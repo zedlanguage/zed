@@ -58,3 +58,35 @@ fn overlapping_chains_agree_with_independent_small_domains_on_longer_chains() {
         );
     }
 }
+
+/// `overlap2c_mid` (target 0, period-70 overlapping reflection guards) scales monotonically at
+/// both 40 -> 320 and 80 -> 640 (HAS-point-probe R7 Q1).
+#[test]
+fn overlap2c_mid_scales_monotonically() {
+    scaling::check_order("overlap2c_mid 40 to 320", 40, 1, |n| {
+        assert_eq!(decide(&formula(n, 0, false)), Ok(true));
+    });
+    scaling::check_order("overlap2c_mid 80 to 640", 80, 1, |n| {
+        assert_eq!(decide(&formula(n, 0, false)), Ok(true));
+    });
+}
+
+/// `overlap2c` at target -23: main's single-pass forward `chain_witness` hit an early-prefix hole
+/// at `i = 2` and fell back to `probe_to` (112.7 G at n = 160, 257.6 G at n = 320); 3-pass
+/// interior-margin greedy walk closes 40 -> 320 in linear work (HAS-point-probe R7 Q1).
+#[test]
+fn overlap2c_target_neg23_scales_in_linear_work() {
+    scaling::check_order("overlap2c target -23 (40 to 320)", 40, 1, |n| {
+        assert_eq!(decide(&formula(n, -23, false)), Ok(n >= 80));
+    });
+}
+
+/// `fork` after `forced`/`reduced` substitutes `q_n` into the final disjunction: main left the
+/// redundant hull rows on `q_{n-1}` in `leftover_ineqs`, bailing out of `sweep_disjoint`
+/// (163.1 G at n = 1000, R = 59.7); vacuous check 3 drops them in O(N) (HAS-point-probe R7 Q4).
+#[test]
+fn fork_with_forced_reduction_scales_in_linear_work() {
+    scaling::check_order("fork with forced reduction (125 to 1000)", 125, 1, |n| {
+        assert_eq!(decide(&fork_formula(n)), Ok(false));
+    });
+}

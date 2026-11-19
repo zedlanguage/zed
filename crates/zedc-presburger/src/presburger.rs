@@ -3516,12 +3516,77 @@ fn has_point(p: Parts) -> Result<bool, Refusal> {
 }
 
 /// The smallest bounded arithmetic progression containing the offsets of one sign of
-/// map: a singleton has step zero. A progression can contain offsets no choice produces.
+/// map: a singleton has step zero. A progression can contain offsets no choice produces;
+/// `exact` is true only when every term `lo + k * step` in `lo..=hi` is actually produced.
 #[derive(Clone, Debug, PartialEq, Eq)]
 struct OffsetHull {
     lo: Int,
     hi: Int,
     step: Int,
+    exact: bool,
+}
+
+impl OffsetHull {
+    fn contains_progression(&self, other: &Self) -> bool {
+        if other.lo < self.lo || other.hi > self.hi {
+            return false;
+        }
+        if self.step.is_zero() {
+            return other.lo == self.lo && other.hi == self.hi;
+        }
+        (&other.lo - &self.lo).mod_floor(&self.step).is_zero()
+            && (other.step.is_zero() || other.step.mod_floor(&self.step).is_zero())
+    }
+
+    /// Sound O(1) certificate that the union of two progressions has no holes.
+    fn exact_union(a: &Self, b: &Self, lo: &Int, hi: &Int, step: &Int) -> bool {
+        if !a.exact || !b.exact {
+            return false;
+        }
+        if step.is_zero() || a.contains_progression(b) || b.contains_progression(a) {
+            return true;
+        }
+        let singleton_with_prog = |s: &Int, p: &Self| {
+            if p.step.is_zero() {
+                return true;
+            }
+            if s + &p.step == p.lo || &p.hi + &p.step == *s {
+                return true;
+            }
+            let two = Int::from(2);
+            p.lo < *s && *s < p.hi && &(s - &p.lo) * &two == p.step && &p.hi - &p.lo == p.step
+        };
+        if a.step.is_zero() {
+            return singleton_with_prog(&a.lo, b);
+        }
+        if b.step.is_zero() {
+            return singleton_with_prog(&b.lo, a);
+        }
+        if a.step == b.step {
+            if (&b.lo - &a.lo).mod_floor(&a.step).is_zero() {
+                return a.lo <= &b.hi + &a.step && b.lo <= &a.hi + &a.step;
+            }
+            // Same step, different residues: disjoint sets, so exact iff sizes match the hull.
+            let count_a = &(&a.hi - &a.lo).div_floor(&a.step) + &Int::ONE;
+            let count_b = &(&b.hi - &b.lo).div_floor(&b.step) + &Int::ONE;
+            let count_all = &(hi - lo).div_floor(step) + &Int::ONE;
+            return &count_a + &count_b == count_all;
+        }
+        false
+    }
+
+    /// Exactness of the Minkowski sum (or difference) of two progressions.
+    /// Necessary and sufficient: one step must divide the other and fit within its span + step.
+    fn exact_sum(x: &Self, y: &Self) -> bool {
+        if !x.exact || !y.exact {
+            return false;
+        }
+        if x.step.is_zero() || y.step.is_zero() {
+            return true;
+        }
+        (y.step.mod_floor(&x.step).is_zero() && y.step <= &(&x.hi - &x.lo) + &x.step)
+            || (x.step.mod_floor(&y.step).is_zero() && x.step <= &(&y.hi - &y.lo) + &y.step)
+    }
 }
 
 /// Offset hulls of `v -> v + c` and `v -> -v + c`, with absent signs represented by None.
@@ -3540,6 +3605,7 @@ impl MapHull {
             lo: offset.clone(),
             hi: offset,
             step: Int::ZERO,
+            exact: true,
         });
         out
     }
@@ -3547,9 +3613,14 @@ impl MapHull {
         match &mut self.0[sign] {
             None => self.0[sign] = Some(span),
             Some(old) => {
-                old.step = old.step.gcd(&span.step).gcd(&(&span.lo - &old.lo));
-                old.lo = old.lo.clone().min(span.lo);
-                old.hi = old.hi.clone().max(span.hi);
+                let step = old.step.gcd(&span.step).gcd(&(&span.lo - &old.lo));
+                let lo = old.lo.clone().min(span.lo.clone());
+                let hi = old.hi.clone().max(span.hi.clone());
+                let exact = OffsetHull::exact_union(old, &span, &lo, &hi, &step);
+                old.step = step;
+                old.lo = lo;
+                old.hi = hi;
+                old.exact = exact;
             }
         }
     }
@@ -3580,6 +3651,7 @@ impl MapHull {
                         lo,
                         hi,
                         step: x.step.gcd(&y.step),
+                        exact: OffsetHull::exact_sum(x, y),
                     },
                 );
             }
@@ -4092,24 +4164,13 @@ fn by_chain_hulls(p: &Parts) -> Option<bool> {
                 .push(Event::Query(j, false));
         }
     }
-    // If all definition guards are disjoint, every map in every live cell is unique.
-    // With every definition reached and every root constraint represented, membership is
-    // then an exact decision, including a positive answer. This structural condition is
-    // global to the chain, so a partly nondeterministic chain never changes to a cheaper
-    // positive path merely because an early cell happened to be deterministic.
-    let functional = stages.iter().all(|stage| match stage.as_slice() {
-        [a, b] => match (clip(&a.0), clip(&b.0)) {
-            (Some((al, ah)), Some((bl, bh))) => al.max(bl) > ah.min(bh),
-            _ => true,
-        },
-        _ => true,
-    });
-    let positive = chain.complete && functional;
     let events: Vec<_> = events.into_iter().collect();
 
     let mut active: Vec<Vec<bool>> = stages.iter().map(|s| vec![false; s.len()]).collect();
     let mut queries = vec![false; chain.queries.len()];
     let mut product = HullProduct::new(stages.len());
+    let mut tried_witness = false;
+    let mut saw_inexact = false;
     for cuts in events.windows(2) {
         let (l, at) = &cuts[0];
         let h = &cuts[1].0 - &Int::ONE;
@@ -4152,48 +4213,53 @@ fn by_chain_hulls(p: &Parts) -> Option<bool> {
                     (-&chain.initial_coef, -&chain.initial_offset)
                 };
                 if progression_meets(&(target - &shift), &coef, offset, &a, &b) {
-                    return (positive
-                        || chain.complete
-                            && chain_witness(&chain, &stages, &active, target, &a, &b))
-                    .then_some(true);
+                    if !chain.complete {
+                        return None;
+                    }
+                    if offset.exact {
+                        return Some(true);
+                    }
+                    if !tried_witness {
+                        tried_witness = true;
+                        if chain_witness(&chain, &stages, &active, target, &a, &b) {
+                            return Some(true);
+                        }
+                    }
+                    // Continue scanning later cells: a later cell may have an exact hull even
+                    // if this cell's inexact hull did not yield a greedy witness.
+                    saw_inexact = true;
                 }
             }
         }
     }
-    Some(false)
+    (!saw_inexact).then_some(false)
 }
 
 /// Whether one choice of an active map at each stage of `chain` carries an input in `a..=b`
-/// to `target`, found by walking back from `target`: at each stage, from the last, the first
-/// active map whose preimage of the value needed lies in the hull of the stages before it.
-/// A walk that reaches the input is a witness, so `true` is exact (with the chain complete,
-/// every twin of a stage takes the map the walk took, so all its variables get values); a
-/// walk that meets a hole of a hull stops with `false`, which decides nothing.
+/// to `target`, found by walking back from `target`: one prefix-hull build (`O(n)`) followed
+/// by up to three fixed-order greedy passes (exact/interior-margin, forward arm order, reverse
+/// arm order), each `O(n)` with no backtracking or search caps. A walk that reaches the input
+/// is a verified witness, so `true` is exact (with the chain complete, every twin of a stage
+/// takes the map the walk took, so all its variables get values); a walk that meets a hole of
+/// a hull stops with `false`, which decides nothing.
 // Complexity tradeoff: the walk is greedy, one step per stage with no backtracking, and
-// `by_chain_hulls` tries it once per question, in the first cell whose hull holds the target;
-// where the hull it follows has a hole at the chosen preimage, or only a later cell has a
-// point, it finds none, and the chain goes on to `pick` and the disjunction search as before
-// (which may refuse it, `Disjuncts`). The trigger is a stage whose two guards overlap, so
-// the stage's hull joins two maps. Naive version: the exact sets of values each stage
-// reaches, which with unit maps x -> x + c and x -> c - x hold up to O(n * C) values for
-// constants up to C (and with binary constants a subset sum), so O(n^2 * C) over the chain;
-// a walk in every cell that holds the target is O(cells * n), up to O(n^2). Used: the prefix
-// hulls (O(n) compositions) and one walk with one `progression_meets` per active map, O(n)
-// arithmetic operations. The hulls keep exact extrema and exact gcds of differences
-// (MapHull::compose), so holes lie only inside a progression. A complete method would need
-// the exact reachable sets in O(n log n), or a walk shared across cells. Tests: r5_hull_tests
+// `by_chain_hulls` tries it at most once per question, in the first cell whose inexact hull
+// holds the target (while exact cells decide in O(1) without walking). Where the hull has a
+// hole near its boundary, forward arm order alone can steer into an early-prefix hole (e.g.,
+// overlap2c at target = -23, n = 160..320). Trying max-interior-margin (preferring exact
+// prefixes, then largest distance from hull endpoints) before forward and reverse arm orders
+// stays inside the hole-free sumset interior (Freiman/Bringmann-Wellnitz dense interior) in
+// 3 * O(n) = O(n) arithmetic operations total. Naive version: exact reachable sets (O(n^2 * C)
+// or subset sum) or walking every cell (O(cells * n) = O(n^2)). Tests: r5_hull_tests
 // `two_reflection_centers_with_a_point_are_answered_at_odd_lengths`,
-// `every_target_of_six_overlapping_steps_is_answered` (PRES-hull-odd-refusal); COMPLEXITY.md
-// row PRES-hull-witness; the chains left are plan row PRES-hull-random-refusals.
+// `every_target_of_six_overlapping_steps_is_answered`, and `overlap2c` target -23 scaling.
 // Assumption, not proved (ASSUME-documented): `by_chain_hulls` and `has_point` return a
 // `true` from here as a point, so every walk that passes `meets(&prefix[0], &y)` must be a
 // real point of `p`. The walk inverts each chosen map exactly and the last test uses the
 // identity hull, which is exact, so the hulls only steer it. It rests on: with
 // `chain.complete`, `GuardedChain::of` and `stages` keep every constraint of `p`; each map
 // active in the cell has its guard true at every `g` of the cell; and each input in `a..=b`
-// has an `other` that puts `g` in the cell. Evidence: the two tests above, the
-// overlapping-chain oracles, and 1,067 random guarded chains (wt/failing-tests/
-// PRES-hull-random-refusals.rs), 0 wrong. If false, `has_point` answers true for a set with
+// has an `other` that puts `g` in the cell. If false, `has_point` answers true for a set with
 // no point: unsound.
 fn chain_witness(
     chain: &GuardedChain,
@@ -4216,43 +4282,106 @@ fn chain_witness(
         let next = MapHull::compose(&value, prefix.last().expect("identity pushed"));
         prefix.push(next);
     }
-    // Whether `y` is the value of some map of `hull` at the initial value of an input in a..=b.
-    let meets = |hull: &MapHull, y: &Int| {
-        hull.0.iter().enumerate().any(|(sign, offset)| {
-            let Some(offset) = offset else { return false };
+    let two = Int::from(2);
+    // Score of `y` in `hull`: `Some((exact, margin))` when `y` meets some branch of `hull`,
+    // preferring exact progressions and then the largest distance from hull endpoints.
+    let score = |hull: &MapHull, y: &Int| -> Option<(bool, Int)> {
+        let mut best: Option<(bool, Int)> = None;
+        for (sign, offset) in hull.0.iter().enumerate() {
+            let Some(offset) = offset else { continue };
             let (coef, shift) = if sign == 0 {
                 (chain.initial_coef.clone(), chain.initial_offset.clone())
             } else {
                 (-&chain.initial_coef, -&chain.initial_offset)
             };
-            progression_meets(&(y - &shift), &coef, offset, a, b)
+            let adj = y - &shift;
+            if !progression_meets(&adj, &coef, offset, a, b) {
+                continue;
+            }
+            let (v_lo, v_hi) = if coef.is_zero() {
+                (adj.clone(), adj)
+            } else if coef.is_positive() {
+                (&adj - &(&coef * b), &adj - &(&coef * a))
+            } else {
+                (&adj - &(&coef * a), &adj - &(&coef * b))
+            };
+            let mid = (&offset.lo + &offset.hi).div_floor(&two);
+            let clamped = mid.max(v_lo).min(v_hi);
+            let margin = (&clamped - &offset.lo).min(&offset.hi - &clamped);
+            let cand = (offset.exact, margin);
+            if best.as_ref().is_none_or(|old| cand > *old) {
+                best = Some(cand);
+            }
+        }
+        best
+    };
+    let arm_preimage = |map: &MapHull, y: &Int| -> Option<Int> {
+        let (sign, offset) = map
+            .0
+            .iter()
+            .enumerate()
+            .find_map(|(s, o)| Some((s, o.as_ref()?)))?;
+        Some(if sign == 0 {
+            y - &offset.lo
+        } else {
+            &offset.lo - y
         })
     };
-    let mut y = target.clone();
-    for j in (0..stages.len()).rev() {
-        let next = stages[j].iter().zip(&active[j]).find_map(|((_, map), on)| {
-            if !*on {
-                return None;
-            }
-            // Each arm holds one map x -> x + c or x -> c - x; its preimage of y.
-            let (sign, offset) = map
-                .0
-                .iter()
-                .enumerate()
-                .find_map(|(s, o)| Some((s, o.as_ref()?)))?;
-            let before = if sign == 0 {
-                &y - &offset.lo
-            } else {
-                &offset.lo - &y
+    enum Strategy {
+        Margin,
+        Forward,
+        Reverse,
+    }
+    for strategy in [Strategy::Margin, Strategy::Forward, Strategy::Reverse] {
+        let mut y = target.clone();
+        let mut ok = true;
+        for j in (0..stages.len()).rev() {
+            let next = match strategy {
+                Strategy::Margin => stages[j]
+                    .iter()
+                    .zip(&active[j])
+                    .filter(|(_, on)| **on)
+                    .filter_map(|((_, map), _)| {
+                        let before = arm_preimage(map, &y)?;
+                        let sc = score(&prefix[j], &before)?;
+                        Some((sc, before))
+                    })
+                    .max_by(|(a_sc, _), (b_sc, _)| a_sc.cmp(b_sc))
+                    .map(|(_, before)| before),
+                Strategy::Forward => stages[j].iter().zip(&active[j]).find_map(|((_, map), on)| {
+                    if !*on {
+                        return None;
+                    }
+                    let before = arm_preimage(map, &y)?;
+                    score(&prefix[j], &before).map(|_| before)
+                }),
+                Strategy::Reverse => {
+                    stages[j]
+                        .iter()
+                        .zip(&active[j])
+                        .rev()
+                        .find_map(|((_, map), on)| {
+                            if !*on {
+                                return None;
+                            }
+                            let before = arm_preimage(map, &y)?;
+                            score(&prefix[j], &before).map(|_| before)
+                        })
+                }
             };
-            meets(&prefix[j], &before).then_some(before)
-        });
-        match next {
-            Some(before) => y = before,
-            None => return false,
+            match next {
+                Some(before) => y = before,
+                None => {
+                    ok = false;
+                    break;
+                }
+            }
+        }
+        if ok && score(&prefix[0], &y).is_some() {
+            return true;
         }
     }
-    meets(&prefix[0], &y)
+    false
 }
 
 mod cell_sweep {
@@ -6086,6 +6215,93 @@ mod cell_sweep {
                 }
             }
         }
+        // Vacuous check 3: when a leftover target item's equations all share one primitive linear
+        // form `L` with values in `[lo, hi]` (e.g., `(i <= c && q == a) || (i >= c+1 && q == b)`
+        // after `forced`/`reduced` substitutes a fixed end value), `narrow_disjunction_hulls` puts
+        // the hull rows `L >= lo` and `L <= hi` in `p.cons`. Those rows are implied by every branch
+        // of the leftover item and would otherwise make `sweep_disjoint` bail on `!leftover_ineqs`.
+        if !leftover_ineqs.is_empty() && !leftover_items.is_empty() {
+            let canonical_form = |terms: &BTreeMap<Atom, Int>| -> (Vec<(Atom, Int)>, bool, Int) {
+                let first_neg = terms.values().next().expect("nonempty terms").is_negative();
+                let g = terms.values().fold(Int::ZERO, |acc, k| acc.gcd(&k.abs()));
+                let key = terms
+                    .iter()
+                    .map(|(a, k)| {
+                        let q = k.div_floor(&g);
+                        (a.clone(), if first_neg { -&q } else { q })
+                    })
+                    .collect();
+                (key, first_neg, g)
+            };
+            let mut item_ranges: BTreeMap<Vec<(Atom, Int)>, (Int, Int)> = BTreeMap::new();
+            for &idx in &leftover_items {
+                let eqs = &items[idx].eqs;
+                if eqs.is_empty() {
+                    continue;
+                }
+                let mut shared_key: Option<Vec<(Atom, Int)>> = None;
+                let mut range: Option<(Int, Int)> = None;
+                let mut ok = true;
+                for eq in eqs {
+                    if eq.lin.terms.is_empty() {
+                        ok = false;
+                        break;
+                    }
+                    let (key, first_neg, g) = canonical_form(&eq.lin.terms);
+                    if !eq.lin.constant.mod_floor(&g).is_zero() {
+                        ok = false;
+                        break;
+                    }
+                    if let Some(prev) = &shared_key {
+                        if *prev != key {
+                            ok = false;
+                            break;
+                        }
+                    } else {
+                        shared_key = Some(key);
+                    }
+                    let q = eq.lin.constant.div_floor(&g);
+                    let val = if first_neg { q } else { -&q };
+                    range = Some(match range {
+                        None => (val.clone(), val),
+                        Some((lo, hi)) => (lo.min(val.clone()), hi.max(val)),
+                    });
+                }
+                if ok && let (Some(key), Some((lo, hi))) = (shared_key, range) {
+                    item_ranges
+                        .entry(key)
+                        .and_modify(|(old_lo, old_hi)| {
+                            if lo > *old_lo {
+                                *old_lo = lo.clone();
+                            }
+                            if hi < *old_hi {
+                                *old_hi = hi.clone();
+                            }
+                        })
+                        .or_insert((lo, hi));
+                }
+            }
+            if !item_ranges.is_empty() {
+                leftover_ineqs.retain(|c| {
+                    if c.lin.terms.is_empty() {
+                        return true;
+                    }
+                    let (key, first_neg, g) = canonical_form(&c.lin.terms);
+                    let Some((lo, hi)) = item_ranges.get(&key) else {
+                        return true;
+                    };
+                    let eval = |v: &Int| {
+                        let prod = &g * v;
+                        if first_neg {
+                            &(-&prod) + &c.lin.constant
+                        } else {
+                            &prod + &c.lin.constant
+                        }
+                    };
+                    eval(lo).is_negative() || eval(hi).is_negative()
+                });
+            }
+        }
 
         Some(Ok(Orientation {
             param_k,
@@ -7584,86 +7800,286 @@ fn gallop(a: &[(usize, usize)], from: usize, x: usize) -> usize {
     lo + a[lo..hi].partition_point(|r| r.1 < x)
 }
 
-/// The cells of a shared [`CellSet`] in `lo..=hi`: a part held by many parts with different
-/// spans of `x` reads its set through one window each, not a copy each.
+/// The first index from `from` of a run of `a` that starts strictly after `x`, by exponential
+/// search.
+fn gallop_start(a: &[(usize, usize)], from: usize, x: usize) -> usize {
+    if a.get(from).is_none_or(|r| r.0 > x) {
+        return from;
+    }
+    let (mut lo, mut step) = (from, 1);
+    while lo + step < a.len() && a[lo + step].0 <= x {
+        lo += step;
+        step *= 2;
+    }
+    let hi = (lo + step + 1).min(a.len());
+    lo + a[lo..hi].partition_point(|r| r.0 <= x)
+}
+
+/// Canonical disjoint sorted non-adjacent inclusive cell-index windows on a shared [`CellSet`].
+/// Single-window views store their interval inline without heap allocation; multi-window views
+/// share their window list via `Rc` so cloning and view-key comparisons stay cheap.
+#[derive(Clone, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
+enum CellWindows {
+    Empty,
+    One([(usize, usize); 1]),
+    Many(Rc<CellSet>),
+}
+
+impl CellWindows {
+    fn from_runs(runs: CellSet) -> Self {
+        match runs.len() {
+            0 => Self::Empty,
+            1 => Self::One([runs[0]]),
+            _ => Self::Many(Rc::new(runs)),
+        }
+    }
+
+    fn as_slice(&self) -> &[(usize, usize)] {
+        match self {
+            Self::Empty => &[],
+            Self::One(r) => r,
+            Self::Many(rs) => rs,
+        }
+    }
+
+    fn is_empty(&self) -> bool {
+        matches!(self, Self::Empty)
+    }
+
+    fn first_lo(&self) -> usize {
+        self.as_slice().first().map_or(usize::MAX, |r| r.0)
+    }
+}
+
+/// Runs of a [`CellPiece`] across its sorted disjoint windows, using galloping search with zero
+/// allocation.
+struct CellPieceRuns<'a> {
+    set: &'a [(usize, usize)],
+    ws: &'a [(usize, usize)],
+    w_idx: usize,
+    s_idx: usize,
+    s_end: usize,
+    w_lo: usize,
+    w_hi: usize,
+}
+
+impl Iterator for CellPieceRuns<'_> {
+    type Item = (usize, usize);
+
+    fn next(&mut self) -> Option<(usize, usize)> {
+        loop {
+            if self.s_idx < self.s_end {
+                let (a, b) = self.set[self.s_idx];
+                self.s_idx += 1;
+                return Some((a.max(self.w_lo), b.min(self.w_hi)));
+            }
+            if self.w_idx >= self.ws.len() {
+                return None;
+            }
+            let (w_lo, w_hi) = self.ws[self.w_idx];
+            self.w_idx += 1;
+            let start = self.s_idx.saturating_sub(1);
+            let first = gallop(self.set, start, w_lo);
+            let stop = gallop_start(self.set, first, w_hi);
+            self.w_lo = w_lo;
+            self.w_hi = w_hi;
+            self.s_idx = first;
+            self.s_end = stop;
+        }
+    }
+}
+
+thread_local! {
+    static EMPTY_CELL_SET: Rc<CellSet> = Rc::new(Vec::new());
+}
+
+/// The cells of a shared [`CellSet`] through one or more disjoint windows: a part held by many
+/// parts with different spans of `x` reads its set through windows, not a copy each.
 #[derive(Clone, Debug)]
 struct CellPiece {
     set: Rc<CellSet>,
-    lo: usize,
-    hi: usize,
+    windows: CellWindows,
 }
 
 impl CellPiece {
-    fn of(runs: CellSet) -> CellPiece {
-        let hi = runs.last().map_or(0, |r| r.1);
-        let lo = runs.first().map_or(1, |r| r.0);
+    fn empty() -> CellPiece {
         CellPiece {
-            set: Rc::new(runs),
-            lo,
-            hi,
+            set: EMPTY_CELL_SET.with(Rc::clone),
+            windows: CellWindows::Empty,
+        }
+    }
+
+    fn of(runs: CellSet) -> CellPiece {
+        match (runs.first(), runs.last()) {
+            (Some(&(lo, _)), Some(&(_, hi))) => CellPiece {
+                set: Rc::new(runs),
+                windows: CellWindows::One([(lo, hi)]),
+            },
+            _ => Self::empty(),
+        }
+    }
+
+    fn full(set: Rc<CellSet>) -> CellPiece {
+        let windows = match (set.first(), set.last()) {
+            (Some(&(lo, _)), Some(&(_, hi))) => CellWindows::One([(lo, hi)]),
+            _ => CellWindows::Empty,
+        };
+        CellPiece { set, windows }
+    }
+
+    fn with_windows(set: Rc<CellSet>, runs: CellSet) -> CellPiece {
+        let windows = if set.is_empty() {
+            CellWindows::Empty
+        } else {
+            CellWindows::from_runs(runs)
+        };
+        CellPiece { set, windows }
+    }
+
+    fn key(&self) -> PieceKey {
+        match &self.windows {
+            CellWindows::Empty => (std::ptr::null(), 1, 0),
+            CellWindows::One([(lo, hi)]) => {
+                if self.count() == 0 {
+                    (std::ptr::null(), 1, 0)
+                } else {
+                    (Rc::as_ptr(&self.set), *lo, *hi)
+                }
+            }
+            CellWindows::Many(ws) => {
+                if self.count() == 0 {
+                    (std::ptr::null(), 1, 0)
+                } else {
+                    // `usize::MAX` never occurs as a cell index `lo`, distinguishing `Many`
+                    // from `One` in the same 24-byte `Copy` key.
+                    (Rc::as_ptr(&self.set), usize::MAX, Rc::as_ptr(ws) as usize)
+                }
+            }
         }
     }
 
     /// The indices of the runs of `set` that meet `lo..=hi`, by two binary searches.
-    fn window(&self) -> (usize, usize) {
-        if self.lo > self.hi {
+    fn window_in(set: &[(usize, usize)], lo: usize, hi: usize) -> (usize, usize) {
+        if lo > hi || set.is_empty() {
             return (0, 0);
         }
-        let first = self.set.partition_point(|r| r.1 < self.lo);
-        let stop = self.set.partition_point(|r| r.0 <= self.hi);
-        (first, stop.max(first))
+        let first = set.partition_point(|r| r.1 < lo);
+        let stop = first + set[first..].partition_point(|r| r.0 <= hi);
+        (first, stop)
     }
 
-    fn runs(&self) -> impl Iterator<Item = (usize, usize)> + '_ {
-        let (first, stop) = self.window();
-        (self.set[first..stop].iter()).map(|&(a, b)| (a.max(self.lo), b.min(self.hi)))
+    fn runs(&self) -> CellPieceRuns<'_> {
+        CellPieceRuns {
+            set: &self.set,
+            ws: self.windows.as_slice(),
+            w_idx: 0,
+            s_idx: 0,
+            s_end: 0,
+            w_lo: 1,
+            w_hi: 0,
+        }
+    }
+
+    fn runs_vec(&self) -> CellSet {
+        if self.windows.is_empty() || self.set.is_empty() {
+            Vec::new()
+        } else {
+            self.runs().collect()
+        }
     }
 
     fn count(&self) -> usize {
-        let (first, stop) = self.window();
-        stop - first
+        if self.set.is_empty() {
+            return 0;
+        }
+        match &self.windows {
+            CellWindows::Empty => 0,
+            CellWindows::One([(lo, hi)]) => {
+                // O(1) whole-base shortcut: a full window contains every run of `set`.
+                if *lo <= self.set[0].0 && *hi >= self.set[self.set.len() - 1].1 {
+                    return self.set.len();
+                }
+                let (first, stop) = Self::window_in(&self.set, *lo, *hi);
+                stop - first
+            }
+            CellWindows::Many(ws) => {
+                let mut total = 0;
+                let mut s_idx = 0;
+                for &(w_lo, w_hi) in ws.iter() {
+                    let first = gallop(&self.set, s_idx, w_lo);
+                    let stop = gallop_start(&self.set, first, w_hi);
+                    total += stop - first;
+                    s_idx = if stop > first { stop - 1 } else { first };
+                }
+                total
+            }
+        }
+    }
+
+    fn is_empty(&self) -> bool {
+        self.windows.is_empty() || self.count() == 0
     }
 
     fn clamp(&self, a: usize, b: usize) -> CellPiece {
+        if a > b || self.set.is_empty() {
+            return CellPiece {
+                set: self.set.clone(),
+                windows: CellWindows::Empty,
+            };
+        }
+        let windows = match &self.windows {
+            CellWindows::Empty => CellWindows::Empty,
+            CellWindows::One([(lo, hi)]) => {
+                let (l, h) = ((*lo).max(a), (*hi).min(b));
+                if l <= h {
+                    CellWindows::One([(l, h)])
+                } else {
+                    CellWindows::Empty
+                }
+            }
+            CellWindows::Many(ws) => CellWindows::from_runs(cells_meet(ws, &[(a, b)])),
+        };
         CellPiece {
             set: self.set.clone(),
-            lo: self.lo.max(a),
-            hi: self.hi.min(b),
+            windows,
         }
     }
 }
 
 /// The cells of `main` and of `extra`: the set of a part held by many parts, read through a
-/// window, and the cells each holder adds of its own, so a holder costs its own cells and not
-/// a copy of the shared set.
+/// window list, and the cells each holder adds of its own, so a holder costs its own cells and
+/// not a copy of the shared set.
 #[derive(Clone, Debug)]
 struct CellView {
     main: CellPiece,
     extra: CellPiece,
 }
 
-/// A [`CellPiece`] by its set and window.
+/// A [`CellPiece`] by its set and window(s): 24-byte `Copy` key with no heap drop, using
+/// `(ptr, usize::MAX, ws_ptr)` for multi-window lists (kept alive by the map value).
 type PieceKey = (*const CellSet, usize, usize);
 
 /// A [`CellView`] by its sets and windows: views with equal keys have equal cells.
-type ViewKey = (*const CellSet, usize, usize, *const CellSet, usize, usize);
+type ViewKey = (PieceKey, PieceKey);
 
 impl CellView {
     fn of(runs: CellSet) -> CellView {
         CellView {
             main: CellPiece::of(runs),
-            extra: CellPiece::of(Vec::new()),
+            extra: CellPiece::empty(),
+        }
+    }
+
+    fn empty() -> CellView {
+        CellView {
+            main: CellPiece::empty(),
+            extra: CellPiece::empty(),
         }
     }
 
     /// Empty pieces count as one, whatever set they are windows of.
     fn key(&self) -> ViewKey {
-        let at = |p: &CellPiece| match p.count() {
-            0 => (std::ptr::null(), 1, 0),
-            _ => (Rc::as_ptr(&p.set), p.lo, p.hi),
-        };
-        let (a, e) = (at(&self.main), at(&self.extra));
-        (a.0, a.1, a.2, e.0, e.1, e.2)
+        (self.main.key(), self.extra.key())
     }
 
     fn clamp(&self, a: usize, b: usize) -> CellView {
@@ -7675,19 +8091,19 @@ impl CellView {
 
     fn runs(&self) -> CellSet {
         match (self.main.count(), self.extra.count()) {
-            (_, 0) => self.main.runs().collect(),
-            (0, _) => self.extra.runs().collect(),
+            (_, 0) => self.main.runs_vec(),
+            (0, _) => self.extra.runs_vec(),
             _ => cells_join(self.main.runs().chain(self.extra.runs()).collect()),
         }
     }
 
     fn is_empty(&self) -> bool {
-        self.main.count() == 0 && self.extra.count() == 0
+        self.main.is_empty() && self.extra.is_empty()
     }
 
-    /// The one run of the view, if it has exactly one.
-    fn single(&self) -> Option<(usize, usize)> {
-        match (self.main.count(), self.extra.count()) {
+    /// The one run of the view, given precomputed `(main.count(), extra.count())`.
+    fn single_with_counts(&self, mc: usize, ec: usize) -> Option<(usize, usize)> {
+        match (mc, ec) {
             (1, 0) => self.main.runs().next(),
             (0, 1) => self.extra.runs().next(),
             (1, 1) => match self.runs().as_slice() {
@@ -7698,106 +8114,212 @@ impl CellView {
         }
     }
 
-    /// The cells of both views.
-    // Complexity tradeoff: a merge of the two run lists costs O(R) for R runs even when one
-    // side is one run, which repeated over H holders of a part of R runs is O(H·R); when one
-    // side is one run the meet is the other side narrowed, O(log R) and no copy.
-    fn meet(&self, other: &CellView) -> CellView {
-        if let Some((a, b)) = self.single() {
-            return other.clamp(a, b);
-        }
-        if let Some((a, b)) = other.single() {
-            return self.clamp(a, b);
-        }
-        // Complexity tradeoff: merging the common main R runs again for H different pairs
-        // costs O(H R), even when each pair differs only in its extras. The distributive
-        // identity (M union A) meet (M union B) = M union (A meet B) retains M by reference
-        // and reads only the extras. Whole-view memoization still handles repeated pairs.
-        if Rc::ptr_eq(&self.main.set, &other.main.set)
-            && self.main.lo == other.main.lo
-            && self.main.hi == other.main.hi
-        {
-            return CellView {
-                main: self.main.clone(),
-                extra: CellPiece::of(cells_meet(
-                    &self.extra.runs().collect::<Vec<_>>(),
-                    &other.extra.runs().collect::<Vec<_>>(),
-                )),
-            };
-        }
-        // Complexity tradeoff: two views of one main set M through different windows w1 and w2
-        // were merged whole, O(R) per pair for R runs of M (distinct_extras_skew: O(n R)).
-        // Meet distributes over union: (M1 | E1) & (M2 | E2) = (M1 & M2) | (M1 & E2) |
-        // (E1 & M2) | (E1 & E2), and M1 & M2 is M through w1 & w2, kept by reference. Of a
-        // cross term only the cells outside w1 & w2 are new, M through w1 read by two binary
-        // searches per piece of an extra run outside that window: O((E1 + E2) log R + K) for
-        // E1 + E2 extra runs and K runs of M put in the extra.
-        if Rc::ptr_eq(&self.main.set, &other.main.set) {
-            let (lo, hi) = (
-                self.main.lo.max(other.main.lo),
-                self.main.hi.min(other.main.hi),
-            );
-            let mut extra: CellSet = Vec::new();
-            for (m, e) in [(&self.main, &other.extra), (&other.main, &self.extra)] {
-                for (a, b) in e.runs() {
-                    let outside = if lo > hi {
-                        vec![(a, b)]
+    /// Exact same-base meet `((S & Wa) | Ea) & ((S & Wb) | Eb)` without reading any run of `S`.
+    fn meet_same_base(
+        am: &CellPiece,
+        ae: &CellPiece,
+        ae_c: usize,
+        bm: &CellPiece,
+        be: &CellPiece,
+        be_c: usize,
+    ) -> CellView {
+        if ae_c == 0 && be_c == 0 {
+            let windows = match (&am.windows, &bm.windows) {
+                (CellWindows::One([(l1, h1)]), CellWindows::One([(l2, h2)])) => {
+                    let (l, h) = ((*l1).max(*l2), (*h1).min(*h2));
+                    if l <= h {
+                        CellWindows::One([(l, h)])
                     } else {
-                        cells_minus(&[(a, b)], &[(lo, hi)])
-                    };
-                    for (a, b) in outside {
-                        extra.extend(m.clamp(a, b).runs());
+                        CellWindows::Empty
                     }
                 }
-            }
-            extra.extend(cells_meet(
-                &self.extra.runs().collect::<Vec<_>>(),
-                &other.extra.runs().collect::<Vec<_>>(),
-            ));
-            return CellView {
-                main: self.main.clamp(lo, hi),
-                extra: CellPiece::of(cells_join(extra)),
+                _ => {
+                    CellWindows::from_runs(cells_meet(am.windows.as_slice(), bm.windows.as_slice()))
+                }
             };
+            return CellView {
+                main: CellPiece {
+                    set: am.set.clone(),
+                    windows,
+                },
+                extra: CellPiece::empty(),
+            };
+        }
+        if am.windows == bm.windows {
+            let extra = if ae_c == 0 || be_c == 0 {
+                CellPiece::empty()
+            } else {
+                CellPiece::of(cells_meet(&ae.runs_vec(), &be.runs_vec()))
+            };
+            return CellView {
+                main: am.clone(),
+                extra,
+            };
+        }
+        // Stack-only fast path for single-window views with <= 1 extra run each (covers
+        // `distinct_extras_skew` and `cross_window_copy` with zero intermediate allocations).
+        if ae_c <= 1
+            && be_c <= 1
+            && let (CellWindows::One([w1]), CellWindows::One([w2])) = (&am.windows, &bm.windows)
+        {
+            let ea = if ae_c == 1 { ae.runs().next() } else { None };
+            let eb = if be_c == 1 { be.runs().next() } else { None };
+            let inter = |a: (usize, usize), b: (usize, usize)| {
+                let (l, h) = (a.0.max(b.0), a.1.min(b.1));
+                (l <= h).then_some((l, h))
+            };
+            let mut buf = [(0usize, 0usize); 3];
+            let mut len = 0usize;
+            if let Some(r) = inter(*w1, *w2) {
+                buf[len] = r;
+                len += 1;
+            }
+            if let Some(r) = eb.and_then(|e| inter(*w1, e)) {
+                buf[len] = r;
+                len += 1;
+            }
+            if let Some(r) = ea.and_then(|e| inter(*w2, e)) {
+                buf[len] = r;
+                len += 1;
+            }
+            // Sort and coalesce up to 3 intervals in place on stack.
+            if len >= 2 && buf[0] > buf[1] {
+                buf.swap(0, 1);
+            }
+            if len == 3 {
+                if buf[1] > buf[2] {
+                    buf.swap(1, 2);
+                }
+                if buf[0] > buf[1] {
+                    buf.swap(0, 1);
+                }
+            }
+            let mut mlen = 0usize;
+            for idx in 0..len {
+                let (lo, hi) = buf[idx];
+                if mlen > 0 && lo <= buf[mlen - 1].1.saturating_add(1) {
+                    buf[mlen - 1].1 = buf[mlen - 1].1.max(hi);
+                } else {
+                    buf[mlen] = (lo, hi);
+                    mlen += 1;
+                }
+            }
+            let e_ab = ea.zip(eb).and_then(|(a, b)| inter(a, b));
+            let extra = match e_ab {
+                Some(r) => CellPiece::of(vec![r]),
+                None => CellPiece::empty(),
+            };
+            let windows = match mlen {
+                0 => {
+                    return CellView {
+                        main: extra,
+                        extra: CellPiece::empty(),
+                    };
+                }
+                1 => CellWindows::One([buf[0]]),
+                _ => CellWindows::Many(Rc::new(buf[..mlen].to_vec())),
+            };
+            return CellView {
+                main: CellPiece {
+                    set: am.set.clone(),
+                    windows,
+                },
+                extra,
+            };
+        }
+        let ea = ae.runs_vec();
+        let eb = be.runs_vec();
+        let wa = am.windows.as_slice();
+        let wb = bm.windows.as_slice();
+        let mut w = cells_meet(wa, wb);
+        w.extend(cells_meet(wa, &eb));
+        w.extend(cells_meet(wb, &ea));
+        let w = cells_join(w);
+        let e = cells_meet(&ea, &eb);
+        if w.is_empty() {
+            return CellView::of(e);
+        }
+        CellView {
+            main: CellPiece::with_windows(am.set.clone(), w),
+            extra: CellPiece::of(e),
+        }
+    }
+
+    /// The cells of both views.
+    // Complexity tradeoff: merging the two run lists costs O(R) for R runs even when one
+    // side is one run, which repeated over H holders of a part of R runs is O(H·R); when one
+    // side is one run the meet is the other side narrowed, O(|W| + log R) and no copy.
+    // For two views of one shared base S through windows W1, W2 with extras E1, E2, the exact
+    // set identity ((S & W1) | E1) & ((S & W2) | E2) = (S & ((W1 & W2) | (W1 & E2) | (W2 & E1)))
+    // | (E1 & E2) keeps S by reference without reading or copying any run of S (K = 0 even when
+    // E1 or E2 is a wide run, closing cross_window_copy): O((|W1| + |W2| + |E1| + |E2|) log ...).
+    #[cfg(test)]
+    fn meet(&self, other: &CellView) -> CellView {
+        let (am_c, ae_c) = (self.main.count(), self.extra.count());
+        let (bm_c, be_c) = (other.main.count(), other.extra.count());
+        if am_c + ae_c == 0 || bm_c + be_c == 0 {
+            return CellView::empty();
+        }
+        if let Some((a, b)) = self.single_with_counts(am_c, ae_c) {
+            return other.clamp(a, b);
+        }
+        if let Some((a, b)) = other.single_with_counts(bm_c, be_c) {
+            return self.clamp(a, b);
+        }
+        let (am, ae, ae_c) = if am_c == 0 {
+            (&self.extra, &self.main, 0)
+        } else {
+            (&self.main, &self.extra, ae_c)
+        };
+        let (bm, be, be_c) = if bm_c == 0 {
+            (&other.extra, &other.main, 0)
+        } else {
+            (&other.main, &other.extra, be_c)
+        };
+        if Rc::ptr_eq(&am.set, &bm.set) {
+            return Self::meet_same_base(am, ae, ae_c, bm, be, be_c);
         }
         CellView::of(cells_meet(&self.runs(), &other.runs()))
     }
 
-    /// The pieces of `views`, views of one set taken in the join of their windows, those with
-    /// the most runs first.
+    /// The pieces of `views`, views of one set merged into a single multi-window [`CellPiece`],
+    /// those with the most runs first.
+    // Complexity tradeoff: emitting one `CellPiece` per window forced `try_join` to materialize
+    // O(R) runs whenever one base appeared through two disjoint windows (`two_windows_one_base`:
+    // O(n R)). Merging all windows of one physical base into a single `CellPiece` with
+    // `CellWindows` keeps the base uncopied in O(W log W) window work. Caching `count()` before
+    // sorting removes the log-factor recomputation during comparisons.
     fn pieces(views: Vec<CellView>) -> Vec<CellPiece> {
         let mut by_set: HashMap<*const CellSet, (Rc<CellSet>, CellSet)> = HashMap::new();
         let pieces = views.into_iter().flat_map(|v| [v.main, v.extra]);
-        for p in pieces.filter(|p| p.count() > 0) {
+        for p in pieces.filter(|p| !p.is_empty()) {
             let e = by_set
                 .entry(Rc::as_ptr(&p.set))
                 .or_insert((p.set.clone(), Vec::new()));
-            e.1.push((p.lo, p.hi));
+            e.1.extend_from_slice(p.windows.as_slice());
         }
-        let mut pieces: Vec<CellPiece> = Vec::new();
-        for (set, mut w) in by_set.into_values() {
-            w.sort_unstable();
-            let mut merged: CellSet = Vec::new();
-            for (lo, hi) in w {
-                match merged.last_mut() {
-                    Some(last) if lo <= last.1.saturating_add(1) => last.1 = last.1.max(hi),
-                    _ => merged.push((lo, hi)),
-                }
+        let mut ranked: Vec<(usize, *const CellSet, usize, CellPiece)> =
+            Vec::with_capacity(by_set.len());
+        for (set, w) in by_set.into_values() {
+            let merged = cells_join(w);
+            let piece = CellPiece::with_windows(set, merged);
+            let count = piece.count();
+            if count > 0 {
+                let ptr = Rc::as_ptr(&piece.set);
+                let first_lo = piece.windows.first_lo();
+                ranked.push((count, ptr, first_lo, piece));
             }
-            let set = &set;
-            pieces.extend(merged.into_iter().map(|(lo, hi)| CellPiece {
-                set: set.clone(),
-                lo,
-                hi,
-            }));
         }
-        // Complexity tradeoff: counting runs through windows avoids materializing O(D R)
-        // runs for D pieces, but sort_by_key recomputes its O(log R) count in comparisons:
-        // O(D log D log R) metadata work. Caching the keys would remove one log factor;
-        // its allocation cost has not been measured in this change.
-        pieces.sort_by_key(|p| (std::cmp::Reverse(p.count()), Rc::as_ptr(&p.set), p.lo));
-        pieces
+        ranked.sort_by_key(|(count, ptr, lo, _)| (std::cmp::Reverse(*count), *ptr, *lo));
+        ranked.into_iter().map(|(_, _, _, p)| p).collect()
     }
 }
+
+/// An unordered pair of physical base pointers for [`CellWalk::base_meets`].
+type BasePair = (*const CellSet, *const CellSet);
+
+/// Cached operands and intersection for [`CellWalk::base_meets`], keeping both bases alive.
+type BaseMeetEntry = (Rc<CellSet>, Rc<CellSet>, Rc<CellSet>);
 
 /// The cells of `x` and, for each disjunct read, the cells where it may hold (its constraints
 /// of `x` alone hold there and each of its disjunctions has a disjunct that may hold) and the
@@ -7812,6 +8334,9 @@ struct CellWalk<'a> {
     joins: HashMap<Vec<PieceKey>, (Vec<CellPiece>, CellPiece)>,
     /// The operands keep every set used in a pointer key alive for this walk.
     meets: FxHashMap<(ViewKey, ViewKey), (CellView, CellView, CellView)>,
+    /// Full-base intersections cached per unordered pair of physical bases, keeping both bases
+    /// alive for the walk so distinct-base views with extras reuse the base intersection.
+    base_meets: FxHashMap<BasePair, BaseMeetEntry>,
     /// Whether some nested part has a one-atom row on an atom (not `x`) that no other part
     /// reads: a disjunction over such payloads is a free choice, and [`Self::spread`] then
     /// goes on past a disjunction it cannot place instead of giving up.
@@ -7819,6 +8344,16 @@ struct CellWalk<'a> {
 }
 
 impl CellWalk<'_> {
+    fn base_meet(&mut self, a: &Rc<CellSet>, b: &Rc<CellSet>) -> Rc<CellSet> {
+        let (pa, pb) = (Rc::as_ptr(a), Rc::as_ptr(b));
+        let key = if pa <= pb { (pa, pb) } else { (pb, pa) };
+        self.base_meets
+            .entry(key)
+            .or_insert_with(|| (a.clone(), b.clone(), Rc::new(cells_meet(a, b))))
+            .2
+            .clone()
+    }
+
     fn live(&mut self, p: &Parts) -> CellSet {
         let all = [(0, self.cells.len() - 1)];
         let mut views: HashMap<ViewKey, CellView> = HashMap::new();
@@ -7847,18 +8382,20 @@ impl CellWalk<'_> {
         let mut sets: HashMap<*const CellSet, (Rc<CellSet>, Option<CellSet>)> = HashMap::new();
         let mut dead: CellSet = Vec::new();
         for v in views.into_values() {
-            let extra: CellSet = v.extra.runs().collect();
-            let window = if v.main.count() == 0 {
-                Vec::new()
+            let extra = v.extra.runs_vec();
+            let window = if v.main.is_empty() {
+                &[][..]
             } else {
-                vec![(v.main.lo, v.main.hi)]
+                v.main.windows.as_slice()
             };
-            dead.extend(cells_minus(&cells_minus(&all, &window), &extra));
-            let s = (sets.entry(Rc::as_ptr(&v.main.set))).or_insert((v.main.set.clone(), None));
-            s.1 = Some(match s.1.take() {
-                None => extra,
-                Some(m) => cells_meet(&m, &extra),
-            });
+            dead.extend(cells_minus(&cells_minus(&all, window), &extra));
+            if !v.main.is_empty() {
+                let s = (sets.entry(Rc::as_ptr(&v.main.set))).or_insert((v.main.set.clone(), None));
+                s.1 = Some(match s.1.take() {
+                    None => extra,
+                    Some(m) => cells_meet(&m, &extra),
+                });
+            }
         }
         for (set, extras) in sets.into_values() {
             let held = cells_join(
@@ -7883,7 +8420,7 @@ impl CellWalk<'_> {
     // persistent merge of Liljenzin, "Confluently Persistent Sets and Maps", 2013.
     fn catalog_live(&mut self, p: &Parts) -> Option<CellSet> {
         let all = [(0, self.cells.len() - 1)];
-        let mut ids: BTreeMap<PieceKey, usize> = BTreeMap::new();
+        let mut ids: BTreeMap<(*const CellSet, usize, usize), usize> = BTreeMap::new();
         let mut bases: Vec<(CellPiece, usize, CellSet)> = Vec::new();
         let mut simple_dead = Vec::new();
         let mut clauses = 0;
@@ -7894,7 +8431,7 @@ impl CellWalk<'_> {
                     let v = self.of(d).0;
                     [v.main, v.extra]
                 })
-                .filter(|piece| piece.count() > 0)
+                .filter(|piece| !piece.is_empty())
                 .collect();
             if pieces.iter().all(|piece| piece.count() <= 1) {
                 let runs = cells_join(pieces.iter().flat_map(CellPiece::runs).collect());
@@ -7906,23 +8443,27 @@ impl CellWalk<'_> {
             for piece in pieces {
                 // Single-run allocations of an equal interval are the same base. Windows
                 // of a multi-run allocation retain that allocation even at a one-run end.
-                let (key, full) = if piece.set.len() == 1 {
-                    let key = (std::ptr::null(), piece.lo, piece.hi);
-                    (key, CellPiece::of(vec![(piece.lo, piece.hi)]))
+                let (key, full) = if piece.set.len() == 1
+                    && let CellWindows::One([(lo, hi)]) = piece.windows
+                {
+                    let (a, b) = (piece.set[0].0.max(lo), piece.set[0].1.min(hi));
+                    let key = (std::ptr::null(), a, b);
+                    (key, CellPiece::of(vec![(a, b)]))
                 } else {
-                    let full = CellPiece {
-                        set: piece.set.clone(),
-                        lo: piece.set.first().expect("nonempty piece").0,
-                        hi: piece.set.last().expect("nonempty piece").1,
-                    };
-                    ((Rc::as_ptr(&piece.set), full.lo, full.hi), full)
+                    let full = CellPiece::full(piece.set.clone());
+                    let lo = piece.set.first().expect("nonempty piece").0;
+                    let hi = piece.set.last().expect("nonempty piece").1;
+                    ((Rc::as_ptr(&piece.set), lo, hi), full)
                 };
                 let next = bases.len();
                 let id = *ids.entry(key).or_insert_with(|| {
                     bases.push((full, 0, Vec::new()));
                     next
                 });
-                windows.entry(id).or_default().push((piece.lo, piece.hi));
+                windows
+                    .entry(id)
+                    .or_default()
+                    .extend_from_slice(piece.windows.as_slice());
             }
             for (id, windows) in windows {
                 bases[id].1 += 1;
@@ -7943,10 +8484,7 @@ impl CellWalk<'_> {
         let mut live = Vec::new();
         for (base, count, gaps) in bases {
             if count == clauses {
-                live.extend(cells_minus(
-                    &base.runs().collect::<Vec<_>>(),
-                    &cells_join(gaps),
-                ));
+                live.extend(cells_minus(&base.runs_vec(), &cells_join(gaps)));
             }
         }
         Some(cells_minus(&cells_join(live), &cells_join(simple_dead)))
@@ -7991,7 +8529,7 @@ impl CellWalk<'_> {
     // holders each join one or more shared sets of R runs with a few cells of their own (D·R).
     // Views of one set join to that set in the join of their windows. The pieces but the one
     // of fewest runs are joined once for each distinct list of them and kept by the list, and
-    // the last piece is kept as the extra, uncopied: O(D log D log R) for holders whose
+    // the last piece is kept as the extra, uncopied: O(D log D + D log R) for holders whose
     // pieces but one are shared, plus the runs of each distinct list joined.
     fn join(&mut self, views: Vec<CellView>) -> CellView {
         self.try_join(views, true).expect("materialized join")
@@ -8001,10 +8539,50 @@ impl CellWalk<'_> {
     /// before a join of incompatible windows copies their shared runs.
     fn try_join(&mut self, views: Vec<CellView>, materialize: bool) -> Option<CellView> {
         let mut views = views;
-        let total = |v: &CellView| v.main.count() + v.extra.count();
-        let Some(s) = (0..views.len()).rev().min_by_key(|&i| total(&views[i])) else {
-            return Some(CellView::of(Vec::new()));
-        };
+        if views.is_empty() {
+            return Some(CellView::empty());
+        }
+        // Single pass computes both `all_unit` and the last minimum-count view without
+        // recounting pieces. When every input view has at most one run, peeling off one view
+        // as `extra` saves no copy and splits a shared base built from singletons into
+        // `main` (n-1 runs) + `extra` (1 run), causing downstream clamped views to materialize
+        // distinct `Rc<CellSet>` bases (`cross_window_copy`).
+        let mut all_unit = true;
+        let mut s = 0;
+        let mut min_c = usize::MAX;
+        for (i, v) in views.iter().enumerate() {
+            let c = v.main.count() + v.extra.count();
+            if c > 1 {
+                all_unit = false;
+            }
+            if c <= min_c {
+                min_c = c;
+                s = i;
+            }
+        }
+        if all_unit && views.len() >= 2 {
+            if views.len() == 2 {
+                let mut runs = Vec::with_capacity(2);
+                for v in &views {
+                    runs.extend(v.main.runs());
+                    runs.extend(v.extra.runs());
+                }
+                return Some(CellView::of(cells_join(runs)));
+            }
+            let pieces = CellView::pieces(views);
+            if pieces.is_empty() {
+                return Some(CellView::empty());
+            }
+            let key: Vec<PieceKey> = pieces.iter().map(CellPiece::key).collect();
+            let joined = self.joins.entry(key).or_insert_with(|| {
+                let runs = cells_join(pieces.iter().flat_map(CellPiece::runs).collect());
+                (pieces, CellPiece::of(runs))
+            });
+            return Some(CellView {
+                main: joined.1.clone(),
+                extra: CellPiece::empty(),
+            });
+        }
         let own = views.swap_remove(s);
         let (extra, left) = if own.main.count() < own.extra.count() {
             (own.main, own.extra)
@@ -8017,13 +8595,13 @@ impl CellWalk<'_> {
         };
         views.push(CellView {
             main: left,
-            extra: CellPiece::of(Vec::new()),
+            extra: CellPiece::empty(),
         });
         let pieces = CellView::pieces(views);
         if pieces.is_empty() {
             return Some(CellView {
                 main: extra,
-                extra: CellPiece::of(Vec::new()),
+                extra: CellPiece::empty(),
             });
         }
         if let [main] = pieces.as_slice() {
@@ -8035,33 +8613,34 @@ impl CellWalk<'_> {
         // Complexity tradeoff: joining windows of the same bases separately costs O(H R)
         // for H different windows and R base runs. When one common window represents all
         // pieces, union distributes over that window. Join the full bases once, then clamp
-        // the shared result: O(R log R) once and O(D log D log R) per D pieces.
-        if pieces[0].count() > 1 {
-            let lo = pieces.iter().map(|p| p.lo).min().expect("nonempty pieces");
-            let hi = pieces.iter().map(|p| p.hi).max().expect("nonempty pieces");
+        // the shared result: O(R log R) once and O(D log D + D log R) per D pieces.
+        if pieces[0].count() > 1
+            && pieces
+                .iter()
+                .all(|p| matches!(p.windows, CellWindows::One(_)))
+        {
+            let lo = pieces
+                .iter()
+                .map(|p| p.windows.as_slice()[0].0)
+                .min()
+                .expect("nonempty pieces");
+            let hi = pieces
+                .iter()
+                .map(|p| p.windows.as_slice()[0].1)
+                .max()
+                .expect("nonempty pieces");
             let common = pieces.iter().all(|p| {
-                let w = CellPiece {
-                    set: p.set.clone(),
-                    lo,
-                    hi,
-                };
-                let (a, b) = w.window();
-                a < b && p.set[a].0.max(lo) >= p.lo && p.set[b - 1].1.min(hi) <= p.hi
+                let (p_lo, p_hi) = p.windows.as_slice()[0];
+                let (a, b) = CellPiece::window_in(&p.set, lo, hi);
+                a < b && p.set[a].0.max(lo) >= p_lo && p.set[b - 1].1.min(hi) <= p_hi
             });
             if common {
                 let mut full: Vec<CellPiece> = pieces
                     .iter()
-                    .map(|p| CellPiece {
-                        set: p.set.clone(),
-                        lo: p.set.first().map_or(1, |r| r.0),
-                        hi: p.set.last().map_or(0, |r| r.1),
-                    })
+                    .map(|p| CellPiece::full(p.set.clone()))
                     .collect();
                 full.sort_by_key(|p| Rc::as_ptr(&p.set));
-                let key = full
-                    .iter()
-                    .map(|p| (Rc::as_ptr(&p.set), p.lo, p.hi))
-                    .collect();
+                let key = full.iter().map(CellPiece::key).collect();
                 let joined = self.joins.entry(key).or_insert_with(|| {
                     let runs = cells_join(full.iter().flat_map(CellPiece::runs).collect());
                     (full, CellPiece::of(runs))
@@ -8075,9 +8654,7 @@ impl CellWalk<'_> {
         if !materialize && pieces[0].count() > 1 {
             return None;
         }
-        let key: Vec<PieceKey> = (pieces.iter())
-            .map(|p| (Rc::as_ptr(&p.set), p.lo, p.hi))
-            .collect();
+        let key: Vec<PieceKey> = pieces.iter().map(CellPiece::key).collect();
         let joined = self.joins.entry(key).or_insert_with(|| {
             let runs = cells_join(pieces.iter().flat_map(CellPiece::runs).collect());
             (pieces, CellPiece::of(runs))
@@ -8090,52 +8667,98 @@ impl CellWalk<'_> {
 
     /// The cells common to both views, retaining the result of a general meet.
     // Complexity tradeoff: merging two multi-run views at every holder costs O(H R)
-    // for H holders and R runs. A pair of complete view keys is merged once: O(R log R)
-    // on its first use and expected O(log R) for the key and lookup thereafter.
-    // This does not bound the total for distinct pairs. One-run meets still clamp.
+    // for H holders and R runs. Same-base views meet in O(|W| + |E|) without reading the base;
+    // distinct-base views cache their full-base intersection `M = S_a & S_b` once in `base_meets`,
+    // clamp `M` to `W_a & W_b`, and resolve cross terms `(S_a & (W_a & E_b)) | (S_b & (W_b & E_a))`
+    // via galloping (keeping a cross term as `main` without copying if `M & W_a & W_b` is empty).
+    // Whole-view memoization in `meets` reuses repeated pairs in O(1).
     fn meet(&mut self, a: &CellView, b: &CellView) -> CellView {
-        if let Some((lo, hi)) = a.single() {
+        let (am_c, ae_c) = (a.main.count(), a.extra.count());
+        let (bm_c, be_c) = (b.main.count(), b.extra.count());
+        if am_c + ae_c == 0 || bm_c + be_c == 0 {
+            return CellView::empty();
+        }
+        if let Some((lo, hi)) = a.single_with_counts(am_c, ae_c) {
             return b.clamp(lo, hi);
         }
-        if let Some((lo, hi)) = b.single() {
+        if let Some((lo, hi)) = b.single_with_counts(bm_c, be_c) {
             return a.clamp(lo, hi);
         }
-        // Complexity tradeoff: different windows miss a cache keyed by whole views, O(H R)
-        // for H holders of R runs. For two bare pieces, intersection distributes over the
-        // windows: cache the full-base pair once, then clamp its result in O(log R). Total
-        // O(sum of full-base pair merge costs + H log R), not a bound on many distinct bases.
-        if a.extra.lo > a.extra.hi && b.extra.lo > b.extra.hi {
-            if a.main.set.is_empty() {
-                return a.clone();
-            }
-            if b.main.set.is_empty() {
-                return b.clone();
-            }
-            let full = |v: &CellView| CellView {
-                main: CellPiece {
-                    set: v.main.set.clone(),
-                    lo: v.main.set.first().expect("multi-run view").0,
-                    hi: v.main.set.last().expect("multi-run view").1,
-                },
-                extra: CellPiece::of(Vec::new()),
-            };
-            let is_full = |v: &CellView| {
-                v.main.set.first().is_some_and(|r| r.0 == v.main.lo)
-                    && v.main.set.last().is_some_and(|r| r.1 == v.main.hi)
-            };
-            if !is_full(a) || !is_full(b) {
-                let lo = a.main.lo.max(b.main.lo);
-                let hi = a.main.hi.min(b.main.hi);
-                return self.meet(&full(a), &full(b)).clamp(lo, hi);
-            }
+        let (am, ae, ae_c) = if am_c == 0 {
+            (&a.extra, &a.main, 0)
+        } else {
+            (&a.main, &a.extra, ae_c)
+        };
+        let (bm, be, be_c) = if bm_c == 0 {
+            (&b.extra, &b.main, 0)
+        } else {
+            (&b.main, &b.extra, be_c)
+        };
+        if Rc::ptr_eq(&am.set, &bm.set) {
+            return CellView::meet_same_base(am, ae, ae_c, bm, be, be_c);
         }
         let (ka, kb) = (a.key(), b.key());
         let key = if ka <= kb { (ka, kb) } else { (kb, ka) };
-        self.meets
-            .entry(key)
-            .or_insert_with(|| (a.clone(), b.clone(), a.meet(b)))
-            .2
-            .clone()
+        if let Some((_, _, cached)) = self.meets.get(&key) {
+            return cached.clone();
+        }
+        let m_set = self.base_meet(&am.set, &bm.set);
+        let main = match (&am.windows, &bm.windows) {
+            (CellWindows::One([(l1, h1)]), CellWindows::One([(l2, h2)])) => {
+                let (l, h) = ((*l1).max(*l2), (*h1).min(*h2));
+                let windows = if l <= h && !m_set.is_empty() {
+                    CellWindows::One([(l, h)])
+                } else {
+                    CellWindows::Empty
+                };
+                CellPiece {
+                    set: m_set,
+                    windows,
+                }
+            }
+            _ => CellPiece::with_windows(
+                m_set,
+                cells_meet(am.windows.as_slice(), bm.windows.as_slice()),
+            ),
+        };
+        let out = if ae_c == 0 && be_c == 0 {
+            CellView {
+                main,
+                extra: CellPiece::empty(),
+            }
+        } else {
+            let wa = am.windows.as_slice();
+            let wb = bm.windows.as_slice();
+            let ea = ae.runs_vec();
+            let eb = be.runs_vec();
+            let cross_a = CellPiece::with_windows(am.set.clone(), cells_meet(wa, &eb));
+            let cross_b = CellPiece::with_windows(bm.set.clone(), cells_meet(wb, &ea));
+            let e_ab = cells_meet(&ea, &eb);
+            let main_empty = main.is_empty();
+            let ca_empty = cross_a.is_empty();
+            let cb_empty = cross_b.is_empty();
+            if main_empty && !ca_empty && cb_empty {
+                CellView {
+                    main: cross_a,
+                    extra: CellPiece::of(e_ab),
+                }
+            } else if main_empty && !cb_empty && ca_empty {
+                CellView {
+                    main: cross_b,
+                    extra: CellPiece::of(e_ab),
+                }
+            } else {
+                let mut extra = e_ab;
+                extra.extend(cross_a.runs());
+                extra.extend(cross_b.runs());
+                CellView {
+                    main,
+                    extra: CellPiece::of(cells_join(extra)),
+                }
+            }
+        };
+        self.meets.insert(key, (a.clone(), b.clone(), out.clone()));
+        out
     }
 
     /// `(may, holds)` of the disjunct `d`.
@@ -8147,7 +8770,7 @@ impl CellWalk<'_> {
         let mut may = own.clone();
         let other =
             (d.cons.iter()).any(|c| !(c.lin.terms.len() == 1 && c.lin.terms.contains_key(self.x)));
-        let mut holds = if other { CellView::of(Vec::new()) } else { own };
+        let mut holds = if other { CellView::empty() } else { own };
         for o in &d.ors {
             let (m, h) = self.of_or(o);
             may = self.meet(&may, &m);
@@ -8331,6 +8954,7 @@ fn cells_of<'p>(p: &'p Parts, x: &Atom, solving: bool) -> Option<Result<bool, Re
         owns: HashMap::new(),
         joins: HashMap::new(),
         meets: FxHashMap::default(),
+        base_meets: FxHashMap::default(),
         unary_payload: false,
     };
     let Some(whole) = walk.span(&p.cons) else {
@@ -8432,6 +9056,7 @@ fn cells_of<'p>(p: &'p Parts, x: &Atom, solving: bool) -> Option<Result<bool, Re
         walk.memo.clear();
         walk.joins.clear();
         walk.meets.clear();
+        walk.base_meets.clear();
     }
     let k = walk.cells.len();
     let live: CellSet = vec![(0, k - 1)];
@@ -8480,6 +9105,29 @@ fn cells_of<'p>(p: &'p Parts, x: &Atom, solving: bool) -> Option<Result<bool, Re
     let mut ids: BTreeMap<Atom, u32> = BTreeMap::new();
     let mut items: Vec<CellItem> = Vec::new();
     let mut linear = true;
+    // Complexity tradeoff: `narrow_disjunction_hulls` adds multi-term `Rel::Ge` hull rows
+    // (e.g., `4 <= z_j - q_{j-1} <= 6` in `fork`, `1 <= y_j - z_j <= 2` in `pub_isplit`) to
+    // `p.cons`. Sending those rows past `cells_point` falls back to `pick` and `cells_by_classes`
+    // (O(n^2) on `fork`, R = 59.7). Lazily indexing placed multi-term `Rel::Eq` rows by their
+    // canonical primitive linear form `(covered_cells, min_val, max_val)` in O(T log T) lets us
+    // check in O(|at| log |covered|) whether a multi-term `Rel::Ge` row is implied (skip) or
+    // refuted (`CellLink::False`) on `at` by the already-placed equalities, with zero cost when
+    // every constraint already yields a `CellLink`.
+    type EqFormKey = Vec<(Atom, Int)>;
+    type EqForms = BTreeMap<EqFormKey, (CellSet, Int, Int)>;
+    let canonical_form = |terms: &BTreeMap<Atom, Int>| -> (EqFormKey, bool, Int) {
+        let first_neg = terms.values().next().expect("nonempty terms").is_negative();
+        let g = terms.values().fold(Int::ZERO, |acc, k| acc.gcd(&k.abs()));
+        let key = terms
+            .iter()
+            .map(|(a, k)| {
+                let q = k.div_floor(&g);
+                (a.clone(), if first_neg { -&q } else { q })
+            })
+            .collect();
+        (key, first_neg, g)
+    };
+    let mut eq_forms: Option<EqForms> = None;
     for (c, at) in placed
         .iter()
         .flat_map(|(cs, at)| cs.iter().map(move |c| (c, at)))
@@ -8494,6 +9142,67 @@ fn cells_of<'p>(p: &'p Parts, x: &Atom, solving: bool) -> Option<Result<bool, Re
             }
             Some(None) => {}
             None => {
+                if c.rel == Rel::Ge && c.lin.terms.len() >= 2 {
+                    let forms = eq_forms.get_or_insert_with(|| {
+                        let mut raw: EqForms = BTreeMap::new();
+                        for (cs, eq_at) in &placed {
+                            if eq_at.is_empty() {
+                                continue;
+                            }
+                            for eq in cs.iter() {
+                                if eq.rel != Rel::Eq || eq.lin.terms.len() < 2 {
+                                    continue;
+                                }
+                                let (key, first_neg, g) = canonical_form(&eq.lin.terms);
+                                if !eq.lin.constant.mod_floor(&g).is_zero() {
+                                    continue;
+                                }
+                                let q = eq.lin.constant.div_floor(&g);
+                                let val = if first_neg { q } else { -&q };
+                                raw.entry(key)
+                                    .and_modify(|(runs, lo, hi)| {
+                                        runs.extend_from_slice(eq_at);
+                                        if val < *lo {
+                                            *lo = val.clone();
+                                        }
+                                        if val > *hi {
+                                            *hi = val.clone();
+                                        }
+                                    })
+                                    .or_insert_with(|| (eq_at.clone(), val.clone(), val));
+                            }
+                        }
+                        raw.into_iter()
+                            .map(|(k, (runs, lo, hi))| (k, (cells_join(runs), lo, hi)))
+                            .collect()
+                    });
+                    let (key, first_neg, g) = canonical_form(&c.lin.terms);
+                    if let Some((covered, lo, hi)) = forms.get(&key)
+                        && cells_without(at, covered).is_empty()
+                    {
+                        let eval = |v: &Int| {
+                            let prod = &g * v;
+                            if first_neg {
+                                &(-&prod) + &c.lin.constant
+                            } else {
+                                &prod + &c.lin.constant
+                            }
+                        };
+                        let v_lo = eval(lo);
+                        let v_hi = eval(hi);
+                        if !v_lo.is_negative() && !v_hi.is_negative() {
+                            continue;
+                        }
+                        if v_lo.is_negative() && v_hi.is_negative() {
+                            items.extend(at.iter().map(|&(a, b)| CellItem {
+                                link: CellLink::False,
+                                a,
+                                b,
+                            }));
+                            continue;
+                        }
+                    }
+                }
                 linear = false;
                 break;
             }
@@ -32792,6 +33501,7 @@ mod r4_cells_tests {
             owns: HashMap::new(),
             joins: HashMap::new(),
             meets: FxHashMap::default(),
+            base_meets: FxHashMap::default(),
             unary_payload: false,
         };
         let expand = |v: &CellView| -> BTreeSet<usize> {
@@ -33407,6 +34117,7 @@ mod r5_hull_tests {
                     lo: Int::from(-4),
                     hi: Int::from(if step == 0 { -4 } else { -4 + 3 * step }),
                     step: Int::from(step),
+                    exact: true,
                 };
                 for target in -15..=15 {
                     let expected = (-5..=5).any(|x| {
@@ -33541,6 +34252,200 @@ mod r5_hull_tests {
     fn every_target_of_six_overlapping_steps_is_answered() {
         assert_eq!(overlapping_chain_agrees(6, false), 0);
     }
+
+    fn fork_formula(n: usize) -> Formula {
+        let x = var("i");
+        let q = |j: usize| var(&format!("q{j:06}"));
+        let c = Lin::constant;
+        let le = |a: &Lin, b: &Lin| Formula::Con(Con::ge(b, a));
+        let eq = |a: &Lin, b: &Lin| Formula::Con(Con::eq(a, b));
+        let not = |f: Formula| Formula::Not(Shared::new(f));
+        let and = |v: Vec<Formula>| Formula::And(Shared::new(v));
+        let or = |v: Vec<Formula>| Formula::Or(Shared::new(v));
+        let mut fs = vec![
+            le(&c(-(n as i128)), &x),
+            le(&x, &c(n as i128)),
+            eq(&q(0), &x.times(2)),
+        ];
+        for j in 1..=n {
+            let g = le(&x, &c(j as i128 - n as i128 / 2));
+            let cc = 2 + 2 * (j % 5) as i128;
+            let b = eq(&q(j).plus(&q(j - 1)), &c(cc));
+            fs.push(or(vec![
+                and(vec![g.clone(), eq(&q(j), &q(j - 1))]),
+                and(vec![not(g), b]),
+            ]));
+            let z = var(&format!("z{j:06}"));
+            fs.push(or(vec![
+                and(vec![le(&x, &c(j as i128)), eq(&z, &q(j - 1).plus(&c(4)))]),
+                and(vec![
+                    not(le(&x, &c(j as i128))),
+                    eq(&z, &q(j - 1).plus(&c(6))),
+                ]),
+            ]));
+        }
+        fs.push(eq(&q(n), &c(n as i128 | 1)));
+        and(fs)
+    }
+
+    #[test]
+    fn offset_hull_exactness_agrees_with_finite_sets() {
+        let expand = |h: &OffsetHull| -> BTreeSet<i128> {
+            let mut s = BTreeSet::new();
+            let lo: i128 = h.lo.to_string().parse().expect("small");
+            let hi: i128 = h.hi.to_string().parse().expect("small");
+            let step: i128 = h.step.to_string().parse().expect("small");
+            if step == 0 {
+                s.insert(lo);
+            } else {
+                let mut v = lo;
+                while v <= hi {
+                    s.insert(v);
+                    v += step;
+                }
+            }
+            s
+        };
+        let mut progs = Vec::new();
+        for lo in -3..=3i128 {
+            progs.push(OffsetHull {
+                lo: Int::from(lo),
+                hi: Int::from(lo),
+                step: Int::ZERO,
+                exact: true,
+            });
+            for step in 1..=4i128 {
+                for count in 2..=4i128 {
+                    progs.push(OffsetHull {
+                        lo: Int::from(lo),
+                        hi: Int::from(lo + (count - 1) * step),
+                        step: Int::from(step),
+                        exact: true,
+                    });
+                }
+            }
+        }
+        for a in &progs {
+            let sa = expand(a);
+            for b in &progs {
+                let sb = expand(b);
+                // Union soundness: exact == true must imply no hole in sa U sb.
+                let mut m = MapHull::empty();
+                m.add(0, a.clone());
+                m.add(0, b.clone());
+                let joined = m.0[0].as_ref().expect("nonempty");
+                if joined.exact {
+                    let mut u = sa.clone();
+                    u.extend(&sb);
+                    assert_eq!(u, expand(joined), "union exactness {a:?} U {b:?}");
+                }
+                // Sum exactness: exact_sum must match actual Minkowski sum equality.
+                let sum_exact = OffsetHull::exact_sum(a, b);
+                let mut sum_set = BTreeSet::new();
+                for &x in &sa {
+                    for &y in &sb {
+                        sum_set.insert(x + y);
+                    }
+                }
+                let sum_hull = OffsetHull {
+                    lo: &a.lo + &b.lo,
+                    hi: &a.hi + &b.hi,
+                    step: a.step.gcd(&b.step),
+                    exact: sum_exact,
+                };
+                assert_eq!(
+                    sum_exact,
+                    sum_set == expand(&sum_hull),
+                    "sum exactness {a:?} + {b:?}"
+                );
+            }
+        }
+        // Explicit counterexample to non-divisible step sum exactness: {0,2,4} + {0,3} misses 1.
+        let a = OffsetHull {
+            lo: Int::ZERO,
+            hi: Int::from(4),
+            step: Int::from(2),
+            exact: true,
+        };
+        let b = OffsetHull {
+            lo: Int::ZERO,
+            hi: Int::from(3),
+            step: Int::from(3),
+            exact: true,
+        };
+        assert!(!OffsetHull::exact_sum(&a, &b));
+    }
+
+    #[test]
+    fn overlap2c_mid_and_neg23_agree_with_oracle_at_small_sizes() {
+        for n in [10, 20, 40] {
+            let reach = chain_reach(n, false);
+            for target in [0i128, -23] {
+                assert_eq!(
+                    decide(&formula(n, target, false)),
+                    Ok(reach.contains(&target)),
+                    "n={n} target={target}"
+                );
+            }
+        }
+        // Target -23 at n = 80 and 160 has a point; n = 160 took 112.7 G before 3-pass witness.
+        assert_eq!(decide(&formula(80, -23, false)), Ok(true));
+        assert_eq!(decide(&formula(160, -23, false)), Ok(true));
+    }
+
+    #[test]
+    fn fork_small_sizes_have_no_point() {
+        for n in [4, 8, 16] {
+            assert_eq!(decide(&fork_formula(n)), Ok(false), "n={n}");
+        }
+    }
+
+    #[test]
+    fn cells_of_handles_implied_refuted_and_partial_hull_inequalities() {
+        let i = Atom::Sym("i".into());
+        let y = Atom::Sym("y".into());
+        let z = Atom::Sym("z".into());
+        let (il, yl, zl) = (Lin::atom(i.clone()), Lin::atom(y), Lin::atom(z));
+        let c = Lin::constant;
+        let part = |cons: Vec<Con>| {
+            let mut p = Parts::default();
+            p.cons = cons;
+            Rc::new(p)
+        };
+        let base_parts = |extra: Vec<Con>, target_y: i128| {
+            let mut p = Parts::default();
+            p.cons = vec![
+                Con::ge(&il, &c(0)),
+                Con::ge(&c(3), &il),
+                Con::ge(&zl, &c(0)),
+                Con::ge(&c(2), &zl),
+                Con::eq(&yl, &c(target_y)),
+            ];
+            p.cons.extend(extra);
+            p.ors = vec![vec![
+                part(vec![Con::ge(&c(1), &il), Con::eq(&yl, &zl.plus(&c(1)))]),
+                part(vec![Con::ge(&il, &c(2)), Con::eq(&yl, &zl.plus(&c(2)))]),
+            ]];
+            p
+        };
+        // Implied hull rows: 1 <= y - z <= 2.
+        let implied = vec![
+            Con::ge(&yl.minus(&zl), &c(1)),
+            Con::ge(&c(2), &yl.minus(&zl)),
+        ];
+        assert_eq!(
+            by_cells(&base_parts(implied.clone(), 2), false),
+            Some(Ok(true))
+        );
+        assert_eq!(by_cells(&base_parts(implied, 10), false), Some(Ok(false)));
+        // Refuted row on all cells: y - z >= 5.
+        let refuted = vec![Con::ge(&yl.minus(&zl), &c(5))];
+        assert_eq!(by_cells(&base_parts(refuted, 2), false), Some(Ok(false)));
+        // Partial row: y - z >= 2 holds on i >= 2 only (must fall back and still agree).
+        let partial = vec![Con::ge(&yl.minus(&zl), &c(2))];
+        assert_eq!(has_point(base_parts(partial.clone(), 2)), Ok(true));
+        assert_eq!(has_point(base_parts(partial, 1)), Ok(false));
+    }
 }
 #[cfg(test)]
 mod r5_guard_input_tests {
@@ -33656,6 +34561,7 @@ mod r5_empty_view_tests {
             owns: HashMap::new(),
             joins: HashMap::new(),
             meets: FxHashMap::default(),
+            base_meets: FxHashMap::default(),
             unary_payload: false,
         };
         let many = CellView::of(vec![(0, 0), (2, 2)]);
@@ -33774,6 +34680,196 @@ mod r6_shared_window_tests {
         for a in &views {
             for b in &views {
                 assert_eq!(a.meet(b).runs(), cells_meet(&a.runs(), &b.runs()));
+            }
+        }
+    }
+
+    /// n holders meeting two views of one shared set whose wide extras cross the disjoint
+    /// windows (`cross_window_copy`): main's single-window meet copies O(n) runs per holder.
+    fn cross_window_copy(n: usize) -> Parts {
+        let xl = Lin::atom(Atom::Sym("i".into()));
+        let c = |k: usize| Lin::constant(k as i128);
+        let at = |k: usize| Con::eq(&xl, &c(k));
+        let make = |cons: Vec<Con>, ors: Vec<Vec<Rc<Parts>>>| {
+            let mut p = Parts::default();
+            p.cons = cons;
+            p.ors = ors;
+            Rc::new(p)
+        };
+        let h = make(
+            Vec::new(),
+            vec![(0..n).map(|j| make(vec![at(2 * j)], Vec::new())).collect()],
+        );
+        let below = |k: usize| make(vec![Con::ge(&c(k), &xl)], vec![vec![h.clone()]]);
+        let above = |k: usize| make(vec![Con::ge(&xl, &c(k))], vec![vec![h.clone()]]);
+        let mut p = Parts::default();
+        p.cons = vec![Con::ge(&xl, &c(0)), Con::ge(&c(4 * n), &xl)];
+        p.ors.push(
+            (0..n)
+                .map(|j| {
+                    let a = make(
+                        Vec::new(),
+                        vec![vec![
+                            below(2 * j),
+                            make(vec![Con::ge(&xl, &c(2 * j + 1))], Vec::new()),
+                        ]],
+                    );
+                    let b = make(
+                        Vec::new(),
+                        vec![vec![
+                            above(2 * j + 1),
+                            make(vec![Con::ge(&c(2 * j), &xl)], Vec::new()),
+                        ]],
+                    );
+                    make(Vec::new(), vec![vec![a], vec![b]])
+                })
+                .collect(),
+        );
+        p
+    }
+
+    /// n holders each joining two disjoint windows of one shared base (`two_windows_one_base`):
+    /// main's single-window `CellPiece` materializes O(n) runs per holder.
+    fn two_windows_one_base(n: usize) -> Parts {
+        let xl = Lin::atom(Atom::Sym("i".into()));
+        let c = |k: usize| Lin::constant(k as i128);
+        let at = |k: usize| Con::eq(&xl, &c(k));
+        let make = |cons: Vec<Con>, ors: Vec<Vec<Rc<Parts>>>| {
+            let mut p = Parts::default();
+            p.cons = cons;
+            p.ors = ors;
+            Rc::new(p)
+        };
+        let h = make(
+            Vec::new(),
+            vec![(0..n).map(|j| make(vec![at(2 * j)], Vec::new())).collect()],
+        );
+        let below = |k: usize| make(vec![Con::ge(&c(k), &xl)], vec![vec![h.clone()]]);
+        let above = |k: usize| make(vec![Con::ge(&xl, &c(k))], vec![vec![h.clone()]]);
+        let mut p = Parts::default();
+        p.cons = vec![Con::ge(&xl, &c(0)), Con::ge(&c(4 * n), &xl)];
+        p.ors.push(
+            (0..n)
+                .map(|j| {
+                    let w1 = below(2 * j);
+                    let w2 = above(2 * j + 2);
+                    let own = make(vec![at(2 * n + 2 * j)], Vec::new());
+                    make(Vec::new(), vec![vec![w1, w2, own]])
+                })
+                .collect(),
+        );
+        p
+    }
+
+    /// n holders meeting two distinct shared bases through different windows with unclipped
+    /// per-holder extras (`distinct_bases_extras`, `i <= 12n`).
+    fn distinct_bases_extras(n: usize) -> Parts {
+        let xl = Lin::atom(Atom::Sym("i".into()));
+        let c = |k: usize| Lin::constant(k as i128);
+        let at = |k: usize| Con::eq(&xl, &c(k));
+        let make = |cons: Vec<Con>, ors: Vec<Vec<Rc<Parts>>>| {
+            let mut p = Parts::default();
+            p.cons = cons;
+            p.ors = ors;
+            Rc::new(p)
+        };
+        let h1 = make(
+            Vec::new(),
+            vec![(0..n).map(|j| make(vec![at(4 * j)], Vec::new())).collect()],
+        );
+        let h2 = make(
+            Vec::new(),
+            vec![
+                (0..n)
+                    .map(|j| make(vec![at(4 * j + 2)], Vec::new()))
+                    .collect(),
+            ],
+        );
+        let below1 = |k: usize| make(vec![Con::ge(&c(k), &xl)], vec![vec![h1.clone()]]);
+        let below2 = |k: usize| make(vec![Con::ge(&c(k), &xl)], vec![vec![h2.clone()]]);
+        let mut p = Parts::default();
+        p.cons = vec![Con::ge(&xl, &c(0)), Con::ge(&c(12 * n), &xl)];
+        p.ors.push(
+            (0..n)
+                .map(|j| {
+                    let a = make(
+                        Vec::new(),
+                        vec![vec![
+                            below1(4 * n - 2 * j),
+                            make(vec![at(8 * n + 2 * j)], Vec::new()),
+                        ]],
+                    );
+                    let b = make(
+                        Vec::new(),
+                        vec![vec![
+                            below2(4 * n - 4 * j),
+                            make(vec![at(8 * n + 2 * j + 1)], Vec::new()),
+                        ]],
+                    );
+                    make(Vec::new(), vec![vec![a], vec![b]])
+                })
+                .collect(),
+        );
+        p
+    }
+
+    #[test]
+    fn multi_window_and_cross_copy_have_their_answers_at_small_sizes() {
+        for n in 1..=8 {
+            assert_eq!(has_point(cross_window_copy(n)), Ok(true), "cross {n}");
+            assert_eq!(has_point(two_windows_one_base(n)), Ok(true), "two {n}");
+            assert_eq!(has_point(distinct_bases_extras(n)), Ok(false), "dist {n}");
+        }
+    }
+
+    #[test]
+    fn multi_window_views_and_distinct_bases_match_finite_sets() {
+        let atom = Atom::Sym("i".into());
+        let mut walk = CellWalk {
+            x: &atom,
+            cells: Vec::new(),
+            memo: HashMap::new(),
+            owns: HashMap::new(),
+            joins: HashMap::new(),
+            meets: FxHashMap::default(),
+            base_meets: FxHashMap::default(),
+            unary_payload: false,
+        };
+        let s1 = Rc::new(vec![(0, 0), (2, 3), (5, 5), (7, 9), (11, 12)]);
+        let s2 = Rc::new(vec![(0, 1), (3, 4), (6, 8), (10, 12)]);
+        let s3 = Rc::new(vec![(0, 12)]);
+        let win_lists: &[CellSet] = &[
+            vec![],
+            vec![(0, 4)],
+            vec![(0, 2), (5, 7)],
+            vec![(1, 3), (6, 8), (10, 12)],
+            vec![(0, 12)],
+        ];
+        let extras: &[CellSet] = &[vec![], vec![(4, 4)], vec![(0, 6)], vec![(1, 2), (8, 10)]];
+        let mut views = Vec::new();
+        for s in [&s1, &s2, &s3] {
+            for w in win_lists {
+                let p = CellPiece::with_windows(s.clone(), w.clone());
+                assert_eq!(p.count(), p.runs_vec().len());
+                for e in extras {
+                    views.push(CellView {
+                        main: p.clone(),
+                        extra: CellPiece::of(e.clone()),
+                    });
+                }
+            }
+        }
+        for a in &views {
+            let ra = a.runs();
+            for b in &views {
+                let rb = b.runs();
+                let want_meet = cells_meet(&ra, &rb);
+                assert_eq!(a.meet(b).runs(), want_meet);
+                assert_eq!(walk.meet(a, b).runs(), want_meet);
+                let mut u = ra.clone();
+                u.extend_from_slice(&rb);
+                let want_join = cells_join(u);
+                assert_eq!(walk.join(vec![a.clone(), b.clone()]).runs(), want_join);
             }
         }
     }
