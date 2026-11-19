@@ -223,6 +223,9 @@ path = "steps/l08_01_remap_run/mod.rs"
 name = "l08_02_remaps"
 path = "steps/l08_02_remaps/mod.rs"
 [[test]]
+name = "l08_02_remap_map"
+path = "steps/l08_02_remap_map/mod.rs"
+[[test]]
 name = "l22_08_vacuity"
 path = "steps/l22_08_vacuity/mod.rs"
 [[test]]
