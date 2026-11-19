@@ -123,7 +123,7 @@ The rest, about 80 lines in `ty.rs` (in `Need::map_tys`, `site_mut`, `alike_at`,
 `Cx::unread`, `Holder::member`, `Choices::apart`, `Rest`, `Near::value_class` (`f32`),
 `BoundNode::remove`, `Pins::own_shape`, `Comparing::fits`, `keep`, `components_in`, `replace`,
 `failing_component`, `PlaceFns::below`, `Forms`, `lone_row`, `refused_in_group`, `meet_rest`,
-`walk_held`, `contains_here`, `Pairs::tried`, `Cx::open`, `bound_in_fns`, `held_bounded`,
+`walk_held`, `contains_here`, `Pairs::tried`, `Cx::open`, `bound_in_fns`, `held_own`,
 `repeated`, `equal_fits`, `uncovered`, `binds_nothing`, `Narrowing::new`, `Approx::made`,
 `Domains`, `ArrowIndex::keep_missing`, the `Hash` of `Sig`, `Places::walk`, `Sig::digest`,
 `first_seen`, `NameDigests::hash_ty`, `Walk::plan`, `Shared::of`, `walk_parts`, the arrow fit
@@ -214,7 +214,7 @@ TEST-types-unreached-paths-6 (see the end of this section).
 Left for row TEST-types-unreached-paths-6, each read in this row but not yet settled (line
 numbers at e94e784c1, with the function each is in): 11642 (`Forms::form`, a morphism in a
 set; probably a guard, not proved), 14050 (`Cx::open`, mask 0), 14170 (`bound_in_fns`),
-14229, 14241 (`held_bounded`), 15195, 15215 (`repeated`), 15451, 15454 (`cover`, an equal
+14229, 14241 (`held_own`), 15195, 15215 (`repeated`), 15451, 15454 (`cover`, an equal
 arrow), 15494 (`equal_fits`; a test built from equal arrows did not reach it, since `Cx::open`
 renames the arrows' variables), 15593, 15594 (`refused_cover`, a variable no argument gives
 values of), 15938 (`met`), 16105, 16163 (`Narrowing::meet_within`), 16425 (`Approx::made`),
@@ -224,3 +224,66 @@ values of), 15938 (`met`), 16105, 16163 (`Narrowing::meet_within`), 16425 (`Appr
 (`Sig::first_seen`, a node met twice), 19830, 19831 (`Walk::plan`, a union already taken
 out), 20371 (`walk_parts`, `Print::Found` not entered), 20431 (`walk_parts`, the swap of
 union names, which needs nested hoisting unions with bounded variables).
+
+## Row TEST-types-unreached-paths-6
+
+Line numbers are those of `ty.rs` at zed-impl e94e784c1, the 40 lines left by row
+TEST-types-unreached-paths-5, found again on main by their text. The tests named are in
+`src/ty/tests/unreached6.rs`, with one program test in
+`tests/steps/l01_26_type_resolution/function_variance.rs`; each was checked red before green by
+breaking the line on purpose and reverting it. 31 lines are settled by tests, 9 by proofs at
+the site. Three wrong answers were found and fixed, each with a test that was red before the
+fix (listed after the table).
+
+| Case | Covering test | Or the reason none is needed |
+|---|---|---|
+| `Forms::form`: a component with no form leaves the tuple with none (11642) | `a_tuple_with_a_component_of_no_form_is_compared_by_parts` | |
+| `Cx::bound_in_fns`: a variable of one carrier read as its mask (14170) | `a_variable_of_one_carrier_held_in_a_result_function_is_its_carrier` | |
+| `held_own` (was `held_bounded`): an own variable a parameter function holds (14241) | `a_variable_in_a_parameter_function_is_bound_through_it`; `a_generic_function_with_its_variable_in_a_parameter_function_is_passed_at_an_instance` (program test) | |
+| `repeated`: a row met many times walked twice (15195) | `a_row_met_many_times_in_the_parameters_is_walked_twice` (a break makes it exponential; it then passes the 60 s limit) | |
+| `repeated`: a variable read as a rigid variable in a parameter function (15215) | `a_variable_of_one_carrier_in_a_parameter_function_is_not_repeated` | |
+| `refused_cover`: a variable no argument gives values of (15593, 15594) | `a_variable_no_argument_gives_is_named_as_written` | |
+| `meet_within` given no results (16105) | `an_intersection_of_no_results_is_within_nothing` | |
+| `Approx::made`: a payload shape with fields, read from below (16425) | `a_payload_with_fields_is_empty_from_below` | |
+| `Domains::kernel_of` of a type holding a function (16768) | `meets_of_functions_of_function_parameters` (reached; a wrong value here is seen only through 17126, which is checked) | |
+| `Domains::fns_apart`: a value type with no kernel type (17126), an empty meet of the values (17129) | `meets_of_functions_of_function_parameters` (17129 reached only: a break there gives the same answer, as the early return skips a `g` that holds no function) | |
+| `Domains::fns_apart` case (iii): exact and partial arrows, the function over all of them (17148) | `a_function_type_of_exact_and_partial_arrows_holds_the_function_over_all_of_them` | |
+| `Domains::fns_apart`: a function type not read through its arrows (17168) | `meets_of_functions_of_function_parameters` | |
+| `Domains::keys_apart`: parameter types with no common value (17277) | `meets_of_functions_of_function_parameters` | |
+| `Domains::inhabited_fn`: a signature met twice (17407) | `inhabited_fn_enters_a_signature_met_twice_once` (a break makes it exponential; it then passes the 60 s limit) | |
+| `Domains::inhabited_fn`: value types that differ (17425), a value type of no function (17428-17432), function types alone (17443) | `inhabited_fn_reads_each_kind_of_value_type` | |
+| `Domains::meet`: partial arrows taking nothing of an exact arrow (17581) | `partial_arrows_taking_nothing_of_the_exact_arrow_leave_no_function` | |
+| `Places::walk`: a parameter function that owns a variable of the same name (18285) | `a_variable_a_parameter_function_owns_is_another_variable` | |
+| `Sig::first_seen`: a row or shape met twice (18659, 18664) | `first_seen_enters_a_row_or_shape_met_twice_once` (a break makes it exponential; it then passes the 60 s limit) | |
+| `Walk::plan`: a union already taken out (19830, 19831) | `the_unknown_printed_for_a_union_and_a_found_result` | |
+| `walk_parts`: `Print::Found` not entered (20371) | `the_unknown_printed_for_a_union_and_a_found_result` | |
+| `walk_parts`: the larger set of union names kept (20431) | `names_of_a_larger_inner_union_are_kept_by_the_union_around_it` | |
+| `Cx::open`: a bound of mask 0 (14050) | | Guard, proof at the site: no bound is 0; a written bound names carriers, and the merge of classes and `restrict` refuse to make 0 |
+| `held_own` where `b` may bind no own variable (14229) | | Guard, proof at the site: each caller returns first where `b.binds_own()` is false |
+| `cover`: an equal arrow that `equal_fits` refuses (15451, 15454) | | Guard, proof at the site: `equal_fits` is true at every equal arrow; the proof is at `equal_fits` |
+| `equal_fits`: an equal arrow holding a bounded variable (15494) | | Guard, proof at the site: `Cx::open` reads or renames each bounded own variable, so no arrow of `q` as read holds one (one step inferred, stated there) |
+| `met` on an arrow of `q` with a parameter type proved empty (15938) | | Guard, proof at the site: `covers` filters such arrows out before `cover` |
+| `meet_within`: no kernel to reduce (16163) | | Guard, proof at the site: `results` is not empty there, and one kernel is pushed per result |
+| `Domains::inhabited_fn`: no arrow whose value type is not the unknown (17438) | | Guard, proof at the site: `v` is such a value type, so `find` gives `Some` |
+| `ArrowIndex::keep_missing`: an arrow repeated in `l` (17834) | | Guard, proof at the site: `offered_keys` gives distinct keys, so `ArrowIndex::new` lists each arrow once per key |
+
+The wrong answers found and fixed:
+
+- An own variable with no bound that a function in the parameters holds was compared as
+  itself, which nothing binds, so a generic function did not fit the type of its instance:
+  `g(h: (x: T) -> int, y: T) = h(x: y)` was refused as `(h: (x: int) -> int, y: int) -> int`
+  (a wrong no). `Cx::held_own` now gives the unbounded own variables too (`Binds::free`), and
+  `outer_or_class` adds the class variables the checker writes for a generic function's
+  variable. Tests: `a_variable_in_a_parameter_function_is_bound_through_it` and the program
+  test above.
+- `permitted` skipped its pass where an arrow held an own variable only inside a function in its
+  parameters, so `((x0: int) -> int) & ((x0: (x: T) -> int) -> int)` was within `(x0: int) ->
+  int` (a wrong yes). Test: `an_arrow_holding_a_variable_in_a_function_has_its_permission_checked`.
+- The message of `refused_cover` named a renamed variable (`B'1`) and printed the arrow from the
+  renamed copy, with `B` as an unbounded `T`. It now quotes the signature as written. Test:
+  `a_variable_no_argument_gives_is_named_as_written`.
+
+Two claims of row TEST-types-unreached-paths-5 were checked again. The guard at `Forms::cut`
+(11749) holds: forms are made only in `form_verdict` and `tie`, and both number the marks first.
+11642 is not a guard: `a_tuple_with_a_component_of_no_form_is_compared_by_parts` reaches it, and
+a break there turns the test red.

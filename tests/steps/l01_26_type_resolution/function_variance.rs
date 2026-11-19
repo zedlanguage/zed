@@ -2826,6 +2826,39 @@ fn an_arrow_lambda_refused_through_a_call_s_needs_is_named() {
     }
 }
 
+/// A generic function whose variable, with no bound, stands in a parameter's function type is
+/// passed where its instance is expected: `g` at `T = int` is `(h: (x: int) -> int, y: int) ->
+/// int`. Before (row TEST-types-unreached-paths-6), the variable inside the function type was
+/// compared as itself, which nothing binds, and the call `p(f: g)` was refused. An instance
+/// that does not exist stays refused: no `T` makes `(x: T) -> int` and `y: T` take `int` and
+/// `f64`.
+#[test]
+fn a_generic_function_with_its_variable_in_a_parameter_function_is_passed_at_an_instance() {
+    let fits = [
+        "p(f: (h: (x: int) -> int, y: int) -> int) = f(h: x -> x + 1, y: 2);\ng(h: (x: T) -> int, y: T) = h(x: y);\na = p(f: g);\n",
+        "p(f: (y: int, h: (x: int) -> int) -> int) = f(h: x -> x + 1, y: 2);\ng(y: T, h: (x: T) -> int) = h(x: y);\na = p(f: g);\n",
+    ];
+    for src in fits {
+        assert_eq!(type_errors(src), Vec::<String>::new(), "{src}");
+        runs_to(src, "a", "3");
+    }
+    // The variable also in the result of the function type, and in the result.
+    let src = "p(f: (h: (x: int) -> int, y: int) -> int) = f(h: x -> x + 1, y: 2);\ng(h: (x: T) -> T, y: T) = h(x: y);\na = p(f: g);\n";
+    assert_eq!(type_errors(src), Vec::<String>::new(), "{src}");
+    runs_to(src, "a", "3");
+    // No instance: `T` would be `int` and `f64` at once, or the result is not `String`, or
+    // the function returns `f64` where `T` is `int`.
+    let g = "g(h: (x: T) -> T, y: T) = h(x: y);\na = p(f: g);\n";
+    for p in [
+        "p(f: (h: (x: int) -> int, y: f64) -> int) = 0;\n",
+        "p(f: (h: (x: int) -> int, y: int) -> String) = \"s\";\n",
+        "p(f: (h: (x: int) -> f64, y: int) -> int) = 0;\n",
+    ] {
+        let src = format!("{p}{g}");
+        assert!(!type_errors(&src).is_empty(), "{src}");
+    }
+}
+
 /// A call that every function the value may hold places alike is compiled as before, with no
 /// placing (DESIGN.md sec:values_morphisms, "The function called places the arguments": "a
 /// call that agrees is placed when it is compiled, at no cost"); a call that differs is placed

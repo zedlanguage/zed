@@ -5485,6 +5485,13 @@ pub struct Binds {
     /// the order of the names, when there is one: a variable is bound to a piece only where its
     /// type there may hold it ([`accepts`]). Shared, as `bounds` is.
     ceilings: Option<Ceilings>,
+    /// The unbounded own variables of the signature whose arrow binds these variables
+    /// ([`Cx::free`] when [`Binds::of_arrow`] made the binding), when there are some: with
+    /// `bounds`, the variables a function the parameters hold is read at or bound through
+    /// ([`Cx::held_own`]). Kept with the binding, not read from [`Cx::free`], so a binding made
+    /// for another comparison, or none, binds none of them through a function. Shared, as
+    /// `bounds` is.
+    free: Option<SortedNames>,
     /// The sum, wrapping, of the hash of each binding ([`bind_digest`]), kept as the map
     /// changes, so equal maps have equal digests, by which [`Compared`] files the binding in
     /// `O(1)`, not in its size.
@@ -5559,6 +5566,7 @@ impl Binds {
             return b;
         }
         let free = |v: &str| cx.free.binary_search_by(|w| (**w).cmp(v)).is_ok();
+        b.free = Some(cx.free.clone());
         b.ceilings = within.and_then(|qr| ceilings(&sa.result, qr, &free));
         let mut vs = Vars::default();
         sa.result.vars_in(&mut vs);
@@ -5582,6 +5590,18 @@ impl Binds {
         let bounds = self.bounds.as_deref()?;
         let at = bounds.binary_search_by(|(w, _)| (**w).cmp(v)).ok()?;
         Some(bounds[at].1)
+    }
+
+    /// Whether `v` is an unbounded own variable of the signature whose arrow binds these
+    /// variables (`free`): by binary search, as the names are in order.
+    fn frees(&self, v: &str) -> bool {
+        (self.free.as_deref()).is_some_and(|f| f.binary_search_by(|w| (**w).cmp(v)).is_ok())
+    }
+
+    /// Whether these may bind an own variable of the signature whose arrow binds them, with a
+    /// bound or without (`bounds`, `free`).
+    fn binds_own(&self) -> bool {
+        self.bounds.is_some() || self.free.is_some()
     }
 
     /// The index of its variables, made now if not yet.
@@ -6336,10 +6356,10 @@ struct Mark {
 /// A comparison of the row or payload shape numbered `left` with the one numbered `right`
 /// ([`Comparing::rows`], [`Comparing::shape_in`]) under the binding `binds`, by which its
 /// answer is kept in [`Cx::compared`]. Hashed by the two numbers and the binding's digest, in
-/// `O(1)`; equal when the numbers are, and the bindings, with their bounds and ceilings, which
-/// [`accepts`] reads too. The bindings are compared on a hash match only, where two copies of
-/// one map are found equal at once (their roots are one node) and others in the size of the
-/// map.
+/// `O(1)`; equal when the numbers are, and the bindings, with their bounds, ceilings and free
+/// variables, which [`accepts`] reads too. The bindings are compared on a hash match only,
+/// where two copies of one map are found equal at once (their roots are one node) and others in
+/// the size of the map.
 struct Compared {
     left: NodeId,
     right: NodeId,
@@ -6362,6 +6382,7 @@ impl Compared {
                 keys: std::sync::OnceLock::new(),
                 bounds: binds.bounds.clone(),
                 ceilings: binds.ceilings.clone(),
+                free: binds.free.clone(),
                 digest: binds.digest,
             },
         }
@@ -6391,6 +6412,7 @@ impl PartialEq for Compared {
             && a.map == b.map
             && same(&a.bounds, &b.bounds)
             && same(&a.ceilings, &b.ceilings)
+            && same(&a.free, &b.free)
     }
 }
 
@@ -9144,8 +9166,8 @@ impl<'m, 's> Comparing<'m, 's> {
         // the normal form is not made (a variable, which a shape of `other` may bind) or the
         // kernel refused, each piece is tried by the rule of one shape, which is sound.
         //
-        // An `other` that holds, in a tuple or a payload, a function that holds a bounded own
-        // variable of the signature whose arrow `binds` binds ([`Cx::reads_bound`]) is not
+        // An `other` that holds, in a tuple or a payload, a function that holds an own variable,
+        // bounded or not, of the signature whose arrow `binds` binds ([`Cx::reads_bound`]) is not
         // decided by the kernel either (FAIL-types-generic-fn-param-renamed-refused): the form
         // compares two functions as they are, with no binding ([`Comparing::fits_named`]),
         // where [`accepts`] reads such a function at the binding ([`Cx::read_at`]) and binds a
@@ -9158,9 +9180,9 @@ impl<'m, 's> Comparing<'m, 's> {
         // Complexity tradeoff: naive, as before, the kernel for every tuple, which gave this
         // wrong no. Used: the kernel elsewhere; here each piece of `t` tried against the shapes
         // of `other` ([`accepts`], filed by [`Comparing::search`] as for a variable), only where
-        // `binds` has bounds and `other` holds such a function; and one walk of `other` outside
-        // functions ([`Cx::reads_bound`]) only where `binds` has bounds, O(|other|), as the form
-        // itself walks `other`.
+        // `binds` may bind an own variable ([`Binds::binds_own`]) and `other` holds such a
+        // function; and one walk of `other` outside functions ([`Cx::reads_bound`]) only where
+        // it may, O(|other|), as the form itself walks `other`.
         let bound = self.cx.borrow().reads_bound(other, binds);
         let mut form: Option<Option<bool>> = None;
         let mut search = Search::new(Site::Other);
@@ -13843,14 +13865,14 @@ async fn accepts<'m>(
                     Some((s, se)) => {
                         let mut ok = false;
                         for w in &t.vars {
-                            // A bounded variable of the signature that only functions hold
-                            // is bound through this one first ([`Cx::through_fn`]).
+                            // An own variable of the signature that only functions hold is
+                            // bound through this one first ([`Cx::through_fn`]).
                             let pairs = c.cx.borrow_mut().through_fn(&s, &se, w, binds);
                             let tried = match pairs {
                                 Some(pairs) => c.bound_through(pairs, binds.clone()).await,
                                 None => None,
                             };
-                            // A function of `t` that holds a bounded variable `binds` binds
+                            // A function of `t` that holds an own variable `binds` binds
                             // is read at that binding ([`Cx::read_at`]); [`params_within`]
                             // checks that the binding does not change after.
                             let read =
@@ -14076,6 +14098,7 @@ async fn fits_in<'m>(s: &Sig, se: &Env, q: &Sig, qe: &Env, c: &'m Comparing<'m, 
     // Cost: a copy of `s` only where so read, of the size reading its arrows already cost; the
     // functions that check bounds take them from the signature, which keeps them by name.
     let mut read;
+    let written = s;
     let s = match renamed {
         Some(bounds) => {
             // A clone starts with no memo ([`Facts`]), so none is kept for the old bounds.
@@ -14096,7 +14119,7 @@ async fn fits_in<'m>(s: &Sig, se: &Env, q: &Sig, qe: &Env, c: &'m Comparing<'m, 
         let plain = s.params.len() == 1 && !permitted(s, &sas, &qas, Pass::Keys, c).await;
         for (k, qa) in qas.iter().enumerate().filter(|_| !plain) {
             if !covers(s, &sas, std::slice::from_ref(qa), c).await {
-                why = refused_cover(s, q, &sas, qa, k, c).await;
+                why = refused_cover(s, written, q, &sas, qa, k, c).await;
                 break;
             }
         }
@@ -14246,6 +14269,13 @@ impl Cx<'_> {
                     let w = cx.fresh(v);
                     cx.rigid.insert(w.clone(), m);
                     wide.insert(w.clone(), Ty::of_mask(m));
+                    // A guard no input reaches (row TEST-types-unreached-paths-6): under
+                    // `!one(m)` the test fails only for `m == 0`, and no bound is 0. A written
+                    // bound is a carrier name or a `TypeOr` of two or more parts (syntax.peg),
+                    // resolve rejects any part that is no carrier name, and `carrier_mask`
+                    // (zedc-check) sets a bit per name. A bound read from a class is its mask,
+                    // which starts at every value and which `restrict` and the merge of two
+                    // classes refuse to make 0. This crate only copies or renames bounds.
                     if m.count_ones() > 1 || m & OTHER != 0 {
                         several.insert(w.clone());
                     }
@@ -14410,10 +14440,17 @@ impl Cx<'_> {
         w
     }
 
-    /// The bounded own variables of the signature whose arrow `b` binds ([`Binds::bound`]) that
-    /// the function `sig`, kept with the reading `env`, holds: each as its name in `sig` and the
-    /// name `b` binds it by, read as [`Cx::bound_in_fns`] reads it (no entry: itself;
-    /// `Rigid(w)`: `w`; a mask or a type already bound: no variable).
+    /// The own variables of the signature whose arrow `b` binds, bounded ([`Binds::bound`]) or
+    /// not ([`Binds::frees`]), that the function `sig`, kept with the reading `env`, holds: each as
+    /// its name in `sig` and the name `b` binds it by, read as [`Cx::bound_in_fns`] reads it (no
+    /// entry: itself; `Rigid(w)`: `w`; a mask or a type already bound: no variable).
+    ///
+    /// The unbounded ones are given too (row TEST-types-unreached-paths-6): given only the
+    /// bounded ones, a variable without a bound that a function of the parameters holds was
+    /// compared as itself, which nothing binds, so the generic `g(h: (x: T) -> int, y: T) =
+    /// h(x: y)` was refused where `(h: (x: int) -> int, y: int) -> int` was expected, though
+    /// its instance at `T = int` is that type. Each binding so made is checked as a bounded
+    /// one's is ([`Cx::through_fn`], [`params_within`]), so this gives no wrong yes.
     ///
     /// Only a name no signature of the nest of `sig` binds can be a variable of a signature
     /// around it ([`VarFacts::outer`]); one `sig` or a function in it binds is another variable
@@ -14421,34 +14458,36 @@ impl Cx<'_> {
     ///
     /// Complexity tradeoff: the names `sig` holds at any depth that its nest does not bind are
     /// walked (every name it holds was O(n) at each level of a nest of n functions, O(n^2)),
-    /// each looked up in `env` and by binary search in the bounds, O(h log k) for h names and
-    /// k bounds. The walk
-    /// of the bounds instead would need the names in `env` that read as each, a walk of `env`
-    /// per bound. Nothing is walked where `b` has no bound.
-    fn held_bounded(sig: &Sig, env: &Env, b: &Binds) -> Vec<(Arc<str>, Arc<str>)> {
-        if b.bounds.is_none() {
+    /// each looked up in `env` and by binary search in the bounds and in `free`, O(h (log k +
+    /// log f)) for h names, k bounds and f free variables. The walk of the bounds and `free`
+    /// instead would need the names in `env` that read as each, a walk of `env` per variable.
+    /// Nothing is walked where `b` may bind no own variable ([`Binds::binds_own`]).
+    fn held_own(sig: &Sig, env: &Env, b: &Binds) -> Vec<(Arc<str>, Arc<str>)> {
+        // A guard no input reaches (row TEST-types-unreached-paths-6): its callers
+        // `reads_bound`, `through_fn` and `read_at` each return before calling it where
+        // `b.binds_own()` is false, and none changes `b` in between.
+        if !b.binds_own() {
             return Vec::new();
         }
-        let facts = sig.facts();
         let mut out = Vec::new();
-        for v in &facts.outer {
+        for v in outer_or_class(sig) {
             let r = match env.get(v) {
                 None => v,
                 Some(Read::Rigid(w)) => w,
                 Some(Read::Mask(_) | Read::Bound(_)) => continue,
             };
-            if b.bound(r).is_some() {
+            if b.bound(r).is_some() || b.frees(r) {
                 out.push((v.clone(), r.clone()));
             }
         }
         out
     }
 
-    /// Whether `t` holds, outside functions, a function that holds a bounded own variable of
-    /// the signature whose arrow `b` binds ([`Cx::held_bounded`]): one [`accepts`] reads at the
+    /// Whether `t` holds, outside functions, a function that holds an own variable of the
+    /// signature whose arrow `b` binds ([`Cx::held_own`]): one [`accepts`] reads at the
     /// binding ([`Cx::read_at`]), so [`params_within`] compares it after the others.
     fn reads_bound(&self, t: &Ty, b: &Binds) -> bool {
-        if b.bounds.is_none() {
+        if !b.binds_own() {
             return false;
         }
         let mut vs = Vars::default();
@@ -14456,7 +14495,7 @@ impl Cx<'_> {
         vs.order.iter().any(|f| {
             self.fns
                 .get(f)
-                .is_some_and(|(sig, env)| !Cx::held_bounded(sig, env, b).is_empty())
+                .is_some_and(|(sig, env)| !Cx::held_own(sig, env, b).is_empty())
         })
     }
 
@@ -14484,14 +14523,21 @@ impl Cx<'_> {
     /// FAIL-typevar-fn-only-binding): the binding is the one the types at the same places
     /// give, not a wider one that would also fit.
     ///
-    /// Cost: a lookup of the names `w` holds ([`Cx::held_bounded`]), and only where one is
+    /// An unbounded own variable is bound through `w` as a bounded one is ([`Cx::held_own`]),
+    /// and counts as unbound here where `b` binds it to `Never`: [`Binds::of_arrow`] binds so
+    /// each one in the result, which the parameters still bind as an unbound one ([`accepts`]),
+    /// so `(h: (x: T) -> int) -> T` fits `(h: (x: int) -> int) -> int` at `T = int`.
+    ///
+    /// Cost: a lookup of the names `w` holds ([`Cx::held_own`]), and only where one is
     /// unbound, a walk of `w`'s types for their variables and a reading of the types paired,
     /// O(size of the two functions), once for each comparison that meets such a function.
     fn through_fn(&mut self, f: &Sig, fe: &Env, w: &Arc<str>, b: &Binds) -> Option<Vec<(Ty, Ty)>> {
-        b.bounds.as_ref()?;
+        if !b.binds_own() {
+            return None;
+        }
         let (ws, we) = self.fns.get(w)?.clone();
-        let unbound: HashSet<Arc<str>> = (Cx::held_bounded(&ws, &we, b).into_iter())
-            .filter(|(_, r)| b.get(r).is_none())
+        let unbound: HashSet<Arc<str>> = (Cx::held_own(&ws, &we, b).into_iter())
+            .filter(|(_, r)| b.get(r).is_none_or(Ty::is_empty))
             .map(|(v, _)| v)
             .collect();
         if unbound.is_empty() || !f.own.is_empty() || !ws.own.is_empty() {
@@ -14524,17 +14570,19 @@ impl Cx<'_> {
         Some(pairs)
     }
 
-    /// The name of the function read as `f` read with each bounded own variable of the
-    /// signature whose arrow `b` binds, held by it and bound to more than `Never` in `b`, read
+    /// The name of the function read as `f` read with each own variable of the signature whose
+    /// arrow `b` binds ([`Cx::held_own`]), held by it and bound to more than `Never` in `b`, read
     /// as that binding ([`Read::Bound`]); `None` where `f` is no function or holds no such
     /// variable (FAIL-types-fn-outer-variable-nest). Read as itself, the variable was bound
     /// afresh inside the function's comparison and the binding dropped with it ([`accepts`]),
     /// or compared as itself where nothing binds ([`within_as_is`]), so `(h: (y: U) -> int, y:
     /// U) -> int for U in int | f64` did not fit the same type with `T`.
     fn read_at(&mut self, f: &Arc<str>, b: &Binds) -> Option<Arc<str>> {
-        b.bounds.as_ref()?;
+        if !b.binds_own() {
+            return None;
+        }
         let (sig, env) = self.fns.get(f)?.clone();
-        let bound: Vec<(Arc<str>, Ty)> = Cx::held_bounded(&sig, &env, b)
+        let bound: Vec<(Arc<str>, Ty)> = Cx::held_own(&sig, &env, b)
             .into_iter()
             .filter_map(|(v, r)| Some((v, b.get(&r).filter(|t| !t.is_empty())?.clone())))
             .collect();
@@ -14585,10 +14633,10 @@ impl Cx<'_> {
 
     /// For each function `t` holds outside functions that [`Cx::read_at`] reads at `b`, the
     /// binding of its name to the name so read: what [`Ty::subst`] by `b` does outside
-    /// functions, carried into them for the bounded variables.
+    /// functions, carried into them for the own variables ([`Cx::held_own`]).
     fn fns_at(&mut self, t: &Ty, b: &Binds) -> Binds {
         let mut out = Binds::new();
-        if b.bounds.is_none() {
+        if !b.binds_own() {
             return out;
         }
         let mut vs = Vars::default();
@@ -14894,7 +14942,7 @@ fn fn_holds_own(s: &Sig, f: &Arc<str>, cx: &Cx) -> bool {
     let Some((sig, env)) = cx.fns.get(f) else {
         return false;
     };
-    sig.facts().outer.iter().any(|v| {
+    outer_or_class(sig).any(|v| {
         let r = match env.get(v) {
             None => v,
             Some(Read::Rigid(w)) => w,
@@ -14902,6 +14950,36 @@ fn fn_holds_own(s: &Sig, f: &Arc<str>, cx: &Cx) -> bool {
         };
         s.bounds.contains_key(r) || cx.free.binary_search_by(|w| (**w).cmp(r)).is_ok()
     })
+}
+
+/// The names the function `sig` holds that a signature around it may own: those no signature
+/// of its nest binds ([`VarFacts::outer`]), and its class variables (`$k`, [`class_id`]),
+/// which [`VarFacts::outer`] leaves out. The checker writes the variable of a generic function
+/// as a class variable the function owns (`g(h: (x: T) -> int, y: T)` owns `$0`), so without
+/// them a function in its parameters held no variable [`Cx::held_own`] or [`fn_holds_own`]
+/// could find (row TEST-types-unreached-paths-6), and `g` did not fit `(h: (x: int) -> int,
+/// y: int) -> int`.
+///
+/// Assumption, not proved (ASSUME-documented): a class variable that a signature around `sig`
+/// owns is not also owned by a signature of `sig`'s nest, so the name is one variable
+/// throughout. A class variable `$k` names the one class `k` of the checker, and a class is
+/// made own by the one function it is generalized at; no input that breaks this is known. If
+/// false, a variable of the inner signature would be bound through as the outer one, and the
+/// check of [`params_within`] that the binding is unchanged is all that guards it.
+///
+/// Cost: the two persistent sets kept with the signature, walked in order.
+fn outer_or_class(sig: &Sig) -> impl Iterator<Item = &Arc<str>> {
+    let facts = sig.facts();
+    facts.outer.iter().chain(facts.classes.iter())
+}
+
+/// Whether a parameter of the arrow `sa` of `s` holds a function that holds an own variable of
+/// `s` the comparison binds ([`fn_holds_own`]): an arrow [`instances`] gives no instance of.
+/// Cost: a walk of the parameter types and a lookup per function name.
+fn params_fn_hold_own(s: &Sig, sa: &Arrow, cx: &Cx) -> bool {
+    let mut vs = Vars::default();
+    sa.params.iter().for_each(|p| p.vars_in(&mut vs));
+    vs.order.iter().any(|f| fn_holds_own(s, f, cx))
 }
 
 /// Whether the arrow `sa` of `s`, its variables bound by `b`, takes only values of `qa`'s
@@ -14963,10 +15041,17 @@ async fn instance_within<'m>(
     if !s.bounds.keys().all(|v| b.get(v).is_none_or(whole_carriers)) {
         return false;
     }
+    // A witness is kept where [`permitted`] cannot decide the arrow alone: a bound of several
+    // least instances, or a variable to bind that a function in the parameters holds, for which
+    // [`instances`] gives none (row TEST-types-unreached-paths-6: `(h: (x: T) -> int, y: T) ->
+    // int`, `T` unbounded, was refused beside `(h: (x: int) -> int, y: int) -> int`, as its
+    // permission was asked of no instance). The witness is an instance at the cover's binding,
+    // its functions read at it ([`instance_at`]), so it is a real instance.
     let several = s
         .bounds
         .values()
-        .any(|&m| m.count_ones() > 1 || m & OTHER != 0);
+        .any(|&m| m.count_ones() > 1 || m & OTHER != 0)
+        || params_fn_hold_own(s, sa, &c.cx.borrow());
     let b = rest_bound(s, b.clone(), c);
     let tries = unbound_carriers(s, sa, &b, &c.cx.borrow());
     let mut found = false;
@@ -15471,7 +15556,22 @@ async fn permitted<'m>(
         let carriers = Carrier::of_mask(m).count();
         carriers > 1 || (carriers == 1 && m & OTHER != 0)
     };
-    if pass == Pass::Witnessed && !s.bounds.values().any(|&m| several_least(m)) {
+    //
+    // [`instances`] also gives `None` for an arrow whose parameters hold a function that holds
+    // a variable to bind ([`fn_holds_own`]), so the pass is skipped only where no function the
+    // comparison reads holds one. Before (row TEST-types-unreached-paths-6), it was skipped
+    // there too, and such an arrow that took part in no cover had its permission asked of
+    // nothing: `((x0: int) -> int) & ((x0: (x: T) -> int) -> int)` was within `(x0: int) ->
+    // int`, a wrong yes, though its second arrow takes functions `q` does not. Cost: a lookup
+    // of each function the comparison reads ([`Cx::fns`]), a superset of those `s` holds, so a
+    // function of `q` only costs the pass, never the answer.
+    if pass == Pass::Witnessed
+        && !s.bounds.values().any(|&m| several_least(m))
+        && !{
+            let cx = c.cx.borrow();
+            cx.fns.keys().any(|f| fn_holds_own(s, f, &cx))
+        }
+    {
         return true;
     }
     let equal: HashSet<&[Ty]> = qas.iter().map(|a| &a.params[..]).collect();
@@ -15647,7 +15747,9 @@ async fn cover<'m>(
             // that binding where a variable has no ceiling from the result ([`ceilings`]) or is
             // bounded and bound already; where each has one, the ceilings and the pins of
             // [`Comparing::search`] find it. Cost: the size of `sa`, once per
-            // arrow of `q`, and nothing when `s` has no bounded variable.
+            // arrow of `q`, and nothing when `s` has no bounded variable. A guard no input
+            // reaches (row TEST-types-unreached-paths-6): `equal_fits` is true at every equal
+            // arrow, so `arrow_fits_alone` here is not called; the proof is at `equal_fits`.
             if equal_fits(s, sa, &c.cx.borrow())
                 || arrow_fits_alone(s, sa, qa, c, &mut refused).await
             {
@@ -15690,6 +15792,18 @@ fn equal_fits(s: &Sig, sa: &Arrow, cx: &Cx) -> bool {
     for t in sa.params.iter().chain([&sa.result]) {
         t.vars_in(&mut vs);
     }
+    // A guard no input reaches (row TEST-types-unreached-paths-6): the loop body below, and so
+    // a `false` from `bounds_hold` and the comparison after it in [`cover`], needs `sa`, equal
+    // to an arrow of `q` as read, to hold a bounded variable of `s`. [`Cx::open`] reads each
+    // bounded own variable of `s` that is not held or has one carrier as its mask, a type and
+    // no variable; it keeps one of several carriers that a function of the parameters holds
+    // under its name only where `q` does not hold that name, or owns a bounded variable of
+    // that name, which `q`'s reading replaces by a mask or a new name; otherwise it renames it
+    // by [`Cx::fresh`], a name only `s`'s reading holds. So no arrow of `q` as read holds it.
+    // Inferred, not proved: every bounded variable of a signature is one of its own variables
+    // (each source of `bounds` in zedc-check adds an own variable of the signature it bounds),
+    // and a reading inherited from a comparison around this one gives no such name, which
+    // rests on the assumption above.
     let mut b = Binds::new();
     for v in vs.order.into_iter().filter(|v| s.bounds.contains_key(v)) {
         b.insert(v.clone(), Ty::var(v));
@@ -15736,8 +15850,15 @@ fn uncovered(refused: Option<String>, c: &Comparing<'_, '_>) {
 /// intersection the checker does not build (case (3)); an arrow that takes values at every
 /// parameter but misses more than one (case (1)). `None` for a plain reason: a value no arrow
 /// takes, or one arrow that returns outside. One pass over the arrows, on the way to an error.
+///
+/// `written` is `s` as the program wrote it: [`fits_in`] reads `s` with a bounded variable
+/// that `q` also holds renamed ([`Cx::own_name`], `B` read as `B'1`), and the message quotes
+/// each arrow and names each variable from `written`. Quoted from the copy read, the arrow
+/// `(x0: B, x1: B) -> int` printed as `(x0: T, x1: T) -> int`, its `B` unbounded there, and
+/// the variable as `B'1`, a name the program never wrote.
 async fn refused_cover<'m>(
     s: &Sig,
+    written: &Sig,
     q: &Sig,
     sas: &[Arrow],
     qa: &Arrow,
@@ -15786,6 +15907,12 @@ async fn refused_cover<'m>(
     let slot = arrow_text(q, &q.arrows[k]);
     let result = text_at(&q.arrows[k].result, q, &c.cx.borrow());
     let reason = if let Some((i, v, t, places)) = shared {
+        // The name the program wrote: a variable renamed by [`Cx::fresh`], `{v}'{count}`,
+        // is `v`, as [`Scope::of_comparison`] prints it.
+        let v = match written.bounds.contains_key(&v) {
+            true => v,
+            false => Arc::from(v.rsplit_once('\'').map_or(v.as_ref(), |(w, _)| w)),
+        };
         let place = match places {
             Places { taken: 1.., .. } => format!(
                 "`{v}` stands where the arrow takes values of it inside a function type, which \
@@ -15803,7 +15930,7 @@ async fn refused_cover<'m>(
         format!(
             "the arrow `{}` takes it only with `{v}` bound to `{}`, values of more than one \
              carrier, but a call fixes `{v}` to one carrier, and {place}",
-            arrow_text(s, &s.arrows[i]),
+            arrow_text(written, &written.arrows[i]),
             text_at(&t, q, &c.cx.borrow())
         )
     } else if let Some((i, j)) = free {
@@ -15812,13 +15939,13 @@ async fn refused_cover<'m>(
              and arrows that cover a parameter together bind no variable: which part each \
              takes is a choice per arrow, and fixing a bounded variable to each carrier of \
              its bound multiplies the arrows by the product of the bounds",
-            arrow_text(s, &s.arrows[i]),
+            arrow_text(written, &written.arrows[i]),
             s.params[j].name
         )
     } else if outside.len() >= 2 {
         let arrows: Vec<String> = outside
             .iter()
-            .map(|&(i, _)| format!("`{}`", arrow_text(s, &s.arrows[i])))
+            .map(|&(i, _)| format!("`{}`", arrow_text(written, &written.arrows[i])))
             .collect();
         // When each takes all of `qa`, the intersection is the result at every value: a plain
         // reason, not a refused cover, with the intersection when the results have kernel types.
@@ -15859,7 +15986,7 @@ async fn refused_cover<'m>(
              several parameters cover them all can take time exponential in the number of \
              parameters, so the checker does not try; to repair it, write the arrows so that \
              they differ at one parameter",
-            arrow_text(s, &s.arrows[i])
+            arrow_text(written, &written.arrows[i])
         )
     };
     Some(format!("at `{slot}`, {reason}"))
@@ -16135,6 +16262,11 @@ async fn met<'m>(
 ) -> bool {
     // An arrow of `q` that takes no value is left to one arrow and the union, as before this
     // form: the index leaves out arrows of `s` that take part of no parameter of it.
+    // A guard no input reaches (row TEST-types-unreached-paths-6): `met` is called by
+    // [`covered`], from [`cover`], and by the test search `reference`, from [`cover`] too, and
+    // every arrow of `q` that [`covers`] passes to [`cover`] has no parameter type
+    // [`Ty::is_empty`] proves empty (its `keyless` filter; the value-type copies keep the
+    // parameter types). `is_empty` of one type gives one answer.
     if qa.params.iter().any(Ty::is_empty) {
         return false;
     }
@@ -16360,6 +16492,9 @@ async fn meet_within<'m>(results: &[Ty], result: &Ty, c: &'m Comparing<'m, '_>) 
         }
         (kernels, rest)
     };
+    // A guard no input reaches (row TEST-types-unreached-paths-6): `results` is not empty
+    // here (the early return above, then `known` or the first result), and the loop pushes one
+    // kernel per result, so `reduce` gives `Some`.
     let Some(k) = kernels.into_iter().reduce(|a, b| &a & &b) else {
         return false;
     };
@@ -17635,6 +17770,9 @@ impl Domains {
             // The function types of that value type, read from the arrow's result, which
             // differs from it only by the `#notFound` of a partial arrow's miss, in its set.
             let fns_alone = v.vars.is_empty() && v.tuples.is_empty() && v.set.is_empty();
+            // A guard no input reaches (row TEST-types-unreached-paths-6): `v` is the first of
+            // `values`, the value types that are not the unknown, so some arrow's value type is
+            // not the unknown, and `find` gives `Some`.
             let Some(b) = g.arrows.iter().find(|b| !b.value().dynamic) else {
                 continue;
             };
@@ -18029,7 +18167,11 @@ impl<'t> ArrowIndex<'t> {
             wanted[p] += 1;
             let row = &mut offered[p * c..(p + 1) * c];
             if l.len() <= c {
-                // `l` is in order and may repeat an arrow that offers the key twice.
+                // `l` is in order. A guard no input reaches (row TEST-types-unreached-paths-6):
+                // `l` repeats no arrow either. [`ArrowIndex::new`] pushes each arrow once per
+                // key [`offered_keys`] gives for its type at the parameter, and those keys are
+                // distinct: atom names from one sorted map of names, then one carrier key per
+                // distinct [`Carrier::base`]. Before, this comment said `l` may repeat one.
                 for (at, &i) in l.iter().enumerate() {
                     if at > 0 && l[at - 1] == i {
                         continue;
@@ -21082,6 +21224,7 @@ mod tests {
     mod bench;
     mod unreached4;
     mod unreached5;
+    mod unreached6;
 
     /// The parameter `x` of type `t`, for the signatures of the tests below.
     fn one_of(t: Ty, result: Ty) -> Sig {
