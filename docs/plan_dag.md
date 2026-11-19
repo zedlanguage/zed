@@ -5803,6 +5803,7 @@ Each pair below is at one level, shares a file and is not yet done. No path of n
 | 0 | MSG-too-large-cast-origin, MSG-list-value-printed-by-arrows | `crates/zedc-check/src/check/` |
 | 0 | MSG-too-large-cast-origin, MSG-tuple-generic-headline | `crates/zedc-check/src/check/` |
 | 0 | MSG-too-large-cast-origin, TEST-generic-operand-messages-reached | `crates/zedc-check/src/check/walk/fp_ops.rs`, `crates/zedc-check/src/check/walk.rs` |
+| 0 | TEST-kernel-unreached-paths-4, FAIL-print-cycle-defined-twice | `crates/zed-kernel/src/types/print.rs`, `crates/zed-kernel/src/types/print/defs.rs`, `crates/zed-kernel/src/types/print/tests.rs` |
 | 0 | TEST-kernel-unreached-paths-4, LIMITS-remove-all | `crates/zed-kernel/src/types/`, `crates/zed-kernel/COMPLETENESS.md` |
 | 0 | TEST-kernel-unreached-paths-4, REFUSAL-front-post-r11-forks | `crates/zed-kernel/src/types/empty.rs` |
 | 0 | TEST-kernel-unreached-paths-4, PERF-kernel-box-union-search | `crates/zed-kernel/src/types/empty.rs` |
@@ -5811,6 +5812,11 @@ Each pair below is at one level, shares a file and is not yet done. No path of n
 | 0 | TEST-kernel-unreached-paths-4, PERF-guarded-function-walk | `crates/zed-kernel/src/types/`, `crates/zed-kernel/COMPLETENESS.md` |
 | 0 | TEST-kernel-unreached-paths-4, FP-ops-order | `crates/zed-kernel/src/types/` |
 | 0 | TEST-types-unreached-paths-6, TYPES-bucket-members-share-shape | `crates/zedc-types/src/ty.rs` |
+| 0 | FAIL-print-cycle-defined-twice, LIMITS-remove-all | `crates/zed-kernel/src/types/print.rs`, `crates/zed-kernel/src/types/print/defs.rs`, `crates/zed-kernel/src/types/print/tests.rs` |
+| 0 | FAIL-print-cycle-defined-twice, FAIL-print-meet-unnamed-bound | `crates/zed-kernel/src/types/print.rs` |
+| 0 | FAIL-print-cycle-defined-twice, PERF-row-hash-tied-digest | `crates/zed-kernel/src/types/print.rs` |
+| 0 | FAIL-print-cycle-defined-twice, PERF-guarded-function-walk | `crates/zed-kernel/src/types/print.rs`, `crates/zed-kernel/src/types/print/defs.rs`, `crates/zed-kernel/src/types/print/tests.rs` |
+| 0 | FAIL-print-cycle-defined-twice, FP-ops-order | `crates/zed-kernel/src/types/print.rs`, `crates/zed-kernel/src/types/print/defs.rs`, `crates/zed-kernel/src/types/print/tests.rs` |
 | 0 | PNCX-coloring-crt-scale, TEST-presburger-unreached-paths | `crates/zedc-presburger/src/presburger/modular.rs` |
 | 0 | PNCX-coloring-crt-scale, PROOF-tied-projection-refusal-names | `crates/zedc-presburger/src/presburger/modular.rs` |
 | 0 | FAIL-batch-linked-copies-growth, TEST-presburger-unreached-paths | `crates/zedc-presburger/src/presburger.rs` |
