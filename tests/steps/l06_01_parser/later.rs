@@ -1,19 +1,7 @@
 //! Name resolution refuses each form of layer L6, naming the step that compiles it, once, and
 //! binds the names such a form declares, so that a use of one is not refused as well.
 
-use super::refused;
-
-#[track_caller]
-fn check(cases: &[(&str, &[&str])]) {
-    let wrong: Vec<String> = cases
-        .iter()
-        .filter_map(|&(text, want)| {
-            let got = refused(text);
-            (got != want).then(|| format!("{text}\n  got  {got:?}\n  want {want:?}"))
-        })
-        .collect();
-    assert!(wrong.is_empty(), "{}", wrong.join("\n"));
-}
+use zed_tests::step_helpers::l02_01_parser_structs::check_refused as check;
 
 #[test]
 fn each_form_names_the_step_that_compiles_it() {

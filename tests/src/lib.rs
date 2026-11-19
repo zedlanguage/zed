@@ -29,6 +29,7 @@ pub mod seed;
 mod seed_tests;
 pub mod spec;
 pub mod step_helpers;
+pub mod tables;
 pub mod tokens;
 pub mod trees;
 

@@ -7,14 +7,7 @@ use super::{fmt, sx};
 /// Checks that each `(text, tree)` builds to `tree`.
 #[track_caller]
 fn trees(cases: &[(&str, &str)]) {
-    let wrong: Vec<String> = cases
-        .iter()
-        .filter_map(|&(text, want)| {
-            let got = sx(text);
-            (got != want).then(|| format!("{text}\n  got  {got}\n  want {want}"))
-        })
-        .collect();
-    assert!(wrong.is_empty(), "{}", wrong.join("\n"));
+    zed_tests::tables::check(cases, sx);
 }
 
 #[test]

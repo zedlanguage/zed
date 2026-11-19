@@ -11,40 +11,4 @@ mod pushes;
 mod ranges;
 mod scaling;
 
-use zedc::lex::lex;
-use zedc::parse::{TOP, parse};
-
-/// The statements of the unit `text`, one s-expression per line, or its error: `error: …`,
-/// or `syntax` when it does not parse.
-fn sx(text: &str) -> String {
-    let tokens = lex(text).unwrap();
-    match parse(text, &tokens, "Unit", TOP) {
-        Err(_) => "syntax".into(),
-        Ok(tree) => match zedc::ast::unit(text, &tokens, &tree) {
-            Err(e) => {
-                let mut out = format!("error: {e}");
-                for n in &e.notes {
-                    out += &format!("; {} at byte {}", n.text, n.span.start);
-                }
-                out
-            }
-            Ok(stmts) => stmts
-                .iter()
-                .map(|s| s.to_string())
-                .collect::<Vec<_>>()
-                .join("\n"),
-        },
-    }
-}
-
-#[track_caller]
-fn check(cases: &[(&str, &str)]) {
-    let wrong: Vec<String> = cases
-        .iter()
-        .filter_map(|&(text, want)| {
-            let got = sx(text);
-            (got != want).then(|| format!("{text}\n  got  {got}\n  want {want}"))
-        })
-        .collect();
-    assert!(wrong.is_empty(), "{}", wrong.join("\n"));
-}
+use zed_tests::step_helpers::l02_01_parser_structs::check;

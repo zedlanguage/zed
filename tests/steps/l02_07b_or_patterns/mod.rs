@@ -13,47 +13,11 @@ mod forms;
 mod names;
 mod scaling;
 
-use zedc::ast::{Error, Stmt, unit};
-use zedc::format::format;
-use zedc::lex::{Token, lex};
+use zed_tests::step_helpers::l02_01_parser_structs::{build, fmt, sx};
+use zedc::ast::Error;
+use zedc::lex::lex;
 use zedc::parse::{TOP, parse};
 use zedc::resolve::resolve_text;
-
-/// The statements of the unit `text`, one s-expression per line.
-fn sx(text: &str) -> String {
-    build(text)
-        .1
-        .iter()
-        .map(|s| s.to_string())
-        .collect::<Vec<_>>()
-        .join("\n")
-}
-
-/// The tokens and statements of the unit `text`.
-#[track_caller]
-fn build(text: &str) -> (Vec<Token>, Vec<Stmt>) {
-    let tokens = lex(text).unwrap();
-    let tree = parse(text, &tokens, "Unit", TOP).unwrap_or_else(|e| panic!("{e} in\n{text}"));
-    let stmts = unit(text, &tokens, &tree).unwrap_or_else(|e| panic!("{e} in\n{text}"));
-    (tokens, stmts)
-}
-
-/// `text` formatted, after checking that the result builds to the same statements and formats
-/// to itself.
-#[track_caller]
-fn fmt(text: &str) -> String {
-    let (tokens, stmts) = build(text);
-    let out = format(text, &tokens, &stmts);
-    let (tokens2, stmts2) = build(&out);
-    let show = |ss: &[Stmt]| ss.iter().map(|s| s.to_string()).collect::<Vec<_>>();
-    assert_eq!(
-        show(&stmts),
-        show(&stmts2),
-        "the statements changed in\n{out}"
-    );
-    assert_eq!(format(&out, &tokens2, &stmts2), out, "not a fixed point");
-    out
-}
 
 /// The error the parser refuses the unit `text` with.
 #[track_caller]

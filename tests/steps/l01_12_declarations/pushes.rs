@@ -42,14 +42,7 @@ fn front(src: &str) -> String {
 
 #[track_caller]
 fn fronts(cases: &[(&str, &str)]) {
-    let wrong: Vec<String> = cases
-        .iter()
-        .filter_map(|&(src, want)| {
-            let got = front(src);
-            (got != want).then(|| format!("{src}\n  got  {got}\n  want {want}"))
-        })
-        .collect();
-    assert!(wrong.is_empty(), "{}", wrong.join("\n"));
+    zed_tests::tables::check(cases, front);
 }
 
 /// The targets that take a push (DESIGN.md sec:ports, "What a push may name"): the outputs of

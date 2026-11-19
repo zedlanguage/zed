@@ -2,19 +2,7 @@
 //! zedc does not support, and refuses each annotation as not supported, or as no
 //! annotation at all.
 
-use super::refused;
-
-#[track_caller]
-fn check(cases: &[(&str, &[&str])]) {
-    let wrong: Vec<String> = cases
-        .iter()
-        .filter_map(|&(text, want)| {
-            let got = refused(text);
-            (got != want).then(|| format!("{text}\n  got  {got:?}\n  want {want:?}"))
-        })
-        .collect();
-    assert!(wrong.is_empty(), "{}", wrong.join("\n"));
-}
+use zed_tests::step_helpers::l02_01_parser_structs::check_refused as check;
 
 #[test]
 fn each_form_names_the_step_that_compiles_it() {

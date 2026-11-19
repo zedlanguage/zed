@@ -17,12 +17,5 @@ pub(crate) use zed_tests::step_helpers::l01_10_lambdas_types_else_tuples::sx;
 
 #[track_caller]
 fn check(cases: &[(&str, &str)]) {
-    let wrong: Vec<String> = cases
-        .iter()
-        .filter_map(|&(text, want)| {
-            let got = sx(text);
-            (got != want).then(|| format!("{text}\n  got  {got}\n  want {want}"))
-        })
-        .collect();
-    assert!(wrong.is_empty(), "{}", wrong.join("\n"));
+    zed_tests::tables::check(cases, sx);
 }

@@ -4,18 +4,7 @@
 
 use zed_tests::step_helpers::l01_10_lambdas_types_else_tuples::sx;
 use zed_tests::step_helpers::l01_13_formatter::fmt;
-
-#[track_caller]
-fn check(cases: &[(&str, &str)], f: fn(&str) -> String) {
-    let wrong: Vec<String> = cases
-        .iter()
-        .filter_map(|&(text, want)| {
-            let got = f(text);
-            (got != want).then(|| format!("{text}\n  got  {got}\n  want {want}"))
-        })
-        .collect();
-    assert!(wrong.is_empty(), "{}", wrong.join("\n"));
-}
+use zed_tests::tables::check;
 
 #[test]
 fn as_alone_names_the_levels() {

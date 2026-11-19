@@ -61,14 +61,7 @@ fn the_clause_parses_loosest() {
         ("f is (T) -> T for T in int", "syntax"),
         ("f is ((T) -> T for T int)", "syntax"),
     ];
-    let wrong: Vec<String> = cases
-        .iter()
-        .filter_map(|&(text, want)| {
-            let got = sx(text);
-            (got != want).then(|| format!("{text}\n  got  {got}\n  want {want}"))
-        })
-        .collect();
-    assert!(wrong.is_empty(), "{}", wrong.join("\n"));
+    zed_tests::tables::check(&cases, sx);
 }
 
 #[test]

@@ -10,36 +10,4 @@ mod fences;
 mod returns;
 mod scaling;
 
-use zedc::lex::lex;
-use zedc::parse::{TOP, parse};
-
-/// The s-expression of the expression `text`, or its error: `error: …`, or `syntax` when it
-/// does not parse.
-fn sx(text: &str) -> String {
-    let tokens = lex(text).unwrap();
-    match parse(text, &tokens, "Expr", TOP) {
-        Err(_) => "syntax".into(),
-        Ok(tree) => zedc::ast::build(text, &tokens, &tree).map_or_else(
-            |e| {
-                let mut out = format!("error: {e}");
-                for n in &e.notes {
-                    out += &format!("; {} at byte {}", n.text, n.span.start);
-                }
-                out
-            },
-            |e| e.to_string(),
-        ),
-    }
-}
-
-#[track_caller]
-fn check(cases: &[(&str, &str)]) {
-    let wrong: Vec<String> = cases
-        .iter()
-        .filter_map(|&(text, want)| {
-            let got = sx(text);
-            (got != want).then(|| format!("{text}\n  got  {got}\n  want {want}"))
-        })
-        .collect();
-    assert!(wrong.is_empty(), "{}", wrong.join("\n"));
-}
+use zed_tests::step_helpers::l02_01_parser_structs::{check_exprs as check, expr_sx as sx};

@@ -2,7 +2,7 @@
 //! step that compiles it, until that step is built. Since step L2.3 resolution also reads the
 //! names in them: a method of a type no declaration names, `this` outside a method.
 
-use super::refused;
+use zed_tests::step_helpers::l02_01_parser_structs::check_refused;
 
 #[test]
 fn each_form_names_the_step_that_compiles_it() {
@@ -89,12 +89,5 @@ fn each_form_names_the_step_that_compiles_it() {
             )],
         ),
     ];
-    let wrong: Vec<String> = cases
-        .iter()
-        .filter_map(|&(text, want)| {
-            let got = refused(text);
-            (got != want).then(|| format!("{text}\n  got  {got:?}\n  want {want:?}"))
-        })
-        .collect();
-    assert!(wrong.is_empty(), "{}", wrong.join("\n"));
+    check_refused(cases);
 }

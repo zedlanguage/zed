@@ -3,19 +3,8 @@
 //! MAP-run-rest; a fold by a function is the checker's to refuse or take); the parser
 //! refuses the parts of a `for` and a reduction that belong to later layers.
 
-use super::{check as check_sx, refused};
-
-#[track_caller]
-fn check(cases: &[(&str, &[&str])]) {
-    let wrong: Vec<String> = cases
-        .iter()
-        .filter_map(|&(text, want)| {
-            let got = refused(text);
-            (got != want).then(|| format!("{text}\n  got  {got:?}\n  want {want:?}"))
-        })
-        .collect();
-    assert!(wrong.is_empty(), "{}", wrong.join("\n"));
-}
+use super::check as check_sx;
+use zed_tests::step_helpers::l02_01_parser_structs::check_refused as check;
 
 #[test]
 fn each_form_names_the_step_that_compiles_it() {
