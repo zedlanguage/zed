@@ -2746,11 +2746,18 @@ impl Blocks {
         // pay per conjunct, O(1) expected and O(log n). Still O(n log² n) in all, each key
         // moving O(log n) times at O(log n) a move, with half the instructions: merge alone
         // grows 11.8 times at 8n (12.4 before), the bench 9.72 (10.03 before). Not done: a
-        // join-based union of the
-        // ordered sets (Blelloch, Ferizovic and Sun, "Parallel Ordered Sets Using Join",
-        // O(m log(n/m + 1)) for m into n), which would make `members` and `at` O(n log n) over
-        // all merges, as imbl 7 has none and `members` is read by zedc-preimage as imbl's
-        // `OrdSet` (`Blocks::member_set`, its `diff`). COMPLEXITY.md row
+        // join-based union of the ordered sets (Blelloch, Ferizovic and Sun, "Parallel Ordered
+        // Sets Using Join", arXiv:1602.02120, O(m log(n/m + 1)) for m into n) would make `members`
+        // O(n log n) over all merges, but imbl 7 has none and `members` is read by
+        // zedc-preimage as imbl's `OrdSet` (`Blocks::member_set`, its `diff`). A join alone
+        // does not make the merge O(n log n): `at`, `moving_at`, `name` and `up` are keyed by
+        // name or node first, so each name of the smaller block is relabeled at its own place
+        // in the order, at least log C(N, k) comparisons for k names among N, which sums to
+        // Θ(n log² n) over merges of blocks of equal size (cross-review round 1, both seats;
+        // the input of `blocks_merged_in_pairs_of_equal_size_stay_well_formed_in_any_order`).
+        // O(n log n) needs those keyed by hash or by stable rows, `names_in`, `pairs` and `at`
+        // nested by block with a join-based union, and the trees of `Blocks::union`, which
+        // relabel the smaller tree node by node, changed too. COMPLEXITY.md row
         // PERF-satellite-random-under9-redesign.
         for &b in blocks.iter().filter(|&&b| b != keep) {
             debug_assert!(

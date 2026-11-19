@@ -2287,6 +2287,82 @@ fn a_name_met_only_in_products_is_moving_in_each_block_that_holds_it() {
     }
 }
 
+/// Conjuncts whose blocks merge in pairs of equal size, level by level, `m` a power of two:
+/// block `i` is the four conjuncts `a_i >= h_i`, `a_i >= h_{i+1}`, `b_i >= h_i`,
+/// `b_i >= h_{i+1}`, a cycle through `h_i` and `h_{i+1}`, so the blocks make a chain along the
+/// names `h`; then, for each level `l` from 1 and each `i` a multiple of `2^l`, the two
+/// conjuncts `c >= h_i` and `c >= h_{i + 2^l}` of a new name `c`, the second of which closes a
+/// cycle through the two blocks of the level below. Each name `a`, `b` and `c` has a bound
+/// `1000 >= a` of its own, so it is no leaf of a star ([`Conjuncts::star`]) and its conjuncts
+/// stay in the forest. Each level moves near half of the conjuncts, so a conjunct moves near
+/// log2 m times ([`Blocks::merge`]). From the Opus seat of cross-review round 1.
+fn balanced_merges(m: usize) -> Vec<Formula> {
+    let s = |x: &str| Lin::atom(Atom::Sym(x.into()));
+    let above = |a: &str, b: &str| Formula::Con(Con::ge(&s(a), &s(b)));
+    let pin = |a: &str| Formula::Con(Con::ge(&Lin::constant(1000), &s(a)));
+    let mut gs = Vec::new();
+    for i in 0..m {
+        let (h, k) = (format!("h{i}"), format!("h{}", i + 1));
+        for t in [format!("a{i}"), format!("b{i}")] {
+            gs.push(pin(&t));
+            gs.push(above(&t, &h));
+            gs.push(above(&t, &k));
+        }
+    }
+    let mut w = 2;
+    while w <= m {
+        for i in (0..m).step_by(w) {
+            let c = format!("c{w}_{i}");
+            gs.push(pin(&c));
+            gs.push(above(&c, &format!("h{i}")));
+            gs.push(above(&c, &format!("h{}", i + w)));
+        }
+        w *= 2;
+    }
+    gs
+}
+
+/// The conjuncts of [`balanced_merges`] added in their own order and in seeded random orders:
+/// after each conjunct the forest is well formed ([`Blocks::well_formed`]), every order ends
+/// with the same blocks, those of two names all in one, and each name's blocks with a moving
+/// conjunct come in ascending order. Fails if `Blocks::merge` leaves out any one of `up`,
+/// `moving_at`, `at`, `pairs` or `names_in` (checked by the seat, one fault at a time).
+#[test]
+fn blocks_merged_in_pairs_of_equal_size_stay_well_formed_in_any_order() {
+    let gs = balanced_merges(16);
+    let mut ends: BTreeSet<BTreeSet<BTreeSet<Arc<Formula>>>> = BTreeSet::new();
+    let orders = std::iter::once((0..gs.len()).collect::<Vec<_>>())
+        .chain((0..8u64).map(|seed| shuffled(gs.len(), &mut Rng::new(seed))));
+    for (o, order) in orders.enumerate() {
+        let mut c = Conjuncts::default();
+        for i in order {
+            c.and(gs[i].clone());
+            if let Err(e) = c.blocks().well_formed() {
+                panic!("order {o}, after {}: {e}", gs[i]);
+            }
+        }
+        let b = c.blocks();
+        for k in b.all() {
+            for n in b.names_of(k) {
+                let moving: Vec<_> = b.moving_blocks(n).collect();
+                assert!(
+                    moving.windows(2).all(|w| w[0] < w[1]),
+                    "order {o}: {n} {moving:?}"
+                );
+            }
+        }
+        let end: BTreeSet<BTreeSet<Arc<Formula>>> =
+            b.all().map(|k| b.members(k).cloned().collect()).collect();
+        let merged = end.iter().filter(|k| k.len() > 1).count();
+        assert_eq!(
+            merged, 1,
+            "order {o}: the conjuncts of two names end in one block"
+        );
+        ends.insert(end);
+    }
+    assert_eq!(ends.len(), 1, "the blocks depend on the order");
+}
+
 /// Checks that building the conjuncts of [`satellite_conjuncts`] in a seeded random order at
 /// `d` and `8d` is linear.
 fn satellite_built_in_a_random_order(d: usize, bounds: bool) {
