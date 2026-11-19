@@ -563,6 +563,23 @@ fn subtype_answers_do_not_depend_on_the_queries_before_them_at_a_fork_without_la
     assert_eq!(order_free(10511391382961984112), 46);
 }
 
+/// Item TEST-kernel-unreached-paths-7: a meet of morphism types with a union of morphism types
+/// whose guarantee is not within its permission, and whose keys and the shared keys of the
+/// types taken are proved to hold no value (`Searching::find_rep`, the closure rows: the arm
+/// that shows the closure after `no_keys`). Drawn by the corpus of seed 20, query
+/// `ts[139] <: ts[141]`, which reached it alone; seeds 0 to 199 reach it only at 20, 69, 118
+/// and 193.
+#[test]
+fn a_closure_whose_keys_hold_no_value_is_shown_for_a_meet_with_a_union_of_morphisms() {
+    let mut rng = Rng::new(20);
+    let ts = corpus(&mut rng, 150);
+    let (a, b) = (&ts[139], &ts[141]);
+    Type::forget_emptiness();
+    assert!(!a.subtype(b), "{a} <: {b}");
+    Type::forget_emptiness();
+    assert_eq!((a - b).verdict(), Verdict::Inhabited, "{a} - {b}");
+}
+
 /// The two queries of the fixed seed above that PERF-set-digest-shape-free turned from refused
 /// to holding, 52 (`ts[137] <: ts[142]`) and 78 (`ts[137] <: ts[33]`), checked without the
 /// emptiness search (plan row CHECK-judgments-ts137-empty). The corpus draws

@@ -3138,6 +3138,25 @@ fn meets_agree_across_orders() {
     );
 }
 
+/// The meets of seed 8639, outside the range above: a group with a member left undecided, whose
+/// first search goes on to settle the causes (`settle_canonical_blame`) and tests its own
+/// values again. It read past the end of its values, which had been moved to the store the
+/// readers of the group read (TEST-kernel-unreached-paths-7). Found by a sweep of seeds 800 to
+/// 40800, which only 8639 failed this way.
+#[test]
+fn meets_with_a_member_left_undecided() {
+    verdicts_agree_across_orders("meets", gen_meets, &[8639], (true, true));
+}
+
+/// The meets of seed 24669, outside the range above: a member shown inhabited only by the search
+/// in which each closure is taken to have a value, whose value is the one kept for readers
+/// (`group_verdicts`, item TEST-kernel-unreached-paths-7). Of seeds 0 to 40800, only 24669 and
+/// 28137 reach that case.
+#[test]
+fn meets_with_a_member_shown_only_with_closures_taken_to_have_values() {
+    verdicts_agree_across_orders("meets", gen_meets, &[24669], (true, true));
+}
+
 /// The pool's rounds keep the first 36 tuples of the product of the values found for each
 /// component (`first_tuples`), built one by one. Against the whole product, built as the oracle
 /// first did, on random choices of up to 6 values for each of up to 5 components, some with none:

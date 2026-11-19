@@ -412,7 +412,19 @@ fn group_verdicts(members: &[Type]) {
                 }
             }
         });
-        st.push(std::mem::take(&mut d.shown));
+        // A member left undecided sends the first search on below (`settle_canonical_blame`),
+        // which tests its own values again by their numbers (`Searching::member_known`), so it
+        // keeps them; taking them left it none, and the next test read past the end
+        // (TEST-kernel-unreached-paths-7, `group_oracle::meets_with_a_member_left_undecided`).
+        // Complexity tradeoff: the copy costs O(the values the first search built), what
+        // building them cost, and only for a group with a member left undecided, which then
+        // searches again; reading them back through the store instead (`Rep::Of`) would save
+        // the copy but give each value a second number in the search that built it.
+        st.push(if undecided.is_empty() {
+            std::mem::take(&mut d.shown)
+        } else {
+            d.shown.clone()
+        });
         st.push(std::mem::take(&mut s.shown));
         if let Some(o) = o.as_mut() {
             st.push(std::mem::take(&mut o.shown));
@@ -12517,6 +12529,9 @@ impl Choices<'_> {
                     match e.first {
                         None => e.first = Some((i, c)),
                         Some((_, d)) if d != c && e.second.is_none() => e.second = Some(i),
+                        // A third refusal, or the first cell refused again: the blocks kept
+                        // are the first two that refuse two cells, so it changes neither.
+                        // Test: `nested_cover::a_component_refused_in_three_blocks_agrees_with_enumeration`.
                         Some(_) => {}
                     }
                 }

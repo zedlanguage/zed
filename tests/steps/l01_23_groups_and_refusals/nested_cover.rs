@@ -420,3 +420,31 @@ fn a_cell_that_cuts_two_pieces_stops_the_cut_one_cell_at_a_time() {
         assert_eq!(one, Verdict::Inhabited, "{s}");
     });
 }
+
+/// Item TEST-kernel-unreached-paths-7: a decision list one of whose components refuses a cell
+/// in three blocks, the third after a second refusing another cell, read for a meet
+/// (`Searching::list_index`, the arm that keeps the first two blocks and passes over the
+/// third). Drawn by `a_box_and_a_box_within_it_agree_with_enumeration` at seed
+/// 7632234373623941596, the only draw of 1500 random runs that reached it; it now reaches it on
+/// every run. Both paths agree with enumeration.
+#[test]
+fn a_component_refused_in_three_blocks_agrees_with_enumeration() {
+    zed_tests::deep::on_small_stack(|| {
+        let row = |r: [u8; 3]| F::Row(r.to_vec());
+        let or = |x: F, y: F| F::Or(Box::new(x), Box::new(y));
+        let and = |x: F, y: F| F::And(Box::new(x), Box::new(y));
+        let f = and(
+            row([1, 7, 4]),
+            or(
+                and(
+                    or(row([5, 2, 5]), row([2, 6, 15])).less(or(row([5, 3, 3]), row([15, 15, 2]))),
+                    and(or(row([15, 4, 6]), row([6, 5, 5])), row([7, 2, 6])),
+                ),
+                row([7, 2, 15]),
+            ),
+        );
+        assert!(inhabited(&f, 3), "{f:?}");
+        let want = Verdict::Inhabited;
+        assert_eq!(both(&f.ty()), (want, want), "{f:?}");
+    });
+}

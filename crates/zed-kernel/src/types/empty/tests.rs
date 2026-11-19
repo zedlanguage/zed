@@ -1678,6 +1678,82 @@ fn height_bounds_are_exact_on_lists_cycles_and_open_parts() {
     }
 }
 
+/// A tuple part kept as an expression, not a decision list, that holds tuples outside all its
+/// tuple types is not bounded (TEST-kernel-unreached-paths-7, the `Err` arm of
+/// `Heights::part_heights`): `(!(1, int) | (int, 2)) & (!(3, int) | (int, 4))` holds
+/// `(5, (1, 2))`, a pair in none of its four tuple types, of height 2, while each of those
+/// types alone has height 1. Bounding the part by the union of its tuple types would give the
+/// pairs the bounds `(1, 1)` and put that value outside them. Such a part is true where no
+/// tuple type holds, which every part built by union, meet and difference from tuple types is
+/// only in a type whose tuples of unlisted lengths are all in (`Tuples::rest`): a part is false
+/// there in each tuple type, and union, meet and difference keep "false there exactly when
+/// `rest` is false" (both false; either false; the first false or the second true). So
+/// `Heights::most_height` has already taken no upper bound for the type, and the part's own
+/// bounds are checked here directly.
+#[test]
+fn a_tuple_part_kept_as_an_expression_holding_other_tuples_is_not_bounded() {
+    let lit = |i: i64| Type::lit(&Value::Int(i)).expect("an integer literal");
+    let pair = |a: Type, b: Type| Type::tuple(vec![a, b]);
+    let tuples = Type::universe(crate::types::Universe::Tuple);
+    let (int, top) = (Type::int, u64::MAX);
+    let a = &(&tuples - &pair(lit(1), int())) | &pair(int(), lit(2));
+    let b = &(&tuples - &pair(lit(3), int())) | &pair(int(), lit(4));
+    let t = &a & &b;
+    let f = &t.p().tuples.lens[&2];
+    assert!(f.view().is_err(), "{t}: the part is kept as an expression");
+    assert_eq!(f.eval3(&|_| Some(false)), Some(true), "{t}");
+    let v = Value::tuple(vec![
+        Value::Int(5),
+        Value::tuple(vec![Value::Int(1), Value::Int(2)]),
+    ]);
+    assert!(t.contains(&v), "{t} holds {v}");
+    let mut h = Heights::default();
+    assert_eq!(h.height_bounds(&t), Some((1, top)), "{t}");
+    assert_eq!(h.part_heights(2, f), Some(vec![(0, top); 2]), "{t}");
+    assert_eq!(height_bounds(&t), Some((1, top)), "{t}, kept");
+}
+
+/// `Side::unseen` on a decision list gives the latest first block of a cell not seen and the
+/// least block a cell not seen may give that is wanted (TEST-kernel-unreached-paths-7, the arm
+/// that takes the lesser of the two candidates for the latter). Blocks 0 to 3 of values true,
+/// false, true, false; the component's cells 10, 11 and 12 have first blocks 0, 2 and 3, and
+/// the goal wants true with `low` 1 and `high` 2. A cell after `low` is cell 11, at block 2,
+/// and the first cell of a block of value true is cell 10, at block 0, also wanted, as block 0
+/// is up to `high` and of value true: the least is cell 10's. With cell 10 seen, the least is
+/// cell 11's, at the latest block but one, and the latest is cell 12's. Random meets of
+/// `nested_cover` reach the case on no run of 16 tried, so it is checked here directly.
+#[test]
+fn the_least_wanted_unseen_cell_of_a_list_is_the_lesser_of_two_candidates() {
+    let component = ListComponent {
+        at: HashMap::from([(10, 0), (11, 2), (12, 3)]),
+        rest: 4,
+        by_block: vec![(0, 10), (2, 11), (3, 12)],
+        by_value: [vec![(3, 12)], vec![(0, 10), (2, 11)]],
+    };
+    let values = vec![true, false, true, false, false];
+    let index = ListIndex {
+        values: values.clone(),
+        components: HashMap::from([(0, component)]),
+        by_last: vec![(3, 0)],
+        by_first: [vec![], vec![(0, 0)]],
+    };
+    let goal = Goal {
+        values: &values,
+        want: true,
+        low: 1,
+        high: 2,
+    };
+    let side = Side::List(&index, goal);
+    assert_eq!(
+        side.unseen(0, &HashSet::new()),
+        [Some((3, 12)), Some((0, 10))]
+    );
+    assert_eq!(
+        side.unseen(0, &HashSet::from([10])),
+        [Some((3, 12)), Some((2, 11))]
+    );
+}
+
 /// `Search::value_height`, `Heights::least_height` and `Heights::height_bounds` agree on every
 /// value the search finds: for each type of a pool of lists, pairs, atoms and their unions,
 /// meets and differences, the value found, when its height is known, lies within the type's

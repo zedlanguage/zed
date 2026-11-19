@@ -1541,46 +1541,34 @@ impl Printer<'_> {
         }
         let every = list.tail != over;
         let mut tail = every.then(|| all(self));
-        // Whether the text from each block on has a value, as `class` below finds it.
-        let mut valued = vec![every; m + 1];
-        for k in (0..m).rev() {
-            valued[k] = value[k] || turn[k] || valued[k + 1];
-        }
-        // Whether each block of value `false` is met with the one atom of the block of value
-        // `true` after it, and that block so written in it: then it ends the text.
-        let mut merged = vec![false; m];
         // The texts of each block's literals: of value `true`, `a` and `all \ b` in the order
         // of the literals; of value `false`, the atoms refused and those taken. The atoms
         // `meet` writes as one text are written so, before any of their own texts is made, so
         // that no text made and dropped counts as a use of a part.
+        //
+        // A block of value `false` is never met with an atom `c` of the block after it, as
+        // `b & c`, where that block is `c` alone, of value `true`, with no text of a value
+        // after it: no list in its one form (module `list` in `bdd.rs`) has that shape. Proof:
+        // with no turn at block k nor after it (a turn after it is a text of a value, and the
+        // block of `c` alone refuses no atom, so it has none), every block from k on and the
+        // default have the value `over` of block k as written, except the block of `c`. So
+        // once the blocks before k are false, the function is `over` under `!c` whatever the
+        // other atoms, and the one form puts `!c` in block k, the first block of that
+        // function; no atom is in two blocks, so `c` is not in the block after it. The
+        // twelfth and thirteenth rounds' coverage found the merge never made
+        // (TEST-kernel-unreached-paths-7), and it is removed.
         let mut texts: Vec<(Vec<Text>, Vec<Text>)> = Vec::with_capacity(m);
         for (k, (_, lits)) in list.blocks.iter().enumerate() {
-            if k > 0 && merged[k - 1] {
-                texts.push((Vec::new(), Vec::new()));
-                continue;
-            }
             let (mut first, mut taken) = (Vec::new(), Vec::new());
             // The atoms the block of value `false` meets, written `b1 & b2 & rest`.
             let mut met = false;
             if !value[k] {
-                let mut atoms: Vec<A> = (lits.iter().filter(|(_, t)| !t))
+                let atoms: Vec<A> = (lits.iter().filter(|(_, t)| !t))
                     .map(|(a, _)| a.clone())
                     .collect();
-                // `b & c` where the rest is the one atom `c` of a block of value `true` with
-                // nothing written after it: a text after `c` would make the rest a union.
-                let c = match list.blocks.get(k + 1) {
-                    Some((_, l)) if !turn[k] && value[k + 1] && !valued[k + 2] => match &l[..] {
-                        [(c, true)] => Some(c.clone()),
-                        _ => None,
-                    },
-                    _ => None,
-                };
-                let ends = c.is_some();
-                atoms.extend(c);
                 if let Some(text) = meet(self, &atoms) {
                     first.push(text);
                     met = true;
-                    merged[k] = ends;
                 }
             }
             for (a, t) in lits {
@@ -1605,7 +1593,23 @@ impl Printer<'_> {
             }
             texts.push((first, taken));
         }
-        // The class of the text from each block on, `None` where it has no value.
+        // The class of the text from each block on, `None` where it has no value. Only the
+        // text after the last block can have none: every block has a class. Proof. In the one
+        // form the values alternate and the default is the value the last block does not have
+        // (module `list` in `bdd.rs`). The last block is turned by no turn (a turn needs a block
+        // after it), so it is written with the value `over` has at the end: written `false`,
+        // its value is `over` and the default is not, so the default is written (`every`);
+        // written `true`, it has a value. A block before a text with a value has one. After a
+        // turn at block k, block k + 1 exists; if it is the last, the default is the value of
+        // block k, `over` before the turn, so not `over` after it, and is written; otherwise
+        // block k + 2 has the value of block k, and is written `true` unless a turn at k + 1
+        // turned it over, which gives block k + 1 a class of its own. So the text after a
+        // turn always has a value. The twelfth and thirteenth rounds' coverage found neither
+        // case made (TEST-kernel-unreached-paths-7); the asserts below keep the proof checked.
+        debug_assert!(
+            (list.blocks.last()).is_none_or(|(v, _)| *v != list.tail),
+            "the default of a list in its one form is the value its last block does not have"
+        );
         let mut class = vec![None; m + 1];
         class[m] = tail.as_ref().map(|t| t.class);
         for k in (0..m).rev() {
@@ -1616,26 +1620,17 @@ impl Printer<'_> {
                     (1, None) => first[0].class,
                     _ => Class::Union,
                 }),
-                // `b \ (a | not rest)`, or `b` where the union has no value.
-                (false, true) => Some(match (taken.is_empty() && next.is_none(), first.len()) {
-                    (false, _) => Class::Diff,
-                    (true, 1) => first[0].class,
-                    (true, _) => Class::And,
-                }),
-                // Met with the block after it, the block's text is the meet, then without the
-                // atoms taken.
-                (false, false) if merged[k] => Some(match taken.is_empty() {
-                    true => first[0].class,
-                    false => Class::Diff,
-                }),
+                // `b \ (a | not rest)`; the text after a turn has a value (above).
+                (false, true) => {
+                    debug_assert!(next.is_some(), "the text after a turn has a value");
+                    Some(Class::Diff)
+                }
                 // A block of value `false` before no value leaves no value.
                 // Its block is a set of one literal or more (`Bdd::list`): each refused one is in
                 // `first` (or in the meet there) and each taken one in `taken`, so the two are not
                 // both empty, and the text after it is not the text of this block. (A block's set
                 // is a `Cell::block: Arc<Set<A>>`, a treap node that holds a literal, so
-                // `set::iter` yields one at least. The one block whose texts are left empty
-                // follows a block with `merged`, which `merged` sets only where that block has
-                // `value` `true`, so it is not of this arm.)
+                // `set::iter` yields one at least.)
                 (false, false) => next.map(|_| match (taken.is_empty(), first.len()) {
                     (false, _) => Class::Diff,
                     (true, 1) if every && k + 1 == m => first[0].class,
@@ -1655,17 +1650,10 @@ impl Printer<'_> {
         // Where the text from the next block on stands.
         let mut at = At::Any;
         for (k, (mut first, taken)) in texts.into_iter().enumerate() {
-            if class[k].is_none() {
-                break;
-            }
+            debug_assert!(class[k].is_some(), "every block has a class");
             let last = class[k + 1].is_none();
             if turn[k] {
                 let refused = Text::group(first, " & ", At::And, Class::And);
-                if taken.is_empty() && last {
-                    put(&mut segs, refused, at);
-                    tail = None;
-                    break;
-                }
                 open(&mut segs, &mut closing, at, Class::Diff);
                 put(&mut segs, refused, At::DiffLeft);
                 segs.push(Seg::Str(" \\ ".into()));
@@ -1688,7 +1676,7 @@ impl Printer<'_> {
                     continue;
                 }
                 let refused = Text::group(first, " & ", At::And, Class::And);
-                if merged[k] || every && k + 1 == m {
+                if every && k + 1 == m {
                     put(&mut segs, refused, at);
                     tail = None;
                     break;
