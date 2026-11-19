@@ -340,7 +340,7 @@ pub struct R10State {
     pub sig_summaries: HashMap<(usize, u64), Arc<CalleeSummary>>,
     pub forwards: Vec<OpenForward>,
     /// Forwards admitted watching each root, in admission order. A forward that is forced or kept
-    /// stays listed until [`Ck::r10_force_root`] next empties the root's list, and readers skip
+    /// stays listed until `Ck::r10_force_root` next empties the root's list, and readers skip
     /// it by its status. Removing it at once (`retain`) cost O(w) per closed forward, O(w^2) for w
     /// forwards on one root; left in place, each entry is dropped once, O(1) amortized.
     pub root_watchers: HashMap<usize, Vec<usize>>,

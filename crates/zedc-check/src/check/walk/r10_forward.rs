@@ -260,6 +260,15 @@ impl<'t, 'a> Ck<'t, 'a> {
                     if n.on.as_var().is_none() {
                         intrinsic_fails.insert("#22");
                     }
+                    // A function held in a need's types (`f(y -> (m, y))`) may own classes and
+                    // hold the callee's parameters, which `finish` would leave unnamed in a
+                    // kept forward (landing review of LAND-map-chain-neon, Neon B3); refuse.
+                    if !matches!(n.kind, NeedKind::Map { .. })
+                        && n.tys()
+                            .any(|t| !t.fns.is_empty() || t.held_function().is_some())
+                    {
+                        intrinsic_fails.insert("#4");
+                    }
                     if let NeedKind::Map { f, .. } = &n.kind
                         && !check_map_fn_27(f)
                     {
@@ -1169,6 +1178,9 @@ impl<'t, 'a> Ck<'t, 'a> {
         &mut self,
         shared: Vec<Need>,
         merged: &Binds,
+        level: usize,
+        own: &mut Vec<usize>,
+        done: &mut Vec<usize>,
     ) -> Vec<Need> {
         if merged.is_empty() || self.r10.barrier_skipped("N4") {
             return shared;
@@ -1185,12 +1197,38 @@ impl<'t, 'a> Ck<'t, 'a> {
         if !any_hit {
             return shared;
         }
+        self.r10_expand_kept_fwds(shared, level, own, done)
+    }
+
+    /// Expands every kept forward in `needs` into its needs, making and resolving its
+    /// internal classes at `level` and listing them in `own` and `done`.
+    pub(in crate::check) fn r10_expand_kept_fwds(
+        &mut self,
+        shared: Vec<Need>,
+        level: usize,
+        own: &mut Vec<usize>,
+        done: &mut Vec<usize>,
+    ) -> Vec<Need> {
         let clear_lambda = !self.r10.cfg.keep_map_lambda_on_decode;
         let mut expanded = Vec::new();
         for n in shared {
             match &n.kind {
                 NeedKind::Fwd(fwd) => {
                     self.r10.stats.n4_merged_expansions += 1;
+                    // The decoded needs name the forward's internal classes `$k`. A kept
+                    // forward never made them, so make and resolve them here as `generalize`
+                    // does its own; otherwise they reach the signature unnamed (Neon B2).
+                    if let Some(lo) = fwd.base_class {
+                        for id in lo..lo + fwd.need_count {
+                            if !self.classes.is_materialized(id) {
+                                self.classes
+                                    .materialize_at(id, Self::make_fresh_class(id, level, true));
+                                self.resolve(id);
+                                own.push(id);
+                                done.push(id);
+                            }
+                        }
+                    }
                     expanded.extend(fwd.decode_uncounted(n.span, clear_lambda));
                 }
                 _ => expanded.push(n),

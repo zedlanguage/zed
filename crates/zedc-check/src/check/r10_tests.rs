@@ -132,6 +132,38 @@ fn sig_eq_full(label: &str, e: &Sig, d: &Sig) -> Result<(), String> {
 }
 
 fn info_eq_full(label: &str, e: &Info, d: &Info) -> Result<(), String> {
+    // Names every field with no `..`, so a field added to `Info` fails to compile here until
+    // it is compared below (landing review round 1, Opus F2).
+    let Info {
+        adopt: _,
+        calls: _,
+        placed: _,
+        fits: _,
+        sigs: _,
+        tops: _,
+        passes: _,
+        quotients: _,
+        follows: _,
+        witness: _,
+        dense: _,
+        brackets: _,
+        reduce: _,
+        reducers: _,
+        family_sums: _,
+        list_concats: _,
+        generic_sums: _,
+        split_folds: _,
+        fold_calls: _,
+        split_needs: _,
+        fold_reads: _,
+        escaping_calls: _,
+        remaps: _,
+        errors: _,
+        reported_literals: _,
+        warnings: _,
+        blocking: _,
+        limits: _,
+    } = e;
     if e.errors != d.errors {
         return Err(format!(
             "{label}: errors mismatch\n  E: {:?}\n  D: {:?}",
@@ -328,8 +360,15 @@ fn d_equals_e_on_chains(form: &str, lo: usize, hi: usize) {
 }
 
 #[test]
-fn r10_m66_chains_f_2_to_79() {
-    d_equals_e_on_chains("f", 2, 79);
+fn r10_m66_chains_f_2_to_60() {
+    d_equals_e_on_chains("f", 2, 60);
+}
+
+/// Split from 2..=79, which took 8.3 s alone at load 38 and 27.4 s in a review seat at load
+/// about 60 (landing review round 1, Opus F1).
+#[test]
+fn r10_m66_chains_f_61_to_79() {
+    d_equals_e_on_chains("f", 61, 79);
 }
 
 #[test]
@@ -1169,4 +1208,147 @@ fn r10_signature_hash_ties_each_bound_to_its_variable() {
         assert_ne!(sx, sy, "base {r}");
         assert_ne!(dx, dy, "base {r}");
     }
+}
+
+/// Landing review, Neon round 1 (B2 N4 expansion, B3 nested lambda in a callee, B4 sibling
+/// lambdas in a closed function, B5 split memo, the Q3 cases): D gives E's results and
+/// signature digests on each program.
+#[test]
+fn r10_neon_round1_programs_agree_with_e() {
+    let cases: &[(&str, &str)] = &[
+        (
+            "n4_expansion",
+            "h0(positional f, positional m) = m.map(f).map(f);\n\
+             h1(positional f, positional t) = {\n  a = t[0];\n  b = t[0];\n  \
+             r = h0(f, b);\n  (a, r)\n};\n",
+        ),
+        (
+            "nested_lambda_in_callee_1",
+            "h0(positional f, positional m) = m.map(x -> (y -> (f(x), y)));\n\
+             h1(positional f, positional m) = h0(f, m);\n",
+        ),
+        (
+            "nested_lambda_in_callee_2",
+            "h0(positional f, positional m) = f(y -> (m, y));\n\
+             h1(positional f, positional m) = h0(f, m);\n",
+        ),
+        (
+            "sibling_lambdas_in_closed_function",
+            "h0(positional f, positional m) = m.map(f).map(f);\n\
+             outer(positional a, positional b) = (\n  (f, m) -> (h0(f, m), a),\n  \
+             (g, n) -> (h0(g, n), b)\n);\n",
+        ),
+        (
+            "split_memo_shared",
+            "top = xs -> xs >< max;\nb = m -> m.map(top);\n\
+             a(positional f, positional m) = (m.map(top), f(b));\nc(positional f) = f(b);\n\
+             r1 = b({\"k\" -> {\"a\" -> 1}});\nr2 = b({\"k\" -> {\"a\" -> 1.0f64}});\n",
+        ),
+        (
+            "rank_above_0",
+            "h0(positional f, positional m) = m.map(f).map(f);\n\
+             h1(positional f, positional g, positional m) = {\n  r0 = m.map(g);\n  \
+             r1 = h0(f, r0);\n  r2 = r1.map(g);\n  r2\n};\n\
+             h2(positional f, positional g, positional m) = h1(f, g, m);\n",
+        ),
+        (
+            "two_forwards_chained",
+            "h0(positional f, positional m) = m.map(f).map(f);\n\
+             h1(positional f, positional g, positional m) = {\n  r0 = h0(f, m);\n  \
+             r1 = h0(g, r0);\n  r2 = r1.map(f);\n  (r0, r2)\n};\n\
+             h2(positional f, positional g, positional m) = h1(f, g, m);\n",
+        ),
+        (
+            "returned_lambda",
+            "h0(positional f, positional m) = m.map(f).map(f);\n\
+             outer(positional g, positional n) = {\n  r0 = n.map(g);\n  \
+             inner = (f, m) -> (h0(f, m), r0);\n  inner\n};\n",
+        ),
+        (
+            "lambda_argument",
+            "h0(positional f, positional m) = m.map(f).map(f);\n\
+             outer(positional k, positional g, positional n) = {\n  r0 = n.map(g);\n  \
+             k((f, m) -> (h0(f, m), r0))\n};\n",
+        ),
+        (
+            "lambda_in_map",
+            "h0(positional f, positional m) = m.map(f).map(f);\n\
+             outer(positional g, positional n) = {\n  r0 = n.map(g);\n  \
+             n.map(x -> ((f, m) -> (h0(f, m), x, r0)))\n};\n",
+        ),
+        (
+            "two_lambda_arguments",
+            "h0(positional f, positional m) = m.map(f).map(f);\n\
+             outer(positional k, positional g, positional n) = {\n  r0 = n.map(g);\n  \
+             k((f, m) -> (h0(f, m), r0), (p, q) -> (h0(p, q), r0))\n};\n",
+        ),
+    ];
+    let mut failed = Vec::new();
+    for (name, src) in cases {
+        let (e, _) = run_with_cfg(src, R10Config::eager());
+        let (d, st) = run_with_cfg(src, R10Config::default());
+        if let Err(why) = info_eq_full(name, &e, &d) {
+            failed.push(format!(
+                "{why} (admitted {}, kept {})",
+                st.admitted, st.kept_at_generalize
+            ));
+            continue;
+        }
+        for (id, es) in &e.sigs {
+            let ds = &d.sigs[id];
+            if es.digest() != ds.digest() || es != ds {
+                failed.push(format!("{name}: signature {id} differs from E's"));
+            }
+        }
+    }
+    assert!(failed.is_empty(), "{}", failed.join("\n"));
+}
+
+/// Landing review, Neon B4: forwards kept inside lambdas nested in one closed function. D
+/// names every type variable as E does (results, digests and signatures equal), on sibling,
+/// nested and mixed shapes; each program admits a forward, so D's path is the one tested.
+#[test]
+fn r10_neon_b4_nested_lambdas_name_as_e() {
+    let h0 = "h0(positional f, positional m) = m.map(f).map(f);\n";
+    let bodies: &[(&str, &str)] = &[
+        (
+            "three_siblings",
+            "outer(positional a, positional b, positional c) = (\n  \
+             (f, m) -> (h0(f, m), a),\n  (g, n) -> (h0(g, n), b),\n  (k, p) -> (h0(k, p), c)\n);\n",
+        ),
+        (
+            "lambda_in_lambda",
+            "outer(positional a) = (f, m) -> (h0(f, m), (g, n) -> (h0(g, n), a, m));\n",
+        ),
+        (
+            "siblings_each_nesting",
+            "outer(positional a, positional b) = (\n  \
+             (f, m) -> ((g, n) -> (h0(g, n), a), h0(f, m)),\n  \
+             (k, p) -> ((q, r) -> (h0(q, r), b), h0(k, p))\n);\n",
+        ),
+        (
+            "two_forwards_in_one_sibling",
+            "outer(positional a, positional b) = (\n  \
+             (f, m) -> (h0(f, m), h0(f, a)),\n  (g, n) -> (h0(g, n), b)\n);\n",
+        ),
+    ];
+    let mut failed = Vec::new();
+    for (name, body) in bodies {
+        let src = format!("{h0}{body}");
+        let (e, _) = run_with_cfg(&src, R10Config::eager());
+        let (d, st) = run_with_cfg(&src, R10Config::default());
+        assert!(e.errors.is_empty(), "{name}: E errors {:?}", e.errors);
+        assert!(st.admitted > 0, "{name}: no forward admitted");
+        if let Err(why) = info_eq_full(name, &e, &d) {
+            failed.push(why);
+            continue;
+        }
+        for (id, es) in &e.sigs {
+            let ds = &d.sigs[id];
+            if es.digest() != ds.digest() || es != ds {
+                failed.push(format!("{name}: signature {id} differs from E's"));
+            }
+        }
+    }
+    assert!(failed.is_empty(), "{}", failed.join("\n"));
 }

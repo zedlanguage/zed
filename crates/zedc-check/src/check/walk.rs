@@ -12427,7 +12427,7 @@ impl<'t, 'a> Ck<'t, 'a> {
         needs.sort_by_key(|(n, _)| *n);
         let ordered = self.r10_merge_direct_and_kept_needs(&kept_fids, needs);
         let (kept, merged) = self.share_alike(ordered);
-        let kept = self.r10_n4_expand_if_merged(kept, &merged);
+        let kept = self.r10_n4_expand_if_merged(kept, &merged, level, &mut own, &mut done);
         sig.needs = kept;
         // Only the classes listed for this level are replaced here, not every class `sig`
         // holds. A type variable keeps its class's name `$k` until `finish`, so a function
@@ -12471,6 +12471,24 @@ impl<'t, 'a> Ck<'t, 'a> {
         deep.extend(merged.iter().map(|(v, t)| (v.clone(), t.clone())));
         self.r10_check_m56c_deep_outside(&sig, &deep, &outside);
         let mut sig = sig.replace(&deep).replace_outside(&outside);
+        // A function that holds a class of a function around it expands its kept forwards
+        // here, so its classes are named as `E` names them: `finish` decodes such forwards by
+        // the names given here only below a function that is not closed, and two of them
+        // inside one closed function kept names that collide (landing review of
+        // LAND-map-chain-neon, Neon B4). Cost: one walk of the signature's variables, only
+        // for a signature with forwards.
+        if sig.has_fwd_needs()
+            && sig_vars(&sig).iter().any(|v| {
+                class_id(v).is_some_and(|k| {
+                    self.classes.is_materialized(k) && self.classes[self.find(k)].level < level
+                })
+            })
+        {
+            let needs = std::mem::take(&mut sig.needs);
+            let mut no_done = Vec::new();
+            sig.needs = self.r10_expand_kept_fwds(needs, level, &mut own, &mut no_done);
+            sig.facts = Default::default();
+        }
         if self.r10.cfg.enabled && sig.has_fwd_needs() {
             self.r10_name_compact_sig_in_generalize(&mut sig, &own, &outside);
         } else {
