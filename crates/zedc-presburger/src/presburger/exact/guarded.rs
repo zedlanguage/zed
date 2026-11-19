@@ -591,7 +591,7 @@ pub(super) fn forward(
     forward_in(&prep, s, h, work)
 }
 
-/// [`forward`] on the part `prep` was prepared from.
+/// `forward` on the part `prep` was prepared from.
 pub(super) fn forward_in(
     prep: &Prep,
     s: &Atom,
