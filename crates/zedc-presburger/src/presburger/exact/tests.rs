@@ -289,6 +289,13 @@ fn random_formulas_at_seed_3569362060062839708() {
     random_formulas_at(3569362060062839708);
 }
 
+/// [`random_formulas_project_to_the_values_of_their_points`] at seed 13733945893095969990,
+/// which refused 4 answers, past the 3 allowed (PRES-presbench1-red).
+#[test]
+fn random_formulas_at_seed_13733945893095969990() {
+    random_formulas_at(13733945893095969990);
+}
+
 fn random_formulas_at(seed: u64) {
     let mut rng = Rng(seed | 1);
     let syms: Vec<Atom> = NAMES.iter().map(|n| a(n)).collect();

@@ -10339,15 +10339,47 @@ fn local_repair(
     model: &Model,
     extra: &[Con],
 ) -> Option<Model> {
+    match local_repair_status(acc, near, values, model, extra) {
+        Repair::Point(m) => Some(m),
+        Repair::None | Repair::Empty => None,
+    }
+}
+
+/// What [`local_repair_status`] found.
+enum Repair {
+    /// A point of the constraints taken with `extra`, as [`local_repair`] gives it.
+    Point(Model),
+    /// No point found; the constraints taken with `extra` may still have one.
+    None,
+    /// No point found, and the constraints taken with `extra` are shown to have none.
+    Empty,
+}
+
+/// [`local_repair`], telling apart the case where the repair's own system shows that the
+/// constraints taken with `extra` have no integer point: every constraint taken of two or more
+/// atoms that reads an atom of `extra` reads only atoms of `extra` (`closed`). Then no
+/// constraint of the repair is specialized at `model` (`TermValues::specialize` gives the
+/// constraint itself when all its atoms are free), so the repair's system is `extra`, the
+/// bounds of its atoms (each implied by the constraints of one atom taken) and constraints
+/// taken: every row is implied by `extra` with the groups of the constraints taken around its
+/// atoms, and its `Ok(None)` ([`solve`] answers so only for a system with no integer point)
+/// shows that `acc.around(extra) ∪ extra` has none either. The repair itself is unchanged.
+fn local_repair_status(
+    acc: &[Con],
+    near: &Near,
+    values: &mut TermValues,
+    model: &Model,
+    extra: &[Con],
+) -> Repair {
     if let Some(m) = least_read_repair(acc, near, values, model, extra) {
-        return Some(m);
+        return Repair::Point(m);
     }
     let seed: BTreeSet<Atom> = extra
         .iter()
         .flat_map(|c| c.lin.terms.keys().cloned())
         .collect();
     if seed.is_empty() {
-        return None;
+        return Repair::None;
     }
     let mut ids = BTreeSet::new();
     let mut local: Vec<Con> = extra.to_vec();
@@ -10374,16 +10406,21 @@ fn local_repair(
         })
         && !extra.iter().all(|c| c.holds_linear(model))
     {
-        return None;
+        return Repair::None;
     }
+    let closed = (ids.iter()).all(|&id| acc[id].lin.terms.keys().all(|b| seed.contains(b)));
     for id in ids {
         local.push(values.specialize(acc, id, &seed, model));
     }
-    let mut m = solve_repair(&local, true).ok()??;
+    let mut m = match solve_repair(&local, true) {
+        Ok(Some(m)) => m,
+        Ok(None) if closed => return Repair::Empty,
+        Ok(None) | Err(_) => return Repair::None,
+    };
     for a in seed {
         m.entry(a).or_insert(Int::ZERO);
     }
-    Some(m)
+    Repair::Point(m)
 }
 
 /// Whether `extra` is shown to meet the constraints taken so far nowhere by a part of them:
@@ -10488,11 +10525,55 @@ fn pick_taking(p: &Parts, deep: bool) -> Result<(Model, Vec<&Parts>), Refusal> {
     if old_path() {
         return pick_by(p, deep, false);
     }
-    pick_by(p, deep, true).or_else(|_| pick_by(p, deep, false))
+    // Complexity tradeoff (PRES-presbench1-red): naive version, a refused fast reading always
+    // followed by the slow one, which reads every disjunction again and solves the constraints
+    // taken once per disjunct that no point answers: the slow reading's work again, up to
+    // O(n·solve) for n disjunctions. Used: where the fast reading never took a disjunct on the
+    // projection's word (`settled`), the slow reading would take the same disjuncts and refuse
+    // at the same disjunction (proof at [`pick_reading`]), so only what it would do differently
+    // is done: [`try_pick_disjoint_wide`], which it runs first, and the solves that give its
+    // refusal's cause. That work is a part of the slow reading's, so no refusal for work is
+    // added; the answer, a refusal and its cause, is the slow reading's.
+    let mut settled = false;
+    match pick_reading(p, deep, true, &mut settled) {
+        Ok(got) => Ok(got),
+        Err(why) if settled => try_pick_disjoint_wide(p, deep).unwrap_or(Err(why)),
+        Err(_) => pick_by(p, deep, false),
+    }
 }
 
 /// [`pick_taking`], reading the disjunctions by halves when `fast`.
 fn pick_by(p: &Parts, deep: bool, fast: bool) -> Result<(Model, Vec<&Parts>), Refusal> {
+    pick_reading(p, deep, fast, &mut false)
+}
+
+/// [`pick_by`]; on a refusal of the fast reading, sets `settled` where the slow reading
+/// (`pick_by(p, deep, false)`) is shown to give the same refusal, with the same cause, unless
+/// [`try_pick_disjoint_wide`], which it runs first, answers.
+///
+/// Why: while the fast reading has taken no disjunct on the projection's word (`valid` never
+/// false), it is the slow reading step for step but for one thing. The disjunctions are read in
+/// the same order (`by_halves_lazy` runs its leaves in order 0..n, as the slow loop does), from
+/// the same model (the solve of `p.cons`, deterministic, made by both), with the same
+/// constraints taken, the same `values` and so the same local repairs; the marks under stamps
+/// only spare reads of parts already found not to hold at the same model. The one difference:
+/// a disjunct `d` that the projection `K` answers with no point (`Ok(None)` of `K ∪ d`) is
+/// passed over, where the slow reading solves the constraints taken `A` with `d`. `K` is a
+/// projection of rows implied by `A` (the rows of `A`'s groups around the disjunctions' atoms,
+/// with every row taken since added), and an over-approximation ([`shadow`] with `exact`
+/// false, or `DisjointWide::project_keep`): every integer point of `A ∪ d` gives one of
+/// `K ∪ d`. So `A ∪ d` has no integer point, and [`solve`], which answers `Ok(Some)` only with
+/// a point, gives `Ok(None)` or a refusal there: never a disjunct taken. Hence both readings
+/// take the same disjunct at each disjunction and the same model, and fail at the same one.
+/// The slow reading's cause is that of the last of its solves there that is refused; the
+/// solves the fast reading passed over are made here, the last first, down to the last refused
+/// solve it made, so the cause is the same.
+fn pick_reading<'a>(
+    p: &'a Parts,
+    deep: bool,
+    fast: bool,
+    settled: &mut bool,
+) -> Result<(Model, Vec<&'a Parts>), Refusal> {
     // Complexity tradeoff: naive `pick_by(..., false)` calls `solve(&cs, true)` on the full `k`-atom
     // component whenever the current model misses both arms of a disjunction, costing `Theta(k^2)`
     // across `k` disjunctions (`quotient` unpacking onto the greatest atom on unbounded unit rows, or
@@ -10554,6 +10635,9 @@ fn pick_by(p: &Parts, deep: bool, fast: bool) -> Result<(Model, Vec<&Parts>), Re
     // Whether the model is a point of the constraints taken: not after a disjunct is taken on
     // the projection's word, until it is found again.
     let mut valid = true;
+    // Whether no disjunct has been taken on the projection's word, so that this reading has
+    // run as the slow one would ([`pick_reading`]).
+    let mut never_invalid = true;
     let keep: Vec<BTreeSet<Atom>> = if asks {
         (batch.iter())
             .map(|ds| {
@@ -10631,7 +10715,14 @@ fn pick_by(p: &Parts, deep: bool, fast: bool) -> Result<(Model, Vec<&Parts>), Re
                 }
                 let mut taken: Option<(&Parts, Model)> = None;
                 let mut why = Refusal::Disjuncts;
-                for d in ds.iter().filter(|_| valid) {
+                // The disjuncts passed over on the projection's word, and the last one whose
+                // solve of the constraints taken was refused.
+                let mut passed: Vec<usize> = Vec::new();
+                let mut why_at: Option<usize> = None;
+                // The disjuncts that the local repair shows to meet the constraints taken
+                // nowhere ([`Repair::Empty`]), in order.
+                let mut empty: Vec<usize> = Vec::new();
+                for (at, d) in ds.iter().enumerate().filter(|_| valid) {
                     // A disjunct whose constraints hold at the model, though the disjunctions below
                     // it may not, is taken with the model unchanged, so that the parts found not to
                     // hold below it are not read again.
@@ -10639,12 +10730,17 @@ fn pick_by(p: &Parts, deep: bool, fast: bool) -> Result<(Model, Vec<&Parts>), Re
                         taken = Some((d, Model::new()));
                         break;
                     }
-                    if let Some(m) = local_repair(&acc.cons, &near, &mut values, &model, &d.cons) {
-                        taken = Some((d, m));
-                        break;
+                    match local_repair_status(&acc.cons, &near, &mut values, &model, &d.cons) {
+                        Repair::Point(m) => {
+                            taken = Some((d, m));
+                            break;
+                        }
+                        Repair::Empty => empty.push(at),
+                        Repair::None => {}
                     }
                 }
-                for d in ds {
+                let mut empty = empty.into_iter().peekable();
+                for (at, d) in ds.iter().enumerate() {
                     if taken.is_some() {
                         break;
                     }
@@ -10662,14 +10758,33 @@ fn pick_by(p: &Parts, deep: bool, fast: bool) -> Result<(Model, Vec<&Parts>), Re
                         let mut cs = k.around(&d.cons);
                         cs.extend(d.cons.iter());
                         match solve_repair(&cs, false) {
-                            Ok(None) => continue,
+                            Ok(None) => {
+                                passed.push(at);
+                                continue;
+                            }
                             Ok(Some(_)) => {
                                 taken = Some((d, Model::new()));
                                 valid = false;
+                                never_invalid = false;
                                 break;
                             }
                             Err(_) => {}
                         }
+                    }
+                    // Complexity tradeoff (PRES-presbench1-red): naive version, the solve below of
+                    // the constraints taken around `d` with `d`, the cost of solving `d`'s whole
+                    // group, for a disjunct whose local repair already showed that system to have
+                    // no integer point ([`Repair::Empty`]). Used: it is passed over, at no cost.
+                    // The solve could only give `Ok(None)` or a refusal (no point exists, and
+                    // [`solve`] gives a point only where there is one), so the disjunct taken is
+                    // the same; a refusal there only names the cause given when no disjunct is
+                    // taken, and that solve is made below when the cause depends on it. The
+                    // projection is still asked first, above, as before, so a disjunct it takes
+                    // is taken as before. `valid` holds here: the repairs ran only while it did,
+                    // and it changes only where a disjunct is taken.
+                    if empty.next_if_eq(&at).is_some() {
+                        passed.push(at);
+                        continue;
                     }
                     if !valid {
                         model = solve_repair(&acc.cons, true)?.ok_or(Refusal::Disjuncts)?;
@@ -10685,10 +10800,37 @@ fn pick_by(p: &Parts, deep: bool, fast: bool) -> Result<(Model, Vec<&Parts>), Re
                             break;
                         }
                         Ok(None) => {}
-                        Err(r) => why = r,
+                        Err(r) => {
+                            why = r;
+                            why_at = Some(at);
+                        }
                     }
                 }
                 let Some((d, m)) = taken else {
+                    // The cause the reading of before gave: that of the last of the solves
+                    // passed over (on the projection's word, or by [`Repair::Empty`]) that is
+                    // refused, if any comes after `why_at`; the solves are made the last first,
+                    // so no more of them than before. A point there cannot be (both proofs above
+                    // show none exists); were one found, the fast reading leaves `settled`
+                    // false, so the slow reading runs as before. Where a disjunct was taken on
+                    // the projection's word the fast reading's refusal is not its answer (the
+                    // slow reading runs), so no cause is made.
+                    if never_invalid {
+                        for &at in passed.iter().rev().take_while(|&&at| Some(at) > why_at) {
+                            let d = &ds[at];
+                            let mut cs = acc.around(&d.cons);
+                            cs.extend(d.cons.iter());
+                            match solve_repair(&cs, true) {
+                                Ok(None) => {}
+                                Ok(Some(_)) => return Err(why),
+                                Err(r) => {
+                                    why = r;
+                                    break;
+                                }
+                            }
+                        }
+                        *settled = !meter::spent();
+                    }
                     return Err(why);
                 };
                 // A change of any value drops every mark, not only the marks of the parts that
