@@ -627,3 +627,13 @@ fn a_test_joined_from_cases_projects_the_whole_block() {
 fn tests_on_punctured_lines_at_seed_5117989267050643737() {
     run_at(Aim::Puncture, 5117989267050643737);
 }
+
+/// The random test on punctured lines at seed 6838338168874375281, which failed at case 10,
+/// step 5 from 7c4749998 to FAIL-audit-seed48-precision: the scope updated one step at a time
+/// gave y the range [-1, 4], and the scope built from scratch gives [-1, 3]. The same fix as
+/// `families::audit_seed_48_keeps_the_hole_in_z` (`Block::gained_hole` compares the names
+/// with the last projection as well) makes it pass.
+#[test]
+fn tests_on_punctured_lines_at_seed_6838338168874375281() {
+    run_at(Aim::Puncture, 6838338168874375281);
+}
