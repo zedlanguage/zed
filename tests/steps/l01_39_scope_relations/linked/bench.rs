@@ -400,7 +400,11 @@ fn a_satellite_of_every_hub_costs_its_related_names_once() {
 /// 16.6 times (2026-11-09). At 64 and 512 it measured 11.3 times, over the limit of 10.5, so it
 /// is built at 512 and 4096: 10.4 times the instructions and 8.3 times the bytes (2026-11-13). Without the bounds no leaf becomes a star
 /// (`a_satellite_of_every_hub_costs_its_related_names_once_in_any_order`, deferred to plan row RP-scaling-10_5 in
-/// wt/scratch/deferred-tests/RP-scaling-10_5.rs). COMPLEXITY.md C37.
+/// wt/scratch/deferred-tests/RP-scaling-10_5.rs). COMPLEXITY.md C37. On 2026-11-19, 10.03
+/// times (663.3M and 6,650.9M instructions, load 35); what grows fastest is the merge of
+/// blocks (`Blocks::merge`, 11.4 times at 512 to 4096): a conjunct is moved O(log d)
+/// times, each move O(log d) in the persistent maps, O(d log² d) in all, as `Blocks` states
+/// (COMPLEXITY.md row PERF-satellite-random-under9).
 #[test]
 fn stars_formed_in_the_block_of_a_satellite_take_time_near_the_block() {
     satellite_built_in_a_random_order(512, true);

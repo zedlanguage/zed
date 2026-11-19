@@ -89,6 +89,8 @@ fn arms_of_a_long_chain_of_accounts_take_time_within_n_log_n() {
     // A lookup of a conjunct in the relation's maps finds the very formula it holds; compared
     // in full, the nest below the level, each lookup cost the depth: 0.85 and 13.19 G
     // instructions at d = 240 and 1920, 15.5 times. Now 0.76 and 7.84 G, 10.2 times.
+    // Doubled from d = 240 to 30,720, each doubling costs 2.09 to 2.15 times, with no trend
+    // up: d log d, no d² term (COMPLEXITY.md row PROOF-account-chains-nlogn).
     on_a_deep_stack(|| {
         let cases: BTreeMap<usize, (Term, Scope)> = [240, 1920]
             .map(|d| {
