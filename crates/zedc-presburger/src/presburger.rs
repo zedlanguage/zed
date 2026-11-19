@@ -94,6 +94,7 @@ use std::sync::atomic::{AtomicU64, Ordering as AtomicOrdering};
 use imbl::{OrdMap, OrdSet};
 use rustc_hash::{FxHashMap, FxHashSet};
 
+use zed_graph::UnionFind;
 use zed_kernel::refine::Refine;
 use zed_kernel::value::fresh_id;
 use zedc_int::int::Int;
@@ -641,14 +642,8 @@ fn atom_disjoint_parts(f: &Formula) -> Option<Vec<Formula>> {
     if parts.len() < 2 {
         return None;
     }
-    fn root(up: &mut [usize], mut i: usize) -> usize {
-        while up[i] != i {
-            up[i] = up[up[i]];
-            i = up[i];
-        }
-        i
-    }
-    let mut up: Vec<usize> = (0..parts.len()).collect();
+    // The least index each group's root, so the groups come in the order of their first part.
+    let mut up = UnionFind::new(parts.len());
     let mut first: HashMap<Atom, usize> = HashMap::new();
     for (i, g) in parts.iter().enumerate() {
         for c in g.cons() {
@@ -659,15 +654,14 @@ fn atom_disjoint_parts(f: &Formula) -> Option<Vec<Formula>> {
                 };
                 for x in factors {
                     let j = *first.entry(x).or_insert(i);
-                    let (ri, rj) = (root(&mut up, i), root(&mut up, j));
-                    up[ri.max(rj)] = ri.min(rj);
+                    up.union_least(i, j);
                 }
             }
         }
     }
     let mut groups: BTreeMap<usize, Vec<Formula>> = BTreeMap::new();
     for (i, g) in parts.iter().enumerate() {
-        let r = root(&mut up, i);
+        let r = up.find(i);
         groups.entry(r).or_default().push((*g).clone());
     }
     (groups.len() > 1).then(|| groups.into_values().map(Formula::and).collect())
@@ -2935,20 +2929,13 @@ fn stage_kernels(base: &Linked, stage: &[Vec<Rc<Parts>>]) -> Vec<Option<Linked>>
     let mut color = stable_colors(&atoms, &colored, &[], &[]);
     color.truncate(atoms.len());
     // The components: the atoms of each row, join and disjunction are joined.
-    let mut up: Vec<usize> = (0..atoms.len()).collect();
-    fn root(up: &mut [usize], mut i: usize) -> usize {
-        while up[i] != i {
-            up[i] = up[up[i]];
-            i = up[i];
-        }
-        i
-    }
-    let join = |up: &mut Vec<usize>, of: &mut dyn Iterator<Item = &Atom>| {
+    // Each root that of the first atom read, as before the shared union-find.
+    let mut up = UnionFind::new(atoms.len());
+    let join = |up: &mut UnionFind, of: &mut dyn Iterator<Item = &Atom>| {
         if let Some(first) = of.next() {
-            let r = root(up, place(first));
+            let first = place(first);
             for a in of {
-                let s = root(up, place(a));
-                up[s] = r;
+                up.union_into(first, place(a));
             }
         }
     };
@@ -2958,7 +2945,7 @@ fn stage_kernels(base: &Linked, stage: &[Vec<Rc<Parts>>]) -> Vec<Option<Linked>>
     for k in &keep {
         join(&mut up, &mut k.iter());
     }
-    let roots: Vec<usize> = (0..atoms.len()).map(|i| root(&mut up, i)).collect();
+    let roots: Vec<usize> = (0..atoms.len()).map(|i| up.find(i)).collect();
     // A component is tied when two of its plain atoms share a color.
     let mut by_color: Vec<usize> = (0..atoms.len())
         .filter(|&i| !matches!(atoms[i], Atom::Product(..)))
@@ -3266,33 +3253,26 @@ impl Alone<'_> {
 /// so that its answer does not change with the names either. The groups are found by union
 /// and find over the atoms with path halving, linking each row and each disjunction's atoms.
 fn alone<'a>(p: &'a Parts, proven: &[Vec<bool>]) -> Option<Alone<'a>> {
-    fn find(parent: &mut [usize], mut i: usize) -> usize {
-        while parent[i] != i {
-            parent[i] = parent[parent[i]];
-            i = parent[i];
-        }
-        i
-    }
     let mut ids: HashMap<&'a Atom, usize> = HashMap::new();
-    let mut parent: Vec<usize> = Vec::new();
-    // Links the atoms given into one group, and gives the group's root, or `None` when no
-    // atom is given.
+    let mut parent = UnionFind::default();
+    // Links the atoms given into one group, and gives an atom of the group, or `None` when no
+    // atom is given. Roots are only compared, so the root rule does not matter here.
     let mut link = |atoms: &mut dyn Iterator<Item = &'a Atom>| -> Option<usize> {
-        let mut root: Option<usize> = None;
+        let mut first: Option<usize> = None;
         for a in atoms {
             let next = parent.len();
             let i = *ids.entry(a).or_insert(next);
             if i == next {
-                parent.push(i);
+                parent.push();
             }
-            let r = find(&mut parent, i);
-            match root {
-                None => root = Some(r),
-                Some(q) if q != r => parent[r] = q,
-                Some(_) => {}
+            match first {
+                None => first = Some(i),
+                Some(f) => {
+                    parent.union(f, i);
+                }
             }
         }
-        root
+        first
     };
     let rows: Vec<Option<usize>> = (p.cons.iter())
         .map(|c| link(&mut c.lin.terms.keys()))
@@ -3306,7 +3286,7 @@ fn alone<'a>(p: &'a Parts, proven: &[Vec<bool>]) -> Option<Alone<'a>> {
     let mut groups: Vec<(Vec<&Con>, Vec<&Parts>)> = Vec::with_capacity(p.ors.len());
     for (r, (ds, shown)) in roots.into_iter().zip(p.ors.iter().zip(proven)) {
         if let Some(r) = r {
-            let r = find(&mut parent, r);
+            let r = parent.find(r);
             if group_of[r].replace(groups.len()).is_some() {
                 return None;
             }
@@ -3322,7 +3302,7 @@ fn alone<'a>(p: &'a Parts, proven: &[Vec<bool>]) -> Option<Alone<'a>> {
     }
     let mut free = Vec::new();
     for (c, r) in p.cons.iter().zip(rows) {
-        match r.and_then(|r| group_of[find(&mut parent, r)]) {
+        match r.and_then(|r| group_of[parent.find(r)]) {
             Some(g) => groups[g].0.push(c),
             None => free.push(c),
         }
@@ -5366,22 +5346,12 @@ mod cell_sweep {
         ors_atoms: &HashSet<Atom>,
     ) -> Result<Vec<Con>, ()> {
         let n = cons.len();
-        let mut parent: Vec<usize> = (0..n).collect();
-        fn find(parent: &mut [usize], mut i: usize) -> usize {
-            while parent[i] != i {
-                parent[i] = parent[parent[i]];
-                i = parent[i];
-            }
-            i
-        }
+        let mut parent = zed_graph::UnionFind::new(n);
         let mut first_by_atom: HashMap<Atom, usize> = HashMap::new();
         for (i, c) in cons.iter().enumerate() {
             for a in c.lin.terms.keys() {
                 if let Some(&prev) = first_by_atom.get(a) {
-                    let (ra, rb) = (find(&mut parent, i), find(&mut parent, prev));
-                    if ra != rb {
-                        parent[ra] = rb;
-                    }
+                    parent.union(i, prev);
                 } else {
                     first_by_atom.insert(a.clone(), i);
                 }
@@ -5390,7 +5360,7 @@ mod cell_sweep {
         let mut active_roots = FxHashSet::default();
         for a in ors_atoms {
             if let Some(&idx) = first_by_atom.get(a) {
-                active_roots.insert(find(&mut parent, idx));
+                active_roots.insert(parent.find(idx));
             }
         }
 
@@ -5413,7 +5383,7 @@ mod cell_sweep {
                 }
                 continue;
             }
-            if !active_roots.contains(&find(&mut parent, i)) {
+            if !active_roots.contains(&parent.find(i)) {
                 continue;
             }
             if c.lin.terms.len() == 1 && c.lin.terms.contains_key(x) {
@@ -9581,34 +9551,16 @@ fn envelope(mut lines: Vec<(Int, Int)>) -> Vec<(Option<Ratio>, Int, Int)> {
 impl<'c> CoreClasses<'c> {
     /// `None` when a class has no point, and so the core none.
     fn of(core: &'c [Con], x: &Atom) -> Option<Self> {
-        // Union-find over the atoms other than `x`, with path halving and union by size.
-        fn find(parent: &mut [usize], mut i: usize) -> usize {
-            while parent[i] != i {
-                parent[i] = parent[parent[i]];
-                i = parent[i];
-            }
-            i
-        }
+        // Union-find over the atoms other than `x`. Roots are only keys of `index` below, whose
+        // classes are numbered in the order of the rows, so the root rule does not matter.
         let mut ids: FxHashMap<&Atom, usize> = FxHashMap::default();
-        let (mut parent, mut size): (Vec<usize>, Vec<u32>) = (Vec::new(), Vec::new());
+        let mut parent = UnionFind::default();
         for c in core {
             let at: Vec<usize> = (c.lin.terms.keys().filter(|a| *a != x))
-                .map(|a| {
-                    let n = ids.len();
-                    *ids.entry(a).or_insert_with(|| {
-                        parent.push(n);
-                        size.push(1);
-                        n
-                    })
-                })
+                .map(|a| *ids.entry(a).or_insert_with(|| parent.push()))
                 .collect();
             for w in at.windows(2) {
-                let (a, b) = (find(&mut parent, w[0]), find(&mut parent, w[1]));
-                if a != b {
-                    let (a, b) = if size[a] < size[b] { (b, a) } else { (a, b) };
-                    parent[b] = a;
-                    size[a] += size[b];
-                }
+                parent.union(w[0], w[1]);
             }
         }
         let mut index: FxHashMap<usize, usize> = FxHashMap::default();
@@ -9619,7 +9571,7 @@ impl<'c> CoreClasses<'c> {
                 always.push(c.clone());
                 continue;
             };
-            let root = find(&mut parent, ids[a]);
+            let root = parent.find(ids[a]);
             let next = rows.len();
             let i = *index.entry(root).or_insert(next);
             if i == next {
@@ -9628,7 +9580,7 @@ impl<'c> CoreClasses<'c> {
             rows[i].push(c);
         }
         let class = (ids.into_iter())
-            .map(|(a, id)| (a, index[&find(&mut parent, id)]))
+            .map(|(a, id)| (a, index[&parent.find(id)]))
             .collect();
         let mut ends = AtomBounds::default();
         let mut kept: Vec<Vec<Con>> = vec![Vec::new(); rows.len()];
@@ -9715,57 +9667,44 @@ fn cells_by_classes(placed: &[(Rc<Vec<Con>>, CellSet)], x: &Atom, live: &[bool])
     if cons().any(|(_, c)| c.lin.terms.contains_key(x)) {
         return None;
     }
-    // Union-find over the atoms, with path halving and union by size.
+    // Union-find over the atoms; roots are only keys of `slot`, so any root rule serves.
     let mut ids: HashMap<&Atom, usize> = HashMap::new();
-    let (mut parent, mut size): (Vec<usize>, Vec<u32>) = (Vec::new(), Vec::new());
-    fn find(parent: &mut [usize], mut i: usize) -> usize {
-        while parent[i] != i {
-            parent[i] = parent[parent[i]];
-            i = parent[i];
-        }
-        i
-    }
+    let mut parent = UnionFind::default();
     let mut first: Vec<Option<usize>> = Vec::new();
     for (_, c) in cons() {
-        let mut at = c.lin.terms.keys().map(|a| {
-            let n = ids.len();
-            *ids.entry(a).or_insert_with(|| {
-                parent.push(n);
-                size.push(1);
-                n
-            })
-        });
-        let Some(u) = at.next() else {
+        let at: Vec<usize> = (c.lin.terms.keys())
+            .map(|a| *ids.entry(a).or_insert_with(|| parent.push()))
+            .collect();
+        let Some(&u) = at.first() else {
             first.push(None);
             continue;
         };
-        for v in at.collect::<Vec<_>>() {
-            let (a, b) = (find(&mut parent, u), find(&mut parent, v));
-            if a != b {
-                let (a, b) = if size[a] < size[b] { (b, a) } else { (a, b) };
-                parent[b] = a;
-                size[a] += size[b];
-            }
+        for &v in &at[1..] {
+            parent.union(u, v);
         }
         first.push(Some(u));
     }
-    // Each class's constraints by group; a constraint of no atom is a class of its own.
-    let mut classes: HashMap<usize, BTreeMap<usize, Vec<&Con>>> = HashMap::new();
+    // Each class's constraints by group, the classes in the order their first constraint is
+    // met; a constraint of no atom is a class of its own. The order is fixed, not a hash
+    // map's: each solve below charges the meter and the first refusal returns at once, so in
+    // a hash map's order the work charged, and whether the limit is reached here, changed from
+    // run to run (`cells_scaling::the_classes_of_the_cells_are_solved_in_one_order`).
+    let mut slot: HashMap<usize, usize> = HashMap::new();
+    let mut classes: Vec<BTreeMap<usize, Vec<&Con>>> = Vec::new();
     for (i, (g, c)) in cons().enumerate() {
         let key = match first[i] {
-            Some(u) => find(&mut parent, u),
+            Some(u) => parent.find(u),
             None => ids.len() + i,
         };
-        classes
-            .entry(key)
-            .or_default()
-            .entry(g)
-            .or_default()
-            .push(c);
+        let s = *slot.entry(key).or_insert_with(|| {
+            classes.push(BTreeMap::new());
+            classes.len() - 1
+        });
+        classes[s].entry(g).or_default().push(c);
     }
     let k = live.len();
     let mut dead: CellSet = Vec::new();
-    for groups in classes.values() {
+    for groups in &classes {
         // The stretches: from each start or end of a run of a group holding the class, with
         // the groups held there, by one sweep over the starts and ends in order.
         let mut ends: Vec<(usize, bool, usize)> = Vec::new();
@@ -11064,7 +11003,9 @@ struct Linked {
     // collects into a `BTreeSet`. Bench
     // `l01_38_omega_test::bench::names::decide_scales_over_guards_told_apart_by_their_nesting`.
     ids: FxHashMap<Atom, usize>,
-    parent: Vec<usize>,
+    /// The groups, each rooted at the atom whose group held more constraints (see
+    /// [`Linked::add`]); read without path compression, since lookups take `&self`.
+    parent: UnionFind,
     /// At each root, its constraints.
     held: Vec<Vec<usize>>,
     /// For the constraints added by [`Linked::meet`], the index of each term's constraint,
@@ -11122,18 +11063,14 @@ impl Linked {
         if let Some(i) = self.ids.get(a) {
             return *i;
         }
-        let i = self.parent.len();
+        let i = self.parent.push();
         self.ids.insert(a.clone(), i);
-        self.parent.push(i);
         self.held.push(Vec::new());
         i
     }
 
-    fn root(&self, mut i: usize) -> usize {
-        while self.parent[i] != i {
-            i = self.parent[i];
-        }
-        i
+    fn root(&self, i: usize) -> usize {
+        self.parent.find_shared(i)
     }
 
     /// Adds a constraint; the smaller group joins the larger, so a root is found in `log` steps.
@@ -11155,7 +11092,7 @@ impl Linked {
                 };
                 let moved = std::mem::take(&mut self.held[small]);
                 self.held[big].extend(moved);
-                self.parent[small] = big;
+                self.parent.union_into(big, small);
                 r = big;
             }
         }
@@ -15516,28 +15453,25 @@ fn parts(
 ) -> Result<Option<Vec<Int>>, Refusal> {
     let base = reduce_subset_row_eqs(base, vars);
     // The parts, by union-find over the variables each row mentions.
-    let mut parent: Vec<usize> = (0..vars).collect();
-    fn find(parent: &mut [usize], mut i: usize) -> usize {
-        while parent[i] != i {
-            parent[i] = parent[parent[i]];
-            i = parent[i];
-        }
-        i
-    }
+    // Each root that of the row's first variable, as before the shared union-find, since the
+    // parts are searched in the order of their roots.
+    let mut parent = UnionFind::new(vars);
     for (r, _) in &base {
         if let Some(&(first, _)) = r.a.first() {
-            let a = find(&mut parent, first);
             for &(j, _) in &r.a[1..] {
-                let b = find(&mut parent, j);
-                parent[b] = a;
+                parent.union_into(first, j);
             }
         }
     }
     // Each part's rows, in the order of `base`, and its variables renumbered from 0 in
-    // increasing order; the parts in the order of their least variable.
+    // increasing order; the parts in the order of their roots. A root is the first (least)
+    // variable of some row of its part, not always the part's least variable: rows `(1, 5)`
+    // then `(3, 5)` give the part {1, 3, 5} the root 3. The order is fixed by `base`, and it
+    // changes only which part is searched first, which matters only when the meter is spent
+    // (the early `Err` below); points and the least refusal do not depend on it.
     let mut of_root: BTreeMap<usize, Part> = BTreeMap::new();
     for v in 0..vars {
-        let root = find(&mut parent, v);
+        let root = parent.find(v);
         of_root.entry(root).or_default().0.push(v);
     }
     for (r, rel) in base {
@@ -15552,7 +15486,7 @@ fn parts(
             }
             continue;
         };
-        let root = find(&mut parent, first);
+        let root = parent.find(first);
         of_root
             .get_mut(&root)
             .expect("a part per root")
@@ -20983,9 +20917,8 @@ fn factored_or(g: &Formula, links: &AtomLinks, even: bool) -> Option<Formula> {
 /// of a product linked with its factors; a group is found in near-constant time.
 struct AtomLinks {
     ids: HashMap<Atom, usize>,
-    parent: Vec<usize>,
-    /// At each root, the number of atoms in its group.
-    size: Vec<usize>,
+    /// The groups; a root is only compared with another, so the root rule does not matter.
+    parent: UnionFind,
 }
 
 impl AtomLinks {
@@ -20994,8 +20927,7 @@ impl AtomLinks {
     fn of(f: &Formula) -> Option<AtomLinks> {
         let mut l = AtomLinks {
             ids: HashMap::new(),
-            parent: Vec::new(),
-            size: Vec::new(),
+            parent: UnionFind::default(),
         };
         let mut aux = false;
         f.walk(&mut |c| {
@@ -21027,44 +20959,19 @@ impl AtomLinks {
         if let Some(&i) = self.ids.get(a) {
             return i;
         }
-        let i = self.parent.len();
+        let i = self.parent.push();
         self.ids.insert(a.clone(), i);
-        self.parent.push(i);
-        self.size.push(1);
         i
     }
 
-    /// The root of `i`, with the path to it halved.
-    fn root_mut(&mut self, mut i: usize) -> usize {
-        while self.parent[i] != i {
-            self.parent[i] = self.parent[self.parent[i]];
-            i = self.parent[i];
-        }
-        i
-    }
-
-    /// Joins the groups of `a` and `b`, the smaller into the larger, so a root is found in
-    /// `log` steps.
+    /// Joins the groups of `a` and `b`.
     fn union(&mut self, a: usize, b: usize) {
-        let (ra, rb) = (self.root_mut(a), self.root_mut(b));
-        if ra != rb {
-            let (big, small) = if self.size[ra] < self.size[rb] {
-                (rb, ra)
-            } else {
-                (ra, rb)
-            };
-            self.parent[small] = big;
-            self.size[big] += self.size[small];
-        }
+        self.parent.union(a, b);
     }
 
     /// The group of the atom `a`, which is one of the atoms the groups were made of.
     fn group(&self, a: &Atom) -> usize {
-        let mut i = self.ids[a];
-        while self.parent[i] != i {
-            i = self.parent[i];
-        }
-        i
+        self.parent.find_shared(self.ids[a])
     }
 }
 
@@ -23254,28 +23161,24 @@ fn linked_conjuncts<'f>(
 ) -> Vec<(Vec<&'f Formula>, Vec<&'f Con>, Vec<usize>)> {
     /// A union-find over the conjuncts, numbered first, and the atoms.
     struct Sets {
-        parent: Vec<usize>,
+        parent: UnionFind,
         ids: HashMap<Atom, usize>,
     }
     impl Sets {
-        fn find(&mut self, mut i: usize) -> usize {
-            while self.parent[i] != i {
-                self.parent[i] = self.parent[self.parent[i]];
-                i = self.parent[i];
-            }
-            i
+        fn find(&mut self, i: usize) -> usize {
+            self.parent.find(i)
         }
+        /// The least element the root, so that the groups come in the order of their first
+        /// conjunct, row or symbol.
         fn union(&mut self, a: usize, b: usize) {
-            let (a, b) = (self.find(a), self.find(b));
-            self.parent[a.max(b)] = a.min(b);
+            self.parent.union_least(a, b);
         }
         /// The element of atom `a`, a product's linked to its factors'.
         fn atom(&mut self, a: &Atom) -> usize {
             if let Some(&e) = self.ids.get(a) {
                 return e;
             }
-            let e = self.parent.len();
-            self.parent.push(e);
+            let e = self.parent.push();
             self.ids.insert(a.clone(), e);
             if let Atom::Product(x, y) = a {
                 for g in [x.atom(), y.atom()] {
@@ -23288,7 +23191,7 @@ fn linked_conjuncts<'f>(
     }
     let cs = f.conjuncts();
     let mut sets = Sets {
-        parent: (0..cs.len()).collect(),
+        parent: UnionFind::new(cs.len()),
         ids: HashMap::new(),
     };
     // The conjunct that first reached each part shared by more than one holder.
@@ -24187,23 +24090,15 @@ fn projected_each(rows: &[Con], syms: &[&Atom]) -> Vec<Option<Vec<Con>>> {
             }
         }
     }
-    // The atoms not asked, joined when a row holds two of them (union by size, with path
-    // halving), and the range of places each such class reaches.
+    // The atoms not asked, joined when a row holds two of them, and the range of places each
+    // such class reaches.
     type Span = Option<(usize, usize)>;
     let join = |s: Span, t: Span| match (s, t) {
         (Some((a, b)), Some((c, d))) => Some((a.min(c), b.max(d))),
         (s, None) => s,
         (None, t) => t,
     };
-    let mut up: Vec<usize> = (0..id.len()).collect();
-    let mut size: Vec<usize> = vec![1; id.len()];
-    let find = |up: &mut Vec<usize>, mut a: usize| {
-        while up[a] != a {
-            up[a] = up[up[a]];
-            a = up[a];
-        }
-        a
-    };
+    let mut up = UnionFind::new(id.len());
     let ids: Vec<Vec<usize>> = (rows.iter())
         .map(|c| c.lin.terms.keys().map(|a| id[a]).collect())
         .collect();
@@ -24211,12 +24106,7 @@ fn projected_each(rows: &[Con], syms: &[&Atom]) -> Vec<Option<Vec<Con>>> {
         let mut free = row.iter().filter(|&&a| place[a].is_none());
         if let Some(&a) = free.next() {
             for &b in free {
-                let (x, y) = (find(&mut up, a), find(&mut up, b));
-                if x != y {
-                    let (x, y) = if size[x] < size[y] { (y, x) } else { (x, y) };
-                    up[y] = x;
-                    size[x] += size[y];
-                }
+                up.union(a, b);
             }
         }
     }
@@ -24226,7 +24116,7 @@ fn projected_each(rows: &[Con], syms: &[&Atom]) -> Vec<Option<Vec<Con>>> {
     let mut class: Vec<Span> = vec![None; id.len()];
     for row in &ids {
         if let Some(&a) = row.iter().find(|&&a| place[a].is_none()) {
-            let r = find(&mut up, a);
+            let r = up.find(a);
             class[r] = join(class[r], own(row));
         }
     }
@@ -24240,7 +24130,7 @@ fn projected_each(rows: &[Con], syms: &[&Atom]) -> Vec<Option<Vec<Con>>> {
         .collect();
     for (j, row) in ids.iter().enumerate() {
         let free = row.iter().find(|&&a| place[a].is_none());
-        let span = join(own(row), free.and_then(|&a| class[find(&mut up, a)]));
+        let span = join(own(row), free.and_then(|&a| class[up.find(a)]));
         let Some((lo, hi)) = span else { continue };
         let p = node_of(lo, hi);
         at[p].push(j);
@@ -25079,26 +24969,14 @@ fn forest_row_hulls(cons: &[&Con]) -> Option<HashMap<Atom, IntervalSet>> {
         })
         .collect();
     // A cycle shows as an inequality joined to an atom already in its tree (union-find over
-    // the atoms and then the inequalities, the smaller tree joining the larger).
+    // the atoms and then the inequalities).
     let n = atoms.len();
-    let mut parent: Vec<usize> = (0..n + rows.len()).collect();
-    let mut size: Vec<usize> = vec![1; n + rows.len()];
-    let root = |parent: &mut Vec<usize>, mut i: usize| {
-        while parent[i] != i {
-            parent[i] = parent[parent[i]];
-            i = parent[i];
-        }
-        i
-    };
+    let mut parent = UnionFind::new(n + rows.len());
     for (r, (ts, _)) in rows.iter().enumerate() {
         for &(i, _) in ts {
-            let (a, b) = (root(&mut parent, n + r), root(&mut parent, i));
-            if a == b {
+            if !parent.union(n + r, i) {
                 return None;
             }
-            let (big, small) = if size[a] < size[b] { (b, a) } else { (a, b) };
-            parent[small] = big;
-            size[big] += size[small];
         }
     }
     let mut boxes: Vec<Ends> = Vec::with_capacity(n);
@@ -25536,20 +25414,11 @@ fn forest_domains(
         *us_j = us;
     }
     let n_units = n_base + free.len();
-    let mut uf: Vec<usize> = (0..n_units).collect();
-    fn find(uf: &mut [usize], mut i: usize) -> usize {
-        while uf[i] != i {
-            uf[i] = uf[uf[i]];
-            i = uf[i];
-        }
-        i
-    }
+    // The least unit each root: the components below are keyed and ordered by it.
+    let mut uf = UnionFind::new(n_units);
     for us in &units_of {
         for u in us.iter().skip(1) {
-            let (a, b) = (find(&mut uf, us[0]), find(&mut uf, *u));
-            if a != b {
-                uf[a.max(b)] = a.min(b);
-            }
+            uf.union_least(us[0], *u);
         }
     }
     // The units of simple disjunctions, and the roots of those touched by one that is not.
@@ -25576,7 +25445,7 @@ fn forest_domains(
             n_base,
             &place,
         ) {
-            let r = find(&mut uf, u);
+            let r = uf.find(u);
             marked[r] = true;
         }
     }
@@ -25586,7 +25455,7 @@ fn forest_domains(
         let Some(&u0) = us.first() else {
             continue;
         };
-        let c = find(&mut uf, u0);
+        let c = uf.find(u0);
         let e = comps.entry(c).or_insert_with(|| ForestComponent {
             groups: BTreeSet::new(),
             free: Vec::new(),
@@ -25601,7 +25470,7 @@ fn forest_domains(
         }
     }
     for (k, a) in free.iter().enumerate() {
-        let c = find(&mut uf, n_base + k);
+        let c = uf.find(n_base + k);
         if let Some(e) = comps.get_mut(&c) {
             e.free.push(*a);
         }
@@ -25881,14 +25750,8 @@ fn forest_component_domains(
     let fin = |k: Int| End::Fin(Num::from(&k));
     let mut edges: Vec<ForestEdge> = Vec::new();
     let mut key: HashMap<(usize, usize), usize> = HashMap::new();
-    let mut cuf: Vec<usize> = (0..nc).collect();
-    fn find(uf: &mut [usize], mut i: usize) -> usize {
-        while uf[i] != i {
-            uf[i] = uf[uf[i]];
-            i = uf[i];
-        }
-        i
-    }
+    // The classes joined by edges so far; only tested for a cycle, so any root will do.
+    let mut cuf = UnionFind::new(nc);
     // The edge between classes `x` and `y`, made when new; `None` when it closes a cycle.
     let mut edge = |x: usize,
                     y: usize,
@@ -25899,11 +25762,9 @@ fn forest_component_domains(
         if let Some(e) = key.get(&k) {
             return Some(*e);
         }
-        let (a, b) = (find(&mut cuf, x), find(&mut cuf, y));
-        if a == b {
+        if !cuf.union(x, y) {
             return None;
         }
-        cuf[a.max(b)] = a.min(b);
         edges.push(ForestEdge {
             a: k.0,
             b: k.1,
@@ -26650,29 +26511,22 @@ fn propagate(other: &[&Con], b: &HashMap<Atom, Ends>, out: &mut Vec<Con>) {
 /// which keeps the numbering of the clusters and the order of each one's rows and atoms
 /// independent of the hash seed.
 fn clusters(cons: &[Con], ors: &[&Formula], ends: &HashMap<Atom, Ends>) -> local::Clusters {
-    fn find(parent: &mut [usize], mut i: usize) -> usize {
-        while parent[i] != i {
-            parent[i] = parent[parent[i]];
-            i = parent[i];
-        }
-        i
-    }
     let mut ids: BTreeMap<Atom, usize> = BTreeMap::new();
-    let mut parent: Vec<usize> = Vec::new();
-    let mut join = |atoms: Vec<Atom>, parent: &mut Vec<usize>| -> Option<usize> {
-        let mut root = None;
+    // Roots are only keys; the clusters are numbered by the order of `ids` below.
+    let mut parent = UnionFind::default();
+    // Joins the atoms given, and gives one of them, or `None` when none is given.
+    let mut join = |atoms: Vec<Atom>, parent: &mut UnionFind| -> Option<usize> {
+        let mut first = None;
         for a in atoms {
-            let i = *ids.entry(a).or_insert_with(|| {
-                parent.push(parent.len());
-                parent.len() - 1
-            });
-            let r = find(parent, i);
-            match root {
-                None => root = Some(r),
-                Some(q) => parent[r] = q,
+            let i = *ids.entry(a).or_insert_with(|| parent.push());
+            match first {
+                None => first = Some(i),
+                Some(f) => {
+                    parent.union(f, i);
+                }
             }
         }
-        root
+        first
     };
     let mut joining: Vec<(usize, Formula)> = Vec::new();
     for c in cons.iter().filter(|c| !is_difference(c)) {
@@ -26687,7 +26541,7 @@ fn clusters(cons: &[Con], ors: &[&Formula], ends: &HashMap<Atom, Ends>) -> local
     }
     let mut parts: HashMap<usize, Vec<Formula>> = HashMap::new();
     for (r, f) in joining {
-        let root = find(&mut parent, r);
+        let root = parent.find(r);
         parts.entry(root).or_default().push(f);
     }
     for c in cons.iter().filter(|c| is_difference(c)) {
@@ -26695,8 +26549,8 @@ fn clusters(cons: &[Con], ors: &[&Formula], ends: &HashMap<Atom, Ends>) -> local
         let Some(Some(first)) = roots.next() else {
             continue;
         };
-        let root = find(&mut parent, first);
-        if roots.all(|i| i.is_some_and(|i| find(&mut parent, i) == root)) {
+        let root = parent.find(first);
+        if roots.all(|i| i.is_some_and(|i| parent.find(i) == root)) {
             parts.entry(root).or_default().push(Formula::Con(c.clone()));
         }
     }
@@ -26705,7 +26559,7 @@ fn clusters(cons: &[Con], ors: &[&Formula], ends: &HashMap<Atom, Ends>) -> local
     let mut out = local::Clusters::default();
     let mut number: HashMap<usize, usize> = HashMap::new();
     for (a, &i) in &ids {
-        let root = find(&mut parent, i);
+        let root = parent.find(i);
         let k = *number.entry(root).or_insert_with(|| {
             out.all.push(local::Cluster {
                 items: parts.remove(&root).unwrap_or_default(),
@@ -27181,15 +27035,10 @@ fn products(
         }))
         .chain(joined)
         .collect();
-    fn find(parent: &mut [usize], mut i: usize) -> usize {
-        while parent[i] != i {
-            parent[i] = parent[parent[i]];
-            i = parent[i];
-        }
-        i
-    }
     let mut ids: BTreeMap<Atom, usize> = BTreeMap::new();
-    let mut parent: Vec<usize> = Vec::new();
+    // Each root that of a row's first atom, as before the shared union-find: the parts are
+    // solved in the order of their roots, which decides the refusal reported first.
+    let mut parent = UnionFind::default();
     let mut firsts: Vec<Option<usize>> = Vec::with_capacity(rows.len());
     // A row with no atom holds or fails alone; where one fails the premises have no point.
     let mut consistent = true;
@@ -27197,17 +27046,11 @@ fn products(
         let atoms: Vec<usize> = r
             .atoms()
             .into_iter()
-            .map(|a| {
-                *ids.entry(a).or_insert_with(|| {
-                    parent.push(parent.len());
-                    parent.len() - 1
-                })
-            })
+            .map(|a| *ids.entry(a).or_insert_with(|| parent.push()))
             .collect();
         if let Some((&a, rest)) = atoms.split_first() {
             for &b in rest {
-                let (ra, rb) = (find(&mut parent, a), find(&mut parent, b));
-                parent[rb] = ra;
+                parent.union_into(a, b);
             }
         } else if !r.holds(&Model::new()) {
             consistent = false;
@@ -27217,7 +27060,7 @@ fn products(
     let mut part_rows: BTreeMap<usize, Vec<Formula>> = BTreeMap::new();
     for (r, first) in rows.into_iter().zip(firsts) {
         if let Some(a) = first {
-            let root = find(&mut parent, a);
+            let root = parent.find(a);
             part_rows.entry(root).or_default().push(r);
         }
     }
@@ -27242,10 +27085,7 @@ fn products(
         if let Some(&id) = ids.get(&atom)
             && consistent
         {
-            part_factors
-                .entry(find(&mut parent, id))
-                .or_default()
-                .push(atom);
+            part_factors.entry(parent.find(id)).or_default().push(atom);
         }
     }
     // What each part gives its factors: `None` when it has no point, and otherwise its point,
@@ -27275,7 +27115,7 @@ fn products(
     for s in factors {
         let atom = s.atom();
         let root = match ids.get(&atom) {
-            Some(&id) if consistent => Some(find(&mut parent, id)),
+            Some(&id) if consistent => Some(parent.find(id)),
             _ => None,
         };
         let Some((root, Some((m, b, signs)))) = root.map(|r| (r, &given[&r])) else {
@@ -33575,6 +33415,43 @@ mod cells_scaling {
             assert_eq!(decide(&holders_chain(n, 1)), Ok(false), "{n}");
             assert_eq!(has_point(holders_parts(n, Some(0), false)), Ok(true), "{n}");
             assert_eq!(has_point(holders_parts(n, None, true)), Ok(false), "{n}");
+        }
+    }
+
+    /// [`cells_by_classes`] solves its classes in an order fixed by the input, so the work a
+    /// question charges is the same on every run. Eight classes of 1 to 8 chained constraints
+    /// on one cell are solved under a meter allowed half the work of all of them, so the solve
+    /// that passes the limit, and the work charged by then, depend on the order. Red when the
+    /// classes were kept in a `std` `HashMap`, whose order differs from map to map.
+    #[test]
+    fn the_classes_of_the_cells_are_solved_in_one_order() {
+        let placed: Vec<(Rc<Vec<Con>>, CellSet)> = (0..8)
+            .map(|j| {
+                let cons = (0..=j)
+                    .map(|i| Con::ge(&var(&format!("c{j}_{i}")), &var(&format!("c{j}_{}", i + 1))))
+                    .collect();
+                (Rc::new(cons), vec![(0, 0)])
+            })
+            .collect();
+        let x = Atom::Sym("x".into());
+        let run = |limit: u64| {
+            let mut work = meter::Work {
+                used: 0,
+                limit,
+                solver: SOLVER,
+            };
+            let answer = work.metered(|| cells_by_classes(&placed, &x, &[true]));
+            (answer, work.used)
+        };
+        let (answer, all) = run(u64::MAX);
+        assert_eq!(answer, Ok(Some(true)));
+        let half = run(all / 2);
+        for _ in 0..32 {
+            assert_eq!(
+                run(all / 2),
+                half,
+                "a run under half the work of {all} units"
+            );
         }
     }
 }
