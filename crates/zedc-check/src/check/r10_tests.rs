@@ -2509,12 +2509,11 @@ fn order_with_marks(s: &Sig) -> Vec<std::sync::Arc<str>> {
 /// lambda reads by `int` closes the lambda, which the forward's kept bit does not follow, so the
 /// replacement must decode the forward as [`Sig::replace`] does.
 ///
-/// This calls `Sig::flat_for` itself; it does not go through `instantiated`, which met no
-/// forward in the 48 programs of `landing6_instantiated_written` and
-/// `landing6_instantiated_forward` (Claude L6 Q1.1). Were `instantiated` to meet one without
-/// its `flat_for`, `Need::replace` now panics on a replacement that must decode
-/// (`landing6_need_replace_refuses_bindings_of_internal_results`), so the gap cannot pass
-/// silently.
+/// This calls `Sig::flat_for` itself and does not go through `instantiated` (Claude L6 Q1.1).
+/// The test that does is `landing6_call_fixing_a_parameter_a_held_lambda_reads_agrees_with_e`,
+/// which reaches `instantiated` with a kept forward and fails, at the `Need::replace` panic,
+/// with its `flat_for` removed (Gemini L6 gap 1). The 48 programs of
+/// `landing6_instantiated_written` and `landing6_instantiated_forward` reach it with none.
 #[test]
 fn landing5_need_replace_bypasses_signature_guard() {
     use zedc_types::ty::{Binds, Carrier, Ty};
