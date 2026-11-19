@@ -1045,7 +1045,7 @@ site 40 (2 new, 38 standing guards read), not run or test-only code 17, open 314
 TEST-kernel-unreached-paths-6.
 
 Thirteenth round (kernel16, 2026-11-19), row TEST-kernel-unreached-paths-6: the 314 lines the
-twelfth round left open (list file at d9e847e11). Coverage was measured at 8d4d6dd94 with
+twelfth round left open (list file at d9e847e11). Coverage was measured at 801fd15f8 with
 llvm-cov over the same eight test groups as the twelfth round (1297 pieces), and again with
 `--each-test` for `l01_23_groups_and_refusals::group_oracle`, `refusals` and
 `sweep_agreement` (262 pieces, 0 failed). This time `group_oracle` is in the measurement: as one
@@ -1054,15 +1054,17 @@ The zed-kernel shared object (`build/cov/debug/libzed_kernel.so`) is one of the 
 since the integration tests run the kernel's code from it. Each line was carried from
 d9e847e11 through the hunks of `git diff -U0`, and its text was checked; all 314 texts match.
 Profiles: `wt/coverage/kernel16-base` (at f1b7578b5, before this round's tests) and
-`wt/coverage/kernel16-final` (at 8d4d6dd94; measured before a rebase, as e45cfd5b1, whose
-zed-kernel and test files are the same).
+`wt/coverage/kernel16-final` (at 801fd15f8; measured on the same zed-kernel and test files
+before a rebase). Each holds the merged profile (`merged.profdata`) and the `llvm-cov show`
+output; the raw profiles of each test were deleted to free disk space, so a split by test
+needs a new run.
 
 The twelfth round's list is not a full scan of the lines that count 0. It is a set carried
-forward from earlier rounds. A full scan of `types/` at 8d4d6dd94 finds 1354 lines that count
+forward from earlier rounds. A full scan of `types/` at 801fd15f8 finds 1354 lines that count
 0. Of these, 606 lie outside test and bench files: 480 in `empty.rs` and 126 elsewhere. Many of
 them are `unreachable!` guards. This round's scope is the 314 carried lines.
 
-Line numbers are at d9e847e11, then (→) at 8d4d6dd94 where the line has moved.
+Line numbers are at d9e847e11, then (→) at 801fd15f8 where the line has moved.
 
 | Line | Closed by | Test or site | Control |
 |---|---|---|---|
@@ -1094,18 +1096,18 @@ this round's test.
 
 Reached in only one of this round's two runs, because the tests that reach them draw a new
 random seed on each run (`Rng::fresh`):
-- 12778 (→ 12932) was reached at 8d4d6dd94 and not at the base.
+- 12778 (→ 12932) was reached at 801fd15f8 and not at the base.
 - 406, 408, 4285, 10637, 10643, 12271 and 12672 (→ 411, 413, 4380, 10768, 10774, 12425, 12826)
-  were reached at the base and not at 8d4d6dd94.
+  were reached at the base and not at 801fd15f8.
 
 The base reached 411 five times. Splitting the base profiles by test shows that one test
-reached it, `group_oracle::meets_agree_across_orders`. That test's profile at 8d4d6dd94 shows 0
+reached it, `group_oracle::meets_agree_across_orders`. That test's profile at 801fd15f8 shows 0
 for the line, and the function the line is in did not change. 12778 counts as reached here. The
 other seven are still open: no test reaches them on every run.
 
-Open, 265 lines, numbered at 4859feeae, each with its text, in
-`wt/coverage/TEST-kernel-unreached-paths-6-kernel16-4859feeae.txt` (the commit after
-4859feeae drops the field `Search::is_group`, so `empty.rs` lines 290-504 are 1 lower,
+Open, 265 lines, numbered at c53a7410d, each with its text, in
+`wt/coverage/TEST-kernel-unreached-paths-6-kernel16-c53a7410d.txt` (e001e7c68, after
+c53a7410d, drops the field `Search::is_group`, so `empty.rs` lines 290-504 are 1 lower,
 506-1640 are 2 lower, 1642-2996 are 3 lower and lines past 2997 are 2 lower; the other files
 do not move):
 - `empty.rs` (222), by enclosing function:
