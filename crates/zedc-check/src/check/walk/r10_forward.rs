@@ -7,9 +7,9 @@ use std::sync::Arc;
 
 use zedc_syntax::lex::Span;
 use zedc_types::ty::{
-    Arrow, Binds, CallPath, EVERY, FwdFinishNaming, FwdVarStep, MapWord, Names, Need, NeedKind,
-    OTHER, Sig, SkipIndex, Ty, VarFacts, Vars, class_id, current_held_var_snapshot, fresh_name,
-    fresh_variable_span_stats_indexed, r10_hash,
+    Arrow, Binds, CallPath, EVERY, FwdFinishNaming, FwdVarStep, MapWord, NameRun, Names, Need,
+    NeedKind, OTHER, Sig, SkipIndex, Ty, VarFacts, Vars, class_id, current_held_var_snapshot,
+    fresh_name, fresh_variable_span_stats_indexed, r10_hash,
 };
 
 use super::super::probe::{
@@ -1349,7 +1349,12 @@ impl<'t, 'a> Ck<'t, 'a> {
                             }
                             FwdVarStep::InternalRun(cnt) => {
                                 if cnt > 0 {
-                                    runs.push((n_idx, cnt));
+                                    runs.push(NameRun {
+                                        start_n: n_idx,
+                                        count: cnt,
+                                        skip: skip_arc.clone(),
+                                        held: held_now.clone(),
+                                    });
                                     if broken_linear_names {
                                         // M62 negative control: quadratic one-by-one draw (Codex R9).
                                         for _ in 0..cnt {
@@ -1371,11 +1376,7 @@ impl<'t, 'a> Ck<'t, 'a> {
                         }
                     }
                     let inner = Arc::make_mut(fwd_arc);
-                    inner.gen_naming = Some(FwdFinishNaming {
-                        runs,
-                        skip: skip_arc.clone(),
-                        held: held_now.clone(),
-                    });
+                    inner.gen_naming = Some(FwdFinishNaming { runs });
                 }
                 _ => {
                     let mut nv = Vars::default();

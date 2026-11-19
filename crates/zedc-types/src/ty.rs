@@ -19,9 +19,10 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use zed_kernel::digest::Digest;
 use zed_kernel::frames::{Deep, Stack};
 pub use zed_kernel::types::names::{
-    FreshVarSpanStats, HeldVarSnapshot, Names, ProgramNames, SkipIndex, current_held_var_snapshot,
-    fresh_name, fresh_name_with_held, fresh_variable_span_stats, fresh_variable_span_stats_indexed,
-    fresh_variable_span_stats_with_held, nth_fresh_variable,
+    FreshVarSpanStats, HeldVarSnapshot, NameItem, NameRun, Names, ProgramNames, SkipIndex,
+    current_held_var_snapshot, fresh_name, fresh_name_with_held, fresh_variable_span_stats,
+    fresh_variable_span_stats_indexed, fresh_variable_span_stats_with_held, nth_fresh_variable,
+    rename_apart,
 };
 use zed_kernel::types::order;
 use zed_kernel::types::{Refusal, Spell, TextPlace, Type as KType, Verdict, defs};
@@ -2500,16 +2501,107 @@ fn fns_outside_tys<'a>(
 // order; keeping one at each function met, as first written, was O(n^2) in time and memory
 // for n nested lambdas that each hold all n variables (60.4 times the work for 8 times n,
 // against 8.5). The order is that of the naive walk: a variable met again is skipped.
+//
+// A function is entered through [`sig_walk`], which places the internal names of each compact
+// forward it holds among its variables ([`RunMark`]); see there.
 fn vars_of<'a>(tys: impl Iterator<Item = &'a Ty>, out: &mut Vars) {
-    enum Walk<'a> {
-        Ty(&'a Ty),
-        Row(&'a Row),
-        Shape(&'a Shape),
-        Held(&'a Sig),
+    let mut stack: Vec<VarWalk<'a>> = tys.map(VarWalk::Ty).collect();
+    stack.reverse();
+    walk_vars(stack, out);
+}
+
+/// One step of [`walk_vars`].
+enum VarWalk<'a> {
+    Ty(&'a Ty),
+    Row(&'a Row),
+    Shape(&'a Shape),
+    Held(&'a Sig),
+    /// A variable a compact forward's steps name ([`FwdVarStep::ClassVar`]).
+    Var(&'a Arc<str>),
+    /// The internal names of one step of a compact forward ([`FwdVarStep::InternalRun`]).
+    Mark(RunMark),
+}
+
+/// The steps that walk the variables of `s` in order, pushed on `stack` last first: each
+/// arrow's parameters and result, then each need's types ([`Need::tys`]). A compact forward's
+/// need is walked first by its steps ([`FwdNeed::var_steps`]), which give its caller variables
+/// and its internal names in the order its leaf needs would show them; its types follow, for
+/// any variable the steps do not name.
+///
+/// Proof that the steps give the order the leaf needs would: `var_steps` is made, with the
+/// need, as the first appearance of each caller variable and each run of internal results in
+/// the forward's leaf needs, in order (`r10_forward`), and `generalize` names the internal
+/// variables in that order, so each run's names rise in it. A step names a variable only while
+/// that variable still stands, as a variable, for a parameter (`sigma`) or an exit (`exits`):
+/// a replacement that put a type in its place, which the steps do not follow, leaves it to the
+/// need's types, so no step adds a variable the need does not hold. A replacement that renames
+/// one variable to another renames the step as well ([`Need::replace_in`]).
+fn sig_walk<'a>(s: &'a Sig, stack: &mut Vec<VarWalk<'a>>) {
+    let from = stack.len();
+    for a in &s.arrows {
+        stack.extend(a.params.iter().map(VarWalk::Ty));
+        stack.push(VarWalk::Ty(&a.result));
     }
+    for (i, n) in s.needs.iter().enumerate() {
+        if let NeedKind::Fwd(fwd) = &n.kind {
+            let visible: HashSet<&Arc<str>> = (fwd.sigma.iter().map(|(_, t)| t))
+                .chain(fwd.exits.iter().map(|(_, t)| t))
+                .filter_map(Ty::as_var)
+                .collect();
+            let naming = fwd.finish_naming.as_ref().or(fwd.gen_naming.as_ref());
+            let mut pieces = naming.map(|fin| fin.runs.iter()).into_iter().flatten();
+            let mut cur: Option<NameRun> = None;
+            for (step, st) in fwd.var_steps.iter().enumerate() {
+                match st {
+                    FwdVarStep::ClassVar(v) if visible.contains(v) => stack.push(VarWalk::Var(v)),
+                    FwdVarStep::ClassVar(_) => {}
+                    FwdVarStep::InternalRun(c) if *c > 0 && naming.is_some() => {
+                        let mut runs = Vec::new();
+                        let mut want = *c;
+                        while want > 0 {
+                            let Some(run) = cur.take().or_else(|| pieces.next().cloned()) else {
+                                break;
+                            };
+                            let take = want.min(run.count);
+                            let mut head = run.clone();
+                            head.count = take;
+                            if take < run.count {
+                                let mut rest = run;
+                                rest.start_n = head.end_n();
+                                rest.count -= take;
+                                cur = Some(rest);
+                            }
+                            runs.push(head);
+                            want -= take;
+                        }
+                        stack.push(VarWalk::Mark(RunMark {
+                            at: 0,
+                            sig: s as *const Sig as usize,
+                            need: i,
+                            step,
+                            runs,
+                        }));
+                    }
+                    FwdVarStep::InternalRun(_) => {}
+                }
+            }
+        }
+        stack.extend(n.tys().map(VarWalk::Ty));
+    }
+    stack[from..].reverse();
+}
+
+/// [`vars_of`] from the steps on `stack`, last first.
+fn walk_vars<'a>(mut stack: Vec<VarWalk<'a>>, out: &mut Vars) {
     let add = |out: &mut Vars, v: &Arc<str>| {
         if out.seen.insert(v.clone()) {
             out.order.push(v.clone());
+        }
+    };
+    let mark = |out: &mut Vars, m: &RunMark| {
+        if out.marked.insert((m.sig, m.need, m.step)) {
+            let at = out.order.len();
+            out.marks.push(RunMark { at, ..m.clone() });
         }
     };
     // By address: every row, shape and function is borrowed for the whole walk, so no key
@@ -2517,44 +2609,57 @@ fn vars_of<'a>(tys: impl Iterator<Item = &'a Ty>, out: &mut Vars) {
     let mut rows = HashSet::new();
     let mut shapes = HashSet::new();
     let mut held = HashSet::new();
-    let mut stack: Vec<Walk<'a>> = tys.map(Walk::Ty).collect();
-    stack.reverse();
     while let Some(w) = stack.pop() {
         let from = stack.len();
         let t = match w {
-            Walk::Row(r) => {
+            VarWalk::Row(r) => {
                 if rows.insert(Arc::as_ptr(&r.0)) {
-                    stack.extend(r.iter().map(Walk::Ty));
+                    stack.extend(r.iter().map(VarWalk::Ty));
                     stack[from..].reverse();
                 }
                 continue;
             }
-            Walk::Shape(s) => {
+            VarWalk::Shape(s) => {
                 if shapes.insert(Arc::as_ptr(&s.0)) {
-                    stack.extend(s.items.iter().chain(s.fields.values()).map(Walk::Ty));
+                    stack.extend(s.items.iter().chain(s.fields.values()).map(VarWalk::Ty));
                     stack[from..].reverse();
                 }
                 continue;
             }
-            Walk::Held(s) => {
+            VarWalk::Held(s) => {
                 if held.insert(s as *const Sig) {
                     match s.facts.4.get() {
-                        Some(order) => order.iter().for_each(|v| add(out, v)),
-                        None => {
-                            stack.extend(sig_tys(s).map(Walk::Ty));
-                            stack[from..].reverse();
+                        // Its marks are placed among its names as its own walk placed them.
+                        Some((order, marks)) => {
+                            let mut marks = marks.iter().peekable();
+                            for (i, v) in order.iter().enumerate() {
+                                while let Some(m) = marks.next_if(|m| m.at <= i) {
+                                    mark(out, m);
+                                }
+                                add(out, v);
+                            }
+                            marks.for_each(|m| mark(out, m));
                         }
+                        None => sig_walk(s, &mut stack),
                     }
                 }
                 continue;
             }
-            Walk::Ty(t) => t,
+            VarWalk::Var(v) => {
+                add(out, v);
+                continue;
+            }
+            VarWalk::Mark(m) => {
+                mark(out, &m);
+                continue;
+            }
+            VarWalk::Ty(t) => t,
         };
         t.vars.iter().for_each(|v| add(out, v));
-        stack.extend(t.tuples.iter().filter(|r| !r.0.fixed).map(Walk::Row));
+        stack.extend(t.tuples.iter().filter(|r| !r.0.fixed).map(VarWalk::Row));
         let open = t.payload_shapes().filter(|s| !s.bits.is_empty());
-        stack.extend(open.map(Walk::Shape));
-        stack.extend(t.fns.iter().map(|s| Walk::Held(s)));
+        stack.extend(open.map(VarWalk::Shape));
+        stack.extend(t.fns.iter().map(|s| VarWalk::Held(s)));
         stack[from..].reverse();
     }
 }
@@ -2595,8 +2700,34 @@ fn sig_parts(
             stores_not_found: a.partial && stores(a),
         })
         .collect();
-    let needs = s.needs.iter().map(|n| n.map_tys(|_| next())).collect();
+    let needs = (s.needs.iter())
+        .map(|n| renamed_steps(n.map_tys(|_| next()), w))
+        .collect();
     (arrows, needs)
+}
+
+/// `n` with the variables its compact forward's steps name ([`FwdVarStep::ClassVar`]) as the
+/// walk `w` replaced them: renamed where `w` put a variable in place of one, and dropped where
+/// it put another type, whose variables the need's types then give ([`sig_walk`]). O(steps).
+fn renamed_steps(mut n: Need, w: &impl Rebuild) -> Need {
+    let NeedKind::Fwd(fwd) = &mut n.kind else {
+        return n;
+    };
+    let bound = |st: &FwdVarStep| matches!(st, FwdVarStep::ClassVar(v) if w.binding(v).is_some());
+    if !fwd.var_steps.iter().any(bound) {
+        return n;
+    }
+    let steps = (fwd.var_steps.iter())
+        .filter_map(|st| match st {
+            FwdVarStep::ClassVar(v) => match w.binding(v) {
+                None => Some(st.clone()),
+                Some(t) => t.as_var().map(|u| FwdVarStep::ClassVar(u.clone())),
+            },
+            FwdVarStep::InternalRun(_) => Some(st.clone()),
+        })
+        .collect();
+    Arc::make_mut(fwd).var_steps = steps;
+    n
 }
 
 /// One replacement of variables ([`Ty::replace_in`]) over a type, a signature or a need.
@@ -2625,6 +2756,66 @@ struct Replacer<'b> {
     /// The variables each signature the walk is inside hides, last entered last: none for one
     /// that hides none, which has no memo of its own.
     entered: Vec<Vec<Arc<str>>>,
+    /// New names for the internal runs of compact forwards, when renaming
+    /// ([`Ty::renamed_runs`]): each signature met is looked up by address.
+    runs: Option<&'b RunRenames>,
+}
+
+/// New names for the internal runs of compact forwards ([`FwdFinishNaming::runs`]), by the
+/// address of the signature that holds the forward and the forward's place among its needs, as
+/// a renaming of a finished signature gives them ([`RunMark`], [`rename_apart`]).
+///
+/// The addresses are keys only, never read through: each is that of a signature the caller
+/// holds for as long as it uses the map, so none names another.
+#[derive(Clone, Debug, Default)]
+pub struct RunRenames {
+    map: HashMap<(usize, usize), Vec<NameRun>>,
+    /// A digest of the map, for [`Renamings`] to find walks under the same one.
+    digest: u64,
+}
+
+impl RunRenames {
+    /// The map from `(signature address, need place)` to the forward's new runs.
+    pub fn new(map: HashMap<(usize, usize), Vec<NameRun>>) -> Self {
+        use std::hash::{Hash, Hasher};
+        // Order-free: the sum of the entries' hashes.
+        let digest = (map.iter())
+            .map(|(k, runs)| {
+                let mut h = std::hash::DefaultHasher::new();
+                k.hash(&mut h);
+                for r in runs {
+                    (r.start_n, r.count, Arc::as_ptr(&r.skip) as usize).hash(&mut h);
+                }
+                h.finish()
+            })
+            .fold(0u64, u64::wrapping_add);
+        RunRenames { map, digest }
+    }
+
+    /// Whether it gives no forward new runs.
+    pub fn is_empty(&self) -> bool {
+        self.map.is_empty()
+    }
+
+    fn get(&self, s: &Sig, need: usize) -> Option<&Vec<NameRun>> {
+        self.map.get(&(s as *const Sig as usize, need))
+    }
+}
+
+impl PartialEq for RunRenames {
+    fn eq(&self, other: &Self) -> bool {
+        let same = |a: &[NameRun], b: &[NameRun]| {
+            a.len() == b.len()
+                && a.iter().zip(b).all(|(x, y)| {
+                    (x.start_n, x.count) == (y.start_n, y.count)
+                        && Arc::ptr_eq(&x.skip, &y.skip)
+                        && x.held.same(&y.held)
+                })
+        };
+        self.digest == other.digest
+            && self.map.len() == other.map.len()
+            && (self.map.iter()).all(|(k, a)| other.map.get(k).is_some_and(|b| same(a, b)))
+    }
 }
 
 /// The rows and payload shapes a walk that rebuilds a type met, by address, with what it made
@@ -2657,7 +2848,15 @@ impl<'b> Replacer<'b> {
             hidden: HashMap::new(),
             memos: vec![Memo::default()],
             entered: Vec::new(),
+            runs: None,
         }
+    }
+
+    /// A renaming that also gives compact forwards the new runs `runs` names.
+    fn renaming(names: &'b Binds, runs: &'b RunRenames) -> Self {
+        let mut w = Replacer::new(names, Mode::Rename);
+        w.runs = Some(runs).filter(|r| !r.is_empty());
+        w
     }
 
     /// The memo of the variables hidden now.
@@ -2695,11 +2894,15 @@ impl<'b> Replacer<'b> {
     /// and held variables and its bounds as the variables hidden now replace them.
     fn sig_of(&self, s: &Sig, arrows: Vec<Arrow>, mut needs: Vec<Need>) -> Sig {
         if self.mode == Mode::Rename {
-            for n in &mut needs {
-                if let NeedKind::Fwd(fwd) = &mut n.kind
-                    && fwd.finish_naming.is_none()
-                    && fwd.gen_naming.is_some()
-                {
+            for (i, n) in needs.iter_mut().enumerate() {
+                let NeedKind::Fwd(fwd) = &mut n.kind else {
+                    continue;
+                };
+                if let Some(runs) = self.runs.and_then(|r| r.get(s, i)) {
+                    let inner = Arc::make_mut(fwd);
+                    inner.finish_naming = Some(FwdFinishNaming { runs: runs.clone() });
+                    inner.base_class = None;
+                } else if fwd.finish_naming.is_none() && fwd.gen_naming.is_some() {
                     let inner = Arc::make_mut(fwd);
                     inner.finish_naming = inner.gen_naming.clone();
                     inner.base_class = None;
@@ -2759,7 +2962,9 @@ impl Rebuild for Replacer<'_> {
         if let Some(done) = self.memo().made.rows.get(&Arc::as_ptr(&r.0)) {
             return Some(done.clone());
         }
+        // A row may hold a function whose forward gets new runs, which no variable shows.
         let kept = match self.mode {
+            _ if self.runs.is_some() => false,
             _ if r.0.fixed => true,
             Mode::Outside if !r.open() => true,
             _ => !self.binds.index().meets(&r.0.bits),
@@ -2780,6 +2985,7 @@ impl Rebuild for Replacer<'_> {
             return Some(done.clone());
         }
         let kept = match self.mode {
+            _ if self.runs.is_some() => false,
             _ if s.fixed => true,
             Mode::Outside if !s.open() => true,
             _ => !self.binds.index().meets(&s.bits),
@@ -2877,6 +3083,7 @@ pub struct Renamings {
 /// The walks of a [`Renamings`] under one pair of maps.
 struct Renaming {
     to: Binds,
+    runs: RunRenames,
     binds: Binds,
     renamed: Memo,
     replaced: Memo,
@@ -2888,12 +3095,31 @@ struct Renaming {
 impl Renamings {
     /// `s.renamed(&to).replace(&binds)`, sharing with the signatures given before.
     pub fn renamed_replaced(&mut self, s: &Arc<Sig>, to: Binds, binds: Binds) -> Arc<Sig> {
-        let at = self.pairs.entry((to.digest, binds.digest)).or_default();
-        let i = match at.iter().position(|r| r.to == to && r.binds == binds) {
+        self.renamed_runs_replaced(s, to, RunRenames::default(), binds)
+    }
+
+    /// [`Renamings::renamed_replaced`], with the compact forwards of the functions renamed given
+    /// the new runs `runs` names ([`Ty::renamed_runs`]). Walks are shared only under the same
+    /// `to`, `runs` and `binds`: a memo keyed by address alone would give a signature the runs
+    /// another map gave it.
+    pub fn renamed_runs_replaced(
+        &mut self,
+        s: &Arc<Sig>,
+        to: Binds,
+        runs: RunRenames,
+        binds: Binds,
+    ) -> Arc<Sig> {
+        let key = (
+            to.digest.wrapping_add(runs.digest.rotate_left(17)),
+            binds.digest,
+        );
+        let at = self.pairs.entry(key).or_default();
+        let i = match (at.iter()).position(|r| r.to == to && r.runs == runs && r.binds == binds) {
             Some(i) => i,
             None => {
                 at.push(Renaming {
                     to,
+                    runs,
                     binds,
                     renamed: Memo::default(),
                     replaced: Memo::default(),
@@ -2903,18 +3129,18 @@ impl Renamings {
             }
         };
         let r = &mut at[i];
-        let walk = |binds: &Binds, mode: Mode, memo: &mut Memo, s: &Arc<Sig>| -> Arc<Sig> {
-            if binds.is_empty() {
+        let walk = |mut w: Replacer<'_>, memo: &mut Memo, s: &Arc<Sig>| -> Arc<Sig> {
+            if w.binds.is_empty() && w.runs.is_none() {
                 return s.clone();
             }
-            let mut w = Replacer::new(binds, mode);
             w.memos[0] = std::mem::take(memo);
             let out = Arc::new(w.sig(s));
             *memo = w.memos.swap_remove(0);
             out
         };
-        let renamed = walk(&r.to, Mode::Rename, &mut r.renamed, s);
-        let out = walk(&r.binds, Mode::Replace, &mut r.replaced, &renamed);
+        let renamed = walk(Replacer::renaming(&r.to, &r.runs), &mut r.renamed, s);
+        let replaced = Replacer::new(&r.binds, Mode::Replace);
+        let out = walk(replaced, &mut r.replaced, &renamed);
         r.walked.push(s.clone());
         r.walked.push(renamed);
         out
@@ -3517,7 +3743,7 @@ pub struct Facts(
     std::sync::OnceLock<Arc<Sig>>,
     std::sync::OnceLock<u64>,
     std::sync::OnceLock<VarBits>,
-    std::sync::OnceLock<Arc<[Arc<str>]>>,
+    std::sync::OnceLock<VarsOrder>,
     std::sync::OnceLock<Entries>,
     std::sync::OnceLock<bool>,
     std::sync::OnceLock<bool>,
@@ -3526,6 +3752,10 @@ pub struct Facts(
     std::sync::OnceLock<bool>,
     pub(crate) std::sync::OnceLock<r10_hash::NeedBlockSummary>,
 );
+
+/// A signature's variables in order, with where its forwards' internal runs fall among them
+/// ([`Sig::vars_order`], [`Sig::vars_marks`]).
+type VarsOrder = (Arc<[Arc<str>]>, Arc<[RunMark]>);
 
 /// What the entries of a family hold at any depth, outside functions: a family is data only
 /// when its entries are (DESIGN.md L1.17, "a value that holds a function is a type error
@@ -4640,12 +4870,11 @@ pub fn reset_fwd_decode_count() {
 /// Naming spans for a `FwdNeed`'s unmaterialized internal result variables (`M66`, `M62`, `M56`).
 #[derive(Clone, Debug)]
 pub struct FwdFinishNaming {
-    /// Runs of `(start_n, count)` in `Names::Variables` (`O(1)` runs on chains).
-    pub runs: Vec<(usize, usize)>,
-    /// Variable names skipped by `fresh_name` (`facts.names` in `generalize`), indexed once.
-    pub skip: Arc<SkipIndex>,
-    /// Snapshot of `ProgramNames` active when `generalize` ran (`O(1)` Arc clone).
-    pub held: HeldVarSnapshot,
+    /// The names of its internal result variables, in order, as runs (`O(1)` runs on chains).
+    /// `generalize` makes one run for each internal run of `var_steps`, all against the
+    /// signature's skip set; a finished signature that renames them apart may cut a run into
+    /// several, kept and fresh ([`rename_apart`]).
+    pub runs: Vec<NameRun>,
 }
 
 /// First-appearance step across a `FwdNeed`'s variables for `generalize`'s `O(1)` naming pass.
@@ -4716,15 +4945,8 @@ impl FwdNeed {
         if let Some(fin) = &self.finish_naming {
             let mut gen_names: Vec<Arc<str>> =
                 Vec::with_capacity(self.need_count.saturating_sub(self.exits.len()));
-            for &(start_n, count) in &fin.runs {
-                let mut cur_n = start_n;
-                for _ in 0..count {
-                    let nm: Arc<str> =
-                        fresh_name_with_held(Names::Variables, &mut cur_n, &fin.held, |s| {
-                            fin.skip.contains(s)
-                        });
-                    gen_names.push(nm);
-                }
+            for run in &fin.runs {
+                gen_names.extend(run.names::<Arc<str>>());
             }
             let mut it = gen_names.into_iter();
             for slot in &mut results {
@@ -5268,12 +5490,14 @@ impl Need {
 
     /// [`Need::replace`], or as `mode` says.
     fn replace_in(&self, binds: &Binds, mode: Mode) -> Need {
-        let tys = rebuild_tys(&mut Replacer::new(binds, mode), self.tys());
+        let mut w = Replacer::new(binds, mode);
+        let tys = rebuild_tys(&mut w, self.tys());
         let mut tys = tys.into_iter();
-        self.map_tys(|_| {
+        let n = self.map_tys(|_| {
             tys.next()
                 .expect("a walk makes one type of each type of a need")
-        })
+        });
+        renamed_steps(n, &w)
     }
 
     /// It with `f` applied to each of the types [`Need::tys`] gives, in that order.
@@ -12716,6 +12940,30 @@ pub struct Vars {
     outside: HashSet<NodeId>,
     /// The variables, in order.
     pub order: Vec<Arc<str>>,
+    /// Where the internal names of the compact forwards of the functions entered fall among
+    /// the variables ([`RunMark`]), each once, in order.
+    pub marks: Vec<RunMark>,
+    /// The marks met, by signature, need and step.
+    marked: HashSet<(usize, usize, usize)>,
+}
+
+/// The internal names of one step of a compact forward ([`FwdVarStep::InternalRun`]) a walk of
+/// variables met, and where: after the first `at` variables it found. A finished signature
+/// names its variables apart in this order ([`rename_apart`]), the names of a run with them.
+#[derive(Clone, Debug)]
+pub struct RunMark {
+    /// How many variables the walk had found when it met the step.
+    pub at: usize,
+    /// The address of the signature that holds the forward, as a key only: never read through.
+    /// The walk that found it borrows that signature, and a signature whose order is kept
+    /// holds the ones its marks name, so the address names no other while either lives.
+    pub sig: usize,
+    /// The place of the forward among that signature's needs.
+    pub need: usize,
+    /// The place of the step among the forward's steps.
+    pub step: usize,
+    /// The names, as runs.
+    pub runs: Vec<NameRun>,
 }
 
 impl Vars {
@@ -13665,6 +13913,15 @@ impl Ty {
     /// variable, and no two keys share one.
     pub fn renamed(&self, names: &Binds) -> Ty {
         self.replace_in(names, Mode::Rename)
+    }
+
+    /// [`Ty::renamed`], with the compact forwards of the functions it holds given the new runs
+    /// `runs` names.
+    pub fn renamed_runs(&self, names: &Binds, runs: &RunRenames) -> Ty {
+        match names.is_empty() && runs.is_empty() {
+            true => self.clone(),
+            false => rebuild_ty(&mut Replacer::renaming(names, runs), self),
+        }
     }
 
     /// `self` with its variables replaced by `binds` outside the functions it holds: the
@@ -19587,15 +19844,28 @@ impl Sig {
     }
 
     /// Its variables in order of first appearance, as [`Ty::vars_in`] gives those of the
-    /// types of its arrows and then of its needs ([`Need::tys`]): worked out by one walk at
-    /// the first call and kept, so it is asked of a signature held in a type, which no longer
-    /// changes. A later walk that meets this signature reads the order in place of entering it
-    /// (`vars_of`); the functions it holds keep none of their own unless asked.
+    /// types of its arrows and then of its needs ([`Need::tys`]), a compact forward's by its
+    /// steps first ([`sig_walk`]): worked out by one walk at the first call and kept, so it is
+    /// asked of a signature held in a type, which no longer changes. A later walk that meets
+    /// this signature reads the order in place of entering it (`vars_of`); the functions it
+    /// holds keep none of their own unless asked.
     pub fn vars_order(&self) -> &[Arc<str>] {
+        &self.vars_order_and_marks().0
+    }
+
+    /// Where the internal names of the compact forwards it holds, at any depth, fall among
+    /// [`Sig::vars_order`], kept with it.
+    pub fn vars_marks(&self) -> &[RunMark] {
+        &self.vars_order_and_marks().1
+    }
+
+    fn vars_order_and_marks(&self) -> &VarsOrder {
         self.facts.4.get_or_init(|| {
             let mut out = Vars::default();
-            vars_of(sig_tys(self), &mut out);
-            out.order.into()
+            let mut stack = Vec::new();
+            sig_walk(self, &mut stack);
+            walk_vars(stack, &mut out);
+            (out.order.into(), out.marks.into())
         })
     }
 
@@ -19622,7 +19892,7 @@ impl Sig {
     pub fn holds_no_variable(&self) -> bool {
         /// Whether it holds a variable, if known: kept, or read from its kept order.
         fn known(s: &Sig) -> Option<bool> {
-            (s.facts.6.get().copied()).or_else(|| s.facts.4.get().map(|o| !o.is_empty()))
+            (s.facts.6.get().copied()).or_else(|| s.facts.4.get().map(|o| !o.0.is_empty()))
         }
         !found_in_nest(
             self,
@@ -28303,11 +28573,11 @@ pub mod r10_hash {
                             continue;
                         }
                         if let Some(fin) = &fwd.finish_naming {
-                            for &(start_n, count) in &fin.runs {
-                                total_len += count;
+                            for run in &fin.runs {
+                                total_len += run.count;
                                 sum = add_p(
                                     sum,
-                                    sum_fresh_vars_o1(start_n, count, &fin.skip, &fin.held),
+                                    sum_fresh_vars_o1(run.start_n, run.count, &run.skip, &run.held),
                                 );
                             }
                         } else if let Some(k0) = fwd.base_class {

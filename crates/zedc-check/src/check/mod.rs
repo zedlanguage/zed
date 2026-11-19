@@ -87,9 +87,10 @@ use zedc_syntax::lex::{Span, Tok, lex, unread_literal};
 use kernel_type::kernel_type;
 use ty::{
     Arrow, Binds, CallPath, Carrier, DataUse, Dense, EVERY, FoldForm, IntDomain, KeyUse, LevelWord,
-    MapWord, Names, Narrow, Need, NeedKind, NodeId, OTHER, ParamRange, PathStep, Piece, PowerUse,
-    Reducer, Renamings, SParam, Shape, Sig, Slot, Ty, VarFacts, VarSet, Vars, Via, Width,
-    WrittenRange, atoms, carriers_text, class_id, errs, fresh_name, mask_text,
+    MapWord, NameItem, NameRun, Names, Narrow, Need, NeedKind, NodeId, OTHER, ParamRange, PathStep,
+    Piece, PowerUse, Reducer, Renamings, RunMark, RunRenames, SParam, Shape, Sig, Slot, Ty,
+    VarFacts, VarSet, Vars, Via, Width, WrittenRange, atoms, carriers_text, class_id, errs,
+    fresh_name, mask_text, rename_apart,
 };
 
 /// How a function argument fits the function type its slot expects.
@@ -5756,37 +5757,68 @@ impl<'t, 'a> Ck<'t, 'a> {
                 None => Some((Printed::Own(v.clone()), v.clone())),
             }
         };
-        let mut order: Vec<(Printed, Arc<str>)> = Vec::new();
-        let mut seen: HashSet<Printed> = HashSet::new();
-        for v in vars.iter().filter(|v| b.get(*v).is_none()) {
-            order.extend(printed(v, false).filter(|(p, _)| seen.insert(p.clone())));
-        }
+        // The names to give: a name taken by a variable before keeps the later one from it.
+        //
+        // The eager checker shows each internal result of a compact forward as a variable of
+        // its own, at the place its leaf needs show it, and names it apart with the rest. Here
+        // those results are runs of names ([`FwdFinishNaming::runs`]), placed among the
+        // variables by their marks ([`Sig::vars_marks`], walked in the eager order by
+        // `sig_walk` in zedc-types, proved there), so they take part as runs.
+        // Complexity tradeoff (closed-sibling repair, step 4): the naive version writes each
+        // run out and names it one name at a time against a set `used` of every name an item
+        // holds and a set `taken` of the names given: O(V + L) for V variables and L internal
+        // names, and O(n·L) over n functions that each hold the one before. Used:
+        // [`rename_apart`], which keeps `used` and the names given as sorted intervals and cuts
+        // a run only where it meets an interval given before, O((1 + h) log k) for a run that
+        // meets h of them, with k intervals in all, so O(V log k + Σ (1 + h_r) log k) here,
+        // and a run that meets nothing stays one run. Given up: a run whose names were given
+        // to many variables one at a time is cut at each, which costs as the naive version.
+        // Proof that the names are those of the naive version: `used` is built once from
+        // every item and only the names given are written after; above the fresh counter n,
+        // every name given was kept and so lies in `used`, so `used ∪ taken = used` there and
+        // the next fresh name is the next name past n outside `used`, which the interval walk
+        // finds. The full proof, run by run, is at [`rename_apart`]; a run's names cut apart
+        // stay runs, each against the skip set it was made with, decoded as before.
+        let mut order = NameOrder::default();
+        order.add(&vars, s.vars_marks(), |v| {
+            b.get(v).is_none().then(|| printed(v, false)).flatten()
+        });
         for v in &vars {
             let Some(t) = b.get(v) else { continue };
             let mut held = Vars::default();
             t.vars_in(&mut held);
-            for w in &held.order {
-                order.extend(printed(w, true).filter(|(p, _)| seen.insert(p.clone())));
+            order.add(&held.order, &held.marks, |w| printed(w, true));
+        }
+        let given = rename_apart(&order.items);
+        let mut names: HashMap<Printed, Arc<str>> = HashMap::new();
+        // The new runs of each forward, by signature and need, step by step.
+        let mut fwd_runs: HashMap<(usize, usize), BTreeMap<usize, Vec<NameRun>>> = HashMap::new();
+        let mut moved: HashSet<(usize, usize)> = HashSet::new();
+        let mut marks = order.marks.iter();
+        for (key, item) in order.keys.into_iter().zip(given) {
+            match (key, item) {
+                (Some(p), NameItem::Name(name)) => {
+                    names.insert(p, name);
+                }
+                (None, NameItem::Runs(runs)) => {
+                    let m = marks.next().expect("one mark for each item of runs");
+                    if !same_runs(&m.runs, &runs) {
+                        moved.insert((m.sig, m.need));
+                    }
+                    fwd_runs
+                        .entry((m.sig, m.need))
+                        .or_default()
+                        .insert(m.step, runs);
+                }
+                _ => unreachable!("rename_apart gives each item back as it was given"),
             }
         }
-        // The names to give: a name taken by a variable before keeps the later one from it.
-        let used: HashSet<Arc<str>> = order.iter().map(|(_, name)| name.clone()).collect();
-        let mut taken: HashSet<Arc<str>> = HashSet::new();
-        let mut n = 0;
-        let mut names: HashMap<Printed, Arc<str>> = HashMap::new();
-        for (p, name) in order {
-            let name = match taken.insert(name.clone()) {
-                true => name,
-                false => {
-                    let name: Arc<str> = fresh_name(Names::Variables, &mut n, |name| {
-                        used.contains(name) || taken.contains(name)
-                    });
-                    taken.insert(name.clone());
-                    name
-                }
-            };
-            names.insert(p, name);
-        }
+        let runs = RunRenames::new(
+            (fwd_runs.into_iter())
+                .filter(|(k, _)| moved.contains(k))
+                .map(|(k, steps)| (k, steps.into_values().flatten().collect()))
+                .collect(),
+        );
         // Each variable to its name, where that is not the variable itself.
         let rename = |v: &Arc<str>, held: bool| {
             let (p, _) = printed(v, held)?;
@@ -5800,13 +5832,13 @@ impl<'t, 'a> Ck<'t, 'a> {
             let to: Binds = (held.order.iter())
                 .filter_map(|w| rename(w, true))
                 .collect();
-            *t = t.renamed(&to);
+            *t = t.renamed_runs(&to, &runs);
         });
         let to: Binds = (vars.iter())
             .filter(|v| b.get(*v).is_none())
             .filter_map(|v| rename(v, false))
             .collect();
-        let out = made.renamed_replaced(s, to, b);
+        let out = made.renamed_runs_replaced(s, to, runs, b);
         if !callee_changed {
             return out;
         }
@@ -14081,6 +14113,61 @@ enum Printed {
     Held(Arc<str>),
     /// The class of this root, named by the function that ended.
     Class(usize),
+}
+
+/// The variables of a finished signature and the internal runs of the compact forwards it holds,
+/// in the order the eager checker meets them, each once, as [`rename_apart`] takes them
+/// ([`Ck::finished_with`]): a variable as what it prints ([`Printed`]), a run by its mark.
+#[derive(Default)]
+struct NameOrder {
+    seen: HashSet<Printed>,
+    marked: HashSet<(usize, usize, usize)>,
+    /// What each item names: a variable, or `None` for the runs of the mark at the same place
+    /// in `marks`' order.
+    keys: Vec<Option<Printed>>,
+    items: Vec<NameItem>,
+    marks: Vec<RunMark>,
+}
+
+impl NameOrder {
+    /// `vars` with `marks` placed among them ([`RunMark::at`]), each variable as `printed`
+    /// gives it, where it gives one.
+    fn add(
+        &mut self,
+        vars: &[Arc<str>],
+        marks: &[RunMark],
+        mut printed: impl FnMut(&Arc<str>) -> Option<(Printed, Arc<str>)>,
+    ) {
+        let mut marks = marks.iter().peekable();
+        for (i, v) in vars.iter().enumerate() {
+            while let Some(m) = marks.next_if(|m| m.at <= i) {
+                self.mark(m);
+            }
+            if let Some((p, name)) = printed(v)
+                && self.seen.insert(p.clone())
+            {
+                self.keys.push(Some(p));
+                self.items.push(NameItem::Name(name));
+            }
+        }
+        marks.for_each(|m| self.mark(m));
+    }
+
+    fn mark(&mut self, m: &RunMark) {
+        if self.marked.insert((m.sig, m.need, m.step)) {
+            self.keys.push(None);
+            self.items.push(NameItem::Runs(m.runs.clone()));
+            self.marks.push(m.clone());
+        }
+    }
+}
+
+/// Whether two lists of runs name the same names the same way: O(runs).
+fn same_runs(a: &[NameRun], b: &[NameRun]) -> bool {
+    a.len() == b.len()
+        && a.iter().zip(b).all(|(x, y)| {
+            (x.start_n, x.count) == (y.start_n, y.count) && Arc::ptr_eq(&x.skip, &y.skip)
+        })
 }
 
 /// The variables of `s`, in order of first appearance, kept on `s` ([`Sig::vars_order`]): a

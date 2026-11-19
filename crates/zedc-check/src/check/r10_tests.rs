@@ -54,17 +54,8 @@ fn decoded_own_vars(sig: &Sig) -> BTreeSet<std::sync::Arc<str>> {
     for n in &sig.needs {
         if let NeedKind::Fwd(fwd) = &n.kind {
             if let Some(ref fin) = fwd.finish_naming {
-                for &(start_n, count) in &fin.runs {
-                    let mut n_idx = start_n;
-                    for _ in 0..count {
-                        let nm = zedc_types::ty::fresh_name_with_held(
-                            zedc_types::ty::Names::Variables,
-                            &mut n_idx,
-                            &fin.held,
-                            |s| fin.skip.contains(s),
-                        );
-                        own.insert(nm);
-                    }
+                for run in &fin.runs {
+                    own.extend(run.names::<std::sync::Arc<str>>());
                 }
             } else if let Some(lo) = fwd.base_class {
                 let exit_offs: HashSet<usize> = fwd.exits.iter().map(|(o, _)| *o).collect();
@@ -1585,4 +1576,173 @@ fn r10_generalize_runs_against_a_wide_skip_set_scale() {
             assert!(d.errors.is_empty(), "errors {:?}", d.errors);
         },
     );
+}
+
+/// Landing review round 2, Opus L2-C1 and Neon L2-B2: two closed lambdas inside one function,
+/// each holding a call of `h0`, whose forward blocks name their inner classes. E names them in
+/// one count over the function; D must give the same names, digest and equality.
+#[test]
+fn r10_closed_sibling_lambdas_name_as_e_does() {
+    let bodies: &[(&str, &str)] = &[
+        (
+            "opus_two_siblings",
+            "h0(positional f, positional m) = m.map(f).map(f);\n\
+             outer(positional a) = ((f, m) -> (h0(f, m), a), (k, p) -> h0(k, p));\n",
+        ),
+        (
+            "neon_two_siblings",
+            "h0(positional f, positional m) = m.map(f).map(f);\n\
+             outer(positional a) = ((f, m) -> h0(f, m), (g, n) -> h0(g, n), a);\n",
+        ),
+        (
+            "three_siblings",
+            "h0(positional f, positional m) = m.map(f).map(f);\n\
+             outer(positional a) = ((f, m) -> (h0(f, m), a), (k, p) -> h0(k, p), (g, q) -> h0(g, q));\n",
+        ),
+    ];
+    let mut failed = Vec::new();
+    for (name, src) in bodies {
+        let (e, _) = run_with_cfg(src, R10Config::eager());
+        let (d, _) = run_with_cfg(src, R10Config::default());
+        assert!(e.errors.is_empty(), "{name}: E errors {:?}", e.errors);
+        if let Err(why) = info_eq_full(name, &e, &d) {
+            failed.push(why);
+            continue;
+        }
+        for (id, es) in &e.sigs {
+            let ds = &d.sigs[id];
+            if es.digest() != ds.digest() || es != ds {
+                failed.push(format!("{name}: signature {id} differs from E's"));
+            }
+        }
+    }
+    assert!(failed.is_empty(), "{}", failed.join("\n"));
+}
+
+/// Landing review round 3, bug 3b: `finished_with` leaves the names of a held forward's
+/// internal runs out of the names in use, so a fresh name given to an ordinary variable of
+/// the same signature can be one a run already gives, and two variables share a name. Each
+/// held function's decoded variables must be as many, and named alike, as E's.
+#[test]
+fn r10_finished_names_never_take_a_run_name() {
+    let src = "h0(positional f, positional m) = m.map(f).map(f);\n\
+               outer(positional a) = ((f, m) -> h0(f, m), (g, n) -> h0(g, n), a);\n";
+    let held_own = |info: &Info| -> Vec<BTreeSet<std::sync::Arc<str>>> {
+        let mut out = Vec::new();
+        for s in info.sigs.values() {
+            for a in &s.arrows {
+                a.result.each_held_fn(|h| out.push(decoded_own_vars(h)));
+            }
+        }
+        out
+    };
+    let (e, _) = run_with_cfg(src, R10Config::eager());
+    let (d, _) = run_with_cfg(src, R10Config::default());
+    let (eo, dov) = (held_own(&e), held_own(&d));
+    assert_eq!(eo.len(), dov.len(), "held functions E {eo:?} D {dov:?}");
+    for (x, y) in eo.iter().zip(&dov) {
+        assert_eq!(x.len(), y.len(), "a run name taken twice: E {x:?} D {y:?}");
+    }
+    assert_eq!(eo, dov, "held functions' variables named apart from E");
+}
+
+/// n closed sibling lambdas, each calling `h1`, which calls `h0` twice (a chain of two), beside
+/// a lambda of n parameters, so the function's signature holds n named variables (a wide skip
+/// set) and n forwards whose internal runs all start at the same names and must be named apart.
+fn chain2_siblings_src(n: usize) -> String {
+    let mut s = String::from(
+        "h0(positional f, positional m) = m.map(f).map(f);\n\
+         h1(positional f, positional m) = h0(f, h0(f, m));\n",
+    );
+    let sibs: Vec<String> = (0..n)
+        .map(|i| format!("(g{i}, m{i}) -> h1(g{i}, m{i})"))
+        .collect();
+    let xs: Vec<String> = (0..n).map(|i| format!("x{i}")).collect();
+    s.push_str(&format!(
+        "outer(positional a) = ({}, ({}) -> ({}), a);\n",
+        sibs.join(", "),
+        xs.join(", "),
+        xs.join(", ")
+    ));
+    s
+}
+
+/// Step 4 of the closed-sibling repair: the sibling forwards' runs named apart as E names them,
+/// signature by signature, at small n.
+#[test]
+fn r10_chain2_siblings_name_as_e_does() {
+    for n in 1..=4 {
+        let src = chain2_siblings_src(n);
+        let (e, _) = run_with_cfg(&src, R10Config::eager());
+        let (d, _) = run_with_cfg(&src, R10Config::default());
+        assert!(e.errors.is_empty(), "n = {n}: E errors {:?}", e.errors);
+        info_eq_full(&format!("chain2 siblings n = {n}"), &e, &d).unwrap();
+        for (id, es) in &e.sigs {
+            let ds = &d.sigs[id];
+            assert!(
+                es.digest() == ds.digest() && es == ds,
+                "n = {n}: signature {id} differs from E's"
+            );
+        }
+    }
+}
+
+/// Step 4 of the closed-sibling repair: naming n sibling forwards' runs apart against a skip
+/// set of n names cuts each run only where it meets a name given before, so the whole costs
+/// O(n log n), not one name at a time per run.
+#[test]
+fn r10_chain2_siblings_wide_skip_set_scale() {
+    let inputs = crate::scaling::inputs(200, chain2_siblings_src);
+    crate::scaling::check(
+        "finishing n sibling chain-2 forwards against n skipped names",
+        200,
+        |n| {
+            let (d, _) = run_with_cfg(&inputs[&n], R10Config::default());
+            assert!(d.errors.is_empty(), "errors {:?}", d.errors);
+        },
+    );
+}
+
+/// Landing review round 2, Opus C2: a function that holds a forward call and returns a lambda
+/// holding one of its parameters has a variable it does not own (the lambda's) and a function
+/// in it that holds one not its own (the parameter's), so its forward is decoded when it
+/// finishes (`r10_promote_open_fwds`), and the forward's internal results become variables of
+/// its own, as E has them. Its own variables, digest and equality must be E's. (A lambda that
+/// holds an outer variable has no forward of its own, so it does not reach that path.)
+#[test]
+fn r10_promoted_forward_results_are_own_variables() {
+    let srcs = [
+        "h0(positional f, positional m) = m.map(f).map(f);\n\
+         g(positional f, positional m) = (h0(f, m), (x) -> (x, m));\n",
+        "h0(positional f, positional m) = m.map(f).map(f);\n\
+         g(positional f, positional m) = (h0(f, m), (x) -> (x, f));\n",
+    ];
+    // Each signature, by node, and each function its arrows' results hold, with the internal
+    // names of its forwards decoded ([`decoded_own_vars`]).
+    let own_vars = |info: &Info| -> Vec<BTreeSet<std::sync::Arc<str>>> {
+        let mut ids: Vec<_> = info.sigs.keys().copied().collect();
+        ids.sort_unstable();
+        let mut out = Vec::new();
+        for id in ids {
+            let s = &info.sigs[&id];
+            out.push(decoded_own_vars(s));
+            for a in &s.arrows {
+                a.result.each_held_fn(|h| out.push(decoded_own_vars(h)));
+            }
+        }
+        out
+    };
+    for src in srcs {
+        let (e, _) = run_with_cfg(src, R10Config::eager());
+        let (d, _) = run_with_cfg(src, R10Config::default());
+        assert!(e.errors.is_empty(), "E errors {:?}", e.errors);
+        assert_eq!(own_vars(&e), own_vars(&d), "own variables\n{src}");
+        for (id, es) in &e.sigs {
+            let ds = &d.sigs[id];
+            assert!(
+                es.digest() == ds.digest() && es == ds,
+                "signature {id} differs\n{src}"
+            );
+        }
+    }
 }

@@ -114,6 +114,13 @@ pub struct FreshVarSpanStats {
 #[derive(Clone, Debug, Default)]
 pub struct HeldVarSnapshot(Arc<Held>);
 
+impl HeldVarSnapshot {
+    /// Whether `other` is this same snapshot, not only an equal one: O(1).
+    pub fn same(&self, other: &HeldVarSnapshot) -> bool {
+        Arc::ptr_eq(&self.0, &other.0)
+    }
+}
+
 /// Returns an `O(1)` snapshot of the [`ProgramNames`] currently active on this thread.
 pub fn current_held_var_snapshot() -> HeldVarSnapshot {
     HELD.with_borrow(|held| HeldVarSnapshot(held.clone()))
@@ -182,11 +189,23 @@ impl Drop for ProgramNames {
 // runs against n names (`r10_generalize_runs_against_a_wide_skip_set_scale`). Used: one sort per
 // skip set, O(s log s), then O(log s + log h) per span (h program names). Given up: the index is
 // built against one program-name snapshot, so a span must be asked with that snapshot.
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Debug)]
 pub struct SkipIndex {
     letters: [bool; 4],
     numbered: Vec<usize>,
     prefix: Vec<u128>,
+}
+
+/// The empty index: it skips no name. Its prefix sums hold the one sum of no places, as an
+/// index [`SkipIndex::new`] makes does, so a span read against it finds `prefix[0]`.
+impl Default for SkipIndex {
+    fn default() -> Self {
+        SkipIndex {
+            letters: [false; 4],
+            numbered: Vec::new(),
+            prefix: vec![0],
+        }
+    }
 }
 
 impl SkipIndex {
@@ -402,6 +421,320 @@ where
     })
 }
 
+/// A run of [`Names::Variables`] names: the `count` picks from `start_n` on that neither `held`
+/// nor `skip` takes, as [`fresh_name_with_held`] makes them one by one. A compact signature
+/// keeps the names of a block of internal variables as a few runs, not one name each.
+#[derive(Clone, Debug)]
+pub struct NameRun {
+    /// The place the picks start from.
+    pub start_n: usize,
+    /// How many names the run holds.
+    pub count: usize,
+    /// The names the picks skip beside `held`.
+    pub skip: Arc<SkipIndex>,
+    /// The program names the picks skip.
+    pub held: HeldVarSnapshot,
+}
+
+impl NameRun {
+    /// The place just past its last name.
+    pub fn end_n(&self) -> usize {
+        fresh_variable_span_stats_indexed(self.start_n, self.count, &self.skip, &self.held).end_n
+    }
+
+    /// The place of its first name at or after place `p`.
+    fn first_at(&self, p: usize) -> usize {
+        fresh_variable_span_stats_indexed(p, 1, &self.skip, &self.held).end_n - 1
+    }
+
+    /// Its names, in order: O(count).
+    pub fn names<S>(&self) -> Vec<S>
+    where
+        S: From<&'static str> + From<String> + std::ops::Deref<Target = str>,
+    {
+        let mut n = self.start_n;
+        (0..self.count)
+            .map(|_| {
+                fresh_name_with_held(Names::Variables, &mut n, &self.held, |s| {
+                    self.skip.contains(s)
+                })
+            })
+            .collect()
+    }
+}
+
+/// The place of a name a [`Names::Variables`] pick can give: `T`, `U`, `V`, `W` at 0 to 3 and
+/// `T{m + 1}` at `m` from 4 on.
+fn var_place(name: &str) -> Option<usize> {
+    match place(name)? {
+        Place::Letter(i) => Some(i),
+        Place::Numbered(m) if m >= 4 => Some(m),
+        _ => None,
+    }
+}
+
+/// Whether the program binds the name at place `p`.
+fn held_at(held: &Held, p: usize) -> bool {
+    if p < 4 {
+        held.letters[p]
+    } else {
+        held.ends.contains_key(&p)
+    }
+}
+
+/// How many places in `lo..hi` neither `held` nor `skip` takes (`usize::MAX` for `hi =
+/// usize::MAX`): O(log h + log s) by the sorted places of each. `skip` leaves out the places
+/// `held` takes ([`SkipIndex::new`]), so no place is counted out twice.
+fn names_between(lo: usize, hi: usize, skip: &SkipIndex, held: &HeldVarSnapshot) -> usize {
+    if hi == usize::MAX {
+        return usize::MAX;
+    }
+    let held = &*held.0;
+    let letters = (lo..hi.min(4))
+        .filter(|&p| !held.letters[p] && !skip.letters[p])
+        .count();
+    let a = lo.max(4);
+    if hi <= a {
+        return letters;
+    }
+    let count_in = |v: &[usize]| v.partition_point(|&x| x < hi) - v.partition_point(|&x| x < a);
+    letters + (hi - a) - count_in(&held.sorted_numbered) - count_in(&skip.numbered)
+}
+
+/// One name to give, or the runs of names to give, as [`rename_apart`] takes and gives them.
+#[derive(Clone, Debug)]
+pub enum NameItem {
+    /// One name.
+    Name(Arc<str>),
+    /// The names of runs, in order.
+    Runs(Vec<NameRun>),
+}
+
+/// The names of `items` made apart, in order: each name is kept unless an item before took it,
+/// and is otherwise given the next [`Names::Variables`] name from 0 on that no item holds, no
+/// name given before is, and the program does not bind ([`ProgramNames`]). This is the rule
+/// the checker names the variables of a finished signature by, one name at a time; here a run
+/// of names is given as runs of names, kept or fresh.
+///
+/// The runs must have been made against the program names held now, as every run of one
+/// check is: a place is taken out as the program's own by the snapshot held now.
+// Complexity tradeoff (closed-sibling repair, step 4): the naive version, as written in
+// `finished_with` before, gives one name at a time, so a block of L internal variables kept as
+// a few runs is written out in full, O(L) for each signature that holds it, and O(n·L) for n
+// functions that each hold the one before. Used: the places items hold and the places given so
+// far are each kept as sorted intervals (`BTreeMap`, start to end), and a run is cut only where
+// it meets an interval of places given before: O((1 + h + s) log k) for a run that meets h such
+// intervals and keeps a stretch across s of its own skipped places, with k intervals in all,
+// and its result is at most 2h + 1 runs plus the s cuts. Given up: a run that meets many names
+// given one at a time is cut at each, as the naive version is; nothing is gained there.
+//
+// Proof that it gives the names the naive version gives:
+// (1) Every interval of `given` is either within an interval of `used` or holds no place of
+//     `used`, and no two intervals of `given` overlap. A kept stretch runs from a name not
+//     given to before the next interval of `given`, and is cut at its run's skipped places, so
+//     each piece lies within one interval `used` was built with for that run (cut the same
+//     way); a fresh stretch runs from `n`, outside `used`, to before the next interval of
+//     `used`, and `n` only grows, so fresh stretches lie above every earlier one.
+// (2) Every place in an interval of `given` that the program does not bind is a name given:
+//     a kept piece holds only its run's names between its cuts, and a fresh stretch holds every
+//     name it may take between its ends. So a name is given before exactly when its place lies
+//     in an interval of `given` (for a place the program binds, or a name with no place, the
+//     set `given_names` is asked instead).
+// (3) `used` is built once and only `given` is written after; each fresh pick leaves `n` just
+//     past it, so every name given at or above `n` was kept, and a kept name is an item's name,
+//     in `used`. Above `n`, then, `used` holds every name given, and the next fresh name is
+//     the next place at or above `n` outside `used` that the program does not bind: the fresh
+//     loop jumps over each interval of `used` and counts the places between.
+// (4) A run's names that lie in one interval of `given` are all given before, by (2), and get
+//     the next fresh names in order; its names before the next interval are none of them given
+//     before and are kept. No fresh name is one of the run's own names, which lie in `used`.
+pub fn rename_apart(items: &[NameItem]) -> Vec<NameItem> {
+    let held = current_held_var_snapshot();
+    let mut r = Renamer {
+        empty: Arc::new(SkipIndex::default()),
+        held,
+        used: std::collections::BTreeMap::new(),
+        given: std::collections::BTreeMap::new(),
+        given_names: HashSet::new(),
+        n: 0,
+    };
+    for item in items {
+        match item {
+            NameItem::Name(s) => {
+                if let Some(p) = var_place(s).filter(|&p| !held_at(&r.held.0, p)) {
+                    r.use_range(p, p + 1);
+                }
+            }
+            NameItem::Runs(runs) => {
+                for run in runs.iter().filter(|run| run.count > 0) {
+                    let end = run.end_n();
+                    let start = run.first_at(run.start_n);
+                    cut_at_skips(start, end, &run.skip, |a, b| r.use_range(a, b));
+                }
+            }
+        }
+    }
+    items
+        .iter()
+        .map(|item| match item {
+            NameItem::Name(s) => NameItem::Name(r.name(s)),
+            NameItem::Runs(runs) => {
+                let mut out = Vec::new();
+                for run in runs {
+                    r.run(run, &mut out);
+                }
+                NameItem::Runs(out)
+            }
+        })
+        .collect()
+}
+
+/// Calls `f` on each stretch of `start..end` between the places `skip` skips: O(1 + s) for
+/// the s skipped places in it, found by binary search.
+fn cut_at_skips(start: usize, end: usize, skip: &SkipIndex, mut f: impl FnMut(usize, usize)) {
+    let letters = (start..end.min(4)).filter(|&p| skip.letters[p]);
+    let lo = skip.numbered.partition_point(|&x| x < start.max(4));
+    let hi = skip.numbered.partition_point(|&x| x < end);
+    let mut at = start;
+    for h in letters.chain(skip.numbered[lo..hi].iter().copied()) {
+        if at < h {
+            f(at, h);
+        }
+        at = h + 1;
+    }
+    if at < end {
+        f(at, end);
+    }
+}
+
+/// The state of [`rename_apart`]: the places the items hold, the places given, and the next
+/// place a fresh name may take.
+struct Renamer {
+    empty: Arc<SkipIndex>,
+    held: HeldVarSnapshot,
+    /// The places the items hold, as disjoint intervals, start to end, merged where they meet;
+    /// a place the program binds may lie inside one.
+    used: std::collections::BTreeMap<usize, usize>,
+    /// The places given, as disjoint intervals; every place in one that the program does not
+    /// bind is given.
+    given: std::collections::BTreeMap<usize, usize>,
+    /// The names given that have no place or whose place the program binds.
+    given_names: HashSet<Arc<str>>,
+    n: usize,
+}
+
+impl Renamer {
+    fn use_range(&mut self, a: usize, b: usize) {
+        let (mut lo, mut hi) = (a, b);
+        while let Some((&s, &e)) = self.used.range(..=hi).next_back() {
+            if e < lo {
+                break;
+            }
+            lo = lo.min(s);
+            hi = hi.max(e);
+            self.used.remove(&s);
+        }
+        self.used.insert(lo, hi);
+    }
+
+    /// The end of the interval of `map` that holds place `p`, if one does.
+    fn end_at(map: &std::collections::BTreeMap<usize, usize>, p: usize) -> Option<usize> {
+        map.range(..=p)
+            .next_back()
+            .map(|(_, &e)| e)
+            .filter(|&e| e > p)
+    }
+
+    /// Gives `c` fresh names, as runs pushed on `out`.
+    fn fresh(&mut self, mut c: usize, out: &mut Vec<NameRun>) {
+        while c > 0 {
+            if let Some(e) = Self::end_at(&self.used, self.n) {
+                self.n = e;
+                continue;
+            }
+            let u = self
+                .used
+                .range(self.n..)
+                .next()
+                .map_or(usize::MAX, |(&s, _)| s);
+            let m = c.min(names_between(self.n, u, &self.empty, &self.held));
+            if m == 0 {
+                self.n = u;
+                continue;
+            }
+            let run = NameRun {
+                start_n: self.n,
+                count: m,
+                skip: self.empty.clone(),
+                held: self.held.clone(),
+            };
+            let end = run.end_n();
+            self.given.insert(run.first_at(self.n), end);
+            out.push(run);
+            self.n = end;
+            c -= m;
+        }
+    }
+
+    fn name(&mut self, s: &Arc<str>) -> Arc<str> {
+        let free = match var_place(s).filter(|&p| !held_at(&self.held.0, p)) {
+            Some(p) if Self::end_at(&self.given, p).is_none() => {
+                self.given.insert(p, p + 1);
+                true
+            }
+            Some(_) => false,
+            None => self.given_names.insert(s.clone()),
+        };
+        if free {
+            return s.clone();
+        }
+        let mut out = Vec::with_capacity(1);
+        self.fresh(1, &mut out);
+        Names::Variables.nth(out[0].end_n() - 1)
+    }
+
+    fn run(&mut self, run: &NameRun, out: &mut Vec<NameRun>) {
+        let mut rem = run.count;
+        if rem == 0 {
+            return;
+        }
+        let mut q = run.first_at(run.start_n);
+        loop {
+            let c = match Self::end_at(&self.given, q) {
+                Some(y) => {
+                    let c = rem.min(names_between(q, y, &run.skip, &run.held));
+                    self.fresh(c, out);
+                    q = y;
+                    c
+                }
+                None => {
+                    let t = self.given.range(q..).next().map_or(usize::MAX, |(&s, _)| s);
+                    let c = rem.min(names_between(q, t, &run.skip, &run.held));
+                    let kept = NameRun {
+                        start_n: q,
+                        count: c,
+                        skip: run.skip.clone(),
+                        held: run.held.clone(),
+                    };
+                    let end = kept.end_n();
+                    let given = &mut self.given;
+                    cut_at_skips(q, end, &run.skip, |a, b| {
+                        given.insert(a, b);
+                    });
+                    out.push(kept);
+                    q = end;
+                    c
+                }
+            };
+            rem -= c;
+            if rem == 0 {
+                return;
+            }
+            q = run.first_at(q);
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -452,5 +785,128 @@ mod tests {
             assert_eq!(picks(Names::Definitions, 2, |_| false), ["Part1", "Part3"]);
         }
         assert_eq!(picks(Names::Definitions, 2, |_| false), ["Part2", "Part3"]);
+    }
+
+    /// The names of `items`, each run written out.
+    fn written_out(items: &[NameItem]) -> Vec<Vec<String>> {
+        (items.iter())
+            .map(|item| match item {
+                NameItem::Name(s) => vec![s.to_string()],
+                NameItem::Runs(runs) => runs.iter().flat_map(|r| r.names::<String>()).collect(),
+            })
+            .collect()
+    }
+
+    /// [`rename_apart`] as the checker did it before, one name at a time.
+    fn one_at_a_time(items: &[NameItem]) -> Vec<Vec<String>> {
+        let names = written_out(items);
+        let used: HashSet<String> = names.iter().flatten().cloned().collect();
+        let mut taken: HashSet<String> = HashSet::new();
+        let mut n = 0;
+        (names.into_iter())
+            .map(|item| {
+                (item.into_iter())
+                    .map(|name| {
+                        if taken.insert(name.clone()) {
+                            return name;
+                        }
+                        let name: String = fresh_name(Names::Variables, &mut n, |s| {
+                            used.contains(s) || taken.contains(s)
+                        });
+                        taken.insert(name.clone());
+                        name
+                    })
+                    .collect()
+            })
+            .collect()
+    }
+
+    /// A fixed-seed generator (xorshift64).
+    struct Rng(u64);
+
+    impl Rng {
+        fn below(&mut self, k: u64) -> usize {
+            self.0 ^= self.0 << 13;
+            self.0 ^= self.0 >> 7;
+            self.0 ^= self.0 << 17;
+            (self.0 % k) as usize
+        }
+    }
+
+    /// A name a pick may give, or one it may not.
+    fn some_name(rng: &mut Rng) -> String {
+        match rng.below(10) {
+            0 => ["a", "T1", "T4", "Part2"][rng.below(4)].to_string(),
+            _ => Names::Variables.nth::<String>(rng.below(40)),
+        }
+    }
+
+    /// Random names and runs, the runs made against the program names held now, given apart
+    /// both ways: each name the same.
+    #[test]
+    fn runs_are_named_apart_as_one_name_at_a_time() {
+        let mut rng = Rng(0x9e37_79b9_7f4a_7c15);
+        for round in 0..3000 {
+            let held: Vec<String> = (0..rng.below(4)).map(|_| some_name(&mut rng)).collect();
+            let _program = ProgramNames::hold(held.iter().map(String::as_str));
+            let snap = current_held_var_snapshot();
+            let items: Vec<NameItem> = (0..1 + rng.below(8))
+                .map(|_| {
+                    if rng.below(2) == 0 {
+                        return NameItem::Name(some_name(&mut rng).into());
+                    }
+                    let skip: Vec<String> =
+                        (0..rng.below(12)).map(|_| some_name(&mut rng)).collect();
+                    let skip = Arc::new(SkipIndex::new(skip.iter().map(String::as_str), &snap));
+                    let runs = (0..1 + rng.below(3))
+                        .map(|_| NameRun {
+                            start_n: rng.below(30),
+                            count: rng.below(14),
+                            skip: skip.clone(),
+                            held: snap.clone(),
+                        })
+                        .collect();
+                    NameItem::Runs(runs)
+                })
+                .collect();
+            assert_eq!(
+                written_out(&rename_apart(&items)),
+                one_at_a_time(&items),
+                "round {round}: items {items:?}, program names {held:?}"
+            );
+        }
+    }
+
+    /// A run all of whose names an item before took is given fresh names as one run, which
+    /// steps over the names the items hold; a name taken by a run is given the next fresh one.
+    #[test]
+    fn a_run_is_cut_only_where_it_meets_a_name_given() {
+        let snap = current_held_var_snapshot();
+        let skip = Arc::new(SkipIndex::default());
+        let run = |start_n, count| NameRun {
+            start_n,
+            count,
+            skip: skip.clone(),
+            held: snap.clone(),
+        };
+        let items = [
+            NameItem::Runs(vec![run(0, 1000)]),
+            NameItem::Runs(vec![run(0, 1000)]),
+            NameItem::Name("T501".into()),
+            NameItem::Runs(vec![run(2000, 1000)]),
+            NameItem::Name("T2501".into()),
+        ];
+        let out = rename_apart(&items);
+        let NameItem::Runs(second) = &out[1] else {
+            panic!("runs")
+        };
+        assert_eq!(second.len(), 1, "{second:?}");
+        assert_eq!((second[0].start_n, second[0].count), (1000, 1000));
+        assert!(
+            matches!(&out[2], NameItem::Name(s) if &**s == "T3001"),
+            "{:?}",
+            out[2]
+        );
+        assert_eq!(written_out(&out), one_at_a_time(&items));
     }
 }
