@@ -41,7 +41,8 @@ static TAKEN: AtomicU64 = AtomicU64::new(0);
 /// chosen intervals (COMPLEXITY.md K123). On one thread the numbers an operation takes depend
 /// only on the intervals, never on the shape. Not proved: while other threads take numbers at
 /// the same time, which number an interval gets depends on their timing, which the draw can
-/// change; the bound assumes it does not.
+/// change; the bound assumes it does not (cost only: the number sets the tree's shape, and the
+/// intervals the tree holds do not depend on its shape).
 fn prio_of() -> u64 {
     PRIORITIES.of(TAKEN.fetch_add(1, AtomicOrdering::Relaxed))
 }

@@ -92,7 +92,8 @@ impl Shift {
     // potential sum over gaps g between ends of log2 g plus 2 log2 m per end, the runs and
     // fusions number O(n p log m), so the chain costs O(n p log m log n) expected, for any
     // chain, periodic or not (Claude seat, LOAD-max-div-unsolved hybrid round 1; the merge
-    // inequality checked on 20000 random merges, not proved in Lean). Measured at n and 8n
+    // inequality checked on 20000 random merges, not proved in Lean; cost only, the bound
+    // counts work and no answer reads it). Measured at n and 8n
     // links (test `the_questions_of_a_chain_of_residue_intervals_scale`; aperiodic, switching
     // and prefixed chains): 8.1 to 8.6 times the instructions. Open: a bound free of log m;
     // a chain interleaving two halves at the finest scale needs about n log2(m / n) runs.

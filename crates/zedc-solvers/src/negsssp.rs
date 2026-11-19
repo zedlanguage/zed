@@ -74,7 +74,8 @@ pub fn potential<H>(
 /// every reduced weight at least `-W / 2` for the power of two `W >= need`; the final search
 /// takes at most `n + 2m` units, a heap entry for each vertex and each edge and an edge each.
 /// The cost of a step to come is estimated by the dearest so far, not proved, and an estimate
-/// that proves too low is raised at the next step. On the both-ways family of `utvpi` at
+/// that proves too low is raised at the next step (cost only: the estimate sets the work
+/// allowed, never the distances returned). On the both-ways family of `utvpi` at
 /// k = 1,024, on its component of 12,284 vertices, the first step of the recursion ended at
 /// 1.95M units with an estimate of 14.0M, the steps left bounded by 17, and the search ended
 /// at 6.7M units after 7 such steps; on a component of 6,141 vertices, an estimate of 6.7M

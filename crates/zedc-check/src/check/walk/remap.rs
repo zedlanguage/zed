@@ -1386,12 +1386,35 @@ fn recovered(mut rows: Vec<Lin>) -> BTreeSet<Atom> {
             rows[r] = next;
         }
     }
-    // Not proved: that a row left with one nonzero entry is exactly an atom whose unit vector
-    // lies in the rows' span. It holds if the loop leaves the rows in reduced row echelon form
-    // (each pivot column cleared from every other row, the earlier pivot rows included, which
-    // `holders` reaches since a pivot's entry in an earlier pivot column is already zero); the
-    // argument is written here and tested on the catalog's cases and the benchmarks, not
-    // checked by a proof tool.
+    // Proof (PROOF-sweep, P246) that a row left with one nonzero entry is exactly an atom whose
+    // unit vector lies in the rows' span over the rationals.
+    // (1) Span kept. `row := pv·row − v·pivot` with `pv` ≠ 0, then division by a nonzero gcd,
+    //     is invertible over Q, and the pivot row is not changed, so the span never changes.
+    //     `pv` ≠ 0 because `p` was found in `holders[a]` and (2) holds.
+    // (2) `holders[b]` is exactly the set of rows with a nonzero entry at `b`, and no `Lin`
+    //     holds a zero entry. At the start every row is a form of `affine` or a unit form (the
+    //     caller), and neither holds a zero: `affine` starts from unit entries, drops a zero
+    //     sum, and `scale` by zero gives an empty `Lin`. In a step, an entry of `r` outside the
+    //     pivot's support is multiplied by `pv` ≠ 0 and stays nonzero, so its holder set is
+    //     right; one inside it is recomputed as `x`, inserted with `r` when `x` ≠ 0 and removed
+    //     from the row and the set when `x` = 0. The gcd division keeps nonzero entries nonzero.
+    // (3) Let atom a_s be given pivot row p_s. Right after its step column a_s is zero in every
+    //     row but p_s, since by (2) `clear` is every other row holding a_s, and each gets
+    //     pv·row[a_s] − row[a_s]·pv = 0. A later step, for atom a_t with pivot row p_t ≠ p_s
+    //     (p_t was not yet a pivot), has p_t[a_s] = 0, so a cleared row r ≠ p_s keeps
+    //     r[a_s] = pv·0 − v·0 = 0, and p_s[a_s] becomes pv·p_s[a_s] ≠ 0 (divided by a gcd).
+    // (4) An atom b given no pivot row had, at its step, no non-pivot row holding it. A later
+    //     pivot row p_t is a non-pivot row then, so p_t[b] = 0, and each cleared non-pivot row
+    //     keeps b-entry pv·0 − v·0 = 0; rows that become pivots stop counting. Every entry of
+    //     every row is at an atom of `atoms`, since a step adds entries only at the pivot's
+    //     support. By (3) and (4), at the end every non-pivot row is empty.
+    // (5) So the span is spanned by the pivot rows, whose pivot columns are distinct and, by
+    //     (3), zero in all other rows. If e_b = Σ λ_s p_s, reading column a_s gives
+    //     e_b[a_s] = λ_s·p_s[a_s]. If b is no pivot column every λ_s is 0 and e_b = 0, which is
+    //     false; so b = a_t, λ_s = 0 for s ≠ t, and p_t = e_b / λ_t has one nonzero entry, at b.
+    //     Conversely a row with one nonzero entry, at b, is c·e_b with c ≠ 0, so e_b is in the
+    //     span. Non-pivot rows are empty (length 0), so the filter below reads exactly the
+    //     pivot rows with one entry. ∎
     rows.iter()
         .filter(|r| r.len() == 1)
         .flat_map(|r| r.keys().copied())

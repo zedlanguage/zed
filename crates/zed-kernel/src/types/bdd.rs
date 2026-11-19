@@ -4218,7 +4218,8 @@ mod list {
         // depth there, proved in module `set`, the order of looking up each of the `s` literals
         // in the larger; but subtrees of the two blocks that are one node are passed at once,
         // so a block made from the other by adding a literal, on one thread, costs only the
-        // paths that differ (measured, not proved: COMPLEXITY.md CANON-list-absorb). Given up:
+        // paths that differ (measured, not proved: COMPLEXITY.md CANON-list-absorb; cost only,
+        // the shared subtrees give the answer a full walk gives). Given up:
         // the other implications above.
         fn implies_by_blocks(&self, other: &Bdd<A>) -> Option<bool> {
             let (Bdd::List(c, v), Bdd::List(d, w)) = (self, other) else {

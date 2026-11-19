@@ -78,7 +78,8 @@ static PRIORITIES: Priorities = Priorities::new(4);
 /// [`zed_kernel::priority`]), where the fixed hash this replaces had no bound for chosen spans
 /// (COMPLEXITY.md K123). A `Num` outside `i128` hashes by its sign alone (`Num`'s `Hash`), so
 /// spans that differ only in such ends tie whatever the draw, each adding at most one to a
-/// depth: not proved small for chosen spans with ends past `i128`.
+/// depth: not proved small for chosen spans with ends past `i128` (cost only: a priority
+/// sets a node's place in the treap, never which spans it holds).
 fn priority(l: &Num, h: &Num) -> u64 {
     PRIORITIES.hash(&(l, h))
 }

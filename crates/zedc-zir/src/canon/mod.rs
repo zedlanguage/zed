@@ -31,6 +31,7 @@ mod def;
 pub mod domain;
 
 mod serial;
+use std::cmp::Ordering;
 use std::collections::HashMap;
 use std::sync::Arc;
 
@@ -224,11 +225,13 @@ fn sorted_facets(facets: &[Facet]) -> Vec<Facet> {
         .zip(kept())
         .collect();
     keyed.sort_by(|(r, f), (s, g)| r.cmp(s).then_with(|| f.value.cmp(&g.value)));
-    // Assumption, not proved: `Value`'s `==` holds exactly when `Value::cmp` gives Equal, so
-    // equal values are neighbors after the sort and this drops every repeat. The kernel
-    // documents it; the old filter, sort and dedup relied on it too. Evidence: the random facet
-    // lists of `many_facets_of_many_kinds_end_as_the_rules_leave_them` and the rule-order test.
-    keyed.dedup_by(|(r, f), (s, g)| r == s && f.value == g.value);
+    // A repeat is a facet whose rank and value compare Equal under the order of the sort, so
+    // the dedup uses that order and not `Value`'s `==` (PROOF-sweep, P246: the claim that the
+    // two agree was not proved here). Proof that this drops every repeat: the sort orders by
+    // the pair (rank, `Value::cmp`), a total order since each part is one (`Ord`, which every
+    // sort and `BTreeMap` of values rests on), and in a sequence sorted by a total order the
+    // elements Equal to one another are neighbors; `dedup_by` keeps the first of each run.
+    keyed.dedup_by(|(r, f), (s, g)| r == s && f.value.cmp(&g.value) == Ordering::Equal);
     keyed.into_iter().map(|(_, f)| f.clone()).collect()
 }
 

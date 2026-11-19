@@ -1158,7 +1158,9 @@ impl Rat {
             // over divisors of 2^12 - 1 to 2^16 + 1 words (2026-11-09); 7.94 over
             // dividends of 2^8 to 2^20 words with the earlier products (2026-11-06). So a
             // quotient by a wide divisor that needs less is refused when the free memory lies
-            // between the two, and none aborts. Tested by
+            // between the two, and none aborts. No answer rests on these figures: they set the
+            // memory asked for before the division, so a figure too low can only turn the
+            // refusal into the allocator's abort, never give a wrong quotient. Tested by
             // `dividing_a_wide_number_is_refused_when_memory_is_short`,
             // `dividing_by_a_wide_divisor_answers_when_its_peak_is_given` and
             // `a_dense_divisor_asks_for_its_transforms` (COMPLEXITY.md K30). A complete
