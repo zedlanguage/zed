@@ -281,9 +281,21 @@ comment-proved general answer); 2499 (`clause` of an `Or`, declined before by `i
 atoms); 3004 (`pair` of a chain that lists other than two, after the test for a chain of two);
 3576 (`reindex` of more than one new block: every call of `replace` passes none or one); 3717
 (`same_seq` of an empty and a non-empty sequence: both calls, in `implies_by_blocks`, pass two of
-equal length). 4441-4513 are the `return false` arms of the test-only checkers `index_is_sound`
-and `cells_are_sound`; they are reached only when an invariant they check is broken, which is
-their purpose, and no test breaks one on purpose.
+equal length).
+
+`print.rs` (numbered at 847a31d3e): 1311-1312 (`part`'s `operand` of a leaf) are now
+`unreachable!`, with the proof at the site (no form has a leaf operand; see `enum Form`).
+53-55 (`surface_operand`) is the `#[cfg(test)]` helper in the table above. Open, with what was
+found: 908, 912 and 997-1006 (`folded` and `meet_of_literals` on an `&` node of the morphisms) and
+960 (`meet_text` refused). A probe of 6,000 random types of unions, meets, differences and tuples
+of morphism types (depth 3 to 7, three literal key and value types, exact, partial and bounded
+arrows) reached `meet_text`'s `Empty` arm 25 times and an `&` node in `meet_of_literals` once
+(999, already decided), but never an `&` of two meets of literals: every such meet came out as one
+list, as `Connect::zipped` joins two chains under `And` at once (`zip_chain`). No proof was found
+that a list equal to a meet of its atoms is always a chain, so the arms stay; the next round
+should try that proof (a canonical form of a conjunction among `Bdd::List`s) or find an input.
+The other print.rs lines of the list (730, 979, 985, 1031, 1048, 1533-1547, 1596-1641, 1768,
+1918-1950, 1975, 2054, 2069), `types.rs` and `empty/refused.rs` are not yet taken (handoff).
 
 The cut-edge test of the parent walk in `gfp` (`bes.rs`, `is_cut` in the walk) was missing: with
 the test removed from the walk, every `decide` test still passed, since a `lo` that is too small

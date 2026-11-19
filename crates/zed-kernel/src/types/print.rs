@@ -1317,9 +1317,11 @@ impl Printer<'_> {
         meet: &dyn Fn(&mut Printer, &[A]) -> Option<Text>,
     ) -> Text {
         // An operand: a leaf as text, otherwise a node of its own.
+        // Every operand is one of a form's, and no form has a leaf operand: `Part::connect` folds
+        // a leaf away from an `Or` or `And`, `Part::of_form` asserts it, and both callers of
+        // `Part::not_expr` outside tests pass a `Part::Expr` (`Connect::negate`).
         let operand = |me: &mut Printer, (q, not): &(Part<A>, bool)| match q.is_leaf() {
-            Some(true) => all(me),
-            Some(false) => Text::word("Never", Class::Prim),
+            Some(_) => unreachable!("no operand of a form is a leaf"),
             None => me.refer(item(q, *not)),
         };
         let diff = |me: &mut Printer, x: &(Part<A>, bool), q: &(Part<A>, bool)| {
