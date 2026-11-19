@@ -1000,3 +1000,173 @@ both(positional f, positional m1, positional m2) = {\n\
         "M56(c)(ii) control: deep must bind the merged variable inside the kept forward! {st_bad:?}"
     );
 }
+
+/// Landing review B2 (Sol's `landing_split_memo_diamond`, adopted): `root` holds `leaf` and
+/// `branch`, and `branch` holds `leaf`. The shared split memo must give `branch` the split
+/// site of `leaf`, as the full walk per signature does.
+#[test]
+fn r10_m31_split_memo_keeps_a_child_shared_with_a_queued_sibling() {
+    use super::{Ck, Tables};
+    use std::sync::Arc;
+    use zedc_syntax::lex::Span;
+    use zedc_types::ty::{CallPath, FoldForm, MapWord, Need, Reducer, Ty};
+
+    let span = Span { start: 1, end: 2 };
+    let direct = Need {
+        on: Ty::empty(),
+        kind: NeedKind::Reduce(Reducer::Max, span, FoldForm::Infix),
+        result: None,
+        span,
+        alike: Arc::from([]),
+        via: CallPath::default(),
+    };
+    let holds = |sig| Need {
+        kind: NeedKind::Map {
+            f: Ty::func(sig),
+            word: MapWord::Map,
+            lambda: false,
+        },
+        ..direct.clone()
+    };
+    let signature = |needs| {
+        let mut sig = Sig::one(vec![], vec![], Ty::empty());
+        sig.needs = needs;
+        Arc::new(sig)
+    };
+    let leaf = signature(vec![direct.clone()]);
+    let branch = signature(vec![holds(leaf.clone())]);
+    let root = signature(vec![holds(leaf), holds(branch.clone())]);
+    let res = zedc_resolve::resolve::resolve(&[]).expect("the empty unit resolves");
+    let tables = Tables::new(&[], &res);
+    let run = |no_split_memo| {
+        set_next_config(R10Config {
+            no_split_memo,
+            ..R10Config::eager()
+        });
+        let mut ck = Ck::new(&tables, |_, _, _| {});
+        ck.info.sigs.insert(0, root.clone());
+        ck.info.sigs.insert(1, branch.clone());
+        ck.info.split_folds.insert(span, "split".into());
+        ck.finish();
+        ck.info.split_needs
+    };
+    let full_walk = run(true);
+    let memo = run(false);
+    assert_eq!(
+        full_walk.get(&1),
+        Some(&vec![span]),
+        "the full walk control"
+    );
+    assert_eq!(memo, full_walk, "the memo keeps the branch's split fold");
+}
+
+/// Landing review B2 in a program (Sol's `split-diamond.zed`): `outer` maps by `top` and by
+/// `branch`, which maps by `top`; the split of `top` reaches `branch` through either walk.
+#[test]
+fn r10_m31_split_memo_matches_the_full_walk_on_a_diamond_program() {
+    let src = "outer(positional a, positional b) = (a.map(top), b.map(branch));\n\
+               branch(positional a) = a.map(top);\n\
+               top(positional xs) = xs >< max;\n\
+               i = top({0 -> 1});\n\
+               f = top({0 -> 1.0});\n";
+    for d in [false, true] {
+        let base = if d {
+            R10Config::default()
+        } else {
+            R10Config::eager()
+        };
+        let (full_walk, _) = run_with_cfg(
+            src,
+            R10Config {
+                no_split_memo: true,
+                ..base.clone()
+            },
+        );
+        let (memo, _) = run_with_cfg(src, base);
+        assert!(
+            !full_walk.split_needs.is_empty(),
+            "the program splits `top`"
+        );
+        assert_eq!(memo.split_needs, full_walk.split_needs, "D {d}");
+    }
+}
+
+/// Landing review B3 (Sol's `lambda-key*.zed`): two maps of one operand that differ only in
+/// whether the function is written as a lambda replay to one key, so the forward is refused
+/// (`#7'`) and D gives E's signatures and errors.
+#[test]
+fn r10_m66_maps_differing_only_in_the_lambda_bit_agree_with_e() {
+    let head = "id = (x: int) -> x;\nh0(positional m) = (m.map(id), m.map((x: int) -> x));\n";
+    for tail in [
+        "h1(positional m) = h0(m);\nh2(positional m) = h1(m);\n",
+        "h1(positional m) = h0(m);\nbad = h1(42);\n",
+        "h1(positional m, positional z) = {\n    before = z.map(id);\n    a, b = h0(m);\n    \
+         (before, a.map(id), b)\n};\n",
+    ] {
+        let src = format!("{head}{tail}");
+        let (e, _) = run_with_cfg(&src, R10Config::eager());
+        let (d, st) = run_with_cfg(&src, R10Config::default());
+        assert_info_eq(&src, &e, &d);
+        assert!(st.refused.contains_key("#7'"), "{src}: {:?}", st.refused);
+    }
+}
+
+/// Landing review B4 (Sol's `landing_forward_hash_contract`, adopted): a forward and its clone
+/// with the cached digest summary cleared are equal, so they hash alike.
+#[test]
+fn r10_equal_forwards_hash_alike_with_or_without_the_digest_summary() {
+    use std::hash::{DefaultHasher, Hash, Hasher};
+    let (d, st) = run_with_cfg(&chain_src(3, "f", false), R10Config::default());
+    assert_eq!(st.admitted, 2);
+    let fwd = d
+        .sigs
+        .values()
+        .flat_map(|s| &s.needs)
+        .find_map(|n| match &n.kind {
+            NeedKind::Fwd(f) => Some(f),
+            _ => None,
+        })
+        .expect("a kept forward");
+    assert!(fwd.digest_summary.is_some());
+    let mut without_summary = (**fwd).clone();
+    without_summary.digest_summary = None;
+    let hash = |value: &zedc_types::ty::FwdNeed| {
+        let mut h = DefaultHasher::new();
+        value.hash(&mut h);
+        h.finish()
+    };
+    assert_eq!(**fwd, without_summary);
+    assert_eq!(hash(fwd), hash(&without_summary));
+}
+
+/// Landing review B5 (Sol's `bounds-hash.rs`, adopted): two signatures that differ only in
+/// which of two variables has which bound encode to different streams and digests.
+#[test]
+fn r10_signature_hash_ties_each_bound_to_its_variable() {
+    use zedc_types::ty::{SParam, Ty, r10_hash::encode_sig_stream};
+    let signature = |left: u8, right: u8| {
+        let params = ["a", "b"]
+            .into_iter()
+            .map(|name| SParam {
+                name: name.into(),
+                positional: true,
+                default: None,
+                range: None,
+            })
+            .collect();
+        let (t, u) = (Ty::var("T".into()), Ty::var("U".into()));
+        let mut sig = Sig::one(params, vec![t.clone(), u], t);
+        sig.own.extend(["T".into(), "U".into()]);
+        sig.bounds.extend([("T".into(), left), ("U".into(), right)]);
+        sig
+    };
+    let (x, y) = (signature(1, 2), signature(2, 1));
+    assert_ne!(x, y);
+    assert_ne!(x.digest(), y.digest());
+    for r in [2, 3, 17, 123_456_789] {
+        let (dx, _, sx) = encode_sig_stream(&x, r, true);
+        let (dy, _, sy) = encode_sig_stream(&y, r, true);
+        assert_ne!(sx, sy, "base {r}");
+        assert_ne!(dx, dy, "base {r}");
+    }
+}

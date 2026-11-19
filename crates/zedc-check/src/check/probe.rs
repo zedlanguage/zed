@@ -145,16 +145,38 @@ pub struct R10Stats {
     pub m56c_bound_vars: usize,
 }
 
+// The configuration switches are for tests only (landing review B1): a production build has no
+// way to turn off D or pick a negative control but `ZED_DISABLE_D`.
+#[cfg(any(test, feature = "forward-probe"))]
 thread_local! {
     static NEXT_CONFIG: RefCell<Option<R10Config>> = const { RefCell::new(None) };
     static PERSISTENT_CONFIG: RefCell<Option<R10Config>> = const { RefCell::new(None) };
+}
+
+thread_local! {
     static LAST_STATS: RefCell<R10Stats> = RefCell::new(R10Stats::default());
 }
 
+#[cfg(any(test, feature = "forward-probe"))]
 pub fn set_next_config(cfg: R10Config) {
     NEXT_CONFIG.with(|c| *c.borrow_mut() = Some(cfg));
 }
 
+/// The configuration a test set for the next check, or for every check on this thread.
+#[cfg(any(test, feature = "forward-probe"))]
+fn set_config() -> Option<R10Config> {
+    NEXT_CONFIG
+        .with(|c| c.borrow_mut().take())
+        .or_else(|| PERSISTENT_CONFIG.with(|c| c.borrow().clone()))
+}
+
+/// None: a production build takes no configuration from code.
+#[cfg(not(any(test, feature = "forward-probe")))]
+fn set_config() -> Option<R10Config> {
+    None
+}
+
+#[cfg(any(test, feature = "forward-probe"))]
 pub fn set_persistent_config(cfg: Option<R10Config>) {
     PERSISTENT_CONFIG.with(|c| *c.borrow_mut() = cfg);
 }
@@ -317,34 +339,46 @@ pub struct R10State {
     /// Keyed by `(sig as *const Sig as usize, sig.digest())` to prevent freed-address aliasing.
     pub sig_summaries: HashMap<(usize, u64), Arc<CalleeSummary>>,
     pub forwards: Vec<OpenForward>,
+    /// Forwards admitted watching each root, in admission order. A forward that is forced or kept
+    /// stays listed until [`Ck::r10_force_root`] next empties the root's list, and readers skip
+    /// it by its status. Removing it at once (`retain`) cost O(w) per closed forward, O(w^2) for w
+    /// forwards on one root; left in place, each entry is dropped once, O(1) amortized.
     pub root_watchers: HashMap<usize, Vec<usize>>,
-    pub closed_internal_ranges: Vec<(usize, usize)>,
+    /// Number of open forwards watching each root. `r10_on_need` returns at once on zero.
+    pub open_watchers: HashMap<usize, usize>,
+    /// Number of open forwards with a deferred need on each root (`#19`). Scanning the root's
+    /// watchers for one cost O(w) per admission, O(w^2) for w calls on one operand.
+    pub deferred_open: HashMap<usize, usize>,
+    /// Open forwards by root and exposed key (`f1`). Scanning every watcher's keys cost O(w) per
+    /// need; a lookup costs O(1) plus the forwards it hits, which are then forced.
+    pub key_watchers: HashMap<(usize, (NeedKind, bool)), Vec<usize>>,
+    /// Class ranges `lo..hi` of kept forwards, by `lo` (disjoint). A sorted `Vec` with
+    /// `insert` cost O(k) per range kept out of order (an outer forward kept after its inner
+    /// ones), O(k^2) in all; the map costs O(log k) per insert and per lookup.
+    pub closed_internal_ranges: BTreeMap<usize, usize>,
     pub forcing: bool,
 }
 
 impl R10State {
     pub fn new_for_ck() -> Self {
-        let cfg = NEXT_CONFIG
-            .with(|c| c.borrow_mut().take())
-            .or_else(|| PERSISTENT_CONFIG.with(|c| c.borrow().clone()))
-            .unwrap_or_else(|| {
-                #[cfg(any(test, feature = "forward-probe"))]
-                {
-                    if std::env::var_os("ZED_ENABLE_D").is_some() {
-                        R10Config::default()
-                    } else {
-                        R10Config::eager()
-                    }
+        let cfg = set_config().unwrap_or_else(|| {
+            #[cfg(any(test, feature = "forward-probe"))]
+            {
+                if std::env::var_os("ZED_ENABLE_D").is_some() {
+                    R10Config::default()
+                } else {
+                    R10Config::eager()
                 }
-                #[cfg(not(any(test, feature = "forward-probe")))]
-                {
-                    if std::env::var_os("ZED_DISABLE_D").is_some() {
-                        R10Config::eager()
-                    } else {
-                        R10Config::default()
-                    }
+            }
+            #[cfg(not(any(test, feature = "forward-probe")))]
+            {
+                if std::env::var_os("ZED_DISABLE_D").is_some() {
+                    R10Config::eager()
+                } else {
+                    R10Config::default()
                 }
-            });
+            }
+        });
         R10State {
             cfg,
             stats: R10Stats::default(),
@@ -353,8 +387,28 @@ impl R10State {
             sig_summaries: HashMap::new(),
             forwards: Vec::new(),
             root_watchers: HashMap::new(),
-            closed_internal_ranges: Vec::new(),
+            open_watchers: HashMap::new(),
+            deferred_open: HashMap::new(),
+            key_watchers: HashMap::new(),
+            closed_internal_ranges: BTreeMap::new(),
             forcing: false,
+        }
+    }
+
+    /// Takes open forward `fid` off the per-root counts as it leaves `Open` (forced or kept), in
+    /// O(roots it watches). Its entries in `root_watchers` and `key_watchers` stay; readers skip
+    /// them by status.
+    pub fn close_counts(&mut self, fid: usize) {
+        let f = &self.forwards[fid];
+        for r in &f.watched_roots {
+            if let Some(n) = self.open_watchers.get_mut(r) {
+                *n -= 1;
+            }
+        }
+        for r in &f.has_any_need_on {
+            if let Some(n) = self.deferred_open.get_mut(r) {
+                *n -= 1;
+            }
         }
     }
 

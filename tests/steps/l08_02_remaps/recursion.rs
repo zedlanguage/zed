@@ -99,3 +99,34 @@ fn a_function_in_the_body_remaps_the_ranged_map_and_its_calls_are_checked() {
     );
     rejected(&format!("{f}x = f({{ 3 -> 1, 8 -> 2 }});\n"), &[FAMILY]);
 }
+
+/// Landing review of LAND-map-chain-neon, B6: link `h{i}` calls `h{i-1}` and maps its result by
+/// `f`, written last link first, so each link's forward holds the next as its callee and
+/// finishing them went 8,000 calls deep. The recursion aborted with a stack overflow on an
+/// 8 MiB stack; the explicit stack in `r10_finish_fwd_callee` checks it on 2 MiB.
+#[test]
+fn a_chain_of_8000_maps_written_in_reverse_order_checks_on_a_2_mib_stack() {
+    let n = 8000;
+    let mut src = String::new();
+    for i in (1..n).rev() {
+        src.push_str(&format!(
+            "h{i}(positional f, positional m) = h{}(f, m).map(f);\n",
+            i - 1
+        ));
+    }
+    src.push_str("h0(positional f, positional m) = m.map(f);\n");
+    src.push_str(&format!(
+        "a = h{}(x -> x + 1, {{\"k\" -> 0}})[\"k\"];\n",
+        n - 1
+    ));
+    std::thread::scope(|scope| {
+        let thread = std::thread::Builder::new().stack_size(2 << 20);
+        let run = || {
+            assert_eq!(
+                zed_tests::step_helpers::l01_16_elaboration::value(&src, "a"),
+                n.to_string()
+            )
+        };
+        thread.spawn_scoped(scope, run).unwrap().join().unwrap();
+    });
+}

@@ -4877,13 +4877,14 @@ impl PartialEq for FwdNeed {
 
 impl Eq for FwdNeed {}
 
+// Hashes a subset of the fields `eq` compares, so equal values hash alike. The cached
+// `digest_summary` is not one: `eq` ignores it and a clone may have it cleared, which gave two
+// equal forwards different hashes (landing review B4). The callee pointer and count cost O(1);
+// hashing `exits` and `sigma` as well would cost their size for no fewer collisions in use.
 impl std::hash::Hash for FwdNeed {
     fn hash<H: std::hash::Hasher>(&self, h: &mut H) {
         self.need_count.hash(h);
-        if let Some(s) = &self.digest_summary {
-            s.body.val.hash(h);
-            s.body.len.hash(h);
-        }
+        Arc::as_ptr(&self.callee).hash(h);
     }
 }
 
@@ -27527,7 +27528,13 @@ pub mod r10_hash {
             for (v, &m) in bounds {
                 match tok_var_plain(v) {
                     Some(tv) => {
-                        let entry = add_p(mul_p(tv, C_BMUL), mul_p((m as u64) + 1, C_BMASK));
+                        // The variable's token times a one-to-one function of its mask, so the
+                        // mask stays tied to its variable: `tv * C_BMUL + (m + 1) * C_BMASK`
+                        // summed the variables and the masks apart, and `{T: 1, U: 2}` and
+                        // `{T: 2, U: 1}` gave one sum (landing review B5). A swap of two
+                        // masks now changes the sum by `(t - u)(g(a) - g(b))`, not 0 mod P.
+                        let g = add_p(mul_p((m as u64) + 1, C_BMASK), C_BMUL);
+                        let entry = mul_p(tv, g);
                         sum = add_p(sum, entry);
                     }
                     None => {

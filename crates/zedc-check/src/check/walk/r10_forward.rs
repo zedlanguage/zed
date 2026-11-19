@@ -488,16 +488,19 @@ impl<'t, 'a> Ck<'t, 'a> {
                     }
                 }
                 _ => {
-                    let sf = site_free(&n.kind).into_owned();
+                    // The key is the need as a replay records it, `Map.lambda` cleared, as for
+                    // a child's templates above: two maps that differ only in that bit replay
+                    // to one key, so they must fail `#7'` here (landing review B3).
+                    let mut sf = site_free(&n.kind).into_owned();
+                    if let NeedKind::Map { lambda, .. } = &mut sf {
+                        *lambda = false;
+                    }
                     let gives = n.result.is_some();
                     if !seen_7p_keys.insert((n.on.clone(), sf.clone(), gives)) {
                         intrinsic_fails.insert("#7'");
                     }
                     if let Some(on_v) = n.on.as_var() {
-                        let mut exp_kind = sf;
-                        if let NeedKind::Map { lambda, .. } = &mut exp_kind {
-                            *lambda = false;
-                        }
+                        let exp_kind = sf;
                         let tmp = Need {
                             on: n.on.clone(),
                             kind: exp_kind.clone(),
@@ -682,12 +685,9 @@ impl<'t, 'a> Ck<'t, 'a> {
                 fails.insert("#18".into());
             }
             // Exact `#19`: refuse if `c.known` is non-empty OR any open forward has >= 1 deferred need on `r`.
-            let has_deferred_known = self.r10.root_watchers.get(&r).is_some_and(|fs| {
-                fs.iter().any(|&fid| {
-                    let f = &self.r10.forwards[fid];
-                    f.status == ForwardStatus::Open && f.has_any_need_on.contains(&r)
-                })
-            });
+            // O(1) by the count `deferred_open`; scanning `r`'s watchers was O(w) per call, O(w^2)
+            // for w calls on one operand.
+            let has_deferred_known = self.r10.deferred_open.get(&r).is_some_and(|&n| n > 0);
             if !c.known.is_empty() || has_deferred_known {
                 fails.insert("#19".into());
             }
@@ -942,6 +942,19 @@ impl<'t, 'a> Ck<'t, 'a> {
         let fwd_id = self.r10.forwards.len();
         for &r in &watched_roots {
             self.r10.root_watchers.entry(r).or_default().push(fwd_id);
+            *self.r10.open_watchers.entry(r).or_default() += 1;
+        }
+        for &r in &has_any_need_on {
+            *self.r10.deferred_open.entry(r).or_default() += 1;
+        }
+        for (&r, ks) in &exposed_keys {
+            for k in ks {
+                self.r10
+                    .key_watchers
+                    .entry((r, k.clone()))
+                    .or_default()
+                    .push(fwd_id);
+            }
         }
         self.r10.open_by_level[level].push(fwd_id);
         self.r10.forwards.push(OpenForward {
@@ -974,10 +987,12 @@ impl<'t, 'a> Ck<'t, 'a> {
             !self.r10.forcing,
             "M56(c): Ck::need must never be entered while forcing"
         );
-        let Some(fids) = self.r10.root_watchers.get(&r).cloned() else {
-            return;
-        };
-        if fids.is_empty() {
+        // Naive: clone `r`'s watcher list and compare `key` with every open watcher's exposed keys,
+        // O(w) per need and O(w^2) for w forwards on one operand. Here: the open count answers
+        // "none" in O(1), and `key_watchers` gives the forwards exposing exactly `key` on `r`.
+        // Each entry it returns is dropped here (the open ones are forced, the rest are closed
+        // already), so every entry is visited once: O(1) amortized per need.
+        if self.r10.open_watchers.get(&r).is_none_or(|&n| n == 0) {
             return;
         }
         if matches!(key.0, NeedKind::Order { .. }) {
@@ -987,22 +1002,14 @@ impl<'t, 'a> Ck<'t, 'a> {
         if self.r10.barrier_skipped("f1") {
             return;
         }
-        let mut hit_fids = Vec::new();
-        for &fid in &fids {
-            let fwd = &self.r10.forwards[fid];
-            if fwd.status != ForwardStatus::Open {
-                continue;
-            }
-            if let Some(ks) = fwd.exposed_keys.get(&r) {
-                for k_exp in ks {
-                    self.r10.stats.f1_key_checks += 1;
-                    if k_exp == key {
-                        hit_fids.push(fid);
-                        break;
-                    }
-                }
-            }
-        }
+        let Some(fids) = self.r10.key_watchers.remove(&(r, key.clone())) else {
+            return;
+        };
+        self.r10.stats.f1_key_checks += fids.len();
+        let mut hit_fids: Vec<usize> = fids
+            .into_iter()
+            .filter(|&fid| self.r10.forwards[fid].status == ForwardStatus::Open)
+            .collect();
         if !hit_fids.is_empty() {
             self.r10.forcing = true;
             hit_fids.sort_unstable();
@@ -1110,19 +1117,11 @@ impl<'t, 'a> Ck<'t, 'a> {
                 self.r10.forwards[fid].status = ForwardStatus::KeptInSig;
                 let (lo, hi) = (self.r10.forwards[fid].lo, self.r10.forwards[fid].hi);
                 if lo < hi {
-                    let pos = self
-                        .r10
-                        .closed_internal_ranges
-                        .partition_point(|&(l, _)| l < lo);
-                    self.r10.closed_internal_ranges.insert(pos, (lo, hi));
+                    self.r10.closed_internal_ranges.insert(lo, hi);
                 }
                 self.r10.stats.kept_at_generalize += 1;
-                let ws = self.r10.forwards[fid].watched_roots.clone();
-                for w in ws {
-                    if let Some(list) = self.r10.root_watchers.get_mut(&w) {
-                        list.retain(|&x| x != fid);
-                    }
-                }
+                // Was: `retain` on each watched root's list, O(w) per kept forward.
+                self.r10.close_counts(fid);
                 kept_fids.push(fid);
             }
         }

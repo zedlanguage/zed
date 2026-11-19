@@ -5580,14 +5580,70 @@ impl<'t, 'a> Ck<'t, 'a> {
 
     /// Finishes any closed `$k`-owning nested `Sig` held inside `callee`'s needs, memoized by
     /// `*const Sig` across the entire `Ck::finish` pass (`O(1)` per unique callee, 0 decodes).
+    ///
+    /// The nested callees form a DAG (an `Arc` graph holds no cycle) whose depth is the length
+    /// of a chain of forwards, which the program sets: thousands of calls deep in a program
+    /// that calls its functions in reverse order. Recursion over it overflowed the stack
+    /// (landing review of LAND-map-chain-neon, B6: 8000 deep aborted with an 8 MiB stack), so a
+    /// first pass lists the callees not yet memoized in post-order with an explicit stack, and
+    /// the second finishes them in that order, each child then a memo lookup. Same O(V + E) as
+    /// the recursion, with heap memory in place of stack frames.
     fn r10_finish_fwd_callee(
         &self,
         callee: &Arc<Sig>,
         made: &mut Renamings,
         fwd_memo: &mut HashMap<*const Sig, Arc<Sig>>,
     ) -> Arc<Sig> {
-        let ptr = Arc::as_ptr(callee);
-        if let Some(done) = fwd_memo.get(&ptr) {
+        if let Some(done) = fwd_memo.get(&Arc::as_ptr(callee)) {
+            return done.clone();
+        }
+        let mut order: Vec<Arc<Sig>> = Vec::new();
+        let mut listed: HashSet<*const Sig> = HashSet::new();
+        listed.insert(Arc::as_ptr(callee));
+        let mut stack: Vec<(Arc<Sig>, usize)> = vec![(callee.clone(), 0)];
+        while let Some((sig, i)) = stack.last_mut() {
+            let next = sig.needs[*i..].iter().position(|n| match &n.kind {
+                NeedKind::Fwd(c) => {
+                    let p = Arc::as_ptr(&c.callee);
+                    !fwd_memo.contains_key(&p) && !listed.contains(&p)
+                }
+                _ => false,
+            });
+            match next {
+                Some(k) => {
+                    let at = *i + k;
+                    *i = at + 1;
+                    let NeedKind::Fwd(c) = &sig.needs[at].kind else {
+                        unreachable!("position matched a forward need")
+                    };
+                    let child = c.callee.clone();
+                    listed.insert(Arc::as_ptr(&child));
+                    stack.push((child, 0));
+                }
+                None => {
+                    let (done, _) = stack.pop().expect("the loop saw a last frame");
+                    order.push(done);
+                }
+            }
+        }
+        for sig in &order {
+            let out = self.r10_finish_one_fwd_callee(sig, made, fwd_memo);
+            fwd_memo.insert(Arc::as_ptr(sig), out);
+        }
+        fwd_memo[&Arc::as_ptr(callee)].clone()
+    }
+
+    /// One step of [`Self::r10_finish_fwd_callee`]: `callee` with its forward children already
+    /// in `fwd_memo`.
+    fn r10_finish_one_fwd_callee(
+        &self,
+        callee: &Arc<Sig>,
+        made: &mut Renamings,
+        fwd_memo: &mut HashMap<*const Sig, Arc<Sig>>,
+    ) -> Arc<Sig> {
+        // A non-forward need's held function can reach this pass again through
+        // `finished_arc_with` and may finish the callee first; its result then stands.
+        if let Some(done) = fwd_memo.get(&Arc::as_ptr(callee)) {
             return done.clone();
         }
         let mut changed = false;
@@ -5628,16 +5684,14 @@ impl<'t, 'a> Ck<'t, 'a> {
                 }
             }
         }
-        let out = if changed {
+        if changed {
             let mut copy = (**callee).clone();
             copy.needs = new_needs;
             copy.facts = Default::default();
             Arc::new(copy)
         } else {
             callee.clone()
-        };
-        fwd_memo.insert(ptr, out.clone());
-        out
+        }
     }
 
     fn finished_with(
@@ -6051,22 +6105,23 @@ impl<'t, 'a> Ck<'t, 'a> {
                 }
             } else {
                 // M31 fix: shared iterative post-order DAG memo across all `info.sigs` entries.
-                // Each unique `Arc<Sig>` is walked at most once in the entire `finish` pass!
+                // Each unique `Arc<Sig>` is walked at most once in the entire `finish` pass.
+                // A frame expands its children one at a time and is combined only once each
+                // is in `memo`. Marking every queued child as on the stack at once (landing
+                // review B2) let a sibling popped first skip a child it shares with a sibling
+                // still queued and combine without that child's sites. An `Arc` graph holds no
+                // cycle, so a child not in `memo` and not yet listed is always new.
                 let skip_compact = self.r10.cfg.skip_compact_split_needs;
                 let mut memo: HashMap<*const Sig, Arc<[Span]>> = HashMap::new();
+                let mut listed: HashSet<*const Sig> = HashSet::new();
                 for (&id, sig) in &self.info.sigs {
                     let root_ptr = Arc::as_ptr(sig);
-                    if !memo.contains_key(&root_ptr) {
-                        let mut stack: Vec<(&Sig, Vec<&Sig>, Vec<Span>, bool)> =
-                            vec![(sig, Vec::new(), Vec::new(), false)];
-                        let mut on_stack: HashSet<*const Sig> = HashSet::from([root_ptr]);
-                        while let Some((s, children, own_sites, ready)) = stack.pop() {
-                            let s_ptr = s as *const Sig;
-                            if memo.contains_key(&s_ptr) {
-                                on_stack.remove(&s_ptr);
-                                continue;
-                            }
-                            if !ready {
+                    if listed.insert(root_ptr) {
+                        // (signature, its children, its own sites, next child to look at)
+                        let mut stack: Vec<(&Sig, Vec<&Sig>, Vec<Span>, usize)> = Vec::new();
+                        let mut next: Option<&Sig> = Some(sig);
+                        loop {
+                            if let Some(s) = next.take() {
                                 self.r10.stats.finish_sigs_walked += 1;
                                 self.r10.stats.finish_needs_walked += s.needs.len();
                                 let mut local_sites: Vec<Span> = Vec::new();
@@ -6105,32 +6160,30 @@ impl<'t, 'a> Ck<'t, 'a> {
                                         }
                                     }
                                 }
-                                let uncached: Vec<&Sig> = local_children
-                                    .iter()
-                                    .copied()
-                                    .filter(|c| {
-                                        let cp = *c as *const Sig;
-                                        !memo.contains_key(&cp) && !on_stack.contains(&cp)
-                                    })
-                                    .collect();
-                                stack.push((s, local_children, local_sites, true));
-                                for c in uncached {
-                                    if on_stack.insert(c as *const Sig) {
-                                        stack.push((c, Vec::new(), Vec::new(), false));
-                                    }
-                                }
-                            } else {
-                                let mut all_sites = own_sites;
-                                for c in children {
-                                    if let Some(cs) = memo.get(&(c as *const Sig)) {
-                                        all_sites.extend_from_slice(cs);
-                                    }
-                                }
-                                all_sites.sort_unstable();
-                                all_sites.dedup();
-                                memo.insert(s_ptr, all_sites.into());
-                                on_stack.remove(&s_ptr);
+                                stack.push((s, local_children, local_sites, 0));
                             }
+                            let Some((s, children, own_sites, at)) = stack.last_mut() else {
+                                break;
+                            };
+                            if let Some(k) = children[*at..]
+                                .iter()
+                                .position(|c| listed.insert(*c as *const Sig))
+                            {
+                                *at += k + 1;
+                                next = Some(children[*at - 1]);
+                                continue;
+                            }
+                            let s_ptr = *s as *const Sig;
+                            let mut all_sites = std::mem::take(own_sites);
+                            for c in children.iter() {
+                                if let Some(cs) = memo.get(&(*c as *const Sig)) {
+                                    all_sites.extend_from_slice(cs);
+                                }
+                            }
+                            all_sites.sort_unstable();
+                            all_sites.dedup();
+                            memo.insert(s_ptr, all_sites.into());
+                            stack.pop();
                         }
                     }
                     if let Some(sites) = memo.get(&root_ptr)
@@ -6313,11 +6366,11 @@ impl<'t, 'a> Ck<'t, 'a> {
         if self.classes.is_materialized(k) || !self.r10.uses_sparse() {
             return false;
         }
-        let idx = self
-            .r10
+        self.r10
             .closed_internal_ranges
-            .partition_point(|&(lo, _)| lo <= k);
-        idx > 0 && k < self.r10.closed_internal_ranges[idx - 1].1
+            .range(..=k)
+            .next_back()
+            .is_some_and(|(_, &hi)| k < hi)
     }
 
     pub(in crate::check) fn make_fresh_class(id: usize, level: usize, given: bool) -> Class {
@@ -6476,11 +6529,8 @@ impl<'t, 'a> Ck<'t, 'a> {
             (f.lo..f.hi).collect(),
             pending_mode,
         );
-        for &w in &f.watched_roots {
-            if let Some(ws) = self.r10.root_watchers.get_mut(&w) {
-                ws.retain(|&x| x != fid);
-            }
-        }
+        // Was: `retain` on each watched root's list, O(w) per forced forward.
+        self.r10.close_counts(fid);
 
         let temp_fwd = self.build_fwd_need_from_open(&f);
         let decoded = temp_fwd.decode_uncounted(f.call_span, clear_lambda);
@@ -6546,12 +6596,14 @@ impl<'t, 'a> Ck<'t, 'a> {
             return;
         }
         let r = self.find(k);
-        let Some(fids) = self.r10.root_watchers.get(&r).cloned() else {
-            return;
-        };
-        if fids.is_empty() {
+        // The list is taken out: its open forwards are forced here and the rest are closed
+        // already, so no entry is read twice (was: cloned, O(w) per call even when all closed).
+        if self.r10.open_watchers.get(&r).is_none_or(|&n| n == 0) {
             return;
         }
+        let Some(fids) = self.r10.root_watchers.remove(&r) else {
+            return;
+        };
         self.r10.forcing = true;
         let mut sorted = fids;
         sorted.sort_unstable();

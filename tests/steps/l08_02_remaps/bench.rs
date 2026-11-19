@@ -1107,3 +1107,34 @@ fn n_maps_by_a_parameter_chained_check_in_linear_time() {
         );
     }
 }
+
+#[test]
+fn n_calls_mapping_by_one_parameter_check_in_linear_time() {
+    // Landing review of FAIL-map-chain-needs-quadratic (LAND-map-chain-neon, Sol's L1 finding):
+    // n calls `h0(f, m_i)` in one body, each kept as a forward that watches the one operand `f`.
+    // Each admission scanned `f`'s watchers for `#19`, each need scanned them for `f1`, and each
+    // forward kept or forced removed itself from the list: O(n^2) in all, check-stage work 17
+    // times as large at 8n for n = 1000 before the per-root counts and key index.
+    let n_calls = 1000;
+    let srcs = scaling::inputs(n_calls, |n| {
+        let mut src = String::from("h0(positional f, positional m) = m.map(f);\n");
+        let params: Vec<String> = (1..=n).map(|i| format!("positional m{i}")).collect();
+        src.push_str(&format!(
+            "outer(positional f, {}) = {{\n",
+            params.join(", ")
+        ));
+        for i in 1..=n {
+            src.push_str(&format!("  _ = h0(f, m{i});\n"));
+        }
+        src.push_str("  f\n};\n");
+        let args: Vec<&str> = (1..=n).map(|_| "{\"k\" -> 0}").collect();
+        src.push_str(&format!("a = outer(x -> x + 1, {})(1);\n", args.join(", ")));
+        src
+    });
+    let run = |n: usize| assert_eq!(value(&srcs[&n], "a"), "2");
+    scaling::check(
+        "n calls mapping by one parameter `f`, whole path",
+        n_calls,
+        run,
+    );
+}
