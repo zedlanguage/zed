@@ -554,8 +554,13 @@ fn subtype_answers_do_not_depend_on_the_queries_before_them_at_a_fork_without_la
     // excludes, so `ts[37]` is empty, and so are `ts[68] = (ts[37], ts[37])` and `ts[78]`, a
     // morphism with an inhabited argument and `ts[37]` its value. Queries 152
     // (`ts[68] <: ts[112]`), 161 (`ts[68] <: ts[16]`), 186 (`ts[37] <: ts[48]`), 194
-    // (`ts[37] <: ts[23]`) and 199 (`ts[78] <: ts[112]`) now hold.
-    assert_eq!(order_free(10511391382961984112), 44);
+    // (`ts[37] <: ts[23]`) and 199 (`ts[78] <: ts[112]`) now hold. It was 44 until the fork
+    // stages of the same row (COMPLEXITY.md K137) decided two differences refused at a fork:
+    // query 1, `ts[47] <: ts[75]`, holds, as `ts[47]` is a `#cons` of pairs `(1, [x])` with `x`
+    // an integer (less some), and `ts[75]` holds every `#cons((1, [x]))`; query 26,
+    // `ts[144] <: ts[100]`, holds, as `ts[144]` is empty: its one part not empty by its own
+    // rows is the pairs `(1, [x])` less `(int, L)`, which holds them all.
+    assert_eq!(order_free(10511391382961984112), 46);
 }
 
 /// The two queries of the fixed seed above that PERF-set-digest-shape-free turned from refused

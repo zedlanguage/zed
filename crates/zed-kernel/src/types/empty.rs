@@ -510,17 +510,30 @@ fn refine_tuple_forks(undecided: &[Type]) {
     if proof.refused.is_none() {
         VERDICTS.with(|v| {
             let mut v = v.borrow_mut();
-            for (m, empty) in roots.into_iter().zip(empty) {
+            for (m, empty) in roots.iter().zip(empty) {
                 if empty
                     && proof
                         .ids
-                        .get(&m)
+                        .get(m)
                         .is_none_or(|&id| causes[id] != Some(Refusal::Fork))
                 {
-                    v.insert(m, Verdict::Empty);
+                    v.insert(m.clone(), Verdict::Empty);
                 }
             }
         });
+    }
+    // The fork stages (module `fork`) for the roots still refused at a fork, as
+    // `Type::verdict_alone` runs them for a type outside a group. COMPLEXITY.md K137.
+    for m in roots {
+        if VERDICTS.with(|v| v.borrow().get(&m) != Some(&Verdict::Refused(Refusal::Fork))) {
+            continue;
+        }
+        let v = match fork::decide(&m) {
+            Some(fork::Decided::Empty) => Verdict::Empty,
+            Some(fork::Decided::Inhabited(_)) => Verdict::Inhabited,
+            None => continue,
+        };
+        VERDICTS.with(|k| k.borrow_mut().insert(m, v));
     }
 }
 
@@ -714,7 +727,10 @@ impl Type {
             // 10511391382961984112 in `judgments.rs`. If false, a subtype answer depends on the
             // queries asked before it: no answer is wrong (a type not proved empty counts as
             // inhabited, and every empty answer is a proof), but checking is not deterministic.
-            return s.refused == Some(Refusal::Fork) && self.empty_past_forks();
+            // The fork stages (module `fork`) decide some of the rest exactly: COMPLEXITY.md K137.
+            return s.refused == Some(Refusal::Fork)
+                && (self.empty_past_forks()
+                    || matches!(fork::decide(self), Some(fork::Decided::Empty)));
         }
         MEMO.with(|m| {
             m.borrow_mut()
@@ -1005,6 +1021,16 @@ impl Type {
         let decided = s.refused.is_none();
         if (decided && b) || (s.refused == Some(Refusal::Fork) && self.empty_past_forks()) {
             Verdict::Empty
+        } else if let Some(v) = (s.refused == Some(Refusal::Fork))
+            .then(|| fork::decide(self))
+            .flatten()
+        {
+            // The fork stages (module `fork`), run only after the search ended at a fork, so a
+            // type decided without one costs what it did. COMPLEXITY.md K137.
+            match v {
+                fork::Decided::Empty => Verdict::Empty,
+                fork::Decided::Inhabited(_) => Verdict::Inhabited,
+            }
         } else if decided
             && (s.ids.get(self).is_some_and(|t| s.witnessed.contains(t)) || s.rep(self).is_some())
         {
@@ -1060,6 +1086,7 @@ impl Type {
         };
         s.swept.insert(self.clone(), None);
         s.solve(self);
+        let forked = s.refused == Some(Refusal::Fork);
         if s.refused.is_none()
             && let Some(r) = s.rep(self)
             && let Some(v) = s.value(r)
@@ -1071,8 +1098,15 @@ impl Type {
             open_forks: true,
             ..Search::default()
         };
-        let r = s.rep(self)?;
-        s.value(r)
+        if let Some(r) = s.rep(self)
+            && let Some(v) = s.value(r)
+        {
+            return Some(v);
+        }
+        match forked.then(|| fork::decide(self)).flatten() {
+            Some(fork::Decided::Inhabited(v)) => Some(v),
+            _ => None,
+        }
     }
 
     /// Whether a search that does not end at a fork proves `self` empty with no fork under it:
@@ -17572,6 +17606,7 @@ fn system(env: &Arc<Env>) -> System {
 }
 
 mod escape;
+mod fork;
 mod names;
 mod refused;
 mod shared;

@@ -194,7 +194,7 @@ fn a_difference_of_forked_unions_is_empty_in_its_size() {
     // Refused(Fork) until PORT-u6-structured-fork; Empty since, by the steps of COMPLEXITY.md
     // K136 at the fork.
     verdict_scales(
-        "Fork, by a difference of unions",
+        "Empty, by a difference of unions",
         1024,
         Verdict::Empty,
         forked_difference_of_unions,
@@ -212,7 +212,7 @@ fn a_union_of_forked_differences_is_empty_in_its_size() {
     // Refused(Fork) until PORT-u6-structured-fork; Empty since, by the steps of COMPLEXITY.md
     // K136 at the fork.
     verdict_scales(
-        "Fork, by a union of differences",
+        "Empty, by a union of differences",
         1024,
         Verdict::Empty,
         forked_union_of_differences,
@@ -233,7 +233,7 @@ fn a_pair_type_met_with_forked_differences_is_empty_in_its_size() {
     // Refused(Fork) until PORT-u6-structured-fork; Empty since, by the steps of COMPLEXITY.md
     // K136 at the fork.
     verdict_scales(
-        "Fork, by a pair type met with a union of differences",
+        "Empty, by a pair type met with a union of differences",
         512,
         Verdict::Empty,
         forked_differences_met_with_pairs,
@@ -1607,6 +1607,24 @@ fn emptiness_counts_a_fork_as_inhabited_in_its_size() {
             let tag = format!("_ie{}", tag.fetch_add(1, Relaxed));
             let t = &list_named(Type::int(), &tag) - &by_place_from_the_end(n, None, &tag);
             assert!(!t.is_empty(), "at {n}");
+        });
+    });
+}
+
+#[test]
+fn coprime_cycles_less_a_fork_are_inhabited_in_the_value_built() {
+    // `coprime_cycles` at `n` and 9, its shortest value `9 n - 1` long, so the work is at least
+    // linear in `n`; it measured 7.99 times the instructions at 8n (load 62, 2026-11-19). The
+    // kernel answers it without the fork stages (COMPLEXITY.md K137), which it never calls
+    // here. With both cycles growing, `n` and `n + 1`, the shortest value grows as `n^2`, and
+    // it has to be written, so no decision that gives it is cheaper.
+    big(|| {
+        let tag = AtomicUsize::new(0);
+        scaling::check("A cycle of n against a cycle of 9, past a fork", 64, |n| {
+            Type::forget_emptiness();
+            let tag = format!("_cc{}", tag.fetch_add(1, Relaxed));
+            let t = coprime_cycles(n, 9, 8, &tag);
+            assert_eq!(t.verdict(), Verdict::Inhabited, "at {n}");
         });
     });
 }

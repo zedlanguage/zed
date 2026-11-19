@@ -849,6 +849,58 @@ fn by_place_from_the_end(n: usize, skip: Option<usize>, tag: &str) -> Type {
         .fold(Type::empty(), |u, t| r3_union(&u, t))
 }
 
+/// The lists of integers whose length is `a - 1` modulo `a`, less those whose length is not
+/// `left` modulo `b` (one cycle of `b` types) and the lists of only 1s. The last two meet at
+/// the element 1, two cyclic types taken out of one tail: a fork. A value has a length `l`
+/// with `l = a - 1` modulo `a` and `l = left` modulo `b`; for `a` and `b` coprime and `left`
+/// `b - 1` the shortest is `a * b - 1` integers other than 1, so a decision that builds it
+/// reads `a * b` pairs of a place on each cycle. With `a - 1` and `left` apart modulo the
+/// greatest common divisor of `a` and `b` there is none. The kernel decides both without the
+/// fork stages (COMPLEXITY.md K137), which it never calls here.
+fn coprime_cycles(a: usize, b: usize, left: usize, tag: &str) -> Type {
+    let positive = period_named(a, a - 1, &format!("{tag}p"));
+    let defs = (0..b)
+        .map(|i| {
+            let body = cons(int(), r((i + 1) % b));
+            let body = if i == left {
+                body
+            } else {
+                Expr::Union(vec![nil(), body])
+            };
+            def(&format!("Q{i}{tag}"), body)
+        })
+        .collect();
+    let other = Group::new(defs).unwrap().instance(vec![]).remove(0);
+    let ones = list_named(lit(1), &format!("{tag}o"));
+    &(&positive - &other) - &ones
+}
+
+/// [`coprime_cycles`] at 7 and 8 leaving 7, and at 7 and 7 leaving 0 (Empty: no length is 6
+/// and 0 modulo 7), answered past the fork; a value of the first is checked to be `7 * 8 - 1`
+/// long, the shortest.
+#[test]
+fn coprime_cycles_less_a_fork_are_decided() {
+    Type::forget_emptiness();
+    let t = coprime_cycles(7, 8, 7, "_cc78");
+    assert_eq!(t.verdict(), Verdict::Inhabited, "{t}");
+    let v = t.witness().expect("a value");
+    assert!(t.contains(&v), "{v}");
+    let mut len = 0;
+    let mut at = &v;
+    while let Value::Atom(a) = at
+        && let Some(items) = &a.payload
+    {
+        len += 1;
+        at = &items[1];
+    }
+    assert_eq!(len, 7 * 8 - 1, "{v}");
+    Type::forget_emptiness();
+    let t = coprime_cycles(7, 7, 0, "_cc77");
+    assert_eq!(t.verdict(), Verdict::Empty, "{t}");
+    Type::forget_emptiness();
+    assert!(t.is_empty(), "{t}");
+}
+
 /// The lists of integers with a 1 at each place `i` from the front, for `i` up to `n`, except
 /// `skip`, or with no 1 among the first `n` places: `F{i}` and `M{k}` (no 1 among the first `k`
 /// places). Every list is one of them when `skip` is none. Read from the front, the places a
@@ -8154,6 +8206,64 @@ fn forked_differences_less_one_pair_short_are_not_empty() {
             }
         }
     }
+}
+
+/// The test t03 of the gemini seat's prototype of the fork stages (round 1 of
+/// REFUSAL-front-u6-subset), ported (PORT-u6-structured-fork): the three forked-differences
+/// shapes at `n` 16 are Empty, and with the pair that holds the 8th first pair not taken out
+/// (the prototype's `drop_neg` 7) none is Empty. The prototype answers the controls Inhabited;
+/// here the union of differences and the pairs met with it are Inhabited, and the difference of
+/// unions is refused at the fork, as at 3 and 8 in
+/// [`forked_differences_less_one_pair_short_are_not_empty`]: its root is a pair, outside the
+/// class the fork stages read (module `fork`, which reads lists of integers).
+#[test]
+fn the_forked_difference_benches_at_16_and_their_controls() {
+    big(|| {
+        let union = |ts: &[Type]| ts.iter().fold(Type::empty(), |u, t| &u | t);
+        let n = 16;
+        for (i, (what, make)) in [
+            (
+                "difference of unions",
+                forked_difference_of_unions as fn(usize, &str) -> Type,
+            ),
+            ("union of differences", forked_union_of_differences),
+            ("pairs met", forked_differences_met_with_pairs),
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            Type::forget_emptiness();
+            let t = make(n, &format!("_rf16{i}"));
+            assert_eq!(t.verdict(), Verdict::Empty, "{what}");
+        }
+        let hole = 8;
+        let tag = "_rf16h";
+        let (ins, outs): (Vec<Type>, Vec<Type>) = forked_pairs(n, tag).into_iter().unzip();
+        let kept: Vec<Type> = (0..n)
+            .filter(|&i| i + 1 != hole)
+            .map(|i| outs[i].clone())
+            .collect();
+        let difference_of_unions = &union(&ins) - &union(&kept);
+        let union_of_differences = (0..n).fold(Type::empty(), |u, i| {
+            if i + 1 == hole {
+                &u | &ins[i]
+            } else {
+                &u | &(&ins[i] - &outs[i])
+            }
+        });
+        let l = list_named(Type::int(), tag);
+        let met = &Type::tuple(vec![l.clone(), l]) & &union_of_differences;
+        for (t, want) in [
+            (difference_of_unions, Verdict::Refused(Refusal::Fork)),
+            (union_of_differences, Verdict::Inhabited),
+            (met, Verdict::Inhabited),
+        ] {
+            Type::forget_emptiness();
+            assert_eq!(t.verdict(), want, "{t}");
+            Type::forget_emptiness();
+            assert!(!t.is_empty(), "{t}");
+        }
+    });
 }
 
 /// Small instance of `bench::refining_a_box_follows_no_fork_in_its_size`: refining the box of

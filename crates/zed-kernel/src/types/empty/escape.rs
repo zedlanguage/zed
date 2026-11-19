@@ -98,10 +98,10 @@ use crate::value::Value;
 // precomputed 64-bit `Digest` makes `Clone` and `Hash` `O(1)`, and `PartialEq` `O(1)` whenever
 // hashes differ or `Rc::ptr_eq` holds (such as shared `Nodes::heads` and memoized place-1 cells).
 #[derive(Clone, Debug)]
-struct Ints {
-    cof: bool,
+pub(super) struct Ints {
+    pub(super) cof: bool,
     hash: u64,
-    vals: Rc<BTreeSet<Value>>,
+    pub(super) vals: Rc<BTreeSet<Value>>,
 }
 
 impl PartialEq for Ints {
@@ -136,7 +136,7 @@ impl Ints {
 
     /// The integer set of `t`, if `t` holds integers and nothing else. Wide integers
     /// (`Value::Big`) are kept as values too: the escape only compares and hashes them (round 10).
-    fn of(t: &Type) -> Option<Ints> {
+    pub(super) fn of(t: &Type) -> Option<Ints> {
         let p = t.p();
         if !only_ints(&p) {
             return None;
@@ -162,7 +162,7 @@ impl Ints {
         Some(Ints::new(p.ints.cofinite, vals))
     }
 
-    fn is_empty(&self) -> bool {
+    pub(super) fn is_empty(&self) -> bool {
         !self.cof && self.vals.is_empty()
     }
 
@@ -195,7 +195,7 @@ impl Ints {
         }
     }
 
-    fn meet(&self, o: &Ints) -> Ints {
+    pub(super) fn meet(&self, o: &Ints) -> Ints {
         match (self.cof, o.cof) {
             (false, _) => Ints::new(
                 false,
@@ -238,7 +238,7 @@ impl Ints {
             .expect("a cofinite set has a natural number")
     }
 
-    fn contains(&self, v: &Value) -> bool {
+    pub(super) fn contains(&self, v: &Value) -> bool {
         self.cof != self.vals.contains(v)
     }
 

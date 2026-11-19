@@ -1208,10 +1208,13 @@ fn u6_case(spec: &Spec, term: &Term, tag: &str) -> (bool, Verdict, Verdict) {
 /// builds of each of the 17 specs are pinned at their verdict now, which is the same in both
 /// orders, and checked against the oracle. Four of the 22 are answered: `_xc1930` Inhabited,
 /// and `_xc2359`, `_xp1550` and `_xp1550r` Empty, by the value search at the K26 fork in
-/// `tuples_on` (a value of one tuple type of a plain union proves it inhabited). The other 18
-/// are still refused, and never wrong: the twelve `_r6sat` are the selector reduction of 3-SAT,
-/// and the rest need the subset construction (row REFUSAL-front-u6-subset). `_r7rc_343f` and
-/// `_r7rc_343r` are in [`r7_random_carrier_plus_chains_both_orders_against_bruteforce`]. The
+/// `tuples_on` (a value of one tuple type of a plain union proves it inhabited). A fifth,
+/// `_xc284r`, is Empty by the fork stages (PORT-u6-structured-fork, COMPLEXITY.md K137), as the
+/// oracle says, and so is the other build, `_xc284`. `_r7rc_343f` and `_r7rc_343r`, in
+/// [`r7_random_carrier_plus_chains_both_orders_against_bruteforce`], are Inhabited by the fork
+/// stages, as the brute force there says. The other 15 are still refused, and never wrong: the
+/// twelve `_r6sat` are the selector reduction of 3-SAT, and the rest need the subset
+/// construction (row REFUSAL-front-u6-subset). The
 /// control: two cases of the same builds that every kernel answers, one inhabited and one
 /// empty.
 #[test]
@@ -1239,7 +1242,7 @@ fn the_u6_fork_cases_are_answered_or_refused_soundly() {
         ]],
     };
     let (s, t) = xc284r.reversed(&term(&[5], &[0, 2, 3, 4]));
-    cases.push(("_xc284".into(), s, t, false, fork));
+    cases.push(("_xc284".into(), s, t, false, Empty));
     let xc363r = Spec {
         groups: vec![vec![
             d(false, &[(6, 0)]),
@@ -1420,15 +1423,19 @@ fn the_u6_fork_cases_are_answered_or_refused_soundly() {
         let (s, t) = selector_reduction(k, &clauses);
         cases.push((format!("_r6sat{id}"), s, t, true, fork));
     }
+    // Every case is run before any pin is checked, so a failure names all the changed pins.
+    let mut changed = Vec::new();
     for (tag, spec, term, inhabited, want) in &cases {
         let (oracle, va, vb) = u6_case(spec, term, tag);
         assert_eq!(oracle, *inhabited, "{tag}: the oracle");
-        assert_eq!(
-            (va, vb),
-            (*want, *want),
-            "{tag}: the verdicts in both orders"
-        );
+        if (va, vb) != (*want, *want) {
+            changed.push(format!("{tag}: {va:?} and {vb:?}, pinned {want:?}"));
+        }
     }
+    assert!(
+        changed.is_empty(),
+        "the verdicts in both orders: {changed:#?}"
+    );
     // The control: `_xc1930` less nothing holds `nil`; `_xc2359` less its own positive side is
     // empty. Both are answered in both orders.
     for (tag, spec, term, want) in [
@@ -1493,6 +1500,199 @@ fn the_u6_review_cases_are_answered_or_refused_soundly() {
         assert_eq!(oracle, inhabited, "{tag}: the oracle");
         assert_eq!((va, vb), (want, want), "{tag}: the verdicts in both orders");
     }
+}
+
+/// The verdicts of `term` in both orders (the build as given, tag `tag`, and the reversed one,
+/// tag `{tag}r`), each asked afresh, checked against `inhabited`: each is that answer or refused
+/// at a fork. An `Inhabited` verdict is checked on the value [`Type::witness`] gives, an answer
+/// against [`Type::is_empty`]. Unlike [`u6_case`] it does not run the oracle, so a case whose
+/// oracle is too costly (a selector reduction with many clauses) passes the formula's answer.
+fn fork_case(spec: &Spec, term: &Term, tag: &str, inhabited: bool) -> (Verdict, Verdict) {
+    let a = spec.ty(&spec.build(tag), term);
+    let (rspec, rterm) = spec.reversed(term);
+    let b = rspec.ty(&rspec.build_in(&format!("{tag}r"), true), &rterm);
+    let want = if inhabited {
+        Verdict::Inhabited
+    } else {
+        Verdict::Empty
+    };
+    let mut out = Vec::new();
+    for (t, order) in [(a, "as given"), (b, "reversed")] {
+        Type::forget_emptiness();
+        let v = t.verdict();
+        assert!(
+            v == want || v == Verdict::Refused(Refusal::Fork),
+            "{tag} ({order}): {v:?}, the answer is {want:?}"
+        );
+        if v == Verdict::Inhabited {
+            let w = t
+                .witness()
+                .unwrap_or_else(|| panic!("{tag} ({order}): no value"));
+            assert!(t.contains(&w), "{tag} ({order}): {w} is not in {t}");
+        }
+        Type::forget_emptiness();
+        if v == Verdict::Empty {
+            assert!(
+                t.is_empty(),
+                "{tag} ({order}): Empty, but is_empty is false"
+            );
+        }
+        Type::forget_emptiness();
+        out.push(v);
+    }
+    (out[0], out[1])
+}
+
+/// Whether the 3-clauses `clauses` over `k` variables are satisfiable, by trying every
+/// assignment: the answer of [`selector_reduction`]`(k, clauses)`.
+fn satisfiable(k: usize, clauses: &[Vec<(usize, bool)>]) -> bool {
+    (0..1u32 << k).any(|a| (clauses.iter()).all(|c| c.iter().any(|&(i, b)| (a >> i & 1 == 1) == b)))
+}
+
+/// `m` random 3-clauses over `k` variables, by the prototype's xorshift.
+fn random_clauses(seed: &mut u64, k: usize, m: usize) -> Vec<Vec<(usize, bool)>> {
+    let mut next = || {
+        *seed ^= *seed << 13;
+        *seed ^= *seed >> 7;
+        *seed ^= *seed << 17;
+        *seed
+    };
+    (0..m)
+        .map(|_| {
+            (0..3)
+                .map(|_| ((next() % k as u64) as usize, next() % 2 == 0))
+                .collect()
+        })
+        .collect()
+}
+
+/// The tests t04 to t11 of the gemini seat's prototype of the fork stages (round 1 of
+/// REFUSAL-front-u6-subset, `structured_fork.rs`), ported with Stages 1 and 2
+/// (PORT-u6-structured-fork, COMPLEXITY.md K137); its t01 and t02 are the U6 cases above and
+/// `_u6a167`, and t03 is `refusals::the_forked_difference_benches_at_16_and_their_controls`.
+/// Each case is checked by [`fork_case`] in both orders against the oracle (or, for t11, the
+/// formula), and pinned at its verdict now. The prototype answers t04 and t05 by its Stage 3
+/// (the prefix-chain CSP), which is not ported: t04 stays refused, as do the cases the
+/// prototype refuses (t06 to t09, t11), since the first element read already leaves two
+/// negative chains (a fork, for Stage 1) and the answer needs two negative states at once (no
+/// simulation, for Stage 2). t05, unsatisfiable, is Empty and t10 Inhabited, both by the
+/// kernel before the fork stages (the same with the stages switched off): the fork stages
+/// decide none of t04 to t11.
+#[test]
+fn the_prototype_fork_stage_cases_are_answered_or_refused_soundly() {
+    use Verdict::Inhabited;
+    let fork = Verdict::Refused(Refusal::Fork);
+    let d = |nil: bool, rows: &[(u16, usize)]| D {
+        nil,
+        rows: rows.to_vec(),
+    };
+    let mut cases: Vec<(String, Spec, Term, bool, Verdict)> = Vec::new();
+    // t04 and t05: 2-SAT as the selector reduction of 3-clauses, an implication chain
+    // x0 -> x1 -> x2 -> x3 with a tautology beside each link; with x0 and !x3 forced, unsatisfiable.
+    for unsat in [true, false] {
+        let k = 4;
+        let mut clauses = Vec::new();
+        for i in 0..k - 1 {
+            clauses.push(vec![(i, false), (i + 1, true), (i + 1, true)]);
+            clauses.push(vec![(i, true), (i, false), (i + 1, true)]);
+        }
+        if unsat {
+            clauses.push(vec![(0, true); 3]);
+            clauses.push(vec![(k - 1, false); 3]);
+        }
+        let (s, t) = selector_reduction(k, &clauses);
+        let want = if unsat { Verdict::Empty } else { fork };
+        cases.push((format!("_pf2sat{}", u8::from(unsat)), s, t, !unsat, want));
+    }
+    // t06 and t07: coupled 3-SAT, (x0 | x1 | x2) & (!x0 | !x1 | !x2), satisfiable, and all eight
+    // clauses over three variables, not.
+    let signs = |m: usize| (0..3).map(|i| (i, m >> i & 1 == 1)).collect::<Vec<_>>();
+    for (tag, clauses) in [
+        ("_pf3sat", vec![signs(7), signs(0)]),
+        ("_pf3unsat", (0..8).map(signs).collect()),
+    ] {
+        let (s, t) = selector_reduction(3, &clauses);
+        cases.push((tag.into(), s, t, satisfiable(3, &clauses), fork));
+    }
+    // t08: the lists over {other, 1} by the place of a 1 from the end, `n` 4, every place
+    // taken out (Empty) and place 3 left (inhabited). 0 is R0, 1 to 4 R1 to R4, 5 to 8 G1 to G4,
+    // 9 to 13 A0 to A4, 14 H, 15 the lists with no 1.
+    let both = 1 | ONE;
+    for skip in [None, Some(3)] {
+        let n = 4;
+        let mut ds = vec![d(true, &[])];
+        ds.extend((1..=n).map(|k| d(false, &[(both, k - 1)])));
+        ds.extend((1..=n).map(|i| d(false, &[(both, n + i), (ONE, i - 1)])));
+        let a0 = ds.len();
+        ds.push(d(true, &[(both, a0)]));
+        ds.extend((1..=n).map(|k| d(false, &[(both, a0 + k - 1)])));
+        let h = ds.len();
+        ds.push(d(false, &[(both, h), (ONE, a0 + n)]));
+        ds.push(d(true, &[(1, h + 1)]));
+        let mut neg = vec![(0, h), (0, h + 1)];
+        neg.extend((1..=n).filter(|&i| Some(i) != skip).map(|i| (0, n + i)));
+        let term = Term {
+            pos: vec![(0, a0)],
+            neg,
+        };
+        let tag = format!("_pfend{}", skip.unwrap_or(0));
+        cases.push((tag, Spec { groups: vec![ds] }, term, skip.is_some(), fork));
+    }
+    // t09: the lists over {other, 1} less those with an even number of 1s and those with an odd
+    // number: Empty, and the two negative automata read every list together.
+    let parity = Spec {
+        groups: vec![vec![
+            d(true, &[(both, 0)]),
+            d(true, &[(1, 1), (ONE, 2)]),
+            d(false, &[(1, 2), (ONE, 1)]),
+            d(false, &[(1, 3), (ONE, 4)]),
+            d(true, &[(1, 4), (ONE, 3)]),
+        ]],
+    };
+    let parity_term = Term {
+        pos: vec![(0, 0)],
+        neg: vec![(0, 1), (0, 3)],
+    };
+    cases.push(("_pfparity".into(), parity, parity_term, false, fork));
+    // t10: the nonempty lists over {other, 1} less `[other]` and `[1]`: every list of length 1 is
+    // taken out, so a value is longer, `[other, other]`; an Empty read off the first element alone
+    // would be wrong.
+    let longer = Spec {
+        groups: vec![vec![
+            d(true, &[(both, 0)]),
+            d(false, &[(both, 0)]),
+            d(true, &[]),
+            d(false, &[(1, 2)]),
+            d(false, &[(ONE, 2)]),
+        ]],
+    };
+    let longer_term = Term {
+        pos: vec![(0, 1)],
+        neg: vec![(0, 3), (0, 4)],
+    };
+    cases.push(("_pflonger".into(), longer, longer_term, true, Inhabited));
+    // Every case is run before any pin is checked, so a failure names all the changed pins.
+    let mut changed = Vec::new();
+    for (tag, spec, term, inhabited, want) in &cases {
+        let (oracle, va, vb) = u6_case(spec, term, tag);
+        assert_eq!(oracle, *inhabited, "{tag}: the oracle");
+        let (fa, fb) = fork_case(spec, term, &format!("{tag}f"), *inhabited);
+        assert_eq!((fa, fb), (va, vb), "{tag}: the verdicts asked twice");
+        if (va, vb) != (*want, *want) {
+            changed.push(format!("{tag}: {va:?} and {vb:?}, pinned {want:?}"));
+        }
+    }
+    assert!(
+        changed.is_empty(),
+        "the verdicts in both orders: {changed:#?}"
+    );
+    // t11: 17 random 3-clauses over 4 variables, satisfiable; the oracle's subset construction
+    // would read over a million sets, so the formula gives the answer.
+    let clauses = random_clauses(&mut 0x9e37_79b9_7f4a_7c15, 4, 17);
+    let sat = satisfiable(4, &clauses);
+    assert!(sat, "t11: the prototype's formula is satisfiable");
+    let (s, t) = selector_reduction(4, &clauses);
+    assert_eq!(fork_case(&s, &t, "_pfr3sat", sat), (fork, fork), "t11");
 }
 
 /// R6-C2: avoiding the leaf head at an optional spine arrival is a
@@ -2527,8 +2727,10 @@ fn r7_random_carrier_plus_chains_both_orders_against_bruteforce() {
             check_case(&fixed, "fixed");
         }
         // Case 343 of a fixed seed, two of the 22 cases of REFUSAL-front-post-r11-forks (U6):
-        // inhabited by [0, 1]; kernel 19bc4e25 answered it in both orders, and the search now
-        // refuses it at a fork in both (row REFUSAL-front-u6-subset), which is never wrong.
+        // inhabited by [0, 1]; kernel 19bc4e25 answered it in both orders, and the search
+        // refused it at a fork in both from REFUSAL-front-post-r11-forks until
+        // PORT-u6-structured-fork: Inhabited since, in both, by Stage 1 of the fork stages
+        // (COMPLEXITY.md K137), which reads a value past the fork.
         {
             let p = |cof: bool, mask: u8| Pred { cof, mask };
             use TailRef::{Car, Node};
@@ -2551,19 +2753,23 @@ fn r7_random_carrier_plus_chains_both_orders_against_bruteforce() {
             };
             assert_eq!(brute_force_inhabited(&case), Some(vec![0, 1]));
             check_case(&case, "343");
-            for rev in [false, true] {
-                let t = build_case(
-                    &case,
-                    &format!("_r7rc_343{}", ["f", "r"][usize::from(rev)]),
-                    rev,
-                );
-                Type::forget_emptiness();
-                assert_eq!(
-                    t.verdict(),
-                    Verdict::Refused(Refusal::Fork),
-                    "r7 case 343, reversed {rev}"
-                );
-            }
+            let verdicts: Vec<Verdict> = [false, true]
+                .into_iter()
+                .map(|rev| {
+                    let t = build_case(
+                        &case,
+                        &format!("_r7rc_343{}", ["f", "r"][usize::from(rev)]),
+                        rev,
+                    );
+                    Type::forget_emptiness();
+                    t.verdict()
+                })
+                .collect();
+            assert_eq!(
+                verdicts,
+                [Verdict::Inhabited, Verdict::Inhabited],
+                "r7 case 343, as given and reversed"
+            );
             Type::forget_emptiness();
         }
         let mut chain_decided = 0usize;
