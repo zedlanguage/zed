@@ -45,6 +45,7 @@ use zedc_lattice::lattice::Congruence;
 use super::super::super::meter::{PIECE, Work};
 use super::super::super::row_sums::plane::{bezout, div_ceil, div_floor};
 use super::super::super::{Atom, Classed, Con, Formula, Lin, Refusal, Rel};
+use super::super::projection::each_constraint;
 use super::{Def, Prep};
 
 /// `α·p + β·q + γ`.
@@ -54,10 +55,31 @@ type Form = (i128, i128, i128);
 /// the residuals.
 pub(in super::super) struct TwoPins<'p, 'a> {
     prep: &'p Prep<'a>,
+    /// One for each arm taken at each shared choice ([`Prep::two_pins`]).
+    cells: Vec<Cell>,
+}
+
+/// The part with one arm taken at each shared choice: each atom's form, the half-planes (the
+/// residuals and the guards of the arms taken), and the choices read by nothing else.
+struct Cell {
     forms: Vec<Form>,
     halves: Vec<Form>,
     /// The polygon's edges, where it is bounded with interior ([`edges`]).
     poly: Option<Polygon>,
+    /// The head of each leaf choice (read by no other conjunct): its guard's form and the
+    /// head's form on each arm.
+    leaves: HashMap<usize, (Form, [Form; 2])>,
+}
+
+/// One reading of the part with some choices' arms fixed ([`Prep::cell`]).
+enum Read {
+    /// The part declines.
+    Decline,
+    /// A guard or residual with no pin is false: no point here.
+    Empty,
+    /// The shared choice of this conjunct is next, with no arm fixed.
+    Branch(usize),
+    Done(Cell),
 }
 
 /// `c·f`, or `None` past `i128`.
@@ -95,8 +117,34 @@ impl<'a> Prep<'a> {
     // reading, `Prep::read`): O(r·t) a name, O(k·r·t) for the k names of a part, where the reading
     // from each name learns the whole part (`y(j) == 2·p + 3·q + j`: 17.5 times the work at 8
     // times k, `tests::names_with_coefficients_past_one_are_read_once_for_the_part`).
+    //
+    // Choices (PRES-two-pin-choices). A choice whose head no other conjunct reads (a leaf) is
+    // taken with both arms: its head's values are those of the first arm over the polygon cut
+    // by `guard >= 0` and of the second over the polygon cut by `guard <= -1`, two queries for
+    // that name alone ([`TwoPins::values`]), and the polygon of the others is not split. A
+    // shared choice (its head read by a residual or another definition) splits the part: each
+    // arm is a cell, read again with that arm's equation and its guard as a half-plane, and a
+    // name's set is the union over the cells, which partition the integer `(p, q)`. Cost: O(r·t)
+    // a reading, at most `2·C - 1` readings for C cells (a binary tree, each inner node a
+    // reading stopped at its choice), so O(C·(r·t + h log h)) a part and O(C·log h) a name:
+    // with c shared choices fixed, linear in the names as before. Where c grows, C can be 2^c
+    // (nested guards: the composed choices of Montúfar, Pascanu, Cho and Bengio, "On the number
+    // of linear regions of deep neural networks", NIPS 2014, have exponentially many pieces);
+    // no exact method here avoids reading each. Flat guards cut at most `1 + c + c(c-1)/2`
+    // real cells (the line arrangement of Zaslavsky, "Facing up to arrangements", Mem. AMS
+    // 154, 1975), but the readings here do not prune empty cells (`edges` does not tell an
+    // empty polygon from a flat one, and a flat cell may hold integer points), so this path
+    // costs 2^c there too. The per-name path the part declines to costs one reading a name, so
+    // the cells pay only while C ≤ n, the n `names` asked: the part declines where they would
+    // pass n, with no charge where the choices read by another definition alone already give
+    // 2^c > n (as when any choice declined it, before), after one pass over the residuals,
+    // O(r·t), where those they read do, and otherwise (a choice that splits the part only by
+    // the head the reading gives it) after at most `2·n - 1` readings, no more than the
+    // per-name path's n up to a factor 2. A chain of k choices (the
+    // counter of `tests::guards_named`, read by the forward certificate) thus costs nothing here.
     pub(in super::super) fn two_pins<'p>(
         &'p self,
+        names: usize,
         work: &mut Work,
     ) -> Result<Option<TwoPins<'p, 'a>>, Refusal> {
         let Prep {
@@ -108,13 +156,90 @@ impl<'a> Prep<'a> {
             reads,
             ..
         } = self;
+        // Whether the choices whose every possible head is read by another conjunct (each
+        // splits the part) give more than `names` cells: by `by_atom`, read by another
+        // definition, and by `loose`, read by a conjunct that is no definition. A pass over
+        // what `Prep` built and charged, so not charged again.
+        let too_many = |loose: &[bool]| {
+            let shared = defs
+                .iter()
+                .zip(reads)
+                .filter(|(d, r)| match d {
+                    Some(d @ Def::Choice { .. }) => r
+                        .iter()
+                        .all(|&x| !d.may_define(atoms[x]) || by_atom[x].len() > 1 || loose[x]),
+                    _ => false,
+                })
+                .count();
+            shared > 0 && (shared >= 64 || 1u64 << shared > names as u64)
+        };
+        let mut loose = vec![false; self.atoms.len()];
+        if too_many(&loose) {
+            return Ok(None);
+        }
         if defs
             .iter()
             .flatten()
             .any(|d| matches!(d, Def::Choice { .. }))
         {
-            return Ok(None);
+            for (g, d) in parts.iter().zip(defs) {
+                if d.is_some() {
+                    continue;
+                }
+                let mut read = 0u64;
+                each_constraint(g, |c| {
+                    read += 1;
+                    for a in c.lin.terms.keys() {
+                        loose[index[a]] = true;
+                    }
+                });
+                work.charge(PIECE.saturating_mul(read))?;
+            }
+            if too_many(&loose) {
+                return Ok(None);
+            }
         }
+        let mut cells = Vec::new();
+        let mut stack: Vec<Vec<Option<usize>>> = vec![vec![None; defs.len()]];
+        while let Some(fix) = stack.pop() {
+            match self.cell(&fix, &loose, work)? {
+                Read::Decline => return Ok(None),
+                Read::Empty => {}
+                Read::Branch(i) => {
+                    // This cell becomes two: more than n cells cost more than the per-name path.
+                    if cells.len() + stack.len() + 2 > names {
+                        return Ok(None);
+                    }
+                    work.charge(PIECE.saturating_mul(fix.len() as u64))?;
+                    for arm in [1, 0] {
+                        let mut f = fix.clone();
+                        f[i] = Some(arm);
+                        stack.push(f);
+                    }
+                }
+                Read::Done(cell) => cells.push(cell),
+            }
+        }
+        Ok(Some(TwoPins { prep: self, cells }))
+    }
+
+    /// One reading of the part with the arm `fix[i]` taken at each choice `i` that has one
+    /// ([`Prep::two_pins`]).
+    fn cell(
+        &self,
+        fix: &[Option<usize>],
+        loose: &[bool],
+        work: &mut Work,
+    ) -> Result<Read, Refusal> {
+        let Prep {
+            parts,
+            defs,
+            atoms,
+            index,
+            by_atom,
+            reads,
+            ..
+        } = self;
         // The atoms some definition may have as head; the others can only be pins.
         let mut headed = vec![false; atoms.len()];
         for (i, d) in defs.iter().enumerate() {
@@ -134,24 +259,25 @@ impl<'a> Prep<'a> {
         // The next atom to try as a pin, in each of the two orders: atoms before it are known.
         let (mut next_free, mut next_any) = (0, 0);
         let free: Vec<usize> = (0..atoms.len()).filter(|&j| !headed[j]).collect();
+        // The guards of the arms taken, as half-planes.
+        let mut guards: Vec<Form> = Vec::new();
+        let mut leaves: HashMap<usize, (Form, [Form; 2])> = HashMap::new();
         loop {
             while let Some(i) = queue.pop() {
                 work.charge(PIECE)?;
-                let Some(Def::Eq(e)) = &defs[i] else { continue };
+                let Some(d) = &defs[i] else { continue };
                 if taken[i] || unknown[i] != 1 {
                     continue;
                 }
                 let Some(&x) = reads[i].iter().find(|&&j| !known[j]) else {
                     continue;
                 };
-                if !defs[i].as_ref().is_some_and(|d| d.may_define(atoms[x])) {
+                if !d.may_define(atoms[x]) {
                     continue;
                 }
                 // `c·x + rest == 0` with `c` 1 or -1: `x = -c·rest`.
-                let c = e.terms[atoms[x]]
-                    .to_i128()
-                    .expect("a coefficient of 1 or -1");
-                let Some(f) = (|| {
+                let head = |e: &Lin| -> Option<Form> {
+                    let c = e.terms[atoms[x]].to_i128()?;
                     let mut out = (0, 0, e.constant.to_i128()?);
                     for (a, k) in &e.terms {
                         let j = index[a];
@@ -160,8 +286,41 @@ impl<'a> Prep<'a> {
                         }
                     }
                     times(-c, out)
-                })() else {
-                    return Ok(None);
+                };
+                let f = match d {
+                    Def::Eq(e) => head(e),
+                    Def::Choice { guard, arms } => {
+                        // The guard reads no `x` (`may_define`), so its atoms are known.
+                        let Some(g) = form_of(guard, index, &forms) else {
+                            return Ok(Read::Decline);
+                        };
+                        match fix[i] {
+                            Some(arm) => {
+                                // `guard >= 0` on the first arm, `-guard - 1 >= 0` on the second.
+                                let Some(cut) = (if arm == 0 {
+                                    Some(g)
+                                } else {
+                                    times(-1, g).and_then(|n| plus(n, (0, 0, -1)))
+                                }) else {
+                                    return Ok(Read::Decline);
+                                };
+                                guards.push(cut);
+                                head(arms[arm])
+                            }
+                            None if by_atom[x].len() == 1 && !loose[x] => {
+                                let (Some(f0), Some(f1)) = (head(arms[0]), head(arms[1])) else {
+                                    return Ok(Read::Decline);
+                                };
+                                leaves.insert(x, (g, [f0, f1]));
+                                // Read by no other conjunct: this form is never used.
+                                Some(f0)
+                            }
+                            None => return Ok(Read::Branch(i)),
+                        }
+                    }
+                };
+                let Some(f) = f else {
+                    return Ok(Read::Decline);
                 };
                 taken[i] = true;
                 forms[x] = f;
@@ -179,7 +338,7 @@ impl<'a> Prep<'a> {
                 break;
             }
             if pins == 2 {
-                return Ok(None);
+                return Ok(Read::Decline);
             }
             while next_free < free.len() && known[free[next_free]] {
                 next_free += 1;
@@ -200,8 +359,22 @@ impl<'a> Prep<'a> {
                 work,
             )?;
         }
-        // The residuals as half-planes over the pins.
+        // The residuals and the guards taken as half-planes over the pins.
         let mut halves = Vec::new();
+        // No pin: true, or this cell has no point (where every cell has none, each name
+        // declines and the cover answers).
+        let mut add = |f: Form| -> bool {
+            if f.0 == 0 && f.1 == 0 {
+                return f.2 >= 0;
+            }
+            halves.push(f);
+            true
+        };
+        for g in guards {
+            if !add(g) {
+                return Ok(Read::Empty);
+            }
+        }
         for (i, g) in parts.iter().enumerate() {
             if taken[i] {
                 continue;
@@ -213,30 +386,22 @@ impl<'a> Prep<'a> {
                     Formula::Con(Con { lin, rel: Rel::Ge }) => {
                         (lin.times(-1).plus(&Lin::constant(-1)), false)
                     }
-                    _ => return Ok(None),
+                    _ => return Ok(Read::Decline),
                 },
-                _ => return Ok(None),
+                _ => return Ok(Read::Decline),
             };
             let Some(f) = form_of(&lin, index, &forms) else {
-                return Ok(None);
-            };
-            let mut add = |f: Form| -> bool {
-                if f.0 == 0 && f.1 == 0 {
-                    // No pin: true, or the part has no point (left to the cover).
-                    return f.2 >= 0;
-                }
-                halves.push(f);
-                true
+                return Ok(Read::Decline);
             };
             if !add(f) {
-                return Ok(None);
+                return Ok(Read::Empty);
             }
             if both {
                 let Some(n) = times(-1, f) else {
-                    return Ok(None);
+                    return Ok(Read::Decline);
                 };
                 if !add(n) {
-                    return Ok(None);
+                    return Ok(Read::Empty);
                 }
             }
         }
@@ -245,11 +410,11 @@ impl<'a> Prep<'a> {
             PIECE.saturating_mul(h.saturating_mul(u64::from(u64::BITS - h.leading_zeros() + 1))),
         )?;
         let poly = edges(&halves);
-        Ok(Some(TwoPins {
-            prep: self,
+        Ok(Read::Done(Cell {
             forms,
             halves,
             poly,
+            leaves,
         }))
     }
 }
@@ -289,7 +454,10 @@ impl TwoPins<'_, '_> {
     // and S do not grow. Otherwise (open, flat, or past `i128`) O(h²) a name for the pairs of
     // the shadows plus O(h) a value tried ([`u_values`]), O(k·h²) a part; an open polygon's
     // half-planes are not pruned, so many residuals there still cost that (PRES-two-pin-edges
-    // leaves it; the unbounded test has h = 2).
+    // leaves it; the unbounded test has h = 2). With choices, that for each cell, and for a
+    // leaf choice's head two queries a cell, each over the polygon cut by its guard, whose
+    // edges are found again from the V edges, O(V log V) ([`form_values`]); the per-name path
+    // it replaces reads the whole part, O(r·t) ≥ O(V).
     pub(in super::super) fn values(
         &self,
         s: &Atom,
@@ -298,57 +466,125 @@ impl TwoPins<'_, '_> {
         let Some(&j) = self.prep.index.get(s) else {
             return Ok(None);
         };
-        let (al, be, ga) = self.forms[j];
-        // A name fixed by the part: its one value, where the part has a point.
-        let (g, a, b) = if al == 0 && be == 0 {
-            (0, 1, 0)
-        } else {
-            let g = Int::from(al).gcd(&Int::from(be)).to_i128();
-            let Some(g) = g.filter(|g| *g > 0) else {
+        // `(g, γ, runs of u)` for each query with a point: the values `γ + g·u`.
+        let mut found: Vec<(i128, i128, Vec<Run>)> = Vec::new();
+        for cell in &self.cells {
+            let queries = match cell.leaves.get(&j) {
+                None => vec![(cell.forms[j], None)],
+                Some(&(guard, [f0, f1])) => {
+                    let Some(other) = times(-1, guard).and_then(|n| plus(n, (0, 0, -1))) else {
+                        return Ok(None);
+                    };
+                    vec![(f0, Some(guard)), (f1, Some(other))]
+                }
+            };
+            for (f, cut) in queries {
+                let Some((g, us)) = form_values(f, cell, cut, work)? else {
+                    return Ok(None);
+                };
+                if !us.is_empty() {
+                    found.push((g, f.2, us));
+                }
+            }
+        }
+        // The union is one class only where every query with a step has the same step `m`
+        // and every query the same residue modulo `m`; otherwise the per-name path answers.
+        let Some(m) = found.iter().map(|q| q.0).max() else {
+            return Ok(None);
+        };
+        if found.iter().any(|q| q.0 > 0 && q.0 != m)
+            || (m > 1 && found.iter().any(|q| (q.1 - found[0].1).rem_euclid(m) != 0))
+        {
+            return Ok(None);
+        }
+        let residue = found[0].1.rem_euclid(m.max(1));
+        let mut pieces = Vec::new();
+        for (g, ga, us) in found {
+            if g == 0 {
+                // A name fixed in this query: its one value.
+                pieces.push((End::Fin(Num::from(ga)), End::Fin(Num::from(ga))));
+                continue;
+            }
+            // A class other than every integer takes finite ranges (`Classed::new`); an open
+            // end there declines to the per-name path.
+            if g > 1 && us.iter().any(|(lo, hi)| lo.is_none() || hi.is_none()) {
                 return Ok(None);
-            };
-            (g, al / g, be / g)
-        };
-        let us = match &self.poly {
-            Some(poly) => poly_values(poly, (a, b), work)?,
-            None => u_values(a, b, &self.halves, work)?,
-        };
-        let Some(us) = us else {
-            return Ok(None);
-        };
-        if us.is_empty() {
-            return Ok(None);
-        }
-        if g == 0 {
-            return Ok(Some(Classed::plain(IntervalSet::point(Num::from(ga)))));
-        }
-        // A class other than every integer takes finite ranges (`Classed::new`); an open end
-        // there declines to the per-name path.
-        if g > 1 && us.iter().any(|(lo, hi)| lo.is_none() || hi.is_none()) {
-            return Ok(None);
-        }
-        let mut pieces = Vec::with_capacity(us.len());
-        for (lo, hi) in us {
-            // `g > 0`, so an open end stays on its side.
-            let at = |u: Option<i128>, open: End| match u {
-                None => Some(open),
-                Some(u) => Some(End::Fin(Num::from(g.checked_mul(u)?.checked_add(ga)?))),
-            };
-            let (Some(lo), Some(hi)) = (at(lo, End::NegInf), at(hi, End::PosInf)) else {
-                return Ok(None);
-            };
-            pieces.push((lo, hi));
+            }
+            for (lo, hi) in us {
+                // `g > 0`, so an open end stays on its side.
+                let at = |u: Option<i128>, open: End| match u {
+                    None => Some(open),
+                    Some(u) => Some(End::Fin(Num::from(g.checked_mul(u)?.checked_add(ga)?))),
+                };
+                let (Some(lo), Some(hi)) = (at(lo, End::NegInf), at(hi, End::PosInf)) else {
+                    return Ok(None);
+                };
+                pieces.push((lo, hi));
+            }
         }
         let ranges = IntervalSet::from_pieces(pieces);
-        Ok(Some(if g == 1 {
+        Ok(Some(if m <= 1 {
             Classed::plain(ranges)
         } else {
-            Classed::new(
-                ranges,
-                Congruence::new(Num::from(g), Num::from(ga.rem_euclid(g))),
-            )
+            Classed::new(ranges, Congruence::new(Num::from(m), Num::from(residue)))
         }))
     }
+}
+
+/// The values of the form `f` over the integer points of `cell`, cut by `cut` where given: its
+/// step `g` (`gcd(α, β)`, 0 for a form with no pin) and the runs of `u` with `f = γ + g·u`;
+/// `None` where it declines ([module note](self)).
+fn form_values(
+    f: Form,
+    cell: &Cell,
+    cut: Option<Form>,
+    work: &mut Work,
+) -> Result<Option<(i128, Vec<Run>)>, Refusal> {
+    let (al, be, _) = f;
+    let (g, a, b) = if al == 0 && be == 0 {
+        (0, 1, 0)
+    } else {
+        let g = Int::from(al).gcd(&Int::from(be)).to_i128();
+        let Some(g) = g.filter(|g| *g > 0) else {
+            return Ok(None);
+        };
+        (g, al / g, be / g)
+    };
+    let cut = match cut {
+        // A guard with no pin: true on the whole cell, or false on it.
+        Some(c) if c.0 == 0 && c.1 == 0 => {
+            if c.2 < 0 {
+                return Ok(Some((g, Vec::new())));
+            }
+            None
+        }
+        c => c,
+    };
+    let us = match cut {
+        None => match &cell.poly {
+            Some(poly) => poly_values(poly, (a, b), work)?,
+            None => u_values(a, b, &cell.halves, work)?,
+        },
+        Some(c) => {
+            // The edges again, from the polygon's own where they are known (the same integer
+            // points as all the half-planes, [`edges`]).
+            let mut halves = match &cell.poly {
+                Some(poly) => poly.rows.clone(),
+                None => cell.halves.clone(),
+            };
+            halves.push(c);
+            let h = halves.len() as u64;
+            work.charge(
+                PIECE
+                    .saturating_mul(h.saturating_mul(u64::from(u64::BITS - h.leading_zeros() + 1))),
+            )?;
+            match edges(&halves) {
+                Some(poly) => poly_values(&poly, (a, b), work)?,
+                None => u_values(a, b, &halves, work)?,
+            }
+        }
+    };
+    Ok(us.map(|us| (g, us)))
 }
 
 /// The values of `u = a·p + b·q` (`a`, `b` coprime) over the integer points of `halves`, as

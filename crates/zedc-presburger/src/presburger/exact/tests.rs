@@ -3822,6 +3822,189 @@ fn names_over_an_unbounded_polygon_are_read_once_for_the_part() {
     assert!(ratio < 10.5, "work {used:?}, {ratio:.2} times at 8 times k");
 }
 
+/// `y(j) == 2·p + 3·q + j` with `0 <= p, q <= 9` and one choice, `z == max(p, q)` (`z == p`
+/// where `p - q >= 0`, `z == q` where `q - p - 1 >= 0`), under `z <= 7`: the choice splits the
+/// polygon in two, and the part is still read once, not once a name (PRES-two-pin-choices).
+#[test]
+fn names_beside_a_choice_are_read_once_for_the_part() {
+    let used = exact_work_of(|k| {
+        let (f, syms, _) = two_free_atoms(2, 3)(k);
+        let Formula::And(rows) = &f else {
+            unreachable!()
+        };
+        let mut rows: Vec<Formula> = rows.iter().cloned().collect();
+        rows.push(Formula::or(vec![
+            Formula::And(Shared::new(vec![
+                eq(&[("z", 1), ("p", -1)], 0),
+                ge(&[("p", 1), ("q", -1)], 0),
+            ])),
+            Formula::And(Shared::new(vec![
+                eq(&[("z", 1), ("q", -1)], 0),
+                ge(&[("q", 1), ("p", -1)], -1),
+            ])),
+        ]));
+        rows.push(ge(&[("z", -1)], 7));
+        let sets = (0..k as i64).map(|j| IntervalSet::of(j, j + 35)).collect();
+        (Formula::And(Shared::new(rows)), syms, sets)
+    });
+    let ratio = used[1] as f64 / used[0].max(1) as f64;
+    assert!(ratio < 10.5, "work {used:?}, {ratio:.2} times at 8 times k");
+}
+
+/// `0 <= p, q <= 9` and a choice for each name, `y(j) == p + 2·q + j` where `p - q - m >= 0`,
+/// else `y(j) == 2·p + q + j`, with `m = j mod 7`: each choice is read by nothing else (a
+/// leaf), so the part is one cell and each name two queries on it, not a reading of its own
+/// (PRES-two-pin-choices). (Arms of steps 2 and 3, as `2·p` and `3·q`, would decline: no one
+/// class holds the union.)
+#[test]
+fn names_each_with_a_choice_of_its_own_are_read_once_for_the_part() {
+    let used = exact_work_of(|k| {
+        let y = |j: usize| format!("y{j}");
+        let mut rows: Vec<Formula> = (0..k)
+            .map(|j| {
+                let (yj, m) = (y(j), (j % 7) as i64);
+                Formula::or(vec![
+                    Formula::And(Shared::new(vec![
+                        eq(&[(&yj, 1), ("p", -1), ("q", -2)], -(j as i64)),
+                        ge(&[("p", 1), ("q", -1)], -m),
+                    ])),
+                    Formula::And(Shared::new(vec![
+                        eq(&[(&yj, 1), ("p", -2), ("q", -1)], -(j as i64)),
+                        ge(&[("q", 1), ("p", -1)], m - 1),
+                    ])),
+                ])
+            })
+            .collect();
+        rows.extend([ge(&[("p", 1)], 0), ge(&[("p", -1)], 9)]);
+        rows.extend([ge(&[("q", 1)], 0), ge(&[("q", -1)], 9)]);
+        let syms: Vec<Atom> = (0..k).map(|j| a(&y(j))).collect();
+        let sets = (0..k as i64).map(|j| IntervalSet::of(j, j + 27)).collect();
+        (Formula::And(Shared::new(rows)), syms, sets)
+    });
+    let ratio = used[1] as f64 / used[0].max(1) as f64;
+    assert!(ratio < 10.5, "work {used:?}, {ratio:.2} times at 8 times k");
+}
+
+/// `0 <= p, q <= 9`, a shared choice `z == max(p, q)` under `2 <= z <= 7`, and names over it:
+/// a common factor 2 in both cells (`y0`, `y1`), `z` itself in a sum (`y2`, `2·p - q` and `p`
+/// on the two cells; `z + 3·q` would be `p + 3·q` and `4·q`, two steps, which no one class
+/// holds, so it would decline like `y5`), leaf choices with
+/// even arms (`y3`), constant arms (`y4`), arms of residues 0 and 1 (`y5`, which declines to
+/// the cover), and an arm whose guard is false on the whole part (`y6`). Each set is exactly
+/// the values at the integer points counted one by one, and every name but `y5` is answered
+/// with no question of the cover (PRES-two-pin-choices).
+#[test]
+fn names_over_a_choice_are_exact() {
+    let choice = |y: &str, guard: &[(&str, i64)], c: i64, arms: [(&[(&str, i64)], i64); 2]| {
+        let neg: Vec<(&str, i64)> = guard.iter().map(|&(s, k)| (s, -k)).collect();
+        let arm = |(terms, d): (&[(&str, i64)], i64)| {
+            let mut t = vec![(y, 1)];
+            t.extend(terms.iter().map(|&(s, k)| (s, -k)));
+            eq(&t, -d)
+        };
+        Formula::or(vec![
+            Formula::And(Shared::new(vec![arm(arms[0]), ge(guard, c)])),
+            Formula::And(Shared::new(vec![arm(arms[1]), ge(&neg, -c - 1)])),
+        ])
+    };
+    let rows = vec![
+        ge(&[("p", 1)], 0),
+        ge(&[("p", -1)], 9),
+        ge(&[("q", 1)], 0),
+        ge(&[("q", -1)], 9),
+        choice(
+            "z",
+            &[("p", 1), ("q", -1)],
+            0,
+            [(&[("p", 1)], 0), (&[("q", 1)], 0)],
+        ),
+        ge(&[("z", -1)], 7),
+        ge(&[("z", 1)], -2),
+        eq(&[("y0", 1), ("p", -2), ("q", -2)], 0),
+        eq(&[("y1", 1), ("z", -2)], -1),
+        eq(&[("y2", 1), ("z", -1), ("p", -1), ("q", 1)], 0),
+        choice("y3", &[("p", 1)], -4, [(&[("q", 2)], 0), (&[("p", 2)], 0)]),
+        choice("y4", &[("q", 1), ("p", -1)], 0, [(&[], 5), (&[], 9)]),
+        choice("y5", &[("p", 1)], -5, [(&[("q", 2)], 0), (&[("q", 2)], 1)]),
+        choice(
+            "y6",
+            &[("p", 1), ("q", 1)],
+            -20,
+            [(&[("q", 1)], 0), (&[("p", 1)], 30)],
+        ),
+    ];
+    let f = Formula::And(Shared::new(rows));
+    let value = |name: &str, p: i64, q: i64| {
+        let z = p.max(q);
+        match name {
+            "y0" => 2 * p + 2 * q,
+            "y1" => 2 * z + 1,
+            "y2" => z + p - q,
+            "y3" => {
+                if p >= 4 {
+                    2 * q
+                } else {
+                    2 * p
+                }
+            }
+            "y4" => {
+                if q >= p {
+                    5
+                } else {
+                    9
+                }
+            }
+            "y5" => {
+                if p >= 5 {
+                    2 * q
+                } else {
+                    2 * q + 1
+                }
+            }
+            _ => {
+                if p + q >= 20 {
+                    q
+                } else {
+                    p + 30
+                }
+            }
+        }
+    };
+    let names = ["y0", "y1", "y2", "y3", "y4", "y5", "y6"];
+    let run = |names: &[&str]| {
+        let syms: Vec<Atom> = names.iter().map(|s| a(s)).collect();
+        let sets = names
+            .iter()
+            .map(|_| Ok(IntervalSet::from_pieces(vec![(End::NegInf, End::PosInf)])))
+            .collect();
+        EXACT_WORK.set(0);
+        FAST_WORK.set(0);
+        let got = exact_each(&f, &syms, (sets, vec![]), SOLVER);
+        let covered = EXACT_WORK.replace(0) - FAST_WORK.replace(0);
+        (got, covered)
+    };
+    let (got, _) = run(&names);
+    for (j, name) in names.iter().enumerate() {
+        let mut want = std::collections::BTreeSet::new();
+        for p in 0..=9 {
+            for q in 0..=9 {
+                if (2..=7).contains(&p.max(q)) {
+                    want.insert(value(name, p, q));
+                }
+            }
+        }
+        let Ok(set) = &got.sets[j] else {
+            panic!("{name} refused: {:?}", got.sets[j]);
+        };
+        for v in -100..=100i64 {
+            let has = set.ranges.contains(v) && set.class.contains(&Num::from(v));
+            assert_eq!(has, want.contains(&v), "{name} at {v}: {set:?}");
+        }
+    }
+    let (_, covered) = run(&["y0", "y1", "y2", "y3", "y4", "y6"]);
+    assert_eq!(covered, 0, "a name was covered");
+}
+
 /// The two-pin reading on a polygon with slanted sides, where the dark shadow is narrower
 /// than the real one and values between them are tried one by one, and on names with a common
 /// factor and with none: each set agrees with the cover alone (`guarded::two_pins`).

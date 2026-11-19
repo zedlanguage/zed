@@ -1362,7 +1362,7 @@ fn certificates<'s>(
     let mut out = Vec::new();
     // The whole part read once with two pins (`guarded::two_pins`): each name's exact set from
     // the polygon, with no reading of its own; a name it declines goes on to the reading below.
-    let two = tried(left, solver, |w| prep.two_pins(w));
+    let two = tried(left, solver, |w| prep.two_pins(mine.len(), w));
     let mut rest: Vec<(&'s Atom, &IntervalSet)> = Vec::new();
     for &(s, h) in mine {
         match two
