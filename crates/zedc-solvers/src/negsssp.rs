@@ -23,12 +23,11 @@
 //! time", arXiv 2609.05590 (2026).
 
 use std::cell::Cell;
-use std::cmp::Reverse;
-use std::collections::BinaryHeap;
 use std::convert::Infallible;
 use std::marker::PhantomData;
 use std::ops::Range;
 
+use zed_graph::{Dijkstra, MinHeap, reduced};
 use zedc_int::int::Int;
 
 const NONE: usize = usize::MAX;
@@ -218,7 +217,7 @@ struct Search {
     seen: Vec<u64>,
     done: Vec<u64>,
     epoch: u64,
-    heap: BinaryHeap<Reverse<(Int, usize)>>,
+    heap: MinHeap<(Int, usize)>,
     /// The vertex being settled, its distance and the place of its next edge.
     settling: Option<(usize, Int, usize)>,
     /// The elementary operations done since the start: entries looked at and edges relaxed.
@@ -233,7 +232,7 @@ impl Search {
             seen: vec![0; n],
             done: vec![0; n],
             epoch: 0,
-            heap: BinaryHeap::new(),
+            heap: MinHeap::new(),
             settling: None,
             work: 0,
         }
@@ -246,7 +245,7 @@ impl Search {
         self.work = 0;
         self.dist[s] = Int::ZERO;
         self.seen[s] = epoch;
-        self.heap.push(Reverse((Int::ZERO, s)));
+        self.heap.push((Int::ZERO, s));
     }
 
     /// The next vertex in order of distance and its distance, not yet settled; `None` when the
@@ -257,7 +256,7 @@ impl Search {
     ) -> Step<Option<(usize, Int)>, H> {
         // The least entry of a vertex not yet settled holds its distance: an entry is pushed at
         // each fall, and the earlier ones are larger.
-        while let Some(Reverse((x, v))) = self.heap.peek() {
+        while let Some((x, v)) = self.heap.peek() {
             unit(tick)?;
             self.work += 1;
             if self.done[*v] != self.epoch {
@@ -311,7 +310,7 @@ impl Search {
         if self.seen[y] != self.epoch || to < self.dist[y] {
             self.seen[y] = self.epoch;
             self.dist[y] = to.clone();
-            self.heap.push(Reverse((to, y)));
+            self.heap.push((to, y));
         }
         Ok(())
     }
@@ -630,19 +629,18 @@ impl<'g, H, F: FnMut() -> Result<(), H>> Solver<'g, H, F> {
         }
         // Every reduced weight is at least -1. Dijkstra on `r + 1`, each vertex starting at
         // `-phi`, labels a path `P` to `v` with `(n + 1)·w(P) + |P| - phi(v)`, so its tree paths
-        // are shortest in `w`; their weights in `w` are the potential.
-        let mut label: Vec<Int> = phi.iter().map(|p| -p).collect();
+        // are shortest in `w`; their weights in `w` are the potential. No weight `r + 1` is
+        // negative, so each vertex comes up once at its label, and a vertex already settled is
+        // never lowered again; an entry that comes up stale is one unit of work too.
+        let label: Vec<Int> = phi.iter().map(|p| -p).collect();
         let mut via = vec![NONE; n];
-        let mut settled = vec![false; n];
         let mut found = vec![Int::ZERO; n];
-        let mut heap: BinaryHeap<Reverse<(Int, usize)>> =
-            label.iter().cloned().zip(0..).map(Reverse).collect();
-        while let Some(Reverse((x, v))) = heap.pop() {
+        let mut search = Dijkstra::starting(label, 0..n);
+        while let Some(entry) = search.pop_entry() {
             unit(&mut self.tick)?;
-            if settled[v] || x != label[v] {
+            let Some((x, v)) = entry else {
                 continue;
-            }
-            settled[v] = true;
+            };
             if via[v] != NONE {
                 let e = via[v];
                 found[v] = &found[g.from[e]] + &g.w[e];
@@ -650,14 +648,10 @@ impl<'g, H, F: FnMut() -> Result<(), H>> Solver<'g, H, F> {
             for e in g.out(v) {
                 unit(&mut self.tick)?;
                 let y = g.to[e];
-                if settled[y] {
-                    continue;
-                }
-                let to = &(&x + &r[e]) + &Int::ONE;
-                if to < label[y] {
-                    label[y] = to.clone();
+                let step = reduced(&r[e] + &Int::ONE, &Int::ZERO)
+                    .expect("every reduced weight is at least -1, as shown above");
+                if search.lower(y, &x + &step) {
                     via[y] = e;
-                    heap.push(Reverse((to, y)));
                 }
             }
         }
@@ -1282,10 +1276,7 @@ fn bf_dijkstra<H>(
     // nothing, and a path that lowers a label and starts at it is no shorter than the same path
     // from its next node, so leaving these nodes out changes no label; it saves taking every
     // node of the graph from a heap.
-    let mut heap: BinaryHeap<Reverse<(Int, usize)>> = seeds
-        .iter()
-        .map(|&x| Reverse((label[x].clone(), x)))
-        .collect();
+    let mut heap: MinHeap<(Int, usize)> = seeds.iter().map(|&x| (label[x].clone(), x)).collect();
     // The round in which a node was last settled, and the walk that last passed it.
     let mut settled_in = vec![0u64; n];
     let mut walked = vec![0u64; n];
@@ -1296,7 +1287,7 @@ fn bf_dijkstra<H>(
         round += 1;
         settled.clear();
         fell.clear();
-        while let Some(Reverse((dx, x))) = heap.pop() {
+        while let Some((dx, x)) = heap.pop() {
             unit(tick)?;
             if dx != label[x] || settled_in[x] == round {
                 continue;
@@ -1314,7 +1305,7 @@ fn bf_dijkstra<H>(
                 if candidate < label[y] {
                     label[y] = candidate.clone();
                     parent[y] = x;
-                    heap.push(Reverse((candidate, y)));
+                    heap.push((candidate, y));
                 }
             }
         }
@@ -1327,7 +1318,7 @@ fn bf_dijkstra<H>(
                 if candidate < label[y] {
                     label[y] = candidate.clone();
                     parent[y] = x;
-                    heap.push(Reverse((candidate, y)));
+                    heap.push((candidate, y));
                     fell.push(y);
                 }
             }
@@ -1374,7 +1365,7 @@ enum Phase {
 pub struct Rounds<'a> {
     out: &'a [Vec<(usize, Int)>],
     label: Vec<Int>,
-    heap: BinaryHeap<Reverse<(Int, usize)>>,
+    heap: MinHeap<(Int, usize)>,
     /// The round in which each node was last settled, and the nodes settled in this one.
     settled_in: Vec<usize>,
     settled: Vec<usize>,
@@ -1395,7 +1386,7 @@ impl<'a> Rounds<'a> {
         Rounds {
             out,
             label: vec![Int::ZERO; n],
-            heap: (0..n).map(|v| Reverse((Int::ZERO, v))).collect(),
+            heap: (0..n).map(|v| (Int::ZERO, v)).collect(),
             settled_in: vec![0; n],
             settled: Vec::new(),
             fell: false,
@@ -1431,7 +1422,7 @@ impl<'a> Rounds<'a> {
     pub fn lower_to(&mut self, v: usize, to: &Int) {
         if *to < self.label[v] {
             self.label[v] = to.clone();
-            self.heap.push(Reverse((to.clone(), v)));
+            self.heap.push((to.clone(), v));
             self.fell = true;
         }
     }
@@ -1441,7 +1432,7 @@ impl<'a> Rounds<'a> {
         let out = self.out;
         match self.phase {
             Phase::Pop => {
-                let Some(Reverse((dx, x))) = self.heap.pop() else {
+                let Some((dx, x)) = self.heap.pop() else {
                     self.phase = Phase::Negative { i: 0, e: 0 };
                     return None;
                 };
@@ -1493,7 +1484,7 @@ impl<'a> Rounds<'a> {
         let candidate = &self.label[x] + w;
         if candidate < self.label[y] {
             self.label[y] = candidate.clone();
-            self.heap.push(Reverse((candidate, y)));
+            self.heap.push((candidate, y));
             if !self.in_lowered[y] {
                 self.in_lowered[y] = true;
                 self.lowered.push(y);

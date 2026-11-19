@@ -26,9 +26,9 @@
 //! greatest point (`tie_cycles`). Values between the ends of a name of a component with a
 //! cycle of weight above 0 and a hole may have no point; the ends are exact.
 
-use std::cmp::Reverse;
-use std::collections::{BTreeMap, BinaryHeap, VecDeque};
+use std::collections::{BTreeMap, VecDeque};
 
+use zed_graph::{Dijkstra, NegativeReducedWeight, reduced};
 use zedc_int::int::Int;
 
 /// A system of difference constraints: each name's integers and the edges between names.
@@ -91,21 +91,23 @@ pub(crate) fn solve(g: &Graph) -> Outcome {
         return Outcome::Empty;
     };
     let wide = &inf * &Int::from(4i64);
+    // A refusal of merged names, given back as the names of `g` merged into them.
+    let refused = |names: &[usize], holed: &[usize]| {
+        let pick = |set: &[usize]| -> Vec<usize> {
+            let set: std::collections::BTreeSet<usize> = set.iter().copied().collect();
+            (0..g.dom.len())
+                .filter(|v| set.contains(&m.of[*v].0))
+                .collect()
+        };
+        Outcome::Refused {
+            names: pick(names),
+            holed: pick(holed),
+        }
+    };
     let hi = match greatest(&m.dom, &m.edges, &m.potential, &wide) {
         Ok(u) => u,
         Err(Stop::Empty) => return Outcome::Empty,
-        Err(Stop::Refused(names, holed)) => {
-            let pick = |set: &[usize]| -> Vec<usize> {
-                let set: std::collections::BTreeSet<usize> = set.iter().copied().collect();
-                (0..g.dom.len())
-                    .filter(|v| set.contains(&m.of[*v].0))
-                    .collect()
-            };
-            return Outcome::Refused {
-                names: pick(&names),
-                holed: pick(&holed),
-            };
-        }
+        Err(Stop::Refused(names, holed)) => return refused(&names, &holed),
     };
     // The negated system: `-x` in the negated integers, each edge reversed.
     let neg_dom: Vec<Vec<(Int, Int)>> = m
@@ -122,9 +124,10 @@ pub(crate) fn solve(g: &Graph) -> Outcome {
         m.potential.iter().map(|p| p.as_ref().map(|p| -p)).collect();
     let lo: Vec<Int> = match greatest(&neg_dom, &neg_edges, &neg_potential, &wide) {
         Ok(u) => u.iter().map(|x| -x).collect(),
+        Err(Stop::Empty) => return Outcome::Empty,
         // The components and the names with holes are those of the system, which was not
-        // refused.
-        Err(_) => return Outcome::Empty,
+        // refused for them; the negated potential can still fail to hold at an edge.
+        Err(Stop::Refused(names, holed)) => return refused(&names, &holed),
     };
     let Some(dom) = tie_cycles(m.dom, &m.edges, &hi) else {
         return Outcome::Empty;
@@ -516,13 +519,16 @@ impl Run<'_> {
         // names without holes, and each reaches the other through those names alone.
         let unholed = |s: &Run, v: usize| !s.holed(v);
         let caps: Vec<(usize, Int)> = names.iter().map(|&v| (v, self.u[v].clone())).collect();
-        let reach = self.paths(c, caps.clone(), |s, v| unholed(s, v));
+        let reach =
+            (self.paths(c, caps.clone(), |s, v| unholed(s, v))).map_err(|_| self.refuse(names))?;
         let cap = |h: usize| reach.get(&h).cloned().unwrap_or_else(|| self.wide.clone());
         let fixed: Vec<(usize, Int)> = match holed[..] {
             [h] => vec![(h, snap_down(&self.dom[h], &cap(h)).ok_or(Stop::Empty)?)],
             [a, b] => {
-                let ab = self.paths(c, vec![(a, Int::ZERO)], |s, v| v == a || unholed(s, v));
-                let ba = self.paths(c, vec![(b, Int::ZERO)], |s, v| v == b || unholed(s, v));
+                let ab = (self.paths(c, vec![(a, Int::ZERO)], |s, v| v == a || unholed(s, v)))
+                    .map_err(|_| self.refuse(names))?;
+                let ba = (self.paths(c, vec![(b, Int::ZERO)], |s, v| v == b || unholed(s, v)))
+                    .map_err(|_| self.refuse(names))?;
                 let w = |m: &BTreeMap<usize, Int>, z: usize| {
                     m.get(&z).cloned().unwrap_or_else(|| self.wide.clone())
                 };
@@ -538,7 +544,7 @@ impl Run<'_> {
         let mut sources: Vec<(usize, Int)> =
             caps.into_iter().filter(|(v, _)| !self.holed(*v)).collect();
         sources.extend(fixed.iter().cloned());
-        let all = self.paths(c, sources, |_, _| true);
+        let all = (self.paths(c, sources, |_, _| true)).map_err(|_| self.refuse(names))?;
         for &v in names {
             let x = all.get(&v).cloned().unwrap_or_else(|| self.u[v].clone());
             if x < *self.lo(v) {
@@ -603,7 +609,7 @@ impl Run<'_> {
         });
         if holds {
             let caps: Vec<(usize, Int)> = names.iter().map(|&v| (v, self.u[v].clone())).collect();
-            let found = self.paths(c, caps, |_, _| true);
+            let found = (self.paths(c, caps, |_, _| true)).map_err(|_| self.refuse(names))?;
             for &v in names {
                 if let Some(x) = found.get(&v) {
                     self.u[v] = x.clone();
@@ -653,38 +659,47 @@ impl Run<'_> {
     /// Least distances within component `c` from `sources`, each with its starting value,
     /// going on from a name only where `on` allows it, by Dijkstra on the reduced weights of
     /// the potential, which [`Run::hull`] has set at every name of the component.
+    ///
+    /// The search keeps each name's label less its potential, a distance over the reduced
+    /// weights `w + p(v) - p(z)`, and adds the potential back at the end. An edge whose reduced
+    /// weight is below zero is `Err`: the potential does not hold there, and the search would
+    /// no longer take each name once, so its O(m log n) would not hold either. The caller
+    /// refuses the component ([`Run::refuse`]).
     fn paths(
         &self,
         c: usize,
         sources: Vec<(usize, Int)>,
         on: impl Fn(&Run, usize) -> bool,
-    ) -> BTreeMap<usize, Int> {
+    ) -> Result<BTreeMap<usize, Int>, NegativeReducedWeight> {
         let p = |v: usize| self.potential[v].clone().unwrap_or(Int::ZERO);
-        let mut label: BTreeMap<usize, Int> = BTreeMap::new();
-        let mut heap: BinaryHeap<Reverse<(Int, usize)>> = BinaryHeap::new();
+        let mut search = Dijkstra::new(BTreeMap::new());
         for (v, x) in sources {
-            if label.get(&v).is_none_or(|y| x < *y) {
-                heap.push(Reverse((&x - &p(v), v)));
-                label.insert(v, x);
-            }
+            search.lower(v, &x - &p(v));
         }
-        while let Some(Reverse((k, v))) = heap.pop() {
-            let lv = label[&v].clone();
-            if &lv - &p(v) != k || !on(self, v) {
+        while let Some((k, v)) = search.pop() {
+            if !on(self, v) {
                 continue;
             }
+            let pv = p(v);
             for (z, w) in &self.out[v] {
                 if self.comp_of[*z] != c {
                     continue;
                 }
-                let t = &lv + w;
-                if label.get(z).is_none_or(|y| t < *y) {
-                    heap.push(Reverse((&t - &p(*z), *z)));
-                    label.insert(*z, t);
-                }
+                let r = reduced(&(w + &pv) - &p(*z), &Int::ZERO)?;
+                search.lower(*z, &k + &r);
             }
         }
-        label
+        Ok(search
+            .into_labels()
+            .into_iter()
+            .map(|(v, k)| (v, &k + &p(v)))
+            .collect())
+    }
+
+    /// The refusal of the component of `names`, its names and those of them with holes.
+    fn refuse(&self, names: &[usize]) -> Stop {
+        let holed = names.iter().copied().filter(|&v| self.holed(v)).collect();
+        Stop::Refused(names.to_vec(), holed)
     }
 }
 
@@ -923,6 +938,36 @@ mod tests {
                 .collect(),
             potential: vec![None; dom.len()],
         }
+    }
+
+    /// `paths` on a cycle `0 → 1 → 2 → 0` of weights 5, -4 and 0: with a potential that holds
+    /// at each edge, the least distances from 0 at 10; with one that does not (all 0, so the
+    /// edge `1 → 2` has reduced weight -4), `Err`. The search before `zed_graph::Dijkstra`
+    /// returned the distances there too, taking a name again each time its label fell, which
+    /// is label correcting and not O(m log n).
+    #[test]
+    fn paths_refuse_a_potential_that_does_not_hold() {
+        let wide = Int::from(1_000i64);
+        let dom: Vec<Vec<(Int, Int)>> = vec![vec![(Int::from(-100i64), Int::from(100i64))]; 3];
+        let edge = |z: usize, w: i64| vec![(z, Int::from(w))];
+        let run = |p: [i64; 3]| Run {
+            dom: &dom,
+            out: vec![edge(1, 5), edge(2, -4), edge(0, 0)],
+            comp_of: vec![0; 3],
+            u: vec![Int::ZERO; 3],
+            potential: p.iter().map(|&x| Some(Int::from(x))).collect(),
+            wide: &wide,
+        };
+        let from = || vec![(0, Int::from(10i64))];
+        let found = run([0, 5, 1]).paths(0, from(), |_, _| true);
+        let want: BTreeMap<usize, Int> = [(0, 10i64), (1, 15), (2, 11)]
+            .map(|(v, x)| (v, Int::from(x)))
+            .into();
+        assert_eq!(found, Ok(want));
+        assert_eq!(
+            run([0; 3]).paths(0, from(), |_, _| true),
+            Err(NegativeReducedWeight)
+        );
     }
 
     /// A small deterministic generator (a linear congruential one).

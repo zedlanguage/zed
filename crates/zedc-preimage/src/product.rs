@@ -39,12 +39,12 @@
 
 use imbl::ordmap::DiffItem;
 use std::cell::RefCell;
-use std::cmp::Reverse;
 use std::collections::{BTreeMap, BTreeSet, BinaryHeap, HashMap};
 use std::fmt;
 use std::sync::{Arc, Mutex, MutexGuard, OnceLock, PoisonError, Weak};
 
 use num_bigint::BigInt;
+use zed_graph::{Dijkstra, MinHeap, reduced};
 use zed_kernel::frames::{Deep, Stack};
 use zed_kernel::poly::roots::{Roots, term_roots};
 use zed_kernel::print;
@@ -3407,7 +3407,7 @@ type CompEdge = (Arc<str>, Arc<str>, (Int, i64));
 
 /// A name in the queue of [`Scope::bound_pass`], by the rank of its component, then its label
 /// less its potential.
-type Queued = Reverse<((i64, Int), Arc<str>)>;
+type Queued = ((i64, Int), Arc<str>);
 
 impl PartialEq for Potential {
     fn eq(&self, _: &Potential) -> bool {
@@ -3813,39 +3813,32 @@ fn negative_without_gaps(
     let at = |n: &Arc<str>| pot.at.get(n).map(|p| p.0.clone()).ok_or(Fall::Potential);
     // Negative when the least reduced distance from `v` to `u` is below `p(v) - p(u) - k`.
     let bound = &(&at(v)? - &at(u)?) - &e.weight;
-    let mut dist: BTreeMap<Arc<str>, Int> = BTreeMap::from([(v.clone(), Int::ZERO)]);
-    let mut done: BTreeSet<Arc<str>> = BTreeSet::new();
-    let mut heap = BinaryHeap::from([Reverse((Int::ZERO, v.clone()))]);
-    while let Some(Reverse((d, s))) = heap.pop() {
+    // Each name comes up once, at its least distance, as no reduced weight is negative; an edge
+    // into a name already done cannot lower it, and is checked like the others. The edge `e`
+    // itself is never read: the search ends when it reaches `u`, before reading `u`'s edges.
+    let mut search = Dijkstra::new(BTreeMap::new());
+    search.lower(v.clone(), Int::ZERO);
+    while let Some((d, s)) = search.pop() {
         if d >= bound {
             return Ok(false);
         }
         if s == *u {
             return Ok(true);
         }
-        if dist.get(&s) != Some(&d) || !done.insert(s.clone()) {
-            continue;
-        }
         let ps = at(&s)?;
         for (h, hb, f) in tree_edges(relation, t, &s) {
             let (Some(from), Some(to)) = (&f.from, &f.to) else {
                 continue;
             };
-            if *from != s || done.contains(to) || waiting.contains(&(h, hb)) {
+            if *from != s || waiting.contains(&(h, hb)) {
                 continue;
             }
             if pot.comp_of(to)? != cu {
                 continue;
             }
-            let r = &(&ps + &f.weight) - &at(to)?;
-            if r < Int::ZERO {
-                return Err(Fall::Potential);
-            }
-            let dx = &d + &r;
-            if dist.get(to).is_none_or(|c| dx < *c) {
-                dist.insert(to.clone(), dx.clone());
-                heap.push(Reverse((dx, to.clone())));
-            }
+            let r =
+                reduced(&(&ps + &f.weight) - &at(to)?, &Int::ZERO).map_err(|_| Fall::Potential)?;
+            search.lower(to.clone(), &d + &r);
         }
     }
     Ok(false)
@@ -3866,12 +3859,12 @@ struct Repair {
     forward: bool,
     /// The edge's end the search does not start from: reaching it closes a cycle.
     end: Arc<str>,
-    /// How far each name reached moves, below zero, the least found so far.
-    moves: BTreeMap<Arc<str>, (Int, i64)>,
+    /// How far each name reached moves, below zero, the least found so far, its labels; the
+    /// names reached, least move first. The weight of an edge is its reduced weight before
+    /// its tail moves, 0 or more, so this is Dijkstra's search.
+    moves: Dijkstra<Arc<str>, Pair, BTreeMap<Arc<str>, Pair>>,
     /// The name and edge each name reached was last reached by.
     via: BTreeMap<Arc<str>, (Arc<str>, Arc<Formula>, bool)>,
-    /// The names reached, least move first.
-    heap: BinaryHeap<Reverse<(Pair, Arc<str>)>>,
     /// The new value of each name the search is done with.
     new: BTreeMap<Arc<str>, (Int, i64)>,
 }
@@ -3895,9 +3888,8 @@ impl Repair {
         Repair {
             forward,
             end: end.clone(),
-            moves: BTreeMap::from([(start.clone(), gamma.clone())]),
+            moves: Dijkstra::starting(BTreeMap::from([(start.clone(), gamma)]), [start.clone()]),
             via: BTreeMap::new(),
-            heap: BinaryHeap::from([Reverse((gamma, start.clone()))]),
             new: BTreeMap::new(),
         }
     }
@@ -3912,12 +3904,13 @@ impl Repair {
         cu: u64,
     ) -> Result<Step, Fall> {
         let zero = (Int::ZERO, 0i64);
-        let Some(Reverse((gs, s))) = self.heap.pop() else {
+        // One entry a turn, a stale one included, so the two sides take turns as before.
+        let Some(entry) = self.moves.pop_entry() else {
             return Ok(Step::Ended);
         };
-        if self.new.contains_key(&s) || self.moves.get(&s) != Some(&gs) {
+        let Some((gs, s)) = entry else {
             return Ok(Step::Going);
-        }
+        };
         let ps = pot.at.get(&s).ok_or(Fall::Potential)?;
         let to_s = if self.forward {
             pair_plus(ps, &gs)
@@ -3929,6 +3922,9 @@ impl Repair {
                 continue;
             };
             let (near, x) = if self.forward { (from, to) } else { (to, from) };
+            // A name done cannot move again: its move is at most `gs`, and `after` is `gs`
+            // plus a reduced weight 0 or more. The new edge from `u` to `v` is never read, as
+            // the search ends on reaching its end, before reading that end's edges.
             if *near != s || self.new.contains_key(x) || waiting.contains(&(h.clone(), hb)) {
                 continue;
             }
@@ -3958,19 +3954,15 @@ impl Repair {
                     pair_minus(&pair_plus(px, &fw), &to_s),
                 )
             };
-            if before < zero {
-                return Err(Fall::Potential);
-            }
+            reduced(before, &zero).map_err(|_| Fall::Potential)?;
             if after >= zero {
                 continue;
             }
             if *x == self.end {
                 return Ok(Step::Cycle(s, (h, hb), after));
             }
-            if self.moves.get(x).is_none_or(|c| after < *c) {
-                self.moves.insert(x.clone(), after.clone());
+            if self.moves.lower(x.clone(), after) {
                 self.via.insert(x.clone(), (s.clone(), h.clone(), hb));
-                self.heap.push(Reverse((after, x.clone())));
             }
         }
         self.new.insert(s, to_s);
@@ -13663,7 +13655,7 @@ impl Scope {
             Ok(l)
         };
         let mut moved: BTreeMap<Arc<str>, Int> = BTreeMap::new();
-        let mut heap: BinaryHeap<Queued> = BinaryHeap::new();
+        let mut heap: MinHeap<Queued> = MinHeap::new();
         for s in &seeds.names {
             read(&mut label, s)?;
         }
@@ -13718,10 +13710,10 @@ impl Scope {
                 continue;
             }
             if let Some(Some(l)) = label.get(s) {
-                heap.push(Reverse(((rank(s)?.1, l - &q(s)?), s.clone())));
+                heap.push(((rank(s)?.1, l - &q(s)?), s.clone()));
             }
         }
-        while let Some(Reverse(((_, k), s))) = heap.pop() {
+        while let Some(((_, k), s)) = heap.pop() {
             let Some(Some(ls)) = label.get(&s).cloned() else {
                 continue;
             };
@@ -13752,7 +13744,7 @@ impl Scope {
                 if read(&mut label, &x)?.is_none_or(|c| by < c) {
                     let at = snap(&x, by);
                     moved.insert(x.clone(), at.clone());
-                    heap.push(Reverse(((rx.1, &at - &qx), x.clone())));
+                    heap.push(((rx.1, &at - &qx), x.clone()));
                     label.insert(x, Some(at));
                 }
             }
