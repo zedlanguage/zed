@@ -38,7 +38,9 @@ fn coordmix_shift_scales() {
     scales("coordmix_shift", 128, 1);
 }
 
-/// 8.8 times the work at 8, 9.6 at 32, 10.1 at 48, 12.1 at 128; 64 is over the limit.
+/// 8.8 times the work at 8, 9.6 at 32, 10.1 at 48, 12.1 at 128; 64 is over the limit. 9.9 at 48
+/// on 2026-11-19, 9.3 (542M and 5,028M instructions) since a change of a lower end no longer
+/// reads every upper disjunction again (COMPLEXITY.md PERF-l139-upper-split).
 #[test]
 fn coordmix_unmatched_scales() {
     scales("coordmix_unmatched", 48, 1);
@@ -108,6 +110,7 @@ fn coordkk_y_scales() {
 /// About `k^1.8` to `k^2.1` on main; about `k^1.05` to `k^1.1` since the threshold aggregate
 /// reads the upper disjunctions and every ray of a group (LAZY-hub-unsolved). 8.4 times the
 /// work at 4, 9.6 at 32, 10.1 at 48, 10.48 at 64 (too near the limit to keep), 11.3 at 96.
+/// 9.9 at 48 on 2026-11-19, 9.3 (542M and 5,016M instructions) since PERF-l139-upper-split.
 #[test]
 fn coordmix_slopes_scales() {
     scales("coordmix_slopes", 48, 1);

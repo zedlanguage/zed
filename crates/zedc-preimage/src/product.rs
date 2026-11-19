@@ -21302,23 +21302,37 @@ impl Scope {
                 yh = yh.min(End::Fin(Num::from(&h)));
             }
         }
-        // The upper disjunctions bound y and x through `UpperBounds`, which depends only on
-        // the staircase, the lower ends of x and y, and the disjunctions.
+        // The upper disjunctions bound y and x through `UpperBounds`, whose parts depend on
+        // the staircase alone, on the lower end of x alone and on the lower end of y alone.
         // Complexity tradeoff: reading each of the u upper disjunctions at each call costs
         // O(u (a log k)) per call for disjunctions of a arms, O(k u) over k tests that each
-        // move only an upper end; the block keeps the bounds and takes in each disjunction
-        // as it enters, O(a log k), and reads them all again, O(u (a log k)), only when the
-        // staircase or a lower end changes or a disjunction leaves.
-        let fresh = b.upper_bounds.as_ref().is_some_and(|u| {
-            &u.pair.0 == x && &u.pair.1 == y && u.tree.same(tree) && u.xl == xl && u.yl == yl
-        });
+        // move only an upper end. The block kept the bounds as one value and read every
+        // disjunction again, O(u (a log k)), whenever the staircase or a lower end changed;
+        // in coordmix_unmatched the lower end of x goes from no bound to a new finite one and
+        // back at each test, so each test read all u disjunctions twice, O(k^2 a log k) over
+        // the k tests (1,720 readings at 48 and 384). Now the staircase's part, O(a log k) per
+        // disjunction, is read again only when the staircase changes or a disjunction leaves,
+        // and a change of a lower end reads only that end's part: none when the end is no
+        // bound, else the u disjunctions' arms at it, O(u a) arithmetic with no descent.
+        // Remaining cost: that read is still O(k u a) over the k tests, 3 of 3,999 perf samples
+        // of coordmix_unmatched at 384 (the whole of `cover_staircase`); a Li Chao tree over
+        // the pieces of each disjunction's largest arm (segments of lines on integer x, compared
+        // exactly) would answer it in O(log) per change, at O(a log^2) per disjunction taken in
+        // and a persistent tree so that a block's copy stays O(1) (COMPLEXITY.md row
+        // PERF-l139-upper-split).
+        let fresh = b
+            .upper_bounds
+            .as_ref()
+            .is_some_and(|u| &u.pair.0 == x && &u.pair.1 == y && u.tree.same(tree));
         if !fresh {
             let mut u = UpperBounds {
                 pair: (x.clone(), y.clone()),
                 tree: tree.clone(),
+                arms: imbl::Vector::new(),
+                y_tree: None,
                 xl: xl.clone(),
+                y_xl: None,
                 yl: yl.clone(),
-                y: None,
                 x: None,
             };
             for at in b.of_role(Role::Upper) {
@@ -21326,8 +21340,9 @@ impl Scope {
             }
             b.upper_bounds = Some(u);
         }
-        if let Some(u) = &b.upper_bounds {
-            if let Some(v) = &u.y {
+        if let Some(u) = &mut b.upper_bounds {
+            u.at_lows(&xl, &yl);
+            if let Some(v) = &least_of(u.y_tree.clone(), u.y_xl.clone()) {
                 yh = yh.min(End::Fin(Num::from(v)));
             }
             if let Some(v) = &u.x {
@@ -21667,15 +21682,34 @@ impl RayLeast {
 
 /// What the upper disjunctions of a block give in [`Scope::cover_staircase`] for the
 /// staircase `tree` of the names `pair` and the lower ends `xl` of x and `yl` of y: the least
-/// upper end of y and of x over the disjunctions, none where no disjunction bounds it.
+/// upper end of y and of x over the disjunctions, none where no disjunction bounds it. The
+/// upper end of y is the least of `y_tree`, which depends on the staircase alone, and `y_xl`,
+/// which depends on `xl` alone; that of x, `x`, depends on `yl` alone.
 #[derive(Clone)]
 struct UpperBounds {
     pair: NamePair,
     tree: Staircase,
+    /// The arms of each upper disjunction on `pair` ([`upper_arms`]), in the order they came.
+    arms: imbl::Vector<Arc<Vec<(Int, Int, Int)>>>,
+    y_tree: Option<Int>,
     xl: End,
+    y_xl: Option<Int>,
     yl: End,
-    y: Option<Int>,
     x: Option<Int>,
+}
+
+/// The largest y the arms `p*x + q*y <= c` of an upper disjunction allow at `x = a`.
+fn upper_y_at(arms: &[(Int, Int, Int)], a: &Int) -> Option<Int> {
+    arms.iter()
+        .map(|(p, q, c)| (c - &(p * a)).div_floor(q))
+        .max()
+}
+
+/// The largest x the arms `p*x + q*y <= c` of an upper disjunction allow at `y = l`.
+fn upper_x_at(arms: &[(Int, Int, Int)], l: &Int) -> Option<Int> {
+    arms.iter()
+        .map(|(p, q, c)| (c - &(q * l)).div_floor(p))
+        .max()
 }
 
 impl UpperBounds {
@@ -21690,23 +21724,43 @@ impl UpperBounds {
         let Some(arms) = upper_arms(g, &self.pair.0, &self.pair.1) else {
             return;
         };
-        let y_at = |a: &Int| {
-            arms.iter()
-                .map(|(p, q, c)| (c - &(p * a)).div_floor(q))
-                .max()
-        };
-        let mut y = self.tree.upper_dec(y_at);
+        let y = self.tree.upper_dec(|a: &Int| upper_y_at(&arms, a));
+        self.y_tree = least_of(self.y_tree.take(), y);
         if let End::Fin(l) = &self.xl {
-            y = least_of(y, y_at(&Int::from(l)));
+            self.y_xl = least_of(self.y_xl.take(), upper_y_at(&arms, &Int::from(l)));
         }
-        self.y = least_of(self.y.take(), y);
         if let End::Fin(l) = &self.yl {
-            let l = Int::from(l);
-            let x = arms
-                .iter()
-                .map(|(p, q, c)| (c - &(q * &l)).div_floor(p))
-                .max();
-            self.x = least_of(self.x.take(), x);
+            self.x = least_of(self.x.take(), upper_x_at(&arms, &Int::from(l)));
+        }
+        self.arms.push_back(Arc::new(arms));
+    }
+
+    /// Moves the lower ends to `xl` and `yl`, reading the arms again only for an end that
+    /// changed to a finite one: O(u a) for u disjunctions of a arms each, O(1) otherwise.
+    fn at_lows(&mut self, xl: &End, yl: &End) {
+        if &self.xl != xl {
+            self.xl = xl.clone();
+            self.y_xl = match xl {
+                End::Fin(l) => {
+                    let l = Int::from(l);
+                    self.arms
+                        .iter()
+                        .fold(None, |m, arms| least_of(m, upper_y_at(arms, &l)))
+                }
+                _ => None,
+            };
+        }
+        if &self.yl != yl {
+            self.yl = yl.clone();
+            self.x = match yl {
+                End::Fin(l) => {
+                    let l = Int::from(l);
+                    self.arms
+                        .iter()
+                        .fold(None, |m, arms| least_of(m, upper_x_at(arms, &l)))
+                }
+                _ => None,
+            };
         }
     }
 }
