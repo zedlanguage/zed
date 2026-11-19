@@ -9,26 +9,40 @@
 # keeps its files, and checks each selection on the saved table (--reuse-table): a listing takes 7
 # to 13 s, and one per check ran past 60 s. One check compares a fresh listing with the table;
 # a few list with --only afresh and check the binaries that listing built (build.log).
+# The checks are in parts, each run as `tools/test_run_tests.sh <part>` under 60 s: `list`, the
+# full listing, which publishes the table (13 s at load 94, 30 to 57 s at load 36 to 76); `select`,
+# the selections of steps, modules and tests on the table list published (about 20 of 0.9 to 1.5 s
+# each at load 64 to 94: with the full listing in the same part it ran past 60 s at load 47 to 94,
+# 2026-11-19); `table`, the selections of --bench and --each-test on that table; `fresh`, the
+# listings with --only afresh; `concurrent`, two runs at once on one log directory; and `trace`.
+# select and table are run after list, with no build of the tests between them. With no part named
+# it runs list, select, table, fresh and concurrent one after another.
+# Each part has a log directory of its own, under which every run of run_tests.sh writes a
+# directory of its own and points <dir>/latest at it; the parts are run one run at a time, so
+# right after a run, latest is that run's.
 fails=0
-check() {
-  if [ "$2" = "$3" ]; then
-    echo "ok: $1"
-  else
-    echo "FAILED: $1"
-    diff <(echo "$2") <(echo "$3") | head -20
-    fails=$((fails + 1))
-  fi
-}
+. tools/test_lib.sh || exit 2
+part=${1:-all}
+case $part in
+  all | list | select | table | fresh | concurrent | trace) ;;
+  *)
+    echo "usage: tools/test_run_tests.sh [list | select | table | fresh | concurrent | trace]"
+    exit 2
+    ;;
+esac
+want() { [ "$part" = all ] || [ "$part" = "$1" ]; }
 logs=build/test-run-tests
 run() {
   tools/run_tests.sh --logs "$logs" "$@"
 }
+# The log directory of the last run of this part.
+last_run() { readlink -f "$logs/latest"; }
 # `tools/test_run_tests.sh trace` checks only the spec reads --trace names (MERGE-spec-reads-map),
 # in a log directory of its own, as a separate piece: the selection checks take most of 60 s at
 # load 80, and these run l01_06 three times and l01_03 once (10 s at load 75, 2026-11-17). l01_06's
 # program test reads DESIGN.md and EXAMPLES.md in place, the spec found beside the checkout or
 # through ZED_SPEC_DIR, absolute or relative to tests/; the l01_03 lexer tests read no spec file.
-if [ "$1" = trace ]; then
+if [ "$part" = trace ]; then
   logs=$logs-trace
   spec_reads() {
     command grep -a -h '^spec:' "$1"/*.reads | sort -u | tr '\n' ' '
@@ -55,10 +69,25 @@ if [ "$1" = trace ]; then
   [ "$fails" = 0 ]
   exit
 fi
-all=$(run --list)
-rc=$?
-[ "$rc" = 0 ] || { echo "FAILED: --list exit $rc"; exit 1; }
-pieces=$(cat "$logs/pieces")
+# The binaries the run in the log directory $1 built, by name without the hash.
+built() {
+  sed -n 's/^ *Executable .*(.*\/\([^/]*\)-[0-9a-f]*)$/\1/p' "$1/build.log" | sort | tr '\n' ' '
+}
+# list lists every piece afresh and publishes the table; select and table select from the table
+# the last list published.
+if want list || want select || want table; then
+  if want list; then
+    all=$(run --list)
+  elif [ -s "$logs/table" ]; then
+    all=$(run --list --reuse-table)
+  else
+    echo "FAILED: no $logs/table: run tools/test_run_tests.sh list first"
+    exit 1
+  fi
+  rc=$?
+  [ "$rc" = 0 ] || { echo "FAILED: --list exit $rc"; exit 1; }
+  pieces=$(cat "$(last_run)/pieces")
+fi
 # The names of the pieces whose binary (third field), without its hash, is one of the groups $@.
 by_binary() {
   local g
@@ -69,7 +98,10 @@ by_binary() {
 selected() {
   run --list --reuse-table --only "$1" | sort
 }
+if want list; then
 check "the full list is the names of the pieces file" "$(echo "$pieces" | cut -d ' ' -f 1)" "$all"
+fi
+if want select; then
 # A step folder outside run_tests.sh's split list is one piece, named by the folder. The step
 # must stay off that list: l01_29 served here until TESTS-l01_29-split (69f447307) split it into
 # a piece per module and per slow test. l01_03 is 8 small lexer tests (TEST-step-one-piece).
@@ -101,8 +133,12 @@ check "a split module selects its tests" "$live3" "$(selected '^l01_38_omega_tes
 check "a split step selects all its pieces" "$(by_binary l01_38_presburger)" "$(selected '^l01_38_presburger')"
 check "zedc's unit tests are one piece" "$(by_binary zedc)" "$(selected '^zedc$')"
 check "a short-addresses piece is selected by its name" "short-l01_37_oracle" "$(selected '^short-l01_37_oracle$')"
-check "a fresh listing selects what the table does" "$(selected '^l01_36_cranelift$')" \
-  "$(run --list --only '^l01_36_cranelift$' | sort)"
+fresh=$(run --list --only '^l01_36_cranelift$' | sort)
+fresh_dir=$(last_run)
+check "a fresh listing selects what the table does" "$(selected '^l01_36_cranelift$')" "$fresh"
+check "a listing with --only builds the binaries of its groups alone" "deep_heap l01_36_cranelift " "$(built "$fresh_dir")"
+fi
+if want table; then
 # Benchmarks (TEST-bench-split): l01_15_kernel_terms holds a module bench beside its correctness
 # tests, and l01_03 none. The default run leaves the benchmarks out and runs the rest of the
 # step with `--skip bench::`; --bench runs each benchmark as a piece; --each-test runs each
@@ -157,26 +193,6 @@ check "--each-test runs the tests of a split step's pieces, filtered and --exact
 check "--each-test runs the tests of pieces with --exact and --skip" \
   "$(listed_by_libtest '^(zedc_preimage|zed_kernel)(-|::)')" \
   "$(run --list --reuse-table --each-test --only '^(zedc_preimage|zed_kernel)$' | sort)"
-# The binaries the last run built, by name without the hash.
-built() {
-  sed -n 's/^ *Executable .*(.*\/\([^/]*\)-[0-9a-f]*)$/\1/p' "$logs/build.log" | sort | tr '\n' ' '
-}
-check "a listing with --only builds the binaries of its groups alone" "deep_heap l01_36_cranelift " "$(built)"
-run --list --only '^zedc$' >/dev/null
-check "zedc's unit tests are built from its library and its command" "zedc zedc " "$(built)"
-check "a module is built with its binary alone" "l01_38_omega_test " \
-  "$(run --list --only '^l01_38_omega_test::live3::' >/dev/null && built)"
-out=$(run --list --only '^zedc$|live3::')
-rc=$?
-check "a part naming no binary stops the run" "1 --only: no test binary is selected by the part 'live3::' of '^zedc\$|live3::'.
-A test or a module is selected only with its binary's group, as <group>::<path>." "$rc $out"
-out=$(run --list --only 'live3::')
-rc=$?
-check "a fresh listing that selects nothing stops the run" "1 NO PIECE MATCHES --only 'live3::'
-A test or a module is selected only with its binary's group, as <group>::<path>." "$rc $out"
-out=$(run --list --only '(l01_38::x|y)')
-rc=$?
-check "a part whose binary cannot be read off stops the run" "2" "$rc"
 check "a listing with --only leaves the table of all pieces" "$(echo "$all" | sort)" "$(selected .)"
 out=$(run --reuse-table --only '^zedc$')
 rc=$?
@@ -188,17 +204,50 @@ check "a pattern matching nothing exits non-zero with a message" "1 NO PIECE MAT
 out=$(run --list --reuse-table --only '(')
 rc=$?
 check "an invalid pattern exits 2" "2 --only: not a valid extended regular expression: (" "$rc $out"
-# This script holds the lock of the log directory as a run in progress would; a run started
-# meanwhile stops at once and names it, and a run started after the lock is released runs.
-exec 8>>"$logs/run.lock"
-flock -n 8 || echo "FAILED: the lock of $logs is held before the check"
-echo "a run held by tools/test_run_tests.sh" >"$logs/run.holder"
-out=$(run --list --reuse-table --only '^zedc$')
+fi
+if want fresh; then
+logs=build/test-run-tests-fresh
+run --list --only '^zedc$' >/dev/null
+check "zedc's unit tests are built from its library and its command" "zedc zedc " "$(built "$(last_run)")"
+check "a module is built with its binary alone" "l01_38_omega_test " \
+  "$(run --list --only '^l01_38_omega_test::live3::' >/dev/null && built "$(last_run)")"
+out=$(run --list --only '^zedc$|live3::')
 rc=$?
-check "a second run on a log directory in use stops and names the first" \
-  "1 Another tools/run_tests.sh run is using $(pwd)/$logs: a run held by tools/test_run_tests.sh.
-Wait for it to end, or give this run a directory of its own with --logs <dir>." "$rc $out"
-exec 8>&-
-check "a run starts once the lock is released" "$(by_binary zedc)" "$(selected '^zedc$')"
+check "a part naming no binary stops the run" "1 --only: no test binary is selected by the part 'live3::' of '^zedc\$|live3::'.
+A test or a module is selected only with its binary's group, as <group>::<path>." "$rc $out"
+out=$(run --list --only 'live3::')
+rc=$?
+check "a fresh listing that selects nothing stops the run" "1 NO PIECE MATCHES --only 'live3::'
+A test or a module is selected only with its binary's group, as <group>::<path>." "$rc $out"
+out=$(run --list --only '(l01_38::x|y)')
+rc=$?
+check "a part whose binary cannot be read off stops the run" "2" "$rc"
+fi
+# Two runs at once on one log directory both run to the end, each in a directory of its own
+# (NO-LOCKS-optimistic); until then the second stopped at once, as the run lock was held. Both
+# list l01_03, a step folder that is one piece, with a fresh build, so that they overlap: both
+# build, both write a table and pieces file, and the table published last is whole. latest is
+# one of the two.
+if want concurrent; then
+logs=build/test-run-tests-concurrent
+step03=$(ls tests/steps | grep '^l01_03_')
+# Started as commands, not through run, so that $! is the pid each run names its directory by.
+tools/run_tests.sh --logs "$logs" --list --only '^l01_03_' >"$logs.a" 2>&1 &
+a=$!
+tools/run_tests.sh --logs "$logs" --list --only '^l01_03_' >"$logs.b" 2>&1 &
+b=$!
+wait "$a"
+rc_a=$?
+wait "$b"
+rc_b=$?
+check "two runs at once on one log directory both pass" "0 0" "$rc_a $rc_b"
+check "both list the piece" "$step03
+$step03" "$(cat "$logs.a" "$logs.b")"
+check "each has a directory of its own" "2" \
+  "$(ls -d "$logs"/*-"$a"* "$logs"/*-"$b"* 2>/dev/null | wc -l)"
+check "latest is one of them" "yes" \
+  "$(case $(readlink "$logs/latest") in *-"$a" | *-"$b") echo yes ;; esac)"
+check "no lock file is left" "" "$(find "$logs" -maxdepth 1 -name '*.lock')"
+fi
 echo "checks failed: $fails"
 [ "$fails" = 0 ]

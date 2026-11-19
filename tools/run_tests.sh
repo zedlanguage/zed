@@ -10,7 +10,7 @@
 # work at two sizes (zed_tests::scaling). The default run leaves out every piece whose tests are
 # all benchmarks and gives a piece that holds some of them `--skip bench::` (with --exact, a
 # `--skip` of each by name). --bench runs each benchmark as a piece of its own, named
-# <group>::<test>, with the same slots, slice, limit and summary lines; --only selects among them
+# <group>::<test>, with the same jobs, slice, limit and summary lines; --only selects among them
 # as among the correctness pieces. A benchmark runs with --nocapture, since libtest keeps the
 # output of a passing test, and its lines that begin `bench ` (zed_tests::scaling) are written to
 # <log dir>/bench.log and printed after the summary (TEST-time-pass-condition). --each-test runs
@@ -39,12 +39,13 @@
 # changes since origin/main, or whose doc links an item the checkout renames, deletes, makes
 # private or puts behind a cfg (tools/check_changed_docs.sh). --list builds what the selection
 # needs, prints the names of the selected pieces and runs nothing.
-# A run without --only saves the table of all pieces in its log directory; --list --reuse-table
-# selects from that table without building or listing the binaries, for tests of the selection.
-# The table is as the run that wrote it left it: with --full or not, and stale once the test
-# binaries are rebuilt. --logs puts the logs, the table and the piece list in <dir> instead of
-# build/test-logs. Two runs in one checkout need different directories: a second run on a
-# directory in use stops at once and names the run using it.
+# Each run writes its logs, table and piece list in a directory of its own,
+# build/test-logs/<UTC time>-<pid>, and build/test-logs/latest names the newest; --logs <dir>
+# puts these under <dir> instead of build/test-logs. Runs at the same time, with --logs or not,
+# share no file. A run without --only also publishes the table of all pieces as <dir>/table;
+# --list --reuse-table selects from it without building or listing the binaries, for tests of
+# the selection. The table is as the run that published it last left it: with --full or not, and
+# stale once the test binaries are rebuilt.
 # Without --only the build is `cargo test --workspace --no-run`, which does nothing on a tree
 # already built that way, so a run after such a build starts the pieces at once. With --only it
 # builds only the test binaries of the groups the pattern names, and the libraries under them,
@@ -53,7 +54,7 @@
 # touched). The binaries are chosen before the build, from their groups' names alone, so a test
 # or a module is selected only with its binary's group, as <group>::<path>: a part of the pattern
 # (an alternative at its top level) that selects no binary stops the run with an error naming it.
-# A failed piece keeps its output in build/test-logs/<piece>.log, or in the --logs directory.
+# A failed piece keeps its output in <the run's log directory>/<piece>.log, which the run prints.
 # --trace <dir> runs each piece under strace, recording the file system calls of the piece and of
 # every process it starts (open, stat, access, exec, readlink, directory listings and the rest of
 # strace's %file class), and writes <dir>/<piece>.reads, the paths those calls named, one per
@@ -179,6 +180,7 @@ if [ -n "$full_suite" ]; then
   fi
 fi
 root=$(pwd)
+. "$root/tools/lib.sh" || exit 2
 # A coverage run builds apart, so the build/cargo of ordinary runs stays as it is. Without a
 # LLVM_PROFILE_FILE an instrumented program writes default_<hash>.profraw in the directory it
 # runs in, a step folder or a package's source, so one is set before the build, whose build
@@ -201,8 +203,8 @@ fi
 # The short-addresses build (step L1.37a) keeps 8 bits of every content address and type digest,
 # so distinct values collide; its pieces check that every place that compares by address
 # confirms equal addresses by contents, and that verdicts and outputs match the full build.
-# It builds in a clone of the checkout's build: an overlay mounted at build/short-clone/cargo
-# whose one lower layer is build/cargo, read-only, and whose upper layer build/short-clone/upper
+# It builds in a clone of the checkout's build: an overlay mounted at <the run's log
+# directory>/short-clone whose one lower layer is build/cargo, read-only, and whose upper layer build/short-clone/upper
 # receives what the feature rebuilds (zed-kernel and every crate above it, 16 crates; the 92
 # crates from crates.io are reused). Mounting it takes 11 ms; a copy of build/cargo would be
 # 94 GB, or 3 GB without the incremental caches, which the feature's crates cannot use. The
@@ -230,10 +232,20 @@ fi
 # again.
 # The clone is mounted in the zrun namespace, so the run must go through zrun, and build/cargo
 # must not change while it is mounted (no other zcargo build of this checkout at that time).
-# A run killed with SIGKILL leaves it mounted, and the next run unmounts it first. Two runs in
-# one checkout take build/short-clone.lock in turn, the second waiting until the first has
-# ended; checkouts do not share a clone, as each zrun namespace mounts its own checkout at the
-# fixed path.
+# Each run mounts it at a directory of its own, <its log directory>/short-clone, with the overlay
+# option index=on, under which the kernel refuses a second mount of an upper layer while one is
+# mounted ("overlay already mounted or mount point busy"), in this namespace or any other
+# (measured 2026-11-19 in a zrun namespace with build/cargo as the lower layer, as here; each run
+# checks that it still holds, see mount_short_clone). So two
+# runs of one checkout never write the clone at once, with no lock file (NO-LOCKS-optimistic,
+# author 2026-11-19: "There should be no locks anywhere"; until then the second run waited on
+# build/short-clone.lock): the second finds the mount refused and the first run's mount in the
+# namespace's mount table, and tries again every 2 s until that run has ended. Only one mount of
+# an upper layer at a time is defined behavior for an overlay, so the wait is the cost of
+# sharing the kept clone; a clone of its own would rebuild for 180 to 237 s and leave GBs to
+# delete. A run killed with SIGKILL leaves its mount behind, which the next run unmounts once no
+# process has the pid named in that mount's directory. Checkouts do not share a clone, as each
+# zrun namespace mounts its own checkout at the fixed path.
 # The build the clone is made from: build/STACK and build/upper, or build/cargo in a checkout
 # without a STACK.
 short_clone_stamp() {
@@ -244,28 +256,63 @@ short_clone_stamp() {
     stat -c 'cargo %i %W' "$root/build/cargo"
   fi
 }
-# Unmounts the clone, if it is mounted. The kernel leaves the overlay's inner work directory at
-# mode 000, which rm cannot enter; it is opened again, so that deleting the checkout succeeds.
-unmount_short_clone() {
-  [ -e /home/luke/Work/wt/.build-root/build/short-clone ] || return 0
-  for _ in 1 2 3 4 5 6 7 8 9 10; do
-    mountpoint -q /home/luke/Work/wt/.build-root/build/short-clone/cargo || break
-    umount /home/luke/Work/wt/.build-root/build/short-clone/cargo 2>/dev/null || sleep 1
+# Prints the directory of each mount of the clone in this namespace, one a line.
+short_clone_mounts() {
+  findmnt -rn -t overlay -o TARGET,OPTIONS |
+    awk '$2 ~ /(^|,)upperdir=\/home\/luke\/Work\/wt\/\.build-root\/build\/short-clone\/upper(,|$)/ { print $1 }'
+}
+# Unmounts each mount of the clone whose run has ended: one at <dir>/<time>-<pid>/short-clone
+# with no process <pid>, or one at build/short-clone/cargo, where a run before NO-LOCKS-optimistic
+# mounted it, that no process is using (umount refuses one in use). Prints the directory of each
+# mount left, the runs still using the clone. A pid used again by another process since the run
+# ended keeps its mount until that process ends; the clone waits that long.
+unmount_dead_short_clones() {
+  local m pid
+  for m in $(short_clone_mounts); do
+    if [[ $m =~ -([0-9]+)/short-clone$ ]]; then
+      pid=${BASH_REMATCH[1]}
+      if [ "$pid" != $$ ] && [ ! -d "/proc/$pid" ] && umount "$m"; then
+        continue
+      fi
+    elif [ "$m" = /home/luke/Work/wt/.build-root/build/short-clone/cargo ] && umount "$m" 2>/dev/null; then
+      continue
+    fi
+    echo "$m"
   done
-  if findmnt -rn -o TARGET | grep -qE '^/home/luke/Work/wt/\.build-root/build/short-clone(/|$)'; then
-    echo "The short-addresses clone /home/luke/Work/wt/.build-root/build/short-clone/cargo is" \
-      "still mounted (in use by a process of this checkout)."
-    return 1
-  fi
+}
+# Opens again the overlay's inner work directory of the clone, which the kernel leaves at mode
+# 000 and rm cannot enter, so that deleting the clone or the checkout succeeds.
+open_short_clone_work() {
   [ -L /home/luke/Work/wt/.build-root/build/short-clone/work/work ] ||
     [ ! -d /home/luke/Work/wt/.build-root/build/short-clone/work/work ] ||
     chmod u+rwx /home/luke/Work/wt/.build-root/build/short-clone/work/work
 }
-# Unmounts and deletes the clone, if there is one. Every path is written out: a delete names its
-# target in full (the author's rule), and the clone exists only at the fixed path of zrun.
+# Deletes the clone, when no run has it mounted. It is first renamed to
+# build/short-clone-dropped, so that a run arriving meanwhile finds no clone and makes a new
+# one, and two runs dropping it at once delete it once: one rename succeeds. Every path is
+# written out: a delete names its target in full (the author's rule), and the clone exists only
+# at the fixed path of zrun. A leftover build/short-clone-dropped, from a run killed while
+# deleting it, is deleted first.
 drop_short_clone() {
+  local d
+  if [ -e /home/luke/Work/wt/.build-root/build/short-clone-dropped ]; then
+    if [ -L /home/luke/Work/wt/.build-root/build/short-clone-dropped ] ||
+      [ "$(realpath -e /home/luke/Work/wt/.build-root/build/short-clone-dropped)" != \
+        /home/luke/Work/wt/.build-root/build/short-clone-dropped ]; then
+      echo "/home/luke/Work/wt/.build-root/build/short-clone-dropped is not a directory; it is left in place."
+      return 1
+    fi
+    [ -L /home/luke/Work/wt/.build-root/build/short-clone-dropped/work/work ] ||
+      [ ! -d /home/luke/Work/wt/.build-root/build/short-clone-dropped/work/work ] ||
+      chmod u+rwx /home/luke/Work/wt/.build-root/build/short-clone-dropped/work/work
+    rm -rf --one-file-system --preserve-root=all /home/luke/Work/wt/.build-root/build/short-clone-dropped
+  fi
   [ -e /home/luke/Work/wt/.build-root/build/short-clone ] || return 0
-  unmount_short_clone || return 1
+  d=$(unmount_dead_short_clones)
+  if [ -n "$d" ]; then
+    echo "The short-addresses clone is mounted by a run still going, at:" $d
+    return 1
+  fi
   if [ -L /home/luke/Work/wt/.build-root/build/short-clone ] ||
     [ ! -d /home/luke/Work/wt/.build-root/build/short-clone ] ||
     [ "$(realpath -e /home/luke/Work/wt/.build-root/build/short-clone)" != \
@@ -274,18 +321,78 @@ drop_short_clone() {
       "directory; it is left in place."
     return 1
   fi
-  rm -rf --one-file-system --preserve-root=all /home/luke/Work/wt/.build-root/build/short-clone
+  open_short_clone_work
+  # A run that checked for mounts just before another mounted the clone would rename it from
+  # under that run's build; both runs would have to find the clone stale within the same few
+  # milliseconds, and the build that loses its files fails and is reported, not passed.
+  if ! mv -T /home/luke/Work/wt/.build-root/build/short-clone /home/luke/Work/wt/.build-root/build/short-clone-dropped; then
+    # Another run renamed it first, and may have made a new one since.
+    [ ! -e /home/luke/Work/wt/.build-root/build/short-clone ] && return 0
+    [ -n "$stamp" ] && [ "$(cat /home/luke/Work/wt/.build-root/build/short-clone/stamp 2>/dev/null)" = "$stamp" ] && return 0
+    echo "The short-addresses clone could not be renamed for deletion."
+    return 1
+  fi
+  rm -rf --one-file-system --preserve-root=all /home/luke/Work/wt/.build-root/build/short-clone-dropped
+}
+# Mounts the clone at <this run's log directory>/short-clone, made again first when it was made
+# from another build of this checkout, and waits while another run has it mounted.
+mount_short_clone() {
+  local m said= free=
+  mkdir -p "$out/short-clone" || return 1
+  while :; do
+    m=$(unmount_dead_short_clones)
+    if [ -z "$m" ] && [ -e /home/luke/Work/wt/.build-root/build/short-clone ] &&
+      [ "$(cat /home/luke/Work/wt/.build-root/build/short-clone/stamp 2>/dev/null)" != "$stamp" ]; then
+      echo "The short-addresses clone was made from another build of this checkout; it is made again."
+      drop_short_clone || return 1
+    fi
+    mkdir -p /home/luke/Work/wt/.build-root/build/short-clone/upper /home/luke/Work/wt/.build-root/build/short-clone/work || return 1
+    if [ ! -e /home/luke/Work/wt/.build-root/build/short-clone/stamp ]; then
+      printf '%s\n' "$stamp" >"$out/short-clone.stamp" &&
+        mv -T "$out/short-clone.stamp" /home/luke/Work/wt/.build-root/build/short-clone/stamp || return 1
+    fi
+    if mount -t overlay overlay -o "lowerdir=$root/build/cargo,upperdir=/home/luke/Work/wt/.build-root/build/short-clone/upper,workdir=/home/luke/Work/wt/.build-root/build/short-clone/work,userxattr,index=on" \
+      "$out/short-clone" 2>"$out/short-clone.err"; then
+      # The refusal of a second mount is what keeps two runs from the clone at once. With
+      # userxattr the kernel turns index off (findmnt shows no index), yet it checks index=on
+      # first and refuses (Linux 7.3.3, 2026-11-19). A kernel that stops refusing would let two runs
+      # write the clone at once, so each run checks: a second mount must fail.
+      mkdir -p "$out/short-clone-check"
+      if mount -t overlay overlay -o "lowerdir=$root/build/cargo,upperdir=/home/luke/Work/wt/.build-root/build/short-clone/upper,workdir=/home/luke/Work/wt/.build-root/build/short-clone/work,userxattr,index=on" \
+        "$out/short-clone-check" 2>/dev/null; then
+        umount "$out/short-clone-check"
+        umount "$out/short-clone"
+        echo "This kernel mounts the short-addresses clone twice with index=on, so two runs could write it at" \
+          "once; tools/run_tests.sh needs another way to keep them apart (NO-LOCKS-optimistic)."
+        return 1
+      fi
+      # Another run may have made the clone again between the check above and the mount.
+      [ "$(cat /home/luke/Work/wt/.build-root/build/short-clone/stamp)" = "$stamp" ] && return 0
+      umount "$out/short-clone"
+      continue
+    fi
+    m=$(unmount_dead_short_clones)
+    if [ -z "$m" ]; then
+      # The run that had it mounted may have ended since the mount was refused: one more try.
+      if [ -n "$free" ]; then
+        cat "$out/short-clone.err"
+        echo "The short-addresses clone of build/cargo could not be mounted."
+        return 1
+      fi
+      free=1
+      continue
+    fi
+    free=
+    [ -n "$said" ] || echo "Waiting for the run that has the short-addresses clone mounted at" $m "to end."
+    said=1
+    sleep 2
+  done
 }
 if [ -n "$clone_remove" ]; then
   if [ "$root" != /home/luke/Work/wt/.build-root ]; then
     echo "The short-addresses clone is mounted in the zrun namespace; run" \
       "/home/luke/Work/wt/zrun tools/run_tests.sh --short-clone-remove from the checkout's root."
     exit 1
-  fi
-  exec 6>>"$root/build/short-clone.lock"
-  if ! flock -n 6; then
-    echo "Waiting for the other run of this checkout that uses the short-addresses clone to end."
-    flock 6
   fi
   if [ ! -e /home/luke/Work/wt/.build-root/build/short-clone ]; then
     echo "This checkout has no short-addresses clone."
@@ -295,24 +402,25 @@ if [ -n "$clone_remove" ]; then
   echo "The short-addresses clone of this checkout is deleted."
   exit 0
 fi
-out=${logs:-build/test-logs}
-[[ $out == /* ]] || out=$root/$out
-mkdir -p "$out"
-# One run at a time uses a log directory: two runs sharing its piece list and summary report
-# pieces of the other run and false failures (rc=127, or a failed count above the failed lines).
-# A second run stops at once and names the first. The kernel drops the lock when the run and
-# every piece it started have ended, so a killed run leaves none behind. The run holding the lock
-# writes its details to run.holder while it holds a short lock on that file, which every run
-# takes before trying the lock, so a stopped run reads the details of the run that stopped it.
-exec 7>>"$out/run.holder" 8>>"$out/run.lock"
-flock 7
-if ! flock -n 8; then
-  echo "Another tools/run_tests.sh run is using $out: $(cat "$out/run.holder")."
-  echo "Wait for it to end, or give this run a directory of its own with --logs <dir>."
-  exit 1
-fi
-echo "process $$, started $(date '+%F %T'), arguments: ${args:-none}" >"$out/run.holder"
-exec 7>&-
+logbase=${logs:-build/test-logs}
+[[ $logbase == /* ]] || logbase=$root/$logbase
+# Each run writes into a log directory of its own, <base>/<UTC time>-<pid>, so runs at the same
+# time share no file and none waits for another (NO-LOCKS-optimistic, author 2026-11-19: "There
+# should be no locks anywhere"). Until then one run held a lock on <base>/run.lock and a second
+# run on the same base stopped at once. <base>/latest names the directory of the run that started
+# last; it is replaced by a rename, so a reader sees the old or the new link, never none. What a
+# later run reads from an earlier one, the table of all pieces and the runtimes the links were
+# made for, is published in <base> the same way (publish, below). The run directories are kept:
+# TOOL-test-logs-prune deletes old ones.
+out=$logbase/$(date -u +%Y%m%dT%H%M%S.%NZ)-$$
+mkdir -p "$out" || exit 1
+ln -sfn "${out##*/}" "$logbase/latest.$$" && mv -T "$logbase/latest.$$" "$logbase/latest"
+echo "process $$, started $(date '+%F %T'), arguments: ${args:-none}" >"$out/run"
+# A --list run prints the piece names alone, which its callers read.
+[ -n "$list" ] || echo "logs: $out"
+# publish <file> <name>: puts a copy of <file> at <base>/<name> by a rename, so a reader of it sees
+# one whole version, the last one published.
+publish() { cp "$1" "$logbase/$2.$$" && mv -T "$logbase/$2.$$" "$logbase/$2"; }
 # The tests of each test binary, one per line, listed once (`--list --format terse`, 30 ms for
 # l01_38's 644 tests); empty for a binary that cannot be listed. list_binary fills it, in the
 # shell that calls it.
@@ -436,11 +544,11 @@ select_pieces() {
   fi
 }
 if [ -n "$reuse" ]; then
-  if [ ! -s "$out/table" ]; then
-    echo "--reuse-table: no $out/table; run tools/run_tests.sh --list without --only first"
+  if [ ! -s "$logbase/table" ]; then
+    echo "--reuse-table: no $logbase/table; run tools/run_tests.sh --list without --only first"
     exit 1
   fi
-  select_pieces "$out/table"
+  select_pieces "$logbase/table"
   cut -d ' ' -f 1 "$out/pieces"
   exit 0
 fi
@@ -628,7 +736,6 @@ else
     # nothing but is still a second build of the package.) The packages ask for
     # the workspace's features (dev-dependencies in crates/zed-native, crates/zed-tools and
     # tests); this stops the build when one does not, before anything is overwritten.
-    features_of() { cargo tree "$@" -f '{p} [{f}]' --prefix none | sed 's/ (\*)$//' | sort -u; }
     differ=$(comm -23 <(features_of $libs) <(features_of --workspace))
     if [ -n "$differ" ]; then
       echo "--only: cargo test --no-run $libs--lib would build these packages with features"
@@ -649,30 +756,13 @@ bins=$(sed -n -e "s|^ *Executable .*(\(/.*\))$|\1|p" -e "s|^ *Executable .*(\([^
 full=$(echo "$bins" | grep '/full-')
 short=
 if [ -n "$short_build" ]; then
-  exec 6>>"$root/build/short-clone.lock"
-  if ! flock -n 6; then
-    echo "Waiting for the other run of this checkout that uses the short-addresses clone to end."
-    flock 6
-  fi
-  unmount_short_clone || exit 1
   stamp=$(short_clone_stamp)
-  if [ -e /home/luke/Work/wt/.build-root/build/short-clone ] &&
-    [ "$(cat "$root/build/short-clone/stamp" 2>/dev/null)" != "$stamp" ]; then
-    echo "The short-addresses clone was made from another build of this checkout; it is made again."
-    drop_short_clone || exit 1
-  fi
-  trap unmount_short_clone EXIT
+  trap '! mountpoint -q "$out/short-clone" || umount "$out/short-clone"; open_short_clone_work' EXIT
   trap 'exit 129' HUP
   trap 'exit 130' INT
   trap 'exit 143' TERM
-  mkdir -p "$root/build/short-clone/upper" "$root/build/short-clone/work" "$root/build/short-clone/cargo"
-  [ -e "$root/build/short-clone/stamp" ] || printf '%s\n' "$stamp" >"$root/build/short-clone/stamp"
-  if ! mount -t overlay overlay -o "lowerdir=$root/build/cargo,upperdir=$root/build/short-clone/upper,workdir=$root/build/short-clone/work,userxattr" \
-    "$root/build/short-clone/cargo"; then
-    echo "The short-addresses clone of build/cargo could not be mounted."
-    exit 1
-  fi
-  if ! CARGO_TARGET_DIR=$root/build/short-clone/cargo cargo test -p zed-tests --features short-addresses,spec \
+  mount_short_clone || exit 1
+  if ! CARGO_TARGET_DIR=$out/short-clone cargo test -p zed-tests --features short-addresses,spec \
     $(printf -- '--test %s ' $short_steps) --no-run --message-format=short >"$out/build-short.log" 2>&1; then
     tail -40 "$out/build-short.log"
     echo "BUILD FAILED (short-addresses)"
@@ -680,7 +770,7 @@ if [ -n "$short_build" ]; then
   fi
   # The packages of short_libs ask for nothing but short-addresses, which the build above gave
   # zed-kernel already, so this builds only their unit-test binaries.
-  if ! CARGO_TARGET_DIR=$root/build/short-clone/cargo cargo test $(printf -- '-p %s ' $short_libs) \
+  if ! CARGO_TARGET_DIR=$out/short-clone cargo test $(printf -- '-p %s ' $short_libs) \
     --features short-addresses --lib --no-run --message-format=short >>"$out/build-short.log" 2>&1; then
     tail -40 "$out/build-short.log"
     echo "BUILD FAILED (short-addresses)"
@@ -931,6 +1021,7 @@ step_pieces() {
     done
   fi
 } | split_benchmarks >"$table"
+[ -n "$only" ] || publish "$table" table || exit 1
 select_pieces "$table"
 if [ -n "$list" ]; then
   cut -d ' ' -f 1 "$out/pieces"
@@ -953,43 +1044,15 @@ fi
 # main three times (DOC-private-links, -2, -3); with no doc comment and no linked item changed it
 # builds nothing.
 tools/check_changed_docs.sh "$out/doc-changed.log" || exit 1
-# At most `slots` pieces run at once on this machine, whichever checkout started them. A piece holds
-# a lock on one file of $slot_dir until it ends, so a killed run frees its slots, and its limit starts
-# when it has one. Four suites at once took 2:13 with 8 slots and 2:05 without, and the longest
-# piece 28 s against 53 s. The author raised the count from 8 to 12 on 2026-11-11 (BUILD-apply):
-# most of a group's wall time was spent waiting for a slot. Waiting pieces queue on a lock of
-# $slot_dir/queue (fd 5; fd 8 is the run lock, which pieces inherit and must keep), so only the
-# first in the queue polls the slots and they are taken first come, first served; a killed waiter
-# frees the queue as a killed piece frees its slot. Six pieces polling without it used 2.9-3.9 s of
-# processor time in 5 s, and 0.58-0.67 s with it (f9150f8a4).
-# BUILD-slots-measure (author P211, 2026-11-14) kept 12 for correctness pieces, after benchmarks
-# moved to --bench. Eight whole suites, each with as many jobs as slots (a run's own `jobs`, 6 by
-# default, caps the pieces it runs at once below the slot count) and ZED_TEST_SLOTS set; 2333
-# pieces, the same 4 failures in all of them. Other agents ran beside them, so the load differs:
-#   slots  wall   pieces' span  at once  wait/piece  slice peak  load1 start/end
-#   12     67 s   34 s           9.5      17 ms      42 GB       1 / 25
-#   12    111 s   77 s           8.9      60 ms      33 GB      39 / 55
-#   16    164 s   87 s          10.1     159 ms      27 GB      72 / 70
-#   16     73 s   47 s          11.4      49 ms      26 GB      37 / 41
-#   20     89 s   50 s          12.1     120 ms      28 GB      63 / 51
-#   20     76 s   43 s          12.9      88 ms      28 GB      42 / 48
-#   24    143 s   88 s          10.5     406 ms      24 GB      17 / 80
-#   24     93 s   55 s          11.7     231 ms      28 GB      35 / 46
-# Wall time follows the load, not the count. A suite takes 913-948 s of processor time whatever
-# the count, so 32 cores need at least 28 s for its pieces, and 12 slots, started on a quiet
-# machine, took 34 s. Above 12, more pieces did not run at once: the first in the queue takes the
-# slots one at a time, trying each from the first with a `flock` process (3 ms each at load 76),
-# so a slot is seldom free for long (24 slots were all held in 1 of 63 samples; 24 workers
-# taking a slot for 0.15 s each, about a mean piece, held 14-16 at once). Pieces that failed only
-# at some counts failed for their random seed, not the crowding: l01_15_kernel_terms and
-# zedc_presburger fail alone at the seed they printed, and zed-kernel's
-# an_index_whose_hash_reads_sharing_is_caught fails in 17 of 200 runs alone (a random hasher).
-# ZED_TEST_SLOTS sets the count for a measurement like this one; --bench always uses 12, whatever
-# ZED_TEST_SLOTS says. Each piece's line gives `wait=`, the time it waited for a slot.
-slots=${ZED_TEST_SLOTS:-12}
-[ "$run_kind" = test ] || slots=12
-slot_dir=${XDG_RUNTIME_DIR:-/tmp}/zedtests-slots
-mkdir -p "$slot_dir"
+# A run runs at most `jobs` pieces at once (xargs -P, below), and each piece's slot is the number
+# xargs gives it in $slot (--process-slot-var), 0 to jobs - 1, unique among the pieces of the run
+# running at that moment; it names the piece's scratch files in $out. Runs on the same machine do
+# not wait for each other (author, 2026-11-19, NO-LOCKS-optimistic: "There should be no locks
+# anywhere"). Until 2026-11-19 each piece first took one of 12 machine-wide slots, a `flock` on a
+# file of $XDG_RUNTIME_DIR/zedtests-slots, with waiters queued on a flock of its file queue
+# (BUILD-apply, BUILD-slots-measure: four suites at once took 2:13 with 8 slots and 2:05 without;
+# 12 slots kept the slice peak at 42 GB or less). ZED_TEST_SLOTS set that count and is no longer
+# read. Each piece's line gives `wait=`, the time from xargs starting it to its timer starting.
 # The C library settings the scaling tests count work under: no rep movsb or rep stosb in memcpy
 # and memset (the hardware counter sees either as one instruction or few, so a quadratic copy
 # would pass). A measured run allocates from a heap of its own
@@ -1020,7 +1083,7 @@ if [ -n "$trace" ]; then
   spec_dir=$(tools/spec_groups.sh --dir)
   [ -z "$spec_dir" ] || spec_real=$(realpath -m -- "$spec_dir")
 fi
-export root out slots slot_dir cores run_kind cov trace spec_dir spec_real
+export root out cores run_kind cov trace spec_dir spec_real
 # Prints the paths the strace output $1 (strace -f -y -e trace=%file,getdents64) names under the
 # checkout, relative to it, and under the spec checkout ($spec_dir above), as spec:<path>
 # relative to it, sorted: for a call of the *at family each path after a directory
@@ -1063,20 +1126,6 @@ trace_reads() {
       }
       under(root) { p = rest(root); print (p ~ /^\.git(\/|$)/ ? "*" : p) }' | sort -u
 }
-take_slot() {
-  exec 5>"$slot_dir/queue"
-  flock 5
-  while :; do
-    for ((slot = 1; slot <= slots; slot++)); do
-      exec 9>"$slot_dir/$slot"
-      flock -n 9 && {
-        exec 5>&-
-        return
-      }
-    done
-    sleep 0.1
-  done
-}
 # A piece writes its output to the file of its slot, which the next piece in that slot overwrites,
 # so a passing piece leaves no log and nothing is deleted. A failed piece's output is copied to its
 # log; a passing piece empties a log left by an earlier failed run, so every log with contents is
@@ -1085,11 +1134,9 @@ piece() {
   name=$1 dir=$2
   shift 2
   asked=${EPOCHREALTIME//[!0-9]/}
-  take_slot
   scratch=$out/slot-$slot.out
   log=$out/$name.log
-  read -r load _ </proc/loadavg
-  limit=$(awk -v l="$load" -v c="$cores" 'BEGIN { x = 20 * l / c; print (x > 20 ? int(x + 1) : 20) }')
+  piece_limit "$cores"
   start=$(date +%s%N)
   wait=$(((start / 1000 - asked) / 1000))
   # %p: a test may run other programs of the build, each writing a profile of its own.
@@ -1132,7 +1179,8 @@ piece() {
   : >"$scratch"
   [ "$rc" = 0 ]
 }
-export -f take_slot piece trace_reads
+# piece_limit comes from tools/lib.sh; a piece runs in a new bash, which has only what is exported.
+export -f piece trace_reads piece_limit
 # A test that builds executables (zed_native::link) keeps each one and links it again only when
 # an input of its link changed (crates/zed-native/src/link.rs, `kept`). The runtime archive is
 # one of those inputs, and Cargo builds it again after any change to zed-native or a crate under
@@ -1140,14 +1188,13 @@ export -f take_slot piece trace_reads
 # again, about 1.5 s each, most of it GNU ld reading the 207 MB archive: the l01_36a piece took
 # 13.4 s instead of 2.6 to 3.0 s at load 44 to 51, and once ran past its limit of 24 s
 # (TEST-runtime-build-in-piece). So when the runtime archives beside the test binaries differ
-# from those of the last run in $out, the selected pieces of the step folders whose sources call
+# from those named in <base>/runtimes, published by the last run that made the links, the selected pieces of the step folders whose sources call
 # the linker run first, with no limit, as part of the build: the links are made there, and the
 # pieces run again in the slots, where they find them kept. Their results are not counted; a
 # piece that fails there fails again in the slots and is reported there.
 warm() {
   name=$1 dir=$2
   shift 2
-  take_slot
   start=$(date +%s%N)
   (cd "$root/$dir" && CARGO_MANIFEST_DIR=$root/$dir \
     systemd-run --user --scope --quiet --same-dir --slice=zedtests.slice \
@@ -1160,7 +1207,7 @@ warm() {
 export -f warm
 deps=$(dirname "$(head -1 "$out/pieces" | cut -d ' ' -f 3)")
 runtimes=$(stat -c '%n %s %Y' "$deps"/libzed_native-*.a 2>/dev/null)
-if [ "$runtimes" != "$(cat "$out/runtimes" 2>/dev/null)" ]; then
+if [ "$runtimes" != "$(cat "$logbase/runtimes" 2>/dev/null)" ]; then
   # A piece calls the linker when the source of its module, read from its name (a step folder,
   # a file or folder in it, or a test in such a file, or in the folder's mod.rs), or the mod.rs
   # of its step folder, which holds the helpers its modules share, names zed_native::link or the
@@ -1189,12 +1236,13 @@ if [ "$runtimes" != "$(cat "$out/runtimes" 2>/dev/null)" ]; then
     fi
   done <"$out/pieces" >"$out/linking"
   if [ ! -s "$out/linking" ] ||
-    xargs -P "$jobs" -L 1 bash -c 'warm "$@"' _ <"$out/linking"; then
+    xargs -P "$jobs" --process-slot-var=slot -L 1 bash -c 'warm "$@"' _ <"$out/linking"; then
     printf '%s\n' "$runtimes" >"$out/runtimes"
+    publish "$out/runtimes" runtimes
   fi
 fi
 : >"$out/bench.log"
-xargs -P "$jobs" -L 1 bash -c 'piece "$@"' _ <"$out/pieces" | tee "$out/summary"
+xargs -P "$jobs" --process-slot-var=slot -L 1 bash -c 'piece "$@"' _ <"$out/pieces" | tee "$out/summary"
 bad=$(grep -vc 'rc=0 ' "$out/summary")
 load=$(awk 'match($0, / load=[0-9.]+/) {
   l = substr($0, RSTART + 6, RLENGTH - 6) + 0
@@ -1206,8 +1254,7 @@ if [ -s "$out/bench.log" ]; then
   cat "$out/bench.log"
 fi
 # The output of each failed piece, printed here so that a copy of this run's output names the
-# tests that failed and why: the piece's log is emptied by the next run that passes it, and goes
-# with the worktree, so a failure seen once under load and passed on every rerun was known only
+# tests that failed and why: the piece's log goes with the worktree, so a failure seen once under load and passed on every rerun was known only
 # as a piece name (FLAKE-l01-39-scaling-unnamed). A benchmark piece, one test run with
 # --nocapture, prints its whole log. A correctness piece prints libtest's lines for the tests
 # still running past 60 s and its account of the failures, from the line `failures:` to the end

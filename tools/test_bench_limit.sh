@@ -9,14 +9,7 @@ limit=$(pwd)/tools/bench_limit.sh
 file=$(pwd)/build/test-bench-limit.limit
 mkdir -p build
 fails=0
-check() {
-  if [ "$2" = "$3" ]; then
-    echo "ok: $1"
-  else
-    echo "FAILED: $1: expected $2, got $3"
-    fails=$((fails + 1))
-  fi
-}
+. tools/test_lib.sh || exit 2
 # Runs a command of 1.5 s that first writes $1 to the limit file, under a base limit of 1 s:
 # prints its exit code and whole seconds taken.
 run() {

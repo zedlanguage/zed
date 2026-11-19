@@ -164,6 +164,8 @@
 # The record is written only after a pass on a clean, unmoved HEAD, and is
 # read only when it ends with its last line `end`, so a run stopped while writing it leaves a
 # record that is ignored, which runs every selected group.
+# By its own path: tools/test_merge_check.sh runs this script in a toy repository.
+. "${BASH_SOURCE[0]%/*}/lib.sh" || exit 2
 base=origin/main list= groups_only= jobs=6 record= reads=
 usage="usage: tools/merge_check.sh [--base <rev>] [--record <file>] [--reads <dir>] [--list | --groups] [jobs]"
 while [ $# -gt 0 ]; do
@@ -214,7 +216,6 @@ for f in "${changed[@]}"; do
   case $f in Cargo.toml | */Cargo.toml | Cargo.lock) manifest=1 ;; esac
 done
 if [ -n "$manifest" ] && [ -z "$groups_only$list" ]; then
-  features_of() { cargo tree "$@" -f '{p} [{f}]' --prefix none | sed 's/ (\*)$//' | sort -u; }
   wsfeat=$(features_of --workspace) || { echo "merge check: cargo tree --workspace failed" >&2; exit 1; }
   bad=
   for p in $(jq -r '.packages[].name' <<<"$meta"); do
@@ -816,8 +817,7 @@ write_reads() {
 # Step 0: the toy cases of this script, each part under the limit of a piece of run_tests.sh.
 if [ -n "$selftest" ] && [ -z "$list" ]; then
   slog=$(git rev-parse --path-format=absolute --git-path merge-check-self)
-  read -r load _ </proc/loadavg
-  limit=$(awk -v l="$load" -v c="$(nproc)" 'BEGIN { x = 20 * l / c; print (x > 20 ? int(x + 1) : 20) }')
+  piece_limit
   timeout -k 5 "$limit" tools/test_merge_check.sh select >"$slog-select.log" 2>&1 &
   p1=$!
   timeout -k 5 "$limit" tools/test_merge_check.sh record >"$slog-record.log" 2>&1 &

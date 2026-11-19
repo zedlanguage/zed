@@ -43,15 +43,7 @@ echo "# spec" >"$ZED_SPEC_DIR/DESIGN.md"
 git -C "$ZED_SPEC_DIR" add -A
 git -C "$ZED_SPEC_DIR" commit -q --allow-empty -m "spec"
 fails=0
-check() {
-  if [ "$2" = "$3" ]; then
-    echo "ok: $1"
-  else
-    echo "FAILED: $1"
-    diff <(echo "$2") <(echo "$3")
-    fails=$((fails + 1))
-  fi
-}
+. tools/test_lib.sh || exit 2
 [ -e "$ws/.git/HEAD" ] || git -C "$ws" init -q -b main
 git -C "$ws" config user.name test
 git -C "$ws" config user.email test@localhost

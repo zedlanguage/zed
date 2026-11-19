@@ -13,15 +13,7 @@ mkdir -p "$ws/a/src" "$ws/a/tests" "$ws/b/src" "$ws/.git"
 # its own.
 export CARGO_TARGET_DIR=$ws/target
 fails=0
-check() {
-  if [ "$2" = "$3" ]; then
-    echo "ok: $1"
-  else
-    echo "FAILED: $1"
-    diff <(echo "$2") <(echo "$3") | head -20
-    fails=$((fails + 1))
-  fi
-}
+. tools/test_lib.sh || exit 2
 # Runs the check in the workspace: its exit code, then the lines that name a build or a failure.
 run() {
   local out rc
