@@ -5089,3 +5089,137 @@ fn remainder_alias_names_keep_the_same_answers() {
     // name choice during remainder extraction, before regime normalization.
     assert!(failures.is_empty(), "{}", failures.join("\n"));
 }
+
+
+// Open (I6.3; docs/handoff/PERF-negated-chain-unsolved.md, U4): `solve_modular` ends with a run
+// that picks the remainder by `Atom` order, which keeps the 5,000-formula enumeration at 11
+// refusals; without it 70 are refused and this test passes. With it, 911 of 1,000 cases are
+// answered and 476 differ, each answered under one naming and refused under another (696 with
+// the round-6 rule alone).
+#[test]
+fn remainder_alias_answers_do_not_depend_on_names() {
+    // I6.3: the remainder of `x = m q + r` was the greater `Atom` of the two unit terms, so
+    // `a == x mod m` and `z == x mod m` read different rows. Each case is asked with the alias
+    // named before and after `x` and the quotients numbered both ways; `decide` and
+    // `satisfiable` give the same answers, refusal included, in both call orders, and every
+    // point satisfies the formula. Half the cases bound `x` to one period (a tie of spans).
+    // Negative control: choosing the remainder by `Atom` order fails this test (R7_CLAUDE.md T2).
+    use zedc::store::presburger::{decide, satisfiable};
+    let (from, to) = std::env::var("PNCX_CASES").map_or((0, 1000), |s| {
+        let (a, b) = s.split_once("..").unwrap();
+        (a.parse().unwrap(), b.parse().unwrap())
+    });
+    let namings: [Naming<'_>; 4] = [
+        (
+            "alias a",
+            &|k| if k == 9 { "a".into() } else { format!("m{k}") },
+            &|i| i,
+        ),
+        (
+            "alias zz",
+            &|k| if k == 9 { "zz".into() } else { format!("m{k}") },
+            &|i| i,
+        ),
+        (
+            "alias a, aux reversed",
+            &|k| if k == 9 { "a".into() } else { format!("m{k}") },
+            &|i| 99 - i,
+        ),
+        (
+            "alias zz, aux reversed",
+            &|k| if k == 9 { "zz".into() } else { format!("m{k}") },
+            &|i| 99 - i,
+        ),
+    ];
+    let mut rng = zed_tests::instances::Rng::new(0x0a11_a5e5);
+    let (mut differ, mut answered, mut ties) = (Vec::new(), 0usize, 0usize);
+    for case_idx in 0..to {
+        let tie = case_idx % 2 == 1;
+        let f = remainder_alias_case(&mut rng, case_idx, tie);
+        if case_idx < from {
+            continue;
+        }
+        let answer = |g: &zedc::store::presburger::Formula, sat_first: bool| {
+            let (d, s) = if sat_first {
+                let s = satisfiable(g);
+                (decide(g), s)
+            } else {
+                let d = decide(g);
+                (d, satisfiable(g))
+            };
+            if let Ok(Some(model)) = &s {
+                assert!(g.holds(model), "case {case_idx}: the point fails {g}");
+            }
+            (d.ok(), s.ok().map(|m| m.is_some()))
+        };
+        let mut base = None;
+        for (label, name, aux) in &namings {
+            let g = renamed(&f, name, aux);
+            for sat_first in [false, true] {
+                let got = answer(&g, sat_first);
+                match base {
+                    None => {
+                        base = Some(got);
+                        answered += usize::from(got.0.is_some());
+                        ties += usize::from(tie && got.0.is_some());
+                    }
+                    Some(b) if b != got => differ.push(format!(
+                        "case {case_idx} {label} sat_first={sat_first}: {got:?} against {b:?}\n  {g}"
+                    )),
+                    Some(_) => {}
+                }
+            }
+        }
+    }
+    println!(
+        "remainder alias cases {from}..{to}: {answered} answered ({ties} with tied spans), {} differ",
+        differ.len()
+    );
+    assert!(answered > 0);
+    assert!(differ.is_empty(), "{}", differ.join("\n"));
+}
+
+/// Case `case_idx` of the enumeration test with an alias `x@9 == r` of one of its remainders
+/// `r` and a clause on `x@9`, the shape `a == x mod m && C(x)` of I6.3. Where `tie`, `x` is
+/// also bounded to one period `lo..=lo + m - 1` of that division, so that `x` and `x@9` have
+/// the same span and neither name nor span can choose the remainder.
+fn remainder_alias_case(
+    rng: &mut zed_tests::instances::Rng,
+    case_idx: usize,
+    tie: bool,
+) -> zedc::store::presburger::Formula {
+    use zedc::store::presburger::{Atom, Con, Formula, Lin};
+    let (f, x0, _, divs, lo, ..) = modular_case(rng, case_idx);
+    let (_, ref r_atom, m, _, _) = divs[rng.below(divs.len())];
+    let a = Atom::Sym(Arc::from("x@9"));
+    let mut parts = vec![
+        f,
+        Formula::Con(Con::eq(
+            &Lin::atom(a.clone()).minus(&Lin::atom(r_atom.clone())),
+            &Lin::constant(0),
+        )),
+    ];
+    let v = rng.int(0, m - 1);
+    parts.push(match rng.below(3) {
+        0 => Formula::negate(Formula::Con(Con::eq(&Lin::atom(a), &Lin::constant(v)))),
+        1 => Formula::Con(Con::ge(
+            &Lin::constant(v).minus(&Lin::atom(a)),
+            &Lin::constant(0),
+        )),
+        _ => Formula::Con(Con::ge(
+            &Lin::atom(a).plus(&Lin::constant(-v)),
+            &Lin::constant(0),
+        )),
+    });
+    if tie {
+        parts.push(Formula::Con(Con::ge(
+            &Lin::atom(x0.clone()).plus(&Lin::constant(-lo)),
+            &Lin::constant(0),
+        )));
+        parts.push(Formula::Con(Con::ge(
+            &Lin::constant(lo + m - 1).minus(&Lin::atom(x0)),
+            &Lin::constant(0),
+        )));
+    }
+    Formula::and(parts)
+}
