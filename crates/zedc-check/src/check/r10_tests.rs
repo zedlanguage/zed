@@ -512,7 +512,7 @@ bad_into = h_into(1);\n";
 
     // 4. T6 exit-variable displacement (Codex R8/R9): T6 held in parameter type of h10 shifts
     //    internal names across the FwdNeed and displaces the exit variable, verifying M62 bulk
-    //    jump (`fresh_variable_span_stats` skipping `T6`) + M65 `Sig::digest` agree with E.
+    //    jump (`fresh_variable_span_stats_indexed` skipping `T6`) + M65 `Sig::digest` agree with E.
     let mut t6_chain = chain_src(10, "f", false);
     t6_chain.push_str(
         "h10(positional f, positional m, positional t: (T6, T6)) = (h9(f, m).map(f), t);\n",
@@ -660,14 +660,32 @@ fn r10_m31_finish_split_walk_constant_and_neg_controls() {
 
     // Negative control B: skip_compact_split_needs drops split_needs when a fold is nested
     // inside a lambda held by a kept FwdNeed.
+    // A lambda whose types hold `max` binds variables of its own, and D refuses to keep a
+    // forward that holds one (`#4-own-vars`, landing round 3, Gemini L3-G1): such a forward
+    // gave D and E different digests once a lambda sat beside the call. No program was found
+    // where a kept forward's callee holds a split fold that the forward's own types do not
+    // (tried while landing round 4: a fold in the callee, `m.map(top)`, a lambda calling
+    // `top`, chains of these), so the control drops that refusal to keep the forward. This
+    // program has no lambda beside the call, and D gives E's results on it with or without
+    // the refusal.
     let nested_split = "\
 h0(positional f, positional m) = m.map(f);\n\
 h1(positional m) = h0(xs -> xs >< max, m);\n\
 h2(positional m) = h1(m);\n\
 a = h2({\"k\" -> {\"a\" -> 1}});\n\
 b = h2({\"k\" -> {\"a\" -> 1.0f64}});\n";
+    let unrefused = R10Config {
+        drop_conds: ["#4-own-vars".to_string()].into_iter().collect(),
+        ..R10Config::default()
+    };
+    let (_, refused_stats) = run_with_cfg(nested_split, R10Config::default());
+    assert_eq!(
+        refused_stats.admitted, 0,
+        "nested_split holds `max` in a lambda: D keeps no forward"
+    );
     let (e_ns, _) = run_with_cfg(nested_split, R10Config::eager());
-    let (d_ns, _) = run_with_cfg(nested_split, R10Config::default());
+    let (d_ns, d_ns_stats) = run_with_cfg(nested_split, unrefused.clone());
+    assert!(d_ns_stats.admitted > 0, "nested_split must keep a forward");
     assert_info_eq("m31_nested_split", &e_ns, &d_ns);
     assert!(
         !e_ns.split_needs.is_empty(),
@@ -677,7 +695,7 @@ b = h2({\"k\" -> {\"a\" -> 1.0f64}});\n";
         nested_split,
         R10Config {
             skip_compact_split_needs: true,
-            ..R10Config::default()
+            ..unrefused
         },
     );
     assert_ne!(
@@ -1543,6 +1561,273 @@ fn r10_exit_replaced_by_an_outer_variable_keeps_the_flat_digest() {
         substituted.0, substituted.1,
         "exit replaced by an outer variable"
     );
+}
+
+/// Landing review round 3, Gemini L3-G2: the test above one level down. The exit replaced is
+/// one of the callee's own forward, so the parent's digest goes through the callee's summary
+/// (`build_sig_needs_summary`), which hashed the exit as the callee's own result while the flat
+/// form hashes it as the outer variable it now is: `==` held and the digests differed.
+#[test]
+fn r10_exit_replaced_in_a_callee_keeps_the_flat_digest() {
+    use std::sync::Arc;
+    use zedc_types::ty::{Binds, Ty};
+
+    let (d, _) = run_with_cfg(&chain_src(4, "f", false), R10Config::default());
+    let has_exit =
+        |n: &zedc_types::ty::Need| matches!(&n.kind, NeedKind::Fwd(f) if !f.exits.is_empty());
+    let (sig, index) = d
+        .sigs
+        .values()
+        .find_map(|s| {
+            s.needs
+                .iter()
+                .position(
+                    |n| matches!(&n.kind, NeedKind::Fwd(f) if f.callee.needs.iter().any(has_exit)),
+                )
+                .map(|i| (s, i))
+        })
+        .expect("a finished signature whose forward's callee has a forward with an exit");
+    let NeedKind::Fwd(outer) = &sig.needs[index].kind else {
+        unreachable!();
+    };
+    let callee = &outer.callee;
+    let inner = callee
+        .needs
+        .iter()
+        .position(has_exit)
+        .expect("the inner forward");
+    let NeedKind::Fwd(inner) = &callee.needs[inner].kind else {
+        unreachable!();
+    };
+    let binds: Binds = inner
+        .exits
+        .iter()
+        .map(|(_, t)| {
+            (
+                t.as_var().expect("a chain exit variable").clone(),
+                Ty::var("Outer".into()),
+            )
+        })
+        .collect();
+    let mut new_callee = callee.replace(&binds);
+    for v in binds.keys() {
+        new_callee.own.remove(v);
+    }
+    new_callee.facts = Default::default();
+
+    let mut parent = Sig::clone(sig);
+    let NeedKind::Fwd(fwd) = &mut parent.needs[index].kind else {
+        unreachable!();
+    };
+    let fwd = Arc::make_mut(fwd);
+    fwd.callee = Arc::new(new_callee);
+    fwd.digest_summary = None;
+    parent.facts = Default::default();
+
+    let mut flat = parent.clone();
+    let (needs, own) = parent.decoded_needs_and_own();
+    flat.needs = needs.into_owned();
+    flat.own = own.into_owned();
+    flat.facts = Default::default();
+    assert_eq!(parent, flat, "compact and flat must be equal");
+    assert_eq!(
+        parent.digest(),
+        flat.digest(),
+        "exit replaced in the callee"
+    );
+}
+
+/// Landing review round 3, Codex L3.Codex-2 (his test, adopted): binding an arrow parameter to
+/// an earlier result the forward reads makes that result an arrow parameter. The flat form then
+/// hashes it as a parameter; the forward's cached summary had hashed it as the result of rank
+/// r, so `==` held and the digests differed.
+#[test]
+fn r10_result_bound_to_an_arrow_parameter_keeps_the_flat_digest() {
+    use zedc_types::ty::{Binds, Ty};
+
+    let src = "h0(positional f, positional m) = m.map(f);\n\
+               g(positional f, positional m, positional spare) = {\n  a = m.map(f);\n  \
+               b = h0(f, a);\n  (b, spare)\n};\n";
+    let (e, _) = run_with_cfg(src, R10Config::eager());
+    let (d, st) = run_with_cfg(src, R10Config::default());
+    assert_eq!(st.kept_at_generalize, 1);
+    assert_info_eq("before the substitution", &e, &d);
+    let (&id, compact) = d
+        .sigs
+        .iter()
+        .find(|(_, s)| s.has_fwd_needs())
+        .expect("a signature with a forward");
+    let flat = &e.sigs[&id];
+    let spare = compact.arrows[0].params[2]
+        .as_var()
+        .expect("spare is a variable");
+    let prior = (compact.needs[0].result.as_ref())
+        .and_then(|t| t.as_var())
+        .expect("the first need's result is a variable");
+    assert_ne!(prior, spare);
+    let NeedKind::Fwd(fwd) = &compact.needs[1].kind else {
+        panic!("the second need is not the forward");
+    };
+    assert!(fwd.sigma.iter().any(|(_, t)| t.as_var() == Some(prior)));
+    assert!(fwd.digest_summary.is_some());
+    assert_eq!(flat.digest(), compact.digest(), "before the substitution");
+
+    let bind: Binds = [(spare.clone(), Ty::var(prior.clone()))]
+        .into_iter()
+        .collect();
+    let (e2, d2) = (flat.replace(&bind), compact.replace(&bind));
+    assert_eq!(e2, d2, "equality after the substitution");
+    assert_eq!(e2.digest(), d2.digest(), "digest after the substitution");
+}
+
+/// Landing review round 3, Gemini L3-G1: a callee whose `Map` need holds a named function with
+/// variables of its own (`id`, `k`). A forward shares the callee, so the variables of that
+/// function are neither renamed with the caller's nor counted among the names in use when the
+/// caller is named; E renames and counts them. Each program must give E's results and
+/// signatures. The controls hold a function with no variables (`inc`), or a parameter or a
+/// lambda whose variables are the callee's own, and stay admitted.
+#[test]
+fn r10_function_with_own_variables_held_in_a_map_agrees_with_e() {
+    let id = "id(positional x) = x;\n";
+    let cases: &[(&str, String)] = &[
+        (
+            "p23_lambda_then_call",
+            format!("{id}h0(positional m) = m.map(id);\ng(positional m) = (y -> (y, y), h0(m));\n"),
+        ),
+        (
+            "p26_call_then_lambda",
+            format!("{id}h0(positional m) = m.map(id);\ng(positional m) = (h0(m), y -> (y, y));\n"),
+        ),
+        (
+            "p24_chain_of_two",
+            format!(
+                "{id}h0(positional m) = m.map(id);\nh1(positional m) = h0(m);\n\
+                 g(positional m) = (y -> (y, y), h1(m));\n"
+            ),
+        ),
+        (
+            "p28_with_a_parameter_function",
+            format!(
+                "{id}h0(positional f, positional m) = m.map(id).map(f);\n\
+                 g(positional f, positional m) = (y -> (y, y), h0(f, m));\n"
+            ),
+        ),
+        (
+            "p16_closed_siblings",
+            format!(
+                "{id}h0(positional m) = m.map(id);\n\
+                 outer(positional a) = (m -> (m, h0(m)), n -> (n, h0(n)), a);\n"
+            ),
+        ),
+        (
+            "p16_one_sibling_beside_a_lambda",
+            format!(
+                "{id}h0(positional m) = m.map(id).map(id);\n\
+                 outer(positional a) = (y -> (y, y), m -> (m, h0(m)), a);\n"
+            ),
+        ),
+        // A fold written in a lambda passed to a forward: its types hold `max` or `(+)`, each
+        // of which binds variables of its own. Found while landing round 4: the M31 control
+        // below used such a lambda.
+        (
+            "fold_by_max_in_a_lambda",
+            "h0(positional f, positional m) = m.map(f);\n\
+             h1(positional m) = h0(xs -> xs >< max, m);\n\
+             h2(positional m) = h1(m);\n\
+             g(positional m) = (y -> (y, y), h2(m));\n"
+                .to_string(),
+        ),
+        (
+            "fold_through_a_named_function_in_a_lambda",
+            "top(positional xs) = xs >< max;\n\
+             h0(positional f, positional m) = m.map(f);\n\
+             h1(positional m) = h0(xs -> top(xs), m);\n\
+             h2(positional m) = h1(m);\n\
+             g(positional m) = (y -> (y, y), h2(m));\n\
+             a = h2({\"k\" -> {\"a\" -> 1}});\n\
+             b = h2({\"k\" -> {\"a\" -> 1.0f64}});\n"
+                .to_string(),
+        ),
+        (
+            "fold_by_plus_in_a_lambda",
+            "h0(positional f, positional m) = m.map(f);\n\
+             h1(positional m) = h0(xs -> xs >< (+), m);\n\
+             h2(positional m) = h1(m);\n\
+             g(positional m) = (y -> (y, y), h2(m));\n\
+             a = h2({\"k\" -> {\"a\" -> 1}});\n\
+             b = h2({\"k\" -> {\"a\" -> 1.0f64}});\n"
+                .to_string(),
+        ),
+        (
+            "map_by_a_named_fold",
+            "top(positional xs) = xs >< max;\nh0(positional m) = m.map(top);\n\
+             h1(positional m) = h0(m);\nh2(positional m) = h1(m);\n\
+             g(positional m) = (y -> (y, y), h2(m));\n\
+             a = h2({\"k\" -> {\"a\" -> 1}});\nb = h2({\"k\" -> {\"a\" -> 1.0f64}});\n"
+                .to_string(),
+        ),
+        // D and E agree on this one with the refusal dropped too.
+        (
+            "p33_returns_a_lambda",
+            "k(positional x) = y -> (x, y);\nh0(positional m) = m.map(k);\n\
+             g(positional m) = (z -> (z, z), h0(m));\n"
+                .to_string(),
+        ),
+    ];
+    let controls: &[(&str, &str)] = &[
+        (
+            "p34_function_with_no_variables",
+            "inc(positional x: int) = x + 1;\nh0(positional m) = m.map(inc);\n\
+             g(positional m) = (y -> (y, y), h0(m));\n",
+        ),
+        (
+            "parameter_function",
+            "h0(positional f, positional m) = m.map(f).map(f);\n\
+             g(positional f, positional m) = (y -> (y, y), h0(f, m));\n",
+        ),
+        (
+            "lambda_of_the_callee",
+            "h0(positional f, positional m) = m.map(x -> f(x)).map(f);\n\
+             g(positional f, positional m) = (y -> (y, y), h0(f, m));\n",
+        ),
+    ];
+    // Whether D gives E's results and signatures on `src`, or the first difference.
+    let agrees = |name: &str, e: &Info, d: &Info| -> Result<(), String> {
+        info_eq_full(name, e, d)?;
+        for (id, es) in &e.sigs {
+            let ds = &d.sigs[id];
+            if es.digest() != ds.digest() || es != ds || !fits_sig(es, ds) || !fits_sig(ds, es) {
+                return Err(format!("{name}: signature {id} differs from E's"));
+            }
+        }
+        Ok(())
+    };
+    // Negative control: D with the refusal dropped.
+    let unrefused = R10Config {
+        drop_conds: ["#4-own-vars".to_string()].into_iter().collect(),
+        ..R10Config::default()
+    };
+    let mut failed = Vec::new();
+    let all = (cases.iter().map(|(n, s)| (*n, s.as_str(), false)))
+        .chain(controls.iter().map(|(n, s)| (*n, *s, true)));
+    for (name, src, control) in all {
+        let (e, _) = run_with_cfg(src, R10Config::eager());
+        let (d, st) = run_with_cfg(src, R10Config::default());
+        assert!(e.errors.is_empty(), "{name}: E errors {:?}", e.errors);
+        if control && st.admitted == 0 {
+            failed.push(format!("{name}: the control admits no forward"));
+        }
+        if let Err(why) = agrees(name, &e, &d) {
+            failed.push(why);
+        }
+        if !control && name != "p33_returns_a_lambda" {
+            let (u, _) = run_with_cfg(src, unrefused.clone());
+            if agrees(name, &e, &u).is_ok() {
+                failed.push(format!("{name}: D agrees with E with the refusal dropped"));
+            }
+        }
+    }
+    assert!(failed.is_empty(), "{}", failed.join("\n"));
 }
 
 /// One function with n forward calls of `h0` beside a held lambda of n parameters, so the

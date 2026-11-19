@@ -5883,16 +5883,8 @@ impl<'t, 'a> Ck<'t, 'a> {
         let mut br = 0usize;
         for nd in &mut copy.needs {
             if let NeedKind::Fwd(fwd_arc) = &mut nd.kind {
-                let sum = ty::r10_hash::build_fwd_summary_at_base(
-                    fwd_arc,
-                    nd.span,
-                    br,
-                    &mat_result_ranks,
-                    ty::r10_hash::R_BASE,
-                );
                 let inner = Arc::make_mut(fwd_arc);
-                inner.digest_base_rank = br;
-                inner.digest_summary = sum;
+                ty::r10_hash::set_fwd_digest_summary(inner, nd.span, br, &mat_result_ranks);
                 br += inner.need_count;
             } else {
                 br += 1;
@@ -6540,6 +6532,7 @@ impl<'t, 'a> Ck<'t, 'a> {
             held_classes: f.summary.held_classes.clone(),
             digest_base_rank: 0,
             digest_summary: None,
+            digest_sigma_ranks: Vec::new(),
         }
     }
 

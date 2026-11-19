@@ -20,8 +20,7 @@ use zed_kernel::digest::Digest;
 use zed_kernel::frames::{Deep, Stack};
 pub use zed_kernel::types::names::{
     FreshVarSpanStats, HeldVarSnapshot, NameItem, NameRun, Names, ProgramNames, SkipIndex,
-    current_held_var_snapshot, fresh_name, fresh_name_with_held, fresh_variable_span_stats,
-    fresh_variable_span_stats_indexed, fresh_variable_span_stats_with_held, nth_fresh_variable,
+    current_held_var_snapshot, fresh_name, fresh_name_with_held, fresh_variable_span_stats_indexed,
     rename_apart,
 };
 use zed_kernel::types::order;
@@ -4931,6 +4930,12 @@ pub struct FwdNeed {
     pub digest_base_rank: usize,
     /// Pre-instantiated `M65` rank-encoded polynomial summary at `R_BASE` (`O(1)` composition).
     pub digest_summary: Option<r10_hash::NeedBlockSummary>,
+    /// For each entry of `sigma`, in order, the rank among the caller's need results that
+    /// `digest_summary` was built with (`None`: hashed as a variable). The summary is valid
+    /// only while the caller gives each argument the same rank; a substitution that makes a
+    /// result a parameter, or a parameter a result, changes it (landing round 3, Codex
+    /// L3.Codex-2). Set with `digest_summary` by [`r10_hash::set_fwd_digest_summary`].
+    pub digest_sigma_ranks: Vec<Option<usize>>,
 }
 
 impl FwdNeed {
@@ -28492,14 +28497,9 @@ pub mod r10_hash {
                 for n in &s.needs {
                     match &n.kind {
                         NeedKind::Fwd(fwd)
-                            if self.r == R_BASE
-                                && fwd
-                                    .digest_summary
-                                    .as_ref()
-                                    .is_some_and(|ds| !ds.fallback_large_id)
-                                && fwd.digest_base_rank == cur_rank =>
+                            if let Some(ds) =
+                                cached_fwd_summary(fwd, cur_rank, &mat_result_ranks, self.r) =>
                         {
-                            let ds = fwd.digest_summary.as_ref().expect("checked above");
                             self.part = self.part.concat(ds.body);
                             cur_rank += fwd.need_count;
                         }
@@ -28628,17 +28628,28 @@ pub mod r10_hash {
         }
         let mut mat_result_ranks: HashMap<Arc<str>, usize> = HashMap::new();
         let mut total_needs = 0usize;
+        let mut exit_not_own_result = false;
         for n in &s.needs {
             match &n.kind {
                 NeedKind::Fwd(fwd) => {
                     for &(off, ref exit_ty) in &fwd.exits {
+                        let rank = total_needs + off;
                         if let Some(v) = exit_ty.as_var()
                             && s.own.contains(v)
                             && !arrow_param_vars.contains(v)
                         {
-                            mat_result_ranks
-                                .entry(v.clone())
-                                .or_insert(total_needs + off);
+                            if *mat_result_ranks.entry(v.clone()).or_insert(rank) != rank {
+                                exit_not_own_result = true;
+                            }
+                        } else {
+                            // The same test as `Encoder::emit_sig`'s: an exit replaced by a
+                            // variable of a function around this one, a concrete type, a
+                            // parameter or an earlier result is not an own result first met at
+                            // its rank, which is how the forward's summary hashes it. The flat
+                            // form hashes it as what it now is, so the summary is refused and
+                            // a caller's forward over this signature is hashed flat (landing
+                            // round 3, Gemini L3-G2). Not taken on the chains.
+                            exit_not_own_result = true;
                         }
                     }
                     total_needs += fwd.need_count;
@@ -28654,20 +28665,24 @@ pub mod r10_hash {
                 }
             }
         }
+        if exit_not_own_result {
+            let mut refused = NeedBlockSummary::empty();
+            refused.need_count = total_needs;
+            refused.fallback_large_id = true;
+            if r == R_BASE {
+                let _ = s.facts.11.set(refused.clone());
+            }
+            return refused;
+        }
 
         let mut summary = NeedBlockSummary::empty();
         let mut cur_rank = 0usize;
         for n in &s.needs {
             let piece = match &n.kind {
                 NeedKind::Fwd(fwd)
-                    if r == R_BASE
-                        && fwd
-                            .digest_summary
-                            .as_ref()
-                            .is_some_and(|ds| !ds.fallback_large_id)
-                        && fwd.digest_base_rank == cur_rank =>
+                    if let Some(ds) = cached_fwd_summary(fwd, cur_rank, &mat_result_ranks, r) =>
                 {
-                    fwd.digest_summary.as_ref().expect("checked above").clone()
+                    ds.clone()
                 }
                 NeedKind::Fwd(fwd) => {
                     match build_fwd_summary_at_base(fwd, n.span, cur_rank, &mat_result_ranks, r) {
@@ -28711,6 +28726,46 @@ pub mod r10_hash {
             let _ = s.facts.11.set(summary.clone());
         }
         summary
+    }
+
+    /// Builds `fwd`'s summary at `base_rank` against the caller's result ranks and stores it in
+    /// `fwd` with the rank it gave each argument, which [`cached_fwd_summary`] compares.
+    /// `O(#sigma)` beyond [`build_fwd_summary_at_base`].
+    pub fn set_fwd_digest_summary(
+        fwd: &mut FwdNeed,
+        call_span: Span,
+        base_rank: usize,
+        caller_result_ranks: &HashMap<Arc<str>, usize>,
+    ) {
+        fwd.digest_summary =
+            build_fwd_summary_at_base(fwd, call_span, base_rank, caller_result_ranks, R_BASE);
+        fwd.digest_base_rank = base_rank;
+        fwd.digest_sigma_ranks = (fwd.sigma.iter())
+            .map(|(_, t)| t.as_var().and_then(|w| caller_result_ranks.get(w).copied()))
+            .collect();
+    }
+
+    /// `fwd`'s stored summary, when it is the one [`build_fwd_summary_at_base`] would give now:
+    /// built at `cur_rank`, at `R_BASE`, and with each argument at the rank the caller gives it
+    /// now. A stored summary hashes each argument by the rank it had when it was built, so an
+    /// argument whose rank has changed since (a result bound to a parameter by a substitution,
+    /// landing round 3, Codex L3.Codex-2) needs a new one. `O(#sigma)` hash lookups, `O(1)` on
+    /// the chains. The naive alternative, building the summary each time, costs `O(#sigma)` too
+    /// while the callee's own summary is cached in its facts, but the callee's whole needs when
+    /// a clone has cleared them.
+    pub fn cached_fwd_summary<'a>(
+        fwd: &'a FwdNeed,
+        cur_rank: usize,
+        caller_result_ranks: &HashMap<Arc<str>, usize>,
+        r: u64,
+    ) -> Option<&'a NeedBlockSummary> {
+        let ds = fwd.digest_summary.as_ref()?;
+        let same_ranks = fwd.digest_sigma_ranks.len() == fwd.sigma.len()
+            && (fwd.sigma.iter().zip(&fwd.digest_sigma_ranks)).all(|((_, t), &built)| {
+                t.as_var().and_then(|w| caller_result_ranks.get(w).copied()) == built
+            });
+        (r == R_BASE && !ds.fallback_large_id && fwd.digest_base_rank == cur_rank && same_ranks)
+            .then_some(ds)
     }
 
     pub fn build_fwd_summary_at_base(

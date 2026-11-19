@@ -284,6 +284,21 @@ impl<'t, 'a> Ck<'t, 'a> {
                     held_foreign_fn |= !zedc_types::ty::tys_hold_only_own_fns(n.tys());
                     for t in n.tys() {
                         let vf = t.var_facts();
+                        // A function held in the need's types that binds variables of its own
+                        // (`m.map(id)` with `id(x) = x`; `m.map(top)` or a lambda
+                        // `xs -> xs >< max`, whose types hold `max`'s or `(+)`'s variables) is
+                        // named by E with the caller's variables around it, which a kept
+                        // forward does not carry, so D and E gave different digests (landing
+                        // round 3, Gemini L3-G1); refuse, under its own label so a test can
+                        // drop it as a negative control (`drop_conds`). Such
+                        // a variable is in `names` and, being bound in the nest, not in
+                        // `outer` (`outer` is `names` less every variable a signature of the
+                        // nest binds), so the test is that the two sets differ in size.
+                        // Complexity tradeoff: the naive test walks `names` against `outer`,
+                        // O(v log v) for v variables held; used: two kept lengths, O(1).
+                        if vf.names.len() > vf.outer.len() {
+                            intrinsic_fails.insert("#4-own-vars");
+                        }
                         held_free = held_free.max(vf.free);
                         for nm in vf.names {
                             held_names.insert(nm);
@@ -1433,16 +1448,8 @@ impl<'t, 'a> Ck<'t, 'a> {
         let mut build_rank = 0usize;
         for nd in &mut sig.needs {
             if let NeedKind::Fwd(fwd_arc) = &mut nd.kind {
-                let sum = r10_hash::build_fwd_summary_at_base(
-                    fwd_arc,
-                    nd.span,
-                    build_rank,
-                    &mat_result_ranks,
-                    r10_hash::R_BASE,
-                );
                 let inner = Arc::make_mut(fwd_arc);
-                inner.digest_base_rank = build_rank;
-                inner.digest_summary = sum;
+                r10_hash::set_fwd_digest_summary(inner, nd.span, build_rank, &mat_result_ranks);
                 build_rank += inner.need_count;
             } else {
                 build_rank += 1;

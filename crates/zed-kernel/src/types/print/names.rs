@@ -187,7 +187,8 @@ impl Drop for ProgramNames {
 // sorted the whole skip set at every span, O(s log s) per span, so `generalize` naming r runs of
 // a signature whose skip set holds s names cost O(r·s log s): 11.3 times the work at 8n for n
 // runs against n names (`r10_generalize_runs_against_a_wide_skip_set_scale`). Used: one sort per
-// skip set, O(s log s), then O(log s + log h) per span (h program names). Given up: the index is
+// skip set, O(s log s), then O(log(2 + h + s)·(log(2 + h) + log(2 + s))) per span (h program
+// names; [`fresh_variable_span_stats_indexed`] binary-searches a count). Given up: the index is
 // built against one program-name snapshot, so a span must be asked with that snapshot.
 #[derive(Clone, Debug)]
 pub struct SkipIndex {
@@ -249,20 +250,10 @@ impl SkipIndex {
 }
 
 /// Advances past `count` fresh [`Names::Variables`] picks starting from `start_n`, skipping
-/// `held` and `skip_names`: [`fresh_variable_span_stats_indexed`] on an index made for this one
-/// span, `O(log(#held) + |skip| log |skip|)`.
-pub fn fresh_variable_span_stats_with_held<'a>(
-    start_n: usize,
-    count: usize,
-    skip_names: impl IntoIterator<Item = &'a str>,
-    held: &HeldVarSnapshot,
-) -> FreshVarSpanStats {
-    fresh_variable_span_stats_indexed(start_n, count, &SkipIndex::new(skip_names, held), held)
-}
-
-/// Advances past `count` fresh [`Names::Variables`] picks starting from `start_n`, skipping
-/// `held` and the names of `skip`, which must have been made against `held`: O(log(#held) +
-/// log |skip|) by binary search on the count of names neither skips below a place.
+/// `held` and the names of `skip`, which must have been made against `held`: a binary search,
+/// over a range of at most h + s places, on the count of names neither skips below a place,
+/// each count O(log h + log s), so O(log(2 + h + s)·(log(2 + h) + log(2 + s))) for h held and
+/// s skipped names (landing round 3, Claude F2 and Codex).
 pub fn fresh_variable_span_stats_indexed(
     start_n: usize,
     count: usize,
@@ -332,17 +323,6 @@ pub fn fresh_variable_span_stats_indexed(
     }
 }
 
-/// Advances past `count` fresh [`Names::Variables`] picks starting from `start_n`, skipping
-/// [`ProgramNames`] and `skip_names`, in `O(log(#held) + |skip| log |skip|)` time.
-pub fn fresh_variable_span_stats<'a>(
-    start_n: usize,
-    count: usize,
-    skip_names: impl IntoIterator<Item = &'a str>,
-) -> FreshVarSpanStats {
-    let snap = current_held_var_snapshot();
-    fresh_variable_span_stats_with_held(start_n, count, skip_names, &snap)
-}
-
 /// Like [`fresh_name`], but skipping the captured [`HeldVarSnapshot`] instead of thread-local `HELD`.
 pub fn fresh_name_with_held<S>(
     names: Names,
@@ -373,20 +353,6 @@ where
             break name;
         }
     }
-}
-
-/// Returns the `idx`th (0-indexed) fresh [`Names::Variables`] name starting from `start_n`,
-/// skipping [`ProgramNames`] and `skip_names`, in `O(log(#held) + |skip| log |skip|)` time.
-pub fn nth_fresh_variable<'a, S>(
-    start_n: usize,
-    idx: usize,
-    skip_names: impl IntoIterator<Item = &'a str>,
-) -> S
-where
-    S: From<&'static str> + From<String>,
-{
-    let stats = fresh_variable_span_stats(start_n, idx + 1, skip_names);
-    Names::Variables.nth(stats.end_n - 1)
 }
 
 /// The next name of `names` from the `n`th on that the program being checked does not bind
@@ -538,10 +504,25 @@ pub enum NameItem {
 // (test `many_runs_over_names_given_one_at_a_time_give_few_runs`). The number of passes h is
 // not bounded by the skip sets alone: a run whose range a sibling run took before it meets one
 // interval with an empty skip set (test `a_run_is_cut_only_where_it_meets_a_name_given`).
-// Conjectured, not proved: the sum of t over all runs is at most V + the sum of (1 + s), as
-// every hole of `given` inside a run's range is made by a name or a skipped place, and each
-// kept stretch fills the hole it starts at. Given up: a run with many kept stretches costs
-// O(log k) for each, against O(1) for each name in the naive version.
+// Bound on the kept stretches: the sum of t over all runs is at most V + 2 times the sum of
+// (1 + s). (The bound V + the sum of (1 + s) once written here is false: m - 1 runs over
+// [2 + 4i, 4 + 4i) and then one over [0, 4m - 2) keep 2m - 1 stretches with V = 0 and s = 0;
+// test `runs_over_runs_keep_up_to_twice_the_runs`.) Proof (landing round 3, Gemini L3-G3;
+// Codex reached the same bound by another route). Let U be the union of the intervals of
+// `used`, and P the number of intervals of `given` that meet U; P starts at 0 and is never
+// negative. (a) A name adds at most 1 to P. (b) A fresh stretch lies outside U, so it makes no
+// new interval that meets U; it can only extend one or join two: it adds at most 0. (c) Take a
+// run with kept stretches K_1, ..., K_t and s skipped or bound places in its range. K_j adds
+// its 1 + s_j pieces (s_j skipped places inside it), each in U, less L_j + R_j, where L_j (R_j)
+// is 1 when its first (last) piece joins an interval of `given` that meets U on its left
+// (right). For j >= 2, L_j = 0 only when the place just before K_j is skipped or bound and
+// outside every kept stretch; for j <= t - 1, R_j = 0 likewise for the place just after it.
+// Each such place is counted at most twice, so the run adds at most
+// t + s_in - 2(t - 1) + 2 s_out <= 2 - t + 2s to P, that is t + (its change of P) <= 2 + 2s.
+// Summing (a), (b), (c) over the whole call with P >= 0 at the end gives the bound. So the
+// passes and the jumps are O(V + sum of (1 + s)) in all, each O(log k). Tradeoff: a run with
+// many kept stretches costs O(log k) for each, against O(1) for each name in the naive
+// version.
 //
 // Proof that it gives the names the naive version gives:
 // (1) No two intervals of `given` overlap, since each insert merges with every interval it
@@ -961,5 +942,37 @@ mod tests {
             .sum();
         assert!(runs <= 2 * v + 2 * m, "{runs} runs for v = {v}, m = {m}");
         assert_eq!(written_out(&out), one_at_a_time(&items));
+    }
+
+    /// Landing review round 3 (Codex L3.Codex-bound, Gemini L3-G3): `m - 1` runs at
+    /// `[2 + 4i, 4 + 4i)`, then one run over `[0, 4m - 2)`, with no names and nothing skipped.
+    /// The last run keeps the m stretches between the earlier runs, so the runs keep 2m - 1
+    /// stretches in all: more than V + Σ(1 + s) = m, which the comment at [`rename_apart`] once
+    /// conjectured, and at most V + 2·Σ(1 + s) = 2m, which it proves.
+    #[test]
+    fn runs_over_runs_keep_up_to_twice_the_runs() {
+        let snap = current_held_var_snapshot();
+        let skip = Arc::new(SkipIndex::default());
+        for m in [2, 3, 10, 100] {
+            let run = |start_n, count| NameRun {
+                start_n,
+                count,
+                skip: skip.clone(),
+                held: snap.clone(),
+            };
+            let mut items: Vec<NameItem> = (0..m - 1)
+                .map(|i| NameItem::Runs(vec![run(2 + 4 * i, 2)]))
+                .collect();
+            items.push(NameItem::Runs(vec![run(0, 4 * m - 2)]));
+            let out = rename_apart(&items);
+            let NameItem::Runs(last) = &out[m - 1] else {
+                panic!("runs")
+            };
+            // The last run's kept stretches start below 4m - 2; its fresh ones at or above.
+            let kept = last.iter().filter(|r| r.start_n < 4 * m - 2).count();
+            assert_eq!(m - 1 + kept, 2 * m - 1, "m = {m}: {last:?}");
+            assert!(m - 1 + kept <= 2 * m, "the proved bound");
+            assert_eq!(written_out(&out), one_at_a_time(&items));
+        }
     }
 }
