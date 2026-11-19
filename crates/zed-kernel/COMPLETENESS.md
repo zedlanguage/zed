@@ -550,3 +550,78 @@ Open, with the reason:
   refusal lists at least one `And` node (`bes::refusal` keeps a component only with
   `branching_and >= 1`). A member refused in a run with no refusal for shape among the nodes it
   reaches would take it. Whether `decide` can refuse a node that way is not proved here.
+
+The rest of the eighth round (cover10, 2026-11-18), at zed-impl 6f871b3fc: the order ties of
+`types.rs`, `types/bdd.rs` and the meet arms of `types/print.rs`. Two instrumented builds: the
+normal one (`build/cov-k`) and one with the `short-addresses` feature, 8-bit digests
+(`build/cov-ks`). In each, the 21 modules of `l01_23_subtyping` were run one at a time (benches
+skipped), and `l01_37a_short_addresses` was run in the short build.
+
+`types.rs`, the order ties. The short build reaches nearly all of them. That includes:
+
+- the tie of payload digests in `atom_names` (601 times);
+- the `Step::Lens` resume in `tuple_lens`;
+- the `Cells`, `Sets`, `SetsInOrder`, `SetRest` and `CellRest` arms of `walk`;
+- the `Exprs` arm with its exclusive-or test;
+- `Expr::clone`;
+- `Key::order`.
+
+In those ranges, 192 lines are reached in `l01_23` and 15 are not. These lines have count 0 in
+both short runs:
+
+- In `atom_names`, the return when two names differ after a resume. A resume starts past the
+  last name read, and two maps that tied up to it can still differ there; no input was built
+  for this.
+- The `Cells(None, Some)` and `Cells(Some, None)` arms: two lists whose digests tie but whose
+  lengths differ.
+- The `Exprs` arm's `(Some(_), None)` case: an exclusive or and an expression that is not one,
+  with tied digests.
+- The early returns of `Key::order` after its digest tie (about 8616-8641), and those of the
+  key comparison at about 8928-8938.
+- `Node::same_head`, which no test calls in either build.
+
+These lines need a collision between two particular shapes. No input was built for them, and no
+proof was made that they cannot happen. A tie of 64-bit digests can occur, so the arms must stay.
+The short-build reach above is not protected by any test. `merge_check` runs the short build only
+for `l01_37a_short_addresses` and `l01_37_oracle`, and `l01_37a` alone reaches only the
+`atom_names` and `tuple_lens` ties and the `Sets` arms. It reaches neither the `Exprs` arm nor
+`Key::order` (both count 0).
+
+In the short build, three tests of `l01_23_subtyping` fail. All three are in the normal build's
+`l01_23` piece and pass there. Each failure was checked, and none gives a wrong verdict:
+
+- `refusal_cost::random_3_cnf_seed_2_is_refused_at_8_bits_and_16`: at 16 bits (5 models) the
+  short build answers `Inhabited` instead of refusing. The value it shows was printed and is a
+  member of the type (`contains` agrees). The test pins the normal build's loss of a value in
+  `refine` (REFUSAL-r3-seed2-16-inhabited), and in the short build the route does not lose it.
+- `listing::tuples_are_checked_against_the_tuple_types_that_may_hold_them`: the same 13 tuples
+  come out in another order. The boxes are listed in digest order; in the normal build the
+  first box listed is already box 1, not box 0. The test pins one build's digest order, and
+  the comment "each box in turn" holds only for that order.
+- `oracle::the_systems_reaching_rare_branches_both_ways_agree_with_the_oracle`: system (4, 3114)
+  is decided on both routes in the short build (2, 0, 0), where the normal build refuses once
+  (1, 0, 1). Every verdict was checked against the oracle and agrees.
+
+`types/bdd.rs`:
+
+- Closed: `Expr::link` with a complement that is an expression not holding `self`. It is reached
+  7.35k times in the normal build. The seventh round recorded count 0 here, and that was wrong.
+  Control run: the arm returning the expression itself as its complement makes 10 tests fail,
+  among them `oracle::verdicts_agree_with_the_oracle_in_any_order` and
+  `one_pass::random_meets_of_lists_and_exclusive_ors_are_decided_as_enumeration_decides_them`.
+- Closed: `Connect::negate` on a `Not` whose operand is an expression. It is reached 5.56k times
+  in the normal build, and the seventh round's count 0 here was also wrong. Control run:
+  returning the `Not` itself instead of its operand makes the same 10 tests fail, among them
+  `one_pass::random_parts_of_one_choice_per_component_are_decided_as_enumeration_decides_them`.
+- `Connect::negate`'s `Source::Form` arm: reached 5 times in the short build and 0 times in the
+  normal build. It stays open: it is reached only under collisions, and no control was run for
+  it.
+- Still open, count 0 in both builds: the `xor::xor_choice` return in `Connect::choose`, the
+  walk's `continue` at an expression already in `exprs` (about 2270), the `continue` in
+  `Cell::atoms` at a cell whose atoms are already made (about 3847), and the literal set false
+  that empties the last block (about 4063). No input was built for them.
+
+`types/print.rs` (the file cover4's list means; the earlier entries say `print.rs`): `folded`,
+`meet_text` and `meet_of_literals` have count 0 in both builds, since `l01_23` prints no meet of
+morphism types. cover4's open question still stands: whether a list equal to a meet of its atoms
+is always a chain. This round did not work on it.
