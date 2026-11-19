@@ -58,7 +58,6 @@ use std::cell::Cell;
 use zedc_lattice::interval::{End, IntervalSet, Num};
 
 use super::rows::{Row, Rows, gcd};
-use super::{JOINED, Stop, along_shared_atoms, join_run};
 
 /// Why a projection was answered here.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -91,7 +90,7 @@ thread_local! {
     pub static REDUCED: Cell<Option<Reduced>> = const { Cell::new(None) };
 }
 
-/// Where the join did not answer: `Limit`, it stopped at its limit; `NoPlan`, it has no plan.
+/// Where the join did not answer: `at_limit`, it stopped at its limit; else it has no plan.
 /// The join runs again only where a reduction can change its work: at the limit, where an atom
 /// was forced or a row's coefficients gained a common factor (its keys shrink by it); with no
 /// plan, where an atom was forced or scaled (its keys may fall below `LIMIT`).
@@ -105,7 +104,17 @@ thread_local! {
 // `l01_38_omega_test::disj_groups::row_sums::classes`, benchmark
 // `l01_38_omega_test::bench::disj_groups::classes`; COMPLEXITY.md row
 // PRES-overlap-sums-exact-subclasses.
-pub(super) fn project(rows: &Rows, want: &[bool], stop: &Stop) -> Option<Vec<Option<IntervalSet>>> {
+//
+// `at_limit`: the join stopped at its limit (else it had no plan). `join`: the join of
+// `row_sums` on the reduced rows, which puts them in its order first, with the units it spent,
+// or `None` where it gives no answer; passed in so that this module names nothing of its
+// parent's (no import cycle, `s_01f_import_graph`).
+pub(super) fn project(
+    rows: &Rows,
+    want: &[bool],
+    at_limit: bool,
+    join: impl FnOnce(Rows) -> Option<(Vec<Option<IntervalSet>>, u64)>,
+) -> Option<Vec<Option<IntervalSet>>> {
     REDUCED.with(|r| r.set(None));
     let wanted = |set: &dyn Fn(usize) -> IntervalSet| -> Vec<Option<IntervalSet>> {
         (0..rows.atoms.len())
@@ -133,21 +142,15 @@ pub(super) fn project(rows: &Rows, want: &[bool], stop: &Stop) -> Option<Vec<Opt
     };
     let scaled_atoms = reduced.scale.iter().flatten().count();
     let worth = forced > 0
-        || match stop {
-            Stop::Limit => reduced.shrunk,
-            Stop::NoPlan => scaled_atoms > 0,
+        || if at_limit {
+            reduced.shrunk
+        } else {
+            scaled_atoms > 0
         };
     if !worth {
         return None;
     }
-    // `JOINED` keeps the join on the rows as given, which the caller and its tests read; this
-    // join's units are in `REDUCED`.
-    let first = JOINED.with(Cell::get);
-    let answer = join_run(&reduced.rows, want, |plan, rows, want, work| {
-        plan.project(rows, want, work, None)
-    });
-    let units = JOINED.with(|j| j.replace(first)).map_or(0, |(u, _)| u);
-    let mut sets = answer.ok()?;
+    let (mut sets, units) = join(reduced.rows)?;
     for (j, scale) in reduced.scale.iter().enumerate() {
         if let (Some((l, d)), Some(set)) = (scale, &sets[j]) {
             // The values `v = l + d·z` of the atom whose `z` the join keeps.
@@ -348,9 +351,9 @@ struct Scaled {
 /// divides `k'`, and is then `Σ (c'/g)·z + k'/g == 0`; an inequality `Σ c'·z >= −k'` holds
 /// exactly where `Σ (c'/g)·z >= ⌈−k'/g⌉ = −⌊k'/g⌋`.
 // Complexity tradeoff: a gcd over the values of each atom of an open row and over the
-// coefficients of each row, `O(t + p)` gcds for `p` values, each `O(log V)`; the rows are put
-// in the order of the join (`along_shared_atoms`, `O(t log t)`) once more, since forced atoms
-// leave them.
+// coefficients of each row, `O(t + p)` gcds for `p` values, each `O(log V)`; the caller's
+// `join` puts the rows in the join's order (`along_shared_atoms`, `O(t log t)`) once more,
+// since forced atoms leave them.
 fn scaled(rows: &Rows, forcing: &Forcing) -> Option<Option<Scaled>> {
     let n = rows.atoms.len();
     let mut in_open = vec![false; n];
@@ -433,7 +436,7 @@ fn scaled(rows: &Rows, forcing: &Forcing) -> Option<Option<Scaled>> {
     let rows = Rows {
         atoms: rows.atoms.clone(),
         domains,
-        rows: along_shared_atoms(out, n),
+        rows: out,
         empty: false,
     };
     Some(Some(Scaled {

@@ -595,11 +595,25 @@ pub(super) fn project(
     // the solver, with the cover on only: with it off (a test control) the path is the
     // solver's alone, as those tests ask (PRES-overlap-sums-exact-subclasses).
     let classes = |stop: Stop| {
-        if old_exact {
-            classes::project(&rows, &want, &stop)
-        } else {
-            None
+        if !old_exact {
+            return None;
         }
+        // `JOINED` keeps the join on the rows as given, which the caller and its tests read;
+        // this join's units are in `classes::REDUCED`.
+        let join = |reduced: Rows| {
+            let n = reduced.atoms.len();
+            let reduced = Rows {
+                rows: along_shared_atoms(reduced.rows, n),
+                ..reduced
+            };
+            let first = JOINED.with(Cell::get);
+            let answer = join_run(&reduced, &want, |plan, rows, want, work| {
+                plan.project(rows, want, work, None)
+            });
+            let units = JOINED.with(|j| j.replace(first)).map_or(0, |(u, _)| u);
+            Some((answer.ok()?, units))
+        };
+        classes::project(&rows, &want, stop == Stop::Limit, join)
     };
     match answer {
         Ok(sets) => Ok(each_of(sets)),
