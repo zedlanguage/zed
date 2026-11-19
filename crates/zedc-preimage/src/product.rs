@@ -11488,60 +11488,42 @@ impl Scope {
     // block update. Reference: P. Cousot and R. Cousot, "Systematic design of program analysis
     // frameworks", POPL '79, 1979, pp. 269-282 (monotone fixed-point preservation across joins).
     fn join_preserving_outer(&self, cases: Vec<Scope>) -> Scope {
-        // The names some case changed, read before the join takes the cases (see below).
-        // Complexity tradeoff: naive version, each case diffed against the outer scope, the
-        // names the case changed: on a chain of nests, whose i-th case has the i sides before
-        // it excluded, that is O(i) names for case i and Theta(d²) over d cases
-        // (`arms_of_a_long_chain_of_accounts_take_time_within_n_log_n`, ratio 20.5). Used:
-        // each case diffed against the one before it (the first against the outer scope).
-        // Equality is transitive, so a name some case holds unequal to the outer scope is
-        // unequal across some adjacent pair, and the set below holds every name the naive
-        // version finds (and maybe more, each checked by the filter below). Each adjacent
-        // diff has at most the names of the two naive ones, so the cost is at most twice the
-        // naive cost, and on a chain, where a case shares all but its own sides with the one
-        // before it, O(1) names per case. COMPLEXITY.md row PRES-products-stay-shared.
-        let mut touched: BTreeSet<Arc<str>> = BTreeSet::new();
-        let mut prev = &self.names.base;
-        for c in &cases {
-            for d in prev.diff(&c.names.base) {
-                let (DiffItem::Add(n, _)
-                | DiffItem::Remove(n, _)
-                | DiffItem::Update { old: (n, _), .. }) = d;
-                touched.insert(n.clone());
-            }
-            prev = &c.names.base;
-        }
         let mut s = join_cases(cases);
         if s.bottom {
             return s;
         }
-        // A name the cases narrowed apart and the join brought back to its outer product
-        // holds a new copy of it, equal and not shared. Every later difference of the
-        // persistent name maps (`Block::update`, `Block::gained_hole`) compares such a copy
-        // in full and does not count it among the names it yields, so a block kept before
-        // the test walked each name any later test rejoined.
-        // Complexity tradeoff: naive version, the joined copies kept, O(1) here and O(k) per
-        // later block update over k tests that each rejoin a name, Theta(k²) over the run
-        // (`holes_cut_one_at_a_time_scale`, ratio 13.6). Used: the outer product put back
-        // where the join equals it, for the names each case changed, from the difference of
-        // the base maps, which skips what a case shares with the outer scope: O(m (c log n +
-        // s)) for m cases, c names changed and s pieces compared. A name on a path
-        // or a pendant leaf is left as it is: its base entry is not its product, and a write
-        // to it materializes the paths (`NameProducts::set_fresh`). COMPLEXITY.md row
-        // PRES-products-stay-shared.
-        let same: Vec<(Arc<str>, Product)> = (touched.into_iter())
-            .filter_map(|n| {
-                let (a, b) = (self.names.base.get(&n)?, s.names.base.get(&n)?);
-                (!Arc::ptr_eq(&a.0, &b.0) && a == b).then(|| (n.clone(), a.clone()))
-            })
-            .filter(|(n, _)| {
-                !(self.names.paths.contains_key(n) || self.names.pendants.contains_key(n))
-                    && !(s.names.paths.contains_key(n) || s.names.pendants.contains_key(n))
-            })
-            .collect();
-        for (n, p) in same {
-            s.names.set_fresh(&n, Some(p));
+        // The joined base map made again as the outer one with the entries the join holds
+        // unequal to it, so that it shares with the outer map every node but the paths to
+        // those entries. A difference of two persistent maps (`imbl::OrdMap::diff`) skips
+        // only the nodes the two share, and steps entry by entry through the others, equal
+        // or not. The cases and the join copy the path to each name they write, and a name
+        // the join brings back to its outer product keeps the copied path; so a block kept
+        // before the test (`Block::update`, `Block::gained_hole`) stepped through every leaf
+        // any later test copied, while it yields, and caps, only the entries that differ.
+        // Complexity tradeoff: naive version (972007232 and 9a8170756), the outer product
+        // put back, through `NameProducts::set_fresh`, for each name some case changed, found
+        // by diffing each case against the one before it. That gives back equal entries but
+        // not shared nodes: on `holes_cut_one_at_a_time_scale` the block updates compared
+        // 0.92 M products at k = 512 (15 K at k = 64), 98% of them the same product, and
+        // the run took 10.22 times the instructions at 8k. Used: one difference of the outer
+        // base map with the joined one, O((c + w) log n) for c entries that differ and w
+        // nodes the join wrote and n names, and one write per differing entry, O(c log n):
+        // 46 K comparisons at k = 512 (4.7 K at 64), and 8.85 times the instructions. The
+        // map is the joined one entry for entry, so no answer changes; a name on a path or
+        // a pendant leaf keeps its base entry, and a built exact map (`NameProducts::view`)
+        // stays the map of the same entries. COMPLEXITY.md row PERF-cover-benches-under9.
+        let mut base = self.names.base.clone();
+        for d in self.names.base.diff(&s.names.base) {
+            match d {
+                DiffItem::Add(n, p) | DiffItem::Update { new: (n, p), .. } => {
+                    base.insert(n.clone(), p.clone());
+                }
+                DiffItem::Remove(n, _) => {
+                    base.remove(n);
+                }
+            }
         }
+        s.names.base = base;
         let mut restores: Vec<(PartKey, (PartWith, Projected))> = Vec::new();
         for d in self.projected.diff(&s.projected) {
             let DiffItem::Remove(k, (outer_with, outer_snap)) = d else {
@@ -23937,6 +23919,46 @@ mod tests {
             joins += j;
         }
         assert!(asked >= 400 && joins >= 100, "asked {asked}, joins {joins}");
+    }
+
+    /// A join of cases keeps the outer base map's nodes wherever its entries are the outer
+    /// ones (`Scope::join_preserving_outer`): cases that bring every name back give the outer
+    /// map itself, and cases that move only `y` give a map whose every other entry is the
+    /// outer product itself. With the cases' copies kept, each later difference of the name
+    /// maps stepped through the copied leaves (`holes_cut_one_at_a_time_scale`, 10.22 times
+    /// the instructions at 8k; COMPLEXITY.md row PERF-cover-benches-under9).
+    #[test]
+    fn a_join_of_cases_shares_the_outer_names_it_does_not_change() {
+        use zed_kernel::term::build::{lit, prim, var};
+        let p = Premises::new();
+        let names: Vec<Arc<str>> = (0..64)
+            .map(|i| Arc::from(format!("x{i}")))
+            .chain([Arc::from("y")])
+            .collect();
+        let outer = Scope::new((names.iter()).map(|n| (n.clone(), Product::of_type(Type::int()))));
+        let ge = |n: &str, c: i64| prim(Prim::Ge, vec![var(n), lit(c)]);
+        let le = |n: &str, c: i64| prim(Prim::Le, vec![var(n), lit(c)]);
+        let and = |a, b| prim(Prim::And, vec![a, b]);
+        let case = |t: &Term| outer.assume(t, true, &p);
+
+        let back = outer.join_preserving_outer(vec![case(&ge("x5", 0)), case(&le("x5", -1))]);
+        assert!(!back.bottom);
+        assert!(back.names.base.ptr_eq(&outer.names.base));
+
+        let moved = outer.join_preserving_outer(vec![
+            case(&and(ge("x5", 0), ge("y", 0))),
+            case(&and(le("x5", -1), ge("y", 1))),
+        ]);
+        assert!(!moved.bottom);
+        assert_eq!(
+            *moved.get("y").ints(),
+            IntervalSet::range(End::of(0), End::PosInf)
+        );
+        for n in &names[..64] {
+            let (a, b) = (&outer.names.base[n], &moved.names.base[n]);
+            assert!(Arc::ptr_eq(&a.0, &b.0), "{n}: {b:?}, not the outer {a:?}");
+        }
+        assert_eq!(outer.names.base.diff(&moved.names.base).count(), 1);
     }
 
     /// Asks `steps` of a scope of the integers `a`, `x` and `y` in turn, until one leaves no
