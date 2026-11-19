@@ -11,6 +11,10 @@ crates/               the Rust-hosted toolchain, kept permanently as the bootstr
   zed-collections/    sorted-list operations and small data structures every crate shares
   zed-graph/          graph algorithms every crate shares: strongly connected components,
                       over nodes numbered before the search or as the walk meets them
+  zed-numtheory/      number theory on words and big integers that every crate shares: gcds,
+                      products and powers modulo a word and modulo 2^61 - 1, primality,
+                      factoring, sieves; below zed-kernel, depending only on num-bigint,
+                      num-integer and num-traits
   zed-kernel/         kernel terms, the ZIR node inventory, the M0.9 reference evaluator
   zedc/               the compiler's top crate: the incremental queries, the run of a program,
                       the `zedc` command's code, and each zedc-* crate's modules re-exported at

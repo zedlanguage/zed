@@ -1400,9 +1400,12 @@ The `OnceLock` and `Mutex` rows above were removed by WRITE-prefix-scale, with `
 
 ## Entries from CAP-bits (`zed-kernel/src/num.rs`, `num/bound.rs`, `num/factor.rs`)
 
+Since DRY-number-theory, `num/factor.rs` is `crates/zed-numtheory/src/factor.rs`, and `mul_mod` is `zed_numtheory::mul_mod`.
+
 | Rust construct | Sites | Gap | At the port |
 |---|---|---|---|
-| `u128` products for a 64-bit product modulo a 64-bit number | `factor::mul_mod`, `factor::split` | None | `(a * b) mod m` on unbounded `int`, the operands' ranges `int[0..<2^64]` letting the plan use two words |
+| `u128` products for a 64-bit product modulo a 64-bit number | `zed_numtheory::mul_mod` | None | `(a * b) mod m` on unbounded `int`, the operands' ranges `int[0..<2^64]` letting the plan use two words |
+| Montgomery products (R = 2^64): a `u128` product, its low word times `-n^-1` wrapping, and the high words subtracted with a borrow | `factor::Montgomery`, used by `is_prime` and `factor::split` | Machine integers (wrapping products, the high word of a product) | `(a * b) mod m` on `int`, as in the row above; Montgomery form is only a faster way to the same residue, so the port may drop it until the runtime has the high word of a product |
 | `BigUint::bits`, `trailing_zeros`, `bit`, `<<` and `>>` on big integers, and `u64::leading_zeros` and `trailing_zeros` | `bound::Bound`, `Rat::small_integer`, `valuation`, `factor::factor` | Bit operations on `int` | Library words on `int` (`bits`, `trailing_zeros`, `shl`), as for the counts in the row of `count_ones` above |
 | `Cow<'_, Rat>`, an operand borrowed unless it must be rebuilt over more primes | `Rat::aligned`, `Value::as_integer` | None | Zed shares values, so the function returns the operand or the rebuilt one |
 | `&dyn Fn(&BigInt, &BigUint) -> bool`, the exact test of a near-tie passed into the rounding | `bound::round`, `Quotient::floor_scaled` | None | A function value |
@@ -1581,7 +1584,7 @@ The `OnceLock` and `Mutex` rows above were removed by WRITE-prefix-scale, with `
 
 | Rust construct | Sites | Gap | At the port |
 |---|---|---|---|
-| `u128` product reduced modulo the Mersenne prime `2^61 - 1` by a mask and a shift | `num::mul_mod` | Bit operations (gap 4) | `(a * b) mod (2^61 - 1)` on `int`, the operands' ranges `int[0..<2^61]` letting the plan use two words |
+| `u128` product reduced modulo the Mersenne prime `2^61 - 1` by a mask and a shift | `zed_numtheory::m61::mul` (was `num::mul_mod`) | Bit operations (gap 4) | `(a * b) mod (2^61 - 1)` on `int`, the operands' ranges `int[0..<2^61]` letting the plan use two words |
 | `[2, 5].map` with a closure that splits each prime off two captured coefficients through `std::mem::take` and reassigns them | `Rat::literal_text` | Mutation | A fold over the two primes with the coefficients as its state |
 
 ## Entries from S22e-quad (`zedc-preimage/src/preimage.rs`)
@@ -1607,7 +1610,7 @@ The `OnceLock` and `Mutex` rows above were removed by WRITE-prefix-scale, with `
 | The approximation of a kept root held in an `Arc<Mutex<Option<(u64, Approx)>>>` beside the root, shared by every copy of the atom, refined through `&self` and left out of the atom's order and equality (`Memo`) | `store::int::{Memo, Atom::approx}` | Lazy cells (gap 3) | A memo of root approximations keyed by the root's form, kept by the runtime, or the approximation passed along with the value |
 | `Int`, the same with an `i128` word, for the Presburger solver | `store::int::Int`, `presburger.rs` | Machine integers | Vanishes: an `int` |
 | `BigInt` from `num-bigint` behind both | `store::int` | External crate | Goes with `num-bigint` (see the external crates above) |
-| `u64` residues multiplied in `u128` and reduced (`pow_mod`), and big integers reduced modulo a power of 2 by a bit mask (`odd_root_mod_pow2`, `pow_mod_pow2`, `inverse_mod_pow2`) | `store::int::{pow_mod, odd_root_mod_pow2, pow_mod_pow2, inverse_mod_pow2}` | Machine integers; bit operations on `int` | `int` products and `%` (the runtime keeps them in a word while they fit), and a mask as `x % 2^k` unless Zed gains bit operations on `int` |
+| `u64` residues multiplied in `u128` and reduced (`pow_mod`), and big integers reduced modulo a power of 2 by a bit mask (`odd_root_mod_pow2`, `pow_mod_pow2`, `inverse_mod_pow2`) | `store::int::{odd_root_mod_pow2, pow_mod_pow2}`, `zed_numtheory::{pow_mod, pow_mod_2_64, odd_root_mod_2_64, inverse_mod_2_64}` (moved there by DRY-number-theory), `num::fast::inverse_mod_pow2` | Machine integers; bit operations on `int` | `int` products and `%` (the runtime keeps them in a word while they fit), and a mask as `x % 2^k` unless Zed gains bit operations on `int` |
 | The S22a summary's pieces as `i128` values with the ends of `i64` standing for the infinities, entered only when every finite end lies strictly inside `i64` (`in_i64`, `small`; since S22-WIDE `in_range`, the ends strictly inside `i128` and the infinities `i128::MIN` and `i128::MAX`), and nodes copied whole with `..(^node).clone()` now that an end is not `Copy` | `store::preimage::{in_range, small, key, input, apply_tag}` | Machine integers; struct update syntax | Vanishes: ends are `int` and the summary holds them as they are |
 
 ## Entries from TD-cong (`zedc-lattice/src/lattice.rs`, `canon/domain.rs`, `canon/serial.rs`, `store/affine.rs`, `store/int.rs`)
@@ -1695,7 +1698,7 @@ The `OnceLock` and `Mutex` rows above were removed by WRITE-prefix-scale, with `
 | Rust construct | Sites | Gap | At the port |
 |---|---|---|---|
 | A closure `signed(x, y)` choosing `x - y` or `x + y` by a captured `bool`, so one body serves `add` and `sub` | `Rat::sum` | None | A local function of the flag, or the operator passed as a value |
-| `BigUint::iter_u64_digits().rev()` folded into a `u128` remainder | `num::rem_u64` (with `num::rem`, which calls it for a modulus of one word) | Missing (no word view of an `int`) | A runtime primitive giving an `int`'s words, or `mod` by a word as a primitive |
+| `BigUint::iter_u64_digits().rev()` folded into a `u128` remainder | `zed_numtheory::rem_big_u64` (was `num::rem_u64`; with `num::rem`, which calls it for a modulus of one word) | Missing (no word view of an `int`) | A runtime primitive giving an `int`'s words, or `mod` by a word as a primitive |
 | `BigUint::from_slice` of a block of `u64` words split into reversed `u32` pairs | `num::rem` | Missing (no word view of an `int`) | The same primitive, building an `int` from a slice of its words |
 | `Result<bool, TooLarge>` with `?` through `divides_by`, `magnitude_order` and `exact_div` | `Rat::divides_by`, `Rat::div_euclid`, `Rat::rem_euclid` | Early exit (gap 12) | A failure value returned and matched at each call |
 
@@ -2173,7 +2176,7 @@ The `OnceLock` and `Mutex` rows above were removed by WRITE-prefix-scale, with `
 | An index loop over the line's bytes that finds the first `//` outside a string literal, a `Peekable<Chars>` scan of tags and entities, and `str::find` over the HTML of cells | `comment`, `text_of`, `cells` | None | A fold over the string's code points with the state in the accumulator |
 | `let … else { continue }` to skip a fence with no entry | `the_enabled_readme_fences_run_with_their_stated_results` | None | A `match` on the lookup's `#notFound` |
 ## Entries from DIAG-suppress (`zedc/src/suppress.rs`, `zedc/src/run.rs`, `zedc/src/unit.rs`)
-| `u128` products reduced modulo `2^61 - 1` for the prefix hashes of a text, and the hash of a span from two prefixes | `Content::new`, `Content::hash` | None | `(a * b) mod (2^61 - 1)` on `int`, the operands' ranges `int[0..<2^61]` letting the plan use two words (as `num::mul_mod`) |
+| `u128` products reduced modulo `2^61 - 1` for the prefix hashes of a text, and the hash of a span from two prefixes | `Content::new`, `Content::hash` | None | `(a * b) mod (2^61 - 1)` on `int`, the operands' ranges `int[0..<2^61]` letting the plan use two words (now `zed_numtheory::m61::mul`, shared with `num.rs`) |
 | An incremental `blake3::Hasher`, finalized once for the occurrence key and again after the count is added | `addresses` | Library | A hash word over a byte sequence built by appending, from the stdlib catalog of step L2.11; the key and the address as two hashes of two sequences |
 | `slice::partition_point` over the top-level statements in source order | `enclosing` | None | A binary search over a sequence by a predicate, from the L3 library (as `docs::check`) |
 | A `HashMap<ContentAddress, bool>` whose flags are set as warnings match, then read for the addresses that matched nothing | `Suppress::hides`, `unmatched`, `refused` | Mutation | A fold over the warnings that returns the set of matched addresses beside the printed ones; the unmatched are the named set minus it |
