@@ -13,13 +13,12 @@
 //! It also holds the structures that searches share, each written once: [`MinHeap`], a heap
 //! that gives its least item first, and [`Dijkstra`], the search for least distances on it
 //! ([`heap`]); [`Worklist`], a queue or stack that holds each item at most once ([`worklist`]);
-//! [`IdSource`], a counter that draws numbers once each across threads ([`ids`]); and
-//! [`BitSet`], a set of small numbers kept one bit each ([`bitset`]).
+//! [`IdSource`], a counter that draws numbers once each across threads ([`ids`]);
+//! [`BitSet`], a set of small numbers kept one bit each ([`bitset`]); and [`UnionFind`] and
+//! [`OffsetUnionFind`], the classes of elements joined in pairs, the second with each
+//! element's offset from its class's root.
 
 use std::marker::PhantomData;
-
-mod union_find;
-pub use union_find::{OffsetUnionFind, UnionFind};
 
 /// The edges of a graph as [`Search::run`] reads them, and what it does with each component.
 pub trait Walk {
@@ -273,6 +272,9 @@ pub mod bitset;
 pub mod heap;
 pub mod ids;
 pub mod worklist;
+
+mod union_find;
+pub use union_find::{OffsetUnionFind, UnionFind};
 
 pub use bitset::BitSet;
 pub use heap::{Dijkstra, Labels, MinHeap, NegativeReducedWeight, reduced};
