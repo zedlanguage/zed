@@ -100,6 +100,9 @@ pub type TextSet<K> = HashSet<K, TextState>;
 /// rotation by 29 of `h` before the xor makes the step depend on the order of the words, so
 /// `step(step(0, a), b)` and `step(step(0, b), a)` differ; `bdd::set::tests` inverts the step
 /// in each argument and relies on these exact constants.
+///
+/// `tests/src/seed.rs` `mix` is a copy of `step(0, x)`, kept because zed-graph and zedc-solvers
+/// compile that file into their tests and do not depend on this crate.
 #[inline]
 pub fn step(h: u64, x: u64) -> u64 {
     let mut z = (h.rotate_left(29) ^ x).wrapping_add(0x9e37_79b9_7f4a_7c15);

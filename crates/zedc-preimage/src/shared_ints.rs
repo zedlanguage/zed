@@ -268,39 +268,24 @@ pub(crate) fn count_forward(n: usize) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::seed::Rng;
     use zedc_lattice::interval::{End, Num};
 
-    /// A small generator, so that the cases are the same on every run.
-    struct Rng(u64);
-
-    impl Rng {
-        fn next(&mut self) -> u64 {
-            self.0 ^= self.0 << 13;
-            self.0 ^= self.0 >> 7;
-            self.0 ^= self.0 << 17;
-            self.0
+    /// A set of up to 6 pieces in `[-40, 40]`, each outer end infinite one time in five.
+    fn set(rng: &mut Rng) -> IntervalSet {
+        let mut ps = Vec::new();
+        for _ in 0..rng.below(7) {
+            let a = rng.int(-40, 40);
+            let b = a + rng.int(0, 5);
+            ps.push((End::of(a), End::of(b)));
         }
-
-        fn below(&mut self, n: u64) -> u64 {
-            self.next() % n
+        if rng.below(5) == 0 {
+            ps.push((End::NegInf, End::of(rng.int(-60, 20))));
         }
-
-        /// A set of up to 6 pieces in `[-40, 40]`, each outer end infinite one time in five.
-        fn set(&mut self) -> IntervalSet {
-            let mut ps = Vec::new();
-            for _ in 0..self.below(7) {
-                let a = self.below(81) as i64 - 40;
-                let b = a + self.below(6) as i64;
-                ps.push((End::of(a), End::of(b)));
-            }
-            if self.below(5) == 0 {
-                ps.push((End::NegInf, End::of(self.below(81) as i64 - 60)));
-            }
-            if self.below(5) == 0 {
-                ps.push((End::of(self.below(81) as i64 - 20), End::PosInf));
-            }
-            IntervalSet::from_pieces(ps)
+        if rng.below(5) == 0 {
+            ps.push((End::of(rng.int(-20, 60)), End::PosInf));
         }
+        IntervalSet::from_pieces(ps)
     }
 
     const OPS: [Op; 9] = [
@@ -320,21 +305,18 @@ mod tests {
     /// chains of 6 random steps from random sets, 4,000 of them.
     #[test]
     fn made_sets_list_as_the_listed_operations_give() {
-        let mut rng = Rng(crate::seed::seed(
-            "made_sets_list_as_the_listed_operations_give",
-        ));
+        let (mut rng, _) = Rng::fresh("made_sets_list_as_the_listed_operations_give");
         for _ in 0..4000 {
             let mut lazy = vec![];
             let mut flat = vec![];
             for _ in 0..3 {
-                let s = rng.set();
+                let s = set(&mut rng);
                 lazy.push(Ints::of(s.clone()));
                 flat.push(s);
             }
             for _ in 0..6 {
-                let (i, j) = (rng.below(lazy.len() as u64), rng.below(lazy.len() as u64));
-                let (i, j) = (i as usize, j as usize);
-                let k = rng.below(OPS.len() as u64 + 1) as usize;
+                let (i, j) = (rng.below(lazy.len()), rng.below(lazy.len()));
+                let k = rng.below(OPS.len() + 1);
                 let (l, f) = match OPS.get(k) {
                     Some(op) => (
                         Ints::forward(op, &lazy[i], &lazy[j]),
@@ -354,7 +336,7 @@ mod tests {
             }
             // Read in a random order, so that some sets are listed through others.
             for _ in 0..lazy.len() {
-                let i = rng.below(lazy.len() as u64) as usize;
+                let i = rng.below(lazy.len());
                 assert_eq!(lazy[i].set(), &flat[i]);
             }
             for (l, f) in lazy.iter().zip(&flat) {

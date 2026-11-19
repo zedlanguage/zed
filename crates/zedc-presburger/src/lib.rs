@@ -21,7 +21,9 @@ mod scaling;
 #[cfg(test)]
 zed_alloc_count::meter_entry_points!();
 
-/// The seed of a random test, new on each run and printed, shared with the step tests.
+/// The seed and generator of a random test, new on each run and printed, shared with the step
+/// tests.
 #[cfg(test)]
 #[path = "../../../tests/src/seed.rs"]
+#[allow(dead_code, reason = "each crate's tests use only some of the generator's draws")]
 mod seed;

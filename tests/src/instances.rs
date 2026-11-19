@@ -32,57 +32,10 @@ pub const ENUMERATION_BUDGET: u64 = 4_096;
 /// How many seeded random instances each law runs beyond its exhaustive ones.
 pub const RANDOM_INSTANCES: usize = 512;
 
-/// A SplitMix64 generator, so that every random instance is reproducible from its seed.
-pub struct Rng(u64);
-
-impl Rng {
-    /// A generator from `seed`.
-    pub fn new(seed: u64) -> Self {
-        Rng(seed)
-    }
-
-    /// The next 64 random bits.
-    pub fn next_u64(&mut self) -> u64 {
-        self.0 = self.0.wrapping_add(0x9e37_79b9_7f4a_7c15);
-        let mut z = self.0;
-        z = (z ^ (z >> 30)).wrapping_mul(0xbf58_476d_1ce4_e5b9);
-        z = (z ^ (z >> 27)).wrapping_mul(0x94d0_49bb_1331_11eb);
-        z ^ (z >> 31)
-    }
-
-    /// A number in `0..n`.
-    pub fn below(&mut self, n: usize) -> usize {
-        (self.next_u64() % n as u64) as usize
-    }
-
-    /// A number in `lo..=hi`.
-    pub fn int(&mut self, lo: i64, hi: i64) -> i64 {
-        lo + self.below((hi - lo + 1) as usize) as i64
-    }
-
-    /// One element of `xs`.
-    pub fn pick<T: Clone>(&mut self, xs: &[T]) -> T {
-        xs[self.below(xs.len())].clone()
-    }
-
-    /// A sequence of at most `max_len` elements of `alphabet`, its length uniform.
-    pub fn seq<T: Clone>(&mut self, alphabet: &[T], max_len: usize) -> Vec<T> {
-        let n = self.below(max_len + 1);
-        (0..n).map(|_| self.pick(alphabet)).collect()
-    }
-}
-
-impl Rng {
-    /// A generator with a new seed on each run, for a random test (author P169: random tests
-    /// run fewer cases, with a new seed each run, printed). The seed is that of
-    /// [`crate::seed::seed`], shared with the random tests of the other groups: printed with `what`
-    /// on standard error, and `ZED_TEST_SEED=<seed>` repeats the run. The seed is also returned,
-    /// for the test's failure messages.
-    pub fn fresh(what: &str) -> (Self, u64) {
-        let seed = crate::seed::seed(what);
-        (Rng::new(seed), seed)
-    }
-}
+/// The generator of every random test, SplitMix64, so that every random instance is
+/// reproducible from its seed. It lives in [`crate::seed`], which the crates' own unit tests
+/// compile in too.
+pub use crate::seed::Rng;
 
 /// The integers of the instance, `-8..=8`.
 pub fn bmc_ints() -> Vec<i64> {

@@ -14351,17 +14351,7 @@ mod tests {
         (&a.dom, a.none, a.exact) == (&b.dom, b.none, b.exact)
     }
 
-    /// A pseudo-random number generator (xorshift64), so the cases are the same on each run.
-    struct Rng(u64);
-
-    impl Rng {
-        fn below(&mut self, n: u64) -> u64 {
-            self.0 ^= self.0 << 13;
-            self.0 ^= self.0 >> 7;
-            self.0 ^= self.0 << 17;
-            self.0 % n
-        }
-    }
+    use crate::seed::{Rng, Xorshift64};
 
     /// What a name in scope stands for.
     #[derive(Clone, Copy, PartialEq)]
@@ -14386,7 +14376,10 @@ mod tests {
     /// and mixed, with constants, named tests and integers, calls, lambdas that call
     /// themselves, and parts shared between places.
     struct Gen {
-        rng: Rng,
+        /// xorshift64, not [`Rng`]: the regression seeds below (`Gen::new(17213863407132117863,
+        /// ..)` and others found by sweeps) and the chains of the benchmarks and of
+        /// `chains_are_read_exactly_on_both_sides_of_the_cliff` are this generator's cases.
+        rng: Xorshift64,
         fresh: u32,
         /// The names in scope, innermost last.
         bound: Vec<(Arc<str>, Kind)>,
@@ -14414,7 +14407,7 @@ mod tests {
     impl Gen {
         fn new(seed: u64, rec: bool) -> Self {
             Gen {
-                rng: Rng(seed),
+                rng: Xorshift64::new(seed),
                 fresh: 0,
                 bound: Vec::new(),
                 pool: Vec::new(),
@@ -15872,9 +15865,8 @@ mod tests {
     /// `i64`, the four orders, the literal on either side, and both outcomes.
     #[test]
     fn an_order_with_a_literal_has_the_preimage_of_the_general_path() {
-        let mut rng = Rng(crate::seed::seed(
-            "an_order_with_a_literal_has_the_preimage_of_the_general_path",
-        ));
+        let (mut rng, _) =
+            Rng::fresh("an_order_with_a_literal_has_the_preimage_of_the_general_path");
         let x: Arc<str> = "x".into();
         let ops = [Prim::Lt, Prim::Le, Prim::Gt, Prim::Ge];
         let (mut read, mut empty) = (0, 0);
@@ -15956,9 +15948,8 @@ mod tests {
     /// literal on either side, and a second input the term does not read.
     #[test]
     fn an_if_of_literals_on_an_order_has_the_summary_of_the_transfer() {
-        let mut rng = Rng(crate::seed::seed(
-            "an_if_of_literals_on_an_order_has_the_summary_of_the_transfer",
-        ));
+        let (mut rng, _) =
+            Rng::fresh("an_if_of_literals_on_an_order_has_the_summary_of_the_transfer");
         let (x, y): (Arc<str>, Arc<str>) = ("x".into(), "y".into());
         let ops = [Prim::Lt, Prim::Le, Prim::Gt, Prim::Ge];
         let (mut both, mut one, mut none) = (0, 0, 0);
@@ -16070,21 +16061,19 @@ mod tests {
     /// two parameters of one function and joins repeated.
     #[test]
     fn the_classes_are_those_of_a_join_refused_by_looking() {
-        let mut rng = Rng(crate::seed::seed(
-            "the_classes_are_those_of_a_join_refused_by_looking",
-        ));
+        let (mut rng, _) = Rng::fresh("the_classes_are_those_of_a_join_refused_by_looking");
         let mut refused = 0;
         for _ in 0..2000 {
             let mut first = vec![0];
             for _ in 0..1 + rng.below(12) {
-                first.push(first.last().unwrap() + rng.below(5) as usize);
+                first.push(first.last().unwrap() + rng.below(5));
             }
-            let nodes = *first.last().unwrap() as u64;
+            let nodes = *first.last().unwrap();
             if nodes == 0 {
                 continue;
             }
             let joins: Vec<(usize, usize)> = (0..rng.below(3 * nodes + 1))
-                .map(|_| (rng.below(nodes) as usize, rng.below(nodes) as usize))
+                .map(|_| (rng.below(nodes), rng.below(nodes)))
                 .collect();
             let (root, joined) = unite(&first, &joins);
             let looked = unite_by_looking(&first, &joins);
@@ -16443,9 +16432,7 @@ mod tests {
     /// clamped point by point, on random piecewise summaries.
     #[test]
     fn a_clamped_summary_is_the_summary_clamped_at_every_point() {
-        let mut rng = Rng(crate::seed::seed(
-            "a_clamped_summary_is_the_summary_clamped_at_every_point",
-        ));
+        let (mut rng, _) = Rng::fresh("a_clamped_summary_is_the_summary_clamped_at_every_point");
         for round in 0..2000 {
             let mut root = None;
             let mut lo = -40i64;
@@ -16508,9 +16495,7 @@ mod tests {
                 ),
             }
         }
-        let mut rng = Rng(crate::seed::seed(
-            "abs_and_two_term_min_and_max_have_the_value_at_every_point",
-        ));
+        let (mut rng, _) = Rng::fresh("abs_and_two_term_min_and_max_have_the_value_at_every_point");
         // Summaries with pieces on built terms, whatever the draws: over `x` in `-5..=5`,
         // `abs(x)` is `-x` below 0 and `x` from 0, `min(x, 0)` is `x` below 0 and 0 from 0, and
         // `max(x, 0)` is 0 below 0 and `x` from 0, two pieces each, so the check reads the
@@ -16671,9 +16656,7 @@ mod tests {
     /// ([`clamp_treap`]) agree with the points.
     #[test]
     fn a_sum_of_summaries_is_the_sum_at_every_point() {
-        let mut rng = Rng(crate::seed::seed(
-            "a_sum_of_summaries_is_the_sum_at_every_point",
-        ));
+        let (mut rng, _) = Rng::fresh("a_sum_of_summaries_is_the_sum_at_every_point");
         let var: Arc<str> = "n".into();
         let piecewise = |root: Tree| Pa::Piecewise {
             var: var.clone(),
