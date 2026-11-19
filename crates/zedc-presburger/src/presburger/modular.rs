@@ -3313,7 +3313,7 @@ fn cofactors_mod_leaves(tree: &[Vec<Int>]) -> Vec<Int> {
 // times the work at 8 times the values (products of 82 to 872 words at 512 to 4096 values,
 // multiplied and divided by num-bigint below the transform sizes; perf, 2026-11-19). When the
 // largest value `V` is at most `B`, a table of least prime factors up to `V` costs no more
-// than reading the input, O(V + B) = O(B) word operations and about 5 V + 4 pi(V) + 4 k bytes,
+// than reading the input, O(V + B) = O(B) word operations and about 2 V + 4 pi(V) + 4 k bytes,
 // so that case is answered from the table. The condition is the one under which the table
 // method is proved linear in the input size; it is not a timed crossover. Measured 2026-11-19
 // (instructions, values 1 + i * stride, `pncx_shared_factor_crossover_axis`, load 47 to 50):
@@ -3365,60 +3365,117 @@ fn shares_a_factor_by_tree(vals: &[Int]) -> Vec<bool> {
         .collect()
 }
 
+/// The largest prime below 2^16. No prime lies in `65522..=65535` (65537 is the next), which
+/// `largest_prime_below_2_16_is_65521` checks by trial division.
+const LARGEST_PRIME_BELOW_2_16: u16 = 65_521;
+
+/// The table entry of a prime held by none of the values; a prime held by `c` of them (counted
+/// up to 2) has `PRIME_HELD_BY_NONE - c`. All three are above every least prime factor a
+/// composite up to `u32::MAX` can have (at most `LARGEST_PRIME_BELOW_2_16`).
+const PRIME_HELD_BY_NONE: u16 = u16::MAX;
+/// The entry of a prime held by two or more of the values.
+const PRIME_HELD_BY_TWO: u16 = PRIME_HELD_BY_NONE - 2;
+const _: () = assert!(LARGEST_PRIME_BELOW_2_16 < PRIME_HELD_BY_TWO);
+
 /// `shares_a_factor` for values in `1..=top`, by a table of least prime factors up to `top`.
-/// O(top + B) word operations for values of `B` bits in all.
+/// O(top + B) word operations for values of `B` bits in all, and 2 top + 4 pi(top) bytes.
 ///
-/// The table is built by the linear sieve: for `i` from 2 up, an `i` with no entry is prime
-/// and enters the list; then `least[i * q] = q` for the listed primes `q` in rising order,
-/// stopping at the first `q` above `least[i]` or with `i * q` above `top`. Proof that every
-/// composite `j <= top` gets its least prime factor `p`, and gets it once: `i = j / p` is at
-/// least `p` and below `j`, every prime factor of `i` is one of `j`, so `least[i] >= p`, and
-/// each prime `q <= p` is listed by then (`q <= i`) with `i * q <= j <= top`; so the loop at
-/// `i` reaches `q = p` and writes `least[j] = p`. A write `least[i * q] = q` is made only
-/// with `q <= least[i]`, so `q` is the least prime factor of `i * q`, and `j` fixes both `q`
-/// and `i`: one write per composite. With at most one stopping step per `i`, the sieve takes
-/// at most `2 top` steps. Factoring a value `v` through the table takes one division per
-/// prime factor counted with multiplicity, at most `log2 v` of them. (The textbook linear
-/// sieve; the proof here is complete, and no paper is relied on.)
+/// One `u16` entry per number up to `top`: 0 for a number the sieve has not reached; for a
+/// composite, its least prime factor; for a prime, a marker `PRIME_HELD_BY_NONE - c` that also
+/// holds `c`, the number of values the prime divides, counted up to 2.
+///
+/// Why 16 bits are enough. A composite `j <= top <= u32::MAX < 2^32` has a least prime factor
+/// `p` with `p^2 <= j < 2^32`, so `p < 2^16`, and as a prime `p <= 65521`, the largest prime
+/// below 2^16. The three markers 65533 to 65535 are above that, so a marker is never read as a
+/// factor nor a factor as a marker, and `c` stops at 2, so a marker never goes below 65533.
+/// Primes cannot be stored as themselves (a prime up to `u32::MAX` takes 32 bits), which is why
+/// a prime gets a marker: its least prime factor is the number itself, the index of the entry.
+/// Nothing overflows: `i * q` is formed in `u64`, and a value written as a factor is a listed
+/// prime `q <= least(i) <= i` with `i * q <= top`, so `q^2 < 2^32` and `q < 2^16`.
+///
+/// The table is built by the linear sieve: for `i` from 2 up, an `i` with no entry is prime,
+/// gets the marker and enters the list; then `least(i * q) = q` for the listed primes `q` in
+/// rising order, stopping at the first `q` above `least(i)` (which is `i` for a prime `i`) or
+/// with `i * q` above `top`. Proof that every composite `j <= top` gets its least prime factor
+/// `p`, and gets it once: `i = j / p` is at least `p` and below `j`, every prime factor of `i`
+/// is one of `j`, so `least(i) >= p`, and each prime `q <= p` is listed by then (`q <= i`)
+/// with `i * q <= j <= top`; so the loop at `i` reaches `q = p` and writes `least(j) = p`. A
+/// write `least(i * q) = q` is made only with `q <= least(i)`, so `q` is the least prime
+/// factor of `i * q`, and `j` fixes both `q` and `i`: one write per composite, and never over
+/// a prime's marker. With at most one stopping step per `i`, the sieve takes at most `2 top`
+/// steps. Factoring a value `v` through the table takes one division per prime factor counted
+/// with multiplicity, at most `log2 v` of them. (The textbook linear sieve; the proof here is
+/// complete, and no paper is relied on.)
+// Complexity tradeoff: the first form kept `least: Vec<u32>` (4 top bytes) and a separate
+// count `held: Vec<u8>` (top bytes), 5 top + 4 pi(top) bytes; this one keeps both in one
+// `Vec<u16>`, 2 top + 4 pi(top) bytes, with the same O(top + B) steps. The cost is a compare
+// per read to tell a marker from a factor. Bench `pncx_coprime_dense_scale` and
+// `pncx_common_factor_scale`; COMPLEXITY.md C31c.
 fn shares_a_factor_by_table(vals: &[u32], top: u32) -> Vec<bool> {
-    let mut least = vec![0u32; top as usize + 1];
-    let mut primes: Vec<u32> = Vec::new();
-    for i in 2..=top {
-        if least[i as usize] == 0 {
-            least[i as usize] = i;
-            primes.push(i);
-        }
-        for &q in &primes {
-            let j = u64::from(i) * u64::from(q);
-            if q > least[i as usize] || j > u64::from(top) {
-                break;
-            }
-            least[j as usize] = q;
-        }
-    }
-    // `held[p]`: by how many of the values the prime `p` is held, counted up to 2.
-    let mut held = vec![0u8; top as usize + 1];
-    let least = &least[..];
-    let primes_of = |v: u32| {
-        let mut x = v;
-        std::iter::from_fn(move || {
-            (x > 1).then(|| {
-                let p = least[x as usize];
-                while x.is_multiple_of(p) {
-                    x /= p;
-                }
-                p as usize
-            })
-        })
-    };
+    let mut table = least_prime_table(top);
+    // The counts: each value adds one to the marker count of each of its distinct primes. The
+    // reads of the table between the writes see markers whose counts have changed, which still
+    // read as primes, so the factoring is unchanged.
     for &v in vals {
-        for p in primes_of(v) {
-            held[p] = (held[p] + 1).min(2);
+        let mut x = v;
+        while x > 1 {
+            let p = take_least_prime(&table, &mut x);
+            let e = &mut table[p as usize];
+            *e = (*e - 1).max(PRIME_HELD_BY_TWO);
         }
     }
     vals.iter()
-        .map(|&v| primes_of(v).any(|p| held[p] == 2))
+        .map(|&v| {
+            let mut x = v;
+            while x > 1 {
+                if table[take_least_prime(&table, &mut x) as usize] == PRIME_HELD_BY_TWO {
+                    return true;
+                }
+            }
+            false
+        })
         .collect()
+}
+
+/// The table of `shares_a_factor_by_table` up to `top`, by the linear sieve described there,
+/// with every prime's count at 0.
+fn least_prime_table(top: u32) -> Vec<u16> {
+    let mut table = vec![0u16; top as usize + 1];
+    let mut primes: Vec<u32> = Vec::new();
+    for i in 2..=top {
+        if table[i as usize] == 0 {
+            table[i as usize] = PRIME_HELD_BY_NONE;
+            primes.push(i);
+        }
+        let least_i = least_prime_factor(&table, i);
+        for &q in &primes {
+            let j = u64::from(i) * u64::from(q);
+            if q > least_i || j > u64::from(top) {
+                break;
+            }
+            // `q < 2^16` (indeed `q <= 65521`), by the proof at `shares_a_factor_by_table`.
+            table[j as usize] = q as u16;
+        }
+    }
+    table
+}
+
+/// The least prime factor of `x`, `2 <= x`, from the table of `shares_a_factor_by_table` once
+/// its sieve has passed `x`: the entry of a composite, or `x` itself for a prime's marker.
+fn least_prime_factor(table: &[u16], x: u32) -> u32 {
+    match table[x as usize] {
+        e if e >= PRIME_HELD_BY_TWO => x,
+        e => u32::from(e),
+    }
+}
+
+/// The least prime factor `p` of `*x` (`*x >= 2`), with every factor `p` divided out of `*x`.
+fn take_least_prime(table: &[u16], x: &mut u32) -> u32 {
+    let p = least_prime_factor(table, *x);
+    while x.is_multiple_of(p) {
+        *x /= p;
+    }
+    p
 }
 
 /// Each modulus with its factors `(b, b^e)` over one set of pairwise coprime bases `b`.
