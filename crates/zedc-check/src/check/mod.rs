@@ -9837,8 +9837,11 @@ impl Rewrite {
     fn line_bounds(&self, source: &str) -> Option<(usize, usize)> {
         let first = self.edits.first()?.0;
         let last = self.edits.last()?.0;
-        let start = (source.get(..first.start)?.rfind('\n')).map_or(0, |i| i + 1);
-        let end = (source.get(last.end..)?.find('\n')).map_or(source.len(), |i| last.end + i);
+        // The edits lie in `source` in order (`get` refuses one that does not), so the bounds
+        // are taken only on valid offsets.
+        source.get(..first.start)?;
+        source.get(last.end..)?;
+        let (start, end) = zedc_base::source::line_bounds(source, first.start, last.end);
         let end = match lex(source.get(last.end..end)?) {
             Ok(tokens) => last.end + tokens.last().map_or(0, |t| t.span.end),
             Err(_) => end,

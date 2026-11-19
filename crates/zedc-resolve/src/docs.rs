@@ -6,7 +6,7 @@ use std::collections::HashSet;
 
 use crate::resolve::{Resolution, is_prelude_name};
 use zedc_syntax::ast::Error;
-use zedc_syntax::lex::{Doc, Part, Span, Tok, Token};
+use zedc_syntax::lex::{Doc, Part, Span, Tok, Token, word_end};
 
 /// The errors of the doc comments `docs` of `text`, lexed as `tokens` and resolved as `res`,
 /// in text order. A block is the doc comments that the same token follows, in the same hole of
@@ -120,11 +120,7 @@ fn links(text: &str, span: Span, names: &HashSet<&str>, out: &mut Vec<Error>) {
         match bytes[i] {
             b'`' => code = !code,
             b'[' if !code => {
-                let name_end = i
-                    + 1
-                    + line[i + 1..]
-                        .find(|c: char| !is_name_char(c))
-                        .unwrap_or(line.len() - i - 1);
+                let name_end = word_end(line, i + 1).unwrap_or(i + 1);
                 let name = &line[i + 1..name_end];
                 let closed = bytes.get(name_end) == Some(&b']');
                 let markdown = bytes.get(name_end + 1) == Some(&b'(');
@@ -153,8 +149,4 @@ fn links(text: &str, span: Span, names: &HashSet<&str>, out: &mut Vec<Error>) {
         }
         i += 1;
     }
-}
-
-fn is_name_char(c: char) -> bool {
-    c.is_alphanumeric() || c == '_'
 }

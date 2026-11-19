@@ -19,6 +19,7 @@ use super::*;
 use zed_kernel::Shared;
 use zed_kernel::bits::BitLen;
 use zed_kernel::limits::{Kill, MainLimits};
+use zed_kernel::text::ident;
 use zedc_lattice::cell::Premises;
 use zedc_preimage::address::Address;
 use zedc_preimage::preimage::{Domains, LetIn, Lets, let_summary};
@@ -13382,10 +13383,7 @@ impl<'t, 'a> Ck<'t, 'a> {
         let rewritten = self.t.text.and_then(|text| {
             let before = text.get(..span.start)?.trim_end().strip_suffix('=')?;
             let cut = before.trim_end().len();
-            let line_start = text[..cut].rfind('\n').map_or(0, |i| i + 1);
-            let line_end = text[span.end..]
-                .find('\n')
-                .map_or(text.len(), |i| span.end + i);
+            let (line_start, line_end) = zedc_base::source::line_bounds(text, cut, span.end);
             let line = format!("{}{}", &text[line_start..cut], &text[span.end..line_end]);
             Some(line.trim().to_string())
         });
@@ -17639,7 +17637,7 @@ impl<'t, 'a> Ck<'t, 'a> {
         };
         let within = written.map_or(String::new(), |w| format!(" in `{w}`"));
         let repair = match (does, code) {
-            (DataUse::Show, Some(c)) if is_name(c) && self.calls_to_data(t) => {
+            (DataUse::Show, Some(c)) if ident::is_name(c) && self.calls_to_data(t) => {
                 match (whole, written) {
                     (None, _) => Some(format!("{c}()")),
                     (Some(w), Some(ws)) if w.start <= from.start && from.end <= w.end => {
@@ -25498,16 +25496,6 @@ fn callee(what: &str) -> String {
 /// The note of a rejection by [`Ck::data`]: what data is.
 const DATA: &str = "data is a value that holds no function at any depth";
 
-/// Whether `code` is a name as the program writes one (author decision: ASCII names,
-/// `[A-Za-z_][A-Za-z0-9_]*` and a suffix `'`), so that `code()` calls what it names.
-fn is_name(code: &str) -> bool {
-    let body = code.strip_suffix('\'').unwrap_or(code);
-    let mut cs = body.chars();
-    cs.next()
-        .is_some_and(|c| c.is_ascii_alphabetic() || c == '_')
-        && cs.all(|c| c.is_ascii_alphanumeric() || c == '_')
-}
-
 /// Why an argument outside the ints `d` is refused: the use it reaches needs ints in `d`.
 fn outside(d: &IntDomain, span: Span) -> Note {
     let text = format!(
@@ -25800,24 +25788,19 @@ fn test_repair(
     }
 }
 
-/// `p`, or `p` followed by the least number from 2 that makes a name no word of `texts`
-/// spells, as `n2` for `n = n - 1`, which would define `n` in terms of itself: a name bound
-/// to the argument then neither reads itself nor shadows a name the call reads.
+/// `p`, or `p` followed by the least number from 1 that makes a name no name of `texts`
+/// spells ([`ident::fresh`]), as `n1` for `n = n - 1`, which would define `n` in terms of
+/// itself: a name bound to the argument then neither reads itself nor shadows a name the call
+/// reads.
 ///
 /// Complexity tradeoff: testing each number against the texts afresh costs their length per
-/// number tried, O(L·k); one pass collecting their words, then one hash lookup per number,
-/// costs O(L + k), and k is at most one more than the number of words.
+/// number tried, O(L·k); one pass collecting their names, then one hash lookup per number,
+/// costs O(L + k), and k is at most one more than the number of names.
 fn fresh(p: &str, texts: &[&str]) -> String {
     let words: HashSet<&str> = (texts.iter())
-        .flat_map(|t| t.split(|c: char| !(c.is_alphanumeric() || c == '_')))
+        .flat_map(|t| ident::names(t).map(|(_, w)| w))
         .collect();
-    if !words.contains(p) {
-        return p.to_string();
-    }
-    (2..)
-        .map(|k| format!("{p}{k}"))
-        .find(|q| !words.contains(q.as_str()))
-        .expect("a number past the words of the texts")
+    ident::fresh(p, |n| !words.contains(n))
 }
 
 /// The headline of a use that takes the ints of a domain, `takes` as "`popCount` takes `x` in

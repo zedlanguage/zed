@@ -36,7 +36,7 @@ use zedc_base::rejection::Row;
 
 use super::engine::Parser;
 use super::grammar::{Grammar, Kind};
-use crate::lex::{Span, Tok, Token};
+use crate::lex::{Span, Tok, Token, ident};
 
 /// A parse error that a row of sec:diagnostics explains: the row, the message, the span the
 /// error is reported at, and the notes, each a span with its text.
@@ -296,28 +296,17 @@ impl Toks<'_, '_> {
         reaches(self.g, self.ring, self.start, &fixed, past)
     }
 
-    /// `like`, or `like2`, `like3` and so on, the first that is no word of the text.
+    /// `like`, or `like1`, `like2` and so on, the first that is no name of the text
+    /// ([`ident::fresh`]).
     fn unused(&self, like: &str) -> String {
-        let words: HashSet<&str> = self
-            .text
-            .split(|c: char| !(c.is_alphanumeric() || c == '_'))
-            .collect();
-        let mut name = like.to_string();
-        let mut n = 1;
-        while words.contains(name.as_str()) {
-            n += 1;
-            name = format!("{like}{n}");
-        }
-        name
+        let words: HashSet<&str> = ident::names(self.text).map(|(_, w)| w).collect();
+        ident::fresh(like, |n| !words.contains(n))
     }
 
     /// The first and last tokens on the source line of token `i`.
     pub(super) fn line(&self, i: usize) -> (usize, usize) {
         let span = self.span(i);
-        let lo = self.text[..span.start].rfind('\n').map_or(0, |k| k + 1);
-        let hi = self.text[span.end..]
-            .find('\n')
-            .map_or(self.text.len(), |k| span.end + k);
+        let (lo, hi) = zedc_base::source::line_bounds(self.text, span.start, span.end);
         let (mut a, mut b) = (i, i);
         while a > 0 && self.span(a - 1).start >= lo {
             a -= 1;

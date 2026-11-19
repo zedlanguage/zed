@@ -221,6 +221,18 @@ pub fn line_col(bytes: &[u8], offset: usize) -> (usize, usize) {
     Lines::new(&bytes[..offset]).line_col(bytes, offset)
 }
 
+/// The lines of `text` that hold bytes `from..to`: the start of the line holding `from` and
+/// the end, before its line break, of the line holding `to`. `\r\n`, `\r` and `\n` each end
+/// a line, as for [`line_col`]; [`load`] leaves only `\n`, and a text that did not pass
+/// through it (a test's, a tool's) still breaks where [`line_col`] counts a new line.
+/// O(length of those lines).
+pub fn line_bounds(text: &str, from: usize, to: usize) -> (usize, usize) {
+    let breaks = ['\r', '\n'];
+    let start = text[..from].rfind(breaks).map_or(0, |i| i + 1);
+    let end = text[to..].find(breaks).map_or(text.len(), |i| to + i);
+    (start, end)
+}
+
 /// Where the lines of a text start, found once, so that the line and column of an offset cost
 /// a binary search and a count of the scalars before it on its line, not a decoding of the
 /// text up to it.
@@ -272,6 +284,26 @@ impl Lines {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A lone `\r` ends a line, as `\n` and `\r\n` do (D5 of REPORT-dryA3: the copies this
+    /// replaced looked for `\n` alone and took `a\rb` as one line).
+    #[test]
+    fn line_bounds_ends_a_line_at_every_break() {
+        let text = "a = 1;\rb = 2;\r\nc = 3;\nd";
+        let b = text.find('b').unwrap();
+        let (s, e) = line_bounds(text, b, b);
+        assert_eq!(&text[s..e], "b = 2;");
+        let c = text.find('c').unwrap();
+        let (s, e) = line_bounds(text, b, c + 1);
+        assert_eq!(&text[s..e], "b = 2;\r\nc = 3;");
+        assert_eq!(line_bounds(text, 0, 0), (0, 6));
+        assert_eq!(
+            line_bounds(text, text.len(), text.len()),
+            (text.len() - 1, text.len())
+        );
+        // The line and column agree with the bounds.
+        assert_eq!(line_col(text.as_bytes(), b), (2, 1));
+    }
 
     /// `first_not_nfc` cuts before a character of combining class 0 whose NFC quick check is
     /// Yes. That cut is exact only if NFC never joins such a character to the text before it:

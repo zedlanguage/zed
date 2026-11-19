@@ -20,27 +20,9 @@ use unicode_security::skeleton;
 use super::punct;
 use super::token::{Error, ErrorKind, Span, is_blank};
 
-/// Whether `c` may start a name: the grammar's `[A-Za-z]`.
-pub fn is_name_start(c: char) -> bool {
-    c.is_ascii_alphabetic()
-}
-
-/// Whether `c` may continue a name: the grammar's `NameChar`, `[A-Za-z0-9_]`.
-pub fn is_name_continue(c: char) -> bool {
-    c.is_ascii_alphanumeric() || c == '_'
-}
-
-/// The end of the name starting at byte `pos` of `text`, if one starts there.
-pub fn name(text: &str, pos: usize) -> Option<usize> {
-    let b = &text.as_bytes()[pos..];
-    let first = char::from(*b.first()?);
-    let starts = is_name_start(first) || (first == '_' && b.get(1).is_some_and(|&c| continues(c)));
-    if !starts {
-        return None;
-    }
-    let run = b.iter().position(|&c| !continues(c)).unwrap_or(b.len());
-    Some(pos + run + usize::from(b.get(run) == Some(&b'\'')))
-}
+// The rules themselves live in the kernel, which the messages that read names out of a
+// program's text share with the lexer.
+pub use zed_kernel::text::ident::{is_name_continue, is_name_start, name_end as name};
 
 /// Whether the byte `c` continues a name. A byte of a character beyond ASCII never does.
 fn continues(c: u8) -> bool {
@@ -111,6 +93,15 @@ pub(super) fn word(text: &str, pos: usize) -> Option<Word> {
         Word::Name(end)
     } else {
         Word::Foreign(end)
+    })
+}
+
+/// The end of the name, or the word that would be a name but for characters beyond ASCII,
+/// starting at byte `pos` of `text`, as `word` reads it: for a reader of names in prose,
+/// such as a doc comment's link `[x']`, that names the whole word in its error.
+pub fn word_end(text: &str, pos: usize) -> Option<usize> {
+    word(text, pos).map(|w| match w {
+        Word::Name(end) | Word::Foreign(end) => end,
     })
 }
 

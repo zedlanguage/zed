@@ -41,6 +41,7 @@ use crate::num::{TooLarge, room};
 
 #[cfg(test)]
 mod bench;
+pub mod ident;
 // `names` is public and its items are named through it (`text::names::Names`), not re-exported
 // here: `names.rs` imports `tree.rs`, whose type `Text` has its methods in this file, so a
 // re-export would make this file and `names.rs` import each other (row

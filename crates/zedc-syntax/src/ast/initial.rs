@@ -20,7 +20,7 @@ use super::{
     BinaryOp, CARRY_FORWARD, Error, Expr, ExprKind, Field, IndexKey, Initial, Note, Param, Pattern,
     RangeEnd, Stmt, StmtKind, StrPart, Target, TypeKind, UnaryOp,
 };
-use crate::lex::{Span, Tok, Token};
+use crate::lex::{Span, Tok, Token, ident};
 use zedc_base::rejection::Row;
 
 /// The `initial` statement `s` is, through the annotations written before it.
@@ -642,10 +642,7 @@ fn fresh(base: &str, bare: bool, used: &HashSet<&str>, taken: &mut Taken) -> Str
         true => base.to_string(),
         false => {
             let next = taken.next.entry(base.to_string()).or_insert(1);
-            let (i, name) = (*next..)
-                .map(|i| (i, format!("{base}{i}")))
-                .find(|(_, r)| free(r, &taken.names))
-                .expect("some suffix is free");
+            let (i, name) = ident::numbered(base, *next, |r| free(r, &taken.names));
             *next = i + 1;
             name
         }

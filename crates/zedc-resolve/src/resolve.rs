@@ -39,7 +39,7 @@ use zedc_syntax::ast::{
     PortName, RangeEnd, RemapLevel, Stmt, StmtKind, StrPart, Struct, Target, TypeDecl,
 };
 use zedc_syntax::ast::{BinaryOp, Every, Note, Type, TypeBound, TypeKind};
-use zedc_syntax::lex::{Span, is_name_continue};
+use zedc_syntax::lex::{Span, ident};
 
 mod pick;
 pub mod tables;
@@ -2715,9 +2715,8 @@ impl Resolver<'_> {
         };
         let (message, repair) = match (self.text, decl) {
             (Some(t), Some(d)) => {
-                let start = t[..a.span.start].rfind('\n').map_or(0, |i| i + 1);
                 let from = d.start.max(a.span.end);
-                let end = t[from..].find('\n').map_or(t.len(), |i| from + i);
+                let (start, end) = zedc_base::source::line_bounds(t, a.span.start, from);
                 let line = joined(&t[start..end]);
                 let rest = t[a.span.end..end].trim_start();
                 let repaired = joined(&format!("{}{rest}", &t[start..a.span.start]));
@@ -4624,14 +4623,11 @@ fn and_list(items: &[String]) -> String {
     }
 }
 
-/// The words of `text`: each run of name characters, a name and the `'` after it.
+/// The names written in `text`, as the lexer reads them ([`ident::names`]).
 // Complexity tradeoff: searching the text for each of k names is O(k · text); one pass that
 // collects every word is O(text), and each name is then one O(1) expected lookup.
 fn words(text: &str) -> HashSet<&str> {
-    let part = |c: char| is_name_continue(c) || c == '\'';
-    text.split(|c: char| !part(c))
-        .filter(|w| !w.is_empty())
-        .collect()
+    ident::names(text).map(|(_, w)| w).collect()
 }
 
 /// The message for the use of `name`, which nothing in scope and nothing in the prelude defines.

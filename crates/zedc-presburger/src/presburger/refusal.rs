@@ -11,6 +11,7 @@ use std::collections::HashSet;
 use std::fmt;
 use std::sync::Arc;
 
+use zed_kernel::text::ident;
 use zedc_lattice::interval::{End, IntervalSet, Num};
 use zedc_lattice::lattice::{Congruence, Lattice};
 
@@ -141,42 +142,24 @@ pub struct Split<'a> {
 /// whether it is checked alone or in a build. Each candidate is one lookup in `taken`, and at most
 /// two more are tried than `taken` holds names of the form `f` and a number.
 pub fn free_names(f: &str, taken: &HashSet<&str>) -> [String; 2] {
-    let mut k = 0usize;
-    let mut next = || loop {
-        k += 1;
-        let candidate = format!("{f}{k}");
-        if !taken.contains(candidate.as_str()) {
-            return candidate;
-        }
-    };
-    [next(), next()]
+    let free = |n: &str| !taken.contains(n);
+    let (k, first) = ident::numbered(f, 1, free);
+    [first, ident::numbered(f, k + 1, free).1]
 }
 
-/// The words of `text` that name variables, each once, in the order they first occur: a word
-/// not followed by `(`, which calls a function, and not an operator or literal word. O(the
-/// length of `text`).
+/// The words of `text` that name variables, each once, in the order they first occur: a name
+/// as the grammar reads it, prime included (`x'`, [`ident::names`]), not followed by `(`,
+/// which calls a function, and not an operator or literal word. O(the length of `text`).
 pub fn names_in(text: &str) -> Vec<&str> {
     const WORDS: [&str; 10] = [
         "mod", "div", "true", "false", "not", "in", "is", "as", "else", "with",
     ];
-    let b = text.as_bytes();
-    let ident = |c: u8| c.is_ascii_alphanumeric() || c == b'_';
     let mut out: Vec<&str> = Vec::new();
     let mut seen: HashSet<&str> = HashSet::new();
-    let mut i = 0;
-    while i < b.len() {
-        if ident(b[i]) && (i == 0 || !ident(b[i - 1])) {
-            let start = i;
-            while i < b.len() && ident(b[i]) {
-                i += 1;
-            }
-            let w = &text[start..i];
-            let call = text[i..].trim_start().starts_with('(');
-            if !b[start].is_ascii_digit() && !call && !WORDS.contains(&w) && seen.insert(w) {
-                out.push(w);
-            }
-        } else {
-            i += 1;
+    for (at, w) in ident::names(text) {
+        let call = text[at + w.len()..].trim_start().starts_with('(');
+        if !call && !WORDS.contains(&w) && seen.insert(w) {
+            out.push(w);
         }
     }
     out
@@ -696,5 +679,18 @@ impl EachClassed {
             .map(|r| r.as_ref().map(Classed::met).map_err(Clone::clone))
             .collect();
         (sets, self.causes.clone())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    /// A name ends after its one `'` (D3 of REPORT-dryA3): the scan this replaced stopped
+    /// before it, so a repair could name `x` where the program wrote `x'`.
+    #[test]
+    fn names_in_keeps_a_prime_and_skips_calls_words_and_numbers() {
+        assert_eq!(
+            super::names_in("x' + f(x) - 2y >= x mod 3 && _ < y'"),
+            ["x'", "x", "y'"]
+        );
     }
 }

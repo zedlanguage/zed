@@ -13,13 +13,15 @@ mod string;
 mod token;
 
 pub use name::name as name_end;
-pub use name::{ascii_name, is_name_continue, is_name_start, is_word_char};
+pub use name::{ascii_name, is_name_continue, is_name_start, is_word_char, word_end};
 pub use punct::{KEYWORDS, OPERATORS};
 use string::{Holes, Reading, Stop};
 pub use token::{
     Digits, Doc, Error, ErrorKind, Part, Span, Tok, Token, UNICODE_VERSION, is_bidi_control,
     is_blank, is_default_ignorable, is_format, may_not_show, text_direction_note, unread_literal,
 };
+/// The grammar's names, shared with the kernel and the readers of names in a program's text.
+pub use zed_kernel::text::ident;
 
 /// The tokens of `text`, a loaded source text.
 pub fn lex(text: &str) -> Result<Vec<Token>, Error> {
