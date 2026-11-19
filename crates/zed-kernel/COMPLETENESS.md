@@ -602,6 +602,14 @@ In the short build, three tests of `l01_23_subtyping` fail. All three are in the
   is decided on both routes in the short build (2, 0, 0), where the normal build refuses once
   (1, 0, 1). Every verdict was checked against the oracle and agrees.
 
+Closed at zed-impl 809acbd54: all three now pass in both builds (all 22 `l01_23` modules run in
+each). `listing` compares the tuples as sets; the `oracle` test asserts the verdicts only (the
+refusal counts stay in its table as the full build's record); the 16-bit assertion of
+`random_3_cnf_seed_2` asserts that no verdict is `Empty`, that a refusal is at shared cells, and
+that an `Inhabited` verdict rests on a value of the difference, found with the new
+`Type::witness` and checked with `Type::contains`. Control run: `Type::witness` returning `None`
+fails that test in the short build, so its `Inhabited` arm is reached there.
+
 `types/bdd.rs`:
 
 - Closed: `Expr::link` with a complement that is an expression not holding `self`. It is reached
@@ -613,11 +621,16 @@ In the short build, three tests of `l01_23_subtyping` fail. All three are in the
   in the normal build, and the seventh round's count 0 here was also wrong. Control run:
   returning the `Not` itself instead of its operand makes the same 10 tests fail, among them
   `one_pass::random_parts_of_one_choice_per_component_are_decided_as_enumeration_decides_them`.
-- `Connect::negate`'s `Source::Form` arm: reached 5 times in the short build and 0 times in the
-  normal build. It stays open: it is reached only under collisions, and no control was run for
-  it.
-- Still open, count 0 in both builds: the `xor::xor_choice` return in `Connect::choose`, the
-  walk's `continue` at an expression already in `exprs` (about 2270), the `continue` in
+- Closed: `Connect::negate`'s `Source::Form` arm. The counts above are of the integration
+  groups only; the kernel's own unit tests reach it. Control run: the arm making `Not` of the
+  expression instead of the form kept fails `bdd::tests::a_complement_is_found_while_it_lives_and_rebuilt_alike_after`
+  and `bdd::tests::batch_and_single_file_agree_on_a_complement_whose_holder_was_freed`.
+- Closed: the `xor::xor_choice` return in `Connect::choose`, by the new unit test
+  `bdd::tests::choices_whose_branches_join_to_opposite_exclusive_ors_are_one` (two choices on one
+  condition joined branch by branch; `c&x | !c&!x` built directly is found before `choose`).
+  The return is a shortcut: with it skipped, `Part::union_as_kept` reaches the same node, so the
+  test passes (measured). Control run: the arm returning `x` fails the test.
+- Still open, count 0 in both builds: the walk's `continue` at an expression already in `exprs` (about 2270), the `continue` in
   `Cell::atoms` at a cell whose atoms are already made (about 3847), and the literal set false
   that empties the last block (about 4063). No input was built for them.
 

@@ -674,6 +674,27 @@ fn exclusive_ors_built_in_any_order_are_one_node() {
     assert_eq!(fixed.id(), fold(&[0, 1, 3, 4, 5], xor_by_or).not().id());
 }
 
+/// Two choices on one condition `c`, `c?x:(!x&e)` and `c?x:(!x&!e)`, neither an exclusive or,
+/// join branch by branch (`zipped`) to `c?x:!x`, which `choose` takes to the exclusive or
+/// `!(c ^ x)` in its one form (`xor::xor_choice`) before making a node of it. Built directly,
+/// `c&x | !c&!x` is found as an exclusive or before `choose`, so this is the way there
+/// (TEST-kernel-unreached-paths-4).
+#[test]
+fn choices_whose_branches_join_to_opposite_exclusive_ors_are_one() {
+    let lits: Vec<Part<Row>> = (0..4).map(|i| Part::literal(atom(i))).collect();
+    let and = |p: &Part<Row>, q: &Part<Row>| p.zip(q, Op::And);
+    let or = |p: &Part<Row>, q: &Part<Row>| p.zip(q, Op::Or);
+    let pick = |c: &Part<Row>, x: &Part<Row>, y: &Part<Row>| or(&and(c, x), &and(&c.not(), y));
+    let (c, e) = (&lits[0], &lits[3]);
+    let x = xor_by_or(&lits[1], &lits[2]);
+    let left = pick(c, &x, &and(&x.not(), e));
+    let right = pick(c, &x, &and(&x.not(), &e.not()));
+    assert!(left.xor_tag().is_none() && right.xor_tag().is_none());
+    let joined = or(&left, &right);
+    let all = xor_by_or(c, &x);
+    assert_eq!(joined.id(), all.not().id());
+}
+
 /// An exclusive or built from two others holds its complement, so taking the complement next
 /// costs a lookup, not a frame of `Connect` and a node made again. `xor_of` made the exclusive or
 /// with the other constant and returned its complement, dropping the node that held that

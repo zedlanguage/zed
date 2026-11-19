@@ -1428,6 +1428,10 @@ impl<'m> Connect<'m> {
         if x == y {
             return x.clone();
         }
+        // A shortcut: without it the meets below are made and `Part::union_as_kept` reaches the
+        // same exclusive or (measured on the test below with this return skipped). Reached
+        // from `zipped`'s two choices on one condition: `c&x | !c&!x` built directly is found
+        // before `choose`. Test: `bdd::tests::choices_whose_branches_join_to_opposite_exclusive_ors_are_one`.
         if let Some(z) = xor::xor_choice(c, x, y) {
             return z;
         }
