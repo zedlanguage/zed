@@ -2932,16 +2932,18 @@ fn connecting_keeps_the_value_of_the_unfolded_expression() {
     assert!(folded > 1000, "{folded} folded");
 }
 
-/// The sorted set of the literals `x_k`, `k < m`, each with value `true`.
-fn literals(m: u64) -> Arc<set::Set<Row>> {
-    let mut keys: Vec<_> = (0..m).map(|k| (atom(k), true)).collect();
+/// The set of the literals `x_{base + k}`, `k < m`, each with value `true`.
+fn literals(base: u64, m: u64) -> Arc<set::Set<Row>> {
+    let mut keys: Vec<_> = (0..m).map(|k| (atom(base + k), true)).collect();
     keys.sort();
     set::from_sorted(keys).expect("non-empty")
 }
 
 #[test]
 fn the_rest_of_two_sequences_orders_the_shorter_first() {
-    let (long, short) = (literals(3), literals(2));
+    // On disjoint atoms, so that no subtree of one is a node of the other: the table keeps one
+    // node for each set, and a shared subtree is passed over whole, reading no key.
+    let (long, short) = (literals(0, 3), literals(10, 2));
     let ends = |a: &set::Set<Row>, b: &set::Set<Row>| {
         let mut rest = Rest::new(a, b);
         let mut keys = 0;
@@ -2978,4 +2980,81 @@ fn expressions_are_equal_exactly_when_they_compare_equal() {
     };
     assert!(*e == *e.clone());
     assert!(*e != *f);
+}
+
+#[test]
+fn atoms_mapped_keep_the_value_at_the_mapped_assignment() {
+    // Every part of `random_expr` over `x_0 … x_5`, leaves and expressions among them, mapped
+    // by `x_i ↦ x_{(i + 2) mod 6}`, against the part read at the assignment moved back.
+    let atoms: Vec<Row> = (0..6).map(atom).collect();
+    let index = |a: &Row| atoms.iter().position(|b| b == a).expect("one of x_0 … x_5");
+    let map = |a: &Row| atoms[(index(a) + 2) % 6].clone();
+    let mut seed = 7;
+    let mut pool = Vec::new();
+    let mut parts = vec![Part::leaf(true), Part::leaf(false)];
+    parts.extend((0..300).map(|_| random_expr(&mut seed, 4, &mut pool)));
+    for p in &parts {
+        let q = p.map_atoms(&map);
+        for bits in 0u32..64 {
+            let at = |a: &Row| bits & (1 << index(a)) != 0;
+            let moved = |a: &Row| at(&map(a));
+            assert_eq!(q.eval(&at), p.eval(&moved), "bits {bits:06b}");
+        }
+    }
+}
+
+#[test]
+fn a_clause_reads_a_shared_operand_once() {
+    let (l0, l1, l2) = (
+        Part::literal(atom(0)),
+        Part::literal(atom(1)),
+        Part::literal(atom(2)),
+    );
+    assert_eq!(Part::<Row>::leaf(false).clause(), None);
+    let e = Part::not_expr(l1);
+    let p = Part::connect(Op::And, e.clone(), Part::connect(Op::And, e, l2));
+    assert_eq!(p.clause(), Some((vec![atom(2)], vec![atom(1)])));
+    let q = Part::connect(Op::And, Part::not_expr(l0), Part::literal(atom(3)));
+    assert_eq!(q.clause(), Some((vec![atom(3)], vec![atom(0)])));
+}
+
+#[test]
+fn disjoint_disjuncts_read_a_shared_union_once() {
+    let n = |i| Part::not_expr(Part::literal(atom(i)));
+    let e = Part::connect(Op::Or, n(0), n(1));
+    let p = Part::connect(
+        Op::Or,
+        e.clone(),
+        Part::connect(Op::Or, e, Part::literal(atom(2))),
+    );
+    assert_eq!(p.disjoint_disjuncts().map(|v| v.len()), Some(3));
+}
+
+#[test]
+fn the_complement_of_an_expression_flips_the_value_taken_toward() {
+    // `!(x_0 | !x_1)` is `!x_0 & x_1`: toward `true` only `x_1` is given.
+    let p = Part::not_expr(Part::connect(
+        Op::Or,
+        Part::literal(atom(0)),
+        Part::not_expr(Part::literal(atom(1))),
+    ));
+    let mut seen = DigestSet::default();
+    let mut given = Vec::new();
+    p.taken_toward(true, &mut seen, &mut |a| given.push(a.clone()));
+    assert_eq!(given, vec![atom(1)]);
+}
+
+#[test]
+fn the_exclusive_or_of_no_atoms_is_its_constant() {
+    for c in [false, true] {
+        assert_eq!(Part::<Row>::xor(None, c), Part::leaf(c));
+    }
+}
+
+#[test]
+fn a_union_of_no_literals_is_false_and_of_an_atom_both_ways_is_left_to_zip() {
+    assert_eq!(Part::<Row>::union_of_literals(&[]), Some(Part::leaf(false)));
+    let (x, nx) = (Part::literal(atom(0)), Part::literal(atom(0)).not());
+    let y = Part::literal(atom(1));
+    assert_eq!(Part::union_of_literals(&[&x, &y, &nx]), None);
 }

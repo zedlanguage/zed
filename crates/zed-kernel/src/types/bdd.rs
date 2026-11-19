@@ -820,6 +820,9 @@ impl<A: Literal> Form<A> {
     fn holds(&self, e: &Arc<Expr<A>>) -> bool {
         let is_e = |p: &Part<A>| matches!(p, Part::Expr(x) if Arc::ptr_eq(x, e));
         match self {
+            // Not reached: the one caller, `Connect::negate`, asks this of a form only in its
+            // branch for a choice, which it takes after its branch for a form `Not` declined, so
+            // the form is an `Or` or an `And`. Kept so that the answer holds for every form.
             Form::Not(p) => is_e(p),
             Form::Or(p, q) | Form::And(p, q) => is_e(p) || is_e(q),
         }
@@ -1425,7 +1428,8 @@ impl<'m> Connect<'m> {
         let (c, same) = self.condition(c).await;
         let (x, y) = if same { (x, y) } else { (y, x) };
         match (x.is_leaf(), y.is_leaf()) {
-            (Some(false), Some(false)) => return Part::leaf(false),
+            // Two `false` branches are equal, answered by the first test of this function.
+            (Some(false), Some(false)) => unreachable!("`x == y` was answered first"),
             (Some(true), Some(false)) => return c,
             (Some(false), Some(true)) => return self.not(&c).await,
             _ => {}
@@ -2552,7 +2556,8 @@ impl<A: Literal> Part<A> {
                             }
                         }
                         Form::Not(x) => refused.extend(x.union_rows()?),
-                        Form::Or(..) => return None,
+                        // `is_or` above holds of every form `Or` (and of a form not yet made).
+                        Form::Or(..) => unreachable!("an `Or` was declined by `is_or`"),
                     }
                 }
             }
@@ -2948,19 +2953,23 @@ mod xor {
                 // `n.not()`, it would hold `n` only weakly, and `n` would be made again once the
                 // caller drops it (cross-review round 3, Claude R3-C1).
                 let x = node(&s, constant);
-                if let (Part::Expr(e), Part::Expr(m)) = (&x, &n) {
-                    let _ = e.complement.set(n.clone());
-                    m.set_back(e);
-                }
+                // `node` makes an expression, and `found` finds only one.
+                let (Part::Expr(e), Part::Expr(m)) = (&x, &n) else {
+                    unreachable!("exclusive ors of two or more atoms are expressions")
+                };
+                let _ = e.complement.set(n.clone());
+                m.set_back(e);
                 x
             } else {
                 // The node asked for holds its complement, so neither is made only to be freed.
                 let x = node(&s, constant);
                 let n = node(&s, !constant);
-                if let (Part::Expr(e), Part::Expr(m)) = (&x, &n) {
-                    let _ = e.complement.set(n.clone());
-                    m.set_back(e);
-                }
+                // `node` makes an expression.
+                let (Part::Expr(e), Part::Expr(m)) = (&x, &n) else {
+                    unreachable!("exclusive ors of two or more atoms are expressions")
+                };
+                let _ = e.complement.set(n.clone());
+                m.set_back(e);
                 x
             }
         }
@@ -2977,10 +2986,12 @@ mod xor {
             digest(set::name_digest(Some(s))),
             (s.clone(), constant),
         );
-        if let Part::Expr(e) = &x {
-            // An entry left by a node dropped on another thread is replaced.
-            A::table(|t| t.xors.insert((s.id, constant), Arc::downgrade(e)));
-        }
+        // `Part::expr_unmade` makes an expression (`Part::made`).
+        let Part::Expr(e) = &x else {
+            unreachable!("`Part::expr_unmade` makes an expression")
+        };
+        // An entry left by a node dropped on another thread is replaced.
+        A::table(|t| t.xors.insert((s.id, constant), Arc::downgrade(e)));
         x
     }
 
@@ -3035,13 +3046,19 @@ mod xor {
         if let (Part::Bdd(x), Part::Bdd(y)) = (a, b) {
             // Two literals on two atoms meet as the complement of the block that refuses both:
             // the list `Bdd::and_literal` makes, without its search of the list for the atom.
-            if let (Some((u, s)), Some((v, t))) = (x.as_literal(), y.as_literal())
-                && u != v
-            {
-                let block = set::insert(Some(&set::single((u.clone(), !s))), (v.clone(), !t));
-                return Part::Bdd(Bdd::assemble(vec![(false, Some(block))], &Bdd::Leaf(true)));
-            }
-            return a.zip(b, Op::And);
+            // Both operands are lists only as two literals on two atoms: the one caller,
+            // `halves`, passes the literal of the smallest atom of `s` (or its complement) and
+            // the exclusive or of the other atoms (or its complement), which is a list only
+            // when it has one atom (`Part::xor`), and then it is that atom's literal.
+            let (Some((u, s)), Some((v, t))) = (x.as_literal(), y.as_literal()) else {
+                unreachable!("two lists met here are literals")
+            };
+            assert!(
+                u != v,
+                "the halves of an exclusive or meet over disjoint atoms"
+            );
+            let block = set::insert(Some(&set::single((u.clone(), !s))), (v.clone(), !t));
+            return Part::Bdd(Bdd::assemble(vec![(false, Some(block))], &Bdd::Leaf(true)));
         }
         let (a, b) = if a.before(b) { (a, b) } else { (b, a) };
         Part::connect(Op::And, a.clone(), b.clone())
@@ -3068,7 +3085,8 @@ mod xor {
             Operands::Two(x, y) => Some([x.xor_tag()?, y.xor_tag()?]),
             Operands::Chain(d) => match d.chain(op)?[..] {
                 [(a, s), (b, t)] => Some([literal(a, s), literal(b, t)]),
-                _ => None,
+                // A list reaches here only past the first test above, as a chain of two.
+                _ => unreachable!("a chain of two literals lists two"),
             },
         }
     }

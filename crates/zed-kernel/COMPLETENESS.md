@@ -259,8 +259,26 @@ fixed to the passed-over value is unreachable by the same reading and is folded 
 (`lists_opposite` of leaves) are reached by `leaves_are_opposite_only_to_the_other_leaf`, which
 fails with the leaf arm made `p == q`. 2657-2658 (`Rest::next` when one sequence ends first) are
 reached by `the_rest_of_two_sequences_orders_the_shorter_first`, which fails with the two arms'
-orders swapped. 2738-2740 (`Expr`'s `eq`) are reached by
-`expressions_are_equal_exactly_when_they_compare_equal`.
+orders swapped (on disjoint atoms: on shared ones the table can make a subtree of one set a node
+of the other, which is passed over whole, and the count of keys read then follows the run).
+2738-2740 (`Expr`'s `eq`) are reached by `expressions_are_equal_exactly_when_they_compare_equal`.
+
+Direct tests, each failing under the control named: 846 and 849 (`union_of_literals` of an atom
+both ways, and of none; `0` made `true`); 1917 and 1937 (`map_atoms` of a leaf, and of a block
+with an odd count of literals; the leaf flipped, the odd literal complemented), by
+`atoms_mapped_keep_the_value_at_the_mapped_assignment`, 300 random parts at all 64
+assignments; 2269 (`disjoint_disjuncts` of a union met twice; the `seen` test dropped);
+2354 (`taken_toward` through `Not`; the value not flipped); 2463 and 2478 (`clause` of `false`,
+and of an operand met twice; `false` passed over, the `seen` test dropped, which lists `x_1`
+twice); 2879 (`Part::xor` of no atoms), by `the_exclusive_or_of_no_atoms_is_its_constant`.
+
+Proved at the site, now `unreachable!` or noted: 1372 (`choose` of two `false` branches, equal
+and so answered by its first test); 755 (`Form::holds` of `Not`: the one caller, `negate`, asks
+only in its branch for a choice, after its branch for `Not` declined; the arm is kept as a
+comment-proved general answer); 2499 (`clause` of an `Or`, declined before by `is_or`); 2898,
+2907 and 2927 (`Part::xor` and `node`: `node` and `found` give only expressions); 2976-2977
+(`xor::meet` of two lists: its one caller, `halves`, passes two lists only as literals of two
+atoms); 3004 (`pair` of a chain that lists other than two, after the test for a chain of two).
 
 The cut-edge test of the parent walk in `gfp` (`bes.rs`, `is_cut` in the walk) was missing: with
 the test removed from the walk, every `decide` test still passed, since a `lo` that is too small
