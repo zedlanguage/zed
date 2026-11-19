@@ -97,8 +97,10 @@ fn the_middle_of_a_chain_whose_lower_end_only_cases_give_is_projected_in_n_log_n
 
 mod row_sums {
 
+    use std::collections::BTreeSet;
+
     use zed_tests::scaling::{self};
-    use zedc::store::presburger::decide;
+    use zedc::store::presburger::{Atom, ROW_SUMS_OFF, decide, project_each};
 
     use crate::disj_groups::row_sums::*;
 
@@ -196,6 +198,42 @@ mod row_sums {
         }
     }
 
+    /// `overlap_rows` at k = 8 and 16 projected by the solver alone (ROW_SUMS_OFF), the path
+    /// past the join's limit (PRES-solver-projection-uncounted). No polynomial method exists
+    /// (one sum is SUBSET-SUM, proof at `project_each_with`), so this checks only that each
+    /// atom gets its exact set or a refusal, and prints the time and work: 2026-11-19, load
+    /// about 40, k = 16 took 13.7 to 22.3 s and refused each atom (over 60 s before the
+    /// hull search skipped the gap between the two values of each atom).
+    #[test]
+    fn overlap_rows_by_the_solver_alone() {
+        for k in [8, 16] {
+            let case = overlap_rows(k);
+            let (f, sets) = (case.formula(), case.brute());
+            let atoms: Vec<Atom> = (0..k).map(v).collect();
+            let mut got = None;
+            let t = std::time::Instant::now();
+            ROW_SUMS_OFF.with(|o| o.set(true));
+            let units = work(|| got = Some(project_each(&f, &atoms)));
+            ROW_SUMS_OFF.with(|o| o.set(false));
+            let (each, _) = got.expect("an answer").expect("a projection");
+            let answered = each.iter().filter(|s| s.is_ok()).count();
+            eprintln!(
+                "overlap_rows({k}) by the solver alone: {:?}, {units} units, {answered} of {k} atoms answered",
+                t.elapsed()
+            );
+            for (i, (s, want)) in each.iter().zip(&sets).enumerate() {
+                if let Ok(s) = s {
+                    let (lo, hi) = (
+                        want.first().map_or(0, |x| x - 50),
+                        want.last().map_or(0, |x| x + 50),
+                    );
+                    let seen: BTreeSet<i64> = (lo..=hi).filter(|x| s.contains(*x)).collect();
+                    assert_eq!(&seen, want, "y{i}: {s:?}");
+                }
+            }
+        }
+    }
+
     /// The 3,000 shared-sum formulas of seed 777 (`decide_sat.rs`): every answer is right and
     /// exact, and no answer is coarser than the solver's alone, with which the first 100 are
     /// compared. Many cases, so a benchmark (author P178);
@@ -215,8 +253,7 @@ mod switchover {
     use std::time::Instant;
 
     use zedc::store::presburger::{
-        Formula, JOIN_LIMIT, JOINED, ROW_SUMS_JOIN, ROW_SUMS_OFF, Refusal, decide, project_each,
-        satisfiable,
+        Formula, JOIN_LIMIT, JOINED, ROW_SUMS_JOIN, ROW_SUMS_OFF, decide, project_each, satisfiable,
     };
 
     use crate::disj_groups::row_sums::*;
@@ -294,7 +331,7 @@ mod switchover {
 
     /// Each question on `f` by the join alone, by the solver alone and by the default path,
     /// with the time of each and whether the default path's join answered (else the solver
-    /// answered `decide` and `satisfiable`, and `project_each` refused, `Refusal::Work`).
+    /// answered `decide` and `satisfiable`, and `project_each` with the exact cover).
     fn three_ways<T: PartialEq + std::fmt::Debug>(name: &str, ask: &str, f: impl Fn() -> T) -> T {
         let (join_ns, by_join, _) = timed(true, &f);
         let (solver_ns, by_solver, _) = timed(false, &f);
@@ -323,7 +360,9 @@ mod switchover {
     /// answers below the limit and stops past it), and the wide family, where the join is
     /// (and the solver's projection is coarser): the join's and the solver's answers to
     /// `decide` and `satisfiable` are equal, and the default path gives the answer of the side
-    /// it takes; its projection is the join's or, past the limit, `Refusal::Work`.
+    /// it takes; its projection is the join's exact sets on both sides, past the limit by the
+    /// solver with the exact cover (PRES-project-exact-solver; before, `Refusal::Work`), and
+    /// the time of each side's projection is printed (A96).
     #[test]
     fn each_side_of_the_switch_gives_the_same_answer_and_the_faster_side_is_measured() {
         for (name, case, k) in [
@@ -350,13 +389,15 @@ mod switchover {
             let by_default = ask();
             let default_ns = t.elapsed().as_nanos();
             let (units, joined) = JOINED.with(|j| j.take()).expect("a plan");
+            assert_eq!(by_default, exact, "{name} project, joined {joined}");
+            let (solver_ns, by_solver, _) = timed(false, ask);
             assert_eq!(
-                by_default,
-                if joined { exact } else { Err(Refusal::Work) },
-                "{name} project"
+                by_solver, exact,
+                "{name} project by the solver and the cover"
             );
             eprintln!(
-                "switchover: {name} project: default {default_ns} ns, joined {joined}, {units} units"
+                "switchover: {name} project: default {default_ns} ns, solver and cover \
+                 {solver_ns} ns, joined {joined}, {units} units"
             );
         }
     }

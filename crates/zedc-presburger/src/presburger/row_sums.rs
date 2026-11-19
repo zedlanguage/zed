@@ -71,9 +71,11 @@
 //! ([`Plan::of`]), the join runs first, alone, with the fixed allowance [`JOIN_LIMIT`]; its
 //! work is charged before each operation runs ([`Work`]), so a run either answers exactly or
 //! stops at the limit, at the same point on every run. Where it stops, `decide` and `point`
-//! ask the solver, whose answers there are exact; `project` refuses with [`Refusal::Work`],
-//! since the solver's projection is the union of the hulls of its disjuncts, a coarser set
-//! (author P197: refuse rather than answer coarser). A formula with no plan (a key past
+//! ask the solver, whose answers there are exact, and so does `project`, whose answer the
+//! cover of module `exact` makes exact (PRES-project-exact-solver); only with the cover off,
+//! a test control, does `project` refuse there with [`Refusal::Work`], since the solver's
+//! projection alone is the union of the hulls of its disjuncts, a coarser set (author P197:
+//! refuse rather than answer coarser). A formula with no plan (a key past
 //! [`LIMIT`]) goes to the solver as before. The one metric is the join's work in units of
 //! [`Work`], counted, not timed, so the switch is the same on every machine; only the time a
 //! unit takes differs, and [`JOIN_LIMIT`] is that limit measured on one machine
@@ -532,12 +534,15 @@ pub(super) fn point(
 }
 
 /// [`super::project_each`] of a formula of the class onto `syms`: the join's exact sets where
-/// it finishes within [`JOIN_LIMIT`], [`Refusal::Work`] where it stops there, and the solver's
-/// `old` where the formula has no plan.
+/// it finishes within [`JOIN_LIMIT`], and the solver's `old(false)` where the formula has no
+/// plan. Where the join stops at its limit, `old(true)` when `old_exact` holds (the solver's
+/// answer, its projection counted against `meter::EXACT_LIMIT`, made exact by the cover of
+/// module `exact`, which refuses only past its own limit), and [`Refusal::Work`] otherwise.
 pub(super) fn project(
     rows: Rows,
     syms: &[Atom],
-    old: impl FnOnce() -> Result<EachClassed, Refusal>,
+    old: impl FnOnce(bool) -> Result<EachClassed, Refusal>,
+    old_exact: bool,
 ) -> Result<EachClassed, Refusal> {
     if rows.empty {
         return Ok(EachClassed::plain((
@@ -580,12 +585,31 @@ pub(super) fn project(
         Ok(sets) => Ok(each_of(sets)),
         Err(Stop::NoPlan) => match shape.and_then(|s| plane::project(&s, &rows, &want)) {
             Some(sets) => Ok(each_of(sets)),
-            None => old(),
+            None => old(false),
         },
-        // Complexity tradeoff: the solver's projection here is the union of the hulls of its
-        // disjuncts, coarser than the exact set (FAIL-projection-not-exact: `[1, 5]` where the
-        // set is {1, 3, 5}); a refusal keeps the written conditions, which is sound, where a
-        // coarser set would be a wrong answer (author P197).
+        // Past the join's limit the solver answers, made exact by the cover (PRES-cover-wire),
+        // which refuses with `Refusal::Questions` only past `meter::EXACT_LIMIT`, the 250 ms of
+        // QUESTIONS A99 (PRES-project-exact-solver). The solver's projection the cover starts
+        // from is counted here too (`old(true)`): it asks a whole decision question per end of
+        // each symbol's hull (`Hull::tighten`), and on overlapping sums each question is a
+        // subset-sum problem, NP-complete, so with no count it ran 14 to 60 s on
+        // `overlap_rows(16)` (PRES-solver-projection-uncounted); counted, it is refused with
+        // `Refusal::Questions` once past `meter::EXACT_LIMIT`, as the cover is. Without the cover (`old_exact` false: the
+        // test controls `project_each_solver` and `meter::EXACT_OFF`) the solver's projection is
+        // the union of the hulls of its disjuncts, coarser than the exact set
+        // (FAIL-projection-not-exact: `[1, 5]` where the set is {1, 3, 5}), so that path refuses,
+        // which keeps the written conditions, rather than answer coarser (author P197).
+        // Complexity tradeoff: a question past the join's limit costs the join's work up to
+        // `JOIN_LIMIT`, then the solver's projection, up to `meter::EXACT_LIMIT`, and the
+        // cover's, up to `meter::EXACT_LIMIT` for each symbol, against the join's
+        // alone before; given up: the refusal's constant cost once the join stops. Why: the
+        // refusal was a wrong answer's stand-in, not a limit of the program (author P197).
+        // Trigger: a formula of the class whose join stops at its limit. Test:
+        // `l01_38_omega_test::disj_groups::each_family_is_answered_alike_on_both_sides_of_the_join_limit`,
+        // benchmark
+        // `l01_38_omega_test::bench::disj_groups::switchover::each_side_of_the_switch_gives_the_same_answer_and_the_faster_side_is_measured`;
+        // COMPLEXITY.md row PRES-project-exact-solver.
+        Err(Stop::Limit) if old_exact => after_stop(|| old(true)),
         Err(Stop::Limit) => Err(Refusal::Work),
     }
 }
@@ -642,8 +666,9 @@ fn after_stop<T>(old: impl FnOnce() -> Result<T, Refusal>) -> Result<T, Refusal>
 }
 
 /// The join's work limit, in units of its work (`Work`): at most 214 ms on the machine below,
-/// within the 250 ms A99 allows a predicted computation (poly.rs `LIMIT`). Past it, `decide` and
-/// `point` ask the solver and `project` refuses ([`Refusal::Work`]).
+/// within the 250 ms A99 allows a predicted computation (poly.rs `LIMIT`). Past it, `decide`,
+/// `point` and `project` ask the solver, `project` with the exact cover, which has its own
+/// limit (`meter::EXACT_LIMIT`); with the cover off `project` refuses ([`Refusal::Work`]).
 // Measured on a Ryzen 9 5950X (x86_64, Linux, the test build at -j 4 with other work running,
 // load 30-60), 2026-11-14, by `bench::disj_groups::switchover`: the time per unit, on cases
 // of at least 10^6 units (best of three), is 4.27 ns (`overlap_rows` k = 1,024, 3.40M units),
@@ -4246,7 +4271,7 @@ mod tests {
         let syms = rows.atoms.clone();
         JOINED.with(|j| j.set(None));
         ROW_SUMS_JOIN.with(|o| o.set(true));
-        let got = project(rows, &syms, || Err(Refusal::Work));
+        let got = project(rows, &syms, |_| Err(Refusal::Work), false);
         ROW_SUMS_JOIN.with(|o| o.set(false));
         let (units, answered) = JOINED.with(Cell::get)?;
         assert!(answered, "the join with no limit answers");
@@ -4296,7 +4321,7 @@ mod tests {
     pub(super) fn by_default(rows: Rows) -> (Option<Vec<IntervalSet>>, Option<Route>) {
         let syms = rows.atoms.clone();
         ROUTE.with(|r| r.set(None));
-        let got = project(rows, &syms, || Err(Refusal::Work)).ok();
+        let got = project(rows, &syms, |_| Err(Refusal::Work), false).ok();
         let sets = got.map(|g| g.met().0.into_iter().map(|s| s.expect("a set")).collect());
         (sets, ROUTE.with(Cell::get))
     }
@@ -4442,7 +4467,7 @@ mod tests {
         let rows = grid(1, 64, 40);
         let syms = rows.atoms.clone();
         ROUTE.with(|r| r.set(None));
-        let got = project(rows, &syms, || Err(Refusal::Work));
+        let got = project(rows, &syms, |_| Err(Refusal::Work), false);
         eprintln!("route {:?}", ROUTE.with(Cell::get));
         assert!(
             got.is_ok(),
@@ -4475,13 +4500,13 @@ mod tests {
         let (rows, alone) = (make(), make());
         ROUTE.with(|r| r.set(None));
         let t = std::time::Instant::now();
-        let got = project(rows, &syms, || Err(Refusal::Work));
+        let got = project(rows, &syms, |_| Err(Refusal::Work), false);
         let took = t.elapsed();
         let route = ROUTE.with(Cell::get);
         // The join alone, at the same limit, for the time printed beside.
         JOIN_LIMIT_SET.with(|o| o.set(Some(JOIN_LIMIT)));
         let t = std::time::Instant::now();
-        let joined = project(alone, &syms, || Err(Refusal::Work));
+        let joined = project(alone, &syms, |_| Err(Refusal::Work), false);
         JOIN_LIMIT_SET.with(|o| o.set(None));
         eprintln!(
             "polygons (allowance, spent, answered) {route:?}, refused in {took:?}; the join \

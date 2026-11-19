@@ -727,6 +727,7 @@ pub(super) mod row_sums {
     use std::sync::Arc;
 
     use zed_tests::scaling::Meter;
+    use zed_tests::step_helpers::l01_38_presburger::solver_alone;
     use zedc::store::presburger::{
         Atom, Con, Formula, JOIN_LIMIT_SET, JOINED, Lin, ROW_SUMS_JOIN, ROW_SUMS_OFF, Refusal,
         decide, project_each, satisfiable,
@@ -789,7 +790,7 @@ pub(super) mod row_sums {
         }
 
         /// Each atom's set of values over the points, by trying every point.
-        fn brute(&self) -> Vec<BTreeSet<i64>> {
+        pub(crate) fn brute(&self) -> Vec<BTreeSet<i64>> {
             let doms: Vec<Vec<i64>> = (self.ranges.iter())
                 .map(|r| r.iter().flat_map(|&(l, h)| l..=h).collect())
                 .collect();
@@ -923,6 +924,18 @@ pub(super) mod row_sums {
             let sets = alone.brute();
             assert_eq!((sets[4].len(), sets[5].len()), (2, 2), "row {i} alone");
         }
+    }
+
+    /// Two overlapping sums projected by the solver alone (ROW_SUMS_OFF): each atom's hull
+    /// search runs over a set of two points, `{0, w_i}`, and asks no question inside the gap
+    /// between them (PRES-solver-projection-uncounted); the answers are the exact sets. The
+    /// time at k = 16 is in `bench::disj_groups::overlap_rows_by_the_solver_alone`.
+    #[test]
+    fn two_overlapping_sums_by_the_solver_alone_are_answered_exactly() {
+        ROW_SUMS_OFF.with(|o| o.set(true));
+        overlap_rows(6).is_answered_exactly();
+        overlap_rows(8).is_answered_exactly();
+        ROW_SUMS_OFF.with(|o| o.set(false));
     }
 
     /// Two equations that share a group: the closing one is met by a lookup (the key join).
@@ -1261,7 +1274,9 @@ pub(super) mod row_sums {
     /// with the limit at the units the join takes, the join answers, as it does with no
     /// limit; one unit below, it stops, `decide` and `satisfiable` give the solver's answer,
     /// equal to the join's wherever the solver does not refuse (a model holding `f`), and
-    /// `project_each` refuses with `Refusal::Work`, since the solver's projection is coarser.
+    /// `project_each` gives the solver's answer made exact by the cover, the join's sets
+    /// (PRES-project-exact-solver); with the cover off ([`solver_alone`]) it refuses with
+    /// `Refusal::Work`, since the solver's projection alone is coarser.
     fn both_sides_of_the_limit(name: &str, f: &Formula, atoms: &[Atom]) -> SolverAnswered {
         let (u, d) = units_of(|| decide(f));
         assert_eq!(
@@ -1294,11 +1309,41 @@ pub(super) mod row_sums {
         // With no control set, a formula over two atoms besides defined ones is projected by
         // polygons (`row_sums::plane`) and not by the join: the sets are the join's.
         assert_eq!(ask(), each, "{name}: project by default");
-        assert_eq!(at_limit(u, ask), (each, true), "{name}: project at {u}");
         assert_eq!(
-            at_limit(u - 1, ask),
+            at_limit(u, ask),
+            (each.clone(), true),
+            "{name}: project at {u}"
+        );
+        // Below the limit the cover answers each symbol with the join's set, or refuses it:
+        // past its own work limit (`Refusal::Questions`, A99's 250 ms) or where the solver
+        // refuses the formula (`Refusal::Disjuncts`, as `decide` above may); never with
+        // another set. The solver's projection the cover starts from is counted against the
+        // same limit there, and refuses the whole call with `Refusal::Questions` past it
+        // (PRES-solver-projection-uncounted: uncounted, `overlap_rows(16)` took over 60 s).
+        let (by_cover, joined) = at_limit(u - 1, ask);
+        assert!(!joined, "{name}: project below {u}");
+        let want = each.clone().expect(name);
+        match by_cover {
+            Err(r) => assert_eq!(r, Refusal::Questions, "{name}: project below {u}"),
+            Ok(by_cover) => {
+                assert_eq!(by_cover.len(), want.len(), "{name}");
+                for (got, want) in by_cover.iter().zip(&want) {
+                    assert!(
+                        got == want || got.is_err(),
+                        "{name}: project below {u}, by the cover: {got:?}, the join's {want:?}"
+                    );
+                }
+                eprintln!(
+                    "{name}: project below {u}: {} of {} symbols answered",
+                    by_cover.iter().filter(|s| s.is_ok()).count(),
+                    by_cover.len()
+                );
+            }
+        }
+        assert_eq!(
+            solver_alone(|| at_limit(u - 1, ask)),
             (Err(Refusal::Work), false),
-            "{name}: project"
+            "{name}: project below {u}, with the cover off"
         );
         (below.is_ok(), point_below.is_ok())
     }
@@ -1316,7 +1361,9 @@ pub(super) mod row_sums {
         let mut answered = Vec::new();
         for (name, case, k) in cases {
             let atoms: Vec<Atom> = (0..k).map(v).collect();
+            let t = std::time::Instant::now();
             answered.push(both_sides_of_the_limit(name, &case.formula(), &atoms));
+            eprintln!("{name}: both sides in {:?}", t.elapsed());
         }
         // The solver refuses the unreachable sum (`Disjuncts`), so below the limit the answer
         // is a refusal: the switch to the solver is taken, and the join is the side that

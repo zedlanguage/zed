@@ -20088,7 +20088,8 @@ fn project_each_with(f: &Formula, syms: &[Atom], cover: bool) -> Result<EachClas
     // A box and one row, or one equation that its residue or its ends settle, is projected
     // exactly without the solver (modules `one_row` and `row_domains`); rows over atoms
     // confined to finite unions of ranges, by the exact join of their sums (module `row_sums`),
-    // refused where the join stops at its work limit.
+    // and where the join stops at its work limit by `solver`, the solver with the cover, which
+    // is exact (refused where the cover is off, since the solver's set alone is coarser).
     let solver_found = || {
         // The formula with each shared part taken out of the disjunctions that hold it in every
         // disjunct ([`factored`]) is asked first, and the formula as written where that leaves
@@ -20103,8 +20104,30 @@ fn project_each_with(f: &Formula, syms: &[Atom], cover: bool) -> Result<EachClas
         project_each_written(f, syms)
     };
     // The solver's answer holds every value with a point and may hold more; the cover of
-    // module `exact` makes it the exact set.
-    let solver = || {
+    // module `exact` makes it the exact set. With `counted` (asked by `row_sums::project` past
+    // the join's limit, where it refused before) the solver's own projection is counted
+    // against `meter::EXACT_LIMIT`, as the cover's work is, and refused with
+    // `Refusal::Questions` past it.
+    // Complexity tradeoff: the solver's projection tightens each end of each symbol's hull by
+    // whole decision questions (`Hull::tighten`), each of which is NP-complete on the
+    // overlapping sums that reach this path (one sum `y1 + ... + yn == t` with each `yi` in
+    // {0, wi} is SUBSET-SUM, and its projection onto `y1` is empty exactly when that instance
+    // has no solution), so no bound polynomial in the formula holds for it unless P = NP; the
+    // join of `row_sums`, pseudo-polynomial in the widths of the ranges, is the method for
+    // this class, and this path is reached only once that join has spent `JOIN_LIMIT`.
+    // Uncounted, `overlap_rows(16)` ran 14 to 60 s here (PRES-solver-projection-uncounted).
+    // Counted on every path instead, the 26 test pieces of that row's attempt 1 were refused
+    // that answer today, so only this path, which answered nothing before, is counted.
+    // Test: `l01_38_omega_test::disj_groups::row_sums::each_family_is_answered_alike_on_both_sides_of_the_join_limit`.
+    let solver_found_counted = || {
+        let mut work = meter::Work {
+            used: 0,
+            limit: meter::EXACT_LIMIT_SET.get().unwrap_or(meter::EXACT_LIMIT),
+            solver: SOLVER,
+        };
+        work.metered(solver_found).and_then(|r| r)
+    };
+    let solver = |counted: bool| {
         if !cover {
             return solver_found().map(EachClassed::plain);
         }
@@ -20123,7 +20146,12 @@ fn project_each_with(f: &Formula, syms: &[Atom], cover: bool) -> Result<EachClas
         // written `!(a + z1 == b + 2c - 4)` refused `z0` past the limit with one sign and
         // answered it with the other (row PRES-cover-order-rewrites; test
         // `l01_39_reduced_product::pendants::the_rewrites_of_seed_5401893596085442912_give_one_answer`).
-        solver_found().and_then(|e| exact::exact_each_checked(f, syms, e, SOLVER))
+        let found = if counted {
+            solver_found_counted()
+        } else {
+            solver_found()
+        };
+        found.and_then(|e| exact::exact_each_checked(f, syms, e, SOLVER))
     };
     if !syms.iter().any(|a| matches!(a, Atom::Product(..))) {
         if let Some(b) = one_row::OneRow::of(&conjuncts) {
@@ -20148,11 +20176,13 @@ fn project_each_with(f: &Formula, syms: &[Atom], cover: bool) -> Result<EachClas
                     Vec::new(),
                 )));
             }
-            Err(Some(rows)) => return row_sums::project(rows, syms, solver),
+            Err(Some(rows)) => {
+                return row_sums::project(rows, syms, solver, cover && !meter::EXACT_OFF.get());
+            }
             Err(None) => {}
         }
     }
-    solver()
+    solver(false)
 }
 
 /// A writing independent of the order of every conjunction and disjunction. Unlike
@@ -23320,6 +23350,26 @@ fn linked_conjuncts<'f>(
     out
 }
 
+/// The greatest integer of `set` at most `v`, `None` where there is none. O(log p) for `p`
+/// pieces ([`IntervalSet::piece_at_or_below`]).
+fn member_at_or_below(set: &IntervalSet, v: &Int) -> Option<Int> {
+    let (_, hi) = set.piece_at_or_below(&End::Fin(Num::from(v)))?;
+    match hi {
+        End::Fin(h) if Int::from(h) < *v => Some(Int::from(h)),
+        _ => Some(v.clone()),
+    }
+}
+
+/// The least integer of `set` at least `v`, `None` where there is none. O(log p) for `p`
+/// pieces ([`IntervalSet::piece_at_or_above`]).
+fn member_at_or_above(set: &IntervalSet, v: &Int) -> Option<Int> {
+    let (lo, _) = set.piece_at_or_above(&End::Fin(Num::from(v)))?;
+    match lo {
+        End::Fin(l) if Int::from(l) > *v => Some(Int::from(l)),
+        _ => Some(v.clone()),
+    }
+}
+
 /// A formula whose hulls [`tighten_each`] tightens, with the rows read to find its points and,
 /// for each symbol it tightens, the least and greatest value of the symbol over the points of
 /// the formula found so far.
@@ -23343,6 +23393,9 @@ struct Hull {
     /// before the first question is asked ([`Hull::seed_arms`]); empty once tried.
     arms: Vec<Rc<Parts>>,
     ask: Ask,
+    /// The answers of `ask` already given, by symbol, side and value, each with whether its
+    /// immunity was asked ([`Hull::asked_with`]).
+    answers: HashMap<(usize, bool, Int), ((Result<bool, Refusal>, bool), bool)>,
 }
 
 impl Hull {
@@ -23376,6 +23429,7 @@ impl Hull {
             has: false,
             arms,
             ask,
+            answers: HashMap::new(),
         }
     }
 
@@ -23508,12 +23562,24 @@ impl Hull {
         v: &Int,
         status: bool,
     ) -> (Result<bool, Refusal>, bool) {
+        // A question asked before gets its first answer: `ask` is a function of the formula
+        // (deterministic), and the answer was read into `has`, `cuts` and `seen` then. Only a
+        // refusal first asked without its immunity is asked again where the immunity is
+        // wanted. The bisection of [`Hull::tighten`] asks the question at one value again
+        // after the loop, and, with values snapped to `set`, at the end it began from.
+        let key = (i, below, v.clone());
+        if let Some((got, with_status)) = self.answers.get(&key)
+            && (*with_status || !status || got.0.is_ok())
+        {
+            return (got.0.clone(), got.1 && status);
+        }
         let con = self.side(i, below, v);
         let (r, immune) = (self.ask)(
             &Formula::and(vec![self.f.clone(), Formula::Con(con)]),
             &mut self.found,
             status,
         );
+        self.answers.insert(key, ((r.clone(), immune), status));
         match r {
             Ok(true) => self.has = true,
             Ok(false) => {
@@ -23679,12 +23745,24 @@ impl Hull {
                             }
                         }
                     };
+                    // Complexity tradeoff (PRES-solver-projection-uncounted): the plain
+                    // bisection asks at every midpoint, `log2 W` whole questions for a range
+                    // `W` wide, and in a gap of `set` (no member, so no point of `f`) each of
+                    // them is a refutation the solver may spend its whole meter on. Here each
+                    // midpoint is snapped to the greatest member of `set` at or below it
+                    // (O(log p) on `p` pieces) and a gap costs no question: `set` holds the
+                    // projection, so no point has the symbol in a gap, and "no point at or
+                    // below the member" is "no point at or below the midpoint". Still at most
+                    // `log2 W + 1` questions, each asked once ([`Hull::asked_with`]'s memo,
+                    // one hash lookup a question); on a set of two points (`overlap_rows` with
+                    // ROW_SUMS_OFF) 2 questions a symbol instead of about 22, and
+                    // `overlap_rows(12)` 45 s → 3.9 s, `overlap_rows(16)` over 60 s → 14-22 s.
                     while a < b {
                         let mid = &a + &(&b - &a).div_floor(&two);
-                        if self.none(i, true, &mid) {
-                            a = &mid + &one
-                        } else {
-                            b = mid
+                        match member_at_or_below(&set, &mid).filter(|m| *m >= a) {
+                            None => a = &mid + &one,
+                            Some(m) if self.none(i, true, &m) => a = &mid + &one,
+                            Some(m) => b = m,
                         }
                     }
                     if self.none(i, true, &a) {
@@ -23719,10 +23797,10 @@ impl Hull {
                     };
                     while a < b {
                         let mid = &b - &(&b - &a).div_floor(&two);
-                        if self.none(i, false, &mid) {
-                            b = &mid - &one
-                        } else {
-                            a = mid
+                        match member_at_or_above(&set, &mid).filter(|m| *m <= b) {
+                            None => b = &mid - &one,
+                            Some(m) if self.none(i, false, &m) => b = &mid - &one,
+                            Some(m) => a = m,
                         }
                     }
                     Some(a)
