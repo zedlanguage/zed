@@ -428,11 +428,11 @@ word finds the greatest key at or below `k`. `.where(k -> k <= v).last` is O(n) 
 compiler recognizes it, which no step states.
 
 Fix: L5 words `m.upTo(k)` and `m.from(k)`, each an ordered restriction in O(log n), so that
-`.first` and `.last` give neighbors. `BinaryHeap` (`topo`, `elab.rs:1533`; `IntervalSet::cap`,
-`interval.rs:266`; Dijkstra's search in `difference_hulls`, `presburger.rs`, and in `Scope::repair` and `Scope::bound_pass`, `product.rs`; the optimal merge order of `Poly::sum`, `zed-kernel/src/poly.rs`; reference 14's `Level::merge`, `zed/corpus/ref/src/p14.rs`) is then an ordered set
-`.first` and `.last` give neighbors. `BinaryHeap` (`topo`, `elab/topo.rs:10`; `IntervalSet::cap`,
-`interval.rs:266`; reference 14's `Level::merge`, `zed/corpus/ref/src/p14.rs`) is then an ordered set
-with `.first` and a `patch`.
+`.first` and `.last` give neighbors. `BinaryHeap` (`topo`, `zedc-resolve/src/resolve/topo.rs:117`;
+`IntervalSet::cap`, `interval.rs:1213`; Dijkstra's search in `difference_hulls`, `presburger.rs`,
+and in `Scope::repair` and `Scope::bound_pass`, `product.rs`; the optimal merge order of
+`Poly::sum`, `zed-kernel/src/poly.rs`; reference 14's `Level::merge`, `zed/corpus/ref/src/p14.rs`)
+is then an ordered set with `.first` and a `patch`.
 
 ### Gap 10. File import cycles (Rust must change)
 
@@ -3189,7 +3189,7 @@ The LOAD-chain-args entries for `Frame` and `Scoped::coordinates` no longer appl
 |---|---|---|---|
 | A divisor's transforms built once and kept in a struct (`Divisor`, `Level`, `By::Reciprocal(Box<Level>, Roots)`), each block of the dividend divided through them while a closure (`put`) writes the quotient's words into a buffer in place | `Divisor::new`, `Divisor::blocks`, `Divisor::div_rem`, `Divisor::rem` | Mutation (gap 11) | a record of the spectra, and a fold over the blocks whose state is the remainder so far and the quotient's blocks, joined once |
 | Residues and remainders in `Vec<u64>` written in place (`fold_words`, `sub_around`, `unfold`, `add_around`, the corrections of `Level::div_rem`) | `remainder`, `unfold`, `Level::div_rem`, `newton` | Mutation (gap 11) | arrays built by one fold each, the carries in its state |
-| Re-measure: two crossovers to num-bigint's division and the cost of the reciprocal, set from timings of the Rust code on 2026-11-09 (load 15 to 17), results identical | `DIV_LEAF` (64 words, below the measured crossing near 8192), `RECIP_LEAF`, `newton_cost`, `sparse_div_cost` | None | Measure each again on the Zed code by the procedure in COMPLEXITY.md section "Crossovers" (DIV-crossover-model); at the port num-bigint's division is replaced by Zed's own |
+| Re-measure: two crossovers to num-bigint's division and the cost of the reciprocal, set from timings of the Rust code on 2026-11-09 (load 15 to 17), results identical | `DIV_LEAF` (64 words), `DIV_COST`, `RECIP_LEAF`, `SPARSE_WORD` and `SPARSE_STEP` in `newton_cost` and `sparse_div_cost`, fitted by `crossover all` (CROSSOVER-bench) but for `SPARSE_STEP` | None | Measure each again on the Zed code by the procedure in COMPLEXITY.md section "Crossovers" (DIV-crossover-model); at the port num-bigint's division is replaced by Zed's own |
 
 ## Entries from LIT-bare (`zedc-check/src/check/mod.rs`, `check/walk.rs`)
 

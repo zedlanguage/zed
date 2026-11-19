@@ -18,7 +18,7 @@ All paths are on this machine. Nothing below has been deleted.
 | what | path |
 |---|---|
 | review branch (merge candidate) | /home/luke/Work/wt/refusal-front-xr, branch wt/refusal-front-xr |
-| accepted round-8 head (fixed ref) | branch wt/refusal-front-accept (6fc19f7a) |
+| accepted round-8 head (fixed ref) | 0e120081a on main (rebased from 6fc19f7a; the branch wt/refusal-front-accept was deleted 2026-11-19) |
 | the whole review record: briefs BRIEF1..11, META5..10, HISTORY.md (issue table X1..X47 and per-round notes), ERRORS_{CLAUDE,CODEX,GEMINI}.md, library/ with bib.md, archive/r1..r10 (each round's brief, reports, diffs, measurements), r11/ (round 11 reports, diffs, logs, sources) | /home/luke/Work/wt/rfx-scratch/review-record (copied from the session scratchpad rfx-xr, which lives under /tmp) |
 | orchestrator's measurements and scratch per round | /home/luke/Work/wt/rfx-scratch/orch (r9x, r10x, r11x; r11x/variants.txt is the three-way fields() table below) |
 | seats' large outputs | /home/luke/Work/wt/rfx-scratch/claude, /home/luke/Work/wt/rfx-scratch/codex, /home/luke/Work/wt/rfx-scratch/gemini; the raw refusal dumps (codex/dump-*, codex/r10/dump-*) were deleted on 2026-11-14 and can be rebuilt from their commits; the comparisons drawn from them stay in codex/r10/accepted-v-*.json and accepted-map.tsv |

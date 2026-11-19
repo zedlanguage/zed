@@ -66,6 +66,8 @@ fn each_operation_on_a_value_a_few_levels_deep() {
         let family = Family::of([(positive.clone(), 1)]);
         assert_eq!(family.get(&negative), Some(&Value::Int(1)));
         assert!(negative.surface_eq(&positive) && !nan.surface_eq(&nan));
+        // The language's order agrees with its `==`: `-0.0` and `0.0` are equal under both.
+        assert_eq!(negative.surface_cmp(&positive), Some(Ordering::Equal));
         assert_eq!(nan.surface_cmp(&nan), None);
         let other = int_list(depth, Value::float(1.0));
         assert_eq!(positive.surface_cmp(&other), Some(Ordering::Less));

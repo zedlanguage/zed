@@ -115,6 +115,8 @@ rows! {
     OverlappingArrows => "Cross-unit overlapping incomparable arrows",
     AmbiguousImport => "Ambiguous imported name",
     NameAboveDefinition => "Name used above its definition",
+    // No diagnostic uses this row yet: plan row TOP-statements-reject emits it.
+    TopLevelStatement => "Statement at a unit's top level",
     // No diagnostic uses this row yet: plan row L1.14a emits it.
     UnresolvedName => "Name that resolves to nothing",
     NeedInCallerScope => "Need met only by an arrow in the caller's scope",

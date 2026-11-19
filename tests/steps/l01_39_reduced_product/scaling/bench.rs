@@ -508,8 +508,9 @@ fn a_test_beside_a_wide_part_costs_its_own_part() {
     // 317M and 2.98G instructions (9.4 times), 64.4M and 667M bytes (10.4 times). Shared:
     // 306M and 2.69G instructions (8.8 times), 59.9M and 518M bytes (8.7 times). The control
     // passes the limit of 13.2 of 2026-11-10 too: each test costs about 1M bytes besides the copies, and a
-    // wider part takes too long to build (its projection costs the square of its names), so
-    // at sizes a test can afford this one bounds the order and does not tell the two apart.
+    // wider part took too long to build then (its projection cost the square of its names; since
+    // PERF-wide-sum-project it costs O(k log k), COMPLEXITY.md F154), so at the sizes this test
+    // was given it bounds the order and does not tell the two apart.
     let n = 256;
     let inputs = scaling::inputs(n, parts_beside_a_wide_part);
     let p = Premises::new();

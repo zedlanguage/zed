@@ -960,8 +960,8 @@ tools/check_changed_docs.sh "$out/doc-changed.log" || exit 1
 # most of a group's wall time was spent waiting for a slot. Waiting pieces queue on a lock of
 # $slot_dir/queue (fd 5; fd 8 is the run lock, which pieces inherit and must keep), so only the
 # first in the queue polls the slots and they are taken first come, first served; a killed waiter
-# frees the queue as a killed piece frees its slot. Six pieces polling without it used 2.9-3.1 s of
-# processor time in 5 s.
+# frees the queue as a killed piece frees its slot. Six pieces polling without it used 2.9-3.9 s of
+# processor time in 5 s, and 0.58-0.67 s with it (f9150f8a4).
 # BUILD-slots-measure (author P211, 2026-11-14) kept 12 for correctness pieces, after benchmarks
 # moved to --bench. Eight whole suites, each with as many jobs as slots (a run's own `jobs`, 6 by
 # default, caps the pieces it runs at once below the slot count) and ZED_TEST_SLOTS set; 2333

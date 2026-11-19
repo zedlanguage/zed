@@ -1,6 +1,8 @@
 //! The two-phase iteration against a flattened stack machine, against the concrete least
 //! fixpoint, and on the loops whose values the landmarks decide.
 
+use std::cell::Cell;
+
 use num_bigint::BigInt;
 use zed_kernel::Value;
 use zed_tests::instances::{RANDOM_INSTANCES, Rng};
@@ -128,7 +130,23 @@ fn both_phases_are_sound(eq: &System) -> bool {
     let mut cells = phase1(eq, &order);
     assert!(is_post_fixpoint(eq, &cells), "phase 1: {eq:?}");
     let before = cells.clone();
-    let narrowed = narrow(eq, &order, &mut cells) > 0;
+    // A bound on phase 2's reads, so that a phase 2 that does not end (the meet taken alone)
+    // fails here by assertion. Each finite end of a narrowing of cell `v` is an end of the cell
+    // before it, a landmark of `v`, or the bound that replaced an infinite end, at most once a
+    // side (`IntervalSet::narrow`), so every end lies in a set `E` of at most 2·pieces +
+    // landmarks + 2 values. A set whose ends lie in `E` is a union of the 2|E| + 1 points and
+    // gaps `E` cuts the line into, so a strictly falling chain of them has at most 2|E| + 2
+    // elements. Each round but the last narrows some cell, and each round reads every cell.
+    let marks = Scopes::new(eq, &order);
+    let rounds = 1 + (0..cells.len())
+        .map(|v| 2 * (2 * cells[v].pieces().count() + marks.of(v).ints().len() + 2) + 2)
+        .sum::<usize>();
+    let counted = Counted {
+        eq,
+        evals: Cell::new(0),
+        limit: cells.len() * rounds,
+    };
+    let narrowed = narrow(&counted, &order, &mut cells) > 0;
     assert!(is_post_fixpoint(eq, &cells), "phase 2: {eq:?}");
     for (v, values) in eq.concrete((-40, 40)).iter().enumerate() {
         assert!(cells[v].is_subset(&before[v]));
@@ -343,8 +361,52 @@ fn phase_two_ends_where_meets_alone_would_descend_forever() {
     assert_eq!(start[0].meet(&eq.eval(0, &start)), iv(Some(1), None));
     let mut cells = start.clone();
     let order = order(&eq).unwrap();
-    assert_eq!(narrow(&eq, &order, &mut cells), 0);
+    // Phase 2 reads the one projection once, in the round that changes nothing. A phase 2
+    // that took the meet alone would read it again in every round of [1..], [2..], ...; the
+    // count stops it at the second read with this message, not at the test's time limit
+    // (TEST-phase2-meet-mutant).
+    let counted = Counted {
+        eq: &eq,
+        evals: Cell::new(0),
+        limit: 1,
+    };
+    assert_eq!(narrow(&counted, &order, &mut cells), 0);
     assert_eq!(cells, start);
+}
+
+/// A system whose projections panic past `limit` reads, so that a phase that should end
+/// fails by assertion rather than running on.
+struct Counted<'a> {
+    eq: &'a System,
+    evals: Cell<usize>,
+    limit: usize,
+}
+
+impl Equations<IntervalSet> for Counted<'_> {
+    type Form = <System as Equations<IntervalSet>>::Form;
+    type Keypath = <System as Equations<IntervalSet>>::Keypath;
+    fn reads(&self) -> &[Vec<usize>] {
+        self.eq.reads()
+    }
+    fn key(&self, v: usize) -> VertexKey<'_, Self::Form, Self::Keypath> {
+        self.eq.key(v)
+    }
+    fn span(&self, v: usize) -> Span {
+        self.eq.span(v)
+    }
+    fn eval(&self, v: usize, cells: &[IntervalSet]) -> IntervalSet {
+        let n = self.evals.get() + 1;
+        assert!(
+            n <= self.limit,
+            "phase 2 read the projections {n} times, past the {} that its finite chains of narrowings allow: it does not end",
+            self.limit
+        );
+        self.evals.set(n);
+        self.eq.eval(v, cells)
+    }
+    fn landmarks(&self, v: usize) -> Landmarks {
+        self.eq.landmarks(v)
+    }
 }
 
 #[test]

@@ -32,6 +32,8 @@ zed-graph.workspace = true
 rustix.workspace = true
 zed-alloc-count.workspace = true
 zed-meter-settings.workspace = true
+# Read by tests/src/scaling.rs (`stacker::remaining_stack`), which src/lib.rs includes in the
+# unit tests by `#[path]`; no file under src/ names it.
 stacker.workspace = true
 
 [target.'cfg(target_os = "linux")'.dev-dependencies]
