@@ -3677,7 +3677,7 @@ The levels and conflict list that the planning script produced were wrong, and w
 | 0 | SPEC-build-modes-main-build | Done (sync-refresh3, 2026-11-17; 57f6beaae and ca356109e): the spec is right and needs no edit; the check was stale. 57f6beaae (SYNC-copies-refresh-2) added "main" to `NOT_MODES` in `crates/zed-tools/src/spec_checks.rs`, with the test `main_before_builds_is_not_a_kind_of_build` (tests/steps/l07_03_unit_log_off/modes.rs); zip-count's `sync` was likely a binary built before it. On origin/main after ca356109e, `sync /home/luke/Work/zed --check` at zed c94d2b0 reports only `syntax.peg` and `desugar.txt` (held for LOOP-break-stmt and OR-PAT), no build-modes finding; ca356109e brings zed/fences and zed/grammar/words.md to zed ad25f0c. Filed by zip-count (2026-11-17): `sync <spec> --check` at zed 5e53796 fails the build-modes check, "DESIGN.md names builds the bullet does not define: [\"5642: \\\"main build\\\"\"]" (`crate::spec_checks`, crates/zed-tools), from the wording of zed 5cf7f90 (SPEC-clif-shim-build). Fix: define the main build in the build-modes bullet or reword line 5642, then run `sync` so zed/grammar and zed/fences, which also lag the spec, are current | S | no | none | `crates/zed-tools/src/spec_checks.rs`, `zed/grammar/`, `zed/fences/` |
 | 26 | ZIP-keyspace-loops-recursion | Filed by zip-count (2026-11-17) from ZIP-count-facts, its parts not doable yet. (1) The loop rule of DESIGN sec:joins ("a generation variable keeps the keyspace of its `initial` value in every generation where each update gives a value with the keyspace of the step before"): loops are refused by name resolution, so `Ck::keyspace` has no case for a frame variable; add it, by induction over one update as `Ck::record_fn` does for recursion. (2) The recursive record: `Ck::record_fn` reads a body twice, the second time assuming the record (proof at `record_fn`), but recursion is refused before the checker ("defined in terms of itself"), so that code has no test. Tests: `initial acc = xs; acc' = acc.map(f);` then `acc.zip(xs)` accepted, `acc' = acc.where(p)` refused; a recursive `f(positional a, positional n: int) = if n == 0 { a } else { f(a.map(x -> x), n - 1) }` keeps `a`'s keys, one that recurses on `a.where(p)` does not | M | no | L6.3, L6.4 | `crates/zedc-check/src/check/walk/fp_ops.rs`, `tests/steps/l03_15a_fp_ops_run` |
 | 0 | SPEC-pat-list | Author decision open (owner: author answer): QUESTIONS A131 (from STUDY-pattern-forms, 2026-11-17): may a `match` take a list apart, `[first, ..rest] -> first`? Recommended A (8): fixed lengths and a rest at the end, on rank-keyed families; the check splits lengths into one class per written length and one for longer lists, O(L · n), O(n²) at worst, which needs the author's approval. Once answered, owner a spec agent: under A or B, `ListPat` in the PEG and meaning rows of sec:grammar, step L2.7b and step L5.1 tests (a scaling test of many lengths at n and 8n), grammar tools rerun, then a parser and checker row after L2.7 and L5.1; under C, a research row for an O(n log n) check first; under D, close this row. | S | no | none | `DESIGN.md` (zed) |
-| 0 | SPEC-set-type-written | Filed by cexport1 (SPEC-cexport-data-types, 2026-11-18). Zed has no written type for a set: a set's type is only inferred (`vocab` in the sec:ffi C-library example returns the domain of a map), so no parameter can be declared a set, and step L7.4g says the example "cannot write" a set parameter for that reason (plan row FFI-cexport). Owner a spec agent: give the written form of a set of `T` in sec:types and the PEG, with its meaning rows in sec:grammar, decided by the standing rules or asked in QUESTIONS with a recommendation. An easy way to get it wrong: `{1, 2, 3}` is already the literal-set type (the union of three singletons, DESIGN sec:types) and `{ l1: t1 }` a struct type, so a spelling `{T}` would read as a one-member literal-set type; the form must not collide with either. Then the sec:ffi example gains a set parameter, and a parser and checker row follows after L10.1. Test: as step L10.1 for the new form (a set parameter accepted and called with a set; a list or a map given to it rejected naming the set type; the printed type of a set value is the written form, so messages print user-writable types), and the grammar tools rerun. | S | no | none | `DESIGN.md` (zed), `zed/grammar/syntax.peg` |
+| 0 | SPEC-set-type-written | Done: zed 6d62b17 (setspec1, 2026-11-19; DESIGN sec:type_language "A set is a self-map, written `Set(T)`", the TypeApply and SetType meaning rows, defined words at L3, sec:ffi's export `known(words: Set(Utf8String), w: Utf8String)` and step L7.4g) and zed-impl f03f880f4 (parse cases, tests, row SET-type-check): a set of `T` is written `Set(T)`, the self-maps `T ->? T` whose value at each key is the key, scored 9 against `T -> T` with a facet 4, `T ->? T` 3, a new arrow 3, `{T}`, `{..T}`, `{\| T \|}` and a keyword 2; it parses as a TypeApply, so the PEG is unchanged; the checker's part is SET-type-check. Filed by cexport1 (SPEC-cexport-data-types, 2026-11-18). Zed has no written type for a set: a set's type is only inferred (`vocab` in the sec:ffi C-library example returns the domain of a map), so no parameter can be declared a set, and step L7.4g says the example "cannot write" a set parameter for that reason (plan row FFI-cexport). Owner a spec agent: give the written form of a set of `T` in sec:types and the PEG, with its meaning rows in sec:grammar, decided by the standing rules or asked in QUESTIONS with a recommendation. An easy way to get it wrong: `{1, 2, 3}` is already the literal-set type (the union of three singletons, DESIGN sec:types) and `{ l1: t1 }` a struct type, so a spelling `{T}` would read as a one-member literal-set type; the form must not collide with either. Then the sec:ffi example gains a set parameter, and a parser and checker row follows after L10.1. Test: as step L10.1 for the new form (a set parameter accepted and called with a set; a list or a map given to it rejected naming the set type; the printed type of a set value is the written form, so messages print user-writable types), and the grammar tools rerun. | S | no | none | `DESIGN.md` (zed), `zed/grammar/syntax.peg` |
 | 8 | SET-type-check | Filed by setspec1 (SPEC-set-type-written, 2026-11-19). DESIGN sec:type_language, "A set is a self-map, written `Set(T)`": `Set(T)` is the prelude type of the sets of members drawn from `T`, the self-maps `T ->? T` whose value at each present key is that key, covariant in `T`, at layer L3, shadowable; an exact set has `Set(D) & (D -> D)`, one with a guarantee `Set(U) & (L .. U -> U)`. It parses today as a `TypeApply` (grammar cases `Set(Utf8String)` and the two intersections; `{T}` and `{..T}` stay errors), but zedc rejects `known(words: Set(Utf8String), w: Utf8String) = w in words;` at L3 with "The type `Set` is not defined" and "an applied type ... does not compile it yet" (checked 2026-11-19 at zed-impl bea36af06), and it prints the type of `{"a", "b"}` as `Part1 -> Part1` with `type Part1 = "a" \| "b"`, a type that also holds maps that are not sets, against the rule that a printed type equals the value's type. Owner a code agent: `Set` in the resolver's prelude types at L3; a fact in the checker's map signature that each value is its key, set by a set display, `::domain`, `T::values` and a map display whose every value is its key; `Set(T)` accepting exactly those; the printer writing `Set(...)` and its intersections. Needs L2.5 for applied types; it does not need L10.1, since a parameter type compiles at L3 today and only `Set` and the applied form are missing. Test: a set parameter accepted and called with a set display, a `::domain` and `{1 -> 1}`; `["a", "b"]`, `{1 -> 2}` and a map rejected where `Set(Utf8String)` is expected, the message naming `Set(Utf8String)`; a `Set(int[0..<10])` passed where `Set(int)` is wanted; a program's own `Set` shadowing the prelude's; the printed type of `{"a", "b"}` is `Set("a" \| "b") & (("a" \| "b") -> "a" \| "b")` and parses back equal (step L1.29); use below L3 rejected naming the layer. Scaling: checking n and 8n set parameters, ratio under 9 as the goal and 10.5 the limit. | M | no | L2.5 | `crates/zedc-resolve/src/resolve.rs`, `crates/zedc-check/src/check/`, `crates/zed-kernel/src/types/print/`, `crates/zedc-types/src/ty.rs`, `tests/steps/l02_05_set_type/ (new)` |
 | 0 | SPEC-pat-string-prefix | Author decision open (owner: author answer): QUESTIONS A132 (from STUDY-pattern-forms, 2026-11-17): may a `match` take a literal prefix off a string, `("GET " ++ path) -> path`? Recommended A (7): no pattern; the standard library gains `stripPrefix(s, prefix)` giving `T \| #noPrefix`. Once answered, owner a spec agent: under A, a standard-library row after L2.11; under B, C or D, sec:grammar, step L2.7b (trie check of prefixes, linear) and a parser and checker row after L2.7; under E, close this row. | S | no | none | `DESIGN.md` (zed) |
 | 0 | SPEC-pat-record | Author decision open (owner: author answer): QUESTIONS A133 (from STUDY-pattern-forms, 2026-11-17): may a `match` take a record apart by its fields, `{x: 0, y:} -> y`? Recommended A (5): an open record pattern, fields left out allowed, as width subtyping reads a record type. Once answered, owner a spec agent: under A or B, `RecordPat` in sec:grammar, step L2.7b and a parser and checker row after L2.7; under C, close this row. | S | no | none | `DESIGN.md` (zed) |
@@ -3702,7 +3702,7 @@ The levels and conflict list that the planning script produced were wrong, and w
 
 ## File conflicts at the same level
 
-Each pair below is at one level, shares a file and is not yet done. No path of needs joins two items at one level, since each level is one more than the highest level among the item's needs. Under the rule of 2026-11-02 the two may run in parallel and the merge resolves the overlap; run them apart where possible. There are 4653 pairs. This section and the next are written by `cargo run -q -p zed-tools --bin conflicts` from the items table above (with `--check` it only compares them with it); edit the table and rerun it, not the lists. Two items share a file when a path of one equals a path of the other or lies inside a directory path of the other, one that ends in `/`. Paths are compared as written, less a trailing ` (new)`; files under `tests/` and the files every step touches are not compared. The two items of a row are in the order of their rows in the table, and the shared paths are the longer path of each match.
+Each pair below is at one level, shares a file and is not yet done. No path of needs joins two items at one level, since each level is one more than the highest level among the item's needs. Under the rule of 2026-11-02 the two may run in parallel and the merge resolves the overlap; run them apart where possible. There are 4619 pairs. This section and the next are written by `cargo run -q -p zed-tools --bin conflicts` from the items table above (with `--check` it only compares them with it); edit the table and rerun it, not the lists. Two items share a file when a path of one equals a path of the other or lies inside a directory path of the other, one that ends in `/`. Paths are compared as written, less a trailing ` (new)`; files under `tests/` and the files every step touches are not compared. The two items of a row are in the order of their rows in the table, and the shared paths are the longer path of each match.
 
 | Level | Items | Shared paths |
 |---|---|---|
@@ -3731,7 +3731,6 @@ Each pair below is at one level, shares a file and is not yet done. No path of n
 | 0 | SPEC-L3.9-tests, TEST-minmax-struct-menu-compiles | `DESIGN.md` |
 | 0 | SPEC-L3.9-tests, SPEC-if-no-else-stmt | `DESIGN.md` |
 | 0 | SPEC-L3.9-tests, SPEC-pat-list | `DESIGN.md` |
-| 0 | SPEC-L3.9-tests, SPEC-set-type-written | `DESIGN.md` |
 | 0 | SPEC-L3.9-tests, SPEC-pat-string-prefix | `DESIGN.md` |
 | 0 | SPEC-L3.9-tests, SPEC-pat-record | `DESIGN.md` |
 | 0 | SPEC-L3.9-tests, SPEC-pat-map-key | `DESIGN.md` |
@@ -3764,7 +3763,6 @@ Each pair below is at one level, shares a file and is not yet done. No path of n
 | 0 | SPEC-L3.21-ac, TEST-minmax-struct-menu-compiles | `DESIGN.md` |
 | 0 | SPEC-L3.21-ac, SPEC-if-no-else-stmt | `DESIGN.md` |
 | 0 | SPEC-L3.21-ac, SPEC-pat-list | `DESIGN.md` |
-| 0 | SPEC-L3.21-ac, SPEC-set-type-written | `DESIGN.md` |
 | 0 | SPEC-L3.21-ac, SPEC-pat-string-prefix | `DESIGN.md` |
 | 0 | SPEC-L3.21-ac, SPEC-pat-record | `DESIGN.md` |
 | 0 | SPEC-L3.21-ac, SPEC-pat-map-key | `DESIGN.md` |
@@ -3796,7 +3794,6 @@ Each pair below is at one level, shares a file and is not yet done. No path of n
 | 0 | WAVE-theory, TEST-minmax-struct-menu-compiles | `DESIGN.md` |
 | 0 | WAVE-theory, SPEC-if-no-else-stmt | `DESIGN.md` |
 | 0 | WAVE-theory, SPEC-pat-list | `DESIGN.md` |
-| 0 | WAVE-theory, SPEC-set-type-written | `DESIGN.md` |
 | 0 | WAVE-theory, SPEC-pat-string-prefix | `DESIGN.md` |
 | 0 | WAVE-theory, SPEC-pat-record | `DESIGN.md` |
 | 0 | WAVE-theory, SPEC-pat-map-key | `DESIGN.md` |
@@ -3856,7 +3853,6 @@ Each pair below is at one level, shares a file and is not yet done. No path of n
 | 0 | SPEC-ffi-library-table, TEST-minmax-struct-menu-compiles | `DESIGN.md` |
 | 0 | SPEC-ffi-library-table, SPEC-if-no-else-stmt | `DESIGN.md` |
 | 0 | SPEC-ffi-library-table, SPEC-pat-list | `DESIGN.md` |
-| 0 | SPEC-ffi-library-table, SPEC-set-type-written | `DESIGN.md` |
 | 0 | SPEC-ffi-library-table, SPEC-pat-string-prefix | `DESIGN.md` |
 | 0 | SPEC-ffi-library-table, SPEC-pat-record | `DESIGN.md` |
 | 0 | SPEC-ffi-library-table, SPEC-pat-map-key | `DESIGN.md` |
@@ -3886,7 +3882,6 @@ Each pair below is at one level, shares a file and is not yet done. No path of n
 | 0 | SPEC-ffi-isolate-limits, TEST-minmax-struct-menu-compiles | `DESIGN.md` |
 | 0 | SPEC-ffi-isolate-limits, SPEC-if-no-else-stmt | `DESIGN.md` |
 | 0 | SPEC-ffi-isolate-limits, SPEC-pat-list | `DESIGN.md` |
-| 0 | SPEC-ffi-isolate-limits, SPEC-set-type-written | `DESIGN.md` |
 | 0 | SPEC-ffi-isolate-limits, SPEC-pat-string-prefix | `DESIGN.md` |
 | 0 | SPEC-ffi-isolate-limits, SPEC-pat-record | `DESIGN.md` |
 | 0 | SPEC-ffi-isolate-limits, SPEC-pat-map-key | `DESIGN.md` |
@@ -3915,7 +3910,6 @@ Each pair below is at one level, shares a file and is not yet done. No path of n
 | 0 | SYM-factor-name, TEST-minmax-struct-menu-compiles | `DESIGN.md` |
 | 0 | SYM-factor-name, SPEC-if-no-else-stmt | `DESIGN.md` |
 | 0 | SYM-factor-name, SPEC-pat-list | `DESIGN.md` |
-| 0 | SYM-factor-name, SPEC-set-type-written | `DESIGN.md` |
 | 0 | SYM-factor-name, SPEC-pat-string-prefix | `DESIGN.md` |
 | 0 | SYM-factor-name, SPEC-pat-record | `DESIGN.md` |
 | 0 | SYM-factor-name, SPEC-pat-map-key | `DESIGN.md` |
@@ -4050,7 +4044,6 @@ Each pair below is at one level, shares a file and is not yet done. No path of n
 | 0 | SPEC-packed-align, TEST-minmax-struct-menu-compiles | `DESIGN.md` |
 | 0 | SPEC-packed-align, SPEC-if-no-else-stmt | `DESIGN.md` |
 | 0 | SPEC-packed-align, SPEC-pat-list | `DESIGN.md` |
-| 0 | SPEC-packed-align, SPEC-set-type-written | `DESIGN.md` |
 | 0 | SPEC-packed-align, SPEC-pat-string-prefix | `DESIGN.md` |
 | 0 | SPEC-packed-align, SPEC-pat-record | `DESIGN.md` |
 | 0 | SPEC-packed-align, SPEC-pat-map-key | `DESIGN.md` |
@@ -4185,7 +4178,6 @@ Each pair below is at one level, shares a file and is not yet done. No path of n
 | 0 | S4-hub-mixed, TEST-minmax-struct-menu-compiles | `DESIGN.md` |
 | 0 | S4-hub-mixed, SPEC-if-no-else-stmt | `DESIGN.md` |
 | 0 | S4-hub-mixed, SPEC-pat-list | `DESIGN.md` |
-| 0 | S4-hub-mixed, SPEC-set-type-written | `DESIGN.md` |
 | 0 | S4-hub-mixed, SPEC-pat-string-prefix | `DESIGN.md` |
 | 0 | S4-hub-mixed, SPEC-pat-record | `DESIGN.md` |
 | 0 | S4-hub-mixed, SPEC-pat-map-key | `DESIGN.md` |
@@ -4622,7 +4614,6 @@ Each pair below is at one level, shares a file and is not yet done. No path of n
 | 0 | SPEC-ffi-int-handles, TEST-minmax-struct-menu-compiles | `DESIGN.md` |
 | 0 | SPEC-ffi-int-handles, SPEC-if-no-else-stmt | `DESIGN.md` |
 | 0 | SPEC-ffi-int-handles, SPEC-pat-list | `DESIGN.md` |
-| 0 | SPEC-ffi-int-handles, SPEC-set-type-written | `DESIGN.md` |
 | 0 | SPEC-ffi-int-handles, SPEC-pat-string-prefix | `DESIGN.md` |
 | 0 | SPEC-ffi-int-handles, SPEC-pat-record | `DESIGN.md` |
 | 0 | SPEC-ffi-int-handles, SPEC-pat-map-key | `DESIGN.md` |
@@ -4650,7 +4641,6 @@ Each pair below is at one level, shares a file and is not yet done. No path of n
 | 0 | SPEC-child-oom-status, TEST-minmax-struct-menu-compiles | `DESIGN.md` |
 | 0 | SPEC-child-oom-status, SPEC-if-no-else-stmt | `DESIGN.md` |
 | 0 | SPEC-child-oom-status, SPEC-pat-list | `DESIGN.md` |
-| 0 | SPEC-child-oom-status, SPEC-set-type-written | `DESIGN.md` |
 | 0 | SPEC-child-oom-status, SPEC-pat-string-prefix | `DESIGN.md` |
 | 0 | SPEC-child-oom-status, SPEC-pat-record | `DESIGN.md` |
 | 0 | SPEC-child-oom-status, SPEC-pat-map-key | `DESIGN.md` |
@@ -4935,7 +4925,6 @@ Each pair below is at one level, shares a file and is not yet done. No path of n
 | 0 | SPEC-port-close-failure, TEST-minmax-struct-menu-compiles | `DESIGN.md` |
 | 0 | SPEC-port-close-failure, SPEC-if-no-else-stmt | `DESIGN.md` |
 | 0 | SPEC-port-close-failure, SPEC-pat-list | `DESIGN.md` |
-| 0 | SPEC-port-close-failure, SPEC-set-type-written | `DESIGN.md` |
 | 0 | SPEC-port-close-failure, SPEC-pat-string-prefix | `DESIGN.md` |
 | 0 | SPEC-port-close-failure, SPEC-pat-record | `DESIGN.md` |
 | 0 | SPEC-port-close-failure, SPEC-pat-map-key | `DESIGN.md` |
@@ -4958,7 +4947,6 @@ Each pair below is at one level, shares a file and is not yet done. No path of n
 | 0 | SPEC-terminated-arg, TEST-minmax-struct-menu-compiles | `DESIGN.md` |
 | 0 | SPEC-terminated-arg, SPEC-if-no-else-stmt | `DESIGN.md` |
 | 0 | SPEC-terminated-arg, SPEC-pat-list | `DESIGN.md` |
-| 0 | SPEC-terminated-arg, SPEC-set-type-written | `DESIGN.md` |
 | 0 | SPEC-terminated-arg, SPEC-pat-string-prefix | `DESIGN.md` |
 | 0 | SPEC-terminated-arg, SPEC-pat-record | `DESIGN.md` |
 | 0 | SPEC-terminated-arg, SPEC-pat-map-key | `DESIGN.md` |
@@ -4980,7 +4968,6 @@ Each pair below is at one level, shares a file and is not yet done. No path of n
 | 0 | SPEC-strict-thread-count, TEST-minmax-struct-menu-compiles | `DESIGN.md` |
 | 0 | SPEC-strict-thread-count, SPEC-if-no-else-stmt | `DESIGN.md` |
 | 0 | SPEC-strict-thread-count, SPEC-pat-list | `DESIGN.md` |
-| 0 | SPEC-strict-thread-count, SPEC-set-type-written | `DESIGN.md` |
 | 0 | SPEC-strict-thread-count, SPEC-pat-string-prefix | `DESIGN.md` |
 | 0 | SPEC-strict-thread-count, SPEC-pat-record | `DESIGN.md` |
 | 0 | SPEC-strict-thread-count, SPEC-pat-map-key | `DESIGN.md` |
@@ -5334,7 +5321,6 @@ Each pair below is at one level, shares a file and is not yet done. No path of n
 | 0 | SPEC-string-slice-text, TEST-minmax-struct-menu-compiles | `DESIGN.md` |
 | 0 | SPEC-string-slice-text, SPEC-if-no-else-stmt | `DESIGN.md` |
 | 0 | SPEC-string-slice-text, SPEC-pat-list | `DESIGN.md` |
-| 0 | SPEC-string-slice-text, SPEC-set-type-written | `DESIGN.md` |
 | 0 | SPEC-string-slice-text, SPEC-pat-string-prefix | `DESIGN.md` |
 | 0 | SPEC-string-slice-text, SPEC-pat-record | `DESIGN.md` |
 | 0 | SPEC-string-slice-text, SPEC-pat-map-key | `DESIGN.md` |
@@ -5478,7 +5464,6 @@ Each pair below is at one level, shares a file and is not yet done. No path of n
 | 0 | DOC-l116-value-cycle, TEST-minmax-struct-menu-compiles | `DESIGN.md` |
 | 0 | DOC-l116-value-cycle, SPEC-if-no-else-stmt | `DESIGN.md` |
 | 0 | DOC-l116-value-cycle, SPEC-pat-list | `DESIGN.md` |
-| 0 | DOC-l116-value-cycle, SPEC-set-type-written | `DESIGN.md` |
 | 0 | DOC-l116-value-cycle, SPEC-pat-string-prefix | `DESIGN.md` |
 | 0 | DOC-l116-value-cycle, SPEC-pat-record | `DESIGN.md` |
 | 0 | DOC-l116-value-cycle, SPEC-pat-map-key | `DESIGN.md` |
@@ -5614,7 +5599,6 @@ Each pair below is at one level, shares a file and is not yet done. No path of n
 | 0 | SPEC-pure-region-port-read, TEST-minmax-struct-menu-compiles | `DESIGN.md` |
 | 0 | SPEC-pure-region-port-read, SPEC-if-no-else-stmt | `DESIGN.md` |
 | 0 | SPEC-pure-region-port-read, SPEC-pat-list | `DESIGN.md` |
-| 0 | SPEC-pure-region-port-read, SPEC-set-type-written | `DESIGN.md` |
 | 0 | SPEC-pure-region-port-read, SPEC-pat-string-prefix | `DESIGN.md` |
 | 0 | SPEC-pure-region-port-read, SPEC-pat-record | `DESIGN.md` |
 | 0 | SPEC-pure-region-port-read, SPEC-pat-map-key | `DESIGN.md` |
@@ -5818,7 +5802,6 @@ Each pair below is at one level, shares a file and is not yet done. No path of n
 | 0 | XR-ffi-stateful-r6, TEST-minmax-struct-menu-compiles | `DESIGN.md` |
 | 0 | XR-ffi-stateful-r6, SPEC-if-no-else-stmt | `DESIGN.md` |
 | 0 | XR-ffi-stateful-r6, SPEC-pat-list | `DESIGN.md` |
-| 0 | XR-ffi-stateful-r6, SPEC-set-type-written | `DESIGN.md` |
 | 0 | XR-ffi-stateful-r6, SPEC-pat-string-prefix | `DESIGN.md` |
 | 0 | XR-ffi-stateful-r6, SPEC-pat-record | `DESIGN.md` |
 | 0 | XR-ffi-stateful-r6, SPEC-pat-map-key | `DESIGN.md` |
@@ -5835,7 +5818,6 @@ Each pair below is at one level, shares a file and is not yet done. No path of n
 | 0 | SPEC-ct-enforce-neon-findings, TEST-minmax-struct-menu-compiles | `DESIGN.md` |
 | 0 | SPEC-ct-enforce-neon-findings, SPEC-if-no-else-stmt | `DESIGN.md` |
 | 0 | SPEC-ct-enforce-neon-findings, SPEC-pat-list | `DESIGN.md` |
-| 0 | SPEC-ct-enforce-neon-findings, SPEC-set-type-written | `DESIGN.md` |
 | 0 | SPEC-ct-enforce-neon-findings, SPEC-pat-string-prefix | `DESIGN.md` |
 | 0 | SPEC-ct-enforce-neon-findings, SPEC-pat-record | `DESIGN.md` |
 | 0 | SPEC-ct-enforce-neon-findings, SPEC-pat-map-key | `DESIGN.md` |
@@ -5854,7 +5836,6 @@ Each pair below is at one level, shares a file and is not yet done. No path of n
 | 0 | SPEC-lambda-notfound-partial-map, TEST-minmax-struct-menu-compiles | `DESIGN.md` |
 | 0 | SPEC-lambda-notfound-partial-map, SPEC-if-no-else-stmt | `DESIGN.md` |
 | 0 | SPEC-lambda-notfound-partial-map, SPEC-pat-list | `DESIGN.md` |
-| 0 | SPEC-lambda-notfound-partial-map, SPEC-set-type-written | `DESIGN.md` |
 | 0 | SPEC-lambda-notfound-partial-map, SPEC-pat-string-prefix | `DESIGN.md` |
 | 0 | SPEC-lambda-notfound-partial-map, SPEC-pat-record | `DESIGN.md` |
 | 0 | SPEC-lambda-notfound-partial-map, SPEC-pat-map-key | `DESIGN.md` |
@@ -5890,7 +5871,6 @@ Each pair below is at one level, shares a file and is not yet done. No path of n
 | 0 | SPEC-headline-piece-in-collection, MSG-tuple-generic-headline | `crates/zedc-check/src/check/walk.rs` |
 | 0 | SPEC-headline-piece-in-collection, TEST-generic-operand-messages-reached | `crates/zedc-check/src/check/walk.rs` |
 | 0 | SPEC-headline-piece-in-collection, SPEC-pat-list | `DESIGN.md` |
-| 0 | SPEC-headline-piece-in-collection, SPEC-set-type-written | `DESIGN.md` |
 | 0 | SPEC-headline-piece-in-collection, SPEC-pat-string-prefix | `DESIGN.md` |
 | 0 | SPEC-headline-piece-in-collection, SPEC-pat-record | `DESIGN.md` |
 | 0 | SPEC-headline-piece-in-collection, SPEC-pat-map-key | `DESIGN.md` |
@@ -6074,7 +6054,6 @@ Each pair below is at one level, shares a file and is not yet done. No path of n
 | 0 | PUSH-target-rules, TEST-minmax-struct-menu-compiles | `DESIGN.md` |
 | 0 | PUSH-target-rules, SPEC-if-no-else-stmt | `DESIGN.md` |
 | 0 | PUSH-target-rules, SPEC-pat-list | `DESIGN.md` |
-| 0 | PUSH-target-rules, SPEC-set-type-written | `DESIGN.md` |
 | 0 | PUSH-target-rules, SPEC-pat-string-prefix | `DESIGN.md` |
 | 0 | PUSH-target-rules, SPEC-pat-record | `DESIGN.md` |
 | 0 | PUSH-target-rules, SPEC-pat-map-key | `DESIGN.md` |
@@ -6087,7 +6066,6 @@ Each pair below is at one level, shares a file and is not yet done. No path of n
 | 0 | GEN-index-vs-element, TEST-minmax-struct-menu-compiles | `DESIGN.md` |
 | 0 | GEN-index-vs-element, SPEC-if-no-else-stmt | `DESIGN.md` |
 | 0 | GEN-index-vs-element, SPEC-pat-list | `DESIGN.md` |
-| 0 | GEN-index-vs-element, SPEC-set-type-written | `DESIGN.md` |
 | 0 | GEN-index-vs-element, SPEC-pat-string-prefix | `DESIGN.md` |
 | 0 | GEN-index-vs-element, SPEC-pat-record | `DESIGN.md` |
 | 0 | GEN-index-vs-element, SPEC-pat-map-key | `DESIGN.md` |
@@ -6124,7 +6102,6 @@ Each pair below is at one level, shares a file and is not yet done. No path of n
 | 0 | LAYER-audit-open, TEST-minmax-struct-menu-compiles | `DESIGN.md` |
 | 0 | LAYER-audit-open, SPEC-if-no-else-stmt | `DESIGN.md` |
 | 0 | LAYER-audit-open, SPEC-pat-list | `DESIGN.md` |
-| 0 | LAYER-audit-open, SPEC-set-type-written | `DESIGN.md` |
 | 0 | LAYER-audit-open, SPEC-pat-string-prefix | `DESIGN.md` |
 | 0 | LAYER-audit-open, SPEC-pat-record | `DESIGN.md` |
 | 0 | LAYER-audit-open, SPEC-pat-map-key | `DESIGN.md` |
@@ -6182,7 +6159,6 @@ Each pair below is at one level, shares a file and is not yet done. No path of n
 | 0 | TEST-minmax-struct-menu-compiles, MSG-tuple-generic-headline | `crates/zedc-check/src/check/` |
 | 0 | TEST-minmax-struct-menu-compiles, TEST-generic-operand-messages-reached | `crates/zedc-check/src/check/walk/fp_ops.rs`, `crates/zedc-check/src/check/walk.rs` |
 | 0 | TEST-minmax-struct-menu-compiles, SPEC-pat-list | `DESIGN.md` |
-| 0 | TEST-minmax-struct-menu-compiles, SPEC-set-type-written | `DESIGN.md` |
 | 0 | TEST-minmax-struct-menu-compiles, SPEC-pat-string-prefix | `DESIGN.md` |
 | 0 | TEST-minmax-struct-menu-compiles, SPEC-pat-record | `DESIGN.md` |
 | 0 | TEST-minmax-struct-menu-compiles, SPEC-pat-map-key | `DESIGN.md` |
@@ -6193,7 +6169,6 @@ Each pair below is at one level, shares a file and is not yet done. No path of n
 | 0 | TEST-minmax-struct-menu-compiles, SPEC-implies-guard | `DESIGN.md` |
 | 0 | PORT-push-twice-static, RANGE-open-ending-warn | `crates/zedc-check` |
 | 0 | SPEC-if-no-else-stmt, SPEC-pat-list | `DESIGN.md` |
-| 0 | SPEC-if-no-else-stmt, SPEC-set-type-written | `DESIGN.md` |
 | 0 | SPEC-if-no-else-stmt, SPEC-pat-string-prefix | `DESIGN.md` |
 | 0 | SPEC-if-no-else-stmt, SPEC-pat-record | `DESIGN.md` |
 | 0 | SPEC-if-no-else-stmt, SPEC-pat-map-key | `DESIGN.md` |
@@ -6212,7 +6187,6 @@ Each pair below is at one level, shares a file and is not yet done. No path of n
 | 0 | MSG-list-value-printed-by-arrows, MSG-tuple-generic-headline | `crates/zedc-check/src/check/` |
 | 0 | MSG-list-value-printed-by-arrows, TEST-generic-operand-messages-reached | `crates/zedc-check/src/check/walk/fp_ops.rs`, `crates/zedc-check/src/check/walk.rs` |
 | 0 | MSG-tuple-generic-headline, TEST-generic-operand-messages-reached | `crates/zedc-check/src/check/walk/fp_ops.rs`, `crates/zedc-check/src/check/walk.rs` |
-| 0 | SPEC-pat-list, SPEC-set-type-written | `DESIGN.md` |
 | 0 | SPEC-pat-list, SPEC-pat-string-prefix | `DESIGN.md` |
 | 0 | SPEC-pat-list, SPEC-pat-record | `DESIGN.md` |
 | 0 | SPEC-pat-list, SPEC-pat-map-key | `DESIGN.md` |
@@ -6221,14 +6195,6 @@ Each pair below is at one level, shares a file and is not yet done. No path of n
 | 0 | SPEC-pat-list, SPEC-json-absent-field | `DESIGN.md` |
 | 0 | SPEC-pat-list, SPEC-json-value | `DESIGN.md` |
 | 0 | SPEC-pat-list, SPEC-implies-guard | `DESIGN.md` |
-| 0 | SPEC-set-type-written, SPEC-pat-string-prefix | `DESIGN.md` |
-| 0 | SPEC-set-type-written, SPEC-pat-record | `DESIGN.md` |
-| 0 | SPEC-set-type-written, SPEC-pat-map-key | `DESIGN.md` |
-| 0 | SPEC-set-type-written, SPEC-mono-fibers | `DESIGN.md` |
-| 0 | SPEC-set-type-written, SPEC-diff-key | `DESIGN.md` |
-| 0 | SPEC-set-type-written, SPEC-json-absent-field | `DESIGN.md` |
-| 0 | SPEC-set-type-written, SPEC-json-value | `DESIGN.md` |
-| 0 | SPEC-set-type-written, SPEC-implies-guard | `DESIGN.md` |
 | 0 | SPEC-pat-string-prefix, SPEC-pat-record | `DESIGN.md` |
 | 0 | SPEC-pat-string-prefix, SPEC-pat-map-key | `DESIGN.md` |
 | 0 | SPEC-pat-string-prefix, SPEC-mono-fibers | `DESIGN.md` |
@@ -8371,7 +8337,7 @@ Each line below names a path and the open items that touch it, by level, when th
 - `.cargo/config.toml`: level 0: BUILD-parallel-frontend; level 1: BUILD-new-layout
 - `Cargo.lock`: level 36: L3.14; level 82: L26.1; level 90: RUST-remove; level 92: RUST-remove-clif
 - `Cargo.toml`: level 0: IMBL-upstream-release; level 5: T14-lints; level 36: L3.14; level 52: L7.4; level 53: L28.1; level 82: L26.1; level 86: L27.1; level 90: RUST-remove; level 92: RUST-remove-clif
-- `DESIGN.md`: level 0: DOC-l116-value-cycle, GEN-index-vs-element, LAYER-audit-open, PUSH-target-rules, S4-hub-mixed, SPEC-L3.21-ac, SPEC-L3.9-tests, SPEC-child-oom-status, SPEC-ct-enforce-neon-findings, SPEC-diff-key, SPEC-ffi-int-handles, SPEC-ffi-isolate-limits, SPEC-ffi-library-table, SPEC-headline-piece-in-collection, SPEC-if-no-else-stmt, SPEC-implies-guard, SPEC-json-absent-field, SPEC-json-value, SPEC-lambda-notfound-partial-map, SPEC-mono-fibers, SPEC-packed-align, SPEC-pat-list, SPEC-pat-map-key, SPEC-pat-record, SPEC-pat-string-prefix, SPEC-port-close-failure, SPEC-pure-region-port-read, SPEC-set-type-written, SPEC-strict-thread-count, SPEC-string-slice-text, SPEC-terminated-arg, SYM-factor-name, TEST-minmax-struct-menu-compiles, WAVE-theory, XR-ffi-stateful-r6; level 1: DIAG-noalloc-row, LOOP-history-one-key, POW-domains, QUESTIONS-answered, SPEC-break-barrier-footprint, SPEC-writer-union-check, STUDY-linking; level 2: MOD-pre-width, PITFALL-date-library, PITFALL-else-absorbs-new-atom, PITFALL-leading-zero, PITFALL-overload-order, SPEC-concat-int-map, SPEC-crossover-time, SPEC-rank-patch-bounds, SPEC-seq-edits; level 6: SETTLE-rounds; level 7: L2.5; level 8: L2.4, L2.8c; level 9: STRUCT-key; level 10: L2.8b; level 15: CONG-transfer, L2.7; level 16: STATIC-assert; level 17: L1.40e, L2.6, RAT-domain, T10; level 19: L1.41, L2.10, SCOPE-warn; level 20: L2.11, L3.2; level 21: L2.14, L4.1; level 22: COLLATE-data; level 26: L3.7, LOWER-stack; level 27: L3.13, RT-exhaust-report; level 28: BIT-repr, HASH-repr, LEAN-shrink, WIDE-product; level 31: L3.11; level 32: PROP-per-arrow, TRACE-gen-laws; level 33: KEYABLE-reject; level 34: L3.23; level 35: LAYOUT-soa; level 36: UNION-spare; level 39: L3.24, L6.11a, WITNESS-widened; level 40: EQ-tabulate, INDUCT-eq-round, L5.5a, LEAN-descent-infer, SORTED-dense; level 41: LEAN-ematch-round; level 42: ARM-split, INDUCT-accum, INDUCT-loop-closed, INDUCT-mutual, LAW14-gen; level 44: ROD-data; level 45: INTERN-threaded, MEMO-cross, SLAB-pack; level 47: L6.17; level 49: S.1d; level 52: L7.5, L8.2a, PORT-why, TARGET-native; level 53: EXPORT-unique, FFI-headertest, L28.1, L7.3e, L7.4b, L7.5b, OOM-wave, RT-exhaust-wave; level 54: FFI-cexport, L10.2a, ROUND-words; level 56: EDGE-class, FFI-token-block-warn, FFI-token-unused-param, READ-arms, SELFINT-design; level 57: L20.1, L7.13a, MEMO-edit; level 58: EDIT-run, L20-grammar-params, L20.1a; level 59: L15.5, L16.3, L17.1, L19.1, L20.2, STAGE-reads; level 60: L15.6, L17.1b; level 61: L15.2c; level 62: REPACK-tile; level 63: L15.7b, L23.5c; level 64: LIST-exact-overlap, NOINST-report; level 66: INDUCT-range-fold; level 67: L22.7a; level 72: L24.11; level 73: S.1; level 74: NATIVE-cache, S.1h; level 76: S.2-forms; level 77: L21.1, S.3-forms; level 79: L24.5; level 80: L20.4, L24.6, S.6a; level 82: FLOAT-elem, INTEROP-study, L26.1, L28.4, L31.1, PKG-fetch, PORT-pointer-keys; level 83: L27.3, L33.1b; level 84: L29.1, L31.2, LIB-linkage; level 85: L31.3, S.8; level 86: HOST-embed, L27.1, L27.2, MCU-period; level 87: L27.2a, L27.2b, L27.2c; level 91: L25.1; level 92: DIAG-json, L25.3, LSP-incr, LSP-version; level 93: L25.4, L25.5, WASM-compiler; level 94: L25.6; level 95: L25.7, PICTURE-type; level 96: L25.9, L30.3a, L30.3b, L30.4; level 97: LIVE-UI-study; level 99: L32.1; level 100: L32.2; level 105: L33.1; level 106: L33.2, L33.3; level 108: L33.1a; level 110: L42.1
+- `DESIGN.md`: level 0: DOC-l116-value-cycle, GEN-index-vs-element, LAYER-audit-open, PUSH-target-rules, S4-hub-mixed, SPEC-L3.21-ac, SPEC-L3.9-tests, SPEC-child-oom-status, SPEC-ct-enforce-neon-findings, SPEC-diff-key, SPEC-ffi-int-handles, SPEC-ffi-isolate-limits, SPEC-ffi-library-table, SPEC-headline-piece-in-collection, SPEC-if-no-else-stmt, SPEC-implies-guard, SPEC-json-absent-field, SPEC-json-value, SPEC-lambda-notfound-partial-map, SPEC-mono-fibers, SPEC-packed-align, SPEC-pat-list, SPEC-pat-map-key, SPEC-pat-record, SPEC-pat-string-prefix, SPEC-port-close-failure, SPEC-pure-region-port-read, SPEC-strict-thread-count, SPEC-string-slice-text, SPEC-terminated-arg, SYM-factor-name, TEST-minmax-struct-menu-compiles, WAVE-theory, XR-ffi-stateful-r6; level 1: DIAG-noalloc-row, LOOP-history-one-key, POW-domains, QUESTIONS-answered, SPEC-break-barrier-footprint, SPEC-writer-union-check, STUDY-linking; level 2: MOD-pre-width, PITFALL-date-library, PITFALL-else-absorbs-new-atom, PITFALL-leading-zero, PITFALL-overload-order, SPEC-concat-int-map, SPEC-crossover-time, SPEC-rank-patch-bounds, SPEC-seq-edits; level 6: SETTLE-rounds; level 7: L2.5; level 8: L2.4, L2.8c; level 9: STRUCT-key; level 10: L2.8b; level 15: CONG-transfer, L2.7; level 16: STATIC-assert; level 17: L1.40e, L2.6, RAT-domain, T10; level 19: L1.41, L2.10, SCOPE-warn; level 20: L2.11, L3.2; level 21: L2.14, L4.1; level 22: COLLATE-data; level 26: L3.7, LOWER-stack; level 27: L3.13, RT-exhaust-report; level 28: BIT-repr, HASH-repr, LEAN-shrink, WIDE-product; level 31: L3.11; level 32: PROP-per-arrow, TRACE-gen-laws; level 33: KEYABLE-reject; level 34: L3.23; level 35: LAYOUT-soa; level 36: UNION-spare; level 39: L3.24, L6.11a, WITNESS-widened; level 40: EQ-tabulate, INDUCT-eq-round, L5.5a, LEAN-descent-infer, SORTED-dense; level 41: LEAN-ematch-round; level 42: ARM-split, INDUCT-accum, INDUCT-loop-closed, INDUCT-mutual, LAW14-gen; level 44: ROD-data; level 45: INTERN-threaded, MEMO-cross, SLAB-pack; level 47: L6.17; level 49: S.1d; level 52: L7.5, L8.2a, PORT-why, TARGET-native; level 53: EXPORT-unique, FFI-headertest, L28.1, L7.3e, L7.4b, L7.5b, OOM-wave, RT-exhaust-wave; level 54: FFI-cexport, L10.2a, ROUND-words; level 56: EDGE-class, FFI-token-block-warn, FFI-token-unused-param, READ-arms, SELFINT-design; level 57: L20.1, L7.13a, MEMO-edit; level 58: EDIT-run, L20-grammar-params, L20.1a; level 59: L15.5, L16.3, L17.1, L19.1, L20.2, STAGE-reads; level 60: L15.6, L17.1b; level 61: L15.2c; level 62: REPACK-tile; level 63: L15.7b, L23.5c; level 64: LIST-exact-overlap, NOINST-report; level 66: INDUCT-range-fold; level 67: L22.7a; level 72: L24.11; level 73: S.1; level 74: NATIVE-cache, S.1h; level 76: S.2-forms; level 77: L21.1, S.3-forms; level 79: L24.5; level 80: L20.4, L24.6, S.6a; level 82: FLOAT-elem, INTEROP-study, L26.1, L28.4, L31.1, PKG-fetch, PORT-pointer-keys; level 83: L27.3, L33.1b; level 84: L29.1, L31.2, LIB-linkage; level 85: L31.3, S.8; level 86: HOST-embed, L27.1, L27.2, MCU-period; level 87: L27.2a, L27.2b, L27.2c; level 91: L25.1; level 92: DIAG-json, L25.3, LSP-incr, LSP-version; level 93: L25.4, L25.5, WASM-compiler; level 94: L25.6; level 95: L25.7, PICTURE-type; level 96: L25.9, L30.3a, L30.3b, L30.4; level 97: LIVE-UI-study; level 99: L32.1; level 100: L32.2; level 105: L33.1; level 106: L33.2, L33.3; level 108: L33.1a; level 110: L42.1
 - `README.md`: level 17: T10; level 88: BOOT-branch; level 90: RUST-remove; level 92: RUST-remove-clif; level 96: L41.8
 - `ZED_PORT_GAPS.md`: level 45: INTERN-threaded, MEMO-cross; level 47: L6.17; level 77: PORT-memo-arenas
 - `bench/ports/`: level 91: L41.1; level 92: L41.2; level 93: L41.3, L41.4, L41.5, L41.6
@@ -8530,7 +8496,7 @@ Each line below names a path and the open items that touch it, by level, when th
 - `rust-bootstrap`: level 88: BOOT-branch; level 89: BOOT-guide
 - `tools/`: level 0: BENCH-limit-counts-setup, BUILD-parallel-frontend, BUILD-slots-random-start, DAGVIEW-first-relayout-x, DAGVIEW-held-digitless, DAGVIEW-relayout-stable, DAGVIEW-rows-under9, DAGVIEW-shape-edges, FLAKE-l01-26-random-recheck, TEST-scaling-cold-and-warm, TIME-pieces-under-cap-high-load, TOOLS-time-tests-fixes; level 42: L5.14a; level 74: S.1c; level 79: S.5; level 82: TERM-3; level 87: BOOT-release; level 89: BOOT-guide; level 96: L30.3b; level 106: L33.1d; level 119: POLISH-ultrareview, POLISH-xreview
 - `tools/fetch_test_deps.sh`: level 0: BUILD-parallel-frontend; level 82: TERM-3
-- `zed/`: level 0: DB-pool, SPEC-set-type-written, SPEC-string-slice-text, SYM-factor-name; level 1: GROUP-prelude, STUDY-linking; level 4: STR-types; level 7: L1.39g; level 8: FLOAT-interval; level 9: L1.26b; level 13: L1.40; level 16: STATIC-assert; level 19: L2.10; level 20: L2.11, L3.2; level 21: CORPUS-oracle, L4.1, STR-views; level 22: COLLATE-data, CORPUS-input-errors; level 25: L3.19; level 26: LOWER-stack; level 27: L3.8; level 28: L3.15a; level 29: INT-twos; level 32: SEMIRING-values; level 36: L5.1; level 37: L4.6, L5.2, L5.3; level 38: CSR-bounds, L4.7, L5.4, L6.11; level 39: L3.24, L5.4a, L5.4c, L6.11a, TEST-corpus-06-variant-domains; level 40: L5.9, L6.19; level 41: L5.7, NO-RUN-audit, PRELUDE-words; level 42: L5.7a, PAR-tree-ops; level 43: ASSOC-fold, BEND-contract, L5.12; level 44: COST-patch, L5.11, L6.16; level 45: L6.13g, L6.18; level 46: L5.14; level 47: L6.17; level 48: PRELUDE-rules-run; level 49: L28.1a, L7.1, S.1d, S.1e; level 50: L7.1b, S.1a; level 52: CODEC-kind, DYN-port, FILE-bytes, L8.2c; level 53: BYTES-wide, INT-128, L21.2, L28.1, L7.3l, L8.3, LAWS-stream, STR-normalize-layer; level 54: CLOCK-direct, CODEC-base, MLIR-noalias, ROUND-words; level 55: CODEC-stream, L11.1, PORT-process; level 56: CODEC-frame, CODEC-utf8, L11.1a, L11.2, L7.13, MAP-pure-zed; level 57: CODEC-lines, L12.1, STR-layer-views; level 58: FACT-unify, L11.3, L12.2, L13.1, L15.2, L18.1, L20.1b; level 59: FACT-prelude, L10.5, L12.2a, L12.3, L15.3, L15.4, L15.5, L16.1, L16.3, L17.1, L19.1, L20.2, L33.1e, L7.15; level 60: CODEC-grammar, COMPILE-data, L12.2b, L12.2i, L12.3a, L13.2, L15.6, L16.2, L22.2, TERM-1; level 61: CODEC-ffi, CODEC-laws, L12.2c, L14.1, L16.4, L18.2b, L18.2d, L22.8; level 62: L12.2d, L12.2h, L15.7, L18.2e, MATH-names, S.1b; level 63: L14.2, L15.8; level 64: L12.2j, L22.3, UNITS-info-prelude; level 65: L15.9, L22.3a, L22.5, UNITS-assumed-args; level 66: L18.2c, L22.6, L22.7, STUDY-codegen-checker-opts, UNITS-text-lengths; level 67: L12.4; level 72: L24.11; level 74: S.1c, S.1h, STD-num, STD-seq, STD-text; level 75: S.2, STD-blake3; level 76: S.2-forms, S.3, ZLEX-scan; level 77: L21.1, PORT-memo-arenas, S.3-forms, S.3a; level 78: S.4; level 79: L19.2, L24.2, L24.3, L24.5; level 80: L19.3, L20.3, L20.4, L24.10, L24.6, S.5b; level 81: CODEC-json, L24.7, LIB-schema, S.6; level 82: FLOAT-elem, L2.13, L20.3c, L22.9, PORT-pointer-keys, QUOT-classes, RT-port-libzed, SCHED-schema-types, TERM-3; level 83: AD-forward, JIT-zed, L19.4, L22.9a, L27.3, STD-full, STUDY-relax-backend, SYM-bool-formulas, TOOLS-port; level 84: AD-reverse, L20.5, L29.1, LIB-compress, LIB-crypto, LIB-linkage, LIB-numerics, LIB-serial, LIB-time, PE-claims, PE-proof, SYM-bool-bit-words; level 85: AD-hvp, L22.10, L24.8, L31.3, LIB-data, S.8; level 86: CHECK-fast-grow, L27.1, L27.2, L31.4; level 87: GPU-compiler-kernels, LIB-graphics; level 88: GPU-front, LIB-docs; level 90: LIB-linalg; level 91: JIT-native-zed, L25.1, LIB-audio, LIB-geometry, LIB-optimize; level 92: L25.2, L25.3, LIB-stats, LSP-incr, LSP-version; level 93: L25.4, L25.5, L30.1, LSP-evict, LSP-notebook, WASM-compiler; level 94: L25.6, L30.2, LIB-text, TERM-2; level 95: L25.7, L30.3, LIB-cli, LIB-ml, LIB-net, PICTURE-type; level 96: L30.3a, L30.4, LIB-dbclient; level 97: L30.5; level 98: L34.1, L34.10, L34.11, L34.9; level 100: L32.2; level 101: L32.3; level 104: L34.2, L34.4, L34.5, LIB-charts; level 105: L33.1, L34.3, L34.6, L34.7, L34.8, L35.1; level 106: L33.3; level 108: L33.1a, L33.3b; level 115: L37.1; level 117: L38.2; level 118: POLISH-errors; level 119: POLISH-ultrareview, POLISH-xreview
+- `zed/`: level 0: DB-pool, SPEC-string-slice-text, SYM-factor-name; level 1: GROUP-prelude, STUDY-linking; level 4: STR-types; level 7: L1.39g; level 8: FLOAT-interval; level 9: L1.26b; level 13: L1.40; level 16: STATIC-assert; level 19: L2.10; level 20: L2.11, L3.2; level 21: CORPUS-oracle, L4.1, STR-views; level 22: COLLATE-data, CORPUS-input-errors; level 25: L3.19; level 26: LOWER-stack; level 27: L3.8; level 28: L3.15a; level 29: INT-twos; level 32: SEMIRING-values; level 36: L5.1; level 37: L4.6, L5.2, L5.3; level 38: CSR-bounds, L4.7, L5.4, L6.11; level 39: L3.24, L5.4a, L5.4c, L6.11a, TEST-corpus-06-variant-domains; level 40: L5.9, L6.19; level 41: L5.7, NO-RUN-audit, PRELUDE-words; level 42: L5.7a, PAR-tree-ops; level 43: ASSOC-fold, BEND-contract, L5.12; level 44: COST-patch, L5.11, L6.16; level 45: L6.13g, L6.18; level 46: L5.14; level 47: L6.17; level 48: PRELUDE-rules-run; level 49: L28.1a, L7.1, S.1d, S.1e; level 50: L7.1b, S.1a; level 52: CODEC-kind, DYN-port, FILE-bytes, L8.2c; level 53: BYTES-wide, INT-128, L21.2, L28.1, L7.3l, L8.3, LAWS-stream, STR-normalize-layer; level 54: CLOCK-direct, CODEC-base, MLIR-noalias, ROUND-words; level 55: CODEC-stream, L11.1, PORT-process; level 56: CODEC-frame, CODEC-utf8, L11.1a, L11.2, L7.13, MAP-pure-zed; level 57: CODEC-lines, L12.1, STR-layer-views; level 58: FACT-unify, L11.3, L12.2, L13.1, L15.2, L18.1, L20.1b; level 59: FACT-prelude, L10.5, L12.2a, L12.3, L15.3, L15.4, L15.5, L16.1, L16.3, L17.1, L19.1, L20.2, L33.1e, L7.15; level 60: CODEC-grammar, COMPILE-data, L12.2b, L12.2i, L12.3a, L13.2, L15.6, L16.2, L22.2, TERM-1; level 61: CODEC-ffi, CODEC-laws, L12.2c, L14.1, L16.4, L18.2b, L18.2d, L22.8; level 62: L12.2d, L12.2h, L15.7, L18.2e, MATH-names, S.1b; level 63: L14.2, L15.8; level 64: L12.2j, L22.3, UNITS-info-prelude; level 65: L15.9, L22.3a, L22.5, UNITS-assumed-args; level 66: L18.2c, L22.6, L22.7, STUDY-codegen-checker-opts, UNITS-text-lengths; level 67: L12.4; level 72: L24.11; level 74: S.1c, S.1h, STD-num, STD-seq, STD-text; level 75: S.2, STD-blake3; level 76: S.2-forms, S.3, ZLEX-scan; level 77: L21.1, PORT-memo-arenas, S.3-forms, S.3a; level 78: S.4; level 79: L19.2, L24.2, L24.3, L24.5; level 80: L19.3, L20.3, L20.4, L24.10, L24.6, S.5b; level 81: CODEC-json, L24.7, LIB-schema, S.6; level 82: FLOAT-elem, L2.13, L20.3c, L22.9, PORT-pointer-keys, QUOT-classes, RT-port-libzed, SCHED-schema-types, TERM-3; level 83: AD-forward, JIT-zed, L19.4, L22.9a, L27.3, STD-full, STUDY-relax-backend, SYM-bool-formulas, TOOLS-port; level 84: AD-reverse, L20.5, L29.1, LIB-compress, LIB-crypto, LIB-linkage, LIB-numerics, LIB-serial, LIB-time, PE-claims, PE-proof, SYM-bool-bit-words; level 85: AD-hvp, L22.10, L24.8, L31.3, LIB-data, S.8; level 86: CHECK-fast-grow, L27.1, L27.2, L31.4; level 87: GPU-compiler-kernels, LIB-graphics; level 88: GPU-front, LIB-docs; level 90: LIB-linalg; level 91: JIT-native-zed, L25.1, LIB-audio, LIB-geometry, LIB-optimize; level 92: L25.2, L25.3, LIB-stats, LSP-incr, LSP-version; level 93: L25.4, L25.5, L30.1, LSP-evict, LSP-notebook, WASM-compiler; level 94: L25.6, L30.2, LIB-text, TERM-2; level 95: L25.7, L30.3, LIB-cli, LIB-ml, LIB-net, PICTURE-type; level 96: L30.3a, L30.4, LIB-dbclient; level 97: L30.5; level 98: L34.1, L34.10, L34.11, L34.9; level 100: L32.2; level 101: L32.3; level 104: L34.2, L34.4, L34.5, LIB-charts; level 105: L33.1, L34.3, L34.6, L34.7, L34.8, L35.1; level 106: L33.3; level 108: L33.1a, L33.3b; level 115: L37.1; level 117: L38.2; level 118: POLISH-errors; level 119: POLISH-ultrareview, POLISH-xreview
 - `zed/compiler/`: level 1: STUDY-linking; level 20: L2.11; level 26: LOWER-stack; level 49: L28.1a; level 53: L28.1; level 54: MLIR-noalias; level 66: STUDY-codegen-checker-opts; level 72: L24.11; level 74: S.1h; level 75: S.2; level 76: S.2-forms, S.3, ZLEX-scan; level 77: PORT-memo-arenas, S.3-forms; level 78: S.4; level 79: L19.2, L24.2, L24.3, L24.5; level 80: L19.3, L20.4, L24.10, L24.6, S.5b; level 81: L24.7, S.6; level 82: L2.13, RT-port-libzed; level 83: JIT-zed, L27.3, STUDY-relax-backend; level 84: L29.1, PE-claims, PE-proof; level 85: L24.8, S.8; level 86: CHECK-fast-grow; level 88: GPU-front; level 91: JIT-native-zed, L25.1; level 92: L25.2, L25.3, LSP-incr, LSP-version; level 93: L25.4, L25.5, L30.1, LSP-evict, LSP-notebook, WASM-compiler; level 94: L25.6, L30.2, TERM-2; level 95: L25.7, L30.3; level 96: L30.3a, L30.4; level 97: L30.5; level 98: L34.1, L34.10, L34.11, L34.9; level 100: L32.2; level 104: L34.2, L34.4; level 105: L34.3, L34.6, L34.7, L35.1; level 115: L37.1; level 117: L38.2; level 118: POLISH-errors
 - `zed/compiler/MLIR.md`: level 1: STUDY-linking; level 49: L28.1a; level 53: L28.1; level 54: MLIR-noalias; level 66: STUDY-codegen-checker-opts; level 83: STUDY-relax-backend; level 84: L29.1
 - `zed/compiler/clif/`: level 83: JIT-zed; level 91: JIT-native-zed
