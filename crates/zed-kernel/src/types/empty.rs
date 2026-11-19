@@ -10922,10 +10922,12 @@ impl<'m> Searching<'m> {
                             }
                         }
                     }
-                    if let Some(row) = self.refine(start, f).await
-                        && let Some(v) = self.row_rep(&row, f).await
-                    {
-                        return Some(v);
+                    for blind_inside in [true, false] {
+                        if let Some(row) = self.refine(start.clone(), f, blind_inside).await
+                            && let Some(v) = self.row_rep(&row, f).await
+                        {
+                            return Some(v);
+                        }
                     }
                 }
             }
@@ -10994,7 +10996,12 @@ impl<'m> Searching<'m> {
     /// the components, and the box ends closed on every tuple type: the part then holds all of
     /// it or none. Its searches neither end at a fork nor follow one: a forked piece counts as
     /// inhabited with nothing shown.
-    async fn refine(&'m self, start: Vec<Type>, f: &Part<Row>) -> Option<Vec<Type>> {
+    async fn refine(
+        &'m self,
+        start: Vec<Type>,
+        f: &Part<Row>,
+        blind_inside: bool,
+    ) -> Option<Vec<Type>> {
         // Complexity tradeoff: the searches of `refine` count a part whose open tuple types
         // fork as inhabited, with nothing shown (`open_forks`), as the search of a value after a
         // refused decision does, instead of following the fork. Given up: a value that only a
@@ -11025,17 +11032,29 @@ impl<'m> Searching<'m> {
         // Complexity tradeoff (COMPLEXITY.md K133): one pass over the `m * k` pairs (`m`
         // components, `k` open tuple types), each cut at once, on the box the cuts before it
         // shrank, to the side `cut_piece` proves (the other side empty, or this one inhabited),
-        // else blindly to `inside`, as on main before GROUP-order-cpoly-merge: at most `2 m k`
-        // searches. Tried and rejected (order2's option 2b): defer an unproved pair instead of
-        // the blind cut and retry the deferred pairs while some cut happened since their last
-        // try. On `the_verdict_of_random_3_cnf_is_refused_in_its_size` (seed 7) that ran 2126
-        // searches from `try_piece` at 128 bits against 86 here, each reading about the same
+        // else blindly: to `inside` when `blind_inside`, else to `outside`. The caller runs a
+        // pass of each, the second only when the first gives no value: at most `4 m k`
+        // searches. Hit rates on random 3-CNF (`r3`, 100 seeds per size, against a count of the
+        // models by trying every tuple; both verdicts alike): of 68, 64, 68, 70 and 61 inhabited
+        // seeds at 8, 10, 12, 14 and 16 bits, the inside pass alone finds 65, 61, 59, 52 and 45,
+        // both passes 68, 64, 66, 65 and 48 (311 of 331); the 20 left are refused. The benches
+        // (seed 7, 16 and 128 bits) went from 39.0 to 42.8 times the work per 8 times the bits,
+        // limit 84 (load5 63.2 at the start, 62.9 at the end). No number of passes, nor any rule
+        // of polynomial work, finds a value wherever there is one: that would find a model of
+        // every satisfiable 3-CNF in polynomial time, deciding 3-SAT, which no rule can do unless
+        // P = NP. Backtracking over the blind cuts is complete but exponential in them. Misses:
+        // `r3(12, 89)` and `r3(16, 2)` (`random_3_cnf_found_by_the_outside_pass_or_refused`,
+        // `random_3_cnf_seed_2_is_refused_at_8_bits_and_16`). Tried and rejected (order2's
+        // option 2b): defer an unproved pair instead of the blind cut and retry the deferred
+        // pairs while some cut happened since their last try. On
+        // `the_verdict_of_random_3_cnf_is_refused_in_its_size` (seed 7) that ran 2126 searches
+        // from `try_piece` at 128 bits against 86 for one pass, each reading about the same
         // region (about 256 tuple types per `tuples_on` call either way), so 231 times the
-        // time per 8 times the bits against 39 here, over the limit of 84 (load 41 to 55). The
-        // cost was the number of searches, not the size of what each one reads. What the
-        // blind cut gives up: a value only `outside` holds, which `refine` then misses; the
-        // cut is sound, since `refine` only proposes a box whose row `row_rep` checks. Lost
-        // with it: random 3-CNF of seed 2 at 16 bits, Inhabited under 2b, is refused here as
+        // time per 8 times the bits against 39 for one pass, over the limit of 84 (load 41 to
+        // 55). The cost was the number of searches, not the size of what each one reads. What the
+        // blind cuts give up: a value on the other side of some blind cut in each pass; the
+        // cuts are sound, since `refine` only proposes a box whose row `row_rep` checks. Lost
+        // with them: random 3-CNF of seed 2 at 16 bits, Inhabited under 2b, is refused here as
         // on main (`random_3_cnf_seed_2_is_refused_at_8_bits_and_16`). The blind cuts make
         // the box depend on the order of the pairs, under 2b too, whose last pairs were cut
         // the same way.
@@ -11046,7 +11065,8 @@ impl<'m> Searching<'m> {
                 }
                 let piece = match self.cut_piece(&mut g, &h, j, k).await {
                     Some(piece) => piece,
-                    None => &g.r[j] & &g.atoms[k][j],
+                    None if blind_inside => &g.r[j] & &g.atoms[k][j],
+                    None => &g.r[j] - &g.atoms[k][j],
                 };
                 g.shrink(j, piece);
                 empty = self.narrow_tuples(&mut g, &mut h).await;

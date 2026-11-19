@@ -883,8 +883,8 @@ fn decide_counted(t: &Type, counts: &mut (usize, usize)) -> Option<ChainPlan> {
         // laminar 2-SAT (Aspvall, Plass and Tarjan 1979). U1 is Boolean distributivity,
         // `\bigwedge_q ((j_1, A) \lor (j_2, B_q)) \iff (j_1, A) \lor (j_2, \bigcap_q B_q)`, and U2
         // is unit propagation: a clause of one atom `(j, U)` narrows `pl[j]` to `pl[j] \cap U`.
-        // Both rewrite the clauses into an equivalent set, so every clause stays exact (each row is
-        // read whole, above): no clause
+        // Both rewrite the clauses into an equivalent set, so every clause of fewer than three
+        // atoms stays exact (a cut row is read further by `read_on`, invariant (I) at U1): no clause
         // is cut to its first two atoms (round 3 of XR-group-order-5 cut them, which made a unit
         // or an emptied clause prove nothing), and a clause of three or more atoms is narrowed
         // like the others; only the 2-SAT below reads the first two atoms of a clause still wide
@@ -910,6 +910,20 @@ fn decide_counted(t: &Type, counts: &mut (usize, usize)) -> Option<ChainPlan> {
                             HashMap::default();
                         for (idx, atoms) in clauses_work.iter().enumerate() {
                             if atoms.len() == 2 {
+                                // Invariant (I): `more[i]` is `Some` only while clause `i` holds
+                                // three atoms or more. It holds where `more` is built (`Some` only
+                                // when `r.atoms.len() >= 3`); U1 keeps each clause it does not
+                                // merge with its own entry and gives each merged clause `None`;
+                                // U2 ends each clause with `read_on`, whose loop stops only at
+                                // three atoms or at `None`; the strengthening sets all to `None`.
+                                // So a clause of two atoms, the only kind U1 merges, is its row
+                                // read to its end, and the merged clause, equivalent to their
+                                // conjunction by distributivity, is exact and needs no further
+                                // reading: `None` below is right.
+                                debug_assert!(
+                                    more[idx].is_none(),
+                                    "U1 merges only rows read whole"
+                                );
                                 let (fixed, other) = if side == 0 {
                                     (&atoms[0], atoms[1].0)
                                 } else {
@@ -952,7 +966,7 @@ fn decide_counted(t: &Type, counts: &mut (usize, usize)) -> Option<ChainPlan> {
                                 next_more.push(m);
                             }
                         }
-                        // Merged from clauses of two atoms, each read whole.
+                        // Merged from clauses of two atoms, each read whole (invariant (I)).
                         next_more.extend(merged_new.iter().map(|_| None));
                         next_work.extend(merged_new);
                         clauses_work = next_work;

@@ -4856,3 +4856,120 @@ fn xr_r3_q2c_refine_decides_six_box_cover_and_adversarial_1908_in_every_order() 
         }
     }
 }
+
+/// Q2(e) of XR-group-order-5 round 3 (Gemini seat; ported by order3 from
+/// wt/failing-tests/GROUP-order-cpoly-merge-gemini-tests.diff). Part 1, outside `C_poly`: the box
+/// `((#a | #b), (L12 | #c)) \ ((#a, L1) | (#a, L12) | (#a, #c) | (#b, L12) | (#b, #c))` is empty
+/// (each first component meets negations that cover all of `L12 | #c`); in each order of the
+/// pair components the verdict is `Empty`. At 4091b22e5 the written order was refused at a
+/// fork and the reversed one `Empty`, an order difference the seat asserted as expected; main
+/// gives `Empty` in both orders (order3, 2026-11-18).
+/// Part 2, inside `C_poly`: a group with a two-component split and a forked recursion is
+/// `Inhabited` in both orders (`(#b, 2)` is a value of R0); red at 4091b22e5 (`Refused(Fork)`).
+#[test]
+fn xr_r3_q2e_classes_find_map_counterexample_and_cpoly_immunity() {
+    // 1. Outside `C_poly`: `((#a | #b), (L12 | #c)) \ ((#a, L1) | (#a, L12) | (#a, #c) | (#b, L12) | (#b, #c))`
+    let one = Type::lit(&zed_kernel::Value::Int(1)).unwrap();
+    let two = Type::lit(&zed_kernel::Value::Int(2)).unwrap();
+    let mk_list = |elem: Type, name: &str| -> Type {
+        Group::new(vec![Def {
+            name: name.into(),
+            params: vec![],
+            body: Expr::Union(vec![
+                Expr::Type(Type::atom("nil")),
+                Expr::Atom("cons".into(), vec![Expr::Type(elem), Expr::Ref(0, vec![])]),
+            ]),
+        }])
+        .unwrap()
+        .instance(vec![])
+        .remove(0)
+    };
+    let l1 = mk_list(one.clone(), "XRR3_L1");
+    let l12 = mk_list(&one | &two, "XRR3_L12");
+    let (a, b, c) = (Type::atom("a"), Type::atom("b"), Type::atom("c"));
+    let mk_box = |rev: bool| -> Type {
+        let pair = |x: Type, y: Type| {
+            if rev {
+                Type::tuple(vec![y, x])
+            } else {
+                Type::tuple(vec![x, y])
+            }
+        };
+        let pos = pair(&a | &b, &l12 | &c);
+        let negs = [
+            pair(a.clone(), l1.clone()),
+            pair(a.clone(), l12.clone()),
+            pair(a.clone(), c.clone()),
+            pair(b.clone(), l12.clone()),
+            pair(b.clone(), c.clone()),
+        ];
+        negs.into_iter().fold(pos, |acc, n| &acc - &n)
+    };
+    Type::forget_emptiness();
+    let v_out_written = mk_box(false).verdict();
+    Type::forget_emptiness();
+    let v_out_reversed = mk_box(true).verdict();
+    for (v, order) in [(v_out_written, "written"), (v_out_reversed, "reversed")] {
+        assert_eq!(v, Verdict::Empty, "the empty box, {order}");
+    }
+    // 2. Inside `C_poly`: recursive group with 2-component split + forked recursion is `Inhabited`
+    // (`(#b, 2)` survives) in BOTH orders. Fails at `4091b22e5` (`Refused(Fork)`).
+    let one_e = Expr::Type(one.clone());
+    let one_two_e = Expr::Type(&one | &two);
+    for rev in [false, true] {
+        Type::forget_emptiness();
+        let pair = |x: Expr, y: Expr| {
+            if rev {
+                Expr::Tuple(vec![y, x])
+            } else {
+                Expr::Tuple(vec![x, y])
+            }
+        };
+        let g = Group::new(vec![
+            Def {
+                name: format!("XRR3_Q2e_R0_{rev}"),
+                params: vec![],
+                body: Expr::Union(vec![
+                    pair(Expr::Ref(0, vec![]), Expr::Ref(1, vec![])),
+                    Expr::Diff(
+                        Box::new(pair(
+                            Expr::Union(vec![
+                                Expr::Type(a.clone()),
+                                Expr::Type(b.clone()),
+                                Expr::Ref(1, vec![]),
+                            ]),
+                            Expr::Union(vec![
+                                one_two_e.clone(),
+                                Expr::Type(c.clone()),
+                                Expr::Ref(0, vec![]),
+                            ]),
+                        )),
+                        Box::new(Expr::Union(vec![
+                            pair(Expr::Type(a.clone()), one_e.clone()),
+                            pair(Expr::Type(a.clone()), one_two_e.clone()),
+                            pair(Expr::Type(a.clone()), Expr::Type(c.clone())),
+                            pair(Expr::Type(b.clone()), one_e.clone()),
+                            pair(Expr::Type(b.clone()), Expr::Type(c.clone())),
+                        ])),
+                    ),
+                ]),
+            },
+            Def {
+                name: format!("XRR3_Q2e_R1_{rev}"),
+                params: vec![],
+                body: Expr::Union(vec![
+                    pair(Expr::Type(Type::int()), Expr::Ref(1, vec![])),
+                    Expr::Type(a.clone()),
+                ]),
+            },
+        ])
+        .unwrap()
+        .instance(vec![]);
+        assert_eq!(g[0].verdict(), Verdict::Inhabited, "C_poly Q2(e) rev={rev}");
+        assert_eq!(
+            g[1].verdict(),
+            Verdict::Inhabited,
+            "C_poly Q2(e) R1 rev={rev}"
+        );
+    }
+}
