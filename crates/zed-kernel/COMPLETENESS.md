@@ -655,3 +655,44 @@ arm of `meet_of_literals`, with a meet joined to an exclusive or. Control runs: 
 giving `None` fails the first test; the `&` arm's `&&` made `||` reaches `folded`'s
 `unreachable!` in the second; `Refused` printed as `Never` fails the third. All three pass in
 both builds.
+
+The order ties, closed in the same round where a test reaches them. The new test
+`l01_37a_short_addresses::collide::families_that_tie_in_digest_reach_every_arm_of_the_order`
+runs in the short build in `merge_check`'s `l01_37a` group. It builds seven families of types that
+differ in one place only, so that many pairs tie in 8-bit digest: unions of `#a(int)` and
+`#n<i>(int)`; exclusive ors and choices of morphism types; unions of morphism types by bit mask;
+negated choices and meets with an exclusive or; and recursive groups that differ in name, in a
+payload literal, or in shape. On every pair it checks that the order is antisymmetric and is
+`Equal` only for one member (the members are distinct by construction; texts would not do, since
+two groups of one name print alike, and `==` on `Type` is the order itself), and that the sorted
+family is in order. In the full build no pair ties and the test asserts that. Temporary probes on
+each arm showed these reached by the test: the names that differ after a tied payload in
+`atom_names`, and that tie itself; the `SetsInOrder` ends of `walk`; in the `Exprs` arm the tie,
+both exclusive-or orders and both mixed cases, and the `Source::Form` operands equal and unequal;
+in `Key::order` the differing groups, the canonical forms unequal and the names unequal; in
+`Canon::order` the tie of forms, the class heads unequal and the held types tied and unequal.
+Control runs, each in the short build, each failing the new test while the other 8 `collide` tests
+pass: `atom_names` answering `Equal` for two names that differ; the payload tie dropping its
+`Step::Names` resume; the `SetsInOrder(None, Some)` end answering `Equal`; the `Exprs` arm's
+`(Some, None)` case answering `Equal`; the form operands answering `Equal` when unequal; and
+`Key::order` answering `Equal` where the canonical forms differ and where the names differ.
+
+Still open:
+
+- `Canon::order` answering on unequal class heads. The test reaches it, but only outside `blind`,
+  where `Key::order` compares the definition graphs (`names_order`) after it, and they decide
+  the same pairs: the control making that return `Equal` passes (measured). Under `blind` its
+  answer is the only one, since `names_order` is skipped, and two groups of different shapes would
+  be given one number in an emptiness search. `blind` runs only in `empty.rs`'s `Ids`, and no
+  test calls `Canon::order` under it: probes found no call in the four `l01_37a` modules or in
+  the `rec`, `deep_rec`, `setop`, `rec_order`, `group_refusal` and `witnesses` modules of
+  `l01_23` in the short build, although `Ids` buckets held tied keys there (985 in `setop`), all
+  of them lists and tuples. An attempt with an empty group `S = #c(p, S) | #d(S)` and an
+  inhabited `S = #c(p, S) | #d(p)` that tie in digest, decided together in unions, tuples, a
+  subtype check and one tuple of 200 groups, put no two groups in one bucket: the searches
+  decide such groups without numbering them. A test needs a search that numbers two different
+  groups whose canonical forms tie.
+- The `Cells` and `Sets` ends of `walk` (`(None, Some)` and `(Some, None)`). The probes never
+  saw them, in the new test or in the `l01_37a` group; only the `SetsInOrder` ends are reached.
+  No input was built for them.
+- `Node::same_head`, which no test calls.

@@ -358,3 +358,131 @@ fn rows_dropped_on_another_thread_leave_entries_that_lookups_pass_over() {
         }
     }
 }
+
+/// Checks the order on every pair of `types` as `the_order_of_types_is_total_on_every_pair_of_900`
+/// does, and returns the number of distinct pairs that tie in digest. The members of `types`
+/// are distinct by construction, so two are equal in the order exactly when they are one
+/// member; texts would not do, as two recursive groups of one name print alike, and `==` is
+/// the order itself.
+fn ordered_and_tied(types: &[Type]) -> usize {
+    let texts: Vec<String> = types.iter().map(|t| t.to_string()).collect();
+    let mut tied = 0;
+    for (i, (a, ta)) in types.iter().zip(&texts).enumerate() {
+        for (j, (b, tb)) in types.iter().zip(&texts).enumerate() {
+            let ab = a.cmp(b);
+            assert_eq!(ab, b.cmp(a).reverse(), "{ta} against {tb}");
+            assert_eq!(ab == Ordering::Equal, i == j, "{ta} against {tb}");
+            tied += usize::from(ab != Ordering::Equal && digest(a) == digest(b));
+        }
+    }
+    let mut sorted = types.to_vec();
+    sorted.sort();
+    for (i, a) in sorted.iter().enumerate() {
+        for b in &sorted[i + 1..] {
+            assert_ne!(a.cmp(b), Ordering::Greater, "{a} after {b}");
+        }
+    }
+    tied
+}
+
+#[test]
+fn families_that_tie_in_digest_reach_every_arm_of_the_order() {
+    // Random types tie in an 8-bit digest only on the first arms of the order. Each family
+    // here holds types that differ in one place only, so that under short-addresses many
+    // pairs tie in digest and the order must decide them on that place: names of atoms after
+    // a tied entry (`atom_names`), lists of different lengths (`walk`, the in-order arms),
+    // exclusive ors and choices (`Walk::Exprs`), negated and conjoined forms
+    // (`Source::Form`), and recursive groups that differ in name, in a payload, or in shape
+    // (`Key::order`, `Canon::order`). The full build ties no pair.
+    let family = |name: &str, types: &[Type]| {
+        let tied = ordered_and_tied(types);
+        assert_eq!(
+            tied > 0,
+            SHORT,
+            "{name}: {tied} distinct pairs tie in digest"
+        );
+    };
+    let int = Type::int();
+    let any = |i: i64| {
+        Type::morphism(
+            Type::empty(),
+            Type::top(),
+            Type::lit(&Value::Int(i)).expect("an integer"),
+        )
+    };
+    let one = Type::tuple(vec![int.clone()]);
+    let names: Vec<Type> = (0..300)
+        .map(|i| &Type::atom_with("a", &one) | &Type::atom_with(&format!("n{i}"), &one))
+        .collect();
+    family("names", &names);
+    let x = |p: &Type, q: &Type| &(p - q) | &(q - p);
+    let mut xors = Vec::new();
+    for i in 0..12 {
+        for j in i + 1..12 {
+            xors.push(x(&any(i), &any(j)));
+            xors.push(x(&x(&any(i), &any(j)), &any(12 + (i + j) % 5)));
+            xors.push(&(&any(i) & &any(j)) | &(&!&any(i) & &any(j + 20)));
+        }
+    }
+    family("xors", &xors);
+    let lists: Vec<Type> = (1u32..300)
+        .map(|m| Type::union_all((0..9).filter(|k| m >> k & 1 == 1).map(|k| any(k as i64))))
+        .collect();
+    family("lists", &lists);
+    let mut forms = Vec::new();
+    for i in 0..10 {
+        for j in i + 1..10 {
+            let choice = &(&any(i) & &any(j)) | &(&!&any(i) & &any(j + 20));
+            forms.push(!&choice);
+            forms.push(&(&any(i) | &any(j)) & &x(&any(i + 30), &any(j + 30)));
+            forms.push(choice);
+        }
+    }
+    family("forms", &forms);
+    use zed_kernel::types::rec::{Def, Expr, Group};
+    let group = |name: &str, payload: Type| {
+        let body = Expr::Union(vec![
+            Expr::Type(Type::atom("nil")),
+            Expr::Atom("c".into(), vec![Expr::Type(payload), Expr::Ref(0, vec![])]),
+        ]);
+        let def = Def {
+            name: name.into(),
+            params: Vec::new(),
+            body,
+        };
+        Group::new(vec![def]).unwrap().instance(vec![]).remove(0)
+    };
+    let renamed: Vec<Type> = (0..300)
+        .map(|i| group(&format!("R{i}"), int.clone()))
+        .collect();
+    family("renamed", &renamed);
+    let payloads: Vec<Type> = (0..300)
+        .map(|i| group("R", Type::lit(&Value::Int(i)).expect("an integer")))
+        .collect();
+    family("payloads", &payloads);
+    let shaped = |shape: i64, payload: Type| {
+        let r = || Expr::Ref(0, vec![]);
+        let p = Expr::Type(payload);
+        let body = match shape {
+            0 => Expr::Union(vec![
+                Expr::Type(Type::atom("nil")),
+                Expr::Atom("c".into(), vec![p, r()]),
+            ]),
+            1 => Expr::Union(vec![
+                Expr::Type(Type::atom("nil")),
+                Expr::Atom("c".into(), vec![r(), p]),
+            ]),
+            _ => Expr::Union(vec![p, Expr::Atom("c".into(), vec![r()])]),
+        };
+        let def = Def {
+            name: "S".into(),
+            params: Vec::new(),
+            body,
+        };
+        Group::new(vec![def]).unwrap().instance(vec![]).remove(0)
+    };
+    let shapes: Vec<Type> = (0..300)
+        .map(|i| shaped(i % 3, Type::lit(&Value::Int(i / 3)).expect("an integer")))
+        .collect();
+    family("shapes", &shapes);
+}
