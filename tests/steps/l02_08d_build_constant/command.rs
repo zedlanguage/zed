@@ -1,6 +1,6 @@
 //! `--option <name>` on the command line turns on an option the manifest declares; one it does
-//! not declare is a usage error naming those it does; and the options a build turns on leave
-//! the pins as they are.
+//! not declare is a usage error naming those it does; the options a build turns on leave
+//! the pins as they are; and a record replays only with the options its program reads.
 
 use std::path::{Path, PathBuf};
 
@@ -76,6 +76,64 @@ fn an_option_turned_on_is_read() {
     ] {
         let (status, out, err) = zedc(words);
         assert_eq!((status, out.as_str()), (0, said), "{words:?}: {err}");
+    }
+}
+
+/// An option enters a program's content address only where the program reads it, since
+/// `build.options.<name>` is a literal in the term the address hashes (DESIGN sec:incremental,
+/// "An edit to a running program": no run option changes a value outside the term; plan row
+/// EDIT-reuse-open-points). So a record of a run that reads `fast` replays only with the
+/// `--option` words of that run, and a record of a program that reads no option replays with
+/// any. The upstream hash of an edit (row EDIT-run) is computed by the same hash function over
+/// the same terms, so a node that reads an option is never reused across runs that set it
+/// differently. Negative control, once and never committed (2026-11-19): with
+/// `Program::check_record` accepting every record, the replay of `reads-off.rec` with
+/// `--option fast` runs and prints `fast`, where the recorded run printed `slow`.
+#[test]
+fn a_record_replays_only_with_the_options_its_program_reads() {
+    let d = package_dir(
+        "record",
+        &[
+            ("zed.manifest", "options = \"fast\";\n"),
+            (
+                "app/reads.zed",
+                "main(m: MainArgs) {\n  m.stdout <- if build.options.fast { \"fast\" } \
+                 else { \"slow\" };\n}\n",
+            ),
+            (
+                "app/plain.zed",
+                "main(m: MainArgs) {\n  m.stdout <- \"same\";\n}\n",
+            ),
+        ],
+    );
+    let path = |f: &str| d.join(f).to_str().unwrap().to_string();
+    let (reads, plain) = (path("app/reads.zed"), path("app/plain.zed"));
+    for (file, on, rec) in [
+        (&reads, false, path("reads-off.rec")),
+        (&reads, true, path("reads-on.rec")),
+        (&plain, false, path("plain-off.rec")),
+        (&plain, true, path("plain-on.rec")),
+    ] {
+        let fast: &[&str] = if on { &["--option", "fast"] } else { &[] };
+        let (status, said, err) = zedc(&[&["run", file, "--record", &rec][..], fast].concat());
+        assert_eq!(status, 0, "{err}");
+        for other in [false, true] {
+            let words: &[&str] = if other { &["--option", "fast"] } else { &[] };
+            let (status, out, err) = zedc(&[&["replay", file, &rec][..], words].concat());
+            if file == &plain || other == on {
+                assert_eq!(
+                    (status, out.as_str()),
+                    (0, said.as_str()),
+                    "{rec} {other}: {err}"
+                );
+            } else {
+                assert_eq!((status, out.as_str()), (2, ""), "{rec} {other}");
+                assert!(
+                    err.contains("a `build.options` or `build.target` value it reads"),
+                    "{err}"
+                );
+            }
+        }
     }
 }
 

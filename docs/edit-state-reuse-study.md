@@ -134,7 +134,7 @@ C15 recommended a run option. It must name the new variable, the function, and, 
 | A source form `@migrate` | 4 | A language word for something used once per edit and then dead in the source |
 | A function of the whole old state, as Hicks and Nettles' state transformer | 4 | Most general, but the programmer must rebuild every variable, and the checker cannot tell which frames it reads |
 
-Instances: a migration applies to each instance keypath present in the new variable and in every old variable it names (for a variable inside a family, key by key); an instance missing from one of the old variables starts from `initial`. If an old frame's type cannot be written in the edited source, because the edit removed the type's name, the parameter is written as the structural type; nominal types that cannot be written structurally are a case for step L34.1's test to cover when they arrive.
+Instances: a migration applies to each instance keypath present in the new variable and in every old variable it names (for a variable inside a family, key by key); an instance missing from one of the old variables starts from `initial`. If an old frame's type cannot be written in the edited source, because the edit removed the type's name, the parameter is written as the structural type. A type that cannot be written in the edited source even structurally exists today, and the rule for it is the first decision of section 9.
 
 ### Sub-problem 9: a migration that fails at run time
 
@@ -213,7 +213,45 @@ Under Replay:
 
 Both: replaying the recording with its edits and `--migrate` options reproduces the run bit-exactly.
 
-## 9. What is left open
+## 9. The two points this study left open, decided
 
-- A nominal type that the edit removes and that cannot be written structurally cannot be a migration's parameter type (sub-problem 8). This needs a rule when nominal types arrive; until then every frame type is writable.
-- The structural check in sub-problem 1 assumes that the elaborated term of a node contains everything its value depends on, including the options of the run that change values. If some run option (for example a floating-point mode) changes values without appearing in the term, it must be added to the hash. Row EDIT-run lists the options it hashes.
+This section first listed two open points. Plan row EDIT-reuse-open-points (agent docs3, 2026-11-19) decided both by the standing rules (exact answers, no surprises, deterministic checking); the spec text is in DESIGN sec:incremental, "An edit to a running program", and the tests in step L34.1.
+
+### Decision 1: a frame type the edited source cannot write
+
+The first open point said that "every frame type is writable" until nominal types arrive. That is not so today. Two kinds of type are named by something an edit can take away:
+
+- An opaque atom of a predicate refinement is named by its syntax tree with each call resolved to the content address of its definition (DESIGN sec:domains). So the old frame type `(x: int where isOdd(x))` names the old `isOdd`. If the edit removes `isOdd`, no source can name that atom. If the edit changes the body of `isOdd`, the same text in the edited source names a different atom, so the frame type changed (tier 3) and `int where isOdd(old)` written in the migration is a different type, which the old frame is not known to be a member of.
+- A grammar type (`type Ident = Utf8String matching grammar { … }`) is related to other types only nominally (DESIGN sec:domains), so an edit that removes or changes the grammar leaves the old type with no name in the edited source.
+
+| Option | Score | Reasoning |
+|---|---|---|
+| **The parameter type of a migration is any type of the edited source that the old frame's type is a subtype of, checked by the ordinary subtyping procedure with the old type taken from the old program; the old type itself, where it can be written, is one such type. A migration whose parameter is not a supertype of the old frame's type is rejected when the edit is checked, naming both types. Where the migration needs the old refinement's fact, the repair is to keep the definition for one edit, migrate, and remove it in the next** | 9 | Exact: the subtyping is the one the checker already decides, so every compiler gives the same verdict. The base of a refinement (`int` for `int where isOdd(x)`, `Utf8String` for a grammar type) is a supertype the edited source can always write, so a migration always exists for a frame of data. No new form. Nothing is accepted that could hold a value outside the parameter's type |
+| Require the parameter type to equal the old frame's type (the rule before) | 3 | Leaves a frame whose refinement named a removed function with no migration at all, so the only choice is a restart, which loses the frame silently from the programmer's point of view |
+| Let the migration's parameter take the old type by a special name (`old.type`) | 4 | A new form used once per edit; messages would have to print a type the program cannot write, which the standing rule forbids (printed types are syntax) |
+| Check the parameter type only at run time, frame by frame | 1 | A check that can fail after the edit is accepted: a surprise, and a refinement with an opaque atom cannot be checked on a value by the checker at all |
+
+A frame type with a refinement under a function's parameter, as `((x: int where isOdd(x)) -> int)`, has no writable supertype that can be called, since a supertype of a function type takes a subtype of its parameter. Such a variable restarts (tier 3) when no migration names it, as every variable whose type changed does; a migration of it is rejected by the rule above, with the repair of keeping the definition for one edit. Messages print the old type as the old source wrote it, so every type a message prints is one the programmer wrote.
+
+### Decision 2: the run options in the upstream hash
+
+The upstream hash covers the elaborated term of a node, so a run option that changed a value without appearing in that term would make a hash match reuse a stale value. Each run option was checked against DESIGN:
+
+| Option | Changes a value? | Why the hash is right |
+|---|---|---|
+| `--option <name>`, the build's target | yes | `build.options.<name>` and `build.target` become literals at resolution, so they are in the elaborated term and in the content address (DESIGN, step L2.8d). Measured: a record of a run that reads `build.options.fast` replays only with the same `--option` words; a record of a program that reads no option replays with any (test `a_record_replays_only_with_the_options_its_program_reads`, tests/steps/l02_08d_build_constant/command.rs) |
+| The floating-point environment | no option sets it | bit-identity pins round-to-nearest-even, no contraction and no extended precision (DESIGN sec:reduction), and foreign code cannot change it for Zed code (sec:ffi, plan row FFI-fpenv) |
+| The grouping of a reduction of a reorder-faceted value | no option sets it | the grouping a run used is recorded, and the value is re-derived only from its recorded grouping (sec:reduction), so a kept node keeps its grouping with its value |
+| `--strict`, `--total`, `--suppress` | no | they accept or reject a program, or silence a warning; a program they accept computes the same values |
+| `--record`, `--bench`, `--leak-check`, `--explain-plan`, `--addresses`, `--c-library`, `--program` | no | they choose what is written beside the run, how it is built, or which program a record is checked against |
+| `--migrate` | yes, under Continue | it is an edit's own input, recorded with the edit in the replay record; it applies to frames, not to nodes the hash matches |
+
+| Option | Score | Reasoning |
+|---|---|---|
+| **No run option changes a value outside the term: state this in DESIGN as a closed list; a later option that changes values is written into the term at resolution, as `--option` is, or hashed with the term** | 9 | Exact today, checked option by option; keeps one hash for the address and the reuse; the rule tells the author of a new option what to do |
+| Hash the whole command line into every node | 4 | Correct but throws away every reuse when an unrelated word (`--record out2.rec`) changes, and makes the reuse depend on spelling |
+| Hash a fixed list of option values into every node | 5 | Correct, but a node that does not read `build.options.fast` would still be recomputed when it changes; the term already carries what each node reads |
+
+### The amount kept is not a meaning
+
+DESIGN says that how much an edit keeps under Replay "is a plan choice by cost, never a meaning". Step L34.1's test now checks it: a run whose plan keeps nothing gives the same frames, outputs and report as one whose plan keeps every matched node.

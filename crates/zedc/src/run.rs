@@ -733,10 +733,12 @@ impl Program {
             Some(a) if a == ours => Ok(()),
             Some(_) => Err(
                 "this record was written by a run of a different program: `main` \
-                 or a definition it uses, or a port of `main`, has changed since. A replay \
-                 must run the program that wrote the record. Replay it with the source as it \
-                 was when the record was written, or run this program again with `--record \
-                 <out>` to make a record of it."
+                 or a definition it uses, a port of `main`, or a `build.options` or \
+                 `build.target` value it reads, has changed since. A replay must run the \
+                 program that wrote the record. Replay it with the source as it was when the \
+                 record was written and the `--option` words that run was given, on a machine \
+                 of the same target, or run this program again with `--record <out>` to make a \
+                 record of it."
                     .to_string(),
             ),
             None => Err(
