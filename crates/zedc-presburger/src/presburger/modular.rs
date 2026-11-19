@@ -626,82 +626,38 @@ fn rewrite_lin_full(
 // given up: such a formula goes to the general path whole; no answer of the 5,000-formula
 // enumeration test changed (sat 4277, empty 712, refused 11 with and without the split).
 pub fn solve_modular(f: &Formula, want_model: bool) -> Option<Option<Model>> {
-    // A remainder row whose two unit terms tie (`solve_modular_whole`, step 3) is read one way
-    // first and, if that gives no answer, the other way: at most two runs, each exact.
-    // If neither gives an answer and some row had both unit terms bounded to less than a period,
-    // a last run takes the previous choice by `Atom` order (as Codex did in round 7, R7-CODEX-2):
-    // without it the 5,000-formula enumeration test refused 70 formulas instead of 11. Each of
-    // the at most three runs is exact; the last reads names, and only when the others refuse.
-    // Where two rows or more tie, the first two runs also turn on the names: they try two of the
-    // readings and the names choose which two (see step 3 of `solve_modular_whole`).
-    // So whether `f` is answered here or left to the general path can turn on the names, but the
-    // answer, when there is one, cannot (PROOF-modular-tied-rows-names). Proof: a reading of a
-    // remainder row `±x ± r + c_q·q + k == 0` takes one of its two unit terms as `r`, and its
-    // equality, with coefficient 1 or -1 there, defines that term by the others; putting the
-    // definition in every other row gives a formula with the same points, read on the other
-    // atoms, whichever term it defines. Every reading of every row is such a substitution, so
-    // each run decides a formula with the points of `f`, exactly where it answers (the contract
-    // of `solve_modular_whole`, checked against enumeration by
-    // `one_scope::one_variable_modular_formulas_match_enumeration`). Two runs that answer thus
-    // give one verdict, that of `f`: `Some(None)` only when `f` has no point, `Some(Some(_))`
-    // only with a point of it. Test:
+    // Every 3-term remainder equality `c_u·u + c_v·v + c_q·q + k == 0` (`|c_u| = |c_v| = 1`,
+    // `|c_q| = m >= 2`) has at most two unit roots `{u, v}`, and step 4 requires every
+    // eliminated remainder `r` to be defined in terms of the same single primary root `x_root`
+    // (since `r`'s 1-term bounds rewrite to 2-term constraints on `(x_root, q_root)`). Therefore
+    // `x_root` must lie in the intersection over all candidate remainder rows of the set of unit
+    // roots whose partner is bounded to width `< m`. That intersection has size at most 2
+    // regardless of how many rows tie, and depends only on the equivalence classes of step 1 and
+    // the bound widths of step 2, never on atom names or row order. Trying every candidate in
+    // the intersection (at most two runs of steps 4+, reusing steps 0–2) is therefore exact and
+    // completely independent of variable names and row order (U4 / I6.3).
+    //
+    // Complexity tradeoff: naive, orient each of t tied rows independently and try all 2^t
+    // combinations, exponential in t; used, intersect the valid `x_root` sets across all
+    // remainder rows to at most 2 candidates, then run steps 4+ at most twice, O(n log n) in
+    // total. Nothing is given up for formulas accepted by step 4: any valid `rem_defs` eliminating
+    // all candidate remainder rows must have its unique `x_root` in this intersection.
+    // Tests: `one_scope::remainder_alias_answers_do_not_depend_on_names`,
+    // `one_scope::one_variable_modular_formulas_match_enumeration`,
+    // `solve_names_tests::two_tied_remainder_rows_are_answered_alike_under_every_naming`,
     // `solve_names_tests::solve_modular_never_gives_two_verdicts_on_tied_remainder_rows`.
-    // Which formulas are refused under which names is the name independence of U4 in
-    // docs/handoff/PERF-negated-chain-unsolved.md, owned by row PERF-negated-chain-unsolved.
-    let mut tied = 0;
-    let mut both_bounded = false;
-    let found = match solve_modular_whole(f, want_model, false, false, &mut tied, &mut both_bounded)
-    {
-        None if tied > 0 => {
-            solve_modular_whole(f, want_model, true, false, &mut tied, &mut both_bounded)
-        }
-        found => found,
-    };
-    match found {
-        None if both_bounded => {
-            solve_modular_whole(f, want_model, false, true, &mut tied, &mut both_bounded)
-        }
-        found => found,
-    }
+    solve_modular_whole(f, want_model)
 }
 
-/// A point of `f` that the runs of [`solve_modular`] that read no names find, or `None`: where
-/// those runs give no answer, find `f` empty, or `f` lies outside their scope. The last run of
-/// [`solve_modular`], which takes a choice by `Atom` order, is not made; and where two remainder
-/// rows or more tie, no point is given, since the two runs then try only two of the readings and
-/// which two turns on the names (step 3 of `solve_modular_whole`). With one tied row the two
-/// runs try both of its readings, each exact, so whether a point is found does not turn on the
-/// names there either. How many rows tie is read from the rows' bounds and how many rows hold
-/// each class, which no renaming changes.
-///
-/// Complexity tradeoff: naive, try every reading of the t tied rows, 2^t runs, each exact, so
-/// a point is found whenever one reading has one; used, at most two runs, O(n log n) each for
-/// n terms, as before, and no point when t >= 2. Given up: a point that only a reading the two
-/// runs do not try would find; `solve` then answers by the Omega test alone (a refusal where
-/// it refused). Test: `solve_names_tests::two_tied_remainder_rows_are_answered_alike_under_every_naming`.
+/// A point of `f` found by [`solve_modular`], or `None` when `f` has no point or lies outside
+/// its scope. Because [`solve_modular`] chooses `x_root` from the name- and order-independent
+/// candidate intersection (size at most 2) and tries every candidate, whether a point is found
+/// does not depend on atom names or row order.
 pub(super) fn point_by_structure(f: &Formula) -> Option<Model> {
-    let (mut tied, mut both_bounded) = (0, false);
-    let found = solve_modular_whole(f, true, false, false, &mut tied, &mut both_bounded);
-    if tied >= 2 {
-        return None;
-    }
-    match found {
-        Some(found) => found,
-        None if tied == 1 => {
-            solve_modular_whole(f, true, true, false, &mut tied, &mut both_bounded).flatten()
-        }
-        None => None,
-    }
+    solve_modular(f, true).flatten()
 }
 
-fn solve_modular_whole(
-    f: &Formula,
-    want_model: bool,
-    flip_ties: bool,
-    by_atom_order: bool,
-    tied: &mut usize,
-    both_bounded: &mut bool,
-) -> Option<Option<Model>> {
+fn solve_modular_whole(f: &Formula, want_model: bool) -> Option<Option<Model>> {
     // Collect top-level conjunction and verify no Product atoms exist anywhere in `f`.
     let mut top_cons: Vec<&Con> = Vec::new();
     let mut top_clauses: Vec<&Formula> = Vec::new();
@@ -916,25 +872,34 @@ fn solve_modular_whole(
         }
     }
 
-    // The rows of two terms or more that hold each root, which tell the two unit terms of a
-    // remainder row apart below: step 4 needs every such row to come down to one variable
-    // `x_root`, which the rows share, while a remainder's other rows are its own bounds. A count
-    // per class does not depend on which member is the root, so not on the names. One pass over
-    // the rows, as step 4 makes.
-    let mut uses: HashMap<Atom, usize> = HashMap::new();
-    for c in &all_cons {
-        let lin = rewrite_lin_full(&c.lin, &fixed, &uf, &empty_rems);
-        if lin.terms.len() >= 2 {
-            for a in lin.terms.keys() {
-                *uses.entry(a.clone()).or_insert(0) += 1;
-            }
-        }
-    }
-
     // Step 3: Recognize 3-term division remainder equalities:
-    // `c_x * x_root + c_q * q_root + c_r * r_root + k == 0` where `|c_x| == 1`, `|c_r| == 1`,
-    // `|c_q| = m >= 2`, and `r_root` is bounded to an interval of width `< m`.
-    let mut rem_defs: HashMap<Atom, FullRemDef> = HashMap::new();
+    // `c_u * u + c_v * v + c_q * q_root + k == 0` where `|c_u| == 1`, `|c_v| == 1`,
+    // `|c_q| = m >= 2`, and at least one of `u`, `v` is bounded to an interval of width `< m`.
+    // Every eliminated remainder `r` has 1-term bounds in `top_cons` that rewrite in step 4 to
+    // 2-term constraints on `(x_root, q_root)`. Step 4 requires all such constraints to share a
+    // single primary root `x_root` (never itself eliminated). Hence `x_root` must lie in the
+    // intersection over all candidate remainder rows of `{w in {u, v} | partner bounded < m}`.
+    // Since each row contributes at most 2 atoms, this intersection has size 0, 1, or 2, and
+    // depends only on step 1's classes and step 2's bound widths (never atom names or row order).
+    struct RemRow {
+        u: Atom,
+        c_u: Int,
+        v: Atom,
+        c_v: Int,
+        q_root: Atom,
+        c_q: Int,
+        m: Int,
+        k: Int,
+        u_can_be_rem: bool,
+        v_can_be_rem: bool,
+    }
+    let bounded_lt_m = |a: &Atom, m: &Int| -> bool {
+        matches!(
+            root_bounds.get(a),
+            Some((Some(lo), Some(hi))) if lo <= hi && (hi - lo) < *m
+        )
+    };
+    let mut rem_rows: Vec<RemRow> = Vec::new();
     for c in &top_cons {
         if c.rel != Rel::Eq {
             continue;
@@ -943,466 +908,489 @@ fn solve_modular_whole(
         if lin.terms.len() != 3 {
             continue;
         }
-        let terms: Vec<(&Atom, &Int)> = lin.terms.iter().collect();
-        // Find the unique term with |coef| >= 2 (`q_root`), and the two unit terms.
-        let mut non_unit = Vec::new();
-        let mut units = Vec::new();
-        for &(a, k) in &terms {
+        let mut non_unit: Option<(&Atom, &Int)> = None;
+        let mut units: Vec<(&Atom, &Int)> = Vec::with_capacity(2);
+        let mut ok = true;
+        for (a, k) in &lin.terms {
             if k.is_unit() {
                 units.push((a, k));
+            } else if non_unit.is_none() {
+                non_unit = Some((a, k));
             } else {
-                non_unit.push((a, k));
+                ok = false;
+                break;
             }
         }
-        if non_unit.len() != 1 || units.len() != 2 {
+        if !ok || units.len() != 2 {
             continue;
         }
-        let (q_root, c_q) = non_unit[0];
-        let m = c_q.abs();
-        // Check which of `units[0]` or `units[1]` is bounded to width < m (`r_root`): its key is
-        // whether its bounds span exactly one period, then the width of its bounds, then the
-        // fewer rows of two terms or more (`uses`).
-        let rem_key = |a: &Atom| -> Option<(bool, Int, std::cmp::Reverse<usize>)> {
-            if let Some((Some(lo), Some(hi))) = root_bounds.get(a)
-                && lo <= hi
-                && (hi - lo) < m
-            {
-                let width = hi - lo;
-                let rows = std::cmp::Reverse(uses.get(a).copied().unwrap_or(0));
-                Some((&width + &Int::ONE == m, width, rows))
-            } else {
-                None
-            }
+        let Some((q_root, c_q)) = non_unit else {
+            continue;
         };
-        let ((r_root, c_r), (x_root, c_x)) = match (rem_key(units[0].0), rem_key(units[1].0)) {
-            (Some(_), None) => (units[0], units[1]),
-            (None, Some(_)) => (units[1], units[0]),
-            // Both are bounded to less than a period, and either reading `x = m q + r` is exact.
-            // The remainder is chosen by the formula, never by a name (I6.3): the term whose
-            // bounds span exactly one period, else the wider, else the one in fewer rows. On a
-            // tie the term whose coefficient has the sign of `c_q` is taken first, the other in
-            // the second run of `solve_modular`; a renaming can change these signs (the root of
-            // a class whose aliases have sign -1), and when both have one sign `units` is in
-            // name order, so a tie is name-independent only through the second run, which flips
-            // every tied row at once. Two runs therefore cover both readings of one tied row
-            // but only two of the four readings of two, and which two turns on the names
-            // (PROOF-solve-renaming-invariant: `u + v == m·q1 + k1`, `v + w == m·q2 + k2`, all
-            // three bounded to one period, had a point found unless `v` was named between `u`
-            // and `w`); so `tied` counts the tied rows, and [`point_by_structure`] gives no point
-            // where two or more tie. The last run of `solve_modular` (`by_atom_order`) takes the
-            // larger `Atom` as `r`.
-            (Some(k0), Some(k1)) => {
-                *both_bounded = true;
-                let k = if by_atom_order {
-                    units[0].0.cmp(units[1].0)
-                } else {
-                    k0.cmp(&k1)
+        let m = c_q.abs();
+        let u_can_be_rem = bounded_lt_m(units[0].0, &m);
+        let v_can_be_rem = bounded_lt_m(units[1].0, &m);
+        if !u_can_be_rem && !v_can_be_rem {
+            continue;
+        }
+        rem_rows.push(RemRow {
+            u: units[0].0.clone(),
+            c_u: units[0].1.clone(),
+            v: units[1].0.clone(),
+            c_v: units[1].1.clone(),
+            q_root: q_root.clone(),
+            c_q: c_q.clone(),
+            m,
+            k: lin.constant.clone(),
+            u_can_be_rem,
+            v_can_be_rem,
+        });
+    }
+
+    let run_with_rems = |rem_defs: HashMap<Atom, FullRemDef>| -> Option<Option<Model>> {
+        // Step 4: Determine the single primary root variable `x_root` and verify all constraints
+        // mention only `x_root` and quotient roots `q_root`.
+        let mut candidate_x: Option<Atom> = None;
+        let mut has_modulus = false;
+        for c in &all_cons {
+            let lin = rewrite_lin_full(&c.lin, &fixed, &uf, &rem_defs);
+            if lin.terms.len() > 2 {
+                return None;
+            }
+            if lin.terms.len() == 2 {
+                let mut it = lin.terms.iter();
+                let (a1, k1) = it.next()?;
+                let (a2, k2) = it.next()?;
+                let (x_cand, q_coef) = match (k1.is_unit(), k2.is_unit()) {
+                    (true, false) => (a1, k2),
+                    (false, true) => (a2, k1),
+                    _ => return None,
                 };
-                match k {
-                    std::cmp::Ordering::Greater => (units[0], units[1]),
-                    std::cmp::Ordering::Less => (units[1], units[0]),
-                    std::cmp::Ordering::Equal => {
-                        *tied += 1;
-                        let first = (units[0].1.is_positive() == c_q.is_positive()) != flip_ties;
-                        if first {
-                            (units[0], units[1])
-                        } else {
-                            (units[1], units[0])
-                        }
-                    }
+                if q_coef.abs() >= Int::from(2) {
+                    has_modulus = true;
+                }
+                match &candidate_x {
+                    None => candidate_x = Some(x_cand.clone()),
+                    Some(x) if x == x_cand => {}
+                    Some(_) => return None,
                 }
             }
-            (None, None) => continue,
-        };
-        if rem_defs.contains_key(r_root) || rem_defs.contains_key(x_root) {
-            continue;
         }
-        rem_defs.insert(
-            r_root.clone(),
-            FullRemDef {
-                c_r: if c_r.is_positive() { 1 } else { -1 },
-                x_root: x_root.clone(),
-                c_x: c_x.clone(),
-                q_root: q_root.clone(),
-                c_q: c_q.clone(),
-                k: lin.constant.clone(),
+        if !has_modulus {
+            return None;
+        }
+        let x_root = candidate_x?;
+
+        // Step 5: Collect top-level bounds on `(x_root, q_root)` to identify GlobalQuot vs LocalQuot.
+        // A constraint with terms `{x_root: c_x, q_root: c_q}` and `|c_x| == 1`, `|c_q| = m >= 2`:
+        // Normalize by dividing by `|c_x|`: wait, if `|c_x| > 1` in a 1-term constraint on `q_root`,
+        // `c_x == 0`. In a 2-term constraint, `|c_x| == 1` (already checked above).
+        #[derive(Default)]
+        struct QuotBounds {
+            s_x: i8,
+            sigma_q: i8,
+            m: Int,
+            // Bounds on `s_x * x - sigma_q * m * q`: `lo <= s_x * x - sigma_q * m * q <= hi`.
+            lo: Option<Int>,
+            hi: Option<Int>,
+            contradiction: bool,
+        }
+
+        let mut q_top: HashMap<Atom, QuotBounds> = HashMap::new();
+        for c in &top_cons {
+            let lin = rewrite_lin_full(&c.lin, &fixed, &uf, &rem_defs);
+            if lin.terms.len() != 2 {
+                continue;
+            }
+            let c_x = lin.terms.get(&x_root)?;
+            if !c_x.is_unit() {
+                return None;
+            }
+            let (q_root, c_q) = lin.terms.iter().find(|(a, _)| *a != &x_root)?;
+            let m = c_q.abs();
+            if m < Int::from(2) {
+                return None;
+            }
+            let entry = q_top.entry(q_root.clone()).or_insert_with(|| {
+                // Orient so `s_x = 1`, `sigma_q = -sgn(c_q) * sgn(c_x)`:
+                // `c_x * (x - sigma_q * m * q) + constant`.
+                let sx: i8 = 1;
+                let sq: i8 = if c_x.is_positive() == c_q.is_negative() {
+                    1
+                } else {
+                    -1
+                };
+                QuotBounds {
+                    s_x: sx,
+                    sigma_q: sq,
+                    m: m.clone(),
+                    lo: None,
+                    hi: None,
+                    contradiction: false,
+                }
+            });
+            if entry.m != m {
+                return None;
+            }
+            // Express `lin` as `t * (entry.s_x * x - entry.sigma_q * m * q) + constant`, where `t = ±1`.
+            let t: i8 = if c_x.is_positive() { 1 } else { -1 };
+            let expected_cq = if (-t * entry.sigma_q) > 0 {
+                m.clone()
+            } else {
+                -&m
+            };
+            if *c_q != expected_cq {
+                return None;
+            }
+            // `t * E + constant >= 0` or `== 0`, where `E = x - sigma_q * m * q`.
+            match c.rel {
+                Rel::Ge if t > 0 => {
+                    let l = -&lin.constant;
+                    entry.lo = max_lo(entry.lo.take(), Some(l));
+                }
+                Rel::Ge => {
+                    let h = lin.constant.clone();
+                    entry.hi = min_hi(entry.hi.take(), Some(h));
+                }
+                Rel::Eq => {
+                    let v = if t > 0 {
+                        -&lin.constant
+                    } else {
+                        lin.constant.clone()
+                    };
+                    entry.lo = max_lo(entry.lo.take(), Some(v.clone()));
+                    entry.hi = min_hi(entry.hi.take(), Some(v));
+                }
+            }
+            if let (Some(l), Some(h)) = (&entry.lo, &entry.hi)
+                && l > h
+            {
+                entry.contradiction = true;
+            }
+        }
+
+        let mut global_quots: HashMap<Atom, GlobalQuot> = HashMap::new();
+        for (q_root, qb) in q_top {
+            if qb.contradiction {
+                return Some(None);
+            }
+            if let (Some(lo), Some(hi)) = (qb.lo, qb.hi) {
+                let w = &hi - &lo;
+                if w < qb.m {
+                    // `lo <= x - sigma_q * m * q <= hi`  <=>  `0 <= (x - lo) - sigma_q * m * q <= w`.
+                    global_quots.insert(
+                        q_root,
+                        GlobalQuot {
+                            s_x: qb.s_x,
+                            c_lo: -&lo,
+                            sigma_q: qb.sigma_q,
+                            m: qb.m,
+                            w,
+                        },
+                    );
+                }
+            }
+        }
+
+        // Verify every 1-term constraint in `all_cons` is either on `x_root` or on a `global_quots` key.
+        for c in &all_cons {
+            let lin = rewrite_lin_full(&c.lin, &fixed, &uf, &rem_defs);
+            if lin.terms.len() == 1 {
+                let a = lin.terms.keys().next()?;
+                if *a != x_root && !global_quots.contains_key(a) {
+                    return None;
+                }
+            }
+        }
+
+        // Step 6: Fold the formula DAG bottom-up with polarity `negated: bool`.
+        // Complexity tradeoff: folding kept conjunction prefixes copies each
+        // prefix's clause vector into its parent, O(n^2) payload bytes for n
+        // clauses even though the traversal visits each node once. The already
+        // collected top-level conjuncts form one flat conjunction in O(n) space;
+        // each payload is then combined once at this level. Nothing is given up:
+        // conjunction is associative and repeated shared conjuncts are idempotent.
+        // Nested conjunctions below alternatives keep the original fold. Test:
+        // pncx_kept_prefix_scale; the original fold fails at 28.2x bytes.
+        let flat_top = matches!(f, Formula::And(_)).then(|| {
+            Formula::And(crate::presburger::Shared::new(
+                top_cons
+                    .iter()
+                    .map(|c| Formula::Con((*c).clone()))
+                    .chain(top_clauses.iter().map(|g| (*g).clone()))
+                    .collect(),
+            ))
+        });
+        let fold_input = flat_top.as_ref().unwrap_or(f);
+        let mut local_windows: HashMap<Atom, Vec<LocalWindow>> = HashMap::new();
+        let folded: Result<FoldNode, ()> = fold_input.fold(
+            false,
+            |g, negated| negated != matches!(g, Formula::Not(_)),
+            |g, negated, parts: Vec<Result<FoldNode, ()>>| match g {
+                Formula::Not(_) => parts.into_iter().next().unwrap_or(Err(())),
+                Formula::Con(c) => fold_leaf(
+                    c,
+                    negated,
+                    &x_root,
+                    &fixed,
+                    &uf,
+                    &rem_defs,
+                    &global_quots,
+                    &mut local_windows,
+                ),
+                Formula::And(_) | Formula::Or(_) => {
+                    let is_and = matches!(g, Formula::And(_)) != negated;
+                    let mut nodes = Vec::with_capacity(parts.len());
+                    for p in parts {
+                        nodes.push(p?);
+                    }
+                    if is_and {
+                        fold_and(nodes, &mut local_windows)
+                    } else {
+                        fold_or(nodes)
+                    }
+                }
             },
         );
-    }
 
-    // Step 4: Determine the single primary root variable `x_root` and verify all constraints
-    // mention only `x_root` and quotient roots `q_root`.
-    let mut candidate_x: Option<Atom> = None;
-    let mut has_modulus = false;
-    for c in &all_cons {
-        let lin = rewrite_lin_full(&c.lin, &fixed, &uf, &rem_defs);
-        if lin.terms.len() > 2 {
+        let root_node = folded.ok()?;
+        if !root_node.half_wins.is_empty() {
             return None;
         }
-        if lin.terms.len() == 2 {
-            let mut it = lin.terms.iter();
-            let (a1, k1) = it.next()?;
-            let (a2, k2) = it.next()?;
-            let (x_cand, q_coef) = match (k1.is_unit(), k2.is_unit()) {
-                (true, false) => (a1, k2),
-                (false, true) => (a2, k1),
-                _ => return None,
-            };
-            if q_coef.abs() >= Int::from(2) {
-                has_modulus = true;
-            }
-            match &candidate_x {
-                None => candidate_x = Some(x_cand.clone()),
-                Some(x) if x == x_cand => {}
-                Some(_) => return None,
+
+        // Step 7: Add top-level narrowed windows of `global_quots` (`w < m - 1`) as unit congruences,
+        // and separate `root_node.clauses` into global bounds, global unit congruences, and clauses.
+        let mut global_bounds = Domain::all();
+        // Complexity tradeoff: accumulated restrictions can rebuild O(s^2) pieces.
+        // As in fold_and, collect restrictions before intersecting them, so
+        // several windows or collapsed clause groups cannot rebuild one growing
+        // residue list quadratically. The balanced merge costs O(s log s) in the
+        // input intervals; nothing is given up. pncx_pure_residues_scale
+        // exercises the same operation.
+        let mut unit_inputs: BTreeMap<Int, Vec<ResidueSet>> = BTreeMap::new();
+        for gq in global_quots.values() {
+            if gq.w < &gq.m - &Int::ONE {
+                let s = shift_residue_interval(&Int::ZERO, &gq.w, gq.s_x, &gq.c_lo, &gq.m);
+                unit_inputs.entry(gq.m.clone()).or_default().push(s);
             }
         }
-    }
-    if !has_modulus {
-        return None;
-    }
-    let x_root = candidate_x?;
 
-    // Step 5: Collect top-level bounds on `(x_root, q_root)` to identify GlobalQuot vs LocalQuot.
-    // A constraint with terms `{x_root: c_x, q_root: c_q}` and `|c_x| == 1`, `|c_q| = m >= 2`:
-    // Normalize by dividing by `|c_x|`: wait, if `|c_x| > 1` in a 1-term constraint on `q_root`,
-    // `c_x == 0`. In a 2-term constraint, `|c_x| == 1` (already checked above).
-    #[derive(Default)]
-    struct QuotBounds {
-        s_x: i8,
-        sigma_q: i8,
-        m: Int,
-        // Bounds on `s_x * x - sigma_q * m * q`: `lo <= s_x * x - sigma_q * m * q <= hi`.
-        lo: Option<Int>,
-        hi: Option<Int>,
-        contradiction: bool,
-    }
-
-    let mut q_top: HashMap<Atom, QuotBounds> = HashMap::new();
-    for c in &top_cons {
-        let lin = rewrite_lin_full(&c.lin, &fixed, &uf, &rem_defs);
-        if lin.terms.len() != 2 {
-            continue;
-        }
-        let c_x = lin.terms.get(&x_root)?;
-        if !c_x.is_unit() {
-            return None;
-        }
-        let (q_root, c_q) = lin.terms.iter().find(|(a, _)| *a != &x_root)?;
-        let m = c_q.abs();
-        if m < Int::from(2) {
-            return None;
-        }
-        let entry = q_top.entry(q_root.clone()).or_insert_with(|| {
-            // Orient so `s_x = 1`, `sigma_q = -sgn(c_q) * sgn(c_x)`:
-            // `c_x * (x - sigma_q * m * q) + constant`.
-            let sx: i8 = 1;
-            let sq: i8 = if c_x.is_positive() == c_q.is_negative() {
-                1
+        let mut raw_clauses: Vec<FlatClause> = Vec::new();
+        for cl in root_node.clauses {
+            if cl.is_true() {
+                continue;
+            }
+            if cl.is_false() {
+                return Some(None);
+            }
+            if cl.mods.is_empty() {
+                global_bounds = global_bounds.intersect(&cl.bounds);
+                if global_bounds.is_empty() {
+                    return Some(None);
+                }
+            } else if cl.bounds.is_empty() && cl.mods.len() == 1 {
+                let (m, s) = cl.mods.into_iter().next()?;
+                unit_inputs.entry(m).or_default().push(s);
             } else {
-                -1
-            };
-            QuotBounds {
-                s_x: sx,
-                sigma_q: sq,
-                m: m.clone(),
-                lo: None,
-                hi: None,
-                contradiction: false,
-            }
-        });
-        if entry.m != m {
-            return None;
-        }
-        // Express `lin` as `t * (entry.s_x * x - entry.sigma_q * m * q) + constant`, where `t = ±1`.
-        let t: i8 = if c_x.is_positive() { 1 } else { -1 };
-        let expected_cq = if (-t * entry.sigma_q) > 0 {
-            m.clone()
-        } else {
-            -&m
-        };
-        if *c_q != expected_cq {
-            return None;
-        }
-        // `t * E + constant >= 0` or `== 0`, where `E = x - sigma_q * m * q`.
-        match c.rel {
-            Rel::Ge if t > 0 => {
-                let l = -&lin.constant;
-                entry.lo = max_lo(entry.lo.take(), Some(l));
-            }
-            Rel::Ge => {
-                let h = lin.constant.clone();
-                entry.hi = min_hi(entry.hi.take(), Some(h));
-            }
-            Rel::Eq => {
-                let v = if t > 0 {
-                    -&lin.constant
-                } else {
-                    lin.constant.clone()
-                };
-                entry.lo = max_lo(entry.lo.take(), Some(v.clone()));
-                entry.hi = min_hi(entry.hi.take(), Some(v));
+                raw_clauses.push(cl);
             }
         }
-        if let (Some(l), Some(h)) = (&entry.lo, &entry.hi)
-            && l > h
-        {
-            entry.contradiction = true;
-        }
-    }
 
-    let mut global_quots: HashMap<Atom, GlobalQuot> = HashMap::new();
-    for (q_root, qb) in q_top {
-        if qb.contradiction {
+        // Step 8: Merge clauses sharing the same modular part `D` via `(D || B1) && (D || B2) <=> D || (B1 && B2)`.
+        // Complexity tradeoff: repeated intersection scans an accumulated domain
+        // O(c^2) times in the worst case. Group the uncut domains, then intersect
+        // in a balanced tree, O(s log c) interval operations for s input intervals.
+        // Restricting every clause to global_bounds would also multiply their
+        // sizes; leave that restriction to the segment walk. Nothing is given up.
+        // Tests: pncx_bound_merge_enumeration; pncx_bound_merge_scale is deferred to
+        // plan row PRES-scaling-10_5 in wt/scratch/deferred-tests/PRES-scaling-10_5.rs.
+        let mut by_mods: BTreeMap<BTreeMap<Int, ResidueSet>, Vec<Domain>> = BTreeMap::new();
+        for cl in raw_clauses {
+            by_mods.entry(cl.mods).or_default().push(cl.bounds);
+        }
+
+        let mut mixed_clauses: Vec<FlatClause> = Vec::new();
+        for (mods, bounds) in by_mods {
+            let bounds = intersect_domains(bounds);
+            if bounds.is_empty() {
+                if mods.len() == 1 {
+                    let (m, s) = mods.into_iter().next()?;
+                    unit_inputs.entry(m).or_default().push(s);
+                } else {
+                    mixed_clauses.push(FlatClause {
+                        bounds: Domain::empty(),
+                        mods,
+                    });
+                }
+            } else {
+                mixed_clauses.push(FlatClause { bounds, mods });
+            }
+        }
+
+        let mut unit_mods = BTreeMap::new();
+        for (m, sets) in unit_inputs {
+            let residues = intersect_residue_sets(sets);
+            if residues.is_empty() {
+                return Some(None);
+            }
+            unit_mods.insert(m, residues);
+        }
+
+        // Complexity tradeoff: enumerating all triples costs O(c^3). The sufficient
+        // three-clause implication uses O(c log c) grouping and constant work per
+        // clause; it can miss implications but never removes a solution. Tested by
+        // one_scope::one_variable_modular_formulas_match_enumeration and pncx_random.
+        global_bounds = global_bounds.intersect(&forced_pair_bounds(&mixed_clauses));
+        if global_bounds.is_empty() {
             return Some(None);
         }
-        if let (Some(lo), Some(hi)) = (qb.lo, qb.hi) {
-            let w = &hi - &lo;
-            if w < qb.m {
-                // `lo <= x - sigma_q * m * q <= hi`  <=>  `0 <= (x - lo) - sigma_q * m * q <= w`.
-                global_quots.insert(
-                    q_root,
-                    GlobalQuot {
-                        s_x: qb.s_x,
-                        c_lo: -&lo,
-                        sigma_q: qb.sigma_q,
-                        m: qb.m,
-                        w,
+
+        // Step 9: Partition `global_bounds` at all bound endpoints of `mixed_clauses` into
+        // bound-homogeneous regimes `[lo_r, hi_r]`.
+        let regimes = partition_into_regimes(&global_bounds, &mixed_clauses);
+        if regimes.is_empty() {
+            return Some(None);
+        }
+
+        // The coordinates for a regime with no bound (`solve_regime`, I5.3): `x = c + s * t` where
+        // `t` is the alias `s * x_root + d` of least `d` among those of sign `s`, so `c = -s * d`.
+        // The aliases of `x_root` are the same atoms under every name, and so are these two.
+        let mut least: [Option<Int>; 2] = [None, None];
+        for a in &all_atoms {
+            let (root, s, d) = uf.get(a);
+            let slot = &mut least[usize::from(s < 0)];
+            if root == x_root && slot.as_ref().is_none_or(|l| d < *l) {
+                *slot = Some(d);
+            }
+        }
+        let [plus, minus] = least;
+        let free: Vec<(i8, Int)> = plus
+            .map(|d| (1, -&d))
+            .into_iter()
+            .chain(minus.map(|d| (-1, d)))
+            .collect();
+        let walked = walk_segments(&regimes, &global_bounds, &free, &unit_mods, &mixed_clauses);
+        let undecided = match walked {
+            RegimeOut::Found(x_val) => {
+                // Complexity tradeoff: constructing every quotient in a Model can
+                // write quadratic output bits. For a Boolean answer evaluate only
+                // the referenced atoms in a visited DAG fold, with linear temporary
+                // space. Repeated atoms still pay their arithmetic cost. Tests:
+                // one_variable_modular_formulas_match_enumeration, pncx_random.
+                if !want_model {
+                    let witness = ScalarWitness {
+                        x_root: &x_root,
+                        x_val: &x_val,
+                        fixed: &fixed,
+                        uf: &uf,
+                        rem_defs: &rem_defs,
+                        global_quots: &global_quots,
+                        local_windows: &local_windows,
+                    };
+                    return ScalarWitness::holds(&witness, f).then(|| Some(Model::new()));
+                }
+                let model = build_model(
+                    &x_root,
+                    &x_val,
+                    &all_atoms,
+                    &fixed,
+                    &uf,
+                    &rem_defs,
+                    &global_quots,
+                    &local_windows,
+                );
+                if !f.holds_as(&model) {
+                    return None;
+                }
+                return Some(Some(if want_model { model } else { Model::new() }));
+            }
+            RegimeOut::Empty => false,
+            RegimeOut::Undecided => true,
+        };
+
+        // Complexity tradeoff: naive version, branching over the residues of every base, exponential
+        // in the number of bases (a conjunction of clauses of residues under several coprime moduli
+        // encodes CNF-SAT, so no exact polynomial method is known for all of them). Used: the CRT
+        // fixpoint, hole cutting on segments shorter than a modulus, the forbidden-box share bound
+        // with conditional expectations, and one level of single-base splitting, each O(n log n) on
+        // one segment. The segments are walked by `walk_segments`, whose cost is bounded there. What
+        // is given up: nothing is refused here; a segment these
+        // steps leave undecided sends the whole formula to the solver's general path, which then
+        // answers, or refuses, as it did before, at its own cost. Tests:
+        // `one_scope::easy_clause_systems_over_several_moduli_keep_their_answers`,
+        // `one_scope::one_variable_modular_formulas_match_enumeration`,
+        // `one_scope::the_questions_of_negated_residues_over_distinct_bounds_scale`.
+        if undecided { None } else { Some(None) }
+    };
+
+    if rem_rows.is_empty() {
+        return run_with_rems(HashMap::new());
+    }
+    let mut candidates: Vec<Atom> = Vec::with_capacity(2);
+    if rem_rows[0].v_can_be_rem {
+        candidates.push(rem_rows[0].u.clone());
+    }
+    if rem_rows[0].u_can_be_rem {
+        candidates.push(rem_rows[0].v.clone());
+    }
+    for row in &rem_rows[1..] {
+        candidates
+            .retain(|x| (*x == row.u && row.v_can_be_rem) || (*x == row.v && row.u_can_be_rem));
+        if candidates.is_empty() {
+            return None;
+        }
+    }
+    if candidates.len() == 2 {
+        // Order the two candidates so the one appearing in more multi-term constraints is tried
+        // first; because both candidates are tried if the first refuses, the verdict and refusal
+        // do not depend on this order.
+        let (mut u0, mut u1) = (0usize, 0usize);
+        for c in &all_cons {
+            let lin = rewrite_lin_full(&c.lin, &fixed, &uf, &empty_rems);
+            if lin.terms.len() >= 2 {
+                if lin.terms.contains_key(&candidates[0]) {
+                    u0 += 1;
+                }
+                if lin.terms.contains_key(&candidates[1]) {
+                    u1 += 1;
+                }
+            }
+        }
+        if u1 > u0 {
+            candidates.swap(0, 1);
+        }
+    }
+    for x_cand in candidates {
+        let mut rem_defs: HashMap<Atom, FullRemDef> = HashMap::new();
+        for row in &rem_rows {
+            let (r_root, c_r, c_x) = if row.u == x_cand {
+                (&row.v, &row.c_v, &row.c_u)
+            } else {
+                (&row.u, &row.c_u, &row.c_v)
+            };
+            let replace = match rem_defs.get(r_root) {
+                None => true,
+                Some(prev) => row.m < prev.c_q.abs(),
+            };
+            if replace {
+                rem_defs.insert(
+                    r_root.clone(),
+                    FullRemDef {
+                        c_r: if c_r.is_positive() { 1 } else { -1 },
+                        x_root: x_cand.clone(),
+                        c_x: c_x.clone(),
+                        q_root: row.q_root.clone(),
+                        c_q: row.c_q.clone(),
+                        k: row.k.clone(),
                     },
                 );
             }
         }
-    }
-
-    // Verify every 1-term constraint in `all_cons` is either on `x_root` or on a `global_quots` key.
-    for c in &all_cons {
-        let lin = rewrite_lin_full(&c.lin, &fixed, &uf, &rem_defs);
-        if lin.terms.len() == 1 {
-            let a = lin.terms.keys().next()?;
-            if *a != x_root && !global_quots.contains_key(a) {
-                return None;
-            }
+        if let Some(ans) = run_with_rems(rem_defs) {
+            return Some(ans);
         }
     }
-
-    // Step 6: Fold the formula DAG bottom-up with polarity `negated: bool`.
-    // Complexity tradeoff: folding kept conjunction prefixes copies each
-    // prefix's clause vector into its parent, O(n^2) payload bytes for n
-    // clauses even though the traversal visits each node once. The already
-    // collected top-level conjuncts form one flat conjunction in O(n) space;
-    // each payload is then combined once at this level. Nothing is given up:
-    // conjunction is associative and repeated shared conjuncts are idempotent.
-    // Nested conjunctions below alternatives keep the original fold. Test:
-    // pncx_kept_prefix_scale; the original fold fails at 28.2x bytes.
-    let flat_top = matches!(f, Formula::And(_)).then(|| {
-        Formula::And(crate::presburger::Shared::new(
-            top_cons
-                .iter()
-                .map(|c| Formula::Con((*c).clone()))
-                .chain(top_clauses.iter().map(|g| (*g).clone()))
-                .collect(),
-        ))
-    });
-    let fold_input = flat_top.as_ref().unwrap_or(f);
-    let mut local_windows: HashMap<Atom, Vec<LocalWindow>> = HashMap::new();
-    let folded: Result<FoldNode, ()> = fold_input.fold(
-        false,
-        |g, negated| negated != matches!(g, Formula::Not(_)),
-        |g, negated, parts: Vec<Result<FoldNode, ()>>| match g {
-            Formula::Not(_) => parts.into_iter().next().unwrap_or(Err(())),
-            Formula::Con(c) => fold_leaf(
-                c,
-                negated,
-                &x_root,
-                &fixed,
-                &uf,
-                &rem_defs,
-                &global_quots,
-                &mut local_windows,
-            ),
-            Formula::And(_) | Formula::Or(_) => {
-                let is_and = matches!(g, Formula::And(_)) != negated;
-                let mut nodes = Vec::with_capacity(parts.len());
-                for p in parts {
-                    nodes.push(p?);
-                }
-                if is_and {
-                    fold_and(nodes, &mut local_windows)
-                } else {
-                    fold_or(nodes)
-                }
-            }
-        },
-    );
-
-    let root_node = folded.ok()?;
-    if !root_node.half_wins.is_empty() {
-        return None;
-    }
-
-    // Step 7: Add top-level narrowed windows of `global_quots` (`w < m - 1`) as unit congruences,
-    // and separate `root_node.clauses` into global bounds, global unit congruences, and clauses.
-    let mut global_bounds = Domain::all();
-    // Complexity tradeoff: accumulated restrictions can rebuild O(s^2) pieces.
-    // As in fold_and, collect restrictions before intersecting them, so
-    // several windows or collapsed clause groups cannot rebuild one growing
-    // residue list quadratically. The balanced merge costs O(s log s) in the
-    // input intervals; nothing is given up. pncx_pure_residues_scale
-    // exercises the same operation.
-    let mut unit_inputs: BTreeMap<Int, Vec<ResidueSet>> = BTreeMap::new();
-    for gq in global_quots.values() {
-        if gq.w < &gq.m - &Int::ONE {
-            let s = shift_residue_interval(&Int::ZERO, &gq.w, gq.s_x, &gq.c_lo, &gq.m);
-            unit_inputs.entry(gq.m.clone()).or_default().push(s);
-        }
-    }
-
-    let mut raw_clauses: Vec<FlatClause> = Vec::new();
-    for cl in root_node.clauses {
-        if cl.is_true() {
-            continue;
-        }
-        if cl.is_false() {
-            return Some(None);
-        }
-        if cl.mods.is_empty() {
-            global_bounds = global_bounds.intersect(&cl.bounds);
-            if global_bounds.is_empty() {
-                return Some(None);
-            }
-        } else if cl.bounds.is_empty() && cl.mods.len() == 1 {
-            let (m, s) = cl.mods.into_iter().next()?;
-            unit_inputs.entry(m).or_default().push(s);
-        } else {
-            raw_clauses.push(cl);
-        }
-    }
-
-    // Step 8: Merge clauses sharing the same modular part `D` via `(D || B1) && (D || B2) <=> D || (B1 && B2)`.
-    // Complexity tradeoff: repeated intersection scans an accumulated domain
-    // O(c^2) times in the worst case. Group the uncut domains, then intersect
-    // in a balanced tree, O(s log c) interval operations for s input intervals.
-    // Restricting every clause to global_bounds would also multiply their
-    // sizes; leave that restriction to the segment walk. Nothing is given up.
-    // Tests: pncx_bound_merge_enumeration; pncx_bound_merge_scale is deferred to
-    // plan row PRES-scaling-10_5 in wt/scratch/deferred-tests/PRES-scaling-10_5.rs.
-    let mut by_mods: BTreeMap<BTreeMap<Int, ResidueSet>, Vec<Domain>> = BTreeMap::new();
-    for cl in raw_clauses {
-        by_mods.entry(cl.mods).or_default().push(cl.bounds);
-    }
-
-    let mut mixed_clauses: Vec<FlatClause> = Vec::new();
-    for (mods, bounds) in by_mods {
-        let bounds = intersect_domains(bounds);
-        if bounds.is_empty() {
-            if mods.len() == 1 {
-                let (m, s) = mods.into_iter().next()?;
-                unit_inputs.entry(m).or_default().push(s);
-            } else {
-                mixed_clauses.push(FlatClause {
-                    bounds: Domain::empty(),
-                    mods,
-                });
-            }
-        } else {
-            mixed_clauses.push(FlatClause { bounds, mods });
-        }
-    }
-
-    let mut unit_mods = BTreeMap::new();
-    for (m, sets) in unit_inputs {
-        let residues = intersect_residue_sets(sets);
-        if residues.is_empty() {
-            return Some(None);
-        }
-        unit_mods.insert(m, residues);
-    }
-
-    // Complexity tradeoff: enumerating all triples costs O(c^3). The sufficient
-    // three-clause implication uses O(c log c) grouping and constant work per
-    // clause; it can miss implications but never removes a solution. Tested by
-    // one_scope::one_variable_modular_formulas_match_enumeration and pncx_random.
-    global_bounds = global_bounds.intersect(&forced_pair_bounds(&mixed_clauses));
-    if global_bounds.is_empty() {
-        return Some(None);
-    }
-
-    // Step 9: Partition `global_bounds` at all bound endpoints of `mixed_clauses` into
-    // bound-homogeneous regimes `[lo_r, hi_r]`.
-    let regimes = partition_into_regimes(&global_bounds, &mixed_clauses);
-    if regimes.is_empty() {
-        return Some(None);
-    }
-
-    // The coordinates for a regime with no bound (`solve_regime`, I5.3): `x = c + s * t` where
-    // `t` is the alias `s * x_root + d` of least `d` among those of sign `s`, so `c = -s * d`.
-    // The aliases of `x_root` are the same atoms under every name, and so are these two.
-    let mut least: [Option<Int>; 2] = [None, None];
-    for a in &all_atoms {
-        let (root, s, d) = uf.get(a);
-        let slot = &mut least[usize::from(s < 0)];
-        if root == x_root && slot.as_ref().is_none_or(|l| d < *l) {
-            *slot = Some(d);
-        }
-    }
-    let [plus, minus] = least;
-    let free: Vec<(i8, Int)> = plus
-        .map(|d| (1, -&d))
-        .into_iter()
-        .chain(minus.map(|d| (-1, d)))
-        .collect();
-    let walked = walk_segments(&regimes, &global_bounds, &free, &unit_mods, &mixed_clauses);
-    let undecided = match walked {
-        RegimeOut::Found(x_val) => {
-            // Complexity tradeoff: constructing every quotient in a Model can
-            // write quadratic output bits. For a Boolean answer evaluate only
-            // the referenced atoms in a visited DAG fold, with linear temporary
-            // space. Repeated atoms still pay their arithmetic cost. Tests:
-            // one_variable_modular_formulas_match_enumeration, pncx_random.
-            if !want_model {
-                let witness = ScalarWitness {
-                    x_root: &x_root,
-                    x_val: &x_val,
-                    fixed: &fixed,
-                    uf: &uf,
-                    rem_defs: &rem_defs,
-                    global_quots: &global_quots,
-                    local_windows: &local_windows,
-                };
-                return ScalarWitness::holds(&witness, f).then(|| Some(Model::new()));
-            }
-            let model = build_model(
-                &x_root,
-                &x_val,
-                &all_atoms,
-                &fixed,
-                &uf,
-                &rem_defs,
-                &global_quots,
-                &local_windows,
-            );
-            if !f.holds_as(&model) {
-                return None;
-            }
-            return Some(Some(if want_model { model } else { Model::new() }));
-        }
-        RegimeOut::Empty => false,
-        RegimeOut::Undecided => true,
-    };
-
-    // Complexity tradeoff: naive version, branching over the residues of every base, exponential
-    // in the number of bases (a conjunction of clauses of residues under several coprime moduli
-    // encodes CNF-SAT, so no exact polynomial method is known for all of them). Used: the CRT
-    // fixpoint, hole cutting on segments shorter than a modulus, the forbidden-box share bound
-    // with conditional expectations, and one level of single-base splitting, each O(n log n) on
-    // one segment. The segments are walked by `walk_segments`, whose cost is bounded there. What
-    // is given up: nothing is refused here; a segment these
-    // steps leave undecided sends the whole formula to the solver's general path, which then
-    // answers, or refuses, as it did before, at its own cost. Tests:
-    // `one_scope::easy_clause_systems_over_several_moduli_keep_their_answers`,
-    // `one_scope::one_variable_modular_formulas_match_enumeration`,
-    // `one_scope::the_questions_of_negated_residues_over_distinct_bounds_scale`.
-    if undecided { None } else { Some(None) }
+    None
 }
 
 /// Solves the segments `segs` (in order along the line, as `partition_into_regimes` gives them)

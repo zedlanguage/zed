@@ -5090,12 +5090,11 @@ fn remainder_alias_names_keep_the_same_answers() {
     assert!(failures.is_empty(), "{}", failures.join("\n"));
 }
 
-
-// Open (I6.3; docs/handoff/PERF-negated-chain-unsolved.md, U4): `solve_modular` ends with a run
-// that picks the remainder by `Atom` order, which keeps the 5,000-formula enumeration at 11
-// refusals; without it 70 are refused and this test passes. With it, 911 of 1,000 cases are
-// answered and 476 differ, each answered under one naming and refused under another (696 with
-// the round-6 rule alone).
+// Fixed (I6.3; docs/handoff/PERF-negated-chain-unsolved.md, U4): `solve_modular` picked the
+// remainder by span, sign and finally `Atom` order, so 400 of 1,000 cases here were answered
+// under one naming and refused under another. It now intersects, over every remainder row, the
+// terms that can be the main variable (at most two) and tries each, so no name decides the
+// reading: 998 of 1,000 are answered and none differ.
 #[test]
 fn remainder_alias_answers_do_not_depend_on_names() {
     // I6.3: the remainder of `x = m q + r` was the greater `Atom` of the two unit terms, so
@@ -5222,4 +5221,216 @@ fn remainder_alias_case(
         )));
     }
     Formula::and(parts)
+}
+
+/// Builds the conjunction of `rows`, each `(terms, constant, is_eq)` meaning
+/// `sum(c * atom) + constant == 0` or `>= 0`, with atom `i` named `names[i]`, in the
+/// order `order`.
+fn small_conjunction(
+    rows: &[(Vec<(usize, i64)>, i64, bool)],
+    names: &[&str],
+    order: &[usize],
+) -> zedc::store::presburger::Formula {
+    use zedc::store::presburger::{Atom, Con, Formula, Lin};
+    let parts = order
+        .iter()
+        .map(|&i| {
+            let (terms, k, is_eq) = &rows[i];
+            let mut l = Lin::constant(*k);
+            for &(a, c) in terms {
+                l = l.plus(&Lin::atom(Atom::Sym(Arc::from(names[a]))).times(c));
+            }
+            let zero = Lin::constant(0);
+            if *is_eq {
+                Formula::Con(Con::eq(&l, &zero))
+            } else {
+                Formula::Con(Con::ge(&l, &zero))
+            }
+        })
+        .collect();
+    zedc::store::presburger::Formula::and(parts)
+}
+
+/// Whether some point with atom `i` in `boxes[i]` satisfies `f`, by enumeration. Every case
+/// below bounds each atom to its box, so this is the exact answer.
+fn small_brute(f: &zedc::store::presburger::Formula, names: &[&str], boxes: &[(i64, i64)]) -> bool {
+    use zedc::store::int::Int;
+    use zedc::store::presburger::Atom;
+    fn go(
+        f: &zedc::store::presburger::Formula,
+        names: &[&str],
+        boxes: &[(i64, i64)],
+        vals: &mut Vec<i64>,
+    ) -> bool {
+        if vals.len() == boxes.len() {
+            let m = names
+                .iter()
+                .zip(vals.iter())
+                .map(|(n, v)| (Atom::Sym(Arc::from(*n)), Int::from(*v)))
+                .collect();
+            return f.holds(&m);
+        }
+        let (lo, hi) = boxes[vals.len()];
+        (lo..=hi).any(|v| {
+            vals.push(v);
+            let r = go(f, names, boxes, vals);
+            vals.pop();
+            r
+        })
+    }
+    go(f, names, boxes, &mut Vec::new())
+}
+
+/// Asks `rows` under every naming in `namings` and every order in `orders`, with `decide` and
+/// `satisfiable` in both call orders; returns the answers seen, which the callers require to
+/// be one, and checks every point found and every answer given against enumeration.
+fn small_answers(
+    rows: &[(Vec<(usize, i64)>, i64, bool)],
+    namings: &[Vec<&str>],
+    orders: &[Vec<usize>],
+    boxes: &[(i64, i64)],
+    label: &str,
+) -> std::collections::BTreeSet<(Option<bool>, Option<bool>)> {
+    use zedc::store::presburger::{decide, satisfiable};
+    let mut seen = std::collections::BTreeSet::new();
+    for names in namings {
+        for order in orders {
+            let g = small_conjunction(rows, names, order);
+            let truth = small_brute(&g, names, boxes);
+            for sat_first in [false, true] {
+                let (d, s) = if sat_first {
+                    let s = satisfiable(&g);
+                    (decide(&g), s)
+                } else {
+                    let d = decide(&g);
+                    (d, satisfiable(&g))
+                };
+                if let Ok(Some(model)) = &s {
+                    assert!(g.holds(model), "{label}: the point fails {g}");
+                }
+                let got = (d.ok(), s.ok().map(|m| m.is_some()));
+                if let Some(b) = got.0 {
+                    assert_eq!(b, truth, "{label}: decide is wrong on {g}");
+                }
+                if let Some(b) = got.1 {
+                    assert_eq!(b, truth, "{label}: satisfiable is wrong on {g}");
+                }
+                seen.insert(got);
+            }
+        }
+    }
+    seen
+}
+
+#[test]
+fn equal_moduli_rows_of_one_remainder_answer_alike_under_names_and_orders() {
+    // `solve_modular` keeps, for a remainder defined by two rows, the row of the smaller
+    // modulus; with equal moduli it keeps the first row it meets. Here `x - 5 q1 - r == k1` and
+    // `x - 5 q2 - r == k2` define `r` with the same modulus, with every atom bounded, and the
+    // answer (refusal included) must not change with the names or the order of the rows.
+    // Atoms: 0 = x, 1 = r, 2 = q1, 3 = q2.
+    let boxes = [(0, 14), (0, 4), (0, 3), (0, 3)];
+    let namings: Vec<Vec<&str>> = vec![
+        vec!["x", "r", "q1", "q2"],
+        vec!["x", "r", "q2", "q1"],
+        vec!["a", "zz", "m", "b"],
+        vec!["zz", "a", "b", "m"],
+        vec!["m", "b", "zz", "a"],
+    ];
+    let mut rng = zed_tests::instances::Rng::new(0x0e9a_1a11);
+    let (mut answered, mut differ) = (0usize, Vec::new());
+    for case in 0..48 {
+        let (k1, k2) = (rng.int(0, 4), rng.int(0, 4));
+        let v = rng.int(0, 14);
+        let mut rows: Vec<(Vec<(usize, i64)>, i64, bool)> = vec![
+            (vec![(0, 1), (2, -5), (1, -1)], -k1, true),
+            (vec![(0, 1), (3, -5), (1, -1)], -k2, true),
+        ];
+        // A clause on `x`, then the boxes.
+        rows.push(if case % 2 == 0 {
+            (vec![(0, 1)], -v, false)
+        } else {
+            (vec![(0, -1)], v, false)
+        });
+        for (i, &(lo, hi)) in boxes.iter().enumerate() {
+            rows.push((vec![(i, 1)], -lo, false));
+            rows.push((vec![(i, -1)], hi, false));
+        }
+        let n = rows.len();
+        let fwd: Vec<usize> = (0..n).collect();
+        let mut swapped = fwd.clone();
+        swapped.swap(0, 1);
+        let rev: Vec<usize> = (0..n).rev().collect();
+        let orders = vec![fwd, swapped, rev];
+        let seen = small_answers(&rows, &namings, &orders, &boxes, &format!("case {case}"));
+        if seen.len() != 1 {
+            differ.push(format!("case {case} k1={k1} k2={k2} v={v}: {seen:?}"));
+        }
+        answered += usize::from(seen.iter().any(|g| g.0.is_some()));
+    }
+    println!(
+        "equal-moduli remainder cases: {answered} of 48 answered, {} differ",
+        differ.len()
+    );
+    assert!(differ.is_empty(), "{}", differ.join("\n"));
+}
+
+#[test]
+fn a_remainder_row_without_points_answers_no_under_either_reading() {
+    // `u + v == 5 q + k` with both `u` and `v` in `0..=4` can be read with either as the
+    // remainder; `solve_modular` tries the candidates in turn and stops at the first answer.
+    // Each case here has no point, so both readings must say so: every answer given is checked
+    // against enumeration, and the answers must agree under every naming and order, so a
+    // first reading's "no" is the same "no" the second reading gives where it runs first.
+    // Atoms: 0 = u, 1 = v, 2 = q.
+    let boxes = [(0, 4), (0, 4), (0, 1)];
+    let namings: Vec<Vec<&str>> = vec![
+        vec!["u", "v", "q"],
+        vec!["v", "u", "q"],
+        vec!["zz", "a", "m"],
+        vec!["a", "zz", "m"],
+    ];
+    let mut cases = 0usize;
+    let mut answered = 0usize;
+    let mut differ = Vec::new();
+    for k in 0..5i64 {
+        for (cu, cv) in [(0i64, 0i64), (1, 0), (0, 1), (4, 4)] {
+            // `u + v - 5 q - k == 0`, `u == cu`, `v == cv`: a point exists only when
+            // `cu + cv - k` is 0 or 5.
+            let mut rows: Vec<(Vec<(usize, i64)>, i64, bool)> = vec![
+                (vec![(0, 1), (1, 1), (2, -5)], -k, true),
+                (vec![(0, 1)], -cu, true),
+                (vec![(1, 1)], -cv, true),
+            ];
+            for (i, &(lo, hi)) in boxes.iter().enumerate() {
+                rows.push((vec![(i, 1)], -lo, false));
+                rows.push((vec![(i, -1)], hi, false));
+            }
+            let s = cu + cv - k;
+            if s == 0 || s == 5 {
+                continue;
+            }
+            cases += 1;
+            let n = rows.len();
+            let orders = vec![(0..n).collect::<Vec<_>>(), (0..n).rev().collect()];
+            let seen = small_answers(
+                &rows,
+                &namings,
+                &orders,
+                &boxes,
+                &format!("k={k} u={cu} v={cv}"),
+            );
+            if seen.len() != 1 {
+                differ.push(format!("k={k} u={cu} v={cv}: {seen:?}"));
+            }
+            assert!(!seen.iter().any(|g| g.0 == Some(true) || g.1 == Some(true)));
+            answered += usize::from(seen.iter().any(|g| g.0 == Some(false)));
+        }
+    }
+    println!(
+        "pointless remainder rows: {answered} of {cases} answered no, {} differ",
+        differ.len()
+    );
+    assert!(answered > 0);
+    assert!(differ.is_empty(), "{}", differ.join("\n"));
 }
