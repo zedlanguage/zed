@@ -1553,3 +1553,36 @@ fn r10_exit_replaced_by_an_outer_variable_keeps_the_flat_digest() {
         "exit replaced by an outer variable"
     );
 }
+
+/// One function with n forward calls of `h0` beside a held lambda of n parameters, so the
+/// signature `generalize` names holds n named variables (its skip set) and n internal runs.
+fn many_runs_wide_skip_src(n: usize) -> String {
+    let mut s = String::from("h0(positional f, positional m) = m.map(f).map(f);\n");
+    let calls: Vec<String> = (0..n).map(|i| format!("h0(a, m{i})")).collect();
+    let ms: Vec<String> = (0..n).map(|i| format!("positional m{i}")).collect();
+    let xs: Vec<String> = (0..n).map(|i| format!("x{i}")).collect();
+    s.push_str(&format!(
+        "g(positional a, {}) = ({}, ({}) -> ({}));\n",
+        ms.join(", "),
+        calls.join(", "),
+        xs.join(", "),
+        xs.join(", ")
+    ));
+    s
+}
+
+/// Step 1 of the closed-sibling repair: `generalize` names each internal run of a forward in
+/// one step against the signature's skip set. Reading the whole skip set at each run made n
+/// runs against n skipped names cost O(n^2); the set is now sorted once per signature.
+#[test]
+fn r10_generalize_runs_against_a_wide_skip_set_scale() {
+    let inputs = crate::scaling::inputs(400, many_runs_wide_skip_src);
+    crate::scaling::check(
+        "generalize naming n internal runs against n skipped names",
+        400,
+        |n| {
+            let (d, _) = run_with_cfg(&inputs[&n], R10Config::default());
+            assert!(d.errors.is_empty(), "errors {:?}", d.errors);
+        },
+    );
+}

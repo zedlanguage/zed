@@ -8,8 +8,8 @@ use std::sync::Arc;
 use zedc_syntax::lex::Span;
 use zedc_types::ty::{
     Arrow, Binds, CallPath, EVERY, FwdFinishNaming, FwdVarStep, MapWord, Names, Need, NeedKind,
-    OTHER, Sig, Ty, VarFacts, Vars, class_id, current_held_var_snapshot, fresh_name,
-    fresh_variable_span_stats, r10_hash,
+    OTHER, Sig, SkipIndex, Ty, VarFacts, Vars, class_id, current_held_var_snapshot, fresh_name,
+    fresh_variable_span_stats_indexed, r10_hash,
 };
 
 use super::super::probe::{
@@ -1264,7 +1264,7 @@ impl<'t, 'a> Ck<'t, 'a> {
     }
 
     /// Names `sig`'s materialized `mine` variables in `O(1)` per compact link (`M62`), advancing
-    /// `n_idx` across unmaterialized `I(F)` runs in one step via `fresh_variable_span_stats` and
+    /// `n_idx` across unmaterialized `I(F)` runs in one step via `fresh_variable_span_stats_indexed` and
     /// pre-computing each `FwdNeed`'s `M65` `digest_summary`.
     pub(in crate::check) fn r10_name_compact_sig_in_generalize(
         &mut self,
@@ -1278,8 +1278,13 @@ impl<'t, 'a> Ck<'t, 'a> {
             .map(|r| Arc::from(format!("${r}")))
             .filter(|v| facts.classes.contains(v) && !outside.contains_key(v))
             .collect();
-        let skip_set: BTreeSet<Arc<str>> = facts.names.iter().cloned().collect();
-        let skip_arc = Arc::new(skip_set);
+        // The skip set, indexed once for every run of the signature (`SkipIndex`, whose
+        // comment gives the tradeoff): O(s log s) here, O(log s) per run below.
+        let held_now = current_held_var_snapshot();
+        let skip_arc = Arc::new(SkipIndex::new(
+            facts.names.iter().map(|s| s.as_ref()),
+            &held_now,
+        ));
 
         let mut n_idx = facts.free;
         let mut mine_seen = BTreeSet::new();
@@ -1344,10 +1349,8 @@ impl<'t, 'a> Ck<'t, 'a> {
                                         }
                                     } else {
                                         // M62 fix: ONE bulk step handling n < 4 + ProgramNames + skip!
-                                        let stats = fresh_variable_span_stats(
-                                            n_idx,
-                                            cnt,
-                                            skip_arc.iter().map(|s| s.as_ref()),
+                                        let stats = fresh_variable_span_stats_indexed(
+                                            n_idx, cnt, &skip_arc, &held_now,
                                         );
                                         n_idx = stats.end_n;
                                     }
@@ -1359,7 +1362,7 @@ impl<'t, 'a> Ck<'t, 'a> {
                     inner.gen_naming = Some(FwdFinishNaming {
                         runs,
                         skip: skip_arc.clone(),
-                        held: current_held_var_snapshot(),
+                        held: held_now.clone(),
                     });
                 }
                 _ => {

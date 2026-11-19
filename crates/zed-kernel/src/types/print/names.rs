@@ -170,12 +170,84 @@ impl Drop for ProgramNames {
     }
 }
 
+/// A skip set of variable names prepared once for many spans ([`fresh_variable_span_stats_indexed`]):
+/// whether each of `T`, `U`, `V`, `W` is in it, and the sorted places `m >= 4` of its names
+/// `T{m + 1}` with their prefix sums. Names no [`Names::Variables`] pick can give (`x`, `T0`,
+/// `T1` to `T4`) are left out, as are places the program-name snapshot it was made against
+/// already skips, so no place is subtracted twice. Names the sequence cannot give are never
+/// asked of it, so [`SkipIndex::contains`] answers exactly for every name a pick can give.
+// Complexity tradeoff (closed-sibling repair, step 1): the naive version, as before, read and
+// sorted the whole skip set at every span, O(s log s) per span, so `generalize` naming r runs of
+// a signature whose skip set holds s names cost O(r·s log s): 11.3 times the work at 8n for n
+// runs against n names (`r10_generalize_runs_against_a_wide_skip_set_scale`). Used: one sort per
+// skip set, O(s log s), then O(log s + log h) per span (h program names). Given up: the index is
+// built against one program-name snapshot, so a span must be asked with that snapshot.
+#[derive(Clone, Debug, Default)]
+pub struct SkipIndex {
+    letters: [bool; 4],
+    numbered: Vec<usize>,
+    prefix: Vec<u128>,
+}
+
+impl SkipIndex {
+    /// The index of `skip_names` against the snapshot `held`: O(s log s) for s names.
+    pub fn new<'a>(skip_names: impl IntoIterator<Item = &'a str>, held: &HeldVarSnapshot) -> Self {
+        let held = &*held.0;
+        let mut letters = [false; 4];
+        let mut numbered = Vec::new();
+        for s in skip_names {
+            match place(s) {
+                Some(Place::Letter(i)) => letters[i] = true,
+                Some(Place::Numbered(m)) if m >= 4 && !held.ends.contains_key(&m) => {
+                    numbered.push(m);
+                }
+                _ => {}
+            }
+        }
+        numbered.sort_unstable();
+        numbered.dedup();
+        let mut prefix = Vec::with_capacity(numbered.len() + 1);
+        prefix.push(0u128);
+        for &m in &numbered {
+            prefix.push(prefix[prefix.len() - 1] + m as u128);
+        }
+        SkipIndex {
+            letters,
+            numbered,
+            prefix,
+        }
+    }
+
+    /// Whether the index skips `name`, for a name a [`Names::Variables`] pick not held by the
+    /// snapshot can give: O(log s).
+    pub fn contains(&self, name: &str) -> bool {
+        match place(name) {
+            Some(Place::Letter(i)) => self.letters[i],
+            Some(Place::Numbered(m)) => self.numbered.binary_search(&m).is_ok(),
+            _ => false,
+        }
+    }
+}
+
 /// Advances past `count` fresh [`Names::Variables`] picks starting from `start_n`, skipping
-/// `held` and `skip_names`, in `O(log(#held) + |skip| log |skip|)` time.
+/// `held` and `skip_names`: [`fresh_variable_span_stats_indexed`] on an index made for this one
+/// span, `O(log(#held) + |skip| log |skip|)`.
 pub fn fresh_variable_span_stats_with_held<'a>(
     start_n: usize,
     count: usize,
     skip_names: impl IntoIterator<Item = &'a str>,
+    held: &HeldVarSnapshot,
+) -> FreshVarSpanStats {
+    fresh_variable_span_stats_indexed(start_n, count, &SkipIndex::new(skip_names, held), held)
+}
+
+/// Advances past `count` fresh [`Names::Variables`] picks starting from `start_n`, skipping
+/// `held` and the names of `skip`, which must have been made against `held`: O(log(#held) +
+/// log |skip|) by binary search on the count of names neither skips below a place.
+pub fn fresh_variable_span_stats_indexed(
+    start_n: usize,
+    count: usize,
+    skip: &SkipIndex,
     held: &HeldVarSnapshot,
 ) -> FreshVarSpanStats {
     if count == 0 {
@@ -187,25 +259,11 @@ pub fn fresh_variable_span_stats_with_held<'a>(
         };
     }
     let held = &*held.0;
-    let mut skip_letters = [false; 4];
-    let mut skip_num = Vec::new();
-    for s in skip_names {
-        match place(s) {
-            Some(Place::Letter(i)) => skip_letters[i] = true,
-            Some(Place::Numbered(m)) if m >= 4 && !held.ends.contains_key(&m) => {
-                skip_num.push(m);
-            }
-            _ => {}
-        }
-    }
-    skip_num.sort_unstable();
-    skip_num.dedup();
-
     let mut n = start_n;
     let mut rem = count;
     let mut letter_mask = 0u8;
     while n < 4 && rem > 0 {
-        if !held.letters[n] && !skip_letters[n] {
+        if !held.letters[n] && !skip.letters[n] {
             letter_mask |= 1u8 << n;
             rem -= 1;
         }
@@ -219,6 +277,7 @@ pub fn fresh_variable_span_stats_with_held<'a>(
             numbered_index_sum: 0,
         };
     }
+    let skip_num = &skip.numbered;
     let p_n = held.sorted_numbered.partition_point(|&x| x < n);
     let s_n = skip_num.partition_point(|&x| x < n);
     let unblocked = |hi: usize| -> usize {
@@ -245,7 +304,7 @@ pub fn fresh_variable_span_stats_with_held<'a>(
     } else {
         held.prefix_sums[p_hi] - held.prefix_sums[p_n]
     };
-    let skip_sum: u128 = skip_num[s_n..s_hi].iter().map(|&x| x as u128).sum();
+    let skip_sum = skip.prefix[s_hi] - skip.prefix[s_n];
     FreshVarSpanStats {
         end_n: lo,
         letter_mask,

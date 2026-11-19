@@ -19,9 +19,9 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use zed_kernel::digest::Digest;
 use zed_kernel::frames::{Deep, Stack};
 pub use zed_kernel::types::names::{
-    FreshVarSpanStats, HeldVarSnapshot, Names, ProgramNames, current_held_var_snapshot, fresh_name,
-    fresh_name_with_held, fresh_variable_span_stats, fresh_variable_span_stats_with_held,
-    nth_fresh_variable,
+    FreshVarSpanStats, HeldVarSnapshot, Names, ProgramNames, SkipIndex, current_held_var_snapshot,
+    fresh_name, fresh_name_with_held, fresh_variable_span_stats, fresh_variable_span_stats_indexed,
+    fresh_variable_span_stats_with_held, nth_fresh_variable,
 };
 use zed_kernel::types::order;
 use zed_kernel::types::{Refusal, Spell, TextPlace, Type as KType, Verdict, defs};
@@ -4642,8 +4642,8 @@ pub fn reset_fwd_decode_count() {
 pub struct FwdFinishNaming {
     /// Runs of `(start_n, count)` in `Names::Variables` (`O(1)` runs on chains).
     pub runs: Vec<(usize, usize)>,
-    /// Variable names skipped by `fresh_name` (`facts.names` in `generalize`).
-    pub skip: Arc<BTreeSet<Arc<str>>>,
+    /// Variable names skipped by `fresh_name` (`facts.names` in `generalize`), indexed once.
+    pub skip: Arc<SkipIndex>,
     /// Snapshot of `ProgramNames` active when `generalize` ran (`O(1)` Arc clone).
     pub held: HeldVarSnapshot,
 }
@@ -27103,18 +27103,13 @@ pub mod r10_hash {
     pub fn sum_fresh_vars_o1(
         start_n: usize,
         count: usize,
-        skip: &BTreeSet<Arc<str>>,
+        skip: &SkipIndex,
         held: &HeldVarSnapshot,
     ) -> u64 {
         if count == 0 {
             return 0;
         }
-        let stats = fresh_variable_span_stats_with_held(
-            start_n,
-            count,
-            skip.iter().map(|s| s.as_ref()),
-            held,
-        );
+        let stats = fresh_variable_span_stats_indexed(start_n, count, skip, held);
         let mut s = 0u64;
         for (i, &c) in C_LET.iter().enumerate() {
             if stats.letter_mask & (1u8 << i) != 0 {
