@@ -3306,11 +3306,128 @@ fn cofactors_mod_leaves(tree: &[Vec<Int>]) -> Vec<Int> {
         .collect()
 }
 
+/// For each of `vals` (each at least 1), whether it shares a prime factor with another of
+/// them. Equal values above 1 share one; a value 1 shares none.
+// Complexity tradeoff: the general method is the product tree and the remainder tree,
+// O(M(B) log k) for `k` values of `B` bits in all, which on k word-size values is 15 to 25
+// times the work at 8 times the values (products of 82 to 872 words at 512 to 4096 values,
+// multiplied and divided by num-bigint below the transform sizes; perf, 2026-11-19). When the
+// largest value `V` is at most `B`, a table of least prime factors up to `V` costs no more
+// than reading the input, O(V + B) = O(B) word operations and about 5 V + 4 pi(V) + 4 k bytes,
+// so that case is answered from the table. The condition is the one under which the table
+// method is proved linear in the input size; it is not a timed crossover. Measured 2026-11-19
+// (instructions, values 1 + i * stride, `pncx_shared_factor_crossover_axis`, load 47 to 50):
+// wherever the condition holds the table took 2.6 to 29 times fewer instructions than the
+// tree (16 values up to 61: 7,131 against 18,297; 4096 values up to 16,381: 1,198,814
+// against 35,079,991) and fewer bytes; beyond it the table is still the cheaper up to `V` of
+// about 2 `B` at 16 values and 4 to 13 `B` at 128 to 4096 values, and the dearer after that
+// (4096 values up to 4,193,281, `B` = 86,008: 176.8 M against 80.1 M). So `V <= c B` with a
+// larger fixed `c` would also be linear and cheaper; `c` = 1 needs no timing to justify it.
+// Both methods give the same answer (`pncx_shared_factor_methods_agree`). What is left on
+// the tree: wide values, and values sparser than one in `log2 V` (`V > B`); no method of
+// lower order than O(M(B) log k) is known for those (Bernstein 2005 gives B^(1 + o(1))), and
+// the tree side is 15 to 18 times the work at 8 times the values. Benches:
+// `pncx_common_factor_scale` and `pncx_coprime_dense_scale` (table side); the tree side's
+// `pncx_common_factor_tree_side_scale` is deferred to plan row PERF-negated-chain-unsolved in
+// wt/scratch/deferred-tests/PERF-negated-chain-unsolved.rs; COMPLEXITY.md C31c.
+fn shares_a_factor(vals: &[Int]) -> Vec<bool> {
+    match dense_values(vals) {
+        Some((small, top)) => shares_a_factor_by_table(&small, top),
+        None => shares_a_factor_by_tree(vals),
+    }
+}
+
+/// `vals` as `u32` with their largest, when every value is in `1..=u32::MAX` and the largest
+/// is at most the number of bits of all of them together. A largest value over `u32::MAX`
+/// that passed the second condition would need more than 2^32 bits of values.
+fn dense_values(vals: &[Int]) -> Option<(Vec<u32>, u32)> {
+    let mut small = Vec::with_capacity(vals.len());
+    let mut bits = 0u64;
+    for v in vals {
+        let x = u32::try_from(v.to_i128()?).ok()?;
+        if x == 0 {
+            return None;
+        }
+        small.push(x);
+        bits += v.bits();
+    }
+    let top = small.iter().copied().max()?;
+    (u64::from(top) <= bits).then_some((small, top))
+}
+
+/// `shares_a_factor` by one product tree and one remainder tree: `gcd(v, (P / v) mod v)` for
+/// the product `P` of all values. O(M(B) log k).
+fn shares_a_factor_by_tree(vals: &[Int]) -> Vec<bool> {
+    let cof = cofactors_mod_leaves(&product_tree(vals.to_vec()));
+    vals.iter()
+        .zip(&cof)
+        .map(|(v, c)| v.gcd_recursive(c) != Int::ONE)
+        .collect()
+}
+
+/// `shares_a_factor` for values in `1..=top`, by a table of least prime factors up to `top`.
+/// O(top + B) word operations for values of `B` bits in all.
+///
+/// The table is built by the linear sieve: for `i` from 2 up, an `i` with no entry is prime
+/// and enters the list; then `least[i * q] = q` for the listed primes `q` in rising order,
+/// stopping at the first `q` above `least[i]` or with `i * q` above `top`. Proof that every
+/// composite `j <= top` gets its least prime factor `p`, and gets it once: `i = j / p` is at
+/// least `p` and below `j`, every prime factor of `i` is one of `j`, so `least[i] >= p`, and
+/// each prime `q <= p` is listed by then (`q <= i`) with `i * q <= j <= top`; so the loop at
+/// `i` reaches `q = p` and writes `least[j] = p`. A write `least[i * q] = q` is made only
+/// with `q <= least[i]`, so `q` is the least prime factor of `i * q`, and `j` fixes both `q`
+/// and `i`: one write per composite. With at most one stopping step per `i`, the sieve takes
+/// at most `2 top` steps. Factoring a value `v` through the table takes one division per
+/// prime factor counted with multiplicity, at most `log2 v` of them. (The textbook linear
+/// sieve; the proof here is complete, and no paper is relied on.)
+fn shares_a_factor_by_table(vals: &[u32], top: u32) -> Vec<bool> {
+    let mut least = vec![0u32; top as usize + 1];
+    let mut primes: Vec<u32> = Vec::new();
+    for i in 2..=top {
+        if least[i as usize] == 0 {
+            least[i as usize] = i;
+            primes.push(i);
+        }
+        for &q in &primes {
+            let j = u64::from(i) * u64::from(q);
+            if q > least[i as usize] || j > u64::from(top) {
+                break;
+            }
+            least[j as usize] = q;
+        }
+    }
+    // `held[p]`: by how many of the values the prime `p` is held, counted up to 2.
+    let mut held = vec![0u8; top as usize + 1];
+    let least = &least[..];
+    let primes_of = |v: u32| {
+        let mut x = v;
+        std::iter::from_fn(move || {
+            (x > 1).then(|| {
+                let p = least[x as usize];
+                while x.is_multiple_of(p) {
+                    x /= p;
+                }
+                p as usize
+            })
+        })
+    };
+    for &v in vals {
+        for p in primes_of(v) {
+            held[p] = (held[p] + 1).min(2);
+        }
+    }
+    vals.iter()
+        .map(|&v| primes_of(v).any(|p| held[p] == 2))
+        .collect()
+}
+
 /// Each modulus with its factors `(b, b^e)` over one set of pairwise coprime bases `b`.
 type ModBase = BTreeMap<Int, Vec<(Int, Int)>>;
 
 /// Factors every modulus in `moduli` over a pairwise coprime base. A modulus coprime to all the
-/// others is its own base; these are found together by one product tree and one remainder tree
+/// others is its own base; these are found together by `shares_a_factor`: from a table of least
+/// prime factors, in O(N) word operations, when the largest modulus is at most `N`, and
+/// otherwise by one product tree and one remainder tree
 /// (`P mod m^2` for the product `P` of all moduli gives `gcd(m, P / m)`), in O(M(N) log k) for
 /// `k` moduli of `N` bits in all, where `M` is the cost of multiplying numbers of `N` bits.
 ///
@@ -3319,8 +3436,9 @@ type ModBase = BTreeMap<Int, Vec<(Int, Int)>>;
 /// 15.3, 16.2, 17.3, 18.1 and 21.2 use product trees and sparse factor
 /// propagation instead, essentially linear in the total bits with fast
 /// arithmetic (a polylogarithmic factor, not a proved O(n log n) bound).
-/// No modulus or answer is given up. Tests: pncx_common_factors_reconstruct_inputs;
-/// pncx_common_factor_scale and pncx_shared_formula_axis are deferred to plan row
+/// No modulus or answer is given up. Tests: pncx_common_factors_reconstruct_inputs,
+/// pncx_coprime_factorization_has_its_answers; benches pncx_common_factor_scale and
+/// pncx_coprime_dense_scale (table side). pncx_shared_formula_axis is deferred to plan row
 /// PERF-negated-chain-unsolved in wt/scratch/deferred-tests/PERF-negated-chain-unsolved.rs.
 fn coprime_factorization(moduli: &BTreeSet<Int>) -> Option<ModBase> {
     let ms: Vec<Int> = moduli.iter().filter(|m| **m > Int::ONE).cloned().collect();
@@ -3337,14 +3455,12 @@ fn coprime_factorization(moduli: &BTreeSet<Int>) -> Option<ModBase> {
         out.extend(complete);
         return Some(out);
     }
-    let cof = cofactors_mod_leaves(&product_tree(ms.clone()));
-
     let mut rest: Vec<Int> = Vec::new();
-    for (m, c) in ms.iter().zip(&cof) {
-        if m.gcd_recursive(c) == Int::ONE {
-            out.insert(m.clone(), vec![(m.clone(), m.clone())]);
-        } else {
+    for (m, shared) in ms.iter().zip(shares_a_factor(&ms)) {
+        if shared {
             rest.push(m.clone());
+        } else {
+            out.insert(m.clone(), vec![(m.clone(), m.clone())]);
         }
     }
     let (bases, factors, _) = coprime_base_and_factors(rest)?;
@@ -3359,11 +3475,14 @@ fn coprime_factorization(moduli: &BTreeSet<Int>) -> Option<ModBase> {
 
 /// A shared factor with independent cofactors needs no base refinement.
 // Complexity tradeoff: pairwise refinement is quadratic on g p_i. A running
-// gcd, followed by one product/remainder tree on the cofactors, recognizes
-// the complete factorization in O(M(B) log k). Failure gives no verdict and
-// Bernstein's general method continues. Test: pncx_common_factor_scale, deferred
-// to plan row PERF-negated-chain-unsolved in
-// wt/scratch/deferred-tests/PERF-negated-chain-unsolved.rs.
+// gcd, followed by `shares_a_factor` on the cofactors, recognizes the complete
+// factorization in O(B) word operations when the largest cofactor is at most
+// the cofactors' B bits (the table method), and in O(M(B) log k) otherwise (one
+// product/remainder tree). Failure gives no verdict and Bernstein's general
+// method continues. Bench: pncx_common_factor_scale (table side); the tree side
+// is over the limit of 10.5 at every size that fits in 60 s (plan row
+// PERF-negated-chain-unsolved, U1; its bench pncx_common_factor_tree_side_scale is
+// deferred in wt/scratch/deferred-tests/PERF-negated-chain-unsolved.rs).
 fn common_factorization(ms: &[Int]) -> Option<ModBase> {
     let mut g = ms.first()?.clone();
     for m in &ms[1..] {
@@ -3376,12 +3495,7 @@ fn common_factorization(ms: &[Int]) -> Option<ModBase> {
     if qs.iter().any(|q| q.gcd_recursive(&g) != Int::ONE) {
         return None;
     }
-    let cof = cofactors_mod_leaves(&product_tree(qs.clone()));
-    if !qs
-        .iter()
-        .zip(&cof)
-        .all(|(q, c)| q.gcd_recursive(c) == Int::ONE)
-    {
+    if shares_a_factor(&qs).contains(&true) {
         return None;
     }
     Some(

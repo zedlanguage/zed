@@ -544,6 +544,150 @@ fn pncx_common_factors_reconstruct_inputs() {
     }
 }
 
+/// `shares_a_factor` by its definition, a gcd of every pair.
+fn shares_a_factor_by_pairs(vals: &[Int]) -> Vec<bool> {
+    (0..vals.len())
+        .map(|i| (0..vals.len()).any(|j| j != i && vals[i].gcd_recursive(&vals[j]) != Int::ONE))
+        .collect()
+}
+
+/// The table method and the tree method of `shares_a_factor` give the pairwise answer on
+/// arithmetic progressions on both sides of the table method's condition (the largest value
+/// at most the bits of all the values): each method is run on every case, whichever side
+/// the case is on, and `shares_a_factor` itself takes the table on 164 of the 384.
+#[test]
+fn pncx_shared_factor_methods_agree() {
+    let (mut table_side, mut tree_side) = (0, 0);
+    for start in 1..7u32 {
+        for stride in [1u32, 2, 3, 5, 6, 30, 97, 210] {
+            for n in [1u32, 2, 3, 5, 8, 13, 40, 120] {
+                let small: Vec<u32> = (0..n).map(|i| start + i * stride).collect();
+                let vals: Vec<Int> = small.iter().map(|&v| Int::from(i64::from(v))).collect();
+                let top = start + (n - 1) * stride;
+                let want = shares_a_factor_by_pairs(&vals);
+                assert_eq!(shares_a_factor_by_table(&small, top), want, "{small:?}");
+                assert_eq!(shares_a_factor_by_tree(&vals), want, "{small:?}");
+                assert_eq!(shares_a_factor(&vals), want, "{small:?}");
+                match dense_values(&vals) {
+                    Some(dense) => {
+                        assert_eq!(dense, (small, top));
+                        table_side += 1;
+                    }
+                    None => tree_side += 1,
+                }
+            }
+        }
+    }
+    assert_eq!((table_side, tree_side), (164, 220));
+}
+
+/// Where `shares_a_factor` changes method: 97 (7 bits) with 90 ones is 97 bits of values, so
+/// the largest value, 97, is at most the bits and the table answers; with 89 ones it is not.
+/// Zero, a negative value, a value over `u32::MAX` and no values at all go to the tree.
+#[test]
+fn pncx_shared_factor_method_boundary() {
+    let with_ones = |v: Int, ones: usize| {
+        let mut vals = vec![v];
+        vals.extend(vec![Int::ONE; ones]);
+        vals
+    };
+    assert_eq!(
+        dense_values(&with_ones(Int::from(97), 90)).map(|(_, top)| top),
+        Some(97)
+    );
+    assert_eq!(dense_values(&with_ones(Int::from(97), 89)), None);
+    for ones in [89, 90] {
+        let vals = with_ones(Int::from(97), ones);
+        assert_eq!(shares_a_factor(&vals), vec![false; ones + 1]);
+    }
+    // Equal values above 1 share a factor on both sides; a value 1 shares none.
+    for ones in [0, 200] {
+        let mut vals = with_ones(Int::from(97), ones);
+        vals.push(Int::from(97));
+        assert_eq!(dense_values(&vals).is_some(), ones == 200);
+        let mut want = vec![false; ones + 2];
+        want[0] = true;
+        want[ones + 1] = true;
+        assert_eq!(shares_a_factor(&vals), want);
+    }
+    let wide = (0..5).fold(Int::ONE, |v, _| &v * &Int::from(1i64 << 40));
+    for odd in [
+        Int::ZERO,
+        Int::from(-3),
+        Int::from(1i64 << 32),
+        wide.clone(),
+    ] {
+        assert_eq!(dense_values(&with_ones(odd, 300)), None);
+    }
+    assert_eq!(
+        dense_values(&with_ones(Int::from(i64::from(u32::MAX)), 0)),
+        None
+    );
+    assert_eq!(dense_values(&[]), None);
+    assert_eq!(shares_a_factor(&[]), Vec::<bool>::new());
+    // A wide value among small ones: the tree, with the pairwise answer.
+    let vals = vec![Int::from(6), wide, Int::from(35), Int::from(11)];
+    assert_eq!(shares_a_factor(&vals), vec![true, true, false, false]);
+}
+
+/// `coprime_factorization` gives the same factors on the table side and on the tree side of
+/// `shares_a_factor`, with a shared factor and without one.
+#[test]
+fn pncx_coprime_factorization_has_its_answers() {
+    let int = |v: i64| Int::from(v);
+    let ints = |vs: &[i64]| vs.iter().map(|v| Int::from(*v)).collect::<Vec<_>>();
+    // A shared factor 2 over coprime cofactors.
+    for (cofactors, table) in [
+        (vec![3, 5, 7, 11, 13], true),
+        (vec![1009, 1013, 1019], false),
+    ] {
+        assert_eq!(dense_values(&ints(&cofactors)).is_some(), table);
+        let ms: BTreeSet<Int> = cofactors.iter().map(|p| int(2 * p)).collect();
+        let want: ModBase = cofactors
+            .iter()
+            .map(|p| (int(2 * p), vec![(int(2), int(2)), (int(*p), int(*p))]))
+            .collect();
+        assert_eq!(coprime_factorization(&ms), Some(want));
+    }
+    // No shared factor: 6, 10 and 15 are factored over 2, 3 and 5, and each of the others is
+    // its own base.
+    for (others, table) in [(vec![7, 11, 13], true), (vec![7, 11, 1013], false)] {
+        let all: Vec<i64> = [6, 10, 15].into_iter().chain(others.clone()).collect();
+        assert_eq!(dense_values(&ints(&all)).is_some(), table);
+        let ms: BTreeSet<Int> = all.iter().map(|m| int(*m)).collect();
+        let mut want: ModBase = others
+            .iter()
+            .map(|p| (int(*p), vec![(int(*p), int(*p))]))
+            .collect();
+        for (m, a, b) in [(6, 2, 3), (10, 2, 5), (15, 3, 5)] {
+            want.insert(int(m), vec![(int(a), int(a)), (int(b), int(b))]);
+        }
+        let mut got = coprime_factorization(&ms).expect("factored");
+        for fs in got.values_mut() {
+            fs.sort();
+        }
+        assert_eq!(got, want);
+    }
+}
+
+/// The cofactors in the bench `pncx_common_factor_scale` are on the table side of
+/// `shares_a_factor` at both of its sizes, so its pair of runs measures one method (A96).
+#[test]
+fn pncx_common_factor_bench_inputs_are_on_the_table_side() {
+    for n in [512, 4096] {
+        let cofactors: Vec<Int> = odd_primes(n).into_iter().collect();
+        assert!(dense_values(&cofactors).is_some());
+    }
+}
+
+/// The first `n` odd primes: the cofactors of `shared_moduli(n)`.
+fn odd_primes(n: usize) -> BTreeSet<Int> {
+    shared_moduli(n)
+        .iter()
+        .map(|m| m.div_floor_wide(&Int::from(2)))
+        .collect()
+}
+
 fn holes(n: usize) -> Vec<Domain> {
     (0..n)
         .map(|i| Domain::single(Int::from(3 * i as i64)).complement())
