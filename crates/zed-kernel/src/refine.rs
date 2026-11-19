@@ -26,6 +26,8 @@
 
 use std::mem;
 
+use zed_graph::{Order, Worklist};
+
 /// The state of a refinement, after Berkholz, Bonsma and Grohe's
 /// Algorithms 2 and 3. Arrays by color have one entry for each vertex, the most colors there
 /// can be.
@@ -38,9 +40,8 @@ pub struct Refine {
     at: Vec<usize>,
     /// How many colors there are.
     colors: usize,
-    /// The colors waiting to refine the others, and whether each is waiting.
-    stack: Vec<usize>,
-    queued: Vec<bool>,
+    /// The colors waiting to refine the others, last in first out.
+    waiting: Worklist,
     /// For the class being refined by: each vertex's number of neighbors in it.
     count: Vec<usize>,
     /// For each color, its vertices with a neighbor in the class, the most and least of their
@@ -68,15 +69,12 @@ impl Refine {
             at[v] = members[c].len();
             members[c].push(v);
         }
-        let mut queued = vec![false; size];
-        queued[..colors].fill(true);
         Refine {
             color,
             members,
             at,
             colors,
-            stack: (0..colors).collect(),
-            queued,
+            waiting: Worklist::first(size, colors, Order::Lifo),
             count: vec![0; size],
             hit: vec![Vec::new(); size],
             most: vec![0; size],
@@ -92,8 +90,7 @@ impl Refine {
     /// Refines until no waiting color splits another: the coloring is then stable. The vertices
     /// counted when the class of `v` refines are `adj[start[v]..start[v + 1]]`.
     pub fn run(&mut self, start: &[usize], adj: &[usize]) {
-        while let Some(r) = self.stack.pop() {
-            self.queued[r] = false;
+        while let Some(r) = self.waiting.pop() {
             let Refine {
                 color,
                 members,
@@ -171,7 +168,7 @@ impl Refine {
                 big = i;
             }
         }
-        let waiting = self.queued[c];
+        let waiting = self.waiting.is_queued(c);
         for i in 0..=top {
             if self.tally[i] == 0 {
                 continue;
@@ -183,9 +180,10 @@ impl Refine {
                 self.colors - 1
             };
             self.new[i] = k;
+            // k is never waiting here: a new color is not, and `c` is pushed only when it was
+            // not, so the push always queues it, as the stack did.
             if (waiting && k != c) || (!waiting && i != big) {
-                self.queued[k] = true;
-                self.stack.push(k);
+                self.waiting.push(k);
             }
         }
         for &v in &hit {

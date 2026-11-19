@@ -21,6 +21,7 @@
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::fmt::Write as _;
 
+use zed_graph::{Order, Worklist};
 use zedc::parse::{Expr, Grammar, Kind, Parser, TOP};
 
 use crate::spec::{Spec, zed_fences};
@@ -442,10 +443,8 @@ impl Splitter {
                 callers[c].push(i);
             }
         }
-        let mut queued = vec![true; g.rules.len()];
-        let mut work: Vec<usize> = (0..g.rules.len()).collect();
+        let mut work = Worklist::all(g.rules.len(), Order::Lifo);
         while let Some(i) = work.pop() {
-            queued[i] = false;
             let mut out = Out {
                 rule: &g.rules[i].name,
                 pairs: None,
@@ -457,10 +456,7 @@ impl Splitter {
             if s != r.rules[i] {
                 r.rules[i] = s;
                 for &c in &callers[i] {
-                    if !queued[c] {
-                        queued[c] = true;
-                        work.push(c);
-                    }
+                    work.push(c);
                 }
             }
         }

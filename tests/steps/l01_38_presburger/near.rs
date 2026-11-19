@@ -1,8 +1,7 @@
 //! Duong's near-linear search for a potential (`zedc::store::negsssp`, item UTVPI-NEAR) against
 //! Bellman–Ford–Moore on small random graphs, and its scaling alone.
 
-use std::collections::VecDeque;
-
+use zed_graph::{Order, Worklist};
 use zed_tests::instances::Rng;
 use zedc::store::int::Int;
 use zedc::store::negsssp::potential_alone;
@@ -15,11 +14,9 @@ type Graph = Vec<Vec<(usize, Int)>>;
 fn bellman_ford_moore(out: &Graph) -> Option<Vec<Int>> {
     let n = out.len();
     let mut d = vec![Int::ZERO; n];
-    let mut queued = vec![true; n];
     let mut taken = vec![0usize; n];
-    let mut queue: VecDeque<usize> = (0..n).collect();
-    while let Some(u) = queue.pop_front() {
-        queued[u] = false;
+    let mut queue = Worklist::all(n, Order::Fifo);
+    while let Some(u) = queue.pop() {
         taken[u] += 1;
         if taken[u] > n {
             return None;
@@ -28,10 +25,7 @@ fn bellman_ford_moore(out: &Graph) -> Option<Vec<Int>> {
             let to = &d[u] + w;
             if to < d[*v] {
                 d[*v] = to;
-                if !queued[*v] {
-                    queued[*v] = true;
-                    queue.push_back(*v);
-                }
+                queue.push(*v);
             }
         }
     }

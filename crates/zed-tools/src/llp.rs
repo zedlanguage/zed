@@ -35,6 +35,7 @@
 
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 
+use zed_graph::{Order, Worklist};
 use zedc::parse::{Expr, Grammar, Kind};
 
 use crate::spec::Spec;
@@ -583,10 +584,8 @@ impl Sets {
                 }
             }
         }
-        let mut queued = vec![true; cfg.prods.len()];
-        let mut work: Vec<usize> = (0..cfg.prods.len()).collect();
+        let mut work = Worklist::all(cfg.prods.len(), Order::Lifo);
         while let Some(p) = work.pop() {
-            queued[p] = false;
             let prod = &cfg.prods[p];
             let (nul, first) = s.ends(&prod.rhs, t, true);
             let (_, last) = s.ends(&prod.rhs, t, false);
@@ -595,10 +594,7 @@ impl Sets {
             s.nullable[a] |= nul;
             if grew {
                 for &q in &uses[a] {
-                    if !queued[q] {
-                        queued[q] = true;
-                        work.push(q);
-                    }
+                    work.push(q);
                 }
             }
         }
@@ -607,10 +603,8 @@ impl Sets {
         if let Some(end) = end {
             s.before[cfg.start as usize].insert(end);
         }
-        let mut queued = vec![true; cfg.prods.len()];
-        let mut work: Vec<usize> = (0..cfg.prods.len()).collect();
+        let mut work = Worklist::all(cfg.prods.len(), Order::Lifo);
         while let Some(p) = work.pop() {
-            queued[p] = false;
             let prod = &cfg.prods[p];
             let a = prod.lhs as usize;
             let mut grown = Vec::new();
@@ -644,10 +638,7 @@ impl Sets {
             }
             for b in grown {
                 for &q in &by_lhs[b] {
-                    if !queued[q] {
-                        queued[q] = true;
-                        work.push(q);
-                    }
+                    work.push(q);
                 }
             }
         }

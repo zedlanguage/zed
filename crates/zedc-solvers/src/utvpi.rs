@@ -627,7 +627,7 @@ mod bench;
 
 #[cfg(test)]
 mod tests {
-    use std::collections::VecDeque;
+    use zed_graph::{Order, Worklist};
 
     use super::{
         At, Int, Search, Shared, bf_dijkstra, goldberg_radzik, graph, integer_empty,
@@ -702,11 +702,9 @@ mod tests {
     fn bellman_ford_moore(out: &[Vec<(usize, Int)>]) -> Option<Vec<Int>> {
         let n = out.len();
         let mut d = vec![Int::ZERO; n];
-        let mut queued = vec![true; n];
         let mut taken = vec![0usize; n];
-        let mut queue: VecDeque<usize> = (0..n).collect();
-        while let Some(u) = queue.pop_front() {
-            queued[u] = false;
+        let mut queue = Worklist::all(n, Order::Fifo);
+        while let Some(u) = queue.pop() {
             taken[u] += 1;
             if taken[u] > n {
                 return None;
@@ -715,10 +713,7 @@ mod tests {
                 let to = &d[u] + w;
                 if to < d[*v] {
                     d[*v] = to;
-                    if !queued[*v] {
-                        queued[*v] = true;
-                        queue.push_back(*v);
-                    }
+                    queue.push(*v);
                 }
             }
         }

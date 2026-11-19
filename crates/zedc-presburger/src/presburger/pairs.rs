@@ -16,8 +16,9 @@
 //! shorter row `q`, the `z` of the longer row `p` that do not give a free atom `w * z` are
 //! collected, and the pair goes when they are fewer than the variables of `p`.
 
-use std::collections::{HashMap, HashSet, VecDeque};
+use std::collections::{HashMap, HashSet};
 
+use zed_graph::{Order, Worklist};
 use zedc_int::int::Int;
 
 use super::formula::{Factor, Lin};
@@ -53,18 +54,15 @@ pub(super) fn kept(
     let index = Index::new(rows, pairs, partners);
     let n = pairs.len();
     let mut live = vec![true; n];
-    let mut queued = vec![true; n];
-    let mut queue: VecDeque<usize> = (0..n).collect();
+    let mut queue = Worklist::all(n, Order::Fifo);
     // The pairs that each pair blocked at their last test, to test again when it goes.
     let mut watch: Vec<Vec<usize>> = vec![Vec::new(); n];
-    while let Some(e) = queue.pop_front() {
-        queued[e] = false;
+    while let Some(e) = queue.pop() {
         if live[e] && index.frees(e, &live, &mut watch) {
             live[e] = false;
             for f in std::mem::take(&mut watch[e]) {
-                if live[f] && !queued[f] {
-                    queued[f] = true;
-                    queue.push_back(f);
+                if live[f] {
+                    queue.push(f);
                 }
             }
         }
