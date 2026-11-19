@@ -11408,6 +11408,8 @@ impl Scope {
         };
         let points = case_points(self, &cases, &free, &joined);
         *self = joined;
+        #[cfg(test)]
+        tests::after_join(self);
         self.in_case = in_case;
         if !self.bottom && !(triggers.is_empty() && points.is_empty()) {
             self.kept.keep(KeptTest {
@@ -23676,6 +23678,230 @@ mod tests {
             .collect();
         want.sort();
         assert_eq!(got, want, "left edge mismatch after removals");
+    }
+
+    thread_local! {
+        /// The untrue entries found right after each join of cases ([`after_join`]), when a
+        /// test has turned the check on by setting this to `Some`.
+        static AFTER_JOIN: std::cell::RefCell<Option<Vec<String>>> =
+            const { std::cell::RefCell::new(None) };
+    }
+
+    /// Called by [`Scope::join_kept`] right after it becomes the join of two cases or more:
+    /// notes the untrue entries of the join, when a test has turned the check on.
+    pub(super) fn after_join(s: &Scope) {
+        if AFTER_JOIN.with(|c| c.borrow().is_none()) {
+            return;
+        }
+        let bad = if s.bottom {
+            Vec::new()
+        } else {
+            untrue_entries(s)
+        };
+        AFTER_JOIN.with(|c| {
+            if let Some(v) = c.borrow_mut().as_mut() {
+                v.push(format!("{} entries", s.projected.len()));
+                v.extend(bad.into_iter().map(|b| format!("untrue: {b}")));
+            }
+        });
+    }
+
+    /// The entries of `s.projected` that [`Scope::is_projected`] would trust, a snapshot equal
+    /// to the scope's own, whose part, projected again, still narrows a name: each such entry
+    /// lets a later projection be skipped that would have narrowed the scope.
+    fn untrue_entries(s: &Scope) -> Vec<String> {
+        let mut bad = Vec::new();
+        for (key, ((eqs, cons), at)) in &s.projected {
+            let names: Vec<Arc<str>> = at.iter().map(|(n, _, _)| n.clone()).collect();
+            if s.snapshot(&names) != *at {
+                continue;
+            }
+            // The part with what it was projected with ([`PartWith`]).
+            let mut with: Vec<Formula> = vec![(*key.0).clone()];
+            with.extend(eqs.iter().cloned().map(Formula::Con));
+            match cons {
+                WithCons::None => {}
+                WithCons::Base(f) => with.push((**f).clone()),
+                WithCons::Shared(cs) => with.extend(cs.iter().cloned().map(Formula::Con)),
+            }
+            let mut again = s.clone();
+            again.project_part(&Formula::and(with));
+            if again.bottom || again.snapshot(&names) != *at {
+                bad.push(format!(
+                    "{key:?} recorded at {at:?}, projected again {:?}",
+                    (!again.bottom).then(|| again.snapshot(&names))
+                ));
+            }
+        }
+        bad
+    }
+
+    /// After each test asked of a scope, and so after each join of the cases a test splits into,
+    /// every `projected` entry at the scope's own snapshot holds there: its part, projected
+    /// again, narrows nothing. `Scope::record` keeps, inside a case, the outer entry of a part it
+    /// certified idle while the other case records its own snapshot of that part, so
+    /// `Scope::join_settled` meets entries of one part that differ (XR-l139 Neon round 4). The
+    /// history is that of `case_wake::a_test_joined_from_cases_projects_the_whole_block` in
+    /// l01_39_scope_relations, then tests asked of the joined scope.
+    #[test]
+    fn projected_entries_after_joins_of_cases_hold_at_the_joins_snapshot() {
+        use zed_kernel::term::build::{lit, prim, var};
+        let lin = |terms: &[(i64, &str)]| {
+            let one = |&(c, n): &(i64, &str)| {
+                if c == 1 {
+                    var(n)
+                } else {
+                    prim(Prim::Mul, vec![lit(c), var(n)])
+                }
+            };
+            let mut it = terms.iter();
+            let first = one(it.next().expect("a term"));
+            it.fold(first, |s, t| prim(Prim::Add, vec![s, one(t)]))
+        };
+        let ge = |t: Term, c: i64| prim(Prim::Ge, vec![t, lit(c)]);
+        let or = |a, b| prim(Prim::Or, vec![a, b]);
+        let and = |a, b| prim(Prim::And, vec![a, b]);
+        let ne = |n: &str, c: i64| prim(Prim::Ne, vec![var(n), lit(c)]);
+        let eq = |n: &str, c: i64| prim(Prim::Eq, vec![var(n), lit(c)]);
+        let le = |t: Term, c: i64| prim(Prim::Le, vec![t, lit(c)]);
+        let steps = [
+            (ge(var("x"), -1), true),
+            (le(var("y"), 1), true),
+            (
+                prim(Prim::Le, vec![var("a"), lin(&[(1, "x"), (1, "y")])]),
+                true,
+            ),
+            (
+                or(
+                    ge(lin(&[(2, "x"), (3, "y")]), 6),
+                    ge(lin(&[(-1, "x"), (-2, "y")]), -1),
+                ),
+                true,
+            ),
+            (
+                or(
+                    ge(lin(&[(1, "x"), (3, "y")]), 1),
+                    ge(lin(&[(3, "x"), (-1, "y")]), 5),
+                ),
+                true,
+            ),
+            (
+                or(
+                    ge(lin(&[(-3, "a")]), -1),
+                    ge(lin(&[(-1, "y"), (1, "a")]), 1),
+                ),
+                true,
+            ),
+            (and(ne("a", -2), ne("y", 1)), false),
+            (le(var("x"), 4), true),
+            (ge(var("a"), -3), true),
+            (ne("y", 0), true),
+            (le(var("a"), 2), true),
+            (or(eq("y", 1), ge(lin(&[(1, "x"), (-1, "a")]), 3)), true),
+            (or(ge(var("x"), 2), le(var("y"), -1)), true),
+            (and(ge(var("x"), 3), ne("a", 0)), false),
+        ];
+        let (asked, joins) = ask_checked(&steps, "fixed history");
+        assert!(asked >= 9, "only {asked} steps kept a point");
+        assert!(joins >= 4, "only {joins} joins of cases");
+    }
+
+    /// The same check on random histories of rows on `a`, `x` and `y`, disjunctions of two rows
+    /// asked holding and conjunctions of two asked not holding (each split into cases and
+    /// joined), and holes.
+    #[test]
+    fn projected_entries_after_joins_of_random_cases_hold_at_the_joins_snapshot() {
+        use zed_kernel::term::build::{lit, prim, var};
+        let mut seed: u64 = 0x2545_f491_4f6c_dd1d;
+        let mut next = |m: u64| {
+            seed ^= seed << 13;
+            seed ^= seed >> 7;
+            seed ^= seed << 17;
+            seed % m
+        };
+        const NAMES: [&str; 3] = ["a", "x", "y"];
+        let row = |next: &mut dyn FnMut(u64) -> u64| {
+            let mut sum: Option<Term> = None;
+            for n in NAMES {
+                let c = next(7) as i64 - 3;
+                if c != 0 {
+                    let t = prim(Prim::Mul, vec![lit(c), var(n)]);
+                    sum = Some(match sum {
+                        None => t,
+                        Some(s) => prim(Prim::Add, vec![s, t]),
+                    });
+                }
+            }
+            let lhs = sum.unwrap_or_else(|| var(NAMES[next(3) as usize]));
+            prim(Prim::Ge, vec![lhs, lit(next(11) as i64 - 5)])
+        };
+        let (mut joins, mut asked) = (0, 0);
+        for history in 0..120 {
+            let mut steps: Vec<(Term, bool)> = Vec::new();
+            for n in NAMES {
+                if next(2) == 0 {
+                    steps.push((prim(Prim::Ge, vec![var(n), lit(next(6) as i64 - 5)]), true));
+                }
+                if next(2) == 0 {
+                    steps.push((prim(Prim::Le, vec![var(n), lit(next(6) as i64)]), true));
+                }
+            }
+            for _ in 0..4 + next(6) {
+                let step = match next(5) {
+                    0 => (row(&mut next), true),
+                    1 => (
+                        prim(
+                            Prim::Ne,
+                            vec![var(NAMES[next(3) as usize]), lit(next(7) as i64 - 3)],
+                        ),
+                        true,
+                    ),
+                    2 | 3 => (prim(Prim::Or, vec![row(&mut next), row(&mut next)]), true),
+                    _ => (prim(Prim::And, vec![row(&mut next), row(&mut next)]), false),
+                };
+                steps.push(step);
+            }
+            let (k, j) = ask_checked(&steps, &format!("history {history}"));
+            asked += k;
+            joins += j;
+        }
+        assert!(asked >= 400 && joins >= 100, "asked {asked}, joins {joins}");
+    }
+
+    /// Asks `steps` of a scope of the integers `a`, `x` and `y` in turn, until one leaves no
+    /// point, and checks the untrue entries right after each join of cases and after each
+    /// step; `at` names the history in a failure. Gives the steps kept and the joins checked.
+    fn ask_checked(steps: &[(Term, bool)], at: &str) -> (usize, usize) {
+        let p = Premises::new();
+        let mut s = Scope::new(
+            ["a", "x", "y"].map(|n| (Arc::<str>::from(n), Product::of_type(Type::int()))),
+        );
+        let (mut asked, mut joins) = (0, 0);
+        for (i, (t, holds)) in steps.iter().enumerate() {
+            AFTER_JOIN.with(|c| *c.borrow_mut() = Some(Vec::new()));
+            let next = s.assume(t, *holds, &p);
+            let at_join = AFTER_JOIN
+                .with(|c| c.borrow_mut().take())
+                .unwrap_or_default();
+            joins += at_join.iter().filter(|l| l.ends_with(" entries")).count();
+            let untrue: Vec<&String> = at_join.iter().filter(|l| l.starts_with("untrue")).collect();
+            assert!(
+                untrue.is_empty(),
+                "{at} step {i}: {t:?} {holds}, at a join:\n{untrue:#?}\nsteps: {steps:?}"
+            );
+            if next.bottom {
+                break;
+            }
+            s = next;
+            asked += 1;
+            let bad = untrue_entries(&s);
+            assert!(
+                bad.is_empty(),
+                "{at} step {i}: {t:?} {holds}:\n{}\nsteps: {steps:?}",
+                bad.join("\n")
+            );
+        }
+        (asked, joins)
     }
 }
 
