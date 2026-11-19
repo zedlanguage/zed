@@ -59,13 +59,12 @@ fn each_form_names_the_step_that_compiles_it() {
         ),
         (
             // A generation push outside a loop or a method is refused (row "Generation push
-            // outside a loop"), and a loop's body is not walked, so the push stands in a method.
-            "String.f(x) { out' <- x; }",
+            // outside a loop"), and a loop's body is not walked, so the push stands in a method,
+            // one whose receiver's fields are not known here (row "Generation push to a name
+            // that is not a field of the receiver" refuses one for a known receiver).
+            "T.f(x) { out' <- x; }",
             &[
-                concat!(
-                    zed_tests::not_yet!("a method"),
-                    " [String.f(x) { out' <- x; }]"
-                ),
+                concat!(zed_tests::not_yet!("a method"), " [T.f(x) { out' <- x; }]"),
                 concat!(
                     zed_tests::not_yet!("a generation push `x' <- e`"),
                     " [out' <- x;]"

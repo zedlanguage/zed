@@ -1030,7 +1030,40 @@ struct Resolver<'u> {
     /// The text of an or-pattern that is the one payload of an atom, `#e(#a | #b)`, whose
     /// parentheses are the payload's: set by the atom just before the or-pattern is walked.
     sole_payload: Option<Span>,
+    /// The names of the fields of each struct the unit declares, by the struct's statement, in
+    /// written order and as a set, or `None` for a struct that imports fields of another type,
+    /// whose names this step does not follow ([`Resolver::generation_push`]).
+    struct_fields: HashMap<Span, Option<(Vec<String>, HashSet<String>)>>,
+    /// Each method whose receiver's fields are known, by the method's statement, the text its
+    /// receiver `this` is bound at.
+    receivers: HashMap<Span, Method>,
 }
+
+/// A method `T.m` whose receiver type's fields are known, for the generation pushes of its body.
+struct Method {
+    /// The receiver's type as written, `T`.
+    receiver: String,
+    /// The method's name, `m`.
+    name: String,
+    /// What the receiver type holds.
+    holds: Receiver,
+}
+
+/// What the receiver type of a method holds, when known: what decides which next generations a
+/// generation push in the method's body may write (DESIGN.md sec:ports, "What a push may name").
+#[derive(Clone, Copy)]
+enum Receiver {
+    /// A prelude type of [`FIELDLESS`], which has no fields.
+    NoFields,
+    /// A struct of the unit, by its statement: its fields are in [`Resolver::struct_fields`].
+    Struct(Span),
+}
+
+/// The prelude types of [`TYPES`] whose values have no fields: numbers, truth values, text and
+/// the empty type (DESIGN.md sec:types). `Lines`, `Files` and `CommandLine` are left out: they
+/// are ports or hold them, and whether a method on one may write a next generation is not
+/// decided here.
+const FIELDLESS: &[&str] = &["int", "rat", "f64", "f32", "bool", "String", "Never"];
 
 /// An or-pattern `(p1 | … | pn)` being walked (DESIGN.md step L2.7b, *Names*): every
 /// alternative binds the same names. The first alternative binds its names in the pattern's
@@ -2178,7 +2211,21 @@ impl Resolver<'_> {
                     Some(signature.collect()),
                 );
             }
-            StmtKind::Struct(st) => self.bind(&st.name, s.span, s.span, Kind::Struct, None),
+            StmtKind::Struct(st) => {
+                self.bind(&st.name, s.span, s.span, Kind::Struct, None);
+                // `None` at the first imported field: its names are another type's.
+                let names: Option<Vec<String>> = (st.fields.iter())
+                    .map(|f| match f {
+                        Field::Typed { name, .. } => Some(name.clone()),
+                        Field::Import { .. } => None,
+                    })
+                    .collect();
+                let fields = names.map(|names| {
+                    let set = names.iter().cloned().collect();
+                    (names, set)
+                });
+                self.struct_fields.insert(s.span, fields);
+            }
             StmtKind::Type(t) => self.bind(&t.name, s.span, s.span, Kind::Type, None),
             StmtKind::Method(m)
                 if m.receiver.ends_with('\'') || m.function.name.ends_with('\'') => {}
@@ -2306,8 +2353,8 @@ impl Resolver<'_> {
             StmtKind::Initial(_) => self.later(s.span, "an `initial` statement"),
             StmtKind::Bind { value, .. } => todo.push(Task::Expr(value)),
             StmtKind::Return(es) => todo.extend(es.iter().rev().map(Task::Expr)),
-            StmtKind::Push { port, .. } if port.ends_with('\'') => {
-                self.later(s.span, "a generation push `x' <- e`")
+            StmtKind::Push { port, value } if port.ends_with('\'') => {
+                self.generation_push(&port[..port.len() - 1], value, s.span)
             }
             StmtKind::Push { port, value } => {
                 self.name(port, s.span);
@@ -2343,6 +2390,14 @@ impl Resolver<'_> {
             }
             StmtKind::Method(m) => {
                 self.later(s.span, "a method");
+                if let Some(holds) = self.receiver(&m.receiver) {
+                    let method = Method {
+                        receiver: m.receiver.clone(),
+                        name: m.function.name.clone(),
+                        holds,
+                    };
+                    self.receivers.insert(s.span, method);
+                }
                 let f = &m.function;
                 let ports: &[Port] = f.ports().unwrap_or_default();
                 todo.push(Task::Function {
@@ -2973,6 +3028,97 @@ impl Resolver<'_> {
             span,
             message: not_yet(what),
             notes: Vec::new(),
+        });
+    }
+
+    /// What the receiver type `ty` of a method declared here holds, when known: a struct of the
+    /// unit in scope, or a prelude type with no fields. `None` for any other type (an imported
+    /// struct, a type declaration, a parameterized or qualified type), whose fields this step
+    /// does not read.
+    fn receiver(&self, ty: &str) -> Option<Receiver> {
+        match self.find(ty) {
+            Some(Found::Bound(ids)) => {
+                let b = &self.out.binders[ids[0]];
+                // An imported struct is bound at its import, which is no key of `struct_fields`.
+                (b.kind == Kind::Struct
+                    && !self.dead.contains(&ids[0])
+                    && self.struct_fields.contains_key(&b.span))
+                .then_some(Receiver::Struct(b.span))
+            }
+            None | Some(Found::Word(_)) if FIELDLESS.contains(&ty) => Some(Receiver::NoFields),
+            _ => None,
+        }
+    }
+
+    /// The generation push `x' <- value` of the statement at `span`. The syntax tree's builder
+    /// refused one that no `loop` and no method holds (row "Generation push outside a loop"),
+    /// and a `loop`'s body is not walked here, so a push that reaches this is held by a method,
+    /// or stands in a string hole. In a method's body it is accepted only for a field `x` of
+    /// the receiver (DESIGN.md sec:ports, "What a push may name"); one for a name that is not a
+    /// field is refused (row "Generation push to a name that is not a field of the receiver").
+    /// One that is a field, or whose receiver's fields are not known here, is of layer L6.
+    // Complexity tradeoff: the innermost method is the binder of `this`, found in O(1) through
+    // `visible`, and the field in O(1) expected in the struct's set of names; a scan of the
+    // struct's field list per push would cost O(fields) each, O(pushes · fields) for a method.
+    fn generation_push(&mut self, x: &str, value: &Expr, span: Span) {
+        let method = match self.find("this") {
+            Some(Found::Bound(ids)) if self.out.binders[ids[0]].kind == Kind::Receiver => {
+                self.receivers.get(&self.out.binders[ids[0]].span)
+            }
+            _ => None,
+        };
+        let Some(&Method {
+            ref receiver,
+            ref name,
+            holds,
+        }) = method
+        else {
+            return self.later(span, "a generation push `x' <- e`");
+        };
+        let mut notes = Vec::new();
+        let why = match holds {
+            Receiver::NoFields => format!("`{receiver}` has no fields"),
+            Receiver::Struct(at) => match &self.struct_fields[&at] {
+                Some((written, set)) if !set.contains(x) => {
+                    notes.push(Note {
+                        span: at,
+                        text: format!("the struct `{receiver}`, which has no field `{x}`"),
+                    });
+                    match &written[..] {
+                        [] => format!("`{receiver}` has no fields"),
+                        [one] => format!(
+                            "`{x}` is not a field of `{receiver}`, whose one field is `{one}`"
+                        ),
+                        [rest @ .., last] => {
+                            let rest: Vec<String> = rest.iter().map(|f| format!("`{f}`")).collect();
+                            format!(
+                                "`{x}` is not a field of `{receiver}`, whose fields are {} and \
+                                 `{last}`",
+                                rest.join(", ")
+                            )
+                        }
+                    }
+                }
+                _ => return self.later(span, "a generation push `x' <- e`"),
+            },
+        };
+        let message = format!(
+            "Invalid push to `{x}'` in the method `{receiver}.{name}`: {why}; a method writes the \
+             next generation of its receiver's fields only."
+        );
+        let value = (self.text)
+            .and_then(|t| t.get(value.span.start..value.span.end))
+            .unwrap_or("…");
+        notes.push(Note {
+            span,
+            text: format!("repair: `{x} = {value};`"),
+        });
+        self.errors.push(Error {
+            row: Some(Row::GenerationPushNotReceiverField),
+            menu: String::new(),
+            span,
+            message,
+            notes,
         });
     }
 

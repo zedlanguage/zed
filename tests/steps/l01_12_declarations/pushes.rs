@@ -219,6 +219,108 @@ fn a_generation_push_outside_a_loop_is_refused() {
     ]);
 }
 
+/// The first diagnostic of `src` under a row, as [`front`] writes it, or what [`front`] gives
+/// when none has a row: a method is not compiled yet, so a refusal in its body comes after the
+/// method's own "not yet".
+fn front_row(src: &str) -> String {
+    let Err(ds) = &*Db::new().front(src) else {
+        return "accepted".into();
+    };
+    let Some(d) = ds.iter().find(|d| d.row.is_some()) else {
+        return front(src);
+    };
+    let repair = d.steps.iter().find_map(|s| s.text.strip_prefix("repair: "));
+    format!(
+        "{} {}:{}: {} | {}",
+        d.row.map_or("no row", Row::name),
+        d.line,
+        d.col,
+        d.message,
+        repair.unwrap_or("none")
+    )
+}
+
+/// `x' <- e` in a method's body for an `x` that is no field of the receiver: a struct of the
+/// unit that has no field `x`, or a prelude type with no fields (DESIGN.md sec:ports, "What a
+/// push may name"). The controls, each one edit from a refused case, are not refused: a push
+/// to a field of the receiver, a push to `x'` in a `loop` that declares `x` inside the method,
+/// and a receiver whose fields this step does not know, a struct that imports another's fields.
+#[test]
+fn a_generation_push_in_a_method_to_a_name_that_is_not_a_field_is_refused() {
+    let refused = |at: &str, method: &str, why: &str, value: &str| {
+        format!(
+            "Generation push to a name that is not a field of the receiver {at}: Invalid push to \
+             `x'` in the method `{method}`: {why}; a method writes the next generation of its \
+             receiver's fields only. | `x = {value};`"
+        )
+    };
+    let counter = "struct Counter { n: int, hi: int, step: int }\n";
+    let cases = [
+        (
+            format!("{counter}Counter.tick() {{\n  x' <- n + 1;\n}}\n"),
+            refused(
+                "3:3",
+                "Counter.tick",
+                "`x` is not a field of `Counter`, whose fields are `n`, `hi` and `step`",
+                "n + 1",
+            ),
+        ),
+        (
+            "struct One { n: int }\nOne.tick() {\n  x' <- n + 1;\n}\n".into(),
+            refused(
+                "3:3",
+                "One.tick",
+                "`x` is not a field of `One`, whose one field is `n`",
+                "n + 1",
+            ),
+        ),
+        // In a lambda in the method's body the push is still the method's.
+        (
+            format!("{counter}Counter.tick() {{\n  g = () -> {{ x' <- 1; 0 }};\n}}\n"),
+            refused(
+                "3:15",
+                "Counter.tick",
+                "`x` is not a field of `Counter`, whose fields are `n`, `hi` and `step`",
+                "1",
+            ),
+        ),
+        (
+            "String.f(positional s) {\n  x' <- s;\n}\n".into(),
+            refused("2:3", "String.f", "`String` has no fields", "s"),
+        ),
+        (
+            "int.f() {\n  x' <- this + 1;\n}\n".into(),
+            refused("2:3", "int.f", "`int` has no fields", "this + 1"),
+        ),
+        // The controls.
+        (
+            format!("{counter}Counter.tick() {{\n  n' <- n + 1;\n}}\n"),
+            "later".into(),
+        ),
+        (
+            format!(
+                "{counter}Counter.tick() {{\n  r = loop {{ initial x = 0; x' <- x + 1; until \
+                 x' >= 3; }}.x;\n}}\n"
+            ),
+            "later".into(),
+        ),
+        (
+            "struct Base { n: int }\nstruct Wide { import Base, w: int }\nWide.tick() {\n  x' <- \
+             n + 1;\n}\n"
+                .into(),
+            "later".into(),
+        ),
+    ];
+    let wrong: Vec<String> = cases
+        .iter()
+        .filter_map(|(src, want)| {
+            let got = front_row(src);
+            (&got != want).then(|| format!("{src}\n  got  {got}\n  want {want}"))
+        })
+        .collect();
+    assert!(wrong.is_empty(), "{}", wrong.join("\n"));
+}
+
 /// A target the grammar does not allow stops the parse at the `<-`; the headline states the
 /// shape of a target, a view and then keys (author P304).
 #[test]

@@ -577,6 +577,14 @@ const NEAR_MISSES: &[NearMiss] = &[
         Some("`x = \"a\";`"),
     ),
     (
+        Row::GenerationPushNotReceiverField,
+        "struct Counter { n: int }\n",
+        "Counter.tick() {\n  n' <- n + 1;\n}\n",
+        "Counter.tick() {\n  x' <- n + 1;\n}\n",
+        "3:3",
+        Some("`x = n + 1;`"),
+    ),
+    (
         Row::BindingInCondition,
         "",
         "f(x: int) = if x == 3 { 1 } else { 0 };\n",
@@ -625,6 +633,8 @@ const LATER: &[Row] = &[
     // A push to a view of a port is not compiled yet: the accepted program is rejected as not yet.
     Row::PushTargetNotPushable,
     Row::PushToReadOnlyView,
+    // A method is not compiled yet: the accepted program is rejected as not yet.
+    Row::GenerationPushNotReceiverField,
     // A `match` is not compiled yet (step L2.7): the accepted program is rejected as not yet.
     Row::BareOperatorPattern,
     Row::OrPatternNamesDiffer,

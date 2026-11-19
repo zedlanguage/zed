@@ -221,6 +221,7 @@ rows! {
     // No diagnostic uses this row yet: plan row PORT-process emits it, with `spawn`.
     PushToMaybeFailure => "Push to a target that may be a failure",
     GenerationPushOutsideLoop => "Generation push outside a loop",
+    GenerationPushNotReceiverField => "Generation push to a name that is not a field of the receiver",
     BindingInCondition => "`=` written in a condition where `==` was meant",
     NamedBeforePositional => "Named argument before a positional one",
     PositionalAfterNamed => "`positional` parameter after a named one",
