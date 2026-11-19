@@ -3711,8 +3711,7 @@ fn height_bounds(t: &Type) -> Option<(u64, u64)> {
             + kept.least.len()
             + kept.payload_bounds.len()
             + kept.payload_least.len();
-        let h_len =
-            h.bounds.len() + h.least.len() + h.payload_bounds.len() + h.payload_least.len();
+        let h_len = h.bounds.len() + h.least.len() + h.payload_bounds.len() + h.payload_least.len();
         if kept_len < h_len {
             std::mem::swap(kept, &mut h);
         }
@@ -3826,9 +3825,9 @@ impl Heights {
                         }
                         if f.eval3(&|_| Some(false)) == Some(false) {
                             children.extend(
-                                f.distinct_atoms()
-                                    .iter()
-                                    .map(|r| (1, r.iter().cloned().map(HeightNode::Type).collect())),
+                                f.distinct_atoms().iter().map(|r| {
+                                    (1, r.iter().cloned().map(HeightNode::Type).collect())
+                                }),
                             );
                         } else {
                             ready.push(std::cmp::Reverse((1, n)));
@@ -4103,9 +4102,7 @@ impl Heights {
             let cyclic = scc.len() > 1 || looped[n];
             for m in scc {
                 let node = nodes[m].clone();
-                if !cyclic
-                    && let HeightNode::Payloads(ref u) = node
-                {
+                if !cyclic && let HeightNode::Payloads(ref u) = node {
                     self.bound_acyclic_payload_node(u);
                     continue;
                 }
@@ -4425,12 +4422,7 @@ fn fields(roots: &[Type]) -> (Vec<Type>, Vec<Type>, Vec<Type>) {
                                         );
                                         let bucket = group_buckets.entry(bkey).or_default();
                                         let found = bucket.iter().copied().find(|&g| {
-                                            groups[g]
-                                                .rep
-                                                .p()
-                                                .atoms
-                                                .names()
-                                                .ptr_eq(cp.atoms.names())
+                                            groups[g].rep.p().atoms.names().ptr_eq(cp.atoms.names())
                                         });
                                         let g = match found {
                                             Some(g) => g,
@@ -4461,10 +4453,7 @@ fn fields(roots: &[Type]) -> (Vec<Type>, Vec<Type>, Vec<Type>) {
                                 groups,
                                 by_name,
                                 queued_plain: [false; 2],
-                                unpushed: [
-                                    (0..n_groups).collect(),
-                                    (0..n_groups).collect(),
-                                ],
+                                unpushed: [(0..n_groups).collect(), (0..n_groups).collect()],
                                 stamp: vec![0; n_groups],
                                 cur_stamp: 0,
                             })

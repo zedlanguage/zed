@@ -1597,15 +1597,15 @@ mod atoms {
                 None => (n.entry.clone(), n.right.clone()),
                 Some(l) => {
                     let (e, new_l) = Self::remove_min(l);
-                    (e, Some(Self::balance(n.entry.clone(), new_l, n.right.clone())))
+                    (
+                        e,
+                        Some(Self::balance(n.entry.clone(), new_l, n.right.clone())),
+                    )
                 }
             }
         }
 
-        fn remove(
-            node: &Option<Arc<PayloadNode>>,
-            name: &str,
-        ) -> (Option<Arc<PayloadNode>>, bool) {
+        fn remove(node: &Option<Arc<PayloadNode>>, name: &str) -> (Option<Arc<PayloadNode>>, bool) {
             let Some(n) = node else {
                 return (None, false);
             };
@@ -1655,14 +1655,14 @@ mod atoms {
             match (&self.root, &other.root) {
                 (None, None) => true,
                 (Some(a), Some(b)) if Arc::ptr_eq(a, b) => true,
-                (Some(a), Some(b)) if a.len == b.len => self.iter_nodes().zip(other.iter_nodes()).all(
-                    |(x, y)| {
+                (Some(a), Some(b)) if a.len == b.len => {
+                    self.iter_nodes().zip(other.iter_nodes()).all(|(x, y)| {
                         Arc::ptr_eq(&x.entry, &y.entry)
                             || (x.entry.name == y.entry.name
                                 && x.entry.bare == y.entry.bare
                                 && x.entry.payload == y.entry.payload)
-                    },
-                ),
+                    })
+                }
                 _ => false,
             }
         }

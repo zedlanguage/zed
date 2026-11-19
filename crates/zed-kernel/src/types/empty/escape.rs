@@ -1213,11 +1213,7 @@ fn decide_counted(t: &Type, counts: &mut (usize, usize)) -> Option<ChainPlan> {
                     let sep = *sep_cache
                         .entry(nodes[v].head.clone())
                         .or_insert_with(|| !c.subset(&nodes[v].head));
-                    dp[v] = if sep {
-                        0
-                    } else {
-                        dp[nx].saturating_add(1)
-                    };
+                    dp[v] = if sep { 0 } else { dp[nx].saturating_add(1) };
                 }
             }
             Some(dp)
@@ -1364,9 +1360,14 @@ fn decide_counted(t: &Type, counts: &mut (usize, usize)) -> Option<ChainPlan> {
             last_tried = actual_len;
             let longer_after = nodes[v].next.is_some() || nodes[v].carrier;
             let all_held = actual_len == l_steady && all_rows_held_from_l0;
-            if let Some(plan) =
-                solve_at_len(actual_len, pl_ext.clone(), longer_after, all_held, None, counts)
-            {
+            if let Some(plan) = solve_at_len(
+                actual_len,
+                pl_ext.clone(),
+                longer_after,
+                all_held,
+                None,
+                counts,
+            ) {
                 return Some(plan);
             }
         }
