@@ -40,8 +40,9 @@ fn a_call_of_n_functions_fixing_a_type_variable_through_one_scales() {
 }
 
 /// PROOF-sweep-front-end: a unit of n definitions, each with a misspelled type, has its n
-/// menus checked by one compile of the unit with every repair made (`front::menus_checked`),
-/// not one compile per menu: O(n) for the repairs and one more compile, against O(n²).
+/// menus checked by one compile of the unit with every repair made (`front::menus_checked`,
+/// `front::checking`), not one compile per menu: O(n) for the repairs and one more compile,
+/// against O(n²).
 #[test]
 fn checking_the_menus_of_n_misspelled_types_scales() {
     let inputs = scaling::inputs(200, |n| {
@@ -61,6 +62,35 @@ fn checking_the_menus_of_n_misspelled_types_scales() {
             head.join("\n")
         );
     });
+}
+
+/// FAIL-menus-checked-whole-unit: of n definitions with a misspelled type, every other one
+/// uses a definition that fails to elaborate, so its menu is withheld and the others' are
+/// offered. `front::checking` compiles the repaired unit, takes out the failing definitions
+/// and every definition that uses one (a worklist over the uses, O(n)), and compiles the rest
+/// again: a compile per stage that fails, at most four, against one compile per menu, O(n²).
+#[test]
+fn checking_the_menus_beside_n_failing_definitions_scales() {
+    let inputs = scaling::inputs(200, |n| {
+        let mut src = String::new();
+        for i in 0..n {
+            if i % 2 == 0 {
+                src.push_str(&format!("g{i}(c: Strng) = {i};\n"));
+            } else {
+                src.push_str(&format!("g{i}(c: Strng) = b{i};\nb{i} = {i} + \"a\";\n"));
+            }
+        }
+        src.push_str("main() = 0;\n");
+        src
+    });
+    scaling::check(
+        "a unit of n definitions with a misspelled type, half using a failing one",
+        200,
+        |n| {
+            let out = crate::rejected(&inputs[&n]);
+            assert_eq!(out.matches("repair: `String`").count(), n / 2);
+        },
+    );
 }
 
 #[test]

@@ -717,21 +717,15 @@ pub(crate) fn rejection(text: &str, build: &crate::build::Build) -> Vec<ast::Err
 /// [`compile`] before its diagnostics are placed: the statements checked and the elaboration,
 /// or the statements the errors are placed among and the errors.
 fn unplaced(text: &str, build: &crate::build::Build) -> Checked {
-    unplaced_menus(text, build, true)
-}
-
-/// [`unplaced`], with the menus [`menus_checked`] checks checked when `menus`, and withheld
-/// otherwise.
-fn unplaced_menus(text: &str, build: &crate::build::Build, menus: bool) -> Checked {
     let ((tokens, docs, stmts), broken) = recovered(text).map_err(|e| (Vec::new(), e))?;
     if broken.errors.is_empty() {
-        return checked(text, &tokens, &docs, stmts, build, menus);
+        return checked(text, &tokens, &docs, stmts, build);
     }
     let stmts = without_broken(text, stmts, &broken.defines);
     let mut errors = broken.errors;
     // A syntax error lies in no statement that parses, so the statements checked place
     // every error as they place the rest. A stable sort, in the order of the text.
-    let stmts = match checked(text, &tokens, &docs, stmts, build, menus) {
+    let stmts = match checked(text, &tokens, &docs, stmts, build) {
         Ok((stmts, _)) => stmts,
         Err((stmts, rest)) => {
             errors.extend(rest);
@@ -745,6 +739,9 @@ fn unplaced_menus(text: &str, build: &crate::build::Build, menus: bool) -> Check
 /// The statements of a unit checked and its elaboration, or the statements its errors are
 /// placed among and the errors, in the order they are reported.
 type Checked = Result<(Vec<Stmt>, Unit), (Vec<Stmt>, Vec<ast::Error>)>;
+
+/// [`Checked`], with the place of the stage that failed beside its errors (see [`staged`]).
+type Staged = Result<(Vec<Stmt>, Unit), (Vec<Stmt>, Vec<ast::Error>, u8)>;
 
 /// The statements of a unit `text` with syntax errors that its checking reads: `stmts`, those
 /// that parse, but for those [`dropped`] leaves out. A use of a name in `broken` that nothing
@@ -813,18 +810,7 @@ fn dropped(
     broken: &HashSet<String>,
 ) -> Vec<bool> {
     let resolve::Resolved { res, errors, .. } = resolved;
-    // The statement whose text holds position `at`, by the statements' starts in text order.
-    let mut by_start: Vec<(usize, usize, usize)> = stmts
-        .iter()
-        .enumerate()
-        .map(|(i, s)| (s.span.start, s.span.end, i))
-        .collect();
-    by_start.sort_unstable();
-    let owner = |at: usize| {
-        let k = by_start.partition_point(|&(start, _, _)| start <= at);
-        let (_, end, i) = *by_start.get(k.checked_sub(1)?)?;
-        (at < end).then_some(i)
-    };
+    let owners = Owners::new(stmts);
     let mut dropped = vec![false; stmts.len()];
     let mut work = Vec::new();
     let unresolved = errors.iter().filter_map(|e| {
@@ -835,65 +821,138 @@ fn dropped(
     });
     let imported = res.broken.iter().map(|span| span.start);
     for at in unresolved.chain(imported) {
-        if let Some(i) = owner(at)
+        if let Some(i) = owners.holding(at)
             && !std::mem::replace(&mut dropped[i], true)
         {
             work.push(i);
         }
     }
-    // The names each statement binds, and the statements that use each name a statement other
-    // than their own binds. A local binder of a dropped statement drops the users of a
-    // top-level binder of its name too: a statement more left out, never a wrong error.
-    let mut binds: Vec<Vec<&str>> = vec![Vec::new(); stmts.len()];
-    for b in &res.binders {
-        if let Some(i) = owner(b.span.start) {
-            binds[i].push(&b.name);
-        }
+    Users::new(stmts.len(), res, &owners).spread(&mut dropped, work);
+    dropped
+}
+
+/// The top-level statements of a unit by their text: which one holds a position.
+struct Owners {
+    /// Each statement's start, end and index, in text order.
+    by_start: Vec<(usize, usize, usize)>,
+}
+
+impl Owners {
+    /// The owners of the positions of `stmts`. O(n log n) for n statements.
+    fn new(stmts: &[Stmt]) -> Owners {
+        let mut by_start: Vec<(usize, usize, usize)> = stmts
+            .iter()
+            .enumerate()
+            .map(|(i, s)| (s.span.start, s.span.end, i))
+            .collect();
+        by_start.sort_unstable();
+        Owners { by_start }
     }
-    let mut users: HashMap<&str, Vec<usize>> = HashMap::new();
-    for (span, r) in &res.uses {
-        let resolve::Ref::Bound(ids) = r else {
-            continue;
-        };
-        let b = &res.binders[ids[0]];
-        if let Some(u) = owner(span.start)
-            && owner(b.span.start) != Some(u)
-        {
-            users.entry(&b.name).or_default().push(u);
-        }
+
+    /// The statement whose text holds position `at`. O(log n).
+    fn holding(&self, at: usize) -> Option<usize> {
+        let k = self.by_start.partition_point(|&(start, _, _)| start <= at);
+        let (_, end, i) = *self.by_start.get(k.checked_sub(1)?)?;
+        (at < end).then_some(i)
     }
-    while let Some(i) = work.pop() {
-        for name in std::mem::take(&mut binds[i]) {
-            for u in users.remove(name).unwrap_or_default() {
-                if !std::mem::replace(&mut dropped[u], true) {
-                    work.push(u);
+
+    /// The statement whose text holds position `at`, or else the first that starts after it:
+    /// the declaration a doc comment there attaches to. O(log n).
+    fn holding_or_next(&self, at: usize) -> Option<usize> {
+        self.holding(at).or_else(|| {
+            let k = self.by_start.partition_point(|&(start, _, _)| start <= at);
+            self.by_start.get(k).map(|&(_, _, i)| i)
+        })
+    }
+}
+
+/// The statements of a unit that use each name another statement binds, by its resolution:
+/// what a statement left out takes with it.
+struct Users<'a> {
+    /// The names each statement binds, until [`Users::spread`] has read them.
+    binds: Vec<Vec<&'a str>>,
+    /// The statements that use each name a statement other than their own binds, until
+    /// [`Users::spread`] has read them.
+    users: HashMap<&'a str, Vec<usize>>,
+}
+
+impl<'a> Users<'a> {
+    /// The users of the `n` statements whose resolution is `res` and whose positions `owners`
+    /// knows. O((n + b + u) log n) for b binders and u uses.
+    fn new(n: usize, res: &'a resolve::Resolution, owners: &Owners) -> Users<'a> {
+        // A local binder of a statement left out drops the users of a top-level binder of its
+        // name too: a statement more left out, never a wrong error.
+        let mut binds: Vec<Vec<&str>> = vec![Vec::new(); n];
+        for b in &res.binders {
+            if let Some(i) = owners.holding(b.span.start) {
+                binds[i].push(&b.name);
+            }
+        }
+        let mut users: HashMap<&str, Vec<usize>> = HashMap::new();
+        for (span, r) in &res.uses {
+            let resolve::Ref::Bound(ids) = r else {
+                continue;
+            };
+            let b = &res.binders[ids[0]];
+            if let Some(u) = owners.holding(span.start)
+                && owners.holding(b.span.start) != Some(u)
+            {
+                users.entry(&b.name).or_default().push(u);
+            }
+        }
+        Users { binds, users }
+    }
+
+    /// Marks in `out` every statement that uses, at any distance, a name a statement of `work`
+    /// binds; `work` holds statements just marked. Each statement's names and each name's users
+    /// are read once over all calls, so the calls together cost O(b + u).
+    fn spread(&mut self, out: &mut [bool], mut work: Vec<usize>) {
+        while let Some(i) = work.pop() {
+            for name in std::mem::take(&mut self.binds[i]) {
+                for u in self.users.remove(name).unwrap_or_default() {
+                    if !std::mem::replace(&mut out[u], true) {
+                        work.push(u);
+                    }
                 }
             }
         }
     }
-    dropped
 }
 
-/// [`unplaced_menus`] for the statements `stmts` of the unit `text`, its tokens `tokens` and
-/// its doc comments `docs`, which parse.
+/// [`unplaced`] for the statements `stmts` of the unit `text`, its tokens `tokens` and its doc
+/// comments `docs`, which parse.
 fn checked(
+    text: &str,
+    tokens: &[lex::Token],
+    docs: &[lex::Doc],
+    stmts: Vec<Stmt>,
+    build: &crate::build::Build,
+) -> Checked {
+    staged(text, tokens, docs, stmts, build, true).map_err(|(stmts, errors, _)| (stmts, errors))
+}
+
+/// [`checked`], with the menus [`menus_checked`] checks checked when `menus` and withheld
+/// otherwise, and with the place of the stage that failed in the order of the stages: 0 for
+/// name resolution, 1 for the reads of the build, 2 for doc comments and elaboration, 3 for
+/// the linear questions.
+fn staged(
     text: &str,
     tokens: &[lex::Token],
     docs: &[lex::Doc],
     mut stmts: Vec<Stmt>,
     build: &crate::build::Build,
     menus: bool,
-) -> Checked {
+) -> Staged {
     let resolved = work::stage(Stage::Resolve, None, || {
         resolve::resolve_text(&stmts, Some(text))
     });
     let mut res = match resolved {
         Ok(res) => res,
-        Err(errors) => return Err((stmts, menus_checked(text, errors, build, menus))),
+        Err(errors) => return Err((stmts, menus_checked(text, errors, build, menus), 0)),
     };
     let misread = crate::build::read(&mut stmts, &mut res, build);
     if !misread.is_empty() {
-        return Err((stmts, misread));
+        return Err((stmts, misread, 1));
     }
     // Doc comments are checked after parsing; their errors join elaboration's.
     let mut errors = work::stage(Stage::Docs, None, || docs::check(text, tokens, docs, &res));
@@ -902,18 +961,18 @@ fn checked(
     });
     let unit = match elaborated {
         Ok(unit) if errors.is_empty() => unit,
-        Ok(_) => return Err((stmts, errors)),
+        Ok(_) => return Err((stmts, errors, 2)),
         Err(es) => {
             errors.extend(es);
             errors.sort_by_key(|e| e.span);
-            return Err((stmts, errors));
+            return Err((stmts, errors, 2));
         }
     };
     let refused = work::stage(Stage::Linear, None, || {
         linear_questions(text, tokens, &stmts, &unit)
     });
     if !refused.is_empty() {
-        return Err((stmts, refused));
+        return Err((stmts, refused, 3));
     }
     Ok((stmts, unit))
 }
@@ -922,45 +981,151 @@ fn checked(
 /// that DESIGN.md sec:diagnostics offers "only when the definition then checks" and name
 /// resolution gives ([`resolve::checked_menu_edit`]: the nearest type name for an unknown one,
 /// a parameter's type variable written once dropped) kept only when that is shown: with every
-/// such repair of the unit made, the unit compiles, so each definition checks with its repair
-/// and the others followed. Otherwise, and when `menus` is false, each is withheld, a fix not
-/// offered rather than one offered that does not check.
+/// such repair of the unit made, the definition that holds the repair checks together with the
+/// definitions it uses, at any distance ([`checking`]), whatever errors the other definitions
+/// have. Otherwise, and when `menus` is false, it is withheld, a fix not offered rather than
+/// one offered that does not check.
 // Complexity tradeoff: checking each repair alone compiles the unit once per menu, O(m·c) for
 // m menus and a compile of cost c, quadratic when m grows with the unit; making every repair
-// and compiling once costs O(c + m log m). The price: in a unit with another error, which the
-// repairs leave, none of these menus is offered. The compile of the repaired unit checks no
-// menu of its own (`menus` false), so it runs once.
+// at once and compiling the repaired unit costs O(m log m) and the compiles of [`checking`],
+// at most one per stage, O(c). The repairs are made together, so a repair is offered when
+// its definition checks with the repairs of the definitions it uses made too: each menu
+// offered is one fix of a set that checks together. The compiles of the repaired unit check
+// no menu of their own (`menus` false), so none recurses.
 fn menus_checked(
     text: &str,
     mut errors: Vec<ast::Error>,
     build: &crate::build::Build,
     menus: bool,
 ) -> Vec<ast::Error> {
-    let (mut edits, owners): (Vec<(Span, String)>, Vec<usize>) = (errors.iter().enumerate())
-        .filter_map(|(i, e)| Some((resolve::checked_menu_edit(e, text)?, i)))
-        .unzip();
+    let mut edits: Vec<(Span, String, usize)> = (errors.iter().enumerate())
+        .filter_map(|(i, e)| {
+            let (span, with) = resolve::checked_menu_edit(e, text)?;
+            Some((span, with, i))
+        })
+        .collect();
     if edits.is_empty() {
         return errors;
     }
-    edits.sort_by_key(|(span, _)| span.start);
+    edits.sort_by_key(|(span, _, _)| span.start);
     let apart = edits.windows(2).all(|w| w[0].0.end <= w[1].0.start);
-    let holds = menus && apart && {
+    let holds = if menus && apart {
+        // The repaired unit, and where each repair starts in it.
         let mut repaired = String::with_capacity(text.len());
-        let mut at = 0;
-        for (span, with) in &edits {
-            repaired.push_str(&text[at..span.start]);
+        let mut starts = Vec::with_capacity(edits.len());
+        let mut from = 0;
+        for (span, with, _) in &edits {
+            repaired.push_str(&text[from..span.start]);
+            starts.push(repaired.len());
             repaired.push_str(with);
-            at = span.end;
+            from = span.end;
         }
-        repaired.push_str(&text[at..]);
-        unplaced_menus(&repaired, build, false).is_ok()
+        repaired.push_str(&text[from..]);
+        checking(&repaired, &starts, build)
+    } else {
+        vec![false; edits.len()]
     };
-    if !holds {
-        for i in owners {
-            resolve::withhold_checked_menu(&mut errors[i]);
+    for ((_, _, i), holds) in edits.iter().zip(holds) {
+        if !holds {
+            resolve::withhold_checked_menu(&mut errors[*i]);
         }
     }
     errors
+}
+
+/// Whether the top-level statement of the unit `text`, built for `build`, that holds each
+/// position of `at` checks together with the statements it uses, at any distance, whatever
+/// errors the others have. The unit is compiled; each statement an error falls in (a doc
+/// comment's error, in the declaration it attaches to) is left out with every statement that
+/// uses it, at any distance; and what is left is compiled again, until a compile passes. The
+/// statements left are then closed under use, so each of them checks with the statements it
+/// uses. An error that falls in no statement, or a compile that fails at a stage no later than
+/// the one before, ends the search with no position shown to check: a menu withheld, never one
+/// offered unchecked.
+// Complexity tradeoff: leaving out the statements of each failed compile and compiling again
+// until one passes costs a compile per round, and a stage that reported only some of its
+// errors could take a round per statement, O(n·c) for n statements. Here each round must fail
+// at a later stage than the one before, so there are at most five compiles, O(c), plus one
+// resolution of the unit and one search over its uses, O((n + b + u) log n) for b binders and
+// u uses ([`Users`]), made only when the first compile fails. The price: a stage that reports
+// only some of its errors withholds the menus that a further round would have shown to check.
+// A statement left out takes its users with it, so the statements kept use only statements
+// kept, and a stage that checks each statement from it and the statements it uses passes
+// again on them; a stage that does not ends the search. What is offered rests only on the
+// last compile passing.
+fn checking(text: &str, at: &[usize], build: &crate::build::Build) -> Vec<bool> {
+    let none = vec![false; at.len()];
+    // The statements that parse and are checked, built again for each compile, which takes
+    // them: as many builds as compiles, O(c) in all.
+    let statements = || {
+        let ((tokens, docs, stmts), broken) = recovered(text).ok()?;
+        let stmts = if broken.errors.is_empty() {
+            stmts
+        } else {
+            without_broken(text, stmts, &broken.defines)
+        };
+        Some((tokens, docs, stmts))
+    };
+    let Some((tokens, docs, stmts)) = statements() else {
+        return none;
+    };
+    let owners = Owners::new(&stmts);
+    let mut out = vec![false; stmts.len()];
+    let resolved = std::cell::OnceCell::new();
+    let mut users = None;
+    let mut last = None;
+    let mut fresh = Some(stmts);
+    loop {
+        let all = match fresh.take() {
+            Some(all) => all,
+            None => match statements() {
+                Some((_, _, all)) if all.len() == out.len() => all,
+                _ => return none,
+            },
+        };
+        let kept: Vec<Stmt> = (all.into_iter().zip(&out))
+            .filter(|(_, o)| !**o)
+            .map(|(s, _)| s)
+            .collect();
+        let kept_docs: Vec<lex::Doc> = (docs.iter())
+            .filter(|d| (owners.holding_or_next(d.span.start)).is_none_or(|i| !out[i]))
+            .cloned()
+            .collect();
+        let (_, errors, stage) = match staged(text, &tokens, &kept_docs, kept, build, false) {
+            Ok(_) => break,
+            Err(failed) => failed,
+        };
+        if last.is_some_and(|l| stage <= l) {
+            return none;
+        }
+        last = Some(stage);
+        let mut work = Vec::new();
+        for e in &errors {
+            let Some(i) = owners.holding_or_next(e.span.start) else {
+                return none;
+            };
+            if !std::mem::replace(&mut out[i], true) {
+                work.push(i);
+            }
+        }
+        if users.is_none() {
+            let Some((_, _, all)) = statements() else {
+                return none;
+            };
+            let r = resolved.get_or_init(|| {
+                work::stage(Stage::Resolve, None, || {
+                    resolve::resolve_in_text(&all, &Alone, Some(text))
+                })
+            });
+            users = Some(Users::new(out.len(), &r.res, &owners));
+        }
+        if let Some(users) = &mut users {
+            users.spread(&mut out, work);
+        }
+    }
+    at.iter()
+        .map(|&p| owners.holding(p).is_some_and(|i| !out[i]))
+        .collect()
 }
 
 /// The operands of the outermost `&&` of `e`, in written order, each as `text` writes it, a

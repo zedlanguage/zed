@@ -55,15 +55,18 @@ fn a_misspelled_type_gets_the_nearest_type_and_is_no_type_variable() {
 
 /// DESIGN.md offers the nearest type name "only when the definition then checks", and the
 /// front end compiles the unit with the repair made to show it (`front::menus_checked`). A
-/// struct is not compiled yet, so a definition whose repair names one is not shown to check
-/// and gets no menu; nor does one whose body then fails, nor one in a unit that has another
-/// error, which the repair leaves.
+/// struct is not compiled yet, so a definition whose repair names one, or that uses one, is
+/// not shown to check and gets no menu; nor does one whose body then fails, nor one that uses
+/// a definition that fails, at any distance.
 #[test]
 fn the_nearest_type_is_offered_only_when_the_definition_then_checks() {
     for src in [
         "struct Config { a: int }\nf(c: Confg) = 0;\nmain() = 0;\n",
+        "struct Pt { a: int }\nf(c: Strng, p: Pt) = 0;\nmain() = 0;\n",
         "f(c: Strng) = c + 1;\nmain() = 0;\n",
-        "f(c: Strng) = 0;\ng = 1 + \"a\";\nmain() = 0;\n",
+        "f(c: Strng) = g;\ng = 1 + \"a\";\nmain() = 0;\n",
+        "f(c: Strng) = h;\nh = g;\ng = 1 + \"a\";\nmain() = 0;\n",
+        "g = 1 + \"a\";\nh = g;\nf(c: Strng) = h;\nmain() = 0;\n",
     ] {
         assert!(!offered(src).is_empty(), "{src}");
         let out = rejected(src);
@@ -72,14 +75,66 @@ fn the_nearest_type_is_offered_only_when_the_definition_then_checks() {
     }
 }
 
+/// Row FAIL-menus-checked-whole-unit: the definition checks with the definitions it uses,
+/// whatever errors the others have, so an error the repair leaves in a definition it does not
+/// use, at any stage of the compile, and a struct it does not use, withhold no menu.
+#[test]
+fn the_nearest_type_is_offered_beside_an_error_the_definition_does_not_use() {
+    for src in [
+        "f(c: Strng) = 0;\ng = 1 + \"a\";\nmain() = 0;\n",
+        "g = 1 + \"a\";\nf(c: Strng) = 0;\nmain() = 0;\n",
+        "f(c: Strng) = 0;\ng = 1 + \"a\";\nh = 2 + \"b\";\nmain() = 0;\n",
+        "f(c: Strng) = 0;\ng = 1 + \"a\";\nh = g;\nk = 2 + \"b\";\nmain() = 0;\n",
+        "f(c: Strng) = 0;\ng = nope;\nmain() = 0;\n",
+        "f(c: Strng) = 0;\ng = nope;\nh = 1 + \"a\";\nmain() = 0;\n",
+        "f(c: Strng) = k;\nk = 2;\ng = k + \"a\";\nmain() = 0;\n",
+        "struct Pt { a: int }\nf(c: Strng) = 0;\nmain() = 0;\n",
+    ] {
+        let out = rejected(src);
+        assert!(
+            out.contains("The type `Strng` is not defined."),
+            "{src}\n{out}"
+        );
+        assert_eq!(out.matches("repair: `String`").count(), 1, "{src}\n{out}");
+    }
+}
+
+/// Of two definitions with a menu, the one that uses a failing definition has its menu
+/// withheld and the other keeps its own.
+#[test]
+fn each_definition_s_menu_is_decided_apart() {
+    let out = rejected("f(c: Strng) = 0;\nh(c: Strng) = g;\ng = 1 + \"a\";\nmain() = 0;\n");
+    assert_eq!(out.matches("repair: `String`").count(), 1, "{out}");
+    assert!(
+        out.contains("1:6: The type `Strng` is not defined.\n  [1] 1:6: repair: `String`"),
+        "{out}"
+    );
+}
+
+/// DESIGN.md step L2.12's test: `f(c: Confg) = 0`, with `type Config` in scope, is rejected
+/// as an unknown type with the menu `Config`. Name resolution finds `Config`; this zedc does
+/// not yet compile a `type` declaration, so the repaired program is still rejected, and by
+/// the rule that a menu is offered only when the definition then checks (sec:diagnostics),
+/// the front end withholds it. When `type` declarations compile, the repaired program is
+/// accepted and the menu offered, and the last two assertions turn.
+#[test]
+fn a_misspelled_type_alias_is_offered_when_the_definition_then_checks() {
+    let src = "type Config = int;\nf(c: Confg) = 0;\nmain() = 0;\n";
+    assert_eq!(offered(src), ["repair: `Config`"]);
+    let out = rejects(src, &["2:6: The type `Confg` is not defined."]);
+    assert!(!out.contains("repair: `Config`"), "{out}");
+    rejected("type Config = int;\nf(c: Config) = 0;\nmain() = 0;\n");
+}
+
 /// The same for the menu of a type variable written once: the parameter with its type
-/// dropped, offered only when the definition then checks.
+/// dropped, offered only when the definition then checks, with the definitions it uses.
 #[test]
 fn the_untyped_parameter_is_offered_only_when_the_definition_then_checks() {
     accepted("f(c) = 0;\nmain() = 0;\n");
     for src in [
-        "f(c: T) = 0;\ng = 1 + \"a\";\nmain() = 0;\n",
-        "struct Pt { a: int }\nf(c: T) = 0;\nmain() = 0;\n",
+        "struct Pt { a: int }\nf(c: T, p: Pt) = 0;\nmain() = 0;\n",
+        "f(c: T) = 1 + \"a\";\nmain() = 0;\n",
+        "f(c: T) = g;\ng = 1 + \"a\";\nmain() = 0;\n",
     ] {
         assert_eq!(offered(src), ["repair: `c`"], "{src}");
         let out = rejected(src);
@@ -89,6 +144,46 @@ fn the_untyped_parameter_is_offered_only_when_the_definition_then_checks() {
         );
         assert!(!out.contains("repair: `c`"), "{out}");
     }
+    for src in [
+        "f(c: T) = 0;\ng = 1 + \"a\";\nmain() = 0;\n",
+        "struct Pt { a: int }\nf(c: T) = 0;\nmain() = 0;\n",
+    ] {
+        rejects(
+            src,
+            &["The type variable `T` is written once", "repair: `c`"],
+        );
+    }
+}
+
+/// The package path (`zedc::unit::load`): a unit that imports nothing is compiled alone, and
+/// its menus are checked as a unit's alone are, beside an error the definition does not use;
+/// a unit that reads others is not compiled there, so its menus are withheld, never offered
+/// unchecked.
+#[test]
+fn a_package_offers_the_menus_of_a_unit_that_imports_nothing() {
+    let files = zedc::unit::Memory(
+        [
+            (
+                "main.zed",
+                "import util.{one};\nh(c: Strng) = one;\nmain() = 0;\n",
+            ),
+            ("util.zed", "one = 1;\ng(c: Strng) = 0;\nbad = 1 + \"a\";\n"),
+        ]
+        .iter()
+        .map(|&(n, t)| (n.to_string(), std::sync::Arc::from(t)))
+        .collect(),
+    );
+    let pkg = zedc::unit::load(&mut zedc::query::Db::new(), &files, &["main"]);
+    let out = pkg.report(std::path::Path::new("")).join("\n");
+    assert!(
+        out.contains("util.zed:2:6: The type `Strng` is not defined.\n  [1] 2:6: repair: `String`"),
+        "{out}"
+    );
+    assert!(
+        out.contains("main.zed:2:6: The type `Strng` is not defined."),
+        "{out}"
+    );
+    assert_eq!(out.matches("repair: `String`").count(), 1, "{out}");
 }
 
 #[test]
