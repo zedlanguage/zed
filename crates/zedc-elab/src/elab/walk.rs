@@ -2696,8 +2696,8 @@ impl<'a> Elab<'a> {
                 None => {
                     format!(
                         "`{name}` is not a function in scope, and reading a field with `.{name}` \
-                         is part of the Zed language that this version of zedc does not compile \
-                         yet. Call a function in scope, or correct the name if it is misspelled."
+                         is part of the Zed language but is not supported by this version of \
+                         zedc. Call a function in scope, or correct the name if it is misspelled."
                     )
                 }
             },

@@ -333,13 +333,13 @@ fn a_cycle_among_statements_is_an_error_whether_a_value_or_a_function() {
     );
     assert_eq!(
         one("f(n) = f(n); x = 1;"),
-        "`f` is defined in terms of itself, which is recursion: this version of zedc does not \
-         compile it yet. [f(n) = f(n);]"
+        "`f` is defined in terms of itself, which is recursion: recursion is not supported by \
+         this version of zedc. [f(n) = f(n);]"
     );
     assert_eq!(
         one("f(n) = g(n: n); g(n) = f(n: n); x = f(n: 1);"),
-        "`f`, `g` are defined in terms of each other, which is recursion: this version of zedc \
-         does not compile it yet. [f(n) = g(n: n);]"
+        "`f`, `g` are defined in terms of each other, which is recursion: recursion is not \
+         supported by this version of zedc. [f(n) = g(n: n);]"
     );
     // An order of definitions that is not a cycle is fine whatever the written order.
     assert_eq!(value("a = b; b = 1; x = a;", "x"), "1");
@@ -447,8 +447,8 @@ fn a_cycle_is_reported_for_each_form_its_statements_and_uses_take() {
         assert_eq!(
             report(&src),
             [
-                "1:1: `f`, `g` are defined in terms of each other, which is recursion: this \
-                 version of zedc does not compile it yet.",
+                "1:1: `f`, `g` are defined in terms of each other, which is recursion: \
+                 recursion is not supported by this version of zedc.",
                 "[1] 1:24: `f` uses `g` here",
                 "[2] 2:24: `g` uses `f` here",
                 "[3] 1:1: repair: remove one of the uses shown, which ends the cycle",
@@ -463,8 +463,8 @@ fn a_cycle_is_reported_for_each_form_its_statements_and_uses_take() {
              h(positional n: int) = f(n);\nmain = f(1);\n"
         ),
         [
-            "1:1: `f`, `g`, `h` are defined in terms of each other, which is recursion: this \
-             version of zedc does not compile it yet.",
+            "1:1: `f`, `g`, `h` are defined in terms of each other, which is recursion: \
+             recursion is not supported by this version of zedc.",
             "[1] 1:24: `f` uses `g` here",
             "[2] 1:31: `f` uses `h` here",
             "[3] 2:24: `g` uses `f` here",

@@ -397,7 +397,7 @@ const NEAR_MISSES: &[NearMiss] = &[
              while t < 10; initial x = 0; x' = x + 1; }`, or an indexed definition, as `x[i in \
              0..<10] = x[i-1] + 1 with x[-1] = 0`, with the start value in place of 0 and the \
              number of steps in place of 10. Loops and indexed definitions are part of the Zed \
-             language, and this version of zedc does not compile them yet.",
+             language but are not supported by this version of zedc.",
         ),
     ),
     // RANGE-open-walk: `.first` stops at the entry that decides it; `.count` needs every
@@ -610,9 +610,9 @@ const NEAR_MISSES: &[NearMiss] = &[
     ),
 ];
 
-/// Rows whose accepted program holds a form zedc does not compile yet (a boundary `with`, step
+/// Rows whose accepted program holds a form zedc does not support (a boundary `with`, step
 /// L6.2, a `loop`, step L6.1, or `with handles(…)` on `main`, plan row SIGNALS-rt): their
-/// accepted program is refused only with the message that names the form as not compiled yet.
+/// accepted program is refused only with the message that names the form as not supported.
 /// Once it is accepted, the row leaves this list.
 const LATER: &[Row] = &[
     Row::BareBoundary,
@@ -628,14 +628,14 @@ const LATER: &[Row] = &[
     Row::CarryWord,
     Row::SignalsReadWithoutHandles,
     Row::SignalDeclarationCannotHold,
-    // A struct declaration is not compiled yet: the accepted program is rejected as not yet.
+    // A struct declaration is not supported yet: the accepted program is rejected as such.
     Row::StructFieldTypeVariable,
-    // A push to a view of a port is not compiled yet: the accepted program is rejected as not yet.
+    // A push to a view of a port is not supported yet: the accepted program is rejected as such.
     Row::PushTargetNotPushable,
     Row::PushToReadOnlyView,
-    // A method is not compiled yet: the accepted program is rejected as not yet.
+    // A method is not supported yet: the accepted program is rejected as such.
     Row::GenerationPushNotReceiverField,
-    // A `match` is not compiled yet (step L2.7): the accepted program is rejected as not yet.
+    // A `match` is not supported yet (step L2.7): the accepted program is rejected as such.
     Row::BareOperatorPattern,
     Row::OrPatternNamesDiffer,
 ];

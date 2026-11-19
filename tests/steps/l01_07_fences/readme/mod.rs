@@ -281,7 +281,7 @@ fn the_enabled_readme_fences_run_with_their_stated_results() {
 /// holds what each gives now.
 const RAISED_LATER: &[(&str, usize, &str)] = &[];
 
-/// Enabled fences that use a word this zedc does not compile yet, by the fence's key, with the
+/// Enabled fences that use a word this zedc does not support, by the fence's key, with the
 /// word and the item that adds it: the test of the enabled fences checks that each still stops
 /// on its word, and fails once the word compiles, so the item that adds it removes the line and
 /// the fence runs with its checks.
@@ -322,7 +322,7 @@ const VARIANT_PINS: &[(&str, usize, &str)] = &[
     (
         "README.md [Everything is a map] 1",
         7,
-        // The sort key `desc` on line 12 is not compiled yet, so the checker, which would
+        // The sort key `desc` on line 12 is not supported yet, so the checker, which would
         // refuse the read of line 7, does not run.
         "line 7: the line is marked ✗ and has no diagnostic",
     ),

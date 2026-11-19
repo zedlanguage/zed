@@ -327,7 +327,7 @@ fn a_call_through_a_value_fills_a_default_that_reads_a_parameter_or_a_held_name(
 /// and 4 (row CALL-placed-value-recursive, its programs carried into row SCHED-scc-unit).
 #[test]
 fn a_function_used_as_a_value_in_its_own_cycle_is_refused_as_recursion() {
-    let not_yet = "which is recursion: this version of zedc does not compile it yet.";
+    let not_yet = "which is recursion: recursion is not supported by this version of zedc.";
     let apply = "apply(k, v: int) = k(x: v);\n";
     let g1 = "g(x: int, y: int = x) = if x > 3 { x + y } else { apply(k: g, v: x + 1) };";
     assert_eq!(
@@ -2009,7 +2009,7 @@ fn a_named_call_through_a_parameter_of_two_differing_functions_runs() {
 }
 
 /// Row PROOF-generic-body-values-from-args, the cases of the proof that this zedc does not
-/// compile yet: each is refused before the checker reaches the call, so no rebuilding is put
+/// support: each is refused before the checker reaches the call, so no rebuilding is put
 /// for it. When one of them is compiled, this test fails, and the proof at
 /// `Ck::coerce_forwarded` must cover that construct (a test of it in
 /// [`a_generic_body_passes_on_only_its_arguments_by_every_route`] or a refusal in
@@ -2035,7 +2035,11 @@ fn constructs_the_proof_leaves_for_later_are_not_compiled_yet() {
     let compiled: Vec<_> = cases
         .iter()
         .map(|rest| (rest, front_errors(&format!("{head}{rest}"))))
-        .filter(|(_, errors)| !errors.iter().any(|e| e.contains("does not compile it yet")))
+        .filter(|(_, errors)| {
+            !errors
+                .iter()
+                .any(|e| e.contains("not supported by this version of zedc"))
+        })
         .collect();
     assert!(compiled.is_empty(), "{compiled:#?}");
 }
@@ -2434,7 +2438,7 @@ fn a_reordered_function_the_generic_body_compares_is_refused() {
 }
 
 /// Row PROOF-reorder-forwarded-uses-complete, use by a struct: a struct declaration is not
-/// compiled yet, so a struct holding the parameter never reaches the checker. When structs
+/// supported yet, so a struct holding the parameter never reaches the checker. When structs
 /// are compiled, this test fails, and the struct cases join the tests above.
 #[test]
 fn a_reordered_function_in_a_struct_is_not_compiled_yet() {
@@ -2446,7 +2450,9 @@ fn a_reordered_function_in_a_struct_is_not_compiled_yet() {
         let src = format!("{head}{REORDER_HEAD}{rest}");
         let errors = front_errors(&src);
         assert!(
-            errors.iter().any(|e| e.contains("does not compile it yet")),
+            errors
+                .iter()
+                .any(|e| e.contains("not supported by this version of zedc")),
             "{src}: {errors:?}"
         );
     }

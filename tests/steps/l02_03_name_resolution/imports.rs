@@ -289,9 +289,8 @@ fn a_type_of_another_unit_is_not_yet_linked() {
     assert_eq!(
         p.report(Path::new("")),
         [
-            "geometry/shapes.zed:1:1: a struct declaration is part of the Zed language, and this \
-             version of zedc does not compile it yet. Write the program without it, with the \
-             forms this zedc compiles.",
+            "geometry/shapes.zed:1:1: a struct declaration is part of the Zed language but is \
+             not supported by this version of zedc. Write the program without it.",
             "main.zed:1:1: an import is part of the Zed language, and this version of zedc does \
              not yet tie a name an import brings in to the other unit's definition. Write the \
              definitions this file uses in it, and remove the import.",

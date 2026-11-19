@@ -259,7 +259,7 @@ fn a_keyed_write_to_main_files_is_a_later_step_in_main_and_outside_it() {
         assert!(
             out.stderr.contains(&format!(
                 "{at}: the push at a key `main::files[\"x\"] <- \"v\";` is part of the Zed \
-                 language, and this version of zedc does not compile it yet."
+                 language but is not supported by this version of zedc."
             )),
             "{name}: {}",
             out.stderr

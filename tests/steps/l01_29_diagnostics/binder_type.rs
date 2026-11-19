@@ -379,7 +379,7 @@ fn every_rule_of_the_grammar_that_writes_a_name_is_classified_and_its_binders_re
     for (rule, site) in SITES {
         match site {
             Site::L1(text, binder) => names_type(text, binder),
-            // Layer L1 refuses the form whole, as one this zedc does not compile yet; the row
+            // Layer L1 refuses the form whole, as one this zedc does not support; the row
             // lands with the layer that compiles it (DESIGN.md step L1.29).
             Site::Later(text) => {
                 let out = rejected(text);

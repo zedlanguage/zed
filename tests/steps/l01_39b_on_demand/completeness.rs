@@ -205,7 +205,10 @@ fn source_exact_is_not_compiled_yet() {
             exact_steps();
             let (r, _) = counted(&src);
             let out = r.expect_err(&src);
-            assert!(out.contains("does not compile it yet"), "{src}: {out}");
+            assert!(
+                out.contains("not supported by this version of zedc"),
+                "{src}: {out}"
+            );
             assert_eq!(exact_steps(), 0);
         });
     }

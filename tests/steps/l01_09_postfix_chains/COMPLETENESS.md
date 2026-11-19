@@ -19,7 +19,7 @@ give them: l01_19_whole_file_ports, l01_19a_command_line and l01_21_test_runner.
 | A curry mark out of place does not parse | `calls::misplaced_curry_marks_do_not_parse` |
 | A positional argument after a named one parses and is refused with its row | `calls::a_positional_argument_after_a_named_one_parses_and_is_rejected_with_its_row` |
 | An argument named twice is refused at the second | `calls::an_argument_named_twice_is_an_error_at_the_second` |
-| A form of a later layer is refused as not compiled yet | `calls::a_form_of_a_later_layer_is_refused_as_not_compiled_yet` |
+| A form of a later layer is refused as not supported | `calls::a_form_of_a_later_layer_is_refused_as_not_compiled_yet` |
 | A sort key is a positional argument; a direction word alone prints back and needs a following `,` or `)` | `calls::a_sort_key_is_a_positional_argument`, `calls::a_direction_word_alone_prints_back_and_needs_a_following_comma_or_paren` |
 | `5.double`: a digit then a letter is member access (the lexer rule) | `chains::a_digit_then_a_letter_is_member_access` |
 | Suffixes apply left to right; a chain is an operand of the operators around it | `chains::suffixes_apply_left_to_right`, `chains::a_chain_is_an_operand_of_the_operators_around_it` |

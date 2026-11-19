@@ -182,7 +182,7 @@ fn a_quantifier_decided_at_a_fixed_entry_costs_the_same_at_8n() {
 /// show it: parsing the n entries of a display is itself linear.
 #[test]
 fn the_elaborated_quantifier_decided_at_a_fixed_entry_costs_the_same_at_8n() {
-    // A parameter of type `[int]` is not compiled yet, so `xs` is a display here, and each run
+    // A parameter of type `[int]` is not supported yet, so `xs` is a display here, and each run
     // binds its kernel name to the n entries around `q`'s own term.
     let unit =
         elab("xs = [0, 1, 2];\nq = xs.any(x -> x >= 10);").unwrap_or_else(|e| panic!("{e:?}"));

@@ -10,7 +10,7 @@ left:
 
 - lines 192 to 201 (`starts_with_in` walking down the left operand of an index key): every unit
   that reaches them, `x[(i in s)..<5]` and the rest listed in `positions.rs`, is refused by
-  `ast::unit` as not compiled yet, and the formatter only sees what `unit` builds; they are
+  `ast::unit` as not supported, and the formatter only sees what `unit` builds; they are
   reached once those forms are compiled;
 - the `}` lines of the list jobs (`Updates`, `Cases`, `Types`, `RecordType`, `Patterns`,
   `FieldPats`, lines 650 to 776): the empty list, which no job is pushed with, since each is

@@ -250,9 +250,12 @@ fn each_design_example_with_a_menu_stands_in_designs_order_and_zedc_writes_it_so
         let (_, pieces, compiled, compare_menu) = found[0];
         let out = rejected(&program(&program_of(example, pieces)));
         if !compiled {
-            // Held back: zedc does not compile the example yet. Once it does, this fails, and
+            // Held back: zedc does not support the example yet. Once it does, this fails, and
             // the example is to be compared like the others.
-            assert!(out.contains("does not compile it yet"), "{out}");
+            assert!(
+                out.contains("not supported by this version of zedc"),
+                "{out}"
+            );
             continue;
         }
         assert_eq!(

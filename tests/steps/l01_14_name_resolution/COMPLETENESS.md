@@ -15,7 +15,7 @@ is listed below with the group that covers it or the reason none is needed.
 | A unit's name shadows a prelude word | order.rs `a_units_own_name_shadows_a_prelude_word` | |
 | ... at each kind of binder (let, parameter, lambda parameter, `else` pattern field, block) | complete.rs `a_prelude_word_is_shadowed_at_each_kind_of_binder` | |
 | A later layer's prelude word is an error naming the layer | order.rs `a_prelude_word_of_a_later_layer_is_an_error_naming_the_layer` | |
-| Each form of a later step named as not compiled yet | complete.rs `each_form_of_a_later_step_is_named_as_not_yet_compiled` | |
+| Each form of a later step named as not supported | complete.rs `each_form_of_a_later_step_is_named_as_not_yet_compiled` | |
 | Statement order does not matter at the top level | order.rs `statement_order_does_not_matter`, above.rs `the_top_level_declares_in_any_order` | |
 | Name bound nowhere | order.rs `a_name_bound_nowhere_is_an_error` | |
 | Binder naming a type, at each kind of binder | complete.rs `a_binder_may_not_name_a_type_at_any_kind_of_binder` | |

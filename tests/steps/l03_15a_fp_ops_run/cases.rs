@@ -28,7 +28,7 @@ fn prints(group: &str, cases: &[(&str, &str)]) {
 }
 
 /// Each program must be rejected at compile time: status not 0, nothing printed, and not for
-/// want of a form this zedc does not compile yet (that rejection says nothing about the rule).
+/// want of a form this zedc does not support (that rejection says nothing about the rule).
 #[track_caller]
 fn rejected(group: &str, exprs: &[&str]) {
     let wrong: Vec<String> = exprs
@@ -39,7 +39,7 @@ fn rejected(group: &str, exprs: &[&str]) {
             let out = run(&format!("fp_ops/{group}_rej_{i}"), &src, "", &[]);
             (out.status == 0
                 || !out.stdout.is_empty()
-                || out.stderr.contains("does not compile it yet"))
+                || out.stderr.contains("not supported by this version of zedc"))
             .then(|| {
                 format!(
                     "{expr}\n  status {}, printed {}\n  {}",
@@ -1347,7 +1347,7 @@ fn a_written_list_type_is_checked() {
         out.status != 0
             && out.stderr.contains(
                 "a list type `[T]` inside a function type `L .. U -> V` is part of the Zed \
-                 language, and this version of zedc does not compile it yet"
+                 language but is not supported by this version of zedc"
             ),
         "{}",
         out.stderr
@@ -2182,7 +2182,7 @@ fn ran_on_input(name: &str, program: &str) -> (u8, String) {
 /// come from one place is accepted though the count is known only at run time, and prints the
 /// pairs at every key; operands whose keys may differ are rejected. A function whose body
 /// zips two parameters needs their arguments to share their keys at each call, also through
-/// a call that passes them on; passing such a function as a value is not compiled yet.
+/// a call that passes them on; passing such a function as a value is not supported yet.
 #[test]
 fn a_zip_of_keys_from_one_place_is_accepted() {
     let main = |defs: &str, body: &str| {

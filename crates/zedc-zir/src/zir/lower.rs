@@ -556,8 +556,8 @@ impl<'t> Lower<'t> {
     ///   `env`, …"), and a child's environment is the option `env:` of `spawn`, not a write.
     /// - `main::files` (`Files`): DESIGN does define writes, "written as `fs[path] <- v` (L7)",
     ///   and a read ordered after one sees it (above), so the premise fails in DESIGN. In this
-    ///   zedc a keyed push is refused before lowering ("this version of zedc does not compile
-    ///   it yet", test `a_keyed_write_to_main_files_is_a_later_step_in_main_and_outside_it` in
+    ///   zedc a keyed push is refused before lowering ("not supported by this version of
+    ///   zedc", test `a_keyed_write_to_main_files_is_a_later_step_in_main_and_outside_it` in
     ///   `l01_19_whole_file_ports::outside`), and when it lowers it is a push to the port, so
     ///   the check of `pushed` above keeps such a read in place. Nothing else of the run writes
     ///   a file: this zedc has no `spawn`, `run`, foreign library, store or socket (zedc-resolve

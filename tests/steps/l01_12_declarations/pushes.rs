@@ -18,7 +18,7 @@ fn main_with(body: &str) -> String {
 }
 
 /// What the front end makes of `src`: `accepted`, `later` when the first diagnostic says the
-/// form is not compiled yet, or the first diagnostic's row, place, headline and first repair.
+/// form is not supported, or the first diagnostic's row, place, headline and first repair.
 fn front(src: &str) -> String {
     match &*Db::new().front(src) {
         Ok(_) => "accepted".into(),
@@ -53,7 +53,7 @@ fn fronts(cases: &[(&str, &str)]) {
 }
 
 /// The targets that take a push (DESIGN.md sec:ports, "What a push may name"): the outputs of
-/// `main`, a parameter declared `Lines`, and the forms not compiled yet, which are refused as
+/// `main`, a parameter declared `Lines`, and the forms not supported yet, which are refused as
 /// such and never under a row: a view that takes a push, a keyed push into an accumulator, a
 /// generation push in the body of a loop or of a method. These are the negative controls of
 /// the refusals below, each one edit from one of them.
@@ -186,7 +186,7 @@ fn a_push_to_a_field_that_is_not_a_port_is_refused() {
              type `MainArgs`, has no field `lines`; its outputs are `m.stdout` and `m.stderr`. | \
              `m.stdout <- \"a\";`",
         ),
-        // A push to a field of another value is not compiled yet, so a field whose type is no
+        // A push to a field of another value is not supported yet, so a field whose type is no
         // port is not refused yet either: plan row PORT-process refuses it with this row.
         (&main_with("r = { total: 1 };\n  r.total <- 1;"), "later"),
     ]);
@@ -220,8 +220,8 @@ fn a_generation_push_outside_a_loop_is_refused() {
 }
 
 /// The first diagnostic of `src` under a row, as [`front`] writes it, or what [`front`] gives
-/// when none has a row: a method is not compiled yet, so a refusal in its body comes after the
-/// method's own "not yet".
+/// when none has a row: a method is not supported yet, so a refusal in its body comes after
+/// the method's own "not supported".
 fn front_row(src: &str) -> String {
     let Err(ds) = &*Db::new().front(src) else {
         return "accepted".into();
@@ -341,7 +341,7 @@ fn a_target_of_the_wrong_shape_names_the_shape() {
             &main_with("m::stdout.bytes <- \"a\";"),
             &shape("m::stdout.bytes", "2:19"),
         ),
-        // Keys after the view are in the shape: the keyed push is not compiled yet.
+        // Keys after the view are in the shape: the keyed push is not supported yet.
         (&main_with("fs::bytes[\"out\"] <- \"a\";"), "later"),
     ]);
 }

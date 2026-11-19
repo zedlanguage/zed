@@ -1,6 +1,6 @@
 //! The prelude words, facet words and types of later layers (DESIGN.md sec:grammar, "Defined
 //! words by layer"): a use of one that no program name shadows is reported as a word this zedc
-//! does not compile yet, not as a name that is not defined.
+//! does not support, not as a name that is not defined.
 
 #[cfg(feature = "spec")]
 use std::collections::BTreeMap;
@@ -209,7 +209,7 @@ const PROGRAM_FACETS: &[(&str, &str)] = &[("L12", "parity"), ("L12", "latency"),
 
 /// Names of the table whose rows are not built, each with the plan row that builds it: the test
 /// holds that each is not yet known, or, for an annotation, that it is listed at its layer and
-/// still refused as not compiled yet, so that row must take it out of this list.
+/// still refused as not supported, so that row must take it out of this list.
 #[cfg(feature = "spec")]
 const PENDING: &[(&str, &str)] = &[
     ("failure", "PORT-ack-name"),
@@ -340,7 +340,7 @@ fn the_resolver_holds_every_word_and_type_of_the_table() {
         for a in annots {
             let name = a.strip_prefix('@').expect("an annotation");
             // A pending annotation is listed at its layer, as every other is, so that it is
-            // refused as not compiled yet; what tells it from a built one is that it still is.
+            // refused as not supported; what tells it from a built one is that it still is.
             assert_eq!(annotation_layer(name), Some(*layer), "@{name}");
             if PENDING.iter().any(|(n, _)| *n == name) {
                 assert!(
@@ -442,7 +442,7 @@ fn the_resolver_holds_every_word_and_type_of_the_table() {
 }
 
 /// Whether a function annotated `@name` is refused with the message that names the annotation
-/// as not compiled yet.
+/// as not supported.
 #[cfg(feature = "spec")]
 fn not_compiled_yet(name: &str) -> bool {
     let src = format!("@{name} f(x: f64) = x;\nmain(m: MainArgs) = 0;\n");
@@ -451,7 +451,7 @@ fn not_compiled_yet(name: &str) -> bool {
 }
 
 /// An annotation that DESIGN lists in "Defined words by layer" but whose step is not built yet is
-/// reported as not compiled yet, as any later word is, and not as "is not an annotation" (plan
+/// reported as not supported, as any later word is, and not as "is not an annotation" (plan
 /// row FAIL-pending-annotation-message: `@fpwarn` got that false message on zed-impl 6b74dc09c).
 #[test]
 fn an_annotation_of_a_later_step_not_yet_built_is_reported_as_not_compiled_yet() {
@@ -471,8 +471,8 @@ fn an_annotation_of_a_later_step_not_yet_built_is_reported_as_not_compiled_yet()
         assert!(!out.contains("is not an annotation"), "@{name}: {out}");
         assert!(
             out.contains(&format!(
-                "the annotation `@{name}` is part of the Zed language, and this version of zedc \
-                 does not compile it yet."
+                "the annotation `@{name}` is part of the Zed language but is not supported by \
+                 this version of zedc."
             )),
             "@{name}: {out}"
         );

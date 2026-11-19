@@ -32,7 +32,7 @@ fn every_l1_fence_passes_but_for_its_free_names() {
             continue;
         }
         // DESIGN puts a declared result type at L1 (`Result = '->' Type`); zedc compiles it on
-        // `main` only (MAIN-args), and rejects it elsewhere as a form it does not compile yet.
+        // `main` only (MAIN-args), and rejects it elsewhere as a form it does not support.
         let result = |w: &&String| w.starts_with("the declared result type ");
         if failures.iter().all(|w| result(w) || free(w)) && failures.iter().any(result) {
             declared.push(f.key.clone());
@@ -40,7 +40,7 @@ fn every_l1_fence_passes_but_for_its_free_names() {
         }
         // The layer audit (DESIGN 23a88fd, author P254) puts `x: T = e` at L1, and with it the
         // range suffix (`port: int[1..=65535] = 8080;`); zedc refuses it as a form it does not
-        // compile yet until plan rows LAYER-L1-forms and RANGE-L1 build it.
+        // support until plan rows LAYER-L1-forms and RANGE-L1 build it.
         let binding = |w: &&String| w.starts_with("the binding with a declared type ");
         if failures.iter().all(|w| binding(w) || free(w)) && failures.iter().any(binding) {
             ascribed.push(f.key.clone());

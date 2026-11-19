@@ -106,5 +106,8 @@ fn a_push_elsewhere_than_in_the_body_of_main_is_not_built() {
             .contains("a push of a value that may be the atom `#ioError`"),
         "{ran:?}"
     );
-    assert!(ran.stderr.contains("does not compile it yet"), "{ran:?}");
+    assert!(
+        ran.stderr.contains("not supported by this version of zedc"),
+        "{ran:?}"
+    );
 }

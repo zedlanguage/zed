@@ -13,7 +13,9 @@ fn recursion(names: &str, at: &str) -> String {
         true => format!("{names} are defined in terms of each other"),
         false => format!("{names} is defined in terms of itself"),
     };
-    format!("{what}, which is recursion: this version of zedc does not compile it yet. [{at}]")
+    format!(
+        "{what}, which is recursion: recursion is not supported by this version of zedc. [{at}]"
+    )
 }
 
 /// The message for the definitions `names` of values that read each other's values, at the

@@ -19,7 +19,7 @@ l01_21_test_runner.
 | A test table lists input and expected in order | `functions::a_test_table_lists_input_and_expected_in_order` |
 | A function inside a block is a statement | `functions::a_function_inside_a_block_is_a_statement` |
 | The unit's top level exports nothing; block bodies still export once | `functions::the_unit_top_level_exports_nothing_and_block_bodies_still_export_once` |
-| A form of a later layer is refused as not compiled yet | `functions::a_form_of_a_later_layer_is_refused_as_not_compiled_yet` |
+| A form of a later layer is refused as not supported | `functions::a_form_of_a_later_layer_is_refused_as_not_compiled_yet` |
 | `if` takes both branches; `else if` nests on the right; every branch block exports | `ifs::*` |
 | A push sends the whole value to its port | `pushes::a_push_sends_the_whole_value_to_its_port` |
 | A display after a signature is a block | `l02_01_parser_structs::body_positions::each_form_whose_brace_is_a_block_is_named` |

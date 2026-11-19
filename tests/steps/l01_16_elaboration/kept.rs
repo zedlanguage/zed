@@ -37,7 +37,7 @@ enum Outcome {
     /// A unit holding each top-level definition.
     Kept,
     /// Elaboration's own errors, none of them a bug in zedc: a form the checker accepts and
-    /// this zedc does not compile yet, as a prelude word.
+    /// this zedc does not support, as a prelude word.
     Refused,
     /// A unit that lost a definition, or a bug in zedc reported: the fault, described.
     Fault(String),

@@ -144,9 +144,8 @@ fn main_takes_one_main_args() {
 fn a_helper_output_port_is_a_later_form_at_l1() {
     let later = |at: &str, written: &str| {
         format!(
-            "{at}: the declared result type `-> {written}` is part of the Zed language, and this \
-             version of zedc does not compile it yet. Write the program without it, with the \
-             forms this zedc compiles."
+            "{at}: the declared result type `-> {written}` is part of the Zed language but is \
+             not supported by this version of zedc. Write the program without it."
         )
     };
     let e = load(b"log(positional s) -> (out: Files) {\n  out <- s;\n}\nmain() = 0;\n").err();

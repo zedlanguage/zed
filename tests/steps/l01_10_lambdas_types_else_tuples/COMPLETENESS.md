@@ -21,7 +21,7 @@ input was found that reaches them. Line 56, a chain of refinements, has a test b
 | `else` and its atom-pattern form | `elses::else_and_its_atom_pattern_form` |
 | `else` in a head | `l01_08_parser::heads::*` |
 | `is` is a relation; type connectives `&`, `|`, `-`, `!`; function types one level per parameter; a one-tuple type and a morphism type with two bounds | `tests_of_types::*` (4 tests) |
-| Type forms of later layers | `later_types::*` (desugaring rules read from the spec; every-value type and named types not compiled yet) |
+| Type forms of later layers | `later_types::*` (desugaring rules read from the spec; every-value type and named types not supported yet) |
 | A chain of refinements (`TypePostfix`, L10) is refused at its first suffix | `later_types::a_chain_of_refinements_is_refused_at_its_first` |
 | A trailing comma makes a one-tuple; it evaluates, matches as a pattern and prints back | `one_tuples::*` (6 tests) |
 | The empty tuple and a parenthesized pattern are refused | `one_tuples::an_empty_tuple_and_a_parenthesized_pattern_are_rejected` |

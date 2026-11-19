@@ -57,7 +57,7 @@ const UNITS: &[&str] = &[
 ];
 
 /// Each unit that builds formats to a fixed point that builds to its statements; one refused
-/// as not compiled yet is counted. Every other refusal is wrong: the unit is valid Zed.
+/// as not supported is counted. Every other refusal is wrong: the unit is valid Zed.
 #[test]
 fn each_parenthesis_a_position_needs_is_kept() {
     let mut units: Vec<String> = UNITS.iter().map(|s| s.to_string()).collect();
@@ -90,7 +90,7 @@ fn each_parenthesis_a_position_needs_is_kept() {
         }
     }
     println!(
-        "{} units: {built} built and formatted, {refused} refused as not compiled yet",
+        "{} units: {built} built and formatted, {refused} refused as not supported",
         units.len()
     );
     assert!(

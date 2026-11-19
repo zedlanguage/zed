@@ -3,7 +3,7 @@
 //! to text that builds to the same statements, keeps its comments and formats to itself.
 //!
 //! The formatter writes built statements, so a case of a form that this zedc refuses as not
-//! compiled yet is counted and left out; once the form compiles, its case is checked here with
+//! supported is counted and left out; once the form compiles, its case is checked here with
 //! no change to this file.
 
 use std::panic::{AssertUnwindSafe, catch_unwind};
@@ -76,7 +76,7 @@ const REJECTED: &[(&str, &str)] = &[
 enum Outcome {
     /// It built as this unit.
     Built(String),
-    /// A place parsed it and this zedc refused the form as not compiled yet.
+    /// A place parsed it and this zedc refused the form as not supported.
     NotYet,
     /// No place built it.
     Unplaced,
@@ -131,7 +131,7 @@ fn every_case_that_builds_formats_to_a_fixed_point() {
         }
     }
     println!(
-        "{} cases: {built} built and formatted, {refused} refused as not compiled yet",
+        "{} cases: {built} built and formatted, {refused} refused as not supported",
         CASES.len()
     );
     assert!(built > 0, "no case builds, so this test checked nothing");
@@ -144,12 +144,12 @@ fn every_case_that_builds_formats_to_a_fixed_point() {
     for (text, rule) in REJECTED {
         assert!(
             rejected.contains(text),
-            "`{text}` is listed as rejected ({rule}), but it builds or is refused as not compiled yet"
+            "`{text}` is listed as rejected ({rule}), but it builds or is refused as not supported"
         );
     }
     assert!(
         unplaced.is_empty(),
-        "{} cases build in no place and are not refused as not compiled yet:\n{}",
+        "{} cases build in no place and are not refused as not supported:\n{}",
         unplaced.len(),
         unplaced.join("\n")
     );

@@ -42,15 +42,15 @@ pub fn too_long() -> String {
 }
 
 /// The message for `what`, a string literal naming a form or prelude name of Zed that this
-/// zedc does not compile yet, as a `&'static str`, for a list of expected messages:
+/// zedc does not support, as a `&'static str`, for a list of expected messages:
 /// `not_yet!("a `match`")`. Written out here, so a test checks the text, not a call.
 #[macro_export]
 macro_rules! not_yet {
     ($what:literal) => {
         concat!(
             $what,
-            " is part of the Zed language, and this version of zedc does not compile it yet. \
-             Write the program without it, with the forms this zedc compiles."
+            " is part of the Zed language but is not supported by this version of zedc. \
+             Write the program without it."
         )
     };
 }
@@ -93,10 +93,10 @@ pub fn undefined_type(name: &str) -> String {
     format!("The type `{name}` is not defined.")
 }
 
-/// Whether `message` reports a form or a link this zedc does not compile yet ([`not_yet()`],
+/// Whether `message` reports a form or a link this zedc does not support ([`not_yet()`],
 /// [`not_linked`] and [`IMPORT_NOT_YET`]).
 pub fn is_not_yet(message: &str) -> bool {
-    message.contains("this version of zedc does not compile it yet")
+    message.contains("not supported by this version of zedc")
         || message.contains("this version of zedc does not yet link")
         || message.contains("this version of zedc does not yet tie")
 }

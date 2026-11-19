@@ -549,7 +549,7 @@ fn a_name_bound_to_a_call_of_literal_values_is_not_read() {
     let call = format!("{G}{H}f(positional c: bool) = h(g(c));\na = f(true);\n");
     assert_eq!(type_errors(&call), Vec::<String>::new());
     assert_eq!(value(&call, "a"), "2.0");
-    // A binding with a declared type, `y: f64 = g(c);`, is not compiled yet; a cast fixes
+    // A binding with a declared type, `y: f64 = g(c);`, is not supported yet; a cast fixes
     // the carrier where the name is bound.
     let cast = format!("{G}{H}f(positional c: bool) = {{ y = f64(g(c)); h(y) }};\na = f(true);\n");
     assert_eq!(type_errors(&cast), Vec::<String>::new());

@@ -133,7 +133,7 @@ fn a_refused_scan_is_named_as_a_scan() {
         e.contains("a scan `.scan((++))` of entries of type \"a\" | \"b\""),
         "{e}"
     );
-    assert!(e.contains("does not compile it yet"), "{e}");
+    assert!(e.contains("not supported by this version of zedc"), "{e}");
     let e = refused("scan_scalar", "${(3).scan((+))}");
     assert!(
         e.contains("`.scan` reads the entries of a family, and this value is 3"),
@@ -227,7 +227,10 @@ fn the_forms_not_built_are_refused_as_not_built() {
     ] {
         let e = refused(name, body);
         assert!(e.contains(what), "{name}: {e}");
-        assert!(e.contains("does not compile it yet"), "{name}: {e}");
+        assert!(
+            e.contains("not supported by this version of zedc"),
+            "{name}: {e}"
+        );
     }
 }
 
@@ -254,7 +257,10 @@ fn reads_of_a_range_with_no_upper_end_that_never_end_are_refused() {
             e.contains("repair: give the range an upper end"),
             "{name}: {e}"
         );
-        assert!(!e.contains("does not compile it yet"), "{name}: {e}");
+        assert!(
+            !e.contains("not supported by this version of zedc"),
+            "{name}: {e}"
+        );
     }
 }
 
@@ -290,5 +296,5 @@ fn where_over_loose_atoms_is_not_built() {
         e.contains("`where` over entries that may be the atoms"),
         "{e}"
     );
-    assert!(e.contains("does not compile it yet"), "{e}");
+    assert!(e.contains("not supported by this version of zedc"), "{e}");
 }

@@ -155,14 +155,13 @@ fn the_arguments_are_an_input() {
 #[test]
 fn a_push_target_may_end_in_one_view() {
     // `PushTarget = Name ('.' Name)* ('::' Name)?` (sec:grammar): `m.stdout::bytes` parses as
-    // the view `bytes` of `m.stdout` (DESIGN step L7.3h), which this zedc does not compile yet.
+    // the view `bytes` of `m.stdout` (DESIGN step L7.3h), which this zedc does not support.
     let src = "main(m: MainArgs) {\n  m.stdout::bytes <- \"a\";\n}\n";
     assert_eq!(
         zedc::run::load(src.as_bytes()).err().as_deref(),
         Some(
-            "2:3: a push to a view of a port `m.stdout::bytes` is part of the Zed language, and \
-             this version of zedc does not compile it yet. Write the program without it, with \
-             the forms this zedc compiles."
+            "2:3: a push to a view of a port `m.stdout::bytes` is part of the Zed language but \
+             is not supported by this version of zedc. Write the program without it."
         ),
     );
     // `m::stdout` is the view `stdout` of `m`, never the field `m.stdout`, and only `::bytes`

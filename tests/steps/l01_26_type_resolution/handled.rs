@@ -208,7 +208,7 @@ fn a_function_that_calls_itself_waits_for_layer_l6() {
     assert!(info.sigs.is_empty());
     let e = zed_tests::step_helpers::l01_16_elaboration::errors(&format!("{text}y = r(#again);\n"));
     assert!(
-        e[0].contains("which is recursion: this version of zedc does not compile it yet"),
+        e[0].contains("which is recursion: recursion is not supported by this version of zedc"),
         "{e:?}"
     );
 }

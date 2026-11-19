@@ -8,8 +8,9 @@
 //! has no carrier at `int`; the decimals themselves are accepted, at `f64`
 //! (`an_unfixed_decimal_in_a_compound_value_takes_f64`).
 //!
-//! Records, arrays, sets and maps, ranges, `match` and struct construction are not compiled
-//! at L1 ("part of the Zed language … does not compile it yet"), so they have no case here.
+//! Records, arrays, sets and maps, ranges, `match` and struct construction are not supported
+//! at L1 ("part of the Zed language but is not supported by this version of zedc"), so they
+//! have no case here.
 
 use super::fixes::{fixes, pairs};
 use zed_tests::step_helpers::l01_16_elaboration::value;

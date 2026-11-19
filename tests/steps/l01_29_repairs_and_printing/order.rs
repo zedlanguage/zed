@@ -658,7 +658,7 @@ odd(positional n) = if n == 0 { false } else { even(n - 1) };
     let messages: Vec<(Place, &str)> = (answer.diagnostics.iter())
         .map(|d| (d.at, d.message.as_str()))
         .collect();
-    let message = "`even`, `odd` are defined in terms of each other, which is recursion: this version of zedc does not compile it yet.";
+    let message = "`even`, `odd` are defined in terms of each other, which is recursion: recursion is not supported by this version of zedc.";
     assert_eq!(messages, [((0, 43), message)]);
 }
 

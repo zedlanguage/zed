@@ -25,9 +25,9 @@
 use super::rejected;
 use zedc::resolve::tables::Tables;
 
-const NOT_YET: &str = ": this version of zedc does not compile it yet.";
+const NOT_YET: &str = ": recursion is not supported by this version of zedc.";
 
-/// The rejection of a call of an overload set, which this zedc does not compile yet.
+/// The rejection of a call of an overload set, which this zedc does not support.
 fn no_dispatch(at: &str) -> String {
     format!(
         "{at}: `f` names 2 definitions, and this version of zedc does not yet choose among \

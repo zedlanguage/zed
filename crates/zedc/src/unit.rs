@@ -841,7 +841,7 @@ pub fn load(db: &mut Db, files: &dyn Files, roots: &[&str]) -> Package {
 /// its top level (QUESTIONS Q54): the name resolves where it is written, to the unit's `main`,
 /// which never runs, so each read is rejected, naming that `main`, with the repair of renaming
 /// it, after which the name is the program's entry point's. A unit with no `main` of its own,
-/// a library, reads the program's port. `main::args` is a metadata read, not compiled yet in any
+/// a library, reads the program's port. `main::args` is a metadata read, not supported in any
 /// unit.
 // Complexity: the unit's top-level statements, then its uses in one pass, O(s + u); the reads
 // are the uses that name the port, `Ref::Main` outside `main`'s body and the parameter

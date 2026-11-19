@@ -173,8 +173,8 @@ fn a_component_emptied_by_a_named_type_is_refused_before_the_checker() {
         let out = rejected(src);
         assert!(
             out.contains(
-                "a type declaration is part of the Zed language, and this version of zedc does \
-not compile it yet"
+                "a type declaration is part of the Zed language but is not supported by this \
+                 version of zedc"
             ),
             "{out}"
         );

@@ -19954,8 +19954,8 @@ impl<'t, 'a> Ck<'t, 'a> {
     ///   partial slot: the test's form does not show that it ends, and a build-stage value
     ///   that is a function is left to run
     ///   (`a_function_a_generic_body_passes_on_keeps_its_test_through_staging`).
-    /// - Not compiled by this zedc, refused before the check reaches the call
-    ///   (zedc-base/src/rejection.rs, "does not compile it yet"): `loop` with `initial`
+    /// - Not supported by this zedc, refused before the check reaches the call
+    ///   (zedc-base/src/rejection.rs, "not supported by this version of zedc"): `loop` with `initial`
     ///   (DESIGN.md sec:generations; `initial` outside a loop is refused as such), `@memoized`
     ///   and its memo arena (sec:arenas), `match`, recursion, a declared result type, a
     ///   struct's type parameters, a binding with a declared type. When one of these is
@@ -27458,7 +27458,8 @@ fn entries_alike(on: &Ty, out: &Ty) -> bool {
 }
 
 /// Whether the printed type `text` writes no literal and no `_`, which a declared type in a
-/// repair of this zedc may not hold yet ("the literal type `1` ... does not compile it yet"):
+/// repair of this zedc may not hold yet ("the literal type `1` ... is not supported by this
+/// version of zedc"):
 /// no word that starts with a digit or a quote, and no `_` alone. A word is a run of
 /// letters, digits, `_` and `'`; `f64` and `int32` start with a letter. The test is on the
 /// text, which is what the repair writes. O(n) for n characters.

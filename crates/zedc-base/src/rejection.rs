@@ -362,12 +362,14 @@ impl Row {
 }
 
 /// The message for `what`, a form or prelude name of the Zed language that this version of
-/// zedc does not compile yet: one text for every such form, so that a reader is never sent to
-/// the plan that schedules it.
+/// zedc does not support (it is not implemented here): one text for every such form, so that a
+/// reader is never sent to the plan that schedules it. The words "not supported" rather than
+/// "does not compile it yet", which readers took for a failure of compile order
+/// (MSG-not-supported-wording, author 2026-11-19).
 pub fn not_yet(what: &str) -> String {
     format!(
-        "{what} is part of the Zed language, and this version of zedc does not compile it yet. \
-         Write the program without it, with the forms this zedc compiles."
+        "{what} is part of the Zed language but is not supported by this version of zedc. \
+         Write the program without it."
     )
 }
 

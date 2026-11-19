@@ -446,14 +446,14 @@ fn a_parameter_joined_with_a_family_rejects_what_is_no_family_at_the_call() {
 fn a_parameter_joined_with_a_family_of_another_carrier_is_not_compiled_yet() {
     // At `X` a family of `f64` the fold runs at `int` and at `f64`, which have two identities,
     // `0` and `-0.0` (sec:reduction, "Identity as data"); the concrete
-    // `(if b { [3.5, 4.0] } else { [1, 2] }).sum` is refused as not compiled yet too.
+    // `(if b { [3.5, 4.0] } else { [1, 2] }).sum` is refused as not supported too.
     rejected(
         &format!("s(positional xs, positional b) = {JOINED}.sum;\nt = s([3.5, 4.0], false);\n"),
-        &["does not compile it yet"],
+        &["not supported by this version of zedc"],
     );
     rejected(
         "f(positional b) = (if b { [3.5, 4.0] } else { [1, 2] }).sum;\nt = f(false);\n",
-        &["does not compile it yet"],
+        &["not supported by this version of zedc"],
     );
 }
 
@@ -656,13 +656,13 @@ fn a_parameter_joined_with_a_family_of_itself_is_refused_and_the_check_ends() {
                 "s(positional xs, positional b) = (if b {{ xs }} else {{ [xs] }}){fold};\n\
                  t = s([1, 2], true);\n"
             ),
-            &["does not compile it yet"],
+            &["not supported by this version of zedc"],
         );
     }
     rejected(
         "s(positional xs, positional b) = (if b { xs } else { { 0 -> xs, 1 -> [xs] } }).sum;\n\
          t = s([1, 2], true);\n",
-        &["does not compile it yet"],
+        &["not supported by this version of zedc"],
     );
 }
 
@@ -959,7 +959,10 @@ fn a_function_a_call_returns_and_runs_at_another_carrier_is_not_compiled_yet() {
         "hf(positional f, positional y) = (f(y), {\"k\" -> (z -> f(z))});\n\
          a = { p = hf(x -> top(x), m[\"a\"]); (p[0], p[1][\"k\"](mi[\"a\"])) };\n",
     ] {
-        rejected(&format!("{TOP}{F}{I}{body}"), &["does not compile it yet"]);
+        rejected(
+            &format!("{TOP}{F}{I}{body}"),
+            &["not supported by this version of zedc"],
+        );
     }
 }
 
@@ -1001,7 +1004,7 @@ fn a_function_a_call_returns_and_runs_at_the_same_carrier_runs_at_its_identity()
 fn a_call_whose_result_holds_the_function_at_any_depth_is_one_it_may_run_after() {
     // Each call's result holds `f` where a later read can reach it: in a lambda's result
     // (`hz`), in a family's values (`h5`; a family's type is an arrow from key to value), in
-    // an atom's payload (`h8`; reading a payload is not compiled yet, so only the check is
+    // an atom's payload (`h8`; reading a payload is not supported yet, so only the check is
     // tested), or its type says only "some tuple" (`hk`, through `k`'s `(..)`), which may hold
     // it. Each call is recorded as one a function passed to it may run after
     // (`Info::escaping_calls`), and elaboration puts no identity of it in force for the

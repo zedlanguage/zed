@@ -64,16 +64,15 @@ fn kernel_form(
                 bounds.push((
                     t.span,
                     "a list type `[T]` inside a function type `L .. U -> V` is part of the Zed \
-                     language, and this version of zedc does not compile it yet. Write the \
+                     language but is not supported by this version of zedc. Write the \
                      function type without `..`, as `(…) -> …`"
                         .to_string(),
                 ));
             }
             ports.push((
                 t.span,
-                "a test against a list type `[T]` is part of the Zed language, and this \
-                 version of zedc does not compile it yet. Write the program without it, with \
-                 the forms this zedc compiles"
+                "a test against a list type `[T]` is part of the Zed language but is not \
+                 supported by this version of zedc. Write the program without it"
                     .to_string(),
             ));
             return None;

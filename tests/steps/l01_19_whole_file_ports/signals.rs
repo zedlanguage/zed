@@ -147,8 +147,8 @@ fn a_declaration_that_holds_is_not_compiled_yet() {
         assert_eq!((out.status, out.stdout.as_str()), (1, ""), "{name}");
         assert!(
             out.stderr.contains(&format!(
-                "1:26: the facet `with {facet}` is part of the Zed language, and this version \
-                 of zedc does not compile it yet."
+                "1:26: the facet `with {facet}` is part of the Zed language but is not \
+                 supported by this version of zedc."
             )),
             "{name}: {}",
             out.stderr

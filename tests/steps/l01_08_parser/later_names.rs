@@ -1,4 +1,4 @@
-//! A form the parser reads and this zedc does not compile yet is named for what it is: only `><`
+//! A form the parser reads and this zedc does not support is named for what it is: only `><`
 //! reduces (sec:reduction); a sort key in a remap's pattern is of step L8.1; `with f(…)` and
 //! `without f(…)` attach and drop a facet (sec:facets); `m[day: 1]` is a named slice
 //! (sec:level_names).

@@ -12419,7 +12419,7 @@ impl Ty {
     /// may hold a function, with one gap: an atom of `set` whose name `payloads` does not list
     /// has a payload that is not known, and is taken as holding none. Not proved that it holds
     /// none; no function in a payload can run after the call while this zedc compiles no read
-    /// of a payload (`match` and `is #a(x)` are refused as not compiled yet).
+    /// of a payload (`match` and `is #a(x)` are refused as not supported).
     ///
     /// It reads the outer level: each row and payload shape keeps the answer for its
     /// components, and each function the answer for its results ([`Sig::may_hold_needs`]).

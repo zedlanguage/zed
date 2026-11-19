@@ -1,7 +1,7 @@
 //! The type `_` and the named type `(n: T)` (item INFER-FIELD-desugar). sec:grammar desugars
 //! `InferType` to the type `_` of every value and `FieldType` to the type `T`, whose `where`
-//! predicate reads its value by the name `n`; this zedc compiles neither, so the parser builds
-//! neither and reports each as not compiled yet. A named parameter of a function type, `(n: int) -> int`, is
+//! predicate reads its value by the name `n`; this zedc supports neither, so the parser builds
+//! neither and reports each as not supported. A named parameter of a function type, `(n: int) -> int`, is
 //! no `FieldType` and builds at L1.
 
 use super::check;

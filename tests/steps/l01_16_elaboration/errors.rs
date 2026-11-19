@@ -122,7 +122,7 @@ fn forms_of_later_steps_and_layers() {
     let cases = [
         (
             "p = 1;\nx = p.size;",
-            "`size` is not a function in scope, and reading a field with `.size` is part of the Zed language that this version of zedc does not compile yet. Call a function in scope, or correct the name if it is misspelled. [p.size]",
+            "`size` is not a function in scope, and reading a field with `.size` is part of the Zed language but is not supported by this version of zedc. Call a function in scope, or correct the name if it is misspelled. [p.size]",
         ),
         (
             "p = 1;\nx = p.map(1);",

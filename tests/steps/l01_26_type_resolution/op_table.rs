@@ -19,7 +19,7 @@
 //! - `expected` is the result type as zedc prints it (user-writable syntax), `error R` for a
 //!   rejection at the case's line by the diagnostics row named `R`, or `error *` where the spec
 //!   names no row. Either may end in ` warn`, a warning at the line. `notyet` is what a case
-//!   gives when zedc rejects a form it does not compile yet; it is never expected.
+//!   gives when zedc rejects a form it does not support; it is never expected.
 //! - A known failure ends the expected part with ` !! MARK: actual`, `MARK` naming the row of
 //!   docs/plan_dag.md that owns the difference (the test checks the row is there), and `actual`
 //!   what zedc gives today, `notyet` for a form of a later step. The test fails when the case gives
@@ -239,7 +239,7 @@ fn check(table: &Table, ns: &[usize]) -> Option<HashMap<usize, String>> {
     Some(results)
 }
 
-/// The result of case `n` checked alone; `notyet` for a form zedc does not compile yet.
+/// The result of case `n` checked alone; `notyet` for a form zedc does not support.
 fn check_alone(table: &Table, n: usize) -> String {
     match front_end(table, n) {
         Some(r) => r,
@@ -250,7 +250,7 @@ fn check_alone(table: &Table, n: usize) -> String {
 }
 
 /// The result of case `n` alone when its unit does not get past the syntax tree or resolution:
-/// `notyet` for a form zedc does not compile yet, else the rejection. `None` when it does, and
+/// `notyet` for a form zedc does not support, else the rejection. `None` when it does, and
 /// only the checker can give its result. This runs no checker, so it costs a small part of a
 /// check.
 fn front_end(table: &Table, n: usize) -> Option<String> {
@@ -263,12 +263,12 @@ fn front_end(table: &Table, n: usize) -> Option<String> {
         Ok(t) => t,
         Err(_) => return Some("error parse".to_string()),
     };
-    // A form the grammar has and the checker does not compile yet, or a type the spec defines
+    // A form the grammar has and the checker does not support yet, or a type the spec defines
     // and resolution does not know yet. Any other name not defined is a rejection: `bool(x)` is
     // no cast (sec:diagnostics), and resolution rejects it as a name.
     const LATER_TYPES: [&str; 6] = ["f16", "bf16", "Utf8String", "char32", "i32", "u8"];
     let not_yet = |m: &str| {
-        m.contains("not compile")
+        m.contains("not supported by this version of zedc")
             || LATER_TYPES
                 .iter()
                 .any(|t| m.ends_with(&format!("`{t}` is not defined.")))
@@ -315,7 +315,7 @@ fn part_of(len: usize, part: usize, parts: usize) -> std::ops::Range<usize> {
 fn run_part(name: &str, part: usize, parts: usize) {
     let table = read_table(name);
     let all: Vec<usize> = part_of(table.cases.len(), part, parts).collect();
-    // A unit that does not get past resolution (a form not compiled yet in some case) is read one
+    // A unit that does not get past resolution (a form not supported yet in some case) is read one
     // case at a time up to resolution, and the cases that get past it alone are checked as one
     // unit: n front-end passes and one check of size n, linear in the cases. Should that unit
     // still not get past resolution, each of its cases is checked alone.

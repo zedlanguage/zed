@@ -15,7 +15,7 @@ the steps that give them (l01_19_whole_file_ports, l01_19a_command_line, l01_21_
 | Bindings and the trailing expression | `blocks::bindings_and_the_trailing_expression` |
 | The `;` rule: every statement but the trailing expression ends in `;` | `blocks::the_semicolon_rule` |
 | A block exports exactly once | `blocks::a_block_exports_exactly_once` |
-| A statement of a later layer is refused as not compiled yet | `blocks::a_statement_of_a_later_layer_is_refused_as_not_compiled_yet` |
+| A statement of a later layer is refused as not supported | `blocks::a_statement_of_a_later_layer_is_refused_as_not_compiled_yet` |
 | A wildcard target binds nothing | `blocks::a_wildcard_target_binds_nothing` |
 | `return` with a value or a comma list | `returns::return_forms` |
 | The empty family `{}` outside and inside body position; an empty block in body position | `empty_family::*` (4 tests) |

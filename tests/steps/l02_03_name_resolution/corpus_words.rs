@@ -86,7 +86,7 @@ fn a_type_of_the_program_named_stream_is_its_own() {
 }
 
 /// Every corpus file that reaches resolution names only defined words; a word of a later layer
-/// is reported as one this zedc does not compile yet. A file that does not reach resolution holds a form of a
+/// is reported as one this zedc does not support. A file that does not reach resolution holds a form of a
 /// later layer, or is the control that does not parse; any other such file fails the test.
 #[test]
 fn no_corpus_file_uses_an_undefined_name() {

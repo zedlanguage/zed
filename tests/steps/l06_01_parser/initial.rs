@@ -42,7 +42,7 @@ pub(super) fn notes(src: &str, e: &Error) -> Vec<String> {
 }
 
 /// Checks that the unit `text` is accepted by the front end, as a user's program is read: or,
-/// for a loop, which this zedc does not compile yet (step L6.2), refused only with the message
+/// for a loop, which this zedc does not support (step L6.2), refused only with the message
 /// that says so.
 #[track_caller]
 pub(super) fn accepted(text: &str) {

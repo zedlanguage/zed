@@ -49,7 +49,7 @@ fn written_body_kept(body: &str) {
             "a fold `><` that the calls of one function run on entries of type",
             "`#empty` at `int`",
             "`-inf` at `f64`",
-            "does not compile it yet",
+            "not supported by this version of zedc",
         ],
     );
     let es = all_errors(&src).join("\n");

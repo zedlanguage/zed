@@ -205,7 +205,7 @@ fn each_variant_gives_its_pinned_diagnostic_at_l1() {
         ),
         // The float facts of sec:facets (spec 7d1cf81; the row's backticks, spec ad25f0c). The
         // ✗ comment names the row "No `int` equals the value", but line 13's facet
-        // `inexact(false)` (plan row FPWARN) is a form zedc does not compile yet, so the unit is
+        // `inexact(false)` (plan row FPWARN) is a form zedc does not support, so the unit is
         // not checked and line 12 has no diagnostic. Alone, zedc rejects the line in that row
         // (plan row CAST-round-whole).
         ("no-int-equals-the-value", none(12)),

@@ -14,7 +14,7 @@ fn an_error_beside_a_recursion_is_reported_with_it() {
     assert_eq!(
         heads,
         [
-            "1:1: `spin` is defined in terms of itself, which is recursion: this version of zedc does not compile it yet.",
+            "1:1: `spin` is defined in terms of itself, which is recursion: recursion is not supported by this version of zedc.",
             "3:8: `f` does not take (true): no arrow of `f` takes these types.",
         ],
         "{out}"
@@ -51,7 +51,7 @@ fn a_call_of_a_recursion_adds_no_error() {
 /// MSG-recursion-chain: the message of a cycle shows each use that closes it, at its site, in
 /// the order of the cycle from its first definition by name, then the repairs
 /// (DESIGN.md sec:diagnostics). Before, it named the definitions only.
-const NOT_YET: &str = ": this version of zedc does not compile it yet.";
+const NOT_YET: &str = ": recursion is not supported by this version of zedc.";
 
 const NO_STEP: &str = "a value cannot be defined in terms of itself, since no step of the \
                        program makes the earlier value";
@@ -64,7 +64,7 @@ fn step_repair(x: &str, next: &str, indexed: &str) -> String {
          `loop t {{ while t < 10; initial {x} = 0; {x}' = {next}; }}`, or an indexed definition, \
          as `{x}[i in 0..<10] = {indexed} with {x}[-1] = 0`, with the start value in place of 0 \
          and the number of steps in place of 10. Loops and indexed definitions are part of the \
-         Zed language, and this version of zedc does not compile them yet."
+         Zed language but are not supported by this version of zedc."
     )
 }
 
@@ -72,8 +72,7 @@ fn step_repair(x: &str, next: &str, indexed: &str) -> String {
 fn function_repair(x: &str) -> String {
     format!(
         "repair: to define a recursive function, write `{x}` as a function with a parameter. \
-         Recursion is part of the Zed language, and this version of zedc does not compile it \
-         yet."
+         Recursion is part of the Zed language but is not supported by this version of zedc."
     )
 }
 

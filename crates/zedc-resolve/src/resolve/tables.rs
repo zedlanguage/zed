@@ -786,8 +786,8 @@ impl<'a> Tables<'a> {
                 span: at,
                 text: format!(
                     "repair: to define a recursive function, write {each}{first} as a function \
-                     with a parameter. Recursion is part of the Zed language, and this version of \
-                     zedc does not compile it yet."
+                     with a parameter. Recursion is part of the Zed language but is not \
+                     supported by this version of zedc."
                 ),
             });
             CycleReport {
@@ -818,7 +818,8 @@ impl<'a> Tables<'a> {
                 span: at,
                 row: None,
                 message: format!(
-                    "{head}, which is recursion: this version of zedc does not compile it yet"
+                    "{head}, which is recursion: recursion is not supported by this version of \
+                     zedc"
                 ),
                 notes,
             }
@@ -897,7 +898,7 @@ impl<'a> Tables<'a> {
              `loop t {{ while t < 10; initial {x} = 0; {x}' = {next}; }}`, or an indexed \
              definition, as `{x}[i in 0..<10] = {indexed} with {x}[-1] = 0`, with the start value \
              in place of 0 and the number of steps in place of 10. Loops and indexed definitions \
-             are part of the Zed language, and this version of zedc does not compile them yet."
+             are part of the Zed language but are not supported by this version of zedc."
         )
     }
 }

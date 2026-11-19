@@ -506,7 +506,7 @@ impl<'a, 's> Builder<'a, 's> {
     /// the one view that takes a push (a generation push `x' <- e` that no `loop` or method
     /// holds is refused by the caller). `v` is the pushed value, whose text the repairs show. A target ending in
     /// `::bytes` (`m.stdout::bytes`, DESIGN step L7.3h) and one with a field of another value
-    /// are not compiled yet. The tokens alternate a name and a separator, `.` or `::`, and the
+    /// are not supported by this zedc. The tokens alternate a name and a separator, `.` or `::`, and the
     /// grammar allows `::` only before the last name.
     pub(super) fn push_target(&self, t: usize, v: usize) -> Result<String, Error> {
         let node = &self.tree.nodes[t];
@@ -720,7 +720,7 @@ impl<'a, 's> Builder<'a, 's> {
         &self.tree.nodes[n].kids
     }
 
-    /// The error for node `n`, a form this zedc parses and does not compile yet. The message
+    /// The error for node `n`, a form this zedc parses and does not support. The message
     /// names the kind of form in plain words ([`kind_of`]) and quotes its first line, cut at
     /// 60 characters, since a form may be a whole block.
     pub(super) fn later(&self, n: usize) -> Error {
@@ -1037,7 +1037,7 @@ impl<'a, 's> Builder<'a, 's> {
 }
 
 /// The kind of form the grammar rule `rule` reads, in plain words, for the message of a form
-/// this zedc does not compile yet; `the form` for a rule with no plainer name.
+/// this zedc does not support; `the form` for a rule with no plainer name.
 fn kind_of(rule: &str) -> &'static str {
     match rule {
         "ReducePolicy" => "the reduction order",

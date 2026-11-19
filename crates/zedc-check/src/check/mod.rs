@@ -11266,8 +11266,8 @@ fn unfixed_binding(
     // DESIGN's menu for `half = 1 / 2` also lists the binding declared at each carrier,
     // `half: rat = 1 / 2` after `half = 1r / 2` and `half: f64 = 1 / 2` after `half = 1.0 / 2`
     // (sec:diagnostics, "A `/` of integer literals"). This zedc refuses a binding with a
-    // declared type before the check ("does not compile it yet"), so a declared fix would be
-    // a fix the program cannot take; they are left out until it compiles one (plan row
+    // declared type before the check ("not supported by this version of zedc"), so a declared
+    // fix would be a fix the program cannot take; they are left out until it compiles one (plan row
     // LIT-declared-fix-call-arg).
     let fixes = forms.into_iter().map(|f| {
         let leaves = if f.carrier() == Carrier::Rat {

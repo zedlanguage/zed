@@ -106,7 +106,7 @@ fn into_without_as_waits_for_level_names() {
     assert!(
         es[0].starts_with(
             "a remap `into` that names the source's levels by their level names is part of the \
-             Zed language, and this version of zedc does not compile it yet."
+             Zed language but is not supported by this version of zedc."
         ),
         "{es:?}"
     );

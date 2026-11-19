@@ -1,7 +1,7 @@
 //! The empty type is the prelude type `Never` (DESIGN.md, the L1 row of "Defined words by
 //! layer"): a program writes it from L1 on, and the checker prints a type with no value as
 //! `Never`. A declared result type `-> Never` and a binding with a declared type `x: Never = 1`
-//! are forms of layer L10, which zedc does not compile yet, so these tests write `Never` where
+//! are forms of layer L10, which zedc does not support yet, so these tests write `Never` where
 //! L1 takes a type: a parameter's type and a function type's result.
 
 use super::{info, sig, type_errors};

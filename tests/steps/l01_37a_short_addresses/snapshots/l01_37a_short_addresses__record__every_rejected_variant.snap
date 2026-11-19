@@ -7,7 +7,7 @@ argument-unit-not-convertible
     Diagnostic {
         line: 2,
         col: 17,
-        message: "the facet attachment `with units(\"GiB\")` is part of the Zed language, and this version of zedc does not compile it yet. Write the program without it, with the forms this zedc compiles.",
+        message: "the facet attachment `with units(\"GiB\")` is part of the Zed language but is not supported by this version of zedc. Write the program without it.",
         steps: [],
         menu: "",
         row: None,
@@ -15,7 +15,7 @@ argument-unit-not-convertible
     Diagnostic {
         line: 3,
         col: 10,
-        message: "the facet attachment `with units(\"Gbit\")` is part of the Zed language, and this version of zedc does not compile it yet. Write the program without it, with the forms this zedc compiles.",
+        message: "the facet attachment `with units(\"Gbit\")` is part of the Zed language but is not supported by this version of zedc. Write the program without it.",
         steps: [],
         menu: "",
         row: None,
@@ -23,7 +23,7 @@ argument-unit-not-convertible
     Diagnostic {
         line: 5,
         col: 13,
-        message: "the facet `with units(\"K\")` is part of the Zed language, and this version of zedc does not compile it yet. Write the program without it, with the forms this zedc compiles.",
+        message: "the facet `with units(\"K\")` is part of the Zed language but is not supported by this version of zedc. Write the program without it.",
         steps: [],
         menu: "",
         row: None,
@@ -31,7 +31,7 @@ argument-unit-not-convertible
     Diagnostic {
         line: 6,
         col: 21,
-        message: "the facet attachment `with units(\"degC\")` is part of the Zed language, and this version of zedc does not compile it yet. Write the program without it, with the forms this zedc compiles.",
+        message: "the facet attachment `with units(\"degC\")` is part of the Zed language but is not supported by this version of zedc. Write the program without it.",
         steps: [],
         menu: "",
         row: None,
@@ -39,7 +39,7 @@ argument-unit-not-convertible
     Diagnostic {
         line: 7,
         col: 13,
-        message: "the facet `with assumedUnits(\"B\")` is part of the Zed language, and this version of zedc does not compile it yet. Write the program without it, with the forms this zedc compiles.",
+        message: "the facet `with assumedUnits(\"B\")` is part of the Zed language but is not supported by this version of zedc. Write the program without it.",
         steps: [],
         menu: "",
         row: None,
@@ -47,7 +47,7 @@ argument-unit-not-convertible
     Diagnostic {
         line: 9,
         col: 15,
-        message: "the facet attachment `with units(\"bit\")` is part of the Zed language, and this version of zedc does not compile it yet. Write the program without it, with the forms this zedc compiles.",
+        message: "the facet attachment `with units(\"bit\")` is part of the Zed language but is not supported by this version of zedc. Write the program without it.",
         steps: [],
         menu: "",
         row: None,
@@ -55,7 +55,7 @@ argument-unit-not-convertible
     Diagnostic {
         line: 16,
         col: 25,
-        message: "the facet attachment `with units(\"kB\")` is part of the Zed language, and this version of zedc does not compile it yet. Write the program without it, with the forms this zedc compiles.",
+        message: "the facet attachment `with units(\"kB\")` is part of the Zed language but is not supported by this version of zedc. Write the program without it.",
         steps: [],
         menu: "",
         row: None,
@@ -63,33 +63,33 @@ argument-unit-not-convertible
     Diagnostic {
         line: 18,
         col: 15,
-        message: "the facet attachment `with units(\"m\")` is part of the Zed language, and this version of zedc does not compile it yet. Write the program without it, with the forms this zedc compiles.",
+        message: "the facet attachment `with units(\"m\")` is part of the Zed language but is not supported by this version of zedc. Write the program without it.",
         steps: [],
         menu: "",
         row: None,
     },
 ]
-  checks: [Outcome { line: 2, col: 17, failure: Some("the facet attachment `with units(\"GiB\")` is part of the Zed language, and this version of zedc does not compile it yet. Write the program without it, with the forms this zedc compiles."), not_run: None }, Outcome { line: 3, col: 10, failure: Some("the facet attachment `with units(\"Gbit\")` is part of the Zed language, and this version of zedc does not compile it yet. Write the program without it, with the forms this zedc compiles."), not_run: None }, Outcome { line: 5, col: 13, failure: Some("the facet `with units(\"K\")` is part of the Zed language, and this version of zedc does not compile it yet. Write the program without it, with the forms this zedc compiles."), not_run: None }, Outcome { line: 6, col: 21, failure: Some("the facet attachment `with units(\"degC\")` is part of the Zed language, and this version of zedc does not compile it yet. Write the program without it, with the forms this zedc compiles."), not_run: None }, Outcome { line: 7, col: 13, failure: Some("the facet `with assumedUnits(\"B\")` is part of the Zed language, and this version of zedc does not compile it yet. Write the program without it, with the forms this zedc compiles."), not_run: None }, Outcome { line: 9, col: 15, failure: Some("the facet attachment `with units(\"bit\")` is part of the Zed language, and this version of zedc does not compile it yet. Write the program without it, with the forms this zedc compiles."), not_run: None }, Outcome { line: 16, col: 25, failure: Some("the facet attachment `with units(\"kB\")` is part of the Zed language, and this version of zedc does not compile it yet. Write the program without it, with the forms this zedc compiles."), not_run: None }, Outcome { line: 18, col: 15, failure: Some("the mark names the row \"Argument whose unit does not convert to its parameter's\", and the diagnostic is in no row of the rejection table: the facet attachment `with units(\"m\")` is part of the Zed language, and this version of zedc does not compile it yet. Write the program without it, with the forms this zedc compiles."), not_run: None }]
+  checks: [Outcome { line: 2, col: 17, failure: Some("the facet attachment `with units(\"GiB\")` is part of the Zed language but is not supported by this version of zedc. Write the program without it."), not_run: None }, Outcome { line: 3, col: 10, failure: Some("the facet attachment `with units(\"Gbit\")` is part of the Zed language but is not supported by this version of zedc. Write the program without it."), not_run: None }, Outcome { line: 5, col: 13, failure: Some("the facet `with units(\"K\")` is part of the Zed language but is not supported by this version of zedc. Write the program without it."), not_run: None }, Outcome { line: 6, col: 21, failure: Some("the facet attachment `with units(\"degC\")` is part of the Zed language but is not supported by this version of zedc. Write the program without it."), not_run: None }, Outcome { line: 7, col: 13, failure: Some("the facet `with assumedUnits(\"B\")` is part of the Zed language but is not supported by this version of zedc. Write the program without it."), not_run: None }, Outcome { line: 9, col: 15, failure: Some("the facet attachment `with units(\"bit\")` is part of the Zed language but is not supported by this version of zedc. Write the program without it."), not_run: None }, Outcome { line: 16, col: 25, failure: Some("the facet attachment `with units(\"kB\")` is part of the Zed language but is not supported by this version of zedc. Write the program without it."), not_run: None }, Outcome { line: 18, col: 15, failure: Some("the mark names the row \"Argument whose unit does not convert to its parameter's\", and the diagnostic is in no row of the rejection table: the facet attachment `with units(\"m\")` is part of the Zed language but is not supported by this version of zedc. Write the program without it."), not_run: None }]
 
 block-binding-never-read
   rejected: [
     Diagnostic {
         line: 2,
         col: 29,
-        message: "the declared result type `-> int` is part of the Zed language, and this version of zedc does not compile it yet. Write the program without it, with the forms this zedc compiles.",
+        message: "the declared result type `-> int` is part of the Zed language but is not supported by this version of zedc. Write the program without it.",
         steps: [],
         menu: "",
         row: None,
     },
 ]
-  checks: [Outcome { line: 2, col: 29, failure: Some("the declared result type `-> int` is part of the Zed language, and this version of zedc does not compile it yet. Write the program without it, with the forms this zedc compiles."), not_run: None }, Outcome { line: 6, col: 1, failure: Some("the line is marked ✗ and has no diagnostic"), not_run: None }]
+  checks: [Outcome { line: 2, col: 29, failure: Some("the declared result type `-> int` is part of the Zed language but is not supported by this version of zedc. Write the program without it."), not_run: None }, Outcome { line: 6, col: 1, failure: Some("the line is marked ✗ and has no diagnostic"), not_run: None }]
 
 byte-length-against-kilobytes
   rejected: [
     Diagnostic {
         line: 2,
         col: 17,
-        message: "the facet attachment `with units(\"GiB\")` is part of the Zed language, and this version of zedc does not compile it yet. Write the program without it, with the forms this zedc compiles.",
+        message: "the facet attachment `with units(\"GiB\")` is part of the Zed language but is not supported by this version of zedc. Write the program without it.",
         steps: [],
         menu: "",
         row: None,
@@ -97,7 +97,7 @@ byte-length-against-kilobytes
     Diagnostic {
         line: 3,
         col: 10,
-        message: "the facet attachment `with units(\"Gbit\")` is part of the Zed language, and this version of zedc does not compile it yet. Write the program without it, with the forms this zedc compiles.",
+        message: "the facet attachment `with units(\"Gbit\")` is part of the Zed language but is not supported by this version of zedc. Write the program without it.",
         steps: [],
         menu: "",
         row: None,
@@ -105,7 +105,7 @@ byte-length-against-kilobytes
     Diagnostic {
         line: 5,
         col: 13,
-        message: "the facet `with units(\"K\")` is part of the Zed language, and this version of zedc does not compile it yet. Write the program without it, with the forms this zedc compiles.",
+        message: "the facet `with units(\"K\")` is part of the Zed language but is not supported by this version of zedc. Write the program without it.",
         steps: [],
         menu: "",
         row: None,
@@ -113,7 +113,7 @@ byte-length-against-kilobytes
     Diagnostic {
         line: 6,
         col: 21,
-        message: "the facet attachment `with units(\"degC\")` is part of the Zed language, and this version of zedc does not compile it yet. Write the program without it, with the forms this zedc compiles.",
+        message: "the facet attachment `with units(\"degC\")` is part of the Zed language but is not supported by this version of zedc. Write the program without it.",
         steps: [],
         menu: "",
         row: None,
@@ -121,7 +121,7 @@ byte-length-against-kilobytes
     Diagnostic {
         line: 7,
         col: 13,
-        message: "the facet `with assumedUnits(\"B\")` is part of the Zed language, and this version of zedc does not compile it yet. Write the program without it, with the forms this zedc compiles.",
+        message: "the facet `with assumedUnits(\"B\")` is part of the Zed language but is not supported by this version of zedc. Write the program without it.",
         steps: [],
         menu: "",
         row: None,
@@ -129,7 +129,7 @@ byte-length-against-kilobytes
     Diagnostic {
         line: 9,
         col: 15,
-        message: "the facet attachment `with units(\"bit\")` is part of the Zed language, and this version of zedc does not compile it yet. Write the program without it, with the forms this zedc compiles.",
+        message: "the facet attachment `with units(\"bit\")` is part of the Zed language but is not supported by this version of zedc. Write the program without it.",
         steps: [],
         menu: "",
         row: None,
@@ -137,7 +137,7 @@ byte-length-against-kilobytes
     Diagnostic {
         line: 16,
         col: 25,
-        message: "the facet attachment `with units(\"kB\")` is part of the Zed language, and this version of zedc does not compile it yet. Write the program without it, with the forms this zedc compiles.",
+        message: "the facet attachment `with units(\"kB\")` is part of the Zed language but is not supported by this version of zedc. Write the program without it.",
         steps: [],
         menu: "",
         row: None,
@@ -145,20 +145,20 @@ byte-length-against-kilobytes
     Diagnostic {
         line: 20,
         col: 21,
-        message: "the facet attachment `with units(\"kB\")` is part of the Zed language, and this version of zedc does not compile it yet. Write the program without it, with the forms this zedc compiles.",
+        message: "the facet attachment `with units(\"kB\")` is part of the Zed language but is not supported by this version of zedc. Write the program without it.",
         steps: [],
         menu: "",
         row: None,
     },
 ]
-  checks: [Outcome { line: 2, col: 17, failure: Some("the facet attachment `with units(\"GiB\")` is part of the Zed language, and this version of zedc does not compile it yet. Write the program without it, with the forms this zedc compiles."), not_run: None }, Outcome { line: 3, col: 10, failure: Some("the facet attachment `with units(\"Gbit\")` is part of the Zed language, and this version of zedc does not compile it yet. Write the program without it, with the forms this zedc compiles."), not_run: None }, Outcome { line: 5, col: 13, failure: Some("the facet `with units(\"K\")` is part of the Zed language, and this version of zedc does not compile it yet. Write the program without it, with the forms this zedc compiles."), not_run: None }, Outcome { line: 6, col: 21, failure: Some("the facet attachment `with units(\"degC\")` is part of the Zed language, and this version of zedc does not compile it yet. Write the program without it, with the forms this zedc compiles."), not_run: None }, Outcome { line: 7, col: 13, failure: Some("the facet `with assumedUnits(\"B\")` is part of the Zed language, and this version of zedc does not compile it yet. Write the program without it, with the forms this zedc compiles."), not_run: None }, Outcome { line: 9, col: 15, failure: Some("the facet attachment `with units(\"bit\")` is part of the Zed language, and this version of zedc does not compile it yet. Write the program without it, with the forms this zedc compiles."), not_run: None }, Outcome { line: 16, col: 25, failure: Some("the facet attachment `with units(\"kB\")` is part of the Zed language, and this version of zedc does not compile it yet. Write the program without it, with the forms this zedc compiles."), not_run: None }, Outcome { line: 20, col: 21, failure: Some("the mark names the row \"Units that differ where an operation requires equal ones\", and the diagnostic is in no row of the rejection table: the facet attachment `with units(\"kB\")` is part of the Zed language, and this version of zedc does not compile it yet. Write the program without it, with the forms this zedc compiles."), not_run: None }]
+  checks: [Outcome { line: 2, col: 17, failure: Some("the facet attachment `with units(\"GiB\")` is part of the Zed language but is not supported by this version of zedc. Write the program without it."), not_run: None }, Outcome { line: 3, col: 10, failure: Some("the facet attachment `with units(\"Gbit\")` is part of the Zed language but is not supported by this version of zedc. Write the program without it."), not_run: None }, Outcome { line: 5, col: 13, failure: Some("the facet `with units(\"K\")` is part of the Zed language but is not supported by this version of zedc. Write the program without it."), not_run: None }, Outcome { line: 6, col: 21, failure: Some("the facet attachment `with units(\"degC\")` is part of the Zed language but is not supported by this version of zedc. Write the program without it."), not_run: None }, Outcome { line: 7, col: 13, failure: Some("the facet `with assumedUnits(\"B\")` is part of the Zed language but is not supported by this version of zedc. Write the program without it."), not_run: None }, Outcome { line: 9, col: 15, failure: Some("the facet attachment `with units(\"bit\")` is part of the Zed language but is not supported by this version of zedc. Write the program without it."), not_run: None }, Outcome { line: 16, col: 25, failure: Some("the facet attachment `with units(\"kB\")` is part of the Zed language but is not supported by this version of zedc. Write the program without it."), not_run: None }, Outcome { line: 20, col: 21, failure: Some("the mark names the row \"Units that differ where an operation requires equal ones\", and the diagnostic is in no row of the rejection table: the facet attachment `with units(\"kB\")` is part of the Zed language but is not supported by this version of zedc. Write the program without it."), not_run: None }]
 
 char-is-not-a-unit
   rejected: [
     Diagnostic {
         line: 2,
         col: 17,
-        message: "the facet attachment `with units(\"GiB\")` is part of the Zed language, and this version of zedc does not compile it yet. Write the program without it, with the forms this zedc compiles.",
+        message: "the facet attachment `with units(\"GiB\")` is part of the Zed language but is not supported by this version of zedc. Write the program without it.",
         steps: [],
         menu: "",
         row: None,
@@ -166,7 +166,7 @@ char-is-not-a-unit
     Diagnostic {
         line: 3,
         col: 10,
-        message: "the facet attachment `with units(\"Gbit\")` is part of the Zed language, and this version of zedc does not compile it yet. Write the program without it, with the forms this zedc compiles.",
+        message: "the facet attachment `with units(\"Gbit\")` is part of the Zed language but is not supported by this version of zedc. Write the program without it.",
         steps: [],
         menu: "",
         row: None,
@@ -174,7 +174,7 @@ char-is-not-a-unit
     Diagnostic {
         line: 5,
         col: 13,
-        message: "the facet `with units(\"K\")` is part of the Zed language, and this version of zedc does not compile it yet. Write the program without it, with the forms this zedc compiles.",
+        message: "the facet `with units(\"K\")` is part of the Zed language but is not supported by this version of zedc. Write the program without it.",
         steps: [],
         menu: "",
         row: None,
@@ -182,7 +182,7 @@ char-is-not-a-unit
     Diagnostic {
         line: 6,
         col: 21,
-        message: "the facet attachment `with units(\"degC\")` is part of the Zed language, and this version of zedc does not compile it yet. Write the program without it, with the forms this zedc compiles.",
+        message: "the facet attachment `with units(\"degC\")` is part of the Zed language but is not supported by this version of zedc. Write the program without it.",
         steps: [],
         menu: "",
         row: None,
@@ -190,7 +190,7 @@ char-is-not-a-unit
     Diagnostic {
         line: 7,
         col: 13,
-        message: "the facet `with assumedUnits(\"B\")` is part of the Zed language, and this version of zedc does not compile it yet. Write the program without it, with the forms this zedc compiles.",
+        message: "the facet `with assumedUnits(\"B\")` is part of the Zed language but is not supported by this version of zedc. Write the program without it.",
         steps: [],
         menu: "",
         row: None,
@@ -198,7 +198,7 @@ char-is-not-a-unit
     Diagnostic {
         line: 9,
         col: 15,
-        message: "the facet attachment `with units(\"bit\")` is part of the Zed language, and this version of zedc does not compile it yet. Write the program without it, with the forms this zedc compiles.",
+        message: "the facet attachment `with units(\"bit\")` is part of the Zed language but is not supported by this version of zedc. Write the program without it.",
         steps: [],
         menu: "",
         row: None,
@@ -206,7 +206,7 @@ char-is-not-a-unit
     Diagnostic {
         line: 16,
         col: 25,
-        message: "the facet attachment `with units(\"kB\")` is part of the Zed language, and this version of zedc does not compile it yet. Write the program without it, with the forms this zedc compiles.",
+        message: "the facet attachment `with units(\"kB\")` is part of the Zed language but is not supported by this version of zedc. Write the program without it.",
         steps: [],
         menu: "",
         row: None,
@@ -214,13 +214,13 @@ char-is-not-a-unit
     Diagnostic {
         line: 22,
         col: 25,
-        message: "the facet attachment `with units(\"char\")` is part of the Zed language, and this version of zedc does not compile it yet. Write the program without it, with the forms this zedc compiles.",
+        message: "the facet attachment `with units(\"char\")` is part of the Zed language but is not supported by this version of zedc. Write the program without it.",
         steps: [],
         menu: "",
         row: None,
     },
 ]
-  checks: [Outcome { line: 2, col: 17, failure: Some("the facet attachment `with units(\"GiB\")` is part of the Zed language, and this version of zedc does not compile it yet. Write the program without it, with the forms this zedc compiles."), not_run: None }, Outcome { line: 3, col: 10, failure: Some("the facet attachment `with units(\"Gbit\")` is part of the Zed language, and this version of zedc does not compile it yet. Write the program without it, with the forms this zedc compiles."), not_run: None }, Outcome { line: 5, col: 13, failure: Some("the facet `with units(\"K\")` is part of the Zed language, and this version of zedc does not compile it yet. Write the program without it, with the forms this zedc compiles."), not_run: None }, Outcome { line: 6, col: 21, failure: Some("the facet attachment `with units(\"degC\")` is part of the Zed language, and this version of zedc does not compile it yet. Write the program without it, with the forms this zedc compiles."), not_run: None }, Outcome { line: 7, col: 13, failure: Some("the facet `with assumedUnits(\"B\")` is part of the Zed language, and this version of zedc does not compile it yet. Write the program without it, with the forms this zedc compiles."), not_run: None }, Outcome { line: 9, col: 15, failure: Some("the facet attachment `with units(\"bit\")` is part of the Zed language, and this version of zedc does not compile it yet. Write the program without it, with the forms this zedc compiles."), not_run: None }, Outcome { line: 16, col: 25, failure: Some("the facet attachment `with units(\"kB\")` is part of the Zed language, and this version of zedc does not compile it yet. Write the program without it, with the forms this zedc compiles."), not_run: None }, Outcome { line: 22, col: 25, failure: Some("the mark names the row \"Unit name not declared\", and the diagnostic is in no row of the rejection table: the facet attachment `with units(\"char\")` is part of the Zed language, and this version of zedc does not compile it yet. Write the program without it, with the forms this zedc compiles."), not_run: None }]
+  checks: [Outcome { line: 2, col: 17, failure: Some("the facet attachment `with units(\"GiB\")` is part of the Zed language but is not supported by this version of zedc. Write the program without it."), not_run: None }, Outcome { line: 3, col: 10, failure: Some("the facet attachment `with units(\"Gbit\")` is part of the Zed language but is not supported by this version of zedc. Write the program without it."), not_run: None }, Outcome { line: 5, col: 13, failure: Some("the facet `with units(\"K\")` is part of the Zed language but is not supported by this version of zedc. Write the program without it."), not_run: None }, Outcome { line: 6, col: 21, failure: Some("the facet attachment `with units(\"degC\")` is part of the Zed language but is not supported by this version of zedc. Write the program without it."), not_run: None }, Outcome { line: 7, col: 13, failure: Some("the facet `with assumedUnits(\"B\")` is part of the Zed language but is not supported by this version of zedc. Write the program without it."), not_run: None }, Outcome { line: 9, col: 15, failure: Some("the facet attachment `with units(\"bit\")` is part of the Zed language but is not supported by this version of zedc. Write the program without it."), not_run: None }, Outcome { line: 16, col: 25, failure: Some("the facet attachment `with units(\"kB\")` is part of the Zed language but is not supported by this version of zedc. Write the program without it."), not_run: None }, Outcome { line: 22, col: 25, failure: Some("the mark names the row \"Unit name not declared\", and the diagnostic is in no row of the rejection table: the facet attachment `with units(\"char\")` is part of the Zed language but is not supported by this version of zedc. Write the program without it."), not_run: None }]
 
 constructor-called-by-position
   rejected: [
@@ -326,7 +326,7 @@ dot-never-mutates
     Diagnostic {
         line: 8,
         col: 29,
-        message: "the declared result type `-> int` is part of the Zed language, and this version of zedc does not compile it yet. Write the program without it, with the forms this zedc compiles.",
+        message: "the declared result type `-> int` is part of the Zed language but is not supported by this version of zedc. Write the program without it.",
         steps: [],
         menu: "",
         row: None,
@@ -371,14 +371,14 @@ dot-never-mutates
         ),
     },
 ]
-  checks: [Outcome { line: 8, col: 29, failure: Some("the declared result type `-> int` is part of the Zed language, and this version of zedc does not compile it yet. Write the program without it, with the forms this zedc compiles."), not_run: None }, Outcome { line: 30, col: 3, failure: None, not_run: None }]
+  checks: [Outcome { line: 8, col: 29, failure: Some("the declared result type `-> int` is part of the Zed language but is not supported by this version of zedc. Write the program without it."), not_run: None }, Outcome { line: 30, col: 3, failure: None, not_run: None }]
 
 exponential-base-differs
   rejected: [
     Diagnostic {
         line: 2,
         col: 14,
-        message: "the facet attachment `with units(\"m\")` is part of the Zed language, and this version of zedc does not compile it yet. Write the program without it, with the forms this zedc compiles.",
+        message: "the facet attachment `with units(\"m\")` is part of the Zed language but is not supported by this version of zedc. Write the program without it.",
         steps: [],
         menu: "",
         row: None,
@@ -386,7 +386,7 @@ exponential-base-differs
     Diagnostic {
         line: 8,
         col: 20,
-        message: "the facet attachment `with units(\"m\")` is part of the Zed language, and this version of zedc does not compile it yet. Write the program without it, with the forms this zedc compiles.",
+        message: "the facet attachment `with units(\"m\")` is part of the Zed language but is not supported by this version of zedc. Write the program without it.",
         steps: [],
         menu: "",
         row: None,
@@ -394,7 +394,7 @@ exponential-base-differs
     Diagnostic {
         line: 10,
         col: 15,
-        message: "the facet attachment `with units(\"km\")` is part of the Zed language, and this version of zedc does not compile it yet. Write the program without it, with the forms this zedc compiles.",
+        message: "the facet attachment `with units(\"km\")` is part of the Zed language but is not supported by this version of zedc. Write the program without it.",
         steps: [],
         menu: "",
         row: None,
@@ -402,20 +402,20 @@ exponential-base-differs
     Diagnostic {
         line: 11,
         col: 21,
-        message: "the facet attachment `with units(\"m\")` is part of the Zed language, and this version of zedc does not compile it yet. Write the program without it, with the forms this zedc compiles.",
+        message: "the facet attachment `with units(\"m\")` is part of the Zed language but is not supported by this version of zedc. Write the program without it.",
         steps: [],
         menu: "",
         row: None,
     },
 ]
-  checks: [Outcome { line: 2, col: 14, failure: Some("the facet attachment `with units(\"m\")` is part of the Zed language, and this version of zedc does not compile it yet. Write the program without it, with the forms this zedc compiles."), not_run: None }, Outcome { line: 8, col: 20, failure: Some("the facet attachment `with units(\"m\")` is part of the Zed language, and this version of zedc does not compile it yet. Write the program without it, with the forms this zedc compiles."), not_run: None }, Outcome { line: 10, col: 15, failure: Some("the facet attachment `with units(\"km\")` is part of the Zed language, and this version of zedc does not compile it yet. Write the program without it, with the forms this zedc compiles."), not_run: None }, Outcome { line: 11, col: 21, failure: Some("the facet attachment `with units(\"m\")` is part of the Zed language, and this version of zedc does not compile it yet. Write the program without it, with the forms this zedc compiles."), not_run: None }, Outcome { line: 14, col: 1, failure: Some("the line is marked ✗ and has no diagnostic"), not_run: None }]
+  checks: [Outcome { line: 2, col: 14, failure: Some("the facet attachment `with units(\"m\")` is part of the Zed language but is not supported by this version of zedc. Write the program without it."), not_run: None }, Outcome { line: 8, col: 20, failure: Some("the facet attachment `with units(\"m\")` is part of the Zed language but is not supported by this version of zedc. Write the program without it."), not_run: None }, Outcome { line: 10, col: 15, failure: Some("the facet attachment `with units(\"km\")` is part of the Zed language but is not supported by this version of zedc. Write the program without it."), not_run: None }, Outcome { line: 11, col: 21, failure: Some("the facet attachment `with units(\"m\")` is part of the Zed language but is not supported by this version of zedc. Write the program without it."), not_run: None }, Outcome { line: 14, col: 1, failure: Some("the line is marked ✗ and has no diagnostic"), not_run: None }]
 
 key-in-bytes-for-codepoints
   rejected: [
     Diagnostic {
         line: 2,
         col: 17,
-        message: "the facet attachment `with units(\"GiB\")` is part of the Zed language, and this version of zedc does not compile it yet. Write the program without it, with the forms this zedc compiles.",
+        message: "the facet attachment `with units(\"GiB\")` is part of the Zed language but is not supported by this version of zedc. Write the program without it.",
         steps: [],
         menu: "",
         row: None,
@@ -423,7 +423,7 @@ key-in-bytes-for-codepoints
     Diagnostic {
         line: 3,
         col: 10,
-        message: "the facet attachment `with units(\"Gbit\")` is part of the Zed language, and this version of zedc does not compile it yet. Write the program without it, with the forms this zedc compiles.",
+        message: "the facet attachment `with units(\"Gbit\")` is part of the Zed language but is not supported by this version of zedc. Write the program without it.",
         steps: [],
         menu: "",
         row: None,
@@ -431,7 +431,7 @@ key-in-bytes-for-codepoints
     Diagnostic {
         line: 5,
         col: 13,
-        message: "the facet `with units(\"K\")` is part of the Zed language, and this version of zedc does not compile it yet. Write the program without it, with the forms this zedc compiles.",
+        message: "the facet `with units(\"K\")` is part of the Zed language but is not supported by this version of zedc. Write the program without it.",
         steps: [],
         menu: "",
         row: None,
@@ -439,7 +439,7 @@ key-in-bytes-for-codepoints
     Diagnostic {
         line: 6,
         col: 21,
-        message: "the facet attachment `with units(\"degC\")` is part of the Zed language, and this version of zedc does not compile it yet. Write the program without it, with the forms this zedc compiles.",
+        message: "the facet attachment `with units(\"degC\")` is part of the Zed language but is not supported by this version of zedc. Write the program without it.",
         steps: [],
         menu: "",
         row: None,
@@ -447,7 +447,7 @@ key-in-bytes-for-codepoints
     Diagnostic {
         line: 7,
         col: 13,
-        message: "the facet `with assumedUnits(\"B\")` is part of the Zed language, and this version of zedc does not compile it yet. Write the program without it, with the forms this zedc compiles.",
+        message: "the facet `with assumedUnits(\"B\")` is part of the Zed language but is not supported by this version of zedc. Write the program without it.",
         steps: [],
         menu: "",
         row: None,
@@ -455,7 +455,7 @@ key-in-bytes-for-codepoints
     Diagnostic {
         line: 9,
         col: 15,
-        message: "the facet attachment `with units(\"bit\")` is part of the Zed language, and this version of zedc does not compile it yet. Write the program without it, with the forms this zedc compiles.",
+        message: "the facet attachment `with units(\"bit\")` is part of the Zed language but is not supported by this version of zedc. Write the program without it.",
         steps: [],
         menu: "",
         row: None,
@@ -463,20 +463,20 @@ key-in-bytes-for-codepoints
     Diagnostic {
         line: 16,
         col: 25,
-        message: "the facet attachment `with units(\"kB\")` is part of the Zed language, and this version of zedc does not compile it yet. Write the program without it, with the forms this zedc compiles.",
+        message: "the facet attachment `with units(\"kB\")` is part of the Zed language but is not supported by this version of zedc. Write the program without it.",
         steps: [],
         menu: "",
         row: None,
     },
 ]
-  checks: [Outcome { line: 2, col: 17, failure: Some("the facet attachment `with units(\"GiB\")` is part of the Zed language, and this version of zedc does not compile it yet. Write the program without it, with the forms this zedc compiles."), not_run: None }, Outcome { line: 3, col: 10, failure: Some("the facet attachment `with units(\"Gbit\")` is part of the Zed language, and this version of zedc does not compile it yet. Write the program without it, with the forms this zedc compiles."), not_run: None }, Outcome { line: 5, col: 13, failure: Some("the facet `with units(\"K\")` is part of the Zed language, and this version of zedc does not compile it yet. Write the program without it, with the forms this zedc compiles."), not_run: None }, Outcome { line: 6, col: 21, failure: Some("the facet attachment `with units(\"degC\")` is part of the Zed language, and this version of zedc does not compile it yet. Write the program without it, with the forms this zedc compiles."), not_run: None }, Outcome { line: 7, col: 13, failure: Some("the facet `with assumedUnits(\"B\")` is part of the Zed language, and this version of zedc does not compile it yet. Write the program without it, with the forms this zedc compiles."), not_run: None }, Outcome { line: 9, col: 15, failure: Some("the facet attachment `with units(\"bit\")` is part of the Zed language, and this version of zedc does not compile it yet. Write the program without it, with the forms this zedc compiles."), not_run: None }, Outcome { line: 16, col: 25, failure: Some("the facet attachment `with units(\"kB\")` is part of the Zed language, and this version of zedc does not compile it yet. Write the program without it, with the forms this zedc compiles."), not_run: None }, Outcome { line: 21, col: 1, failure: Some("the line is marked ✗ and has no diagnostic"), not_run: None }]
+  checks: [Outcome { line: 2, col: 17, failure: Some("the facet attachment `with units(\"GiB\")` is part of the Zed language but is not supported by this version of zedc. Write the program without it."), not_run: None }, Outcome { line: 3, col: 10, failure: Some("the facet attachment `with units(\"Gbit\")` is part of the Zed language but is not supported by this version of zedc. Write the program without it."), not_run: None }, Outcome { line: 5, col: 13, failure: Some("the facet `with units(\"K\")` is part of the Zed language but is not supported by this version of zedc. Write the program without it."), not_run: None }, Outcome { line: 6, col: 21, failure: Some("the facet attachment `with units(\"degC\")` is part of the Zed language but is not supported by this version of zedc. Write the program without it."), not_run: None }, Outcome { line: 7, col: 13, failure: Some("the facet `with assumedUnits(\"B\")` is part of the Zed language but is not supported by this version of zedc. Write the program without it."), not_run: None }, Outcome { line: 9, col: 15, failure: Some("the facet attachment `with units(\"bit\")` is part of the Zed language but is not supported by this version of zedc. Write the program without it."), not_run: None }, Outcome { line: 16, col: 25, failure: Some("the facet attachment `with units(\"kB\")` is part of the Zed language but is not supported by this version of zedc. Write the program without it."), not_run: None }, Outcome { line: 21, col: 1, failure: Some("the line is marked ✗ and has no diagnostic"), not_run: None }]
 
 log-unit-compared-with-number
   rejected: [
     Diagnostic {
         line: 2,
         col: 14,
-        message: "the facet attachment `with units(\"m\")` is part of the Zed language, and this version of zedc does not compile it yet. Write the program without it, with the forms this zedc compiles.",
+        message: "the facet attachment `with units(\"m\")` is part of the Zed language but is not supported by this version of zedc. Write the program without it.",
         steps: [],
         menu: "",
         row: None,
@@ -484,7 +484,7 @@ log-unit-compared-with-number
     Diagnostic {
         line: 8,
         col: 20,
-        message: "the facet attachment `with units(\"m\")` is part of the Zed language, and this version of zedc does not compile it yet. Write the program without it, with the forms this zedc compiles.",
+        message: "the facet attachment `with units(\"m\")` is part of the Zed language but is not supported by this version of zedc. Write the program without it.",
         steps: [],
         menu: "",
         row: None,
@@ -492,7 +492,7 @@ log-unit-compared-with-number
     Diagnostic {
         line: 10,
         col: 15,
-        message: "the facet attachment `with units(\"km\")` is part of the Zed language, and this version of zedc does not compile it yet. Write the program without it, with the forms this zedc compiles.",
+        message: "the facet attachment `with units(\"km\")` is part of the Zed language but is not supported by this version of zedc. Write the program without it.",
         steps: [],
         menu: "",
         row: None,
@@ -500,20 +500,20 @@ log-unit-compared-with-number
     Diagnostic {
         line: 11,
         col: 21,
-        message: "the facet attachment `with units(\"m\")` is part of the Zed language, and this version of zedc does not compile it yet. Write the program without it, with the forms this zedc compiles.",
+        message: "the facet attachment `with units(\"m\")` is part of the Zed language but is not supported by this version of zedc. Write the program without it.",
         steps: [],
         menu: "",
         row: None,
     },
 ]
-  checks: [Outcome { line: 2, col: 14, failure: Some("the facet attachment `with units(\"m\")` is part of the Zed language, and this version of zedc does not compile it yet. Write the program without it, with the forms this zedc compiles."), not_run: None }, Outcome { line: 8, col: 20, failure: Some("the facet attachment `with units(\"m\")` is part of the Zed language, and this version of zedc does not compile it yet. Write the program without it, with the forms this zedc compiles."), not_run: None }, Outcome { line: 10, col: 15, failure: Some("the facet attachment `with units(\"km\")` is part of the Zed language, and this version of zedc does not compile it yet. Write the program without it, with the forms this zedc compiles."), not_run: None }, Outcome { line: 11, col: 21, failure: Some("the facet attachment `with units(\"m\")` is part of the Zed language, and this version of zedc does not compile it yet. Write the program without it, with the forms this zedc compiles."), not_run: None }, Outcome { line: 13, col: 1, failure: Some("the line is marked ✗ and has no diagnostic"), not_run: None }]
+  checks: [Outcome { line: 2, col: 14, failure: Some("the facet attachment `with units(\"m\")` is part of the Zed language but is not supported by this version of zedc. Write the program without it."), not_run: None }, Outcome { line: 8, col: 20, failure: Some("the facet attachment `with units(\"m\")` is part of the Zed language but is not supported by this version of zedc. Write the program without it."), not_run: None }, Outcome { line: 10, col: 15, failure: Some("the facet attachment `with units(\"km\")` is part of the Zed language but is not supported by this version of zedc. Write the program without it."), not_run: None }, Outcome { line: 11, col: 21, failure: Some("the facet attachment `with units(\"m\")` is part of the Zed language but is not supported by this version of zedc. Write the program without it."), not_run: None }, Outcome { line: 13, col: 1, failure: Some("the line is marked ✗ and has no diagnostic"), not_run: None }]
 
 log-unit-product
   rejected: [
     Diagnostic {
         line: 2,
         col: 14,
-        message: "the facet attachment `with units(\"m\")` is part of the Zed language, and this version of zedc does not compile it yet. Write the program without it, with the forms this zedc compiles.",
+        message: "the facet attachment `with units(\"m\")` is part of the Zed language but is not supported by this version of zedc. Write the program without it.",
         steps: [],
         menu: "",
         row: None,
@@ -521,7 +521,7 @@ log-unit-product
     Diagnostic {
         line: 8,
         col: 20,
-        message: "the facet attachment `with units(\"m\")` is part of the Zed language, and this version of zedc does not compile it yet. Write the program without it, with the forms this zedc compiles.",
+        message: "the facet attachment `with units(\"m\")` is part of the Zed language but is not supported by this version of zedc. Write the program without it.",
         steps: [],
         menu: "",
         row: None,
@@ -529,7 +529,7 @@ log-unit-product
     Diagnostic {
         line: 10,
         col: 15,
-        message: "the facet attachment `with units(\"km\")` is part of the Zed language, and this version of zedc does not compile it yet. Write the program without it, with the forms this zedc compiles.",
+        message: "the facet attachment `with units(\"km\")` is part of the Zed language but is not supported by this version of zedc. Write the program without it.",
         steps: [],
         menu: "",
         row: None,
@@ -537,33 +537,33 @@ log-unit-product
     Diagnostic {
         line: 11,
         col: 21,
-        message: "the facet attachment `with units(\"m\")` is part of the Zed language, and this version of zedc does not compile it yet. Write the program without it, with the forms this zedc compiles.",
+        message: "the facet attachment `with units(\"m\")` is part of the Zed language but is not supported by this version of zedc. Write the program without it.",
         steps: [],
         menu: "",
         row: None,
     },
 ]
-  checks: [Outcome { line: 2, col: 14, failure: Some("the facet attachment `with units(\"m\")` is part of the Zed language, and this version of zedc does not compile it yet. Write the program without it, with the forms this zedc compiles."), not_run: None }, Outcome { line: 8, col: 20, failure: Some("the facet attachment `with units(\"m\")` is part of the Zed language, and this version of zedc does not compile it yet. Write the program without it, with the forms this zedc compiles."), not_run: None }, Outcome { line: 10, col: 15, failure: Some("the facet attachment `with units(\"km\")` is part of the Zed language, and this version of zedc does not compile it yet. Write the program without it, with the forms this zedc compiles."), not_run: None }, Outcome { line: 11, col: 21, failure: Some("the facet attachment `with units(\"m\")` is part of the Zed language, and this version of zedc does not compile it yet. Write the program without it, with the forms this zedc compiles."), not_run: None }, Outcome { line: 12, col: 1, failure: Some("the line is marked ✗ and has no diagnostic"), not_run: None }]
+  checks: [Outcome { line: 2, col: 14, failure: Some("the facet attachment `with units(\"m\")` is part of the Zed language but is not supported by this version of zedc. Write the program without it."), not_run: None }, Outcome { line: 8, col: 20, failure: Some("the facet attachment `with units(\"m\")` is part of the Zed language but is not supported by this version of zedc. Write the program without it."), not_run: None }, Outcome { line: 10, col: 15, failure: Some("the facet attachment `with units(\"km\")` is part of the Zed language but is not supported by this version of zedc. Write the program without it."), not_run: None }, Outcome { line: 11, col: 21, failure: Some("the facet attachment `with units(\"m\")` is part of the Zed language but is not supported by this version of zedc. Write the program without it."), not_run: None }, Outcome { line: 12, col: 1, failure: Some("the line is marked ✗ and has no diagnostic"), not_run: None }]
 
 no-int-equals-the-value
   rejected: [
     Diagnostic {
         line: 13,
         col: 14,
-        message: "the facet `with inexact(false)` is part of the Zed language, and this version of zedc does not compile it yet. Write the program without it, with the forms this zedc compiles.",
+        message: "the facet `with inexact(false)` is part of the Zed language but is not supported by this version of zedc. Write the program without it.",
         steps: [],
         menu: "",
         row: None,
     },
 ]
-  checks: [Outcome { line: 12, col: 1, failure: Some("the line is marked ✗ and has no diagnostic"), not_run: None }, Outcome { line: 13, col: 14, failure: Some("the facet `with inexact(false)` is part of the Zed language, and this version of zedc does not compile it yet. Write the program without it, with the forms this zedc compiles."), not_run: None }]
+  checks: [Outcome { line: 12, col: 1, failure: Some("the line is marked ✗ and has no diagnostic"), not_run: None }, Outcome { line: 13, col: 14, failure: Some("the facet `with inexact(false)` is part of the Zed language but is not supported by this version of zedc. Write the program without it."), not_run: None }]
 
 nullable-column-missing-none
   rejected: [
     Diagnostic {
         line: 3,
         col: 1,
-        message: "the struct declaration `struct KeyVal  grammar { key: JsonStr  \":\"  value: Json }` is part of the Zed language, and this version of zedc does not compile it yet. Write the program without it, with the forms this zedc compiles.",
+        message: "the struct declaration `struct KeyVal  grammar { key: JsonStr  \":\"  value: Json }` is part of the Zed language but is not supported by this version of zedc. Write the program without it.",
         steps: [],
         menu: "",
         row: None,
@@ -571,7 +571,7 @@ nullable-column-missing-none
     Diagnostic {
         line: 4,
         col: 1,
-        message: "the struct declaration `struct JsonObj grammar { \"{\"  entries: KeyVal sep \",\"  \"}\" }` is part of the Zed language, and this version of zedc does not compile it yet. Write the program without it, with the forms this zedc compiles.",
+        message: "the struct declaration `struct JsonObj grammar { \"{\"  entries: KeyVal sep \",\"  \"}\" }` is part of the Zed language but is not supported by this version of zedc. Write the program without it.",
         steps: [],
         menu: "",
         row: None,
@@ -579,7 +579,7 @@ nullable-column-missing-none
     Diagnostic {
         line: 10,
         col: 25,
-        message: "the `matching` refinement of layer L20 `matching grammar { alpha (alpha | digit)* }` is part of the Zed language, and this version of zedc does not compile it yet. Write the program without it, with the forms this zedc compiles.",
+        message: "the `matching` refinement of layer L20 `matching grammar { alpha (alpha | digit)* }` is part of the Zed language but is not supported by this version of zedc. Write the program without it.",
         steps: [],
         menu: "",
         row: None,
@@ -587,7 +587,7 @@ nullable-column-missing-none
     Diagnostic {
         line: 16,
         col: 1,
-        message: "the struct declaration `struct Chunk grammar { …` is part of the Zed language, and this version of zedc does not compile it yet. Write the program without it, with the forms this zedc compiles.",
+        message: "the struct declaration `struct Chunk grammar { …` is part of the Zed language but is not supported by this version of zedc. Write the program without it.",
         steps: [],
         menu: "",
         row: None,
@@ -595,7 +595,7 @@ nullable-column-missing-none
     Diagnostic {
         line: 23,
         col: 1,
-        message: "the struct declaration `struct Message grammar { tag: u8  body: (Ping | Data) with t…` is part of the Zed language, and this version of zedc does not compile it yet. Write the program without it, with the forms this zedc compiles.",
+        message: "the struct declaration `struct Message grammar { tag: u8  body: (Ping | Data) with t…` is part of the Zed language but is not supported by this version of zedc. Write the program without it.",
         steps: [],
         menu: "",
         row: None,
@@ -603,7 +603,7 @@ nullable-column-missing-none
     Diagnostic {
         line: 28,
         col: 1,
-        message: "the law `law doubleIsSum(x: int) = double(x) == x + x;` is part of the Zed language, and this version of zedc does not compile it yet. Write the program without it, with the forms this zedc compiles.",
+        message: "the law `law doubleIsSum(x: int) = double(x) == x + x;` is part of the Zed language but is not supported by this version of zedc. Write the program without it.",
         steps: [],
         menu: "",
         row: None,
@@ -611,7 +611,7 @@ nullable-column-missing-none
     Diagnostic {
         line: 36,
         col: 1,
-        message: "the signature `orders: OrderId ->? { total: rat, note: Utf8String }   // ✗ …` is part of the Zed language, and this version of zedc does not compile it yet. Write the program without it, with the forms this zedc compiles.",
+        message: "the signature `orders: OrderId ->? { total: rat, note: Utf8String }   // ✗ …` is part of the Zed language but is not supported by this version of zedc. Write the program without it.",
         steps: [],
         menu: "",
         row: None,
@@ -619,7 +619,7 @@ nullable-column-missing-none
     Diagnostic {
         line: 44,
         col: 12,
-        message: "the facet attachment `with units(\"m/s\")` is part of the Zed language, and this version of zedc does not compile it yet. Write the program without it, with the forms this zedc compiles.",
+        message: "the facet attachment `with units(\"m/s\")` is part of the Zed language but is not supported by this version of zedc. Write the program without it.",
         steps: [],
         menu: "",
         row: None,
@@ -627,7 +627,7 @@ nullable-column-missing-none
     Diagnostic {
         line: 45,
         col: 12,
-        message: "the facet attachment `with units(\"s\")` is part of the Zed language, and this version of zedc does not compile it yet. Write the program without it, with the forms this zedc compiles.",
+        message: "the facet attachment `with units(\"s\")` is part of the Zed language but is not supported by this version of zedc. Write the program without it.",
         steps: [],
         menu: "",
         row: None,
@@ -672,14 +672,14 @@ nullable-column-missing-none
         ),
     },
 ]
-  checks: [Outcome { line: 3, col: 1, failure: Some("the struct declaration `struct KeyVal  grammar { key: JsonStr  \":\"  value: Json }` is part of the Zed language, and this version of zedc does not compile it yet. Write the program without it, with the forms this zedc compiles."), not_run: None }, Outcome { line: 4, col: 1, failure: Some("the struct declaration `struct JsonObj grammar { \"{\"  entries: KeyVal sep \",\"  \"}\" }` is part of the Zed language, and this version of zedc does not compile it yet. Write the program without it, with the forms this zedc compiles."), not_run: None }, Outcome { line: 10, col: 25, failure: Some("the `matching` refinement of layer L20 `matching grammar { alpha (alpha | digit)* }` is part of the Zed language, and this version of zedc does not compile it yet. Write the program without it, with the forms this zedc compiles."), not_run: None }, Outcome { line: 16, col: 1, failure: Some("the struct declaration `struct Chunk grammar { …` is part of the Zed language, and this version of zedc does not compile it yet. Write the program without it, with the forms this zedc compiles."), not_run: None }, Outcome { line: 23, col: 1, failure: Some("the struct declaration `struct Message grammar { tag: u8  body: (Ping | Data) with t…` is part of the Zed language, and this version of zedc does not compile it yet. Write the program without it, with the forms this zedc compiles."), not_run: None }, Outcome { line: 28, col: 1, failure: Some("the law `law doubleIsSum(x: int) = double(x) == x + x;` is part of the Zed language, and this version of zedc does not compile it yet. Write the program without it, with the forms this zedc compiles."), not_run: None }, Outcome { line: 36, col: 1, failure: Some("the mark names the row \"Stored collection whose type and schema disagree\", and the diagnostic is in no row of the rejection table: the signature `orders: OrderId ->? { total: rat, note: Utf8String }   // ✗ …` is part of the Zed language, and this version of zedc does not compile it yet. Write the program without it, with the forms this zedc compiles."), not_run: None }, Outcome { line: 44, col: 12, failure: Some("the facet attachment `with units(\"m/s\")` is part of the Zed language, and this version of zedc does not compile it yet. Write the program without it, with the forms this zedc compiles."), not_run: None }, Outcome { line: 45, col: 12, failure: Some("the facet attachment `with units(\"s\")` is part of the Zed language, and this version of zedc does not compile it yet. Write the program without it, with the forms this zedc compiles."), not_run: None }, Outcome { line: 51, col: 1, failure: Some("Syntax error at `rows`. Try `exec : (Db, Utf8String with taint(#clean)) -> Rows | #sqlError;` instead.\n  [1] 51:1: expected '(' or '[' or 'matching' or '&' or '|' or 'with' or 'where' or 'for' or '=' or ';'\n      51 | rows = exec(db, sanitize(userInput));     // ✓ sanitizers are the only taint-removers\n         | ^^^^\n  [2] 49:1: the declaration of `exec` begins here\n      49 | exec : (Db, Utf8String with taint(#clean)) -> Rows | #sqlError   // a sink's signature, shown as a type\n         | ^^^^ [2]                                                      ^ [4]\n  [3] 51:1: this line begins at the first column, so it begins the next declaration\n  [4] 49:63: repair: `exec : (Db, Utf8String with taint(#clean)) -> Rows | #sqlError;`"), not_run: None }]
+  checks: [Outcome { line: 3, col: 1, failure: Some("the struct declaration `struct KeyVal  grammar { key: JsonStr  \":\"  value: Json }` is part of the Zed language but is not supported by this version of zedc. Write the program without it."), not_run: None }, Outcome { line: 4, col: 1, failure: Some("the struct declaration `struct JsonObj grammar { \"{\"  entries: KeyVal sep \",\"  \"}\" }` is part of the Zed language but is not supported by this version of zedc. Write the program without it."), not_run: None }, Outcome { line: 10, col: 25, failure: Some("the `matching` refinement of layer L20 `matching grammar { alpha (alpha | digit)* }` is part of the Zed language but is not supported by this version of zedc. Write the program without it."), not_run: None }, Outcome { line: 16, col: 1, failure: Some("the struct declaration `struct Chunk grammar { …` is part of the Zed language but is not supported by this version of zedc. Write the program without it."), not_run: None }, Outcome { line: 23, col: 1, failure: Some("the struct declaration `struct Message grammar { tag: u8  body: (Ping | Data) with t…` is part of the Zed language but is not supported by this version of zedc. Write the program without it."), not_run: None }, Outcome { line: 28, col: 1, failure: Some("the law `law doubleIsSum(x: int) = double(x) == x + x;` is part of the Zed language but is not supported by this version of zedc. Write the program without it."), not_run: None }, Outcome { line: 36, col: 1, failure: Some("the mark names the row \"Stored collection whose type and schema disagree\", and the diagnostic is in no row of the rejection table: the signature `orders: OrderId ->? { total: rat, note: Utf8String }   // ✗ …` is part of the Zed language but is not supported by this version of zedc. Write the program without it."), not_run: None }, Outcome { line: 44, col: 12, failure: Some("the facet attachment `with units(\"m/s\")` is part of the Zed language but is not supported by this version of zedc. Write the program without it."), not_run: None }, Outcome { line: 45, col: 12, failure: Some("the facet attachment `with units(\"s\")` is part of the Zed language but is not supported by this version of zedc. Write the program without it."), not_run: None }, Outcome { line: 51, col: 1, failure: Some("Syntax error at `rows`. Try `exec : (Db, Utf8String with taint(#clean)) -> Rows | #sqlError;` instead.\n  [1] 51:1: expected '(' or '[' or 'matching' or '&' or '|' or 'with' or 'where' or 'for' or '=' or ';'\n      51 | rows = exec(db, sanitize(userInput));     // ✓ sanitizers are the only taint-removers\n         | ^^^^\n  [2] 49:1: the declaration of `exec` begins here\n      49 | exec : (Db, Utf8String with taint(#clean)) -> Rows | #sqlError   // a sink's signature, shown as a type\n         | ^^^^ [2]                                                      ^ [4]\n  [3] 51:1: this line begins at the first column, so it begins the next declaration\n  [4] 49:63: repair: `exec : (Db, Utf8String with taint(#clean)) -> Rows | #sqlError;`"), not_run: None }]
 
 numeric-is-not-binary-float
   rejected: [
     Diagnostic {
         line: 3,
         col: 1,
-        message: "the struct declaration `struct KeyVal  grammar { key: JsonStr  \":\"  value: Json }` is part of the Zed language, and this version of zedc does not compile it yet. Write the program without it, with the forms this zedc compiles.",
+        message: "the struct declaration `struct KeyVal  grammar { key: JsonStr  \":\"  value: Json }` is part of the Zed language but is not supported by this version of zedc. Write the program without it.",
         steps: [],
         menu: "",
         row: None,
@@ -687,7 +687,7 @@ numeric-is-not-binary-float
     Diagnostic {
         line: 4,
         col: 1,
-        message: "the struct declaration `struct JsonObj grammar { \"{\"  entries: KeyVal sep \",\"  \"}\" }` is part of the Zed language, and this version of zedc does not compile it yet. Write the program without it, with the forms this zedc compiles.",
+        message: "the struct declaration `struct JsonObj grammar { \"{\"  entries: KeyVal sep \",\"  \"}\" }` is part of the Zed language but is not supported by this version of zedc. Write the program without it.",
         steps: [],
         menu: "",
         row: None,
@@ -695,7 +695,7 @@ numeric-is-not-binary-float
     Diagnostic {
         line: 10,
         col: 25,
-        message: "the `matching` refinement of layer L20 `matching grammar { alpha (alpha | digit)* }` is part of the Zed language, and this version of zedc does not compile it yet. Write the program without it, with the forms this zedc compiles.",
+        message: "the `matching` refinement of layer L20 `matching grammar { alpha (alpha | digit)* }` is part of the Zed language but is not supported by this version of zedc. Write the program without it.",
         steps: [],
         menu: "",
         row: None,
@@ -703,7 +703,7 @@ numeric-is-not-binary-float
     Diagnostic {
         line: 16,
         col: 1,
-        message: "the struct declaration `struct Chunk grammar { …` is part of the Zed language, and this version of zedc does not compile it yet. Write the program without it, with the forms this zedc compiles.",
+        message: "the struct declaration `struct Chunk grammar { …` is part of the Zed language but is not supported by this version of zedc. Write the program without it.",
         steps: [],
         menu: "",
         row: None,
@@ -711,7 +711,7 @@ numeric-is-not-binary-float
     Diagnostic {
         line: 23,
         col: 1,
-        message: "the struct declaration `struct Message grammar { tag: u8  body: (Ping | Data) with t…` is part of the Zed language, and this version of zedc does not compile it yet. Write the program without it, with the forms this zedc compiles.",
+        message: "the struct declaration `struct Message grammar { tag: u8  body: (Ping | Data) with t…` is part of the Zed language but is not supported by this version of zedc. Write the program without it.",
         steps: [],
         menu: "",
         row: None,
@@ -719,7 +719,7 @@ numeric-is-not-binary-float
     Diagnostic {
         line: 28,
         col: 1,
-        message: "the law `law doubleIsSum(x: int) = double(x) == x + x;` is part of the Zed language, and this version of zedc does not compile it yet. Write the program without it, with the forms this zedc compiles.",
+        message: "the law `law doubleIsSum(x: int) = double(x) == x + x;` is part of the Zed language but is not supported by this version of zedc. Write the program without it.",
         steps: [],
         menu: "",
         row: None,
@@ -727,7 +727,7 @@ numeric-is-not-binary-float
     Diagnostic {
         line: 36,
         col: 1,
-        message: "the signature `orders: OrderId ->? { total: f64, note: Utf8String | #none }…` is part of the Zed language, and this version of zedc does not compile it yet. Write the program without it, with the forms this zedc compiles.",
+        message: "the signature `orders: OrderId ->? { total: f64, note: Utf8String | #none }…` is part of the Zed language but is not supported by this version of zedc. Write the program without it.",
         steps: [],
         menu: "",
         row: None,
@@ -735,7 +735,7 @@ numeric-is-not-binary-float
     Diagnostic {
         line: 44,
         col: 12,
-        message: "the facet attachment `with units(\"m/s\")` is part of the Zed language, and this version of zedc does not compile it yet. Write the program without it, with the forms this zedc compiles.",
+        message: "the facet attachment `with units(\"m/s\")` is part of the Zed language but is not supported by this version of zedc. Write the program without it.",
         steps: [],
         menu: "",
         row: None,
@@ -743,7 +743,7 @@ numeric-is-not-binary-float
     Diagnostic {
         line: 45,
         col: 12,
-        message: "the facet attachment `with units(\"s\")` is part of the Zed language, and this version of zedc does not compile it yet. Write the program without it, with the forms this zedc compiles.",
+        message: "the facet attachment `with units(\"s\")` is part of the Zed language but is not supported by this version of zedc. Write the program without it.",
         steps: [],
         menu: "",
         row: None,
@@ -788,14 +788,14 @@ numeric-is-not-binary-float
         ),
     },
 ]
-  checks: [Outcome { line: 3, col: 1, failure: Some("the struct declaration `struct KeyVal  grammar { key: JsonStr  \":\"  value: Json }` is part of the Zed language, and this version of zedc does not compile it yet. Write the program without it, with the forms this zedc compiles."), not_run: None }, Outcome { line: 4, col: 1, failure: Some("the struct declaration `struct JsonObj grammar { \"{\"  entries: KeyVal sep \",\"  \"}\" }` is part of the Zed language, and this version of zedc does not compile it yet. Write the program without it, with the forms this zedc compiles."), not_run: None }, Outcome { line: 10, col: 25, failure: Some("the `matching` refinement of layer L20 `matching grammar { alpha (alpha | digit)* }` is part of the Zed language, and this version of zedc does not compile it yet. Write the program without it, with the forms this zedc compiles."), not_run: None }, Outcome { line: 16, col: 1, failure: Some("the struct declaration `struct Chunk grammar { …` is part of the Zed language, and this version of zedc does not compile it yet. Write the program without it, with the forms this zedc compiles."), not_run: None }, Outcome { line: 23, col: 1, failure: Some("the struct declaration `struct Message grammar { tag: u8  body: (Ping | Data) with t…` is part of the Zed language, and this version of zedc does not compile it yet. Write the program without it, with the forms this zedc compiles."), not_run: None }, Outcome { line: 28, col: 1, failure: Some("the law `law doubleIsSum(x: int) = double(x) == x + x;` is part of the Zed language, and this version of zedc does not compile it yet. Write the program without it, with the forms this zedc compiles."), not_run: None }, Outcome { line: 36, col: 1, failure: Some("the mark names the row \"Stored collection whose type and schema disagree\", and the diagnostic is in no row of the rejection table: the signature `orders: OrderId ->? { total: f64, note: Utf8String | #none }…` is part of the Zed language, and this version of zedc does not compile it yet. Write the program without it, with the forms this zedc compiles."), not_run: None }, Outcome { line: 44, col: 12, failure: Some("the facet attachment `with units(\"m/s\")` is part of the Zed language, and this version of zedc does not compile it yet. Write the program without it, with the forms this zedc compiles."), not_run: None }, Outcome { line: 45, col: 12, failure: Some("the facet attachment `with units(\"s\")` is part of the Zed language, and this version of zedc does not compile it yet. Write the program without it, with the forms this zedc compiles."), not_run: None }, Outcome { line: 51, col: 1, failure: Some("Syntax error at `rows`. Try `exec : (Db, Utf8String with taint(#clean)) -> Rows | #sqlError;` instead.\n  [1] 51:1: expected '(' or '[' or 'matching' or '&' or '|' or 'with' or 'where' or 'for' or '=' or ';'\n      51 | rows = exec(db, sanitize(userInput));     // ✓ sanitizers are the only taint-removers\n         | ^^^^\n  [2] 49:1: the declaration of `exec` begins here\n      49 | exec : (Db, Utf8String with taint(#clean)) -> Rows | #sqlError   // a sink's signature, shown as a type\n         | ^^^^ [2]                                                      ^ [4]\n  [3] 51:1: this line begins at the first column, so it begins the next declaration\n  [4] 49:63: repair: `exec : (Db, Utf8String with taint(#clean)) -> Rows | #sqlError;`"), not_run: None }]
+  checks: [Outcome { line: 3, col: 1, failure: Some("the struct declaration `struct KeyVal  grammar { key: JsonStr  \":\"  value: Json }` is part of the Zed language but is not supported by this version of zedc. Write the program without it."), not_run: None }, Outcome { line: 4, col: 1, failure: Some("the struct declaration `struct JsonObj grammar { \"{\"  entries: KeyVal sep \",\"  \"}\" }` is part of the Zed language but is not supported by this version of zedc. Write the program without it."), not_run: None }, Outcome { line: 10, col: 25, failure: Some("the `matching` refinement of layer L20 `matching grammar { alpha (alpha | digit)* }` is part of the Zed language but is not supported by this version of zedc. Write the program without it."), not_run: None }, Outcome { line: 16, col: 1, failure: Some("the struct declaration `struct Chunk grammar { …` is part of the Zed language but is not supported by this version of zedc. Write the program without it."), not_run: None }, Outcome { line: 23, col: 1, failure: Some("the struct declaration `struct Message grammar { tag: u8  body: (Ping | Data) with t…` is part of the Zed language but is not supported by this version of zedc. Write the program without it."), not_run: None }, Outcome { line: 28, col: 1, failure: Some("the law `law doubleIsSum(x: int) = double(x) == x + x;` is part of the Zed language but is not supported by this version of zedc. Write the program without it."), not_run: None }, Outcome { line: 36, col: 1, failure: Some("the mark names the row \"Stored collection whose type and schema disagree\", and the diagnostic is in no row of the rejection table: the signature `orders: OrderId ->? { total: f64, note: Utf8String | #none }…` is part of the Zed language but is not supported by this version of zedc. Write the program without it."), not_run: None }, Outcome { line: 44, col: 12, failure: Some("the facet attachment `with units(\"m/s\")` is part of the Zed language but is not supported by this version of zedc. Write the program without it."), not_run: None }, Outcome { line: 45, col: 12, failure: Some("the facet attachment `with units(\"s\")` is part of the Zed language but is not supported by this version of zedc. Write the program without it."), not_run: None }, Outcome { line: 51, col: 1, failure: Some("Syntax error at `rows`. Try `exec : (Db, Utf8String with taint(#clean)) -> Rows | #sqlError;` instead.\n  [1] 51:1: expected '(' or '[' or 'matching' or '&' or '|' or 'with' or 'where' or 'for' or '=' or ';'\n      51 | rows = exec(db, sanitize(userInput));     // ✓ sanitizers are the only taint-removers\n         | ^^^^\n  [2] 49:1: the declaration of `exec` begins here\n      49 | exec : (Db, Utf8String with taint(#clean)) -> Rows | #sqlError   // a sink's signature, shown as a type\n         | ^^^^ [2]                                                      ^ [4]\n  [3] 51:1: this line begins at the first column, so it begins the next declaration\n  [4] 49:63: repair: `exec : (Db, Utf8String with taint(#clean)) -> Rows | #sqlError;`"), not_run: None }]
 
 payload-built-by-position
   rejected: [
     Diagnostic {
         line: 3,
         col: 1,
-        message: "a type declaration is part of the Zed language, and this version of zedc does not compile it yet. Write the program without it, with the forms this zedc compiles.",
+        message: "a type declaration is part of the Zed language but is not supported by this version of zedc. Write the program without it.",
         steps: [],
         menu: "",
         row: None,
@@ -803,7 +803,7 @@ payload-built-by-position
     Diagnostic {
         line: 3,
         col: 13,
-        message: "an atom type with a payload is part of the Zed language, and this version of zedc does not compile it yet. Write the program without it, with the forms this zedc compiles.",
+        message: "an atom type with a payload is part of the Zed language but is not supported by this version of zedc. Write the program without it.",
         steps: [],
         menu: "",
         row: None,
@@ -821,20 +821,20 @@ payload-built-by-position
     Diagnostic {
         line: 6,
         col: 21,
-        message: "a `match` is part of the Zed language, and this version of zedc does not compile it yet. Write the program without it, with the forms this zedc compiles.",
+        message: "a `match` is part of the Zed language but is not supported by this version of zedc. Write the program without it.",
         steps: [],
         menu: "",
         row: None,
     },
 ]
-  checks: [Outcome { line: 3, col: 1, failure: Some("a type declaration is part of the Zed language, and this version of zedc does not compile it yet. Write the program without it, with the forms this zedc compiles."), not_run: None }, Outcome { line: 3, col: 13, failure: Some("an atom type with a payload is part of the Zed language, and this version of zedc does not compile it yet. Write the program without it, with the forms this zedc compiles."), not_run: None }, Outcome { line: 3, col: 41, failure: Some("The type `Utf8String` is not defined."), not_run: None }, Outcome { line: 5, col: 1, failure: Some("the line is marked ✗ and has no diagnostic"), not_run: None }, Outcome { line: 6, col: 21, failure: Some("a `match` is part of the Zed language, and this version of zedc does not compile it yet. Write the program without it, with the forms this zedc compiles."), not_run: None }]
+  checks: [Outcome { line: 3, col: 1, failure: Some("a type declaration is part of the Zed language but is not supported by this version of zedc. Write the program without it."), not_run: None }, Outcome { line: 3, col: 13, failure: Some("an atom type with a payload is part of the Zed language but is not supported by this version of zedc. Write the program without it."), not_run: None }, Outcome { line: 3, col: 41, failure: Some("The type `Utf8String` is not defined."), not_run: None }, Outcome { line: 5, col: 1, failure: Some("the line is marked ✗ and has no diagnostic"), not_run: None }, Outcome { line: 6, col: 21, failure: Some("a `match` is part of the Zed language but is not supported by this version of zedc. Write the program without it."), not_run: None }]
 
 point-reading-against-kelvin
   rejected: [
     Diagnostic {
         line: 2,
         col: 10,
-        message: "the facet attachment `with units(\"GiB\")` is part of the Zed language, and this version of zedc does not compile it yet. Write the program without it, with the forms this zedc compiles.",
+        message: "the facet attachment `with units(\"GiB\")` is part of the Zed language but is not supported by this version of zedc. Write the program without it.",
         steps: [],
         menu: "",
         row: None,
@@ -842,7 +842,7 @@ point-reading-against-kelvin
     Diagnostic {
         line: 3,
         col: 10,
-        message: "the facet attachment `with units(\"GB\")` is part of the Zed language, and this version of zedc does not compile it yet. Write the program without it, with the forms this zedc compiles.",
+        message: "the facet attachment `with units(\"GB\")` is part of the Zed language but is not supported by this version of zedc. Write the program without it.",
         steps: [],
         menu: "",
         row: None,
@@ -850,7 +850,7 @@ point-reading-against-kelvin
     Diagnostic {
         line: 5,
         col: 11,
-        message: "the facet attachment `with units(\"bit\")` is part of the Zed language, and this version of zedc does not compile it yet. Write the program without it, with the forms this zedc compiles.",
+        message: "the facet attachment `with units(\"bit\")` is part of the Zed language but is not supported by this version of zedc. Write the program without it.",
         steps: [],
         menu: "",
         row: None,
@@ -858,7 +858,7 @@ point-reading-against-kelvin
     Diagnostic {
         line: 6,
         col: 17,
-        message: "the facet attachment `with units(\"m\")` is part of the Zed language, and this version of zedc does not compile it yet. Write the program without it, with the forms this zedc compiles.",
+        message: "the facet attachment `with units(\"m\")` is part of the Zed language but is not supported by this version of zedc. Write the program without it.",
         steps: [],
         menu: "",
         row: None,
@@ -866,7 +866,7 @@ point-reading-against-kelvin
     Diagnostic {
         line: 7,
         col: 20,
-        message: "the facet attachment `with units(\"km\")` is part of the Zed language, and this version of zedc does not compile it yet. Write the program without it, with the forms this zedc compiles.",
+        message: "the facet attachment `with units(\"km\")` is part of the Zed language but is not supported by this version of zedc. Write the program without it.",
         steps: [],
         menu: "",
         row: None,
@@ -874,7 +874,7 @@ point-reading-against-kelvin
     Diagnostic {
         line: 8,
         col: 16,
-        message: "the facet attachment `with units(\"°C\")` is part of the Zed language, and this version of zedc does not compile it yet. Write the program without it, with the forms this zedc compiles.",
+        message: "the facet attachment `with units(\"°C\")` is part of the Zed language but is not supported by this version of zedc. Write the program without it.",
         steps: [],
         menu: "",
         row: None,
@@ -882,7 +882,7 @@ point-reading-against-kelvin
     Diagnostic {
         line: 9,
         col: 29,
-        message: "the facet attachment `with units(\"K\")` is part of the Zed language, and this version of zedc does not compile it yet. Write the program without it, with the forms this zedc compiles.",
+        message: "the facet attachment `with units(\"K\")` is part of the Zed language but is not supported by this version of zedc. Write the program without it.",
         steps: [],
         menu: "",
         row: None,
@@ -890,20 +890,20 @@ point-reading-against-kelvin
     Diagnostic {
         line: 11,
         col: 21,
-        message: "the facet attachment `with units(\"K\")` is part of the Zed language, and this version of zedc does not compile it yet. Write the program without it, with the forms this zedc compiles.",
+        message: "the facet attachment `with units(\"K\")` is part of the Zed language but is not supported by this version of zedc. Write the program without it.",
         steps: [],
         menu: "",
         row: None,
     },
 ]
-  checks: [Outcome { line: 2, col: 10, failure: Some("the facet attachment `with units(\"GiB\")` is part of the Zed language, and this version of zedc does not compile it yet. Write the program without it, with the forms this zedc compiles."), not_run: None }, Outcome { line: 3, col: 10, failure: Some("the facet attachment `with units(\"GB\")` is part of the Zed language, and this version of zedc does not compile it yet. Write the program without it, with the forms this zedc compiles."), not_run: None }, Outcome { line: 5, col: 11, failure: Some("the facet attachment `with units(\"bit\")` is part of the Zed language, and this version of zedc does not compile it yet. Write the program without it, with the forms this zedc compiles."), not_run: None }, Outcome { line: 6, col: 17, failure: Some("the facet attachment `with units(\"m\")` is part of the Zed language, and this version of zedc does not compile it yet. Write the program without it, with the forms this zedc compiles."), not_run: None }, Outcome { line: 7, col: 20, failure: Some("the facet attachment `with units(\"km\")` is part of the Zed language, and this version of zedc does not compile it yet. Write the program without it, with the forms this zedc compiles."), not_run: None }, Outcome { line: 8, col: 16, failure: Some("the facet attachment `with units(\"°C\")` is part of the Zed language, and this version of zedc does not compile it yet. Write the program without it, with the forms this zedc compiles."), not_run: None }, Outcome { line: 9, col: 29, failure: Some("the facet attachment `with units(\"K\")` is part of the Zed language, and this version of zedc does not compile it yet. Write the program without it, with the forms this zedc compiles."), not_run: None }, Outcome { line: 11, col: 21, failure: Some("the mark names the row \"Point reading compared with a value that is not a reading\", and the diagnostic is in no row of the rejection table: the facet attachment `with units(\"K\")` is part of the Zed language, and this version of zedc does not compile it yet. Write the program without it, with the forms this zedc compiles."), not_run: None }]
+  checks: [Outcome { line: 2, col: 10, failure: Some("the facet attachment `with units(\"GiB\")` is part of the Zed language but is not supported by this version of zedc. Write the program without it."), not_run: None }, Outcome { line: 3, col: 10, failure: Some("the facet attachment `with units(\"GB\")` is part of the Zed language but is not supported by this version of zedc. Write the program without it."), not_run: None }, Outcome { line: 5, col: 11, failure: Some("the facet attachment `with units(\"bit\")` is part of the Zed language but is not supported by this version of zedc. Write the program without it."), not_run: None }, Outcome { line: 6, col: 17, failure: Some("the facet attachment `with units(\"m\")` is part of the Zed language but is not supported by this version of zedc. Write the program without it."), not_run: None }, Outcome { line: 7, col: 20, failure: Some("the facet attachment `with units(\"km\")` is part of the Zed language but is not supported by this version of zedc. Write the program without it."), not_run: None }, Outcome { line: 8, col: 16, failure: Some("the facet attachment `with units(\"°C\")` is part of the Zed language but is not supported by this version of zedc. Write the program without it."), not_run: None }, Outcome { line: 9, col: 29, failure: Some("the facet attachment `with units(\"K\")` is part of the Zed language but is not supported by this version of zedc. Write the program without it."), not_run: None }, Outcome { line: 11, col: 21, failure: Some("the mark names the row \"Point reading compared with a value that is not a reading\", and the diagnostic is in no row of the rejection table: the facet attachment `with units(\"K\")` is part of the Zed language but is not supported by this version of zedc. Write the program without it."), not_run: None }]
 
 point-unit-in-quotient
   rejected: [
     Diagnostic {
         line: 2,
         col: 16,
-        message: "the facet attachment `with units(\"°C\")` is part of the Zed language, and this version of zedc does not compile it yet. Write the program without it, with the forms this zedc compiles.",
+        message: "the facet attachment `with units(\"°C\")` is part of the Zed language but is not supported by this version of zedc. Write the program without it.",
         steps: [],
         menu: "",
         row: None,
@@ -911,7 +911,7 @@ point-unit-in-quotient
     Diagnostic {
         line: 3,
         col: 19,
-        message: "the facet attachment `with units(\"degC\")` is part of the Zed language, and this version of zedc does not compile it yet. Write the program without it, with the forms this zedc compiles.",
+        message: "the facet attachment `with units(\"degC\")` is part of the Zed language but is not supported by this version of zedc. Write the program without it.",
         steps: [],
         menu: "",
         row: None,
@@ -919,7 +919,7 @@ point-unit-in-quotient
     Diagnostic {
         line: 6,
         col: 21,
-        message: "the facet attachment `with units(\"K\")` is part of the Zed language, and this version of zedc does not compile it yet. Write the program without it, with the forms this zedc compiles.",
+        message: "the facet attachment `with units(\"K\")` is part of the Zed language but is not supported by this version of zedc. Write the program without it.",
         steps: [],
         menu: "",
         row: None,
@@ -927,7 +927,7 @@ point-unit-in-quotient
     Diagnostic {
         line: 7,
         col: 19,
-        message: "the facet attachment `with units(\"degC\")` is part of the Zed language, and this version of zedc does not compile it yet. Write the program without it, with the forms this zedc compiles.",
+        message: "the facet attachment `with units(\"degC\")` is part of the Zed language but is not supported by this version of zedc. Write the program without it.",
         steps: [],
         menu: "",
         row: None,
@@ -935,20 +935,20 @@ point-unit-in-quotient
     Diagnostic {
         line: 10,
         col: 24,
-        message: "the facet attachment `with units(\"m\")` is part of the Zed language, and this version of zedc does not compile it yet. Write the program without it, with the forms this zedc compiles.",
+        message: "the facet attachment `with units(\"m\")` is part of the Zed language but is not supported by this version of zedc. Write the program without it.",
         steps: [],
         menu: "",
         row: None,
     },
 ]
-  checks: [Outcome { line: 2, col: 16, failure: Some("the facet attachment `with units(\"°C\")` is part of the Zed language, and this version of zedc does not compile it yet. Write the program without it, with the forms this zedc compiles."), not_run: None }, Outcome { line: 3, col: 19, failure: Some("the facet attachment `with units(\"degC\")` is part of the Zed language, and this version of zedc does not compile it yet. Write the program without it, with the forms this zedc compiles."), not_run: None }, Outcome { line: 6, col: 21, failure: Some("the facet attachment `with units(\"K\")` is part of the Zed language, and this version of zedc does not compile it yet. Write the program without it, with the forms this zedc compiles."), not_run: None }, Outcome { line: 7, col: 19, failure: Some("the facet attachment `with units(\"degC\")` is part of the Zed language, and this version of zedc does not compile it yet. Write the program without it, with the forms this zedc compiles."), not_run: None }, Outcome { line: 10, col: 24, failure: Some("the mark names the row \"Point unit in a product, quotient or power\", and the diagnostic is in no row of the rejection table: the facet attachment `with units(\"m\")` is part of the Zed language, and this version of zedc does not compile it yet. Write the program without it, with the forms this zedc compiles."), not_run: None }]
+  checks: [Outcome { line: 2, col: 16, failure: Some("the facet attachment `with units(\"°C\")` is part of the Zed language but is not supported by this version of zedc. Write the program without it."), not_run: None }, Outcome { line: 3, col: 19, failure: Some("the facet attachment `with units(\"degC\")` is part of the Zed language but is not supported by this version of zedc. Write the program without it."), not_run: None }, Outcome { line: 6, col: 21, failure: Some("the facet attachment `with units(\"K\")` is part of the Zed language but is not supported by this version of zedc. Write the program without it."), not_run: None }, Outcome { line: 7, col: 19, failure: Some("the facet attachment `with units(\"degC\")` is part of the Zed language but is not supported by this version of zedc. Write the program without it."), not_run: None }, Outcome { line: 10, col: 24, failure: Some("the mark names the row \"Point unit in a product, quotient or power\", and the diagnostic is in no row of the rejection table: the facet attachment `with units(\"m\")` is part of the Zed language but is not supported by this version of zedc. Write the program without it."), not_run: None }]
 
 removed-fact-not-carried
   rejected: [
     Diagnostic {
         line: 2,
         col: 10,
-        message: "the facet attachment `with units(\"m\")` is part of the Zed language, and this version of zedc does not compile it yet. Write the program without it, with the forms this zedc compiles.",
+        message: "the facet attachment `with units(\"m\")` is part of the Zed language but is not supported by this version of zedc. Write the program without it.",
         steps: [],
         menu: "",
         row: None,
@@ -956,7 +956,7 @@ removed-fact-not-carried
     Diagnostic {
         line: 5,
         col: 15,
-        message: "the facet removal `without units(\"m\")` is part of the Zed language, and this version of zedc does not compile it yet. Write the program without it, with the forms this zedc compiles.",
+        message: "the facet removal `without units(\"m\")` is part of the Zed language but is not supported by this version of zedc. Write the program without it.",
         steps: [],
         menu: "",
         row: None,
@@ -964,7 +964,7 @@ removed-fact-not-carried
     Diagnostic {
         line: 6,
         col: 12,
-        message: "the facet removal `without units(\"m\")` is part of the Zed language, and this version of zedc does not compile it yet. Write the program without it, with the forms this zedc compiles.",
+        message: "the facet removal `without units(\"m\")` is part of the Zed language but is not supported by this version of zedc. Write the program without it.",
         steps: [],
         menu: "",
         row: None,
@@ -972,20 +972,20 @@ removed-fact-not-carried
     Diagnostic {
         line: 8,
         col: 15,
-        message: "the facet removal `without units(\"km\")` is part of the Zed language, and this version of zedc does not compile it yet. Write the program without it, with the forms this zedc compiles.",
+        message: "the facet removal `without units(\"km\")` is part of the Zed language but is not supported by this version of zedc. Write the program without it.",
         steps: [],
         menu: "",
         row: None,
     },
 ]
-  checks: [Outcome { line: 2, col: 10, failure: Some("the facet attachment `with units(\"m\")` is part of the Zed language, and this version of zedc does not compile it yet. Write the program without it, with the forms this zedc compiles."), not_run: None }, Outcome { line: 5, col: 15, failure: Some("the facet removal `without units(\"m\")` is part of the Zed language, and this version of zedc does not compile it yet. Write the program without it, with the forms this zedc compiles."), not_run: None }, Outcome { line: 6, col: 12, failure: Some("the facet removal `without units(\"m\")` is part of the Zed language, and this version of zedc does not compile it yet. Write the program without it, with the forms this zedc compiles."), not_run: None }, Outcome { line: 8, col: 15, failure: Some("the mark names the row \"Fact removed that the value does not carry\", and the diagnostic is in no row of the rejection table: the facet removal `without units(\"km\")` is part of the Zed language, and this version of zedc does not compile it yet. Write the program without it, with the forms this zedc compiles."), not_run: None }]
+  checks: [Outcome { line: 2, col: 10, failure: Some("the facet attachment `with units(\"m\")` is part of the Zed language but is not supported by this version of zedc. Write the program without it."), not_run: None }, Outcome { line: 5, col: 15, failure: Some("the facet removal `without units(\"m\")` is part of the Zed language but is not supported by this version of zedc. Write the program without it."), not_run: None }, Outcome { line: 6, col: 12, failure: Some("the facet removal `without units(\"m\")` is part of the Zed language but is not supported by this version of zedc. Write the program without it."), not_run: None }, Outcome { line: 8, col: 15, failure: Some("the mark names the row \"Fact removed that the value does not carry\", and the diagnostic is in no row of the rejection table: the facet removal `without units(\"km\")` is part of the Zed language but is not supported by this version of zedc. Write the program without it."), not_run: None }]
 
 removed-fact-not-removable
   rejected: [
     Diagnostic {
         line: 2,
         col: 10,
-        message: "the facet attachment `with units(\"m\")` is part of the Zed language, and this version of zedc does not compile it yet. Write the program without it, with the forms this zedc compiles.",
+        message: "the facet attachment `with units(\"m\")` is part of the Zed language but is not supported by this version of zedc. Write the program without it.",
         steps: [],
         menu: "",
         row: None,
@@ -993,7 +993,7 @@ removed-fact-not-removable
     Diagnostic {
         line: 5,
         col: 15,
-        message: "the facet removal `without units(\"m\")` is part of the Zed language, and this version of zedc does not compile it yet. Write the program without it, with the forms this zedc compiles.",
+        message: "the facet removal `without units(\"m\")` is part of the Zed language but is not supported by this version of zedc. Write the program without it.",
         steps: [],
         menu: "",
         row: None,
@@ -1001,7 +1001,7 @@ removed-fact-not-removable
     Diagnostic {
         line: 6,
         col: 12,
-        message: "the facet removal `without units(\"m\")` is part of the Zed language, and this version of zedc does not compile it yet. Write the program without it, with the forms this zedc compiles.",
+        message: "the facet removal `without units(\"m\")` is part of the Zed language but is not supported by this version of zedc. Write the program without it.",
         steps: [],
         menu: "",
         row: None,
@@ -1009,33 +1009,33 @@ removed-fact-not-removable
     Diagnostic {
         line: 9,
         col: 21,
-        message: "the facet removal `without taint(#user)` is part of the Zed language, and this version of zedc does not compile it yet. Write the program without it, with the forms this zedc compiles.",
+        message: "the facet removal `without taint(#user)` is part of the Zed language but is not supported by this version of zedc. Write the program without it.",
         steps: [],
         menu: "",
         row: None,
     },
 ]
-  checks: [Outcome { line: 2, col: 10, failure: Some("the facet attachment `with units(\"m\")` is part of the Zed language, and this version of zedc does not compile it yet. Write the program without it, with the forms this zedc compiles."), not_run: None }, Outcome { line: 5, col: 15, failure: Some("the facet removal `without units(\"m\")` is part of the Zed language, and this version of zedc does not compile it yet. Write the program without it, with the forms this zedc compiles."), not_run: None }, Outcome { line: 6, col: 12, failure: Some("the facet removal `without units(\"m\")` is part of the Zed language, and this version of zedc does not compile it yet. Write the program without it, with the forms this zedc compiles."), not_run: None }, Outcome { line: 9, col: 21, failure: Some("the mark names the row \"Fact removed from a facet that does not allow it\", and the diagnostic is in no row of the rejection table: the facet removal `without taint(#user)` is part of the Zed language, and this version of zedc does not compile it yet. Write the program without it, with the forms this zedc compiles."), not_run: None }]
+  checks: [Outcome { line: 2, col: 10, failure: Some("the facet attachment `with units(\"m\")` is part of the Zed language but is not supported by this version of zedc. Write the program without it."), not_run: None }, Outcome { line: 5, col: 15, failure: Some("the facet removal `without units(\"m\")` is part of the Zed language but is not supported by this version of zedc. Write the program without it."), not_run: None }, Outcome { line: 6, col: 12, failure: Some("the facet removal `without units(\"m\")` is part of the Zed language but is not supported by this version of zedc. Write the program without it."), not_run: None }, Outcome { line: 9, col: 21, failure: Some("the mark names the row \"Fact removed from a facet that does not allow it\", and the diagnostic is in no row of the rejection table: the facet removal `without taint(#user)` is part of the Zed language but is not supported by this version of zedc. Write the program without it."), not_run: None }]
 
 rounded-value-at-refusing-parameter
   rejected: [
     Diagnostic {
         line: 13,
         col: 14,
-        message: "the facet `with inexact(false)` is part of the Zed language, and this version of zedc does not compile it yet. Write the program without it, with the forms this zedc compiles.",
+        message: "the facet `with inexact(false)` is part of the Zed language but is not supported by this version of zedc. Write the program without it.",
         steps: [],
         menu: "",
         row: None,
     },
 ]
-  checks: [Outcome { line: 13, col: 14, failure: Some("the facet `with inexact(false)` is part of the Zed language, and this version of zedc does not compile it yet. Write the program without it, with the forms this zedc compiles."), not_run: None }, Outcome { line: 15, col: 1, failure: Some("the line is marked ✗ and has no diagnostic"), not_run: None }]
+  checks: [Outcome { line: 13, col: 14, failure: Some("the facet `with inexact(false)` is part of the Zed language but is not supported by this version of zedc. Write the program without it."), not_run: None }, Outcome { line: 15, col: 1, failure: Some("the line is marked ✗ and has no diagnostic"), not_run: None }]
 
 taint-reaches-clean-sink
   rejected: [
     Diagnostic {
         line: 3,
         col: 1,
-        message: "the struct declaration `struct KeyVal  grammar { key: JsonStr  \":\"  value: Json }` is part of the Zed language, and this version of zedc does not compile it yet. Write the program without it, with the forms this zedc compiles.",
+        message: "the struct declaration `struct KeyVal  grammar { key: JsonStr  \":\"  value: Json }` is part of the Zed language but is not supported by this version of zedc. Write the program without it.",
         steps: [],
         menu: "",
         row: None,
@@ -1043,7 +1043,7 @@ taint-reaches-clean-sink
     Diagnostic {
         line: 4,
         col: 1,
-        message: "the struct declaration `struct JsonObj grammar { \"{\"  entries: KeyVal sep \",\"  \"}\" }` is part of the Zed language, and this version of zedc does not compile it yet. Write the program without it, with the forms this zedc compiles.",
+        message: "the struct declaration `struct JsonObj grammar { \"{\"  entries: KeyVal sep \",\"  \"}\" }` is part of the Zed language but is not supported by this version of zedc. Write the program without it.",
         steps: [],
         menu: "",
         row: None,
@@ -1051,7 +1051,7 @@ taint-reaches-clean-sink
     Diagnostic {
         line: 10,
         col: 25,
-        message: "the `matching` refinement of layer L20 `matching grammar { alpha (alpha | digit)* }` is part of the Zed language, and this version of zedc does not compile it yet. Write the program without it, with the forms this zedc compiles.",
+        message: "the `matching` refinement of layer L20 `matching grammar { alpha (alpha | digit)* }` is part of the Zed language but is not supported by this version of zedc. Write the program without it.",
         steps: [],
         menu: "",
         row: None,
@@ -1059,7 +1059,7 @@ taint-reaches-clean-sink
     Diagnostic {
         line: 16,
         col: 1,
-        message: "the struct declaration `struct Chunk grammar { …` is part of the Zed language, and this version of zedc does not compile it yet. Write the program without it, with the forms this zedc compiles.",
+        message: "the struct declaration `struct Chunk grammar { …` is part of the Zed language but is not supported by this version of zedc. Write the program without it.",
         steps: [],
         menu: "",
         row: None,
@@ -1067,7 +1067,7 @@ taint-reaches-clean-sink
     Diagnostic {
         line: 23,
         col: 1,
-        message: "the struct declaration `struct Message grammar { tag: u8  body: (Ping | Data) with t…` is part of the Zed language, and this version of zedc does not compile it yet. Write the program without it, with the forms this zedc compiles.",
+        message: "the struct declaration `struct Message grammar { tag: u8  body: (Ping | Data) with t…` is part of the Zed language but is not supported by this version of zedc. Write the program without it.",
         steps: [],
         menu: "",
         row: None,
@@ -1075,7 +1075,7 @@ taint-reaches-clean-sink
     Diagnostic {
         line: 28,
         col: 1,
-        message: "the law `law doubleIsSum(x: int) = double(x) == x + x;` is part of the Zed language, and this version of zedc does not compile it yet. Write the program without it, with the forms this zedc compiles.",
+        message: "the law `law doubleIsSum(x: int) = double(x) == x + x;` is part of the Zed language but is not supported by this version of zedc. Write the program without it.",
         steps: [],
         menu: "",
         row: None,
@@ -1083,7 +1083,7 @@ taint-reaches-clean-sink
     Diagnostic {
         line: 36,
         col: 1,
-        message: "the signature `orders: OrderId ->? { total: rat, note: Utf8String | #none } …` is part of the Zed language, and this version of zedc does not compile it yet. Write the program without it, with the forms this zedc compiles.",
+        message: "the signature `orders: OrderId ->? { total: rat, note: Utf8String | #none } …` is part of the Zed language but is not supported by this version of zedc. Write the program without it.",
         steps: [],
         menu: "",
         row: None,
@@ -1091,7 +1091,7 @@ taint-reaches-clean-sink
     Diagnostic {
         line: 44,
         col: 12,
-        message: "the facet attachment `with units(\"m/s\")` is part of the Zed language, and this version of zedc does not compile it yet. Write the program without it, with the forms this zedc compiles.",
+        message: "the facet attachment `with units(\"m/s\")` is part of the Zed language but is not supported by this version of zedc. Write the program without it.",
         steps: [],
         menu: "",
         row: None,
@@ -1099,7 +1099,7 @@ taint-reaches-clean-sink
     Diagnostic {
         line: 45,
         col: 12,
-        message: "the facet attachment `with units(\"s\")` is part of the Zed language, and this version of zedc does not compile it yet. Write the program without it, with the forms this zedc compiles.",
+        message: "the facet attachment `with units(\"s\")` is part of the Zed language but is not supported by this version of zedc. Write the program without it.",
         steps: [],
         menu: "",
         row: None,
@@ -1144,7 +1144,7 @@ taint-reaches-clean-sink
         ),
     },
 ]
-  checks: [Outcome { line: 3, col: 1, failure: Some("the struct declaration `struct KeyVal  grammar { key: JsonStr  \":\"  value: Json }` is part of the Zed language, and this version of zedc does not compile it yet. Write the program without it, with the forms this zedc compiles."), not_run: None }, Outcome { line: 4, col: 1, failure: Some("the struct declaration `struct JsonObj grammar { \"{\"  entries: KeyVal sep \",\"  \"}\" }` is part of the Zed language, and this version of zedc does not compile it yet. Write the program without it, with the forms this zedc compiles."), not_run: None }, Outcome { line: 10, col: 25, failure: Some("the `matching` refinement of layer L20 `matching grammar { alpha (alpha | digit)* }` is part of the Zed language, and this version of zedc does not compile it yet. Write the program without it, with the forms this zedc compiles."), not_run: None }, Outcome { line: 16, col: 1, failure: Some("the struct declaration `struct Chunk grammar { …` is part of the Zed language, and this version of zedc does not compile it yet. Write the program without it, with the forms this zedc compiles."), not_run: None }, Outcome { line: 23, col: 1, failure: Some("the struct declaration `struct Message grammar { tag: u8  body: (Ping | Data) with t…` is part of the Zed language, and this version of zedc does not compile it yet. Write the program without it, with the forms this zedc compiles."), not_run: None }, Outcome { line: 28, col: 1, failure: Some("the law `law doubleIsSum(x: int) = double(x) == x + x;` is part of the Zed language, and this version of zedc does not compile it yet. Write the program without it, with the forms this zedc compiles."), not_run: None }, Outcome { line: 36, col: 1, failure: Some("the signature `orders: OrderId ->? { total: rat, note: Utf8String | #none } …` is part of the Zed language, and this version of zedc does not compile it yet. Write the program without it, with the forms this zedc compiles."), not_run: None }, Outcome { line: 44, col: 12, failure: Some("the facet attachment `with units(\"m/s\")` is part of the Zed language, and this version of zedc does not compile it yet. Write the program without it, with the forms this zedc compiles."), not_run: None }, Outcome { line: 45, col: 12, failure: Some("the facet attachment `with units(\"s\")` is part of the Zed language, and this version of zedc does not compile it yet. Write the program without it, with the forms this zedc compiles."), not_run: None }, Outcome { line: 50, col: 1, failure: Some("the mark names the row \"Taint at a sink whose parameter does not take it\", and the diagnostic is in the row \"Syntax error\": Syntax error at `exec`. Try `exec : (Db, Utf8String with taint(#clean)) -> Rows | #sqlError;` instead."), not_run: None }]
+  checks: [Outcome { line: 3, col: 1, failure: Some("the struct declaration `struct KeyVal  grammar { key: JsonStr  \":\"  value: Json }` is part of the Zed language but is not supported by this version of zedc. Write the program without it."), not_run: None }, Outcome { line: 4, col: 1, failure: Some("the struct declaration `struct JsonObj grammar { \"{\"  entries: KeyVal sep \",\"  \"}\" }` is part of the Zed language but is not supported by this version of zedc. Write the program without it."), not_run: None }, Outcome { line: 10, col: 25, failure: Some("the `matching` refinement of layer L20 `matching grammar { alpha (alpha | digit)* }` is part of the Zed language but is not supported by this version of zedc. Write the program without it."), not_run: None }, Outcome { line: 16, col: 1, failure: Some("the struct declaration `struct Chunk grammar { …` is part of the Zed language but is not supported by this version of zedc. Write the program without it."), not_run: None }, Outcome { line: 23, col: 1, failure: Some("the struct declaration `struct Message grammar { tag: u8  body: (Ping | Data) with t…` is part of the Zed language but is not supported by this version of zedc. Write the program without it."), not_run: None }, Outcome { line: 28, col: 1, failure: Some("the law `law doubleIsSum(x: int) = double(x) == x + x;` is part of the Zed language but is not supported by this version of zedc. Write the program without it."), not_run: None }, Outcome { line: 36, col: 1, failure: Some("the signature `orders: OrderId ->? { total: rat, note: Utf8String | #none } …` is part of the Zed language but is not supported by this version of zedc. Write the program without it."), not_run: None }, Outcome { line: 44, col: 12, failure: Some("the facet attachment `with units(\"m/s\")` is part of the Zed language but is not supported by this version of zedc. Write the program without it."), not_run: None }, Outcome { line: 45, col: 12, failure: Some("the facet attachment `with units(\"s\")` is part of the Zed language but is not supported by this version of zedc. Write the program without it."), not_run: None }, Outcome { line: 50, col: 1, failure: Some("the mark names the row \"Taint at a sink whose parameter does not take it\", and the diagnostic is in the row \"Syntax error\": Syntax error at `exec`. Try `exec : (Db, Utf8String with taint(#clean)) -> Rows | #sqlError;` instead."), not_run: None }]
 
 taint-through-concatenation
   rejected: [
@@ -1164,7 +1164,7 @@ text-length-in-bytes
     Diagnostic {
         line: 2,
         col: 17,
-        message: "the facet attachment `with units(\"GiB\")` is part of the Zed language, and this version of zedc does not compile it yet. Write the program without it, with the forms this zedc compiles.",
+        message: "the facet attachment `with units(\"GiB\")` is part of the Zed language but is not supported by this version of zedc. Write the program without it.",
         steps: [],
         menu: "",
         row: None,
@@ -1172,7 +1172,7 @@ text-length-in-bytes
     Diagnostic {
         line: 3,
         col: 10,
-        message: "the facet attachment `with units(\"Gbit\")` is part of the Zed language, and this version of zedc does not compile it yet. Write the program without it, with the forms this zedc compiles.",
+        message: "the facet attachment `with units(\"Gbit\")` is part of the Zed language but is not supported by this version of zedc. Write the program without it.",
         steps: [],
         menu: "",
         row: None,
@@ -1180,7 +1180,7 @@ text-length-in-bytes
     Diagnostic {
         line: 5,
         col: 13,
-        message: "the facet `with units(\"K\")` is part of the Zed language, and this version of zedc does not compile it yet. Write the program without it, with the forms this zedc compiles.",
+        message: "the facet `with units(\"K\")` is part of the Zed language but is not supported by this version of zedc. Write the program without it.",
         steps: [],
         menu: "",
         row: None,
@@ -1188,7 +1188,7 @@ text-length-in-bytes
     Diagnostic {
         line: 6,
         col: 21,
-        message: "the facet attachment `with units(\"degC\")` is part of the Zed language, and this version of zedc does not compile it yet. Write the program without it, with the forms this zedc compiles.",
+        message: "the facet attachment `with units(\"degC\")` is part of the Zed language but is not supported by this version of zedc. Write the program without it.",
         steps: [],
         menu: "",
         row: None,
@@ -1196,7 +1196,7 @@ text-length-in-bytes
     Diagnostic {
         line: 7,
         col: 13,
-        message: "the facet `with assumedUnits(\"B\")` is part of the Zed language, and this version of zedc does not compile it yet. Write the program without it, with the forms this zedc compiles.",
+        message: "the facet `with assumedUnits(\"B\")` is part of the Zed language but is not supported by this version of zedc. Write the program without it.",
         steps: [],
         menu: "",
         row: None,
@@ -1204,7 +1204,7 @@ text-length-in-bytes
     Diagnostic {
         line: 9,
         col: 15,
-        message: "the facet attachment `with units(\"bit\")` is part of the Zed language, and this version of zedc does not compile it yet. Write the program without it, with the forms this zedc compiles.",
+        message: "the facet attachment `with units(\"bit\")` is part of the Zed language but is not supported by this version of zedc. Write the program without it.",
         steps: [],
         menu: "",
         row: None,
@@ -1212,7 +1212,7 @@ text-length-in-bytes
     Diagnostic {
         line: 16,
         col: 25,
-        message: "the facet attachment `with units(\"kB\")` is part of the Zed language, and this version of zedc does not compile it yet. Write the program without it, with the forms this zedc compiles.",
+        message: "the facet attachment `with units(\"kB\")` is part of the Zed language but is not supported by this version of zedc. Write the program without it.",
         steps: [],
         menu: "",
         row: None,
@@ -1220,20 +1220,20 @@ text-length-in-bytes
     Diagnostic {
         line: 19,
         col: 17,
-        message: "the facet attachment `with units(\"B\")` is part of the Zed language, and this version of zedc does not compile it yet. Write the program without it, with the forms this zedc compiles.",
+        message: "the facet attachment `with units(\"B\")` is part of the Zed language but is not supported by this version of zedc. Write the program without it.",
         steps: [],
         menu: "",
         row: None,
     },
 ]
-  checks: [Outcome { line: 2, col: 17, failure: Some("the facet attachment `with units(\"GiB\")` is part of the Zed language, and this version of zedc does not compile it yet. Write the program without it, with the forms this zedc compiles."), not_run: None }, Outcome { line: 3, col: 10, failure: Some("the facet attachment `with units(\"Gbit\")` is part of the Zed language, and this version of zedc does not compile it yet. Write the program without it, with the forms this zedc compiles."), not_run: None }, Outcome { line: 5, col: 13, failure: Some("the facet `with units(\"K\")` is part of the Zed language, and this version of zedc does not compile it yet. Write the program without it, with the forms this zedc compiles."), not_run: None }, Outcome { line: 6, col: 21, failure: Some("the facet attachment `with units(\"degC\")` is part of the Zed language, and this version of zedc does not compile it yet. Write the program without it, with the forms this zedc compiles."), not_run: None }, Outcome { line: 7, col: 13, failure: Some("the facet `with assumedUnits(\"B\")` is part of the Zed language, and this version of zedc does not compile it yet. Write the program without it, with the forms this zedc compiles."), not_run: None }, Outcome { line: 9, col: 15, failure: Some("the facet attachment `with units(\"bit\")` is part of the Zed language, and this version of zedc does not compile it yet. Write the program without it, with the forms this zedc compiles."), not_run: None }, Outcome { line: 16, col: 25, failure: Some("the facet attachment `with units(\"kB\")` is part of the Zed language, and this version of zedc does not compile it yet. Write the program without it, with the forms this zedc compiles."), not_run: None }, Outcome { line: 19, col: 17, failure: Some("the mark names the row \"Units that differ where an operation requires equal ones\", and the diagnostic is in no row of the rejection table: the facet attachment `with units(\"B\")` is part of the Zed language, and this version of zedc does not compile it yet. Write the program without it, with the forms this zedc compiles."), not_run: None }]
+  checks: [Outcome { line: 2, col: 17, failure: Some("the facet attachment `with units(\"GiB\")` is part of the Zed language but is not supported by this version of zedc. Write the program without it."), not_run: None }, Outcome { line: 3, col: 10, failure: Some("the facet attachment `with units(\"Gbit\")` is part of the Zed language but is not supported by this version of zedc. Write the program without it."), not_run: None }, Outcome { line: 5, col: 13, failure: Some("the facet `with units(\"K\")` is part of the Zed language but is not supported by this version of zedc. Write the program without it."), not_run: None }, Outcome { line: 6, col: 21, failure: Some("the facet attachment `with units(\"degC\")` is part of the Zed language but is not supported by this version of zedc. Write the program without it."), not_run: None }, Outcome { line: 7, col: 13, failure: Some("the facet `with assumedUnits(\"B\")` is part of the Zed language but is not supported by this version of zedc. Write the program without it."), not_run: None }, Outcome { line: 9, col: 15, failure: Some("the facet attachment `with units(\"bit\")` is part of the Zed language but is not supported by this version of zedc. Write the program without it."), not_run: None }, Outcome { line: 16, col: 25, failure: Some("the facet attachment `with units(\"kB\")` is part of the Zed language but is not supported by this version of zedc. Write the program without it."), not_run: None }, Outcome { line: 19, col: 17, failure: Some("the mark names the row \"Units that differ where an operation requires equal ones\", and the diagnostic is in no row of the rejection table: the facet attachment `with units(\"B\")` is part of the Zed language but is not supported by this version of zedc. Write the program without it."), not_run: None }]
 
 two-point-readings-added
   rejected: [
     Diagnostic {
         line: 2,
         col: 16,
-        message: "the facet attachment `with units(\"°C\")` is part of the Zed language, and this version of zedc does not compile it yet. Write the program without it, with the forms this zedc compiles.",
+        message: "the facet attachment `with units(\"°C\")` is part of the Zed language but is not supported by this version of zedc. Write the program without it.",
         steps: [],
         menu: "",
         row: None,
@@ -1241,7 +1241,7 @@ two-point-readings-added
     Diagnostic {
         line: 3,
         col: 19,
-        message: "the facet attachment `with units(\"degC\")` is part of the Zed language, and this version of zedc does not compile it yet. Write the program without it, with the forms this zedc compiles.",
+        message: "the facet attachment `with units(\"degC\")` is part of the Zed language but is not supported by this version of zedc. Write the program without it.",
         steps: [],
         menu: "",
         row: None,
@@ -1249,7 +1249,7 @@ two-point-readings-added
     Diagnostic {
         line: 6,
         col: 21,
-        message: "the facet attachment `with units(\"K\")` is part of the Zed language, and this version of zedc does not compile it yet. Write the program without it, with the forms this zedc compiles.",
+        message: "the facet attachment `with units(\"K\")` is part of the Zed language but is not supported by this version of zedc. Write the program without it.",
         steps: [],
         menu: "",
         row: None,
@@ -1257,33 +1257,33 @@ two-point-readings-added
     Diagnostic {
         line: 7,
         col: 19,
-        message: "the facet attachment `with units(\"degC\")` is part of the Zed language, and this version of zedc does not compile it yet. Write the program without it, with the forms this zedc compiles.",
+        message: "the facet attachment `with units(\"degC\")` is part of the Zed language but is not supported by this version of zedc. Write the program without it.",
         steps: [],
         menu: "",
         row: None,
     },
 ]
-  checks: [Outcome { line: 2, col: 16, failure: Some("the facet attachment `with units(\"°C\")` is part of the Zed language, and this version of zedc does not compile it yet. Write the program without it, with the forms this zedc compiles."), not_run: None }, Outcome { line: 3, col: 19, failure: Some("the facet attachment `with units(\"degC\")` is part of the Zed language, and this version of zedc does not compile it yet. Write the program without it, with the forms this zedc compiles."), not_run: None }, Outcome { line: 6, col: 21, failure: Some("the facet attachment `with units(\"K\")` is part of the Zed language, and this version of zedc does not compile it yet. Write the program without it, with the forms this zedc compiles."), not_run: None }, Outcome { line: 7, col: 19, failure: Some("the facet attachment `with units(\"degC\")` is part of the Zed language, and this version of zedc does not compile it yet. Write the program without it, with the forms this zedc compiles."), not_run: None }, Outcome { line: 9, col: 1, failure: Some("the line is marked ✗ and has no diagnostic"), not_run: None }]
+  checks: [Outcome { line: 2, col: 16, failure: Some("the facet attachment `with units(\"°C\")` is part of the Zed language but is not supported by this version of zedc. Write the program without it."), not_run: None }, Outcome { line: 3, col: 19, failure: Some("the facet attachment `with units(\"degC\")` is part of the Zed language but is not supported by this version of zedc. Write the program without it."), not_run: None }, Outcome { line: 6, col: 21, failure: Some("the facet attachment `with units(\"K\")` is part of the Zed language but is not supported by this version of zedc. Write the program without it."), not_run: None }, Outcome { line: 7, col: 19, failure: Some("the facet attachment `with units(\"degC\")` is part of the Zed language but is not supported by this version of zedc. Write the program without it."), not_run: None }, Outcome { line: 9, col: 1, failure: Some("the line is marked ✗ and has no diagnostic"), not_run: None }]
 
 two-writers-of-one-generation
   rejected: [
     Diagnostic {
         line: 8,
         col: 29,
-        message: "the declared result type `-> int` is part of the Zed language, and this version of zedc does not compile it yet. Write the program without it, with the forms this zedc compiles.",
+        message: "the declared result type `-> int` is part of the Zed language but is not supported by this version of zedc. Write the program without it.",
         steps: [],
         menu: "",
         row: None,
     },
 ]
-  checks: [Outcome { line: 8, col: 29, failure: Some("the declared result type `-> int` is part of the Zed language, and this version of zedc does not compile it yet. Write the program without it, with the forms this zedc compiles."), not_run: None }, Outcome { line: 29, col: 1, failure: Some("the line is marked ✗ and has no diagnostic"), not_run: None }]
+  checks: [Outcome { line: 8, col: 29, failure: Some("the declared result type `-> int` is part of the Zed language but is not supported by this version of zedc. Write the program without it."), not_run: None }, Outcome { line: 29, col: 1, failure: Some("the line is marked ✗ and has no diagnostic"), not_run: None }]
 
 unit-comparison-sum-still-strict
   rejected: [
     Diagnostic {
         line: 2,
         col: 10,
-        message: "the facet attachment `with units(\"GiB\")` is part of the Zed language, and this version of zedc does not compile it yet. Write the program without it, with the forms this zedc compiles.",
+        message: "the facet attachment `with units(\"GiB\")` is part of the Zed language but is not supported by this version of zedc. Write the program without it.",
         steps: [],
         menu: "",
         row: None,
@@ -1291,7 +1291,7 @@ unit-comparison-sum-still-strict
     Diagnostic {
         line: 3,
         col: 10,
-        message: "the facet attachment `with units(\"GB\")` is part of the Zed language, and this version of zedc does not compile it yet. Write the program without it, with the forms this zedc compiles.",
+        message: "the facet attachment `with units(\"GB\")` is part of the Zed language but is not supported by this version of zedc. Write the program without it.",
         steps: [],
         menu: "",
         row: None,
@@ -1299,7 +1299,7 @@ unit-comparison-sum-still-strict
     Diagnostic {
         line: 5,
         col: 11,
-        message: "the facet attachment `with units(\"bit\")` is part of the Zed language, and this version of zedc does not compile it yet. Write the program without it, with the forms this zedc compiles.",
+        message: "the facet attachment `with units(\"bit\")` is part of the Zed language but is not supported by this version of zedc. Write the program without it.",
         steps: [],
         menu: "",
         row: None,
@@ -1307,7 +1307,7 @@ unit-comparison-sum-still-strict
     Diagnostic {
         line: 6,
         col: 17,
-        message: "the facet attachment `with units(\"m\")` is part of the Zed language, and this version of zedc does not compile it yet. Write the program without it, with the forms this zedc compiles.",
+        message: "the facet attachment `with units(\"m\")` is part of the Zed language but is not supported by this version of zedc. Write the program without it.",
         steps: [],
         menu: "",
         row: None,
@@ -1315,7 +1315,7 @@ unit-comparison-sum-still-strict
     Diagnostic {
         line: 7,
         col: 20,
-        message: "the facet attachment `with units(\"km\")` is part of the Zed language, and this version of zedc does not compile it yet. Write the program without it, with the forms this zedc compiles.",
+        message: "the facet attachment `with units(\"km\")` is part of the Zed language but is not supported by this version of zedc. Write the program without it.",
         steps: [],
         menu: "",
         row: None,
@@ -1323,7 +1323,7 @@ unit-comparison-sum-still-strict
     Diagnostic {
         line: 8,
         col: 16,
-        message: "the facet attachment `with units(\"°C\")` is part of the Zed language, and this version of zedc does not compile it yet. Write the program without it, with the forms this zedc compiles.",
+        message: "the facet attachment `with units(\"°C\")` is part of the Zed language but is not supported by this version of zedc. Write the program without it.",
         steps: [],
         menu: "",
         row: None,
@@ -1331,7 +1331,7 @@ unit-comparison-sum-still-strict
     Diagnostic {
         line: 9,
         col: 29,
-        message: "the facet attachment `with units(\"K\")` is part of the Zed language, and this version of zedc does not compile it yet. Write the program without it, with the forms this zedc compiles.",
+        message: "the facet attachment `with units(\"K\")` is part of the Zed language but is not supported by this version of zedc. Write the program without it.",
         steps: [],
         menu: "",
         row: None,
@@ -1339,13 +1339,13 @@ unit-comparison-sum-still-strict
     Diagnostic {
         line: 10,
         col: 19,
-        message: "the facet attachment `with units(\"km\")` is part of the Zed language, and this version of zedc does not compile it yet. Write the program without it, with the forms this zedc compiles.",
+        message: "the facet attachment `with units(\"km\")` is part of the Zed language but is not supported by this version of zedc. Write the program without it.",
         steps: [],
         menu: "",
         row: None,
     },
 ]
-  checks: [Outcome { line: 2, col: 10, failure: Some("the facet attachment `with units(\"GiB\")` is part of the Zed language, and this version of zedc does not compile it yet. Write the program without it, with the forms this zedc compiles."), not_run: None }, Outcome { line: 3, col: 10, failure: Some("the facet attachment `with units(\"GB\")` is part of the Zed language, and this version of zedc does not compile it yet. Write the program without it, with the forms this zedc compiles."), not_run: None }, Outcome { line: 5, col: 11, failure: Some("the facet attachment `with units(\"bit\")` is part of the Zed language, and this version of zedc does not compile it yet. Write the program without it, with the forms this zedc compiles."), not_run: None }, Outcome { line: 6, col: 17, failure: Some("the facet attachment `with units(\"m\")` is part of the Zed language, and this version of zedc does not compile it yet. Write the program without it, with the forms this zedc compiles."), not_run: None }, Outcome { line: 7, col: 20, failure: Some("the facet attachment `with units(\"km\")` is part of the Zed language, and this version of zedc does not compile it yet. Write the program without it, with the forms this zedc compiles."), not_run: None }, Outcome { line: 8, col: 16, failure: Some("the facet attachment `with units(\"°C\")` is part of the Zed language, and this version of zedc does not compile it yet. Write the program without it, with the forms this zedc compiles."), not_run: None }, Outcome { line: 9, col: 29, failure: Some("the facet attachment `with units(\"K\")` is part of the Zed language, and this version of zedc does not compile it yet. Write the program without it, with the forms this zedc compiles."), not_run: None }, Outcome { line: 10, col: 19, failure: Some("the mark names the row \"Units that differ where an operation requires equal ones\", and the diagnostic is in no row of the rejection table: the facet attachment `with units(\"km\")` is part of the Zed language, and this version of zedc does not compile it yet. Write the program without it, with the forms this zedc compiles."), not_run: None }]
+  checks: [Outcome { line: 2, col: 10, failure: Some("the facet attachment `with units(\"GiB\")` is part of the Zed language but is not supported by this version of zedc. Write the program without it."), not_run: None }, Outcome { line: 3, col: 10, failure: Some("the facet attachment `with units(\"GB\")` is part of the Zed language but is not supported by this version of zedc. Write the program without it."), not_run: None }, Outcome { line: 5, col: 11, failure: Some("the facet attachment `with units(\"bit\")` is part of the Zed language but is not supported by this version of zedc. Write the program without it."), not_run: None }, Outcome { line: 6, col: 17, failure: Some("the facet attachment `with units(\"m\")` is part of the Zed language but is not supported by this version of zedc. Write the program without it."), not_run: None }, Outcome { line: 7, col: 20, failure: Some("the facet attachment `with units(\"km\")` is part of the Zed language but is not supported by this version of zedc. Write the program without it."), not_run: None }, Outcome { line: 8, col: 16, failure: Some("the facet attachment `with units(\"°C\")` is part of the Zed language but is not supported by this version of zedc. Write the program without it."), not_run: None }, Outcome { line: 9, col: 29, failure: Some("the facet attachment `with units(\"K\")` is part of the Zed language but is not supported by this version of zedc. Write the program without it."), not_run: None }, Outcome { line: 10, col: 19, failure: Some("the mark names the row \"Units that differ where an operation requires equal ones\", and the diagnostic is in no row of the rejection table: the facet attachment `with units(\"km\")` is part of the Zed language but is not supported by this version of zedc. Write the program without it."), not_run: None }]
 
 unit-mismatch-force-energy
   rejected: [
@@ -1365,7 +1365,7 @@ unit-mismatch-in-sum
     Diagnostic {
         line: 3,
         col: 1,
-        message: "the struct declaration `struct KeyVal  grammar { key: JsonStr  \":\"  value: Json }` is part of the Zed language, and this version of zedc does not compile it yet. Write the program without it, with the forms this zedc compiles.",
+        message: "the struct declaration `struct KeyVal  grammar { key: JsonStr  \":\"  value: Json }` is part of the Zed language but is not supported by this version of zedc. Write the program without it.",
         steps: [],
         menu: "",
         row: None,
@@ -1373,7 +1373,7 @@ unit-mismatch-in-sum
     Diagnostic {
         line: 4,
         col: 1,
-        message: "the struct declaration `struct JsonObj grammar { \"{\"  entries: KeyVal sep \",\"  \"}\" }` is part of the Zed language, and this version of zedc does not compile it yet. Write the program without it, with the forms this zedc compiles.",
+        message: "the struct declaration `struct JsonObj grammar { \"{\"  entries: KeyVal sep \",\"  \"}\" }` is part of the Zed language but is not supported by this version of zedc. Write the program without it.",
         steps: [],
         menu: "",
         row: None,
@@ -1381,7 +1381,7 @@ unit-mismatch-in-sum
     Diagnostic {
         line: 10,
         col: 25,
-        message: "the `matching` refinement of layer L20 `matching grammar { alpha (alpha | digit)* }` is part of the Zed language, and this version of zedc does not compile it yet. Write the program without it, with the forms this zedc compiles.",
+        message: "the `matching` refinement of layer L20 `matching grammar { alpha (alpha | digit)* }` is part of the Zed language but is not supported by this version of zedc. Write the program without it.",
         steps: [],
         menu: "",
         row: None,
@@ -1389,7 +1389,7 @@ unit-mismatch-in-sum
     Diagnostic {
         line: 16,
         col: 1,
-        message: "the struct declaration `struct Chunk grammar { …` is part of the Zed language, and this version of zedc does not compile it yet. Write the program without it, with the forms this zedc compiles.",
+        message: "the struct declaration `struct Chunk grammar { …` is part of the Zed language but is not supported by this version of zedc. Write the program without it.",
         steps: [],
         menu: "",
         row: None,
@@ -1397,7 +1397,7 @@ unit-mismatch-in-sum
     Diagnostic {
         line: 23,
         col: 1,
-        message: "the struct declaration `struct Message grammar { tag: u8  body: (Ping | Data) with t…` is part of the Zed language, and this version of zedc does not compile it yet. Write the program without it, with the forms this zedc compiles.",
+        message: "the struct declaration `struct Message grammar { tag: u8  body: (Ping | Data) with t…` is part of the Zed language but is not supported by this version of zedc. Write the program without it.",
         steps: [],
         menu: "",
         row: None,
@@ -1405,7 +1405,7 @@ unit-mismatch-in-sum
     Diagnostic {
         line: 28,
         col: 1,
-        message: "the law `law doubleIsSum(x: int) = double(x) == x + x;` is part of the Zed language, and this version of zedc does not compile it yet. Write the program without it, with the forms this zedc compiles.",
+        message: "the law `law doubleIsSum(x: int) = double(x) == x + x;` is part of the Zed language but is not supported by this version of zedc. Write the program without it.",
         steps: [],
         menu: "",
         row: None,
@@ -1413,7 +1413,7 @@ unit-mismatch-in-sum
     Diagnostic {
         line: 36,
         col: 1,
-        message: "the signature `orders: OrderId ->? { total: rat, note: Utf8String | #none } …` is part of the Zed language, and this version of zedc does not compile it yet. Write the program without it, with the forms this zedc compiles.",
+        message: "the signature `orders: OrderId ->? { total: rat, note: Utf8String | #none } …` is part of the Zed language but is not supported by this version of zedc. Write the program without it.",
         steps: [],
         menu: "",
         row: None,
@@ -1421,7 +1421,7 @@ unit-mismatch-in-sum
     Diagnostic {
         line: 44,
         col: 12,
-        message: "the facet attachment `with units(\"m/s\")` is part of the Zed language, and this version of zedc does not compile it yet. Write the program without it, with the forms this zedc compiles.",
+        message: "the facet attachment `with units(\"m/s\")` is part of the Zed language but is not supported by this version of zedc. Write the program without it.",
         steps: [],
         menu: "",
         row: None,
@@ -1429,7 +1429,7 @@ unit-mismatch-in-sum
     Diagnostic {
         line: 45,
         col: 12,
-        message: "the facet attachment `with units(\"s\")` is part of the Zed language, and this version of zedc does not compile it yet. Write the program without it, with the forms this zedc compiles.",
+        message: "the facet attachment `with units(\"s\")` is part of the Zed language but is not supported by this version of zedc. Write the program without it.",
         steps: [],
         menu: "",
         row: None,
@@ -1474,14 +1474,14 @@ unit-mismatch-in-sum
         ),
     },
 ]
-  checks: [Outcome { line: 3, col: 1, failure: Some("the struct declaration `struct KeyVal  grammar { key: JsonStr  \":\"  value: Json }` is part of the Zed language, and this version of zedc does not compile it yet. Write the program without it, with the forms this zedc compiles."), not_run: None }, Outcome { line: 4, col: 1, failure: Some("the struct declaration `struct JsonObj grammar { \"{\"  entries: KeyVal sep \",\"  \"}\" }` is part of the Zed language, and this version of zedc does not compile it yet. Write the program without it, with the forms this zedc compiles."), not_run: None }, Outcome { line: 10, col: 25, failure: Some("the `matching` refinement of layer L20 `matching grammar { alpha (alpha | digit)* }` is part of the Zed language, and this version of zedc does not compile it yet. Write the program without it, with the forms this zedc compiles."), not_run: None }, Outcome { line: 16, col: 1, failure: Some("the struct declaration `struct Chunk grammar { …` is part of the Zed language, and this version of zedc does not compile it yet. Write the program without it, with the forms this zedc compiles."), not_run: None }, Outcome { line: 23, col: 1, failure: Some("the struct declaration `struct Message grammar { tag: u8  body: (Ping | Data) with t…` is part of the Zed language, and this version of zedc does not compile it yet. Write the program without it, with the forms this zedc compiles."), not_run: None }, Outcome { line: 28, col: 1, failure: Some("the law `law doubleIsSum(x: int) = double(x) == x + x;` is part of the Zed language, and this version of zedc does not compile it yet. Write the program without it, with the forms this zedc compiles."), not_run: None }, Outcome { line: 36, col: 1, failure: Some("the signature `orders: OrderId ->? { total: rat, note: Utf8String | #none } …` is part of the Zed language, and this version of zedc does not compile it yet. Write the program without it, with the forms this zedc compiles."), not_run: None }, Outcome { line: 44, col: 12, failure: Some("the facet attachment `with units(\"m/s\")` is part of the Zed language, and this version of zedc does not compile it yet. Write the program without it, with the forms this zedc compiles."), not_run: None }, Outcome { line: 45, col: 12, failure: Some("the facet attachment `with units(\"s\")` is part of the Zed language, and this version of zedc does not compile it yet. Write the program without it, with the forms this zedc compiles."), not_run: None }, Outcome { line: 47, col: 1, failure: Some("the line is marked ✗ and has no diagnostic"), not_run: None }, Outcome { line: 51, col: 1, failure: Some("Syntax error at `rows`. Try `exec : (Db, Utf8String with taint(#clean)) -> Rows | #sqlError;` instead.\n  [1] 51:1: expected '(' or '[' or 'matching' or '&' or '|' or 'with' or 'where' or 'for' or '=' or ';'\n      51 | rows = exec(db, sanitize(userInput));     // ✓ sanitizers are the only taint-removers\n         | ^^^^\n  [2] 49:1: the declaration of `exec` begins here\n      49 | exec : (Db, Utf8String with taint(#clean)) -> Rows | #sqlError   // a sink's signature, shown as a type\n         | ^^^^ [2]                                                      ^ [4]\n  [3] 51:1: this line begins at the first column, so it begins the next declaration\n  [4] 49:63: repair: `exec : (Db, Utf8String with taint(#clean)) -> Rows | #sqlError;`"), not_run: None }]
+  checks: [Outcome { line: 3, col: 1, failure: Some("the struct declaration `struct KeyVal  grammar { key: JsonStr  \":\"  value: Json }` is part of the Zed language but is not supported by this version of zedc. Write the program without it."), not_run: None }, Outcome { line: 4, col: 1, failure: Some("the struct declaration `struct JsonObj grammar { \"{\"  entries: KeyVal sep \",\"  \"}\" }` is part of the Zed language but is not supported by this version of zedc. Write the program without it."), not_run: None }, Outcome { line: 10, col: 25, failure: Some("the `matching` refinement of layer L20 `matching grammar { alpha (alpha | digit)* }` is part of the Zed language but is not supported by this version of zedc. Write the program without it."), not_run: None }, Outcome { line: 16, col: 1, failure: Some("the struct declaration `struct Chunk grammar { …` is part of the Zed language but is not supported by this version of zedc. Write the program without it."), not_run: None }, Outcome { line: 23, col: 1, failure: Some("the struct declaration `struct Message grammar { tag: u8  body: (Ping | Data) with t…` is part of the Zed language but is not supported by this version of zedc. Write the program without it."), not_run: None }, Outcome { line: 28, col: 1, failure: Some("the law `law doubleIsSum(x: int) = double(x) == x + x;` is part of the Zed language but is not supported by this version of zedc. Write the program without it."), not_run: None }, Outcome { line: 36, col: 1, failure: Some("the signature `orders: OrderId ->? { total: rat, note: Utf8String | #none } …` is part of the Zed language but is not supported by this version of zedc. Write the program without it."), not_run: None }, Outcome { line: 44, col: 12, failure: Some("the facet attachment `with units(\"m/s\")` is part of the Zed language but is not supported by this version of zedc. Write the program without it."), not_run: None }, Outcome { line: 45, col: 12, failure: Some("the facet attachment `with units(\"s\")` is part of the Zed language but is not supported by this version of zedc. Write the program without it."), not_run: None }, Outcome { line: 47, col: 1, failure: Some("the line is marked ✗ and has no diagnostic"), not_run: None }, Outcome { line: 51, col: 1, failure: Some("Syntax error at `rows`. Try `exec : (Db, Utf8String with taint(#clean)) -> Rows | #sqlError;` instead.\n  [1] 51:1: expected '(' or '[' or 'matching' or '&' or '|' or 'with' or 'where' or 'for' or '=' or ';'\n      51 | rows = exec(db, sanitize(userInput));     // ✓ sanitizers are the only taint-removers\n         | ^^^^\n  [2] 49:1: the declaration of `exec` begins here\n      49 | exec : (Db, Utf8String with taint(#clean)) -> Rows | #sqlError   // a sink's signature, shown as a type\n         | ^^^^ [2]                                                      ^ [4]\n  [3] 51:1: this line begins at the first column, so it begins the next declaration\n  [4] 49:63: repair: `exec : (Db, Utf8String with taint(#clean)) -> Rows | #sqlError;`"), not_run: None }]
 
 units-differ-by-kind
   rejected: [
     Diagnostic {
         line: 2,
         col: 16,
-        message: "the facet attachment `with units(\"N\")` is part of the Zed language, and this version of zedc does not compile it yet. Write the program without it, with the forms this zedc compiles.",
+        message: "the facet attachment `with units(\"N\")` is part of the Zed language but is not supported by this version of zedc. Write the program without it.",
         steps: [],
         menu: "",
         row: None,
@@ -1489,7 +1489,7 @@ units-differ-by-kind
     Diagnostic {
         line: 3,
         col: 14,
-        message: "the facet attachment `with units(\"m\")` is part of the Zed language, and this version of zedc does not compile it yet. Write the program without it, with the forms this zedc compiles.",
+        message: "the facet attachment `with units(\"m\")` is part of the Zed language but is not supported by this version of zedc. Write the program without it.",
         steps: [],
         menu: "",
         row: None,
@@ -1497,7 +1497,7 @@ units-differ-by-kind
     Diagnostic {
         line: 6,
         col: 19,
-        message: "the facet attachment `with units(\"Bq\")` is part of the Zed language, and this version of zedc does not compile it yet. Write the program without it, with the forms this zedc compiles.",
+        message: "the facet attachment `with units(\"Bq\")` is part of the Zed language but is not supported by this version of zedc. Write the program without it.",
         steps: [],
         menu: "",
         row: None,
@@ -1505,23 +1505,23 @@ units-differ-by-kind
     Diagnostic {
         line: 8,
         col: 13,
-        message: "the facet attachment `with units(\"%\")` is part of the Zed language, and this version of zedc does not compile it yet. Write the program without it, with the forms this zedc compiles.",
+        message: "the facet attachment `with units(\"%\")` is part of the Zed language but is not supported by this version of zedc. Write the program without it.",
         steps: [],
         menu: "",
         row: None,
     },
 ]
-  checks: [Outcome { line: 2, col: 16, failure: Some("the facet attachment `with units(\"N\")` is part of the Zed language, and this version of zedc does not compile it yet. Write the program without it, with the forms this zedc compiles."), not_run: None }, Outcome { line: 3, col: 14, failure: Some("the facet attachment `with units(\"m\")` is part of the Zed language, and this version of zedc does not compile it yet. Write the program without it, with the forms this zedc compiles."), not_run: None }, Outcome { line: 6, col: 19, failure: Some("the facet attachment `with units(\"Bq\")` is part of the Zed language, and this version of zedc does not compile it yet. Write the program without it, with the forms this zedc compiles."), not_run: None }, Outcome { line: 8, col: 13, failure: Some("the facet attachment `with units(\"%\")` is part of the Zed language, and this version of zedc does not compile it yet. Write the program without it, with the forms this zedc compiles."), not_run: None }, Outcome { line: 10, col: 1, failure: Some("the line is marked ✗ and has no diagnostic"), not_run: None }]
+  checks: [Outcome { line: 2, col: 16, failure: Some("the facet attachment `with units(\"N\")` is part of the Zed language but is not supported by this version of zedc. Write the program without it."), not_run: None }, Outcome { line: 3, col: 14, failure: Some("the facet attachment `with units(\"m\")` is part of the Zed language but is not supported by this version of zedc. Write the program without it."), not_run: None }, Outcome { line: 6, col: 19, failure: Some("the facet attachment `with units(\"Bq\")` is part of the Zed language but is not supported by this version of zedc. Write the program without it."), not_run: None }, Outcome { line: 8, col: 13, failure: Some("the facet attachment `with units(\"%\")` is part of the Zed language but is not supported by this version of zedc. Write the program without it."), not_run: None }, Outcome { line: 10, col: 1, failure: Some("the line is marked ✗ and has no diagnostic"), not_run: None }]
 
 value-binding-has-no-next-generation
   rejected: [
     Diagnostic {
         line: 8,
         col: 29,
-        message: "the declared result type `-> int` is part of the Zed language, and this version of zedc does not compile it yet. Write the program without it, with the forms this zedc compiles.",
+        message: "the declared result type `-> int` is part of the Zed language but is not supported by this version of zedc. Write the program without it.",
         steps: [],
         menu: "",
         row: None,
     },
 ]
-  checks: [Outcome { line: 8, col: 29, failure: Some("the declared result type `-> int` is part of the Zed language, and this version of zedc does not compile it yet. Write the program without it, with the forms this zedc compiles."), not_run: None }, Outcome { line: 19, col: 1, failure: Some("the line is marked ✗ and has no diagnostic"), not_run: None }]
+  checks: [Outcome { line: 8, col: 29, failure: Some("the declared result type `-> int` is part of the Zed language but is not supported by this version of zedc. Write the program without it."), not_run: None }, Outcome { line: 19, col: 1, failure: Some("the line is marked ✗ and has no diagnostic"), not_run: None }]

@@ -1,5 +1,5 @@
 //! The parser builds every form of this step; name resolution refuses each one as a form this
-//! zedc does not compile yet, and refuses each annotation as not compiled yet, or as no
+//! zedc does not support, and refuses each annotation as not supported, or as no
 //! annotation at all.
 
 use super::refused;

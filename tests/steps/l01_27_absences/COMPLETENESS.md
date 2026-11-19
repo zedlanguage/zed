@@ -20,8 +20,8 @@ rule 6 of sec:type_resolution, and sec:tour_methods (`_` drops a loose failure o
 | `else` in a block statement and a block export | same, case "block statement and export" | |
 | `else` nested in its own default | same, case "nested in its own default" | |
 | `else` in a lambda body | `edges.rs` `an_else_in_a_lambda_body_handles_what_the_lambda_is_passed` | |
-| `else` in a match arm | | `match` is not compiled at L1 (`zed_tests::is_not_yet`) |
-| `else` in a loop body or with `initial` | | zedc answers "a `loop` ... does not compile it yet" at L1 |
+| `else` in a match arm | | `match` is not supported at L1 (`zed_tests::is_not_yet`) |
+| `else` in a loop body or with `initial` | | zedc answers "a `loop` ... is not supported by this version of zedc" at L1 |
 | A default that may itself fail keeps its own atoms | `edges.rs` `a_default_that_may_fail_or_is_an_atom_puts_its_own_atoms_in_the_type` | |
 | An atom literal as the default | same | |
 | The pattern form with an atom default | same | |

@@ -2,40 +2,40 @@
 source: tests/steps/l01_37a_short_addresses/record.rs
 expression: without_addresses(&out)
 ---
-01-word-count.zed (L4): does not load: 01-word-count.zed:8:15: a `for` is part of the Zed language, and this version of zedc does not compile it yet. Write the program without it, with the forms this zedc compiles.
-02-histogram.zed (L4): does not load: 02-histogram.zed:11:12: a `for` is part of the Zed language, and this version of zedc does not compile it yet. Write the program without it, with the forms this zedc compiles.
-02-histogram.zed:12:15: a `for` is part of the Zed language, and this version of zedc does not compile it yet. Write the program without it, with the forms this zedc compiles.
-03-edit-distance.zed (L6): does not load: 03-edit-distance.zed:14:6: a metadata read `::` is part of the Zed language, and this version of zedc does not compile it yet. Write the program without it, with the forms this zedc compiles.
-03-edit-distance.zed:14:14: a metadata read `::` is part of the Zed language, and this version of zedc does not compile it yet. Write the program without it, with the forms this zedc compiles.
-03-edit-distance.zed:18:3: an indexed definition is part of the Zed language, and this version of zedc does not compile it yet. Write the program without it, with the forms this zedc compiles.
-03-edit-distance.zed:22:5: a metadata read `::` is part of the Zed language, and this version of zedc does not compile it yet. Write the program without it, with the forms this zedc compiles.
-03-edit-distance.zed:22:13: a metadata read `::` is part of the Zed language, and this version of zedc does not compile it yet. Write the program without it, with the forms this zedc compiles.
-03-edit-distance.zed:26:15: a `for` is part of the Zed language, and this version of zedc does not compile it yet. Write the program without it, with the forms this zedc compiles.
-04-running-variance.zed (L5): does not load: 04-running-variance.zed:12:15: a `for` is part of the Zed language, and this version of zedc does not compile it yet. Write the program without it, with the forms this zedc compiles.
-05-max-prefix-sum.zed (L5): does not load: 05-max-prefix-sum.zed:10:35: a tuple-destructuring parameter is part of the Zed language, and this version of zedc does not compile it yet. Write the program without it, with the forms this zedc compiles.
-06-matrix-multiply.zed (L5): does not load: 06-matrix-multiply.zed:19:11: a `for` is part of the Zed language, and this version of zedc does not compile it yet. Write the program without it, with the forms this zedc compiles.
-06-matrix-multiply.zed:19:26: a `for` is part of the Zed language, and this version of zedc does not compile it yet. Write the program without it, with the forms this zedc compiles.
-06-matrix-multiply.zed:19:43: a `for` is part of the Zed language, and this version of zedc does not compile it yet. Write the program without it, with the forms this zedc compiles.
-07-json-parser/main.zed (L20): does not load: 07-json-parser/json.zed:6:1: the struct declaration `struct KeyVal  grammar { key: JsonStr ":" value: Json }` is part of the Zed language, and this version of zedc does not compile it yet. Write the program without it, with the forms this zedc compiles.
-07-json-parser/json.zed:7:1: the struct declaration `struct JsonObj grammar { "{" entries: KeyVal* sep "," "}" }` is part of the Zed language, and this version of zedc does not compile it yet. Write the program without it, with the forms this zedc compiles.
-07-json-parser/json.zed:8:1: the struct declaration `struct JsonArr grammar { "[" items: Json* sep "," "]" }` is part of the Zed language, and this version of zedc does not compile it yet. Write the program without it, with the forms this zedc compiles.
-07-json-parser/json.zed:9:27: the `matching` refinement of layer L20 `matching grammar { "\"" (alpha | digit | " ")* "\"" }` is part of the Zed language, and this version of zedc does not compile it yet. Write the program without it, with the forms this zedc compiles.
-07-json-parser/json.zed:10:27: the `matching` refinement of layer L20 `matching grammar { "-"? digit+ ("." digit+)? }` is part of the Zed language, and this version of zedc does not compile it yet. Write the program without it, with the forms this zedc compiles.
-07-json-parser/json.zed:11:27: the `matching` refinement of layer L20 `matching grammar { "true" | "false" | "null" }` is part of the Zed language, and this version of zedc does not compile it yet. Write the program without it, with the forms this zedc compiles.
+01-word-count.zed (L4): does not load: 01-word-count.zed:8:15: a `for` is part of the Zed language but is not supported by this version of zedc. Write the program without it.
+02-histogram.zed (L4): does not load: 02-histogram.zed:11:12: a `for` is part of the Zed language but is not supported by this version of zedc. Write the program without it.
+02-histogram.zed:12:15: a `for` is part of the Zed language but is not supported by this version of zedc. Write the program without it.
+03-edit-distance.zed (L6): does not load: 03-edit-distance.zed:14:6: a metadata read `::` is part of the Zed language but is not supported by this version of zedc. Write the program without it.
+03-edit-distance.zed:14:14: a metadata read `::` is part of the Zed language but is not supported by this version of zedc. Write the program without it.
+03-edit-distance.zed:18:3: an indexed definition is part of the Zed language but is not supported by this version of zedc. Write the program without it.
+03-edit-distance.zed:22:5: a metadata read `::` is part of the Zed language but is not supported by this version of zedc. Write the program without it.
+03-edit-distance.zed:22:13: a metadata read `::` is part of the Zed language but is not supported by this version of zedc. Write the program without it.
+03-edit-distance.zed:26:15: a `for` is part of the Zed language but is not supported by this version of zedc. Write the program without it.
+04-running-variance.zed (L5): does not load: 04-running-variance.zed:12:15: a `for` is part of the Zed language but is not supported by this version of zedc. Write the program without it.
+05-max-prefix-sum.zed (L5): does not load: 05-max-prefix-sum.zed:10:35: a tuple-destructuring parameter is part of the Zed language but is not supported by this version of zedc. Write the program without it.
+06-matrix-multiply.zed (L5): does not load: 06-matrix-multiply.zed:19:11: a `for` is part of the Zed language but is not supported by this version of zedc. Write the program without it.
+06-matrix-multiply.zed:19:26: a `for` is part of the Zed language but is not supported by this version of zedc. Write the program without it.
+06-matrix-multiply.zed:19:43: a `for` is part of the Zed language but is not supported by this version of zedc. Write the program without it.
+07-json-parser/main.zed (L20): does not load: 07-json-parser/json.zed:6:1: the struct declaration `struct KeyVal  grammar { key: JsonStr ":" value: Json }` is part of the Zed language but is not supported by this version of zedc. Write the program without it.
+07-json-parser/json.zed:7:1: the struct declaration `struct JsonObj grammar { "{" entries: KeyVal* sep "," "}" }` is part of the Zed language but is not supported by this version of zedc. Write the program without it.
+07-json-parser/json.zed:8:1: the struct declaration `struct JsonArr grammar { "[" items: Json* sep "," "]" }` is part of the Zed language but is not supported by this version of zedc. Write the program without it.
+07-json-parser/json.zed:9:27: the `matching` refinement of layer L20 `matching grammar { "\"" (alpha | digit | " ")* "\"" }` is part of the Zed language but is not supported by this version of zedc. Write the program without it.
+07-json-parser/json.zed:10:27: the `matching` refinement of layer L20 `matching grammar { "-"? digit+ ("." digit+)? }` is part of the Zed language but is not supported by this version of zedc. Write the program without it.
+07-json-parser/json.zed:11:27: the `matching` refinement of layer L20 `matching grammar { "true" | "false" | "null" }` is part of the Zed language but is not supported by this version of zedc. Write the program without it.
 07-json-parser/main.zed:9:1: an import is part of the Zed language, and this version of zedc does not yet tie a name an import brings in to the other unit's definition. Write the definitions this file uses in it, and remove the import.
-08-utf8-percent.zed (L6): does not load: 08-utf8-percent.zed:8:1: a struct declaration is part of the Zed language, and this version of zedc does not compile it yet. Write the program without it, with the forms this zedc compiles.
+08-utf8-percent.zed (L6): does not load: 08-utf8-percent.zed:8:1: a struct declaration is part of the Zed language but is not supported by this version of zedc. Write the program without it.
 08-utf8-percent.zed:8:39: The type `Utf8String` is not defined.
-08-utf8-percent.zed:11:24: a `match` is part of the Zed language, and this version of zedc does not compile it yet. Write the program without it, with the forms this zedc compiles.
-08-utf8-percent.zed:23:31: a `match` is part of the Zed language, and this version of zedc does not compile it yet. Write the program without it, with the forms this zedc compiles.
+08-utf8-percent.zed:11:24: a `match` is part of the Zed language but is not supported by this version of zedc. Write the program without it.
+08-utf8-percent.zed:23:31: a `match` is part of the Zed language but is not supported by this version of zedc. Write the program without it.
 08-utf8-percent.zed:23:37: `char32` is not defined.
-08-utf8-percent.zed:25:36: a `match` is part of the Zed language, and this version of zedc does not compile it yet. Write the program without it, with the forms this zedc compiles.
-08-utf8-percent.zed:41:3: an indexed definition is part of the Zed language, and this version of zedc does not compile it yet. Write the program without it, with the forms this zedc compiles.
-08-utf8-percent.zed:43:10: a `for` is part of the Zed language, and this version of zedc does not compile it yet. Write the program without it, with the forms this zedc compiles.
-08-utf8-percent.zed:43:25: a metadata read `::` is part of the Zed language, and this version of zedc does not compile it yet. Write the program without it, with the forms this zedc compiles.
+08-utf8-percent.zed:25:36: a `match` is part of the Zed language but is not supported by this version of zedc. Write the program without it.
+08-utf8-percent.zed:41:3: an indexed definition is part of the Zed language but is not supported by this version of zedc. Write the program without it.
+08-utf8-percent.zed:43:10: a `for` is part of the Zed language but is not supported by this version of zedc. Write the program without it.
+08-utf8-percent.zed:43:25: a metadata read `::` is part of the Zed language but is not supported by this version of zedc. Write the program without it.
 08-utf8-percent.zed:44:13: `char32` is not defined.
-08-utf8-percent.zed:44:43: a metadata read `::` is part of the Zed language, and this version of zedc does not compile it yet. Write the program without it, with the forms this zedc compiles.
-08-utf8-percent.zed:44:79: a metadata read `::` is part of the Zed language, and this version of zedc does not compile it yet. Write the program without it, with the forms this zedc compiles.
-08-utf8-percent.zed:46:3: an indexed definition is part of the Zed language, and this version of zedc does not compile it yet. Write the program without it, with the forms this zedc compiles.
+08-utf8-percent.zed:44:43: a metadata read `::` is part of the Zed language but is not supported by this version of zedc. Write the program without it.
+08-utf8-percent.zed:44:79: a metadata read `::` is part of the Zed language but is not supported by this version of zedc. Write the program without it.
+08-utf8-percent.zed:46:3: an indexed definition is part of the Zed language but is not supported by this version of zedc. Write the program without it.
 09-canonical-equal.zed (L3): does not load: 09-canonical-equal.zed:7:23: `concat` takes a family of strings, and an optional separator `sep:` by name.
   [1] 7:23: repair: write `s.lower.split("-").concat`
       7 | canon(positional s) = s.lower.split("-").concat("").split(" ").concat("");
@@ -57,155 +57,155 @@ expression: without_addresses(&out)
 10-regex-matcher/main.zed:15:60: `char32` is not defined.
 10-regex-matcher/main.zed:16:43: `char32` is not defined.
 10-regex-matcher/main.zed:16:60: `char32` is not defined.
-10-regex-matcher/main.zed:18:10: the prelude word `mix` is part of the Zed language, and this version of zedc does not compile it yet. Write the program without it, with the forms this zedc compiles.
+10-regex-matcher/main.zed:18:10: the prelude word `mix` is part of the Zed language but is not supported by this version of zedc. Write the program without it.
 10-regex-matcher/main.zed:9:1: an import is part of the Zed language, and this version of zedc does not yet tie a name an import brings in to the other unit's definition. Write the definitions this file uses in it, and remove the import.
-10-regex-matcher/regex.zed:4:1: a type declaration is part of the Zed language, and this version of zedc does not compile it yet. Write the program without it, with the forms this zedc compiles.
-10-regex-matcher/regex.zed:4:26: an atom type with a payload is part of the Zed language, and this version of zedc does not compile it yet. Write the program without it, with the forms this zedc compiles.
+10-regex-matcher/regex.zed:4:1: a type declaration is part of the Zed language but is not supported by this version of zedc. Write the program without it.
+10-regex-matcher/regex.zed:4:26: an atom type with a payload is part of the Zed language but is not supported by this version of zedc. Write the program without it.
 10-regex-matcher/regex.zed:4:34: The type `char32` is not defined.
-10-regex-matcher/regex.zed:4:44: an atom type with a payload is part of the Zed language, and this version of zedc does not compile it yet. Write the program without it, with the forms this zedc compiles.
+10-regex-matcher/regex.zed:4:44: an atom type with a payload is part of the Zed language but is not supported by this version of zedc. Write the program without it.
 10-regex-matcher/regex.zed:4:55: The type `char32` is not defined.
 10-regex-matcher/regex.zed:4:67: The type `char32` is not defined.
-10-regex-matcher/regex.zed:5:11: an atom type with a payload is part of the Zed language, and this version of zedc does not compile it yet. Write the program without it, with the forms this zedc compiles.
-10-regex-matcher/regex.zed:5:32: an atom type with a payload is part of the Zed language, and this version of zedc does not compile it yet. Write the program without it, with the forms this zedc compiles.
-10-regex-matcher/regex.zed:5:53: an atom type with a payload is part of the Zed language, and this version of zedc does not compile it yet. Write the program without it, with the forms this zedc compiles.
-10-regex-matcher/regex.zed:7:27: a `match` is part of the Zed language, and this version of zedc does not compile it yet. Write the program without it, with the forms this zedc compiles.
-10-regex-matcher/regex.zed:17:39: a `match` is part of the Zed language, and this version of zedc does not compile it yet. Write the program without it, with the forms this zedc compiles.
-10-regex-matcher/regex.zed:28:49: a metadata read `::` is part of the Zed language, and this version of zedc does not compile it yet. Write the program without it, with the forms this zedc compiles.
-11-csv-split.zed (L5): does not load: 11-csv-split.zed:9:1: a struct declaration is part of the Zed language, and this version of zedc does not compile it yet. Write the program without it, with the forms this zedc compiles.
+10-regex-matcher/regex.zed:5:11: an atom type with a payload is part of the Zed language but is not supported by this version of zedc. Write the program without it.
+10-regex-matcher/regex.zed:5:32: an atom type with a payload is part of the Zed language but is not supported by this version of zedc. Write the program without it.
+10-regex-matcher/regex.zed:5:53: an atom type with a payload is part of the Zed language but is not supported by this version of zedc. Write the program without it.
+10-regex-matcher/regex.zed:7:27: a `match` is part of the Zed language but is not supported by this version of zedc. Write the program without it.
+10-regex-matcher/regex.zed:17:39: a `match` is part of the Zed language but is not supported by this version of zedc. Write the program without it.
+10-regex-matcher/regex.zed:28:49: a metadata read `::` is part of the Zed language but is not supported by this version of zedc. Write the program without it.
+11-csv-split.zed (L5): does not load: 11-csv-split.zed:9:1: a struct declaration is part of the Zed language but is not supported by this version of zedc. Write the program without it.
 11-csv-split.zed:19:30: `char32` is not defined.
-11-csv-split.zed:20:11: a `for` is part of the Zed language, and this version of zedc does not compile it yet. Write the program without it, with the forms this zedc compiles.
+11-csv-split.zed:20:11: a `for` is part of the Zed language but is not supported by this version of zedc. Write the program without it.
 11-csv-split.zed:20:34: `char32` is not defined.
-11-csv-split.zed:21:19: a `for` is part of the Zed language, and this version of zedc does not compile it yet. Write the program without it, with the forms this zedc compiles.
-11-csv-split.zed:21:71: a metadata read `::` is part of the Zed language, and this version of zedc does not compile it yet. Write the program without it, with the forms this zedc compiles.
-11-csv-split.zed:22:3: a `for` is part of the Zed language, and this version of zedc does not compile it yet. Write the program without it, with the forms this zedc compiles.
-11-csv-split.zed:22:16: a metadata read `::` is part of the Zed language, and this version of zedc does not compile it yet. Write the program without it, with the forms this zedc compiles.
-11-csv-split.zed:28:8: a metadata read `::` is part of the Zed language, and this version of zedc does not compile it yet. Write the program without it, with the forms this zedc compiles.
-12-cyk-table.zed (L6): does not load: 12-cyk-table.zed:10:1: a struct declaration is part of the Zed language, and this version of zedc does not compile it yet. Write the program without it, with the forms this zedc compiles.
+11-csv-split.zed:21:19: a `for` is part of the Zed language but is not supported by this version of zedc. Write the program without it.
+11-csv-split.zed:21:71: a metadata read `::` is part of the Zed language but is not supported by this version of zedc. Write the program without it.
+11-csv-split.zed:22:3: a `for` is part of the Zed language but is not supported by this version of zedc. Write the program without it.
+11-csv-split.zed:22:16: a metadata read `::` is part of the Zed language but is not supported by this version of zedc. Write the program without it.
+11-csv-split.zed:28:8: a metadata read `::` is part of the Zed language but is not supported by this version of zedc. Write the program without it.
+12-cyk-table.zed (L6): does not load: 12-cyk-table.zed:10:1: a struct declaration is part of the Zed language but is not supported by this version of zedc. Write the program without it.
 12-cyk-table.zed:13:55: `char32` is not defined.
 12-cyk-table.zed:13:76: `char32` is not defined.
-12-cyk-table.zed:20:7: a metadata read `::` is part of the Zed language, and this version of zedc does not compile it yet. Write the program without it, with the forms this zedc compiles.
-12-cyk-table.zed:21:3: an indexed definition is part of the Zed language, and this version of zedc does not compile it yet. Write the program without it, with the forms this zedc compiles.
-12-cyk-table.zed:30:16: a metadata read `::` is part of the Zed language, and this version of zedc does not compile it yet. Write the program without it, with the forms this zedc compiles.
-12-cyk-table.zed:30:50: a metadata read `::` is part of the Zed language, and this version of zedc does not compile it yet. Write the program without it, with the forms this zedc compiles.
-12-cyk-table.zed:31:13: a `for` is part of the Zed language, and this version of zedc does not compile it yet. Write the program without it, with the forms this zedc compiles.
-13-union-find/main.zed (L6): does not load: 13-union-find/main.zed:16:11: a `for` is part of the Zed language, and this version of zedc does not compile it yet. Write the program without it, with the forms this zedc compiles.
-13-union-find/main.zed:17:11: a `for` is part of the Zed language, and this version of zedc does not compile it yet. Write the program without it, with the forms this zedc compiles.
+12-cyk-table.zed:20:7: a metadata read `::` is part of the Zed language but is not supported by this version of zedc. Write the program without it.
+12-cyk-table.zed:21:3: an indexed definition is part of the Zed language but is not supported by this version of zedc. Write the program without it.
+12-cyk-table.zed:30:16: a metadata read `::` is part of the Zed language but is not supported by this version of zedc. Write the program without it.
+12-cyk-table.zed:30:50: a metadata read `::` is part of the Zed language but is not supported by this version of zedc. Write the program without it.
+12-cyk-table.zed:31:13: a `for` is part of the Zed language but is not supported by this version of zedc. Write the program without it.
+13-union-find/main.zed (L6): does not load: 13-union-find/main.zed:16:11: a `for` is part of the Zed language but is not supported by this version of zedc. Write the program without it.
+13-union-find/main.zed:17:11: a `for` is part of the Zed language but is not supported by this version of zedc. Write the program without it.
 13-union-find/main.zed:10:1: an import is part of the Zed language, and this version of zedc does not yet tie a name an import brings in to the other unit's definition. Write the definitions this file uses in it, and remove the import.
-13-union-find/uf.zed:6:1: a struct declaration is part of the Zed language, and this version of zedc does not compile it yet. Write the program without it, with the forms this zedc compiles.
-13-union-find/uf.zed:8:46: a `loop` is part of the Zed language, and this version of zedc does not compile it yet. Write the program without it, with the forms this zedc compiles.
-14-clustering.zed (L7): does not load: 14-clustering.zed:15:21: the inner generator `, j -> q in pts` is part of the Zed language, and this version of zedc does not compile it yet. Write the program without it, with the forms this zedc compiles.
-15-spreadsheet.zed (L7): does not load: 15-spreadsheet.zed:15:46: a `match` is part of the Zed language, and this version of zedc does not compile it yet. Write the program without it, with the forms this zedc compiles.
-15-spreadsheet.zed:20:26: a `for` is part of the Zed language, and this version of zedc does not compile it yet. Write the program without it, with the forms this zedc compiles.
-15-spreadsheet.zed:23:9: a `loop` is part of the Zed language, and this version of zedc does not compile it yet. Write the program without it, with the forms this zedc compiles.
-15-spreadsheet.zed:28:15: a metadata read `::` is part of the Zed language, and this version of zedc does not compile it yet. Write the program without it, with the forms this zedc compiles.
-16-game-tick.zed (L7): does not load: 16-game-tick.zed:16:3: the signature `moves: int ->? Utf8String ->? int with reducer((+));` is part of the Zed language, and this version of zedc does not compile it yet. Write the program without it, with the forms this zedc compiles.
-17-sensor-pipeline.zed (L7): does not load: 17-sensor-pipeline.zed:12:1: a struct declaration is part of the Zed language, and this version of zedc does not compile it yet. Write the program without it, with the forms this zedc compiles.
+13-union-find/uf.zed:6:1: a struct declaration is part of the Zed language but is not supported by this version of zedc. Write the program without it.
+13-union-find/uf.zed:8:46: a `loop` is part of the Zed language but is not supported by this version of zedc. Write the program without it.
+14-clustering.zed (L7): does not load: 14-clustering.zed:15:21: the inner generator `, j -> q in pts` is part of the Zed language but is not supported by this version of zedc. Write the program without it.
+15-spreadsheet.zed (L7): does not load: 15-spreadsheet.zed:15:46: a `match` is part of the Zed language but is not supported by this version of zedc. Write the program without it.
+15-spreadsheet.zed:20:26: a `for` is part of the Zed language but is not supported by this version of zedc. Write the program without it.
+15-spreadsheet.zed:23:9: a `loop` is part of the Zed language but is not supported by this version of zedc. Write the program without it.
+15-spreadsheet.zed:28:15: a metadata read `::` is part of the Zed language but is not supported by this version of zedc. Write the program without it.
+16-game-tick.zed (L7): does not load: 16-game-tick.zed:16:3: the signature `moves: int ->? Utf8String ->? int with reducer((+));` is part of the Zed language but is not supported by this version of zedc. Write the program without it.
+17-sensor-pipeline.zed (L7): does not load: 17-sensor-pipeline.zed:12:1: a struct declaration is part of the Zed language but is not supported by this version of zedc. Write the program without it.
 17-sensor-pipeline.zed:12:34: The type `Utf8String` is not defined.
-17-sensor-pipeline.zed:22:15: a `for` is part of the Zed language, and this version of zedc does not compile it yet. Write the program without it, with the forms this zedc compiles.
-17-sensor-pipeline.zed:23:13: a `for` is part of the Zed language, and this version of zedc does not compile it yet. Write the program without it, with the forms this zedc compiles.
-18-socket-wordfreq.zed (L7): does not load: 18-socket-wordfreq.zed:9:1: the signature `sock: Stream(Utf8String);` is part of the Zed language, and this version of zedc does not compile it yet. Write the program without it, with the forms this zedc compiles.
-19-bank-ledger.zed (L6): does not load: 19-bank-ledger.zed:13:1: a type declaration is part of the Zed language, and this version of zedc does not compile it yet. Write the program without it, with the forms this zedc compiles.
-19-bank-ledger.zed:13:11: an atom type with a payload is part of the Zed language, and this version of zedc does not compile it yet. Write the program without it, with the forms this zedc compiles.
+17-sensor-pipeline.zed:22:15: a `for` is part of the Zed language but is not supported by this version of zedc. Write the program without it.
+17-sensor-pipeline.zed:23:13: a `for` is part of the Zed language but is not supported by this version of zedc. Write the program without it.
+18-socket-wordfreq.zed (L7): does not load: 18-socket-wordfreq.zed:9:1: the signature `sock: Stream(Utf8String);` is part of the Zed language but is not supported by this version of zedc. Write the program without it.
+19-bank-ledger.zed (L6): does not load: 19-bank-ledger.zed:13:1: a type declaration is part of the Zed language but is not supported by this version of zedc. Write the program without it.
+19-bank-ledger.zed:13:11: an atom type with a payload is part of the Zed language but is not supported by this version of zedc. Write the program without it.
 19-bank-ledger.zed:13:21: The type `Utf8String` is not defined.
-19-bank-ledger.zed:13:35: an atom type with a payload is part of the Zed language, and this version of zedc does not compile it yet. Write the program without it, with the forms this zedc compiles.
+19-bank-ledger.zed:13:35: an atom type with a payload is part of the Zed language but is not supported by this version of zedc. Write the program without it.
 19-bank-ledger.zed:13:48: The type `Utf8String` is not defined.
-19-bank-ledger.zed:13:72: an atom type with a payload is part of the Zed language, and this version of zedc does not compile it yet. Write the program without it, with the forms this zedc compiles.
+19-bank-ledger.zed:13:72: an atom type with a payload is part of the Zed language but is not supported by this version of zedc. Write the program without it.
 19-bank-ledger.zed:13:86: The type `Utf8String` is not defined.
-19-bank-ledger.zed:26:38: a `match` is part of the Zed language, and this version of zedc does not compile it yet. Write the program without it, with the forms this zedc compiles.
-19-bank-ledger.zed:33:37: a `match` is part of the Zed language, and this version of zedc does not compile it yet. Write the program without it, with the forms this zedc compiles.
-19-bank-ledger.zed:40:10: a `loop` is part of the Zed language, and this version of zedc does not compile it yet. Write the program without it, with the forms this zedc compiles.
-19-bank-ledger.zed:47:13: a `for` is part of the Zed language, and this version of zedc does not compile it yet. Write the program without it, with the forms this zedc compiles.
-19-bank-ledger.zed:48:52: a metadata read `::` is part of the Zed language, and this version of zedc does not compile it yet. Write the program without it, with the forms this zedc compiles.
-19-bank-ledger.zed:48:76: a metadata read `::` is part of the Zed language, and this version of zedc does not compile it yet. Write the program without it, with the forms this zedc compiles.
-19-bank-ledger.zed:48:92: a metadata read `::` is part of the Zed language, and this version of zedc does not compile it yet. Write the program without it, with the forms this zedc compiles.
-20-taint.zed (L13): does not load: 20-taint.zed:12:30: the facet `with taint(#user)` is part of the Zed language, and this version of zedc does not compile it yet. Write the program without it, with the forms this zedc compiles.
+19-bank-ledger.zed:26:38: a `match` is part of the Zed language but is not supported by this version of zedc. Write the program without it.
+19-bank-ledger.zed:33:37: a `match` is part of the Zed language but is not supported by this version of zedc. Write the program without it.
+19-bank-ledger.zed:40:10: a `loop` is part of the Zed language but is not supported by this version of zedc. Write the program without it.
+19-bank-ledger.zed:47:13: a `for` is part of the Zed language but is not supported by this version of zedc. Write the program without it.
+19-bank-ledger.zed:48:52: a metadata read `::` is part of the Zed language but is not supported by this version of zedc. Write the program without it.
+19-bank-ledger.zed:48:76: a metadata read `::` is part of the Zed language but is not supported by this version of zedc. Write the program without it.
+19-bank-ledger.zed:48:92: a metadata read `::` is part of the Zed language but is not supported by this version of zedc. Write the program without it.
+20-taint.zed (L13): does not load: 20-taint.zed:12:30: the facet `with taint(#user)` is part of the Zed language but is not supported by this version of zedc. Write the program without it.
 21-stats-module/main.zed (L3): does not load: 21-stats-module/main.zed:12:1: an import is part of the Zed language, and this version of zedc does not yet tie a name an import brings in to the other unit's definition. Write the definitions this file uses in it, and remove the import.
-21-stats-module/stats.zed:5:13: a metadata read `::` is part of the Zed language, and this version of zedc does not compile it yet. Write the program without it, with the forms this zedc compiles.
-21-stats-module/stats.zed:11:9: a `for` is part of the Zed language, and this version of zedc does not compile it yet. Write the program without it, with the forms this zedc compiles.
-21-stats-module/stats.zed:12:10: a record display is part of the Zed language, and this version of zedc does not compile it yet. Write the program without it, with the forms this zedc compiles.
-22-top-k.zed (L5): does not load: 22-top-k.zed:7:1: a struct declaration is part of the Zed language, and this version of zedc does not compile it yet. Write the program without it, with the forms this zedc compiles.
+21-stats-module/stats.zed:5:13: a metadata read `::` is part of the Zed language but is not supported by this version of zedc. Write the program without it.
+21-stats-module/stats.zed:11:9: a `for` is part of the Zed language but is not supported by this version of zedc. Write the program without it.
+21-stats-module/stats.zed:12:10: a record display is part of the Zed language but is not supported by this version of zedc. Write the program without it.
+22-top-k.zed (L5): does not load: 22-top-k.zed:7:1: a struct declaration is part of the Zed language but is not supported by this version of zedc. Write the program without it.
 22-top-k.zed:7:22: The type `Utf8String` is not defined.
-22-top-k.zed:11:17: a sort key `asc` or `desc` is part of the Zed language, and this version of zedc does not compile it yet. Write the program without it, with the forms this zedc compiles.
-22-top-k.zed:11:36: a sort key `asc` or `desc` is part of the Zed language, and this version of zedc does not compile it yet. Write the program without it, with the forms this zedc compiles.
-22-top-k.zed:12:15: a `for` is part of the Zed language, and this version of zedc does not compile it yet. Write the program without it, with the forms this zedc compiles.
-23-join-zoo.zed (L5): does not load: 23-join-zoo.zed:11:1: a struct declaration is part of the Zed language, and this version of zedc does not compile it yet. Write the program without it, with the forms this zedc compiles.
+22-top-k.zed:11:17: a sort key `asc` or `desc` is part of the Zed language but is not supported by this version of zedc. Write the program without it.
+22-top-k.zed:11:36: a sort key `asc` or `desc` is part of the Zed language but is not supported by this version of zedc. Write the program without it.
+22-top-k.zed:12:15: a `for` is part of the Zed language but is not supported by this version of zedc. Write the program without it.
+23-join-zoo.zed (L5): does not load: 23-join-zoo.zed:11:1: a struct declaration is part of the Zed language but is not supported by this version of zedc. Write the program without it.
 23-join-zoo.zed:11:20: The type `Utf8String` is not defined.
-23-join-zoo.zed:18:21: a `match` is part of the Zed language, and this version of zedc does not compile it yet. Write the program without it, with the forms this zedc compiles.
-23-join-zoo.zed:20:21: a `for` is part of the Zed language, and this version of zedc does not compile it yet. Write the program without it, with the forms this zedc compiles.
-23-join-zoo.zed:26:12: a `for` is part of the Zed language, and this version of zedc does not compile it yet. Write the program without it, with the forms this zedc compiles.
-23-join-zoo.zed:26:44: a metadata read `::` is part of the Zed language, and this version of zedc does not compile it yet. Write the program without it, with the forms this zedc compiles.
-23-join-zoo.zed:27:12: a `for` is part of the Zed language, and this version of zedc does not compile it yet. Write the program without it, with the forms this zedc compiles.
-23-join-zoo.zed:28:12: a `for` is part of the Zed language, and this version of zedc does not compile it yet. Write the program without it, with the forms this zedc compiles.
-23-join-zoo.zed:29:12: a `for` is part of the Zed language, and this version of zedc does not compile it yet. Write the program without it, with the forms this zedc compiles.
-23-join-zoo.zed:29:21: a metadata read `::` is part of the Zed language, and this version of zedc does not compile it yet. Write the program without it, with the forms this zedc compiles.
-23-join-zoo.zed:29:42: a metadata read `::` is part of the Zed language, and this version of zedc does not compile it yet. Write the program without it, with the forms this zedc compiles.
-23-join-zoo.zed:30:12: a metadata read `::` is part of the Zed language, and this version of zedc does not compile it yet. Write the program without it, with the forms this zedc compiles.
-23-join-zoo.zed:30:32: a metadata read `::` is part of the Zed language, and this version of zedc does not compile it yet. Write the program without it, with the forms this zedc compiles.
-23-join-zoo.zed:31:12: a metadata read `::` is part of the Zed language, and this version of zedc does not compile it yet. Write the program without it, with the forms this zedc compiles.
-23-join-zoo.zed:31:30: a metadata read `::` is part of the Zed language, and this version of zedc does not compile it yet. Write the program without it, with the forms this zedc compiles.
-23-join-zoo.zed:32:12: a `for` is part of the Zed language, and this version of zedc does not compile it yet. Write the program without it, with the forms this zedc compiles.
-23-join-zoo.zed:33:12: a `for` is part of the Zed language, and this version of zedc does not compile it yet. Write the program without it, with the forms this zedc compiles.
-24-weighted-pick.zed (L6): does not load: 24-weighted-pick.zed:10:1: a struct declaration is part of the Zed language, and this version of zedc does not compile it yet. Write the program without it, with the forms this zedc compiles.
-24-weighted-pick.zed:14:7: a metadata read `::` is part of the Zed language, and this version of zedc does not compile it yet. Write the program without it, with the forms this zedc compiles.
-24-weighted-pick.zed:15:3: an indexed definition is part of the Zed language, and this version of zedc does not compile it yet. Write the program without it, with the forms this zedc compiles.
-24-weighted-pick.zed:22:26: a `loop` is part of the Zed language, and this version of zedc does not compile it yet. Write the program without it, with the forms this zedc compiles.
-25-autocorrelation.zed (L5): does not load: 25-autocorrelation.zed:11:60: a tuple-destructuring parameter is part of the Zed language, and this version of zedc does not compile it yet. Write the program without it, with the forms this zedc compiles.
-25-autocorrelation.zed:12:15: a `for` is part of the Zed language, and this version of zedc does not compile it yet. Write the program without it, with the forms this zedc compiles.
-26-heat-stencil.zed (L6): does not load: 26-heat-stencil.zed:13:11: a metadata read `::` is part of the Zed language, and this version of zedc does not compile it yet. Write the program without it, with the forms this zedc compiles.
-26-heat-stencil.zed:14:3: an indexed definition is part of the Zed language, and this version of zedc does not compile it yet. Write the program without it, with the forms this zedc compiles.
-26-heat-stencil.zed:18:34: a `for` is part of the Zed language, and this version of zedc does not compile it yet. Write the program without it, with the forms this zedc compiles.
-27-parent-chain.zed (L6): does not load: 27-parent-chain.zed:7:1: a struct declaration is part of the Zed language, and this version of zedc does not compile it yet. Write the program without it, with the forms this zedc compiles.
+23-join-zoo.zed:18:21: a `match` is part of the Zed language but is not supported by this version of zedc. Write the program without it.
+23-join-zoo.zed:20:21: a `for` is part of the Zed language but is not supported by this version of zedc. Write the program without it.
+23-join-zoo.zed:26:12: a `for` is part of the Zed language but is not supported by this version of zedc. Write the program without it.
+23-join-zoo.zed:26:44: a metadata read `::` is part of the Zed language but is not supported by this version of zedc. Write the program without it.
+23-join-zoo.zed:27:12: a `for` is part of the Zed language but is not supported by this version of zedc. Write the program without it.
+23-join-zoo.zed:28:12: a `for` is part of the Zed language but is not supported by this version of zedc. Write the program without it.
+23-join-zoo.zed:29:12: a `for` is part of the Zed language but is not supported by this version of zedc. Write the program without it.
+23-join-zoo.zed:29:21: a metadata read `::` is part of the Zed language but is not supported by this version of zedc. Write the program without it.
+23-join-zoo.zed:29:42: a metadata read `::` is part of the Zed language but is not supported by this version of zedc. Write the program without it.
+23-join-zoo.zed:30:12: a metadata read `::` is part of the Zed language but is not supported by this version of zedc. Write the program without it.
+23-join-zoo.zed:30:32: a metadata read `::` is part of the Zed language but is not supported by this version of zedc. Write the program without it.
+23-join-zoo.zed:31:12: a metadata read `::` is part of the Zed language but is not supported by this version of zedc. Write the program without it.
+23-join-zoo.zed:31:30: a metadata read `::` is part of the Zed language but is not supported by this version of zedc. Write the program without it.
+23-join-zoo.zed:32:12: a `for` is part of the Zed language but is not supported by this version of zedc. Write the program without it.
+23-join-zoo.zed:33:12: a `for` is part of the Zed language but is not supported by this version of zedc. Write the program without it.
+24-weighted-pick.zed (L6): does not load: 24-weighted-pick.zed:10:1: a struct declaration is part of the Zed language but is not supported by this version of zedc. Write the program without it.
+24-weighted-pick.zed:14:7: a metadata read `::` is part of the Zed language but is not supported by this version of zedc. Write the program without it.
+24-weighted-pick.zed:15:3: an indexed definition is part of the Zed language but is not supported by this version of zedc. Write the program without it.
+24-weighted-pick.zed:22:26: a `loop` is part of the Zed language but is not supported by this version of zedc. Write the program without it.
+25-autocorrelation.zed (L5): does not load: 25-autocorrelation.zed:11:60: a tuple-destructuring parameter is part of the Zed language but is not supported by this version of zedc. Write the program without it.
+25-autocorrelation.zed:12:15: a `for` is part of the Zed language but is not supported by this version of zedc. Write the program without it.
+26-heat-stencil.zed (L6): does not load: 26-heat-stencil.zed:13:11: a metadata read `::` is part of the Zed language but is not supported by this version of zedc. Write the program without it.
+26-heat-stencil.zed:14:3: an indexed definition is part of the Zed language but is not supported by this version of zedc. Write the program without it.
+26-heat-stencil.zed:18:34: a `for` is part of the Zed language but is not supported by this version of zedc. Write the program without it.
+27-parent-chain.zed (L6): does not load: 27-parent-chain.zed:7:1: a struct declaration is part of the Zed language but is not supported by this version of zedc. Write the program without it.
 27-parent-chain.zed:7:22: The type `Utf8String` is not defined.
 27-parent-chain.zed:7:42: The type `Utf8String` is not defined.
-27-parent-chain.zed:13:7: a metadata read `::` is part of the Zed language, and this version of zedc does not compile it yet. Write the program without it, with the forms this zedc compiles.
-27-parent-chain.zed:18:29: a `loop` is part of the Zed language, and this version of zedc does not compile it yet. Write the program without it, with the forms this zedc compiles.
-27-parent-chain.zed:20:3: an indexed definition is part of the Zed language, and this version of zedc does not compile it yet. Write the program without it, with the forms this zedc compiles.
-27-parent-chain.zed:24:15: a `for` is part of the Zed language, and this version of zedc does not compile it yet. Write the program without it, with the forms this zedc compiles.
-28-precedence-climbing.zed (L6): does not load: 28-precedence-climbing.zed:10:1: a struct declaration is part of the Zed language, and this version of zedc does not compile it yet. Write the program without it, with the forms this zedc compiles.
+27-parent-chain.zed:13:7: a metadata read `::` is part of the Zed language but is not supported by this version of zedc. Write the program without it.
+27-parent-chain.zed:18:29: a `loop` is part of the Zed language but is not supported by this version of zedc. Write the program without it.
+27-parent-chain.zed:20:3: an indexed definition is part of the Zed language but is not supported by this version of zedc. Write the program without it.
+27-parent-chain.zed:24:15: a `for` is part of the Zed language but is not supported by this version of zedc. Write the program without it.
+28-precedence-climbing.zed (L6): does not load: 28-precedence-climbing.zed:10:1: a struct declaration is part of the Zed language but is not supported by this version of zedc. Write the program without it.
 28-precedence-climbing.zed:10:36: The type `Utf8String` is not defined.
-28-precedence-climbing.zed:25:14: a metadata read `::` is part of the Zed language, and this version of zedc does not compile it yet. Write the program without it, with the forms this zedc compiles.
-28-precedence-climbing.zed:27:28: a metadata read `::` is part of the Zed language, and this version of zedc does not compile it yet. Write the program without it, with the forms this zedc compiles.
-28-precedence-climbing.zed:27:82: a metadata read `::` is part of the Zed language, and this version of zedc does not compile it yet. Write the program without it, with the forms this zedc compiles.
-28-precedence-climbing.zed:31:6: a metadata read `::` is part of the Zed language, and this version of zedc does not compile it yet. Write the program without it, with the forms this zedc compiles.
-28-precedence-climbing.zed:37:26: a metadata read `::` is part of the Zed language, and this version of zedc does not compile it yet. Write the program without it, with the forms this zedc compiles.
-28-precedence-climbing.zed:45:9: a `loop` is part of the Zed language, and this version of zedc does not compile it yet. Write the program without it, with the forms this zedc compiles.
-29-late-dedup.zed (L7): does not load: 29-late-dedup.zed:21:1: the signature `sensors: Stream(Utf8String);` is part of the Zed language, and this version of zedc does not compile it yet. Write the program without it, with the forms this zedc compiles.
-30-client-server/main.zed (L20): does not load: 30-client-server/api.zed:5:25: the `matching` refinement of layer L20 `matching grammar { alpha+ }` is part of the Zed language, and this version of zedc does not compile it yet. Write the program without it, with the forms this zedc compiles.
-30-client-server/api.zed:6:25: the `matching` refinement of layer L20 `matching grammar { digit+ }` is part of the Zed language, and this version of zedc does not compile it yet. Write the program without it, with the forms this zedc compiles.
-30-client-server/api.zed:7:1: the struct declaration `struct Get     grammar { "get" item: Word }` is part of the Zed language, and this version of zedc does not compile it yet. Write the program without it, with the forms this zedc compiles.
-30-client-server/api.zed:8:1: the struct declaration `struct Buy     grammar { "buy" item: Word qty: Count }` is part of the Zed language, and this version of zedc does not compile it yet. Write the program without it, with the forms this zedc compiles.
-30-client-server/api.zed:10:1: the struct declaration `struct Price   grammar { item: Word "=" amount: Count }` is part of the Zed language, and this version of zedc does not compile it yet. Write the program without it, with the forms this zedc compiles.
-30-client-server/api.zed:11:1: the struct declaration `struct Missing grammar { "missing:" item: Word }` is part of the Zed language, and this version of zedc does not compile it yet. Write the program without it, with the forms this zedc compiles.
+28-precedence-climbing.zed:25:14: a metadata read `::` is part of the Zed language but is not supported by this version of zedc. Write the program without it.
+28-precedence-climbing.zed:27:28: a metadata read `::` is part of the Zed language but is not supported by this version of zedc. Write the program without it.
+28-precedence-climbing.zed:27:82: a metadata read `::` is part of the Zed language but is not supported by this version of zedc. Write the program without it.
+28-precedence-climbing.zed:31:6: a metadata read `::` is part of the Zed language but is not supported by this version of zedc. Write the program without it.
+28-precedence-climbing.zed:37:26: a metadata read `::` is part of the Zed language but is not supported by this version of zedc. Write the program without it.
+28-precedence-climbing.zed:45:9: a `loop` is part of the Zed language but is not supported by this version of zedc. Write the program without it.
+29-late-dedup.zed (L7): does not load: 29-late-dedup.zed:21:1: the signature `sensors: Stream(Utf8String);` is part of the Zed language but is not supported by this version of zedc. Write the program without it.
+30-client-server/main.zed (L20): does not load: 30-client-server/api.zed:5:25: the `matching` refinement of layer L20 `matching grammar { alpha+ }` is part of the Zed language but is not supported by this version of zedc. Write the program without it.
+30-client-server/api.zed:6:25: the `matching` refinement of layer L20 `matching grammar { digit+ }` is part of the Zed language but is not supported by this version of zedc. Write the program without it.
+30-client-server/api.zed:7:1: the struct declaration `struct Get     grammar { "get" item: Word }` is part of the Zed language but is not supported by this version of zedc. Write the program without it.
+30-client-server/api.zed:8:1: the struct declaration `struct Buy     grammar { "buy" item: Word qty: Count }` is part of the Zed language but is not supported by this version of zedc. Write the program without it.
+30-client-server/api.zed:10:1: the struct declaration `struct Price   grammar { item: Word "=" amount: Count }` is part of the Zed language but is not supported by this version of zedc. Write the program without it.
+30-client-server/api.zed:11:1: the struct declaration `struct Missing grammar { "missing:" item: Word }` is part of the Zed language but is not supported by this version of zedc. Write the program without it.
 30-client-server/main.zed:11:1: an import is part of the Zed language, and this version of zedc does not yet tie a name an import brings in to the other unit's definition. Write the definitions this file uses in it, and remove the import.
 30-client-server/main.zed:12:1: an import is part of the Zed language, and this version of zedc does not yet tie a name an import brings in to the other unit's definition. Write the definitions this file uses in it, and remove the import.
 30-client-server/server.zed:3:1: an import is part of the Zed language, and this version of zedc does not yet tie a name an import brings in to the other unit's definition. Write the definitions this file uses in it, and remove the import.
-31-typechecker/main.zed (L6): does not load: 31-typechecker/ast.zed:4:1: a type declaration is part of the Zed language, and this version of zedc does not compile it yet. Write the program without it, with the forms this zedc compiles.
-31-typechecker/ast.zed:4:13: an atom type with a payload is part of the Zed language, and this version of zedc does not compile it yet. Write the program without it, with the forms this zedc compiles.
-31-typechecker/ast.zed:4:28: an atom type with a payload is part of the Zed language, and this version of zedc does not compile it yet. Write the program without it, with the forms this zedc compiles.
-31-typechecker/ast.zed:4:45: an atom type with a payload is part of the Zed language, and this version of zedc does not compile it yet. Write the program without it, with the forms this zedc compiles.
+31-typechecker/main.zed (L6): does not load: 31-typechecker/ast.zed:4:1: a type declaration is part of the Zed language but is not supported by this version of zedc. Write the program without it.
+31-typechecker/ast.zed:4:13: an atom type with a payload is part of the Zed language but is not supported by this version of zedc. Write the program without it.
+31-typechecker/ast.zed:4:28: an atom type with a payload is part of the Zed language but is not supported by this version of zedc. Write the program without it.
+31-typechecker/ast.zed:4:45: an atom type with a payload is part of the Zed language but is not supported by this version of zedc. Write the program without it.
 31-typechecker/ast.zed:4:56: The type `Utf8String` is not defined.
-31-typechecker/ast.zed:5:13: an atom type with a payload is part of the Zed language, and this version of zedc does not compile it yet. Write the program without it, with the forms this zedc compiles.
-31-typechecker/ast.zed:5:38: an atom type with a payload is part of the Zed language, and this version of zedc does not compile it yet. Write the program without it, with the forms this zedc compiles.
-31-typechecker/ast.zed:6:13: an atom type with a payload is part of the Zed language, and this version of zedc does not compile it yet. Write the program without it, with the forms this zedc compiles.
-31-typechecker/ast.zed:8:1: a struct declaration is part of the Zed language, and this version of zedc does not compile it yet. Write the program without it, with the forms this zedc compiles.
+31-typechecker/ast.zed:5:13: an atom type with a payload is part of the Zed language but is not supported by this version of zedc. Write the program without it.
+31-typechecker/ast.zed:5:38: an atom type with a payload is part of the Zed language but is not supported by this version of zedc. Write the program without it.
+31-typechecker/ast.zed:6:13: an atom type with a payload is part of the Zed language but is not supported by this version of zedc. Write the program without it.
+31-typechecker/ast.zed:8:1: a struct declaration is part of the Zed language but is not supported by this version of zedc. Write the program without it.
 31-typechecker/ast.zed:8:32: The type `Utf8String` is not defined.
-31-typechecker/ast.zed:12:12: a metadata read `::` is part of the Zed language, and this version of zedc does not compile it yet. Write the program without it, with the forms this zedc compiles.
-31-typechecker/ast.zed:14:20: a metadata read `::` is part of the Zed language, and this version of zedc does not compile it yet. Write the program without it, with the forms this zedc compiles.
-31-typechecker/ast.zed:17:12: a metadata read `::` is part of the Zed language, and this version of zedc does not compile it yet. Write the program without it, with the forms this zedc compiles.
-31-typechecker/ast.zed:18:12: a metadata read `::` is part of the Zed language, and this version of zedc does not compile it yet. Write the program without it, with the forms this zedc compiles.
-31-typechecker/ast.zed:20:20: a metadata read `::` is part of the Zed language, and this version of zedc does not compile it yet. Write the program without it, with the forms this zedc compiles.
-31-typechecker/ast.zed:23:10: a `match` is part of the Zed language, and this version of zedc does not compile it yet. Write the program without it, with the forms this zedc compiles.
-31-typechecker/ast.zed:28:33: a metadata read `::` is part of the Zed language, and this version of zedc does not compile it yet. Write the program without it, with the forms this zedc compiles.
-31-typechecker/check.zed:5:20: a `match` is part of the Zed language, and this version of zedc does not compile it yet. Write the program without it, with the forms this zedc compiles.
-31-typechecker/check.zed:23:38: a `match` is part of the Zed language, and this version of zedc does not compile it yet. Write the program without it, with the forms this zedc compiles.
-31-typechecker/check.zed:26:18: a `match` is part of the Zed language, and this version of zedc does not compile it yet. Write the program without it, with the forms this zedc compiles.
-31-typechecker/check.zed:33:24: a `match` is part of the Zed language, and this version of zedc does not compile it yet. Write the program without it, with the forms this zedc compiles.
-31-typechecker/main.zed:21:51: a `match` is part of the Zed language, and this version of zedc does not compile it yet. Write the program without it, with the forms this zedc compiles.
-31-typechecker/main.zed:30:11: a `for` is part of the Zed language, and this version of zedc does not compile it yet. Write the program without it, with the forms this zedc compiles.
-31-typechecker/main.zed:33:8: a `loop` is part of the Zed language, and this version of zedc does not compile it yet. Write the program without it, with the forms this zedc compiles.
-31-typechecker/main.zed:41:25: a `match` is part of the Zed language, and this version of zedc does not compile it yet. Write the program without it, with the forms this zedc compiles.
-31-typechecker/main.zed:46:12: a `match` is part of the Zed language, and this version of zedc does not compile it yet. Write the program without it, with the forms this zedc compiles.
-31-typechecker/main.zed:47:12: a `match` is part of the Zed language, and this version of zedc does not compile it yet. Write the program without it, with the forms this zedc compiles.
-31-typechecker/main.zed:61:13: a `for` is part of the Zed language, and this version of zedc does not compile it yet. Write the program without it, with the forms this zedc compiles.
+31-typechecker/ast.zed:12:12: a metadata read `::` is part of the Zed language but is not supported by this version of zedc. Write the program without it.
+31-typechecker/ast.zed:14:20: a metadata read `::` is part of the Zed language but is not supported by this version of zedc. Write the program without it.
+31-typechecker/ast.zed:17:12: a metadata read `::` is part of the Zed language but is not supported by this version of zedc. Write the program without it.
+31-typechecker/ast.zed:18:12: a metadata read `::` is part of the Zed language but is not supported by this version of zedc. Write the program without it.
+31-typechecker/ast.zed:20:20: a metadata read `::` is part of the Zed language but is not supported by this version of zedc. Write the program without it.
+31-typechecker/ast.zed:23:10: a `match` is part of the Zed language but is not supported by this version of zedc. Write the program without it.
+31-typechecker/ast.zed:28:33: a metadata read `::` is part of the Zed language but is not supported by this version of zedc. Write the program without it.
+31-typechecker/check.zed:5:20: a `match` is part of the Zed language but is not supported by this version of zedc. Write the program without it.
+31-typechecker/check.zed:23:38: a `match` is part of the Zed language but is not supported by this version of zedc. Write the program without it.
+31-typechecker/check.zed:26:18: a `match` is part of the Zed language but is not supported by this version of zedc. Write the program without it.
+31-typechecker/check.zed:33:24: a `match` is part of the Zed language but is not supported by this version of zedc. Write the program without it.
+31-typechecker/main.zed:21:51: a `match` is part of the Zed language but is not supported by this version of zedc. Write the program without it.
+31-typechecker/main.zed:30:11: a `for` is part of the Zed language but is not supported by this version of zedc. Write the program without it.
+31-typechecker/main.zed:33:8: a `loop` is part of the Zed language but is not supported by this version of zedc. Write the program without it.
+31-typechecker/main.zed:41:25: a `match` is part of the Zed language but is not supported by this version of zedc. Write the program without it.
+31-typechecker/main.zed:46:12: a `match` is part of the Zed language but is not supported by this version of zedc. Write the program without it.
+31-typechecker/main.zed:47:12: a `match` is part of the Zed language but is not supported by this version of zedc. Write the program without it.
+31-typechecker/main.zed:61:13: a `for` is part of the Zed language but is not supported by this version of zedc. Write the program without it.
 31-typechecker/main.zed:18:1: an import is part of the Zed language, and this version of zedc does not yet tie a name an import brings in to the other unit's definition. Write the definitions this file uses in it, and remove the import.
 31-typechecker/main.zed:19:1: an import is part of the Zed language, and this version of zedc does not yet tie a name an import brings in to the other unit's definition. Write the definitions this file uses in it, and remove the import.

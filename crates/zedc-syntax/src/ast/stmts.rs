@@ -726,10 +726,10 @@ impl Builder<'_, '_> {
             match self.tree.name(k) {
                 "Params" => params = self.params(k, self.span(n))?,
                 // Any result type but `int` is rejected naming `int`, a form this zedc does not
-                // compile yet as well, as the old `-> (stdout: Lines)`, after the parameter,
+                // support as well, as the old `-> (stdout: Lines)`, after the parameter,
                 // whose message says where each old input is read now ([`Self::main_header`]).
                 // A facet `with handles(…)` is checked here, and a `main` that takes signals over
-                // is not compiled yet ([`Self::main_handles`]).
+                // is not supported ([`Self::main_handles`]).
                 "Result"
                     if is_main
                         && self
@@ -814,7 +814,7 @@ impl Builder<'_, '_> {
     /// `main` is checked here: on `main`'s table, `main::stdin`, `main::args`, `main::env` and
     /// `main::files` are the inputs a row's key gives, and any other field is rejected. Every
     /// function reads `main::files` (QUESTIONS A68), so any table may give it; the outputs, and
-    /// the other inputs on another function's table, are not compiled yet, since this zedc
+    /// the other inputs on another function's table, are not supported, since this zedc
     /// compares the outputs by a row's value and a function other than `main` reads the other
     /// inputs by `main::args`, of layer L3. A name is left to the resolver, which knows what the unit
     /// defines. A port given twice in one clause is rejected.
@@ -932,7 +932,7 @@ impl Builder<'_, '_> {
     /// (row "Signal declaration of `main` that cannot hold"): a second `handles`, no argument,
     /// an argument other than `#sigint`, `#sigterm` and `#sighup`, an atom named twice, or a
     /// `main` that never reads `m.signals`; and a declaration that holds is a form this zedc
-    /// does not compile yet, until plan row SIGNALS-rt gives the port and the runtime's part.
+    /// does not support, until plan row SIGNALS-rt gives the port and the runtime's part.
     // Complexity: one pass over the f facets and the a arguments, O(f + a); the atoms seen are
     // at most three, so the repeat check is a scan of a list of at most three, O(1) each.
     fn main_handles(&mut self, t: usize, body: Span) -> Error {

@@ -2940,7 +2940,7 @@ impl Resolver<'_> {
     /// decides it. This zedc declares no port at the top level (no store, no foreign library),
     /// so a name the unit or the prelude binds is Zed code, which a test never replaces, and is
     /// rejected, as a name that names nothing is; a port constructor of the prelude that the
-    /// unit does not bind is refused as not compiled yet, since this zedc has none of them.
+    /// unit does not bind is refused as not supported, since this zedc has none of them.
     /// The menu of a rejection is the ports `f` may reach: `main`'s inputs on `main`'s table,
     /// and on another function's the file port `main::files`, the one port such a function
     /// reads in this zedc (QUESTIONS A68), or the table without the clause.
@@ -3001,7 +3001,7 @@ impl Resolver<'_> {
         }
     }
 
-    /// The form `what`, which the parser builds and this zedc does not compile yet.
+    /// The form `what`, which the parser builds and this zedc does not support.
     /// `what`, a read of a range with no upper end, `a ..`, or of a stream over one, that would
     /// never end, `why` saying what it reads: refused, with the reads that do end as the repair
     /// (plan row RANGE-open-walk).
@@ -4830,7 +4830,7 @@ fn near_in_spelling(written: &str, name: &str) -> bool {
 
 /// The row "Type variable in a `struct` field that is not one of the struct's declared type
 /// parameters" (DESIGN.md sec:diagnostics) for `n` at `span`. DESIGN.md's menu declares the
-/// struct's parameters, `struct Pair(A, B) {…}`, a form this zedc does not compile yet, so the
+/// struct's parameters, `struct Pair(A, B) {…}`, a form this zedc does not support, so the
 /// error offers no menu.
 fn field_type_var(n: &str, span: Span) -> Error {
     Error {
@@ -4847,7 +4847,7 @@ fn field_type_var(n: &str, span: Span) -> Error {
                 text: format!(
                     "a capital letter alone, or followed only by digits, as `{n}`, names a type \
                      variable; a struct's field may name only the struct's own type parameters, \
-                     which this version of zedc does not compile yet"
+                     which are not supported by this version of zedc"
                 ),
             },
             Note {
@@ -4927,8 +4927,8 @@ fn written_once(n: &str, first: Span, param: Option<(&str, Span, bool)>) -> Erro
         None => Note {
             span: first,
             text: format!(
-                "`_` in place of `{n}` is part of the Zed language, and this version of zedc \
-                 does not compile it yet; name the type, or write `{n}` where the body or \
+                "`_` in place of `{n}` is part of the Zed language but is not supported by \
+                 this version of zedc; name the type, or write `{n}` where the body or \
                  another parameter has the same type"
             ),
         },

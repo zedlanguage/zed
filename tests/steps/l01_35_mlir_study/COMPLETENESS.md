@@ -34,5 +34,5 @@ needed.
 | indexed definition, annotations (bare, with arguments, of the unit), local function, parameter default, method, struct field default, block body with `<-` and `return` of two, a table row, two statements | the table: 11 rows |
 | **Kernel term counts** | |
 | the terms of the step units | `layout::the_step_units_are_measured_and_each_node_takes_at_least_its_inline_size` |
-| a discard, a family, a fixed point, a reindex, a generator, a fold | none at this step: these terms come only from `for`, `loop`, indexed definitions and `><`, which zedc refuses at L1 ("is part of the Zed language, and this version of zedc does not compile it yet"), so no unit reaches the term stage with one; they join when those forms compile |
+| a discard, a family, a fixed point, a reindex, a generator, a fold | none at this step: these terms come only from `for`, `loop`, indexed definitions and `><`, which zedc refuses at L1 ("is part of the Zed language but is not supported by this version of zedc"), so no unit reaches the term stage with one; they join when those forms compile |
 | **Scaling** | the reader's time in `bench` (linear in the source); not a correctness test (P178) |

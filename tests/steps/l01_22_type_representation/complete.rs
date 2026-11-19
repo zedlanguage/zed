@@ -196,11 +196,10 @@ fn a_bounds_error_and_a_port_error_both_stand_in_written_order() {
 /// the `Array` arm of `kernel_form`).
 #[test]
 fn is_rejects_a_list_type_and_a_bound_holding_one() {
-    let list = "a test against a list type `[T]` is part of the Zed language, and this version \
-                of zedc does not compile it yet. Write the program without it, with the forms \
-                this zedc compiles.";
+    let list = "a test against a list type `[T]` is part of the Zed language but is not \
+                supported by this version of zedc. Write the program without it.";
     let bound = "a list type `[T]` inside a function type `L .. U -> V` is part of the Zed \
-                 language, and this version of zedc does not compile it yet. Write the function \
+                 language but is not supported by this version of zedc. Write the function \
                  type without `..`, as `(…) -> …`.";
     for (written, want) in [
         ("[int]", vec![format!("{list} [[int]]")]),

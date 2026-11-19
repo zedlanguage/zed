@@ -180,7 +180,7 @@ fn the_record_of_a_unit_of_a_few_definitions_is_made() {
 /// The syntax-tree count of each kind of expression and statement: a statement is one node,
 /// each expression in it one more, and an expression inside a pattern or a type is part of that
 /// pattern or type. Each count below is worked out by hand from that rule; the unit is only
-/// parsed, so forms this step does not compile yet are counted too.
+/// parsed, so forms this zedc does not support are counted too.
 #[test]
 fn each_kind_of_expression_and_statement_is_counted_once() {
     let cases: [(&str, &str, usize); 41] = [

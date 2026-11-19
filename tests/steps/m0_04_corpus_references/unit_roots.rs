@@ -52,7 +52,7 @@ fn the_packages_of_the_corpus_are_exactly_these() {
 }
 
 /// Loaded as `zedc run` loads a file, each program finds every unit it imports: no diagnostic
-/// says a unit cannot be imported. (Each still stops at forms this zedc does not compile yet,
+/// says a unit cannot be imported. (Each still stops at forms this zedc does not support,
 /// such as tying an imported name to its definition, step L2.4.)
 #[test]
 fn zedc_finds_every_unit_each_package_imports() {

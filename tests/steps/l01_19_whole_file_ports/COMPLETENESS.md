@@ -34,7 +34,7 @@ Plan row TEST-complete-ports (author P189). Coverage before and after is at the 
 | A string holding a line end, the empty string, a non-ASCII string | `combinations.rs::a_pushed_value_is_written_as_lines_at_any_depth` | |
 | A family of strings written one line per entry | `lines.rs::a_family_of_lines_is_written_one_line_per_entry` | |
 | An empty level, flat or nested, writes no line | `writes.rs::an_empty_level_pushed_writes_no_line` | Checked through `join_lines`; a program cannot build such a family at L1, since map displays are a later form. |
-| Pushed values given as map displays (`{}`, `{0 -> "a"}`, nested) | | Left out: zedc refuses map displays at L1 ("a map display is part of the Zed language, and this version of zedc does not compile it yet"). |
+| Pushed values given as map displays (`{}`, `{0 -> "a"}`, nested) | | Left out: zedc refuses map displays at L1 ("a map display is part of the Zed language but is not supported by this version of zedc"). |
 | Only strings are written; a number pushed is rejected with a repair | `writes.rs::only_strings_are_written_as_lines` | |
 | A push whose value may hold a failure is rejected: a stdin line, to stderr, an argument, a variable, a file, a bare atom | `combinations.rs::a_push_whose_value_may_hold_a_failure_is_rejected_at_the_push` | |
 | Two push sites on two branches; only the one that runs writes | `combinations.rs::of_two_push_sites_only_the_one_that_runs_writes`; `writes.rs::an_error_stops_the_wave_before_anything_is_written` | |

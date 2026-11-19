@@ -6875,7 +6875,10 @@ main() = f(x: {text});
         let batch = zedc::run::load(src.as_bytes())
             .err()
             .expect("literal type compilation must be reported");
-        assert!(batch.contains("does not compile it yet"), "{batch}");
+        assert!(
+            batch.contains("not supported by this version of zedc"),
+            "{batch}"
+        );
         let alone = std::thread::spawn(move || zedc::run::load(src.as_bytes()).err())
             .join()
             .unwrap();

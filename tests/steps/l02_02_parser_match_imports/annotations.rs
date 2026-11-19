@@ -52,7 +52,7 @@ fn malformed_annotations() {
 }
 
 /// An annotation on an operand (rule AnnotExpr, layer L7, as in `d = @fpsafe (x - y);`)
-/// parses, and is refused as not compiled yet until it is built; before, such a unit reached an
+/// parses, and is refused as not supported until it is built; before, such a unit reached an
 /// `unreachable!` in the builder of `Prefix`.
 #[test]
 fn annotated_operands() {

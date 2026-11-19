@@ -1,4 +1,4 @@
-//! Name resolution refuses each form of layer L3 that zedc does not compile yet (the displays,
+//! Name resolution refuses each form of layer L3 that zedc does not support (the displays,
 //! `in`, `not in`, `><` and the operator sections are built, plan rows MAP-run and
 //! MAP-run-rest; a fold by a function is the checker's to refuse or take); the parser
 //! refuses the parts of a `for` and a reduction that belong to later layers.

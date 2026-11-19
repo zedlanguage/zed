@@ -31,19 +31,22 @@ fn a_member_call_on_each_kind_of_literal_has_the_short_headline_and_the_rule_in_
             out.contains("with the literal as its first argument, since a literal has no fields"),
             "{out}"
         );
-        assert!(!out.contains("does not compile"), "{out}");
+        assert!(
+            !out.contains("not supported by this version of zedc"),
+            "{out}"
+        );
     }
 }
 
 #[test]
 fn a_member_of_a_value_that_can_have_fields_keeps_the_field_read_clause() {
     // A parameter can hold a record, so `.e` may read its field, a form this zedc does not
-    // compile yet; that is the error, not an undefined name.
+    // support; that is the error, not an undefined name.
     let out = rejected("t(r) = r.e;\n");
     assert!(
         out.lines()
             .next()
-            .is_some_and(|h| h.contains("does not compile yet")),
+            .is_some_and(|h| h.contains("not supported by this version of zedc")),
         "{out}"
     );
     assert!(!out.contains("is not defined"), "{out}");

@@ -617,7 +617,7 @@ impl<'t, 'a> Ck<'t, 'a> {
     /// type, and the root of the first class not yet resolved that the word reads: a string
     /// operand that is the class, the pieces of `concat` that are, or an entry of the pieces
     /// that is. A variable the word reads that names no class, a type variable of a signature,
-    /// is not compiled yet. `None` after an error.
+    /// is not supported by this zedc. `None` after an error.
     // Complexity tradeoff: one walk of the operands' variables and one replacement, O(size of
     // the operands); a type a class is resolved to holds no variable (the invariant at
     // `Class::resolved`), so one replacement leaves only classes not yet resolved. The naive
@@ -1184,7 +1184,7 @@ impl<'t, 'a> Ck<'t, 'a> {
     /// that type; one not yet resolved records it as a need on its class, met at each call of
     /// the generic function, and at each application of a lambda such as a fold's, on the
     /// type the call gives it; a variable with no class, which a written type parameter is,
-    /// is not compiled yet. The rest of the operand takes it as it stands, and the results are
+    /// is not supported by this zedc. The rest of the operand takes it as it stands, and the results are
     /// joined: `++` is checked piece by piece, so the join of the pieces' results holds the
     /// whole's. A `++` with an operand that may be a family is a list join wherever it is
     /// met, since a string beside a list is rejected, so it is recorded at `site` with the
@@ -1430,7 +1430,7 @@ impl<'t, 'a> Ck<'t, 'a> {
     /// resolved records it as a need on its class ([`NeedKind::Zip`]), met at each call of the
     /// generic function on the type the call gives it, where the arguments' own expressions
     /// show whether they share their keys ([`Self::zip_shares_keys`]); a variable with no
-    /// class, which a written type parameter is, is not compiled yet. `need` is `Ck::need`,
+    /// class, which a written type parameter is, is not supported by this zedc. `need` is `Ck::need`,
     /// passed in as at `list_concat_end`, so this file imports nothing of walk.rs.
     // Complexity tradeoff: the bounds over all the families each operand may be, two
     // subtype tests and one diff for the message, linear in the arrows (`key_bounds`); plus
