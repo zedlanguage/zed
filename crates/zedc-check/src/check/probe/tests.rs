@@ -1,9 +1,12 @@
 //! Tests of the counters of `probe.rs`: each checks a small unit and reads the report.
 
-use super::last_report;
+use super::{R10Config, last_report, set_next_config};
 
-/// The probe's report for the unit `text`, checked alone.
+/// The probe's report for the unit `text`, checked alone by E. The probe counts what D would
+/// meet on E's path, and a check with D's sparse store writes no report (`Classes`'s `Drop`),
+/// so these tests pin E rather than take the test default, which `ZED_ENABLE_D` turns to D.
 fn report(text: &str) -> String {
+    set_next_config(R10Config::eager());
     let tokens = zedc_syntax::lex::lex(text).expect("the unit lexes");
     let (tree, errors) = zedc_syntax::parse::parse_unit(text, &tokens, zedc_syntax::parse::TOP);
     assert!(errors.is_empty(), "the unit parses");
