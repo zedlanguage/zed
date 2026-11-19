@@ -144,8 +144,9 @@ carried in ZIR, and the stripped form".
    may-block; make `recheck` prove each stored fact again in one forward pass from its node's
    inputs, as abstraction-carrying code checks a certificate, carrying in full only the facts a
    fixpoint found. Then `may_be_nan` reads a real type and skips the run-time NaN test on a float
-   edge known NaN-free. Consumer: L24.2, whose vectorization reads intervals and types from the
-   edges.
+   edge known NaN-free. Direct consumer: ZIR-cost-facts, which stores the cost bounds beside
+   these facts. L24.2, whose vectorization reads intervals and types from the edges, reaches it
+   through S.4 and L24.1, so it is not a direct need of L24.2.
 2. **ZIR-cost-facts.** Once L18.1 derives `f::cost` and `f::depth`, store each node's bound on
    the graph, keep it in the full form, drop it in the stripped one, and re-check it. Consumer:
    L24.1, whose strategy catalog chooses a schedule from cost bounds per region.
