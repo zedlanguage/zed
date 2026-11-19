@@ -245,6 +245,104 @@ mod row_sums {
     }
 }
 
+/// The classes of `row_sums::classes` answered where the join does not
+/// (PRES-overlap-sums-exact-subclasses), each at n and 8n: forced atoms past the join's limit
+/// and scaled atoms with no plan.
+mod classes {
+    use zed_tests::scaling;
+    use zedc::store::presburger::{Atom, JOIN_LIMIT_SET, REDUCED, ReducedBy, project_each};
+
+    use crate::disj_groups::row_sums::classes::{Big, overlap_scaled};
+    use crate::disj_groups::row_sums::v;
+
+    /// `n + 1` atoms each in `0..=4` or `8..=12`, and the rows `y_i + 40·y_(i+1) == t_i` of
+    /// one point: the coefficient 40 is greater than the width 12 of the term `y_i`, so each
+    /// row forces `y_(i+1)`, then `y_0` is forced by the first row.
+    fn forced_chain(n: usize) -> Big {
+        let p = |i: usize| [1, 9, 3, 12][i % 4];
+        Big {
+            ranges: vec![vec![(0, 4), (8, 12)]; n + 1],
+            rows: (0..n)
+                .map(|i| {
+                    let mut cs = vec![0; n + 1];
+                    cs[i] = 1;
+                    cs[i + 1] = 40;
+                    (cs, p(i) + 40 * p(i + 1), true)
+                })
+                .collect(),
+        }
+    }
+
+    /// Each of `atoms` projected, with the join's limit at `limit`: `by` gave the answer and
+    /// each set is a point or not empty.
+    fn answered(f: &zedc::store::presburger::Formula, atoms: &[Atom], limit: Option<u64>) {
+        JOIN_LIMIT_SET.with(|l| l.set(limit));
+        let p = project_each(f, atoms);
+        JOIN_LIMIT_SET.with(|l| l.set(None));
+        let reduced = REDUCED.with(|r| r.take()).expect("answered by the classes");
+        assert_ne!(reduced.by, ReducedBy::NoPoint);
+        let (each, _) = p.expect("a projection");
+        assert!(each.iter().all(|s| s.as_ref().is_ok_and(|s| !s.is_empty())));
+    }
+
+    /// A chain of rows each forcing an atom, past the join's limit (set to 0, so the join
+    /// stops at its first step): the forcing passes each term a few times, `O(t log t)`.
+    #[test]
+    fn a_chain_of_forced_rows_past_the_limit_is_projected_in_n_log_n() {
+        let inputs = scaling::inputs(1000, |n| forced_chain(n).formula());
+        scaling::check_order("a chain of forced rows projected", 1000, 1, |n| {
+            answered(&inputs[&n], &[v(0), v(n / 2), v(n)], Some(0));
+        });
+    }
+
+    /// `overlap_rows(k)` at k = 8, 12, 16 and 24, by the default path (the join answers) and
+    /// past the join's limit (set to 0): the atoms answered and the time of each. No class
+    /// takes it (no atom is forced, each atom's one value besides 0 scales it but its rows'
+    /// coefficients keep gcd 1, so the keys do not shrink), so past the limit it is the solver
+    /// with the cover, which answers each atom with the join's set or refuses it.
+    #[test]
+    fn overlap_rows_by_the_default_path_and_past_the_limit() {
+        for k in [8, 12, 16, 24] {
+            let f = crate::disj_groups::row_sums::overlap_rows(k).formula();
+            let atoms: Vec<Atom> = (0..k).map(v).collect();
+            let t = std::time::Instant::now();
+            let (exact, _) = project_each(&f, &atoms).expect("a projection");
+            let joined = t.elapsed();
+            assert!(exact.iter().all(Result::is_ok), "k = {k}");
+            REDUCED.with(|r| r.set(None));
+            JOIN_LIMIT_SET.with(|l| l.set(Some(0)));
+            let t = std::time::Instant::now();
+            let past = project_each(&f, &atoms);
+            let past_time = t.elapsed();
+            JOIN_LIMIT_SET.with(|l| l.set(None));
+            assert_eq!(REDUCED.with(|r| r.take()), None, "k = {k}");
+            let answered = match &past {
+                Ok((each, _)) => {
+                    for (got, want) in each.iter().zip(&exact) {
+                        assert!(got.is_err() || got == want, "k = {k}");
+                    }
+                    each.iter().filter(|s| s.is_ok()).count()
+                }
+                Err(_) => 0,
+            };
+            eprintln!(
+                "overlap_rows({k}): the join {joined:?}, {k} of {k} atoms; past the limit \
+                 {past_time:?}, {answered} of {k} atoms ({:?})",
+                past.as_ref().err()
+            );
+        }
+    }
+
+    /// `overlap_rows(k)` with its values times `10^15`, with no plan: scaled, then joined.
+    #[test]
+    fn overlapping_sums_of_scaled_values_are_projected_in_n_log_n() {
+        let inputs = scaling::inputs(128, |k| overlap_scaled(k, 1_000_000_000_000_000).formula());
+        scaling::check_order("overlapping sums of scaled values projected", 128, 1, |k| {
+            answered(&inputs[&k], &[v(0), v(k / 2), v(k - 1)], None);
+        });
+    }
+}
+
 /// The measurements behind the switch of `row_sums` between the join of row sums, the solver
 /// and refusal (PRES-switchover-not-race, author P196/P197, A96): the join's time per unit of
 /// its work, which sets `JOIN_LIMIT`, and both sides of the switch on a family where the

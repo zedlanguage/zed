@@ -1455,6 +1455,360 @@ pub(super) mod row_sums {
             assert_eq!(with, without, "{what}");
         }
     }
+
+    /// The classes answered exactly where the join does not (`row_sums::classes`,
+    /// PRES-overlap-sums-exact-subclasses): forced atoms, scaled atoms, and the join once more
+    /// on the rows they reduce. Each answer is checked against every point; each class has a
+    /// case it must not take.
+    pub(crate) mod classes {
+        use std::collections::BTreeSet;
+
+        use zedc::store::interval::{End, Num};
+        use zedc::store::presburger::{
+            Atom, Con, Formula, JOIN_LIMIT_SET, Lin, REDUCED, Reduced, ReducedBy, project_each,
+        };
+
+        use super::v;
+
+        /// Atoms with their values (each a list of ranges) and rows `(coefficients, target,
+        /// equation)`, in `i128`, so that values past `2^62` can be written.
+        pub(crate) struct Big {
+            pub(crate) ranges: Vec<Vec<(i128, i128)>>,
+            pub(crate) rows: Vec<(Vec<i128>, i128, bool)>,
+        }
+
+        impl Big {
+            pub(crate) fn formula(&self) -> Formula {
+                let mut fs = Vec::new();
+                for (i, ranges) in self.ranges.iter().enumerate() {
+                    let y = Lin::atom(v(i));
+                    let ge = |l: Lin| Formula::Con(Con::ge(&l, &Lin::constant(0)));
+                    fs.push(Formula::or(
+                        (ranges.iter())
+                            .map(|&(l, h)| {
+                                if l == h {
+                                    Formula::Con(Con::eq(&y, &Lin::constant(l)))
+                                } else {
+                                    Formula::and(vec![
+                                        ge(y.minus(&Lin::constant(l))),
+                                        ge(Lin::constant(h).minus(&y)),
+                                    ])
+                                }
+                            })
+                            .collect(),
+                    ));
+                }
+                for (cs, t, eq) in &self.rows {
+                    let lin = (cs.iter().enumerate())
+                        .filter(|(_, c)| **c != 0)
+                        .fold(Lin::constant(-t), |l, (i, c)| {
+                            l.plus(&Lin::atom(v(i)).times(*c))
+                        });
+                    let zero = Lin::constant(0);
+                    fs.push(Formula::Con(if *eq {
+                        Con::eq(&lin, &zero)
+                    } else {
+                        Con::ge(&lin, &zero)
+                    }));
+                }
+                Formula::and(fs)
+            }
+
+            /// Each atom's values over the points, by trying every point.
+            pub(crate) fn brute(&self) -> Vec<BTreeSet<i128>> {
+                let doms: Vec<Vec<i128>> = (self.ranges.iter())
+                    .map(|r| r.iter().flat_map(|&(l, h)| l..=h).collect())
+                    .collect();
+                let mut sets = vec![BTreeSet::new(); doms.len()];
+                let mut idx = vec![0usize; doms.len()];
+                'next: loop {
+                    let pt: Vec<i128> = (0..doms.len()).map(|i| doms[i][idx[i]]).collect();
+                    let meets = self.rows.iter().all(|(cs, t, e)| {
+                        let s: i128 = cs.iter().zip(&pt).map(|(c, x)| c * x).sum();
+                        if *e { s == *t } else { s >= *t }
+                    });
+                    if meets {
+                        for (s, x) in sets.iter_mut().zip(&pt) {
+                            s.insert(*x);
+                        }
+                    }
+                    for i in 0..doms.len() {
+                        idx[i] += 1;
+                        if idx[i] < doms[i].len() {
+                            continue 'next;
+                        }
+                        idx[i] = 0;
+                    }
+                    return sets;
+                }
+            }
+
+            /// Each atom's projection, with the join's limit at `limit` (`None`, the default),
+            /// and the reductions that answered it; each set answered is checked against
+            /// `want`, the values over the points, on the values of the atom's ranges (an
+            /// answer holds no value outside them, the join's sets being subsets of the
+            /// ranges and the solver's exact). The count of atoms answered.
+            pub(crate) fn projected(
+                &self,
+                limit: Option<u64>,
+                want: &[BTreeSet<i128>],
+            ) -> (usize, Option<Reduced>) {
+                let f = self.formula();
+                let atoms: Vec<Atom> = (0..self.ranges.len()).map(v).collect();
+                REDUCED.with(|r| r.set(None));
+                JOIN_LIMIT_SET.with(|l| l.set(limit));
+                let got = project_each(&f, &atoms);
+                JOIN_LIMIT_SET.with(|l| l.set(None));
+                let reduced = REDUCED.with(|r| r.take());
+                let each = match got {
+                    Ok((each, _)) => each,
+                    Err(r) => {
+                        assert!(reduced.is_none(), "{f}: refused {r:?} after {reduced:?}");
+                        return (0, reduced);
+                    }
+                };
+                let mut answered = 0;
+                for (i, (s, want)) in each.iter().zip(want).enumerate() {
+                    let Ok(s) = s else {
+                        assert!(reduced.is_none(), "y{i} of {f}: refused after {reduced:?}");
+                        continue;
+                    };
+                    answered += 1;
+                    let seen: BTreeSet<i128> = (self.ranges[i].iter())
+                        .flat_map(|&(l, h)| l..=h)
+                        .filter(|&x| s.contains_end(&end(x)))
+                        .collect();
+                    assert_eq!(&seen, want, "y{i} of {f}, {reduced:?}: {s:?}");
+                    let (lo, hi) = (
+                        self.ranges[i][0].0,
+                        self.ranges[i].last().expect("a range").1,
+                    );
+                    assert!(
+                        !s.contains_end(&end(lo - 1)) && !s.contains_end(&end(hi + 1)),
+                        "y{i} of {f}: {s:?}"
+                    );
+                }
+                (answered, reduced)
+            }
+        }
+
+        fn end(x: i128) -> End {
+            End::Fin(Num::from(x))
+        }
+
+        /// k atoms each in `0..=m` or `2m..=3m`, with coefficients the powers of `10m`, summing
+        /// to `t`: each coefficient is greater than the width of the terms below it, so the
+        /// row is superincreasing and solved from its heaviest term down (the `sparse` family
+        /// of the switchover benchmark, whose join stops at its limit from k = 3, m = 300).
+        pub(crate) fn sparse(k: usize, m: i128, t: i128) -> Big {
+            let g = 10 * m;
+            Big {
+                ranges: vec![vec![(0, m), (2 * m, 3 * m)]; k],
+                rows: vec![((0..k).map(|i| g.pow(i as u32)).collect(), t, true)],
+            }
+        }
+
+        /// The limit no join meets: every join stops at its first step.
+        const STOPPED: Option<u64> = Some(0);
+
+        /// The sparse family past the join's limit, at targets met by one point, by none
+        /// (a value in the gap between an atom's ranges), and by none past the greatest sum:
+        /// each answered exactly by forced atoms alone.
+        #[test]
+        fn sparse_sums_past_the_limit_are_answered_by_forced_atoms() {
+            for (k, m) in [(2usize, 4i128), (3, 3), (4, 2)] {
+                let g = 10 * m;
+                for t in [3 + g * m, 3 + g * (m + 1), m + 1 + g * m] {
+                    let case = sparse(k, m, t);
+                    let want = case.brute();
+                    let (answered, reduced) = case.projected(STOPPED, &want);
+                    assert_eq!(answered, k, "k = {k}, m = {m}, t = {t}");
+                    let by = reduced.expect("answered by the classes").by;
+                    let none = want[0].is_empty();
+                    assert_eq!(
+                        by,
+                        if none {
+                            ReducedBy::NoPoint
+                        } else {
+                            ReducedBy::Forced
+                        },
+                        "k = {k}, m = {m}, t = {t}"
+                    );
+                }
+            }
+        }
+
+        /// The negative control of forcing: in `y0 + 4·y1 == 4`, `y0` in `0..=4` and `y1` in
+        /// `0..=2`, the coefficient of `y1` equals the width of `y0`'s term, so neither is
+        /// forced (the points are (4, 0) and (0, 1)); no class answers, and the projection is
+        /// the solver's with the cover, or refused.
+        #[test]
+        fn a_coefficient_equal_to_the_width_below_it_forces_nothing() {
+            let case = Big {
+                ranges: vec![vec![(0, 4)], vec![(0, 2)]],
+                rows: vec![(vec![1, 4], 4, true)],
+            };
+            let want = case.brute();
+            assert_eq!(want[1], BTreeSet::from([0, 1]));
+            let (_, reduced) = case.projected(STOPPED, &want);
+            assert_eq!(reduced, None);
+        }
+
+        /// `overlap_rows(k)` with every value times `step`: at `10^15` and k >= 9, a row's sums
+        /// span more than `2^62`, so the join has no plan (at k = 6 they do not, and it plans); each atom is scaled by its one value besides 0, each row is divided by
+        /// `10^15`, and the join answers the rows of `overlap_rows(k)`.
+        pub(crate) fn overlap_scaled(k: usize, step: i128) -> Big {
+            let case = super::overlap_rows(k);
+            Big {
+                ranges: (case.ranges.iter())
+                    .map(|r| {
+                        (r.iter())
+                            .map(|&(l, h)| (i128::from(l) * step, i128::from(h) * step))
+                            .collect()
+                    })
+                    .collect(),
+                rows: (case.rows.iter())
+                    .map(|(cs, t, e)| {
+                        (
+                            cs.iter().map(|&c| i128::from(c)).collect(),
+                            i128::from(*t) * step,
+                            *e,
+                        )
+                    })
+                    .collect(),
+            }
+        }
+
+        const STEP: i128 = 1_000_000_000_000_000;
+
+        /// The scaled family with no plan, answered exactly; and its negative control, the same
+        /// with one atom's value 1 more, so the gcd of its row's coefficients is 1 and the keys
+        /// still pass `2^62`: no class answers.
+        #[test]
+        fn sums_of_values_with_a_common_factor_past_2_62_are_answered_by_scaling() {
+            for k in [9, 12, 15] {
+                let case = overlap_scaled(k, STEP);
+                let want = case.brute();
+                let (answered, reduced) = case.projected(None, &want);
+                let reduced = reduced.expect("answered by the classes");
+                assert_eq!(answered, k, "k = {k}");
+                assert_eq!(reduced.scaled, k, "k = {k}");
+                assert!(matches!(reduced.by, ReducedBy::Joined(_)), "k = {k}");
+            }
+            // The control goes to the solver, whose work on these values grows quickly with k
+            // (2026-11-19: 0.1 s at k = 9; 22 s for k = 9, 12 and 15 together), so it is asked
+            // at k = 9 alone.
+            let k = 9;
+            let mut control = overlap_scaled(k, STEP);
+            control.ranges[k - 1][1].0 += 1;
+            control.ranges[k - 1][1].1 += 1;
+            let want = control.brute();
+            let t = std::time::Instant::now();
+            let (answered, reduced) = control.projected(None, &want);
+            eprintln!(
+                "control, k = {k}: {answered} of {k} answered by the solver in {:?}",
+                t.elapsed()
+            );
+            assert_eq!(reduced, None, "control, k = {k}");
+        }
+
+        /// Four atoms in `{1, 3, 7, 11}`, summing to 15, with `y0 >= y1`: every value is odd, so
+        /// no point, shown by the gcd of the scaled row (each `y = 1 + 2·z`, so the row is
+        /// `2·(z0 + z1 + z2 + z3) == 11`) not dividing its constant. (One equation alone is
+        /// settled before the join by its residue, `row_domains`, hence the second row.) Its
+        /// control, the sum 16, has points, answered past the limit by the solver with the
+        /// cover and not by the classes, since the scaled rows' join stops at the same limit.
+        #[test]
+        fn an_odd_sum_of_four_odd_values_past_the_limit_has_no_point_by_the_gcd() {
+            let ranges = vec![vec![(1, 1), (3, 3), (7, 7), (11, 11)]; 4];
+            let odd = Big {
+                ranges: ranges.clone(),
+                rows: vec![(vec![1, 1, 1, 1], 15, true), (vec![1, -1, 0, 0], 0, false)],
+            };
+            let want = odd.brute();
+            assert!(want.iter().all(BTreeSet::is_empty));
+            let (answered, reduced) = odd.projected(STOPPED, &want);
+            assert_eq!(answered, 4);
+            assert_eq!(reduced.map(|r| r.by), Some(ReducedBy::NoPoint));
+            let even = Big {
+                ranges,
+                rows: vec![(vec![1, 1, 1, 1], 16, true), (vec![1, -1, 0, 0], 0, false)],
+            };
+            let want = even.brute();
+            assert!(!want[0].is_empty());
+            let (_, reduced) = even.projected(STOPPED, &want);
+            assert_eq!(reduced, None);
+        }
+
+        /// Random rows with the shapes the classes take (coefficients growing by a random
+        /// factor, values of a common step) and shapes they do not, past the join's limit and
+        /// with no limit: every answer is the set over the points. The count of formulas the
+        /// classes answered.
+        pub(crate) fn random_agree(seed: u64, n: usize) -> usize {
+            let mut rng = zed_tests::instances::Rng::new(seed);
+            let mut by_classes = 0;
+            for c in 0..n {
+                let k = 2 + rng.below(3);
+                let step = [1, 1, 2, 3][rng.below(4)] as i128;
+                let mut ranges = Vec::new();
+                for _ in 0..k {
+                    let l = rng.int(-2, 2) as i128;
+                    let mut r: Vec<(i128, i128)> = vec![(l * step, l * step)];
+                    let mut at = l;
+                    for _ in 0..1 + rng.below(3) {
+                        at += 1 + rng.below(3) as i128;
+                        let wide = if step == 1 { rng.below(3) as i128 } else { 0 };
+                        r.push((at * step, (at + wide) * step));
+                        at += wide;
+                    }
+                    ranges.push(r);
+                }
+                let mut rows = Vec::new();
+                for r in 0..1 + rng.below(2) {
+                    let mut c = 1i128;
+                    let cs: Vec<i128> = (0..k)
+                        .map(|_| {
+                            let x = c * [1, -1][rng.below(2)];
+                            c *= 1 + rng.below(30) as i128;
+                            x
+                        })
+                        .collect();
+                    let t = (0..k)
+                        .map(|i| {
+                            let r = &ranges[i][rng.below(ranges[i].len())];
+                            cs[i] * r.0
+                        })
+                        .sum::<i128>()
+                        + rng.int(-1, 1) as i128;
+                    rows.push((cs, t, r == 0 || rng.below(2) == 0));
+                }
+                let case = Big { ranges, rows };
+                let want = case.brute();
+                let (_, reduced) = case.projected(STOPPED, &want);
+                by_classes += usize::from(reduced.is_some());
+                let (answered, _) = case.projected(None, &want);
+                assert_eq!(answered, k, "seed {seed} case {c}: {}", case.formula());
+            }
+            by_classes
+        }
+
+        /// 300 random formulas of a fresh seed through [`random_agree`].
+        #[test]
+        fn random_rows_past_the_limit_are_answered_exactly_or_refused() {
+            let (_, seed) = zed_tests::instances::Rng::fresh("row_sums::classes");
+            let count = random_agree(seed, 300);
+            eprintln!("row_sums::classes, seed {seed}: {count} of 300 answered by the classes");
+        }
+
+        /// 300 random formulas of seed 777: the count the classes answer is exact, so a class
+        /// lost shows at every run.
+        #[test]
+        fn the_300_random_rows_of_seed_777_past_the_limit_are_answered_exactly() {
+            let count = random_agree(777, 300);
+            eprintln!("row_sums::classes, seed 777: {count} of 300 answered by the classes");
+            assert_eq!(count, 181);
+        }
+    }
 }
 
 /// The two rows over `x` and `y` of the questions [`two_wide_atoms`] asks, `a·x + b·y + k >= 0`:

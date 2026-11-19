@@ -154,6 +154,13 @@
 //! row takes any value of it. Any other conjunct, an atom of a row with neither a disjunction
 //! nor two bounds, a second disjunction on one atom, or a number past `i128` leaves the
 //! formula to the solver alone.
+//!
+//! Where the join gives no projection (stopped at its limit, or no plan), the classes of module
+//! `classes` answer what they prove exact before the solver: atoms forced to one value (a term
+//! heavier than all others of its equation together; superincreasing rows), atoms whose values
+//! have a common step and rows divided by the gcd of their coefficients, then the join once
+//! more on the rows so reduced (PRES-overlap-sums-exact-subclasses; its proofs, its scored
+//! table of the classes not taken, and its literature are in that module's note).
 
 use std::borrow::Cow;
 use std::cell::Cell;
@@ -166,9 +173,11 @@ use super::formula::{Atom, Conjuncts, Formula, Id, Model, Rel, one_bound};
 use super::refusal::{EachClassed, Refusal};
 use super::row_domains::{self, Settled, range};
 
+mod classes;
 pub(super) mod plane;
 mod rows;
 
+pub use classes::{REDUCED, Reduced, ReducedBy};
 pub(super) use rows::Rows;
 use rows::{Row, gcd};
 
@@ -581,12 +590,27 @@ pub(super) fn project(
     let answer = join_run(&rows, &want, |plan, rows, want, work| {
         plan.project(rows, want, work, shape.as_ref())
     });
+    // Where the join gives no answer, the classes of module `classes` that are proved exact
+    // (forced and scaled atoms, then the join once more on the rows they reduce) answer before
+    // the solver, with the cover on only: with it off (a test control) the path is the
+    // solver's alone, as those tests ask (PRES-overlap-sums-exact-subclasses).
+    let classes = |stop: Stop| {
+        if old_exact {
+            classes::project(&rows, &want, &stop)
+        } else {
+            None
+        }
+    };
     match answer {
         Ok(sets) => Ok(each_of(sets)),
         Err(Stop::NoPlan) => match shape.and_then(|s| plane::project(&s, &rows, &want)) {
             Some(sets) => Ok(each_of(sets)),
-            None => old(false),
+            None => match classes(Stop::NoPlan) {
+                Some(sets) => Ok(each_of(sets)),
+                None => old(false),
+            },
         },
+        Err(Stop::Limit) if let Some(sets) = classes(Stop::Limit) => Ok(each_of(sets)),
         // Past the join's limit the solver answers, made exact by the cover (PRES-cover-wire),
         // which refuses with `Refusal::Questions` only past `meter::EXACT_LIMIT`, the 250 ms of
         // QUESTIONS A99 (PRES-project-exact-solver). The solver's projection the cover starts

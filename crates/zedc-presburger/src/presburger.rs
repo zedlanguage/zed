@@ -140,7 +140,9 @@ use nesting::nesting;
 pub use refusal::{
     Classed, Each, EachClassed, One, Refusal, Split, Tie, Written, free_names, names_in,
 };
-pub use row_sums::{JOIN_LIMIT, JOIN_LIMIT_SET, JOINED, ROW_SUMS_JOIN, ROW_SUMS_OFF};
+pub use row_sums::{
+    JOIN_LIMIT, JOIN_LIMIT_SET, JOINED, REDUCED, ROW_SUMS_JOIN, ROW_SUMS_OFF, Reduced, ReducedBy,
+};
 pub use slack::ROW_ORDER_SCAN;
 use slack::{
     DisjInfo, DisjointWide, HitKind, RowPlan, fill_row_model, has_product_con, meet_ends,
@@ -20050,7 +20052,9 @@ fn project_each_with(f: &Formula, syms: &[Atom], cover: bool) -> Result<EachClas
     // only an empty set, which is exact; `one_row` only a box and one row whose equation has
     // coefficients 1 and -1, where each atom's values are one range, given exactly
     // (`OneRow::project`); `row_sums` a unique point or the exact join of rows over atoms in
-    // finite unions of ranges; `certified_domains` only difference rows and forests it
+    // finite unions of ranges, or past the join, by `row_sums::classes`, no point, the points
+    // of forced atoms, or the join of the rows that forcing and scaling reduce, each exact by
+    // its proof there; `certified_domains` only difference rows and forests it
     // certifies exact (its proof). `two_var_domains` only a formula whose every disjunct
     // reduces by unit equalities to rows over at most two atoms, projected exactly by
     // `twovar::project_convex` (its proof), and it refuses where a strip has holes. Each of these answers the exact set `E`, a finite union of
