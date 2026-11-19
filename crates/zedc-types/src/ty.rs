@@ -6809,7 +6809,10 @@ fn some_value(t: &Ty, cx: &Cx, own: Option<(&str, Carrier)>) -> Result<Value, Op
         Carrier::Str => Some(Value::str("")),
         Carrier::F64 => Some(Value::float(0.0)),
         Carrier::F32 => Some(Value::float32(0.0)),
-        Carrier::Rat => None,
+        // TEST-shape-witness-no-zero-carrier: this was `None`, so a rigid variable bounded by
+        // `rat` alone, or an own one with `rat` in its bound, gave no value and its member's
+        // closed shapes were searched and counted as failed, refusing a correct yes.
+        Carrier::Rat => Some(Value::rat(zed_kernel::Rat::int(0.into()))),
     };
     let mut made: HashMap<*const (), Value> = HashMap::new();
     let mut out: Vec<Value> = Vec::new();
@@ -7742,7 +7745,8 @@ impl<G: Ord + Clone, M> Searched<G, M> {
     // each carrier of its bound, at most `Carrier::ALL.len()` (6) tests, so the same order.
     // Given up: a member none of whose values this finds ([`some_value`]: a scalar set holding
     // none of `0`, `false`, `""` and no one value, a variable neither rigid nor a bounded own
-    // one, two bounded own variables, or a `rat` instance), or whose value is in the union
+    // one, two bounded own variables, or an own variable whose bound holds `OTHER`), or whose
+    // value is in the union
     // though it fails every shape of it, is searched as before, failures counted.
     fn closed_left_out<'t>(
         &mut self,
@@ -21235,6 +21239,54 @@ mod tests {
             now, before,
             "{held_b} in {shapes_b}: an instance in the closed shape"
         );
+    }
+
+    /// TEST-shape-witness-no-zero-carrier: the members of
+    /// [`shapes_free_of_variables_a_member_cannot_fit_are_not_counted_as_failed`] with `V'1`'s
+    /// bound holding `rat`, a carrier [`some_value`] gave no zero for, or `OTHER`. At each
+    /// instance of `V'1` the member `((V, V),) | ((V, V, V),)` fits the open shape with `T` the
+    /// instance (DESIGN.md sec:type_resolution rule 6: "A bounded type variable is one carrier at
+    /// a call"), so the answer is yes in each case; each case is asked with `V'1` rigid and with
+    /// it a bounded own variable. A rigid `V'1` fits a shape only if it fits it at every
+    /// instance, so a value at one carrier outside the shape free of variables leaves that shape
+    /// out, `OTHER` in the bound or not. An own `V'1` with `OTHER` in its bound may be a tuple
+    /// type whose values lie in the shape free of variables, so that shape is kept and the
+    /// verdict is the old search's (`CLOSED_OFF`): a refusal by the count of failures, not a
+    /// wrong answer. Control: with `rat`'s zero witness `None`, as at d4ce3868b, the rigid
+    /// `rat` case is refused.
+    #[test]
+    fn shapes_free_of_variables_are_left_out_at_a_rat_carrier_and_kept_at_other() {
+        let (v, t) = (Ty::var("V'1".into()), Ty::var("T".into()));
+        let (int, boolt) = (Ty::carrier(Carrier::Int), Ty::carrier(Carrier::Bool));
+        let tup = |xs: &[&Ty]| Ty::tuple(xs.iter().map(|x| (*x).clone()).collect());
+        let one = |s: &Ty| Ty::tuple(vec![s.clone()]);
+        let fixed = Ty::union_all(&[tup(&[&int, &boolt]), tup(&[&int, &boolt, &boolt])]);
+        let open = Ty::union_all(&[tup(&[&t, &t]), tup(&[&t, &t, &t])]);
+        let shapes = Ty::union_all(&[one(&fixed), one(&open)]);
+        let held = Ty::union_all(&[one(&tup(&[&v, &v])), one(&tup(&[&v, &v, &v]))]);
+        let fits = |rigid: bool, mask: u8| {
+            let mut cx = Cx::default();
+            if rigid {
+                cx.rigid.insert("V'1".into(), mask);
+            } else {
+                cx.keep_own("V'1".into(), Some(mask));
+            }
+            let mut binds = Binds::new();
+            comparing!(&mut cx, |c| c.sub_in(&held, &shapes, &mut binds))
+        };
+        let (rat, int_rat) = (Carrier::Rat.bit(), Carrier::Int.bit() | Carrier::Rat.bit());
+        let other = Carrier::Int.bit() | OTHER;
+        for rigid in [true, false] {
+            for mask in [rat, int_rat] {
+                assert!(fits(rigid, mask), "rigid {rigid}, mask {mask:#b}");
+            }
+        }
+        assert!(fits(true, other), "rigid, a bound holding OTHER");
+        let now = fits(false, other);
+        CLOSED_OFF.set(true);
+        let before = fits(false, other);
+        CLOSED_OFF.set(false);
+        assert_eq!(now, before, "own, a bound holding OTHER");
     }
 
     /// The carrier masks: `NUMBER_BITS` holds exactly the numbers, `f32` among them; each
