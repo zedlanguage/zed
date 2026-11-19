@@ -978,4 +978,5 @@ as an alias is written, passes every print test. The arm is kept as it is.
 Counts: 21 lines; closed by a test 14 (print 1964; group 805, 820; unfold 78, 170; escape 1127,
 1350, 1351, 2112, 2113; refused 130, 146, 500, 510), by a proof 7 (group 566, 569, 570; unfold
 137; escape 1442, 1443; refused 469), open 0. One bug fixed (group 820, the poisoned lock). The
-102 lines outside the row's functions were not examined in this round either.
+102 lines outside the row's functions were not examined in this round either. They, and the
+305 `empty.rs` lines the fifth round left open, are the row TEST-kernel-unreached-paths-5.
