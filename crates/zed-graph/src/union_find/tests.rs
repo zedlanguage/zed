@@ -1,13 +1,5 @@
 use super::{OffsetUnionFind, UnionFind};
-
-/// A step of xorshift64, the random numbers of these tests; `state` is never 0 (the seed is
-/// made odd), so the sequence never sticks at 0.
-fn next(state: &mut u64) -> u64 {
-    *state ^= *state << 13;
-    *state ^= *state >> 7;
-    *state ^= *state << 17;
-    *state
-}
+use crate::seed::Rng;
 
 /// How each union of the random tests links.
 #[derive(Clone, Copy, Debug)]
@@ -20,14 +12,14 @@ enum Rule {
 /// Runs random unions on `UnionFind` and on a plain labeling (each element's class label,
 /// relabeled in full on each union), checking classes and each rule's root; returns
 /// the unions that joined two classes and those that found one.
-fn agree(state: &mut u64) -> (usize, usize) {
-    let n = 1 + (next(state) % 24) as usize;
+fn agree(rng: &mut Rng) -> (usize, usize) {
+    let n = 1 + rng.below(24);
     let mut uf = UnionFind::new(n);
     let mut label: Vec<usize> = (0..n).collect();
     let (mut joined, mut same) = (0, 0);
-    for _ in 0..(next(state) % (2 * n as u64 + 1)) {
-        let (a, b) = (next(state) as usize % n, next(state) as usize % n);
-        let rule = [Rule::Rank, Rule::Into, Rule::Least][next(state) as usize % 3];
+    for _ in 0..rng.below(2 * n + 1) {
+        let (a, b) = (rng.below(n), rng.below(n));
+        let rule = rng.pick(&[Rule::Rank, Rule::Into, Rule::Least]);
         let was = label[a] == label[b];
         let (ra, rb) = (uf.find(a), uf.find(b));
         let did = match rule {
@@ -74,10 +66,10 @@ fn union_find_classes_match_a_plain_labeling() {
     assert_eq!(uf.push(), 3);
     assert!(uf.union_into(3, 0));
     assert_eq!(uf.find(1), 3);
-    let mut state = crate::seed::seed("union_find_classes_match_a_plain_labeling") | 1;
+    let (mut rng, _) = Rng::fresh("union_find_classes_match_a_plain_labeling");
     let (mut joined, mut same) = (0, 0);
     for _ in 0..5000 {
-        let (j, s) = agree(&mut state);
+        let (j, s) = agree(&mut rng);
         joined += j;
         same += s;
     }
@@ -97,16 +89,14 @@ fn offset_union_find_matches_plain_values() {
     assert_eq!(uf.find(3), (3, 0));
     // Random: values drawn first, each record true of them, so every find must give
     // `x_v - x_root` of the drawn values, and each record inside a class the true difference.
-    let mut state = crate::seed::seed("offset_union_find_matches_plain_values") | 1;
+    let (mut rng, _) = Rng::fresh("offset_union_find_matches_plain_values");
     for _ in 0..5000 {
-        let n = 1 + (next(&mut state) % 24) as usize;
-        let x: Vec<i64> = (0..n)
-            .map(|_| (next(&mut state) % 41) as i64 - 20)
-            .collect();
+        let n = 1 + rng.below(24);
+        let x: Vec<i64> = (0..n).map(|_| rng.int(-20, 20)).collect();
         let mut uf: OffsetUnionFind<i64> = OffsetUnionFind::new(n);
         let mut label: Vec<usize> = (0..n).collect();
-        for _ in 0..(next(&mut state) % (2 * n as u64 + 1)) {
-            let (a, b) = (next(&mut state) as usize % n, next(&mut state) as usize % n);
+        for _ in 0..rng.below(2 * n + 1) {
+            let (a, b) = (rng.below(n), rng.below(n));
             let rb = uf.find(b).0;
             match uf.union_into(b, a, &(x[a] - x[b])) {
                 Ok(()) => {
@@ -136,7 +126,7 @@ fn offset_union_find_matches_plain_values() {
 mod bench {
     use std::collections::BTreeMap;
 
-    use super::{UnionFind, next};
+    use super::{Rng, UnionFind};
     use crate::scaling;
 
     /// `n` elements and `n` unions of random pairs, then a find of each: O(n α(n)).
@@ -155,15 +145,13 @@ mod bench {
         // and timing noise is small, small enough that the larger run stays well under a
         // second.
         let n = 200_000;
-        // A fixed odd seed (2^64 divided by the golden ratio, a common xorshift seed), so the
-        // pairs are the same on every run and the two sizes compare like with like.
-        let mut state = 0x9e37_79b9_7f4a_7c15;
+        // A fixed seed (any serves), so the pairs are the same on every run and the two sizes
+        // compare like with like.
+        let mut rng = Rng::new(0);
         let built: BTreeMap<usize, Vec<(usize, usize)>> = [n, scaling::FACTOR * n]
             .into_iter()
             .map(|m| {
-                let pairs = (0..m)
-                    .map(|_| (next(&mut state) as usize % m, next(&mut state) as usize % m))
-                    .collect();
+                let pairs = (0..m).map(|_| (rng.below(m), rng.below(m))).collect();
                 (m, pairs)
             })
             .collect();
