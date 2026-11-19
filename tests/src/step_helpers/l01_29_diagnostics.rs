@@ -11,6 +11,25 @@ pub fn rejected(src: &str) -> String {
     }
 }
 
+/// `src` as a whole program: a `main` that pushes `""` is added when it declares none, so that
+/// `load` checks its functions.
+pub fn with_main(src: &str) -> String {
+    match src.contains("main(") {
+        true => src.to_string(),
+        false => format!("{src}main(m: MainArgs) {{\n  m.stdout <- \"\";\n}}\n"),
+    }
+}
+
+/// [`rejected`] of `src` [`with_main`].
+pub fn rejected_with_main(src: &str) -> String {
+    rejected(&with_main(src))
+}
+
+/// Whether the program `src` [`with_main`] is accepted.
+pub fn accepted_with_main(src: &str) -> bool {
+    load(with_main(src).as_bytes()).is_ok()
+}
+
 /// The step texts of the rendered diagnostics `out`, without their places.
 pub fn steps(out: &str) -> Vec<&str> {
     out.lines()

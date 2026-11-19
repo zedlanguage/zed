@@ -6,17 +6,9 @@
 //! An `=` outside a condition stays a syntax error.
 
 use zedc::rejection::Row;
-use zedc::run::load;
 
 use super::push_or_less::{parses, program, refusal};
-
-/// The rendered diagnostics of the rejected program `src`.
-fn rejected(src: &str) -> String {
-    match load(src.as_bytes()) {
-        Ok(_) => panic!("accepted:\n{src}"),
-        Err(e) => e,
-    }
-}
+use zed_tests::step_helpers::l01_29_diagnostics::rejected;
 
 /// The note on what `=` is.
 const BINDS: &str =

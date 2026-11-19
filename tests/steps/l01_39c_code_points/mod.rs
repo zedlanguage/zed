@@ -12,7 +12,9 @@ mod values;
 
 use zed_kernel::value::Family;
 use zed_kernel::{Prim, Value};
-use zedc::run::load;
+use zed_tests::step_helpers::l01_29_diagnostics::{
+    accepted_with_main as accepted, rejected_with_main as rejected,
+};
 
 /// Functions that pass their argument on, so that a word applied to their result is judged on
 /// a value known only when the program runs: the word on a literal that never converts is
@@ -22,27 +24,6 @@ const PASS: &str = "text(positional v: String) = v;\nwhole(positional v: int) = 
 /// The value of `x = <expr>;` after [`PASS`], printed.
 fn x(expr: &str) -> String {
     zed_tests::step_helpers::l01_16_elaboration::value(&format!("{PASS}x = {expr};\n"), "x")
-}
-
-/// `src` as a whole program: a `main` is added when it declares none.
-fn program(src: &str) -> String {
-    match src.contains("main(") {
-        true => src.to_string(),
-        false => format!("{src}main(m: MainArgs) {{\n  m.stdout <- \"\";\n}}\n"),
-    }
-}
-
-/// The rendered diagnostics of the rejected program `src`.
-fn rejected(src: &str) -> String {
-    match load(program(src).as_bytes()) {
-        Ok(_) => panic!("accepted:\n{src}"),
-        Err(e) => e,
-    }
-}
-
-/// Whether the program `src` is accepted.
-fn accepted(src: &str) -> bool {
-    load(program(src).as_bytes()).is_ok()
 }
 
 /// The kernel's value of the word `p` on `x`.

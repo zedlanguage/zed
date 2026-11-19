@@ -5,19 +5,11 @@
 //! as written, and offers it with `< -` when the declaration then parses. A push that `< -`
 //! does not repair stays a syntax error.
 
+use zed_tests::step_helpers::l01_29_diagnostics::rejected;
 use zedc::ast::Error;
 use zedc::lex::lex;
 use zedc::parse::{TOP, parse};
 use zedc::rejection::Row;
-use zedc::run::load;
-
-/// The rendered diagnostics of the rejected program `src`.
-fn rejected(src: &str) -> String {
-    match load(src.as_bytes()) {
-        Ok(_) => panic!("accepted:\n{src}"),
-        Err(e) => e,
-    }
-}
 
 /// The error the unit `src` is refused with by the parser.
 pub(super) fn refusal(src: &str) -> Error {

@@ -16,19 +16,12 @@ mod type_names;
 use std::path::{Path, PathBuf};
 
 use zed_kernel::Value;
+use zed_tests::step_helpers::l01_29_diagnostics::rejected;
 use zedc::check::read::parse_type;
 use zedc::check::ty::{Ty, printed};
 use zedc::front::{Diagnostic, Quoted, Step, Unloaded};
 
 const ESC: char = '\u{1B}';
-
-/// The rendered diagnostics of the rejected program `src`.
-fn rejected(src: &str) -> String {
-    match zedc::run::load(src.as_bytes()) {
-        Ok(_) => panic!("accepted:\n{src}"),
-        Err(e) => e,
-    }
-}
 
 /// Whether `out` holds a character a terminal acts on or does not show, other than the line
 /// breaks of the layout.

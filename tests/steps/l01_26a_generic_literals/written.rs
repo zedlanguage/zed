@@ -5,14 +5,7 @@
 
 use zed_tests::step_helpers::l01_16_elaboration::value;
 use zed_tests::step_helpers::l01_26_type_resolution::type_errors;
-
-/// The rendered rejection of `src`, with its notes.
-fn rejected(src: &str) -> String {
-    match zedc::run::load(src.as_bytes()) {
-        Ok(_) => panic!("accepted:\n{src}"),
-        Err(e) => e,
-    }
-}
+use zed_tests::step_helpers::l01_29_diagnostics::rejected;
 
 const DIVIDES: &str = "Nothing gives the integer literals a carrier, and `/` has none at `int`";
 
