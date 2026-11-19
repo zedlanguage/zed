@@ -3935,6 +3935,7 @@ Each pair below is at one level, shares a file and is not yet done. No path of n
 | 0 | HOLES-exact-between, CHECK-sum-of-summarized-names | `crates/zedc-preimage/src/product.rs` |
 | 0 | HOLES-exact-between, FAIL-audit-seed-17180819687505084927 | `crates/zedc-preimage/src/product.rs` |
 | 0 | HOLES-exact-between, LAND-refused-shape-neon | `crates/zedc-preimage/src/product.rs` |
+| 0 | HOLES-exact-between, BENCH-named-limits-side-by-side-tiers | `crates/zedc-preimage/src/product.rs` |
 | 0 | HOLES-exact-between, PERF-refused-shape-disjunctions-quadratic | `crates/zedc-preimage/src/product.rs` |
 | 0 | HOLES-exact-between, PERF-hull-join-row-after | `crates/zedc-preimage/src/holes.rs`, `crates/zedc-preimage/src/product.rs` |
 | 0 | HOLES-exact-between, MALLOC-deep-block-free-lists | `crates/zedc-preimage/src/product.rs` |
@@ -3958,6 +3959,7 @@ Each pair below is at one level, shares a file and is not yet done. No path of n
 | 0 | TIGHTEN-k-parts, CHECK-sum-of-summarized-names | `crates/zedc-preimage/src/product.rs` |
 | 0 | TIGHTEN-k-parts, FAIL-audit-seed-17180819687505084927 | `crates/zedc-preimage/src/product.rs` |
 | 0 | TIGHTEN-k-parts, LAND-refused-shape-neon | `crates/zedc-preimage/src/product.rs` |
+| 0 | TIGHTEN-k-parts, BENCH-named-limits-side-by-side-tiers | `crates/zedc-preimage/src/product.rs` |
 | 0 | TIGHTEN-k-parts, PERF-refused-shape-disjunctions-quadratic | `crates/zedc-preimage/src/product.rs` |
 | 0 | TIGHTEN-k-parts, PERF-hull-join-row-after | `crates/zedc-preimage/src/product.rs` |
 | 0 | TIGHTEN-k-parts, MALLOC-deep-block-free-lists | `crates/zedc-preimage/src/product.rs` |
@@ -4124,6 +4126,7 @@ Each pair below is at one level, shares a file and is not yet done. No path of n
 | 0 | PRES-sum-chain-cost, FAIL-omega-pairs-4972743790605253739 | `crates/zedc-presburger/src/presburger/extend.rs` |
 | 0 | PRES-sum-chain-cost, PRES-join-cost-predictor | `crates/zedc-presburger/src/presburger/row_sums.rs`, `crates/zedc-presburger/src/presburger.rs` |
 | 0 | PRES-sum-chain-cost, LAND-cover-hybrid-neon | `crates/zedc-presburger/src/presburger/exact.rs` |
+| 0 | PRES-sum-chain-cost, BENCH-deep-small-choice | `crates/zedc-presburger/src/presburger/exact.rs` |
 | 0 | PRES-sum-chain-cost, FAIL-one-scope-bodies-seed-shadows | `crates/zedc-presburger/src/presburger.rs`, `crates/zedc-presburger/src/presburger/extend.rs` |
 | 0 | PRES-sum-chain-cost, PROOF-tied-projection-refusal-names | `crates/zedc-presburger/src/` |
 | 0 | PRES-sum-chain-cost, PROOF-solve-omega-path-renaming | `crates/zedc-presburger/src/presburger.rs` |
@@ -4148,6 +4151,7 @@ Each pair below is at one level, shares a file and is not yet done. No path of n
 | 0 | PRES-holes-steps-cost, FAIL-omega-pairs-4972743790605253739 | `crates/zedc-presburger/src/presburger/extend.rs` |
 | 0 | PRES-holes-steps-cost, PRES-join-cost-predictor | `crates/zedc-presburger/src/presburger/row_sums.rs`, `crates/zedc-presburger/src/presburger.rs` |
 | 0 | PRES-holes-steps-cost, LAND-cover-hybrid-neon | `crates/zedc-presburger/src/presburger/exact.rs` |
+| 0 | PRES-holes-steps-cost, BENCH-deep-small-choice | `crates/zedc-presburger/src/presburger/exact.rs` |
 | 0 | PRES-holes-steps-cost, FAIL-one-scope-bodies-seed-shadows | `crates/zedc-presburger/src/presburger.rs`, `crates/zedc-presburger/src/presburger/extend.rs` |
 | 0 | PRES-holes-steps-cost, PROOF-tied-projection-refusal-names | `crates/zedc-presburger/src/` |
 | 0 | PRES-holes-steps-cost, PROOF-solve-omega-path-renaming | `crates/zedc-presburger/src/presburger.rs` |
@@ -4225,6 +4229,7 @@ Each pair below is at one level, shares a file and is not yet done. No path of n
 | 0 | PERF-l139-block-incr, CHECK-sum-of-summarized-names | `crates/zedc-preimage/src/product.rs` |
 | 0 | PERF-l139-block-incr, FAIL-audit-seed-17180819687505084927 | `crates/zedc-preimage/src/product.rs` |
 | 0 | PERF-l139-block-incr, LAND-refused-shape-neon | `crates/zedc-preimage/src/product.rs` |
+| 0 | PERF-l139-block-incr, BENCH-named-limits-side-by-side-tiers | `crates/zedc-preimage/src/product.rs` |
 | 0 | PERF-l139-block-incr, PERF-refused-shape-disjunctions-quadratic | `crates/zedc-preimage/src/product.rs` |
 | 0 | PERF-l139-block-incr, PERF-hull-join-row-after | `crates/zedc-preimage/src/product.rs` |
 | 0 | PERF-l139-block-incr, PROOF-tied-projection-refusal-names | `crates/zedc-presburger/src/conjuncts.rs` |
@@ -4254,6 +4259,7 @@ Each pair below is at one level, shares a file and is not yet done. No path of n
 | 0 | PERF-l139-persist-due, FAIL-exact-refusals-4164922340 | `crates/zedc-presburger/src/presburger.rs` |
 | 0 | PERF-l139-persist-due, PRES-join-cost-predictor | `crates/zedc-presburger/src/presburger.rs` |
 | 0 | PERF-l139-persist-due, LAND-refused-shape-neon | `crates/zedc-preimage/src/product.rs` |
+| 0 | PERF-l139-persist-due, BENCH-named-limits-side-by-side-tiers | `crates/zedc-preimage/src/product.rs` |
 | 0 | PERF-l139-persist-due, FAIL-one-scope-bodies-seed-shadows | `crates/zedc-presburger/src/presburger.rs` |
 | 0 | PERF-l139-persist-due, PERF-refused-shape-disjunctions-quadratic | `crates/zedc-preimage/src/product.rs` |
 | 0 | PERF-l139-persist-due, PERF-hull-join-row-after | `crates/zedc-preimage/src/product.rs` |
@@ -4280,6 +4286,7 @@ Each pair below is at one level, shares a file and is not yet done. No path of n
 | 0 | PERF-l139-hopb-wakes, CHECK-sum-of-summarized-names | `crates/zedc-preimage/src/product.rs` |
 | 0 | PERF-l139-hopb-wakes, FAIL-audit-seed-17180819687505084927 | `crates/zedc-preimage/src/product.rs` |
 | 0 | PERF-l139-hopb-wakes, LAND-refused-shape-neon | `crates/zedc-preimage/src/product.rs` |
+| 0 | PERF-l139-hopb-wakes, BENCH-named-limits-side-by-side-tiers | `crates/zedc-preimage/src/product.rs` |
 | 0 | PERF-l139-hopb-wakes, PERF-refused-shape-disjunctions-quadratic | `crates/zedc-preimage/src/product.rs` |
 | 0 | PERF-l139-hopb-wakes, PERF-hull-join-row-after | `crates/zedc-preimage/src/product.rs` |
 | 0 | PERF-l139-hopb-wakes, MALLOC-deep-block-free-lists | `crates/zedc-preimage/src/product.rs` |
@@ -4452,6 +4459,7 @@ Each pair below is at one level, shares a file and is not yet done. No path of n
 | 0 | S22-scaling-10_5, CHECK-sum-of-summarized-names | `crates/zedc-preimage/src/product.rs` |
 | 0 | S22-scaling-10_5, FAIL-audit-seed-17180819687505084927 | `crates/zedc-preimage/src/product.rs` |
 | 0 | S22-scaling-10_5, LAND-refused-shape-neon | `crates/zedc-preimage/src/product.rs` |
+| 0 | S22-scaling-10_5, BENCH-named-limits-side-by-side-tiers | `crates/zedc-preimage/src/product.rs` |
 | 0 | S22-scaling-10_5, PERF-refused-shape-disjunctions-quadratic | `crates/zedc-preimage/src/product.rs` |
 | 0 | S22-scaling-10_5, PERF-hull-join-row-after | `crates/zedc-preimage/src/` |
 | 0 | S22-scaling-10_5, PERF-preimage-chain-draw-spread | `crates/zedc-preimage/src/preimage.rs` |
@@ -5055,6 +5063,7 @@ Each pair below is at one level, shares a file and is not yet done. No path of n
 | 0 | PATH-reads-scale, CHECK-sum-of-summarized-names | `crates/zedc-preimage/src/product.rs` |
 | 0 | PATH-reads-scale, FAIL-audit-seed-17180819687505084927 | `crates/zedc-preimage/src/product.rs` |
 | 0 | PATH-reads-scale, LAND-refused-shape-neon | `crates/zedc-preimage/src/product.rs` |
+| 0 | PATH-reads-scale, BENCH-named-limits-side-by-side-tiers | `crates/zedc-preimage/src/product.rs` |
 | 0 | PATH-reads-scale, PERF-refused-shape-disjunctions-quadratic | `crates/zedc-preimage/src/product.rs` |
 | 0 | PATH-reads-scale, PERF-hull-join-row-after | `crates/zedc-preimage/src/` |
 | 0 | PATH-reads-scale, PERF-preimage-chain-draw-spread | `crates/zedc-preimage/src/preimage.rs` |
@@ -5077,6 +5086,7 @@ Each pair below is at one level, shares a file and is not yet done. No path of n
 | 0 | NARROW-hub-interleaved-scale, CHECK-sum-of-summarized-names | `crates/zedc-preimage/src/product.rs` |
 | 0 | NARROW-hub-interleaved-scale, FAIL-audit-seed-17180819687505084927 | `crates/zedc-preimage/src/product.rs` |
 | 0 | NARROW-hub-interleaved-scale, LAND-refused-shape-neon | `crates/zedc-preimage/src/product.rs` |
+| 0 | NARROW-hub-interleaved-scale, BENCH-named-limits-side-by-side-tiers | `crates/zedc-preimage/src/product.rs` |
 | 0 | NARROW-hub-interleaved-scale, PERF-refused-shape-disjunctions-quadratic | `crates/zedc-preimage/src/product.rs` |
 | 0 | NARROW-hub-interleaved-scale, PERF-hull-join-row-after | `crates/zedc-preimage/src/` |
 | 0 | NARROW-hub-interleaved-scale, PERF-preimage-chain-draw-spread | `crates/zedc-preimage/src/preimage.rs` |
@@ -5095,6 +5105,7 @@ Each pair below is at one level, shares a file and is not yet done. No path of n
 | 0 | STAR-satellite-scale, CHECK-sum-of-summarized-names | `crates/zedc-preimage/src/product.rs` |
 | 0 | STAR-satellite-scale, FAIL-audit-seed-17180819687505084927 | `crates/zedc-preimage/src/product.rs` |
 | 0 | STAR-satellite-scale, LAND-refused-shape-neon | `crates/zedc-preimage/src/product.rs` |
+| 0 | STAR-satellite-scale, BENCH-named-limits-side-by-side-tiers | `crates/zedc-preimage/src/product.rs` |
 | 0 | STAR-satellite-scale, PERF-refused-shape-disjunctions-quadratic | `crates/zedc-preimage/src/product.rs` |
 | 0 | STAR-satellite-scale, PERF-hull-join-row-after | `crates/zedc-preimage/src/` |
 | 0 | STAR-satellite-scale, PERF-preimage-chain-draw-spread | `crates/zedc-preimage/src/preimage.rs` |
@@ -5112,6 +5123,7 @@ Each pair below is at one level, shares a file and is not yet done. No path of n
 | 0 | LINKED-incremental-scratch-agree, CHECK-sum-of-summarized-names | `crates/zedc-preimage/src/product.rs` |
 | 0 | LINKED-incremental-scratch-agree, FAIL-audit-seed-17180819687505084927 | `crates/zedc-preimage/src/product.rs` |
 | 0 | LINKED-incremental-scratch-agree, LAND-refused-shape-neon | `crates/zedc-preimage/src/product.rs` |
+| 0 | LINKED-incremental-scratch-agree, BENCH-named-limits-side-by-side-tiers | `crates/zedc-preimage/src/product.rs` |
 | 0 | LINKED-incremental-scratch-agree, PERF-refused-shape-disjunctions-quadratic | `crates/zedc-preimage/src/product.rs` |
 | 0 | LINKED-incremental-scratch-agree, PERF-hull-join-row-after | `crates/zedc-preimage/src/product.rs` |
 | 0 | LINKED-incremental-scratch-agree, MALLOC-deep-block-free-lists | `crates/zedc-preimage/src/product.rs` |
@@ -5126,6 +5138,7 @@ Each pair below is at one level, shares a file and is not yet done. No path of n
 | 0 | FAMILY-scale-larger, CHECK-sum-of-summarized-names | `crates/zedc-preimage/src/product.rs` |
 | 0 | FAMILY-scale-larger, FAIL-audit-seed-17180819687505084927 | `crates/zedc-preimage/src/product.rs` |
 | 0 | FAMILY-scale-larger, LAND-refused-shape-neon | `crates/zedc-preimage/src/product.rs` |
+| 0 | FAMILY-scale-larger, BENCH-named-limits-side-by-side-tiers | `crates/zedc-preimage/src/product.rs` |
 | 0 | FAMILY-scale-larger, PERF-refused-shape-disjunctions-quadratic | `crates/zedc-preimage/src/product.rs` |
 | 0 | FAMILY-scale-larger, PERF-hull-join-row-after | `crates/zedc-preimage/src/product.rs` |
 | 0 | FAMILY-scale-larger, MALLOC-deep-block-free-lists | `crates/zedc-preimage/src/product.rs` |
@@ -5139,6 +5152,7 @@ Each pair below is at one level, shares a file and is not yet done. No path of n
 | 0 | SCOPE-assume-disjunctions-setup, CHECK-sum-of-summarized-names | `crates/zedc-preimage/src/product.rs` |
 | 0 | SCOPE-assume-disjunctions-setup, FAIL-audit-seed-17180819687505084927 | `crates/zedc-preimage/src/product.rs` |
 | 0 | SCOPE-assume-disjunctions-setup, LAND-refused-shape-neon | `crates/zedc-preimage/src/product.rs` |
+| 0 | SCOPE-assume-disjunctions-setup, BENCH-named-limits-side-by-side-tiers | `crates/zedc-preimage/src/product.rs` |
 | 0 | SCOPE-assume-disjunctions-setup, PERF-refused-shape-disjunctions-quadratic | `crates/zedc-preimage/src/product.rs` |
 | 0 | SCOPE-assume-disjunctions-setup, PERF-hull-join-row-after | `crates/zedc-preimage/src/product.rs` |
 | 0 | SCOPE-assume-disjunctions-setup, MALLOC-deep-block-free-lists | `crates/zedc-preimage/src/product.rs` |
@@ -5151,6 +5165,7 @@ Each pair below is at one level, shares a file and is not yet done. No path of n
 | 0 | SCALE-near-limit-l0139, CHECK-sum-of-summarized-names | `crates/zedc-preimage/src/product.rs` |
 | 0 | SCALE-near-limit-l0139, FAIL-audit-seed-17180819687505084927 | `crates/zedc-preimage/src/product.rs` |
 | 0 | SCALE-near-limit-l0139, LAND-refused-shape-neon | `crates/zedc-preimage/src/product.rs` |
+| 0 | SCALE-near-limit-l0139, BENCH-named-limits-side-by-side-tiers | `crates/zedc-preimage/src/product.rs` |
 | 0 | SCALE-near-limit-l0139, PERF-refused-shape-disjunctions-quadratic | `crates/zedc-preimage/src/product.rs` |
 | 0 | SCALE-near-limit-l0139, PERF-hull-join-row-after | `crates/zedc-preimage/src/product.rs` |
 | 0 | SCALE-near-limit-l0139, MALLOC-deep-block-free-lists | `crates/zedc-preimage/src/product.rs` |
@@ -5162,6 +5177,7 @@ Each pair below is at one level, shares a file and is not yet done. No path of n
 | 0 | SOLVER-refused-parts-slow, CHECK-sum-of-summarized-names | `crates/zedc-preimage/src/product.rs` |
 | 0 | SOLVER-refused-parts-slow, FAIL-audit-seed-17180819687505084927 | `crates/zedc-preimage/src/product.rs` |
 | 0 | SOLVER-refused-parts-slow, LAND-refused-shape-neon | `crates/zedc-preimage/src/product.rs` |
+| 0 | SOLVER-refused-parts-slow, BENCH-named-limits-side-by-side-tiers | `crates/zedc-preimage/src/product.rs` |
 | 0 | SOLVER-refused-parts-slow, PERF-refused-shape-disjunctions-quadratic | `crates/zedc-preimage/src/product.rs` |
 | 0 | SOLVER-refused-parts-slow, PERF-hull-join-row-after | `crates/zedc-preimage/src/product.rs` |
 | 0 | SOLVER-refused-parts-slow, MALLOC-deep-block-free-lists | `crates/zedc-preimage/src/product.rs` |
@@ -5280,6 +5296,7 @@ Each pair below is at one level, shares a file and is not yet done. No path of n
 | 0 | BENCH-scope-project-due-blocks, CHECK-sum-of-summarized-names | `crates/zedc-preimage/src/product.rs` |
 | 0 | BENCH-scope-project-due-blocks, FAIL-audit-seed-17180819687505084927 | `crates/zedc-preimage/src/product.rs` |
 | 0 | BENCH-scope-project-due-blocks, LAND-refused-shape-neon | `crates/zedc-preimage/src/product.rs` |
+| 0 | BENCH-scope-project-due-blocks, BENCH-named-limits-side-by-side-tiers | `crates/zedc-preimage/src/product.rs` |
 | 0 | BENCH-scope-project-due-blocks, PERF-refused-shape-disjunctions-quadratic | `crates/zedc-preimage/src/product.rs` |
 | 0 | BENCH-scope-project-due-blocks, PERF-hull-join-row-after | `crates/zedc-preimage/src/product.rs` |
 | 0 | BENCH-scope-project-due-blocks, MALLOC-deep-block-free-lists | `crates/zedc-preimage/src/product.rs` |
@@ -5329,6 +5346,7 @@ Each pair below is at one level, shares a file and is not yet done. No path of n
 | 0 | XR-cover-hybrid, TEST-presburger-unreached-paths | `crates/zedc-presburger/src/presburger/exact.rs` |
 | 0 | XR-cover-hybrid, FAIL-exact-refusals-13733945893095969990 | `crates/zedc-presburger/src/presburger/exact.rs` |
 | 0 | XR-cover-hybrid, LAND-cover-hybrid-neon | `crates/zedc-presburger/src/presburger/exact.rs` |
+| 0 | XR-cover-hybrid, BENCH-deep-small-choice | `crates/zedc-presburger/src/presburger/exact.rs` |
 | 0 | XR-cover-hybrid, PROOF-tied-projection-refusal-names | `crates/zedc-presburger/src/presburger/exact.rs` |
 | 0 | BENCH-done-marks-wall-remeasure, SCHED-loop-early | `docs/plan_dag.md` |
 | 0 | BENCH-done-marks-wall-remeasure, LAYER-audit-open | `docs/plan_dag.md` |
@@ -5338,6 +5356,7 @@ Each pair below is at one level, shares a file and is not yet done. No path of n
 | 0 | PRES-cover-moduli-two-disjunctions, TEST-presburger-unreached-paths | `crates/zedc-presburger/src/presburger/exact.rs` |
 | 0 | PRES-cover-moduli-two-disjunctions, FAIL-exact-refusals-13733945893095969990 | `crates/zedc-presburger/src/presburger/exact.rs` |
 | 0 | PRES-cover-moduli-two-disjunctions, LAND-cover-hybrid-neon | `crates/zedc-presburger/src/presburger/exact.rs` |
+| 0 | PRES-cover-moduli-two-disjunctions, BENCH-deep-small-choice | `crates/zedc-presburger/src/presburger/exact.rs` |
 | 0 | PRES-cover-moduli-two-disjunctions, PROOF-tied-projection-refusal-names | `crates/zedc-presburger/src/presburger/exact.rs` |
 | 0 | PRES-direct-stride-answer-downstream, BENCH-project-block-whole-release | `crates/zedc-preimage/src/product.rs` |
 | 0 | PRES-direct-stride-answer-downstream, BENCH-named-wide-conjunction-tiers | `crates/zedc-preimage/src/product.rs` |
@@ -5348,6 +5367,8 @@ Each pair below is at one level, shares a file and is not yet done. No path of n
 | 0 | PRES-direct-stride-answer-downstream, FAIL-exact-refusals-13733945893095969990 | `crates/zedc-presburger/src/presburger/exact.rs` |
 | 0 | PRES-direct-stride-answer-downstream, LAND-refused-shape-neon | `crates/zedc-preimage/src/product.rs` |
 | 0 | PRES-direct-stride-answer-downstream, LAND-cover-hybrid-neon | `crates/zedc-presburger/src/presburger/exact.rs` |
+| 0 | PRES-direct-stride-answer-downstream, BENCH-named-limits-side-by-side-tiers | `crates/zedc-preimage/src/product.rs` |
+| 0 | PRES-direct-stride-answer-downstream, BENCH-deep-small-choice | `crates/zedc-presburger/src/presburger/exact.rs` |
 | 0 | PRES-direct-stride-answer-downstream, PERF-refused-shape-disjunctions-quadratic | `crates/zedc-preimage/src/product.rs` |
 | 0 | PRES-direct-stride-answer-downstream, PERF-hull-join-row-after | `crates/zedc-preimage/src/` |
 | 0 | PRES-direct-stride-answer-downstream, PERF-preimage-chain-draw-spread | `crates/zedc-preimage/src/preimage.rs` |
@@ -5359,6 +5380,7 @@ Each pair below is at one level, shares a file and is not yet done. No path of n
 | 0 | BENCH-project-block-whole-release, CHECK-sum-of-summarized-names | `crates/zedc-preimage/src/product.rs` |
 | 0 | BENCH-project-block-whole-release, FAIL-audit-seed-17180819687505084927 | `crates/zedc-preimage/src/product.rs` |
 | 0 | BENCH-project-block-whole-release, LAND-refused-shape-neon | `crates/zedc-preimage/src/product.rs` |
+| 0 | BENCH-project-block-whole-release, BENCH-named-limits-side-by-side-tiers | `crates/zedc-preimage/src/product.rs` |
 | 0 | BENCH-project-block-whole-release, PERF-refused-shape-disjunctions-quadratic | `crates/zedc-preimage/src/product.rs` |
 | 0 | BENCH-project-block-whole-release, PERF-hull-join-row-after | `crates/zedc-preimage/src/product.rs` |
 | 0 | BENCH-project-block-whole-release, MALLOC-deep-block-free-lists | `crates/zedc-preimage/src/product.rs` |
@@ -5366,12 +5388,14 @@ Each pair below is at one level, shares a file and is not yet done. No path of n
 | 0 | BENCH-named-wide-conjunction-tiers, CHECK-sum-of-summarized-names | `crates/zedc-preimage/src/product.rs` |
 | 0 | BENCH-named-wide-conjunction-tiers, FAIL-audit-seed-17180819687505084927 | `crates/zedc-preimage/src/product.rs` |
 | 0 | BENCH-named-wide-conjunction-tiers, LAND-refused-shape-neon | `crates/zedc-preimage/src/product.rs` |
+| 0 | BENCH-named-wide-conjunction-tiers, BENCH-named-limits-side-by-side-tiers | `crates/zedc-preimage/src/product.rs` |
 | 0 | BENCH-named-wide-conjunction-tiers, PERF-refused-shape-disjunctions-quadratic | `crates/zedc-preimage/src/product.rs` |
 | 0 | BENCH-named-wide-conjunction-tiers, PERF-hull-join-row-after | `crates/zedc-preimage/src/product.rs` |
 | 0 | BENCH-named-wide-conjunction-tiers, MALLOC-deep-block-free-lists | `crates/zedc-preimage/src/product.rs` |
 | 0 | BENCH-reduced-product-scaling-work, CHECK-sum-of-summarized-names | `crates/zedc-preimage/src/product.rs` |
 | 0 | BENCH-reduced-product-scaling-work, FAIL-audit-seed-17180819687505084927 | `crates/zedc-preimage/src/product.rs` |
 | 0 | BENCH-reduced-product-scaling-work, LAND-refused-shape-neon | `crates/zedc-preimage/src/product.rs` |
+| 0 | BENCH-reduced-product-scaling-work, BENCH-named-limits-side-by-side-tiers | `crates/zedc-preimage/src/product.rs` |
 | 0 | BENCH-reduced-product-scaling-work, PERF-refused-shape-disjunctions-quadratic | `crates/zedc-preimage/src/product.rs` |
 | 0 | BENCH-reduced-product-scaling-work, PERF-hull-join-row-after | `crates/zedc-preimage/src/product.rs` |
 | 0 | BENCH-reduced-product-scaling-work, MALLOC-deep-block-free-lists | `crates/zedc-preimage/src/product.rs` |
@@ -5575,6 +5599,7 @@ Each pair below is at one level, shares a file and is not yet done. No path of n
 | 0 | TEST-presburger-unreached-paths, FAIL-omega-pairs-4972743790605253739 | `crates/zedc-presburger/src/presburger/extend.rs` |
 | 0 | TEST-presburger-unreached-paths, PRES-join-cost-predictor | `crates/zedc-presburger/src/presburger/row_sums.rs`, `crates/zedc-presburger/src/presburger.rs` |
 | 0 | TEST-presburger-unreached-paths, LAND-cover-hybrid-neon | `crates/zedc-presburger/src/presburger/exact.rs` |
+| 0 | TEST-presburger-unreached-paths, BENCH-deep-small-choice | `crates/zedc-presburger/src/presburger/exact.rs` |
 | 0 | TEST-presburger-unreached-paths, FAIL-one-scope-bodies-seed-shadows | `crates/zedc-presburger/src/presburger.rs`, `crates/zedc-presburger/src/presburger/extend.rs` |
 | 0 | TEST-presburger-unreached-paths, PROOF-tied-projection-refusal-names | `crates/zedc-presburger/src/` |
 | 0 | TEST-presburger-unreached-paths, PROOF-solve-omega-path-renaming | `crates/zedc-presburger/src/presburger.rs` |
@@ -5644,6 +5669,7 @@ Each pair below is at one level, shares a file and is not yet done. No path of n
 | 0 | CHECK-sum-of-summarized-names, LIMITS-remove-all | `crates/zedc-check/src/check/walk.rs` |
 | 0 | CHECK-sum-of-summarized-names, TEST-term-for-uncovered | `crates/zedc-check/src/check/walk.rs` |
 | 0 | CHECK-sum-of-summarized-names, LAND-refused-shape-neon | `crates/zedc-preimage/src/product.rs` |
+| 0 | CHECK-sum-of-summarized-names, BENCH-named-limits-side-by-side-tiers | `crates/zedc-preimage/src/product.rs` |
 | 0 | CHECK-sum-of-summarized-names, SPEC-headline-piece-in-collection | `crates/zedc-check/src/check/walk.rs` |
 | 0 | CHECK-sum-of-summarized-names, FAIL-nested-display-headline-code-quadratic | `crates/zedc-check/src/check/walk.rs` |
 | 0 | CHECK-sum-of-summarized-names, LAND-map-chain-neon | `crates/zedc-check/src/check/walk.rs` |
@@ -5713,11 +5739,13 @@ Each pair below is at one level, shares a file and is not yet done. No path of n
 | 0 | CHECK-binder-call-summary, MSG-tuple-generic-headline | `crates/zedc-check/src/check/walk.rs` |
 | 0 | CHECK-binder-call-summary, TEST-generic-operand-messages-reached | `crates/zedc-check/src/check/walk.rs` |
 | 0 | FAIL-audit-seed-17180819687505084927, LAND-refused-shape-neon | `crates/zedc-preimage/src/product.rs` |
+| 0 | FAIL-audit-seed-17180819687505084927, BENCH-named-limits-side-by-side-tiers | `crates/zedc-preimage/src/product.rs` |
 | 0 | FAIL-audit-seed-17180819687505084927, PERF-refused-shape-disjunctions-quadratic | `crates/zedc-preimage/src/product.rs` |
 | 0 | FAIL-audit-seed-17180819687505084927, PERF-hull-join-row-after | `crates/zedc-preimage/src/product.rs` |
 | 0 | FAIL-audit-seed-17180819687505084927, MALLOC-deep-block-free-lists | `crates/zedc-preimage/src/product.rs` |
 | 0 | FAIL-exact-refusals-13733945893095969990, FAIL-exact-refusals-4164922340 | `crates/zedc-presburger/src/presburger/exact/tests.rs` |
 | 0 | FAIL-exact-refusals-13733945893095969990, LAND-cover-hybrid-neon | `crates/zedc-presburger/src/presburger/exact.rs` |
+| 0 | FAIL-exact-refusals-13733945893095969990, BENCH-deep-small-choice | `crates/zedc-presburger/src/presburger/exact.rs` |
 | 0 | FAIL-exact-refusals-13733945893095969990, PROOF-tied-projection-refusal-names | `crates/zedc-presburger/src/presburger/exact.rs`, `crates/zedc-presburger/src/presburger/exact/tests.rs` |
 | 0 | FAIL-exact-refusals-4164922340, PRES-join-cost-predictor | `crates/zedc-presburger/src/presburger.rs` |
 | 0 | FAIL-exact-refusals-4164922340, FAIL-one-scope-bodies-seed-shadows | `crates/zedc-presburger/src/presburger.rs` |
@@ -5793,10 +5821,16 @@ Each pair below is at one level, shares a file and is not yet done. No path of n
 | 0 | TEST-term-for-uncovered, MSG-list-value-printed-by-arrows | `crates/zedc-check/src/check/` |
 | 0 | TEST-term-for-uncovered, MSG-tuple-generic-headline | `crates/zedc-check/src/check/` |
 | 0 | TEST-term-for-uncovered, TEST-generic-operand-messages-reached | `crates/zedc-check/src/check/walk/fp_ops.rs`, `crates/zedc-check/src/check/walk.rs` |
+| 0 | LAND-refused-shape-neon, BENCH-named-limits-side-by-side-tiers | `crates/zedc-preimage/src/product.rs` |
 | 0 | LAND-refused-shape-neon, PERF-refused-shape-disjunctions-quadratic | `crates/zedc-preimage/src/product.rs` |
 | 0 | LAND-refused-shape-neon, PERF-hull-join-row-after | `crates/zedc-preimage/src/product.rs` |
 | 0 | LAND-refused-shape-neon, MALLOC-deep-block-free-lists | `crates/zedc-preimage/src/product.rs` |
+| 0 | LAND-cover-hybrid-neon, BENCH-deep-small-choice | `crates/zedc-presburger/src/presburger/exact.rs` |
 | 0 | LAND-cover-hybrid-neon, PROOF-tied-projection-refusal-names | `crates/zedc-presburger/src/presburger/exact.rs` |
+| 0 | BENCH-named-limits-side-by-side-tiers, PERF-refused-shape-disjunctions-quadratic | `crates/zedc-preimage/src/product.rs` |
+| 0 | BENCH-named-limits-side-by-side-tiers, PERF-hull-join-row-after | `crates/zedc-preimage/src/product.rs` |
+| 0 | BENCH-named-limits-side-by-side-tiers, MALLOC-deep-block-free-lists | `crates/zedc-preimage/src/product.rs` |
+| 0 | BENCH-deep-small-choice, PROOF-tied-projection-refusal-names | `crates/zedc-presburger/src/presburger/exact.rs` |
 | 0 | XR-ffi-stateful-r6, SPEC-ct-enforce-neon-findings | `DESIGN.md` |
 | 0 | XR-ffi-stateful-r6, SPEC-lambda-notfound-partial-map | `DESIGN.md` |
 | 0 | XR-ffi-stateful-r6, SPEC-headline-piece-in-collection | `DESIGN.md` |
@@ -8459,8 +8493,8 @@ Each line below names a path and the open items that touch it, by level, when th
 - `crates/zedc-lattice/src/interval.rs`: level 10: PRE-abs-output; level 25: L3.6
 - `crates/zedc-lattice/src/iterate.rs`: level 38: L6.11; level 39: L6.11a; level 40: L6.11b
 - `crates/zedc-lattice/src/lattice.rs`: level 14: L1.40a; level 15: CONG-transfer
-- `crates/zedc-preimage/`: level 0: BENCH-named-wide-conjunction-tiers, BENCH-project-block-whole-release, BENCH-reduced-product-scaling-work, BENCH-scope-project-due-blocks, CHECK-sum-of-summarized-names, FAIL-audit-seed-17180819687505084927, FAMILY-scale-larger, HOLES-exact-between, LAND-refused-shape-neon, LINKED-incremental-scratch-agree, MALLOC-deep-block-free-lists, NARROW-hub-interleaved-scale, PATH-reads-scale, PERF-hull-join-row-after, PERF-l139-block-incr, PERF-l139-hopb-wakes, PERF-l139-persist-due, PERF-preimage-chain-draw-spread, PERF-preimage-seed-7776978274844439420-round1, PERF-refused-shape-disjunctions-quadratic, PRES-direct-stride-answer-downstream, REF-nested-moduli-state, S22-scaling-10_5, SCALE-near-limit-l0139, SCOPE-assume-disjunctions-setup, SOLVER-refused-parts-slow, STAR-satellite-scale, TIGHTEN-k-parts; level 2: MOD-pre-width, PERF-alternating-product-bytes, PERF-wide-modulus-cliffs, PULL-bisect; level 3: PERF-l139-under9, ST-case-points-later-link, ST-relation-shared-disjunctions, ST-walk-bound-test, ST-walk-checker-or; level 5: PRES-interval-strided-piece, S15-calls; level 8: PRES-project-exact-solver; level 9: FAIL-linked-holes-seed-90, FAIL-or-if-projection-not-exact, FAIL-scope-equation-odd-points, FAIL-scope-three-names-one-row, PERF-preimage-cross-dead-under9, S22-R2; level 10: PRE-abs-output; level 12: ST-wider; level 13: L1.40; level 14: L1.40a; level 15: CONG-transfer, L1.40b-sparse, L1.40c, L2.7; level 16: L1.40b; level 17: L1.40e; level 18: L2.12; level 19: L2.10, SCOPE-warn; level 25: L3.6; level 26: L3.7; level 27: L3.8; level 37: L4.3; level 52: PREIMAGE-reindex; level 56: MENU-linear-L10; level 59: L12.3, L15.3; level 63: L15.8
-- `crates/zedc-preimage/src/`: level 0: BENCH-named-wide-conjunction-tiers, BENCH-project-block-whole-release, BENCH-reduced-product-scaling-work, BENCH-scope-project-due-blocks, CHECK-sum-of-summarized-names, FAIL-audit-seed-17180819687505084927, FAMILY-scale-larger, HOLES-exact-between, LAND-refused-shape-neon, LINKED-incremental-scratch-agree, MALLOC-deep-block-free-lists, PERF-hull-join-row-after, PERF-l139-block-incr, PERF-l139-hopb-wakes, PERF-l139-persist-due, PERF-preimage-chain-draw-spread, PERF-preimage-seed-7776978274844439420-round1, PERF-refused-shape-disjunctions-quadratic, REF-nested-moduli-state, SCALE-near-limit-l0139, SCOPE-assume-disjunctions-setup, SOLVER-refused-parts-slow, TIGHTEN-k-parts; level 2: MOD-pre-width, PERF-alternating-product-bytes, PERF-wide-modulus-cliffs, PULL-bisect; level 3: PERF-l139-under9, ST-case-points-later-link, ST-relation-shared-disjunctions, ST-walk-bound-test, ST-walk-checker-or; level 5: S15-calls; level 8: PRES-project-exact-solver; level 9: FAIL-linked-holes-seed-90, FAIL-or-if-projection-not-exact, FAIL-scope-equation-odd-points, FAIL-scope-three-names-one-row, PERF-preimage-cross-dead-under9, S22-R2; level 10: PRE-abs-output; level 12: ST-wider; level 13: L1.40; level 14: L1.40a; level 15: CONG-transfer, L1.40b-sparse, L1.40c, L2.7; level 16: L1.40b; level 17: L1.40e; level 18: L2.12; level 19: L2.10, SCOPE-warn; level 25: L3.6; level 26: L3.7; level 27: L3.8; level 37: L4.3; level 52: PREIMAGE-reindex; level 56: MENU-linear-L10; level 59: L12.3, L15.3; level 63: L15.8
+- `crates/zedc-preimage/`: level 0: BENCH-named-limits-side-by-side-tiers, BENCH-named-wide-conjunction-tiers, BENCH-project-block-whole-release, BENCH-reduced-product-scaling-work, BENCH-scope-project-due-blocks, CHECK-sum-of-summarized-names, FAIL-audit-seed-17180819687505084927, FAMILY-scale-larger, HOLES-exact-between, LAND-refused-shape-neon, LINKED-incremental-scratch-agree, MALLOC-deep-block-free-lists, NARROW-hub-interleaved-scale, PATH-reads-scale, PERF-hull-join-row-after, PERF-l139-block-incr, PERF-l139-hopb-wakes, PERF-l139-persist-due, PERF-preimage-chain-draw-spread, PERF-preimage-seed-7776978274844439420-round1, PERF-refused-shape-disjunctions-quadratic, PRES-direct-stride-answer-downstream, REF-nested-moduli-state, S22-scaling-10_5, SCALE-near-limit-l0139, SCOPE-assume-disjunctions-setup, SOLVER-refused-parts-slow, STAR-satellite-scale, TIGHTEN-k-parts; level 2: MOD-pre-width, PERF-alternating-product-bytes, PERF-wide-modulus-cliffs, PULL-bisect; level 3: PERF-l139-under9, ST-case-points-later-link, ST-relation-shared-disjunctions, ST-walk-bound-test, ST-walk-checker-or; level 5: PRES-interval-strided-piece, S15-calls; level 8: PRES-project-exact-solver; level 9: FAIL-linked-holes-seed-90, FAIL-or-if-projection-not-exact, FAIL-scope-equation-odd-points, FAIL-scope-three-names-one-row, PERF-preimage-cross-dead-under9, S22-R2; level 10: PRE-abs-output; level 12: ST-wider; level 13: L1.40; level 14: L1.40a; level 15: CONG-transfer, L1.40b-sparse, L1.40c, L2.7; level 16: L1.40b; level 17: L1.40e; level 18: L2.12; level 19: L2.10, SCOPE-warn; level 25: L3.6; level 26: L3.7; level 27: L3.8; level 37: L4.3; level 52: PREIMAGE-reindex; level 56: MENU-linear-L10; level 59: L12.3, L15.3; level 63: L15.8
+- `crates/zedc-preimage/src/`: level 0: BENCH-named-limits-side-by-side-tiers, BENCH-named-wide-conjunction-tiers, BENCH-project-block-whole-release, BENCH-reduced-product-scaling-work, BENCH-scope-project-due-blocks, CHECK-sum-of-summarized-names, FAIL-audit-seed-17180819687505084927, FAMILY-scale-larger, HOLES-exact-between, LAND-refused-shape-neon, LINKED-incremental-scratch-agree, MALLOC-deep-block-free-lists, PERF-hull-join-row-after, PERF-l139-block-incr, PERF-l139-hopb-wakes, PERF-l139-persist-due, PERF-preimage-chain-draw-spread, PERF-preimage-seed-7776978274844439420-round1, PERF-refused-shape-disjunctions-quadratic, REF-nested-moduli-state, SCALE-near-limit-l0139, SCOPE-assume-disjunctions-setup, SOLVER-refused-parts-slow, TIGHTEN-k-parts; level 2: MOD-pre-width, PERF-alternating-product-bytes, PERF-wide-modulus-cliffs, PULL-bisect; level 3: PERF-l139-under9, ST-case-points-later-link, ST-relation-shared-disjunctions, ST-walk-bound-test, ST-walk-checker-or; level 5: S15-calls; level 8: PRES-project-exact-solver; level 9: FAIL-linked-holes-seed-90, FAIL-or-if-projection-not-exact, FAIL-scope-equation-odd-points, FAIL-scope-three-names-one-row, PERF-preimage-cross-dead-under9, S22-R2; level 10: PRE-abs-output; level 12: ST-wider; level 13: L1.40; level 14: L1.40a; level 15: CONG-transfer, L1.40b-sparse, L1.40c, L2.7; level 16: L1.40b; level 17: L1.40e; level 18: L2.12; level 19: L2.10, SCOPE-warn; level 25: L3.6; level 26: L3.7; level 27: L3.8; level 37: L4.3; level 52: PREIMAGE-reindex; level 56: MENU-linear-L10; level 59: L12.3, L15.3; level 63: L15.8
 - `crates/zedc-preimage/src/preimage.rs`: level 0: PERF-preimage-chain-draw-spread, PERF-preimage-seed-7776978274844439420-round1; level 2: MOD-pre-width; level 5: S15-calls; level 8: PRES-project-exact-solver; level 9: FAIL-or-if-projection-not-exact, PERF-preimage-cross-dead-under9, S22-R2; level 10: PRE-abs-output; level 13: L1.40; level 15: L2.7; level 19: L2.10; level 25: L3.6; level 37: L4.3; level 52: PREIMAGE-reindex; level 56: MENU-linear-L10; level 59: L15.3; level 63: L15.8
 - `crates/zedc-preimage/src/product.rs`: level 0: BENCH-named-wide-conjunction-tiers, BENCH-project-block-whole-release, BENCH-reduced-product-scaling-work, BENCH-scope-project-due-blocks, CHECK-sum-of-summarized-names, FAIL-audit-seed-17180819687505084927, FAMILY-scale-larger, HOLES-exact-between, LAND-refused-shape-neon, LINKED-incremental-scratch-agree, MALLOC-deep-block-free-lists, PERF-l139-block-incr, PERF-l139-hopb-wakes, PERF-l139-persist-due, PERF-refused-shape-disjunctions-quadratic, SCALE-near-limit-l0139, SCOPE-assume-disjunctions-setup, SOLVER-refused-parts-slow, TIGHTEN-k-parts; level 3: PERF-l139-under9, ST-case-points-later-link, ST-relation-shared-disjunctions, ST-walk-bound-test, ST-walk-checker-or; level 9: FAIL-linked-holes-seed-90, FAIL-scope-equation-odd-points, FAIL-scope-three-names-one-row; level 12: ST-wider; level 13: L1.40; level 14: L1.40a; level 15: CONG-transfer, L1.40b-sparse, L1.40c, L2.7; level 16: L1.40b; level 17: L1.40e; level 18: L2.12; level 19: L2.10, SCOPE-warn; level 25: L3.6; level 26: L3.7; level 27: L3.8; level 37: L4.3; level 59: L12.3, L15.3; level 63: L15.8
 - `crates/zedc-presburger/`: level 0: FAIL-batch-linked-copies-growth, FAIL-dark-cycle-both-ways-growth, FAIL-exact-refusals-13733945893095969990, FAIL-exact-refusals-4164922340, FAIL-omega-pairs-4972743790605253739, FAIL-one-scope-bodies-seed-shadows, FAIL-tie-doubled-cycle-deeper-search, LAND-cover-hybrid-neon, PERF-l139-block-incr, PERF-l139-persist-due, PERF-tie-rekey-count, PNCX-coloring-crt-scale, PRES-c12-proof, PRES-c12-small-cost, PRES-cover-moduli-two-disjunctions, PRES-direct-stride-answer-downstream, PRES-floor-grow, PRES-fused-bound, PRES-holes-steps-cost, PRES-join-cost-predictor, PRES-ladder-10_5, PRES-pair-scan-cost, PRES-scaling-10_5, PRES-sign-free-order-growth, PRES-sum-chain-cost, PRES-two-pin-edges, PROOF-solve-omega-path-renaming, PROOF-tied-projection-refusal-names, Q1-LOCAL-method, RP-scaling-10_5, SOLVE-growth-implied-row, TEST-presburger-unreached-paths, XR-cover-hybrid; level 1: PRES-cover-refusals-moduli, PRES-growth-hull-side-one-symbol, PRES-shadows-refusal-by-cost, PRES-solver-equation-sign-free, PRES-two-pin-choices; level 2: PRES-sign-tie-names, PRES-solve-equation-sign; level 3: PRES-a99-per-call-or-symbol, ST-relation-shared-disjunctions; level 5: PRES-cover-bench-deep-accounts-again, PRES-cover-bench-deep-paired, PRES-cover-bench-disjoint-reduced, PRES-cover-bench-many-calls, PRES-cover-exact-limit-scaled, PRES-groupA-forward-per-name-order, PRES-interval-strided-piece, PRES-pugh-xr-rounds; level 7: PRES-cover-bench-regressions; level 8: PRES-cover-wire, PRES-project-exact-solver; level 9: FAIL-or-if-projection-not-exact, PERF-preimage-cross-dead-under9, PRES-shadow-exact-comment; level 10: ST-formula-parse-keep; level 11: ST-formula-print; level 17: HAS-point-probe; level 26: L3.7; level 36: L4.4; level 40: DESCENT-sum; level 58: MOD-residue; level 74: HULL3-GEN
