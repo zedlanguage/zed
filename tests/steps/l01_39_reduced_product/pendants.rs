@@ -4,7 +4,6 @@
 //! whole part on random parts where neither refuses, and on a program where the answer
 //! changed.
 
-use std::cell::OnceCell;
 use std::collections::{BTreeMap, HashSet};
 use std::sync::Arc;
 
@@ -700,6 +699,323 @@ fn lp_max(rows: &[(Vec<i64>, i64)], objective: &[i64]) -> Lp {
     Lp::Max(t[0][rhs].div_floor(&den))
 }
 
+/// A row of [`omega`]: coefficients and constant.
+type Row = (Vec<Num>, Num);
+
+/// Whether some integer `x` has `a · x <= b` for each row `(a, b)` ([`omega`]).
+fn has_point(rows: &[(Vec<i64>, i64)]) -> bool {
+    let row = |(a, b): &(Vec<i64>, i64)| (a.iter().map(|x| Num::from(*x)).collect(), Num::from(*b));
+    omega(rows.iter().map(row).collect(), Vec::new())
+}
+
+/// Whether some integer `x` has `a · x <= b` for each row `(a, b)` of `le` and `a · x == b` for
+/// each of `eq`, by the Omega test (Pugh, "A practical algorithm for exact array dependence
+/// analysis", CACM 35(8), 1992), exact for any rows, with no bound on `x`.
+///
+/// An equation is divided by the gcd of its coefficients (no integer point where that does not
+/// divide its constant), then its coefficients are brought to one of `±1` by Euclid's algorithm
+/// on columns: `x_i = x_i' - q · x_j'` is a change of variables with an integer inverse, so it
+/// maps the integer points one to one, and it turns the coefficient `c_j` of every row into
+/// `c_j - q · c_i`. With the one coefficient left `±1`, the equation fixes `x_i`, which is put
+/// into every row. An inequality is divided by the gcd of its coefficients, its constant
+/// rounded down (the same integer points); of two with the same coefficients the lesser
+/// constant is kept, and two of opposite coefficients whose constants add to 0 are an
+/// equation. A variable bounded on one side only is dropped with its rows: for any integer
+/// values of the others, an integer value of it far enough out meets them all. Otherwise a
+/// variable is eliminated by Fourier and Motzkin's real shadow, the combinations
+/// `l · upper + u · lower`, which has the same integer points as the projection where each
+/// lower bound or each upper bound has coefficient 1; else there are integer points if the dark
+/// shadow (each constant less `(l - 1)(u - 1)`) has one, none if the real shadow has none, and
+/// otherwise exactly where one of the splinters has one: the equations `l · x_j = L + i` for
+/// each lower bound `L <= l · x_j` and `0 <= i <= (l · m - l - m) / m`, `m` the greatest
+/// coefficient of an upper bound (Pugh's theorem). Each step leaves out a variable, or adds an
+/// equation that then does, so the recursion ends.
+///
+/// Complexity tradeoff: exponential in the variables in the worst case (each elimination can
+/// multiply the rows, each splinter adds a branch), against enumeration within the proven bound
+/// `(n + 1) · Δ` on some integer point (Schrijver, Theory of Linear and Integer Programming,
+/// cor. 17.1b; `Δ` the greatest subdeterminant), which for the 3 hubs and up to 6 `z` and 40
+/// rows of a random part is millions of values per hub. The rows are deduplicated after each
+/// step. A test oracle on at most 9 variables.
+fn omega(le: Vec<Row>, mut eq: Vec<Row>) -> bool {
+    let (zero, one) = (Num::from(0), Num::from(1));
+    let gcd = |a: &[Num]| a.iter().fold(Num::from(0), |g, x| g.gcd(x));
+    let mut le = le;
+    while let Some((mut a, b)) = eq.pop() {
+        let g = gcd(&a);
+        if g.is_zero() {
+            if !b.is_zero() {
+                return false;
+            }
+            continue;
+        }
+        if !b.mod_floor(&g).is_zero() {
+            return false;
+        }
+        for x in &mut a {
+            *x = x.div_floor(&g);
+        }
+        let b = b.div_floor(&g);
+        let i = loop {
+            let nz: Vec<usize> = (0..a.len()).filter(|&j| !a[j].is_zero()).collect();
+            let i = *nz
+                .iter()
+                .min_by_key(|&&j| a[j].abs())
+                .expect("a coefficient, as gcd 1");
+            if nz.len() == 1 {
+                break i;
+            }
+            for &j in nz.iter().filter(|&&j| j != i) {
+                let q = a[j].div_floor(&a[i]);
+                let shift = |r: &mut Vec<Num>| r[j] = &r[j] - &(&q * &r[i]);
+                shift(&mut a);
+                for (r, _) in le.iter_mut().chain(eq.iter_mut()) {
+                    shift(r);
+                }
+            }
+        };
+        assert!(
+            a[i].abs() == one,
+            "Euclid's algorithm keeps the gcd 1: {a:?}"
+        );
+        let v = &b * &a[i];
+        for (r, c) in le.iter_mut().chain(eq.iter_mut()) {
+            *c = &*c - &(&r[i] * &v);
+            r[i] = zero.clone();
+        }
+    }
+    let mut rows: BTreeMap<Vec<Num>, Num> = BTreeMap::new();
+    for (a, b) in le {
+        let g = gcd(&a);
+        if g.is_zero() {
+            if b.signum() < 0 {
+                return false;
+            }
+            continue;
+        }
+        let a: Vec<Num> = a.iter().map(|x| x.div_floor(&g)).collect();
+        let b = b.div_floor(&g);
+        let c = rows.entry(a).or_insert_with(|| b.clone());
+        if b < *c {
+            *c = b;
+        }
+    }
+    let mut eqs = Vec::new();
+    for (a, b) in &rows {
+        let na: Vec<Num> = a.iter().map(|x| -x).collect();
+        if let Some(c) = rows.get(&na) {
+            let s = b + c;
+            if s.signum() < 0 {
+                return false;
+            }
+            if s.is_zero() && *a > na {
+                eqs.push((a.clone(), b.clone()));
+            }
+        }
+    }
+    let rows: Vec<Row> = rows.into_iter().collect();
+    if !eqs.is_empty() {
+        return omega(rows, eqs);
+    }
+    // The variable to eliminate: exact first, then the fewest combinations.
+    let k = rows.first().map_or(0, |r| r.0.len());
+    let mut best: Option<(bool, usize, usize)> = None;
+    for j in 0..k {
+        let (mut lo, mut up, mut lo_unit, mut up_unit) = (0, 0, true, true);
+        for (a, _) in &rows {
+            match a[j].signum() {
+                1 => (up, up_unit) = (up + 1, up_unit && a[j] == one),
+                -1 => (lo, lo_unit) = (lo + 1, lo_unit && a[j] == -&one),
+                _ => {}
+            }
+        }
+        if lo + up == 0 {
+            continue;
+        }
+        if lo == 0 || up == 0 {
+            return omega(
+                rows.into_iter().filter(|(a, _)| a[j].is_zero()).collect(),
+                eq,
+            );
+        }
+        let key = (!(lo_unit || up_unit), lo * up, j);
+        if best.is_none_or(|b| key < b) {
+            best = Some(key);
+        }
+    }
+    // No variable left: each row is `0 <= b` with `b >= 0`, checked above.
+    let Some((inexact, _, j)) = best else {
+        return true;
+    };
+    let side = |s: i8| -> Vec<&Row> { rows.iter().filter(|(a, _)| a[j].signum() == s).collect() };
+    let (lower, upper) = (side(-1), side(1));
+    let shadow = |dark: bool| -> Vec<Row> {
+        let mut out: Vec<Row> = rows
+            .iter()
+            .filter(|(a, _)| a[j].is_zero())
+            .cloned()
+            .collect();
+        for (ua, ub) in &upper {
+            for (la, lb) in &lower {
+                let (u, l) = (&ua[j], -&la[j]);
+                let a = ua
+                    .iter()
+                    .zip(la)
+                    .map(|(x, y)| &(&l * x) + &(u * y))
+                    .collect();
+                let mut b = &(&l * ub) + &(u * lb);
+                if dark {
+                    b = &b - &(&(&l - &one) * &(u - &one));
+                }
+                out.push((a, b));
+            }
+        }
+        out
+    };
+    if !inexact {
+        return omega(shadow(false), Vec::new());
+    }
+    if !omega(shadow(false), Vec::new()) {
+        return false;
+    }
+    if omega(shadow(true), Vec::new()) {
+        return true;
+    }
+    let m = upper
+        .iter()
+        .map(|(a, _)| a[j].clone())
+        .max()
+        .expect("an upper bound");
+    for (la, lb) in &lower {
+        let l = -&la[j];
+        let top = (&(&(&l * &m) - &l) - &m).div_floor(&m);
+        let mut i = zero.clone();
+        while i <= top {
+            if omega(rows.clone(), vec![(la.clone(), lb - &i)]) {
+                return true;
+            }
+            i = &i + &one;
+        }
+    }
+    false
+}
+
+/// The rows `a · x <= b` with `l <= u · x <= h` added.
+fn with_range(rows: &[(Vec<i64>, i64)], u: &[i64], l: i64, h: i64) -> Vec<(Vec<i64>, i64)> {
+    let mut out = rows.to_vec();
+    out.push((u.iter().map(|x| -x).collect(), -l));
+    out.push((u.to_vec(), h));
+    out
+}
+
+/// The values of `u · x` in `l..=h` at the integer points `x` of `rows`, as ranges in order,
+/// by halving the range and asking [`has_point`] of each half.
+///
+/// Complexity tradeoff: `O(pieces · log(h - l))` questions where the values taken form a few
+/// pieces, `O(h - l)` where every value is a piece of its own; asking value by value is always
+/// `O(h - l)`. A test oracle over ranges of a few hundred values at most.
+fn taken_within(rows: &[(Vec<i64>, i64)], u: &[i64], l: i64, h: i64) -> Vec<(i64, i64)> {
+    if l > h || !has_point(&with_range(rows, u, l, h)) {
+        return Vec::new();
+    }
+    if l == h {
+        return vec![(l, l)];
+    }
+    let m = l + (h - l) / 2;
+    let mut out = taken_within(rows, u, l, m);
+    for (a, b) in taken_within(rows, u, m + 1, h) {
+        match out.last_mut() {
+            Some((_, e)) if *e + 1 == a => *e = b,
+            _ => out.push((a, b)),
+        }
+    }
+    out
+}
+
+/// The least value of `u · x` at least `from` at the integer points `x` of `rows`, or `None`
+/// where there is none: a range doubled from `from` until [`has_point`] finds a point in it,
+/// which it does once it reaches that least value, then halved down to it.
+fn least_taken_from(rows: &[(Vec<i64>, i64)], u: &[i64], from: i64) -> Option<i64> {
+    let mut above = rows.to_vec();
+    above.push((u.iter().map(|x| -x).collect(), -from));
+    if !has_point(&above) {
+        return None;
+    }
+    let mut span: i64 = 1;
+    while !has_point(&with_range(rows, u, from, from + span - 1)) {
+        span = span.checked_mul(2).expect("a value within i64");
+    }
+    let (mut lo, mut hi) = (from, from + span - 1);
+    while lo < hi {
+        let m = lo + (hi - lo) / 2;
+        if has_point(&with_range(rows, u, from, m)) {
+            hi = m;
+        } else {
+            lo = m + 1;
+        }
+    }
+    Some(lo)
+}
+
+/// The values of `u · x` above `q` at the integer points `x` of `rows`, where the rational
+/// values grow without bound and every value in `p..=q` is taken (`p` `None` for no lower end),
+/// as ranges in order with the last one open (`None`), or `None` where they are not a finite
+/// union of ranges.
+///
+/// Let `t0` be the least `t >= 1` with an integer point `y` of the recession cone
+/// (`a · y <= 0` for each row) with `u · y = t`: one exists, since a rational ray with
+/// `u · y > 0` times a common denominator is one, and [`has_point`] decides each `t`. For a
+/// value `w` taken at an integer point `x`, `x + k · y` is an integer point for each whole `k`
+/// (`a · (x + k · y) <= b`), so `w + k · t0` is taken. So in each class of residues mod `t0`,
+/// the values above `q` taken are those from the least one, `m_r`, on: those of `p..=q` itself
+/// where it meets the class, else the least found by [`least_taken_from`] with
+/// `u · x = r + t0 · k` for a new integer `k`, or none in the class. Where every class has
+/// values, `w > q` is taken exactly where `w >= m_r` of its class, and every `w` from the
+/// greatest `m_r` on is; where a class has none, the values are infinitely many with
+/// infinitely many gaps, which a finite union of ranges cannot hold.
+fn taken_beyond(
+    rows: &[(Vec<i64>, i64)],
+    u: &[i64],
+    p: Option<i64>,
+    q: i64,
+) -> Option<Vec<(i64, Option<i64>)>> {
+    let cone: Vec<(Vec<i64>, i64)> = rows.iter().map(|(a, _)| (a.clone(), 0)).collect();
+    let t0 = (1..)
+        .find(|&t| has_point(&with_range(&cone, u, t, t)))
+        .expect("a step of the cone, as the values grow without bound");
+    let covered = |r: i64| p.is_none_or(|p| q - p + 1 >= t0 || (r - p).rem_euclid(t0) <= q - p);
+    let mut least: Vec<i64> = Vec::new();
+    for r in (0..t0).filter(|&r| !covered(r)) {
+        let class: Vec<(Vec<i64>, i64)> = rows
+            .iter()
+            .map(|(a, b)| (a.iter().copied().chain([0]).collect(), *b))
+            .chain([
+                (u.iter().copied().chain([-t0]).collect(), r),
+                (u.iter().map(|x| -x).chain([t0]).collect(), -r),
+            ])
+            .collect();
+        let ue: Vec<i64> = u.iter().copied().chain([0]).collect();
+        least.push(least_taken_from(&class, &ue, q + 1)?);
+    }
+    let top = least.iter().copied().max().unwrap_or(q + 1);
+    let mut out: Vec<(i64, Option<i64>)> = Vec::new();
+    for w in q + 1..top {
+        let r = w.rem_euclid(t0);
+        let m = (0..t0).filter(|&s| !covered(s)).position(|s| s == r);
+        if m.is_none_or(|m| w >= least[m]) {
+            match out.last_mut() {
+                Some((_, Some(e))) if *e + 1 == w => *e = w,
+                _ => out.push((w, Some(w))),
+            }
+        }
+    }
+    match out.last_mut() {
+        Some((_, e)) if *e == Some(top - 1) => *e = None,
+        _ => out.push((top, None)),
+    }
+    Some(out)
+}
+
 /// `Ok` where each hub lies within `-far..=far` at every rational point of `rows` (over the
 /// names of `boxes`, from [`lp_rows`]), or there is none: then [`points`], which visits every
 /// integer point with the hubs in that range, visited every integer point of `rows`, so a value
@@ -724,77 +1040,55 @@ fn hubs_within(
     Ok(())
 }
 
-/// The ends and holes of `hull` and `set`, the values of `n` found by [`points`] in one
-/// disjunct (`cons` within `boxes`) with the hubs within `-far..=far`, decided. Where every
-/// hub lies in that range at every rational point of the disjunct ([`hubs_within`]), what
-/// `points` found is exact. Otherwise each end and hole is decided alone. An end found is
-/// taken, so the name's end lies at or beyond it. It is the end where it is the end of the
-/// name's box, or where the floor of the greatest rational value ([`lp_max`]) equals it. Where
-/// the rational values grow without bound, so do the integer ones (Meyer 1974: the integer
-/// points of a rational polyhedron, when there are any, and `points` found one, have the same
-/// recession cone as the polyhedron), and the end is opened: the hull is exact, but the values
-/// beyond the last piece found need not all be taken (`z0 == 2 * a + 1` takes only the odd
-/// values; `100 * b <= a <= 100 * b + 1` with `b >= 0` takes `0, 1, 100, 101, 200, ...`). The
-/// set returned holds every value beyond (`upper` below), and those values are proved taken
-/// only by a step of the cone, as follows. Otherwise the rational points past the end are
-/// bounded, and where
-/// [`hubs_within`] holds of them, the end is the end: at each hub point each `z` takes exactly
-/// the range shortest paths give, so an integer point past the end would have been found. A
-/// hole of `set` is a hole where [`hubs_within`] holds of the rational points with `n` in it.
-/// An end or hole none of these decides is a gap of this brute force, reported, not guessed.
-/// The rule these replace opened every end found that moved between two ranges of the hubs,
-/// and so opened `z3 <= 13` of seed 894 case 15, reached only with `a >= 33` and `b <= -60`
-/// (FAIL-pendants-oracle-seed-894); it did not check holes.
+/// The values of `n` in one disjunct (`cons` within `boxes`), from `hull` and `set`, those
+/// [`points`] found with the hubs within `-far..=far` (empty where it found no point; [`brute`]
+/// asks this only of a disjunct with an integer point). Where every hub lies in that range at
+/// every rational point of the disjunct ([`hubs_within`]), what `points` found is exact.
+/// Otherwise the values are decided by integer feasibility ([`has_point`]), exact for any
+/// rows, so `far` sets only how much `points` finds at once, never the answer: a value is
+/// found first where `points` found none ([`least_taken_from`]); each hole between pieces is
+/// decided ([`taken_within`]); at an end that is not the end of the name's box, the values
+/// past it up to the floor of the greatest rational value ([`lp_max`]) are decided the same
+/// way, and where the rational values grow without bound, those beyond are decided by
+/// [`taken_beyond`].
+///
+/// This replaces a rule that proved values past an end or in a hole taken only by a step of
+/// the recession cone found within the window and that panicked where neither a step nor
+/// [`hubs_within`] decided them (FAIL-pendants-oracle-undecided: seed 12883791572206885593,
+/// whose hole `-117..=-117` of `z2` lay where `-a` is unbounded beyond 75).
 ///
 /// Returns the hull, `lower` and `upper`: `lower` holds only values proved taken and `upper`
-/// every value taken, so the exact set lies between them, and is each of them where they are
-/// equal. `lower` is the set found, with an opened end's piece where a step proves it. Proof
-/// of the step: write the disjunct's rows ([`lp_rows`]) as `A · x <= b`, and its recession
-/// cone as `A · x <= 0`, the same rows with each constant and each finite end of a box 0
-/// (`steps` gives the values of `n` at the integer points of the cone that [`points`] finds).
-/// Let `r` be such a point with `n(r) = t`, `1 <= t <= len` for the upper end, where the last
-/// piece found is `[p, p + len - 1]` (`len` unbounded where `p` is `-inf`). Each value of that
-/// piece is taken at an integer point `x0` (every value [`points`] finds is taken), and for
-/// each whole `q >= 0`, `A · (x0 + q · r) = A · x0 + q · A · r <= b`, so `x0 + q · r` is an
-/// integer point of the disjunct with `n = n(x0) + q · t`. A value `w >= p` is
-/// `p + s + q · t` with `0 <= s < t <= len`, so `p + s` lies in the piece and `w` is taken:
-/// every value from `p` on is. The lower end is the same with `-t`. Where no such `r` is found
-/// (none exists for `z0 == 2 * a + 1`, whose piece is one value and whose cone has `t = 2`
-/// only), the piece stays out of `lower`, and a check that reads these sets says it cannot
-/// decide, rather than call an answer exact or unsound on a set it has not proved.
-///
-/// A hole is filled by the same step first ([`reached`]): a value `v` of it is taken where
-/// some value `u` already taken (found, or filled before) and some integer point `r` of the
-/// cone give `v = u + n(r)`, `n(r) != 0`, since `x0 + r` is then a point of the disjunct with
-/// `n = v`, as above. Only what is left of a hole goes to [`hubs_within`]. Without this, the
-/// values of `z0 == 2 * a + 3 * b`, `a, b >= 0`, found with the hubs within `0..=75`, end
-/// `.., 373, 375` with 374 missing (it needs `a >= 76` or `b >= 76`), the hub ranges there are
-/// unbounded, and the brute force stopped on that hole before it reached the end, which the
-/// step 2 proves (TEST-pendants-step-proof-complete; test
-/// `a_hole_filled_by_a_step_of_the_cone_is_taken`).
+/// every value taken, so the exact set lies between them. They are equal but where an end's
+/// values grow without bound with a residue class mod the cone's least step never taken
+/// ([`taken_beyond`]: infinitely many gaps, which [`IntervalSet`] cannot hold); there `upper`
+/// holds every value beyond, and a check that reads these sets says it cannot decide.
 fn decided_ends(
     (hull, set): (IntervalSet, IntervalSet),
     n: &str,
     cons: &[Cmp],
     boxes: &BTreeMap<String, Piece>,
     far: i64,
-    steps: impl Fn(&str) -> IntervalSet,
 ) -> (IntervalSet, IntervalSet, IntervalSet) {
-    if set.is_empty() {
-        return (hull, set.clone(), set);
-    }
     let rows = lp_rows(cons, boxes);
     if hubs_within(&rows, boxes, far).is_ok() {
         return (hull, set.clone(), set);
     }
-    let unit = |m: &str, s: i64| -> Vec<i64> {
-        boxes.keys().map(|x| if x == m { s } else { 0 }).collect()
+    let unit = |s: i64| -> Vec<i64> { boxes.keys().map(|x| if x == n { s } else { 0 }).collect() };
+    // A value taken where `points` found none, which [`brute`] asks only of a disjunct with an
+    // integer point: the least from 0 up, else the greatest below 0.
+    let mut taken = if set.is_empty() {
+        let v = least_taken_from(&rows, &unit(1), 0)
+            .or_else(|| least_taken_from(&rows, &unit(-1), 1).map(|v| -v))
+            .expect("a value, as the disjunct has an integer point");
+        IntervalSet::single(v)
+    } else {
+        set
     };
     // Each hole between two pieces found, `[b + 1, a - 1]` between `[.., b]` and `[a, ..]`.
-    let holes: Vec<(i64, i64)> = (set.pieces().zip(set.pieces().skip(1)))
+    let holes: Vec<(i64, i64)> = (taken.pieces().zip(taken.pieces().skip(1)))
         .map(|(p, q)| {
             let (End::Fin(b), End::Fin(a)) = (&p.1, &q.0) else {
-                panic!("pieces with a hole between them have finite ends: {set:?}");
+                panic!("pieces with a hole between them have finite ends: {taken:?}");
             };
             (
                 b.to_i64().expect("a value") + 1,
@@ -802,110 +1096,57 @@ fn decided_ends(
             )
         })
         .collect();
-    // The values of the holes a step of the cone proves taken, until no more are (see above).
-    // A pass over the holes' values costs O(holes' length · pieces), and each pass but the last
-    // fills one value or more: a test oracle over holes of a few hundred values at most.
-    let steps_n = steps(n);
-    let mut taken = set.clone();
-    loop {
-        let before = taken.clone();
-        for &(b, a) in &holes {
-            for v in b..=a {
-                if !taken.contains(v) && reached(v, &taken, &steps_n) {
-                    taken = taken.join(&IntervalSet::single(v));
-                }
-            }
-        }
-        if taken == before {
-            break;
+    for (b, a) in holes {
+        for (l, h) in taken_within(&rows, &unit(1), b, a) {
+            taken = taken.join(&IntervalSet::of(l, h));
         }
     }
-    // Each stretch of a hole left: decided empty where the hubs are within range there.
-    for &(b, a) in &holes {
-        for (l, h) in IntervalSet::of(b, a).minus(&taken).pieces() {
-            let (l, h) = (l.to_i64().expect("a value"), h.to_i64().expect("a value"));
-            let mut within = rows.clone();
-            within.push((unit(n, -1), -l));
-            within.push((unit(n, 1), h));
-            if let Err(why) = hubs_within(&within, boxes, far) {
-                panic!(
-                    "the brute force cannot decide the hole {l}..={h} of {n}: in it {why}, within \
-                     {cons:?} {boxes:?}"
-                );
-            }
-        }
-    }
-    let set = &taken;
-    let (Some(first), Some(last)) = (set.first(), set.last()) else {
-        unreachable!("the set only grew");
-    };
     let (lo, hi) = boxes[n];
-    // The end decided, and whether every value of the piece at it is proved taken: always but
-    // for an opened end, where a step of the cone proves it (see above). `piece` is the piece
-    // found at the end, `sign` 1 for the upper end and -1 for the lower.
-    let end = |found: &End, bound: Option<i64>, sign: i64, inf: End, piece: &(End, End)| {
-        let End::Fin(e) = found else {
-            return (found.clone(), true);
+    // Each end, in the values of `sign · n`: the piece at it is `p..=q`, `q` the end found.
+    // `back` turns a range of those values, `None` for no end, into one of `n`.
+    let mut upper = taken.clone();
+    for (sign, bound) in [(1, hi), (-1, lo)] {
+        let piece = if sign == 1 {
+            taken.last()
+        } else {
+            taken.first()
         };
+        let (near, end) = piece
+            .map(|(a, b)| if sign == 1 { (a, b) } else { (b, a) })
+            .expect("a value");
+        // An end found unbounded: every value beyond it is taken.
+        let End::Fin(e) = end else { continue };
         let e = e.to_i64().expect("an end found within the boxes");
         if bound == Some(e) {
-            return (found.clone(), true);
+            continue;
         }
-        match lp_max(&rows, &unit(n, sign)) {
-            Lp::Unbounded => {
-                // The steps `t` that prove it, `1 <= sign · t <= len`.
-                let len = match piece {
-                    (End::Fin(p), End::Fin(q)) => {
-                        let len = q.to_i64().expect("a value") - p.to_i64().expect("a value");
-                        End::of(len + 1)
-                    }
-                    _ => End::PosInf,
-                };
-                let proving = match sign {
-                    1 => IntervalSet::range(End::of(1), len),
-                    _ => IntervalSet::range(-&len, End::of(-1)),
-                };
-                return (inf, !steps(n).meet(&proving).is_empty());
+        let (p, q) = (near.to_i64().map(|v| sign * v), sign * e);
+        let back = |l: i64, h: Option<i64>| match sign {
+            1 => IntervalSet::range(End::of(l), h.map_or(End::PosInf, End::of)),
+            _ => IntervalSet::range(h.map_or(End::NegInf, |h| End::of(-h)), End::of(-l)),
+        };
+        let more: Vec<IntervalSet> = match lp_max(&rows, &unit(sign)) {
+            Lp::Max(f) => {
+                let f = f.to_i64().expect("a value");
+                (taken_within(&rows, &unit(sign), q + 1, f).into_iter())
+                    .map(|(l, h)| back(l, Some(h)))
+                    .collect()
             }
-            Lp::Max(f) if f == Num::from(sign * e) => return (found.clone(), true),
-            Lp::Max(f) if f > Num::from(sign * e) => {}
-            other => panic!("{other:?} over {n} at {cons:?} {boxes:?}, with {e} found"),
+            Lp::Unbounded => match taken_beyond(&rows, &unit(sign), p, q) {
+                Some(rs) => rs.into_iter().map(|(l, h)| back(l, h)).collect(),
+                None => {
+                    upper = upper.join(&back(q, None));
+                    Vec::new()
+                }
+            },
+            Lp::Empty => unreachable!("{n} takes {e} in {cons:?} {boxes:?}"),
+        };
+        for m in more {
+            taken = taken.join(&m);
+            upper = upper.join(&m);
         }
-        // The rational points with `sign · n >= sign · e + 1`, and the range of each hub there.
-        let mut past = rows.clone();
-        past.push((unit(n, -sign), -(sign * e + 1)));
-        if let Err(why) = hubs_within(&past, boxes, far) {
-            panic!(
-                "the brute force cannot decide the end {e} of {n}: past it {why}, within \
-                 {cons:?} {boxes:?}"
-            );
-        }
-        (found.clone(), true)
-    };
-    let (l, low_proved) = end(&first.0, lo, -1, End::NegInf, first);
-    let (h, high_proved) = end(&last.1, hi, 1, End::PosInf, last);
-    let low = IntervalSet::range(l.clone(), first.1.clone());
-    let high = IntervalSet::range(last.0.clone(), h.clone());
-    let upper = set.join(&low).join(&high);
-    let mut lower = set.clone();
-    if low_proved {
-        lower = lower.join(&low);
     }
-    if high_proved {
-        lower = lower.join(&high);
-    }
-    (IntervalSet::range(l, h), lower, upper)
-}
-
-/// Whether `v = u + t` for some `u` in `taken` and some `t != 0` in `steps`, the values of `n`
-/// at the integer points of the cone: then `v` is taken ([`decided_ends`]).
-fn reached(v: i64, taken: &IntervalSet, steps: &IntervalSet) -> bool {
-    taken.pieces().any(|(l, h)| {
-        // `t = v - u` for `u` in `[l, h]` is `[v - h, v - l]`; an infinite end stays infinite.
-        let flip = |e: &End, inf: End| e.to_i64().map_or(inf, |w| End::of(v - w));
-        let ts = IntervalSet::range(flip(h, End::NegInf), flip(l, End::PosInf));
-        !ts.minus(&IntervalSet::single(0)).meet(steps).is_empty()
-    })
+    (upper.hull(), taken, upper)
 }
 
 /// The range `-far..=far` [`brute`] enumerates the hubs within on random parts.
@@ -969,40 +1210,21 @@ fn brute(
         })
         .collect();
     for (cs, b) in &terms {
-        // The integer points of the disjunct's recession cone ([`decided_ends`]), found once
-        // and only where an end is opened.
-        let cone: OnceCell<Found> = OnceCell::new();
-        let steps = |n: &str| {
-            let found = cone.get_or_init(|| {
-                let cs0: Vec<Cmp> = (cs.iter())
-                    .map(|c| Cmp {
-                        constant: 0,
-                        ..c.clone()
-                    })
-                    .collect();
-                let b0 = (b.iter())
-                    .map(|(m, (l, h))| (m.clone(), (l.map(|_| 0), h.map(|_| 0))))
-                    .collect();
-                points(&cs0, &b0, far, true)
-            });
-            found
-                .as_ref()
-                .map_or(IntervalSet::empty(), |f| f[n].1.clone())
-        };
-        let Some(found) = points(cs, b, far, exact) else {
-            // No integer point with the hubs within `-far..=far`; none at all where every
-            // rational point has them there.
-            if let Err(why) = hubs_within(&lp_rows(cs, b), b, far) {
-                panic!(
-                    "the brute force cannot decide that a disjunct has no point: {why}, within \
-                     {cs:?} {b:?}"
-                );
+        let found = match points(cs, b, far, exact) {
+            Some(found) => found,
+            // No integer point with the hubs within `-far..=far`: none at all, or every name
+            // is decided from no value found.
+            None if !has_point(&lp_rows(cs, b)) => continue,
+            None => {
+                let e = IntervalSet::empty();
+                b.keys()
+                    .map(|n| (n.clone(), (e.clone(), e.clone())))
+                    .collect()
             }
-            continue;
         };
         for (n, x) in found {
             let o = out.get_mut(&n).expect("a name");
-            let (hull, lower, upper) = decided_ends(x, &n, cs, b, far, steps);
+            let (hull, lower, upper) = decided_ends(x, &n, cs, b, far);
             o.0 = o.0.join(&hull);
             o.1 = o.1.join(&lower);
             o.2 = o.2.join(&upper);
@@ -2666,6 +2888,30 @@ fn refused_projections_of_joined_random_parts_keep_sound_boxes() {
     eprintln!("{count:?} (parts refused, names refused, names narrower than the box)");
 }
 
+/// The oracle decides each end and hole of seed 12883791572206885593 of the joined random
+/// parts, whose hole `-117..=-117` of `z2` lies where `-a` is unbounded beyond [`WIDE`]
+/// (FAIL-pendants-oracle-undecided).
+#[test]
+fn the_oracle_decides_every_end_and_hole_of_seed_12883791572206885593() {
+    refused_names_in(12883791572206885593, 25, true);
+}
+
+/// The oracle decides each end and hole of seed 9829204742287041310 of the joined random parts,
+/// whose end 30 of `a` has `c` up to 83 past it, beyond [`WIDE`]
+/// (FAIL-pendants-oracle-undecided).
+#[test]
+fn the_oracle_decides_every_end_and_hole_of_seed_9829204742287041310() {
+    refused_names_in(9829204742287041310, 25, true);
+}
+
+/// The oracle reads the end 57 of `a` in case 8 of seed 490 of the joined random parts
+/// (`a <= 2 * c + 11`, `c <= 23`) as the end, though `a` passes the enumerated range there
+/// (FAIL-pendants-brute-window-seed).
+#[test]
+fn the_oracle_decides_the_end_57_of_seed_490() {
+    refused_names_in(490, 25, true);
+}
+
 /// The next random part of `r` and its boxes, as [`refused_names_in`] draws them.
 fn next_case(r: &mut Rng, double: bool) -> (Vec<Item>, BTreeMap<String, Vec<Piece>>) {
     let nz = 2 + r.below(5);
@@ -3461,23 +3707,25 @@ fn the_brute_force_check_does_not_call_an_opened_periodic_or_gapped_set_exact() 
         precision("z0", &upper, &lower, &upper),
         Ok(Precision::Sound)
     );
-    // A gap: `a` takes `0, 1` within the range and `100, 101, ...` beyond it, and `b` every
-    // value from 0 on, but only 0 within the range; neither is proved, so neither is exact.
+    // A gap: `a` takes `0, 1` within the range and `100, 101, ...` beyond it, the classes 2
+    // to 99 mod the cone's least step 100 never, so it is not proved; `b` takes every value
+    // from 0 on (`a = 100 * b`), only 0 within the range, and the cone's step 1 proves the rest.
     let items = parse("100 * b <= a && a <= 100 * b + 1");
     let bs = boxes("a=[-inf,inf] b=[0,inf]");
     let (truth, bounds) = brute_answer(&items, &bs);
     assert_eq!(bounds["a"], ("[0,1]".to_string(), "[0,inf]".to_string()));
-    assert_eq!(bounds["b"], ("[0,0]".to_string(), "[0,inf]".to_string()));
+    assert_eq!(bounds["b"], ("[0,inf]".to_string(), "[0,inf]".to_string()));
     assert_eq!(
         compared(&items, &bs, &truth, &truth),
         Ok(Vec::new()),
         "the opened sets are sound"
     );
-    for n in ["a", "b"] {
-        let (l, u) = &bounds[n];
-        let got = precision(n, &shown_set(u), &shown_set(l), &shown_set(u));
-        assert_eq!(got, Ok(Precision::Sound), "{n}");
-    }
+    let (l, u) = &bounds["a"];
+    let got = precision("a", &shown_set(u), &shown_set(l), &shown_set(u));
+    assert_eq!(got, Ok(Precision::Sound), "a");
+    let (l, u) = &bounds["b"];
+    let got = precision("b", &shown_set(u), &shown_set(l), &shown_set(u));
+    assert_eq!(got, Ok(Precision::Exact), "b");
 }
 
 /// An opened end that a step of the recession cone proves ([`decided_ends`]) keeps an exact
