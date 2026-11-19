@@ -1,10 +1,19 @@
 //! Tests of the counters of `probe.rs`: each checks a small unit and reads the report.
 
-use super::{R10Config, last_report, set_next_config};
+use super::{R10Config, env_config, last_report, set_next_config};
+
+/// A check that no test configured runs D unless `ZED_DISABLE_D` is set, in every build (author,
+/// QUESTIONS A170). Before this, a `cfg(test)` or `forward-probe` build defaulted to E and took D
+/// only under `ZED_ENABLE_D`, so the tests ran a different default from a production build.
+#[test]
+fn a_check_defaults_to_d_and_takes_e_only_when_disabled() {
+    assert!(env_config(false).enabled, "the default is D");
+    assert!(!env_config(true).enabled, "`ZED_DISABLE_D` turns D off");
+}
 
 /// The probe's report for the unit `text`, checked alone by E. The probe counts what D would
 /// meet on E's path, and a check with D's sparse store writes no report (`Classes`'s `Drop`),
-/// so these tests pin E rather than take the test default, which `ZED_ENABLE_D` turns to D.
+/// so these tests pin E rather than take the default, D.
 fn report(text: &str) -> String {
     set_next_config(R10Config::eager());
     let tokens = zedc_syntax::lex::lex(text).expect("the unit lexes");

@@ -146,7 +146,7 @@ pub struct R10Stats {
 }
 
 // The configuration switches are for tests only (landing review B1): a production build has no
-// way to turn off D or pick a negative control but `ZED_DISABLE_D`.
+// way to pick a negative control, and turns D off only through `ZED_DISABLE_D` (`env_config`).
 #[cfg(any(test, feature = "forward-probe"))]
 thread_local! {
     static NEXT_CONFIG: RefCell<Option<R10Config>> = const { RefCell::new(None) };
@@ -174,6 +174,20 @@ fn set_config() -> Option<R10Config> {
 #[cfg(not(any(test, feature = "forward-probe")))]
 fn set_config() -> Option<R10Config> {
     None
+}
+
+/// The configuration of a check that no test configured, in every build: E (`R10Config::eager`)
+/// when `disable_d` (the environment sets `ZED_DISABLE_D`), D (`R10Config::default`) otherwise
+/// (author, QUESTIONS A170, 2026-11-19: D is the default; E is removed once row
+/// PROOF-map-chain-d-skip-and-admit proves D gives no wrong answer). A test built with
+/// `cfg(test)` takes the same default as a production build; a test that compares D with E
+/// sets each with `set_next_config`.
+fn env_config(disable_d: bool) -> R10Config {
+    if disable_d {
+        R10Config::eager()
+    } else {
+        R10Config::default()
+    }
 }
 
 #[cfg(any(test, feature = "forward-probe"))]
@@ -364,24 +378,8 @@ pub struct R10State {
 
 impl R10State {
     pub fn new_for_ck() -> Self {
-        let cfg = set_config().unwrap_or_else(|| {
-            #[cfg(any(test, feature = "forward-probe"))]
-            {
-                if std::env::var_os("ZED_ENABLE_D").is_some() {
-                    R10Config::default()
-                } else {
-                    R10Config::eager()
-                }
-            }
-            #[cfg(not(any(test, feature = "forward-probe")))]
-            {
-                if std::env::var_os("ZED_DISABLE_D").is_some() {
-                    R10Config::eager()
-                } else {
-                    R10Config::default()
-                }
-            }
-        });
+        let cfg =
+            set_config().unwrap_or_else(|| env_config(std::env::var_os("ZED_DISABLE_D").is_some()));
         R10State {
             cfg,
             stats: R10Stats::default(),
