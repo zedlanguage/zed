@@ -6412,7 +6412,7 @@ impl<'t, 'a> Ck<'t, 'a> {
         for (pv, rty) in &f.param_map {
             param_lookup.insert(pv, rty);
         }
-        let on_vars: Vec<Ty> = f
+        let mut on_vars: Vec<Ty> = f
             .summary
             .on_param_vars
             .iter()
@@ -6425,6 +6425,16 @@ impl<'t, 'a> Ck<'t, 'a> {
             .zip(&f.exit_ids)
             .map(|(&off, &eid)| (off, Ty::var(format!("${eid}").into())))
             .collect();
+        // An exit that some need of the callee is on is a receiver too. The next level takes
+        // its receivers only from `on_vars`, so without the exits a use on an exit was lost
+        // there and `#19` let a second call on that exit reserve a new result where E reuses
+        // the key (landing round 2, Sol L2.C1, `inherited-exit-key.zed`).
+        on_vars.extend(
+            exits
+                .iter()
+                .filter(|(off, _)| f.summary.on_exit_offsets.contains(off))
+                .map(|(_, t)| t.clone()),
+        );
         let mut var_lookup: HashMap<Arc<str>, Ty> = f
             .param_map
             .iter()
@@ -6494,6 +6504,7 @@ impl<'t, 'a> Ck<'t, 'a> {
             held_free: f.summary.held_free,
             held_names: f.summary.held_names.clone(),
             held_outer: f.summary.held_outer.clone(),
+            held_foreign_fn: f.summary.held_foreign_fn,
             held_classes: f.summary.held_classes.clone(),
             digest_base_rank: 0,
             digest_summary: None,

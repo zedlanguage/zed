@@ -1398,3 +1398,158 @@ fn r10_decoded_own_set_leaves_out_the_exits() {
     }
     assert!(tried > 0, "no kept forward with an exit on the chain");
 }
+
+/// Landing review round 2, Neon L2-B3: three bounded variables whose masks keep both
+/// `sum(m + 1)` and `sum(k * (m + 1))` gave one hash at every base under the old sum.
+#[test]
+fn r10_signature_hash_three_bounds_keeping_both_sums_differ() {
+    use zedc_types::ty::{SParam, Ty, r10_hash::encode_sig_stream};
+    let signature = |names: [&str; 3], masks: [u8; 3]| {
+        let params = names
+            .iter()
+            .map(|n| SParam {
+                name: n.to_lowercase().into(),
+                positional: true,
+                default: None,
+                range: None,
+            })
+            .collect();
+        let tys: Vec<Ty> = names.iter().map(|n| Ty::var((*n).into())).collect();
+        let mut sig = Sig::one(params, tys.clone(), tys[0].clone());
+        sig.own.extend(names.iter().map(|n| (*n).into()));
+        sig.bounds
+            .extend(names.iter().zip(masks).map(|(n, m)| ((*n).into(), m)));
+        sig
+    };
+    for names in [["T5", "T6", "T7"], ["$0", "$1", "$2"]] {
+        let x = signature(names, [1, 4, 1]);
+        let y = signature(names, [2, 2, 2]);
+        assert_ne!(x, y);
+        assert_ne!(x.digest(), y.digest(), "{names:?}");
+        for r in [2, 3, 17, 123_456_789] {
+            let (dx, _, sx) = encode_sig_stream(&x, r, true);
+            let (dy, _, sy) = encode_sig_stream(&y, r, true);
+            assert_ne!(sx, sy, "{names:?} base {r}");
+            assert_ne!(dx, dy, "{names:?} base {r}");
+        }
+    }
+}
+
+/// Landing review round 2, Sol L2.C1: `pair` maps `m` to `a` and `a` to `b` and returns both;
+/// `wrap` forwards to it. The use on the exit `a` must reach `wrap`'s compact block, or `#19`
+/// lets `hop(f, a)` reserve a new result where E reuses the key, and D accepts `c ++ "a"`
+/// with `c` numeric, which E rejects. The control calls `pair` directly.
+#[test]
+fn r10_inherited_use_on_an_exit_reaches_the_next_level() {
+    let tail = "outer(positional f, positional m) = {\n  a, b = X(f, m);\n  c = hop(f, a);\n  (b + 1, c ++ \"a\")\n};\n";
+    let head = "hop(positional f, positional m) = m.map(f);\n\
+                pair(positional f, positional m) = {\n  a = m.map(f);\n  b = a.map(f);\n  (a, b)\n};\n\
+                wrap(positional f, positional m) = pair(f, m);\n\
+                wrap2(positional f, positional m) = wrap(f, m);\n";
+    for callee in ["wrap2", "wrap", "pair"] {
+        let src = format!("{head}{}", tail.replace('X', callee));
+        let (e, _) = run_with_cfg(&src, R10Config::eager());
+        let (d, _) = run_with_cfg(&src, R10Config::default());
+        assert!(!e.errors.is_empty(), "{callee}: E accepts\n{src}");
+        assert_info_eq(&format!("inherited_exit_key_{callee}"), &e, &d);
+    }
+}
+
+/// Landing review round 2, Neon L2-B1: `h0` holds `x -> f(x)`, whose variables are `h0`'s,
+/// not its own. In E the lambda around `h0(f, m)` holds that function through the flat `Map`
+/// need, so it does not hold only its own variables; D's compact block hid the function, and
+/// the digest of `outer` differed while `==` held. The control `h1` holds `f` itself.
+#[test]
+fn r10_function_held_in_a_forward_block_counts_for_own_variables() {
+    let bodies: &[(&str, &str)] = &[
+        (
+            "held_lambda",
+            "h0(positional f, positional m) = m.map(x -> f(x));\n\
+             outer(positional a) = ((f, m) -> h0(f, m), a);\n",
+        ),
+        (
+            "held_lambda_in_map",
+            "h0(positional f, positional m) = m.map(x -> f(x));\n\
+             outer(positional a, positional m) = (m.map(y -> ((f, n) -> h0(f, n))), a);\n",
+        ),
+        (
+            "control_no_held_lambda",
+            "h1(positional f, positional m) = m.map(f);\n\
+             outer(positional a) = ((f, m) -> h1(f, m), a);\n",
+        ),
+    ];
+    let mut failed = Vec::new();
+    for (name, src) in bodies {
+        let (e, _) = run_with_cfg(src, R10Config::eager());
+        let (d, st) = run_with_cfg(src, R10Config::default());
+        assert!(e.errors.is_empty(), "{name}: E errors {:?}", e.errors);
+        assert!(st.admitted > 0, "{name}: no forward admitted");
+        if let Err(why) = info_eq_full(name, &e, &d) {
+            failed.push(why);
+            continue;
+        }
+        for (id, es) in &e.sigs {
+            let ds = &d.sigs[id];
+            if es.digest() != ds.digest() || es != ds {
+                failed.push(format!("{name}: signature {id} differs from E's"));
+            }
+        }
+    }
+    assert!(failed.is_empty(), "{}", failed.join("\n"));
+}
+
+/// Landing review round 2, Sol L2.C2 (his probe, adopted): an exit of a compact block replaced
+/// by a variable of a function around it, as an instantiation does, must give the digest of
+/// the flat form; before, the block was hashed as if the exit were still its own result.
+#[test]
+fn r10_exit_replaced_by_an_outer_variable_keeps_the_flat_digest() {
+    use zedc_types::ty::{Binds, Ty};
+
+    let (d, _) = run_with_cfg(&chain_src(4, "f", false), R10Config::default());
+    let (sig, index) = d
+        .sigs
+        .values()
+        .find_map(|s| {
+            s.needs
+                .iter()
+                .position(|n| matches!(&n.kind, NeedKind::Fwd(f) if !f.exits.is_empty()))
+                .map(|i| (s, i))
+        })
+        .expect("a finished signature with an exit");
+
+    let compare = |compact: &Sig| {
+        let mut flat = compact.clone();
+        let (needs, own) = compact.decoded_needs_and_own();
+        flat.needs = needs.into_owned();
+        flat.own = own.into_owned();
+        flat.facts = Default::default();
+        assert_eq!(compact, &flat, "compact and flat must be equal");
+        (compact.digest(), flat.digest())
+    };
+    let control = compare(sig);
+    assert_eq!(control.0, control.1, "original forward");
+
+    let NeedKind::Fwd(f) = &sig.needs[index].kind else {
+        unreachable!();
+    };
+    let binds: Binds = f
+        .exits
+        .iter()
+        .map(|(_, t)| {
+            (
+                t.as_var().expect("a chain exit variable").clone(),
+                Ty::var("Outer".into()),
+            )
+        })
+        .collect();
+    let mut compact = sig.replace(&binds);
+    for v in binds.keys() {
+        compact.own.remove(v);
+    }
+    compact.facts = Default::default();
+    let substituted = compare(&compact);
+    assert_eq!(
+        substituted.0, substituted.1,
+        "exit replaced by an outer variable"
+    );
+}

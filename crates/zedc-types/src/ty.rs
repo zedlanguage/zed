@@ -2429,6 +2429,31 @@ fn found_in_nest<'a>(
 /// the `here` of [`found_in_nest`] for [`Sig::holds_no_variable`] and
 /// [`Sig::holds_only_own_variables`].
 fn fns_outside(s: &Sig, may_hold: impl Fn(&Arc<str>) -> bool) -> Option<Vec<&Sig>> {
+    // A compact forward block hides the functions its flat needs hold. One of them that
+    // holds a variable not its own makes E's answer false for both callers (it holds a
+    // variable, and one not its own), so the walk stops as it does at such a variable
+    // (landing round 2, Neon L2-B1). O(1) per need: the bit is kept on the block.
+    if s.needs
+        .iter()
+        .any(|n| matches!(&n.kind, NeedKind::Fwd(f) if f.held_foreign_fn))
+    {
+        return None;
+    }
+    fns_outside_tys(sig_tys(s), may_hold)
+}
+
+/// Whether each function `tys` hold outside functions holds only its own variables and
+/// those of the functions inside it ([`Sig::holds_only_own_variables`]).
+pub fn tys_hold_only_own_fns<'a>(tys: impl Iterator<Item = &'a Ty>) -> bool {
+    fns_outside_tys(tys, |_| true)
+        .is_some_and(|fns| fns.iter().all(|f| f.holds_only_own_variables()))
+}
+
+/// [`fns_outside`] over the types `tys`.
+fn fns_outside_tys<'a>(
+    tys: impl Iterator<Item = &'a Ty>,
+    may_hold: impl Fn(&Arc<str>) -> bool,
+) -> Option<Vec<&'a Sig>> {
     // By address: every row and shape is borrowed from `s` for the whole walk, so no key
     // names a freed node, and the sets are only read by insert, never iterated. The sets are
     // this signature's own: a row skipped here because another signature of the chain walked
@@ -2443,7 +2468,7 @@ fn fns_outside(s: &Sig, may_hold: impl Fn(&Arc<str>) -> bool) -> Option<Vec<&Sig
     // functions shared by the results of n nested function types was walked once for each
     // of them, as these sets are each signature's own, O(n^2) on the first ask (16.1 times
     // the instructions at 8n). Used: O(1) for a row that holds no variable.
-    let mut stack: Vec<&Ty> = sig_tys(s).collect();
+    let mut stack: Vec<&Ty> = tys.collect();
     while let Some(t) = stack.pop() {
         if !t.vars.iter().all(&may_hold) {
             return None;
@@ -4665,6 +4690,12 @@ pub struct FwdNeed {
     pub held_names: BTreeSet<Arc<str>>,
     /// Cached `VarFacts::outer` from functions held inside `callee`'s needs.
     pub held_outer: BTreeSet<Arc<str>>,
+    /// Whether a function held, outside functions, in the needs the block stands for holds a
+    /// variable that is not its own. The flat needs show such a function to
+    /// [`Sig::holds_only_own_variables`]; the block hides it, so `fns_outside` reads this bit
+    /// instead (landing round 2, Neon L2-B1). A substitution leaves it as it is: it changes
+    /// no function's own variables.
+    pub held_foreign_fn: bool,
     /// Cached outer class variables if `#4` is dropped in a negative-control test.
     pub held_classes: BTreeSet<Arc<str>>,
     /// Base rank at which `digest_summary` was built (so `emit_sig` never double-shifts).
@@ -26898,8 +26929,6 @@ pub mod r10_hash {
     const C0_NRANK: u64 = 0x0D7C_6B5A_4938_2717 % P;
     const C1_NRANK: u64 = 0x19E7_C5A3_816F_4D2D % P;
     const C_ARROW_RANK: u64 = 0x0F5E_4D3C_2B1A_0987 % P;
-    const C_BMUL: u64 = 0x1234_5678_9ABC_DEF1 % P;
-    const C_BMASK: u64 = 0x0FED_CBA9_8765_4323 % P;
 
     const TAG_END: u64 = 0x1001;
     const TAG_NONE: u64 = 0x1002;
@@ -27536,30 +27565,20 @@ pub mod r10_hash {
         }
 
         fn emit_bounds(&mut self, bounds: &BTreeMap<Arc<str>, u8>) {
-            let mut sum = 0u64;
-            let mut any_large = false;
-            for (v, &m) in bounds {
-                match tok_var_plain(v) {
-                    Some(tv) => {
-                        // The variable's token times a one-to-one function of its mask, so the
-                        // mask stays tied to its variable: `tv * C_BMUL + (m + 1) * C_BMASK`
-                        // summed the variables and the masks apart, and `{T: 1, U: 2}` and
-                        // `{T: 2, U: 1}` gave one sum (landing review B5). A swap of two
-                        // masks now changes the sum by `(t - u)(g(a) - g(b))`, not 0 mod P.
-                        let g = add_p(mul_p((m as u64) + 1, C_BMASK), C_BMUL);
-                        let entry = mul_p(tv, g);
-                        sum = add_p(sum, entry);
-                    }
-                    None => {
-                        any_large = true;
-                        break;
-                    }
-                }
-            }
-            if !any_large {
+            // Each (variable, mask) pair in the map's order, as `Eq` compares the map. A sum
+            // over the pairs collides: `tv * C_BMUL + (m + 1) * C_BMASK` let two masks swap
+            // (landing round 1, B5), and `tv * g(m)`, with `tv` and `g` both affine, gave one
+            // sum for `{T5: 1, T6: 4, T7: 1}` and `{T5: 2, T6: 2, T7: 2}` at every base
+            // (landing round 2, Neon L2-B3). An admitted forward has no bounds (#2), so no
+            // compact summary composes this term; the cost stays O(|bounds|).
+            let toks: Option<Vec<u64>> = bounds.keys().map(|v| tok_var_plain(v)).collect();
+            if let Some(toks) = toks {
                 self.emit(TAG_BOUNDS_SET);
                 self.emit_usize(bounds.len());
-                self.emit(sum);
+                for (tv, &m) in toks.into_iter().zip(bounds.values()) {
+                    self.emit(tv);
+                    self.emit((m as u64) + 1);
+                }
             } else {
                 self.fallback_large_id = true;
                 self.emit(TAG_VAR_SET_FALLBACK);
@@ -28069,13 +28088,22 @@ pub mod r10_hash {
                 match &n.kind {
                     NeedKind::Fwd(fwd) => {
                         for &(off, ref exit_ty) in &fwd.exits {
+                            let rank = total_needs + off;
                             if let Some(v) = exit_ty.as_var()
                                 && s.own.contains(v)
                                 && !arrow_param_vars.contains(v)
                             {
-                                mat_result_ranks
-                                    .entry(v.clone())
-                                    .or_insert(total_needs + off);
+                                if *mat_result_ranks.entry(v.clone()).or_insert(rank) != rank {
+                                    any_needs_fallback = true;
+                                }
+                            } else {
+                                // The summary hashes each exit as an own result first met at
+                                // its rank. An exit replaced by a variable of a function
+                                // around it, a concrete type, a parameter or an earlier result
+                                // is not one, so the needs are hashed flat (landing round 2,
+                                // Sol L2.C2). Not taken on the chains, whose exits are own
+                                // results.
+                                any_needs_fallback = true;
                             }
                         }
                         let can_fast = self.r == R_BASE

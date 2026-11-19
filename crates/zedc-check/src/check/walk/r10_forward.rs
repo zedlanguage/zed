@@ -176,6 +176,7 @@ impl<'t, 'a> Ck<'t, 'a> {
         let mut held_free = 0usize;
         let mut held_names: BTreeSet<Arc<str>> = BTreeSet::new();
         let mut held_outer: BTreeSet<Arc<str>> = BTreeSet::new();
+        let mut held_foreign_fn = false;
         let mut held_classes: BTreeSet<Arc<str>> = BTreeSet::new();
         let mut tie_uf = TieUf::default();
 
@@ -242,6 +243,7 @@ impl<'t, 'a> Ck<'t, 'a> {
                     held_free = held_free.max(fwd.held_free);
                     held_names.extend(fwd.held_names.iter().cloned());
                     held_outer.extend(fwd.held_outer.iter().cloned());
+                    held_foreign_fn |= fwd.held_foreign_fn;
                     held_classes.extend(fwd.held_classes.iter().cloned());
                 }
                 _ => {
@@ -279,6 +281,7 @@ impl<'t, 'a> Ck<'t, 'a> {
                     let mut nv_tie = Vars::default();
                     n.vars_in(&mut nv_tie);
                     tie_uf.union_group(nv_tie.order.iter());
+                    held_foreign_fn |= !zedc_types::ty::tys_hold_only_own_fns(n.tys());
                     for t in n.tys() {
                         let vf = t.var_facts();
                         held_free = held_free.max(vf.free);
@@ -593,6 +596,7 @@ impl<'t, 'a> Ck<'t, 'a> {
             held_free,
             held_names,
             held_outer,
+            held_foreign_fn,
             held_classes,
             intrinsic_fails,
             exposed_needs,

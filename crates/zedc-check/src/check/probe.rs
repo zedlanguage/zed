@@ -289,6 +289,9 @@ pub struct CalleeSummary {
     pub held_free: usize,
     pub held_names: BTreeSet<Arc<str>>,
     pub held_outer: BTreeSet<Arc<str>>,
+    /// Whether a function held in the needs, outside functions, holds a variable not its own
+    /// (E: [`Sig::holds_only_own_variables`] false on it); see [`ty::FwdNeed::held_foreign_fn`].
+    pub held_foreign_fn: bool,
     pub held_classes: BTreeSet<Arc<str>>,
     pub intrinsic_fails: BTreeSet<&'static str>,
     pub exposed_needs: Vec<ExposedTemplate>,
