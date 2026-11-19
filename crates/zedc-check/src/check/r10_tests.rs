@@ -2455,3 +2455,548 @@ fn landing4_replace_closing_a_held_function_keeps_the_flat_digest() {
         "held function closed by replace"
     );
 }
+
+/// `s` with its compact forwards decoded and their internal results among its own variables:
+/// the flat form of the same signature.
+fn flat_of(s: &Sig) -> Sig {
+    let mut flat = s.clone();
+    let (needs, own) = s.decoded_needs_and_own();
+    flat.needs = needs.into_owned();
+    flat.own = own.into_owned();
+    flat.facts = Default::default();
+    flat
+}
+
+/// The first signature of `d` that keeps a forward with an internal result, with its id and
+/// the variable of that result.
+fn sig_with_hidden(d: &Info) -> (usize, std::sync::Arc<Sig>, std::sync::Arc<str>) {
+    use zedc_types::ty::Ty;
+    let found = d.sigs.iter().find_map(|(id, s)| {
+        (s.needs.iter())
+            .find_map(|n| match &n.kind {
+                NeedKind::Fwd(f) => f
+                    .internal_result_tys()
+                    .first()
+                    .and_then(Ty::as_var)
+                    .cloned(),
+                _ => None,
+            })
+            .map(|hidden| (*id, s.clone(), hidden))
+    });
+    found.expect("a signature keeps a forward with an internal result")
+}
+
+/// The variables of `s` in order, with the internal names of its compact forwards where its
+/// walk places them ([`Sig::vars_marks`]).
+fn order_with_marks(s: &Sig) -> Vec<std::sync::Arc<str>> {
+    let mut result = Vec::new();
+    for i in 0..=s.vars_order().len() {
+        for mark in s.vars_marks().iter().filter(|m| m.at == i) {
+            for run in &mark.runs {
+                result.extend(run.names::<std::sync::Arc<str>>());
+            }
+        }
+        result.extend(s.vars_order().get(i).cloned());
+    }
+    result
+}
+
+/// Landing round 5, Codex L5.Codex-direct-need: `instantiated` replaces a parameter of a
+/// signature that keeps a forward through the needs one by one. Replacing the parameter a held
+/// lambda reads by `int` closes the lambda, which the forward's kept bit does not follow, so the
+/// replacement must decode the forward as [`Sig::replace`] does.
+#[test]
+fn landing5_need_replace_bypasses_signature_guard() {
+    use zedc_types::ty::{Binds, Carrier, Ty};
+    let src = "h0(positional a, positional m) = m.map((x: int) -> a);\n\
+               h1(positional a, positional m) = h0(a, m);\n";
+    let (e, _) = run_with_cfg(src, R10Config::eager());
+    let (d, _) = run_with_cfg(src, R10Config::default());
+    assert_info_eq("before direct need replacement", &e, &d);
+    let (&id, compact) = d.sigs.iter().find(|(_, s)| s.has_fwd_needs()).unwrap();
+    let flat = &e.sigs[&id];
+    let a = compact.arrows[0].params[0].as_var().unwrap().clone();
+    let binds: Binds = [(a, Ty::carrier(Carrier::Int))].into_iter().collect();
+    let flat = flat.replace(&binds);
+    let control = compact.replace(&binds);
+    assert_eq!(flat, control);
+    assert_eq!(
+        flat.holds_only_own_variables(),
+        control.holds_only_own_variables()
+    );
+    // As `instantiated` replaces: the arrows and the needs one by one, on the signature
+    // [`Sig::flat_for`] gives.
+    let base = compact.flat_for(&binds);
+    let mut through_needs = Sig::clone(&base);
+    for ar in &mut through_needs.arrows {
+        for p in &mut ar.params {
+            *p = p.replace(&binds);
+        }
+        ar.result = ar.result.replace(&binds);
+    }
+    through_needs.needs = base.needs.iter().map(|n| n.replace(&binds)).collect();
+    for v in binds.keys() {
+        through_needs.own.remove(v);
+        through_needs.held.remove(v);
+    }
+    through_needs.facts = Default::default();
+    assert_eq!(flat, through_needs);
+    assert_eq!(
+        flat.holds_only_own_variables(),
+        through_needs.holds_only_own_variables()
+    );
+}
+
+/// Landing round 5, Codex L5.Codex-direct-map-order: a need's types mapped one by one rename
+/// a forward's caller variable; its steps must follow, as a replacement of the signature makes
+/// them follow, or the variables come in another order than the flat needs give.
+#[test]
+fn landing5_need_map_tys_leaves_step_order_stale() {
+    use zedc_types::ty::{Binds, Ty};
+    let (d, _) = run_with_cfg(&chain_src(4, "f", false), R10Config::default());
+    let compact = (d.sigs.values())
+        .find(|s| {
+            (s.needs.iter())
+                .any(|n| matches!(&n.kind, NeedKind::Fwd(f) if f.need_count > f.exits.len()))
+        })
+        .unwrap();
+    let mut compact = Sig::clone(compact);
+    for arrow in &mut compact.arrows {
+        arrow.params.fill(Ty::empty());
+        arrow.result = Ty::empty();
+    }
+    let flat = flat_of(&compact);
+    assert_eq!(
+        order_with_marks(&compact),
+        order_with_marks(&flat),
+        "original order"
+    );
+    let first = flat.needs[0].on.as_var().unwrap().clone();
+    let bind: Binds = [(first, Ty::var("RenamedReceiver".into()))]
+        .into_iter()
+        .collect();
+    let flat = flat.replace(&bind);
+    assert_eq!(
+        order_with_marks(&compact.replace(&bind)),
+        order_with_marks(&flat),
+        "signature replacement control"
+    );
+    let mut mapped = compact.clone();
+    mapped.needs = (compact.needs.iter())
+        .map(|n| n.map_tys(|t| t.replace(&bind)))
+        .collect();
+    mapped.facts = Default::default();
+    assert_eq!(order_with_marks(&mapped), order_with_marks(&flat));
+}
+
+/// Landing round 5, Codex L5.Codex-tuple-rename: a renaming of an internal result of a forward
+/// held in a function inside a tuple. The tuple's row keeps bits of the names it holds, which
+/// leave out the internal names, so the renaming must not keep the row whole on those bits.
+#[test]
+fn landing5_rename_hidden_result_inside_a_tuple() {
+    use std::sync::Arc;
+    use zedc_types::ty::{Binds, Ty};
+    let (e, _) = run_with_cfg(&chain_src(4, "f", false), R10Config::eager());
+    let (d, _) = run_with_cfg(&chain_src(4, "f", false), R10Config::default());
+    assert_info_eq("before tuple rename", &e, &d);
+    let (id, compact, hidden) = sig_with_hidden(&d);
+    let flat = &e.sigs[&id];
+    assert!(!compact.facts().holds(&hidden));
+    assert!(flat.facts().holds(&hidden));
+    let absent: Binds = [(Arc::from("AbsentAuditName"), Ty::var("AuditRename".into()))]
+        .into_iter()
+        .collect();
+    let names: Binds = [(hidden, Ty::var("AuditRename".into()))]
+        .into_iter()
+        .collect();
+    let wrap = |s: &Arc<Sig>| Ty::tuple(vec![Ty::func(s.clone())]);
+    assert_eq!(wrap(&compact).renamed(&absent), wrap(flat).renamed(&absent));
+    assert_eq!(
+        Ty::func(compact.clone()).renamed(&names),
+        Ty::func(flat.clone()).renamed(&names),
+        "direct held signature control"
+    );
+    assert_eq!(wrap(&compact).renamed(&names), wrap(flat).renamed(&names));
+}
+
+/// Landing round 5, Codex L5.Codex-hidden-target and Gemini L5-B1: a replacement or a renaming
+/// whose target is the name of an internal result. The flat signature then holds that name in
+/// two places, so the compact one must decode to hash alike.
+#[test]
+fn landing5_bind_target_is_a_hidden_result() {
+    use zedc_types::ty::{Binds, Ty};
+    let (e, _) = run_with_cfg(&chain_src(4, "f", false), R10Config::eager());
+    let (d, _) = run_with_cfg(&chain_src(4, "f", false), R10Config::default());
+    assert_info_eq("before binding to hidden result", &e, &d);
+    let (id, compact, hidden) = sig_with_hidden(&d);
+    let flat = &e.sigs[&id];
+    let param = compact.arrows[0].params[1].as_var().unwrap().clone();
+    let fresh: Binds = [(param.clone(), Ty::var("FreshResultAlias".into()))]
+        .into_iter()
+        .collect();
+    let (c, f) = (compact.replace(&fresh), flat.replace(&fresh));
+    assert_eq!(c, f);
+    assert_eq!(c.digest(), f.digest(), "fresh spelling control");
+    let collision: Binds = [(param, Ty::var(hidden.clone()))].into_iter().collect();
+    let (c, f) = (compact.replace(&collision), flat.replace(&collision));
+    assert_eq!(c, f);
+    assert_eq!(
+        c.digest(),
+        f.digest(),
+        "replace: target is an internal result"
+    );
+    let (c, f) = (compact.renamed(&collision), flat.renamed(&collision));
+    assert_eq!(c, f);
+    assert_eq!(
+        c.digest(),
+        f.digest(),
+        "rename: target is an internal result"
+    );
+    // With no arrows, so that only the forward's arguments name the parameter's variable.
+    let mut bare = Sig::clone(&compact);
+    for a in &mut bare.arrows {
+        a.params.fill(Ty::empty());
+        a.result = Ty::empty();
+    }
+    let bare_flat = flat_of(&bare);
+    let first = bare_flat.needs[0].on.as_var().unwrap().clone();
+    let collision: Binds = [(first, Ty::var(hidden))].into_iter().collect();
+    let (c, f) = (bare.replace(&collision), bare_flat.replace(&collision));
+    assert_eq!(c, f);
+    assert_eq!(
+        c.digest(),
+        f.digest(),
+        "no arrows: target is an internal result"
+    );
+}
+
+/// Landing round 5, Codex L5.Codex-own-union: a signature intersected with itself holds the
+/// own names once, as a set; the compact one must hash as the flat one does.
+#[test]
+fn landing5_signature_intersection_counts_own_names_once() {
+    let (e, _) = run_with_cfg(&chain_src(4, "f", false), R10Config::eager());
+    let (d, _) = run_with_cfg(&chain_src(4, "f", false), R10Config::default());
+    assert_info_eq("before function intersection", &e, &d);
+    let (&id, compact) = (d.sigs.iter())
+        .find(|(_, s)| {
+            (s.needs.iter())
+                .any(|n| matches!(&n.kind, NeedKind::Fwd(f) if f.need_count > f.exits.len()))
+        })
+        .unwrap();
+    let flat = &e.sigs[&id];
+    let mut c = Sig::clone(compact);
+    let mut f = Sig::clone(flat);
+    c.add_arrows_of(compact);
+    f.add_arrows_of(flat);
+    assert_eq!(c, f);
+    assert_eq!(c.digest(), f.digest(), "own names form a set");
+}
+
+/// Landing round 5, Codex: the chains decode no forward, and a call from `main` decodes one,
+/// at 100 and 800 links, for both forms (`M66`).
+#[test]
+fn landing5_chain_decode_grid() {
+    for form in ["f", "lambda"] {
+        for n in [100, 800] {
+            for main in [false, true] {
+                let src = chain_src(n, form, main);
+                reset_fwd_decode_count();
+                let (info, stats) = run_with_cfg(&src, R10Config::default());
+                let count = fwd_decode_count();
+                assert!(info.errors.is_empty(), "{:?}", info.errors);
+                assert_eq!(stats.admitted, n - 1);
+                assert_eq!(stats.kept_at_generalize, n - 1);
+                assert_eq!(count, u64::from(main), "{form} n={n} main={main}");
+            }
+        }
+    }
+}
+
+/// Landing round 5, Gemini L5-B2: a replacement outside functions of the variable a held
+/// lambda reads. The flat needs hold the lambda, which such a replacement does not enter, so
+/// the compact forward must not carry the new name into it.
+#[test]
+fn landing5_replace_outside_leaves_a_held_function() {
+    use zedc_types::ty::{Binds, Ty};
+    for src in [
+        "h0(positional a, positional m) = m.map((x: int) -> a);\n\
+         h1(positional a, positional m) = h0(a, m);\n",
+        // Control: no function held in the needs.
+        "h0(positional f, positional m) = m.map(f);\n\
+         h1(positional f, positional m) = h0(f, m);\n",
+    ] {
+        let (d, _) = run_with_cfg(src, R10Config::default());
+        let compact = d.sigs.values().find(|s| s.has_fwd_needs()).unwrap();
+        let flat = flat_of(compact);
+        assert_eq!(**compact, flat);
+        let a = compact.arrows[0].params[0].as_var().unwrap().clone();
+        let binds: Binds = [(a, Ty::var("OuterSwap".into()))].into_iter().collect();
+        let (c, f) = (
+            compact.replace_outside(&binds),
+            flat.replace_outside(&binds),
+        );
+        assert_eq!(c, f, "{src}");
+        assert_eq!(c.digest(), f.digest(), "{src}");
+    }
+}
+
+/// Landing round 5, Gemini L5-B3: [`Ty::renamed_runs`] with runs for a forward and a name map
+/// that also names one of its internal results. The flat signature holds no forward, so its
+/// runs are not used and the name map renames the result; the compact one must agree.
+#[test]
+fn landing5_renamed_runs_agree_with_the_flat_signature() {
+    use std::collections::HashMap;
+    use std::sync::Arc;
+    use zedc_types::ty::{Binds, NameRun, RunRenames, SkipIndex, Ty, current_held_var_snapshot};
+    let (d, _) = run_with_cfg(&chain_src(4, "f", false), R10Config::default());
+    let (_, compact, hidden) = sig_with_hidden(&d);
+    let flat = Arc::new(flat_of(&compact));
+    let (at, count) = (compact.needs.iter().enumerate())
+        .find_map(|(i, n)| match &n.kind {
+            NeedKind::Fwd(f) if f.need_count > f.exits.len() => {
+                Some((i, f.need_count - f.exits.len()))
+            }
+            _ => None,
+        })
+        .unwrap();
+    let run = NameRun {
+        start_n: 20,
+        count,
+        skip: Arc::new(SkipIndex::default()),
+        held: current_held_var_snapshot(),
+    };
+    let key = |s: &Arc<Sig>| (Arc::as_ptr(s) as usize, at);
+    let runs_c = RunRenames::new(HashMap::from([(key(&compact), vec![run.clone()])]));
+    let runs_f = RunRenames::new(HashMap::from([(key(&flat), vec![run])]));
+    let to: Binds = [(hidden.clone(), Ty::var("T99".into()))]
+        .into_iter()
+        .collect();
+    let sib = Arc::new(Sig::one(vec![], vec![], Ty::var(hidden)));
+    let tup = |s: &Arc<Sig>| Ty::tuple(vec![Ty::func(s.clone()), Ty::func(sib.clone())]);
+    let c = tup(&compact).renamed_runs(&to, &runs_c);
+    let f = tup(&flat).renamed_runs(&to, &runs_f);
+    assert_eq!(c, f);
+}
+
+/// The signature of `h1` in `src`, its visible variables renamed to the classes `$10`, `$11`
+/// and `$101`, its forward's internal results the classes from `$100` on: a signature as the
+/// checker holds it before it is finished, compact, with its flat form.
+fn unfinished_pair(src: &str, clear_arrows: bool) -> (std::sync::Arc<Sig>, std::sync::Arc<Sig>) {
+    use std::sync::Arc;
+    use zedc_types::ty::{Binds, Ty};
+    let (d, _) = run_with_cfg(src, R10Config::default());
+    let orig = d.sigs.values().find(|s| s.has_fwd_needs()).unwrap();
+    let arrow = &orig.arrows[0];
+    let ren: Binds = [
+        (
+            arrow.params[0].as_var().unwrap().clone(),
+            Ty::var("$10".into()),
+        ),
+        (
+            arrow.params[1].as_var().unwrap().clone(),
+            Ty::var("$11".into()),
+        ),
+        (
+            arrow.result.as_var().unwrap().clone(),
+            Ty::var("$101".into()),
+        ),
+    ]
+    .into_iter()
+    .collect();
+    let mut compact = orig.renamed(&ren);
+    if clear_arrows {
+        for a in &mut compact.arrows {
+            a.params.fill(Ty::empty());
+            a.result = Ty::empty();
+        }
+    }
+    let NeedKind::Fwd(f) = &mut compact.needs[0].kind else {
+        unreachable!()
+    };
+    let f = Arc::make_mut(f);
+    f.finish_naming = None;
+    f.gen_naming = None;
+    f.base_class = Some(100);
+    f.digest_summary = None;
+    compact.facts = Default::default();
+    let flat = flat_of(&compact);
+    assert_eq!(compact, flat);
+    assert_eq!(compact.digest(), flat.digest());
+    (Arc::new(compact), Arc::new(flat))
+}
+
+/// Landing round 5, Gemini L5-B4: settling a class a held lambda reads to `int` closes the
+/// lambda, and settling a class the forward's argument holds to a union puts that union's
+/// variables first where the flat needs first use it. The compact forward must be decoded
+/// for both, as [`Sig::replace`] decodes it.
+#[test]
+fn landing5_settle_agrees_with_the_flat_signature() {
+    use zedc_types::ty::{Carrier, Ty};
+    let src = "h0(positional a, positional m) = m.map((x: int) -> a).map((x: int) -> a);\n\
+               h1(positional a, positional m) = h0(a, m);\n";
+    let (c, f) = unfinished_pair(src, false);
+    let close = |v: &str| (v == "$10").then(|| Ty::carrier(Carrier::Int));
+    let (sc, sf) = (c.settle(&close), f.settle(&close));
+    assert_eq!(*sc, *sf);
+    assert_eq!(sc.holds_only_own_variables(), sf.holds_only_own_variables());
+    let outer = |s| Sig::one(vec![], vec![], Ty::func(s));
+    assert_eq!(outer(sc).digest(), outer(sf).digest(), "closed by settle");
+    let (c, f) = unfinished_pair(src, true);
+    let both = Ty::var("FirstNew".into()).union(&Ty::var("SecondNew".into()));
+    let compound = |v: &str| (v == "$11").then(|| both.clone());
+    let (sc, sf) = (c.settle(&compound), f.settle(&compound));
+    assert_eq!(*sc, *sf);
+    assert_eq!(
+        order_with_marks(&sc),
+        order_with_marks(&sf),
+        "settled to a union"
+    );
+    let (wc, wf) = (c.solved_with(&compound), f.solved_with(&compound));
+    assert_eq!(wc, wf);
+    assert_eq!(
+        order_with_marks(&wc),
+        order_with_marks(&wf),
+        "solved to a union"
+    );
+}
+
+/// Landing round 5, Gemini L5-B5: a forward whose callee's held lambda reads a variable of a
+/// function around the callee (`OuterQ`), replaced in the caller. The flat needs hold the
+/// lambda with that variable, so the compact forward must be decoded for the replacement to
+/// reach it.
+#[test]
+fn landing5_outer_variable_of_a_held_function_is_replaced() {
+    use std::sync::Arc;
+    use zedc_types::ty::{Binds, Carrier, Ty};
+    let src = "h0(positional a, positional m) = m.map((x: int) -> a);\n\
+               h1(positional a, positional m) = h0(a, m);\n";
+    let (d, _) = run_with_cfg(src, R10Config::default());
+    let mut compact = Sig::clone(d.sigs.values().find(|s| s.has_fwd_needs()).unwrap());
+    let NeedKind::Fwd(fwd) = &mut compact.needs[0].kind else {
+        unreachable!()
+    };
+    let fwd = Arc::make_mut(fwd);
+    let bind_q: Binds = [(fwd.sigma[0].0.clone(), Ty::var("OuterQ".into()))]
+        .into_iter()
+        .collect();
+    fwd.callee = Arc::new(fwd.callee.replace(&bind_q));
+    fwd.sigma.remove(0);
+    fwd.held_names.insert("OuterQ".into());
+    fwd.held_outer.insert("OuterQ".into());
+    fwd.digest_summary = None;
+    compact.facts = Default::default();
+    let flat = flat_of(&compact);
+    assert_eq!(compact, flat);
+    let sub_q: Binds = [("OuterQ".into(), Ty::carrier(Carrier::Int))]
+        .into_iter()
+        .collect();
+    let (c, f) = (compact.replace(&sub_q), flat.replace(&sub_q));
+    assert_eq!(c, f);
+    assert_eq!(c.digest(), f.digest());
+}
+
+/// Landing round 5, Gemini: partial applications and functions passed where a permuted
+/// parameter list is wanted, checked under D and E (probes 6 and 6B; all agreed in round 5).
+/// Gemini's `permuted_fits_slot_generic` is left out: its `R` is written once, so the unit
+/// does not resolve.
+#[test]
+fn landing5_partial_and_permuted_programs_agree_with_e() {
+    let cases: &[(&str, &str)] = &[
+        (
+            "partial_level2",
+            "h0(positional p, f, m) = m.map(f).map(f);\n\
+             h1(positional p, f, m) = h0(p, f: f, m: m);\n\
+             g() = () -> h1(1, ...);\n",
+        ),
+        (
+            "partial_chain2",
+            "h0(positional p, f, m) = m.map(f).map(f);\n\
+             h1(positional p, f, m) = h0(p, f: f, m: m).map(f);\n\
+             h2(positional p, f, m) = h1(p, f: f, m: m);\n\
+             g() = h2(1, ...);\n\
+             k(positional f, positional m) = g()(f: f, m: m);\n",
+        ),
+        (
+            "partial_twice_and_full",
+            "h0(positional p, f, m) = m.map(f).map(f);\n\
+             h1(positional p, f, m) = h0(p, f: f, m: m);\n\
+             g1() = h1(1, ...);\n\
+             g2() = h1(2, ...);\n\
+             k(positional f, positional m) = h1(3, f: f, m: m);\n",
+        ),
+        (
+            "partial_level2_lower_to_outer",
+            "h0(positional p, f, m) = m.map(f).map(f);\n\
+             h1(positional p, f, m) = h0(p, f: f, m: m);\n\
+             g(positional z) = { f = () -> z(h1(1, ...)); f };\n",
+        ),
+        (
+            "partial_half_given",
+            "inc(positional x: int) = x + 1;\n\
+             h0(positional a, m) = (a.map(inc).map(inc), m.map(inc).map(inc));\n\
+             h1(positional a, m) = h0(a, m: m);\n\
+             g(positional a) = h1(a, ...);\n\
+             k(positional a, positional m) = g(a)(m: m);\n",
+        ),
+        (
+            "partial_returning_lambda_with_fwd",
+            "h0(positional f, positional m) = m.map(f).map(f);\n\
+             h1(positional a, b) = (a, b, (f, m) -> h0(f, m));\n\
+             g() = h1(1, ...);\n",
+        ),
+        (
+            "partial_with_2_internal_and_other_var_order",
+            "h0(positional p, f, g, m) = { r1 = m.map(f); r2 = r1.map(g); r2.map(f) };\n\
+             h1(positional p, f, g, m) = h0(p, f: f, g: g, m: m);\n\
+             g() = h1(1, ...);\n\
+             k(positional f, positional g, positional m) = g()(f: f, g: g, m: m);\n",
+        ),
+        (
+            "partial_on_lambda_chain",
+            "h0(positional p, f, m) = m.map(x -> f(x)).map(x -> f(x));\n\
+             h1(positional p, f, m) = h0(p, f: f, m: m);\n\
+             g() = h1(1, ...);\n\
+             k(positional f, positional m) = g()(f: f, m: m);\n",
+        ),
+        (
+            "permuted_fits_slot_err",
+            "h0(positional f, positional m) = m.map(f).map(f);\n\
+             h1(f, m) = h0(f, m);\n\
+             use_fn(positional g: (m: int ->? int, f: int -> int) -> (int ->? int)) = \
+             g(m: {0 -> 1}, f: x -> x + 1);\n\
+             res = use_fn(h1);\n",
+        ),
+        (
+            "permuted_fits_slot_generic_ret",
+            "h0(positional f, positional m) = m.map(f).map(f);\n\
+             h1(f, m) = h0(f, m);\n\
+             use_fn(positional g: (m: M, f: F) -> M, positional m: M, positional f: F) = \
+             g(m: m, f: f);\n\
+             res = use_fn(h1, {0 -> 1}, x -> x + 1);\n",
+        ),
+    ];
+    for (name, src) in cases {
+        let (e, _) = run_with_cfg(src, R10Config::eager());
+        let (d, _) = run_with_cfg(src, R10Config::default());
+        assert_info_eq(name, &e, &d);
+    }
+}
+
+/// Landing round 5, Gemini NB3: a signature with no own variable that keeps a forward with
+/// internal results binds those results as its own, as the flat one does, so
+/// [`VarFacts::binds`](zedc_types::ty::VarFacts::binds) is set for both.
+#[test]
+fn landing5_internal_results_count_as_bound_for_var_facts() {
+    use std::sync::Arc;
+    use zedc_types::ty::Ty;
+    let (d, _) = run_with_cfg(&chain_src(4, "f", false), R10Config::default());
+    let (_, orig, _) = sig_with_hidden(&d);
+    let mut s = Sig::clone(&orig);
+    s.own.clear();
+    s.facts = Default::default();
+    let flat = flat_of(&s);
+    let vf_c = Ty::func(Arc::new(s)).var_facts();
+    let vf_f = Ty::func(Arc::new(flat)).var_facts();
+    assert!(vf_f.binds);
+    assert_eq!(vf_c.binds, vf_f.binds);
+}

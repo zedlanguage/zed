@@ -513,8 +513,9 @@ pub enum NameItem {
 // have between them only places the run skips or the program binds. So a run with t kept
 // stretches and s skipped or bound places in its range makes at most 2t + 1 + s passes, each
 // O(log k + c) (c below), and the fresh loop's jumps over intervals of `used` cost O(log k) each, at most
-// one per interval of `used` in all, since `n` only grows. The work is then O(log k) times
-// the input (V names, and 1 + s per run) plus the runs given. Before `given` was merged, a run
+// one per interval of `used` in all, since `n` only grows. The work is then O(log k + c) times
+// the passes, bounded below (V names, and 1 + s per run), plus the runs given (landing round
+// 5, Codex: an earlier version of this sentence left out c). Before `given` was merged, a run
 // over names given one at a time met each of them: v names under m such runs gave m·2v runs
 // (test `many_runs_over_names_given_one_at_a_time_give_few_runs`). The number of passes h is
 // not bounded by the skip sets alone: a run whose range a sibling run took before it meets one

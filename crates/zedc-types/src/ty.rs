@@ -2699,34 +2699,10 @@ fn sig_parts(
             stores_not_found: a.partial && stores(a),
         })
         .collect();
-    let needs = (s.needs.iter())
-        .map(|n| renamed_steps(n.map_tys(|_| next()), w))
-        .collect();
+    // A compact forward's steps follow its arguments and exits as they are mapped
+    // ([`Need::map_tys`]).
+    let needs = (s.needs.iter()).map(|n| n.map_tys(|_| next())).collect();
     (arrows, needs)
-}
-
-/// `n` with the variables its compact forward's steps name ([`FwdVarStep::ClassVar`]) as the
-/// walk `w` replaced them: renamed where `w` put a variable in place of one, and dropped where
-/// it put another type, whose variables the need's types then give ([`sig_walk`]). O(steps).
-fn renamed_steps(mut n: Need, w: &impl Rebuild) -> Need {
-    let NeedKind::Fwd(fwd) = &mut n.kind else {
-        return n;
-    };
-    let bound = |st: &FwdVarStep| matches!(st, FwdVarStep::ClassVar(v) if w.binding(v).is_some());
-    if !fwd.var_steps.iter().any(bound) {
-        return n;
-    }
-    let steps = (fwd.var_steps.iter())
-        .filter_map(|st| match st {
-            FwdVarStep::ClassVar(v) => match w.binding(v) {
-                None => Some(st.clone()),
-                Some(t) => t.as_var().map(|u| FwdVarStep::ClassVar(u.clone())),
-            },
-            FwdVarStep::InternalRun(_) => Some(st.clone()),
-        })
-        .collect();
-    Arc::make_mut(fwd).var_steps = steps;
-    n
 }
 
 /// One replacement of variables ([`Ty::replace_in`]) over a type, a signature or a need.
@@ -2762,6 +2738,8 @@ struct Replacer<'b> {
     /// kept for as long as the memos, which are keyed by their addresses and those of the types
     /// they hold.
     kept: Vec<Arc<Sig>>,
+    /// [`Self::targets`], once asked.
+    targets: std::cell::OnceCell<HashSet<Arc<str>>>,
 }
 
 /// New names for the internal runs of compact forwards ([`FwdFinishNaming::runs`]), by the
@@ -2853,13 +2831,14 @@ impl<'b> Replacer<'b> {
             entered: Vec::new(),
             runs: None,
             kept: Vec::new(),
+            targets: std::cell::OnceCell::new(),
         }
     }
 
     /// Whether the walk must replace in `s` with its compact forwards decoded into the needs
     /// they stand for, as the flat signature holds them (landing round 4, Codex L4.Codex-order
     /// and L4.Codex-hidden). A forward's steps follow an argument or exit renamed to another
-    /// variable ([`renamed_steps`]), but not one replaced by another type, whose variables the
+    /// variable ([`Need::map_tys`]), but not one replaced by another type, whose variables the
     /// flat needs first show where the leaf needs use it, not after the forward's runs; and a
     /// binding of one of the forward's internal results, which no type of the signature shows,
     /// would leave it in the compact signature and replace it in the flat one. `nested`: `s` is
@@ -2872,6 +2851,21 @@ impl<'b> Replacer<'b> {
     // the smaller side: each variable bound tested with [`FwdNeed::holds_internal`],
     // O(#binds·runs) index lookups, or the results listed and each looked up in `binds`,
     // O(need_count). Only a forward this finds is decoded, at the flat form's cost.
+    //
+    // Landing round 5 adds three more cases, each tested the same way. A variable of a type
+    // `binds` puts in place of one that is an internal result (Codex L5.Codex-hidden-target,
+    // Gemini L5-B1): the flat signature then holds that name where the arguments show it as
+    // well as where the forward's results do, which the compact one cannot say; the variables
+    // of the bound types are listed once per walk, O(size of their facts), and tested on the
+    // smaller side as above. A variable bound that the callee's held functions read from
+    // around it (`held_outer`, Gemini L5-B5): the decoded needs hold it, and the callee is
+    // not replaced in, O(min(#binds, #held_outer)) lookups. Outside functions, an argument
+    // or exit bound at all (Gemini L5-B2): the flat walk does not enter the functions the
+    // needs hold, where the forward's argument would carry the new name in. The callee's
+    // parameter variables are its own classes, which no held set lists, so the test cannot
+    // be narrowed to the arguments those functions read; it costs O(#sigma + #exits), and on
+    // a chain `generalize` binds no variable of a kept forward outside functions
+    // (`m56c_bound_vars == 0` in the chain tests), so no link is decoded by it.
     fn must_decode(&self, s: &Sig, nested: bool) -> bool {
         if self.binds.is_empty() || !s.has_fwd_needs() {
             return false;
@@ -2892,6 +2886,26 @@ impl<'b> Replacer<'b> {
                 (self.binds.keys()).any(|v| self.bound(v).is_some() && fwd.holds_internal(v))
             }
         };
+        let targets_internal = |fwd: &FwdNeed| {
+            let targets = self.targets();
+            let internal = fwd.need_count.saturating_sub(fwd.exits.len());
+            if targets.is_empty() || internal == 0 {
+                false
+            } else if targets.len() >= internal {
+                (fwd.internal_result_tys().iter())
+                    .filter_map(Ty::as_var)
+                    .any(|v| targets.contains(v))
+            } else {
+                targets.iter().any(|v| fwd.holds_internal(v))
+            }
+        };
+        let binds_outer = |fwd: &FwdNeed| {
+            if self.binds.len() < fwd.held_outer.len() {
+                (self.binds.keys()).any(|v| fwd.held_outer.contains(v) && bound(v).is_some())
+            } else {
+                fwd.held_outer.iter().any(|v| bound(v).is_some())
+            }
+        };
         s.needs.iter().any(|n| {
             let NeedKind::Fwd(fwd) = &n.kind else {
                 return false;
@@ -2900,7 +2914,28 @@ impl<'b> Replacer<'b> {
                 .chain(fwd.exits.iter().map(|(_, t)| t))
                 .filter_map(Ty::as_var)
                 .any(|v| bound(v).is_some_and(|t| t.as_var().is_none()));
-            typed || (!hides_own && binds_internal(fwd))
+            let read_held = self.mode == Mode::Outside
+                && (fwd.sigma.iter().map(|(_, t)| t))
+                    .chain(fwd.exits.iter().map(|(_, t)| t))
+                    .any(|t| t.as_var().is_some_and(|v| bound(v).is_some()));
+            typed
+                || read_held
+                || (!hides_own && binds_internal(fwd))
+                || targets_internal(fwd)
+                || (self.mode != Mode::Outside && binds_outer(fwd))
+        })
+    }
+
+    /// The variables of the types `binds` puts in place of others, at any depth: listed at the
+    /// first call and kept for the walk.
+    fn targets(&self) -> &HashSet<Arc<str>> {
+        self.targets.get_or_init(|| {
+            let mut out = HashSet::new();
+            for t in self.binds.values() {
+                let f = t.var_facts();
+                out.extend(f.classes.iter().chain(&f.names).cloned());
+            }
+            out
         })
     }
 
@@ -3032,10 +3067,13 @@ impl Rebuild for Replacer<'_> {
             return Some(done.clone());
         }
         // A row may hold a function whose forward gets new runs, which no variable shows.
+        // In a renaming, a row whose functions keep a forward with internal results may hold a
+        // name its bits do not show ([`VarBits::internal`]), so it is entered.
         let kept = match self.mode {
             _ if self.runs.is_some() => false,
             _ if r.0.fixed => true,
             Mode::Outside if !r.open() => true,
+            Mode::Rename if r.0.bits.internal => false,
             _ => !self.binds.index().meets(&r.0.bits),
         };
         kept.then(|| {
@@ -3057,6 +3095,7 @@ impl Rebuild for Replacer<'_> {
             _ if self.runs.is_some() => false,
             _ if s.fixed => true,
             Mode::Outside if !s.open() => true,
+            Mode::Rename if s.bits.internal => false,
             _ => !self.binds.index().meets(&s.bits),
         };
         kept.then(|| {
@@ -3597,6 +3636,9 @@ struct Settle<'s> {
     /// One memo for the type the walk started at, if it started at one, and one for each
     /// signature it is inside, last entered last.
     made: Vec<Made>,
+    /// The signatures the walk decoded and settled in place of those met, kept for as long as
+    /// the memos, which may be keyed by the addresses of the rows they hold.
+    kept: Vec<Arc<Sig>>,
 }
 
 impl Settle<'_> {
@@ -3605,6 +3647,21 @@ impl Settle<'_> {
         self.made
             .last_mut()
             .expect("a settling walk enters a row or shape only inside a memo")
+    }
+
+    /// Whether `s` must be settled with its compact forwards decoded ([`Self::known_held`]).
+    fn must_decode(&self, s: &Sig) -> bool {
+        let solve = self.solve;
+        s.needs.iter().any(|n| {
+            let NeedKind::Fwd(fwd) = &n.kind else {
+                return false;
+            };
+            let typed = (fwd.sigma.iter().map(|(_, t)| t))
+                .chain(fwd.exits.iter().map(|(_, t)| t))
+                .filter_map(Ty::as_var)
+                .any(|v| solve(v).is_some_and(|t| t.as_var().is_none()));
+            typed || fwd.held_outer.iter().any(|v| solve(v).is_some())
+        })
     }
 }
 
@@ -3643,6 +3700,22 @@ impl Rebuild for Settle<'_> {
         }
         if let Some(done) = s.facts.1.get() {
             return Some(done.clone());
+        }
+        // Settled decoded, as [`Replacer::must_decode`] decides for a replacement (landing
+        // round 5, Gemini L5-B4): an argument or exit solved to a type that is not a variable,
+        // which the steps do not follow and which may close a function the callee holds, or a
+        // variable its held functions read from around it. The internal results are classes
+        // no one solves (the checker's `stale` leaves out closed internal classes), so they
+        // are not looked up. O(#sigma + #exits + #held_outer) per forward, once per signature.
+        if self.must_decode(s) {
+            let (needs, own) = s.decoded_needs_and_own();
+            let mut flat = Sig::clone(s);
+            flat.needs = needs.into_owned();
+            flat.own = own.into_owned();
+            let flat = Arc::new(flat);
+            self.kept.push(flat.clone());
+            let done = rebuild_held(self, &flat);
+            return Some(s.facts.1.get_or_init(|| done).clone());
         }
         self.made.push(Made::default());
         None
@@ -3993,6 +4066,11 @@ pub struct VarFacts {
     /// `names` and `outer` both `{A}` (landing round 4, Codex L4.Codex-own-facts). Each
     /// signature ORs its functions' bits, O(1) per function held.
     pub binds: bool,
+    /// Whether a signature of the nest keeps a compact forward with internal results, whose
+    /// names `classes` and `names` leave out (landing round 5, Codex L5.Codex-tuple-rename): a
+    /// renaming must enter a row or payload shape that holds one, whose bits do not show those
+    /// names (`VarBits::internal`). ORed as `binds` is, O(1) per function held.
+    pub internal: bool,
 }
 
 impl VarFacts {
@@ -4019,6 +4097,11 @@ impl VarFacts {
         for n in &s.needs {
             if let NeedKind::Fwd(fwd) = &n.kind {
                 g.free = g.free.max(fwd.held_free);
+                // Its internal results are own variables of the flat signature, so it binds
+                // one where it has one (landing round 5, Gemini NB3).
+                let internal = fwd.need_count > fwd.exits.len();
+                g.binds |= internal;
+                g.internal |= internal;
                 for nm in &fwd.held_names {
                     g.add_to(false, nm, &mut added);
                     // A held name the forward does not list as outer is bound in its nest.
@@ -4086,6 +4169,7 @@ impl VarFacts {
         merge(&mut self.outer_classes, &f.outer_classes);
         self.free = self.free.max(f.free);
         self.binds |= f.binds;
+        self.internal |= f.internal;
     }
 
     /// Adds the variable `v` to its classes (`class`) or to its names, unless this walk has
@@ -4156,6 +4240,9 @@ struct VarBits {
     /// The first `n` such that no function it holds holds the `n`th variable name, or more
     /// ([`VarFacts::free`]); the largest of its functions'.
     free: usize,
+    /// Whether a function it holds keeps a compact forward with internal results, whose names
+    /// set no bit ([`VarFacts::internal`]).
+    internal: bool,
 }
 
 impl Default for VarBits {
@@ -4166,6 +4253,7 @@ impl Default for VarBits {
             classes: 0,
             names: 0,
             free: 0,
+            internal: false,
         }
     }
 }
@@ -4192,6 +4280,7 @@ impl VarBits {
     fn of_facts(f: &VarFacts) -> VarBits {
         let mut b = VarBits {
             free: f.free,
+            internal: f.internal,
             ..VarBits::default()
         };
         (f.classes.iter().chain(&f.names)).for_each(|v| b.add(VarBits::of_var(v)));
@@ -4205,6 +4294,7 @@ impl VarBits {
         self.classes |= other.classes;
         self.names |= other.names;
         self.free = self.free.max(other.free);
+        self.internal |= other.internal;
     }
 
     /// Adds the bits of `t`, at the cost of its outer level: its rows, payload shapes and
@@ -5631,11 +5721,10 @@ impl Need {
         let mut w = Replacer::new(binds, mode);
         let tys = rebuild_tys(&mut w, self.tys());
         let mut tys = tys.into_iter();
-        let n = self.map_tys(|_| {
+        self.map_tys(|_| {
             tys.next()
                 .expect("a walk makes one type of each type of a need")
-        });
-        renamed_steps(n, &w)
+        })
     }
 
     /// It with `f` applied to each of the types [`Need::tys`] gives, in that order.
@@ -5750,20 +5839,29 @@ impl Need {
                 },
                 NeedKind::Fwd(fwd) => {
                     let mut renames: HashMap<Arc<str>, Arc<str>> = HashMap::new();
+                    // The variables of `sigma` and `exits` that `f` put another type than a
+                    // variable in place of.
+                    let mut replaced: HashSet<Arc<str>> = HashSet::new();
                     let mut non_var_subst = false;
+                    let mut note = |old_t: &Ty, new_t: &Ty| {
+                        if new_t != old_t {
+                            match (old_t.as_var(), new_t.as_var()) {
+                                (Some(ov), Some(nv)) => {
+                                    renames.insert(ov.clone(), nv.clone());
+                                }
+                                (ov, _) => {
+                                    non_var_subst = true;
+                                    replaced.extend(ov.cloned());
+                                }
+                            }
+                        }
+                    };
                     let new_sigma: Vec<(Arc<str>, Ty)> = fwd
                         .sigma
                         .iter()
                         .map(|(p, old_t)| {
                             let new_t = f(old_t);
-                            if new_t != *old_t {
-                                match (old_t.as_var(), new_t.as_var()) {
-                                    (Some(ov), Some(nv)) => {
-                                        renames.insert(ov.clone(), nv.clone());
-                                    }
-                                    _ => non_var_subst = true,
-                                }
-                            }
+                            note(old_t, &new_t);
                             (p.clone(), new_t)
                         })
                         .collect();
@@ -5772,14 +5870,7 @@ impl Need {
                         .iter()
                         .map(|(off, old_t)| {
                             let new_t = f(old_t);
-                            if new_t != *old_t {
-                                match (old_t.as_var(), new_t.as_var()) {
-                                    (Some(ov), Some(nv)) => {
-                                        renames.insert(ov.clone(), nv.clone());
-                                    }
-                                    _ => non_var_subst = true,
-                                }
-                            }
+                            note(old_t, &new_t);
                             (*off, new_t)
                         })
                         .collect();
@@ -5806,6 +5897,24 @@ impl Need {
                         updated.exits = new_exits;
                         updated.on_vars = new_on_vars;
                         updated.var_ties = new_var_ties;
+                        // The steps name variables of `sigma` and `exits` ([`sig_walk`] reads
+                        // no other), so they follow those: renamed where `f` renamed one, and
+                        // dropped where it put another type, whose variables the need's types
+                        // then give (landing round 5, Codex L5.Codex-direct-map-order: a step
+                        // left stale put the renamed variable last). Read from the old names
+                        // only, so a swap renames both. O(steps) beside the lookups.
+                        if !renames.is_empty() || !replaced.is_empty() {
+                            updated.var_steps = (fwd.var_steps.iter())
+                                .filter_map(|st| match st {
+                                    FwdVarStep::ClassVar(v) => match renames.get(v) {
+                                        Some(u) => Some(FwdVarStep::ClassVar(u.clone())),
+                                        None if replaced.contains(v) => None,
+                                        None => Some(st.clone()),
+                                    },
+                                    FwdVarStep::InternalRun(_) => Some(st.clone()),
+                                })
+                                .collect();
+                        }
                         NeedKind::Fwd(Arc::new(updated))
                     }
                 }
@@ -14049,8 +14158,10 @@ impl Ty {
     /// `self` with the variables `names` gives other names, at every depth, inside the
     /// functions it holds too, their own variables among them: each value of `names` is one
     /// variable, and no two keys share one. The results a compact forward makes inside are
-    /// not variables of the signature it sits in until decoded, so `names` does not reach
-    /// them: their names are in the forward's runs, which [`Ty::renamed_runs`] renames.
+    /// own variables of the flat signature, so where `names` names one of them, or gives one
+    /// of their names as a new name, the forward is decoded and they are renamed as the flat
+    /// signature's are (`Replacer::must_decode`); otherwise their names stay in the forward's
+    /// runs, which [`Ty::renamed_runs`] gives new names (landing round 5, Gemini L5-B3).
     pub fn renamed(&self, names: &Binds) -> Ty {
         self.replace_in(names, Mode::Rename)
     }
@@ -14270,9 +14381,15 @@ impl Ty {
     /// It with each class variable `solve` gives a type replaced by that type at every depth,
     /// each signature it holds settled once ([`Sig::settle`]). A tuple that holds no variable
     /// and no function is kept whole.
+    ///
+    /// `solve` gives no type for an internal result of a compact forward
+    /// ([`FwdNeed::holds_internal`]): those are classes the checker closes and does not solve
+    /// (`stale` in zedc-check leaves out closed internal classes), and a forward settled
+    /// without being decoded keeps them (landing round 5, Gemini L5-B4, attacks 4B and 4C).
     pub fn settle(&self, solve: Solve) -> Ty {
         let made = vec![Made::default()];
-        rebuild_ty(&mut Settle { solve, made }, self)
+        let kept = Vec::new();
+        rebuild_ty(&mut Settle { solve, made, kept }, self)
     }
 
     /// Every variable in it outside the functions it holds, in order of first appearance: a
@@ -19859,6 +19976,8 @@ impl Sig {
     }
 
     /// It with each class variable `solve` gives a type replaced by that type at every depth.
+    /// `solve` gives no type for an internal result of a compact forward, as for
+    /// [`Ty::settle`].
     pub fn solved_with(&self, solve: Solve) -> Sig {
         let mut vs = Vars::default();
         for a in &self.arrows {
@@ -20201,13 +20320,15 @@ impl Sig {
 
     /// It with each class variable `solve` gives a type replaced by that type at every depth:
     /// made at the first call and kept, so it is asked only when no class changes after,
-    /// as the checker finishes. A signature that holds no class variable is itself.
+    /// as the checker finishes. A signature that holds no class variable is itself. `solve`
+    /// gives no type for an internal result of a compact forward, as for [`Ty::settle`].
     pub fn settle(self: &Arc<Sig>, solve: Solve) -> Arc<Sig> {
         if self.facts().classes.is_empty() {
             return self.clone();
         }
         let made = Vec::new();
-        rebuild_held(&mut Settle { solve, made }, self)
+        let kept = Vec::new();
+        rebuild_held(&mut Settle { solve, made, kept }, self)
     }
 
     /// The class variables of `want` that its arrows and needs hold, in the order in which
@@ -20327,18 +20448,44 @@ impl Sig {
     /// Adds the arrows of `q` after its own, and `q`'s bounded and own variables and needs:
     /// it becomes the intersection of the two function types, as `s & q` is read when the two
     /// take the same parameters.
+    ///
+    /// Where either keeps a compact forward, both are decoded first: the own variables form a
+    /// set, so an internal result of both is one variable of the intersection, as the flat
+    /// signatures make it, where two compact forwards would count it twice (landing round 5,
+    /// Codex L5.Codex-own-union). O(need_count) per forward, the flat form's cost; the chains
+    /// intersect no function.
     pub fn add_arrows_of(&mut self, q: &Sig) {
+        if self.has_fwd_needs() {
+            let (needs, own) = self.decoded_needs_and_own();
+            let (needs, own) = (needs.into_owned(), own.into_owned());
+            self.needs = needs;
+            self.own = own;
+        }
+        let (q_needs, q_own) = q.decoded_needs_and_own();
         self.arrows.extend(q.arrows.iter().cloned());
         (self.bounds).extend(q.bounds.iter().map(|(v, m)| (v.clone(), *m)));
-        self.own.extend(q.own.iter().cloned());
+        self.own.extend(q_own.iter().cloned());
         self.held.extend(q.held.iter().cloned());
-        self.needs.extend(q.needs.iter().cloned());
+        self.needs.extend(q_needs.iter().cloned());
     }
 
     /// It with its variables replaced by `binds` at every depth; a bounded variable replaced
     /// by another variable keeps its bound under the new name.
     pub fn replace(&self, binds: &Binds) -> Sig {
         self.replace_in(binds, Mode::Replace)
+    }
+
+    /// It as [`Sig::replace`] by `binds` walks it: with its compact forwards decoded into the
+    /// flat needs where that replacement must decode them, else itself. For a caller that
+    /// replaces its needs one by one ([`Need::replace`]), which sees no signature to decode
+    /// (landing round 5, Codex L5.Codex-direct-need). O(1) where nothing is decoded beyond the
+    /// test, else O(need_count) per forward, as [`Sig::replace`] costs.
+    pub fn flat_for(&self, binds: &Binds) -> Cow<'_, Sig> {
+        let mut w = Replacer::new(binds, Mode::Replace);
+        match w.must_decode(self, false) {
+            true => Cow::Owned(Sig::clone(&w.decoded(self))),
+            false => Cow::Borrowed(self),
+        }
     }
 
     /// It with the variables `names` gives other names, as [`Ty::renamed`] does.

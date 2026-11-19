@@ -1301,6 +1301,11 @@ impl<'t, 'a> Ck<'t, 'a> {
                 if self.classes.is_materialized(id) {
                     continue;
                 }
+                // The level of the partial call, not the forward's: in the flat form these
+                // results are own variables of the callee's signature, which the call makes
+                // fresh at its own level. Each class is resolved and named at once, so
+                // `lasting` skips it (landing round 5, Gemini L5-NB2 and Codex; D against E
+                // on partial calls: `landing5_partial_and_permuted_programs_agree_with_e`).
                 let class = Self::make_fresh_class(id, self.level, true);
                 self.classes.materialize_at(id, class);
                 self.resolve(id);

@@ -9093,14 +9093,19 @@ impl<'t, 'a> Ck<'t, 'a> {
         if b.is_empty() {
             return sig.clone();
         }
-        let mut inst = Sig::clone(sig);
+        // The needs are replaced one by one, which meets no signature to decode a compact
+        // forward in, so they are replaced in the signature as [`Sig::replace`] would walk it,
+        // decoded where it must be (landing round 5, Codex L5.Codex-direct-need: a parameter a
+        // held lambda reads, bound to `int`, closes the lambda in the flat needs only).
+        let base = sig.flat_for(&b);
+        let mut inst = Sig::clone(&base);
         for ar in &mut inst.arrows {
             for p in &mut ar.params {
                 *p = p.replace(&b);
             }
             ar.result = ar.result.replace(&b);
         }
-        inst.needs = inst.needs.iter().map(|n| n.replace(&b)).collect();
+        inst.needs = base.needs.iter().map(|n| n.replace(&b)).collect();
         for v in b.keys() {
             inst.own.remove(v);
             inst.held.remove(v);
@@ -19749,7 +19754,10 @@ impl<'t, 'a> Ck<'t, 'a> {
             keys: s.keys.clone(),
             word: s.word.clone(),
             needs: needs_in_order(&kept, &from),
-            own: s.own.clone(),
+            // The needs are decoded ([`guarded_needs`]), so the internal results of their
+            // forwards are own variables, as in the flat signature (landing round 5, Gemini
+            // L5-NB1).
+            own: s.decoded_needs_and_own().1.into_owned(),
             held: s.held.clone(),
             named: s.named,
             hull: s.hull.clone(),
@@ -24292,6 +24300,9 @@ impl<'t, 'a> Ck<'t, 'a> {
             out = out.union(&match partial {
                 true => result,
                 false => {
+                    // `left` holds no compact forward, which a need-by-need replacement would
+                    // not decode: an admitted call leaves no need, and `replay` decodes the
+                    // forwards it is given before it leaves any.
                     let needs = left.iter().map(|n| n.replace(&binds)).collect();
                     let (held, now) = hold(&result, needs, |v| self.is_class(v));
                     if !self.trying && held.may_hold_needs() {
