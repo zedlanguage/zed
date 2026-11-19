@@ -590,10 +590,13 @@ for `l01_37a_short_addresses` and `l01_37_oracle`, and `l01_37a` alone reaches o
 In the short build, three tests of `l01_23_subtyping` fail. All three are in the normal build's
 `l01_23` piece and pass there. Each failure was checked, and none gives a wrong verdict:
 
-- `refusal_cost::random_3_cnf_seed_2_is_refused_at_8_bits_and_16`: at 16 bits (5 models) the
-  short build answers `Inhabited` instead of refusing. The value it shows was printed and is a
-  member of the type (`contains` agrees). The test pins the normal build's loss of a value in
-  `refine` (REFUSAL-r3-seed2-16-inhabited), and in the short build the route does not lose it.
+- `refusal_cost::random_3_cnf_seed_2_is_refused_at_8_bits_and_16` (now
+  `random_3_cnf_seed_2_is_refused_at_8_bits_and_found_at_16`): at 16 bits (5 models) the
+  short build answered `Inhabited` where the normal build refused. The value it shows was
+  printed and is a member of the type (`contains` agrees). The normal build now finds a value
+  too (REFUSAL-r3-seed2-16-inhabited); the test asserts `Inhabited` in the normal build only,
+  and under `short-addresses` takes a refusal or an `Inhabited` verdict whose value is in the
+  difference, since the short build orders the pairs of `refine` by other digests.
 - `listing::tuples_are_checked_against_the_tuple_types_that_may_hold_them`: the same 13 tuples
   come out in another order. The boxes are listed in digest order; in the normal build the
   first box listed is already box 1, not box 0. The test pins one build's digest order, and

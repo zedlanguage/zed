@@ -213,26 +213,15 @@ fn random_3_cnf_is_refused_at_shared_cells() {
     assert_eq!(r3_verdicts(16, 7), (refused, refused));
 }
 
-/// Seed 2, the benchmarks' instance until GROUP-order-cpoly-merge: over 8 bits no tuple meets
-/// every clause (counted by trying all 256) and the verdict is a refusal at shared cells; over
-/// 16 bits 5 tuples meet every clause (all 65,536 tried). There the full build refuses both
-/// verdicts: `refine` cuts a pair it proves neither way blindly, to `inside` on its first pass
-/// and to `outside` on its second, and the 5 values lie on neither side (the tradeoff at
-/// `Searching::refine`, COMPLEXITY.md K133). Deferring those cuts found a value here, at 231
-/// times the time per 8 times the bits on the benchmarks (plan row
-/// REFUSAL-r3-seed2-16-inhabited). The short-addresses build orders the pairs by other digests
-/// and finds a value, so over 16 bits the test asserts what holds in both builds: no verdict is
-/// `Empty`, and an `Inhabited` one rests on a value of the difference.
-#[test]
-fn random_3_cnf_seed_2_is_refused_at_8_bits_and_16() {
-    let refused = Verdict::Refused(Refusal::SharedCells(0));
-    assert_eq!(models(8, 2), 0);
-    assert_eq!(r3_verdicts(8, 2), (refused, refused));
-    assert_eq!(models(16, 2), 5);
-    let (a, b) = r3(16, 2);
-    for v in <[Verdict; 2]>::from(r3_verdicts(16, 2)) {
+/// Asserts that both verdicts of `r3(vars, seed)`, which has a model, are `Inhabited`, each
+/// resting on a value of the difference. The short-addresses build orders the pairs of
+/// `Searching::refine` by other digests, so its blind cuts differ; there it asserts only what
+/// holds in both builds: no verdict is `Empty`, and an `Inhabited` one rests on such a value.
+fn assert_found(vars: usize, seed: u64) {
+    let (a, b) = r3(vars, seed);
+    for v in <[Verdict; 2]>::from(r3_verdicts(vars, seed)) {
         match v {
-            Verdict::Empty => panic!("5 tuples meet every clause, and a verdict is Empty"),
+            Verdict::Empty => panic!("r3({vars}, {seed}) has a model, and a verdict is Empty"),
             Verdict::Inhabited => {
                 Type::forget_emptiness();
                 let x = (&a - &b)
@@ -243,23 +232,53 @@ fn random_3_cnf_seed_2_is_refused_at_8_bits_and_16() {
                     "{x} is not in {a} \\ {b}"
                 );
             }
-            Verdict::Refused(r) => assert_eq!(r, Refusal::SharedCells(0)),
+            Verdict::Refused(r) => {
+                if !cfg!(feature = "short-addresses") {
+                    panic!("r3({vars}, {seed}) has a model, and a verdict is refused: {r:?}");
+                }
+            }
         }
     }
 }
 
-/// The two blind passes of `Searching::refine` (COMPLEXITY.md K133). Seed 7 over 8 bits has 2
-/// models; the first pass, cutting each pair it proves neither way to `inside`, finds none, and
-/// the second, cutting to `outside`, finds one, so both verdicts are Inhabited. Seed 89 over 12
-/// bits has 1 model, which both passes miss: it is refused, a documented miss. No pass of
+/// Seed 2, the benchmarks' instance until GROUP-order-cpoly-merge: over 8 bits no tuple meets
+/// every clause (counted by trying all 256) and the verdict is a refusal at shared cells; over
+/// 16 bits 5 tuples meet every clause (all 65,536 tried), and both verdicts find one. There
+/// `refine` cuts two pairs blindly, at components 0 and 1; the 5 values lie inside the first
+/// and outside the second, so the inside pass and the outside pass each end in a box proved
+/// empty, and the inside pass finds a value once it undoes its second blind cut and keeps the
+/// other side (the tradeoff at `Searching::refine`, COMPLEXITY.md K133; plan row
+/// REFUSAL-r3-seed2-16-inhabited).
+#[test]
+fn random_3_cnf_seed_2_is_refused_at_8_bits_and_found_at_16() {
+    let refused = Verdict::Refused(Refusal::SharedCells(0));
+    assert_eq!(models(8, 2), 0);
+    assert_eq!(r3_verdicts(8, 2), (refused, refused));
+    assert_eq!(models(16, 2), 5);
+    assert_found(16, 2);
+}
+
+/// The passes of `Searching::refine` (COMPLEXITY.md K133). Seed 7 over 8 bits has 2 models;
+/// the first pass, cutting each pair it proves neither way to `inside`, finds none, and the
+/// second, cutting to `outside`, finds one. Seed 89 over 12 bits has 1 model, which both passes
+/// missed until a pass undid its latest blind cut once the box was proved empty. Seed 19 over
+/// 16 bits has a model that both passes still miss with that undo: it is refused, a documented
+/// miss (in the full build; the short-addresses build cuts in another order). No rule of
 /// polynomial work finds a model of every satisfiable 3-CNF unless P = NP.
 #[test]
-fn random_3_cnf_found_by_the_outside_pass_or_refused() {
+fn random_3_cnf_found_by_a_second_pass_or_an_undone_cut_or_refused() {
     assert_eq!(models(8, 7), 2);
-    assert_eq!(r3_verdicts(8, 7), (Verdict::Inhabited, Verdict::Inhabited));
-    let refused = Verdict::Refused(Refusal::SharedCells(0));
+    assert_found(8, 7);
     assert_eq!(models(12, 89), 1);
-    assert_eq!(r3_verdicts(12, 89), (refused.clone(), refused));
+    assert_found(12, 89);
+    assert_eq!(models(16, 19), 5);
+    if !cfg!(feature = "short-addresses") {
+        let (v, s) = r3_verdicts(16, 19);
+        assert!(
+            matches!(v, Verdict::Refused(_)) && matches!(s, Verdict::Refused(_)),
+            "r3(16, 19): {v:?} and {s:?}"
+        );
+    }
 }
 
 // Measured at 8d0bfe954 with the classes of values (COMPLEXITY.md K111; instructions of
@@ -271,7 +290,10 @@ fn random_3_cnf_found_by_the_outside_pass_or_refused() {
 // assert of `refusal_scales`): 39.2 times the time per 8 times the bits, limit 84 (branch
 // wt/order2, 2026-11-18, load 41 to 55). With the second, outside pass of `refine` (order3,
 // 2026-11-18): 42.8 times the work per 8 times the bits against 39.0 for one pass, measured
-// together, load5 63.2 at the start and 62.9 at the end. Seed 2 was used until GROUP-order-cpoly-merge. Measured at 8d0bfe954 for seed 2: 61.0M instructions at n = 8 and 3.82G at
-// n = 64, 62.6 times, under a limit of 141.
+// together, load5 63.2 at the start and 62.9 at the end. With the undo of a pass's latest blind
+// cut once the box is proved empty (order3b, 2026-11-19): 40.6 times the instructions for both
+// verdicts (466M at 16 bits, 18.9G at 128), against 43.7 (412M, 18.0G) without it, load5 21 to
+// 27. Seed 2 was used until GROUP-order-cpoly-merge. Measured at 8d0bfe954 for seed 2: 61.0M
+// instructions at n = 8 and 3.82G at n = 64, 62.6 times, under a limit of 141.
 
 mod bench;

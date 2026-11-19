@@ -4857,63 +4857,17 @@ fn xr_r3_q2c_refine_decides_six_box_cover_and_adversarial_1908_in_every_order() 
     }
 }
 
-/// Q2(e) of XR-group-order-5 round 3 (Gemini seat; ported by order3 from
-/// wt/failing-tests/GROUP-order-cpoly-merge-gemini-tests.diff). Part 1, outside `C_poly`: the box
-/// `((#a | #b), (L12 | #c)) \ ((#a, L1) | (#a, L12) | (#a, #c) | (#b, L12) | (#b, #c))` is empty
-/// (each first component meets negations that cover all of `L12 | #c`); in each order of the
-/// pair components the verdict is `Empty`. At 4091b22e5 the written order was refused at a
-/// fork and the reversed one `Empty`, an order difference the seat asserted as expected; main
-/// gives `Empty` in both orders (order3, 2026-11-18).
-/// Part 2, inside `C_poly`: a group with a two-component split and a forked recursion is
-/// `Inhabited` in both orders (`(#b, 2)` is a value of R0); red at 4091b22e5 (`Refused(Fork)`).
+/// Q2(e) of XR-group-order-5 round 3 (the Gemini seat's test, ported by order3), inside
+/// `C_poly`: a group whose first definition splits a pair at both components and recurses
+/// through both is `Inhabited` in both orders of the pair (`(#b, 2)` is a value of R0, and `#a`
+/// one of R1). The seat reported it refused at a fork at 4091b22e5 (not rechecked). The seat's
+/// other half, the box outside `C_poly` decided `Empty` in both orders, is
+/// `a_box_split_at_two_components_outside_cpoly_is_empty_in_both_orders`.
 #[test]
-fn xr_r3_q2e_classes_find_map_counterexample_and_cpoly_immunity() {
-    // 1. Outside `C_poly`: `((#a | #b), (L12 | #c)) \ ((#a, L1) | (#a, L12) | (#a, #c) | (#b, L12) | (#b, #c))`
+fn a_cpoly_group_split_at_two_components_with_forked_recursion_is_inhabited_in_both_orders() {
     let one = Type::lit(&zed_kernel::Value::Int(1)).unwrap();
     let two = Type::lit(&zed_kernel::Value::Int(2)).unwrap();
-    let mk_list = |elem: Type, name: &str| -> Type {
-        Group::new(vec![Def {
-            name: name.into(),
-            params: vec![],
-            body: Expr::Union(vec![
-                Expr::Type(Type::atom("nil")),
-                Expr::Atom("cons".into(), vec![Expr::Type(elem), Expr::Ref(0, vec![])]),
-            ]),
-        }])
-        .unwrap()
-        .instance(vec![])
-        .remove(0)
-    };
-    let l1 = mk_list(one.clone(), "XRR3_L1");
-    let l12 = mk_list(&one | &two, "XRR3_L12");
     let (a, b, c) = (Type::atom("a"), Type::atom("b"), Type::atom("c"));
-    let mk_box = |rev: bool| -> Type {
-        let pair = |x: Type, y: Type| {
-            if rev {
-                Type::tuple(vec![y, x])
-            } else {
-                Type::tuple(vec![x, y])
-            }
-        };
-        let pos = pair(&a | &b, &l12 | &c);
-        let negs = [
-            pair(a.clone(), l1.clone()),
-            pair(a.clone(), l12.clone()),
-            pair(a.clone(), c.clone()),
-            pair(b.clone(), l12.clone()),
-            pair(b.clone(), c.clone()),
-        ];
-        negs.into_iter().fold(pos, |acc, n| &acc - &n)
-    };
-    Type::forget_emptiness();
-    let v_out_written = mk_box(false).verdict();
-    Type::forget_emptiness();
-    let v_out_reversed = mk_box(true).verdict();
-    for (v, order) in [(v_out_written, "written"), (v_out_reversed, "reversed")] {
-        assert_eq!(v, Verdict::Empty, "the empty box, {order}");
-    }
-    // 2. Inside `C_poly`: recursive group with 2-component split + forked recursion is `Inhabited`
-    // (`(#b, 2)` survives) in BOTH orders. Fails at `4091b22e5` (`Refused(Fork)`).
     let one_e = Expr::Type(one.clone());
     let one_two_e = Expr::Type(&one | &two);
     for rev in [false, true] {
