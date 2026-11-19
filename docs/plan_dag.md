@@ -5666,7 +5666,6 @@ Each pair below is at one level, shares a file and is not yet done. No path of n
 | 0 | PROOF-sweep-zedc-preimage, BENCH-scope-project-due-blocks | `crates/zedc-preimage/src/product.rs` |
 | 0 | PROOF-sweep-zedc-preimage, BENCH-project-block-whole-release | `crates/zedc-preimage/src/product.rs` |
 | 0 | PROOF-sweep-zedc-preimage, BENCH-named-wide-conjunction-tiers | `crates/zedc-preimage/src/product.rs` |
-| 0 | PROOF-sweep-zedc-preimage, BENCH-reduced-product-scaling-work | `crates/zedc-preimage/src/product.rs` |
 | 0 | PROOF-sweep-zedc-preimage, CHECK-sum-of-summarized-names | `crates/zedc-preimage/src/product.rs` |
 | 0 | PROOF-sweep-zedc-preimage, FAIL-audit-seed-17180819687505084927 | `crates/zedc-preimage/src/product.rs` |
 | 0 | PROOF-sweep-zedc-preimage, BENCH-named-limits-side-by-side-tiers | `crates/zedc-preimage/src/product.rs` |

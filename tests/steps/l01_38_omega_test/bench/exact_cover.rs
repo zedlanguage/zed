@@ -124,7 +124,9 @@ fn the_cover_takes_a_bounded_time_per_unit_of_work() {
 /// time is not the fixed costs; a question is not required. `direct` counts fewer units than
 /// the cells (`2, 3 n=3000`: 92,684), so `n` is doubled. On 7f34b01a9 `direct` answered all
 /// five cases with no question: 123,384 to 197,684 units a case, worst 76.4 ns a unit (the
-/// padding case), 237 ms at the limit (load 59).
+/// padding case), 237 ms at the limit (load 59). On 7f015461f, 125,584 to 199,884 units a
+/// case, and over four runs 141 to 352 ms at the limit (load5 53), the padding case worst
+/// each time: its time is the difference of two runs of about 30 ms each, so it varies most.
 #[test]
 fn the_default_path_takes_a_bounded_time_per_unit_of_work() {
     use zedc::store::presburger::exact::DIRECT_OFF;
