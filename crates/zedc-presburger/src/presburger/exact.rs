@@ -276,10 +276,13 @@ pub(super) fn exact_each(f: &Formula, syms: &[Atom], found: Each, solver: Solver
         if SHARED_OFF.get() || once[i].0.is_some() || !p.factors.is_empty() || asked[i] < 2 {
             continue;
         }
-        let want: BTreeMap<&Atom, IntervalSet> = (sorted.iter())
-            .filter(|(s, _)| part_of.get(*s).copied().or((!many).then_some(0)) == Some(i))
+        // Complexity tradeoff: `members[i]` already holds the answered symbols of part `i` in
+        // the order of `sorted`, so this reads O(k_i) entries per part and O(n) in all. Scanning
+        // all of `sorted` for each part, as 0ac1dccff did, was O(parts · n) = O(n²) hash lookups
+        // when every part is small (`independent_stages_scale`: 10.514, FAIL-bench-independent-stages).
+        let want: BTreeMap<&Atom, IntervalSet> = (members[i].iter())
             .filter(|(s, _)| !certified.contains_key(*s))
-            .filter_map(|(s, h)| Some((*s, h.as_ref().ok()?.clone())))
+            .map(|(s, h)| (*s, (*h).clone()))
             .collect();
         if want.len() < 2 {
             continue;
