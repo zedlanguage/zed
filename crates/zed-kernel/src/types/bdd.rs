@@ -3658,7 +3658,8 @@ mod list {
                 Some(l)
             }
             1 => olds.iter().max_by_key(|(_, s)| s.len()).map(|&(l, _)| l),
-            _ => return None,
+            // Every call of [`replace`] passes `Vec::new()` or a one-element `vec![..]`.
+            _ => unreachable!("no caller replaces blocks by more than one"),
         };
         for &(l, s) in &olds {
             if Some(l) == kept {
@@ -3799,7 +3800,10 @@ mod list {
                     || (c.digest == d.digest
                         && Bdd::List(c.clone(), true) == Bdd::List(d.clone(), true))
             }
-            _ => false,
+            // Both callers are in `implies_by_blocks`: case A compares the rests of two lists of
+            // equal length, so both are empty or neither is; case B passes the shorter list,
+            // never empty, and the longer one's rest, of its length (checked just before).
+            _ => unreachable!("same_seq compares sequences of equal length"),
         }
     }
 

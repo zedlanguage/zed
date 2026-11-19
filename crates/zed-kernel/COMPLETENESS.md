@@ -278,7 +278,12 @@ only in its branch for a choice, after its branch for `Not` declined; the arm is
 comment-proved general answer); 2499 (`clause` of an `Or`, declined before by `is_or`); 2898,
 2907 and 2927 (`Part::xor` and `node`: `node` and `found` give only expressions); 2976-2977
 (`xor::meet` of two lists: its one caller, `halves`, passes two lists only as literals of two
-atoms); 3004 (`pair` of a chain that lists other than two, after the test for a chain of two).
+atoms); 3004 (`pair` of a chain that lists other than two, after the test for a chain of two);
+3576 (`reindex` of more than one new block: every call of `replace` passes none or one); 3717
+(`same_seq` of an empty and a non-empty sequence: both calls, in `implies_by_blocks`, pass two of
+equal length). 4441-4513 are the `return false` arms of the test-only checkers `index_is_sound`
+and `cells_are_sound`; they are reached only when an invariant they check is broken, which is
+their purpose, and no test breaks one on purpose.
 
 The cut-edge test of the parent walk in `gfp` (`bes.rs`, `is_cut` in the walk) was missing: with
 the test removed from the walk, every `decide` test still passed, since a `lo` that is too small
