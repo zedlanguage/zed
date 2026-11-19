@@ -6856,6 +6856,7 @@ Each pair below is at one level, shares a file and is not yet done. No path of n
 | 1 | TAG-run, META-read-run | `crates/zedc-elab/src/elab/walk.rs` |
 | 1 | TAG-run, WHERE-loose-atoms | `crates/zedc-check/src/check/walk.rs` |
 | 1 | TAG-run, REDUCE-family-entries | `crates/zedc-check/src/check/walk.rs` |
+| 1 | TAG-run, FAIL-map-chain-own-vars-fn-quadratic | `crates/zedc-check/src/check/walk/r10_forward.rs` |
 | 1 | TAG-run, PUSH-bubble-nested | `crates/zedc-check/src/check/mod.rs` |
 | 1 | TAG-run, TONIC-remap-witness | `crates/zedc-check/src/check/walk/remap.rs` |
 | 1 | GROUP-prelude, L1.29e | `crates/zedc-check/src/check/walk/remap.rs` |
@@ -6883,6 +6884,7 @@ Each pair below is at one level, shares a file and is not yet done. No path of n
 | 1 | L1.29e, REDUCE-by-function | `crates/zedc-check/src/check/walk.rs` |
 | 1 | L1.29e, WHERE-loose-atoms | `crates/zedc-check/src/check/walk.rs` |
 | 1 | L1.29e, REDUCE-family-entries | `crates/zedc-check/src/check/walk.rs` |
+| 1 | L1.29e, FAIL-map-chain-own-vars-fn-quadratic | `crates/zedc-check/src/check/walk/r10_forward.rs` |
 | 1 | L1.29e, PUSH-bubble-nested | `crates/zedc-check/src/check/mod.rs` |
 | 1 | L1.29e, TONIC-remap-witness | `crates/zedc-check/src/check/walk/remap.rs` |
 | 1 | REPAIR-through-branch, MSG-too-large-figure | `crates/zedc-check/src/check/walk.rs` |
@@ -6898,6 +6900,7 @@ Each pair below is at one level, shares a file and is not yet done. No path of n
 | 1 | MSG-too-large-figure, REDUCE-by-function | `crates/zedc-check/src/check/walk.rs` |
 | 1 | MSG-too-large-figure, WHERE-loose-atoms | `crates/zedc-check/src/check/walk.rs` |
 | 1 | MSG-too-large-figure, REDUCE-family-entries | `crates/zedc-check/src/check/walk.rs` |
+| 1 | MSG-too-large-figure, FAIL-map-chain-own-vars-fn-quadratic | `crates/zedc-check/src/check/walk/r10_forward.rs` |
 | 1 | MSG-too-large-figure, PUSH-bubble-nested | `crates/zedc-check/src/check/mod.rs`, `crates/zed-rt/src/ports.rs` |
 | 1 | MSG-too-large-figure, TONIC-remap-witness | `crates/zedc-check/src/check/walk/remap.rs` |
 | 1 | LIT-generic-class-follows-needs, PROOF-sweep | `crates/zedc-check/src/check/` |
@@ -6905,6 +6908,7 @@ Each pair below is at one level, shares a file and is not yet done. No path of n
 | 1 | LIT-generic-class-follows-needs, REDUCE-by-function | `crates/zedc-check/src/check/walk.rs` |
 | 1 | LIT-generic-class-follows-needs, WHERE-loose-atoms | `crates/zedc-check/src/check/walk.rs` |
 | 1 | LIT-generic-class-follows-needs, REDUCE-family-entries | `crates/zedc-check/src/check/walk.rs` |
+| 1 | LIT-generic-class-follows-needs, FAIL-map-chain-own-vars-fn-quadratic | `crates/zedc-check/src/check/walk/r10_forward.rs` |
 | 1 | LIT-generic-class-follows-needs, PUSH-bubble-nested | `crates/zedc-check/src/check/mod.rs` |
 | 1 | LIT-generic-class-follows-needs, TONIC-remap-witness | `crates/zedc-check/src/check/walk/remap.rs` |
 | 1 | PROOF-sweep, PRES-join-cost-predictor | `crates/zedc-presburger/src/presburger/row_sums.rs`, `crates/zedc-presburger/src/presburger.rs` |
@@ -6916,6 +6920,7 @@ Each pair below is at one level, shares a file and is not yet done. No path of n
 | 1 | PROOF-sweep, DISCARD-standalone | `crates/zedc-resolve/src/resolve.rs` |
 | 1 | PROOF-sweep, WHERE-loose-atoms | `crates/zedc-check/src/check/walk.rs` |
 | 1 | PROOF-sweep, REDUCE-family-entries | `crates/zedc-check/src/check/walk.rs` |
+| 1 | PROOF-sweep, FAIL-map-chain-own-vars-fn-quadratic | `crates/zedc-check/src/check/walk/r10_forward.rs`, `crates/zedc-types/src/ty.rs` |
 | 1 | PROOF-sweep, PERF-escape-big-heads-scaling | `crates/zed-kernel/src/types/empty/escape.rs` |
 | 1 | PROOF-sweep, PERF-set-tied-digest-depth | `crates/zed-kernel/src/types/bdd/set.rs`, `crates/zed-kernel/src/types/bdd.rs`, `crates/zed-kernel/src/types/bdd/settings.rs`, `crates/zed-kernel/src/priority.rs` |
 | 1 | PROOF-sweep, PUSH-bubble-nested | `crates/zedc-check/src/check/mod.rs`, `crates/zedc/src/run.rs`, `crates/zed-rt/src/ports.rs` |
