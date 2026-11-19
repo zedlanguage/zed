@@ -2710,6 +2710,11 @@ fn landing5_chain_decode_grid() {
                 assert_eq!(stats.admitted, n - 1);
                 assert_eq!(stats.kept_at_generalize, n - 1);
                 assert_eq!(count, u64::from(main), "{form} n={n} main={main}");
+                // No forward forced, expanded at a merge or bound by M56(c) (landing round 6,
+                // Codex's decode probe).
+                assert_eq!(stats.forced, 0);
+                assert_eq!(stats.n4_merged_expansions, 0);
+                assert_eq!(stats.m56c_bound_vars, 0);
             }
         }
     }
@@ -3002,4 +3007,422 @@ fn landing5_internal_results_count_as_bound_for_var_facts() {
     let vf_f = Ty::func(Arc::new(flat)).var_facts();
     assert!(vf_f.binds);
     assert_eq!(vf_c.binds, vf_f.binds);
+}
+
+/// Two maps through a held lambda that reads the parameter `a`, forwarded once: with
+/// [`unfinished_pair`], `$10` is `a`, `$11` is `m`, `$100` the internal result and `$101`
+/// the exit (landing round 6, Gemini).
+const LANDING6_LAMBDA_SRC: &str = "h0(positional a, positional m) = m.map((x: int) -> a).map((x: int) -> a);\n\
+     h1(positional a, positional m) = h0(a, m);\n";
+
+/// The same, with the function passed as an argument (landing round 6, Codex).
+const LANDING6_F_SRC: &str = "h0(positional f, positional m) = m.map(f).map(f);\n\
+     h1(positional f, positional m) = h0(f, m);\n";
+
+/// Landing round 6, Codex L6.settle-target and Gemini L6-B1: a solution that gives a visible
+/// variable the name of an internal result, which `solve` leaves unsolved as `Sig::settle`
+/// asks. D kept the forward compact and hashed the result in its inherited role, so the
+/// settled signatures were equal with different digests (Codex: 1240585616135713484 against
+/// 219136362243331606). A fresh target is the control.
+#[test]
+fn landing6_settle_target_is_an_internal_result() {
+    use zedc_types::ty::Ty;
+    for src in [LANDING6_LAMBDA_SRC, LANDING6_F_SRC] {
+        for target in ["$999", "$100"] {
+            let (c, f) = unfinished_pair(src, false);
+            let NeedKind::Fwd(fwd) = &c.needs[0].kind else {
+                unreachable!()
+            };
+            assert!(fwd.holds_internal("$100"));
+            let solve = |v: &str| (v == "$10").then(|| Ty::var(target.into()));
+            assert!(solve("$100").is_none());
+            let (sc, sf) = (c.settle(&solve), f.settle(&solve));
+            assert_eq!(*sc, *sf, "{src} -> {target}");
+            assert_eq!(sc.digest(), sf.digest(), "{src} -> {target}");
+        }
+    }
+}
+
+/// Landing round 6, Codex L6.first-seen and Gemini L6-B5: `first_seen` read a compact forward
+/// by its types, so it never found an internal result (`[]` against E's `["$100"]`). Asked
+/// of the signature, of it held in a tuple in another, and of the visible parameters.
+#[test]
+fn landing6_first_seen_reads_the_flat_form() {
+    use std::sync::Arc;
+    use zedc_types::ty::Ty;
+    for src in [LANDING6_LAMBDA_SRC, LANDING6_F_SRC] {
+        for clear in [false, true] {
+            let (c, f) = unfinished_pair(src, clear);
+            let held =
+                |s: &Arc<Sig>| Sig::one(vec![], vec![], Ty::tuple(vec![Ty::func(s.clone())]));
+            for want in [
+                vec!["$100"],
+                vec!["$10", "$11"],
+                vec!["$100", "$10", "$101"],
+            ] {
+                let want: HashSet<Arc<str>> = want.into_iter().map(Arc::from).collect();
+                let e = f.first_seen(&want);
+                assert_eq!(c.first_seen(&want), e, "{src} {want:?}");
+                assert_eq!(held(&c).first_seen(&want), held(&f).first_seen(&want));
+            }
+            let hidden: HashSet<Arc<str>> = [Arc::from("$100")].into_iter().collect();
+            assert_eq!(c.first_seen(&hidden), vec![Arc::<str>::from("$100")]);
+        }
+    }
+}
+
+/// Landing round 6, Gemini L6-B5: `Need::on_holds_var` read a compact forward's kept `.on`
+/// variables only, so an internal result that a later map has as its `.on` was not found.
+#[test]
+fn landing6_on_holds_var_finds_an_internal_receiver() {
+    let (d, _) = run_with_cfg(&chain_src(4, "f", false), R10Config::default());
+    let (_, compact, hidden) = sig_with_hidden(&d);
+    let flat = flat_of(&compact);
+    let on = |s: &Sig, v: &str| s.needs.iter().any(|n| n.on_holds_var(v));
+    assert!(on(&flat, &hidden));
+    assert_eq!(on(&compact, &hidden), on(&flat, &hidden));
+    let visible = flat.needs[0].on.as_var().unwrap().clone();
+    assert_eq!(on(&compact, &visible), on(&flat, &visible));
+    assert!(!on(&compact, "Absent") && !on(&flat, "Absent"));
+}
+
+/// Landing round 6, Codex L6.compound-steps, Gemini L6-B3 and Claude Q2.2 (probe 1):
+/// `Need::map_tys` on a compact forward's need, with the receiver replaced by `Alpha | Beta`,
+/// gave the order `T, W, T5, Alpha, Beta, V` against E's `Alpha, Beta, T, W, T5, V`. One need
+/// cannot keep that order, so a mapping that is not a renaming now panics; `Sig::replace` is
+/// the control, which decodes.
+#[test]
+#[should_panic(expected = "decode it first")]
+fn landing6_need_map_tys_refuses_a_compound_replacement() {
+    use zedc_types::ty::{Binds, Ty};
+    let (d, _) = run_with_cfg(&chain_src(4, "f", false), R10Config::default());
+    let (_, sig, _) = sig_with_hidden(&d);
+    let mut sig = Sig::clone(&sig);
+    for arrow in &mut sig.arrows {
+        arrow.params.fill(Ty::empty());
+        arrow.result = Ty::empty();
+    }
+    sig.facts = Default::default();
+    let flat = flat_of(&sig);
+    let receiver = flat.needs[0].on.as_var().unwrap().clone();
+    let together = Ty::var("Alpha".into()).union(&Ty::var("Beta".into()));
+    let bind: Binds = [(receiver, together)].into_iter().collect();
+    assert_eq!(
+        order_with_marks(&sig.replace(&bind)),
+        order_with_marks(&flat.replace(&bind)),
+        "control"
+    );
+    for n in &sig.needs {
+        n.map_tys(|t| t.replace(&bind));
+    }
+}
+
+/// Landing round 6, Claude Q2.2: a renaming of a visible variable onto an internal result
+/// (`T -> W`) through `Need::map_tys` merged two variables in E and none in D; it panics.
+#[test]
+#[should_panic(expected = "decode it first")]
+fn landing6_need_map_tys_refuses_a_rename_onto_an_internal_result() {
+    use zedc_types::ty::{Binds, Ty};
+    let (d, _) = run_with_cfg(&chain_src(4, "f", false), R10Config::default());
+    let (_, sig, hidden) = sig_with_hidden(&d);
+    let flat = flat_of(&sig);
+    let visible = flat.needs[0].on.as_var().unwrap().clone();
+    let bind: Binds = [(visible, Ty::var(hidden))].into_iter().collect();
+    for n in &sig.needs {
+        n.map_tys(|t| t.replace(&bind));
+    }
+}
+
+/// Landing round 6, Codex and Gemini controls for the two panics above: swapping two
+/// arguments and renaming one onto another keep the forward compact and agree with E on
+/// order, `==` and digest.
+#[test]
+fn landing6_need_map_tys_renamings_agree_with_e() {
+    use zedc_types::ty::{Binds, Ty};
+    let (d, _) = run_with_cfg(&chain_src(4, "f", false), R10Config::default());
+    let (_, sig, _) = sig_with_hidden(&d);
+    let mut sig = Sig::clone(&sig);
+    for arrow in &mut sig.arrows {
+        arrow.params.fill(Ty::empty());
+        arrow.result = Ty::empty();
+    }
+    sig.facts = Default::default();
+    let flat = flat_of(&sig);
+    let NeedKind::Fwd(fwd) = &sig.needs[0].kind else {
+        unreachable!()
+    };
+    let v0 = fwd.sigma[0].1.as_var().unwrap().clone();
+    let v1 = fwd.sigma[1].1.as_var().unwrap().clone();
+    let map = |s: &Sig, binds: &Binds| {
+        let mut s = s.clone();
+        s.needs = s
+            .needs
+            .iter()
+            .map(|n| n.map_tys(|t| t.replace(binds)))
+            .collect();
+        s.facts = Default::default();
+        s
+    };
+    let swap: Binds = [
+        (v0.clone(), Ty::var(v1.clone())),
+        (v1.clone(), Ty::var(v0.clone())),
+    ]
+    .into_iter()
+    .collect();
+    let merge: Binds = [(v0, Ty::var(v1))].into_iter().collect();
+    for binds in [swap, merge] {
+        let (c, e) = (map(&sig, &binds), map(&flat, &binds));
+        assert_eq!(order_with_marks(&c), order_with_marks(&e));
+        assert_eq!(c, e);
+        assert_eq!(c.digest(), e.digest());
+    }
+}
+
+/// Landing round 6, Claude Q2.2 (probe 2): the parameter a held lambda reads, bound to `int`
+/// through `Need::replace` on each need without `Sig::flat_for`, gave
+/// `holds_only_own_variables` false in D and true in E. `Need::replace` now panics on a
+/// binding that must decode; `Sig::replace` is the control.
+#[test]
+#[should_panic(expected = "decode it first")]
+fn landing6_need_replace_refuses_a_binding_that_must_decode() {
+    use zedc_types::ty::{Binds, Carrier, Ty};
+    let src = "h0(positional a, positional m) = m.map((x: int) -> a);\n\
+               h1(positional a, positional m) = h0(a, m);\n";
+    let (e, _) = run_with_cfg(src, R10Config::eager());
+    let (d, _) = run_with_cfg(src, R10Config::default());
+    let (&id, compact) = d.sigs.iter().find(|(_, s)| s.has_fwd_needs()).unwrap();
+    let a = compact.arrows[0].params[0].as_var().unwrap().clone();
+    let binds: Binds = [(a, Ty::carrier(Carrier::Int))].into_iter().collect();
+    assert_eq!(
+        e.sigs[&id].replace(&binds),
+        compact.replace(&binds),
+        "control"
+    );
+    for n in &compact.needs {
+        n.replace(&binds);
+    }
+}
+
+/// Landing round 6, Gemini (non-blocking coverage gap): with `Sig::flat_for` taken out of
+/// `Ck::instantiated`, every test passed, as none called a function keeping a forward with an
+/// argument that fixes the parameter its held lambda reads. These calls do; the forward is
+/// kept, so the call meets it compact. Only the programs with a written function type reach
+/// `instantiated` (`ties_in_fns`); with the line taken out they fail at the panic of
+/// `Need::replace` (measured in landing round 6).
+#[test]
+fn landing6_call_fixing_a_parameter_a_held_lambda_reads_agrees_with_e() {
+    let lib = "h0(positional a, positional m) = m.map((x: int) -> a);\n\
+               h1(positional a, positional m) = h0(a, m);\n";
+    // A written function type holding a variable makes the call instantiate the signature
+    // before applying it (`ties_in_fns`), where the literal fixes `T`.
+    let typed = "h0(positional a, positional m) = m.map((x: int) -> a);\n\
+                 h1(positional a: T, positional f: (T) -> T, positional m) = h0(f(a), m);\n";
+    let calls = [
+        (
+            lib,
+            "main(m: MainArgs) {\n  v = h1(1, {\"k\" -> 0})[\"k\"];\n  m.stdout <- [\"${v}\"];\n}\n",
+        ),
+        (
+            lib,
+            "main(m: MainArgs) {\n  v = h1(\"s\", {\"k\" -> 0})[\"k\"];\n  m.stdout <- [v];\n}\n",
+        ),
+        (lib, "g(positional m) = h1(2, m);\n"),
+        (
+            typed,
+            "main(m: MainArgs) {\n  v = h1(1, x -> x + 1, {\"k\" -> 0})[\"k\"];\n  m.stdout <- [\"${v}\"];\n}\n",
+        ),
+        (typed, "g(positional m) = h1(2, x -> x, m);\n"),
+    ];
+    for (lib, call) in calls {
+        let src = format!("{lib}{call}");
+        let (e, _) = run_with_cfg(&src, R10Config::eager());
+        assert!(e.errors.is_empty(), "{src}\n{:?}", e.errors);
+        let (d, stats) = run_with_cfg(&src, R10Config::default());
+        assert!(stats.kept_at_generalize >= 1, "{src}: a forward is kept");
+        assert_info_eq(&src, &e, &d);
+    }
+}
+
+/// The `held_outer` fixture of [`landing5_outer_variable_of_a_held_function_is_replaced`],
+/// or the same with the variable a class read by the held function (`held_classes`).
+fn landing6_held_read_pair(class: bool) -> (Sig, Sig) {
+    use std::sync::Arc;
+    use zedc_types::ty::{Binds, Ty};
+    let src = "h0(positional a, positional m) = m.map((x: int) -> a);\n\
+               h1(positional a, positional m) = h0(a, m);\n";
+    let (d, _) = run_with_cfg(src, R10Config::default());
+    let mut compact = Sig::clone(d.sigs.values().find(|s| s.has_fwd_needs()).unwrap());
+    let NeedKind::Fwd(fwd) = &mut compact.needs[0].kind else {
+        unreachable!()
+    };
+    let fwd = Arc::make_mut(fwd);
+    let name: Arc<str> = if class { "$99".into() } else { "OuterQ".into() };
+    let bind: Binds = [(fwd.sigma[0].0.clone(), Ty::var(name.clone()))]
+        .into_iter()
+        .collect();
+    fwd.callee = Arc::new(fwd.callee.replace(&bind));
+    fwd.sigma.remove(0);
+    match class {
+        true => {
+            fwd.held_classes.insert(name);
+        }
+        false => {
+            fwd.held_names.insert(name.clone());
+            fwd.held_outer.insert(name);
+        }
+    }
+    fwd.digest_summary = None;
+    compact.facts = Default::default();
+    let flat = flat_of(&compact);
+    assert_eq!(compact, flat);
+    assert_eq!(compact.digest(), flat.digest());
+    (compact, flat)
+}
+
+/// Landing round 6, Gemini L6-B2: a variable the callee's held functions read from around it
+/// was missed by `Need::vars_in`, so `solved_with` did not solve it (D and E digests
+/// 1679879502987995254 and 1734963554527029029), `vars_order` left it out (`[T, U, V]`
+/// against `[T, U, V, OuterQ]`), and `fits_sig` accepted two signatures that swap it with
+/// another (E false, D true); and a class read so (`held_classes`) was not tested by the
+/// guards of `Sig::replace` and `Sig::settle`. The checker keeps no such forward (`#4`,
+/// `#4-outer`); these are of the public API.
+#[test]
+fn landing6_variables_read_by_held_functions_agree_with_e() {
+    use std::sync::Arc;
+    use zedc_types::ty::{Binds, Carrier, Ty};
+    let int = || Ty::carrier(Carrier::Int);
+    let (c, f) = landing6_held_read_pair(false);
+    let solve = |v: &str| (v == "OuterQ").then(int);
+    let (sc, sf) = (c.solved_with(&solve), f.solved_with(&solve));
+    assert_eq!(sc, sf);
+    assert_eq!(sc.digest(), sf.digest());
+    let (c, f) = (Arc::new(c), Arc::new(f));
+    let mut seen = c.vars_order().to_vec();
+    let mut want = f.vars_order().to_vec();
+    assert!(seen.iter().any(|v| &**v == "OuterQ"), "{seen:?}");
+    seen.sort();
+    want.sort();
+    assert_eq!(seen, want);
+    let pair = |h1: &Arc<Sig>| {
+        let make = |a: &str, b: &str| {
+            let mut s = Sig::one(
+                h1.params.clone(),
+                vec![Ty::var(a.into()), Ty::var(b.into())],
+                Ty::func(h1.clone()),
+            );
+            s.own.insert("OuterQ".into());
+            s.own.insert("OuterR".into());
+            s
+        };
+        (make("OuterQ", "OuterR"), make("OuterR", "OuterQ"))
+    };
+    let ((e1, e2), (d1, d2)) = (pair(&f), pair(&c));
+    assert!(fits_sig(&e1, &e1) && fits_sig(&d1, &d1), "control");
+    assert_eq!(fits_sig(&d1, &d2), fits_sig(&e1, &e2));
+    let (c, f) = landing6_held_read_pair(true);
+    let sub: Binds = [("$99".into(), int())].into_iter().collect();
+    assert_eq!(c.replace(&sub), f.replace(&sub));
+    let solve = |v: &str| (v == "$99").then(int);
+    let (sc, sf) = (Arc::new(c).settle(&solve), Arc::new(f).settle(&solve));
+    assert_eq!(*sc, *sf);
+    assert_eq!(sc.digest(), sf.digest());
+}
+
+/// Landing round 6, Gemini L6-B2: a function the callee holds that reads a written variable
+/// from around it is refused (`#4`) in Zed source, so the checker keeps no forward with
+/// `held_outer`, and D and E agree. Gemini's program, with its control that reads nothing.
+#[test]
+fn landing6_outer_variable_read_in_a_map_is_refused() {
+    let read = "outer(positional q: Q, positional r: R, positional q2: Q, positional r2: R) = {\n\
+                \th0(positional m) = m.map((x: int) -> q);\n\
+                \th1(positional m) = h0(m);\n\
+                \t(q2, r, r2, h1)\n\
+                };\n";
+    let (e, _) = run_with_cfg(read, R10Config::eager());
+    assert!(e.errors.is_empty(), "{:?}", e.errors);
+    let (d, stats) = run_with_cfg(read, R10Config::default());
+    assert_eq!(stats.kept_at_generalize, 0);
+    assert!(
+        d.sigs
+            .values()
+            .all(|s| (s.needs.iter()).all(|n| match &n.kind {
+                NeedKind::Fwd(f) => f.held_outer.is_empty(),
+                _ => true,
+            }))
+    );
+    assert_info_eq("outer variable read in a map", &e, &d);
+    let control = read.replace("-> q)", "-> 1)");
+    let (e, _) = run_with_cfg(&control, R10Config::eager());
+    let (d, stats) = run_with_cfg(&control, R10Config::default());
+    assert!(stats.kept_at_generalize >= 1, "control keeps a forward");
+    assert_info_eq("control", &e, &d);
+}
+
+/// Landing round 6, Gemini L6-B4: `VarBits::is_empty` ignored the `internal` bit, so a
+/// signature holding only a forward with internal results read as holding no variable,
+/// a tuple holding it did not bind, and a renaming of an internal result inside a tuple or
+/// payload two functions deep was skipped. An absent name is the control.
+///
+/// The signature is Gemini's: every type of the forward's need set to `int`, so its only
+/// variables are internal results. Gemini made it with `Need::map_tys`, which since this round
+/// refuses that mapping, so the test sets the same fields the old `map_tys` gave (each
+/// argument, exit, `.on` type and tie `int`, the steps reduced to the internal runs, the
+/// digest summary dropped); `s == flat` and the digests show the forward still decodes to
+/// the flat needs.
+#[test]
+fn landing6_internal_results_count_as_variables_in_rows_and_shapes() {
+    use std::collections::BTreeMap;
+    use std::sync::Arc;
+    use zedc_types::ty::{Binds, Carrier, FwdVarStep, Ty};
+    let int = || Ty::carrier(Carrier::Int);
+    let (d, _) = run_with_cfg(&chain_src(4, "f", false), R10Config::default());
+    let (_, orig, hidden) = sig_with_hidden(&d);
+    let mut s = Sig::clone(&orig);
+    for a in &mut s.arrows {
+        a.params.fill(int());
+        a.result = int();
+    }
+    for need in &mut s.needs {
+        let NeedKind::Fwd(fwd) = &mut need.kind else {
+            *need = need.map_tys(|_| int());
+            continue;
+        };
+        let fwd = Arc::make_mut(fwd);
+        fwd.sigma.iter_mut().for_each(|(_, t)| *t = int());
+        fwd.exits.iter_mut().for_each(|(_, t)| *t = int());
+        fwd.on_vars.fill(int());
+        fwd.var_ties.iter_mut().for_each(|g| g.fill(int()));
+        fwd.var_steps
+            .retain(|st| matches!(st, FwdVarStep::InternalRun(_)));
+        fwd.digest_summary = None;
+        need.on = int();
+        need.result = need.result.as_ref().map(|_| int());
+    }
+    s.own.clear();
+    s.facts = Default::default();
+    let flat = flat_of(&s);
+    assert_eq!(s, flat);
+    assert_eq!(s.digest(), flat.digest());
+    assert!(flat.needs.iter().any(|n| n.on.as_var() == Some(&hidden)));
+    let (sc, sf) = (Arc::new(s), Arc::new(flat));
+    assert!(!sf.holds_no_variable());
+    assert_eq!(sc.holds_no_variable(), sf.holds_no_variable());
+    let (t1c, t1f) = (Ty::tuple(vec![Ty::func(sc)]), Ty::tuple(vec![Ty::func(sf)]));
+    assert_eq!(t1c.var_facts().binds, t1f.var_facts().binds);
+    assert_eq!(t1c.holds_vars(), t1f.holds_vars());
+    let outer = |t: &Ty| Arc::new(Sig::one(vec![], vec![], t.clone()));
+    let (oc, of) = (outer(&t1c), outer(&t1f));
+    let (t2c, t2f) = (
+        Ty::tuple(vec![Ty::func(oc.clone())]),
+        Ty::tuple(vec![Ty::func(of.clone())]),
+    );
+    let shape = |s: Arc<Sig>| Ty::atom_of("box", vec![Ty::func(s)], BTreeMap::new());
+    let (shc, shf) = (shape(oc), shape(of));
+    let absent: Binds = [("Absent".into(), Ty::var("Renamed".into()))]
+        .into_iter()
+        .collect();
+    assert_eq!(t2c.renamed(&absent), t2f.renamed(&absent), "control");
+    let names: Binds = [(hidden, Ty::var("Renamed".into()))].into_iter().collect();
+    assert_eq!(t2c.renamed(&names), t2f.renamed(&names));
+    assert_eq!(shc.renamed(&names), shf.renamed(&names));
 }

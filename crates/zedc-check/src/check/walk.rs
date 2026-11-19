@@ -19746,7 +19746,7 @@ impl<'t, 'a> Ck<'t, 'a> {
         }
         // The needs that hold, at `s`'s parameter places, which `range_need_of` reads; the
         // permuted signature holds them at `e`'s (FAIL-fit-declared-permuted-needs).
-        let kept = guarded_needs(&s, e);
+        let (kept, own) = guarded_needs(&s, e);
         let permuted = Sig {
             bounds: s.bounds.clone(),
             data: s.data,
@@ -19757,7 +19757,7 @@ impl<'t, 'a> Ck<'t, 'a> {
             // The needs are decoded ([`guarded_needs`]), so the internal results of their
             // forwards are own variables, as in the flat signature (landing round 5, Gemini
             // L5-NB1).
-            own: s.decoded_needs_and_own().1.into_owned(),
+            own,
             held: s.held.clone(),
             named: s.named,
             hull: s.hull.clone(),
@@ -27621,7 +27621,9 @@ fn domain_test(s: &Sig, ranges: Vec<Option<ParamRange>>) -> Result<Domain, (usiz
             p.vars_in(&mut vars);
         }
     }
-    let used = |v: &str| (s.needs.iter()).any(|n| n.on_holds_var(v));
+    // The variables asked are those of the parameter types, so the test with no decode is
+    // exact ([`Need::on_holds_type_var`]).
+    let used = |v: &str| (s.needs.iter()).any(|n| n.on_holds_type_var(v));
     let mut binds = Binds::new();
     for v in &vars.order {
         match s.bounds.get(v) {
@@ -27958,16 +27960,23 @@ fn in_order(from: &[usize]) -> bool {
 /// an exact arrow of `e` the call may pass any value of its parameter types to `s`, so nothing
 /// is dropped, and `(x: int) -> int` stays refused for `small(x: int[0..<10])`.
 ///
-/// Cost: one pass over the needs, O(needs).
-fn guarded_needs(s: &Sig, e: &Sig) -> Vec<Need> {
+/// The needs are those of `s` decoded ([`Sig::decoded_needs_and_own`]), returned with the own
+/// variables that go with them: the internal results of its compact forwards are own
+/// variables of the flat signature. One decode serves both (landing round 6, Codex
+/// L6.double-decode: the own set was read by a second decode, whose needs were dropped).
+///
+/// Cost: one pass over the needs, O(needs), beside the one decode.
+fn guarded_needs(s: &Sig, e: &Sig) -> (Vec<Need>, BTreeSet<Arc<str>>) {
     let guarded = !e.arrows.is_empty()
         && e.arrows.iter().all(|a| a.partial)
         && s.arrows.iter().any(|a| !a.partial)
         && domain_test(s, s.params.iter().map(|p| p.range.clone()).collect()).is_ok();
-    (s.decoded_needs_cow().iter())
+    let (needs, own) = s.decoded_needs_and_own();
+    let kept = (needs.iter())
         .filter(|n| !(guarded && range_need_of(s, n).is_some()))
         .cloned()
-        .collect()
+        .collect();
+    (kept, own.into_owned())
 }
 
 /// The needs `needs` of a function, made at its own parameter places, at the places the

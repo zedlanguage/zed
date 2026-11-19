@@ -363,6 +363,17 @@ impl<'t, 'a> Ck<'t, 'a> {
         {
             intrinsic_fails.insert("#4");
         }
+        // A function held in the needs that reads a written variable from around the callee
+        // (`held_outer`): the flat needs show that variable where the leaf need holds the
+        // function, which the steps do not record, so `vars_order`, `Need::vars_in` and the
+        // readers built on them (`fits_sig`, `solved_with`) would miss or misplace it (landing
+        // round 6, Gemini L6-B2). No checker input is known to reach it (a variable written
+        // around the callee is a class while it is checked, refused just above), so it is
+        // refused rather than carried: every forward the checker keeps has `held_outer`
+        // empty. O(1).
+        if !held_outer.is_empty() {
+            intrinsic_fails.insert("#4-outer");
+        }
 
         let is_own_result_var = |v: &Arc<str>| -> bool {
             if seen_res_vars.contains(v) {
