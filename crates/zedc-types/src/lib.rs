@@ -9,5 +9,8 @@ pub mod ty;
 /// tests.
 #[cfg(test)]
 #[path = "../../../tests/src/seed.rs"]
-#[allow(dead_code, reason = "each crate's tests use only some of the generator's draws")]
+#[allow(
+    dead_code,
+    reason = "each crate's tests use only some of the generator's draws"
+)]
 mod seed;
