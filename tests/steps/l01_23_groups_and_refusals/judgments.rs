@@ -2530,6 +2530,64 @@ fn a_meet_of_functions_over_function_domains_that_differ_is_empty() {
     assert!(wrong.is_empty(), "{wrong:#?}");
 }
 
+/// The meet of two functions whose exact arrows take function types of two domain bounds, or a
+/// function type beside data, is empty where the domains differ, so the meet with a union
+/// holding the second is within the first (FAIL-kernel-print-seed-4238766106498969688). For
+/// `X = int .. (int | #a) -> ()` and `Y = int .. (int | #b) -> ()`, the function giving `()` at
+/// each key of `int | #a` is an `X` outside `Y`'s permission; before, the checker built only
+/// the one of domain `int`, which is of both, and kept `(X -> int) & (Y -> int)` as both arrows,
+/// a subtype of neither. With `#a` beside a function type, `#a` is in the first guarantee and
+/// outside the second permission; before, a permission that takes functions was compared with
+/// no guarantee that is not exact.
+#[test]
+fn a_meet_of_functions_over_two_bound_or_mixed_domains_that_differ_is_empty() {
+    use zedc::check::read::parse_type;
+    let mut wrong: Vec<String> = [
+        "((int .. (int | #a) -> ()) -> int) & (((int .. (int | #b) -> ()) -> int) | ())",
+        "((int .. (int | #a) -> ()) -> int) & (((int ->? ()) -> int) | ())",
+        "((int .. (int | #a) -> ()) -> int) & (((int -> ()) -> int) | ())",
+        "(((int -> ()) | #a) -> int) & ((((int -> ()) | #b) -> int) | ())",
+        "((#pair(#a, int) | (int -> ())) -> int) & (((#pair(#b, int) | (int -> ())) -> int) | ())",
+    ]
+    .into_iter()
+    .map(|text| (text, parse_type(text).unwrap()))
+    .filter(|(_, t)| !t.is_empty())
+    .map(|(text, t)| format!("`{text}` reads as `{t}`, not `Never`"))
+    .collect();
+    // The minimized draw: the meet with a union holding the second side is within the first.
+    for (text, within) in [
+        (
+            "((int .. (int | #a) -> ()) -> int) & (((int .. (int | #b) -> ()) -> int) | #b)",
+            "(int .. (int | #a) -> ()) -> int",
+        ),
+        (
+            "(((int -> ()) | #a) -> int) & ((((int -> ()) | #b) -> int) | #b)",
+            "((int -> ()) | #a) -> int",
+        ),
+    ] {
+        let (t, w) = (parse_type(text).unwrap(), parse_type(within).unwrap());
+        if !t.subtype(&w) {
+            wrong.push(format!("`{text}` reads as `{t}`, not within `{within}`"));
+        }
+    }
+    // Controls, each with a function of both sides: one domain both ways; a permission that
+    // holds `X`'s functions and the data; a guarantee whose data is within the permission; the
+    // unknown beside the function type, which may stand for a function.
+    wrong.extend(
+        [
+            "((int .. (int | #a) -> ()) -> int) & (((int .. (int | #a) -> ()) -> _) | ())",
+            "((int .. (int | #a) -> ()) -> int) & ((((int | #a) ->? ()) ->? int) | ())",
+            "(((int -> ()) | #a) -> int) & ((((int -> ()) | #a | #b) ->? int) | ())",
+            "(((int -> ()) | #a) -> int) & ((((int -> ()) | #a) -> _) | ())",
+            "(((int -> ()) | _) -> int) & ((((int -> ()) | _) ->? int) | ())",
+        ]
+        .into_iter()
+        .filter(|text| parse_type(text).unwrap().is_empty())
+        .map(|text| format!("`{text}` reads as `Never`")),
+    );
+    assert!(wrong.is_empty(), "{wrong:#?}");
+}
+
 /// The meet of a function whose exact arrow takes data with one that takes only functions there
 /// is empty, also where that data holds the unknown or a function inside: a function of both
 /// would have a domain holding a value that is not a function, within a permission of

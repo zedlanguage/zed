@@ -16344,6 +16344,11 @@ struct Approx {
     /// the types read are borrowed by the caller for as long as this is used, so no address is
     /// freed and given to another type in that time.
     done: HashMap<(*const Ty, bool), KType>,
+    /// Whether a function type read from below is read as no value, not as every function
+    /// where [`Domains::holds_fn`] proves it holds one: the read is then within the usual read
+    /// from below (each read is monotone in what it is given), and read by
+    /// [`Domains::outside`].
+    data: bool,
 }
 
 impl Approx {
@@ -16408,7 +16413,7 @@ impl Approx {
             true if t.fns.iter().any(|g| g.data) => KType::top(),
             true if !t.fns.is_empty() => KType::universe(Universe::Morphism),
             true => KType::empty(),
-            false if Domains::holds_fn(t) => KType::universe(Universe::Morphism),
+            false if !self.data && Domains::holds_fn(t) => KType::universe(Universe::Morphism),
             false => KType::empty(),
         };
         let vars = (up && !t.vars.is_empty()).then(KType::top);
@@ -16577,6 +16582,11 @@ struct Domains {
     /// parameter type of an exact arrow holds a function type at any depth outside functions
     /// ([`Domains::no_fn_type`]).
     below_in: bool,
+    /// Where neither `exact` nor `below_in` holds, the union of the tuples of the parameter
+    /// types of each exact arrow, each read from below with function types read as no value
+    /// (`Approx::data`), where the kernel finds no function in it at any depth
+    /// ([`KType::function_part`]); none else. Read by [`Domains::outside`].
+    data_below: Option<KType>,
     /// The union of the tuples of the parameter types of each exact arrow whose parameter
     /// types each hold a value ([`Domains::witness`]), each read from above ([`Approx`]); none
     /// where there is no such arrow. Read by [`Domains::shapes_apart`].
@@ -16644,6 +16654,26 @@ impl Domains {
             })
             .collect();
         let keyed_up = (!keyed.is_empty()).then(|| KType::union_all(keyed));
+        // Complexity tradeoff: one more read of each exact arrow's parameter types, through an
+        // `Approx` of its own (the reads differ), and one walk of the union for a function
+        // ([`KType::function_part`], linear), made only where `outside` would give up without
+        // it; the order of the cost of [`Domains::of`] is unchanged.
+        let data_below = (!exact && !below_in && guaranteed.is_some())
+            .then(|| {
+                let mut data = Approx {
+                    data: true,
+                    ..Approx::default()
+                };
+                let ts = (s.arrows.iter().zip(&kernels))
+                    .filter(|(a, _)| !a.partial)
+                    .map(|(a, ks)| {
+                        let ks = (a.params.iter().zip(ks))
+                            .map(|(p, k)| k.clone().unwrap_or_else(|| data.of(p, false)));
+                        KType::tuple(ks.collect())
+                    });
+                KType::union_all(ts.collect::<Vec<_>>())
+            })
+            .filter(|d| d.function_part().is_none());
         Domains {
             permission,
             guaranteed,
@@ -16651,6 +16681,7 @@ impl Domains {
             exact,
             held,
             below_in,
+            data_below,
             keyed_up,
         }
     }
@@ -16811,7 +16842,16 @@ impl Domains {
     /// (`below_in`): then the guarantee read from below lies within the guarantee (the proof at
     /// [`Domains::kernel_of`]: a function in a value read from below comes only from a `_`,
     /// which holds it), so a value of it outside the permission read from above is a value of
-    /// the guarantee outside the permission. Before (FAIL-types-meet-fn-kept-not-within), a
+    /// the guarantee outside the permission. Where neither holds and the permission may hold a
+    /// function, the guarantee read from below with function types read as no value
+    /// (`data_below`) is compared instead: it lies within the usual read from below (each read
+    /// is monotone), and the kernel finds no function in any of its values, so by the claim at
+    /// [`Approx`] each of its values `v` is a value of the guarantee (`v' = v`, `v` holding no
+    /// function), and one outside the permission read from above is outside the permission.
+    /// Before (FAIL-kernel-print-seed-4238766106498969688), `(((int -> ()) | #a) -> int) &
+    /// ((((int -> ()) | #b) -> int) | #b)` was kept as both arrows, within neither side, though
+    /// `#a` is in the first side's guarantee and outside the second's permission. Before
+    /// (FAIL-types-meet-fn-kept-not-within), a
     /// guarantee holding `_` against a permission that takes a function was never compared,
     /// and such meets were kept within neither side.
     // Complexity tradeoff: one comparison for each exact arrow, made first, cost O(a) kernel
@@ -16837,7 +16877,8 @@ impl Domains {
             return false;
         };
         if !self.exact && !self.below_in && other.permission.function_part().is_some() {
-            return false;
+            return (self.data_below.as_ref())
+                .is_some_and(|d| d.subtype_verdict(&other.permission) == Verdict::Inhabited);
         }
         g.subtype_verdict(&other.permission) == Verdict::Inhabited
     }
@@ -16978,7 +17019,16 @@ impl Domains {
     /// every one is partial, each with such a kernel type: `w` gives `r` at each key of `A`,
     /// and no key else. Its domain `A` holds each exact arrow's parameter type and lies within
     /// the union of all of them, and at a key in an arrow's parameter type its value `r` is in
-    /// that arrow's value type, so in its result; so `w` is of `g`. The tuple of the
+    /// that arrow's value type, so in its result; so `w` is of `g`. (iii) Where `g` has exact
+    /// and partial arrows and `R` holds `r` as in (ii), `w` with `A` the union of the parameter
+    /// types of all of `g`'s arrows, each with such a kernel type, and `r` at each key of `A`:
+    /// `A` holds each exact arrow's parameter type and lies within the union of all, and `r` is
+    /// in each arrow's value type, so `w` is of `g` by the argument of (ii). Before
+    /// (FAIL-kernel-print-seed-4238766106498969688), only (ii) was built, whose domain is the
+    /// guarantee; for `X = int .. (int | #a) -> ()` and `Y = int .. (int | #b) -> ()` that `w`,
+    /// of domain `int`, is of both, so `(X -> int) & (Y -> int)` was kept as both arrows, within
+    /// neither side; the `w` of (iii), of domain `int | #a`, is outside `Y`'s permission, so
+    /// the meet is `Never`, as is `(X -> int) & ((Y -> int) | #b)`. The tuple of the
     /// witnesses, `w` at `j`, is in `a`'s parameter types, so in the domain of every function of
     /// `s`, at every instance of `s`'s variables. It is in the permission of `q` only if some
     /// arrow `b` of `q` takes `w` at `j`, through the type `u` there. Where `u` has no
@@ -17022,7 +17072,9 @@ impl Domains {
     // comparison of the unions, then one of `G_h` with the meet of the `A`s, then one of the
     // `R`s with the results, each `A` given one verdict, and one verdict for each `G_h`; O(a)
     // types read and three comparisons of unions of O(a) rows (COMPLEXITY.md F234); each
-    // built `w` reads its `g`'s arrows once, a meet and a union of O(a) kernel types;
+    // built `w` reads its `g`'s arrows once, a meet and a union of O(a) kernel types (a `g`
+    // with exact and partial arrows builds two, so at most twice the unions, the parameter
+    // types read once through the shared [`Approx`]);
     // [`Domains::kernel_of`] reads each type once through one [`Approx`] for the call, linear
     // in the types read. Given up: a function type whose parameter type holds a function type
     // or a payload shape with fields (no kernel type for `A`, `U_h` or `G_h`), a `g` whose
@@ -17055,12 +17107,23 @@ impl Domains {
             if r.verdict() != Verdict::Inhabited {
                 return out;
             }
-            let domain: Option<Vec<KType>> = (g.arrows.iter())
-                .filter(|b| partial || !b.partial)
-                .map(|b| Domains::kernel_of(&b.params[0], approx))
-                .collect();
-            if let Some(a) = domain {
-                out.push((KType::union_all(a), Some(r)));
+            let domain = |all: bool, approx: &mut Approx| -> Option<KType> {
+                let ks: Option<Vec<KType>> = (g.arrows.iter())
+                    .filter(|b| all || !b.partial)
+                    .map(|b| Domains::kernel_of(&b.params[0], approx))
+                    .collect();
+                ks.map(KType::union_all)
+            };
+            if let Some(a) = domain(partial, approx) {
+                out.push((a, Some(r.clone())));
+            }
+            // (iii) Where `g` has exact and partial arrows, also the function whose domain is
+            // the union of all of them, its permission.
+            if !partial
+                && g.arrows.iter().any(|b| b.partial)
+                && let Some(a) = domain(true, approx)
+            {
+                out.push((a, Some(r)));
             }
             out
         };

@@ -1623,3 +1623,27 @@ fn an_intersection_of_functions_in_a_tuple_equals_its_print_read_back() {
         );
     }
 }
+
+/// The kernel printer's round trip on a seed whose type bounds a domain by the meet of a
+/// function type of two domain bounds with a union holding another
+/// (FAIL-kernel-print-seed-4238766106498969688). With `X = f64 .. (f64 | #a) -> ()` and `Y = f64
+/// .. (f64 | ()) -> ()`, the upper bound is `A & (A | B)` for `A = X .. (X & (X | f64)) -> _`
+/// and `B` an arrow over `Y`; the kernel's `A` is `X -> _`, and so is the bound, which the
+/// printer writes without the parentheses `-> String ->? int` needs none of. The print was
+/// right; the checker kept `(X -> _) & (Y .. .. -> ((), ()))` as both arrows, within neither
+/// side, where a function of `X` (of domain `f64 | #a`) is outside `Y`'s permission, so that
+/// meet is empty, and read the text as another type.
+#[test]
+fn a_bound_meeting_function_types_of_two_domain_bounds_reads_back_as_printed() {
+    // The text the seed drew and the kernel printer's print of the type built with it, as the
+    // random test compares them; the seed reproduces the draw itself:
+    // ZED_TEST_SEED=4238766106498969688 on the random test above.
+    let text = "(((f64) .. ((f64) | (#a)) -> (())) .. (((f64) .. ((f64) | (#a)) -> (())) & (((f64) .. ((f64) | (#a)) -> (())) | (f64))) -> (_)) .. ((((f64) .. ((f64) | (#a)) -> (())) .. (((f64) .. ((f64) | (#a)) -> (())) & (((f64) .. ((f64) | (#a)) -> (())) | (f64))) -> (_)) & ((((f64) .. ((f64) | (#a)) -> (())) .. (((f64) .. ((f64) | (#a)) -> (())) & (((f64) .. ((f64) | (#a)) -> (())) | (f64))) -> (_)) | (((f64) .. ((f64) | (())) -> (())) .. (((f64) .. ((f64) | (())) -> (())) | ((f64) | (_))) -> (((()), (())))))) -> ((String) ->? (int))";
+    let mut wrong = Vec::new();
+    kernel_read_back(
+        text,
+        "((f64 .. (f64 | #a) -> ()) -> _) -> String ->? int",
+        &mut wrong,
+    );
+    assert!(wrong.is_empty(), "{}", wrong.join("\n"));
+}
