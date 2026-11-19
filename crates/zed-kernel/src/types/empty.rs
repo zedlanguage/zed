@@ -286,7 +286,6 @@ fn group_verdicts(members: &[Type]) {
     let mut d = Search {
         strict: true,
         refuse_forks: true,
-        is_group: true,
         blame: Some(Blames::default()),
         ..Search::default()
     };
@@ -502,7 +501,6 @@ fn refine_tuple_forks(undecided: &[Type]) {
     let mut proof = Search {
         strict: true,
         refuse_forks: true,
-        is_group: true,
         blame: Some(Blames::default()),
         tuple_universe: true,
         ..Search::default()
@@ -1638,7 +1636,6 @@ struct Search {
     /// met. A fork then refuses the types that read that type ([`Search::causes`]) and the
     /// search goes on; with no type being decided, it ends the search as with one root.
     blame: Option<Blames>,
-    is_group: bool,
     /// Uses the exact all-Top row identity for an additional Empty proof only.
     tuple_universe: bool,
     tuple_universes: HashMap<u64, Part<Row>, Digests>,
@@ -2994,7 +2991,8 @@ impl Search {
         let ep = self.epoch;
         // A search with `blame` and open forks returned above, so no arm here meets one (an arm
         // `(Some(_), _) if self.open_forks && self.is_group => {}`, written before that return,
-        // was dead and is gone; item TEST-kernel-unreached-paths-6).
+        // was dead and is gone with the field `is_group`, which only it read; item
+        // TEST-kernel-unreached-paths-6).
         match (&mut self.blame, self.current) {
             (Some(blame), Some(c)) if !self.open_forks => {
                 blame.push((c, r, ep));
