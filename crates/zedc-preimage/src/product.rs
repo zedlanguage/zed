@@ -11480,14 +11480,27 @@ impl Scope {
     // frameworks", POPL '79, 1979, pp. 269-282 (monotone fixed-point preservation across joins).
     fn join_preserving_outer(&self, cases: Vec<Scope>) -> Scope {
         // The names some case changed, read before the join takes the cases (see below).
+        // Complexity tradeoff: naive version, each case diffed against the outer scope, the
+        // names the case changed: on a chain of nests, whose i-th case has the i sides before
+        // it excluded, that is O(i) names for case i and Theta(d²) over d cases
+        // (`arms_of_a_long_chain_of_accounts_take_time_within_n_log_n`, ratio 20.5). Used:
+        // each case diffed against the one before it (the first against the outer scope).
+        // Equality is transitive, so a name some case holds unequal to the outer scope is
+        // unequal across some adjacent pair, and the set below holds every name the naive
+        // version finds (and maybe more, each checked by the filter below). Each adjacent
+        // diff has at most the names of the two naive ones, so the cost is at most twice the
+        // naive cost, and on a chain, where a case shares all but its own sides with the one
+        // before it, O(1) names per case. COMPLEXITY.md row PRES-products-stay-shared.
         let mut touched: BTreeSet<Arc<str>> = BTreeSet::new();
+        let mut prev = &self.names.base;
         for c in &cases {
-            for d in self.names.base.diff(&c.names.base) {
+            for d in prev.diff(&c.names.base) {
                 let (DiffItem::Add(n, _)
                 | DiffItem::Remove(n, _)
                 | DiffItem::Update { old: (n, _), .. }) = d;
                 touched.insert(n.clone());
             }
+            prev = &c.names.base;
         }
         let mut s = join_cases(cases);
         if s.bottom {
