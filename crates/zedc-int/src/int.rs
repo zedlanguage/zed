@@ -532,6 +532,26 @@ impl PartialOrd for Int {
     }
 }
 
+/// Unbounded, so every value has a next and a previous one: the interval lists of
+/// `zed_collections::intervals` run over `Int` ends.
+impl zed_collections::intervals::Discrete for Int {
+    #[inline]
+    fn succ(&self) -> Option<Int> {
+        Some(self + &Int::ONE)
+    }
+
+    #[inline]
+    fn pred(&self) -> Option<Int> {
+        Some(self - &Int::ONE)
+    }
+
+    #[inline]
+    fn at_most_succ(&self, other: &Int) -> bool {
+        // Without forming `other + 1` where the order alone answers.
+        self <= other || *self <= other + &Int::ONE
+    }
+}
+
 impl fmt::Display for Int {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match &self.0 {

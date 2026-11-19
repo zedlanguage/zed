@@ -217,18 +217,7 @@ fn back(s: &Int, d: &Int, lo: &Int, hi: &Int) -> (Int, Int) {
 
 /// The residues of `0..m` outside the sorted intervals `rs`, as sorted disjoint intervals.
 fn complement(rs: &[(Int, Int)], m: &Int) -> Vec<(Int, Int)> {
-    let mut out: Vec<(Int, Int)> = Vec::new();
-    let mut next = Int::ZERO;
-    for (lo, hi) in rs {
-        if *lo > next {
-            out.push((next.clone(), lo - &Int::ONE));
-        }
-        next = next.max(hi + &Int::ONE);
-    }
-    if next < *m {
-        out.push((next, m - &Int::ONE));
-    }
-    out
+    zed_collections::intervals::complement(rs, Int::ZERO, m - &Int::ONE)
 }
 
 /// Whether the interval `g` holds a value whose residue modulo `m` is in `left`, sorted

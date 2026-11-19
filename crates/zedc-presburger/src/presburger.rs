@@ -4373,6 +4373,7 @@ mod cell_sweep {
     use std::rc::Rc;
 
     use rustc_hash::{FxHashMap, FxHashSet};
+    use zed_collections::intervals::{self, Interval};
     use zedc_int::int::Int;
 
     use super::{Atom, AtomBounds, Con, Lin, Parts, Refusal, Rel, Span, bezout, narrow, solve};
@@ -4453,78 +4454,7 @@ mod cell_sweep {
             }
         }
         let s = b.remove(x).expect("x initialized");
-        non_empty_span(&s).then_some(s)
-    }
-
-    fn non_empty_span(s: &Span) -> bool {
-        s.0.as_ref().zip(s.1.as_ref()).is_none_or(|(l, h)| l <= h)
-    }
-
-    fn meet_span(a: &Span, b: &Span) -> Option<Span> {
-        let lo = match (&a.0, &b.0) {
-            (Some(l1), Some(l2)) => Some(l1.max(l2).clone()),
-            (Some(l), None) | (None, Some(l)) => Some(l.clone()),
-            (None, None) => None,
-        };
-        let hi = match (&a.1, &b.1) {
-            (Some(h1), Some(h2)) => Some(h1.min(h2).clone()),
-            (Some(h), None) | (None, Some(h)) => Some(h.clone()),
-            (None, None) => None,
-        };
-        let s = (lo, hi);
-        non_empty_span(&s).then_some(s)
-    }
-
-    fn cmp_lo(a: &Option<Int>, b: &Option<Int>) -> std::cmp::Ordering {
-        a.cmp(b)
-    }
-
-    fn coalesce_spans(mut spans: Vec<Span>) -> Vec<Span> {
-        spans.retain(non_empty_span);
-        if spans.len() <= 1 {
-            return spans;
-        }
-        spans.sort_by(|a, b| cmp_lo(&a.0, &b.0));
-        let mut out: Vec<Span> = Vec::with_capacity(spans.len());
-        for s in spans {
-            if let Some(last) = out.last_mut() {
-                let touches = match (&last.1, &s.0) {
-                    (None, _) | (_, None) => true,
-                    (Some(h), Some(l)) => &(h + &Int::ONE) >= l,
-                };
-                if touches {
-                    last.1 = match (&last.1, s.1) {
-                        (None, _) | (_, None) => None,
-                        (Some(h1), Some(h2)) => Some(h1.max(&h2).clone()),
-                    };
-                    continue;
-                }
-            }
-            out.push(s);
-        }
-        out
-    }
-
-    fn intersect_span_lists(a: &[Span], b: &[Span]) -> Vec<Span> {
-        let (mut i, mut j) = (0usize, 0usize);
-        let mut out = Vec::new();
-        while i < a.len() && j < b.len() {
-            if let Some(m) = meet_span(&a[i], &b[j]) {
-                out.push(m);
-            }
-            let adv_a = match (&a[i].1, &b[j].1) {
-                (Some(ha), Some(hb)) => ha <= hb,
-                (Some(_), None) => true,
-                (None, Some(_)) => false,
-                (None, None) => true,
-            };
-            if adv_a {
-                i += 1;
-            } else {
-                j += 1;
-            }
-        }
-        out
+        (!s.is_empty()).then_some(s)
     }
 
     /// Evaluates a pure-`x` disjunction DAG into sorted, non-touching sub-spans of `whole`.
@@ -4563,7 +4493,7 @@ mod cell_sweep {
                 }
                 continue;
             }
-            let Some(u_span) = span_of(&u.cons, x).and_then(|s| meet_span(&s, whole)) else {
+            let Some(u_span) = span_of(&u.cons, x).and_then(|s| s.meet(whole)) else {
                 memo.insert(ptr, Rc::new(Vec::new()));
                 continue;
             };
@@ -4582,7 +4512,7 @@ mod cell_sweep {
                         joined.extend(vs.iter().cloned());
                     }
                 }
-                let joined = coalesce_spans(joined);
+                let joined = intervals::coalesce(joined);
                 if joined.is_empty() {
                     empty = true;
                     break;
@@ -4596,7 +4526,7 @@ mod cell_sweep {
             while lists.len() > 1 {
                 let a = lists.pop_front().expect("at least two");
                 let b = lists.pop_front().expect("at least two");
-                let m = intersect_span_lists(&a, &b);
+                let m = intervals::intersect(&a, &b);
                 if m.is_empty() {
                     lists.clear();
                     break;
@@ -4613,7 +4543,7 @@ mod cell_sweep {
                 all.extend(vs.iter().cloned());
             }
         }
-        coalesce_spans(all)
+        intervals::coalesce(all)
     }
 
     /// Lazy range-add, zero-minimum segment tree over `0..n` local cells. Tracks how many active
@@ -4759,22 +4689,22 @@ mod cell_sweep {
         (start, end)
     }
 
-    /// Complement cell ranges in `0..num_cells` of a sorted disjoint list of `[start, end)` ranges.
+    /// Appends to `out` the cells of `0..num_cells` outside the `[start, end)` ranges `present`,
+    /// sorted by start, as inclusive ranges; an empty range holds no cell.
     fn complement_ranges(
         num_cells: usize,
-        present: &[(usize, usize)],
+        present: impl IntoIterator<Item = (usize, usize)>,
         out: &mut Vec<(usize, usize)>,
     ) {
-        let mut cur = 0usize;
-        for &(s, e) in present {
-            if cur < s {
-                out.push((cur, s - 1));
-            }
-            cur = cur.max(e);
-        }
-        if cur < num_cells {
-            out.push((cur, num_cells - 1));
-        }
+        let Some(last) = num_cells.checked_sub(1) else {
+            return;
+        };
+        let closed: Vec<(usize, usize)> = present
+            .into_iter()
+            .filter(|&(s, e)| s < e)
+            .map(|(s, e)| (s, e - 1))
+            .collect();
+        out.extend(intervals::complement(&closed, 0, last));
     }
 
     struct DisjNode<'a> {
@@ -4892,7 +4822,7 @@ mod cell_sweep {
                 continue;
             }
             if !done {
-                let Some(sp) = span_of(&u.cons, x).and_then(|s| meet_span(&s, whole)) else {
+                let Some(sp) = span_of(&u.cons, x).and_then(|s| s.meet(whole)) else {
                     nodes.insert(
                         ptr,
                         DisjNode {
@@ -4929,7 +4859,7 @@ mod cell_sweep {
                 continue;
             }
             let sp = span_of(&u.cons, x)
-                .and_then(|s| meet_span(&s, whole))
+                .and_then(|s| s.meet(whole))
                 .expect("checked live");
             let mut eq: Option<&'a Con> = None;
             for c in &u.cons {
@@ -5072,15 +5002,12 @@ mod cell_sweep {
             let mut blocks = Vec::new();
             if let Some(sp) = &info.span {
                 let r = span_cell_range(sp, whole, &cuts);
-                complement_ranges(num_local, &[r], &mut blocks);
+                complement_ranges(num_local, [r], &mut blocks);
             }
             if let Some(gs_list) = node_pure_guards.get(&ptr) {
                 for gs in gs_list {
-                    let prs: Vec<(usize, usize)> = gs
-                        .iter()
-                        .map(|s| span_cell_range(s, whole, &cuts))
-                        .collect();
-                    complement_ranges(num_local, &prs, &mut blocks);
+                    let prs = gs.iter().map(|s| span_cell_range(s, whole, &cuts));
+                    complement_ranges(num_local, prs, &mut blocks);
                 }
             }
             node_blocks.insert(ptr, blocks);
@@ -5913,7 +5840,7 @@ mod cell_sweep {
                 }
             }
             k_span = b.remove(k).expect("k initialized");
-            if !non_empty_span(&k_span) {
+            if k_span.is_empty() {
                 return Some(Err(()));
             }
         }
@@ -6457,7 +6384,7 @@ mod cell_sweep {
         if let Some(th) = &target.1 {
             tighten_ge(&(c - th), &-m, &mut lo, &mut hi);
         }
-        non_empty_span(&(lo, hi))
+        !(lo, hi).is_empty()
     }
 
     /// Decides `a * x + b * k + d == 0` for `(x, k) ∈ x_span × k_span` in closed form via [`bezout`].
@@ -6513,7 +6440,7 @@ mod cell_sweep {
                     }
                 }
             }
-            non_empty_span(ms)
+            !ms.is_empty()
         };
         bound_m(&bp, &x0, x_span, &mut m_span) && bound_m(&-&ap, &k0, k_span, &mut m_span)
     }
@@ -6685,7 +6612,7 @@ mod cell_sweep {
             } else {
                 (None, Some(c.lin.constant.clone()))
             };
-            let Some(next) = meet_span(&sp, &bound) else {
+            let Some(next) = sp.meet(&bound) else {
                 return Some(None);
             };
             sp = next;
@@ -7665,59 +7592,11 @@ type Span = (Option<Int>, Option<Int>);
 /// Cell indices `a..=b`, sorted, disjoint and not adjacent.
 type CellSet = Vec<(usize, usize)>;
 
-/// The cells in both `a` and `b`.
-fn cells_meet(a: &[(usize, usize)], b: &[(usize, usize)]) -> CellSet {
-    let (mut i, mut j, mut out) = (0, 0, Vec::new());
-    while i < a.len() && j < b.len() {
-        let (lo, hi) = (a[i].0.max(b[j].0), a[i].1.min(b[j].1));
-        if lo <= hi {
-            out.push((lo, hi));
-        }
-        if a[i].1 < b[j].1 {
-            i += 1;
-        } else {
-            j += 1;
-        }
-    }
-    out
-}
-
-/// The cells in any of `all`'s ranges.
-fn cells_join(mut all: Vec<(usize, usize)>) -> CellSet {
-    all.sort_unstable();
-    let mut out: CellSet = Vec::with_capacity(all.len());
-    for (lo, hi) in all {
-        match out.last_mut() {
-            Some(last) if lo <= last.1 + 1 => last.1 = last.1.max(hi),
-            _ => out.push((lo, hi)),
-        }
-    }
-    out
-}
-
-/// The cells of `a` not in `b`.
-fn cells_minus(a: &[(usize, usize)], b: &[(usize, usize)]) -> CellSet {
-    let mut out = Vec::new();
-    let mut j = 0;
-    for &(lo, hi) in a {
-        let mut lo = lo;
-        while j < b.len() && b[j].1 < lo {
-            j += 1;
-        }
-        let mut k = j;
-        while k < b.len() && b[k].0 <= hi && lo <= hi {
-            if b[k].0 > lo {
-                out.push((lo, b[k].0 - 1));
-            }
-            lo = lo.max(b[k].1 + 1);
-            k += 1;
-        }
-        if lo <= hi {
-            out.push((lo, hi));
-        }
-    }
-    out
-}
+// The cells in both `a` and `b` (`cells_meet`), in any of `all`'s ranges (`cells_join`), and of
+// `a` not in `b` (`cells_minus`): the shared interval-list routines (DRY-sorted-structures-2).
+use zed_collections::intervals::{
+    coalesce as cells_join, intersect as cells_meet, minus as cells_minus,
+};
 
 /// The cells of `a` not in `b`, as [`cells_minus`], found by search for each run of `b`.
 // Complexity tradeoff: a merge of the two lists reads every run of `a`, O(A + B). `spread`

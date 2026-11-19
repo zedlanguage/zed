@@ -2043,19 +2043,11 @@ fn finite(runs: Vec<(i128, i128)>) -> Vec<Run> {
 /// order of `w`, not of `u`. The one copy of the narrower way of [`u_runs`] and of
 /// [`poly_values`] (dryA5 row 22).
 ///
-/// The test `l <= e + 1`, with `e + 1` saturated, is exact over all of `i128`: where `e` is
-/// `i128::MAX` every later run, starting at or after the kept run's start, overlaps it. The
+/// The shared [`zed_collections::intervals::coalesce`] (DRY-sorted-structures-2) tests
+/// `l <= e + 1` without forming `e + 1` at `i128::MAX`, so it is exact over all of `i128`. The
 /// copies tested `e >= l - 1`, which overflowed at `l == i128::MIN` (a panic in a debug build).
-fn merge_runs(mut runs: Vec<(i128, i128)>) -> Vec<(i128, i128)> {
-    runs.sort_unstable();
-    let mut merged: Vec<(i128, i128)> = Vec::with_capacity(runs.len());
-    for (l, h) in runs {
-        match merged.last_mut() {
-            Some((_, e)) if l <= e.saturating_add(1) => *e = (*e).max(h),
-            _ => merged.push((l, h)),
-        }
-    }
-    merged
+fn merge_runs(runs: Vec<(i128, i128)>) -> Vec<(i128, i128)> {
+    zed_collections::intervals::coalesce(runs)
 }
 
 /// A row `x·X + y·Y + c >= 0` over two integer unknowns.

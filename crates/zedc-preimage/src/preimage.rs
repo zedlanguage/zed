@@ -12190,20 +12190,9 @@ fn ranges_meet(ranges: &[(usize, usize)], (lo, hi): (usize, usize)) -> bool {
 
 /// The classes `0..n` outside `ranges`, ranges `i..=j` sorted and disjoint, in the same form.
 fn ranges_complement(ranges: &[(usize, usize)], n: usize) -> Vec<(usize, usize)> {
-    let mut out = Vec::with_capacity(ranges.len() + 1);
-    let mut next = 0;
-    for &(i, j) in ranges {
-        if next < i {
-            out.push((next, i - 1));
-        }
-        // The greatest end so far, not this one's (DRY-sorted-structures, D2): a range inside
-        // an earlier one, as `2..=3` after `0..=5`, must not bring `next` back to 4.
-        next = next.max(j + 1);
-    }
-    if next < n {
-        out.push((next, n - 1));
-    }
-    out
+    n.checked_sub(1).map_or_else(Vec::new, |last| {
+        zed_collections::intervals::complement(ranges, 0, last)
+    })
 }
 
 /// Whether `u` and `v` are one summary: equal coefficients, or one shared treap.

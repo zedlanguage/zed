@@ -4,5 +4,9 @@
 //!
 //! [`sorted`]: sorting with duplicates removed, the union of sorted lists in one merge, and the
 //! walk of two sorted lists side by side.
+//!
+//! [`intervals`]: sorted lists of disjoint closed intervals of integers, and their union, meet,
+//! difference and complement.
 
+pub mod intervals;
 pub mod sorted;

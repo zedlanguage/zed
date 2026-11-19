@@ -11,6 +11,7 @@ mod brooks;
 
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet, VecDeque};
 
+use zed_collections::intervals;
 use zed_graph::MinHeap;
 use zedc_int::int::Int;
 
@@ -75,89 +76,30 @@ impl Domain {
         matches!(self.pieces.as_slice(), [(None, None)])
     }
 
-    fn from_pieces(mut pieces: Vec<Span>) -> Self {
-        pieces.retain(|(lo, hi)| match (lo, hi) {
-            (Some(l), Some(h)) => l <= h,
-            _ => true,
-        });
-        pieces.sort_by(|a, b| cmp_lo(&a.0, &b.0));
-        let mut merged: Vec<Span> = Vec::with_capacity(pieces.len());
-        for (lo, hi) in pieces {
-            if let Some((_, last_hi)) = merged.last_mut() {
-                let joins = match (&*last_hi, &lo) {
-                    (None, _) | (_, None) => true,
-                    (Some(h), Some(l)) => *l <= h + &Int::ONE,
-                };
-                if joins {
-                    *last_hi = max_hi(last_hi.take(), hi);
-                    continue;
-                }
-            }
-            merged.push((lo, hi));
+    fn from_pieces(pieces: Vec<Span>) -> Self {
+        Domain {
+            pieces: intervals::coalesce(pieces),
         }
-        Domain { pieces: merged }
     }
 
+    // Complexity tradeoff: the two lists joined and coalesced sort them again, O(n log n); both
+    // are normal, so one merge by lower end, O(n), gives the same list.
     fn union(&self, other: &Self) -> Self {
-        let mut pieces = Vec::with_capacity(self.pieces.len() + other.pieces.len());
-        pieces.extend(self.pieces.iter().cloned());
-        pieces.extend(other.pieces.iter().cloned());
-        Self::from_pieces(pieces)
+        Domain {
+            pieces: intervals::union(&self.pieces, &other.pieces),
+        }
     }
 
     fn complement(&self) -> Self {
-        if self.pieces.is_empty() {
-            return Self::all();
+        Domain {
+            pieces: intervals::complement_spans(&self.pieces),
         }
-        let mut out = Vec::with_capacity(self.pieces.len() + 1);
-        let mut cur_lo: Option<Int> = None;
-        for (lo, hi) in &self.pieces {
-            match lo {
-                None => {}
-                Some(l) => {
-                    let prev_hi = l - &Int::ONE;
-                    let valid = cur_lo.as_ref().is_none_or(|c| *c <= prev_hi);
-                    if valid {
-                        out.push((cur_lo, Some(prev_hi)));
-                    }
-                }
-            }
-            match hi {
-                None => return Domain { pieces: out },
-                Some(h) => cur_lo = Some(h + &Int::ONE),
-            }
-        }
-        out.push((cur_lo, None));
-        Domain { pieces: out }
     }
 
     fn intersect(&self, other: &Self) -> Self {
-        let mut out = Vec::new();
-        let (mut i, mut j) = (0, 0);
-        while i < self.pieces.len() && j < other.pieces.len() {
-            let (l1, h1) = &self.pieces[i];
-            let (l2, h2) = &other.pieces[j];
-            let lo = max_lo(l1.clone(), l2.clone());
-            let hi = min_hi(h1.clone(), h2.clone());
-            let valid = match (&lo, &hi) {
-                (Some(l), Some(h)) => l <= h,
-                _ => true,
-            };
-            if valid {
-                out.push((lo, hi));
-            }
-            let adv_i = match (h1, h2) {
-                (None, _) => false,
-                (_, None) => true,
-                (Some(a), Some(b)) => a <= b,
-            };
-            if adv_i {
-                i += 1;
-            } else {
-                j += 1;
-            }
+        Domain {
+            pieces: intervals::intersect(&self.pieces, &other.pieces),
         }
-        Domain { pieces: out }
     }
 
     fn contains_span(&self, lo: &Option<Int>, hi: &Option<Int>) -> bool {
@@ -166,7 +108,8 @@ impl Domain {
         // containing interval in O(log s) comparisons. Nothing is given up for
         // the nonempty spans callers pass. Tests: pncx_domain_membership_scale
         // (the scan fails) and pncx_domain_membership_matches_scan.
-        let end = self.pieces.partition_point(|(l, _)| !cmp_lo(l, lo).is_gt());
+        // `Option`'s order puts `None` first, as an unbounded lower end must be.
+        let end = self.pieces.partition_point(|(l, _)| l <= lo);
         let Some((_, h)) = end.checked_sub(1).and_then(|i| self.pieces.get(i)) else {
             return false;
         };
@@ -175,15 +118,6 @@ impl Domain {
             (Some(_), None) => false,
             (Some(a), Some(b)) => a >= b,
         }
-    }
-}
-
-fn cmp_lo(a: &Option<Int>, b: &Option<Int>) -> std::cmp::Ordering {
-    match (a, b) {
-        (None, None) => std::cmp::Ordering::Equal,
-        (None, Some(_)) => std::cmp::Ordering::Less,
-        (Some(_), None) => std::cmp::Ordering::Greater,
-        (Some(x), Some(y)) => x.cmp(y),
     }
 }
 
@@ -201,18 +135,10 @@ fn min_hi(a: Option<Int>, b: Option<Int>) -> Option<Int> {
     }
 }
 
-fn max_hi(a: Option<Int>, b: Option<Int>) -> Option<Int> {
-    match (a, b) {
-        (None, _) | (_, None) => None,
-        (Some(x), Some(y)) => Some(x.max(y)),
-    }
-}
-
-/// Normalizes a collection of closed intervals in `0..m` into a sorted, disjoint, non-adjacent
-/// `ResidueSet`.
+/// Normalizes a collection of closed intervals, clipped to `0..m`, into a sorted, disjoint,
+/// non-adjacent `ResidueSet`.
 fn res_normalize(mut intervals: Vec<(Int, Int)>, m: &Int) -> ResidueSet {
     let max_r = m - &Int::ONE;
-    intervals.retain(|(l, h)| *l <= *h && *h >= Int::ZERO && *l <= max_r);
     for (l, h) in &mut intervals {
         if *l < Int::ZERO {
             *l = Int::ZERO;
@@ -221,74 +147,32 @@ fn res_normalize(mut intervals: Vec<(Int, Int)>, m: &Int) -> ResidueSet {
             *h = max_r.clone();
         }
     }
-    intervals.sort_by(|a, b| a.0.cmp(&b.0));
-    let mut out: ResidueSet = Vec::with_capacity(intervals.len());
-    for (lo, hi) in intervals {
-        if let Some((_, last_hi)) = out.last_mut()
-            && lo <= &*last_hi + &Int::ONE
-        {
-            if hi > *last_hi {
-                *last_hi = hi;
-            }
-            continue;
-        }
-        out.push((lo, hi));
-    }
-    out
+    // An interval wholly outside `0..m` is empty once clipped, and `coalesce` drops it.
+    intervals::coalesce(intervals)
 }
 
+/// The residues of `0..m` outside `s`, sorted by lower end (overlapping or nested intervals are
+/// read correctly, DRY-sorted-structures D2).
 fn res_complement(s: &[(Int, Int)], m: &Int) -> ResidueSet {
-    let max_r = m - &Int::ONE;
-    if s.is_empty() {
-        return vec![(Int::ZERO, max_r)];
-    }
-    let mut out = Vec::with_capacity(s.len() + 1);
-    let mut cur = Int::ZERO;
-    for (lo, hi) in s {
-        // The greatest end so far, not this one's (DRY-sorted-structures, D2): an interval
-        // inside an earlier one, as `(2, 3)` after `(0, 5)`, must not bring `cur` back to 4.
-        // Where a gap is written, `hi + 1 > lo > cur`, so the new end is this one's.
-        if cur < *lo {
-            out.push((cur, lo - &Int::ONE));
-            cur = hi + &Int::ONE;
-        } else {
-            cur = cur.max(hi + &Int::ONE);
-        }
-    }
-    if cur <= max_r {
-        out.push((cur, max_r));
-    }
-    out
+    intervals::complement(s, Int::ZERO, m - &Int::ONE)
 }
 
+/// The union of the residue sets `a` and `b`, clipped to `0..m`.
+// Complexity tradeoff: the two joined and normalized sort them again, O(n log n); a residue
+// set is sorted by lower end (each is built by the functions of this section, all of which
+// return normal lists, or is a single interval), so one merge, O(n), gives the same list, and
+// the meet with `0..m` clips it as `res_normalize` did.
 fn res_union(a: &[(Int, Int)], b: &[(Int, Int)], m: &Int) -> ResidueSet {
-    let mut v = Vec::with_capacity(a.len() + b.len());
-    v.extend_from_slice(a);
-    v.extend_from_slice(b);
-    res_normalize(v, m)
+    debug_assert!(a.is_sorted_by(|x, y| x.0 <= y.0) && b.is_sorted_by(|x, y| x.0 <= y.0));
+    intervals::intersect(&intervals::union(a, b), &[(Int::ZERO, m - &Int::ONE)])
 }
 
 fn res_intersect(a: &[(Int, Int)], b: &[(Int, Int)]) -> ResidueSet {
-    let mut out = Vec::new();
-    let (mut i, mut j) = (0, 0);
-    while i < a.len() && j < b.len() {
-        let lo = (&a[i].0).max(&b[j].0);
-        let hi = (&a[i].1).min(&b[j].1);
-        if lo <= hi {
-            out.push((lo.clone(), hi.clone()));
-        }
-        if a[i].1 <= b[j].1 {
-            i += 1;
-        } else {
-            j += 1;
-        }
-    }
-    out
+    intervals::intersect(a, b)
 }
 
 fn res_diff(a: &[(Int, Int)], b: &[(Int, Int)], m: &Int) -> ResidueSet {
-    let comp = res_complement(b, m);
-    res_intersect(a, &comp)
+    intervals::intersect(a, &res_complement(b, m))
 }
 
 fn res_is_full(s: &[(Int, Int)], m: &Int) -> bool {

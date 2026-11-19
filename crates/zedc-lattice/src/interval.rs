@@ -1423,13 +1423,27 @@ pub fn split_signs(pieces: impl IntoIterator<Item = (End, End)>) -> Vec<(End, En
 /// The pieces of [`IntervalSet::from_pieces`] of `pieces`, in increasing order: empty pieces
 /// dropped, the rest sorted and those that overlap or touch merged. `O(p log p)` for the sort.
 pub fn normal_pieces(mut pieces: Vec<(End, End)>) -> Vec<(End, End)> {
-    pieces.retain(|(lo, hi)| lo <= hi && *lo != PosInf && *hi != NegInf);
-    pieces.sort();
-    let mut out: Vec<(End, End)> = Vec::with_capacity(pieces.len());
-    for (lo, hi) in pieces {
-        push_merged(&mut out, lo, hi);
+    // A piece at an infinity alone, `PosInf..=PosInf` or `NegInf..=NegInf`, holds no integer,
+    // though its ends are in order; `coalesce` drops the rest of the empty pieces.
+    pieces.retain(|(lo, hi)| *lo != PosInf && *hi != NegInf);
+    zed_collections::intervals::coalesce(pieces)
+}
+
+/// The ends as the shared interval-list routines read them (DRY-sorted-structures-2). An
+/// infinity is its own neighbor on its side, as [`End::succ`] and [`End::pred`] have it, and the
+/// type ends there: nothing lies above `PosInf` or below `NegInf`.
+impl zed_collections::intervals::Discrete for End {
+    fn succ(&self) -> Option<End> {
+        (*self != PosInf).then(|| End::succ(self))
     }
-    out
+
+    fn pred(&self) -> Option<End> {
+        (*self != NegInf).then(|| End::pred(self))
+    }
+
+    fn at_most_succ(&self, other: &End) -> bool {
+        End::at_most_succ(self, other)
+    }
 }
 
 impl PartialEq for IntervalSet {
@@ -1526,20 +1540,6 @@ impl fmt::Display for IntervalSet {
             }
         }
         write!(f, "]")
-    }
-}
-
-/// Appends the piece `lo..=hi` to `out`, whose pieces are sorted and end at or before `lo`'s
-/// piece starts, merging it into the last piece when the two overlap or touch.
-fn push_merged(out: &mut Vec<(End, End)>, lo: End, hi: End) {
-    match out.last_mut() {
-        // Overlapping or adjacent: no integer lies between, so the pieces are one.
-        Some(last) if lo.at_most_succ(&last.1) => {
-            if hi > last.1 {
-                last.1 = hi;
-            }
-        }
-        _ => out.push((lo, hi)),
     }
 }
 

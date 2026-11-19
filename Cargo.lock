@@ -1265,6 +1265,7 @@ dependencies = [
  "num-bigint",
  "num-integer",
  "num-traits",
+ "zed-collections",
  "zed-kernel",
 ]
 
@@ -1272,6 +1273,7 @@ dependencies = [
 name = "zedc-lattice"
 version = "0.0.0"
 dependencies = [
+ "zed-collections",
  "zed-graph",
  "zed-kernel",
  "zedc-base",
@@ -1289,6 +1291,7 @@ dependencies = [
  "rustix",
  "stacker",
  "zed-alloc-count",
+ "zed-collections",
  "zed-graph",
  "zed-kernel",
  "zed-meter-settings",
@@ -1312,6 +1315,7 @@ dependencies = [
  "rustix",
  "stacker",
  "zed-alloc-count",
+ "zed-collections",
  "zed-graph",
  "zed-kernel",
  "zed-meter-settings",
@@ -1335,6 +1339,7 @@ dependencies = [
 name = "zedc-solvers"
 version = "0.0.0"
 dependencies = [
+ "zed-collections",
  "zed-graph",
  "zed-kernel",
  "zedc-int",

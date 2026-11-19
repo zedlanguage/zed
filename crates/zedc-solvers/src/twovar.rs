@@ -373,38 +373,10 @@ pub enum TwoVarProj {
     Holed,
 }
 
-/// Appends a closed interval `(lo, hi)` (ignoring empty ones) to a sorted list of disjoint
-/// intervals, merging with the previous interval when adjacent or overlapping.
-fn push_range(out: &mut Vec<(Option<Int>, Option<Int>)>, r: (Option<Int>, Option<Int>)) {
-    if let (Some(a), Some(b)) = (&r.0, &r.1)
-        && a > b
-    {
-        return;
-    }
-    if let Some((_, prev_hi)) = out.last_mut() {
-        match (&*prev_hi, &r.0) {
-            (None, _) => return,
-            (Some(ph), Some(cl)) if &(ph + &Int::ONE) >= cl => {
-                *prev_hi = match (&*prev_hi, &r.1) {
-                    (_, None) => None,
-                    (Some(a), Some(b)) => Some(a.clone().max(b.clone())),
-                    (None, _) => None,
-                };
-                return;
-            }
-            (Some(_), None) => {
-                *prev_hi = match (&*prev_hi, &r.1) {
-                    (_, None) => None,
-                    (Some(a), Some(b)) => Some(a.clone().max(b.clone())),
-                    (None, _) => None,
-                };
-                return;
-            }
-            _ => {}
-        }
-    }
-    out.push(r);
-}
+// Appends a closed interval `(lo, hi)` (ignoring empty ones) to a sorted list of disjoint
+// intervals, merging with the previous interval when adjacent or overlapping: the shared
+// routine (DRY-sorted-structures-2).
+use zed_collections::intervals::push as push_range;
 
 /// Exact integer projection of `ua >= y >= lb` over a finite strip `[a, b]` where
 /// `0 <= ua(x) - lb(x) < 1` for every `x` in `[a, b]`, so each `x` has either 0 or 1 integer `y`.
