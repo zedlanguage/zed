@@ -1794,7 +1794,8 @@ fn wide_against_the_oracle() {
 /// where the cover alone had lowered seed 4 to (8, 3)) raised 16 seeds and lowered none
 /// (2026-11-18): seeds 2, 10, 16, 18, 22, 26, 36, 40, 46, 48, 50, 64, 66, 78, 86 and 98, with 4
 /// at its earlier (9, 3); each record checked by `check_sound` and every odd seed too.
-/// The sums are now (141, 129), (137, 123), (135, 125) and (136, 121).
+/// The sums are now (141, 129), (137, 123), (135, 125) and (138, 123): seed 108 rose from (7, 7)
+/// to (9, 9) on main (all 9 records equal to the oracle's, each checked by `check_sound`).
 const AUDIT_EVEN: [(usize, usize); 64] = [
     (9, 9),
     (9, 9),
@@ -1850,7 +1851,7 @@ const AUDIT_EVEN: [(usize, usize); 64] = [
     (9, 9),
     (9, 9),
     (4, 4),
-    (7, 7),
+    (9, 9),
     (8, 8),
     (9, 9),
     (9, 9),
@@ -1872,7 +1873,7 @@ fn audit_seeds_against_the_oracle() {
         .chunks(16)
         .map(|c| c.iter().fold((0, 0), |s, e| (s.0 + e.0, s.1 + e.1)))
         .collect();
-    assert_eq!(sums, [(141, 129), (137, 123), (135, 125), (136, 121)]);
+    assert_eq!(sums, [(141, 129), (137, 123), (135, 125), (138, 123)]);
     let (mut rng, run) = zed_tests::instances::Rng::fresh("audit seeds");
     let seed = rng.below(128) as u64;
     let r = audit(seed..seed + 1);
