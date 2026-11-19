@@ -6365,6 +6365,42 @@ impl Block {
                 .all(|(e, place)| place.get_min().is_some_and(|(m, _)| m == e));
         below.then(|| at.clone())
     }
+
+    /// The parts that `fired_chains[k]` (`subset`) held back and that a part `at` of chain key
+    /// `k`, with ends `ends`, found idle does not certify, or `None` when it certifies them all.
+    /// It certifies a part whose ends lie at or above its own ([`chain_below`]): it implies that
+    /// part, so the integer witnesses of its idleness are that part's too (as in
+    /// [`Scope::idle_by_chain`]). The least part of the chain certifies them all; another part
+    /// of it, dequeued first because some other wake made it due, may not: the parts left stay
+    /// held back for the part that woke them. `subset` `None` holds back every part of the key.
+    /// O(e log k) for e places when `at` is as low as [`Block::chain_least`]'s ends; otherwise
+    /// O(m e) for the m parts held back.
+    fn chain_left_by_idle(
+        &self,
+        k: &Arc<Vec<ChainAtom>>,
+        at: &PartAt,
+        ends: &[Int],
+        subset: Option<Vec<PartAt>>,
+    ) -> Option<Vec<PartAt>> {
+        let ends_of = |j: &PartAt| self.parts.get(j).and_then(|p| p.chain.as_ref());
+        let left: Vec<PartAt> = match subset {
+            None => {
+                if (self.chain_least(k).as_ref().and_then(ends_of))
+                    .is_some_and(|(_, least)| chain_below(ends, least))
+                {
+                    return None;
+                }
+                (self.chains.get(k).into_iter().flatten())
+                    .filter(|(e, j)| j != at && !chain_below(ends, e))
+                    .map(|(_, j)| j.clone())
+                    .collect()
+            }
+            Some(rest) => (rest.into_iter())
+                .filter(|j| j != at && ends_of(j).is_none_or(|(_, e)| !chain_below(ends, e)))
+                .collect(),
+        };
+        (!left.is_empty()).then_some(left)
+    }
     /// Returns only the parts of `recession[rkey]` that neither the recession-direction
     /// certificate ([`Block::recession_cone_uncertified`]) nor the bounded-box face certificate
     /// ([`Block::box_face_uncertified`]) can certify on the current group and intervals
@@ -7950,6 +7986,28 @@ impl Block {
                         }
                     }
                 }
+                // Proof that waking only the least part Q of a chain loses no part P above it
+                // (PERF-l139-under9, l139b). Q's ends lie at or below P's in every place, so Q
+                // implies P, and Q with the block's base implies P with it: an integer witness
+                // that a projection of Q changes nothing is one for P too, whatever certificate
+                // gives it (`idle`, the half-line or the puncture certificate). (1) Q certified
+                // idle before its projection: P is idle too, and `Scope::project_block` drops
+                // only the parts at or above Q's ends ([`Block::chain_left_by_idle`]). (2) Q not
+                // idle after its projection: every part held back is queued. (3) Q managed (a
+                // stair or ray aggregate): `managed` needs `aggregable`, which holds only when
+                // no part of the block has role `Other` (`Role::of`). `Stair` and `Upper` are
+                // fixed by the arms' terms: the parts of a `Row` chain key have the same terms,
+                // and no part of a key with an `Abs` atom is either: that atom's two arms have
+                // coefficients of y of opposite signs, which `Upper` refuses, and either both
+                // are on y alone or each has two names or more, which `stair_row` refuses
+                // (it asks two arms on two different names). So the only roles the parts of a
+                // key can differ in are `Ray` and `Other` (`Ray` also asks the arms' constants
+                // to agree); with no `Other` in the block, P has Q's role and is managed too.
+                // (4) `base_is_due` below reads the constraints' part (`at.0`); a chain part is
+                // never that part (`Block::enter` gives a chain only to a conjunct `of` a
+                // disjunction, `(false, _)`), so the parts not pushed here cannot change it.
+                // Checked: the answers of the families at k = 1 to 24 with and without this
+                // wake are the same (`families/answers.rs`).
                 for (ck, least) in lazy_chains {
                     next.fired.insert(least.clone());
                     next.fired_chains.insert(ck, None);
@@ -14168,8 +14226,13 @@ impl Scope {
                 && (self.part_halfline_idle(&b, part, &mut halfline_ctx)
                     || self.idle_by_chain(&b, &i, part, &mut certified, &mut certified_chains))
             {
-                if let Some((k, _)) = &part.chain {
-                    b.fired_chains.remove(k);
+                // Idle, it certifies the held-back parts of its chain at or above its ends; the
+                // others stay held back ([`Block::chain_left_by_idle`]).
+                if let Some((k, ends)) = &part.chain
+                    && let Some(subset) = b.fired_chains.remove(k)
+                    && let Some(left) = b.chain_left_by_idle(k, &i, ends, subset)
+                {
+                    b.fired_chains.insert(k.clone(), Some(left));
                 }
                 continue;
             }
@@ -14202,6 +14265,12 @@ impl Scope {
             // domains; when it now holds (and records its ends in `certified_chains`), chain
             // subsumption (`Q` implies `P`) certifies every higher member without queueing it;
             // when a sector query reported only a subset (`Some(rest)`), expand only `rest`.
+            // The part here need not be the least: another wake can make a higher part due
+            // and dequeue it first. Idle, it certifies only the parts at or above its ends
+            // ([`Block::chain_left_by_idle`]); the others stay held back for the least part.
+            // Before (l139b), it dropped them, a loss of precision only, since each such part
+            // is implied by the least part, which was projected too; no test input of l01_39
+            // reached it (counted, temporary probe: 0 in 766 tests).
             if let Some((k, c_ends)) = &part.chain
                 && let Some(subset) = b.fired_chains.remove(k)
             {
@@ -14214,6 +14283,9 @@ impl Scope {
                     certified.insert(i.clone(), now_idle);
                     if now_idle {
                         certified_chains.insert(k.clone(), c_ends.clone());
+                        if let Some(left) = b.chain_left_by_idle(k, &i, c_ends, subset) {
+                            b.fired_chains.insert(k.clone(), Some(left));
+                        }
                     } else {
                         match subset {
                             Some(rest) => {

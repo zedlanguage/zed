@@ -2622,6 +2622,7 @@ C3 x = 2w + 1, x = 2y: bottom
 C4 x = 3w + 1, x >= y: x=[1..=1, 4..=4, 7..=7] y=[0..=3] w=[0..=2]
 ";
 
+mod answers;
 mod bench;
 
 /// Audit seed 126: the cover gives each name ends at least as tight as the solver alone,
