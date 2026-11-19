@@ -22,6 +22,7 @@ use super::{expr_kids_mut, stmts_exprs_mut};
 use crate::ast::{Expr, ExprKind, Stmt, unit};
 use crate::lex::{Span, lex};
 use crate::parse::{TOP, parse_unit};
+use crate::seed::Rng;
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 
@@ -89,21 +90,14 @@ fn each_desugaring_gives_each_expression_its_own_span() {
     }
 }
 
-/// A seeded generator (splitmix64) of random expressions that nest the desugarings of
-/// [`DESUGARINGS`] inside each other, for [`random_programs_give_each_expression_its_own_span`].
-struct Gen(u64);
+/// A seeded generator of random expressions that nest the desugarings of [`DESUGARINGS`]
+/// inside each other, for [`random_programs_give_each_expression_its_own_span`], drawing from
+/// the shared [`Rng`].
+struct Gen(Rng);
 
 impl Gen {
-    fn next(&mut self) -> u64 {
-        self.0 = self.0.wrapping_add(0x9e37_79b9_7f4a_7c15);
-        let mut z = self.0;
-        z = (z ^ (z >> 30)).wrapping_mul(0xbf58_476d_1ce4_e5b9);
-        z = (z ^ (z >> 27)).wrapping_mul(0x94d0_49bb_1331_11eb);
-        z ^ (z >> 31)
-    }
-
     fn below(&mut self, n: u64) -> u64 {
-        self.next() % n
+        self.0.below_u64(n)
     }
 
     /// An operand of `depth` levels at most: a leaf at depth 0, else a form in parentheses, so
@@ -180,7 +174,7 @@ impl Gen {
 #[test]
 fn random_programs_give_each_expression_its_own_span() {
     for seed in 0..400u64 {
-        let text = Gen(seed).program();
+        let text = Gen(Rng::new(seed)).program();
         match shared_span(&text) {
             Ok(None) => {}
             Ok(Some(why)) => panic!("seed {seed}: {why}, in\n{text}"),

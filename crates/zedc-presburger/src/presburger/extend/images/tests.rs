@@ -677,14 +677,9 @@ fn residue_map_images_agree_with_the_values_of_a_window_of_inputs() {
     // no step is the skipping step, every question is answered, whether or not the default
     // multipliers p + w are units mod m.
     // 300 chains from a new seed each run, printed.
-    let mut rng =
-        crate::seed::seed("residue_map_images_agree_with_the_values_of_a_window_of_inputs") | 1;
-    let mut next = |lo: i64, hi: i64| {
-        rng ^= rng << 13;
-        rng ^= rng >> 7;
-        rng ^= rng << 17;
-        lo + (rng % (hi - lo + 1) as u64) as i64
-    };
+    let (mut rng, _) =
+        crate::seed::Rng::fresh("residue_map_images_agree_with_the_values_of_a_window_of_inputs");
+    let mut next = |lo: i64, hi: i64| rng.int(lo, hi);
     let (mut answered, mut required, mut found, mut trials) = (0, 0, 0, 0);
     for _ in 0..300 {
         let m = next(1, 36);
@@ -787,13 +782,8 @@ fn residue_map_images_with_mixed_multipliers_agree_with_the_image_of_every_resid
     // at later steps, with exceptions placed half the time at a residue of the current image.
     // Since every step commutes with h + m, the image is that of Z_m under the residue map,
     // computed here residue by residue; every question must be answered, and equal it.
-    let mut rng = 0x10ad_u64;
-    let mut next = |lo: i64, hi: i64| {
-        rng ^= rng << 13;
-        rng ^= rng >> 7;
-        rng ^= rng << 17;
-        lo + (rng % (hi - lo + 1) as u64) as i64
-    };
+    let mut rng = crate::seed::Rng::new(0x10ad);
+    let mut next = |lo: i64, hi: i64| rng.int(lo, hi);
     let multipliers = [1, 2, 3, 4, 5, 6, 7, 9, 10, 11, 12, 13, 14, 15];
     for chain in 0..48 {
         let m = [360, 1008, 5400, 7056][chain % 4];
@@ -1013,13 +1003,9 @@ fn shift_chain_images_agree_with_the_image_of_every_residue() {
     // commutes with h + m, so the image is that of Z_m, computed residue by residue; every
     // question must be answered, and equal it.
     // 60 chains from a new seed each run, printed; each depth with each order 10 times.
-    let mut rng = crate::seed::seed("shift_chain_images_agree_with_the_image_of_every_residue") | 1;
-    let mut next = |lo: i64, hi: i64| {
-        rng ^= rng << 13;
-        rng ^= rng >> 7;
-        rng ^= rng << 17;
-        lo + (rng % (hi - lo + 1) as u64) as i64
-    };
+    let (mut rng, _) =
+        crate::seed::Rng::fresh("shift_chain_images_agree_with_the_image_of_every_residue");
+    let mut next = |lo: i64, hi: i64| rng.int(lo, hi);
     let (mut inside, mut asked) = (0, 0);
     for chain in 0..60 {
         let m = next(1, 40);

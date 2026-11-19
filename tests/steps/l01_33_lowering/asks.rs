@@ -8,6 +8,7 @@
 use num_bigint::{BigInt, Sign};
 use zed_kernel::term::build::{lam, var};
 use zed_kernel::{Prim, Term, Value};
+use zed_tests::seed::Rng;
 use zed_tests::step_helpers::l01_17_value_representation::{in_child_at, lower_limit_by};
 use zedc::zir::lower::lower;
 
@@ -17,16 +18,11 @@ fn in_child(name: &str) -> bool {
     in_child_at(module_path!(), name)
 }
 
-/// A number of `bytes` bytes, each odd, from a fixed linear congruential generator.
+/// A number of `bytes` bytes, each odd, from a fixed seed.
 pub(super) fn wide(bytes: usize) -> BigInt {
-    let mut x: u64 = 0x9e37_79b9_7f4a_7c15;
+    let mut rng = Rng::new(0x9e37_79b9_7f4a_7c15);
     let digits: Vec<u8> = (0..bytes)
-        .map(|_| {
-            x = x
-                .wrapping_mul(6_364_136_223_846_793_005)
-                .wrapping_add(1_442_695_040_888_963_407);
-            (x >> 56) as u8 | 1
-        })
+        .map(|_| (rng.next_u64() >> 56) as u8 | 1)
         .collect();
     BigInt::from_bytes_le(Sign::Plus, &digits)
 }

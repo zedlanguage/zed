@@ -1,9 +1,12 @@
 //! The graph families of cross-review X14 (xs), by which its deciders were measured: each
 //! generator copied without change from the cross-measure (wt/xs-cmp/src: claude.rs, codex.rs,
 //! gemini.rs, claude/codex_r1.rs), with one graph type for all, and the widening of a node
-//! (wt/xs-cmp/src/main.rs `widen_kind`).
+//! (wt/xs-cmp/src/main.rs `widen_kind`). `claude::random` draws from
+//! `zed_tests::seed::Xorshift64` in place of its own copy of the same xorshift, so each seed
+//! gives the graph it gave there.
 
 use zed_kernel::types::bes::{Bes, Kind};
+use zed_tests::seed::Xorshift64;
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum K {
@@ -66,17 +69,11 @@ impl G {
 
 mod claude {
     use super::*;
-    fn rnd(x: &mut u64) -> u64 {
-        *x ^= *x << 13;
-        *x ^= *x >> 7;
-        *x ^= *x << 17;
-        *x
-    }
 
-    pub(super) fn random(x: &mut u64, n: usize, pmor: u64) -> G {
+    pub(super) fn random(x: &mut Xorshift64, n: usize, pmor: u64) -> G {
         let mut g = G::default();
         for _ in 0..n {
-            let r = rnd(x) % 20;
+            let r = x.below(20);
             let k = if r == 0 {
                 K::Bot
             } else if r == 1 {
@@ -91,11 +88,11 @@ mod claude {
         for v in 0..n {
             let d = match g.k[v] {
                 K::Mor => 1,
-                K::Or | K::And => 1 + rnd(x) % 3,
+                K::Or | K::And => 1 + x.below(3),
                 _ => 0,
             };
             for _ in 0..d {
-                let w = (rnd(x) % n as u64) as u32;
+                let w = x.below(n as u64) as u32;
                 g.c[v].push(w);
             }
         }
@@ -907,11 +904,11 @@ fn widen(x: &G, v: usize, wide: usize, kind: &str) -> G {
 /// stays at 0 from 0, so seed 0 is read as that seed.
 pub fn random(seed: u64, rate: u64, n: usize) -> G {
     assert!(rate <= 18, "at most 18 in 20 nodes are morphisms");
-    let mut x = if seed == 0 {
+    let mut x = Xorshift64::new(if seed == 0 {
         0x2545_F491_4F6C_DD1D
     } else {
         seed
-    };
+    });
     claude::random(&mut x, n, rate)
 }
 
@@ -936,7 +933,7 @@ pub fn family(f: &str, n: usize) -> G {
         "unring" => claude::unring(n),
         "defeatD" => claude::defeat_d(n),
         "defeatgsr" => claude::defeat_gsr(n),
-        "random" => claude::random(&mut 0x2545_F491_4F6C_DD1D, n, 5),
+        "random" => claude::random(&mut Xorshift64::new(0x2545_F491_4F6C_DD1D), n, 5),
         "c_chain" | "c_ladder" | "c_bigladder" | "c_adversary" => {
             codex_r1::family_g(f.trim_start_matches("c_"), n)
         }

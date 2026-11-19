@@ -4,7 +4,8 @@
 //! tests `random_changes_agree_with_the_model_and_keep_old_versions` and
 //! `shared_subtrees_are_passed_over` in `tests.rs` check both at small sizes.
 
-use super::tests::{Draw, M};
+use super::tests::M;
+use crate::seed::Rng;
 use std::collections::HashMap;
 
 #[test]
@@ -14,8 +15,8 @@ fn insertion_lookup_and_difference_scale_as_n_log_n() {
     let inputs: HashMap<usize, Vec<u64>> = [100_000, 800_000]
         .into_iter()
         .map(|n| {
-            let mut d = Draw(n as u64);
-            (n, (0..n).map(|_| d.next()).collect())
+            let mut d = Rng::new(n as u64);
+            (n, (0..n).map(|_| d.next_u64()).collect())
         })
         .collect();
     crate::scaling::check_order(

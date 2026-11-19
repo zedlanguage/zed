@@ -1617,14 +1617,7 @@ mod tests {
     /// reports a negative cycle exactly when the reference does. Both answers occur.
     #[test]
     fn the_round_bound_agrees_with_bellman_ford() {
-        // xorshift stays at 0 from 0, so the seed is made odd.
-        let mut state = crate::seed::seed("the_round_bound_agrees_with_bellman_ford") | 1;
-        let mut below = |k: usize| {
-            state ^= state << 13;
-            state ^= state >> 7;
-            state ^= state << 17;
-            (state % k as u64) as usize
-        };
+        let (mut rng, _) = crate::seed::Rng::fresh("the_round_bound_agrees_with_bellman_ford");
         // Both answers on built graphs, so the check could fail either way on every run.
         // `0 -> 1 -> 0` of weights -1 and -1 is a cycle of weight -2, so negative; the edge
         // `0 -> 1` of weight -1 alone closes no cycle, so feasible, with labels 0 and -1.
@@ -1636,11 +1629,11 @@ mod tests {
         assert_eq!(bellman_ford(&feasible), labels, "graph {feasible:?}");
         assert_eq!(search(&feasible, 2), labels, "graph {feasible:?}");
         for _ in 0..20_000 {
-            let n = 1 + below(10);
+            let n = 1 + rng.below(10);
             let mut out: Vec<Vec<(usize, i64)>> = vec![Vec::new(); n];
-            for _ in 0..below(3 * n + 1) {
-                let (u, v) = (below(n), below(n));
-                out[u].push((v, below(16) as i64 - 6));
+            for _ in 0..rng.below(3 * n + 1) {
+                let (u, v) = (rng.below(n), rng.below(n));
+                out[u].push((v, rng.int(-6, 9)));
             }
             assert_eq!(search(&out, n as u64), bellman_ford(&out), "graph {out:?}");
         }

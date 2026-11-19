@@ -9,23 +9,19 @@
 use num_bigint::{BigInt, BigUint, Sign};
 use zed_kernel::term::build::lit;
 use zed_kernel::{Rat, Term, Value};
+use zed_tests::seed::Rng;
 use zedc::address::ContentAddress;
 use zedc::canon::{self, Def};
 use zedc::zir::canon::address;
 use zedc::zir::lower::lower;
 use zedc::zir::{Region, binary};
 
-/// A number of `bits` bits whose bytes come from a fixed linear congruential generator, so
+/// A number of `bits` bits whose bytes, each odd, come from a generator of a fixed seed, so
 /// every run and every machine builds the same one.
 pub(super) fn wide(bits: usize, sign: Sign) -> BigInt {
-    let mut x: u64 = 0x9e37_79b9_7f4a_7c15;
+    let mut rng = Rng::new(0x9e37_79b9_7f4a_7c15);
     let bytes: Vec<u8> = (0..bits / 8)
-        .map(|_| {
-            x = x
-                .wrapping_mul(6_364_136_223_846_793_005)
-                .wrapping_add(1_442_695_040_888_963_407);
-            (x >> 56) as u8 | 1
-        })
+        .map(|_| (rng.next_u64() >> 56) as u8 | 1)
         .collect();
     BigInt::from_bytes_le(sign, &bytes)
 }

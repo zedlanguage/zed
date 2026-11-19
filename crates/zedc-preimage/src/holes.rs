@@ -970,39 +970,26 @@ mod tests {
         );
     }
 
-    /// A small deterministic generator (a linear congruential one).
-    struct Lcg(u64);
-
-    impl Lcg {
-        fn next(&mut self, n: u64) -> u64 {
-            self.0 = self
-                .0
-                .wrapping_mul(6_364_136_223_846_793_005)
-                .wrapping_add(1_442_695_040_888_963_407);
-            (self.0 >> 33) % n
-        }
-    }
-
     /// Random systems of up to five names in `0..=6` with holes, compared with enumeration:
     /// the ends of every name are exact where the method answers, the values kept are a
     /// superset of the exact ones, and no answer is empty where a point exists.
     #[test]
     fn small_systems_agree_with_enumeration() {
-        let mut g = Lcg(0x5eed);
+        let mut g = crate::seed::Rng::new(0x5eed);
         let (mut answered, mut refused) = (0, 0);
         for round in 0..6000 {
-            let n = 2 + g.next(4) as usize;
+            let n = 2 + g.below_u64(4) as usize;
             // Half the systems are a cycle through every name with chords, holes in at most
             // `holed` names, so that cycles and contraction are both reached often.
             let ring = round % 2 == 1;
-            let holed = if ring { g.next(4) as usize } else { n };
+            let holed = if ring { g.below_u64(4) as usize } else { n };
             let dom: Vec<Vec<(i64, i64)>> = (0..n)
                 .map(|i| {
                     let keep: Vec<i64> = if i < holed {
-                        (0..=6).filter(|_| g.next(10) < 7).collect()
+                        (0..=6).filter(|_| g.below_u64(10) < 7).collect()
                     } else {
-                        let a = g.next(4) as i64;
-                        (a..=a + 2 + g.next(4) as i64).collect()
+                        let a = g.below_u64(4) as i64;
+                        (a..=a + 2 + g.below_u64(4) as i64).collect()
                     };
                     let mut d: Vec<(i64, i64)> = Vec::new();
                     for v in keep {
@@ -1020,14 +1007,14 @@ mod tests {
             let mut edges: Vec<(usize, usize, i64)> = Vec::new();
             if ring {
                 for i in 0..n {
-                    edges.push((i, (i + 1) % n, g.next(4) as i64 - 1));
+                    edges.push((i, (i + 1) % n, g.below_u64(4) as i64 - 1));
                 }
             }
-            let m = g.next(if ring { 3 } else { 2 * n as u64 + 1 }) as usize;
+            let m = g.below_u64(if ring { 3 } else { 2 * n as u64 + 1 }) as usize;
             for _ in 0..m {
-                let u = g.next(n as u64) as usize;
-                let v = g.next(n as u64) as usize;
-                edges.push((u, v, g.next(5) as i64 - 2));
+                let u = g.below_u64(n as u64) as usize;
+                let v = g.below_u64(n as u64) as usize;
+                edges.push((u, v, g.below_u64(5) as i64 - 2));
             }
             let exact = brute(&dom, &edges);
             match (solve(&graph(&dom, &edges)), exact) {

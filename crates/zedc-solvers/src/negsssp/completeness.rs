@@ -6,6 +6,7 @@
 //! list is `crates/zedc-solvers/COMPLETENESS.md`.
 
 use super::*;
+use crate::seed::Rng;
 
 /// Edges `u → (v, w)` with machine weights, as [`potential`] takes them.
 fn graph(out: &[Vec<(usize, i64)>]) -> Vec<Vec<(usize, Int)>> {
@@ -56,17 +57,6 @@ fn holds(out: &[Vec<(usize, i64)>], set: &[usize], p: &[Int]) -> bool {
             .iter()
             .all(|&(v, w)| place[v] == usize::MAX || p[place[v]] <= &p[place[u]] + &Int::from(w))
     })
-}
-
-/// xorshift64 from the run's seed for `test`, made odd since 0 stays at 0.
-fn random(test: &str) -> impl FnMut(u64) -> u64 {
-    let mut state = crate::seed::seed(test) | 1;
-    move |k| {
-        state ^= state << 13;
-        state ^= state >> 7;
-        state ^= state << 17;
-        state % k
-    }
 }
 
 /// The radii with `δ₀ = d / scale`.
@@ -332,29 +322,29 @@ fn merges_of_random_overlapping_covers_agree_with_bellman_ford() {
     let thirds = [vec![0, 1], vec![1, 2], vec![2, 0]];
     assert!(thirds.iter().all(|y| bellman_ford(&cycle, y).is_some()));
     assert!(!merge_agrees(&cycle, &thirds), "{cycle:?}: a potential");
-    let mut below = random("merges_of_random_overlapping_covers_agree_with_bellman_ford");
+    let (mut rng, _) = Rng::fresh("merges_of_random_overlapping_covers_agree_with_bellman_ford");
     for _ in 0..3000 {
-        let n = 2 + below(7) as usize;
+        let n = 2 + rng.below(7);
         let mut out: Vec<Vec<(usize, i64)>> = vec![Vec::new(); n];
-        for _ in 0..below(3 * n as u64) {
-            let (u, v) = (below(n as u64) as usize, below(n as u64) as usize);
+        for _ in 0..rng.below(3 * n) {
+            let (u, v) = (rng.below(n), rng.below(n));
             if u != v {
-                out[u].push((v, below(14) as i64 - 5));
+                out[u].push((v, rng.int(-5, 8)));
             }
         }
         // Up to four children, each vertex in at least one, each child with a potential.
-        let k = 1 + below(4) as usize;
+        let k = 1 + rng.below(4);
         let mut cover: Vec<Vec<usize>> = vec![Vec::new(); k];
         for v in 0..n {
             let mut placed = false;
             for child in &mut cover {
-                if below(2) == 0 {
+                if rng.coin() {
                     child.push(v);
                     placed = true;
                 }
             }
             if !placed {
-                cover[below(k as u64) as usize].push(v);
+                cover[rng.below(k)].push(v);
             }
         }
         cover.retain(|y| !y.is_empty());
@@ -386,20 +376,20 @@ fn large_weights_give_the_least_walk_weights_of_bellman_ford() {
     assert!(search_agrees(&path), "{path:?}: no potential");
     path[0].push((2, big));
     assert!(!search_agrees(&path), "{path:?}: a potential");
-    let mut below = random("large_weights_give_the_least_walk_weights_of_bellman_ford");
+    let (mut rng, _) = Rng::fresh("large_weights_give_the_least_walk_weights_of_bellman_ford");
     for round in 0..400 {
-        let n = 2 + below(24) as usize;
-        let scale = 1i64 << (10 + below(31));
+        let n = 2 + rng.below(24);
+        let scale = 1i64 << (10 + rng.below(31));
         // A path of negative edges, then edges of either sign.
         let mut out: Vec<Vec<(usize, i64)>> = (0..n)
             .map(|u| match u {
                 0 => Vec::new(),
-                _ => vec![(u - 1, -(below(scale as u64) as i64) - 1)],
+                _ => vec![(u - 1, -rng.int(1, scale))],
             })
             .collect();
-        for _ in 0..below(2 * n as u64) {
-            let (u, v) = (below(n as u64) as usize, below(n as u64) as usize);
-            let w = below(4 * scale as u64) as i64 - if round % 2 == 0 { 0 } else { scale };
+        for _ in 0..rng.below(2 * n) {
+            let (u, v) = (rng.below(n), rng.below(n));
+            let w = rng.int(0, 4 * scale - 1) - if round % 2 == 0 { 0 } else { scale };
             out[u].push((v, w));
         }
         search_agrees(&out);
@@ -414,8 +404,9 @@ fn weights_just_above_minus_w_over_2_grow_balls_and_keep_the_answers_of_bellman_
     // The path's 30 negative edges make BF-Dijkstra run out of units, so the recursion runs.
     // An edge to a higher vertex closes a negative cycle with the path, since every such
     // edge weighs less than `A`; even rounds have none, odd rounds may.
-    let mut below =
-        random("weights_just_above_minus_w_over_2_grow_balls_and_keep_the_answers_of_bellman_ford");
+    let (mut rng, _) = Rng::fresh(
+        "weights_just_above_minus_w_over_2_grow_balls_and_keep_the_answers_of_bellman_ford",
+    );
     let n = 31;
     let (a, b) = (1i64 << 30, (1i64 << 29) - 1);
     // Both answers on built graphs, so the check could fail either way on every run: the
@@ -438,8 +429,8 @@ fn weights_just_above_minus_w_over_2_grow_balls_and_keep_the_answers_of_bellman_
                 _ => vec![(u - 1, -a)],
             })
             .collect();
-        for _ in 0..below(3 * n as u64) {
-            let (mut u, mut v) = (below(n as u64) as usize, below(n as u64) as usize);
+        for _ in 0..rng.below(3 * n) {
+            let (mut u, mut v) = (rng.below(n), rng.below(n));
             // In even rounds every edge goes to a lower vertex, as the path does: no cycle.
             if round % 2 == 0 {
                 if u == v {
@@ -449,10 +440,10 @@ fn weights_just_above_minus_w_over_2_grow_balls_and_keep_the_answers_of_bellman_
                     (u, v) = (v, u);
                 }
             }
-            let w = match below(3) {
+            let w = match rng.below(3) {
                 0 => -b,
-                1 => -b + below(4) as i64,
-                _ => below(a as u64) as i64,
+                1 => -b + rng.int(0, 3),
+                _ => rng.int(0, a - 1),
             };
             out[u].push((v, w));
         }

@@ -681,13 +681,8 @@ mod tests {
         // Random rows over `x`, `y` in a box, from a new seed each run: the least and greatest
         // `x` of the integer points, against every point of the box. The box rows come first
         // and last, so the envelopes see them in both orders.
-        let mut seed = crate::seed::seed("the_ends_match_a_search_of_the_box");
-        let mut next = |m: i64| -> i64 {
-            seed = seed
-                .wrapping_mul(6364136223846793005)
-                .wrapping_add(1442695040888963407);
-            ((seed >> 33) % (2 * m as u64 + 1)) as i64 - m
-        };
+        let (mut rng, _) = crate::seed::Rng::fresh("the_ends_match_a_search_of_the_box");
+        let mut next = |m: i64| rng.int(-m, m);
         for case in 0..4000 {
             let b = 1 + case % 9;
             let mut rows: Vec<([i64; 2], i64)> = vec![([1, 0], b), ([0, -1], b)];
@@ -759,13 +754,8 @@ mod tests {
         // Random rows over `x`, `y` in a box, from a new seed each run, as for the ends: `point`
         // must give a point of the rows exactly when the box has one, and without `want` answer
         // it by zeros. Both answers occur.
-        let mut seed = crate::seed::seed("the_points_match_a_search_of_the_box");
-        let mut next = |m: i64| -> i64 {
-            seed = seed
-                .wrapping_mul(6364136223846793005)
-                .wrapping_add(1442695040888963407);
-            ((seed >> 33) % (2 * m as u64 + 1)) as i64 - m
-        };
+        let (mut rng, _) = crate::seed::Rng::fresh("the_points_match_a_search_of_the_box");
+        let mut next = |m: i64| rng.int(-m, m);
         // Both answers on built rows, so the check could fail either way on every run: the
         // box `-1 <= x, y <= 1` alone holds (0, 0); with `x - 2 >= 0` added, `x >= 2` lies
         // outside it, so there is no point.
@@ -876,13 +866,8 @@ mod tests {
 
     #[test]
     fn project_convex_matches_a_search_of_the_box() {
-        let mut seed = crate::seed::seed("project_convex_matches_a_search_of_the_box");
-        let mut next = |m: i64| -> i64 {
-            seed = seed
-                .wrapping_mul(6364136223846793005)
-                .wrapping_add(1442695040888963407);
-            ((seed >> 33) % (2 * m as u64 + 1)) as i64 - m
-        };
+        let (mut rng, _) = crate::seed::Rng::fresh("project_convex_matches_a_search_of_the_box");
+        let mut next = |m: i64| rng.int(-m, m);
         let mut saw_ranges = 0usize;
         let mut saw_holed = 0usize;
         for case in 0..4000 {

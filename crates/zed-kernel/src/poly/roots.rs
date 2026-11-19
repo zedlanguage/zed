@@ -642,17 +642,12 @@ mod tests {
         assert_eq!(roots(&b, -1_000_000_000, 1_000_000_000), [-2, -1, 1]);
     }
 
-    /// Each polynomial of a deterministic family checked against evaluation at every integer of
+    /// Each polynomial of a random family checked against evaluation at every integer of
     /// `-60..=60`, which holds every root by Cauchy's bound.
     #[test]
     fn agrees_with_evaluation_at_every_member() {
-        let mut seed = crate::seed::seed("agrees_with_evaluation_at_every_member") | 1;
-        let mut next = |m: u64| {
-            seed ^= seed << 13;
-            seed ^= seed >> 7;
-            seed ^= seed << 17;
-            seed % m
-        };
+        let (mut rng, _) = crate::seed::Rng::fresh("agrees_with_evaluation_at_every_member");
+        let mut next = |m: u64| rng.below_u64(m);
         for _ in 0..400 {
             let f = match next(2) {
                 0 => {
@@ -727,13 +722,8 @@ mod tests {
     /// found by evaluation within Cauchy's bound of the factor.
     #[test]
     fn agrees_with_planted_roots_over_many_terms() {
-        let mut seed = crate::seed::seed("agrees_with_planted_roots_over_many_terms") | 1;
-        let mut next = |m: u64| {
-            seed ^= seed << 13;
-            seed ^= seed >> 7;
-            seed ^= seed << 17;
-            seed % m
-        };
+        let (mut rng, _) = crate::seed::Rng::fresh("agrees_with_planted_roots_over_many_terms");
+        let mut next = |m: u64| rng.below_u64(m);
         for _ in 0..300 {
             let t = 1 + next(8);
             let h = Sparse::new((0..t).map(|_| (next(16), BigInt::from(next(7) as i64 - 3))));

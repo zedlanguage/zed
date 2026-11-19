@@ -343,19 +343,6 @@ mod tests {
         })
     }
 
-    /// A small deterministic generator (splitmix64).
-    struct Rng(u64);
-
-    impl Rng {
-        fn below(&mut self, n: u64) -> u64 {
-            self.0 = self.0.wrapping_add(0x9e37_79b9_7f4a_7c15);
-            let mut z = self.0;
-            z = (z ^ (z >> 30)).wrapping_mul(0xbf58_476d_1ce4_e5b9);
-            z = (z ^ (z >> 27)).wrapping_mul(0x94d0_49bb_1331_11eb);
-            (z ^ (z >> 31)) % n
-        }
-    }
-
     /// The map's rows, and checks that each node is above its children and its pivots are in
     /// order.
     fn model(r: &Rows) -> BTreeMap<Atom, Arc<Lin>> {
@@ -433,18 +420,18 @@ mod tests {
 
     #[test]
     fn a_map_and_one_made_from_it_differ_in_the_changed_rows_alone() {
-        let mut rnd = Rng(7);
+        let mut rnd = crate::seed::Rng::new(7);
         for round in 0..300 {
             let mut a = Rows::default();
-            let size = rnd.below(60);
+            let size = rnd.below_u64(60);
             for _ in 0..size {
-                let k = rnd.below(80);
+                let k = rnd.below_u64(80);
                 a.insert(key(k), row(k as i64));
             }
             let mut b = a.clone();
-            for _ in 0..rnd.below(6) {
-                let k = rnd.below(90);
-                match rnd.below(3) {
+            for _ in 0..rnd.below_u64(6) {
+                let k = rnd.below_u64(90);
+                match rnd.below_u64(3) {
                     0 => b.remove(&key(k)),
                     1 => b.insert(key(k), row(round)),
                     _ => {

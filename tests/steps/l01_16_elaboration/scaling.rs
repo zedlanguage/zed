@@ -3,6 +3,7 @@
 //! that the forms those benchmarks time give the right result.
 
 use zed_tests::deep::{program, statements};
+use zed_tests::seed::Rng;
 use zedc::ast::{Stmt, unit};
 use zedc::lex::lex_fence;
 use zedc::parse::{TOP, parse};
@@ -76,13 +77,8 @@ fn topo_by_scan(deps: &[Vec<usize>]) -> Result<Vec<usize>, Vec<usize>> {
 
 #[test]
 fn the_dependency_order_is_the_first_ready_by_index() {
-    let mut x: u64 = 0x9e37_79b9_7f4a_7c15;
-    let mut next = |m: usize| {
-        x ^= x << 13;
-        x ^= x >> 7;
-        x ^= x << 17;
-        (x % m as u64) as usize
-    };
+    let mut rng = Rng::new(0x9e37_79b9_7f4a_7c15);
+    let mut next = |m: usize| rng.below(m);
     let (mut orders, mut cycles) = (0, 0);
     for _ in 0..2000 {
         let n = 1 + next(12);

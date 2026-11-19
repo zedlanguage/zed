@@ -37,13 +37,10 @@ fn the_field_operations_agree_with_division_by_p() {
         1 << 32,
         (1 << 63) + 5,
     ];
-    let mut z: u64 = 1;
+    let mut rng = crate::seed::Rng::new(1);
     let mut values: Vec<u64> = edges.to_vec();
     for _ in 0..2000 {
-        z = z
-            .wrapping_mul(6364136223846793005)
-            .wrapping_add(1442695040888963407);
-        values.push(z % P);
+        values.push(rng.below_u64(P));
     }
     for &a in &values {
         for &b in &values[..40] {

@@ -22819,13 +22819,8 @@ mod tests {
     /// empty, whole, one piece, many pieces and pieces with infinite ends.
     #[test]
     fn the_members_kept_by_an_interval_are_those_a_filter_keeps() {
-        let mut seed: u64 = 0x9e37_79b9_7f4a_7c15;
-        let mut next = |m: u64| {
-            seed ^= seed << 13;
-            seed ^= seed >> 7;
-            seed ^= seed << 17;
-            seed % m
-        };
+        let mut rng = crate::seed::Rng::new(0x9e37_79b9_7f4a_7c15);
+        let mut next = |m: u64| rng.below_u64(m);
         let wide = Value::int(BigInt::from(1u8) << 70);
         assert!(matches!(wide, Value::Big(_)));
         for round in 0..400 {
@@ -22921,13 +22916,8 @@ mod tests {
     /// rounds. Sets of runs and gaps of integers, against intervals of one piece and of many.
     #[test]
     fn the_listed_shortcuts_give_what_the_walks_give() {
-        let mut seed: u64 = 0x4e3f_47ab_c0de_0002;
-        let mut next = |m: u64| {
-            seed ^= seed << 13;
-            seed ^= seed >> 7;
-            seed ^= seed << 17;
-            seed % m
-        };
+        let mut rng = crate::seed::Rng::new(0x4e3f_47ab_c0de_0002);
+        let mut next = |m: u64| rng.below_u64(m);
         let (mut kept_fired, mut all_fired, mut among_fired) = (0, 0, 0);
         for round in 0..2000 {
             let mut vs = TreapSet::new();
@@ -22999,13 +22989,8 @@ mod tests {
     /// shortcut's own output is checked as well. The record must be written in some rounds.
     #[test]
     fn reductions_record_only_intervals_and_sets_of_the_same_integers() {
-        let mut seed: u64 = 0x9e37_79b9_7f4a_7c15;
-        let mut next = |m: u64| {
-            seed ^= seed << 13;
-            seed ^= seed >> 7;
-            seed ^= seed << 17;
-            seed % m
-        };
+        let mut rng = crate::seed::Rng::new(0x9e37_79b9_7f4a_7c15);
+        let mut next = |m: u64| rng.below_u64(m);
         let mut written = 0;
         for round in 0..600 {
             let mut vs = TreapSet::new();
@@ -23147,13 +23132,8 @@ mod tests {
     #[test]
     fn the_groups_kept_by_path_links_are_the_groups_found_anew() {
         let names: Vec<Atom> = (0..8).map(|i| Atom::Sym(format!("n{i}").into())).collect();
-        let mut seed: u64 = 0x2545_f491_4f6c_dd1d;
-        let mut next = |m: u64| {
-            seed ^= seed << 13;
-            seed ^= seed >> 7;
-            seed ^= seed << 17;
-            seed % m
-        };
+        let mut rng = crate::seed::Rng::new(0x2545_f491_4f6c_dd1d);
+        let mut next = |m: u64| rng.below_u64(m);
         let partition = |s: &Split| -> BTreeSet<BTreeSet<Factor>> {
             s.groups.values().map(|(fs, _)| fs.clone()).collect()
         };
@@ -23269,15 +23249,12 @@ mod tests {
         assert_eq!(pot.last(), None);
         assert_eq!(rank_at(&mut pot, &mut list, 0), 0);
         check_ranks(&pot, &list);
-        let mut seed: u64 = 0x9e37_79b9_7f4a_7c15;
+        let mut rng = crate::seed::Rng::new(0x9e37_79b9_7f4a_7c15);
         for k in 0..1500 {
-            seed ^= seed << 13;
-            seed ^= seed >> 7;
-            seed ^= seed << 17;
             let place = match k % 4 {
                 0 => 0,
                 1 => list.len(),
-                _ => seed as usize % (list.len() + 1),
+                _ => rng.below(list.len() + 1),
             };
             rank_at(&mut pot, &mut list, place);
             check_ranks(&pot, &list);
@@ -23401,13 +23378,8 @@ mod tests {
             }
         }
 
-        let mut seed: u64 = 0x517c_c1b7_2722_0a95;
-        let mut rng = |m: u64| -> i64 {
-            seed ^= seed << 13;
-            seed ^= seed >> 7;
-            seed ^= seed << 17;
-            (seed % m) as i64
-        };
+        let mut draws = crate::seed::Rng::new(0x517c_c1b7_2722_0a95);
+        let mut rng = |m: u64| -> i64 { draws.below_u64(m) as i64 };
         let dummy = |id: i64| -> PartAt {
             let x = Lin::atom(Atom::Sym("x".into())).plus(&Lin::constant(id));
             (
@@ -23745,13 +23717,8 @@ mod tests {
             }
         }
 
-        let mut seed: u64 = 0x9e37_79b9_7f4a_7c15;
-        let mut rng = |m: u64| -> i64 {
-            seed ^= seed << 13;
-            seed ^= seed >> 7;
-            seed ^= seed << 17;
-            (seed % m) as i64
-        };
+        let mut draws = crate::seed::Rng::new(0x9e37_79b9_7f4a_7c15);
+        let mut rng = |m: u64| -> i64 { draws.below_u64(m) as i64 };
         let dummy = |id: i64| -> PartAt {
             let x = Lin::atom(Atom::Sym("x".into())).plus(&Lin::constant(id));
             (
@@ -24061,13 +24028,8 @@ mod tests {
     #[test]
     fn projected_entries_after_joins_of_random_cases_hold_at_the_joins_snapshot() {
         use zed_kernel::term::build::{lit, prim, var};
-        let mut seed: u64 = 0x2545_f491_4f6c_dd1d;
-        let mut next = |m: u64| {
-            seed ^= seed << 13;
-            seed ^= seed >> 7;
-            seed ^= seed << 17;
-            seed % m
-        };
+        let mut rng = crate::seed::Rng::new(0x2545_f491_4f6c_dd1d);
+        let mut next = |m: u64| rng.below_u64(m);
         const NAMES: [&str; 3] = ["a", "x", "y"];
         let row = |next: &mut dyn FnMut(u64) -> u64| {
             let mut sum: Option<Term> = None;

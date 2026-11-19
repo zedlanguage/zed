@@ -11,6 +11,7 @@ use num_bigint::{BigInt, Sign};
 use zed_kernel::num::bytes_of;
 use zed_kernel::term::build::var;
 use zed_tests::scaling::check_order;
+use zed_tests::seed::Rng;
 use zed_tests::step_helpers::l01_17_value_representation::{in_child_at, lower_limit_by};
 use zedc::canon::{Def, Domain, address};
 use zedc::store::interval::{IntervalSet, Num};
@@ -154,16 +155,11 @@ fn a_kept_end_is_addressed_when_memory_is_given() {
     }
 }
 
-/// A number of `bytes` bytes, each odd, from a fixed linear congruential generator.
+/// A number of `bytes` bytes, each odd, from a fixed seed.
 fn wide(bytes: usize) -> Num {
-    let mut x: u64 = 0x9e37_79b9_7f4a_7c15;
+    let mut rng = Rng::new(0x9e37_79b9_7f4a_7c15);
     let digits: Vec<u8> = (0..bytes)
-        .map(|_| {
-            x = x
-                .wrapping_mul(6_364_136_223_846_793_005)
-                .wrapping_add(1_442_695_040_888_963_407);
-            (x >> 56) as u8 | 1
-        })
+        .map(|_| (rng.next_u64() >> 56) as u8 | 1)
         .collect();
     Num::from(BigInt::from_bytes_le(Sign::Plus, &digits))
 }

@@ -3,6 +3,7 @@
 //! of their own so that tests appended to `tests.rs` do not conflict with them.
 
 use super::*;
+use crate::seed::Rng;
 
 /// The names `z0` to `z{k-1}`.
 fn zs(k: usize) -> Vec<String> {
@@ -106,9 +107,7 @@ fn a_class_with_no_point_answers_empty() {
 /// member with m's own set (REPORT.md).
 #[test]
 fn random_classes_answer_as_with_their_columns_apart() {
-    let mut rng = Rng(crate::seed::seed(
-        "random_classes_answer_as_with_their_columns_apart",
-    ));
+    let (mut rng, _) = Rng::fresh("random_classes_answer_as_with_their_columns_apart");
     let names: Vec<String> = ["x", "y", "u", "v"].iter().map(|s| s.to_string()).collect();
     for _ in 0..300 {
         let leaf = |rng: &mut Rng| {
@@ -202,12 +201,9 @@ fn named_con(rng: &mut Rng) -> Formula {
     let mut terms: std::collections::BTreeMap<Atom, Int> = std::collections::BTreeMap::new();
     for _ in 0..rng.int(0, 3) {
         let atom = match rng.below(8) {
-            0 => Atom::product(
-                &SYMS[rng.below(6) as usize].into(),
-                &SYMS[rng.below(6) as usize].into(),
-            ),
+            0 => Atom::product(&SYMS[rng.below(6)].into(), &SYMS[rng.below(6)].into()),
             1 => Atom::Aux(rng.below(3) as u32),
-            _ => a(SYMS[rng.below(6) as usize]),
+            _ => a(SYMS[rng.below(6)]),
         };
         let sign = if rng.below(2) == 0 { 1 } else { -1 };
         terms.insert(atom, Int::from(sign * rng.int(1, 3)));
@@ -229,13 +225,11 @@ fn named_con(rng: &mut Rng) -> Formula {
 fn shared_dag(rng: &mut Rng, nodes: usize) -> Formula {
     let mut pool: Vec<Formula> = (0..4).map(|_| named_con(rng)).collect();
     for _ in 0..nodes {
-        let pick = |rng: &mut Rng, pool: &Vec<Formula>| {
-            pool[rng.below(pool.len() as u64) as usize].clone()
-        };
+        let pick = |rng: &mut Rng, pool: &Vec<Formula>| pool[rng.below(pool.len())].clone();
         let g = match rng.below(5) {
             0 => Formula::Not(Shared::new(pick(rng, &pool))),
             k => {
-                let n = rng.int(0, 3) as usize;
+                let n = rng.below(4);
                 let kids: Vec<Formula> = (0..n).map(|_| pick(rng, &pool)).collect();
                 if k % 2 == 0 {
                     Formula::And(Shared::new(kids))
@@ -272,11 +266,9 @@ fn first_name(s: &str) -> &str {
 /// text with the text written in full.
 #[test]
 fn a_shared_part_is_written_as_if_written_again() {
-    let mut rng = Rng(crate::seed::seed(
-        "a_shared_part_is_written_as_if_written_again",
-    ));
+    let (mut rng, _) = Rng::fresh("a_shared_part_is_written_as_if_written_again");
     for _ in 0..400 {
-        let nodes = rng.int(1, 12) as usize;
+        let nodes = 1 + rng.below(12);
         let f = shared_dag(&mut rng, nodes);
         let g = unshared(&f);
         assert_eq!(f.to_string(), g.to_string());
@@ -291,11 +283,9 @@ fn a_shared_part_is_written_as_if_written_again() {
 /// not in the tree before it.
 #[test]
 fn the_names_of_the_constraints_are_the_names_of_the_text() {
-    let mut rng = Rng(crate::seed::seed(
-        "the_names_of_the_constraints_are_the_names_of_the_text",
-    ));
+    let (mut rng, _) = Rng::fresh("the_names_of_the_constraints_are_the_names_of_the_text");
     for _ in 0..400 {
-        let nodes = rng.int(0, 12) as usize;
+        let nodes = rng.below(13);
         let f = shared_dag(&mut rng, nodes);
         for name in [first_name as fn(&str) -> &str, |s| s] {
             let text = f.written(name);

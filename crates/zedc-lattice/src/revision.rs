@@ -759,28 +759,17 @@ mod tests {
             }
         }
         let fixed = pairs.len();
-        let mut seed =
-            crate::seed::seed("a_sum_or_difference_of_two_pieces_is_what_the_parts_give") | 1;
-        let mut below = |n: u64| {
-            seed ^= seed << 13;
-            seed ^= seed >> 7;
-            seed ^= seed << 17;
-            seed % n
-        };
-        let end = |below: &mut dyn FnMut(u64) -> u64| match below(10) {
+        let (mut rng, _) =
+            crate::seed::Rng::fresh("a_sum_or_difference_of_two_pieces_is_what_the_parts_give");
+        let mut end = || match rng.below(10) {
             0 => NegInf,
             1 => PosInf,
-            2 => End::from(i128::MAX - below(5) as i128),
-            3 => End::from(i128::MIN + below(5) as i128),
-            _ => End::of(below(41) as i64 - 20),
+            2 => End::from(i128::MAX - rng.int_i128(0, 4)),
+            3 => End::from(i128::MIN + rng.int_i128(0, 4)),
+            _ => End::of(rng.int(-20, 20)),
         };
         for _ in 0..1000 {
-            let (a, b, c, d) = (
-                end(&mut below),
-                end(&mut below),
-                end(&mut below),
-                end(&mut below),
-            );
+            let (a, b, c, d) = (end(), end(), end(), end());
             let (lo, hi) = if a <= b { (a, b) } else { (b, a) };
             let (lo2, hi2) = if c <= d { (c, d) } else { (d, c) };
             pairs.push((IntervalSet::range(lo, hi), IntervalSet::range(lo2, hi2)));

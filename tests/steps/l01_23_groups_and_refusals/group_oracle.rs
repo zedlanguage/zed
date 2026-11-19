@@ -4481,7 +4481,7 @@ fn xr_r2_q2e_full_permutation_invariance_components_defs_and_arms() {
         for trial in 0..6 {
             let mut dperm: Vec<usize> = (0..n).collect();
             for i in (1..n).rev() {
-                let j = (prng.next_u64() as usize) % (i + 1);
+                let j = prng.below(i + 1);
                 dperm.swap(i, j);
             }
             let p2 = if trial % 2 == 1 { [1, 0] } else { [0, 1] };

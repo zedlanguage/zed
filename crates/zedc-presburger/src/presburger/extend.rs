@@ -6415,13 +6415,10 @@ mod tests {
         // reversed) keep exactly the integer points of the box, `merge_pieces` of two such
         // pieces keeps their union, and `decide_cons` agrees with the points
         // ([`small_pieces_checked`]).
-        let mut seed = crate::seed::seed(
+        let (mut rng, _) = crate::seed::Rng::fresh(
             "envelope_lean_merge_and_decide_keep_the_integer_points_of_small_systems",
         );
-        let mut next = || {
-            seed = seed.wrapping_mul(6364136223846793005).wrapping_add(1);
-            (seed >> 32) as i64
-        };
+        let mut next = || rng.int(0, i64::from(u32::MAX));
         let mut control_differs = 0;
         for case in 0..50 {
             let pieces = [(); 2].map(|_| {
@@ -6512,11 +6509,8 @@ mod tests {
         // same rows ([`leaned_alike`]). Not red on the hash map: each rewrite is implied by the
         // rows, and these decisions are not refused, so the order did not change the rows here;
         // the ordered map makes the order fixed by construction.
-        let mut seed = crate::seed::seed("lean_keeps_the_same_rows_on_every_run");
-        let mut next = || {
-            seed = seed.wrapping_mul(6364136223846793005).wrapping_add(1);
-            (seed >> 33) as i64
-        };
+        let (mut rng, _) = crate::seed::Rng::fresh("lean_keeps_the_same_rows_on_every_run");
+        let mut next = || rng.int(0, i64::from(i32::MAX));
         // 15 systems, about one of which has a capped ray; when none has, the system built
         // with one is leaned too, and no number of systems is relied on
         // (PROOF-test-coverage-constructive).
@@ -6784,11 +6778,8 @@ mod tests {
                 }
             })
         }
-        let mut seed = 0x8e4971u64;
-        let mut rand = || {
-            seed = seed.wrapping_mul(6364136223846793005).wrapping_add(1);
-            (seed >> 33) as i64
-        };
+        let mut rng = crate::seed::Rng::new(0x8e4971);
+        let mut rand = || rng.int(0, i64::from(i32::MAX));
         let mut changed = 0;
         let mut control_caught = 0;
         // Box every input so exhaustive satisfiability is a complete oracle, even when a
@@ -7039,11 +7030,8 @@ mod tests {
 
     #[test]
     fn r5_branch_roots_detect_exactly_the_nonleaf_intersections() {
-        let mut state = 789213u64;
-        let mut next = || {
-            state = state.wrapping_mul(6364136223846793005).wrapping_add(1);
-            state >> 32
-        };
+        let mut rng = crate::seed::Rng::new(789213);
+        let mut next = || rng.next_u64();
         for _ in 0..8 {
             let mut defs = Vec::new();
             for n in 0..60u32 {
@@ -7112,11 +7100,8 @@ mod tests {
 
     #[test]
     fn r5_batched_secants_keep_every_point_of_convex_vertical_rays() {
-        let mut seed = 713731u64;
-        let mut next = || {
-            seed = seed.wrapping_mul(6364136223846793005).wrapping_add(1);
-            (seed >> 33) as i64
-        };
+        let mut rng = crate::seed::Rng::new(713731);
+        let mut next = || rng.int(0, i64::from(i32::MAX));
         for case in 0..80 {
             let n = 2 + next() % 9;
             let start = next() % 11 - 5;
@@ -7224,11 +7209,8 @@ mod tests {
             Abs(usize, i64),
             Max(usize, usize, i64),
         }
-        let mut seed = 0xe721947u64;
-        let mut next = || {
-            seed = seed.wrapping_mul(6364136223846793005).wrapping_add(1);
-            seed >> 32
-        };
+        let mut rng = crate::seed::Rng::new(0xe721947);
+        let mut next = || rng.next_u64();
         let mut certificates = 0;
         for case in 0..64 {
             let mut ops = vec![Op::Input];
@@ -7436,11 +7418,8 @@ mod tests {
     }
     #[test]
     fn r5_directed_shared_unions_equal_elementwise_union() {
-        let mut seed = 13729291u64;
-        let mut next = || {
-            seed = seed.wrapping_mul(6364136223846793005).wrapping_add(1);
-            seed >> 32
-        };
+        let mut rng = crate::seed::Rng::new(13729291);
+        let mut next = || rng.next_u64();
         for _ in 0..120 {
             let base: imbl::OrdSet<i64> = (0..160).filter(|_| next() % 3 != 0).collect();
             let mut sets = Vec::new();
@@ -7470,11 +7449,8 @@ mod tests {
     }
     #[test]
     fn r5_ancestor_union_matches_pairwise_containment() {
-        let mut seed = 917373u64;
-        let mut next = || {
-            seed = seed.wrapping_mul(6364136223846793005).wrapping_add(1);
-            seed >> 32
-        };
+        let mut rng = crate::seed::Rng::new(917373);
+        let mut next = || rng.next_u64();
         let mut defs = Vec::new();
         for n in 0..100u32 {
             let rhs = if n == 0 {
@@ -7848,11 +7824,8 @@ mod tests {
     }
     #[test]
     fn bounded_row_totals_equal_the_old_in_place_sweep() {
-        let mut seed = 0x264815aceu64;
-        let mut rand = || {
-            seed = seed.wrapping_mul(6364136223846793005).wrapping_add(1);
-            (seed >> 32) as i64
-        };
+        let mut rng = crate::seed::Rng::new(0x264815ace);
+        let mut rand = || rng.int(0, i64::from(u32::MAX));
         let mut checked = 0;
         for n in 1..=8 {
             for _ in 0..500 {

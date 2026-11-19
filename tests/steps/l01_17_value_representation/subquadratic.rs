@@ -8,17 +8,14 @@ use num_bigint::{BigInt, BigUint};
 use num_integer::Integer;
 use num_traits::{One, Zero};
 use zed_kernel::Rat;
+use zed_tests::seed::Rng;
 
-/// A number of `words` 64-bit words drawn from `seed` (splitmix64), its top word not zero.
+/// A number of `words` 64-bit words drawn from `seed`, its top word not zero.
 pub(crate) fn random(words: usize, seed: u64) -> BigInt {
-    let mut x = seed;
+    let mut rng = Rng::new(seed);
     let mut halves: Vec<u32> = (0..words)
         .flat_map(|_| {
-            x = x.wrapping_add(0x9e37_79b9_7f4a_7c15);
-            let mut z = x;
-            z = (z ^ (z >> 30)).wrapping_mul(0xbf58_476d_1ce4_e5b9);
-            z = (z ^ (z >> 27)).wrapping_mul(0x94d0_49bb_1331_11eb);
-            let z = z ^ (z >> 31);
+            let z = rng.next_u64();
             [z as u32, (z >> 32) as u32]
         })
         .collect();

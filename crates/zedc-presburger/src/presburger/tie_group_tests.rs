@@ -544,13 +544,7 @@ fn counts_read_at_a_tie_are_those_of_the_rows_held() {
 /// [`System::touch`] marks; each run checks the counts at every read ([`System::stale`]).
 #[test]
 fn counts_read_are_those_of_the_rows_held_on_random_systems() {
-    let mut s: u64 = 0x2545_f491_4f6c_dd1d;
-    let mut next = |below: u64| {
-        s ^= s << 13;
-        s ^= s >> 7;
-        s ^= s << 17;
-        s % below
-    };
+    let mut rng = crate::seed::Rng::new(0x2545_f491_4f6c_dd1d);
     let vars = 7;
     let before = TIES_CHECKED.with(std::cell::Cell::get);
     for _ in 0..2000 {
@@ -568,19 +562,19 @@ fn counts_read_are_those_of_the_rows_held_on_random_systems() {
             }
         }
         for _ in 0..8 {
-            let len = 2 + next(3) as usize;
+            let len = 2 + rng.below(3);
             let mut vs: Vec<usize> = Vec::new();
             while vs.len() < len {
-                let v = next(vars as u64) as usize;
+                let v = rng.below(vars);
                 if !vs.contains(&v) {
                     vs.push(v);
                 }
             }
             vs.sort_unstable();
             let a: Vec<Term> = (vs.iter())
-                .map(|&v| (v, Int::from([-2, -1, 1, 2][next(4) as usize])))
+                .map(|&v| (v, Int::from(rng.pick(&[-2_i64, -1, 1, 2]))))
                 .collect();
-            let k = Int::from(next(5) as i64 - 2);
+            let k = Int::from(rng.int(-2, 2));
             base.push((Row { a: a.into(), k }, Rel::Ge));
         }
         let _ = search(vars, &base, &vec![0; vars], false, &|i| format!("v{i}"));

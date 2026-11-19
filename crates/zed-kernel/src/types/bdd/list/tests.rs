@@ -33,13 +33,9 @@ fn a_list_grown_a_literal_at_a_time_keeps_a_sound_index() {
     const ATOMS: u64 = 12;
     let atoms: Vec<Row> = (0..ATOMS).map(|i| atom(72000 + i)).collect();
     let at = |a: &Row| atoms.iter().position(|b| b == a).expect("an atom listed");
-    let mut seed = crate::seed::seed("a_list_grown_a_literal_at_a_time_keeps_a_sound_index") | 1;
-    let mut next = move || {
-        seed ^= seed << 13;
-        seed ^= seed >> 7;
-        seed ^= seed << 17;
-        seed
-    };
+    let (mut rng, _) =
+        crate::seed::Rng::fresh("a_list_grown_a_literal_at_a_time_keeps_a_sound_index");
+    let mut next = move || rng.next_u64();
     let (mut lists, mut cut) = (0, 0);
     for _ in 0..60 {
         let (a, t) = (next() % ATOMS, next() % 2 == 0);

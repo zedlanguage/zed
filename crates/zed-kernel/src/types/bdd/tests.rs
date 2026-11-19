@@ -1,4 +1,5 @@
 use super::*;
+use crate::seed::Rng;
 use crate::types::{AtomPart, Morphism, Node, Row, Type};
 use crate::value::Value;
 
@@ -7,15 +8,12 @@ pub(super) fn atom(i: u64) -> Row {
     Row::new(vec![Type::lit(&Value::Int(i as i64)).unwrap()])
 }
 
-fn random(seed: &mut u64, depth: u32) -> Part<Row> {
-    *seed = seed
-        .wrapping_mul(6364136223846793005)
-        .wrapping_add(1442695040888963407);
-    let pick = *seed >> 33;
+fn random(rng: &mut Rng, depth: u32) -> Part<Row> {
+    let pick = rng.next_u64();
     if depth == 0 || pick.is_multiple_of(5) {
         return Part::literal(atom(pick % 6));
     }
-    let (a, b) = (random(seed, depth - 1), random(seed, depth - 1));
+    let (a, b) = (random(rng, depth - 1), random(rng, depth - 1));
     match pick % 3 {
         0 => a.zip(&b, Op::Or),
         1 => a.zip(&b, Op::And),
@@ -25,20 +23,17 @@ fn random(seed: &mut u64, depth: u32) -> Part<Row> {
 
 /// The part built from `random`'s connectives as expressions, so that every form is met;
 /// an operand is at times one built before, kept in `pool`, so that expressions are shared.
-fn random_expr(seed: &mut u64, depth: u32, pool: &mut Vec<Part<Row>>) -> Part<Row> {
-    *seed = seed
-        .wrapping_mul(6364136223846793005)
-        .wrapping_add(1442695040888963407);
-    let pick = *seed >> 33;
+fn random_expr(rng: &mut Rng, depth: u32, pool: &mut Vec<Part<Row>>) -> Part<Row> {
+    let pick = rng.next_u64();
     if !pool.is_empty() && pick % 7 == 3 {
         return pool[(pick / 7) as usize % pool.len()].clone();
     }
     if depth == 0 || pick.is_multiple_of(5) {
-        return random(seed, 2);
+        return random(rng, 2);
     }
     let (a, b) = (
-        random_expr(seed, depth - 1, pool),
-        random_expr(seed, depth - 1, pool),
+        random_expr(rng, depth - 1, pool),
+        random_expr(rng, depth - 1, pool),
     );
     let p = match pick % 3 {
         0 => Part::connect(Op::Or, a, b),
@@ -57,15 +52,15 @@ fn three_valued_operations_keep_the_assignments() {
     // assignment agreeing with what it fixes; settling keeps every assignment in the
     // part, and makes it empty only when the part is; an atom forced taken is in every assignment in the part, and one
     // forced refused in none.
-    let mut seed = crate::seed::seed("three_valued_operations_keep_the_assignments");
+    let (mut rng, _) = Rng::fresh("three_valued_operations_keep_the_assignments");
     let mut met = [0usize; 4];
     for _ in 0..600 {
-        let p = if seed.is_multiple_of(2) {
-            random(&mut seed, 6)
+        let p = if rng.coin() {
+            random(&mut rng, 6)
         } else {
-            random_expr(&mut seed, 5, &mut Vec::new())
+            random_expr(&mut rng, 5, &mut Vec::new())
         };
-        let (known, fixed) = ((seed >> 7) as u32 % 64, (seed >> 13) as u32 % 64);
+        let (known, fixed) = (rng.below(64) as u32, rng.below(64) as u32);
         for (n, k) in met.iter_mut().zip(three_valued_holds(&p, known, fixed)) {
             *n += usize::from(k);
         }
@@ -380,13 +375,8 @@ fn lists_agree_with_the_diagrams_apply_built() {
         .collect();
     // The id of the one list of each function, by its values.
     let mut ids: HashMap<u64, u64> = HashMap::new();
-    let mut seed = crate::seed::seed("lists_agree_with_the_diagrams_apply_built");
-    let mut next = || {
-        seed = seed
-            .wrapping_mul(6364136223846793005)
-            .wrapping_add(1442695040888963407);
-        seed >> 33
-    };
+    let (mut rng, _) = Rng::fresh("lists_agree_with_the_diagrams_apply_built");
+    let mut next = || rng.next_u64();
     let (mut joined, mut found_again) = (0usize, 0usize);
     for _ in 0..4_000 {
         let r = next() as usize;
@@ -523,10 +513,10 @@ fn list_agrees(
 
 #[test]
 fn list_matches_the_one_form_found_from_its_values() {
-    let mut seed = crate::seed::seed("list_matches_the_one_form_found_from_its_values");
+    let (mut rng, _) = Rng::fresh("list_matches_the_one_form_found_from_its_values");
     let mut lists = 0;
     for _ in 0..800 {
-        let Part::Bdd(b) = random(&mut seed, 6) else {
+        let Part::Bdd(b) = random(&mut rng, 6) else {
             continue;
         };
         list_matches(&b);
@@ -953,13 +943,8 @@ fn the_halves_of_exclusive_ors_meet_as_zip_meets_them() {
     // for literals and exclusive ors over disjoint atoms; it must make the part `zip` makes.
     // Random sets of 1 to 7 atoms, each built in a random order, are met with each other and
     // their complements, both ways round.
-    let mut seed = crate::seed::seed("the_halves_of_exclusive_ors_meet_as_zip_meets_them");
-    let mut next = |below: u64| {
-        seed = seed
-            .wrapping_mul(6364136223846793005)
-            .wrapping_add(1442695040888963407);
-        (seed >> 33) % below
-    };
+    let (mut rng, _) = Rng::fresh("the_halves_of_exclusive_ors_meet_as_zip_meets_them");
+    let mut next = |below: u64| rng.below_u64(below);
     let mut first = 0u64;
     let mut parts = Vec::new();
     for _ in 0..60 {
@@ -2042,13 +2027,8 @@ fn list_operations_agree_with_plain_lists() {
     // kept, since ids are compared only between lists alive at once.
     const ATOMS: u64 = 40;
     let base = 71000;
-    let mut seed = crate::seed::seed("list_operations_agree_with_plain_lists") | 1;
-    let mut next = move || {
-        seed ^= seed << 13;
-        seed ^= seed >> 7;
-        seed ^= seed << 17;
-        seed
-    };
+    let (mut rng, _) = Rng::fresh("list_operations_agree_with_plain_lists");
+    let mut next = move || rng.next_u64();
     let atoms: Vec<Row> = (0..ATOMS).map(|i| atom(base + i)).collect();
     let index = |a: &Row| atoms.iter().position(|b| b == a).expect("an atom listed") as u64;
     let plain = |b: &Bdd<Row>| Plain {
@@ -2154,13 +2134,8 @@ fn a_set_less_some_literals_is_the_set_they_leave_one_at_a_time() {
     // `set::retain` against removing the literals one at a time (`set::remove`): sets have one
     // shape and are found again in the table, so the two must give one node. Random sets of up
     // to 200 literals, with none, some or all removed.
-    let mut seed = 7u64;
-    let mut next = || {
-        seed = seed
-            .wrapping_mul(6364136223846793005)
-            .wrapping_add(1442695040888963407);
-        seed >> 33
-    };
+    let mut rng = Rng::new(7);
+    let mut next = || rng.next_u64();
     for round in 0..300 {
         let m = next() % 200 + 1;
         let mut t = set::single((atom(round * 1000), next() % 2 == 0));
@@ -2978,20 +2953,15 @@ fn the_delegating_orders_and_texts_of_parts_agree_with_what_they_delegate_to() {
 /// assignment of the six atoms.
 #[test]
 fn connecting_keeps_the_value_of_the_unfolded_expression() {
-    let mut seed = crate::seed::seed("connecting_keeps_the_value_of_the_unfolded_expression");
-    let operand = |seed: &mut u64| {
-        *seed = seed
-            .wrapping_mul(6364136223846793005)
-            .wrapping_add(1442695040888963407);
-        match (*seed >> 33) % 4 {
-            0 => Part::Bdd(Bdd::Leaf(true)),
-            1 => Part::Bdd(Bdd::Leaf(false)),
-            _ => random(seed, 2),
-        }
+    let (mut rng, _) = Rng::fresh("connecting_keeps_the_value_of_the_unfolded_expression");
+    let operand = |rng: &mut Rng| match rng.below(4) {
+        0 => Part::Bdd(Bdd::Leaf(true)),
+        1 => Part::Bdd(Bdd::Leaf(false)),
+        _ => random(rng, 2),
     };
     let mut folded = 0;
     for _ in 0..2000 {
-        let (a, b) = (operand(&mut seed), operand(&mut seed));
+        let (a, b) = (operand(&mut rng), operand(&mut rng));
         for op in [Op::Or, Op::And] {
             let or = matches!(op, Op::Or);
             let new = Part::connect(op, a.clone(), b.clone());
@@ -3069,10 +3039,10 @@ fn atoms_mapped_keep_the_value_at_the_mapped_assignment() {
     let atoms: Vec<Row> = (0..6).map(atom).collect();
     let index = |a: &Row| atoms.iter().position(|b| b == a).expect("one of x_0 … x_5");
     let map = |a: &Row| atoms[(index(a) + 2) % 6].clone();
-    let mut seed = 7;
+    let mut rng = Rng::new(7);
     let mut pool = Vec::new();
     let mut parts = vec![Part::leaf(true), Part::leaf(false)];
-    parts.extend((0..300).map(|_| random_expr(&mut seed, 4, &mut pool)));
+    parts.extend((0..300).map(|_| random_expr(&mut rng, 4, &mut pool)));
     for p in &parts {
         let q = p.map_atoms(&map);
         for bits in 0u32..64 {
@@ -3187,10 +3157,10 @@ fn reaching_visits_the_nodes_a_walk_of_every_path_finds() {
         ));
         assert_eq!(calls, 0);
     }
-    let mut seed = crate::seed::seed("reaching_visits_the_nodes_a_walk_of_every_path_finds");
+    let (mut rng, _) = Rng::fresh("reaching_visits_the_nodes_a_walk_of_every_path_finds");
     let (mut lists, mut stopped) = (0, 0);
     for _ in 0..800 {
-        let Part::Bdd(b) = random(&mut seed, 6) else {
+        let Part::Bdd(b) = random(&mut rng, 6) else {
             continue;
         };
         let mut expected = Vec::new();
@@ -3339,9 +3309,9 @@ fn walks_pass_over_what_they_met_and_stop_when_f_fails() {
 /// equal to itself (cover8: the tie was reached only in the short-addresses build).
 #[test]
 fn a_part_goes_before_itself() {
-    let mut seed = crate::seed::seed("a_part_goes_before_itself");
+    let (mut rng, _) = Rng::fresh("a_part_goes_before_itself");
     for _ in 0..50 {
-        let p = random_expr(&mut seed, 4, &mut Vec::new());
+        let p = random_expr(&mut rng, 4, &mut Vec::new());
         assert!(p.before(&p), "{p:?}");
     }
 }

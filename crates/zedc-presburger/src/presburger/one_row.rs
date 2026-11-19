@@ -318,13 +318,8 @@ mod tests {
     /// A random box of three atoms, some ends open, and a row `t >= 0` or `t == 0` (its
     /// coefficients 1 or -1 for an equation), from `seed`.
     fn case(seed: u64) -> (Vec<Con>, [Atom; 3], Ends) {
-        let mut s = seed.wrapping_mul(0x9E37_79B9_7F4A_7C15) | 1;
-        let mut next = |n: u64| {
-            s ^= s << 13;
-            s ^= s >> 7;
-            s ^= s << 17;
-            s % n
-        };
+        let mut rng = crate::seed::Rng::new(seed);
+        let mut next = |n: u64| rng.below_u64(n);
         let atoms = ["x", "y", "z"].map(|n| Atom::Sym(n.into()));
         let mut cons = Vec::new();
         let mut ends = [(None, None); 3];

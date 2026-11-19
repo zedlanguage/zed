@@ -280,13 +280,9 @@ fn scalar_read_from_the_parts_is_that_of_comparing_types() {
         scalar.is_some()
     };
     let lit = |v: Value| Type::lit(&v).expect("a literal");
-    let mut seed = crate::seed::seed("scalar_read_from_the_parts_is_that_of_comparing_types") | 1;
-    let mut below = |n: u64| {
-        seed ^= seed << 13;
-        seed ^= seed >> 7;
-        seed ^= seed << 17;
-        seed % n
-    };
+    let (mut rng, _) =
+        crate::seed::Rng::fresh("scalar_read_from_the_parts_is_that_of_comparing_types");
+    let mut below = |n: u64| rng.below_u64(n);
     let (mut ones, mut others) = (0, 0);
     let piece = |below: &mut dyn FnMut(u64) -> u64| match below(12) {
         0 => lit(Value::Bool(below(2) == 0)),
@@ -960,13 +956,8 @@ fn ints_listed_are_the_ints_the_type_holds() {
     let lit = |v: Value| Type::lit(&v).expect("a literal");
     let big = Value::int(num_bigint::BigInt::from(1u8) << 70usize);
     let far = Value::int(num_bigint::BigInt::from(1u8) << 90usize);
-    let mut seed = crate::seed::seed("ints_listed_are_the_ints_the_type_holds") | 1;
-    let mut below = |n: u64| {
-        seed ^= seed << 13;
-        seed ^= seed >> 7;
-        seed ^= seed << 17;
-        seed % n
-    };
+    let (mut rng, _) = crate::seed::Rng::fresh("ints_listed_are_the_ints_the_type_holds");
+    let mut below = |n: u64| rng.below_u64(n);
     let piece = |below: &mut dyn FnMut(u64) -> u64| match below(9) {
         0..=2 => lit(Value::Int(below(9) as i64 - 4)),
         3 => lit(big.clone()),
@@ -1015,13 +1006,8 @@ fn ints_listed_are_the_ints_the_type_holds() {
 fn ints_of_a_set_is_the_union_of_its_literals() {
     let lit = |v: &Value| Type::lit(v).expect("a literal");
     let wide = |k: u64| Value::int(num_bigint::BigInt::from(k + 1) << 70usize);
-    let mut seed = crate::seed::seed("ints_of_a_set_is_the_union_of_its_literals") | 1;
-    let mut below = |n: u64| {
-        seed ^= seed << 13;
-        seed ^= seed >> 7;
-        seed ^= seed << 17;
-        seed % n
-    };
+    let (mut rng, _) = crate::seed::Rng::fresh("ints_of_a_set_is_the_union_of_its_literals");
+    let mut below = |n: u64| rng.below_u64(n);
     for n in 0..=40 {
         let vs: Vec<Value> = (0..n)
             .map(|_| match below(4) {
@@ -1059,13 +1045,8 @@ fn lists_values_of_agrees_with_listing_the_meet() {
         Type::string(),
         Type::f32(),
     ];
-    let mut seed = crate::seed::seed("lists_values_of_agrees_with_listing_the_meet") | 1;
-    let mut below = |n: u64| {
-        seed ^= seed << 13;
-        seed ^= seed >> 7;
-        seed ^= seed << 17;
-        seed % n
-    };
+    let (mut rng, _) = crate::seed::Rng::fresh("lists_values_of_agrees_with_listing_the_meet");
+    let mut below = |n: u64| rng.below_u64(n);
     let piece = |below: &mut dyn FnMut(u64) -> u64| match below(12) {
         0 => lit(Value::Int(below(3) as i64)),
         1 => lit(Value::rat(half.clone())),

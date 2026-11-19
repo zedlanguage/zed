@@ -2119,33 +2119,19 @@ mod r6_row_order_tests {
 mod unbounded_row_tests {
     use super::*;
 
-    /// A small linear congruential generator, so the rows are the same on every run.
-    struct Lcg(u64);
-
-    impl Lcg {
-        fn below(&mut self, n: u64) -> u64 {
-            self.0 = self
-                .0
-                .wrapping_mul(6_364_136_223_846_793_005)
-                .wrapping_add(1_442_695_040_888_963_407);
-            (self.0 >> 33) % n
-        }
-    }
-
     #[test]
     fn every_hit_has_a_point_and_its_fill_gives_one() {
-        let mut rng = Lcg(0x5eed_0f0e_3a77);
+        // A fixed seed, so the rows are the same on every run.
+        let mut rng = crate::seed::Rng::new(0x5eed_0f0e_3a77);
         let mut reached: BTreeMap<&str, usize> = BTreeMap::new();
         let mut wrong = Vec::new();
         for _ in 0..2000 {
-            let k = 2 + rng.below(5) as usize;
+            let k = 2 + rng.below(5);
             // Distinct names in a random order, so the greatest name falls anywhere in the row.
             let mut names: Vec<usize> = (0..k).collect();
-            for i in (1..k).rev() {
-                names.swap(i, rng.below(i as u64 + 1) as usize);
-            }
-            let ws: Vec<i128> = (0..k).map(|_| 1 + rng.below(6) as i128).collect();
-            let highs: Vec<usize> = (0..k).map(|_| rng.below(2) as usize).collect();
+            rng.shuffle(&mut names);
+            let ws: Vec<i128> = (0..k).map(|_| rng.int_i128(1, 6)).collect();
+            let highs: Vec<usize> = (0..k).map(|_| rng.below(2)).collect();
             let row = || -> Vec<DisjInfo> {
                 (0..k)
                     .map(|i| DisjInfo {
@@ -2205,8 +2191,8 @@ mod unbounded_row_tests {
                 }
             }
         }
-        // Each kind of hit is reached (31916 exact, 13184 fast, 15958 fast at gmax, 32882 slow
-        // on 2026-11-14), so the test does not silently stop reaching one.
+        // Each kind of hit is reached (31828 exact, 12360 fast, 15914 fast at gmax, 32022 slow
+        // on 2026-11-19), so the test does not silently stop reaching one.
         for kind in ["exact", "fast", "fast at gmax", "slow"] {
             assert!(reached.contains_key(kind), "no {kind} hit: {reached:?}");
         }

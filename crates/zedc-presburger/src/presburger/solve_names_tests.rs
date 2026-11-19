@@ -8,29 +8,13 @@ use super::*;
 
 mod bench;
 
-/// A pseudo-random number generator (xorshift64), seeded by [`crate::seed::seed`]: a new seed
-/// on each run, printed, which `ZED_TEST_SEED` repeats.
-struct Rng(u64);
+use crate::seed::Rng;
 
-impl Rng {
-    fn below(&mut self, n: u64) -> u64 {
-        self.0 ^= self.0 << 13;
-        self.0 ^= self.0 >> 7;
-        self.0 ^= self.0 << 17;
-        self.0 % n
-    }
-
-    fn int(&mut self, lo: i128, hi: i128) -> i128 {
-        lo + self.below((hi - lo + 1) as u64) as i128
-    }
-
-    fn shuffled(&mut self, n: usize) -> Vec<usize> {
-        let mut p: Vec<usize> = (0..n).collect();
-        for i in (1..n).rev() {
-            p.swap(i, self.below(i as u64 + 1) as usize);
-        }
-        p
-    }
+/// `0..n` in a random order.
+fn shuffled(rng: &mut Rng, n: usize) -> Vec<usize> {
+    let mut p: Vec<usize> = (0..n).collect();
+    rng.shuffle(&mut p);
+    p
 }
 
 /// A row `Σ c[i]·x[i] + k`, compared with zero by `>=`, or `==` when `eq`, over variables by
@@ -100,21 +84,21 @@ fn names(rng: &mut Rng, n: usize) -> Vec<String> {
 
 /// Random rows over `n` variables with small coefficients.
 fn random_rows(rng: &mut Rng, n: usize) -> Vec<Row> {
-    let m = 2 + rng.below(2 * n as u64 + 2) as usize;
+    let m = 2 + rng.below(2 * n + 2);
     (0..m)
         .map(|_| {
-            let w = 1 + rng.below(n.min(4) as u64) as usize;
-            let vars = rng.shuffled(n);
+            let w = 1 + rng.below(n.min(4));
+            let vars = shuffled(rng, n);
             let c: Vec<(usize, i128)> = (vars[..w].iter())
                 .map(|&i| {
-                    let mut k = rng.int(-4, 4);
+                    let mut k = rng.int_i128(-4, 4);
                     if k == 0 {
                         k = 1;
                     }
                     (i, k)
                 })
                 .collect();
-            row(&c, rng.int(-8, 8), rng.below(4) == 0)
+            row(&c, rng.int_i128(-8, 8), rng.below(4) == 0)
         })
         .collect()
 }
@@ -124,19 +108,19 @@ fn random_rows(rng: &mut Rng, n: usize) -> Vec<Row> {
 /// From about 7 pairs the Omega test refuses these (`modular::r7_tests`, 2026-11-16), so
 /// [`solve`] answers by the modular solver's point.
 fn division_pairs(rng: &mut Rng) -> (usize, Vec<Row>) {
-    let pairs = 1 + rng.below(10) as usize;
+    let pairs = 1 + rng.below(10);
     let mut rows = vec![
-        row(&[(0, 1)], -rng.int(0, 90), false),
-        row(&[(2, 1)], -rng.int(0, 3), false),
+        row(&[(0, 1)], -rng.int_i128(0, 90), false),
+        row(&[(2, 1)], -rng.int_i128(0, 3), false),
     ];
     let mut n = 1;
     for _ in 0..pairs {
-        let c = rng.int(2, 7);
+        let c = rng.int_i128(2, 7);
         let (q, r) = (n, n + 1);
         n += 2;
-        rows.push(row(&[(0, 1), (q, -c), (r, -1)], -rng.int(-9, 9), true));
+        rows.push(row(&[(0, 1), (q, -c), (r, -1)], -rng.int_i128(-9, 9), true));
         rows.push(row(&[(r, 1)], 0, false));
-        rows.push(row(&[(r, -1)], c - 1 - rng.int(0, 1), false));
+        rows.push(row(&[(r, -1)], c - 1 - rng.int_i128(0, 1), false));
     }
     (n, rows)
 }
@@ -152,7 +136,7 @@ fn aliased_pairs(rng: &mut Rng) -> (usize, Vec<Row>) {
             let a = n;
             n += 1;
             let s = if rng.below(2) == 0 { 1 } else { -1 };
-            rows.push(row(&[(a, 1), (0, -s)], -rng.int(-5, 5), true));
+            rows.push(row(&[(a, 1), (0, -s)], -rng.int_i128(-5, 5), true));
             r.c[0].0 = a;
         }
         rows.push(r);
@@ -169,12 +153,12 @@ fn tied_cycles(rng: &mut Rng) -> (usize, Vec<Row>) {
     } else {
         vec![(0, 1), (1, 2), (2, 0), (3, 4), (4, 5), (5, 3)]
     };
-    let (a, b, k) = (rng.int(1, 3), rng.int(-3, 3), rng.int(-5, 5));
+    let (a, b, k) = (rng.int_i128(1, 3), rng.int_i128(-3, 3), rng.int_i128(-5, 5));
     let eq = rng.below(3) == 0;
     let mut rows: Vec<Row> = (edges.iter())
         .map(|&(i, j)| row(&[(i, a), (j, b)], k, eq))
         .collect();
-    let bound = rng.int(1, 6);
+    let bound = rng.int_i128(1, 6);
     for i in 0..n {
         rows.push(row(&[(i, 1)], bound, false));
         rows.push(row(&[(i, -1)], bound, false));
@@ -185,44 +169,44 @@ fn tied_cycles(rng: &mut Rng) -> (usize, Vec<Row>) {
 /// Unit equalities joining variables into classes, with rows of other coefficients over them,
 /// as the representatives of `Ties` and the roots of the modular solver choose among.
 fn unit_classes(rng: &mut Rng) -> (usize, Vec<Row>) {
-    let n = 3 + rng.below(4) as usize;
+    let n = 3 + rng.below(4);
     let mut rows = Vec::new();
     for i in 1..n {
         if rng.below(3) != 0 {
-            let j = rng.below(i as u64) as usize;
+            let j = rng.below(i);
             let s = if rng.below(2) == 0 { 1 } else { -1 };
-            rows.push(row(&[(i, 1), (j, -s)], rng.int(-3, 3), true));
+            rows.push(row(&[(i, 1), (j, -s)], rng.int_i128(-3, 3), true));
         }
     }
     for _ in 0..1 + rng.below(3) {
-        let i = rng.below(n as u64) as usize;
-        let j = rng.below(n as u64) as usize;
-        let (a, b) = (rng.int(2, 5), rng.int(-5, 5));
+        let i = rng.below(n);
+        let j = rng.below(n);
+        let (a, b) = (rng.int_i128(2, 5), rng.int_i128(-5, 5));
         let c: Vec<(usize, i128)> = if i == j {
             vec![(i, a)]
         } else {
             vec![(i, a), (j, b)]
         };
-        rows.push(row(&c, rng.int(-9, 9), rng.below(2) == 0));
+        rows.push(row(&c, rng.int_i128(-9, 9), rng.below(2) == 0));
     }
     (n, rows)
 }
 
 /// Wide equalities of unit terms, nested or overlapping, with boxes: the slack reductions.
 fn wide(rng: &mut Rng) -> (usize, Vec<Row>) {
-    let n = 4 + rng.below(4) as usize;
+    let n = 4 + rng.below(4);
     let mut rows = Vec::new();
     for _ in 0..1 + rng.below(3) {
-        let w = 2 + rng.below(n as u64 - 1) as usize;
-        let vars = rng.shuffled(n);
+        let w = 2 + rng.below(n - 1);
+        let vars = shuffled(rng, n);
         let c: Vec<(usize, i128)> = (vars[..w].iter())
             .map(|&i| (i, if rng.below(4) == 0 { -1 } else { 1 }))
             .collect();
-        rows.push(row(&c, -rng.int(0, 2 * w as i128), true));
+        rows.push(row(&c, -rng.int_i128(0, 2 * w as i128), true));
     }
     for i in 0..n {
         rows.push(row(&[(i, 1)], 0, false));
-        rows.push(row(&[(i, -1)], rng.int(1, 3), false));
+        rows.push(row(&[(i, -1)], rng.int_i128(1, 3), false));
     }
     (n, rows)
 }
@@ -231,7 +215,7 @@ fn wide(rng: &mut Rng) -> (usize, Vec<Row>) {
 fn draw(rng: &mut Rng, f: u64) -> (usize, Vec<Row>) {
     match f {
         0 => {
-            let n = 2 + rng.below(5) as usize;
+            let n = 2 + rng.below(5);
             (n, random_rows(rng, n))
         }
         1 => division_pairs(rng),
@@ -249,7 +233,7 @@ const FAMILIES: u64 = 7;
 /// The systems drawn, each with every answer it got and how often, where its namings or
 /// orders of rows did not give one answer.
 fn differing(seed: u64, systems: usize, namings: usize) -> Vec<String> {
-    let mut rng = Rng(seed | 1);
+    let mut rng = Rng::new(seed);
     let mut found = Vec::new();
     for s in 0..systems {
         let (n, rows) = draw(&mut rng, s as u64 % FAMILIES);
@@ -258,7 +242,7 @@ fn differing(seed: u64, systems: usize, namings: usize) -> Vec<String> {
             let name = names(&mut rng, n);
             let mut cs = cons(&rows, &name);
             let how = if t % 2 == 1 {
-                let order = rng.shuffled(cs.len());
+                let order = shuffled(&mut rng, cs.len());
                 cs = order.iter().map(|&i| cs[i].clone()).collect();
                 "shuffled"
             } else {
@@ -314,10 +298,10 @@ fn tied_remainders(m: i128, ks: [i128; 3], pairs: usize, triangle: bool) -> (usi
 
 /// [`tied_remainders`] with its sizes and constants drawn.
 fn tied_remainders_drawn(rng: &mut Rng) -> (usize, Vec<Row>) {
-    let m = rng.int(2, 1000);
-    let k = |rng: &mut Rng| -rng.int(160, 160 + 2 * m);
+    let m = rng.int_i128(2, 1000);
+    let k = |rng: &mut Rng| -rng.int_i128(160, 160 + 2 * m);
     let ks = [k(rng), k(rng), k(rng)];
-    tied_remainders(m, ks, rng.below(13) as usize, rng.below(3) == 0)
+    tied_remainders(m, ks, rng.below(13), rng.below(3) == 0)
 }
 
 #[test]
@@ -376,9 +360,7 @@ fn two_tied_remainder_rows_are_answered_alike_under_every_naming() {
 /// holds under every naming.
 #[test]
 fn solve_modular_never_gives_two_verdicts_on_tied_remainder_rows() {
-    let mut rng = Rng(crate::seed::seed(
-        "solve_modular_never_gives_two_verdicts_on_tied_remainder_rows",
-    ));
+    let (mut rng, _) = Rng::fresh("solve_modular_never_gives_two_verdicts_on_tied_remainder_rows");
     let mut answered = 0;
     for (m, pairs, triangle) in [
         (3, 0, false),

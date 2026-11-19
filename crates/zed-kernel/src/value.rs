@@ -5021,6 +5021,7 @@ pub(crate) mod key_forms;
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::seed::Rng;
 
     impl Family {
         /// [`Family::entry_beside`] at a key whose value these tests can always build.
@@ -5038,11 +5039,9 @@ mod tests {
         let mut es: Vec<u64> = vec![0, 1, 15, 16, 17, P - 2, P - 1, P, u64::MAX];
         es.extend((0..64).map(|b| 1_u64 << b));
         es.extend((0..16).map(|j| 15_u64 << (4 * j)));
-        let mut x: u64 = 7;
+        let mut rng = crate::seed::Rng::new(7);
         for _ in 0..10_000 {
-            x = x
-                .wrapping_mul(6364136223846793005)
-                .wrapping_add(1442695040888963407);
+            let x = rng.next_u64();
             es.push(x);
             es.push(x % (P - 1));
         }
@@ -5274,12 +5273,10 @@ mod tests {
     #[test]
     fn kept_sums_follow_changes() {
         let mut m: btree::Map<Value, Value> = btree::Map::default();
-        let mut x: u64 = 12345;
+        let mut rng = crate::seed::Rng::new(12345);
         let d = |m: &btree::Map<Value, Value>| digest(&Value::Family(Family::from_map(m.clone())));
         for step in 0..3000 {
-            x = x
-                .wrapping_mul(6364136223846793005)
-                .wrapping_add(1442695040888963407);
+            let x = rng.next_u64();
             let k = Value::Int(i64::try_from(x >> 54).expect("10 bits"));
             let kept = m.clone();
             if x & 3 == 0 {
@@ -6127,9 +6124,8 @@ mod tests {
         // the set of the wide integers themselves is built as well. A key too far from both
         // ends to move is checked against the binary search `search_beside`, which reads only
         // the order. And `wide_beside` itself, given the moved ends, agrees with the small set.
-        let mut d = Draw(crate::seed::seed(
-            "the_entry_beside_a_key_of_a_wide_range_is_the_one_a_built_set_gives",
-        ));
+        let (mut d, _) =
+            Rng::fresh("the_entry_beside_a_key_of_a_wide_range_is_the_one_a_built_set_gives");
         let two = BigInt::from(2);
         let centres = [
             BigInt::zero(),
@@ -6161,12 +6157,9 @@ mod tests {
         ]);
         let (mut by_set, mut by_search) = (0usize, 0usize);
         for _ in 0..40 {
-            let mut c = [
-                d.below(centres.len() as u64) as usize,
-                d.below(centres.len() as u64) as usize,
-            ];
+            let mut c = [d.below(centres.len()), d.below(centres.len())];
             c.sort_by_key(|&i| centres[i].clone());
-            let mut off = [d.below(81) as i64 - 40, d.below(81) as i64 - 40];
+            let mut off = [d.int(-40, 40), d.int(-40, 40)];
             let one = c[0] == c[1];
             if one {
                 off.sort();
@@ -6185,7 +6178,7 @@ mod tests {
                     keys.extend(named_near(e).into_iter().map(|k| (k, side)));
                 }
                 for _ in 0..30 {
-                    let at = centre + (d.below(201) as i64 - 100);
+                    let at = centre + d.int(-100, 100);
                     let k = match d.below(4) {
                         0 => Value::int(at),
                         1 => {
@@ -6708,11 +6701,9 @@ mod tests {
         // later pairs of its run back, and a pair must stay findable from its home slot.
         let mut table = ReadSet::new();
         let mut set = HashSet::new();
-        let mut x: u64 = crate::seed::seed("the_table_of_pairs_holds_what_a_set_holds") | 1;
+        let (mut rng, _) = Rng::fresh("the_table_of_pairs_holds_what_a_set_holds");
         for _ in 0..20_000 {
-            x ^= x << 13;
-            x ^= x >> 7;
-            x ^= x << 17;
+            let x = rng.next_u64();
             let pair = (x % 23, (x >> 8) % 19);
             if pair == EMPTY {
                 // Two empty values are read at once and never kept.
@@ -6794,30 +6785,13 @@ mod tests {
         }
     }
 
-    /// splitmix64 from `seed`.
-    struct Draw(u64);
-
-    impl Draw {
-        fn next(&mut self) -> u64 {
-            self.0 = self.0.wrapping_add(0x9e37_79b9_7f4a_7c15);
-            let mut z = self.0;
-            z = (z ^ (z >> 30)).wrapping_mul(0xbf58_476d_1ce4_e5b9);
-            z = (z ^ (z >> 27)).wrapping_mul(0x94d0_49bb_1331_11eb);
-            z ^ (z >> 31)
-        }
-
-        fn below(&mut self, n: u64) -> u64 {
-            self.next() % n
-        }
-    }
-
     /// `n` integers in the 64-bit range: half from -2 to 2, so that neighbors are often equal,
     /// and the rest drawn over the whole range.
     pub(super) fn drawn_ints(n: usize) -> Vec<Value> {
-        let mut d = Draw(crate::seed::seed("drawn_ints"));
+        let (mut d, _) = Rng::fresh("drawn_ints");
         let mut int = || match d.below(2) {
-            0 => d.below(5) as i64 - 2,
-            _ => d.next() as i64,
+            0 => d.int(-2, 2),
+            _ => d.next_u64() as i64,
         };
         (0..n).map(|_| Value::Int(int())).collect()
     }
@@ -6867,7 +6841,7 @@ mod tests {
     /// equal in value but of two kinds: integers near 0, at the ends of the 64-bit range and
     /// drawn over it, wide integers just past it, rationals and floats that equal integers, both
     /// zeros, NaN and the infinities, and tuples, keypaths, atoms and families of these.
-    fn any_value(d: &mut Draw, depth: u32) -> Value {
+    fn any_value(d: &mut Rng, depth: u32) -> Value {
         const ENDS: [i64; 9] = [
             i64::MIN,
             i64::MIN + 1,
@@ -6891,7 +6865,7 @@ mod tests {
             9_223_372_036_854_775_808.0,
             -9_223_372_036_854_775_808.0,
         ];
-        let list = |d: &mut Draw| -> Vec<Value> {
+        let list = |d: &mut Rng| -> Vec<Value> {
             (0..d.below(3))
                 .map(|_| any_value(d, depth.saturating_sub(1)))
                 .collect()
@@ -6899,9 +6873,9 @@ mod tests {
         match d.below(if depth == 0 { 10 } else { 14 }) {
             0 => Value::Bool(d.below(2) == 1),
             1..=3 => Value::Int(match d.below(3) {
-                0 => ENDS[d.below(ENDS.len() as u64) as usize],
-                1 => d.below(5) as i64 - 2,
-                _ => d.next() as i64,
+                0 => d.pick(&ENDS),
+                1 => d.int(-2, 2),
+                _ => d.next_u64() as i64,
             }),
             4 => {
                 let past = BigInt::from(d.below(3) + 1);
@@ -6911,18 +6885,18 @@ mod tests {
                 })
             }
             5 => {
-                let (num, den) = (d.below(7) as i64 - 3, d.below(3) as i64 + 1);
+                let (num, den) = (d.int(-3, 3), d.int(1, 3));
                 Value::rat(Rat::new(BigInt::from(num), BigInt::from(den)).expect("den > 0"))
             }
-            6 => Value::float(FLOATS[d.below(FLOATS.len() as u64) as usize]),
-            7 => Value::float32(FLOATS[d.below(FLOATS.len() as u64) as usize] as f32),
-            8 => Value::str(["", "a", "ab", "b"][d.below(4) as usize]),
-            9 => Value::atom(["e", "f"][d.below(2) as usize]),
+            6 => Value::float(d.pick(&FLOATS)),
+            7 => Value::float32(d.pick(&FLOATS) as f32),
+            8 => Value::str(d.pick(&["", "a", "ab", "b"])),
+            9 => Value::atom(d.pick(&["e", "f"])),
             10 => Value::tuple(list(d)),
             11 => Value::path(list(d)),
-            12 => Value::atom_with(["e", "f"][d.below(2) as usize], list(d)),
+            12 => Value::atom_with(d.pick(&["e", "f"]), list(d)),
             _ => {
-                let base = d.below(3) as i64;
+                let base = d.int(0, 2);
                 let values = list(d);
                 Value::from(Family::of(
                     values
@@ -6953,9 +6927,7 @@ mod tests {
     /// draws met more than 2000, 100 and 2000 of them).
     #[test]
     fn the_integer_shortcut_agrees_with_the_general_order() {
-        let mut d = Draw(crate::seed::seed(
-            "the_integer_shortcut_agrees_with_the_general_order",
-        ));
+        let (mut d, _) = Rng::fresh("the_integer_shortcut_agrees_with_the_general_order");
         let mut met = [0usize; 3];
         for _ in 0..50_000 {
             let (a, b) = (any_value(&mut d, 2), any_value(&mut d, 2));
@@ -7037,7 +7009,7 @@ mod tests {
     /// in another form: a `rat` with its powers of 2 and 5 kept or built, a wide integer read
     /// from a decimal exponent or from its digits, a string joined from two parts, a sequence
     /// shared or fresh, a struct payload with fields of another id, and NaN by other bits.
-    fn drawn(d: &mut Draw, depth: u32) -> (Value, Value) {
+    fn drawn(d: &mut Rng, depth: u32) -> (Value, Value) {
         let pick = d.below(if depth == 0 { 7 } else { 10 });
         match pick {
             0 => {
@@ -7045,12 +7017,12 @@ mod tests {
                 (Value::Bool(b), Value::Bool(b))
             }
             1 => {
-                let n = d.below(5) as i64 - 2;
+                let n = d.int(-2, 2);
                 (Value::Int(n), Value::Int(n))
             }
             2 => {
                 // m * 10^k / den, written with an exponent and built in full.
-                let (m, k, den) = (d.below(7) as i64 - 3, d.below(3), 1 + d.below(3) as i64);
+                let (m, k, den) = (d.int(-3, 3), d.below(3), d.int(1, 3));
                 let full = Rat::new(BigInt::from(m * 10_i64.pow(k as u32)), BigInt::from(den))
                     .expect("a denominator above 0");
                 let kept = Rat::decimal(&format!("{m}e{k}"))
@@ -7064,7 +7036,7 @@ mod tests {
             }
             3 => {
                 // 10^(19 + k), beyond 64 bits, from its digits and from an exponent.
-                let k = d.below(2) as usize;
+                let k = d.below(2);
                 let digits = format!("1{}", "0".repeat(19 + k));
                 let a = Value::int_text(&digits, 10)
                     .expect("memory")
@@ -7078,7 +7050,7 @@ mod tests {
             }
             4 => {
                 let bits = [0.0, -0.0, 1.5, f64::NAN, f64::INFINITY];
-                let x = bits[d.below(5) as usize];
+                let x = d.pick(&bits);
                 let y = if x.is_nan() {
                     f64::from_bits(x.to_bits() ^ 1)
                 } else {
@@ -7088,22 +7060,22 @@ mod tests {
             }
             5 => {
                 let words = ["", "ab", "abc", "a"];
-                let (s, t) = (words[d.below(4) as usize], words[d.below(4) as usize]);
+                let (s, t) = (d.pick(&words), d.pick(&words));
                 let whole = Value::str(&format!("{s}{t}"));
                 let joined = Text::join(&Text::from(s), &Text::from(t)).expect("short");
                 (whole, Value::Str(joined))
             }
             6 => {
                 // Long enough that a text spans several of the blocks its hash reads.
-                let n = 60 + d.below(10) as usize;
-                let cut = d.below(n as u64) as usize;
+                let n = 60 + d.below(10);
+                let cut = d.below(n);
                 let s = "x".repeat(n);
                 let joined =
                     Text::join(&Text::from(&s[..cut]), &Text::from(&s[cut..])).expect("short");
                 (Value::str(&s), Value::Str(joined))
             }
             7 | 8 => {
-                let len = d.below(3) as usize;
+                let len = d.below(3);
                 let (xs, ys): (Vec<Value>, Vec<Value>) =
                     (0..len).map(|_| drawn(d, depth - 1)).unzip();
                 let (a, b) = if pick == 7 {
@@ -7119,8 +7091,8 @@ mod tests {
                 }
             }
             _ => {
-                let name = ["e", "f"][d.below(2) as usize];
-                let len = d.below(3) as usize;
+                let name = d.pick(&["e", "f"]);
+                let len = d.below(3);
                 let (xs, ys): (Vec<Value>, Vec<Value>) =
                     (0..len).map(|_| drawn(d, depth - 1)).unzip();
                 if d.below(2) == 0 {
@@ -7148,7 +7120,7 @@ mod tests {
     /// test asserted that the draws met more than 100, 1000 and 1000 of them).
     #[test]
     fn equal_values_hash_alike() {
-        let mut d = Draw(crate::seed::seed("equal_values_hash_alike"));
+        let (mut d, _) = Rng::fresh("equal_values_hash_alike");
         let mut met = [0usize; 3];
         let mut last: std::collections::VecDeque<Value> = Default::default();
         let keys = std::hash::RandomState::new();

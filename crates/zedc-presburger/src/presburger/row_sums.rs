@@ -4045,13 +4045,8 @@ mod tests {
     /// words; `x - y + h` in words; all in intervals) and each parity is met.
     #[test]
     fn lattice_by_pairs() {
-        let mut seed = 0x9E37_79B9_7F4A_7C15_u64;
-        let mut next = move |n: u64| {
-            seed = seed
-                .wrapping_mul(6_364_136_223_846_793_005)
-                .wrapping_add(1_442_695_040_888_963_407);
-            (seed >> 33) % n
-        };
+        let mut rng = crate::seed::Rng::new(0x9E37_79B9_7F4A_7C15);
+        let mut next = move |n: u64| rng.below_u64(n);
         let set = |top: i64, next: &mut dyn FnMut(u64) -> u64| {
             let mut keys: Vec<i64> = (0..next(12)).map(|_| next(top as u64) as i64).collect();
             let mut fill: Vec<(i64, i64)> = (0..next(3))
@@ -4211,13 +4206,8 @@ mod tests {
     /// reach below key 0, and ranges of one value. Each kind of answer is met.
     #[test]
     fn least_step_finds_the_step_the_walk_finds() {
-        let mut seed = 0x2545_F491_4F6C_DD1D_u64;
-        let mut next = move |n: u64| {
-            seed = seed
-                .wrapping_mul(6_364_136_223_846_793_005)
-                .wrapping_add(1_442_695_040_888_963_407);
-            (seed >> 33) % n
-        };
+        let mut rng = crate::seed::Rng::new(0x2545_F491_4F6C_DD1D);
+        let mut next = move |n: u64| rng.below_u64(n);
         let (mut found, mut none) = (0, 0);
         for case in 0..3000 {
             let top_key = [50, 300, 5000][case % 3];
@@ -4414,13 +4404,8 @@ mod tests {
     /// counts of each are printed, not asserted, since they depend on the draws.
     #[test]
     fn the_route_and_the_join_agree_on_wide_ranges_with_several_defined_atoms() {
-        let mut seed = 0x1F12_3BB5_5A47_9C2D_u64;
-        let mut next = move |n: u64| {
-            seed = seed
-                .wrapping_mul(6_364_136_223_846_793_005)
-                .wrapping_add(1_442_695_040_888_963_407);
-            (seed >> 33) % n
-        };
+        let mut rng = crate::seed::Rng::new(0x1F12_3BB5_5A47_9C2D);
+        let mut next = move |n: u64| rng.below_u64(n);
         let ranges = |w: u64, next: &mut dyn FnMut(u64) -> u64| {
             let mut at = -(w as i128) - next(w) as i128;
             let mut out = Vec::new();

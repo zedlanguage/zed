@@ -16,6 +16,7 @@ use zed_kernel::types::Type;
 use zed_kernel::types::rec::{Def, Expr, Group};
 use zed_kernel::value::Value;
 use zed_kernel::{Pattern, Term};
+use zed_tests::instances::Rng;
 use zed_tests::scaling;
 
 /// How deep the small tests nest their types, terms, patterns and bodies, on the default test
@@ -243,11 +244,11 @@ fn outside_in_is_inside_out(cases: usize) {
     // The text of a type is made in a loop that tries a type, makes the texts it found
     // missing, and tries again. Printing every part first makes each text at the first try,
     // as the recursion did; both must give the same text.
-    let (mut rng, seed) = zed_tests::instances::Rng::fresh("types made outside in and inside out");
+    let (mut rng, seed) = Rng::fresh("types made outside in and inside out");
     for k in 0..cases {
         let case = rng.next_u64();
-        let outside_in = random(&mut case.clone(), 5, false);
-        let inside_out = random(&mut case.clone(), 5, true);
+        let outside_in = random(&mut Rng::new(case), 5, false);
+        let inside_out = random(&mut Rng::new(case), 5, true);
         let why = format!("type {k}, case seed {case} (ZED_TEST_SEED={seed})");
         assert_eq!(outside_in.to_string(), inside_out.to_string(), "{why}");
         assert_eq!(
@@ -266,15 +267,8 @@ fn the_text_of_a_few_types_made_from_the_outside_in_is_their_text_made_from_the_
     outside_in_is_inside_out(50);
 }
 
-fn next(s: &mut u64) -> u64 {
-    *s = s
-        .wrapping_mul(6364136223846793005)
-        .wrapping_add(1442695040888963407);
-    *s >> 33
-}
-
 /// A random type `d` deep; with `print`, the text of each part is made before it is used.
-fn random(s: &mut u64, d: u32, print: bool) -> Type {
+fn random(s: &mut Rng, d: u32, print: bool) -> Type {
     random_in(s, d, print, None)
 }
 
@@ -285,8 +279,8 @@ struct Trees {
 }
 
 /// [`random`], with instances of `tree` among the parts when it is given.
-fn random_in(s: &mut u64, d: u32, print: bool, tree: Option<&Trees>) -> Type {
-    let k = next(s);
+fn random_in(s: &mut Rng, d: u32, print: bool, tree: Option<&Trees>) -> Type {
+    let k = s.next_u64();
     let t = if d == 0 || k.is_multiple_of(7) {
         match k % 6 {
             0 => Type::int(),
@@ -480,16 +474,14 @@ fn outside_in_is_inside_out_with_trees(cases: u64) {
     // the type built again with the text of each part made before it is used, which shares the
     // recursive nodes and makes the other parts' texts anew. Each name must spell out the text
     // of its argument. A group of its own for each type keeps the names of one from another.
-    let (mut rng, seed) = zed_tests::instances::Rng::fresh(
-        "types with recursive types made outside in and inside out",
-    );
+    let (mut rng, seed) = Rng::fresh("types with recursive types made outside in and inside out");
     for k in 0..cases {
         let trees = Trees {
             group: tree(&format!("T{k}"), "A"),
             made: RefCell::new(Vec::new()),
         };
         let case = rng.next_u64();
-        let outside_in = random_in(&mut case.clone(), 5, false, Some(&trees));
+        let outside_in = random_in(&mut Rng::new(case), 5, false, Some(&trees));
         let text = outside_in.to_string();
         for (t, arg) in trees.made.borrow().iter() {
             assert_eq!(
@@ -498,7 +490,7 @@ fn outside_in_is_inside_out_with_trees(cases: u64) {
                 "type {k}, case seed {case} (ZED_TEST_SEED={seed})"
             );
         }
-        let inside_out = random_in(&mut case.clone(), 5, true, Some(&trees));
+        let inside_out = random_in(&mut Rng::new(case), 5, true, Some(&trees));
         assert_eq!(
             text,
             inside_out.to_string(),

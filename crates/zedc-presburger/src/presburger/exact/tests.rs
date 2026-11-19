@@ -6,16 +6,22 @@ mod bench;
 mod columns;
 mod push_down;
 
-/// A pseudo-random number generator (xorshift64), seeded by [`crate::seed::seed`]: a new
-/// seed on each run, printed, which `ZED_TEST_SEED` repeats.
-struct Rng(u64);
+/// The pseudo-random number generator of these tests: xorshift64 ([`crate::seed::Xorshift64`]),
+/// seeded by [`crate::seed::seed`] (a new seed on each run, printed, which `ZED_TEST_SEED`
+/// repeats) or by a fixed seed. Not [`crate::seed::Rng`]: the tests `random_formulas_at_seed_*`
+/// and `disjuncts_shown_empty_are_never_solved_in_full` hold cases sweeps found at those seeds
+/// of this stream, and the seeds the comments here record (10847150771481521372 of
+/// `the_cover_gives_one_answer_in_every_order_of_the_parts`) repeat only on it. The `| 1` at
+/// the seeded calls is kept for the same reason: the recorded seeds were drawn with it.
+struct Rng(crate::seed::Xorshift64);
 
 impl Rng {
+    fn new(seed: u64) -> Self {
+        Rng(crate::seed::Xorshift64::new(seed))
+    }
+
     fn below(&mut self, n: u64) -> u64 {
-        self.0 ^= self.0 << 13;
-        self.0 ^= self.0 >> 7;
-        self.0 ^= self.0 << 17;
-        self.0 % n
+        self.0.below(n)
     }
 
     fn int(&mut self, lo: i64, hi: i64) -> i64 {
@@ -312,7 +318,7 @@ fn random_formulas_at_seed_4164922340731529606() {
 /// disjuncts stayed on 0, so 1 and 2 were solved in full.
 #[test]
 fn disjuncts_shown_empty_are_never_solved_in_full() {
-    let mut rng = Rng(13733945893095969990 | 1);
+    let mut rng = Rng::new(13733945893095969990 | 1);
     let f = (0..=63)
         .map(|_| boxed(formula(&mut rng, 3)))
         .last()
@@ -340,7 +346,7 @@ fn disjuncts_shown_empty_are_never_solved_in_full() {
 }
 
 fn random_formulas_at(seed: u64) {
-    let mut rng = Rng(seed | 1);
+    let mut rng = Rng::new(seed | 1);
     let syms: Vec<Atom> = NAMES.iter().map(|n| a(n)).collect();
     let (mut wrong, mut refused, mut wider_before) = (Vec::new(), Vec::new(), 0);
     for round in 0..300 {
@@ -377,7 +383,7 @@ fn random_formulas_at(seed: u64) {
 fn conjunctions_of_separate_groups_project_to_the_values_of_their_points() {
     let seed =
         crate::seed::seed("conjunctions_of_separate_groups_project_to_the_values_of_their_points");
-    let mut rng = Rng(seed | 1);
+    let mut rng = Rng::new(seed | 1);
     let syms: Vec<Atom> = NAMES.iter().map(|n| a(n)).collect();
     let (mut wrong, mut refused, mut rounds, mut empty) = (Vec::new(), Vec::new(), 0, 0);
     for round in 0..400 {
@@ -440,7 +446,7 @@ fn conjunctions_of_separate_groups_project_to_the_values_of_their_points() {
 fn the_answers_do_not_depend_on_the_order_of_the_symbols_part(part: usize) {
     let test = format!("the_answers_do_not_depend_on_the_order_of_the_symbols_part_{part}");
     let seed = crate::seed::seed(&test);
-    let mut rng = Rng(seed | 1);
+    let mut rng = Rng::new(seed | 1);
     let orders: [&[&str]; 3] = [&["x", "y", "z"], &["z", "y", "x"], &["y", "x", "z", "y"]];
     let mut differ = Vec::new();
     for round in 0..30 {
@@ -511,7 +517,7 @@ fn the_covers_answer_alike_with_and_without_what_the_symbols_before_learned_part
         "the_covers_answer_alike_with_and_without_what_the_symbols_before_learned_part_{part}"
     );
     let seed = crate::seed::seed(&test);
-    let mut rng = Rng(seed | 1);
+    let mut rng = Rng::new(seed | 1);
     let syms: Vec<Atom> = ["x", "y", "z", "w"].iter().map(|n| a(n)).collect();
     let (mut differ, mut whole) = (Vec::new(), 0);
     let run = |f: &Formula, off: bool| {
@@ -632,7 +638,7 @@ fn a_part_split_off_gets_the_same_answer_with_and_without_direct() {
     let syms: Vec<Atom> = names.iter().map(|n| a(n)).collect();
     let (mut wrong, mut refused, mut outside) = (Vec::new(), 0, 0);
     for seed in [1u64, 126, 4_242, 99_991] {
-        let mut rng = Rng(seed);
+        let mut rng = Rng::new(seed);
         for round in 0..20 {
             let p = boxed(formula(&mut rng, 3));
             let q = boxed(if round % 2 == 0 {
@@ -735,7 +741,7 @@ fn values_two_disjunctions_allow_only_apart_are_left_out() {
 /// value with exhaustive points, without using the cover as the oracle.
 #[test]
 fn certified_forests_match_enumerated_points_without_questions() {
-    let mut rng = Rng(0x1380);
+    let mut rng = Rng::new(0x1380);
     for _ in 0..40 {
         let edge = |x, y, vs: [i64; 2]| {
             Formula::or(vs.into_iter().map(|v| eq(&[(x, 1), (y, -1)], -v)).collect())
@@ -1369,7 +1375,7 @@ fn holed_values(f: &Formula, strides: &[(String, i64, i64)]) -> IntervalSet {
 fn the_cover_gives_one_answer_in_every_order_of_the_parts() {
     const LOW: u64 = 150_000;
     let seed = crate::seed::seed("the_cover_gives_one_answer_in_every_order_of_the_parts");
-    let mut rng = Rng(seed | 1);
+    let mut rng = Rng::new(seed | 1);
     let syms = vec![a("x")];
     let window = IntervalSet::of(-W, W);
     let (mut differ, mut wrong, mut narrow) = (Vec::new(), Vec::new(), Vec::new());
@@ -1762,7 +1768,7 @@ fn every_writing_of_a_formula_gets_one_answer() {
     use super::super::UNFACTORED;
     const LOW: u64 = 150_000;
     let seed = crate::seed::seed("every_writing_of_a_formula_gets_one_answer");
-    let mut rng = Rng(seed | 1);
+    let mut rng = Rng::new(seed | 1);
     let window = IntervalSet::of(-W, W);
     let (mut differ, mut wrong) = (Vec::new(), Vec::new());
     let (mut forms, mut answered, mut repeats, mut refused) = (0, 0, 0, 0);
@@ -2151,7 +2157,7 @@ fn brute_wide(f: &Formula, sym: &str) -> IntervalSet {
 #[test]
 fn read_once_formulas_project_to_the_values_of_their_points() {
     let seed = crate::seed::seed("read_once_formulas_project_to_the_values_of_their_points");
-    let mut rng = Rng(seed | 1);
+    let mut rng = Rng::new(seed | 1);
     let (mut answered, mut wrong) = (0, Vec::new());
     for round in 0..400 {
         let f = read_once_formula(&mut rng);
@@ -2345,7 +2351,7 @@ fn decomposable_formula(rng: &mut Rng, names: &[&str], depth: u32) -> Formula {
 #[test]
 fn decomposable_formulas_project_to_the_values_of_their_points() {
     let seed = crate::seed::seed("decomposable_formulas_project_to_the_values_of_their_points");
-    let mut rng = Rng(seed | 1);
+    let mut rng = Rng::new(seed | 1);
     let (mut answered, mut wrong, mut declined) = (0, Vec::new(), Vec::new());
     for round in 0..300 {
         let f = decomposable_formula(&mut rng, &NAMES, 3);
@@ -2390,7 +2396,7 @@ fn two_disjunctions_tied_by_one_atom_get_their_emptiness_answered() {
     let none = Atom::Sym("#none".into());
     let (mut wrong, mut declined, mut empty) = (Vec::new(), 0, 0);
     for seed in [1u64, 126, 4_242, 99_991] {
-        let mut rng = Rng(seed);
+        let mut rng = Rng::new(seed);
         for round in 0..50 {
             let over_x = |rng: &mut Rng| {
                 let c = if rng.below(2) == 0 { 1 } else { -1 };
@@ -2974,7 +2980,7 @@ fn guards_on_both_sides_agree_with_their_points() {
 /// conjuncts shuffled is certified alike, with no question.
 #[test]
 fn guards_renamed_and_shuffled_are_certified_alike() {
-    let mut rng = Rng(crate::seed::seed(
+    let mut rng = Rng::new(crate::seed::seed(
         "guards_renamed_and_shuffled_are_certified_alike",
     ));
     type Name<'a> = &'a dyn Fn(&str, i64) -> String;

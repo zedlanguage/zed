@@ -294,14 +294,8 @@ mod tests {
     /// one tree; the depth stays near `log2` of the size.
     #[test]
     fn spans_agree_with_a_list() {
-        // Xorshift needs a state other than 0.
-        let mut seed = crate::seed::seed("spans_agree_with_a_list") | 1;
-        let mut next = |n: u64| {
-            seed ^= seed << 13;
-            seed ^= seed >> 7;
-            seed ^= seed << 17;
-            (seed % n) as i64
-        };
+        let (mut rng, _) = crate::seed::Rng::fresh("spans_agree_with_a_list");
+        let mut next = |n: u64| rng.below_u64(n) as i64;
         for round in 0..16 {
             let w = if round % 2 == 0 { 8 } else { 400 };
             let mut s = Spans::default();

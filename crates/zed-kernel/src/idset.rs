@@ -831,10 +831,10 @@ mod tests {
 
     /// Numbers spread over one leaf, several leaves, and the levels above them.
     fn numbers(seed: u32, n: usize) -> Vec<u32> {
-        let mut x = seed;
+        let mut rng = crate::seed::Rng::new(u64::from(seed));
         (0..n)
             .map(|k| {
-                x = x.wrapping_mul(1_103_515_245).wrapping_add(12_345);
+                let x = rng.next_u64() as u32;
                 match k % 3 {
                     0 => x % 300,
                     1 => x % 9000,

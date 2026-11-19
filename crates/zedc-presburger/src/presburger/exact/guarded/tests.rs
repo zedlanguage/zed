@@ -98,21 +98,7 @@ fn pins_of_a_chain_deeper_than_the_call_stack_are_found() {
     std::mem::forget(f);
 }
 
-/// xorshift64, seeded by [`crate::seed::seed`].
-struct Rng(u64);
-
-impl Rng {
-    fn below(&mut self, n: u64) -> u64 {
-        self.0 ^= self.0 << 13;
-        self.0 ^= self.0 >> 7;
-        self.0 ^= self.0 << 17;
-        self.0 % n
-    }
-
-    fn int(&mut self, lo: i64, hi: i64) -> i64 {
-        lo + self.below((hi - lo + 1) as u64) as i64
-    }
-}
+use crate::seed::Rng;
 
 const NAMES: [&str; 3] = ["x", "y", "z"];
 
@@ -120,13 +106,13 @@ const NAMES: [&str; 3] = ["x", "y", "z"];
 /// some are shared and read through the memo.
 fn formula(rng: &mut Rng, depth: u32, made: &mut Vec<Formula>) -> Formula {
     if !made.is_empty() && rng.below(5) == 0 {
-        return made[rng.below(made.len() as u64) as usize].clone();
+        return made[rng.below(made.len())].clone();
     }
     let f = if depth == 0 || rng.below(4) == 0 {
         let terms: Vec<(&str, i64)> = NAMES.iter().map(|n| (*n, rng.int(-2, 2))).collect();
         row(&terms, rng.int(-4, 4), rng.below(4) == 0)
     } else {
-        let n = 1 + rng.below(3) as usize;
+        let n = 1 + rng.below(3);
         let parts: Vec<Formula> = (0..n).map(|_| formula(rng, depth - 1, made)).collect();
         match rng.below(5) {
             0 => Formula::Not(Shared::new(parts.into_iter().next().unwrap())),
@@ -147,7 +133,7 @@ fn end(rng: &mut Rng) -> Option<Int> {
 #[test]
 fn pins_match_the_recursive_walk_on_random_formulas() {
     let seed = crate::seed::seed("pins_match_the_recursive_walk_on_random_formulas");
-    let mut rng = Rng(seed | 1);
+    let mut rng = Rng::new(seed);
     let atoms: Vec<Atom> = NAMES.iter().map(|n| a(n)).collect();
     for round in 0..2000 {
         let f = formula(&mut rng, 8, &mut Vec::new());
@@ -164,7 +150,7 @@ fn pins_match_the_recursive_walk_on_random_formulas() {
             .collect();
         let neg = rng.below(2) == 0;
         let limit = if rng.below(3) == 0 {
-            rng.below(20) * PIECE
+            rng.below_u64(20) * PIECE
         } else {
             u64::MAX
         };

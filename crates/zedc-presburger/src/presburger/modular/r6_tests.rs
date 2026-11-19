@@ -194,13 +194,12 @@ fn power_inputs(bits: usize) -> (BTreeMap<Int, ResidueSet>, Int) {
 #[test]
 fn pncx_power_propagation_oracle() {
     for seed in 0..512u64 {
-        let mut state = seed;
+        let mut rng = crate::seed::Rng::new(seed);
         let mut sets = BTreeMap::new();
         let mut q = 1i64;
         for i in 0..6 {
             q *= 2;
-            state = state.wrapping_mul(6364136223846793005).wrapping_add(1);
-            let a = (state % q as u64) as i64;
+            let a = rng.int(0, q - 1);
             let b = if i == 4 { a } else { (a + 1).min(q - 1) };
             sets.insert(Int::from(q), vec![(Int::from(a), Int::from(b))]);
         }
@@ -306,16 +305,10 @@ fn pncx_wide_arithmetic_random_oracle() {
     // A new seed each run, printed. Every fifth case of 1200: as 5 is prime to 2, 3, 71 and
     // 91, the signs and shifts still take every value they took, and the lengths, 17 to 516
     // bytes, every fifth.
-    let mut state = crate::seed::seed("pncx_wide_arithmetic_random_oracle");
+    let (mut rng, _) = crate::seed::Rng::fresh("pncx_wide_arithmetic_random_oracle");
     for i in (0..1200usize).step_by(5) {
         let mut make = |n: usize| {
-            let mut bytes = Vec::with_capacity(n);
-            for _ in 0..n {
-                state = state
-                    .wrapping_mul(6364136223846793005)
-                    .wrapping_add(1442695040888963407);
-                bytes.push((state >> 32) as u8);
-            }
+            let bytes: Vec<u8> = (0..n).map(|_| rng.next_u64() as u8).collect();
             BigInt::from_bytes_le(Sign::Plus, &bytes)
         };
         let a: BigInt = make(17 + i % 500) << (i % 91);

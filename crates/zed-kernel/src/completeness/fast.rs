@@ -12,18 +12,10 @@ use num_traits::{One, Zero};
 use crate::num::crossover::{self, Kept};
 use crate::num::{bezout_int, div_rem_uint, gcd_uint, gcd_uint_recursive, read_digits, rem_uint};
 
-/// splitmix64 words, `words` of them, the top one not zero.
+/// Random words from `seed`, `words` of them, the top one not zero.
 fn random(seed: u64, words: usize) -> BigUint {
-    let mut x = seed;
-    let mut w: Vec<u64> = (0..words)
-        .map(|_| {
-            x = x.wrapping_add(0x9e37_79b9_7f4a_7c15);
-            let mut z = x;
-            z = (z ^ (z >> 30)).wrapping_mul(0xbf58_476d_1ce4_e5b9);
-            z = (z ^ (z >> 27)).wrapping_mul(0x94d0_49bb_1331_11eb);
-            z ^ (z >> 31)
-        })
-        .collect();
+    let mut rng = crate::seed::Rng::new(seed);
+    let mut w: Vec<u64> = (0..words).map(|_| rng.next_u64()).collect();
     if let Some(top) = w.last_mut() {
         *top |= 1 << 63;
     }

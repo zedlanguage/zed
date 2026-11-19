@@ -2506,17 +2506,11 @@ mod tests {
         }
     }
 
-    /// `len` digits from splitmix64 started at `seed`.
+    /// `len` random digits from `seed`.
     fn digits(seed: u64, len: usize) -> String {
-        let mut x = seed;
+        let mut rng = crate::seed::Rng::new(seed);
         (0..len)
-            .map(|_| {
-                x = x.wrapping_add(0x9e37_79b9_7f4a_7c15);
-                let mut z = x;
-                z = (z ^ (z >> 30)).wrapping_mul(0xbf58_476d_1ce4_e5b9);
-                z = (z ^ (z >> 27)).wrapping_mul(0x94d0_49bb_1331_11eb);
-                char::from(b'0' + ((z ^ (z >> 31)) % 10) as u8)
-            })
+            .map(|_| char::from(b'0' + rng.below(10) as u8))
             .collect()
     }
 

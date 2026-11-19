@@ -22012,18 +22012,9 @@ mod tests {
         false
     }
 
-    /// splitmix64 from a seed of [`crate::seed::seed`], new on each run.
-    struct Rng(u64);
-
-    impl Rng {
-        fn below(&mut self, n: u64) -> u64 {
-            self.0 = self.0.wrapping_add(0x9e37_79b9_7f4a_7c15);
-            let mut z = self.0;
-            z = (z ^ (z >> 30)).wrapping_mul(0xbf58_476d_1ce4_e5b9);
-            z = (z ^ (z >> 27)).wrapping_mul(0x94d0_49bb_1331_11eb);
-            (z ^ (z >> 31)) % n
-        }
-    }
+    /// The tests' generator. Its draws `below_u64(n)` are those of the splitmix64 copy it
+    /// replaced, so the fixed seeds below draw the cases they were found at.
+    use crate::seed::Rng;
 
     /// The bound of the variable `B` of the signatures below: `int | f64`.
     const B_MASK: u8 = 0b11;
@@ -22031,12 +22022,12 @@ mod tests {
     /// A random member: an atom of eight, a carrier, a literal, an atom with a payload, or,
     /// when `open`, a type variable, the bounded variable `B`, the unknown or a function.
     fn member(rng: &mut Rng, open: bool) -> Ty {
-        match rng.below(if open { 14 } else { 10 }) {
-            0..=4 => Ty::set(KType::atom(&format!("a{}", rng.below(8)))),
+        match rng.below_u64(if open { 14 } else { 10 }) {
+            0..=4 => Ty::set(KType::atom(&format!("a{}", rng.below_u64(8)))),
             5 => Ty::carrier(Carrier::Int),
             6 => Ty::carrier(Carrier::Str),
             7 => Ty::carrier(Carrier::Bool),
-            8 => Ty::lit(&Value::Int(rng.below(3) as i64)),
+            8 => Ty::lit(&Value::Int(rng.below_u64(3) as i64)),
             9 => Ty::set(KType::atom_with("p", &KType::tuple(vec![KType::int()]))),
             10 => Ty::var("T".into()),
             11 => Ty::var("B".into()),
@@ -22044,7 +22035,7 @@ mod tests {
             _ => {
                 let a = Arrow {
                     params: vec![Ty::set(KType::atom("a0"))],
-                    result: Ty::set(KType::atom(&format!("a{}", rng.below(2)))),
+                    result: Ty::set(KType::atom(&format!("a{}", rng.below_u64(2)))),
                     partial: false,
                     stores_not_found: false,
                 };
@@ -22055,7 +22046,7 @@ mod tests {
 
     /// A union of one to three random members.
     fn union(rng: &mut Rng, open: bool) -> Ty {
-        let k = 1 + rng.below(3);
+        let k = 1 + rng.below_u64(3);
         (0..k).fold(Ty::empty(), |t, _| t.union(&member(rng, open)))
     }
 
@@ -22067,18 +22058,18 @@ mod tests {
     /// function, so that the permissions share a class, differ in one, or have none.
     #[test]
     fn functions_met_through_the_index_are_those_met_pair_by_pair() {
-        let mut rng = Rng(crate::seed::seed(
+        let mut rng = Rng::new(crate::seed::seed(
             "functions_met_through_the_index_are_those_met_pair_by_pair",
         ));
         let function = |rng: &mut Rng| {
-            let width = 1 + rng.below(2) as usize;
-            let k = if width == 1 { 1 + rng.below(3) } else { 1 };
+            let width = 1 + rng.below(2);
+            let k = if width == 1 { 1 + rng.below_u64(3) } else { 1 };
             let arrows = (0..k)
                 .map(|_| {
-                    let open = rng.below(4) == 0;
+                    let open = rng.below_u64(4) == 0;
                     let params = (0..width).map(|_| union(rng, open)).collect();
                     let result = union(rng, false);
-                    match rng.below(2) {
+                    match rng.below_u64(2) {
                         0 => Arrow::exact(params, result),
                         _ => Arrow::partial_of(params, result),
                     }
@@ -22087,7 +22078,7 @@ mod tests {
             Ty::func(Arc::new(sig(arrows, width, false)))
         };
         let side = |rng: &mut Rng| {
-            let k = 1 + rng.below(6);
+            let k = 1 + rng.below_u64(6);
             (0..k).fold(Ty::empty(), |t, _| t.union(&function(rng)))
         };
         let (mut cases, mut kept, mut wrong) = (0, 0, Vec::new());
@@ -22165,12 +22156,12 @@ mod tests {
     /// An arrow of `q` near `sa`: each parameter type narrowed to some of its members or
     /// widened by one, the result widened or narrowed alike, so that about half fit.
     fn near(rng: &mut Rng, sa: &Arrow) -> Arrow {
-        let mut vary = |t: &Ty| match rng.below(3) {
+        let mut vary = |t: &Ty| match rng.below_u64(3) {
             0 => t.clone(),
             1 => t.union(&member(rng, false)),
             _ => {
                 let ps = t.pieces();
-                ps[rng.below(ps.len() as u64) as usize].ty()
+                ps[rng.below(ps.len())].ty()
             }
         };
         Arrow {
@@ -22185,14 +22176,14 @@ mod tests {
     /// An arrow of `q` that two arrows of `s` may cover only together: at one parameter the
     /// union of theirs, at the others a piece of `a`'s, and the union of their results.
     fn joined(rng: &mut Rng, a: &Arrow, b: &Arrow) -> Arrow {
-        let at = rng.below(a.params.len() as u64) as usize;
+        let at = rng.below(a.params.len());
         let params = (0..a.params.len())
             .map(|j| {
                 let ps = a.params[j].pieces();
                 if j == at || ps.is_empty() {
                     a.params[j].union(&b.params[j])
                 } else {
-                    ps[rng.below(ps.len() as u64) as usize].ty()
+                    ps[rng.below(ps.len())].ty()
                 }
             })
             .collect();
@@ -22207,8 +22198,8 @@ mod tests {
     /// One arrow of `q` for the arrows `sas` of `s`: random, near an arrow of `s`, or joined
     /// from two.
     fn arrow_of_q(rng: &mut Rng, sas: &[Arrow], width: usize, wider: bool, open: bool) -> Arrow {
-        let pick = |rng: &mut Rng| &sas[rng.below(sas.len() as u64) as usize];
-        match rng.below(6) {
+        let pick = |rng: &mut Rng| &sas[rng.below(sas.len())];
+        match rng.below_u64(6) {
             0 if wider => Arrow {
                 params: (0..width).map(|_| wider_union(rng, open)).collect(),
                 result: wider_union(rng, false),
@@ -22460,7 +22451,7 @@ mod tests {
             carrier(Carrier::Bool),
             "built carriers",
         );
-        let mut rng = Rng(crate::seed::seed(
+        let mut rng = Rng::new(crate::seed::seed(
             "the_index_of_arrows_gives_the_verdict_of_every_set_of_arrows",
         ));
         let mut counts = Counts::default();
@@ -22481,12 +22472,12 @@ mod tests {
     /// Whether the parameter types may be open (two times in three) and whether `s` holds
     /// `B` (one time in two) are drawn apart from `n`.
     fn index_case(rng: &mut Rng, n: usize, case: usize, counts: &mut Counts) {
-        let width = 1 + rng.below(2) as usize;
-        let open = rng.below(3) != 0;
+        let width = 1 + rng.below(2);
+        let open = rng.below_u64(3) != 0;
         let sas: Vec<Arrow> = (0..n)
             .map(|_| {
                 let params = (0..width).map(|_| union(rng, open)).collect();
-                let wide = open && rng.below(4) == 0;
+                let wide = open && rng.below_u64(4) == 0;
                 Arrow {
                     params,
                     result: union(rng, wide),
@@ -22498,8 +22489,8 @@ mod tests {
         let qas: Vec<Arrow> = (0..n.min(60))
             .map(|_| arrow_of_q(rng, &sas, width, false, false))
             .collect();
-        let s = sig(sas.clone(), width, rng.below(2) == 0);
-        let order = rng.below(u64::MAX);
+        let s = sig(sas.clone(), width, rng.below_u64(2) == 0);
+        let order = rng.below_u64(u64::MAX);
         for qa in &qas {
             let q = sig(vec![qa.clone()], width, false);
             counts.compare(&s, &q, &format!("case {case}"));
@@ -22568,11 +22559,11 @@ mod tests {
     /// in their order, and the verdict must not depend on it.
     fn same_in_every_order(s: &Sig, q: &Sig, seed: u64, what: &str) {
         let verdict = fits_sig(s, q);
-        let mut rng = Rng(seed ^ 0x0bde_5eed);
+        let mut rng = Rng::new(seed ^ 0x0bde_5eed);
         let n = s.arrows.len();
         let mut shuffled = s.arrows.clone();
         for i in (1..n).rev() {
-            shuffled.swap(i, rng.below(i as u64 + 1) as usize);
+            shuffled.swap(i, rng.below(i + 1));
         }
         let mut rotated = s.arrows.clone();
         rotated.rotate_left(1.min(n));
@@ -22600,17 +22591,17 @@ mod tests {
     /// and `f64`, tuples of carriers and atoms, a kind-wide part, and, when `open`, a tuple
     /// holding the variable `T` or the bounded variable `B`.
     fn wider_member(rng: &mut Rng, open: bool) -> Ty {
-        match rng.below(if open { 13 } else { 12 }) {
+        match rng.below_u64(if open { 13 } else { 12 }) {
             0..=1 => member(rng, open),
-            2 => Ty::set(&atoms() - &KType::atom(&format!("a{}", rng.below(8)))),
+            2 => Ty::set(&atoms() - &KType::atom(&format!("a{}", rng.below_u64(8)))),
             3 => Ty::set(atoms()),
             4 => Ty::set(KType::atom_with("e", &KType::empty())),
-            5 => Ty::lit(&Value::Bool(rng.below(2) == 0)),
+            5 => Ty::lit(&Value::Bool(rng.below_u64(2) == 0)),
             6 => Ty::carrier(Carrier::Rat),
             7 => Ty::carrier(Carrier::F64),
             8 => Ty::tuple(vec![
                 Ty::carrier(Carrier::Int),
-                Ty::set(KType::atom(&format!("a{}", rng.below(3)))),
+                Ty::set(KType::atom(&format!("a{}", rng.below_u64(3)))),
             ]),
             9 => Ty::tuple(vec![
                 Ty::carrier(Carrier::Int).union(&Ty::carrier(Carrier::Str)),
@@ -22618,7 +22609,7 @@ mod tests {
             10 => Ty::set(KType::tuple(vec![KType::top(); 2])),
             11 => Ty::set(wide()),
             _ => Ty::tuple(vec![Ty::var(
-                if rng.below(2) == 0 { "T" } else { "B" }.into(),
+                if rng.below_u64(2) == 0 { "T" } else { "B" }.into(),
             )]),
         }
     }
@@ -22626,15 +22617,15 @@ mod tests {
     /// A union of one to three members of the wider family, sometimes with a member of the
     /// first family.
     fn wider_union(rng: &mut Rng, open: bool) -> Ty {
-        let k = 1 + rng.below(3);
+        let k = 1 + rng.below_u64(3);
         (0..k).fold(Ty::empty(), |t, _| t.union(&wider_member(rng, open)))
     }
 
     /// [`near`] with the members of the wider family, a type of no piece kept as it is.
     fn wider_near(rng: &mut Rng, sa: &Arrow) -> Arrow {
-        let mut vary = |t: &Ty| match (rng.below(3), t.pieces()) {
+        let mut vary = |t: &Ty| match (rng.below_u64(3), t.pieces()) {
             (1, _) => t.union(&wider_member(rng, false)),
-            (2, ps) if !ps.is_empty() => ps[rng.below(ps.len() as u64) as usize].ty(),
+            (2, ps) if !ps.is_empty() => ps[rng.below(ps.len())].ty(),
             _ => t.clone(),
         };
         Arrow {
@@ -22675,7 +22666,7 @@ mod tests {
         // are tuples of one carrier and three different atoms, so no two share a value.
         let pair = |a: &str| Ty::tuple(vec![Ty::carrier(Carrier::Int), Ty::set(KType::atom(a))]);
         built_verdicts(pair("a0"), pair("a1"), pair("a2"), "built tuples");
-        let mut rng = Rng(crate::seed::seed(
+        let mut rng = Rng::new(crate::seed::seed(
             "the_index_of_arrows_gives_the_verdict_of_every_set_of_arrows_on_wider_shapes",
         ));
         let mut counts = Counts::default();
@@ -22712,12 +22703,12 @@ mod tests {
     /// bound of `B` in `q`, and the seed of the orders of the arrows.
     fn wider_input(rng: &mut Rng, n: usize) -> (Sig, Vec<Arrow>, usize, Option<u8>, u64) {
         let masks = [None, Some(B_MASK), Some(0b1001), Some(OTHER | 0b1)];
-        let width = 1 + rng.below(2) as usize;
-        let open = rng.below(3) != 0;
+        let width = 1 + rng.below(2);
+        let open = rng.below_u64(3) != 0;
         let sas: Vec<Arrow> = (0..n)
             .map(|_| {
                 let params = (0..width).map(|_| wider_union(rng, open)).collect();
-                let wide = open && rng.below(4) == 0;
+                let wide = open && rng.below_u64(4) == 0;
                 Arrow {
                     params,
                     result: wider_union(rng, wide),
@@ -22729,9 +22720,9 @@ mod tests {
         let qas: Vec<Arrow> = (0..n.min(30))
             .map(|_| arrow_of_q(rng, &sas, width, true, open))
             .collect();
-        let s = sig_mask(sas, width, masks[rng.below(4) as usize]);
-        let qm = masks[rng.below(4) as usize];
-        let order = rng.below(u64::MAX);
+        let s = sig_mask(sas, width, masks[rng.below(4)]);
+        let qm = masks[rng.below(4)];
+        let order = rng.below_u64(u64::MAX);
         (s, qas, width, qm, order)
     }
 
@@ -22750,7 +22741,7 @@ mod tests {
     /// makes them.
     #[test]
     fn a_refused_arrow_tried_and_dropped_leaves_the_verdict_to_the_other_arrows() {
-        let mut rng = Rng(158393);
+        let mut rng = Rng::new(158393);
         let mut counts = Counts::default();
         for case in 0..5 {
             wider_case(
@@ -22791,7 +22782,7 @@ mod tests {
         assert!(fits_sig(&a, &a), "{a} in itself");
         assert_eq!(why_unfit(&a, &a), None, "{a} in itself");
 
-        let mut rng = Rng(250);
+        let mut rng = Rng::new(250);
         let mut input = None;
         for c in 0..=4 {
             input = Some(wider_input(&mut rng, WIDER_SIZES[c % WIDER_SIZES.len()]));
@@ -23780,22 +23771,22 @@ mod tests {
     /// one of the variables `names`, now and then with `int` beside it, `int`, `Bool`, a
     /// literal of two, or the tuple `(int,)`, which has neither a variable nor a scalar.
     fn sig_component(rng: &mut Rng, names: &[&str]) -> Ty {
-        let var = |rng: &mut Rng| Ty::var(names[rng.below(names.len() as u64) as usize].into());
-        match rng.below(8) {
+        let var = |rng: &mut Rng| Ty::var(names[rng.below(names.len())].into());
+        match rng.below_u64(8) {
             0..=2 => var(rng),
             3 => var(rng).union(&Ty::carrier(Carrier::Int)),
             4 => Ty::carrier(Carrier::Int),
             5 => Ty::carrier(Carrier::Bool),
-            6 => Ty::lit(&Value::Int(rng.below(2) as i64)),
+            6 => Ty::lit(&Value::Int(rng.below_u64(2) as i64)),
             _ => Ty::tuple(vec![Ty::carrier(Carrier::Int)]),
         }
     }
 
     /// The members of a random parameter: one to five tuples of one or two components.
     fn sig_members(rng: &mut Rng, names: &[&str]) -> Vec<Vec<Ty>> {
-        (0..1 + rng.below(5))
+        (0..1 + rng.below_u64(5))
             .map(|_| {
-                (0..1 + rng.below(2))
+                (0..1 + rng.below_u64(2))
                     .map(|_| sig_component(rng, names))
                     .collect()
             })
@@ -24063,14 +24054,14 @@ mod tests {
     /// one, so that some ceilings hold scalars (the shapes `open` of [`Pins`]).
     fn sig_result(rng: &mut Rng, names: &[&str]) -> Vec<Vec<Ty>> {
         let one = |rng: &mut Rng| {
-            let v = Ty::var(names[rng.below(names.len() as u64) as usize].into());
-            match rng.below(4) {
+            let v = Ty::var(names[rng.below(names.len())].into());
+            match rng.below_u64(4) {
                 0 => v.union(&Ty::carrier(Carrier::Int)),
                 _ => v,
             }
         };
-        (0..1 + rng.below(2))
-            .map(|_| (0..1 + rng.below(2)).map(|_| one(rng)).collect())
+        (0..1 + rng.below_u64(2))
+            .map(|_| (0..1 + rng.below_u64(2)).map(|_| one(rng)).collect())
             .collect()
     }
 
@@ -24082,7 +24073,7 @@ mod tests {
     /// each is a case given up (see [`Comparing::search`]).
     #[test]
     fn pinned_shapes_are_those_of_the_rule_of_one_shape() {
-        let mut rng = Rng(crate::seed::seed(
+        let mut rng = Rng::new(crate::seed::seed(
             "pinned_shapes_are_those_of_the_rule_of_one_shape",
         ));
         let (ts, xs) = (["T", "U", "V"], ["X", "W", "Y"]);
@@ -24095,16 +24086,16 @@ mod tests {
             let (mut qm, qr) = if i % 2 == 0 {
                 let mut qm = renamed(&sm, &ts, &xs);
                 for k in (1..qm.len()).rev() {
-                    qm.swap(k, rng.below(k as u64 + 1) as usize);
+                    qm.swap(k, rng.below(k + 1));
                 }
                 (qm, renamed(&sr, &ts, &xs))
             } else {
                 let qr = sig_result(&mut rng, &xs);
                 (sig_members(&mut rng, &xs), qr)
             };
-            if rng.below(4) == 0 {
-                let m = rng.below(qm.len() as u64) as usize;
-                let j = rng.below(qm[m].len() as u64) as usize;
+            if rng.below_u64(4) == 0 {
+                let m = rng.below(qm.len());
+                let j = rng.below(qm[m].len());
                 qm[m][j] = sig_component(&mut rng, &xs);
             }
             let q = random_shapes_sig(&xs, &qm, &qr);
@@ -24136,9 +24127,9 @@ mod tests {
     fn a_shape_held_as_is_out_of_written_order_gives_no_wrong_verdict() {
         let (ts, xs) = (["T", "U"], ["X", "W"]);
         let component = |rng: &mut Rng, names: &[&str]| {
-            let v = |rng: &mut Rng| Ty::var(names[rng.below(names.len() as u64) as usize].into());
+            let v = |rng: &mut Rng| Ty::var(names[rng.below(names.len())].into());
             let tup = |c: Vec<Ty>| Ty::tuple(c);
-            match rng.below(6) {
+            match rng.below_u64(6) {
                 0 => v(rng),
                 1 => Ty::carrier(Carrier::Int),
                 2 => tup(vec![v(rng), v(rng)]),
@@ -24151,9 +24142,9 @@ mod tests {
             }
         };
         let members = |rng: &mut Rng, names: &[&str]| -> Vec<Vec<Ty>> {
-            (0..1 + rng.below(4))
+            (0..1 + rng.below_u64(4))
                 .map(|_| {
-                    (0..1 + rng.below(2))
+                    (0..1 + rng.below_u64(2))
                         .map(|_| component(rng, names))
                         .collect()
                 })
@@ -24164,7 +24155,7 @@ mod tests {
             sig_unchosen(s, q).is_none().then_some(ok)
         };
         let run = |seed: u64, stop_at_apart: bool| {
-            let mut rng = Rng(seed);
+            let mut rng = Rng::new(seed);
             let (mut apart, mut decided_by_hit, mut held) = (Vec::new(), 0, 0);
             for i in 0..600 {
                 if stop_at_apart && !apart.is_empty() {
@@ -24176,7 +24167,7 @@ mod tests {
                 let (qm, qr) = if i % 2 == 0 {
                     let mut qm = renamed(&sm, &ts, &xs);
                     for k in (1..qm.len()).rev() {
-                        qm.swap(k, rng.below(k as u64 + 1) as usize);
+                        qm.swap(k, rng.below(k + 1));
                     }
                     (qm, renamed(&sr, &ts, &xs))
                 } else {
@@ -24307,14 +24298,14 @@ mod tests {
             }
             want
         }
-        let mut rng = Rng(crate::seed::seed("bound_trie_agrees_with_a_map_of_paths"));
+        let mut rng = Rng::new(crate::seed::seed("bound_trie_agrees_with_a_map_of_paths"));
         let vars: [Arc<str>; 2] = [Arc::from("a"), Arc::from("b")];
         for _ in 0..40 {
             let mut trie = BoundTrie::default();
             let mut of: BTreeMap<usize, (usize, Vec<PinStep>)> = BTreeMap::new();
             let mut copy = None;
             for step in 0..200 {
-                let r = rng.below(24) as usize;
+                let r = rng.below(24);
                 let on = |path: &[PinStep], j| path.iter().any(|s: &PinStep| s.0 == j);
                 let (at, mut path) = of.get(&r).cloned().unwrap_or_default();
                 let lacking: Vec<usize> = (0..6).filter(|&j| !on(&path, j)).collect();
@@ -24322,12 +24313,12 @@ mod tests {
                     continue;
                 }
                 let first = !of.contains_key(&r);
-                let k = 1 + rng.below(if first { 3 } else { 2 }) as usize;
+                let k = 1 + rng.below(if first { 3 } else { 2 });
                 let mut steps: Vec<PinStep> = Vec::new();
                 for _ in 0..k {
-                    let j = lacking[rng.below(lacking.len() as u64) as usize];
+                    let j = lacking[rng.below(lacking.len())];
                     if !on(&steps, j) {
-                        steps.push((j, vars[rng.below(2) as usize].clone()));
+                        steps.push((j, vars[rng.below(2)].clone()));
                     }
                 }
                 steps.sort_unstable_by_key(|s| s.0);
@@ -24362,7 +24353,7 @@ mod tests {
     /// which FAIL-types-bounded-shapes-renamed-refused refused from three shapes on.
     #[test]
     fn bound_shapes_agree_with_trying_every_shape() {
-        let mut rng = Rng(crate::seed::seed(
+        let mut rng = Rng::new(crate::seed::seed(
             "bound_shapes_agree_with_trying_every_shape",
         ));
         let (ts, xs) = (["T", "U", "V"], ["X", "W", "Y"]);
@@ -24376,14 +24367,14 @@ mod tests {
         let (mut held, mut failed, mut refused) = (0, 0, 0);
         for i in 0..3000 {
             let sm = sig_members(&mut rng, &ts);
-            let sr = match rng.below(2) {
+            let sr = match rng.below_u64(2) {
                 0 => int.clone(),
                 _ => sig_result(&mut rng, &ts),
             };
             let (qm, qr) = if i % 2 == 0 {
                 let mut qm = renamed(&sm, &ts, &xs);
                 for k in (1..qm.len()).rev() {
-                    qm.swap(k, rng.below(k as u64 + 1) as usize);
+                    qm.swap(k, rng.below(k + 1));
                 }
                 (qm, renamed(&sr, &ts, &xs))
             } else {
@@ -24411,7 +24402,7 @@ mod tests {
             let mut order: Vec<usize> = (0..n).collect();
             let s = make(&names, &order);
             for k in (1..n).rev() {
-                order.swap(k, rng.below(k as u64 + 1) as usize);
+                order.swap(k, rng.below(k + 1));
             }
             let q = make(&renames, &order);
             assert!(fits_both(&s, &q), "{q} in {s}");
@@ -24438,7 +24429,7 @@ mod tests {
             };
             let mut order: Vec<usize> = (0..1 << m).collect();
             for k in (1..order.len()).rev() {
-                order.swap(k, rng.below(k as u64 + 1) as usize);
+                order.swap(k, rng.below(k + 1));
             }
             let shapes: Vec<Vec<Ty>> = (0..1 << m).map(|p| row("T", p)).collect();
             let rows: Vec<Vec<Ty>> = order.iter().map(|&p| row("X", p)).collect();
@@ -24458,7 +24449,7 @@ mod tests {
         for (n, m) in [(3, 1), (4, 1), (3, 2), (5, 3), (8, 2), (8, 4)] {
             let name = |p: &str, r: usize, j: usize, s: usize| format!("{p}{r}_{j}_{s}");
             let joined: Vec<Vec<bool>> = (0..n)
-                .map(|r| (0..m).map(|_| r == 0 || rng.below(2) == 0).collect())
+                .map(|r| (0..m).map(|_| r == 0 || rng.below_u64(2) == 0).collect())
                 .collect();
             let row = |p: &str, r: usize| -> Vec<Ty> {
                 (0..m)
@@ -24606,7 +24597,7 @@ mod tests {
         for (seed, case, arrow, q_takes_all) in
             [(59, 0, 0, false), (41, 0, 0, false), (24, 3, 0, true)]
         {
-            let mut rng = Rng(seed);
+            let mut rng = Rng::new(seed);
             let mut input = None;
             for c in 0..=case {
                 input = Some(wider_input(&mut rng, WIDER_SIZES[c % WIDER_SIZES.len()]));
@@ -24736,7 +24727,7 @@ mod tests {
     /// A random mask of [`VALUES`], not empty.
     fn mask(rng: &mut Rng) -> u8 {
         loop {
-            let m = rng.below(1 << VALUES) as u8;
+            let m = rng.below_u64(1 << VALUES) as u8;
             if m != 0 {
                 break m;
             }
@@ -24746,11 +24737,11 @@ mod tests {
     /// `B` one time in eight, else the values of a random mask; when `narrow`, of the meet of
     /// two and one of the first three values, so that results outside a slot's are common.
     fn small(rng: &mut Rng, narrow: bool) -> Small {
-        if rng.below(8) == 0 {
+        if rng.below_u64(8) == 0 {
             return Small::B(0);
         }
         Small::Values(match narrow {
-            true => mask(rng) & mask(rng) | 1 << rng.below(3),
+            true => mask(rng) & mask(rng) | 1 << rng.below_u64(3),
             false => mask(rng),
         })
     }
@@ -24763,7 +24754,7 @@ mod tests {
         // by the intersection of results ([`covered`]). The checker refuses some covers
         // (cases (1) to (3) of [`covered`]), so a cover it does not take is counted, not
         // asserted, and the counts show each form of fit occurs.
-        let mut rng = Rng(crate::seed::seed(
+        let mut rng = Rng::new(crate::seed::seed(
             "a_fit_of_small_types_is_a_cover_of_their_values",
         ));
         // Each kind on a built case, on every run. `int`, `bool` and `String` are the bits 1, 2
@@ -24786,7 +24777,7 @@ mod tests {
         let (mut fit, mut cover, mut refused, mut neither) = (0, 0, 0, 0);
         for case in 0..2000 {
             let width = 1 + case % 2;
-            let n = 1 + rng.below(4) as usize;
+            let n = 1 + rng.below(4);
             let mut arrows: Vec<(Vec<Small>, Small)> = Vec::new();
             for _ in 0..n {
                 let ps = (0..width).map(|_| small(&mut rng, false)).collect();
@@ -24795,7 +24786,7 @@ mod tests {
             let params: Vec<u8> = (0..width)
                 .map(|_| (mask(&mut rng) & mask(&mut rng)).max(1))
                 .collect();
-            let result = mask(&mut rng) | 1 << rng.below(3);
+            let result = mask(&mut rng) | 1 << rng.below_u64(3);
             match small_cover(&arrows, &params, result, &format!("case {case}")) {
                 Cover::Fit => fit += 1,
                 Cover::Together | Cover::ByFns => cover += 1,
@@ -24869,24 +24860,26 @@ mod tests {
         // it) beside values ([`meet_within`]). A fit holds at each carrier the caller may fix
         // `U` to, at every value, as rule 6 types a call there, and the verdict is the same in
         // every order of the arrows.
-        let mut rng = Rng(crate::seed::seed(
+        let mut rng = Rng::new(crate::seed::seed(
             "a_fit_at_a_bounded_variable_is_a_cover_of_its_values",
         ));
         let (mut fit, mut refused, mut neither) = (0, 0, 0);
         let place = |rng: &mut Rng, narrow: bool| match small(rng, narrow) {
-            Small::B(_) if narrow && rng.below(2) == 0 => Small::B(1 << rng.below(VALUES as u64)),
+            Small::B(_) if narrow && rng.below_u64(2) == 0 => {
+                Small::B(1 << rng.below_u64(VALUES as u64))
+            }
             p => p,
         };
         for case in 0..1200 {
             let width = 1 + case % 2;
-            let n = 1 + rng.below(4) as usize;
+            let n = 1 + rng.below(4);
             let mut arrows: Vec<(Vec<Small>, Small)> = Vec::new();
             for _ in 0..n {
                 let ps = (0..width).map(|_| place(&mut rng, false)).collect();
                 arrows.push((ps, place(&mut rng, true)));
             }
             // A slot's place: `U`, alone or with values, one time in three, else values.
-            let slot = |rng: &mut Rng, m: u8| match rng.below(3) {
+            let slot = |rng: &mut Rng, m: u8| match rng.below_u64(3) {
                 0 => (true, m & mask(rng) & mask(rng)),
                 _ => (false, m.max(1)),
             };
@@ -24896,7 +24889,7 @@ mod tests {
                     slot(&mut rng, m)
                 })
                 .collect();
-            let m = mask(&mut rng) | 1 << rng.below(3);
+            let m = mask(&mut rng) | 1 << rng.below_u64(3);
             let result = slot(&mut rng, m);
             match bounded_cover(
                 &arrows,
@@ -25049,17 +25042,17 @@ mod tests {
         /// A random place of values, not empty: functions one time in `f` each.
         fn random(rng: &mut Rng, narrow: bool, f: u64) -> Place {
             let m = match narrow {
-                true => (rng.below(64) & rng.below(64)) as u8,
-                false => rng.below(64) as u8,
+                true => (rng.below_u64(64) & rng.below_u64(64)) as u8,
+                false => rng.below_u64(64) as u8,
             };
             let mut p = Place {
                 m,
-                f1: rng.below(f) == 0,
-                f2: rng.below(f) == 0,
+                f1: rng.below_u64(f) == 0,
+                f2: rng.below_u64(f) == 0,
                 t: false,
             };
             if p.values() == 0 {
-                p.m = 1 << rng.below(6);
+                p.m = 1 << rng.below_u64(6);
             }
             p
         }
@@ -25105,16 +25098,16 @@ mod tests {
         // holds the slot's functions by `T` bound to them ([`meet_within`]): a function piece
         // is left out of the intersection only where another result holds no function. Each
         // fit holds at every value, and the verdict is the same in every order of the arrows.
-        let mut rng = Rng(crate::seed::seed(
+        let mut rng = Rng::new(crate::seed::seed(
             "a_fit_with_functions_in_the_results_is_a_cover_of_their_values",
         ));
         let (mut fit, mut cover, mut by_fns, mut refused, mut neither) = (0, 0, 0, 0, 0);
         for case in 0..600 {
             let width = 1 + case % 2;
-            let n = 2 + rng.below(3) as usize;
+            let n = 2 + rng.below(3);
             let mut arrows: Vec<(Vec<Place>, Place)> = Vec::new();
             for _ in 0..n {
-                let tj = (rng.below(3) == 0).then(|| rng.below(width as u64) as usize);
+                let tj = (rng.below_u64(3) == 0).then(|| rng.below(width));
                 let ps = (0..width)
                     .map(|j| match tj == Some(j) {
                         true => Place {
@@ -25125,14 +25118,14 @@ mod tests {
                     })
                     .collect();
                 let mut r = Place::random(&mut rng, true, 2);
-                r.t = tj.is_some() && rng.below(2) == 0;
+                r.t = tj.is_some() && rng.below_u64(2) == 0;
                 arrows.push((ps, r));
             }
             let params: Vec<Place> = (0..width)
                 .map(|_| Place::random(&mut rng, true, 3))
                 .collect();
             let mut result = Place::random(&mut rng, false, 3);
-            result.m |= 1 << rng.below(3);
+            result.m |= 1 << rng.below_u64(3);
             match fn_cover(
                 &arrows,
                 &params,
@@ -25558,13 +25551,13 @@ mod tests {
     /// A random component of a shape: a literal of three, `int`, `String`, a tuple of a
     /// literal and a component, or, when `open`, the variable `T` or `U`.
     fn component(rng: &mut Rng, open: bool, depth: u32) -> Ty {
-        match rng.below(if open { 8 } else { 6 }) {
-            0..=2 => Ty::lit(&Value::Int(rng.below(3) as i64)),
+        match rng.below_u64(if open { 8 } else { 6 }) {
+            0..=2 => Ty::lit(&Value::Int(rng.below_u64(3) as i64)),
             3 => Ty::carrier(Carrier::Int),
             4 => Ty::carrier(Carrier::Str),
             5 if depth > 0 => Ty::carrier(Carrier::Int),
             5 => Ty::tuple(vec![
-                Ty::lit(&Value::Int(rng.below(2) as i64)),
+                Ty::lit(&Value::Int(rng.below_u64(2) as i64)),
                 component(rng, open, depth + 1),
             ]),
             6 => Ty::var("T".into()),
@@ -25575,7 +25568,7 @@ mod tests {
     /// A union of one to four random members of width two: tuples, or payloads of the atom
     /// `#p`.
     fn shapes(rng: &mut Rng, open: bool, payloads: bool) -> Ty {
-        let k = 1 + rng.below(4);
+        let k = 1 + rng.below_u64(4);
         let mut ms = Vec::new();
         for _ in 0..k {
             let cs = vec![component(rng, open, 0), component(rng, open, 0)];
@@ -25597,7 +25590,7 @@ mod tests {
     /// wherever the index does not refuse.
     #[test]
     fn shapes_found_by_the_index_are_those_of_the_rule_of_one_shape() {
-        let mut rng = Rng(crate::seed::seed(
+        let mut rng = Rng::new(crate::seed::seed(
             "shapes_found_by_the_index_are_those_of_the_rule_of_one_shape",
         ));
         // A built case that holds by binding, whatever the draws: `(int, int)` is in
@@ -25657,20 +25650,20 @@ mod tests {
     /// a component, a union of no class, a function of three, and, when `open`, the variable
     /// `T` or the unknown.
     fn near_component(rng: &mut Rng, open: bool, depth: u32, fns: &[Arc<Sig>]) -> Ty {
-        match rng.below(if open { 15 } else { 13 }) {
-            0..=2 => Ty::lit(&Value::Int(rng.below(3) as i64)),
+        match rng.below_u64(if open { 15 } else { 13 }) {
+            0..=2 => Ty::lit(&Value::Int(rng.below_u64(3) as i64)),
             3 => Ty::carrier(Carrier::Int),
             4 => Ty::carrier(Carrier::Str),
-            5 => Ty::lit(&Value::float([0.0, -0.0][rng.below(2) as usize])),
+            5 => Ty::lit(&Value::float([0.0, -0.0][rng.below(2)])),
             6 => Ty::lit(&Value::Bool(true)),
-            7 => Ty::set(KType::atom(["a", "b"][rng.below(2) as usize])),
+            7 => Ty::set(KType::atom(["a", "b"][rng.below(2)])),
             8 if depth == 0 => Ty::tuple(vec![
-                Ty::lit(&Value::Int(rng.below(2) as i64)),
+                Ty::lit(&Value::Int(rng.below_u64(2) as i64)),
                 near_component(rng, open, depth + 1, fns),
             ]),
             8 => Ty::carrier(Carrier::Int),
             9 => Ty::lit(&Value::Int(1)).union(&Ty::carrier(Carrier::Str)),
-            10..=12 => Ty::func(fns[rng.below(3) as usize].clone()),
+            10..=12 => Ty::func(fns[rng.below(3)].clone()),
             13 => Ty::var("T".into()),
             _ => Ty::dynamic(),
         }
@@ -25680,14 +25673,14 @@ mod tests {
     /// kind-wide part, `int`, and when `open` the variable `T`.
     fn near_union(rng: &mut Rng, open: bool, fns: &[Arc<Sig>]) -> Ty {
         let mut ms = Vec::new();
-        for _ in 0..1 + rng.below(6) {
-            let width = [1, 2, 2, 2, 3][rng.below(5) as usize];
+        for _ in 0..1 + rng.below_u64(6) {
+            let width = [1, 2, 2, 2, 3][rng.below(5)];
             let cs = (0..width)
                 .map(|_| near_component(rng, open, 0, fns))
                 .collect();
             ms.push(Ty::tuple(cs));
         }
-        match rng.below(12) {
+        match rng.below_u64(12) {
             0 => ms.push(Ty::set(KType::tuple(vec![KType::int(), KType::top()]))),
             1 => ms.push(Ty::set(wide())),
             2 => ms.push(Ty::carrier(Carrier::Int)),
@@ -25708,7 +25701,7 @@ mod tests {
             Arc::new(Sig::one(Vec::new(), Vec::new(), Ty::lit(&Value::Int(1)))),
             Arc::new(Sig::one(Vec::new(), Vec::new(), Ty::carrier(Carrier::Str))),
         ];
-        let mut rng = Rng(crate::seed::seed(
+        let mut rng = Rng::new(crate::seed::seed(
             "tuples_met_and_subtracted_through_the_index_are_those_of_every_pair",
         ));
         // A built case of both kinds, whatever the draws: `(int,) | (String,)` meets `(int,)` in
@@ -25761,7 +25754,7 @@ mod tests {
             Arc::new(Sig::one(Vec::new(), Vec::new(), Ty::lit(&Value::Int(1)))),
             Arc::new(Sig::one(Vec::new(), Vec::new(), Ty::carrier(Carrier::Str))),
         ];
-        let mut rng = Rng(crate::seed::seed(
+        let mut rng = Rng::new(crate::seed::seed(
             "tuples_compared_by_meets_through_the_index_are_those_of_every_pair",
         ));
         // Built cases decided by tuples, through [`Near`], whatever the draws: each side is
@@ -25820,15 +25813,15 @@ mod tests {
     /// 1.5, both booleans, two strings, two bare atoms, an atom with a payload, a tuple of an
     /// integer and a value, a path, an integer outside 64 bits and a rational.
     fn near_value(rng: &mut Rng, depth: u32) -> Value {
-        match rng.below(14) {
-            0..=2 => Value::Int(rng.below(3) as i64),
-            3 => Value::float([0.0, -0.0, 1.5][rng.below(3) as usize]),
-            4 => Value::Bool(rng.below(2) == 0),
-            5 => Value::str(["s", "t"][rng.below(2) as usize]),
-            6 => Value::atom(["a", "b"][rng.below(2) as usize]),
-            7 => Value::atom_with("a", vec![Value::Int(rng.below(2) as i64)]),
+        match rng.below_u64(14) {
+            0..=2 => Value::Int(rng.below_u64(3) as i64),
+            3 => Value::float([0.0, -0.0, 1.5][rng.below(3)]),
+            4 => Value::Bool(rng.below_u64(2) == 0),
+            5 => Value::str(["s", "t"][rng.below(2)]),
+            6 => Value::atom(["a", "b"][rng.below(2)]),
+            7 => Value::atom_with("a", vec![Value::Int(rng.below_u64(2) as i64)]),
             8 | 9 if depth == 0 => Value::tuple(vec![
-                Value::Int(rng.below(2) as i64),
+                Value::Int(rng.below_u64(2) as i64),
                 near_value(rng, depth + 1),
             ]),
             8 | 9 => Value::Int(1),
@@ -25860,7 +25853,7 @@ mod tests {
             Arc::new(Sig::one(Vec::new(), Vec::new(), Ty::lit(&Value::Int(1)))),
             Arc::new(Sig::one(Vec::new(), Vec::new(), Ty::carrier(Carrier::Str))),
         ];
-        let mut rng = Rng(crate::seed::seed(
+        let mut rng = Rng::new(crate::seed::seed(
             "tuples_that_hold_a_value_through_the_index_are_those_of_every_tuple",
         ));
         // Both verdicts on a built case, whatever the draws: `(int,) | (String,)` holds `(1,)`
@@ -25875,14 +25868,14 @@ mod tests {
         for i in 0..8000 {
             let t = near_union(&mut rng, i % 3 == 0, &fns);
             // A value of a length that `t` has most of the time: that of one of its tuples.
-            let width = match t.tuples.is_empty() || rng.below(5) == 0 {
-                true => 1 + rng.below(3) as usize,
-                false => t.tuples[rng.below(t.tuples.len() as u64) as usize].len(),
+            let width = match t.tuples.is_empty() || rng.below_u64(5) == 0 {
+                true => 1 + rng.below(3),
+                false => t.tuples[rng.below(t.tuples.len())].len(),
             };
             let tuple =
                 |rng: &mut Rng| Value::tuple((0..width).map(|_| near_value(rng, 0)).collect());
             let v = tuple(&mut rng);
-            let k = 1 + rng.below(12) as usize;
+            let k = 1 + rng.below(12);
             let vs = Value::tuple(
                 (0..k)
                     .map(|_| Value::tuple(vec![tuple(&mut rng)]))
@@ -25933,16 +25926,16 @@ mod tests {
             let (n, _) = names.next()?;
             names.next().is_none().then(|| ShapeKey::Atom(n.into()))
         };
-        let piece = |rng: &mut Rng| match rng.below(15) {
+        let piece = |rng: &mut Rng| match rng.below_u64(15) {
             0 => KType::int(),
-            1 => KType::lit(&Value::Int(rng.below(3) as i64)).expect("a literal"),
+            1 => KType::lit(&Value::Int(rng.below_u64(3) as i64)).expect("a literal"),
             2 => KType::f64(),
             3 => KType::lit(&Value::float(1.5)).expect("a literal"),
             4 => KType::rat(),
             5 => KType::string(),
             6 => KType::bool(),
             7 => KType::lit(&Value::Bool(false)).expect("a literal"),
-            8 => KType::atom(["a", "b"][rng.below(2) as usize]),
+            8 => KType::atom(["a", "b"][rng.below(2)]),
             9 => KType::atom_with("a", &KType::int()),
             10 => KType::atom_with("c", &KType::empty()),
             11 => &atoms() - &KType::atom("a"),
@@ -25971,15 +25964,15 @@ mod tests {
             class_agrees(&mixed, &by_subtype).is_none(),
             "built: int | String"
         );
-        let mut rng = Rng(crate::seed::seed(
+        let mut rng = Rng::new(crate::seed::seed(
             "class_of_read_from_the_parts_is_that_of_comparing_types",
         ));
         let (mut carriers, mut names, mut none) = (0, 0, 0);
         for _ in 0..20_000 {
             let mut s = piece(&mut rng);
-            for _ in 0..rng.below(3) {
+            for _ in 0..rng.below_u64(3) {
                 let p = piece(&mut rng);
-                s = match rng.below(4) {
+                s = match rng.below_u64(4) {
                     0 => &s - &p,
                     _ => &s | &p,
                 };
@@ -26102,7 +26095,7 @@ mod tests {
         let v = Value::tuple(vec![Value::Int(1)]);
         let found = holders_agree(&t, &v, 0);
         assert!(found.len() > 1, "built: {t} holds {v:?} by {found:?}");
-        let mut rng = Rng(crate::seed::seed(
+        let mut rng = Rng::new(crate::seed::seed(
             "filings_find_the_same_tuples_whatever_the_hash_and_the_order",
         ));
         let (mut found, mut several) = (0, 0);
@@ -26114,8 +26107,8 @@ mod tests {
             several += want.iter().filter(|w| w.len() > 1).count();
 
             let width = match t.tuples.is_empty() {
-                true => 1 + rng.below(3) as usize,
-                false => t.tuples[rng.below(t.tuples.len() as u64) as usize].len(),
+                true => 1 + rng.below(3),
+                false => t.tuples[rng.below(t.tuples.len())].len(),
             };
             let v = Value::tuple((0..width).map(|_| near_value(&mut rng, 0)).collect());
             let want = holders_agree(&t, &v, i);

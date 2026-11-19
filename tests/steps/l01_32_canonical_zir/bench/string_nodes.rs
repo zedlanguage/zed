@@ -6,6 +6,7 @@ use zed_kernel::term::build::lit;
 use zed_kernel::text::Text;
 use zed_kernel::value::Value;
 use zed_tests::scaling::{check_order, inputs};
+use zed_tests::seed::Xorshift64;
 use zedc::canon::{self, Def};
 
 fn holding(t: Text) -> Def {
@@ -40,17 +41,13 @@ fn a_shared_string_is_addressed_by_its_distinct_content() {
 #[test]
 fn a_flat_string_is_addressed_in_time_linear_in_its_bytes() {
     // One block of n bytes with no repeats longer than a few bytes: the parse makes about n/3
-    // rules (348,644 for 1 MiB), each hashed and written once.
+    // rules (348,644 for 1 MiB), each hashed and written once. The count of rules depends on
+    // the bytes drawn, so the stream of the generator the limit was measured on is kept.
     let n = 1 << 15;
     let bytes = |k: usize| -> String {
-        let mut x: u64 = 0x9e37_79b9_7f4a_7c15;
+        let mut x = Xorshift64::new(0x9e37_79b9_7f4a_7c15);
         (0..k)
-            .map(|_| {
-                x ^= x << 13;
-                x ^= x >> 7;
-                x ^= x << 17;
-                char::from(b'a' + (x % 26) as u8)
-            })
+            .map(|_| char::from(b'a' + x.below(26) as u8))
             .collect()
     };
     let defs = inputs(n, |k| holding(Text::from(bytes(k))));

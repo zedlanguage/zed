@@ -9,6 +9,7 @@ use std::sync::Arc;
 
 use zed_kernel::term::build::{lam, lit, var};
 use zed_kernel::{Prim, Shared, Term, Value};
+use zed_tests::seed::Rng;
 use zedc::elab::{Def, Unit};
 use zedc::stage::{self, Stage, color, free, passed};
 
@@ -179,31 +180,28 @@ fn the_effects_of_a_part_shared_by_both_arms_are_read() {
 /// callee of a call of no arguments, which `free` always reads through `Frees`.
 #[test]
 fn the_names_of_a_term_of_primitives_and_ifs_are_those_frees_gives() {
-    /// A pseudo-random number generator (xorshift64), with the count of `let`s made.
-    struct Rng(u64, usize);
-    impl Rng {
-        fn below(&mut self, n: u64) -> u64 {
-            self.0 ^= self.0 << 13;
-            self.0 ^= self.0 >> 7;
-            self.0 ^= self.0 << 17;
-            self.0 % n
+    /// The random generator, with the count of `let`s made.
+    struct Gen(Rng, usize);
+    impl Gen {
+        fn below(&mut self, n: usize) -> usize {
+            self.0.below(n)
         }
     }
-    fn term(r: &mut Rng, pool: &mut Vec<Shared>, depth: u32) -> Term {
+    fn term(r: &mut Gen, pool: &mut Vec<Shared>, depth: u32) -> Term {
         let names = ["a", "b", "c", "d"];
         let pick = if depth == 0 { r.below(3) } else { r.below(7) };
         match pick {
-            0 => var(names[r.below(4) as usize]),
+            0 => var(names[r.below(4)]),
             1 => lit(r.below(5) as i64),
             2 => Term::Read("stdin".into()),
             3 | 4 => {
-                let p = [Prim::Add, Prim::Ge, Prim::Lt][r.below(3) as usize];
+                let p = [Prim::Add, Prim::Ge, Prim::Lt][r.below(3)];
                 prim(p, vec![term(r, pool, depth - 1), term(r, pool, depth - 1)])
             }
             5 => {
-                let part = |r: &mut Rng, pool: &mut Vec<Shared>| {
+                let part = |r: &mut Gen, pool: &mut Vec<Shared>| {
                     if !pool.is_empty() && r.below(2) == 0 {
-                        pool[r.below(pool.len() as u64) as usize].clone()
+                        pool[r.below(pool.len())].clone()
                     } else {
                         let s = Shared::new(term(r, pool, depth - 1));
                         pool.push(s.clone());
@@ -216,11 +214,11 @@ fn the_names_of_a_term_of_primitives_and_ifs_are_those_frees_gives() {
                 r.1 += 1;
                 let e = Shared::new(term(r, pool, depth - 1));
                 let body = Shared::new(term(r, pool, depth - 1));
-                Term::Let(names[r.below(4) as usize].into(), e, body)
+                Term::Let(names[r.below(4)].into(), e, body)
             }
         }
     }
-    let mut r = Rng(0x3c6e_f372_fe94_f82b, 0);
+    let mut r = Gen(Rng::new(0x3c6e_f372_fe94_f82b), 0);
     let (mut fast, mut lets) = (0, 0);
     for _ in 0..4000 {
         let mut pool = Vec::new();

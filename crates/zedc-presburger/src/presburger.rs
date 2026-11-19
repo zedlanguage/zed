@@ -29142,18 +29142,6 @@ pub(super) mod tests {
         sys
     }
 
-    /// A small random generator for the tests below (xorshift).
-    struct Draw(u64);
-
-    impl Draw {
-        fn int(&mut self, lo: i128, hi: i128) -> i128 {
-            self.0 ^= self.0 << 13;
-            self.0 ^= self.0 >> 7;
-            self.0 ^= self.0 << 17;
-            lo + (self.0 % (hi - lo + 1) as u64) as i128
-        }
-    }
-
     /// Every permutation of `0..4`.
     fn perms4() -> Vec<Vec<usize>> {
         let mut out = Vec::new();
@@ -29183,16 +29171,19 @@ pub(super) mod tests {
         // on a variable cross (about one in 200); for each way of being empty the systems did
         // not give, the system of [`BOX_EMPTY`] built for it is checked, and no number of
         // systems is relied on (PROOF-test-coverage-constructive).
-        let mut g = Draw(
-            crate::seed::seed(
-                "the_row_test_of_the_box_shows_empty_only_what_has_no_rational_point",
-            ) | 1,
+        let (mut g, _) = crate::seed::Rng::fresh(
+            "the_row_test_of_the_box_shows_empty_only_what_has_no_rational_point",
         );
         let all = perms4();
         let mut ways = [0usize; 2];
         for _ in 0..400 {
-            let rows: Vec<(Vec<i128>, i128)> = (0..g.int(2, 5))
-                .map(|_| ((0..4).map(|_| g.int(-7, 7)).collect(), g.int(-20, 20)))
+            let rows: Vec<(Vec<i128>, i128)> = (0..g.int_i128(2, 5))
+                .map(|_| {
+                    (
+                        (0..4).map(|_| g.int_i128(-7, 7)).collect(),
+                        g.int_i128(-20, 20),
+                    )
+                })
                 .collect();
             if let Some(crossed) = box_answer(&rows, &all) {
                 ways[usize::from(crossed)] += 1;
@@ -29279,14 +29270,14 @@ pub(super) mod tests {
     fn the_row_test_of_the_box_keeps_every_system_with_an_integer_point() {
         // 3000 systems of 2 to 6 rows over four variables in [-4, 4], each row holding at a
         // random point of the box with slack 0 to 2: the box test never says empty.
-        let mut g = Draw(0x38_0c_0d);
+        let mut g = crate::seed::Rng::new(0x38_0c_0d);
         for _ in 0..3000 {
-            let p: Vec<i128> = (0..4).map(|_| g.int(-4, 4)).collect();
-            let rows: Vec<(Vec<i128>, i128)> = (0..g.int(2, 6))
+            let p: Vec<i128> = (0..4).map(|_| g.int_i128(-4, 4)).collect();
+            let rows: Vec<(Vec<i128>, i128)> = (0..g.int_i128(2, 6))
                 .map(|_| {
-                    let c: Vec<i128> = (0..4).map(|_| g.int(-7, 7)).collect();
+                    let c: Vec<i128> = (0..4).map(|_| g.int_i128(-7, 7)).collect();
                     let at: i128 = c.iter().zip(&p).map(|(c, x)| c * x).sum();
-                    (c, g.int(0, 2) - at)
+                    (c, g.int_i128(0, 2) - at)
                 })
                 .collect();
             let sys = boxed_system(&rows, &[0, 1, 2, 3], 4);
@@ -29386,18 +29377,11 @@ pub(super) mod tests {
         Join(Box<Chain>, Box<Chain>),
     }
 
-    /// A pseudo-random number generator (xorshift64), seeded by [`crate::seed::seed`]: a new
-    /// seed on each run, printed, which `ZED_TEST_SEED` repeats.
-    struct Rng(u64);
-
-    impl Rng {
-        fn below(&mut self, n: u64) -> u64 {
-            self.0 ^= self.0 << 13;
-            self.0 ^= self.0 >> 7;
-            self.0 ^= self.0 << 17;
-            self.0 % n
-        }
-    }
+    // The seeds recorded below (13321774086915806854 and the others of
+    // `hull_sides_on_random_conjunctions_are_the_sides`) drew their systems on the xorshift64
+    // generator these tests used until DRY-test-helpers; each system is written out, so no test
+    // depends on that generator.
+    use crate::seed::Rng;
 
     /// A small random formula over `x` and `y`: a constraint `>= 0` or `== 0` on a term
     /// with a small constant, `true`, `false`, a negation, or a conjunction or disjunction
@@ -29411,7 +29395,7 @@ pub(super) mod tests {
             };
             let rel = if rng.below(4) == 0 { Rel::Eq } else { Rel::Ge };
             Formula::Con(Con {
-                lin: lin(terms, rng.below(3) as i128 - 1),
+                lin: lin(terms, rng.int_i128(-1, 1)),
                 rel,
             })
         };
@@ -29501,9 +29485,8 @@ pub(super) mod tests {
 
     #[test]
     fn a_chain_joined_in_one_pass_is_built_as_joined_two_at_a_time() {
-        let mut rng = Rng(crate::seed::seed(
-            "a_chain_joined_in_one_pass_is_built_as_joined_two_at_a_time",
-        ) | 1);
+        let (mut rng, _) =
+            Rng::fresh("a_chain_joined_in_one_pass_is_built_as_joined_two_at_a_time");
         let mut kinds = std::collections::BTreeSet::new();
         for round in 0..2000 {
             // A chain is a `&&` or `||` of two operands, never one operand alone.
@@ -29614,19 +29597,19 @@ pub(super) mod tests {
     #[test]
     fn difference_hulls_are_those_the_solver_finds() {
         let names = ["a", "b", "c", "d", "e"];
-        let mut rng = Rng(crate::seed::seed("difference_hulls_are_those_the_solver_finds") | 1);
+        let (mut rng, _) = Rng::fresh("difference_hulls_are_those_the_solver_finds");
         let mut compared = 0;
         for _ in 0..400 {
-            let rows = 1 + rng.below(8) as usize;
+            let rows = 1 + rng.below(8);
             let cons: Vec<Con> = (0..rows)
                 .map(|_| {
-                    let x = names[rng.below(5) as usize];
-                    let k = rng.below(13) as i128 - 6;
+                    let x = names[rng.below(5)];
+                    let k = rng.int_i128(-6, 6);
                     let terms: Vec<(&str, i128)> = match rng.below(4) {
                         0 => vec![(x, 1)],
                         1 => vec![(x, -1)],
                         _ => {
-                            let y = names[rng.below(5) as usize];
+                            let y = names[rng.below(5)];
                             if x == y {
                                 vec![(x, 1)]
                             } else {
@@ -29693,17 +29676,16 @@ pub(super) mod tests {
     fn substituted_difference_hulls_are_those_the_solver_finds() {
         let kept = ["a", "b", "c"];
         let others = ["y", "z"];
-        let mut rng =
-            Rng(crate::seed::seed("substituted_difference_hulls_are_those_the_solver_finds") | 1);
+        let (mut rng, _) = Rng::fresh("substituted_difference_hulls_are_those_the_solver_finds");
         let (mut taken, mut not_taken) = (0, 0);
         for _ in 0..800 {
-            let rows = 1 + rng.below(9) as usize;
+            let rows = 1 + rng.below(9);
             let cons: Vec<Con> = (0..rows)
                 .map(|_| {
-                    let x = kept[rng.below(3) as usize];
-                    let w = kept[rng.below(3) as usize];
-                    let y = others[rng.below(2) as usize];
-                    let k = rng.below(13) as i128 - 6;
+                    let x = kept[rng.below(3)];
+                    let w = kept[rng.below(3)];
+                    let y = others[rng.below(2)];
+                    let k = rng.int_i128(-6, 6);
                     let sign = if rng.below(2) == 0 { 1 } else { -1 };
                     let terms: Vec<(&str, i128)> = match rng.below(6) {
                         0 => vec![(x, sign)],
@@ -29826,21 +29808,21 @@ pub(super) mod tests {
     #[test]
     fn forest_row_hulls_are_those_the_solver_finds() {
         let names = ["a", "b", "c", "d", "e", "f"];
-        let mut rng = Rng(crate::seed::seed("forest_row_hulls_are_those_the_solver_finds") | 1);
+        let (mut rng, _) = Rng::fresh("forest_row_hulls_are_those_the_solver_finds");
         for _ in 0..1000 {
-            let rows = 1 + rng.below(7) as usize;
+            let rows = 1 + rng.below(7);
             let cons: Vec<Con> = (0..rows)
                 .map(|_| {
-                    let k = rng.below(17) as i128 - 8;
+                    let k = rng.int_i128(-8, 8);
                     let width = if rng.below(2) == 0 {
                         1
                     } else {
-                        2 + rng.below(3) as usize
+                        2 + rng.below(3)
                     };
                     let mut terms: Vec<(&str, i128)> = Vec::new();
                     while terms.len() < width {
-                        let x = names[rng.below(6) as usize];
-                        let c = 1 + rng.below(3) as i128;
+                        let x = names[rng.below(6)];
+                        let c = rng.int_i128(1, 3);
                         let c = if rng.below(2) == 0 { c } else { -c };
                         if terms.iter().all(|(y, _)| *y != x) {
                             terms.push((x, c));
@@ -29908,18 +29890,18 @@ pub(super) mod tests {
     #[test]
     fn part_bounds_contain_the_hulls_the_solver_finds() {
         let names = ["a", "b", "c", "d"];
-        let mut rng = Rng(crate::seed::seed("part_bounds_contain_the_hulls_the_solver_finds") | 1);
+        let (mut rng, _) = Rng::fresh("part_bounds_contain_the_hulls_the_solver_finds");
         let row = |rng: &mut Rng| {
             let terms: Vec<(&str, i128)> = (0..1 + rng.below(3))
                 .map(|_| {
-                    let k = 1 + rng.below(3) as i128;
+                    let k = rng.int_i128(1, 3);
                     let k = if rng.below(2) == 0 { k } else { -k };
-                    (names[rng.below(4) as usize], k)
+                    (names[rng.below(4)], k)
                 })
                 .collect();
             let rel = if rng.below(5) == 0 { Rel::Eq } else { Rel::Ge };
             Formula::Con(Con {
-                lin: lin(&terms, rng.below(13) as i128 - 6),
+                lin: lin(&terms, rng.int_i128(-6, 6)),
                 rel,
             })
         };
@@ -30356,18 +30338,18 @@ pub(super) mod tests {
     #[test]
     fn hull_sides_on_random_conjunctions_are_the_sides() {
         let names = ["a", "b", "c", "d"];
-        let mut rng = Rng(crate::seed::seed("hull_sides_on_random_conjunctions_are_the_sides") | 1);
+        let (mut rng, _) = Rng::fresh("hull_sides_on_random_conjunctions_are_the_sides");
         let row = |rng: &mut Rng| {
             let terms: Vec<(&str, i128)> = (0..1 + rng.below(3))
                 .map(|_| {
-                    let k = 1 + rng.below(3) as i128;
+                    let k = rng.int_i128(1, 3);
                     let k = if rng.below(2) == 0 { k } else { -k };
-                    (names[rng.below(4) as usize], k)
+                    (names[rng.below(4)], k)
                 })
                 .collect();
             let rel = if rng.below(5) == 0 { Rel::Eq } else { Rel::Ge };
             Formula::Con(Con {
-                lin: lin(&terms, rng.below(41) as i128 - 20),
+                lin: lin(&terms, rng.int_i128(-20, 20)),
                 rel,
             })
         };
@@ -30751,15 +30733,12 @@ pub(super) mod tests {
         // Classes of 16, 8 (one color), 2 and 1 joined by random trees with three implied
         // equalities each, in 400 random orders and orientations: roots of rank 2 and more
         // are joined, so equal ranks occur above the leaves.
-        let mut rng = Rng(crate::seed::seed(
-            "the_representatives_of_joined_equalities_do_not_depend_on_their_order",
-        ) | 1);
+        let (mut rng, _) =
+            Rng::fresh("the_representatives_of_joined_equalities_do_not_depend_on_their_order");
         let sizes = [16, 8, 2, 1];
         let n: usize = sizes.iter().sum();
         let mut place: Vec<usize> = (0..n).collect();
-        for i in (1..n).rev() {
-            place.swap(i, rng.below(i as u64 + 1) as usize);
-        }
+        rng.shuffle(&mut place);
         let mut value = vec![0; n];
         let mut keys = vec![0; n];
         let mut edges = Vec::new();
@@ -30767,16 +30746,16 @@ pub(super) mod tests {
         for (c, &size) in sizes.iter().enumerate() {
             let members = &place[start..start + size];
             for (k, &m) in members.iter().enumerate() {
-                value[m] = rng.below(5) as i64 - 2;
-                keys[m] = if c == 1 { 7 } else { rng.below(3) as usize };
+                value[m] = rng.int(-2, 2);
+                keys[m] = if c == 1 { 7 } else { rng.below(3) };
                 if k > 0 {
-                    edges.push((m, members[rng.below(k as u64) as usize]));
+                    edges.push((m, members[rng.below(k)]));
                 }
             }
             if size > 2 {
                 for _ in 0..3 {
-                    let a = members[rng.below(size as u64) as usize];
-                    let b = members[rng.below(size as u64) as usize];
+                    let a = members[rng.below(size)];
+                    let b = members[rng.below(size)];
                     edges.push((a, b));
                 }
             }
@@ -30789,9 +30768,7 @@ pub(super) mod tests {
         let m = large.edges.len();
         for _ in 0..400 {
             let mut order: Vec<usize> = (0..m).collect();
-            for i in (1..m).rev() {
-                order.swap(i, rng.below(i as u64 + 1) as usize);
-            }
+            rng.shuffle(&mut order);
             let flip: Vec<bool> = (0..m).map(|_| rng.below(2) == 1).collect();
             let (got, r, k) = large.joined(&order, &flip);
             assert_eq!(got, want, "order {order:?}, flipped {flip:?}");
@@ -30833,19 +30810,7 @@ pub(super) mod tests {
 #[cfg(test)]
 mod difference_rows {
     use super::*;
-
-    /// A pseudo-random number generator (xorshift64), seeded by [`crate::seed::seed`]: a new
-    /// seed on each run, printed, which `ZED_TEST_SEED` repeats.
-    struct Rng(u64);
-
-    impl Rng {
-        fn below(&mut self, n: u64) -> u64 {
-            self.0 ^= self.0 << 13;
-            self.0 ^= self.0 >> 7;
-            self.0 ^= self.0 << 17;
-            self.0 % n
-        }
-    }
+    use crate::seed::Rng;
 
     fn x(i: usize) -> Lin {
         Lin::atom(Atom::Sym(format!("x{i}").into()))
@@ -30892,13 +30857,13 @@ mod difference_rows {
     /// rows are all alike, stars of alike leaves, chains, and random graphs.
     #[test]
     fn solve_never_refuses_rows_of_two_unit_terms() {
-        let mut rng = Rng(crate::seed::seed("solve_never_refuses_rows_of_two_unit_terms") | 1);
+        let (mut rng, _) = Rng::fresh("solve_never_refuses_rows_of_two_unit_terms");
         let (mut empty, mut point) = (0, 0);
         for case in 0..1000 {
-            let n = 2 + rng.below(24) as usize;
+            let n = 2 + rng.below(24);
             let sum_ok = case % 3 == 2;
             let k = |rng: &mut Rng, alike: bool| {
-                if alike { 0 } else { rng.below(9) as i128 - 4 }
+                if alike { 0 } else { rng.int_i128(-4, 4) }
             };
             let alike = rng.below(3) == 0;
             let mut pairs: Vec<(usize, usize)> = Vec::new();
@@ -30916,9 +30881,9 @@ mod difference_rows {
                 2 => pairs.extend((1..n).flat_map(|i| [(0, i), (i, 0)])),
                 3 => pairs.extend((0..n - 1).map(|i| (i + 1, i))),
                 _ => {
-                    for _ in 0..rng.below(3 * n as u64) + 1 {
-                        let i = rng.below(n as u64) as usize;
-                        let j = rng.below(n as u64) as usize;
+                    for _ in 0..rng.below(3 * n) + 1 {
+                        let i = rng.below(n);
+                        let j = rng.below(n);
                         pairs.push((i, j));
                     }
                 }
@@ -30947,8 +30912,8 @@ mod difference_rows {
                 }
             }
             for _ in 0..rng.below(4) {
-                let i = rng.below(n as u64) as usize;
-                let c = rng.below(21) as i128 - 10;
+                let i = rng.below(n);
+                let c = rng.int_i128(-10, 10);
                 cons.push(Con {
                     lin: x(i).times(-1).plus(&Lin::constant(c)),
                     rel: Rel::Ge,
@@ -31031,20 +30996,11 @@ mod difference_rows {
 #[cfg(test)]
 mod by_halves_against_old {
     use super::*;
+    // The seeds recorded below (1446..., 1987..., 1580..., 10897...) and the measurement over
+    // seeds 1 to 2000 drew on the xorshift64 generator this module used until DRY-test-helpers;
+    // each case is written out, so no test depends on that generator.
+    use crate::seed::Rng;
     mod bench;
-
-    /// A pseudo-random number generator (xorshift64), seeded by [`crate::seed::seed`]: a new
-    /// seed on each run, printed, which `ZED_TEST_SEED` repeats.
-    struct Rng(u64);
-
-    impl Rng {
-        fn below(&mut self, n: u64) -> u64 {
-            self.0 ^= self.0 << 13;
-            self.0 ^= self.0 >> 7;
-            self.0 ^= self.0 << 17;
-            self.0 % n
-        }
-    }
 
     fn v(i: usize) -> Lin {
         Lin::atom(Atom::Sym(format!("v{i}").into()))
@@ -31064,12 +31020,12 @@ mod by_halves_against_old {
     /// two or three disjuncts of a bound or an equality, so that some hold at the least point,
     /// some at none and some are empty.
     fn group(rng: &mut Rng, general: bool) -> (Formula, Vec<Atom>) {
-        let n = 3 + rng.below(10) as usize;
+        let n = 3 + rng.below(10);
         let mut edges: Vec<(usize, usize)> = match rng.below(3) {
             0 => (0..n - 1).map(|i| (i, i + 1)).collect(),
-            1 => (1..n).map(|i| (rng.below(i as u64) as usize, i)).collect(),
+            1 => (1..n).map(|i| (rng.below(i), i)).collect(),
             _ => (0..n + n / 2)
-                .map(|_| (rng.below(n as u64) as usize, rng.below(n as u64) as usize))
+                .map(|_| (rng.below(n), rng.below(n)))
                 .filter(|(a, b)| a != b)
                 .collect(),
         };
@@ -31078,7 +31034,7 @@ mod by_halves_against_old {
         let form = |rng: &mut Rng, (a, b): (usize, usize)| {
             let l = v(b).minus(&v(a));
             if general {
-                let c = rng.below(n as u64) as usize;
+                let c = rng.below(n);
                 if c != a && c != b {
                     return l.minus(&v(c));
                 }
@@ -31091,17 +31047,17 @@ mod by_halves_against_old {
             fs.push(ge(Lin::constant(20).minus(&v(i))));
         }
         for &e in &edges {
-            let k = rng.below(5) as i128 - 2;
+            let k = rng.int_i128(-2, 2);
             fs.push(ge(form(rng, e).plus(&Lin::constant(k))));
         }
         for _ in 0..1 + rng.below(4) {
-            let Some(&e) = edges.get(rng.below(edges.len().max(1) as u64) as usize) else {
+            let Some(&e) = edges.get(rng.below(edges.len().max(1))) else {
                 break;
             };
             let f = form(rng, e);
             let ds = (0..2 + rng.below(2))
                 .map(|_| {
-                    let c = Lin::constant(rng.below(13) as i128 - 4);
+                    let c = Lin::constant(rng.int_i128(-4, 8));
                     match rng.below(3) {
                         0 => ge(c.minus(&f)),
                         1 => ge(f.minus(&c)),
@@ -31189,7 +31145,7 @@ mod by_halves_against_old {
     /// cause and whether the hulls are equal, and printed.
     #[test]
     fn answers_are_those_of_the_old_path() {
-        let mut rng = Rng(crate::seed::seed("answers_are_those_of_the_old_path") | 1);
+        let (mut rng, _) = Rng::fresh("answers_are_those_of_the_old_path");
         let (mut cases, mut narrower) = (0, 0);
         let mut compared: BTreeMap<((bool, bool), bool), usize> = BTreeMap::new();
         for case in 0..20 {
@@ -31961,19 +31917,7 @@ mod by_halves_against_old {
 #[cfg(test)]
 mod dark_shadow {
     use super::*;
-
-    /// A pseudo-random number generator (xorshift64), seeded by [`crate::seed::seed`]: a new
-    /// seed on each run, printed, which `ZED_TEST_SEED` repeats.
-    struct Rng(u64);
-
-    impl Rng {
-        fn below(&mut self, n: u64) -> u64 {
-            self.0 ^= self.0 << 13;
-            self.0 ^= self.0 >> 7;
-            self.0 ^= self.0 << 17;
-            self.0 % n
-        }
-    }
+    use crate::seed::Rng;
 
     fn a(s: &str) -> Atom {
         Atom::Sym(s.into())
@@ -31997,8 +31941,7 @@ mod dark_shadow {
     /// shadow has points (`y = 2`) the system has not, are the case the dark shadow keeps.
     #[test]
     fn projections_with_dark_shadows_keep_the_integer_points() {
-        let mut rng =
-            Rng(crate::seed::seed("projections_with_dark_shadows_keep_the_integer_points") | 1);
+        let (mut rng, _) = Rng::fresh("projections_with_dark_shadows_keep_the_integer_points");
         let mut gone = 0;
         for _ in 0..50 {
             let mut rows = vec![
@@ -32006,7 +31949,7 @@ mod dark_shadow {
                 Con::ge(&Lin::constant(4), &Lin::atom(a("r"))),
             ];
             for _ in 0..2 + rng.below(3) {
-                let k = |rng: &mut Rng, n: u64| rng.below(2 * n + 1) as i128 - n as i128;
+                let k = |rng: &mut Rng, n: i128| rng.int_i128(-n, n);
                 let lin = Lin::atom(a("r"))
                     .times(k(&mut rng, 4))
                     .plus(&Lin::atom(a("y")).times(k(&mut rng, 2)))
@@ -32111,13 +32054,7 @@ mod jointly_empty_order {
     fn orders(n: usize) -> Vec<(&'static str, Vec<usize>)> {
         let bits = n.trailing_zeros();
         let mut random: Vec<usize> = (0..n).collect();
-        let mut s = 0x9e37_79b9_7f4a_7c15_u64;
-        for i in (1..n).rev() {
-            s ^= s << 13;
-            s ^= s >> 7;
-            s ^= s << 17;
-            random.swap(i, (s % (i as u64 + 1)) as usize);
-        }
+        crate::seed::Rng::new(0x9e37_79b9_7f4a_7c15).shuffle(&mut random);
         vec![
             ("in order", (0..n).collect()),
             ("reversed", (0..n).rev().collect()),
@@ -32485,22 +32422,9 @@ mod forced_against_solver {
         }
     }
 
-    /// A pseudo-random number generator (xorshift64), seeded by [`crate::seed::seed`]: a new
-    /// seed on each run, printed, which `ZED_TEST_SEED` repeats.
-    struct Rng(u64);
-
-    impl Rng {
-        fn below(&mut self, n: u64) -> u64 {
-            self.0 ^= self.0 << 13;
-            self.0 ^= self.0 >> 7;
-            self.0 ^= self.0 << 17;
-            self.0 % n
-        }
-
-        fn small(&mut self) -> i64 {
-            self.below(7) as i64 - 3
-        }
-    }
+    // The seed 11777143762957258550 above drew its formula on the xorshift64 generator these
+    // tests used until DRY-test-helpers; the formula is written out, so no test depends on it.
+    use crate::seed::Rng;
 
     /// A formula of the shape the preimage of a chain of `if` at a point gives: definitions
     /// `(g && c * q_i == e1) || (!g && q_i == e2)`, each guard `g` over the inputs or an earlier
@@ -32515,13 +32439,13 @@ mod forced_against_solver {
             let over = |rng: &mut Rng| match rng.below(4) {
                 0 => sym("x"),
                 1 => sym("y"),
-                2 if i > 0 => q(rng.below(u64::from(i)) as u32),
+                2 if i > 0 => q(rng.below_u64(u64::from(i)) as u32),
                 _ => p.clone(),
             };
-            let g = ge(&over(rng), &k(rng.small()));
-            let c = 1 + rng.below(2) as i64;
-            let e1 = over(rng).plus(&k(rng.small()));
-            let e2 = k(rng.small());
+            let g = ge(&over(rng), &k(rng.int(-3, 3)));
+            let c = rng.int(1, 2);
+            let e1 = over(rng).plus(&k(rng.int(-3, 3)));
+            let e2 = k(rng.int(-3, 3));
             fs.push(Formula::or(vec![
                 Formula::and(vec![g.clone(), eq(&q(i).times(c), &e1)]),
                 Formula::and(vec![Formula::negate(g), eq(&q(i), &e2)]),
@@ -32534,12 +32458,12 @@ mod forced_against_solver {
         for x in ["x", "y"] {
             match rng.below(5) {
                 0 => {}
-                1 => fs.push(eq(&sym(x).times(2), &k(rng.small()))),
-                _ => fs.push(eq(&sym(x), &k(rng.small()))),
+                1 => fs.push(eq(&sym(x).times(2), &k(rng.int(-3, 3)))),
+                _ => fs.push(eq(&sym(x), &k(rng.int(-3, 3)))),
             }
         }
         if rng.below(6) == 0 {
-            fs.push(eq(&sym("x"), &k(rng.small())));
+            fs.push(eq(&sym("x"), &k(rng.int(-3, 3))));
         }
         Formula::and(fs)
     }
@@ -32551,22 +32475,22 @@ mod forced_against_solver {
     /// over both inputs, or over their difference.
     fn input_bounds(rng: &mut Rng, p: &Lin, fs: &mut Vec<Formula>) {
         for x in ["x", "y"] {
-            let c = 1 + rng.below(3) as i64;
+            let c = rng.int(1, 3);
             let cx = sym(x).times(c);
-            let lo = rng.small();
+            let lo = rng.int(-3, 3);
             match rng.below(8) {
                 0 => {}
                 1 => fs.push(ge(&cx, &k(lo))),
                 2 => fs.push(ge(&k(lo), &cx)),
                 3 => fs.push(eq(&sym(x), &k(lo))),
                 _ => {
-                    let hi = lo + c * (rng.below(3) as i64 - 1);
+                    let hi = lo + c * rng.int(-1, 1);
                     fs.push(ge(&cx, &k(lo)));
                     fs.push(ge(&k(hi), &cx));
                 }
             }
         }
-        let v = rng.small();
+        let v = rng.int(-3, 3);
         match rng.below(8) {
             0 => fs.push(ge(p, &k(v))),
             1 => fs.push(ge(&sym("x").plus(&sym("y")), &k(v))),
@@ -32585,9 +32509,8 @@ mod forced_against_solver {
         // [`ANSWERS`] for each of answers 0, 1 and 3 the chains did not give (the rarest, 1,
         // is 7% of them). Class 2 no longer occurs, since a formula true before the trial now
         // gives its point (class 1).
-        let mut rng = Rng(crate::seed::seed(
-            "propagation_agrees_with_the_solver_on_chains_of_definitions",
-        ) | 1);
+        let (mut rng, _) =
+            Rng::fresh("propagation_agrees_with_the_solver_on_chains_of_definitions");
         let mut seen = [0usize; 9];
         for _ in 0..100 {
             seen[agrees(&chain(&mut rng, false))] += 1;
@@ -32604,8 +32527,7 @@ mod forced_against_solver {
         // rare here (the inputs are mostly bounded), and the chains of the test above give it
         // often. A point at the bounds other than the solver's (6) is common
         // (PRES-small-point).
-        let mut rng =
-            Rng(crate::seed::seed("propagation_agrees_with_the_solver_on_bounded_inputs") | 1);
+        let (mut rng, _) = Rng::fresh("propagation_agrees_with_the_solver_on_bounded_inputs");
         let mut seen = [0usize; 9];
         for _ in 0..100 {
             seen[agrees(&chain(&mut rng, true))] += 1;
@@ -32883,9 +32805,7 @@ mod forced_against_solver {
     fn rewritten(f: &Formula, name: &dyn Fn(&Atom) -> Atom, rng: &mut Rng) -> Formula {
         fn each(gs: &[Formula], name: &dyn Fn(&Atom) -> Atom, rng: &mut Rng) -> Vec<Formula> {
             let mut gs: Vec<Formula> = gs.iter().map(|g| rewritten(g, name, rng)).collect();
-            for i in (1..gs.len()).rev() {
-                gs.swap(i, rng.below(i as u64 + 1) as usize);
-            }
+            rng.shuffle(&mut gs);
             gs
         }
         match f {
@@ -32970,8 +32890,8 @@ mod forced_against_solver {
         // did, the formula of [`ANSWERS`] answered at the bounds (6) is checked the same way,
         // so no number of chains is relied on (PROOF-test-coverage-constructive).
         let seed = crate::seed::seed("the_point_at_the_bounds_does_not_depend_on_names_or_order");
-        let mut rng = Rng(seed | 1);
-        let mut order = Rng(seed.rotate_left(32) | 1);
+        let mut rng = Rng::new(seed);
+        let mut order = Rng::new(seed.rotate_left(32));
         let mut at_bounds = 0;
         for case in 0..120 {
             let f = chain(&mut rng, case % 2 == 0);
@@ -32995,7 +32915,7 @@ mod forced_against_solver {
     #[test]
     fn the_formula_built_to_be_answered_at_the_bounds_is() {
         let f = ANSWERS[3].1();
-        assert!(at_the_bounds_alike(&f, &mut Rng(1)), "{f}");
+        assert!(at_the_bounds_alike(&f, &mut Rng::new(1)), "{f}");
     }
 
     /// A ladder that the rounds at the bounds climb one step a round: `x` bounded, then each
@@ -33005,16 +32925,16 @@ mod forced_against_solver {
     /// and at the end, sometimes, a disjunction over the last step and `y`.
     fn ladder(rng: &mut Rng) -> Formula {
         let x = sym("x");
-        let lo = rng.small();
+        let lo = rng.int(-3, 3);
         let mut fs = vec![ge(&x, &k(lo))];
         if rng.below(2) == 0 {
-            fs.push(ge(&k(lo + rng.below(3) as i64), &x));
+            fs.push(ge(&k(lo + rng.int(0, 2)), &x));
         }
         let (mut prev, mut at) = (x, lo);
         for i in 0..1 + rng.below(8) as u32 {
             // `prev >= t` false at `prev`'s value `at`, mostly, so the second operand is forced.
-            let t = at + rng.below(4) as i64;
-            let d = rng.small();
+            let t = at + rng.int(0, 3);
+            let d = rng.int(-3, 3);
             let step = if rng.below(3) == 0 {
                 ge(&prev.plus(&k(d)), &q(i))
             } else {
@@ -33022,15 +32942,15 @@ mod forced_against_solver {
             };
             fs.push(Formula::or(vec![ge(&prev, &k(t)), step]));
             if rng.below(4) == 0 {
-                fs.push(ge(&k(at + d + rng.small()), &q(i)));
+                fs.push(ge(&k(at + d + rng.int(-3, 3)), &q(i)));
             }
             (prev, at) = (q(i), at + d);
         }
         if rng.below(2) == 0 {
-            let m = at + rng.small();
+            let m = at + rng.int(-3, 3);
             fs.push(Formula::or(vec![
                 ge(&k(m), &prev),
-                eq(&sym("y"), &k(rng.small())),
+                eq(&sym("y"), &k(rng.int(-3, 3))),
             ]));
         }
         Formula::and(fs)
@@ -33044,8 +32964,8 @@ mod forced_against_solver {
         // round, is 10% of them); then the ladder of [`LADDERS`] for each kind they did not
         // give, so no number of ladders is relied on (PROOF-test-coverage-constructive).
         let seed = crate::seed::seed("rounds_at_the_bounds_do_not_depend_on_names_or_order");
-        let mut rng = Rng(seed | 1);
-        let mut order = Rng(seed.rotate_left(32) | 1);
+        let mut rng = Rng::new(seed);
+        let mut order = Rng::new(seed.rotate_left(32));
         let mut kinds = [0usize; 3];
         for _ in 0..50 {
             let f = ladder(&mut rng);
@@ -33122,7 +33042,7 @@ mod forced_against_solver {
     fn each_ladder_built_for_a_kind_makes_it() {
         for (i, (kind, f)) in LADDERS.into_iter().enumerate() {
             let f = f();
-            assert!(ladder_kinds(&f, &mut Rng(1))[i], "{kind}: {f}");
+            assert!(ladder_kinds(&f, &mut Rng::new(1))[i], "{kind}: {f}");
         }
     }
 
@@ -33136,7 +33056,7 @@ mod forced_against_solver {
         // formulas here have at most a few dozen parts and do not grow. A record of each
         // change alone would cost O(e), but it would be taken inside the methods of module
         // `state` that the test checks from outside.
-        let mut rng = Rng(crate::seed::seed("the_state_never_loosens") | 1);
+        let (mut rng, _) = Rng::fresh("the_state_never_loosens");
         let mut changed = 0;
         for case in 0..1000 {
             let f = match case % 3 {
@@ -33669,11 +33589,8 @@ mod unit_interval_tests {
     fn unit_interval_matches_points() {
         let (x, y) = (Atom::Sym("x".into()), Atom::Sym("y".into()));
         // 100 cases from a new seed each run, printed; about two x in five have a point.
-        let mut seed = crate::seed::seed("unit_interval_matches_points");
-        let mut next = |m: i128| {
-            seed = seed.wrapping_mul(6_364_136_223_846_793_005).wrapping_add(1);
-            ((seed >> 33) as i128).rem_euclid(m)
-        };
+        let (mut rng, _) = crate::seed::Rng::fresh("unit_interval_matches_points");
+        let mut next = |m: i128| rng.int_i128(0, m - 1);
         let mut nonempty = 0;
         for _ in 0..100 {
             let rows: Vec<Con> = (0..1 + next(6))
@@ -33769,12 +33686,8 @@ mod unit_interval_tests {
     fn core_classes_answer_as_the_whole_core() {
         let x = Atom::Sym("x".into());
         let others: Vec<Atom> = (0..4).map(|i| Atom::Sym(format!("y{i}").into())).collect();
-        let first = crate::seed::seed("core_classes_answer_as_the_whole_core");
-        let mut seed: u64 = first;
-        let mut next = |m: i128| {
-            seed = seed.wrapping_mul(6_364_136_223_846_793_005).wrapping_add(1);
-            ((seed >> 33) as i128).rem_euclid(m)
-        };
+        let (mut rng, first) = crate::seed::Rng::fresh("core_classes_answer_as_the_whole_core");
+        let mut next = |m: i128| rng.int_i128(0, m - 1);
         let row = |next: &mut dyn FnMut(i128) -> i128, unit: bool| {
             let mut terms = BTreeMap::new();
             if next(3) > 0 {
@@ -34589,13 +34502,8 @@ mod real_end_tests {
     /// bound.
     #[test]
     fn the_bound_never_cuts_an_integer_point() {
-        let mut seed = crate::seed::seed("the_bound_never_cuts_an_integer_point");
-        let mut next = |m: i64| {
-            seed = seed
-                .wrapping_mul(6364136223846793005)
-                .wrapping_add(1442695040888963407);
-            ((seed >> 33) % (2 * m as u64 + 1)) as i64 - m
-        };
+        let (mut rng, _) = crate::seed::Rng::fresh("the_bound_never_cuts_an_integer_point");
+        let mut next = |m: i64| rng.int(-m, m);
         let names = ["a", "b", "z"];
         let mut bounded = 0;
         for _ in 0..100 {
@@ -35875,24 +35783,16 @@ mod sweep_against_pick_tests {
 
     #[test]
     fn the_unbounded_row_sweep_marks_the_arms_pick_by_finds() {
-        let mut seed: u64 = 0x5eed_1234;
-        let mut below = |n: u64| {
-            seed = seed
-                .wrapping_mul(6_364_136_223_846_793_005)
-                .wrapping_add(1_442_695_040_888_963_407);
-            (seed >> 33) % n
-        };
+        let mut rng = crate::seed::Rng::new(0x5eed_1234);
         let mut skipped_hits = 0usize;
         let mut wrong = Vec::new();
         for _ in 0..1500 {
-            let k = 2 + below(2) as usize;
+            let k = 2 + rng.below(2);
             // Distinct names in a random order, so the greatest name falls anywhere in the row.
             let mut names: Vec<usize> = (0..k).collect();
-            for i in (1..k).rev() {
-                names.swap(i, below(i as u64 + 1) as usize);
-            }
-            let ws: Vec<i128> = (0..k).map(|_| 1 + below(5) as i128).collect();
-            let highs: Vec<usize> = (0..k).map(|_| below(2) as usize).collect();
+            rng.shuffle(&mut names);
+            let ws: Vec<i128> = (0..k).map(|_| rng.int_i128(1, 5)).collect();
+            let highs: Vec<usize> = (0..k).map(|_| rng.below(2)).collect();
             let atom = |i: usize| Atom::Sym(format!("a{}", names[i]).into());
             let row = || -> Vec<DisjInfo> {
                 (0..k)
@@ -35948,7 +35848,7 @@ mod sweep_against_pick_tests {
                 }
             }
         }
-        // 10488 hits where the fast pattern is skipped on 2026-11-14, so the test does not
+        // 10504 hits where the fast pattern is skipped on 2026-11-19, so the test does not
         // silently stop reaching them.
         assert!(skipped_hits > 0, "no hit where the fast pattern is skipped");
         assert!(

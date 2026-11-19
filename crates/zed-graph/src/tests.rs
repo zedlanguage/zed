@@ -1,14 +1,7 @@
 use std::collections::HashMap;
 
 use super::{Search, Walk, components, on_cycle, tarjan};
-
-/// A step of xorshift64, the random numbers of these tests.
-fn next(state: &mut u64) -> u64 {
-    *state ^= *state << 13;
-    *state ^= *state >> 7;
-    *state ^= *state << 17;
-    *state
-}
+use crate::seed::Rng;
 
 /// Which nodes each node reaches by a path of one edge or more, by repeated search from each
 /// node: O(n (n + e)), the plain method the tests check Tarjan's against.
@@ -29,12 +22,12 @@ fn reaches(edges: &[Vec<usize>]) -> Vec<Vec<bool>> {
         .collect()
 }
 
-fn random_graph(state: &mut u64) -> Vec<Vec<usize>> {
-    let n = 1 + (next(state) % 12) as usize;
-    let e = (next(state) % (3 * n as u64 + 1)) as usize;
+fn random_graph(rng: &mut Rng) -> Vec<Vec<usize>> {
+    let n = 1 + rng.below(12);
+    let e = rng.below(3 * n + 1);
     let mut edges = vec![Vec::new(); n];
     for _ in 0..e {
-        let (u, v) = (next(state) as usize % n, next(state) as usize % n);
+        let (u, v) = (rng.below(n), rng.below(n));
         edges[u].push(v);
     }
     edges
@@ -81,11 +74,11 @@ fn components_are_the_classes_of_mutual_reach_numbered_in_reverse_topological_or
     let (merged, split) = components_agree(&built);
     assert!(merged > 0, "{built:?}: no pair merged");
     assert!(split > 0, "{built:?}: no pair split");
-    let mut state = crate::seed::seed(
+    let (mut rng, _) = Rng::fresh(
         "components_are_the_classes_of_mutual_reach_numbered_in_reverse_topological_order",
     );
     for _ in 0..5000 {
-        components_agree(&random_graph(&mut state));
+        components_agree(&random_graph(&mut rng));
     }
 }
 
@@ -107,9 +100,9 @@ fn a_node_is_on_a_cycle_exactly_when_it_reaches_itself() {
     let (yes, no) = cycles_agree(&built);
     assert!(yes > 0, "{built:?}: no node on a cycle");
     assert!(no > 0, "{built:?}: every node on a cycle");
-    let mut state = crate::seed::seed("a_node_is_on_a_cycle_exactly_when_it_reaches_itself");
+    let (mut rng, _) = Rng::fresh("a_node_is_on_a_cycle_exactly_when_it_reaches_itself");
     for _ in 0..5000 {
-        cycles_agree(&random_graph(&mut state));
+        cycles_agree(&random_graph(&mut rng));
     }
 }
 
@@ -296,15 +289,13 @@ fn a_search_over_nodes_numbered_as_met_finds_the_classes_of_mutual_reach() {
     Search::new().run(&mut walk, roots);
     let (merged, split) = lazy_agree(&built, &walk, &[2, 0]);
     assert!(merged > 0 && split > 0, "{built:?}");
-    let mut state =
-        crate::seed::seed("a_search_over_nodes_numbered_as_met_finds_the_classes_of_mutual_reach");
+    let (mut rng, _) =
+        Rng::fresh("a_search_over_nodes_numbered_as_met_finds_the_classes_of_mutual_reach");
     for _ in 0..5000 {
-        let edges = random_graph(&mut state);
+        let edges = random_graph(&mut rng);
         let n = edges.len();
         // A random subset of the nodes as roots, in a random order, some twice.
-        let roots: Vec<usize> = (0..1 + next(&mut state) % (n as u64 + 1))
-            .map(|_| next(&mut state) as usize % n)
-            .collect();
+        let roots: Vec<usize> = (0..1 + rng.below(n + 1)).map(|_| rng.below(n)).collect();
         let map = labeled(&edges);
         let mut walk = Labeled::new(&map);
         let numbers: Vec<usize> = roots.iter().map(|&r| walk.number(label(r))).collect();
@@ -315,19 +306,19 @@ fn a_search_over_nodes_numbered_as_met_finds_the_classes_of_mutual_reach() {
 
 #[test]
 fn a_search_run_again_after_its_graph_grows_reads_only_the_new_nodes() {
-    let mut state =
-        crate::seed::seed("a_search_run_again_after_its_graph_grows_reads_only_the_new_nodes");
+    let (mut rng, _) =
+        Rng::fresh("a_search_run_again_after_its_graph_grows_reads_only_the_new_nodes");
     let (mut merged_new, mut split_new) = (0, 0);
     for _ in 0..5000 {
         // Old nodes 0..a with edges among themselves; new nodes a..n with edges to any node.
-        let old = random_graph(&mut state);
+        let old = random_graph(&mut rng);
         let a = old.len();
-        let n = a + 1 + (next(&mut state) % 8) as usize;
+        let n = a + 1 + rng.below(8);
         let mut edges = old;
         edges.resize(n, Vec::new());
-        for _ in 0..next(&mut state) % (3 * (n - a) as u64 + 1) {
-            let u = a + next(&mut state) as usize % (n - a);
-            edges[u].push(next(&mut state) as usize % n);
+        for _ in 0..rng.below(3 * (n - a) + 1) {
+            let u = a + rng.below(n - a);
+            edges[u].push(rng.below(n));
         }
         let map = labeled(&edges);
         let mut walk = Labeled::new(&map);

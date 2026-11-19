@@ -1,30 +1,15 @@
 use std::collections::HashMap;
 
 use super::*;
+use crate::seed::Rng;
 
 // Every expected answer below is byte comparison: two strings must get one name exactly when
 // their bytes are equal. The canonical name of a string is that of its bytes parsed whole as
 // one block (`Names::leaf`), which reads no summary; every other construction joins summaries.
 
-/// A small deterministic generator (xorshift64*), so that each run tests the same strings.
-struct Rng(u64);
-
-impl Rng {
-    fn next(&mut self) -> u64 {
-        self.0 ^= self.0 >> 12;
-        self.0 ^= self.0 << 25;
-        self.0 ^= self.0 >> 27;
-        self.0.wrapping_mul(0x2545_f491_4f6c_dd1d)
-    }
-
-    /// A number in `lo..=hi`.
-    fn int(&mut self, lo: usize, hi: usize) -> usize {
-        lo + (self.next() % (hi - lo + 1) as u64) as usize
-    }
-
-    fn pick<T: Copy>(&mut self, xs: &[T]) -> T {
-        xs[self.int(0, xs.len() - 1)]
-    }
+/// A number in `lo..=hi`.
+fn int(rng: &mut Rng, lo: usize, hi: usize) -> usize {
+    lo + rng.below(hi - lo + 1)
 }
 
 /// [`decide`] on labels given as a list.
@@ -55,10 +40,10 @@ impl Corpus {
 
 /// `data` as a random tree of joins, leaves of 1 to `leafmax` bytes.
 fn build(names: &mut Names, data: &[u8], rng: &mut Rng, leafmax: usize) -> Option<Arc<Sum>> {
-    if data.len() <= 1 || (data.len() <= leafmax && rng.next().is_multiple_of(2)) {
+    if data.len() <= 1 || (data.len() <= leafmax && rng.next_u64().is_multiple_of(2)) {
         return names.leaf(data);
     }
-    let i = rng.int(0, data.len());
+    let i = int(rng, 0, data.len());
     let x = build(names, &data[..i], rng, leafmax);
     let y = build(names, &data[i..], rng, leafmax);
     names.join(x, y)
@@ -90,13 +75,13 @@ fn adversarial(rng: &mut Rng, n: usize) -> Vec<u8> {
     let all: Vec<u8> = (0..=255).collect();
     let alphabets: [&[u8]; 5] = [b"ab", b"abc", b"a", &all, b"aab"];
     let alpha = rng.pick(&alphabets);
-    match rng.int(0, 4) {
+    match rng.below(5) {
         0 => (0..n).map(|_| rng.pick(alpha)).collect(),
         k @ (1 | 2) => {
-            let unit: Vec<u8> = (0..rng.int(1, 7)).map(|_| rng.pick(alpha)).collect();
+            let unit: Vec<u8> = (0..int(rng, 1, 7)).map(|_| rng.pick(alpha)).collect();
             let mut data: Vec<u8> = unit.iter().copied().cycle().take(n).collect();
             if k == 2 && n > 0 {
-                let i = rng.int(0, n - 1);
+                let i = rng.below(n);
                 data[i] = rng.pick(alpha);
             }
             data
@@ -105,7 +90,7 @@ fn adversarial(rng: &mut Rng, n: usize) -> Vec<u8> {
             let mut data = Vec::new();
             while data.len() < n {
                 let b = rng.pick(alpha);
-                data.extend(std::iter::repeat_n(b, rng.int(1, 40)));
+                data.extend(std::iter::repeat_n(b, int(rng, 1, 40)));
             }
             data.truncate(n);
             data
@@ -126,7 +111,7 @@ fn adversarial(rng: &mut Rng, n: usize) -> Vec<u8> {
 fn random_and_adversarial_joins_match_bytes() {
     let mut names = Names::new();
     let mut corpus = Corpus::default();
-    let mut rng = Rng(crate::seed::seed("random_and_adversarial_joins_match_bytes") | 1);
+    let (mut rng, _) = Rng::fresh("random_and_adversarial_joins_match_bytes");
     for _ in 0..150 {
         let n = rng.pick(&[5, 30, 100, 300, 1000, 3000]);
         let data = adversarial(&mut rng, n);
@@ -157,14 +142,18 @@ fn zimin_words_built_both_ways_agree() {
     // Checked against the bytes while short, and the two associations against each other after.
     let mut names = Names::new();
     let mut corpus = Corpus::default();
-    let mut rng = Rng(crate::seed::seed("zimin_words_built_both_ways_agree") | 1);
+    let (mut rng, _) = Rng::fresh("zimin_words_built_both_ways_agree");
     for _ in 0..4 {
-        let base: Vec<u8> = (0..rng.int(1, 40)).map(|_| rng.pick(b"abc")).collect();
+        let base: Vec<u8> = (0..int(&mut rng, 1, 40))
+            .map(|_| rng.pick(b"abc"))
+            .collect();
         let (mut x1, mut x2) = (names.leaf(&base), names.leaf(&base));
         let mut data = base;
         let mut seen = vec![name_of(&x1)];
         for k in 0..40 {
-            let c: Vec<u8> = (0..rng.int(1, 3)).map(|_| rng.pick(b"abcd")).collect();
+            let c: Vec<u8> = (0..int(&mut rng, 1, 3))
+                .map(|_| rng.pick(b"abcd"))
+                .collect();
             let (cl, cr) = (names.leaf(&c), names.leaf(&c));
             let left = names.join(x1.clone(), cl);
             let y1 = names.join(left, x2.clone());
@@ -223,13 +212,13 @@ fn texts_joined_in_any_order_have_one_name() {
     // The finger tree's shape follows the order of the joins; the names must not. Pieces of 1 to
     // 300 bytes joined from the left, from the right, and as a balanced tree, and the text read
     // into one block, all one name; one byte changed gives another.
-    let mut rng = Rng(crate::seed::seed("texts_joined_in_any_order_have_one_name") | 1);
+    let (mut rng, _) = Rng::fresh("texts_joined_in_any_order_have_one_name");
     let mut names = Names::new();
     for _ in 0..30 {
-        let n = rng.int(1, 60);
+        let n = int(&mut rng, 1, 60);
         let pieces: Vec<String> = (0..n)
             .map(|_| {
-                let len = rng.int(1, 300);
+                let len = int(&mut rng, 1, 300);
                 let data = adversarial(&mut rng, len);
                 data.iter().map(|&b| char::from(b'a' + b % 26)).collect()
             })
@@ -254,7 +243,7 @@ fn texts_joined_in_any_order_have_one_name() {
         assert_eq!(names.name(&right), want);
         assert_eq!(names.name(&mid), want);
         let mut other = pieces.concat().into_bytes();
-        let i = rng.int(0, other.len() - 1);
+        let i = rng.below(other.len());
         other[i] = if other[i] == b'a' { b'b' } else { b'a' };
         let other = String::from_utf8(other).expect("ASCII");
         assert_ne!(names.name(&Text::from(other)), want);
@@ -267,10 +256,10 @@ fn texts_joined_in_any_order_have_one_name() {
 fn proper_ids(rng: &mut Rng, n: usize) -> Vec<u128> {
     let mut ids: Vec<u128> = Vec::with_capacity(n);
     while ids.len() < n {
-        let id = u128::from(if rng.next().is_multiple_of(2) {
-            rng.next()
+        let id = u128::from(if rng.next_u64().is_multiple_of(2) {
+            rng.next_u64()
         } else {
-            rng.next() % 8
+            rng.below_u64(8)
         });
         if ids.last() != Some(&id) {
             ids.push(id);
@@ -314,11 +303,11 @@ fn a_block_start_reads_8_symbols_left_and_4_right() {
     assert!(i - j <= CL, "a start reads 7 to its left");
 
     // A change outside `i - 8 ..= i + 4` leaves the start at `i` as it was.
-    let mut rng = Rng(crate::seed::seed("a_block_start_reads_8_symbols_left_and_4_right") | 1);
+    let (mut rng, _) = Rng::fresh("a_block_start_reads_8_symbols_left_and_4_right");
     for _ in 0..20_000 {
-        let n = rng.int(14, 40);
+        let n = int(&mut rng, 14, 40);
         let ids = proper_ids(&mut rng, n);
-        let i = rng.int(CL, n - 1 - CR);
+        let i = int(&mut rng, CL, n - 1 - CR);
         let outside: Vec<usize> = (0..n).filter(|&j| j + CL < i || j > i + CR).collect();
         if outside.is_empty() {
             continue;
@@ -326,7 +315,7 @@ fn a_block_start_reads_8_symbols_left_and_4_right() {
         let j = rng.pick(&outside);
         let mut z = ids.clone();
         z[j] = loop {
-            let id = u128::from(rng.next());
+            let id = u128::from(rng.next_u64());
             if Some(&id) != j.checked_sub(1).map(|k| &ids[k]) && Some(&id) != ids.get(j + 1) {
                 break id;
             }
@@ -388,9 +377,9 @@ fn plain_decide(ids: &[u128], ts: bool, te: bool) -> Vec<bool> {
 /// to 60, wide and narrow labels, at each choice of true start and end.
 #[test]
 fn decide_gives_the_starts_of_the_plain_rounds() {
-    let mut rng = Rng(crate::seed::seed("decide_gives_the_starts_of_the_plain_rounds") | 1);
+    let (mut rng, _) = Rng::fresh("decide_gives_the_starts_of_the_plain_rounds");
     for _ in 0..20_000 {
-        let n = rng.int(1, 60);
+        let n = int(&mut rng, 1, 60);
         let ids = proper_ids(&mut rng, n);
         for (ts, te) in [(false, false), (true, false), (false, true), (true, true)] {
             assert_eq!(
@@ -415,9 +404,9 @@ fn a_block_at_the_true_end_may_hold_5_symbols() {
     let starts: Vec<usize> = (0..ids.len()).filter(|&i| st[i]).collect();
     assert_eq!(starts, [0, 3, 5, 8, 10, 12, 14, 17, 19]);
     assert_eq!(ids.len() - 19, 5);
-    let mut rng = Rng(crate::seed::seed("a_block_at_the_true_end_may_hold_5_symbols") | 1);
+    let (mut rng, _) = Rng::fresh("a_block_at_the_true_end_may_hold_5_symbols");
     for _ in 0..20_000 {
-        let n = rng.int(2, 60);
+        let n = int(&mut rng, 2, 60);
         let ids = proper_ids(&mut rng, n);
         let st = decide_of(&ids, true, true);
         let mut starts: Vec<usize> = (0..n).filter(|&i| st[i]).collect();
@@ -470,7 +459,7 @@ fn canonical_parts_are_a_function_of_the_text() {
     // Each text named in two canonical dictionaries: one that met other texts first and reads
     // it whole, one that builds it as a random tree of joins. The rules under the two names
     // must be the same tree and spell the text; names stay exact as in `Names::new`.
-    let mut rng = Rng(crate::seed::seed("canonical_parts_are_a_function_of_the_text") | 1);
+    let (mut rng, _) = Rng::fresh("canonical_parts_are_a_function_of_the_text");
     let mut warm = Names::canonical(fnv128);
     let mut corpus = Corpus::default();
     for _ in 0..120 {
@@ -563,7 +552,7 @@ fn an_exact_label_reads_back_to_its_rule() {
     // PERF-canon-flat-strings: a rule whose code fits in 125 bits is labeled by the code, not
     // a hash. Read each such label back, from its bits alone, to the rule's tree, and check
     // that no two rules share a label of any kind.
-    let mut rng = Rng(crate::seed::seed("an_exact_label_reads_back_to_its_rule") | 1);
+    let (mut rng, _) = Rng::fresh("an_exact_label_reads_back_to_its_rule");
     let mut names = Names::canonical(fnv128);
     for _ in 0..60 {
         let n = rng.pick(&[5, 30, 300, 3000]);
@@ -618,7 +607,7 @@ fn a_weak_label_hash_is_flagged_and_names_stay_exact() {
     let whole = names.leaf(&distinct);
     corpus.add(name_of(&whole), &distinct);
     assert!(names.collided());
-    let mut rng = Rng(crate::seed::seed("a_weak_label_hash_is_flagged_and_names_stay_exact") | 1);
+    let (mut rng, _) = Rng::fresh("a_weak_label_hash_is_flagged_and_names_stay_exact");
     for _ in 0..60 {
         let n = rng.pick(&[5, 30, 300, 3000]);
         let data = adversarial(&mut rng, n);

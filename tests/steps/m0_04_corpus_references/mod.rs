@@ -15,6 +15,7 @@ mod unit_roots;
 use std::fs;
 
 use zed_corpus_ref::zedrt;
+use zed_tests::seed::Rng;
 
 /// The corpus directory.
 fn corpus() -> String {
@@ -338,13 +339,8 @@ fn no_edges_mean_no_nodes_in_range() {
 /// A table of a label per node, relabeled at each edge, on small graphs of a fixed random sequence.
 #[test]
 fn union_find_agrees_with_a_table_of_labels_on_small_graphs() {
-    let mut state: u64 = 0x2545_f491_4f6c_dd1d;
-    let mut next = |below: u64| {
-        state = state
-            .wrapping_mul(6_364_136_223_846_793_005)
-            .wrapping_add(1_442_695_040_888_963_407);
-        (state >> 33) % below
-    };
+    let mut rng = Rng::new(0x2545_f491_4f6c_dd1d);
+    let mut next = |below: u64| rng.below_u64(below);
     for round in 0..500 {
         let span = 1 + next(12);
         let lines = (0..1 + next(8)).map(|_| {
@@ -502,32 +498,23 @@ fn clustering_agrees_with_its_quadratic_form_on_every_small_grid_input() {
     assert_eq!((differ, first), (0, None), "of {seen} inputs");
 }
 
-/// splitmix64: the `i`th number of the sequence that starts at `seed`.
-fn splitmix(seed: u64, i: u64) -> u64 {
-    let mut z = seed.wrapping_add(i.wrapping_mul(0x9E37_79B9_7F4A_7C15));
-    z = (z ^ (z >> 30)).wrapping_mul(0xBF58_476D_1CE4_E5B9);
-    z = (z ^ (z >> 27)).wrapping_mul(0x94D0_49BB_1331_11EB);
-    z ^ (z >> 31)
-}
-
 /// Random sets of up to 40 points: coordinates from ranges of 3, 10 and 1000 values, which give
 /// equal points and equal distances often, and from 2^40 values times 10^20, which needs more
 /// than 64 bits; a count of clusters from -1 to n + 1 at random. Each run draws new sets.
 #[test]
 fn clustering_agrees_with_its_quadratic_form_on_random_inputs() {
     let mut inputs = Vec::new();
-    let seed = zed_tests::seed::seed("clustering_agrees_with_its_quadratic_form_on_random_inputs");
-    for case in 0..1500u64 {
-        let draw = |i: u64| splitmix(seed.wrapping_add(case), i);
-        let n = draw(0) % 41;
-        let (range, scale) = [
+    let (mut rng, _) = Rng::fresh("clustering_agrees_with_its_quadratic_form_on_random_inputs");
+    for _ in 0..1500 {
+        let n = rng.below_u64(41);
+        let (range, scale) = rng.pick(&[
             (3, ""),
             (10, ""),
             (1000, ""),
             (1 << 40, "00000000000000000000"),
-        ][(draw(1) % 4) as usize];
-        let coordinate = |i: u64| {
-            let c = (draw(i) % range) as i64 - (range / 2) as i64;
+        ]);
+        let mut coordinate = || {
+            let c = rng.below_u64(range) as i64 - (range / 2) as i64;
             if c == 0 {
                 "0".to_string()
             } else {
@@ -535,9 +522,9 @@ fn clustering_agrees_with_its_quadratic_form_on_random_inputs() {
             }
         };
         let body: String = (0..n)
-            .map(|i| format!("{} {}\n", coordinate(2 + 2 * i), coordinate(3 + 2 * i)))
+            .map(|_| format!("{} {}\n", coordinate(), coordinate()))
             .collect();
-        let k = (draw(100) % (n + 3)) as i64 - 1;
+        let k = rng.below_u64(n + 3) as i64 - 1;
         inputs.push(format!("{k}\n{body}"));
     }
     let (seen, differ, first) = count_differences(inputs.into_iter());

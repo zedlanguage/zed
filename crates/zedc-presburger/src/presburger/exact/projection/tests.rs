@@ -130,13 +130,8 @@ fn the_omega_nightmare_has_no_point() {
 fn small_systems_project_to_their_enumerated_values() {
     // A fixed family of small systems with strides and non-unit bounds, each checked
     // against enumeration over a box larger than every point's coordinates.
-    let mut seed: u64 = 0x2545_f491_4f6c_dd1d;
-    let mut next = |n: i64| -> i64 {
-        seed ^= seed << 13;
-        seed ^= seed >> 7;
-        seed ^= seed << 17;
-        (seed % (2 * n as u64 + 1)) as i64 - n
-    };
+    let mut rng = crate::seed::Rng::new(0x2545_f491_4f6c_dd1d);
+    let mut next = |n: i64| rng.int(-n, n);
     for case in 0..300 {
         let names = ["s", "x", "y"];
         let mut rows = Vec::new();

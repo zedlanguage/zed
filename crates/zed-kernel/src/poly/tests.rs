@@ -776,13 +776,8 @@ fn the_support_product_agrees_with_the_sparse_one() {
     // Pseudo-random sums: few distinct sums (on a few progressions) and all distinct ones (the
     // primes must grow), with small coefficients that cancel. A slot test that took a slot of
     // two sums for one, or a coefficient read from a shared slot, would differ here.
-    let mut x = crate::seed::seed("the_support_product_agrees_with_the_sparse_one") | 1;
-    let mut next = |m: u64| {
-        x ^= x << 13;
-        x ^= x >> 7;
-        x ^= x << 17;
-        x % m
-    };
+    let (mut rng, _) = crate::seed::Rng::fresh("the_support_product_agrees_with_the_sparse_one");
+    let mut next = |m: u64| rng.below_u64(m);
     for round in 0..60 {
         let gaps = [3, 1000, 1 << 40][round % 3];
         let (n, m) = (1 + next(80), 1 + next(80));

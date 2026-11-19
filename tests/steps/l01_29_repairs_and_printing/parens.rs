@@ -17,6 +17,7 @@ use std::collections::HashSet;
 
 use zed_kernel::types::rec::{Def, Expr, Group};
 use zed_kernel::types::{TextPlace, Type as KType};
+use zed_tests::seed::Rng;
 use zedc::check::read::parse_type;
 use zedc::check::ty::Ty;
 use zedc::lex::lex_fence;
@@ -129,18 +130,6 @@ fn the_kernel_printer_parenthesizes_where_the_grammar_layering_needs_it() {
         }
     }
     assert!(wrong.is_empty(), "{}", wrong.join("\n"));
-}
-
-/// A random number generator for [`generated`]: SplitMix64, seeded by [`zed_tests::seed::seed`].
-struct Rng(u64);
-
-impl Rng {
-    fn below(&mut self, n: usize) -> usize {
-        self.0 = self.0.wrapping_add(0x9e37_79b9_7f4a_7c15);
-        let x = (self.0 ^ (self.0 >> 30)).wrapping_mul(0xbf58_476d_1ce4_e5b9);
-        let x = (x ^ (x >> 27)).wrapping_mul(0x94d0_49bb_1331_11eb);
-        ((x ^ (x >> 31)) % n as u64) as usize
-    }
 }
 
 const LEAVES: [&str; 12] = [
@@ -395,7 +384,7 @@ fn each_text_built_for_a_form_prints_it() {
 /// Fails when a form is still not printed, which happens only when the printer no longer
 /// writes it.
 fn read_back_round(seed: u64) {
-    let mut rng = Rng(seed);
+    let mut rng = Rng::new(seed);
     let mut wrong = Vec::new();
     let mut read = 0;
     let mut seen = HashSet::new();
@@ -802,7 +791,7 @@ fn the_kernel_printer_reads_back_and_holds_no_parentheses_the_grammar_does_not_n
     let seed = zed_tests::seed::seed(
         "the_kernel_printer_reads_back_and_holds_no_parentheses_the_grammar_does_not_need",
     );
-    let mut rng = Rng(seed);
+    let mut rng = Rng::new(seed);
     let (mut wrong, mut read, mut seen, mut unpaired) = (Vec::new(), 0, HashSet::new(), 0);
     let mut forms = KERNEL_FORMS.map(|(f, _)| (f, 0usize));
     for _ in 0..3000 {
@@ -1401,7 +1390,7 @@ fn the_group_printer_reads_back_and_holds_no_parentheses_the_grammar_does_not_ne
         misprinted("(#u) -> #u", &want),
         ["`(#u) -> #u`: `#u -> #u` parses the same"]
     );
-    let mut rng = Rng(zed_tests::seed::seed(
+    let mut rng = Rng::new(zed_tests::seed::seed(
         "the_group_printer_reads_back_and_holds_no_parentheses_the_grammar_does_not_need",
     ));
     let (mut wrong, mut read, mut seen) = (Vec::new(), 0, HashSet::new());

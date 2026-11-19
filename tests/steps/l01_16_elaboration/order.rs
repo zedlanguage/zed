@@ -3,6 +3,7 @@
 
 use std::collections::HashMap;
 
+use zed_tests::seed::Rng;
 use zedc::elab::{top_order, topo, topo_joined};
 use zedc::resolve::Ref;
 
@@ -103,13 +104,8 @@ fn joins_order_as_their_items_written_out() {
     // Random graphs of items and joins: the order is that of `topo` on the graph with each
     // join's items written into each sorted list that names it, and the cycles are its
     // components found by reachability.
-    let mut x: u64 = 0x2545_f491_4f6c_dd1d;
-    let mut next = |m: usize| {
-        x ^= x << 13;
-        x ^= x >> 7;
-        x ^= x << 17;
-        (x % m as u64) as usize
-    };
+    let mut rng = Rng::new(0x2545_f491_4f6c_dd1d);
+    let mut next = |m: usize| rng.below(m);
     let (mut orders, mut cycles) = (0, 0);
     for _ in 0..4000 {
         let items = 1 + next(10);

@@ -634,6 +634,7 @@ mod tests {
         integer_empty_by, integer_point, integer_point_by, negated, negsssp, odd_zero_cycle,
         potential, race, reversed, rounded,
     };
+    use crate::seed::Rng;
 
     /// The rows `x0 - x1 >= 0`, `x1 - x0 >= 0`, `1 - x0 - x1 >= 0`, and with `odd` also
     /// `x0 + x1 - 1 >= 0`, over two variables.
@@ -724,15 +725,6 @@ mod tests {
         Some(d)
     }
 
-    /// splitmix64, so the graphs are the same on every run.
-    fn next(state: &mut u64) -> u64 {
-        *state = state.wrapping_add(0x9e37_79b9_7f4a_7c15);
-        let mut z = *state;
-        z = (z ^ (z >> 30)).wrapping_mul(0xbf58_476d_1ce4_e5b9);
-        z = (z ^ (z >> 27)).wrapping_mul(0x94d0_49bb_1331_11eb);
-        z ^ (z >> 31)
-    }
-
     /// A function giving a graph built for an answer.
     type BuiltGraph = fn() -> Vec<Vec<(usize, Int)>>;
 
@@ -803,21 +795,21 @@ mod tests {
         // Radzik's search, BF-Dijkstra and Duong's search, each alone, are checked. Then the
         // graph of [`ANSWERS`] for each answer the random graphs did not give.
         let vars = 25usize;
-        let mut state = crate::seed::seed("random_graphs_get_the_decisions_of_bellman_ford_moore");
+        let (mut rng, _) = Rng::fresh("random_graphs_get_the_decisions_of_bellman_ford_moore");
         let mut answers = [0usize; 3];
         for _ in 0..400 {
             let mut out: Vec<Vec<(usize, Int)>> = vec![Vec::new(); 2 * vars];
-            let rows = 10 + next(&mut state) % 100;
+            let rows = 10 + rng.below(100);
             for _ in 0..rows {
-                let k = Int::from((next(&mut state) % 26) as i64 - 5);
-                let l1 = (next(&mut state) % (2 * vars as u64)) as usize;
-                if next(&mut state).is_multiple_of(4) {
+                let k = Int::from(rng.int(-5, 20));
+                let l1 = rng.below(2 * vars);
+                if rng.next_u64().is_multiple_of(4) {
                     out[l1 ^ 1].push((l1, &k + &k));
                 } else {
-                    let l2 = (next(&mut state) % (2 * vars as u64)) as usize;
+                    let l2 = rng.below(2 * vars);
                     // A third of the rows with a constant up to 5 are equalities, the row and
                     // its opposite `¬l1 + ¬l2 <= -k`, which make the zero-weight cycles.
-                    if k <= Int::from(5) && next(&mut state).is_multiple_of(3) {
+                    if k <= Int::from(5) && rng.next_u64().is_multiple_of(3) {
                         out[l1].push((l2 ^ 1, -&k));
                         out[l2].push((l1 ^ 1, -&k));
                     }
@@ -912,22 +904,19 @@ mod tests {
             );
             assert!(to_rounds > 0, "{out:?}: no label passed to BF-Dijkstra");
         }
-        let mut state = crate::seed::seed("shared_labels_keep_the_answers_of_bellman_ford");
+        let (mut rng, _) = Rng::fresh("shared_labels_keep_the_answers_of_bellman_ford");
         for graph in 0..3000 {
-            let n = 1 + (next(&mut state) % if graph % 4 == 0 { 40 } else { 12 }) as usize;
+            let n = 1 + rng.below(if graph % 4 == 0 { 40 } else { 12 });
             let mut out: Vec<Vec<(usize, Int)>> = vec![Vec::new(); n];
-            if next(&mut state).is_multiple_of(2) {
+            if rng.next_u64().is_multiple_of(2) {
                 for (u, edges) in out.iter_mut().enumerate() {
-                    let w = Int::from((next(&mut state) % 31) as i64);
+                    let w = Int::from(rng.int(0, 30));
                     edges.push(((u + 1) % n, w));
                 }
             }
-            for _ in 0..next(&mut state) % (3 * n as u64 + 1) {
-                let (u, v) = (
-                    (next(&mut state) % n as u64) as usize,
-                    (next(&mut state) % n as u64) as usize,
-                );
-                out[u].push((v, Int::from((next(&mut state) % 19) as i64 - 6)));
+            for _ in 0..rng.below(3 * n + 1) {
+                let (u, v) = (rng.below(n), rng.below(n));
+                out[u].push((v, Int::from(rng.int(-6, 12))));
             }
             shared_agrees(&out, &format!("graph {graph}"));
         }
@@ -1003,11 +992,12 @@ mod tests {
 
     /// The battery item UTVPI-GOR's verifier ran and the tests above hold only in part (test
     /// audit 2026-11-08): `graphs` random directed graphs of 1 to 12 nodes, self loops allowed,
-    /// 0 to 3n edges of weights -8 to 12, from `state`. Each search alone, the race of them and
+    /// 0 to 3n edges of weights -8 to 12, from `seed`. Each search alone, the race of them and
     /// `potential` must find a negative cycle exactly when Bellman–Ford–Moore does, and
     /// otherwise give a potential that holds on every edge. Both answers are checked on built
     /// graphs first, so the check could fail either way on every run.
-    pub(super) fn small_graphs_agree(mut state: u64, graphs: usize) {
+    pub(super) fn small_graphs_agree(seed: u64, graphs: usize) {
+        let mut rng = Rng::new(seed);
         // The loop 0 → 0 of weight -1 is a negative cycle; the edge 0 → 1 of weight -8 closes
         // none, so labels 0 and -8 are a potential.
         let loop_ = vec![vec![(0, Int::from(-1))]];
@@ -1018,14 +1008,11 @@ mod tests {
         let edge = vec![vec![(1, Int::from(-8))], vec![]];
         assert!(small_graph_agrees(&edge, "one edge"), "no potential");
         for graph in 0..graphs {
-            let n = 1 + (next(&mut state) % 12) as usize;
+            let n = 1 + rng.below(12);
             let mut out: Vec<Vec<(usize, Int)>> = vec![Vec::new(); n];
-            for _ in 0..next(&mut state) % (3 * n as u64 + 1) {
-                let (u, v) = (
-                    (next(&mut state) % n as u64) as usize,
-                    (next(&mut state) % n as u64) as usize,
-                );
-                out[u].push((v, Int::from((next(&mut state) % 21) as i64 - 8)));
+            for _ in 0..rng.below(3 * n + 1) {
+                let (u, v) = (rng.below(n), rng.below(n));
+                out[u].push((v, Int::from(rng.int(-8, 12))));
             }
             small_graph_agrees(&out, &format!("graph {graph}"));
         }
@@ -1068,18 +1055,15 @@ mod tests {
         edges.extend((1..=k).map(|i| (k, k + i, -1)));
         edges.extend((1..k).map(|i| (i, k, 2 * (k - 1 - i) as i64)));
         let heavy = n as i64 + 1 + edges.iter().map(|e| e.2.abs()).sum::<i64>();
-        let mut state = 1u64;
-        let mut below = |m: usize| (next(&mut state) % m as u64) as usize;
+        let mut rng = Rng::new(1);
         for _ in 0..5 * edges.len() {
-            let (a, b) = (below(n), below(n));
+            let (a, b) = (rng.below(n), rng.below(n));
             if a != b {
                 edges.push((a, b, heavy));
             }
         }
         let mut label: Vec<usize> = (0..n).collect();
-        for i in (1..n).rev() {
-            label.swap(i, below(i + 1));
-        }
+        rng.shuffle(&mut label);
         let mut out: Vec<Vec<(usize, Int)>> = vec![Vec::new(); n];
         for (u, v, w) in edges {
             out[label[u]].push((label[v], Int::from(w)));
@@ -1166,9 +1150,8 @@ mod tests {
         // or `±x ± y + k >= 0`, x and y different, k from -4 to 4. With every search,
         // `integer_empty` must say whether some point of the box holds every row, and
         // `integer_point` must give such a point exactly when one exists. Both answers occur.
-        let mut state = crate::seed::seed("the_rows_get_the_answers_of_a_search_of_the_box");
-        let mut below = |m: u64| next(&mut state) % m;
-        let sign = |s: u64| Int::from(if s == 0 { 1 } else { -1 });
+        let (mut rng, _) = Rng::fresh("the_rows_get_the_answers_of_a_search_of_the_box");
+        let sign = |s: usize| Int::from(if s == 0 { 1 } else { -1 });
         // Both answers on built rows, so the check could fail either way on every run: in the
         // box -1..=1 of one variable, `x >= 0` holds at 0 and 1, and `x - 2 >= 0` at no point,
         // since it needs x >= 2.
@@ -1189,14 +1172,14 @@ mod tests {
                 rows.push((vec![(j, Int::ONE)], Int::from(b as i64)));
                 rows.push((vec![(j, Int::from(-1))], Int::from(b as i64)));
             }
-            for _ in 0..1 + below(6) {
-                let x = below(n as u64) as usize;
-                let mut a = vec![(x, sign(below(2)))];
-                if n > 1 && below(3) > 0 {
-                    let y = (x + 1 + below(n as u64 - 1) as usize) % n;
-                    a.push((y, sign(below(2))));
+            for _ in 0..1 + rng.below(6) {
+                let x = rng.below(n);
+                let mut a = vec![(x, sign(rng.below(2)))];
+                if n > 1 && rng.below(3) > 0 {
+                    let y = (x + 1 + rng.below(n - 1)) % n;
+                    a.push((y, sign(rng.below(2))));
                 }
-                rows.push((a, Int::from(below(9) as i64 - 4)));
+                rows.push((a, Int::from(rng.int(-4, 4))));
             }
             rows_agree(n, b, &rows);
         }

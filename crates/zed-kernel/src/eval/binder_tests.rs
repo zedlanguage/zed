@@ -9,6 +9,7 @@
 use std::collections::{BTreeSet, HashMap, HashSet};
 use std::sync::Arc;
 
+use crate::seed::Xorshift64;
 use crate::term::build::{app, lam, let_, lit, prim, var};
 use crate::term::walk::{Kid, kids};
 use crate::term::{Evidence, FixKind, GuardPos, Pattern, Prim, Shared, Term, Witness};
@@ -590,9 +591,10 @@ fn a_body_shared_by_two_lambdas_has_one_set_whichever_is_read_first() {
 /// its binders, so that a name is often both bound and read and binders shadow each other.
 /// With `share`, a part is often a node made before; with `nest`, a part is often one node read
 /// at three to five depths under binders of one name ([`Gen::nest`]). With 4 names and no
-/// `nest`, it draws what it drew before row TEST-reads-deep-sharing, seed for seed.
+/// `nest`, it draws what it drew before row TEST-reads-deep-sharing, seed for seed. Its draws
+/// are xorshift64's ([`Xorshift64`]), kept for that: the terms are pinned to the seeds.
 struct Gen {
-    state: u64,
+    rng: Xorshift64,
     pool: Vec<Shared>,
     share: bool,
     names: u64,
@@ -602,18 +604,8 @@ struct Gen {
 const NAMES: [&str; 6] = ["x", "y", "this", "k", "a", "b"];
 
 impl Gen {
-    fn next(&mut self, n: u64) -> u64 {
-        // xorshift64
-        let mut s = self.state;
-        s ^= s << 13;
-        s ^= s >> 7;
-        s ^= s << 17;
-        self.state = s;
-        s % n
-    }
-
     fn name(&mut self) -> &'static str {
-        NAMES[self.next(self.names) as usize]
+        NAMES[self.rng.below(self.names) as usize]
     }
 
     /// One node `s` read at each of three to five nested binders of one name `x`, each binder
@@ -625,9 +617,9 @@ impl Gen {
         let s = self.sub(d);
         let x: Arc<str> = self.name().into();
         let mut t = Term::If(sh(var(self.name())), s.clone(), s.clone());
-        for _ in 0..3 + self.next(3) {
+        for _ in 0..3 + self.rng.below(3) {
             let body = sh(Term::If(sh(var(self.name())), s.clone(), sh(t)));
-            t = match self.next(5) {
+            t = match self.rng.below(5) {
                 0 => Term::Lam(vec![x.clone()], body),
                 1 => Term::Let(x.clone(), s.clone(), body),
                 2 => Term::Fam {
@@ -653,8 +645,8 @@ impl Gen {
     }
 
     fn sub(&mut self, depth: u32) -> Shared {
-        if self.share && !self.pool.is_empty() && self.next(3) == 0 {
-            let i = self.next(self.pool.len() as u64) as usize;
+        if self.share && !self.pool.is_empty() && self.rng.below(3) == 0 {
+            let i = self.rng.below(self.pool.len() as u64) as usize;
             return self.pool[i].clone();
         }
         let s = sh(self.term(depth));
@@ -664,9 +656,9 @@ impl Gen {
 
     fn pattern(&mut self, depth: u32) -> Pattern {
         match if depth == 0 {
-            self.next(3)
+            self.rng.below(3)
         } else {
-            self.next(7)
+            self.rng.below(7)
         } {
             0 => Pattern::Wild,
             1 => bind(self.name()),
@@ -680,20 +672,20 @@ impl Gen {
 
     fn term(&mut self, depth: u32) -> Term {
         if depth == 0 {
-            return match self.next(3) {
+            return match self.rng.below(3) {
                 0 => lit(0i64),
                 _ => var(self.name()),
             };
         }
         let d = depth - 1;
-        if self.nest && self.next(6) == 0 {
+        if self.nest && self.rng.below(6) == 0 {
             return self.nest(d);
         }
-        match self.next(16) {
+        match self.rng.below(16) {
             0 => var(self.name()),
             1 => {
                 let xs = [self.name(), self.name()];
-                let k = 1 + self.next(2) as usize;
+                let k = 1 + self.rng.below(2) as usize;
                 Term::Lam(xs[..k].iter().map(|&x| x.into()).collect(), self.sub(d))
             }
             2 => Term::App(self.sub(d), vec![self.term(d)]),
@@ -702,7 +694,7 @@ impl Gen {
             5 => Term::If(self.sub(d), self.sub(d), self.sub(d)),
             6 => {
                 let s = self.sub(d);
-                let arms = (0..1 + self.next(2))
+                let arms = (0..1 + self.rng.below(2))
                     .map(|_| (self.pattern(2), self.term(d)))
                     .collect();
                 Term::Match(s, arms)
@@ -725,13 +717,13 @@ impl Gen {
             10 => Term::Fold {
                 family: self.sub(d),
                 op: self.sub(d),
-                identity: (self.next(2) == 0).then(|| self.sub(d)),
+                identity: (self.rng.below(2) == 0).then(|| self.sub(d)),
                 depth: 1,
                 ev: Evidence::new(),
             },
             11 | 12 => {
                 let (init, step) = (self.sub(d), self.sub(d));
-                let kind = match self.next(2) {
+                let kind = match self.rng.below(2) {
                     0 => FixKind::Definedness,
                     _ => FixKind::Lattice { join: self.sub(d) },
                 };
@@ -774,7 +766,7 @@ fn reads_agrees_with_a_walk_of_the_tree_on_random_terms() {
     for share in [false, true] {
         for seed in 1..=20_000u64 {
             let mut g = Gen {
-                state: seed.wrapping_mul(0x9E37_79B9_7F4A_7C15) | 1,
+                rng: Xorshift64::new(seed.wrapping_mul(0x9E37_79B9_7F4A_7C15) | 1),
                 pool: Vec::new(),
                 share,
                 names: 4,
@@ -809,7 +801,7 @@ fn reads_agrees_with_a_walk_of_the_tree_on_random_terms() {
 fn reads_lies_between_the_tree_walk_and_the_shared_bound_on_deeply_shared_terms() {
     for seed in 1..=20_000u64 {
         let mut g = Gen {
-            state: seed.wrapping_mul(0x9E37_79B9_7F4A_7C15) | 1,
+            rng: Xorshift64::new(seed.wrapping_mul(0x9E37_79B9_7F4A_7C15) | 1),
             pool: Vec::new(),
             share: true,
             names: NAMES.len() as u64,

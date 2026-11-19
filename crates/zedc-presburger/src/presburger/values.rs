@@ -582,21 +582,13 @@ mod tests {
         }
         let mut expected = kept(&expected);
         expected.sort();
-        let mut s = 0x9e37_79b9_7f4a_7c15_u64;
         for order in 0..4 {
             let mut ors = chain(n);
             match order {
                 0 => {}
                 1 => ors.reverse(),
                 2 => ors.iter_mut().for_each(|ds| ds.reverse()),
-                _ => {
-                    for i in (1..ors.len()).rev() {
-                        s ^= s << 13;
-                        s ^= s >> 7;
-                        s ^= s << 17;
-                        ors.swap(i, (s % (i as u64 + 1)) as usize);
-                    }
-                }
+                _ => crate::seed::Rng::new(0x9e37_79b9_7f4a_7c15).shuffle(&mut ors),
             }
             assert!(
                 drop_outside_values(&[], &mut ors, Vec::as_slice),

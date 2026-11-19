@@ -1,4 +1,5 @@
 use super::*;
+use crate::seed::{Rng, Xorshift64};
 
 /// The region of the part `f` on the box `r`, made by a search of its own.
 fn region(r: Vec<Type>, f: &Part<Row>) -> Region {
@@ -136,13 +137,8 @@ fn the_residue_length_agrees_with_a_scan() {
             assert_eq!(found, scanned, "the inverse of {a} modulo {m}");
         }
     }
-    let mut seed = crate::seed::seed("the_residue_length_agrees_with_a_scan");
-    let mut next = |below: u64| {
-        seed = seed
-            .wrapping_mul(6364136223846793005)
-            .wrapping_add(1442695040888963407);
-        (seed >> 33) % below
-    };
+    let (mut rng, _) = Rng::fresh("the_residue_length_agrees_with_a_scan");
+    let mut next = |below: u64| rng.below_u64(below);
     let (mut exists, mut given) = (0, 0);
     for _ in 0..20_000 {
         // Up to four classes of `none`: the case of KERNEL-witness-length-miss has four, and
@@ -174,13 +170,8 @@ fn the_residue_length_agrees_with_a_scan() {
 /// of many common divisors (PERF-residue-length-cost).
 #[test]
 fn a_meeting_pair_agrees_with_every_pair() {
-    let mut seed = crate::seed::seed("a_meeting_pair_agrees_with_every_pair");
-    let mut next = |below: u64| {
-        seed = seed
-            .wrapping_mul(6364136223846793005)
-            .wrapping_add(1442695040888963407);
-        (seed >> 33) % below
-    };
+    let (mut rng, _) = Rng::fresh("a_meeting_pair_agrees_with_every_pair");
+    let mut next = |below: u64| rng.below_u64(below);
     let periods = [1, 2, 3, 4, 6, 8, 9, 12, 18, 24, 36, 5, 10, 30];
     let meet = |a: (u64, u64), b: (u64, u64)| {
         let g = gcd(a.0, b.0);
@@ -408,26 +399,14 @@ fn tuple_types_with_one_component_type_share_its_cell() {
     assert_eq!(h.opens, [4, 0, 0]);
 }
 
-/// A small generator for the tests below: xorshift.
-fn next(s: &mut u64) -> u64 {
-    *s ^= *s << 13;
-    *s ^= *s >> 7;
-    *s ^= *s << 17;
-    *s
-}
-
 /// Random clauses of one and two literals on `vars` variables.
-fn clauses(s: &mut u64, vars: usize) -> Vec<(Literal2, Literal2)> {
-    let m = 1 + next(s) as usize % (3 * vars);
-    let lit = |s: &mut u64| next(s) as usize % (2 * vars);
+fn clauses(s: &mut Rng, vars: usize) -> Vec<(Literal2, Literal2)> {
+    let m = 1 + s.below(3 * vars);
+    let lit = |s: &mut Rng| s.below(2 * vars);
     (0..m)
         .map(|_| {
             let a = lit(s);
-            if next(s).is_multiple_of(3) {
-                (a, a)
-            } else {
-                (a, lit(s))
-            }
+            if s.below(3) == 0 { (a, a) } else { (a, lit(s)) }
         })
         .collect()
 }
@@ -441,8 +420,7 @@ fn holds2(x: &[bool], l: Literal2) -> bool {
 /// variables, and each solution it gives holds every clause.
 #[test]
 fn two_sat_solve_agrees_with_enumeration_and_its_solutions_hold() {
-    let mut s =
-        crate::seed::seed("two_sat_solve_agrees_with_enumeration_and_its_solutions_hold") | 1;
+    let (mut s, _) = Rng::fresh("two_sat_solve_agrees_with_enumeration_and_its_solutions_hold");
     let mut seen = [0usize; 2];
     for vars in 1..=12 {
         for _ in 0..40 {
@@ -551,10 +529,9 @@ fn read_two_sat_agrees_with_enumeration_on_built_and_random_parts() {
     assert_eq!(read_two_sat_agrees(&and(&a, &stranger)), None);
     // Random parts: each part read as a 2-CNF agrees (the check above); a part of another
     // structure is `None`, which is allowed of any part.
-    let mut s =
-        crate::seed::seed("read_two_sat_agrees_with_enumeration_on_built_and_random_parts") | 1;
-    fn random(s: &mut u64, depth: u32, atoms: &[Part<Row>]) -> Part<Row> {
-        let pick = next(s);
+    let (mut s, _) = Rng::fresh("read_two_sat_agrees_with_enumeration_on_built_and_random_parts");
+    fn random(s: &mut Rng, depth: u32, atoms: &[Part<Row>]) -> Part<Row> {
+        let pick = s.next_u64();
         if depth == 0 || pick.is_multiple_of(4) {
             let p = &atoms[(pick >> 8) as usize % atoms.len()];
             return if pick >> 4 & 1 == 1 {
@@ -584,12 +561,12 @@ fn read_two_sat_agrees_with_enumeration_on_built_and_random_parts() {
 #[test]
 fn the_value_shown_for_a_two_cnf_holds_every_clause() {
     let vars = 48;
-    let mut s = crate::seed::seed("the_value_shown_for_a_two_cnf_holds_every_clause") | 1;
+    let (mut s, _) = Rng::fresh("the_value_shown_for_a_two_cnf_holds_every_clause");
     let mut shown = 0;
     for _ in 0..12 {
         let cs: Vec<(Literal2, Literal2)> = (0..vars)
             .map(|_| {
-                let mut l = || next(&mut s) as usize % (2 * vars);
+                let mut l = || s.below(2 * vars);
                 (l(), l())
             })
             .collect();
@@ -892,9 +869,11 @@ fn a_ring_of_alike_lists_has_one_trie_whatever_its_length() {
     }
 }
 
-/// A number in `0..n`, from the generator [`next`].
-fn below(s: &mut u64, n: usize) -> usize {
-    (next(s) >> 11) as usize % n
+/// A number in `0..n`, from xorshift64. [`random_cells`] and [`random_group`] draw with it,
+/// not with [`Rng`]: `types_that_meet_are_joined_at_the_seeds_that_split_by_order` names
+/// seeds whose cases split by order under this stream.
+fn below(s: &mut Xorshift64, n: usize) -> usize {
+    (s.next_u64() >> 11) as usize % n
 }
 
 /// Every value but the one-tuple of the literal `r`: under a node, it holds every one-tuple there
@@ -908,7 +887,7 @@ fn all_but_one(r: usize) -> Type {
 /// union of one to three of `#x((T,))`, `#x((P,))`, `(T,)`, `(P, T)`, `(T, P)`, `P`,
 /// `#x(any \ (r,))` and a literal `r`, `T` a member, `P` a type of `pool`, `x` one of three
 /// names. None if the group is refused.
-fn random_group(s: &mut u64, pool: &[Type], tag: &str) -> Option<Vec<Type>> {
+fn random_group(s: &mut Xorshift64, pool: &[Type], tag: &str) -> Option<Vec<Type>> {
     use super::super::rec::{Def, Expr, Group};
     let n = 1 + below(s, 4);
     let defs = (0..n)
@@ -945,7 +924,7 @@ fn random_group(s: &mut u64, pool: &[Type], tag: &str) -> Option<Vec<Type>> {
 /// Random cells: plain types, the members of a group over them and of a group over both, each
 /// type alone, under a name or a one-tuple, or joined with another; and `#x(any \ (r,))` and
 /// `(any \ (r,),)`, which hold every value under a node but the one-tuple of a literal `r`.
-fn random_cells(s: &mut u64) -> Vec<Type> {
+fn random_cells(s: &mut Xorshift64) -> Vec<Type> {
     let lit = |i: usize| Type::lit(&Value::Int(i as i64)).expect("a literal");
     let one = |t: &Type| Type::tuple(vec![t.clone()]);
     let mut pool: Vec<Type> = (0..2 + below(s, 3))
@@ -1057,7 +1036,7 @@ fn types_that_meet_are_joined_at_the_seeds_that_split_by_order() {
 
 /// 400 cases of random groups from `seed` ([`check_classes`]).
 fn joined_in_random_groups_holding_lower_types(seed: u64) {
-    let mut s = seed | 1;
+    let mut s = Xorshift64::new(seed | 1);
     let (mut met, mut apart) = (0, 0);
     for case in 0..400 {
         let ts = random_cells(&mut s);
@@ -1134,8 +1113,9 @@ fn group_of_makes_the_groups_of_its_walk_before_the_shared_search() {
         let pq = group.instance(vec![]);
         assert_eq!(group_of_agrees_with_its_old_walk(first, &pq[first]), 1);
     }
-    let mut s =
-        crate::seed::seed("group_of_makes_the_groups_of_its_walk_before_the_shared_search") | 1;
+    let mut s = Xorshift64::new(crate::seed::seed(
+        "group_of_makes_the_groups_of_its_walk_before_the_shared_search",
+    ));
     let mut shared = 0;
     Type::forget_emptiness();
     for case in 0..400 {
@@ -1150,27 +1130,27 @@ fn group_of_makes_the_groups_of_its_walk_before_the_shared_search() {
 }
 
 /// A random component: one of the integers 0 to 2, every integer, or every integer but one.
-fn random_component(s: &mut u64) -> Type {
+fn random_component(s: &mut Rng) -> Type {
     let lit = |i: usize| Type::lit(&Value::Int(i as i64)).expect("a literal");
-    match below(s, 5) {
+    match s.below(5) {
         3 => Type::int(),
-        4 => &Type::int() - &lit(below(s, 3)),
+        4 => &Type::int() - &lit(s.below(3)),
         i => lit(i),
     }
 }
 
 /// A random tuple type of length one to three.
-fn random_tuple(s: &mut u64) -> Type {
-    let m = 1 + below(s, 3);
+fn random_tuple(s: &mut Rng) -> Type {
+    let m = 1 + s.below(3);
     Type::tuple((0..m).map(|_| random_component(s)).collect())
 }
 
 /// Three to eight random types of tuples: tuple types, unions of two, one less another, and
 /// every tuple less one or two tuple types.
-fn random_tuples(s: &mut u64) -> Vec<Type> {
+fn random_tuples(s: &mut Rng) -> Vec<Type> {
     let tuples = Type::universe(crate::types::Universe::Tuple);
-    (0..3 + below(s, 6))
-        .map(|_| match below(s, 6) {
+    (0..3 + s.below(6))
+        .map(|_| match s.below(6) {
             0 => &random_tuple(s) | &random_tuple(s),
             1 => &random_tuple(s) - &random_tuple(s),
             2 => &tuples - &random_tuple(s),
@@ -1185,9 +1165,8 @@ fn random_tuples(s: &mut u64) -> Vec<Type> {
 /// components and the first components of a negated one-tuple type.
 #[test]
 fn types_that_meet_are_joined_in_random_unions_and_negations_of_tuples() {
-    let mut s =
-        crate::seed::seed("types_that_meet_are_joined_in_random_unions_and_negations_of_tuples")
-            | 1;
+    let (mut s, _) =
+        Rng::fresh("types_that_meet_are_joined_in_random_unions_and_negations_of_tuples");
     let (mut met, mut apart) = (0, 0);
     for case in 0..1000 {
         let ts = random_tuples(&mut s);
@@ -1204,14 +1183,9 @@ fn types_that_meet_are_joined_in_random_unions_and_negations_of_tuples() {
 fn a_rollback_keeps_a_reader_exactly_when_a_read_before_it_is_kept() {
     const TYPES: usize = 12;
     const READERS: usize = 4;
-    let mut seed =
-        crate::seed::seed("a_rollback_keeps_a_reader_exactly_when_a_read_before_it_is_kept");
-    let mut next = |below: usize| {
-        seed = seed
-            .wrapping_mul(6364136223846793005)
-            .wrapping_add(1442695040888963407);
-        (seed >> 33) as usize % below
-    };
+    let (mut rng, _) =
+        Rng::fresh("a_rollback_keeps_a_reader_exactly_when_a_read_before_it_is_kept");
+    let mut next = |below: usize| rng.below(below);
     let mut r = Rollbacks::new(TYPES, READERS);
     let (mut kept, mut dropped) = (0, 0);
     let mut ep = 0;
@@ -1859,13 +1833,10 @@ fn the_three_sat_reduction_at_residue_length_is_correct() {
             .map(|s: usize| [(0, s & 1 == 1), (1, s & 2 == 2), (2, s & 4 == 4)])
             .collect(),
     ];
-    let mut seed = 0x2545_f491_4f6c_dd1du64;
-    let mut next = |k: u64| {
-        seed ^= seed << 13;
-        seed ^= seed >> 7;
-        seed ^= seed << 17;
-        seed % k
-    };
+    // xorshift64 from a fixed seed, kept: the assertion of at least 20 formulas of each kind
+    // below counts the formulas of this stream.
+    let mut rng = Xorshift64::new(0x2545_f491_4f6c_dd1d);
+    let mut next = |k: u64| rng.below(k);
     for _ in 0..200 {
         let clauses = 10 + next(51) as usize;
         let f = (0..clauses)
@@ -1956,7 +1927,7 @@ fn greedy_length_handles_three_primes_disjoint_pairs_and_deep_trees() {
 /// draws of `s` alone: the cells of [`random_cells`] (plain types, the members of two random
 /// groups, under names and one-tuples), lists, and pairs, meets, unions and differences of
 /// them. The same draws make equal types, new nodes and new group instances each time.
-fn random_height_types(s: &mut u64) -> Vec<Type> {
+fn random_height_types(s: &mut Xorshift64) -> Vec<Type> {
     let mut ts = random_cells(s);
     ts.push(list_group(below(s, 2) == 0));
     ts.push(fixed_list(below(s, 4)));
@@ -1993,27 +1964,27 @@ fn first_stale(ts: &[Type]) -> Option<(usize, Option<(u64, u64)>, Option<(u64, u
 /// is found by the same comparison, for that type.
 #[test]
 fn kept_height_bounds_agree_with_fresh_ones_across_rebuilds() {
-    let mut s = crate::seed::seed("kept_height_bounds_agree_with_fresh_ones_across_rebuilds") | 1;
+    let (mut s, _) = Rng::fresh("kept_height_bounds_agree_with_fresh_ones_across_rebuilds");
     Type::forget_emptiness();
     let mut compared = 0;
     for case in 0..150 {
-        let draws = next(&mut s) | 1;
-        let ts = random_height_types(&mut draws.clone());
+        let draws = s.next_u64();
+        let ts = random_height_types(&mut Xorshift64::new(draws));
         // Ask the kept bounds of some types first, in random order, so later ones find
         // children kept by earlier questions.
         for _ in 0..ts.len() {
-            height_bounds(&ts[below(&mut s, ts.len())]);
+            height_bounds(&ts[s.below(ts.len())]);
         }
         assert_eq!(first_stale(&ts), None, "case {case}, as built");
-        if below(&mut s, 3) == 0 {
+        if s.below(3) == 0 {
             Type::forget_emptiness();
         }
-        let again = random_height_types(&mut draws.clone());
+        let again = random_height_types(&mut Xorshift64::new(draws));
         assert_eq!(again.len(), ts.len(), "case {case}: the same draws");
         assert_eq!(first_stale(&again), None, "case {case}, built again");
         compared += ts.len() + again.len();
         // Negative control: a wrong kept entry is seen.
-        let k = below(&mut s, again.len());
+        let k = s.below(again.len());
         let t = &again[k];
         let wrong = match height_bounds(t) {
             None => Some((0, 0)),
@@ -2032,19 +2003,6 @@ fn kept_height_bounds_agree_with_fresh_ones_across_rebuilds() {
     }
     eprintln!("{compared} kept bounds compared with fresh ones");
     assert!(compared > 1000, "only {compared} compared");
-}
-
-/// splitmix64 from a seed, for the random types below.
-struct Draw(u64);
-
-impl Draw {
-    fn below(&mut self, n: u64) -> u64 {
-        self.0 = self.0.wrapping_add(0x9e37_79b9_7f4a_7c15);
-        let mut z = self.0;
-        z = (z ^ (z >> 30)).wrapping_mul(0xbf58_476d_1ce4_e5b9);
-        z = (z ^ (z >> 27)).wrapping_mul(0x94d0_49bb_1331_11eb);
-        (z ^ (z >> 31)) % n
-    }
 }
 
 /// The values the random types are checked on, and the type `bound` that holds exactly them:
@@ -2096,16 +2054,16 @@ fn values_and_bound() -> (Vec<Value>, Type) {
 /// A random type of depth at most `d` over integers, the atoms `#a` and `#b`, tuples of one and
 /// two components, unions, meets and differences, and (when `rec`) instances of random
 /// recursive groups.
-fn random_type(draw: &mut Draw, d: u32, rec: bool) -> Type {
+fn random_type(draw: &mut Rng, d: u32, rec: bool) -> Type {
     let lit = |i: i64| Type::lit(&Value::Int(i)).expect("an integer literal");
-    let name = |draw: &mut Draw| if draw.below(2) == 0 { "a" } else { "b" };
-    let small = |draw: &mut Draw| draw.below(5) as i64 - 2;
+    let name = |draw: &mut Rng| if draw.below_u64(2) == 0 { "a" } else { "b" };
+    let small = |draw: &mut Rng| draw.below_u64(5) as i64 - 2;
     let pick = if d == 0 {
-        draw.below(5)
+        draw.below_u64(5)
     } else {
-        draw.below(13)
+        draw.below_u64(13)
     };
-    let sub = |draw: &mut Draw| random_type(draw, d.saturating_sub(1), rec);
+    let sub = |draw: &mut Rng| random_type(draw, d.saturating_sub(1), rec);
     match pick {
         0 => lit(small(draw)),
         1 => Type::int(),
@@ -2129,17 +2087,21 @@ fn random_type(draw: &mut Draw, d: u32, rec: bool) -> Type {
 
 /// An instance of a random recursive group of one or two definitions, or none when the group
 /// is rejected.
-fn random_instance(draw: &mut Draw) -> Option<Type> {
+fn random_instance(draw: &mut Rng) -> Option<Type> {
     use super::super::rec::{Def, Expr, Group};
-    fn expr(draw: &mut Draw, defs: usize, d: u32) -> Expr {
-        let pick = if d == 0 { draw.below(2) } else { draw.below(8) };
+    fn expr(draw: &mut Rng, defs: usize, d: u32) -> Expr {
+        let pick = if d == 0 {
+            draw.below_u64(2)
+        } else {
+            draw.below_u64(8)
+        };
         match pick {
             0 => Expr::Type(random_type(draw, 1, false)),
-            1 => Expr::Ref(draw.below(defs as u64) as usize, vec![]),
+            1 => Expr::Ref(draw.below_u64(defs as u64) as usize, vec![]),
             2 => Expr::Tuple(vec![expr(draw, defs, d - 1)]),
             3 => Expr::Tuple(vec![expr(draw, defs, d - 1), expr(draw, defs, d - 1)]),
             4 => {
-                let n = if draw.below(2) == 0 { "a" } else { "b" };
+                let n = if draw.below_u64(2) == 0 { "a" } else { "b" };
                 Expr::Atom(n.into(), vec![expr(draw, defs, d - 1)])
             }
             5 => Expr::Union(vec![expr(draw, defs, d - 1), expr(draw, defs, d - 1)]),
@@ -2150,7 +2112,7 @@ fn random_instance(draw: &mut Draw) -> Option<Type> {
             ),
         }
     }
-    let defs = 1 + draw.below(2) as usize;
+    let defs = 1 + draw.below_u64(2) as usize;
     let group: Vec<Def> = (0..defs)
         .map(|i| Def {
             name: format!("T{i}"),
@@ -2158,7 +2120,7 @@ fn random_instance(draw: &mut Draw) -> Option<Type> {
             body: expr(draw, defs, 3),
         })
         .collect();
-    let at = draw.below(defs as u64) as usize;
+    let at = draw.below_u64(defs as u64) as usize;
     Some(Group::new(group).ok()?.instance(vec![]).remove(at))
 }
 
@@ -2176,7 +2138,7 @@ fn random_types_agree_with_membership_on_a_finite_set_of_values() {
         values.iter().all(|v| bound.contains(v)),
         "a value outside the bound"
     );
-    let mut draw = Draw(0x5eed);
+    let mut draw = Rng::new(0x5eed);
     let (mut decided, mut refused) = (0, 0);
     let mut previous = Type::top();
     for case in 0..3000 {

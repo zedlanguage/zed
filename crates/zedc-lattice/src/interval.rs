@@ -1976,26 +1976,12 @@ mod tests {
         assert_eq!(a.widen(&set(&[(0, 0), (9, 20)]), &none), set(&[(0, 20)]));
     }
 
-    /// A xorshift generator, so that the random tests repeat.
-    pub(super) struct Rng(pub(super) u64);
-
-    impl Rng {
-        fn below(&mut self, n: u64) -> u64 {
-            self.0 ^= self.0 << 13;
-            self.0 ^= self.0 >> 7;
-            self.0 ^= self.0 << 17;
-            self.0 % n
-        }
-
-        fn int(&mut self, lo: i64, hi: i64) -> i64 {
-            lo + self.below((hi - lo + 1) as u64) as i64
-        }
-    }
+    pub(super) use crate::seed::Rng;
 
     /// A random set of up to `most` raw pieces with ends in `-w..=w`, overlapping, adjacent or
     /// single points, with an unbounded end on either side now and then.
     pub(super) fn random_set(rng: &mut Rng, most: u64, w: i64) -> IntervalSet {
-        let n = rng.below(most + 1);
+        let n = rng.below_u64(most + 1);
         let mut raw = Vec::new();
         for _ in 0..n {
             let lo = rng.int(-w, w);
@@ -2136,8 +2122,7 @@ mod tests {
     /// tier of 400 pieces in `-1500..=1500` is in `bench.rs`.
     #[test]
     fn set_operations_agree_with_the_vec_version_on_random_sets() {
-        let seed = crate::seed::seed("set_operations_agree_with_the_vec_version_on_random_sets");
-        let mut rng = Rng(seed | 1);
+        let (mut rng, _) = Rng::fresh("set_operations_agree_with_the_vec_version_on_random_sets");
         for (rounds, most, w) in [(1000, 6, 12), (40, 60, 200)] {
             operations_agree(&mut rng, rounds, most, w);
         }
@@ -2149,7 +2134,7 @@ mod tests {
     /// shared.
     #[test]
     fn in_class_agrees_with_rounding_each_piece() {
-        let mut rng = Rng(0x6b38_1c2d_0e5f_7a91);
+        let mut rng = Rng::new(0x6b38_1c2d_0e5f_7a91);
         let w = 40;
         for _ in 0..2000 {
             let (a, b) = (random_set(&mut rng, 30, w), random_set(&mut rng, 30, w));
@@ -2247,7 +2232,7 @@ mod tests {
     /// their tree), on two narrowings of one set, and on equal and empty sets.
     #[test]
     fn lost_to_gives_the_members_minus_gives() {
-        let mut rng = Rng(crate::seed::seed("lost_to_gives_the_members_minus_gives") | 1);
+        let (mut rng, _) = Rng::fresh("lost_to_gives_the_members_minus_gives");
         for (rounds, most, w) in [(1000, 6, 12), (100, 60, 200), (5, 400, 1500)] {
             lost_to_agrees(&mut rng, rounds, most, w);
         }
@@ -2310,7 +2295,7 @@ mod tests {
             s.hash(&mut h);
             h.finish()
         };
-        let mut rng = Rng(crate::seed::seed("equal_sets_built_differently_hash_alike") | 1);
+        let (mut rng, _) = Rng::fresh("equal_sets_built_differently_hash_alike");
         for _ in 0..500 {
             let (a, b) = (random_set(&mut rng, 12, 40), random_set(&mut rng, 12, 40));
             // (a ∪ b) \ (b \ a) = a, built by splits and joins, not from a's pieces.
@@ -2387,13 +2372,8 @@ mod tests {
                 })
                 .sum()
         };
-        let mut rng = 0x9e37_79b9_7f4a_7c15u64;
-        let mut next = move || {
-            rng ^= rng << 13;
-            rng ^= rng >> 7;
-            rng ^= rng << 17;
-            (rng % 200) as i64
-        };
+        let mut rng = Rng::new(0x9e37_79b9_7f4a_7c15);
+        let mut next = move || rng.int(0, 199);
         for _ in 0..200 {
             let mut make = || {
                 let mut ps: Vec<(i64, i64)> = (0..next() % 12)

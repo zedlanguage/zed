@@ -1,30 +1,14 @@
 use super::*;
 use crate::num::{Format, Rat};
+use crate::seed::Rng;
 use num_bigint::BigInt;
 use num_traits::{One, Zero};
 
-/// A splitmix64 stream.
-struct Mix(u64);
-
-impl Mix {
-    fn next(&mut self) -> u64 {
-        self.0 = self.0.wrapping_add(0x9e37_79b9_7f4a_7c15);
-        let mut z = self.0;
-        z = (z ^ (z >> 30)).wrapping_mul(0xbf58_476d_1ce4_e5b9);
-        z = (z ^ (z >> 27)).wrapping_mul(0x94d0_49bb_1331_11eb);
-        z ^ (z >> 31)
-    }
-
-    /// A number in `0..n`.
-    fn below(&mut self, n: u64) -> u64 {
-        self.next() % n
-    }
-
-    fn digits(&mut self, len: usize) -> String {
-        (0..len)
-            .map(|_| char::from(b'0' + self.below(10) as u8))
-            .collect()
-    }
+/// `len` random decimal digits.
+fn digits(mix: &mut Rng, len: usize) -> String {
+    (0..len)
+        .map(|_| char::from(b'0' + mix.below(10) as u8))
+        .collect()
 }
 
 const FORMATS: [FloatFormat; 4] = [
@@ -220,9 +204,9 @@ fn schubfach_logarithms_are_exact() {
 
 #[test]
 fn shortest_texts_of_doubles_read_back() {
-    let mut mix = Mix(crate::seed::seed("shortest_texts_of_doubles_read_back"));
+    let (mut mix, _) = Rng::fresh("shortest_texts_of_doubles_read_back");
     for _ in 0..20_000 {
-        let x = f64::from_bits(mix.next() >> 1);
+        let x = f64::from_bits(mix.next_u64() >> 1);
         if !x.is_finite() {
             continue;
         }
@@ -234,9 +218,9 @@ fn shortest_texts_of_doubles_read_back() {
             );
         }
     }
-    let mut mix = Mix(mix.next());
+    let mut mix = Rng::new(mix.next_u64());
     for i in 0..2_000 {
-        let x = f64::from_bits(mix.next() >> 1);
+        let x = f64::from_bits(mix.next_u64() >> 1);
         if x.is_finite() && i % 2 == 0 {
             check(&format!("{x:e}"));
         }
@@ -258,13 +242,11 @@ fn f32_bits_read_back(bits: impl Iterator<Item = u32>) {
 
 #[test]
 fn shortest_texts_of_sampled_floats_read_back() {
-    let mut mix = Mix(crate::seed::seed(
-        "shortest_texts_of_sampled_floats_read_back",
-    ));
-    f32_bits_read_back((0..10_000).map(|_| mix.next() as u32));
+    let (mut mix, _) = Rng::fresh("shortest_texts_of_sampled_floats_read_back");
+    f32_bits_read_back((0..10_000).map(|_| mix.next_u64() as u32));
     // Subnormals drawn from their whole range; the least ones, the largest ones and the first
     // normals; and the top of the range.
-    f32_bits_read_back((0..20_000).map(|_| mix.below(1 << 23) as u32));
+    f32_bits_read_back((0..20_000).map(|_| mix.below_u64(1 << 23) as u32));
     f32_bits_read_back((0..4096).chain((1 << 23) - 4096..(1 << 23) + 4096));
     f32_bits_read_back(0x7f7f_0000..0x7f80_0000);
 }
@@ -274,18 +256,18 @@ fn shortest_texts_of_sampled_floats_read_back() {
 
 #[test]
 fn random_texts_of_up_to_800_digits() {
-    let mut mix = Mix(crate::seed::seed("random_texts_of_up_to_800_digits"));
+    let (mut mix, _) = Rng::fresh("random_texts_of_up_to_800_digits");
     for i in 0..1_500 {
-        let len = 1 + mix.below(if i % 4 == 0 { 800 } else { 40 }) as usize;
-        let digits = mix.digits(len);
-        let point = mix.below(len as u64 + 2) as usize;
+        let len = 1 + mix.below(if i % 4 == 0 { 800 } else { 40 });
+        let digits = digits(&mut mix, len);
+        let point = mix.below(len + 2);
         let mantissa = if point > len {
             digits.clone()
         } else {
             format!("{}.{}", &digits[..point], &digits[point..])
         };
         // A magnitude across and beyond every format's range.
-        let magnitude = mix.below(720) as i64 - 360;
+        let magnitude = mix.int(-360, 359);
         let exp = magnitude - point.min(len) as i64;
         check(&format!("{mantissa}e{exp}"));
     }
@@ -317,20 +299,20 @@ fn halfway_texts(m: u64, e: i64) -> [String; 3] {
 
 #[test]
 fn halfway_points_and_subnormals() {
-    let mut mix = Mix(crate::seed::seed("halfway_points_and_subnormals"));
+    let (mut mix, _) = Rng::fresh("halfway_points_and_subnormals");
     for format in FORMATS {
         let p = format.precision();
         for i in 0..300 {
             // Normal and subnormal significands, over the whole range of exponents.
             let m = if i % 3 == 0 {
-                1 + mix.below((1 << (p - 1)) - 1)
+                1 + mix.below_u64((1 << (p - 1)) - 1)
             } else {
-                (1 << (p - 1)) | mix.below(1 << (p - 1))
+                (1 << (p - 1)) | mix.below_u64(1 << (p - 1))
             };
             let e = if i % 3 == 0 {
                 format.tiny()
             } else {
-                format.tiny() + mix.below((2 * format.emax() - 1) as u64) as i64
+                format.tiny() + mix.int(0, 2 * format.emax() - 2)
             };
             let [tie, above, below] = halfway_texts(m, e);
             let lower = read_float(&exact_text(&BigUint::from(m), e), format);
@@ -436,9 +418,9 @@ fn significands_of_19_and_20_digits() {
     ] {
         check(text);
     }
-    let mut mix = Mix(crate::seed::seed("significands_of_19_and_20_digits"));
+    let (mut mix, _) = Rng::fresh("significands_of_19_and_20_digits");
     for i in 0..600 {
-        let x = f64::from_bits(mix.next() >> 1);
+        let x = f64::from_bits(mix.next_u64() >> 1);
         if !x.is_finite() || x == 0.0 {
             continue;
         }
@@ -472,25 +454,25 @@ fn significands_of_19_and_20_digits() {
 /// around the 19 kept.
 #[test]
 fn texts_of_every_shape() {
-    let mut mix = Mix(crate::seed::seed("texts_of_every_shape"));
+    let (mut mix, _) = Rng::fresh("texts_of_every_shape");
     for _ in 0..20_000 {
-        let zeros = |mix: &mut Mix, n: u64| "0".repeat(mix.below(n) as usize);
+        let zeros = |mix: &mut Rng, n: usize| "0".repeat(mix.below(n));
         let lead = zeros(&mut mix, 3);
-        let len = 1 + mix.below(23) as usize;
-        let mut digits = format!("{}{}", 1 + mix.below(9), mix.digits(len - 1));
+        let len = 1 + mix.below(23);
+        let mut digits = format!("{}{}", 1 + mix.below(9), digits(&mut mix, len - 1));
         digits.push_str(&zeros(&mut mix, 4));
         let text = match mix.below(4) {
             0 => format!("{lead}{digits}"),
             1 => format!("{lead}.{}{digits}", zeros(&mut mix, 4)),
             2 => format!("{lead}{digits}."),
             _ => {
-                let at = mix.below(digits.len() as u64 + 1) as usize;
+                let at = mix.below(digits.len() + 1);
                 format!("{lead}{}.{}", &digits[..at], &digits[at..])
             }
         };
         let text = match mix.below(3) {
             0 => text,
-            1 => format!("{text}e{}", mix.below(40) as i64 - 20),
+            1 => format!("{text}e{}", mix.int(-20, 19)),
             _ => format!("{text}E+{}", mix.below(20)),
         };
         check(&text);
@@ -578,9 +560,9 @@ fn shows_as_before(bits: u64) {
 
 #[test]
 fn shown_as_before_on_random_doubles() {
-    let mut mix = Mix(crate::seed::seed("shown_as_before_on_random_doubles"));
+    let (mut mix, _) = Rng::fresh("shown_as_before_on_random_doubles");
     for _ in 0..10_000 {
-        shows_as_before(mix.next());
+        shows_as_before(mix.next_u64());
     }
 }
 
@@ -651,13 +633,11 @@ fn show_f32_writes_the_shortest_text_that_reads_back_at_f32() {
     assert_eq!(show_f32(-0.0), "-0.0");
     assert_eq!(show_f32(f32::NEG_INFINITY), "-inf");
     assert_eq!(show_f32(f32::NAN), "nan");
-    let mut mix = Mix(crate::seed::seed(
-        "show_f32_writes_the_shortest_text_that_reads_back_at_f32",
-    ));
+    let (mut mix, _) = Rng::fresh("show_f32_writes_the_shortest_text_that_reads_back_at_f32");
     let edges = (0..4096)
         .chain(0x7f7f_f000..0x7f80_0000)
         .chain(0x007f_f000..0x0080_1000);
-    for b in (0..10_000).map(|_| mix.next() as u32).chain(edges) {
+    for b in (0..10_000).map(|_| mix.next_u64() as u32).chain(edges) {
         let x = f32::from_bits(b);
         if !x.is_finite() {
             continue;

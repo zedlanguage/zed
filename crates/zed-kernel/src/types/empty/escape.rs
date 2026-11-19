@@ -2289,13 +2289,8 @@ mod windows_tests {
     /// with an atom or a kill at place 1: `cells_windows` gives each row the walk's cells.
     #[test]
     fn windows_agree_with_the_walk() {
-        let mut seed = crate::seed::seed("windows_agree_with_the_walk") | 1;
-        let mut rnd = |n: u64| {
-            seed ^= seed << 13;
-            seed ^= seed >> 7;
-            seed ^= seed << 17;
-            seed % n.max(1)
-        };
+        let (mut rng, _) = crate::seed::Rng::fresh("windows_agree_with_the_walk");
+        let mut rnd = |n: u64| rng.below_u64(n.max(1));
         for case in 0..600u64 {
             let sigma = 1 + rnd(if case % 2 == 0 { 3 } else { 12 }) as i64;
             let set = |rnd: &mut dyn FnMut(u64) -> u64| {

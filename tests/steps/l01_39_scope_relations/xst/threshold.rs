@@ -15,12 +15,38 @@ use zedc::store::interval::{End, IntervalSet};
 use zedc::store::threshold::{self, Answer, Lower, System, Upper};
 
 /// The model's generator: a linear congruential sequence, so a seed names a corpus.
+///
+/// The step wraps: 2^31 divides 2^64, so the wrapped `seed * 1103515245 + 12345` mod 2^31 is
+/// the exact one for every seed. It multiplied without wrapping until DRY-test-helpers, which
+/// panicked in a debug build for a seed above `(2^64 - 12345) / 1103515245`, 16,716,347,288;
+/// every seed below that draws the stream it drew then (`a_large_seed_steps_exactly`).
 struct Rng(u64);
 
 impl Rng {
     fn below(&mut self, n: i64) -> i64 {
-        self.0 = (self.0 * 1_103_515_245 + 12_345) % 2_147_483_648;
+        self.0 = self.0.wrapping_mul(1_103_515_245).wrapping_add(12_345) % 2_147_483_648;
         (self.0 % n as u64) as i64
+    }
+}
+
+/// [`Rng::below`] steps a seed of any size to the exact `(seed * 1103515245 + 12345) mod 2^31`,
+/// without the overflow of the unwrapped multiply it had.
+#[test]
+fn a_large_seed_steps_exactly() {
+    // 16,716,347,288 is the last seed whose unwrapped step fits in 64 bits; 16,716,347,289 the
+    // first that overflowed.
+    for seed in [
+        0,
+        1,
+        2_147_483_647,
+        16_716_347_288,
+        16_716_347_289,
+        u64::MAX,
+    ] {
+        let mut r = Rng(seed);
+        r.below(1);
+        let exact = (u128::from(seed) * 1_103_515_245 + 12_345) % 2_147_483_648;
+        assert_eq!(u128::from(r.0), exact, "seed {seed}");
     }
 }
 
@@ -189,7 +215,8 @@ fn component_checked(sys: &System, at: &str) -> Option<bool> {
 }
 
 /// A new seed for [`Rng`] ([`zed_tests::instances::Rng::fresh`], printed with `what`), below
-/// `2^31`: [`Rng::below`] multiplies without wrapping, so a larger seed would overflow.
+/// `2^31`, the range of the generator's states. A seed and its value mod `2^31` draw the same
+/// stream, so the reduced seed the failure messages print repeats the run.
 fn fresh(what: &str) -> u64 {
     zed_tests::instances::Rng::fresh(what).1 % 2_147_483_648
 }

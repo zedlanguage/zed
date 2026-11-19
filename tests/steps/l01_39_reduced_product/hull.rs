@@ -3,6 +3,7 @@
 use std::collections::BTreeMap;
 
 use zed_tests::scaling;
+use zed_tests::seed::Rng;
 use zedc::store::hull::Hull;
 use zedc::store::int::Int;
 use zedc::store::presburger::{Atom, Lin};
@@ -92,34 +93,15 @@ fn is_hull_of(h: &Hull, names: &[String], points: &[Vec<i128>]) {
     assert_eq!(h.rows().count(), names.len() - rank(&diffs), "{h}");
 }
 
-/// A small linear congruential generator, so the test needs no crate. Its seed is new each
-/// run and printed ([`Rng::fresh`]; until TEST-bench-move-l0139 each test had a fixed seed).
-struct Rng(u64);
-
-impl Rng {
-    /// A generator of a new seed, printed with how to repeat it (author P169).
-    fn fresh(what: &str) -> Self {
-        Rng(zed_tests::instances::Rng::fresh(what).1)
-    }
-
-    fn below(&mut self, n: u64) -> i128 {
-        self.0 = self
-            .0
-            .wrapping_mul(6364136223846793005)
-            .wrapping_add(1442695040888963407);
-        ((self.0 >> 33) % n) as i128
-    }
-}
-
 /// The points `x0 + M t` for random small `M`, `x0` and `t`, of dimension at most `k`.
 fn on_plane(rnd: &mut Rng, d: usize, k: usize, n: usize) -> Vec<Vec<i128>> {
-    let x0: Vec<i128> = (0..d).map(|_| rnd.below(7) - 3).collect();
+    let x0: Vec<i128> = (0..d).map(|_| rnd.int_i128(-3, 3)).collect();
     let m: Vec<Vec<i128>> = (0..d)
         .map(|_| {
             (0..k)
                 .map(|_| {
                     if rnd.below(3) == 0 {
-                        rnd.below(5) - 2
+                        rnd.int_i128(-2, 2)
                     } else {
                         0
                     }
@@ -129,7 +111,7 @@ fn on_plane(rnd: &mut Rng, d: usize, k: usize, n: usize) -> Vec<Vec<i128>> {
         .collect();
     (0..n)
         .map(|_| {
-            let t: Vec<i128> = (0..k).map(|_| rnd.below(9) - 4).collect();
+            let t: Vec<i128> = (0..k).map(|_| rnd.int_i128(-4, 4)).collect();
             (0..d)
                 .map(|i| x0[i] + (0..k).map(|j| m[i][j] * t[j]).sum::<i128>())
                 .collect()
@@ -180,11 +162,11 @@ fn a_contradiction_is_the_empty_hull_and_the_identity_of_join() {
 fn the_join_of_point_hulls_is_the_hull_of_the_points() {
     // Random points on random planes; the hulls of the points are joined one at a time, in
     // either order of the names, so the rows that differ lie first or last.
-    let mut rnd = Rng::fresh("the_join_of_point_hulls_is_the_hull_of_the_points");
+    let (mut rnd, _) = Rng::fresh("the_join_of_point_hulls_is_the_hull_of_the_points");
     for _ in 0..200 {
-        let d = 1 + rnd.below(7) as usize;
-        let k = rnd.below(d as u64 + 1) as usize;
-        let n = 1 + rnd.below(6) as usize;
+        let d = 1 + rnd.below(7);
+        let k = rnd.below(d + 1);
+        let n = 1 + rnd.below(6);
         let names: Vec<String> = (0..d).map(|i| format!("x{i}")).collect();
         let pts = on_plane(&mut rnd, d, k, n);
         for rev in [false, true] {
@@ -212,13 +194,13 @@ fn the_join_of_point_hulls_is_the_hull_of_the_points() {
 fn a_join_of_hulls_that_differ_in_a_few_names_is_exact() {
     // As at a loop head: the second side is the first with a few names moved by one, and the
     // join is the hull of both sides' points.
-    let mut rnd = Rng::fresh("a_join_of_hulls_that_differ_in_a_few_names_is_exact");
+    let (mut rnd, _) = Rng::fresh("a_join_of_hulls_that_differ_in_a_few_names_is_exact");
     for _ in 0..100 {
-        let d = 4 + rnd.below(8) as usize;
-        let k = 1 + rnd.below(3) as usize;
+        let d = 4 + rnd.below(8);
+        let k = 1 + rnd.below(3);
         let names: Vec<String> = (0..d).map(|i| format!("x{i}")).collect();
         let a = on_plane(&mut rnd, d, k, k + 2);
-        let moved: Vec<usize> = (0..2).map(|_| rnd.below(d as u64) as usize).collect();
+        let moved: Vec<usize> = (0..2).map(|_| rnd.below(d)).collect();
         let b: Vec<Vec<i128>> = a
             .iter()
             .map(|p| {
@@ -244,10 +226,10 @@ fn a_join_with_a_hull_narrowed_from_it_is_the_first_hull() {
     // the hull by a few equalities, which may rewrite many of its rows, so the second hull
     // shares part of its rows with the first and holds others rewritten. Either way round, the
     // join is the hull of the first's points.
-    let mut rnd = Rng::fresh("a_join_with_a_hull_narrowed_from_it_is_the_first_hull");
+    let (mut rnd, _) = Rng::fresh("a_join_with_a_hull_narrowed_from_it_is_the_first_hull");
     for _ in 0..200 {
-        let d = 3 + rnd.below(8) as usize;
-        let k = rnd.below(4) as usize;
+        let d = 3 + rnd.below(8);
+        let k = rnd.below(4);
         let names: Vec<String> = (0..d).map(|i| format!("x{i}")).collect();
         let pts = on_plane(&mut rnd, d, k, k + 2);
         let a = pts
@@ -257,9 +239,12 @@ fn a_join_with_a_hull_narrowed_from_it_is_the_first_hull() {
             .expect("a point");
         let mut b = a.clone();
         for _ in 0..1 + rnd.below(3) {
-            let i = rnd.below(d as u64) as usize;
-            let j = rnd.below(d as u64) as usize;
-            b = b.and(&lin(&[(&names[i], 1), (&names[j], -2)], rnd.below(3) - 1));
+            let i = rnd.below(d);
+            let j = rnd.below(d);
+            b = b.and(&lin(
+                &[(&names[i], 1), (&names[j], -2)],
+                rnd.int_i128(-1, 1),
+            ));
         }
         is_hull_of(&a.clone().join(&b), &names, &pts);
         is_hull_of(&b.join(&a), &names, &pts);
@@ -270,10 +255,10 @@ fn a_join_with_a_hull_narrowed_from_it_is_the_first_hull() {
 fn a_join_of_hulls_built_apart_is_exact() {
     // Two hulls of one set built in different orders share no rows in memory; the join
     // compares their rows by value and keeps the hull.
-    let mut rnd = Rng::fresh("a_join_of_hulls_built_apart_is_exact");
+    let (mut rnd, _) = Rng::fresh("a_join_of_hulls_built_apart_is_exact");
     for _ in 0..100 {
-        let d = 3 + rnd.below(8) as usize;
-        let k = rnd.below(4) as usize;
+        let d = 3 + rnd.below(8);
+        let k = rnd.below(4);
         let names: Vec<String> = (0..d).map(|i| format!("x{i}")).collect();
         let pts = on_plane(&mut rnd, d, k, k + 2);
         let of = |ps: &mut dyn Iterator<Item = &Vec<i128>>| {

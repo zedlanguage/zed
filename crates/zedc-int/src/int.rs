@@ -3286,14 +3286,8 @@ mod tests {
     /// num-bigint's division against its others (it picks num-bigint at these widths).
     #[test]
     fn stripping_any_factor_agrees_with_dividing_once_per_factor() {
-        let mut seed =
-            crate::seed::seed("stripping_any_factor_agrees_with_dividing_once_per_factor");
-        let mut next = move || {
-            seed = seed.wrapping_add(0x9e37_79b9_7f4a_7c15);
-            let z = (seed ^ (seed >> 30)).wrapping_mul(0xbf58_476d_1ce4_e5b9);
-            let z = (z ^ (z >> 27)).wrapping_mul(0x94d0_49bb_1331_11eb);
-            z ^ (z >> 31)
-        };
+        let (mut rng, _) =
+            crate::seed::Rng::fresh("stripping_any_factor_agrees_with_dividing_once_per_factor");
         let wide = BigUint::from_slice(&[0x8000_0001, 0x1234_5679, 0xdead_beef, 0x7]);
         let factors = [
             BigUint::from(3u32),
@@ -3324,7 +3318,9 @@ mod tests {
                         continue;
                     }
                     let u = BigUint::from_slice(
-                        &(0..2 * words).map(|_| next() as u32).collect::<Vec<_>>(),
+                        &(0..2 * words)
+                            .map(|_| rng.next_u64() as u32)
+                            .collect::<Vec<_>>(),
                     ) + 1u32;
                     let mut rest = c.pow(u32::try_from(k).unwrap()) * &u;
                     let (mut want, mut times) = (rest.clone(), 0u64);
@@ -3341,11 +3337,10 @@ mod tests {
 
     #[test]
     fn a_root_in_one_word_is_the_root_by_big_numbers() {
-        let mut x = crate::seed::seed("a_root_in_one_word_is_the_root_by_big_numbers");
+        let (mut rng, _) = crate::seed::Rng::fresh("a_root_in_one_word_is_the_root_by_big_numbers");
         for p in [3u64, 5, 7, 11, 13, 31, 61, 127, 509, 4093, 65_521] {
             for _ in 0..200 {
-                x = x.wrapping_mul(0x9e37_79b9_7f4a_7c15).wrapping_add(1);
-                let o = x | 1;
+                let o = rng.next_u64() | 1;
                 let word = odd_root_mod_word(o, p);
                 for k in [1u64, 2, 17, 63, 64] {
                     let mask = u64::MAX >> (64 - k);

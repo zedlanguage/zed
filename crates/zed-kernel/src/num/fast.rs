@@ -4096,18 +4096,10 @@ mod tests {
         }
     }
 
-    /// splitmix64 words.
+    /// `words` random 64-bit words from `seed`, each 32-bit digit the low half of one draw.
     fn random(seed: u64, words: usize) -> BigUint {
-        let mut x = seed;
-        let digits: Vec<u32> = (0..2 * words)
-            .map(|_| {
-                x = x.wrapping_add(0x9e37_79b9_7f4a_7c15);
-                let mut z = x;
-                z = (z ^ (z >> 30)).wrapping_mul(0xbf58_476d_1ce4_e5b9);
-                z = (z ^ (z >> 27)).wrapping_mul(0x94d0_49bb_1331_11eb);
-                (z ^ (z >> 31)) as u32
-            })
-            .collect();
+        let mut rng = crate::seed::Rng::new(seed);
+        let digits: Vec<u32> = (0..2 * words).map(|_| rng.next_u64() as u32).collect();
         BigUint::new(digits)
     }
 

@@ -320,21 +320,15 @@ mod tests {
 
     #[test]
     fn holes_read_through_bindings_hold_where_the_cut_intervals_do() {
-        let mut seed: u64 = 7;
-        let mut next = |m: u64| {
-            seed = seed
-                .wrapping_mul(6_364_136_223_846_793_005)
-                .wrapping_add(1_442_695_040_888_963_407);
-            (seed >> 33) % m
-        };
+        let mut rng = crate::seed::Rng::new(7);
         for _ in 0..300 {
             let mut h = Holes::new();
             let mut cuts: Vec<(i64, i64)> = Vec::new();
-            for _ in 0..1 + next(12) {
-                if next(3) == 0 {
+            for _ in 0..1 + rng.below(12) {
+                if rng.below(3) == 0 {
                     // A binding y == c' z + d'.
-                    let c1 = [1, -1, 2, -3][next(4) as usize];
-                    let d1 = next(9) as i64 - 4;
+                    let c1 = rng.pick(&[1_i64, -1, 2, -3]);
+                    let d1 = rng.int(-4, 4);
                     h = h.through(&int(c1), &int(d1));
                     cuts = cuts
                         .iter()
@@ -347,8 +341,8 @@ mod tests {
                         })
                         .collect();
                 } else {
-                    let lo = next(80) as i64 - 40;
-                    let hi = lo + next(9) as i64;
+                    let lo = rng.int(-40, 39);
+                    let hi = lo + rng.int(0, 8);
                     h.cut(&int(lo), &int(hi));
                     cuts.push((lo, hi));
                 }

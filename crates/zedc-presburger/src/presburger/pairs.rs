@@ -362,26 +362,16 @@ mod tests {
         // Random rows over a few symbols, random pairs and random mentioned products, the
         // pairs given in a random order: `kept` agrees with `expanded`, so its answer does not
         // depend on the order of the pairs.
-        let mut s = 0x2545_f491_4f6c_dd1d_u64;
-        let mut next = move |n: u64| {
-            s ^= s << 13;
-            s ^= s >> 7;
-            s ^= s << 17;
-            s % n
-        };
+        let mut rng = crate::seed::Rng::new(0x2545_f491_4f6c_dd1d);
+        let mut next = move |n: usize| rng.below(n);
         let names = ["a", "b", "c", "d", "e", "f"];
         let mut dropped = 0;
         for case in 0..4000 {
-            let nv = 3 + next(4) as usize;
+            let nv = 3 + next(4);
             let rows: Vec<Lin> = (0..2 + next(5))
                 .map(|_| {
                     let terms: Vec<(i64, &str)> = (0..1 + next(4))
-                        .map(|_| {
-                            (
-                                [-2, -1, 1, 1, 2][next(5) as usize],
-                                names[next(nv as u64) as usize],
-                            )
-                        })
+                        .map(|_| ([-2, -1, 1, 1, 2][next(5)], names[next(nv)]))
                         .collect();
                     row(next(5) as i64 - 2, &terms)
                 })
@@ -400,15 +390,10 @@ mod tests {
                 }
             }
             for i in (1..pairs.len()).rev() {
-                pairs.swap(i, next(i as u64 + 1) as usize);
+                pairs.swap(i, next(i + 1));
             }
             let products: Vec<(&str, &str)> = (0..next(5))
-                .map(|_| {
-                    (
-                        names[next(nv as u64) as usize],
-                        names[next(nv as u64) as usize],
-                    )
-                })
+                .map(|_| (names[next(nv)], names[next(nv)]))
                 .collect();
             let partners = partners_of(&products);
             let rows: Vec<&Lin> = rows.iter().collect();

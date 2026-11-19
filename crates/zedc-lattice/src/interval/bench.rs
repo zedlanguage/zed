@@ -11,6 +11,6 @@ use super::tests::{Rng, operations_agree};
 /// pieces with ends in `-1500..=1500`, against the Vec version built from members.
 #[test]
 fn set_operations_agree_on_large_random_sets() {
-    let seed = crate::seed::seed("set_operations_agree_on_large_random_sets");
-    operations_agree(&mut Rng(seed | 1), 40, 400, 1500);
+    let (mut rng, _) = Rng::fresh("set_operations_agree_on_large_random_sets");
+    operations_agree(&mut rng, 40, 400, 1500);
 }

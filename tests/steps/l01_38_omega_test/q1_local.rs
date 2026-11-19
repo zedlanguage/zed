@@ -25,6 +25,7 @@ use std::sync::Arc;
 
 use zed_tests::instances::Rng;
 use zed_tests::scaling::{self, Meter};
+use zed_tests::seed::Xorshift64;
 use zedc::store::presburger::{Atom, Con, Formula, Lin, Refusal, decide, satisfiable};
 
 use super::stages::{Row, rationally_empty};
@@ -100,30 +101,20 @@ fn least_empty_support(rows: &[Row], n: usize) -> usize {
     unreachable!("the rows have no rational point")
 }
 
-/// The xorshift generator of cross-review XR3's probes (`verify_r3.rs:196`).
-struct XorShift(u64);
-
-impl XorShift {
-    fn next(&mut self) -> u64 {
-        self.0 ^= self.0 << 13;
-        self.0 ^= self.0 >> 7;
-        self.0 ^= self.0 << 17;
-        self.0
-    }
-
-    fn int(&mut self, lo: i64, hi: i64) -> i64 {
-        lo + (self.next() % ((hi - lo + 1) as u64)) as i64
-    }
+/// A number in `lo..=hi` from the xorshift generator of cross-review XR3's probes
+/// (`verify_r3.rs:196`), as they drew it: the counts of fresh seed 1 are pinned to its stream.
+fn int(rng: &mut Xorshift64, lo: i64, hi: i64) -> i64 {
+    lo + rng.below((hi - lo + 1) as u64) as i64
 }
 
 /// One system of the fresh-seed family: 2 to 5 rows over four variables, coefficients in
 /// [-7, 7], constants in [-20, 20], drawn as `verify_r3.rs` draws them, then the box [-4, 4].
-fn fresh(rng: &mut XorShift) -> Vec<Row> {
-    let m = 2 + rng.int(0, 3) as usize;
+fn fresh(rng: &mut Xorshift64) -> Vec<Row> {
+    let m = 2 + int(rng, 0, 3) as usize;
     let mut rows: Vec<Row> = (0..m)
         .map(|_| {
-            let t = (0..4).map(|j| (j, rng.int(-7, 7))).collect();
-            (t, rng.int(-20, 20))
+            let t = (0..4).map(|j| (j, int(rng, -7, 7))).collect();
+            (t, int(rng, -20, 20))
         })
         .collect();
     boxed(&mut rows, 4, 4);
@@ -269,7 +260,7 @@ fn the_census_of_the_oracle_family() {
 
 /// The census of the first `count` systems of the fresh-seed family drawn from `seed`.
 pub(super) fn fresh_census(seed: u64, count: usize) -> Census {
-    let mut rng = XorShift(seed);
+    let mut rng = Xorshift64::new(seed);
     let c = census((0..count).map(|_| fresh(&mut rng)));
     println!("Q1-LOCAL census, fresh seed {seed:#x}, {count} systems: {c:?}");
     c
@@ -292,7 +283,7 @@ fn the_census_of_the_first_300_systems_of_fresh_seed_1() {
 #[test]
 fn the_census_of_300_systems_of_a_new_seed() {
     let (_, seed) = Rng::fresh("q1_local: the census of a new seed");
-    let _ = fresh_census(seed | 1, 300);
+    let _ = fresh_census(seed, 300);
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -832,7 +823,7 @@ fn the_answers_of_the_oracle_family_are_free_of_the_order_of_their_rows() {
 #[test]
 fn the_answers_of_the_fresh_family_are_free_of_the_order_of_their_rows() {
     let (_, seed) = Rng::fresh("the fresh family, rows in any order");
-    let mut rng = XorShift(seed | 1);
+    let mut rng = Xorshift64::new(seed);
     for _ in 0..60 {
         let _ = order_free("the fresh family", &fresh(&mut rng));
     }

@@ -7,6 +7,7 @@ use std::collections::HashMap;
 use std::path::Path;
 
 use super::{files, mistakes};
+use zed_tests::seed::Rng;
 use zedc::query::Db;
 use zedc::unit::load;
 
@@ -269,20 +270,6 @@ fn defined(path: &str) -> String {
     format!("v{}", path.replace('.', "_"))
 }
 
-/// A generator of numbers, seeded, so that each case can be run again by its seed.
-struct Rng(u64);
-
-impl Rng {
-    /// A number below `n` (splitmix64).
-    fn below(&mut self, n: usize) -> usize {
-        self.0 = self.0.wrapping_add(0x9e37_79b9_7f4a_7c15);
-        let mut z = self.0;
-        z = (z ^ (z >> 30)).wrapping_mul(0xbf58_476d_1ce4_e5b9);
-        z = (z ^ (z >> 27)).wrapping_mul(0x94d0_49bb_1331_11eb);
-        ((z ^ (z >> 31)) % n as u64) as usize
-    }
-}
-
 /// A package [`generate`] made: its files, its roots, its prelude, and each unit's imports in
 /// order with the line of each, for the units with a file that parses.
 type Generated = (
@@ -300,7 +287,7 @@ const PATHS: [&str; 8] = ["a", "b", "c", "d", "e", "g.x", "g.y", "zz"];
 /// with a definition before their imports, and sometimes a prelude; with roots, one of which
 /// may name no file.
 fn generate(seed: u64) -> Generated {
-    let mut rng = Rng(seed);
+    let mut rng = Rng::new(seed);
     let mut fs = Vec::new();
     let mut graph = HashMap::new();
     // `zz` never has a file.

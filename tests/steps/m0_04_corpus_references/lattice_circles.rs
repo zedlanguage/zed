@@ -9,7 +9,9 @@
 use std::collections::BTreeMap;
 use std::fmt::Write;
 
-use super::{cluster_text, p14_oracle, splitmix};
+use zed_tests::seed::Rng;
+
+use super::{cluster_text, p14_oracle};
 
 type Pt = (i64, i64);
 
@@ -60,12 +62,9 @@ fn point_sets() -> Vec<(&'static str, Vec<Pt>)> {
 /// `points` as built, reversed, and in two orders drawn at random.
 fn orders(points: &[Pt]) -> Vec<Vec<Pt>> {
     let shuffled = |seed: u64| {
-        let mut keyed: Vec<(u64, Pt)> = (0..)
-            .zip(points)
-            .map(|(i, &p)| (splitmix(seed, i), p))
-            .collect();
-        keyed.sort_unstable();
-        keyed.into_iter().map(|(_, p)| p).collect()
+        let mut shuffled = points.to_vec();
+        Rng::new(seed).shuffle(&mut shuffled);
+        shuffled
     };
     let reversed = points.iter().rev().copied().collect();
     vec![points.to_vec(), reversed, shuffled(1), shuffled(2)]

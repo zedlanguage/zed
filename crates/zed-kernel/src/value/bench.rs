@@ -93,12 +93,9 @@ fn a_hash_set_of_families_of_one_size_scales() {
 fn hashing_a_map_after_each_change_scales() {
     crate::scaling::check_order("n inserts into a map, hashed after each", 20_000, 1, |n| {
         let mut m: btree::Map<Value, Value> = btree::Map::default();
-        let mut x: u64 = 7;
+        let mut rng = crate::seed::Rng::new(7);
         for i in 0..n {
-            x = x
-                .wrapping_mul(6364136223846793005)
-                .wrapping_add(1442695040888963407);
-            m.insert(Value::Int((x >> 1) as i64), Value::Int(i as i64));
+            m.insert(Value::Int(rng.int(0, i64::MAX)), Value::Int(i as i64));
             std::hint::black_box(digest(&Value::Family(Family::from_map(m.clone()))));
         }
     });

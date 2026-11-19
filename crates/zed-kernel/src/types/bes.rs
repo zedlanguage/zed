@@ -1470,13 +1470,10 @@ mod tests {
     /// `decide` against the game on the draws numbered in `checked`; asserts that those
     /// draws take the second least fixed point of the one-`Mor` step at least once.
     fn draws_agree_with_the_game(checked: std::ops::Range<u64>) {
-        let mut seed = 0x9e37_79b9_7f4a_7c15_u64;
-        let mut next = |k: u64| {
-            seed ^= seed << 13;
-            seed ^= seed >> 7;
-            seed ^= seed << 17;
-            seed % k
-        };
+        // xorshift64 from a fixed seed, kept: the draws numbered in `checked`, and the draw
+        // that takes the second least fixed point, are those of this stream.
+        let mut rng = crate::seed::Xorshift64::new(0x9e37_79b9_7f4a_7c15);
+        let mut next = |k: u64| rng.below(k);
         let (mut decided, mut refused) = (0, 0);
         let second_before = super::SECOND_PASSES.with(std::cell::Cell::get);
         // Small systems with many `Mor` nodes, then wide ones with few: only the second

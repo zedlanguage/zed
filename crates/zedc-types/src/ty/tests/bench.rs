@@ -11,7 +11,7 @@ use super::*;
 /// Each verdict is checked against every set of arrows as there; only the sizes differ.
 #[test]
 fn the_index_of_arrows_gives_the_verdict_on_large_overloads() {
-    let mut rng = Rng(crate::seed::seed(
+    let mut rng = Rng::new(crate::seed::seed(
         "the_index_of_arrows_gives_the_verdict_on_large_overloads",
     ));
     let mut counts = Counts::default();
@@ -28,7 +28,7 @@ fn the_index_of_arrows_gives_the_verdict_on_large_overloads() {
 /// leaves that arrow out of the cover only ([`part_of_alone`]).
 #[test]
 fn a_refused_part_does_not_refuse_a_cover_other_arrows_give() {
-    let mut rng = Rng(2929246812783321450);
+    let mut rng = Rng::new(2929246812783321450);
     let mut counts = Counts::default();
     for case in 0..3 {
         index_case(&mut rng, 300, case, &mut counts);

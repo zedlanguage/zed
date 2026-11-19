@@ -2,6 +2,7 @@
 
 use zed_kernel::term::build::{lit, prim};
 use zed_kernel::{Prim, Value, eval};
+use zed_tests::seed::Rng;
 
 use super::x;
 
@@ -77,14 +78,6 @@ fn decimal_value(text: &str) -> (u128, i32) {
     (n, s)
 }
 
-fn splitmix64(x: &mut u64) -> u64 {
-    *x = x.wrapping_add(0x9e37_79b9_7f4a_7c15);
-    let mut z = *x;
-    z = (z ^ (z >> 30)).wrapping_mul(0xbf58_476d_1ce4_e5b9);
-    z = (z ^ (z >> 27)).wrapping_mul(0x94d0_49bb_1331_11eb);
-    z ^ (z >> 31)
-}
-
 fn show(v: f64) -> String {
     match eval(&prim(Prim::Show, vec![lit(Value::float(v))])).unwrap() {
         Value::Str(s) => s.to_string(),
@@ -143,8 +136,7 @@ fn read_f64(text: &str) -> f64 {
 fn every_sampled_tie_prints_the_larger_magnitude() {
     // 300 samples a binade, 15,600 ties, from a new seed each run (was 1000 from a fixed one).
     const PER_BINADE: usize = 300;
-    let drawn = zed_tests::seed::seed("every_sampled_tie_prints_the_larger_magnitude");
-    let mut seed = drawn;
+    let (mut rng, drawn) = Rng::fresh("every_sampled_tie_prints_the_larger_magnitude");
     let mut binades_with_ties = Vec::new();
     let mut ties = 0usize;
     for p in 1u32..=100 {
@@ -161,7 +153,7 @@ fn every_sampled_tie_prints_the_larger_magnitude() {
         let mut found = 0usize;
         for _ in 0..PER_BINADE {
             let low = 1u64 << (52 - t);
-            let k = (low + splitmix64(&mut seed) % low) | 1;
+            let k = (low + rng.below_u64(low)) | 1;
             let m = k << t;
             let v = f64::from_bits((((e + 1023) as u64) << 52) | (m - (1 << 52)));
             // M read back from v's bits, so the checks below are of the float under test.
@@ -276,13 +268,10 @@ fn every_float_reads_back_to_itself() {
         f64::INFINITY,
         f64::NEG_INFINITY,
     ];
-    // A fixed linear congruential sequence of bit patterns, every exponent among them.
-    let mut state: u64 = 0x2545_f491_4f6c_dd1d;
+    // A fixed sequence of random bit patterns, every exponent among them.
+    let mut rng = Rng::new(0x2545_f491_4f6c_dd1d);
     for _ in 0..20_000 {
-        state = state
-            .wrapping_mul(6_364_136_223_846_793_005)
-            .wrapping_add(1_442_695_040_888_963_407);
-        let v = f64::from_bits(state);
+        let v = f64::from_bits(rng.next_u64());
         if !v.is_nan() {
             edges.push(v);
         }

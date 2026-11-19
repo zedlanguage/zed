@@ -614,19 +614,7 @@ impl<'a> Side<'a> {
 mod tests {
     use super::*;
     use crate::presburger::{Lin, Rel};
-
-    /// A small generator of numbers (xorshift64), seeded by [`crate::seed::seed`]: a new seed on
-    /// each run, printed, which `ZED_TEST_SEED` repeats.
-    struct Rng(u64);
-
-    impl Rng {
-        fn below(&mut self, n: usize) -> usize {
-            self.0 ^= self.0 << 13;
-            self.0 ^= self.0 >> 7;
-            self.0 ^= self.0 << 17;
-            (self.0 % n as u64) as usize
-        }
-    }
+    use crate::seed::Rng;
 
     fn leaf(c: &mut Canon, k: usize) -> S {
         c.intern(Sym::Con(Con {
@@ -695,9 +683,8 @@ mod tests {
 
     #[test]
     fn a_sequence_joined_anywhere_has_the_root_of_its_parse_from_scratch() {
-        let mut rng = Rng(crate::seed::seed(
-            "a_sequence_joined_anywhere_has_the_root_of_its_parse_from_scratch",
-        ) | 1);
+        let (mut rng, _) =
+            Rng::fresh("a_sequence_joined_anywhere_has_the_root_of_its_parse_from_scratch");
         let mut c = Canon::new();
         for round in 0..500 {
             let xs = sequence(&mut c, &mut rng);
@@ -715,7 +702,7 @@ mod tests {
 
     #[test]
     fn sequences_compare_as_written_out() {
-        let mut rng = Rng(crate::seed::seed("sequences_compare_as_written_out") | 1);
+        let (mut rng, _) = Rng::fresh("sequences_compare_as_written_out");
         let mut c = Canon::new();
         for round in 0..500 {
             let xs = sequence(&mut c, &mut rng);

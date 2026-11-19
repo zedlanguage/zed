@@ -3,6 +3,7 @@
 
 use unicode_normalization::char::canonical_combining_class;
 use unicode_normalization::{UnicodeNormalization, is_nfc};
+use zed_tests::seed::Rng;
 use zedc::source::{Reject, Span, load};
 
 /// The files, by what produced them.
@@ -76,19 +77,6 @@ fn a_non_nfc_rejection_names_the_nfc_spelling_and_fixing_it_loads() {
     }
 }
 
-/// A generator from a seed, so a failure reproduces.
-struct Lcg(u64);
-
-impl Lcg {
-    fn next(&mut self, n: usize) -> usize {
-        self.0 = self
-            .0
-            .wrapping_mul(6364136223846793005)
-            .wrapping_add(1442695040888963407);
-        ((self.0 >> 33) as usize) % n
-    }
-}
-
 /// Over random text built from characters that compose, reorder or are replaced by NFC, the
 /// span of every rejection is the first part of the text NFC changes: the text before it is
 /// NFC, the span is not, its NFC spelling put in its place begins the NFC of the text (the
@@ -106,12 +94,10 @@ pub(super) fn spans_of_random_texts(seed: u64, cases: usize) {
         'a', 'e', 'n', 'x', ' ', '\u{301}', '\u{303}', '\u{323}', '\u{307}', '\u{212b}', '\u{c5}',
         '\u{1100}', '\u{1161}', '\u{11a8}', '\u{ac00}', '\u{b47}', '\u{b3e}', '\u{344}',
     ];
-    let mut rng = Lcg(seed);
+    let mut rng = Rng::new(seed);
     for _ in 0..cases {
-        let len = 1 + rng.next(8);
-        let s: String = (0..len)
-            .map(|_| alphabet[rng.next(alphabet.len())])
-            .collect();
+        let len = 1 + rng.below(8);
+        let s: String = (0..len).map(|_| rng.pick(&alphabet)).collect();
         span_of(&s);
     }
     assert!(span_of("a"), "\"a\" rejected");

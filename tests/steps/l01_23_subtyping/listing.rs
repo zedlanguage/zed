@@ -90,19 +90,17 @@ fn the_difference_of_int_0_and_int_minus_0_0_is_one_value_not_known_finite() {
     }
 }
 
-/// A small random type over the literals 0..3 and pairs of them, from `seed`.
-fn random(seed: &mut u64, depth: u32) -> Type {
-    *seed = seed
-        .wrapping_mul(6364136223846793005)
-        .wrapping_add(1442695040888963407);
-    let k = (*seed >> 33) % if depth == 0 { 2 } else { 6 };
+/// A small random type over the literals 0..3 and pairs of them, drawn by `rng`.
+fn random(rng: &mut Rng, depth: u32) -> Type {
+    let x = rng.next_u64();
+    let k = (x >> 33) % if depth == 0 { 2 } else { 6 };
     match k {
-        0 => lit(((*seed >> 40) % 3) as usize),
-        1 => Type::union_all((0..3).filter(|i| (*seed >> (45 + i)) & 1 == 1).map(lit)),
-        2 => Type::tuple(vec![random(seed, depth - 1), random(seed, depth - 1)]),
-        3 => &random(seed, depth - 1) | &random(seed, depth - 1),
-        4 => &random(seed, depth - 1) & &random(seed, depth - 1),
-        _ => &random(seed, depth - 1) - &random(seed, depth - 1),
+        0 => lit(((x >> 40) % 3) as usize),
+        1 => Type::union_all((0..3).filter(|i| (x >> (45 + i)) & 1 == 1).map(lit)),
+        2 => Type::tuple(vec![random(rng, depth - 1), random(rng, depth - 1)]),
+        3 => &random(rng, depth - 1) | &random(rng, depth - 1),
+        4 => &random(rng, depth - 1) & &random(rng, depth - 1),
+        _ => &random(rng, depth - 1) - &random(rng, depth - 1),
     }
 }
 
@@ -133,11 +131,10 @@ fn lists_agree_with_membership() {
             .into_iter()
             .collect();
     }
-    let (_, mut seed) = Rng::fresh("random listed types");
-    let first = seed;
+    let (mut rng, first) = Rng::fresh("random listed types");
     let mut checked = 0;
     for _ in 0..100 {
-        let t = random(&mut seed, 3);
+        let t = random(&mut rng, 3);
         checked += usize::from(lists_as_it_holds(&t, &all, first));
     }
     eprintln!("{checked} of 100 types listed (ZED_TEST_SEED={first})");
@@ -678,36 +675,34 @@ fn finiteness_sees_through_meets_and_exclusive_ors() {
 
 /// A small random type over the integers 0..3, `int` and its complements of one literal, pairs
 /// and one-tuples of such types nested `level` deep, joined, met, differenced and taken in
-/// exclusive or, from `seed`. Many are infinite.
-fn random_mixed(seed: &mut u64, depth: u32, level: u32) -> Type {
-    *seed = seed
-        .wrapping_mul(6364136223846793005)
-        .wrapping_add(1442695040888963407);
+/// exclusive or, drawn by `rng`. Many are infinite.
+fn random_mixed(rng: &mut Rng, depth: u32, level: u32) -> Type {
+    let x = rng.next_u64();
     let leaf = depth == 0;
-    let k = (*seed >> 33) % if leaf { 4 } else { 9 };
-    let bits = *seed >> 40;
+    let k = (x >> 33) % if leaf { 4 } else { 9 };
+    let bits = x >> 40;
     match k {
         0 => lit((bits % 3) as usize),
         1 => Type::union_all((0..3).filter(|i| (bits >> i) & 1 == 1).map(lit)),
         2 => Type::int(),
         3 => &Type::int() - &lit((bits % 3) as usize),
         4 | 5 if level > 0 => {
-            let a = random_mixed(seed, depth - 1, level - 1);
+            let a = random_mixed(rng, depth - 1, level - 1);
             if k == 4 {
-                Type::tuple(vec![a, random_mixed(seed, depth - 1, level - 1)])
+                Type::tuple(vec![a, random_mixed(rng, depth - 1, level - 1)])
             } else {
                 Type::tuple(vec![a])
             }
         }
         4 | 5 => lit((bits % 3) as usize),
-        6 => &random_mixed(seed, depth - 1, level) | &random_mixed(seed, depth - 1, level),
-        7 => &random_mixed(seed, depth - 1, level) & &random_mixed(seed, depth - 1, level),
+        6 => &random_mixed(rng, depth - 1, level) | &random_mixed(rng, depth - 1, level),
+        7 => &random_mixed(rng, depth - 1, level) & &random_mixed(rng, depth - 1, level),
         _ if bits & 1 == 0 => {
-            &random_mixed(seed, depth - 1, level) - &random_mixed(seed, depth - 1, level)
+            &random_mixed(rng, depth - 1, level) - &random_mixed(rng, depth - 1, level)
         }
         _ => xor(
-            &random_mixed(seed, depth - 1, level),
-            &random_mixed(seed, depth - 1, level),
+            &random_mixed(rng, depth - 1, level),
+            &random_mixed(rng, depth - 1, level),
         ),
     }
 }
@@ -760,10 +755,9 @@ fn each_value_agrees_with_a_search_of_all_points() {
     let mut counts = [0; 3];
     // The generator starts from a new seed each run, printed; it was 7 (TEST-bench-move-l0123,
     // author P169).
-    let (_, first) = Rng::fresh("random mixed types");
-    let mut seed = first;
+    let (mut rng, first) = Rng::fresh("random mixed types");
     for _ in 0..1500 {
-        let t = random_mixed(&mut seed, 4, 2);
+        let t = random_mixed(&mut rng, 4, 2);
         counts[check(&t, &format!("ZED_TEST_SEED={first}"))] += 1;
     }
     let [listed_count, infinite, missed] = counts;

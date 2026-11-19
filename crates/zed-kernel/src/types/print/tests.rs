@@ -6,26 +6,20 @@
 use super::super::bdd::Part;
 use super::super::{Op, Row, SALT, Type};
 use super::defs::{collect, lift, plain};
+use crate::seed::Rng;
 use crate::value::Value;
-
-fn next(seed: &mut u64) -> u64 {
-    *seed = seed
-        .wrapping_mul(6364136223846793005)
-        .wrapping_add(1442695040888963407);
-    *seed >> 33
-}
 
 pub(super) fn lit(i: u64) -> Type {
     Type::lit(&Value::Int(i as i64)).expect("an integer literal type")
 }
 
-fn leaf(seed: &mut u64, depth: u32) -> Type {
-    let k = next(seed);
+fn leaf(rng: &mut Rng, depth: u32) -> Type {
+    let k = rng.next_u64();
     match k % 7 {
         0 => Type::top(),
         1 | 2 => lit(k / 7 % 4),
         3 => Type::atom(&format!("a{}", k / 7 % 3)),
-        4 if depth > 0 => ty(seed, depth - 1),
+        4 if depth > 0 => ty(rng, depth - 1),
         5 => Type::exact(lit(k / 7 % 3), Type::int()),
         _ => Type::int(),
     }
@@ -33,25 +27,21 @@ fn leaf(seed: &mut u64, depth: u32) -> Type {
 
 /// A random type of unions, intersections, differences and complements of tuple types,
 /// some of them an atom's payload.
-fn ty(seed: &mut u64, depth: u32) -> Type {
-    let k = next(seed);
+fn ty(rng: &mut Rng, depth: u32) -> Type {
+    let k = rng.next_u64();
     if depth == 0 || k.is_multiple_of(7) {
         let n = 1 + (k / 7 % 2) as usize;
-        let t = Type::tuple(
-            (0..n)
-                .map(|_| leaf(seed, depth.saturating_sub(2)))
-                .collect(),
-        );
+        let t = Type::tuple((0..n).map(|_| leaf(rng, depth.saturating_sub(2))).collect());
         return match k / 14 % 5 {
             0 => Type::atom_with("p", &t),
             _ => t,
         };
     }
-    let a = ty(seed, depth - 1);
+    let a = ty(rng, depth - 1);
     match k % 4 {
-        0 => &a | &ty(seed, depth - 1),
-        1 => &a & &ty(seed, depth - 1),
-        2 => &a - &ty(seed, depth - 1),
+        0 => &a | &ty(rng, depth - 1),
+        1 => &a & &ty(rng, depth - 1),
+        2 => &a - &ty(rng, depth - 1),
         _ => !&a,
     }
 }
@@ -72,8 +62,7 @@ fn texts(salt: u64, base: u64, n: u64) -> (Vec<(String, String)>, usize, Vec<boo
         let mut kept = 0;
         let texts = (0..n)
             .map(|i| {
-                let mut seed = base.wrapping_add(i * 7919);
-                let t = ty(&mut seed, 5);
+                let t = ty(&mut Rng::new(base.wrapping_add(i * 7919)), 5);
                 kept += exprs(&t);
                 (t.to_string(), t.surface().to_string())
             })
@@ -528,8 +517,8 @@ fn a_difference_of_differences_prints_as_written() {
 
 /// A random part of 1-tuples over six rows, from literals, their complements, meets,
 /// unions and complements.
-fn random_part(seed: &mut u64, depth: u32) -> Part<Row> {
-    let k = next(seed);
+fn random_part(rng: &mut Rng, depth: u32) -> Part<Row> {
+    let k = rng.next_u64();
     if depth == 0 || k.is_multiple_of(5) {
         let l = Part::literal(Row::new(vec![lit(k / 5 % 6)]));
         return if (k / 30).is_multiple_of(2) {
@@ -538,10 +527,10 @@ fn random_part(seed: &mut u64, depth: u32) -> Part<Row> {
             l.not()
         };
     }
-    let a = random_part(seed, depth - 1);
+    let a = random_part(rng, depth - 1);
     match k % 3 {
-        0 => a.zip(&random_part(seed, depth - 1), Op::And),
-        1 => a.zip(&random_part(seed, depth - 1), Op::Or),
+        0 => a.zip(&random_part(rng, depth - 1), Op::And),
+        1 => a.zip(&random_part(rng, depth - 1), Op::Or),
         _ => a.not(),
     }
 }
@@ -555,8 +544,8 @@ fn only_a_part_holding_values_outside_every_atom_prints_the_top_type() {
     let base =
         crate::seed::seed("only_a_part_holding_values_outside_every_atom_prints_the_top_type");
     for i in 0..4000u64 {
-        let mut seed = base.wrapping_add(i * 7919);
-        kept += usize::from(prints_top_when_outside(&random_part(&mut seed, 6)).0);
+        let mut rng = Rng::new(base.wrapping_add(i * 7919));
+        kept += usize::from(prints_top_when_outside(&random_part(&mut rng, 6)).0);
     }
     eprintln!("{kept} of 4000 kept as expressions");
     // Kept expressions built, whatever the draws met (PROOF-test-count-thresholds; until

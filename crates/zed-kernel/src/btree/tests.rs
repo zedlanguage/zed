@@ -1,26 +1,10 @@
 use super::*;
+use crate::seed::Rng;
 use std::collections::BTreeMap;
 
 impl Hole for u64 {
     fn hole() -> Self {
         0
-    }
-}
-
-/// splitmix64 from a seed.
-pub(super) struct Draw(pub(super) u64);
-
-impl Draw {
-    pub(super) fn next(&mut self) -> u64 {
-        self.0 = self.0.wrapping_add(0x9e37_79b9_7f4a_7c15);
-        let mut z = self.0;
-        z = (z ^ (z >> 30)).wrapping_mul(0xbf58_476d_1ce4_e5b9);
-        z = (z ^ (z >> 27)).wrapping_mul(0x94d0_49bb_1331_11eb);
-        z ^ (z >> 31)
-    }
-
-    fn below(&mut self, n: u64) -> u64 {
-        self.next() % n
     }
 }
 
@@ -283,19 +267,19 @@ fn a_build_keeps_the_last_of_equal_keys() {
 fn random_changes_agree_with_the_model_and_keep_old_versions() {
     let base = crate::seed::seed("random_changes_agree_with_the_model_and_keep_old_versions");
     for i in 0..6u64 {
-        let mut d = Draw(base.wrapping_add(i));
+        let mut d = Rng::new(base.wrapping_add(i));
         // Small domains make removals and replacements common, large ones deep trees.
         let domain = [20, 300, 3000][i as usize % 3];
         let mut versions: Vec<(M, BTreeMap<u64, u64>)> = vec![(M::default(), BTreeMap::new())];
         for step in 0..800 {
-            let from = d.below(versions.len() as u64) as usize;
+            let from = d.below(versions.len());
             let (mut m, mut model) = versions[from].clone();
             for _ in 0..1 + d.below(8) {
-                let k = d.below(domain);
+                let k = d.below_u64(domain);
                 if d.below(3) == 0 {
                     assert_eq!(m.remove(&k), model.remove(&k).is_some());
                 } else {
-                    let v = d.next();
+                    let v = d.next_u64();
                     assert_eq!(m.insert(k, v), model.insert(k, v).is_none());
                 }
             }
@@ -412,7 +396,7 @@ fn fresh_sum(m: &M) -> u64 {
 /// Returns how often each arm of the changes ran (`Arm`).
 fn changes_after_sums(seed: u64, shared: bool) -> [u32; 10] {
     ARMS.with(|a| a.set([0; 10]));
-    let mut draw = Draw(seed);
+    let mut draw = Rng::new(seed);
     let mut m = M::default();
     // Grow, then shrink, so nodes merge and borrow; then remove every key left, so the root
     // collapses through each height.
@@ -420,7 +404,7 @@ fn changes_after_sums(seed: u64, shared: bool) -> [u32; 10] {
         .map(|step| {
             (
                 draw.below(5) < if step < 3000 { 4 } else { 1 },
-                draw.below(1500),
+                draw.below_u64(1500),
             )
         })
         .collect();

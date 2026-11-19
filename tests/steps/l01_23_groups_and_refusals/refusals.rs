@@ -5098,22 +5098,8 @@ struct R6Input {
     refused: Vec<(R6Head, R6Tail)>,
 }
 
-struct R6Rng(u64);
-
-impl R6Rng {
-    fn next(&mut self) -> u64 {
-        self.0 ^= self.0 << 13;
-        self.0 ^= self.0 >> 7;
-        self.0 ^= self.0 << 17;
-        self.0
-    }
-    fn below(&mut self, n: u64) -> u64 {
-        self.next() % n
-    }
-}
-
-fn r6_random_input(g: &mut R6Rng, np_max: u64, nr_max: u64, alt_rows: bool) -> R6Input {
-    let head = |g: &mut R6Rng| {
+fn r6_random_input(g: &mut Rng, np_max: u64, nr_max: u64, alt_rows: bool) -> R6Input {
+    let head = |g: &mut Rng| {
         // Mostly one-value holes (`int \ {v}`) and small finite sets, sometimes all integers.
         match g.below(6) {
             0 => R6Head { cof: true, mask: 0 },
@@ -5138,18 +5124,18 @@ fn r6_random_input(g: &mut R6Rng, np_max: u64, nr_max: u64, alt_rows: bool) -> R
             head(g)
         }
     });
-    let terminal = |g: &mut R6Rng| {
+    let terminal = |g: &mut Rng| {
         if carrier.is_some() && g.below(3) != 0 {
             R6Tail::Car
         } else {
             R6Tail::End
         }
     };
-    let np = 1 + g.below(np_max) as usize;
+    let np = 1 + g.below_u64(np_max) as usize;
     let mut pool = Vec::new();
     for i in 0..np {
         let next = if i > 0 && g.below(3) != 0 {
-            R6Tail::Node(g.below(i as u64) as usize)
+            R6Tail::Node(g.below(i))
         } else {
             terminal(g)
         };
@@ -5171,11 +5157,11 @@ fn r6_random_input(g: &mut R6Rng, np_max: u64, nr_max: u64, alt_rows: bool) -> R
         }
     }
     let np = pool.len();
-    let tail = |g: &mut R6Rng| {
+    let tail = |g: &mut Rng| {
         if g.below(4) == 0 {
             terminal(g)
         } else {
-            R6Tail::Node(g.below(np as u64) as usize)
+            R6Tail::Node(g.below(np))
         }
     };
     let mut taken = vec![(head(g), tail(g))];
@@ -5190,7 +5176,7 @@ fn r6_random_input(g: &mut R6Rng, np_max: u64, nr_max: u64, alt_rows: bool) -> R
         let top = alt_rows && t == R6Tail::Car && g.below(2) == 0;
         taken.push((if top { carrier.unwrap() } else { head(g) }, t));
     }
-    let refused = (0..1 + g.below(nr_max))
+    let refused = (0..1 + g.below_u64(nr_max))
         .map(|_| (head(g), tail(g)))
         .collect();
     R6Input {
@@ -5342,8 +5328,7 @@ fn r6_oracle_run(what: &'static str, count: usize, np_max: u64, nr_max: u64) {
 /// TEST-bench-move-l0123 each test had a fixed seed and 600 to 3,000 inputs, the two tests at
 /// 1,500 differing only in their seed, now one test of 800).
 fn r6_oracle_run_with(what: &'static str, count: usize, np_max: u64, nr_max: u64, alt_rows: bool) {
-    let (_, seed) = Rng::fresh(what);
-    let mut g = R6Rng(seed);
+    let (mut g, seed) = Rng::fresh(what);
     let mut counts = std::collections::BTreeMap::new();
     for i in 0..count {
         let x = r6_random_input(&mut g, np_max, nr_max, alt_rows);
@@ -6579,21 +6564,12 @@ fn r9_bmm(a: &[Vec<bool>], b: &[Vec<bool>], tag: &str) -> Type {
     &ts[dmax + 1] - &u
 }
 
-/// A splitmix64 step, for the deterministic random matrices of the R9 tests and probe.
-fn r9_mix(s: &mut u64) -> u64 {
-    *s = s.wrapping_add(0x9e37_79b9_7f4a_7c15);
-    let mut z = *s;
-    z = (z ^ (z >> 30)).wrapping_mul(0xbf58_476d_1ce4_e5b9);
-    z = (z ^ (z >> 27)).wrapping_mul(0x94d0_49bb_1331_11eb);
-    z ^ (z >> 31)
-}
-
 /// Two random `m × m` Boolean matrices with entries 1 at rate `num / 8`.
 fn r9_matrices(m: usize, num: u64, seed: u64) -> (Vec<Vec<bool>>, Vec<Vec<bool>>) {
-    let mut s = seed;
+    let mut rng = Rng::new(seed);
     let mut g = || {
         (0..m)
-            .map(|_| (0..m).map(|_| r9_mix(&mut s) % 8 < num).collect())
+            .map(|_| (0..m).map(|_| rng.below_u64(8) < num).collect())
             .collect::<Vec<Vec<bool>>>()
     };
     let a = g();
@@ -6609,13 +6585,9 @@ fn r9_matrices(m: usize, num: u64, seed: u64) -> (Vec<Vec<bool>>, Vec<Vec<bool>>
 fn r9_one_matrices(side: usize) -> (Vec<Vec<bool>>, Vec<Vec<bool>>) {
     let s = side.isqrt();
     let m = s * s;
-    let mut seed = 0x51ce_u64;
+    let mut rng = Rng::new(0x51ce);
     let f: Vec<Vec<usize>> = (0..s)
-        .map(|_| {
-            (0..m)
-                .map(|_| (r9_mix(&mut seed) % s as u64) as usize)
-                .collect()
-        })
+        .map(|_| (0..m).map(|_| rng.below(s)).collect())
         .collect();
     let a = (0..m)
         .map(|i| (0..m).map(|q| q / s == i % s).collect())
@@ -6836,8 +6808,7 @@ fn r9_balanced(n: usize, tag: &str) -> Type {
 /// from the fixed seed `0x91842aabbccd`, 0.88 s alone under load.
 #[test]
 fn r9_compressed_and_expanded_runs_agree_with_enumeration() {
-    let (_, seed) = Rng::fresh("r9 compressed and expanded runs");
-    let mut rng = R6Rng(seed);
+    let (mut rng, seed) = Rng::fresh("r9 compressed and expanded runs");
     for i in 0..800 {
         let input = r6_random_input(&mut rng, 4, 4, true);
         let want = r6_oracle(&input);
@@ -9075,14 +9046,14 @@ fn xr_r2_q2b_carrier_merge_unprojected_head_and_prefix_chains() {
             }
             let mut perm: Vec<usize> = (0..defs.len()).collect();
             for i in (1..perm.len()).rev() {
-                let j = (prng.next_u64() as usize) % (i + 1);
+                let j = prng.below(i + 1);
                 perm.swap(i, j);
             }
             let (pdefs, inv) = permute_defs(defs, &perm);
             let ts = Group::new(pdefs).unwrap().instance(vec![]);
             let mut ep_order: Vec<usize> = (0..endpoints.len()).collect();
             for i in (1..ep_order.len()).rev() {
-                let j = (prng.next_u64() as usize) % (i + 1);
+                let j = prng.below(i + 1);
                 ep_order.swap(i, j);
             }
             let u = ep_order

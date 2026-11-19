@@ -10,47 +10,29 @@ use std::collections::BTreeSet;
 use zed_kernel::term::build::{lit, prim};
 use zed_kernel::{Family, Prim, Term, Value};
 use zed_tests::kernel::*;
-use zed_tests::seed::seed;
+use zed_tests::seed::{Rng, seed};
 
 use super::models;
 
 /// Families drawn per run.
 const DRAWS: usize = 24;
 
-/// splitmix64.
-struct Draw(u64);
-
-impl Draw {
-    fn next(&mut self) -> u64 {
-        self.0 = self.0.wrapping_add(0x9E37_79B9_7F4A_7C15);
-        let mut z = self.0;
-        z = (z ^ (z >> 30)).wrapping_mul(0xBF58_476D_1CE4_E5B9);
-        z = (z ^ (z >> 27)).wrapping_mul(0x94D0_49BB_1331_11EB);
-        z ^ (z >> 31)
+/// Up to `most` distinct keys from `0..span`, at least one.
+fn keys(d: &mut Rng, most: usize, span: i64) -> BTreeSet<i64> {
+    let want = 1 + d.below(most);
+    let mut ks = BTreeSet::new();
+    while ks.len() < want {
+        ks.insert(d.int(0, span - 1));
     }
-
-    /// A number in `0..n`.
-    fn below(&mut self, n: u64) -> u64 {
-        self.next() % n
-    }
-
-    /// Up to `most` distinct keys from `0..span`, at least one.
-    fn keys(&mut self, most: u64, span: u64) -> BTreeSet<i64> {
-        let want = 1 + self.below(most);
-        let mut ks = BTreeSet::new();
-        while (ks.len() as u64) < want {
-            ks.insert(self.below(span) as i64);
-        }
-        ks
-    }
+    ks
 }
 
 /// A two-level family of int keys and values, as leaves.
-fn family(d: &mut Draw) -> Vec<(Vec<Value>, Value)> {
+fn family(d: &mut Rng) -> Vec<(Vec<Value>, Value)> {
     let mut leaves = Vec::new();
-    for p in d.keys(5, 20) {
-        for q in d.keys(4, 10) {
-            let v = d.below(101) as i64 - 50;
+    for p in keys(d, 5, 20) {
+        for q in keys(d, 4, 10) {
+            let v = d.int(-50, 50);
             leaves.push((vec![Value::Int(p), Value::Int(q)], Value::Int(v)));
         }
     }
@@ -81,7 +63,7 @@ fn f(v: Term) -> Term {
 
 #[test]
 fn map_commutes_with_a_key_only_remap_on_random_families() {
-    let mut d = Draw(seed(
+    let mut d = Rng::new(seed(
         "map_commutes_with_a_key_only_remap_on_random_families",
     ));
     for _ in 0..DRAWS {

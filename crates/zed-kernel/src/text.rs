@@ -1250,22 +1250,16 @@ mod tests {
     fn joins_in_any_order_keep_the_tree_balanced_and_the_text_whole() {
         // Texts of 1 to 300 bytes, some of several characters' bytes, joined in an order a
         // random generator picks, each against a plain `String`.
-        let mut seed =
-            crate::seed::seed("joins_in_any_order_keep_the_tree_balanced_and_the_text_whole") | 1;
-        let mut next = move |k: usize| {
-            seed ^= seed << 13;
-            seed ^= seed >> 7;
-            seed ^= seed << 17;
-            (seed % k as u64) as usize
-        };
+        let (mut rng, _) =
+            crate::seed::Rng::fresh("joins_in_any_order_keep_the_tree_balanced_and_the_text_whole");
         let mut pool: Vec<(Text, String)> = (1..=40)
             .map(|i| {
-                let s = ["x", "ö", "日"][i % 3].repeat(1 + next(100));
+                let s = ["x", "ö", "日"][i % 3].repeat(1 + rng.below(100));
                 (Text::from(s.as_str()), s)
             })
             .collect();
         for _ in 0..2000 {
-            let (i, j) = (next(pool.len()), next(pool.len()));
+            let (i, j) = (rng.below(pool.len()), rng.below(pool.len()));
             if pool[i].1.len() + pool[j].1.len() > 1 << 15 {
                 continue;
             }

@@ -3,24 +3,8 @@
 //! dropped on a small stack.
 
 use super::*;
+use crate::seed::Rng;
 use std::collections::BTreeSet;
-
-/// A small generator of its own, so the tests need no other crate: splitmix64.
-struct Gen(u64);
-
-impl Gen {
-    fn next(&mut self) -> u64 {
-        self.0 = self.0.wrapping_add(0x9e37_79b9_7f4a_7c15);
-        let mut x = self.0;
-        x = (x ^ (x >> 30)).wrapping_mul(0xbf58_476d_1ce4_e5b9);
-        x = (x ^ (x >> 27)).wrapping_mul(0x94d0_49bb_1331_11eb);
-        x ^ (x >> 31)
-    }
-
-    fn below(&mut self, n: u64) -> i64 {
-        (self.next() % n) as i64
-    }
-}
 
 /// Checks every node of `s`: keys in order, heap order by priority with ties broken by key, and
 /// the size, sum and classes of each subtree; returns the keys in order. A walk with a stack.
@@ -81,14 +65,14 @@ fn shape(s: &TreapSet<i64>) -> Vec<i64> {
 }
 
 /// A random set of up to `n` keys in `0..range`.
-fn random(g: &mut Gen, n: u64, range: u64) -> BTreeSet<i64> {
+fn random(g: &mut Rng, n: usize, range: i64) -> BTreeSet<i64> {
     let k = g.below(n + 1);
-    (0..k).map(|_| g.below(range)).collect()
+    (0..k).map(|_| g.int(0, range - 1)).collect()
 }
 
 #[test]
 fn every_operation_agrees_with_a_btree_set() {
-    let mut g = Gen(7);
+    let mut g = Rng::new(7);
     for round in 0..400 {
         let range = [8, 64, 1000][round % 3];
         let (a, b) = (random(&mut g, 60, range), random(&mut g, 60, range));
@@ -100,7 +84,7 @@ fn every_operation_agrees_with_a_btree_set() {
         );
         assert_eq!(sa.first(), a.first());
         assert_eq!(sa.last(), a.last());
-        for k in 0..range as i64 {
+        for k in 0..range {
             assert_eq!(sa.contains(&k), a.contains(&k));
         }
         assert_eq!(keys(&sa.union(&sb)), a.union(&b).copied().collect());
@@ -120,7 +104,7 @@ fn every_operation_agrees_with_a_btree_set() {
         assert_eq!(sa.is_disjoint(&sb), a.is_disjoint(&b));
         assert_eq!(sa == sb, a == b);
         assert_eq!(sa.cmp(&sb), a.cmp(&b));
-        let c = g.below(range);
+        let c = g.int(0, range - 1);
         assert_eq!(keys(&sa.at_least(&c)), a.range(c..).copied().collect());
         assert_eq!(keys(&sa.at_most(&c)), a.range(..=c).copied().collect());
         let (lo, hi) = (sa.at_most(&c), sb.at_least(&(c + 1)));
@@ -128,7 +112,7 @@ fn every_operation_agrees_with_a_btree_set() {
         assert_eq!(keys(&lo.concat(&hi)), joined);
         let (mut m, mut bm) = (sa.clone(), a.clone());
         for _ in 0..20 {
-            let k = g.below(range);
+            let k = g.int(0, range - 1);
             match g.below(2) {
                 0 => assert_eq!(m.insert(k), bm.insert(k)),
                 _ => assert_eq!(m.remove(&k), bm.remove(&k)),
@@ -144,15 +128,15 @@ fn every_operation_agrees_with_a_btree_set() {
 fn sets_made_from_one_set_agree_with_a_btree_set() {
     // Cuts, set operations and edits of one set, combined again: the operations meet shared
     // subtrees, which the stops of `at_once` and the sizes in `combine` answer.
-    let mut g = Gen(11);
+    let mut g = Rng::new(11);
     for _ in 0..200 {
         let base = random(&mut g, 200, 400);
         let s = of(&base);
         let mut sets: Vec<(TreapSet<i64>, BTreeSet<i64>)> = vec![(s, base)];
         for _ in 0..12 {
-            let i = g.below(sets.len() as u64) as usize;
-            let j = g.below(sets.len() as u64) as usize;
-            let c = g.below(400);
+            let i = g.below(sets.len());
+            let j = g.below(sets.len());
+            let c = g.int(0, 399);
             let ((x, bx), (y, by)) = (&sets[i], &sets[j]);
             let made = match g.below(6) {
                 0 => (x.at_least(&c), bx.range(c..).copied().collect()),
@@ -175,8 +159,8 @@ fn sets_made_from_one_set_agree_with_a_btree_set() {
 
 #[test]
 fn one_set_of_keys_has_one_shape() {
-    let mut g = Gen(3);
-    let ks: Vec<i64> = (0..300).map(|_| g.below(10_000)).collect();
+    let mut g = Rng::new(3);
+    let ks: Vec<i64> = (0..300).map(|_| g.int(0, 9_999)).collect();
     let forward: TreapSet<i64> = ks.iter().copied().collect();
     let backward: TreapSet<i64> = ks.iter().rev().copied().collect();
     assert_eq!(shape(&forward), shape(&backward));

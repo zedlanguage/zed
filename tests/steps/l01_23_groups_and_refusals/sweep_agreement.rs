@@ -18,6 +18,7 @@ use zed_kernel::Value;
 use zed_kernel::types::rec::{Def, Expr, Group};
 use zed_kernel::types::{Refusal, Type, Verdict};
 use zed_tests::instances::Rng;
+use zed_tests::seed::Xorshift64;
 
 // The element classes: 0 is an integer other than 1 to 5, 1 and 2 the integers, 3 false,
 // 4 true, 5 a pair with a 1 first, 6 a pair of integers without, 7 the atom `a`, 8 to 10 the
@@ -1549,18 +1550,13 @@ fn satisfiable(k: usize, clauses: &[Vec<(usize, bool)>]) -> bool {
     (0..1u32 << k).any(|a| (clauses.iter()).all(|c| c.iter().any(|&(i, b)| (a >> i & 1 == 1) == b)))
 }
 
-/// `m` random 3-clauses over `k` variables, by the prototype's xorshift.
-fn random_clauses(seed: &mut u64, k: usize, m: usize) -> Vec<Vec<(usize, bool)>> {
-    let mut next = || {
-        *seed ^= *seed << 13;
-        *seed ^= *seed >> 7;
-        *seed ^= *seed << 17;
-        *seed
-    };
+/// `m` random 3-clauses over `k` variables from `seed`, by the prototype's xorshift.
+fn random_clauses(seed: u64, k: usize, m: usize) -> Vec<Vec<(usize, bool)>> {
+    let mut x = Xorshift64::new(seed);
     (0..m)
         .map(|_| {
             (0..3)
-                .map(|_| ((next() % k as u64) as usize, next() % 2 == 0))
+                .map(|_| (x.below(k as u64) as usize, x.below(2) == 0))
                 .collect()
         })
         .collect()
@@ -1688,7 +1684,7 @@ fn the_prototype_fork_stage_cases_are_answered_or_refused_soundly() {
     );
     // t11: 17 random 3-clauses over 4 variables, satisfiable; the oracle's subset construction
     // would read over a million sets, so the formula gives the answer.
-    let clauses = random_clauses(&mut 0x9e37_79b9_7f4a_7c15, 4, 17);
+    let clauses = random_clauses(0x9e37_79b9_7f4a_7c15, 4, 17);
     let sat = satisfiable(4, &clauses);
     assert!(sat, "t11: the prototype's formula is satisfiable");
     let (s, t) = selector_reduction(4, &clauses);
