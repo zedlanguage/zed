@@ -1816,7 +1816,7 @@ fn decide_kept_status(
             let Some(kept) = kept.as_deref_mut() else {
                 return has_point(p);
             };
-            if let Ok(m) = pick(&p, true) {
+            if let Some(m) = pick_point(&p, true) {
                 kept.extend(point_of_f(m));
                 return Ok(true);
             }
@@ -3395,7 +3395,7 @@ fn by_color<'a>(p: &'a Parts, color: &HashMap<Atom, usize>) -> Option<Vec<&'a Co
 // those measurements, not on the code. Test:
 // `l01_38_omega_test::decide_sat::decide_answers_where_satisfiable_answers`.
 fn found(p: Parts) -> Result<Option<Model>, Refusal> {
-    if let Ok(m) = pick(&p, true) {
+    if let Some(m) = pick_point(&p, true) {
         return Ok(Some(m));
     }
     let mut points = Vec::new();
@@ -3487,7 +3487,7 @@ fn has_point(p: Parts) -> Result<bool, Refusal> {
     if let Some(answer) = by_chain_hulls(&p) {
         return Ok(answer);
     }
-    if pick(&p, true).is_ok() {
+    if pick_point(&p, true).is_some() {
         return Ok(true);
     }
     if let Some(answer) = by_cells(&p, true) {
@@ -3510,7 +3510,7 @@ fn has_point(p: Parts) -> Result<bool, Refusal> {
     match batched_prefix(p, &mut points) {
         Ok(None) => Ok(false),
         Ok(Some(_)) if !points.is_empty() => Ok(true),
-        Ok(Some(q)) => pick(&q, true).map(|_| true).map_err(|_| refused),
+        Ok(Some(q)) => pick_point(&q, true).map(|_| true).ok_or(refused),
         Err(_) => Err(refused),
     }
 }
@@ -10522,6 +10522,24 @@ fn pick(p: &Parts, deep: bool) -> Result<Model, Refusal> {
 /// included when `deep`. A disjunct holding at the point that the search did not take is not
 /// among them.
 fn pick_taking(p: &Parts, deep: bool) -> Result<(Model, Vec<&Parts>), Refusal> {
+    pick_taking_why(p, deep, true)
+}
+
+/// [`pick`] for a caller that reads only whether there is a point: `None` where [`pick`]
+/// refuses, whatever the cause.
+fn pick_point(p: &Parts, deep: bool) -> Option<Model> {
+    pick_taking_point(p, deep).map(|(m, _)| m)
+}
+
+/// [`pick_taking`] for a caller that reads only whether there is a point: `None` where
+/// [`pick_taking`] refuses, whatever the cause.
+fn pick_taking_point(p: &Parts, deep: bool) -> Option<(Model, Vec<&Parts>)> {
+    pick_taking_why(p, deep, false).ok()
+}
+
+/// [`pick_taking`]; unless `cause`, a refusal's cause is not looked for ([`pick_reading`]), so
+/// the refusal is [`Refusal::Disjuncts`] or the cause of whatever solve refused last.
+fn pick_taking_why(p: &Parts, deep: bool, cause: bool) -> Result<(Model, Vec<&Parts>), Refusal> {
     if old_path() {
         return pick_by(p, deep, false);
     }
@@ -10535,16 +10553,58 @@ fn pick_taking(p: &Parts, deep: bool) -> Result<(Model, Vec<&Parts>), Refusal> {
     // refusal's cause. That work is a part of the slow reading's, so no refusal for work is
     // added; the answer, a refusal and its cause, is the slow reading's.
     let mut settled = false;
-    match pick_reading(p, deep, true, &mut settled) {
+    match pick_reading(p, deep, true, cause, &mut settled) {
         Ok(got) => Ok(got),
         Err(why) if settled => try_pick_disjoint_wide(p, deep).unwrap_or(Err(why)),
-        Err(_) => pick_by(p, deep, false),
+        Err(_) => pick_reading(p, deep, false, cause, &mut false),
     }
 }
 
 /// [`pick_taking`], reading the disjunctions by halves when `fast`.
 fn pick_by(p: &Parts, deep: bool, fast: bool) -> Result<(Model, Vec<&Parts>), Refusal> {
-    pick_reading(p, deep, fast, &mut false)
+    pick_reading(p, deep, fast, true, &mut false)
+}
+
+/// What a solve in [`pick_reading`] answered, for the tests to read: none, a point, or a
+/// refusal.
+#[cfg(test)]
+#[derive(Clone, Debug, PartialEq)]
+enum PickSolved {
+    Empty,
+    Point,
+    Refused(Refusal),
+}
+
+#[cfg(test)]
+thread_local! {
+    /// The solves of [`pick_reading`] on this thread while a test keeps it `Some`: the step
+    /// (`"kernel"` the projection with a disjunct, `"full"` the constraints taken with it,
+    /// `"cause"` the solve made again for the cause), the disjunct's place, and the answer.
+    /// Each disjunction read is opened by `"disjunction"` (with its number of disjuncts), then
+    /// an `"empty"` for each disjunct the local repair showed empty ([`Repair::Empty`]); these
+    /// two carry no solve.
+    static PICK_TRACE: RefCell<Option<Vec<(&'static str, usize, PickSolved)>>> =
+        const { RefCell::new(None) };
+}
+
+/// Notes a solve of [`pick_reading`] in [`PICK_TRACE`]; nothing outside the tests.
+fn pick_traced(step: &'static str, at: usize, got: &Result<Option<Model>, Refusal>) {
+    #[cfg(test)]
+    PICK_TRACE.with(|t| {
+        if let Some(t) = t.borrow_mut().as_mut() {
+            t.push((
+                step,
+                at,
+                match got {
+                    Ok(None) => PickSolved::Empty,
+                    Ok(Some(_)) => PickSolved::Point,
+                    Err(r) => PickSolved::Refused(r.clone()),
+                },
+            ));
+        }
+    });
+    #[cfg(not(test))]
+    let _ = (step, at, got);
 }
 
 /// [`pick_by`]; on a refusal of the fast reading, sets `settled` where the slow reading
@@ -10567,11 +10627,14 @@ fn pick_by(p: &Parts, deep: bool, fast: bool) -> Result<(Model, Vec<&Parts>), Re
 /// take the same disjunct at each disjunction and the same model, and fail at the same one.
 /// The slow reading's cause is that of the last of its solves there that is refused; the
 /// solves the fast reading passed over are made here, the last first, down to the last refused
-/// solve it made, so the cause is the same.
+/// solve it made, so the cause is the same. Unless `cause`, they are not made, and the
+/// refusal's cause is not the slow reading's: only for a caller that drops it
+/// ([`pick_taking_point`]).
 fn pick_reading<'a>(
     p: &'a Parts,
     deep: bool,
     fast: bool,
+    cause: bool,
     settled: &mut bool,
 ) -> Result<(Model, Vec<&'a Parts>), Refusal> {
     // Complexity tradeoff: naive `pick_by(..., false)` calls `solve(&cs, true)` on the full `k`-atom
@@ -10739,6 +10802,13 @@ fn pick_reading<'a>(
                         Repair::None => {}
                     }
                 }
+                #[cfg(test)]
+                {
+                    pick_traced("disjunction", ds.len(), &Ok(None));
+                    empty
+                        .iter()
+                        .for_each(|&at| pick_traced("empty", at, &Ok(None)));
+                }
                 let mut empty = empty.into_iter().peekable();
                 for (at, d) in ds.iter().enumerate() {
                     if taken.is_some() {
@@ -10757,8 +10827,13 @@ fn pick_reading<'a>(
                     if let Some(k) = &kernel {
                         let mut cs = k.around(&d.cons);
                         cs.extend(d.cons.iter());
-                        match solve_repair(&cs, false) {
+                        let got = solve_repair(&cs, false);
+                        pick_traced("kernel", at, &got);
+                        match got {
                             Ok(None) => {
+                                // Past `at` in `empty` too, or the cursor stays on it and every
+                                // later disjunct shown empty is solved in full.
+                                empty.next_if_eq(&at);
                                 passed.push(at);
                                 continue;
                             }
@@ -10794,7 +10869,9 @@ fn pick_reading<'a>(
                     }
                     let mut cs = acc.around(&d.cons);
                     cs.extend(d.cons.iter());
-                    match solve_repair(&cs, true) {
+                    let got = solve_repair(&cs, true);
+                    pick_traced("full", at, &got);
+                    match got {
                         Ok(Some(m)) => {
                             taken = Some((d, m));
                             break;
@@ -10815,12 +10892,31 @@ fn pick_reading<'a>(
                     // false, so the slow reading runs as before. Where a disjunct was taken on
                     // the projection's word the fast reading's refusal is not its answer (the
                     // slow reading runs), so no cause is made.
+                    // Complexity tradeoff (PRES-presbench1-red, cross-review round 2): naive
+                    // version, these solves made for every caller: up to one solve of the
+                    // constraints taken around a disjunct with it for each disjunct passed over,
+                    // the cost of solving that disjunct's whole group each time, though most
+                    // callers ([`pick_taking_point`]: the first picks of [`found`] and
+                    // [`has_point`], [`point_with`], the asks of [`search_by_halves`]) read only
+                    // whether a point was found. Used: they are made only where the cause is read
+                    // (`cause`), O(1) otherwise. No solve here can give a point (`A ∪ d` has none,
+                    // above), so leaving them out changes no point found and no disjunct taken,
+                    // and `settled` is set as before; what changes is the cause of the refusal,
+                    // which those callers drop, and the work spent, which only falls. They cannot
+                    // be left out where the cause is read: a solve here can be refused (`Tie`,
+                    // `Growth`) where the projection's solve answered `Ok(None)`
+                    // (`cause_replay_tests`). Measured on seed 4164922340731529606 of
+                    // `exact::tests::random_formulas_project_to_the_values_of_their_points` (work
+                    // of each symbol's loop with the limit lifted): see the commit message.
                     if never_invalid {
+                        let passed = if cause { &passed[..] } else { &[] };
                         for &at in passed.iter().rev().take_while(|&&at| Some(at) > why_at) {
                             let d = &ds[at];
                             let mut cs = acc.around(&d.cons);
                             cs.extend(d.cons.iter());
-                            match solve_repair(&cs, true) {
+                            let got = solve_repair(&cs, true);
+                            pick_traced("cause", at, &got);
+                            match got {
                                 Ok(None) => {}
                                 Ok(Some(_)) => return Err(why),
                                 Err(r) => {
@@ -13087,7 +13183,7 @@ fn point_with(
     if backward {
         q.ors.reverse();
     }
-    pick(&q, true).ok()
+    pick_point(&q, true)
 }
 
 /// Points for [`probe_to`] found by searches that force many disjuncts at once: first all the
@@ -13248,7 +13344,7 @@ fn search_by_halves(
         // A question of the cover is charged each search's constraints and disjunctions; past
         // its limit the search finds no point, and the question is refused (`exact::Work::ask`).
         meter::charge((q.cons.len() + q.ors.len()) as u64 + 1).ok()?;
-        let (m, mut took) = pick_taking(&q, true).ok()?;
+        let (m, mut took) = pick_taking_point(&q, true)?;
         took.extend(unit_took);
         let mut near = Near::default();
         if note {
@@ -21510,7 +21606,7 @@ fn ask_disjunct(settled: Result<Option<Parts>, Refusal>, sub: &[Atom], sets: boo
             // (PRES-probe-first).
             let point = sets
                 || q.ors.is_empty()
-                || pick(&q, false).is_ok()
+                || pick_point(&q, false).is_some()
                 || !matches!(probe_to(q, &mut Vec::new(), true), Ok(None));
             Asked::Answer(Ok(((Vec::new(), Vec::new()), point)))
         }
@@ -33347,6 +33443,165 @@ mod unit_interval_tests {
         );
         let answers = core_classes_checked("built", &core, &x, &questions);
         assert_eq!(answers, Some((1, 1)), "{core:?} with {questions:?}");
+    }
+}
+
+/// The cause of a refusal of [`pick_reading`]'s fast reading where the projection showed the
+/// last disjunct to have no point (PRES-presbench1-red, cross-review round 2): the solve of the
+/// constraints taken with that disjunct, made again for the cause, can itself be refused even
+/// though the projection's solve answered `Ok(None)`, so that solve cannot be left out where the
+/// cause is used.
+#[cfg(test)]
+mod cause_replay_tests {
+    use super::*;
+
+    fn con(pairs: &[(&str, i64)], c: i64, rel: Rel) -> Con {
+        Con {
+            lin: Lin {
+                terms: (pairs.iter())
+                    .map(|&(n, k)| (Atom::Sym(n.into()), Int::from(k)))
+                    .collect(),
+                constant: Int::from(c),
+            },
+            rel,
+        }
+    }
+
+    fn arm(cons: Vec<Con>) -> Rc<Parts> {
+        let mut d = Parts::default();
+        d.cons = cons;
+        Rc::new(d)
+    }
+
+    /// The fast reading of `p` (`deep` off), with the solves of its leaves.
+    fn traced(
+        p: &Parts,
+    ) -> (
+        Result<Model, Refusal>,
+        bool,
+        Vec<(&'static str, usize, PickSolved)>,
+    ) {
+        PICK_TRACE.with(|t| *t.borrow_mut() = Some(Vec::new()));
+        let mut settled = false;
+        let got = pick_reading(p, false, true, true, &mut settled).map(|(m, _)| m);
+        let trace = PICK_TRACE
+            .with(|t| t.borrow_mut().take())
+            .unwrap_or_default();
+        let solves = trace
+            .into_iter()
+            .filter(|(step, ..)| !matches!(*step, "disjunction" | "empty"));
+        (got, settled, solves.collect())
+    }
+
+    /// `full`, the constraints of `p` with its one failing disjunct (the last read, place 0 of
+    /// its disjunction), has no integer point, and the solver refuses it with `why`; the fast
+    /// reading of `p` passes that disjunct over on the projection's `Ok(None)`, then solves
+    /// `full` again for the cause and gives `why`, settled; `pick_taking` and the slow reading
+    /// give `why` too, not `Refusal::Disjuncts`.
+    fn refusal_survives_the_empty_projection(p: &Parts, full: &[&Con], why: &Refusal) {
+        assert_eq!(solve(full, true).as_ref(), Err(why));
+        let (got, settled, trace) = traced(p);
+        assert_eq!(got.as_ref(), Err(why));
+        assert_eq!(
+            trace,
+            vec![
+                ("kernel", 0, PickSolved::Empty),
+                ("cause", 0, PickSolved::Refused(why.clone())),
+            ]
+        );
+        assert!(settled);
+        assert_eq!(pick_taking(p, false).map(|(m, _)| m).as_ref(), Err(why));
+        assert_eq!(pick_by(p, false, false).map(|(m, _)| m).as_ref(), Err(why));
+    }
+
+    /// Sol's example (R2-CODEX-04). Over `a, b, c, t` with `S = a + b + c + t`: the base
+    /// `S == 1`, whose solve sets one atom to 1 (`t`, found by the solve, as the solver picks
+    /// it) and the others to 0; an earlier one-arm disjunction `-100 <= 2S + v <= 100` for each
+    /// atom `v` and `S - v >= 1` for `v` in `a, b, c`, holding at that model; and a last one
+    /// `a + b + c >= 1`, which misses it. The rows force `a, b, c <= 0` against `a + b + c >= 1`,
+    /// so there is no point; the projection onto `a, b, c` shows it, while the whole system is
+    /// symmetric in the four atoms and the solver refuses it with `Tie` on `S == 1`.
+    #[test]
+    fn a_tie_survives_a_projection_with_no_point() {
+        let names = ["a", "b", "c", "d"];
+        let all: Vec<(&str, i64)> = names.iter().map(|&n| (n, 1)).collect();
+        let base = con(&all, -1, Rel::Eq);
+        let m = solve(&[&base], true).unwrap().unwrap();
+        let ones: Vec<&str> = (names.iter().copied())
+            .filter(|&n| m.get(&Atom::Sym(n.into())) == Some(&Int::from(1)))
+            .collect();
+        let [t] = ones[..] else { panic!("{m:?}") };
+        let rest: Vec<&str> = names.iter().copied().filter(|&n| n != t).collect();
+        let mut earlier = Vec::new();
+        for &v in &names {
+            let mut up: Vec<(&str, i64)> = names.iter().map(|&n| (n, 2)).collect();
+            up.iter_mut().find(|(n, _)| *n == v).unwrap().1 = 3;
+            let down: Vec<(&str, i64)> = up.iter().map(|&(n, k)| (n, -k)).collect();
+            earlier.push(con(&up, 100, Rel::Ge));
+            earlier.push(con(&down, 100, Rel::Ge));
+        }
+        for &r in &rest {
+            let row: Vec<(&str, i64)> = (names.iter().copied())
+                .filter(|&n| n != r)
+                .map(|n| (n, 1))
+                .collect();
+            earlier.push(con(&row, -1, Rel::Ge));
+        }
+        let rest_sum: Vec<(&str, i64)> = rest.iter().map(|&n| (n, 1)).collect();
+        let last = vec![con(&rest_sum, -1, Rel::Ge)];
+        let mut full: Vec<&Con> = vec![&base];
+        full.extend(&earlier);
+        full.extend(&last);
+        let mut p = Parts::default();
+        p.cons.push(base.clone());
+        // Read the last first: `earlier`, then `last`.
+        p.ors.push(vec![arm(last.clone())]);
+        p.ors.push(vec![arm(earlier.clone())]);
+        let why = Refusal::Tie(std::sync::Arc::new(Tie {
+            vars: ["a", "c", "d", "b"].map(String::from).to_vec(),
+            rows: vec!["a + c + d + b - 1 == 0".into()],
+        }));
+        refusal_survives_the_empty_projection(&p, &full, &why);
+    }
+
+    /// Gemini's example (R2_GEMINI section 2.1). Six rows on `x, y`; ten rows on `a, b, c, d`
+    /// with coefficients 2 and 3 on both sides of each atom; and `s + x + a >= 0`, the one row
+    /// of `s`, joining them. The one disjunct `-3x + 2y >= 1 && -3x - 2y >= 1` (so `x <= -1`)
+    /// meets `3x + 2y >= -2 && 3x - 2y >= -2` (so `x >= 0`) nowhere. The projection onto `x, y`
+    /// drops `s`, and with it `a, b, c, d`, and shows that over two atoms; the whole system keeps
+    /// six atoms after `s` is dropped, none of which can be eliminated without adding terms, and
+    /// the solver refuses it with `Growth`.
+    #[test]
+    fn growth_survives_a_projection_with_no_point() {
+        use Rel::Ge;
+        let cons = vec![
+            con(&[("x", 3), ("y", 2)], 2, Ge),
+            con(&[("x", 3), ("y", -2)], 2, Ge),
+            con(&[("x", 5), ("y", 2)], 10, Ge),
+            con(&[("x", 5), ("y", -2)], 10, Ge),
+            con(&[("x", -5), ("y", 2)], 10, Ge),
+            con(&[("x", -5), ("y", -2)], 10, Ge),
+            con(&[("a", 2), ("b", 3), ("c", 2)], 5, Ge),
+            con(&[("a", -2), ("b", 3), ("c", -2)], 5, Ge),
+            con(&[("a", 2), ("b", -3), ("d", 2)], 5, Ge),
+            con(&[("a", -2), ("b", -3), ("d", -2)], 5, Ge),
+            con(&[("a", 3), ("c", 2), ("d", 3)], 5, Ge),
+            con(&[("a", -3), ("c", -2), ("d", -3)], 5, Ge),
+            con(&[("b", 2), ("c", 3), ("d", -2)], 5, Ge),
+            con(&[("b", -2), ("c", -3), ("d", 2)], 5, Ge),
+            con(&[("a", 2), ("b", 2), ("c", -3), ("d", 3)], 5, Ge),
+            con(&[("a", -2), ("b", -2), ("c", 3), ("d", -3)], 5, Ge),
+            con(&[("s", 1), ("x", 1), ("a", 1)], 0, Ge),
+        ];
+        let d0 = vec![
+            con(&[("x", -3), ("y", 2)], -1, Ge),
+            con(&[("x", -3), ("y", -2)], -1, Ge),
+        ];
+        let full: Vec<&Con> = cons.iter().chain(&d0).collect();
+        let mut p = Parts::default();
+        p.cons = cons.clone();
+        p.ors.push(vec![arm(d0.clone())]);
+        refusal_survives_the_empty_projection(&p, &full, &Refusal::Growth);
     }
 }
 

@@ -296,6 +296,41 @@ fn random_formulas_at_seed_13733945893095969990() {
     random_formulas_at(13733945893095969990);
 }
 
+/// A disjunct that the local repair showed to have no point with the constraints taken
+/// ([`super::super::Repair::Empty`]) is passed over without the solve of its whole group, also
+/// where the projection passed over one such disjunct before it (PRES-presbench1-red). Round 63
+/// of seed 13733945893095969990 runs out of work inside a reading where the repair showed
+/// disjuncts 0, 1 and 2 empty and the projection passed over 0; the cursor over the empty
+/// disjuncts stayed on 0, so 1 and 2 were solved in full.
+#[test]
+fn disjuncts_shown_empty_are_never_solved_in_full() {
+    let mut rng = Rng(13733945893095969990 | 1);
+    let f = (0..=63)
+        .map(|_| boxed(formula(&mut rng, 3)))
+        .last()
+        .unwrap();
+    let syms: Vec<Atom> = NAMES.iter().map(|n| a(n)).collect();
+    super::super::PICK_TRACE.with(|t| *t.borrow_mut() = Some(Vec::new()));
+    let _ = project_each_exact(&f, &syms);
+    let trace = super::super::PICK_TRACE
+        .with(|t| t.borrow_mut().take())
+        .unwrap_or_default();
+    let (mut empty, mut emptied, mut solved) = (Vec::new(), 0, Vec::new());
+    for (step, at, _) in &trace {
+        match *step {
+            "disjunction" => empty.clear(),
+            "empty" => {
+                empty.push(*at);
+                emptied += 1;
+            }
+            "full" if empty.contains(at) => solved.push(*at),
+            _ => {}
+        }
+    }
+    assert!(emptied > 0, "no disjunct shown empty: {f}");
+    assert_eq!(solved, Vec::<usize>::new());
+}
+
 fn random_formulas_at(seed: u64) {
     let mut rng = Rng(seed | 1);
     let syms: Vec<Atom> = NAMES.iter().map(|n| a(n)).collect();
