@@ -3594,7 +3594,7 @@ impl Search {
     /// shown here: a scalar, a bare atom, a struct or a closure is of height 0, a tuple one more
     /// than its highest component (1 when it has none), an atom with a payload one more than its
     /// payload tuple. `None` for a value with a level not read in ([`Rep::Of`]), a list kept as
-    /// its length ([`Rep::List`]) or a compound [`Value`]: [`Heights::least_height`] is compared
+    /// its length ([`Rep::List`]) or a compound [`Value`]: [`Heights::least_height_node`] is compared
     /// only with a height known exactly. Each value is measured once, on a list rather than the
     /// thread's stack, so a list of `n` items costs `O(n)` once for all its suffixes.
     fn value_height(&mut self, v: usize) -> Option<u64> {
@@ -3673,7 +3673,7 @@ impl std::hash::Hash for HeightNode {
 /// The bounds on the heights of types' values ([`height_bounds`]), kept in `HEIGHTS`.
 #[derive(Default)]
 struct Heights {
-    /// The least height of a value of each type asked about ([`Heights::least_height`]).
+    /// The least height of a value of each type asked about ([`Heights::least_height_node`]).
     least: HashMap<Type, u64, Digests>,
     /// The least and greatest height of a value of each type asked about, `None` for a type
     /// shown to have no value ([`Heights::height_bounds`]).
@@ -3936,7 +3936,7 @@ impl Heights {
 
     /// Bounds `(lo, hi)` on the height ([`Search::value_height`]) of every value of `t`, `hi`
     /// `u64::MAX` when none is known; `None` when `t` is shown to have no value. `lo` is
-    /// [`Heights::least_height`]. `hi` is `u64::MAX` for a type on a cycle of the types it
+    /// [`Heights::least_height_node`]. `hi` is `u64::MAX` for a type on a cycle of the types it
     /// reaches through atom payloads and tuple components; for any other type it is the
     /// greatest over its parts: 0 for a scalar, a bare atom, a struct or a closure, `u64::MAX`
     /// for the atoms outside a finite set or the tuples of a length it holds all of, one more
@@ -3954,7 +3954,7 @@ impl Heights {
     /// meet is not empty, the clause was kept, and `h(x)` is one more than the greatest
     /// component height, at most one more than the greatest kept upper bound. A type on a cycle
     /// is given `hi = u64::MAX`, which bounds anything. So `h(x) <= hi`, and `lo <= h(x)` by
-    /// [`Heights::least_height`]; a type with no part left or with `lo > hi` has no value.
+    /// [`Heights::least_height_node`]; a type with no part left or with `lo > hi` has no value.
     ///
     /// Use: the meet of a list of length `a` and a list of length `b != a`, written as nested
     /// `#cons` tuples (`R_a`, of height exactly `2a`), has no value, and the search that
