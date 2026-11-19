@@ -3953,8 +3953,9 @@ fn carried(p: Prim, own: [Option<Carrier>; 2], args: &[Term]) -> (bool, Option<C
 /// The kernel has no `+`, `-`, `*` or `/` on an `int` and a value of another carrier, nor `/` on
 /// two `int`s (`/` has no arrow at `int`, DESIGN sec:lexical; `zed_kernel::eval`), so a value of
 /// the witness reaching that last arm would stop the program with a bug in zedc. The checker
-/// accepts no such program: a decimal or a `/` among the literals removes `int` from the class
-/// the witness belongs to (DESIGN step L1.26a), and so no `int` reaches the last arm. The value
+/// is meant to accept no such program: a decimal or a `/` among the literals removes `int` from
+/// the class the witness belongs to (DESIGN step L1.26a), and so no `int` reaches the last
+/// arm; it does not hold under `==` (row FAIL-generic-eq-int-witness, below). The value
 /// of every value of the witness that does reach the operation is unchanged: the operands are
 /// laid out on the patterns of the one whose last arm is at `c` (at `/` on two `int`s, `c` is
 /// `f64`, a decimal's own format), less `is c`, each taking its arm `is q` at each `is q`, and
@@ -3963,17 +3964,24 @@ fn carried(p: Prim, own: [Option<Carrier>; 2], args: &[Term]) -> (bool, Option<C
 // Complexity tradeoff: O(C²) pattern comparisons for the C ≤ 4 arms of each operand, against
 // the O(C) arms `per_carrier` builds; each arm moved, not copied. Not taken: the checker giving
 // these literals a value at another carrier in the last arm, as it gives `1.0` in `x == 1 / 2`;
-// there the witness may be an `int` (`==` takes any two values), here it cannot, so the arm is
-// dropped rather than given a value no run reaches.
-// Assumption, not proved (ASSUME-documented): the checker accepts no program in which an
-// `int` value of the witness reaches the last arm rewritten here, since a decimal or a `/`
-// among the literals removes `int` from the witness's class (L1.26a). The rewrite needs it:
-// the new last arm takes each operand's value at `c`, so an `int` reaching it would get a
-// value at `c` (`1.0 / 2.0`) where the old arm stopped (`1 / 2` has no arrow at `int`).
-// Evidence: `l01_26a_generic_literals::operations` (`FOLDED`, each body's value against a
-// declared carrier) and `l25_08_mutate::examples`, red before STAGE-generic-fold-int-arm, and
-// a coverage run reaching every line but three defensive `return own` exits. If false, a
-// program would get a value at the wrong carrier where it stopped before: unsound.
+// the arm is dropped rather than given a value no run should reach (but see (2) below: under
+// `==` a run does reach it).
+// The claim split (PROOF-sweep-front-end). (1) Every witness value that is not an `int` gets
+// the value it had: derived above, arm by arm. (2) No `int` value of the witness reaches the
+// new last arm: a claim of the checker, not of this rewrite, which needs it since the new arm
+// takes each operand's value at `c`, so an `int` reaching it gets a value at `c` (`1.0 /
+// 2.0`) where the old arm stopped (`1 / 2` has no arrow at `int`). (2) is false today, a
+// fault of the checker, row FAIL-generic-eq-int-witness: `==` lets an `int` witness through,
+// so `f(positional x) = x == 3 / 2 * 2;` is accepted at `f(3)` and gives `false` (an `int`
+// compared with the `f64` `3.0`) where `f(3r)` gives `true`, and `f(positional x: int)` with
+// the same body is refused. Elaboration cannot refuse it: `check::Info` does not record, per
+// operation, whether `int` is left in the class, and the arms do not show it (`1 + 1.5` has
+// the same arms at the class {int, f64} as at {f64}); keeping a stopping `is int` arm here is
+// what STAGE-generic-fold-int-arm removed, since the build stage cannot build `int / int`.
+// The fix is the checker's: refuse that call, as it refuses the declared `int`, or record the
+// class in `Info` so this keeps `own` where `int` is in it. Evidence for the operators other
+// than `==`: `l01_26a_generic_literals::operations` (`FOLDED`, each body's value against a
+// declared carrier) and `l25_08_mutate::examples`.
 fn without_int(p: Prim, own: [Option<Carrier>; 2], args: &mut [Term]) -> [Option<Carrier>; 2] {
     use Carrier::{F64, Int};
     if !matches!(p, Prim::Add | Prim::Sub | Prim::Mul | Prim::Div) {

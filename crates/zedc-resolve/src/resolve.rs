@@ -4386,8 +4386,9 @@ impl Resolver<'_> {
     /// variable; the menu is the nearest type name by spelling.
     fn unknown_type(&mut self, n: &str, span: Span) {
         let mut notes = Vec::new();
-        // Assumption, not proved: the definition checks with the nearest name in place, which
-        // DESIGN.md asks of the menu; this zedc offers it without checking the definition again.
+        // DESIGN.md offers the menu "only when the definition then checks", which name
+        // resolution cannot know: the front end checks the unit with the repair made and
+        // withholds the menu when it does not compile ([`checked_menu_edit`]).
         if let Some(near) = self.nearest(n) {
             notes.push(Note {
                 span,
@@ -4412,9 +4413,9 @@ impl Resolver<'_> {
     // row (L1.29e), so this scan tests each of the K candidates in O(L) for a name of length
     // L, O(K·L) for one name, and the memo answers a name written again while the types in
     // scope are unchanged in O(1): U uses of D distinct unknown names cost O(U + D·K·L), where
-    // the naive search (no memo) costs O(U·K·L). Assumption, not proved: D stays small, since
-    // each distinct unknown name is a separate misspelling the program holds; L1.29e removes
-    // the D·K term.
+    // the naive search (no memo) costs O(U·K·L). The D·K term is a cost, not a claim the
+    // result rests on: the answer is right for any D, and a program with many distinct unknown
+    // names is only slower; L1.29e removes the term (PROOF-nearest-name-quadratic).
     fn nearest(&mut self, n: &str) -> Option<String> {
         if let Some((at, near)) = self.nearest_memo.get(n)
             && *at == self.type_changes
@@ -4854,6 +4855,47 @@ fn field_type_var(n: &str, span: Span) -> Error {
     }
 }
 
+/// The edit of the unit `text` that the repair of `e` makes, as the span replaced and its
+/// replacement, when `e` is of a row whose menu DESIGN.md sec:diagnostics offers "only when the
+/// definition then checks" and name resolution gives that menu: the nearest type name in place
+/// of an unknown one (`Resolver::unknown_type`), or a parameter with its type, a type variable
+/// written once, dropped from the `:` on ([`written_once`]). Name resolution cannot tell
+/// whether the definition then checks, so the front end makes the edit, checks the unit, and
+/// otherwise withholds the menu ([`withhold_checked_menu`]).
+pub fn checked_menu_edit(e: &Error, text: &str) -> Option<(Span, String)> {
+    let repair = e.notes.iter().find(|n| n.text.starts_with(REPAIR))?;
+    match e.row? {
+        Row::UnknownTypeName => {
+            let near = repair.text.strip_prefix(REPAIR)?.strip_suffix('`')?;
+            Some((e.span, near.to_string()))
+        }
+        Row::TypeVariableOnce => {
+            // The repair's span is the parameter's and `e`'s the variable's, its whole type.
+            let colon =
+                repair.span.start + text.get(repair.span.start..e.span.start)?.rfind(':')?;
+            Some((
+                Span {
+                    start: colon,
+                    end: e.span.end,
+                },
+                String::new(),
+            ))
+        }
+        _ => None,
+    }
+}
+
+/// `e` without the menu [`checked_menu_edit`] reads, when the definition was not shown to
+/// check with it; any other error is left as it is.
+pub fn withhold_checked_menu(e: &mut Error) {
+    if matches!(e.row, Some(Row::UnknownTypeName | Row::TypeVariableOnce)) {
+        e.notes.retain(|n| !n.text.starts_with(REPAIR));
+    }
+}
+
+/// How the note of a repair begins.
+const REPAIR: &str = "repair: `";
+
 /// The row "Type variable" (DESIGN.md sec:diagnostics): the type variable `n`, written at
 /// `first`, is written once in its signature and nowhere in its body. `param` is the name and
 /// text of the parameter whose whole type it is, and whether that parameter has a default, if
@@ -4869,10 +4911,11 @@ fn written_once(n: &str, first: Span, param: Option<(&str, Span, bool)>) -> Erro
     }];
     // DESIGN.md's menu is the site written `_`, which this zedc refuses until step L10. A
     // parameter with no type is inferred as one written `_` is, so for a parameter whose whole
-    // type is the variable the menu drops the type. Assumption, not proved: the definition
-    // then checks, since `n` constrained that parameter no further than no type does
-    // (evidence: the tests of tests/steps/l02_12_diagnostics/type_names.rs). Inside a larger
-    // type no rewrite this zedc compiles says the same, so no menu is offered.
+    // type is the variable the menu drops the type. DESIGN.md offers it "only when the
+    // definition then checks", which name resolution cannot know: the front end checks the
+    // unit with the type dropped and withholds the menu when it does not compile
+    // ([`checked_menu_edit`]). Inside a larger type no rewrite this zedc compiles says the
+    // same, so no menu is offered.
     notes.push(match param {
         Some((name, at, default)) => Note {
             span: at,

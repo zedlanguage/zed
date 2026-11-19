@@ -83,6 +83,10 @@ const HEADER: usize = 64;
 /// (spans, not bytes live); a request beyond it is refused as the system refuses one. Not proved
 /// to be enough for a process that runs any number of metered runs: COMPLEXITY.md row
 /// TEST-meter-allocator-bias bounds one run's share (about 370 runs of the largest bench).
+/// That claim is about how many runs one process can meter, not about any answer
+/// (PROOF-sweep-front-end): this allocator serves only metered test and bench processes, and
+/// past the reservation a request is refused as the system refuses one, so a process that
+/// meters too many runs stops on an allocation failure instead of giving a wrong count.
 const RESERVED: usize = 1 << 46;
 
 /// The size classes of requests aligned to 16 bytes or less: 4 up to 64 bytes, then 4 for each

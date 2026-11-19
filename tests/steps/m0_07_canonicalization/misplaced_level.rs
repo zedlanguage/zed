@@ -202,3 +202,34 @@ fn a_binder_deep_inside_a_term_is_renamed_in_one_step() {
     steps_once(&t);
     one_pass_is_stepwise(t);
 }
+
+/// `\a. \b. \c. \d. \02` with `\02` free, and the same term reading `c`, the binder at level 2.
+fn free_and_bound_level_two() -> (Term, Term) {
+    let body = |x: &str| lam(&["a", "b", "c", "d"], var(x));
+    (body(&l(2)), body("c"))
+}
+
+#[test]
+fn a_bound_variable_at_a_level_is_addressed() {
+    // The control for the refusals below: the term that reads the binder is canonical.
+    let (_, bound) = free_and_bound_level_two();
+    let normal = canonicalize(&def("f", bound.clone()));
+    assert_eq!(normal.body, lam(&[&l(0), &l(1), &l(2), &l(3)], var(&l(2))));
+    addr(&def("f", bound));
+}
+
+#[test]
+#[should_panic(expected = "is spelled as a binder level")]
+fn a_free_name_spelled_as_a_level_is_refused() {
+    // Kept, the free `\02` would be written as the bound variable at level 2, and both terms
+    // of the pair would have one address (PROOF-sweep-front-end).
+    let (free, _) = free_and_bound_level_two();
+    addr(&def("f", free));
+}
+
+#[test]
+#[should_panic(expected = "is spelled as a binder level")]
+fn a_free_name_spelled_as_a_level_is_refused_in_a_query_key() {
+    let (free, _) = free_and_bound_level_two();
+    binders::keyed(&free, &|_| None);
+}

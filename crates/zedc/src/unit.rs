@@ -35,7 +35,7 @@ use crate::parse::{TOP, parse_unit};
 use crate::pin::{self, Check, Edit, PIN_FILE, PRELUDE, Pins};
 use crate::place::{MANIFEST, Place};
 use crate::query::{self, Db};
-use crate::resolve::{Exports, Ref, Refused, Resolved, Units};
+use crate::resolve::{self, Exports, Ref, Refused, Resolved, Units};
 use crate::source;
 use crate::suppress::{InFile, Severity, Suppress, addresses};
 
@@ -804,8 +804,19 @@ pub fn load(db: &mut Db, files: &dyn Files, roots: &[&str]) -> Package {
             // A unit with syntax errors has them and its others in the order of the text, as
             // `front::compile` gives them. A stable sort, O(e log e) for its e errors.
             let at = pkg.problems.len();
-            let errors = broken.errors.iter().chain(&r.errors).chain(&r.later);
-            pkg.problems.extend(errors.map(problem));
+            // A menu DESIGN.md offers "only when the definition then checks" is checked by
+            // compiling the unit alone with it made (`front::compile`); a unit that reads
+            // others is not checked here, so its menu is withheld, never offered unchecked.
+            let resolved = r.errors.iter().chain(&r.later).map(|e| {
+                let mut e = e.clone();
+                resolve::withhold_checked_menu(&mut e);
+                e
+            });
+            let errors = broken.errors.iter().cloned().chain(resolved);
+            pkg.problems.extend(errors.map(|error| Problem {
+                file: file.clone(),
+                error,
+            }));
             if !broken.errors.is_empty() {
                 pkg.problems[at..].sort_by_key(|p| p.error.span.start);
             }

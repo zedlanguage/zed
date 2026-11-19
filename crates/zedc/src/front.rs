@@ -717,15 +717,21 @@ pub(crate) fn rejection(text: &str, build: &crate::build::Build) -> Vec<ast::Err
 /// [`compile`] before its diagnostics are placed: the statements checked and the elaboration,
 /// or the statements the errors are placed among and the errors.
 fn unplaced(text: &str, build: &crate::build::Build) -> Checked {
+    unplaced_menus(text, build, true)
+}
+
+/// [`unplaced`], with the menus [`menus_checked`] checks checked when `menus`, and withheld
+/// otherwise.
+fn unplaced_menus(text: &str, build: &crate::build::Build, menus: bool) -> Checked {
     let ((tokens, docs, stmts), broken) = recovered(text).map_err(|e| (Vec::new(), e))?;
     if broken.errors.is_empty() {
-        return checked(text, &tokens, &docs, stmts, build);
+        return checked(text, &tokens, &docs, stmts, build, menus);
     }
     let stmts = without_broken(text, stmts, &broken.defines);
     let mut errors = broken.errors;
     // A syntax error lies in no statement that parses, so the statements checked place
     // every error as they place the rest. A stable sort, in the order of the text.
-    let stmts = match checked(text, &tokens, &docs, stmts, build) {
+    let stmts = match checked(text, &tokens, &docs, stmts, build, menus) {
         Ok((stmts, _)) => stmts,
         Err((stmts, rest)) => {
             errors.extend(rest);
@@ -868,21 +874,22 @@ fn dropped(
     dropped
 }
 
-/// [`unplaced`] for the statements `stmts` of the unit `text`, its tokens `tokens` and its doc
-/// comments `docs`, which parse.
+/// [`unplaced_menus`] for the statements `stmts` of the unit `text`, its tokens `tokens` and
+/// its doc comments `docs`, which parse.
 fn checked(
     text: &str,
     tokens: &[lex::Token],
     docs: &[lex::Doc],
     mut stmts: Vec<Stmt>,
     build: &crate::build::Build,
+    menus: bool,
 ) -> Checked {
     let resolved = work::stage(Stage::Resolve, None, || {
         resolve::resolve_text(&stmts, Some(text))
     });
     let mut res = match resolved {
         Ok(res) => res,
-        Err(errors) => return Err((stmts, errors)),
+        Err(errors) => return Err((stmts, menus_checked(text, errors, build, menus))),
     };
     let misread = crate::build::read(&mut stmts, &mut res, build);
     if !misread.is_empty() {
@@ -909,6 +916,51 @@ fn checked(
         return Err((stmts, refused));
     }
     Ok((stmts, unit))
+}
+
+/// The name-resolution errors `errors` of the unit `text`, built for `build`, with each menu
+/// that DESIGN.md sec:diagnostics offers "only when the definition then checks" and name
+/// resolution gives ([`resolve::checked_menu_edit`]: the nearest type name for an unknown one,
+/// a parameter's type variable written once dropped) kept only when that is shown: with every
+/// such repair of the unit made, the unit compiles, so each definition checks with its repair
+/// and the others followed. Otherwise, and when `menus` is false, each is withheld, a fix not
+/// offered rather than one offered that does not check.
+// Complexity tradeoff: checking each repair alone compiles the unit once per menu, O(m·c) for
+// m menus and a compile of cost c, quadratic when m grows with the unit; making every repair
+// and compiling once costs O(c + m log m). The price: in a unit with another error, which the
+// repairs leave, none of these menus is offered. The compile of the repaired unit checks no
+// menu of its own (`menus` false), so it runs once.
+fn menus_checked(
+    text: &str,
+    mut errors: Vec<ast::Error>,
+    build: &crate::build::Build,
+    menus: bool,
+) -> Vec<ast::Error> {
+    let (mut edits, owners): (Vec<(Span, String)>, Vec<usize>) = (errors.iter().enumerate())
+        .filter_map(|(i, e)| Some((resolve::checked_menu_edit(e, text)?, i)))
+        .unzip();
+    if edits.is_empty() {
+        return errors;
+    }
+    edits.sort_by_key(|(span, _)| span.start);
+    let apart = edits.windows(2).all(|w| w[0].0.end <= w[1].0.start);
+    let holds = menus && apart && {
+        let mut repaired = String::with_capacity(text.len());
+        let mut at = 0;
+        for (span, with) in &edits {
+            repaired.push_str(&text[at..span.start]);
+            repaired.push_str(with);
+            at = span.end;
+        }
+        repaired.push_str(&text[at..]);
+        unplaced_menus(&repaired, build, false).is_ok()
+    };
+    if !holds {
+        for i in owners {
+            resolve::withhold_checked_menu(&mut errors[i]);
+        }
+    }
+    errors
 }
 
 /// The operands of the outermost `&&` of `e`, in written order, each as `text` writes it, a

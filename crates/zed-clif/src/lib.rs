@@ -371,8 +371,10 @@ fn generate(target: &ZedClifTarget, text: &str, symbols: &[&str]) -> Result<ZedC
     // Cranelift's verifier and compiler on it, which this crate does not bound: their cost per
     // function is Cranelift's (not proved linear in the size of a function: register allocation
     // and the e-graph pass are Cranelift's own; the scaling test of `s_07b_clif_shim_calls`
-    // measures the number of functions at one size). Names are resolved per relocation by an
-    // index into `symbols`, O(1) each, against O(symbols) for a search by name.
+    // measures the number of functions at one size). That claim is about time alone
+    // (PROOF-sweep-front-end): the code Cranelift gives is what its verifier accepted, however
+    // long that took, so no answer of a program rests on it. Names are resolved per relocation
+    // by an index into `symbols`, O(1) each, against O(symbols) for a search by name.
     if let Some((line, words)) = preamble_line(text) {
         return Err(format!(
             "the CLIF text, line {line}: `{words}` before the first function; the text may hold \

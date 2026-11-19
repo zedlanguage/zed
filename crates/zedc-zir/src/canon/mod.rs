@@ -226,11 +226,19 @@ fn sorted_facets(facets: &[Facet]) -> Vec<Facet> {
         .collect();
     keyed.sort_by(|(r, f), (s, g)| r.cmp(s).then_with(|| f.value.cmp(&g.value)));
     // A repeat is a facet whose rank and value compare Equal under the order of the sort, so
-    // the dedup uses that order and not `Value`'s `==` (PROOF-sweep, P246: the claim that the
-    // two agree was not proved here). Proof that this drops every repeat: the sort orders by
-    // the pair (rank, `Value::cmp`), a total order since each part is one (`Ord`, which every
-    // sort and `BTreeMap` of values rests on), and in a sequence sorted by a total order the
-    // elements Equal to one another are neighbors; `dedup_by` keeps the first of each run.
+    // the dedup uses that order. Proof that this drops every repeat: the sort orders by the
+    // pair (rank, `Value::cmp`), a total order since each part is one, and in a sequence
+    // sorted by a total order the elements Equal to one another are neighbors; `dedup_by`
+    // keeps the first of each run. Proof that it drops nothing else: `Value::cmp` gives Equal
+    // exactly when `==` says the values are the same (zed-kernel's `impl PartialEq for Value`
+    // says so; the test `value_cmp_is_a_total_order_that_agrees_with_equality` checks it,
+    // with totality, on every pair and triple of values of every kind, with two broken orders
+    // as negative controls; PROOF-value-cmp-total). Cost, not soundness: a number kept with
+    // prime powers is written in its kept form (sec:kernel, tags 13 and 14), so of two Equal
+    // facet values, `2^64` kept as a power and `2^64` in digits, the one kept is the one
+    // written first and the address depends on which; two equal definitions can then have two
+    // addresses (a share missed), never two different ones one address. A form of each value
+    // alone would have to factor the digits or write out the powers, neither bounded.
     keyed.dedup_by(|(r, f), (s, g)| r == s && f.value.cmp(&g.value) == Ordering::Equal);
     keyed.into_iter().map(|(_, f)| f.clone()).collect()
 }
@@ -436,5 +444,189 @@ mod tests {
     /// `f(g)` with both names free.
     fn app_of(f: &str, g: &str) -> Term {
         zed_kernel::term::build::app(var(f), vec![var(g)])
+    }
+
+    /// Values of every kind, with the pairs an order could confuse: `0.0` and `-0.0`, a NaN,
+    /// one number in several kinds (`2`, `2/1`, `2.0`), an integer just outside 64 bits and
+    /// `2^64` kept as a power, a string written whole and joined from two blocks, a bare atom
+    /// and the same atom with an empty payload, a tuple shared and the same tuple built again,
+    /// and a set kept as a range and the same set written out.
+    fn sample_values() -> Vec<Value> {
+        use zed_kernel::{Family, Rat, Text};
+        let big = |t: &str| Value::int_text(t, 10).unwrap().unwrap();
+        let rat = |n: i64, d: i64| Value::rat(Rat::new(n.into(), d.into()).unwrap());
+        let shared = Value::tuple(vec![Value::Int(1), Value::str("a")]);
+        let mut values = vec![
+            Value::Bool(false),
+            Value::Bool(true),
+            Value::Int(0),
+            Value::Int(1),
+            Value::Int(-1),
+            Value::Int(2),
+            Value::Int(i64::MAX),
+            Value::Int(i64::MIN),
+            big("9223372036854775808"),
+            big("-9223372036854775809"),
+            big("18446744073709551616"),
+            Value::power_text("2^64").unwrap().unwrap(),
+            rat(1, 2),
+            rat(-1, 2),
+            rat(1, 3),
+            rat(2, 1),
+            rat(0, 1),
+            Value::float(0.0),
+            Value::float(-0.0),
+            Value::float(0.5),
+            Value::float(1.0),
+            Value::float(2.0),
+            Value::float(f64::NAN),
+            Value::float(f64::INFINITY),
+            Value::float(f64::NEG_INFINITY),
+            Value::float32(0.0),
+            Value::float32(-0.0),
+            Value::float32(1.0),
+            Value::float32(f32::NAN),
+            Value::str(""),
+            Value::str("a"),
+            Value::str("ab"),
+            Value::str("b"),
+            Value::Str(Text::join(&"a".into(), &"b".into()).unwrap()),
+            Value::atom("a"),
+            Value::atom("b"),
+            Value::atom_with("a", vec![]),
+            Value::atom_with("a", vec![Value::Int(1)]),
+            Value::atom_with("a", vec![Value::float(1.0)]),
+            Value::atom_named("a", vec![("x".into(), Value::Int(1))]).unwrap(),
+            Value::atom_named("a", vec![("y".into(), Value::Int(1))]).unwrap(),
+            Value::tuple(vec![]),
+            Value::tuple(vec![Value::Int(1)]),
+            Value::tuple(vec![Value::float(1.0)]),
+            Value::tuple(vec![Value::Int(1), Value::str("a")]),
+            shared.clone(),
+            Value::tuple(vec![shared.clone(), Value::float(-0.0)]),
+            Value::tuple(vec![shared, Value::float(0.0)]),
+            Value::path(vec![]),
+            Value::path(vec![Value::Int(1)]),
+            Value::from(Family::new()),
+            Value::from(Family::of([(1, "a")])),
+            Value::from(Family::of([(1, "b")])),
+            Value::from(Family::of([(Value::float(1.0), "a")])),
+            Value::from(Family::set([1, 2])),
+            Value::from(Family::range(1, 2)),
+            Value::from(Family::set([Value::float(0.0)])),
+            Value::from(Family::set([Value::float(-0.0)])),
+        ];
+        // Each value again inside a tuple, so the walk over parts is tested on every pair.
+        let wrapped: Vec<Value> = values
+            .iter()
+            .map(|v| Value::tuple(vec![v.clone()]))
+            .collect();
+        values.extend(wrapped);
+        values
+    }
+
+    type Cmp<'a> = &'a dyn Fn(&Value, &Value) -> Ordering;
+
+    /// The first way in which `cmp` is not a total order on `values` that agrees with `eq`:
+    /// two values ordered the same way both ways round (so also a value not Equal to itself),
+    /// `cmp` saying Equal where `eq` says unequal or the other way round, or three values out
+    /// of order (`a <= b <= c` with not `a <= c`, or with `a == c` where one step is strict).
+    /// `None` when there is none. O(n^3) comparisons for n values.
+    fn order_fault(
+        values: &[Value],
+        cmp: Cmp,
+        eq: &dyn Fn(&Value, &Value) -> bool,
+    ) -> Option<String> {
+        for a in values {
+            for b in values {
+                let ab = cmp(a, b);
+                if ab != cmp(b, a).reverse() {
+                    return Some(format!("not antisymmetric on {a:?} and {b:?}"));
+                }
+                if (ab == Ordering::Equal) != eq(a, b) {
+                    return Some(format!(
+                        "cmp gives {ab:?} but == gives {} on {a:?} and {b:?}",
+                        eq(a, b)
+                    ));
+                }
+                for c in values {
+                    let bc = cmp(b, c);
+                    if ab == Ordering::Greater || bc == Ordering::Greater {
+                        continue;
+                    }
+                    let want = match (ab, bc) {
+                        (Ordering::Equal, Ordering::Equal) => Ordering::Equal,
+                        _ => Ordering::Less,
+                    };
+                    if cmp(a, c) != want {
+                        return Some(format!("not transitive on {a:?}, {b:?} and {c:?}"));
+                    }
+                }
+            }
+        }
+        None
+    }
+
+    /// PROOF-value-cmp-total: `sorted_facets` drops a facet as a repeat when its value compares
+    /// Equal under `Value::cmp` to the one before, which is sound only when `Value::cmp` is a
+    /// total order and Equal exactly when `==` says the values are the same. This tests both on
+    /// every pair and triple of [`sample_values`], and that values Equal under the order give
+    /// one address, so the facet the dedup keeps does not change the address. Negative
+    /// controls: an order that makes numbers of different kinds with one value Equal (`1` and
+    /// `1.0`), and one that makes `-0.0` and `0.0` Equal, are each caught.
+    #[test]
+    fn value_cmp_is_a_total_order_that_agrees_with_equality() {
+        let values = sample_values();
+        let eq = |a: &Value, b: &Value| a == b;
+        assert_eq!(order_fault(&values, &|a, b| a.cmp(b), &eq), None);
+
+        let refs = |_: &str| None;
+        let address_with = |v: &Value| {
+            let facet = Facet {
+                hint: false,
+                kind: "k".into(),
+                value: v.clone(),
+            };
+            let def = Def {
+                name: "d".into(),
+                domain: None,
+                facets: vec![facet],
+                body: lit(0),
+            };
+            address(&def, &refs).unwrap()
+        };
+        // A number kept with prime powers is written in the form it is kept in (DESIGN.md
+        // sec:kernel, tags 13 and 14), so `2^64` kept as a power and `2^64` in digits are one
+        // value with two addresses: a share missed, never two values given one address.
+        fn kept(v: &Value) -> bool {
+            match v {
+                Value::Big(r) | Value::Rat(r) => !r.kept().2.is_empty(),
+                Value::Tuple(xs) => xs.as_slice().iter().any(kept),
+                _ => false,
+            }
+        }
+        for a in &values {
+            for b in &values {
+                if a.cmp(b) == Ordering::Equal {
+                    match kept(a) == kept(b) {
+                        true => assert_eq!(address_with(a), address_with(b), "{a:?} and {b:?}"),
+                        false => assert_ne!(address_with(a), address_with(b), "{a:?} and {b:?}"),
+                    }
+                }
+            }
+        }
+
+        let kindless = |a: &Value, b: &Value| match (a.number_kind(), b.number_kind()) {
+            (Some(_), Some(_)) if a.surface_cmp(b) == Some(Ordering::Equal) => Ordering::Equal,
+            _ => a.cmp(b),
+        };
+        assert!(order_fault(&values, &kindless, &eq).is_some());
+        let signless = |a: &Value, b: &Value| match (a, b) {
+            (Value::Float(x), Value::Float(y)) if x.get() == 0.0 && y.get() == 0.0 => {
+                Ordering::Equal
+            }
+            _ => a.cmp(b),
+        };
+        assert!(order_fault(&values, &signless, &eq).is_some());
     }
 }

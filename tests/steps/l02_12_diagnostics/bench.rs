@@ -39,6 +39,30 @@ fn a_call_of_n_functions_fixing_a_type_variable_through_one_scales() {
     );
 }
 
+/// PROOF-sweep-front-end: a unit of n definitions, each with a misspelled type, has its n
+/// menus checked by one compile of the unit with every repair made (`front::menus_checked`),
+/// not one compile per menu: O(n) for the repairs and one more compile, against O(n²).
+#[test]
+fn checking_the_menus_of_n_misspelled_types_scales() {
+    let inputs = scaling::inputs(200, |n| {
+        // `g`, not `f`: `f32` and `f64` name prelude types, a unit that does not compile
+        // with the repairs made, so every menu would be withheld.
+        let mut src: String = (0..n).map(|i| format!("g{i}(c: Strng) = {i};\n")).collect();
+        src.push_str("main() = 0;\n");
+        src
+    });
+    scaling::check("a unit of n definitions with a misspelled type", 200, |n| {
+        let out = crate::rejected(&inputs[&n]);
+        let head: Vec<&str> = out.lines().take(12).collect();
+        assert_eq!(
+            out.matches("repair: `String`").count(),
+            n,
+            "{}",
+            head.join("\n")
+        );
+    });
+}
+
 #[test]
 fn printing_a_quoted_string_scales() {
     let inputs = scaling::inputs(4000, quoted);

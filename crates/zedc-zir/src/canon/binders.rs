@@ -319,12 +319,12 @@ fn renamed_scope(
         };
         walk.scope.entry(x.clone()).or_default().push(new);
     }
-    // Assumption, not proved: no use in the scope is free in the whole term and spelled as a
-    // level, since such a use would resolve to nothing here and could meet a binder's new name
-    // (the one-pass walk shares this). Evidence: elaboration names binders `x`, `x@k` and `$k`
-    // (zedc-elab `Elab::new`, `Elab::temp`), the free names of an addressed definition are
-    // source names, and every `\0`-prefixed name made in the crates outside this module holds
-    // a letter after the U+0000, so `level_of` reads none of them as a level.
+    // A use in the scope that no binder of the walk binds is either bound by a binder outside
+    // the scope, which is canonical (every binder before this one in preorder is), so its
+    // level is below `depth` and below every new name given here; or free in the whole term.
+    // A free use spelled as a level could meet a binder's new name, so the rules are defined
+    // only on terms with none: `canonicalize` refuses the others (`Levels::refuse_free_level`)
+    // before an address is taken, and the one-pass walk agrees with these steps on the rest.
     let body = walk.term_at(body, depth + names.len());
     (walk.unbind(names), body)
 }
@@ -601,7 +601,10 @@ impl Levels<'_> {
                             _ => None,
                         } {
                             Some(n) => Term::Var(n),
-                            None => t.clone(),
+                            None => {
+                                self.refuse_free_level(x);
+                                t.clone()
+                            }
                         },
                     }),
                     Term::Lit(_) | Term::PrimFn(_) | Term::Read(_) => done.push(t.clone()),
@@ -709,6 +712,28 @@ impl Levels<'_> {
             }
         }
         done.pop().expect("the renamed term")
+    }
+
+    /// Stops the compiler when `x`, a name no binder around it binds, is spelled as a level in
+    /// a walk of a whole term ([`canonical`], [`keyed`]). Such a name is free in the whole
+    /// term, and it would be written exactly as the bound variable of that level
+    /// (`\x. \y. \z. \w. \02` and `\x. \y. \z. \w. z` would be one term, and so have one
+    /// address), so the address or key would not tell two different terms apart. No producer
+    /// makes one: source text cannot spell U+0000 (the lexer rejects it), elaboration names
+    /// binders `x`, `x@k` and `$k`, and every other `\0` name made in the crates has a letter
+    /// after the U+0000. That evidence is not a proof, so the case is refused here rather than
+    /// relied on (P246): a wrong address is never given, and the cost is one prefix test per
+    /// free name. The step walk ([`Mode::Written`]) starts inside the term, where a name
+    /// spelled as a level is bound by a canonical binder outside the scope it walks, so it is
+    /// not checked there; the rules agree with [`canonical`] on every term this check admits.
+    fn refuse_free_level(&self, x: &str) {
+        if !matches!(self.mode, Mode::Written) && level_of(x).is_some() {
+            panic!(
+                "compiler fault: the canonicalizer was given a term in which the free name \
+                 {x:?} is spelled as a binder level, so its address could equal that of a \
+                 different term"
+            );
+        }
     }
 
     /// Takes the one name `x` out of scope again, and returns its new name.

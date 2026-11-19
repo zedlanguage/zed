@@ -143,3 +143,21 @@ fn declared_names_are_bound_and_refused_once() {
         ),
     ]);
 }
+
+#[test]
+fn a_break_in_a_string_hole_is_refused_by_name_resolution() {
+    // The syntax tree's builder accepts a `break;` in a string hole with no lambda or function
+    // around it in the hole, since it cannot see whether a loop's body holds the string
+    // (`Builder::break_placed`); name resolution walks the hole's statements and refuses it,
+    // with or without a loop around the string (PROOF-sweep-front-end).
+    check(&[
+        (
+            "f(x) = \"a${ { break; } }\";",
+            &[concat!(zed_tests::not_yet!("a `break`"), " [break;]")],
+        ),
+        (
+            "f(x) = \"a${ { y = x; break; } }b\";",
+            &[concat!(zed_tests::not_yet!("a `break`"), " [break;]")],
+        ),
+    ]);
+}

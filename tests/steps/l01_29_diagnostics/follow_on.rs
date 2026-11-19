@@ -48,6 +48,19 @@ fn each_use_of_a_rejected_member_call_gives_no_second_error() {
     }
 }
 
+/// A later error that does not depend on the rejected member's type is still reported: only
+/// the follow-on errors are dropped (`member_end` in zedc-check's `check/walk.rs`;
+/// TEST-assume-documented-gaps).
+#[test]
+fn an_error_beside_a_rejected_member_call_is_still_reported() {
+    let src = "t() = 1.e;\nu() = t() + (\"a\" + 1);\nmain(m: MainArgs) {\n    m.stdout <- \"${u()}\";\n}\n";
+    let out = rejected(src);
+    let h = headlines(&out);
+    assert_eq!(h.len(), 2, "{out}");
+    assert_eq!(h[0], "1:7: `e` is not defined.", "{out}");
+    assert!(h[1].starts_with("2:"), "{out}");
+}
+
 #[test]
 fn a_rejected_field_read_gives_no_second_error_at_its_use() {
     let src = "t(positional r) = r.e;\nmain(m: MainArgs) {\n    m.stdout <- \"${t(1)}\";\n}\n";

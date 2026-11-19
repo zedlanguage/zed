@@ -27,13 +27,68 @@ fn rejects(src: &str, parts: &[&str]) -> String {
     out
 }
 
+/// The repairs name resolution offers for `src`, before the front end checks them: the menu
+/// it would give were the definition shown to check with it.
+fn offered(src: &str) -> Vec<String> {
+    let tokens = zedc::lex::lex(src).unwrap();
+    let tree = zedc::parse::parse(src, &tokens, "Unit", zedc::parse::TOP).unwrap();
+    let stmts = zedc::ast::unit(src, &tokens, &tree).unwrap();
+    let errors = zedc::resolve::resolve_text(&stmts, Some(src))
+        .err()
+        .unwrap_or_default();
+    (errors.iter())
+        .flat_map(|e| &e.notes)
+        .filter(|n| n.text.starts_with("repair: "))
+        .map(|n| n.text.clone())
+        .collect()
+}
+
 #[test]
 fn a_misspelled_type_gets_the_nearest_type_and_is_no_type_variable() {
     let out = rejects(
-        "struct Config { a: int }\nf(c: Confg) = 0;\nmain() = 0;\n",
-        &["2:6: The type `Confg` is not defined.", "repair: `Config`"],
+        "f(c: Strng) = 0;\nmain() = 0;\n",
+        &["1:6: The type `Strng` is not defined.", "repair: `String`"],
     );
     assert!(!out.contains("type variable"), "{out}");
+    accepted("f(c: String) = 0;\nmain() = 0;\n");
+}
+
+/// DESIGN.md offers the nearest type name "only when the definition then checks", and the
+/// front end compiles the unit with the repair made to show it (`front::menus_checked`). A
+/// struct is not compiled yet, so a definition whose repair names one is not shown to check
+/// and gets no menu; nor does one whose body then fails, nor one in a unit that has another
+/// error, which the repair leaves.
+#[test]
+fn the_nearest_type_is_offered_only_when_the_definition_then_checks() {
+    for src in [
+        "struct Config { a: int }\nf(c: Confg) = 0;\nmain() = 0;\n",
+        "f(c: Strng) = c + 1;\nmain() = 0;\n",
+        "f(c: Strng) = 0;\ng = 1 + \"a\";\nmain() = 0;\n",
+    ] {
+        assert!(!offered(src).is_empty(), "{src}");
+        let out = rejected(src);
+        assert!(out.contains("is not defined."), "{out}");
+        assert!(!out.contains("repair: `"), "{out}");
+    }
+}
+
+/// The same for the menu of a type variable written once: the parameter with its type
+/// dropped, offered only when the definition then checks.
+#[test]
+fn the_untyped_parameter_is_offered_only_when_the_definition_then_checks() {
+    accepted("f(c) = 0;\nmain() = 0;\n");
+    for src in [
+        "f(c: T) = 0;\ng = 1 + \"a\";\nmain() = 0;\n",
+        "struct Pt { a: int }\nf(c: T) = 0;\nmain() = 0;\n",
+    ] {
+        assert_eq!(offered(src), ["repair: `c`"], "{src}");
+        let out = rejected(src);
+        assert!(
+            out.contains("The type variable `T` is written once"),
+            "{out}"
+        );
+        assert!(!out.contains("repair: `c`"), "{out}");
+    }
 }
 
 #[test]
@@ -182,15 +237,20 @@ fn a_misspelling_written_many_times_is_reported_at_each() {
     );
 }
 
-/// DESIGN.md step L1.29e's examples, at type names: each kind of slip offers `Config`.
+/// DESIGN.md step L1.29e's examples, at type names: each kind of slip offers `Config` at name
+/// resolution, and `String`, a type this zedc compiles, through the front end.
 #[test]
 fn each_kind_of_slip_offers_the_type() {
     for n in ["Confg", "Configg", "Cinfig", "Cofnig"] {
+        let src = format!("struct Config {{ a: int }}\nf(c: {n}) = 0;\nmain() = 0;\n");
+        assert_eq!(offered(&src), ["repair: `Config`"], "{src}");
+    }
+    for n in ["Strng", "Stringg", "Sxring", "Stirng"] {
         rejects(
-            &format!("struct Config {{ a: int }}\nf(c: {n}) = 0;\nmain() = 0;\n"),
+            &format!("f(c: {n}) = 0;\nmain() = 0;\n"),
             &[
                 &format!("The type `{n}` is not defined."),
-                "repair: `Config`",
+                "repair: `String`",
             ],
         );
     }
@@ -198,19 +258,18 @@ fn each_kind_of_slip_offers_the_type() {
 
 #[test]
 fn a_name_equal_once_case_and_underscores_are_folded_is_near() {
+    let src = "struct MyConfig { a: int }\nf(c: My_config) = 0;\nmain() = 0;\n";
+    assert_eq!(offered(src), ["repair: `MyConfig`"]);
     rejects(
-        "struct MyConfig { a: int }\nf(c: My_config) = 0;\nmain() = 0;\n",
-        &["The type `My_config` is not defined.", "repair: `MyConfig`"],
+        "f(c: S_TRING) = 0;\nmain() = 0;\n",
+        &["The type `S_TRING` is not defined.", "repair: `String`"],
     );
 }
 
 #[test]
 fn of_two_near_types_the_first_in_name_order_is_offered() {
-    let out = rejects(
-        "struct Cat { a: int }\nstruct Bat { a: int }\nf(c: Hat) = 0;\nmain() = 0;\n",
-        &["The type `Hat` is not defined.", "repair: `Bat`"],
-    );
-    assert!(!out.contains("repair: `Cat`"), "{out}");
+    let src = "struct Cat { a: int }\nstruct Bat { a: int }\nf(c: Hat) = 0;\nmain() = 0;\n";
+    assert_eq!(offered(src), ["repair: `Bat`"]);
 }
 
 #[test]

@@ -1970,9 +1970,12 @@ const FORM: &str = "its form does not show that it ends";
 /// (`Evaluator::run`), so the term is left for the run to make, and the reason says so. Every
 /// other error is the evaluator's own text, its fault-report wording kept: the term passed the
 /// checker, so a primitive given a function, or a port read in a pure region (no port is bound
-/// in a build run), is a fault of zedc. Not proved: that the checker refuses every term that
-/// gives a primitive a function; the wording follows the checker's contract, which
-/// `KernelError::Type` states. O(1) beside the run.
+/// in a build run), is a fault of zedc. That the checker refuses every term that gives a
+/// primitive a function is the checker's contract, which `KernelError::Type` states; nothing
+/// here rests on it but the wording (PROOF-sweep-front-end): both callers turn any error into
+/// the `Err` that leaves the term to run as written, so the value the program gives is the
+/// same whichever text the reason holds, and were the contract broken, only the reason would
+/// be wrong in calling a correct run's error a fault of zedc. O(1) beside the run.
 fn left_why(e: KernelError) -> String {
     match e {
         KernelError::Type(m) if m == "the program's result is a function" => {

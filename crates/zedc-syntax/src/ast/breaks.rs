@@ -50,7 +50,15 @@ impl Builder<'_, '_> {
     /// The error for the `break;` of node `d` when no `loop` or `for` body holds it directly.
     /// In a string hole, whose tree holds only the hole, a `break;` with no lambda or function
     /// around it within the hole is accepted: whether a loop's body holds the string is not
-    /// known here (not proved; name resolution refuses every `break;` until layer L6).
+    /// known here. No program holding one runs, though, so accepting it here decides no
+    /// verdict. Name resolution refuses every `break;` it walks until layer L6 (`zedc-resolve`
+    /// `Resolver::stmt`, `StmtKind::Break`, "a `break`"), and its walk of an expression enters
+    /// a string's holes (`ExprKind::Str`) and every block in them; and where a walk passes a
+    /// part by (a `loop`, which it refuses whole, or the section of a fold `><`), the checker
+    /// and elaboration give a `break;` no meaning (`StmtKind::Break` is `unreachable!` in
+    /// `zedc-check` `check/walk.rs` and `zedc-elab` `elab/walk.rs`), so the compiler stops
+    /// rather than run the program. Tested by
+    /// `l06_01_parser::later::a_break_in_a_string_hole_is_refused_by_name_resolution`.
     pub(super) fn break_placed(&self, d: usize) -> Result<(), Error> {
         let stop = self.stop_of(d);
         match stop.map(|s| self.tree.name(s)) {
