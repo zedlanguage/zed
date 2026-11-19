@@ -1101,9 +1101,42 @@ fn field_pow(x: u64, mut e: u64) -> u64 {
     r
 }
 
-/// `R^e mod P`.
+/// `a · b mod P` at compile time, as [`field_mul`] computes it, for [`POW_R`].
+const fn field_mul_const(a: u64, b: u64) -> u64 {
+    let x = (a as u128) * (b as u128);
+    let m = P as u128;
+    let r = (x & m) + (x >> 61);
+    (if r >= m { r - m } else { r }) as u64
+}
+
+/// `POW_R[j][d] = R^(d · 16^j) mod P`, for the 16 base-16 digits of a `u64` exponent.
+static POW_R: [[u64; 16]; 16] = {
+    let mut t = [[1; 16]; 16];
+    let mut base = R;
+    let mut j = 0;
+    while j < 16 {
+        let mut d = 1;
+        while d < 16 {
+            t[j][d] = field_mul_const(t[j][d - 1], base);
+            d += 1;
+        }
+        // R^(16^(j+1)) = R^(15 · 16^j) · R^(16^j).
+        base = field_mul_const(t[j][15], base);
+        j += 1;
+    }
+    t
+};
+
+/// `R^e mod P`, one table product for each base-16 digit of `e`.
+// Complexity tradeoff: by squaring (`field_pow`), up to 61 squarings and 61 products; every
+// entry of a hashed map with an integer key that does not follow the one before asks this, and
+// it took 82% of `bench::hashing_a_map_after_each_change_scales` (perf, 2026-11-19). Used: a
+// fixed table of 256 powers (2 KB, built at compile time), 16 products whatever `e`. Both give
+// `R^e` exactly, so no digest changes (`pow_r_agrees_with_squaring`).
 fn pow_r(e: u64) -> u64 {
-    field_pow(R, e)
+    (0..16).fold(1, |r, j| {
+        field_mul(r, POW_R[j][((e >> (4 * j)) & 15) as usize])
+    })
 }
 
 /// `1 / x mod P`, for `x` not 0 modulo `P` (Fermat).
@@ -4994,6 +5027,27 @@ mod tests {
         fn beside_at(&self, k: &Value, after: bool) -> Option<(Value, Value)> {
             self.entry_beside(k, after)
                 .expect("the memory for the key's value")
+        }
+    }
+
+    /// `pow_r`, by its table, gives `R^e` as squaring does: at 0, each digit at its extremes,
+    /// every power of two, the largest exponents, and 10,000 drawn ones (PERF-map-hash-inserts-
+    /// 160k).
+    #[test]
+    fn pow_r_agrees_with_squaring() {
+        let mut es: Vec<u64> = vec![0, 1, 15, 16, 17, P - 2, P - 1, P, u64::MAX];
+        es.extend((0..64).map(|b| 1_u64 << b));
+        es.extend((0..16).map(|j| 15_u64 << (4 * j)));
+        let mut x: u64 = 7;
+        for _ in 0..10_000 {
+            x = x
+                .wrapping_mul(6364136223846793005)
+                .wrapping_add(1442695040888963407);
+            es.push(x);
+            es.push(x % (P - 1));
+        }
+        for e in es {
+            assert_eq!(pow_r(e), field_pow(R, e), "e = {e}");
         }
     }
 
