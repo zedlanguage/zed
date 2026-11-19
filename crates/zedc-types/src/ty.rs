@@ -2778,6 +2778,11 @@ impl Rebuild for Replacer<'_> {
         let hide = (self.entered.pop()).expect("a signature the walk leaves is one it entered");
         if !hide.is_empty() {
             self.memos.pop();
+            // Each count is 1 here, and each `v` is listed (row TEST-types-unreached-paths-4):
+            // [`Self::known_held`] counted each `v` of `hide` on entering, and signatures are
+            // left in the reverse order they were entered, so `v` is still listed; and it hides
+            // only variables [`Self::bound`] gives, which leaves out those hidden already, so no
+            // count passes 1. The two tests below are guards no input reaches.
             for v in &hide {
                 if let Some(n) = self.hidden.get_mut(v) {
                     *n -= 1;
@@ -4852,6 +4857,11 @@ impl Need {
 
     /// The site its kind records at, for the kinds that hold one apart from the use: a
     /// bracket, a level word, a fold, `.sum` and a remap.
+    ///
+    /// Its `None`, and the `None` of [`Self::alike_at`]'s test, are guards no input reaches
+    /// (row TEST-types-unreached-paths-4): their only callers, `share_alike` in zedc-check's
+    /// walk.rs and the replay there of the uses alike it records, read only needs that
+    /// [`Self::site`] gives a site, and the two match the same kinds.
     pub fn site_mut(&mut self) -> Option<&mut Span> {
         match &mut self.kind {
             NeedKind::Component { site, .. }
@@ -8098,6 +8108,9 @@ impl BoundNode {
                 self.shapes.remove(&r);
             }
             Some((first, rest)) => {
+                // Always found (row TEST-types-unreached-paths-4): the one caller,
+                // [`Bound::pin`], passes the path `r` was filed under, kept in [`Bound::of`],
+                // and the trie keeps an edge for each path of a shape filed.
                 if let Some((label, child)) = self.next.get_mut(first) {
                     debug_assert!(rest.starts_with(label));
                     if child.remove(&rest[label.len()..], r) {
@@ -8149,6 +8162,9 @@ impl Bound {
             if self.done.insert(v.clone()).is_some() {
                 continue;
             }
+            // Guards no input reaches (row TEST-types-unreached-paths-4): `exact` is made for
+            // this bucket, so each `r` is in it; and a place holds one variable, never one in
+            // `done`, so the steps of a shape filed already are never all on its path.
             for &(r, j) in exact.get(v).into_iter().flatten() {
                 if bucket.binary_search(&r).is_ok() {
                     added.entry(r).or_default().push((j, w.clone()));
@@ -8702,6 +8718,11 @@ impl<'m, 's> Comparing<'m, 's> {
                 let mut inner = std::mem::replace(&mut *self.cx.borrow_mut(), open);
                 // A name made in the state of its own and not forgotten there is dropped
                 // with it, as before; the names kept for the whole comparison stay.
+                // A guard no input reaches (row TEST-types-unreached-paths-4): the state starts
+                // with `made` empty, a name is put in `made` only by [`Cx::fresh`], inside a
+                // comparison [`fits_in`] opened ([`Cx::open`] marks `made` at its length), and
+                // [`Cx::forget`] drains it back to that mark before `fits_in` returns; the
+                // returns before `open` make no name. So `made` is empty here.
                 for w in &inner.made {
                     inner.fns.remove(w);
                     inner.closed.remove(w);
@@ -20839,6 +20860,7 @@ mod tests {
     use super::*;
 
     mod bench;
+    mod unreached4;
 
     /// The parameter `x` of type `t`, for the signatures of the tests below.
     fn one_of(t: Ty, result: Ty) -> Sig {
@@ -20922,8 +20944,9 @@ mod tests {
     }
 
     /// A variable that a function and a function in its result each own is their own in both:
-    /// a binding of it outside is hidden in each, the count of functions hiding it going to
-    /// two and back, and only the other variable is replaced (row
+    /// a binding of it outside is hidden in each, by the outer function alone (the inner one
+    /// finds it hidden already, so the count of functions hiding it stays at one; row
+    /// TEST-types-unreached-paths-4), and only the other variable is replaced (row
     /// TEST-types-unreached-paths-3: `Replace::made_held`).
     #[test]
     fn a_variable_owned_by_two_nested_functions_is_replaced_in_neither() {

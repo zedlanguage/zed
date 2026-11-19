@@ -102,7 +102,7 @@ in `crates/zed-kernel/COMPLETENESS.md`, section TEST-types-unreached-paths-3. Wh
 | `Absorb::sig` and `write_parts` on a parameter that holds `_` beside `int` or a variable (3118-3123, 19015-19019) | `ty.rs` `a_signature_whose_parameter_holds_the_unknown_beside_int_prints_the_unknown_alone` | |
 | A payload not known (`None`) against a known one: `==`, `union`, `union_all` (1194-1195, 2073) | `ty.rs` `a_payload_not_known_equals_only_one_not_known_and_stays_not_known_in_a_union` | |
 | `holds_only_own_variables` over a row or payload shape shared by a parameter and the result (2464, 2469) | `ty.rs` `a_row_shared_by_a_parameter_and_the_result_is_read_once_for_the_variables_it_holds` | |
-| `Replace::made_held`: a variable owned by two nested functions, hidden twice and shown again (2812-2813) | `ty.rs` `a_variable_owned_by_two_nested_functions_is_replaced_in_neither` | |
+| `Replace::made_held`: a variable owned by two nested functions, hidden by the outer one and shown again (2812-2813; corrected by row TEST-types-unreached-paths-4: the inner one finds it hidden already, so it is never hidden twice) | `ty.rs` `a_variable_owned_by_two_nested_functions_is_replaced_in_neither` | |
 | `with_held_fns` keeping a tuple or payload that holds no function, and a variable beside them (3007, 3018) | `ty.rs` `replacing_held_functions_keeps_the_parts_that_hold_none` | |
 | `fits_sig` by the hull of the result ints, and `WrittenRange` ends (4537-4543, 13515-13519) | `ty.rs` `a_function_fits_where_its_result_range_lies_within_the_range_expected` | |
 | `ParamRange::int` on component ranges, `ParamRange::parts` named, positional and on a type that is not one row (4574, 4596, 4611) | `ty.rs` `a_range_on_a_component_of_a_tuple_parameter_prints_in_its_place` | |
@@ -130,3 +130,46 @@ The rest, about 80 lines in `ty.rs` (in `Need::map_tys`, `site_mut`, `alike_at`,
 loop at 20082, and `index_keeps`), listed with their lines in
 `/home/luke/Work/wt/coverage/TEST-types-unreached-paths-3-left.txt`, is row
 TEST-types-unreached-paths-4.
+
+## Row TEST-types-unreached-paths-4
+
+Line numbers are those of `ty.rs` at zed-impl 373e5d22a, from a new coverage run of the full
+local suite there; the tests named are in `src/ty/tests/unreached4.rs`. 66 lines are settled
+below: 35 by tests, 9 by proofs at the site, 22 as row TEST-types-unreached-paths-3 settled them. The other 79 are row TEST-types-unreached-paths-5 (see the end of this section).
+
+| Case | Covering test | Or the reason none is needed |
+|---|---|---|
+| `Same::rest`: functions nested past the comparison's stack that differ only innermost (931) | `deep_functions_that_differ_only_in_the_innermost_result_are_unequal` | |
+| `Hash` of a `Width` past `i64` (4620) | `equal_wide_widths_hash_alike` | |
+| `errs_members` on builds other than the family `errs` of (5357, 5360, 5363) | `errs_members_reads_only_the_family_errs_of_builds` | |
+| `Binds::remove` of a binding, digest and index (5605) | `removing_a_binding_drops_it_from_the_digest_and_the_index` | |
+| `Cx::unread` of a function read with a mask and a bound variable (6285, 6286) | `a_function_put_back_for_a_message_reads_its_masks_and_bound_variables` | |
+| `member` of a rigid variable of one carrier (6540, 6541, 6561-6563) | `a_rigid_variable_is_a_member_where_its_one_carrier_is_filed` | |
+| `some_value` of rigid strings, `f32`, shared rows and the unknown (6809, 6811, 6824, 6847) | `some_value_of_rigid_strings_and_f32_shared_rows_and_the_unknown` | |
+| `Choices::apart` naming a field, and the bucket held anywhere (6722, 6729, 6732) | `the_reason_shapes_are_not_told_apart_names_fields_and_the_bucket_held_anywhere` | |
+| `Rest::held` of parts that list no value (7228, 7255) | `a_rest_of_parts_that_list_no_value_is_held` | |
+| `Near::value_class` of an `f32` (7427) | `the_class_of_an_f32_value_is_its_carrier` | |
+| `Bound::lists` with nothing pinned, a member with no keyed variable, and an edge of two steps (8240, 8257, 8264, 8284, 8285) | `a_member_with_no_keyed_variable_reads_the_shapes_pinned_under_any_variable` | |
+| `fits_written` and `fits_alone` giving a kept refusal again (8512, 8524, 8724) | `a_kept_verdict_on_functions_is_given_again_with_its_refusal` | |
+| `kept_rows_in`: a kept refused no, and a component the search proves empty though it lists a value (8887, 8896, 8903) | `a_kept_verdict_on_rows_is_given_again_with_its_refusal` | |
+| `FoldForm::fold_name` of `.sum` (4098) | `each_fold_is_named_as_it_is_written` | |
+| `Replace::made_held`: a hidden variable not listed, or counted twice (2786, 2787) | | Guard, proof at the site: each `v` was counted on entering, signatures are left in reverse order, and `bound` leaves out a variable hidden already |
+| `Need::site_mut` and `alike_at` on a need with no site (4862, 4874) | | Guard, proof at `site_mut`: their only callers, in zedc-check's `walk.rs`, read only needs `site` gives a site, and the two match the same kinds |
+| `BoundNode::remove` of a path with no edge (8115) | | Guard, proof at the site: `Bound::pin` passes the path the shape was filed under |
+| `Bound::pin`: a shape outside the bucket, and steps all on the path already (8155, 8163) | | Guard, proof at the site: `exact` is made for the bucket, and a place holds one variable, never one in `done` |
+| `fits_alone` dropping names left in `made` (8706, 8707) | | Guard, proof at the site: `fits_in` drains `made` back to its mark before it returns, and the state starts with it empty |
+| `Debug` texts (1429, 1472, 1815-1817, 5675-5677) | | As row TEST-types-unreached-paths-3: text for developers |
+| `unreachable!` arms (2905-2906, 2947-2948) | | As row TEST-types-unreached-paths-3 |
+| `errs_members` with no `#errs` (5348), `Ty::verdict` against the unknown (12503) | | As row TEST-types-unreached-paths-3 |
+| `Absorb::remade` (3107), `binding` of two walkers (3196-3198), `Facts` `eq` and `hash` (3568-3576) | | As row TEST-types-unreached-paths-3 |
+
+Left for row TEST-types-unreached-paths-5 (owner types9), each read in this row but not yet
+settled: 9079 and 10105 (an empty list of shapes of an atom; `payloads` does not exclude
+`Some([])`), 9216 (`near_form` on a `near` holding `_`), 10117, 10624, 10653, 10796-10798
+(`Addressed for Row`, no caller found yet), 11577, 11621, 11728, 12543, 12645, 12646, 12896,
+12901, 12914 (a row, shape or family met twice in one walk), 13006, 13302, 13527-13530, 14029,
+14149, 14208, 14220, 15174, 15194, 15430, 15433, 15473, 15572, 15573, 15917, 16084, 16142, 16399,
+16682, 16687, 16716, 16787, 16792, 17053, 17056, 17064, 17084, 17193, 17323, 17341, 17344-17348,
+17354, 17359, 17497, 17750, 18201, 18301, 18575, 18580, 18945, 18946, 19746, 19747, 19922, 20021,
+20022, 20064, 20065, 20078, 20079, 20139, 20265, 20287, 20347. Lines 16344-17107 were changed on
+main by 97b5d1690 after 373e5d22a, so those in that range must be found again by their text.
