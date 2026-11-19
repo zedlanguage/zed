@@ -164,7 +164,7 @@ use super::formula::{Atom, Conjuncts, Formula, Id, Model, Rel, one_bound};
 use super::refusal::{EachClassed, Refusal};
 use super::row_domains::{self, Settled, range};
 
-mod plane;
+pub(super) mod plane;
 mod rows;
 
 pub(super) use rows::Rows;

@@ -786,3 +786,4 @@ pub(super) fn forward_in(
 
 #[cfg(test)]
 mod tests;
+mod two_pins;

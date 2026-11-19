@@ -511,7 +511,7 @@ struct Scratch {
 }
 
 /// `(s, t)` with `s·a + t·b == 1`, for `a` and `b` coprime (extended Euclid).
-fn bezout(a: i128, b: i128) -> Option<(i128, i128)> {
+pub(in crate::presburger) fn bezout(a: i128, b: i128) -> Option<(i128, i128)> {
     let (mut r0, mut r1) = (a, b);
     let (mut s0, mut s1) = (1i128, 0i128);
     let (mut t0, mut t1) = (0i128, 1i128);
@@ -529,12 +529,12 @@ fn bezout(a: i128, b: i128) -> Option<(i128, i128)> {
 }
 
 /// `floor(n / d)` for `d > 0`.
-fn div_floor(n: i128, d: i128) -> Option<i128> {
+pub(in crate::presburger) fn div_floor(n: i128, d: i128) -> Option<i128> {
     n.checked_div_euclid(d)
 }
 
 /// `ceil(n / d)` for `d > 0`.
-fn div_ceil(n: i128, d: i128) -> Option<i128> {
+pub(in crate::presburger) fn div_ceil(n: i128, d: i128) -> Option<i128> {
     div_floor(n.checked_neg()?, d)?.checked_neg()
 }
 

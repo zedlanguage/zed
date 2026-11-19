@@ -3645,6 +3645,97 @@ fn a_class_whose_certificate_declines_is_tried_once() {
     assert!(ratio < 10.5, "work {used:?}, {ratio:.2} times at 8 times k");
 }
 
+/// The whole work of `exact_each` (certificates, the reading of the part and the cover) on
+/// `family(k)` at k = 64 and 512, every name asked with the set given; the answers at k = 8
+/// agree with the cover alone.
+fn exact_work_of(family: impl Fn(usize) -> (Formula, Vec<Atom>, Vec<IntervalSet>)) -> Vec<u64> {
+    let run = |k: usize, off: bool| {
+        let (f, syms, sets) = family(k);
+        GUARDED_OFF.set(off);
+        EXACT_WORK.set(0);
+        FAST_WORK.set(0);
+        let got = exact_each(
+            &f,
+            &syms,
+            (sets.into_iter().map(Ok).collect(), vec![]),
+            SOLVER,
+        );
+        GUARDED_OFF.set(false);
+        FAST_WORK.set(0);
+        (format!("{:?}", got.sets), EXACT_WORK.replace(0))
+    };
+    assert_eq!(
+        run(8, false).0,
+        run(8, true).0,
+        "the certificates against the cover alone"
+    );
+    [64, 512].into_iter().map(|k| run(k, false).1).collect()
+}
+
+/// `y(j) == a·p + b·q + j` with `0 <= p, q <= 9`, every name asked with the hull of its values.
+fn two_free_atoms(a_: i64, b: i64) -> impl Fn(usize) -> (Formula, Vec<Atom>, Vec<IntervalSet>) {
+    move |k| {
+        let y = |j: usize| format!("y{j}");
+        let mut rows: Vec<Formula> = (0..k)
+            .map(|j| eq(&[(&y(j), 1), ("p", -a_), ("q", -b)], -(j as i64)))
+            .collect();
+        rows.extend([ge(&[("p", 1)], 0), ge(&[("p", -1)], 9)]);
+        rows.extend([ge(&[("q", 1)], 0), ge(&[("q", -1)], 9)]);
+        let syms: Vec<Atom> = (0..k).map(|j| a(&y(j))).collect();
+        let top = 9 * (a_ + b);
+        let sets = (0..k as i64).map(|j| IntervalSet::of(j, j + top)).collect();
+        (Formula::And(Shared::new(rows)), syms, sets)
+    }
+}
+
+/// Names whose coefficients on the free atoms are not 1 or -1, `y(j) == 2·p + 3·q + j`: the
+/// part is read once, not once a name (PRES-groupA-forward-per-name-order, part 2b).
+#[test]
+fn names_with_coefficients_past_one_are_read_once_for_the_part() {
+    let used = exact_work_of(two_free_atoms(2, 3));
+    let ratio = used[1] as f64 / used[0].max(1) as f64;
+    assert!(ratio < 10.5, "work {used:?}, {ratio:.2} times at 8 times k");
+}
+
+/// As above with a common factor, `y(j) == 2·p + 4·q + j`: whatever answers these names, the
+/// part costs no work a name of its size (PRES-groupA-forward-per-name-order, part 2b).
+#[test]
+fn names_with_a_common_factor_are_read_once_for_the_part() {
+    let used = exact_work_of(two_free_atoms(2, 4));
+    let ratio = used[1] as f64 / used[0].max(1) as f64;
+    assert!(ratio < 10.5, "work {used:?}, {ratio:.2} times at 8 times k");
+}
+
+/// The two-pin reading on a polygon with slanted sides, where the dark shadow is narrower
+/// than the real one and values between them are tried one by one, and on names with a common
+/// factor and with none: each set agrees with the cover alone (`guarded::two_pins`).
+#[test]
+fn the_two_pin_reading_agrees_with_the_cover_on_slanted_sides() {
+    let f = Formula::And(Shared::new(vec![
+        eq(&[("y", 1), ("p", -3), ("q", -5)], 0),
+        eq(&[("z", 1), ("p", -4), ("q", 6)], -1),
+        eq(&[("v", 1), ("p", -7), ("q", -2)], 0),
+        ge(&[("p", 1)], 0),
+        ge(&[("q", 1)], 0),
+        ge(&[("p", -2), ("q", -3)], 40),
+        ge(&[("p", -1), ("q", 1)], 7),
+        Formula::Not(Shared::new(ge(&[("p", 1), ("q", -3)], 0))),
+    ]));
+    let syms: Vec<Atom> = ["y", "z", "v", "p", "q"].iter().map(|s| a(s)).collect();
+    let run = |off: bool| {
+        GUARDED_OFF.set(off);
+        let got = exact_each(
+            &f,
+            &syms,
+            (vec![Ok(IntervalSet::of(-1000, 1000)); syms.len()], vec![]),
+            SOLVER,
+        );
+        GUARDED_OFF.set(false);
+        format!("{:?}", got.sets)
+    };
+    assert_eq!(run(false), run(true));
+}
+
 /// Names tied with both signs and nonzero shifts (`b = 5 - a`, `c = a - 3`, `d = -c - 2`,
 /// with `e` in a second class over `e + f - s == 0`): each set moved from the first name of
 /// its class certified agrees with the cover alone, name by name, with every name asked.

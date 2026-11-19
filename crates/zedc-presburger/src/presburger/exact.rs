@@ -232,7 +232,7 @@ pub(super) fn exact_each(f: &Formula, syms: &[Atom], found: Each, solver: Solver
     // levels, all of them at 8,800, against the certificate's 70,512 and 563,312. Where it
     // declines, its work, at most the part's allowance, is taken from the reading and the
     // fast paths, never from the loops (PRES-cover-bench-guards-beyond, -chains-abs).
-    let mut certified: HashMap<&Atom, IntervalSet> = HashMap::new();
+    let mut certified: HashMap<&Atom, Classed> = HashMap::new();
     let mut once: Vec<(Option<ReadOnce>, u64)> = Vec::with_capacity(parts.len());
     for ((p, &k), mine) in parts.iter().zip(&asked).zip(&members) {
         if !p.factors.is_empty() || k == 0 {
@@ -363,7 +363,7 @@ pub(super) fn exact_each(f: &Formula, syms: &[Atom], found: Each, solver: Solver
                 // `h` is not empty here (above), and each of its values has a point of the part.
                 if let Some(set) = certified.remove(s) {
                     shown[i] = true;
-                    return Ok(Classed::plain(set));
+                    return Ok(set);
                 }
                 if let (Some((has, sets)), _) = &once[i] {
                     shown[i] |= *has;
@@ -1358,8 +1358,22 @@ fn certificates<'s>(
     mine: &[(&'s Atom, &IntervalSet)],
     left: &mut u64,
     solver: Solver,
-) -> Vec<(&'s Atom, IntervalSet)> {
+) -> Vec<(&'s Atom, Classed)> {
     let mut out = Vec::new();
+    // The whole part read once with two pins (`guarded::two_pins`): each name's exact set from
+    // the polygon, with no reading of its own; a name it declines goes on to the reading below.
+    let two = tried(left, solver, |w| prep.two_pins(w));
+    let mut rest: Vec<(&'s Atom, &IntervalSet)> = Vec::new();
+    for &(s, h) in mine {
+        match two
+            .as_ref()
+            .and_then(|t| tried(left, solver, |w| t.values(s, w)))
+        {
+            Some(set) => out.push((s, set)),
+            None => rest.push((s, h)),
+        }
+    }
+    let mine = &rest[..];
     // The first name of each class certified, by which the others of its class are answered
     // with no reading of their own (`Prep::carried`).
     let mut first: HashMap<usize, (&Atom, IntervalSet)> = HashMap::new();
@@ -1377,7 +1391,7 @@ fn certificates<'s>(
         if let Some((from, set)) = class.and_then(|c| first.get(&c))
             && let Some(set) = prep.carried(s, from, set)
         {
-            out.push((s, set));
+            out.push((s, Classed::plain(set)));
             continue;
         }
         match tried(left, solver, |w| guarded::forward_in(prep, s, h, w)) {
@@ -1385,7 +1399,7 @@ fn certificates<'s>(
                 if let Some(c) = class {
                     first.insert(c, (s, set.clone()));
                 }
-                out.push((s, set));
+                out.push((s, Classed::plain(set)));
             }
             None => {
                 if let Some(c) = class {
