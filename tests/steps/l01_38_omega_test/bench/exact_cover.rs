@@ -98,9 +98,16 @@ fn timed(f: &Formula) -> (u128, u128, u64, u64) {
 /// 900 ms or more at the limit. The evens are now `x == 2 * v2 or x == 4 * v4`, the same set
 /// through a choice, which the two-pin reading declines; `n=2000 pad=50` replaces `n=1000
 /// pad=50`, which counted 63,332 units with one multiple and 102,959 with the choice.
+///
+/// Since PRES-one-block-changes-goal (2026-11-19) `exact::block_set` keeps a stride as its range
+/// met with its class, so `direct` answers the choice of two multiples with no question
+/// (`2, 4 n=4000`: 107,684 units, 0 questions). The cases are timed with `direct` off
+/// (`DIRECT_OFF`), so that the cells and questions are what is timed whatever `direct` comes to
+/// answer: 122,220 to 1,427,169 units and 1 to 1,001 questions a case, worst 67.9 ns a unit,
+/// 211 ms at the limit (load 67).
 #[test]
 fn the_cover_takes_a_bounded_time_per_unit_of_work() {
-    use zedc::store::presburger::exact::EXACT_LIMIT;
+    use zedc::store::presburger::exact::{DIRECT_OFF, EXACT_LIMIT};
     let cases: Vec<(&str, Formula)> = vec![
         ("2, 4 n=4000", multiples(&[2, 4], 4000, 0)),
         ("2, 3 n=3000", multiples(&[2, 3], 3000, 0)),
@@ -108,6 +115,8 @@ fn the_cover_takes_a_bounded_time_per_unit_of_work() {
         ("2, 4 n=2000 pad=50", multiples(&[2, 4], 2000, 50)),
         ("2, 4 n=400 pad=400", multiples(&[2, 4], 400, 400)),
     ];
+    // The cells and questions are what is timed, so `direct` is not tried first.
+    DIRECT_OFF.set(true);
     let mut worst = 0f64;
     for (name, f) in &cases {
         let (with, alone, units, questions) = timed(f);
@@ -126,6 +135,7 @@ fn the_cover_takes_a_bounded_time_per_unit_of_work() {
             ns as f64 / questions as f64
         );
     }
+    DIRECT_OFF.set(false);
     let most = worst * EXACT_LIMIT as f64 / 1e6;
     eprintln!("exact cover: worst {worst:.1} ns per unit; the limit takes at most {most:.0} ms");
     assert!(most <= 500.0, "{most:.0} ms at the limit");
