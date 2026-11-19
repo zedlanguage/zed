@@ -638,6 +638,69 @@ fn tests_on_punctured_lines_at_seed_6838338168874375281() {
     run_at(Aim::Puncture, 6838338168874375281);
 }
 
+/// The random test on punctured lines at seed 17583574254131380130, which failed at case 13,
+/// step 3 (FAIL-case-wake-puncture-17583574254131380130).
+#[test]
+fn tests_on_punctured_lines_at_seed_17583574254131380130() {
+    run_at(Aim::Puncture, 17583574254131380130);
+}
+
+/// The history of punctured-line seed 17583574254131380130, case 13, step 3, cut to the five
+/// assumptions it fails with (FAIL-case-wake-puncture-17583574254131380130). A name given a hole
+/// outside the block's projection asks for the whole block; here every part due was certified
+/// idle, so no part was projected and the request was only kept, and y kept 2. By hand, with
+/// x >= 1 the guard `x <= -2` is false, so the block holds `y != z + 1` and `y != 3z + 2` on
+/// z in [0, 1]: at y = 2, z = 1 fails the first and z = 0 the second. Each puncture alone
+/// leaves y = 2 a z, which is why each part is idle. The scope before the test already holds
+/// y = 2 (it has no hole, so nothing asks for the whole block); the hole the test gives y is
+/// what asks. Both the original test (asked false) and a plain `y != -1` are checked.
+#[test]
+fn an_entry_hole_with_every_part_idle_projects_the_whole_block() {
+    let p = Premises::new();
+    let ne = |t: Term, c: i64| prim(Prim::Ne, t, int(c));
+    let history = [
+        prim(Prim::Ge, var("x"), int(1)),
+        prim(Prim::Le, var("z"), int(1)),
+        prim(Prim::Ge, var("z"), int(0)),
+        prim(
+            Prim::Or,
+            prim(Prim::Le, var("x"), int(-2)),
+            ne(lin(&[(-1, "y"), (1, "z")]), -1),
+        ),
+        ne(lin(&[(-1, "y"), (3, "z")]), -2),
+    ];
+    let ns: Vec<Arc<str>> = ["a", "x", "y", "z"].iter().map(|&n| n.into()).collect();
+    let mut s = ints(&ns);
+    for t in &history {
+        s = s.assume(t, true, &p);
+    }
+    let tests = [
+        (
+            prim(
+                Prim::And,
+                ne(var("y"), -2),
+                prim(Prim::Ge, lin(&[(-2, "y")]), int(2)),
+            ),
+            false,
+        ),
+        (ne(var("y"), -1), true),
+    ];
+    for (t, holds) in &tests {
+        let got = s.assume(t, *holds, &p);
+        let mut fresh = s.clone();
+        fresh.forget_projections();
+        let mut want = fresh.assume(t, *holds, &p);
+        want.forget_projections();
+        want.reduce();
+        assert_eq!(intervals(&got, &ns), intervals(&want, &ns));
+        assert!(
+            !got.get("y").ints().contains(2),
+            "y keeps 2: {:?}",
+            got.get("y").ints()
+        );
+    }
+}
+
 /// The random test on punctured lines at seed 5, one of the two seeds of 1 to 130 (5 and 22)
 /// that fail when `Block::cone_certified` always says a key may be skipped (at case 5, step 1,
 /// the test `3a - 3z >= 4 && 3x + y + 3z >= -1` false): the test in this file that a direction

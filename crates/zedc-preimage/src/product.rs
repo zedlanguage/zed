@@ -14421,7 +14421,25 @@ impl Scope {
                 break;
             }
         }
-        // A request no projected part took stays for the next projection.
+        // A whole-block request that no projected part took (every due part was certified
+        // idle, by the half-line, chain or punctured-line certificates) is served here. Each
+        // certificate says one part alone moves nothing, which is true, but the parts together
+        // can remove a value no one of them removes. Keeping the request for the next
+        // projection left y = 2 under `y != z + 1`, `y != 3z + 2`, z in [0, 1], where the whole
+        // block has no point (FAIL-case-wake-puncture-17583574254131380130,
+        // `case_wake::an_entry_hole_with_every_part_idle_projects_the_whole_block`); the next
+        // projection, if one comes, can be skipped the same way. Cost: one whole-block
+        // projection per hole made outside the loop, the cost the loop's own trigger pays when a
+        // part gives the hole. The flag can be set here only if no part was projected: each
+        // projection takes it into `again` before any exit other than `self.bottom`.
+        if entry_hole && !self.bottom {
+            let all = compact_abs(&Formula::and(
+                b.parts.values().map(|p| b.formula(p)).collect(),
+            ));
+            self.project_part(&all);
+            self.cover(&mut b, covered.is_some());
+            entry_hole = false;
+        }
         b.hole_pending = entry_hole;
         self.record(b, &start, &due, &ran, &released_loop);
     }
