@@ -19036,7 +19036,7 @@ impl HalfLineContext {
                 !rows.is_empty()
                     && rays.iter().all(|d| {
                         rows.iter()
-                            .any(|(au, av)| &(&(au * &d[0]) + &(av * &d[1])) > &Int::ZERO)
+                            .any(|(au, av)| (&(au * &d[0]) + &(av * &d[1])) > Int::ZERO)
                     })
             }
         }
