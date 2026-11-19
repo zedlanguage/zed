@@ -1112,6 +1112,48 @@ enum Part<'a> {
     Other,
 }
 
+/// Frees a [`Part::Tuple`] without recursing on its depth (FAIL-l01_26-stack-overflow): the
+/// parts of `((…(0, 0)…, 0), 0)` nest as deep as the text, which `parts` (walk.rs) reads with a
+/// stack of its own, and the drop the compiler writes freed them one level a call, about 90
+/// bytes of stack a level, so 16,384 levels took 1.4 MiB and overflowed a 512 KiB stack.
+/// Here each unshared inner tuple is detached from its parent, its place taken by a shared
+/// empty tuple, and kept on a list until its own parts are detached, so a part is freed with
+/// no tuple under it that it alone holds: every drop this runs returns after one level.
+/// Proof that no part is lost or freed twice: a part is detached only from a tuple this drop
+/// alone holds (`Rc::get_mut` is `Some` only where no other `Rc` or `Weak` points at it), and
+/// moved, not copied, onto the list, which frees each tuple once as it pops it; a shared
+/// tuple is left in place, and its drop only lowers its count.
+// Complexity tradeoff: one pass over the unshared tuples, O(their parts), with a list as
+// long as the tuples still to free and one allocation, the empty tuple, made at the first
+// inner tuple only; a tuple of literals alone frees as before, with neither. The drop the
+// compiler writes is the same O(their parts) with no list, but its stack grows with the depth.
+impl<'a> Drop for Part<'a> {
+    fn drop(&mut self) {
+        let Part::Tuple(ps) = self else {
+            return;
+        };
+        let mut empty: Option<Rc<[Part<'a>]>> = None;
+        let mut detach = |ps: &mut Rc<[Part<'a>]>, list: &mut Vec<Rc<[Part<'a>]>>| {
+            let Some(ps) = Rc::get_mut(ps) else {
+                return;
+            };
+            for p in ps {
+                if let Part::Tuple(inner) = p
+                    && Rc::get_mut(inner).is_some()
+                {
+                    let e = empty.get_or_insert_with(|| Rc::from(Vec::new())).clone();
+                    list.push(std::mem::replace(inner, e));
+                }
+            }
+        };
+        let mut list = Vec::new();
+        detach(ps, &mut list);
+        while let Some(mut ps) = list.pop() {
+            detach(&mut ps, &mut list);
+        }
+    }
+}
+
 /// An argument of a call: an expression, or an argument already found, as when a use the
 /// body of a generic function makes is checked again at a call of the function.
 #[derive(Clone)]

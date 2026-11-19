@@ -862,6 +862,19 @@ fn literals_at_many_tuple_shapes_and_in_wide_and_deep_tuples_are_adopted() {
 }
 
 #[test]
+fn pairing_a_deep_comparison_frees_its_literals_on_a_small_stack() {
+    // The literals of a tuple nested d deep are freed without recursing on d
+    // (FAIL-l01_26-stack-overflow): freed one level a call, they took about 90 bytes of stack
+    // a level, 1.4 MiB at the 16,384 levels of
+    // `bench::literals::pairing_the_sides_of_a_deep_comparison_scales`, which overflowed on a
+    // 512 KiB stack and came within 0.6 MiB of a test thread's 2 MiB. The pairing itself fits
+    // in 512 KiB at that depth.
+    let d = 16_384;
+    let adoptions = zed_tests::scaling::on_a_thread(512 << 10, || deep_operands(d).adoptions());
+    assert_eq!(adoptions, d + 1);
+}
+
+#[test]
 fn a_wide_tuple_compared_with_a_literal_has_one_repair_per_component() {
     // A small instance of the benchmark
     // `bench::literals::the_component_repairs_of_a_wide_tuple_scale`, checked as it checks.
