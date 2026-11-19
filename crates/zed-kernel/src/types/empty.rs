@@ -14894,6 +14894,7 @@ fn judge(env: &Arc<Env>) -> Judgment {
     let System {
         mut b,
         origin,
+        meets,
         mut wider,
         leaves,
         same,
@@ -14962,7 +14963,7 @@ fn judge(env: &Arc<Env>) -> Judgment {
     }
     let why = refused
         .contains(&true)
-        .then(|| Why::new(n, b, origin, runs, wide));
+        .then(|| Why::new(n, b, origin, meets, runs, wide));
     Judgment {
         answers,
         refused,
@@ -16484,6 +16485,7 @@ impl Why {
         members: usize,
         graph: Bes,
         origin: Vec<(usize, Arc<rec::Node>)>,
+        meets: HashMap<u32, Vec<u32>>,
         runs: Vec<Decision>,
         wide: Vec<bool>,
     ) -> Why {
@@ -16514,6 +16516,7 @@ impl Why {
             wide,
             graph,
             origin,
+            meets,
             runs,
             of,
             open,
@@ -16529,6 +16532,9 @@ impl Why {
 struct System {
     b: Bes,
     origin: Vec<(usize, Arc<rec::Node>)>,
+    /// Each meet's node, with the node of each of its operands as written in its origin, a
+    /// recursive meet among them read as its own operands: its children before they are sorted.
+    meets: HashMap<u32, Vec<u32>>,
     wider: Vec<u32>,
     leaves: Vec<u32>,
     same: Vec<u32>,
@@ -16650,6 +16656,7 @@ fn system(env: &Arc<Env>) -> System {
     // The nodes with children, by their definition and what they are made of; their children
     // are set from the keys once every node is made.
     let mut made: HashMap<(usize, Made<'_>), u32> = HashMap::new();
+    let mut meets: HashMap<u32, Vec<u32>> = HashMap::new();
     let (mut todo, mut done, mut arms) = (Vec::new(), Vec::new(), Vec::new());
     for (def, body) in bodies.iter().enumerate() {
         todo.push(Step::Visit(body));
@@ -16782,6 +16789,8 @@ fn system(env: &Arc<Env>) -> System {
                 Step::Make(e, k) => (e, done.split_off(done.len() - k)),
             };
             let root = Arc::ptr_eq(e, body);
+            // A meet's operands' nodes as written, kept where its origin is set.
+            let mut written = None;
             let (key, wide) = match &e.e {
                 rec::Shape::Union(_) => {
                     let mut parts = parts;
@@ -16799,6 +16808,9 @@ fn system(env: &Arc<Env>) -> System {
                 rec::Shape::Tuple(_) => (Made::Tuple(parts), false),
                 rec::Shape::Atom(name, _) => (Made::Atom(name, parts), false),
                 rec::Shape::And(_) => {
+                    // The operands were pushed on `todo` in the order written, so they were
+                    // visited, and their nodes put on `done`, in the reverse order.
+                    written = Some(parts.iter().rev().copied().collect());
                     let mut parts = parts;
                     parts.sort_unstable();
                     parts.dedup();
@@ -16822,6 +16834,9 @@ fn system(env: &Arc<Env>) -> System {
                 if wide {
                     wider.push(def as u32);
                 }
+                if let Some(w) = written {
+                    meets.insert(def as u32, w);
+                }
                 continue;
             }
             let v = match made.entry((def, key)) {
@@ -16834,6 +16849,9 @@ fn system(env: &Arc<Env>) -> System {
                     origin.push((def, Arc::clone(e)));
                     if wide {
                         wider.push(v);
+                    }
+                    if let Some(w) = written {
+                        meets.insert(v, w);
                     }
                     *slot.insert(v)
                 }
@@ -16850,6 +16868,7 @@ fn system(env: &Arc<Env>) -> System {
     System {
         b,
         origin,
+        meets,
         wider,
         leaves,
         same,

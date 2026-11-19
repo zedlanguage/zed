@@ -7823,6 +7823,9 @@ pub mod rec {
         pub(in crate::types) graph: Bes,
         /// The definition and the expression each node stands for, by its number.
         pub(in crate::types) origin: Vec<(usize, Arc<Node>)>,
+        /// Each meet's node, with the node of each of its operands as written in its origin, a
+        /// recursive meet among them read as its own operands (`empty::system`).
+        pub(in crate::types) meets: HashMap<u32, Vec<u32>>,
         /// The decisions: with the leaves `Bot`, and, when there are leaves, with them `Top`.
         pub(in crate::types) runs: Vec<Decision>,
         /// For each run, the refusal whose component holds each node it refused for its shape.

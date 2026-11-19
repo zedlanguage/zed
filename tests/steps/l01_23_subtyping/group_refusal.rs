@@ -713,6 +713,44 @@ fn a_refused_member_read_through_a_meet_names_the_meet() {
     );
 }
 
+/// The group of [`meets`] with `R`'s meets written `_ & S & R` and `_ & Q & (S | S)` (`_` is
+/// `top`), the second the one the message names, being least by its text. It has a closed
+/// operand first, and `S` last as a union with one distinct arm, whose node is `S`'s. The
+/// decider makes a meet's node of the set of its operands' nodes, sorted by number, so the
+/// message must name each refused one by the operand as written, in the order written
+/// (TEST-kernel-unreached-paths-4). Control runs: with the children zipped with the operands as
+/// written, the message named `_` and `Q`; with the operands' nodes recorded in the order
+/// `system` visits them, which is the reverse of the order written, it named `_` and `Q` too.
+#[test]
+fn a_meet_named_by_the_message_lists_its_open_operands_as_written() {
+    let and = |xs: Vec<Expr>| Expr::And(xs);
+    let one = |a: Expr| Expr::Tuple(vec![a]);
+    Type::forget_emptiness();
+    let types = group(vec![
+        ("P".into(), or(vec![one(r(0)), one(and(vec![r(0), r(3)]))])),
+        ("Q".into(), or(vec![f(r(0)), f(r(2)), one(r(3))])),
+        (
+            "R".into(),
+            or(vec![
+                one(and(vec![Expr::Type(Type::top()), r(3), r(2)])),
+                one(and(vec![
+                    Expr::Type(Type::top()),
+                    r(1),
+                    or(vec![r(3), r(3)]),
+                ])),
+                f(r(3)),
+            ]),
+        ),
+        ("S".into(), or(vec![one(and(vec![r(1), r(2)])), one(r(3))])),
+    ]);
+    assert_eq!(types[2].verdict(), Verdict::Refused(Refusal::Group));
+    let text = message(&types[2]);
+    assert!(
+        text.contains("needs a value in each of `Q` and `S | S`,"),
+        "{text}"
+    );
+}
+
 /// `n` copies of the refused component of [`refused`]; a ring of `n` definitions `Opt{k} = #none |
 /// #some(A{k}, Opt{k+1})`, each inhabited by its case `#none` though it reads the refused copy
 /// `k`; and `m` members `Box{j} = (A0, Opt0)`, each refused since it reads `A0`, and each

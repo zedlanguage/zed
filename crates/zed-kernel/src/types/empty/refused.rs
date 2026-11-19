@@ -275,10 +275,54 @@ fn written(group: &Group, j: usize) -> String {
     )
 }
 
+/// The texts of the first two distinct refused operands of node `v`, the meet of the operands
+/// `xs` in definition `def`, in the order written. `system` reads the operands in this order, a
+/// recursive meet among them read as its own operands, and keeps the node of each
+/// (`Why::meets`) before it sorts them into the node's children, so each operand is named by
+/// its own text, a union with one distinct arm included, whose node is that arm's. Time linear
+/// in the operands.
+fn meet_operands(
+    why: &Why,
+    group: &Group,
+    def: usize,
+    xs: &[Arc<rec::Node>],
+    v: u32,
+    refused: impl Fn(&u32) -> bool,
+) -> Vec<String> {
+    let nodes = why
+        .meets
+        .get(&v)
+        .expect("a meet's node keeps its operands' nodes");
+    let mut operands: Vec<&Arc<rec::Node>> = Vec::with_capacity(nodes.len());
+    let mut todo: Vec<&Arc<rec::Node>> = xs.iter().rev().collect();
+    while let Some(x) = todo.pop() {
+        match &x.e {
+            rec::Shape::And(ys) if x.recursive => todo.extend(ys.iter().rev()),
+            _ => operands.push(x),
+        }
+    }
+    assert_eq!(
+        operands.len(),
+        nodes.len(),
+        "one node per operand as written"
+    );
+    let mut named = HashSet::new();
+    (operands.iter().zip(nodes))
+        .filter(|(_, w)| refused(w) && named.insert(**w))
+        .map(|(x, _)| format!("`{}`", group.text(def, x)))
+        .take(2)
+        .collect()
+}
+
 /// `a`, `b` and `c`.
 fn listed(names: &[String]) -> String {
     match names {
-        [] => String::new(),
+        // Every list given is non-empty: the definitions taking part hold the member; a
+        // definition's references are listed only when there are some; a tuple's or a meet's
+        // open parts number at least two (`refused_site`); and the repair's definitions are
+        // listed only when there are two or more, each repair holding the member or the
+        // tuple's definition.
+        [] => unreachable!("an empty list is never written out"),
         [a] => a.clone(),
         [init @ .., last] => format!("{} and {last}", init.join(", ")),
     }
@@ -377,16 +421,24 @@ fn refused_site(env: &Arc<Env>, i: usize) -> GroupSite {
     );
     let mut fixes: Vec<BTreeSet<usize>> = vec![taking.clone()];
     if let Some((meet, owner, t, v)) = &tuple {
-        let def = why.origin[*v as usize].0;
-        let parts = match &why.origin[*v as usize].1.e {
-            rec::Shape::Tuple(xs) | rec::Shape::Atom(_, xs) | rec::Shape::And(xs) => xs.as_slice(),
-            _ => &[],
+        let (def, e) = (why.origin[*v as usize].0, &why.origin[*v as usize].1);
+        let refused = |w: &u32| run.answers[*w as usize] == Answer::Refused;
+        // A node in `tuples` is an `And` node with two distinct children in the refused
+        // component (`bes::refusal`), and `decide` marks every node of that component refused
+        // in this run, so at least two children are refused; `system` makes an `And` node only
+        // of a tuple, an atom with a payload or a meet.
+        let open: Vec<String> = match &e.e {
+            // The children are the components, one each, in order (`system`).
+            rec::Shape::Tuple(xs) | rec::Shape::Atom(_, xs) => {
+                (why.graph.children(*v).iter().zip(xs))
+                    .filter(|(w, _)| refused(w))
+                    .map(|(_, x)| format!("`{}`", group.text(def, x)))
+                    .take(2)
+                    .collect()
+            }
+            rec::Shape::And(xs) => meet_operands(why, group, def, xs, *v, refused),
+            _ => unreachable!("an `And` node is a tuple, an atom or a meet"),
         };
-        let open: Vec<String> = (why.graph.children(*v).iter().zip(parts))
-            .filter(|(w, _)| run.answers[**w as usize] == Answer::Refused)
-            .map(|(_, x)| format!("`{}`", group.text(def, x)))
-            .take(2)
-            .collect();
         let (what, needs) = if *meet {
             ("meet", "a value in each of")
         } else {
