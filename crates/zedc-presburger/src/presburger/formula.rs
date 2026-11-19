@@ -79,8 +79,8 @@ impl Ord for Lin {
                 return m.cmp(&n).then_with(|| self.constant.cmp(&other.constant));
             }
             if m == 2 && n == 2 {
-                return (self.terms.last_key_value().cmp(&other.terms.last_key_value()))
-                    .then_with(|| self.constant.cmp(&other.constant));
+                let (p, q) = (self.terms.last_key_value(), other.terms.last_key_value());
+                return p.cmp(&q).then_with(|| self.constant.cmp(&other.constant));
             }
         }
         self.terms
