@@ -344,7 +344,7 @@ const NEAR_MISSES: &[NearMiss] = &[
         "  d[i in 0..<2] = c*.bump(1);\n};\n",
         "4:19",
         Some(
-            "`r1 = c*.bump(1);` before the definition writes `c'` once on a step, and each key \
+            "`r2 = c*.bump(1);` before the definition writes `c'` once on a step, and each key \
              reads the result",
         ),
     ),
@@ -449,7 +449,7 @@ const NEAR_MISSES: &[NearMiss] = &[
         "g(p: int) = if p >= 5 && p <= 12 && 12 div (p - 4) > 0 { 10 div (p - 4) } else { 0 };\n",
         "g(p: int) = if p >= 4 && p <= 12 && 12 div (p - 4) > 0 { 10 div (p - 4) } else { 0 };\n",
         "1:58",
-        Some("write `(12 div (p - 4)) > 0` so that it gives `true` or `false` at `p = 4`"),
+        Some("write `12 div (p - 4) > 0` so that it gives `true` or `false` at `p = 4`"),
     ),
     // SPEC-sigint-override: `m.signals` exists only under `with handles(…)` on `main`'s result.
     (

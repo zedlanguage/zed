@@ -563,13 +563,13 @@ const ONE_WRITER: &str = "a step writes `c'` at most once, even where the values
 /// the definition, the second gives each key its own entry.
 #[test]
 fn several_writers_of_one_fact() {
-    let message = "Several writers of `c'` in one step: `d[i in 0..<2] = c*.a()`. Try `r1 = \
-                   c*.a(); d[i in 0..<2] = r1;` instead.";
+    let message = "Several writers of `c'` in one step: `d[i in 0..<2] = c*.a()`. Try `r2 = \
+                   c*.a(); d[i in 0..<2] = r2;` instead.";
     let notes = [
         "`c*.a()` writes `c'`, and `d[i in 0..<2] = …` computes its value once for each key of \
          `i` in `0..<2`, so `c'` is written twice in one step [c*.a()]",
         &format!("{ONE_WRITER} [d[i in 0..<2] = c*.a();]"),
-        "repair: `r1 = c*.a();` before the definition writes `c'` once on a step, and each key \
+        "repair: `r2 = c*.a();` before the definition writes `c'` once on a step, and each key \
          reads the result [d[i in 0..<2] = c*.a();]",
         "repair: `c[i]*.a()` writes one entry of `c` for each key of `i`, when `c` has an entry \
          for each [c*.a()]",
@@ -582,7 +582,7 @@ fn several_writers_of_one_fact() {
             Some(message),
             &notes,
             &[
-                t_loop(&[initial, "r1 = c*.a(); d[i in 0..<2] = r1;"]).as_str(),
+                t_loop(&[initial, "r2 = c*.a(); d[i in 0..<2] = r2;"]).as_str(),
                 t_loop(&[initial, "d[i in 0..<2] = c[i]*.a();"]).as_str(),
             ],
         );
@@ -624,19 +624,19 @@ fn several_writers_of_one_fact() {
         (
             "old[i in 0..<4] = grid[0]*.relax();",
             "grid[0]*.relax()",
-            "r1 = grid[0]*.relax(); old[i in 0..<4] = r1;",
+            "r2 = grid[0]*.relax(); old[i in 0..<4] = r2;",
         ),
         // A chain is one write, made once for each key.
         (
             "old[i in 0..<4] = grid*.a().b();",
             "grid*.a().b()",
-            "r1 = grid*.a().b(); old[i in 0..<4] = r1;",
+            "r2 = grid*.a().b(); old[i in 0..<4] = r2;",
         ),
         // The call is moved out of the rest of the value.
         (
             "old[i in 0..<4] = grid*.a() + i;",
             "grid*.a()",
-            "r1 = grid*.a(); old[i in 0..<4] = r1 + i;",
+            "r2 = grid*.a(); old[i in 0..<4] = r2 + i;",
         ),
         // A call that reads the key cannot be moved out: each key gets its own entry.
         (
@@ -666,7 +666,7 @@ fn several_writers_of_one_fact() {
         (
             "old[i in 0..<4] = { e[j in 0..<grid*.a()] = j; 0 };",
             "grid*.a()",
-            "r1 = grid*.a(); old[i in 0..<4] = { e[j in 0..<r1] = j; 0 };",
+            "r2 = grid*.a(); old[i in 0..<4] = { e[j in 0..<r2] = j; 0 };",
         ),
         (
             "old[i in 0..<4] = { e[j in 0..<2] = grid[j]*.a(); 0 };",
@@ -677,7 +677,7 @@ fn several_writers_of_one_fact() {
         (
             "old[i in 0..<4] = grid.pos*.relax();",
             "grid.pos*.relax()",
-            "r1 = grid.pos*.relax(); old[i in 0..<4] = r1;",
+            "r2 = grid.pos*.relax(); old[i in 0..<4] = r2;",
         ),
         (
             "old[i in 0..<4] = grid.pos*.relax(i);",
@@ -1516,20 +1516,20 @@ fn several_writers_in_a_for_body() {
         Row::Collision,
         "c*.a()",
         Some(
-            "Several writers of `c'` in one step: `for i in 0..<t { c*.a() }`. Try `r1 = c*.a(); \
-             x' = for i in 0..<t { r1 };` instead.",
+            "Several writers of `c'` in one step: `for i in 0..<t { c*.a() }`. Try `r2 = c*.a(); \
+             x' = for i in 0..<t { r2 };` instead.",
         ),
         &[
             "`c*.a()` writes `c'`, and `for i in 0..<t …` runs its body once for each key of `i` \
              in `0..<t`, so `c'` is written once for each key in one step [c*.a()]",
             &format!("{ONE_WRITER} [for i in 0..<t {{ c*.a() }}]"),
-            "repair: `r1 = c*.a();` before the statement writes `c'` once on a step, and each \
+            "repair: `r2 = c*.a();` before the statement writes `c'` once on a step, and each \
              key reads the result [x' = for i in 0..<t { c*.a() };]",
             "repair: `c[i]*.a()` writes one entry of `c` for each key of `i`, when `c` has an \
              entry for each [c*.a()]",
         ],
         &[
-            &t_loop(&["initial c = 0;", "r1 = c*.a(); x' = for i in 0..<t { r1 };"]),
+            &t_loop(&["initial c = 0;", "r2 = c*.a(); x' = for i in 0..<t { r2 };"]),
             &t_loop(&[
                 "initial c = 0 with carryForward;",
                 "x' = for i in 0..<t { c[i]*.a() };",
@@ -1707,15 +1707,15 @@ fn a_dot_call_run_for_each_key_is_made_once() {
     assert_eq!(&src[e.span.start..e.span.end], "c.next()");
     assert_eq!(
         e.message,
-        "No statement of this loop updates `c`: `c.next()` does not update `c`. Try `r1 = \
-         c*.next(); d[i in 0..<2] = r1;` instead."
+        "No statement of this loop updates `c`: `c.next()` does not update `c`. Try `r2 = \
+         c*.next(); d[i in 0..<2] = r2;` instead."
     );
     assert_eq!(
         notes(&src, &e)[3..],
         [
             "`c*.next()` would write `c'`, and `d[i in 0..<2] = …` computes its value once for \
              each key of `i` in `0..<2`, so `c'` would be written twice in one step [c.next()]",
-            "repair: `r1 = c*.next(); d[i in 0..<2] = r1;` in place of `d[i in 0..<2] = \
+            "repair: `r2 = c*.next(); d[i in 0..<2] = r2;` in place of `d[i in 0..<2] = \
              c.next();` [c.next()]",
         ]
     );
@@ -1723,7 +1723,7 @@ fn a_dot_call_run_for_each_key_is_made_once() {
         "{NEXT}{}",
         t_loop(&[
             "initial c = Counter(n: 0);",
-            "r1 = c*.next(); d[i in 0..<2] = r1;"
+            "r2 = c*.next(); d[i in 0..<2] = r2;"
         ])
     ));
     // A call that is a whole statement moves before the statement around it.

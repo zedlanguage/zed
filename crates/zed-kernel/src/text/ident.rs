@@ -71,14 +71,17 @@ pub fn names(text: &str) -> impl Iterator<Item = (usize, &str)> {
     })
 }
 
-/// A new name for a repair: `base` itself when `free` takes it, else [`numbered`] from 1, so
-/// `x` taken gives `x1`, then `x2` (D1 of REPORT-dryA3: the copies this replaced started at
-/// 1 or at 2; the first suffix is 1 everywhere now).
+/// A new name beside the names a program writes: `base` itself when `free` takes it, else
+/// [`numbered`] from 2, so `x` taken gives `x2`, the second `x`, then `x3`. DESIGN.md
+/// sec:diagnostics names a second binding so: `y2 = y * 2;` (the rebinding row) and
+/// `x2 = x - 1;` for `popCount(x - 1)` (the repair of a value outside the ints its use
+/// takes). Names that are always numbered, such as the two functions a split makes (`ok1` and
+/// `ok2`, DESIGN.md sec:units), call [`numbered`] from 1 instead.
 pub fn fresh(base: &str, free: impl Fn(&str) -> bool) -> String {
     if free(base) {
         return base.to_string();
     }
-    numbered(base, 1, free).1
+    numbered(base, 2, free).1
 }
 
 /// The least `k` from `from` up whose name `{base}{k}` `free` takes, and that name. A caller
@@ -97,11 +100,12 @@ mod tests {
     use super::*;
 
     #[test]
-    fn fresh_names_start_at_suffix_one() {
-        let taken = ["x", "x1", "y2"];
+    fn a_fresh_name_is_the_base_or_the_second_one() {
+        let taken = ["x", "w", "w2", "y2"];
         let free = |n: &str| !taken.contains(&n);
         assert_eq!(fresh("z", free), "z");
         assert_eq!(fresh("x", free), "x2");
+        assert_eq!(fresh("w", free), "w3");
         assert_eq!(fresh("y", free), "y");
         assert_eq!(numbered("y", 1, free), (1, "y1".to_string()));
         assert_eq!(numbered("y", 2, free), (3, "y3".to_string()));

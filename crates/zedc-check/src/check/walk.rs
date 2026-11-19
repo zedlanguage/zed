@@ -25788,8 +25788,8 @@ fn test_repair(
     }
 }
 
-/// `p`, or `p` followed by the least number from 1 that makes a name no name of `texts`
-/// spells ([`ident::fresh`]), as `n1` for `n = n - 1`, which would define `n` in terms of
+/// `p`, or `p` followed by the least number from 2 that makes a name no name of `texts`
+/// spells ([`ident::fresh`]), as `n2` for `n = n - 1`, which would define `n` in terms of
 /// itself: a name bound to the argument then neither reads itself nor shadows a name the call
 /// reads.
 ///

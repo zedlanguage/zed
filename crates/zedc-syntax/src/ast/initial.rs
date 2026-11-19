@@ -630,7 +630,8 @@ struct Taken {
 }
 
 /// A name `base1`, `base2`, … that no name of `used` and none of `taken` spells, added to
-/// `taken`; `base` itself when `bare` and it is free.
+/// `taken`; when `bare`, `base` itself if it is free, else `base2`, `base3`, … as
+/// [`ident::fresh`] names a second binding (DESIGN.md sec:diagnostics, `y2`).
 // Complexity tradeoff: trying the suffixes from 1 each time costs O(k^2) for k new names of one
 // base, as for k nested binders of one name that hide a key. Here each base keeps the suffix
 // after the last it gave, since the names taken only grow: each suffix is tried once per base
@@ -641,7 +642,8 @@ fn fresh(base: &str, bare: bool, used: &HashSet<&str>, taken: &mut Taken) -> Str
     let name = match bare && free(base, &taken.names) {
         true => base.to_string(),
         false => {
-            let next = taken.next.entry(base.to_string()).or_insert(1);
+            let first = if bare { 2 } else { 1 };
+            let next = taken.next.entry(base.to_string()).or_insert(first);
             let (i, name) = ident::numbered(base, *next, |r| free(r, &taken.names));
             *next = i + 1;
             name

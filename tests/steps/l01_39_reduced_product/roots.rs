@@ -94,7 +94,7 @@ fn a_constraint_that_fails_at_a_root_is_rejected() {
     assert_eq!(errors.len(), 1, "{errors:#?}");
     assert!(
         errors[0].starts_with(
-            "`10 div (p - 4)` may divide by 0: `(12 div (p - 4)) > 0` gives `#divByZero` at \
+            "`10 div (p - 4)` may divide by 0: `12 div (p - 4) > 0` gives `#divByZero` at \
              `p = 4`, a root of `p - 4 == 0`."
         ),
         "{}",

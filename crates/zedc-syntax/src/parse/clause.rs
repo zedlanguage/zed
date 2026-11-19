@@ -296,7 +296,7 @@ impl Toks<'_, '_> {
         reaches(self.g, self.ring, self.start, &fixed, past)
     }
 
-    /// `like`, or `like1`, `like2` and so on, the first that is no name of the text
+    /// `like`, or `like2`, `like3` and so on, the first that is no name of the text
     /// ([`ident::fresh`]).
     fn unused(&self, like: &str) -> String {
         let words: HashSet<&str> = ident::names(self.text).map(|(_, w)| w).collect();
