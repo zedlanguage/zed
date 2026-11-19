@@ -2593,6 +2593,28 @@ enum Change {
 }
 
 impl Region {
+    /// The tuple types the part `g` excludes ([`Part::forced`]: a value in one is in no value
+    /// of `g`); whether each tuple type of the region is one of them, by its index; and for each
+    /// component and cell, the excluded tuple types that have that cell there, for
+    /// [`Searching::inside_excluded`]. Linear in the excluded tuple types times the components.
+    fn excluded_cells(&self, g: &Part<Row>) -> (Vec<Row>, Vec<bool>, Vec<Vec<Vec<usize>>>) {
+        let (_, excluded) = g.forced();
+        let mut refused = vec![false; self.atoms.len()];
+        let mut sharing: Vec<Vec<Vec<usize>>> = self
+            .cells
+            .iter()
+            .map(|cs| vec![Vec::new(); cs.len()])
+            .collect();
+        for a in &excluded {
+            let e = self.index[a];
+            refused[e] = true;
+            for (j, cells) in sharing.iter_mut().enumerate() {
+                cells[self.cell(e, j)].push(e);
+            }
+        }
+        (excluded, refused, sharing)
+    }
+
     /// Whether two of the rows `open` differ in component `j`, each with a recursive type there.
     fn forks(&self, open: &[usize], j: usize) -> bool {
         let mut cells = open
@@ -6311,7 +6333,7 @@ impl<'m> Searching<'m> {
                 // this refusal: `cycle_meet` reads it and `union_classes` decides it in
                 // `O(n log n)`. A split into the open tuple types below, run before this
                 // refusal, is order `n` pieces by a part of `n` nodes on
-                // `refusals::a_difference_of_forked_unions_is_refused_in_its_size` (62 times the
+                // `refusals::bench::a_difference_of_forked_unions_is_empty_in_its_size` (62 times the
                 // bytes at 8 times `n`; REFUSAL-nfa-refuse, not kept). Trigger: a
                 // component on which the open tuple types fork, outside seeding. Tests:
                 // `l01_23_groups_and_refusals::refusals::each_refusal_names_its_cause` (`fork_empty`) and
@@ -6346,6 +6368,30 @@ impl<'m> Searching<'m> {
                     if self.row_rep(&row, &f).await.is_some() {
                         return false;
                     }
+                }
+                // Complexity tradeoff (COMPLEXITY.md K136, PORT-u6-structured-fork, Stage 0 of
+                // the gemini seat's fork solver in REFUSAL-front-u6-subset round 1): two exact
+                // steps before the refusal, each of which settles the part without following
+                // the fork. (1) A union of parts that share no tuple type is decided part by
+                // part, each on a region of its own (`disjuncts_empty`, the split that K80 runs
+                // for a cover below): a part holds only its own tuple types, so a fork across
+                // two parts is never met. (2) A part each of whose tuple types left lies inside
+                // one it excludes is empty (`all_inside_excluded`, the proof of K80's
+                // `all_inside` in `find_rep`). Naive version: the refusal alone, which refused
+                // the three forked-differences benches (`refusals::bench::a_difference_of_forked_unions_is_empty_in_its_size`,
+                // `a_union_of_forked_differences_is_empty_in_its_size`,
+                // `a_pair_type_met_with_forked_differences_is_empty_in_its_size`), all Empty.
+                // Cost: (1) one region per part, each of its own tuple types only, linear in the
+                // part; (2) for each tuple type left, the excluded ones sharing its cell in the
+                // component where fewest do, each tested component by component until one
+                // holds it, so order `n` tests on those benches and at most the tuple types
+                // left times the excluded ones in general, the cost of K80's skip in
+                // `find_rep`. Given up: a part neither step settles is still refused.
+                if let Some(parts) = f.disjoint_disjuncts() {
+                    return self.disjuncts_empty(&g.r, parts).await;
+                }
+                if self.all_inside_excluded(g, &f).await {
+                    return true;
                 }
                 self.refuse_fork();
                 return true;
@@ -6475,33 +6521,7 @@ impl<'m> Searching<'m> {
                 // below (`l01_23_groups_and_refusals::refusals::a_union_of_pairs_less_pairs_holding_them_is_empty_in_its_size`,
                 // COMPLEXITY.md K80).
                 if let Some(parts) = f.disjoint_disjuncts() {
-                    let mut all_empty = true;
-                    let mut forks = Vec::new();
-                    let mut blamed_false = Vec::new();
-                    for d in parts {
-                        let snap = self.fork_snapshot();
-                        if !self.piece(g.r.clone(), d, true).await {
-                            all_empty = false;
-                            match self.take_blame_on_false(snap, None) {
-                                None => return false,
-                                Some(gu) => blamed_false.push(gu),
-                            }
-                            continue;
-                        }
-                        if let Some(fork) = self.take_fork(snap, None) {
-                            forks.push(fork);
-                        }
-                    }
-                    if !all_empty {
-                        for gu in blamed_false {
-                            self.restore_fork(gu);
-                        }
-                        return false;
-                    }
-                    for fork in forks {
-                        self.restore_fork(fork);
-                    }
-                    return true;
+                    return self.disjuncts_empty(&g.r, parts).await;
                 }
                 // DESIGN.md L1.23 takes out each piece on which narrowing alone proves the part
                 // empty before it splits the box into the open tuple types, and narrows the box
@@ -7150,6 +7170,64 @@ impl<'m> Searching<'m> {
         g.shrink(j, t);
         g.close(j, cell, !missed);
         true
+    }
+
+    /// Whether no tuple in the box `r` is in any of `parts`, the operands of a union that share
+    /// no tuple type ([`Part::disjoint_disjuncts`]): each decided as a piece of its own on the
+    /// box with only its own tuple types. A fork or blame met in a part is kept only when the
+    /// answer rests on it: every part's when all are empty, else only those of the parts found
+    /// inhabited, and none when one is inhabited with no blame.
+    async fn disjuncts_empty(&'m self, r: &[Type], parts: Vec<Part<Row>>) -> bool {
+        let mut all_empty = true;
+        let mut forks = Vec::new();
+        let mut blamed_false = Vec::new();
+        for d in parts {
+            let snap = self.fork_snapshot();
+            if !self.piece(r.to_vec(), d, true).await {
+                all_empty = false;
+                match self.take_blame_on_false(snap, None) {
+                    None => return false,
+                    Some(gu) => blamed_false.push(gu),
+                }
+                continue;
+            }
+            if let Some(fork) = self.take_fork(snap, None) {
+                forks.push(fork);
+            }
+        }
+        if !all_empty {
+            for gu in blamed_false {
+                self.restore_fork(gu);
+            }
+            return false;
+        }
+        for fork in forks {
+            self.restore_fork(fork);
+        }
+        true
+    }
+
+    /// Whether every open tuple type of `f` on the box of `g` that `f` does not exclude lies
+    /// inside one it excludes ([`Searching::inside_excluded`]) and `f` is false when all of
+    /// them are: then `f` is empty on the box. Proof: a value of `f` in the box is in some tuple
+    /// type of `f` not excluded, since `f` with all of those false is false; that tuple type
+    /// lies inside an excluded one, so the value is in a tuple type that `f` excludes, and is
+    /// no value of `f`. The test of `Searching::find_rep` (`all_inside`, COMPLEXITY.md K80),
+    /// here as a decision.
+    async fn all_inside_excluded(&'m self, g: &Region, f: &Part<Row>) -> bool {
+        let (excluded, refused, sharing) = g.excluded_cells(f);
+        if excluded.is_empty() {
+            return false;
+        }
+        for a in f.distinct_atoms() {
+            let k = g.index[&a];
+            if !refused[k] && !self.inside_excluded(g, k, &sharing).await {
+                return false;
+            }
+        }
+        f.restrict(&|a| (!refused[g.index[a]]).then_some(false))
+            .is_leaf()
+            == Some(false)
     }
 
     /// Whether no tuple in the box `r` is in `f`, decided on a region of its own.
@@ -10887,8 +10965,8 @@ impl<'m> Searching<'m> {
             // one part at a time on that box: a value of one in the box is a value of the union,
             // and each part's own box holds its own tuple types only, so `n` such parts cost
             // order `n`, not the `n` candidates by `n` cells of one box over them all
-            // (`l01_23_groups_and_refusals::refusals::a_union_of_forked_differences_is_refused_in_its_size`,
-            // and `a_pair_type_met_with_forked_differences_is_refused_in_its_size`, whose pair
+            // (`l01_23_groups_and_refusals::refusals::bench::a_union_of_forked_differences_is_empty_in_its_size`,
+            // and `a_pair_type_met_with_forked_differences_is_empty_in_its_size`, whose pair
             // type holds the box and so drops out; COMPLEXITY.md K80).
             // Complexity tradeoff (COMPLEXITY.md K80): the naive search narrows each of the n
             // candidates of the whole part against the n cells of its components and then
@@ -10979,22 +11057,7 @@ impl<'m> Searching<'m> {
                     }
                     self.s().past_fork = true;
                 }
-                // The tuple types the part excludes: a value in one is in no value of the part.
-                let (_, excluded) = g.forced();
-                let mut refused = vec![false; b.atoms.len()];
-                // For each component and cell, the excluded tuple types that have that cell there.
-                let mut sharing: Vec<Vec<Vec<usize>>> = b
-                    .cells
-                    .iter()
-                    .map(|cs| vec![Vec::new(); cs.len()])
-                    .collect();
-                for a in &excluded {
-                    let e = b.index[a];
-                    refused[e] = true;
-                    for (j, cells) in sharing.iter_mut().enumerate() {
-                        cells[b.cell(e, j)].push(e);
-                    }
-                }
+                let (excluded, refused, sharing) = b.excluded_cells(&g);
                 // Complexity tradeoff (COMPLEXITY.md K35, K80): the naive version narrows every
                 // candidate, O(n^2) types for n candidates; used, one test per candidate skips
                 // those inside an excluded tuple type, O(n) on the pairs of `fork_by`; nothing is
@@ -11005,7 +11068,7 @@ impl<'m> Searching<'m> {
                 // every open cell of its components, n candidates by n cells, order n^2 types on the
                 // pairs of `l01_23_groups_and_refusals::refusals::fork_by` (COMPLEXITY.md K35). So is a candidate
                 // that lies inside an excluded tuple type in every component, as each pair of
-                // `a_difference_of_forked_unions_is_refused_in_its_size` does (K80). `all_inside`
+                // `a_difference_of_forked_unions_is_empty_in_its_size` does (K80). `all_inside`
                 // says whether every candidate was skipped so.
                 let mut all_inside = true;
                 // Complexity tradeoff (COMPLEXITY.md K135, BENCH-row-rep-many-tuples): when the
@@ -11059,7 +11122,7 @@ impl<'m> Searching<'m> {
                 // false, and an excluded tuple type holds no value of the part. Neither the
                 // candidates below nor refining would find one, so nothing is given up, and
                 // refining such a part on a fork costs order `n^2`, a search of the whole part for
-                // each tuple type (`a_difference_of_forked_unions_is_refused_in_its_size`,
+                // each tuple type (`a_difference_of_forked_unions_is_empty_in_its_size`,
                 // COMPLEXITY.md K80). A forked part whose components separate in `overlaps` (`Π_sym`)
                 // is already split by `class_rep` above (`a_value_found_by_refining_a_forked_part_is_kept`);
                 // skipping `refine` on a still-forked unsplit box prevents order-dependent refusal vs

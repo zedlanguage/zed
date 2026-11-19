@@ -667,16 +667,22 @@ fn refusal_scales(
     cause: Refusal,
     make: impl Fn(usize, &str) -> Type + Sync + Send,
 ) {
+    verdict_scales(what, n, Verdict::Refused(cause), make);
+}
+
+/// Runs `scaling::check` on the verdict of `make(n, tag)`, which must be `want`.
+fn verdict_scales(
+    what: &str,
+    n: usize,
+    want: Verdict,
+    make: impl Fn(usize, &str) -> Type + Sync + Send,
+) {
     big(move || {
         let tag = AtomicUsize::new(0);
         scaling::check(what, n, |n| {
             Type::forget_emptiness();
             let tag = format!("_rc{}", tag.fetch_add(1, Relaxed));
-            assert_eq!(
-                make(n, &tag).verdict(),
-                Verdict::Refused(cause),
-                "{what} at {n}"
-            );
+            assert_eq!(make(n, &tag).verdict(), want, "{what} at {n}");
         })
     });
 }
@@ -7879,11 +7885,22 @@ fn refused_at(
     prefix: &str,
     make: impl Fn(usize, &str) -> Type + Send,
 ) {
+    verdict_at(sizes, Verdict::Refused(cause), prefix, make);
+}
+
+/// The verdict of `make(n, tag)` at each of `sizes` is `want`, with no measurement: the small
+/// instances of the benchmarks that call [`verdict_scales`].
+fn verdict_at(
+    sizes: &[usize],
+    want: Verdict,
+    prefix: &str,
+    make: impl Fn(usize, &str) -> Type + Send,
+) {
     big(move || {
         for &n in sizes {
             Type::forget_emptiness();
             let t = make(n, &format!("{prefix}{n}"));
-            assert_eq!(t.verdict(), Verdict::Refused(cause), "{prefix} at {n}");
+            assert_eq!(t.verdict(), want, "{prefix} at {n}");
         }
     });
 }
@@ -8049,38 +8066,42 @@ fn a_fork_emptied_by_two_list_types_together_is_decided_in_both_orders() {
     }
 }
 
-/// Small instance of `bench::a_difference_of_forked_unions_is_refused_in_its_size`: the union
-/// of a few forked pairs less the union of the pairs that hold them is refused at the fork.
+/// Small instance of `bench::a_difference_of_forked_unions_is_empty_in_its_size`: the union
+/// of a few forked pairs less the union of the pairs that hold them is empty, since each pair
+/// lies inside the pair that holds it. Refused at the fork before PORT-u6-structured-fork; now
+/// each open tuple type at the fork lies inside one the part excludes (COMPLEXITY.md K136).
 #[test]
-fn a_small_difference_of_forked_unions_is_refused() {
-    refused_at(
+fn a_small_difference_of_forked_unions_is_empty() {
+    verdict_at(
         &[2, 3, 4, 8],
-        Refusal::Fork,
+        Verdict::Empty,
         "_rsdu",
         forked_difference_of_unions,
     );
 }
 
-/// Small instance of `bench::a_union_of_forked_differences_is_refused_in_its_size`: a union of
-/// a few forked differences is refused at the fork.
+/// Small instance of `bench::a_union_of_forked_differences_is_empty_in_its_size`: a union of
+/// a few forked differences, each a pair less a pair that holds it, is empty. Refused at the
+/// fork before PORT-u6-structured-fork; now the union is decided difference by difference
+/// at the fork (COMPLEXITY.md K136).
 #[test]
-fn a_small_union_of_forked_differences_is_refused() {
-    refused_at(
+fn a_small_union_of_forked_differences_is_empty() {
+    verdict_at(
         &[2, 3, 4, 8],
-        Refusal::Fork,
+        Verdict::Empty,
         "_rsud",
         forked_union_of_differences,
     );
 }
 
-/// Small instance of `bench::a_pair_type_met_with_forked_differences_is_refused_in_its_size`:
-/// a pair type met with a few forked differences is searched one difference at a time and
-/// refused at the fork.
+/// Small instance of `bench::a_pair_type_met_with_forked_differences_is_empty_in_its_size`:
+/// a pair type met with a few forked differences is searched one difference at a time and is
+/// empty. Refused at the fork before PORT-u6-structured-fork (COMPLEXITY.md K136).
 #[test]
-fn a_pair_type_met_with_a_few_forked_differences_is_refused() {
-    refused_at(
+fn a_pair_type_met_with_a_few_forked_differences_is_empty() {
+    verdict_at(
         &[2, 3, 4, 8],
-        Refusal::Fork,
+        Verdict::Empty,
         "_rspm",
         forked_differences_met_with_pairs,
     );
@@ -8090,10 +8111,11 @@ fn a_pair_type_met_with_a_few_forked_differences_is_refused() {
 /// first pair not taken out: each holds that first pair, as `([1], [0])` for `hole` 1 (a list
 /// of only 1s and a list of odd length), so none is empty. A check from the cross-review of
 /// REFUSAL-front-u6-subset (round 1, the opus seat's test 6) that an exact answer for these
-/// benches reads the pairs: the benches are refused now, and a rule that answered them Empty
-/// would have to answer these Inhabited. The verdicts now: the union of differences and the
-/// pairs met with it are Inhabited at every size; the difference of unions is Inhabited at
-/// `n` 2 and refused at the fork at 3 and 8.
+/// benches reads the pairs: the benches are answered Empty since PORT-u6-structured-fork
+/// (COMPLEXITY.md K136), and these must stay Inhabited, or refused. The verdicts now: the
+/// union of differences and the pairs met with it are Inhabited at every size; the difference
+/// of unions is Inhabited at `n` 2 and refused at the fork at 3 and 8 (the open tuple type of
+/// the hole lies inside no excluded one, so K136's proof does not apply).
 #[test]
 fn forked_differences_less_one_pair_short_are_not_empty() {
     let union = |ts: &[Type]| ts.iter().fold(Type::empty(), |u, t| &u | t);

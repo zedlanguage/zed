@@ -181,7 +181,7 @@ fn a_fork_no_list_type_empties_is_decided_in_its_size() {
 }
 
 #[test]
-fn a_difference_of_forked_unions_is_refused_in_its_size() {
+fn a_difference_of_forked_unions_is_empty_in_its_size() {
     // The union of `n` pairs minus the union of `n` pairs that hold them, one each. Measured on
     // 8874023a, before REFUSAL-narrow-cells: 25.7M, 104M, 470M and 2396M instructions at n 8,
     // 16, 32 and 64, order n^2: each pair was a candidate for a value, whose narrowing tested
@@ -191,33 +191,37 @@ fn a_difference_of_forked_unions_is_refused_in_its_size() {
     // no value outside its pairs, is passed over as empty without refining (COMPLEXITY.md K80).
     // Resized from n 8 to n 1024 (TEST-bench-move-l0123, author P169); 1x took 316545620 ns at load
     // 34.40.
-    refusal_scales(
+    // Refused(Fork) until PORT-u6-structured-fork; Empty since, by the steps of COMPLEXITY.md
+    // K136 at the fork.
+    verdict_scales(
         "Fork, by a difference of unions",
         1024,
-        Refusal::Fork,
+        Verdict::Empty,
         forked_difference_of_unions,
     );
 }
 
 #[test]
-fn a_union_of_forked_differences_is_refused_in_its_size() {
+fn a_union_of_forked_differences_is_empty_in_its_size() {
     // The union of `n` differences, each a pair minus a pair that holds it. Measured on
     // 8874023a, before REFUSAL-narrow-cells: 64.6M, 264M, 1125M and 5123M instructions at n 8,
     // 16, 32 and 64, order n^2: the value search took all `2n` pairs on one box. Now 4.3M, 8.4M,
     // 16.7M and 33.4M (release probe), one box for each difference (COMPLEXITY.md K80).
     // Resized from n 8 to n 1024 (TEST-bench-move-l0123, author P169); 1x took 233029207 ns at load
     // 33.78.
-    refusal_scales(
+    // Refused(Fork) until PORT-u6-structured-fork; Empty since, by the steps of COMPLEXITY.md
+    // K136 at the fork.
+    verdict_scales(
         "Fork, by a union of differences",
         1024,
-        Refusal::Fork,
+        Verdict::Empty,
         forked_union_of_differences,
     );
 }
 
 #[test]
-fn a_pair_type_met_with_forked_differences_is_refused_in_its_size() {
-    // The union of `a_union_of_forked_differences_is_refused_in_its_size` met with the pairs of
+fn a_pair_type_met_with_forked_differences_is_empty_in_its_size() {
+    // The union of `a_union_of_forked_differences_is_empty_in_its_size` met with the pairs of
     // lists of integers, so the union is not at the top of the part. On the box that the pair
     // type narrows to, the pair type holds every tuple and drops out, and the union is searched
     // one difference at a time. Release probe, instructions at n 8, 16, 32 and 64: on 3c251cd5,
@@ -226,10 +230,12 @@ fn a_pair_type_met_with_forked_differences_is_refused_in_its_size() {
     // (COMPLEXITY.md K80).
     // Resized from n 8 to n 512 (TEST-bench-move-l0123, author P169); 1x took 214234900 ns at load
     // 34.07.
-    refusal_scales(
+    // Refused(Fork) until PORT-u6-structured-fork; Empty since, by the steps of COMPLEXITY.md
+    // K136 at the fork.
+    verdict_scales(
         "Fork, by a pair type met with a union of differences",
         512,
-        Refusal::Fork,
+        Verdict::Empty,
         forked_differences_met_with_pairs,
     );
 }
