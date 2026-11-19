@@ -22,6 +22,7 @@ mod meet_join_oracle;
 mod one_pass;
 mod oracle;
 mod payload_scaling;
+mod printed_meets;
 mod rec;
 mod rec_order;
 mod refusal_cost;

@@ -21,7 +21,7 @@
 //! payload of every tuple but not every struct, or the reverse, has no surface type: it prints
 //! as `#a(tuple)` or `#a(struct)` and is marked not exact.
 
-use std::collections::{BTreeMap, HashMap, HashSet};
+use std::collections::{BTreeMap, HashMap};
 use std::sync::Arc;
 
 use super::TextClass as Class;
@@ -902,21 +902,31 @@ impl Printer<'_> {
         if !self.meet_of_literals(p) {
             return None;
         }
-        let (mut ms, mut seen, mut stack) = (Vec::new(), HashSet::new(), vec![p.clone()]);
-        while let Some(q) = stack.pop() {
-            if !seen.insert(q.id()) {
-                continue;
+        match p.view() {
+            Ok(_) => {
+                let ms = p.forced().0;
+                self.meet_text(&ms)
             }
-            match q.view() {
-                Ok(_) => ms.extend(q.forced().0),
-                Err(Form::And(x, y)) => stack.extend([x.clone(), y.clone()]),
-                // `meet_of_literals(p)` held: it is `true` of a node only when the node is a
-                // list or an `&` both of whose operands it holds of, and `false` of any other
-                // form, so every node reached from `p` is a list or an `&`.
-                Err(_) => unreachable!("a meet of morphism types holds only meets and lists"),
-            }
+            // `meet_of_literals(p)` held, so `p` is a list or an `&` of two parts it holds of;
+            // an `&` of two lists that are each the meet of their atoms is never made, so `p`
+            // is a list. Proof. (1) A list equal to the meet `a1 & … & ak` of its atoms is a
+            // chain under `And` (one atom's literal for k = 1): a list is in its one form (module
+            // `list` in `bdd.rs`), whose first block holds every literal under which the
+            // function is constant, all of one value; the meet is `false` under each `!ai` and
+            // under no other literal, so the first block is `{!a1, …, !ak}` of value `false`, and
+            // these are all the atoms, so no block follows and the default is `true`: the chain.
+            // (2) A `Form::And` is made by `Part::connect`, called with `Op::And` by
+            // `Connect::zipped` (after `Bdd::zip_chain`, which answers with a list whenever one
+            // operand is a list that is a chain under `And`, literals included, and the other a
+            // list) and by `xor::meet` (whose two lists are literals, joined as a list there);
+            // `Part::of_form` makes again only a form an expression had. So no `&` has two
+            // operands each such a list; and since an `&` it holds of has two operands it holds
+            // of, the lowest such `&` would have two lists, which (2) excludes. cover4 asked
+            // whether (1) holds (COMPLETENESS.md); the test
+            // `l01_23_subtyping` `printed_meets::a_meet_joined_to_an_exclusive_or_keeps_its_connective`
+            // reaches the `&` arm of `meet_of_literals` with one operand no meet.
+            Err(_) => unreachable!("a meet of morphism literals is one list"),
         }
-        self.meet_text(&ms)
     }
 
     /// The text of the meet of the morphism types `ms`, two or more, as the one morphism type

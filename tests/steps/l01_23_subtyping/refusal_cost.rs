@@ -101,7 +101,7 @@ fn x_tail(n: usize, tag: &str) -> (Type, Type) {
 /// The tuples of `vars` bits, and the complement of those in which every clause of random 3-CNF
 /// at 4.26 clauses a variable holds, by `seed` (the generator of `two_sat.rs`); each literal is
 /// the tuple type with that bit fixed and `top` elsewhere.
-fn r3(vars: usize, seed: u64) -> (Type, Type) {
+pub(super) fn r3(vars: usize, seed: u64) -> (Type, Type) {
     let mut g = Rng::new(seed * 2 + 1);
     let cylinder = |v: usize, b: bool| {
         let mut c = vec![Type::top(); vars];

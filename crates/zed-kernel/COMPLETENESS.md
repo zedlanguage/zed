@@ -638,3 +638,20 @@ fails that test in the short build, so its `Inhabited` arm is reached there.
 `meet_text` and `meet_of_literals` have count 0 in both builds, since `l01_23` prints no meet of
 morphism types. cover4's open question still stands: whether a list equal to a meet of its atoms
 is always a chain. This round did not work on it.
+
+Closed in the next round. cover4's question is answered yes, by proof: a list is in its one form
+(module `list` in `bdd.rs`), whose first block holds every literal under which the function is
+constant; the meet `a1 & … & ak` is constant (`false`) under each `!ai` and under no other
+literal, so the list is the one block `{!a1, …, !ak}` of value `false` with default `true`, the
+chain under `And`. `Connect::zipped` calls `Bdd::zip_chain` before `Part::connect`, and
+`zip_chain` answers with a list whenever one operand is such a chain and the other a list;
+`xor::meet` joins two literals as a list; so no `&` node has two operands that are meets of
+literals. `folded`'s `&` arm is therefore unreachable: `folded` now reads the one list, with
+the proof at the site and `unreachable!` for any other form. The new module
+`l01_23_subtyping::printed_meets` (3 tests) prints meets of morphism types and reaches every
+arm of `meet_text` (`Inhabited`, a value no literal names, one bound, both bounds, neither
+written, and a refused comparison of the bounds, using `refusal_cost::r3(16, 7)`) and the `&`
+arm of `meet_of_literals`, with a meet joined to an exclusive or. Control runs: `Inhabited`
+giving `None` fails the first test; the `&` arm's `&&` made `||` reaches `folded`'s
+`unreachable!` in the second; `Refused` printed as `Never` fails the third. All three pass in
+both builds.
