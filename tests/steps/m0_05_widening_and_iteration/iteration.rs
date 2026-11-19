@@ -138,9 +138,10 @@ fn both_phases_are_sound(eq: &System) -> bool {
     // gaps `E` cuts the line into, so a strictly falling chain of them has at most 2|E| + 2
     // elements. Each round but the last narrows some cell, and each round reads every cell.
     let marks = Scopes::new(eq, &order);
-    let rounds = 1 + (0..cells.len())
-        .map(|v| 2 * (2 * cells[v].pieces().count() + marks.of(v).ints().len() + 2) + 2)
-        .sum::<usize>();
+    let rounds = 1
+        + (0..cells.len())
+            .map(|v| 2 * (2 * cells[v].pieces().count() + marks.of(v).ints().len() + 2) + 2)
+            .sum::<usize>();
     let counted = Counted {
         eq,
         evals: Cell::new(0),
