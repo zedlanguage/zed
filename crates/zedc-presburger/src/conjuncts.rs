@@ -1905,7 +1905,7 @@ impl Conjuncts {
 
 /// The equality constraints (`Rel::Eq`) of `rels` linked to `seeds` by chains of equalities
 /// that share a name, and the names they mention with the seeds: a search with a visited set
-/// over [`Conjuncts::eq_users`], in time near the equalities found (O(seeds) when none exist).
+/// over `Conjuncts::eq_users`, in time near the equalities found (O(seeds) when none exist).
 pub fn reach_eqs(
     rels: &[&Conjuncts],
     seeds: impl IntoIterator<Item = Arc<str>>,
