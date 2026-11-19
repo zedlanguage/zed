@@ -91,7 +91,8 @@ fn wide_scales() {
 /// 12.0 times the instructions at 8n while each part of a test was certified idle again at
 /// each of its cases; 10.3 since the least part of each chain of disjunctions stands for the
 /// parts above it (XR-l139-family, `Scope::idle_by_chain`). 10.3 at 4 and 26.1 at 32 on
-/// 2026-11-14, so it stays at 4.
+/// 2026-11-14, so it stays at 4. 10.1 at 4 on 2026-11-19 before PERF-l139-under9, 8.9 after
+/// (82.7M and 737M instructions).
 #[test]
 fn coordmix_floor_scales() {
     scales("coordmix_floor", 4, 1);
@@ -131,7 +132,10 @@ fn coordkk_scales() {
 /// was certified idle again at each of its cases; 10.1 since the least part of each chain of
 /// disjunctions stands for the parts above it (XR-l139-family, `Scope::idle_by_chain`). On
 /// 2026-11-14, 11.3 times at 4 (99.9M and 1,130M instructions), over the limit; 10.0 at 3,
-/// 27.6 at 16.
+/// 27.6 at 16. On 2026-11-19 (PERF-l139-under9), 9.2 at 3 since `compact_abs` reads the
+/// clause `x + j y >= 1 || x - j y >= 1 || x >= 1` as `x + |j y| >= 1`, and 8.6 at 3 (98.2M
+/// and 845M instructions) since a recession bucket wakes only the least part of each of its
+/// chains (`Block::update`): each test had woken all the parts of the tests before it.
 #[test]
 fn star_extra_scales() {
     scales("star_extra", 3, 1);
@@ -155,7 +159,8 @@ fn chain_scales() {
 
 /// About `k^2.1` while each side of a hull over two names was searched; 8.8 times the
 /// instructions at 8n since those sides are read off the envelopes of their rows
-/// (XR-l139-family). 7.9 at 2, 9.5 at 4, 10.2 at 5, 10.9 at 6.
+/// (XR-l139-family). 7.9 at 2, 9.5 at 4, 10.2 at 5, 10.9 at 6. 9.0 at 5 on 2026-11-19 before
+/// PERF-l139-under9, 7.3 after (62.1M and 455M instructions).
 #[test]
 fn boxstar_scales() {
     scales("boxstar", 5, 1);

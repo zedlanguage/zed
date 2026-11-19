@@ -7826,6 +7826,7 @@ impl Block {
             } else {
                 let mut rkeys: BTreeSet<RecKey> = BTreeSet::new();
                 let mut pkeys: BTreeSet<PunctureKey> = BTreeSet::new();
+                let mut lazy_chains: Vec<(Arc<Vec<ChainAtom>>, PartAt)> = Vec::new();
                 for n in &changed_names {
                     let f = Factor::Sym(n.clone());
                     let group_vs = next
@@ -7908,6 +7909,18 @@ impl Block {
                             due.extend(uncert.into_iter().filter(|at| keep(at)));
                             continue;
                         }
+                        // Complexity tradeoff: naive version, every part of each chain of the
+                        // bucket is pushed, O(j) per chain of j parts, so a test whose names move
+                        // at each of its i steps wakes all i parts each time, O(k^2) parts over a
+                        // run of k (star_extra: 421 parts at k = 12, 1,705 at k = 24), each
+                        // dismissed later by `Scope::idle_by_chain` at some 90K instructions.
+                        // Used: as in [`Block::wake_recession_bucket`], only the chain's least
+                        // part ([`Block::chain_least`]) is pushed, forced through `fired`, with
+                        // the chain in `fired_chains`; [`Scope::project_block`] queues the rest
+                        // only when that part is not idle after its projection, and chain
+                        // subsumption certifies them otherwise. O(log j) per chain. When the
+                        // chain has no least part, or the half-line certificate (`keep`) skips
+                        // it, every part is pushed as before.
                         let mut push_bucket = |bucket: &RecessionBucket| {
                             for at in &bucket.unchained {
                                 if keep(at) {
@@ -7915,6 +7928,12 @@ impl Block {
                                 }
                             }
                             for ck in bucket.chains.keys() {
+                                if let Some(least) = next.chain_least(ck)
+                                    && keep(&least)
+                                {
+                                    lazy_chains.push((ck.clone(), least));
+                                    continue;
+                                }
                                 for (_, at) in next.chains.get(ck).into_iter().flatten() {
                                     if keep(at) {
                                         due.push(at.clone());
@@ -7938,6 +7957,11 @@ impl Block {
                             push_bucket(&idx.neg_leaf);
                         }
                     }
+                }
+                for (ck, least) in lazy_chains {
+                    next.fired.insert(least.clone());
+                    next.fired_chains.insert(ck, None);
+                    due.push(least);
                 }
                 if !pkeys.is_empty() {
                     let base_is_due = due.iter().any(|at| at.0);
@@ -22439,9 +22463,26 @@ fn compact_abs(part: &Formula) -> Formula {
     for g in distinct_conjuncts(part) {
         let shaped = (|| {
             let Formula::Or(gs) = &g else { return None };
-            let [Formula::Con(a), Formula::Con(b)] = &gs[..] else {
+            // The pair `F + b y + c >= 0`, `F - b y + c >= 0` is the two arms with the most
+            // terms; any other arm must be `F + d >= 0` with `d <= c`, which the pair's union
+            // `F + |b y| + c >= 0` holds already (`|b y| >= 0`), so the clause is that union.
+            // star_extra's `x + j y >= 1 || x - j y >= 1 || x >= 1` is such a clause; with
+            // only two-arm clauses read here, its k clauses all went into every whole-block
+            // projection, k of them a test: 21.3 times the instructions at 8n
+            // (PRES-cover-bench-star-extra, PERF-l139-under9). Cost: O(T) for the T terms of
+            // the clause's arms (one pass to count them, one comparison of each other arm's
+            // terms with the pair's), as the two-arm reading is O(T) for its two arms.
+            let mut cons = Vec::with_capacity(gs.len());
+            for h in gs.iter() {
+                let Formula::Con(c) = h else { return None };
+                cons.push(c);
+            }
+            let most = cons.iter().map(|c| c.lin.terms.len()).max()?;
+            let mut pair = cons.iter().filter(|c| c.lin.terms.len() == most);
+            let (Some(a), Some(b), None) = (pair.next(), pair.next(), pair.next()) else {
                 return None;
             };
+            let extra: Vec<&&Con> = cons.iter().filter(|c| c.lin.terms.len() < most).collect();
             if a.rel != Rel::Ge
                 || b.rel != Rel::Ge
                 || a.lin.constant != b.lin.constant
@@ -22462,6 +22503,11 @@ fn compact_abs(part: &Formula) -> Formula {
                 }
             }
             let (y, k) = changed?;
+            if !extra.iter().all(|e| {
+                e.rel == Rel::Ge && e.lin.terms == rest && e.lin.constant <= a.lin.constant
+            }) {
+                return None;
+            }
             Some(((rest, y), k, a.lin.constant.clone()))
         })();
         match shaped {
