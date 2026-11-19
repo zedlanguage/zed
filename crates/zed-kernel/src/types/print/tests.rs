@@ -628,3 +628,117 @@ fn a_type_printed_apart_is_written_out_and_parenthesized_by_its_place() {
         (part1, vec!["(Part1, Part1)".into()])
     );
 }
+
+/// Item TEST-kernel-unreached-paths-4 (kernel13): a message collecting the definitions of a
+/// cycle (`Printer::collect`): a definition whose body waits on one not placed yet gets a place
+/// first and its body after the others; a union named by count that waits is written where it
+/// stands; a tuple that waits and is not named is written where it stands; a node whose text
+/// is the tuple's name is an alias, given the tuple's reference.
+#[test]
+fn a_message_collects_the_definitions_of_a_cycle() {
+    use super::super::rec::{Def, Expr, Group};
+    let mutual = Group::new(vec![
+        Def {
+            name: "KM0".into(),
+            params: vec![],
+            body: Expr::Union(vec![
+                Expr::Type(Type::atom("ma")),
+                Expr::Atom("ml".into(), vec![Expr::Ref(1, vec![])]),
+            ]),
+        },
+        Def {
+            name: "KM1".into(),
+            params: vec![],
+            body: Expr::Union(vec![
+                Expr::Type(Type::atom("mb")),
+                Expr::Atom("mm".into(), vec![Expr::Ref(0, vec![])]),
+            ]),
+        },
+    ])
+    .expect("a group")
+    .instance(vec![])
+    .remove(0);
+    let tl = Group::new(vec![Def {
+        name: "KT".into(),
+        params: vec![],
+        body: Expr::Union(vec![
+            Expr::Type(Type::atom("stop")),
+            Expr::Tuple(vec![Expr::Type(Type::int()), Expr::Ref(0, vec![])]),
+        ]),
+    }])
+    .expect("a group")
+    .instance(vec![])
+    .remove(0);
+    let tn = Group::new(vec![Def {
+        name: "KN".into(),
+        params: vec![],
+        body: Expr::Tuple(vec![
+            Expr::Type(Type::int()),
+            Expr::Union(vec![Expr::Type(Type::atom("stop")), Expr::Ref(0, vec![])]),
+        ]),
+    }])
+    .expect("a group")
+    .instance(vec![])
+    .remove(0);
+    let in_a_message = |t: &Type| {
+        let _on = collect();
+        let mut root = t.surface().root;
+        let defs = lift(&mut [&mut root], &|_| false);
+        (root, defs)
+    };
+    let def = |name: &str, body: &str| (name.to_string(), body.to_string());
+    // `#ml(KM1)` waits on `KM0`, and `KM1`'s union, named by count, waits too: it is written
+    // where it stands, inside `KM0`'s body.
+    assert_eq!(
+        in_a_message(&mutual),
+        (
+            "Part2".to_string(),
+            vec![
+                def("Part1", "#mb | #mm(Part2)"),
+                def("Part2", "#ma | #ml(Part1)")
+            ]
+        )
+    );
+    // The tuple `(int, KT)` waits on `KT` and is not named: written in `KT`'s body.
+    let one = in_a_message(&tl);
+    assert_eq!(
+        one,
+        (
+            "Part1".to_string(),
+            vec![def("Part1", "(int, Part1) | #stop")]
+        )
+    );
+    // The same inside a tuple: the tuple holding the cycle is placed after it.
+    assert_eq!(
+        in_a_message(&Type::tuple(vec![lit(1), tl.clone()])),
+        ("(1, Part1)".to_string(), one.1)
+    );
+    // `KN`'s node is one name, the tuple's: an alias of it, given the tuple's reference.
+    assert_eq!(
+        in_a_message(&tn),
+        (
+            "Part2".to_string(),
+            vec![def("Part1", "Part2 | #stop"), def("Part2", "(int, Part1)")]
+        )
+    );
+}
+
+/// `Printer::meet_of_literals` walks an `&` whose operands share a part: `x & (m & x)`, with
+/// `x` an exclusive or and `m` a meet of two morphism literals, is kept as that form. When the
+/// digests put `m & x` on top of the stack, `x` is pushed twice and popped the second time
+/// decided; otherwise `x` is decided first and not pushed again. Either way the meet `m` is
+/// folded to one arrow. The order follows the digests, which differ between builds, so the
+/// test runs over many `x` (TEST-kernel-unreached-paths-4, kernel13).
+#[test]
+fn a_meet_whose_operands_share_a_part_folds_the_meet_in_it() {
+    let (int, b, never) = (Type::int(), Type::bool(), Type::empty());
+    let ar = |l: Type, u: Type, v: Type| Type::morphism(l, u, v);
+    let any = |v: Type| Type::morphism(Type::empty(), Type::top(), v);
+    let m = &ar(never.clone(), int, lit(1)) & &ar(never, b, lit(1));
+    let x = |p: &Type, q: &Type| &(p - q) | &(q - p);
+    for k in 2..40 {
+        let xk = x(&any(lit(k)), &any(lit(k + 1)));
+        let text = (&xk & &(&m & &xk)).surface().to_string();
+        assert!(text.contains("(Never ->? 1)"), "{k}: {text}");
+    }
+}

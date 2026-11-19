@@ -841,3 +841,95 @@ The other 102 lines are outside the row's list and were not examined in this rou
 `surface_operand`, 53-55), `empty/sweep.rs` 27, `empty/shared.rs` 13, `empty/names.rs` 3,
 `empty/refused.rs` 3 (guards: 198, 341, 456), `bdd/list/treap.rs`, `bucket.rs`,
 `print/uses.rs` 1 each (guards).
+
+Tenth round (kernel13, 2026-11-19): the ninth round's 46 open lines, line numbers at 23b16794b.
+
+Closed by a test, each with a control run that the new test fails while the others pass:
+
+- `bdd.rs` `choose`, the rule for two choices on one condition (1491, 1495, 1503):
+  `a_choice_whose_meets_choose_on_one_condition_with_equal_unions_is_that_union` (the arms
+  `c == d` and opposite conditions) and `a_choice_whose_meets_choose_on_two_conditions_keeps_their_union`
+  (the arm `None`, an input found by a random search over the connectives and reduced by hand;
+  the test checks the complement's values on all 64 sets of the atoms).
+- `print.rs` `meet_of_literals`, an operand already met (1005):
+  `a_meet_whose_operands_share_a_part_folds_the_meet_in_it` (`x & (m & x)`, over 38 `x`, since
+  the digests decide which order the walk takes). The same test reaches the push of an operand
+  not met (1022).
+- `print.rs` `collect` (1940, 1946, 1952-1955, 1957, 1960-1962, 1972):
+  `a_message_collects_the_definitions_of_a_cycle`, on four messages: a mutual pair
+  `KM0 = #ma | #ml(KM1)`, `KM1 = #mb | #mm(KM0)`; `KT = #stop | (int, KT)` alone and inside a
+  tuple; and `KN = (int, #stop | KN)`. Controls, each failing the test: an unmarked tuple not
+  skipped (1946); a counted node that waits keeping its mark (1953); aliases not given the
+  reference (1940); waiting bodies filled with nothing (1972).
+- `rec/unfold.rs` `rope_with`, a parameter written as its argument (453):
+  `a_part_s_name_writes_each_parameter_as_its_argument` (`pp(x, y) = (#pa, x, y | pp(x, y))` at
+  `int, bool`, part named `bool | pp(int, bool)`). Control: `args[0]` for `args[*i]`; it needs
+  the two parameters, since with one the control is the same code.
+- `empty/escape.rs` `node`, a row tail outside the class of the first list (455, 526):
+  `node_tests::a_tail_that_links_by_another_atom_is_outside_the_class` and
+  `a_tail_that_ends_at_another_stop_is_outside_the_class`. Each asserts that `decide` gives no
+  answer and that the type is inhabited. The control used was a panic in each arm, which shows
+  the arm is reached; the first control tried, the arm falling through, did not fail the tests,
+  since a later check refuses the same rows. So these tests show the arms are reached and the
+  answers right, but not that the arms are needed for the answer.
+- `rec/group.rs` 133, a node numbering probing past a tied hash of another shape: reached in
+  the short build (1382 times in the kernel's unit tests, by a probe). Control: the tie taken as
+  the same node; it fails
+  `l01_37a_short_addresses::collide::an_emptiness_search_tells_apart_groups_whose_forms_tie` in
+  the short build, while the kernel's own short-build tests pass.
+
+Closed by a proof at the site:
+
+- `bdd.rs` `choose`, two leaves (1443, 1444, and the guard 1442): the three arms are removed. Both `false` is `x == y`,
+  answered first; `x` true with `y` false gives the parts `c` and `false`, and the reverse gives
+  `false` and `!c`, which `Part::union_as_kept` joins by `Part::zip_at_once` first, giving the
+  operand other than the leaf `false`: what the arms returned. The proof is of equal results,
+  so it does not need the withdrawn claim that no non-leaf part stands for a constant.
+- `rec/group.rs` 567 (`instance`, the instance made meanwhile): only the maker thread inserts
+  into its own table, and between its two locks it runs only `eval`, and no product code of the
+  crate calls `instance`; so `Some(first)` is not reached. The comment there said another thread
+  may have made the instance meanwhile, which was wrong (each thread has its own table); it is
+  corrected.
+- `hash.rs` 9: under the short build, `SHORT` is `cfg!(feature = "short-addresses")`, so every
+  call of `mix` takes this line; every short-build test reaches it. The coverage run did not
+  measure the short build.
+
+Re-examined, standing: `empty/escape.rs` 150 and 1082 (the ninth round's weakest proofs). For 150,
+every write of a `Parts`'s `ints` in the crate was read; for 1082, each exit of the loops before
+it. Each proof comment now says what was checked.
+
+Reached, with no control: `rec/group.rs` 205-206 (`Group::new` keeping the groups it looked at
+until the lock is released): 8540 times in the short build's kernel tests (probe). The line
+exists so that no group is dropped under the lock, which would take the lock again; no test
+makes the group looked at the last handle while the lock is held, which needs two threads.
+
+Open, with the reason:
+
+- `print.rs` `collect`, the arm `(false, false)` (1964): a node named but not counted whose body
+  waits on nothing and is no alias and no tuple. Not reached by the four messages above, nor by
+  four messages that print a tuple again in a later type (taken from the earlier print). A
+  counted node is any but a tuple, a recursive type, a token and a part taken from an earlier
+  print, so the arm needs a forced recursive node, or a forced token, whose text is not one
+  reference; no such node was found, and no proof was found that none exists.
+- `rec/group.rs` 566, 569, 570 (a dead handle in the table): another thread dropped the last handle of
+  this thread's instance and has not yet removed the entry; 805; 820 (a poisoned `GROUPS`: a
+  panic under it needs a panic in `Def` equality, which compares types through `Type::cmp`, and
+  that the whole order never panics is not proved); `rec/unfold.rs` 78 (thread teardown), 137
+  and 170 (two threads making one member or node). Each needs two threads racing, or a thread's
+  end, at a chosen moment; no test does this.
+- `empty/escape.rs` 1127, 1350-1351, 1442-1443, 2112-2113: no input was built (as in the ninth
+  round).
+- `empty/refused.rs` 130, 146, 469, 500, 510: as in the eighth round.
+
+Found, not fixed: one recursive type written by two types of one message is defined twice, once
+per type (`Part1` and `(Part2, Part2)`, with `Part1 = (int, Part1) | #stop` and
+`Part2 = (int, Part2) | #stop`). A cycle's places are merged with none (`defs::reserve`), and
+`Printer::remember` keeps no part holding a recursive node. Row FAIL-print-cycle-defined-twice,
+test in /home/luke/Work/wt/failing-tests/FAIL-print-cycle-defined-twice.rs.
+
+Counts: the ninth round's open list, line by line from the list file, has 47 lines, not 46
+(`collect` lists 12 lines, `escape.rs` 9). Closed by a test 20 (bdd 3, print 1005 and 1022,
+`collect` 11, unfold 453, escape 455 and 526, group 133); closed by a proof 4 (bdd 1443 and 1444,
+group 567, hash 9); reached without a control 2 (group 205-206); open 21 (print 1964; group 566,
+569, 570, 805, 820; unfold 78, 137, 170; escape 7; refused 5). The 102 lines outside the row's
+functions were not examined in this round either; they stay in this row.

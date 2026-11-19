@@ -695,6 +695,65 @@ fn choices_whose_branches_join_to_opposite_exclusive_ors_are_one() {
     assert_eq!(joined.id(), all.not().id());
 }
 
+/// The values of `p` on the 64 sets of the atoms 0 to 5.
+fn values(p: &Part<Row>) -> Vec<bool> {
+    (0..64u32)
+        .map(|set| p.eval(&|t: &Row| (0..6).any(|i| set & (1 << i) != 0 && *t == atom(i))))
+        .collect()
+}
+
+/// `k&x | !k&y` with `k`, `x` and `y` choices on one condition `c`: `Connect::choose` meets `k`
+/// with `x` and `!k` with `y`, each meet a choice on `c` again, and joins the two by the rule for
+/// two choices on one condition. Here the union of the branches on each side of `c` is `l1`, so
+/// the choice is `l1`. With `k = c&!l2 | !c&l3` the two meets choose on `c` as kept (the arm
+/// `c == d` of `choose`, not reached by any other test, TEST-kernel-unreached-paths-4); with
+/// `k = c&l2 | !c&l3` one meet chooses on `c` and the other on `!c` (the arm of opposite
+/// conditions).
+#[test]
+fn a_choice_whose_meets_choose_on_one_condition_with_equal_unions_is_that_union() {
+    let l: Vec<Part<Row>> = (0..4).map(|i| Part::literal(atom(i))).collect();
+    let pick = |c: &Part<Row>, x: &Part<Row>, y: &Part<Row>| {
+        c.zip(x, Op::And).zip(&c.not().zip(y, Op::And), Op::Or)
+    };
+    let (c, l1, l2, l3) = (&l[0], &l[1], &l[2], &l[3]);
+    let x = pick(c, l1, &l1.zip(l3, Op::And));
+    let y = pick(c, l1, &l1.zip(&l3.not(), Op::And));
+    for k in [pick(c, &l2.not(), l3), pick(c, l2, l3)] {
+        let joined = Part::connect(Op::And, k.clone(), x.clone())
+            .zip(&Part::connect(Op::And, k.not(), y.clone()), Op::Or);
+        assert_eq!(joined, *l1, "{k:?}");
+    }
+}
+
+/// The rule for two choices on one condition of `Connect::choose`, met with two choices on two
+/// conditions that are neither equal nor complements (the arm `None`, not reached by any other
+/// test, TEST-kernel-unreached-paths-4): the union is kept as an expression, and it holds the
+/// assignments of `k&x | !k&y`. The input, the complement of a choice of choices, was found by a
+/// random search over the connectives and reduced by hand.
+#[test]
+fn a_choice_whose_meets_choose_on_two_conditions_keeps_their_union() {
+    let l: Vec<Part<Row>> = (0..6).map(|i| Part::literal(atom(i))).collect();
+    let pick = |c: &Part<Row>, x: &Part<Row>, y: &Part<Row>| {
+        c.zip(x, Op::And).zip(&c.not().zip(y, Op::And), Op::Or)
+    };
+    let kept = |c: &Part<Row>, x: &Part<Row>, y: &Part<Row>| {
+        Part::connect(
+            Op::Or,
+            Part::connect(Op::And, c.clone(), x.clone()),
+            Part::connect(Op::And, c.not(), y.clone()),
+        )
+    };
+    let (l1, l3, l4, l5) = (&l[1], &l[3], &l[4], &l[5]);
+    let inner = pick(l4, &l1.not(), l3);
+    let outer = pick(l3, &inner, l5);
+    let both = kept(l4, &outer, &outer);
+    let p = kept(&outer, &inner, &both);
+    let complement = p.not();
+    let want: Vec<bool> = values(&p).into_iter().map(|v| !v).collect();
+    assert_eq!(values(&complement), want);
+    assert!(complement.is_leaf().is_none());
+}
+
 /// An exclusive or built from two others holds its complement, so taking the complement next
 /// costs a lookup, not a frame of `Connect` and a node made again. `xor_of` made the exclusive or
 /// with the other constant and returned its complement, dropping the node that held that

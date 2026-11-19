@@ -560,7 +560,15 @@ impl Group {
             let t = eval(&self.0.bodies[i], &env);
             *env.cell(i) = Some(t);
         }
-        // Another thread may have made the instance meanwhile: the first kept is the one.
+        // Only this thread inserts into its own table (`made_by`); another thread only removes
+        // from it, when it drops the last handle of one of this thread's instances. So the entry
+        // is either vacant or holds a dead handle: one whose instance another thread dropped
+        // last, before or while this one ran (`Drop for Env` removes it under this lock, so a
+        // dead handle is found only in the time between). The arm `Some(first)` is not reached
+        // (kernel13, TEST-kernel-unreached-paths-4): between the two locks this thread runs only
+        // `eval`, and no product code of the crate calls `instance` (every call is in a test),
+        // so nothing of this group at these arguments is made meanwhile. It stays, so that the
+        // first instance kept is the one should `eval` ever make instances.
         let mut table = lock();
         let kept = match table.entry(made_by).or_default().entry(key) {
             Entry::Occupied(mut o) => match o.get().upgrade() {

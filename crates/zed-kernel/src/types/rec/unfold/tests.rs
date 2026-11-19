@@ -133,6 +133,36 @@ fn a_part_s_name_is_unchanged_when_the_names_inside_it_are_shared() {
     }
 }
 
+/// Item TEST-kernel-unreached-paths-4 (kernel13): a part's name is written at the instance's
+/// arguments, so a parameter in it is written as its argument (`Show::rope_with`, the
+/// `Shape::Param` arm with arguments): the part `y | pp(x, y)` of
+/// `pp(x, y) = (#pa, x, y | pp(x, y))` at `x = int`, `y = bool` is named
+/// `bool | pp(int, bool)`, each parameter written as its own argument.
+#[test]
+fn a_part_s_name_writes_each_parameter_as_its_argument() {
+    let (x, y) = (|| Expr::Param(0), || Expr::Param(1));
+    let a = Expr::Type(Type::atom("pa"));
+    let def = Def {
+        name: "pp".into(),
+        params: vec!["x".into(), "y".into()],
+        body: Expr::Tuple(vec![
+            a,
+            x(),
+            Expr::Union(vec![y(), Expr::Ref(0, vec![x(), y()])]),
+        ]),
+    };
+    let t = Group::new(vec![def])
+        .expect("accepted")
+        .instance(vec![Type::int(), Type::bool()])
+        .remove(0);
+    let env = env_of(&t);
+    let ps = parts(&env);
+    assert_eq!(ps.len(), 1);
+    let name: String = component(ps[0], &env).rope().strs().collect();
+    assert_eq!(name, "bool | pp(int, bool)");
+    assert_eq!(name, spelled(ps[0], &env));
+}
+
 #[test]
 fn a_nest_of_parts_prints_as_it_did_before_names_were_shared() {
     // The printer ranks the recursive types it defines by their names (`Tok::Rec`), so a

@@ -151,7 +151,11 @@ impl Ints {
                 // made by `Type::lit` of an integer, `Type::ints_of` (which asserts it) and the
                 // universe (cofinite, no values), and changed only by `Lits::zip` and
                 // `Lits::not` with other integer sets, which keep values from their operands
-                // (TEST-kernel-unreached-paths-4, kernel12).
+                // (TEST-kernel-unreached-paths-4, kernel12). Checked again by kernel13 over every
+                // write of a `Parts`'s `ints` in the crate: besides those, `Parts::join_literals`
+                // inserts the values of another type's `ints`, and `Type::split`
+                // (`types/empty.rs`) and the clones `q.ints = p.ints.clone()` copy one type's
+                // `ints` whole; none moves a value between the kinds of literal.
                 _ => unreachable!("a value in a type's integers that is no integer"),
             }
         }
@@ -1086,7 +1090,12 @@ fn decide_counted(t: &Type, counts: &mut (usize, usize)) -> Option<ChainPlan> {
             // Every clause here has two atoms or more: the fixed point above ends only when it
             // finds no clause of one atom (`narrowed_places` empty), the strengthening only
             // cuts clauses to two, and an empty clause returns before (TEST-kernel-unreached-
-            // paths-4, kernel12).
+            // paths-4, kernel12). Checked again by kernel13 step by step: an empty clause read
+            // from a row returns at `clauses_work.iter().any(Vec::is_empty)`; a merged clause
+            // holds `(jf, af)` and maybe one atom more; a clause that narrowing empties returns
+            // at `updated.is_empty()`; the inner loop breaks only on a pass with nothing changed
+            // and no unit clause, the units counted after that pass's merges; and the outer
+            // loop breaks only right after such an inner loop.
             if atoms.len() < 2 {
                 unreachable!("a clause of fewer than two atoms after the fixed point")
             }
@@ -2356,5 +2365,71 @@ mod windows_tests {
                 );
             }
         }
+    }
+}
+
+/// `Nodes::node` refuses a row tail outside the class of the first list it read
+/// (TEST-kernel-unreached-paths-4).
+#[cfg(test)]
+mod node_tests {
+    use super::*;
+
+    /// The list `L = #stop | #link((int, L))`.
+    fn list(stop: &str, link: &str) -> Type {
+        use super::super::super::rec::{Def, Expr, Group};
+        let body = Expr::Union(vec![
+            Expr::Type(Type::atom(stop)),
+            Expr::Atom(
+                link.into(),
+                vec![Expr::Type(Type::int()), Expr::Ref(0, vec![])],
+            ),
+        ]);
+        (Group::new(vec![Def {
+            name: "L".into(),
+            params: vec![],
+            body,
+        }]))
+        .expect("a group")
+        .instance(vec![])
+        .remove(0)
+    }
+
+    /// `#cons((int, l) - (int, m))`, with the payload's rows as `decide` reads them: `(int, l)`
+    /// taken and `(int, m)` refused.
+    fn cons_minus(l: &Type, m: &Type) -> Type {
+        let pair = |r: &Type| Type::tuple(vec![Type::int(), r.clone()]);
+        let t = Type::atom_with("cons", &(&pair(l) - &pair(m)));
+        let f = t.p().atoms.names()[&std::sync::Arc::<str>::from("cons")]
+            .payload
+            .p()
+            .tuples
+            .lens
+            .get(&2)
+            .expect("pairs")
+            .clone();
+        let (taken, refused) = f.forced();
+        assert_eq!((taken.len(), refused.len()), (1, 1), "{t:?}");
+        t
+    }
+
+    /// A refused tail `M = #nil | #other((int, M))` links by another atom than the taken tail
+    /// `L = #nil | #cons((int, L))`. `M` is no list of `L`'s class, and its carrier has `L`'s
+    /// head; read as one, the refused row would cover the taken one and give `Empty`, though
+    /// `#cons((1, #cons((2, #nil))))` is a value: its tail is in `L` and not in `M`.
+    #[test]
+    fn a_tail_that_links_by_another_atom_is_outside_the_class() {
+        let t = cons_minus(&list("nil", "cons"), &list("nil", "other"));
+        assert!(decide(&t).is_none());
+        assert!(!t.is_empty());
+    }
+
+    /// A refused tail `#end` ends at another stop than the taken tail `#nil`. Read as one stop,
+    /// the refused row would cover the taken one and give `Empty`, though `#cons((1, #nil))` is
+    /// a value.
+    #[test]
+    fn a_tail_that_ends_at_another_stop_is_outside_the_class() {
+        let t = cons_minus(&Type::atom("nil"), &Type::atom("end"));
+        assert!(decide(&t).is_none());
+        assert!(!t.is_empty());
     }
 }

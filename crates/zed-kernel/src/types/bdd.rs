@@ -1437,17 +1437,16 @@ impl<'m> Connect<'m> {
         }
         let (c, same) = self.condition(c).await;
         let (x, y) = if same { (x, y) } else { (y, x) };
-        match (x.is_leaf(), y.is_leaf()) {
-            // Two `false` branches are equal, answered by the first test of this function.
-            (Some(false), Some(false)) => unreachable!("`x == y` was answered first"),
-            (Some(true), Some(false)) => return c,
-            (Some(false), Some(true)) => return self.not(&c).await,
-            _ => {}
-        }
         // The two parts whose union the choice is: `c | y` when `x` is `true`, since
         // `c | !c&y` is `c | y`, and `x | !c` when `y` is; otherwise the meets `c&x` and
         // `!c&y`. A branch `false` needs no arm: its meet is `false`, which the first rule of
         // `Part::union_as_kept` drops (cross-review of xor-shape, round 3, Gemini Q2).
+        // Two leaves need no arm either (TEST-kernel-unreached-paths-4, kernel13: the arms were
+        // removed, as no test reached them and the proof that no input does was withdrawn). Both
+        // `false` is `x == y`, answered first. `x` true and `y` false gives the parts `c` and
+        // `false`, and `x` false and `y` true gives `false` and `!c`; in either order
+        // `Part::union_as_kept` calls `Part::zip_at_once` first, which under `Or` gives the
+        // operand other than the leaf `false`: `c`, or `!c`, the parts the arms returned.
         let parts = match (x.is_leaf(), y.is_leaf()) {
             (Some(true), _) => [c.clone(), y.clone()],
             (_, Some(true)) => [x.clone(), self.not(&c).await],
@@ -1486,6 +1485,9 @@ impl<'m> Connect<'m> {
         }
         // `c&u | !c&v` and `c&s | !c&t` are `c&(u|s) | !c&(v|t)`, which is `u|s` when the two
         // unions are equal.
+        // Each arm is reached by a test: `c == d` and the opposite condition by
+        // `bdd::tests::a_choice_whose_meets_choose_on_one_condition_with_equal_unions_is_that_union`,
+        // two other conditions by `a_choice_whose_meets_choose_on_two_conditions_keeps_their_union`.
         if let (Some((c, u, v)), Some((d, s, t))) = (a.choice_as_kept(), b.choice_as_kept()) {
             let same = if c == d {
                 Some((s, t))
