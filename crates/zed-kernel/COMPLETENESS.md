@@ -1043,3 +1043,107 @@ Counts: 401 lines (101 outside `empty.rs`, 300 in it). Closed by a test 30, by a
 site 40 (2 new, 38 standing guards read), not run or test-only code 17, open 314 (59 outside
 `empty.rs`, 255 in it, 7288 and 7299 among them). They go to the row
 TEST-kernel-unreached-paths-6.
+
+Thirteenth round (kernel16, 2026-11-19), row TEST-kernel-unreached-paths-6: the 314 lines the
+twelfth round left open (list file at d9e847e11). Coverage was measured at e45cfd5b1 with
+llvm-cov over the same eight test groups as the twelfth round (1297 pieces), and again with
+`--each-test` for `l01_23_groups_and_refusals::group_oracle`, `refusals` and
+`sweep_agreement` (262 pieces, 0 failed). This time `group_oracle` is in the measurement: as one
+piece it ran past its time limit under coverage, but each of its tests ran as its own piece.
+The zed-kernel shared object (`build/cov/debug/libzed_kernel.so`) is one of the objects read,
+since the integration tests run the kernel's code from it. Each line was carried from
+d9e847e11 through the hunks of `git diff -U0`, and its text was checked; all 314 texts match.
+Profiles: `wt/coverage/kernel16-base` (at f1b7578b5, before this round's tests) and
+`wt/coverage/kernel16-final` (at e45cfd5b1).
+
+The twelfth round's list is not a full scan of the lines that count 0. It is a set carried
+forward from earlier rounds. A full scan of `types/` at e45cfd5b1 finds 1354 lines that count
+0. Of these, 606 lie outside test and bench files: 480 in `empty.rs` and 126 elsewhere. Many of
+them are `unreachable!` guards. This round's scope is the 314 carried lines.
+
+Line numbers are at d9e847e11, then (→) at e45cfd5b1 where the line has moved.
+
+| Line | Closed by | Test or site | Control |
+|---|---|---|---|
+| `empty/shared.rs` 53, 76, 77, 81, 85, 97, 98 (→ 82-127), the `Tied::Many` arms of `ByType` | test | `ByType` gained a test-only digest mask (`with_mask`). The test `a_map_by_type_whose_digests_are_forced_to_tie_agrees_with_an_ordered_map` runs masks 0 and 0xF, so every digest ties. It checks `ByType` against a `BTreeMap` through insert, get, get_mut, remove and retain, and checks that a retain keeping nothing leaves the map empty | each fails only this test: `remove`'s `Many` arm, its `_ => None` arm, `get_mut`'s `Many` arm made `None`, and `retain`'s arm made `true` |
+| `empty/names.rs` 246 | test | `the_lowest_common_ancestor_by_doubling_agrees_with_the_walk_up_the_parents`. The tree has 200 nodes, and every pair is checked against the walk up the parents | dropping `(a, c) = (x, y)` fails it |
+| `empty/names.rs` 316, 353 | test | `a_union_of_one_arm_with_no_two_nodes_alike_gives_the_contracted_copy`, on the system `Or[1,2], Top, Or[1,3], Bot, Or[1,1]`. It expects `to == [0,1,2,3,1]` and `union == [true,false,true,false]`. `group_oracle` also reaches both lines | `None => return None` fails it; so does `continue` made `unreachable!` |
+| `empty.rs` 7288 (→ 7419), the `return None` for a cell that cuts a second piece in `Searching::pieces_one_at_a_time` | test | `nested_cover::a_cell_that_cuts_two_pieces_stops_the_cut_one_cell_at_a_time`, on `((0 \| 1, 1) \| (2 \| 3, 2) \| (1 \| 2, 3)) \ (0 \| 3, 1 \| 2 \| 3)`. Under `with_pieces_compared` it gives the plain verdict, Inhabited. A comment at the site gives the reason the return gives the crossing check's verdict. No two pieces are held by the same cells, so a cell that one cut piece holds and the other does not is in `met ∩ outside` and not in `every`. A control that drops the line therefore cannot fail any test | the line made a panic fails the test |
+| `empty.rs` 3124, 3128 (→ 3144, 3148), `Search::refusal_rank` for `Residues` and `NoWitness` | test | `the_refusals_a_search_gives_up_on_are_ranked_in_a_fixed_order`: every kind in one strict order | `Residues` ranked 7 fails it ("Residues before SharedCells(0)"); so does `NoWitness` ranked 0 ("MorphismSplit before NoWitness") |
+| `empty.rs` 2984, `Search::give_up`'s arm `(Some(_), _) if self.open_forks && self.is_group => {}` | proof, removed | The function returns at its top when `self.open_forks && self.blame.is_some()` (since 5d72f0689), so the arm could not match. It is removed, with the reason at the site. No behavior changes | none |
+| `empty/sweep.rs` 1753, 1773, `check_list_value`: a type not read as a list, and a value that is not an atom | test | `r4_checker_tests::actual_products_and_lists_reject_bad_values`: `check_actual(&Type::int(), &Value::Int(7))` and `check_actual(&one, &Value::Int(7))` are false | each `return false` made `return true` fails the test |
+| `empty/sweep.rs` 1776, an atom value with named fields | test | the same test: `#cons(head: 7, tail: #nil)`, made by `Value::atom_named`, is refused by the list `#cons(int, #nil)` | `return false` made `return true` fails the test |
+| `empty/sweep.rs` 1767, `sw.c` empty after `shape` | proof | `expect` with the proof at the site. `shape` gives a clause only in the branch that first sets `c` to the payload's name (`get_or_insert_with`), and the `let` above requires the clause | none |
+
+Reached by tests already in the tree, with no new test or control this round: 30 lines.
+`group_oracle`, which the twelfth round did not measure, reaches most of them, and both runs
+of this round reach all of them:
+- `empty.rs` 2802, 3163, 4867;
+- `tuples_on`'s fork restores 6162, 6165, 6177, 6399;
+- 7299, the crossing check's `return None` in `pieces_one_at_a_time`;
+- `find_rep` 9912-9914;
+- the morphism restores 11550, 11553-11556, 11558, 11565, 11567, 11573-11575, 11577-11579 and
+  11582;
+- 13143 and 14930;
+- `empty/sweep.rs` 1470 and 1471.
+
+The twelfth round's least sure claim was that kernel15's new test might reach 7288 and 7299.
+It was half right: 7299 is reached (17 times in the final run), and 7288 was not reached until
+this round's test.
+
+Reached in only one of this round's two runs, because the tests that reach them draw a new
+random seed on each run (`Rng::fresh`):
+- 12778 (→ 12932) was reached at e45cfd5b1 and not at the base.
+- 406, 408, 4285, 10637, 10643, 12271 and 12672 (→ 411, 413, 4380, 10768, 10774, 12425, 12826)
+  were reached at the base and not at e45cfd5b1.
+
+The base reached 411 five times. Splitting the base profiles by test shows that one test
+reached it, `group_oracle::meets_agree_across_orders`. That test's profile at e45cfd5b1 shows 0
+for the line, and the function the line is in did not change. 12778 counts as reached here. The
+other seven are still open: no test reaches them on every run.
+
+Open, 265 lines, numbered at 6bdc19ada, each with its text, in
+`wt/coverage/TEST-kernel-unreached-paths-6-kernel16-6bdc19ada.txt`:
+- `empty.rs` (222), by enclosing function:
+  - `check_chain_witness`: 44 lines, 9367-10006.
+  - `find_prefix_chains`: 31 lines, 8118-9270.
+  - `tuples_on` (its fork restores): 22 lines, 6253-6613.
+  - `find_rep`: 13 lines, 10591-10816, among them 10768-10774, the `no_keys` calls.
+  - 11 lines, 5085 and 5137-5147: the list fallback after `chain_rep` fails, inside
+    `decided`.
+  - `chain_rep`: 8 lines, 9279-9325.
+  - `morphisms` (its fork restores): 6 lines, 11648-11751.
+  - `Side::mentions`: 5 lines, 12775-12780.
+  - `step`: 4 lines, 14706-14786.
+  - Three lines each in `rep`, `leaf`, `group_verdicts` (411-413), `empty_by_classes`,
+    `cycle_meet` and `any_empty`.
+  - One or two lines each in 45 more functions: 117, 125, 522, 526, 636, 818, 928, 941, 1843,
+    2043, 2217, 2242, 3068, 3117, 3130, 3214, 3313, 3746, 3843, 4168, 4380, 5004, 5023, 5246,
+    5358, 5439, 5442, 5618, 5623, 6115, 6170, 6706, 6742, 7010, 7103, 7160,
+    7241, 7828, 7829, 7880, 10053, 10377, 12045, 12066, 12151, 12152, 12215, 12425, 12491,
+    12662, 12826, 12904, 12926, 13468, 13522, 13801, 14044, 17333, 17334, 17529.
+  - The twelfth round labeled 9663-9922 (at d9e847e11; 9794-10053 here) "the walk over
+    `no_keys` in `find_rep`". That label is wrong: these lines lie in `check_chain_witness`,
+    where they are the walk over the chain's items and their memo tables. The enclosing
+    functions above were found from the `fn` lines before each line.
+- `bdd.rs` (6): 715, 792, 832, 1320, 1333, 3877.
+- `empty/sweep.rs` (20): 746, 857, 867, 1002, 1118, 1150, 1156, 1167, 1168, 1234, 1286, 1287,
+  1348, 1588, 1595, 1840, 1937, 1991, 2069, 2136.
+- `print.rs` (17): 734, 1072, 1559, 1560, 1573, 1622, 1623, 1628, 1629, 1659, 1665-1667, 1794,
+  2038, 2117, 2132.
+
+Notes for the next round:
+- `Side::mentions` runs only from `Choices::rest_choice`, when `Choices::meet` picks for a
+  shared component the point `None`, a value in a cell neither operand mentions, and the
+  component has no value outside its open cells (`other` false). Reaching it needs a tuple part
+  `(A & B) | C` whose `C` mentions the third cell of a component that is all cells. The value
+  search (`one_pass_row`) must reach that part after `row_rep` and `two_sat` fail.
+- `print.rs` 1559-1560 run whenever `merged[k]` is ever true. So no test makes a meet merge that
+  has a following block of one atom.
+- `empty/sweep.rs` 1753-1776 are refusal branches of the independent checker. Only direct calls
+  reach them, since the sweep hands the checker only values it built.
+
+Counts: 314 lines. Closed by a test with a control 16, by a proof 2 (one arm removed, one
+`expect`). Reached by existing tests in both runs 30, and in one run only 1 (12778). Open 265,
+seven of them reached in the base run by a random draw. Rows: the 265 open lines go to the row
+TEST-kernel-unreached-paths-7.
