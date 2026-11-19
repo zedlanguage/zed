@@ -1819,8 +1819,15 @@ mod atoms {
     /// monotonic addition chain (`O(1)` nodes per addition, so `n` prefix unions create `n`
     /// shared nodes instead of `O(n log n)` AVL path-copy nodes, keeping DAG walks `O(n)` at
     /// `8x` per `8n` instead of `n log_2 n`'s `11.4x`); any overwrite or removal drops
-    /// `payload_dag` to `None`, falling back to `payloads.root()` (`O(n log n)`). `bare_names`
-    /// counts the listed names that hold their bare atom, kept by [`Atoms::set`] in O(1).
+    /// `payload_dag` to `None`, falling back to `payloads.root()` (`O(n log n)`). `bare` is the
+    /// persistent set of the listed names that hold their bare atom, kept by [`Atoms::set`] in
+    /// O(log n).
+    // Complexity tradeoff: a count of the bare names (O(1) per `set`) says whether there is one
+    // but not which, so finding it scanned `names` in order: `#a_0((0,)) | ... | #a_i((0,)) |
+    // #z` read all i payload names before `#z` at every prefix, Θ(n²) over n prefixes
+    // (`front_bare_name_after_payload_prefixes_must_scale`, 14.0 times for 8 times n). Used: the
+    // set of bare names, O(log n) per `set` beside the O(log n) of `names` itself, so a bare name
+    // is read in O(log n) and all of them in O(b) for their b.
     #[derive(Clone, Debug)]
     pub(super) struct Atoms {
         name_sum: u64,
@@ -1831,7 +1838,7 @@ mod atoms {
         /// `Some(head)` when all payload entries were added monotonically with no overwrite or
         /// removal; `None` otherwise (fall back to `payloads.root()`).
         payload_dag: Option<Option<Arc<PayloadNode>>>,
-        bare_names: usize,
+        bare: OrdSet<Arc<str>>,
     }
 
     impl Default for Atoms {
@@ -1843,18 +1850,19 @@ mod atoms {
                 sum: 0,
                 payloads: PayloadTree::default(),
                 payload_dag: Some(None),
-                bare_names: 0,
+                bare: OrdSet::new(),
             }
         }
     }
 
     impl PartialEq for Atoms {
         fn eq(&self, other: &Self) -> bool {
-            // `payloads` and `payload_dag` are derived indexes of `names`, kept solely by `Atoms::set`.
+            // `payloads`, `payload_dag` and `bare` are derived indexes of `names`, kept solely by
+            // `Atoms::set`.
             self.cofinite == other.cofinite
                 && self.sum == other.sum
                 && self.name_sum == other.name_sum
-                && self.bare_names == other.bare_names
+                && self.bare.len() == other.bare.len()
                 && self.names == other.names
         }
     }
@@ -1923,9 +1931,14 @@ mod atoms {
             }
         }
 
-        /// How many listed names hold their bare atom.
+        /// How many listed names hold their bare atom, O(1).
         pub(super) fn bare_names(&self) -> usize {
-            self.bare_names
+            self.bare.len()
+        }
+
+        /// The listed names that hold their bare atom, in name order.
+        pub(super) fn bare(&self) -> &OrdSet<Arc<str>> {
+            &self.bare
         }
 
         /// The map of names, taken out to be freed in a loop when the node holding it is
@@ -1981,12 +1994,20 @@ mod atoms {
                 return;
             }
             let mut had_payload = false;
+            let mut was_bare = false;
             if let Some(old) = self.names.remove(name) {
                 let (primary, named) = Atoms::entries(name, &old);
                 self.sum = self.sum.wrapping_sub(primary);
                 self.name_sum = self.name_sum.wrapping_sub(named);
                 had_payload = !old.payload.lists_nothing();
-                self.bare_names -= usize::from(old.bare);
+                was_bare = old.bare;
+            }
+            // `bare` lists a name exactly when it is listed in `names` with its bare atom.
+            let is_bare = p.bare && p != default;
+            if was_bare && !is_bare {
+                self.bare.remove(name);
+            } else if is_bare && !was_bare {
+                self.bare.insert(name.clone());
             }
             if p != default {
                 let (primary, named) = Atoms::entries(name, &p);
@@ -2004,7 +2025,6 @@ mod atoms {
                     self.payloads.remove(name);
                     self.payload_dag = None;
                 }
-                self.bare_names += usize::from(p.bare);
                 self.names.insert(name.clone(), p);
             } else if had_payload {
                 self.payloads.remove(name);
@@ -5526,10 +5546,13 @@ impl Visit {
                     keys.extend(lits.values.iter().cloned());
                     listed &= !lits.cofinite;
                 }
-                // A name listed is an exception to the names not listed. When finite with zero
-                // bare names (`bare_names() == 0`), skip scanning `names()` (`O(1)` vs `O(n)`).
+                // A name listed is an exception to the names not listed. Finite, the exceptions
+                // are the bare names, read in name order from their index (`Atoms::bare`) in
+                // O(b), where a scan of `names()` read every name.
                 let atoms = &p.atoms;
-                if atoms.cofinite() || atoms.bare_names() > 0 {
+                if !atoms.cofinite() {
+                    keys.extend(atoms.bare().iter().map(|name| Value::atom(name)));
+                } else {
                     keys.extend(
                         atoms
                             .names()

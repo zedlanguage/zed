@@ -26,13 +26,34 @@ All paths are on this machine. Nothing below has been deleted.
 | test-group logs per run | /home/luke/Work/wt/refusal-front-xr/build/r9c-logs, r9c2-logs, r9d-logs, r9rb-logs, r9x-logs, r9x2-logs, r9x3-logs, r10c-logs, r10m-logs, r10r-logs, r11c-logs, r11m-logs, r11f-logs |
 | round 11 seat reports | review-record/r11/claude/R11_CLAUDE.md and .diff; review-record/r11/codex/R11_CODEX.md and .diff, with meas/ and sources/fetched/ |
 
-Test builders named below are in tests/steps/l01_23_subtyping/refusals.rs on the branch; the
-probe families are built by `rfx_case(name, n, tag)` in the same file. The probes `rfx_probe` and `r9_escape_probe`, run with `RFX=<name> RFX_N=16,64,256,1024`, are
-kept out of the tree until this step is done, in
-/home/luke/Work/wt/scratch/deferred-tests/REFUSAL-front-rest.rs (TESTS-defer-failing; no cfg switch
-may keep code from running): they call private helpers of refusals.rs, so they go back as a
-binary of zed-benches once `rfx_case` and its helpers move to `zed_tests::step_helpers`.
-`r9_wide_literal_probe` is the binary `r9_wide_literal` of zed-benches.
+Test builders named below are in tests/steps/l01_23_subtyping/refusals.rs on the branch (now
+tests/steps/l01_23_groups_and_refusals/refusals.rs); the probe families are built by
+`rfx_case(name, n, tag)` in the same file. `r9_wide_literal_probe` is the binary
+`r9_wide_literal` of zed-benches.
+
+## State after REFUSAL-front-rest (agent front1, 2026-11-19, from main 2eb9353cc)
+
+| item | on main before | now |
+|---|---|---|
+| U2 | fixed: `r10_answer_preservation_nine_node_list_regression` passes (Inhabited, witness `[0, 2]`; 1.060 at 8 and 64) | unchanged |
+| U3 | fixed: the two probes printed 21.8M and 11.6M units at 1024 (1.189G and 594M at the round-11 merge), 3.9 times per 4 times n | pinned: `bench::r11_tagged_payloads_must_scale` 7.994 and `r11_named_payloads_must_scale` 8.027 (16384 and 131072), replacing the two probes |
+| U4 | fixed: `r11_payload_name_prefixes_must_scale` 7.891 | a neighbor found and fixed: one bare name after n payload names, 14.05 times, now 7.852 (`front_bare_name_after_payload_prefixes_must_scale`; `Atoms::bare`, COMPLEXITY) |
+| U5 | open: 15.9 times from 512 to 4096 | fixed: `sweep::lits_ok` walked every listed integer once per head read; it reads the set's class union now (COMPLEXITY); 8.04 times, bench resized to 4096 and 32768, 8.143 |
+| U6 | open | open, not attempted in this run; what remains is in U6 below |
+| U7 | open | Mutant 2 argued at the code (comment above the narrowing in `find_prefix_chains`); the mutation run is in U7 below |
+
+The deferred file /home/luke/Work/wt/scratch/deferred-tests/REFUSAL-front-rest.rs is deleted.
+Its parts: the three tests of part (a) were on main already, identical, and pass;
+`r11_ternary_alignment_probe` (4096 alone took past 60 s with its membership check) is now the
+bench `r11_ternary_alignment_scales` (1024 and 8192, 8.146); the zed-kernel escape-cells bench
+of 6817c6740 and the probes `rfx_probe` and `r9_escape_probe` were dropped, not brought back.
+The escape bench timed `cells_sweep` (the Θ(n²) method `cells_windows` replaced, about 350
+lines) against `cells_windows` on dumps that no longer exist; the answers of `cells_windows`
+are checked against the definition by `escape::windows_tests::windows_agree_with_the_walk`
+(600 random forests) and its cost by the three `escape_cells_of_*` benches, so bringing it back
+would restore only dead code. The two probes printed work and asserted nothing; every family
+they printed can be measured by a `scaling::check` over `rfx_case`, as `escape_cells_scale`
+does.
 
 ## U1. X38: the escape's cell discovery reads super-linearly many empty cells
 
@@ -255,6 +276,15 @@ not stable), with every narrowing explained. Known narrowings: R10-C3 (U2), and 
 wrapper refusals that the item context turned into checked Inhabited answers. Codex R10 had a
 partial dump with three narrowings, all the X45 map rule (archive/r10/codex). Codex R9's dump
 of 19bc4e25 against cb709f13: 630,616 keys, 0 missing, 0 changed.
+
+What remains (front1, 2026-11-19; not attempted): the R9 tooling
+(review-record/r9/codex: dump-instrument.mjs, compare-dumps.mjs, replay-dump.mjs) keys each
+answer by the type's digest, which the canon-key change altered, so the two dumps share no
+keys. The certificate needs (1) a key both kernels compute alike, such as the printed type,
+(2) one corpus both kernels run: 19bc4e25 does not compile against today's tests (orch/r11x/
+notes.txt), so either its own test tree at 19bc4e25 is run on both kernels or a corpus of
+printed types is replayed, and (3) each changed answer explained. U2's narrowing no longer
+exists on main.
 
 ## U7. Case A proof and Mutant 2 (needs a second reader)
 

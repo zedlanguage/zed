@@ -7682,16 +7682,22 @@ fn r11_payload_name_prefixes(n: usize) -> Type {
     Type::tuple(fields)
 }
 
+/// The ternary-density alignment type at size `n` (side `m`, the square root of `n`), with its
+/// matrix `a` and side `m`.
+fn r11_ternary_type(n: usize, tag: &str) -> (Type, Vec<Vec<bool>>, usize) {
+    let m = n.isqrt().max(4);
+    let a: Vec<Vec<bool>> = (0..m)
+        .map(|i| (0..m).map(|q| i % 3 != 0 || q >= m - 2).collect())
+        .collect();
+    let b = vec![vec![true; m]; m];
+    assert!(r9_product_all_ones(&a, &b));
+    (r9_bmm(&a, &b, &format!("_r11ternary{n}{tag}")), a, m)
+}
+
 fn r11_ternary_alignment(sizes: &[usize]) {
     big(|| {
         for &n in sizes {
-            let m = n.isqrt().max(4);
-            let a: Vec<Vec<bool>> = (0..m)
-                .map(|i| (0..m).map(|q| i % 3 != 0 || q >= m - 2).collect())
-                .collect();
-            let b = vec![vec![true; m]; m];
-            assert!(r9_product_all_ones(&a, &b));
-            let t = r9_bmm(&a, &b, &format!("_r11ternary{n}"));
+            let (t, a, m) = r11_ternary_type(n, "");
             Type::forget_emptiness();
             let mut meter = scaling::Meter::new();
             let work = meter.work(|| assert_eq!(t.verdict(), Verdict::Inhabited));

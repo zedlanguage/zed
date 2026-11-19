@@ -136,6 +136,49 @@ fn atoms_combined_by_a_diff_agree_with_the_walk() {
     }
 }
 
+/// The index of bare names (`Atoms::bare`) lists exactly the names `names()` lists with their
+/// bare atom, after unions, meets, differences and complements of finite and cofinite sets,
+/// where a name gains, keeps or loses its bare atom, or is unlisted while bare in a cofinite
+/// set (REFUSAL-front-rest).
+#[test]
+fn the_index_of_bare_names_lists_exactly_the_bare_names() {
+    let atom = |i: usize| match i % 3 {
+        0 => Type::atom(&format!("a{i}")),
+        1 => Type::atom_with(&format!("a{i}"), &Type::tuple(vec![Type::int()])),
+        _ => Type::atom(&format!("a{i}")) | Type::atom_with(&format!("a{i}"), &Type::top()),
+    };
+    let check = |a: &Atoms| {
+        let scanned: Vec<Arc<str>> = (a.names().iter())
+            .filter(|(_, p)| p.bare)
+            .map(|(n, _)| n.clone())
+            .collect();
+        let indexed: Vec<Arc<str>> = a.bare().iter().cloned().collect();
+        assert_eq!(indexed, scanned);
+        assert_eq!(a.bare_names(), scanned.len());
+    };
+    let mut sets = vec![Type::empty(), Type::top()];
+    for (lo, hi, step) in [(0, 1, 1), (0, 9, 1), (2, 30, 1), (0, 40, 3), (1, 40, 2)] {
+        sets.push(Type::union_all((lo..hi).step_by(step).map(atom)));
+    }
+    // Bare atoms alone over the same names, so a difference takes a bare atom from a name that
+    // keeps its payload.
+    sets.push(Type::union_all(
+        (0..40).map(|i| Type::atom(&format!("a{i}"))),
+    ));
+    let complements: Vec<Type> = sets.iter().map(|t| !t).collect();
+    sets.extend(complements);
+    for a in &sets {
+        check(&a.p().atoms);
+        for b in &sets {
+            check(&(a | b).p().atoms);
+            check(&(a & b).p().atoms);
+            check(&(a - b).p().atoms);
+            check(&a.p().atoms.minus(&b.p().atoms));
+            check(&a.p().atoms.not());
+        }
+    }
+}
+
 /// `a - b`, which reads only the names one of the two lists (BENCH-if-chain-other-paths), is
 /// `a & !b`, which complements each name `b` lists: for finite and cofinite sets of every
 /// size order, sets sharing names whose parts differ (bare, payload or both), and types with

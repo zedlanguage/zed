@@ -9030,6 +9030,23 @@ impl<'m> Searching<'m> {
             // no partial stopping head and no deferred spine, replacing x this
             // way cannot destroy a solution. Staying partial tokens are dropped
             // only with step_loose, so this dominance is not asserted for them.
+            //
+            // Why `!step_loose` changes only precision, never a verdict (U7 of REFUSAL-front-
+            // unsolved; the Q4 argument of Codex R11, read again by front1). Drop `!step_loose`:
+            // the narrowing then also runs on a step already loose, and only `r0` differs. (1)
+            // `step_loose` stays true either way, so `had_loose` and `step_exact[step]` are the
+            // same after this step. (2) Every later step rebuilds `r0` from `carrier_head`; the
+            // `Empty` returns read `greedy_unsafe`, `optional_spine_choice`, `committed_count`,
+            // `spine_all_holes` and `had_loose`, none of which reads this `r0`; `try_kill`, the one
+            // reader of earlier `witness_heads`, runs only when `spine_u1` is `Some`, which the
+            // guard excludes and which is fixed before the loop. (3) Every later `Inhabited`
+            // return needs `!had_loose`, now false. (4) The return below at this step reads `r0`
+            // only as the witness: the narrowing needs `non_disjoint_stop_heads` empty, so it
+            // takes the branch that pushes `r0` (nonempty either way), and `chain_rep` checks
+            // that witness from scratch, falling back to the search when it fails. So the
+            // mutant can change the witness shown, or turn a checked answer into the search's,
+            // but it cannot add an `Empty`. The other two conjuncts carry the dominance argument
+            // above (Codex R11 Q4); this paragraph does not cover them.
             if !rem_cuts.is_empty() {
                 if !step_loose && non_disjoint_stop_heads.is_empty() && spine_u1.is_none() {
                     let mut r0_narrow = r0.clone();
@@ -10388,14 +10405,9 @@ impl<'m> Searching<'m> {
 
     async fn find_rep(&'m self, t: &Type) -> Option<usize> {
         // A bare atom is a value: the empty list of a list type.
-        if t.p().atoms.bare_names() > 0
-            && let Some(name) = t
-                .p()
-                .atoms
-                .names()
-                .iter()
-                .find_map(|(n, a)| a.bare.then_some(n))
-        {
+        // The least bare name, as a scan of `names` in order found it: O(log n) from the index
+        // of bare names (`Atoms::bare`), where the scan read every name before it.
+        if let Some(name) = t.p().atoms.bare().get_min() {
             return Some(self.s().show(Rep::Value(Value::atom(name))));
         }
         // A list of pure cycles with no stop in it: a list of it, kept as its length. A union of
@@ -15501,18 +15513,16 @@ fn nonflat_part(t: &Type) -> Type {
             );
         } else {
             q.atoms = p.atoms.clone();
-            if p.atoms.bare_names() > 0 {
-                for (name, a) in p.atoms.names().iter() {
-                    if a.bare {
-                        q.atoms.set(
-                            name,
-                            super::AtomPart {
-                                bare: false,
-                                payload: a.payload.clone(),
-                            },
-                        );
-                    }
-                }
+            // Only the bare names (`Atoms::bare`), O(b log n) for their b, not every name.
+            for name in p.atoms.bare() {
+                let a = p.atoms.get(name);
+                q.atoms.set(
+                    name,
+                    super::AtomPart {
+                        bare: false,
+                        payload: a.payload,
+                    },
+                );
             }
         }
     })

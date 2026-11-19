@@ -1098,20 +1098,18 @@ fn r10_shared_product_list_is_swept_and_checked_once() {
 
 #[test]
 fn r10_shared_irrelevant_holes_are_projected_once_and_scale() {
-    // Finding (TEST-bench-move-l0123, author P169): left at its old n 32, because the check fails
-    // its limit at the sizes the resize asks for (1x is 0.9 ms at n 32; 1x about 0.5 s would need
-    // n in the thousands). The work grows faster than n log n. Bench lines, load about 34,
-    // instructions at n and 8n: n 32 passes, 9.0 times (4.08M and 36.8M; the first runs 8.3
-    // times); n 64 fails, 11.0 times (8.00M and 88.4M); n 128 fails, 14.1 times (16.7M and
-    // 235.2M). A size probe of one verdict took 62M instructions at n 256, 911M at 2048 (14.6
-    // times) and 9.3G at 8192.
+    // Resized from n 32 to n 4096 (REFUSAL-front-rest U5, front1). It was held at n 32 because
+    // the work grew faster than n log n: one verdict took 125M instructions at n 512 and 1.98G
+    // at 4096 (15.9 times). The cause was `sweep::lits_ok`, which walked the n padding integers
+    // of each of the n heads to check they were 64-bit; it now reads the set's class union in
+    // O(1). After the fix: 106M at 512, 852M at 4096 (8.04 times).
     big(|| {
-        let a = r10_padded_congruence(32, "_r10pad32");
-        let b = r10_padded_congruence(256, "_r10pad256");
-        scaling::check("irrelevant shared holes in integer heads", 32, |n| {
+        let a = r10_padded_congruence(4096, "_r10pad4096");
+        let b = r10_padded_congruence(8 * 4096, "_r10pad32768");
+        scaling::check("irrelevant shared holes in integer heads", 4096, |n| {
             Type::forget_emptiness();
             assert_eq!(
-                (if n == 32 { &a } else { &b }).verdict(),
+                (if n == 4096 { &a } else { &b }).verdict(),
                 Verdict::Inhabited
             );
         });
@@ -1195,16 +1193,25 @@ fn r11_failure_prefix_probe() {
     });
 }
 
+/// U3 of REFUSAL-front-unsolved: n tags `#r11outer_i(P)` over one shared payload P of n rows
+/// `(#inner((i,)), #inner((i,)))`. The probe this replaces (`r11_tagged_payload_probe`) printed
+/// 1.189G units at 1024 on the round-11 merge; on 2eb9353cc it printed 1.48M, 5.55M and 21.8M at
+/// 64, 256 and 1024 (3.9 times per 4 times n).
 #[test]
-fn r11_tagged_payload_probe() {
+fn r11_tagged_payloads_must_scale() {
     big(|| {
-        for n in [16, 64, 256, 1024] {
-            let t = r11_tagged_payloads(n);
-            Type::forget_emptiness();
-            let mut m = scaling::Meter::new();
-            let w = m.work(|| assert_eq!(t.verdict(), Verdict::Inhabited));
-            eprintln!("R11TAG n {n} units {} bytes {}", w.units, w.bytes);
-        }
+        let (a, b) = (r11_tagged_payloads(16384), r11_tagged_payloads(8 * 16384));
+        scaling::check(
+            "n tags over one shared payload of tagged rows",
+            16384,
+            |n| {
+                Type::forget_emptiness();
+                assert_eq!(
+                    (if n == 16384 { &a } else { &b }).verdict(),
+                    Verdict::Inhabited
+                );
+            },
+        );
     });
 }
 
@@ -1275,6 +1282,24 @@ fn r11_ternary_alignment_is_inhabited() {
     r11_ternary_alignment(&[16, 64, 256, 1024]);
 }
 
+/// The ternary-density alignment family from 1024 to 8192, past the 4096 the deferred probe
+/// `r11_ternary_alignment_probe` printed by hand (REFUSAL-front-rest). One verdict took 116M
+/// units at 256, 464M at 1024 and 1.87G at 4096 (4.0 times per 4 times n).
+#[test]
+fn r11_ternary_alignment_scales() {
+    big(|| {
+        let (a, _, _) = r11_ternary_type(1024, "_scale");
+        let (b, _, _) = r11_ternary_type(8 * 1024, "_scale");
+        scaling::check("ternary-density alignment", 1024, |n| {
+            Type::forget_emptiness();
+            assert_eq!(
+                (if n == 1024 { &a } else { &b }).verdict(),
+                Verdict::Inhabited
+            );
+        });
+    });
+}
+
 #[test]
 fn r11_tuple_fields_within_list_items_scale() {
     // Resized from n 32 to n 4096 (TEST-bench-move-l0123, author P169); 1x took 63271327 ns at
@@ -1326,21 +1351,22 @@ fn r11_many_names_must_scale() {
     });
 }
 
-/// R11 probe for what the R10-C4 memo leaves: n tags sharing one payload diagram whose n rows
-/// each hold a component with an atom name, which every tag still reads.
+/// U3 of REFUSAL-front-unsolved (what the R10-C4 memo left): n tags sharing one payload diagram
+/// whose n rows each hold a component with an atom name. The probe this replaces
+/// (`r11_named_payload_probe`) printed 594M units at 1024 on the round-11 merge; on 2eb9353cc it
+/// printed 819K, 2.99M and 11.6M at 64, 256 and 1024 (3.9 times per 4 times n).
 #[test]
-fn r11_named_payload_probe() {
-    let sizes = std::env::var("RFX_N").unwrap_or("16,64,256,1024".into());
-    big(move || {
-        for n in sizes.split(',').map(|s| s.parse::<usize>().unwrap()) {
+fn r11_named_payloads_must_scale() {
+    big(|| {
+        let a = r11_named_payloads(16384, "_scale");
+        let b = r11_named_payloads(8 * 16384, "_scale");
+        scaling::check("n tags over one shared payload of named rows", 16384, |n| {
             Type::forget_emptiness();
-            let t = r11_named_payloads(n, &format!("_{n}"));
-            let mut v = None;
-            let mut meter = scaling::Meter::new();
-            let w = meter.work(|| v = Some(t.verdict()));
-            assert_eq!(v, Some(Verdict::Inhabited));
-            eprintln!("R11NAMED n {n} {v:?} units {} bytes {}", w.units, w.bytes);
-        }
+            assert_eq!(
+                (if n == 16384 { &a } else { &b }).verdict(),
+                Verdict::Inhabited
+            );
+        });
     });
 }
 
@@ -1677,6 +1703,40 @@ fn diagonal_rows_difference_sweep() {
             let w = meter.work(|| assert!((&x - &u).is_empty()));
             eprintln!("DIAG n {n} units {} bytes {}", w.units, w.bytes);
         }
+    });
+}
+
+/// The prefixes of `r11_payload_name_prefixes`, each with one bare atom whose name sorts after
+/// every payload name, so a scan of the names for a bare one passes all the payload names first
+/// (REFUSAL-front-rest, the adversary R_NEON names as its claim most likely to be wrong).
+fn front_bare_after_payload_prefixes(n: usize) -> Type {
+    let payload = Type::tuple(vec![lit(0)]);
+    let mut a = Type::atom("z_front_bare");
+    let fields = (0..n)
+        .map(|i| {
+            a = &a | &Type::atom_with(&format!("a_front_named_{i}"), &payload);
+            a.clone()
+        })
+        .collect();
+    Type::tuple(fields)
+}
+
+#[test]
+fn front_bare_name_after_payload_prefixes_must_scale() {
+    big(|| {
+        let a = front_bare_after_payload_prefixes(128);
+        let b = front_bare_after_payload_prefixes(1024);
+        scaling::check(
+            "a bare name after payload-bearing name prefixes",
+            128,
+            |n| {
+                Type::forget_emptiness();
+                assert_eq!(
+                    (if n == 128 { &a } else { &b }).verdict(),
+                    Verdict::Inhabited
+                );
+            },
+        );
     });
 }
 

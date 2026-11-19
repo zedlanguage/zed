@@ -256,14 +256,8 @@ fn shape(
         }
         clause = Some(((taken, refused), union));
     }
-    let e = if p.atoms.bare_names() > 0 {
-        (p.atoms.names().iter())
-            .filter(|(_, part)| part.bare)
-            .map(|(name, _)| name.clone())
-            .collect()
-    } else {
-        BTreeSet::new()
-    };
+    // The bare names from their index (`Atoms::bare`): O(b) for their b, not every name.
+    let e = p.atoms.bare().iter().cloned().collect();
     Some((e, clause))
 }
 
@@ -316,11 +310,16 @@ fn scalar_ok(p: &Parts) -> bool {
 }
 
 /// Whether `p` lists no rational, float or string, and only integers of 64 bits.
+// Complexity tradeoff: walking the listed integers to test each for `Value::Int` costs O(k) per
+// call, and `head_ok` runs once per head read (`read_head`), so n heads each listing the same
+// n integers (`r10padded`: `int - (padding | k)`) cost Θ(n²). Used: the set's class union
+// (`TreapSet::classes`, kept per subtree), O(1); it is `INT_CLASS` alone exactly when every
+// listed integer is a `Value::Int`.
 fn lits_ok(p: &Parts) -> bool {
     [&p.rats, &p.floats, &p.f32s, &p.strings]
         .iter()
         .all(|l: &&Lits| !l.cofinite && l.values.is_empty())
-        && p.ints.values.iter().all(|v| matches!(v, Value::Int(_)))
+        && p.ints.values.classes() & !Value::INT_CLASS == 0
 }
 
 /// Whether `h` is a head of the class: booleans and integers of 64 bits, bare atoms of
