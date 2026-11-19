@@ -648,6 +648,17 @@ impl Classed {
         let Some(rest) = rest else {
             return Classed::plain(self.met().minus(&other.met()));
         };
+        // Complexity tradeoff: naive version, always run `minus` and `meet` over all p pieces,
+        // O(p) allocations when `self.ranges` and `other.ranges` share the same `Arc<Node>`
+        // (common in `Held::push` when the projected stride covers the full finite goal); used:
+        // O(1) equality check (`Arc::ptr_eq` inside `IntervalSet::eq`) skips both tree walks.
+        if self.ranges == other.ranges {
+            return if rest == Congruence::Bottom {
+                Classed::plain(IntervalSet::empty())
+            } else {
+                Classed::new(self.ranges.clone(), rest)
+            };
+        }
         let outside = Classed::new(self.ranges.minus(&other.ranges), self.class.clone());
         if rest == Congruence::Bottom {
             return outside;

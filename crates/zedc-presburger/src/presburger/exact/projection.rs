@@ -156,7 +156,14 @@ impl Held {
     fn push(&mut self, p: Strided, out: &mut Vec<Strided>, work: &mut Work) -> Result<(), Refusal> {
         let lo = p.lo.as_ref().map_or(End::NegInf, fin);
         let hi = p.hi.as_ref().map_or(End::PosInf, fin);
-        let within = self.left.meet(&Classed::plain(IntervalSet::range(lo, hi)));
+        let within = if let Some((l, u)) = self.left.ranges.bounds()
+            && *l >= lo
+            && *u <= hi
+        {
+            self.left.clone()
+        } else {
+            self.left.meet(&Classed::plain(IntervalSet::range(lo, hi)))
+        };
         if p.step == Int::from(1) {
             work.charge(PIECE.saturating_mul(within.listed_len().saturating_add(1)))?;
             self.left = self.left.minus(&within);
@@ -164,13 +171,19 @@ impl Held {
             work.charge(PIECE.saturating_mul(within.listed_len().saturating_add(1)))?;
             // The finite pieces of `within`; a piece with no end is skipped (the goal is then
             // not held by this part alone). With a class other than every integer every piece
-            // is finite already.
-            let finite = IntervalSet::from_pieces(
-                (within.ranges.pieces())
-                    .filter(|(l, u)| matches!((l, u), (End::Fin(_), End::Fin(_))))
-                    .map(|(l, u)| (l.clone(), u.clone()))
-                    .collect(),
-            );
+            // is finite already. Complexity tradeoff: naive version, always collect and rebuild
+            // all pieces via `from_pieces`, O(p) allocations per push (`changes_of_one_block`);
+            // used: reuse `within.ranges` in O(1) when its ends are already finite.
+            let finite = if matches!(within.ranges.bounds(), Some((End::Fin(_), End::Fin(_)))) {
+                within.ranges.clone()
+            } else {
+                IntervalSet::from_pieces(
+                    (within.ranges.pieces())
+                        .filter(|(l, u)| matches!((l, u), (End::Fin(_), End::Fin(_))))
+                        .map(|(l, u)| (l.clone(), u.clone()))
+                        .collect(),
+                )
+            };
             let class = Congruence::new(Num::from(&p.step), Num::from(&p.res));
             let taken = Classed::new(finite, within.class.meet(&class));
             // Each value taken charged [`LISTED`], as each was when listed.

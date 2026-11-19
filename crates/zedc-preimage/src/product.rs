@@ -15044,13 +15044,68 @@ impl Scope {
     /// `x == m * k + r` with `k` free, and the names, to project onto ([`Scope::project_part`]).
     fn framed(&self, part: &Formula) -> (Formula, Vec<Atom>) {
         let mentioned = part.atoms();
-        let mut parts: Vec<Formula> = mentioned
-            .iter()
-            .filter_map(|a| match a {
-                Atom::Sym(n) => Some(presburger::member(a, self.get(n).ints())),
-                _ => None,
-            })
-            .collect();
+        let mut parts: Vec<Formula> = Vec::with_capacity(mentioned.len());
+        for a in &mentioned {
+            let Atom::Sym(n) = a else { continue };
+            let prod = self.get(n);
+            let set = prod.ints();
+            // Complexity tradeoff: naive version, `presburger::member(a, set)` emits an m-arm `Or`
+            // disjunction (2m constraints) for an m-piece finite arithmetic progression of
+            // singletons `{lo, lo + d, ..., hi}` (`d >= 2`), causing O(m^2) work in
+            // `guarded::forward` and O(m) solver questions in `cells_cover` per step
+            // (`changes_of_one_block_hold_bounded_memory`). Used: when the exact cover is on and
+            // `set` is any multi-piece (`set.len() >= 2`) finite arithmetic progression of
+            // singletons with step `d >= 2`, emit `lo <= a <= hi` and `a == d*k + lo` directly
+            // (3 constraints, O(1) formula size; O(m) once to verify the progression shape). Under
+            // `EXACT_OFF` (solver alone), keep `presburger::member` so the hull solver still
+            // splits the disjuncts as before
+            // (`families::audit_seed_4_keeps_its_exact_sets_with_the_cover`).
+            // Exact over `Z` with fresh existential `"{n} prog"` (absent from `syms` and `part`).
+            let mut prog: Option<(Int, Int, Int)> = None;
+            if !presburger::exact::EXACT_OFF.get() && set.len() >= 2 {
+                let mut it = set.pieces();
+                if let (Some((End::Fin(a0), End::Fin(b0))), Some((End::Fin(a1), End::Fin(b1)))) =
+                    (it.next(), it.next())
+                    && a0 == b0
+                    && a1 == b1
+                {
+                    let lo = Int::from(a0);
+                    let mut prev = Int::from(a1);
+                    let step = &prev - &lo;
+                    if step > Int::ONE {
+                        let mut ok = true;
+                        for (l, u) in it {
+                            if let (End::Fin(lv), End::Fin(uv)) = (l, u)
+                                && lv == uv
+                            {
+                                let cur = Int::from(lv);
+                                if &cur - &prev != step {
+                                    ok = false;
+                                    break;
+                                }
+                                prev = cur;
+                            } else {
+                                ok = false;
+                                break;
+                            }
+                        }
+                        if ok {
+                            prog = Some((lo, prev, step));
+                        }
+                    }
+                }
+            }
+            if let Some((lo, hi, step)) = prog {
+                let var = Lin::atom(a.clone());
+                parts.push(Formula::Con(Con::ge(&var, &Lin::constant(lo.clone()))));
+                parts.push(Formula::Con(Con::ge(&Lin::constant(hi), &var)));
+                let k = Lin::atom(Atom::Sym(format!("{n} prog").into()));
+                let rhs = k.times(step).plus(&Lin::constant(lo));
+                parts.push(Formula::Con(Con::eq(&var, &rhs)));
+            } else {
+                parts.push(presburger::member(a, set));
+            }
+        }
         // Each name's congruence, `x == m * k + r` with `k` free, so that the projection
         // already lies in the class: otherwise the class moves an endpoint, the relation moves
         // another name's to match, and the two pass a bound back and forth without end.
