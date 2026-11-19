@@ -410,6 +410,99 @@ Front1's key doubt holds. Runs d and bx1 have 210 and 213 keys with more than on
 6 of those mix Refused(Fork) with another answer in one run. Those are filed as
 REFUSAL-front-u6-keys.
 
+### REFUSAL-front-u6-subset: method found in a prototype, not yet in the kernel (front3, 2026-11-19)
+
+Word-model measurements (front3, `anti/main.rs`, run on the 14 distinct specs of the 18 cases):
+
+- The plain subset construction and the antichain method both decide all 18. The negative
+  union is ambiguous in every case. The largest plain search is 189 subsets (`_r6sat6`).
+- The antichain method is exponential on random 3-SAT selector reductions. At k=4, m=17
+  it keeps 1152 sets (1833 ever made). Opus measured 12.2 s at k=6.
+
+So neither method is allowed under DESIGN's rule against exponential algorithms.
+
+Cross-review, round 1 of at most 3. The reports are in
+`/home/luke/Work/wt/cd-xr/REFUSAL-front-u6-subset/r1/{opus,sol,gemini}/`.
+
+- **Sol: partly.** It proposes a structural preflight with no counts:
+  - prefix-box projection decides the 12 `_r6sat` cases and both `_r7rc_343` cases;
+  - a simulation cover decides `_xc284r`, `_xp43` and `_xp43r`;
+  - a spine witness decides `_xc363r`;
+  - the benches grow exactly 8.0000x in steps.
+
+  I re-ran it. Its suite passes, the mutant panics on `_xc284r`, and the benches give 8.0000.
+- **Opus: partly.**
+  - Rule G1 (follow the fork when the negative union is deterministic after one letter)
+    decides the benches at 7.99–8.11 in instructions, but refuses all 18 cases.
+  - It proves that any test on the pattern set alone, with no counts, that admits the 12
+    `_r6sat` cases also admits all of 3-SAT. The proof does not cover procedures that look
+    at the instance, such as Sol's and Gemini's.
+- **Gemini: method found, in a prototype** (`gemini/proto/structured_fork.rs`). It has four
+  stages:
+  - **Stage 0:** merge parallel edges, absorb self-loop carriers and drop simulated positives.
+  - **Stage 1:** dispatch on one letter, then an exact product search when the negative
+    union has at most one deterministic state.
+  - **Stage 2 and 2b:** forward simulation, and the same on the reversed automaton.
+  - **Stage 3:** prefix-chain CSP with arc consistency, pure values, leaf elimination and
+    Boolean-bridge elimination, then 2-SAT. A core that is not Boolean is refused.
+
+  The 12 `_r6sat` cases turn out to be tautologies plus 2-SAT, with no coupled 3-SAT core.
+
+  front3 re-ran it (rustc -O, load 80–91):
+  - `--u6`: all 14 specs, in both orders, match the oracle.
+    - Stage 1 decides `_xc363r` and `_r7rc_343`.
+    - Stage 2 decides `_xc284r`.
+    - Stage 3 decides `_xp43` and the 12 `_r6sat` cases.
+    - Stage 2b decides the A167 example below.
+  - All 12 of its tests pass. The negative control panics on `_xc284r` as it should.
+  - The benches are all Empty, and steps grow exactly 8x per 8x of n. Instructions from
+    512 to 4096:
+
+    | bench | instruction ratio |
+    |---|---|
+    | difference of unions (Stage 1) | 8.07 |
+    | union of differences | 7.84 |
+    | pairs met | 7.90 |
+
+  - Random 3-SAT selector reductions are refused at k of 6 or more, and at k from 4 to 64
+    with the seed from `main.rs`. Steps per state stay flat (5.7–9.8).
+  - Stage 3 deciding 2-SAT chains costs 5.1–8.8 steps per state, flat from k=8 to 128.
+
+What is still open (the row stays open for this):
+
+1. **Port the stages into the kernel.** The prototype works on words over letters. The
+   kernel's `tuples_on` works on Region and Part, and it refuses benches 2 and 3 at K26
+   before any fork search, where the word model sees no nondeterminism. Gemini proposes
+   these places to hook in:
+   - `f.disjoint_disjuncts()` ahead of K26, for benches 2 and 3;
+   - K80 `all_inside` lifted into `tuples_on`, for bench 1;
+   - Stage 3 inside `escape::decide`;
+   - Stages 0–2 just before `refuse_fork`.
+2. **Bound the cost of Stage 2.** The simulation costs |QP|·|QN|·|E|·|Σ|, which is
+   quadratic in states. Under the standing rule, either bring it to n log n or give a
+   proof and a scaling bench (for example by_place_from_the_end) before it lands.
+
+The named-fragment rule (DESIGN, the hard rule against exponential algorithms) already
+decides what happens outside the stages: a case outside them stays Refused(Fork). That is
+why there is no QUESTIONS entry.
+
+New kernel tests pin today's answers, so the port shows up as a change in them:
+
+- `sweep_agreement::the_u6_review_cases_are_answered_or_refused_soundly`:
+  - the A167 example (`_u6a167`): Refused(Fork) in both orders;
+  - Sol's 3-SAT gadget (`_u6gad`): Refused(Fork);
+  - the gadget with the variable forced (`_u6gadu`): Empty.
+- `refusals::forked_differences_less_one_pair_short_are_not_empty` (Opus test 6):
+  - the three bench shapes with one pair left out, at n = 2, 3 and 8, with the gap in the
+    first or last pair;
+  - the union of differences and the met form: Inhabited;
+  - the difference of unions: Inhabited at n=2 and Refused(Fork) at n=3 and 8, which is
+    never wrong.
+
+Gemini's other tests run on the word model only: t03–t11, including the by_place_from_the_end
+and parity-cover families that must be refused, and the truncation-soundness case. They port
+together with the stages.
+
 ## U7. Case A proof and Mutant 2 (needs a second reader)
 
 Codex R11 wrote the per-child transition and dominance argument for narrowing r0 to

@@ -8083,6 +8083,54 @@ fn a_pair_type_met_with_a_few_forked_differences_is_refused() {
     );
 }
 
+/// The three types of the forked-differences benches with the pair that holds the `hole`th
+/// first pair not taken out: each holds that first pair, as `([1], [0])` for `hole` 1 (a list
+/// of only 1s and a list of odd length), so none is empty. A check from the cross-review of
+/// REFUSAL-front-u6-subset (round 1, the opus seat's test 6) that an exact answer for these
+/// benches reads the pairs: the benches are refused now, and a rule that answered them Empty
+/// would have to answer these Inhabited. The verdicts now: the union of differences and the
+/// pairs met with it are Inhabited at every size; the difference of unions is Inhabited at
+/// `n` 2 and refused at the fork at 3 and 8.
+#[test]
+fn forked_differences_less_one_pair_short_are_not_empty() {
+    let union = |ts: &[Type]| ts.iter().fold(Type::empty(), |u, t| &u | t);
+    for n in [2, 3, 8] {
+        for hole in [1, n] {
+            let tag = format!("_rfh{n}_{hole}");
+            let (ins, outs): (Vec<Type>, Vec<Type>) = forked_pairs(n, &tag).into_iter().unzip();
+            let kept: Vec<Type> = (0..n)
+                .filter(|&i| i + 1 != hole)
+                .map(|i| outs[i].clone())
+                .collect();
+            let difference_of_unions = &union(&ins) - &union(&kept);
+            let union_of_differences = (0..n).fold(Type::empty(), |u, i| {
+                if i + 1 == hole {
+                    &u | &ins[i]
+                } else {
+                    &u | &(&ins[i] - &outs[i])
+                }
+            });
+            let l = list_named(Type::int(), &tag);
+            let met = &Type::tuple(vec![l.clone(), l]) & &union_of_differences;
+            let first = if n == 2 {
+                Verdict::Inhabited
+            } else {
+                Verdict::Refused(Refusal::Fork)
+            };
+            for (t, want) in [
+                (difference_of_unions, first),
+                (union_of_differences, Verdict::Inhabited),
+                (met, Verdict::Inhabited),
+            ] {
+                Type::forget_emptiness();
+                assert_eq!(t.verdict(), want, "{t}");
+                Type::forget_emptiness();
+                assert!(!t.is_empty(), "{t}");
+            }
+        }
+    }
+}
+
 /// Small instance of `bench::refining_a_box_follows_no_fork_in_its_size`: refining the box of
 /// these pairs meets the fork of the end family and the verdict is refused for it, with the
 /// end family's place `n` kept or left out; `is_empty` counts the pairs as inhabited. At n 1,

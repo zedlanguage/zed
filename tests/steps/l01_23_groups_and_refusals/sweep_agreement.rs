@@ -1441,6 +1441,60 @@ fn the_u6_fork_cases_are_answered_or_refused_soundly() {
     }
 }
 
+/// Cases from the cross-review of REFUSAL-front-u6-subset (round 1, 2026-11-19). Each is checked
+/// against the oracle in both orders ([`u6_case`]) and pinned at its verdict now, the same in
+/// both orders:
+///
+/// - `_u6a167`: lists of integers less `#nil`, the lists that end in 1 and the lists that end in
+///   another integer. Empty, since every list is one of the three; refused at the fork now. At
+///   every element both ending types stay open, so the opus seat's rule (follow the fork when
+///   the union taken out is deterministic after one element) refuses it too.
+/// - `_u6gad`: the selector reduction of (v | a | b), (v | !a | !b), (!v | a | !b),
+///   (!v | !a | b). Satisfiable (all true); refused at the fork now. The sol seat proved that its
+///   prefix-box projection leaves all four clauses: each variable has both signs, so no pure
+///   literal is eliminated. This gadget is how 3-SAT stays inside what that rule refuses.
+/// - `_u6gadu`: the same with (v | v | v) and (!v | !v | !v). Not satisfiable; answered Empty.
+#[test]
+fn the_u6_review_cases_are_answered_or_refused_soundly() {
+    let d = |nil: bool, rows: &[(u16, usize)]| D {
+        nil,
+        rows: rows.to_vec(),
+    };
+    let a167 = Spec {
+        groups: vec![vec![
+            d(true, &[(INT, 0)]),
+            d(true, &[]),
+            d(false, &[(ONE, 1), (INT, 2)]),
+            d(false, &[(INT & !ONE, 1), (INT, 3)]),
+        ]],
+    };
+    let a167_term = Term {
+        pos: vec![(0, 0)],
+        neg: vec![(0, 1), (0, 2), (0, 3)],
+    };
+    let gadget = vec![
+        vec![(0, true), (1, true), (2, true)],
+        vec![(0, true), (1, false), (2, false)],
+        vec![(0, false), (1, true), (2, false)],
+        vec![(0, false), (1, false), (2, true)],
+    ];
+    let mut forced = gadget.clone();
+    forced.push(vec![(0, true); 3]);
+    forced.push(vec![(0, false); 3]);
+    let (gs, gt) = selector_reduction(3, &gadget);
+    let (fs, ft) = selector_reduction(3, &forced);
+    let fork = Verdict::Refused(Refusal::Fork);
+    for (tag, spec, term, inhabited, want) in [
+        ("_u6a167", &a167, &a167_term, false, fork),
+        ("_u6gad", &gs, &gt, true, fork),
+        ("_u6gadu", &fs, &ft, false, Verdict::Empty),
+    ] {
+        let (oracle, va, vb) = u6_case(spec, term, tag);
+        assert_eq!(oracle, inhabited, "{tag}: the oracle");
+        assert_eq!((va, vb), (want, want), "{tag}: the verdicts in both orders");
+    }
+}
+
 /// R6-C2: avoiding the leaf head at an optional spine arrival is a
 /// commitment. Another negative chain can distinguish that choice.
 #[test]
