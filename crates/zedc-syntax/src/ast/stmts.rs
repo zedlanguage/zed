@@ -349,10 +349,18 @@ impl Builder<'_, '_> {
                     ty: self.ty(ty)?,
                 })
             }
-            "WholePush" => StmtKind::Push {
-                port: self.push_target(kids[0], kids[1])?,
-                value: self.node(kids[1])?,
-            },
+            "WholePush" => {
+                let port = self.push_target(kids[0], kids[1])?;
+                // Only a target of one name ends in a prime: `push_target` names a port of
+                // `main` as `m.stdout` or `m.stderr`.
+                if let Some(x) = port.strip_suffix('\'') {
+                    self.generation_push_placed(kids[0], x, self.pushed_text(kids[1]))?;
+                }
+                StmtKind::Push {
+                    port,
+                    value: self.node(kids[1])?,
+                }
+            }
             "Import" => StmtKind::Import(self.import(d)?),
             _ => return Err(self.later(d)),
         })

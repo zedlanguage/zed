@@ -503,8 +503,8 @@ impl<'a, 's> Builder<'a, 's> {
     /// `main` whose body holds it, recorded as pushed to ([`Mains`]); or why the target
     /// cannot be pushed to (DESIGN.md sec:ports, "What a push may name"): an input of `main`,
     /// with or without a view; a field `MainArgs` does not have; a view other than `::bytes`,
-    /// the one view that takes a push; a generation push `x' <- e` that no `loop` or method
-    /// holds. `v` is the pushed value, whose text the repairs show. A target ending in
+    /// the one view that takes a push (a generation push `x' <- e` that no `loop` or method
+    /// holds is refused by the caller). `v` is the pushed value, whose text the repairs show. A target ending in
     /// `::bytes` (`m.stdout::bytes`, DESIGN step L7.3h) and one with a field of another value
     /// are not compiled yet. The tokens alternate a name and a separator, `.` or `::`, and the
     /// grammar allows `::` only before the last name.
@@ -519,11 +519,7 @@ impl<'a, 's> Builder<'a, 's> {
         let base = &names[..names.len() - view.is_some() as usize];
         let span = self.span(t);
         let target = &self.text[span.start..span.end];
-        let value = {
-            let s = self.span(v);
-            let text = &self.text[s.start..s.end];
-            if text.contains('\n') { "…" } else { text }
-        };
+        let value = self.pushed_text(v);
         let main = self.mains.at(span.start);
         let m = main.and_then(|b| b.param.as_deref());
         let refuse = |row: Row, message: String, repair: Option<String>| Error {
@@ -588,12 +584,9 @@ impl<'a, 's> Builder<'a, 's> {
             None => {}
         }
         match names[..] {
-            [name] => {
-                if let Some(x) = name.strip_suffix('\'') {
-                    self.generation_push_placed(t, x, value)?;
-                }
-                Ok(name.into())
-            }
+            // A generation push `x' <- e` is placed by the caller (`Builder::generation_push_placed`
+            // in `breaks.rs`, which imports this file).
+            [name] => Ok(name.into()),
             [p, field] if Some(p) == m => {
                 let main = main.expect("m is main's parameter");
                 let i = (field == "stderr") as usize;
@@ -602,6 +595,13 @@ impl<'a, 's> Builder<'a, 's> {
             }
             _ => Err(self.later_as(t, "a push to a field of a value")),
         }
+    }
+
+    /// The text of the pushed value node `v` as a repair shows it, `…` if it spans lines.
+    pub(super) fn pushed_text(&self, v: usize) -> &'s str {
+        let s = self.span(v);
+        let text = &self.text[s.start..s.end];
+        if text.contains('\n') { "…" } else { text }
     }
     pub(super) fn new(
         text: &'s str,
