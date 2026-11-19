@@ -848,7 +848,11 @@ impl Type {
             // dependency is lost, since a node is skipped only when it was read before.
             // Tests: cycle_dup::shared_parts_are_read_once_when_deciding_their_groups and the
             // tests that a batch and a single query agree.
-            let (mut rows, mut morphisms) = (DigestSet::default(), DigestSet::default());
+            let (mut rows, mut morphisms, mut payload_seen) = (
+                DigestSet::default(),
+                DigestSet::default(),
+                DigestSet::default(),
+            );
             let mut found = Vec::new();
             let mut stack: Vec<Type> = roots.to_vec();
             let visit = |t: &Type, seen: &mut HashSet<u64, Digests>, stack: &mut Vec<Type>| {
@@ -866,14 +870,15 @@ impl Type {
                     continue;
                 }
                 let p = t.p();
-                // Complexity tradeoff: reading all names at every node is quadratic
-                // on a chain of failure atoms. Only payload-bearing names have edges;
-                // read those in O(payload edges * log names), with the same seen set.
-                for name in p.atoms.payloads() {
-                    if let Some(a) = p.atoms.names().get(name) {
-                        visit(&a.payload, &mut seen, &mut stack);
-                    }
-                }
+                // Complexity tradeoff (R11-C3): iterating all payload-bearing names of every
+                // prefix union sharing one persistent map costs `Theta(n^2 log n)`
+                // (`r11_payload_name_prefixes_must_scale`). Visiting each shared `PayloadNode`
+                // once via `payload_seen` reduces the walk to `O(V + E)` in the distinct tree
+                // nodes reached (`O(n log n)` across `n` prefix unions).
+                p.atoms
+                    .payload_entries_unseen(&mut payload_seen, &mut |_name, _bare, payload| {
+                        visit(payload, &mut seen, &mut stack);
+                    });
                 for part in p.tuples.lens.values() {
                     part.atoms_unseen(&mut rows, &mut |row| {
                         row.iter().for_each(|x| visit(x, &mut seen, &mut stack));
@@ -3630,6 +3635,41 @@ impl Search {
     }
 }
 
+/// A node in the height-bounds DAG: either a [`Type`] or a shared persistent [`super::atoms::PayloadNode`]
+/// representing the union of its subtree's payload-bearing atoms.
+#[derive(Clone)]
+enum HeightNode {
+    Type(Type),
+    Payloads(std::sync::Arc<super::atoms::PayloadNode>),
+}
+
+impl PartialEq for HeightNode {
+    fn eq(&self, other: &Self) -> bool {
+        match (self, other) {
+            (HeightNode::Type(a), HeightNode::Type(b)) => a == b,
+            (HeightNode::Payloads(a), HeightNode::Payloads(b)) => a.id() == b.id(),
+            _ => false,
+        }
+    }
+}
+
+impl Eq for HeightNode {}
+
+impl std::hash::Hash for HeightNode {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        match self {
+            HeightNode::Type(t) => {
+                0u8.hash(state);
+                t.hash(state);
+            }
+            HeightNode::Payloads(n) => {
+                1u8.hash(state);
+                n.id().hash(state);
+            }
+        }
+    }
+}
+
 /// The bounds on the heights of types' values ([`height_bounds`]), kept in `HEIGHTS`.
 #[derive(Default)]
 struct Heights {
@@ -3638,6 +3678,10 @@ struct Heights {
     /// The least and greatest height of a value of each type asked about, `None` for a type
     /// shown to have no value ([`Heights::height_bounds`]).
     bounds: HashMap<Type, Option<(u64, u64)>, Digests>,
+    /// Cached least height and `(lo, hi)` bounds per shared [`super::atoms::PayloadNode::id`],
+    /// so `n` prefix unions sharing persistent payload trees are bounded in `O(n log n)`.
+    payload_least: DigestMap<u64, u64>,
+    payload_bounds: DigestMap<u64, Option<(u64, u64)>>,
 }
 
 /// [`Heights::height_bounds`] of `t`, kept for every search of this thread until
@@ -3663,23 +3707,46 @@ fn height_bounds(t: &Type) -> Option<(u64, u64)> {
     let b = h.height_bounds(t);
     HEIGHTS.with_borrow_mut(|kept| {
         // `kept` is empty unless a question was asked inside this one; the larger map stays.
-        if kept.bounds.len() + kept.least.len() < h.bounds.len() + h.least.len() {
+        let kept_len = kept.bounds.len()
+            + kept.least.len()
+            + kept.payload_bounds.len()
+            + kept.payload_least.len();
+        let h_len =
+            h.bounds.len() + h.least.len() + h.payload_bounds.len() + h.payload_least.len();
+        if kept_len < h_len {
             std::mem::swap(kept, &mut h);
         }
         kept.bounds.extend(h.bounds);
         kept.least.extend(h.least);
+        kept.payload_bounds.extend(h.payload_bounds);
+        kept.payload_least.extend(h.payload_least);
     });
     b
 }
 
 impl Heights {
-    /// A lower bound on the height ([`Search::value_height`]) of every value of `t`, `u64::MAX`
-    /// when `t` has none: the height of the shortest derivation of `t` in the grammar whose
+    fn get_least(&self, node: &HeightNode) -> Option<u64> {
+        match node {
+            HeightNode::Type(t) => self.least.get(t).copied(),
+            HeightNode::Payloads(n) => self.payload_least.get(&n.id()).copied(),
+        }
+    }
+
+    fn has_bounds(&self, node: &HeightNode) -> bool {
+        match node {
+            HeightNode::Type(t) => self.bounds.contains_key(t),
+            HeightNode::Payloads(n) => self.payload_bounds.contains_key(&n.id()),
+        }
+    }
+
+    /// A lower bound on the height ([`Search::value_height`]) of every value of `root`, `u64::MAX`
+    /// when `root` has none: the height of the shortest derivation of `root` in the grammar whose
     /// rules are, for each type, a scalar, a bare atom, a struct or a closure it may hold (height
-    /// 0); an atom name with a payload type `a` (one more than `a`); a tuple length it holds all
-    /// of, or whose part is not false on a tuple in none of its tuple types (height 1); and each
-    /// tuple type of a part false on a tuple in none of them (one more than its highest
-    /// component).
+    /// 0); an atom name with a payload type `a` (one more than `a`, factored through shared
+    /// [`super::atoms::PayloadNode`] union nodes of offset 0 so shared prefix maps cost
+    /// `O(n log n)`); a tuple length it holds all of, or whose part is not false on a tuple in
+    /// none of its tuple types (height 1); and each tuple type of a part false on a tuple in none
+    /// of them (one more than its highest component).
     ///
     /// Proof that it is a lower bound: every value `x` of `t` is derived by such a rule of `t`
     /// from values of its child types, each of a smaller height, so by induction on the height of
@@ -3689,84 +3756,106 @@ impl Heights {
     /// part; it is then a value of that tuple type's components. A type left with no derivation
     /// has no value, so `u64::MAX` is a bound too.
     ///
-    /// Each type's bound is kept in `HEIGHTS` ([`height_bounds`]); the types not yet bounded that
-    /// `t` reaches are bounded together by Knuth's generalization of Dijkstra's algorithm (Knuth,
-    /// "A generalization of Dijkstra's algorithm", Inf. Proc. Letters 6, 1977): each rule's
-    /// height is one plus the highest of its children's, a superior function, so the types are
-    /// settled in order of height and each rule is ready once its last child is settled.
-    // Complexity tradeoff: O(E log E) for the E rules and children of the types reached and not
-    // bounded before, each type once until the kept bounds are dropped. Naive alternative:
-    // iterate the equations to a fixpoint from 0, O(E) a round but with no bound on the rounds
-    // when a cycle derives nothing (`G = #cons((int, G))` alone rises forever), or from below
-    // with cycles read as 0, which leaves `G_i = #cons((int, G_i)) | #cons((1, R_{i-1}))` at
-    // height 2 instead of `2i`.
+    /// Each node's bound is kept in `HEIGHTS` ([`height_bounds`]); the nodes not yet bounded that
+    /// `root` reaches are bounded together by Knuth's generalization of Dijkstra's algorithm
+    /// (Knuth, "A generalization of Dijkstra's algorithm", Inf. Proc. Letters 6, 1977): each
+    /// rule's height is `add` (0 or 1) plus the highest of its children's, a superior function,
+    /// so the nodes are settled in order of height and each rule is ready once its last child is
+    /// settled.
+    // Complexity tradeoff: O(E log E) for the E rules and children of the types and shared
+    // `PayloadNode`s reached and not bounded before, each once until the kept bounds are dropped.
+    // Naive alternatives: iterating all `p.atoms.payloads()` per type costs `Theta(n^2 log n)`
+    // time and `Theta(n^2)` bytes on `r11_payload_name_prefixes_must_scale`; iterating the
+    // equations to a fixpoint from 0 has no bound on rounds when a cycle derives nothing.
+    #[cfg(test)]
     fn least_height(&mut self, t: &Type) -> u64 {
-        if let Some(&h) = self.least.get(t) {
+        self.least_height_node(&HeightNode::Type(t.clone()))
+    }
+
+    fn least_height_node(&mut self, root: &HeightNode) -> u64 {
+        if let Some(h) = self.get_least(root) {
             return h;
         }
-        // A rule of `node`: `base` is one more than the highest child settled so far, `waiting`
+        // A rule of `node`: `base` is `add` more than the highest child settled so far, `waiting`
         // the children not yet settled.
         struct Rule {
             node: usize,
+            add: u64,
             base: u64,
             waiting: usize,
         }
-        let mut index: HashMap<Type, usize, Digests> = HashMap::default();
-        let mut nodes: Vec<Type> = Vec::new();
+        let mut index: HashMap<HeightNode, usize, Digests> = HashMap::default();
+        let mut nodes: Vec<HeightNode> = Vec::new();
         let mut users: Vec<Vec<usize>> = Vec::new();
         let mut rules: Vec<Rule> = Vec::new();
         let mut ready: std::collections::BinaryHeap<std::cmp::Reverse<(u64, usize)>> =
             std::collections::BinaryHeap::new();
-        index.insert(t.clone(), 0);
-        nodes.push(t.clone());
+        index.insert(root.clone(), 0);
+        nodes.push(root.clone());
         users.push(Vec::new());
         let mut next = 0;
         while next < nodes.len() {
             let n = next;
             next += 1;
-            let ty = nodes[n].clone();
-            let p = ty.p();
-            let lits = [&p.ints, &p.rats, &p.floats, &p.f32s, &p.strings];
-            if p.bools != 0
-                || p.structs
-                || p.atoms.cofinite()
-                || p.morphisms.is_leaf() != Some(false)
-                || lits.iter().any(|l| l.cofinite || !l.values.is_empty())
-            {
-                ready.push(std::cmp::Reverse((0, n)));
-            }
-            if p.tuples.rest {
-                ready.push(std::cmp::Reverse((1, n)));
-            }
-            if p.atoms.bare_names() > 0 {
-                ready.push(std::cmp::Reverse((0, n)));
-            }
-            // An atom name gives a rule of its own only through a payload that lists something
-            // (`Atoms::payloads`): a payload that lists nothing has no value, so its rule never
-            // becomes ready, and its bare atom is the rule of height 0 pushed above.
-            let mut children: Vec<Vec<Type>> = (p.atoms.payloads().iter())
-                .map(|name| vec![p.atoms.names()[name].payload.clone()])
-                .collect();
-            for f in p.tuples.lens.values() {
-                if f.is_leaf() == Some(false) {
-                    continue;
+            let cur = nodes[n].clone();
+            let mut children: Vec<(u64, Vec<HeightNode>)> = Vec::new();
+            match &cur {
+                HeightNode::Type(ty) => {
+                    let p = ty.p();
+                    let lits = [&p.ints, &p.rats, &p.floats, &p.f32s, &p.strings];
+                    if p.bools != 0
+                        || p.structs
+                        || p.atoms.cofinite()
+                        || p.morphisms.is_leaf() != Some(false)
+                        || lits.iter().any(|l| l.cofinite || !l.values.is_empty())
+                    {
+                        ready.push(std::cmp::Reverse((0, n)));
+                    }
+                    if p.tuples.rest {
+                        ready.push(std::cmp::Reverse((1, n)));
+                    }
+                    if p.atoms.bare_names() > 0 {
+                        ready.push(std::cmp::Reverse((0, n)));
+                    }
+                    if let Some(pr) = p.atoms.payload_dag() {
+                        children.push((0, vec![HeightNode::Payloads(pr.clone())]));
+                    }
+                    for f in p.tuples.lens.values() {
+                        if f.is_leaf() == Some(false) {
+                            continue;
+                        }
+                        if f.eval3(&|_| Some(false)) == Some(false) {
+                            children.extend(
+                                f.distinct_atoms()
+                                    .iter()
+                                    .map(|r| (1, r.iter().cloned().map(HeightNode::Type).collect())),
+                            );
+                        } else {
+                            ready.push(std::cmp::Reverse((1, n)));
+                        }
+                    }
                 }
-                if f.eval3(&|_| Some(false)) == Some(false) {
-                    children.extend(f.distinct_atoms().iter().map(|r| r.to_vec()));
-                } else {
-                    ready.push(std::cmp::Reverse((1, n)));
+                HeightNode::Payloads(u) => {
+                    children.push((1, vec![HeightNode::Type(u.payload().clone())]));
+                    if let Some(l) = u.left() {
+                        children.push((0, vec![HeightNode::Payloads(l.clone())]));
+                    }
+                    if let Some(r) = u.right() {
+                        children.push((0, vec![HeightNode::Payloads(r.clone())]));
+                    }
                 }
             }
-            for row in children {
+            for (add, row) in children {
                 let r = rules.len();
                 let mut rule = Rule {
                     node: n,
-                    base: 1,
+                    add,
+                    base: add,
                     waiting: 0,
                 };
                 for c in row {
-                    match self.least.get(&c) {
-                        Some(&h) => rule.base = rule.base.max(h.saturating_add(1)),
+                    match self.get_least(&c) {
+                        Some(h) => rule.base = rule.base.max(h.saturating_add(add)),
                         None => {
                             let i = *index.entry(c.clone()).or_insert_with(|| {
                                 nodes.push(c);
@@ -3792,35 +3881,55 @@ impl Heights {
             height[n] = h;
             for &r in &users[n] {
                 let rule = &mut rules[r];
-                rule.base = rule.base.max(h + 1);
+                rule.base = rule.base.max(h.saturating_add(rule.add));
                 rule.waiting -= 1;
                 if rule.waiting == 0 && rule.base != u64::MAX && height[rule.node] == u64::MAX {
                     ready.push(std::cmp::Reverse((rule.base, rule.node)));
                 }
             }
         }
-        for (ty, h) in nodes.into_iter().zip(height) {
-            self.least.insert(ty, h);
+        for (node, h) in nodes.into_iter().zip(height) {
+            match node {
+                HeightNode::Type(ty) => {
+                    self.least.insert(ty, h);
+                }
+                HeightNode::Payloads(u) => {
+                    self.payload_least.insert(u.id(), h);
+                }
+            }
         }
-        self.least[t]
+        self.get_least(root).expect("root settled above")
     }
 
-    /// The types whose values' heights bound those of `t`'s values: each atom's payload type that
-    /// lists something, and each component of each tuple type of each tuple part. A payload that
-    /// lists nothing (the empty type) has no value, so it bounds nothing: its least height is
-    /// `u64::MAX` and [`Heights::most_height`] takes nothing from it.
-    // Complexity tradeoff: the names with such a payload are read from `Atoms::payloads`, in
-    // O(log n) each, so a type pays for its payload atoms only. Naive alternative: read every
-    // atom name, which made the union of `n` bare atoms (`r11_names_family`, `n` such types
-    // each with `n` names) cost O(n^2) here and in the two functions below.
-    fn height_children(t: &Type) -> Vec<Type> {
-        let p = t.p();
-        let mut out: Vec<Type> = (p.atoms.payloads().iter())
-            .map(|name| p.atoms.names()[name].payload.clone())
-            .collect();
-        for f in p.tuples.lens.values() {
-            for row in f.distinct_atoms() {
-                out.extend(row.iter().cloned());
+    /// The nodes whose values' heights bound those of `node`'s values: for a `Type`, its shared
+    /// [`super::atoms::PayloadNode`] root (if any) and each component of each tuple type of each
+    /// tuple part; for a `PayloadNode`, its payload type and its left and right subtrees.
+    // Complexity tradeoff (R11-C3): reading `p.atoms.payloads()` flat per type cost
+    // `Theta(n^2 log n)` time and `Theta(n^2)` bytes on `r11_payload_name_prefixes_must_scale`.
+    // Stepping through the persistent `PayloadNode` tree gives `O(1)` children per node and
+    // visits each shared tree node once across all prefix types (`O(n log n)`).
+    fn height_children(node: &HeightNode) -> Vec<HeightNode> {
+        let mut out: Vec<HeightNode> = Vec::new();
+        match node {
+            HeightNode::Type(t) => {
+                let p = t.p();
+                if let Some(pr) = p.atoms.payload_dag() {
+                    out.push(HeightNode::Payloads(pr.clone()));
+                }
+                for f in p.tuples.lens.values() {
+                    for row in f.distinct_atoms() {
+                        out.extend(row.iter().cloned().map(HeightNode::Type));
+                    }
+                }
+            }
+            HeightNode::Payloads(u) => {
+                out.push(HeightNode::Type(u.payload().clone()));
+                if let Some(l) = u.left() {
+                    out.push(HeightNode::Payloads(l.clone()));
+                }
+                if let Some(r) = u.right() {
+                    out.push(HeightNode::Payloads(r.clone()));
+                }
             }
         }
         out
@@ -3853,42 +3962,111 @@ impl Heights {
     /// shows it walks `min(a, b)` levels of new meets; here each meet of the lists' suffixes is
     /// bounded once in `O(1)` from the suffixes' bounds, kept for every search
     /// ([`height_bounds`]).
-    // Complexity tradeoff: one walk of the types `t` reaches that are not bounded yet, by
-    // Tarjan's algorithm for the cycles (Tarjan, "Depth-first search and linear graph
-    // algorithms", SIAM J. Comput. 1, 1972), O(V + E) for the V types and E children, plus each
-    // tuple part's clauses once, O(its literals times its length), plus `least_height`, O(E log
-    // E); kept for every search ([`height_bounds`]). Naive alternative: decide each meet by the
-    // search, which walks the shorter list once for each pair of lengths met, O(n^2) types for
-    // `n` lengths (the lists by the place of a 1 from the end, `verdict` at `n` 512: 263,783 types
-    // and 18.9 s; COMPLEXITY.md K126). Given up: a type on a cycle is bounded from below only,
-    // so a meet of two cyclic types is left to the search; a part kept as an expression is
-    // bounded through its tuple types as a union, or not at all.
+    // Complexity tradeoff: one walk of the types and shared `PayloadNode`s `t` reaches that are
+    // not bounded yet, by Tarjan's algorithm for the cycles (Tarjan, "Depth-first search and
+    // linear graph algorithms", SIAM J. Comput. 1, 1972), O(V + E) for the V nodes and E
+    // children, plus each tuple part's clauses once, O(its literals times its length), plus
+    // `least_height`, O(E log E); kept for every search ([`height_bounds`]). Naive alternative:
+    // decide each meet by the search, which walks the shorter list once for each pair of lengths
+    // met, O(n^2) types for `n` lengths (the lists by the place of a 1 from the end, `verdict`
+    // at `n` 512: 263,783 types and 18.9 s; COMPLEXITY.md K126). Given up: a type on a cycle is
+    // bounded from below only, so a meet of two cyclic types is left to the search; a part kept
+    // as an expression is bounded through its tuple types as a union, or not at all.
+    /// Bounds an acyclic `PayloadNode` whose `payload`, `left`, and `right` are already in
+    /// `self.bounds` / `self.payload_bounds` in `O(1)` without launching Dijkstra.
+    fn bound_acyclic_payload_node(&mut self, u: &super::atoms::PayloadNode) -> Option<(u64, u64)> {
+        let mut lo = u64::MAX;
+        let mut hi: Option<u64> = None;
+        if let Some((pl, ph)) = self.bounds[u.payload()] {
+            lo = lo.min(pl.saturating_add(1));
+            let h = ph.saturating_add(1);
+            hi = Some(hi.map_or(h, |x| x.max(h)));
+        }
+        if let Some(l) = u.left()
+            && let Some((ll, lh)) = self.payload_bounds[&l.id()]
+        {
+            lo = lo.min(ll);
+            hi = Some(hi.map_or(lh, |x| x.max(lh)));
+        }
+        if let Some(r) = u.right()
+            && let Some((rl, rh)) = self.payload_bounds[&r.id()]
+        {
+            lo = lo.min(rl);
+            hi = Some(hi.map_or(rh, |x| x.max(rh)));
+        }
+        self.payload_least.insert(u.id(), lo);
+        let b = if lo == u64::MAX {
+            None
+        } else {
+            hi.filter(|&h| lo <= h).map(|h| (lo, h))
+        };
+        self.payload_bounds.insert(u.id(), b);
+        b
+    }
+
+    /// Fast path for a `PayloadTree` whose unseen nodes only reference `Type` payloads already
+    /// present in `self.bounds`: bounds every unseen `PayloadNode` in one post-order walk with no
+    /// Tarjan or Dijkstra allocations. Returns `true` when `root` is now in `self.payload_bounds`.
+    fn bound_payload_tree_fast(&mut self, root: &super::atoms::PayloadNode) -> bool {
+        if self.payload_bounds.contains_key(&root.id()) {
+            return true;
+        }
+        let mut stack: Vec<(&super::atoms::PayloadNode, bool)> = vec![(root, false)];
+        while let Some((node, ready)) = stack.pop() {
+            if self.payload_bounds.contains_key(&node.id()) {
+                continue;
+            }
+            if !ready {
+                if !self.bounds.contains_key(node.payload()) {
+                    return false;
+                }
+                stack.push((node, true));
+                if let Some(r) = node.right()
+                    && !self.payload_bounds.contains_key(&r.id())
+                {
+                    stack.push((r.as_ref(), false));
+                }
+                if let Some(l) = node.left()
+                    && !self.payload_bounds.contains_key(&l.id())
+                {
+                    stack.push((l.as_ref(), false));
+                }
+            } else {
+                self.bound_acyclic_payload_node(node);
+            }
+        }
+        true
+    }
+
     fn height_bounds(&mut self, t: &Type) -> Option<(u64, u64)> {
         if let Some(&b) = self.bounds.get(t) {
             return b;
         }
-        // Tarjan's algorithm, on a list rather than the thread's stack. Each type reached and
+        if let Some(pr) = t.p().atoms.payload_dag() {
+            self.bound_payload_tree_fast(pr);
+        }
+        // Tarjan's algorithm, on a list rather than the thread's stack. Each node reached and
         // not bounded is numbered in the order it is reached; `children[n]` are its children not
-        // bounded, `low[n]` the least number reached from it on the stack, and a frame is a type
+        // bounded, `low[n]` the least number reached from it on the stack, and a frame is a node
         // with the next of its children to visit.
-        let mut index: HashMap<Type, usize, Digests> = HashMap::default();
-        let mut nodes: Vec<Type> = Vec::new();
-        let mut children: Vec<Vec<Type>> = Vec::new();
+        let mut index: HashMap<HeightNode, usize, Digests> = HashMap::default();
+        let mut nodes: Vec<HeightNode> = Vec::new();
+        let mut children: Vec<Vec<HeightNode>> = Vec::new();
         let mut low: Vec<usize> = Vec::new();
         let mut on_stack: Vec<bool> = Vec::new();
         let mut looped: Vec<bool> = Vec::new();
         let mut stack: Vec<usize> = Vec::new();
         let mut frames: Vec<(usize, usize)> = Vec::new();
-        let mut reach = Some(t.clone());
+        let mut reach = Some(HeightNode::Type(t.clone()));
         loop {
-            if let Some(ty) = reach.take() {
+            if let Some(node) = reach.take() {
                 let n = nodes.len();
-                let cs: Vec<Type> = (Self::height_children(&ty).into_iter())
-                    .filter(|c| !self.bounds.contains_key(c))
+                let cs: Vec<HeightNode> = (Self::height_children(&node).into_iter())
+                    .filter(|c| !self.has_bounds(c))
                     .collect();
-                looped.push(cs.contains(&ty));
-                index.insert(ty.clone(), n);
-                nodes.push(ty);
+                looped.push(cs.contains(&node));
+                index.insert(node.clone(), n);
+                nodes.push(node);
                 children.push(cs);
                 low.push(n);
                 on_stack.push(true);
@@ -3924,54 +4102,84 @@ impl Heights {
             }
             let cyclic = scc.len() > 1 || looped[n];
             for m in scc {
-                let ty = nodes[m].clone();
-                let lo = self.least_height(&ty);
+                let node = nodes[m].clone();
+                if !cyclic
+                    && let HeightNode::Payloads(ref u) = node
+                {
+                    self.bound_acyclic_payload_node(u);
+                    continue;
+                }
+                let lo = self.least_height_node(&node);
                 let b = if lo == u64::MAX {
                     None
                 } else if cyclic {
                     Some((lo, u64::MAX))
                 } else {
-                    self.most_height(&ty)
+                    self.most_height(&node)
                         .filter(|&hi| lo <= hi)
                         .map(|hi| (lo, hi))
                 };
-                self.bounds.insert(ty, b);
+                match node {
+                    HeightNode::Type(ty) => {
+                        self.bounds.insert(ty, b);
+                    }
+                    HeightNode::Payloads(u) => {
+                        self.payload_bounds.insert(u.id(), b);
+                    }
+                }
             }
         }
         self.bounds[t]
     }
 
-    /// The greatest height over the parts of `t` ([`Heights::height_bounds`]), every type `t`
-    /// reaches outside its own cycle bounded already; `None` when no part may hold a value.
-    fn most_height(&mut self, t: &Type) -> Option<u64> {
-        let p = t.p();
+    /// The greatest height over the parts of `node` ([`Heights::height_bounds`]), every node
+    /// `node` reaches outside its own cycle bounded already; `None` when no part may hold a value.
+    fn most_height(&mut self, node: &HeightNode) -> Option<u64> {
         let mut hi: Option<u64> = None;
         let mut take = |h: u64| hi = Some(hi.map_or(h, |x| x.max(h)));
-        let lits = [&p.ints, &p.rats, &p.floats, &p.f32s, &p.strings];
-        if p.bools != 0
-            || p.structs
-            || p.morphisms.is_leaf() != Some(false)
-            || lits.iter().any(|l| l.cofinite || !l.values.is_empty())
-        {
-            take(0);
-        }
-        if p.atoms.cofinite() || p.tuples.rest {
-            take(u64::MAX);
-        }
-        if p.atoms.bare_names() > 0 {
-            take(0);
-        }
-        // Only the payloads that list something, as in `height_children`: those that list
-        // nothing are bounded `None` and take nothing.
-        for name in p.atoms.payloads() {
-            if let Some((_, h)) = self.bounds[&p.atoms.names()[name].payload] {
-                take(h.saturating_add(1));
+        match node {
+            HeightNode::Type(t) => {
+                let p = t.p();
+                let lits = [&p.ints, &p.rats, &p.floats, &p.f32s, &p.strings];
+                if p.bools != 0
+                    || p.structs
+                    || p.morphisms.is_leaf() != Some(false)
+                    || lits.iter().any(|l| l.cofinite || !l.values.is_empty())
+                {
+                    take(0);
+                }
+                if p.atoms.cofinite() || p.tuples.rest {
+                    take(u64::MAX);
+                }
+                if p.atoms.bare_names() > 0 {
+                    take(0);
+                }
+                if let Some(pr) = p.atoms.payload_dag()
+                    && let Some((_, h)) = self.payload_bounds[&pr.id()]
+                {
+                    take(h);
+                }
+                for (&len, f) in &p.tuples.lens {
+                    if let Some(v) = self.part_heights(len, f) {
+                        let h = v.iter().map(|&(_, h)| h).max().unwrap_or(0);
+                        take(h.saturating_add(1));
+                    }
+                }
             }
-        }
-        for (&len, f) in &p.tuples.lens {
-            if let Some(v) = self.part_heights(len, f) {
-                let h = v.iter().map(|&(_, h)| h).max().unwrap_or(0);
-                take(h.saturating_add(1));
+            HeightNode::Payloads(u) => {
+                if let Some((_, h)) = self.bounds[u.payload()] {
+                    take(h.saturating_add(1));
+                }
+                if let Some(l) = u.left()
+                    && let Some((_, h)) = self.payload_bounds[&l.id()]
+                {
+                    take(h);
+                }
+                if let Some(r) = u.right()
+                    && let Some((_, h)) = self.payload_bounds[&r.id()]
+                {
+                    take(h);
+                }
             }
         }
         hi
@@ -4093,17 +4301,38 @@ impl Heights {
 fn fields(roots: &[Type]) -> (Vec<Type>, Vec<Type>, Vec<Type>) {
     let (mut seen, mut out, mut wraps, mut items) =
         (DigestSet::default(), Vec::new(), Vec::new(), Vec::new());
+    // Named components in a payload diagram sharing the same `Atoms::names` `OrdMap` root
+    // (`OrdMap::ptr_eq`), so a shared map of many bare names is indexed once.
+    struct NamedGroup {
+        rep: Type,
+        entries: Vec<(usize, Type)>,
+    }
     // A payload diagram's distinct components with their place: those with no atom name
-    // (`plain`) and those with one (`named`), and in which contexts `plain` was queued.
+    // (`plain`) and those with one (`groups`, indexed by atom name in `by_name`), plus which
+    // contexts have queued `plain` and which `groups` remain unpushed as non-matching.
+    //
+    // Complexity tradeoff (U3 / R10-C4): iterating `rows.named` per outer tag cost `Theta(K * W)`
+    // when `K` outer tags share one payload diagram with `W` named components
+    // (`r11_named_payload_probe`, `r11_tagged_payload_probe`). Grouping components by
+    // `OrdMap::ptr_eq`, building an inverted index `by_name` once per diagram, and draining
+    // non-matching `unpushed[ctx]` groups once per context reduces total work across all tags to
+    // `O(W + sum |distinct maps| + total matches)`.
     struct Rows {
         plain: Vec<(usize, Type)>,
-        named: Vec<(usize, Type)>,
-        queued: [bool; 2],
+        groups: Vec<NamedGroup>,
+        by_name: HashMap<std::sync::Arc<str>, Vec<usize>>,
+        queued_plain: [bool; 2],
+        unpushed: [Vec<usize>; 2],
+        stamp: Vec<usize>,
+        cur_stamp: usize,
     }
-    // Payload diagrams read, by (length, diagram id), `None` when not a union of rows; tuple
-    // and morphism diagrams of the types themselves walked, by (id, context); list tails
+    // Payload diagrams read, by (length, diagram id), `None` when not a union of rows;
+    // persistent `PayloadNode` wrap results + side effects memoized by `(PayloadNode::id, in_item)`;
+    // tuple and morphism diagrams of the types themselves walked, by (id, context); list tails
     // followed by the X44 walk, by (node id, link name).
     let mut payloads: DigestMap<(usize, u64), Option<Rows>> = DigestMap::default();
+    let mut payload_wrap: DigestMap<(u64, bool), bool> = DigestMap::default();
+    let mut entry_wrap: DigestMap<(u64, bool), bool> = DigestMap::default();
     let (mut own, mut maps) = (DigestSet::default(), DigestSet::default());
     // Keyed by the program's link names, so it keeps the seeded hasher (`DigestMap` says why).
     let mut tails_seen = HashSet::new();
@@ -4124,86 +4353,204 @@ fn fields(roots: &[Type]) -> (Vec<Type>, Vec<Type>, Vec<Type>) {
         // An atom's payload components, but not one with an atom of the same name: that is a
         // link of a list through the atom (a cons cell's tail), whose walk would make every tail
         // of the list a root.
-        // Only the names whose payload lists something (`Atoms::payloads`): reading every name
-        // here cost O(names) per type, n^2 on a chain of n failure atoms (l01_27_absences), and
-        // a name whose payload lists nothing adds no component and leaves `wrap` as it is.
+        // Complexity tradeoff (R11-C3): walking `p.atoms.payloads()` flat per type cost
+        // `Theta(n^2 log n)` on `n` prefix unions sharing one persistent map
+        // (`r11_payload_name_prefixes_must_scale`). Memoizing each `(PayloadNode::id, in_item)` in
+        // `payload_wrap` and each shared `(PayloadEntry::id, in_item)` in `entry_wrap` visits
+        // every shared tree node once and evaluates every distinct entry once per context
+        // (`O(n log n)`).
         let mut wrap = !p.atoms.names().is_empty();
-        for name in p.atoms.payloads() {
-            let Some(a) = p.atoms.names().get(name) else {
-                continue;
-            };
-            if a.bare {
-                continue;
-            }
-            let pp = a.payload.p();
-            wrap &= !pp.tuples.rest && !pp.structs;
-            for (len, b) in &pp.tuples.lens {
-                let rows = payloads.entry((*len, b.id())).or_insert_with(|| {
-                    let mut rows = Rows {
-                        plain: Vec::new(),
-                        named: Vec::new(),
-                        queued: [false; 2],
-                    };
-                    let mut met = DigestSet::default();
-                    for row in b.union_rows()? {
-                        for (i, c) in row.iter().enumerate() {
-                            if !met.insert((i, c.node_id())) {
-                                continue;
-                            }
-                            if c.p().atoms.names().is_empty() {
-                                rows.plain.push((i, c.clone()));
-                            } else {
-                                rows.named.push((i, c.clone()));
-                            }
-                        }
-                    }
-                    Some(rows)
-                });
-                let Some(rows) = rows else {
-                    wrap = false;
-                    continue;
-                };
-                // A pair's first component is a list's item, never its link (`list_step` reads
-                // the link at component 1); it and the fields written in it are in an item.
-                let pair = *len == 2;
-                if !std::mem::replace(&mut rows.queued[usize::from(in_item)], true) {
-                    for (i, c) in &rows.plain {
-                        stack.push((c.clone(), in_item || (pair && *i == 0)));
-                    }
-                }
-                for (i, c) in &rows.named {
-                    let item = pair && *i == 0;
-                    if !c.p().atoms.names().contains_key(name) {
-                        stack.push((c.clone(), in_item || item));
+        if let Some(root) = p.atoms.payload_dag() {
+            let mut pstack: Vec<(&super::atoms::PayloadNode, bool)> = vec![(root.as_ref(), false)];
+            while let Some((node, ready)) = pstack.pop() {
+                let key = (node.id(), in_item);
+                if !ready {
+                    if payload_wrap.contains_key(&key) {
                         continue;
                     }
-                    wrap = false;
-                    if item {
-                        // An item that is itself a list of the same names is walked as a
-                        // field (X43).
-                        items.push(c.clone());
-                        stack.push((c.clone(), true));
-                    } else if pair {
-                        // The tail: follow its literal links, each (node, link name) once,
-                        // and admit only a Boolean list type met on the way (X44, at any
-                        // depth); literal intermediate tails are not roots.
-                        let mut tails = vec![c.clone()];
-                        while let Some(tail) = tails.pop() {
-                            if !tails_seen.insert((tail.node_id(), name.clone())) {
-                                continue;
+                    pstack.push((node, true));
+                    if let Some(r) = node.right()
+                        && !payload_wrap.contains_key(&(r.id(), in_item))
+                    {
+                        pstack.push((r.as_ref(), false));
+                    }
+                    if let Some(l) = node.left()
+                        && !payload_wrap.contains_key(&(l.id(), in_item))
+                    {
+                        pstack.push((l.as_ref(), false));
+                    }
+                    continue;
+                }
+                if payload_wrap.contains_key(&key) {
+                    continue;
+                }
+                let mut node_wrap = true;
+                if let Some(l) = node.left() {
+                    node_wrap &= payload_wrap[&(l.id(), in_item)];
+                }
+                if let Some(r) = node.right() {
+                    node_wrap &= payload_wrap[&(r.id(), in_item)];
+                }
+                let ekey = (node.entry_id(), in_item);
+                let ew = if let Some(&w) = entry_wrap.get(&ekey) {
+                    w
+                } else if node.bare() {
+                    entry_wrap.insert(ekey, true);
+                    true
+                } else {
+                    let mut ew = true;
+                    let name = node.name();
+                    let pp = node.payload().p();
+                    ew &= !pp.tuples.rest && !pp.structs;
+                    for (len, b) in &pp.tuples.lens {
+                        let rows = payloads.entry((*len, b.id())).or_insert_with(|| {
+                            let mut plain = Vec::new();
+                            let mut groups: Vec<NamedGroup> = Vec::new();
+                            let mut group_buckets: DigestMap<(u64, u64, usize), Vec<usize>> =
+                                DigestMap::default();
+                            let mut met = DigestSet::default();
+                            for row in b.union_rows()? {
+                                for (i, c) in row.iter().enumerate() {
+                                    if !met.insert((i, c.node_id())) {
+                                        continue;
+                                    }
+                                    let cp = c.p();
+                                    if cp.atoms.names().is_empty() {
+                                        plain.push((i, c.clone()));
+                                    } else {
+                                        let bkey = (
+                                            cp.atoms.sum(),
+                                            cp.atoms.name_sum(),
+                                            cp.atoms.names().len(),
+                                        );
+                                        let bucket = group_buckets.entry(bkey).or_default();
+                                        let found = bucket.iter().copied().find(|&g| {
+                                            groups[g]
+                                                .rep
+                                                .p()
+                                                .atoms
+                                                .names()
+                                                .ptr_eq(cp.atoms.names())
+                                        });
+                                        let g = match found {
+                                            Some(g) => g,
+                                            None => {
+                                                let g = groups.len();
+                                                groups.push(NamedGroup {
+                                                    rep: c.clone(),
+                                                    entries: Vec::new(),
+                                                });
+                                                bucket.push(g);
+                                                g
+                                            }
+                                        };
+                                        groups[g].entries.push((i, c.clone()));
+                                    }
+                                }
                             }
-                            if boolean_tail(&tail, name) {
-                                items.push(tail.clone());
-                                stack.push((tail, true));
-                            } else if let Some((_, link, _, next)) = list_step(&tail)
-                                && link == *name
-                            {
-                                tails.push(next);
+                            let mut by_name: HashMap<std::sync::Arc<str>, Vec<usize>> =
+                                HashMap::new();
+                            for (g, group) in groups.iter().enumerate() {
+                                for atom_name in group.rep.p().atoms.names().keys() {
+                                    by_name.entry(atom_name.clone()).or_default().push(g);
+                                }
+                            }
+                            let n_groups = groups.len();
+                            Some(Rows {
+                                plain,
+                                groups,
+                                by_name,
+                                queued_plain: [false; 2],
+                                unpushed: [
+                                    (0..n_groups).collect(),
+                                    (0..n_groups).collect(),
+                                ],
+                                stamp: vec![0; n_groups],
+                                cur_stamp: 0,
+                            })
+                        });
+                        let Some(rows) = rows else {
+                            ew = false;
+                            continue;
+                        };
+                        // A pair's first component is a list's item, never its link (`list_step`
+                        // reads the link at component 1); it and the fields written in it are in
+                        // an item.
+                        let pair = *len == 2;
+                        let ctx = usize::from(in_item);
+                        if !std::mem::replace(&mut rows.queued_plain[ctx], true) {
+                            for (i, c) in &rows.plain {
+                                stack.push((c.clone(), in_item || (pair && *i == 0)));
+                            }
+                        }
+                        if let Some(matching) = rows.by_name.get(name) {
+                            ew = false;
+                            if !rows.unpushed[ctx].is_empty() {
+                                rows.cur_stamp += 1;
+                                let st = rows.cur_stamp;
+                                for &g in matching {
+                                    rows.stamp[g] = st;
+                                }
+                                let mut still = Vec::new();
+                                for g in std::mem::take(&mut rows.unpushed[ctx]) {
+                                    if rows.stamp[g] == st {
+                                        still.push(g);
+                                    } else {
+                                        for (i, c) in &rows.groups[g].entries {
+                                            let item = pair && *i == 0;
+                                            stack.push((c.clone(), in_item || item));
+                                        }
+                                    }
+                                }
+                                rows.unpushed[ctx] = still;
+                            }
+                            for &g in matching {
+                                for (i, c) in &rows.groups[g].entries {
+                                    let item = pair && *i == 0;
+                                    if item {
+                                        // An item that is itself a list of the same names is
+                                        // walked as a field (X43).
+                                        items.push(c.clone());
+                                        stack.push((c.clone(), true));
+                                    } else if pair {
+                                        // The tail: follow its literal links, each (node, link
+                                        // name) once, and admit only a Boolean list type met on
+                                        // the way (X44, at any depth); literal intermediate tails
+                                        // are not roots.
+                                        let mut tails = vec![c.clone()];
+                                        while let Some(tail) = tails.pop() {
+                                            if !tails_seen.insert((tail.node_id(), name.clone())) {
+                                                continue;
+                                            }
+                                            if boolean_tail(&tail, name) {
+                                                items.push(tail.clone());
+                                                stack.push((tail, true));
+                                            } else if let Some((_, link, _, next)) =
+                                                list_step(&tail)
+                                                && link == *name
+                                            {
+                                                tails.push(next);
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        } else if !rows.unpushed[ctx].is_empty() {
+                            for g in std::mem::take(&mut rows.unpushed[ctx]) {
+                                for (i, c) in &rows.groups[g].entries {
+                                    let item = pair && *i == 0;
+                                    stack.push((c.clone(), in_item || item));
+                                }
                             }
                         }
                     }
-                }
+                    entry_wrap.insert(ekey, ew);
+                    ew
+                };
+                node_wrap &= ew;
+                payload_wrap.insert(key, node_wrap);
             }
+            wrap &= payload_wrap[&(root.id(), in_item)];
         }
         if wrap {
             wraps.push(t.clone());
@@ -5020,8 +5367,7 @@ impl<'m> Searching<'m> {
         if p.bools != 0
             || lits.iter().any(|l| l.cofinite || !l.values.is_empty())
             || p.atoms.cofinite()
-            || (canonical
-                && (p.structs || p.tuples.rest || p.atoms.names().values().any(|a| a.bare)))
+            || (canonical && (p.structs || p.tuples.rest || p.atoms.bare_names() > 0))
         {
             return false;
         }
@@ -7218,7 +7564,7 @@ impl<'m> Searching<'m> {
             stop: stop?,
             link: name,
             item,
-            bare: p.atoms.names().values().any(|a| a.bare),
+            bare: p.atoms.bare_names() > 0,
             all,
             any,
             none,
@@ -10006,12 +10352,13 @@ impl<'m> Searching<'m> {
 
     async fn find_rep(&'m self, t: &Type) -> Option<usize> {
         // A bare atom is a value: the empty list of a list type.
-        if let Some(name) = t
-            .p()
-            .atoms
-            .names()
-            .iter()
-            .find_map(|(n, a)| a.bare.then_some(n))
+        if t.p().atoms.bare_names() > 0
+            && let Some(name) = t
+                .p()
+                .atoms
+                .names()
+                .iter()
+                .find_map(|(n, a)| a.bare.then_some(n))
         {
             return Some(self.s().show(Rep::Value(Value::atom(name))));
         }
@@ -15058,15 +15405,17 @@ fn nonflat_part(t: &Type) -> Type {
             );
         } else {
             q.atoms = p.atoms.clone();
-            for (name, a) in p.atoms.names().iter() {
-                if a.bare {
-                    q.atoms.set(
-                        name,
-                        super::AtomPart {
-                            bare: false,
-                            payload: a.payload.clone(),
-                        },
-                    );
+            if p.atoms.bare_names() > 0 {
+                for (name, a) in p.atoms.names().iter() {
+                    if a.bare {
+                        q.atoms.set(
+                            name,
+                            super::AtomPart {
+                                bare: false,
+                                payload: a.payload.clone(),
+                            },
+                        );
+                    }
                 }
             }
         }

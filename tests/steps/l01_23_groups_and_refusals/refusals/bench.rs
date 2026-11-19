@@ -1679,3 +1679,18 @@ fn diagonal_rows_difference_sweep() {
         }
     });
 }
+
+#[test]
+fn r11_payload_name_prefixes_must_scale() {
+    big(|| {
+        let a = r11_payload_name_prefixes(128);
+        let b = r11_payload_name_prefixes(1024);
+        scaling::check("shared payload-bearing name prefixes", 128, |n| {
+            Type::forget_emptiness();
+            assert_eq!(
+                (if n == 128 { &a } else { &b }).verdict(),
+                Verdict::Inhabited
+            );
+        });
+    });
+}

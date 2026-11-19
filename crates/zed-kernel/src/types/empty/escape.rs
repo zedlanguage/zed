@@ -160,10 +160,20 @@ impl Ints {
     /// Whether `self ⊆ o`.
     fn subset(&self, o: &Ints) -> bool {
         match (self.cof, o.cof) {
-            (false, false) => self.vals.iter().all(|x| o.vals.contains(x)),
-            (false, true) => self.vals.iter().all(|x| !o.vals.contains(x)),
+            (false, false) => {
+                self.vals.len() <= o.vals.len() && self.vals.iter().all(|x| o.vals.contains(x))
+            }
+            (false, true) => {
+                if self.vals.len() <= o.vals.len() {
+                    self.vals.iter().all(|x| !o.vals.contains(x))
+                } else {
+                    o.vals.iter().all(|x| !self.vals.contains(x))
+                }
+            }
             (true, false) => false,
-            (true, true) => o.vals.iter().all(|x| self.vals.contains(x)),
+            (true, true) => {
+                o.vals.len() <= self.vals.len() && o.vals.iter().all(|x| self.vals.contains(x))
+            }
         }
     }
 
@@ -765,6 +775,7 @@ fn decide_counted(t: &Type, counts: &mut (usize, usize)) -> Option<ChainPlan> {
                         mut pl: Vec<Ints>,
                         longer_after: bool,
                         all_held_from_l0: bool,
+                        mut zero_out: Option<&mut Vec<usize>>,
                         counts: &mut (usize, usize)|
      -> Option<ChainPlan> {
         let mut hints: Vec<(Row, ChainHint)> = Vec::new();
@@ -854,6 +865,11 @@ fn decide_counted(t: &Type, counts: &mut (usize, usize)) -> Option<ChainPlan> {
                 (r.atoms.len() >= 3 && read < last)
                     .then(|| (anc.at(r.s, read - 1, nodes), read + 1, last)),
             );
+            if r.atoms.is_empty()
+                && let Some(z) = zero_out.as_deref_mut()
+            {
+                z.push(r.s);
+            }
             orig_live.push((r.row, r.atoms.clone()));
             clauses_work.push(r.atoms);
         }
@@ -1145,7 +1161,8 @@ fn decide_counted(t: &Type, counts: &mut (usize, usize)) -> Option<ChainPlan> {
         })
     };
 
-    if let Some(plan) = solve_at_len(l0, pl.clone(), longer, true, counts) {
+    let mut zero_rows: Vec<usize> = Vec::new();
+    if let Some(plan) = solve_at_len(l0, pl.clone(), longer, true, Some(&mut zero_rows), counts) {
         return Some(plan);
     }
 
@@ -1160,26 +1177,149 @@ fn decide_counted(t: &Type, counts: &mut (usize, usize)) -> Option<ChainPlan> {
                 steps == hs || nodes[term].carrier
             }
         };
-        let h_active = neg
+        // Complexity tradeoff: deciding every positive length `l0 ..= l_steady` independently
+        // costs `O(n^2 log n)` when chains have height `n`. Instead, one `O(nodes)` bottom-up
+        // DP on the node forest (`next_no_stop`, and `next_sep` when `cur` is at the carrier
+        // so every place `j > l0` has head `H`) finds the exact earliest length `l_first > l0`
+        // where `l0`'s active rows change (clearing every zero-atom killer of `l0`, or else the
+        // earliest active row that stops holding or gains a separating cell), plus the active-
+        // row and steady-state lengths `l_next` and `l_steady`. At most three lengths past `l0`
+        // are solved, preserving `O((nodes + rows + cells) log n)` with no thresholds. Order-
+        // independent (min/max over sets of rows) and sound: only `l_steady` with `all_held`, or
+        // a single zero-atom row covering every length `>= l0`, may return `Empty`.
+        let mut next_no_stop = vec![usize::MAX; nodes.len()];
+        for v in 0..nodes.len() {
+            next_no_stop[v] = match nodes[v].next {
+                None if nodes[v].carrier => usize::MAX,
+                None => 1,
+                Some(nx) => {
+                    debug_assert!(nx < v);
+                    if !nodes[v].stop {
+                        0
+                    } else {
+                        next_no_stop[nx].saturating_add(1)
+                    }
+                }
+            };
+        }
+        let next_sep = if nodes[cur].carrier
+            && let Some(c) = &h_car
+        {
+            let mut sep_cache: HashMap<Ints, bool, Digests> = HashMap::default();
+            let mut dp = vec![usize::MAX; nodes.len()];
+            for v in 0..nodes.len() {
+                if let Some(nx) = nodes[v].next {
+                    debug_assert!(nx < v);
+                    let sep = *sep_cache
+                        .entry(nodes[v].head.clone())
+                        .or_insert_with(|| !c.subset(&nodes[v].head));
+                    dp[v] = if sep {
+                        0
+                    } else {
+                        dp[nx].saturating_add(1)
+                    };
+                }
+            }
+            Some(dp)
+        } else {
+            None
+        };
+        let first_change = |s: usize| -> usize {
+            let hs = nodes[s].ht;
+            let steps = l0 - 1;
+            let no_stop = if steps < hs {
+                let d = next_no_stop[anc.at(s, steps, nodes)];
+                if d == usize::MAX {
+                    usize::MAX
+                } else {
+                    l0.saturating_add(d)
+                }
+            } else if nodes[ns.terminal(s, &anc)].carrier {
+                usize::MAX
+            } else {
+                l0.saturating_add(1)
+            };
+            let sep = if let Some(ref dp) = next_sep
+                && steps < hs
+            {
+                let d = dp[anc.at(s, steps, nodes)];
+                if d == usize::MAX {
+                    usize::MAX
+                } else {
+                    l0.saturating_add(1).saturating_add(d)
+                }
+            } else {
+                usize::MAX
+            };
+            no_stop.min(sep)
+        };
+        let row_steady = |s: usize| -> usize {
+            let term = ns.terminal(s, &anc);
+            nodes[s].ht + if nodes[term].carrier { 1 } else { 2 }
+        };
+        let l_first = if next_sep.is_some() {
+            if !zero_rows.is_empty() {
+                let mut clear = l0;
+                for &s in &zero_rows {
+                    let fc = first_change(s);
+                    if fc == usize::MAX {
+                        // A single refused row holds every length >= l0 and has no separating
+                        // cell on any place >= 1 (since `cur` is at the carrier and `e1` holds).
+                        return Some(ChainPlan::Empty);
+                    }
+                    clear = clear.max(fc);
+                }
+                clear
+            } else {
+                let m = neg
+                    .iter()
+                    .filter(|&&(_, s)| holds_l0(s))
+                    .map(|&(_, s)| first_change(s))
+                    .min()
+                    .unwrap_or(usize::MAX);
+                if m == usize::MAX { l0 } else { m }
+            }
+        } else {
+            l0.saturating_add(1)
+        };
+        let l_next = neg
             .iter()
             .filter(|&&(_, s)| holds_l0(s))
-            .map(|&(_, s)| nodes[s].ht)
+            .map(|&(_, s)| row_steady(s))
             .max()
-            .unwrap_or(0);
-        let h_max = neg.iter().map(|&(_, s)| nodes[s].ht).max().unwrap_or(0);
-        let l_next = (h_active + 1).max(l0);
-        let l_trunc = (h_max + 1).max(l0);
-        let mut cands = Vec::with_capacity(2);
-        if l_next > l0 && l_next < l_trunc {
-            cands.push(l_next);
+            .unwrap_or(0)
+            .max(l0);
+        let l_steady = neg
+            .iter()
+            .map(|&(_, s)| row_steady(s))
+            .max()
+            .unwrap_or(0)
+            .max(l0);
+        let mut cands = Vec::with_capacity(3);
+        for len in [l_first, l_next, l_steady] {
+            if len > l0 {
+                cands.push(len);
+            }
         }
-        if l_trunc > l0 {
-            cands.push(l_trunc);
-        }
+        cands.sort_unstable();
+        cands.dedup();
+        let all_rows_held_from_l0 = neg.iter().all(|&(_, s)| {
+            let hs = nodes[s].ht;
+            let steps = l0 - 1;
+            if steps < hs {
+                next_no_stop[anc.at(s, steps, nodes)] == usize::MAX
+            } else {
+                nodes[ns.terminal(s, &anc)].carrier
+            }
+        });
         let mut pl_ext = pl;
         let mut v = cur;
         let mut ok = true;
+        let mut last_tried = l0;
         for cand_len in cands {
+            if cand_len <= last_tried {
+                continue;
+            }
             while pl_ext.len() - 1 < cand_len || !nodes[v].stop {
                 if nodes[v].carrier {
                     let c = h_car.as_ref()?;
@@ -1208,26 +1348,11 @@ fn decide_counted(t: &Type, counts: &mut (usize, usize)) -> Option<ChainPlan> {
                 break;
             }
             let actual_len = pl_ext.len() - 1;
+            last_tried = actual_len;
             let longer_after = nodes[v].next.is_some() || nodes[v].carrier;
-            let all_held = actual_len == l_trunc
-                && neg.iter().all(|&(_, s)| {
-                    let term = ns.terminal(s, &anc);
-                    if !nodes[term].carrier {
-                        return false;
-                    }
-                    let mut u = s;
-                    let mut step = 0usize;
-                    while let Some(nx) = nodes[u].next {
-                        if step + 1 >= l0 && !nodes[u].stop {
-                            return false;
-                        }
-                        u = nx;
-                        step += 1;
-                    }
-                    true
-                });
+            let all_held = actual_len == l_steady && all_rows_held_from_l0;
             if let Some(plan) =
-                solve_at_len(actual_len, pl_ext.clone(), longer_after, all_held, counts)
+                solve_at_len(actual_len, pl_ext.clone(), longer_after, all_held, None, counts)
             {
                 return Some(plan);
             }

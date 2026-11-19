@@ -9354,3 +9354,49 @@ fn xr_r2_bench_escape_bucket_small_anchor_scales() {
         },
     );
 }
+
+#[test]
+fn r10_answer_preservation_nine_node_list_regression() {
+    big(|| {
+        for reverse in [false, true] {
+            Type::forget_emptiness();
+            let t = r10_precision_case("r10precision", reverse);
+            assert_eq!(t.verdict(), Verdict::Inhabited);
+            assert!(t.contains(&r6_colour_list(&[0, 2])));
+            assert!(!t.contains(&r6_colour_list(&[])));
+            assert!(!t.contains(&r6_colour_list(&[0])));
+        }
+        let inner = r10_precision_case("r10precisionwidth", false);
+        let a = Type::tuple(vec![inner.clone(); 8]);
+        let b = Type::tuple(vec![inner; 64]);
+        scaling::check(
+            "preserving a prefix witness in shared list fields",
+            8,
+            |n| {
+                Type::forget_emptiness();
+                assert_eq!((if n == 8 { &a } else { &b }).verdict(), Verdict::Inhabited);
+            },
+        );
+    });
+}
+
+/// R10-C3: a nine-node list whose answer changed since 19bc4e25; cause still open.
+fn r10_precision_case(tag: &str, reverse: bool) -> Type {
+    let raw = [
+        (true, 63, 0),
+        (false, 2, 0),
+        (false, 59, 1),
+        (false, 40, 2),
+        (true, 61, 0),
+        (true, 61, 4),
+        (true, 25, 5),
+        (true, 61, 6),
+        (false, 47, 3),
+    ];
+    let ns: Vec<_> = raw
+        .iter()
+        .map(|&(stop, mask, next)| R3Node { stop, mask, next })
+        .collect();
+    assert!(r3_oracle(&ns, &[1, 2, 3, 7, 8], 63));
+    r3_build(&ns, &[1, 2, 3, 7, 8], 63, reverse, tag, 0)
+}

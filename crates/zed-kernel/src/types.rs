@@ -254,6 +254,12 @@ impl Drop for Node {
             if !p.atoms.names().is_empty() {
                 free(Freed::Atoms(p.atoms.take_names()));
             }
+            if !p.atoms.payloads().is_empty() {
+                free(Freed::Payloads(p.atoms.take_payloads()));
+            }
+            if let Some(dag) = p.atoms.take_payload_dag() {
+                free(Freed::PayloadDag(dag));
+            }
             if !p.tuples.lens.is_empty() {
                 free(Freed::Lens(std::mem::take(&mut p.tuples.lens)));
             }
@@ -275,6 +281,8 @@ impl Drop for Node {
 #[expect(dead_code, reason = "a part is held only to be dropped")]
 enum Freed {
     Atoms(OrdMap<Arc<str>, AtomPart>),
+    Payloads(atoms::PayloadTree),
+    PayloadDag(Arc<atoms::PayloadNode>),
     Lens(BTreeMap<usize, Part<Row>>),
     Rope(Rope),
     Tuples(bdd::Owned<Row>),
@@ -1395,23 +1403,472 @@ struct AtomPart {
 mod atoms {
     use super::*;
 
+    /// Unique id for [`PayloadNode`] and [`PayloadEntry`], never reused.
+    fn next_payload_node() -> u64 {
+        static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
+        NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+    }
+
+    /// One `(name, bare, payload)` entry shared across path-copied [`PayloadNode`] ancestors,
+    /// so walks that memoize per-entry work (`fields`, `decide_groups_read`) do not redo it on
+    /// copied ancestor nodes along an AVL insertion path.
+    #[derive(Debug)]
+    struct PayloadEntry {
+        id: u64,
+        name: Arc<str>,
+        bare: bool,
+        payload: Type,
+    }
+
+    /// A node of a persistent AVL tree of payload-bearing atom entries `(name, bare, payload)`.
+    ///
+    /// Complexity tradeoff (R11-C3): `imbl::OrdSet<Arc<str>>` hides its internal B+ tree nodes,
+    /// so `n` prefix unions sharing one persistent map were iterated in `O(n^2 log n)` by
+    /// `decide_groups_read`, `fields`, and `Heights` (`r11_payload_name_prefixes_must_scale`:
+    /// 68.9x instructions and 33.6x bytes from 128 to 1,024). A persistent AVL tree with unique
+    /// `id`s per node and shared `Arc<PayloadEntry>` across path copies exposes structural sharing
+    /// so every DAG walk visits each shared node once and evaluates each distinct entry once:
+    /// `O(n log n)` total nodes, time, and bytes across `n` prefix unions. Insert/remove/lookup
+    /// remain `O(log k)` with `height <= 1.44 log_2(k + 2)`.
+    #[derive(Debug)]
+    pub(in crate::types) struct PayloadNode {
+        id: u64,
+        height: u8,
+        len: usize,
+        entry: Arc<PayloadEntry>,
+        left: Option<Arc<PayloadNode>>,
+        right: Option<Arc<PayloadNode>>,
+    }
+
+    impl PayloadNode {
+        #[inline]
+        pub(in crate::types) fn id(&self) -> u64 {
+            self.id
+        }
+
+        #[inline]
+        pub(in crate::types) fn entry_id(&self) -> u64 {
+            self.entry.id
+        }
+
+        #[inline]
+        pub(in crate::types) fn name(&self) -> &Arc<str> {
+            &self.entry.name
+        }
+
+        #[inline]
+        pub(in crate::types) fn bare(&self) -> bool {
+            self.entry.bare
+        }
+
+        #[inline]
+        pub(in crate::types) fn payload(&self) -> &Type {
+            &self.entry.payload
+        }
+
+        #[inline]
+        pub(in crate::types) fn left(&self) -> Option<&Arc<PayloadNode>> {
+            self.left.as_ref()
+        }
+
+        #[inline]
+        pub(in crate::types) fn right(&self) -> Option<&Arc<PayloadNode>> {
+            self.right.as_ref()
+        }
+
+        fn h(n: &Option<Arc<PayloadNode>>) -> i8 {
+            n.as_ref().map_or(0, |x| x.height as i8)
+        }
+
+        fn sz(n: &Option<Arc<PayloadNode>>) -> usize {
+            n.as_ref().map_or(0, |x| x.len)
+        }
+
+        fn new_entry(name: Arc<str>, bare: bool, payload: Type) -> Arc<PayloadEntry> {
+            Arc::new(PayloadEntry {
+                id: next_payload_node(),
+                name,
+                bare,
+                payload,
+            })
+        }
+
+        fn make(
+            entry: Arc<PayloadEntry>,
+            left: Option<Arc<PayloadNode>>,
+            right: Option<Arc<PayloadNode>>,
+        ) -> Arc<PayloadNode> {
+            let height = 1 + Self::h(&left).max(Self::h(&right)) as u8;
+            let len = 1 + Self::sz(&left) + Self::sz(&right);
+            Arc::new(PayloadNode {
+                id: next_payload_node(),
+                height,
+                len,
+                entry,
+                left,
+                right,
+            })
+        }
+
+        fn rot_left(x: &PayloadNode) -> Arc<PayloadNode> {
+            let y = x.right.as_ref().expect("rot_left requires right child");
+            let new_x = Self::make(x.entry.clone(), x.left.clone(), y.left.clone());
+            Self::make(y.entry.clone(), Some(new_x), y.right.clone())
+        }
+
+        fn rot_right(y: &PayloadNode) -> Arc<PayloadNode> {
+            let x = y.left.as_ref().expect("rot_right requires left child");
+            let new_y = Self::make(y.entry.clone(), x.right.clone(), y.right.clone());
+            Self::make(x.entry.clone(), x.left.clone(), Some(new_y))
+        }
+
+        fn balance(
+            entry: Arc<PayloadEntry>,
+            left: Option<Arc<PayloadNode>>,
+            right: Option<Arc<PayloadNode>>,
+        ) -> Arc<PayloadNode> {
+            let bf = Self::h(&left) - Self::h(&right);
+            if bf > 1 {
+                let l = left.as_ref().expect("left-heavy node has left child");
+                let l_rot = if Self::h(&l.left) < Self::h(&l.right) {
+                    Some(Self::rot_left(l))
+                } else {
+                    None
+                };
+                let x = l_rot.as_deref().unwrap_or(l);
+                let new_y = Self::make(entry, x.right.clone(), right);
+                Self::make(x.entry.clone(), x.left.clone(), Some(new_y))
+            } else if bf < -1 {
+                let r = right.as_ref().expect("right-heavy node has right child");
+                let r_rot = if Self::h(&r.right) < Self::h(&r.left) {
+                    Some(Self::rot_right(r))
+                } else {
+                    None
+                };
+                let y = r_rot.as_deref().unwrap_or(r);
+                let new_x = Self::make(entry, left, y.left.clone());
+                Self::make(y.entry.clone(), Some(new_x), y.right.clone())
+            } else {
+                Self::make(entry, left, right)
+            }
+        }
+
+        fn step(entry: Arc<PayloadEntry>, prev: Option<Arc<PayloadNode>>) -> Arc<PayloadNode> {
+            Arc::new(PayloadNode {
+                id: next_payload_node(),
+                height: 1,
+                len: 1,
+                entry,
+                left: prev,
+                right: None,
+            })
+        }
+
+        fn insert_entry(
+            node: &Option<Arc<PayloadNode>>,
+            entry: Arc<PayloadEntry>,
+        ) -> Arc<PayloadNode> {
+            let Some(n) = node else {
+                return Self::make(entry, None, None);
+            };
+            match entry.name.cmp(&n.entry.name) {
+                Ordering::Equal => {
+                    if n.entry.bare == entry.bare && n.entry.payload == entry.payload {
+                        n.clone()
+                    } else {
+                        Self::make(entry, n.left.clone(), n.right.clone())
+                    }
+                }
+                Ordering::Less => Self::balance(
+                    n.entry.clone(),
+                    Some(Self::insert_entry(&n.left, entry)),
+                    n.right.clone(),
+                ),
+                Ordering::Greater => Self::balance(
+                    n.entry.clone(),
+                    n.left.clone(),
+                    Some(Self::insert_entry(&n.right, entry)),
+                ),
+            }
+        }
+
+        fn remove_min(n: &PayloadNode) -> (Arc<PayloadEntry>, Option<Arc<PayloadNode>>) {
+            match &n.left {
+                None => (n.entry.clone(), n.right.clone()),
+                Some(l) => {
+                    let (e, new_l) = Self::remove_min(l);
+                    (e, Some(Self::balance(n.entry.clone(), new_l, n.right.clone())))
+                }
+            }
+        }
+
+        fn remove(
+            node: &Option<Arc<PayloadNode>>,
+            name: &str,
+        ) -> (Option<Arc<PayloadNode>>, bool) {
+            let Some(n) = node else {
+                return (None, false);
+            };
+            match name.cmp(n.entry.name.as_ref()) {
+                Ordering::Equal => match (&n.left, &n.right) {
+                    (None, r) => (r.clone(), true),
+                    (l, None) => (l.clone(), true),
+                    (l, Some(r)) => {
+                        let (e, new_r) = Self::remove_min(r);
+                        (Some(Self::balance(e, l.clone(), new_r)), true)
+                    }
+                },
+                Ordering::Less => {
+                    let (new_l, removed) = Self::remove(&n.left, name);
+                    if !removed {
+                        (Some(n.clone()), false)
+                    } else {
+                        (
+                            Some(Self::balance(n.entry.clone(), new_l, n.right.clone())),
+                            true,
+                        )
+                    }
+                }
+                Ordering::Greater => {
+                    let (new_r, removed) = Self::remove(&n.right, name);
+                    if !removed {
+                        (Some(n.clone()), false)
+                    } else {
+                        (
+                            Some(Self::balance(n.entry.clone(), n.left.clone(), new_r)),
+                            true,
+                        )
+                    }
+                }
+            }
+        }
+    }
+
+    /// Persistent ordered map of payload-bearing atom names to `(bare, payload)` with node sharing.
+    #[derive(Clone, Debug, Default)]
+    pub(in crate::types) struct PayloadTree {
+        root: Option<Arc<PayloadNode>>,
+    }
+
+    impl PartialEq for PayloadTree {
+        fn eq(&self, other: &Self) -> bool {
+            match (&self.root, &other.root) {
+                (None, None) => true,
+                (Some(a), Some(b)) if Arc::ptr_eq(a, b) => true,
+                (Some(a), Some(b)) if a.len == b.len => self.iter_nodes().zip(other.iter_nodes()).all(
+                    |(x, y)| {
+                        Arc::ptr_eq(&x.entry, &y.entry)
+                            || (x.entry.name == y.entry.name
+                                && x.entry.bare == y.entry.bare
+                                && x.entry.payload == y.entry.payload)
+                    },
+                ),
+                _ => false,
+            }
+        }
+    }
+
+    impl Eq for PayloadTree {}
+
+    pub(in crate::types) struct PayloadNodeIter<'a> {
+        stack: Vec<&'a PayloadNode>,
+    }
+
+    impl<'a> PayloadNodeIter<'a> {
+        fn new(root: Option<&'a PayloadNode>) -> Self {
+            let mut it = PayloadNodeIter { stack: Vec::new() };
+            it.push_left(root);
+            it
+        }
+
+        fn push_left(&mut self, mut cur: Option<&'a PayloadNode>) {
+            while let Some(n) = cur {
+                self.stack.push(n);
+                cur = n.left.as_deref();
+            }
+        }
+    }
+
+    impl<'a> Iterator for PayloadNodeIter<'a> {
+        type Item = &'a PayloadNode;
+
+        fn next(&mut self) -> Option<Self::Item> {
+            let n = self.stack.pop()?;
+            self.push_left(n.right.as_deref());
+            Some(n)
+        }
+    }
+
+    pub(in crate::types) struct PayloadNameIter<'a>(PayloadNodeIter<'a>);
+
+    impl<'a> Iterator for PayloadNameIter<'a> {
+        type Item = &'a Arc<str>;
+
+        fn next(&mut self) -> Option<Self::Item> {
+            self.0.next().map(|n| &n.entry.name)
+        }
+    }
+
+    impl<'a> IntoIterator for &'a PayloadTree {
+        type Item = &'a Arc<str>;
+        type IntoIter = PayloadNameIter<'a>;
+
+        fn into_iter(self) -> Self::IntoIter {
+            self.iter()
+        }
+    }
+
+    impl PayloadTree {
+        #[inline]
+        pub(in crate::types) fn is_empty(&self) -> bool {
+            self.root.is_none()
+        }
+
+        #[inline]
+        pub(in crate::types) fn len(&self) -> usize {
+            self.root.as_ref().map_or(0, |n| n.len)
+        }
+
+        #[inline]
+        pub(in crate::types) fn root(&self) -> Option<&Arc<PayloadNode>> {
+            self.root.as_ref()
+        }
+
+        pub(in crate::types) fn contains(&self, name: &str) -> bool {
+            let mut cur = self.root.as_deref();
+            while let Some(n) = cur {
+                match name.cmp(n.entry.name.as_ref()) {
+                    Ordering::Equal => return true,
+                    Ordering::Less => cur = n.left.as_deref(),
+                    Ordering::Greater => cur = n.right.as_deref(),
+                }
+            }
+            false
+        }
+
+        pub(in crate::types) fn get_min(&self) -> Option<&Arc<str>> {
+            let mut cur = self.root.as_deref()?;
+            while let Some(l) = cur.left.as_deref() {
+                cur = l;
+            }
+            Some(&cur.entry.name)
+        }
+
+        pub(in crate::types) fn iter(&self) -> PayloadNameIter<'_> {
+            PayloadNameIter(self.iter_nodes())
+        }
+
+        fn iter_nodes(&self) -> PayloadNodeIter<'_> {
+            PayloadNodeIter::new(self.root.as_deref())
+        }
+
+        /// Visits every node reachable from `root` whose `id` is not yet in `seen`, skipping
+        /// whole subtrees/prefixes already visited in an earlier shared DAG.
+        pub(in crate::types) fn visit_unseen<S: std::hash::BuildHasher>(
+            root: &PayloadNode,
+            seen: &mut std::collections::HashSet<u64, S>,
+            f: &mut impl FnMut(&Arc<str>, bool, &Type),
+        ) {
+            let mut stack = vec![(root, false)];
+            while let Some((node, emit)) = stack.pop() {
+                if emit {
+                    f(&node.entry.name, node.entry.bare, &node.entry.payload);
+                    continue;
+                }
+                if !seen.insert(node.id) {
+                    continue;
+                }
+                if let Some(r) = node.right.as_deref() {
+                    stack.push((r, false));
+                }
+                stack.push((node, true));
+                if let Some(l) = node.left.as_deref() {
+                    stack.push((l, false));
+                }
+            }
+        }
+
+        fn insert_entry(&mut self, entry: Arc<PayloadEntry>) {
+            self.root = Some(PayloadNode::insert_entry(&self.root, entry));
+        }
+
+        fn remove(&mut self, name: &str) {
+            let (new_root, _) = PayloadNode::remove(&self.root, name);
+            self.root = new_root;
+        }
+    }
+
+    impl Drop for PayloadNode {
+        fn drop(&mut self) {
+            let mut stack = Vec::new();
+            if let Some(l) = self.left.take() {
+                stack.push(l);
+            }
+            if let Some(r) = self.right.take() {
+                stack.push(r);
+            }
+            while let Some(arc) = stack.pop() {
+                if let Ok(mut node) = Arc::try_unwrap(arc) {
+                    if let Some(l) = node.left.take() {
+                        stack.push(l);
+                    }
+                    if let Some(r) = node.right.take() {
+                        stack.push(r);
+                    }
+                }
+            }
+        }
+    }
+
     /// Per atom name, its part; a name not listed has every payload when `cofinite`, else none.
     /// The map is persistent, and `sum` is the wrapping sum of its entries' hashes. `payloads`
-    /// is the set of listed names whose payload lists something, kept by [`Atoms::set`] in
-    /// O(log n), so that a sweep finds the one payload name, or that there is none, without
-    /// reading the others: the sweeps ask it of every type they are given, and reading every
-    /// name there made a chain of `n` failure atoms cost `n^2 log n`. `bare_names` counts the
-    /// listed names that hold their bare atom, kept by [`Atoms::set`] in O(1), so that whether a
-    /// type holds a bare atom is read without reading the names.
-    #[derive(Clone, PartialEq, Eq, Debug, Default)]
+    /// is the persistent AVL tree of listed names whose payload lists something, kept by
+    /// [`Atoms::set`] in O(log n). When every payload mutation so far was a pure addition (no
+    /// overwrite or removal of an existing payload name), `payload_dag` keeps the exact
+    /// monotonic addition chain (`O(1)` nodes per addition, so `n` prefix unions create `n`
+    /// shared nodes instead of `O(n log n)` AVL path-copy nodes, keeping DAG walks `O(n)` at
+    /// `8x` per `8n` instead of `n log_2 n`'s `11.4x`); any overwrite or removal drops
+    /// `payload_dag` to `None`, falling back to `payloads.root()` (`O(n log n)`). `bare_names`
+    /// counts the listed names that hold their bare atom, kept by [`Atoms::set`] in O(1).
+    #[derive(Clone, Debug)]
     pub(super) struct Atoms {
         name_sum: u64,
         cofinite: bool,
         names: OrdMap<Arc<str>, AtomPart>,
         sum: u64,
-        payloads: OrdSet<Arc<str>>,
+        payloads: PayloadTree,
+        /// `Some(head)` when all payload entries were added monotonically with no overwrite or
+        /// removal; `None` otherwise (fall back to `payloads.root()`).
+        payload_dag: Option<Option<Arc<PayloadNode>>>,
         bare_names: usize,
     }
+
+    impl Default for Atoms {
+        fn default() -> Self {
+            Atoms {
+                name_sum: 0,
+                cofinite: false,
+                names: OrdMap::default(),
+                sum: 0,
+                payloads: PayloadTree::default(),
+                payload_dag: Some(None),
+                bare_names: 0,
+            }
+        }
+    }
+
+    impl PartialEq for Atoms {
+        fn eq(&self, other: &Self) -> bool {
+            // `payloads` and `payload_dag` are derived indexes of `names`, kept solely by `Atoms::set`.
+            self.cofinite == other.cofinite
+                && self.sum == other.sum
+                && self.name_sum == other.name_sum
+                && self.bare_names == other.bare_names
+                && self.names == other.names
+        }
+    }
+
+    impl Eq for Atoms {}
 
     impl Atoms {
         /// Every atom: cofinite, no name listed.
@@ -1447,9 +1904,32 @@ mod atoms {
             self.name_sum
         }
 
-        /// The listed names whose payload lists something.
-        pub(super) fn payloads(&self) -> &OrdSet<Arc<str>> {
+        /// The persistent tree of listed names whose payload lists something.
+        pub(super) fn payloads(&self) -> &PayloadTree {
             &self.payloads
+        }
+
+        /// The shared persistent DAG root of all payload-bearing entries: the `O(1)`-per-step
+        /// monotonic addition chain when no payload entry was overwritten or removed, else the
+        /// balanced AVL `PayloadTree` root.
+        #[inline]
+        pub(in crate::types) fn payload_dag(&self) -> Option<&Arc<PayloadNode>> {
+            match &self.payload_dag {
+                Some(opt) => opt.as_ref(),
+                None => self.payloads.root(),
+            }
+        }
+
+        /// Visits every payload-bearing entry reachable from [`Atoms::payload_dag`] whose node
+        /// `id` is not yet in `seen`.
+        pub(in crate::types) fn payload_entries_unseen<S: std::hash::BuildHasher>(
+            &self,
+            seen: &mut std::collections::HashSet<u64, S>,
+            f: &mut impl FnMut(&Arc<str>, bool, &Type),
+        ) {
+            if let Some(root) = self.payload_dag() {
+                PayloadTree::visit_unseen(root.as_ref(), seen, f);
+            }
         }
 
         /// How many listed names hold their bare atom.
@@ -1462,6 +1942,16 @@ mod atoms {
         /// invariant; the sums are left stale, which nothing reads of a node being dropped.
         pub(super) fn take_names(&mut self) -> OrdMap<Arc<str>, AtomPart> {
             std::mem::take(&mut self.names)
+        }
+
+        /// The tree of payload entries, taken out to be freed in a loop (`Drop for Node`).
+        pub(super) fn take_payloads(&mut self) -> PayloadTree {
+            std::mem::take(&mut self.payloads)
+        }
+
+        /// The monotonic payload DAG head, taken out to be freed in a loop (`Drop for Node`).
+        pub(super) fn take_payload_dag(&mut self) -> Option<Arc<PayloadNode>> {
+            self.payload_dag.take().flatten()
         }
 
         /// Whether it is the part of no atom, `Atoms::default()`, read with nothing built.
@@ -1487,27 +1977,47 @@ mod atoms {
 
         /// Gives `name` the part `p`, unlisting it when `p` is what an unlisted name has.
         pub(super) fn set(&mut self, name: &Arc<str>, p: AtomPart) {
-            if let Some(old) = self.names.remove(name) {
-                let (primary, named) = Atoms::entries(name, &old);
-                self.sum = self.sum.wrapping_sub(primary);
-                self.name_sum = self.name_sum.wrapping_sub(named);
-                self.payloads.remove(name);
-                self.bare_names -= usize::from(old.bare);
-            }
             let default = if self.cofinite {
                 AtomPart::all()
             } else {
                 AtomPart::none()
             };
+            if let Some(old) = self.names.get(name) {
+                if *old == p {
+                    return;
+                }
+            } else if p == default {
+                return;
+            }
+            let mut had_payload = false;
+            if let Some(old) = self.names.remove(name) {
+                let (primary, named) = Atoms::entries(name, &old);
+                self.sum = self.sum.wrapping_sub(primary);
+                self.name_sum = self.name_sum.wrapping_sub(named);
+                had_payload = !old.payload.lists_nothing();
+                self.bare_names -= usize::from(old.bare);
+            }
             if p != default {
                 let (primary, named) = Atoms::entries(name, &p);
                 self.sum = self.sum.wrapping_add(primary);
                 self.name_sum = self.name_sum.wrapping_add(named);
                 if !p.payload.lists_nothing() {
-                    self.payloads.insert(name.clone());
+                    let entry = PayloadNode::new_entry(name.clone(), p.bare, p.payload.clone());
+                    self.payloads.insert_entry(entry.clone());
+                    if had_payload {
+                        self.payload_dag = None;
+                    } else if let Some(prev) = self.payload_dag.take() {
+                        self.payload_dag = Some(Some(PayloadNode::step(entry, prev)));
+                    }
+                } else if had_payload {
+                    self.payloads.remove(name);
+                    self.payload_dag = None;
                 }
                 self.bare_names += usize::from(p.bare);
                 self.names.insert(name.clone(), p);
+            } else if had_payload {
+                self.payloads.remove(name);
+                self.payload_dag = None;
             }
         }
 
@@ -2317,6 +2827,7 @@ impl Type {
         // name made a chain of n failure atoms cost n^2 log n in the sweeps (batch merge 128).
         // The answer is unchanged: false exactly when a reachable type has morphism bounds.
         let mut seen = BTreeSet::new();
+        let mut payload_seen = crate::digest::DigestSet::default();
         let mut pending = vec![self.clone()];
         while let Some(t) = pending.pop() {
             if !seen.insert(t.clone()) {
@@ -2326,12 +2837,10 @@ impl Type {
                 return false;
             }
             let p = t.p();
-            pending.extend(
-                p.atoms
-                    .payloads()
-                    .iter()
-                    .map(|n| p.atoms.names()[n].payload.clone()),
-            );
+            p.atoms
+                .payload_entries_unseen(&mut payload_seen, &mut |_, _, payload| {
+                    pending.push(payload.clone());
+                });
             p.tuples.atoms(&mut |row| {
                 pending.extend(row.iter().cloned());
                 true
@@ -4951,64 +5460,120 @@ enum Reading {
 /// once for the whole call, by each way of reading the types below it ([`Reading`]). A key is
 /// not tied to its depth: a component equal to a key at another depth only makes its tuple
 /// type read.
+/// A node in [`Filer`]'s key-filing DAG: either a [`Type`] or a shared persistent
+/// [`atoms::PayloadNode`] whose keys are the union of its subtree's payload types' keys.
+#[derive(Clone)]
+enum FileNode {
+    Type(Type),
+    Payloads(Arc<atoms::PayloadNode>),
+}
+
+impl PartialEq for FileNode {
+    fn eq(&self, other: &Self) -> bool {
+        match (self, other) {
+            (FileNode::Type(a), FileNode::Type(b)) => a == b,
+            (FileNode::Payloads(a), FileNode::Payloads(b)) => a.id() == b.id(),
+            _ => false,
+        }
+    }
+}
+
+impl Eq for FileNode {}
+
+impl std::hash::Hash for FileNode {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        match self {
+            FileNode::Type(t) => {
+                0u8.hash(state);
+                t.hash(state);
+            }
+            FileNode::Payloads(n) => {
+                1u8.hash(state);
+                n.id().hash(state);
+            }
+        }
+    }
+}
+
 #[derive(Default)]
 struct Filer {
     /// Per way of reading ([`Reading`], in order), the types filed.
     filed: [HashMap<Type, Filed>; 3],
+    /// Per way of reading, the shared persistent [`atoms::PayloadNode`]s filed (used under
+    /// [`Reading::Payloads`]), so `n` prefix unions sharing a payload tree are filed in
+    /// `O(n log n)` instead of `Theta(n^2 log n)`.
+    filed_payloads: [crate::digest::DigestMap<u64, Filed>; 3],
 }
 
-/// A type that [`Filer::file`] is filing.
+/// A node that [`Filer::file`] is filing.
 struct Visit {
-    ty: Type,
+    node: FileNode,
     /// Its own keys: its scalars, bare atoms and empty tuple, unsorted.
     keys: Vec<Value>,
-    /// Whether every value of the type has its own key or a first component in a first column.
+    /// Whether every value of the node has its own key or a first component in a first column.
     listed: bool,
-    /// Its first columns not yet read.
-    firsts: Vec<Type>,
-    /// The keys of the first columns filed before it was done, each read once.
+    /// Its first columns / payload children not yet read.
+    firsts: Vec<FileNode>,
+    /// The keys of the children filed before it was done, each read once.
     below: Vec<Filed>,
 }
 
 impl Visit {
-    /// The type `ty`, with its own keys and first columns, and with [`Reading::Payloads`] the
-    /// payload types of its atom names.
-    fn new(ty: Type, reading: Reading) -> Visit {
+    /// The node `node`, with its own keys and children, and with [`Reading::Payloads`] the shared
+    /// persistent [`atoms::PayloadNode`] root of its payload-bearing atom names.
+    fn new(node: FileNode, reading: Reading) -> Visit {
         let (mut keys, mut listed, mut next) = (Vec::new(), true, Vec::new());
-        let p = ty.p();
-        for b in [false, true] {
-            if p.bools & (1 << u8::from(b)) != 0 {
-                keys.push(Value::Bool(b));
+        match &node {
+            FileNode::Type(ty) => {
+                let p = ty.p();
+                for b in [false, true] {
+                    if p.bools & (1 << u8::from(b)) != 0 {
+                        keys.push(Value::Bool(b));
+                    }
+                }
+                for lits in [&p.ints, &p.rats, &p.floats, &p.f32s, &p.strings] {
+                    keys.extend(lits.values.iter().cloned());
+                    listed &= !lits.cofinite;
+                }
+                // A name listed is an exception to the names not listed. When finite with zero
+                // bare names (`bare_names() == 0`), skip scanning `names()` (`O(1)` vs `O(n)`).
+                let atoms = &p.atoms;
+                if atoms.cofinite() || atoms.bare_names() > 0 {
+                    keys.extend(
+                        atoms
+                            .names()
+                            .iter()
+                            .filter(|(_, a)| a.bare != atoms.cofinite())
+                            .map(|(name, _)| Value::atom(name)),
+                    );
+                }
+                listed &= !atoms.cofinite();
+                // An atom with a tuple payload is in the type when its name is listed and the
+                // tuple of its arguments is in the name's payload type, so its key is one of that
+                // type's. Stepping through the persistent `PayloadNode` tree files each shared
+                // node once across all prefix unions (`O(n log n)` instead of `Theta(n^2 log n)`).
+                if reading == Reading::Payloads
+                    && let Some(pr) = atoms.payload_dag()
+                {
+                    next.push(FileNode::Payloads(pr.clone()));
+                }
+                let by_boxes = reading == Reading::Boxes;
+                listed &= firsts(ty, by_boxes, &mut keys, |c| {
+                    next.push(FileNode::Type(c.clone()));
+                });
+            }
+            FileNode::Payloads(u) => {
+                next.push(FileNode::Type(u.payload().clone()));
+                if let Some(l) = u.left() {
+                    next.push(FileNode::Payloads(l.clone()));
+                }
+                if let Some(r) = u.right() {
+                    next.push(FileNode::Payloads(r.clone()));
+                }
             }
         }
-        for lits in [&p.ints, &p.rats, &p.floats, &p.f32s, &p.strings] {
-            keys.extend(lits.values.iter().cloned());
-            listed &= !lits.cofinite;
-        }
-        // A name listed is an exception to the names not listed.
-        let atoms = &p.atoms;
-        keys.extend(
-            atoms
-                .names()
-                .iter()
-                .filter(|(_, a)| a.bare != atoms.cofinite())
-                .map(|(name, _)| Value::atom(name)),
-        );
-        listed &= !atoms.cofinite();
-        // An atom with a tuple payload is in the type when its name is listed and the tuple of
-        // its arguments is in the name's payload type, so its key is one of that type's.
-        if reading == Reading::Payloads {
-            next.extend(
-                atoms
-                    .payloads()
-                    .iter()
-                    .map(|name| atoms.names()[name].payload.clone()),
-            );
-        }
-        let by_boxes = reading == Reading::Boxes;
-        listed &= firsts(&ty, by_boxes, &mut keys, |c| next.push(c.clone()));
         Visit {
-            ty,
+            node,
             keys,
             listed,
             firsts: next,
@@ -5027,51 +5592,68 @@ impl Filer {
     // for the walk, read every type the column reaches again for each column, O(n²) for a
     // chain of n types each holding the one before in its first component, as the makers of
     // `t_i = (t_{i-1}, t_{i-1})` file `t_{i-1}`, …, `t_0` for each i (COMPLEXITY.md K109). Here
-    // each type is walked and filed once per `each_value` call and way of reading, O(T + E)
-    // for the T types and E first columns reached, plus the keys copied: a type whose keys are
-    // those of one set below it, as each type of such a chain, shares that set, and only a
-    // type with keys of its own beside a set below, or two distinct sets below, merges them,
-    // in O(k log k) for the k keys it reads; a row reading the type copies those k keys into
-    // its index anyway ([`Keyed::add`]). The cost is a map of every type filed, each with a
-    // shared set, held until the makers are built. The types are numbered as the walk meets
-    // them (`FileWalk::numbers`), since the column types have no numbers of their own; the
-    // search is the workspace's one Tarjan search, which takes nodes numbered as met
-    // (GRAPH-lazy-tarjan), in place of a copy of it here, at the same O(T + E).
+    // each type and shared `PayloadNode` is walked and filed once per `each_value` call and way
+    // of reading, O(T + E) for the T nodes and E edges reached, plus the keys copied: a node
+    // whose keys are those of one set below it, as each type of such a chain or each prefix union
+    // sharing one payload, shares that set, and only a node with keys of its own beside a set
+    // below, or two distinct sets below, merges them, in O(k log k) for the k keys it reads; a
+    // row reading the type copies those k keys into its index anyway ([`Keyed::add`]). The cost
+    // is a map of every node filed, each with a shared set, held until the makers are built. The
+    // nodes are numbered as the walk meets them (`FileWalk::numbers`), since the column types
+    // have no numbers of their own; the search is the workspace's one Tarjan search, which takes
+    // nodes numbered as met (GRAPH-lazy-tarjan), in place of a copy of it here, at the same
+    // O(T + E).
     fn file(&mut self, t: &Type, reading: Reading) -> Filed {
-        let filed = &mut self.filed[reading as usize];
+        let idx = reading as usize;
+        let filed = &mut self.filed[idx];
+        let filed_payloads = &mut self.filed_payloads[idx];
         if let Some(f) = filed.get(t) {
             return f.clone();
         }
+        let start = FileNode::Type(t.clone());
         let mut walk = FileWalk {
             filed,
+            filed_payloads,
             reading,
-            numbers: HashMap::from([(t.clone(), 0)]),
-            visits: vec![Visit::new(t.clone(), reading)],
+            numbers: HashMap::from([(start.clone(), 0)]),
+            visits: vec![Visit::new(start, reading)],
         };
         zed_graph::Search::new().run(&mut walk, [0]);
         walk.filed[t].clone()
     }
 }
 
-/// The walk of [`Filer::file`] over the types below a column type, read one way.
+/// The walk of [`Filer::file`] over the types and shared [`atoms::PayloadNode`]s below a column
+/// type, read one way.
 struct FileWalk<'f> {
     /// The types filed, by this walk and earlier ones.
     filed: &'f mut HashMap<Type, Filed>,
+    /// The shared `PayloadNode`s filed, by this walk and earlier ones.
+    filed_payloads: &'f mut crate::digest::DigestMap<u64, Filed>,
     reading: Reading,
-    /// Each type of this walk by its number, the position of its visit.
-    numbers: HashMap<Type, usize>,
+    /// Each node of this walk by its number, the position of its visit.
+    numbers: HashMap<FileNode, usize>,
     visits: Vec<Visit>,
 }
 
+impl FileWalk<'_> {
+    fn get_filed(&self, c: &FileNode) -> Option<&Filed> {
+        match c {
+            FileNode::Type(t) => self.filed.get(t),
+            FileNode::Payloads(u) => self.filed_payloads.get(&u.id()),
+        }
+    }
+}
+
 impl zed_graph::Walk for FileWalk<'_> {
-    /// A visit's first columns not yet read are kept in the visit.
+    /// A visit's children not yet read are kept in the visit.
     type At = ();
 
-    /// The next first column of type `v` not yet filed; a filed one adds its keys to `v`'s.
+    /// The next child of node `v` not yet filed; a filed one adds its keys to `v`'s.
     fn next(&mut self, v: usize, _: &mut ()) -> Option<usize> {
         while let Some(c) = self.visits[v].firsts.pop() {
-            if let Some(f) = self.filed.get(&c) {
-                self.visits[v].below.push(f.clone());
+            if let Some(f) = self.get_filed(&c).cloned() {
+                self.visits[v].below.push(f);
             } else if let Some(&w) = self.numbers.get(&c) {
                 // Walked and not yet filed: `c` reaches `v`, and is filed with it.
                 return Some(w);
@@ -5085,8 +5667,8 @@ impl zed_graph::Walk for FileWalk<'_> {
         None
     }
 
-    /// Files the types that reach each other with the keys of all of them and of the types
-    /// below them, and adds those keys to the type the walk reached them from.
+    /// Files the nodes that reach each other with the keys of all of them and of the nodes
+    /// below them, and adds those keys to the node the walk reached them from.
     fn found(&mut self, members: &mut [usize], from: Option<usize>) {
         let (mut keys, mut listed, mut below) = (Vec::new(), true, Vec::new());
         for &w in &*members {
@@ -5097,7 +5679,14 @@ impl zed_graph::Walk for FileWalk<'_> {
         }
         let f = merged(keys, listed, below);
         for &w in &*members {
-            self.filed.insert(self.visits[w].ty.clone(), f.clone());
+            match &self.visits[w].node {
+                FileNode::Type(ty) => {
+                    self.filed.insert(ty.clone(), f.clone());
+                }
+                FileNode::Payloads(u) => {
+                    self.filed_payloads.insert(u.id(), f.clone());
+                }
+            }
         }
         if let Some(u) = from {
             self.visits[u].below.push(f);

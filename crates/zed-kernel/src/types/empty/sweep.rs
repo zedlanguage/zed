@@ -256,10 +256,14 @@ fn shape(
         }
         clause = Some(((taken, refused), union));
     }
-    let e = (p.atoms.names().iter())
-        .filter(|(_, part)| part.bare)
-        .map(|(name, _)| name.clone())
-        .collect();
+    let e = if p.atoms.bare_names() > 0 {
+        (p.atoms.names().iter())
+            .filter(|(_, part)| part.bare)
+            .map(|(name, _)| name.clone())
+            .collect()
+    } else {
+        BTreeSet::new()
+    };
     Some((e, clause))
 }
 
