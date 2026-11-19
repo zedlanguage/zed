@@ -681,7 +681,8 @@ fn accepted_random_programs_raise_no_type_error() {
 /// check misses; a seed both fail on is a fault neither catches.
 #[test]
 fn accepted_random_programs_raise_no_type_error_with_the_fixes_off() {
-    let seed = zed_tests::seed::seed("accepted_random_programs_raise_no_type_error_with_the_fixes_off");
+    let seed =
+        zed_tests::seed::seed("accepted_random_programs_raise_no_type_error_with_the_fixes_off");
     zedc::check::obligation_test_modes::set(true, false);
     let r = run_programs(seed, SETS);
     zedc::check::obligation_test_modes::set(false, false);

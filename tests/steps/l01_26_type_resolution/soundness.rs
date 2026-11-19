@@ -1284,7 +1284,9 @@ fn a_power_of_a_division_of_integer_literals_is_refused_with_the_exact_fix() {
 /// FAIL-random-pow-destructured-literal), each with the specific fix that refuses it turned
 /// off (`obligation_test_modes`, TEST-random-sweep-off): with the end-of-walk check off too,
 /// each is accepted, the fault the kernel then met (red); with it on, each is refused, by the
-/// check of the use no step discharged (green, CHK-obligation-sweep).
+/// check of the use no step discharged (green, CHK-obligation-sweep). With the fixes on each
+/// is refused once too; the power seed's message then names `p[0]` at the call
+/// (CHK-pow-component-bound), where the end-of-walk check names the `^`.
 #[test]
 fn the_end_of_walk_check_alone_refuses_both_seeds() {
     use zedc::check::obligation_test_modes::set;
@@ -1298,6 +1300,6 @@ fn the_end_of_walk_check_alone_refuses_both_seeds() {
         set(false, false);
         assert!(red.is_empty(), "{defs}\n{call}: {red:?}");
         assert_eq!(green.len(), 1, "{defs}\n{call}: {green:?}");
-        assert_eq!(green, r_errors(defs, call), "{defs}\n{call}");
+        assert_eq!(r_errors(defs, call).len(), 1, "{defs}\n{call}");
     }
 }

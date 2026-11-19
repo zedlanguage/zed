@@ -6299,10 +6299,10 @@ impl<'t, 'a> Ck<'t, 'a> {
             // function ends, so nothing else checks them. Before, none was, and `r = h((-3,
             // 0))` with `h(positional p) { a, b = p; return 0^a; }` was accepted, the exponent
             // need of `^` recorded on the class of `-3` and never met
-            // (FAIL-random-pow-destructured-literal). The other uses ask the class for
-            // carriers, which its mask already meets and the application already reports (a
-            // use at `int` refused for `1.5` in `h((1.5, 2))`); checking them here too gave
-            // each such error twice, so they stay on the class unchecked here.
+            // (FAIL-random-pow-destructured-literal). The uses that only ask the class for
+            // carriers its mask already meets, or that the application already reports (a use
+            // at `int` refused for `1.5` in `h((1.5, 2))`), stay on the class unchecked here:
+            // checking them too gave each such error twice.
             // A class a use asked takes its whole carrier, so `h((3, 0))` is refused too, as
             // the same call inside a function was already, and as `bitAnd(p[0], 3)` refuses
             // every component; the literal's own value is not enough, since the body's `a - 5`
@@ -6313,12 +6313,19 @@ impl<'t, 'a> Ck<'t, 'a> {
             // O(uses) in all; checking at each use as it is recorded is not possible, since
             // the class has no type yet then.
             // The uses kept are recorded as met by the mask (CHK-obligation-ledger), so the
-            // end of the walk does not check them again ([`Self::sweep_unchecked_uses`]).
-            // With the fixes off (a test mode, TEST-random-sweep-off) the bounding uses stay on
-            // the class with no discharge, as before FAIL-random-pow-destructured-literal.
-            let (bounds, kept): (Vec<_>, Vec<_>) = std::mem::take(&mut self.classes[r].uses)
+            // end of the walk does not check them again ([`Self::sweep_unchecked_uses`]). Only
+            // the kinds the mask does meet are kept: an argument at a parameter of a closed
+            // type (`Into`), which the application reports, and a use that takes data
+            // (`Data`), which a class of carriers alone, holding no function, meets. Every
+            // other kind is checked on the type, as `Power` and `NoInt` are. Before, every kind
+            // but those two was kept, and with the fixes off the `sum` of
+            // FAIL-random-f64-destructured-family (`SumMethod`) was counted as met by the mask
+            // and never checked, so the end of the walk could not catch it.
+            // With the fixes off (a test mode, TEST-random-sweep-off) the uses to check stay
+            // on the class with no discharge, as before FAIL-random-pow-destructured-literal.
+            let (kept, bounds): (Vec<_>, Vec<_>) = std::mem::take(&mut self.classes[r].uses)
                 .into_iter()
-                .partition(|(_, n)| matches!(n.kind, NeedKind::Power(_) | NeedKind::NoInt(_)));
+                .partition(|(_, n)| matches!(n.kind, NeedKind::Into { .. } | NeedKind::Data(..)));
             let (bounds, unchecked) = match obligation_test_modes::fixes_off() {
                 false => (bounds, Vec::new()),
                 true => (Vec::new(), bounds),
@@ -6365,7 +6372,9 @@ impl<'t, 'a> Ck<'t, 'a> {
             let Some(t) = &self.classes[k].resolved else {
                 continue;
             };
-            if t.as_var().is_some_and(|v| v.strip_prefix('$') == Some(&*k.to_string())) {
+            if t.as_var()
+                .is_some_and(|v| v.strip_prefix('$') == Some(&*k.to_string()))
+            {
                 continue;
             }
             for (seq, n) in &self.classes[k].uses {
@@ -6397,14 +6406,8 @@ impl<'t, 'a> Ck<'t, 'a> {
     }
 
     /// Under `cfg(test)`, keeps the counts of discharged uses of this check for the unit
-    /// tests ([`last_discharged`]).
+    /// tests (`last_discharged`).
     fn note_discharged(&self) {
-        if std::env::var_os("ZED_PROBE_DISCHARGE").is_some()
-            && (self.discharged[0] + self.discharged[2] + self.discharged[3]) > 0
-        {
-            let text: String = self.t.text.unwrap_or("").chars().take(300).collect();
-            eprintln!("DISCHARGE {:?} {text:?}", self.discharged);
-        }
         #[cfg(test)]
         LAST_DISCHARGED.with(|d| d.set(self.discharged));
     }
@@ -12905,7 +12908,7 @@ impl<'t, 'a> Ck<'t, 'a> {
         }
         // A `min` or `max` use of a site both classes hold is joined into one. Each was
         // checked on what flowed into the other class above, so nothing is checked again.
-        let mut joined = 0;
+        // The use joined stays an obligation in the one kept, so the ledger records nothing.
         for (seq, mut n) in uses {
             if let NeedKind::Order {
                 word, first, other, ..
@@ -12916,7 +12919,6 @@ impl<'t, 'a> Ck<'t, 'a> {
                         if let NeedKind::Order { other: kept, .. } = &mut c.uses[*at.get()].1.kind {
                             *kept = one_shape_per_length(&kept.union(other));
                         }
-                        joined += 1;
                         continue;
                     }
                     Entry::Vacant(at) => {
@@ -12954,7 +12956,6 @@ impl<'t, 'a> Ck<'t, 'a> {
         c.reasons.push(reason);
         c.mask = m;
         c.level = c.level.min(level);
-        self.discharge(Discharge::Joined, joined);
         if lowered {
             let mut vars = Vars::default();
             for (_, n) in &self.classes[root].uses {
@@ -15425,7 +15426,12 @@ impl<'t, 'a> Ck<'t, 'a> {
             // (CHK-pow-component-bound); see [`Self::open_place`]. A test above the `^` that
             // leaves the exponent at least 0 wherever it is an int, as `if a >= 0 { 0^a }`,
             // takes no need, as `popCount` reads it ([`Self::floor`], [`Self::ints_as_int`]).
-            let open = self.open_place(e);
+            // With the fixes off (a test mode, TEST-random-sweep-off) no path is followed and
+            // the need goes on the class of the part, as before CHK-pow-component-bound.
+            let open = match obligation_test_modes::fixes_off() {
+                false => self.open_place(e),
+                true => None,
+            };
             let as_int = self.int_read_binder(e, &open);
             let shown_as_int = !self.trying
                 && as_int.is_some()
@@ -28188,23 +28194,20 @@ mod tests {
     /// For each reason a use is discharged (CHK-obligation-ledger), a program whose check
     /// discharges some use for it is accepted, and the end of the walk finds no use left to
     /// check (`Swept` 0; a debug build would also fail its assertion). A use met by the mask
-    /// of its class is not checked again at the end: `h((1.5, 2))` keeps the `<` use of the
-    /// class of `1.5` on the class unchecked, and is accepted.
+    /// of its class is not checked again at the end: `h((1.5, 2))` keeps the `Into` use of
+    /// the class of `1.5` at the parameter of `h` on the class unchecked, and is accepted.
+    /// `Refused` has its own test below.
     #[test]
     fn each_discharge_reason_leaves_nothing_for_the_end_of_the_walk() {
         let programs = [
+            (Discharge::Checked, "f(x: rat) = x - (3/2)^-3;\n"),
             (
-                Discharge::Checked,
+                Discharge::Signature,
                 "h(positional p) = 2^p[0];\nr = h((3, 0));\n",
             ),
-            (Discharge::Signature, "inc(positional x) = x + 1;\n"),
             (
                 Discharge::Mask,
-                "h(positional p) = if p[0] < 5 { p[0] } else { 0 };\nr = h((1.5, 2));\n",
-            ),
-            (
-                Discharge::Joined,
-                "f(positional x, positional y) {\n  a = min(x, 1);\n  b = if x < y { x } else { y };\n  c = min(b, 1);\n  return a + c;\n}\n",
+                "h(positional p) = p[0] + 1r;\nr = h((1.5, 2));\n",
             ),
         ];
         for (why, text) in programs {
@@ -28212,34 +28215,6 @@ mod tests {
             assert!(errors.is_empty(), "{why:?}: {text}: {errors:?}");
             assert!(last_discharged(why) > 0, "{why:?}: {text}");
             assert_eq!(last_discharged(Discharge::Swept), 0, "{why:?}: {text}");
-        }
-    }
-
-    #[test]
-    fn probe_discharge_counts() {
-        let programs = [
-            "h(positional p) = 2^p[0];\nr = h((3, 0));\n",
-            "g0(positional a) = min(a, (0, 0));\ng1(positional a) = g0(min(a, (1, 0)));\ng2(positional a) = g1(min(a, (2, 0)));\nx = g2((5, 9));\n",
-            "h(positional p) = p[0]^2;\nr = h((1.5, 0));\n",
-            "h(positional p) = 2^p[0];\nr = h((1.5, 0));\n",
-            "h(positional p) = p[1]^p[0];\nr = h((3, 2));\n",
-            "h(positional p) {\n  a, b = p;\n  return 2^a;\n}\nr = h((3, 1));\n",
-            "h(positional p) {\n  a, b = p;\n  return a^2;\n}\nr = h((3.5, 1));\n",
-            "h(positional p) = if p[0] < 5 { p[0] } else { 0 };\nr = h((1.5, 2));\n",
-            "h(positional p) = (0)^p[0];\nr = h((3, 0));\n",
-            "f(positional x) {\n  y = x + 1.5;\n  return x^2;\n}\n",
-            "f(positional x) {\n  y = x + 1;\n  return 2^x;\n}\nr = f(3);\n",
-            "x = (3, 0);\ny = 2^x[0];\n",
-            "h(positional p) = (p[0] ^ 2) + 1;\nr = h((3, 0));\n",
-            "f(positional x, positional y) {\n  a = min(x, 1);\n  b = if x < y { x } else { y };\n  c = min(b, 1);\n  return a + c;\n}\n",
-            "f(positional x) {\n  a = x < 1;\n  b = x < 1;\n  return a && b;\n}\n",
-            "f(positional x, positional y) {\n  a = x < y;\n  b = y < x;\n  return a && b;\n}\n",
-            "f(positional x, positional y) = if x < y { x } else { y };\nr = f(1, 2);\n",
-        ];
-        for text in programs {
-            let errors = unit_errors(text);
-            let counts: Vec<_> = Discharge::ALL.iter().map(|&w| (w, last_discharged(w))).collect();
-            eprintln!("PROBE {text:?} {errors:?} {counts:?}");
         }
     }
 

@@ -10,10 +10,14 @@ use super::super::soundness::{
 /// generic functions check in time linear in `n`.
 #[test]
 fn the_end_of_walk_check_scales() {
-    let units = resolved(200, uses_left_on_classes);
-    scaling::check("the end-of-walk check over n classes with uses left", 200, |n| {
-        assert_eq!(units[&n].check().errors.len(), 0);
-    });
+    let units = resolved(400, uses_left_on_classes);
+    scaling::check(
+        "the end-of-walk check over n classes with uses left",
+        400,
+        |n| {
+            assert_eq!(units[&n].check().errors.len(), 0);
+        },
+    );
 }
 
 /// CHK-pow-component-bound: the bound an exponent puts on a component of a tuple parameter is

@@ -63,8 +63,8 @@ use zed_kernel::num::{
     FloatFormat, LiteralRounding, TooLarge, fixed_room, literal_f32, literal_f64, show_f32,
     show_f64,
 };
-use zed_kernel::types::{Spell, Spelled, Type as KType, Universes, Verdict, defs};
 use zed_kernel::term::ScalarType;
+use zed_kernel::types::{Spell, Spelled, Type as KType, Universes, Verdict, defs};
 use zed_kernel::{KernelError, Prim, Rat, Term, Universe, Value, eval};
 
 use zedc_base::rejection::Row;
@@ -1694,8 +1694,6 @@ pub(crate) enum Discharge {
     /// Left on the class as met by the carriers of its mask (`resolve_top_parts`), which the
     /// application already reports where they are not met.
     Mask,
-    /// A `min` or `max` use joined into an equal one of the class it merged with.
-    Joined,
     /// A sum of a class of carriers alone, refused with no use recorded (`carriers_only`).
     Refused,
     /// Checked at the end of the walk, no step before having discharged it.
@@ -1703,11 +1701,10 @@ pub(crate) enum Discharge {
 }
 
 impl Discharge {
-    pub(crate) const ALL: [Discharge; 6] = [
+    pub(crate) const ALL: [Discharge; 5] = [
         Discharge::Checked,
         Discharge::Signature,
         Discharge::Mask,
-        Discharge::Joined,
         Discharge::Refused,
         Discharge::Swept,
     ];
@@ -1715,7 +1712,7 @@ impl Discharge {
 
 /// Test-only modes of the obligation check (TEST-random-sweep-off): the specific fixes that
 /// discharge a use where it arises turned off, so a test shows what the end-of-walk check
-/// ([`Ck::sweep_unchecked_uses`]) catches alone, and that check turned off too, so a test shows
+/// (`Ck::sweep_unchecked_uses`) catches alone, and that check turned off too, so a test shows
 /// the fault it catches (red before green). Built only with the feature
 /// `obligation-test-modes`, which no release build turns on; each mode is per thread, off
 /// until a test sets it.
@@ -11898,6 +11895,7 @@ fn prim_arrows(p: Prim) -> Vec<Arrow> {
     };
     let table = p.arrows().expect("a primitive the kernel's table types");
     (table.iter())
+        .filter(|a| a.refused.is_none())
         .map(|a| Arrow {
             params: a.params.iter().map(|&t| Ty::carrier(carrier(t))).collect(),
             result: (a.atoms.iter()).fold(Ty::carrier(carrier(a.result)), |t, n| {

@@ -380,7 +380,7 @@ impl Prim {
     /// key path, a function, any value at all) or whose arrows the checker builds by another
     /// rule (the bit words, step L1.39a). The checker's `op_sig` and `word_sig` are built from
     /// this table, in its order, which is the order a class tries the carriers; the test
-    /// `prim_arrow_table` checks that [`crate::eval`] takes each tuple of scalars exactly
+    /// `prim_arrow_table` checks that [`mod@crate::eval`] takes each tuple of scalars exactly
     /// when an arrow here does, and gives that arrow's carrier or an atom.
     ///
     /// The atoms are those the checker types, not every atom the evaluator may give: `int(x)`
@@ -398,6 +398,20 @@ impl Prim {
                 params,
                 result,
                 atoms,
+                refused: None,
+            }
+        }
+        // A tuple the checker refuses by design, for the reason `why`.
+        const fn r(
+            params: &'static [ScalarType],
+            result: ScalarType,
+            why: &'static str,
+        ) -> ScalarArrow {
+            ScalarArrow {
+                params,
+                result,
+                atoms: &[],
+                refused: Some(why),
             }
         }
         // A list of arrows as a constant, so the slice it returns is `'static`.
@@ -424,6 +438,63 @@ impl Prim {
             a(&[F32, F32], B, &[]),
             a(&[S, S], B, &[]),
             a(&[B, B], B, &[]),
+        ];
+        // `==` and `!=` of two carriers: the evaluator compares any two values, and the checker
+        // refuses two whose types share no value, numbers of two carriers included (`n == y`
+        // with `n: int` and `y: f64`); the repair is a cast (DESIGN.md sec:diagnostics, the
+        // rows "Two numeric values with no common carrier" and "Two values compared by `==` or
+        // `!=` whose types share no value"; `Ck::equal` in zedc-check).
+        const APART: &str = "two carriers share no value; the repair is a cast";
+        const EQUAL: &[ScalarArrow] = &[
+            a(&[I, I], B, &[]),
+            a(&[F64, F64], B, &[]),
+            a(&[R, R], B, &[]),
+            a(&[F32, F32], B, &[]),
+            a(&[S, S], B, &[]),
+            a(&[B, B], B, &[]),
+            r(&[I, R], B, APART),
+            r(&[I, F32], B, APART),
+            r(&[I, F64], B, APART),
+            r(&[I, S], B, APART),
+            r(&[I, B], B, APART),
+            r(&[R, I], B, APART),
+            r(&[R, F32], B, APART),
+            r(&[R, F64], B, APART),
+            r(&[R, S], B, APART),
+            r(&[R, B], B, APART),
+            r(&[F32, I], B, APART),
+            r(&[F32, R], B, APART),
+            r(&[F32, F64], B, APART),
+            r(&[F32, S], B, APART),
+            r(&[F32, B], B, APART),
+            r(&[F64, I], B, APART),
+            r(&[F64, R], B, APART),
+            r(&[F64, F32], B, APART),
+            r(&[F64, S], B, APART),
+            r(&[F64, B], B, APART),
+            r(&[S, I], B, APART),
+            r(&[S, R], B, APART),
+            r(&[S, F32], B, APART),
+            r(&[S, F64], B, APART),
+            r(&[S, B], B, APART),
+            r(&[B, I], B, APART),
+            r(&[B, R], B, APART),
+            r(&[B, F32], B, APART),
+            r(&[B, F64], B, APART),
+            r(&[B, S], B, APART),
+        ];
+        // `min` and `max` of two strings or two bools: the evaluator orders any two values of
+        // one kind (DESIGN.md sec:order), and the checker's `min` and `max` take numbers only.
+        // DESIGN.md says neither that they take strings and bools nor that they refuse them;
+        // until it does, the checker keeps refusing them.
+        const NUMBERS_ONLY: &str = "the checker's `min` and `max` take numbers only";
+        const MIN_MAX: &[ScalarArrow] = &[
+            a(&[I, I], I, &[]),
+            a(&[F64, F64], F64, &[]),
+            a(&[R, R], R, &[]),
+            a(&[F32, F32], F32, &[]),
+            r(&[S, S], S, NUMBERS_ONLY),
+            r(&[B, B], B, NUMBERS_ONLY),
         ];
         const NUMBER: &[ScalarArrow] = &[
             a(&[I], I, &[]),
@@ -459,11 +530,12 @@ impl Prim {
                 a(&[F32, I], F32, &[]),
             ],
             Concat => list![a(&[S, S], S, &[])],
-            Eq | Ne | Lt | Le | Gt | Ge => ORDER,
+            Eq | Ne => EQUAL,
+            Lt | Le | Gt | Ge => ORDER,
             And | Or => list![a(&[B, B], B, &[])],
             Not => list![a(&[B], B, &[])],
             Neg | Abs => NUMBER,
-            Min | Max => ARITH,
+            Min | Max => MIN_MAX,
             CastInt => list![
                 a(&[I], I, &[]),
                 a(&[F64], I, &[]),
@@ -542,6 +614,9 @@ pub struct ScalarArrow {
     pub result: ScalarType,
     /// The atoms, by name, the result may be instead.
     pub atoms: &'static [&'static str],
+    /// `Some(why)` for a tuple the evaluator takes and the checker refuses by design, so no
+    /// checked program reaches it; the checker builds no arrow from it.
+    pub refused: Option<&'static str>,
 }
 
 /// A pattern of a `match` arm.

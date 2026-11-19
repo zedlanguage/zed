@@ -15,14 +15,94 @@ use crate::value::{KernelError, Value};
 const ALL: [Prim; 88] = {
     use Prim::*;
     [
-        Add, Sub, Mul, Div, IntDiv, Mod, Neg, Eq, Ne, Lt, Le, Gt, Ge, And, Or, Not, Min, Max,
-        Get, Count, Union, Path, PathKey, PathLen, Tuple, TupleGet, Concat, Pow, Atom, Show,
-        CastInt, CastRat, CastF64, Abs, Len, Lower, Upper, Trim, Sum, BitAnd, BitOr, BitXor,
-        BitNot, Shl, Shr, PopCount, LeadingZeros, TrailingZeros, Rotl, Rotr, F64Bits,
-        CodePoint, Scalar, Utf8, FromUtf8, MulHi, BitReverse, ByteSwap, Pdep, Pext, FunnelShl,
-        FunnelShr, At, CastF32, Sqrt, Fma, Entries, Has, Range, FirstEntry, LastEntry,
-        EntryAfter, EntryBefore, First, Last, Split, Lines, Join, RangeFrom, ListConcat, Place,
-        CallNamed, Round, RoundTiesAway, Floor, Ceil, Trunc, AwayFromZero,
+        Add,
+        Sub,
+        Mul,
+        Div,
+        IntDiv,
+        Mod,
+        Neg,
+        Eq,
+        Ne,
+        Lt,
+        Le,
+        Gt,
+        Ge,
+        And,
+        Or,
+        Not,
+        Min,
+        Max,
+        Get,
+        Count,
+        Union,
+        Path,
+        PathKey,
+        PathLen,
+        Tuple,
+        TupleGet,
+        Concat,
+        Pow,
+        Atom,
+        Show,
+        CastInt,
+        CastRat,
+        CastF64,
+        Abs,
+        Len,
+        Lower,
+        Upper,
+        Trim,
+        Sum,
+        BitAnd,
+        BitOr,
+        BitXor,
+        BitNot,
+        Shl,
+        Shr,
+        PopCount,
+        LeadingZeros,
+        TrailingZeros,
+        Rotl,
+        Rotr,
+        F64Bits,
+        CodePoint,
+        Scalar,
+        Utf8,
+        FromUtf8,
+        MulHi,
+        BitReverse,
+        ByteSwap,
+        Pdep,
+        Pext,
+        FunnelShl,
+        FunnelShr,
+        At,
+        CastF32,
+        Sqrt,
+        Fma,
+        Entries,
+        Has,
+        Range,
+        FirstEntry,
+        LastEntry,
+        EntryAfter,
+        EntryBefore,
+        First,
+        Last,
+        Split,
+        Lines,
+        Join,
+        RangeFrom,
+        ListConcat,
+        Place,
+        CallNamed,
+        Round,
+        RoundTiesAway,
+        Floor,
+        Ceil,
+        Trunc,
+        AwayFromZero,
     ]
 };
 
@@ -76,33 +156,18 @@ fn tuples(n: usize) -> Vec<Vec<ScalarType>> {
     })
 }
 
-/// The tuples of operand carriers the evaluator takes and the table leaves out, on purpose:
-/// the checker is narrower there and refuses the program, so no checked program reaches them.
-/// `==` and `!=` of two carriers: the evaluator compares any two values, and the checker
-/// refuses two carriers that can never be equal (`Ck::equal`). `min` and `max` of two strings
-/// or two bools: the evaluator orders any two values of one kind, and the checker's `min` and
-/// `max` take numbers only.
-fn wider(p: Prim, ts: &[ScalarType]) -> bool {
-    match p {
-        Prim::Eq | Prim::Ne => true,
-        Prim::Min | Prim::Max => {
-            ts[0] == ts[1] && matches!(ts[0], ScalarType::Str | ScalarType::Bool)
-        }
-        _ => false,
-    }
-}
-
 /// What disagrees, for each primitive with a table: a tuple the table has an arrow for that
 /// the evaluator refuses or gives another carrier for, or a tuple the evaluator takes that the
-/// table has no arrow for and [`wider`] does not name.
-fn disagreements(
-    arrows_of: impl Fn(Prim) -> Option<&'static [ScalarArrow]>,
-    wider: impl Fn(Prim, &[ScalarType]) -> bool,
-) -> Vec<String> {
+/// table has no arrow for. The arrows the checker refuses by design
+/// ([`ScalarArrow::refused`]) are held to the evaluator like the others, so the table names
+/// every tuple the evaluator takes and no gap is left unlisted.
+fn disagreements(arrows_of: impl Fn(Prim) -> Option<&'static [ScalarArrow]>) -> Vec<String> {
     let mut found = Vec::new();
     for p in ALL {
         let Some(arrows) = arrows_of(p) else { continue };
-        let n = p.arity().expect("a primitive with a table has a fixed arity");
+        let n = p
+            .arity()
+            .expect("a primitive with a table has a fixed arity");
         for ts in tuples(n) {
             let arrow = arrows.iter().find(|a| a.params == ts.as_slice());
             let got = prim_data(p, ts.iter().map(|&t| sample(t)).collect());
@@ -117,10 +182,10 @@ fn disagreements(
                     }
                 }
                 (Some(a), Err(e)) => found.push(format!("{p:?}{ts:?}: {e:?}, the table has {a:?}")),
-                (None, Ok(v)) if !wider(p, &ts) => {
+                (None, Ok(v)) => {
                     found.push(format!("{p:?}{ts:?}: gives {v}, the table has no arrow"))
                 }
-                (None, Err(KernelError::Type(_)) | Ok(_)) => {}
+                (None, Err(KernelError::Type(_))) => {}
                 (None, Err(e)) => found.push(format!("{p:?}{ts:?}: {e:?}, not a type error")),
             }
         }
@@ -139,30 +204,92 @@ fn every_primitive_is_listed_once() {
 /// arity: 6, 36 or 216 tuples each, about 2 800 evaluations in all.
 #[test]
 fn prim_arrow_table() {
-    let found = disagreements(Prim::arrows, wider);
+    let found = disagreements(Prim::arrows);
     assert!(found.is_empty(), "{}", found.join("\n"));
 }
 
-/// Negative controls: a table missing one arrow, and one with an arrow the evaluator does not
-/// take, are both caught.
+/// The arrows the checker refuses by design are exactly `==` and `!=` of two carriers (30
+/// tuples each) and `min` and `max` of two strings or two bools; no other primitive has one.
+#[test]
+fn the_refused_arrows_are_the_named_ones() {
+    let mut refused = Vec::new();
+    for p in ALL {
+        for a in p.arrows().unwrap_or(&[]) {
+            if a.refused.is_some() {
+                refused.push((p, a.params));
+            }
+        }
+    }
+    let count = |p: Prim| refused.iter().filter(|(q, _)| *q == p).count();
+    assert_eq!((count(Prim::Eq), count(Prim::Ne)), (30, 30));
+    assert_eq!((count(Prim::Min), count(Prim::Max)), (2, 2));
+    assert_eq!(refused.len(), 64, "{refused:?}");
+    assert!(refused.iter().all(|(p, ts)| match p {
+        Prim::Eq | Prim::Ne => ts[0] != ts[1],
+        _ => ts[0] == ts[1] && matches!(ts[0], ScalarType::Str | ScalarType::Bool),
+    }));
+}
+
+/// Negative controls: a table missing one arrow, one with an arrow the evaluator does not
+/// take, and one missing a refused arrow, are all caught.
 #[test]
 fn a_wrong_table_is_caught() {
     const MISSING: &[ScalarArrow] = &[ScalarArrow {
         params: &[ScalarType::Int, ScalarType::Int],
         result: ScalarType::Int,
         atoms: &[],
+        refused: None,
     }];
     const EXTRA: &[ScalarArrow] = &[ScalarArrow {
         params: &[ScalarType::Str],
         result: ScalarType::Str,
         atoms: &[],
+        refused: None,
     }];
-    let missing = |p: Prim| if p == Prim::Add { Some(MISSING) } else { p.arrows() };
-    let extra = |p: Prim| if p == Prim::Neg { Some(EXTRA) } else { p.arrows() };
-    let found = disagreements(missing, wider);
+    let missing = |p: Prim| {
+        if p == Prim::Add {
+            Some(MISSING)
+        } else {
+            p.arrows()
+        }
+    };
+    let extra = |p: Prim| {
+        if p == Prim::Neg {
+            Some(EXTRA)
+        } else {
+            p.arrows()
+        }
+    };
+    let found = disagreements(missing);
     assert_eq!(found.len(), 3, "{found:?}");
-    assert!(found.iter().all(|f| f.starts_with("Add") && f.contains("no arrow")));
-    let found = disagreements(extra, wider);
+    assert!(
+        found
+            .iter()
+            .all(|f| f.starts_with("Add") && f.contains("no arrow"))
+    );
+    let found = disagreements(extra);
     assert_eq!(found.len(), 5, "{found:?}");
     assert!(found.iter().any(|f| f.starts_with("Neg[Str]")));
+    // `min` with its refused arrows dropped: the evaluator still takes two strings and two
+    // bools, so both are found.
+    let min = Prim::Min.arrows().unwrap();
+    let kept: &'static [ScalarArrow] = Box::leak(
+        (min.iter().copied())
+            .filter(|a| a.refused.is_none())
+            .collect::<Vec<_>>()
+            .into_boxed_slice(),
+    );
+    let found = disagreements(|p| {
+        if p == Prim::Min {
+            Some(kept)
+        } else {
+            p.arrows()
+        }
+    });
+    assert_eq!(found.len(), 2, "{found:?}");
+    assert!(
+        found
+            .iter()
+            .all(|f| f.starts_with("Min") && f.contains("no arrow"))
+    );
 }
