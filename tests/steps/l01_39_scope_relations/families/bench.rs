@@ -216,3 +216,9 @@ fn hopb_scales() {
 fn hoponb_scales() {
     scales("hoponb", 2, 1);
 }
+
+/// Deferred (PERF-l139-persist-due): 10.81 times the instructions, 10.19 the bytes at 8n.
+#[test]
+fn persist_scales() {
+    scales("persist", 2, 1);
+}

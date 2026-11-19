@@ -20025,7 +20025,9 @@ fn project_each_with(f: &Formula, syms: &[Atom], cover: bool) -> Result<EachClas
     // coefficients 1 and -1, where each atom's values are one range, given exactly
     // (`OneRow::project`); `row_sums` a unique point or the exact join of rows over atoms in
     // finite unions of ranges; `certified_domains` only difference rows and forests it
-    // certifies exact (its proof). Each of these answers the exact set `E`, a finite union of
+    // certifies exact (its proof). `two_var_domains` only a formula whose every disjunct
+    // reduces by unit equalities to rows over at most two atoms, projected exactly by
+    // `twovar::project_convex` (its proof), and it refuses where a strip has holes. Each of these answers the exact set `E`, a finite union of
     // ranges, with no cause, and none can answer where `E` has holes without end, as no finite
     // union of ranges is such a set. Any other answer is the cover's: `E`, or with holes
     // without end the set `exact::ended` reads from `E` alone, with the cause `Repeats`. So
@@ -20082,6 +20084,11 @@ fn project_each_with(f: &Formula, syms: &[Atom], cover: bool) -> Result<EachClas
         }
         if !meter::EXACT_OFF.get()
             && let Some(each) = certified_domains(f, syms)
+        {
+            return Ok(EachClassed::plain(each));
+        }
+        if !meter::EXACT_OFF.get()
+            && let Some(each) = two_var_domains(f, syms)
         {
             return Ok(EachClassed::plain(each));
         }
@@ -20289,6 +20296,408 @@ fn certified_domains(f: &Formula, syms: &[Atom]) -> Option<Each> {
         syms.iter()
             .map(|s| Ok(doms.get(s).cloned().unwrap_or_else(IntervalSet::top)))
             .collect(),
+        Vec::new(),
+    ))
+}
+
+/// Exact integer projection onto `syms` when `f` (containing no product atoms) is a conjunction
+/// of constraints with at most one disjunction of flat conjunctions, and every arm reduces via
+/// unimodular unit-equality substitution to at most two variables whose narrow strip
+/// `0 <= u(s) - l(s) < 1` on each envelope segment is hole-free ([`twovar::project_convex`]).
+///
+/// Proof of exactness:
+/// 1. For `f ≡ B ∧ (A_1 ∨ ... ∨ A_d)`, the integer projection onto `s` is the union of the
+///    projections of `B ∧ A_i` onto `s` (for `d = 0`, empty; with no disjunction, `d = 1` with
+///    `A_1 = true`).
+/// 2. Substituting `x = -a*(t + k)` from a unit equality `a*x + t + k == 0` (`a = ±1`, `x != s`)
+///    is a unimodular elimination (W. Pugh, "The Omega test", Supercomputing 1991, sec. 2.2),
+///    preserving the set of integer projections onto all remaining atoms (and onto `s`).
+///    Substituting a single-atom equality `a*x + k == 0` (`x != s`) is exact because `a | k`
+///    fixes `x = -k/a` uniquely, else no integer solution exists.
+/// 3. Remaining equalities are written as opposing `>= 0` inequalities. When at most two atoms
+///    remain, [`twovar::project_convex`] returns either the exact finite union of disjoint closed
+///    intervals or `Holed` (causing `None`, falling back to the ordinary solver + cover). If `s`
+///    does not appear in the remaining rows, [`twovar::point`] decides feasibility exactly.
+///
+/// Complexity tradeoff: naive version, `project_each_written` (`Level::open` + `solve_omega` +
+/// `shadow_logged` + `hull_side`) followed by `exact::exact_each` (`direct` + `cells_cover` ->
+/// `projection::pugh` with O(b) splinters per lower bound of coefficient `b`). On `persist` at
+/// `k = 16`, those two stages spent 465M of 688M instructions (262M solver + 203M cover, 185M in
+/// `pugh` splinters). Used: O(d * |syms| * (m log m + log M)) via [`twovar::project_convex`],
+/// independent of coefficient magnitude `b` (no splinters, no solver questions). Structural
+/// refusal (`None`) on products, multiple disjunctions, >2 remaining atoms, or any holed strip.
+fn two_var_domains(f: &Formula, syms: &[Atom]) -> Option<Each> {
+    if syms.iter().any(|a| matches!(a, Atom::Product(..))) {
+        return None;
+    }
+    let has_product = |c: &Con| c.lin.terms.keys().any(|a| matches!(a, Atom::Product(..)));
+    let neg_ge = |c: &Con| Con {
+        lin: Lin {
+            terms: c.lin.terms.iter().map(|(a, v)| (a.clone(), -v)).collect(),
+            constant: &(-&c.lin.constant) - &Int::ONE,
+        },
+        rel: Rel::Ge,
+    };
+    let neg_eq_arms = |c: &Con| {
+        let lt = Con {
+            lin: Lin {
+                terms: c.lin.terms.iter().map(|(a, v)| (a.clone(), -v)).collect(),
+                constant: &(-&c.lin.constant) - &Int::ONE,
+            },
+            rel: Rel::Ge,
+        };
+        let gt = Con {
+            lin: Lin {
+                terms: c.lin.terms.clone(),
+                constant: &c.lin.constant - &Int::ONE,
+            },
+            rel: Rel::Ge,
+        };
+        vec![vec![lt], vec![gt]]
+    };
+
+    // First pass: collect top-level `base` constraints and defer any single top-level disjunction
+    // node so `base_eqs` is known before walking disjunction arms (`O(1)` bailout on wide
+    // disjunctions like `wide_pairs` and `unary_arms` as soon as `|atoms| > base_eqs + 2`).
+    let mut base: Vec<Con> = Vec::new();
+    let mut base_eqs: usize = 0;
+    let mut base_atoms: BTreeSet<Atom> = BTreeSet::new();
+    let mut has_ge = false;
+    let mut arms: Option<Vec<Vec<Con>>> = None;
+    let mut deferred_or: Option<(&[Formula], bool)> = None;
+    let mut stack = vec![(f, true)];
+    let mut seen: HashSet<(Id, bool)> = HashSet::new();
+    while let Some((g, pos)) = stack.pop() {
+        if let Some(id) = Id::of(g)
+            && !seen.insert((id, pos))
+        {
+            continue;
+        }
+        match g {
+            Formula::Con(c) => {
+                if has_product(c) {
+                    return None;
+                }
+                match (pos, c.rel) {
+                    (true, Rel::Ge) => {
+                        has_ge = true;
+                        base_atoms.extend(c.lin.terms.keys().cloned());
+                        base.push(c.clone());
+                    }
+                    (true, Rel::Eq) => {
+                        base_eqs += 1;
+                        base_atoms.extend(c.lin.terms.keys().cloned());
+                        base.push(c.clone());
+                    }
+                    (false, Rel::Ge) => {
+                        has_ge = true;
+                        base_atoms.extend(c.lin.terms.keys().cloned());
+                        base.push(neg_ge(c));
+                    }
+                    (false, Rel::Eq) => {
+                        if arms.is_some() || deferred_or.is_some() {
+                            return None;
+                        }
+                        has_ge = true;
+                        base_atoms.extend(c.lin.terms.keys().cloned());
+                        arms = Some(neg_eq_arms(c));
+                    }
+                }
+            }
+            Formula::Not(h) => stack.push((h, !pos)),
+            Formula::And(gs) if pos => stack.extend(gs.iter().map(|h| (h, true))),
+            Formula::Or(gs) if !pos => stack.extend(gs.iter().map(|h| (h, false))),
+            Formula::Or(gs) | Formula::And(gs) => {
+                if arms.is_some() || deferred_or.is_some() {
+                    return None;
+                }
+                deferred_or = Some((gs, pos));
+            }
+        }
+    }
+    if base_atoms.len() > base_eqs + 2 {
+        return None;
+    }
+
+    // Extracts a flat conjunction of `Rel::Ge` constraints (under polarity `pos`), bailing out
+    // immediately if distinct atoms (together with `base_atoms`) exceed `base_eqs + 2`.
+    let extract_conj = |root: &Formula, root_pos: bool| -> Option<Vec<Con>> {
+        let mut out = Vec::new();
+        let mut arm_atoms = base_atoms.clone();
+        let mut stack = vec![(root, root_pos)];
+        let mut seen: HashSet<(Id, bool)> = HashSet::new();
+        while let Some((g, pos)) = stack.pop() {
+            if let Some(id) = Id::of(g)
+                && !seen.insert((id, pos))
+            {
+                continue;
+            }
+            match g {
+                Formula::Con(c) => {
+                    if has_product(c) {
+                        return None;
+                    }
+                    let row = match (pos, c.rel) {
+                        (true, Rel::Ge) => c.clone(),
+                        (false, Rel::Ge) => neg_ge(c),
+                        (_, Rel::Eq) => return None,
+                    };
+                    for a in row.lin.terms.keys() {
+                        if !arm_atoms.contains(a) {
+                            arm_atoms.insert(a.clone());
+                            if arm_atoms.len() > base_eqs + 2 {
+                                return None;
+                            }
+                        }
+                    }
+                    out.push(row);
+                }
+                Formula::Not(h) => stack.push((h, !pos)),
+                Formula::And(gs) if pos => stack.extend(gs.iter().map(|h| (h, true))),
+                Formula::Or(gs) if !pos => stack.extend(gs.iter().map(|h| (h, false))),
+                _ => return None,
+            }
+        }
+        Some(out)
+    };
+
+    if let Some((gs, pos)) = deferred_or {
+        // Flatten nested disjunctions of the same polarity using an explicit visited set.
+        let mut disj: Vec<Vec<Con>> = Vec::new();
+        let mut dstack: Vec<(&Formula, bool)> = gs.iter().rev().map(|h| (h, pos)).collect();
+        let mut dseen: HashSet<(Id, bool)> = HashSet::new();
+        while let Some((h, hpos)) = dstack.pop() {
+            if let Some(id) = Id::of(h)
+                && !dseen.insert((id, hpos))
+            {
+                continue;
+            }
+            match h {
+                Formula::Not(inner) => dstack.push((inner, !hpos)),
+                Formula::Or(hs) if hpos => {
+                    dstack.extend(hs.iter().rev().map(|x| (x, true)));
+                }
+                Formula::And(hs) if !hpos => {
+                    dstack.extend(hs.iter().rev().map(|x| (x, false)));
+                }
+                Formula::Con(c) if !hpos && c.rel == Rel::Eq => {
+                    if has_product(c) {
+                        return None;
+                    }
+                    let mut arm_atoms = base_atoms.clone();
+                    arm_atoms.extend(c.lin.terms.keys().cloned());
+                    if arm_atoms.len() > base_eqs + 2 {
+                        return None;
+                    }
+                    has_ge = true;
+                    disj.extend(neg_eq_arms(c));
+                }
+                _ => {
+                    let arm = extract_conj(h, hpos)?;
+                    if !arm.is_empty() {
+                        has_ge = true;
+                    }
+                    disj.push(arm);
+                }
+            }
+        }
+        arms = Some(disj);
+    }
+
+    if !has_ge {
+        return None;
+    }
+
+    let arm_list: Vec<Vec<Con>> = arms.unwrap_or_else(|| vec![Vec::new()]);
+    if arm_list.is_empty() {
+        return Some(no_points(syms));
+    }
+
+    // Deduplicate requested symbols so repeated symbols are projected once.
+    let unique_syms: BTreeSet<&Atom> = syms.iter().collect();
+
+    // Project one conjunction `rows` onto `sym`, returning `None` if it cannot reduce to <= 2
+    // atoms or has a holed strip.
+    let project_arm = |base: &[Con], arm: &[Con], sym: &Atom| -> Option<IntervalSet> {
+        type Row = (BTreeMap<Atom, Int>, Int);
+        // Charged like the solver it stands in for: each row read, each row rewritten by a
+        // substitution (its terms), and the rows `twovar` reads; past the limit this step
+        // answers nothing and the solver, on the same spent meter, refuses.
+        meter::charge((base.len() + arm.len()) as u64 + 1).ok()?;
+        let mut atoms: BTreeSet<&Atom> = BTreeSet::new();
+        let mut eq_count = 0usize;
+        for k in base.iter().chain(arm.iter()) {
+            atoms.extend(k.lin.terms.keys());
+            if k.rel == Rel::Eq {
+                eq_count += 1;
+            }
+        }
+        if atoms.len() > eq_count + 2 {
+            return None;
+        }
+        let (mut eq, mut ge): (Vec<Row>, Vec<Row>) = (Vec::new(), Vec::new());
+        for k in base.iter().chain(arm.iter()) {
+            let row = (k.lin.terms.clone(), k.lin.constant.clone());
+            if k.rel == Rel::Eq {
+                eq.push(row);
+            } else {
+                ge.push(row);
+            }
+        }
+        // Eliminate unit equalities (and single-atom equalities) on atoms other than `sym`.
+        loop {
+            let mut progressed = false;
+            for i in 0..eq.len() {
+                if eq[i].0.is_empty() {
+                    if !eq[i].1.is_zero() {
+                        return Some(IntervalSet::empty());
+                    }
+                    continue;
+                }
+                // Check for a single-atom equality `a*x + k == 0` with `x != sym`.
+                if eq[i].0.len() == 1 {
+                    let (x, a) = eq[i].0.iter().next().expect("one term");
+                    if x != sym {
+                        let (x, a) = (x.clone(), a.clone());
+                        let k = eq[i].1.clone();
+                        if !k.mod_floor(&a).is_zero() {
+                            return Some(IntervalSet::empty());
+                        }
+                        let val = -&k.div_floor(&a);
+                        eq[i] = (BTreeMap::new(), Int::ZERO);
+                        for row in eq.iter_mut().chain(ge.iter_mut()) {
+                            if let Some(m) = row.0.remove(&x) {
+                                row.1 = &row.1 + &(&m * &val);
+                            }
+                        }
+                        progressed = true;
+                        continue;
+                    }
+                }
+                let Some((x, a)) = (eq[i].0.iter())
+                    .find(|(x, a)| *x != sym && a.abs() == Int::ONE)
+                    .map(|(x, a)| (x.clone(), a.clone()))
+                else {
+                    continue;
+                };
+                let (t, k) = std::mem::take(&mut eq[i]);
+                for row in eq.iter_mut().chain(ge.iter_mut()) {
+                    let Some(m) = row.0.remove(&x) else {
+                        continue;
+                    };
+                    meter::charge(t.len() as u64 + 1).ok()?;
+                    let f = -&(&m * &a);
+                    for (y, v) in t.iter().filter(|(y, _)| **y != x) {
+                        let s = &row.0.remove(y).unwrap_or(Int::ZERO) + &(&f * v);
+                        if !s.is_zero() {
+                            row.0.insert(y.clone(), s);
+                        }
+                    }
+                    row.1 = &row.1 + &(&f * &k);
+                }
+                progressed = true;
+            }
+            if !progressed {
+                break;
+            }
+        }
+        let mut rows: Vec<Row> = Vec::with_capacity(ge.len() + 2 * eq.len());
+        for (t, k) in ge {
+            if t.is_empty() {
+                if k.is_negative() {
+                    return Some(IntervalSet::empty());
+                }
+                continue;
+            }
+            rows.push((t, k));
+        }
+        for (t, k) in eq {
+            if t.is_empty() {
+                if !k.is_zero() {
+                    return Some(IntervalSet::empty());
+                }
+                continue;
+            }
+            let neg = t.iter().map(|(a, v)| (a.clone(), -v)).collect();
+            rows.push((neg, -&k));
+            rows.push((t, k));
+        }
+        let mut rem: Vec<&Atom> = Vec::new();
+        for (t, _) in &rows {
+            for a in t.keys() {
+                if !rem.contains(&a) {
+                    rem.push(a);
+                    if rem.len() > 2 {
+                        return None;
+                    }
+                }
+            }
+        }
+        if rem.is_empty() {
+            return Some(IntervalSet::top());
+        }
+        let sym_pos = rem.iter().position(|a| *a == sym);
+        if let Some(pos) = sym_pos {
+            let other_idx = (rem.len() == 2).then_some(1);
+            let terms: Vec<(Vec<Term>, &Int)> = rows
+                .iter()
+                .map(|(t, k)| {
+                    let at = |a: &Atom| usize::from(a != rem[pos]);
+                    (t.iter().map(|(a, v)| (at(a), v.clone())).collect(), k)
+                })
+                .collect();
+            meter::charge(rows.len() as u64 + 1).ok()?;
+            let refs: Vec<(&[Term], &Int)> = terms.iter().map(|(t, k)| (&t[..], *k)).collect();
+            match twovar::project_convex(&refs, 0, other_idx) {
+                twovar::TwoVarProj::Holed => None,
+                twovar::TwoVarProj::Ranges(ranges) => {
+                    let pieces = ranges
+                        .into_iter()
+                        .map(|(lo, hi)| {
+                            (
+                                lo.map_or(End::NegInf, |v| End::Fin(Num::from(&v))),
+                                hi.map_or(End::PosInf, |v| End::Fin(Num::from(&v))),
+                            )
+                        })
+                        .collect();
+                    Some(IntervalSet::from_pieces(pieces))
+                }
+            }
+        } else {
+            // `sym` does not appear in the remaining rows; decide feasibility on the <= 2
+            // remaining atoms.
+            let first = rem[0];
+            let second = (rem.len() == 2).then_some(1);
+            let terms: Vec<(Vec<Term>, &Int)> = rows
+                .iter()
+                .map(|(t, k)| {
+                    let at = |a: &Atom| usize::from(a != first);
+                    (t.iter().map(|(a, v)| (at(a), v.clone())).collect(), k)
+                })
+                .collect();
+            meter::charge(rows.len() as u64 + 1).ok()?;
+            let refs: Vec<(&[Term], &Int)> = terms.iter().map(|(t, k)| (&t[..], *k)).collect();
+            if twovar::point(&refs, 0, second, false).is_some() {
+                Some(IntervalSet::top())
+            } else {
+                Some(IntervalSet::empty())
+            }
+        }
+    };
+
+    let mut doms: BTreeMap<&Atom, IntervalSet> = unique_syms
+        .iter()
+        .map(|&s| (s, IntervalSet::empty()))
+        .collect();
+    for arm in &arm_list {
+        for &s in &unique_syms {
+            let set = project_arm(&base, arm, s)?;
+            let entry = doms.get_mut(s).expect("symbol present");
+            *entry = entry.join(&set);
+        }
+    }
+    Some((
+        syms.iter().map(|s| Ok(doms[s].clone())).collect(),
         Vec::new(),
     ))
 }
