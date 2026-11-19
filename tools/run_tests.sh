@@ -1213,11 +1213,17 @@ fi
 # still running past 60 s and its account of the failures, from the line `failures:` to the end
 # (each failed test's captured output and panic, then their names); when there is none (a piece
 # stopped by its limit or a signal, or a crash), the last 40 lines, as a failed build prints.
+# Before those it prints the seed lines of the piece's random tests (`<test>: seed <n>;
+# ZED_TEST_SEED=<n> repeats this run`, from zed_tests::seed): they go to standard error past
+# libtest's capture, so they stand before `failures:` in the log, and without them a failure
+# seen once could not be repeated (TOOL-merge-push-seed-in-dump: the step 3 output of satred1b,
+# 2026-11-19T17:22:46Z, named a failed draw of pendants with no seed).
 grep -v 'rc=0 ' "$out/summary" | while read -r name _; do
   echo "---- failed piece $name (its output: $out/$name.log) ----"
   if [ "$run_kind" != test ]; then
     cat "$out/$name.log"
   else
+    grep -a -E '; ZED_TEST_SEED=[0-9]+ repeats this run$' "$out/$name.log"
     grep -E '^test .* has been running for over' "$out/$name.log"
     if grep -q '^failures:$' "$out/$name.log"; then
       sed -n '/^failures:$/,$p' "$out/$name.log"
