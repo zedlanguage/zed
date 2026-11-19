@@ -1258,47 +1258,61 @@ struct Record {
 /// leaves the points as they were; the other steps assume the test.
 fn audit(seeds: std::ops::Range<u64>) -> Vec<Record> {
     let all = audit_tests();
+    let mut out = Vec::new();
+    for seed in seeds {
+        let steps: Vec<(Term, bool)> = all[seed as usize]
+            .iter()
+            .enumerate()
+            .map(|(step, t)| (t.clone(), step % 3 == 2))
+            .collect();
+        out.extend(audit_steps(seed, &steps));
+    }
+    out
+}
+
+/// The records of [`audit`] at `seed` for the steps `steps`, each a test and whether the step
+/// joins the scopes of the test and of its negation (the audit's steps 2, 5 and 8) rather than
+/// assuming it; `seed` chooses the window as [`audit`] does.
+fn audit_steps(seed: u64, steps: &[(Term, bool)]) -> Vec<Record> {
     let p = Premises::new();
     let ns: Vec<Arc<str>> = AUDIT_NAMES.into_iter().map(Arc::from).collect();
     let names: Vec<String> = AUDIT_NAMES.map(String::from).to_vec();
     let mut out = Vec::new();
-    for seed in seeds {
-        let even = seed % 2 == 0;
-        let r = if even { 9 } else { 12 };
-        let window = vec![(-r, r); 4];
-        let mut s = ints(&ns);
-        let mut points: Vec<[i64; 4]> = Vec::new();
-        each_point(&window, |pt| {
-            if !even || pt.iter().all(|v| v.abs() <= 8) {
-                points.push(pt.try_into().expect("a point of four names"));
-            }
+    let even = seed % 2 == 0;
+    let r = if even { 9 } else { 12 };
+    let window = vec![(-r, r); 4];
+    let mut s = ints(&ns);
+    let mut points: Vec<[i64; 4]> = Vec::new();
+    each_point(&window, |pt| {
+        if !even || pt.iter().all(|v| v.abs() <= 8) {
+            points.push(pt.try_into().expect("a point of four names"));
+        }
+    });
+    if even {
+        for n in &ns {
+            s = s.assume(&and(ge(var(n), int(-8)), le(var(n), int(8))), true, &p);
+        }
+    }
+    for (step, (t, join)) in steps.iter().enumerate() {
+        if *join {
+            s = s.assume(t, true, &p).join(&s.assume(t, false, &p));
+        } else {
+            s = s.assume(t, true, &p);
+            let c = cond(t, &names);
+            points.retain(|pt| c.holds(pt));
+        }
+        let mut o = Oracle::empty(names.clone(), window.clone(), None);
+        points.iter().for_each(|pt| o.see(pt));
+        let got = facts(&s, &ns);
+        o.check_sound(&format!("audit {seed}:{step}"), &s, &got);
+        let ends = o.ends_of(&s);
+        out.push(Record {
+            seed,
+            step,
+            found: o.facts(&ns),
+            ends,
+            got,
         });
-        if even {
-            for n in &ns {
-                s = s.assume(&and(ge(var(n), int(-8)), le(var(n), int(8))), true, &p);
-            }
-        }
-        for (step, t) in all[seed as usize].iter().enumerate() {
-            if step % 3 == 2 {
-                s = s.assume(t, true, &p).join(&s.assume(t, false, &p));
-            } else {
-                s = s.assume(t, true, &p);
-                let c = cond(t, &names);
-                points.retain(|pt| c.holds(pt));
-            }
-            let mut o = Oracle::empty(names.clone(), window.clone(), None);
-            points.iter().for_each(|pt| o.see(pt));
-            let got = facts(&s, &ns);
-            o.check_sound(&format!("audit {seed}:{step}"), &s, &got);
-            let ends = o.ends_of(&s);
-            out.push(Record {
-                seed,
-                step,
-                found: o.facts(&ns),
-                ends,
-                got,
-            });
-        }
     }
     out
 }
@@ -2587,6 +2601,49 @@ fn audit_seed_126_keeps_the_ends_the_solver_alone_finds() {
             c.step,
             a.got,
             c.got
+        );
+    }
+}
+
+/// Audit seed 48 keeps the oracle's sets at its steps 7 and 8 (FAIL-audit-seed48-precision). Four
+/// of its steps (0, 1, 6 and 7, each assumed) are enough to show the loss: after them the oracle
+/// gives z the set {-1} and [3, 8], and from 7c4749998 to the fix the scope gave [-3, 8]. That
+/// commit had `Block::gained_hole`, outside the cases of a test, compare the names with those of
+/// the last projection outside the cases only; the fix compares them with those of the last
+/// projection as well. Without step 1 the scope gives [-3, 8] with or without the fix, so that
+/// shorter case is not this loss.
+#[test]
+fn audit_seed_48_keeps_the_hole_in_z() {
+    let steps = [
+        eq(add(var("y"), times(0, "x")), int(4)),
+        or(
+            ge(add(var("x"), times(-2, "x")), int(0)),
+            ge(add(var("x"), times(0, "a")), int(3)),
+        ),
+        or(
+            and(
+                ge(add(var("a"), times(-2, "a")), int(3)),
+                eq(add(var("z"), times(-3, "x")), int(2)),
+            ),
+            ge(add(var("z"), times(-1, "x")), int(3)),
+        ),
+        and(
+            or(
+                ge(add(var("z"), times(-1, "a")), int(2)),
+                ge(add(var("x"), times(1, "y")), int(4)),
+            ),
+            or(
+                eq(add(var("z"), times(-3, "z")), int(2)),
+                ge(add(var("x"), times(1, "a")), int(2)),
+            ),
+        ),
+    ]
+    .map(|t| (t, false));
+    for r in audit_steps(48, &steps) {
+        assert_eq!(
+            r.got, r.found,
+            "audit seed 48, the four steps: step {}",
+            r.step
         );
     }
 }

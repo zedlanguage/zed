@@ -5757,15 +5757,31 @@ impl Block {
     /// `case_wake::a_test_joined_from_cases_projects_the_whole_block`). Cost: the same
     /// O(c log N) for c names changed since that projection, and one whole-block projection
     /// where a part that gave the hole outside the cases would have asked for one.
+    ///
+    /// Outside the cases the names are compared with those of the last projection as well
+    /// ([`Block::names_at`]), and a hole found by either comparison counts, as before
+    /// FAIL-case-wake-pair-3394941344 for the second. With the comparison with
+    /// `outer_names_at` alone, audit seed 48 kept z at [-3, 8] where the whole block gives {-1}
+    /// and [3, 8] (FAIL-audit-seed48-precision, `families::audit_seed_48_keeps_the_hole_in_z`).
+    /// A hole found asks only for a whole-block projection, which gives the block's exact
+    /// projection, so the extra comparison can narrow a set and never widen one. Cost: two
+    /// differences, O((c1 + c2) log N) for c1 and c2 names changed since each projection, in
+    /// place of one, and the whole-block projections the second comparison asks for.
     fn gained_hole(&self, names: &imbl::OrdMap<Arc<str>, Product>, outer: bool) -> bool {
         if self.hole_pending {
             return true;
         }
-        let at = if outer {
-            &self.outer_names_at
-        } else {
-            &self.names_at
-        };
+        (outer && self.gained_hole_since(&self.outer_names_at, names))
+            || self.gained_hole_since(&self.names_at, names)
+    }
+
+    /// Whether a name of the block changed between `at` and `names` and now holds more than one
+    /// piece ([`Block::gained_hole`]).
+    fn gained_hole_since(
+        &self,
+        at: &imbl::OrdMap<Arc<str>, Product>,
+        names: &imbl::OrdMap<Arc<str>, Product>,
+    ) -> bool {
         // A star's leaf is left out, as the loop's trigger leaves it out
         // ([`Scope::project_block`]): no part's projection onto the hubs reads it.
         let holed = |n: &Arc<str>| {
