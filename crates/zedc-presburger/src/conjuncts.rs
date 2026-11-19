@@ -200,6 +200,27 @@ pub struct Conjuncts {
 /// Two names, in order.
 type NamePair = (Arc<str>, Arc<str>);
 
+/// A map keyed by name that is read only by key, never in order: the fields of [`StarIndex`]
+/// and [`Admit`] of this type.
+// Complexity tradeoff: naive version, an `OrdMap` keyed by name, O(log n) comparisons of
+// two names a lookup, each a `memcmp`: on the bench
+// `linked::bench::stars_formed_in_the_block_of_a_satellite_take_time_near_the_block`,
+// `Arc<str>` comparison and `memcmp` took about 20% of the instructions and grew faster than
+// the run (Gemini seat's callgrind, PERF-satellite-random-under9-redesign). Used: a persistent
+// hash map (imbl `GenericHashMap`), one hash of the name (O(its length)) and one comparison
+// on a match, O(1) expected a lookup. Correct only where no code reads the map's order:
+// every use of these fields is `get`, `get_mut`, `contains_key`, `insert`, `remove`,
+// `entry` or a sum over `values` (checked by reading each use, PERF-satellite-lookup-hash);
+// the maps inside them stay `OrdMap`, since their keys are read in order. The hasher is
+// fixed (`FxBuildHasher`), so a run does not depend on a random seed. Only the maps read far
+// more often than written are hashed: a write to a shared hash map copies a node of up to 32
+// entries, where an `OrdMap` copies a leaf of a few, so hashing `whys`, `ties`, `near` and
+// the `Uses` maps as well lowered the satellite bench to 0.805 of the instructions but raised
+// the chain and ladder benches of linked/bench.rs by up to 1.062 in instructions and 1.151
+// in bytes; with these four alone the satellite bench is 0.980 and no measured bench rose.
+// COMPLEXITY.md row PERF-satellite-lookup-hash.
+type ByName<V> = GenericHashMap<Arc<str>, V, FxBuildHasher, DefaultSharedPtr>;
+
 /// The class of a star of two hubs or more ([`Conjuncts::star`]): its conjuncts with the leaf
 /// written [`LEAF`], in order. Two stars of one class have the same hubs and the same
 /// conjuncts among them ([`Conjuncts::core`]), so their leaves differ only in their own
@@ -257,7 +278,7 @@ fn renamed(g: &Formula, x: &str, to: &Arc<str>) -> Formula {
 #[derive(Clone, Debug, Default)]
 struct StarIndex {
     /// The names of the shape of a leaf ([`Conjuncts::star`]), each with its shape.
-    shapes: OrdMap<Arc<str>, Arc<Shape>>,
+    shapes: ByName<Arc<Shape>>,
     /// The other names some conjunct mentions, each with why it is not of that shape.
     whys: OrdMap<Arc<str>, Arc<Why>>,
     /// Of the names of `whys` with a `count`, those of each witness, by their own counts.
@@ -275,7 +296,7 @@ struct StarIndex {
     ties: OrdMap<Arc<str>, OrdMap<Arc<str>, usize>>,
     /// Of each name, how many of its `free` conjuncts are of other than two names: a name
     /// with none is a satellite.
-    wide: OrdMap<Arc<str>, usize>,
+    wide: ByName<usize>,
     /// The other names each hub's `free` conjuncts mention, each with how many mention it;
     /// kept only at the hubs of `level`, so that a conjunct of many names costs no more than
     /// its names unless they are such hubs.
@@ -285,7 +306,7 @@ struct StarIndex {
     /// Of each satellite related to a hub it is near, one such hub: the one that needs the
     /// names the satellite relates to, while each other hub it is near needs this one
     /// ([`StarIndex::place`]).
-    anchor: OrdMap<Arc<str>, Arc<str>>,
+    anchor: ByName<Arc<str>>,
     /// What each hub of `level` needs among the hubs of a leaf to admit it.
     admit: Admit,
     /// The leaves of the names of `shapes` of two hubs or more, by their hubs.
@@ -371,7 +392,7 @@ struct Admit {
     /// many need it: a satellite its anchor, or at the anchor or when it has none the names it
     /// relates to other than the hub ([`StarIndex::place`]); any other name itself. The hub
     /// admits a leaf whose hubs hold all of them.
-    needs: OrdMap<Arc<str>, OrdMap<Arc<str>, usize>>,
+    needs: ByName<OrdMap<Arc<str>, usize>>,
     /// Of each such hub and hub set at it, how many of the hub's `needs` the set holds.
     hits: OrdMap<(Arc<str>, Hubs), usize>,
     /// The hub sets at each such hub, by their `hits` there.
