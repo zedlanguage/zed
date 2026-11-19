@@ -5789,6 +5789,29 @@ impl Block {
             || self.gained_hole_since(&self.names_at, names)
     }
 
+    /// Whether comparing the block's own names one by one costs less than the difference of the
+    /// maps can: `u (log2 N + 1) <= N` for `u` names of the block and `N` in scope.
+    ///
+    /// Complexity tradeoff (PERF-reduced-product-regressed): naive version, the difference of
+    /// the whole map against the block's snapshot ([`Block::names_at`], `outer_names_at`),
+    /// which skips only subtrees the two maps share. Products rewritten with equal values (a
+    /// fresh `Arc`, a path copy of the node) are compared one by one, so a difference costs up
+    /// to O(N), not O(c log N) for c names changed. In the eager join of k stars
+    /// (`l01_39_reduced_product::scaling::an_eager_join_projects_again_the_stars_it_settles_and_scales`)
+    /// each star's block took about 0.38 N value comparisons per difference, three differences
+    /// per block (two in [`Block::gained_hole`] since 972baad7e, one in [`Block::update`]), so
+    /// O(k²) per join: 11.68 times the work at 8k before 972baad7e, 13.78 after. Used: the
+    /// block's names looked up one by one, O(u log N), when that bound is at most the
+    /// difference's bound O(N); otherwise the difference as before. Each call then costs
+    /// O(min(u log N, N)), never more than before, and the same names are found changed: the
+    /// difference's callers already fall back to the block's names when more than u changed,
+    /// and a name not the block's is never used. COMPLEXITY.md row
+    /// PERF-reduced-product-regressed.
+    fn users_cheaper_than_diff(&self, names: &imbl::OrdMap<Arc<str>, Product>) -> bool {
+        let n = names.len().max(1);
+        self.users.len() * (n.ilog2() as usize + 1) <= n
+    }
+
     /// Whether a name of the block changed between `at` and `names` and now holds more than one
     /// piece ([`Block::gained_hole`]).
     fn gained_hole_since(
@@ -5804,6 +5827,9 @@ impl Block {
                 && !same_framed_opt(at.get(n), names.get(n))
                 && names.get(n).is_some_and(|p| p.ints().len() > 1)
         };
+        if self.users_cheaper_than_diff(names) {
+            return self.users.keys().any(holed);
+        }
         let mut changed = Vec::new();
         for d in at.diff(names) {
             let (DiffItem::Add(n, _)
@@ -7749,7 +7775,17 @@ impl Block {
         // is certified idle on `(next.split.base, names)` (identical marginals to `base`).
         let mut changed_names: Vec<Arc<str>> = Vec::new();
         let mut walked = 0;
-        for d in self.names_at.diff(names) {
+        // The block's names compared one by one, without the difference, when that costs less
+        // than the difference can ([`Block::users_cheaper_than_diff`]).
+        let scan = next.users_cheaper_than_diff(names);
+        if scan {
+            walked = next.users.len() + 1;
+        }
+        for d in (!scan)
+            .then(|| self.names_at.diff(names))
+            .into_iter()
+            .flatten()
+        {
             if let DiffItem::Update {
                 old: (_, a),
                 new: (_, b),
