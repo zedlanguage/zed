@@ -2112,6 +2112,44 @@ fn built(orders: &SatelliteOrders, d: usize) -> Conjuncts {
     c
 }
 
+/// The satellite of every hub built in seeded random orders, which merges blocks of every
+/// size into one another (`Blocks::merge`, which moves a block's indexes by name and by pair):
+/// after each conjunct the forest is well formed ([`Blocks::well_formed`], which rebuilds every
+/// index from the blocks' conjuncts), every order ends with the same blocks, and each name's
+/// blocks with a moving conjunct come in ascending order of their numbers.
+#[test]
+fn a_satellite_built_in_any_order_merges_into_the_same_well_formed_blocks() {
+    for bounds in [false, true] {
+        let gs = satellite_conjuncts(12, bounds);
+        let mut ends: BTreeSet<BTreeSet<BTreeSet<Arc<Formula>>>> = BTreeSet::new();
+        for seed in 0..8u64 {
+            let mut rng = Rng::new(seed);
+            let mut c = Conjuncts::default();
+            for i in shuffled(gs.len(), &mut rng) {
+                c.and(gs[i].clone());
+                if let Err(e) = c.blocks().well_formed() {
+                    panic!("bounds {bounds} seed {seed}, after {}: {e}", gs[i]);
+                }
+            }
+            let b = c.blocks();
+            let names: BTreeSet<Arc<str>> = b.all().flat_map(|k| b.names_of(k).cloned()).collect();
+            for n in &names {
+                let moving: Vec<_> = b.moving_blocks(n).collect();
+                assert!(
+                    moving.windows(2).all(|w| w[0] < w[1]),
+                    "bounds {bounds} seed {seed}: blocks of {n} {moving:?}"
+                );
+            }
+            ends.insert(b.all().map(|k| b.members(k).cloned().collect()).collect());
+        }
+        assert_eq!(
+            ends.len(),
+            1,
+            "bounds {bounds}: the blocks depend on the order"
+        );
+    }
+}
+
 /// Checks that building the conjuncts of [`satellite_conjuncts`] in a seeded random order at
 /// `d` and `8d` is linear.
 fn satellite_built_in_a_random_order(d: usize, bounds: bool) {

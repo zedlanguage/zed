@@ -2394,7 +2394,8 @@ impl Blocks {
 
     /// Checks the forest, for tests: each conjunct of the forest is in the block that holds
     /// it, conjuncts that share an atom other than a name are in one block, each name is
-    /// mentioned, and each name's conjuncts by block are those of the blocks; the parent
+    /// mentioned, and each name's conjuncts by block, and its moving conjuncts' counts by block
+    /// ([`Blocks::moving_blocks`]), are those of the blocks; the parent
     /// links are exactly the pairs of a block and a name it mentions, each tree has one root
     /// that every node's links lead to, and the labels of the trees are those links'
     /// components; each tree's counts are those of its conjuncts and names.
@@ -2465,9 +2466,13 @@ impl Blocks {
         }
         let mut names_in: BTreeMap<(BlockId, Arc<str>), usize> = BTreeMap::new();
         let mut pairs: BTreeMap<(BlockId, Arc<str>, Arc<str>), usize> = BTreeMap::new();
+        let mut moving: BTreeMap<Arc<str>, BTreeMap<BlockId, usize>> = BTreeMap::new();
         for (&b, ms) in &self.members {
             for h in ms {
                 for n in names(h) {
+                    if !self.hung.has(&n, h) {
+                        *moving.entry(n.clone()).or_default().entry(b).or_default() += 1;
+                    }
                     *names_in.entry((b, n)).or_default() += 1;
                 }
                 if let Some([u, v]) = pair(h) {
@@ -2485,6 +2490,15 @@ impl Blocks {
         }
         if !self.pairs.iter().map(|(k, &c)| (k.clone(), c)).eq(pairs) {
             return Err("the counts of the pairs of the blocks are not those of the blocks".into());
+        }
+        let kept = (self.moving_at.iter())
+            .map(|(n, m)| (n.clone(), m.iter().map(|(&b, &c)| (b, c)).collect()));
+        if !kept.eq(moving) {
+            return Err(
+                "the counts of the moving conjuncts of the names by block are not those of the \
+                 blocks"
+                    .into(),
+            );
         }
         let held = (self.forest.0.iter()).map(|(k, s)| (k.clone(), s.iter().cloned().collect()));
         if !held.eq(forest) {
@@ -2704,23 +2718,79 @@ impl Blocks {
             .iter()
             .max_by_key(|&&b| self.members.get(&b).map_or(0, |m| m.len()))
             .expect("a block");
+        // Complexity tradeoff: naive version, each conjunct of a merged block moved alone
+        // ([`Blocks::put`]): per name of each conjunct, two descents of `names_in`, two of
+        // `moving_at` and two of `at`, and two of `pairs` per conjunct of two names, each
+        // O(log n); a conjunct moves O(log n) times (each merge keeps the block of the most
+        // conjuncts), so O(n log² n) over n conjuncts, and 34% of the satellite of every hub
+        // built in a random order, growing 11.40 times at 8n (presperf1). Used: each index
+        // moved by its keys, not by conjunct: a block's counts per name (`names_in`,
+        // `moving_at`) and per pair (`pairs`) each moved once, its conjuncts of each name
+        // (`at`) moved as a set into the other block's (imbl's `union`, the smaller set into
+        // the larger), and each name's link read once. The same indexes after (checked by
+        // [`Blocks::well_formed`]), with O(k log n) for the k names and pairs of the block
+        // in place of O(c·w log n) for its c conjuncts of w names; `of` and `members` still
+        // pay per conjunct, O(1) expected and O(log n). Still O(n log² n) in all, each key
+        // moving O(log n) times at O(log n) a move, with half the instructions: merge alone
+        // grows 11.8 times at 8n (12.4 before), the bench 9.72 (10.03 before). Not done: a
+        // join-based union of the
+        // ordered sets (Blelloch, Ferizovic and Sun, "Parallel Ordered Sets Using Join",
+        // O(m log(n/m + 1)) for m into n), which would make `members` and `at` O(n log n) over
+        // all merges, as imbl 7 has none and `members` is read by zedc-preimage as imbl's
+        // `OrdSet` (`Blocks::member_set`, its `diff`). COMPLEXITY.md row
+        // PERF-satellite-random-under9-redesign.
         for &b in blocks.iter().filter(|&&b| b != keep) {
+            debug_assert!(
+                !self.apart.contains(&b) && !self.apart.contains(&keep),
+                "only blocks of the forest are merged, so `forest` keeps its entries"
+            );
             let moved = self.members.remove(&b).unwrap_or_default();
             for g in &moved {
-                let atoms = g.atoms();
-                self.put(g, &atoms, Some(keep));
-                for a in atoms {
-                    if let Atom::Sym(n) = a
-                        && let Some(&id) = self.name.get(&n)
-                        && self.up.get(&id) == Some(&b)
-                    {
-                        self.up.insert(id, keep);
+                self.of.insert(g.clone(), keep);
+            }
+            let named: Vec<(Arc<str>, usize)> = (self.names_in)
+                .range((b, Arc::<str>::from(""))..)
+                .take_while(|((c, _), _)| *c == b)
+                .map(|((_, n), &k)| (n.clone(), k))
+                .collect();
+            for (n, k) in named {
+                self.names_in.remove(&(b, n.clone()));
+                tally(&mut self.names_in, (keep, n.clone()), k as isize);
+                if let Some(counts) = self.moving_at.get_mut(&n)
+                    && let Some(m) = counts.remove(&b)
+                {
+                    tally(counts, keep, m as isize);
+                }
+                if let Some(set) = self.at.remove(&(n.clone(), b)) {
+                    match self.at.get_mut(&(n.clone(), keep)) {
+                        Some(to) => *to = std::mem::take(to).union(set),
+                        None => {
+                            self.at.insert((n.clone(), keep), set);
+                        }
                     }
                 }
+                // A link from `b` is to a name one of its conjuncts mentions alone, which
+                // `names_in` lists.
+                if let Some(&id) = self.name.get(&n)
+                    && self.up.get(&id) == Some(&b)
+                {
+                    self.up.insert(id, keep);
+                }
+            }
+            let empty: Arc<str> = Arc::from("");
+            let paired: Vec<(Arc<str>, Arc<str>, usize)> = (self.pairs)
+                .range((b, empty.clone(), empty)..)
+                .take_while(|((c, _, _), _)| *c == b)
+                .map(|((_, u, v), &k)| (u.clone(), v.clone(), k))
+                .collect();
+            for (u, v, k) in paired {
+                self.pairs.remove(&(b, u.clone(), v.clone()));
+                tally(&mut self.pairs, (keep, u, v), k as isize);
             }
             self.up.remove(&b);
             self.drop_node(b);
-            self.members.entry(keep).or_default().extend(moved);
+            let into = self.members.entry(keep).or_default();
+            *into = std::mem::take(into).union(moved);
         }
         match top {
             Some(t) => self.up.insert(keep, t),
