@@ -573,3 +573,149 @@ fn the_benchmark_inputs_have_their_answers_at_small_sizes() {
         assert_eq!(crate::presburger::decide(&f), Ok(true), "{n}");
     }
 }
+
+/// The alias chain of `alias_chain(n)` whose last link carries one `64·n`-bit written offset
+/// (U3 of PERF-negated-chain-unsolved).
+fn wide_alias_chain(n: usize) -> Formula {
+    let (_, atoms, f) = alias_chain(n);
+    let huge = Int::from(num_bigint::BigInt::from(1) << (64 * n));
+    let f = f.map_cons(&|c| {
+        let mut c = c.clone();
+        if c.lin.terms.contains_key(&atoms[n - 1]) && c.lin.terms.contains_key(&atoms[n]) {
+            c.lin.constant = -&huge;
+        }
+        Formula::Con(c)
+    });
+    let mut model = Model::new();
+    for (i, a) in atoms.iter().enumerate() {
+        let value = if i == n {
+            &Int::from(3i64 - n as i64) - &huge
+        } else {
+            Int::from(2i64 - i as i64)
+        };
+        model.insert(a.clone(), value);
+    }
+    model.insert(Atom::Aux(0), Int::ZERO);
+    model.insert(Atom::Aux(1), Int::from(2));
+    assert!(f.holds(&model));
+    f
+}
+
+#[test]
+fn pncx_wide_affine_alias_scale() {
+    let inputs = scaling::inputs(128, wide_alias_chain);
+    scaling::check_order("affine aliases with one wide written offset", 128, 1, |n| {
+        assert!(matches!(solve_modular(&inputs[&n], false), Some(Some(_))));
+    });
+}
+
+/// Builds a chain where the single `64*n`-bit offset sits in the middle (`n/2`) AND appears first
+/// in the conjunction, with alternating signs and an unbounded primary variable (exercising
+/// Kruskal bit-weight ordering, LCA cancellation, and `min_offsets_of`).
+fn wide_middle_first_chain(n: usize) -> Formula {
+    let mid = n / 2;
+    let atoms: Vec<_> = (0..=n)
+        .map(|i| Atom::Sym(format!("m{:06}", n - i).into()))
+        .collect();
+    let huge = Int::from(num_bigint::BigInt::from(1) << (64 * n));
+    let mut parts = Vec::with_capacity(n + 5);
+    // Place the wide middle edge FIRST to defeat naive FIFO orderings.
+    // Sign-alternating chain: a_i = -a_{i+1} + c_i (except wide edge a_{mid-1} = -a_mid + huge).
+    parts.push(Formula::Con(Con::eq(
+        &Lin::atom(atoms[mid - 1].clone()),
+        &Lin::atom(atoms[mid].clone())
+            .times(-1)
+            .plus(&Lin::constant(huge.clone())),
+    )));
+    for i in (0..n).rev() {
+        if i == mid - 1 {
+            continue;
+        }
+        parts.push(Formula::Con(Con::eq(
+            &Lin::atom(atoms[i].clone()),
+            &Lin::atom(atoms[i + 1].clone())
+                .times(-1)
+                .plus(&Lin::constant(1)),
+        )));
+    }
+    let x = Lin::atom(atoms[0].clone());
+    let q = Lin::atom(Atom::Aux(0));
+    let r = Lin::atom(Atom::Aux(1));
+    parts.extend([
+        Formula::Con(Con::eq(&x, &q.times(3).plus(&r))),
+        Formula::Con(Con::ge(&r, &Lin::constant(0))),
+        Formula::Con(Con::ge(&Lin::constant(2), &r)),
+        Formula::Con(Con::eq(&r, &Lin::constant(2))),
+    ]);
+    Formula::And(crate::presburger::Shared::new(parts))
+}
+
+#[test]
+fn pncx_wide_affine_alias_adversarial_shapes() {
+    // 1. Verify exact model construction and `min_offsets_of` on middle-wide-first alternating-sign
+    //    unbounded chains, plus renaming invariance.
+    for n in [4usize, 7, 16] {
+        let f = wide_middle_first_chain(n);
+        assert!(matches!(solve_modular(&f, false), Some(Some(_))), "n={n}");
+        let model = solve_modular(&f, true)
+            .expect("accepted")
+            .expect("satisfiable");
+        assert!(f.holds(&model), "model failed at n={n}");
+
+        // Rename every symbol in reverse order and confirm identical verdict.
+        let renamed = f.map_cons(&|c| {
+            let mut terms = BTreeMap::new();
+            for (a, k) in &c.lin.terms {
+                let na = match a {
+                    Atom::Sym(s) => Atom::Sym(format!("z_{s}").into()),
+                    other => other.clone(),
+                };
+                terms.insert(na, k.clone());
+            }
+            Formula::Con(Con {
+                lin: Lin {
+                    terms,
+                    constant: c.lin.constant.clone(),
+                },
+                rel: c.rel,
+            })
+        });
+        assert!(
+            matches!(solve_modular(&renamed, false), Some(Some(_))),
+            "renamed n={n}"
+        );
+    }
+
+    // 2. Verify `UnitUf::min_offsets_of` matches naive `tree_get` over a mixed-sign forest.
+    let mut uf = UnitUf::new();
+    let atoms: Vec<_> = (0..12)
+        .map(|i| Atom::Sym(format!("v{i:02}").into()))
+        .collect();
+    for i in 0..11 {
+        let sign = if i % 3 == 0 { -1 } else { 1 };
+        let offset = if i == 5 {
+            Int::from(num_bigint::BigInt::from(1) << 256)
+        } else {
+            Int::from((i as i64) * 7 - 11)
+        };
+        uf.union(&atoms[i], &atoms[i + 1], sign, &offset)
+            .expect("consistent");
+    }
+    let root = uf.tree_root(&atoms[0]);
+    let mut expected: [Option<Int>; 2] = [None, None];
+    for a in &atoms {
+        let (r, s, d) = uf.tree_get(a);
+        assert_eq!(r, root);
+        let slot = &mut expected[usize::from(s < 0)];
+        if slot.as_ref().is_none_or(|l| d < *l) {
+            *slot = Some(d);
+        }
+    }
+    assert_eq!(uf.min_offsets_of(&root), expected);
+
+    // 3. Scaling check on the adversarial middle-wide-edge-first unbounded alternating-sign chain.
+    let inputs = scaling::inputs(128, wide_middle_first_chain);
+    scaling::check_order("middle wide offset placed first", 128, 1, |n| {
+        assert!(matches!(solve_modular(&inputs[&n], false), Some(Some(_))));
+    });
+}

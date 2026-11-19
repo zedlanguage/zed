@@ -145,6 +145,15 @@ impl Int {
         }
     }
 
+    /// The number of binary digits of `|self|`: `0` for zero, and `floor(log2(|self|)) + 1`
+    /// otherwise, in O(1) time with no heap allocation.
+    pub fn bits(&self) -> u64 {
+        match &self.0 {
+            Repr::Small(v) => u64::from(128 - v.unsigned_abs().leading_zeros()),
+            Repr::Big(v) => v.bits(),
+        }
+    }
+
     /// Whether the value is 1 or -1.
     pub fn is_unit(&self) -> bool {
         matches!(self.0, Repr::Small(1 | -1))

@@ -9,7 +9,8 @@
 
 mod brooks;
 
-use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet, VecDeque};
+use std::cmp::Reverse;
+use std::collections::{BTreeMap, BTreeSet, BinaryHeap, HashMap, HashSet, VecDeque};
 
 use zedc_int::int::Int;
 
@@ -452,126 +453,330 @@ impl FoldNode {
     }
 }
 
-/// Union-Find with potentials `atom = sign * root + offset`, `sign in {-1, 1}`.
+/// Union-Find with affine potentials `atom = sign * parent + offset`, `sign in {-1, 1}`,
+/// linking by subtree size without compressing edge offsets.
+// Complexity tradeoff: naive path compression (`find`/`flatten`) rewrites every atom's edge
+// directly to the root, copying a single `B`-bit written offset onto `Omega(n)` atoms in
+// `O(n * B)` time and bytes (`r6_tests::pncx_wide_affine_alias_scale`: 50.6x bytes and 13.4x
+// instructions for 8x size, 391.9 MB at n = 1024). Linking by subtree size without compressing
+// offsets keeps tree height at most `floor(log2 n)` (Tarjan and van Leeuwen 1984) while leaving
+// every edge offset stored on a single tree edge (O(S) total stored bits for total input
+// bit-length S). Dense `usize` indices keep tree walks and LCA queries allocation-free without
+// `HashMap` lookups or `Atom` clones; LCA cancellation in `rewrite_lin_full` and `union` avoids
+// crossing any wide edge above the LCA of cancelling terms. Nothing is given up: `get`
+// re-anchors to the smallest `Atom` (`canon`) in O(log n) hops for callers expecting canonical
+// roots, while `solve_modular_whole` works over balanced internal tree roots (invariant under
+// renaming via `solve_regime`). Tests: `pncx_wide_affine_alias_scale`,
+// `pncx_affine_alias_chain_scale`, `pncx_alias_chain_axis`,
+// `one_scope::one_variable_answers_do_not_depend_on_names`.
 struct UnitUf {
-    parent: HashMap<Atom, (Atom, i8, Int)>,
+    ids: HashMap<Atom, usize>,
+    atoms: Vec<Atom>,
+    parent: Vec<usize>,
+    sign: Vec<i8>,
+    offset: Vec<Int>,
+    size: Vec<usize>,
+    /// Index of the smallest `Atom` (by `Ord`) in this component, stored at each tree root.
+    canon: Vec<usize>,
 }
 
 impl UnitUf {
     fn new() -> Self {
         UnitUf {
-            parent: HashMap::new(),
+            ids: HashMap::new(),
+            atoms: Vec::new(),
+            parent: Vec::new(),
+            sign: Vec::new(),
+            offset: Vec::new(),
+            size: Vec::new(),
+            canon: Vec::new(),
         }
+    }
+
+    fn ensure_id(&mut self, a: &Atom) -> usize {
+        if let Some(&id) = self.ids.get(a) {
+            return id;
+        }
+        let id = self.atoms.len();
+        self.ids.insert(a.clone(), id);
+        self.atoms.push(a.clone());
+        self.parent.push(id);
+        self.sign.push(1);
+        self.offset.push(Int::ZERO);
+        self.size.push(1);
+        self.canon.push(id);
+        id
     }
 
     fn ensure(&mut self, a: &Atom) {
-        if !self.parent.contains_key(a) {
-            self.parent.insert(a.clone(), (a.clone(), 1, Int::ZERO));
+        self.ensure_id(a);
+    }
+
+    fn root_and_depth_id(&self, mut u: usize) -> (usize, usize) {
+        let mut d = 0usize;
+        while self.parent[u] != u {
+            u = self.parent[u];
+            d += 1;
+        }
+        (u, d)
+    }
+
+    fn tree_root_id(&self, mut u: usize) -> usize {
+        while self.parent[u] != u {
+            u = self.parent[u];
+        }
+        u
+    }
+
+    /// The balanced tree root of `a` (pointer hops only, no integer arithmetic).
+    fn tree_root(&self, a: &Atom) -> Atom {
+        match self.ids.get(a) {
+            Some(&id) => self.atoms[self.tree_root_id(id)].clone(),
+            None => a.clone(),
         }
     }
 
-    /// The root of `a` with `a = s * root + d`, compressing the path. A loop, not recursion:
-    /// the parent chain can be as long as the number of unit equalities.
-    fn find(&mut self, a: &Atom) -> (Atom, i8, Int) {
-        self.ensure(a);
-        let mut path: Vec<Atom> = Vec::new();
-        let mut cur = a.clone();
-        loop {
-            let p = &self.parent[&cur].0;
-            if *p == cur {
-                break;
-            }
-            let next = p.clone();
-            path.push(cur);
-            cur = next;
+    /// Lowest common ancestor of `u` (at depth `du`) and `v` (at depth `dv`) in the same tree,
+    /// returning `(lca, lca_depth)` with pointer hops only.
+    fn lca_same_tree(
+        &self,
+        mut u: usize,
+        mut du: usize,
+        mut v: usize,
+        mut dv: usize,
+    ) -> (usize, usize) {
+        while du > dv {
+            u = self.parent[u];
+            du -= 1;
         }
-        let root = cur;
-        // Walk back from the atom nearest the root: each link `v = s * p + d` with `p` already
-        // pointing at the root as `p = ps * root + pd` becomes `v = (s * ps) * root + (s * pd + d)`.
-        let (mut rs, mut rd): (i8, Int) = (1, Int::ZERO);
-        for v in path.iter().rev() {
-            let (_, s, d) = self.parent[v].clone();
-            let new_s = s * rs;
-            let new_d = if s > 0 { &rd + &d } else { &d - &rd };
-            self.parent
-                .insert(v.clone(), (root.clone(), new_s, new_d.clone()));
-            rs = new_s;
-            rd = new_d;
+        while dv > du {
+            v = self.parent[v];
+            dv -= 1;
         }
-        if path.is_empty() {
-            (root, 1, Int::ZERO)
-        } else {
-            (root, rs, rd)
+        while u != v {
+            u = self.parent[u];
+            v = self.parent[v];
+            du -= 1;
         }
+        (u, du)
     }
 
-    /// Points every atom straight at its root, so that each later [`UnitUf::get`] follows at
-    /// most one link.
-    // Complexity tradeoff: `get` takes `&self` and cannot compress, so after a chain of unions
-    // written in descending name order each `get` walked the whole chain, Omega(n^2) over the
-    // atoms (I6.11, `r6_tests::bench::pncx_affine_alias_chain_scale`, 61.0 times the work for 8 times
-    // the aliases). Compressing every path once after the unions costs O(n log n) amortized
-    // (path compression with linking by name, Tarjan and van Leeuwen 1984), and the roots, signs
-    // and offsets are the same, so no answer depends on it. Nothing is given up.
-    fn flatten(&mut self) {
-        let mut atoms: Vec<Atom> = self.parent.keys().cloned().collect();
-        atoms.sort();
-        for a in &atoms {
-            self.find(a);
-        }
-    }
-
-    fn get(&self, a: &Atom) -> (Atom, i8, Int) {
-        let mut cur = a.clone();
+    /// Expresses `u = s * target + d` where `target` is an ancestor of `u`.
+    fn walk_to_id(&self, mut u: usize, target: usize) -> (i8, Int) {
         let mut s: i8 = 1;
         let mut d = Int::ZERO;
-        while let Some((p, ps, pd)) = self.parent.get(&cur) {
-            if p == &cur {
-                return (cur, s, d);
+        while u != target {
+            let pd = &self.offset[u];
+            if !pd.is_zero() {
+                d = if s > 0 { &d + pd } else { &d - pd };
             }
-            d = if s > 0 { &d + pd } else { &d - pd };
-            s *= *ps;
-            cur = p.clone();
+            s *= self.sign[u];
+            u = self.parent[u];
         }
-        (a.clone(), 1, Int::ZERO)
+        (s, d)
     }
 
-    /// Links `a = s * b + d`. Returns `Err(())` on contradiction, or `Ok(Some((root, val)))` when
-    /// an opposite-sign cycle fixes `root` to an integer `val`.
+    /// Expresses `u = s * tree_root + d`.
+    fn tree_get_id(&self, mut u: usize) -> (usize, i8, Int) {
+        let mut s: i8 = 1;
+        let mut d = Int::ZERO;
+        while self.parent[u] != u {
+            let pd = &self.offset[u];
+            if !pd.is_zero() {
+                d = if s > 0 { &d + pd } else { &d - pd };
+            }
+            s *= self.sign[u];
+            u = self.parent[u];
+        }
+        (u, s, d)
+    }
+
+    /// Expresses `a = s * tree_root + d` in O(log n) hops.
+    fn tree_get(&self, a: &Atom) -> (Atom, i8, Int) {
+        match self.ids.get(a) {
+            Some(&id) => {
+                let (r, s, d) = self.tree_get_id(id);
+                (self.atoms[r].clone(), s, d)
+            }
+            None => (a.clone(), 1, Int::ZERO),
+        }
+    }
+
+    /// Expresses `a = s * canon_root + d`, re-anchored to the smallest `Atom` in `a`'s component,
+    /// in O(log n) hops.
+    #[cfg(test)]
+    fn get(&self, a: &Atom) -> (Atom, i8, Int) {
+        let Some(&id) = self.ids.get(a) else {
+            return (a.clone(), 1, Int::ZERO);
+        };
+        let (r, sa, da) = self.tree_get_id(id);
+        let c = self.canon[r];
+        if c == r {
+            return (self.atoms[r].clone(), sa, da);
+        }
+        let (_, sc, dc) = self.tree_get_id(c);
+        // a = sa * r + da, c = sc * r + dc => r = sc * c - sc * dc
+        // => a = (sa * sc) * c + (da - sa * sc * dc)
+        let s = sa * sc;
+        let d = if s > 0 { &da - &dc } else { &da + &dc };
+        (self.atoms[c].clone(), s, d)
+    }
+
+    /// Returns `[min_{v = +root + d} d, min_{v = -root + d} d]` over all atoms in `root`'s tree
+    /// in one bottom-up pass (each edge offset is added or subtracted at most twice, O(S) bit work).
+    fn min_offsets_of(&self, root: &Atom) -> [Option<Int>; 2] {
+        let Some(&root_id) = self.ids.get(root) else {
+            return [Some(Int::ZERO), None];
+        };
+        let n = self.atoms.len();
+        let mut head = vec![usize::MAX; n];
+        let mut next = vec![usize::MAX; n];
+        for u in 0..n {
+            let p = self.parent[u];
+            if p != u {
+                next[u] = head[p];
+                head[p] = u;
+            }
+        }
+        let mut order = Vec::new();
+        let mut stack = vec![root_id];
+        while let Some(u) = stack.pop() {
+            order.push(u);
+            let mut c = head[u];
+            while c != usize::MAX {
+                stack.push(c);
+                c = next[c];
+            }
+        }
+        let mut best: Vec<[Option<Int>; 2]> = vec![[None, None]; n];
+        for &u in order.iter().rev() {
+            let mut cur: [Option<Int>; 2] = [Some(Int::ZERO), None];
+            let mut c = head[u];
+            while c != usize::MAX {
+                let se = self.sign[c];
+                let de = &self.offset[c];
+                // For `v = sv * c + dv` and `c = se * u + de`,
+                // `v = (sv * se) * u + (sv * de + dv)`.
+                if let Some(d_pos) = best[c][0].take() {
+                    let cand = if de.is_zero() { d_pos } else { &d_pos + de };
+                    let slot = &mut cur[usize::from(se < 0)];
+                    if slot.as_ref().is_none_or(|l| cand < *l) {
+                        *slot = Some(cand);
+                    }
+                }
+                if let Some(d_neg) = best[c][1].take() {
+                    let cand = if de.is_zero() { d_neg } else { &d_neg - de };
+                    let slot = &mut cur[usize::from(se > 0)];
+                    if slot.as_ref().is_none_or(|l| cand < *l) {
+                        *slot = Some(cand);
+                    }
+                }
+                c = next[c];
+            }
+            best[u] = cur;
+        }
+        std::mem::take(&mut best[root_id])
+    }
+
+    /// Links `a = s * b + d`. Returns `Err(())` on contradiction, or `Ok(Some((tree_root, val)))`
+    /// when an opposite-sign cycle fixes `tree_root` to an integer `val`.
     fn union(&mut self, a: &Atom, b: &Atom, s: i8, d: &Int) -> Result<Option<(Atom, Int)>, ()> {
-        let (ra, sa, da) = self.find(a);
-        let (rb, sb, db) = self.find(b);
-        // sa * ra + da = s * (sb * rb + db) + d
-        // sa * ra = (s * sb) * rb + (s * db + d - da)
-        let s_db = if s > 0 { db } else { -&db };
-        let rhs_const = &(&s_db + d) - &da;
-        let rel_s = sa * s * sb;
-        let rel_d = if sa > 0 { rhs_const } else { -&rhs_const };
-        // Now ra = rel_s * rb + rel_d.
+        let ia = self.ensure_id(a);
+        let ib = self.ensure_id(b);
+        let (ra, da_depth) = self.root_and_depth_id(ia);
+        let (rb, db_depth) = self.root_and_depth_id(ib);
         if ra == rb {
+            let (lca, _) = self.lca_same_tree(ia, da_depth, ib, db_depth);
+            let (sa, da) = self.walk_to_id(ia, lca);
+            let (sb, db) = self.walk_to_id(ib, lca);
+            // sa * lca + da = s * (sb * lca + db) + d
+            let s_db = if s > 0 { db } else { -&db };
+            let rhs_const = &(&s_db + d) - &da;
+            let rel_s = sa * s * sb;
+            let rel_d = if sa > 0 { rhs_const } else { -&rhs_const };
             if rel_s == 1 {
                 if !rel_d.is_zero() {
                     return Err(());
                 }
                 return Ok(None);
-            } else {
-                // 2 * ra = rel_d
-                let two = Int::from(2);
-                if !rel_d.mod_floor_wide(&two).is_zero() {
-                    return Err(());
-                }
-                return Ok(Some((ra, rel_d.div_floor_wide(&two))));
             }
+            // 2 * lca = rel_d
+            let two = Int::from(2);
+            if !rel_d.mod_floor_wide(&two).is_zero() {
+                return Err(());
+            }
+            let lca_val = rel_d.div_floor_wide(&two);
+            // Lift `lca = sl * ra + dl` to `ra = sl * (lca_val - dl)`.
+            let (sl, dl) = self.walk_to_id(lca, ra);
+            let diff = &lca_val - &dl;
+            let root_val = if sl > 0 { diff } else { -&diff };
+            return Ok(Some((self.atoms[ra].clone(), root_val)));
         }
-        // Choose canonical root: prefer smaller Atom so order of equations doesn't matter.
-        if ra > rb {
-            self.parent.insert(ra, (rb, rel_s, rel_d));
+        let (_, sa, da) = self.tree_get_id(ia);
+        let (_, sb, db) = self.tree_get_id(ib);
+        // sa * ra + da = s * (sb * rb + db) + d  =>  ra = rel_s * rb + rel_d
+        let s_db = if s > 0 { db } else { -&db };
+        let rhs_const = &(&s_db + d) - &da;
+        let rel_s = sa * s * sb;
+        let rel_d = if sa > 0 { rhs_const } else { -&rhs_const };
+        // Link smaller subtree under larger subtree; break ties by smaller Atom.
+        let attach_ra_under_rb = self.size[ra] < self.size[rb]
+            || (self.size[ra] == self.size[rb] && self.atoms[ra] > self.atoms[rb]);
+        if attach_ra_under_rb {
+            self.parent[ra] = rb;
+            self.sign[ra] = rel_s;
+            self.offset[ra] = rel_d;
+            self.size[rb] += self.size[ra];
+            if self.atoms[self.canon[ra]] < self.atoms[self.canon[rb]] {
+                self.canon[rb] = self.canon[ra];
+            }
         } else {
             // rb = rel_s * (ra - rel_d) = rel_s * ra - rel_s * rel_d
             let inv_d = if rel_s > 0 { -&rel_d } else { rel_d };
-            self.parent.insert(rb, (ra, rel_s, inv_d));
+            self.parent[rb] = ra;
+            self.sign[rb] = rel_s;
+            self.offset[rb] = inv_d;
+            self.size[ra] += self.size[rb];
+            if self.atoms[self.canon[rb]] < self.atoms[self.canon[ra]] {
+                self.canon[ra] = self.canon[rb];
+            }
         }
         Ok(None)
+    }
+}
+
+fn add_scaled(acc: &mut Int, k: &Int, d: &Int) {
+    if d.is_zero() {
+        return;
+    }
+    if k.is_unit() {
+        *acc = if k.is_positive() {
+            &*acc + d
+        } else {
+            &*acc - d
+        };
+    } else {
+        *acc = &*acc + &(k * d);
+    }
+}
+
+fn emit_root_term(
+    r: &Atom,
+    k1: Int,
+    rem_defs: &HashMap<Atom, FullRemDef>,
+    terms: &mut BTreeMap<Atom, Int>,
+    constant: &mut Int,
+) {
+    if let Some(rem) = rem_defs.get(r) {
+        let factor = if rem.c_r > 0 { -&k1 } else { k1 };
+        add_scaled(constant, &factor, &rem.k);
+        let e_x = terms.entry(rem.x_root.clone()).or_insert(Int::ZERO);
+        *e_x = &*e_x + &(&factor * &rem.c_x);
+        let e_q = terms.entry(rem.q_root.clone()).or_insert(Int::ZERO);
+        *e_q = &*e_q + &(&factor * &rem.c_q);
+    } else {
+        let e = terms.entry(r.clone()).or_insert(Int::ZERO);
+        *e = &*e + &k1;
     }
 }
 
@@ -581,32 +786,121 @@ fn rewrite_lin_full(
     uf: &UnitUf,
     rem_defs: &HashMap<Atom, FullRemDef>,
 ) -> Lin {
-    let mut terms: BTreeMap<Atom, Int> = BTreeMap::new();
     let mut constant = lin.constant.clone();
-    for (a, k) in &lin.terms {
+    if lin.terms.is_empty() {
+        return Lin {
+            terms: BTreeMap::new(),
+            constant,
+        };
+    }
+    if lin.terms.len() == 1 {
+        let (a, k) = lin.terms.iter().next().expect("checked non-empty");
         if let Some(v) = fixed.get(a) {
-            constant = &constant + &(k * v);
-            continue;
+            add_scaled(&mut constant, k, v);
+            return Lin {
+                terms: BTreeMap::new(),
+                constant,
+            };
         }
-        let (r1, s1, d1) = uf.get(a);
+        let (r1, s1, d1) = uf.tree_get(a);
         if let Some(v) = fixed.get(&r1) {
             let val = if s1 > 0 { v + &d1 } else { &d1 - v };
-            constant = &constant + &(k * &val);
+            add_scaled(&mut constant, k, &val);
+            return Lin {
+                terms: BTreeMap::new(),
+                constant,
+            };
+        }
+        add_scaled(&mut constant, k, &d1);
+        let k1 = if s1 > 0 { k.clone() } else { -k };
+        let mut terms = BTreeMap::new();
+        emit_root_term(&r1, k1, rem_defs, &mut terms, &mut constant);
+        terms.retain(|_, v| !v.is_zero());
+        return Lin { terms, constant };
+    }
+    if lin.terms.len() == 2 {
+        let mut it = lin.terms.iter();
+        let (a, ka) = it.next().expect("len == 2");
+        let (b, kb) = it.next().expect("len == 2");
+        if !fixed.contains_key(a)
+            && !fixed.contains_key(b)
+            && let (Some(&ia), Some(&ib)) = (uf.ids.get(a), uf.ids.get(b))
+        {
+            let (ra, da_depth) = uf.root_and_depth_id(ia);
+            let (rb, db_depth) = uf.root_and_depth_id(ib);
+            if ra == rb {
+                // Both terms lie in the same UF tree: collapse at their LCA first so cancelling
+                // terms (`net_k == 0`) never cross wide edges above the LCA.
+                let (lca, _) = uf.lca_same_tree(ia, da_depth, ib, db_depth);
+                let (sa, da) = uf.walk_to_id(ia, lca);
+                let (sb, db) = uf.walk_to_id(ib, lca);
+                add_scaled(&mut constant, ka, &da);
+                add_scaled(&mut constant, kb, &db);
+                let k_a = if sa > 0 { ka.clone() } else { -ka };
+                let net_k = if sb > 0 { &k_a + kb } else { &k_a - kb };
+                if net_k.is_zero() {
+                    return Lin {
+                        terms: BTreeMap::new(),
+                        constant,
+                    };
+                }
+                let (sl, dl) = uf.walk_to_id(lca, ra);
+                let r_atom = &uf.atoms[ra];
+                if let Some(v) = fixed.get(r_atom) {
+                    let val = if sl > 0 { v + &dl } else { &dl - v };
+                    add_scaled(&mut constant, &net_k, &val);
+                    return Lin {
+                        terms: BTreeMap::new(),
+                        constant,
+                    };
+                }
+                add_scaled(&mut constant, &net_k, &dl);
+                let k1 = if sl > 0 { net_k } else { -&net_k };
+                let mut terms = BTreeMap::new();
+                emit_root_term(r_atom, k1, rem_defs, &mut terms, &mut constant);
+                terms.retain(|_, v| !v.is_zero());
+                return Lin { terms, constant };
+            }
+        }
+    }
+    let mut terms: BTreeMap<Atom, Int> = BTreeMap::new();
+    let mut groups: HashMap<usize, Vec<(usize, usize, &Int)>> = HashMap::new();
+    for (a, k) in &lin.terms {
+        if let Some(v) = fixed.get(a) {
+            add_scaled(&mut constant, k, v);
             continue;
         }
-        constant = &constant + &(k * &d1);
-        let k1 = if s1 > 0 { k.clone() } else { -k };
-        if let Some(rem) = rem_defs.get(&r1) {
-            let factor = if rem.c_r > 0 { -&k1 } else { k1 };
-            constant = &constant + &(&factor * &rem.k);
-            let e_x = terms.entry(rem.x_root.clone()).or_insert(Int::ZERO);
-            *e_x = &*e_x + &(&factor * &rem.c_x);
-            let e_q = terms.entry(rem.q_root.clone()).or_insert(Int::ZERO);
-            *e_q = &*e_q + &(&factor * &rem.c_q);
+        if let Some(&id) = uf.ids.get(a) {
+            let (r, depth) = uf.root_and_depth_id(id);
+            groups.entry(r).or_default().push((id, depth, k));
         } else {
-            let e = terms.entry(r1).or_insert(Int::ZERO);
-            *e = &*e + &k1;
+            emit_root_term(a, k.clone(), rem_defs, &mut terms, &mut constant);
         }
+    }
+    for (r, members) in groups {
+        let (mut lca, mut lca_depth) = (members[0].0, members[0].1);
+        for &(id, depth, _) in &members[1..] {
+            (lca, lca_depth) = uf.lca_same_tree(lca, lca_depth, id, depth);
+        }
+        let mut net_k = Int::ZERO;
+        for (id, _, k) in members {
+            let (s, d) = uf.walk_to_id(id, lca);
+            add_scaled(&mut constant, k, &d);
+            net_k = if s > 0 { &net_k + k } else { &net_k - k };
+        }
+        if net_k.is_zero() {
+            continue;
+        }
+        let (sl, dl) = uf.walk_to_id(lca, r);
+        let r_atom = &uf.atoms[r];
+        if let Some(v) = fixed.get(r_atom) {
+            let val = if sl > 0 { v + &dl } else { &dl - v };
+            add_scaled(&mut constant, &net_k, &val);
+            continue;
+        }
+        add_scaled(&mut constant, &net_k, &dl);
+        let k1 = if sl > 0 { net_k } else { -&net_k };
+        emit_root_term(r_atom, k1, rem_defs, &mut terms, &mut constant);
     }
     terms.retain(|_, v| !v.is_zero());
     Lin { terms, constant }
@@ -731,37 +1025,58 @@ fn solve_modular_whole(f: &Formula, want_model: bool) -> Option<Option<Model>> {
     // one pass per atom fixed in a chain (`2 a_i == 2 a_(i+1)` written so that each pass fixes
     // one more), O(n^2) rows read (R7-CLAUDE-1, `r7_tests::bench::pncx_fixed_chain_scale`), and a pass
     // that only joined two classes stopped the loop, so a row read before the join was never
-    // read again and the result followed the order of the rows. A worklist reads each row once,
-    // and again only when its class is fixed (once per row) or joined with a smaller class
-    // whose rows it also lists (O(log n) times per row, the smaller list moving into the larger),
-    // O(n log n) row reads in all. Its result is the fixpoint of the same sound rules, the same
-    // for every order of the rows. Nothing is given up.
+    // read again and the result followed the order of the rows. A FIFO worklist reads each row
+    // O(log n) times, but if a wide unit equality `a = b + B` is processed before small unit
+    // equalities, later small unions on the same component cross the wide edge `O(n)` times,
+    // `O(n * B)` bit work. Ordering the worklist by ascending bit-width (Kruskal's minimum
+    // bit-weight spanning forest) processes every small unit equality before wider edges, so
+    // when an edge of width `B` is joined, every existing tree edge has width `<= B`, bounding
+    // total Step 1 bit work by `O(S log n)` for total input bit-length `S` regardless of row
+    // order. Its result is the fixpoint of the same sound rules, independent of row order.
+    // Nothing is given up. Tests: `pncx_wide_affine_alias_scale`, `pncx_fixed_chain_scale`.
+    let empty_rems: HashMap<Atom, FullRemDef> = HashMap::new();
     let mut class_rows: HashMap<Atom, Vec<usize>> = HashMap::new();
     for (i, c) in top_cons.iter().enumerate() {
         for a in c.lin.terms.keys() {
             class_rows.entry(a.clone()).or_default().push(i);
         }
     }
+    let con_bit_weight = |c: &Con| -> u64 {
+        let mut w = c.lin.constant.bits();
+        for k in c.lin.terms.values() {
+            w = w.max(k.bits());
+        }
+        w
+    };
+    let mut row_weight: Vec<u64> = top_cons.iter().map(|c| con_bit_weight(c)).collect();
     let mut queued = vec![true; top_cons.len()];
-    let mut queue: VecDeque<usize> = (0..top_cons.len()).collect();
-    // Puts the rows of the class of `root` back in the queue.
-    fn requeue(rows: Option<&Vec<usize>>, queued: &mut [bool], queue: &mut VecDeque<usize>) {
+    let mut queue: BinaryHeap<Reverse<(u64, usize)>> = row_weight
+        .iter()
+        .enumerate()
+        .map(|(i, &w)| Reverse((w, i)))
+        .collect();
+    // Puts the rows of a modified class back in the priority worklist with at least `trigger_w`.
+    fn requeue(
+        rows: Option<&Vec<usize>>,
+        trigger_w: u64,
+        row_weight: &mut [u64],
+        queued: &mut [bool],
+        queue: &mut BinaryHeap<Reverse<(u64, usize)>>,
+    ) {
         for &i in rows.into_iter().flatten() {
+            if trigger_w > row_weight[i] {
+                row_weight[i] = trigger_w;
+            }
             if !queued[i] {
                 queued[i] = true;
-                queue.push_back(i);
+                queue.push(Reverse((row_weight[i], i)));
             }
         }
     }
-    while let Some(i) = queue.pop_front() {
+    while let Some(Reverse((_, i))) = queue.pop() {
         queued[i] = false;
         let c = &top_cons[i];
-        // Compress the paths of this row's atoms first, so that `rewrite_lin_full`'s `get`
-        // follows one link while unions are still being made (I6.11).
-        for a in c.lin.terms.keys() {
-            uf.find(a);
-        }
-        let lin = rewrite_lin_full(&c.lin, &fixed, &uf, &HashMap::new());
+        let lin = rewrite_lin_full(&c.lin, &fixed, &uf, &empty_rems);
         if lin.terms.is_empty() {
             let bad = match c.rel {
                 Rel::Ge => lin.constant.is_negative(),
@@ -788,8 +1103,15 @@ fn solve_modular_whole(f: &Formula, want_model: bool) -> Option<Option<Model>> {
                     return Some(None);
                 }
             } else {
+                let w_val = val.bits();
                 fixed.insert(a.clone(), val);
-                requeue(class_rows.get(a), &mut queued, &mut queue);
+                requeue(
+                    class_rows.get(a),
+                    w_val,
+                    &mut row_weight,
+                    &mut queued,
+                    &mut queue,
+                );
             }
         } else if c.rel == Rel::Eq && lin.terms.len() == 2 {
             let mut it = lin.terms.iter();
@@ -805,9 +1127,10 @@ fn solve_modular_whole(f: &Formula, want_model: bool) -> Option<Option<Model>> {
                 } else {
                     lin.constant.clone()
                 };
-                // `a` and `b` are roots of two classes, neither fixed (`rewrite_lin_full`).
+                let w_d = d.bits();
+                // `a` and `b` are tree roots of two classes, neither fixed (`rewrite_lin_full`).
                 let joined = uf.union(a, b, s, &d);
-                let root = uf.find(a).0;
+                let root = uf.tree_root(a);
                 let (small, large) = {
                     let ra = class_rows.remove(a).unwrap_or_default();
                     let rb = class_rows.remove(b).unwrap_or_default();
@@ -817,7 +1140,7 @@ fn solve_modular_whole(f: &Formula, want_model: bool) -> Option<Option<Model>> {
                         (rb, ra)
                     }
                 };
-                requeue(Some(&small), &mut queued, &mut queue);
+                requeue(Some(&small), w_d, &mut row_weight, &mut queued, &mut queue);
                 let mut large = large;
                 large.extend(small);
                 match joined {
@@ -828,8 +1151,15 @@ fn solve_modular_whole(f: &Formula, want_model: bool) -> Option<Option<Model>> {
                                 return Some(None);
                             }
                         } else {
+                            let w_val = val.bits();
                             fixed.insert(fixed_root, val);
-                            requeue(Some(&large), &mut queued, &mut queue);
+                            requeue(
+                                Some(&large),
+                                w_val,
+                                &mut row_weight,
+                                &mut queued,
+                                &mut queue,
+                            );
                         }
                     }
                     Ok(None) => {}
@@ -839,11 +1169,8 @@ fn solve_modular_whole(f: &Formula, want_model: bool) -> Option<Option<Model>> {
         }
     }
 
-    uf.flatten();
-
     // Step 2: Identify 1-term bounds on root atoms to help recognize 3-term division remainders
     // (`x_root + c - m * q_root - r_root == 0` with `0 <= r <= m - 1`).
-    let empty_rems: HashMap<Atom, FullRemDef> = HashMap::new();
     let mut root_bounds: HashMap<Atom, (Option<Int>, Option<Int>)> = HashMap::new();
     for c in &top_cons {
         let lin = rewrite_lin_full(&c.lin, &fixed, &uf, &empty_rems);
@@ -1255,20 +1582,19 @@ fn solve_modular_whole(f: &Formula, want_model: bool) -> Option<Option<Model>> {
         // The coordinates for a regime with no bound (`solve_regime`, I5.3): `x = c + s * t` where
         // `t` is the alias `s * x_root + d` of least `d` among those of sign `s`, so `c = -s * d`.
         // The aliases of `x_root` are the same atoms under every name, and so are these two.
-        let mut least: [Option<Int>; 2] = [None, None];
-        for a in &all_atoms {
-            let (root, s, d) = uf.get(a);
-            let slot = &mut least[usize::from(s < 0)];
-            if root == x_root && slot.as_ref().is_none_or(|l| d < *l) {
-                *slot = Some(d);
-            }
-        }
-        let [plus, minus] = least;
-        let free: Vec<(i8, Int)> = plus
-            .map(|d| (1, -&d))
-            .into_iter()
-            .chain(minus.map(|d| (-1, d)))
-            .collect();
+        // Only needed when an unbounded span `(None, None)` exists in `regimes`, and computed by
+        // `min_offsets_of` in O(S) bit work (touching each tree edge at most twice).
+        let free: Vec<(i8, Int)> = if regimes.first().is_some_and(|(l, _)| l.is_none())
+            && regimes.last().is_some_and(|(_, h)| h.is_none())
+        {
+            let [plus, minus] = uf.min_offsets_of(&x_root);
+            plus.map(|d| (1, -&d))
+                .into_iter()
+                .chain(minus.map(|d| (-1, d)))
+                .collect()
+        } else {
+            Vec::new()
+        };
         let walked = walk_segments(&regimes, &global_bounds, &free, &unit_mods, &mixed_clauses);
         let undecided = match walked {
             RegimeOut::Found(x_val) => {
@@ -4762,7 +5088,7 @@ fn build_model(
         if model.contains_key(a) {
             continue;
         }
-        let (root, s, d) = uf.get(a);
+        let (root, s, d) = uf.tree_get(a);
         let root_val = model.get(&root).cloned().unwrap_or(Int::ZERO);
         let val = if s > 0 {
             &root_val + &d
@@ -5013,7 +5339,7 @@ impl ScalarWitness<'_> {
         {
             return self.root(a);
         }
-        let (root, s, d) = self.uf.get(a);
+        let (root, s, d) = self.uf.tree_get(a);
         let v = self.root(&root);
         if s > 0 { &v + &d } else { &d - &v }
     }
@@ -5024,10 +5350,21 @@ impl ScalarWitness<'_> {
         // remainders in a product/remainder tree, then cancel quotient terms
         // algebraically when their coefficients are multiples of the divisor.
         // The tree costs O(M(B + S) log k) bit operations for S modulus bits;
-        // unmatched constraints retain direct evaluation, with no verdict lost.
-        // Tests: pncx_pairs_scale and the enumeration suites. Negative control:
-        // evaluating every constraint directly fails the large pairs scale.
+        // unmatched constraints use LCA cancellation via `rewrite_lin_full`
+        // before evaluating root values when all special roots are UF tree roots
+        // (avoiding crossing wide UF edges on cancelling aliases), with direct
+        // evaluation as the final fallback and no verdict lost.
+        // Tests: pncx_pairs_scale, pncx_wide_affine_alias_scale, enumeration suites.
         let specs = self.quotient_specs();
+        let empty_rems: HashMap<Atom, FullRemDef> = HashMap::new();
+        let roots_clean = self.uf.tree_root(self.x_root) == *self.x_root
+            && self
+                .rem_defs
+                .keys()
+                .chain(self.global_quots.keys())
+                .chain(self.local_windows.keys())
+                .chain(self.fixed.keys())
+                .all(|a| self.uf.tree_root(a) == *a);
         f.fold(
             (),
             |_, ()| (),
@@ -5041,13 +5378,19 @@ impl ScalarWitness<'_> {
                             Rel::Ge => !v.is_negative(),
                         };
                     }
-                    let v = c
-                        .lin
-                        .terms
-                        .iter()
-                        .fold(c.lin.constant.clone(), |v, (a, k)| {
-                            &v + &(k * &self.atom(a))
-                        });
+                    let v = if roots_clean {
+                        let lin = rewrite_lin_full(&c.lin, self.fixed, self.uf, &empty_rems);
+                        lin.terms
+                            .iter()
+                            .fold(lin.constant, |v, (a, k)| &v + &(k * &self.root(a)))
+                    } else {
+                        c.lin
+                            .terms
+                            .iter()
+                            .fold(c.lin.constant.clone(), |v, (a, k)| {
+                                &v + &(k * &self.atom(a))
+                            })
+                    };
                     match c.rel {
                         Rel::Eq => v.is_zero(),
                         Rel::Ge => !v.is_negative(),
@@ -5069,7 +5412,7 @@ impl ScalarWitness<'_> {
             .chain(self.global_quots.keys())
             .chain(self.local_windows.keys())
         {
-            if self.fixed.contains_key(a) || self.uf.get(a).0 != *a {
+            if self.fixed.contains_key(a) || self.uf.tree_root(a) != *a {
                 return None;
             }
         }
