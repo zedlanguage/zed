@@ -1381,12 +1381,8 @@ impl<'a> P<'a> {
                 }
                 '\\' => {
                     let (_, e) = chars.next().ok_or("an unfinished escape")?;
+                    // The lexer's table: `\'` is no escape in either (D4 of REPORT-dryA3).
                     out.push(match e {
-                        'n' => '\n',
-                        'r' => '\r',
-                        't' => '\t',
-                        '0' => '\0',
-                        '\\' | '"' | '\'' | '$' => e,
                         'u' => {
                             let mut hex = String::new();
                             if chars.next().map(|c| c.1) != Some('{') {
@@ -1403,7 +1399,8 @@ impl<'a> P<'a> {
                                 .and_then(char::from_u32)
                                 .ok_or_else(|| format!("`\\u{{{hex}}}` is not a character"))?
                         }
-                        e => return Err(format!("`\\{e}` is not an escape")),
+                        e => zed_kernel::text::escaped(e)
+                            .ok_or_else(|| format!("`\\{e}` is not an escape"))?,
                     });
                 }
                 c => out.push(c),

@@ -105,7 +105,9 @@ fn a_one_tuple_is_written_with_a_comma() {
 
 #[test]
 fn string_escapes() {
-    // The kernel prints a printable character as itself; the reader takes Rust's escapes too.
+    // The kernel prints a printable character as itself; the reader takes the escapes of a Zed
+    // string literal, the lexer's table (`zed_kernel::text::escaped`), and no other: `\'` is no
+    // escape in Zed, and a `'` is written as itself.
     assert_eq!(
         parse_value("\"\\u{1f600}\\n\\0\""),
         Ok(Value::str("😀\n\0"))
@@ -114,6 +116,12 @@ fn string_escapes() {
         parse_value("\"a\\qb\""),
         Err("column 2: `\\q` is not an escape".into())
     );
+    assert_eq!(
+        parse_value("\"a\\'b\""),
+        Err("column 2: `\\'` is not an escape".into())
+    );
+    let quote = Value::str("it's \"$\\\"");
+    assert_eq!(parse_value(&quote.to_string()), Ok(quote));
 }
 
 #[test]

@@ -224,7 +224,7 @@ impl Reading {
 fn escape(text: &str, i: usize) -> Result<usize, Error> {
     let rest = &text[i + 1..];
     match rest.chars().next() {
-        Some('n' | 't' | 'r' | '0' | '\\' | '"' | '$') => Ok(i + 2),
+        Some(c) if zed_kernel::text::escaped(c).is_some() => Ok(i + 2),
         Some('u') => {
             let digits = rest[1..]
                 .strip_prefix('{')
@@ -518,15 +518,11 @@ fn decode(text: &str, start: usize, end: usize, cuts: &[(usize, usize)]) -> Stri
             continue;
         }
         out.push(match chars.next().expect("an escape was checked") {
-            'n' => '\n',
-            't' => '\t',
-            'r' => '\r',
-            '0' => '\0',
             'u' => {
                 let hex: String = chars.by_ref().skip(1).take_while(|&c| c != '}').collect();
                 char::from_u32(u32::from_str_radix(&hex, 16).expect("checked")).expect("checked")
             }
-            other => other,
+            c => zed_kernel::text::escaped(c).expect("an escape was checked"),
         });
     }
     out

@@ -998,6 +998,23 @@ impl fmt::Display for Literal<'_> {
         f.write_char('"')
     }
 }
+
+/// The character the one-character escape `\c` of a string literal stands for (DESIGN.md
+/// sec:lexical, the string row): `\n`, `\t`, `\r`, `\0`, `\\`, `\"` and `\$`; none for any
+/// other `c`, such as `'`, which needs no escape. `\u{X}` is read apart, by its digits. The
+/// one table for every reader of a literal, the lexer's and ZIR text's, and the escapes
+/// [`Literal`] writes.
+pub fn escaped(c: char) -> Option<char> {
+    match c {
+        'n' => Some('\n'),
+        't' => Some('\t'),
+        'r' => Some('\r'),
+        '0' => Some('\0'),
+        '\\' | '"' | '$' => Some(c),
+        _ => None,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

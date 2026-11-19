@@ -252,8 +252,8 @@ const VALUES: &[(&str, &str, &str)] = &[
         "error: column 2: `\\u{zz}` is not a character",
     ),
     (
-        "each one-letter escape",
-        "\"\\n\\r\\t\\0\\\\\\\"\\'\\$\"",
+        "each one-letter escape, and `'` as itself, since `\\'` is no escape",
+        "\"\\n\\r\\t\\0\\\\\\\"'\\$\"",
         "\"\\n\\r\\t\\0\\\\\\\"'$\"",
     ),
     (
