@@ -3821,11 +3821,31 @@ fn fork_by_two_shows_no_value_in_the_oracle() {
 // The tests of the cross-review XR-group-order-5 (GROUP-order-cpoly-merge): the red tests of
 // GROUP-order-verdicts-5, and the tests of its rounds 1 to 3.
 
+/// Cells 1140, 1558, 1696 and 1908 gave other verdicts with the parts of each tuple reversed
+/// (GROUP-order-verdicts part 5; cells1140 had R0 and R2 Refused(Fork) as written and every
+/// member Inhabited reversed). Since GROUP-order-cpoly-merge they agree exactly. Checked on
+/// 7e9326d16 over seeds 0 to 1999 of the meets, layer, cells, mixed and X14 (`claude_of(g, 4)`)
+/// families, four orders each with the tuples reversed in two: none of the 10,000 differs.
+/// The negative control shows the test is not vacuous: reversing changes each system, and the
+/// exact class separates Inhabited, Empty and Refused.
 #[test]
 fn cells_whose_tuple_parts_differ_in_order_agree_across_orders() {
     for seed in [1140, 1558, 1696, 1908] {
+        let sys = gen_cells(&mut Rng::new(seed));
+        let rev: Vec<E> = sys.iter().map(reversed).collect();
+        assert_ne!(
+            sys, rev,
+            "cells{seed}: reversing its tuples changes nothing"
+        );
         verdicts_agree_across_orders("cells", gen_cells, &[seed], (false, true));
     }
+    let classes = [
+        Some(Verdict::Inhabited),
+        Some(Verdict::Empty),
+        Some(Verdict::Refused(Refusal::Fork)),
+    ]
+    .map(|v| verdict_class(v, true));
+    assert!(classes[0] != classes[1] && classes[1] != classes[2] && classes[0] != classes[2]);
 }
 
 fn xr_atom_a() -> E {
