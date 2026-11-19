@@ -13066,11 +13066,22 @@ impl Ty {
     /// Whether it holds a variable at any depth, inside functions and payloads too: at the cost
     /// of its outer level, since each row, payload shape and function keeps whether it holds
     /// one.
+    //
+    // Complexity tradeoff (FAIL-l0126-chain-of-calls-quadratic): naive version, as before,
+    // `!s.bits().is_empty()` for each function, which the first time a signature is asked
+    // hashes every variable of its facts, those of every level below: O(n) for each of the
+    // n results of a chain of n curried calls, O(n^2) in all (23.0 times the work at 8n in
+    // `a_chain_of_calls_on_one_value_checks_in_linear_time`, once the checker's `close` asked
+    // this of each call's type). Used: `Sig::holds_no_var`, the emptiness of the two sets the
+    // facts keep, O(1) once the facts are made. The same answer: `VarBits::of_facts` sets one
+    // bit of `classes` or `names` for each variable of those two sets, and
+    // `VarBits::is_empty` reads only those two words, so the bits are empty exactly where both
+    // sets are.
     pub fn holds_vars(&self) -> bool {
         !self.vars.is_empty()
             || self.tuples.iter().any(Row::holds_vars)
             || self.payload_shapes().any(Shape::holds_vars)
-            || self.fns.iter().any(|s| !s.bits().is_empty())
+            || self.fns.iter().any(|s| !s.holds_no_var())
     }
 
     /// Every variable in it, in order of first appearance.

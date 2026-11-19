@@ -363,6 +363,76 @@ fn a_bounded_variable_beside_a_free_one_takes_only_what_its_bound_holds() {
     }
 }
 
+/// The two types `bounded_or_free(n, "(int,)")` reads to, built from their parts with no text:
+/// the benchmark `a_signature_of_many_bounded_variables_beside_a_free_one_fits_in_time_near_its_size`
+/// builds its inputs so (FAIL-bench-bounded-beside-free-near-limit). Reading the two texts at
+/// n and 8n took about a third of that benchmark's time (72,000 parameters read by the parser
+/// and the reader before timing, at about 170,000 instructions each), which pushed it past its
+/// time limit under load; built from parts, each parameter costs a few small allocations.
+/// `building_bounded_or_free_gives_what_reading_its_text_gives` holds the two to the read
+/// types, field by field.
+pub(super) fn bounded_or_free_built(n: usize) -> (zedc::check::ty::Ty, zedc::check::ty::Ty) {
+    use std::sync::Arc;
+    use zedc::check::ty::{Carrier, SParam, Sig, Ty};
+    let var = |v: String| Ty::var(Arc::from(v));
+    let one = |t: Ty| Ty::tuple(vec![t]);
+    let params = || -> Vec<SParam> {
+        (0..n)
+            .map(|i| SParam {
+                name: Arc::from(format!("x{i}")),
+                positional: false,
+                default: None,
+                range: None,
+            })
+            .collect()
+    };
+    let free = one(var("T".to_string()));
+    let tys = (0..n)
+        .map(|i| one(var(format!("B{i}"))).union(&free))
+        .collect();
+    let mut s = Sig::one(params(), tys, one(var(format!("B{}", n - 1))));
+    let mask = Carrier::Int.bit() | Carrier::F64.bit();
+    s.bounds = (0..n).map(|i| (Arc::from(format!("B{i}")), mask)).collect();
+    s.own = s.bounds.keys().cloned().collect();
+    s.own.insert(Arc::from("T"));
+    s.note_held();
+    let int = one(Ty::carrier(Carrier::Int));
+    let given = int.union(&one(Ty::carrier(Carrier::Str)));
+    let q = Sig::one(params(), vec![given; n], int);
+    (Ty::func(Arc::new(s)), Ty::func(Arc::new(q)))
+}
+
+/// `bounded_or_free_built` gives the types `bounded_or_free` reads to: equal as types, printed
+/// alike by `Debug`, which writes each part, and equal in each field of the signatures that
+/// equality of types does not compare (the own and held variables, the bounds, the names).
+/// The builder makes each parameter the same way whatever `n` is, so sizes 2 to 40 stand for
+/// the benchmark's 8000 and 64000.
+#[test]
+fn building_bounded_or_free_gives_what_reading_its_text_gives() {
+    for n in 2..=40 {
+        let (s, q) = bounded_or_free(n, "(int,)");
+        let read = [s, q].map(|t| parse_type(&t).unwrap_or_else(|e| panic!("{e}")));
+        let (bs, bq) = bounded_or_free_built(n);
+        for (r, b) in read.iter().zip([&bs, &bq]) {
+            assert_eq!(r, b, "n = {n}");
+            assert_eq!(format!("{r:?}"), format!("{b:?}"), "n = {n}");
+            assert_eq!(r.fns.len(), 1);
+            let (r, b) = (&r.fns[0], &b.fns[0]);
+            assert_eq!(r.params, b.params, "n = {n}");
+            assert_eq!(r.bounds, b.bounds, "n = {n}");
+            assert_eq!(r.own, b.own, "n = {n}");
+            assert_eq!(r.held, b.held, "n = {n}");
+            assert_eq!(r.named, b.named, "n = {n}");
+            assert_eq!(r.needs.len(), b.needs.len(), "n = {n}");
+            assert_eq!(r.word, b.word, "n = {n}");
+            assert_eq!(r.hull, b.hull, "n = {n}");
+            assert_eq!(r.keys, b.keys, "n = {n}");
+            assert_eq!(r.dense, b.dense, "n = {n}");
+            assert_eq!(r.data, b.data, "n = {n}");
+        }
+    }
+}
+
 /// A signature of `n` parameters, parameter `i` taking `(Ti,) | ({other},)` with `Ti` free,
 /// returning `(T0, ..., T(n-1))`; and the same under the names `Ui`, with `{given}` for
 /// `{other}`. The result puts a ceiling on each `Ti`, `Ui`, so `(Ui,)` binds `Ti` and

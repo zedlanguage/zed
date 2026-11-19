@@ -6,7 +6,7 @@ use zedc::parse::{TOP, parse};
 use zedc::resolve::resolve;
 
 use super::super::bounds::{
-    bounded_chain, bounded_in_a_payload, bounded_or_free, distinct_bounds_chain,
+    bounded_chain, bounded_in_a_payload, bounded_or_free_built, distinct_bounds_chain,
     free_beside_a_carrier, free_in_one_tuple, many_bounds, nested, nested_lambdas, passed,
     passed_deep, passed_through_fns, passed_through_fns_in_tuples, shared_bounded_chain, wide,
     wide_lambda,
@@ -108,6 +108,17 @@ fn passing_functions_in_tuples_scales() {
     // read through `Cx::through_fn` as above: linear in n for one tuple of n functions and for
     // n tuples of one. Small instances:
     // `bounds::functions_in_tuples_whose_bounded_variables_only_they_hold_fit_under_other_names`.
+    //
+    // Cost per function (FAIL-bench-tuples-near-limit, perf with DWARF call chains on the
+    // profiling build, 2026-11-19): about 640K instructions per function for one tuple
+    // (2.04G at n = 3200) and 925K for n tuples (2.96G); lexing, parsing and resolving the
+    // inputs, before timing, is 14% and 17% of the piece. No one function of the checker
+    // takes more than 7% of the samples by its own code (`Comparing::fits_read` 6.8%,
+    // `Denote::ty` 3.9%, `Cx::read` 3.4%, `merge` 2.9%, `var_mask` 2.6%, `Forms::fns` 2.5%,
+    // `Sig::digest` with its `OnceLock` 2.8%, the rest under 2.4% each), so there is no single
+    // site whose cut would take the piece far from its limit; the time is the checker's
+    // constant for each function read at a binding (`Cx::through_fn`, `Cx::bound_name`). At
+    // load 24 the piece takes 11.6 s of its 20 s limit; at load 52, 25.1 s of 33 s.
     check_scales(
         "one tuple of n functions, each with its own bounded variable, passed under other \
          names",
@@ -254,16 +265,16 @@ fn a_signature_of_many_bounded_variables_beside_a_free_one_fits_in_time_near_its
     // and taken by `(T,)` (FAIL-types-overload-bounded-tuple). The refusal looks the bound up
     // in the signature's sorted bounds (`Binds::bound`, O(log n)) and checks the piece alone,
     // so the comparison is O(n log n); a linear scan of the bounds per piece would be O(n^2).
-    // The signatures are read before timing. n was 9600: the permission of each arrow's
+    // The signatures are built before timing. n was 9600: the permission of each arrow's
     // instance (`instance_within`, FAIL-types-fn-param-exact-domain) added about 8% of the
     // instructions at an unchanged ratio, and at a load average of 37 the whole run took
     // 21.5 s before that change, past the 20 s limit, so n is 8000 (18.4 s at that load).
+    // They are built from their parts (`bounded_or_free_built`, equal to the read types by
+    // `building_bounded_or_free_gives_what_reading_its_text_gives`), not read from the texts
+    // of `bounded_or_free`: reading 72,000 parameters took about a third of the piece's time
+    // and put it past its limit at load 48 (FAIL-bench-bounded-beside-free-near-limit).
     let n = 8000;
-    let inputs = zed_tests::scaling::inputs(n, |m| {
-        let (s, q) = bounded_or_free(m, "(int,)");
-        let read = |t: &str| parse_type(t).unwrap_or_else(|e| panic!("{e}"));
-        (read(&s), read(&q))
-    });
+    let inputs = zed_tests::scaling::inputs(n, bounded_or_free_built);
     zed_tests::scaling::check_order(
         "a signature of n bounded variables beside a free one, given n tuples",
         n,
