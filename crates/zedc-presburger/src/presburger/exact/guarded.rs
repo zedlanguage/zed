@@ -128,6 +128,81 @@ pub(super) struct Prep<'a> {
     guarded: Vec<bool>,
     by_atom: Vec<Vec<usize>>,
     reads: Vec<Vec<usize>>,
+    /// Each atom `x` as `sign * r + shift` for the atom `r` (by number) of its class: the atoms
+    /// tied through equations of two atoms with coefficients 1 or -1 ([`Prep::class`]).
+    tie: Vec<(usize, Int, Int)>,
+}
+
+/// The classes of the atoms `atoms` tied through the equations among `defs` of exactly two
+/// atoms, each with coefficient 1 or -1: `a * y + b * x + c == 0` is `y = -a·b * x - a·c`, a
+/// bijection between the values of `y` and of `x` at the points of `f`, so the projection of
+/// `y` is that of `x` moved by it ([`Prep::carried`]). Each atom as `sign * r + shift` for its
+/// class's atom `r`. An equation that closes a cycle adds nothing to the classes; it is a
+/// conjunct of `f` like any other, and the ties used are all equations of `f`.
+// Complexity tradeoff: union by size with path compression (Tarjan, "Efficiency of a good but
+// not linear set union algorithm", JACM 22(2), 1975), each node holding its relation to its
+// parent (the weighted union-find of the relation `x = ±y + c`), O(r·α(a)) for r equations
+// over a atoms; the naive search of each pair of atoms for a path of equations is O(a·r).
+fn ties(defs: &[Option<Def>], index: &HashMap<&Atom, usize>) -> Vec<(usize, Int, Int)> {
+    let n = index.len();
+    let mut up: Vec<(usize, Int, Int)> = (0..n).map(|j| (j, Int::ONE, Int::ZERO)).collect();
+    let mut size = vec![1usize; n];
+    // `j` as `sign * root + shift`, every node on its path pointed at the root.
+    fn find(up: &mut [(usize, Int, Int)], j: usize) -> (usize, Int, Int) {
+        let mut path = Vec::new();
+        let mut r = j;
+        while up[r].0 != r {
+            path.push(r);
+            r = up[r].0;
+        }
+        // Nearest the root first: each node's parent already points at the root, so
+        // `x = s * p + c` and `p = ps * root + pc` give `x = s·ps * root + s·pc + c`.
+        for &x in path.iter().rev() {
+            let (p, s, c) = up[x].clone();
+            if p != r {
+                let (_, ps, pc) = up[p].clone();
+                up[x] = (r, &s * &ps, &(&s * &pc) + &c);
+            }
+        }
+        if j == r {
+            (r, Int::ONE, Int::ZERO)
+        } else {
+            up[j].clone()
+        }
+    }
+    for d in defs.iter().flatten() {
+        let Def::Eq(e) = d else { continue };
+        let mut terms = e.terms.iter();
+        let (Some((y, a)), Some((x, b)), None) = (terms.next(), terms.next(), terms.next()) else {
+            continue;
+        };
+        if a.abs() != Int::ONE || b.abs() != Int::ONE {
+            continue;
+        }
+        // `y = sigma * x + delta`, with `a` its own inverse.
+        let sigma = -&(a * b);
+        let mut delta = -&(a * &e.constant);
+        let (ry, sy, cy) = find(&mut up, index[y]);
+        let (rx, sx, cx) = find(&mut up, index[x]);
+        if ry == rx {
+            continue;
+        }
+        // The smaller class goes under the larger: `x = sigma * y - sigma * delta` as well.
+        let ((ry, sy, cy), (rx, sx, cx)) = if size[ry] > size[rx] {
+            delta = -&(&sigma * &delta);
+            ((rx, sx, cx), (ry, sy, cy))
+        } else {
+            ((ry, sy, cy), (rx, sx, cx))
+        };
+        // `sy * ry + cy = sigma * (sx * rx + cx) + delta`, `sy` its own inverse.
+        up[ry] = (
+            rx,
+            &sy * &(&sigma * &sx),
+            &sy * &(&(&(&sigma * &cx) + &delta) - &cy),
+        );
+        size[rx] += size[ry];
+    }
+    (0..n).map(|j| find(&mut up, j)).collect()
 }
 
 /// `lin` divided by the gcd of its coefficients, the constant rounded down: the same integer
@@ -246,6 +321,7 @@ pub(super) fn prepare<'a>(f: &'a Formula, work: &mut Work) -> Result<Option<Prep
             }
         }
     }
+    let tie = ties(&defs, &index);
     Ok(Some(Prep {
         parts,
         defs,
@@ -254,10 +330,43 @@ pub(super) fn prepare<'a>(f: &'a Formula, work: &mut Work) -> Result<Option<Prep
         guarded,
         by_atom,
         reads,
+        tie,
     }))
 }
 
 impl<'a> Prep<'a> {
+    /// The class of `s` among the atoms tied through equations of two atoms ([`ties`]).
+    pub(super) fn class(&self, s: &Atom) -> Option<usize> {
+        self.index.get(s).map(|&j| self.tie[j].0)
+    }
+
+    /// The projection of `s` from `set`, that of `from`, an atom of the same class: `s` is
+    /// `sign * from + shift` at every point of the part, a bijection, so its projection is
+    /// `set` moved by it. `None` where the two are not of one class.
+    pub(super) fn carried(&self, s: &Atom, from: &Atom, set: &IntervalSet) -> Option<IntervalSet> {
+        let (r, ss, cs) = &self.tie[*self.index.get(s)?];
+        let (q, sf, cf) = &self.tie[*self.index.get(from)?];
+        if r != q {
+            return None;
+        }
+        // `from = sf * r + cf`, so `r = sf * (from - cf)` and `s = ss·sf * from + cs - ss·sf·cf`.
+        let sign = ss * sf;
+        let shift = cs - &(&sign * cf);
+        let moved = |e: &End| match e {
+            End::Fin(n) => fin(&(&(&sign * &Int::from(n)) + &shift)),
+            End::NegInf | End::PosInf if sign.is_negative() => -e,
+            e => e.clone(),
+        };
+        let mut pieces: Vec<(End, End)> = set
+            .pieces()
+            .map(|(lo, hi)| (moved(lo), moved(hi)))
+            .collect();
+        if sign.is_negative() {
+            pieces = pieces.into_iter().rev().map(|(lo, hi)| (hi, lo)).collect();
+        }
+        Some(IntervalSet::from_pieces(pieces))
+    }
+
     /// The definitions and residuals from `s` ([module note](self)); `None` where a second
     /// atom must be left free.
     // Complexity tradeoff: Kahn's order over the atom incidence of the definitions, O(r·t) for
@@ -273,6 +382,7 @@ impl<'a> Prep<'a> {
             guarded,
             by_atom,
             reads,
+            tie: _,
         } = self;
         let mut known = vec![false; atoms.len()];
         let mut unknown: Vec<usize> = reads.iter().map(Vec::len).collect();

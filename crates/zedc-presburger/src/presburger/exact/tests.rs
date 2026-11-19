@@ -3563,3 +3563,92 @@ fn a_definition_that_reaches_two_new_atoms_declines_unless_another_supplies_one(
     assert_eq!(certify(&supplied, "s", &h), Some(h.clone()));
     on_off(&supplied, &h);
 }
+
+/// Names tied with both signs and nonzero shifts (`b = 5 - a`, `c = a - 3`, `d = -c - 2`,
+/// with `e` in a second class over `e + f - s == 0`): each set moved from the first name of
+/// its class certified agrees with the cover alone, name by name, with every name asked.
+#[test]
+fn names_tied_with_both_signs_are_moved_exactly() {
+    let f = Formula::And(Shared::new(vec![
+        eq(&[("b", 1), ("a", 1)], -5),
+        eq(&[("c", 1), ("a", -1)], 3),
+        eq(&[("d", 1), ("c", 1)], 2),
+        eq(&[("e", 1), ("f", -1)], 0),
+        ge(&[("a", 1)], 0),
+        ge(&[("a", -1)], 9),
+        ge(&[("f", 1)], 2),
+        ge(&[("f", -1)], 4),
+    ]));
+    let names = ["a", "b", "c", "d", "e", "f"];
+    let want = [(0, 9), (-4, 5), (-3, 6), (-8, 1), (-2, 4), (-2, 4)];
+    let syms: Vec<Atom> = names.iter().map(|s| a(s)).collect();
+    let run = |off: bool| {
+        GUARDED_OFF.set(off);
+        let each = want
+            .iter()
+            .map(|&(l, h)| Ok(IntervalSet::of(l, h)))
+            .collect();
+        let got = exact_each(&f, &syms, (each, vec![]), SOLVER);
+        GUARDED_OFF.set(false);
+        EXACT_WORK.set(0);
+        FAST_WORK.set(0);
+        got.sets
+            .into_iter()
+            .map(|g| g.unwrap().ranges)
+            .collect::<Vec<_>>()
+    };
+    let on = run(false);
+    assert_eq!(on, run(true));
+    for ((s, got), &(l, h)) in names.iter().zip(&on).zip(&want) {
+        assert_eq!(got, &IntervalSet::of(l, h), "{s}");
+    }
+    // Two pieces, one without end: `b = 5 - a` reverses them and moves each end.
+    let mut work = Work {
+        used: 0,
+        limit: u64::MAX,
+        solver: SOLVER,
+    };
+    let prep = guarded::prepare(&f, &mut work).unwrap().unwrap();
+    let set = IntervalSet::from_pieces(vec![(End::NegInf, End::of(0)), (End::of(3), End::of(4))]);
+    let moved = IntervalSet::from_pieces(vec![(End::of(1), End::of(2)), (End::of(5), End::PosInf)]);
+    assert_eq!(prep.carried(&a("b"), &a("a"), &set), Some(moved));
+    assert_eq!(prep.carried(&a("e"), &a("a"), &set), None);
+}
+
+/// The chain `c(j+1) == c(j) + 1` for `j < k`, with `0 <= c0 <= 9`, every name asked with its
+/// exact set `j..=j+9`: each answered by the certificate, the part read for the names together,
+/// not once a name, O(k) in all and not O(k²) (PRES-groupA-forward-per-name-order).
+#[test]
+fn the_names_of_a_chain_of_unit_equations_are_certified_together() {
+    let mut used = Vec::new();
+    for k in [64, 512] {
+        let c = |j: usize| format!("c{j}");
+        let mut rows: Vec<Formula> = (0..k)
+            .map(|j| eq(&[(&c(j + 1), 1), (&c(j), -1)], -1))
+            .collect();
+        rows.push(ge(&[("c0", 1)], 0));
+        rows.push(ge(&[("c0", -1)], 9));
+        let f = Formula::And(Shared::new(rows));
+        let syms: Vec<Atom> = (0..=k).map(|j| a(&c(j))).collect();
+        let want: Vec<IntervalSet> = (0..=k)
+            .map(|j| IntervalSet::of(j as i64, j as i64 + 9))
+            .collect();
+        let each = want.iter().cloned().map(Ok).collect();
+        EXACT_WORK.set(0);
+        FAST_WORK.set(0);
+        let got = exact_each(&f, &syms, (each, vec![]), SOLVER);
+        let fast = FAST_WORK.replace(0);
+        used.push(fast);
+        assert_eq!(
+            EXACT_WORK.replace(0) - fast,
+            0,
+            "a name was covered at k = {k}"
+        );
+        assert_eq!(got.sets.len(), want.len());
+        for (g, w) in got.sets.iter().zip(&want) {
+            assert_eq!(&g.as_ref().unwrap().ranges, w, "at k = {k}");
+        }
+    }
+    let ratio = used[1] as f64 / used[0].max(1) as f64;
+    assert!(ratio < 10.5, "work {used:?}, {ratio:.2} times at 8 times k");
+}

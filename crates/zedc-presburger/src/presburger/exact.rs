@@ -245,9 +245,33 @@ pub(super) fn exact_each(f: &Formula, syms: &[Atom], found: Each, solver: Solver
         if !GUARDED_OFF.get()
             && let Some(prep) = tried(&mut left, solver, |w| guarded::prepare(&p.f, w))
         {
+            // The first name of each class certified, by which the others of its class are
+            // answered with no reading of their own (`Prep::carried`).
+            // Complexity tradeoff: naive version, each name's certificate its own, O(r·t) for
+            // its reading and again for each piece of `h`, so O(k·r·t) for the k names of a
+            // part: on a chain of unit equations, k = r, 61 times the work at 8 times k
+            // (`tests::the_names_of_a_chain_of_unit_equations_are_certified_together`). Used:
+            // the classes of names tied by equations of two atoms with coefficients 1 or -1,
+            // built once a part in O(r·α(a)) (`guarded::ties`), one certificate for each class
+            // and O(P) to move its set to each other name, P pieces. A class whose certificates
+            // decline still tries each of its names, O(r·t) a name as before; so do names tied
+            // only through equations of three or more atoms, or through choices
+            // (PRES-groupA-forward-per-name-order, open).
+            let mut first: HashMap<usize, (&Atom, IntervalSet)> = HashMap::new();
             for &(s, h) in mine {
+                let class = prep.class(s);
+                if let Some((from, set)) = class.and_then(|c| first.get(&c))
+                    && let Some(set) = prep.carried(s, from, set)
+                {
+                    certified.insert(s, set);
+                    open -= 1;
+                    continue;
+                }
                 if let Some(set) = tried(&mut left, solver, |w| guarded::forward_in(&prep, s, h, w))
                 {
+                    if let Some(c) = class {
+                        first.insert(c, (s, set.clone()));
+                    }
                     certified.insert(s, set);
                     open -= 1;
                 }
