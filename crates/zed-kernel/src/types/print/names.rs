@@ -522,19 +522,34 @@ pub enum NameItem {
 // `finished_with` before, gives one name at a time, so a block of L internal variables kept as
 // a few runs is written out in full, O(L) for each signature that holds it, and O(n·L) for n
 // functions that each hold the one before. Used: the places items hold and the places given so
-// far are each kept as sorted intervals (`BTreeMap`, start to end), and a run is cut only where
-// it meets an interval of places given before: O((1 + h + s) log k) for a run that meets h such
-// intervals and keeps a stretch across s of its own skipped places, with k intervals in all,
-// and its result is at most 2h + 1 runs plus the s cuts. Given up: a run that meets many names
-// given one at a time is cut at each, as the naive version is; nothing is gained there.
+// far are each kept as sorted intervals (`BTreeMap`, start to end), merged where they overlap
+// or touch, and a run is cut only where it meets an interval of places given before.
+//
+// Cost of one run, with k intervals in all. Each pass of the loop in `Renamer::run` gives at
+// least one run: the place q a pass starts at is a name of the run (`first_at`), so a pass at
+// an interval of `given` gives c >= 1 fresh names, and a pass elsewhere gives the kept stretch.
+// Since `given` is merged where intervals touch, two passes in a row at intervals of `given`
+// have between them only places the run skips or the program binds. So a run with t kept
+// stretches and s skipped or bound places in its range makes at most 2t + 1 + s passes, each
+// O(log k), and the fresh loop's jumps over intervals of `used` cost O(log k) each, at most
+// one per interval of `used` in all, since `n` only grows. The work is then O(log k) times
+// the input (V names, and 1 + s per run) plus the runs given. Before `given` was merged, a run
+// over names given one at a time met each of them: v names under m such runs gave m·2v runs
+// (test `many_runs_over_names_given_one_at_a_time_give_few_runs`). The number of passes h is
+// not bounded by the skip sets alone: a run whose range a sibling run took before it meets one
+// interval with an empty skip set (test `a_run_is_cut_only_where_it_meets_a_name_given`).
+// Conjectured, not proved: the sum of t over all runs is at most V + the sum of (1 + s), as
+// every hole of `given` inside a run's range is made by a name or a skipped place, and each
+// kept stretch fills the hole it starts at. Given up: a run with many kept stretches costs
+// O(log k) for each, against O(1) for each name in the naive version.
 //
 // Proof that it gives the names the naive version gives:
-// (1) Every interval of `given` is either within an interval of `used` or holds no place of
-//     `used`, and no two intervals of `given` overlap. A kept stretch runs from a name not
-//     given to before the next interval of `given`, and is cut at its run's skipped places, so
-//     each piece lies within one interval `used` was built with for that run (cut the same
-//     way); a fresh stretch runs from `n`, outside `used`, to before the next interval of
-//     `used`, and `n` only grows, so fresh stretches lie above every earlier one.
+// (1) No two intervals of `given` overlap, since each insert merges with every interval it
+//     overlaps or touches; merging touching intervals adds no place to their union. A kept
+//     stretch runs from a name not given to before the next interval of `given` and is cut at
+//     its run's skipped places; a fresh stretch runs from `n`, outside `used`, to before the
+//     next interval of `used`, and `n` only grows, so fresh stretches lie above every earlier
+//     one.
 // (2) Every place in an interval of `given` that the program does not bind is a name given:
 //     a kept piece holds only its run's names between its cuts, and a fresh stretch holds every
 //     name it may take between its ends. So a name is given before exactly when its place lies
@@ -625,16 +640,22 @@ struct Renamer {
 
 impl Renamer {
     fn use_range(&mut self, a: usize, b: usize) {
+        Self::add_range(&mut self.used, a, b);
+    }
+
+    /// Adds `a..b` to `map`, merged with every interval it overlaps or touches: O((1 + j) log k)
+    /// for the j intervals merged, each of which it removes, so O(log k) amortized per call.
+    fn add_range(map: &mut std::collections::BTreeMap<usize, usize>, a: usize, b: usize) {
         let (mut lo, mut hi) = (a, b);
-        while let Some((&s, &e)) = self.used.range(..=hi).next_back() {
+        while let Some((&s, &e)) = map.range(..=hi).next_back() {
             if e < lo {
                 break;
             }
             lo = lo.min(s);
             hi = hi.max(e);
-            self.used.remove(&s);
+            map.remove(&s);
         }
-        self.used.insert(lo, hi);
+        map.insert(lo, hi);
     }
 
     /// The end of the interval of `map` that holds place `p`, if one does.
@@ -669,7 +690,7 @@ impl Renamer {
                 held: self.held.clone(),
             };
             let end = run.end_n();
-            self.given.insert(run.first_at(self.n), end);
+            Self::add_range(&mut self.given, run.first_at(self.n), end);
             out.push(run);
             self.n = end;
             c -= m;
@@ -679,7 +700,7 @@ impl Renamer {
     fn name(&mut self, s: &Arc<str>) -> Arc<str> {
         let free = match var_place(s).filter(|&p| !held_at(&self.held.0, p)) {
             Some(p) if Self::end_at(&self.given, p).is_none() => {
-                self.given.insert(p, p + 1);
+                Self::add_range(&mut self.given, p, p + 1);
                 true
             }
             Some(_) => false,
@@ -719,7 +740,7 @@ impl Renamer {
                     let end = kept.end_n();
                     let given = &mut self.given;
                     cut_at_skips(q, end, &run.skip, |a, b| {
-                        given.insert(a, b);
+                        Self::add_range(given, a, b);
                     });
                     out.push(kept);
                     q = end;
@@ -907,6 +928,38 @@ mod tests {
             "{:?}",
             out[2]
         );
+        assert_eq!(written_out(&out), one_at_a_time(&items));
+    }
+
+    /// `v` names given one at a time at every other place of `0..2v`, then `m` runs over all of
+    /// `0..2v`. The first run is kept between the names; every later run meets names given
+    /// before across its whole range and is given one fresh run. Each step of a run gives at
+    /// least one run, so the runs given bound the work: with the places given kept as touching
+    /// intervals, unmerged, each later run met 2v of them, m·2v runs in all.
+    #[test]
+    fn many_runs_over_names_given_one_at_a_time_give_few_runs() {
+        let snap = current_held_var_snapshot();
+        let skip = Arc::new(SkipIndex::default());
+        let (v, m) = (200, 200);
+        let mut items: Vec<NameItem> = (0..v)
+            .map(|i| NameItem::Name(Names::Variables.nth::<String>(2 * i).into()))
+            .collect();
+        items.extend((0..m).map(|_| {
+            NameItem::Runs(vec![NameRun {
+                start_n: 0,
+                count: 2 * v,
+                skip: skip.clone(),
+                held: snap.clone(),
+            }])
+        }));
+        let out = rename_apart(&items);
+        let runs: usize = (out.iter())
+            .map(|item| match item {
+                NameItem::Name(_) => 0,
+                NameItem::Runs(runs) => runs.len(),
+            })
+            .sum();
+        assert!(runs <= 2 * v + 2 * m, "{runs} runs for v = {v}, m = {m}");
         assert_eq!(written_out(&out), one_at_a_time(&items));
     }
 }

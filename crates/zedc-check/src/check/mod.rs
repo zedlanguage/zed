@@ -5768,11 +5768,11 @@ impl<'t, 'a> Ck<'t, 'a> {
         // run out and names it one name at a time against a set `used` of every name an item
         // holds and a set `taken` of the names given: O(V + L) for V variables and L internal
         // names, and O(n·L) over n functions that each hold the one before. Used:
-        // [`rename_apart`], which keeps `used` and the names given as sorted intervals and cuts
-        // a run only where it meets an interval given before, O((1 + h) log k) for a run that
-        // meets h of them, with k intervals in all, so O(V log k + Σ (1 + h_r) log k) here,
-        // and a run that meets nothing stays one run. Given up: a run whose names were given
-        // to many variables one at a time is cut at each, which costs as the naive version.
+        // [`rename_apart`], which keeps `used` and the names given as sorted intervals, merged
+        // where they touch, and cuts a run only where it meets an interval given before: each
+        // step of a run gives at least one run, so a run costs O(log k) for each run it gives,
+        // with k intervals in all, and a run that meets nothing stays one run. The bound on
+        // the runs given, and what is given up, are at [`rename_apart`].
         // Proof that the names are those of the naive version: `used` is built once from
         // every item and only the names given are written after; above the fresh counter n,
         // every name given was kept and so lies in `used`, so `used ∪ taken = used` there and
