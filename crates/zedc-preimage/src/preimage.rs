@@ -15199,10 +15199,10 @@ mod tests {
     /// decides it depend on its shape ([`presburger::decide`] does not undo the choice of a
     /// disjunct): gives whether the formulas differ as built, whether the solver decided the
     /// points of each pair compared, and how the preimages differ. A preimage exact as an `if`
-    /// stays exact as `||` (FAIL-or-ifs-no-longer-exact-seed) except where the `||` box is wider, a
-    /// projection that is not the exact set (FAIL-or-if-projection-not-exact, a wrong answer
-    /// fixed by PRES-switchover-not-race), or where the solver refuses the `||` shape's question
-    /// (FAIL-or-if-tie-refusal); each is named apart from "no longer exact".
+    /// stays exact as `||` (FAIL-or-ifs-no-longer-exact-seed), a wider `||` box included
+    /// (FAIL-or-if-projection-not-exact, fixed by the exact projection of
+    /// PRES-project-exact-solver), except where the solver refuses the `||` shape's question
+    /// (FAIL-or-if-tie-refusal), which is named apart from "no longer exact".
     fn holds_where_it_held_as_ifs(
         t: &Term,
         preimages: bool,
@@ -15256,19 +15256,15 @@ mod tests {
                     looser |= inside(&pn, x, y) && !inside(&po, x, y);
                 }
             }
-            // A wrong answer this test names apart until it is fixed: a `||` box wider than the
-            // `if` box. Both formulas hold at the same points, so the wider box is a projection
-            // that is not the exact set (author P197); the question of exactness is right to
-            // fail on it, since the box holds points outside the preimage. `g || b` keeps the
-            // disjunct `b` whole, presburger `project` gives each disjunct its hull and meets
-            // each disjunction's union of them, and where `b`'s hull covers a value that `g`
-            // leaves out and `b` does not take, the box keeps it; the `if` reading's disjunct
-            // `!g && b` has no point there and is removed. `x != 1 || x + 2 * y == 0` (the
-            // points of `b` have even `x`) and `x != 1 || min(-x, x - x) != -1` (the disjunct
-            // `m <= -2` is empty at `x == 1` only through the case split of the `min`) give
-            // `x` its whole range as `||` and `-6..=0, 2..=6` as an `if`. The failing test
-            // FAIL-or-if-projection-not-exact holds them, fixed by the exact projection of
-            // PRES-switchover-not-race; then this class goes. A preimage whose question of
+            // A `||` box wider than the `if` box, not exact, is a wrong answer and fails here as
+            // "no longer exact": both formulas hold at the same points, so the wider box would
+            // be a projection that is not the exact set (author P197). It was named apart while
+            // presburger `project` gave each disjunct of `g || b` its hull, so that `b`'s hull
+            // kept a value `g` leaves out and `b` does not take; `x != 1 || x + 2 * y == 0` and
+            // `x != 1 || min(-x, x - x) != -1` gave `x` its whole range as `||` and
+            // `-6..=0, 2..=6` as an `if`. The projection now keeps the gaps
+            // (`or_if_projections_keep_the_gaps_the_if_reading_shows`, PRES-project-exact-solver),
+            // and the class is gone. A preimage whose question of
             // exactness the solver refuses for the `||` shape and decides for the `if` shape is
             // marked necessary, as the doc above allows; it is counted apart. In 2500 fresh seeds
             // each such refusal was `Unordered`: the `||` shape is symmetric in `x` and `y`, so the
@@ -15279,18 +15275,13 @@ mod tests {
             // and is fixed (PRESBURGER-or-if-disjuncts-refusal). A preimage with the same box that
             // is no longer exact is the failure this test looks for.
             let refused_now = pn.refusal.is_some() && po.refusal.is_none();
-            let wider = !refused_now && looser && !tighter;
             differ.extend(
                 [
                     (tighter && !looser, "tighter"),
                     (looser && !tighter, "looser"),
                     (looser && tighter, "neither"),
                     (pn.exact && !po.exact, "now exact"),
-                    (
-                        po.exact && !pn.exact && !wider && !refused_now,
-                        "no longer exact",
-                    ),
-                    (po.exact && !pn.exact && wider, "no longer exact, wider box"),
+                    (po.exact && !pn.exact && !refused_now, "no longer exact"),
                     (
                         po.exact && !pn.exact && refused_now,
                         "no longer exact, refused",
@@ -17480,12 +17471,12 @@ mod tests {
         }
     }
 
-    /// Two programs whose preimage of `true` is the box `x != 1`, exact as an `if`, and not
-    /// exact as `||` ([`Walk::or_if`]), whose box holds `x == 1`: both formulas hold at the same
-    /// points, so the `||` reading's projection is not the exact set (author P197: a projection
-    /// is the exact set on every path; PRES-switchover-not-race). The disjunct `b` of `g || b`
-    /// is projected to its hull, and the union of hulls keeps `x == 1`, where `b` does not
-    /// hold; the `if` reading's disjunct `!g && b` has no point and is removed.
+    /// Two programs whose preimage of `true` is the box `x != 1`, exact both as an `if` and as
+    /// `||` ([`Walk::or_if`]): both formulas hold at the same points, so the `||` reading's
+    /// projection must be the same exact set (author P197: a projection is the exact set on
+    /// every path; FAIL-or-if-projection-not-exact). The `||` box once held `x == 1`, when the
+    /// disjunct `b` of `g || b` was projected to its hull and the union of hulls kept a value
+    /// `b` does not take; the `if` reading's disjunct `!g && b` has no point there.
     /// - `1 != (x - y) + y || 2 * (x + y) == x`: the points of `x + 2 * y == 0` have even `x`.
     /// - `x != 1 || min(-x, x - x) != -1`: the disjunct `m <= -2` holds no point with `x == 1`
     ///   only through the case split of the `min` (`m = -x` where `-x <= 0`).

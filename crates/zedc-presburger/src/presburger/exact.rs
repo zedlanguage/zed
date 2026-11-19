@@ -52,9 +52,8 @@
 // of step 1 (COMPLEXITY.md row PRES-pugh-work-budget).
 // Trigger: a holed disjunct (a stride, `x + 2 * y == 0`), or values each disjunction allows
 // through a different disjunct. Tests: `exact::tests`; zedc_preimage
-// `or_if_projections_keep_the_gaps_the_if_reading_shows` needs the cover on the checker's
-// path and is kept out of the tree until row PRES-cover-wire puts it there
-// (/home/luke/Work/wt/failing-tests/FAIL-or-if-projection-not-exact.rs).
+// `or_if_projections_keep_the_gaps_the_if_reading_shows` and `or_ifs_hold_where_they_held_as_ifs`,
+// on the checker's path since PRES-cover-wire (PRES-project-exact-solver).
 
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::rc::Rc;
