@@ -13133,9 +13133,16 @@ impl Scope {
             }
             // A star projected is noted, so that a later move of a hub that leaves its leaf
             // within its family's bound passes it over ([`Scope::moved_blocks`]).
+            // Complexity tradeoff: naive version, the members of every block projected read
+            // for a leaf, O(m) per projection of a block of `m` members, though only a star, a
+            // block apart, can have one: 6 per cent of coordmix's instructions at 8n went to
+            // walking blocks not apart. Used: only a block apart is read. COMPLEXITY.md row
+            // PERF-l139-star-leaf.
             if !self.lazy {
-                let leaf = (blocks.members(b))
-                    .filter(|_| blocks.is_apart(b))
+                let leaf = (blocks.is_apart(b))
+                    .then(|| blocks.members(b))
+                    .into_iter()
+                    .flatten()
                     .flat_map(|g| conjuncts::names(g))
                     .find(|x| relation.star(x) == Some(b));
                 if let Some(x) = leaf {
