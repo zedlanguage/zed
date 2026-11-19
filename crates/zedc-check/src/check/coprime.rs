@@ -726,9 +726,7 @@ mod tests {
 
     /// The primes below `n`.
     fn primes(n: u64) -> Vec<u64> {
-        (2..n)
-            .filter(|&q| (2..).take_while(|d| d * d <= q).all(|d| q % d != 0))
-            .collect()
+        (2..n).filter(|&q| zed_numtheory::is_prime(q)).collect()
     }
 
     /// The base by halves of `ns`: its elements are above 1 and pairwise coprime; each root's

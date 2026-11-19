@@ -500,66 +500,22 @@ fn decimal_text_of_wide_values_of_both_signs() {
     }
 }
 
+/// The primes of the cheap root check are what their comment says: prime, and the largest
+/// below `2^64`, `2^63` and `2^62`.
 #[test]
-fn the_odd_prime_sieve_agrees_with_trial_division() {
-    let is_p = |n: u64| {
-        n >= 2
-            && (2..n)
-                .take_while(|d| d * d <= n)
-                .all(|d| !n.is_multiple_of(d))
-    };
-    for n in 0..300u64 {
-        let sieve = odd_primes_below(n);
-        assert_eq!(sieve.len() as u64, n.div_ceil(2), "length below {n}");
-        for (i, &p) in sieve.iter().enumerate() {
-            assert_eq!(p, is_p(2 * i as u64 + 1), "{} below {n}", 2 * i + 1);
-        }
+fn the_root_check_primes_are_the_largest_below_their_powers_of_two() {
+    for (q, k) in ROOT_CHECK_PRIMES.into_iter().zip([64u32, 63, 62]) {
+        assert!(is_prime(q), "{q}");
+        // `2^(k-1) <= q < 2^k`, and the next prime is at least `2^k` (none below `2^64`).
+        assert_eq!(q.ilog2(), k - 1, "{q}");
+        let next = next_prime(q);
+        assert!(next.is_none_or(|n| n.ilog2() >= k), "{q}: next {next:?}");
     }
 }
 
 #[test]
 fn word_arithmetic_helpers_on_their_ends() {
-    // pow_mod: modulus 1 (everything is 0), exponent 0, base at and past the modulus, the
-    // largest modulus below 2^64.
-    let q = u64::MAX - 58; // a prime
-    let cases: Vec<(&str, u64, u64, u64, u64)> = vec![
-        ("modulus 1", 5, 3, 1, 0),
-        ("exponent 0", 5, 0, 7, 1),
-        ("base 0", 0, 5, 7, 0),
-        ("base is the modulus", 7, 3, 7, 0),
-        ("base past the modulus", 9, 2, 7, 4),
-        ("Fermat", 12_345, q - 1, q, 1),
-        ("wide product", q - 1, 2, q, 1),
-    ];
-    for (case, x, e, m, want) in cases {
-        assert_eq!(pow_mod(x, e, m), want, "{case}");
-    }
-    // pow_word is the power modulo 2^64; inverse_mod_word inverts every odd word.
-    for (b, e) in [
-        (3u64, 0u64),
-        (3, 1),
-        (3, 40),
-        (3, 41),
-        (u64::MAX, 3),
-        (2, 64),
-        (2, 63),
-    ] {
-        let want = (BigUint::from(b).pow(e as u32) % (BigUint::from(1u32) << 64u32))
-            .iter_u64_digits()
-            .next()
-            .unwrap_or(0);
-        assert_eq!(pow_word(b, e), want, "{b} ^ {e}");
-    }
-    for d in [
-        1u64,
-        3,
-        5,
-        0x8000_0000_0000_0001,
-        u64::MAX,
-        0x1234_5678_9abc_def1,
-    ] {
-        assert_eq!(d.wrapping_mul(inverse_mod_word(d)), 1, "inverse of {d}");
-    }
+    // pow_mod_2_64, pow_mod and inverse_mod_2_64 are tested in zed-numtheory.
     // pow_mod_pow2 against num-bigint, exponents 0, 1 and many, moduli of one bit and past a
     // word.
     let x = BigUint::from(3u32).pow(50u32) + 1u32;

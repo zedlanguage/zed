@@ -179,8 +179,9 @@ pub(super) mod plane;
 mod rows;
 
 pub use classes::{REDUCED, Reduced, ReducedBy};
+use rows::Row;
 pub(super) use rows::Rows;
-use rows::{Row, gcd};
+use zed_numtheory::gcd_u128 as gcd;
 
 impl Rows {
     /// The formula given as its top-level conjuncts (`Formula::conjunct_list`), when it is of

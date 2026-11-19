@@ -26,10 +26,11 @@
 //! (its values are a progression, as many pieces as values), or a number past `i128` is not
 //! taken here: the formula goes to the join, which is exact, as before.
 
+use zed_numtheory::{bezout_i128, gcd_u128 as gcd};
 use zedc_int::int::{i128_div_ceil, i128_div_floor};
 use zedc_lattice::interval::{End, IntervalSet, Num};
 
-use super::rows::{Rows, gcd};
+use super::rows::Rows;
 
 /// `a·x + b·y + c >= 0`.
 #[derive(Clone, Copy, Debug)]
@@ -511,22 +512,12 @@ struct Scratch {
     upper: Vec<(i128, i128, i128)>,
 }
 
-/// `(s, t)` with `s·a + t·b == 1`, for `a` and `b` coprime (extended Euclid).
+/// `(s, t)` with `s·a + t·b == 1`, for `a` and `b` coprime ([`bezout_i128`], whose cofactors
+/// equal those of the signed Euclid this module used before; checked by
+/// `bezout_cofactors_give_the_gcd_and_are_the_least` in zed-numtheory).
 pub(in crate::presburger) fn bezout(a: i128, b: i128) -> Option<(i128, i128)> {
-    let (mut r0, mut r1) = (a, b);
-    let (mut s0, mut s1) = (1i128, 0i128);
-    let (mut t0, mut t1) = (0i128, 1i128);
-    while r1 != 0 {
-        let q = r0.checked_div(r1)?;
-        (r0, r1) = (r1, r0.checked_sub(q.checked_mul(r1)?)?);
-        (s0, s1) = (s1, s0.checked_sub(q.checked_mul(s1)?)?);
-        (t0, t1) = (t1, t0.checked_sub(q.checked_mul(t1)?)?);
-    }
-    match r0 {
-        1 => Some((s0, t0)),
-        -1 => Some((s0.checked_neg()?, t0.checked_neg()?)),
-        _ => None,
-    }
+    let (g, s, t) = bezout_i128(a, b)?;
+    (g == 1).then_some((s, t))
 }
 
 #[cfg(test)]

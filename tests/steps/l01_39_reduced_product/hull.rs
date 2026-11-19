@@ -66,11 +66,10 @@ fn rank(vs: &[Vec<i128>]) -> usize {
 }
 
 fn gcd(a: i128, b: i128) -> i128 {
-    let (mut a, mut b) = (a.abs(), b.abs());
-    while b != 0 {
-        (a, b) = (b, a % b);
-    }
-    a
+    // At most `2^127`, which only `gcd(i128::MIN, 0)` reaches, and the old `abs` overflowed
+    // there.
+    i128::try_from(zed_numtheory::gcd_u128(a.unsigned_abs(), b.unsigned_abs()))
+        .expect("below 2^127")
 }
 
 /// Checks that `h` is the affine hull of `points`: each row is zero at each point, and the

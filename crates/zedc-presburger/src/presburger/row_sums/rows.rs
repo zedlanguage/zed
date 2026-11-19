@@ -21,11 +21,3 @@ pub(in crate::presburger) struct Rows {
     /// Some conjunct has no point.
     pub(super) empty: bool,
 }
-
-/// The greatest common divisor of `a` and `b` (Euclid), `a` where `b` is 0.
-pub(super) fn gcd(mut a: u128, mut b: u128) -> u128 {
-    while b != 0 {
-        (a, b) = (b, a % b);
-    }
-    a
-}

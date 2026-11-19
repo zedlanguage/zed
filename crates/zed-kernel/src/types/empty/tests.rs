@@ -174,7 +174,7 @@ fn a_meeting_pair_agrees_with_every_pair() {
     let mut next = |below: u64| rng.below_u64(below);
     let periods = [1, 2, 3, 4, 6, 8, 9, 12, 18, 24, 36, 5, 10, 30];
     let meet = |a: (u64, u64), b: (u64, u64)| {
-        let g = gcd(a.0, b.0);
+        let g = gcd_u64(a.0, b.0);
         a.1 % g == b.1 % g
     };
     let mut found = 0;
@@ -316,8 +316,8 @@ fn residue_agrees(all: &[(u64, u64)], none: &[(u64, u64)]) -> (bool, bool) {
             .iter()
             .filter(|&&(p, at)| (1..=60).any(|n| fits_all(all, n) && n % p == at))
             .map(|&(p, _)| {
-                let l = all.iter().fold(1, |l, &(q, _)| l / gcd(l, q) * q);
-                gcd(l, p) as f64 / p as f64
+                let l = all.iter().fold(1, |l, &(q, _)| l / gcd_u64(l, q) * q);
+                gcd_u64(l, p) as f64 / p as f64
             })
             .sum();
         if sum < 1.0 && scanned.is_some() {

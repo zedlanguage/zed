@@ -18,6 +18,7 @@ num-bigint.workspace = true
 zed-collections.workspace = true
 zed-graph.workspace = true
 zed-kernel.workspace = true
+zed-numtheory.workspace = true
 zedc-int.workspace = true
 zedc-lattice.workspace = true
 zedc-presburger.workspace = true

@@ -1,0 +1,24 @@
+[package]
+name = "zed-numtheory"
+version.workspace = true
+edition.workspace = true
+license-file.workspace = true
+repository.workspace = true
+publish.workspace = true
+
+# Number theory every crate shares, zed-kernel included (DRY-number-theory, the author,
+# 2026-11-19: one routine per job, in one crate), so it depends on no other crate of the
+# workspace. Also a dylib, as zed-kernel is: each test binary links one shared copy.
+[lib]
+crate-type = ["rlib", "dylib"]
+
+[dependencies]
+num-bigint.workspace = true
+num-traits.workspace = true
+
+[dev-dependencies]
+# The big gcd the word routines are checked against.
+num-integer.workspace = true
+
+[lints]
+workspace = true

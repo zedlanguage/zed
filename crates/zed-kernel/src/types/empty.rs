@@ -77,6 +77,7 @@ use std::pin::Pin;
 use std::sync::{Arc, Mutex};
 
 use num_bigint::{BigInt, BigUint};
+use zed_numtheory::{factor, gcd_u64};
 
 use super::bdd::{Bdd, Form, Part};
 use super::bes::{Answer, Bes, Decision, Kind, decide};
@@ -1822,25 +1823,16 @@ struct ChainGroup {
     multi_target: bool,
 }
 
-/// The prime powers of `n`.
-fn prime_powers(mut n: u64) -> Vec<(u64, u64)> {
-    let mut out = Vec::new();
-    let mut r = 2;
-    while r <= n / r {
-        if n.is_multiple_of(r) {
-            let mut q = 1;
-            while n.is_multiple_of(r) {
-                n /= r;
-                q *= r;
-            }
-            out.push((r, q));
-        }
-        r += 1;
-    }
-    if n > 1 {
-        out.push((n, n));
-    }
-    out
+/// The prime powers of `n`: `(p, p^k)` for each prime `p` dividing `n` exactly `k` times, in
+/// increasing order of `p`; empty for 0 and 1.
+// Complexity tradeoff: trial division up to `sqrt n` was O(sqrt n), 2^32 divisions for a 64-bit
+// prime period; [`factor`] (Pollard's rho with Miller-Rabin) is O(n^(1/4)) expected products.
+fn prime_powers(n: u64) -> Vec<(u64, u64)> {
+    // `p.pow(k)` cannot overflow: `p^k` divides `n`.
+    factor(n)
+        .into_iter()
+        .map(|(p, k)| (p, p.pow(u32::try_from(k).expect("k <= 63"))))
+        .collect()
 }
 
 /// A list type made of pure cycles of one item, as the rule on pure cycles reads it: its
@@ -2448,9 +2440,6 @@ fn shares(all: &[(u64, u64)], none: &[(u64, u64)]) -> Lengths {
         Some(_) => Lengths::Some,
     }
 }
-fn gcd(a: u64, b: u64) -> u64 {
-    if b == 0 { a } else { gcd(b, a % b) }
-}
 
 /// Two classes `(period, residue)` of `classes` that share a length, by their indices, or
 /// `None` when they are pairwise disjoint. The classes `(p, r)` and `(q, s)` meet exactly when
@@ -2499,7 +2488,7 @@ fn meeting_pair(classes: &[(u64, u64)]) -> Option<(usize, usize)> {
     let mut down: HashMap<(usize, u64), HashMap<u64, usize>> = HashMap::new();
     for a in 0..groups.len() {
         for b in 0..a {
-            let g = gcd(groups[a].0, groups[b].0);
+            let g = gcd_u64(groups[a].0, groups[b].0);
             for s in [a, b] {
                 down.entry((s, g))
                     .or_insert_with(|| (groups[s].1.iter()).map(|(&r, &i)| (r % g, i)).collect());

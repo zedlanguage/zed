@@ -77,31 +77,17 @@ fn integer(t: &Term) -> Arc<Rat> {
     }
 }
 
-/// `b^e mod m`, for `m` below 2^63.
-fn pow_mod(b: u64, e: u64, m: u64) -> u64 {
-    let (mut b, mut e, mut r) = (u128::from(b % m), e, 1u128);
-    let m = u128::from(m);
-    while e > 0 {
-        if e & 1 == 1 {
-            r = r * b % m;
-        }
-        b = b * b % m;
-        e >>= 1;
-    }
-    u64::try_from(r).expect("below m")
-}
-
 /// The Mersenne prime 2^61 - 1, a modulus by which a wide number is checked without a copy.
-const MERSENNE: u64 = (1 << 61) - 1;
+const MERSENNE: u64 = zed_numtheory::m61::P;
 
 /// `(2^n + 1 - r) / (2^k + 1) mod 2^61 - 1`, the residue of the quotient of `2^n + 1` by
 /// `2^k + 1` that leaves `r`, from the residues of its parts.
 fn quotient_residue(n: u64, k: u64, r: u64) -> u64 {
+    use zed_numtheory::{mul_mod, pow_mod};
     let m = MERSENNE;
     let a = (pow_mod(2, n, m) + 1 + m - r % m) % m;
     let d = (pow_mod(2, k, m) + 1) % m;
-    u64::try_from(u128::from(a) * u128::from(pow_mod(d, m - 2, m)) % u128::from(m))
-        .expect("below m")
+    mul_mod(a, pow_mod(d, m - 2, m), m)
 }
 
 /// The residue of `q` modulo 2^61 - 1, read by [`Rat::rem_euclid`] one word at a time.
@@ -194,7 +180,7 @@ fn a_wide_number_modulo_a_small_one_answers_when_memory_is_short() {
     let kept = lit(Value::integer(
         Rat::int(above(NARROW)).mul(&two_to(5)).unwrap(),
     ));
-    let mersenne = (1u64 << 61) - 1;
+    let mersenne = MERSENNE;
     // `2^3 = 1 (mod 7)`, `2^61 = 1 (mod 2^61 - 1)` and `2^64 = -1 (mod 2^64 + 1)`, and `n` is a multiple of 128.
     let cases = [
         (bin(Prim::Mod, wide(), num(3)), BigInt::from(2)),

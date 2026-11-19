@@ -591,27 +591,14 @@ fn nodes(mut parts: &[Text]) -> Vec<Text> {
     out
 }
 
-/// The prime modulus of [`Text::poly_hash`], `2^61 − 1`.
-const POLY_P: u64 = (1 << 61) - 1;
-/// The base of [`Text::poly_hash`], below [`POLY_P`].
+/// The base of [`Text::poly_hash`], below its prime modulus `2^61 − 1`
+/// ([`zed_numtheory::m61::P`]).
 const POLY_B: u64 = 0x0f3d_5b79_a2c4_e681;
 
-/// `a · b` modulo [`POLY_P`], for `a` and `b` below it: the product is below `2^122`, and
-/// `x = hi · 2^61 + lo` is `hi + lo` modulo `2^61 − 1`, twice.
-fn poly_mul(a: u64, b: u64) -> u64 {
-    let x = u128::from(a) * u128::from(b);
-    let r = (x as u64 & POLY_P) + (x >> 61) as u64;
-    let r = (r & POLY_P) + (r >> 61);
-    if r >= POLY_P { r - POLY_P } else { r }
-}
+// `a · b` and `a + b` modulo `2^61 − 1`, for operands below it.
+use zed_numtheory::m61::{add as poly_add, mul as poly_mul};
 
-/// `a + b` modulo [`POLY_P`], for `a` and `b` below it.
-fn poly_add(a: u64, b: u64) -> u64 {
-    let r = a + b;
-    if r >= POLY_P { r - POLY_P } else { r }
-}
-
-/// The hash of `bytes` ([`Text::poly_hash`]) and `B` to their length, modulo [`POLY_P`].
+/// The hash of `bytes` ([`Text::poly_hash`]) and `B` to their length, modulo `2^61 − 1`.
 fn poly_bytes(bytes: &[u8]) -> (u64, u64) {
     bytes.iter().fold((0, 1), |(h, p), &b| {
         (

@@ -201,15 +201,10 @@ pub fn enumerated(w: &zedc::store::presburger::Relation) -> Option<(bool, bool)>
 
 /// The first `n` primes.
 pub fn primes(n: usize) -> Vec<i64> {
-    let mut ps = Vec::new();
-    let mut k = 2i64;
-    while ps.len() < n {
-        if ps.iter().all(|p| k % p != 0) {
-            ps.push(k);
-        }
-        k += 1;
-    }
-    ps
+    zed_numtheory::first_primes(n)
+        .into_iter()
+        .map(|p| i64::try_from(p).expect("the first primes of a test are below 2^63"))
+        .collect()
 }
 
 /// A solver integer of exactly `words` 64-bit words (its top bit set), negative when

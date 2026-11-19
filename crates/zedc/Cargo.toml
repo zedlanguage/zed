@@ -20,6 +20,7 @@ blake3.workspace = true
 rustix = { workspace = true, features = ["fs"] }
 zed-graph.workspace = true
 zed-kernel.workspace = true
+zed-numtheory.workspace = true
 zedc-base.workspace = true
 zedc-syntax.workspace = true
 zedc-int.workspace = true

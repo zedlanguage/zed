@@ -1092,6 +1092,7 @@ dependencies = [
  "zed-collections",
  "zed-graph",
  "zed-meter-settings",
+ "zed-numtheory",
 ]
 
 [[package]]
@@ -1124,6 +1125,15 @@ dependencies = [
  "zed-rt",
  "zedc",
  "zedc-presburger",
+]
+
+[[package]]
+name = "zed-numtheory"
+version = "0.0.0"
+dependencies = [
+ "num-bigint",
+ "num-integer",
+ "num-traits",
 ]
 
 [[package]]
@@ -1164,6 +1174,7 @@ dependencies = [
  "zed-kernel",
  "zed-meter-settings",
  "zed-native",
+ "zed-numtheory",
  "zed-rt",
  "zed-tools",
  "zedc",
@@ -1190,6 +1201,7 @@ dependencies = [
  "zed-alloc-count",
  "zed-graph",
  "zed-kernel",
+ "zed-numtheory",
  "zedc",
  "zedc-base",
  "zedc-check",
@@ -1231,6 +1243,7 @@ dependencies = [
  "zed-graph",
  "zed-kernel",
  "zed-meter-settings",
+ "zed-numtheory",
  "zedc-base",
  "zedc-check",
  "zedc-int",
@@ -1268,6 +1281,7 @@ dependencies = [
  "num-traits",
  "zed-collections",
  "zed-kernel",
+ "zed-numtheory",
 ]
 
 [[package]]
@@ -1277,6 +1291,7 @@ dependencies = [
  "zed-collections",
  "zed-graph",
  "zed-kernel",
+ "zed-numtheory",
  "zedc-base",
  "zedc-int",
  "zedc-syntax",
@@ -1296,6 +1311,7 @@ dependencies = [
  "zed-graph",
  "zed-kernel",
  "zed-meter-settings",
+ "zed-numtheory",
  "zedc-int",
  "zedc-lattice",
  "zedc-preimage",
@@ -1320,6 +1336,7 @@ dependencies = [
  "zed-graph",
  "zed-kernel",
  "zed-meter-settings",
+ "zed-numtheory",
  "zedc-int",
  "zedc-lattice",
  "zedc-presburger",

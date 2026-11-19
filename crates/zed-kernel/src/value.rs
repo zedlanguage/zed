@@ -1083,31 +1083,9 @@ const R: u64 = 0x0d8e_4e27_c47d_124f;
 const A: u64 = 0x1a3f_5c2b_9e8d_7061;
 const B: u64 = 0x07b3_a9e1_d2c4_f583;
 
-/// `a · b mod P`, for `a` and `b` below `P`.
-fn field_mul(a: u64, b: u64) -> u64 {
-    crate::num::mul_mod(a, b)
-}
-
-/// `x^e mod P`, by squaring: 61 squarings at most for `e < P`.
-fn field_pow(x: u64, mut e: u64) -> u64 {
-    let (mut b, mut r) = (x, 1);
-    while e > 0 {
-        if e & 1 == 1 {
-            r = field_mul(r, b);
-        }
-        b = field_mul(b, b);
-        e >>= 1;
-    }
-    r
-}
-
-/// `a · b mod P` at compile time, as [`field_mul`] computes it, for [`POW_R`].
-const fn field_mul_const(a: u64, b: u64) -> u64 {
-    let x = (a as u128) * (b as u128);
-    let m = P as u128;
-    let r = (x & m) + (x >> 61);
-    (if r >= m { r - m } else { r }) as u64
-}
+// `a · b`, `x^e` and `a - b` modulo `P`, for operands below `P` (`const`, so [`POW_R`] is
+// built with the same product at compile time).
+use zed_numtheory::m61::{mul as field_mul, pow_word as field_pow, sub as field_sub};
 
 /// `POW_R[j][d] = R^(d · 16^j) mod P`, for the 16 base-16 digits of a `u64` exponent.
 static POW_R: [[u64; 16]; 16] = {
@@ -1117,11 +1095,11 @@ static POW_R: [[u64; 16]; 16] = {
     while j < 16 {
         let mut d = 1;
         while d < 16 {
-            t[j][d] = field_mul_const(t[j][d - 1], base);
+            t[j][d] = field_mul(t[j][d - 1], base);
             d += 1;
         }
         // R^(16^(j+1)) = R^(15 · 16^j) · R^(16^j).
-        base = field_mul_const(t[j][15], base);
+        base = field_mul(t[j][15], base);
         j += 1;
     }
     t
@@ -1142,11 +1120,6 @@ fn pow_r(e: u64) -> u64 {
 /// `1 / x mod P`, for `x` not 0 modulo `P` (Fermat).
 fn field_inv(x: u64) -> u64 {
     field_pow(x, P - 2)
-}
-
-/// `a - b mod P`, for `a` and `b` below `P`.
-fn field_sub(a: u64, b: u64) -> u64 {
-    btree::add(a, P - b)
 }
 
 /// The residues `n mod P` and `n mod (P - 1)` of an integer `n`, `Int` or `Big`; none for any

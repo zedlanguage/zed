@@ -6030,9 +6030,14 @@ fn class_of(term: &Term, classes: &Classes) -> Option<Congruence> {
             i64::try_from(r).ok()?,
         ))
     };
-    fn gcd(a: i128, b: i128) -> i128 {
-        if b == 0 { a.abs() } else { gcd(b, a % b) }
-    }
+    // The shared gcd: this file is an independent oracle for the preimage solver, but the gcd
+    // is not what it checks (the solver's class arithmetic is), and the gcd has its own tests
+    // in zed-numtheory against num-integer, so sharing it costs the oracle no independence.
+    // `None` only for a gcd of `2^127` (an operand `i128::MIN` with the other 0 or a multiple),
+    // where the old `abs` overflowed.
+    let gcd = |a: i128, b: i128| {
+        i128::try_from(zed_numtheory::gcd_u128(a.unsigned_abs(), b.unsigned_abs())).ok()
+    };
     match term {
         Term::Lit(Value::Int(v)) => Some(Congruence::single(*v)),
         Term::Var(x) => Some(classes.get(x).cloned().unwrap_or(Congruence::top())),
@@ -6045,13 +6050,16 @@ fn class_of(term: &Term, classes: &Classes) -> Option<Congruence> {
             (Prim::Add | Prim::Sub, [a, b]) => {
                 let ((m, r), (n, s)) =
                     (parts(class_of(a, classes)?)?, parts(class_of(b, classes)?)?);
-                class(gcd(m, n), if *p == Prim::Add { r + s } else { r - s })
+                class(gcd(m, n)?, if *p == Prim::Add { r + s } else { r - s })
             }
             (Prim::Mul, [a, b]) => {
                 // (r mod m)(s mod n) is rs mod gcd(mn, rn, sm).
                 let ((m, r), (n, s)) =
                     (parts(class_of(a, classes)?)?, parts(class_of(b, classes)?)?);
-                let g = gcd(gcd(m.checked_mul(n)?, r.checked_mul(n)?), s.checked_mul(m)?);
+                let g = gcd(
+                    gcd(m.checked_mul(n)?, r.checked_mul(n)?)?,
+                    s.checked_mul(m)?,
+                )?;
                 class(g, r.checked_mul(s)?)
             }
             (Prim::Mod, [a, Term::Lit(Value::Int(k))]) if *k > 0 => {
@@ -6062,7 +6070,7 @@ fn class_of(term: &Term, classes: &Classes) -> Option<Congruence> {
                 if m % k == 0 {
                     class(0, r.rem_euclid(k))
                 } else {
-                    class(gcd(m, k), r)
+                    class(gcd(m, k)?, r)
                 }
             }
             _ => None,

@@ -18,6 +18,7 @@ num-integer.workspace = true
 num-traits.workspace = true
 zed-collections.workspace = true
 zed-kernel.workspace = true
+zed-numtheory.workspace = true
 
 [lints]
 workspace = true

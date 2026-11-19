@@ -14,36 +14,13 @@ use num_integer::Integer;
 use num_traits::{One, Zero};
 use zed_kernel::bits::BitLen;
 use zed_kernel::num::{
-    TooLarge, div_floor_int, div_rem_uint, gcd_uint, is_prime, mod_floor_int, mul_int, mul_uint,
-    pow_uint, read_digits, rem_uint, room, to_decimal,
+    TooLarge, div_floor_int, div_rem_uint, gcd_uint, mod_floor_int, mul_int, mul_uint, pow_uint,
+    read_digits, rem_uint, room, to_decimal,
 };
-
-/// The greatest common divisor by Stein's binary algorithm: shifts and subtractions, no
-/// division.
-macro_rules! stein {
-    ($name:ident, $t:ty) => {
-        fn $name(mut a: $t, mut b: $t) -> $t {
-            if a == 0 || b == 0 {
-                return a | b;
-            }
-            let s = (a | b).trailing_zeros();
-            a >>= a.trailing_zeros();
-            loop {
-                b >>= b.trailing_zeros();
-                if a > b {
-                    (a, b) = (b, a);
-                }
-                b -= a;
-                if b == 0 {
-                    return a << s;
-                }
-            }
-        }
-    };
-}
-
-stein!(stein64, u64);
-stein!(stein128, u128);
+use zed_numtheory::{
+    bezout_i128, gcd_big_u64, gcd_u64, gcd_u128, inverse_mod_2_64, is_prime, next_prime,
+    odd_primes_below, odd_root_mod_2_64, pow_mod, pow_mod_2_64, rem_big_u64,
+};
 
 /// An integer. A value that fits in `i128` is always `Small`, so that two equal values have
 /// one form.
@@ -176,8 +153,8 @@ impl Int {
                 let (a, b) = (a.unsigned_abs(), b.unsigned_abs());
                 // In 64 bits when both fit, where each step is one instruction.
                 let g = match (u64::try_from(a), u64::try_from(b)) {
-                    (Ok(a), Ok(b)) => u128::from(stein64(a, b)),
-                    _ => stein128(a, b),
+                    (Ok(a), Ok(b)) => u128::from(gcd_u64(a, b)),
+                    _ => gcd_u128(a, b),
                 };
                 i128::try_from(g).map_or_else(|_| BigInt::from(g).into(), Int::from)
             }
@@ -200,18 +177,7 @@ impl Int {
                     let bm = b.magnitude();
                     let zb = bm.trailing_zeros().unwrap_or(0);
                     let z = u64::from(zs).min(zb);
-                    let g_odd = if d == 1 {
-                        1
-                    } else {
-                        let dm = u128::from(d);
-                        let r = bm
-                            .iter_u64_digits()
-                            .rev()
-                            .fold(0u128, |acc, w| ((acc << 64) | u128::from(w)) % dm)
-                            as u64;
-                        stein64(r, d)
-                    };
-                    let g = u128::from(g_odd) << z;
+                    let g = u128::from(gcd_big_u64(bm, d)) << z;
                     return i128::try_from(g).map_or_else(|_| BigInt::from(g).into(), Int::from);
                 }
                 BigInt::from(gcd_uint(self.big().magnitude(), other.big().magnitude())).into()
@@ -243,26 +209,15 @@ impl Int {
         }
     }
 
-    /// The extended gcd. Machine integers retain their direct arithmetic;
-    /// wider integers use the kernel's binary half-GCD.
+    /// The extended gcd. Machine integers use the word extended Euclid of zed-numtheory
+    /// ([`bezout_i128`]), the same steps and cofactors as the loop over `Int` it replaced,
+    /// with no allocation; wider integers, and an operand `i128::MIN`, use the kernel's binary
+    /// half-GCD.
     pub fn extended_gcd(&self, b: &Int) -> Option<(Int, Int, Int)> {
-        if matches!((&self.0, &b.0), (Repr::Small(_), Repr::Small(_))) {
-            let (mut r, mut next) = (self.abs(), b.abs());
-            let (mut s, mut ns) = (Int::ONE, Int::ZERO);
-            let (mut t, mut nt) = (Int::ZERO, Int::ONE);
-            while !next.is_zero() {
-                let q = r.div_floor(&next);
-                (r, next) = (next.clone(), &r - &(&q * &next));
-                (s, ns) = (ns.clone(), &s - &(&q * &ns));
-                (t, nt) = (nt.clone(), &t - &(&q * &nt));
-            }
-            if self.is_negative() {
-                s = -&s;
-            }
-            if b.is_negative() {
-                t = -&t;
-            }
-            return Some((r, s, t));
+        if let (Repr::Small(x), Repr::Small(y)) = (&self.0, &b.0)
+            && let Some((g, s, t)) = bezout_i128(*x, *y)
+        {
+            return Some((g.into(), s.into(), t.into()));
         }
         zed_kernel::num::bezout_int(&self.big(), &b.big())
             .map(|(g, s, t)| (g.into(), s.into(), t.into()))
@@ -908,30 +863,27 @@ fn least_root(mut b: BigUint) -> (BigUint, BigUint) {
     (b, m)
 }
 
-/// `prime[i]` holds when `2 * i + 1` is prime, for `2 * i + 1 < n`: a sieve of Eratosthenes over
-/// the odd numbers, in `O(n log log n)`.
-fn odd_primes_below(n: u64) -> Vec<bool> {
-    let len = usize::try_from(n.div_ceil(2)).expect("the bits of a base held in memory");
-    let mut prime = vec![true; len];
-    if let Some(one) = prime.first_mut() {
-        *one = false;
-    }
-    let mut i = 1;
-    while (2 * i + 1) * (2 * i + 1) < 2 * len {
-        if prime[i] {
-            let q = 2 * i + 1;
-            // Odd multiples of q from q * q.
-            for j in ((q * q) / 2..len).step_by(q) {
-                prime[j] = false;
-            }
-        }
-        i += 1;
-    }
-    prime
-}
-
-/// Primes below `2^64` by which [`OddPart::root`] tests a candidate root before its power.
-const TEST_PRIMES: [u64; 3] = [
+/// The primes by which [`OddPart::root`] checks a candidate root `r` cheaply before it computes
+/// the full power `r^p`: `2^64 - 59 = 18446744073709551557`, `2^63 - 25 = 9223372036854775783`
+/// and `2^62 - 57 = 4611686018427387847`, the largest primes below `2^64`, `2^63` and `2^62`
+/// (test `the_root_check_primes_are_the_largest_below_their_powers_of_two`).
+///
+/// The check: [`OddPart::of`] keeps `o mod q` for each `q`, and a candidate passes when
+/// `(r mod q)^p mod q` equals it for all three. A candidate that fails at one `q` is not the
+/// root, since `r^p = o` gives `r^p = o (mod q)`; so the check only rejects, and rejects
+/// correctly. A candidate that passes is still decided by the full power `r^p == o`, so the
+/// answer is exact whatever these primes are; the check only saves the full power, O(M(n) log p)
+/// for `n` the bits of `o`, against O(log p) word products per prime.
+///
+/// Why these values: a wrong candidate passes at `q` exactly when `q` divides `r^p - o`, which
+/// is not zero. For a candidate that is not built to fool the check, that happens about once in
+/// `q` tries, so the larger `q`, the better; a word-sized `q` keeps `o mod q`, `r mod q` and the
+/// products of [`pow_mod`] in `u64` and `u128` arithmetic. Why three: each prime costs O(log p)
+/// word products, small beside the full power, and three make a wasted full power rarer
+/// (about `2^-64 · 2^-63 · 2^-62 = 2^-189` by the estimate above, where one prime gives about
+/// `2^-64`). No proof bounds
+/// how often a wrong candidate passes; none is needed, since a pass never decides alone.
+const ROOT_CHECK_PRIMES: [u64; 3] = [
     18_446_744_073_709_551_557,
     9_223_372_036_854_775_783,
     4_611_686_018_427_387_847,
@@ -943,6 +895,10 @@ const TEST_PRIMES: [u64; 3] = [
 /// power passes one such `q` with chance about `1 / p`, since the `p`-th powers are one in `p`
 /// of the units modulo `q`. No prime below it is 1 modulo an index above `FILTER_BOUND / 2`,
 /// so each index wider than a word also gets the least prime that is 1 modulo it ([`Filter`]).
+/// The bound sets cost only, never the answer: a rejection is proved by the residue argument
+/// above, and an index that passes is decided by [`OddPart::root`]. 1024 gives the 171 odd
+/// primes below it, whose residues come from one remainder tree; the code records no
+/// measurement behind this value.
 const FILTER_BOUND: u64 = 1024;
 
 /// The residues of `o` by which [`OddPart::passes`] rejects an index: `(q, o mod q)` for each
@@ -954,8 +910,8 @@ struct Filter {
     wide: Vec<(u64, u64, u64)>,
 }
 
-/// `b = 2^v * o` with `o` odd, `o` modulo each of [`TEST_PRIMES`], and, once a root wider than
-/// one word is looked for, the residues of `o` in a [`Filter`].
+/// `b = 2^v * o` with `o` odd, `o` modulo each of [`ROOT_CHECK_PRIMES`], and, once a root wider
+/// than one word is looked for, the residues of `o` in a [`Filter`].
 struct OddPart {
     v: u64,
     o: BigUint,
@@ -967,7 +923,8 @@ impl OddPart {
     fn of(b: &BigUint) -> OddPart {
         let v = b.trailing_zeros().expect("a base is at least 2");
         let o = b >> v;
-        let residues = TEST_PRIMES.map(|q| u64::try_from(&o % q).expect("below q"));
+        // `o mod q` for the cheap root check ([`ROOT_CHECK_PRIMES`]).
+        let residues = ROOT_CHECK_PRIMES.map(|q| rem_big_u64(&o, q));
         OddPart {
             v,
             o,
@@ -1052,7 +1009,8 @@ impl OddPart {
     /// is `2^(v / p)` times the odd `p`-th root of `o`, which is below `2^s` for `s` the bits of
     /// `o` over `p`, rounded up, and so is the one odd `p`-th root of `o` modulo `2^s`
     /// ([`odd_root_mod_pow2`]). That candidate is checked by its bit count and modulo
-    /// [`TEST_PRIMES`], in time of order its own bits, and only then by its `p`-th power.
+    /// [`ROOT_CHECK_PRIMES`], in time of order its own bits, and only then by its `p`-th power,
+    /// which decides.
     fn root(&self, p: u64) -> Option<BigUint> {
         if !self.v.is_multiple_of(p) {
             return None;
@@ -1068,12 +1026,14 @@ impl OddPart {
             // and filtered in one word, with nothing allocated: the root modulo `2^64` cut to
             // `s` bits is the one modulo `2^s`.
             let low = self.o.iter_u64_digits().next().expect("o is odd");
-            let r = odd_root_mod_word(low, p) & (u64::MAX >> (64 - s));
+            let r = odd_root_mod_2_64(low, p) & (u64::MAX >> (64 - s));
             let rb = u64::from(r.bit_len());
             if n <= p * (rb - 1) || n > p * rb {
                 return None;
             }
-            let agree = TEST_PRIMES
+            // The cheap check modulo three primes, which only rejects; the full power below
+            // decides ([`ROOT_CHECK_PRIMES`]).
+            let agree = ROOT_CHECK_PRIMES
                 .iter()
                 .zip(&self.residues)
                 .all(|(&q, &oq)| pow_mod(r % q, p, q) == oq);
@@ -1089,10 +1049,12 @@ impl OddPart {
         if n <= p * (rb - 1) || n > p * rb {
             return None;
         }
-        let agree = TEST_PRIMES.iter().zip(&self.residues).all(|(&q, &oq)| {
-            let rq = u64::try_from(&r % q).expect("below q");
-            pow_mod(rq, p, q) == oq
-        });
+        // The cheap check modulo three primes, which only rejects; the full power below decides
+        // ([`ROOT_CHECK_PRIMES`]).
+        let agree = ROOT_CHECK_PRIMES
+            .iter()
+            .zip(&self.residues)
+            .all(|(&q, &oq)| pow_mod(rem_big_u64(&r, q), p, q) == oq);
         (agree && pow_uint(&r, p) == self.o).then(|| r << shift)
     }
 }
@@ -1143,37 +1105,23 @@ fn remainders(x: &BigUint, ms: &[u64]) -> Vec<u64> {
         .collect()
 }
 
-/// `x ^ e` modulo `q`, for `q` below `2^64`.
-fn pow_mod(x: u64, mut e: u64, q: u64) -> u64 {
-    let mul = |a: u64, b: u64| (u128::from(a) * u128::from(b) % u128::from(q)) as u64;
-    let (mut base, mut out) = (x % q, 1 % q);
-    while e > 0 {
-        if e & 1 == 1 {
-            out = mul(out, base);
-        }
-        base = mul(base, base);
-        e >>= 1;
-    }
-    out
-}
-
 /// The odd `x < 2^k` with `x ^ p == o` modulo `2^k`, for `o` odd, `p` an odd prime and
 /// `k >= 1`. Since `p` is odd, `x -> x ^ p` permutes the odd residues modulo `2^k`, so there is
 /// exactly one. Newton's method over the 2-adic integers finds it: `p * x ^ (p - 1)` is odd, so
 /// each step doubles the bits that are right. The first 64 bits come from
-/// [`odd_root_mod_word`], with the inverse of the derivative there, in one word; from there the
+/// [`odd_root_mod_2_64`], with the inverse of the derivative there, in one word; from there the
 /// inverse of the derivative is carried from step to step and refined by one Newton step of
 /// its own, so the cost is `O(M(k) log p)`, with `M(k)` that of a product of `k` bits, and a
 /// root of `k` bits takes `log2(k / 64)` steps on numbers wider than a word, not `log2 k`.
 fn odd_root_mod_pow2(o: &BigUint, p: u64, k: u64) -> BigUint {
     let low = o.iter_u64_digits().next().expect("o is odd");
-    let word = odd_root_mod_word(low, p);
+    let word = odd_root_mod_2_64(low, p);
     if k <= 64 {
         return BigUint::from(word & (u64::MAX >> (64 - k)));
     }
     let mut x = BigUint::from(word);
     // The inverse of the derivative at `x`, right modulo 2^64.
-    let mut z = BigUint::from(inverse_mod_word(pow_word(word, p - 1).wrapping_mul(p)));
+    let mut z = BigUint::from(inverse_mod_2_64(pow_mod_2_64(word, p - 1).wrapping_mul(p)));
     let mut j = 64;
     while j < k {
         j = (2 * j).min(k);
@@ -1189,42 +1137,6 @@ fn odd_root_mod_pow2(o: &BigUint, p: u64, k: u64) -> BigUint {
         z = mul_uint(&z, &((&unit + 2u32 - (mul_uint(&d, &z) & &mask)) & &mask)) & &mask;
         let step = mul_uint(&f, &z) & &mask;
         x = (x + unit - step) & mask;
-    }
-    x
-}
-
-/// `b ^ e` modulo `2^64`.
-fn pow_word(mut b: u64, mut e: u64) -> u64 {
-    let mut out = 1u64;
-    while e > 0 {
-        if e & 1 == 1 {
-            out = out.wrapping_mul(b);
-        }
-        b = b.wrapping_mul(b);
-        e >>= 1;
-    }
-    out
-}
-
-/// The inverse of an odd `d` modulo `2^64`: `d` is its own inverse modulo 8, and each step
-/// `z * (2 - d * z)` doubles the bits that are right, so five steps make 96.
-fn inverse_mod_word(d: u64) -> u64 {
-    let mut z = d;
-    for _ in 0..5 {
-        z = z.wrapping_mul(2u64.wrapping_sub(d.wrapping_mul(z)));
-    }
-    z
-}
-
-/// [`odd_root_mod_pow2`] in one word: the odd `x` with `x ^ p == o` modulo `2^64`, for `o` odd
-/// and `p` odd, by six Newton steps from `x = 1`, each doubling the bits that are right.
-fn odd_root_mod_word(o: u64, p: u64) -> u64 {
-    let mut x = 1u64;
-    for _ in 0..6 {
-        let y = pow_word(x, p - 1);
-        let f = y.wrapping_mul(x).wrapping_sub(o);
-        // The inverse of the odd derivative `p * x ^ (p - 1)`.
-        x = x.wrapping_sub(f.wrapping_mul(inverse_mod_word(y.wrapping_mul(p))));
     }
     x
 }
@@ -1460,7 +1372,7 @@ impl Core {
     fn exps_gcd(&self) -> BigUint {
         self.0
             .iter()
-            .fold(BigUint::ZERO, |g, (_, e)| Integer::gcd(&g, e))
+            .fold(BigUint::ZERO, |g, (_, e)| gcd_uint(&g, e))
     }
 
     /// Whether two cores have one value. The atoms on which they differ in form are taken
@@ -1952,7 +1864,7 @@ impl Kept {
                     // b ^ (e / k) = b ^ (e' / k') in lowest terms, with k' >= 2 since k does
                     // not divide e; b is not a perfect power (`Core::power`), so this is
                     // irrational, and its ceiling is one past its floor.
-                    let g = Integer::gcd(exp, k);
+                    let g = gcd_uint(exp, k);
                     let (e, k) = (exp / &g, k / &g);
                     let r = Num::power(false, base.clone(), e).root_floor(&k);
                     return if up { &r + &Num::ONE } else { r };
@@ -2152,13 +2064,18 @@ fn is_perfect_power(x: &Kept, k: &BigUint) -> bool {
     let mut bits = 64;
     let mut tested: u64 = 0;
     loop {
-        p = next_prime(p);
+        // Unreachable: `root_approx` decides once `bits` reaches the bits of `x`, and `bits`
+        // doubles at each power of two of `tested`, so `tested` stays below twice the bits of
+        // `x` over 64 and `p`, the `tested`-th prime, far below `2^64`.
+        p = next_prime(p).expect("a prime below 2^64 for a value held in memory");
         tested += 1;
-        let g = Integer::gcd(k, &BigUint::from(p - 1));
-        if !g.is_one() {
-            let n = BigUint::from(p);
-            let a = x.residue(&n).expect("integer atoms have residues");
-            if !a.is_zero() && !a.modpow(&(BigUint::from(p - 1) / &g), &n).is_one() {
+        let g = gcd_big_u64(k, p - 1);
+        if g != 1 {
+            let a = x
+                .residue(&BigUint::from(p))
+                .expect("integer atoms have residues");
+            let a = u64::try_from(a).expect("a residue below p");
+            if a != 0 && pow_mod(a, (p - 1) / g, p) != 1 {
                 return false;
             }
         }
@@ -2169,18 +2086,6 @@ fn is_perfect_power(x: &Kept, k: &BigUint) -> bool {
             bits *= 2;
         }
     }
-}
-
-/// The least prime above `p`.
-fn next_prime(p: u64) -> u64 {
-    let mut q = p + 1;
-    while (2..)
-        .take_while(|d| d * d <= q)
-        .any(|d| q.is_multiple_of(d))
-    {
-        q += 1;
-    }
-    q
 }
 
 /// An unbounded integer held in one machine word while it fits in `i64`: an interval end
@@ -2349,8 +2254,8 @@ impl Num {
         }
         let g = terms
             .iter()
-            .fold(Integer::gcd(&d, &BigInt::from(den.clone())), |g, (c, _)| {
-                Integer::gcd(&g, c)
+            .fold(BigInt::from(gcd_uint(d.magnitude(), &den)), |g, (c, _)| {
+                BigInt::from(gcd_uint(g.magnitude(), c.magnitude()))
             });
         let (terms, d, den) = if g.is_one() {
             (terms, d, den)
@@ -2921,7 +2826,7 @@ impl Num {
     pub fn gcd(&self, other: &Num) -> Num {
         match (&self.0, &other.0) {
             (Word::Small(a), Word::Small(b)) => {
-                return Integer::gcd(&(*a as i128), &(*b as i128)).into();
+                return i128::from(gcd_u64(a.unsigned_abs(), b.unsigned_abs())).into();
             }
             (Word::Kept(_), _) if other.scalar().is_some() => {
                 if other.is_zero() {
@@ -2931,7 +2836,7 @@ impl Num {
                 if let Word::Kept(x) = &self.0
                     && let Some(r) = x.residue(s.big().magnitude())
                 {
-                    return Integer::gcd(&BigInt::from(r), &*s.big()).into();
+                    return BigInt::from(gcd_uint(&r, s.big().magnitude())).into();
                 }
             }
             (_, Word::Kept(_)) if self.scalar().is_some() => return other.gcd(self),
@@ -2947,7 +2852,7 @@ impl Num {
         // COMPLEXITY.md S33. A complete solution would factor out the common part of the cores
         // over a coprime base (as at `Core::value_cmp`) and take the gcd of the remaining
         // coefficients by residues.
-        self.big().gcd(&other.big()).into()
+        BigInt::from(gcd_uint(self.big().magnitude(), other.big().magnitude())).into()
     }
 
     /// The Euclidean quotient: `self = q * d + r` with `r` in `0..abs(d)`, for `d` not zero.
@@ -3450,7 +3355,7 @@ mod tests {
         for p in [3u64, 5, 7, 11, 13, 31, 61, 127, 509, 4093, 65_521] {
             for _ in 0..200 {
                 let o = rng.next_u64() | 1;
-                let word = odd_root_mod_word(o, p);
+                let word = odd_root_mod_2_64(o, p);
                 for k in [1u64, 2, 17, 63, 64] {
                     let mask = u64::MAX >> (64 - k);
                     let big = odd_root_mod_pow2(&BigUint::from(o), p, k);

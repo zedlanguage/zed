@@ -113,17 +113,14 @@ struct Branch<K, V> {
     sum: AtomicU64,
 }
 
-/// The modulus of [`Map::sum`], the prime `2^61 - 1`.
-pub(crate) const SUM_MODULUS: u64 = (1 << 61) - 1;
+/// The modulus of [`Map::sum`], the prime `2^61 - 1` ([`zed_numtheory::m61`]).
+pub(crate) const SUM_MODULUS: u64 = zed_numtheory::m61::P;
 
 /// The mark of a branch whose sum is not kept: no sum, which is below [`SUM_MODULUS`], is it.
 const UNSUMMED: u64 = u64::MAX;
 
-/// `a + b` modulo [`SUM_MODULUS`], for `a` and `b` below it.
-pub(crate) fn add(a: u64, b: u64) -> u64 {
-    let s = a + b;
-    if s >= SUM_MODULUS { s - SUM_MODULUS } else { s }
-}
+/// `a + b` modulo [`SUM_MODULUS`], for `a` below it and `b` at most it.
+pub(crate) use zed_numtheory::m61::add;
 
 /// The bit a kept sum carries beside its residue when the entries it covers hold a `-0.0` at
 /// any depth (`value::family_sum`), so that whether a family is its own key (`Value::is_key`)

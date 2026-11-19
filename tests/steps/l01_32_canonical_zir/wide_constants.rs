@@ -249,10 +249,7 @@ fn a_cut_count_of_limbs_is_an_error() {
 
 /// The first `n` primes.
 pub(super) fn primes(n: usize) -> Vec<u64> {
-    (2..)
-        .filter(|&p| zed_kernel::num::is_prime(p))
-        .take(n)
-        .collect()
+    zed_numtheory::first_primes(n)
 }
 
 /// The product of `primes`, each to the power 2^100, kept as its powers.

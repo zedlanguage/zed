@@ -18,6 +18,7 @@ members = [
     "crates/zed-collections",
     "crates/zed-graph",
     "crates/zed-kernel",
+    "crates/zed-numtheory",
     "crates/zed-rt",
     "crates/zed-cert",
     "crates/zed-native",
@@ -44,6 +45,7 @@ publish = false
 zed-collections = { path = "crates/zed-collections" }
 zed-graph = { path = "crates/zed-graph" }
 zed-kernel = { path = "crates/zed-kernel" }
+zed-numtheory = { path = "crates/zed-numtheory" }
 zed-rt = { path = "crates/zed-rt" }
 zedc = { path = "crates/zedc" }
 zed-native = { path = "crates/zed-native" }

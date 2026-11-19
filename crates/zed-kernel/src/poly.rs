@@ -34,9 +34,11 @@ use zed_graph::MinHeap;
 
 use crate::digest::{Digest, step};
 use crate::machine_int::BitLen;
-use crate::num::{is_prime, mul_cost, mul_int, mul_uint, pow_uint, squares_by_transform};
+use crate::num::{mul_cost, mul_int, mul_uint, pow_uint, squares_by_transform};
 use crate::term::{Prim, Term};
 use crate::value::Value;
+use zed_numtheory::m61::{self, P};
+use zed_numtheory::next_prime;
 
 /// The ring the identity is read in.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -204,9 +206,6 @@ fn sum_charge<K: Key>(p: &Poly<K>) -> f64 {
     let words: u64 = p.terms.iter().map(|(_, c)| c.bits().div_ceil(64)).sum();
     p.terms.len() as f64 * K::TERM + words as f64 * SUM_WORD
 }
-
-/// The prime the points are taken modulo, `2^61 - 1`.
-const P: u64 = (1 << 61) - 1;
 
 /// What [`decide`] found.
 #[derive(Clone, Debug, PartialEq)]
@@ -829,14 +828,14 @@ impl<'t> Identity<'t> {
                     if d == 0 {
                         return None;
                     }
-                    mulmod(residue(a), powmod(d, &BigUint::from(P - 2)))
+                    m61::mul(residue(a), m61::pow(d, &BigUint::from(P - 2)))
                 }
                 Node::Leaf(l) => at[*l as usize],
-                Node::Add(a, b) => addmod(vals[*a], vals[*b]),
-                Node::Sub(a, b) => addmod(vals[*a], P - vals[*b]),
+                Node::Add(a, b) => m61::add(vals[*a], vals[*b]),
+                Node::Sub(a, b) => m61::add(vals[*a], (P - vals[*b]) % P),
                 Node::Neg(a) => (P - vals[*a]) % P,
-                Node::Mul(a, b) => mulmod(vals[*a], vals[*b]),
-                Node::Pow(a, e) => powmod(vals[*a], e),
+                Node::Mul(a, b) => m61::mul(vals[*a], vals[*b]),
+                Node::Pow(a, e) => m61::pow(vals[*a], e),
             };
             vals.push(v);
         }
@@ -1380,7 +1379,7 @@ impl<'t> Identity<'t> {
                 let (e, rest) = k.without(ctx, v);
                 let e = if e < P { e } else { 1 + (e - 1) % (P - 1) };
                 let s = reduced.entry((rest, e)).or_insert(0);
-                *s = addmod(*s, *c);
+                *s = m61::add(*s, *c);
             }
             let split: Vec<(K, u64, u64)> = reduced
                 .into_iter()
@@ -1394,9 +1393,9 @@ impl<'t> Identity<'t> {
                 let xm = small_mod(x);
                 let mut acc: HashMap<K, u64> = HashMap::new();
                 for (rest, e, c) in &split {
-                    let t = mulmod(*c, powmod(xm, &BigUint::from(*e)));
+                    let t = m61::mul(*c, m61::pow(xm, &BigUint::from(*e)));
                     let s = acc.entry(rest.clone()).or_insert(0);
-                    *s = addmod(*s, t);
+                    *s = m61::add(*s, t);
                 }
                 let mut left: Vec<(K, u64)> = acc.into_iter().filter(|(_, c)| *c != 0).collect();
                 if !left.is_empty() {
@@ -1565,40 +1564,6 @@ fn residue(a: &BigInt) -> u64 {
     a.mod_floor(&BigInt::from(P))
         .to_u64()
         .expect("a residue is below P")
-}
-
-fn addmod(a: u64, b: u64) -> u64 {
-    let s = a + b;
-    if s >= P { s - P } else { s }
-}
-
-/// `a * b` modulo `P = 2^61 - 1`: the 122-bit product folded once, since `2^61 = 1` modulo `P`.
-fn mulmod(a: u64, b: u64) -> u64 {
-    let x = u128::from(a) * u128::from(b);
-    let lo = u64::try_from(x & u128::from(P)).expect("61 bits");
-    let hi = u64::try_from(x >> 61).expect("61 bits");
-    addmod(lo, hi)
-}
-
-/// `b ^ e` modulo `P`, with the exponent reduced modulo `P - 1` (Fermat) when `b` is not 0:
-/// `O(log e)` for the reduction and 61 squarings.
-fn powmod(b: u64, e: &BigUint) -> u64 {
-    if e.is_zero() {
-        return 1;
-    }
-    if b == 0 {
-        return 0;
-    }
-    let mut e = (e % (P - 1)).to_u64().expect("below P - 1");
-    let (mut b, mut r) = (b, 1);
-    while e > 0 {
-        if e & 1 == 1 {
-            r = mulmod(r, b);
-        }
-        b = mulmod(b, b);
-        e >>= 1;
-    }
-    r
 }
 
 /// Which keys an expansion uses.
@@ -2561,11 +2526,10 @@ fn pairs_at(ra: &[u128], rb: &[u128], s: u128) -> u64 {
 fn draw_prime(lambda: u64, rng: &mut u64) -> u64 {
     let lo = lambda.max(2);
     *rng = step(*rng, 3);
-    let mut p = lo + *rng % lo;
-    while !is_prime(p) {
-        p += 1;
-    }
-    p
+    let p = lo + *rng % lo;
+    // Unreachable: each round holds a dense fold of `p` words, so `lambda` and `p` stay far
+    // below `2^62`, and a prime lies between `p` and `2p` (Bertrand's postulate), below `2^64`.
+    next_prime(p - 1).expect("a prime below 2^64 past a fold held in memory")
 }
 
 /// Every `a + b`, `a` in `ra` and `b` in `rb`, in increasing order, each once, by rounds at a

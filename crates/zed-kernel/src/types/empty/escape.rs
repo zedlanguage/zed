@@ -1948,8 +1948,10 @@ fn cells_windows(
             l.sort_unstable_by_key(|&v| key(v));
         }
     };
+    // The shared Stein gcd on 64-bit words; `usize` is 64 bits on the one supported target
+    // (Linux x86_64), so both conversions are exact.
     fn gcd(a: usize, b: usize) -> usize {
-        if b == 0 { a } else { gcd(b, a % b) }
+        zed_numtheory::gcd_u64(a as u64, b as u64) as usize
     }
     // The places' modulus: list `x` is only at places `j = a_x` modulo `g_place`.
     let (mut g_place, mut first) = (0usize, vec![usize::MAX; nv + 1]);

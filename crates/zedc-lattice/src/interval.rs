@@ -15,6 +15,7 @@ use std::ops::Neg;
 use std::sync::{Arc, OnceLock};
 
 use zed_kernel::{Prim, Value};
+use zed_numtheory::m61::{P, add as add_mod, mul as mul_mod};
 
 use super::landmarks::Landmarks;
 pub use zedc_int::int::Num;
@@ -194,24 +195,8 @@ struct Node {
     pow: u64,
 }
 
-/// The modulus of the content hash, the prime `2^61 - 1`.
-const P: u64 = (1 << 61) - 1;
-/// The base of the content hash.
+/// The base of the content hash, below the modulus `P = 2^61 - 1` ([`zed_numtheory::m61`]).
 const R: u64 = 0x0b4f_7e1d_9a35_c2e7 % P;
-
-/// `a · b` modulo `P`, for `a, b < P`.
-fn mul_mod(a: u64, b: u64) -> u64 {
-    let x = u128::from(a) * u128::from(b);
-    let s = (x as u64 & P) + (x >> 61) as u64;
-    let s = (s & P) + (s >> 61);
-    if s >= P { s - P } else { s }
-}
-
-/// `a + b` modulo `P`, for `a, b < P`.
-fn add_mod(a: u64, b: u64) -> u64 {
-    let s = a + b;
-    if s >= P { s - P } else { s }
-}
 
 /// A hasher with fixed keys, so that a set's content hash is the same in every run.
 struct FixedHasher(u64);

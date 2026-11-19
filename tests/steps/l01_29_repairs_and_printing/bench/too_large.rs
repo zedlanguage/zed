@@ -122,26 +122,12 @@ fn bounding_a_chain_of_products_whose_roots_all_share_a_prime_scales() {
     );
 }
 
-/// The first `n` primes, by a sieve that doubles its range until it holds them.
+/// The first `n` primes.
 fn primes(n: usize) -> Vec<u128> {
-    let mut top = 64;
-    loop {
-        let mut composite = vec![false; top];
-        let mut out = Vec::with_capacity(n);
-        for p in 2..top {
-            if composite[p] {
-                continue;
-            }
-            out.push(p as u128);
-            if out.len() == n {
-                return out;
-            }
-            for m in (p * p..top).step_by(p) {
-                composite[m] = true;
-            }
-        }
-        top *= 2;
-    }
+    zed_numtheory::first_primes(n)
+        .into_iter()
+        .map(u128::from)
+        .collect()
 }
 
 /// `x` of `k = isqrt(n)` primes and `k` sets `u_i` and `k` sets `v_j` of `k` primes each, all

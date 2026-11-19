@@ -1203,11 +1203,8 @@ fn drop_last(c: &mut Cond) {
 }
 
 fn gcd(a: i64, b: i64) -> i64 {
-    let (mut a, mut b) = (a.abs(), b.abs());
-    while b != 0 {
-        (a, b) = (b, a % b);
-    }
-    a
+    // At most `2^63`, which only `gcd(i64::MIN, 0)` reaches, and the old `abs` overflowed there.
+    i64::try_from(zed_numtheory::gcd_u64(a.unsigned_abs(), b.unsigned_abs())).expect("below 2^63")
 }
 
 /// Checks family `name` at size `k`: the scope holds every point the oracle finds, and the

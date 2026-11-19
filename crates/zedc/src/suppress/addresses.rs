@@ -93,9 +93,8 @@ fn declared(s: &Stmt) -> Option<&str> {
     }
 }
 
-/// The modulus of the polynomial hash of a node's text, the prime 2^61 - 1.
-const MODULUS: u64 = (1 << 61) - 1;
-/// The base of the polynomial hash, below `MODULUS`.
+/// The base of the polynomial hash of a node's text, below its modulus, the prime 2^61 - 1
+/// ([`zed_numtheory::m61`], whose products need no division).
 const BASE: u64 = 1_000_003;
 
 /// The polynomial hash of each prefix of a text with its white space dropped, so that the hash
@@ -119,7 +118,7 @@ struct Content {
 
 impl Content {
     fn new(text: &[u8]) -> Content {
-        let mul = |a: u64, b: u64| (u128::from(a) * u128::from(b) % u128::from(MODULUS)) as u64;
+        use zed_numtheory::m61::{add, mul};
         let mut content = Content {
             prefix: Vec::with_capacity(text.len() + 1),
             count: Vec::with_capacity(text.len() + 1),
@@ -130,7 +129,7 @@ impl Content {
             content.prefix.push(hash);
             content.count.push(count);
             if !b.is_ascii_whitespace() {
-                hash = (mul(hash, BASE) + u64::from(b) + 1) % MODULUS;
+                hash = add(mul(hash, BASE), u64::from(b) + 1);
                 count += 1;
                 content.power.push(mul(content.power[count - 1], BASE));
             }
@@ -148,8 +147,7 @@ impl Content {
             span.end.clamp(span.start.min(last), last),
         );
         let n = self.count[end] - self.count[start];
-        let shifted = (u128::from(self.prefix[start]) * u128::from(self.power[n])
-            % u128::from(MODULUS)) as u64;
-        (self.prefix[end] + MODULUS - shifted) % MODULUS
+        use zed_numtheory::m61::{mul, sub};
+        sub(self.prefix[end], mul(self.prefix[start], self.power[n]))
     }
 }

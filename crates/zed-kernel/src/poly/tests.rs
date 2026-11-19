@@ -698,9 +698,9 @@ fn sparse_keys_past_u128() {
 
 #[test]
 fn modular_arithmetic() {
-    assert_eq!(mulmod(P - 1, P - 1), 1);
-    assert_eq!(powmod(0, &BigUint::zero()), 1);
-    assert_eq!(powmod(3, &BigUint::from(P - 1)), 1);
+    assert_eq!(m61::mul(P - 1, P - 1), 1);
+    assert_eq!(m61::pow(0, &BigUint::zero()), 1);
+    assert_eq!(m61::pow(3, &BigUint::from(P - 1)), 1);
     assert_eq!(small_mod(-1), P - 1);
     assert_eq!((0..5).map(small).collect::<Vec<_>>(), [0, 1, -1, 2, -2]);
 }

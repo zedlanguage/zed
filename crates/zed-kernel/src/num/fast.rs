@@ -125,6 +125,7 @@ use std::rc::{Rc, Weak};
 use num_bigint::{BigInt, BigUint, Sign};
 use num_integer::Integer;
 use num_traits::{One, Signed, ToPrimitive, Zero};
+use zed_numtheory::inverse_mod_2_64;
 
 use super::TooLarge;
 use crate::machine_int::BitLen;
@@ -1417,18 +1418,9 @@ fn sparse_mul(a: &BigUint, b: &BigUint) -> BigUint {
     from_words(out)
 }
 
-/// `x^-1 mod p` for a prime `p` and `x` not a multiple of it, by Fermat.
+/// `x^-1 mod p` for a prime `p` and `x` not a multiple of it, by Fermat: `x^(p - 2)`.
 const fn inv_mod(x: u64, p: u64) -> u64 {
-    let (mut b, mut e, mut r) = (x as u128, p - 2, 1u128);
-    let p = p as u128;
-    while e > 0 {
-        if e & 1 == 1 {
-            r = r * b % p;
-        }
-        b = b * b % p;
-        e >>= 1;
-    }
-    r as u64
+    zed_numtheory::pow_mod(x, p - 2, p)
 }
 
 /// `a * b` of signed numbers, by [`mul`].
@@ -2157,16 +2149,6 @@ fn low128(x: &BigInt) -> u128 {
     }
 }
 
-/// `x^-1 mod 2^64` for an odd `x`: `3x XOR 2` is right in its low 5 bits, and each of four
-/// Newton steps `y (2 - x y)` doubles the right bits, to 80.
-fn inverse_mod_2_64(x: u64) -> u64 {
-    let mut y = x.wrapping_mul(3) ^ 2;
-    for _ in 0..4 {
-        y = y.wrapping_mul(2u64.wrapping_sub(x.wrapping_mul(y)));
-    }
-    y
-}
-
 /// The 2-adic valuation of `x`; `None` for 0.
 fn nu(x: &BigInt) -> Option<u64> {
     x.trailing_zeros()
@@ -2182,11 +2164,7 @@ fn inverse_mod_pow2(x: &BigUint, w: u64) -> BigUint {
     // Unreachable: every caller passes an odd `x` (`step`'s `b1`, `a` after its `bit(0)`
     // test, the odd part `o`, an odd modulus), and an odd number has a low word.
     let low = x.iter_u64_digits().next().expect("x is odd");
-    let mut inv = 1u64;
-    for _ in 0..6 {
-        inv = inv.wrapping_mul(2u64.wrapping_sub(low.wrapping_mul(inv)));
-    }
-    let mut y = BigUint::from(inv);
+    let mut y = BigUint::from(inverse_mod_2_64(low));
     let mut h = 64;
     while h < w {
         let bits = (2 * h).min(w);
@@ -4145,7 +4123,7 @@ mod tests {
     #[test]
     fn the_primes_are_primes_with_a_root_of_order_2_to_the_50() {
         for f in &FIELDS {
-            assert!(super::super::factor::is_prime(f.p));
+            assert!(zed_numtheory::is_prime(f.p));
             assert_eq!((f.p - 1) % (1 << 50), 0);
             // A quadratic nonresidue: root^((p-1)/2) = -1, so root^((p-1)/2^50) has order 2^50.
             let r = f.pow(f.to_mont(f.root), (f.p - 1) / 2);

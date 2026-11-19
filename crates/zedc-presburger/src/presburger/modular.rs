@@ -3257,8 +3257,9 @@ const LARGEST_PRIME_BELOW_2_16: u16 = 65_521;
 
 /// The table entry of a prime held by none of the values; a prime held by `c` of them (counted
 /// up to 2) has `PRIME_HELD_BY_NONE - c`. All three are above every least prime factor a
-/// composite up to `u32::MAX` can have (at most `LARGEST_PRIME_BELOW_2_16`).
-const PRIME_HELD_BY_NONE: u16 = u16::MAX;
+/// composite up to `u32::MAX` can have (at most `LARGEST_PRIME_BELOW_2_16`). It is the marker
+/// [`zed_numtheory::least_prime_factors`] writes for a prime, so its table is used as built.
+const PRIME_HELD_BY_NONE: u16 = zed_numtheory::PRIME;
 /// The entry of a prime held by two or more of the values.
 const PRIME_HELD_BY_TWO: u16 = PRIME_HELD_BY_NONE - 2;
 const _: () = assert!(LARGEST_PRIME_BELOW_2_16 < PRIME_HELD_BY_TWO);
@@ -3279,26 +3280,16 @@ const _: () = assert!(LARGEST_PRIME_BELOW_2_16 < PRIME_HELD_BY_TWO);
 /// Nothing overflows: `i * q` is formed in `u64`, and a value written as a factor is a listed
 /// prime `q <= least(i) <= i` with `i * q <= top`, so `q^2 < 2^32` and `q < 2^16`.
 ///
-/// The table is built by the linear sieve: for `i` from 2 up, an `i` with no entry is prime,
-/// gets the marker and enters the list; then `least(i * q) = q` for the listed primes `q` in
-/// rising order, stopping at the first `q` above `least(i)` (which is `i` for a prime `i`) or
-/// with `i * q` above `top`. Proof that every composite `j <= top` gets its least prime factor
-/// `p`, and gets it once: `i = j / p` is at least `p` and below `j`, every prime factor of `i`
-/// is one of `j`, so `least(i) >= p`, and each prime `q <= p` is listed by then (`q <= i`)
-/// with `i * q <= j <= top`; so the loop at `i` reaches `q = p` and writes `least(j) = p`. A
-/// write `least(i * q) = q` is made only with `q <= least(i)`, so `q` is the least prime
-/// factor of `i * q`, and `j` fixes both `q` and `i`: one write per composite, and never over
-/// a prime's marker. With at most one stopping step per `i`, the sieve takes at most `2 top`
-/// steps. Factoring a value `v` through the table takes one division per prime factor counted
-/// with multiplicity, at most `log2 v` of them. (The textbook linear sieve; the proof here is
-/// complete, and no paper is relied on.)
+/// The table is built by the linear sieve of [`zed_numtheory::least_prime_factors`], in at most
+/// `2 top` steps (the proof is there). Factoring a value `v` through the table takes one
+/// division per prime factor counted with multiplicity, at most `log2 v` of them.
 // Complexity tradeoff: the first form kept `least: Vec<u32>` (4 top bytes) and a separate
 // count `held: Vec<u8>` (top bytes), 5 top + 4 pi(top) bytes; this one keeps both in one
 // `Vec<u16>`, 2 top + 4 pi(top) bytes, with the same O(top + B) steps. The cost is a compare
 // per read to tell a marker from a factor. Bench `pncx_coprime_dense_scale` and
 // `pncx_common_factor_scale`; COMPLEXITY.md C31c.
 fn shares_a_factor_by_table(vals: &[u32], top: u32) -> Vec<bool> {
-    let mut table = least_prime_table(top);
+    let mut table = zed_numtheory::least_prime_factors(top);
     // The counts: each value adds one to the marker count of each of its distinct primes. The
     // reads of the table between the writes see markers whose counts have changed, which still
     // read as primes, so the factoring is unchanged.
@@ -3321,29 +3312,6 @@ fn shares_a_factor_by_table(vals: &[u32], top: u32) -> Vec<bool> {
             false
         })
         .collect()
-}
-
-/// The table of `shares_a_factor_by_table` up to `top`, by the linear sieve described there,
-/// with every prime's count at 0.
-fn least_prime_table(top: u32) -> Vec<u16> {
-    let mut table = vec![0u16; top as usize + 1];
-    let mut primes: Vec<u32> = Vec::new();
-    for i in 2..=top {
-        if table[i as usize] == 0 {
-            table[i as usize] = PRIME_HELD_BY_NONE;
-            primes.push(i);
-        }
-        let least_i = least_prime_factor(&table, i);
-        for &q in &primes {
-            let j = u64::from(i) * u64::from(q);
-            if q > least_i || j > u64::from(top) {
-                break;
-            }
-            // `q < 2^16` (indeed `q <= 65521`), by the proof at `shares_a_factor_by_table`.
-            table[j as usize] = q as u16;
-        }
-    }
-    table
 }
 
 /// The least prime factor of `x`, `2 <= x`, from the table of `shares_a_factor_by_table` once
@@ -4931,7 +4899,7 @@ fn elementary_intervals(
 }
 
 fn combine_crt_pair(r1: &Int, m1: &Int, r2: &Int, m2: &Int) -> Option<(Int, Int)> {
-    let g = wide_gcd(m1, m2);
+    let g = m1.gcd(m2);
     let diff = r2 - r1;
     if !diff.mod_floor(&g).is_zero() {
         return None;
@@ -5606,24 +5574,6 @@ fn inverse_mod(a: &Int, m: &Int) -> Option<Int> {
             let (g, u, _) = a.extended_gcd(m)?;
             (g == Int::ONE).then(|| u.mod_floor(m))
         }
-    }
-}
-
-/// The greatest common divisor of `a` and `b`, never negative, by the kernel's half gcd
-/// (`zed_kernel::num::gcd_uint`), O(M(n) log n), where `Int::gcd` on wide values is the
-/// binary gcd of num-integer, O(n^2).
-fn wide_gcd(a: &Int, b: &Int) -> Int {
-    if let (Some(_), Some(_)) = (a.to_i128(), b.to_i128()) {
-        return a.gcd(b);
-    }
-    let an = zedc_int::int::Num::from(a);
-    let bn = zedc_int::int::Num::from(b);
-    match (an.built(), bn.built()) {
-        (Ok(ab), Ok(bb)) => Int::from(num_bigint::BigInt::from(zed_kernel::num::gcd_uint(
-            ab.magnitude(),
-            bb.magnitude(),
-        ))),
-        _ => a.gcd(b),
     }
 }
 

@@ -18,7 +18,6 @@
 
 mod bound;
 mod digit_text;
-mod factor;
 mod fast;
 mod float_text;
 mod room;
@@ -36,7 +35,6 @@ use num_traits::{One, Pow, Signed, ToPrimitive, Zero};
 
 use crate::machine_int::BitLen;
 use bound::{Format, Product};
-pub use factor::is_prime;
 #[doc(hidden)]
 pub use fast::crossover;
 use fast::{LEAF_DIGITS, built, read_digits_by};
@@ -50,6 +48,8 @@ pub use room::{
     LiteralRounding, TooLarge, about, bits_of_digits, bytes_of, bytes_text, digits_of_bits,
     fixed_room, machine_memory, memory_clause, room,
 };
+use zed_numtheory::m61::{self, P as MERSENNE_61};
+use zed_numtheory::{factor, gcd_big_u64, is_prime, mul_mod, pow_mod_big, rem_big_u64};
 
 /// How [`Rat::round_whole`] rounds a number to a whole one: the rules of `round` (ties to
 /// even), `round(x, ties: #away)`, `floor`, `ceil`, `trunc` and `awayFromZero` (DESIGN.md
@@ -497,9 +497,9 @@ impl Rat {
     /// so the cost is the size of the coefficients and exponents, never of the value.
     pub fn residues(&self) -> (bool, u64, u64) {
         let side = |coef: &BigInt, sign: Sign| {
-            let mut r = rem_u64(coef.magnitude(), MERSENNE_61);
+            let mut r = rem_big_u64(coef.magnitude(), MERSENNE_61);
             for (p, e) in self.pows.iter().filter(|(_, e)| e.sign() == sign) {
-                r = mul_mod(r, pow_mod(*p, e.magnitude()));
+                r = m61::mul(r, m61::pow(*p, e.magnitude()));
             }
             r
         };
@@ -518,9 +518,9 @@ impl Rat {
         debug_assert!(self.is_integer(), "residues of an integer");
         let (negative, n, _) = self.residues();
         let q = MERSENNE_61 - 1;
-        let mut e = rem_u64(self.num.magnitude(), q);
+        let mut e = rem_big_u64(self.num.magnitude(), q);
         for (p, k) in self.pows.iter() {
-            e = mul_mod_any(e, pow_mod_any(*p % q, k.magnitude(), q), q);
+            e = mul_mod(e, pow_mod_big(*p, k.magnitude(), q), q);
         }
         match negative {
             true => ((MERSENNE_61 - n) % MERSENNE_61, (q - e) % q),
@@ -997,7 +997,7 @@ impl Rat {
             }
             match part.to_u64() {
                 Some(w) => {
-                    for (p, k) in factor::factor(w) {
+                    for (p, k) in factor(w) {
                         let x = &times * k;
                         pows.push((p, if i == 0 { x } else { -x }));
                     }
@@ -1406,78 +1406,6 @@ impl Rat {
     }
 }
 
-/// The Mersenne prime `2^61 - 1`, the modulus of [`Rat::residues`].
-const MERSENNE_61: u64 = (1 << 61) - 1;
-
-/// `a * b mod 2^61 - 1`, for `a` and `b` below it.
-pub(crate) fn mul_mod(a: u64, b: u64) -> u64 {
-    let x = u128::from(a) * u128::from(b);
-    let m = u128::from(MERSENNE_61);
-    // `2^61 = 1 (mod M)`, so the high part adds to the low part; one subtraction ends it.
-    let r = (x & m) + (x >> 61);
-    let r = if r >= m { r - m } else { r };
-    // Unreachable: `a, b < M` give `x < M^2 < 2^122`, so `r <= M + 2^61 - 1 < 2M` before the
-    // subtraction and `r < M < 2^61` after it.
-    u64::try_from(r).expect("a residue below 2^61")
-}
-
-/// `x mod m`, by Horner over the limbs of `x` from the most significant, with nothing
-/// allocated.
-// Complexity tradeoff: `&x % m` in num-bigint 0.4 copies `x` and divides it by `m` as a big
-// number, so the residue of a constant of n words took 2n words that were never asked for,
-// and a wide constant written out aborted the lowering under a short memory limit
-// (`l01_17_value_representation::asks::addressing_a_wide_constant_is_refused_when_memory_is_short`,
-// item ENGINE-one). Here each limb is one `u128` remainder: O(n) time, as before, in O(1)
-// space.
-fn rem_u64(x: &BigUint, m: u64) -> u64 {
-    let m = u128::from(m);
-    let r = x
-        .iter_u64_digits()
-        .rev()
-        .fold(0u128, |r, d| ((r << 64) | u128::from(d)) % m);
-    // Unreachable: each fold step ends with `% m`, so `r < m <= u64::MAX`.
-    u64::try_from(r).expect("a remainder below a u64 modulus")
-}
-
-/// `p^e mod 2^61 - 1`, by squaring after reducing `e` modulo `M - 1` (Fermat), so the cost
-/// is the length of `e` and 61 squarings. `p` is prime, so `p mod M` is zero only for
-/// `p = M`, whose powers are 0 for `e > 0`.
-fn pow_mod(p: u64, e: &BigUint) -> u64 {
-    let base = p % MERSENNE_61;
-    if base == 0 {
-        return u64::from(e.is_zero());
-    }
-    let mut k = rem_u64(e, MERSENNE_61 - 1);
-    let (mut b, mut r) = (base, 1);
-    while k > 0 {
-        if k & 1 == 1 {
-            r = mul_mod(r, b);
-        }
-        b = mul_mod(b, b);
-        k >>= 1;
-    }
-    r
-}
-
-/// `a * b mod m`, for `a` and `b` below `m`.
-fn mul_mod_any(a: u64, b: u64, m: u64) -> u64 {
-    let r = u128::from(a) * u128::from(b) % u128::from(m);
-    // Unreachable: the remainder is below `m`, a `u64`.
-    u64::try_from(r).expect("a remainder below a u64 modulus")
-}
-
-/// `b^e mod m`, for `b` below `m`, by squaring over the bits of `e`: O(bits of `e`).
-fn pow_mod_any(b: u64, e: &BigUint, m: u64) -> u64 {
-    let mut r = 1 % m;
-    for i in (0..e.bits()).rev() {
-        r = mul_mod_any(r, r, m);
-        if e.bit(i) {
-            r = mul_mod_any(r, b, m);
-        }
-    }
-    r
-}
-
 /// `num / den` reduced, with `den` positive.
 fn reduce(num: BigInt, den: BigInt) -> (BigInt, BigInt) {
     let g = gcd(&num, &den);
@@ -1564,33 +1492,11 @@ fn gcd_uint_using(a: &BigUint, b: &BigUint, core: fn(&BigUint, &BigUint) -> BigU
             (lo >> sh) | (hi << (64 - sh))
         })
     }
-    fn gcd_mod_odd_u64(x: &BigUint, mut d: u64) -> u64 {
-        if d == 1 {
-            return 1;
-        }
-        let dm = u128::from(d);
-        let mut r = x
-            .iter_u64_digits()
-            .rev()
-            .fold(0u128, |acc, w| ((acc << 64) | u128::from(w)) % dm) as u64;
-        if r == 0 {
-            return d;
-        }
-        r >>= r.trailing_zeros();
-        while r != d {
-            if r < d {
-                (r, d) = (d, r);
-            }
-            r -= d;
-            r >>= r.trailing_zeros();
-        }
-        d
-    }
     if let Some(da) = odd_u64(a, za) {
-        return BigUint::from(gcd_mod_odd_u64(b, da)) << z;
+        return BigUint::from(gcd_big_u64(b, da)) << z;
     }
     if let Some(db) = odd_u64(b, zb) {
-        return BigUint::from(gcd_mod_odd_u64(a, db)) << z;
+        return BigUint::from(gcd_big_u64(a, db)) << z;
     }
     fn odd(x: &BigUint, z: u64) -> Cow<'_, BigUint> {
         match z {
@@ -1907,7 +1813,7 @@ const POINT_WORDS: u32 = 16;
 /// [`REM_STEP`] times `m`'s width when it has none.
 fn rem(a: &BigUint, m: &BigUint) -> Result<BigUint, TooLarge> {
     if let Some(w) = m.to_u64() {
-        return Ok(BigUint::from(rem_u64(a, w)));
+        return Ok(BigUint::from(rem_big_u64(a, w)));
     }
     // Complexity tradeoff: the memory is asked as `POINT_WORDS` words a point of `m`'s
     // transforms, or `REM_STEP` times `m`'s width, measured bounds on its peak (see each), not
@@ -2626,7 +2532,7 @@ mod tests {
         ];
         for x in &xs {
             for m in [1, 2, 7, MERSENNE_61 - 1, MERSENNE_61, u64::MAX] {
-                assert_eq!(BigUint::from(rem_u64(x, m)), x % m, "{x} mod {m}");
+                assert_eq!(BigUint::from(rem_big_u64(x, m)), x % m, "{x} mod {m}");
             }
         }
     }
@@ -2717,12 +2623,12 @@ mod tests {
         let m = MERSENNE_61;
         for (a, b) in [(m - 1, m - 1), (m - 1, 1), (m - 2, m - 3), (0, m - 1)] {
             let want = u128::from(a) * u128::from(b) % u128::from(m);
-            assert_eq!(u128::from(mul_mod(a, b)), want, "{a} * {b}");
+            assert_eq!(u128::from(m61::mul(a, b)), want, "{a} * {b}");
         }
         // `(M - 1)^2 = 1`, and an exponent of `M - 1` or a multiple of it reduces to 0.
-        assert_eq!(pow_mod(m - 1, &BigUint::from(2u8)), 1);
-        assert_eq!(pow_mod(3, &BigUint::from(m - 1)), 1);
-        assert_eq!(pow_mod(3, &(BigUint::from(m - 1) << 70u32)), 1);
-        assert_eq!(pow_mod(m, &BigUint::from(5u8)), 0);
+        assert_eq!(m61::pow(m - 1, &BigUint::from(2u8)), 1);
+        assert_eq!(m61::pow(3, &BigUint::from(m - 1)), 1);
+        assert_eq!(m61::pow(3, &(BigUint::from(m - 1) << 70u32)), 1);
+        assert_eq!(m61::pow(m, &BigUint::from(5u8)), 0);
     }
 }

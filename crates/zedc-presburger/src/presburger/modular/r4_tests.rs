@@ -876,7 +876,7 @@ fn pncx_shared_factor_table_reads_every_least_prime_factor() {
             .filter(|d| d * d <= n)
             .unwrap_or(n)
     };
-    let table = least_prime_table(top);
+    let table = zed_numtheory::least_prime_factors(top);
     for x in 2..=top {
         assert_eq!(least_prime_factor(&table, x), lpf(x), "{x}");
     }

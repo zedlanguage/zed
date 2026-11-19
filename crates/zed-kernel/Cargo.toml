@@ -28,6 +28,7 @@ num-integer = "0.1"
 num-traits = "0.2"
 zed-graph.workspace = true
 zed-collections.workspace = true
+zed-numtheory.workspace = true
 
 [dev-dependencies]
 rustix.workspace = true
