@@ -19231,26 +19231,25 @@ impl HullNode {
                     return Self::make_branch(nl, nr);
                 }
             }
-        } else if hr > hl + 1 {
-            if let HullNode::Branch {
+        } else if hr > hl + 1
+            && let HullNode::Branch {
                 left: rl,
                 right: rr,
                 ..
             } = &*right
+        {
+            if rr.height() >= rl.height() {
+                let nl = Self::make_branch(left, rl.clone());
+                return Self::make_branch(nl, rr.clone());
+            } else if let HullNode::Branch {
+                left: rll,
+                right: rlr,
+                ..
+            } = &**rl
             {
-                if rr.height() >= rl.height() {
-                    let nl = Self::make_branch(left, rl.clone());
-                    return Self::make_branch(nl, rr.clone());
-                } else if let HullNode::Branch {
-                    left: rll,
-                    right: rlr,
-                    ..
-                } = &**rl
-                {
-                    let nl = Self::make_branch(left, rll.clone());
-                    let nr = Self::make_branch(rlr.clone(), rr.clone());
-                    return Self::make_branch(nl, nr);
-                }
+                let nl = Self::make_branch(left, rll.clone());
+                let nr = Self::make_branch(rlr.clone(), rr.clone());
+                return Self::make_branch(nl, nr);
             }
         }
         Self::make_branch(left, right)
@@ -20032,12 +20031,7 @@ impl BoxFaceIndex {
 
     /// Reports every part that cannot be certified across one of the valid edges `edges`
     /// (1 or 2 edges, all fixing the same variable so each certifies every other variable).
-    fn report_edges(
-        &self,
-        edges: &[BoxEdge<'_>],
-        v_axis: bool,
-        out: &mut Vec<PartAt>,
-    ) {
+    fn report_edges(&self, edges: &[BoxEdge<'_>], v_axis: bool, out: &mut Vec<PartAt>) {
         out.extend(self.unindexed.iter().cloned());
         let order_edges = |quad: ArmQuad| -> Vec<BoxEdge<'_>> {
             if edges.len() <= 1 {
