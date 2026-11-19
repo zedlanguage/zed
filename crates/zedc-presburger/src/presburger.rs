@@ -20097,7 +20097,7 @@ fn project_each_with(f: &Formula, syms: &[Atom], cover: bool) -> Result<EachClas
         // written `!(a + z1 == b + 2c - 4)` refused `z0` past the limit with one sign and
         // answered it with the other (row PRES-cover-order-rewrites; test
         // `l01_39_reduced_product::pendants::the_rewrites_of_seed_5401893596085442912_give_one_answer`).
-        solver_found().map(|e| exact::exact_each(f, syms, e, SOLVER))
+        solver_found().and_then(|e| exact::exact_each_checked(f, syms, e, SOLVER))
     };
     if !syms.iter().any(|a| matches!(a, Atom::Product(..))) {
         if let Some(b) = one_row::OneRow::of(&conjuncts) {

@@ -460,6 +460,63 @@ fn the_answers_do_not_depend_on_the_order_of_the_symbols() {
     assert!(differ.is_empty(), "seed {seed}: {differ:#?}");
 }
 
+/// The covers of a part's symbols give the same answers and refusals with what the symbols
+/// before them learned (`PartCache`) as without it: random formulas as above, at limits from a
+/// few questions' work to the full one, for `[x, y, z, w]` (`w` read by no constraint). Where
+/// the call is refused as a whole, every symbol is refused for that cause without the cache.
+/// None asks more questions or runs more fast work (`FAST_WORK`) with the cache, and some call
+/// is refused as a whole. What the cache saves is measured on the formulas it is for
+/// (`disjoint::bench::the_join_of_arms_on_many_disjoint_refused_groups_reduced_scales` in
+/// `l01_39_scope_relations`): random formulas over four symbols seldom reach the steps it keeps.
+#[test]
+fn the_covers_answer_alike_with_and_without_what_the_symbols_before_learned() {
+    let seed = crate::seed::seed(
+        "the_covers_answer_alike_with_and_without_what_the_symbols_before_learned",
+    );
+    let mut rng = Rng(seed | 1);
+    let syms: Vec<Atom> = ["x", "y", "z", "w"].iter().map(|n| a(n)).collect();
+    let (mut differ, mut whole) = (Vec::new(), 0);
+    let run = |f: &Formula, off: bool| {
+        PART_CACHE_OFF.set(off);
+        let (q, d) = (EXACT_QUESTIONS.get(), FAST_WORK.get());
+        let got = project_each_exact(f, &syms);
+        PART_CACHE_OFF.set(false);
+        (got, EXACT_QUESTIONS.get() - q, FAST_WORK.get() - d)
+    };
+    for round in 0..120 {
+        let f = boxed(formula(&mut rng, 3));
+        for limit in [3_000, 10_000, 30_000, 100_000, EXACT_LIMIT] {
+            EXACT_LIMIT_SET.set(Some(limit));
+            let (on, q_on, d_on) = run(&f, false);
+            let (off, q_off, d_off) = run(&f, true);
+            EXACT_LIMIT_SET.set(None);
+            let say = |what: String| format!("round {round} limit {limit}: {what}: {f}");
+            match (&on, &off) {
+                (Ok((a, _)), Ok((b, _))) if a != b => {
+                    differ.push(say(format!("{a:?} with, {b:?} without")))
+                }
+                (Err(e), Ok((b, _))) => {
+                    whole += 1;
+                    if b.iter().any(|r| r.as_ref().err() != Some(e)) {
+                        differ.push(say(format!("refused {e:?} with, {b:?} without")));
+                    }
+                }
+                (Ok(_), Err(_)) | (Err(_), Err(_)) if format!("{on:?}") != format!("{off:?}") => {
+                    differ.push(say(format!("{on:?} with, {off:?} without")))
+                }
+                _ => {}
+            }
+            if q_on > q_off || d_on > d_off {
+                differ.push(say(format!(
+                    "{q_on} questions, {d_on} fast work with; {q_off}, {d_off} without"
+                )));
+            }
+        }
+    }
+    assert!(differ.is_empty(), "seed {seed}: {differ:#?}");
+    assert!(whole > 0, "seed {seed}: no call was refused as a whole");
+}
+
 /// `(x == 1 && y == 0 || x == 3 && y == 1) && (x == 1 && y == 1 || x == 3 && y == 0)`, which
 /// has no point, though the solver's meet of the unions of hulls keeps x in {1, 3}.
 fn apart() -> Formula {

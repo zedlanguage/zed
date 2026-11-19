@@ -67,7 +67,7 @@ use super::absorbing;
 use super::formula::{Ends, Id};
 pub use super::meter::{
     DIRECT_OFF, EXACT_LIMIT, EXACT_LIMIT_SET, EXACT_OFF, EXACT_QUESTIONS, EXACT_WORK, FAST_WORK,
-    GUARDED_OFF, QUESTION_WORK, SHARED_OFF, SOLVER_UNIT,
+    GUARDED_OFF, PART_CACHE_OFF, QUESTION_WORK, SHARED_OFF, SOLVER_UNIT,
 };
 use super::meter::{PIECE, Solver, Work};
 use super::{Atom, Classed, Con, Each, EachClassed, Factor, Formula, Lin, Model, Refusal, Rel};
@@ -118,8 +118,22 @@ impl Work {
 /// order puts it in that form first, once for both. `solver` holds the solver's steps the
 /// cover asks ([`Solver`]).
 pub(super) fn exact_each(f: &Formula, syms: &[Atom], found: Each, solver: Solver) -> EachClassed {
+    exact_each_checked(f, syms, found, solver).unwrap_or_else(|e| EachClassed {
+        sets: vec![Err(e); syms.len()],
+        causes: Vec::new(),
+    })
+}
+
+/// [`exact_each`], or the refusal of the projection as a whole where every symbol of a formula
+/// of one part is refused at a step of its cover that does not read the symbol, for one cause.
+pub(super) fn exact_each_checked(
+    f: &Formula,
+    syms: &[Atom],
+    found: Each,
+    solver: Solver,
+) -> Result<EachClassed, Refusal> {
     if EXACT_OFF.get() {
-        return EachClassed::plain(found);
+        return Ok(EachClassed::plain(found));
     }
     let (each, _) = found;
     // A set of the solver's that is empty shows that `f` has no point, since each set it
@@ -139,10 +153,10 @@ pub(super) fn exact_each(f: &Formula, syms: &[Atom], found: Each, solver: Solver
         let out = (each.into_iter())
             .map(|r| r.map(|_| IntervalSet::empty()))
             .collect();
-        return EachClassed::plain((out, Vec::new()));
+        return Ok(EachClassed::plain((out, Vec::new())));
     }
     if let Some(out) = by_columns(f, syms, &each, solver) {
-        return out;
+        return Ok(out);
     }
     let limit = EXACT_LIMIT_SET.get().unwrap_or(EXACT_LIMIT);
     // The conjuncts of `f` grouped into parts that share no atom (`split`): each symbol is
@@ -337,6 +351,9 @@ pub(super) fn exact_each(f: &Formula, syms: &[Atom], found: Each, solver: Solver
         w / k + u64::from(j < w % k)
     };
     let mut nth: Vec<u64> = vec![0; parts.len()];
+    // Each part's cache for its covers over the reduced formula and over the part ([`PartCache`]).
+    let mut small_cache: Vec<PartCache> = (0..parts.len()).map(|_| PartCache::default()).collect();
+    let mut part_cache: Vec<PartCache> = (0..parts.len()).map(|_| PartCache::default()).collect();
     let mut shown = vec![false; parts.len()];
     let mut wider = false;
     let answers: BTreeMap<&Atom, Result<Classed, Refusal>> = (sorted.into_iter())
@@ -360,6 +377,10 @@ pub(super) fn exact_each(f: &Formula, syms: &[Atom], found: Each, solver: Solver
                 let fast = limit - charge(i, nth[i]);
                 nth[i] += 1;
                 let p = &parts[i];
+                if PART_CACHE_OFF.get() {
+                    small_cache[i] = PartCache::default();
+                    part_cache[i] = PartCache::default();
+                }
                 // `h` is not empty here (above), and each of its values has a point of the part.
                 if let Some(set) = certified.remove(s) {
                     shown[i] = true;
@@ -393,6 +414,7 @@ pub(super) fn exact_each(f: &Formula, syms: &[Atom], found: Each, solver: Solver
                         *size,
                         &p.factors,
                         &mut small_points[i],
+                        &mut small_cache[i],
                         fast,
                         &mut alone,
                     );
@@ -409,6 +431,7 @@ pub(super) fn exact_each(f: &Formula, syms: &[Atom], found: Each, solver: Solver
                     p.size,
                     &p.factors,
                     &mut points[i],
+                    &mut part_cache[i],
                     fast,
                     &mut work,
                 )?;
@@ -418,16 +441,31 @@ pub(super) fn exact_each(f: &Formula, syms: &[Atom], found: Each, solver: Solver
             (s, answer)
         })
         .collect();
+    // Every symbol of the one part refused at a step of its cover over the part that does not
+    // read the symbol (`PartCache::refused` counts them), all for one cause: the projection as
+    // a whole is refused, as the solver refuses it alone, so the caller reports it once and not
+    // once a symbol (`Scope::project_part` indexes each refusal under every name of the part).
+    // Complexity tradeoff: naive version, k refusals of k names each, O(k²): 4.66 s of the
+    // 9.7 s of `disjoint::bench::the_join_of_arms_on_many_disjoint_refused_groups_reduced_scales`
+    // at 1,024 symbols; used: one refusal, O(k) (from the Gemini 4 Neon seat of
+    // PRES-cover-hybrid, `exact_each_checked`).
+    if let ([_], Some((_, Err(e)))) = (parts.as_slice(), answers.first_key_value())
+        && answers.len() > 1
+        && part_cache[0].refused == answers.len() as u64
+        && answers.values().all(|a| a.as_ref().err() == Some(e))
+    {
+        return Err(e.clone());
+    }
     let out: Vec<Result<Classed, Refusal>> = syms.iter().map(|s| answers[s].clone()).collect();
     if !many {
-        return EachClassed {
+        return Ok(EachClassed {
             sets: out,
             causes: if wider {
                 vec![Refusal::Repeats]
             } else {
                 Vec::new()
             },
-        };
+        });
     }
     let mut call = Work {
         used: 0,
@@ -447,14 +485,14 @@ pub(super) fn exact_each(f: &Formula, syms: &[Atom], found: Each, solver: Solver
             (Err(e), _) => Err(e.clone()),
         })
         .collect();
-    EachClassed {
+    Ok(EachClassed {
         sets: out,
         causes: if wider {
             vec![Refusal::Repeats]
         } else {
             Vec::new()
         },
-    }
+    })
 }
 
 /// A part of `f` for [`split`]: the conjunction of some of its conjuncts, the atoms they read,
@@ -750,6 +788,7 @@ fn cover(
     size: u64,
     factors: &HashSet<Atom>,
     points: &mut Vec<Model>,
+    cache: &mut PartCache,
     fast: u64,
     work: &mut Work,
 ) -> Result<(Classed, bool), Refusal> {
@@ -764,18 +803,59 @@ fn cover(
     // such an `f` empty before the cover runs in every case tried, so the test that reaches
     // this case gives `exact_each` sets that miss it (`tests::a_part_split_off_gets_the_same_
     // answer_with_and_without_direct`, which also compares `direct` on and off).
+    // A symbol outside the atoms of a block that `direct` noted for an earlier symbol of the
+    // part gets no answer from it (`direct_noting`), so it is not run ([`PartCache`]).
+    let given = fast;
     let mut fast = fast;
     if factors.is_empty()
         && !DIRECT_OFF.get()
-        && let Some(set) = tried(&mut fast, work.solver, |w| direct(f, s, &h.hull(), w))
+        && !(cache.direct_fails.iter()).any(|(b, upto)| given <= *upto && !b.contains(s))
+        && let Some(set) = tried(&mut fast, work.solver, |w| {
+            let mut fails = None;
+            let got = direct_noting(f, s, &h.hull(), w, &mut fails);
+            let upto = |refused: bool| if refused { given } else { u64::MAX };
+            (cache.direct_fails).extend(fails.map(|(b, refused)| (b, upto(refused))));
+            got
+        })
     {
         return Ok((set, false));
     }
-    let (set, kept) = cells_cover(f, s, h, size, factors, points, work)?;
+    let (set, kept) = cells_cover(f, s, h, size, factors, points, cache, work)?;
     Ok((Classed::plain(set), kept))
 }
 
+/// What the covers of one part's symbols learn that does not read the symbol, kept for the
+/// later symbols of the part, which reach the same step at the same work and so get the same
+/// outcome at the same charge: `quick` is [`quick_point`]'s outcome where it found no point
+/// (the units it charged) or was refused, asked at no work used; `whole` is the question of
+/// `f` alone (the gap every value, no point found), with the work used when it was asked, and
+/// its units where it found no point, or its refusal; `direct_fails` holds the atoms
+/// [`direct_noting`] noted, outside which no symbol of the part gets an answer from it, each
+/// with the largest allowance it holds for (every allowance where the note is of a block whose
+/// elimination does not end, the allowance of the run where it is of a refusal); `refused`
+/// counts the symbols refused by `quick` or `whole`, steps that do not read the symbol.
+// Complexity tradeoff: naive version, each of the k symbols of a part runs `quick_point`,
+// `direct` and asks `f` alone again, O(k·|f|) where `|f|` is O(k): at 1,024 symbols in
+// `disjoint::bench::the_join_of_arms_on_many_disjoint_refused_groups_reduced_scales`, 4.9 s in
+// `direct` (513 runs, each refused at the same step) and the covers 2.9 s at 256 symbols, each
+// symbol refused alike. Used: each run once a part (twice for `direct`, whose allowances take
+// two values, `charge` in [`exact_each_checked`]), the rest O(1) a symbol and O(1) a note
+// checked, a note made only by a run that costs at least the reading of `f`; every answer and
+// refusal is the one the symbol's own run gives (from the Gemini 4 Neon seat of
+// PRES-cover-hybrid, `PartCache`, its proof checked against this code).
+#[derive(Default)]
+struct PartCache {
+    quick: Option<Result<u64, Refusal>>,
+    whole: Option<(u64, Result<u64, Refusal>)>,
+    direct_fails: Vec<(HashSet<Atom>, u64)>,
+    refused: u64,
+}
+
 /// [`cover`] by cells and questions, once [`direct`] has not answered.
+#[expect(
+    clippy::too_many_arguments,
+    reason = "the cache is kept by the part, apart from the points of `f` it holds"
+)]
 fn cells_cover(
     f: &Formula,
     s: &Atom,
@@ -783,6 +863,7 @@ fn cells_cover(
     size: u64,
     factors: &HashSet<Atom>,
     points: &mut Vec<Model>,
+    cache: &mut PartCache,
     work: &mut Work,
 ) -> Result<(IntervalSet, bool), Refusal> {
     let mut found = IntervalSet::empty();
@@ -798,12 +879,33 @@ fn cells_cover(
     let mut kept: Vec<Kept> = Vec::new();
     let mut read = 0;
     // A first point without a question where one comes soon (`quick_point`): every point of
-    // `f` has `s` in `h`, so its cell is read as a question's point would be.
-    if points.is_empty()
-        && factors.is_empty()
-        && let Some(m) = quick_point(f, 2 * (size + 2), work)?
-    {
-        points.push(m);
+    // `f` has `s` in `h`, so its cell is read as a question's point would be. Its outcome where
+    // it finds none does not read `s`, so a later symbol of the part, starting from the same
+    // work, gets it from `cache` at the same charge ([`PartCache`]).
+    if points.is_empty() && factors.is_empty() {
+        let fresh = work.used == 0;
+        match &cache.quick {
+            Some(Ok(units)) if fresh => work.charge(*units)?,
+            Some(Err(e)) if fresh => {
+                cache.refused += 1;
+                return Err(e.clone());
+            }
+            _ => match quick_point(f, 2 * (size + 2), work) {
+                Ok(Some(m)) => points.push(m),
+                Ok(None) => {
+                    if fresh {
+                        cache.quick = Some(Ok(work.used));
+                    }
+                }
+                Err(e) => {
+                    if fresh {
+                        cache.quick = Some(Err(e.clone()));
+                        cache.refused += 1;
+                    }
+                    return Err(e);
+                }
+            },
+        }
     }
     loop {
         while read < points.len() && !gap.is_empty() {
@@ -970,13 +1072,45 @@ fn cells_cover(
         let Some(piece) = gap.first().cloned() else {
             return ended(found, kept, work);
         };
-        work.question(size + 2)?;
-        EXACT_QUESTIONS.set(EXACT_QUESTIONS.get() + 1);
+        // With no point found and the gap every value, the question is `f` alone, which does
+        // not read `s`; a later symbol of the part reaching it at the same work gets its
+        // outcome from `cache` at the same charge ([`PartCache`]).
+        let whole = points.is_empty() && piece == (End::NegInf, End::PosInf);
+        let start = work.used;
+        match &cache.whole {
+            Some((at, Ok(units))) if whole && *at == start => {
+                work.charge(*units)?;
+                gap = IntervalSet::empty();
+                continue;
+            }
+            Some((at, Err(e))) if whole && *at == start => {
+                cache.refused += 1;
+                return Err(e.clone());
+            }
+            _ => {}
+        }
         let piece = IntervalSet::range(piece.0, piece.1);
-        let q = Formula::and(vec![f.clone(), super::member(s, &piece)]);
-        match work.ask(&q)? {
-            None => gap = gap.minus(&piece),
-            Some(m) => points.push(m),
+        let asked = (|| {
+            work.question(size + 2)?;
+            EXACT_QUESTIONS.set(EXACT_QUESTIONS.get() + 1);
+            let q = Formula::and(vec![f.clone(), super::member(s, &piece)]);
+            work.ask(&q)
+        })();
+        match asked {
+            Ok(None) => {
+                if whole {
+                    cache.whole = Some((start, Ok(work.used - start)));
+                }
+                gap = gap.minus(&piece);
+            }
+            Ok(Some(m)) => points.push(m),
+            Err(e) => {
+                if whole {
+                    cache.whole = Some((start, Err(e.clone())));
+                    cache.refused += 1;
+                }
+                return Err(e);
+            }
         }
     }
 }
@@ -1459,11 +1593,12 @@ fn certificates<'s>(
 // copies of `R` for k blocks, which is the size of that group's normal form, every row of
 // them charged, so the cost is O(k |R|) row reads plus the projections, under the allowance of
 // `tried`; a group with two disjunctions is not distributed (`None`, the cover is asked).
-fn direct(
+fn direct_noting(
     f: &Formula,
     s: &Atom,
     within: &IntervalSet,
     work: &mut Work,
+    fails: &mut Option<(HashSet<Atom>, bool)>,
 ) -> Result<Option<Classed>, Refusal> {
     enum Go<'a> {
         Read(&'a Formula, bool),
@@ -1486,86 +1621,172 @@ fn direct(
             Formula::And(gs) | Formula::Or(gs) => stack.extend(gs.iter()),
         }
     }
+    // Whether no step so far read `s` (below).
+    let mut pure = true;
     let mut memo: HashMap<(Id, bool), Part> = HashMap::new();
     let mut stack = vec![Go::Read(f, true)];
     let mut values: Vec<Part> = Vec::new();
-    while let Some(step) = stack.pop() {
-        match step {
-            Go::Read(g, pos) => {
-                if let Some(v) = Id::of(g).and_then(|k| memo.get(&(k, pos))) {
-                    match v {
-                        Part::Rows(rows) => work.read(rows.len() as u64)?,
-                        Part::Alts(blocks) => {
-                            work.read(blocks.iter().map(|b| b.len() as u64).sum())?
+    let read = (|| {
+        while let Some(step) = stack.pop() {
+            match step {
+                Go::Read(g, pos) => {
+                    if let Some(v) = Id::of(g).and_then(|k| memo.get(&(k, pos))) {
+                        match v {
+                            Part::Rows(rows) => work.read(rows.len() as u64)?,
+                            Part::Alts(blocks) => {
+                                work.read(blocks.iter().map(|b| b.len() as u64).sum())?
+                            }
+                            Part::Set(..) => {}
                         }
-                        Part::Set(..) => {}
+                        values.push(v.clone());
+                        continue;
                     }
-                    values.push(v.clone());
-                    continue;
+                    match g {
+                        Formula::Con(c) => {
+                            work.read(1)?;
+                            values.push(match (pos, c.rel) {
+                                (true, _) => Part::Rows(vec![c.clone()]),
+                                (false, Rel::Ge) => Part::Rows(vec![negated(c, &Int::from(-1))]),
+                                // `t != 0` is `t <= -1 or t >= 1`, two blocks.
+                                (false, Rel::Eq) => Part::Alts(vec![
+                                    vec![negated(c, &Int::from(-1))],
+                                    vec![negated(c, &Int::from(1))],
+                                ]),
+                            });
+                        }
+                        Formula::Not(h) => stack.push(Go::Read(h, !pos)),
+                        Formula::And(gs) | Formula::Or(gs) => {
+                            stack.push(Go::Join(g, pos));
+                            stack.extend(gs.iter().rev().map(|h| Go::Read(h, pos)));
+                        }
+                    }
                 }
-                match g {
-                    Formula::Con(c) => {
-                        work.read(1)?;
-                        values.push(match (pos, c.rel) {
-                            (true, _) => Part::Rows(vec![c.clone()]),
-                            (false, Rel::Ge) => Part::Rows(vec![negated(c, &Int::from(-1))]),
-                            // `t != 0` is `t <= -1 or t >= 1`, two blocks.
-                            (false, Rel::Eq) => Part::Alts(vec![
-                                vec![negated(c, &Int::from(-1))],
-                                vec![negated(c, &Int::from(1))],
-                            ]),
-                        });
+                Go::Join(g, pos) => {
+                    let (Formula::And(gs) | Formula::Or(gs)) = g else {
+                        unreachable!("a join is pushed for a conjunction or a disjunction");
+                    };
+                    let parts = values.split_off(values.len() - gs.len());
+                    let and = matches!(g, Formula::And(_)) == pos;
+                    pure &= if and {
+                        parts.iter().all(|p| matches!(p, Part::Rows(_)))
+                    } else {
+                        !parts.iter().any(|p| matches!(p, Part::Set(..)))
+                    };
+                    let v = if and {
+                        met(parts, s, within, true, work)?
+                    } else {
+                        joined_parts(parts, s, within, work)?
+                    };
+                    let Some(mut v) = v else {
+                        return Ok(None);
+                    };
+                    if let Some(k) = Id::of(g)
+                        && holders.get(&k).is_some_and(|&n| n > 1)
+                    {
+                        // A shared disjunction is projected here, not kept as blocks: each holder
+                        // would copy its blocks and distribute its own rows over them, so a chain
+                        // of parts each holding the two before it (`l01_39_reduced_product`
+                        // `arms_of_a_chain_of_named_conjunctions...`) grew as the number of paths,
+                        // exponential in its length, until each call spent its allowance (past 60 s
+                        // where 4.2 s before 94f38f6d3). Projected, it is one set read by each
+                        // holder, as before; blocks stay unprojected only on parts read once.
+                        if let Part::Alts(_) = v {
+                            pure = false;
+                            let Some((set, atoms)) = as_set(v, s, within, false, work)? else {
+                                return Ok(None);
+                            };
+                            v = Part::Set(set, atoms);
+                        }
+                        memo.insert((k, pos), v.clone());
                     }
-                    Formula::Not(h) => stack.push(Go::Read(h, !pos)),
-                    Formula::And(gs) | Formula::Or(gs) => {
-                        stack.push(Go::Join(g, pos));
-                        stack.extend(gs.iter().rev().map(|h| Go::Read(h, pos)));
-                    }
+                    values.push(v);
                 }
-            }
-            Go::Join(g, pos) => {
-                let (Formula::And(gs) | Formula::Or(gs)) = g else {
-                    unreachable!("a join is pushed for a conjunction or a disjunction");
-                };
-                let parts = values.split_off(values.len() - gs.len());
-                let v = if matches!(g, Formula::And(_)) == pos {
-                    met(parts, s, within, true, work)?
-                } else {
-                    joined_parts(parts, s, within, work)?
-                };
-                let Some(mut v) = v else {
-                    return Ok(None);
-                };
-                if let Some(k) = Id::of(g)
-                    && holders.get(&k).is_some_and(|&n| n > 1)
-                {
-                    // A shared disjunction is projected here, not kept as blocks: each holder
-                    // would copy its blocks and distribute its own rows over them, so a chain
-                    // of parts each holding the two before it (`l01_39_reduced_product`
-                    // `arms_of_a_chain_of_named_conjunctions...`) grew as the number of paths,
-                    // exponential in its length, until each call spent its allowance (past 60 s
-                    // where 4.2 s before 94f38f6d3). Projected, it is one set read by each
-                    // holder, as before; blocks stay unprojected only on parts read once.
-                    if let Part::Alts(_) = v {
-                        let Some((set, atoms)) = as_set(v, s, within, false, work)? else {
-                            return Ok(None);
-                        };
-                        v = Part::Set(set, atoms);
-                    }
-                    memo.insert((k, pos), v.clone());
-                }
-                values.push(v);
             }
         }
+        Ok(Some(()))
+    })();
+    // A refusal while every step is `pure` comes at the same work for every symbol, as no step
+    // so far read `s` or `within` (a conjunction of rows and a disjunction with no set charge
+    // nothing, and a read charges its rows): it is noted with no atoms, so no symbol of the part
+    // is run again at this allowance or less (`PartCache`; with less, a run stops at the same
+    // charge or before, as `Work::charge` and `metered` stop once past the limit).
+    match read {
+        Err(e) => {
+            if pure {
+                *fails = Some((HashSet::new(), true));
+            }
+            return Err(e);
+        }
+        Ok(None) => return Ok(None),
+        Ok(Some(())) => {}
     }
-    Ok(as_set(
-        values.pop().expect("the part of `f`"),
-        s,
-        within,
-        false,
-        work,
-    )?
-    .map(|(set, _)| set))
+    let last = values.pop().expect("the part of `f`");
+    // A disjunction of blocks read with no step that reads `s` (`pure`): its blocks are the same
+    // for every symbol, and its set is `None` where a block's is, else the join of theirs. The
+    // blocks without `s` are projected first, then those with it, the sets joined in the order
+    // of the blocks: with every block projected, the work is the same sum in either order, and
+    // with one not, the set is `None` in either order. A block without `s` reads neither `s` nor
+    // `within` in [`block_set`], so its outcome is the same for every symbol it lacks. One whose
+    // elimination does not end is `None` for every symbol it lacks, at any allowance, so the
+    // atoms of that block are noted (`fails`): no symbol outside them gets an answer here. One
+    // refused is refused alike for every symbol none of the blocks without `s` up to it reads
+    // (each of them lacks that symbol too, and its blocks before it without the symbol hold at
+    // least those, each adding work or ending the run), so their atoms are noted as a refusal,
+    // holding at this allowance or less.
+    // Complexity tradeoff: naive version, the blocks in their order: on two blocks of k/2 rows
+    // each (`disjoint::bench::the_join_of_arms_on_many_disjoint_refused_groups_reduced_scales`),
+    // each symbol of the first was refused at its own block, spending its whole allowance, k/2
+    // times, before the second block, whose elimination does not end for any of them, was read
+    // (4.9 s of 5.2 s at 1,024 symbols). Used: the blocks without `s` first, O(1) more a block,
+    // so the first symbol of the first block notes the second and the others are not run
+    // (from the Gemini 4 Neon seat of PRES-cover-hybrid, `disjoint_uneliminable`, which tests
+    // each block's groups once a part; here the blocks are read by the runs already made).
+    if let (true, Part::Alts(blocks)) = (pure, &last) {
+        let atoms = |bs: &mut dyn Iterator<Item = &Vec<Con>>| -> HashSet<Atom> {
+            bs.flatten()
+                .flat_map(|c| c.lin.terms.keys().cloned())
+                .collect()
+        };
+        let reads = |b: &[Con]| b.iter().any(|c| c.lin.terms.contains_key(s));
+        let mut sets: Vec<Option<Classed>> = vec![None; blocks.len()];
+        for (i, b) in blocks.iter().enumerate().filter(|(_, b)| !reads(b)) {
+            match block_set(b, s, within, false, work) {
+                Ok(Some(p)) => sets[i] = Some(p),
+                Ok(None) => {
+                    *fails = Some((atoms(&mut std::iter::once(b)), false));
+                    return Ok(None);
+                }
+                Err(e) => {
+                    let before = blocks[..=i].iter().filter(|b| !reads(b));
+                    *fails = Some((atoms(&mut before.into_iter()), true));
+                    return Err(e);
+                }
+            }
+        }
+        let mut set = Classed::plain(IntervalSet::empty());
+        for (b, done) in blocks.iter().zip(sets) {
+            let p = match done {
+                Some(p) => p,
+                None => match block_set(b, s, within, false, work)? {
+                    Some(p) => p,
+                    None => return Ok(None),
+                },
+            };
+            set = set.join(&p);
+        }
+        return Ok(Some(set));
+    }
+    Ok(as_set(last, s, within, false, work)?.map(|(set, _)| set))
+}
+
+/// [`direct_noting`], with nothing noted.
+fn direct(
+    f: &Formula,
+    s: &Atom,
+    within: &IntervalSet,
+    work: &mut Work,
+) -> Result<Option<Classed>, Refusal> {
+    direct_noting(f, s, within, work, &mut None)
 }
 
 /// What [`read_once`] gives: whether `f` has a point, and its projection onto each atom.
@@ -2079,6 +2300,14 @@ fn read_once(f: &Formula, work: &mut Work) -> Result<Option<ReadOnce>, Refusal> 
     };
     let every = IntervalSet::range(End::NegInf, End::PosInf);
     let mut out = HashMap::new();
+    // The atoms in their order, not the map's: an atom whose places meet under a conjunction
+    // ends the read (`None`) after the atoms before it are charged, so in the map's order,
+    // which changes from run to run, the work charged and the allowance left to the fast paths
+    // after it changed too (found by `tests::the_covers_answer_alike_with_and_without_what_the_
+    // symbols_before_learned`, 100 units apart on one formula). Sorting adds O(a log a) for the
+    // a atoms to the O(t) read of their t places.
+    let mut occ_of: Vec<(&Atom, Vec<usize>)> = occ_of.into_iter().collect();
+    occ_of.sort_unstable_by(|x, y| x.0.cmp(y.0));
     for (a, mut os) in occ_of {
         if os.len() == 1 && matches!(nodes[os[0]], Node::Block(_)) {
             let b = os[0];

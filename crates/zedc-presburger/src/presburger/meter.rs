@@ -60,6 +60,9 @@ thread_local! {
     /// Test control: `exact_each` skips the shared step (`exact::shared_cells`), for the tests
     /// that compare the covers with and without it.
     pub static SHARED_OFF: Cell<bool> = const { Cell::new(false) };
+    /// Test control: each symbol's covers start with nothing learned by the covers of the
+    /// symbols before it (`exact::PartCache`), for the tests that compare the two.
+    pub static PART_CACHE_OFF: Cell<bool> = const { Cell::new(false) };
     /// The questions `exact_each` has asked on this thread, read by tests.
     pub static EXACT_QUESTIONS: Cell<u64> = const { Cell::new(0) };
     /// The work `exact_each` has used on this thread, read by tests and benchmarks.
