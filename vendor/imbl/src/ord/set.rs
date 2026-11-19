@@ -1,6 +1,10 @@
 // This Source Code Form is subject to the terms of the Mozilla Public
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at http://mozilla.org/MPL/2.0/.
+//
+// Modified for zed on 2026-11-19 (PERF-satellite-random-under9-redesign):
+// `GenericOrdSet::union` delegates to join-based `GenericOrdMap::union`.
+// See CHANGES-zed.md at the crate root.
 
 //! An ordered set.
 //!
@@ -525,15 +529,11 @@ where
     /// ```
     #[must_use]
     pub fn union(self, other: Self) -> Self {
-        let (mut to_mutate, to_consume) = if self.len() >= other.len() {
-            (self, other)
-        } else {
-            (other, self)
-        };
-        for value in to_consume {
-            to_mutate.insert(value);
+        // zed (PERF-satellite-random-under9-redesign): delegate to join-based
+        // `GenericOrdMap::union`, O(m log(n/m + 1)) for sizes m <= n.
+        GenericOrdSet {
+            map: self.map.union(other.map),
         }
-        to_mutate
     }
 
     /// Construct the union of multiple sets.

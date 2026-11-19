@@ -1975,6 +1975,35 @@ pub fn reach(
 /// A block of a [`Blocks`] forest, or a name in it.
 pub type BlockId = u64;
 
+/// A node in the persistent union-find over merged-away block ids ([`Blocks::uf`]):
+/// unmerged blocks and name ids are absent (implicitly `Root { rank: 0, live: id }`).
+#[derive(Clone, Copy, Debug)]
+enum UfNode {
+    /// Merged into `parent`.
+    Parent(BlockId),
+    /// Root of a merged group with union-by-rank `rank` and live block id `live`.
+    Root { rank: u8, live: BlockId },
+}
+
+/// Ascending live block ids for [`Blocks::moving_blocks`]: zero-allocation for 0 or 1 block.
+enum MovingBlocks {
+    Empty,
+    One(Option<BlockId>),
+    Many(std::vec::IntoIter<BlockId>),
+}
+
+impl Iterator for MovingBlocks {
+    type Item = BlockId;
+
+    fn next(&mut self) -> Option<BlockId> {
+        match self {
+            MovingBlocks::Empty => None,
+            MovingBlocks::One(b) => b.take(),
+            MovingBlocks::Many(it) => it.next(),
+        }
+    }
+}
+
 /// The blocks of a conjunction, kept as conjuncts are added and removed, and the forest they
 /// form with the names. Conjuncts that share an atom other than a name are in one block; the
 /// blocks are then the biconnected components of the graph whose vertices are these groups and
@@ -1986,23 +2015,24 @@ pub type BlockId = u64;
 /// A new conjunct is a block of its own: it is linked to each tree of a name it mentions that
 /// is not yet its own, by rerooting the smaller tree (so a node is rerooted O(log n) times),
 /// and when it meets its own tree a second time, the blocks on the tree path between are
-/// merged into one, the smaller blocks' conjuncts moved into the largest (so a conjunct is
-/// moved O(log n) times): with the persistent maps, O(log² n) amortized per conjunct. A
-/// removed conjunct of two names and no other atom is taken out in time near the smaller
-/// side of each split it makes, searched from both of its names in turn (`Blocks::cut`). Any
-/// other removed conjunct that is a block alone and shares at most one name with the rest is
-/// unlinked in O(log n); a removal from a block of names whose other conjuncts still link all
-/// its names places those conjuncts again, in time near the block (`Blocks::split`); any
-/// other removal rebuilds the blocks of the conjuncts linked to it, in time near their number.
-/// The blocks do not depend on the order the conjuncts came in; the roots and the numbers do,
-/// and nothing reads them but this forest.
+/// merged into one, keeping the largest block (`Blocks::merge`). Block-local indexes (`members`,
+/// `names_in`, `at`, `pairs`) merge via join-based B+Tree union in O(W log W) total across all
+/// merges, and merged-away block ids in `of`, `up`, and private `moving_at` entries resolve
+/// lazily through the persistent union-find `uf`. A removed conjunct of two names and no other
+/// atom is taken out in time near the smaller side of each split it makes, searched from both
+/// of its names in turn (`Blocks::cut`). Any other removed conjunct that is a block alone and
+/// shares at most one name with the rest is unlinked in O(log n); a removal from a block of
+/// names whose other conjuncts still link all its names places those conjuncts again, in time
+/// near the block (`Blocks::split`); any other removal rebuilds the blocks of the conjuncts
+/// linked to it, in time near their number. The blocks do not depend on the order the conjuncts
+/// came in; the roots and the numbers do, and nothing reads them but this forest.
 #[derive(Clone, Debug, Default)]
 pub struct Blocks {
     /// The next number for a block or a name.
     next: BlockId,
     /// Each name's number.
     name: OrdMap<Arc<str>, BlockId>,
-    /// Each conjunct's block.
+    /// Each conjunct's block (possibly a merged-away id resolved through [`Blocks::uf`]).
     // Complexity tradeoff: naive version, an `OrdMap` keyed by the formula, O(log n)
     // comparisons a lookup, each a walk of two constraints' terms (about 220 instructions):
     // near 2,400 instructions a lookup at 2,000 conjuncts, and growing with log n, which made
@@ -2010,15 +2040,30 @@ pub struct Blocks {
     // (Bagwell's hash array mapped trie, imbl `GenericHashMap`), one hash of the formula
     // (`Formula`'s `Hash`, kept with a compound node, linear in a constraint's size) and one
     // comparison, which a key held at the same address answers by its pointer, so O(1)
-    // expected a lookup. This map is only read by key, never in order, so no order is lost;
-    // its hasher is fixed (`FxBuildHasher` over the formula's own fixed hash), so a run does
-    // not depend on a random seed. Test
+    // expected a lookup; merged-away block ids are resolved lazily through `uf`, avoiding
+    // rewriting `of` for every moved conjunct during `Blocks::merge`. This map is only read
+    // by key, never in order, so no order is lost; its hasher is fixed (`FxBuildHasher` over
+    // the formula's own fixed hash), so a run does not depend on a random seed. Test
     // `l01_39_scope_relations::xst::s4::a_chain_raise_in_reverse_narrows_in_near_linear_time`;
-    // COMPLEXITY.md row ST-chain-raise-reverse-log.
+    // COMPLEXITY.md row ST-chain-raise-reverse-log, PERF-satellite-random-under9-redesign.
     of: GenericHashMap<Arc<Formula>, BlockId, FxBuildHasher, DefaultSharedPtr>,
+    /// Persistent union-find over merged-away block ids (union by rank with root live id;
+    /// path compression on `&mut self` reads): resolves stale block ids stored in `of`, `up`,
+    /// and `moving_at` in `O(1)` when unmerged and `<= log₂ n` HAMT hops worst-case
+    /// (`O(alpha(n) log_{32} n)` amortized on linear histories, Tarjan 1975).
+    // Complexity tradeoff: naive version, `Blocks::merge` rewrote `of` for every moved
+    // conjunct (`O(n log n * log_{32} n)`), `up` for every child name (`O(W log^2 n)`), and
+    // `moving_at` for every name of the merged-away block (`O(W log^2 n)`), because their
+    // outer keys are not `BlockId`. Used: record `b -> keep` in `uf` in `O(log_{32} n)` per
+    // merged-away block (`O(n log n)` total across all merges) and resolve lazily on reads.
+    // Tradeoff: readers of merged blocks pay `uf` resolution hops (`<= log₂ n` worst-case on
+    // branched immutable reads; `O(alpha(n))` amortized on linear `&mut self` walks).
+    // Tarjan, JACM 22(2), 1975. COMPLEXITY.md row PERF-satellite-random-under9-redesign.
+    uf: GenericHashMap<BlockId, UfNode, FxBuildHasher, DefaultSharedPtr>,
     /// Each block's conjuncts.
     members: OrdMap<BlockId, OrdSet<Arc<Formula>>>,
-    /// Each node's parent in its tree; a root has none.
+    /// Each node's parent in its tree (a name's parent block may be a merged-away id resolved
+    /// through [`Blocks::uf`]); a root has none.
     up: OrdMap<BlockId, BlockId>,
     /// The tree of each node of the forest: a number of its own, never a node's.
     tree_of: OrdMap<BlockId, BlockId>,
@@ -2026,16 +2071,17 @@ pub struct Blocks {
     trees: OrdMap<BlockId, OrdSet<BlockId>>,
     /// The conjuncts that mention each name as an atom of its own.
     syms: Uses<Arc<Formula>>,
-    /// The conjuncts of each block that mention each name, the entries of `syms` cut by `of`;
-    /// none empty.
-    // Complexity tradeoff: the searches of `Blocks::cut` could read a name's conjuncts from
-    // `syms` and skip those of other blocks, O(1) to keep but O(d) per name read for a name
-    // of d conjuncts in all blocks, so a removal beside a name of many blocks cost near d and
-    // d such removals O(d²). This index gives a name's conjuncts in one block, so a search
-    // reads only the block's; it costs O(log n) per name of a conjunct each time the
-    // conjunct changes block, the order those moves already cost, and one entry per name of
-    // each conjunct.
-    at: OrdMap<(Arc<str>, BlockId), OrdSet<Arc<Formula>>>,
+    /// For each block, its conjuncts that mention each name as an atom of its own, the entries
+    /// of `syms` cut by `of`; none empty.
+    // Complexity tradeoff: naive version, a flat `OrdMap<(Arc<str>, BlockId), OrdSet<...>>`
+    // required one outer `O(log n)` remove + insert per name of a merged-away block in
+    // `Blocks::merge`, `O(W log^2 n)` over balanced merges. Used: nested by `BlockId` first
+    // (`OrdMap<BlockId, OrdMap<Arc<str>, OrdSet<Arc<Formula>>>>`) so `Blocks::merge` removes
+    // a block's whole inner map and merges it with join-based `OrdMap::union_with` +
+    // `OrdSet::union` (Blelloch, Ferizovic and Sun, SPAA 2016; Brown and Tarjan, JACM 1979),
+    // `O(W log W)` total over all merges, while `Blocks::advance` still looks up `(b, x)` in
+    // `O(log n)`. COMPLEXITY.md row PERF-satellite-random-under9-redesign.
+    at: OrdMap<BlockId, OrdMap<Arc<str>, OrdSet<Arc<Formula>>>>,
     /// The conjuncts of the forest's blocks, not those apart from it, that mention each name
     /// as an atom of its own: the entries of `syms` whose block is in the forest.
     // Complexity tradeoff: a name's conjuncts in its tree could be read from `syms`, skipping
@@ -2063,36 +2109,40 @@ pub struct Blocks {
     /// The conjuncts of the stars at each hub ([`Conjuncts::hanging`]), kept by
     /// [`Blocks::hang`].
     hung: Uses<Arc<Formula>>,
-    /// For each name, the number of its moving conjuncts in each block: those that mention
-    /// it and do not hang at it ([`Conjuncts::moving`]); none zero.
-    // Complexity tradeoff: the blocks a move of a name makes due could be read by walking
-    // the name's moving conjuncts and looking up each one's block, O(d log n) per move for a
-    // name of d moving conjuncts, so a name that moves once per test, over k tests with d
-    // near k, costs O(k² log n). This index gives each block once, in O(log n) per block,
-    // at O(log n) per name of a conjunct each time the conjunct changes block or hangs,
-    // the order `at` already costs.
+    /// For each name, the number of its moving conjuncts in each block, keyed by the block's
+    /// stable tag for that name (the `BlockId` recorded in [`Blocks::names_in`], which resolves
+    /// through [`Blocks::uf`] to the live block, with no two tags resolving to one block);
+    /// none zero.
+    // Complexity tradeoff: naive version, updating `moving_at[n]` for every name `n` of a
+    // merged-away block in `Blocks::merge` cost `O(k log n)` per merge and `O(W log^2 n)` over
+    // balanced merges. Used: each `(b, n)` in `names_in` keeps its tag `tag_b` in
+    // `moving_at[n]`; on merge, private names of `b` leave `moving_at` untouched (resolved
+    // lazily via `uf`), and only names present in both `b` and `keep` (found during
+    // `names_in`'s join-based `union_with_key`) combine their tags in `moving_at[n]`. Each
+    // collision permanently lowers `sum_b |names_in[b]|` by 1, so at most `W` collisions occur
+    // across all merges: `O(W log n)` total. `moving_blocks(n)` resolves tags and sorts only
+    // when a name has 2+ blocks. COMPLEXITY.md row PERF-satellite-random-under9-redesign.
     moving_at: OrdMap<Arc<str>, OrdMap<BlockId, usize>>,
-    /// For each block, the number of its conjuncts that mention each name ([`names`]); none
-    /// zero.
-    // Complexity tradeoff: naive version, the names of a block read from its conjuncts,
-    // O(d log n) for a block of d conjuncts, so a scope that takes one conjunct out of a
-    // block of near k conjuncts at each of k tests and makes the block's names seeds
-    // (`Scope::due`) costs O(k² log n). This index gives a block's names in O(log n) and
-    // their number, at O(log n) per name of a conjunct each time the conjunct changes block,
-    // the order `at` already costs. Test
-    // `l01_39_scope_relations::families::coordkk_scales`; COMPLEXITY.md row PERF-l139-due.
-    names_in: OrdMap<(BlockId, Arc<str>), usize>,
-    /// For each block and two names `u < v`, the number of its conjuncts of those two names
-    /// and no other atom ([`pair`]); none zero.
-    // Complexity tradeoff: naive version, a conjunct of two names taken out of a block of
-    // others always searched for a second path between the names (`Blocks::peel`), whose
-    // breadth-first search reads every conjunct of the block at the first name before any
-    // reaches the second: O(d log n) for a block of d conjuncts on the two names, so k such
-    // removals O(k² log n). A second conjunct of the same two names leaves the block whole
-    // (a path through one can go through the other), which this count shows in O(log n), at
-    // O(log n) each time a conjunct of two names changes block. Test
-    // `l01_39_scope_relations::families::coordkk_scales`; COMPLEXITY.md row PERF-l139-due.
-    pairs: OrdMap<(BlockId, Arc<str>, Arc<str>), usize>,
+    /// For each block, each name its conjuncts mention ([`names`]) with `(count, tag)`:
+    /// `count > 0` is the number of conjuncts mentioning it and `tag` is this block's key in
+    /// `moving_at[n]` (`resolve(tag) == b`).
+    // Complexity tradeoff: naive version, a flat `OrdMap<(BlockId, Arc<str>), usize>` cost
+    // `O(k log n)` per merge (`O(W log^2 n)` over balanced merges). Used: nested by `BlockId`
+    // (`OrdMap<BlockId, OrdMap<Arc<str>, (usize, BlockId)>>`) merged by join-based
+    // `OrdMap::union_with_key` (Blelloch, Ferizovic and Sun, SPAA 2016; Brown and Tarjan,
+    // JACM 1979), `O(W log W)` total over all merges, while `names_of(b)` reads `b`'s inner
+    // map directly in ascending name order. COMPLEXITY.md row
+    // PERF-satellite-random-under9-redesign.
+    names_in: OrdMap<BlockId, OrdMap<Arc<str>, (usize, BlockId)>>,
+    /// For each block, the count of its conjuncts on each ordered pair of names `(u, v)` and
+    /// no other atom ([`pair`]); none zero.
+    // Complexity tradeoff: naive version, a flat `OrdMap<(BlockId, Arc<str>, Arc<str>), usize>`
+    // cost `O(p log n)` per merge (`O(n log^2 n)` over balanced merges). Used: nested by
+    // `BlockId` (`OrdMap<BlockId, OrdMap<(Arc<str>, Arc<str>), usize>>`) merged by join-based
+    // `OrdMap::union_with` (Blelloch, Ferizovic and Sun, SPAA 2016; Brown and Tarjan,
+    // JACM 1979), `O(n log n)` total over all merges; `Blocks::cut` still queries `(b, u, v)`
+    // in `O(log n)`. COMPLEXITY.md row PERF-satellite-random-under9-redesign.
+    pairs: OrdMap<BlockId, OrdMap<NamePair, usize>>,
 }
 
 /// Adds `by` to the count of `r` in `counts`, which holds no zero.
@@ -2120,9 +2170,112 @@ fn tally<K: Ord + Clone>(counts: &mut OrdMap<K, usize>, r: K, by: isize) {
 }
 
 impl Blocks {
+    /// Resolves a possibly merged-away block id to its live block id without path compression.
+    fn resolve(&self, mut id: BlockId) -> BlockId {
+        if self.uf.is_empty() {
+            return id;
+        }
+        while let Some(&node) = self.uf.get(&id) {
+            match node {
+                UfNode::Parent(p) => id = p,
+                UfNode::Root { live, .. } => return live,
+            }
+        }
+        id
+    }
+
+    /// Follows `uf` with path compression, returning `(root_id, rank, live_id)`.
+    fn uf_root_mut(&mut self, id: BlockId) -> (BlockId, u8, BlockId) {
+        if self.uf.is_empty() {
+            return (id, 0, id);
+        }
+        let Some(&first) = self.uf.get(&id) else {
+            return (id, 0, id);
+        };
+        let p1 = match first {
+            UfNode::Root { rank, live } => return (id, rank, live),
+            UfNode::Parent(p) => p,
+        };
+        let p2 = match self.uf.get(&p1).copied() {
+            None => return (p1, 0, p1),
+            Some(UfNode::Root { rank, live }) => return (p1, rank, live),
+            Some(UfNode::Parent(p)) => p,
+        };
+        let mut trail = vec![id, p1];
+        let mut cur = p2;
+        let (root, rank, live) = loop {
+            match self.uf.get(&cur).copied() {
+                None => break (cur, 0, cur),
+                Some(UfNode::Root { rank, live }) => break (cur, rank, live),
+                Some(UfNode::Parent(p)) => {
+                    trail.push(cur);
+                    cur = p;
+                }
+            }
+        };
+        for &node in &trail[..trail.len() - 1] {
+            self.uf.insert(node, UfNode::Parent(root));
+        }
+        (root, rank, live)
+    }
+
+    /// Resolves `id` to its live block id with path compression on `uf`.
+    fn resolve_mut(&mut self, id: BlockId) -> BlockId {
+        self.uf_root_mut(id).2
+    }
+
+    /// Merges block `b`'s union-find group into `keep`'s group by rank, keeping `live = keep`.
+    fn uf_merge(&mut self, b: BlockId, keep: BlockId) {
+        let (rb, rank_b, _) = self.uf_root_mut(b);
+        let (rk, rank_k, _) = self.uf_root_mut(keep);
+        debug_assert_ne!(rb, rk, "merging distinct live blocks");
+        match rank_b.cmp(&rank_k) {
+            std::cmp::Ordering::Less => {
+                self.uf.insert(rb, UfNode::Parent(rk));
+            }
+            std::cmp::Ordering::Greater => {
+                self.uf.insert(rk, UfNode::Parent(rb));
+                self.uf.insert(
+                    rb,
+                    UfNode::Root {
+                        rank: rank_b,
+                        live: keep,
+                    },
+                );
+            }
+            std::cmp::Ordering::Equal => {
+                self.uf.insert(rb, UfNode::Parent(rk));
+                self.uf.insert(
+                    rk,
+                    UfNode::Root {
+                        rank: rank_k.saturating_add(1),
+                        live: keep,
+                    },
+                );
+            }
+        }
+    }
+
+    /// Parent of node `x` in its tree, resolving any merged-away parent block id through `uf`.
+    fn parent(&self, x: BlockId) -> Option<BlockId> {
+        self.up.get(&x).map(|&p| self.resolve(p))
+    }
+
+    /// Parent of node `x` in its tree, compressing `uf` when `x`'s parent block was merged.
+    fn parent_mut(&mut self, x: BlockId) -> Option<BlockId> {
+        let raw = self.up.get(&x).copied()?;
+        Some(self.resolve_mut(raw))
+    }
+
+    /// The block of `g`, compressing `uf` when `g`'s stored block id was merged.
+    fn of_mut(&mut self, g: &Arc<Formula>) -> Option<BlockId> {
+        let raw = self.of.get(g).copied()?;
+        Some(self.resolve_mut(raw))
+    }
+
     /// The block of `g`.
     pub fn of(&self, g: &Arc<Formula>) -> Option<BlockId> {
-        self.of.get(g).copied()
+        self.of.get(g).map(|&b| self.resolve(b))
     }
 
     /// The conjuncts of block `b`.
@@ -2137,10 +2290,7 @@ impl Blocks {
 
     /// The names the conjuncts of block `b` mention ([`names`]), in O(log n) and their number.
     pub fn names_of(&self, b: BlockId) -> impl Iterator<Item = &Arc<str>> {
-        self.names_in
-            .range((b, Arc::<str>::from(""))..)
-            .take_while(move |((c, _), _)| *c == b)
-            .map(|((_, n), _)| n)
+        self.names_in.get(&b).into_iter().flat_map(|m| m.keys())
     }
 
     /// The blocks that hold now the conjuncts of block `b` of `old`, an earlier state of
@@ -2269,6 +2419,52 @@ impl Blocks {
         self.apart.remove(&b);
     }
 
+    /// Decrements `names_in[b][n]` by 1, dropping empty inner maps, and returns its `moving_at`
+    /// tag.
+    fn dec_name_in(&mut self, b: BlockId, n: &Arc<str>) -> Option<BlockId> {
+        let inner = self.names_in.get_mut(&b)?;
+        let tag = match inner.get_mut(n) {
+            Some((c, tag)) => {
+                let tag = *tag;
+                debug_assert!(*c > 0, "a count below zero");
+                *c = c.saturating_sub(1);
+                if *c == 0 {
+                    inner.remove(n);
+                }
+                tag
+            }
+            None => {
+                debug_assert!(false, "removing absent name from names_in");
+                return None;
+            }
+        };
+        if inner.is_empty() {
+            self.names_in.remove(&b);
+        }
+        Some(tag)
+    }
+
+    /// Increments `names_in[b][n]` by 1 (initializing its `moving_at` tag to `b` when new)
+    /// and returns its `moving_at` tag.
+    fn inc_name_in(&mut self, b: BlockId, n: Arc<str>) -> BlockId {
+        match self.names_in.get_mut(&b) {
+            Some(inner) => match inner.get_mut(&n) {
+                Some((c, tag)) => {
+                    *c += 1;
+                    *tag
+                }
+                None => {
+                    inner.insert(n, (1, b));
+                    b
+                }
+            },
+            None => {
+                self.names_in.insert(b, OrdMap::unit(n, (1, b)));
+                b
+            }
+        }
+    }
+
     /// Puts `g`, of the atoms `atoms`, in block `to`, or in none, and gives the block it was
     /// in; `of`, `at` and `forest` change together, a block apart from the forest being so
     /// already when a conjunct is put in it and still when one is taken out. In O(log n) per
@@ -2279,40 +2475,48 @@ impl Blocks {
         atoms: &BTreeSet<Atom>,
         to: Option<BlockId>,
     ) -> Option<BlockId> {
-        let was = match to {
+        let raw_was = match to {
             Some(b) => self.of.insert(g.clone(), b),
             None => self.of.remove(g),
         };
+        let was = raw_was.map(|w| self.resolve_mut(w));
         if was == to {
             return was;
         }
         // `atoms` are `g`'s atoms (each caller passes `g.atoms()`, or for `replace` those of a
         // conjunct of the same atoms), so its names are read from them, not collected again.
         for n in names_of_atoms(atoms) {
-            if let Some(w) = was {
-                tally(&mut self.names_in, (w, n.clone()), -1);
-            }
-            if let Some(t) = to {
-                tally(&mut self.names_in, (t, n.clone()), 1);
-            }
+            let was_tag = was.and_then(|w| self.dec_name_in(w, &n));
+            let to_tag = to.map(|t| self.inc_name_in(t, n.clone()));
             if self.hung.has(&n, g) {
                 continue;
             }
-            if let Some(w) = was {
-                self.count_moving(&n, w, -1);
+            if let Some(tag) = was_tag {
+                self.count_moving(&n, tag, -1);
             }
-            if let Some(t) = to {
-                self.count_moving(&n, t, 1);
+            if let Some(tag) = to_tag {
+                self.count_moving(&n, tag, 1);
             }
         }
         let mut two = atoms.iter();
         if let (Some(Atom::Sym(u)), Some(Atom::Sym(v)), None) = (two.next(), two.next(), two.next())
         {
-            if let Some(w) = was {
-                tally(&mut self.pairs, (w, u.clone(), v.clone()), -1);
+            if let Some(w) = was
+                && let Some(inner) = self.pairs.get_mut(&w)
+            {
+                tally(inner, (u.clone(), v.clone()), -1);
+                if inner.is_empty() {
+                    self.pairs.remove(&w);
+                }
             }
             if let Some(t) = to {
-                tally(&mut self.pairs, (t, u.clone(), v.clone()), 1);
+                match self.pairs.get_mut(&t) {
+                    Some(inner) => tally(inner, (u.clone(), v.clone()), 1),
+                    None => {
+                        self.pairs
+                            .insert(t, OrdMap::unit((u.clone(), v.clone()), 1));
+                    }
+                }
             }
         }
         let in_forest = |b: Option<BlockId>| b.is_some_and(|b| !self.apart.contains(&b));
@@ -2326,24 +2530,32 @@ impl Blocks {
             } else if to_in && !was_in {
                 self.forest.add(x, g);
             }
-            if let Some(w) = was {
-                let key = (x.clone(), w);
-                if let Some(set) = self.at.get_mut(&key) {
+            if let Some(w) = was
+                && let Some(by_name) = self.at.get_mut(&w)
+            {
+                if let Some(set) = by_name.get_mut(x) {
                     set.remove(g);
                     if set.is_empty() {
-                        self.at.remove(&key);
+                        by_name.remove(x);
                     }
+                }
+                if by_name.is_empty() {
+                    self.at.remove(&w);
                 }
             }
             if let Some(t) = to {
-                // One descent for a key that is there, as in [`Uses::add`].
-                let key = (x.clone(), t);
-                match self.at.get_mut(&key) {
-                    Some(set) => {
-                        set.insert(g.clone());
-                    }
+                match self.at.get_mut(&t) {
+                    Some(by_name) => match by_name.get_mut(x) {
+                        Some(set) => {
+                            set.insert(g.clone());
+                        }
+                        None => {
+                            by_name.insert(x.clone(), OrdSet::unit(g.clone()));
+                        }
+                    },
                     None => {
-                        self.at.insert(key, OrdSet::unit(g.clone()));
+                        self.at
+                            .insert(t, OrdMap::unit(x.clone(), OrdSet::unit(g.clone())));
                     }
                 }
             }
@@ -2382,17 +2594,34 @@ impl Blocks {
         } else {
             self.hung.remove(n, g);
         }
-        if changed && let Some(b) = self.of(g) {
-            self.count_moving(n, b, if on { -1 } else { 1 });
+        if changed && let Some(b) = self.of_mut(g) {
+            let tag = self
+                .names_in
+                .get(&b)
+                .and_then(|m| m.get(n))
+                .map_or(b, |&(_, tag)| tag);
+            self.count_moving(n, tag, if on { -1 } else { 1 });
         }
     }
 
-    /// The blocks that hold a moving conjunct of `n` ([`Conjuncts::moving`]), each once.
+    /// The blocks that hold a moving conjunct of `n` ([`Conjuncts::moving`]), each once, in
+    /// ascending order.
     pub fn moving_blocks(&self, n: &str) -> impl Iterator<Item = BlockId> + '_ {
-        self.moving_at
-            .get(n)
-            .into_iter()
-            .flat_map(|m| m.keys().copied())
+        let Some(m) = self.moving_at.get(n) else {
+            return MovingBlocks::Empty;
+        };
+        match m.len() {
+            0 => MovingBlocks::Empty,
+            1 => {
+                let tag = *m.keys().next().expect("non-empty moving_at map");
+                MovingBlocks::One(Some(self.resolve(tag)))
+            }
+            _ => {
+                let mut ids: Vec<BlockId> = m.keys().map(|&tag| self.resolve(tag)).collect();
+                ids.sort_unstable();
+                MovingBlocks::Many(ids.into_iter())
+            }
+        }
     }
 
     fn fresh(&mut self) -> BlockId {
@@ -2409,20 +2638,49 @@ impl Blocks {
     /// components; each tree's counts are those of its conjuncts and names.
     /// In time near the forest's size times its depth.
     pub fn well_formed(&self) -> Result<(), String> {
+        // Check `uf` is acyclic and bounded in depth (union-by-rank guarantees <= 64).
+        for (&id, _) in &self.uf {
+            let mut cur = id;
+            let mut steps = 0usize;
+            while let Some(&node) = self.uf.get(&cur) {
+                match node {
+                    UfNode::Root { .. } => break,
+                    UfNode::Parent(p) => {
+                        steps += 1;
+                        if steps > 64 {
+                            return Err(format!("uf chain from {id} exceeds rank bound or cycles"));
+                        }
+                        cur = p;
+                    }
+                }
+            }
+        }
         let mut nodes: BTreeSet<BlockId> = BTreeSet::new();
         let mut names_of: BTreeMap<BlockId, BTreeSet<BlockId>> = BTreeMap::new();
         let mut others: BTreeMap<BlockId, usize> = BTreeMap::new();
         let mut gaps: BTreeMap<BlockId, usize> = BTreeMap::new();
-        let mut at: BTreeMap<(Arc<str>, BlockId), BTreeSet<Arc<Formula>>> = BTreeMap::new();
+        let mut at: BTreeMap<BlockId, BTreeMap<Arc<str>, BTreeSet<Arc<Formula>>>> = BTreeMap::new();
         let mut forest: BTreeMap<Arc<str>, BTreeSet<Arc<Formula>>> = BTreeMap::new();
+        let mut total_members = 0usize;
         for (&b, ms) in &self.members {
+            if ms.is_empty() {
+                return Err(format!("block {b} has no conjuncts"));
+            }
+            if self.resolve(b) != b {
+                return Err(format!("live block {b} resolves to {}", self.resolve(b)));
+            }
+            total_members += ms.len();
             for h in ms {
-                if self.of.get(h) != Some(&b) {
+                if self.of(h) != Some(b) {
                     return Err(format!("{h} is in block {b} but not held there"));
                 }
                 for a in h.atoms() {
                     if let Atom::Sym(x) = a {
-                        at.entry((x, b)).or_default().insert(h.clone());
+                        at.entry(b)
+                            .or_default()
+                            .entry(x)
+                            .or_default()
+                            .insert(h.clone());
                     }
                 }
             }
@@ -2456,7 +2714,7 @@ impl Blocks {
                         },
                         a => {
                             let gs = self.shared.get(&a).into_iter().flatten();
-                            if let Some(o) = gs.map(|o| self.of.get(o)).find(|o| *o != Some(&b)) {
+                            if let Some(o) = gs.map(|o| self.of(o)).find(|o| *o != Some(b)) {
                                 return Err(format!("{h} of block {b} shares {a:?}, in {o:?}"));
                             }
                         }
@@ -2467,18 +2725,29 @@ impl Blocks {
         }
         // Each member is held in its own block, so no conjunct is in two; with as many
         // conjuncts held as there are members, no conjunct is held that is in no block.
-        if self.of.len() != self.members.values().map(OrdSet::len).sum::<usize>() {
+        if self.of.len() != total_members {
             return Err("the conjuncts with a block are not those of the blocks".into());
         }
-        let held = self
-            .at
-            .iter()
-            .map(|(k, s)| (k.clone(), s.iter().cloned().collect()));
-        if !held.eq(at) {
+        let mut held_at: BTreeMap<BlockId, BTreeMap<Arc<str>, BTreeSet<Arc<Formula>>>> =
+            BTreeMap::new();
+        for (&b, by_name) in &self.at {
+            if by_name.is_empty() {
+                return Err(format!("empty `at` entry for block {b}"));
+            }
+            let mut inner = BTreeMap::new();
+            for (n, s) in by_name {
+                if s.is_empty() {
+                    return Err(format!("empty `at` set for ({b}, {n})"));
+                }
+                inner.insert(n.clone(), s.iter().cloned().collect());
+            }
+            held_at.insert(b, inner);
+        }
+        if held_at != at {
             return Err("the conjuncts of the names by block are not those of the blocks".into());
         }
-        let mut names_in: BTreeMap<(BlockId, Arc<str>), usize> = BTreeMap::new();
-        let mut pairs: BTreeMap<(BlockId, Arc<str>, Arc<str>), usize> = BTreeMap::new();
+        let mut names_in: BTreeMap<BlockId, BTreeMap<Arc<str>, usize>> = BTreeMap::new();
+        let mut pairs: BTreeMap<BlockId, BTreeMap<NamePair, usize>> = BTreeMap::new();
         let mut moving: BTreeMap<Arc<str>, BTreeMap<BlockId, usize>> = BTreeMap::new();
         for (&b, ms) in &self.members {
             for h in ms {
@@ -2486,27 +2755,82 @@ impl Blocks {
                     if !self.hung.has(&n, h) {
                         *moving.entry(n.clone()).or_default().entry(b).or_default() += 1;
                     }
-                    *names_in.entry((b, n)).or_default() += 1;
+                    *names_in.entry(b).or_default().entry(n).or_default() += 1;
                 }
                 if let Some([u, v]) = pair(h) {
-                    *pairs.entry((b, u, v)).or_default() += 1;
+                    *pairs.entry(b).or_default().entry((u, v)).or_default() += 1;
                 }
             }
         }
-        if !self
-            .names_in
-            .iter()
-            .map(|(k, &c)| (k.clone(), c))
-            .eq(names_in)
-        {
+        let mut held_names: BTreeMap<BlockId, BTreeMap<Arc<str>, usize>> = BTreeMap::new();
+        for (&b, inner) in &self.names_in {
+            if inner.is_empty() {
+                return Err(format!("empty `names_in` entry for block {b}"));
+            }
+            let mut counts = BTreeMap::new();
+            for (n, &(c, tag)) in inner {
+                if c == 0 {
+                    return Err(format!("zero `names_in` count for ({b}, {n})"));
+                }
+                if self.resolve(tag) != b {
+                    return Err(format!(
+                        "`names_in` tag {tag} for ({b}, {n}) resolves to {}",
+                        self.resolve(tag)
+                    ));
+                }
+                counts.insert(n.clone(), c);
+            }
+            held_names.insert(b, counts);
+        }
+        if held_names != names_in {
             return Err("the counts of the names of the blocks are not those of the blocks".into());
         }
-        if !self.pairs.iter().map(|(k, &c)| (k.clone(), c)).eq(pairs) {
+        let mut held_pairs: BTreeMap<BlockId, BTreeMap<NamePair, usize>> = BTreeMap::new();
+        for (&b, inner) in &self.pairs {
+            if inner.is_empty() {
+                return Err(format!("empty `pairs` entry for block {b}"));
+            }
+            let mut counts = BTreeMap::new();
+            for (k, &c) in inner {
+                if c == 0 {
+                    return Err(format!("zero `pairs` count for ({b}, {k:?})"));
+                }
+                counts.insert(k.clone(), c);
+            }
+            held_pairs.insert(b, counts);
+        }
+        if held_pairs != pairs {
             return Err("the counts of the pairs of the blocks are not those of the blocks".into());
         }
-        let kept = (self.moving_at.iter())
-            .map(|(n, m)| (n.clone(), m.iter().map(|(&b, &c)| (b, c)).collect()));
-        if !kept.eq(moving) {
+        let mut kept_moving: BTreeMap<Arc<str>, BTreeMap<BlockId, usize>> = BTreeMap::new();
+        for (n, m) in &self.moving_at {
+            if m.is_empty() {
+                return Err(format!("empty `moving_at` entry for {n}"));
+            }
+            let mut resolved = BTreeMap::new();
+            for (&tag, &c) in m {
+                if c == 0 {
+                    return Err(format!("zero `moving_at` count for ({n}, {tag})"));
+                }
+                let b = self.resolve(tag);
+                let expected_tag = self
+                    .names_in
+                    .get(&b)
+                    .and_then(|im| im.get(n))
+                    .map(|&(_, t)| t);
+                if expected_tag != Some(tag) {
+                    return Err(format!(
+                        "`moving_at` tag {tag} for ({n}, {b}) mismatches `names_in` tag \
+                         {expected_tag:?}"
+                    ));
+                }
+                if resolved.insert(b, c).is_some() {
+                    return Err(format!("duplicate resolved block {b} in `moving_at[{n}]`"));
+                }
+            }
+            kept_moving.insert(n.clone(), resolved);
+        }
+        if kept_moving != moving {
             return Err(
                 "the counts of the moving conjuncts of the names by block are not those of the \
                  blocks"
@@ -2547,13 +2871,13 @@ impl Blocks {
         let mut links = 0;
         for (&b, ns) in &names_of {
             for &n in ns {
-                if (self.up.get(&b) == Some(&n)) == (self.up.get(&n) == Some(&b)) {
+                if (self.parent(b) == Some(n)) == (self.parent(n) == Some(b)) {
                     return Err(format!("block {b} and its name {n} are not linked once"));
                 }
                 links += 1;
             }
         }
-        if self.up.len() != links {
+        if self.up.len() != links || self.up.keys().any(|k| !nodes.contains(k)) {
             return Err(format!(
                 "parent links {:?}, names of the blocks {names_of:?}, names {:?}",
                 self.up, self.name
@@ -2563,12 +2887,12 @@ impl Blocks {
         for &x in &nodes {
             let mut at = x;
             for _ in 0..=nodes.len() {
-                match self.up.get(&at) {
-                    Some(&p) => at = p,
+                match self.parent(at) {
+                    Some(p) => at = p,
                     None => break,
                 }
             }
-            if self.up.contains_key(&at) {
+            if self.parent(at).is_some() {
                 return Err(format!("the links from {x} make a cycle"));
             }
             let t = self.find(x);
@@ -2644,7 +2968,8 @@ impl Blocks {
         for &x in &moved {
             self.tree_of.insert(x, big);
         }
-        self.trees.entry(big).or_default().extend(moved);
+        let into = self.trees.entry(big).or_default();
+        *into = std::mem::take(into).union(moved);
         for counts in [&mut self.others, &mut self.gaps] {
             if let Some(n) = counts.remove(&small) {
                 tally(counts, big, n as isize);
@@ -2657,7 +2982,7 @@ impl Blocks {
         let mut prev: Option<BlockId> = None;
         let mut cur = x;
         loop {
-            let next = self.up.get(&cur).copied();
+            let next = self.parent_mut(cur);
             match prev {
                 Some(p) => self.up.insert(cur, p),
                 None => self.up.remove(&cur),
@@ -2689,7 +3014,7 @@ impl Blocks {
     /// The nodes of the tree path from `a` to `b`, two nodes of one tree, and the nearest
     /// common ancestor: both sides are walked up in turn until one meets the other's walk, in
     /// time near the path.
-    fn path(&self, a: BlockId, b: BlockId) -> (Vec<BlockId>, BlockId) {
+    fn path(&mut self, a: BlockId, b: BlockId) -> (Vec<BlockId>, BlockId) {
         let mut walks = [vec![a], vec![b]];
         let mut seen: [BTreeSet<BlockId>; 2] = [BTreeSet::from([a]), BTreeSet::from([b])];
         let top = if a == b {
@@ -2699,7 +3024,7 @@ impl Blocks {
                 let mut stepped = false;
                 for side in 0..2 {
                     let last = *walks[side].last().expect("a start");
-                    if let Some(&p) = self.up.get(&last) {
+                    if let Some(p) = self.parent_mut(last) {
                         stepped = true;
                         walks[side].push(p);
                         seen[side].insert(p);
@@ -2725,92 +3050,87 @@ impl Blocks {
     }
 
     /// Merges `blocks` into the one of the most conjuncts and gives it: the others' conjuncts
-    /// are moved into it and their names re-hung from it. The merged block's parent is `top`.
+    /// and block-local indexes are unioned into it and merged-away ids recorded in `uf`. The
+    /// merged block's parent is `top`.
     fn merge(&mut self, blocks: &[BlockId], top: Option<BlockId>) -> BlockId {
         let keep = *blocks
             .iter()
-            .max_by_key(|&&b| self.members.get(&b).map_or(0, |m| m.len()))
+            .max_by_key(|&&b| self.members.get(&b).map_or(0, OrdSet::len))
             .expect("a block");
         // Complexity tradeoff: naive version, each conjunct of a merged block moved alone
-        // ([`Blocks::put`]): per name of each conjunct, two descents of `names_in`, two of
-        // `moving_at` and two of `at`, and two of `pairs` per conjunct of two names, each
-        // O(log n); a conjunct moves O(log n) times (each merge keeps the block of the most
-        // conjuncts), so O(n log² n) over n conjuncts, and 34% of the satellite of every hub
-        // built in a random order, growing 11.40 times at 8n (presperf1). Used: each index
-        // moved by its keys, not by conjunct: a block's counts per name (`names_in`,
-        // `moving_at`) and per pair (`pairs`) each moved once, its conjuncts of each name
-        // (`at`) moved as a set into the other block's (imbl's `union`, the smaller set into
-        // the larger), and each name's link read once. The same indexes after (checked by
-        // [`Blocks::well_formed`]), with O(k log n) for the k names and pairs of the block
-        // in place of O(c·w log n) for its c conjuncts of w names; `of` and `members` still
-        // pay per conjunct, O(1) expected and O(log n). Still O(n log² n) in all, each key
-        // moving O(log n) times at O(log n) a move, with half the instructions: merge alone
-        // grows 11.8 times at 8n (12.4 before), the bench 9.72 (10.03 before). Not done: a
-        // join-based union of the ordered sets (Blelloch, Ferizovic and Sun, "Parallel Ordered
-        // Sets Using Join", arXiv:1602.02120, O(m log(n/m + 1)) for m into n) would make `members`
-        // O(n log n) over all merges, but imbl 7 has none and `members` is read by
-        // zedc-preimage as imbl's `OrdSet` (`Blocks::member_set`, its `diff`). A join alone
-        // does not make the merge O(n log n): `at`, `moving_at`, `name` and `up` are keyed by
-        // name or node first, so each name of the smaller block is relabeled at its own place
-        // in the order, at least log C(N, k) comparisons for k names among N, which sums to
-        // Θ(n log² n) over merges of blocks of equal size (cross-review round 1, both seats;
-        // the input of `blocks_merged_in_pairs_of_equal_size_stay_well_formed_in_any_order`).
-        // O(n log n) needs those keyed by hash or by stable rows, `names_in`, `pairs` and `at`
-        // nested by block with a join-based union, and the trees of `Blocks::union`, which
-        // relabel the smaller tree node by node, changed too. COMPLEXITY.md row
-        // PERF-satellite-random-under9-redesign.
+        // ([`Blocks::put`]): per name of each conjunct, descents of `names_in`, `moving_at`,
+        // `at` and `pairs`, each O(log n); a conjunct moves O(log n) times (each merge keeps the
+        // block of the most conjuncts), so O(n log² n) over n conjuncts, 34% of the satellite of
+        // every hub built in a random order and growing 11.40 times at 8n (presperf1). Stage 1
+        // (satred1, 920b207e4): each index moved by its keys, not by conjunct, still
+        // O(n log² n), merge alone growing 11.8 times at 8n and the bench 9.72. A move by keys
+        // cannot do better while the indexes are keyed by name first: each name of the smaller
+        // block is relabeled at its own place in the order, at least log C(N, k) comparisons
+        // for k names among N, Θ(n log² n) over merges of blocks of equal size (cross-review
+        // round 1, Opus and Sol seats). Used (cross-review round 1, Gemini seat): (1) the
+        // block-local indexes (`members`, `names_in`, `at`, `pairs`) are nested by `BlockId`
+        // and merged with the join-based B+Tree `union`/`union_with_key` added to
+        // `vendor/imbl` (Blelloch, Ferizovic and Sun, "Just Join for Parallel Ordered Sets",
+        // SPAA 2016, arXiv:1602.02120), O(m log(n/m + 1)) for m keys into n, which sums to
+        // O(n log n) over any merge tree (Brown and Tarjan, "A fast merging algorithm", JACM
+        // 26(2), 1979); (2) the indexes keyed by conjunct or name (`of`, `up`, `moving_at`) are
+        // not rewritten: `uf_merge(b, keep)` records `b -> keep` in the persistent union-find
+        // `uf` (union by rank, path compression on `&mut self`; Tarjan, JACM 22(2), 1975),
+        // O(log n) per merged-away block, and a read resolves its block through `uf`; `moving_at`
+        // is keyed by stable tags (`names_in`'s second field) and changed only for the names
+        // both blocks hold, which `names_in`'s `union_with_key` finds, at most one per name
+        // per merge it survives. Cost: a read of `of`, `up` or `moving_at` follows at most
+        // log₂ n `uf` links when not compressed; `moving_blocks(n)` resolves tags and sorts
+        // when `n` is in two or more blocks; `uf` is never compacted, so it keeps one entry
+        // per merged-away block; `Blocks::union` still relabels the smaller tree of `tree_of`
+        // node by node, O(n log² n) over unions (about 2% of the satellite bench's run, Opus
+        // seat). Merge alone now grows 9.06 times at 8n (callgrind, Gemini seat; 11.7 before),
+        // and `stars_formed_in_the_block_of_a_satellite_take_time_near_the_block` 9.336 (9.763
+        // before). COMPLEXITY.md row PERF-satellite-random-under9-redesign.
+        let mut keep_members = self.members.remove(&keep).unwrap_or_default();
+        let mut keep_names = self.names_in.remove(&keep).unwrap_or_default();
+        let mut keep_at = self.at.remove(&keep).unwrap_or_default();
+        let mut keep_pairs = self.pairs.remove(&keep).unwrap_or_default();
         for &b in blocks.iter().filter(|&&b| b != keep) {
             debug_assert!(
                 !self.apart.contains(&b) && !self.apart.contains(&keep),
                 "only blocks of the forest are merged, so `forest` keeps its entries"
             );
-            let moved = self.members.remove(&b).unwrap_or_default();
-            for g in &moved {
-                self.of.insert(g.clone(), keep);
+            self.uf_merge(b, keep);
+            if let Some(moved) = self.members.remove(&b) {
+                keep_members = keep_members.union(moved);
             }
-            let named: Vec<(Arc<str>, usize)> = (self.names_in)
-                .range((b, Arc::<str>::from(""))..)
-                .take_while(|((c, _), _)| *c == b)
-                .map(|((_, n), &k)| (n.clone(), k))
-                .collect();
-            for (n, k) in named {
-                self.names_in.remove(&(b, n.clone()));
-                tally(&mut self.names_in, (keep, n.clone()), k as isize);
-                if let Some(counts) = self.moving_at.get_mut(&n)
-                    && let Some(m) = counts.remove(&b)
-                {
-                    tally(counts, keep, m as isize);
-                }
-                if let Some(set) = self.at.remove(&(n.clone(), b)) {
-                    match self.at.get_mut(&(n.clone(), keep)) {
-                        Some(to) => *to = std::mem::take(to).union(set),
-                        None => {
-                            self.at.insert((n.clone(), keep), set);
-                        }
+            if let Some(b_names) = self.names_in.remove(&b) {
+                let moving_at = &mut self.moving_at;
+                keep_names = keep_names.union_with_key(b_names, |n, (ck, tag_k), (cb, tag_b)| {
+                    if let Some(counts) = moving_at.get_mut(n)
+                        && let Some(m) = counts.remove(&tag_b)
+                    {
+                        tally(counts, tag_k, m as isize);
                     }
-                }
-                // A link from `b` is to a name one of its conjuncts mentions alone, which
-                // `names_in` lists.
-                if let Some(&id) = self.name.get(&n)
-                    && self.up.get(&id) == Some(&b)
-                {
-                    self.up.insert(id, keep);
-                }
+                    (ck + cb, tag_k)
+                });
             }
-            let empty: Arc<str> = Arc::from("");
-            let paired: Vec<(Arc<str>, Arc<str>, usize)> = (self.pairs)
-                .range((b, empty.clone(), empty)..)
-                .take_while(|((c, _, _), _)| *c == b)
-                .map(|((_, u, v), &k)| (u.clone(), v.clone(), k))
-                .collect();
-            for (u, v, k) in paired {
-                self.pairs.remove(&(b, u.clone(), v.clone()));
-                tally(&mut self.pairs, (keep, u, v), k as isize);
+            if let Some(b_at) = self.at.remove(&b) {
+                keep_at = keep_at.union_with(b_at, |a, b| a.union(b));
+            }
+            if let Some(b_pairs) = self.pairs.remove(&b) {
+                keep_pairs = keep_pairs.union_with(b_pairs, |a, b| a + b);
             }
             self.up.remove(&b);
             self.drop_node(b);
-            let into = self.members.entry(keep).or_default();
-            *into = std::mem::take(into).union(moved);
+        }
+        if !keep_members.is_empty() {
+            self.members.insert(keep, keep_members);
+        }
+        if !keep_names.is_empty() {
+            self.names_in.insert(keep, keep_names);
+        }
+        if !keep_at.is_empty() {
+            self.at.insert(keep, keep_at);
+        }
+        if !keep_pairs.is_empty() {
+            self.pairs.insert(keep, keep_pairs);
         }
         match top {
             Some(t) => self.up.insert(keep, t),
@@ -2829,7 +3149,7 @@ impl Blocks {
             let small_first = self.tree_size(self.find(a)) <= self.tree_size(self.find(b));
             let (x, y) = if small_first { (a, b) } else { (b, a) };
             self.reroot(x);
-            let top = self.up.get(&y).copied();
+            let top = self.parent_mut(y);
             // Before the merge, which takes one of the two blocks out of its tree.
             self.union(a, b);
             return self.merge(&[x, y], top);
@@ -2843,7 +3163,7 @@ impl Blocks {
             return a;
         }
         let parent = if self.members.contains_key(&top) {
-            self.up.get(&top).copied()
+            self.parent_mut(top)
         } else {
             Some(top)
         };
@@ -2900,7 +3220,8 @@ impl Blocks {
                 .get(a)
                 .and_then(|s| s.iter().find(|h| *h != g))
                 .and_then(|h| self.of.get(h))
-                .copied();
+                .copied()
+                .map(|raw| self.resolve_mut(raw));
             if let Some(o) = other
                 && o != cur
             {
@@ -2983,8 +3304,8 @@ impl Blocks {
         let mut from: BTreeMap<BlockId, Vec<&Arc<Formula>>> = BTreeMap::new();
         let mut order: Vec<BlockId> = Vec::new();
         for g in gs {
-            match self.of.get(g) {
-                Some(&b) => {
+            match self.of_mut(g) {
+                Some(b) => {
                     let out = from.entry(b).or_default();
                     if out.is_empty() {
                         order.push(b);
@@ -3002,7 +3323,7 @@ impl Blocks {
                 if let Some(pairs) = pairs {
                     for (g, [u, v]) in out.iter().zip(pairs) {
                         self.unuse(g);
-                        let b = self.of[*g];
+                        let b = self.of_mut(g).expect("the block of a conjunct");
                         self.cut(b, g, &u, &v);
                     }
                     continue;
@@ -3046,7 +3367,11 @@ impl Blocks {
         // `pairs`).
         if ms.is_empty() {
             self.bridge(b, r, (u, iu), (v, iv));
-        } else if !self.pairs.contains_key(&(b, u.clone(), v.clone())) {
+        } else if !self
+            .pairs
+            .get(&b)
+            .is_some_and(|m| m.contains_key(&(u.clone(), v.clone())))
+        {
             self.peel(b, r, (u, iu), (v, iv));
         }
     }
@@ -3063,7 +3388,7 @@ impl Blocks {
         self.members.remove(&b);
         self.up.remove(&b);
         for id in [u.1, v.1] {
-            if self.up.get(&id) == Some(&b) {
+            if self.parent_mut(id) == Some(b) {
                 self.up.remove(&id);
             }
         }
@@ -3178,7 +3503,7 @@ impl Blocks {
             .chain(right.iter().rev())
             .map(|&(_, c)| cut_id(c))
             .collect();
-        let parent = self.up.get(&b).copied();
+        let parent = self.parent_mut(b);
         // The block that hangs from `b`'s parent: the one after it when it is a cut, so that the
         // one before hangs from it too; else the one that mentions it, else `b`.
         let mut top = left.len();
@@ -3314,7 +3639,7 @@ impl Blocks {
         }
         if let Some(s) = kept.first()
             && let Some(&id) = self.name.get(*s)
-            && self.up.get(&id) == Some(&b)
+            && self.parent_mut(id) == Some(b)
         {
             self.up.remove(&id);
         }
@@ -3357,7 +3682,7 @@ impl Blocks {
                 [s.get_min(), s.get_max()]
                     .into_iter()
                     .flatten()
-                    .any(|h| self.of.get(h) == Some(&b) && atoms.is_subset(&h.atoms()))
+                    .any(|h| self.of(h) == Some(b) && atoms.is_subset(&h.atoms()))
             });
             if !covered {
                 return false;
@@ -3475,7 +3800,7 @@ impl Blocks {
                 gaps += usize::from(self.gapped.contains(n));
                 continue;
             }
-            if self.up.get(&id) == Some(&b) {
+            if self.parent_mut(id) == Some(b) {
                 self.up.remove(&id);
             }
             count.insert(id, if Some(id) == top { usize::MAX } else { 1 });
@@ -3564,7 +3889,7 @@ impl Blocks {
         // The trees built again lose every node, so their counts go, and placing the conjuncts
         // counts them afresh.
         for g in gs.iter().chain(&found) {
-            if let Some(&b) = self.of.get(g) {
+            if let Some(b) = self.of_mut(g) {
                 let r = self.find(b);
                 self.others.remove(&r);
                 self.gaps.remove(&r);
@@ -3689,12 +4014,12 @@ impl Blocks {
     fn advance(&self, c: &mut Cursor, b: BlockId) -> Option<Option<Node>> {
         let (set, last, check) = match c {
             Cursor::Atoms(ns) => return ns.pop().map(Some),
-            Cursor::Name(x, last) => (self.at.get(&(x.clone(), b))?, last, false),
+            Cursor::Name(x, last) => (self.at.get(&b)?.get(x)?, last, false),
             Cursor::Atom(a, last) => (self.shared.get(a)?, last, true),
         };
         let h = after(set, last.as_ref())?.clone();
         *last = Some(h.clone());
-        Some((!check || self.of.get(&h) == Some(&b)).then_some(Node::Conj(h)))
+        Some((!check || self.of(&h) == Some(b)).then_some(Node::Conj(h)))
     }
 }
 
@@ -3943,7 +4268,9 @@ impl TreeWalk {
         };
         *last = Some(h.clone());
         if name.is_some() {
-            let b = blocks.of[&h];
+            let b = blocks
+                .of(&h)
+                .expect("a conjunct of the forest is in a block");
             if self.seen.insert(b) {
                 self.nodes.push((b, None));
             }
@@ -4072,11 +4399,7 @@ mod tests {
             let b = blocks.of(&gs[0]).expect("the block of the first conjunct");
             assert_eq!(blocks.members(b).count(), 4);
             let mut broken = blocks.clone();
-            broken.pairs = broken
-                .pairs
-                .into_iter()
-                .filter(|((k, _, _), _)| *k != b)
-                .collect();
+            broken.pairs.remove(&b);
             assert_eq!(
                 broken.well_formed(),
                 Err("the counts of the pairs of the blocks are not those of the blocks".into())
@@ -4103,5 +4426,274 @@ mod tests {
             blocks.well_formed(),
             Err("the conjuncts with a block are not those of the blocks".to_string())
         );
+    }
+
+    fn diff(a: &str, b: &str, c: i64) -> Formula {
+        row(&[(a, 1), (b, -1)], c, Rel::Ge)
+    }
+
+    fn block_partition(c: &Conjuncts) -> BTreeSet<BTreeSet<Arc<Formula>>> {
+        c.blocks()
+            .all()
+            .map(|b| c.blocks().members(b).cloned().collect())
+            .collect()
+    }
+
+    #[test]
+    fn balanced_binary_merge_tree_is_well_formed_and_order_independent() {
+        // Adversarial Q5 workload: 2^k disjoint 3-cycles merged pairwise in k balanced rounds so
+        // equal-sized blocks merge at every level.
+        let k = 5usize; // 32 leaves -> 1 block of 32*3 + 31*2 = 158 conjuncts, 96 names.
+        let leaves = 1usize << k;
+        let mut ordered: Vec<Formula> = Vec::new();
+        for i in 0..leaves {
+            let a = format!("n_{i}_0");
+            let b = format!("n_{i}_1");
+            let c = format!("n_{i}_2");
+            ordered.push(diff(&a, &b, 0));
+            ordered.push(diff(&b, &c, 0));
+            ordered.push(diff(&c, &a, 0));
+        }
+        let mut step = 1usize;
+        while step < leaves {
+            for base in (0..leaves).step_by(step * 2) {
+                let l0 = format!("n_{base}_0");
+                let r0 = format!("n_{}_0", base + step);
+                let l1 = format!("n_{base}_1");
+                let r1 = format!("n_{}_1", base + step);
+                ordered.push(diff(&l0, &r0, 0));
+                ordered.push(diff(&r1, &l1, 0));
+            }
+            step *= 2;
+        }
+
+        let mut fwd = Conjuncts::default();
+        for f in &ordered {
+            fwd.and(f.clone());
+        }
+        fwd.blocks().well_formed().expect("forward well-formed");
+        assert!(!fwd.blocks().uf.is_empty(), "balanced merges populated uf");
+        assert_eq!(fwd.blocks().all().count(), 1);
+        let root = fwd.blocks().all().next().expect("one block");
+        let names_fwd: Vec<Arc<str>> = fwd.blocks().names_of(root).cloned().collect();
+        assert_eq!(names_fwd.len(), leaves * 3);
+        assert!(names_fwd.windows(2).all(|w| w[0] < w[1]));
+        for n in &names_fwd {
+            let mb: Vec<BlockId> = fwd.blocks().moving_blocks(n).collect();
+            assert_eq!(mb, vec![root]);
+        }
+
+        // Reverse order and deterministic stride order must yield the exact same block partition.
+        let mut rev = Conjuncts::default();
+        for f in ordered.iter().rev() {
+            rev.and(f.clone());
+        }
+        rev.blocks().well_formed().expect("reverse well-formed");
+        assert_eq!(block_partition(&fwd), block_partition(&rev));
+
+        let mut permuted = Conjuncts::default();
+        let n = ordered.len();
+        let mut idx = 0usize;
+        for _ in 0..n {
+            permuted.and(ordered[idx].clone());
+            idx = (idx + 37) % n; // gcd(37, 158) == 1
+        }
+        permuted
+            .blocks()
+            .well_formed()
+            .expect("permuted well-formed");
+        assert_eq!(block_partition(&fwd), block_partition(&permuted));
+    }
+
+    #[test]
+    fn shrink_then_merge_chain_keeps_uf_rank_logarithmic() {
+        // Adversarial Q5 workload against naive size-based aliasing: maintain a live block of
+        // size 2 on (u, v), merge it into a fresh block of size 3 on (u_next, v_next) so the old
+        // block is always absorbed into the new one, then shrink the winner back to size 2.
+        // Without union-by-rank, `uf` chains grow to length 48; with union-by-rank, depth <= 7.
+        let mut b = Blocks::default();
+        let mut u = String::from("u_0");
+        let mut v = String::from("v_0");
+        let mut cur_edges = vec![Arc::new(diff(&u, &v, 0)), Arc::new(diff(&u, &v, 1))];
+        for e in &cur_edges {
+            b.add(e);
+        }
+
+        for round in 1..=48usize {
+            let u_next = format!("u_{round}");
+            let v_next = format!("v_{round}");
+            let n0 = Arc::new(diff(&u_next, &v_next, 0));
+            let n1 = Arc::new(diff(&u_next, &v_next, 1));
+            let n2 = Arc::new(diff(&u_next, &v_next, 2));
+            b.add(&n0);
+            b.add(&n1);
+            b.add(&n2);
+            let big_id = b.of(&n0).expect("big block");
+            let prev_id = b.of(&cur_edges[0]).expect("prev block");
+            assert_ne!(big_id, prev_id);
+
+            let br1 = Arc::new(diff(&u, &u_next, 0));
+            let br2 = Arc::new(diff(&v, &v_next, 0));
+            b.add(&br1);
+            b.add(&br2);
+            // `big_id` had 3 conjuncts > `prev_id`'s 2, so `prev_id` was merged into `big_id`.
+            assert_eq!(b.of(&cur_edges[0]), Some(big_id));
+            assert_eq!(b.of(&n0), Some(big_id));
+
+            // Remove old edges and one edge of `big_id`, leaving `big_id` alive with 2 conjuncts.
+            let mut drop_list = vec![br2, br1, n2];
+            drop_list.extend(cur_edges);
+            b.remove(&drop_list);
+            b.well_formed()
+                .expect("well-formed after shrink-then-merge");
+            assert_eq!(b.of(&n0), Some(big_id));
+
+            cur_edges = vec![n0, n1];
+            u = u_next;
+            v = v_next;
+        }
+        assert!(b.uf.len() >= 48, "expected >= 48 merged blocks in uf");
+        let mut max_depth = 0usize;
+        for (&id, _) in &b.uf {
+            let mut cur = id;
+            let mut depth = 0usize;
+            while let Some(&node) = b.uf.get(&cur) {
+                match node {
+                    UfNode::Root { .. } => break,
+                    UfNode::Parent(p) => {
+                        depth += 1;
+                        cur = p;
+                    }
+                }
+            }
+            max_depth = max_depth.max(depth);
+        }
+        assert!(
+            max_depth <= 8,
+            "uf max depth {max_depth} grew beyond log2 bound"
+        );
+    }
+
+    #[test]
+    fn branched_clones_and_mutations_stay_independent_and_well_formed() {
+        let mut base = Conjuncts::default();
+        let e0 = diff("a", "b", 0);
+        let e1 = diff("b", "c", 0);
+        let e2 = diff("c", "d", 0);
+        for f in [&e0, &e1, &e2] {
+            base.and(f.clone());
+        }
+        let snapshot = base.blocks().clone();
+        let old_b = snapshot.of(&Arc::new(e0.clone())).expect("e0 placed");
+
+        let mut left = base.clone();
+        let mut right = base.clone();
+
+        // Left branch closes cycle a-b-c-a, hangs a conjunct, then peels/removes.
+        let l_close = diff("c", "a", 0);
+        left.and(l_close.clone());
+        left.blocks().well_formed().expect("left after cycle");
+        let left_now = left.blocks().now_of(&snapshot, old_b);
+        assert_eq!(left_now.len(), 1);
+        let merged_block = *left_now.iter().next().expect("merged block");
+        assert_eq!(
+            left.blocks().moving_blocks("b").collect::<Vec<_>>(),
+            vec![merged_block]
+        );
+        left.remove(&Arc::new(l_close));
+        left.blocks().well_formed().expect("left after peel");
+
+        // Right branch closes a different cycle b-c-d-b and replaces an edge.
+        let r_close = diff("d", "b", 0);
+        right.and(r_close);
+        right.blocks().well_formed().expect("right after cycle");
+        let r_repl = diff("b", "c", 5);
+        right.blocks.replace(&Arc::new(e1), &Arc::new(r_repl));
+        right.blocks().well_formed().expect("right after replace");
+
+        // Base snapshot must be untouched.
+        snapshot.well_formed().expect("snapshot still well-formed");
+        assert_eq!(snapshot.all().count(), 3);
+    }
+
+    #[test]
+    fn merge_with_product_atoms_and_hung_conjuncts_preserves_all_indexes() {
+        let mut b = Blocks::default();
+        let prod = Atom::Product(Factor::Sym(Arc::from("p")), Factor::Sym(Arc::from("q")));
+        let g1 = Arc::new(Formula::Con(Con {
+            lin: Lin::atom(Atom::Sym(Arc::from("a")))
+                .plus(&Lin::atom(prod.clone()))
+                .plus(&Lin::constant(0)),
+            rel: Rel::Ge,
+        }));
+        let g2 = Arc::new(Formula::Con(Con {
+            lin: Lin::atom(Atom::Sym(Arc::from("b")))
+                .plus(&Lin::atom(prod))
+                .plus(&Lin::constant(1)),
+            rel: Rel::Ge,
+        }));
+        let g3 = Arc::new(diff("a", "c", 0));
+        let g4 = Arc::new(diff("b", "d", 0));
+        b.add(&g1);
+        b.add(&g3);
+        // Hang g1 at "p" and "a" before cross-tree merge with g2.
+        b.hang(&Arc::from("p"), &g1, true);
+        b.hang(&Arc::from("a"), &g1, true);
+        b.well_formed().expect("before product merge");
+
+        b.add(&g4);
+        b.add(&g2); // shares Atom::Product("p","q") with g1 across trees -> cross-tree merge!
+        b.well_formed().expect("after product merge");
+        assert_eq!(b.of(&g1), b.of(&g2));
+        // "p" is mentioned by both g1 (hung) and g2 (moving), so moving_blocks("p") has the block.
+        let merged = b.of(&g1).expect("g1 in merged block");
+        assert_eq!(b.moving_blocks("p").collect::<Vec<_>>(), vec![merged]);
+        // Unhang g1 at "p" and "a" after merge; tags must still resolve cleanly.
+        b.hang(&Arc::from("p"), &g1, false);
+        b.hang(&Arc::from("a"), &g1, false);
+        b.well_formed().expect("after post-merge unhang");
+        // Verify moving_blocks("a") is sorted ascending and has both `merged` and `g3`'s block.
+        let mb_a: Vec<BlockId> = b.moving_blocks("a").collect();
+        assert_eq!(mb_a.len(), 2);
+        assert!(mb_a[0] < mb_a[1]);
+        // Remove g1 and verify rebuild/split leaves indexes well-formed.
+        b.remove(&[g1]);
+        b.well_formed().expect("after removing product conjunct");
+    }
+
+    #[test]
+    fn well_formed_negative_controls_detect_corrupted_indexes() {
+        let mut b = Blocks::default();
+        let g1 = Arc::new(diff("x", "y", 0));
+        let g2 = Arc::new(diff("y", "z", 0));
+        let g3 = Arc::new(diff("z", "x", 0));
+        b.add(&g1);
+        b.add(&g2);
+        b.add(&g3);
+        b.well_formed().expect("clean baseline");
+
+        // Negative control 1: stale `of` entry not in `members`.
+        let mut stale_of = b.clone();
+        let ghost = Arc::new(diff("u", "v", 0));
+        stale_of.of.insert(ghost, 999);
+        assert!(stale_of.well_formed().is_err(), "stale `of` must fail");
+
+        // Negative control 2: mismatched `moving_at` tag relative to `names_in`.
+        let mut bad_tag = b.clone();
+        let live = bad_tag.of(&g1).expect("g1 block");
+        if let Some(m) = bad_tag.moving_at.get_mut("x") {
+            m.clear();
+            m.insert(live + 10_000, 2);
+        }
+        assert!(
+            bad_tag.well_formed().is_err(),
+            "bad `moving_at` tag must fail"
+        );
+
+        // Negative control 3: cycle in `uf`.
+        let mut uf_cycle = b.clone();
+        uf_cycle.uf.insert(500, UfNode::Parent(501));
+        uf_cycle.uf.insert(501, UfNode::Parent(500));
+        assert!(uf_cycle.well_formed().is_err(), "`uf` cycle must fail");
     }
 }

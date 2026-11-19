@@ -4,7 +4,10 @@
 //
 // Modified for zed on 2026-11-16 (imbl 7.0.2, IMBL-diff-branch-skip): tests
 // of the work of a diff only (`diff_skips_a_shared_subtree_at_the_root` and
-// the tests after it). See CHANGES-zed.md at the crate root.
+// the tests after it).
+// Modified for zed on 2026-11-19 (PERF-satellite-random-under9-redesign):
+// `union` and `union_with_key` delegate to join-based `Node::union_with_key`,
+// with tests. See CHANGES-zed.md at the crate root.
 
 //! An ordered map.
 //!
@@ -930,20 +933,8 @@ where
     /// ```
     #[inline]
     #[must_use]
-    pub fn union(mut self, mut other: Self) -> Self {
-        // We get better performance by consuming the small one and growing the big one. But the
-        // code isn't quite symmetric, because we need to keep values that are present in `self`.
-        if self.len() >= other.len() {
-            for (k, v) in other {
-                self.entry(k).or_insert(v);
-            }
-            self
-        } else {
-            for (k, v) in self {
-                other.insert(k, v);
-            }
-            other
-        }
+    pub fn union(self, other: Self) -> Self {
+        self.union_with_key(other, |_, left, _| left)
     }
 
     /// Construct the union of two maps, using a function to decide
@@ -954,7 +945,7 @@ where
     /// and the value from the other map as the second. It should
     /// return the value to be inserted in the resulting map.
     ///
-    /// Time: O(n log n)
+    /// Time: O(m log(n/m + 1)) for sizes m <= n.
     #[inline]
     #[must_use]
     pub fn union_with<F>(self, other: Self, mut f: F) -> Self
@@ -973,7 +964,7 @@ where
     /// value from the other map as the third argument. It should
     /// return the value to be inserted in the resulting map.
     ///
-    /// Time: O(n log n)
+    /// Time: O(m log(n/m + 1)) for sizes m <= n.
     ///
     /// # Examples
     ///
@@ -993,31 +984,22 @@ where
     where
         F: FnMut(&K, V, V) -> V,
     {
-        if self.len() >= other.len() {
-            self.union_with_key_inner(other, f)
-        } else {
-            other.union_with_key_inner(self, |key, other_value, self_value| {
-                f(key, self_value, other_value)
-            })
+        // zed (PERF-satellite-random-under9-redesign): join-based B+Tree union,
+        // O(m log(n/m + 1)) instead of O(m log n) one-by-one remove/insert.
+        if self.is_empty() {
+            return other;
         }
-    }
-
-    fn union_with_key_inner<F>(mut self, other: Self, mut f: F) -> Self
-    where
-        F: FnMut(&K, V, V) -> V,
-    {
-        for (key, right_value) in other {
-            match self.remove(&key) {
-                None => {
-                    self.insert(key, right_value);
-                }
-                Some(left_value) => {
-                    let final_value = f(&key, left_value, right_value);
-                    self.insert(key, final_value);
-                }
-            }
+        if other.is_empty() {
+            return self;
         }
-        self
+        let a = self.root.expect("non-empty map has root");
+        let b = other.root.expect("non-empty map has root");
+        let mut dupes = 0usize;
+        let root = Node::union_with_key(a, b, false, &mut dupes, &mut f);
+        GenericOrdMap {
+            size: self.size + other.size - dupes,
+            root: Some(root),
+        }
     }
 
     /// Construct the union of a sequence of maps, selecting the value
@@ -3137,5 +3119,261 @@ mod test {
                 assert_eq!(v, map1.get(k).or_else(|| map2.get(k)).unwrap());
             }
         }
+    }
+
+    #[test]
+    fn union_with_key_sane_and_exact_across_shapes() {
+        let sizes = [0usize, 1, 2, 5, 16, 17, 64, 256, 600];
+        for &na in &sizes {
+            for &nb in &[0usize, 1, 7, 16, 17, 100, 500] {
+                // Disjoint, overlapping, and interleaved patterns.
+                let patterns: Vec<(Vec<(usize, usize)>, Vec<(usize, usize)>)> = vec![
+                    (
+                        (0..na).map(|i| (i, 1)).collect(),
+                        (na..na + nb).map(|i| (i, 2)).collect(),
+                    ),
+                    (
+                        (0..na).map(|i| (i * 2, 10 + i)).collect(),
+                        (0..nb).map(|i| (i * 2 + 1, 20 + i)).collect(),
+                    ),
+                    (
+                        (0..na).map(|i| (i * 2, 10 + i)).collect(),
+                        (0..nb).map(|i| (i * 3, 20 + i)).collect(),
+                    ),
+                ];
+                for (va, vb) in patterns {
+                    let a: OrdMap<usize, usize> = va.iter().copied().collect();
+                    let b: OrdMap<usize, usize> = vb.iter().copied().collect();
+                    let a_snap = a.clone();
+                    let b_snap = b.clone();
+
+                    let mut expected: collections::BTreeMap<usize, usize> =
+                        va.iter().copied().collect();
+                    for &(k, v) in &vb {
+                        expected
+                            .entry(k)
+                            .and_modify(|l| *l = *l * 1000 + v + k)
+                            .or_insert(v);
+                    }
+
+                    let merged = a
+                        .clone()
+                        .union_with_key(b.clone(), |k, l, r| l * 1000 + r + *k);
+                    merged.check_sane();
+                    assert_eq!(merged.len(), expected.len());
+                    assert!(merged
+                        .iter()
+                        .map(|(&k, &v)| (k, v))
+                        .eq(expected.into_iter()));
+                    // Persistence: originals unchanged.
+                    assert_eq!(a, a_snap);
+                    assert_eq!(b, b_snap);
+
+                    // Plain union keeps left value on collision.
+                    let mut exp_plain: collections::BTreeMap<usize, usize> =
+                        va.iter().copied().collect();
+                    for &(k, v) in &vb {
+                        exp_plain.entry(k).or_insert(v);
+                    }
+                    let plain = a.union(b);
+                    plain.check_sane();
+                    assert_eq!(plain.len(), exp_plain.len());
+                    assert!(plain
+                        .iter()
+                        .map(|(&k, &v)| (k, v))
+                        .eq(exp_plain.into_iter()));
+                }
+            }
+        }
+    }
+
+    #[derive(Clone, Debug)]
+    struct CountedKey(usize);
+
+    thread_local! {
+        static CMPS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+    }
+
+    impl PartialEq for CountedKey {
+        fn eq(&self, other: &Self) -> bool {
+            self.cmp(other) == Ordering::Equal
+        }
+    }
+    impl Eq for CountedKey {}
+    impl PartialOrd for CountedKey {
+        fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+            Some(self.cmp(other))
+        }
+    }
+    impl Ord for CountedKey {
+        fn cmp(&self, other: &Self) -> Ordering {
+            CMPS.with(|c| c.set(c.get() + 1));
+            self.0.cmp(&other.0)
+        }
+    }
+
+    #[test]
+    fn union_disjoint_ranges_costs_logarithmic_comparisons() {
+        let a: OrdMap<CountedKey, usize> = (0..10_000).map(|i| (CountedKey(i), i)).collect();
+        let b: OrdMap<CountedKey, usize> = (10_000..20_000).map(|i| (CountedKey(i), i)).collect();
+        CMPS.with(|c| c.set(0));
+        let u = a.union(b);
+        let cmps = CMPS.with(|c| c.get());
+        u.check_sane();
+        assert_eq!(u.len(), 20_000);
+        assert!(
+            cmps < 2_000,
+            "disjoint union of 10k + 10k took {} comparisons (expected O(log n) < 2000)",
+            cmps
+        );
+    }
+
+    #[test]
+    fn union_balanced_merge_tree_costs_n_log_n_comparisons() {
+        let run = |n: usize| -> usize {
+            assert!(n.is_power_of_two());
+            let bits = n.trailing_zeros();
+            // Bit-reversed keys: every pair merged at every level is maximally interleaved.
+            let mut maps: Vec<OrdMap<CountedKey, usize>> = (0..n)
+                .map(|i| {
+                    let k = i.reverse_bits() >> (usize::BITS - bits);
+                    OrdMap::unit(CountedKey(k), 1)
+                })
+                .collect();
+            CMPS.with(|c| c.set(0));
+            while maps.len() > 1 {
+                let mut next = Vec::with_capacity(maps.len() / 2);
+                let mut it = maps.into_iter();
+                while let (Some(a), Some(b)) = (it.next(), it.next()) {
+                    next.push(a.union_with(b, |x, y| x + y));
+                }
+                maps = next;
+            }
+            let cmps = CMPS.with(|c| c.get());
+            let out = maps.pop().unwrap();
+            out.check_sane();
+            assert_eq!(out.len(), n);
+            assert!(out
+                .iter()
+                .enumerate()
+                .all(|(i, (k, &v))| k.0 == i && v == 1));
+            cmps
+        };
+        let c512 = run(512);
+        let c4096 = run(4096);
+        let c32768 = run(32768);
+        let r1 = c4096 as f64 / c512 as f64;
+        let r2 = c32768 as f64 / c4096 as f64;
+        eprintln!(
+            "balanced merge tree cmps: 512={}, 4096={} ({:.2}x), 32768={} ({:.2}x)",
+            c512, c4096, r1, c32768, r2
+        );
+        assert!(
+            r2 < 10.7,
+            "balanced merge tree 4096 -> 32768 took {} -> {} comparisons (ratio {:.2}, expected O(n log n) < 10.7)",
+            c4096,
+            c32768,
+            r2
+        );
+    }
+
+    /// Unions of maps of random shape, built by inserts and removes and by earlier unions,
+    /// with removes after the unions: each result holds what a `BTreeMap` holds, the inputs
+    /// are unchanged, and a result whose history has no remove is sane. (`check_sane` asks
+    /// non-root branches for MEDIAN - 1 keys, which `remove` does not keep: its rebalance
+    /// acts below THIRD, so a map with a remove in its history is compared by content only.)
+    /// zed, PERF-satellite-random-under9-redesign.
+    #[test]
+    fn union_of_random_shapes_with_removes_after_matches_a_btreemap() {
+        type Entry = (OrdMap<u64, u64>, collections::BTreeMap<u64, u64>, bool);
+        let mut state: u64 = 0x9e37_79b9_7f4a_7c15;
+        let mut next = move |bound: u64| -> u64 {
+            state ^= state << 13;
+            state ^= state >> 7;
+            state ^= state << 17;
+            state % bound
+        };
+        let same = |map: &OrdMap<u64, u64>, model: &collections::BTreeMap<u64, u64>| {
+            map.len() == model.len() && map.iter().map(|(&k, &v)| (k, v)).eq(model.clone())
+        };
+        let mut pool: Vec<Entry> = Vec::new();
+        let mut sane_unions = 0;
+        for round in 0..3000 {
+            // Rounds before 1500 remove nothing, so every union there is checked for sanity.
+            let removing = round >= 1500;
+            let choice = if pool.len() < 2 {
+                0
+            } else if removing {
+                next(4)
+            } else {
+                next(3)
+            };
+            if choice == 0 {
+                let mut map = OrdMap::new();
+                let mut model = collections::BTreeMap::new();
+                let size = [0, 1, 3, 17, 40, 200, 1500][next(7) as usize];
+                let span = 1 + size * (1 + next(4));
+                let base = next(3000);
+                for _ in 0..size {
+                    let k = base + next(span);
+                    map.insert(k, round);
+                    model.insert(k, round);
+                }
+                let removes = if removing { next(size + 1) } else { 0 };
+                for _ in 0..removes {
+                    let k = base + next(span);
+                    assert_eq!(map.remove(&k), model.remove(&k));
+                }
+                if removes == 0 {
+                    map.check_sane();
+                }
+                assert!(same(&map, &model));
+                pool.push((map, model, removes > 0));
+            } else if choice == 3 {
+                let i = next(pool.len() as u64) as usize;
+                let (map, model, removed) = &mut pool[i];
+                let keys: Vec<u64> = model.keys().copied().collect();
+                for _ in 0..next(keys.len() as u64 + 1) {
+                    let k = keys[next(keys.len() as u64) as usize];
+                    assert_eq!(map.remove(&k), model.remove(&k));
+                    *removed = true;
+                }
+                assert!(same(map, model));
+            } else {
+                let i = next(pool.len() as u64) as usize;
+                let j = next(pool.len() as u64) as usize;
+                let (a, ma, ra) = pool[i].clone();
+                let (b, mb, rb) = pool[j].clone();
+                let mut want = ma.clone();
+                for (&k, &v) in &mb {
+                    want.entry(k)
+                        .and_modify(|l| *l = l.wrapping_mul(31).wrapping_add(v))
+                        .or_insert(v);
+                }
+                let got = a
+                    .clone()
+                    .union_with(b.clone(), |l, r| l.wrapping_mul(31).wrapping_add(r));
+                if !ra && !rb {
+                    got.check_sane();
+                    sane_unions += 1;
+                }
+                assert!(same(&got, &want));
+                assert!(same(&a, &ma));
+                assert!(same(&b, &mb));
+                let entry = (got, want, ra || rb);
+                if pool.len() < 40 {
+                    pool.push(entry);
+                } else {
+                    let r = next(pool.len() as u64) as usize;
+                    pool[r] = entry;
+                }
+            }
+        }
+        eprintln!("unions checked for sanity: {sane_unions}");
+        assert!(
+            sane_unions > 500,
+            "only {} unions were checked for sanity",
+            sane_unions
+        );
     }
 }

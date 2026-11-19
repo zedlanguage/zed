@@ -5,7 +5,10 @@
 // Modified for zed on 2026-11-16 (imbl 7.0.2, IMBL-diff-branch-skip): the
 // diff of two maps steps over shared subtrees at every level (`Cursor::align`
 // and the functions before it); `Node::level` is pub(crate); the test counter
-// `PUSHES` and `Node::addresses`. See CHANGES-zed.md at the crate root.
+// `PUSHES` and `Node::addresses`.
+// Modified for zed on 2026-11-19 (PERF-satellite-random-under9-redesign):
+// join-based O(m log(n/m + 1)) union (`Node::union_with_key`, `split_lt`,
+// `join_with_sep`). See CHANGES-zed.md at the crate root.
 
 use std::collections::VecDeque;
 use std::iter::FromIterator;
@@ -44,7 +47,8 @@ impl<K: Ord + std::fmt::Debug, V: std::fmt::Debug, P: SharedPointerKind> Branch<
                 for i in 0..self.keys.len() {
                     let left = &leaves[i];
                     let right = &leaves[i + 1];
-                    assert!(left.keys.last().unwrap().0 < right.keys.first().unwrap().0);
+                    assert!(left.keys.last().unwrap().0 < self.keys[i]);
+                    assert!(self.keys[i] <= right.keys.first().unwrap().0);
                 }
                 leaves.iter().map(|child| child.check_sane(false)).sum()
             }
@@ -54,6 +58,8 @@ impl<K: Ord + std::fmt::Debug, V: std::fmt::Debug, P: SharedPointerKind> Branch<
                     let right = &branches[i + 1];
                     assert!(left.level() == level.get() - 1);
                     assert!(right.level() == level.get() - 1);
+                    assert!(left.max().unwrap().0 < self.keys[i]);
+                    assert!(self.keys[i] <= right.min().unwrap().0);
                 }
                 branches.iter().map(|child| child.check_sane(false)).sum()
             }
@@ -255,6 +261,55 @@ impl<K, V, P: SharedPointerKind> Children<K, V, P> {
                 branches: branches.split_off(at),
                 level: *level,
             },
+        }
+    }
+    fn push_back(&mut self, node: Node<K, V, P>) {
+        match (self, node) {
+            (Children::Leaves { leaves }, Node::Leaf(node)) => leaves.push_back(node),
+            (Children::Branches { branches, .. }, Node::Branch(node)) => branches.push_back(node),
+            _ => panic!("mismatched push_back"),
+        }
+    }
+    fn push_front(&mut self, node: Node<K, V, P>) {
+        match (self, node) {
+            (Children::Leaves { leaves }, Node::Leaf(node)) => leaves.push_front(node),
+            (Children::Branches { branches, .. }, Node::Branch(node)) => branches.push_front(node),
+            _ => panic!("mismatched push_front"),
+        }
+    }
+    fn extend_slice(&mut self, other: &Self, range: std::ops::Range<usize>) {
+        match (self, other) {
+            (
+                Children::Leaves { leaves },
+                Children::Leaves {
+                    leaves: other_leaves,
+                },
+            ) => leaves.extend(other_leaves[range].iter().cloned()),
+            (
+                Children::Branches { branches, .. },
+                Children::Branches {
+                    branches: other_branches,
+                    ..
+                },
+            ) => branches.extend(other_branches[range].iter().cloned()),
+            _ => panic!("mismatched extend_slice"),
+        }
+    }
+    fn clone_slice(&self, range: std::ops::Range<usize>) -> Self {
+        match self {
+            Children::Leaves { leaves } => Children::Leaves {
+                leaves: Chunk::from_iter(leaves[range].iter().cloned()),
+            },
+            Children::Branches { branches, level } => Children::Branches {
+                branches: Chunk::from_iter(branches[range].iter().cloned()),
+                level: *level,
+            },
+        }
+    }
+    fn get_node(&self, idx: usize) -> Node<K, V, P> {
+        match self {
+            Children::Leaves { leaves } => Node::Leaf(leaves[idx].clone()),
+            Children::Branches { branches, .. } => Node::Branch(branches[idx].clone()),
         }
     }
 }
@@ -692,6 +747,598 @@ impl<K: Ord + Clone, V: Clone, P: SharedPointerKind> Node<K, V, P> {
                 _ => panic!("mismatched split"),
             },
         }))
+    }
+
+    fn is_valid_non_root(&self) -> bool {
+        match self {
+            Node::Leaf(leaf) => leaf.keys.len() >= THIRD,
+            Node::Branch(branch) => branch.keys.len() >= MEDIAN - 1,
+        }
+    }
+
+    fn from_branch_slice(branch: &Branch<K, V, P>, start: usize, end: usize) -> Option<Self> {
+        debug_assert!(start <= end && end <= branch.children.len());
+        match end - start {
+            0 => None,
+            1 => Some(branch.children.get_node(start)),
+            _ => Some(Node::Branch(SharedPointer::new(Branch {
+                keys: Chunk::from_iter(branch.keys[start..end - 1].iter().cloned()),
+                children: branch.children.clone_slice(start..end),
+            }))),
+        }
+    }
+
+    /// Inserts `(key, value)` into `self`, combining with `f` when `key` already exists.
+    /// When `swapped` is `false`, `value` is the left argument to `f` and the existing value
+    /// is the right; when `swapped` is `true`, the existing value is left and `value` is right.
+    fn insert_with_key<F>(
+        &mut self,
+        key: K,
+        value: V,
+        swapped: bool,
+        dupes: &mut usize,
+        f: &mut F,
+    ) -> InsertAction<K, V, P>
+    where
+        F: FnMut(&K, V, V) -> V,
+    {
+        match self {
+            Node::Branch(branch) => {
+                SharedPointer::make_mut(branch).insert_with_key(key, value, swapped, dupes, f)
+            }
+            Node::Leaf(leaf) => {
+                SharedPointer::make_mut(leaf).insert_with_key(key, value, swapped, dupes, f)
+            }
+        }
+    }
+
+    /// Joins two non-empty B+Trees `left` and `right` separated by `sep`
+    /// (`max(left) < sep <= min(right)`) in `O(B * (|h(left) - h(right)| + 1))` work
+    /// and zero key comparisons.
+    fn join_with_sep(mut left: Self, sep: K, mut right: Self) -> Self {
+        match left.level().cmp(&right.level()) {
+            std::cmp::Ordering::Equal => match (left, right) {
+                (Node::Leaf(mut l), Node::Leaf(r)) => {
+                    let split = SharedPointer::make_mut(&mut l).merge_or_split_append(&r);
+                    match split {
+                        None => Node::Leaf(l),
+                        Some((leaf_sep, r_new)) => {
+                            Node::new_from_split(Node::Leaf(l), leaf_sep, Node::Leaf(r_new))
+                        }
+                    }
+                }
+                (Node::Branch(mut l), Node::Branch(r)) => {
+                    let split = SharedPointer::make_mut(&mut l).merge_or_split_append(sep, &r);
+                    match split {
+                        None => Node::Branch(l),
+                        Some((up_sep, r_new)) => {
+                            Node::new_from_split(Node::Branch(l), up_sep, Node::Branch(r_new))
+                        }
+                    }
+                }
+                _ => unreachable!("same level implies same node kind"),
+            },
+            std::cmp::Ordering::Greater => {
+                if let Some((up_sep, sib)) = left.join_right(sep, right) {
+                    Node::new_from_split(left, up_sep, sib)
+                } else {
+                    left
+                }
+            }
+            std::cmp::Ordering::Less => {
+                if let Some((sib, up_sep)) = right.join_left(left, sep) {
+                    Node::new_from_split(sib, up_sep, right)
+                } else {
+                    right
+                }
+            }
+        }
+    }
+
+    /// Appends `right` (with `right.level() <= self.level()`) onto the right spine of `self`.
+    fn join_right(&mut self, sep: K, right: Self) -> Option<(K, Self)> {
+        if self.level() == right.level() {
+            return match (self, right) {
+                (Node::Leaf(l), Node::Leaf(r)) => SharedPointer::make_mut(l)
+                    .merge_or_split_append(&r)
+                    .map(|(s, n)| (s, Node::Leaf(n))),
+                (Node::Branch(l), Node::Branch(r)) => SharedPointer::make_mut(l)
+                    .merge_or_split_append(sep, &r)
+                    .map(|(s, n)| (s, Node::Branch(n))),
+                _ => unreachable!("same level implies same node kind"),
+            };
+        }
+        let branch = match self {
+            Node::Branch(b) => SharedPointer::make_mut(b),
+            Node::Leaf(_) => unreachable!("self.level() > right.level()"),
+        };
+        let split = match &mut branch.children {
+            Children::Leaves { leaves } => {
+                let last = leaves.len() - 1;
+                let right_leaf = match right {
+                    Node::Leaf(r) => r,
+                    Node::Branch(_) => unreachable!("leaf level"),
+                };
+                SharedPointer::make_mut(&mut leaves[last])
+                    .merge_or_split_append(&right_leaf)
+                    .map(|(s, n)| (s, Node::Leaf(n)))
+            }
+            Children::Branches { branches, .. } => {
+                let last = branches.len() - 1;
+                let mut child = Node::Branch(branches[last].clone());
+                let res = child.join_right(sep, right);
+                if let Node::Branch(updated) = child {
+                    branches[last] = updated;
+                }
+                res
+            }
+        };
+        let (up_sep, new_node) = split?;
+        if branch.keys.len() < NODE_SIZE {
+            branch.keys.push_back(up_sep);
+            branch.children.push_back(new_node);
+            None
+        } else {
+            let idx = branch.keys.len();
+            match branch.split_branch_insert(idx, up_sep, new_node) {
+                InsertAction::Split(s, n) => Some((s, n)),
+                _ => unreachable!("full branch always splits"),
+            }
+        }
+    }
+
+    /// Prepends `left` (with `left.level() <= self.level()`) onto the left spine of `self`.
+    fn join_left(&mut self, left: Self, sep: K) -> Option<(Self, K)> {
+        if self.level() == left.level() {
+            return match (left, self) {
+                (Node::Leaf(mut l), Node::Leaf(r)) => {
+                    let split = SharedPointer::make_mut(&mut l).merge_or_split_append(r);
+                    match split {
+                        None => {
+                            *r = l;
+                            None
+                        }
+                        Some((s, new_r)) => {
+                            *r = new_r;
+                            Some((Node::Leaf(l), s))
+                        }
+                    }
+                }
+                (Node::Branch(mut l), Node::Branch(r)) => {
+                    let split = SharedPointer::make_mut(&mut l).merge_or_split_append(sep, r);
+                    match split {
+                        None => {
+                            *r = l;
+                            None
+                        }
+                        Some((s, new_r)) => {
+                            *r = new_r;
+                            Some((Node::Branch(l), s))
+                        }
+                    }
+                }
+                _ => unreachable!("same level implies same node kind"),
+            };
+        }
+        let branch = match self {
+            Node::Branch(b) => SharedPointer::make_mut(b),
+            Node::Leaf(_) => unreachable!("self.level() > left.level()"),
+        };
+        let split = match &mut branch.children {
+            Children::Leaves { leaves } => {
+                let mut left_leaf = match left {
+                    Node::Leaf(l) => l,
+                    Node::Branch(_) => unreachable!("leaf level"),
+                };
+                let split = SharedPointer::make_mut(&mut left_leaf).merge_or_split_append(&leaves[0]);
+                match split {
+                    None => {
+                        leaves[0] = left_leaf;
+                        None
+                    }
+                    Some((s, new_r)) => {
+                        leaves[0] = new_r;
+                        Some((Node::Leaf(left_leaf), s))
+                    }
+                }
+            }
+            Children::Branches { branches, .. } => {
+                let mut child = Node::Branch(branches[0].clone());
+                let res = child.join_left(left, sep);
+                if let Node::Branch(updated) = child {
+                    branches[0] = updated;
+                }
+                res
+            }
+        };
+        let (new_left, up_sep) = split?;
+        if branch.keys.len() < NODE_SIZE {
+            branch.keys.push_front(up_sep);
+            branch.children.push_front(new_left);
+            None
+        } else {
+            Some(branch.split_branch_prepend(new_left, up_sep))
+        }
+    }
+
+    /// Splits `self` into `(left, right)` where every key in `left` is `< pivot` and
+    /// every key in `right` is `>= pivot`, in `O(log n)` comparisons and `O(B log_B n)` work.
+    fn split_lt(self, pivot: &K) -> (Option<Self>, Option<Self>) {
+        match self {
+            Node::Leaf(leaf) => {
+                let idx = slice_ext::binary_search_by(&leaf.keys, |(k, _)| k.cmp(pivot))
+                    .unwrap_or_else(|x| x);
+                if idx == 0 {
+                    (None, Some(Node::Leaf(leaf)))
+                } else if idx == leaf.keys.len() {
+                    (Some(Node::Leaf(leaf)), None)
+                } else {
+                    let left_keys = Chunk::from_iter(leaf.keys[..idx].iter().cloned());
+                    let right_keys = Chunk::from_iter(leaf.keys[idx..].iter().cloned());
+                    (
+                        Some(Node::Leaf(SharedPointer::new(Leaf { keys: left_keys }))),
+                        Some(Node::Leaf(SharedPointer::new(Leaf { keys: right_keys }))),
+                    )
+                }
+            }
+            Node::Branch(branch) => {
+                match slice_ext::binary_search_by(&branch.keys, |k| k.cmp(pivot)) {
+                    Ok(x) => {
+                        // Strong separator invariant: children[0..=x] < keys[x] == pivot <= children[x+1..].
+                        let left = Self::from_branch_slice(&branch, 0, x + 1);
+                        let right = Self::from_branch_slice(&branch, x + 1, branch.children.len());
+                        (left, right)
+                    }
+                    Err(i) => {
+                        let (child_l, child_r) = branch.children.get_node(i).split_lt(pivot);
+                        let left_prefix = Self::from_branch_slice(&branch, 0, i);
+                        let left = match (left_prefix, child_l) {
+                            (None, x) | (x, None) => x,
+                            (Some(lp), Some(cl)) => {
+                                Some(Self::join_with_sep(lp, branch.keys[i - 1].clone(), cl))
+                            }
+                        };
+                        let right_suffix =
+                            Self::from_branch_slice(&branch, i + 1, branch.children.len());
+                        let right = match (child_r, right_suffix) {
+                            (None, x) | (x, None) => x,
+                            (Some(cr), Some(rs)) => {
+                                Some(Self::join_with_sep(cr, branch.keys[i].clone(), rs))
+                            }
+                        };
+                        (left, right)
+                    }
+                }
+            }
+        }
+    }
+
+    /// Join-based union of two non-empty B+Trees in `O(m log(n/m + 1))` time for sizes
+    /// `m <= n` (Blelloch, Ferizovic and Sun, "Parallel Ordered Sets Using Join", SPAA 2016;
+    /// Brown and Tarjan, JACM 1979).
+    ///
+    /// Complexity tradeoff: imbl 7.0.2 inserted every entry of the smaller tree into the
+    /// larger one by one, `O(m log n)` per union and `O(N log^2 N)` over a merge tree of `N`
+    /// singletons. Always pivoting on the shorter tree (`a.level() <= b.level()`) ensures
+    /// `min(h(a), h(b))` decreases strictly at every recursive call; calls at height `k` form
+    /// an antichain on disjoint key ranges of size at least `c_k = Omega(MEDIAN^k)` in both
+    /// trees, so `|C_k| <= m / c_k`, and Jensen's inequality gives `O(m log(n/m + 1))` for
+    /// both split and join work, telescoping to `O(N log N)` over any merge tree.
+    pub(crate) fn union_with_key<F>(
+        mut a: Self,
+        mut b: Self,
+        mut swapped: bool,
+        dupes: &mut usize,
+        f: &mut F,
+    ) -> Self
+    where
+        F: FnMut(&K, V, V) -> V,
+    {
+        if a.level() > b.level() {
+            mem::swap(&mut a, &mut b);
+            swapped = !swapped;
+        }
+        match (a, b) {
+            (Node::Leaf(la), Node::Leaf(lb)) => {
+                // Two-way merge of two sorted leaves (each <= NODE_SIZE).
+                let mut merged: Vec<(K, V)> = Vec::with_capacity(la.keys.len() + lb.keys.len());
+                let (mut ia, mut ib) = (0, 0);
+                while ia < la.keys.len() && ib < lb.keys.len() {
+                    match la.keys[ia].0.cmp(&lb.keys[ib].0) {
+                        std::cmp::Ordering::Less => {
+                            merged.push(la.keys[ia].clone());
+                            ia += 1;
+                        }
+                        std::cmp::Ordering::Greater => {
+                            merged.push(lb.keys[ib].clone());
+                            ib += 1;
+                        }
+                        std::cmp::Ordering::Equal => {
+                            *dupes += 1;
+                            let (k, va) = la.keys[ia].clone();
+                            let vb = lb.keys[ib].1.clone();
+                            let v = if !swapped {
+                                f(&k, va, vb)
+                            } else {
+                                f(&k, vb, va)
+                            };
+                            merged.push((k, v));
+                            ia += 1;
+                            ib += 1;
+                        }
+                    }
+                }
+                merged.extend(la.keys[ia..].iter().cloned());
+                merged.extend(lb.keys[ib..].iter().cloned());
+                if merged.len() <= NODE_SIZE {
+                    Node::Leaf(SharedPointer::new(Leaf {
+                        keys: Chunk::from_iter(merged),
+                    }))
+                } else {
+                    let mid = merged.len() / 2;
+                    let right_vec = merged.split_off(mid);
+                    let sep = right_vec[0].0.clone();
+                    Node::new_from_split(
+                        Node::Leaf(SharedPointer::new(Leaf {
+                            keys: Chunk::from_iter(merged),
+                        })),
+                        sep,
+                        Node::Leaf(SharedPointer::new(Leaf {
+                            keys: Chunk::from_iter(right_vec),
+                        })),
+                    )
+                }
+            }
+            (Node::Leaf(la), mut b_node) => {
+                // Insert <= NODE_SIZE sorted keys from leaf `la` into branch `b_node`.
+                for (k, v) in la.keys.iter() {
+                    if let InsertAction::Split(sep, right) =
+                        b_node.insert_with_key(k.clone(), v.clone(), swapped, dupes, f)
+                    {
+                        b_node = Node::new_from_split(b_node, sep, right);
+                    }
+                }
+                b_node
+            }
+            (Node::Branch(ba), Node::Branch(bb)) => {
+                let b_node = Node::Branch(bb);
+                // Split `b_node` at each separator key of `ba`, recurse on pairs, then join.
+                let num_keys = ba.keys.len();
+                let mut rem = Some(b_node);
+                let mut pieces: Chunk<Option<Node<K, V, P>>, NUM_CHILDREN> = Chunk::new();
+                for sep in ba.keys.iter() {
+                    match rem {
+                        Some(r) => {
+                            let (left, right) = r.split_lt(sep);
+                            pieces.push_back(left);
+                            rem = right;
+                        }
+                        None => pieces.push_back(None),
+                    }
+                }
+                pieces.push_back(rem);
+
+                let mut results: Chunk<Node<K, V, P>, NUM_CHILDREN> = Chunk::new();
+                for (i, piece) in pieces.into_iter().enumerate() {
+                    let child = ba.children.get_node(i);
+                    let merged = match piece {
+                        None => child,
+                        Some(d) => Self::union_with_key(child, d, swapped, dupes, f),
+                    };
+                    results.push_back(merged);
+                }
+
+                // Fast path: if all children share one level and are valid non-root nodes,
+                // pack them directly into a single branch without calling `join_with_sep`.
+                let first_level = results[0].level();
+                if results
+                    .iter()
+                    .all(|n| n.level() == first_level && n.is_valid_non_root())
+                {
+                    let children = if first_level == 0 {
+                        let leaves = Chunk::from_iter(results.into_iter().map(|n| match n {
+                            Node::Leaf(l) => l,
+                            Node::Branch(_) => unreachable!("level 0 is a leaf"),
+                        }));
+                        Children::Leaves { leaves }
+                    } else {
+                        let branches = Chunk::from_iter(results.into_iter().map(|n| match n {
+                            Node::Branch(b) => b,
+                            Node::Leaf(_) => unreachable!("level > 0 is a branch"),
+                        }));
+                        Children::Branches {
+                            branches,
+                            level: NonZeroUsize::new(first_level + 1).unwrap(),
+                        }
+                    };
+                    return Node::Branch(SharedPointer::new(Branch {
+                        keys: ba.keys.clone(),
+                        children,
+                    }));
+                }
+
+                let mut iter = results.into_iter();
+                let mut acc = iter.next().expect("branch has at least 2 children");
+                for i in 0..num_keys {
+                    let next = iter.next().expect("keys.len() + 1 == children.len()");
+                    acc = Self::join_with_sep(acc, ba.keys[i].clone(), next);
+                }
+                acc
+            }
+            (Node::Branch(_), Node::Leaf(_)) => unreachable!("a.level() <= b.level()"),
+        }
+    }
+}
+
+impl<K: Ord + Clone, V: Clone, P: SharedPointerKind> Branch<K, V, P> {
+    fn insert_with_key<F>(
+        &mut self,
+        key: K,
+        value: V,
+        swapped: bool,
+        dupes: &mut usize,
+        f: &mut F,
+    ) -> InsertAction<K, V, P>
+    where
+        F: FnMut(&K, V, V) -> V,
+    {
+        let i = slice_ext::binary_search_by(&self.keys, |k| k.cmp(&key))
+            .map(|x| x + 1)
+            .unwrap_or_else(|x| x);
+        let insert_action = match &mut self.children {
+            Children::Leaves { leaves } => {
+                SharedPointer::make_mut(&mut leaves[i]).insert_with_key(key, value, swapped, dupes, f)
+            }
+            Children::Branches { branches, .. } => {
+                SharedPointer::make_mut(&mut branches[i])
+                    .insert_with_key(key, value, swapped, dupes, f)
+            }
+        };
+        match insert_action {
+            InsertAction::Split(new_key, new_node) if self.keys.len() >= NODE_SIZE => {
+                self.split_branch_insert(i, new_key, new_node)
+            }
+            InsertAction::Split(separator, new_node) => {
+                self.keys.insert(i, separator);
+                self.children.insert(i + 1, new_node);
+                InsertAction::Inserted
+            }
+            action => action,
+        }
+    }
+
+    /// Appends `sep` and `other` onto `self`, splitting evenly into two valid non-root
+    /// branches if the combined keys exceed `NODE_SIZE`.
+    fn merge_or_split_append(
+        &mut self,
+        sep: K,
+        other: &Branch<K, V, P>,
+    ) -> Option<(K, SharedPointer<Branch<K, V, P>, P>)> {
+        let total_keys = self.keys.len() + 1 + other.keys.len();
+        if total_keys <= NODE_SIZE {
+            self.keys.push_back(sep);
+            self.keys.extend(other.keys.iter().cloned());
+            self.children.extend(&other.children);
+            return None;
+        }
+        let total_children = self.children.len() + other.children.len();
+        let left_c = total_children / 2;
+        let left_k = left_c - 1;
+        let (up_sep, rk, rc) = match left_k.cmp(&self.keys.len()) {
+            std::cmp::Ordering::Less => {
+                let mut rk = self.keys.split_off(left_k + 1);
+                let up_sep = self.keys.pop_back();
+                rk.push_back(sep);
+                rk.extend(other.keys.iter().cloned());
+                let mut rc = self.children.split_off(left_c);
+                rc.extend(&other.children);
+                (up_sep, rk, rc)
+            }
+            std::cmp::Ordering::Equal => (sep, other.keys.clone(), other.children.clone()),
+            std::cmp::Ordering::Greater => {
+                let take_k = left_k - self.keys.len() - 1;
+                self.keys.push_back(sep);
+                self.keys.extend(other.keys[..take_k].iter().cloned());
+                let up_sep = other.keys[take_k].clone();
+                let rk = Chunk::from_iter(other.keys[take_k + 1..].iter().cloned());
+                let take_c = left_c - self.children.len();
+                self.children.extend_slice(&other.children, 0..take_c);
+                let rc = other.children.clone_slice(take_c..other.children.len());
+                (up_sep, rk, rc)
+            }
+        };
+        debug_assert_eq!(self.keys.len() + 1, self.children.len());
+        debug_assert_eq!(rk.len() + 1, rc.len());
+        Some((
+            up_sep,
+            SharedPointer::new(Branch {
+                keys: rk,
+                children: rc,
+            }),
+        ))
+    }
+
+    /// Prepends `(new_node, new_key)` to a full branch (`keys.len() == NODE_SIZE`),
+    /// leaving the right half in `self` and returning `(left_branch, mid_sep)`.
+    fn split_branch_prepend(
+        &mut self,
+        new_node: Node<K, V, P>,
+        new_key: K,
+    ) -> (Node<K, V, P>, K) {
+        let mut right_keys = self.keys.split_off(MEDIAN);
+        let mid_sep = self.keys.pop_back();
+        self.keys.push_front(new_key);
+        let mut right_children = self.children.split_off(MEDIAN);
+        self.children.push_front(new_node);
+        mem::swap(&mut self.keys, &mut right_keys);
+        mem::swap(&mut self.children, &mut right_children);
+        debug_assert_eq!(self.keys.len() + 1, self.children.len());
+        debug_assert_eq!(right_keys.len() + 1, right_children.len());
+        (
+            Node::Branch(SharedPointer::new(Branch {
+                keys: right_keys,
+                children: right_children,
+            })),
+            mid_sep,
+        )
+    }
+}
+
+impl<K: Ord + Clone, V: Clone> Leaf<K, V> {
+    fn insert_with_key<P: SharedPointerKind, F>(
+        &mut self,
+        key: K,
+        value: V,
+        swapped: bool,
+        dupes: &mut usize,
+        f: &mut F,
+    ) -> InsertAction<K, V, P>
+    where
+        F: FnMut(&K, V, V) -> V,
+    {
+        match slice_ext::binary_search_by(&self.keys, |(k, _)| k.cmp(&key)) {
+            Ok(i) => {
+                *dupes += 1;
+                let existing = self.keys[i].1.clone();
+                let combined = if !swapped {
+                    f(&key, value, existing)
+                } else {
+                    f(&key, existing, value)
+                };
+                self.keys[i].1 = combined;
+                InsertAction::Inserted
+            }
+            Err(i) if self.keys.len() >= NODE_SIZE => self.split_leaf_insert(i, key, value),
+            Err(i) => {
+                self.keys.insert(i, (key, value));
+                InsertAction::Inserted
+            }
+        }
+    }
+
+    /// Appends `other` onto `self`, splitting evenly into two valid non-root leaves
+    /// if the combined entries exceed `NODE_SIZE`.
+    fn merge_or_split_append<P: SharedPointerKind>(
+        &mut self,
+        other: &Leaf<K, V>,
+    ) -> Option<(K, SharedPointer<Leaf<K, V>, P>)> {
+        let total = self.keys.len() + other.keys.len();
+        if total <= NODE_SIZE {
+            self.keys.extend(other.keys.iter().cloned());
+            return None;
+        }
+        let mid = total / 2;
+        let rk = if self.keys.len() > mid {
+            let mut rk = self.keys.split_off(mid);
+            rk.extend(other.keys.iter().cloned());
+            rk
+        } else {
+            let take = mid - self.keys.len();
+            self.keys.extend(other.keys[..take].iter().cloned());
+            Chunk::from_iter(other.keys[take..].iter().cloned())
+        };
+        let sep = rk[0].0.clone();
+        Some((sep, SharedPointer::new(Leaf { keys: rk })))
     }
 }
 

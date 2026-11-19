@@ -17,4 +17,25 @@ License 2.0 (LICENCE.md); each changed file keeps its license notice and says wh
 - `src/ord/map.rs`: tests only: `diff_skips_a_shared_subtree_at_the_root`,
   `diff_work_grows_with_the_height` and `diff_of_each_change_at_each_size`.
 
+2026-11-19, plan row PERF-satellite-random-under9-redesign (stage 2):
+
+- `src/nodes/btree.rs`: added join-based `Node::union_with_key` using
+  `Node::split_lt`, `Node::join_with_sep` (`join_right`, `join_left`), and
+  `Node::insert_with_key`, running in O(m log(n/m + 1)) for sizes m <= n
+  (Blelloch, Ferizovic and Sun, SPAA 2016; Brown and Tarjan, JACM 1979).
+  Strengthened `Branch::check_sane` (test/fuzzing only) to check the separator
+  key invariant `max(left) < sep <= min(right)`.
+- `src/ord/map.rs`: `GenericOrdMap::union` and `GenericOrdMap::union_with_key`
+  now delegate to `Node::union_with_key`; added tests
+  `union_with_key_sane_and_exact_across_shapes`,
+  `union_disjoint_ranges_costs_logarithmic_comparisons`,
+  `union_balanced_merge_tree_costs_n_log_n_comparisons` and
+  `union_of_random_shapes_with_removes_after_matches_a_btreemap`. The last checks
+  sanity only for maps with no `remove` in their history: imbl 7.0.2's `remove`
+  rebalances a branch only below THIRD keys, while `check_sane` (and the comment on
+  `Branch`) asks non-root branches for MEDIAN - 1, so a map built by removes can fail
+  `check_sane` with unmodified imbl too (found 2026-11-19; lookups are unaffected).
+- `src/ord/set.rs`: `GenericOrdSet::union` now delegates to
+  `GenericOrdMap::union`.
+
 Nothing here has been sent upstream.
