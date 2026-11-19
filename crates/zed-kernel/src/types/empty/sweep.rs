@@ -2223,6 +2223,10 @@ mod r4_checker_tests {
         let good = Value::atom_with("cons", vec![Value::Int(7), Value::atom("nil")]);
         assert!(check_actual(&one, &good));
         assert!(!check_actual(&one, &Value::atom("nil")));
+        // Item TEST-kernel-unreached-paths-6: a value that is not an atom is no list, and a
+        // type the checker does not read as a list confirms no value.
+        assert!(!check_actual(&one, &Value::Int(7)));
+        assert!(!check_actual(&Type::int(), &Value::Int(7)));
         assert!(!check_actual(
             &one,
             &Value::atom_with("cons", vec![Value::Bool(true), Value::atom("nil")])

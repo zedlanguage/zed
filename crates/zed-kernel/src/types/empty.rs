@@ -7409,6 +7409,10 @@ impl<'m> Searching<'m> {
                         continue;
                     }
                     outside.extend(held.iter().copied());
+                    // A second piece cut: the check below would return `None` too, since no two
+                    // pieces are held by the same cells, so a cell one of the two holds and the
+                    // other does not is met, outside `t`, and not in `every`. Returning here
+                    // saves the tests of the pieces after it.
                     if cut.replace(i).is_some() {
                         return None;
                     }

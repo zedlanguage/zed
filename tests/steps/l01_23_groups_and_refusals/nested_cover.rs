@@ -398,3 +398,25 @@ fn pieces_cut_one_cell_at_a_time_are_those_found_two_at_a_time() {
         }
     });
 }
+
+/// Item TEST-kernel-unreached-paths-6: on component 0, the cell `1 | 2` comes after the
+/// disjoint cells `0 | 1` and `2 | 3` and cuts both their pieces, so it crosses a cell before
+/// it, and the cut one cell at a time stops at the second piece cut (its first `return None`)
+/// and leaves the box to the steps below. Of ten boxes tried with these three cells, this was
+/// the first to reach that line; the boxes less the three rows, such as
+/// `(int, int) \ ((0 | 1, int) | (2 | 3, int) | (1 | 2, 1))`, did not. The value `(1, 1)` is
+/// in the type.
+#[test]
+fn a_cell_that_cuts_two_pieces_stops_the_cut_one_cell_at_a_time() {
+    zed_tests::deep::on_small_stack(|| {
+        use zedc::check::read::parse_type;
+        let s = "((0 | 1, 1) | (2 | 3, 2) | (1 | 2, 3)) \\ (0 | 3, 1 | 2 | 3)";
+        let t = parse_type(s).unwrap().kernel().expect("a kernel type");
+        let one = Type::with_pieces_compared(|| t.verdict());
+        Type::forget_emptiness();
+        let two = t.verdict();
+        Type::forget_emptiness();
+        assert_eq!(one, two, "{s}");
+        assert_eq!(one, Verdict::Inhabited, "{s}");
+    });
+}
