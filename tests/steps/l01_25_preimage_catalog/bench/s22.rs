@@ -277,6 +277,11 @@ fn chain_cross_above_its_width_scales() {
 /// `k = 66`). On `cross` from `k = 51` to `99` the `k - 50` guards `j > 50` that no input meets
 /// were each still refuted by one full propagation (2.0 G at 52, was 22.9 G; 1.05 G at 48), and since
 /// LIN-probe-refute by one search over their bounds (`chain_cross_above_its_width_scales`).
+/// Since 16b3c83e7 the exact cover projects `m`, and its question `m` in [-6, -3] (in
+/// [-62, -3] at 64) costs 173M instructions at 8 and 23.1G at 64 in `found`, so the cover
+/// refuses it at its work limit at both sizes: about 170M of the 232M at 8 and 240M of the
+/// 879M at 64 buy no answer (PERF-cross-dead-size8-constant; the search is
+/// PERF-cross-dead-cover-question-search).
 #[test]
 fn chain_cross_dead_scales() {
     scales("cross_dead", 8);
