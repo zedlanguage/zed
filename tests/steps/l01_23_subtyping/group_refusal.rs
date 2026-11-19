@@ -1133,4 +1133,165 @@ fn both_and_the_readers_of_refused_members_agree_in_every_order() {
     }
 }
 
+/// A refused group of one definition, which refers only to itself:
+///
+/// ```text
+/// type A = (A & (int -> A), A & A) | (A & (_, _), A & (_, _)) | (int -> A & (_, _))
+/// ```
+///
+/// Its references make one cycle, which the message says in words. Every other refused fixture
+/// has two or more. Found by a random search over groups of one to three definitions (seed 11456
+/// of the search in the cover10 notes of COMPLETENESS.md).
+#[test]
+fn a_refused_definition_that_refers_only_to_itself_makes_one_cycle() {
+    let and = |xs: Vec<Expr>| Expr::And(xs);
+    let two = || Expr::Type(Type::tuple(vec![Type::top(), Type::top()]));
+    Type::forget_emptiness();
+    let types = group(vec![(
+        "A".into(),
+        or(vec![
+            pair(and(vec![r(0), f(r(0))]), and(vec![r(0), r(0)])),
+            pair(and(vec![r(0), two()]), and(vec![r(0), two()])),
+            f(and(vec![r(0), two()])),
+        ]),
+    )]);
+    let text = message(&types[0]);
+    assert!(
+        text.contains("`A` refers to itself; these references make one cycle;"),
+        "{text}"
+    );
+}
+
+/// A refused group whose repair needs `| #end` in all three definitions:
+///
+/// ```text
+/// type A = (C, B & A) | (A, A & A) | (int -> B)
+/// type B = (A & C, C & (_, _)) | (A & (_, _), C)
+/// type C = (C & A,) | (C & (int -> B), B & (int -> B)) | (int -> B & A)
+/// ```
+///
+/// The message for `B` lists the three definitions by name, sorted. Seed 378109 of the search
+/// named above.
+#[test]
+fn a_repair_over_several_definitions_lists_them_by_name() {
+    let and = |xs: Vec<Expr>| Expr::And(xs);
+    let one = |a: Expr| Expr::Tuple(vec![a]);
+    let two = || Expr::Type(Type::tuple(vec![Type::top(), Type::top()]));
+    let (a, b, c) = (|| r(0), || r(1), || r(2));
+    Type::forget_emptiness();
+    let types = group(vec![
+        (
+            "A".into(),
+            or(vec![
+                pair(c(), and(vec![b(), a()])),
+                pair(a(), and(vec![a(), a()])),
+                f(b()),
+            ]),
+        ),
+        (
+            "B".into(),
+            or(vec![
+                pair(and(vec![a(), c()]), and(vec![c(), two()])),
+                pair(and(vec![a(), two()]), c()),
+            ]),
+        ),
+        (
+            "C".into(),
+            or(vec![
+                one(and(vec![c(), a()])),
+                pair(and(vec![c(), f(b())]), and(vec![b(), f(b())])),
+                f(and(vec![b(), a()])),
+            ]),
+        ),
+    ]);
+    let text = message(&types[1]);
+    assert!(
+        text.contains(
+            "; adding the case `| #end` to each of `A`, `B` and `C` removes this obstacle,"
+        ),
+        "{text}"
+    );
+}
+
+/// The one-cycle group of [`a_refused_definition_that_refers_only_to_itself_makes_one_cycle`]
+/// with two more arms, each writing the union `#p | #q | #r`. The site, asked for outside a
+/// checker's message, declares that union once after the definitions, as `type Part1 = …;`,
+/// and names it `Part1` where it stands.
+#[test]
+fn a_site_outside_a_message_declares_a_part_written_twice_after_the_definitions() {
+    let and = |xs: Vec<Expr>| Expr::And(xs);
+    let two = || Expr::Type(Type::tuple(vec![Type::top(), Type::top()]));
+    let big = || {
+        Expr::Type(Type::tuple(vec![
+            &(&Type::atom("p") | &Type::atom("q")) | &Type::atom("r"),
+            Type::int(),
+        ]))
+    };
+    Type::forget_emptiness();
+    let types = group(vec![(
+        "A".into(),
+        or(vec![
+            pair(and(vec![r(0), f(r(0))]), and(vec![r(0), r(0)])),
+            pair(and(vec![r(0), two()]), and(vec![r(0), two()])),
+            f(and(vec![r(0), two()])),
+            pair(big(), and(vec![r(0), f(r(0))])),
+            pair(and(vec![r(0), f(r(0))]), big()),
+        ]),
+    )]);
+    assert_eq!(types[0].verdict(), Verdict::Refused(Refusal::Group));
+    let site = types[0]
+        .refusal_site(Refusal::Group)
+        .expect("a refused member");
+    assert_eq!(
+        site.defs,
+        [
+            "type A = (A & (int -> A), A & A) | (A & (_, _), A & (_, _)) | (int -> A & (_, _)) \
+             | ((Part1, int), A & (int -> A)) | (A & (int -> A), (Part1, int));",
+            "type Part1 = #p | #q | #r;",
+        ]
+    );
+}
+
+/// A meet with a recursive meet among its operands, written `A & (A & (int -> A))`:
+///
+/// ```text
+/// type A = (A & (A & (int -> A)), A & (int -> A)) | (int -> A & (_, _)) | (A & (_, _),)
+/// ```
+///
+/// `system` reads the inner meet as its own operands, so the outer one has three operands'
+/// nodes; the message reads the operands the same way and names each refused one once.
+#[test]
+fn a_meet_written_inside_a_meet_is_read_as_its_operands() {
+    let and = |xs: Vec<Expr>| Expr::And(xs);
+    let two = || Expr::Type(Type::tuple(vec![Type::top(), Type::top()]));
+    let fa = || f(r(0));
+    Type::forget_emptiness();
+    let types = group(vec![(
+        "A".into(),
+        or(vec![
+            pair(
+                and(vec![r(0), and(vec![r(0), fa()])]),
+                and(vec![r(0), fa()]),
+            ),
+            f(and(vec![r(0), two()])),
+            Expr::Tuple(vec![and(vec![r(0), two()])]),
+        ]),
+    )]);
+    let text = message(&types[0]);
+    assert!(
+        text.contains(
+            "the meet `A & A & (int -> A)` in `A` needs a value in each of `A` and `int -> A`,"
+        ),
+        "{text}"
+    );
+}
+
+/// A type that reads no member of a recursive group has no site.
+#[test]
+fn a_type_reading_no_group_has_no_refusal_site() {
+    let t = Type::tuple(vec![Type::int(), Type::atom("k")]);
+    assert_eq!(t.refusal_site(Refusal::Group), None);
+    assert_eq!(t.refusal_site(Refusal::Fork), None);
+}
+
 mod bench;

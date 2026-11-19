@@ -488,3 +488,65 @@ Open, with the reason. Every line below has count 0 in both runs:
   `Decided` ending never comes. Every fixture has two or more cycles, and its tuple is always
   present. `listed([])` would be unreachable if `open` could be proved never empty, and that
   proof is not done.
+
+Eighth round (cover10, 2026-11-18): the seventh round's open list. Coverage measured with the
+same instrumented build, `l01_23_subtyping`'s `group_refusal` tests run alone, with the kernel's
+shared library given to `llvm-cov`.
+
+Closed:
+
+- `types.rs`, the `Value::Path`/`Value::Family` arms of `kind`, `kind_status` and `spine`: now
+  `unreachable!`, with the proof at `makeable` (its three callers, and by induction a `Lit`
+  holds only values of its own kind). `Kind::Other` is gone. Control run: `makeable`'s `Path`
+  arm answering `true` makes
+  `a_membership_keyed_by_f32_values_and_asked_of_a_path_agrees_with_contains` panic at the new
+  `unreachable!`.
+- `types.rs`, the `Float32` arms of `erasable` and `witness`:
+  `a_membership_reading_f32_values_by_their_spine_agrees_with_contains` (reached 8 and 4 times).
+  Control run: `witness` giving an `f64` value makes it fail.
+- `empty/refused.rs`, a refused meet's open operands: the message now names them by the
+  program's text in the order written, from the nodes `system` records per meet (`Why::meets`),
+  with the proof that every meet node has its record at `meet_operands`.
+  `a_meet_named_by_the_message_lists_its_open_operands_as_written`; controls run: the old zip of
+  sorted nodes, and the record not reversed, each name `_` and `Q` and fail.
+- `empty/refused.rs`, `open` never empty: proved at the site (a node in `tuples` has two
+  distinct children in the refused component, all refused in that run), and `listed([])` is
+  `unreachable!` with the proof that each caller passes a non-empty list. The `_ => &[]` arm is
+  gone.
+- `empty/refused.rs`, "one cycle":
+  `a_refused_definition_that_refers_only_to_itself_makes_one_cycle`. Control run: the arm
+  tested on `cycles == 0` prints "1 independent cycles" and fails.
+- `empty/refused.rs`, the repair over several definitions:
+  `a_repair_over_several_definitions_lists_them_by_name`. Control run: the first name dropped
+  from the list fails.
+- `empty/refused.rs`, the shared-part lift outside a message (178):
+  `a_site_outside_a_message_declares_a_part_written_twice_after_the_definitions`. Control run:
+  the lifted parts not declared fails.
+- `empty/refused.rs`, a recursive meet among a meet's operands (316):
+  `a_meet_written_inside_a_meet_is_read_as_its_operands`. Control run: the inner meet not read
+  as its operands panics at the count check.
+- `empty/refused.rs`, `first_member` finding no member (260):
+  `a_type_reading_no_group_has_no_refusal_site`. Control run: returning the last type walked
+  panics at `site`'s `unreachable!`.
+- `empty/refused.rs`, `Recheck::Refused`: reached once by the tests above.
+
+The fixtures of the "one cycle" and several-definition tests were found by a random search
+over groups of one to three definitions, each a union of one to three arms, an arm a pair, a
+1-tuple or `int -> x`, and `x` a reference, a reference met with `(_, _)`, with a reference, or
+with `int -> ` a reference, or `#k` (seeds 0 to 399999): 1017 members refused for
+`Refusal::Group`, 116 of them with one cycle, 11 with a repair over several definitions. With
+no meets allowed, the same 400000 seeds give no refused member at all.
+
+Open, with the reason:
+
+- `empty/refused.rs`, the `Kind::Bot` set for a fixed node in a re-check (130), and
+  `Recheck::Decided` with its ending "lets the checker decide it" (500, 510). None of the 1017
+  refused members above reaches them. A repair is decided only for a member that reaches no
+  meet or difference (`settled` with `wide` false), and every refused member found reaches a
+  meet: the search found no refusal without one. Proving that a member reaching no meet is
+  never refused would close both, and is not done.
+- `empty/refused.rs`, the tuple that is `None` (the path past `if let Some(..) = &tuple`, count
+  0 at its closing brace): every refused member found reaches a refusal for shape, and each such
+  refusal lists at least one `And` node (`bes::refusal` keeps a component only with
+  `branching_and >= 1`). A member refused in a run with no refusal for shape among the nodes it
+  reaches would take it. Whether `decide` can refuse a node that way is not proved here.
