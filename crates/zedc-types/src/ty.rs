@@ -19845,7 +19845,7 @@ impl Sig {
 
     /// Its variables in order of first appearance, as [`Ty::vars_in`] gives those of the
     /// types of its arrows and then of its needs ([`Need::tys`]), a compact forward's by its
-    /// steps first ([`sig_walk`]): worked out by one walk at the first call and kept, so it is
+    /// steps first (`sig_walk`): worked out by one walk at the first call and kept, so it is
     /// asked of a signature held in a type, which no longer changes. A later walk that meets
     /// this signature reads the order in place of entering it (`vars_of`); the functions it
     /// holds keep none of their own unless asked.
