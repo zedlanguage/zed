@@ -210,7 +210,7 @@ fn r3_verdicts(vars: usize, seed: u64) -> (Verdict, Verdict) {
 #[test]
 fn random_3_cnf_is_refused_at_shared_cells() {
     let refused = Verdict::Refused(Refusal::SharedCells(0));
-    assert_eq!(r3_verdicts(16, 7), (refused.clone(), refused));
+    assert_eq!(r3_verdicts(16, 7), (refused, refused));
 }
 
 /// Seed 2, the benchmarks' instance until GROUP-order-cpoly-merge: over 8 bits no tuple meets
@@ -224,9 +224,9 @@ fn random_3_cnf_is_refused_at_shared_cells() {
 fn random_3_cnf_seed_2_is_refused_at_8_bits_and_16() {
     let refused = Verdict::Refused(Refusal::SharedCells(0));
     assert_eq!(models(8, 2), 0);
-    assert_eq!(r3_verdicts(8, 2), (refused.clone(), refused.clone()));
+    assert_eq!(r3_verdicts(8, 2), (refused, refused));
     assert_eq!(models(16, 2), 5);
-    assert_eq!(r3_verdicts(16, 2), (refused.clone(), refused));
+    assert_eq!(r3_verdicts(16, 2), (refused, refused));
 }
 
 // Measured at 8d0bfe954 with the classes of values (COMPLEXITY.md K111; instructions of

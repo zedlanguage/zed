@@ -10575,6 +10575,10 @@ enum PickSolved {
     Refused(Refusal),
 }
 
+/// The steps [`PICK_TRACE`] keeps: the step's name, the disjunct's place, and the answer.
+#[cfg(test)]
+type PickTrace = Vec<(&'static str, usize, PickSolved)>;
+
 #[cfg(test)]
 thread_local! {
     /// The solves of [`pick_reading`] on this thread while a test keeps it `Some`: the step
@@ -10583,7 +10587,7 @@ thread_local! {
     /// Each disjunction read is opened by `"disjunction"` (with its number of disjuncts), then
     /// an `"empty"` for each disjunct the local repair showed empty ([`Repair::Empty`]); these
     /// two carry no solve.
-    static PICK_TRACE: RefCell<Option<Vec<(&'static str, usize, PickSolved)>>> =
+    static PICK_TRACE: RefCell<Option<PickTrace>> =
         const { RefCell::new(None) };
 }
 
@@ -33474,13 +33478,7 @@ mod cause_replay_tests {
     }
 
     /// The fast reading of `p` (`deep` off), with the solves of its leaves.
-    fn traced(
-        p: &Parts,
-    ) -> (
-        Result<Model, Refusal>,
-        bool,
-        Vec<(&'static str, usize, PickSolved)>,
-    ) {
+    fn traced(p: &Parts) -> (Result<Model, Refusal>, bool, PickTrace) {
         PICK_TRACE.with(|t| *t.borrow_mut() = Some(Vec::new()));
         let mut settled = false;
         let got = pick_reading(p, false, true, true, &mut settled).map(|(m, _)| m);

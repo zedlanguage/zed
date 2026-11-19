@@ -4456,13 +4456,13 @@ fn xr_r2_q2e_full_permutation_invariance_components_defs_and_arms() {
             let got_vs = alone(&kernel(&perm_sys, &format!("xrr2_p_{name}_{trial}")));
             for new_pos in 0..n {
                 let orig_idx = dperm[new_pos];
-                let eq_class = match (base_vs[orig_idx], got_vs[new_pos]) {
-                    (None, None) => true,
-                    (Some(Verdict::Empty), Some(Verdict::Empty)) => true,
-                    (Some(Verdict::Inhabited), Some(Verdict::Inhabited)) => true,
-                    (Some(Verdict::Refused(_)), Some(Verdict::Refused(_))) => true,
-                    _ => false,
-                };
+                let eq_class = matches!(
+                    (base_vs[orig_idx], got_vs[new_pos]),
+                    (None, None)
+                        | (Some(Verdict::Empty), Some(Verdict::Empty))
+                        | (Some(Verdict::Inhabited), Some(Verdict::Inhabited))
+                        | (Some(Verdict::Refused(_)), Some(Verdict::Refused(_)))
+                );
                 assert!(
                     eq_class,
                     "{name} trial {trial} def {orig_idx}: base {:?} vs permuted {:?} (dperm={dperm:?}, p2={p2:?})",
