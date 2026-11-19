@@ -521,9 +521,8 @@ impl TwoPins<'_, '_> {
     // strip, read from its one or two edges; flat, or past `i128`, from all h) O(h²) a name
     // for the pairs of the shadows plus O(h) a value tried ([`u_values`]). With choices, that
     // for each cell, and for a leaf choice's head two queries a cell, each over the region cut
-    // by its guard, read in place in O(log V) ([`cut_values`]), except an open region whose
-    // rays the guard splits, whose edges are found again, O(V log V); the per-name path it
-    // replaces reads the whole part, O(r·t) ≥ O(V).
+    // by its guard, read in place in O(log V) ([`cut_values`]); the per-name path it replaces
+    // reads the whole part, O(r·t) ≥ O(V).
     pub(in super::super) fn values(
         &self,
         s: &Atom,
@@ -662,10 +661,14 @@ fn log_pieces(n: usize) -> u64 {
 // from the corner where `c` is greatest (Chazelle and Dobkin, "Intersection of convex
 // objects in two and three dimensions", JACM 34(1), 1987, Theorem 3: the intersection of a
 // line and a convex p-gon in O(log p)). An open region is cut in place where `c` holds on
-// both its rays past the lid, so the cut region is again open with the same rays, or fails
-// on both, so the cut region lies within the lid ([`open`]); where `c` holds on one ray and
-// not the other (or is parallel to one and fails on it), the cut region's rays differ and
-// its edges are found again, O(V log V) as before.
+// both its rays past the lid, so the cut region is again open with the same rays; or fails
+// past the lid, so the cut region lies within it ([`open`], [`fails_past_lid`]); or holds on
+// one ray and fails on the other (parallel to either allowed), so the cut region's rays are
+// the one kept and `c`'s line from where it crosses the lid ([`split`],
+// PRES-two-pin-split-rays: `tests::leaf_choices_whose_guards_split_the_rays_cost_log_of_them`,
+// 72.19 times the work at 8 times k with the edges found again, 9.58 now). The edges are
+// found again, O(V log V), only where none of those applies (`c == 0` through an end of the
+// lid, a cut region with no interior, or past `i128`).
 fn cut_values(
     shape: &Shape,
     c: Form,
@@ -713,17 +716,83 @@ fn cut_values(
                     Cut::Part(k) => open_values(&k, r, (a, b), work),
                     Cut::Empty | Cut::Face(_) => rebuild(work),
                 },
-                // `c` falls along both rays and is at most 0 at the ends of the lid: past the
-                // lid it is below 0 except on the lid itself, so the cut region is the
-                // polygon's, cut.
-                Some(cut) if signs[0] < 0 && signs[1] < 0 && signs[2] <= 0 && signs[3] <= 0 => {
-                    cut_poly_values(&o.k, cut, (a, b), work)
-                }
+                // `c` is at most 0 on the lid and does not rise along either ray, falling along
+                // each or below 0 on the whole lid: past the lid it is below 0 except on the
+                // lid itself, so the cut region is the polygon's, cut.
+                Some(cut) if fails_past_lid(signs) => cut_poly_values(&o.k, cut, (a, b), work),
+                // `c` holds on one ray and fails on the other: the polygon cut, with rays the
+                // one kept and `c`'s line from where it crosses the lid ([`split`]).
+                Some(Cut::Part(k)) => match split(r, c, signs) {
+                    Some(rays) => open_values(&k, &rays, (a, b), work),
+                    None => rebuild(work),
+                },
                 _ => rebuild(work),
             }
         }
         Shape::Rows(_) => rebuild(work),
     }
+}
+
+/// Whether `c` is below 0 everywhere past the lid of an open region, from
+/// `[c·ds, c·de, c(l0), c(l1)]` ([`cut_values`]): a point there is `l + α·ds + β·de` for `l` on
+/// the lid and `α, β >= 0` not both 0, where `c` is `c(l) + α·(c·ds) + β·(c·de)`, `c(l)` at most
+/// 0 between the ends; it is below 0 where each ray's term is below 0 or `c(l)` is.
+fn fails_past_lid([s0, s1, c0, c1]: [i128; 4]) -> bool {
+    let lid_below = c0 < 0 && c1 < 0;
+    c0 <= 0 && c1 <= 0 && (s0 < 0 || (s0 == 0 && lid_below)) && (s1 < 0 || (s1 == 0 && lid_below))
+}
+
+/// The rays past the lid of the open region `r` cut by `c >= 0` where `c` holds on one ray and
+/// fails on the other, from `[c·ds, c·de, c(l0), c(l1)]` ([`cut_values`]); `None` otherwise or
+/// past `i128`.
+// Exact: say `c` holds along `ra` (`c·ds >= 0`, `c(l0) > 0`) and fails along `rb` (`c·de <= 0`,
+// `c(l1) < 0`; parallel to either ray is allowed). Past the lid the region is
+// `conv(l0, l1) + cone(ds, de)` ([`Rays`]); its part where `c >= 0` is convex, with the corners
+// `l0` and `z`, where `c == 0` crosses the lid (`c` is above 0 at `l0` and below at `l1`), and
+// the directions `cone(ds, de)` where `c` does not fall, which is `cone(ds, de')` for `de'` the
+// direction of `c`'s line within `cone(ds, de)`. That is `{ra >= 0, c >= 0, lid <= 0}`: the rays
+// `ra` and `c`, `ds` and `de'`, the lid's ends `l0` and `z`, so long as the lid falls along
+// both directions and the corner of `ra` and `c` lies before it ([`open`] places the lid past
+// where each leaf choice's cut crosses the lines of `ra` and `rb`, so it does), or `ra` and `c`
+// are parallel with opposite normals, a half-strip. Each of those is checked here, with `de'`
+// in `cone(ds, de)` (`ra·de' >= 0`, `rb·de' >= 0`), so a failed check declines to the edges
+// found again, never a wrong answer. Within the lid the cut region is the polygon cut by `c`,
+// whose lid edge runs from `l0` to `z`. The other way round, `rb` is kept and `c` takes the
+// place of `ra`. O(1).
+fn split(r: &Rays, c: Form, [s0, s1, c0, c1]: [i128; 4]) -> Option<Rays> {
+    let rays = if s0 >= 0 && c0 > 0 && s1 <= 0 && c1 < 0 {
+        Rays {
+            rb: c,
+            de: (c.1, c.0.checked_neg()?),
+            l1: point(&r.lid, &c)?,
+            ..*r
+        }
+    } else if s1 >= 0 && c1 > 0 && s0 <= 0 && c0 < 0 {
+        Rays {
+            ra: c,
+            ds: (c.1.checked_neg()?, c.0),
+            l0: point(&c, &r.lid)?,
+            ..*r
+        }
+    } else {
+        return None;
+    };
+    let cr = cross(&rays.ra, &rays.rb)?;
+    let corner = if cr > 0 {
+        at(&rays.lid, point(&rays.ra, &rays.rb)?)? > 0
+    } else {
+        cr == 0 && dot((rays.ra.0, rays.ra.1), (rays.rb.0, rays.rb.1))? < 0
+    };
+    let lid = (rays.lid.0, rays.lid.1);
+    let within = |d: (i128, i128)| -> Option<bool> {
+        Some(dot((r.ra.0, r.ra.1), d)? >= 0 && dot((r.rb.0, r.rb.1), d)? >= 0)
+    };
+    let ok = corner
+        && dot(lid, rays.ds)? < 0
+        && dot(lid, rays.de)? < 0
+        && within(rays.ds)?
+        && within(rays.de)?;
+    ok.then_some(rays)
 }
 
 /// [`poly_values`] over the polygon `p` cut as `cut`.

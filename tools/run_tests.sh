@@ -820,9 +820,23 @@ split="
 # zed_kernel ran past its limit of 22 s at load 35 (merge of FAIL-overlaps-order-ddc1ec274,
 # 2026-11-18); without benchmarks it took 12.5 to 14.7 s whole at load 39, and 3.9 s without its
 # random test of the boolean equation solver, which takes about 10 s alone and is a piece of its own.
+# zedc_presburger took 17.96 s without benchmarks at load 27 and 34.8 s at load 76 (88 s of CPU:
+# the piece is starved of cores, so its time follows the CPU of all its tests). Its ten tests of
+# 2.4 to 5.5 s of CPU each (37 s of the 88) are pieces of their own, each 4.2 to 7.1 s alone at
+# load 72 to 91 (LIMIT-two-pin-ratio-11, 2026-11-19).
 alone="
   zedc_preimage::preimage::tests::summaries_read_again_give_what_reading_the_term_again_gives_seed_7776978274844439420
   zed_kernel::types::bes::tests::decide_agrees_with_the_game_on_systems_drawn_at_random
+  zedc_presburger::presburger::row_sums::tests::the_polygons_of_the_route_are_never_more_than_the_join_spends
+  zedc_presburger::presburger::sweep_against_pick_tests::the_unbounded_row_sweep_marks_the_arms_pick_by_finds
+  zedc_presburger::presburger::exact::tests::random_formulas_at_seed_10413658062665981385
+  zedc_presburger::presburger::exact::tests::random_formulas_at_seed_4164922340731529606
+  zedc_presburger::presburger::exact::tests::random_formulas_at_seed_13733945893095969990
+  zedc_presburger::presburger::exact::tests::random_formulas_at_seed_3569362060062839708
+  zedc_presburger::presburger::exact::tests::random_formulas_project_to_the_values_of_their_points
+  zedc_presburger::presburger::row_sums::tests::the_route_and_the_join_agree_on_wide_ranges_with_several_defined_atoms
+  zedc_presburger::presburger::exact::tests::read_once_formulas_project_to_the_values_of_their_points
+  zedc_presburger::presburger::exact::tests::every_writing_of_a_formula_gets_one_answer
 "
 # The pieces of step folder $1 in the test binary $2, or of its module $3 (a path in the
 # binary) when one is given. A module's piece filters by `$3::`, which libtest matches anywhere in

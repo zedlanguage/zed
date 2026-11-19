@@ -433,14 +433,17 @@ fn conjunctions_of_separate_groups_project_to_the_values_of_their_points() {
 /// the full one, each symbol answered alike for `[x, y, z]`, `[z, y, x]` and `[y, x, z, y]`.
 /// Before the symbols were taken in one order (`exact_each`), a symbol covered after
 /// another read the points that one's questions found, so its work, and a refusal past the
-/// limit, depended on the order of the call.
-#[test]
-fn the_answers_do_not_depend_on_the_order_of_the_symbols() {
-    let seed = crate::seed::seed("the_answers_do_not_depend_on_the_order_of_the_symbols");
+/// limit, depended on the order of the call. 120 formulas in four parts of 30, each a test with
+/// a seed of its own: whole, the test took 12.9 s alone at load 56, and the slowest of the
+/// library piece of `zedc-presburger`, which took 17.96 s at load 27 against its limit of 20 s
+/// (twopin3, 2026-11-19).
+fn the_answers_do_not_depend_on_the_order_of_the_symbols_part(part: usize) {
+    let test = format!("the_answers_do_not_depend_on_the_order_of_the_symbols_part_{part}");
+    let seed = crate::seed::seed(&test);
     let mut rng = Rng(seed | 1);
     let orders: [&[&str]; 3] = [&["x", "y", "z"], &["z", "y", "x"], &["y", "x", "z", "y"]];
     let mut differ = Vec::new();
-    for round in 0..120 {
+    for round in 0..30 {
         let f = boxed(formula(&mut rng, 3));
         for limit in [3_000, 10_000, 30_000, 100_000, EXACT_LIMIT] {
             EXACT_LIMIT_SET.set(Some(limit));
@@ -468,6 +471,26 @@ fn the_answers_do_not_depend_on_the_order_of_the_symbols() {
     assert!(differ.is_empty(), "seed {seed}: {differ:#?}");
 }
 
+#[test]
+fn the_answers_do_not_depend_on_the_order_of_the_symbols_part_0() {
+    the_answers_do_not_depend_on_the_order_of_the_symbols_part(0);
+}
+
+#[test]
+fn the_answers_do_not_depend_on_the_order_of_the_symbols_part_1() {
+    the_answers_do_not_depend_on_the_order_of_the_symbols_part(1);
+}
+
+#[test]
+fn the_answers_do_not_depend_on_the_order_of_the_symbols_part_2() {
+    the_answers_do_not_depend_on_the_order_of_the_symbols_part(2);
+}
+
+#[test]
+fn the_answers_do_not_depend_on_the_order_of_the_symbols_part_3() {
+    the_answers_do_not_depend_on_the_order_of_the_symbols_part(3);
+}
+
 /// The covers of a part's symbols give the same answers and refusals with what the symbols
 /// before them learned (`PartCache`) as without it: random formulas as above, at limits from a
 /// few questions' work to the full one, for `[x, y, z, w]` (`w` read by no constraint). Where
@@ -476,11 +499,18 @@ fn the_answers_do_not_depend_on_the_order_of_the_symbols() {
 /// is refused as a whole. What the cache saves is measured on the formulas it is for
 /// (`disjoint::bench::the_join_of_arms_on_many_disjoint_refused_groups_reduced_scales` in
 /// `l01_39_scope_relations`): random formulas over four symbols seldom reach the steps it keeps.
-#[test]
-fn the_covers_answer_alike_with_and_without_what_the_symbols_before_learned() {
-    let seed = crate::seed::seed(
-        "the_covers_answer_alike_with_and_without_what_the_symbols_before_learned",
+///
+/// Two parts, each a test with a seed of its own, of 60 formulas each, and past 60 only until
+/// some call was refused as a whole (at most 120): whole, the 120 formulas took 16.6 s in the
+/// library piece at load 49 to 63, the slowest test of the piece (twopin3, 2026-11-19). A call
+/// was refused as a whole in 9 to 17 of 120 rounds in six runs, so a part of 60 alone would miss
+/// one about once in e^5 ≈ 150 runs; going on to 120 makes that as rare as for the whole test
+/// before (about e^-10).
+fn the_covers_answer_alike_with_and_without_what_the_symbols_before_learned_part(part: usize) {
+    let test = format!(
+        "the_covers_answer_alike_with_and_without_what_the_symbols_before_learned_part_{part}"
     );
+    let seed = crate::seed::seed(&test);
     let mut rng = Rng(seed | 1);
     let syms: Vec<Atom> = ["x", "y", "z", "w"].iter().map(|n| a(n)).collect();
     let (mut differ, mut whole) = (Vec::new(), 0);
@@ -492,6 +522,9 @@ fn the_covers_answer_alike_with_and_without_what_the_symbols_before_learned() {
         (got, EXACT_QUESTIONS.get() - q, FAST_WORK.get() - d)
     };
     for round in 0..120 {
+        if round >= 60 && whole > 0 {
+            break;
+        }
         let f = boxed(formula(&mut rng, 3));
         for limit in [3_000, 10_000, 30_000, 100_000, EXACT_LIMIT] {
             EXACT_LIMIT_SET.set(Some(limit));
@@ -523,6 +556,16 @@ fn the_covers_answer_alike_with_and_without_what_the_symbols_before_learned() {
     }
     assert!(differ.is_empty(), "seed {seed}: {differ:#?}");
     assert!(whole > 0, "seed {seed}: no call was refused as a whole");
+}
+
+#[test]
+fn the_covers_answer_alike_with_and_without_what_the_symbols_before_learned_part_0() {
+    the_covers_answer_alike_with_and_without_what_the_symbols_before_learned_part(0);
+}
+
+#[test]
+fn the_covers_answer_alike_with_and_without_what_the_symbols_before_learned_part_1() {
+    the_covers_answer_alike_with_and_without_what_the_symbols_before_learned_part(1);
 }
 
 /// `(x == 1 && y == 0 || x == 3 && y == 1) && (x == 1 && y == 1 || x == 3 && y == 0)`, which
@@ -3714,6 +3757,14 @@ fn a_class_whose_certificate_declines_is_tried_once() {
 /// `family(k)` at k = 64 and 512, every name asked with the set given; the answers at k = 8
 /// agree with the cover alone.
 fn exact_work_of(family: impl Fn(usize) -> (Formula, Vec<Atom>, Vec<IntervalSet>)) -> Vec<u64> {
+    exact_work_at(family, [64, 512])
+}
+
+/// As `exact_work_of`, at the sizes `ks`.
+fn exact_work_at(
+    family: impl Fn(usize) -> (Formula, Vec<Atom>, Vec<IntervalSet>),
+    ks: [usize; 2],
+) -> Vec<u64> {
     let run = |k: usize, off: bool| {
         let (f, syms, sets) = family(k);
         GUARDED_OFF.set(off);
@@ -3734,8 +3785,18 @@ fn exact_work_of(family: impl Fn(usize) -> (Formula, Vec<Atom>, Vec<IntervalSet>
         run(8, true).0,
         "the certificates against the cover alone"
     );
-    [64, 512].into_iter().map(|k| run(k, false).1).collect()
+    ks.into_iter().map(|k| run(k, false).1).collect()
 }
+
+/// The sizes at which the tests of a part of k tangents measure its work: the part is
+/// O(k log k), the sort of its k + 3 edges charged `h·(bits(h) + 1)` pieces, and each name
+/// O(log k), one piece a halving, `bits(h) + 1`. Over k = 1024 to 8192 that factor goes from 12
+/// to 15, so the predicted ratio is 8 · 15/12 = 10.0, under the limit 10.5 with room for the
+/// linear terms (LIMIT-two-pin-ratio-11). At k = 64 to 512 it was 8 · 11/8 = 11, over the limit:
+/// an n log n at its own prediction meets the goal 9 (P300), never the limit. Measured
+/// 2026-11-19: 10.88 at 64 to 512, 10.58 at 128 to 1024, 10.12 at 512 to 4096, 9.95 at 1024 to
+/// 8192 (the work is counted, not timed, so the load does not change it).
+const TANGENT_SIZES: [usize; 2] = [1024, 8192];
 
 /// `y(j) == a·p + b·q + j` with `0 <= p, q <= 9`, every name asked with the hull of its values.
 fn two_free_atoms(a_: i64, b: i64) -> impl Fn(usize) -> (Formula, Vec<Atom>, Vec<IntervalSet>) {
@@ -3794,29 +3855,26 @@ fn names_over_a_polygon_of_many_sides_read_its_edges_once() {
 /// (PRES-two-pin-edges).
 #[test]
 fn names_over_a_polygon_of_many_true_edges_cost_log_of_them() {
-    let used = exact_work_of(|k| {
-        let y = |j: usize| format!("y{j}");
-        let kk = k as i64;
-        let mut rows: Vec<Formula> = (0..k)
-            .map(|j| eq(&[(&y(j), 1), ("p", -2), ("q", -3)], -(j as i64)))
-            .collect();
-        rows.extend((0..=kk).map(|j| ge(&[("q", 1), ("p", -2 * j)], j * j)));
-        rows.extend([ge(&[("q", -1)], kk * kk), ge(&[("p", 1)], kk)]);
-        let syms: Vec<Atom> = (0..k).map(|j| a(&y(j))).collect();
-        let sets = (0..k)
-            .map(|_| IntervalSet::from_pieces(vec![(End::NegInf, End::PosInf)]))
-            .collect();
-        (Formula::And(Shared::new(rows)), syms, sets)
-    });
-    // The part is O(k log k) (the sort of its k + 3 edges) and each name O(log k) (binary
-    // searches over them, each charged one piece a halving: `u64::BITS - leading_zeros + 1`,
-    // 8 at 67 edges and 11 at 515). So the predicted ratio is 8 · 11/8 = 11, which by P300
-    // meets the scaling rule for a proved n log n; anything past it is more than n log n.
-    let ratio = used[1] as f64 / used[0].max(1) as f64;
-    assert!(
-        ratio <= 11.0,
-        "work {used:?}, {ratio:.2} times at 8 times k"
+    let used = exact_work_at(
+        |k| {
+            let y = |j: usize| format!("y{j}");
+            let kk = k as i64;
+            let mut rows: Vec<Formula> = (0..k)
+                .map(|j| eq(&[(&y(j), 1), ("p", -2), ("q", -3)], -(j as i64)))
+                .collect();
+            rows.extend((0..=kk).map(|j| ge(&[("q", 1), ("p", -2 * j)], j * j)));
+            rows.extend([ge(&[("q", -1)], kk * kk), ge(&[("p", 1)], kk)]);
+            let syms: Vec<Atom> = (0..k).map(|j| a(&y(j))).collect();
+            let sets = (0..k)
+                .map(|_| IntervalSet::from_pieces(vec![(End::NegInf, End::PosInf)]))
+                .collect();
+            (Formula::And(Shared::new(rows)), syms, sets)
+        },
+        TANGENT_SIZES,
     );
+    // The part is O(k log k) and each name O(log k): predicted 10.0 times at `TANGENT_SIZES`.
+    let ratio = used[1] as f64 / used[0].max(1) as f64;
+    assert!(ratio < 10.5, "work {used:?}, {ratio:.2} times at 8 times k");
 }
 
 /// The same polygon with names in many directions, `y(j) == g·(j + 1)·p + g·(2·j + 1)·q`,
@@ -3909,14 +3967,11 @@ fn open_tangents(k: usize) -> (Formula, Vec<Atom>, Vec<IntervalSet>) {
 /// each name read every half-plane, O(h²) a name (Fourier-Motzkin and Pugh's dark shadow).
 #[test]
 fn names_over_an_open_polygon_of_many_true_edges_cost_log_of_them() {
-    let used = exact_work_of(open_tangents);
+    let used = exact_work_at(open_tangents, TANGENT_SIZES);
     // As `names_over_a_polygon_of_many_true_edges_cost_log_of_them`: O(k log k) a part and
-    // O(log k) a name, predicted 8 · 11/8 = 11 times at 8 times k (P300).
+    // O(log k) a name, predicted 10.0 times at `TANGENT_SIZES`.
     let ratio = used[1] as f64 / used[0].max(1) as f64;
-    assert!(
-        ratio <= 11.0,
-        "work {used:?}, {ratio:.2} times at 8 times k"
-    );
+    assert!(ratio < 10.5, "work {used:?}, {ratio:.2} times at 8 times k");
 }
 
 /// Every set over an open region is exactly the values at its integer points, counted one by
@@ -4326,14 +4381,84 @@ fn leaf_choices_over_tangents(k: usize, open: bool) -> (Formula, Vec<Atom>, Vec<
 #[test]
 fn leaf_choices_over_a_polygon_of_many_true_edges_cost_log_of_them() {
     for open in [false, true] {
-        let used = exact_work_of(|k| leaf_choices_over_tangents(k, open));
-        // O(k log k) a part and O(log k) a name: 11 times at 8 times k, as above (P300).
+        let used = exact_work_at(|k| leaf_choices_over_tangents(k, open), TANGENT_SIZES);
+        // O(k log k) a part and O(log k) a name: predicted 10.0 times at `TANGENT_SIZES`.
         let ratio = used[1] as f64 / used[0].max(1) as f64;
         assert!(
-            ratio <= 11.0,
+            ratio < 10.5,
             "open {open}: work {used:?}, {ratio:.2} times at 8 times k"
         );
     }
+}
+
+/// A leaf choice for each name over the open tangents whose guard splits the rays:
+/// `y(j) == p + 2·q + j` where `q - 3·k·p - m >= 0`, else `y(j) == 2·p + q + j`, `m = j mod 7`,
+/// over the tangents of `open_tangents`. The rays run up (`p >= -k`) and along the last tangent,
+/// direction `(1, 2·k)`; the guard holds along the first and fails along the second, and the
+/// other arm's cut the other way round, so each arm's region past the lid has the guard's line
+/// for one of its rays (PRES-two-pin-split-rays).
+fn leaf_choices_splitting_rays(k: usize) -> (Formula, Vec<Atom>, Vec<IntervalSet>) {
+    let y = |j: usize| format!("y{j}");
+    let kk = k as i64;
+    let mut rows: Vec<Formula> = (0..k)
+        .map(|j| {
+            let (yj, m) = (y(j), (j % 7) as i64);
+            Formula::or(vec![
+                Formula::And(Shared::new(vec![
+                    eq(&[(&yj, 1), ("p", -1), ("q", -2)], -(j as i64)),
+                    ge(&[("q", 1), ("p", -3 * kk)], -m),
+                ])),
+                Formula::And(Shared::new(vec![
+                    eq(&[(&yj, 1), ("p", -2), ("q", -1)], -(j as i64)),
+                    ge(&[("q", -1), ("p", 3 * kk)], m - 1),
+                ])),
+            ])
+        })
+        .collect();
+    rows.extend((0..=kk).map(|j| ge(&[("q", 1), ("p", -2 * j)], j * j)));
+    rows.push(ge(&[("p", 1)], kk));
+    let syms: Vec<Atom> = (0..k).map(|j| a(&y(j))).collect();
+    let sets = (0..k)
+        .map(|_| IntervalSet::from_pieces(vec![(End::NegInf, End::PosInf)]))
+        .collect();
+    (Formula::And(Shared::new(rows)), syms, sets)
+}
+
+/// Leaf choices whose guards split the rays of an open region (`leaf_choices_splitting_rays`):
+/// before PRES-two-pin-split-rays each such query found the cut region's edges again,
+/// O(V log V) a name (72.19 times the work at k 128 to 1024; now 9.97 there and 9.58 at
+/// `TANGENT_SIZES`).
+#[test]
+fn leaf_choices_whose_guards_split_the_rays_cost_log_of_them() {
+    let used = exact_work_at(leaf_choices_splitting_rays, TANGENT_SIZES);
+    // O(k log k) a part and O(log k) a name: predicted 10.0 times at `TANGENT_SIZES`.
+    let ratio = used[1] as f64 / used[0].max(1) as f64;
+    assert!(ratio < 10.5, "work {used:?}, {ratio:.2} times at 8 times k");
+}
+
+/// Leaf choices over the open tangents at k = 6, whose rays run up and along `(1, 12)`, with
+/// guards that split the rays, each set exactly the values at the integer points counted one by
+/// one with no question of the cover (PRES-two-pin-split-rays): guards that hold up and fail
+/// along `(1, 12)` (`q - 18·p >= 0`, `q - 13·p - 5 >= 0`) and the other way (`20·p - q + 3 >=
+/// 0`), each arm's cut the other way round; guards parallel to the ray up (`-p + 2 >= 0` holds
+/// on it, the region past the lid a half-strip; its other arm `p - 3 >= 0` fails on it) and to
+/// the last tangent (`-12·p + q + 30 >= 0`, holding along it inside, and its other arm); and
+/// a guard parallel to the ray up that fails on it and falls along the other
+/// (`-p - 7 >= 0`, nothing past the lid), with arms that rise, fall and stay along the rays.
+#[test]
+fn leaf_choices_whose_guards_split_the_rays_are_exact() {
+    let leaves: [Leaf; 8] = [
+        ((-18, 1, 0), [(1, 2), (2, 1)]),
+        ((-13, 1, -5), [(1, 2), (2, 1)]),
+        ((20, -1, 3), [(1, 2), (2, 1)]),
+        ((-1, 0, 2), [(1, 2), (2, 1)]),
+        ((-1, 0, 2), [(1, 0), (1, 1)]),
+        ((-12, 1, 30), [(1, 2), (12, -1)]),
+        ((-1, 0, -7), [(1, 2), (2, 1)]),
+        ((-18, 1, 0), [(12, -1), (-1, 1)]),
+    ];
+    let covered = leaf_choices_checked(&leaves, true);
+    assert_eq!(covered, 0, "a name was covered");
 }
 
 /// Each name: the guard `(A, B, C)` and the arms `(α, β)`, `y == α·p + β·q`.
