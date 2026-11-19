@@ -439,3 +439,52 @@ them:
 - A walk's `continue` at an expression already in `exprs` (about line 2270), the join of two
   blocks of one value in the merge at about line 3847, and a literal set false that empties the
   last block (about line 4063).
+
+Seventh round (cover9, 2026-11-19): the remainder of the sixth round's open list, at zed-impl
+a279c3f51. Coverage measured with instrumented builds (`build/cov-k`, `-C instrument-coverage`):
+the kernel's unit tests, and every test of l01_22_type_representation, l01_23_groups_and_refusals,
+l01_23_subtyping and l01_26_type_resolution, each run alone (2079 tests), with the kernel's shared
+library given to `llvm-cov`.
+
+Closed:
+
+- `empty/refused.rs`, `written` with a definition that has parameters:
+  `a_site_on_a_cycle_writes_the_parameters_of_its_definitions` (l01_23_subtyping). Control run:
+  with the parameters left out, the line read `type L = #nil | #cons(T, L(T));` and the test
+  failed.
+- `types.rs`, `makeable`'s `Value::Path` arm:
+  `a_membership_keyed_by_f32_values_and_asked_of_a_path_agrees_with_contains`. Control run: with
+  the arm answering `true` the test still passes, because the row index then reads the path as
+  `Kind::Other` and gives the same verdict. The arm saves work and changes no verdict, so no test
+  can fail on it; the test pins that `Membership::contains` agrees with `Type::contains` there.
+- `types/bdd.rs`, `Connect::negate`'s `Source::Form` arm: reached once by the integration groups.
+  Not reached by a kernel unit test.
+
+Open, with the reason. Every line below has count 0 in both runs:
+
+- `types/bdd.rs`: `Expr::link` with a complement that is an expression not holding `self`;
+  `Connect::negate` on a `Not` whose operand is an expression; `Connect::choose`'s
+  `xor::xor_choice` return and the rule for two choices on one condition; the lines near 2270,
+  3847 and 4063. No input was built for them. Proving them unreachable would mean proving facts
+  about how expressions are shared across threads and the order of the caches, and this round
+  did not prove that.
+- `types.rs`: the `Value::Family`/`Value::Path` arms of `kind`, `kind_status` and `spine`, and the
+  `Float32` arms of `erasable` and `witness` (about 5160, 5319, 5486, 5507, 5531). `holds_in` has
+  three callers, and each one is given only makeable values. That makes the Path and Family arms
+  unreachable only if no maker ever makes a path or a family value. No constructor for one exists
+  in `types.rs` or `types/*.rs`, but this round did not prove it for the whole crate, so the arms
+  stay rather than becoming `unreachable!`. An `f32` key in the test above did not reach the
+  `Float32` arms.
+- `types.rs`, the order ties (about 1081-1298, 7992-8032, 8319-8329, 8592-8597): every one needs
+  two distinct parts with equal digests. With full-width digests no test meets one. The
+  `short-addresses` feature (8-bit digests) is the build that could, and this round built no
+  instrumented copy of it.
+- `print.rs`: the listed lines and cover4's meet arms. No test reaches them, and none was written.
+- `empty/refused.rs`: the `Kind::Bot` set for a fixed node (130), `Recheck::Decided` and
+  `Recheck::Refused` (146, 148, 432, 437), the shared-part lift with a local definition (178),
+  `listed([])` (281), "one cycle" (373), the `_ => &[]` arm (383), the tuple that is `None` (401),
+  the "lets the checker decide it" ending (442) and the repair over several definitions (459-462).
+  Every refused fixture known reads a meet, so the repair leaves the member to the search and the
+  `Decided` ending never comes. Every fixture has two or more cycles, and its tuple is always
+  present. `listed([])` would be unreachable if `open` could be proved never empty, and that
+  proof is not done.

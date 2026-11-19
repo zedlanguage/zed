@@ -1182,3 +1182,52 @@ fn a_recursive_node_is_rewritten_only_where_level_keeps_its_unfolding() {
     );
     assert_eq!(list.rewrite_levels(&mut memo, &mut same), None);
 }
+
+/// TEST-kernel-unreached-paths-4: a `Membership` of tuple types keyed by `f32` values, at
+/// tuples of `f32` values and at tuples holding a path, answers as `Type::contains` does. A path
+/// is not `makeable`, so its tuple is tested the naive way (the `Value::Path` arm of
+/// `makeable`, reached here; the `Float32` arms of `erasable` and `witness` are not, see
+/// COMPLETENESS.md, seventh round). Control run: with that arm answering `true` the test still
+/// passes, since the row index then reads the path as `Kind::Other` and answers alike; the
+/// arm saves work, not a verdict.
+#[test]
+fn a_membership_keyed_by_f32_values_and_asked_of_a_path_agrees_with_contains() {
+    let f = |x: f32| Type::lit(&Value::float32(x)).expect("an f32 literal");
+    let pair = |a: Type, b: Type| Type::tuple(vec![a, b]);
+    let one = |a: Type| Type::tuple(vec![a]);
+    let t = Type::union_all([
+        pair(f(1.0), Type::int()),
+        pair(f(2.0), Type::bool()),
+        pair(&Type::f32() - &f(1.0), Type::string()),
+        pair(one(f(1.0)), Type::int()),
+        pair(one(&Type::f32() - &f(2.0)), Type::bool()),
+        pair(Type::int(), Type::int()),
+    ]);
+    let firsts = [
+        Value::float32(0.0),
+        Value::float32(1.0),
+        Value::float32(2.0),
+        Value::Int(1),
+        Value::tuple(vec![Value::float32(1.0)]),
+        Value::tuple(vec![Value::float32(2.0)]),
+        Value::tuple(vec![Value::float32(3.0)]),
+        Value::path(vec![Value::str("k")]),
+    ];
+    let seconds = [
+        Value::Int(7),
+        Value::Bool(true),
+        Value::str("s"),
+        Value::path(vec![Value::str("k")]),
+    ];
+    let mut m = t.membership();
+    let mut yes = 0;
+    for x in &firsts {
+        for y in &seconds {
+            let v = Value::tuple(vec![x.clone(), y.clone()]);
+            let want = t.contains(&v);
+            assert_eq!(m.contains(&v), want, "{v:?}");
+            yes += usize::from(want);
+        }
+    }
+    assert!(yes > 0 && yes < firsts.len() * seconds.len());
+}

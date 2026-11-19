@@ -175,6 +175,31 @@ fn a_mixed_component_is_refused_with_its_own_message() {
     }
 }
 
+/// TEST-kernel-unreached-paths-4: a refusal for a cause other than `Refusal::Group` points at
+/// the first member on a cycle, with its group's definitions written as declared, parameters
+/// among them (`written` in empty/refused.rs). Control run: with the parameters left out of
+/// `written`, the line read `type L = #nil | #cons(T, L(T));` and this test failed.
+#[test]
+fn a_site_on_a_cycle_writes_the_parameters_of_its_definitions() {
+    let body = or(vec![
+        Expr::Type(Type::atom("nil")),
+        atom(
+            "cons",
+            vec![Expr::Param(0), Expr::Ref(0, vec![Expr::Param(0)])],
+        ),
+    ]);
+    let g = Group::new(vec![Def {
+        name: "L".into(),
+        params: vec!["T".into()],
+        body,
+    }])
+    .unwrap_or_else(|e| panic!("{}", e.message));
+    let t = g.instance(vec![Type::int()]).remove(0);
+    let site = t.refusal_site(Refusal::Fork).expect("a member on a cycle");
+    assert_eq!(site.head, "L");
+    assert_eq!(site.defs, ["type L(T) = #nil | #cons(T, L(T));"]);
+}
+
 #[test]
 fn a_members_message_is_the_same_when_the_definitions_are_listed_in_another_order() {
     Type::forget_emptiness();
