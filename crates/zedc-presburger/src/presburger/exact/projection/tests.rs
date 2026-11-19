@@ -191,6 +191,115 @@ fn small_systems_project_to_their_enumerated_values() {
 /// A goal held early stops the projection: the repaired unit's rows (`w == 0` put in) onto
 /// `x` make 1,562 parts with every splinter, and far fewer once `[4, 7]` and `[9, +inf)`, the
 /// goal of its first cell, are held (`exact::tests::every_name_of_the_repaired_unit_has_its_exact_answer`).
+/// The rows `Σ c[j]·x[start + j] + k >= 0` of the first 8 windows of the window system of
+/// `l01_38_presburger::exp_families` (width 3, 2 rows a window, n = 12, seed 1096302828291),
+/// the smallest prefix of its windows whose projection onto `x0` builds a shadow past the limit
+/// (FAIL-window-seed-13014466797380974686).
+const WINDOWS: [(usize, [i64; 3], i64); 16] = [
+    (0, [7, -10, -10], -2),
+    (0, [-7, -6, 11], -3),
+    (1, [-4, 6, -11], -5),
+    (1, [-7, 1, 6], 0),
+    (2, [-7, -2, 11], -5),
+    (2, [-6, -3, -9], -6),
+    (3, [-10, -11, -11], 1),
+    (3, [-10, -11, -3], 1),
+    (4, [-10, 4, -1], -5),
+    (4, [-10, 7, -11], -1),
+    (5, [5, -10, 7], -2),
+    (5, [11, 5, -3], -5),
+    (6, [1, 7, -1], -2),
+    (6, [-8, 1, 5], -6),
+    (7, [9, 6, 7], 2),
+    (7, [3, 1, -11], 6),
+];
+
+/// The rows of the first `w` windows of [`WINDOWS`], with each of `x0 .. x(w+1)` in `-12..=12`.
+fn window_rows(w: usize) -> Vec<Con> {
+    let mut rows = Vec::new();
+    for i in 0..w + 2 {
+        let x = format!("x{i}");
+        rows.push(row(&[(&x, 1)], 12, Rel::Ge));
+        rows.push(row(&[(&x, -1)], 12, Rel::Ge));
+    }
+    for (start, c, k) in WINDOWS.iter().filter(|r| r.0 < w) {
+        let names: Vec<String> = (0..3).map(|j| format!("x{}", start + j)).collect();
+        let t: Vec<(&str, i64)> = (0..3).map(|j| (names[j].as_str(), c[j])).collect();
+        rows.push(row(&t, *k, Rel::Ge));
+    }
+    rows
+}
+
+/// The values of `x0` at the points of [`window_rows`]`(w)`, by a dynamic program from the last
+/// window back over the pairs `(x[i], x[i+1])`: O(w · 25^3).
+fn window_x0(w: usize) -> Vec<i64> {
+    let vals: Vec<i64> = (-12..=12).collect();
+    let at = |v: i64| (v + 12) as usize;
+    let mut kept = vec![[true; 25]; 25];
+    for i in (0..w).rev() {
+        let mine: Vec<_> = WINDOWS.iter().filter(|r| r.0 == i).collect();
+        let mut before = vec![[false; 25]; 25];
+        for &a in &vals {
+            for &b in &vals {
+                before[at(a)][at(b)] = vals.iter().any(|&c| {
+                    kept[at(b)][at(c)]
+                        && (mine.iter()).all(|(_, k, d)| k[0] * a + k[1] * b + k[2] * c + d >= 0)
+                });
+            }
+        }
+        kept = before;
+    }
+    (vals.iter().copied())
+        .filter(|&a| kept[at(a)].iter().any(|&k| k))
+        .collect()
+}
+
+fn limited() -> Work {
+    Work {
+        used: 0,
+        limit: super::super::EXACT_LIMIT,
+        solver: super::super::super::SOLVER,
+    }
+}
+
+/// The 8 windows of [`WINDOWS`] onto `x0`: one shadow of 591,501 rows (each lower bound of
+/// an atom paired with each upper bound). Before, it was built whole and only then read, so the
+/// call charged 119,398,000 units, 38.5 times [`EXACT_LIMIT`] (2026-11-19), and at
+/// all 10 windows its shadow of 3,212,640 rows took about 8 s against the 250 ms the limit
+/// stands for. Now each row is charged as it is made, and the call is refused within one row
+/// of the limit: a row reads at most the 10 atoms, so it is charged at most 11 · SOLVER_UNIT.
+/// Control: [`the_window_projection_one_window_shorter_is_exact_within_the_limit`].
+#[test]
+fn a_shadow_past_the_limit_is_refused_while_it_is_made() {
+    let mut w = limited();
+    let goal = IntervalSet::range(End::from(-12i64), End::from(12i64));
+    let got = pugh(&window_rows(8), &sym("x0"), &goal, &mut w);
+    assert!(matches!(got, Err(Refusal::Questions)), "{got:?}");
+    let row_most = 11 * super::super::SOLVER_UNIT;
+    assert!(
+        w.used <= w.limit + row_most,
+        "{} units past the limit {}",
+        w.used - w.limit,
+        w.limit
+    );
+}
+
+/// The control of [`a_shadow_past_the_limit_is_refused_while_it_is_made`]: the first 7
+/// windows project onto `x0` within the limit (325,032 units, 2026-11-19), to the values the
+/// dynamic program gives, so the refusal there comes from the size of its shadow.
+#[test]
+fn the_window_projection_one_window_shorter_is_exact_within_the_limit() {
+    let mut w = limited();
+    let goal = IntervalSet::range(End::from(-12i64), End::from(12i64));
+    let parts = pugh(&window_rows(7), &sym("x0"), &goal, &mut w).expect("answered");
+    let (set, tails) = ranges(&parts, &mut w).expect("answered");
+    assert!(tails.is_empty());
+    assert!(w.used <= w.limit, "{} of {}", w.used, w.limit);
+    let expected = window_x0(7);
+    assert!(!expected.is_empty());
+    assert_eq!(values(&set, -12, 12), expected);
+}
+
 #[test]
 fn a_held_goal_stops_the_splinters() {
     let rows = vec![

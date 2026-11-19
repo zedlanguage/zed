@@ -711,6 +711,22 @@ fn project(
     }
     let size: u64 = rows.iter().map(|k| k.lin.terms.len() as u64 + 1).sum();
     work.read(size)?;
+    project_read(rows, t, at, from, work, fresh, held, out)
+}
+
+/// [`project`] of `rows` already charged to `work` (each row its terms and one more), with
+/// `held` not yet done.
+#[allow(clippy::too_many_arguments)]
+fn project_read(
+    rows: Vec<Con>,
+    t: &Atom,
+    at: &mut Int,
+    from: &mut Int,
+    work: &mut Work,
+    fresh: &mut u32,
+    held: &mut Held,
+    out: &mut Vec<Strided>,
+) -> Result<(), Refusal> {
     let Some(mut rows) = tidied(rows) else {
         return Ok(());
     };
@@ -908,6 +924,19 @@ fn project(
         .collect();
     // For each lower `b·x + l >= 0` and upper `-a·x + u >= 0`: `a·(b·x + l) + b·(-a·x + u) =
     // a·l + b·u >= 0`, the real shadow, and `>= (a-1)(b-1)`, the dark one.
+    // Each row of the shadow is charged as it is made, its terms and one more, which is what the
+    // call below would read of it, and that call does not read it again (`project_read`): `held`
+    // is not done there, as nothing above changed it since this call found it not done.
+    // Complexity tradeoff: before, the shadow was made whole and then read by the call below,
+    // so its |lower|·|upper| rows were built uncharged before the limit was checked: on the
+    // windows of `l01_38_presburger::exp_families` at seed 1096302828291 one shadow held
+    // 6,425,279 terms, 207 times the limit of 3,100,000 units, and took about 8 s to build
+    // before its read refused it, twice in one cover, 16 to 21 s against the 250 ms the limit
+    // stands for (FAIL-window-seed-13014466797380974686). Used: the same charges, made row by
+    // row, so the same projections are answered with the same work, and a refused one stops
+    // within one row of the limit; O(1) more a row.
+    let others_size: u64 = others.iter().map(|k| k.lin.terms.len() as u64 + 1).sum();
+    work.read(others_size)?;
     let mut shadow = others.clone();
     for &i in &lower {
         for &j in &upper {
@@ -918,10 +947,11 @@ fn project(
             if !is_exact {
                 lin.constant = &lin.constant - &(&(&a - &Int::from(1)) * &(&b - &Int::from(1)));
             }
+            work.read(lin.terms.len() as u64 + 1)?;
             shadow.push(Con { lin, rel: Rel::Ge });
         }
     }
-    project(shadow, t, at, from, work, fresh, held, out)?;
+    project_read(shadow, t, at, from, work, fresh, held, out)?;
     if is_exact {
         return Ok(());
     }

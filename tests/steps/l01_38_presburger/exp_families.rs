@@ -607,6 +607,20 @@ fn random_window_systems_are_answered_as_the_window_program_answers() {
     random_window_systems_answer(&seeds, &format!("fresh seed {seed}"));
 }
 
+/// The four seeds [`random_window_systems_are_answered_as_the_window_program_answers`] drew
+/// from fresh seed 13014466797380974686, at which it took 11 to 21 s where it takes 0.66 s
+/// (FAIL-window-seed-13014466797380974686): the projection onto `x0` of the windows of 3, 2
+/// rows each, n = 12, seed 1096302828291 built two shadows of 6,425,279 terms, uncharged,
+/// before its work limit refused them. The case, cut to its first 8 windows, is
+/// `exact::projection::tests::a_shadow_past_the_limit_is_refused_while_it_is_made`.
+#[test]
+fn random_window_systems_at_the_seeds_of_a_slow_run() {
+    random_window_systems_answer(
+        &[421299115613, 713586870135, 1096302828291, 316746888211],
+        "fresh seed 13014466797380974686",
+    );
+}
+
 /// [`windows`] of 3 variables and 2 rows and of 2 variables and 3 rows, over 6, 12 and 24
 /// variables, at each of `seeds`, answered as the window program answers; `at` is named on
 /// failure.
