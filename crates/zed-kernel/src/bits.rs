@@ -33,8 +33,10 @@ use crate::term::Prim;
 use crate::value::Value;
 
 /// The binary size of an unsigned machine integer, defined once for every crate
-/// (DRY-numeric-shared): before, 19 sites wrote `BITS - leading_zeros()` by hand and three
-/// wrote `ilog2() + !is_power_of_two()`, which panics at 0.
+/// (DRY-numeric-shared): before, 31 sites wrote `BITS - leading_zeros()` (or the floor log,
+/// one less) by hand and three wrote `ilog2() + !is_power_of_two()`, which panics at 0. One
+/// copy stays written out, in `zed_graph::Lift::with_depth`: zed-graph sits below zed-kernel
+/// and cannot call this.
 pub trait BitLen: Copy {
     /// The number of binary digits: 0 for 0, and `floor(log2 x) + 1` otherwise.
     fn bit_len(self) -> u32;

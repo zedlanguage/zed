@@ -39,7 +39,9 @@ impl Lift {
             "a tree of {n} nodes does not fit in memory"
         );
         // Enough levels that `2^levels > deepest`, so a rise of up to `deepest` is a sum of
-        // the kept powers; at least one, the parent.
+        // the kept powers; at least one, the parent. `BITS - leading_zeros` is
+        // `zed_kernel::bits::BitLen::bit_len`, written out because zed-graph sits below
+        // zed-kernel (DRY-numeric-shared).
         let levels = (usize::BITS - deepest.leading_zeros()).max(1) as usize;
         let mut up = vec![0; (n + 1) * levels];
         up[n * levels..].fill(n as u32);
