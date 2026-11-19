@@ -780,7 +780,7 @@ mod trial {
 /// only shrinks, a mark is only raised, a count only falls. Their fields are private to this
 /// module, so every change elsewhere goes through these methods.
 mod state {
-    use zedc_int::int::Int;
+    use zedc_int::int::{Int, IntRange, meet_range};
 
     /// A value unknown at first and then fixed for good; [`Once::fix`] is its only change.
     pub(super) struct Once<T>(Option<T>);
@@ -804,10 +804,7 @@ mod state {
 
     /// An interval of integers, at first all of them, that only shrinks:
     /// [`Interval::meet_lo`] and [`Interval::meet_hi`] are its only changes.
-    pub(super) struct Interval {
-        lo: Option<Int>,
-        hi: Option<Int>,
-    }
+    pub(super) struct Interval(IntRange);
 
     /// What an interval is after a meet.
     pub(super) enum Meet {
@@ -822,43 +819,39 @@ mod state {
     impl Interval {
         /// Every integer.
         pub(super) const fn whole() -> Interval {
-            Interval { lo: None, hi: None }
+            Interval((None, None))
         }
 
         /// Whether it is every integer.
         pub(super) fn is_whole(&self) -> bool {
-            self.lo.is_none() && self.hi.is_none()
+            self.0.0.is_none() && self.0.1.is_none()
         }
 
         /// Its lower end, else its upper end; `None` when it is every integer.
         pub(super) fn end(&self) -> Option<&Int> {
-            self.lo.as_ref().or(self.hi.as_ref())
+            self.0.0.as_ref().or(self.0.1.as_ref())
         }
 
         /// Its ends, `None` where it is open.
         #[cfg(test)]
         pub(super) fn ends(&self) -> (Option<&Int>, Option<&Int>) {
-            (self.lo.as_ref(), self.hi.as_ref())
+            (self.0.0.as_ref(), self.0.1.as_ref())
         }
 
         /// The interval met with the integers of at least `lo`.
         pub(super) fn meet_lo(&mut self, lo: Int) -> Meet {
-            if self.lo.as_ref().is_none_or(|l| *l < lo) {
-                self.lo = Some(lo);
-            }
+            meet_range(&mut self.0, (Some(lo), None));
             self.shape()
         }
 
         /// The interval met with the integers of at most `hi`.
         pub(super) fn meet_hi(&mut self, hi: Int) -> Meet {
-            if self.hi.as_ref().is_none_or(|h| hi < *h) {
-                self.hi = Some(hi);
-            }
+            meet_range(&mut self.0, (None, Some(hi)));
             self.shape()
         }
 
         fn shape(&self) -> Meet {
-            match (&self.lo, &self.hi) {
+            match &self.0 {
                 (Some(lo), Some(hi)) if lo > hi => Meet::Empty,
                 (Some(lo), Some(hi)) if lo == hi => Meet::One(lo.clone()),
                 _ => Meet::Wide,

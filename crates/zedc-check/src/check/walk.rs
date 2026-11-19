@@ -17,6 +17,7 @@ use super::arms::{
 use super::limits::{ADDRESS_BYTES_LOG2, target_text};
 use super::*;
 use zed_kernel::Shared;
+use zed_kernel::bits::BitLen;
 use zed_kernel::limits::{Kill, MainLimits};
 use zedc_lattice::cell::Premises;
 use zedc_preimage::address::Address;
@@ -14753,11 +14754,11 @@ impl<'t, 'a> Ck<'t, 'a> {
     /// `with units("MiB")` (DESIGN.md sec:diagnostics, row "Number too large for any memory of
     /// the target").
     fn main_limit_fix(&self, bits: &Num, at: Span, arg: Span) -> Option<Rewrite> {
-        let need = bits
-            .to_i128()
-            .map(|b| (b + 7) / 8)
+        let need = (bits.to_i128())
+            .and_then(|b| u128::try_from(b).ok())
+            .map(|b| b.div_ceil(8))
             .expect("below 2^64 bytes");
-        let j = 128 - (need - 1).leading_zeros();
+        let j = need.ceil_log2();
         let with = format!("2^{j}");
         let alone = match self.code(Some(at)) {
             Some(code) => format!(
@@ -14904,7 +14905,7 @@ impl<'t, 'a> Ck<'t, 'a> {
         let mut fixes = Vec::new();
         let most = room_bits.saturating_sub(u128::from(built)) / floor_log;
         if most > 1 {
-            let j = 127 - most.leading_zeros();
+            let j = most.ilog2();
             let with = match negative {
                 true => format!("-(2^{j})"),
                 false => format!("(2^{j})"),

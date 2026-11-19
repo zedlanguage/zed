@@ -33,7 +33,7 @@
 
 use std::collections::BTreeMap;
 
-use zedc_int::int::Int;
+use zedc_int::int::{Int, IntRange, meet_range, row_range};
 use zedc_lattice::interval::{End, IntervalSet, Num};
 
 use super::formula::{Atom, Con, Conjuncts, Formula, Model, Rel};
@@ -66,7 +66,7 @@ impl Sum {
 }
 
 /// The ends of each atom, `None` for an end that is unbounded.
-type Ends = (Option<Int>, Option<Int>);
+type Ends = IntRange;
 
 /// A conjunction of bounds on single atoms and at most one longer row, read once.
 pub(super) struct OneRow {
@@ -118,28 +118,8 @@ impl OneRow {
                 }
                 (Some((a, coef)), None) => {
                     // `coef·a + k` compared with zero.
-                    let (lo, hi) = match c.rel {
-                        Rel::Eq => {
-                            empty |= !k.mod_floor(coef).is_zero();
-                            let v = -&k.div_floor(coef);
-                            (Some(v.clone()), Some(v))
-                        }
-                        // `a >= -k / coef`, rounded up.
-                        Rel::Ge if coef.is_positive() => (Some(-&k.div_floor(coef)), None),
-                        // `a <= k / -coef`, rounded down.
-                        Rel::Ge => (None, Some(k.div_floor(&-coef))),
-                    };
-                    let (l, h) = ends.entry(a.clone()).or_default();
-                    if let Some(lo) = lo
-                        && l.as_ref().is_none_or(|v| lo > *v)
-                    {
-                        *l = Some(lo);
-                    }
-                    if let Some(hi) = hi
-                        && h.as_ref().is_none_or(|v| hi < *v)
-                    {
-                        *h = Some(hi);
-                    }
+                    let (add, bad) = row_range(coef, k, c.rel == Rel::Eq);
+                    empty |= bad | meet_range(ends.entry(a.clone()).or_default(), add);
                 }
                 (Some(_), Some(_)) => {
                     if row.is_some()
@@ -275,7 +255,7 @@ impl OneRow {
                 Rel::Ge => None,
             };
             // `coef·a >= v` and `coef·a <= v` as ends of `a`, rounded inward.
-            let up = |v: Int| -&(-&v).div_floor(coef);
+            let up = |v: Int| v.div_ceil(coef);
             let down = |v: Int| v.div_floor(coef);
             let (nl, nh) = if coef.is_positive() {
                 (below.map(up), above.map(down))

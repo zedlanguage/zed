@@ -15,7 +15,7 @@
 //! bisection on the counts of the prefixes of a range with points.
 
 use super::linear::{Q, Term};
-use zedc_int::int::Int;
+use zedc_int::int::{Int, IntRange, meet_range, row_range};
 
 /// The line `(p·x + q) / r`, with `r` above zero.
 #[derive(Clone)]
@@ -49,7 +49,7 @@ impl Line {
 
     /// `⌈(p·x + q) / r⌉`.
     fn ceil(&self, x: &Int) -> Int {
-        -&self.neg().floor(x)
+        (&(&self.p * x) + &self.q).div_ceil(&self.r)
     }
 
     /// `Σ ⌊(p·x + q) / r⌋` over the `n` integers from `s`.
@@ -119,18 +119,14 @@ fn least(lines: &[Line]) -> Vec<(usize, Option<Q>)> {
     env
 }
 
-/// The integer range `[lo, hi]`, either end unbounded when `None`, narrowed by `lo2` and `hi2`.
-fn narrow(range: &mut (Option<Int>, Option<Int>), lo2: Option<Int>, hi2: Option<Int>) {
-    if let Some(v) = lo2 {
-        range.0 = Some(range.0.take().map_or(v.clone(), |o| o.max(v)));
-    }
-    if let Some(v) = hi2 {
-        range.1 = Some(range.1.take().map_or(v.clone(), |o| o.min(v)));
-    }
+/// The integer range `[lo, hi]`, either end unbounded when `None`, narrowed by `lo2` and `hi2`
+/// ([`meet_range`], with the ends passed apart as the callers here have them).
+fn narrow(range: &mut IntRange, lo2: Option<Int>, hi2: Option<Int>) {
+    meet_range(range, (lo2, hi2));
 }
 
 /// The bounds of `x` and the lines that bound `y` above and below.
-type Split = ((Option<Int>, Option<Int>), Vec<Line>, Vec<Line>);
+type Split = (IntRange, Vec<Line>, Vec<Line>);
 
 /// The bounds that the rows over `x[x]` and, when given, `x[y]`, put on `x`, and the lines that
 /// bound `y` above and below, with `x` read negated where `flip` is set; `None` when a row with
@@ -148,10 +144,8 @@ fn split(rows: &[(&[Term], &Int)], x: usize, y: Option<usize>, flip: bool) -> Op
         let cy = y.map_or(Int::ZERO, at);
         let k = (*k).clone();
         if cy.is_zero() {
-            if cx.is_positive() {
-                narrow(&mut xs, Some(-&k.div_floor(&cx)), None);
-            } else if cx.is_negative() {
-                narrow(&mut xs, None, Some(k.div_floor(&-&cx)));
+            if !cx.is_zero() {
+                meet_range(&mut xs, row_range(&cx, &k, false).0);
             } else if k.is_negative() {
                 return None;
             }

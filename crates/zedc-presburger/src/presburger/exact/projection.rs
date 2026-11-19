@@ -25,7 +25,7 @@
 use std::cell::Cell;
 use std::collections::{BTreeMap, BTreeSet, HashSet};
 
-use zedc_int::int::Int;
+use zedc_int::int::{Int, IntRange, meet_range, row_range};
 use zedc_lattice::interval::{End, IntervalSet, Num};
 use zedc_lattice::lattice::{Congruence, Lattice};
 
@@ -571,13 +571,6 @@ fn normalized(rows: &mut Vec<Con>, divs: &mut Vec<Div>) {
     });
 }
 
-/// `a mod^ b` of Pugh's equality step: `a - b·floor(a/b + 1/2)`, in `(-b/2, b/2]`.
-fn mod_hat(a: &Int, b: &Int) -> Int {
-    let two = Int::from(2);
-    let q = (&(&two * a) + b).div_floor(&(&two * b));
-    a - &(b * &q)
-}
-
 /// `rows` with `x` replaced by `e`.
 fn substituted(rows: Vec<Con>, x: &Atom, e: &Lin) -> Vec<Con> {
     rows.into_iter()
@@ -794,13 +787,17 @@ fn project_read(
             Int::from(1)
         };
         // `x_k = -sign(a_k)·m·σ + Σ_{i != k} sign(a_k)·(a_i mod^ m)·x_i + sign(a_k)·(c mod^ m)`.
+        // `mod^` is `Int::mod_hat`, odd at the tie where Pugh's `a - m·floor(a/m + 1/2)`, in
+        // `[-m/2, m/2)`, is not; the step needs only `r == a (mod m)`, `|r| <= m/2`, and
+        // `a_k mod^ m == -sign(a_k)`, which holds for `|a_k| == m - 1 >= 2` (a unit `a_k` was
+        // substituted above), not a tie.
         let mut ek = Lin {
             terms: [(sigma, &(-&sign) * &m)].into_iter().collect(),
-            constant: &sign * &mod_hat(&e.constant, &m),
+            constant: &sign * &e.constant.mod_hat(&m),
         };
         for (a, c) in &e.terms {
             if *a != k {
-                let v = &sign * &mod_hat(c, &m);
+                let v = &sign * &c.mod_hat(&m);
                 if !v.is_zero() {
                     ek.terms.insert(a.clone(), v);
                 }
@@ -1251,8 +1248,7 @@ pub(super) fn fin(v: &Int) -> End {
 
 /// The values of `s` that rows over `s` alone allow (each row with no atom holding or not).
 pub(super) fn bounded(rows: &[Con], s: &Atom) -> IntervalSet {
-    let mut lo: Option<Int> = None;
-    let mut hi: Option<Int> = None;
+    let mut range: IntRange = (None, None);
     for k in rows {
         let Some(a) = k.lin.terms.get(s) else {
             if !holds_at(k, &k.lin.constant) {
@@ -1260,35 +1256,12 @@ pub(super) fn bounded(rows: &[Con], s: &Atom) -> IntervalSet {
             }
             continue;
         };
-        let c = &k.lin.constant;
-        let (l, u) = match k.rel {
-            // `a·s + c >= 0`: `s >= ceil(-c / a)` with `a` above zero, else `s <= floor(c / -a)`.
-            Rel::Ge if a.is_positive() => (Some(-&c.div_floor(a)), None),
-            Rel::Ge => (None, Some(c.div_floor(&-a))),
-            Rel::Eq => {
-                if !c.mod_floor(a).is_zero() {
-                    return IntervalSet::empty();
-                }
-                let v = -&c.div_floor(a);
-                (Some(v.clone()), Some(v))
-            }
-        };
-        if let Some(l) = l
-            && lo.as_ref().is_none_or(|x| &l > x)
-        {
-            lo = Some(l);
-        }
-        if let Some(u) = u
-            && hi.as_ref().is_none_or(|x| &u < x)
-        {
-            hi = Some(u);
+        let (add, bad) = row_range(a, &k.lin.constant, k.rel == Rel::Eq);
+        if bad || meet_range(&mut range, add) {
+            return IntervalSet::empty();
         }
     }
-    if let (Some(l), Some(u)) = (&lo, &hi)
-        && l > u
-    {
-        return IntervalSet::empty();
-    }
+    let (lo, hi) = range;
     IntervalSet::range(
         lo.as_ref().map_or(End::NegInf, fin),
         hi.as_ref().map_or(End::PosInf, fin),

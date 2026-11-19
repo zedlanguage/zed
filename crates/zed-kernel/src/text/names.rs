@@ -68,6 +68,7 @@ use std::hash::BuildHasher;
 use std::sync::Arc;
 
 use super::tree::{Text, Tree};
+use crate::bits::BitLen;
 
 /// How many symbols to the left a block start reads.
 const CL: usize = 8;
@@ -239,7 +240,7 @@ impl Labels {
         }
         // The label below bit 126 is a 1 bit and the rule's code: the symbol's code, one longer.
         let rest = label & !(3 << 126);
-        Some((rest, 128 - rest.leading_zeros()))
+        Some((rest, rest.bit_len()))
     }
 
     /// The exact label of a rule whose code fits: bit 126 set, the top bit clear, and below
@@ -273,7 +274,7 @@ impl Labels {
                 push(0, 1)?;
                 let (c, l) = self.code(*sym)?;
                 push(c, l)?;
-                let n = 63 - count.leading_zeros();
+                let n = count.ilog2();
                 push(u128::from(*count), 2 * n + 1)?;
             }
             Rule::Block(k, syms) => {

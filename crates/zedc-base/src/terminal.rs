@@ -8,6 +8,7 @@ use std::fmt;
 
 use unicode_normalization::char::is_combining_mark;
 use unicode_width::UnicodeWidthChar;
+use zed_kernel::bits::BitLen;
 
 /// Whether `c` is printed in its escape form: a control character, a space other than U+0020
 /// (U+00A0, U+2028, …), or a character of no display width that is not a combining mark (a
@@ -31,7 +32,7 @@ pub fn escape(c: char, f: &mut impl fmt::Write) -> fmt::Result {
 /// The columns [`escape`] writes for `c`: `\u{` and `}` and one hex digit for each four bits up
 /// to the highest set.
 pub fn escape_width(c: char) -> usize {
-    let bits = 32 - (c as u32 | 1).leading_zeros() as usize;
+    let bits = (c as u32 | 1).bit_len() as usize;
     4 + bits.div_ceil(4)
 }
 

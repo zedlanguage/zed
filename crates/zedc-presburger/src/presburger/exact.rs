@@ -59,12 +59,12 @@ use std::collections::{BTreeMap, HashMap, HashSet};
 use std::rc::Rc;
 
 use zed_graph::UnionFind;
-use zedc_int::int::Int;
+use zedc_int::int::{Int, range_is_empty, range_meet, row_range};
 use zedc_lattice::interval::{End, IntervalSet, Num};
 use zedc_lattice::lattice::Congruence;
 
 use super::absorbing;
-use super::formula::{Ends, Id, ends_meet};
+use super::formula::{Ends, Id};
 pub use super::meter::{
     DIRECT_OFF, EXACT_LIMIT, EXACT_LIMIT_SET, EXACT_OFF, EXACT_QUESTIONS, EXACT_WORK, FAST_WORK,
     GUARDED_OFF, PART_CACHE_OFF, QUESTION_WORK, SHARED_OFF, SOLVER_UNIT,
@@ -1464,7 +1464,7 @@ fn dirs_of(rows: &[Con]) -> Dirs {
     for (t, e) in rows.iter().filter_map(dir_of) {
         let met = d
             .get(&t)
-            .map_or_else(|| e.clone(), |old| ends_meet(old, &e));
+            .map_or_else(|| e.clone(), |old| range_meet(old, &e));
         d.insert(t, met);
     }
     d
@@ -1476,7 +1476,7 @@ fn dirs_meet(a: &mut Dirs, b: Dirs) {
     for (t, e) in b {
         let met = a
             .get(&t)
-            .map_or_else(|| e.clone(), |old| ends_meet(old, &e));
+            .map_or_else(|| e.clone(), |old| range_meet(old, &e));
         a.insert(t, met);
     }
 }
@@ -2018,8 +2018,8 @@ fn read_once(f: &Formula, work: &mut Work) -> Result<Option<ReadOnce>, Refusal> 
                         for (a, bnd) in more {
                             let met = u
                                 .get(&a)
-                                .map_or_else(|| bnd.clone(), |old| ends_meet(old, &bnd));
-                            if ends_empty(&met) {
+                                .map_or_else(|| bnd.clone(), |old| range_meet(old, &bnd));
+                            if range_is_empty(&met) {
                                 *bad = true;
                             }
                             u.insert(a, met);
@@ -2067,8 +2067,8 @@ fn read_once(f: &Formula, work: &mut Work) -> Result<Option<ReadOnce>, Refusal> 
                             let bnd = (lo, hi);
                             let met = unary
                                 .get(a)
-                                .map_or_else(|| bnd.clone(), |old| ends_meet(old, &bnd));
-                            if ends_empty(&met) {
+                                .map_or_else(|| bnd.clone(), |old| range_meet(old, &bnd));
+                            if range_is_empty(&met) {
                                 unsat = true;
                             }
                             unary.insert(a.clone(), met);
@@ -2134,8 +2134,8 @@ fn read_once(f: &Formula, work: &mut Work) -> Result<Option<ReadOnce>, Refusal> 
                         let prev = cur_box.get(a).cloned();
                         let met = prev
                             .as_ref()
-                            .map_or_else(|| bnd.clone(), |old| ends_meet(old, bnd));
-                        if ends_empty(&met) {
+                            .map_or_else(|| bnd.clone(), |old| range_meet(old, bnd));
+                        if range_is_empty(&met) {
                             box_unsat[i] = true;
                         }
                         after_box[i].insert(a.clone(), met.clone());
@@ -2361,7 +2361,7 @@ fn read_once(f: &Formula, work: &mut Work) -> Result<Option<ReadOnce>, Refusal> 
             .expect("the tree is built where two nodes read an atom")
     };
     let ends_set = |e: &Ends| {
-        if ends_empty(e) {
+        if range_is_empty(e) {
             IntervalSet::empty()
         } else {
             let fin =
@@ -2689,10 +2689,9 @@ fn point_cells(
                 let r = &value(&c.lin, m) - &(k * &v);
                 let row: Ends = match c.rel {
                     Rel::Eq => (Some(v.clone()), Some(v.clone())),
-                    Rel::Ge if k.is_positive() => (Some(-&r.div_floor(k)), None),
-                    Rel::Ge => (None, Some(r.div_floor(&-k))),
+                    Rel::Ge => row_range(k, &r, false).0,
                 };
-                (lo, hi) = ends_meet(&(lo, hi), &row);
+                (lo, hi) = range_meet(&(lo, hi), &row);
             }
             let end = |e: Option<Int>, inf: End| e.as_ref().map_or(inf, fin);
             add(
@@ -2733,19 +2732,12 @@ fn star(rows: &[Con], work: &mut Work) -> Result<Option<HashMap<Atom, IntervalSe
         if c.lin.terms.len() == 1 {
             let (a, k) = c.lin.terms.iter().next().expect("one term");
             let c0 = &c.lin.constant;
-            let row: Ends = match c.rel {
-                Rel::Ge if k.is_positive() => (Some(-&c0.div_floor(k)), None),
-                Rel::Ge => (None, Some(c0.div_floor(&-k))),
-                Rel::Eq => {
-                    let v = (-c0).div_floor(k);
-                    if k * &v != -c0 {
-                        return Ok(Some(nothing(rows)));
-                    }
-                    (Some(v.clone()), Some(v))
-                }
-            };
+            let (row, bad) = row_range(k, c0, c.rel == Rel::Eq);
+            if bad {
+                return Ok(Some(nothing(rows)));
+            }
             let d = dom.entry(a).or_insert((None, None));
-            *d = ends_meet(d, &row);
+            *d = range_meet(d, &row);
             continue;
         }
         if c.rel != Rel::Ge {
@@ -2764,7 +2756,7 @@ fn star(rows: &[Con], work: &mut Work) -> Result<Option<HashMap<Atom, IntervalSe
     let Some((terms, k)) = form else {
         return Ok(None);
     };
-    if dom.values().any(ends_empty) {
+    if dom.values().any(range_is_empty) {
         return Ok(Some(nothing(rows)));
     }
     // Each term's maximum on its atom's interval, `None` where it is unbounded above.
@@ -2796,14 +2788,9 @@ fn star(rows: &[Con], work: &mut Work) -> Result<Option<HashMap<Atom, IntervalSe
         } else {
             // `c·v + r >= 0`, `r` the constant and the other terms' maxima.
             let r = &(k + &sum) - &own.unwrap_or_else(|| Int::from(0));
-            let row: Ends = if c.is_positive() {
-                (Some(-&r.div_floor(c)), None)
-            } else {
-                (None, Some(r.div_floor(&-c)))
-            };
-            ends_meet(&d, &row)
+            range_meet(&d, &row_range(c, &r, false).0)
         };
-        if ends_empty(&d) {
+        if range_is_empty(&d) {
             return Ok(Some(nothing(rows)));
         }
         out.insert(
@@ -2830,14 +2817,10 @@ fn nothing(rows: &[Con]) -> HashMap<Atom, IntervalSet> {
         .collect()
 }
 
-fn ends_empty(a: &Ends) -> bool {
-    matches!(a, (Some(lo), Some(hi)) if lo > hi)
-}
-
 /// The values of `y` for which some `x` in `d` has `a·x + b·y + k >= 0`, for `a` and `b` not
 /// zero: every `y` where `a·x` is unbounded above on `d`, else `b·y >= -(k + max a·x)`.
 fn ends_sent(d: &Ends, a: &Int, b: &Int, k: &Int) -> Ends {
-    if ends_empty(d) {
+    if range_is_empty(d) {
         return (Some(Int::ONE), Some(Int::ZERO));
     }
     let end = if a.is_positive() { &d.1 } else { &d.0 };
@@ -2846,7 +2829,7 @@ fn ends_sent(d: &Ends, a: &Int, b: &Int, k: &Int) -> Ends {
     };
     let t = -&(k + &(a * x));
     if b.is_positive() {
-        (Some(-&(-&t).div_floor(b)), None)
+        (Some(t.div_ceil(b)), None)
     } else {
         (None, Some(t.div_floor(b)))
     }
@@ -2891,7 +2874,7 @@ fn forest(rows: &[Con], work: &mut Work) -> Result<Option<HashMap<Atom, Interval
     for c in rows {
         if let Some((a, lo, hi)) = super::formula::one_bound(c) {
             let i = index[a];
-            own[i] = ends_meet(&own[i], &(lo, hi));
+            own[i] = range_meet(&own[i], &(lo, hi));
             continue;
         }
         let mut ts = c.lin.terms.iter();
@@ -2948,7 +2931,7 @@ fn forest(rows: &[Con], work: &mut Work) -> Result<Option<HashMap<Atom, Interval
         if let Some(e) = up_edge[i] {
             to_parent[i] = sent(e, i, &below[i]);
             let p = other(e, i);
-            below[p] = ends_meet(&below[p], &to_parent[i]);
+            below[p] = range_meet(&below[p], &to_parent[i]);
         }
     }
     // From the roots down: the message from each atom's parent, from the parent's values over
@@ -2959,21 +2942,21 @@ fn forest(rows: &[Con], work: &mut Work) -> Result<Option<HashMap<Atom, Interval
             .map(|&e| (e, other(e, i)))
             .filter(|&(e, j)| up_edge[j] == Some(e))
             .collect();
-        let base = ends_meet(&own[i], &from_parent[i]);
+        let base = range_meet(&own[i], &from_parent[i]);
         let mut suffix: Vec<Ends> = vec![(None, None); kids.len() + 1];
         for t in (0..kids.len()).rev() {
-            suffix[t] = ends_meet(&suffix[t + 1], &to_parent[kids[t].1]);
+            suffix[t] = range_meet(&suffix[t + 1], &to_parent[kids[t].1]);
         }
         let mut prefix = base;
         for (t, &(e, j)) in kids.iter().enumerate() {
-            from_parent[j] = sent(e, i, &ends_meet(&prefix, &suffix[t + 1]));
-            prefix = ends_meet(&prefix, &to_parent[j]);
+            from_parent[j] = sent(e, i, &range_meet(&prefix, &suffix[t + 1]));
+            prefix = range_meet(&prefix, &to_parent[j]);
         }
     }
     let ends: Vec<Ends> = (0..n)
-        .map(|i| ends_meet(&below[i], &from_parent[i]))
+        .map(|i| range_meet(&below[i], &from_parent[i]))
         .collect();
-    let none = ends.iter().any(ends_empty);
+    let none = ends.iter().any(range_is_empty);
     let fin = |e: &Option<Int>, inf: End| e.as_ref().map_or(inf, |v| End::Fin(Num::from(v)));
     Ok(Some(
         (atoms.into_iter().zip(&ends))

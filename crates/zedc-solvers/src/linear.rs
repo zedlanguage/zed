@@ -6,7 +6,11 @@ use zedc_int::int::Int;
 /// A coefficient at a variable.
 pub type Term = (usize, Int);
 
-/// A rational, in lowest terms with a positive denominator.
+/// A rational, in lowest terms with a positive denominator. Equality is structural, which is
+/// equality of value only because [`Q::new`] reduces; order is by value (cross products).
+/// Also the slope and intercept keys of the lower-hull tree in `zedc-preimage`'s `product`
+/// (DRY-numeric-shared; before, two types there of their own relied on reduced input that
+/// nothing enforced).
 #[derive(Clone, PartialEq, Eq, Debug)]
 pub struct Q {
     pub(crate) n: Int,
@@ -62,13 +66,23 @@ impl Q {
     }
 
     /// The greatest integer at most `self`.
-    pub(crate) fn floor(&self) -> Int {
+    pub fn floor(&self) -> Int {
         self.n.div_floor(&self.d)
     }
 
     /// The least integer at least `self`.
-    pub(crate) fn ceil(&self) -> Int {
-        -&(-&self.n).div_floor(&self.d)
+    pub fn ceil(&self) -> Int {
+        self.n.div_ceil(&self.d)
+    }
+
+    /// The numerator, in lowest terms; its sign is the rational's.
+    pub fn numer(&self) -> &Int {
+        &self.n
+    }
+
+    /// The denominator, in lowest terms and above zero.
+    pub fn denom(&self) -> &Int {
+        &self.d
     }
 
     pub(crate) fn is_zero(&self) -> bool {

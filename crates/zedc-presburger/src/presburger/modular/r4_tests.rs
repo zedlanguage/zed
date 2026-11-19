@@ -207,7 +207,7 @@ fn pncx_batch_remainders_match() {
         let mut ms: Vec<_> = (2..30).map(Int::from).collect();
         ms.push(&x + &Int::ONE);
         for point in [x.clone(), -&x] {
-            let want: Vec<_> = ms.iter().map(|m| point.mod_floor_wide(m)).collect();
+            let want: Vec<_> = ms.iter().map(|m| point.mod_floor(m)).collect();
             assert_eq!(batch_remainders(&point, &ms), want);
         }
     }
@@ -311,7 +311,7 @@ fn color_system(
     let info: Vec<_> = shared_moduli(3 * n)
         .into_iter()
         .map(|m| {
-            let p = m.div_floor_wide(&Int::from(2));
+            let p = m.div_floor(&Int::from(2));
             BaseInfo {
                 max_q: p.clone(),
                 u: Int::ZERO,
@@ -684,7 +684,7 @@ fn pncx_common_factor_bench_inputs_are_on_the_table_side() {
 fn odd_primes(n: usize) -> BTreeSet<Int> {
     shared_moduli(n)
         .iter()
-        .map(|m| m.div_floor_wide(&Int::from(2)))
+        .map(|m| m.div_floor(&Int::from(2)))
         .collect()
 }
 

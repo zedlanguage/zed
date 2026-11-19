@@ -65,14 +65,14 @@ pub(crate) fn word(p: Prim, x: &Value) -> Result<Value, KernelError> {
         // rounds it (step L1.18); the `overflow()` fact it carries is step L10.3b's.
         (Prim::CastF64, Value::Str(s)) => {
             let s = s.try_flat().map_err(|e| unread("f64", s.len(), e))?;
-            match read_f64(&s) {
+            match read_float(&s, read_f64_ieee) {
                 Some(f) => Value::float(f),
                 None => invalid(),
             }
         }
         (Prim::CastF32, Value::Str(s)) => {
             let s = s.try_flat().map_err(|e| unread("f32", s.len(), e))?;
-            match read_f32(&s) {
+            match read_float(&s, read_f32_ieee) {
                 Some(f) => Value::float32(f),
                 None => invalid(),
             }
@@ -704,23 +704,14 @@ fn read_rat(s: &str) -> Result<Option<Rat>, TooLarge> {
     })
 }
 
-/// What `String` writes for a float, correctly rounded: `-0.5`, `1.0e300`, `inf`, `nan`;
-/// an integer such as `3` is read too.
-fn read_f64(s: &str) -> Option<f64> {
+/// What `String` writes for a float, correctly rounded by `ieee` (`read_f64_ieee` or
+/// `read_f32_ieee`): `-0.5`, `1.0e300`, `inf`, `nan`; an integer such as `3` is read too.
+fn read_float<F: std::str::FromStr>(s: &str, ieee: fn(&str) -> Option<F>) -> Option<F> {
     let body = s.strip_prefix('-').unwrap_or(s);
     if body == "inf" || body == "nan" {
         return s.parse().ok();
     }
-    float_text(body).then(|| read_f64_ieee(s))?
-}
-
-/// [`read_f64`] at `f32`.
-fn read_f32(s: &str) -> Option<f32> {
-    let body = s.strip_prefix('-').unwrap_or(s);
-    if body == "inf" || body == "nan" {
-        return s.parse().ok();
-    }
-    float_text(body).then(|| read_f32_ieee(s))?
+    float_text(body).then(|| ieee(s))?
 }
 
 /// Whether `body` is digits with an optional fraction and exponent, as `String` writes a

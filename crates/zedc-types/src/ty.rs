@@ -9840,7 +9840,7 @@ impl<'m, 's> Comparing<'m, 's> {
                 h.push(held[lo]);
                 work.push((m, h, nodes));
             } else {
-                let mid = lo + (hi - lo) / 2;
+                let mid = lo.midpoint(hi);
                 nodes.push((mid, hi));
                 nodes.push((lo, mid));
                 work.push((m, h, nodes));

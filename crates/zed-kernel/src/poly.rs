@@ -32,6 +32,7 @@ use num_integer::Integer;
 use num_traits::{One, Signed, ToPrimitive, Zero};
 use zed_graph::MinHeap;
 
+use crate::bits::BitLen;
 use crate::digest::{Digest, step};
 use crate::num::{is_prime, mul_cost, mul_int, mul_uint, pow_uint, squares_by_transform};
 use crate::term::{Prim, Term};
@@ -2032,7 +2033,7 @@ impl<K: Key> Poly<K> {
         let bits = |p: &Poly<K>| p.terms.iter().map(|(_, c)| c.bits()).max().unwrap_or(0);
         let (ta, tb) = (self.terms.len() as u64, o.terms.len() as u64);
         // |c| < 2^(ba + bb + bits(min(ta, tb))), and one bit more for the sign.
-        let slot_bits = bits(self) + bits(o) + u64::from(64 - ta.min(tb).leading_zeros()) + 1;
+        let slot_bits = bits(self) + bits(o) + u64::from(ta.min(tb).bit_len()) + 1;
         let slot_words = slot_bits.div_ceil(32);
         // The packed product's transforms, and the packing, setup and unpacking the choice
         // below counts, which a product of few terms spends mostly in (`(x + y) ^ 72 - x`
@@ -2265,7 +2266,7 @@ impl<K: Key> Poly<K> {
                 .collect()
         };
         let (ra, rb) = (reduce(a, lo_a), reduce(b, lo_b));
-        let bits = |x: u128| u64::from(128 - x.leading_zeros());
+        let bits = |x: u128| u64::from(x.bit_len());
         let pairs = ta as u128 * tb as u128;
         // Each of the nine moments `sum a^i b^j` (i, j < 3) of a slot is at most
         // `pairs * ha^2 * hb^2`.

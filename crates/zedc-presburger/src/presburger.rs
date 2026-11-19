@@ -97,7 +97,7 @@ use rustc_hash::{FxHashMap, FxHashSet};
 use zed_graph::UnionFind;
 use zed_kernel::refine::Refine;
 use zed_kernel::value::fresh_id;
-use zedc_int::int::Int;
+use zedc_int::int::{Int, IntRange, meet_range, range_meet, row_range};
 use zedc_lattice::interval::{End, IntervalSet, Num};
 use zedc_solvers::linear::{Q, Term};
 use zedc_solvers::{live3, twovar, utvpi};
@@ -146,7 +146,7 @@ pub use row_sums::{
 };
 pub use slack::ROW_ORDER_SCAN;
 use slack::{
-    DisjInfo, DisjointWide, HitKind, RowPlan, fill_row_model, has_product_con, meet_ends,
+    DisjInfo, DisjointWide, HitKind, RowPlan, fill_row_model, has_product_con,
     reduce_subset_wide_eqs, row_order, signed_ends, sweep_row, sweep_row_unbounded, unary_bound,
 };
 
@@ -4058,10 +4058,10 @@ fn progression_meets(target: &Int, coef: &Int, offset: &OffsetHull, lo: &Int, hi
     let low = target - &offset.hi;
     let high = target - &offset.lo;
     let (l, h) = if coef.is_positive() {
-        (-&(-&low).div_floor(coef), high.div_floor(coef))
+        (low.div_ceil(coef), high.div_floor(coef))
     } else {
         let a = -coef;
-        (-&high.div_floor(&a), (-&low).div_floor(&a))
+        ((-&high).div_ceil(&a), (-&low).div_floor(&a))
     };
     let l = l.max(lo.clone());
     let h = h.min(hi.clone());
@@ -4288,7 +4288,10 @@ fn chain_witness(
                 (&adj - &(&coef * a), &adj - &(&coef * b))
             };
             let mid = (&offset.lo + &offset.hi).div_floor(&two);
-            let clamped = mid.max(v_lo).min(v_hi);
+            // `v_lo <= v_hi`, so `clamp` (which panics otherwise) is safe: with `coef` 0 the
+            // two are `adj`; otherwise `progression_meets` held, which needs
+            // `a <= l <= h <= b`, so `a <= b`, and `adj - coef·t` is monotone in `t`.
+            let clamped = mid.clamp(v_lo, v_hi);
             let margin = (&clamped - &offset.lo).min(&offset.hi - &clamped);
             let cand = (offset.exact, margin);
             if best.as_ref().is_none_or(|old| cand > *old) {
@@ -4667,7 +4670,7 @@ mod cell_sweep {
                 return;
             }
             self.push(idx);
-            let mid = l + (r - l) / 2;
+            let mid = l.midpoint(r);
             if ql <= mid {
                 self.add_rec(idx * 2, l, mid, ql, qr, delta);
             }
@@ -4693,7 +4696,7 @@ mod cell_sweep {
                 return;
             }
             self.push(idx);
-            let mid = l + (r - l) / 2;
+            let mid = l.midpoint(r);
             if self.min_val[idx * 2] == 0 {
                 self.harvest_rec(idx * 2, l, mid, out);
             }
@@ -6438,7 +6441,7 @@ mod cell_sweep {
         let tighten_ge = |rhs: &Int, coef: &Int, lo: &mut Option<Int>, hi: &mut Option<Int>| {
             // `coef * x >= rhs`.
             if coef.is_positive() {
-                let bnd = -&(-rhs).div_floor(coef);
+                let bnd = rhs.div_ceil(coef);
                 if lo.as_ref().is_none_or(|l| &bnd > l) {
                     *lo = Some(bnd);
                 }
@@ -6486,7 +6489,7 @@ mod cell_sweep {
             if let Some(l) = &sp.0 {
                 let rhs = l - base;
                 if coef.is_positive() {
-                    let bnd = -&(-&rhs).div_floor(coef);
+                    let bnd = rhs.div_ceil(coef);
                     if ms.0.as_ref().is_none_or(|prev| &bnd > prev) {
                         ms.0 = Some(bnd);
                     }
@@ -9428,9 +9431,9 @@ fn unit_interval(rows: &[&Con], x: &Atom) -> Option<(Option<Int>, Option<Int>)> 
     let (e, f) = (envelope(lower), envelope(upper));
     // The pieces of `E - F = E + (-F)`: from a start (`None` below every value) to the next
     // start of either envelope, the sum of the two lines then in force.
-    let (mut lo, mut hi): (Option<Option<Ratio>>, Option<Option<Ratio>>) = (None, None);
+    let (mut lo, mut hi): (Option<Option<Q>>, Option<Option<Q>>) = (None, None);
     let (mut i, mut j) = (0, 0);
-    let mut start: Option<Ratio> = None;
+    let mut start: Option<Q> = None;
     loop {
         let (sl, ic) = (&e[i].1 + &f[j].1, &e[i].2 + &f[j].2);
         let (ne, nf) = (
@@ -9438,44 +9441,40 @@ fn unit_interval(rows: &[&Con], x: &Atom) -> Option<(Option<Int>, Option<Int>)> 
             f.get(j + 1).and_then(|l| l.0.clone()),
         );
         let end = match (&ne, &nf) {
-            (Some(a), Some(b)) => Some(if ratio_le(a, b) { a.clone() } else { b.clone() }),
+            (Some(a), Some(b)) => Some(a.min(b).clone()),
             (a, b) => a.clone().or_else(|| b.clone()),
         };
-        // Where `sl·x + ic <= 0` on `[start, end]`.
+        // Where `sl·x + ic <= 0` on `[start, end]` (`start` `None` below every value, `end`
+        // above).
         let (mut a, mut b) = (start.clone(), end.clone());
-        let root = |n: Int, d: Int| Some(Ratio(n, d));
         let some = if sl.is_zero() {
             !ic.is_positive()
         } else if sl.is_positive() {
-            let r = root(-&ic, sl.clone());
-            b = ratio_min(b, r);
-            a.as_ref()
-                .zip(b.as_ref())
-                .is_none_or(|(a, b)| ratio_le(a, b))
+            let r = Q::new(-&ic, sl.clone());
+            b = Some(b.map_or(r.clone(), |b| b.min(r)));
+            a.as_ref().zip(b.as_ref()).is_none_or(|(a, b)| a <= b)
         } else {
-            let r = root(ic.clone(), -&sl);
-            a = ratio_max(a, r);
-            a.as_ref()
-                .zip(b.as_ref())
-                .is_none_or(|(a, b)| ratio_le(a, b))
+            let r = Q::new(ic.clone(), -&sl);
+            a = Some(a.map_or(r.clone(), |a| a.max(r)));
+            a.as_ref().zip(b.as_ref()).is_none_or(|(a, b)| a <= b)
         };
         if some {
             lo = Some(match lo {
                 None => a,
-                Some(l) => l.and_then(|l| a.map(|a| if ratio_le(&l, &a) { l } else { a })),
+                Some(l) => l.and_then(|l| a.map(|a| l.min(a))),
             });
             hi = Some(match hi {
                 None => b,
-                Some(h) => h.and_then(|h| b.map(|b| if ratio_le(&h, &b) { b } else { h })),
+                Some(h) => h.and_then(|h| b.map(|b| h.max(b))),
             });
         }
         let Some(end) = end else {
             break;
         };
-        if ne.as_ref().is_some_and(|n| ratio_eq(n, &end)) {
+        if ne.as_ref() == Some(&end) {
             i += 1;
         }
-        if nf.as_ref().is_some_and(|n| ratio_eq(n, &end)) {
+        if nf.as_ref() == Some(&end) {
             j += 1;
         }
         start = Some(end);
@@ -9484,68 +9483,62 @@ fn unit_interval(rows: &[&Con], x: &Atom) -> Option<(Option<Int>, Option<Int>)> 
         return Some((Some(Int::ONE), Some(Int::ZERO)));
     };
     // The integers of the interval: its least end rounded up, its greatest rounded down.
-    let lo = lo.map(|Ratio(n, d)| -&(-&n).div_floor(&d));
-    let hi = hi.map(|Ratio(n, d)| n.div_floor(&d));
+    let lo = lo.map(|r| r.ceil());
+    let hi = hi.map(|r| r.floor());
     Some((lo, hi))
 }
 
-/// A rational `n / d` with `d > 0`.
-#[derive(Clone)]
-struct Ratio(Int, Int);
-
-fn ratio_le(a: &Ratio, b: &Ratio) -> bool {
-    &a.0 * &b.1 <= &b.0 * &a.1
-}
-
-fn ratio_eq(a: &Ratio, b: &Ratio) -> bool {
-    &a.0 * &b.1 == &b.0 * &a.1
-}
-
-/// The lesser of an end (`None` above every value) and a value.
-fn ratio_min(a: Option<Ratio>, b: Option<Ratio>) -> Option<Ratio> {
-    match (a, b) {
-        (Some(a), Some(b)) => Some(if ratio_le(&a, &b) { a } else { b }),
-        (a, b) => a.or(b),
-    }
-}
-
-/// The greater of an end (`None` below every value) and a value.
-fn ratio_max(a: Option<Ratio>, b: Option<Ratio>) -> Option<Ratio> {
-    match (a, b) {
-        (Some(a), Some(b)) => Some(if ratio_le(&a, &b) { b } else { a }),
-        (a, b) => a.or(b),
-    }
-}
-
 /// The upper envelope of lines `p·x + q` given as `(p, q)`: the lines on it in order of
-/// slope, each with the `x` it starts at (`None` for the first, from below every value).
-fn envelope(mut lines: Vec<(Int, Int)>) -> Vec<(Option<Ratio>, Int, Int)> {
+/// slope, each with the `x` it starts at (`None` for the first, from below every value), a
+/// reduced [`Q`] (DRY-numeric-shared: an unreduced `Ratio` of its own before, compared by
+/// cross products, which `Q`'s order is).
+fn envelope(mut lines: Vec<(Int, Int)>) -> Vec<(Option<Q>, Int, Int)> {
     lines.sort_unstable_by(|a, b| a.0.cmp(&b.0).then_with(|| a.1.cmp(&b.1)));
-    let mut hull: Vec<(Int, Int)> = Vec::new();
-    for l in lines {
-        // Of lines of one slope only the last, the highest, can be on the envelope.
-        if hull.last().is_some_and(|h| h.0 == l.0) {
-            hull.pop();
-        }
-        // The last line is under the envelope when the new one meets the one before it no
-        // later than it does: `(q1 - q3)/(p3 - p1) <= (q1 - q2)/(p2 - p1)`.
-        while let [.., a, b] = hull.as_slice() {
-            if &(&a.1 - &l.1) * &(&b.0 - &a.0) <= &(&a.1 - &b.1) * &(&l.0 - &a.0) {
-                hull.pop();
-            } else {
-                break;
-            }
-        }
-        hull.push(l);
-    }
+    let hull: Vec<&(Int, Int)> = upper_envelope(&lines, |(p, q)| (p, q))
+        .into_iter()
+        .map(|j| &lines[j])
+        .collect();
     let starts = std::iter::once(None).chain(
         hull.windows(2)
-            .map(|w| Some(Ratio(&w[0].1 - &w[1].1, &w[1].0 - &w[0].0))),
+            .map(|w| Some(Q::new(&w[0].1 - &w[1].1, &w[1].0 - &w[0].0))),
     );
     starts
         .zip(hull.iter())
         .map(|(s, (p, q))| (s, p.clone(), q.clone()))
         .collect()
+}
+
+/// The upper envelope of lines `p·x + q`, `line` giving `(p, q)` of each, `lines` sorted by
+/// slope and within a slope by intercept: the indices of the lines on it, in order of slope.
+/// Of one slope only the last, the highest, can be on it. Line `b` between `a` and `c` (slopes
+/// `pa < pb < pc`) is under `max(a, c)` everywhere when at the crossing of `a` and `c`,
+/// `x = (qa - qc) / (pc - pa)`, it is under `a`: `(pb - pa)·(qa - qc) <= (qa - qb)·(pc - pa)`,
+/// with both differences of slopes above zero, so the cross-multiplied form keeps the order.
+/// Shared by [`envelope`] and `extend`'s `hull_of` (DRY-numeric-shared; two copies before,
+/// the same test written with the operands named apart).
+///
+/// Complexity tradeoff: naive version, each line tested against every pair of the others,
+/// O(n³) products. Used: the monotone chain (Andrew, "Another efficient algorithm for convex
+/// hulls in two dimensions", IPL 9(5), 1979) on the sorted lines, each index pushed and popped
+/// at most once, O(n) products after the caller's O(n log n) sort. Tradeoffs: none.
+fn upper_envelope<T>(lines: &[T], line: impl Fn(&T) -> (&Int, &Int)) -> Vec<usize> {
+    let mut hull: Vec<usize> = Vec::new();
+    for j in 0..lines.len() {
+        let (pc, qc) = line(&lines[j]);
+        if lines.get(j + 1).is_some_and(|next| line(next).0 == pc) {
+            continue;
+        }
+        while let [.., a, b] = hull[..] {
+            let ((pa, qa), (pb, qb)) = (line(&lines[a]), line(&lines[b]));
+            if &(pb - pa) * &(qa - qc) <= &(qa - qb) * &(pc - pa) {
+                hull.pop();
+            } else {
+                break;
+            }
+        }
+        hull.push(j);
+    }
+    hull
 }
 
 impl<'c> CoreClasses<'c> {
@@ -10028,7 +10021,7 @@ fn cells_point(l: usize, r: usize, items: Vec<CellItem>, live: &[bool]) -> bool 
         .collect();
     touched.sort_unstable();
     touched.dedup();
-    let m = l + (r - l) / 2;
+    let m = l.midpoint(r);
     for (lo, hi) in [(l, m), (m + 1, r)] {
         let mut next: Vec<CellItem> = (part.iter())
             .filter(|it| it.a <= hi && lo <= it.b)
@@ -11919,7 +11912,7 @@ fn by_halves_general<E>(
         let top = path.last().expect("a range runs");
         let (l, r) = (top.l, top.r);
         if r - l > 1 {
-            path.push(range(l, l + (r - l) / 2));
+            path.push(range(l, l.midpoint(r)));
             continue;
         }
         let added = leaf(l, &mut || {
@@ -12684,7 +12677,7 @@ fn learn(p: &Parts, rest: Vec<Rc<Parts>>, d: &Parts, implied: &mut Near) {
                 step *= 2;
             }
             while bad - good > 1 {
-                let mid = good + (bad - good) / 2;
+                let mid = good.midpoint(bad);
                 if none(&ws[mid]) {
                     good = mid;
                 } else {
@@ -12790,7 +12783,7 @@ fn refuted_by_links(p: &Parts, links: &[usize], base: &Near, d: &Parts) -> bool 
 
 /// The least and the greatest value of each atom, as [`Near::one`] keeps them; an atom absent
 /// is unbounded.
-type AtomBounds = BTreeMap<Atom, (Option<Int>, Option<Int>)>;
+type AtomBounds = BTreeMap<Atom, IntRange>;
 
 /// A part of a formula that [`bounds_refute`] reads: a constraint, or a disjunction.
 enum Unit<'a> {
@@ -13076,16 +13069,9 @@ fn narrow_ge(lin: &Lin, sign: bool, b: &mut AtomBounds) -> bool {
             (None, 1) => sum.clone(),
             _ => continue,
         };
-        // `coef·x >= -rest`.
-        let r = -&rest;
-        let ok = if coef.is_positive() {
-            // `x >= ceil(r / coef)`.
-            narrow_to(b, a, Some(-&(-&r).div_floor(coef)), None)
-        } else {
-            // `x <= floor(r / coef)`, `coef` below zero.
-            narrow_to(b, a, None, Some((-&r).div_floor(&-coef)))
-        };
-        if !ok {
+        // `coef·x + rest >= 0`.
+        let (lo, hi) = row_range(coef, &rest, false).0;
+        if !narrow_to(b, a, lo, hi) {
             return false;
         }
     }
@@ -15548,7 +15534,7 @@ fn least(held: Option<Refusal>, r: Refusal) -> Refusal {
 /// rewriting the remaining `O(m)`-term row at each step in `Theta(m^2)`. Because every elimination
 /// is unit-coefficient (exact, zero dark/gray gap), Fourier-Motzkin projection onto suffix slices
 /// in `keys` order reduces to prefix sums `[PL[t], PH[t]]` of the unary integer bounds `[l_u, h_u]`,
-/// and back-substitution with [`nearest_zero`] constructs the identical witness in `O(m log m)`.
+/// and back-substitution with [`Int::nearest_zero`] constructs the identical witness in `O(m log m)`.
 /// Components with unbounded variables, non-unit or multiple wide rows, or duplicate colors among
 /// unfixed variables (beyond the corner/empty box checks) return `None` and run `Omega` unchanged.
 /// Test: `l01_38_presburger::slack_scale::ss_decide_scales`.
@@ -15682,7 +15668,7 @@ fn try_search_bounded_unit_eq(
         let u = unfixed[idx];
         let lo_u = vals[u].clone().max(&rem - &ph[idx]);
         let hi_u = h_vec[u].clone().min(&rem - &pl[idx]);
-        let chosen = nearest_zero(&Some(lo_u), &Some(hi_u));
+        let chosen = Int::nearest_zero(Some(&lo_u), Some(&hi_u));
         rem = &rem - &chosen;
         vals[u] = chosen;
     }
@@ -16622,20 +16608,6 @@ impl Row {
             a: merge(&self.a, &Int::ONE, &def.a, c, j),
             k: &self.k + &(c * &def.k),
         }
-    }
-}
-
-/// The symmetric remainder of `a` by `m`, of either sign, odd in `a`: at exactly half of `m`
-/// it takes the sign opposite to `a`, so that `mod_hat(-a, m) == -mod_hat(a, m)` and an
-/// equality solved with its sign turned gives the same definition.
-fn mod_hat(a: &Int, m: &Int) -> Int {
-    let m = m.abs();
-    let r = a.mod_floor(&m);
-    match (&r + &r).cmp(&m) {
-        Ordering::Less => r,
-        Ordering::Greater => &r - &m,
-        Ordering::Equal if a.is_negative() => r,
-        Ordering::Equal => &r - &m,
     }
 }
 
@@ -17928,7 +17900,7 @@ fn box_empty(sys: &System) -> bool {
 type Coordinate = fn(&Option<Int>, &Option<Int>) -> Option<Int>;
 
 /// The five candidate points of the box stage, one coordinate at a time: the value nearest
-/// zero ([`nearest_zero`], which also stands in wherever a bound is missing), the lower bound,
+/// zero ([`Int::nearest_zero`], which also stands in wherever a bound is missing), the lower bound,
 /// the upper bound, and the midpoint of the bounds rounded down and rounded up.
 const CANDIDATES: [Coordinate; 5] = [
     |_, _| None,
@@ -17937,15 +17909,6 @@ const CANDIDATES: [Coordinate; 5] = [
     |lo, hi| Some((lo.as_ref()? + hi.as_ref()?).div_floor(&Int::from(2))),
     |lo, hi| Some((&(lo.as_ref()? + hi.as_ref()?) + &Int::ONE).div_floor(&Int::from(2))),
 ];
-
-/// The value nearest zero between the bounds `lo` and `hi`.
-fn nearest_zero(lo: &Option<Int>, hi: &Option<Int>) -> Int {
-    match (lo, hi) {
-        (Some(l), _) if l.is_positive() => l.clone(),
-        (_, Some(h)) if h.is_negative() => h.clone(),
-        _ => Int::ZERO,
-    }
-}
 
 /// The first of five points of the box `lo`, `hi` that holds every row: the point nearest
 /// zero, the lower corner, the upper corner, and the two midpoints, rounded down and rounded
@@ -17957,7 +17920,7 @@ fn box_point(sys: &System, lo: &[Option<Int>], hi: &[Option<Int>]) -> Option<Vec
         let v: Vec<Int> = lo
             .iter()
             .zip(hi)
-            .map(|(l, h)| at(l, h).unwrap_or_else(|| nearest_zero(l, h)))
+            .map(|(l, h)| at(l, h).unwrap_or_else(|| Int::nearest_zero(l.as_ref(), h.as_ref())))
             .collect();
         let holds = sys.rows.iter().all(|(a, held)| {
             !a.iter()
@@ -19227,7 +19190,7 @@ impl Omega {
         let mut a: Vec<Term> =
             e.a.iter()
                 .filter(|(i, _)| *i != y)
-                .map(|(i, c)| (*i, -&(c - &mod_hat(c, b)).div_floor(b)))
+                .map(|(i, c)| (*i, -&(c - &c.mod_hat(b)).div_floor(b)))
                 .filter(|(_, q)| !q.is_zero())
                 .collect();
         a.push((t, Int::ONE));
@@ -19235,7 +19198,7 @@ impl Omega {
         // solutions need.
         let def = Row {
             a: a.into(),
-            k: -&(&e.k - &mod_hat(&e.k, b)).div_floor(b),
+            k: -&(&e.k - &e.k.mod_hat(b)).div_floor(b),
         };
         self.es.put(s, e, &mut self.sys);
         self.es.subst(y, &def, &mut self.sys);
@@ -19550,7 +19513,11 @@ impl Omega {
             let s = &self.sys.vars[j].sides;
             let v = match (s.lo == s.lo_unary, s.hi == s.hi_unary, lo, hi) {
                 // Only bounds: the value nearest zero.
-                (true, true, Some(l), Some(h)) => l.max(Int::ZERO).min(h),
+                // Below, the lower side has bounds alone and other rows bound the variable
+                // from above only (or the reverse), so the variable's own bound on that side
+                // keeps every point and a value nearer zero might not: the one-bound arms are
+                // not the nearest-zero rule, and are right as they are (REPORT-dryA5 row 19).
+                (true, true, Some(l), Some(h)) => Int::nearest_zero(Some(&l), Some(&h)),
                 (true, _, Some(l), _) => l,
                 (_, _, _, Some(h)) => h,
                 _ => unreachable!("a fixable variable has the bound"),
@@ -19773,11 +19740,7 @@ fn choose(rows: &[Row], j: usize, m: &[Int]) -> Int {
             hi = Some(hi.map_or(b.clone(), |h| h.min(b)));
         }
     }
-    match (lo, hi) {
-        (Some(l), _) if l.is_positive() => l,
-        (_, Some(h)) if h.is_negative() => h,
-        _ => Int::ZERO,
-    }
+    Int::nearest_zero(lo.as_ref(), hi.as_ref())
 }
 
 /// The values of a symbol over the formula's points, as a union of intervals (see the module
@@ -23782,34 +23745,17 @@ fn bounds_alone(sym: &Atom, rows: &[Con]) -> IntervalSet {
 
 /// The least and greatest integers `x` (`None`: unbounded) with `a·x + k >= 0`, or `== 0` by
 /// its relation, for each `(a, k, rel)` of `rows`, `a` not zero; `None` when there is none.
-fn int_bounds(
-    rows: impl IntoIterator<Item = (Int, Int, Rel)>,
-) -> Option<(Option<Int>, Option<Int>)> {
-    let (mut lo, mut hi): (Option<Int>, Option<Int>) = (None, None);
-    let mut raise = |v: Int| lo = Some(lo.take().map_or(v.clone(), |l| l.max(v)));
-    let mut lower = |v: Int| hi = Some(hi.take().map_or(v.clone(), |h| h.min(v)));
+fn int_bounds(rows: impl IntoIterator<Item = (Int, Int, Rel)>) -> Option<IntRange> {
+    let mut range: IntRange = (None, None);
+    let mut empty = false;
     for (a, k, rel) in rows {
-        // `x >= -k / a` rounded up when `a` is above zero, `x <= k / -a` rounded down when
-        // below; an equality is both.
-        match rel {
-            Rel::Ge if a.is_positive() => raise(-&k.div_floor(&a)),
-            Rel::Ge => lower(k.div_floor(&-&a)),
-            Rel::Eq => {
-                if !k.mod_floor(&a).is_zero() {
-                    return None;
-                }
-                let v = -&k.div_floor(&a);
-                raise(v.clone());
-                lower(v);
-            }
+        let (add, bad) = row_range(&a, &k, rel == Rel::Eq);
+        if bad {
+            return None;
         }
+        empty = meet_range(&mut range, add);
     }
-    if let (Some(l), Some(h)) = (&lo, &hi)
-        && l > h
-    {
-        return None;
-    }
-    Some((lo, hi))
+    (!empty).then_some(range)
 }
 
 /// An integer point of `rows`, or `None` when none is found so: [`shadow`] eliminates every
@@ -24040,7 +23986,7 @@ fn projected_each(rows: &[Con], syms: &[&Atom]) -> Vec<Option<Vec<Con>>> {
     while let Some((l, r)) = stack.pop() {
         let p = nodes.len();
         let kids = (r - l > 1).then(|| {
-            let m = l + (r - l) / 2;
+            let m = l.midpoint(r);
             stack.push((m, r));
             stack.push((l, m));
             (p + 1, p + 2 * (m - l))
@@ -24056,7 +24002,7 @@ fn projected_each(rows: &[Con], syms: &[&Atom]) -> Vec<Option<Vec<Con>>> {
     let node_of = |lo: usize, hi: usize| -> usize {
         let (mut p, mut l, mut r) = (0, 0, k);
         while r - l > 1 {
-            let m = l + (r - l) / 2;
+            let m = l.midpoint(r);
             if hi < m {
                 p += 1;
                 r = m;
@@ -25039,14 +24985,9 @@ fn forest_row_hulls(cons: &[&Con]) -> Option<HashMap<Atom, IntervalSet>> {
         }
     };
     // The values of `x` with `a·x + k >= 0`, every integer when `k` is `None` (unbounded).
-    let half = |a: &Int, k: Option<Int>| -> Ends {
-        match k {
-            None => (None, None),
-            Some(k) if a.is_positive() => (Some(-&k.div_floor(a)), None),
-            Some(k) => (None, Some(k.div_floor(&-a))),
-        }
-    };
-    let meet = formula::ends_meet;
+    let half =
+        |a: &Int, k: Option<Int>| -> Ends { k.map_or((None, None), |k| row_range(a, &k, false).0) };
+    let meet = range_meet;
     // The constant of inequality `r` plus the greatest values of its terms, each read from
     // `ends(u)`, with the term of each atom left out in turn: for each atom of `r`, that sum
     // without its term, `None` where a term left in has no greatest value.
@@ -27479,7 +27420,7 @@ impl SlackIndex {
                     Some(prev) if *prev == a => {}
                     Some(_) => return SlackStatus::Unknown,
                 }
-                if meet_ends(&mut add_ends, b) {
+                if meet_range(&mut add_ends, b) {
                     return SlackStatus::Refuted;
                 }
             }
@@ -27489,7 +27430,7 @@ impl SlackIndex {
         };
         let old_e = self.dw.ends.get(&a).cloned().unwrap_or((None, None));
         let mut new_e = old_e.clone();
-        if meet_ends(&mut new_e, add_ends) {
+        if meet_range(&mut new_e, add_ends) {
             return SlackStatus::Refuted;
         }
         // If another disjunction also constrains `a`, fixing `d` could directly narrow `a` for it.
@@ -27633,13 +27574,13 @@ fn parse_two_point_disj(
                 Some(prev) if *prev == a => {}
                 Some(_) => return None,
             }
-            if meet_ends(&mut e, b) {
+            if meet_range(&mut e, b) {
                 return None;
             }
         }
         let a = arm_a?;
         if let Some((il, ih)) = implied.one.get(&a)
-            && meet_ends(&mut e, (il.clone(), ih.clone()))
+            && meet_range(&mut e, (il.clone(), ih.clone()))
         {
             return None;
         }
@@ -27776,12 +27717,7 @@ fn find_probe_points(
 
     for (a, (lo, hi)) in &si.dw.ends {
         if !si.dw.atom_row.contains_key(a) {
-            let v = match (lo, hi) {
-                (Some(l), Some(h)) => l.max(&Int::ZERO).min(h).clone(),
-                (Some(l), None) => l.max(&Int::ZERO).clone(),
-                (None, Some(h)) => h.min(&Int::ZERO).clone(),
-                (None, None) => Int::ZERO,
-            };
+            let v = Int::nearest_zero(lo.as_ref(), hi.as_ref());
             fixed_atoms.push((a.clone(), v));
         }
     }
@@ -27990,12 +27926,7 @@ fn find_tied_point(p: &Parts, color: &HashMap<Atom, usize>, want: bool) -> Optio
 
     for (a, (lo, hi)) in &dw.ends {
         if !dw.atom_row.contains_key(a) {
-            let v = match (lo, hi) {
-                (Some(l), Some(h)) => l.max(&Int::ZERO).min(h).clone(),
-                (Some(l), None) => l.max(&Int::ZERO).clone(),
-                (None, Some(h)) => h.min(&Int::ZERO).clone(),
-                (None, None) => Int::ZERO,
-            };
+            let v = Int::nearest_zero(lo.as_ref(), hi.as_ref());
             fixed_atoms.push((a.clone(), v));
         }
     }
@@ -28064,7 +27995,7 @@ impl BoundedPickRow {
         }
         let mut idx = 0usize;
         let mut acc = Int::ZERO;
-        let mut step = 1usize << (usize::BITS - 1 - n.leading_zeros());
+        let mut step = 1usize << n.ilog2();
         while step > 0 {
             let next = idx + step;
             if next <= n && &acc + &self.bit[next] < *target {
@@ -28220,7 +28151,7 @@ fn parse_one_point_disj(ds: &[std::rc::Rc<Parts>]) -> Option<(Atom, Int)> {
                 Some(prev) if *prev == a => {}
                 Some(_) => return None,
             }
-            if meet_ends(&mut ends, b) {
+            if meet_range(&mut ends, b) {
                 return None;
             }
         }
@@ -28388,12 +28319,7 @@ fn try_pick_disjoint_wide<'a>(
 
     for (a, (lo, hi)) in &base_dw.ends {
         if !base_dw.atom_row.contains_key(a) {
-            let v = match (lo, hi) {
-                (Some(l), Some(h)) => l.max(&Int::ZERO).min(h).clone(),
-                (Some(l), None) => l.max(&Int::ZERO).clone(),
-                (None, Some(h)) => h.min(&Int::ZERO).clone(),
-                (None, None) => Int::ZERO,
-            };
+            let v = Int::nearest_zero(lo.as_ref(), hi.as_ref());
             final_vals.insert(a.clone(), v);
         }
     }
@@ -35777,5 +35703,47 @@ mod loose_pair_tests {
         cons[1] = c(&[("a", 3), ("b", 2), ("c", 3)], -4, Rel::Eq);
         let m = solve(&cons, true).unwrap().expect("a point");
         assert!(cons.iter().all(|k| k.holds(&m)), "{m:?}");
+    }
+}
+
+#[cfg(test)]
+mod upper_envelope_tests {
+    use super::{Int, upper_envelope};
+
+    /// [`upper_envelope`] keeps exactly the lines that are above every other line somewhere,
+    /// on random sets of distinct lines with slopes and intercepts in `-6..=6`. Two lines cross
+    /// at `x = a / b` with `|a| <= 12` and `0 < b <= 12`, so two crossings are at least 1/144
+    /// apart and the open piece where a line is alone on top holds a point `k / 288`; the
+    /// oracle tries each `k / 288` for `|x| <= 13` (all crossings within `|x| <= 12`), and a
+    /// line is checked at `p·k + 288·q`.
+    #[test]
+    fn the_upper_envelope_keeps_the_lines_alone_on_top_somewhere() {
+        let mut seed = 0x9e37_79b9_7f4a_7c15u64;
+        let mut rng = |n: u64| {
+            seed ^= seed << 13;
+            seed ^= seed >> 7;
+            seed ^= seed << 17;
+            seed % n
+        };
+        for _ in 0..400 {
+            let mut lines: Vec<(i128, i128)> = (0..1 + rng(9))
+                .map(|_| (rng(13) as i128 - 6, rng(13) as i128 - 6))
+                .collect();
+            lines.sort_unstable();
+            lines.dedup();
+            let big: Vec<(Int, Int)> = (lines.iter())
+                .map(|&(p, q)| (Int::from(p), Int::from(q)))
+                .collect();
+            let got = upper_envelope(&big, |(p, q)| (p, q));
+            let want: Vec<usize> = (0..lines.len())
+                .filter(|&j| {
+                    (-288 * 13..=288 * 13).any(|k: i128| {
+                        let at = |(p, q): (i128, i128)| p * k + 288 * q;
+                        (lines.iter().enumerate()).all(|(i, &l)| i == j || at(l) < at(lines[j]))
+                    })
+                })
+                .collect();
+            assert_eq!(got, want, "{lines:?}");
+        }
     }
 }

@@ -1335,6 +1335,7 @@ name = "zedc-solvers"
 version = "0.0.0"
 dependencies = [
  "zed-graph",
+ "zed-kernel",
  "zedc-int",
  "zedc-solvers",
 ]

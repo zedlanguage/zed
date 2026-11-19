@@ -41,12 +41,13 @@
 
 use std::collections::HashMap;
 
-use zedc_int::int::{Int, Num};
+use zed_kernel::bits::{BitLen, ceil_midpoint, floor_midpoint};
+use zedc_int::int::{Int, Num, i128_div_ceil, i128_div_floor};
 use zedc_lattice::interval::{End, IntervalSet};
 use zedc_lattice::lattice::Congruence;
 
 use super::super::super::meter::{PIECE, TWO_PIN_READINGS, Work};
-use super::super::super::row_sums::plane::{bezout, div_ceil, div_floor};
+use super::super::super::row_sums::plane::bezout;
 use super::super::super::{Atom, Classed, Con, Formula, Lin, Refusal, Rel};
 use super::super::projection::each_constraint;
 use super::{Def, Prep};
@@ -472,9 +473,7 @@ impl<'a> Prep<'a> {
             }
         }
         let h = (halves.len() + cuts.len()) as u64;
-        work.charge(
-            PIECE.saturating_mul(h.saturating_mul(u64::from(u64::BITS - h.leading_zeros() + 1))),
-        )?;
+        work.charge(PIECE.saturating_mul(h.saturating_mul(u64::from(h.bit_len() + 1))))?;
         let shape = shape_of(&halves, &cuts);
         Ok(Read::Done(Cell {
             forms,
@@ -648,7 +647,7 @@ fn shape_values(
 /// `2·(⌊log2 n⌋ + 2)` pieces, for one search over n edges.
 fn log_pieces(n: usize) -> u64 {
     let n = n as u64;
-    PIECE.saturating_mul(2 * u64::from(u64::BITS - n.leading_zeros() + 1))
+    PIECE.saturating_mul(2 * u64::from(n.bit_len() + 1))
 }
 
 /// The runs of `u = a·p + b·q` over the integer points of `shape` where `c >= 0` (the arm of a
@@ -686,9 +685,7 @@ fn cut_values(
         };
         halves.push(c);
         let h = halves.len() as u64;
-        work.charge(
-            PIECE.saturating_mul(h.saturating_mul(u64::from(u64::BITS - h.leading_zeros() + 1))),
-        )?;
+        work.charge(PIECE.saturating_mul(h.saturating_mul(u64::from(h.bit_len() + 1))))?;
         shape_values(&shape_of(&halves, &[]), (a, b), work)
     };
     match shape {
@@ -1254,7 +1251,7 @@ fn open(halves: &[Form], q: &[(Form, bool)], cuts: &[Form]) -> Option<Shape> {
     }
     let mut cl = i128::MIN;
     for (x, y, d) in pts {
-        cl = cl.max(1i128.checked_sub(div_floor(dot(ell, (x, y))?, d)?)?);
+        cl = cl.max(1i128.checked_sub(i128_div_floor(dot(ell, (x, y))?, d)?)?);
     }
     let lid = (ell.0, ell.1, cl);
     if cr > 0 && at(&lid, point(&ra, &rb)?)? <= 0 {
@@ -1318,7 +1315,7 @@ fn first_false(
     mut pred: impl FnMut(i128) -> Option<bool>,
 ) -> Option<i128> {
     while lo < hi {
-        let m = lo + (hi - lo) / 2;
+        let m = floor_midpoint(lo, hi);
         if pred(m)? {
             lo = m + 1;
         } else {
@@ -1395,8 +1392,8 @@ trait Convex {
         for j in [x, y] {
             let (_, _, d) = self.corner(j);
             let num = self.off(j, v, 0)?;
-            lo = lo.min(div_ceil(num, d)?);
-            hi = hi.max(div_floor(num, d)?);
+            lo = lo.min(i128_div_ceil(num, d)?);
+            hi = hi.max(i128_div_floor(num, d)?);
         }
         Some((lo, hi))
     }
@@ -1593,7 +1590,7 @@ fn full_dark(
     // The first value of `[rl, top]` with length at least 1, and the last of `[top, rh]`.
     let (mut lo, mut hi) = (rl, top);
     while lo < hi {
-        let m = lo + (hi - lo) / 2;
+        let m = floor_midpoint(lo, hi);
         let Some(ok) = long(m, work)? else {
             return Ok(None);
         };
@@ -1602,7 +1599,7 @@ fn full_dark(
     let d1 = lo;
     let (mut lo, mut hi) = (top, rh);
     while lo < hi {
-        let m = hi - (hi - lo) / 2;
+        let m = ceil_midpoint(lo, hi);
         let Some(ok) = long(m, work)? else {
             return Ok(None);
         };
@@ -1631,7 +1628,7 @@ fn poly_values(
         return Ok(None);
     };
     let n = poly.n() as u64;
-    let log = u64::from(u64::BITS - n.leading_zeros() + 1);
+    let log = u64::from(n.bit_len() + 1);
     let step = PIECE.saturating_mul(log);
     work.charge(step.saturating_mul(8))?;
     let to_uw = |(ha, hb, hc): Form| -> Option<Row> {
@@ -1993,7 +1990,7 @@ fn open_values<K: Convex>(
             Some(true) => {
                 let (mut lo, mut hi) = (out + 1, probe);
                 while lo < hi {
-                    let m = lo + (hi - lo) / 2;
+                    let m = floor_midpoint(lo, hi);
                     let Some(ok) = long(m, work)? else {
                         return Ok(None);
                     };
@@ -2092,12 +2089,12 @@ fn meet(p: i128, q: i128, lo: &mut Option<i128>, hi: &mut Option<i128>) -> Optio
     match p.signum() {
         0 => Some(q >= 0),
         1 => {
-            let l = div_ceil(q.checked_neg()?, p)?;
+            let l = i128_div_ceil(q.checked_neg()?, p)?;
             *lo = Some(lo.map_or(l, |v| v.max(l)));
             Some(true)
         }
         _ => {
-            let h = div_floor(q, p.checked_neg()?)?;
+            let h = i128_div_floor(q, p.checked_neg()?)?;
             *hi = Some(hi.map_or(h, |v| v.min(h)));
             Some(true)
         }

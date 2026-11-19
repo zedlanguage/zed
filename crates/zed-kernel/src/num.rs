@@ -34,6 +34,7 @@ use num_bigint::{BigInt, BigUint, Sign};
 use num_integer::Integer;
 use num_traits::{One, Pow, Signed, ToPrimitive, Zero};
 
+use crate::bits::BitLen;
 use bound::{Format, Product};
 pub use factor::is_prime;
 #[doc(hidden)]
@@ -355,7 +356,7 @@ impl Rat {
         // value is beyond `2^63`; within it, it has at most about 128 bits.
         let mut low = BigInt::from(self.num.bits()) - 1;
         for (p, e) in self.pows.iter() {
-            low += e * (63 - p.leading_zeros());
+            low += e * p.ilog2();
         }
         // Within the bound every exponent is below 64, so the build is never refused.
         match low <= BigInt::from(63) {
@@ -672,7 +673,7 @@ impl Rat {
             .collect();
         // `base >= 2^low`, so its digits are at least `low log10 2 > 0.30102 low`.
         let low: BigUint = (reduced.iter())
-            .map(|(p, e)| e * u64::from(63 - p.leading_zeros()))
+            .map(|(p, e)| e * u64::from(p.ilog2()))
             .sum();
         let g_text = g.to_string();
         let least = BigUint::from(head.len() + 1 + g_text.len()) + low * 30102u32 / 100_000u32;
@@ -1481,9 +1482,10 @@ fn pow_mod_any(b: u64, e: &BigUint, m: u64) -> u64 {
 fn reduce(num: BigInt, den: BigInt) -> (BigInt, BigInt) {
     let g = gcd(&num, &den);
     let sign = if den.is_negative() { -1 } else { 1 };
+    // `g` divides both and is positive, so each floor is the exact quotient.
     (
-        sign * fast::exact_quotient(&num, &g),
-        sign * fast::exact_quotient(&den, &g),
+        sign * fast::div_floor(&num, &g),
+        sign * fast::div_floor(&den, &g),
     )
 }
 
@@ -1502,6 +1504,20 @@ pub fn div_rem_uint(a: &BigUint, b: &BigUint) -> (BigUint, BigUint) {
 /// would be wider than `b` (`num::fast::rem`).
 pub fn rem_uint(a: &BigUint, b: &BigUint) -> BigUint {
     fast::rem(a, b)
+}
+
+/// `floor(a / m)` for `m` not zero, either sign, for integers held outside a [`Rat`]: the
+/// division of the magnitudes by [`div_rem_uint`], O(M(n)) past its measured crossover with
+/// num-bigint's division (`num::fast::div_rem`), where num-bigint's `div_floor` alone is
+/// O(n^1.52) (Burnikel and Ziegler over Toom-3).
+pub fn div_floor_int(a: &BigInt, m: &BigInt) -> BigInt {
+    fast::div_floor(a, m)
+}
+
+/// `a - m floor(a / m)` for `m` not zero, the remainder of [`div_floor_int`], which has the
+/// sign of `m`, by [`rem_uint`] on the magnitudes.
+pub fn mod_floor_int(a: &BigInt, m: &BigInt) -> BigInt {
+    fast::mod_floor(a, m)
 }
 
 /// `a^-1 mod m` for `m` above zero, below `m`, or `None` when `a` and `m` have a common
@@ -1761,7 +1777,8 @@ fn valuation_upto(n: BigInt, p: u64, cap: u64) -> (u64, BigInt) {
         .filter(|(i, _)| v >> i & 1 == 1)
         .fold(BigUint::one(), |acc, (_, pw)| fast::mul(&acc, pw));
     drop(powers);
-    (v, fast::exact_quotient(&n, &BigInt::from(pv)))
+    // `pv` divides `n` and is positive, so the floor is the exact quotient.
+    (v, fast::div_floor(&n, &BigInt::from(pv)))
 }
 
 /// The prime powers of two numbers merged by prime, `f` combining the exponents of a prime
@@ -1822,7 +1839,7 @@ fn width<'a>(coef: &BigInt, pows: impl Iterator<Item = (u64, &'a BigUint)>) -> B
     let mut bits = BigUint::from(coef.bits());
     for (p, e) in pows {
         // `p^e < 2^(e * ceil(log2 p))`.
-        bits += e * (p.ilog2() + u32::from(!p.is_power_of_two()));
+        bits += e * p.ceil_log2();
     }
     bits
 }

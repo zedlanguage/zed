@@ -25,6 +25,7 @@
 //! Schubfach takes the even one; and one significant digit where Java asks for two.
 
 use super::LiteralRounding;
+use crate::bits::BitLen;
 use num_bigint::{BigInt, BigUint};
 use std::cmp::Ordering;
 
@@ -343,7 +344,7 @@ fn scaled(w: u64, q: i64, format: FloatFormat) -> Result<u64, Edge> {
         // Exact: `w * 5^q < 2^128`; the bits past the top 64, `s` of them, only tell whether
         // the value lies above `n * 2^(q + s)`.
         let n = u128::from(w) * u128::from(POW5_SMALL[k]);
-        let s = 64u32.saturating_sub(n.leading_zeros());
+        let s = n.bit_len().saturating_sub(64);
         let inexact = n & ((1u128 << s) - 1) != 0;
         return round((n >> s) as u64, q + i64::from(s), inexact, format);
     }

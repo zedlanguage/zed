@@ -38,7 +38,7 @@ use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::sync::Arc;
 
 use zed_graph::{OffsetUnionFind, UnionFind};
-use zedc_int::int::Int;
+use zedc_int::int::{Int, i128_div_ceil, i128_div_floor};
 use zedc_presburger::presburger::{Atom, Con, Formula, Lin, Rel};
 use zedc_stage::defs::written_name;
 
@@ -264,12 +264,18 @@ pub(crate) fn check(test: &Test, outcome: bool, text: &dyn Fn(usize) -> String) 
         let (Some(x), Some(c)) = (x.to_i128(), a.c.to_i128()) else {
             continue;
         };
-        // `x * v + c >= 0`.
+        // `x * v + c >= 0`. A bound that does not fit in `i128` is left out: the box only
+        // grows, so fewer parts are found to hold on all of it, which adds edges, never drops
+        // one.
         if x > 0 {
-            let l = (-c).div_euclid(x) + i128::from((-c).rem_euclid(x) != 0);
+            let Some(l) = c.checked_neg().and_then(|n| i128_div_ceil(n, x)) else {
+                continue;
+            };
             blo[*v] = Some(blo[*v].map_or(l, |y| y.max(l)));
         } else {
-            let h = c.div_euclid(-x);
+            let Some(h) = x.checked_neg().and_then(|d| i128_div_floor(c, d)) else {
+                continue;
+            };
             bhi[*v] = Some(bhi[*v].map_or(h, |y| y.min(h)));
         }
     }
@@ -1109,10 +1115,13 @@ impl Say<'_> {
                     continue;
                 }
                 let (xc, cc) = (x.to_i128()?, a.c.to_i128()?);
-                // `xc * v + cc >= 0`: v >= ceil(-cc / xc), or v <= floor(cc / -xc).
+                // `xc * v + cc >= 0`: v >= ceil(-cc / xc), or v <= floor(cc / -xc). The term
+                // writes `to`, whose side is `to % 2 == side`, and `write_of` gives side 0 to
+                // `xc >= 0` and side 1 to `xc < 0`, so the divisor is above zero unless `xc` is
+                // 0; the division is right for either sign and answers `None` for 0.
                 let at = match side {
-                    0 => (cc.checked_neg()?).div_euclid(xc) + i128::from((-cc).rem_euclid(xc) != 0),
-                    _ => cc.div_euclid(xc.checked_neg()?),
+                    0 => i128_div_ceil(cc.checked_neg()?, xc)?,
+                    _ => i128_div_floor(cc, xc.checked_neg()?)?,
                 };
                 let at_start = at.checked_sub(off)?;
                 limit = if side == 0 {
@@ -1122,7 +1131,9 @@ impl Say<'_> {
                 };
             }
         }
-        let times = (limit.checked_sub(v0)?.checked_abs()? + gain.abs() - 1) / gain.abs();
+        // `ceil(|limit - v0| / |gain|)`, `gain` not 0 by the test above; checked, so a gain
+        // of `i128::MIN` (whose `abs` overflows, here and in the text below) answers `None`.
+        let times = i128_div_ceil(limit.checked_sub(v0)?.checked_abs()?, gain.checked_abs()?)?;
         if times < 2 {
             return None;
         }

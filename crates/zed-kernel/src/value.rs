@@ -40,6 +40,7 @@ use std::slice;
 use std::sync::atomic::{AtomicU64, Ordering as AtomicOrdering};
 use std::sync::{Arc, LazyLock, OnceLock};
 
+use crate::bits::{BitLen, ceil_midpoint, floor_midpoint};
 use crate::btree::{self, Hole};
 use num_bigint::{BigInt, BigUint};
 use num_traits::{One, ToPrimitive, Zero};
@@ -656,7 +657,7 @@ impl Value {
         // needing less is refused when the free memory lies between the two, and none aborts.
         // Tested by `a_long_integer_literal_is_refused_when_memory_is_short` (COMPLEXITY.md
         // K30). A complete solution would pack the digits into words with memory reserved once.
-        let per_digit = radix.ilog2() + u32::from(!radix.is_power_of_two());
+        let per_digit = radix.ceil_log2();
         let len = BigUint::from(digits.len());
         room(&len * per_digit, (len * (8 + per_digit)) << 1u32)?;
         Ok(BigUint::parse_bytes(digits.as_bytes(), radix).map(int))
@@ -1800,7 +1801,7 @@ fn word_beside(lo_end: i64, last_end: i64, k: &Value, after: bool) -> Option<i64
             return None;
         }
         while lo < hi {
-            let mid = lo + (hi - lo) / 2;
+            let mid = floor_midpoint(lo, hi);
             match past(mid as i64) {
                 true => hi = mid,
                 false => lo = mid + 1,
@@ -1812,7 +1813,7 @@ fn word_beside(lo_end: i64, last_end: i64, k: &Value, after: bool) -> Option<i64
             return None;
         }
         while lo < hi {
-            let mid = lo + (hi - lo + 1) / 2;
+            let mid = ceil_midpoint(lo, hi);
             match past(mid as i64) {
                 true => lo = mid,
                 false => hi = mid - 1,

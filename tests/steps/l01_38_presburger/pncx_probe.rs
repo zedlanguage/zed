@@ -11,6 +11,25 @@ use zed_tests::step_helpers::l01_38_presburger::pncx::*;
 use zedc::store::preimage::Scoped;
 use zedc::store::presburger::extend::Extending;
 
+/// The family of `bench::pncx_probe::pncx_wide_floor_division_scales` at small sizes and every
+/// sign, against num-integer's floor division: `a = q d + r` with `r` of the sign of `d` and
+/// below it in magnitude, and the same `q` and `r` as num-integer's.
+#[test]
+fn floor_division_of_wide_solver_integers_is_exact() {
+    use num_integer::Integer;
+    use zedc::store::int::Num;
+    let big = |x: &zedc::store::int::Int| Num::from(x).built().expect("written").into_owned();
+    for (aw, dw) in [(2, 1), (3, 2), (8, 3), (40, 20), (5, 40)] {
+        for (na, nd) in [(false, false), (true, false), (false, true), (true, true)] {
+            let (a, d) = (wide_int(aw, 3, na), wide_int(dw, 4, nd));
+            let (ab, db) = (big(&a), big(&d));
+            let (q, r) = (a.div_floor(&d), a.mod_floor(&d));
+            assert_eq!(big(&q), ab.div_floor(&db), "{aw} by {dw} words");
+            assert_eq!(big(&r), ab.mod_floor(&db), "{aw} by {dw} words");
+        }
+    }
+}
+
 /// PNCX_SEEDS=a..b: random chains; each answer, faced and plain, in both orders, against
 /// points. Prints one line per question and MISMATCH lines. Without PNCX_SEEDS, seeds 0 to 3
 /// (about 0.3 s at load 35); seeds 0 to 19 (1.7 s at load 35, 3.1 s at load 25 with the

@@ -166,7 +166,8 @@ use std::borrow::Cow;
 use std::cell::Cell;
 use std::collections::{BTreeMap, HashMap};
 
-use zedc_int::int::Int;
+use zed_kernel::bits::BitLen;
+use zedc_int::int::{Int, i128_div_ceil};
 use zedc_lattice::interval::{End, IntervalSet, Num};
 
 use super::formula::{Atom, Conjuncts, Formula, Id, Model, Rel, one_bound};
@@ -746,7 +747,7 @@ thread_local! {
 
 /// The number of bits of `n`: 1 + the floor of its base-2 logarithm, 0 for 0.
 fn bits(n: u64) -> u64 {
-    u64::from(u64::BITS - n.leading_zeros())
+    u64::from(n.bit_len())
 }
 
 /// The units charged for sorting `n` keys: `n · (1 + bits(n))`, saturating.
@@ -1601,18 +1602,12 @@ fn least_step(set: &Set, top: i64, delta: i64, n: i64) -> Option<i64> {
         // top - e·delta in [a, z]: e·delta in [top - z, top - a].
         let (p, q) = (top - i128::from(z), top - i128::from(a));
         let (e0, e1) = if delta > 0 {
-            (
-                p.div_euclid(delta) + i128::from(p.rem_euclid(delta) != 0),
-                q.div_euclid(delta),
-            )
+            (i128_div_ceil(p, delta)?, q.div_euclid(delta))
         } else {
             let d = -delta;
             // e·d in [a - top, z - top].
             let (p, q) = (-q, -p);
-            (
-                p.div_euclid(d) + i128::from(p.rem_euclid(d) != 0),
-                q.div_euclid(d),
-            )
+            (i128_div_ceil(p, d)?, q.div_euclid(d))
         };
         let (e0, e1) = (e0.max(0), e1.min(last));
         if e0 <= e1 && best.is_none_or(|b| e0 < b) {

@@ -25,9 +25,9 @@
 
 use std::collections::HashMap;
 
-use zedc_int::int::Int;
+use zedc_int::int::{Int, range_meet};
 
-use super::formula::{Atom, Con, Ends, Formula, Lin, Model, Rel, ends_meet};
+use super::formula::{Atom, Con, Ends, Formula, Lin, Model, Rel};
 
 /// One cluster of a part ([`super::clusters`]): its general rows and disjunctions with the
 /// difference rows on its atoms alone (`items`), and the bounds of each of its atoms (`ends`).
@@ -203,7 +203,7 @@ pub(super) fn cluster_sides(
             };
             return (sum(&a.0, &b.0), sum(&a.1, &b.1));
         }
-        ends_meet(a, b)
+        range_meet(a, b)
     };
     // The constraints on block `b` that `info`, what the other sides of cut node `x` allow,
     // gives.

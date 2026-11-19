@@ -18,7 +18,7 @@ use super::formula::{Atom, Con, Rel};
 pub(super) type Form = Vec<(Atom, Int)>;
 
 /// The least and greatest value of a form, `None` where that side is open.
-pub(super) type Bounds = (Option<Int>, Option<Int>);
+pub(super) type Bounds = zedc_int::int::IntRange;
 
 /// The range of each form that some rows bound: its least and greatest value, `None` where
 /// the rows leave that side open. A range whose least value is above its greatest is empty.
@@ -488,7 +488,7 @@ impl Cover {
             }
             self.push(i);
             path.push(i);
-            let m = (l + r) / 2;
+            let m = l.midpoint(r);
             stack.push((2 * i + 1, m, r));
             stack.push((2 * i, l, m));
         }
@@ -521,7 +521,7 @@ impl Cover {
                 continue;
             }
             self.push(i);
-            let m = (l + r) / 2;
+            let m = l.midpoint(r);
             stack.push((2 * i + 1, m, r));
             stack.push((2 * i, l, m));
         }

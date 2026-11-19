@@ -292,7 +292,7 @@ fn the_extended_gcd_gives_bezout_coefficients_for_every_sign() {
 }
 
 #[test]
-fn wide_floor_division_agrees_with_floor_division_for_every_sign() {
+fn floor_and_ceiling_division_agree_with_num_integer_for_every_sign() {
     // Machine and wide divisors, every sign, exact and inexact quotients, a dividend below the
     // divisor (quotient 0 or -1), and zero.
     let ends = ends();
@@ -300,16 +300,17 @@ fn wide_floor_division_agrees_with_floor_division_for_every_sign() {
         for m in ends.iter().filter(|m| !m.is_zero()) {
             let (x, y) = (Int::from(a.clone()), Int::from(m.clone()));
             let want = (Int::from(a.div_floor(m)), Int::from(a.mod_floor(m)));
+            assert_eq!((x.div_floor(&y), x.mod_floor(&y)), want, "{a} by {m}");
             assert_eq!(
-                (x.div_floor_wide(&y), x.mod_floor_wide(&y)),
-                want,
-                "{a} by {m}"
+                x.div_ceil(&y),
+                Int::from(Integer::div_ceil(a, m)),
+                "{a} by {m}, ceil"
             );
-            assert_eq!(
-                (x.div_floor(&y), x.mod_floor(&y)),
-                want,
-                "{a} by {m}, narrow"
-            );
+            // The symmetric remainder: congruent, at most half of |m|, odd in `a`.
+            let h = x.mod_hat(&y);
+            assert!((&x - &h).mod_floor(&y).is_zero(), "{a} mod^ {m}");
+            assert!(&h.abs() + &h.abs() <= y.abs(), "{a} mod^ {m} = {h}");
+            assert_eq!((-&x).mod_hat(&y), -&h, "-{a} mod^ {m}");
         }
     }
     // Exact multiples of a wide divisor have remainder zero for every sign.
@@ -317,10 +318,162 @@ fn wide_floor_division_agrees_with_floor_division_for_every_sign() {
     for k in [-3, -1, 1, 3] {
         let a = Int::from(&m * k);
         for d in [m.clone(), -m.clone()] {
-            let r = a.mod_floor_wide(&Int::from(d.clone()));
+            let r = a.mod_floor(&Int::from(d.clone()));
             assert!(r.is_zero(), "{k}·3^100 mod {d}");
         }
     }
+}
+
+/// The tie of the symmetric remainder: at exactly half of `|m|` the value takes the sign
+/// opposite to the dividend, so `mod_hat` is odd (REPORT-dryA1 row 2: the copy in
+/// `presburger::exact::projection` gave `-1 mod^ 2 == -1 == 1 mod^ 2`).
+#[test]
+fn the_symmetric_remainder_at_half_the_modulus_is_odd() {
+    let wide = pow2(200);
+    for (a, m) in [
+        (Int::from(1), Int::from(2)),
+        (Int::from(3), Int::from(6)),
+        (Int::from(5), Int::from(-2)),
+        // 3·2^200 mod 2^201 is 2^200, half the modulus.
+        (&(&wide + &wide) + &wide, &wide + &wide),
+    ] {
+        assert_eq!((-&a).mod_hat(&m), -&a.mod_hat(&m), "{a} mod^ {m}");
+        assert_eq!(
+            &a.mod_hat(&m).abs() + &a.mod_hat(&m).abs(),
+            m.abs(),
+            "{a} mod^ {m}"
+        );
+    }
+    assert_eq!(Int::from(1).mod_hat(&Int::from(2)), Int::from(-1));
+    assert_eq!(Int::from(-1).mod_hat(&Int::from(2)), Int::from(1));
+}
+
+/// The checked `i128` divisions agree with num-integer's on every sign, give every quotient
+/// that fits (also for `MIN`, where `-((-n) div d)` overflows), and answer `None` for a zero
+/// divisor and for `MIN / -1`.
+#[test]
+fn checked_i128_floor_and_ceiling_divisions_cover_every_sign_and_end() {
+    let ends: Vec<i128> = [
+        0,
+        1,
+        2,
+        3,
+        6,
+        7,
+        i128::from(i64::MAX),
+        i128::MAX - 1,
+        i128::MAX,
+    ]
+    .into_iter()
+    .flat_map(|x| [x, -x])
+    .chain([i128::MIN, i128::MIN + 1])
+    .collect();
+    for &n in &ends {
+        for &d in &ends {
+            let (nb, db) = (BigInt::from(n), BigInt::from(d));
+            let fit = |q: BigInt| i128::try_from(q).ok();
+            let (floor, ceil) = if d == 0 {
+                (None, None)
+            } else {
+                (fit(nb.div_floor(&db)), fit(Integer::div_ceil(&nb, &db)))
+            };
+            assert_eq!(i128_div_floor(n, d), floor, "floor({n} / {d})");
+            assert_eq!(i128_div_ceil(n, d), ceil, "ceil({n} / {d})");
+        }
+    }
+}
+
+/// The value nearest zero in a range: 0 inside, the nearer end outside, a missing end
+/// unbounded, and `hi` (or 0) on an empty range, as the solver's copies it replaced
+/// gave on every range that is not empty.
+#[test]
+fn the_value_nearest_zero_in_a_range() {
+    let n = |x: i64| Some(Int::from(x));
+    let cases: [(Option<Int>, Option<Int>, i64); 10] = [
+        (None, None, 0),
+        (n(-3), n(4), 0),
+        (n(2), n(9), 2),
+        (n(-9), n(-2), -2),
+        (n(5), None, 5),
+        (n(-5), None, 0),
+        (None, n(-5), -5),
+        (None, n(5), 0),
+        (n(7), n(3), 3),
+        (n(-3), n(-7), -7),
+    ];
+    for (lo, hi, want) in cases {
+        let got = Int::nearest_zero(lo.as_ref(), hi.as_ref());
+        assert_eq!(got, Int::from(want), "nearest zero in [{lo:?}, {hi:?}]");
+    }
+    let w = pow2(200);
+    assert_eq!(Int::nearest_zero(Some(&w), None), w);
+    assert_eq!(Int::nearest_zero(None, Some(&-&w)), -&w);
+}
+
+/// `row_range(a, k, eq)` holds exactly the `x` in `-40..=40` with `a·x + k >= 0` (or `== 0`),
+/// for every `a` in `-7..=7` but 0 and `k` in `-30..=30`, the flag set exactly when an
+/// equality has no integer root; `meet_range` and `range_meet` agree with the intersection
+/// of the sets, and `range_is_empty` with its emptiness. Every root is within `|x| <= 30`, so
+/// the window holds both sides of each bound.
+#[test]
+fn ranges_of_single_atom_rows_and_their_meets_are_exact() {
+    let holds = |r: &IntRange, x: i64| {
+        r.0.as_ref().is_none_or(|l| *l <= Int::from(x))
+            && r.1.as_ref().is_none_or(|h| Int::from(x) <= *h)
+    };
+    let mut seen: Vec<(IntRange, Vec<i64>)> = Vec::new();
+    for a in (-7i64..=7).filter(|a| *a != 0) {
+        for k in -30i64..=30 {
+            for eq in [false, true] {
+                let (r, bad) = row_range(&Int::from(a), &Int::from(k), eq);
+                let want: Vec<i64> = (-40..=40)
+                    .filter(|x| if eq { a * x + k == 0 } else { a * x + k >= 0 })
+                    .collect();
+                assert_eq!(bad, eq && k % a != 0, "a = {a}, k = {k}");
+                if !bad {
+                    let got: Vec<i64> = (-40..=40).filter(|x| holds(&r, *x)).collect();
+                    assert_eq!(got, want, "a = {a}, k = {k}, eq = {eq}");
+                    if seen.len() < 60 && (a + k).rem_euclid(7) == 0 {
+                        seen.push((r, want));
+                    }
+                }
+            }
+        }
+    }
+    for (r, rs) in &seen {
+        for (s, ss) in &seen {
+            let both: Vec<i64> = rs.iter().filter(|x| ss.contains(x)).copied().collect();
+            let m = range_meet(r, s);
+            let mut cur = r.clone();
+            let empty = meet_range(&mut cur, s.clone());
+            assert_eq!(cur, m);
+            assert_eq!(empty, range_is_empty(&m));
+            let got: Vec<i64> = (-40..=40).filter(|x| holds(&m, *x)).collect();
+            assert_eq!(got, both, "{r:?} meet {s:?}");
+            assert!(!empty || both.is_empty(), "{r:?} meet {s:?}");
+        }
+    }
+}
+
+/// `ceil_log2` and `pow2` at the ends: `pow2(ceil_log2(x))` is the least power of two at
+/// least `x`, for `x` at and around each power, in a machine word and past it.
+#[test]
+fn ceiling_log2_and_powers_of_two_meet_at_every_power() {
+    assert_eq!(Int::from(-5).ceil_log2(), 0);
+    assert_eq!(Int::ZERO.ceil_log2(), 0);
+    assert_eq!(Int::ONE.ceil_log2(), 0);
+    for k in [1u32, 2, 62, 63, 64, 125, 126, 127, 128, 200] {
+        let p = pow2(k);
+        assert_eq!(Int::pow2(u64::from(k)), p, "2^{k}");
+        assert_eq!(p.ceil_log2(), u64::from(k), "ceil log2 2^{k}");
+        assert_eq!(
+            (&p - &Int::ONE).ceil_log2(),
+            u64::from(k) - u64::from(k == 1),
+            "2^{k} - 1"
+        );
+        assert_eq!((&p + &Int::ONE).ceil_log2(), u64::from(k) + 1, "2^{k} + 1");
+    }
+    assert_eq!(Int::pow2(0), Int::ONE);
 }
 
 #[test]

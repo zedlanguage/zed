@@ -15,6 +15,7 @@ use num_traits::{One, ToPrimitive, Zero};
 
 use super::fast::{self, built};
 use super::room::{LiteralRounding, TooLarge, room};
+use crate::bits::BitLen;
 
 /// `coef * prod p^e`, every exponent positive; the coefficient is borrowed from the number it
 /// bounds where it can be, so a wide one is not copied.
@@ -145,7 +146,7 @@ impl Product<'_> {
     fn bits(&self) -> BigUint {
         let mut b = BigUint::from(self.coef.bits());
         for (p, e) in &self.pows {
-            b += e * (64 - p.leading_zeros());
+            b += e * p.bit_len();
         }
         b
     }
@@ -195,7 +196,7 @@ fn by_bit_length(n: &Product<'_>, d: &Product<'_>) -> Option<Ordering> {
         let b = x.coef.bits();
         let (mut low, mut high) = (BigUint::from(b - 1), BigUint::from(b));
         for (p, e) in &x.pows {
-            let bits = u64::from(64 - p.leading_zeros());
+            let bits = u64::from(p.bit_len());
             low += e * (bits - 1);
             high += e * bits;
         }

@@ -12031,7 +12031,7 @@ impl ByClass {
                 }
                 Cls::Split { left, right, tag } => {
                     let f = compose(*tag, f)?;
-                    let mid = lo + (hi - lo) / 2;
+                    let mid = usize::midpoint(lo, hi);
                     todo.push((right, (mid, hi), f));
                     todo.push((left, (lo, mid), f));
                 }
@@ -12049,7 +12049,7 @@ impl ByClass {
                 Cls::Same(leaf) => break leaf,
                 Cls::Split { left, right, tag } => {
                     tags.push(*tag);
-                    let mid = lo + (hi - lo) / 2;
+                    let mid = usize::midpoint(lo, hi);
                     (node, lo, hi) = if index < mid {
                         (left, lo, mid)
                     } else {
@@ -12108,7 +12108,7 @@ fn cls_zip(
         out.push(((lo, hi), Some((leaf_pa(u, bases.0)?, leaf_pa(v, bases.1)?))));
         return Some(());
     }
-    let mid = lo + (hi - lo) / 2;
+    let mid = lo.midpoint(hi);
     let (al, ar) = cls_halves(a)?;
     let (bl, br) = cls_halves(b)?;
     cls_zip(&al, &bl, bases, (lo, mid), on, out)?;
@@ -12124,7 +12124,7 @@ fn cls_build(
     if let Some((_, pa)) = leaves.next_if(|(span, _)| *span == (lo, hi)) {
         return Rc::new(Cls::Same(Leaf::Own(pa)));
     }
-    let mid = lo + (hi - lo) / 2;
+    let mid = lo.midpoint(hi);
     Rc::new(Cls::Split {
         left: cls_build(leaves, (lo, mid)),
         right: cls_build(leaves, (mid, hi)),
@@ -12152,7 +12152,7 @@ fn cls_clamp(
     if on.is_some_and(|r| !ranges_meet(r, (lo, hi))) {
         return Some(cls_unread());
     }
-    let mid = lo + (hi - lo) / 2;
+    let mid = lo.midpoint(hi);
     Some(Rc::new(match &**node {
         Cls::Same(leaf) => {
             let pa = match leaf {
@@ -12266,7 +12266,7 @@ fn cls_splice(
     if hi <= take.0 || take.1 <= lo {
         return Some(no.clone());
     }
-    let mid = lo + (hi - lo) / 2;
+    let mid = lo.midpoint(hi);
     let (yl, yr) = cls_halves(yes)?;
     let (nl, nr) = cls_halves(no)?;
     Some(Rc::new(Cls::Split {
@@ -13025,13 +13025,13 @@ fn invert_piece(lo: &End, hi: &End, a: &Int, b: &Int, z: &IntervalSet, out: &mut
         // none.
         let (xl, xh) = if a.is_positive() {
             (
-                solve(zlo, |zl| ceil_div(&(zl - b), a), NegInf),
+                solve(zlo, |zl| (zl - b).div_ceil(a), NegInf),
                 solve(zhi, |zh| (zh - b).div_floor(a), PosInf),
             )
         } else {
             let d = -a;
             (
-                solve(zhi, |zh| ceil_div(&(b - zh), &d), NegInf),
+                solve(zhi, |zh| (b - zh).div_ceil(&d), NegInf),
                 solve(zlo, |zl| (b - zl).div_floor(&d), PosInf),
             )
         };
@@ -13048,11 +13048,6 @@ fn solve(e: &End, f: impl FnOnce(&Int) -> Int, inf: End) -> End {
         Fin(v) => Fin(Num::from(&f(&Int::from(v)))),
         _ => inf,
     }
-}
-
-/// `n / d` rounded up, for `d > 0`.
-fn ceil_div(n: &Int, d: &Int) -> Int {
-    -&(-n).div_floor(d)
 }
 
 /// The number of a set of names bound within a term being closed ([`Locals`]).

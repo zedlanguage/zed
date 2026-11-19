@@ -63,7 +63,7 @@ use super::preimage::{
 };
 use super::spans::Spans;
 use super::threshold;
-use zedc_int::int::Int;
+use zedc_int::int::{Int, IntRange, row_range};
 use zedc_lattice::affine::Bounds;
 use zedc_lattice::cell::{Cell, Entry, Premise, Premises};
 use zedc_lattice::interval::{End, IntervalSet, Num};
@@ -73,6 +73,7 @@ use zedc_lattice::revision::{self, Op, reduce_congruence};
 use zedc_presburger::conjuncts::{self, BlockId, Conjuncts, Edge, Uses};
 use zedc_presburger::hull::Hull;
 use zedc_presburger::presburger::{self, Atom, Con, Factor, Formula, Lin, Rel};
+use zedc_solvers::linear::Q;
 use zedc_stage::defs::written_name;
 use zedc_stage::stage;
 
@@ -18530,19 +18531,32 @@ struct PunctureContext {
     pendant_pt: Option<(Int, Int)>,
 }
 
+/// The finite range `b` narrowed by `add` (`zedc_int::int::meet_range` for a range whose ends
+/// are both finite).
+fn narrow_box(b: &mut (Int, Int), add: IntRange) {
+    if let Some(lo) = add.0
+        && lo > b.0
+    {
+        b.0 = lo;
+    }
+    if let Some(hi) = add.1
+        && hi < b.1
+    {
+        b.1 = hi;
+    }
+}
+
 impl PunctureContext {
     fn fiber_with(u: &Int, au: &Int, av: &Int, e: &Int, bounds: &(Int, Int)) -> Option<(Int, Int)> {
-        let mut lo = bounds.0.clone();
-        let mut hi = bounds.1.clone();
-        let t = -&(e + &(au * u));
-        if av.is_positive() {
-            lo = lo.max(-&(-&t).div_floor(av));
-        } else if av.is_negative() {
-            hi = hi.min(t.div_floor(av));
-        } else if t.is_positive() {
+        let mut out = bounds.clone();
+        // `av·v + k >= 0` with `k = e + au·u`.
+        let k = e + &(au * u);
+        if !av.is_zero() {
+            narrow_box(&mut out, row_range(av, &k, false).0);
+        } else if k.is_negative() {
             return None;
         }
-        (lo <= hi).then_some((lo, hi))
+        (out.0 <= out.1).then_some(out)
     }
 
     fn of(
@@ -18630,10 +18644,8 @@ impl PunctureContext {
                 &d * &oy.1
             };
             let rx = &e + &max_dy;
-            if a.is_positive() {
-                xd.0 = xd.0.max(-&rx.div_floor(&a));
-            } else if a.is_negative() {
-                xd.1 = xd.1.min(rx.div_floor(&-&a));
+            if !a.is_zero() {
+                narrow_box(&mut xd, row_range(&a, &rx, false).0);
             }
             let max_ax = if a.is_negative() {
                 &a * &ox.0
@@ -18641,10 +18653,8 @@ impl PunctureContext {
                 &a * &ox.1
             };
             let ry = &e + &max_ax;
-            if d.is_positive() {
-                yd.0 = yd.0.max(-&ry.div_floor(&d));
-            } else if d.is_negative() {
-                yd.1 = yd.1.min(ry.div_floor(&-&d));
+            if !d.is_zero() {
+                narrow_box(&mut yd, row_range(&d, &ry, false).0);
             }
             if xd.0 > xd.1 || yd.0 > yd.1 {
                 return None;
@@ -19232,38 +19242,14 @@ enum UnaryKind {
     VLe,
 }
 
-/// Exact reduced rational slope `b / d` (`d > 0`, `gcd(|b|, d) == 1`) ordering leaves in
-/// [`LowerHullTree`].
-#[derive(Clone, PartialEq, Eq, Debug)]
-struct SlopeKey(Int, Int);
+/// Exact reduced rational slope `b / d` (`d > 0`) ordering leaves in [`LowerHullTree`]: a
+/// [`Q`], whose constructor reduces, so its structural `Eq` agrees with its order by value,
+/// as `Ord` requires (an unreduced `2/4` would be equal in order to `1/2` and not `==`).
+type SlopeKey = Q;
 
-impl Ord for SlopeKey {
-    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
-        (&self.0 * &other.1).cmp(&(&other.0 * &self.1))
-    }
-}
-
-impl PartialOrd for SlopeKey {
-    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
-        Some(self.cmp(other))
-    }
-}
-
-/// Exact rational intercept `c / d` (`d > 0`) ordering parallel arms at one slope leaf.
-#[derive(Clone, PartialEq, Eq)]
-struct HullVal(Int, Int);
-
-impl Ord for HullVal {
-    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
-        (&self.0 * &other.1).cmp(&(&other.0 * &self.1))
-    }
-}
-
-impl PartialOrd for HullVal {
-    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
-        Some(self.cmp(other))
-    }
-}
+/// Exact rational intercept `c / d` (`d > 0`) ordering parallel arms at one slope leaf, a
+/// reduced [`Q`] as [`SlopeKey`] is, for the `OrdSet` of a leaf's entries.
+type HullVal = Q;
 
 /// Dual point `(b / d, c / d)` (`d > 0`) of an arm `a * u + b * v + c >= 0` (`d = |a|`).
 /// The arm holds at query `(u_q, v_q)` (with `u_q` negated when `a > 0`) iff `b * v_q + c >= d * u_q`.
@@ -19275,6 +19261,16 @@ struct HullPt {
 }
 
 impl HullPt {
+    /// The dual point of slope `s` and intercept `v`, over the common denominator
+    /// `s.denom() * v.denom()`.
+    fn of(s: &SlopeKey, v: &HullVal) -> HullPt {
+        HullPt {
+            b: s.numer() * v.denom(),
+            c: v.numer() * s.denom(),
+            d: s.denom() * v.denom(),
+        }
+    }
+
     fn eval_le(&self, other: &Self, v_q: &Int) -> bool {
         let lhs = &(&(&self.b * v_q) + &self.c) * &other.d;
         let rhs = &(&(&other.b * v_q) + &other.c) * &self.d;
@@ -19301,13 +19297,13 @@ fn hull_orient(a: &HullPt, b: &HullPt, c: &HullPt) -> std::cmp::Ordering {
 fn hull_line_le_at(l1: &HullPt, l2: &HullPt, r1: &HullPt, r2: &HullPt, x_sep: &SlopeKey) -> bool {
     let dlx = &(&l2.b * &l1.d) - &(&l1.b * &l2.d);
     let dly = &(&l2.c * &l1.d) - &(&l1.c * &l2.d);
-    let dxl = &(&x_sep.0 * &l1.d) - &(&l1.b * &x_sep.1);
-    let n1 = &(&(&l1.c * &x_sep.1) * &dlx) + &(&dly * &dxl);
+    let dxl = &(x_sep.numer() * &l1.d) - &(&l1.b * x_sep.denom());
+    let n1 = &(&(&l1.c * x_sep.denom()) * &dlx) + &(&dly * &dxl);
 
     let drx = &(&r2.b * &r1.d) - &(&r1.b * &r2.d);
     let dry = &(&r2.c * &r1.d) - &(&r1.c * &r2.d);
-    let dxr = &(&x_sep.0 * &r1.d) - &(&r1.b * &x_sep.1);
-    let n2 = &(&(&r1.c * &x_sep.1) * &drx) + &(&dry * &dxr);
+    let dxr = &(x_sep.numer() * &r1.d) - &(&r1.b * x_sep.denom());
+    let n2 = &(&(&r1.c * x_sep.denom()) * &drx) + &(&dry * &dxr);
 
     let lhs = &n1 * &(&r1.d * &drx);
     let rhs = &n2 * &(&l1.d * &dlx);
@@ -19512,12 +19508,12 @@ impl HullNode {
         match self {
             HullNode::Leaf { pt, entries, .. } => {
                 // `pt.b / pt.d` equals the slope of every entry at this leaf; check each entry's
-                // exact intercept `val.0 / val.1` in ascending order and stop once satisfied.
+                // exact intercept `val` in ascending order and stop once satisfied.
                 for (val, at) in entries {
                     let entry_pt = HullPt {
-                        b: &pt.b * &val.1,
-                        c: &val.0 * &pt.d,
-                        d: &pt.d * &val.1,
+                        b: &pt.b * val.denom(),
+                        c: val.numer() * &pt.d,
+                        d: &pt.d * val.denom(),
                     };
                     if entry_pt.eval_ge(v_q, u_q) {
                         break;
@@ -19547,14 +19543,9 @@ impl HullNode {
                     let mut next = entries.clone();
                     next.insert((val.clone(), at.clone()));
                     let min_val = &next.get_min().expect("non-empty leaf").0;
-                    let min_pt = HullPt {
-                        b: &s.0 * &min_val.1,
-                        c: &min_val.0 * &s.1,
-                        d: &s.1 * &min_val.1,
-                    };
                     Arc::new(HullNode::Leaf {
                         slope: s.clone(),
-                        pt: min_pt,
+                        pt: HullPt::of(s, min_val),
                         entries: next,
                     })
                 }
@@ -19605,14 +19596,9 @@ impl HullNode {
                     return Some(node.clone());
                 }
                 let min_val = &next.get_min()?.0;
-                let min_pt = HullPt {
-                    b: &s.0 * &min_val.1,
-                    c: &min_val.0 * &s.1,
-                    d: &s.1 * &min_val.1,
-                };
                 Some(Arc::new(HullNode::Leaf {
                     slope: s.clone(),
-                    pt: min_pt,
+                    pt: HullPt::of(s, min_val),
                     entries: next,
                 }))
             }
@@ -20069,18 +20055,8 @@ impl PartFace {
         } else {
             (b, c, d)
         };
-        let gs = d.gcd(&b.abs());
-        let slope = if gs > Int::ONE {
-            SlopeKey(b.div_floor(&gs), d.div_floor(&gs))
-        } else {
-            SlopeKey(b.clone(), d.clone())
-        };
-        let gc = d.gcd(&c.abs());
-        let val = if gc > Int::ONE {
-            HullVal(c.div_floor(&gc), d.div_floor(&gc))
-        } else {
-            HullVal(c.clone(), d.clone())
-        };
+        let slope = SlopeKey::new(b.clone(), d.clone());
+        let val = HullVal::new(c.clone(), d.clone());
         let pt = HullPt { b, c, d };
         let (unary, thresh) = unary.unwrap_or((UnaryKind::None, Int::ZERO));
         Some(PartFace {
@@ -23638,7 +23614,7 @@ mod tests {
                 HullNode::Leaf { slope, pt, entries } => {
                     assert!(!entries.is_empty());
                     assert!(pt.d.is_positive());
-                    assert_eq!(&pt.b * &slope.1, &slope.0 * &pt.d);
+                    assert_eq!(&pt.b * slope.denom(), slope.numer() * &pt.d);
                     pts.push(pt.clone());
                 }
                 HullNode::Branch {
@@ -23720,10 +23696,8 @@ mod tests {
                 let d = Int::from(1 + rng(4));
                 let b = Int::from(rng(13) - 6);
                 let c = Int::from(rng(17) - 8);
-                let gs = d.gcd(&b.abs());
-                let slope = SlopeKey(b.div_floor(&gs), d.div_floor(&gs));
-                let gc = d.gcd(&c.abs());
-                let val = HullVal(c.div_floor(&gc), d.div_floor(&gc));
+                let slope = SlopeKey::new(b.clone(), d.clone());
+                let val = HullVal::new(c.clone(), d.clone());
                 let pt = HullPt { b, c, d };
                 let at = dummy(step);
                 hull = hull.insert(&slope, &val, &pt, &at);

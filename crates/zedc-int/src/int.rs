@@ -12,9 +12,10 @@ use std::sync::{Arc, Mutex};
 use num_bigint::{BigInt, BigUint, Sign};
 use num_integer::Integer;
 use num_traits::{One, Zero};
+use zed_kernel::bits::BitLen;
 use zed_kernel::num::{
-    TooLarge, div_rem_uint, gcd_uint, is_prime, mul_int, mul_uint, pow_uint, read_digits, rem_uint,
-    room, to_decimal,
+    TooLarge, div_floor_int, div_rem_uint, gcd_uint, is_prime, mod_floor_int, mul_int, mul_uint,
+    pow_uint, read_digits, rem_uint, room, to_decimal,
 };
 
 /// The greatest common divisor by Stein's binary algorithm: shifts and subtractions, no
@@ -149,7 +150,7 @@ impl Int {
     /// otherwise, in O(1) time with no heap allocation.
     pub fn bits(&self) -> u64 {
         match &self.0 {
-            Repr::Small(v) => u64::from(128 - v.unsigned_abs().leading_zeros()),
+            Repr::Small(v) => u64::from(v.unsigned_abs().bit_len()),
             Repr::Big(v) => v.bits(),
         }
     }
@@ -242,56 +243,6 @@ impl Int {
         }
     }
 
-    // Complexity tradeoff: wide long division costs superlinear work in
-    // num-bigint. Use reciprocal division, O(M(B)), for explicit modular
-    // arithmetic; native representations keep their direct division.
-    // No values are given up. Test: pncx_wide_arithmetic_random_oracle.
-    /// Floor division by a nonzero divisor, with the kernel's wide arithmetic.
-    pub fn div_floor_wide(&self, m: &Int) -> Int {
-        match (&self.0, &m.0) {
-            // A machine divisor has a direct linear scan of the dividend;
-            // constructing a reciprocal would add work and allocations.
-            (_, Repr::Small(_)) => self.div_floor(m),
-            _ => self.big_div_floor(m),
-        }
-    }
-
-    /// Remainder for div_floor_wide, with the sign of the nonzero divisor.
-    pub fn mod_floor_wide(&self, m: &Int) -> Int {
-        match (&self.0, &m.0) {
-            (_, Repr::Small(_)) => self.mod_floor(m),
-            _ => self.big_mod_floor(m),
-        }
-    }
-
-    // Complexity tradeoff: num-bigint's arithmetic is quadratic for gcd and
-    // superlinear for wide division. Reuse kernel half-GCD and reciprocal
-    // division, O(M(n) log n) and O(M(n)), with exactly the same signs.
-    // Tests: pncx_fast_bezout_matches_euclid and the integer arithmetic unit
-    // tests; pncx_fibonacci_scale and pncx_common_factor_scale are deferred to
-    // plan row PERF-negated-chain-unsolved in
-    // wt/scratch/deferred-tests/PERF-negated-chain-unsolved.rs.
-    fn big_div_floor(&self, m: &Int) -> Int {
-        let (a, b) = (self.big(), m.big());
-        let (q, r) = div_rem_uint(a.magnitude(), b.magnitude());
-        if a.sign() == b.sign() {
-            BigInt::from(q).into()
-        } else {
-            (-BigInt::from(q) - BigInt::from(!r.is_zero())).into()
-        }
-    }
-
-    fn big_mod_floor(&self, m: &Int) -> Int {
-        let (a, b) = (self.big(), m.big());
-        let r = rem_uint(a.magnitude(), b.magnitude());
-        let r = if a.sign() != b.sign() && !r.is_zero() {
-            b.magnitude() - r
-        } else {
-            r
-        };
-        BigInt::from_biguint(b.sign(), r).into()
-    }
-
     /// The extended gcd. Machine integers retain their direct arithmetic;
     /// wider integers use the kernel's binary half-GCD.
     pub fn extended_gcd(&self, b: &Int) -> Option<(Int, Int, Int)> {
@@ -317,7 +268,12 @@ impl Int {
             .map(|(g, s, t)| (g.into(), s.into(), t.into()))
     }
 
-    /// `self / m` rounded down, for `m` of either sign and not zero.
+    /// `self / m` rounded down, for `m` of either sign and not zero. Past `i128` the division
+    /// of the magnitudes is the kernel's (`zed_kernel::num::div_floor_int`): num-bigint's own
+    /// below its measured crossover and O(M(n)) by a reciprocal above it, where num-bigint's
+    /// `div_floor` alone is O(n^1.52) (Burnikel and Ziegler over Toom-3). Tests:
+    /// `l01_38_presburger::pncx_probe::floor_division_of_wide_solver_integers_is_exact`; the
+    /// growth by `bench::pncx_probe::pncx_wide_floor_division_scales` (COMPLEXITY.md S48).
     pub fn div_floor(&self, m: &Int) -> Int {
         match (&self.0, &m.0) {
             // In 64 bits when both fit, where a 128-bit division is many times slower; the
@@ -325,13 +281,36 @@ impl Int {
             (Repr::Small(a), Repr::Small(b)) => match (i64::try_from(*a), i64::try_from(*b)) {
                 (Ok(a), Ok(b)) if (a, b) != (i64::MIN, -1) => Integer::div_floor(&a, &b).into(),
                 _ if (*a, *b) != (i128::MIN, -1) => Integer::div_floor(a, b).into(),
-                _ => self.big().div_floor(&m.big()).into(),
+                _ => div_floor_int(&self.big(), &m.big()).into(),
             },
-            _ => self.big().div_floor(&m.big()).into(),
+            _ => div_floor_int(&self.big(), &m.big()).into(),
         }
     }
 
-    /// The remainder of [`Int::div_floor`], which has the sign of `m`.
+    /// `self / m` rounded up, for `m` of either sign and not zero: `-((-self) div_floor m)`,
+    /// since `ceil(x) = -floor(-x)`; one division, as [`Int::div_floor`].
+    pub fn div_ceil(&self, m: &Int) -> Int {
+        -&(-self).div_floor(m)
+    }
+
+    /// The integer nearest zero in `[lo, hi]`, a missing end being unbounded: 0 where the
+    /// range holds it, else the end nearer zero; `max(lo, 0)` then `min(hi)`, so on an empty
+    /// range (`lo > hi`) the answer is `hi` or 0, never past `hi`. The shared copy of seven
+    /// in the Presburger solver (DRY-numeric-shared, REPORT-dryA5 row 19); before it, three
+    /// of them answered `lo` instead on an empty range with `lo > 0`.
+    pub fn nearest_zero(lo: Option<&Int>, hi: Option<&Int>) -> Int {
+        let v = match lo {
+            Some(l) if l.is_positive() => l.clone(),
+            _ => Int::ZERO,
+        };
+        match hi {
+            Some(h) if *h < v => h.clone(),
+            _ => v,
+        }
+    }
+
+    /// The remainder of [`Int::div_floor`], which has the sign of `m`, by the kernel's
+    /// division past `i128` as there (`zed_kernel::num::mod_floor_int`).
     pub fn mod_floor(&self, m: &Int) -> Int {
         match (&self.0, &m.0) {
             // `MIN mod -1` is 0, but `rem` overflows computing it, as `MIN / -1` does.
@@ -340,7 +319,47 @@ impl Int {
                 (Ok(a), Ok(b)) => Integer::mod_floor(&a, &b).into(),
                 _ => Integer::mod_floor(a, b).into(),
             },
-            _ => self.big().mod_floor(&m.big()).into(),
+            _ => mod_floor_int(&self.big(), &m.big()).into(),
+        }
+    }
+
+    /// The symmetric remainder of `self` by `m` (Pugh's `a mod^ m`, "The Omega test", 1992),
+    /// for `m` not zero, with the sign of `m` ignored: `r == self (mod m)` and
+    /// `-|m|/2 <= r <= |m|/2`. At exactly half of `|m|` it takes the sign opposite to `self`,
+    /// so the function is odd, `(-a).mod_hat(m) == -(a.mod_hat(m))`, and an equality solved
+    /// with its sign turned gives the same definition. Pugh's `a - m floor(a/m + 1/2)` lies in
+    /// `[-m/2, m/2)` and is not odd at the tie (`-1 mod^ 2 == -1 == 1 mod^ 2`); both satisfy
+    /// the two facts the Omega test's equality step needs, the congruence and `|r| <= m/2`.
+    pub fn mod_hat(&self, m: &Int) -> Int {
+        let m = m.abs();
+        let r = self.mod_floor(&m);
+        match (&r + &r).cmp(&m) {
+            Ordering::Less => r,
+            Ordering::Greater => &r - &m,
+            Ordering::Equal if self.is_negative() => r,
+            Ordering::Equal => &r - &m,
+        }
+    }
+
+    /// `ceil(log2 self)`, the least `k` with `2^k >= self`: 0 for `self <= 1`, as
+    /// `zed_kernel::bits::BitLen::ceil_log2` is for a machine word. It is `bits(self - 1)` for
+    /// `self >= 1`, O(1) past the subtraction; doubling a power until it reaches `self`, as
+    /// negsssp did, takes `k` additions of up to `k` bits, O(k^2 / 64) word operations.
+    pub fn ceil_log2(&self) -> u64 {
+        if *self <= Int::ONE {
+            0
+        } else {
+            (self - &Int::ONE).bits()
+        }
+    }
+
+    /// `2^k`: one shift, O(k / 64) words, where doubling from 1 takes O(k^2 / 64).
+    pub fn pow2(k: u64) -> Int {
+        // 126 is the highest exponent whose power fits an `i128`, which `Small` holds.
+        if k <= 126 {
+            Int::from(1i128 << k)
+        } else {
+            Int::from(BigInt::one() << k)
         }
     }
 }
@@ -412,6 +431,75 @@ impl Neg for &Int {
         }
         (-&*self.big()).into()
     }
+}
+
+/// `floor(n / d)` in `i128`, for `d` of either sign: `None` when `d` is 0 or the quotient
+/// does not fit (only `MIN / -1`). From the Euclidean quotient `q`, with `n = q·d + r` and
+/// `0 <= r < |d|`: `n/d = q + r/d`, so the floor is `q` for `d > 0` and `q - [r != 0]` for
+/// `d < 0`. `q - 1` cannot overflow, as `r != 0` needs `|d| >= 2`, so `|q| <= |n|/2 + 1`.
+/// It negates nothing, so `n = MIN` gives every quotient that fits; the form
+/// `-((-n) div d)` answers `None` there. The shared copy of the checked integer division
+/// that several `i128` paths of the solvers wrote out by hand (DRY-numeric-shared).
+pub fn i128_div_floor(n: i128, d: i128) -> Option<i128> {
+    let q = n.checked_div_euclid(d)?;
+    let exact = n.checked_rem_euclid(d)? == 0;
+    Some(if d < 0 && !exact { q - 1 } else { q })
+}
+
+/// `ceil(n / d)` in `i128`, for `d` of either sign, as [`i128_div_floor`]: the ceiling of
+/// `q + r/d` is `q + [r != 0]` for `d > 0` (where `r != 0` needs `d >= 2`, so `q + 1` fits)
+/// and `q` for `d < 0`.
+pub fn i128_div_ceil(n: i128, d: i128) -> Option<i128> {
+    let q = n.checked_div_euclid(d)?;
+    let exact = n.checked_rem_euclid(d)? == 0;
+    Some(if d > 0 && !exact { q + 1 } else { q })
+}
+
+/// An integer range `[lo, hi]`, an end `None` when unbounded; empty when `lo > hi`.
+pub type IntRange = (Option<Int>, Option<Int>);
+
+/// The integers `x` with `a·x + k >= 0`, or `a·x + k == 0` when `eq`, for `a` not zero, and
+/// whether `eq` has no integer root. `a·x + k >= 0` is `x >= ⌈-k / a⌉` for `a > 0` and
+/// `x <= ⌊k / -a⌋` for `a < 0`; an equality is the point `⌈-k / a⌉`, the root when `a`
+/// divides `k` (with the flag set, a caller reads the row as empty). Shared by the readings
+/// of single-atom rows in `zedc-presburger` (DRY-numeric-shared; one copy per reader before).
+/// One or two floor divisions, O(M(n)) each above the kernel's crossover.
+pub fn row_range(a: &Int, k: &Int, eq: bool) -> (IntRange, bool) {
+    if eq {
+        let v = -&k.div_floor(a);
+        ((Some(v.clone()), Some(v)), !k.mod_floor(a).is_zero())
+    } else if a.is_positive() {
+        ((Some((-k).div_ceil(a)), None), false)
+    } else {
+        ((None, Some(k.div_floor(&-a))), false)
+    }
+}
+
+/// `cur` narrowed to its meet with `add`; whether the meet is empty (`lo > hi`).
+pub fn meet_range(cur: &mut IntRange, add: IntRange) -> bool {
+    if let Some(lo) = add.0
+        && cur.0.as_ref().is_none_or(|v| lo > *v)
+    {
+        cur.0 = Some(lo);
+    }
+    if let Some(hi) = add.1
+        && cur.1.as_ref().is_none_or(|v| hi < *v)
+    {
+        cur.1 = Some(hi);
+    }
+    range_is_empty(cur)
+}
+
+/// The meet of `a` and `b`, as [`meet_range`] but by value.
+pub fn range_meet(a: &IntRange, b: &IntRange) -> IntRange {
+    let mut out = a.clone();
+    meet_range(&mut out, b.clone());
+    out
+}
+
+/// Whether `r` holds no integer (`lo > hi`).
+pub fn range_is_empty(r: &IntRange) -> bool {
+    matches!(r, (Some(l), Some(h)) if l > h)
 }
 
 impl Ord for Int {
@@ -881,7 +969,7 @@ impl OddPart {
                 .filter(|&i| prime[i as usize])
                 .map(|i| 2 * i + 1);
             let n = self.o.bits();
-            let index = odd_primes_below((n - 1) / 64 + 1);
+            let index = odd_primes_below(n.div_ceil(64));
             let wide: Vec<(u64, u64)> = (1..index.len() as u64)
                 .filter(|&i| index[i as usize])
                 .map(|i| {
@@ -961,7 +1049,7 @@ impl OddPart {
             // `s` bits is the one modulo `2^s`.
             let low = self.o.iter_u64_digits().next().expect("o is odd");
             let r = odd_root_mod_word(low, p) & (u64::MAX >> (64 - s));
-            let rb = u64::from(u64::BITS - r.leading_zeros());
+            let rb = u64::from(r.bit_len());
             if n <= p * (rb - 1) || n > p * rb {
                 return None;
             }
@@ -1124,7 +1212,7 @@ fn odd_root_mod_word(o: u64, p: u64) -> u64 {
 /// `x ^ e` modulo `mask + 1`, a power of 2.
 fn pow_mod_pow2(x: &BigUint, e: u64, mask: &BigUint) -> BigUint {
     let mut out = BigUint::from(1u32);
-    for i in (0..u64::BITS - e.leading_zeros()).rev() {
+    for i in (0..e.bit_len()).rev() {
         out = mul_uint(&out, &out) & mask;
         if e >> i & 1 == 1 {
             out = mul_uint(&out, x) & mask;
@@ -1768,7 +1856,7 @@ impl Kept {
             widest = widest.max(w);
         }
         let count = self.terms.len() as u64 + 1;
-        sum += 64 - u64::from(count.leading_zeros());
+        sum += u64::from(count.bit_len());
         let widest = widest.max(sum.clone());
         (sum, widest)
     }
@@ -2361,7 +2449,7 @@ impl Num {
     /// A kept value is not written out (`Num::kept_bits`).
     pub fn bits(&self) -> Num {
         match &self.0 {
-            Word::Small(v) => Num::from(i64::from(64 - v.unsigned_abs().leading_zeros())),
+            Word::Small(v) => Num::from(i64::from(v.unsigned_abs().bit_len())),
             Word::Big(v) => Num::from(i128::from(v.bits())),
             Word::Kept(k) => Num::from(self.kept_bits(k)),
         }
@@ -2392,7 +2480,7 @@ impl Num {
                 if x == 0 {
                     return Num::from(i64::from(h.count_ones()));
                 }
-                let p = 63 - x.leading_zeros();
+                let p = x.ilog2();
                 let top = (h >> p >> 1).count_ones();
                 let low = u32::from(h.trailing_ones() >= p);
                 Num::from(i64::from(top + p + low))
@@ -2417,7 +2505,7 @@ impl Num {
                 for (i, (a, b)) in (0..at).rev().zip(lw.zip(hw.rev())) {
                     let x = a ^ b;
                     if x != 0 {
-                        let d = 63 - u64::from(x.leading_zeros());
+                        let d = u64::from(x.ilog2());
                         let p = 64 * i as u64 + d;
                         top += u64::from((b >> d >> 1).count_ones());
                         let low = u64::from(h.trailing_ones() >= p);
@@ -2562,7 +2650,7 @@ impl Num {
                 // (a cube of `2 ^ k + 1`); COMPLEXITY.md S33. A complete solution would keep
                 // `s ^ k` as an atom for a kept sum `s`.
                 let mut r = Num::ONE;
-                for i in (0..u32::BITS - k.leading_zeros()).rev() {
+                for i in (0..k.bit_len()).rev() {
                     r = &r * &r;
                     if (k >> i) & 1 == 1 {
                         r = &r * self;
@@ -2766,8 +2854,9 @@ impl Num {
         // (every pair of 156 kept values) and, by a power of 2,
         // `l01_39a_bit_words::kept_ends::a_shift_right_of_a_kept_end_keeps_its_form`;
         // COMPLEXITY.md S33. A complete solution would keep `floor(a / b)` as an atom,
-        // approximated as the quotient of the approximations.
-        self.big().div_floor(&d.big()).into()
+        // approximated as the quotient of the approximations. The digits are divided by the
+        // kernel's division, as at `Int::div_floor` (COMPLEXITY.md S48).
+        div_floor_int(&self.big(), &d.big()).into()
     }
 
     /// The remainder of [`Num::div_floor`], which has the sign of `d`.
@@ -2803,8 +2892,8 @@ impl Num {
         // dividend holding a kept root. Test:
         // `l01_24_refinement_lattices::ends::kept_forms_compute_as_their_values_written_out`;
         // COMPLEXITY.md S33. A complete solution would follow from a kept quotient, as at
-        // `div_floor`.
-        self.big().mod_floor(&d.big()).into()
+        // `div_floor`. The digits are divided by the kernel's division (COMPLEXITY.md S48).
+        mod_floor_int(&self.big(), &d.big()).into()
     }
 
     /// The greatest common divisor, at least 0. With one kept operand and one that is not,

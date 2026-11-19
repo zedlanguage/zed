@@ -260,6 +260,7 @@ mod tests {
     use std::collections::BTreeSet;
     use zed_kernel::Term;
     use zed_kernel::Value;
+    use zed_kernel::bits::BitLen;
 
     fn addr(i: i64) -> Address {
         Address::of(&Term::Lit(Value::Int(i)))
@@ -312,7 +313,7 @@ mod tests {
                     list.insert((l, h, k));
                 }
                 let depth = check(&s.root);
-                assert!(depth <= 4 * (64 - (list.len() as u64).leading_zeros() as usize) + 4);
+                assert!(depth <= 4 * list.len().bit_len() as usize + 4);
                 let (a, u, b) = (next(w as u64) - 1, next(w as u64 + 8), next(w as u64 + 8));
                 let pick = [Some(a), None];
                 let (a, u, b) = (

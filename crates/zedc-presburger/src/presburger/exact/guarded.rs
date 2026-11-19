@@ -43,7 +43,7 @@
 use std::cell::RefCell;
 use std::collections::{HashMap, HashSet};
 
-use zedc_int::int::Int;
+use zedc_int::int::{Int, row_range};
 use zedc_lattice::interval::{End, IntervalSet};
 
 use super::super::formula::Id;
@@ -574,12 +574,12 @@ fn at_least(a: &Int, lo: Option<&Int>, k: &Int) -> IntervalSet {
             IntervalSet::top()
         };
     }
-    // `a * p >= -r`: `p >= ceil(-r / a)` for `a > 0`, `p <= floor(r / -a)` for `a < 0`.
-    if a.is_positive() {
-        IntervalSet::range(fin(&-&r.div_floor(a)), End::PosInf)
-    } else {
-        IntervalSet::range(End::NegInf, fin(&r.div_floor(&-a)))
-    }
+    // `a * p + r >= 0`.
+    let (lo, hi) = row_range(a, &r, false).0;
+    IntervalSet::range(
+        lo.as_ref().map_or(End::NegInf, fin),
+        hi.as_ref().map_or(End::PosInf, fin),
+    )
 }
 
 /// The pins `p` with `a * p + hi <= k`.

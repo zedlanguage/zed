@@ -212,6 +212,25 @@ pub fn primes(n: usize) -> Vec<i64> {
     ps
 }
 
+/// A solver integer of exactly `words` 64-bit words (its top bit set), negative when
+/// `negative`, its words drawn from `seed`.
+pub fn wide_int(words: usize, seed: u64, negative: bool) -> zedc::store::int::Int {
+    let mut rng = crate::instances::Rng::new(seed);
+    let mut digits: Vec<u64> = (0..words).map(|_| rng.next_u64()).collect();
+    if let Some(top) = digits.last_mut() {
+        *top |= 1 << 63;
+    }
+    let mut digits32 = Vec::with_capacity(2 * words);
+    for d in digits {
+        digits32.extend([d as u32, (d >> 32) as u32]);
+    }
+    let sign = match negative {
+        true => num_bigint::Sign::Minus,
+        false => num_bigint::Sign::Plus,
+    };
+    num_bigint::BigInt::from_slice(sign, &digits32).into()
+}
+
 /// `2^n + d` in decimal, for `n >= 1` and `d` in -1..=1 (the last digit of `2^n` is 2, 4, 6
 /// or 8).
 pub fn pow2(n: usize, d: i8) -> String {

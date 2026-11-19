@@ -28,6 +28,7 @@ use std::marker::PhantomData;
 use std::ops::Range;
 
 use zed_graph::{Dijkstra, MinHeap, reduced};
+use zed_kernel::bits::BitLen;
 use zedc_int::int::Int;
 
 const NONE: usize = usize::MAX;
@@ -95,16 +96,6 @@ impl Progress {
     }
 }
 
-/// `⌈log₂ x⌉` for `x >= 1`.
-fn ceil_log2_int(x: &Int) -> u64 {
-    let (mut p, mut b) = (Int::ONE, 0);
-    while p < *x {
-        p = &p + &p;
-        b += 1;
-    }
-    b
-}
-
 /// [`potential`] run to its end.
 pub fn potential_alone(out: &[Vec<(usize, Int)>]) -> Option<Vec<Int>> {
     match potential(out, |_| Ok::<(), Infallible>(())) {
@@ -125,15 +116,6 @@ struct Graph {
     redge: Vec<usize>,
     /// The mass of each vertex, its edges in and out plus `λ` (\[D\] eq. mass, l.139).
     mass: Vec<u64>,
-}
-
-/// `⌈log₂ x⌉`, 0 for `x <= 1`.
-fn ceil_log2(x: u64) -> u64 {
-    if x <= 1 {
-        0
-    } else {
-        u64::from((x - 1).ilog2()) + 1
-    }
 }
 
 impl Graph {
@@ -169,7 +151,7 @@ impl Graph {
             fill[v] += 1;
         }
         // λ = ⌈log log n⌉, at least 1 so that every vertex has mass at least 1.
-        let lambda = ceil_log2(ceil_log2(n as u64)).max(1);
+        let lambda = u64::from(n.ceil_log2().ceil_log2()).max(1);
         let mass = (0..n)
             .map(|v| (start[v + 1] - start[v] + rstart[v + 1] - rstart[v]) as u64 + lambda)
             .collect();
@@ -193,18 +175,10 @@ impl Graph {
     }
 }
 
-/// The least power of two at or above `x`, for `x >= 1`.
+/// The least power of two at or above `x`, 1 for `x <= 1`: one shift by [`Int::ceil_log2`],
+/// O(digits), where doubling from 1 took O(digits^2 / 64) word operations.
 fn power_of_two_at_least(x: &Int) -> Int {
-    let mut p = Int::ONE;
-    while p < *x {
-        p = &p + &p;
-    }
-    p
-}
-
-/// `⌈a / b⌉` for `a >= 0` and `b > 0`.
-fn ceil_div(a: &Int, b: &Int) -> Int {
-    (&(a + b) - &Int::ONE).div_floor(b)
+    Int::pow2(x.ceil_log2())
 }
 
 /// A Dijkstra search on the clipped weights `ell` within a set of vertices, along the edges
@@ -369,7 +343,7 @@ impl Ball {
     /// Offers the next vertex of the search and its distance, or `None` at its end.
     fn feed(&mut self, next: Option<(usize, &Int)>, mass: &[u64], at: &Radii) -> Fed {
         // The least `t` with the vertex in the ball of radius `t·δ₀`.
-        let next = next.map(|(v, x)| (v, ceil_div(&(x * at.scale), at.d)));
+        let next = next.map(|(v, x)| (v, (x * at.scale).div_ceil(at.d)));
         if !self.closed {
             if let Some((v, i)) = &next
                 && *i <= self.t
@@ -454,9 +428,9 @@ impl<'g, H, F: FnMut() -> Result<(), H>> Solver<'g, H, F> {
     fn new(g: &'g Graph, progress: &'g Progress, tick: F) -> Self {
         let n = g.mass.len();
         let m0: u64 = g.mass.iter().sum();
-        let l = ceil_log2(m0).max(1);
+        let l = u64::from(m0.ceil_log2()).max(1);
         // N₀ = ⌈16 L ⌈log L⌉ / θ⌉ and N_h = ⌈16 L / θ⌉ with θ = 1/24 ([D] eq. micro-width).
-        let n0 = 384 * l * ceil_log2(l).max(1);
+        let n0 = 384 * l * u64::from(l.ceil_log2()).max(1);
         let n_h = 384 * l;
         Solver {
             g,
@@ -618,11 +592,7 @@ impl<'g, H, F: FnMut() -> Result<(), H>> Solver<'g, H, F> {
                 let done = self.progress.done.get();
                 dearest = dearest.max(done - begun);
                 let need = -&low;
-                let steps = if need <= Int::ONE {
-                    0
-                } else {
-                    ceil_log2_int(&need)
-                };
+                let steps = need.ceil_log2();
                 let last = (n + 2 * m) as u64;
                 self.progress.total.set(Some(done + steps * dearest + last));
             }
@@ -955,7 +925,8 @@ impl<'g, H, F: FnMut() -> Result<(), H>> Solver<'g, H, F> {
                 if &(&dist + &dist) * &Int::from(8) > *d {
                     break;
                 }
-                let i = ceil_div(&(&dist * scale_h), d)
+                let i = (&dist * scale_h)
+                    .div_ceil(d)
                     .to_i128()
                     .and_then(|i| u64::try_from(i).ok())
                     .expect("a distance within 2Δ has a shell index up to 2·N_h");

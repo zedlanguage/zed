@@ -29,7 +29,7 @@ use std::hash::BuildHasherDefault;
 
 use rustc_hash::FxHasher;
 
-use zedc_int::int::Int;
+use zedc_int::int::{Int, IntRange, meet_range, row_range};
 use zedc_lattice::interval::{End, IntervalSet, Num};
 
 use super::formula::{Atom, Con, Lin, Model, Rel};
@@ -258,7 +258,7 @@ impl Sum {
     }
 }
 
-type Ends = (Option<Int>, Option<Int>);
+type Ends = IntRange;
 
 pub(super) fn signed_ends(e: &Ends, coef: &Int) -> Ends {
     let mul = |x: &Option<Int>| x.as_ref().map(|v| coef * v);
@@ -281,34 +281,11 @@ pub(super) fn unary_bound(c: &Con) -> Option<(Option<Atom>, Ends, bool)> {
             if matches!(a, Atom::Product(..)) {
                 return None;
             }
-            match c.rel {
-                Rel::Eq => {
-                    let bad = !k.mod_floor(coef).is_zero();
-                    let v = -&k.div_floor(coef);
-                    Some((Some(a.clone()), (Some(v.clone()), Some(v)), bad))
-                }
-                Rel::Ge if coef.is_positive() => {
-                    Some((Some(a.clone()), (Some(-&k.div_floor(coef)), None), false))
-                }
-                Rel::Ge => Some((Some(a.clone()), (None, Some(k.div_floor(&-coef))), false)),
-            }
+            let (ends, bad) = row_range(coef, k, c.rel == Rel::Eq);
+            Some((Some(a.clone()), ends, bad))
         }
         _ => None,
     }
-}
-
-pub(super) fn meet_ends(cur: &mut Ends, add: Ends) -> bool {
-    if let Some(lo) = add.0
-        && cur.0.as_ref().is_none_or(|v| lo > *v)
-    {
-        cur.0 = Some(lo);
-    }
-    if let Some(hi) = add.1
-        && cur.1.as_ref().is_none_or(|v| hi < *v)
-    {
-        cur.1 = Some(hi);
-    }
-    matches!((&cur.0, &cur.1), (Some(l), Some(h)) if l > h)
 }
 
 #[derive(Clone)]
@@ -400,7 +377,7 @@ impl DisjointWide {
             if let Some((atom, b, bad)) = unary_bound(c) {
                 empty |= bad;
                 if let Some(a) = atom {
-                    empty |= meet_ends(ends.entry(a).or_default(), b);
+                    empty |= meet_range(ends.entry(a).or_default(), b);
                 }
                 continue;
             }
@@ -460,14 +437,14 @@ impl DisjointWide {
                 Rel::Eq => wr.least.without(l.as_ref()).map(|v| -&v),
                 Rel::Ge => None,
             };
-            let up = |v: Int| -&(-&v).div_floor(coef);
+            let up = |v: Int| v.div_ceil(coef);
             let down = |v: Int| v.div_floor(coef);
             let (nl, nh) = if coef.is_positive() {
                 (below.map(up), above.map(down))
             } else {
                 (above.map(up), below.map(down))
             };
-            if meet_ends(&mut (lo.clone(), hi.clone()), (nl.clone(), nh.clone())) {
+            if meet_range(&mut (lo.clone(), hi.clone()), (nl.clone(), nh.clone())) {
                 return None;
             }
             if let Some(nl) = nl
@@ -521,7 +498,7 @@ impl DisjointWide {
                     Some(prev) if *prev == a => {}
                     Some(_) => return None,
                 }
-                if meet_ends(&mut add_ends, b) {
+                if meet_range(&mut add_ends, b) {
                     return Some(false);
                 }
             }
@@ -532,7 +509,7 @@ impl DisjointWide {
         let Some(mut base_e) = self.projected_ends(&a) else {
             return Some(false);
         };
-        Some(!meet_ends(&mut base_e, add_ends))
+        Some(!meet_range(&mut base_e, add_ends))
     }
 
     /// Tightens `self` in place with unary constraints `added`. Returns `false` (leaving `self`
@@ -555,7 +532,7 @@ impl DisjointWide {
             };
             let old_e = self.ends.get(&a).cloned().unwrap_or((None, None));
             let mut new_e = old_e.clone();
-            if meet_ends(&mut new_e, b) {
+            if meet_range(&mut new_e, b) {
                 self.ends.insert(a, new_e);
                 self.empty = true;
                 return true;
@@ -772,14 +749,14 @@ impl DisjointWide {
                     Rel::Eq => pref_least[idx].value().map(|v| -&(&v + &suffix_sum)),
                     Rel::Ge => None,
                 };
-                let up = |v: Int| -&(-&v).div_floor(coef);
+                let up = |v: Int| v.div_ceil(coef);
                 let down = |v: Int| v.div_floor(coef);
                 let (nl, nh) = if coef.is_positive() {
                     (below.map(up), above.map(down))
                 } else {
                     (above.map(up), below.map(down))
                 };
-                if meet_ends(&mut (lo.clone(), hi.clone()), (nl.clone(), nh.clone())) {
+                if meet_range(&mut (lo.clone(), hi.clone()), (nl.clone(), nh.clone())) {
                     return None;
                 }
                 if let Some(nl) = nl
@@ -888,7 +865,7 @@ impl FastGreedy {
                 });
                 return id;
             }
-            let mid = (nl + nr) / 2;
+            let mid = nl.midpoint(nr);
             let l = build_min(nodes, w, nl, mid);
             let r = build_min(nodes, w, mid + 1, nr);
             let mv = min_opt(&nodes[l as usize].min_val, &nodes[r as usize].min_val);
@@ -920,7 +897,7 @@ impl FastGreedy {
                 });
                 return id;
             }
-            let mid = (nl + nr) / 2;
+            let mid = nl.midpoint(nr);
             let (nl_id, nr_id) = if idx <= mid {
                 (sum_add(nodes, cur.left, nl, mid, idx, val), cur.right)
             } else {
@@ -953,7 +930,7 @@ impl FastGreedy {
                 });
                 return id;
             }
-            let mid = (nl + nr) / 2;
+            let mid = nl.midpoint(nr);
             let (nl_id, nr_id) = if idx <= mid {
                 (min_set_none(nodes, cur.left, nl, mid, idx), cur.right)
             } else {
@@ -994,7 +971,7 @@ impl FastGreedy {
                 nodes.push(cur);
                 return id;
             }
-            let mid = (nl + nr) / 2;
+            let mid = nl.midpoint(nr);
             let nl_id = min_range_add(nodes, cur.left, nl, mid, ql, qr, delta);
             let nr_id = min_range_add(nodes, cur.right, mid + 1, nr, ql, qr, delta);
             let mv = min_opt(
@@ -1055,7 +1032,7 @@ impl FastGreedy {
         if ql <= nl && nr <= qr {
             return self.sum_nodes[root as usize].sum.clone();
         }
-        let mid = (nl + nr) / 2;
+        let mid = nl.midpoint(nr);
         let node = &self.sum_nodes[root as usize];
         let mut res = Int::ZERO;
         if ql <= mid {
@@ -1092,7 +1069,7 @@ impl FastGreedy {
                 return Some(nl);
             }
         }
-        let mid = (nl + nr) / 2;
+        let mid = nl.midpoint(nr);
         if ql <= mid
             && let Some(hit) = self.sum_prefix_fit(node.left, nl, mid, ql, qr, budget)
         {
@@ -1127,7 +1104,7 @@ impl FastGreedy {
             return Some(nl);
         }
         let next_add = acc_add + &node.add;
-        let mid = (nl + nr) / 2;
+        let mid = nl.midpoint(nr);
         if ql <= mid
             && let Some(hit) = self.min_first_le(node.left, nl, mid, ql, qr, &next_add, rhs)
         {
@@ -1331,7 +1308,7 @@ pub(super) fn sweep_row(
             let mut lo = 0usize;
             let mut hi = k_r - 1;
             while lo < hi {
-                let mid = (lo + hi) / 2;
+                let mid = lo.midpoint(hi);
                 let s = if solve_pos[loc] <= mid {
                     &solve_psum[mid + 1] - &w_of[loc]
                 } else {
@@ -1930,7 +1907,7 @@ impl WidePointRepairer {
             }
             if let Some(a) = atom {
                 let entry = updates.entry(a).or_insert((None, None));
-                if meet_ends(entry, b) {
+                if meet_range(entry, b) {
                     self.dw.empty = true;
                     return Some(Err(()));
                 }
@@ -1941,7 +1918,7 @@ impl WidePointRepairer {
         for (a, add_e) in updates {
             let old_e = self.dw.ends.get(&a).cloned().unwrap_or((None, None));
             let mut new_e = old_e.clone();
-            if meet_ends(&mut new_e, add_e) {
+            if meet_range(&mut new_e, add_e) {
                 self.dw.empty = true;
                 return Some(Err(()));
             }

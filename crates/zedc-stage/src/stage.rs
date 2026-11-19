@@ -728,7 +728,7 @@ impl Sets {
     /// The union of the nonempty sets `s` and `t`, whose names start with `p` and `q`, which
     /// differ above both sets' split bits.
     fn join(&mut self, p: Name, s: Set, q: Name, t: Set) -> Set {
-        let bit = 1 << (Name::BITS - 1 - (p ^ q).leading_zeros());
+        let bit = 1 << (p ^ q).ilog2();
         match p & bit {
             0 => self.split(above(p, bit), bit, s, t),
             _ => self.split(above(p, bit), bit, t, s),
@@ -1220,7 +1220,7 @@ impl Maps {
     /// The union of the nonempty maps `m` and `n`, whose names start with `p` and `q`, which
     /// differ above both maps' split bits.
     fn join(&mut self, p: Name, m: Map, q: Name, n: Map) -> Map {
-        let bit = 1 << (Name::BITS - 1 - (p ^ q).leading_zeros());
+        let bit = 1 << (p ^ q).ilog2();
         match p & bit {
             0 => self.split(above(p, bit), bit, m, n),
             _ => self.split(above(p, bit), bit, n, m),

@@ -26,6 +26,7 @@
 //! (its values are a progression, as many pieces as values), or a number past `i128` is not
 //! taken here: the formula goes to the join, which is exact, as before.
 
+use zedc_int::int::{i128_div_ceil, i128_div_floor};
 use zedc_lattice::interval::{End, IntervalSet, Num};
 
 use super::rows::{Rows, gcd};
@@ -487,11 +488,11 @@ fn shadow(
             0 if pc < 0 => return Some(None),
             0 => {}
             1 => {
-                let l = div_ceil(pc.checked_neg()?, pa)?;
+                let l = i128_div_ceil(pc.checked_neg()?, pa)?;
                 lo = Some(lo.map_or(l, |v| v.max(l)));
             }
             _ => {
-                let h = div_floor(pc, pa.checked_neg()?)?;
+                let h = i128_div_floor(pc, pa.checked_neg()?)?;
                 hi = Some(hi.map_or(h, |v| v.min(h)));
             }
         }
@@ -526,16 +527,6 @@ pub(in crate::presburger) fn bezout(a: i128, b: i128) -> Option<(i128, i128)> {
         -1 => Some((s0.checked_neg()?, t0.checked_neg()?)),
         _ => None,
     }
-}
-
-/// `floor(n / d)` for `d > 0`.
-pub(in crate::presburger) fn div_floor(n: i128, d: i128) -> Option<i128> {
-    n.checked_div_euclid(d)
-}
-
-/// `ceil(n / d)` for `d > 0`.
-pub(in crate::presburger) fn div_ceil(n: i128, d: i128) -> Option<i128> {
-    div_floor(n.checked_neg()?, d)?.checked_neg()
 }
 
 #[cfg(test)]

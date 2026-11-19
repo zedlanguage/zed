@@ -39,7 +39,7 @@ use std::sync::Arc;
 use super::formula::{Rel, Shared};
 use super::{
     Atom, Con, Factor, Formula, Id, Lin, Model, Refusal, decide, nnf, satisfiable, shadow,
-    shadow_whole,
+    shadow_whole, upper_envelope,
 };
 use zedc_int::int::Int;
 
@@ -4004,7 +4004,7 @@ type LineGroup = (Atom, Terms, bool);
 // The lines `e * y >= m * f + b` of each group `(y, f, lower)`: `m`, `b` and the row index.
 type LineRows = BTreeMap<LineGroup, Vec<(Int, Int, usize)>>;
 // The lower and upper bound of each primitive form (`None` none).
-type FormBounds = BTreeMap<Terms, (Option<Int>, Option<Int>)>;
+type FormBounds = BTreeMap<Terms, zedc_int::int::IntRange>;
 
 /// The lines `e * y >= m * f + b` of `rows` by `(y, f, lower)`, the explicit 1-form bounds
 /// `[lo, hi]` on each primitive form `f`, and whether those bounds are consistent. The groups
@@ -4088,26 +4088,14 @@ fn hull_of(
     lines: &[(Int, Int, usize)],
     bounds: Option<&(Option<Int>, Option<Int>)>,
 ) -> (Vec<usize>, HashSet<usize>) {
+    let mut hull = upper_envelope(lines, |(m, b, _)| (m, b));
+    // Every line not on the envelope, by row: each index is on it once at most, and in order.
     let mut drop: HashSet<usize> = HashSet::new();
-    let mut hull: Vec<usize> = Vec::new();
-    for j in 0..lines.len() {
-        // Of one slope the highest, the last, holds the others.
-        if j + 1 < lines.len() && lines[j + 1].0 == lines[j].0 {
-            drop.insert(lines[j].2);
-            continue;
+    let mut on = hull.iter().peekable();
+    for (j, line) in lines.iter().enumerate() {
+        if on.next_if_eq(&&j).is_none() {
+            drop.insert(line.2);
         }
-        while let [.., p, q] = hull[..] {
-            let ((ma, ba, _), (mb, bb, _), (mc, bc, _)) = (&lines[p], &lines[q], &lines[j]);
-            // Slopes ma < mb < mc: line b is under max(a, c) everywhere when at the
-            // crossing of a and c, t = (ba - bc) / (mc - ma), it is under a.
-            if &(mb - ma) * &(ba - bc) <= &(ba - bb) * &(mc - ma) {
-                drop.insert(lines[q].2);
-                hull.pop();
-            } else {
-                break;
-            }
-        }
-        hull.push(j);
     }
     if let Some((lo, hi)) = bounds {
         if let Some(u) = hi {
@@ -4874,7 +4862,6 @@ fn normalize_own_leaf(
 // This reproduces the old in-place atom order exactly, including bounds tightened
 // earlier in the same row; it is not a simultaneous/weaker propagation sweep.
 fn tighten_bounded_row(row: &Con, bounds: &mut BTreeMap<Atom, (Int, Int)>) -> bool {
-    let ceil_div = |x: &Int, g: &Int| -(&(-x).div_floor(g));
     let contribution = |k: &Int, b: &(Int, Int)| {
         if k.is_positive() {
             (k * &b.0, k * &b.1)
@@ -4902,7 +4889,7 @@ fn tighten_bounded_row(row: &Con, bounds: &mut BTreeMap<Atom, (Int, Int)>) -> bo
         let old = entry.clone();
         match (row.rel, ka.is_positive()) {
             (Rel::Ge, true) => {
-                let lo = ceil_div(&(-&rest_hi), &g);
+                let lo = (-&rest_hi).div_ceil(&g);
                 if lo > entry.0 {
                     entry.0 = lo;
                 }
@@ -4914,7 +4901,7 @@ fn tighten_bounded_row(row: &Con, bounds: &mut BTreeMap<Atom, (Int, Int)>) -> bo
                 }
             }
             (Rel::Eq, true) => {
-                let lo = ceil_div(&(-&rest_hi), &g);
+                let lo = (-&rest_hi).div_ceil(&g);
                 let hi = (-&rest_lo).div_floor(&g);
                 if lo > entry.0 {
                     entry.0 = lo;
@@ -4924,7 +4911,7 @@ fn tighten_bounded_row(row: &Con, bounds: &mut BTreeMap<Atom, (Int, Int)>) -> bo
                 }
             }
             (Rel::Eq, false) => {
-                let lo = ceil_div(&rest_lo, &g);
+                let lo = rest_lo.div_ceil(&g);
                 let hi = rest_hi.div_floor(&g);
                 if lo > entry.0 {
                     entry.0 = lo;
@@ -4948,7 +4935,6 @@ fn tighten_bounded_row(row: &Con, bounds: &mut BTreeMap<Atom, (Int, Int)>) -> bo
 
 #[cfg(test)]
 fn tighten_bounded_row_slow(row: &Con, rem_bounds: &mut BTreeMap<Atom, (Int, Int)>) -> bool {
-    let ceil_div = |x: &Int, g: &Int| -(&(-x).div_floor(g));
     let atoms: Vec<(Atom, Int)> = (row.lin.terms.iter())
         .map(|(a, k)| (a.clone(), k.clone()))
         .collect();
@@ -4972,7 +4958,7 @@ fn tighten_bounded_row_slow(row: &Con, rem_bounds: &mut BTreeMap<Atom, (Int, Int
         let entry = rem_bounds.get_mut(a).expect("bounded leaf");
         match (row.rel, ka.is_positive()) {
             (Rel::Ge, true) => {
-                let lo = ceil_div(&(-&rest_hi), &g);
+                let lo = (-&rest_hi).div_ceil(&g);
                 if lo > entry.0 {
                     entry.0 = lo;
                 }
@@ -4984,7 +4970,7 @@ fn tighten_bounded_row_slow(row: &Con, rem_bounds: &mut BTreeMap<Atom, (Int, Int
                 }
             }
             (Rel::Eq, true) => {
-                let lo = ceil_div(&(-&rest_hi), &g);
+                let lo = (-&rest_hi).div_ceil(&g);
                 let hi = (-&rest_lo).div_floor(&g);
                 if lo > entry.0 {
                     entry.0 = lo;
@@ -4994,7 +4980,7 @@ fn tighten_bounded_row_slow(row: &Con, rem_bounds: &mut BTreeMap<Atom, (Int, Int
                 }
             }
             (Rel::Eq, false) => {
-                let lo = ceil_div(&rest_lo, &g);
+                let lo = rest_lo.div_ceil(&g);
                 let hi = rest_hi.div_floor(&g);
                 if lo > entry.0 {
                     entry.0 = lo;
@@ -5034,7 +5020,6 @@ fn quotient_offsets(
     leaf: &dyn Fn(&Atom) -> bool,
     def: &dyn Fn(u32) -> Formula,
 ) -> Option<Vec<Vec<Con>>> {
-    let ceil_div = |x: &Int, g: &Int| -(&(-x).div_floor(g));
     let tighten = |b: &mut (Option<Int>, Option<Int>), lo: Option<Int>, hi: Option<Int>| {
         if let Some(l) = lo {
             b.0 = Some(b.0.take().map_or(l.clone(), |o| o.max(l)));
@@ -5066,7 +5051,7 @@ fn quotient_offsets(
             let g = ka.abs();
             let c = &r.lin.constant;
             match (r.rel, ka.is_positive()) {
-                (Rel::Ge, true) => tighten(&mut b, Some(ceil_div(&(-c), &g)), None),
+                (Rel::Ge, true) => tighten(&mut b, Some((-c).div_ceil(&g)), None),
                 (Rel::Ge, false) => tighten(&mut b, None, Some(c.div_floor(&g))),
                 (Rel::Eq, _) => {
                     if !c.mod_floor(&g).is_zero() {
@@ -5265,7 +5250,7 @@ fn quotient_offsets(
             let c = &lin.constant;
             match (r.rel, neg_q) {
                 (Rel::Ge, false) => {
-                    let lo = ceil_div(&-&(c + &r_max), &m);
+                    let lo = (-&(c + &r_max)).div_ceil(&m);
                     tighten(cand.entry(q_terms).or_default(), Some(lo), None);
                 }
                 (Rel::Ge, true) => {
@@ -5275,7 +5260,7 @@ fn quotient_offsets(
                 }
                 (Rel::Eq, _) => {
                     let c_pos = if neg_q { -c } else { c.clone() };
-                    let lo = ceil_div(&-&(&c_pos + &r_max), &m);
+                    let lo = (-&(&c_pos + &r_max)).div_ceil(&m);
                     let hi = (-&(&c_pos + &r_min)).div_floor(&m);
                     tighten(cand.entry(q_terms).or_default(), Some(lo), Some(hi));
                 }

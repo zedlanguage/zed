@@ -127,6 +127,7 @@ use num_integer::Integer;
 use num_traits::{One, Signed, ToPrimitive, Zero};
 
 use super::TooLarge;
+use crate::bits::BitLen;
 
 /// The 64-bit words at or below which the narrower factor goes to num-bigint's
 /// multiplication, the other methods' costs not computed. Measured on 2026-11-07 at load 34
@@ -1543,6 +1544,15 @@ fn div_rem_by_reciprocal(a: &BigUint, b: &BigUint) -> (BigUint, BigUint) {
 /// `a mod b` for `b` not zero, as [`div_rem`] finds it. A quotient wider than `b` is not built:
 /// [`Divisor::rem`] reads `a` block by block and keeps only the remainder.
 pub(crate) fn rem(a: &BigUint, b: &BigUint) -> BigUint {
+    // Complexity tradeoff: a divisor of at most `DIV_LEAF` bits goes to num-bigint's long
+    // division, O(DIV_LEAF m) for `m` bits, linear, as every step of a `Divisor` would send it
+    // there anyway; the blocks of a `Divisor` would then each be one division of
+    // `2 len` words with its own buffers, which for a one-word prime cost 5.8 times the
+    // instructions of `bench::pncx_probe::pncx_pairs_scale` at 2880 (DRY-numeric-shared,
+    // 2026-11-19). Identical results; tested by `quotients_agree_with_num_bigint`.
+    if b.bits() <= DIV_LEAF {
+        return a % b;
+    }
     if a.bits().saturating_sub(b.bits()) >= b.bits() {
         return Divisor::new(Cow::Borrowed(b), a.bits()).rem(a);
     }
@@ -1877,11 +1887,29 @@ fn newton(a: &BigUint, p: u64, xh: BigUint, h: u64, tw: &Roots) -> BigUint {
     ((xh - taken) << l) + (u >> (2 * h - l))
 }
 
-/// `a / g` for a `g` that divides `a`, positive, the sign of `a` kept.
-pub(crate) fn exact_quotient(a: &BigInt, g: &BigInt) -> BigInt {
-    let (q, r) = div_rem(a.magnitude(), g.magnitude());
-    debug_assert!(r.is_zero(), "g divides a");
-    BigInt::from_biguint(a.sign() * g.sign(), q)
+/// `floor(a / m)` for `m` not zero, by [`div_rem`] on the magnitudes: O(M(n)) past the
+/// measured crossover, num-bigint's division below it. A quotient of operands of opposite
+/// signs with a remainder rounds down, one below the negated quotient of the magnitudes.
+pub(crate) fn div_floor(a: &BigInt, m: &BigInt) -> BigInt {
+    let (q, r) = div_rem(a.magnitude(), m.magnitude());
+    if a.is_negative() == m.is_negative() {
+        BigInt::from(q)
+    } else if r.is_zero() {
+        -BigInt::from(q)
+    } else {
+        -BigInt::from(q + 1u32)
+    }
+}
+
+/// `a - m floor(a / m)` for `m` not zero, the remainder of [`div_floor`], which has the sign
+/// of `m`, by [`rem`] on the magnitudes (no quotient built when it would be wider than `m`).
+pub(crate) fn mod_floor(a: &BigInt, m: &BigInt) -> BigInt {
+    let r = rem(a.magnitude(), m.magnitude());
+    let r = match a.is_negative() != m.is_negative() && !r.is_zero() {
+        true => m.magnitude() - r,
+        false => r,
+    };
+    BigInt::from_biguint(m.sign(), r)
 }
 
 /// The Euclidean quotient `floor`-like `a div m`, the remainder in `[0, |m|)`, `m` not zero.
@@ -3704,9 +3732,7 @@ pub(super) fn built(pows: &[(u64, BigUint)]) -> Result<BigInt, TooLarge> {
         .map(|(p, e)| e.to_u64().map(|e| (*p, e)))
         .collect();
     let Some(small) = small else {
-        let bits: BigUint = (pows.iter())
-            .map(|(p, e)| e * (p.ilog2() + u32::from(!p.is_power_of_two())))
-            .sum();
+        let bits: BigUint = (pows.iter()).map(|(p, e)| e * p.ceil_log2()).sum();
         return Err(TooLarge {
             size: bits.clone(),
             ask: bits,
@@ -4278,6 +4304,16 @@ mod tests {
         let m = BigInt::from(random(6, 120));
         for (a, m) in [(&a, &m), (&-&a, &m), (&a, &-&m), (&-&a, &-&m)] {
             assert_eq!(div_euclid(a, m), num_traits::Euclid::div_euclid(a, m));
+        }
+        // Floor division and its remainder on every sign, exact and inexact, a dividend of 0
+        // and one below the divisor, past the leaf (the tests' `DIV_COST` is infinite).
+        let exact = &m * BigInt::from(random(7, 180));
+        let zero = BigInt::zero();
+        for (a, m) in [(&a, &m), (&exact, &m), (&zero, &m), (&m, &a)] {
+            for (a, m) in [(a, m), (&-a, m), (a, &-m), (&-a, &-m)] {
+                let want = (Integer::div_floor(a, m), Integer::mod_floor(a, m));
+                assert_eq!((div_floor(a, m), mod_floor(a, m)), want, "{a} by {m}");
+            }
         }
     }
 

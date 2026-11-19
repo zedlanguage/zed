@@ -449,7 +449,7 @@ impl<'a> Builder<'a, '_> {
         let (mut lo, mut hi) = (0, self.slots.len());
         let mut steps = Vec::new();
         while hi - lo > 1 {
-            let mid = (lo + hi) / 2;
+            let mid = lo.midpoint(hi);
             steps.push(i >= mid);
             if i < mid {
                 hi = mid;
@@ -471,7 +471,7 @@ impl<'a> Builder<'a, '_> {
                 false => Term::Lit(Value::Int(0)),
             };
         }
-        let mid = (lo + hi) / 2;
+        let mid = lo.midpoint(hi);
         Term::Prim(Prim::Tuple, vec![self.tree(lo, mid), self.tree(mid, hi)])
     }
 

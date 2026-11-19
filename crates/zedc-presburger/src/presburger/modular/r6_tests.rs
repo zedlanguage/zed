@@ -327,9 +327,7 @@ fn pncx_wide_arithmetic_random_oracle() {
             q -= 1;
             r += &b;
         }
-        assert_eq!(ia.div_floor_wide(&ib), Int::from(q.clone()), "case={i}");
         assert_eq!(ia.div_floor(&ib), Int::from(q), "case={i}");
-        assert_eq!(ia.mod_floor_wide(&ib), Int::from(r.clone()), "case={i}");
         assert_eq!(ia.mod_floor(&ib), Int::from(r), "case={i}");
     }
 }
@@ -473,7 +471,7 @@ fn pncx_empty_pair_implication() {
         if forced_pair_bounds(&clauses).is_empty() {
             assert!(
                 !(0..35).any(|x| clauses.iter().all(|cl| cl.mods.iter().any(|(m, s)| {
-                    let r = Int::from(x).mod_floor_wide(m);
+                    let r = Int::from(x).mod_floor(m);
                     s.iter().any(|(a, b)| a <= &r && &r <= b)
                 }))),
                 "mask={mask}"

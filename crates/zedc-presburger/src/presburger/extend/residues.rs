@@ -38,7 +38,7 @@ use std::collections::{BTreeMap, HashMap, HashSet};
 
 use super::holes::{Holes, hole_of};
 use super::{Atom, Con, Formula, Lin, Rel};
-use zedc_int::int::Int;
+use zedc_int::int::{Int, row_range};
 
 /// What the intervals and residues left say of a formula read with holes.
 pub(super) enum Reading {
@@ -81,17 +81,10 @@ impl Line {
     /// The root bounded by `k * r + e >= 0` or `== 0`: `false` where that has no integer
     /// solution.
     fn bound(&mut self, rel: Rel, k: &Int, e: &Int) -> bool {
-        let (lo, hi) = match rel {
-            Rel::Ge if k.is_positive() => (Some(-&e.div_floor(k)), None),
-            Rel::Ge => (None, Some(e.div_floor(&-k))),
-            Rel::Eq => {
-                if !e.mod_floor(k).is_zero() {
-                    return false;
-                }
-                let v = (-e).div_floor(k);
-                (Some(v.clone()), Some(v))
-            }
-        };
+        let ((lo, hi), bad) = row_range(k, e, rel == Rel::Eq);
+        if bad {
+            return false;
+        }
         if let Some(l) = lo {
             self.lo = Some(self.lo.take().map_or(l.clone(), |o| o.max(l)));
         }

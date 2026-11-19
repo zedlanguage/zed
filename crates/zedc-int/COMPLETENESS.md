@@ -43,9 +43,10 @@ end with an empty top level instead, tested).
 | `gcd_recursive`: the same cases, machine pair and wide | `the_gcd_on_every_path_is_the_nonnegative_gcd` |
 | `extended_gcd`: machine path and wide path, every pair of ends with zero, every sign: `g` is the gcd and `s·a + t·b = g` | `the_extended_gcd_gives_bezout_coefficients_for_every_sign` |
 | `div_floor`, `mod_floor`: 64-bit, 128-bit and wide paths, every sign, `MIN / -1`, `MIN mod -1`, at and across the i64 and i128 ends | `tests::floor_division_agrees_on_every_path_for_every_sign`, `tests::division_rounds_down_and_the_gcd_is_never_negative` |
-| `div_floor_wide`, `mod_floor_wide`: machine divisor (falls to `div_floor`) and wide divisor, every sign, dividend 0, below the divisor, exact and inexact | `wide_floor_division_agrees_with_floor_division_for_every_sign` |
-| Exact multiples of a wide divisor have remainder 0 for every sign | `wide_floor_division_agrees_with_floor_division_for_every_sign` |
-| Division by zero | None needed: the divisor is "nonzero" by contract (doc of `div_floor`, `div_floor_wide`); the callers divide by coefficients they checked |
+| `div_floor`, `mod_floor`, `div_ceil`, `mod_hat` against num-integer: machine and wide divisors, every sign, dividend 0, below the divisor, exact and inexact; `mod_hat` congruent, at most half the modulus, odd | `floor_and_ceiling_division_agree_with_num_integer_for_every_sign` |
+| `mod_hat` at exactly half the modulus, machine and wide, divisor of either sign | `the_symmetric_remainder_at_half_the_modulus_is_odd` |
+| Exact multiples of a wide divisor have remainder 0 for every sign | `floor_and_ceiling_division_agree_with_num_integer_for_every_sign` |
+| Division by zero | None needed: the divisor is "nonzero" by contract (doc of `div_floor`); the callers divide by coefficients they checked |
 | `least_root` on 2..50,000 against trial | `tests::least_roots_agree_with_trial_and_with_powers_of_large_bases` |
 | `least_root` on powers of wide bases (odd, even, with odd parts) to prime and composite exponents and their neighbors; a power of 2 alone | `tests::least_roots_agree_with_trial_and_with_powers_of_large_bases` |
 | `least_root` on 2 and 3 (below the loop bound), 4, 8, 9, 12, 36, 72, 6^6 (square then cube root), 10^9, 2^15, 5^15 (cube then 5th root) | `least_roots_of_the_smallest_bases_and_of_mixed_powers` |

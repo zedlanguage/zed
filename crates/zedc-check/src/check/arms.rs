@@ -760,7 +760,7 @@ impl<'a> Arms<'a> {
         // alone, as the lookup that searched for paths found.
         let (mut lo, mut hi) = (0, steps.len());
         while hi - lo > 1 {
-            let mid = lo + (hi - lo) / 2;
+            let mid = lo.midpoint(hi);
             let prefix = paths(&steps[..mid]);
             match self.explains(k, &prefix, x, false) {
                 true => (hi, found) = (mid, prefix),

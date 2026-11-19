@@ -471,7 +471,7 @@ impl ClampBasis {
         let denominator = &self.a + &self.b;
         let target = c - &self.constant;
         let mut lo = (&(&target - &Int::from(2)) * &numerator).div_floor(&denominator);
-        let mut hi = -(&(-&(&(&target + &Int::from(2)) * &numerator)).div_floor(&denominator));
+        let mut hi = (&(&target + &Int::from(2)) * &numerator).div_ceil(&denominator);
         while &hi - &lo > Int::ONE {
             let mid = (&lo + &hi).div_floor(&Int::from(2));
             if self.value(&mid) >= *c {

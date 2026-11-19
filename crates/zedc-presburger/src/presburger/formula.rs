@@ -774,19 +774,6 @@ pub(super) fn one_bound(c: &Con) -> Option<(&Atom, Option<Int>, Option<Int>)> {
 }
 
 /// The least and greatest value of each atom, `None` where there is none.
-pub(super) type Ends = (Option<Int>, Option<Int>);
-
-/// The intersection of two intervals, each end `None` where it is unbounded; empty where the
-/// least is above the greatest. The one copy of `exact`, `local` and `presburger` (dryA5 row
-/// 18), O(1) comparisons and one clone per end.
-pub(super) fn ends_meet(a: &Ends, b: &Ends) -> Ends {
-    let lo = match (&a.0, &b.0) {
-        (Some(x), Some(y)) => Some(x.max(y).clone()),
-        (x, y) => x.clone().or_else(|| y.clone()),
-    };
-    let hi = match (&a.1, &b.1) {
-        (Some(x), Some(y)) => Some(x.min(y).clone()),
-        (x, y) => x.clone().or_else(|| y.clone()),
-    };
-    (lo, hi)
-}
+/// The meet of two is [`zedc_int::int::range_meet`], the one copy for `exact`, `local`,
+/// `presburger`, zedc-solvers and zedc-preimage (dryA5 row 18; DRY-numeric-shared).
+pub(super) type Ends = zedc_int::int::IntRange;

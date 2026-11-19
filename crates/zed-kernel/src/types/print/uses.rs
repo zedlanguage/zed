@@ -76,7 +76,7 @@ fn mask(key: u32, bit: u32) -> u32 {
 
 /// The highest bit in which `a` and `b` differ.
 fn branching_bit(a: u32, b: u32) -> u32 {
-    1 << (31 - (a ^ b).leading_zeros())
+    1 << (a ^ b).ilog2()
 }
 
 fn branch(prefix: u32, bit: u32, left: Rc<Trie>, right: Rc<Trie>) -> Rc<Trie> {
