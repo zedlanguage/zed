@@ -236,6 +236,89 @@ fn a_row_met_many_times_in_the_parameters_is_walked_twice() {
     assert!(!k.subtype(&c));
 }
 
+/// The hash D gives a signature walks a row shared at each level once per scope context
+/// ([`r10_hash::Encoder`]), not once per path, which hung the test above; it is the hash of
+/// the same signature with every row built apart. The shared row holds `R`, the result of a
+/// need, read in the arrow (where `R` hashes as a variable) and in the need (where it hashes
+/// as the need's rank): a replay of the arrow's walk in the need would give another hash.
+#[test]
+fn a_row_shared_in_the_arrows_and_the_needs_hashes_as_rows_built_apart() {
+    fn apart(leaf: &dyn Fn() -> Ty, depth: usize) -> Ty {
+        if depth == 0 {
+            return leaf();
+        }
+        Ty::tuple(vec![apart(leaf, depth - 1), apart(leaf, depth - 1)])
+    }
+    let leaf = || Ty::tuple(vec![var("R"), int()]);
+    // The row in the arrow and the row in the need, shared or not.
+    let signature = |in_arrow: Ty, in_need: Ty| {
+        let mut s = bsig(vec![ex(vec![in_arrow], int())], 1, &[]);
+        s.own.insert("R".into());
+        s.needs = vec![Need {
+            on: var("T"),
+            kind: NeedKind::Index(in_need),
+            result: Some(var("R")),
+            span: Span { start: 0, end: 1 },
+            alike: Arc::from([]),
+            via: CallPath::default(),
+        }];
+        s.note_held();
+        s
+    };
+    for depth in 0..8 {
+        let row = doubled(leaf(), depth);
+        let shared = signature(row.clone(), row);
+        let built_apart = signature(apart(&leaf, depth), apart(&leaf, depth));
+        assert_eq!(shared, built_apart);
+        for r in [r10_hash::R_BASE, 17, 123_456_789] {
+            assert_eq!(
+                r10_hash::sig_digest_with_base(&shared, r),
+                r10_hash::sig_digest_with_base(&built_apart, r),
+                "depth {depth}, base {r}"
+            );
+        }
+    }
+}
+
+/// A walk of a shared row that adds to a side sum of the hash (here `s_params`, the position
+/// of each tracked parameter, as a need's summary takes it) is not replayed from the memo, and
+/// adds at the absolute position although the walk restarts the hash from empty: the hash and
+/// the sums, for the rows shared and built apart, are those of a walk of every path that
+/// memoizes nothing.
+#[test]
+fn a_shared_row_of_a_tracked_parameter_adds_each_place_to_the_side_sums() {
+    use r10_hash::{Encoder, ScopePhase, SigScope};
+    fn apart(depth: usize) -> Ty {
+        if depth == 0 {
+            return Ty::tuple(vec![var("P"), int()]);
+        }
+        Ty::tuple(vec![apart(depth - 1), apart(depth - 1)])
+    }
+    // With `keep_stream`, the encoder walks every path and memoizes nothing.
+    let encode = |t: &Ty, keep_stream: bool| {
+        let mut enc = Encoder::new(17, keep_stream);
+        enc.push_scope(SigScope {
+            own: [Arc::from("P")].into_iter().collect(),
+            mat_result_ranks: HashMap::new(),
+            phase: ScopePhase::Needs,
+            is_root: true,
+        });
+        enc.tracked_params = Some([Arc::from("P")].into_iter().collect());
+        // A token before the type, so that its walk starts at a power of `r` other than 1.
+        enc.emit_ty(&int());
+        enc.emit_ty(t);
+        (enc.part.finalize(), enc.s_params)
+    };
+    for depth in 0..8 {
+        let (shared, built_apart) = (doubled(apart(0), depth), apart(depth));
+        assert_eq!(shared, built_apart);
+        let walked = encode(&built_apart, true);
+        assert!(!walked.1.is_empty(), "the parameter is tracked");
+        assert_eq!(encode(&shared, false), walked, "depth {depth}");
+        assert_eq!(encode(&built_apart, false), walked, "depth {depth}");
+    }
+}
+
 /// A bounded variable that the arrow takes only inside a function type is given by no
 /// argument, so no argument fixes its carrier ([`refused_cover`], [`Places`]), and the message
 /// names the arrow and the variable as the program wrote them: `B`, not the name the

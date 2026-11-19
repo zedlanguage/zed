@@ -28436,7 +28436,32 @@ pub mod r10_hash {
         pub s_span_end: u64,
         pub s_map_lambda_true: u64,
         pub fallback_large_id: bool,
-        closed_memo: HashMap<*const (), PartHash>,
+        /// The hash of each row and shape walked by [`Encoder::memoized`], by its address and
+        /// the context it was walked in (0 for one that holds no variable, whose hash is the
+        /// same in every context; else `ctx`). Each entry keeps its row or shape alive, so a
+        /// temporary freed during the walk (a decoded need) cannot hand its address to another
+        /// row and that row read the first one's hash.
+        memo: HashMap<(*const (), u64), (PartHash, Walked)>,
+        /// The scope stack's state: a new number each time a scope is pushed or changed, the
+        /// number from before the push when it is popped. Two walks of one row under one
+        /// number read the same scopes, so give the same tokens.
+        ctx: u64,
+        next_ctx: u64,
+        /// The power of `r` at the start of `part` within the whole stream: `part` restarts
+        /// from empty inside [`Encoder::memoized`], and the side sums (`s_rank`, `s_params`,
+        /// the tracked spans, `s_map_lambda_true`) are taken at the absolute position,
+        /// `base_pow * part.pow`.
+        base_pow: u64,
+        /// How many side sums or `fallback_large_id` were changed: a walk that changed none
+        /// is replayed from `memo` exactly; one that changed some is not stored.
+        effects: u64,
+    }
+
+    /// A row or shape kept alive by [`Encoder::memo`].
+    #[allow(dead_code, reason = "held only to keep the address in use, never read")]
+    enum Walked {
+        Row(Row),
+        Shape(Shape),
     }
 
     impl Encoder {
@@ -28454,7 +28479,78 @@ pub mod r10_hash {
                 s_span_end: 0,
                 s_map_lambda_true: 0,
                 fallback_large_id: false,
-                closed_memo: HashMap::new(),
+                memo: HashMap::new(),
+                ctx: 1,
+                next_ctx: 1,
+                base_pow: 1,
+                effects: 0,
+            }
+        }
+
+        /// The power of `r` at the next token's position in the whole stream.
+        #[inline]
+        fn abs_pow(&self) -> u64 {
+            mul_p(self.base_pow, self.part.pow)
+        }
+
+        /// Pushes `sc` and returns the context to give back to [`Encoder::pop_scope`].
+        pub fn push_scope(&mut self, sc: SigScope) -> u64 {
+            self.scopes.push(sc);
+            let outer = self.ctx;
+            self.new_ctx();
+            outer
+        }
+
+        fn pop_scope(&mut self, outer: u64) {
+            self.scopes.pop();
+            self.ctx = outer;
+        }
+
+        /// A new context, after the top scope changed.
+        fn new_ctx(&mut self) {
+            self.next_ctx += 1;
+            self.ctx = self.next_ctx;
+        }
+
+        /// Walks a row or shape with `walk`, once for each context it is met in. Naive: walk
+        /// each path to a shared row, `O(2^d)` for a row shared at each of `d` levels (test
+        /// `a_row_met_many_times_in_the_parameters_is_walked_twice`, `d = 40`). Here: a hash
+        /// map lookup by (address, context), so each row is walked once per context it is met
+        /// in, `O(nodes * contexts)`, at the cost of one lookup and one multiply a row. A row
+        /// that holds no variable gives the same tokens in every context; one that holds
+        /// variables gives tokens that read only `scopes` (fixed by `ctx`), `tracked_params`
+        /// (fixed for the encoder) and `r`. The walk starts from an empty `part` and is
+        /// joined after, which [`PartHash::concat`] makes exact; the side sums inside read
+        /// [`Encoder::abs_pow`], so they stay at their absolute positions, and a walk that
+        /// changed one is not stored, as a replay would leave it out. With `stream` kept the
+        /// walk is not memoized, so the stream holds every token.
+        fn memoized(
+            &mut self,
+            addr: *const (),
+            closed: bool,
+            keep: impl FnOnce() -> Walked,
+            walk: impl FnOnce(&mut Self),
+        ) {
+            if self.stream.is_some() {
+                walk(self);
+                return;
+            }
+            let key = (addr, if closed { 0 } else { self.ctx });
+            if let Some(&(cached, _)) = self.memo.get(&key) {
+                self.part = self.part.concat(cached);
+                return;
+            }
+            let saved = self.part;
+            let outer_base = self.base_pow;
+            let effects = self.effects;
+            self.base_pow = mul_p(outer_base, saved.pow);
+            self.part = PartHash::empty();
+            walk(self);
+            let sub = self.part;
+            self.part = saved.concat(sub);
+            self.base_pow = outer_base;
+            if self.effects == effects {
+                self.memo.insert(key, (sub, keep()));
             }
         }
 
@@ -28490,9 +28586,10 @@ pub mod r10_hash {
 
         #[inline]
         fn emit_tracked_span(&mut self, s: Span) {
-            let p_start = self.part.pow;
+            self.effects += 1;
+            let p_start = self.abs_pow();
             self.emit_usize(s.start);
-            let p_end = self.part.pow;
+            let p_end = self.abs_pow();
             self.emit_usize(s.end);
             self.s_span_start = add_p(self.s_span_start, p_start);
             self.s_span_end = add_p(self.s_span_end, p_end);
@@ -28583,7 +28680,10 @@ pub mod r10_hash {
             if !any_large {
                 self.emit(tag);
                 self.emit_usize(len);
-                let pos_pow = self.part.pow;
+                let pos_pow = self.abs_pow();
+                if rank_mult > 0 || !param_hits.is_empty() {
+                    self.effects += 1;
+                }
                 if rank_mult > 0 {
                     self.s_rank = add_p(self.s_rank, mul_p(mod_p(rank_mult as u128), pos_pow));
                 }
@@ -28594,6 +28694,7 @@ pub mod r10_hash {
                 self.emit(sum);
             } else {
                 self.fallback_large_id = true;
+                self.effects += 1;
                 self.emit(TAG_VAR_SET_FALLBACK);
                 self.emit(tag);
                 self.emit_usize(len);
@@ -28632,6 +28733,7 @@ pub mod r10_hash {
                 }
             } else {
                 self.fallback_large_id = true;
+                self.effects += 1;
                 self.emit(TAG_VAR_SET_FALLBACK);
                 self.emit(TAG_BOUNDS_SET);
                 self.emit_usize(bounds.len());
@@ -28703,55 +28805,31 @@ pub mod r10_hash {
         }
 
         fn emit_row(&mut self, row: &Row) {
-            let addr = row.addr();
-            let closed = !row.holds_vars() && self.stream.is_none();
-            if closed && let Some(&cached) = self.closed_memo.get(&addr) {
-                self.part = self.part.concat(cached);
-                return;
-            }
-            let saved = self.part;
-            if closed {
-                self.part = PartHash::empty();
-            }
-            self.emit(TAG_ROW);
-            self.emit_usize(row.len());
-            for c in row.iter() {
-                self.emit_ty(c);
-            }
-            if closed {
-                let sub = self.part;
-                self.closed_memo.insert(addr, sub);
-                self.part = saved.concat(sub);
-            }
+            let keep = || Walked::Row(row.clone());
+            self.memoized(row.addr(), !row.holds_vars(), keep, |e| {
+                e.emit(TAG_ROW);
+                e.emit_usize(row.len());
+                for c in row.iter() {
+                    e.emit_ty(c);
+                }
+            });
         }
 
         fn emit_shape(&mut self, sh: &Shape) {
-            let addr: *const () = sh.as_ptr().cast();
-            let closed = !sh.holds_vars() && self.stream.is_none();
-            if closed && let Some(&cached) = self.closed_memo.get(&addr) {
-                self.part = self.part.concat(cached);
-                return;
-            }
-            let saved = self.part;
-            if closed {
-                self.part = PartHash::empty();
-            }
-            self.emit(TAG_SHAPE);
-            self.emit_usize(sh.items.len());
-            for t in &sh.items {
-                self.emit_ty(t);
-            }
-            self.emit_usize(sh.fields.len());
-            for (fname, fty) in &sh.fields {
-                self.emit_str(fname);
-                self.emit_ty(fty);
-            }
-            self.emit_bool(sh.open);
-            if closed {
-                let sub = self.part;
-                self.closed_memo.insert(addr, sub);
-                self.part = saved.concat(sub);
-            }
+            let keep = || Walked::Shape(sh.clone());
+            self.memoized(sh.as_ptr().cast(), !sh.holds_vars(), keep, |e| {
+                e.emit(TAG_SHAPE);
+                e.emit_usize(sh.items.len());
+                for t in &sh.items {
+                    e.emit_ty(t);
+                }
+                e.emit_usize(sh.fields.len());
+                for (fname, fty) in &sh.fields {
+                    e.emit_str(fname);
+                    e.emit_ty(fty);
+                }
+                e.emit_bool(sh.open);
+            });
         }
 
         pub fn emit_ty(&mut self, t: &Ty) {
@@ -29020,7 +29098,8 @@ pub mod r10_hash {
                     self.emit_ty(f);
                     self.emit_map_word(*word);
                     if track_top_spans && *lambda {
-                        let p_lam = self.part.pow;
+                        self.effects += 1;
+                        let p_lam = self.abs_pow();
                         self.s_map_lambda_true = add_p(self.s_map_lambda_true, p_lam);
                     }
                     self.emit_bool(*lambda);
@@ -29177,7 +29256,7 @@ pub mod r10_hash {
             }
 
             let is_root = self.scopes.is_empty();
-            self.scopes.push(SigScope {
+            let outer_ctx = self.push_scope(SigScope {
                 own: s.own.clone(),
                 mat_result_ranks: mat_result_ranks.clone(),
                 phase: ScopePhase::Arrows,
@@ -29221,6 +29300,7 @@ pub mod r10_hash {
                     sc.mat_result_ranks = full_ranks;
                     sc.phase = ScopePhase::Needs;
                 }
+                self.new_ctx();
                 for dn in decoded_needs.iter() {
                     self.emit_flat_need(dn, false);
                 }
@@ -29228,6 +29308,7 @@ pub mod r10_hash {
                 if let Some(sc) = self.scopes.last_mut() {
                     sc.phase = ScopePhase::Needs;
                 }
+                self.new_ctx();
                 let mut cur_rank = 0usize;
                 for n in &s.needs {
                     match &n.kind {
@@ -29268,6 +29349,7 @@ pub mod r10_hash {
                                         }
                                     }
                                 }
+                                self.new_ctx();
                                 for dn in &decoded {
                                     self.emit_flat_need(dn, false);
                                 }
@@ -29281,7 +29363,7 @@ pub mod r10_hash {
                     }
                 }
             }
-            self.scopes.pop();
+            self.pop_scope(outer_ctx);
 
             self.emit_sig_own_set(s);
             self.emit_var_set(TAG_HELD_SET, s.held.len(), s.held.iter(), false);
@@ -29446,7 +29528,7 @@ pub mod r10_hash {
                 }
                 _ => {
                     let mut enc = Encoder::new(r, false);
-                    enc.scopes.push(SigScope {
+                    enc.push_scope(SigScope {
                         own: s.own.clone(),
                         mat_result_ranks: mat_result_ranks.clone(),
                         phase: ScopePhase::Needs,
