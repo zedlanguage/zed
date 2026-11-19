@@ -15608,14 +15608,27 @@ async fn permitted<'m>(
     // comparison reads holds one. Before (row TEST-types-unreached-paths-6), it was skipped
     // there too, and such an arrow that took part in no cover had its permission asked of
     // nothing: `((x0: int) -> int) & ((x0: (x: T) -> int) -> int)` was within `(x0: int) ->
-    // int`, a wrong yes, though its second arrow takes functions `q` does not. Cost: a lookup
-    // of each function the comparison reads ([`Cx::fns`]), a superset of those `s` holds, so a
-    // function of `q` only costs the pass, never the answer.
+    // int`, a wrong yes, though its second arrow takes functions `q` does not.
+    //
+    // Proof that the answer is the same as without the skip. The loop below wants an arrow
+    // in this pass only where `several`: [`instances`] gave `None` or more than one instance.
+    // More than one needs a bound `several_least` takes (above). `None` comes only from its
+    // test that a function in the arrow's parameters holds a variable to bind, the walk
+    // [`params_fn_hold_own`] makes, by the same `vars_in` and [`fn_holds_own`]. So where
+    // neither holds for any arrow of `s`, no arrow is wanted and the loop returns `true`.
+    //
+    // Complexity tradeoff (FAIL-l0126-bench-regressions): first, every function the
+    // comparison reads ([`Cx::fns`]) was tested, a superset of those the arrows of `s` hold:
+    // O(n) functions at each comparison of a nest of n, O(n^2) in all (ratio 42.9 at 8n in
+    // `a_power_returned_n_deep_is_checked_in_linear_time`, and four l01_26 benches timed out).
+    // Used: the functions in the parameters of the arrows of `s` only, the walk [`instances`]
+    // makes for an arrow that holds a variable to bind, O(|params of s|) plus a lookup per
+    // function name found (ratio 7.864).
     if pass == Pass::Witnessed
         && !s.bounds.values().any(|&m| several_least(m))
         && !{
             let cx = c.cx.borrow();
-            cx.fns.keys().any(|f| fn_holds_own(s, f, &cx))
+            sas.iter().any(|sa| params_fn_hold_own(s, sa, &cx))
         }
     {
         return true;
