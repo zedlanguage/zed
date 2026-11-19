@@ -5,7 +5,7 @@ expression: out
 "total = price * ;"
   line 1, at ";": expected '-' or '!' or an annotation such as `@name` or a number or a string or 'true' or 'false' or an atom such as `#name` or a name or 'this' or '(' or 'if' or 'match' or 'for' or 'loop' or '[' or '{' or '?'
 "discount = if member { 0.1 }; // `if` needs its `else`"
-  line 1, at ";": expected 'else'
+  line 1, at ";": Missing `else` in an `if` that gives a value: `if member { 0.1 }`. An `if` that gives a value has both arms.
 "area(w, h) = w * h\nmain = area(2, 3);"
   line 2, at "main": expected '(' or '[' or '.' or '?.' or '*.' or '::' or '^' or '*' or '/' or 'div' or 'mod' or '+' or '-' or '++' or an infix call such as `~plus~` or '..<' or '..=' or '..' or '><' or 'as' or 'into' or 'with' or 'without' or '<=' or '<' or '>=' or '>' or 'is' or 'not' or 'in' or '==' or '!=' or '&&' or '||' or 'else' or ';' or 'test' or 'proof'
 "xs = [1, 2, 3;"

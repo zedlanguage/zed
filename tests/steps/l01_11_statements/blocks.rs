@@ -129,3 +129,92 @@ fn a_wildcard_target_binds_nothing() {
         "_, hi = p.bounds;"
     );
 }
+
+/// The two forms of `if` (author, P348; DESIGN.md sec:tour_methods, "Statement position must
+/// write something, and drop nothing"). The `if` statement stands among the statements of a
+/// block, may leave out its `else`, and each arm ends with a statement, after any bindings; a
+/// missing `else` builds as the empty block. The `if` that gives a value has both arms, each
+/// one expression. Red before green: the parser refused `if done { break; };`, "expected
+/// 'else'".
+#[test]
+fn an_if_statement_may_leave_out_its_else_and_its_arms_end_with_a_statement() {
+    check(&[
+        // Accepted.
+        (
+            "loop { if done { break; }; }",
+            "(loop (block (do (if done (block (break)) (block)))))",
+        ),
+        (
+            "x -> { if c { y = f(x); out <- y; }; 0 }",
+            "(fn (x) (block (do (if c (block (= (y) (call f x)) (<- out y)) (block))) (return 0)))",
+        ),
+        (
+            "c -> { x = if c { 1 } else { 2 }; x }",
+            "(fn (c) (block (= (x) (if c (block (return 1)) (block (return 2)))) (return x)))",
+        ),
+        (
+            "loop { if a { break; } else if b { y = 1; break; }; }",
+            "(loop (block (do (if a (block (break)) (if b (block (= (y) 1) (break)) (block))))))",
+        ),
+        // Rejected: an empty `else { }`, a value at the end of an arm, an `if` that gives a
+        // value with no `else` (its message, a clause of the parse error, is tested at step
+        // L1.19), an empty `if`, and an empty `then` arm.
+        (
+            "loop { if c { break; } else { }; }",
+            "error: Empty `else { }` in an `if` statement. Leave out the `else`: `if c { break; \
+             };`.; an arm of an `if` statement holds a statement; with no `else`, nothing happens \
+             when the condition is false at byte 28",
+        ),
+        (
+            "c -> { if c { 1 }; 0 }",
+            "error: Value at the end of an arm of an `if` statement: `1`.; an arm of an `if` \
+             statement ends with a statement; an `if` that gives a value has an `else` and \
+             stands where the value is used, as `x = if c { 1 } else { 2 };` at byte 14",
+        ),
+        (
+            "c -> { if c { f(c) }; 0 }",
+            "error: Value at the end of an arm of an `if` statement: `f(c)`. End the arm with a \
+             statement, `f(c);`.; an arm of an `if` statement ends with a statement; an `if` \
+             that gives a value has an `else` and stands where the value is used, as `x = if c \
+             { 1 } else { 2 };` at byte 14",
+        ),
+        ("c -> { x = if c { 1 }; x }", "syntax"),
+        (
+            "c -> { if c { }; 0 }",
+            "error: Empty `if` statement: `if c { };` does nothing. Delete it.; an arm of an `if` \
+             statement holds a statement at byte 12",
+        ),
+        (
+            "loop { if c { } else { break; }; }",
+            "error: Empty block after `if c` in an `if` statement. Write a statement in it, or \
+             negate the condition: `if !c { break; };`.; an arm of an `if` statement holds a \
+             statement at byte 12",
+        ),
+        // A condition that is already negated as a whole loses its `!`, and the parentheses
+        // that only grouped it; a `!` on part of the condition is not dropped (the controls).
+        (
+            "loop { if !c { } else { break; }; }",
+            "error: Empty block after `if !c` in an `if` statement. Write a statement in it, or \
+             negate the condition: `if c { break; };`.; an arm of an `if` statement holds a \
+             statement at byte 13",
+        ),
+        (
+            "loop { if !(a && b) { } else { break; }; }",
+            "error: Empty block after `if !(a && b)` in an `if` statement. Write a statement in \
+             it, or negate the condition: `if a && b { break; };`.; an arm of an `if` statement \
+             holds a statement at byte 20",
+        ),
+        (
+            "loop { if !a && b { } else { break; }; }",
+            "error: Empty block after `if !a && b` in an `if` statement. Write a statement in it, \
+             or negate the condition: `if !(!a && b) { break; };`.; an arm of an `if` statement \
+             holds a statement at byte 18",
+        ),
+        (
+            "loop { if a && b { } else { break; }; }",
+            "error: Empty block after `if a && b` in an `if` statement. Write a statement in it, \
+             or negate the condition: `if !(a && b) { break; };`.; an arm of an `if` statement \
+             holds a statement at byte 17",
+        ),
+    ]);
+}

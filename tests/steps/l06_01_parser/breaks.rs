@@ -41,10 +41,11 @@ fn refused(text: &str, message: &str, notes: &[&str]) {
 #[test]
 fn a_break_in_the_body_of_a_loop_or_a_for_builds() {
     for text in [
-        "f(c) = loop { if c { break; } else { }; };",
-        "f(c) = loop { { x = 1; if c { break; } else { }; }; };",
+        "f(c) = loop { if c { break; }; };",
+        "f(c) = loop { { x = 1; if c { break; }; }; };",
         "f(c) = loop t { x = match t { 0 -> { break; }, _ -> t }; };",
-        "f(xs) = for x in xs { if x > 0 { break; } else { }; x };",
+        "f(xs) = for x in xs { if x > 0 { break; }; x };",
+        "f(c) = loop { if c { y = 1; break; } else if !c { break; }; };",
         "f(c) = loop { g = x -> loop { break; }; };",
         "f(c) = loop { loop { break; }; break; };",
     ] {
@@ -68,7 +69,7 @@ fn a_break_in_a_lambda_in_a_loop_is_refused() {
             "the loop around the lambda `g`, which a `break;` ends only from the loop's own body \
              [loop { g = x -> { break; }; }]",
             "repair: return a result that the loop's body tests, as `done = g(…); if done { \
-             break; } else { };` [break;]",
+             break; };` [break;]",
             "repair: move the `break;` out of the lambda `g`, into the loop's body [break;]",
         ],
     );
@@ -120,21 +121,22 @@ fn a_break_with_no_loop_around_it_is_refused() {
     );
 }
 
-/// `f(n) = loop t0 { if t0 > 1 { break; } else { }; loop t1 { … }; };`, `n` loops nested, each
-/// with a `break;` in a branch: the walk that finds each `break;`'s loop (`stop_of`) runs once.
+/// `f(n) = loop t0 { if t0 > 1 { break; }; loop t1 { … }; };`, `n` loops nested, each
+/// with a `break;` in an `if` statement: the walk that finds each `break;`'s loop (`stop_of`)
+/// runs once.
 pub(super) fn nested_breaks(n: usize) -> String {
     let opens: String = (0..n)
-        .map(|i| format!("loop t{i} {{ if t{i} > 1 {{ break; }} else {{ }}; "))
+        .map(|i| format!("loop t{i} {{ if t{i} > 1 {{ break; }}; "))
         .collect();
     format!("f(n) = {opens}{};\n", " };".repeat(n - 1) + " }")
 }
 
-/// `f(n) = loop { { x = 1; { x = 1; … if n > 1 { break; } else { } } } ; };`, `n` blocks
-/// nested in one another's exports in statement position, the innermost exporting an `if` with
-/// an empty branch: the walk that marks the paths of a statement (`on_path`) runs once.
+/// `f(n) = loop { { x = 1; { x = 1; … if n > 1 { break; }; } } ; };`, `n` blocks nested in one
+/// another's exports in statement position, the innermost ending with an `if` statement and
+/// exporting nothing: the walk that marks the paths of a statement (`on_path`) runs once.
 pub(super) fn nested_exports(n: usize) -> String {
     format!(
-        "f(n) = loop {{ {}if n > 1 {{ break; }} else {{ }}{}; }};\n",
+        "f(n) = loop {{ {}if n > 1 {{ break; }};{}; }};\n",
         "{ x = 1; ".repeat(n),
         " }".repeat(n)
     )

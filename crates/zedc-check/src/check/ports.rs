@@ -419,8 +419,11 @@ pub enum Silent<'e> {
 /// A path writes when it ends in a call of one of `writers`, the functions with an output port
 /// parameter, which every call fills with an output port ([`ports`] rejects any other argument
 /// there). The default of an `else` stands in for a failure and is no path of its own, as the
-/// repair `c*.m() else #ok;` shows. A block that exports nothing (the parser allows one only on
-/// a path of an expression statement, or ending in `break;`) writes when one of its statements
+/// repair `c*.m() else #ok;` shows. A statement `if` (`IfStmt`, author P348) comes here as the
+/// expression `if` it means: its arms are blocks that export nothing, and a missing `else` is the
+/// empty block, which does nothing. A block that exports nothing (the parser allows one only as
+/// an arm of a statement `if`, on a path of an expression statement, or ending in `break;`)
+/// writes when one of its statements
 /// is a push, a `break;` or an expression statement, or a binding whose value writes on some
 /// path; otherwise it does nothing. An expression statement in it counts whatever it does, since
 /// it is checked on its own, and refused there when it writes on no path: the block's statement

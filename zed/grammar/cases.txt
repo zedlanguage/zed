@@ -416,7 +416,7 @@ Expr ::: m into ((break a) -> v) ::: ERROR
 Expr ::: [(break x) ..] ::: ERROR
 Expr ::: if c { break; } else { i } ::: (if c ({ break ; }) else ({ i }))
 Expr ::: loop { break; } ::: (loop ({ break ; }))
-Expr ::: loop t { if t > 2 { break; } else { }; } ::: (loop t ({ ((if (t > 2) ({ break ; }) else { }) ;) }))
+Expr ::: loop t { if t > 2 { break; }; } ::: (loop t ({ (if (t > 2) ({ break ; }) ;) }))
 Expr ::: match v { #a -> { break; }, _ -> 2 } ::: (match v { (#a -> ({ break ; })) , (_ -> 2) })
 # an annotation's arguments are the parentheses after it only when the declaration after them still parses (CRITIQUE-AGY-2 3.6)
 Item ::: @fused (a + b).map(f); ::: (@fused ((((( (a + b) )) (. map)) (( f ))) ;))

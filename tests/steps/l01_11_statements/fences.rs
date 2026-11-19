@@ -17,7 +17,7 @@ fn every_block_in_expression_position_builds_or_names_its_step() {
         for (p, node) in tree.nodes.iter().enumerate() {
             if matches!(
                 tree.name(p),
-                "Body" | "If" | "For" | "Loop" | "Proof" | "Arm"
+                "Body" | "If" | "IfStmt" | "For" | "Loop" | "Proof" | "Arm"
             ) {
                 continue;
             }

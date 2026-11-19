@@ -77,7 +77,7 @@ fn a_call_that_pushes_to_a_port_is_a_statement() {
         (0, "hi!\n", "e\n")
     );
     let branches = "k = int(m.args[0] else \"\") else 0;\n  \
-                    if k > 1 { say(\"many\", out: m.stdout) } else { say(\"one\", out: m.stdout) };";
+                    if k > 1 { say(\"many\", out: m.stdout); } else { say(\"one\", out: m.stdout); };";
     let out = run("stmt_branches", &with_say(branches), "", &[]);
     assert_eq!(
         (out.status, out.stdout.as_str()),
@@ -105,11 +105,13 @@ fn a_statement_that_writes_nothing_or_drops_a_result_is_refused() {
         rejected("stmt_pure", src),
         "4:3: Statement has no effect: `f(1)` writes to no port, and its value is dropped."
     );
+    // An arm of an `if` statement ends with a statement, so a value there is refused by the
+    // parser, named (author, P348).
     let branch = "k = int(m.args[0] else \"\") else 0;\n  \
-                  if k > 1 { say(\"many\", out: m.stdout) } else { 0 };";
+                  if k > 1 { say(\"many\", out: m.stdout); } else { 0 };";
     assert_eq!(
         rejected("stmt_one_branch", &with_say(branch)),
-        "5:3: Statement has no effect: `0` writes to no port, and its value is dropped."
+        "5:51: Value at the end of an arm of an `if` statement: `0`."
     );
     let src = "bump(positional s, out: Lines) { out <- s; 3 }\n\n\
                main(m: MainArgs) {\n  bump(\"hi\", out: m.stdout);\n}\n";
@@ -209,43 +211,49 @@ fn statement_errors(body: &str) -> Vec<(String, String, Vec<String>)> {
 }
 
 /// Red before green: the parser refused every block here that exports nothing, "this block
-/// exports nothing, and a block gives a value, so it must export one", and the empty `{ }` as an
-/// empty block. On a path of an expression statement a block may export nothing: `{ }` is a
-/// path that does nothing, and a block that exports nothing writes when one of its statements
-/// writes; the statement is legal when each path writes or does nothing and at least one
-/// writes (DESIGN.md sec:tour_methods, "Statement position must write something, and drop
-/// nothing"; row FAIL-exprstmt-empty-paths). Each statement here writes when its condition
-/// holds and nothing otherwise, run with no argument (`k` is 0) and with 5.
+/// exports nothing, and a block gives a value, so it must export one", and an `if` with no
+/// `else`. A block in statement position may export nothing, and writes when one of its
+/// statements writes; an `if` statement may leave out its `else`, and its arms end with a
+/// statement (author, P348; DESIGN.md sec:tour_methods, "Statement position must write
+/// something, and drop nothing"; row FAIL-exprstmt-empty-paths). Each statement here writes
+/// when its condition holds and nothing otherwise, run with no argument (`k` is 0) and with 5.
 #[test]
 fn a_block_with_a_write_on_one_branch_and_no_export_is_a_statement() {
     // A brace in statement position is a block when a statement follows it (sec:grammar,
-    // `!HEAD &('{' Item) ~Block`), here `j = k;`; `{ if … }` is the family of one value.
+    // `!HEAD &('{' Item) ~Block`), here `j = k;`.
     for (name, body, none, five) in [
-        // The write in the `then` branch only, by a push and by a call.
+        // The write in the `then` arm only, by a push and by a call.
         (
             "stmt_block_then_push",
-            "{ j = k; if j > 1 { m.stdout <- \"x\"; } else { } };",
+            "{ j = k; if j > 1 { m.stdout <- \"x\"; }; };",
             "",
             "x\n",
         ),
         (
             "stmt_then_call",
-            "if k > 1 { say(\"x\", out: m.stdout); } else { };",
+            "if k > 1 { say(\"x\", out: m.stdout); };",
             "",
             "x\n",
         ),
-        // The write in the `else` branch only.
+        // A binding before the statement that ends the arm.
+        (
+            "stmt_then_binding",
+            "if k > 1 { y = \"x\"; m.stdout <- y; };",
+            "",
+            "x\n",
+        ),
+        // The write when the condition is false, by the negated condition.
         (
             "stmt_block_else_call",
-            "{ j = k; if j > 1 { } else { say(\"x\", out: m.stdout); } };",
+            "{ j = k; if !(j > 1) { say(\"x\", out: m.stdout); }; };",
             "x\n",
             "",
         ),
-        // Nested twice, the empty branch two blocks down.
+        // Nested twice, the `if` with no `else` two blocks down.
         (
             "stmt_block_nested",
-            "{ j = k; if j > 1 { if j > 2 { say(\"x\", out: m.stdout); } else { } } \
-             else { say(\"y\", out: m.stdout) } };",
+            "{ j = k; if j > 1 { if j > 2 { say(\"x\", out: m.stdout); }; } \
+             else { say(\"y\", out: m.stdout); }; };",
             "y\n",
             "x\n",
         ),
@@ -272,11 +280,11 @@ fn a_block_with_a_write_on_one_branch_and_no_export_is_a_statement() {
     }
 }
 
-/// The contrasts: a statement that writes on no path, `if c { } else { };` or a block of
-/// bindings, is refused at the statement; a value dropped on a path is refused at the value,
-/// here in an `if` that is a statement of a block that exports nothing; and a block in the
-/// place of a value still exports one (step L1.11), so `x = if c { } else { 1 };` is refused
-/// by the parser (DESIGN.md sec:tour_methods).
+/// The contrasts: a statement that writes on no path, an `if` whose arm only binds or a block
+/// of bindings, is refused at the statement; an empty `else { }`, an empty `if` and a value at
+/// the end of an arm of an `if` statement are refused by the parser (author, P348); and a block
+/// in the place of a value still exports one (step L1.11), so `x = if c { } else { 1 };` is
+/// refused by the parser, and so is `x = if c { 1 };` (DESIGN.md sec:tour_methods).
 #[test]
 fn a_statement_whose_paths_write_nothing_or_drop_a_value_is_refused() {
     let none = |stmt: &str| {
@@ -287,35 +295,53 @@ fn a_statement_whose_paths_write_nothing_or_drop_a_value_is_refused() {
             vec![shown.to_string()],
         )]
     };
-    // The block's export is an `if` that writes on no path, so the block writes on none.
-    for body in [
-        "if k > 1 { } else { };",
-        "{ j = k; };",
-        "{ j = k; if j > 1 { } else { } };",
-    ] {
+    for body in ["if k > 1 { j = k; };", "{ j = k; };"] {
         assert_eq!(statement_errors(body), none(body), "{body}");
     }
     // The `if` is a statement of the block: it is refused itself, and the block counts it as a
     // statement and is not refused again.
     assert_eq!(
-        statement_errors("{ j = k; if j > 1 { } else { }; };"),
-        none("if j > 1 { } else { };")
+        statement_errors("{ j = k; if j > 1 { i = j; }; };"),
+        none("if j > 1 { i = j; };")
     );
-    let inner = "if j > 1 { say(\"x\", out: m.stdout) } else { 0 };";
-    let body = format!("{{ j = k; {inner} }};");
-    assert_eq!(
-        statement_errors(&body),
-        [(
-            "Statement has no effect: `0` writes to no port, and its value is dropped.".into(),
-            inner.to_string(),
-            vec!["0".to_string(); 3]
-        )]
-    );
-    let src = with_say("k = int(m.args[0] else \"\") else 0;\n  if k > 1 { } else { };");
+    let src = with_say("k = int(m.args[0] else \"\") else 0;\n  if k > 1 { j = k; };");
     assert_eq!(
         rejected("stmt_empty_paths", &src),
-        "5:3: Statement has no effect: `if k > 1 { } else { }` writes to no port on any path."
+        "5:3: Statement has no effect: `if k > 1 { j = k; }` writes to no port on any path."
     );
+    for (name, stmt, want) in [
+        (
+            "stmt_empty_else",
+            "if k > 1 { say(\"x\", out: m.stdout); } else { };",
+            "5:41: Empty `else { }` in an `if` statement. Leave out the `else`: \
+             `if k > 1 { say(\"x\", out: m.stdout); };`.",
+        ),
+        (
+            "stmt_empty_if",
+            "if k > 1 { };",
+            "5:12: Empty `if` statement: `if k > 1 { };` does nothing. Delete it.",
+        ),
+        (
+            "stmt_arm_call",
+            "if k > 1 { say(\"x\", out: m.stdout) };",
+            "5:14: Value at the end of an arm of an `if` statement: `say(\"x\", out: m.stdout)`. \
+             End the arm with a statement, `say(\"x\", out: m.stdout);`.",
+        ),
+        (
+            "stmt_arm_value",
+            "if k > 1 { 1 };",
+            "5:14: Value at the end of an arm of an `if` statement: `1`.",
+        ),
+        (
+            "stmt_value_no_else",
+            "x = if k > 1 { 1 };\n  m.stdout <- \"a\";",
+            "5:21: Missing `else` in an `if` that gives a value: `if k > 1 { 1 }`. An `if` that \
+             gives a value has both arms.",
+        ),
+    ] {
+        let src = with_say(&format!("k = int(m.args[0] else \"\") else 0;\n  {stmt}"));
+        assert_eq!(rejected(name, &src), want, "{stmt}");
+    }
     let src = with_say(
         "k = int(m.args[0] else \"\") else 0;\n  x = if k > 1 { } else { 1 };\n  \
          m.stdout <- \"a\";",
@@ -333,8 +359,10 @@ fn a_statement_whose_paths_write_nothing_or_drop_a_value_is_refused() {
 /// export, named in the headline and at each note, whichever branch writes, however deep the
 /// `if` stands, and whatever the block holds before its export (DESIGN.md sec:tour_methods,
 /// "the check is per flow path: each branch of an `if` or `match` and each block's export is
-/// checked on its own"; `check::ports::silent_tail`). An `if` that is a statement of a block,
-/// not its export, is checked where it stands.
+/// checked on its own"; `check::ports::silent_tail`). Each `if` here is the export of a block,
+/// so it gives a value and has one expression in each arm; an `if` that is a statement of a
+/// block ends each arm with a statement, so a value there is refused by the parser (author,
+/// P348; `a_statement_whose_paths_write_nothing_or_drop_a_value_is_refused`).
 #[test]
 fn a_block_that_writes_on_one_branch_only_is_refused_at_the_silent_branch() {
     let silent = |stmt: &str, branch: &str| {
@@ -363,11 +391,6 @@ fn a_block_that_writes_on_one_branch_only_is_refused_at_the_silent_branch() {
     // A write before the `if` does not make its silent branch write.
     let body = "{ say(\"a\", out: m.stdout); if k > 1 { say(\"x\", out: m.stdout) } else { 0 } };";
     assert_eq!(statement_errors(body), silent(body, "0"));
-    // An `if` that is a statement of the block is refused where it stands, though the block's
-    // export writes.
-    let inner = "if k > 1 { say(\"x\", out: m.stdout) } else { 0 };";
-    let body = format!("{{ {inner} say(\"a\", out: m.stdout) }};");
-    assert_eq!(statement_errors(&body), silent(inner, "0"));
     // The same through `zedc run`: refused, placed at the statement.
     let src = with_say(
         "k = int(m.args[0] else \"\") else 0;\n  \

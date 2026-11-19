@@ -334,7 +334,8 @@ impl Toks<'_, '_> {
 /// declaration `mutable x = e;`, at a word other than `carryForward` after `with` at the end
 /// of an `initial` statement, at a pattern built with an operator written bare, at an or-pattern
 /// as an `else` tail's pattern, or at a union, intersection or difference written bare as a key,
-/// or at `<-` or `=` in a condition.
+/// or at `<-` or `=` in a condition, or after the block of an `if` that gives a value and has
+/// no `else`.
 /// The scans run over the statement, its block, its line or the type, and each check of a word
 /// or a repair is one more parse: linear in the unit, on the error path only.
 pub(super) fn clause(t: &Toks<'_, '_>, far: usize) -> Option<Clause> {
@@ -351,6 +352,65 @@ pub(super) fn clause(t: &Toks<'_, '_>, far: usize) -> Option<Clause> {
         .or_else(|| push_or_less(t, far))
         .or_else(|| push_target(t, far))
         .or_else(|| binding_in_condition(t, far))
+        .or_else(|| value_if_without_else(t, far))
+}
+
+/// The [`Clause`] for an `if` that gives a value and has no `else` (author, P348): `x = if c {
+/// 1 };`. The parse stops just after the `}` of the `if`'s block, since only an `if` statement,
+/// the first word of its statement, may leave out its `else`. The `if` is found by matching the
+/// brace back and scanning back over its condition to an `if` at the brace's depth; the clause
+/// applies when that `if` is not the first word of its statement, and the text with `else { }`
+/// written after the brace parses past it. One scan back over the statement and one parse, on
+/// the error path only: linear in the unit.
+fn value_if_without_else(t: &Toks<'_, '_>, far: usize) -> Option<Clause> {
+    let close = far.checked_sub(1)?;
+    if t.t(close) != "}" || t.t(far) == "else" {
+        return None;
+    }
+    let mut open = close;
+    let mut d = depth(t.t(open));
+    while d != 0 {
+        open = open.checked_sub(1)?;
+        d += depth(t.t(open));
+    }
+    // Back over the condition, to the `if` at the brace's depth.
+    let mut k = open.checked_sub(1)?;
+    let mut d = 0;
+    loop {
+        d += depth(t.t(k));
+        if d > 0 || d == 0 && t.t(k) == ";" {
+            return None;
+        }
+        if d == 0 && t.t(k) == "if" {
+            break;
+        }
+        k = k.checked_sub(1)?;
+    }
+    if t.decl_first(t.stmt_first(k)) == k || !t.parses(close, close, "} else { 0 }") {
+        return None;
+    }
+    let written = t.between(k, close);
+    let shown = if quotable(written) {
+        written
+    } else {
+        "if c { … }"
+    };
+    let span = t.span(far);
+    Some(Clause {
+        row: None,
+        message: format!(
+            "Missing `else` in an `if` that gives a value: `{shown}`. An `if` that gives a value \
+             has both arms."
+        ),
+        span,
+        notes: vec![(
+            t.span(k),
+            "an `if` that gives a value has an `else`, as `x = if c { 1 } else { 2 };`; only an \
+             `if` statement, which stands alone and ends with `;`, may leave it out, as `if c { \
+             break; };`"
+                .to_string(),
+        )],
+    })
 }
 
 /// The [`Clause`] for a push statement whose target cannot be pushed to (row "Push to a target
@@ -892,7 +952,7 @@ pub const RESERVED: [(&str, &str, &str); 37] = [
     ),
     (
         "break",
-        "it begins the statement `break;`, which ends a loop early, as `if c { break; } else { };`",
+        "it begins the statement `break;`, which ends a loop early, as `if c { break; };`",
         "stop",
     ),
     (

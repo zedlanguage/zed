@@ -329,8 +329,8 @@ const NEAR_MISSES: &[NearMiss] = &[
     (
         Row::NotEveryPath,
         "r = loop t {\n  while t < 3;\n",
-        "  initial c = 0 with carryForward;\n  if t > 1 { c*.bump(1) } else { 0 };\n};\n",
-        "  initial c = 0;\n  if t > 1 { c*.bump(1) } else { 0 };\n};\n",
+        "  initial c = 0 with carryForward;\n  if t > 1 { c*.bump(1); };\n};\n",
+        "  initial c = 0;\n  if t > 1 { c*.bump(1); };\n};\n",
         "4:14",
         Some(
             "`initial c = 0 with carryForward;` in place of `initial c = 0;`, so a step that \

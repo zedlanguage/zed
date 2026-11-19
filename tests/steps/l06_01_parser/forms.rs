@@ -35,12 +35,12 @@ fn breaks_build_as_statements() {
             "(def f (n) = (loop (block (break))))",
         ),
         (
-            "f(xs, v) = loop i { if xs[i] == v { break; } else { }; };",
+            "f(xs, v) = loop i { if xs[i] == v { break; }; };",
             "(def f (xs v) = (loop i (block (do (if (== (index xs i) v) (block (break)) \
              (block))))))",
         ),
         (
-            "f(xs) = for x in xs { if x > 0 { break; } else { }; x };",
+            "f(xs) = for x in xs { if x > 0 { break; }; x };",
             "(def f (xs) = (for (x) xs (block (do (if (> x 0) (block (break)) (block))) \
              (return x))))",
         ),

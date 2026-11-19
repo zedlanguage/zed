@@ -34,7 +34,7 @@ fn nested_loops_whose_break_reads_the_outer_step() {
              i)))))))))",
         ),
         (
-            "f(n) = loop i { initial r = 0; r' = loop j { if j > i { break; } else { }; }; };",
+            "f(n) = loop i { initial r = 0; r' = loop j { if j > i { break; }; }; };",
             "(def f (n) = (loop i (block (initial (r) 0) (= (r') (loop j (block (do (if (> j i) \
              (block (break)) (block)))))))))",
         ),

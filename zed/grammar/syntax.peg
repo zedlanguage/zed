@@ -28,6 +28,7 @@ Decl          = ~Local                                                          
               | ~Push                                                              L1
               | ~Binding                                                           L1
               | ~Signature                                                         L7
+              | ~IfStmt                                                            L1
               | ~ExprStmt                                                          L1
 Local         = 'local' Decl                                                       L2
 Initial       = 'initial' InitTarget '=' Expr Carry? ';'                           L6
@@ -40,6 +41,7 @@ Emit          = 'emit' Expr ';'                                                 
 While         = 'while' Expr ';'                                                   L6
 Until         = 'until' Expr ';'                                                   L6
 Break         = 'break' ';'                                                        L6
+IfStmt        = 'if' head(Expr12) Block ('else' 'if' head(Expr12) Block)* ('else' Block)? ';'   L1
 ExprStmt      = Expr ';'                                                           L1
 
 Import        = 'import' Path '.' '{' Name % ',' ','? '}' Pin? ';'                 L2

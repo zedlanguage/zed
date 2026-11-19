@@ -25,8 +25,13 @@ fn each_form_round_trips() {
         ("f(x) = loop {   };", "f(x) = loop { };\n"),
         ("f(n) = loop { break ; };", "f(n) = loop {\n  break;\n};\n"),
         (
-            "f(n) = loop{if n>1{break;}else{};};",
-            "f(n) = loop {\n  if n > 1 {\n    break;\n  } else { };\n};\n",
+            "f(n) = loop{if n>1{break;};};",
+            "f(n) = loop {\n  if n > 1 {\n    break;\n  };\n};\n",
+        ),
+        (
+            "f(n) = loop{if n>1{break;}else if n<0{x=1;break;};};",
+            "f(n) = loop {\n  if n > 1 {\n    break;\n  } else if n < 0 {\n    x = 1;\n    \
+             break;\n  };\n};\n",
         ),
         ("f(x) = loop { x };", "f(x) = loop { x };\n"),
         (

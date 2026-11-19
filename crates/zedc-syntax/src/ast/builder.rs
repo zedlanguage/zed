@@ -696,11 +696,13 @@ impl<'a, 's> Builder<'a, 's> {
 
     /// Whether node `n` is on a path of an expression statement: the statement's expression,
     /// and from a node on a path, the inside of parentheses, the value an `else` tail falls back
-    /// from, both branches of an `if`, each arm's value of a `match`, and a block's export. A
-    /// block on such a path may export nothing (DESIGN.md sec:tour_methods, "Statement position
-    /// must write something, and drop nothing"): in `if c { m.stdout <- "x"; } else { };`
-    /// neither block gives a value, since the statement drops it. Whether each path writes is
-    /// the checker's (`check::ports::silent_tail`).
+    /// from, each arm's value of a `match`, and a block's export. A block on such a path may
+    /// export nothing (DESIGN.md sec:tour_methods, "Statement position must write something,
+    /// and drop nothing"): in `match k { 0 -> { m.stdout <- "x"; }, _ -> { } };` neither arm
+    /// gives a value, since the statement drops it. Whether each path writes is the checker's
+    /// (`check::ports::silent_tail`). The branches of an expression `if` are not on a path: an
+    /// `if` with a value has one expression in each arm (author, P348), and the statement `if`
+    /// is its own form, `IfStmt` (`Builder::if_stmt`).
     // Complexity tradeoff: the naive test climbs from each block that exports nothing to the
     // statement, O(depth) per block, which is O(n²) for n such blocks nested in one another's
     // exports; one walk from the root on the first such block marks every node in O(n), and
@@ -719,7 +721,7 @@ impl<'a, 's> Builder<'a, 's> {
                     ("Expr" | "Group", true) => kids,
                     // `e else d`: the statement drops `e`'s value, and `d` is a value.
                     ("Expr12", true) => &kids[..1],
-                    ("If" | "Match", true) => &kids[1..],
+                    ("Match", true) => &kids[1..],
                     ("Arm", true) => &kids[kids.len() - 1..],
                     ("Block", true) => match kids.last() {
                         Some(&e) if tree.name(e) != "Item" => &kids[kids.len() - 1..],

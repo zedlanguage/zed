@@ -323,6 +323,7 @@ impl Builder<'_, '_> {
                 self.break_placed(d)?;
                 StmtKind::Break
             }
+            "IfStmt" => StmtKind::Expr(self.if_stmt(d)?),
             "ExprStmt" => StmtKind::Expr(self.node(kids[0])?),
             "Function" => StmtKind::Function(self.function(d, 0)?),
             "Method" => StmtKind::Method(Box::new(Method {
@@ -355,6 +356,240 @@ impl Builder<'_, '_> {
             "Import" => StmtKind::Import(self.import(d)?),
             _ => return Err(self.later(d)),
         })
+    }
+
+    /// The statement `if` of node `d`, an `IfStmt` (DESIGN.md sec:tour_methods, "Statement
+    /// position must write something, and drop nothing"; author, P348): `if c { … }`, then any
+    /// `else if c { … }` arms, then at most one `else { … }`, each arm holding statements and
+    /// ending in one. It is built as the expression `if` it means: each `else if` is the `if`
+    /// in the `else` of the one before, and a missing `else` is the empty block, the path that
+    /// does nothing, so the checker, the elaborator and the formatter read it as the statement
+    /// `if c { … } else { };` they read before. An arm with no statement, or one that ends in a
+    /// value, is rejected here, at the arm (row "Statement that writes nothing, or drops a
+    /// declared result").
+    // Complexity: one pass over the a arms, each tested on its last child in O(1): O(a).
+    fn if_stmt(&mut self, d: usize) -> Result<Expr, Error> {
+        let kids = self.kids(d);
+        // `'if' head(Expr12) Block ('else' 'if' head(Expr12) Block)* ('else' Block)? ';'`: pairs
+        // of a condition and its arm, then the `else` arm when the count is odd.
+        let (pairs, last) = match kids.len() % 2 {
+            0 => (kids, None),
+            _ => (&kids[..kids.len() - 1], kids.last().copied()),
+        };
+        let mut arms = Vec::with_capacity(pairs.len() / 2);
+        for &[c, b] in pairs.as_chunks::<2>().0 {
+            let cond = self.node(c)?;
+            let then = self.body(b)?;
+            self.arm_ends_in_statement(d, b)?;
+            arms.push((c, cond, then));
+        }
+        let end = self.span(*kids.last().expect("an `if` statement has an arm"));
+        let mut otherwise = match last {
+            Some(b) => {
+                let e = self.body(b)?;
+                self.arm_ends_in_statement(d, b)?;
+                e
+            }
+            None => Expr {
+                kind: ExprKind::Block(Vec::new()),
+                span: Span {
+                    start: end.end,
+                    end: end.end,
+                },
+            },
+        };
+        while let Some((c, cond, then)) = arms.pop() {
+            // The `if` before the condition.
+            let start = self.tokens[self.tree.nodes[c].start - 1].span.start;
+            otherwise = Expr {
+                kind: ExprKind::If {
+                    cond: Box::new(cond),
+                    then: Box::new(then),
+                    otherwise: Box::new(otherwise),
+                },
+                span: Span {
+                    start,
+                    end: end.end,
+                },
+            };
+        }
+        Ok(otherwise)
+    }
+
+    /// Checks that the arm `b` of the `if` statement `d` holds a statement and ends in one. An
+    /// empty `else { }` is rejected with the statement written without it; an arm that ends in
+    /// a value, `if c { f(x) };`, names the value.
+    fn arm_ends_in_statement(&self, d: usize, b: usize) -> Result<(), Error> {
+        let tree = self.tree;
+        let kids = self.kids(d);
+        let text = |s: Span| &self.text[s.start..s.end];
+        let one_line = |s: Span| Some(text(s)).filter(|t| !t.contains('\n'));
+        let error = |span: Span, message: String, notes: Vec<Note>| Error {
+            row: Some(Row::WritesNothing),
+            menu: String::new(),
+            span,
+            message,
+            notes,
+        };
+        let block = self.span(b);
+        if let Some(&k) = self.kids(b).last() {
+            if tree.name(k) == "Item" {
+                return Ok(());
+            }
+            let value = self.span(k);
+            let shown = one_line(value).map_or_else(
+                || format!("{} …", text(value).lines().next().unwrap_or("").trim_end()),
+                str::to_string,
+            );
+            let mut message =
+                format!("Value at the end of an arm of an `if` statement: `{shown}`.");
+            // A call may write a port, so `f(x);` may be the statement meant; a value of any
+            // other form writes nothing, and `1;` would be refused as a statement with no effect.
+            let (first, after) = (tree.nodes[k].start, tree.nodes[k].end);
+            if one_line(value).is_some() && self.word(after - 1) == ")" && self.word(first) != "(" {
+                message.push_str(&format!(" End the arm with a statement, `{shown};`."));
+            }
+            return Err(error(
+                value,
+                message,
+                vec![Note {
+                    span: value,
+                    text:
+                        "an arm of an `if` statement ends with a statement; an `if` that gives a \
+                           value has an `else` and stands where the value is used, as `x = if c \
+                           { 1 } else { 2 };`"
+                            .into(),
+                }],
+            ));
+        }
+        let first = self.tokens[tree.nodes[d].start].span.start;
+        if Some(b) == kids.last().copied() && kids.len() % 2 == 1 {
+            // `else { }`: the statement ends at the arm before it.
+            let before = self.span(kids[kids.len() - 2]);
+            let else_at = self.tokens[tree.nodes[b].start - 1].span;
+            let kept = Span {
+                start: first,
+                end: before.end,
+            };
+            let message = match one_line(kept) {
+                Some(t) => format!(
+                    "Empty `else {{ }}` in an `if` statement. Leave out the `else`: `{t};`."
+                ),
+                None => {
+                    "Empty `else { }` in an `if` statement. Leave out the `else` and its block."
+                        .to_string()
+                }
+            };
+            return Err(error(
+                Span {
+                    start: else_at.start,
+                    end: block.end,
+                },
+                message,
+                vec![Note {
+                    span: block,
+                    text: "an arm of an `if` statement holds a statement; with no `else`, nothing \
+                           happens when the condition is false"
+                        .into(),
+                }],
+            ));
+        }
+        let stmt = self.span(d);
+        let message = if kids.len() == 2 {
+            match one_line(stmt) {
+                Some(t) => format!("Empty `if` statement: `{t}` does nothing. Delete it."),
+                None => "Empty `if` statement: it does nothing. Delete it.".to_string(),
+            }
+        } else {
+            let at = kids
+                .iter()
+                .position(|&k| k == b)
+                .expect("the arm is a child");
+            let cond = self.kids(d)[at - 1];
+            let c = text(self.span(cond));
+            let mut m =
+                format!("Empty block after `if {c}` in an `if` statement. Write a statement in it");
+            // `if c { } else { s; };` is `if !c { s; };`.
+            if let [_, _, e] = kids[..]
+                && !self.kids(e).is_empty()
+                && let Some(t) = one_line(self.span(e))
+            {
+                let neg = self.negated(cond);
+                m.push_str(&format!(", or negate the condition: `if {neg} {t};`"));
+            }
+            m.push('.');
+            m
+        };
+        Err(error(
+            block,
+            message,
+            vec![Note {
+                span: block,
+                text: "an arm of an `if` statement holds a statement".into(),
+            }],
+        ))
+    }
+
+    /// The condition `cond` negated, written as the user would write it: a `!` that already
+    /// negates the whole condition is dropped (`!x` gives `x`, `!(a && b)` gives `a && b`), and
+    /// otherwise one is added, with parentheses unless the condition is one token (`!c`,
+    /// `!(a && b)`). The condition is negated as a whole only when a `Prefix` node, `'!'
+    /// Prefix`, spans all of it: `!x && y` is a `&&` whose left side is negated, and gets `!(…)`.
+    // Complexity: one descent through the nodes that span the whole condition, O(depth), and
+    // one scan of its tokens for the parentheses, O(length).
+    fn negated(&self, cond: usize) -> String {
+        let tree = self.tree;
+        let (s, e) = (tree.nodes[cond].start, tree.nodes[cond].end);
+        let whole =
+            |a: usize, b: usize| &self.text[self.tokens[a].span.start..self.tokens[b - 1].span.end];
+        let mut n = cond;
+        let negates_all = loop {
+            if tree.name(n) == "Prefix" && self.word(s) == "!" {
+                break true;
+            }
+            match self
+                .kids(n)
+                .iter()
+                .find(|&&k| (tree.nodes[k].start, tree.nodes[k].end) == (s, e))
+            {
+                Some(&k) => n = k,
+                None => break false,
+            }
+        };
+        if !negates_all {
+            return match e - s {
+                1 => format!("!{}", whole(s, e)),
+                _ => format!("!({})", whole(s, e)),
+            };
+        }
+        // `!( … )`: the parentheses only grouped the negated condition, unless they close
+        // before the end or hold a tuple.
+        let (a, b) = (s + 1, e);
+        if b - a >= 3 && self.word(a) == "(" && self.word(b - 1) == ")" {
+            let mut depth = 0usize;
+            let mut grouped = true;
+            for i in a..b {
+                match self.word(i) {
+                    "(" | "[" | "{" => depth += 1,
+                    ")" | "]" | "}" => {
+                        depth -= 1;
+                        if depth == 0 && i != b - 1 {
+                            grouped = false;
+                            break;
+                        }
+                    }
+                    "," if depth == 1 => {
+                        grouped = false;
+                        break;
+                    }
+                    _ => {}
+                }
+            }
+            if grouped {
+                return whole(a + 1, b - 1).to_string();
+            }
+        }
+        whole(a, b).to_string()
     }
 
     /// The name of node `n`, a `Name`, and its text.

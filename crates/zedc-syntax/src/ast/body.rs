@@ -212,6 +212,18 @@ impl Builder<'_, '_> {
         match tree.name(p) {
             "If" if tree.nodes[p].kids[1] == n => "the head of an `if`",
             "If" => "the `else` of an `if`",
+            // `'if' head(Expr12) Block ('else' 'if' head(Expr12) Block)* ('else' Block)? ';'`:
+            // an arm after a condition sits at an odd place, the `else` arm at an even one.
+            "IfStmt"
+                if tree.nodes[p]
+                    .kids
+                    .iter()
+                    .position(|&k| k == n)
+                    .is_some_and(|i| i % 2 == 1) =>
+            {
+                "the head of an `if`"
+            }
+            "IfStmt" => "the `else` of an `if`",
             "ElseTail" => "a fallback's `else`",
             "Lambda" => "a lambda's `->`",
             "Arm" => "a match arm's `->`",

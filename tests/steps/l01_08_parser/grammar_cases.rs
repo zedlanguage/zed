@@ -115,7 +115,14 @@ pub const CASES: &[(&str, &str, u32, &str, &str)] = &[
     ("Decl#15", "Decl", 0, "out <- 1;", "out <- 1 ;"),
     ("Decl#16", "Decl", 0, "x = 1;", "x = 1 ;"),
     ("Decl#17", "Decl", 0, "f: int -> int;", "f : int -> int ;"),
-    ("Decl#18", "Decl", 0, "f(x);", "f ( x ) ;"),
+    (
+        "Decl#18",
+        "Decl",
+        0,
+        "if c { out <- 1; };",
+        "if c { out <- 1 ; } ;",
+    ),
+    ("Decl#19", "Decl", 0, "f(x);", "f ( x ) ;"),
     (
         "Local#0",
         "Local",
@@ -159,6 +166,27 @@ pub const CASES: &[(&str, &str, u32, &str, &str)] = &[
     ("While#0", "While", 0, "while x < 3;", "while x < 3 ;"),
     ("Until#0", "Until", 0, "until x > 3;", "until x > 3 ;"),
     ("Break#0", "Break", 0, "break;", "break ;"),
+    (
+        "IfStmt#0",
+        "IfStmt",
+        0,
+        "if c { out <- 1; };",
+        "if c { out <- 1 ; } ;",
+    ),
+    (
+        "IfStmt#0",
+        "IfStmt",
+        0,
+        "if a { x = 1; out <- x; } else if b { out <- 2; } else { out <- 3; };",
+        "if a { x = 1 ; out <- x ; } else if b { out <- 2 ; } else { out <- 3 ; } ;",
+    ),
+    (
+        "IfStmt#0",
+        "IfStmt",
+        6,
+        "if c { break; };",
+        "if c { break ; } ;",
+    ),
     ("ExprStmt#0", "ExprStmt", 0, "f(x);", "f ( x ) ;"),
     (
         "Import#0",

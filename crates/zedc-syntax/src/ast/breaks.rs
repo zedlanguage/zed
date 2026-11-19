@@ -130,7 +130,7 @@ impl Builder<'_, '_> {
                     span,
                     text: format!(
                         "repair: return a result that the loop's body tests, as `done = {call}; \
-                         if done {{ break; }} else {{ }};`"
+                         if done {{ break; }};`"
                     ),
                 });
                 notes.push(Note {

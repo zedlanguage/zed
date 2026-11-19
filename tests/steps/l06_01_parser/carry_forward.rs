@@ -88,7 +88,7 @@ const LOOP_NOTE: &str = "the loop, which updates `c`: a variable a loop updates 
 #[test]
 fn a_recurrence_updated_on_some_paths_only_is_refused() {
     refused(
-        &t_loop(&["initial c = 0;", "if t > 1 { c*.bump(1) } else { 0 };"]),
+        &t_loop(&["initial c = 0;", "if t > 1 { c*.bump(1); };"]),
         Row::NotEveryPath,
         "c*.bump",
         Some(
@@ -98,7 +98,7 @@ fn a_recurrence_updated_on_some_paths_only_is_refused() {
         &[
             LOOP_NOTE,
             "`c*.bump` updates `c` only on the paths through a branch of the `if` [c*.bump]",
-            "the `if` that `c*.bump` stands in [if t > 1 { c*.bump(1) } else { 0 }]",
+            "the `if` that `c*.bump` stands in [if t > 1 { c*.bump(1); }]",
             "repair: `initial c = 0 with carryForward;` in place of `initial c = 0;`, so a step \
              that does not update `c` keeps its value [initial c = 0;]",
             "repair: update `c` on every path, with the update written where the branch is \
@@ -108,7 +108,7 @@ fn a_recurrence_updated_on_some_paths_only_is_refused() {
         &[
             &t_loop(&[
                 "initial c = 0 with carryForward;",
-                "if t > 1 { c*.bump(1) } else { 0 };",
+                "if t > 1 { c*.bump(1); };",
             ]),
             &t_loop(&["initial c = 0;", "c' = if t > 1 { c + 1 } else { c };"]),
         ],
@@ -1358,36 +1358,36 @@ fn a_dot_call_does_not_update_its_receiver() {
 /// paths, so the repair also carries the variable forward.
 #[test]
 fn a_dot_call_on_some_paths_is_named_with_its_part() {
-    let src = c_loop(&["if t > 1 { c*.tick() } else { c.add(2) };"]);
+    let src = c_loop(&["if t > 1 { c*.tick(); } else { c.add(2); };"]);
     let e = refusal(&src);
     assert_eq!(e.row, Some(Row::NotEveryPath), "{e:?}");
     assert_eq!(&src[e.span.start..e.span.end], "c*.tick");
     assert_eq!(
         e.message,
         "Not updated on every path of a step: `c*.tick` updates `c` only in a branch of the \
-         `if`, and `c.add(2)` does not update `c`. Try `c*.add(2)` instead."
+         `if`, and `c.add(2)` does not update `c`. Try `c*.add(2);` instead."
     );
     assert_eq!(
         super::initial::notes(&src, &e),
         [
             LOOP_NOTE,
             "`c*.tick` updates `c` only on the paths through a branch of the `if` [c*.tick]",
-            "the `if` that `c*.tick` stands in [if t > 1 { c*.tick() } else { c.add(2) }]",
+            "the `if` that `c*.tick` stands in [if t > 1 { c*.tick(); } else { c.add(2); }]",
             "`c.add(2)` does not update `c`: a `.` call never updates its receiver, and \
              `c*.add(2)` does; it runs only on the paths through a branch of the `if` \
              [c.add(2)]",
-            "repair: `c*.add(2)` in place of `c.add(2)` [c.add(2)]",
+            "repair: `c*.add(2);` in place of `c.add(2);` [c.add(2)]",
         ]
     );
-    builds(&c_loop(&["if t > 1 { c*.tick() } else { c*.add(2) };"]));
+    builds(&c_loop(&["if t > 1 { c*.tick(); } else { c*.add(2); };"]));
 
-    let src = c_loop(&["if t > 1 { c.tick() } else { 0 };"]);
+    let src = c_loop(&["if t > 1 { c.tick(); };"]);
     let e = refusal(&src);
     assert_eq!(e.row, Some(Row::InitialNotUpdated), "{e:?}");
     assert_eq!(
         e.message,
         "No statement of this loop updates `c`: `c.tick()` does not update `c`. Try \
-         `c*.tick()` and `initial c = Counter(n: 0) with carryForward;` instead."
+         `c*.tick();` and `initial c = Counter(n: 0) with carryForward;` instead."
     );
     assert_eq!(&src[e.span.start..e.span.end], "c.tick()");
     let want = vec![
@@ -1395,11 +1395,11 @@ fn a_dot_call_on_some_paths_is_named_with_its_part() {
         INITIAL_NOTE,
         "`c.tick()` does not update `c`: a `.` call never updates its receiver, and \
          `c*.tick()` does; it runs only on the paths through a branch of the `if` [c.tick()]",
-        "repair: `c*.tick()` in place of `c.tick()` and `initial c = Counter(n: 0) with \
+        "repair: `c*.tick();` in place of `c.tick();` and `initial c = Counter(n: 0) with \
          carryForward;` in place of `initial c = Counter(n: 0);` [c.tick()]",
     ];
     assert_eq!(super::initial::notes(&src, &e), want);
-    let mut carried = c_loop(&["if t > 1 { c*.tick() } else { 0 };"]);
+    let mut carried = c_loop(&["if t > 1 { c*.tick(); };"]);
     carried = carried.replace(
         "Counter(n: 0);\n  if",
         "Counter(n: 0) with carryForward;\n  if",

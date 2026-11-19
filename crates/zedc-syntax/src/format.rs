@@ -1405,22 +1405,33 @@ impl<'a> Formatter<'a> {
                 then,
                 otherwise,
             } => {
-                let otherwise = match otherwise.kind {
-                    ExprKind::If { .. } => Job::Raw { e: otherwise, ind },
-                    _ => Job::Block {
-                        e: otherwise,
-                        ind,
-                        place: Place::Branch,
-                    },
-                };
                 let unsafe_head = head_unsafe(cond);
-                then![stack;
-                    at(cond, ELSE),
-                    put(if unsafe_head { ") " } else { " " }),
-                    Job::Block { e: then, ind, place: Place::Branch },
-                    put(" else "),
-                    otherwise,
-                ];
+                match &otherwise.kind {
+                    // A statement `if` with no `else` is built with the empty block there
+                    // (`IfStmt`, sec:tour_methods); no `if` that gives a value has one.
+                    ExprKind::Block(stmts) if stmts.is_empty() => then![stack;
+                        at(cond, ELSE),
+                        put(if unsafe_head { ") " } else { " " }),
+                        Job::Block { e: then, ind, place: Place::Branch },
+                    ],
+                    _ => {
+                        let otherwise = match otherwise.kind {
+                            ExprKind::If { .. } => Job::Raw { e: otherwise, ind },
+                            _ => Job::Block {
+                                e: otherwise,
+                                ind,
+                                place: Place::Branch,
+                            },
+                        };
+                        then![stack;
+                            at(cond, ELSE),
+                            put(if unsafe_head { ") " } else { " " }),
+                            Job::Block { e: then, ind, place: Place::Branch },
+                            put(" else "),
+                            otherwise,
+                        ];
+                    }
+                }
                 self.put(if unsafe_head { "if (" } else { "if " });
             }
             ExprKind::Match { of, arms } => {
