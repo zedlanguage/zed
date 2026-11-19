@@ -980,3 +980,66 @@ Counts: 21 lines; closed by a test 14 (print 1964; group 805, 820; unfold 78, 17
 137; escape 1442, 1443; refused 469), open 0. One bug fixed (group 820, the poisoned lock). The
 102 lines outside the row's functions were not examined in this round either. They, and the
 305 `empty.rs` lines the fifth round left open, are the row TEST-kernel-unreached-paths-5.
+
+Twelfth round (kernel15, 2026-11-19), row TEST-kernel-unreached-paths-5: the 102 lines outside
+the row's functions (line numbers at 23b16794b) and the `empty.rs` lines the fifth round left
+open (the list file has 332, at 16279bfc5). Both lists were re-measured with llvm-cov at
+d9e847e11 over the test groups `zed_kernel`, `l01_22_type_representation`, `l01_23_subtyping`,
+`l01_23_groups_and_refusals`, `l01_26_type_resolution`, `l01_26a_generic_literals`,
+`l01_29_diagnostics` and `l01_29_repairs_and_printing` (1295 pieces; `group_oracle` timed out
+under coverage and left no profile). The lines were carried to d9e847e11 through the hunks of
+`git diff -U0`, and each carried line's text was checked against the text in the list. Line
+numbers below are at d9e847e11.
+
+The "102 lines" are 101: the per-file counts of the ninth round's list (28, 24, 27, 13, 3, 3,
+1, 1, 1) sum to 101. All 101 still count 0. Of the 332 `empty.rs` lines, 30 lie in code changed
+since 16279bfc5 and 2 are now reached, which leaves 300 that still count 0.
+
+| Line | Closed by | Test or site | Control |
+|---|---|---|---|
+| `empty.rs` 7260-7320 (30 lines), the cut one cell at a time in `nested_pieces`, now `Searching::pieces_one_at_a_time` | test | `l01_23_groups_and_refusals::nested_cover::pieces_cut_one_cell_at_a_time_are_those_found_two_at_a_time`. Product code takes this cut only when `laminar_pieces` meets a test it cannot decide, and no test input does that. The test runs each type under `Type::with_pieces_compared`, which also makes the one-at-a-time cut, checks that it equals the two-at-a-time cut whenever that one is decided, and answers with it. The verdict must equal the plain verdict and agree with `inhabited`. Inputs: 300 random draws for each of widths 2 to 4, three crossing cells whose exclusive or is the type, and the nested rows `((#_, i) \ (#a, i), 1)` for i in 0..4, less `((#_, int), 1 \| 2)` | (1) `held.extend(&cs)` removed in the within-all branch; (2) `pieces[i].0 = &pieces[i].0 - &t` replaced by a clone. Both fail the new test with "the pieces found two at a time and one at a time differ", and the other `nested_cover` tests pass |
+| `empty.rs` 7160-7161, `nested_cover` merging two pieces held by the same cells | proof | `debug_assert!` with the proof at the site. No two pieces are held by the same cells. In the two-at-a-time cut the pieces form a forest, and each piece is held by the cells on its path to the root. In the one-at-a-time cut this holds by induction: each step adds a new, non-empty cell set `cs`, and `p - t` keeps `held(p)` while `p & t` gets `held(p) ∪ cs` | none |
+| `empty.rs` 2216, 2737, 3608, 3620, 11406, 11407, 11926, 12056, 12167, 13472, 17237, 17245, 17307 | proof (standing) | `unreachable!` guards, each with its proof at the site. For 2216 the proof is the `while` condition just above, and for 13472 it is the bodies of `literal_keys` and `flat_keys`, which make only `Key::Bool`, `Key::Lit` and `Key::Atom`. Each proof was read and checked against its callers | none |
+| `bdd.rs` 517, 555, 1107, 1306, 2038, 3689, 3833, 4098, 4230; `print.rs` 139, 309, 932, 1338; `empty/sweep.rs` 1197; `empty/refused.rs` 198, 341, 456; `empty/shared.rs` 134, 144, 147, 291, 315, 316; `bdd/list/treap.rs` 195; `print/uses.rs` 114 | proof (standing) | `unreachable!` or `debug_assert!` guards, each with its proof at the site, read and checked. `shared.rs` 316 is the release-build return after the `debug_assert!` at 315 | none |
+| `bdd.rs` 91-97 | not run code | `Tables::new` is a `const fn` evaluated by the compiler in the `const` initializers of `TUPLES` and `MORPHISMS` (comment at the site) | none |
+| `bdd.rs` 4576, 4583, 4624, 4638, 4643, 4648; `print.rs` 53-55; `bucket.rs` 403 | test-only code | failure branches of `#[cfg(test)]` checks, the `#[cfg(test)]` helper `surface_operand`, and the panic of a test helper. A passing test does not reach them | none |
+
+Fixed in passing: `zedc-resolve`'s `Resolver::struct_fields` (from d31b1f860) failed
+`clippy -D warnings` (`type_complexity`). The field's type now uses the alias `FieldNames`.
+
+Open, `empty.rs` (255 lines, at d9e847e11): 117, 125, 406-408, 517, 521, 618, 800, 910, 923, 1825,
+2025, 2199, 2224, 2802, 2984, 3048, 3097, 3110, 3124, 3128, 3163, 3194, 3293, 3651, 3748, 4073,
+4285, 4642, 4644, 4646, 4867, 4909, 4928, 4990; the list fallback after `chain_rep` fails,
+5042-5052 (10 lines); 5151, 5263, 5344, 5347; fork and blame restores 5386, 5391, 5392, 5523,
+5528; 6020, 6075; 6158, 6162, 6163, 6165, 6177, 6324; the restores in `tuples_on`, 6394-6409 (8
+lines) and 6478-6495 (13 lines); 6509, 6518, 6611, 6647, 6915, 7008, 7065, 7146; 7288 and 7299
+(the two `return None` lines of the crossing check in `pieces_one_at_a_time`: the new test is
+not confirmed to reach them, since this round measured no coverage after adding it);
+`find_prefix_chains` 7589, 7595, 7622, 7697, 7698, 7749, 7987, 8003, 8023, 8060, 8090-8094 (4
+lines), 8123-8127 (4 lines), 8650, 8718, 8802-8832 (17 lines), 8863, 8913, 9097, 9139;
+`chain_rep` 9148, 9157, 9174-9178, 9194; `check_chain_witness` 9236, 9249, 9300, 9362, 9383, 9397,
+9405, 9409, 9424, 9434, 9438, 9478-9482 (4 lines), 9508-9512 (4 lines); the walk over `no_keys`
+in `find_rep` 9663-9922 (39 lines); 10103, 10120, 10125, 10246, 10460, 10461, 10499, 10564,
+10571, 10637-10643 (6 lines), 10681, 10685, 11494, 11495; the restores for morphisms
+11550-11597 (21 lines); 11891, 11912, 11997, 11998, 12061, 12271, 12337, 12508; `Side::mentions`
+12621-12626 (5 lines; its one caller, 12123 at d9e847e11, is in `rest_choice`), 12672, 12750,
+12772, 12778, 13143, 13149, 13166, 13167, 13314, 13368, 13647, 13890, 14552, 14560, 14607, 14632,
+14930, 17179, 17180, 17375. Every open line, with its text, is listed in
+`wt/coverage/TEST-kernel-unreached-paths-5-kernel15-d9e847e11.txt` (314 lines).
+
+Open, outside `empty.rs` (59 lines, at d9e847e11):
+- `bdd.rs`: 715, 792, 1320 and 1333; 832 (`holds`, `Form::Not`, argued at the site, not
+  guarded); and 3877 (a race between threads on `OnceLock`, argued at the site, no test).
+- `print.rs`: 734 (`force_cycles`, argued at the site by a sweep of seeds), 1072, 1559, 1560,
+  1573, 1622, 1623, 1628, 1629, 1659, 1665-1667, 1794, 2038, 2117 and 2132.
+- `empty/sweep.rs`: 746, 857, 867, 1002, 1118, 1150, 1156, 1167, 1168, 1234, 1286, 1287, 1348,
+  1470, 1471, 1588, 1595, 1753, 1767, 1773, 1776, 1840, 1937, 1991, 2069 and 2136.
+- `empty/shared.rs`: 53, 76, 77, 81, 85, 97 and 98. These are the `Tied::Many` arms of the map
+  keyed by `name_digest`, reached only when two different types share a digest. A test needs a
+  hook that forces the digest.
+- `empty/names.rs`: 246, 316 and 353.
+
+Counts: 401 lines (101 outside `empty.rs`, 300 in it). Closed by a test 30, by a proof at the
+site 40 (2 new, 38 standing guards read), not run or test-only code 17, open 314 (59 outside
+`empty.rs`, 255 in it, 7288 and 7299 among them). They go to the row
+TEST-kernel-unreached-paths-6.

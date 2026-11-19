@@ -945,6 +945,9 @@ enum Found {
     Word(u32),
 }
 
+/// The names of a struct's fields, in written order and as a set ([`Resolver::struct_fields`]).
+type FieldNames = (Vec<String>, HashSet<String>);
+
 #[derive(Default)]
 struct Resolver<'u> {
     out: Resolution,
@@ -1033,7 +1036,7 @@ struct Resolver<'u> {
     /// The names of the fields of each struct the unit declares, by the struct's statement, in
     /// written order and as a set, or `None` for a struct that imports fields of another type,
     /// whose names this step does not follow ([`Resolver::generation_push`]).
-    struct_fields: HashMap<Span, Option<(Vec<String>, HashSet<String>)>>,
+    struct_fields: HashMap<Span, Option<FieldNames>>,
     /// Each method whose receiver's fields are known, by the method's statement, the text its
     /// receiver `this` is bound at.
     receivers: HashMap<Span, Method>,

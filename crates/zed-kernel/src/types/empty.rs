@@ -255,6 +255,11 @@ thread_local! {
     /// disjoint parts to `Searching::take_out_piece` and the split into the open tuple types:
     /// set only by [`Type::without_nested_cover`], for the test that compares the two paths.
     static NO_NESTED_COVER: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+    /// Whether `Searching::nested_pieces` also cuts the pieces one cell at a time, checks that
+    /// they are the pieces `Searching::laminar_pieces` finds whenever it decides them, and
+    /// answers with them: set only by [`Type::with_pieces_compared`], for the test of the cut
+    /// one cell at a time, which product code takes only after a test not decided.
+    static PIECES_COMPARED: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
 }
 
 /// Keeps the verdicts of `members`, the recursive members of one group. A member the group's
@@ -598,6 +603,19 @@ impl Type {
         NO_NESTED_COVER.with(|c| c.set(true));
         let r = f();
         NO_NESTED_COVER.with(|c| c.set(false));
+        Type::forget_emptiness();
+        r
+    }
+
+    /// Runs `f` with `Searching::nested_pieces` cutting the pieces both ways and checking that
+    /// they agree, answering with those cut one cell at a time; the kept emptiness results
+    /// dropped before and after. For the test of the cut one cell at a time.
+    #[doc(hidden)]
+    pub fn with_pieces_compared<R>(f: impl FnOnce() -> R) -> R {
+        Type::forget_emptiness();
+        PIECES_COMPARED.with(|c| c.set(true));
+        let r = f();
+        PIECES_COMPARED.with(|c| c.set(false));
         Type::forget_emptiness();
         r
     }
@@ -7232,6 +7250,17 @@ impl<'m> Searching<'m> {
         let mut left: BTreeMap<usize, usize> = BTreeMap::new();
         for (p, held) in pieces {
             if let Some(t) = by_held.get_mut(&held) {
+                // Not reached: no two pieces are held by the same cells. In `laminar_pieces`
+                // the piece of cell `c` is held by `c`'s own cells and those of the cells around
+                // it; two pieces of one set would have each cell inside the other, which a
+                // forest of cells does not have. In `pieces_one_at_a_time`, by induction over
+                // the cells added: a cell's own cells `cs` are new and not empty, so `t - u`
+                // (held by `cs` alone) differs from each piece held before (each holds an
+                // earlier cell), a piece `p` cut into `p - t` and `p & t` gives `held(p)` and
+                // `held(p) ∪ cs`, which differ, and adding `cs` to two pieces of different
+                // sets keeps them different, `cs` holding no earlier cell. Kept, joining the
+                // two, so that the answer holds whatever the pieces.
+                debug_assert!(false, "two pieces held by the same cells");
                 *t = &*t | &p;
                 continue;
             }
@@ -7312,9 +7341,30 @@ impl<'m> Searching<'m> {
                 }
             }
         }
-        if let Some(found) = self.laminar_pieces(&types).await {
-            return found;
+        let laminar = self.laminar_pieces(&types).await;
+        if PIECES_COMPARED.with(std::cell::Cell::get) {
+            let one = self.pieces_one_at_a_time(types).await;
+            if let Some(found) = laminar {
+                assert_eq!(
+                    found, one,
+                    "the pieces found two at a time and one at a time differ"
+                );
+            }
+            return one;
         }
+        match laminar {
+            Some(found) => found,
+            None => self.pieces_one_at_a_time(types).await,
+        }
+    }
+
+    /// The pieces of [`Searching::nested_pieces`] for the distinct cells `types`, cut one cell
+    /// at a time. Reached in product code only when [`Searching::laminar_pieces`] meets a test
+    /// not decided.
+    async fn pieces_one_at_a_time(
+        &'m self,
+        types: Vec<(Type, BTreeSet<usize>)>,
+    ) -> Option<Vec<(Type, BTreeSet<usize>)>> {
         // Only cells pairwise nested or disjoint on the component are cut here: DESIGN (sec.
         // L1.23) takes out of the box "each piece on which narrowing alone proves the part
         // empty", a piece being the meet of the component with one open tuple type's cell, so

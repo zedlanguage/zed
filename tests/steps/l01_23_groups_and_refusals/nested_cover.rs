@@ -346,3 +346,55 @@ fn a_piece_taken_out_before_the_split_leaves_a_box_the_split_settles() {
         assert_eq!(both(&f.ty()), (Verdict::Empty, Verdict::Empty), "{f:?}");
     });
 }
+
+/// `nested_pieces` cuts the pieces one cell at a time only when a test of two cells is not
+/// decided, which no small input makes. Here every call also cuts them so
+/// (`Type::with_pieces_compared`): wherever the cells two at a time give pieces, those cut one
+/// at a time are the same, and the verdict on the pieces cut one at a time is the verdict of
+/// the ordinary path and agrees with enumeration. The random boxes of
+/// `both_paths_agree_with_enumeration_on_random_boxes`, the crossing cells and the nested ones.
+#[test]
+fn pieces_cut_one_cell_at_a_time_are_those_found_two_at_a_time() {
+    zed_tests::deep::on_small_stack(|| {
+        use zedc::check::read::parse_type;
+        let (mut g, _) = Rng::fresh("pieces cut one cell at a time");
+        let mut fs = Vec::new();
+        for width in 2..=4 {
+            for _ in 0..300 {
+                let inner = match g.below(2) {
+                    0 => random(&mut g, width, 4),
+                    _ => {
+                        let (a, c) = (1 + g.below(4), 3 + g.below(9));
+                        rows(&mut g, width, a).less(rows(&mut g, width, c))
+                    }
+                };
+                fs.push((F::And(Box::new(row(&mut g, width)), Box::new(inner)), width));
+            }
+        }
+        let xor = |x: F, y: F| F::Or(Box::new(x.clone().less(y.clone())), Box::new(y.less(x)));
+        let odd = xor(
+            xor(F::Row(vec![3, TOP]), F::Row(vec![6, TOP])),
+            F::Row(vec![5, TOP]),
+        );
+        fs.push((F::And(Box::new(F::Row(vec![TOP, TOP])), Box::new(odd)), 2));
+        let mut types: Vec<(Type, Option<bool>)> = fs
+            .iter()
+            .map(|(f, width)| (f.ty(), Some(inhabited(f, *width))))
+            .collect();
+        let rows: Vec<String> = (0..4)
+            .map(|i| format!("((#_, {i}) \\ (#a, {i}), 1)"))
+            .collect();
+        let kernel = |s: &str| parse_type(s).unwrap().kernel().expect("a kernel type");
+        let nested = &kernel(&rows.join(" | ")) - &kernel("((#_, int), 1 | 2)");
+        types.push((nested, Some(false)));
+        for (t, truth) in &types {
+            let one = Type::with_pieces_compared(|| t.verdict());
+            let two = t.verdict();
+            Type::forget_emptiness();
+            assert_eq!(one, two, "{t:?}");
+            if class(one) < 2 {
+                assert_eq!(Some(class(one) == 1), *truth, "{t:?}: {one:?}");
+            }
+        }
+    });
+}
