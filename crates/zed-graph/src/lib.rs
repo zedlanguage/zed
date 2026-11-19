@@ -18,6 +18,9 @@
 
 use std::marker::PhantomData;
 
+mod union_find;
+pub use union_find::{OffsetUnionFind, UnionFind};
+
 /// The edges of a graph as [`Search::run`] reads them, and what it does with each component.
 pub trait Walk {
     /// Where the search is in the edges of a node on its path; it starts at
