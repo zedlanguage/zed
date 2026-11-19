@@ -398,3 +398,42 @@ Open, 305 lines, with the reason for each group:
   `check_chain_witness` 8752-9384, `find_rep`'s `no_keys` 9973-10198, the `decided` parts
   fallback 4633-4643, `system` 14808-14809, and about 90 single lines elsewhere: not studied this
   round.
+
+Sixth round (cover8, 2026-11-19): cover4's open list outside `empty.rs`, at zed-impl 4f7bb8726
+(old numbers from 847a31d3e mapped by `git diff -U0`). Coverage measured with an instrumented
+build of the kernel's unit tests (`build/cov-k`, `-C instrument-coverage`), one filtered run each.
+Baseline 567 kernel unit tests passed.
+
+Closed in `types/bdd.rs` (numbers at this round's commit):
+
+- `Bdd::reaching`: the `seen` test that skips a node met twice, and the join of two states, are
+  `unreachable!`, with the proof at the function. `Bdd::view` puts a leaf on one side of each
+  node, so the nodes reached form one chain, each with fewer literals than those before it, and
+  live lists have distinct ids. The unused `join` argument is removed, with its closure in
+  `list_boxes` (`types.rs`). The leaf input and a stop by `f` are reached by
+  `bdd::tests::reaching_visits_the_nodes_a_walk_of_every_path_finds`, which compares every call
+  with a walk of every path (529 lists, 562 stops). Control: with `f`'s `false` ignored the test
+  fails ("stopped at call 1").
+- `Part::before`'s tie of digests: `a_part_goes_before_itself`.
+- `Part::not_as_kept`'s `Form::Not` arm: `the_complement_as_kept_of_a_not_is_its_operand`.
+- `Part::choice_of_as_kept`, two chains with two opposite literals (`return None`) and the final
+  `None` for no condition or two: `a_union_with_two_conditions_or_none_is_no_choice_as_kept`,
+  with one-condition cases that give the choice.
+- `Bdd::implies_by_blocks` on an operand that is a leaf: `unreachable!`, with the proof at the
+  site. `absorbed` is called only after `Part::zip_at_once` gave `None`, which it never gives
+  for a leaf operand.
+- `union_rows` passing over an expression met twice, `taken_toward` passing over a cell in
+  `seen`, `atoms_unseen` stopping when `f` fails on shared set nodes:
+  `walks_pass_over_what_they_met_and_stop_when_f_fails` (the controls for these three were
+  reasoned, not run: each check removed makes its assertion fail).
+
+Open in `types/bdd.rs`. No kernel unit test reaches these, and this round built no input for
+them:
+
+- `Expr::link` with a complement that is an expression not holding `self`.
+- `Connect::negate`: a `Not` whose operand is an expression, and a complement made through a
+  choice that gets a `Source::Form`.
+- `Connect::choose`: the `xor::xor_choice` return, and the rule for two choices on one condition.
+- A walk's `continue` at an expression already in `exprs` (about line 2270), the join of two
+  blocks of one value in the merge at about line 3847, and a literal set false that empties the
+  last block (about line 4063).

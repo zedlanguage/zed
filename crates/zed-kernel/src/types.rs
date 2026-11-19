@@ -4517,7 +4517,8 @@ fn meet_rows(r: &Row, s: &Row) -> Row {
 /// holds a tuple outside every tuple type it takes. A value of a diagram is in the last tuple
 /// type its path takes, and in the meet of those the path took before; so each node that is
 /// the last tuple type taken on a path to `true` gives the box of its tuple type met with the
-/// union of the meets on the paths to it, one pass over the nodes, never over the paths. A node
+/// meet of those taken on the one path to it (a list's nodes form one chain, [`Bdd::reaching`]),
+/// one pass over the nodes. A node
 /// whose taken branch meets another tuple type before `true` gives no box of its own, so a meet
 /// of tuple types gives its meet in either order of the diagram.
 fn list_boxes(b: &Bdd<Row>, len: usize) -> Option<Vec<Row>> {
@@ -4546,12 +4547,6 @@ fn list_boxes(b: &Bdd<Row>, len: usize) -> Option<Vec<Row>> {
             }
             runs.push(last);
             runs
-        },
-        |r, s| {
-            let (m, n) = (met(r), met(s));
-            let count = r.iter().chain(s).map(|(_, k)| k).sum();
-            let join = m.iter().zip(n.iter()).map(|(x, y)| x | y).collect();
-            vec![(Row::new(join), count)]
         },
         |a, runs| {
             out.push(meet_rows(a, &met(runs)));

@@ -474,9 +474,16 @@ impl<A: Literal> Bdd<A> {
     /// Whether `f` holds of each node's atom and state, for the nodes ([`Bdd::branch`]) from
     /// whose `hi` a chain of `lo` edges alone reaches `true`: the nodes that are the last `hi`
     /// taken on some path to `true`. The root has the state `start`; an edge to a node's `hi`
-    /// passes on `take` of its state and its atom, an edge to its `lo` its state; a node's state
-    /// is `join` of the states of the edges into it. Each node is visited once, after every node
-    /// with an edge into it, so the time is linear in the nodes however many paths there are.
+    /// passes on `take` of its state and its atom, an edge to its `lo` its state. Each node is
+    /// visited once, after every node with an edge into it, so the time is linear in the nodes.
+    ///
+    /// Each node has one edge into it, so no states are ever joined. Proof: [`Bdd::view`] puts a
+    /// leaf on one side of every node, so a node has at most one child that is a list, and the
+    /// nodes reached from the root form one chain `n0, n1, …`. Each `n(j+1)` is `n(j)` with its
+    /// first literal removed (and `finish` only shortens a list), so it has fewer literals than
+    /// every node before it in the chain and is none of them; and two live lists with the same
+    /// id are the same list ([`Bdd::id`]: cell ids are drawn two apart from one counter). So no
+    /// id is met twice in the walk, and `n(j+1)` gets its state only from `n(j)`.
     ///
     /// The nodes of a list follow the literals of each block in the order of their atoms, so
     /// which nodes are the last `hi` of a path depends on the order of the atoms only within a
@@ -488,7 +495,6 @@ impl<A: Literal> Bdd<A> {
         &self,
         start: S,
         take: impl Fn(&S, &A) -> S,
-        join: impl Fn(&S, &S) -> S,
         mut f: impl FnMut(&A, &S) -> bool,
     ) -> bool {
         if let Bdd::Leaf(_) = self {
@@ -507,7 +513,8 @@ impl<A: Literal> Bdd<A> {
                 continue;
             }
             if !seen.insert(n.id()) {
-                continue;
+                // The nodes reached form one chain with no node met twice (proof above).
+                unreachable!("a node of the chain is pushed once");
             }
             stack.push((n, true));
             let (_, _, hi, lo) = node(n);
@@ -543,11 +550,10 @@ impl<A: Literal> Bdd<A> {
             }
             for (child, s) in [(hi, take(&here, atom)), (lo, here)] {
                 if let Bdd::List(..) = child {
-                    let s = match state.remove(&child.id()) {
-                        Some(t) => join(&t, &s),
-                        None => s,
-                    };
-                    state.insert(child.id(), s);
+                    // `child` has one edge into it, this one (proof above), so it has no state yet.
+                    if state.insert(child.id(), s).is_some() {
+                        unreachable!("a node's state comes from its one parent");
+                    }
                 }
             }
         }
@@ -4181,7 +4187,11 @@ mod list {
         // the other implications above.
         fn implies_by_blocks(&self, other: &Bdd<A>) -> Option<bool> {
             let (Bdd::List(c, v), Bdd::List(d, w)) = (self, other) else {
-                return None;
+                // The one caller, `Bdd::absorbed`, is called only by `Part::union_as_kept` and
+                // `Connect::zipped`, each after `Part::zip_at_once` gave `None` for the two
+                // operands (`zipped` is entered only from `Connect::zip`, which tests it first);
+                // `zip_at_once` gives `Some` whenever an operand is a leaf.
+                unreachable!("both operands of `absorbed` are lists")
             };
             let short = crate::address::short64;
             if c.len == d.len {

@@ -3058,3 +3058,201 @@ fn a_union_of_no_literals_is_false_and_of_an_atom_both_ways_is_left_to_zip() {
     let y = Part::literal(atom(1));
     assert_eq!(Part::union_of_literals(&[&x, &y, &nx]), None);
 }
+
+/// The calls `Bdd::reaching` makes, found by walking every path of `b` ([`Bdd::branch`]): each
+/// node from whose `hi` a chain of `lo` edges reaches `true`, with the atoms taken on the path
+/// to it. The walk is over paths, not nodes, so it holds for any diagram.
+fn reaching_by_paths(b: &Bdd<Row>, taken: &mut Vec<Row>, out: &mut Vec<String>) {
+    let Ok((_, a, hi, lo)) = b.branch() else {
+        return;
+    };
+    let mut end = hi;
+    while let Ok((_, _, _, l)) = end.branch() {
+        end = l;
+    }
+    if *end == Bdd::Leaf(true) {
+        out.push(format!("{a:?} after {taken:?}"));
+    }
+    taken.push(a.clone());
+    reaching_by_paths(hi, taken, out);
+    taken.pop();
+    reaching_by_paths(lo, taken, out);
+}
+
+/// `reaching` passes `f` each node that is the last `hi` taken on a path to `true`, with the
+/// atoms taken before it, as a walk of every path finds; it stops at the first `false` of `f`
+/// and gives `false`; and on a leaf it calls nothing and gives `true`. Its `seen` and joined
+/// states are unreachable (proof at `Bdd::reaching`); the leaf and a stop by `f` were never
+/// reached by the kernel's tests before (cover8): its one caller's `f` always holds.
+#[test]
+fn reaching_visits_the_nodes_a_walk_of_every_path_finds() {
+    for v in [false, true] {
+        let mut calls = 0;
+        assert!(Bdd::<Row>::Leaf(v).reaching(
+            (),
+            |_, _| (),
+            |_, _| {
+                calls += 1;
+                false
+            }
+        ));
+        assert_eq!(calls, 0);
+    }
+    let mut seed = crate::seed::seed("reaching_visits_the_nodes_a_walk_of_every_path_finds");
+    let (mut lists, mut stopped) = (0, 0);
+    for _ in 0..800 {
+        let Part::Bdd(b) = random(&mut seed, 6) else {
+            continue;
+        };
+        let mut expected = Vec::new();
+        reaching_by_paths(&b, &mut Vec::new(), &mut expected);
+        let mut got = Vec::new();
+        let take = |s: &Vec<Row>, a: &Row| {
+            let mut s = s.clone();
+            s.push(a.clone());
+            s
+        };
+        assert!(b.reaching(Vec::new(), take, |a, s| {
+            got.push(format!("{a:?} after {s:?}"));
+            true
+        }));
+        expected.sort();
+        got.sort();
+        assert_eq!(got, expected, "{b:?}");
+        lists += 1;
+        // Stopped at its `k`-th call, `reaching` gives `false` after exactly `k` calls.
+        for k in 1..=expected.len() {
+            let mut calls = 0;
+            let all = b.reaching(Vec::new(), take, |_, _| {
+                calls += 1;
+                calls < k
+            });
+            assert!(!all && calls == k, "{b:?} stopped at call {k}");
+            stopped += 1;
+        }
+    }
+    eprintln!("{lists} lists, {stopped} stops");
+    // Each kind on a list built to give it, whatever the draws met: `a0 | a1` reaches `true`
+    // from both nodes, so `f` is called twice and can stop at either.
+    let (a0, a1) = (Bdd::literal(atom(0)), Bdd::literal(atom(1)));
+    let b = a0.zip_chain(&a1, Op::Or).expect("a chain joined");
+    let mut calls = 0;
+    assert!(b.reaching(
+        (),
+        |_, _| (),
+        |_, _| {
+            calls += 1;
+            true
+        }
+    ));
+    assert_eq!(calls, 2);
+}
+
+/// `x_i | x_(i+1)`, kept as an expression.
+fn or_expr(i: u64) -> Part<Row> {
+    Part::connect(Op::Or, Part::literal(atom(i)), Part::literal(atom(i + 1)))
+}
+
+/// The complement as kept of `!q` made as an expression, whose own complement is not yet
+/// made, is `q`, read from its form (cover8; not reached by the kernel's tests before).
+#[test]
+fn the_complement_as_kept_of_a_not_is_its_operand() {
+    let q = or_expr(0);
+    let n = Part::not_expr(q.clone());
+    let Part::Expr(e) = &n else {
+        panic!("`!q` is an expression")
+    };
+    assert!(
+        e.known().is_none(),
+        "the complement of `!q` is not yet made"
+    );
+    assert_eq!(Part::not_as_kept(&n), Some(q));
+}
+
+/// `a | b` is a choice as kept only when exactly one condition fits (`choice_of_as_kept`): two
+/// chains with two literals taken opposite ways, and two meets of expressions each with its
+/// complement in the other, give `None`, as do two meets with no complement between them;
+/// one condition gives the choice. The cases with two conditions or none were not reached by
+/// the kernel's tests before (cover8).
+#[test]
+fn a_union_with_two_conditions_or_none_is_no_choice_as_kept() {
+    let lit = |i: u64, t: bool| {
+        let l = Bdd::literal(atom(i));
+        if t { l } else { l.not() }
+    };
+    let chain =
+        |x: Bdd<Row>, y: Bdd<Row>| Part::Bdd(x.zip_chain(&y, Op::And).expect("a chain met"));
+    // Chains: `x0&x1 | !x0&x1` chooses on `x0`; `x0&x1 | !x0&!x1` on two atoms.
+    let one = Part::choice_of_as_kept(
+        &chain(lit(0, true), lit(1, true)),
+        &chain(lit(0, false), lit(1, true)),
+    );
+    let x0 = Part::Bdd(lit(0, true));
+    let x1 = Part::Bdd(lit(1, true));
+    assert_eq!(one, Some((x0, x1.clone(), x1)));
+    let two = Part::choice_of_as_kept(
+        &chain(lit(0, true), lit(1, true)),
+        &chain(lit(0, false), lit(1, false)),
+    );
+    assert_eq!(two, None);
+    // Meets of expressions.
+    let (p, q) = (or_expr(0), or_expr(2));
+    let meet = |a: &Part<Row>, b: &Part<Row>| Part::connect(Op::And, a.clone(), b.clone());
+    let (np, nq) = (Part::not_expr(p.clone()), Part::not_expr(q.clone()));
+    assert_eq!(
+        Part::choice_of_as_kept(&meet(&p, &q), &meet(&np, &q)),
+        Some((p.clone(), q.clone(), q.clone()))
+    );
+    assert_eq!(
+        Part::choice_of_as_kept(&meet(&p, &q), &meet(&np, &nq)),
+        None
+    );
+    let (r, s) = (or_expr(4), or_expr(6));
+    assert_eq!(Part::choice_of_as_kept(&meet(&p, &q), &meet(&r, &s)), None);
+}
+
+/// The walks that keep a `seen` set pass over what they met before, and stop when `f` fails
+/// (cover8; none of these steps was reached by the kernel's tests before): a union whose two
+/// operands are one expression gives that expression's atoms once; a list walked a second time
+/// toward `true` with the same set gives nothing; and the walk of atoms over shared set nodes
+/// gives `false` at the first atom `f` refuses.
+#[test]
+fn walks_pass_over_what_they_met_and_stop_when_f_fails() {
+    let e = or_expr(0);
+    let twice = Part::connect(Op::Or, e.clone(), e);
+    assert_eq!(twice.union_rows(), Some(vec![atom(0), atom(1)]));
+    let x: Vec<Bdd<Row>> = (0..3).map(|i| Bdd::literal(atom(i))).collect();
+    let chain = x[0].zip_chain(&x[1], Op::Or).expect("a chain joined");
+    let chain = chain.zip_chain(&x[2], Op::Or).expect("a chain joined");
+    let mut seen = DigestSet::default();
+    let mut given = Vec::new();
+    chain.taken_toward(true, &mut seen, &mut |a| given.push(a.clone()));
+    assert_eq!(given.len(), 3, "{given:?}");
+    chain.taken_toward(true, &mut seen, &mut |a| given.push(a.clone()));
+    assert_eq!(
+        given.len(),
+        3,
+        "a second walk with the same set gives nothing"
+    );
+    let mut calls = 0;
+    let all = chain.atoms_unseen(
+        &mut DigestSet::default(),
+        &mut |_| {
+            calls += 1;
+            false
+        },
+        true,
+    );
+    assert!(!all && calls == 1);
+}
+
+/// A part goes before itself: of equal digests the order of contents decides, and a part is
+/// equal to itself (cover8: the tie was reached only in the short-addresses build).
+#[test]
+fn a_part_goes_before_itself() {
+    let mut seed = crate::seed::seed("a_part_goes_before_itself");
+    for _ in 0..50 {
+        let p = random_expr(&mut seed, 4, &mut Vec::new());
+        assert!(p.before(&p), "{p:?}");
+    }
+}
