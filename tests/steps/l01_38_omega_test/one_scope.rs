@@ -5223,11 +5223,14 @@ fn remainder_alias_case(
     Formula::and(parts)
 }
 
+/// One row of [`small_conjunction`]: `(terms, constant, is_eq)`, the terms as `(atom, c)`.
+type SmallRow = (Vec<(usize, i64)>, i64, bool);
+
 /// Builds the conjunction of `rows`, each `(terms, constant, is_eq)` meaning
 /// `sum(c * atom) + constant == 0` or `>= 0`, with atom `i` named `names[i]`, in the
 /// order `order`.
 fn small_conjunction(
-    rows: &[(Vec<(usize, i64)>, i64, bool)],
+    rows: &[SmallRow],
     names: &[&str],
     order: &[usize],
 ) -> zedc::store::presburger::Formula {
@@ -5285,7 +5288,7 @@ fn small_brute(f: &zedc::store::presburger::Formula, names: &[&str], boxes: &[(i
 /// `satisfiable` in both call orders; returns the answers seen, which the callers require to
 /// be one, and checks every point found and every answer given against enumeration.
 fn small_answers(
-    rows: &[(Vec<(usize, i64)>, i64, bool)],
+    rows: &[SmallRow],
     namings: &[Vec<&str>],
     orders: &[Vec<usize>],
     boxes: &[(i64, i64)],
@@ -5342,7 +5345,7 @@ fn equal_moduli_rows_of_one_remainder_answer_alike_under_names_and_orders() {
     for case in 0..48 {
         let (k1, k2) = (rng.int(0, 4), rng.int(0, 4));
         let v = rng.int(0, 14);
-        let mut rows: Vec<(Vec<(usize, i64)>, i64, bool)> = vec![
+        let mut rows: Vec<SmallRow> = vec![
             (vec![(0, 1), (2, -5), (1, -1)], -k1, true),
             (vec![(0, 1), (3, -5), (1, -1)], -k2, true),
         ];
@@ -5397,7 +5400,7 @@ fn a_remainder_row_without_points_answers_no_under_either_reading() {
         for (cu, cv) in [(0i64, 0i64), (1, 0), (0, 1), (4, 4)] {
             // `u + v - 5 q - k == 0`, `u == cu`, `v == cv`: a point exists only when
             // `cu + cv - k` is 0 or 5.
-            let mut rows: Vec<(Vec<(usize, i64)>, i64, bool)> = vec![
+            let mut rows: Vec<SmallRow> = vec![
                 (vec![(0, 1), (1, 1), (2, -5)], -k, true),
                 (vec![(0, 1)], -cu, true),
                 (vec![(1, 1)], -cv, true),
