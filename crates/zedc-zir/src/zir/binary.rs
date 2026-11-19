@@ -27,13 +27,12 @@ use zed_kernel::term::{Evidence, Grade, GuardPos, Pattern, Witness};
 use zed_kernel::text::{Piece, Text};
 use zed_kernel::value::{Atom, Value};
 
-use super::strip::Form;
 use super::text::{self, PRIMS, VERSION};
-use super::{Derived, Edge, Node, Op, Region, RegionKind, Src};
+use super::{Derived, Edge, Form, Node, Op, Region, RegionKind, Src};
 
 const MAGIC: &[u8; 4] = b"ZIR\0";
 
-/// The first four bytes of a stripped module ([`encode_stripped`]).
+/// The first four bytes of a stripped module ([`encode_as_stripped`]).
 const MAGIC_STRIPPED: &[u8; 4] = b"ZIRs";
 
 /// The one NaN word the form writes: the quiet NaN with a zero payload. Rust does not fix the
@@ -83,11 +82,12 @@ pub fn encode(root: &Region) -> Result<Vec<u8>, TooLarge> {
     encode_as(MAGIC, root)
 }
 
-/// The binary form of [`strip`](super::strip::strip)`(root)`, which starts `ZIRs` in place of
-/// `ZIR\0`, so that [`decode_form`] reads it back as stripped and [`decode`] refuses it.
-/// [`TooLarge`] as at [`encode`].
-pub fn encode_stripped(root: &Region) -> Result<Vec<u8>, TooLarge> {
-    encode_as(MAGIC_STRIPPED, &super::strip::strip(root))
+/// The binary form of `stripped`, a graph already stripped, which starts `ZIRs` in place of
+/// `ZIR\0`, so that [`decode_form`] reads it back as stripped and [`decode`] refuses it. The
+/// stripping module calls it (`strip::encode_stripped`), so that this module does not import
+/// that one. [`TooLarge`] as at [`encode`].
+pub(super) fn encode_as_stripped(stripped: &Region) -> Result<Vec<u8>, TooLarge> {
+    encode_as(MAGIC_STRIPPED, stripped)
 }
 
 fn encode_as(magic: &[u8; 4], root: &Region) -> Result<Vec<u8>, TooLarge> {
@@ -591,7 +591,7 @@ pub fn decode(bytes: &[u8]) -> Result<Region, String> {
     }
 }
 
-/// The graph encoded in `bytes`, a full or a stripped module ([`encode_stripped`]), and its
+/// The graph encoded in `bytes`, a full or a stripped module (`strip::encode_stripped`), and its
 /// form, which its first four bytes give; as [`decode`] otherwise.
 pub fn decode_form(bytes: &[u8]) -> Result<(Region, Form), String> {
     let mut r = R {

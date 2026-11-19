@@ -65,6 +65,16 @@ use zed_kernel::value::Value;
 use crate::canon::{Domain, Facet};
 use zedc_lattice::interval::IntervalSet;
 
+/// The form of a serialized module (DESIGN.md sec:kernel, "Facts carried, and the stripped
+/// form"): [`text`] and [`binary`] read both, and [`strip`] makes the stripped one.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum Form {
+    /// Every fact stored, as the compiler wrote it.
+    Full,
+    /// Only what running needs ([`strip::strip`]).
+    Stripped,
+}
+
 /// The kind of a region (DESIGN.md sec:ir, "Shape").
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum RegionKind {

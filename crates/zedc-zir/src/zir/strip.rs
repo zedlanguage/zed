@@ -27,19 +27,27 @@ use std::fmt::Write;
 use std::mem;
 use std::sync::Arc;
 
+use zed_kernel::num::TooLarge;
 use zed_kernel::term::Evidence;
 use zed_kernel::types::Type;
 
+use super::binary;
 use super::validate::{shape, validate};
-use super::{Edge, Node, Op, Region, Src, text};
+use super::{Edge, Form, Node, Op, Region, Src, text};
 
-/// The form of a serialized module.
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub enum Form {
-    /// Every fact stored, as the compiler wrote it.
-    Full,
-    /// Only what running needs ([`strip`]).
-    Stripped,
+/// The stripped text form of the graph rooted at `root`: the text form of [`strip`]`(root)`
+/// under the first line `zir 1 stripped`, which [`text::parse_form`] reads back and
+/// [`text::parse`] refuses.
+pub fn print_stripped(root: &Region) -> String {
+    text::print_as_stripped(&strip(root))
+}
+
+/// The stripped binary form of the graph rooted at `root`: the binary form of
+/// [`strip`]`(root)`, which starts `ZIRs` in place of `ZIR\0`, so that
+/// [`binary::decode_form`] reads it back as stripped and [`binary::decode`] refuses it.
+/// [`TooLarge`] as at [`binary::encode`].
+pub fn encode_stripped(root: &Region) -> Result<Vec<u8>, TooLarge> {
+    binary::encode_as_stripped(&strip(root))
 }
 
 /// Why [`recheck`] refuses a stripped module.

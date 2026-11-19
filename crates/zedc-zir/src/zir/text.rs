@@ -36,8 +36,9 @@ use zed_kernel::types::{Type, Universe};
 use zed_kernel::value::Family;
 use zed_kernel::value::Value;
 
-use super::strip::Form;
-use super::{Derived, Edge, Node, Op, Region, RegionKind, Src, ValueEdge, any_domain, kind_name};
+use super::{
+    Derived, Edge, Form, Node, Op, Region, RegionKind, Src, ValueEdge, any_domain, kind_name,
+};
 use crate::canon::Facet;
 use crate::canon::binders::level_of;
 use zedc_lattice::interval::{End, IntervalSet, Num};
@@ -169,12 +170,12 @@ pub fn print(root: &Region) -> String {
     out
 }
 
-/// The stripped text form of the graph rooted at `root`: the text form of
-/// [`strip`](super::strip::strip)`(root)` under the first line `zir 1 stripped`, which
-/// [`parse_form`] reads back and [`parse`] refuses.
-pub fn print_stripped(root: &Region) -> String {
+/// The text form of `stripped`, a graph already stripped, under the first line
+/// `zir 1 stripped`, which [`parse_form`] reads back and [`parse`] refuses. The stripping
+/// module calls it (`strip::print_stripped`), so that this module does not import that one.
+pub(super) fn print_as_stripped(stripped: &Region) -> String {
     let mut out = format!("zir {VERSION} stripped\n");
-    region_lines(&super::strip::strip(root), &mut out);
+    region_lines(stripped, &mut out);
     out
 }
 
@@ -408,7 +409,7 @@ pub fn parse(text: &str) -> Result<Region, String> {
     }
 }
 
-/// The graph in `text`, a full or a stripped module ([`print_stripped`]), and its form, which
+/// The graph in `text`, a full or a stripped module (`strip::print_stripped`), and its form, which
 /// its first line gives; as [`parse`] otherwise.
 pub fn parse_form(text: &str) -> Result<(Region, Form), String> {
     let mut lines = Vec::new();

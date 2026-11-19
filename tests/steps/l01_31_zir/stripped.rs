@@ -12,9 +12,9 @@ use zed_kernel::types::Type;
 use zed_kernel::{Evaluator, Value, World};
 use zed_tests::step_helpers::l01_33_lowering::nest;
 use zedc::zir::lower::{lower, raise};
-use zedc::zir::strip::{Form, STRIPPED_REFUSED, recheck, strip};
+use zedc::zir::strip::{STRIPPED_REFUSED, encode_stripped, print_stripped, recheck, strip};
 use zedc::zir::validate::validate;
-use zedc::zir::{Edge, Op, Region, RegionKind, Src, binary, memory, text};
+use zedc::zir::{Edge, Form, Op, Region, RegionKind, Src, binary, memory, text};
 
 use super::round;
 use super::scaling::nested_ifs;
@@ -232,10 +232,10 @@ fn the_stripped_form_keeps_no_fact_and_runs_as_the_full_form() {
         assert!(!full.0.starts_with("error"), "{full:?}");
         assert_eq!(outputs(&s), full, "{}", text::print(&g));
         // Both serializations write the stripped form and read it back as stripped.
-        let written = text::print_stripped(&g);
+        let written = print_stripped(&g);
         assert!(written.starts_with("zir 1 stripped\n"), "{written}");
         assert_eq!(text::parse_form(&written), Ok((s.clone(), Form::Stripped)));
-        let bytes = binary::encode_stripped(&g).expect("memory for the bytes");
+        let bytes = encode_stripped(&g).expect("memory for the bytes");
         assert_eq!(&bytes[..4], b"ZIRs");
         assert_eq!(binary::decode_form(&bytes), Ok((s.clone(), Form::Stripped)));
         let full_bytes = binary::encode(&g).expect("memory for the bytes");
@@ -260,17 +260,16 @@ fn the_stripped_form_keeps_no_fact_and_runs_as_the_full_form() {
 fn the_recheck_refuses_a_stripped_module() {
     let g = text::parse(&facts_program()).expect("a graph");
     assert_eq!(recheck(&g, Form::Full), Ok(()));
-    let (s, form) = text::parse_form(&text::print_stripped(&g)).expect("a graph");
+    let (s, form) = text::parse_form(&print_stripped(&g)).expect("a graph");
     assert_eq!(form, Form::Stripped);
     assert_eq!(recheck(&s, form), Err(STRIPPED_REFUSED.to_string()));
     let (s, form) =
-        binary::decode_form(&binary::encode_stripped(&g).expect("memory for the bytes"))
-            .expect("a graph");
+        binary::decode_form(&encode_stripped(&g).expect("memory for the bytes")).expect("a graph");
     assert_eq!(recheck(&s, form), Err(STRIPPED_REFUSED.to_string()));
     // The readers of a full module refuse a stripped one, so none takes it for one whose facts
     // it may check.
     assert_eq!(
-        text::parse(&text::print_stripped(&g)),
+        text::parse(&print_stripped(&g)),
         Err(
             "the first line is `zir 1 stripped`, so the module is stripped of its facts, and \
              this reader reads a full module, whose first line is `zir 1`"
@@ -278,7 +277,7 @@ fn the_recheck_refuses_a_stripped_module() {
         )
     );
     assert_eq!(
-        binary::decode(&binary::encode_stripped(&g).expect("memory for the bytes")),
+        binary::decode(&encode_stripped(&g).expect("memory for the bytes")),
         Err(
             "byte 0: the data starts `ZIRs`, so the module is stripped of its facts, and this \
              reader reads a full module, which starts `ZIR\\0`"

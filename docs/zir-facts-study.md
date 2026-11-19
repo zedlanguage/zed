@@ -61,8 +61,8 @@ kernel documents and reads `associative` (`term.rs:697-700`). Fixed at `walk.rs:
   graph has no form for an unknown witness. Stripping a graph is linear in its size as the binary
   form counts it: a region shared by several nodes is stripped once for each set of constants
   its users capture, so sharing is kept, and the walk keeps its frames on the heap.
-- **Its forms.** Text: first line `zir 1 stripped` (`text::print_stripped`, read by
-  `text::parse_form`). Binary: first bytes `ZIRs` (`binary::encode_stripped`, read by
+- **Its forms.** Text: first line `zir 1 stripped` (`strip::print_stripped`, read by
+  `text::parse_form`). Binary: first bytes `ZIRs` (`strip::encode_stripped`, read by
   `binary::decode_form`). The full readers `text::parse` and `binary::decode` refuse a stripped
   module with a message naming its first line or first bytes.
 - **The re-check** (`strip::recheck`). A stripped module is refused (`STRIPPED_REFUSED`); a full

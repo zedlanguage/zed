@@ -131,7 +131,7 @@ pub(crate) fn data(
     let file = source.0.unwrap_or_default();
     let (source, sites) = kept_lines(source.1, sites);
     let source = source.as_str();
-    let zir = zedc::zir::binary::encode_stripped(graph).map_err(|e| {
+    let zir = zedc::zir::strip::encode_stripped(graph).map_err(|e| {
         format!(
             "Executable too large for memory: writing a constant of the program into the \
              executable takes {}. Repairs: free memory and build again, or run the program with \
