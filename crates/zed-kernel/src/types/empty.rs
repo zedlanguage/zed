@@ -4329,8 +4329,9 @@ impl Heights {
 fn fields(roots: &[Type]) -> (Vec<Type>, Vec<Type>, Vec<Type>) {
     let (mut seen, mut out, mut wraps, mut items) =
         (DigestSet::default(), Vec::new(), Vec::new(), Vec::new());
-    // Named components in a payload diagram sharing the same `Atoms::names` `OrdMap` root
-    // (`OrdMap::ptr_eq`), so a shared map of many bare names is indexed once.
+    // Named components in a payload diagram with one set of atom names (the same
+    // `Atoms::names` `OrdMap` root, `OrdMap::ptr_eq`, or equal names), so a shared map of many
+    // bare names is indexed once.
     struct NamedGroup {
         rep: Type,
         entries: Vec<(usize, Type)>,
@@ -4452,8 +4453,23 @@ fn fields(roots: &[Type]) -> (Vec<Type>, Vec<Type>, Vec<Type>) {
                                             cp.atoms.names().len(),
                                         );
                                         let bucket = group_buckets.entry(bkey).or_default();
+                                        // One group per set of atom names: a group is read
+                                        // only for its rep's names (`by_name` below), so maps
+                                        // of equal names built apart join one group.
+                                        // Complexity tradeoff: grouping by `ptr_eq` alone put n
+                                        // components whose equal maps were built apart (n
+                                        // payloads `#a(x: i, f: (int) -> int)`) in n groups of
+                                        // one bucket, and each scanned the bucket: n² steps
+                                        // (kinds::bench, 44 times the work at 8n). With the
+                                        // names compared too, a bucket holds one group per set
+                                        // of names, and sets that differ share a bucket only
+                                        // when their 64-bit sums collide, so each component
+                                        // costs O(its names) expected, the walk O(nodes + names).
                                         let found = bucket.iter().copied().find(|&g| {
-                                            groups[g].rep.p().atoms.names().ptr_eq(cp.atoms.names())
+                                            let names = groups[g].rep.p();
+                                            let names = names.atoms.names();
+                                            names.ptr_eq(cp.atoms.names())
+                                                || names.keys().eq(cp.atoms.names().keys())
                                         });
                                         let g = match found {
                                             Some(g) => g,
