@@ -147,7 +147,12 @@ impl Ints {
                 v @ (Value::Int(_) | Value::Big(_)) => {
                     vals.insert(v.clone());
                 }
-                _ => return None,
+                // The integers of a type hold `Value::Int` and `Value::Big` alone: they are
+                // made by `Type::lit` of an integer, `Type::ints_of` (which asserts it) and the
+                // universe (cofinite, no values), and changed only by `Lits::zip` and
+                // `Lits::not` with other integer sets, which keep values from their operands
+                // (TEST-kernel-unreached-paths-4, kernel12).
+                _ => unreachable!("a value in a type's integers that is no integer"),
             }
         }
         Some(Ints::new(p.ints.cofinite, vals))
@@ -251,9 +256,9 @@ impl Ints {
     // set once) and mutating that single `BTreeSet` in place costs `O(S log S)`.
     fn intersect_many(sets: &[&Ints]) -> Ints {
         debug_assert!(!sets.is_empty());
-        if sets.len() == 1 {
-            return (*sets[0]).clone();
-        }
+        // No shortcut for one set: both callers pass two or more (U1 merges a group of two
+        // clauses or more, U2 a place's set and one unit at least), and the two branches below
+        // give the set itself for one set (TEST-kernel-unreached-paths-4, kernel12).
         if let Some((min_idx, min_fin)) = sets
             .iter()
             .enumerate()
@@ -1078,8 +1083,12 @@ fn decide_counted(t: &Type, counts: &mut (usize, usize)) -> Option<ChainPlan> {
                 });
                 two[k] = id;
             }
-            if atoms.len() == 1 {
-                two[1] = two[0];
+            // Every clause here has two atoms or more: the fixed point above ends only when it
+            // finds no clause of one atom (`narrowed_places` empty), the strengthening only
+            // cuts clauses to two, and an empty clause returns before (TEST-kernel-unreached-
+            // paths-4, kernel12).
+            if atoms.len() < 2 {
+                unreachable!("a clause of fewer than two atoms after the fixed point")
             }
             clause.push(two);
         }

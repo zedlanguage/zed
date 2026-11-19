@@ -680,18 +680,24 @@ fn delete_cascade(g: &Bes, u_set: &[u32], t_sccs: &[Vec<u32>], sc: &mut Scratch)
         }
     }
     while let Some(w) = sc.queue.pop() {
+        // A node of a tuple component died; if the component is a simple cycle, that breaks it
+        // into a chain. Every queued node has a component: `t_sccs` is `components` of `u_set`
+        // (Tarjan from every node of `u_set`, so each lies in one), the loop above set
+        // `t_comp` from it, and only nodes of `u_set` are queued (`kill` of a component, and a
+        // parent `p` with `in_sub[p]`, which holds of `u_set` alone here). By the same proof
+        // each such parent `p` has a component, so `cp` below is never `u32::MAX`.
         let cw = sc.t_comp[w as usize];
-        if cw != u32::MAX {
-            // A node of a simple cycle died, which breaks the cycle into a chain.
-            broken[cw as usize] = true;
+        if cw == u32::MAX {
+            unreachable!("a node of `u_set` outside every tuple component")
         }
+        broken[cw as usize] = true;
         for &p_u32 in &g.parents[w as usize] {
             let p = p_u32 as usize;
             if !sc.in_sub[p] {
                 continue;
             }
             let cp = sc.t_comp[p];
-            if g.kind[p] == Kind::Or && cp != u32::MAX && cp != cw && !broken[cp as usize] {
+            if g.kind[p] == Kind::Or && cp != cw && !broken[cp as usize] {
                 seeds[cp as usize] -= 1;
                 if seeds[cp as usize] == 0 {
                     broken[cp as usize] = true;
@@ -1246,6 +1252,33 @@ mod tests {
         assert!(!sc.cur[w as usize], "w's one edge is cut");
     }
 
+    /// The narrowed `gfp` cuts no edge out of a `Mor` node. Edges out of `Mor` nodes are not
+    /// followed in the tuple graph, so a `Mor` node is alone in its tuple component, and the
+    /// edge to its child is inside that component only when the child is the node itself
+    /// (`T = int -> T`). Item TEST-kernel-unreached-paths-4 (kernel12): no system drawn reaches
+    /// this arm. The game agrees that the node is inhabited.
+    #[test]
+    fn the_narrowed_greatest_fixed_point_keeps_the_edge_of_a_morphism_to_itself() {
+        let mut g = Bes::new();
+        let m = g.add(Kind::Bot, vec![]);
+        g.set(m, Kind::Mor, vec![m]);
+        g.seal();
+        let sub = [m];
+        let mut sc = Scratch::new(g.len());
+        for (i, c) in components(&g, &sub, Edges::Tuple, &mut sc.local)
+            .iter()
+            .enumerate()
+        {
+            for &v in c {
+                sc.t_comp[v as usize] = i as u32;
+            }
+        }
+        gfp(&g, &sub, true, false, true, &mut sc);
+        assert!(sc.cur[m as usize], "the edge of `m` to itself is not cut");
+        assert!(by_the_game(&g)[m as usize]);
+        assert_eq!(decide(&g).answers[m as usize], Answer::Inhabited);
+    }
+
     /// The cascade of `delete_cascade`, called directly: no system drawn for `decide` makes it
     /// kill a node (every tuple cycle of the `u_set`s drawn has a seed). The `Or` cycle `c, d`
     /// has no way out and dies at the start; the `Or` cycle `a, b` has one seed, `a`'s edge to
@@ -1275,6 +1308,59 @@ mod tests {
             assert_eq!(sc.lo[v], want[v], "lo of node {v}");
             assert_eq!(sc.hi[v], want[v], "hi of node {v}");
         }
+    }
+
+    /// The cascade's other branches, called directly as above. Around the cycles `c, d` and
+    /// `a, b` of that test, which die in the same way: `p, q` is an `Or` cycle with two seeds,
+    /// `a` and the constant `y` outside, so it loses one when `a` dies and lives; `h` is an
+    /// `Or` of `a` and `y`, whose need falls from 2 to 1 and which lives; `s, r` is a cycle
+    /// with the `And` node `s` of `r` and `a` and the `Or` node `r` of `s` and `a`, and `s` (a
+    /// parent of `a` before `r`) dies by its need before `r` takes the cycle's last seed, so the
+    /// kill of the cycle meets `s` already dead; `t`, an `Or` of `s` and `y`, must see `s` die
+    /// once. The game says `p`, `q`, `h` and `t` are inhabited and the rest not.
+    #[test]
+    fn a_cascade_passes_over_the_dead_and_keeps_what_still_has_a_seed_or_a_child() {
+        let mut g = Bes::new();
+        let [a, b, c, d, s, r, t, h, p, q] = [(); 10].map(|_| g.add(Kind::Bot, vec![]));
+        let y = g.add(Kind::Top, vec![]);
+        g.set(a, Kind::Or, vec![b, c]);
+        g.set(b, Kind::Or, vec![a]);
+        g.set(c, Kind::Or, vec![d]);
+        g.set(d, Kind::Or, vec![c]);
+        g.set(s, Kind::And, vec![r, a]);
+        g.set(r, Kind::Or, vec![s, a]);
+        g.set(t, Kind::Or, vec![s, y]);
+        g.set(h, Kind::Or, vec![a, y]);
+        g.set(p, Kind::Or, vec![q, a, y]);
+        g.set(q, Kind::Or, vec![p]);
+        g.seal();
+        let mut sc = Scratch::new(g.len());
+        sc.lo[y as usize] = true;
+        sc.hi[y as usize] = true;
+        delete_cascade(
+            &g,
+            &[a, b, c, d, s, r, t, h, p, q],
+            &[
+                vec![c, d],
+                vec![a, b],
+                vec![s, r],
+                vec![t],
+                vec![h],
+                vec![p, q],
+            ],
+            &mut sc,
+        );
+        let want = by_the_game(&g);
+        for v in [a, b, c, d, s, r, t, h, p, q] {
+            let v = v as usize;
+            assert_eq!(sc.lo[v], want[v], "lo of node {v}");
+            assert_eq!(sc.hi[v], want[v], "hi of node {v}");
+        }
+        assert_eq!(
+            [p, q, h, t].map(|v| want[v as usize]),
+            [true; 4],
+            "the nodes kept alive are inhabited"
+        );
     }
 
     /// Draws of the wide shape in `decide_agrees_with_the_game_on_systems_drawn_at_random`.

@@ -83,6 +83,25 @@ fn spelled(e: &Node, env: &Env) -> String {
     text
 }
 
+/// Item TEST-kernel-unreached-paths-4: a part kept unevaluated is a recursive node with no
+/// group members of its own (`Type::group_members`, which `empty.rs` reads to tell a member
+/// from a part); the member it lies in has its group's.
+#[test]
+fn a_part_kept_unevaluated_has_no_group_members() {
+    let t = nest("gm", 2);
+    let env = env_of(&t);
+    let members = t.group_members().expect("a member has its group's members");
+    assert_eq!(members.len(), 1);
+    assert_eq!(members[0], t);
+    let ps = parts(&env);
+    assert!(!ps.is_empty());
+    for p in ps {
+        let part = component(p, &env);
+        assert!(matches!(&*part.0, crate::types::Node::Rec(_)));
+        assert_eq!(part.group_members(), None, "part {}", p.at);
+    }
+}
+
 #[test]
 fn a_part_s_name_is_unchanged_when_the_names_inside_it_are_shared() {
     // Item PERF-part-name-nested: a name holds the names of the parts inside it, kept once

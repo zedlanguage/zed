@@ -742,3 +742,102 @@ Closed by cover11 (TEST-kernel-unreached-paths-4), except the part named at the 
 - `Node::same_head`: removed, with `impl PartialEq for Shape` (its one user, itself used only by
   `unfold::partial`, which now matches the shape) and the `Tree::same_head` method;
   `Expr::same_head` is now an inherent method and `walk::equal` takes expressions only.
+
+Ninth round (kernel12, 2026-11-19): the row's list outside `empty.rs`, re-measured at zed-impl
+23b16794b with `tools/run_tests.sh --cov` (every piece, the kernel's unit tests in chunks), the
+profiles merged and read with `llvm-cov export`. Four pieces left no profile and are not counted:
+`group_oracle`, `case_wake`, `zedc_presburger` and `l01_36b`. The lines at count 0 outside
+`types/empty.rs` are listed in /home/luke/Work/wt/coverage/TEST-kernel-unreached-paths-4-kernel12-23b16794b.txt
+(186 lines, `file line text`, numbered at 23b16794b). 84 of them are in the files and functions
+the row names; the other 102 are counted at the end.
+
+Closed by a test, each with a control run that the new test fails while the others pass:
+
+- `bes.rs` `delete_cascade` (673, 699, 706): `a_cascade_passes_over_the_dead_and_keeps_what_still_has_a_seed_or_a_child`
+  calls it directly (no system drawn for `decide` makes it kill a node). Controls: a node killed
+  on any decrement of `need`; on any decrement of its seeds; `kill` not testing `cur`.
+- `bes.rs` `gfp`'s `Kind::Mor` arm of the cut test (435):
+  `the_narrowed_greatest_fixed_point_keeps_the_edge_of_a_morphism_to_itself`. A `Mor` node is
+  alone in its tuple component (edges out of `Mor` nodes are not followed there), so the arm is
+  reached only by a `Mor` node whose child is itself. Control: the arm answering `true`.
+- `bdd.rs` `clause`, a literal under a `Not` (2575): an assertion added to
+  `a_clause_reads_a_shared_operand_once`, on the `And` of `Not(!a4)` and `a5`, read as the atoms
+  4 and 5 taken (only `negate` makes `Form::Not` in product code). Control: that arm pushing to `refused`.
+- `print.rs` 1051, the `", "` between the arguments of a member written by name (outside the
+  row's functions, closed with them): `a_member_of_two_parameters_written_by_name_lists_its_arguments`.
+  Control: the separator dropped.
+- `rec/group.rs` 192, a rejection inside a message: added to
+  `a_rejection_quoting_types_that_share_a_part_declares_the_part_first`. Control: the test of
+  `local` made `true`.
+- `rec/group.rs` 261, a recursive occurrence with arguments where the definition has no
+  parameters: `a_recursive_occurrence_given_arguments_where_there_are_no_parameters_is_rejected`
+  (`N = () | (int, N(int))`). Control: the arm writing `N()`.
+- `rec/unfold.rs` 276, a part kept unevaluated asked for its group's members:
+  `a_part_kept_unevaluated_has_no_group_members`. Control: `Key::members` without its
+  `At::Member` test.
+
+Closed by a proof at the site:
+
+- `bes.rs` 687, a node of `u_set` outside every tuple component in `delete_cascade`'s queue
+  loop: `unreachable!`, since `u_set` is the union of the tuple components `t_sccs` it is given;
+  the test `cp != u32::MAX` of the parent loop is removed by the same proof.
+- `empty/escape.rs` 150, a value of a type's integers that is no integer: `unreachable!`.
+  `Type::lit` and `Type::ints_of` (which asserts it) put only integers there, the universe holds
+  none, and `Lits::zip` and `Lits::not` keep only values of their operands.
+- `empty/escape.rs` 255, `intersect_many` of one set: the shortcut is removed. Both callers pass
+  two sets or more, and the general branches give the set itself for one.
+- `empty/escape.rs` 1082, a clause of one atom: `unreachable!`. The loop before it ends only when
+  no place narrows, strengthening only cuts a clause to two atoms, and an empty clause returns
+  earlier.
+- `rec/unfold.rs` 371, `component` of an eager part: `unreachable!`. Its one caller in product
+  code is `eval`'s `Step::Component` arm, which comes after the eager arm.
+
+Guards whose proofs stand from earlier rounds (each a comment at the site; not reached, as
+proved): `bes.rs` 352, 438, 488, 619, 629, 664, 772; `bdd.rs` 395 and 405 (`chain_without`),
+1442 (`choose`, two `false` branches), 2578 and 2583 (`clause`), 2983, 2994, 3016, 3079 and 3114
+(module `xor`); `empty/escape.rs` 517, 660; `rec/group.rs` 100, 256; `rec/unfold.rs` 350, 516.
+The failure branch of a test: `rec/group.rs` 874.
+
+Open, with the reason:
+
+- `bdd.rs` `choose`, a `true` and a `false` branch (1443, 1444). This round wrote a proof that
+  no caller passes two unequal leaves, and withdrew it before it landed: it holds only if no
+  part that is not a leaf stands for a constant. Branches of a choice are operands of `And` and
+  `Or` forms or chains of one literal or more, so no leaf; but an expression is not kept in one
+  form, and that an `And` of two such branches is never the leaf `true` (nor an `Or` the leaf
+  `false`) was not proved for every route through `zip`. The arms are correct as written.
+- `bdd.rs` `choose`, the rule for two choices on one condition (1491, 1495, 1503): no input was
+  built where `Part::union_as_kept` fails on two meets that are both choices on one condition.
+- `print.rs` `meet_of_literals`, an operand already met (1005) and the push of an operand not
+  met (1022): reached only by a meet of morphism types that shares an operand between two of
+  its own meets; `printed_meets` has none, and no input was built.
+- `print.rs` `collect` (1940, 1946, 1952-1957, 1960-1964, 1972): an alias of a node whose text is
+  one name; a node neither a tuple nor marked; and a marked node whose body waits on a
+  definition of a cycle (the `WAIT` arms and `defs::fill`). No message in any test collects a
+  cycle of definitions with a counted or named member; no input was built.
+- `empty/escape.rs`: `node` meeting a type again on its path (455) and a second stop that differs
+  (526); `decide_counted`'s unsatisfiable clauses with `exact && !wide` (1127) and an empty
+  carrier head (1350, 1351); `take` on a cell whose integers are inside the head (1442, 1443);
+  the re-sort for another modulus (2112, 2113). No input was built; each needs a list group of
+  a shape the tests do not form (for 455, a cycle of two list members met through
+  `escape::decide`).
+- `empty/refused.rs` 130, 146, 469, 500, 510: the reasons of the eighth round stand (every
+  refused member found reaches a meet, and every refusal lists an `And` node).
+- `rec/group.rs` 133 and 205-206, and `hash.rs` 9: ties of digests, which only the short build
+  can meet; the instrumented run here was of the normal build.
+- `rec/group.rs` 566-570 (an instance made by another thread first, or freed), 805 (a thread's
+  table dropped at its end), 820 (a poisoned lock), and `rec/unfold.rs` 78, 137, 170 (the same
+  races and thread teardown in the unfolding caches): reached only when two threads race on one
+  group or a thread ends during a run; no test does this.
+- `rec/unfold.rs` 453, a parameter printed with the instance's arguments in `rope_with`: no test
+  prints a definition's body under arguments; no input was built.
+
+Counts for the 84 lines: closed by a test 9, closed by a proof 5, guards proved earlier 23, the
+failure branch of a test 1, open 46.
+
+The other 102 lines are outside the row's list and were not examined in this round:
+`bdd.rs` 28 (among them `Tables::new`, a `const fn` run at compile time, 91-97, and the
+`#[cfg(test)]` checks 4573-4645), `print.rs` 24 (among them the `#[cfg(test)]` helper
+`surface_operand`, 53-55), `empty/sweep.rs` 27, `empty/shared.rs` 13, `empty/names.rs` 3,
+`empty/refused.rs` 3 (guards: 198, 341, 456), `bdd/list/treap.rs`, `bucket.rs`,
+`print/uses.rs` 1 each (guards).

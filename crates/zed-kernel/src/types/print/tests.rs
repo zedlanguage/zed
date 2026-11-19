@@ -328,6 +328,37 @@ fn a_cycle_of_parts_written_by_name_is_defined() {
     }
 }
 
+/// Item TEST-kernel-unreached-paths-4: a member of a group of two parameters, written by name,
+/// separates its arguments by a comma and a space.
+#[test]
+fn a_member_of_two_parameters_written_by_name_lists_its_arguments() {
+    use super::super::rec::{Def, Expr, Group};
+    // `type P(T, U) = #nil | #c(T, U, P(T, U))`.
+    let def = Def {
+        name: "PrintTwoParams".into(),
+        params: vec!["T".into(), "U".into()],
+        body: Expr::Union(vec![
+            Expr::Type(Type::atom("nil")),
+            Expr::Atom(
+                "c".into(),
+                vec![
+                    Expr::Param(0),
+                    Expr::Param(1),
+                    Expr::Ref(0, vec![Expr::Param(0), Expr::Param(1)]),
+                ],
+            ),
+        ]),
+    };
+    let t = Group::new(vec![def])
+        .expect("accepted")
+        .instance(vec![Type::int(), Type::bool()])
+        .remove(0);
+    assert_eq!(
+        t.surface_by_name(super::At::Any).to_string(),
+        "PrintTwoParams(int, bool)"
+    );
+}
+
 /// `0 | 0.5 | 2r/3r | 1 | 1.5 | 5r/3r | …`: `m` literals of each of int, f64 and rat, which
 /// the fixed order interleaves by value (DESIGN.md sec:diagnostics, decision A92).
 pub(super) fn three_carriers(m: usize) -> Type {

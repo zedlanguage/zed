@@ -3037,6 +3037,15 @@ fn a_clause_reads_a_shared_operand_once() {
     assert_eq!(p.clause(), Some((vec![atom(2)], vec![atom(1)])));
     let q = Part::connect(Op::And, Part::not_expr(l0), Part::literal(atom(3)));
     assert_eq!(q.clause(), Some((vec![atom(3)], vec![atom(0)])));
+    // Item TEST-kernel-unreached-paths-4: the complement, kept as an expression, of a refused
+    // literal takes its atom. Product code makes `Form::Not` only of an expression (`negate`),
+    // so only a test reaches this arm.
+    let r = Part::connect(
+        Op::And,
+        Part::not_expr(Part::literal(atom(4)).not()),
+        Part::literal(atom(5)),
+    );
+    assert_eq!(r.clause(), Some((vec![atom(4), atom(5)], vec![])));
 }
 
 #[test]

@@ -367,8 +367,10 @@ fn eager(e: &Node) -> bool {
 /// occurrence, it is kept as a node evaluated on first use, since evaluating it now could need
 /// the parts of the type being built.
 fn component(e: &Arc<Node>, env: &Arc<Env>) -> Type {
+    // The one caller, `eval`, sends an eager component to `Step::Eval` and only the others
+    // here (TEST-kernel-unreached-paths-4, kernel12).
     if eager(e) {
-        return eval(e, env);
+        unreachable!("an eager component is evaluated by `eval` itself")
     }
     let part = env.node(At::Part(e.at), || {
         let (named, at) = (e.clone(), env.clone());

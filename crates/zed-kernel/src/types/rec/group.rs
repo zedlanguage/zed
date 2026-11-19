@@ -1034,7 +1034,8 @@ mod tests {
                 ]),
             ]),
         }];
-        let r = Group::new(defs).expect_err("a recursive occurrence that changes the parameter");
+        let r = Group::new(defs.clone())
+            .expect_err("a recursive occurrence that changes the parameter");
         assert!(
             r.message
                 .contains("its recursive occurrence `L((Part1, Part1))` changes")
@@ -1056,5 +1057,41 @@ mod tests {
         };
         // Outside a message the text declares the part itself, on a line before the expression.
         assert_eq!(text(), "type Part1 = int \\ 1;\n() | ((Part1, Part1), M)");
+        // Inside a message that collects definitions, the rejection leaves its parts to the
+        // message's table: no declaration follows its sentence.
+        let _on = defs::collect();
+        let r = Group::new(defs.clone()).expect_err("rejected inside a message too");
+        assert!(
+            r.message.contains("changes the parameters") && !r.message.contains("type Part1"),
+            "{}",
+            r.message
+        );
+    }
+
+    /// Item TEST-kernel-unreached-paths-4: a definition with no parameters whose recursive
+    /// occurrence passes one is not regular, and the repair names the member alone.
+    #[test]
+    fn a_recursive_occurrence_given_arguments_where_there_are_no_parameters_is_rejected() {
+        // `type N = () | (int, N(int))`.
+        let defs = vec![Def {
+            name: "N".to_string(),
+            params: vec![],
+            body: Expr::Union(vec![
+                Expr::Tuple(vec![]),
+                Expr::Tuple(vec![
+                    Expr::Type(Type::int()),
+                    Expr::Ref(0, vec![Expr::Type(Type::int())]),
+                ]),
+            ]),
+        }];
+        let r = Group::new(defs).expect_err("a recursive occurrence with an argument");
+        assert!(
+            r.message.contains("is not regular")
+                && r.message.contains("as `N`")
+                && !r.message.contains("as `N(")
+                && r.message.contains("`N(int)`"),
+            "{}",
+            r.message
+        );
     }
 }
