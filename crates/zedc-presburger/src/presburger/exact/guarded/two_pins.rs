@@ -56,6 +56,8 @@ pub(in super::super) struct TwoPins<'p, 'a> {
     prep: &'p Prep<'a>,
     forms: Vec<Form>,
     halves: Vec<Form>,
+    /// The polygon's edges, where it is bounded with interior ([`edges`]).
+    poly: Option<Polygon>,
 }
 
 /// `c·f`, or `None` past `i128`.
@@ -238,10 +240,16 @@ impl<'a> Prep<'a> {
                 }
             }
         }
+        let h = halves.len() as u64;
+        work.charge(
+            PIECE.saturating_mul(h.saturating_mul(u64::from(u64::BITS - h.leading_zeros() + 1))),
+        )?;
+        let poly = edges(&halves);
         Ok(Some(TwoPins {
             prep: self,
             forms,
             halves,
+            poly,
         }))
     }
 }
@@ -274,12 +282,14 @@ fn learn(
 impl TwoPins<'_, '_> {
     /// The exact projection of the part onto `s` ([module note](self)); `None` where it
     /// declines.
-    // Complexity tradeoff: O(h²) for the h half-planes, the pairs of the shadows, plus O(h) for
-    // each value of the real shadow outside the dark one, each charged; for the k names of a
-    // part O(k·h²) in all, with no reading of the part a name. A part with many residuals (h of
-    // the order of k) would still cost O(k·h²); sorting the half-planes into the polygon's edges
-    // once a part and finding each shadow's ends by binary search over them would make it
-    // O(h log h + k·log h) (PRES-groupA-two-pin-edges, open).
+    // Complexity tradeoff: where the polygon is bounded with interior, its V edges are found
+    // once a part in O(h log h) ([`edges`]) and each name costs O((log d + S)·log V) for the
+    // distance d from an end of its range to the values with a stretch of `w` at least 1 long
+    // and the S values tried one by one ([`poly_values`]): O(h log h + k·log h) a part where d
+    // and S do not grow. Otherwise (open, flat, or past `i128`) O(h²) a name for the pairs of
+    // the shadows plus O(h) a value tried ([`u_values`]), O(k·h²) a part; an open polygon's
+    // half-planes are not pruned, so many residuals there still cost that (PRES-two-pin-edges
+    // leaves it; the unbounded test has h = 2).
     pub(in super::super) fn values(
         &self,
         s: &Atom,
@@ -299,7 +309,11 @@ impl TwoPins<'_, '_> {
             };
             (g, al / g, be / g)
         };
-        let Some(us) = u_values(a, b, &self.halves, work)? else {
+        let us = match &self.poly {
+            Some(poly) => poly_values(poly, (a, b), work)?,
+            None => u_values(a, b, &self.halves, work)?,
+        };
+        let Some(us) = us else {
             return Ok(None);
         };
         if us.is_empty() {
@@ -308,10 +322,19 @@ impl TwoPins<'_, '_> {
         if g == 0 {
             return Ok(Some(Classed::plain(IntervalSet::point(Num::from(ga)))));
         }
+        // A class other than every integer takes finite ranges (`Classed::new`); an open end
+        // there declines to the per-name path.
+        if g > 1 && us.iter().any(|(lo, hi)| lo.is_none() || hi.is_none()) {
+            return Ok(None);
+        }
         let mut pieces = Vec::with_capacity(us.len());
         for (lo, hi) in us {
-            let at = |u: i128| Some(End::Fin(Num::from(g.checked_mul(u)?.checked_add(ga)?)));
-            let (Some(lo), Some(hi)) = (at(lo), at(hi)) else {
+            // `g > 0`, so an open end stays on its side.
+            let at = |u: Option<i128>, open: End| match u {
+                None => Some(open),
+                Some(u) => Some(End::Fin(Num::from(g.checked_mul(u)?.checked_add(ga)?))),
+            };
+            let (Some(lo), Some(hi)) = (at(lo, End::NegInf), at(hi, End::PosInf)) else {
                 return Ok(None);
             };
             pieces.push((lo, hi));
@@ -329,13 +352,14 @@ impl TwoPins<'_, '_> {
 }
 
 /// The values of `u = a·p + b·q` (`a`, `b` coprime) over the integer points of `halves`, as
-/// sorted runs; `Ok(None)` where unbounded or past `i128` ([module note](self)).
+/// sorted runs; `Ok(None)` where it declines (an open end the dark shadow does not share, or
+/// past `i128`) ([module note](self)).
 fn u_values(
     a: i128,
     b: i128,
     halves: &[Form],
     work: &mut Work,
-) -> Result<Option<Vec<(i128, i128)>>, Refusal> {
+) -> Result<Option<Vec<Run>>, Refusal> {
     let Some((s, t)) = bezout(a, b) else {
         return Ok(None);
     };
@@ -364,6 +388,59 @@ fn u_values(
         // No integer point: the real shadow of one coordinate or the other is empty.
         return Ok(Some(Vec::new()));
     };
+    // An end of the real shadow that is open: every value past it has a point exactly where the
+    // dark shadow is open at the same end (each of its values has an integer `w`), and then
+    // only the finite stretch outside the dark shadow is tried. Where the real shadow is open
+    // and the dark one is not (a strip whose fiber stays shorter than Pugh's bound, the values
+    // with a point periodic rather than all), the reading declines. Each open end is cut at a
+    // value inside the dark shadow, and the run reaching the cut is opened again at the end.
+    let (open_lo, open_hi) = (real.0.is_none(), real.1.is_none());
+    let Some((dl, dh)) = dark else {
+        if open_lo || open_hi {
+            return Ok(None);
+        }
+        return u_runs(real, None, (wl, wh), &uw, &wu, h, work);
+    };
+    if (open_lo && dl.is_some()) || (open_hi && dh.is_some()) {
+        return Ok(None);
+    }
+    // A finite value of the dark shadow, within the real one.
+    let inside = dl.or(dh).or(real.0).or(real.1).unwrap_or(0);
+    let rl = real.0.unwrap_or(inside);
+    let rh = real.1.unwrap_or(inside).max(rl);
+    let Some(mut runs) = u_runs(
+        (Some(rl), Some(rh)),
+        Some((dl, dh)),
+        (wl, wh),
+        &uw,
+        &wu,
+        h,
+        work,
+    )?
+    else {
+        return Ok(None);
+    };
+    if open_lo && let Some(first) = runs.first_mut() {
+        first.0 = None;
+    }
+    if open_hi && let Some(last) = runs.last_mut() {
+        last.1 = None;
+    }
+    Ok(Some(runs))
+}
+
+/// The runs of [`u_values`] within the finite real shadow `real`, with the dark shadow `dark`
+/// (`None` where empty) and the real shadow `(wl, wh)` of the other coordinate.
+#[allow(clippy::too_many_arguments)]
+fn u_runs(
+    real: (Option<i128>, Option<i128>),
+    dark: Option<(Option<i128>, Option<i128>)>,
+    (wl, wh): (Option<i128>, Option<i128>),
+    uw: &[Row],
+    wu: &[Row],
+    h: u64,
+    work: &mut Work,
+) -> Result<Option<Vec<Run>>, Refusal> {
     let (Some(rl), Some(rh)) = real else {
         return Ok(None);
     };
@@ -389,7 +466,7 @@ fn u_values(
         // The narrower way: each integer `w` of the polygon gives one interval of `u`.
         for w in wl..=wh {
             work.charge(PIECE.saturating_mul(h))?;
-            match fiber(&wu, w) {
+            match fiber(wu, w) {
                 None => return Ok(None),
                 Some(None) => {}
                 Some(Some((l, h))) => {
@@ -408,7 +485,7 @@ fn u_values(
                 _ => merged.push((l, h)),
             }
         }
-        return Ok(Some(merged));
+        return Ok(Some(finite(merged)));
     }
     // The values of the real shadow outside the dark one, each tried for an integer `w`.
     let mut add = |l: i128, h: i128| match runs.last_mut() {
@@ -428,7 +505,7 @@ fn u_values(
         let mut u = lo;
         while u <= hi {
             work.charge(PIECE.saturating_mul(h))?;
-            match fiber(&uw, u) {
+            match fiber(uw, u) {
                 None => return Ok(None),
                 Some(None) => {}
                 Some(Some(_)) => add(u, u),
@@ -436,7 +513,509 @@ fn u_values(
             u += 1;
         }
     }
-    Ok(Some(runs))
+    Ok(Some(finite(runs)))
+}
+
+/// The polygon of `halves` as its edges ([`Polygon`]); `None` where it is not bounded, has no
+/// interior, or a number passes `i128`, and then each name reads all the half-planes
+/// ([`u_values`]).
+// Complexity tradeoff: the half-plane intersection by sorting on the angle of the normal and
+// a double-ended queue, O(h log h) once a part (the O(h log h) bound for half-plane
+// intersection is Shamos and Hoey, "Geometric intersection problems", FOCS 1976), then a check
+// of every half-plane at its least corner, O(h log V). Naive: every name's shadows over all h
+// half-planes, O(h²) a name and O(k·h²) a part (`tests::names_over_a_polygon_of_many_sides_
+// read_its_edges_once`, 190.77 times at 8 times k; `names_over_a_polygon_of_many_true_edges_
+// cost_log_of_them`, 195.19); now O(log V) a step a name ([`poly_values`]). Exact: a
+// half-plane dropped holds at every corner of the kept ones, so on their whole polygon, and
+// the integer points are the same. Four sides of a box of half-width 2^60 are added so that the
+// queue meets a closed region; where one of them is left among the edges the polygon may be
+// open, and the old path answers (unbounded parts, `u_values`).
+fn edges(halves: &[Form]) -> Option<Polygon> {
+    const M: i128 = 1 << 60;
+    let boxed = [(1, 0, M), (-1, 0, M), (0, 1, M), (0, -1, M)];
+    let mut all: Vec<(Form, bool)> = halves.iter().map(|&f| (f, false)).collect();
+    all.extend(boxed.iter().map(|&f| (f, true)));
+    // The angle of the normal `(A, B)`: upper half first, then by the cross product.
+    let upper = |f: &Form| f.1 > 0 || (f.1 == 0 && f.0 > 0);
+    let cross = |f: &Form, g: &Form| f.0.checked_mul(g.1)?.checked_sub(f.1.checked_mul(g.0)?);
+    let mut bad = false;
+    all.sort_by(|(f, _), (g, _)| {
+        upper(g).cmp(&upper(f)).then_with(|| match cross(f, g) {
+            Some(c) => 0.cmp(&c),
+            None => {
+                bad = true;
+                std::cmp::Ordering::Equal
+            }
+        })
+    });
+    if bad {
+        return None;
+    }
+    // Of half-planes with the same normal direction, the tightest: `C/|n|` least.
+    let mut kept: Vec<(Form, bool)> = Vec::with_capacity(all.len());
+    for (f, b) in all {
+        if let Some((g, gb)) = kept.last_mut()
+            && upper(g) == upper(&f)
+            && cross(g, &f)? == 0
+        {
+            // `f = λ·g` on the normal, `λ > 0`: `f` is tighter where `C_f < λ·C_g`.
+            let (kf, kg) = if g.0 != 0 { (f.0, g.0) } else { (f.1, g.1) };
+            let lhs = f.2.checked_mul(kg)?;
+            let rhs = g.2.checked_mul(kf)?;
+            if (kg > 0 && lhs < rhs) || (kg < 0 && lhs > rhs) {
+                *g = f;
+                *gb = b;
+            }
+            continue;
+        }
+        kept.push((f, b));
+    }
+    // The corner of two lines, `(p·d, q·d, d)` with `d > 0`; `None` where parallel.
+    let corner = |f: &Form, g: &Form| -> Option<(i128, i128, i128)> {
+        let det = cross(f, g)?;
+        if det == 0 {
+            return None;
+        }
+        let p = g.2.checked_mul(f.1)?.checked_sub(f.2.checked_mul(g.1)?)?;
+        let q = f.2.checked_mul(g.0)?.checked_sub(g.2.checked_mul(f.0)?)?;
+        Some(if det > 0 { (p, q, det) } else { (-p, -q, -det) })
+    };
+    // `A·p + B·q + C` at a corner, times its `d > 0`.
+    let at = |f: &Form, c: (i128, i128, i128)| -> Option<i128> {
+        f.0.checked_mul(c.0)?
+            .checked_add(f.1.checked_mul(c.1)?)?
+            .checked_add(f.2.checked_mul(c.2)?)
+    };
+    // The queue drops a neighbor whose corner is not strictly inside the new half-plane, so of
+    // many lines through one corner only two stay; the check below, which counts the line
+    // itself as inside, makes every drop exact whatever the queue did.
+    let inside = |f: &Form, c: (i128, i128, i128)| -> Option<bool> { Some(at(f, c)? > 0) };
+    let mut q: std::collections::VecDeque<(Form, bool)> = std::collections::VecDeque::new();
+    for (f, b) in kept {
+        while q.len() >= 2 && !inside(&f, corner(&q[q.len() - 1].0, &q[q.len() - 2].0)?)? {
+            q.pop_back();
+        }
+        while q.len() >= 2 && !inside(&f, corner(&q[0].0, &q[1].0)?)? {
+            q.pop_front();
+        }
+        q.push_back((f, b));
+    }
+    loop {
+        let n = q.len();
+        if n >= 3 && !inside(&q[0].0, corner(&q[n - 1].0, &q[n - 2].0)?)? {
+            q.pop_back();
+        } else if n >= 3 && !inside(&q[n - 1].0, corner(&q[0].0, &q[1].0)?)? {
+            q.pop_front();
+        } else {
+            break;
+        }
+    }
+    if q.len() < 3 || q.iter().any(|(_, b)| *b) {
+        return None;
+    }
+    // The check: the kept normals turn by less than half a turn from each to the next, so the
+    // kept half-planes cut a bounded convex polygon whose corners are those of neighbors; and
+    // every half-plane of the part holds at the corner least along its normal (found by binary
+    // search, [`Polygon::ends`]), so it holds on the whole polygon and the part's polygon is
+    // that one. O(h log V) for the V kept.
+    let mut rows: Vec<Form> = q.into_iter().map(|(f, _)| f).collect();
+    let mut first = 0;
+    for i in 1..rows.len() {
+        if angle_cmp((rows[i].0, rows[i].1), (rows[first].0, rows[first].1))?.is_lt() {
+            first = i;
+        }
+    }
+    rows.rotate_left(first);
+    let n = rows.len();
+    let mut corners = Vec::with_capacity(n);
+    for i in 0..n {
+        let (f, g) = (&rows[i], &rows[(i + 1) % n]);
+        if cross(f, g)? <= 0 {
+            return None;
+        }
+        corners.push(corner(f, g)?);
+    }
+    let poly = Polygon { rows, corners };
+    for f in halves {
+        let [x, y] = poly.ends((f.0, f.1))?;
+        if at(f, poly.corners[x])? < 0 || at(f, poly.corners[y])? < 0 {
+            return None;
+        }
+    }
+    Some(poly)
+}
+
+/// A bounded convex polygon with interior: the half-planes of its edges in the order of the
+/// angles of their normals from 0, and `corners[j]`, the corner of edges `j` and `j + 1`
+/// (cyclic), as `(p·d, q·d, d)` with `d > 0`.
+struct Polygon {
+    rows: Vec<Form>,
+    corners: Vec<(i128, i128, i128)>,
+}
+
+/// The order of the angles of two directions, counterclockwise from the first axis; `None`
+/// past `i128`.
+fn angle_cmp(f: (i128, i128), g: (i128, i128)) -> Option<std::cmp::Ordering> {
+    let upper = |v: (i128, i128)| v.1 > 0 || (v.1 == 0 && v.0 > 0);
+    let cross = f.0.checked_mul(g.1)?.checked_sub(f.1.checked_mul(g.0)?)?;
+    Some(upper(g).cmp(&upper(f)).then(0.cmp(&cross)))
+}
+
+/// The least `i` in `[lo, hi)` where `pred` fails, `pred` holding on a prefix (`hi` where it
+/// never fails); `None` where `pred` is `None`.
+fn first_false(
+    mut lo: i128,
+    mut hi: i128,
+    mut pred: impl FnMut(i128) -> Option<bool>,
+) -> Option<i128> {
+    while lo < hi {
+        let m = lo + (hi - lo) / 2;
+        if pred(m)? {
+            lo = m + 1;
+        } else {
+            hi = m;
+        }
+    }
+    Some(lo)
+}
+
+impl Polygon {
+    /// `(v·x - c)·d` at corner `j` (cyclic), `x = (p, q)`: its sign is that of `v·x - c`.
+    fn off(&self, j: usize, v: (i128, i128), c: i128) -> Option<i128> {
+        let (p, q, d) = self.corners[j % self.corners.len()];
+        v.0.checked_mul(p)?
+            .checked_add(v.1.checked_mul(q)?)?
+            .checked_sub(c.checked_mul(d)?)
+    }
+
+    /// The number of edges whose normal's angle is below that of `v` (`or_equal`: not above).
+    fn below(&self, v: (i128, i128), or_equal: bool) -> Option<usize> {
+        let k = first_false(0, self.rows.len() as i128, |i| {
+            let r = self.rows[i as usize];
+            let o = angle_cmp((r.0, r.1), v)?;
+            Some(o.is_lt() || (or_equal && o.is_eq()))
+        })?;
+        Some(k as usize)
+    }
+
+    /// The two chains of edges along `v·x`: the edges whose normals lie strictly between `v`
+    /// and `-v` counterclockwise, and between `-v` and `v`; each `[j0, j1)`, indices cyclic.
+    /// Along each chain `v·x` runs from one end of the polygon to the other, and at a value
+    /// between the ends one edge of each chain bounds the polygon's line there. Each chain has
+    /// an edge, the normals of a bounded polygon lying in no closed half-plane.
+    fn chains(&self, v: (i128, i128)) -> Option<[(usize, usize); 2]> {
+        let n = self.rows.len();
+        let o = (v.0.checked_neg()?, v.1.checked_neg()?);
+        let mut out = [(0, 0); 2];
+        for (i, (from, to)) in [(v, o), (o, v)].into_iter().enumerate() {
+            let j0 = self.below(from, true)?;
+            let mut j1 = self.below(to, false)?;
+            if j1 <= j0 {
+                j1 += n;
+            }
+            if j1 - j0 >= n {
+                return None;
+            }
+            out[i] = (j0, j1);
+        }
+        Some(out)
+    }
+
+    /// The corners where `v·x` is least and greatest, in either order: the two ends of a chain.
+    fn ends(&self, v: (i128, i128)) -> Option<[usize; 2]> {
+        let n = self.rows.len();
+        let [(j0, j1), _] = self.chains(v)?;
+        Some([(j0 + n - 1) % n, (j1 - 1) % n])
+    }
+
+    /// The integer values of `v·x` over the polygon, `[ceil(least), floor(greatest)]`.
+    fn range(&self, v: (i128, i128)) -> Option<(i128, i128)> {
+        let [x, y] = self.ends(v)?;
+        let (mut lo, mut hi) = (i128::MAX, i128::MIN);
+        for j in [x, y] {
+            let (_, _, d) = self.corners[j];
+            let num = self.off(j, v, 0)?;
+            lo = lo.min(div_ceil(num, d)?);
+            hi = hi.max(div_floor(num, d)?);
+        }
+        Some((lo, hi))
+    }
+
+    /// The edge of `chain` that bounds the line `v·x == c`, for `c` between the ends.
+    fn across(&self, (j0, j1): (usize, usize), v: (i128, i128), c: i128) -> Option<Form> {
+        let n = self.rows.len();
+        // The corner where edge `j` starts; along the chain `v·x` there is monotone.
+        let start = |j: usize| self.off(j + n - 1, v, c);
+        // `c` lies between the chain's ends, so it rises where its start is below `c` or its
+        // end above (at `c` equal to one end, the other end decides).
+        let rising = start(j0)? < 0 || self.off(j1 - 1, v, c)? > 0;
+        let k = first_false(j0 as i128, j1 as i128, |j| {
+            let o = start(j as usize)?;
+            Some(if rising { o <= 0 } else { o >= 0 })
+        })?;
+        Some(self.rows[(k as usize).saturating_sub(1).max(j0) % n])
+    }
+}
+
+/// `|y_a - y_b|` for the bounds `y = -(E·c + C)/D` of two rows at `x == c`, as `(num, den)`.
+fn gap(ra: Row, rb: Row, c: i128) -> Option<(i128, i128)> {
+    let ya = ra.0.checked_mul(c)?.checked_add(ra.2)?;
+    let yb = rb.0.checked_mul(c)?.checked_add(rb.2)?;
+    let num = yb.checked_mul(ra.1)?.checked_sub(ya.checked_mul(rb.1)?)?;
+    Some((num.checked_abs()?, ra.1.checked_mul(rb.1)?.checked_abs()?))
+}
+
+/// The stretch of `[rl, rh]` where `len` is at least 1, the length concave: its greatest
+/// value by binary search on the sign of its step, then halving on either side. `Ok(None)`
+/// past `i128`, `Ok(Some(None))` where nowhere.
+type Len<'f> = dyn Fn(i128, &mut Work) -> Result<Option<(i128, i128)>, Refusal> + 'f;
+type Long<'f> = dyn Fn(i128, &mut Work) -> Result<Option<bool>, Refusal> + 'f;
+fn full_dark(
+    rl: i128,
+    rh: i128,
+    len: &Len<'_>,
+    long: &Long<'_>,
+    work: &mut Work,
+) -> Result<Option<Option<(i128, i128)>>, Refusal> {
+    let mut peak = (rl, rh);
+    while peak.0 < peak.1 {
+        let m = peak.0 + (peak.1 - peak.0) / 2;
+        let (Some(x), Some(y)) = (len(m, work)?, len(m + 1, work)?) else {
+            return Ok(None);
+        };
+        let (Some(l), Some(r)) = (y.0.checked_mul(x.1), x.0.checked_mul(y.1)) else {
+            return Ok(None);
+        };
+        if l > r {
+            peak.0 = m + 1;
+        } else {
+            peak.1 = m;
+        }
+    }
+    let top = peak.0;
+    let Some(at_top) = long(top, work)? else {
+        return Ok(None);
+    };
+    if !at_top {
+        return Ok(Some(None));
+    }
+    // The first value of `[rl, top]` with length at least 1, and the last of `[top, rh]`.
+    let (mut lo, mut hi) = (rl, top);
+    while lo < hi {
+        let m = lo + (hi - lo) / 2;
+        let Some(ok) = long(m, work)? else {
+            return Ok(None);
+        };
+        if ok { hi = m } else { lo = m + 1 }
+    }
+    let d1 = lo;
+    let (mut lo, mut hi) = (top, rh);
+    while lo < hi {
+        let m = hi - (hi - lo) / 2;
+        let Some(ok) = long(m, work)? else {
+            return Ok(None);
+        };
+        if ok { lo = m } else { hi = m - 1 }
+    }
+    Ok(Some(Some((d1, lo))))
+}
+
+/// [`u_values`] over a [`Polygon`]: each end, each line's bounds and each gap found by binary
+/// search over the edges, O(log V) each.
+// Complexity tradeoff: naive, the shadows over all V edges, O(V²) a name (Fourier-Motzkin and
+// Pugh's dark shadow, [`u_values`]); here the real shadow is the values at the two corners
+// where `u` is least and greatest, and in place of Pugh's dark shadow the values where the
+// line `u == c` meets the polygon in a stretch of `w` at least 1 long (each holds an integer
+// `w`). That length is concave in `c` (the polygon is convex), so its greatest value is found
+// by binary search on the sign of its step, and the two ends where it reaches 1 by binary
+// search on either side: O(log(R)·log V) for the range R of `u`. The values outside are tried
+// one by one as before, or each `w` of the polygon where that is fewer, O(log V) each. So a
+// name costs O((log R + S)·log V) for S values tried, against O(V² + S·V) before.
+fn poly_values(
+    poly: &Polygon,
+    (a, b): (i128, i128),
+    work: &mut Work,
+) -> Result<Option<Vec<Run>>, Refusal> {
+    let Some((s, t)) = bezout(a, b) else {
+        return Ok(None);
+    };
+    let n = poly.rows.len() as u64;
+    let log = u64::from(u64::BITS - n.leading_zeros() + 1);
+    let step = PIECE.saturating_mul(log);
+    work.charge(step.saturating_mul(8))?;
+    let to_uw = |(ha, hb, hc): Form| -> Option<Row> {
+        let e = ha.checked_mul(s)?.checked_add(hb.checked_mul(t)?)?;
+        let d = hb.checked_mul(a)?.checked_sub(ha.checked_mul(b)?)?;
+        Some((e, d, hc))
+    };
+    let to_wu = |f: Form| -> Option<Row> {
+        let (e, d, c) = to_uw(f)?;
+        Some((d, e, c))
+    };
+    // `u = a·p + b·q` and `w = -t·p + s·q`.
+    let (vu, vw) = ((a, b), (t.checked_neg(), s));
+    let Some(vw) = vw.0.map(|x| (x, vw.1)) else {
+        return Ok(None);
+    };
+    let (Some(cu), Some(cw), Some((rl, rh)), Some((wl, wh))) = (
+        poly.chains(vu),
+        poly.chains(vw),
+        poly.range(vu),
+        poly.range(vw),
+    ) else {
+        return Ok(None);
+    };
+    if rl > rh || wl > wh {
+        return Ok(Some(Vec::new()));
+    }
+    // The two rows bounding `w` on the line `u == c`.
+    let rows_at = |c: i128| -> Option<[Row; 2]> {
+        Some([
+            to_uw(poly.across(cu[0], vu, c)?)?,
+            to_uw(poly.across(cu[1], vu, c)?)?,
+        ])
+    };
+    let len = |c: i128, work: &mut Work| -> Result<Option<(i128, i128)>, Refusal> {
+        work.charge(step)?;
+        Ok(rows_at(c).and_then(|[x, y]| gap(x, y, c)))
+    };
+    let long = |c: i128, work: &mut Work| -> Result<Option<bool>, Refusal> {
+        Ok(len(c, work)?.map(|(x, y)| x >= y))
+    };
+    // The end of the stretch where the length is at least 1 nearest `from`, sought toward `to`
+    // by doubling steps and then halving between the last two (O(log d) for the distance d
+    // to it); `Some(None)` where no step lands in it (the stretch is missed or empty). Where
+    // a step `x` is long and the one before, `y`, is not, `y` lies outside the stretch on the
+    // side of `from`, and between them the test is monotone.
+    let gallop = |from: i128, to: i128, work: &mut Work| -> Result<Option<Option<i128>>, Refusal> {
+        let dir: i128 = if to >= from { 1 } else { -1 };
+        let mut out = from - dir;
+        let mut size: i128 = 1;
+        loop {
+            let probe = from + dir * (size - 1);
+            let probe = if dir > 0 {
+                probe.min(to)
+            } else {
+                probe.max(to)
+            };
+            let Some(ok) = long(probe, work)? else {
+                return Ok(None);
+            };
+            if ok {
+                // The first long value after `out`, going from `from`.
+                let (mut lo, mut hi) = (out + dir, probe);
+                while lo != hi {
+                    let m = lo + dir * ((hi - lo) * dir / 2);
+                    let Some(ok) = long(m, work)? else {
+                        return Ok(None);
+                    };
+                    if ok { hi = m } else { lo = m + dir }
+                }
+                return Ok(Some(Some(lo)));
+            }
+            if probe == to {
+                return Ok(Some(None));
+            }
+            out = probe;
+            let Some(next) = size.checked_mul(2) else {
+                return Ok(None);
+            };
+            size = next;
+        }
+    };
+    let quick = match gallop(rl, rh, work)? {
+        None => return Ok(None),
+        Some(Some(d1)) => match gallop(rh, d1, work)? {
+            Some(Some(d2)) => Some(Some((d1, d2))),
+            _ => return Ok(None),
+        },
+        Some(None) => None,
+    };
+    // The stretch of `c` where the length is at least 1, `None` where nowhere; where the steps
+    // above missed it, by the greatest length (binary search on the sign of its step) and
+    // halving on either side, O(log R) steps.
+    let dark = match quick {
+        Some(dark) => dark,
+        None => match full_dark(rl, rh, &len, &long, work)? {
+            Some(dark) => dark,
+            None => return Ok(None),
+        },
+    };
+    let dark_size = dark.map_or(0, |(l, h)| h - l + 1);
+    let (Some(splinters), Some(width)) = (
+        rh.checked_sub(rl)
+            .and_then(|x| x.checked_add(1 - dark_size)),
+        wh.checked_sub(wl).and_then(|x| x.checked_add(1)),
+    ) else {
+        return Ok(None);
+    };
+    let mut runs: Vec<(i128, i128)> = Vec::new();
+    if width < splinters {
+        // The narrower way: each integer `w` of the polygon gives one interval of `u`.
+        for w in wl..=wh {
+            work.charge(step)?;
+            let rows = (|| {
+                Some([
+                    to_wu(poly.across(cw[0], vw, w)?)?,
+                    to_wu(poly.across(cw[1], vw, w)?)?,
+                ])
+            })();
+            let Some(rows) = rows else { return Ok(None) };
+            match fiber(&rows, w) {
+                None => return Ok(None),
+                Some(None) => {}
+                Some(Some((l, h))) => {
+                    let (l, h) = (l.map_or(rl, |l| l.max(rl)), h.map_or(rh, |h| h.min(rh)));
+                    if l <= h {
+                        runs.push((l, h));
+                    }
+                }
+            }
+        }
+        runs.sort_unstable();
+        let mut merged: Vec<(i128, i128)> = Vec::with_capacity(runs.len());
+        for (l, h) in runs {
+            match merged.last_mut() {
+                Some((_, e)) if *e >= l - 1 => *e = (*e).max(h),
+                _ => merged.push((l, h)),
+            }
+        }
+        return Ok(Some(finite(merged)));
+    }
+    let mut add = |l: i128, h: i128| match runs.last_mut() {
+        Some((_, e)) if *e + 1 == l => *e = h,
+        _ => runs.push((l, h)),
+    };
+    let segments = match dark {
+        Some((l, h)) => [(rl, l - 1, false), (l, h, true), (h + 1, rh, false)],
+        None => [(rl, rh, false), (1, 0, false), (1, 0, false)],
+    };
+    for (lo, hi, whole) in segments {
+        if whole {
+            add(lo, hi);
+            continue;
+        }
+        for u in lo..=hi {
+            work.charge(step)?;
+            let Some(rows) = rows_at(u) else {
+                return Ok(None);
+            };
+            match fiber(&rows, u) {
+                None => return Ok(None),
+                Some(None) => {}
+                Some(Some(_)) => add(u, u),
+            }
+        }
+    }
+    Ok(Some(finite(runs)))
+}
+
+/// A run of values, `None` an open end.
+type Run = (Option<i128>, Option<i128>);
+
+/// Finite runs as [`Run`]s.
+fn finite(runs: Vec<(i128, i128)>) -> Vec<Run> {
+    runs.into_iter().map(|(l, h)| (Some(l), Some(h))).collect()
 }
 
 /// A row `x·X + y·Y + c >= 0` over two integer unknowns.

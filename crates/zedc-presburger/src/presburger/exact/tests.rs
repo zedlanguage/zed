@@ -3706,6 +3706,122 @@ fn names_with_a_common_factor_are_read_once_for_the_part() {
     assert!(ratio < 10.5, "work {used:?}, {ratio:.2} times at 8 times k");
 }
 
+/// As `names_with_coefficients_past_one_are_read_once_for_the_part` with one more half-plane
+/// a name, `p + j·q <= 9 + 9·j` (none cuts the box): the residuals grow with k, and each name
+/// must not read them all (PRES-two-pin-edges).
+#[test]
+fn names_over_a_polygon_of_many_sides_read_its_edges_once() {
+    let used = exact_work_of(|k| {
+        let (f, syms, sets) = two_free_atoms(2, 3)(k);
+        let Formula::And(rows) = &f else {
+            unreachable!()
+        };
+        let mut rows: Vec<Formula> = rows.iter().cloned().collect();
+        rows.extend((0..k as i64).map(|j| ge(&[("p", -1), ("q", -j)], 9 + 9 * j)));
+        (Formula::And(Shared::new(rows)), syms, sets)
+    });
+    let ratio = used[1] as f64 / used[0].max(1) as f64;
+    assert!(ratio < 10.5, "work {used:?}, {ratio:.2} times at 8 times k");
+}
+
+/// As above with every row a true edge, the tangents `q >= 2·j·p - j²` to `q = p²` under
+/// `q <= k²`: the edges grow with k, and each name still costs no work of their number
+/// (PRES-two-pin-edges).
+#[test]
+fn names_over_a_polygon_of_many_true_edges_cost_log_of_them() {
+    let used = exact_work_of(|k| {
+        let y = |j: usize| format!("y{j}");
+        let kk = k as i64;
+        let mut rows: Vec<Formula> = (0..k)
+            .map(|j| eq(&[(&y(j), 1), ("p", -2), ("q", -3)], -(j as i64)))
+            .collect();
+        rows.extend((0..=kk).map(|j| ge(&[("q", 1), ("p", -2 * j)], j * j)));
+        rows.extend([ge(&[("q", -1)], kk * kk), ge(&[("p", 1)], kk)]);
+        let syms: Vec<Atom> = (0..k).map(|j| a(&y(j))).collect();
+        let sets = (0..k)
+            .map(|_| IntervalSet::from_pieces(vec![(End::NegInf, End::PosInf)]))
+            .collect();
+        (Formula::And(Shared::new(rows)), syms, sets)
+    });
+    // The part is O(k log k) (the sort of its k + 3 edges) and each name O(log k) (binary
+    // searches over them, each charged one piece a halving: `u64::BITS - leading_zeros + 1`,
+    // 8 at 67 edges and 11 at 515). So the predicted ratio is 8 · 11/8 = 11, which by P300
+    // meets the scaling rule for a proved n log n; anything past it is more than n log n.
+    let ratio = used[1] as f64 / used[0].max(1) as f64;
+    assert!(
+        ratio <= 11.0,
+        "work {used:?}, {ratio:.2} times at 8 times k"
+    );
+}
+
+/// The same polygon with names in many directions, `y(j) == g·(j + 1)·p + g·(2·j + 1)·q`,
+/// `g = 2` in every third: each set is exactly the values at the polygon's integer points,
+/// counted one by one (the cover alone refuses most of these names), through the binary
+/// searches along every direction (PRES-two-pin-edges).
+#[test]
+fn names_in_many_directions_over_many_edges_are_exact() {
+    let k = 8i64;
+    let y = |j: i64| format!("y{j}");
+    let g = |j: i64| if j % 3 == 0 { 2 } else { 1 };
+    let mut rows: Vec<Formula> = (0..k)
+        .map(|j| {
+            eq(
+                &[
+                    (&y(j), 1),
+                    ("p", -g(j) * (j + 1)),
+                    ("q", -g(j) * (2 * j + 1)),
+                ],
+                0,
+            )
+        })
+        .collect();
+    rows.extend((0..=k).map(|i| ge(&[("q", 1), ("p", -2 * i)], i * i)));
+    rows.extend([ge(&[("q", -1)], k * k), ge(&[("p", 1)], k)]);
+    let syms: Vec<Atom> = (0..k).map(|j| a(&y(j))).collect();
+    let sets = (0..k)
+        .map(|_| Ok(IntervalSet::from_pieces(vec![(End::NegInf, End::PosInf)])))
+        .collect();
+    let f = Formula::And(Shared::new(rows));
+    let got = exact_each(&f, &syms, (sets, vec![]), SOLVER);
+    for j in 0..k {
+        let mut want = std::collections::BTreeSet::new();
+        for p in -k..=k {
+            for q in 0..=k * k {
+                if (0..=k).all(|i| q - 2 * i * p + i * i >= 0) {
+                    want.insert(g(j) * (j + 1) * p + g(j) * (2 * j + 1) * q);
+                }
+            }
+        }
+        let Ok(set) = &got.sets[j as usize] else {
+            panic!("y{j} refused: {:?}", got.sets[j as usize]);
+        };
+        for v in -2000..=2000i64 {
+            let has = set.ranges.contains(v) && set.class.contains(&Num::from(v));
+            assert_eq!(has, want.contains(&v), "y{j} at {v}: {set:?}");
+        }
+    }
+}
+
+/// `y(j) == 2·p + 3·q + j` with only `p, q >= 0`: the polygon is unbounded, and each name's
+/// set, `j` and every value from `j + 2` up, is read once for the part (PRES-two-pin-edges).
+#[test]
+fn names_over_an_unbounded_polygon_are_read_once_for_the_part() {
+    let used = exact_work_of(|k| {
+        let y = |j: usize| format!("y{j}");
+        let mut rows: Vec<Formula> = (0..k)
+            .map(|j| eq(&[(&y(j), 1), ("p", -2), ("q", -3)], -(j as i64)))
+            .collect();
+        rows.extend([ge(&[("p", 1)], 0), ge(&[("q", 1)], 0)]);
+        let syms: Vec<Atom> = (0..k).map(|j| a(&y(j))).collect();
+        let sets = (0..k as i64)
+            .map(|j| IntervalSet::from_pieces(vec![(End::of(j), End::PosInf)]))
+            .collect();
+        (Formula::And(Shared::new(rows)), syms, sets)
+    });
+    let ratio = used[1] as f64 / used[0].max(1) as f64;
+    assert!(ratio < 10.5, "work {used:?}, {ratio:.2} times at 8 times k");
+}
+
 /// The two-pin reading on a polygon with slanted sides, where the dark shadow is narrower
 /// than the real one and values between them are tried one by one, and on names with a common
 /// factor and with none: each set agrees with the cover alone (`guarded::two_pins`).
