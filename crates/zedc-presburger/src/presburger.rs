@@ -10587,7 +10587,7 @@ thread_local! {
         const { RefCell::new(None) };
 }
 
-/// Notes a solve of [`pick_reading`] in [`PICK_TRACE`]; nothing outside the tests.
+/// Notes a solve of [`pick_reading`] in `PICK_TRACE`; nothing outside the tests.
 fn pick_traced(step: &'static str, at: usize, got: &Result<Option<Model>, Refusal>) {
     #[cfg(test)]
     PICK_TRACE.with(|t| {
