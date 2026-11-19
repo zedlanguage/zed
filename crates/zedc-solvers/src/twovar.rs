@@ -390,7 +390,7 @@ fn push_range(out: &mut Vec<(Option<Int>, Option<Int>)>, r: (Option<Int>, Option
     if let Some((_, prev_hi)) = out.last_mut() {
         match (&*prev_hi, &r.0) {
             (None, _) => return,
-            (Some(ph), Some(cl)) if &(&*ph + &Int::ONE) >= cl => {
+            (Some(ph), Some(cl)) if &(ph + &Int::ONE) >= cl => {
                 *prev_hi = match (&*prev_hi, &r.1) {
                     (_, None) => None,
                     (Some(a), Some(b)) => Some(a.clone().max(b.clone())),
@@ -493,7 +493,7 @@ fn convex_strip(ua: &Line, lb: &Line, a: Int, b: Int) -> Option<Option<(Int, Int
         }
     }
     let last = &(&a + &lo2) - &Int::ONE;
-    if &(&(&last - &first) + &Int::ONE) == &tot {
+    if (&(&last - &first) + &Int::ONE) == tot {
         Some(Some((first, last)))
     } else {
         None
