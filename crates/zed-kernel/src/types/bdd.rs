@@ -2252,6 +2252,8 @@ impl<A: Literal> Part<A> {
         let mut stack: Vec<Pending<A>> = vec![(root.clone(), None)];
         while let Some((e, ops)) = stack.pop() {
             let Some(ops) = ops else {
+                // Met again when two clusters share an operand, as `e & !e` does
+                // (`tests::three_valued_operations_keep_the_assignments`).
                 if exprs.contains_key(&e.id) {
                     continue;
                 }
@@ -2270,9 +2272,20 @@ impl<A: Literal> Part<A> {
                 stack.extend(below.into_iter().map(|x| (x, None)));
                 continue;
             };
-            if exprs.contains_key(&e.id) {
-                continue;
-            }
+            // Proof that `e` is not yet in `exprs`. It was not when `(e, Some(ops))` was pushed,
+            // just after the check above. Until it is popped, only entries pushed after it are
+            // popped: `(x, None)` for `x` in `below`, and what those push in turn, so each
+            // concerns an operand of `e`'s cluster or, by induction, an operand of the cluster of
+            // one of those. `e` is put in `exprs` only at a pop of an `(e, Some(_))`, so in that
+            // time only if `e` is an operand, at some depth, of its own cluster. On such a cycle no
+            // expression is ever put in `exprs`: each is put there only after the sets of all its
+            // cluster's operands are read from `exprs` (`exprs[&x.id]` below, which panics on one
+            // missing), so the first of the cycle to be put there would need its operand on the
+            // cycle there before it.
+            debug_assert!(
+                !exprs.contains_key(&e.id),
+                "an expression's sets are made once"
+            );
             let sets: Vec<(Set<A>, Set<A>)> = ops
                 .iter()
                 .map(|q| match q {
@@ -2619,15 +2632,17 @@ impl<A: Literal> Part<A> {
     }
 }
 
-/// Two lists, cells, sets, expressions or parts of one universe to compare in `order` (module `types`); no
-/// cell or set is before one.
+/// Two lists, cells, sets, expressions or parts of one universe to compare in `order` (module
+/// `types`).
 pub(super) enum Walk<'a, A: Literal> {
     Bdds(&'a Bdd<A>, &'a Bdd<A>),
-    Cells(Option<&'a Cell<A>>, Option<&'a Cell<A>>),
-    Sets(Option<&'a Set<A>>, Option<&'a Set<A>>),
+    /// The root cells of two lists, each of one or more blocks.
+    Cells(&'a Cell<A>, &'a Cell<A>),
+    /// Two blocks, or the sets of two exclusive ors.
+    Sets(&'a Set<A>, &'a Set<A>),
     /// Two sets, or two subtrees at one place in two sets, of tied digests, compared by their
-    /// literals in order, a prefix first; their digests are not compared, since a subtree's
-    /// literals follow the run's draw of priorities.
+    /// literals in order, a prefix first, no subtree before one; their digests are not compared,
+    /// since a subtree's literals follow the run's draw of priorities.
     SetsInOrder(Option<&'a Set<A>>, Option<&'a Set<A>>),
     Exprs(&'a Expr<A>, &'a Expr<A>),
     Parts(&'a Part<A>, &'a Part<A>),
@@ -3847,6 +3862,15 @@ mod list {
             }
             let mut stack: Vec<(&Cell<A>, bool)> = vec![(self, false)];
             while let Some((c, ready)) = stack.pop() {
+                // Made by another thread since `c` was pushed: the cells of a list are shared
+                // between threads, and `OnceLock` keeps the first atoms set. On one thread this
+                // does not happen. `c` was pushed with no atoms; until it is popped only cells
+                // below it are made, and `c` is not below itself. Nor is a cell made twice in one
+                // walk: the walk starts at a list's root (`Cell::find_by_atoms`), and a cell met
+                // twice in one tree would put its blocks twice in the list, while a list in its
+                // one form holds each atom in one block (module comment). Skipping saves making
+                // the set again, which would give the same atoms; no test makes the race, so no
+                // test reaches this.
                 if c.atoms.get().is_some() {
                     continue;
                 }
@@ -4063,8 +4087,13 @@ mod list {
                     None if at == 0 => {
                         finish((replace(&seq, (0, 1), Vec::new(), delta), !v), default)
                     }
+                    // Proof that the last block of two or more is not emptied: the list is in its
+                    // one form (module comment, made so by `finish`, `Bdd::literal_key` and
+                    // `Bdd::or_new_literal`; `Bdd::not` keeps the blocks), in which two or more
+                    // blocks end in a block of two or more literals, so one left in it. With one
+                    // block, `at == 0` is the arm above.
                     None if at + 1 == n => {
-                        finish((replace(&seq, (at, n), Vec::new(), delta), v), default)
+                        unreachable!("the last of two or more blocks holds two or more literals")
                     }
                     None => {
                         let joined = set::union(nth(&seq, at - 1), nth(&seq, at + 1));

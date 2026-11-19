@@ -1168,18 +1168,12 @@ fn walk<'a, A: Ordered>(w: Walk<'a, A>, steps: &mut Vec<Step<'a>>, equal: &Equal
             if c != Ordering::Equal {
                 return c;
             }
-            walk(Walk::Cells(Some(a), Some(b)), steps, equal)
+            walk(Walk::Cells(a, b), steps, equal)
         }
-        Walk::Cells(None, None) | Walk::Sets(None, None) | Walk::SetsInOrder(None, None) => {
-            Ordering::Equal
-        }
-        Walk::Cells(None, Some(_))
-        | Walk::Sets(None, Some(_))
-        | Walk::SetsInOrder(None, Some(_)) => Ordering::Less,
-        Walk::Cells(Some(_), None)
-        | Walk::Sets(Some(_), None)
-        | Walk::SetsInOrder(Some(_), None) => Ordering::Greater,
-        Walk::Cells(Some(a), Some(b)) => {
+        Walk::SetsInOrder(None, None) => Ordering::Equal,
+        Walk::SetsInOrder(None, Some(_)) => Ordering::Less,
+        Walk::SetsInOrder(Some(_), None) => Ordering::Greater,
+        Walk::Cells(a, b) => {
             let key = (a.id, b.id);
             if key.0 == key.1 || equal.contains(&key) {
                 return Ordering::Equal;
@@ -1195,7 +1189,7 @@ fn walk<'a, A: Ordered>(w: Walk<'a, A>, steps: &mut Vec<Step<'a>>, equal: &Equal
             }
             c
         }
-        Walk::Sets(Some(a), Some(b)) => {
+        Walk::Sets(a, b) => {
             let key = (a.id, b.id);
             if key.0 == key.1 || equal.contains(&key) {
                 return Ordering::Equal;
@@ -1262,7 +1256,7 @@ fn walk<'a, A: Ordered>(w: Walk<'a, A>, steps: &mut Vec<Step<'a>>, equal: &Equal
                 // The blocks are compared before the rest, which waits below them.
                 steps.extend([
                     A::walk(Walk::CellRest(rest)),
-                    A::walk(Walk::Sets(Some(&x.block), Some(&y.block))),
+                    A::walk(Walk::Sets(&x.block, &y.block)),
                 ]);
                 Ordering::Equal
             }
@@ -1284,10 +1278,7 @@ fn walk<'a, A: Ordered>(w: Walk<'a, A>, steps: &mut Vec<Step<'a>>, equal: &Equal
                 (Some((s, c)), Some((t, d))) => {
                     let c = c.cmp(&d);
                     if c == Ordering::Equal {
-                        steps.extend([
-                            Step::Equal(key.0, key.1),
-                            A::walk(Walk::Sets(Some(s), Some(t))),
-                        ]);
+                        steps.extend([Step::Equal(key.0, key.1), A::walk(Walk::Sets(s, t))]);
                     }
                     return c;
                 }
@@ -7699,8 +7690,8 @@ pub mod rec {
     pub(super) mod unfold;
 
     mod walk {
-        //! `Clone`, `==` and `Debug` of [`Expr`], and `Debug` of a body's tree ([`Node`]) and `==` of
-        //! its shapes, each keeping its own stack on the heap, so an expression of any depth is copied, compared and
+        //! `Clone`, `==` and `Debug` of [`Expr`], and `Debug` of a body's tree ([`Node`]), each
+        //! keeping its own stack on the heap, so an expression of any depth is copied, compared and
         //! written on a small stack (COMPLEXITY.md K39). Each costs O(size). `Debug` writes the one line
         //! a derived `Debug` writes for `{:?}`, under `{:#?}` too.
 
@@ -7713,9 +7704,6 @@ pub mod rec {
         pub(super) trait Tree: Sized {
             /// The parts directly below, in order.
             fn kids(&self) -> impl DoubleEndedIterator<Item = &Self>;
-
-            /// Whether the two hold the same besides their parts below, and as many of those.
-            fn same_head(&self, other: &Self) -> bool;
 
             /// Writes the text before the parts below, and gives the text after them.
             fn open(&self, f: &mut fmt::Formatter<'_>) -> Result<&'static str, fmt::Error>;
@@ -7736,6 +7724,23 @@ pub mod rec {
                     Expr::Morphism(l, u, v) => (&[], [Some(l), Some(u), Some(v)]),
                 };
                 list.iter().chain(boxes.into_iter().flatten())
+            }
+
+            /// Whether the two hold the same besides their parts below, and as many of those.
+            fn same_head(&self, other: &Expr) -> bool {
+                match (self, other) {
+                    (Expr::Param(i), Expr::Param(j)) => i == j,
+                    (Expr::Ref(i, xs), Expr::Ref(j, ys)) => i == j && xs.len() == ys.len(),
+                    (Expr::Type(s), Expr::Type(t)) => s == t,
+                    (Expr::Union(xs), Expr::Union(ys))
+                    | (Expr::And(xs), Expr::And(ys))
+                    | (Expr::Tuple(xs), Expr::Tuple(ys)) => xs.len() == ys.len(),
+                    (Expr::Atom(m, xs), Expr::Atom(n, ys)) => m == n && xs.len() == ys.len(),
+                    (Expr::Not(_), Expr::Not(_))
+                    | (Expr::Diff(..), Expr::Diff(..))
+                    | (Expr::Morphism(..), Expr::Morphism(..)) => true,
+                    _ => false,
+                }
             }
         }
 
@@ -7823,22 +7828,6 @@ pub mod rec {
                 Expr::kids(self)
             }
 
-            fn same_head(&self, other: &Expr) -> bool {
-                match (self, other) {
-                    (Expr::Param(i), Expr::Param(j)) => i == j,
-                    (Expr::Ref(i, xs), Expr::Ref(j, ys)) => i == j && xs.len() == ys.len(),
-                    (Expr::Type(s), Expr::Type(t)) => s == t,
-                    (Expr::Union(xs), Expr::Union(ys))
-                    | (Expr::And(xs), Expr::And(ys))
-                    | (Expr::Tuple(xs), Expr::Tuple(ys)) => xs.len() == ys.len(),
-                    (Expr::Atom(m, xs), Expr::Atom(n, ys)) => m == n && xs.len() == ys.len(),
-                    (Expr::Not(_), Expr::Not(_))
-                    | (Expr::Diff(..), Expr::Diff(..))
-                    | (Expr::Morphism(..), Expr::Morphism(..)) => true,
-                    _ => false,
-                }
-            }
-
             fn open(&self, f: &mut fmt::Formatter<'_>) -> Result<&'static str, fmt::Error> {
                 Ok(match self {
                     Expr::Param(i) => {
@@ -7890,13 +7879,6 @@ pub mod rec {
                 self.e.kids().map(|n| &**n)
             }
 
-            fn same_head(&self, other: &Node) -> bool {
-                self.digest == other.digest
-                    && self.recursive == other.recursive
-                    && self.open == other.open
-                    && self.e.same_head(&other.e)
-            }
-
             fn open(&self, f: &mut fmt::Formatter<'_>) -> Result<&'static str, fmt::Error> {
                 write!(
                     f,
@@ -7911,9 +7893,8 @@ pub mod rec {
         }
 
         /// Whether `a` and `b` are equal, part by part, from a stack of pairs. A pair that is one
-        /// value twice is equal unread. A body's tree is a tree, built by `Node::of` from an expression,
-        /// so no pair is met twice.
-        pub(super) fn equal<T: Tree>(a: &T, b: &T) -> bool {
+        /// value twice is equal unread. An expression owns its parts, so no pair is met twice.
+        fn equal(a: &Expr, b: &Expr) -> bool {
             let mut pairs = vec![(a, b)];
             while let Some((a, b)) = pairs.pop() {
                 if std::ptr::eq(a, b) {
@@ -7962,16 +7943,6 @@ pub mod rec {
         }
 
         impl Eq for Expr {}
-
-        impl PartialEq for Shape {
-            fn eq(&self, other: &Shape) -> bool {
-                self.same_head(other)
-                    && self
-                        .kids()
-                        .zip(other.kids())
-                        .all(|(a, b)| equal(&**a, &**b))
-            }
-        }
 
         impl fmt::Debug for Expr {
             fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -8929,6 +8900,10 @@ pub mod rec {
             }
             for ((x, xs), (y, ys)) in self.classes.iter().zip(&other.classes) {
                 let c = x.e.head().cmp(&y.e.head()).then_with(|| xs.cmp(ys));
+                // Under `blind` this answer is the only one for two groups whose forms tie in
+                // digest, since `Key::order` then skips the names: the emptiness search would give
+                // them one number. Reached there, on the children's classes, by
+                // `l01_37a_short_addresses::collide::an_emptiness_search_tells_apart_groups_whose_forms_tie`.
                 if c.is_ne() {
                     return c;
                 }

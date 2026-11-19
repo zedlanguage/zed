@@ -565,7 +565,7 @@ fn exact(s: &Shape) -> bool {
 
 /// Whether `l`, the guarantee of an arrow, is `Never`: the arrow is written `U ->? V`.
 fn partial(l: &Node) -> bool {
-    l.e == Shape::Type(Type::empty())
+    matches!(&l.e, Shape::Type(t) if *t == Type::empty())
 }
 
 /// Whether part `i` of an expression of shape `s` is left out of its text, and so is not

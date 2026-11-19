@@ -633,9 +633,24 @@ fails that test in the short build, so its `Inhabited` arm is reached there.
   condition joined branch by branch; `c&x | !c&!x` built directly is found before `choose`).
   The return is a shortcut: with it skipped, `Part::union_as_kept` reaches the same node, so the
   test passes (measured). Control run: the arm returning `x` fails the test.
-- Still open, count 0 in both builds: the walk's `continue` at an expression already in `exprs` (about 2270), the `continue` in
-  `Cell::atoms` at a cell whose atoms are already made (about 3847), and the literal set false
-  that empties the last block (about 4063). No input was built for them.
+- Closed (TEST-kernel-unreached-paths-4, cover11): the three paths left at count 0 above.
+  - `Part`'s walk of expressions has two checks of `exprs`. The first, at an `(e, None)` entry,
+    is reached by `bdd::tests::three_valued_operations_keep_the_assignments` (`e & !e`, two
+    clusters sharing an operand), found by a temporary probe; the counts above were of the
+    integration groups only. Control run: that check removed fails the test on the new
+    `debug_assert!` below. The second, at an `(e, Some(ops))` entry (the "about 2270" here), is
+    now a proof at the site and a `debug_assert!`: between the push of `(e, Some(ops))` and its
+    pop only entries for operands of `e`'s cluster, at some depth, are popped, and none of them is
+    put in `exprs` before its own operands are, so `e` cannot be put there in that time.
+  - The `continue` in `Cell::atoms` at a cell whose atoms are made: kept, with a comment proving
+    that one thread never reaches it (a cell is pushed with no atoms, only cells below it are made
+    before its pop, and a list in its one form meets no cell twice). Only another thread making
+    the same cell's atoms at that moment reaches it, which no test does; the skip only saves
+    making the same set again.
+  - The literal set false that empties the last block of two or more (`or_literal`): now
+    `unreachable!`, with the proof at the site. In a list's one form two or more blocks end in a
+    block of two or more literals, so one literal set false leaves one; one block is the `at == 0`
+    arm.
 
 `types/print.rs` (the file cover4's list means; the earlier entries say `print.rs`): `folded`,
 `meet_text` and `meet_of_literals` have count 0 in both builds, since `l01_23` prints no meet of
@@ -699,3 +714,31 @@ Still open:
   saw them, in the new test or in the `l01_37a` group; only the `SetsInOrder` ends are reached.
   No input was built for them.
 - `Node::same_head`, which no test calls.
+
+Closed by cover11 (TEST-kernel-unreached-paths-4), except the part named at the end:
+
+- `Canon::order` under `blind`. The new test
+  `l01_37a_short_addresses::collide::an_emptiness_search_tells_apart_groups_whose_forms_tie`
+  builds 600 groups `A = #a | #c<x>(int, A)`, `B = #b | #c<x>(int, B)`,
+  `C = #a | #d<x>(int, C)` with `M = A & B` (empty) or `M = A & C` (inhabited), for x in 0..300.
+  The ends `#a` and `#b` are held types, which the group's decider does not meet, so every `M` is
+  left to the search (the test asserts `decided_by_group() == None`). For each pair of one empty
+  and one inhabited `M` that tie in digest it checks that their union is inhabited and their
+  tuple empty, each with the emptiness answers forgotten first; in the full build no pair ties
+  and the test asserts that. A temporary probe showed the arm reached under `blind`, deciding on
+  the children's classes (`xs.cmp(ys)`) with the heads equal. Control run: the arm answering
+  `Equal` under `blind` fails the test in the short build (the tuple assertion), while the other
+  `collide` tests pass. A comment at the site names the test.
+- Still open: the class heads alone deciding under `blind`. An earlier family (ends held as
+  `#a(int)` and `#b(int)`, atoms of tuple payload) reached unequal heads under `blind` (probe),
+  but the control making only that case answer `Equal` passed: every pair differing in emptiness
+  there also differed in the held types or the children's classes, compared after. No family was
+  found where only the heads tell an empty group from an inhabited one: the decider reads atom
+  names, so groups that differ in an atom name on a path that decides emptiness are decided
+  without the search. Whether such a family exists is not proved either way.
+- The `Cells` and `Sets` ends: removed. Every construction of `Walk::Cells` and `Walk::Sets` (in
+  `walk` and in `set/tests.rs`) passed `Some` on both sides, so the arms were unreachable; both
+  now hold references, and the end arms remain only for `SetsInOrder`, which reaches them.
+- `Node::same_head`: removed, with `impl PartialEq for Shape` (its one user, itself used only by
+  `unfold::partial`, which now matches the shape) and the `Tree::same_head` method;
+  `Expr::same_head` is now an inherent method and `walk::equal` takes expressions only.

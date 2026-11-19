@@ -486,3 +486,81 @@ fn families_that_tie_in_digest_reach_every_arm_of_the_order() {
         .collect();
     family("shapes", &shapes);
 }
+
+/// In a group of `A = #a | #c<x>(int, A)`, `B = #b | #c<x>(int, B)` and `C = #a | #d<x>(int, C)`,
+/// `M = A & B` when `empty`, else `M = A & C`. `A` and `B` hold lists that end in `#a` and in
+/// `#b`, which share no value, so `A & B` is empty; `A & C` holds `#a`. The groups differ in the
+/// names `#c<x>` and `#d<x>` and in which member `M` meets with `A`, and so only in the heads and
+/// the children's classes of their nodes, which [`Type`]'s order compares in `Canon::order`.
+/// `#a` and `#b` are types held, which the group's decider does not meet, so it leaves `M` to
+/// the search either way.
+fn ends_meet(x: usize, empty: bool) -> Type {
+    use zed_kernel::types::rec::{Def, Expr, Group};
+    let def = |name: &str, body: Expr| Def {
+        name: name.into(),
+        params: Vec::new(),
+        body,
+    };
+    let list = |end: &str, cons: &str, me: usize| {
+        Expr::Union(vec![
+            Expr::Type(Type::atom(end)),
+            Expr::Atom(
+                format!("{cons}{x}"),
+                vec![Expr::Type(Type::int()), Expr::Ref(me, Vec::new())],
+            ),
+        ])
+    };
+    let other = if empty { 1 } else { 2 };
+    Group::new(vec![
+        def("A", list("a", "c", 0)),
+        def("B", list("b", "c", 1)),
+        def("C", list("a", "d", 2)),
+        def(
+            "M",
+            Expr::And(vec![Expr::Ref(0, Vec::new()), Expr::Ref(other, Vec::new())]),
+        ),
+    ])
+    .unwrap()
+    .instance(vec![])
+    .remove(3)
+}
+
+#[test]
+fn an_emptiness_search_tells_apart_groups_whose_forms_tie() {
+    // The search numbers the types it meets with names left out (`blind`), comparing the keys
+    // of one digest, where `Key::order` skips the names, and two groups that differ only in the
+    // heads and children of their nodes are told apart by `Canon::order` alone; here, by the
+    // classes of the children of `M`'s node. Were an empty `M` of `ends_meet` and an inhabited
+    // one given one number, the second met would take the first's answer: their union would be
+    // empty or their tuple inhabited, whichever is met first. Each answer is checked against the
+    // members' answers alone, over the pairs that tie in digest (TEST-kernel-unreached-paths-4).
+    let members: Vec<(Type, bool)> = (0..300)
+        .flat_map(|x| [true, false].map(|empty| (ends_meet(x, empty), empty)))
+        .collect();
+    for (m, empty) in &members {
+        assert_eq!(m.decided_by_group(), None, "{m}");
+        Type::forget_emptiness();
+        assert_eq!(m.is_empty(), *empty, "{m}");
+    }
+    let mut tied = 0;
+    for (i, (a, ea)) in members.iter().enumerate() {
+        for (b, eb) in &members[i + 1..] {
+            if digest(a) != digest(b) || ea == eb {
+                continue;
+            }
+            tied += 1;
+            Type::forget_emptiness();
+            assert!(!(a | b).is_empty(), "{a} | {b}");
+            Type::forget_emptiness();
+            assert!(
+                Type::tuple(vec![a.clone(), b.clone()]).is_empty(),
+                "{a}, {b}"
+            );
+        }
+    }
+    assert_eq!(
+        tied > 0,
+        SHORT,
+        "{tied} pairs of one empty and one inhabited tie"
+    );
+}

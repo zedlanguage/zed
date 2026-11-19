@@ -275,16 +275,9 @@ fn sets_whose_digests_tie_and_shapes_differ_are_ordered_by_their_literals() {
         let expected = (in_order(&s).iter().map(|k| (k.1, &k.0)))
             .cmp(in_order(&t).iter().map(|k| (k.1, &k.0)));
         assert_ne!(expected, std::cmp::Ordering::Equal);
-        assert_eq!(Row::order(Walk::Sets(Some(x), Some(y))), expected, "{e}");
-        assert_eq!(
-            Row::order(Walk::Sets(Some(y), Some(x))),
-            expected.reverse(),
-            "{e}"
-        );
-        assert_eq!(
-            Row::order(Walk::Sets(Some(x), Some(x))),
-            std::cmp::Ordering::Equal
-        );
+        assert_eq!(Row::order(Walk::Sets(x, y)), expected, "{e}");
+        assert_eq!(Row::order(Walk::Sets(y, x)), expected.reverse(), "{e}");
+        assert_eq!(Row::order(Walk::Sets(x, x)), std::cmp::Ordering::Equal);
     }
     assert!(found > 0, "no digest of 64 gave two shapes");
 }
