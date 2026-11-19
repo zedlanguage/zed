@@ -903,6 +903,17 @@ struct Pending {
     ty: Ty,
 }
 
+/// A fit of a function of `s` where one of `q` is expected, by `what` at `span`, put off
+/// until the fit it was found in has run ([`Ck::fit_classes`]). `place` holds, for each
+/// parameter of `q`, the index of the parameter of `s` named alike.
+struct WaitingFit {
+    s: Arc<Sig>,
+    q: Arc<Sig>,
+    place: Vec<usize>,
+    what: Arc<str>,
+    span: Span,
+}
+
 /// A class of literals alone that a binding in a body has just given its carrier
 /// ([`Ck::powers_bound`]): `mask`, the carriers it might take before the binding chose one,
 /// says which repairs of its int powers its own uses take, and `carried`, whether the bound
@@ -1332,9 +1343,9 @@ type Masks = Vec<(Arc<str>, u8)>;
 
 /// `t` shown with each class of `masks`, a variable of `t` with its carriers, shown as the
 /// union of those carriers.
-fn show_with(t: &Ty, masks: &Masks, spell: Spell<'_>) -> String {
+fn show_with(t: &Ty, masks: &Masks, spell: Spell<'_>, names: &[(Arc<str>, Arc<str>)]) -> String {
     if masks.is_empty() {
-        return t.text_spelled(false, spell);
+        return t.text_named(false, spell, names);
     }
     // One union, printed in the order of a union (`order::cmp`, DESIGN.md sec:diagnostics), so
     // that the carriers stand among the other members as in a type written with them.
@@ -1345,7 +1356,7 @@ fn show_with(t: &Ty, masks: &Masks, spell: Spell<'_>) -> String {
         rest.vars.remove(v);
     }
     rest.union(&Ty::of_mask(narrowed))
-        .text_spelled(false, spell)
+        .text_named(false, spell, names)
 }
 
 /// Where a repair note that writes types in code says to declare the definitions those
@@ -1994,6 +2005,19 @@ struct Ck<'t, 'a> {
     opened: bool,
     /// Whether a repair is being tried, so its errors offer none.
     trying: bool,
+    /// Whether a fit of classes ([`Ck::fit_classes`]) is being run for good after its trial
+    /// held, so that a fit nested in it runs without a trial of its own: the outer trial
+    /// already ran it.
+    fitting: bool,
+    /// The fits of classes found inside the one being run ([`Ck::fit_classes`]), which that
+    /// one runs in turn instead of each inside the call that found it, so that a function type
+    /// nested d deep takes a constant depth of stack and not d calls of [`Ck::apply`]; with the
+    /// count of [`Self::marks`] when the fit now running began.
+    fits_waiting: Option<(u64, Vec<WaitingFit>)>,
+    /// How many points the checker has marked ([`Ck::mark`]): a fit is put off only while this
+    /// count is that of [`Self::fits_waiting`], so that no state was marked to be undone, or
+    /// errors counted for a verdict, since its fit began (see [`Ck::fit_classes`]).
+    marks: std::cell::Cell<u64>,
     /// The span of each call whose arguments do not fit its function, outside a trial, and of
     /// each application whose value is the empty type it took from one: the checker gives
     /// such a call no value, and an application that refuses an argument from one of them
@@ -2701,6 +2725,9 @@ impl<'t, 'a> Ck<'t, 'a> {
             opened: false,
             failed: HashSet::new(),
             trying: false,
+            fitting: false,
+            fits_waiting: None,
+            marks: std::cell::Cell::new(0),
             rough: false,
             lines_out: HashSet::new(),
             port_params: HashSet::new(),
@@ -3815,7 +3842,7 @@ impl<'t, 'a> Ck<'t, 'a> {
                         .collect();
                     format!(
                         "`{b}` is declared `{}`",
-                        show_with(&t, &masks, &|v| self.spelling(v))
+                        show_with(&t, &masks, &|v| self.spelling(v), &[])
                     )
                 }
             },
@@ -5081,7 +5108,50 @@ impl<'t, 'a> Ck<'t, 'a> {
     /// `t` shown with each class narrowed to some carriers shown as their union.
     fn show(&self, t: &Ty) -> String {
         let t = &self.as_literals(&self.settled(t));
-        show_with(t, &self.masks(t), &|v| self.spelling(v))
+        let names = self.written_names(&t.var_facts().classes);
+        show_with(t, &self.masks(t), &|v| self.spelling(v), &names)
+    }
+
+    /// Each class of `vars` not yet solved that a type variable written in the signature of a
+    /// function being checked stands for ([`Self::type_vars`]), with that name: a message
+    /// about the body of `q(g: (h: (x: T) -> int, y: T) -> int) = p(f: g)` prints the class of
+    /// `T` as `T`, a type the user can write there, where the printer alone prints a variable
+    /// no signature of the text binds as `_`, every value
+    /// (FAIL-check-class-in-fn-arg-not-narrowed). A name an inner function writes again hides
+    /// the outer one, so a class whose name is hidden keeps `_`.
+    // Complexity tradeoff: for each class, a scan of the written names of the open functions,
+    // innermost first, O(v·w) for v classes and w names written in the d open signatures, with
+    // a root lookup per name; the alternative, a map from each class root to its name kept as
+    // classes merge, would cost a write at every merge of every check for the few messages
+    // that print a class. Signatures write few names and a message prints few classes.
+    fn written_names<'v>(
+        &self,
+        vars: impl IntoIterator<Item = &'v Arc<str>>,
+    ) -> Vec<(Arc<str>, Arc<str>)> {
+        let mut out = Vec::new();
+        if self.type_vars.is_empty() {
+            return out;
+        }
+        for v in vars {
+            let Some(k) = class_id(v).filter(|_| self.is_class(v) && self.stale(v).is_none())
+            else {
+                continue;
+            };
+            let r = self.find(k);
+            let mut hidden: HashSet<&str> = HashSet::new();
+            let found = (self.type_vars.iter().rev()).find_map(|(_, b)| {
+                let hit = b.iter().find_map(|(n, c)| {
+                    let j = class_id(c.as_var()?)?;
+                    (!hidden.contains(&**n) && self.find(j) == r).then(|| n.clone())
+                });
+                hidden.extend(b.keys().map(|n| &**n));
+                hit
+            });
+            if let Some(name) = found {
+                out.push((v.clone(), name));
+            }
+        }
+        out
     }
 
     /// `t` with each class of generic literals alone, not yet resolved, replaced by its
@@ -5247,15 +5317,17 @@ impl<'t, 'a> Ck<'t, 'a> {
 
     /// The text of `t` in a message.
     fn text(&self, t: &Ty) -> String {
-        self.as_literals(&self.settled(t))
-            .text_spelled(false, &|v| self.spelling(v))
+        let t = self.as_literals(&self.settled(t));
+        let names = self.written_names(&t.var_facts().classes);
+        t.text_named(false, &|v| self.spelling(v), &names)
     }
 
     /// The text of `t` in a message as one operand of a union, `T | U`: a function in it is
     /// parenthesized.
     fn text_in_union(&self, t: &Ty) -> String {
-        self.as_literals(&self.settled(t))
-            .text_spelled(true, &|v| self.spelling(v))
+        let t = self.as_literals(&self.settled(t));
+        let names = self.written_names(&t.var_facts().classes);
+        t.text_named(true, &|v| self.spelling(v), &names)
     }
 
     /// The text of `s` in a message. A variable of `s` that stands in one place of it and whose
@@ -5317,9 +5389,10 @@ impl<'t, 'a> Ck<'t, 'a> {
                 })
             })
             .collect();
+        let names = self.written_names(&s.facts().classes);
         match binds.is_empty() {
-            true => s.to_string(),
-            false => s.replace(&binds).to_string(),
+            true => s.text_named(&names),
+            false => s.replace(&binds).text_named(&names),
         }
     }
 
@@ -7063,7 +7136,12 @@ impl<'t, 'a> Ck<'t, 'a> {
                 .collect()
         });
         let why = at
-            .and_then(|(i, p, q)| Some(args[i].as_ref()?.ty.of_piece(p).refused(q)))
+            .and_then(|(i, p, q)| {
+                let t = args[i].as_ref()?.ty.of_piece(p);
+                let (tf, qf) = (t.var_facts(), q.var_facts());
+                let names = self.written_names(tf.classes.iter().chain(&qf.classes));
+                Some(t.refused_named(q, &names))
+            })
             .filter(|w| !w.is_empty())
             .unwrap_or_else(|| why.to_string());
         does_not_take(what, &shown.join(", "), &why)
@@ -7343,6 +7421,19 @@ fn hold(t: &Ty, needs: Vec<Need>, is_class: impl Fn(&str) -> bool) -> (Ty, Vec<N
 
 /// `t` with the type variables of `sig`'s parameters that no argument bound made unknown.
 fn close(t: &Ty, sig: &Sig, is_class: impl Fn(&str) -> bool) -> Ty {
+    // `subst` replaces only variables `t` holds, so a `t` that holds none is its own answer.
+    // Complexity tradeoff (FAIL-check-class-in-fn-arg-not-narrowed): naive version, the walk
+    // of every parameter below at each call, O(k) for parameters k function types deep, so
+    // O(k^2) for a fit at each of k levels. Used: `Ty::holds_vars`, the cost of the outer
+    // level of `t`, since each row, shape and function keeps whether it holds a variable;
+    // the parameters are walked only when `t` holds one, as before. Not used: the variables
+    // of `t` outside functions (`Ty::vars_outside`), which would also skip a `t` holding
+    // only classes, but walks every open row of `t` at each call, where `subst` skips a row
+    // whose bits miss the binds: `rows_shared_on_many_paths_scale_in_its_call` went from
+    // 8.5 s to over 120 s.
+    if !t.holds_vars() {
+        return t.clone();
+    }
     let mut own = Vars::default();
     for a in &sig.arrows {
         a.params.iter().for_each(|p| p.vars_in(&mut own));
@@ -7786,6 +7877,7 @@ impl Ck<'_, '_> {
 
     /// The point the checker is at.
     fn mark(&self) -> Mark {
+        self.marks.set(self.marks.get() + 1);
         Mark {
             log: self.log.len(),
             errors: self.errors.len(),

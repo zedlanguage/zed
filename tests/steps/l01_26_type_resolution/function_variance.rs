@@ -2903,3 +2903,154 @@ fn an_agreeing_call_is_compiled_as_before_and_a_differing_one_runs_in_an_executa
         );
     }
 }
+
+/// Row FAIL-check-class-in-fn-arg-not-narrowed (a wrong yes): inside `q`, `T` is written in
+/// `g`'s function type and nowhere else that fixes it, so the checker gives it a class.
+/// `p(f: g)` passes `g` at `p`'s closed parameter `(h: int, y: int) -> int`; the comparison of
+/// types took the class as `int` there in a binding it then dropped, so `q(g: s)` with `s` at
+/// `bool` was accepted and `p` called `s` with two `int`s. The class is now narrowed by calling
+/// `g` with the parameter types of the slot, as `p` calls it.
+#[test]
+fn a_class_inside_a_function_argument_is_narrowed_at_a_closed_parameter() {
+    let head = "p(f: (h: int, y: int) -> int) = f(h: 1, y: 2);\n";
+    for src in [
+        format!(
+            "{head}q(g: (h: T, y: T) -> int) = p(f: g);\ns(h: bool, y: bool) = 0;\na = q(g: s);\n"
+        ),
+        format!(
+            "{head}q(g: (h: T, y: T) -> int, z: T) = p(f: g);\ns(h: bool, y: bool) = 0;\n\
+             a = q(g: s, z: true);\n"
+        ),
+        // The parameters in another order: the slot's names decide.
+        format!(
+            "{head}q(g: (y: T, h: T) -> int) = p(f: g);\ns(y: bool, h: bool) = 0;\na = q(g: s);\n"
+        ),
+        // Two type variables, each narrowed at its own parameter.
+        format!(
+            "{head}q(g: (h: T, y: U) -> int, z: T, w: U) = p(f: g);\ns(h: int, y: bool) = 0;\n\
+             a = q(g: s, z: 1, w: true);\n"
+        ),
+    ] {
+        assert!(!type_errors(&src).is_empty(), "{src}");
+    }
+    // At `int` it is accepted.
+    accepted(&format!(
+        "{head}q(g: (h: T, y: T) -> int) = p(f: g);\ns(h: int, y: int) = h + y;\na = q(g: s);\n"
+    ));
+}
+
+/// The class in the result of the function argument: `(h: int) -> T` passed where `(h: int) ->
+/// int` is expected makes `T` `int`, alone and inside a tuple, and against a generic slot
+/// `(x: int) -> U` whose `U` is fixed by another argument.
+#[test]
+fn a_class_in_the_result_of_a_function_argument_is_narrowed() {
+    let one = "p(f: (h: int) -> int) = f(h: 1);\n";
+    accepted(&format!(
+        "{one}q(g: (h: int) -> T, z: T) = p(f: g);\ns(h: int) = h;\na = q(g: s, z: 3);\n"
+    ));
+    for src in [
+        format!(
+            "{one}q(g: (h: int) -> T, z: T) = p(f: g);\ns(h: int) = true;\na = q(g: s, z: true);\n"
+        ),
+        "p(f: (h: int) -> (int, int)) = f(h: 1);\nq(g: (h: int) -> (T, int), z: T) = p(f: g);\n\
+         s(h: int) = (true, 1);\na = q(g: s, z: true);\n"
+            .to_string(),
+        "m(f: (x: int) -> U, z: U) = f(x: 1);\nq(g: (x: T) -> T, z: T) = m(f: g, z: z);\n\
+         s(x: bool) = x;\na = q(g: s, z: true);\n"
+            .to_string(),
+    ] {
+        assert!(!type_errors(&src).is_empty(), "{src}");
+    }
+}
+
+/// The class one function deeper, at a doubly contravariant place: `T` in `(h: (x: T) -> int,
+/// y: T) -> int` passed where `(h: (x: int) -> int, y: int) -> int` is expected is `int`. The
+/// comparison of types could not bind a class there, so `q` alone was refused (a wrong no); now
+/// it is accepted and the call with `s` at `bool` is refused. The same holds where `g` is
+/// called with a declared function, `g(h: k, y: 1)`.
+#[test]
+fn a_class_inside_a_function_argument_nested_is_narrowed() {
+    let q_of = |body: &str| format!("q(g: (h: (x: T) -> int, y: T) -> int) = {body};\n");
+    let p = "p(f: (h: (x: int) -> int, y: int) -> int) = 0;\n";
+    let k = "k(x: int) = x;\n";
+    for pre in [
+        format!("{p}{}", q_of("p(f: g)")),
+        format!("{k}{}", q_of("g(h: k, y: 1)")),
+    ] {
+        accepted(&pre);
+        accepted(&format!(
+            "{pre}s(h: (x: int) -> int, y: int) = 0;\na = q(g: s);\n"
+        ));
+        let src = format!("{pre}s(h: (x: bool) -> int, y: bool) = 0;\na = q(g: s);\n");
+        assert!(!type_errors(&src).is_empty(), "{src}");
+    }
+}
+
+/// A refusal inside `q` prints the class of `q`'s `T` as `T`, a type the user can write there,
+/// not `_`, which says every value: "`p` does not take ((h: (x: _) -> int, y: _) -> int)" before.
+#[test]
+fn a_class_of_a_written_type_variable_prints_as_its_name() {
+    let src = "p(f: (h: (x: int) -> int, y: int) -> bool) = true;\n\
+               q(g: (h: (x: T) -> int, y: T) -> int) = p(f: g);\n";
+    let errors = type_errors(src);
+    assert_eq!(errors.len(), 1, "{src}: {errors:?}");
+    assert!(
+        errors[0].contains("((h: (x: T) -> int, y: T) -> int)") && !errors[0].contains('_'),
+        "{src}: {errors:?}"
+    );
+}
+
+/// The same at a partial parameter (FAIL-check-class-in-fn-arg-not-narrowed). DESIGN.md
+/// sec:type_language ("Morphism types carry two domain bounds"): `K ->? V` has an empty lower
+/// domain and the upper one `K`, so a function fits it whose domain is within `K`; with `T`
+/// in `g`'s domain, `p(f: g)` makes `T` one of `K`'s. Before, the comparison of types bound
+/// `T` and dropped the binding, so `q(g: s)` with `s` taking `bool` was accepted, and `p` would
+/// call it with ints. A tuple is matched to the one shape of its length in `K`
+/// (FAIL-fn-domain-bindable-variable, whose programs keep their verdicts).
+#[test]
+fn a_class_inside_a_function_argument_is_narrowed_at_a_partial_parameter() {
+    let two = "p(f: (x: int, y: int) ->? int) = f(x: 1, y: 2);\n\
+               q(g: (x: T, y: T) -> int) = p(f: g);\n";
+    let pair = "p(f: (x: (int, int) | String) ->? int) = f(x: (1, 2));\n\
+                q(g: (x: (T, T)) -> int) = p(f: g);\n";
+    for head in [two, pair] {
+        assert_eq!(type_errors(head), Vec::<String>::new(), "{head}");
+    }
+    for src in [
+        format!("{two}s(x: int, y: int) = 0;\na = q(g: s);\n"),
+        format!("{pair}s(x: (int, int)) = 0;\na = q(g: s);\n"),
+    ] {
+        assert_eq!(type_errors(&src), Vec::<String>::new(), "{src}");
+    }
+    for src in [
+        format!("{two}s(x: bool, y: bool) = 0;\na = q(g: s);\n"),
+        format!("{pair}s(x: (bool, bool)) = 0;\na = q(g: s);\n"),
+    ] {
+        assert_eq!(type_errors(&src).len(), 1, "{src}: {:?}", type_errors(&src));
+    }
+    // A result outside the partial arrow's is refused, and the clause names `T` as written.
+    let src = "p(f: (x: (int, int) | String) ->? int) = 0;\n\
+               q(g: (x: (T, T)) -> String) = p(f: g);\n";
+    let errors = type_errors(src);
+    assert_eq!(errors.len(), 1, "{src}: {errors:?}");
+    assert!(
+        errors[0].contains("`(x: (T, T)) -> String`") && !errors[0].contains('_'),
+        "{src}: {errors:?}"
+    );
+}
+
+/// A function whose parameter takes functions whose results are variables of their own, two
+/// deep, is passed where the same depth with `int` results is expected, and called with such
+/// a function: the small instance of the second deep series of
+/// `bench::function_variance::classes_inside_function_arguments_narrowed_by_calls_scale`. The
+/// call of `q` with an `s` taking `bool` is refused.
+#[test]
+fn a_function_whose_results_are_variables_of_their_own_fits_int_results() {
+    let head = "p(f: (h: (x: (x: int) -> int) -> int, y: int) -> int) = 0;\n\
+                q(g: (h: ((x: ((x: int) -> U0 for U0 in int)) -> U1 for U1 in int), y: int) -> \
+                int) = p(f: g);\n";
+    let ok = format!("{head}s(h: (x: (x: int) -> int) -> int, y: int) = 0;\na = q(g: s);\n");
+    assert_eq!(type_errors(&ok), Vec::<String>::new(), "{ok}");
+    let bad = format!("{head}s(h: (x: (x: int) -> int) -> int, y: bool) = 0;\na = q(g: s);\n");
+    assert_eq!(type_errors(&bad).len(), 1, "{bad}: {:?}", type_errors(&bad));
+}

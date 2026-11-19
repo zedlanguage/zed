@@ -635,6 +635,110 @@ fn a_repeated_placed_call_of_p_named_arguments_in_native_code_scales() {
     );
 }
 
+/// A class of a function parameter `T` narrowed at a closed parameter by calls
+/// (FAIL-check-class-in-fn-arg-not-narrowed, `Ck::fit_classes`): n functions, each passed where
+/// `(h: (x: int) -> int, y: int) -> int` is expected with `T` at both `int`s; and one function
+/// whose `T` lies n function types deep, passed where the same depth of `int` is expected,
+/// then called with a function of that type. Each level is one call of the function's
+/// parameters, tried once at the outermost level and then run for good (`Ck::fitting`); with a
+/// trial at each level, each run for good tried every level inside it again, O(n²) for the
+/// depth. The deep one runs on a 2 MiB stack, 400 and 3200 deep: each level's fit waits for
+/// the one around it to end (`Ck::fits_waiting`); run inside the call that found it, it
+/// overflowed that stack 400 deep. Each level's call leaves the result `int` as it is, without
+/// a walk of the parameters below it (`close`); with that walk, 28.9 times the work at 8n. The
+/// same depth with each result a variable of its own (`U0 in int`, …), which `close` does walk
+/// the parameters for, measured 8.1 times. Both deep series also compare each level's
+/// arrows with every function the comparison has opened (`permitted`, `fn_holds_own`), O(n²)
+/// in all: 17.9 and 22.2 times at 8n, against 7.7 and 7.9 without that scan (row
+/// FAIL-l0126-bench-regressions, which also holds `a_power_returned_n_deep`). And n functions
+/// passed at a partial parameter, where no call is made and each parameter of the function is
+/// compared once with the arrow's (`Ck::result_into`). Besides its ratio: no errors at each
+/// size. Small instances: `function_variance::a_class_inside_a_function_argument_nested_is_narrowed`,
+/// `function_variance::a_class_inside_a_function_argument_is_narrowed_at_a_partial_parameter`
+/// and `function_variance::a_function_whose_results_are_variables_of_their_own_fits_int_results`.
+#[test]
+fn classes_inside_function_arguments_narrowed_by_calls_scale() {
+    use super::super::type_errors;
+    let many = |n: usize| {
+        let mut src = String::from("p(f: (h: (x: int) -> int, y: int) -> int) = 0;\n");
+        for i in 0..n {
+            src.push_str(&format!(
+                "q{i}(g: (h: (x: T) -> int, y: T) -> int) = p(f: g);\n"
+            ));
+        }
+        src
+    };
+    let partial = |n: usize| {
+        let mut src = String::from("p(f: (x: (int, int) | String) ->? int) = 0;\n");
+        for i in 0..n {
+            src.push_str(&format!("q{i}(g: (x: (T, T)) -> int) = p(f: g);\n"));
+        }
+        src
+    };
+    let deep = |n: usize| {
+        let (mut pt, mut qt) = ("int".to_string(), "T".to_string());
+        for _ in 0..n {
+            pt = format!("(x: {pt}) -> int");
+            qt = format!("(x: {qt}) -> int");
+        }
+        format!(
+            "p(f: (h: {pt}, y: int) -> int) = 0;\nq(g: (h: {qt}, y: T) -> int) = p(f: g);\n\
+             s(h: {pt}, y: int) = 0;\na = q(g: s);\n"
+        )
+    };
+    for (what, n, make) in [
+        (
+            "n functions, each with a class narrowed by a call",
+            400,
+            &many as &dyn Fn(usize) -> String,
+        ),
+        (
+            "n functions, each passed at a partial parameter",
+            400,
+            &partial,
+        ),
+    ] {
+        let inputs = scaling::inputs(n, make);
+        scaling::check(what, n, |m| {
+            let errors = type_errors(&inputs[&m]);
+            assert!(errors.is_empty(), "{what} at {m}: {errors:?}");
+        });
+    }
+    let declared = |n: usize| {
+        let (mut pt, mut qt) = ("int".to_string(), "int".to_string());
+        for i in 0..n {
+            pt = format!("(x: {pt}) -> int");
+            qt = format!("((x: {qt}) -> U{i} for U{i} in int)");
+        }
+        format!(
+            "p(f: (h: {pt}, y: int) -> int) = 0;\nq(g: (h: {qt}, y: int) -> int) = p(f: g);\n\
+             s(h: {pt}, y: int) = 0;\na = q(g: s);\n"
+        )
+    };
+    for (what, n, make) in [
+        (
+            "one function whose class lies n function types deep, narrowed by calls, on a 2 MiB \
+             stack",
+            400,
+            &deep as &dyn Fn(usize) -> String,
+        ),
+        (
+            "one function n function types deep, each result a variable of its own, on a 2 MiB \
+             stack",
+            400,
+            &declared,
+        ),
+    ] {
+        let inputs = scaling::inputs(n, make);
+        zed_tests::deep::on_small_stack(|| {
+            scaling::check(what, n, |m| {
+                let errors = type_errors(&inputs[&m]);
+                assert!(errors.is_empty(), "{what} at {m}: {errors:?}");
+            });
+        });
+    }
+}
+
 /// A hot call through a value that agrees with the one function the value holds costs the same
 /// in a unit where another call is placed by the function called: the value is then a closure
 /// that carries its parameter list, which a call that agrees does not read (DESIGN.md

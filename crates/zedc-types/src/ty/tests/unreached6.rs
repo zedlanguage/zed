@@ -535,3 +535,60 @@ fn a_function_type_of_exact_and_partial_arrows_holds_the_function_over_all_of_th
         assert!(b.meet(&a).is_empty(), "{}", b.meet(&a));
     }
 }
+
+/// PROOF-held-own-outer-or-class: a class variable a function of the nest owns is that
+/// function's variable where it stands in it, so [`VarFacts::outer_classes`] leaves it out,
+/// as [`VarFacts::outer`] leaves out a name the nest owns; the same class variable standing
+/// outside every owner is one a signature around may own, and is kept. Before, every class
+/// variable was taken as one of a signature around ([`outer_or_class`]).
+#[test]
+fn a_class_variable_the_nest_owns_is_not_an_outer_one() {
+    let k = || var("$3");
+    let mut owner = sig(vec![ex(vec![k()], int())], 1, false);
+    owner.own = [Arc::from("$3")].into_iter().collect();
+    owner.note_held();
+    let inside = sig(vec![ex(vec![fty(owner.clone())], int())], 1, false);
+    let facts = inside.facts();
+    assert!(facts.classes.contains("$3"), "{inside}");
+    assert!(!facts.outer_classes.contains("$3"), "{inside}");
+    let both = sig(vec![ex(vec![fty(owner), k()], int())], 2, false);
+    assert!(both.facts().outer_classes.contains("$3"), "{both}");
+}
+
+/// A bounded variable a signature does not own, as [`Sig::replace`] leaves one when it
+/// replaces a bounded own variable by another variable, met at an arrow equal to one of the
+/// other side by the same free variable ([`equal_fits`], case 2c): `((x0: B) -> int) &
+/// ((x0: String) -> int)` with the bound `B in int | f64` it does not own fits `((x0: B) ->
+/// int) & ((x0: String) -> int | f64)` of the same `B`, whose first arrow is equal to its
+/// own. `bounds_hold` refuses `B`, of no known mask, and the comparison after it decides.
+#[test]
+fn a_bounded_variable_not_owned_fits_an_equal_arrow() {
+    let c = bounded_not_owned(vec![ex(vec![var("B")], int()), ex(vec![string()], int())]);
+    let k = bounded_not_owned(vec![
+        ex(vec![var("B")], int()),
+        ex(vec![string()], int().union(&f64_())),
+    ]);
+    assert!(c.subtype(&k), "{}", c.refused(&k));
+}
+
+/// A bounded variable `B` that a signature does not own, met by an own unbounded variable
+/// `B` of the other side, which [`Cx::own_name`] reads under its own name, is a different
+/// variable ([`equal_fits`], case (a)): `(x0: B) -> int` with `B` fixed outside within `int |
+/// f64` does not take every type, so it does not fit `(x0: B) -> int` whose `B` is its own.
+#[test]
+fn a_bounded_variable_not_owned_is_not_an_own_one_of_the_same_name() {
+    let c = bounded_not_owned(vec![ex(vec![var("B")], int())]);
+    let mut every = sig(vec![ex(vec![var("B")], int())], 1, false);
+    every.own = [Arc::from("B")].into_iter().collect();
+    every.note_held();
+    let k = fty(every);
+    assert!(!c.subtype(&k), "{c} fits {k}");
+}
+
+/// A function type of `arrows`, with the bound `B in int | f64` on a `B` it does not own.
+fn bounded_not_owned(arrows: Vec<Arrow>) -> Ty {
+    let mut s = sig(arrows, 1, false);
+    s.bounds = [(Arc::from("B"), B_MASK)].into_iter().collect();
+    s.note_held();
+    fty(s)
+}

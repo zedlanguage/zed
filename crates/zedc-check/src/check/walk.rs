@@ -13918,6 +13918,7 @@ impl<'t, 'a> Ck<'t, 'a> {
                 ok
             }
             None => match piece {
+                Piece::Fn(s) if let Some(ok) = self.fn_into_classes(s, ty, what, span) => ok,
                 Piece::Fn(s) if s.holds_needs() => {
                     self.fit_needs(s, ty, &mut Binds::new(), what, span)
                 }
@@ -13956,6 +13957,243 @@ impl<'t, 'a> Ck<'t, 'a> {
         let q = q.replace(binds);
         let from = self.errors.len();
         self.needs_hold(s, &q, what, span) || self.errors.len() > from
+    }
+
+    /// Whether `s` holds a class of a function around that no type has solved: a class
+    /// [`Self::stale`] reads as nothing, which the comparison of types ([`Self::sub`]) takes
+    /// as a variable it may bind to anything. O(the classes `s` holds), its facts being kept
+    /// on it ([`Sig::facts`]).
+    fn holds_open_class(&self, s: &Sig) -> bool {
+        (s.facts().classes.iter()).any(|v| self.is_class(v) && self.stale(v).is_none())
+    }
+
+    /// Whether a function of `s` may be passed, by `what` at `span`, at a parameter of type
+    /// `p` with one function type that holds no type variable but classes, where `s` or that
+    /// type holds a class of a function around that no type has solved
+    /// ([`Self::fit_classes`]); `None` otherwise, for the comparison of types. A function
+    /// type with a variable of its own, as `map`'s `(x: T) -> U`, is left to that comparison,
+    /// which binds `T` and `U` for the call's result. O(the classes and variables of `s` and
+    /// `p`'s function type), as their facts are kept ([`Sig::facts`]).
+    fn fn_into_classes(&mut self, s: &Arc<Sig>, p: &Ty, what: &str, span: Span) -> Option<bool> {
+        let q = p.fns.only()?;
+        if !q.facts().names.is_empty() || !(self.holds_open_class(s) || self.holds_open_class(q)) {
+            return None;
+        }
+        self.fit_classes(s, &q.clone(), what, span)
+    }
+
+    /// Whether a function of `s` may be passed, by `what` at `span`, where a function of `q`
+    /// is expected, when `s` or `q` holds a class of a function around that no type has
+    /// solved ([`Self::holds_open_class`]); `None` where the parameters of `q` cannot be
+    /// matched to those of `s` by name, so the caller compares the two as types.
+    ///
+    /// The comparison of types binds such a class, as any variable it may bind, in a binding
+    /// of its own that it then drops, so it neither narrows the class nor records that it
+    /// must be what it was bound to (FAIL-check-class-in-fn-arg-not-narrowed: `q(g: (h: T,
+    /// y: T) -> int) = p(f: g)`, with `p` taking `(h: int, y: int) -> int`, left `T` open, and
+    /// `q(g: s)` with `s` taking two `bool`s was accepted). And a class at a doubly
+    /// contravariant place, `T` in `(h: (x: T) -> int, y: T) -> int`, is on the side it may
+    /// not bind, so that comparison refused a fit it should take. Here each arrow of `q`
+    /// calls `s` with its parameters instead, as a call written in the body would: a class
+    /// parameter of `s` takes the type passed ([`Self::flow`]), and a class passed at a closed
+    /// parameter is restricted to it, both through [`Self::apply`], which comes back here for
+    /// a function parameter of `s` that holds such a class. The result of each call must
+    /// then be one of the arrow's result ([`Self::result_into`]). This is the check of
+    /// [`Self::needs_hold`], extended to classes.
+    ///
+    /// Outside a trial the calls are tried first ([`Self::tried`]) and run for good only if
+    /// they hold, so that a misfit is the caller's one refusal of the argument, naming `s`'s
+    /// type, and not an error naming a call the program does not write.
+    ///
+    /// Complexity tradeoff: one call per arrow of `q`, at the cost of [`Self::apply`] on
+    /// `q`'s parameters, twice outside a trial; the comparison of types it stands in for
+    /// walked the same parameters once. Naive (and wrong) version: that comparison alone.
+    /// A partial arrow of `q` makes no call: its parameters and result are each compared once
+    /// with `s`'s ([`Self::result_into`]), linear in their pieces, as that comparison was.
+    /// The parameters are matched by name through a hash map, O(p) for p parameters, not by
+    /// a scan of `s`'s for each of `q`'s, O(p²).
+    fn fit_classes(&mut self, s: &Arc<Sig>, q: &Arc<Sig>, what: &str, span: Span) -> Option<bool> {
+        // A partial arrow `K ->? V` has an empty lower domain and the upper one `K` (DESIGN
+        // sec:type_language, "Morphism types carry two domain bounds"): a function fits it
+        // whose domain is within `K` and whose result is within `V | #notFound`. It promises
+        // no call over all of `K`, so calls of `s` with `K` would refuse what fits
+        // (FAIL-fn-domain-bindable-variable: `(x: (T, T)) -> int` fits `(x: (int, int) |
+        // String) ->? int`). So at a partial arrow the parameter types of `s` must be within
+        // its own, by [`Self::result_into`], which restricts a class they hold; `s` of one
+        // arrow only, as which arrows of several cover the domain is the comparison of types'
+        // question, to which `s` of several is left.
+        if q.arrows.iter().any(|a| a.partial) && s.arrows.len() != 1 {
+            return None;
+        }
+        // The index in `s` of each parameter of `q`, named alike and passed alike.
+        let at: HashMap<&str, (usize, bool)> = (s.params.iter().enumerate())
+            .map(|(i, p)| (&*p.name, (i, p.positional)))
+            .collect();
+        let mut place = Vec::with_capacity(q.params.len());
+        for p in &q.params {
+            match at.get(&*p.name) {
+                Some(&(i, positional)) if positional == p.positional => place.push(i),
+                _ => return None,
+            }
+        }
+        let fit = WaitingFit {
+            s: s.clone(),
+            q: q.clone(),
+            place,
+            what: what.into(),
+            span,
+        };
+        // A fit found while another runs, with no point marked since that one began, waits
+        // for it ([`Self::fits_waiting`]), which runs it before it returns and takes its
+        // verdict in its own. Its `true` here is no verdict: what reads it before then is the
+        // call that found it, whose arrow is already chosen (by `Self::sub` alone,
+        // [`Self::apply_many`]), and which reports a misfit only as an error, an error the
+        // waiting fit gives itself when it runs. A marked point may begin a trial or a count
+        // of errors that reads the verdict from the errors (as [`Self::compares`] does), or
+        // be undone; a fit inside one runs at once, as every fit did before, so that it is
+        // inside it.
+        //
+        // Complexity tradeoff: the same calls, in another order, so the same O(d) work for a
+        // function type nested d deep, now on a constant depth of stack; the naive way, each
+        // fit run inside the call that found it, took d nested calls of [`Self::apply`],
+        // several KiB of stack each, and overflowed a 2 MiB stack about 400 deep, where the
+        // comparison of types it stands in for takes types 100,000 deep (COMPLEXITY F118).
+        // Cost: one count per marked point, and one `WaitingFit` per fit, O(the parameters
+        // of `q`), which matching them by name already took.
+        if let Some((marks, waiting)) = &mut self.fits_waiting
+            && *marks == self.marks.get()
+        {
+            waiting.push(fit);
+            return Some(true);
+        }
+        let run = |ck: &mut Self| ck.run_fits(&fit);
+        // A fit nested in one run for good after its trial ([`Self::fitting`]) was run by that
+        // trial already, so it runs at once: a trial at each level of a function type nested d
+        // deep cost O(d²) in all, each level's run for good trying all the levels inside it
+        // again; this is O(d).
+        if self.trying || self.fitting {
+            return Some(run(self));
+        }
+        if self.tried(run) != Some(true) {
+            return Some(false);
+        }
+        let fitting = std::mem::replace(&mut self.fitting, true);
+        let ok = run(self);
+        self.fitting = fitting;
+        Some(ok)
+    }
+
+    /// Runs `first` ([`Self::run_fit`]), then each fit it or a later one found and put off
+    /// ([`Self::fits_waiting`]), the last found first; whether all fit. The fits waiting for
+    /// a fit around this one are kept apart, and back in place after.
+    fn run_fits(&mut self, first: &WaitingFit) -> bool {
+        let around = self.fits_waiting.replace((self.marks.get(), Vec::new()));
+        let mut ok = self.run_fit(first);
+        while let Some((marks, waiting)) = &mut self.fits_waiting
+            && let Some(fit) = waiting.pop()
+        {
+            *marks = self.marks.get();
+            ok &= self.run_fit(&fit);
+        }
+        self.fits_waiting = around;
+        ok
+    }
+
+    /// Whether the function of `fit.s` fits `fit.q` ([`Self::fit_classes`]): each arrow of
+    /// `q` calls `s` with its parameters, or, partial, has its parameters and result compared
+    /// with those of `s`'s one arrow.
+    fn run_fit(&mut self, fit: &WaitingFit) -> bool {
+        let WaitingFit {
+            s,
+            q,
+            place,
+            what,
+            span,
+        } = fit;
+        let (what, span) = (&**what, *span);
+        let mut ok = true;
+        for a in &q.arrows {
+            if a.partial {
+                let sa = &s.arrows[0];
+                ok &= (a.params.iter().enumerate())
+                    .all(|(j, t)| self.result_into(&sa.params[place[j]], t, what, span))
+                    && self.result_into(&sa.result, &a.result, what, span);
+                continue;
+            }
+            let mut args: Vec<Option<Arg<'a>>> = vec![None; s.params.len()];
+            for (j, t) in a.params.iter().enumerate() {
+                args[place[j]] = Some(Arg::of(t.clone()));
+            }
+            let from = self.errors.len();
+            let (r, _) = self.apply(Label::Text(what), s, args, false, span);
+            ok &= self.errors.len() == from && self.result_into(&r, &a.result, what, span);
+        }
+        ok
+    }
+
+    /// Whether the result `r` of a call made by [`Self::fit_classes`] is one of `t`, the
+    /// result of the arrow it stands for, where either may hold a class of a function around:
+    /// `r` flows into a class `t` is; a class `r` holds is restricted to `t`, and must be one
+    /// of it ([`NeedKind::Into`]), as at a parameter of a call; a function `r` holds is fitted
+    /// to `t`'s one function type as its argument was ([`Self::fit_classes`]); and a tuple,
+    /// to `t`'s one tuple shape of its length, component by component. Anything else is
+    /// compared as a type.
+    ///
+    /// Cost: linear in the pieces of `r` and `t`, besides the calls of nested functions. The
+    /// pairs still to compare are kept on a stack, since tuples and results nest as deep as
+    /// the text.
+    fn result_into(&mut self, r: &Ty, t: &Ty, what: &str, span: Span) -> bool {
+        let mut stack = vec![(r.clone(), t.clone())];
+        while let Some((r, t)) = stack.pop() {
+            if let Some(j) = self.class_of_ty(&t) {
+                if !self.flow(j, &r, what, span, span) {
+                    return false;
+                }
+                continue;
+            }
+            for piece in r.pieces() {
+                let ok = match (self.class_of(&piece), &piece) {
+                    _ if piece == Piece::Dyn => t.dynamic,
+                    (Some(_), _) if t.dynamic || !t.vars.is_empty() => true,
+                    (Some(k), _) => {
+                        if !t.tuples.is_empty() || !t.fns.is_empty() {
+                            let kind = NeedKind::Into {
+                                what: what.into(),
+                                ty: t.clone(),
+                            };
+                            self.need(k, kind, false, span);
+                        }
+                        self.restrict(k, mask_of(&t), what, span)
+                    }
+                    (None, Piece::Fn(g)) => match self.fn_into_classes(g, &t, what, span) {
+                        Some(ok) => ok,
+                        None => self.sub(&piece.ty(), &t, &mut Binds::new()),
+                    },
+                    // A tuple of length n is in `t` only in a shape of that length, where `t`
+                    // holds no variable, unknown or kind-wide part that may hold it too: with
+                    // one such shape, it is within it component by component.
+                    (None, Piece::Tuple(c)) => {
+                        let shapes: Vec<Piece> = (t.pieces().into_iter())
+                            .filter(|p| matches!(p, Piece::Tuple(d) if d.len() == c.len()))
+                            .collect();
+                        match &shapes[..] {
+                            [Piece::Tuple(d)]
+                                if t.vars.is_empty() && !t.dynamic && t.held_wide().is_none() =>
+                            {
+                                stack.extend(c.iter().cloned().zip(d.iter().cloned()));
+                                true
+                            }
+                            _ => self.sub(&piece.ty(), &t, &mut Binds::new()),
+                        }
+                    }
+                    _ => self.sub(&piece.ty(), &t, &mut Binds::new()),
+                };
+                if !ok {
+                    return false;
+                }
+            }
+        }
+        true
     }
 
     /// Whether the needs of `s`, and of the functions it returns, hold where `s` is passed as a
@@ -19443,8 +19681,12 @@ impl<'t, 'a> Ck<'t, 'a> {
             }
             // The cover of rule 6 the checker refuses, if that is why ([`ty::why_unfit`]).
             let why = match !permuted.holds_needs() {
-                true => ty::why_unfit_with(&permuted, e, &|v| self.stale(v))
-                    .map_or_else(String::new, |w| format!(": {w}")),
+                true => {
+                    let classes = permuted.facts().classes.iter().chain(&e.facts().classes);
+                    let names = self.written_names(classes);
+                    ty::why_unfit_with(&permuted, e, &|v| self.stale(v), &names)
+                        .map_or_else(String::new, |w| format!(": {w}"))
+                }
                 false => String::new(),
             };
             let (s, e) = (self.sig_text(&s), self.sig_text(e));
@@ -20489,6 +20731,16 @@ impl<'t, 'a> Ck<'t, 'a> {
     /// its type variables, or returns a function whose body does, by those uses checked on the
     /// types `e` passes ([`Sig::holds_needs`]). False only when no error says why.
     fn fits_slot(&mut self, s: &Arc<Sig>, e: &Arc<Sig>, what: &str, span: Span) -> bool {
+        // A slot or function that holds a class of a function around, as `h` of `g(h: k, y:
+        // 1)` with `g` a parameter of type `(h: (x: T) -> int, y: T) -> int`: the class is
+        // narrowed by calls, not left to the comparison of types, which takes `T` in
+        // `(x: T) -> int` as on the side it may not bind ([`Self::fit_classes`]).
+        if e.facts().names.is_empty()
+            && (self.holds_open_class(s) || self.holds_open_class(e))
+            && let Some(ok) = self.fit_classes(s, e, what, span)
+        {
+            return ok;
+        }
         match !s.holds_needs() {
             true => ty::fits_sig_with(s, e, &|v| self.stale(v)),
             false => {
@@ -23691,6 +23943,7 @@ impl<'t, 'a> Ck<'t, 'a> {
                         self.restrict(k, mask_of(p), what, span)
                     }
                     None => match &piece {
+                        Piece::Fn(s) if let Some(ok) = self.fn_into_classes(s, p, what, span) => ok,
                         Piece::Fn(s) if s.holds_needs() && !p.fns.is_empty() => {
                             self.fit_needs(s, p, &mut binds, what, span)
                         }
