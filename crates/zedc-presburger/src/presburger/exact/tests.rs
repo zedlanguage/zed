@@ -3309,40 +3309,83 @@ fn a_block_of_a_boxed_sum_is_read_once_in_linear_work() {
     assert!(ratio < 10.5, "work {used:?}, {ratio:.2} times");
 }
 
-/// One part where the forward certificate answers some symbols and the shared step reads the
-/// rest (`exact_each`): the counter of [`guards_f`] at k = 16, asked for `i`, `m` and every
-/// `t(j)`. The certificate answers `i`; the reading declines on the chain; the shared step
-/// covers the symbols left. The answers equal those with the shared step off, and the work of
-/// the call stays within `4·k·L` for its k symbols and limit L (the bound in `exact_each`), on
-/// both sides.
+/// One part of the counter of [`guards_f`] at k = 16, asked for `i`, `m` and every `t(j)`,
+/// where the forward certificate answers one symbol and the reading declines (`exact_each`).
+/// The shared step reads each left symbol's cell at the newest point before its question
+/// ([`shared_cells`]), as the symbol's own cover would read it at its first point, so it asks
+/// no question that cover would not. The work with the step is then at most the work without
+/// it plus what the step reads beyond that one cell a symbol: `c = k·(size + 2·PIECE)`, for
+/// the k symbols asked and `size` the constraints of `f` (at least the part's). Before the cell
+/// read, the step asked 9 questions here, 3,141,230 units against 899,024 without it; with it,
+/// no question, 607,274 units. The answers are the same, and both sides stay within `4·k·L`
+/// for limit L.
 #[test]
-fn a_part_certified_in_part_shares_the_rest_alike() {
+fn a_part_certified_in_part_shares_only_what_direct_declined() {
     let f = guards_f(16, 12, false, true);
     let mut names = vec!["i".to_string(), "m".to_string()];
     names.extend((1..=16).map(|j| format!("t{j}")));
     let syms: Vec<Atom> = names.iter().map(|s| a(s)).collect();
-    let top = IntervalSet::top();
-    let certified: Vec<&String> = (names.iter())
-        .filter(|s| certify(&f, s, &top).is_some())
-        .collect();
     let run = |off: bool| {
         SHARED_OFF.set(off);
         EXACT_WORK.set(0);
-        EXACT_QUESTIONS.set(0);
         let got = project_each_exact(&f, &syms).unwrap().0;
         SHARED_OFF.set(false);
-        (got, EXACT_WORK.replace(0), EXACT_QUESTIONS.replace(0))
+        (got, EXACT_WORK.replace(0))
     };
-    let (on, work_on, asked_on) = run(false);
-    let (off, work_off, asked_off) = run(true);
-    println!(
-        "certified {certified:?}; work on {work_on}, off {work_off}; questions on {asked_on}, \
-         off {asked_off}"
-    );
+    let (on, work_on) = run(false);
+    let (off, work_off) = run(true);
     assert_eq!(on, off);
+    let c = syms.len() as u64 * (constraints(&f) + 2 * PIECE);
+    assert!(
+        work_on <= work_off + c,
+        "work on {work_on}, off {work_off}, c {c}"
+    );
     let bound = 4 * syms.len() as u64 * EXACT_LIMIT;
     assert!(
         work_on <= bound && work_off <= bound,
         "{work_on}, {work_off}, bound {bound}"
+    );
+}
+
+/// Where the cell at the newest point leaves a gap, [`shared_cells`] still asks its question:
+/// on `(0 <= x <= 2 ∧ y = 0) ∨ (3 <= x <= 7 ∧ y = 1)` the first point is in one disjunct, its
+/// cell of `x` holds one of the two ranges, and the other is found by a question. The sets
+/// asked are the hulls of the answers, since the step asks one question a symbol and leaves
+/// a symbol with more gaps to its own cover. The sets shown are those of the symbols run
+/// alone (`SHARED_OFF`).
+#[test]
+fn a_cell_with_a_gap_still_asks_its_question() {
+    let arm = |lo: i64, hi: i64, v: i64| {
+        Formula::and(vec![
+            ge(&[("x", 1)], -lo),
+            ge(&[("x", -1)], hi),
+            eq(&[("y", 1)], -v),
+        ])
+    };
+    let f = Formula::or(vec![arm(0, 2, 0), arm(3, 7, 1)]);
+    let (ax, ay) = (a("x"), a("y"));
+    let want: BTreeMap<&Atom, IntervalSet> =
+        [(&ax, IntervalSet::of(0, 7)), (&ay, IntervalSet::of(0, 1))]
+            .into_iter()
+            .collect();
+    let mut work = Work {
+        used: 0,
+        limit: EXACT_LIMIT,
+        solver: SOLVER,
+    };
+    let (mut points, mut out) = (Vec::new(), HashMap::new());
+    EXACT_QUESTIONS.set(0);
+    shared_cells(&f, constraints(&f), want, &mut points, &mut out, &mut work).unwrap();
+    let asked = EXACT_QUESTIONS.replace(0);
+    assert!(asked >= 1, "{asked} questions: the gap was not asked about");
+    SHARED_OFF.set(true);
+    let alone = project_each_exact(&f, &[ax.clone(), ay.clone()]).unwrap().0;
+    SHARED_OFF.set(false);
+    let x_set = IntervalSet::of(0, 7);
+    assert_eq!(out.get(&ax), Some(&x_set));
+    assert_eq!(out.get(&ay), Some(&IntervalSet::of(0, 1)));
+    assert_eq!(
+        format!("{:?}", alone[0]),
+        format!("{:?}", Ok::<_, Refusal>(x_set))
     );
 }

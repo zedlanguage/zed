@@ -268,6 +268,7 @@ pub(super) fn exact_each(f: &Formula, syms: &[Atom], found: Each, solver: Solver
     // certificates and the reading spent (`allowed`), so the bound `4·k·L` below is unchanged;
     // a certified symbol's share of `w` comes off a fast allowance it no longer uses.
     // Complexity tradeoff: see [`shared_cells`].
+    let mut small_points: Vec<Vec<Model>> = vec![Vec::new(); parts.len()];
     let mut shared: Vec<HashMap<Atom, IntervalSet>> = vec![HashMap::new(); parts.len()];
     for (i, p) in parts.iter().enumerate() {
         if SHARED_OFF.get() || once[i].0.is_some() || !p.factors.is_empty() || asked[i] < 2 {
@@ -285,7 +286,11 @@ pub(super) fn exact_each(f: &Formula, syms: &[Atom], found: Each, solver: Solver
         let mut left = allowed;
         let out = &mut shared[i];
         tried(&mut left, solver, |w| {
-            shared_cells(&p.f, p.size, want, &mut points[i], out, w).map(Some)
+            let (g, size, at) = match &small[i] {
+                Some((g, size)) => (g, *size, &mut small_points[i]),
+                None => (&p.f, p.size, &mut points[i]),
+            };
+            shared_cells(g, size, want, at, out, w).map(Some)
         });
         once[i].1 += allowed - left;
     }
@@ -327,7 +332,6 @@ pub(super) fn exact_each(f: &Formula, syms: &[Atom], found: Each, solver: Solver
         w / k + u64::from(j < w % k)
     };
     let mut nth: Vec<u64> = vec![0; parts.len()];
-    let mut small_points: Vec<Vec<Model>> = vec![Vec::new(); parts.len()];
     let mut shown = vec![false; parts.len()];
     let mut wider = false;
     let answers: BTreeMap<&Atom, Result<Classed, Refusal>> = (sorted.into_iter())
@@ -365,6 +369,7 @@ pub(super) fn exact_each(f: &Formula, syms: &[Atom], found: Each, solver: Solver
                     }));
                 }
                 if let Some(set) = shared[i].get(s) {
+                    shown[i] |= small[i].is_some() && !set.is_empty();
                     return Ok(Classed::plain(set.clone()));
                 }
                 // The cover of `s` over the part's smaller formula (above), with the limit of its
@@ -2158,7 +2163,12 @@ fn shared_cells(
     let order: Vec<Atom> = want.keys().map(|s| (*s).clone()).collect();
     let none = IntervalSet::empty();
     // Each symbol is checked once before its question, O(1) charged pieces each, and all once
-    // at the end: a check of every symbol before each question would be O(k²).
+    // at the end: a check of every symbol before each question would be O(k²). A symbol with
+    // a gap reads one cell, at the newest point (below), so the loop's work beyond
+    // `point_cells` and the questions is the sum over the symbols s left with a gap of
+    // `size + PIECE·(|c_s| + 1)` plus the work of `cell` for s, O(k·size) plus the cells' own
+    // charged work, with no term in the number of points: each symbol is visited once by this
+    // loop (`order` holds it once), and it reads one point, not every point found.
     for s in &order {
         while read < points.len() {
             point_cells(f, &points[read], &want, size, &mut found, work)?;
@@ -2168,7 +2178,36 @@ fn shared_cells(
             continue;
         };
         work.read(1)?;
-        let gap = h.minus(found.get(s).unwrap_or(&none));
+        let mut gap = h.minus(found.get(s).unwrap_or(&none));
+        if gap.is_empty() {
+            out.insert(s.clone(), h.clone());
+            want.remove(s);
+            continue;
+        }
+        // Before the question, the symbol's cell at the newest point, as `cells_cover` reads it
+        // (the projection of the implicant at that point): every cell of `s` at a point of `f`
+        // lies in the projection of `f` on `s`, so any point is sound, and the question still
+        // follows where a gap is left; only the cost changes, never the answer. The cells that
+        // `point_cells` reads (forest, star, line) can be narrower than this projection, and
+        // each question it saves charges `size + 2` and a solver run.
+        // Complexity tradeoff: naive version, a question for each gap `point_cells` left (9 on
+        // the guards of `tests::a_part_certified_in_part_shares_only_what_direct_declined`,
+        // 2,587,400 units); reading the cell at every point already found would cost
+        // O(k·q·size) for q points, up to O(k²·size). Used: one cell per symbol, at one point,
+        // `size` units read plus the cell's own charged work and [`PIECE`] for each of its
+        // pieces and one more, O(k·size) plus the cells' work over the k symbols (the sum above
+        // the loop), charged to this step's allowance, which is part of the symbols' `k·L`
+        // ([`exact_each`]), so the bound `4·k·L` holds as before. `points` is not empty here:
+        // the step returned above where `f` has no point, and the loop above read every point,
+        // so `read == points.len() >= 1`. The parts of the cell with holes and its strides are
+        // dropped: the ranges `c` alone are values of `s` with a point, as in `cells_cover`, and
+        // what they leave is asked or left to the symbol's own cover.
+        let (c, _, _) = cell(f, &points[read - 1], s, &HashSet::new(), &h.hull(), work)?;
+        work.read(size)?;
+        work.charge(PIECE.saturating_mul(c.len() as u64 + 1))?;
+        gap = gap.minus(&c);
+        let e = found.entry(s.clone()).or_insert_with(IntervalSet::empty);
+        *e = e.join(&c);
         let Some((lo, hi)) = gap.pieces().next() else {
             out.insert(s.clone(), h.clone());
             want.remove(s);
