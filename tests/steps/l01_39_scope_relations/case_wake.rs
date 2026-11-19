@@ -637,3 +637,105 @@ fn tests_on_punctured_lines_at_seed_5117989267050643737() {
 fn tests_on_punctured_lines_at_seed_6838338168874375281() {
     run_at(Aim::Puncture, 6838338168874375281);
 }
+
+/// Bounded-box disjunctions (with idle parts, narrowing parts, distinct unary thresholds, holes,
+/// classes, and a third name) match the projection from scratch after every step.
+#[test]
+fn bounded_box_face_certificate_matches_from_scratch() {
+    let p = Premises::new();
+    let ge = |t: Term, c: i64| prim(Prim::Ge, t, int(c));
+    let le = |t: Term, c: i64| prim(Prim::Le, t, int(c));
+    let or = |a, b| prim(Prim::Or, a, b);
+    let check_steps = |ns: &[Arc<str>], steps: &[Term]| {
+        let mut s = ints(ns);
+        for (idx, t) in steps.iter().enumerate() {
+            let got = s.assume(t, true, &p);
+            let mut fresh = s.clone();
+            fresh.forget_projections();
+            let mut want = fresh.assume(t, true, &p);
+            want.forget_projections();
+            want.reduce();
+            assert_eq!(
+                intervals(&got, ns),
+                intervals(&want, ns),
+                "step {idx} mismatch on {t:?}"
+            );
+            s = got;
+        }
+    };
+
+    // 1. box_cases followed by a narrowing disjunction whose parts must wake.
+    let xy: Vec<Arc<str>> = ["x", "y"].iter().map(|&n| n.into()).collect();
+    let mut steps = vec![
+        ge(var("x"), 0),
+        le(var("x"), 10),
+        ge(var("y"), 0),
+        le(var("y"), 10),
+    ];
+    for j in 1..=6i64 {
+        steps.push(or(
+            le(lin(&[(1, "x"), (j, "y")]), 10 * j + 5),
+            ge(var("x"), 9),
+        ));
+    }
+    // Forces a narrowing of `y` in the case `x >= 7 && x <= 8` (arm `x >= 9` fails, and
+    // `x + 6*y <= 65` fails at y = 10 when x >= 6).
+    steps.push(or(ge(lin(&[(1, "x"), (1, "y")]), 19), le(var("x"), 8)));
+    steps.push(ge(var("x"), 6));
+    steps.push(le(var("x"), 8));
+    check_steps(&xy, &steps);
+
+    // 2. box_cases_y followed by a narrowing disjunction.
+    let mut steps_y = vec![
+        ge(var("x"), 0),
+        le(var("x"), 10),
+        ge(var("y"), 0),
+        le(var("y"), 10),
+    ];
+    for j in 1..=6i64 {
+        steps_y.push(or(
+            le(lin(&[(1, "x"), (j, "y")]), 10 * j + 5),
+            le(var("y"), 1),
+        ));
+    }
+    steps_y.push(or(ge(var("y"), 10), le(var("x"), 5)));
+    steps_y.push(ge(var("x"), 6));
+    check_steps(&xy, &steps_y);
+
+    // 3. Distinct unary thresholds (`x >= 3 + j`) with a tightening case.
+    let mut steps_dt = vec![
+        ge(var("x"), 0),
+        le(var("x"), 10),
+        ge(var("y"), 0),
+        le(var("y"), 10),
+    ];
+    for j in 1..=6i64 {
+        steps_dt.push(or(
+            le(lin(&[(1, "x"), (j, "y")]), 10 * j + 3),
+            ge(var("x"), 3 + j),
+        ));
+    }
+    steps_dt.push(or(ge(var("x"), 7), le(lin(&[(1, "x"), (2, "y")]), 18)));
+    steps_dt.push(ge(var("y"), 10));
+    check_steps(&xy, &steps_dt);
+
+    // 4. Bounded box beside a hole (`x != 0`) and a class (`x == 2*z`) and a third name (`a >= x+y`).
+    let axyz: Vec<Arc<str>> = ["a", "x", "y", "z"].iter().map(|&n| n.into()).collect();
+    let mut steps_hc = vec![
+        ge(var("x"), 0),
+        le(var("x"), 10),
+        ge(var("y"), 0),
+        le(var("y"), 10),
+        ge(lin(&[(1, "a"), (-1, "x"), (-1, "y")]), 0),
+        prim(Prim::Ne, var("x"), int(0)),
+        prim(Prim::Eq, var("x"), lin(&[(2, "z")])),
+    ];
+    for j in 1..=4i64 {
+        steps_hc.push(or(
+            le(lin(&[(1, "x"), (j, "y")]), 10 * j + 5),
+            ge(var("x"), 9),
+        ));
+    }
+    steps_hc.push(or(le(lin(&[(1, "x"), (3, "y")]), 30), ge(var("x"), 8)));
+    check_steps(&axyz, &steps_hc);
+}

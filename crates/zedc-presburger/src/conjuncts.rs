@@ -182,6 +182,14 @@ pub struct Conjuncts {
     pairs: OrdMap<Arc<PairKey>, Front>,
     /// The conjuncts that mention each name, alone or in a product.
     users: Uses<Arc<Formula>>,
+    /// The equality constraints (`Rel::Eq`) that mention each name, so [`reach_eqs`] skips
+    /// inequalities and disjunctions in O(1) when searching for Karr's join equalities.
+    // Complexity tradeoff: naive version, `reach` with `is_eq` walked every conjunct in
+    // `users.of(&n)` for each seed name at every join, O(k) per join and O(k^2) over k
+    // disjunctions on the same names (split4: 16,778 iterations at k = 64 vs 314 at k = 8;
+    // box_cases: 8,192 vs 128). Used: a persistent `Uses` index holding only `Rel::Eq`
+    // constraints, O(s log e) per equality added/removed and O(1) when none exist.
+    eq_users: Uses<Arc<Formula>>,
     /// The blocks of the conjuncts: the forest of the conjuncts of no star, and each star's
     /// conjuncts as a block of its own outside it ([`Blocks::detach`]).
     blocks: Blocks,
@@ -1732,8 +1740,12 @@ impl Conjuncts {
             return;
         }
         let ns = names(&g);
+        let is_eq = matches!(&*g, Formula::Con(c) if c.rel == Rel::Eq);
         for n in &ns {
             self.users.add(n, &g);
+            if is_eq {
+                self.eq_users.add(n, &g);
+            }
             self.index.moving.add(n, &g);
         }
         if let Some(n) = alone(&g) {
@@ -1814,8 +1826,12 @@ impl Conjuncts {
             return false;
         }
         let ns = names(g);
+        let is_eq = matches!(&**g, Formula::Con(c) if c.rel == Rel::Eq);
         for n in &ns {
             self.users.remove(n, g);
+            if is_eq {
+                self.eq_users.remove(n, g);
+            }
             self.index.moving.remove(n, g);
         }
         if let Some(n) = alone(g) {
@@ -1885,6 +1901,37 @@ impl Conjuncts {
         let rest: Vec<Arc<Formula>> = held.into_values().flatten().collect();
         self.unplace(&rest);
     }
+}
+
+/// The equality constraints (`Rel::Eq`) of `rels` linked to `seeds` by chains of equalities
+/// that share a name, and the names they mention with the seeds: a search with a visited set
+/// over [`Conjuncts::eq_users`], in time near the equalities found (O(seeds) when none exist).
+pub fn reach_eqs(
+    rels: &[&Conjuncts],
+    seeds: impl IntoIterator<Item = Arc<str>>,
+) -> (BTreeSet<Arc<Formula>>, BTreeSet<Arc<str>>) {
+    let mut found: BTreeSet<Arc<Formula>> = BTreeSet::new();
+    let mut seen: BTreeSet<Arc<str>> = BTreeSet::new();
+    let mut work: Vec<Arc<str>> = Vec::new();
+    for n in seeds {
+        if seen.insert(n.clone()) {
+            work.push(n);
+        }
+    }
+    while let Some(n) = work.pop() {
+        for g in rels.iter().flat_map(|r| r.eq_users.of(&n)) {
+            if found.contains(g) {
+                continue;
+            }
+            found.insert(g.clone());
+            for m in names(g) {
+                if seen.insert(m.clone()) {
+                    work.push(m);
+                }
+            }
+        }
+    }
+    (found, seen)
 }
 
 /// The conjuncts of `rels` linked to `seeds` by chains of conjuncts that share a name, only
@@ -2874,6 +2921,7 @@ impl Blocks {
             }
             match out[..] {
                 [g] if self.unlink(b, g) => {}
+                _ if !self.is_apart(b) && self.remove_covered(b, out) => {}
                 _ => rebuild = !self.split(b, out),
             }
         }
@@ -3179,6 +3227,56 @@ impl Blocks {
         self.members.remove(&b);
         self.drop_node(b);
         self.put(g, &g.atoms(), None);
+        true
+    }
+
+    /// Removes `out` (already taken out of `syms`) from non-apart block `b` in O(|out| s log k)
+    /// when every `g` in `out` mentions plain names only and another remaining conjunct `h` in
+    /// `b` covers all of `g`'s atoms (`atoms(g) ⊆ atoms(h)`).
+    ///
+    /// Proof: in [`Blocks`], two conjuncts are in the same block iff no name vertex separates
+    /// them in the bipartite graph of conjuncts and names (components sharing a conjunct vertex
+    /// merge into one block). For any name vertex `u`, any path in `G \ {u}` passing through
+    /// `n1 - g - n2` has `n1, n2 ∈ atoms(g) \ {u} ⊆ atoms(h) \ {u}`, so `n1 - h - n2` is a walk
+    /// in `(G \ out) \ {u}`. By induction over `g ∈ out` (each witness `h` is in `b \ out`, as
+    /// `syms` no longer holds `out`), neither connectivity modulo any name nor the set of names
+    /// of `b` changes, so `b` stays one block with the same tree links.
+    // Complexity tradeoff: naive version, `Blocks::split` rebuilds all `m` members of `b`
+    // whenever a removed conjunct has 3+ names (`pair(g)` is `None`), O(m log^2 m) per join and
+    // O(k^2 log^2 k) on `split4` (2,142 member re-insertions at k = 64 vs 42 at k = 8). Used:
+    // probe the first and last remaining conjunct of `syms` for each name of `g`, O(s log k)
+    // per removed conjunct; falls back to `split` when no single witness covers `g`.
+    fn remove_covered(&mut self, b: BlockId, out: &[&Arc<Formula>]) -> bool {
+        let mut atom_sets: Vec<BTreeSet<Atom>> = Vec::with_capacity(out.len());
+        for g in out {
+            let atoms = g.atoms();
+            if atoms.is_empty() || !atoms.iter().all(|a| matches!(a, Atom::Sym(_))) {
+                return false;
+            }
+            let covered = atoms.iter().any(|a| {
+                let Atom::Sym(n) = a else { return false };
+                let Some(s) = self.syms.0.get(n) else {
+                    return false;
+                };
+                [s.get_min(), s.get_max()]
+                    .into_iter()
+                    .flatten()
+                    .any(|h| self.of.get(h) == Some(&b) && atoms.is_subset(&h.atoms()))
+            });
+            if !covered {
+                return false;
+            }
+            atom_sets.push(atoms);
+        }
+        let r = self.find(b);
+        for (g, atoms) in out.iter().zip(atom_sets) {
+            if edges(g).is_none() {
+                tally(&mut self.others, r, -1);
+            }
+            self.put(g, &atoms, None);
+            let ms = self.members.get_mut(&b).expect("the block of a conjunct");
+            ms.remove(*g);
+        }
         true
     }
 
@@ -3775,5 +3873,84 @@ fn is_false(f: &Formula) -> bool {
 impl fmt::Display for Conjuncts {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "{}", self.formula())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn row(terms: &[(&str, i64)], c: i64, rel: Rel) -> Formula {
+        let lin = terms.iter().fold(Lin::constant(c), |l, (n, k)| {
+            l.plus(&Lin::atom(Atom::Sym((*n).into())).times(*k))
+        });
+        Formula::Con(Con { lin, rel })
+    }
+
+    #[test]
+    fn reach_eqs_matches_reach_with_is_eq_filter() {
+        let mut r1 = Conjuncts::default();
+        let mut r2 = Conjuncts::default();
+        let e1 = row(&[("x", 1), ("y", -1)], 0, Rel::Eq);
+        let e2 = row(&[("y", 1), ("z", -2)], 1, Rel::Eq);
+        let e3 = row(&[("a", 1), ("b", -1)], 0, Rel::Eq);
+        let g1 = row(&[("x", 1), ("w", 1)], -1, Rel::Ge);
+        let d1 = Formula::or(vec![
+            row(&[("x", 1), ("y", 1), ("w", 1)], -1, Rel::Ge),
+            row(&[("x", 1), ("y", -1), ("v", 1)], -1, Rel::Ge),
+        ]);
+        r1.and(e1.clone());
+        r1.and(g1.clone());
+        r1.and(d1.clone());
+        r2.and(e2.clone());
+        r2.and(e3.clone());
+        r2.and(d1.clone());
+        let is_eq = |g: &Formula| matches!(g, Formula::Con(c) if c.rel == Rel::Eq);
+        for seed in ["x", "z", "a", "w", "v"] {
+            let got = reach_eqs(&[&r1, &r2], [Arc::<str>::from(seed)]);
+            let want = reach(&[&r1, &r2], [Arc::<str>::from(seed)], is_eq);
+            assert_eq!(got, want, "seed {seed}");
+        }
+        r1.remove(&Arc::new(e1));
+        for seed in ["x", "y", "z"] {
+            let got = reach_eqs(&[&r1, &r2], [Arc::<str>::from(seed)]);
+            let want = reach(&[&r1, &r2], [Arc::<str>::from(seed)], is_eq);
+            assert_eq!(got, want, "after remove, seed {seed}");
+        }
+    }
+
+    #[test]
+    fn remove_covered_keeps_the_same_block_partition_as_from_scratch() {
+        let mut rel = Conjuncts::default();
+        let mut expected: Vec<Formula> = Vec::new();
+        for j in 1..=6i64 {
+            let d = Formula::or(vec![
+                row(&[("x", 1), ("y", j), ("w", 1)], -1, Rel::Ge),
+                row(&[("x", 1), ("y", -j), ("v", 1)], -1, Rel::Ge),
+            ]);
+            rel.and(d.clone());
+            expected.push(d);
+        }
+        // Add 3-name constraints covered by the 4-name disjunctions, then swap them out.
+        let c1 = row(&[("x", 1), ("y", 7), ("w", 1)], -1, Rel::Ge);
+        let c2 = row(&[("x", 1), ("y", -7), ("v", 1)], -1, Rel::Ge);
+        let d7 = Formula::or(vec![c1.clone(), c2.clone()]);
+        rel.and(c1.clone());
+        rel.and(c2.clone());
+        rel.swap(&[Arc::new(c1), Arc::new(c2)], d7.clone());
+        expected.push(d7);
+
+        let mut fresh = Conjuncts::default();
+        for f in expected {
+            fresh.and(f);
+        }
+        let parts = |c: &Conjuncts| -> BTreeSet<BTreeSet<Arc<Formula>>> {
+            c.blocks()
+                .members
+                .values()
+                .map(|ms| ms.iter().cloned().collect())
+                .collect()
+        };
+        assert_eq!(parts(&rel), parts(&fresh));
     }
 }

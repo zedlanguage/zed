@@ -222,3 +222,18 @@ fn hoponb_scales() {
 fn persist_scales() {
     scales("persist", 2, 1);
 }
+
+#[test]
+fn box_cases_scales() {
+    scales("box_cases", 8, 1);
+}
+
+#[test]
+fn box_cases_y_scales() {
+    scales("box_cases_y", 8, 1);
+}
+
+#[test]
+fn split4_scales() {
+    scales("split4", 8, 1);
+}

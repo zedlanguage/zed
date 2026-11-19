@@ -6347,6 +6347,150 @@ impl Block {
                 .all(|(e, place)| place.get_min().is_some_and(|(m, _)| m == e));
         below.then(|| at.clone())
     }
+    /// Returns only the parts of `recession[rkey]` that neither the recession-direction
+    /// certificate ([`Block::recession_cone_uncertified`]) nor the bounded-box face certificate
+    /// ([`Block::box_face_uncertified`]) can certify on the current group and intervals
+    /// `names`; `None` when both refuse.
+    fn recession_uncertified(
+        &self,
+        rkey: &RecKey,
+        group_vars: &BTreeSet<Factor>,
+        names: &imbl::OrdMap<Arc<str>, Product>,
+        include_managed: bool,
+    ) -> Option<Vec<PartAt>> {
+        if let Some(uncert) =
+            self.recession_cone_uncertified(rkey, group_vars, names, include_managed)
+        {
+            return Some(uncert);
+        }
+        self.box_face_uncertified(rkey, names, include_managed)
+    }
+
+    /// Bounded-box face certificate for two-name `>=` disjunctions (`rkey.2.is_none()`):
+    /// returns the uncertified parts of `recession[rkey]` in O(r + log k + output) when both
+    /// `u` and `v` have finite, unclassed, hole-free intervals `[lu, hu]` and `[lv, hv]` and
+    /// `split.base` admits a valid coordinate projection onto a `v`-face (`v -> lv` or `v -> hv`)
+    /// and a `u`-face (`u -> lu` or `u -> hu`).
+    ///
+    /// Proof: suppose every row of `split.base` is `Rel::Ge` on plain symbols (`eqs` empty).
+    /// When every row mentioning `v` has `coeff(v) <= 0` (resp. `>= 0`), moving `z_v -> lv`
+    /// (resp. `hv`) from any integer point `z0` of the box satisfying `split.base` increases
+    /// every row (since `lv - z0_v <= 0`, resp. `hv - z0_v >= 0`), keeps `z` in the box
+    /// (`lv, hv ∈ pv`, unclassed), and leaves EVERY other coordinate `z_n` (`n != v`) unchanged
+    /// (including names of the group/block outside `{u, v}`, even if classed or holed). Any
+    /// disjunction `g` not reported on that `v`-edge holds at every integer point of the edge,
+    /// so `g ∧ split.base` preserves the exact projection of `split.base` onto every `n != v`.
+    /// Symmetrically, a valid `u`-face move preserves every `n != u` (in particular `v`).
+    /// Together `{v} ∩ {u} = ∅`, so `g` narrows no name and may be skipped inside a case.
+    // Complexity tradeoff: naive version, bounded-box families (`box_cases`, `box_cases_y`) have
+    // an empty recession cone and fall back to waking all k parts of `recession[rkey]` on every
+    // case (and every box move in `Block::update`), causing 4,032 `Scope::idle` checks at k = 64
+    // (22.56x and 21.38x instructions at 8n). Used: index each two-variable arm's dual point in
+    // a persistent Overmars-van Leeuwen `LowerHullTree` guarded by a rotation-free
+    // `ThreshHullTrie` on any unary arm: O(log^2 k) insert, O(log k) query when 0 parts fail.
+    fn box_face_uncertified(
+        &self,
+        rkey: &RecKey,
+        names: &imbl::OrdMap<Arc<str>, Product>,
+        include_managed: bool,
+    ) -> Option<Vec<PartAt>> {
+        if rkey.2.is_some() || !self.split.eqs.is_empty() {
+            return None;
+        }
+        let idx = self.recession.get(rkey)?;
+        if !idx.pos_leaf.is_empty() || !idx.neg_leaf.is_empty() {
+            return None;
+        }
+        let mut hub_buckets: Vec<&RecessionBucket> = Vec::with_capacity(3);
+        if !idx.plain.is_empty() {
+            hub_buckets.push(&idx.plain);
+        }
+        if (include_managed || !self.stair_managed) && !idx.stair.is_empty() {
+            hub_buckets.push(&idx.stair);
+        }
+        if (include_managed || !self.ray_managed) && !idx.ray.is_empty() {
+            hub_buckets.push(&idx.ray);
+        }
+        if hub_buckets.is_empty() {
+            return Some(Vec::new());
+        }
+        // A chain of two or more parts is woken through its least part by the bucket wake,
+        // while the face reports each uncertified member: m reports where the bucket wakes one
+        // (coordmix_floor, one chain of k parts: 11.12x at 8n with the face, 10.07x without).
+        if hub_buckets.iter().any(|b| b.shared_chains > 0) {
+            return None;
+        }
+        let (u, v) = (&rkey.0, &rkey.1);
+        let top = Product::top();
+        let pu = names.get(u).unwrap_or(&top);
+        let pv = names.get(v).unwrap_or(&top);
+        if classed(pu) || classed(pv) {
+            return None;
+        }
+        let (End::Fin(lu), End::Fin(hu)) = pu.ints().only()? else {
+            return None;
+        };
+        let (End::Fin(lv), End::Fin(hv)) = pv.ints().only()? else {
+            return None;
+        };
+        let (lu, hu, lv, hv) = (Int::from(lu), Int::from(hu), Int::from(lv), Int::from(hv));
+        let base_items: &[Formula] = match &*self.split.base {
+            Formula::And(gs) => gs,
+            f => std::slice::from_ref(f),
+        };
+        let mut u_lo_ok = true;
+        let mut u_hi_ok = true;
+        let mut v_lo_ok = true;
+        let mut v_hi_ok = true;
+        for f in base_items {
+            let Formula::Con(c) = f else {
+                return None;
+            };
+            if c.rel != Rel::Ge || c.lin.terms.is_empty() {
+                return None;
+            }
+            if !c.lin.terms.keys().all(|a| matches!(a, Atom::Sym(_))) {
+                return None;
+            }
+            if let Some(cu) = c.lin.terms.get(&Atom::Sym(u.clone())) {
+                if cu.is_positive() {
+                    u_lo_ok = false;
+                } else if cu.is_negative() {
+                    u_hi_ok = false;
+                }
+            }
+            if let Some(cv) = c.lin.terms.get(&Atom::Sym(v.clone())) {
+                if cv.is_positive() {
+                    v_lo_ok = false;
+                } else if cv.is_negative() {
+                    v_hi_ok = false;
+                }
+            }
+        }
+        if (!v_lo_ok && !v_hi_ok) || (!u_lo_ok && !u_hi_ok) {
+            return None;
+        }
+        let mut v_edges: Vec<BoxEdge<'_>> = Vec::with_capacity(2);
+        if v_lo_ok {
+            v_edges.push(((&lu, &hu), (&lv, &lv)));
+        }
+        if v_hi_ok {
+            v_edges.push(((&lu, &hu), (&hv, &hv)));
+        }
+        let mut u_edges: Vec<BoxEdge<'_>> = Vec::with_capacity(2);
+        if u_lo_ok {
+            u_edges.push(((&lu, &lu), (&lv, &hv)));
+        }
+        if u_hi_ok {
+            u_edges.push(((&hu, &hu), (&lv, &hv)));
+        }
+        let mut out = Vec::new();
+        for bkt in &hub_buckets {
+            bkt.face.report_edges(&v_edges, true, &mut out);
+            bkt.face.report_edges(&u_edges, false, &mut out);
+        }
+        Some(out)
+    }
 
     /// Returns only the parts of `recession[rkey]` (excluding aggregates that currently hold)
     /// that the recession-direction certificate cannot certify on the current group and
@@ -6355,7 +6499,7 @@ impl Block {
     /// group, a class or hole on a group variable, an unsatisfied unary base row, or an empty
     /// strict recession cone), leaving non-managed parts of `rkey` to fall back to chain-least
     /// / full wakeup.
-    fn recession_uncertified(
+    fn recession_cone_uncertified(
         &self,
         rkey: &RecKey,
         group_vars: &BTreeSet<Factor>,
@@ -7704,21 +7848,30 @@ impl Block {
                 for rkey in rkeys {
                     let rkey_group: BTreeSet<Factor> = rec_key_factors(&rkey).into_iter().collect();
                     if let Some(uncert) =
-                        next.recession_uncertified(&rkey, &rkey_group, names, false)
+                        next.recession_cone_uncertified(&rkey, &rkey_group, names, false)
                     {
                         due.extend(uncert);
                     } else if let Some(idx) = next.recession.get(&rkey) {
                         let pair = (rkey.0.clone(), rkey.1.clone());
                         let hl = HalfLineContext::of(&next, &get, &pair);
-                        let mut push_bucket = |bucket: &RecessionBucket| {
-                            let keep = |at: &PartAt| {
-                                !hl.as_ref().is_some_and(|c| {
-                                    next.parts.get(at).is_some_and(|p| {
-                                        p.pure_two_sym.is_some()
-                                            && p.of.as_deref().is_some_and(|g| c.is_idle(g))
-                                    })
+                        let keep = |at: &PartAt| {
+                            !hl.as_ref().is_some_and(|c| {
+                                next.parts.get(at).is_some_and(|p| {
+                                    p.pure_two_sym.is_some()
+                                        && p.of.as_deref().is_some_and(|g| c.is_idle(g))
                                 })
-                            };
+                            })
+                        };
+                        // The face certificate ([`Block::box_face_uncertified`]) and the
+                        // half-line certificate (`keep`) are both exact, and each may skip parts
+                        // the other keeps, so the face's report is filtered by `keep` as the
+                        // whole bucket is below: the parts woken are a subset of those the
+                        // bucket loop wakes.
+                        if let Some(uncert) = next.box_face_uncertified(&rkey, names, false) {
+                            due.extend(uncert.into_iter().filter(|at| keep(at)));
+                            continue;
+                        }
+                        let mut push_bucket = |bucket: &RecessionBucket| {
                             for at in &bucket.unchained {
                                 if keep(at) {
                                     due.push(at.clone());
@@ -9608,12 +9761,8 @@ impl Scope {
         // hull is taken over the names linked by equalities to a name or a conjunct the sides
         // do not share: the rest of the two hulls is one, which their join keeps as it is and
         // the shared conjuncts already state.
-        let is_eq = |g: &Formula| matches!(g, Formula::Con(c) if c.rel == Rel::Eq);
-        let (eqs, near) = conjuncts::reach(
-            &[&self.relation, &other.relation],
-            seeds.iter().cloned(),
-            is_eq,
-        );
+        let (eqs, near) =
+            conjuncts::reach_eqs(&[&self.relation, &other.relation], seeds.iter().cloned());
         let hull = self.hull(&eqs, &near).join(&other.hull(&eqs, &near));
         let reduce = |c: &Con| hull.reduce(c);
         let kept: Vec<Formula> = hull
@@ -18893,6 +19042,1056 @@ impl HalfLineContext {
         }
     }
 }
+/// The sign quadrant of a two-variable arm `a * u + b * v + c >= 0` (`a != 0, b != 0`), which
+/// determines which corner of a box edge `[eu_min, eu_max] x [ev_min, ev_max]` minimizes the arm.
+#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+enum ArmQuad {
+    /// `a < 0, b < 0`: worst corner `(eu_max, ev_max)`.
+    Nn,
+    /// `a < 0, b > 0`: worst corner `(eu_max, ev_min)`.
+    Np,
+    /// `a > 0, b < 0`: worst corner `(eu_min, ev_max)`.
+    Pn,
+    /// `a > 0, b > 0`: worst corner `(eu_min, ev_min)`.
+    Pp,
+}
+
+/// Which unary arm, if any, guards a part in [`BoxFaceIndex`].
+#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+enum UnaryKind {
+    None,
+    /// `u >= t`: holds on `[eu_min, eu_max]` iff `t <= eu_min`; fails iff `t > eu_min`.
+    UGe,
+    /// `u <= t`: holds on `[eu_min, eu_max]` iff `t >= eu_max`; fails iff `t < eu_max`.
+    ULe,
+    /// `v >= t`: holds on `[ev_min, ev_max]` iff `t <= ev_min`; fails iff `t > ev_min`.
+    VGe,
+    /// `v <= t`: holds on `[ev_min, ev_max]` iff `t >= ev_max`; fails iff `t < ev_max`.
+    VLe,
+}
+
+/// Exact reduced rational slope `b / d` (`d > 0`, `gcd(|b|, d) == 1`) ordering leaves in
+/// [`LowerHullTree`].
+#[derive(Clone, PartialEq, Eq, Debug)]
+struct SlopeKey(Int, Int);
+
+impl Ord for SlopeKey {
+    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+        (&self.0 * &other.1).cmp(&(&other.0 * &self.1))
+    }
+}
+
+impl PartialOrd for SlopeKey {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+/// Exact rational intercept `c / d` (`d > 0`) ordering parallel arms at one slope leaf.
+#[derive(Clone, PartialEq, Eq)]
+struct HullVal(Int, Int);
+
+impl Ord for HullVal {
+    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+        (&self.0 * &other.1).cmp(&(&other.0 * &self.1))
+    }
+}
+
+impl PartialOrd for HullVal {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+/// Dual point `(b / d, c / d)` (`d > 0`) of an arm `a * u + b * v + c >= 0` (`d = |a|`).
+/// The arm holds at query `(u_q, v_q)` (with `u_q` negated when `a > 0`) iff `b * v_q + c >= d * u_q`.
+#[derive(Clone)]
+struct HullPt {
+    b: Int,
+    c: Int,
+    d: Int,
+}
+
+impl HullPt {
+    fn eval_le(&self, other: &Self, v_q: &Int) -> bool {
+        let lhs = &(&(&self.b * v_q) + &self.c) * &other.d;
+        let rhs = &(&(&other.b * v_q) + &other.c) * &self.d;
+        lhs <= rhs
+    }
+
+    fn eval_ge(&self, v_q: &Int, u_q: &Int) -> bool {
+        &(&self.b * v_q) + &self.c >= &self.d * u_q
+    }
+}
+
+/// Sign of the 2D cross product `(b - a) x (c - a)` for dual points `a, b, c`, in exact `Int`.
+/// Positive iff `c` lies strictly above directed line `a -> b`.
+fn hull_orient(a: &HullPt, b: &HullPt, c: &HullPt) -> std::cmp::Ordering {
+    let dx1 = &(&b.b * &a.d) - &(&a.b * &b.d);
+    let dy1 = &(&b.c * &a.d) - &(&a.c * &b.d);
+    let dx2 = &(&c.b * &a.d) - &(&a.b * &c.d);
+    let dy2 = &(&c.c * &a.d) - &(&a.c * &c.d);
+    (&dx1 * &dy2).cmp(&(&dy1 * &dx2))
+}
+
+/// Whether directed line `l1 -> l2` lies at or below directed line `r1 -> r2` at `x_sep`, given
+/// `slope(l1 -> l2) < slope(r1 -> r2)` and strictly increasing x-coordinates within each pair.
+fn hull_line_le_at(l1: &HullPt, l2: &HullPt, r1: &HullPt, r2: &HullPt, x_sep: &SlopeKey) -> bool {
+    let dlx = &(&l2.b * &l1.d) - &(&l1.b * &l2.d);
+    let dly = &(&l2.c * &l1.d) - &(&l1.c * &l2.d);
+    let dxl = &(&x_sep.0 * &l1.d) - &(&l1.b * &x_sep.1);
+    let n1 = &(&(&l1.c * &x_sep.1) * &dlx) + &(&dly * &dxl);
+
+    let drx = &(&r2.b * &r1.d) - &(&r1.b * &r2.d);
+    let dry = &(&r2.c * &r1.d) - &(&r1.c * &r2.d);
+    let dxr = &(&x_sep.0 * &r1.d) - &(&r1.b * &x_sep.1);
+    let n2 = &(&(&r1.c * &x_sep.1) * &drx) + &(&dry * &dxr);
+
+    let lhs = &n1 * &(&r1.d * &drx);
+    let rhs = &n2 * &(&l1.d * &dlx);
+    lhs <= rhs
+}
+
+/// Persistent leaf-oriented AVL tree storing 2D dual points ordered by slope, with each internal
+/// node carrying the lower-hull bridge `(p_l, p_r)` between its subtrees (Overmars & van Leeuwen,
+/// "Maintenance of configurations in the plane", JCSS 23(2), 1981, pp. 166-204).
+///
+/// Worst-case persistent insert/remove: O(log^2 k) (O(log k) path nodes, each computing a bridge
+/// in O(log k)). Minimum evaluation `min_eval(v_q)`: O(log k). Reporting all `m` violating parts
+/// `b * v_q + c < d * u_q`: O(log k) when `m == 0`, O((m + 1) log^2 k) in general.
+#[derive(Clone, Default)]
+struct LowerHullTree(Option<Arc<HullNode>>);
+
+#[derive(Clone)]
+enum HullNode {
+    Leaf {
+        slope: SlopeKey,
+        pt: HullPt,
+        entries: imbl::OrdSet<(HullVal, PartAt)>,
+    },
+    Branch {
+        height: u32,
+        max_slope: SlopeKey,
+        left: Arc<HullNode>,
+        right: Arc<HullNode>,
+        bridge: (HullPt, HullPt),
+    },
+}
+
+impl HullNode {
+    fn height(&self) -> u32 {
+        match self {
+            HullNode::Leaf { .. } => 1,
+            HullNode::Branch { height, .. } => *height,
+        }
+    }
+
+    fn max_slope(&self) -> &SlopeKey {
+        match self {
+            HullNode::Leaf { slope, .. } => slope,
+            HullNode::Branch { max_slope, .. } => max_slope,
+        }
+    }
+
+    fn make_branch(left: Arc<HullNode>, right: Arc<HullNode>) -> Arc<HullNode> {
+        let height = 1 + left.height().max(right.height());
+        let max_slope = right.max_slope().clone();
+        let bridge = Self::find_bridge(&left, &right);
+        Arc::new(HullNode::Branch {
+            height,
+            max_slope,
+            left,
+            right,
+            bridge,
+        })
+    }
+
+    fn balance(left: Arc<HullNode>, right: Arc<HullNode>) -> Arc<HullNode> {
+        let (hl, hr) = (left.height(), right.height());
+        if hl > hr + 1 {
+            if let HullNode::Branch {
+                left: ll,
+                right: lr,
+                ..
+            } = &*left
+            {
+                if ll.height() >= lr.height() {
+                    let nr = Self::make_branch(lr.clone(), right);
+                    return Self::make_branch(ll.clone(), nr);
+                } else if let HullNode::Branch {
+                    left: lrl,
+                    right: lrr,
+                    ..
+                } = &**lr
+                {
+                    let nl = Self::make_branch(ll.clone(), lrl.clone());
+                    let nr = Self::make_branch(lrr.clone(), right);
+                    return Self::make_branch(nl, nr);
+                }
+            }
+        } else if hr > hl + 1 {
+            if let HullNode::Branch {
+                left: rl,
+                right: rr,
+                ..
+            } = &*right
+            {
+                if rr.height() >= rl.height() {
+                    let nl = Self::make_branch(left, rl.clone());
+                    return Self::make_branch(nl, rr.clone());
+                } else if let HullNode::Branch {
+                    left: rll,
+                    right: rlr,
+                    ..
+                } = &**rl
+                {
+                    let nl = Self::make_branch(left, rll.clone());
+                    let nr = Self::make_branch(rlr.clone(), rr.clone());
+                    return Self::make_branch(nl, nr);
+                }
+            }
+        }
+        Self::make_branch(left, right)
+    }
+
+    /// Lower common tangent `(p*, q*)` between left subtree `l` and right subtree `r` in
+    /// O(height(l) + height(r)) by descending one level per step (Overmars & van Leeuwen 1981).
+    fn find_bridge(l: &HullNode, r: &HullNode) -> (HullPt, HullPt) {
+        let x_sep = l.max_slope();
+        let mut u = l;
+        let mut v = r;
+        loop {
+            match (u, v) {
+                (HullNode::Leaf { pt: p, .. }, HullNode::Leaf { pt: q, .. }) => {
+                    return (p.clone(), q.clone());
+                }
+                (
+                    HullNode::Leaf { pt: p, .. },
+                    HullNode::Branch {
+                        left: vl,
+                        right: vr,
+                        bridge: (r1, r2),
+                        ..
+                    },
+                ) => {
+                    if !hull_orient(r1, r2, p).is_gt() {
+                        v = vr;
+                    } else {
+                        v = vl;
+                    }
+                }
+                (
+                    HullNode::Branch {
+                        left: ul,
+                        right: ur,
+                        bridge: (l1, l2),
+                        ..
+                    },
+                    HullNode::Leaf { pt: q, .. },
+                ) => {
+                    if !hull_orient(l1, l2, q).is_gt() {
+                        u = ul;
+                    } else {
+                        u = ur;
+                    }
+                }
+                (
+                    HullNode::Branch {
+                        left: ul,
+                        right: ur,
+                        bridge: (l1, l2),
+                        ..
+                    },
+                    HullNode::Branch {
+                        left: vl,
+                        right: vr,
+                        bridge: (r1, r2),
+                        ..
+                    },
+                ) => {
+                    if !hull_orient(l1, l2, r1).is_gt() || !hull_orient(l1, l2, r2).is_gt() {
+                        u = ul;
+                    } else if !hull_orient(r1, r2, l1).is_gt() || !hull_orient(r1, r2, l2).is_gt() {
+                        v = vr;
+                    } else if hull_line_le_at(l1, l2, r1, r2, x_sep) {
+                        u = ur;
+                    } else {
+                        v = vl;
+                    }
+                }
+            }
+        }
+    }
+
+    fn min_pt(&self, v_q: &Int) -> &HullPt {
+        let mut cur = self;
+        while let HullNode::Branch {
+            left,
+            right,
+            bridge: (p_l, p_r),
+            ..
+        } = cur
+        {
+            if p_l.eval_le(p_r, v_q) {
+                cur = left;
+            } else {
+                cur = right;
+            }
+        }
+        match cur {
+            HullNode::Leaf { pt, .. } => pt,
+            HullNode::Branch { .. } => unreachable!(),
+        }
+    }
+
+    fn report_below(&self, v_q: &Int, u_q: &Int, out: &mut Vec<PartAt>) {
+        if self.min_pt(v_q).eval_ge(v_q, u_q) {
+            return;
+        }
+        match self {
+            HullNode::Leaf { pt, entries, .. } => {
+                // `pt.b / pt.d` equals the slope of every entry at this leaf; check each entry's
+                // exact intercept `val.0 / val.1` in ascending order and stop once satisfied.
+                for (val, at) in entries {
+                    let entry_pt = HullPt {
+                        b: &pt.b * &val.1,
+                        c: &val.0 * &pt.d,
+                        d: &pt.d * &val.1,
+                    };
+                    if entry_pt.eval_ge(v_q, u_q) {
+                        break;
+                    }
+                    out.push(at.clone());
+                }
+            }
+            HullNode::Branch { left, right, .. } => {
+                left.report_below(v_q, u_q, out);
+                right.report_below(v_q, u_q, out);
+            }
+        }
+    }
+
+    fn insert(
+        node: &Arc<HullNode>,
+        slope: &SlopeKey,
+        val: &HullVal,
+        pt: &HullPt,
+        at: &PartAt,
+    ) -> Arc<HullNode> {
+        match &**node {
+            HullNode::Leaf {
+                slope: s, entries, ..
+            } => match slope.cmp(s) {
+                std::cmp::Ordering::Equal => {
+                    let mut next = entries.clone();
+                    next.insert((val.clone(), at.clone()));
+                    let min_val = &next.get_min().expect("non-empty leaf").0;
+                    let min_pt = HullPt {
+                        b: &s.0 * &min_val.1,
+                        c: &min_val.0 * &s.1,
+                        d: &s.1 * &min_val.1,
+                    };
+                    Arc::new(HullNode::Leaf {
+                        slope: s.clone(),
+                        pt: min_pt,
+                        entries: next,
+                    })
+                }
+                std::cmp::Ordering::Less => {
+                    let new_leaf = Arc::new(HullNode::Leaf {
+                        slope: slope.clone(),
+                        pt: pt.clone(),
+                        entries: imbl::OrdSet::unit((val.clone(), at.clone())),
+                    });
+                    Self::make_branch(new_leaf, node.clone())
+                }
+                std::cmp::Ordering::Greater => {
+                    let new_leaf = Arc::new(HullNode::Leaf {
+                        slope: slope.clone(),
+                        pt: pt.clone(),
+                        entries: imbl::OrdSet::unit((val.clone(), at.clone())),
+                    });
+                    Self::make_branch(node.clone(), new_leaf)
+                }
+            },
+            HullNode::Branch { left, right, .. } => {
+                if slope <= left.max_slope() {
+                    let nl = Self::insert(left, slope, val, pt, at);
+                    Self::balance(nl, right.clone())
+                } else {
+                    let nr = Self::insert(right, slope, val, pt, at);
+                    Self::balance(left.clone(), nr)
+                }
+            }
+        }
+    }
+
+    fn remove(
+        node: &Arc<HullNode>,
+        slope: &SlopeKey,
+        val: &HullVal,
+        at: &PartAt,
+    ) -> Option<Arc<HullNode>> {
+        match &**node {
+            HullNode::Leaf {
+                slope: s, entries, ..
+            } => {
+                if slope != s {
+                    return Some(node.clone());
+                }
+                let mut next = entries.clone();
+                if next.remove(&(val.clone(), at.clone())).is_none() {
+                    return Some(node.clone());
+                }
+                let min_val = &next.get_min()?.0;
+                let min_pt = HullPt {
+                    b: &s.0 * &min_val.1,
+                    c: &min_val.0 * &s.1,
+                    d: &s.1 * &min_val.1,
+                };
+                Some(Arc::new(HullNode::Leaf {
+                    slope: s.clone(),
+                    pt: min_pt,
+                    entries: next,
+                }))
+            }
+            HullNode::Branch { left, right, .. } => {
+                if slope <= left.max_slope() {
+                    match Self::remove(left, slope, val, at) {
+                        Some(nl) => Some(Self::balance(nl, right.clone())),
+                        None => Some(right.clone()),
+                    }
+                } else {
+                    match Self::remove(right, slope, val, at) {
+                        Some(nr) => Some(Self::balance(left.clone(), nr)),
+                        None => Some(left.clone()),
+                    }
+                }
+            }
+        }
+    }
+}
+
+impl LowerHullTree {
+    fn is_empty(&self) -> bool {
+        self.0.is_none()
+    }
+
+    fn insert(&self, slope: &SlopeKey, val: &HullVal, pt: &HullPt, at: &PartAt) -> Self {
+        match &self.0 {
+            None => LowerHullTree(Some(Arc::new(HullNode::Leaf {
+                slope: slope.clone(),
+                pt: pt.clone(),
+                entries: imbl::OrdSet::unit((val.clone(), at.clone())),
+            }))),
+            Some(root) => LowerHullTree(Some(HullNode::insert(root, slope, val, pt, at))),
+        }
+    }
+
+    fn remove(&self, slope: &SlopeKey, val: &HullVal, at: &PartAt) -> Self {
+        match &self.0 {
+            None => LowerHullTree(None),
+            Some(root) => LowerHullTree(HullNode::remove(root, slope, val, at)),
+        }
+    }
+
+    fn any_below(&self, v_q: &Int, u_q: &Int) -> bool {
+        self.0
+            .as_ref()
+            .is_some_and(|root| !root.min_pt(v_q).eval_ge(v_q, u_q))
+    }
+
+    fn report_below(&self, v_q: &Int, u_q: &Int, out: &mut Vec<PartAt>) {
+        if let Some(root) = &self.0 {
+            root.report_below(v_q, u_q, out);
+        }
+    }
+}
+
+/// Prefix-free, order-preserving binary key for an arbitrary-precision signed `Int`:
+/// `a < b` iff `ord_bytes(a) < ord_bytes(b)` lexicographically, and no key is a prefix of
+/// another. Used by [`ThreshHullTrie`] so threshold ordering needs zero rotations.
+fn int_ord_bytes(t: &Int) -> Vec<u8> {
+    if let Some(v) = t.to_i128() {
+        let u = (v as u128) ^ (1u128 << 127);
+        let mut out = Vec::with_capacity(17);
+        out.push(0x80);
+        out.extend_from_slice(&u.to_be_bytes());
+        return out;
+    }
+    if t.is_negative() {
+        let abs_s = (-t).to_string();
+        let len = !(abs_s.len() as u64);
+        let mut out = Vec::with_capacity(9 + abs_s.len());
+        out.push(0x00);
+        out.extend_from_slice(&len.to_be_bytes());
+        out.extend(abs_s.bytes().map(|b| !b));
+        out
+    } else {
+        let s = t.to_string();
+        let len = s.len() as u64;
+        let mut out = Vec::with_capacity(9 + s.len());
+        out.push(0xFF);
+        out.extend_from_slice(&len.to_be_bytes());
+        out.extend_from_slice(s.as_bytes());
+        out
+    }
+}
+
+fn bit_at(key: &[u8], bit: usize) -> bool {
+    let byte = bit / 8;
+    let shift = 7 - (bit % 8);
+    byte < key.len() && ((key[byte] >> shift) & 1) != 0
+}
+
+fn first_diff_bit(a: &[u8], b: &[u8]) -> Option<usize> {
+    let n = a.len().min(b.len());
+    for i in 0..n {
+        let x = a[i] ^ b[i];
+        if x != 0 {
+            return Some(i * 8 + x.leading_zeros() as usize);
+        }
+    }
+    if a.len() != b.len() {
+        Some(n * 8)
+    } else {
+        None
+    }
+}
+
+/// Persistent compressed binary trie (Patricia trie) ordered by unary threshold `t: Int`, where
+/// every node carries the [`LowerHullTree`] of all parts in its subtree. Because the trie never
+/// rotates, inserting or removing a part updates only O(depth) hulls (1 hull when all parts share
+/// one threshold), and 1-sided threshold queries (`t > q` or `t < q`) decompose into O(depth)
+/// canonical subtrees checked in O(log k) each.
+#[derive(Clone, Default)]
+struct ThreshHullTrie(Option<Arc<TrieNode>>);
+
+#[derive(Clone)]
+enum TrieNode {
+    Leaf {
+        thresh: Int,
+        key: Vec<u8>,
+        hull: LowerHullTree,
+    },
+    Branch {
+        bit: usize,
+        min_thresh: Int,
+        max_thresh: Int,
+        /// Representative key of the subtree for finding the first differing bit on insert.
+        sample_key: Vec<u8>,
+        left: Arc<TrieNode>,
+        right: Arc<TrieNode>,
+        hull: LowerHullTree,
+    },
+}
+
+impl TrieNode {
+    fn min_thresh(&self) -> &Int {
+        match self {
+            TrieNode::Leaf { thresh, .. } => thresh,
+            TrieNode::Branch { min_thresh, .. } => min_thresh,
+        }
+    }
+
+    fn max_thresh(&self) -> &Int {
+        match self {
+            TrieNode::Leaf { thresh, .. } => thresh,
+            TrieNode::Branch { max_thresh, .. } => max_thresh,
+        }
+    }
+
+    fn sample_key(&self) -> &[u8] {
+        match self {
+            TrieNode::Leaf { key, .. } => key,
+            TrieNode::Branch { sample_key, .. } => sample_key,
+        }
+    }
+
+    fn hull(&self) -> &LowerHullTree {
+        match self {
+            TrieNode::Leaf { hull, .. } | TrieNode::Branch { hull, .. } => hull,
+        }
+    }
+
+    fn insert(
+        node: &Arc<TrieNode>,
+        thresh: &Int,
+        key: &[u8],
+        pf: &PartFace,
+        at: &PartAt,
+    ) -> Arc<TrieNode> {
+        let diff = first_diff_bit(node.sample_key(), key);
+        match &**node {
+            TrieNode::Leaf {
+                thresh: lt,
+                key: lk,
+                hull,
+            } => match diff {
+                None => Arc::new(TrieNode::Leaf {
+                    thresh: lt.clone(),
+                    key: lk.clone(),
+                    hull: hull.insert(&pf.slope, &pf.val, &pf.pt, at),
+                }),
+                Some(b) => {
+                    let new_leaf = Arc::new(TrieNode::Leaf {
+                        thresh: thresh.clone(),
+                        key: key.to_vec(),
+                        hull: LowerHullTree::default().insert(&pf.slope, &pf.val, &pf.pt, at),
+                    });
+                    let merged = hull.insert(&pf.slope, &pf.val, &pf.pt, at);
+                    let (left, right) = if bit_at(key, b) {
+                        (node.clone(), new_leaf)
+                    } else {
+                        (new_leaf, node.clone())
+                    };
+                    Arc::new(TrieNode::Branch {
+                        bit: b,
+                        min_thresh: left.min_thresh().clone(),
+                        max_thresh: right.max_thresh().clone(),
+                        sample_key: left.sample_key().to_vec(),
+                        left,
+                        right,
+                        hull: merged,
+                    })
+                }
+            },
+            TrieNode::Branch {
+                bit,
+                sample_key,
+                left,
+                right,
+                hull,
+                ..
+            } => {
+                if let Some(d) = diff
+                    && d < *bit
+                {
+                    let new_leaf = Arc::new(TrieNode::Leaf {
+                        thresh: thresh.clone(),
+                        key: key.to_vec(),
+                        hull: LowerHullTree::default().insert(&pf.slope, &pf.val, &pf.pt, at),
+                    });
+                    let merged = hull.insert(&pf.slope, &pf.val, &pf.pt, at);
+                    let (nl, nr) = if bit_at(key, d) {
+                        (node.clone(), new_leaf)
+                    } else {
+                        (new_leaf, node.clone())
+                    };
+                    return Arc::new(TrieNode::Branch {
+                        bit: d,
+                        min_thresh: nl.min_thresh().clone(),
+                        max_thresh: nr.max_thresh().clone(),
+                        sample_key: nl.sample_key().to_vec(),
+                        left: nl,
+                        right: nr,
+                        hull: merged,
+                    });
+                }
+                let (nl, nr) = if bit_at(key, *bit) {
+                    (left.clone(), Self::insert(right, thresh, key, pf, at))
+                } else {
+                    (Self::insert(left, thresh, key, pf, at), right.clone())
+                };
+                Arc::new(TrieNode::Branch {
+                    bit: *bit,
+                    min_thresh: nl.min_thresh().clone(),
+                    max_thresh: nr.max_thresh().clone(),
+                    sample_key: sample_key.clone(),
+                    left: nl,
+                    right: nr,
+                    hull: hull.insert(&pf.slope, &pf.val, &pf.pt, at),
+                })
+            }
+        }
+    }
+
+    fn remove(
+        node: &Arc<TrieNode>,
+        key: &[u8],
+        pf: &PartFace,
+        at: &PartAt,
+    ) -> Option<Arc<TrieNode>> {
+        match &**node {
+            TrieNode::Leaf {
+                thresh,
+                key: lk,
+                hull,
+            } => {
+                if lk.as_slice() != key {
+                    return Some(node.clone());
+                }
+                let next = hull.remove(&pf.slope, &pf.val, at);
+                if next.is_empty() {
+                    None
+                } else {
+                    Some(Arc::new(TrieNode::Leaf {
+                        thresh: thresh.clone(),
+                        key: lk.clone(),
+                        hull: next,
+                    }))
+                }
+            }
+            TrieNode::Branch {
+                bit,
+                left,
+                right,
+                hull,
+                ..
+            } => {
+                let (nl, nr) = if bit_at(key, *bit) {
+                    let Some(nr) = Self::remove(right, key, pf, at) else {
+                        return Some(left.clone());
+                    };
+                    (left.clone(), nr)
+                } else {
+                    let Some(nl) = Self::remove(left, key, pf, at) else {
+                        return Some(right.clone());
+                    };
+                    (nl, right.clone())
+                };
+                Some(Arc::new(TrieNode::Branch {
+                    bit: *bit,
+                    min_thresh: nl.min_thresh().clone(),
+                    max_thresh: nr.max_thresh().clone(),
+                    sample_key: nl.sample_key().to_vec(),
+                    left: nl,
+                    right: nr,
+                    hull: hull.remove(&pf.slope, &pf.val, at),
+                }))
+            }
+        }
+    }
+
+    /// Whether any part with `thresh > bound` (when `gt`) or `thresh < bound` (when `!gt`)
+    /// violates the half-plane query `(v_q, u_q)`.
+    fn any_failing(&self, gt: bool, bound: &Int, v_q: &Int, u_q: &Int) -> bool {
+        if gt {
+            if self.max_thresh() <= bound {
+                return false;
+            }
+            if self.min_thresh() > bound {
+                return self.hull().any_below(v_q, u_q);
+            }
+        } else {
+            if self.min_thresh() >= bound {
+                return false;
+            }
+            if self.max_thresh() < bound {
+                return self.hull().any_below(v_q, u_q);
+            }
+        }
+        match self {
+            TrieNode::Leaf { .. } => unreachable!("min_thresh == max_thresh at leaf"),
+            TrieNode::Branch { left, right, .. } => {
+                left.any_failing(gt, bound, v_q, u_q) || right.any_failing(gt, bound, v_q, u_q)
+            }
+        }
+    }
+
+    fn report_failing(&self, gt: bool, bound: &Int, v_q: &Int, u_q: &Int, out: &mut Vec<PartAt>) {
+        if gt {
+            if self.max_thresh() <= bound {
+                return;
+            }
+            if self.min_thresh() > bound {
+                self.hull().report_below(v_q, u_q, out);
+                return;
+            }
+        } else {
+            if self.min_thresh() >= bound {
+                return;
+            }
+            if self.max_thresh() < bound {
+                self.hull().report_below(v_q, u_q, out);
+                return;
+            }
+        }
+        match self {
+            TrieNode::Leaf { .. } => unreachable!("min_thresh == max_thresh at leaf"),
+            TrieNode::Branch { left, right, .. } => {
+                left.report_failing(gt, bound, v_q, u_q, out);
+                right.report_failing(gt, bound, v_q, u_q, out);
+            }
+        }
+    }
+}
+
+impl ThreshHullTrie {
+    fn is_empty(&self) -> bool {
+        self.0.is_none()
+    }
+
+    fn insert(&self, pf: &PartFace, at: &PartAt) -> Self {
+        let key = int_ord_bytes(&pf.thresh);
+        match &self.0 {
+            None => ThreshHullTrie(Some(Arc::new(TrieNode::Leaf {
+                thresh: pf.thresh.clone(),
+                key,
+                hull: LowerHullTree::default().insert(&pf.slope, &pf.val, &pf.pt, at),
+            }))),
+            Some(root) => ThreshHullTrie(Some(TrieNode::insert(root, &pf.thresh, &key, pf, at))),
+        }
+    }
+
+    fn remove(&self, pf: &PartFace, at: &PartAt) -> Self {
+        let key = int_ord_bytes(&pf.thresh);
+        match &self.0 {
+            None => ThreshHullTrie(None),
+            Some(root) => ThreshHullTrie(TrieNode::remove(root, &key, pf, at)),
+        }
+    }
+}
+
+/// Summary of one two-name disjunction for [`BoxFaceIndex`]: one two-variable arm and an
+/// optional unary arm. Either arm holding across a box edge certifies the disjunction on it.
+#[derive(Clone)]
+struct PartFace {
+    quad: ArmQuad,
+    unary: UnaryKind,
+    thresh: Int,
+    slope: SlopeKey,
+    val: HullVal,
+    pt: HullPt,
+}
+
+impl PartFace {
+    fn of(arms: &[Formula], u: &Arc<str>, v: &Arc<str>) -> Option<PartFace> {
+        let mut unary: Option<(UnaryKind, Int)> = None;
+        let mut two: Option<(Int, Int, Int)> = None;
+        for arm in arms {
+            let Formula::Con(c) = arm else { return None };
+            if c.rel != Rel::Ge {
+                return None;
+            }
+            let cu = c
+                .lin
+                .terms
+                .get(&Atom::Sym(u.clone()))
+                .cloned()
+                .unwrap_or(Int::ZERO);
+            let cv = c
+                .lin
+                .terms
+                .get(&Atom::Sym(v.clone()))
+                .cloned()
+                .unwrap_or(Int::ZERO);
+            if !cu.is_zero() && !cv.is_zero() {
+                if two.is_none() {
+                    two = Some((cu, cv, c.lin.constant.clone()));
+                }
+            } else if !cu.is_zero() && unary.is_none() {
+                if cu.is_positive() {
+                    unary = Some((UnaryKind::UGe, -&c.lin.constant.div_floor(&cu)));
+                } else {
+                    unary = Some((UnaryKind::ULe, c.lin.constant.div_floor(&-&cu)));
+                }
+            } else if !cv.is_zero() && unary.is_none() {
+                if cv.is_positive() {
+                    unary = Some((UnaryKind::VGe, -&c.lin.constant.div_floor(&cv)));
+                } else {
+                    unary = Some((UnaryKind::VLe, c.lin.constant.div_floor(&-&cv)));
+                }
+            }
+        }
+        let (a, b, c) = two?;
+        let quad = match (a.is_positive(), b.is_positive()) {
+            (false, false) => ArmQuad::Nn,
+            (false, true) => ArmQuad::Np,
+            (true, false) => ArmQuad::Pn,
+            (true, true) => ArmQuad::Pp,
+        };
+        let d = a.abs();
+        let g = d.gcd(&b.abs()).gcd(&c.abs());
+        let (b, c, d) = if g > Int::ONE {
+            (b.div_floor(&g), c.div_floor(&g), d.div_floor(&g))
+        } else {
+            (b, c, d)
+        };
+        let gs = d.gcd(&b.abs());
+        let slope = if gs > Int::ONE {
+            SlopeKey(b.div_floor(&gs), d.div_floor(&gs))
+        } else {
+            SlopeKey(b.clone(), d.clone())
+        };
+        let gc = d.gcd(&c.abs());
+        let val = if gc > Int::ONE {
+            HullVal(c.div_floor(&gc), d.div_floor(&gc))
+        } else {
+            HullVal(c.clone(), d.clone())
+        };
+        let pt = HullPt { b, c, d };
+        let (unary, thresh) = unary.unwrap_or((UnaryKind::None, Int::ZERO));
+        Some(PartFace {
+            quad,
+            unary,
+            thresh,
+            slope,
+            val,
+            pt,
+        })
+    }
+}
+
+/// One edge of a box, `([u_min, u_max], [v_min, v_max])`, with one of its two intervals a
+/// single point.
+type BoxEdge<'a> = ((&'a Int, &'a Int), (&'a Int, &'a Int));
+
+/// Persistent bounded-box face index for two-name `>=` disjunctions in a [`RecessionBucket`].
+/// Parts with a two-variable arm are indexed by `(ArmQuad, UnaryKind)` into a [`ThreshHullTrie`]
+/// (or a bare [`LowerHullTree`] when `UnaryKind::None`); parts without one sit in `unindexed`
+/// and are always reported when queried.
+#[derive(Clone, Default)]
+struct BoxFaceIndex {
+    plain_hulls: imbl::OrdMap<ArmQuad, LowerHullTree>,
+    guarded: imbl::OrdMap<(ArmQuad, UnaryKind), ThreshHullTrie>,
+    unindexed: imbl::OrdSet<PartAt>,
+}
+
+impl BoxFaceIndex {
+    fn add(&mut self, at: &PartAt, face: Option<&PartFace>) {
+        let Some(pf) = face else {
+            self.unindexed.insert(at.clone());
+            return;
+        };
+        if pf.unary == UnaryKind::None {
+            let next = self
+                .plain_hulls
+                .get(&pf.quad)
+                .cloned()
+                .unwrap_or_default()
+                .insert(&pf.slope, &pf.val, &pf.pt, at);
+            self.plain_hulls.insert(pf.quad, next);
+        } else {
+            let key = (pf.quad, pf.unary);
+            let next = self
+                .guarded
+                .get(&key)
+                .cloned()
+                .unwrap_or_default()
+                .insert(pf, at);
+            self.guarded.insert(key, next);
+        }
+    }
+
+    fn remove(&mut self, at: &PartAt, face: Option<&PartFace>) {
+        let Some(pf) = face else {
+            self.unindexed.remove(at);
+            return;
+        };
+        if pf.unary == UnaryKind::None {
+            if let Some(tree) = self.plain_hulls.get(&pf.quad) {
+                let next = tree.remove(&pf.slope, &pf.val, at);
+                if next.is_empty() {
+                    self.plain_hulls.remove(&pf.quad);
+                } else {
+                    self.plain_hulls.insert(pf.quad, next);
+                }
+            }
+        } else {
+            let key = (pf.quad, pf.unary);
+            if let Some(trie) = self.guarded.get(&key) {
+                let next = trie.remove(pf, at);
+                if next.is_empty() {
+                    self.guarded.remove(&key);
+                } else {
+                    self.guarded.insert(key, next);
+                }
+            }
+        }
+    }
+
+    /// The `(v_q, u_q)` lower-hull query point for quadrant `quad` on sub-box
+    /// `[eu_lo, eu_hi] x [ev_lo, ev_hi]`.
+    fn hull_query(quad: ArmQuad, eu: (&Int, &Int), ev: (&Int, &Int)) -> (Int, Int) {
+        match quad {
+            ArmQuad::Nn => (ev.1.clone(), eu.1.clone()),
+            ArmQuad::Np => (ev.0.clone(), eu.1.clone()),
+            ArmQuad::Pn => (ev.1.clone(), -eu.0),
+            ArmQuad::Pp => (ev.0.clone(), -eu.0),
+        }
+    }
+
+    /// `(gt, bound)` for unary kind `uk` on sub-box `[eu_lo, eu_hi] x [ev_lo, ev_hi]`:
+    /// a part fails its unary arm iff `thresh > bound` (when `gt`) or `thresh < bound` (when `!gt`).
+    fn unary_query<'a>(
+        uk: UnaryKind,
+        eu: (&'a Int, &'a Int),
+        ev: (&'a Int, &'a Int),
+    ) -> (bool, &'a Int) {
+        match uk {
+            UnaryKind::UGe => (true, eu.0),
+            UnaryKind::ULe => (false, eu.1),
+            UnaryKind::VGe => (true, ev.0),
+            UnaryKind::VLe => (false, ev.1),
+            UnaryKind::None => unreachable!(),
+        }
+    }
+
+    /// Reports every part that cannot be certified across one of the valid edges `edges`
+    /// (1 or 2 edges, all fixing the same variable so each certifies every other variable).
+    fn report_edges(
+        &self,
+        edges: &[BoxEdge<'_>],
+        v_axis: bool,
+        out: &mut Vec<PartAt>,
+    ) {
+        out.extend(self.unindexed.iter().cloned());
+        let order_edges = |quad: ArmQuad| -> Vec<BoxEdge<'_>> {
+            if edges.len() <= 1 {
+                return edges.to_vec();
+            }
+            // Prefer the edge that maximizes `a * u + b * v` for this quadrant so a single O(log k)
+            // check certifies the whole bucket whenever possible.
+            let prefer_second = if v_axis {
+                matches!(quad, ArmQuad::Np | ArmQuad::Pp)
+            } else {
+                matches!(quad, ArmQuad::Pn | ArmQuad::Pp)
+            };
+            if prefer_second {
+                vec![edges[1], edges[0]]
+            } else {
+                vec![edges[0], edges[1]]
+            }
+        };
+        for (&quad, tree) in &self.plain_hulls {
+            let ord = order_edges(quad);
+            let mut chosen = None;
+            for &(eu, ev) in &ord {
+                let (vq, uq) = Self::hull_query(quad, eu, ev);
+                if !tree.any_below(&vq, &uq) {
+                    chosen = None;
+                    break;
+                }
+                if chosen.is_none() {
+                    chosen = Some((vq, uq));
+                }
+            }
+            if let Some((vq, uq)) = chosen {
+                tree.report_below(&vq, &uq, out);
+            }
+        }
+        for (&(quad, uk), trie) in &self.guarded {
+            let Some(root) = &trie.0 else { continue };
+            let ord = order_edges(quad);
+            let mut chosen = None;
+            for &(eu, ev) in &ord {
+                let (gt, bound) = Self::unary_query(uk, eu, ev);
+                let (vq, uq) = Self::hull_query(quad, eu, ev);
+                if !root.any_failing(gt, bound, &vq, &uq) {
+                    chosen = None;
+                    break;
+                }
+                if chosen.is_none() {
+                    chosen = Some((gt, bound, vq, uq));
+                }
+            }
+            if let Some((gt, bound, vq, uq)) = chosen {
+                root.report_failing(gt, bound, &vq, &uq, out);
+            }
+        }
+    }
+}
 
 #[derive(Clone)]
 struct PartRecession {
@@ -18900,6 +20099,7 @@ struct PartRecession {
     leaf_sign: i8,
     linear: Vec<(TurnEnd, TurnEnd)>,
     wraps: Vec<(Turn, Turn)>,
+    face: Option<PartFace>,
 }
 
 #[derive(Clone, Default)]
@@ -18909,6 +20109,10 @@ struct RecessionBucket {
     non_pure: imbl::OrdSet<PartAt>,
     linear: Pst<TurnEnd>,
     wraps: Pst<Turn>,
+    face: BoxFaceIndex,
+    /// The number of chain keys in `chains` that hold two or more parts; the face certificate
+    /// ([`Block::box_face_uncertified`]) is used only when it is 0.
+    shared_chains: usize,
 }
 
 impl RecessionBucket {
@@ -18925,7 +20129,11 @@ impl RecessionBucket {
     ) {
         match chain_key {
             Some(ck) => {
-                *self.chains.entry(ck).or_insert(0) += 1;
+                let n = self.chains.entry(ck).or_insert(0);
+                *n += 1;
+                if *n == 2 {
+                    self.shared_chains += 1;
+                }
             }
             None => {
                 self.unchained.insert(at.clone());
@@ -18940,6 +20148,9 @@ impl RecessionBucket {
         for (lo, hi) in &rec.wraps {
             self.wraps = self.wraps.insert((lo.clone(), hi.clone(), at.clone()));
         }
+        if rec.key.2.is_none() {
+            self.face.add(at, rec.face.as_ref());
+        }
     }
 
     fn remove(
@@ -18953,6 +20164,9 @@ impl RecessionBucket {
             Some(ck) => {
                 if let Some(n) = self.chains.get_mut(ck) {
                     *n -= 1;
+                    if *n == 1 {
+                        self.shared_chains -= 1;
+                    }
                     if *n == 0 {
                         self.chains.remove(ck);
                     }
@@ -18970,6 +20184,9 @@ impl RecessionBucket {
         }
         for (lo, hi) in &rec.wraps {
             self.wraps = self.wraps.remove(&(lo.clone(), hi.clone(), at.clone()));
+        }
+        if rec.key.2.is_none() {
+            self.face.remove(at, rec.face.as_ref());
         }
     }
 
@@ -19266,6 +20483,11 @@ fn recession_shape(g: &Formula, leaf: Option<&Arc<str>>) -> Option<PartRecession
         }
         _ => return None,
     };
+    let face = if aux_sym.is_none() {
+        PartFace::of(arms, &u, &v)
+    } else {
+        None
+    };
     let key: RecKey = (u, v, aux_sym);
     let (p, q) = (&bs[0][0], &bs[0][1]);
     let mut orig_lo = [q.clone(), -p];
@@ -19294,6 +20516,7 @@ fn recession_shape(g: &Formula, leaf: Option<&Arc<str>>) -> Option<PartRecession
                     leaf_sign,
                     linear,
                     wraps: Vec::new(),
+                    face,
                 });
             }
         } else if by.is_positive() {
@@ -19316,6 +20539,7 @@ fn recession_shape(g: &Formula, leaf: Option<&Arc<str>>) -> Option<PartRecession
             leaf_sign,
             linear: Vec::new(),
             wraps: Vec::new(),
+            face,
         });
     }
     let t_lo = Turn(orig_lo);
@@ -19337,6 +20561,7 @@ fn recession_shape(g: &Formula, leaf: Option<&Arc<str>>) -> Option<PartRecession
         leaf_sign,
         linear,
         wraps,
+        face,
     })
 }
 
@@ -22197,6 +23422,260 @@ mod tests {
         let pp_miss = puncture_part(&g_miss).expect("puncture part");
         assert!(!ctx.is_idle(&pp_hit));
         assert!(ctx.is_idle(&pp_miss));
+    }
+
+    /// Random insertions, removals, and half-plane / box-edge queries on [`LowerHullTree`],
+    /// [`ThreshHullTrie`], [`int_ord_bytes`], and [`BoxFaceIndex`] match brute-force evaluation
+    /// while maintaining AVL height balance and the Overmars-van Leeuwen lower-bridge invariant.
+    #[test]
+    fn lower_hull_tree_and_box_face_index_match_the_oracle() {
+        fn check_hull(node: &HullNode, pts: &mut Vec<HullPt>) {
+            match node {
+                HullNode::Leaf { slope, pt, entries } => {
+                    assert!(!entries.is_empty());
+                    assert!(pt.d.is_positive());
+                    assert_eq!(&pt.b * &slope.1, &slope.0 * &pt.d);
+                    pts.push(pt.clone());
+                }
+                HullNode::Branch {
+                    height,
+                    max_slope,
+                    left,
+                    right,
+                    bridge: (p_l, p_r),
+                } => {
+                    let (lh, rh) = (left.height(), right.height());
+                    assert!(lh >= 1 && rh >= 1 && lh.abs_diff(rh) <= 1);
+                    assert_eq!(*height, 1 + lh.max(rh));
+                    assert_eq!(max_slope, right.max_slope());
+                    assert!(left.max_slope() < right.max_slope());
+                    let mut lpts = Vec::new();
+                    let mut rpts = Vec::new();
+                    check_hull(left, &mut lpts);
+                    check_hull(right, &mut rpts);
+                    for p in lpts.iter().chain(&rpts) {
+                        assert!(
+                            !hull_orient(p_l, p_r, p).is_lt(),
+                            "bridge invariant violated"
+                        );
+                    }
+                    pts.extend(lpts);
+                    pts.extend(rpts);
+                }
+            }
+        }
+
+        // Order preservation and prefix-freedom of `int_ord_bytes`, including BigInts.
+        let huge_pos = &Int::from(i128::MAX) + &Int::from(1234567i64);
+        let huger_pos = &huge_pos * &Int::from(100i64);
+        let huge_neg = &Int::from(i128::MIN) - &Int::from(1234567i64);
+        let huger_neg = &huge_neg * &Int::from(100i64);
+        let ordered = [
+            huger_neg,
+            huge_neg,
+            Int::from(i128::MIN),
+            Int::from(-1000i64),
+            Int::from(-1i64),
+            Int::ZERO,
+            Int::ONE,
+            Int::from(1000i64),
+            Int::from(i128::MAX),
+            huge_pos,
+            huger_pos,
+        ];
+        let keys: Vec<Vec<u8>> = ordered.iter().map(int_ord_bytes).collect();
+        for i in 0..keys.len() {
+            for j in i + 1..keys.len() {
+                assert!(keys[i] < keys[j], "ord_bytes order failed at ({i}, {j})");
+                assert!(
+                    !keys[j].starts_with(&keys[i]),
+                    "prefix collision at ({i}, {j})"
+                );
+            }
+        }
+
+        let mut seed: u64 = 0x9e37_79b9_7f4a_7c15;
+        let mut rng = |m: u64| -> i64 {
+            seed ^= seed << 13;
+            seed ^= seed >> 7;
+            seed ^= seed << 17;
+            (seed % m) as i64
+        };
+        let dummy = |id: i64| -> PartAt {
+            let x = Lin::atom(Atom::Sym("x".into())).plus(&Lin::constant(id));
+            (
+                false,
+                Arc::new(Formula::Con(Con::ge(&x, &Lin::constant(0)))),
+            )
+        };
+
+        // Random insert/remove + query verification on `LowerHullTree`.
+        let mut hull = LowerHullTree::default();
+        let mut entries: Vec<(PartAt, SlopeKey, HullVal, HullPt)> = Vec::new();
+        for step in 0..250 {
+            if !entries.is_empty() && rng(3) == 0 {
+                let idx = rng(entries.len() as u64) as usize;
+                let (at, slope, val, _) = entries.swap_remove(idx);
+                hull = hull.remove(&slope, &val, &at);
+            } else {
+                let d = Int::from(1 + rng(4));
+                let b = Int::from(rng(13) - 6);
+                let c = Int::from(rng(17) - 8);
+                let gs = d.gcd(&b.abs());
+                let slope = SlopeKey(b.div_floor(&gs), d.div_floor(&gs));
+                let gc = d.gcd(&c.abs());
+                let val = HullVal(c.div_floor(&gc), d.div_floor(&gc));
+                let pt = HullPt { b, c, d };
+                let at = dummy(step);
+                hull = hull.insert(&slope, &val, &pt, &at);
+                entries.push((at, slope, val, pt));
+            }
+            if let Some(root) = &hull.0 {
+                check_hull(root, &mut Vec::new());
+            }
+            for _ in 0..8 {
+                let vq = Int::from(rng(15) - 7);
+                let uq = Int::from(rng(15) - 7);
+                let mut got = Vec::new();
+                hull.report_below(&vq, &uq, &mut got);
+                got.sort();
+                let mut want: Vec<PartAt> = entries
+                    .iter()
+                    .filter(|(_, _, _, pt)| !pt.eval_ge(&vq, &uq))
+                    .map(|(at, _, _, _)| at.clone())
+                    .collect();
+                want.sort();
+                assert_eq!(hull.any_below(&vq, &uq), !want.is_empty());
+                assert_eq!(got, want);
+            }
+        }
+
+        // Random `BoxFaceIndex` verification against brute-force corner evaluation.
+        let u: Arc<str> = "x".into();
+        let v: Arc<str> = "y".into();
+        let mut face_idx = BoxFaceIndex::default();
+        let mut parts: Vec<(PartAt, Vec<Formula>, Option<PartFace>)> = Vec::new();
+        for id in 0..120 {
+            let a = if rng(2) == 0 {
+                1 + rng(4)
+            } else {
+                -(1 + rng(4))
+            };
+            let b = if rng(2) == 0 {
+                1 + rng(4)
+            } else {
+                -(1 + rng(4))
+            };
+            let c = rng(41) - 20;
+            let row1 = Formula::Con(Con::ge(
+                &Lin::atom(Atom::Sym(u.clone()))
+                    .times(a)
+                    .plus(&Lin::atom(Atom::Sym(v.clone())).times(b))
+                    .plus(&Lin::constant(c)),
+                &Lin::constant(0),
+            ));
+            let mut arms = vec![row1];
+            match rng(5) {
+                0 => {}
+                1 => arms.push(Formula::Con(Con::ge(
+                    &Lin::atom(Atom::Sym(u.clone())),
+                    &Lin::constant(rng(11) - 5),
+                ))),
+                2 => arms.push(Formula::Con(Con::ge(
+                    &Lin::constant(rng(11) - 5),
+                    &Lin::atom(Atom::Sym(u.clone())),
+                ))),
+                3 => arms.push(Formula::Con(Con::ge(
+                    &Lin::atom(Atom::Sym(v.clone())),
+                    &Lin::constant(rng(11) - 5),
+                ))),
+                _ => arms.push(Formula::Con(Con::ge(
+                    &Lin::constant(rng(11) - 5),
+                    &Lin::atom(Atom::Sym(v.clone())),
+                ))),
+            }
+            let pf = PartFace::of(&arms, &u, &v);
+            assert!(pf.is_some());
+            let at = dummy(1000 + id);
+            face_idx.add(&at, pf.as_ref());
+            parts.push((at, arms, pf));
+        }
+        let eval_arm = |arm: &Formula, xv: i64, yv: i64| -> bool {
+            let Formula::Con(c) = arm else { return false };
+            let cu = c
+                .lin
+                .terms
+                .get(&Atom::Sym(u.clone()))
+                .cloned()
+                .unwrap_or(Int::ZERO);
+            let cv = c
+                .lin
+                .terms
+                .get(&Atom::Sym(v.clone()))
+                .cloned()
+                .unwrap_or(Int::ZERO);
+            &(&(&cu * &Int::from(xv)) + &(&cv * &Int::from(yv))) + &c.lin.constant >= Int::ZERO
+        };
+        let holds_on_edge = |arms: &[Formula], xlo: i64, xhi: i64, ylo: i64, yhi: i64| -> bool {
+            arms.iter().any(|arm| {
+                eval_arm(arm, xlo, ylo)
+                    && eval_arm(arm, xlo, yhi)
+                    && eval_arm(arm, xhi, ylo)
+                    && eval_arm(arm, xhi, yhi)
+            })
+        };
+        for _ in 0..80 {
+            let lu = rng(7) - 5;
+            let hu = lu + rng(7);
+            let lv = rng(7) - 5;
+            let hv = lv + rng(7);
+            let (ilu, ihu, ilv, ihv) = (Int::from(lu), Int::from(hu), Int::from(lv), Int::from(hv));
+            // Single-edge query (exact equality with brute force).
+            let mut got = Vec::new();
+            face_idx.report_edges(&[((&ilu, &ihu), (&ilv, &ilv))], true, &mut got);
+            got.sort();
+            let mut want: Vec<PartAt> = parts
+                .iter()
+                .filter(|(_, arms, _)| !holds_on_edge(arms, lu, hu, lv, lv))
+                .map(|(at, _, _)| at.clone())
+                .collect();
+            want.sort();
+            assert_eq!(got, want, "bottom edge mismatch [{lu}..={hu}] x [{lv}]");
+
+            // Two-edge query: every part NOT reported must hold on at least one of the two edges.
+            let mut got2 = Vec::new();
+            face_idx.report_edges(
+                &[((&ilu, &ihu), (&ilv, &ilv)), ((&ilu, &ihu), (&ihv, &ihv))],
+                true,
+                &mut got2,
+            );
+            let rep2: BTreeSet<PartAt> = got2.into_iter().collect();
+            for (at, arms, _) in &parts {
+                if !rep2.contains(at) {
+                    assert!(
+                        holds_on_edge(arms, lu, hu, lv, lv) || holds_on_edge(arms, lu, hu, hv, hv),
+                        "unsound skip on two v-edges"
+                    );
+                }
+            }
+        }
+        // Remove half the parts and re-check exactness.
+        for _ in 0..60 {
+            let idx = rng(parts.len() as u64) as usize;
+            let (at, _, pf) = parts.swap_remove(idx);
+            face_idx.remove(&at, pf.as_ref());
+        }
+        let (ilu, ilv, ihv) = (Int::from(-2i64), Int::from(-1i64), Int::from(5i64));
+        let mut got = Vec::new();
+        face_idx.report_edges(&[((&ilu, &ilu), (&ilv, &ihv))], false, &mut got);
+        got.sort();
+        let mut want: Vec<PartAt> = parts
+            .iter()
+            .filter(|(_, arms, _)| !holds_on_edge(arms, -2, -2, -1, 5))
+            .map(|(at, _, _)| at.clone())
+            .collect();
+        want.sort();
+        assert_eq!(got, want, "left edge mismatch after removals");
     }
 }
 

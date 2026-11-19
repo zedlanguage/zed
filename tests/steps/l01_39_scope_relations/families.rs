@@ -529,6 +529,34 @@ fn family(name: &str, k: usize) -> Family {
             tests.push(le(var("x"), int(5)));
             around(&xy, 150)
         }
+        // `x`, `y` in 0..=10, then `k` disjunctions `x + j*y <= 10j + 5 || x >= 9`
+        // (box_cases), or `x + j*y <= 10j + 5 || y <= 1` (box_cases_y); each is a part on two
+        // names that are bounded on both sides.
+        "box_cases" | "box_cases_y" => {
+            tests.extend(boxed_from(&xy, 0, 10));
+            tests.extend((1..=ki).map(|j| {
+                let other = if name == "box_cases" {
+                    ge(var("x"), int(9))
+                } else {
+                    le(var("y"), int(1))
+                };
+                or(le(add(var("x"), times(j, "y")), int(10 * j + 5)), other)
+            }));
+            vec![("x".into(), -1, 11), ("y".into(), -1, 11)]
+        }
+        // The star, then `k` disjunctions `x + j*y + w >= 1 || x - j*y + v >= 1`, each on
+        // four names and not of the chain shape.
+        "split4" => {
+            names.extend(["w".to_string(), "v".to_string()]);
+            tests.push(star());
+            tests.extend((1..=ki).map(|j| {
+                or(
+                    ge(add(add(var("x"), times(j, "y")), var("w")), int(1)),
+                    ge(add(sub(var("x"), times(j, "y")), var("v")), int(1)),
+                )
+            }));
+            around(&["x", "y", "w", "v"], 6)
+        }
         // `x`, `y` in 0..=10 and the two hole tests (hole_end0); then `x + y <= 10 || 3x + y
         // >= 37` (hole_end1); then `x <= 8` (hole_end2). The `_pad` forms first add `k`
         // disjunctions `x + j*y >= -1000j || x - j*y >= 1000j` that the box makes redundant,
