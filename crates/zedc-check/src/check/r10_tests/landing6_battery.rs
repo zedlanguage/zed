@@ -10,8 +10,8 @@
 //!   internal results (`Outside -> W`) lists the name twice in D (in a mark and in
 //!   `vars_order`) and once in E, whose `vars_order` merges the two variables by name
 //!   (Claude Q2.3; `Sig::vars_marks` says so). A variable bound to the compact signature
-//!   itself lists its internal names twice in both. The order is compared with each internal
-//!   name once, on both sides.
+//!   itself lists its internal names twice in both. Under such a binding (`Ctx::under`) the
+//!   order is compared with each internal name once, on both sides; under every other, as is.
 //!
 //! `Need::map_tys` refuses every compact forward and `Need::replace` refuses a binding that
 //! must decode (landing round 6, Claude Q2.2), so those operations may panic in D and not in
@@ -20,7 +20,7 @@
 use super::*;
 use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::sync::Arc;
-use zedc_types::ty::{Binds, Carrier, Need, Ty, why_unfit};
+use zedc_types::ty::{Binds, Carrier, Need, NeedKind, Ty, why_unfit};
 
 type Pair = (String, Arc<Sig>, Arc<Sig>);
 
@@ -33,10 +33,30 @@ struct Found {
     d_refused: usize,
 }
 
-/// The pair being run: the internal results of D's forwards, and whether one is unfinished.
+/// The pair being run: the internal results of D's forwards, whether one is unfinished, and
+/// whether the binding run may make the clash of Q2.3.
 struct Ctx {
     internal: BTreeSet<Arc<str>>,
     unfinished: bool,
+    clash: bool,
+}
+
+impl Ctx {
+    /// `self` for a run under `b`, which makes the clash of Q2.3 when one of its types names
+    /// an internal result or holds a function with internal results (the compact signature
+    /// itself, `Ty::func(c)`); no other binding of the battery can (landing round 7, Claude
+    /// F7: the orders were compared with each internal name once for every binding).
+    fn under(&self, b: &Binds) -> Ctx {
+        let clash = b.values().any(|t| {
+            let f = t.var_facts();
+            f.internal || (f.classes.iter().chain(&f.names)).any(|v| self.internal.contains(v))
+        });
+        Ctx {
+            internal: self.internal.clone(),
+            unfinished: self.unfinished,
+            clash,
+        }
+    }
 }
 
 fn internal_names(s: &Sig) -> BTreeSet<Arc<str>> {
@@ -96,10 +116,13 @@ fn cmp_sig(label: &str, c: &Sig, f: &Sig, cx: &Ctx, out: &mut Found) {
         oc.retain(|v| !cx.internal.contains(v));
         of.retain(|v| !cx.internal.contains(v));
     }
-    let (oc, of) = (
-        once_each_internal(oc, &cx.internal),
-        once_each_internal(of, &cx.internal),
-    );
+    let (oc, of) = match cx.clash {
+        true => (
+            once_each_internal(oc, &cx.internal),
+            once_each_internal(of, &cx.internal),
+        ),
+        false => (oc, of),
+    };
     bad("order_with_marks", format!("{oc:?}"), format!("{of:?}"));
     bad(
         "decoded own",
@@ -182,25 +205,50 @@ fn cmp_sig(label: &str, c: &Sig, f: &Sig, cx: &Ctx, out: &mut Found) {
     );
 }
 
-/// `op` on D and on E, compared. `d_may_refuse`: the operation meets a compact forward's need
-/// alone (`Need::map_tys`, `Need::replace`), so D may panic where E does not.
+/// The refusal an operation that meets a compact forward's need alone (`Need::map_tys`,
+/// `Need::replace`) documents: the start of its panic message, and whether D's signature
+/// warrants it under this binding.
+struct Refusal {
+    says: &'static str,
+    warranted: bool,
+}
+
+/// `op` on D and on E, compared. With `refusal`, D may panic where E does not, but only with
+/// that message and only where it is warranted; any other panic, on either side or on both,
+/// is a difference (landing round 7, Codex L7.Codex-battery-panic: every D-only panic was
+/// counted a refusal, and two panics passed).
 fn run_op(
     label: &str,
     cx: &Ctx,
     out: &mut Found,
-    d_may_refuse: bool,
+    refusal: Option<Refusal>,
     op: impl Fn(&Arc<Sig>) -> Sig,
     c: &Arc<Sig>,
     f: &Arc<Sig>,
 ) {
+    let said = |e: &Box<dyn std::any::Any + Send>| -> String {
+        (e.downcast_ref::<String>().cloned())
+            .or_else(|| e.downcast_ref::<&str>().map(|s| s.to_string()))
+            .unwrap_or_default()
+    };
     let rc = catch_unwind(AssertUnwindSafe(|| op(c)));
     let rf = catch_unwind(AssertUnwindSafe(|| op(f)));
     match (rc, rf) {
         (Ok(a), Ok(b)) => cmp_sig(label, &a, &b, cx, out),
-        (Err(_), Ok(_)) if d_may_refuse => out.d_refused += 1,
-        (Err(_), Ok(_)) => out.bad.push(format!("{label}: D panicked, E did not")),
-        (Ok(_), Err(_)) => out.bad.push(format!("{label}: E panicked, D did not")),
-        (Err(_), Err(_)) => {}
+        (Err(e), Ok(_)) => match &refusal {
+            Some(r) if r.warranted && said(&e).starts_with(r.says) => out.d_refused += 1,
+            _ => out
+                .bad
+                .push(format!("{label}: D panicked, E did not: {}", said(&e))),
+        },
+        (Ok(_), Err(e)) => out
+            .bad
+            .push(format!("{label}: E panicked, D did not: {}", said(&e))),
+        (Err(d), Err(e)) => out.bad.push(format!(
+            "{label}: both panicked: D {}; E {}",
+            said(&d),
+            said(&e)
+        )),
     }
 }
 
@@ -222,9 +270,35 @@ fn each_need(s: &Sig, b: &Binds, need: impl Fn(&Need) -> Need) -> Sig {
     x
 }
 
+/// `s` made anew with its facts cleared at every depth: in its arrows, in its needs, in each
+/// function their types hold and in the callee of each compact forward. `Sig::settle` keeps
+/// what a signature was settled into in its facts, once, as the checker settles each
+/// signature under one solution; the battery settles the same signature under many bindings,
+/// so each settle starts from such a copy (landing round 7, Gemini B5: reusing the pair made
+/// every binding after the first return the first one's result).
+fn fresh(s: &Arc<Sig>) -> Arc<Sig> {
+    let mut x = Sig::clone(s);
+    x.facts = Default::default();
+    for a in &mut x.arrows {
+        a.params
+            .iter_mut()
+            .for_each(|p| *p = p.with_held_fns(fresh));
+        a.result = a.result.with_held_fns(fresh);
+    }
+    for n in &mut x.needs {
+        *n = n.with_held_fns(fresh);
+        if let NeedKind::Fwd(fwd) = &mut n.kind {
+            let fwd = Arc::make_mut(fwd);
+            fwd.callee = fresh(&fwd.callee);
+        }
+    }
+    Arc::new(x)
+}
+
 /// All operations of the battery under one binding. `internal_key`: `b` binds an internal
 /// result, which `Sig::settle` and `Sig::solved_with` do not take.
 fn ops(name: &str, c: &Arc<Sig>, f: &Arc<Sig>, b: &Binds, internal_key: bool, cx: &Ctx) -> Found {
+    let cx = &cx.under(b);
     let mut out = Found::default();
     let bs: Vec<String> = (b.iter())
         .map(|(k, t)| match t.as_var() {
@@ -234,31 +308,31 @@ fn ops(name: &str, c: &Arc<Sig>, f: &Arc<Sig>, b: &Binds, internal_key: bool, cx
         .collect();
     let l = |op: &str| format!("{name} {op} {{{}}}", bs.join(", "));
     let o = &mut out;
-    run_op(&l("Sig::replace"), cx, o, false, |s| s.replace(b), c, f);
-    run_op(&l("Sig::renamed"), cx, o, false, |s| s.renamed(b), c, f);
+    run_op(&l("Sig::replace"), cx, o, None, |s| s.replace(b), c, f);
+    run_op(&l("Sig::renamed"), cx, o, None, |s| s.renamed(b), c, f);
     let replace_outside = |s: &Arc<Sig>| s.replace_outside(b);
     run_op(
         &l("Sig::replace_outside"),
         cx,
         o,
-        false,
+        None,
         replace_outside,
         c,
         f,
     );
     let flat_for = |s: &Arc<Sig>| s.flat_for(b).into_owned();
-    run_op(&l("Sig::flat_for"), cx, o, false, flat_for, c, f);
+    run_op(&l("Sig::flat_for"), cx, o, None, flat_for, c, f);
     let in_tuple = |s: &Arc<Sig>| Ty::tuple(vec![Ty::func(s.clone())]);
     let op = |s: &Arc<Sig>| held_one(in_tuple(s).replace(b));
-    run_op(&l("tuple(func).replace"), cx, o, false, op, c, f);
+    run_op(&l("tuple(func).replace"), cx, o, None, op, c, f);
     let op = |s: &Arc<Sig>| held_one(in_tuple(s).renamed(b));
-    run_op(&l("tuple(func).renamed"), cx, o, false, op, c, f);
+    run_op(&l("tuple(func).renamed"), cx, o, None, op, c, f);
     let op = |s: &Arc<Sig>| held_one(in_tuple(s).replace_outside(b));
-    run_op(&l("tuple(func).replace_outside"), cx, o, false, op, c, f);
+    run_op(&l("tuple(func).replace_outside"), cx, o, None, op, c, f);
     let op = |s: &Arc<Sig>| held_one(Ty::func(s.clone()).replace(b));
-    run_op(&l("func.replace"), cx, o, false, op, c, f);
+    run_op(&l("func.replace"), cx, o, None, op, c, f);
     let op = |s: &Arc<Sig>| held_one(Ty::func(s.clone()).renamed(b));
-    run_op(&l("func.renamed"), cx, o, false, op, c, f);
+    run_op(&l("func.renamed"), cx, o, None, op, c, f);
     // As `instantiated` (walk.rs) replaces: on the signature `flat_for` gives, arrows and
     // needs one by one.
     let instantiated = |s: &Arc<Sig>| {
@@ -270,27 +344,42 @@ fn ops(name: &str, c: &Arc<Sig>, f: &Arc<Sig>, b: &Binds, internal_key: bool, cx
         }
         x
     };
-    run_op(&l("instantiated"), cx, o, false, instantiated, c, f);
+    run_op(&l("instantiated"), cx, o, None, instantiated, c, f);
     // `Need::map_tys` and `Need::replace` one by one, on the signature as it is.
+    // `Need::map_tys` refuses every compact forward; `Need::replace` one that the binding
+    // must decode, which is when `Sig::flat_for` decodes.
+    let refusal = |says, warranted| Some(Refusal { says, warranted });
     let op = |s: &Arc<Sig>| each_need(s, b, |n| n.map_tys(|t| t.replace(b)));
-    run_op(&l("Need::map_tys each"), cx, o, true, op, c, f);
+    let map_says = "`Need::map_tys` does not take a compact forward";
+    let r = refusal(map_says, c.has_fwd_needs());
+    run_op(&l("Need::map_tys each"), cx, o, r, op, c, f);
     let op = |s: &Arc<Sig>| each_need(s, b, |n| n.replace(b));
-    run_op(&l("Need::replace each"), cx, o, true, op, c, f);
+    let replace_says = "a compact forward is replaced in only by a replacement that keeps it";
+    let must = matches!(c.flat_for(b), std::borrow::Cow::Owned(_));
+    run_op(
+        &l("Need::replace each"),
+        cx,
+        o,
+        refusal(replace_says, must),
+        op,
+        c,
+        f,
+    );
     if !internal_key {
         let solve = |v: &str| b.get(v).cloned();
-        let op = |s: &Arc<Sig>| Sig::clone(&s.settle(&solve));
-        run_op(&l("Sig::settle"), cx, o, false, op, c, f);
+        let op = |s: &Arc<Sig>| Sig::clone(&fresh(s).settle(&solve));
+        run_op(&l("Sig::settle"), cx, o, None, op, c, f);
         let op = |s: &Arc<Sig>| s.solved_with(&solve);
-        run_op(&l("Sig::solved_with"), cx, o, false, op, c, f);
-        let op = |s: &Arc<Sig>| held_one(in_tuple(s).settle(&solve));
-        run_op(&l("tuple(func).settle"), cx, o, false, op, c, f);
+        run_op(&l("Sig::solved_with"), cx, o, None, op, c, f);
+        let op = |s: &Arc<Sig>| held_one(in_tuple(&fresh(s)).settle(&solve));
+        run_op(&l("tuple(func).settle"), cx, o, None, op, c, f);
     }
     let op = |s: &Arc<Sig>| {
         let mut x = Sig::clone(s);
         x.add_arrows_of(&s.replace(b));
         x
     };
-    run_op(&l("add_arrows_of replaced"), cx, o, false, op, c, f);
+    run_op(&l("add_arrows_of replaced"), cx, o, None, op, c, f);
     out
 }
 
@@ -400,6 +489,7 @@ fn ctx(name: &str, c: &Sig) -> Ctx {
     Ctx {
         internal: internal_names(c),
         unfinished: name.starts_with("unfinished"),
+        clash: false,
     }
 }
 

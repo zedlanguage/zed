@@ -3077,6 +3077,83 @@ fn landing6_first_seen_reads_the_flat_form() {
     }
 }
 
+/// Landing round 7, Codex L7.Codex-first-seen-sharing: `first_seen` walked the flat form of a
+/// signature with forwards each time it met it, and each such walk began a new set of rows
+/// entered, so a function held twice at each of d levels was decoded 2^(d+1) - 1 times
+/// (15, 255 and 4095 at d = 4, 8, 12). Here `top` names the class of its own map after the
+/// functions it holds, so the walk meets every one of them first. D agrees with E and decodes
+/// at most once per distinct signature.
+#[test]
+fn landing7_first_seen_decodes_a_shared_function_once() {
+    for depth in [4, 8, 12] {
+        let mut src = String::from("h0(positional f, positional m) = m.map(f).map(f);\n");
+        for i in 1..=depth {
+            let j = i - 1;
+            src.push_str(&format!(
+                "h{i}(positional f, positional m) = (h0(f, m), h{j}, h{j});\n"
+            ));
+        }
+        src.push_str(&format!(
+            "top(positional f, positional m) = (h{depth}, m.map(f));\n"
+        ));
+        let (e, _) = run_with_cfg(&src, R10Config::eager());
+        reset_fwd_decode_count();
+        let (d, _) = run_with_cfg(&src, R10Config::default());
+        let decodes = fwd_decode_count();
+        let kept = d.sigs.values().filter(|s| s.has_fwd_needs()).count();
+        assert_eq!(kept, depth, "depth {depth}: each h_i keeps its forward");
+        assert_info_eq(&format!("depth {depth}"), &e, &d);
+        assert!(
+            decodes <= depth as u64 + 1,
+            "depth {depth}: {decodes} decodes for {} distinct signatures",
+            depth + 1
+        );
+    }
+}
+
+/// Landing round 7, Codex L7.Codex-held-read-order: a variable the callee's held function
+/// reads from around it was put after all the forward's steps, so `vars_order` gave
+/// `[U, V, OuterQ]` where the flat signature gives `[U, OuterQ, V]`: the map's receiver, then
+/// the function it holds, which reads `OuterQ`, then its result. The arrows are emptied so
+/// the order is that of the needs alone. Codex's probe, ported (P328).
+#[test]
+fn landing7_held_read_keeps_its_place_in_vars_order() {
+    use std::sync::Arc;
+    use zedc_types::ty::{Binds, Ty};
+    let src = "h0(positional a, positional m) = m.map((x: int) -> a);\n\
+               h1(positional a, positional m) = h0(a, m);\n";
+    let (d, _) = run_with_cfg(src, R10Config::default());
+    let mut compact = Sig::clone(d.sigs.values().find(|s| s.has_fwd_needs()).unwrap());
+    for arrow in &mut compact.arrows {
+        arrow.params.fill(Ty::empty());
+        arrow.result = Ty::empty();
+    }
+    let NeedKind::Fwd(fwd) = &mut compact.needs[0].kind else {
+        unreachable!()
+    };
+    let fwd = Arc::make_mut(fwd);
+    let name: Arc<str> = "OuterQ".into();
+    let bind: Binds = [(fwd.sigma[0].0.clone(), Ty::var(name.clone()))]
+        .into_iter()
+        .collect();
+    fwd.callee = Arc::new(fwd.callee.replace(&bind));
+    let (_, removed) = fwd.sigma.remove(0);
+    for tie in &mut fwd.var_ties {
+        tie.retain(|t| t != &removed);
+    }
+    fwd.var_ties.retain(|tie| tie.len() > 1);
+    fwd.held_names.insert(name.clone());
+    fwd.held_outer.insert(name);
+    fwd.digest_summary = None;
+    compact.facts = Default::default();
+    let flat = flat_of(&compact);
+    assert_eq!(compact, flat);
+    assert_eq!(compact.digest(), flat.digest());
+    let want: Vec<Arc<str>> = ["U", "OuterQ", "V"].map(Arc::from).into();
+    assert_eq!(flat.vars_order(), &want[..], "control: the flat order");
+    assert_eq!(compact.vars_order(), flat.vars_order());
+}
+
 /// Landing round 6, Gemini L6-B5: `Need::on_holds_var` read a compact forward's kept `.on`
 /// variables only, so an internal result that a later map has as its `.on` was not found.
 #[test]
@@ -3198,27 +3275,100 @@ fn landing6_need_replace_refuses_bindings_of_internal_results() {
 
 /// Landing round 6: `Need::with_held_fns`, which the checker uses on a compact forward in
 /// place of `Need::map_tys`, keeps it compact and equal to itself when each held function is
-/// kept, and the signature with it agrees with E.
+/// kept, and the signature with it agrees with E. Landing round 7, Gemini B4: the round-6
+/// test counted the calls over all needs, and every call came from the direct `map` need,
+/// none from the forward; the two are now counted apart, and the forward's are 0, as its
+/// types hold no function (its callee's needs hold the lambda, which it does not enter).
 #[test]
 fn landing6_need_with_held_fns_keeps_a_compact_forward() {
     let (d, _) = run_with_cfg(&chain_src(3, "lambda", false), R10Config::default());
     let (_, sig, _) = sig_with_hidden(&d);
-    let mut calls = 0;
+    let (mut fwd_calls, mut direct_calls) = (0, 0);
     let mut kept = Sig::clone(&sig);
     kept.needs = (sig.needs.iter())
         .map(|n| {
+            let is_fwd = matches!(n.kind, NeedKind::Fwd(_));
             n.with_held_fns(|f| {
-                calls += 1;
+                *(if is_fwd {
+                    &mut fwd_calls
+                } else {
+                    &mut direct_calls
+                }) += 1;
                 f.clone()
             })
         })
         .collect();
-    assert!(calls > 0, "the lambda chain's forward holds a function");
+    assert_eq!(fwd_calls, 0, "the forward's own types hold no function");
+    assert!(direct_calls > 0, "the direct map need holds the lambda");
     assert_eq!(kept.needs, sig.needs);
     assert!(kept.has_fwd_needs());
     kept.facts = Default::default();
     assert_eq!(kept, flat_of(&sig));
     assert_eq!(kept.digest(), flat_of(&sig).digest());
+}
+
+/// Landing round 7, Gemini B4: on a compact forward `Need::with_held_fns` gives `each` only
+/// the functions of the types the forward shows, not those its callee's needs hold, so a
+/// mapping that changes a function differs from the same mapping of the flat needs (Gemini's
+/// probe, ported, P328, as a test of that documented limit). The checker's caller,
+/// `r10_promote_open_fwds`, is shown to agree with E on a chain whose callee's leaf need
+/// holds a lambda that itself calls a chain and reads a parameter from around it.
+#[test]
+fn landing7_need_with_held_fns_leaves_the_callee() {
+    use std::sync::Arc;
+    use zedc_types::ty::{Carrier, SParam, Ty};
+    let src = "h0(positional a, positional m) = m.map((x: int) -> a);\n\
+               h1(positional a, positional m) = h0(a, m);\n";
+    let (e, _) = run_with_cfg(src, R10Config::eager());
+    let (d, _) = run_with_cfg(src, R10Config::default());
+    let (&id, compact) = d.sigs.iter().find(|(_, s)| s.has_fwd_needs()).unwrap();
+    let flat = &e.sigs[&id];
+    assert_eq!(**compact, **flat);
+    let param = SParam {
+        name: "x".into(),
+        positional: true,
+        default: None,
+        range: None,
+    };
+    let to_bool = Arc::new(Sig::one(
+        vec![param],
+        vec![Ty::carrier(Carrier::Int)],
+        Ty::carrier(Carrier::Bool),
+    ));
+    let mapped = |s: &Sig, calls: &mut usize| {
+        let mut out = s.clone();
+        out.needs = (s.needs.iter())
+            .map(|n| {
+                n.with_held_fns(|_| {
+                    *calls += 1;
+                    to_bool.clone()
+                })
+            })
+            .collect();
+        out.facts = Default::default();
+        out
+    };
+    let (mut d_calls, mut e_calls) = (0, 0);
+    let (dm, em) = (mapped(compact, &mut d_calls), mapped(flat, &mut e_calls));
+    assert_eq!(
+        (d_calls, e_calls),
+        (0, 1),
+        "the callee's lambda is not entered"
+    );
+    assert_ne!(dm, em);
+    assert_eq!(dm, **compact, "the compact forward is kept as it was");
+
+    // The checker's caller: a lambda in the leaf need of a kept forward that calls a chain
+    // and reads `a` from around it. D agrees with E.
+    let src = "h0(positional a, positional m) = m.map((x: int) -> a);\n\
+               h1(positional a, positional m) = h0(a, m).map((x: int) -> a);\n\
+               k0(positional a, positional m, positional ms) = ms.map((y: int) -> h1(a, m));\n\
+               k1(positional a, positional m, positional ms) = k0(a, m, ms);\n\
+               k2(positional a, positional m, positional ms) = k1(a, m, ms);\n";
+    let (e, _) = run_with_cfg(src, R10Config::eager());
+    let (d, _) = run_with_cfg(src, R10Config::default());
+    assert!(e.errors.is_empty(), "{:?}", e.errors);
+    assert_info_eq("a lambda calling a chain in a leaf need", &e, &d);
 }
 
 /// Landing round 6, Codex and Gemini controls for the two panics above: swapping two
@@ -3332,7 +3482,7 @@ fn landing6_call_fixing_a_parameter_a_held_lambda_reads_agrees_with_e() {
 /// or the same with the variable a class read by the held function (`held_classes`).
 fn landing6_held_read_pair(class: bool) -> (Sig, Sig) {
     use std::sync::Arc;
-    use zedc_types::ty::{Binds, Ty};
+    use zedc_types::ty::{Binds, FwdVarStep, Ty};
     let src = "h0(positional a, positional m) = m.map((x: int) -> a);\n\
                h1(positional a, positional m) = h0(a, m);\n";
     let (d, _) = run_with_cfg(src, R10Config::default());
@@ -3346,7 +3496,18 @@ fn landing6_held_read_pair(class: bool) -> (Sig, Sig) {
         .into_iter()
         .collect();
     fwd.callee = Arc::new(fwd.callee.replace(&bind));
-    fwd.sigma.remove(0);
+    // The caller's variable for the argument goes with it, from the steps, ties and `.on`
+    // variables too (landing round 7, Claude F1: left in the steps, it put a stale `T` at the
+    // end of D's order with the arrows emptied).
+    let (_, gone) = fwd.sigma.remove(0);
+    if let Some(gone) = gone.as_var().cloned() {
+        (fwd.var_steps).retain(|st| !matches!(st, FwdVarStep::ClassVar(v) if *v == gone));
+        fwd.var_ties
+            .iter_mut()
+            .for_each(|g| g.retain(|t| *t != Ty::var(gone.clone())));
+        fwd.var_ties.retain(|g| !g.is_empty());
+        fwd.on_vars.retain(|t| *t != Ty::var(gone.clone()));
+    }
     match class {
         true => {
             fwd.held_classes.insert(name);
@@ -3371,10 +3532,17 @@ fn landing6_held_read_pair(class: bool) -> (Sig, Sig) {
 /// another (E false, D true); and a class read so (`held_classes`) was not tested by the
 /// guards of `Sig::replace` and `Sig::settle`. The checker keeps no such forward (`#4`,
 /// `#4-outer`); these are of the public API.
+///
+/// The orders are compared exactly, also with the arrows emptied, so that the needs alone
+/// give them; per need (`Need::vars_in`) as sets, as documented there. Landing round 7,
+/// Claude F1 found D's order different with the arrows emptied (`[U, OuterQ, V, T]` against
+/// `[U, OuterQ, V]`, rerun as a control); the cause was the fixture, which removed the
+/// argument but left its variable `T` in the forward's steps. With it removed too, the orders
+/// agree.
 #[test]
 fn landing6_variables_read_by_held_functions_agree_with_e() {
     use std::sync::Arc;
-    use zedc_types::ty::{Binds, Carrier, Ty};
+    use zedc_types::ty::{Binds, Carrier, Ty, Vars};
     let int = || Ty::carrier(Carrier::Int);
     let (c, f) = landing6_held_read_pair(false);
     let solve = |v: &str| (v == "OuterQ").then(int);
@@ -3382,11 +3550,8 @@ fn landing6_variables_read_by_held_functions_agree_with_e() {
     assert_eq!(sc, sf);
     assert_eq!(sc.digest(), sf.digest());
     let (c, f) = (Arc::new(c), Arc::new(f));
-    let mut seen = c.vars_order().to_vec();
-    let mut want = f.vars_order().to_vec();
+    let (seen, want) = (c.vars_order(), f.vars_order());
     assert!(seen.iter().any(|v| &**v == "OuterQ"), "{seen:?}");
-    seen.sort();
-    want.sort();
     assert_eq!(seen, want);
     let pair = |h1: &Arc<Sig>| {
         let make = |a: &str, b: &str| {
@@ -3411,6 +3576,27 @@ fn landing6_variables_read_by_held_functions_agree_with_e() {
     let (sc, sf) = (Arc::new(c).settle(&solve), Arc::new(f).settle(&solve));
     assert_eq!(*sc, *sf);
     assert_eq!(sc.digest(), sf.digest());
+    // With the arrows emptied the needs alone give the order: the same variables, the place
+    // of the held-read one aside (see the doc).
+    for class in [false, true] {
+        let (mut c, _) = landing6_held_read_pair(class);
+        for a in &mut c.arrows {
+            a.params.fill(Ty::empty());
+            a.result = Ty::empty();
+        }
+        let f = flat_of(&c);
+        let (c, f) = (Arc::new(c), Arc::new(f));
+        let (seen, want) = (c.vars_order(), f.vars_order());
+        assert_eq!(seen, want, "arrows emptied, held-read class: {class}");
+        let (mut dv, mut ev) = (Vars::default(), Vars::default());
+        c.needs.iter().for_each(|n| n.vars_in(&mut dv));
+        f.needs.iter().for_each(|n| n.vars_in(&mut ev));
+        // A lone forward gives its variables in the order of its types, not of its leaf
+        // needs (see `Need::vars_in`): per need, the same set.
+        dv.order.sort();
+        ev.order.sort();
+        assert_eq!(dv.order, ev.order, "`Need::vars_in`, class: {class}");
+    }
 }
 
 /// Landing round 6, Gemini L6-B2: a function the callee holds that reads a written variable
@@ -3458,7 +3644,71 @@ fn landing6_outer_variable_read_in_a_map_is_refused() {
 fn landing6_internal_results_count_as_variables_in_rows_and_shapes() {
     use std::collections::BTreeMap;
     use std::sync::Arc;
-    use zedc_types::ty::{Binds, Carrier, FwdVarStep, Ty};
+    use zedc_types::ty::{Binds, SParam, Ty};
+    let (s, flat, hidden) = internal_results_only(false);
+    let (sc, sf) = (Arc::new(s), Arc::new(flat));
+    assert!(!sf.holds_no_variable());
+    assert_eq!(sc.holds_no_variable(), sf.holds_no_variable());
+    let (t1c, t1f) = (
+        Ty::tuple(vec![Ty::func(sc.clone())]),
+        Ty::tuple(vec![Ty::func(sf.clone())]),
+    );
+    assert_eq!(t1c.var_facts().binds, t1f.var_facts().binds);
+    assert_eq!(t1c.holds_vars(), t1f.holds_vars());
+    let outer = |t: &Ty| Arc::new(Sig::one(vec![], vec![], t.clone()));
+    let (oc, of) = (outer(&t1c), outer(&t1f));
+    let (t2c, t2f) = (
+        Ty::tuple(vec![Ty::func(oc.clone())]),
+        Ty::tuple(vec![Ty::func(of.clone())]),
+    );
+    let shape = |s: Arc<Sig>| Ty::atom_of("box", vec![Ty::func(s)], BTreeMap::new());
+    let (shc, shf) = (shape(oc), shape(of));
+    let absent: Binds = [("Absent".into(), Ty::var("Renamed".into()))]
+        .into_iter()
+        .collect();
+    assert_eq!(t2c.renamed(&absent), t2f.renamed(&absent), "control");
+    let names: Binds = [(hidden, Ty::var("Renamed".into()))].into_iter().collect();
+    assert_eq!(t2c.renamed(&names), t2f.renamed(&names));
+    assert_eq!(shc.renamed(&names), shf.renamed(&names));
+
+    // Landing round 7, Gemini B2 (probe ported, P328): `Sig::holds_no_var` left out the
+    // internal results, so the meet of `(x: int) -> <the signature>` with
+    // `(x: int) -> bool` was `Never` in D and `int -> Never` in E.
+    use zedc_types::ty::Carrier;
+    let int = || Ty::carrier(Carrier::Int);
+    let x = || SParam {
+        name: "x".into(),
+        positional: true,
+        default: None,
+        range: None,
+    };
+    let over = |s: &Arc<Sig>| {
+        Ty::func(Arc::new(Sig::one(
+            vec![x()],
+            vec![int()],
+            Ty::func(s.clone()),
+        )))
+    };
+    let q = Ty::func(Arc::new(Sig::one(
+        vec![x()],
+        vec![int()],
+        Ty::carrier(Carrier::Bool),
+    )));
+    let (mc, mf) = (over(&sc).meet(&q), over(&sf).meet(&q));
+    assert!(!mf.is_empty(), "control: E's meet is not empty");
+    assert_eq!(mc, mf);
+}
+
+/// The signature of `h3` of a four-link chain with every type it shows `int`, so that the
+/// only variables it holds are its forward's internal results: (compact, flat, one internal
+/// result that a later need has as its `.on`). With `unnamed`, the forward is made unnamed
+/// (no naming, base class 100), as before `finish`. `Need::map_tys` refuses a compact
+/// forward, so the fields the old `map_tys` gave are set directly (each argument, exit, `.on`
+/// type and tie `int`, the steps reduced to the internal runs, the digest summary dropped);
+/// `s == flat` and the digests show the forward still decodes to the flat needs.
+fn internal_results_only(unnamed: bool) -> (Sig, Sig, std::sync::Arc<str>) {
+    use std::sync::Arc;
+    use zedc_types::ty::{Carrier, FwdVarStep, Ty};
     let int = || Ty::carrier(Carrier::Int);
     let (d, _) = run_with_cfg(&chain_src(4, "f", false), R10Config::default());
     let (_, orig, hidden) = sig_with_hidden(&d);
@@ -3479,6 +3729,11 @@ fn landing6_internal_results_count_as_variables_in_rows_and_shapes() {
         fwd.var_ties.iter_mut().for_each(|g| g.fill(int()));
         fwd.var_steps
             .retain(|st| matches!(st, FwdVarStep::InternalRun(_)));
+        if unnamed {
+            fwd.finish_naming = None;
+            fwd.gen_naming = None;
+            fwd.base_class = Some(100);
+        }
         fwd.digest_summary = None;
         need.on = int();
         need.result = need.result.as_ref().map(|_| int());
@@ -3488,28 +3743,61 @@ fn landing6_internal_results_count_as_variables_in_rows_and_shapes() {
     let flat = flat_of(&s);
     assert_eq!(s, flat);
     assert_eq!(s.digest(), flat.digest());
-    assert!(flat.needs.iter().any(|n| n.on.as_var() == Some(&hidden)));
-    let (sc, sf) = (Arc::new(s), Arc::new(flat));
-    assert!(!sf.holds_no_variable());
-    assert_eq!(sc.holds_no_variable(), sf.holds_no_variable());
-    let (t1c, t1f) = (Ty::tuple(vec![Ty::func(sc)]), Ty::tuple(vec![Ty::func(sf)]));
-    assert_eq!(t1c.var_facts().binds, t1f.var_facts().binds);
-    assert_eq!(t1c.holds_vars(), t1f.holds_vars());
-    let outer = |t: &Ty| Arc::new(Sig::one(vec![], vec![], t.clone()));
-    let (oc, of) = (outer(&t1c), outer(&t1f));
-    let (t2c, t2f) = (
-        Ty::tuple(vec![Ty::func(oc.clone())]),
-        Ty::tuple(vec![Ty::func(of.clone())]),
+    if !unnamed {
+        assert!(flat.needs.iter().any(|n| n.on.as_var() == Some(&hidden)));
+    }
+    (s, flat, hidden)
+}
+
+/// Landing round 7, Gemini B3 (probe ported, P328): `holds_no_variable` read a kept order
+/// with no variable and no mark as "no variable", but an unnamed forward leaves no mark, so
+/// once `vars_order` had been asked a signature whose only variables are such a forward's
+/// internal results read as holding none, where E says it holds some.
+#[test]
+fn landing7_holds_no_variable_does_not_change_after_vars_order() {
+    let (s, flat, _) = internal_results_only(true);
+    let first = s.clone();
+    assert!(!flat.holds_no_variable(), "control: E");
+    assert_eq!(
+        first.holds_no_variable(),
+        flat.holds_no_variable(),
+        "asked first"
     );
-    let shape = |s: Arc<Sig>| Ty::atom_of("box", vec![Ty::func(s)], BTreeMap::new());
-    let (shc, shf) = (shape(oc), shape(of));
-    let absent: Binds = [("Absent".into(), Ty::var("Renamed".into()))]
-        .into_iter()
-        .collect();
-    assert_eq!(t2c.renamed(&absent), t2f.renamed(&absent), "control");
-    let names: Binds = [(hidden, Ty::var("Renamed".into()))].into_iter().collect();
-    assert_eq!(t2c.renamed(&names), t2f.renamed(&names));
-    assert_eq!(shc.renamed(&names), shf.renamed(&names));
+    let _ = s.vars_order();
+    let _ = flat.vars_order();
+    assert_eq!(
+        s.holds_no_variable(),
+        flat.holds_no_variable(),
+        "asked after the order"
+    );
+}
+
+/// Landing round 7, Gemini B1 (probe ported, P328): `first_seen` decoded a held function
+/// whenever it had internal results, so `g_i = (h_i, m.map(f))` decoded all of `h_i`'s
+/// links for a class only `m.map(f)` holds, n - 2 decodes over n such functions, O(n²) in
+/// all (33.9 times the instructions at 8n); with the tuple the other way round, the class is
+/// met first and nothing is decoded (the control). D agrees with E, and neither order
+/// decodes.
+#[test]
+fn landing7_first_seen_passes_over_a_forward_holding_nothing_wanted() {
+    for n in [10usize, 20, 40] {
+        for before in [false, true] {
+            let mut src = chain_src(n, "f", false);
+            for i in 0..n {
+                src.push_str(&match before {
+                    true => format!("g{i}(positional f, positional m) = (h{i}, m.map(f));\n"),
+                    false => format!("g{i}(positional f, positional m) = (m.map(f), h{i});\n"),
+                });
+            }
+            let (e, _) = run_with_cfg(&src, R10Config::eager());
+            assert!(e.errors.is_empty(), "{:?}", e.errors);
+            reset_fwd_decode_count();
+            let (d, _) = run_with_cfg(&src, R10Config::default());
+            let decodes = fwd_decode_count();
+            assert_info_eq(&format!("n {n}, held chain first: {before}"), &e, &d);
+            assert_eq!(decodes, 0, "n {n}, held chain first: {before}");
+        }
+    }
 }
 
 /// Landing round 6, Claude Q1.2: a chain function passed where a function type takes its
@@ -3533,7 +3821,7 @@ fn landing6_permuted_sig_owns_the_internal_results() {
         grew += usize::from(s.own != flat.own);
         let mut slot = Sig::clone(s);
         slot.params.reverse();
-        let (kept, p) = crate::check::walk::permuted_sig(s, &slot, &[1, 0]);
+        let (kept, p) = crate::check::walk::permuted_sig(s, &slot, &[1, 0], &[1, 0]);
         assert_eq!(p.own, flat.own, "sig {k}: own");
         assert_eq!(kept.len(), flat.needs.len(), "sig {k}: decoded needs");
         assert_eq!(p.params, slot.params, "sig {k}: params");

@@ -19739,12 +19739,13 @@ impl<'t, 'a> Ck<'t, 'a> {
             );
             return (Ty::func(e.clone()), None);
         }
-        // `inv[j]`: the parameter of `s` at place `j` of `e`, read for the ranges below.
+        // `inv[j]`: the parameter of `s` at place `j` of `e`, read by `permuted_sig` and for
+        // the ranges below; built once, O(params).
         let mut inv = vec![0; from.len()];
         for (i, &j) in from.iter().enumerate() {
             inv[j] = i;
         }
-        let (kept, permuted) = permuted_sig(&s, e, &from);
+        let (kept, permuted) = permuted_sig(&s, e, &from, &inv);
         let what = format!("`{}`", f.name);
         let permuted = Arc::new(permuted);
         // A range need the slot leaves in place (an exact arrow may pass any value of its
@@ -27936,7 +27937,10 @@ fn in_order(from: &[usize]) -> bool {
 /// variables of the flat signature. One decode serves both (landing round 6, Codex
 /// L6.double-decode: the own set was read by a second decode, whose needs were dropped).
 ///
-/// Cost: one pass over the needs, O(needs), beside the one decode.
+/// Cost: one pass over the needs, O(needs), beside the one decode and, where every arrow of
+/// `e` is partial and an arrow of `s` is exact, the [`domain_test`] of `s`: its kernel types,
+/// O(arrows · params), and for each unbounded variable of the parameter types one pass over
+/// the needs, O(variables · needs) (landing round 7, Codex Q6 and Claude F6).
 fn guarded_needs(s: &Sig, e: &Sig) -> (Vec<Need>, BTreeSet<Arc<str>>) {
     let guarded = !e.arrows.is_empty()
         && e.arrows.iter().all(|a| a.partial)
@@ -27958,12 +27962,14 @@ fn guarded_needs(s: &Sig, e: &Sig) -> (Vec<Need>, BTreeSet<Arc<str>>) {
 /// signature (landing round 5, Gemini L5-NB1; tested by
 /// `landing6_permuted_sig_owns_the_internal_results`, Claude L6 Q1.2).
 ///
-/// Cost: O(needs + params · arrows), beside the one decode.
-pub(super) fn permuted_sig(s: &Sig, e: &Sig, from: &[usize]) -> (Vec<Need>, Sig) {
-    let mut inv = vec![0; from.len()];
-    for (i, &j) in from.iter().enumerate() {
-        inv[j] = i;
-    }
+/// `inv` is the inverse of `from` (`inv[j]`: the parameter of `s` at place `j` of `e`), which
+/// the caller builds once and also reads for the ranges.
+///
+/// Cost: O(needs + params · arrows) for the needs and arrows, the clones of `s`'s bounds,
+/// keys, held variables and hull (O(their sizes)), and [`guarded_needs`] (its one decode and
+/// its domain test), all once per call (landing round 7, Codex Q6 and Claude F6: the cost
+/// first named only the needs and arrows).
+pub(super) fn permuted_sig(s: &Sig, e: &Sig, from: &[usize], inv: &[usize]) -> (Vec<Need>, Sig) {
     let (kept, own) = guarded_needs(s, e);
     let permuted = Sig {
         bounds: s.bounds.clone(),

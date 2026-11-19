@@ -370,7 +370,9 @@ impl<'t, 'a> Ck<'t, 'a> {
         // round 6, Gemini L6-B2). No checker input is known to reach it (a variable written
         // around the callee is a class while it is checked, refused just above), so it is
         // refused rather than carried: every forward the checker keeps has `held_outer`
-        // empty. O(1).
+        // empty. It is a guard no test reaches: with it removed every library test passes,
+        // and the program of `landing6_outer_variable_read_in_a_map_is_refused` is refused by
+        // `#4` and `#6` first (landing round 7, Claude F2). O(1).
         if !held_outer.is_empty() {
             intrinsic_fails.insert("#4-outer");
         }

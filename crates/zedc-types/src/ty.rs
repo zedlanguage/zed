@@ -2551,7 +2551,12 @@ fn sig_walk<'a>(s: &'a Sig, stack: &mut Vec<VarWalk<'a>>) {
             let naming = fwd.finish_naming.as_ref().or(fwd.gen_naming.as_ref());
             let mut pieces = naming.map(|fin| fin.runs.iter()).into_iter().flatten();
             let mut cur: Option<NameRun> = None;
+            let read = fwd.held_read_places(n.span);
+            let mut read = read.into_iter().peekable();
             for (step, st) in fwd.var_steps.iter().enumerate() {
+                while let Some((_, v)) = read.next_if(|&(i, _)| i == step) {
+                    stack.push(VarWalk::Var(v));
+                }
                 match st {
                     FwdVarStep::ClassVar(v) if visible.contains(v) => stack.push(VarWalk::Var(v)),
                     FwdVarStep::ClassVar(_) => {}
@@ -2586,10 +2591,10 @@ fn sig_walk<'a>(s: &'a Sig, stack: &mut Vec<VarWalk<'a>>) {
                 }
             }
             // The variables its held functions read from around the callee, which the steps
-            // do not name; their place among the others is not kept, as no forward the
-            // checker keeps has any (`#4`, `#4-outer`; landing round 6, Gemini L6-B2).
-            let read = fwd.held_outer.iter().chain(&fwd.held_classes);
-            stack.extend(read.map(VarWalk::Var));
+            // do not name, each at its place in the leaf needs ([`FwdNeed::held_read_places`];
+            // landing round 6, Gemini L6-B2, and round 7, Codex L7.Codex-held-read-order). No
+            // forward the checker keeps has any (`#4`, `#4-outer`).
+            stack.extend(read.map(|(_, v)| VarWalk::Var(v)));
         }
         stack.extend(n.tys().map(VarWalk::Ty));
     }
@@ -2706,7 +2711,8 @@ fn sig_parts(
         })
         .collect();
     // A compact forward's steps follow its arguments and exits as they are mapped
-    // ([`Need::map_tys`]).
+    // (`Need::map_tys_in`, which takes a compact forward; the public `Need::map_tys` does
+    // not).
     let needs = (s.needs.iter()).map(|n| n.map_tys_in(|_| next())).collect();
     (arrows, needs)
 }
@@ -3682,8 +3688,15 @@ impl Settle<'_> {
     /// compact one cannot say (landing round 6, Codex and Gemini L6-B1, the [`Settle`] case of
     /// Codex L5.Codex-hidden-target). The checker never makes such a solution (`stale` gives
     /// no type that holds a closed internal class), so the test costs only where a forward
-    /// has internal results: one `solve` per class of `s` and the variables of each type it
-    /// gives, O(classes + size of the solutions), which the rebuild that follows walks anyway.
+    /// has internal results: one `solve` per class of `s`, and each variable of each type it
+    /// gives asked of each such forward ([`FwdNeed::holds_internal`], O(exits) for a class,
+    /// O(runs) index lookups for a name). That is O(classes + size of the solutions + m · Σ
+    /// cost of `holds_internal`) for m variables in the solutions: a product of the solutions'
+    /// variables and the forwards with internal results, not their sum (landing round 7,
+    /// Codex Q6: the bound first stated left out the product). A common index (the forwards'
+    /// class ranges and name runs, sorted, asked once per variable) would make it O((m + runs)
+    /// · log). It is not built yet: no program is known that makes both factors large (the
+    /// chain benches stay at 8.1 at 8n), and it is an open item of this landing.
     fn must_decode(&self, s: &Sig) -> bool {
         let solve = self.solve;
         let fwds = || {
@@ -3761,7 +3774,8 @@ impl Rebuild for Settle<'_> {
         // no one solves (the checker's `stale` leaves out closed internal classes), so they
         // are not looked up; a class solved to a type that holds one is (landing round 6, see
         // [`Self::must_decode`]). O(#sigma + #exits + #held_outer) per forward, once per
-        // signature, and where a forward has internal results O(classes + size of solutions).
+        // signature, and where a forward has internal results the product bound stated at
+        // [`Self::must_decode`].
         if self.must_decode(s) {
             let (needs, own) = s.decoded_needs_and_own();
             let mut flat = Sig::clone(s);
@@ -5287,6 +5301,63 @@ impl FwdNeed {
         (self.internal_result_tys().iter()).any(|t| t.as_var().is_some_and(|v| &**v == name))
     }
 
+    /// Where each variable its held functions read from around the callee (`held_outer`,
+    /// `held_classes`) first appears among its steps ([`FwdNeed::var_steps`]), as the leaf
+    /// needs show it: pairs (i, v), v to be placed before step i (after the last at
+    /// `var_steps.len()`), sorted by i. Empty, with no decode, when both sets are empty, as on
+    /// every forward the checker keeps (`#4`, `#4-outer`).
+    ///
+    /// The steps give the first appearance of each caller variable and of each run of
+    /// internal results in the leaf needs, in order, and the internal results are named in
+    /// that order (see `sig_walk`), so the k-th internal name met in the leaf needs is in the
+    /// run of the step that takes it, and that step's place is that of the run's first name.
+    /// A read variable goes before the first step placed after it. Landing round 7, Codex
+    /// L7.Codex-held-read-order: put after all the steps, `vars_order` gave `[U, V, OuterQ]`
+    /// where the flat signature gives `[U, OuterQ, V]`.
+    // Complexity tradeoff: one decode and one walk of the leaf needs, O(flat needs), plus
+    // O(H log H + S) for H read variables and S steps, by one merge of the two sorted lists.
+    // Naive: a scan of the steps for each read variable, O(H * S). Neither is met by the
+    // checker, whose forwards read none.
+    pub fn held_read_places(&self, span: Span) -> Vec<(usize, &Arc<str>)> {
+        if self.held_outer.is_empty() && self.held_classes.is_empty() {
+            return Vec::new();
+        }
+        let leaves = self.decode(span);
+        let mut flat = Vars::default();
+        vars_of(leaves.iter().flat_map(Need::tys), &mut flat);
+        let pos: HashMap<&Arc<str>, usize> =
+            flat.order.iter().enumerate().map(|(i, v)| (v, i)).collect();
+        let internal: Vec<usize> = (flat.order.iter().enumerate())
+            .filter(|(_, v)| self.holds_internal(v))
+            .map(|(i, _)| i)
+            .collect();
+        let mut taken = 0;
+        let steps: Vec<(usize, usize)> = (self.var_steps.iter().enumerate())
+            .filter_map(|(i, st)| match st {
+                FwdVarStep::ClassVar(v) => pos.get(v).map(|&p| (i, p)),
+                FwdVarStep::InternalRun(c) => {
+                    let p = internal.get(taken).copied();
+                    taken += c;
+                    p.map(|p| (i, p))
+                }
+            })
+            .collect();
+        let mut read: Vec<(usize, &Arc<str>)> = (self.held_outer.iter())
+            .chain(&self.held_classes)
+            .map(|v| (pos.get(v).copied().unwrap_or(usize::MAX), v))
+            .collect();
+        read.sort();
+        read.dedup_by(|a, b| a.1 == b.1);
+        let mut out = Vec::with_capacity(read.len());
+        let mut at = steps.iter().peekable();
+        for (p, v) in read {
+            while at.next_if(|&&(_, q)| q < p).is_some() {}
+            let before = at.peek().map_or(self.var_steps.len(), |&&(i, _)| i);
+            out.push((before, v));
+        }
+        out
+    }
+
     /// The results the block makes itself, without its exits (`O(need_count)`): the variables
     /// of these join the own set of a signature that decodes the block. An exit is a type of
     /// the caller, which may be a variable of a function around it, so it is never added.
@@ -5820,9 +5891,10 @@ impl Need {
 
     /// It with `f` applied to each of the types [`Need::tys`] gives, in that order.
     ///
-    /// A compact forward panics: decode it first with [`Sig::flat_for`] or
-    /// [`Sig::decoded_needs_cow`], map its held functions with [`Need::with_held_fns`], or
-    /// replace in it with [`Need::replace`]. `f` is never shown the forward's internal
+    /// A compact forward panics: decode it first with [`Sig::decoded_needs_cow`], map its
+    /// held functions with [`Need::with_held_fns`], or replace in it with [`Need::replace`].
+    /// [`Sig::flat_for`] decodes only for a binding that needs it, and leaves the forward
+    /// compact (so still refused here) for one that keeps it (landing round 7, Codex Q6). `f` is never shown the forward's internal
     /// results, which no type holds, nor the variables of the other needs of the signature,
     /// so a mapping of an internal result (`W -> int`) or of another variable onto one
     /// (`V -> W`) changes the flat needs and could not change the compact one, and no test of
@@ -5833,14 +5905,26 @@ impl Need {
         assert!(
             !matches!(self.kind, NeedKind::Fwd(_)),
             "`Need::map_tys` does not take a compact forward, whose internal results it cannot \
-             see; decode it first with `Sig::flat_for`"
+             see; decode it first with `Sig::decoded_needs_cow`"
         );
         self.map_tys_in(f)
     }
 
-    /// It with `each` applied to every function its types hold, as [`Ty::with_held_fns`] does;
-    /// no variable of the need itself changes, so a compact forward stays compact with the
-    /// same steps. O(size of the types) beside the calls of `each`.
+    /// It with `each` applied to every function the types [`Need::tys`] gives hold, as
+    /// [`Ty::with_held_fns`] does; no variable of the need itself changes, so a compact
+    /// forward stays compact with the same steps. O(size of the types) beside the calls of
+    /// `each`.
+    ///
+    /// On a compact forward these are the types it shows (its arguments, exits and the types
+    /// it ties), not the functions held in the needs of the callee: those are not given to
+    /// `each`, while the flat needs show them. So the result agrees with the same mapping of
+    /// the flat needs only where `each` keeps every function the callee's needs hold; a
+    /// caller that may change one decodes first ([`Sig::flat_for`]). The checker's one
+    /// caller, `r10_promote_open_fwds`, changes only a function that keeps a compact forward
+    /// and holds a variable from around it; a function held in the leaf needs of a kept
+    /// forward binds no variable (admission `#4-own-vars`) and holds no class from around
+    /// (`#4`), and promoting a forward without internal results changes how it is stored,
+    /// not what it is (landing round 7, Gemini B4).
     pub fn with_held_fns(&self, mut each: impl FnMut(&Arc<Sig>) -> Arc<Sig>) -> Need {
         self.map_tys_in(|t| {
             if t.fns.is_empty() && t.tuples.is_empty() && t.payloads.is_empty() {
@@ -5856,10 +5940,18 @@ impl Need {
     /// one need cannot stand for the flat needs it would give. The callers show the bindings
     /// it cannot see: [`Need::replace`] tests them with `Replacer::must_decode` first, and
     /// [`Need::with_held_fns`] changes no variable. `sig_parts`, which remakes a whole
-    /// signature after a walk, is the remaining caller; a replacement reaches it only after
-    /// `Replacer::must_decode` has tested the signature. `f` is not applied to the functions the
-    /// callee holds, so it must leave the variables they read from around (`held_outer`) as
-    /// they are.
+    /// signature after a walk, is the remaining caller, reached from four walks: a
+    /// replacement only after `Replacer::must_decode` has tested the signature, a settle only
+    /// after `Settle::must_decode`, and the walks of [`Ty::with_held_fns`] and of `absorb`
+    /// with no test, as neither changes a bare variable and every forward the checker keeps
+    /// has bare variables as its arguments and exits (admission `#5`, `#6`, `#14`; landing
+    /// round 7, Claude F5). `f` is not applied to the functions the callee holds, so it must
+    /// leave the variables they read from around (`held_outer`) as they are.
+    ///
+    /// The assert below is the last of three on the paths to it: the public
+    /// [`Need::map_tys`] refuses every compact forward and [`Need::replace`] a binding that
+    /// must decode before they call this, so no test reaches it alone (landing round 7,
+    /// Claude F3); it guards the walks above.
     fn map_tys_in(&self, mut f: impl FnMut(&Ty) -> Ty) -> Need {
         Need {
             on: f(&self.on),
@@ -6033,6 +6125,15 @@ impl Need {
                         NeedKind::Fwd(fwd.clone())
                     } else {
                         let mut updated = (**fwd).clone();
+                        // `non_var_subst` passes the assert only where an argument or exit
+                        // was not a bare variable before and `f` changed it (a function type
+                        // whose held functions `f` remade): no forward the checker keeps has
+                        // one (see the doc above), so this path serves forwards made by hand.
+                        // It is kept as a safe answer (the summary dropped, so the digest
+                        // builds it again, `cached_fwd_summary`) rather than made a panic, as
+                        // that the checker
+                        // never reaches it is computed on the kept forwards, not proved
+                        // (landing round 7, Codex Q6 proposed the panic).
                         if non_var_subst {
                             updated.digest_summary = None;
                         } else if let Some(ref cur_sum) = updated.digest_summary {
@@ -6117,8 +6218,10 @@ impl Need {
     /// arguments' and exits' variables; its internal results, which no type of the signature
     /// shows, are not among them. The variables the callee's held functions read from around
     /// it (`held_outer`, `held_classes`) follow; no forward the checker keeps has any (`#4`,
-    /// `#4-outer`), so their place among the others is not kept (landing round 6, Gemini
-    /// L6-B2).
+    /// `#4-outer`) (landing round 6, Gemini L6-B2). A compact forward's variables come in the
+    /// order of its types (`sigma`, then `exits`), not of its leaf needs, which no lone need
+    /// has; [`Sig::vars_order`] gives a signature's in the order of its flat form, held reads
+    /// at their places (landing round 7, Codex L7.Codex-held-read-order).
     pub fn vars_in(&self, out: &mut Vars) {
         self.tys().for_each(|t| t.vars_in(out));
         if let NeedKind::Fwd(fwd) = &self.kind {
@@ -14468,6 +14571,15 @@ impl Ty {
         rebuild_ty(&mut Widen::default(), self)
     }
 
+    /// Whether a function it holds, at any depth, keeps a compact forward with internal
+    /// results ([`VarFacts::internal`]): read from the facts of its functions and the bits of
+    /// its rows and payload shapes, as [`VarFacts`] gathers them, O(its top-level parts).
+    pub fn holds_internal_fn(&self) -> bool {
+        self.fns.iter().any(|f| f.facts().internal)
+            || self.tuples.iter().any(|r| r.0.bits.internal)
+            || self.payload_shapes().any(|s| s.bits.internal)
+    }
+
     /// It with each function it holds outside functions, itself or at any depth in its tuples
     /// and its atoms' payloads, replaced by what `each` makes of it; the functions are not
     /// entered, so one a function returns is left to that function. A family that holds a
@@ -20341,10 +20453,14 @@ impl Sig {
         // A compact forward's internal results are variables of the flat needs that no type
         // of the signature shows: they are its order's marks, not its names, and the walk
         // outside functions stops at such a forward as at a variable (landing round 6, Gemini
-        // L6-B4). O(1) per need beside the walk.
+        // L6-B4). O(1) per need beside the walk. A kept order proves a variable only when it
+        // is not empty: an unnamed forward's internal results leave no mark in it, so an
+        // empty order answers nothing and the walk below is made (landing round 7, Gemini
+        // B3: read as "no variable", the answer changed once `vars_order` had been asked).
         fn known(s: &Sig) -> Option<bool> {
-            (s.facts.6.get().copied())
-                .or_else(|| s.facts.4.get().map(|o| !o.0.is_empty() || !o.1.is_empty()))
+            (s.facts.6.get().copied()).or_else(|| {
+                (s.facts.4.get()).and_then(|o| (!o.0.is_empty() || !o.1.is_empty()).then_some(true))
+            })
         }
         let internal = |s: &Sig| {
             (s.needs.iter())
@@ -20470,9 +20586,14 @@ impl Sig {
     // `an_is_test_of_curried_lambdas_whose_parameters_take_a_carrier_scales`). Used: the
     // emptiness of the two sets, O(1) once the facts are made, and they are made by merging the
     // smaller set into the larger, O(n log n) for the nest.
+    //
+    // A compact forward's internal results are variables its sets leave out, so `internal` is
+    // read too, as `VarBits::is_empty` reads it (landing round 7, Gemini B2: without it a
+    // function holding such a forward and nothing else read as holding no variable, and
+    // `Ty::meet` gave `Never` in D where E gave `int -> Never`). O(1).
     fn holds_no_var(&self) -> bool {
         let f = self.facts();
-        f.classes.is_empty() && f.names.is_empty()
+        f.classes.is_empty() && f.names.is_empty() && !f.internal
     }
 
     /// The signatures of the functions it holds at any depth for which `lacks` holds, each
@@ -20534,8 +20655,9 @@ impl Sig {
     /// The class variables of `want` that its arrows and needs hold, in the order in which
     /// [`Ty::vars_in`] meets them. The walk enters no function whose facts hold none of those
     /// still unseen, and it stops once all are seen, so it costs no more than replacing them.
-    /// A row or payload shape met again is shared and was walked whole the first time, so it
-    /// is entered once.
+    /// A row, payload shape or held function met again is shared and was walked whole the
+    /// first time (the walk finishes what an item holds before it pops anything pushed
+    /// earlier), so it is entered once.
     ///
     /// A signature with compact forwards is walked in its flat form ([`Sig::decoded_needs_cow`])
     /// at the point the walk meets it, so the answer is that of the flat signature: the
@@ -20543,24 +20665,57 @@ impl Sig {
     /// which no type shows (landing round 6, Codex and Gemini L6-B5: read by its types, a
     /// forward gave its arguments in the order of `sigma` and never its internal results). A
     /// function is entered when its classes meet those still wanted or it has internal
-    /// results ([`VarFacts::internal`]), whose names its classes do not list. Cost: the decode
-    /// of each such signature, O(its flat needs), beside the walk; the one checker caller
-    /// (`generalize` in zedc-check) asks it only of a signature with no compact forward
-    /// outside functions. The walk of the flat form keeps its own set of rows entered, since
-    /// the decoded needs are dropped after it: a row walked in both is walked twice, which
-    /// finds nothing new, as every variable met the first time is no longer wanted.
+    /// results ([`VarFacts::internal`]), whose names its classes do not list. Cost: one decode
+    /// of each distinct such signature, O(its flat needs), beside a walk that enters each
+    /// distinct row, shape and function once. The one checker caller (`generalize` in
+    /// zedc-check) asks it of a signature with no compact forward outside functions, but the
+    /// functions it holds may keep forwards (the case below).
+    /// The flat forms share the walk's set of nodes entered and are kept until it ends.
+    /// Naive: a walk of each flat form with its own set, as before landing round 7, decodes a
+    /// function once per path to it, 2^(d+1) - 1 times for one held twice at each of d levels
+    /// (Codex L7.Codex-first-seen-sharing); this way, once per distinct signature.
+    ///
+    /// A held function whose classes meet none of those still wanted, but which has internal
+    /// results, is decoded only if one of its own forwards has an internal result still
+    /// wanted ([`FwdNeed::holds_internal`], after an O(1) test of the range of the wanted
+    /// classes) or a type its forwards show holds a function with internal results; otherwise
+    /// its arrows and other needs are walked as they are, which in the flat form come in the
+    /// same order around the forwards' needs, and the forwards are passed over, as nothing in
+    /// them can be wanted. Landing round 7, Gemini B1: decoded whenever it had internal
+    /// results, `g_i = (h_i, m.map(f))` over a chain `h_0 .. h_{n-1}` decoded each `h_i`, all
+    /// i links, for a class only `m.map(f)` holds: O(n²) (33.9 times the instructions at 8n).
+    /// Passing a forward over relies on the functions its leaf needs hold having no internal
+    /// results, which `#4-own-vars` ensures for every forward the checker keeps (internal
+    /// results set `VarFacts::binds`), and on `want` holding classes, as documented above.
     pub fn first_seen(&self, want: &HashSet<Arc<str>>) -> Vec<Arc<str>> {
+        let mut out = Vec::new();
+        let mut left = want.clone();
+        let mut entered = HashSet::new();
+        let mut flats = Vec::new();
+        let range = WantRange::of(want);
+        self.first_seen_in(&mut left, &range, &mut out, &mut entered, &mut flats);
+        out
+    }
+
+    /// The walk of [`Sig::first_seen`] over `self`, moving each variable of `left` it meets
+    /// to `out`. `range` bounds the classes of `left`. `entered` holds the addresses of the
+    /// rows, shapes and held functions already walked; `flats` keeps the flat form of each
+    /// signature with forwards walked, so that no address in `entered` names a freed node
+    /// until the whole walk ends.
+    fn first_seen_in(
+        &self,
+        left: &mut HashSet<Arc<str>>,
+        range: &WantRange,
+        out: &mut Vec<Arc<str>>,
+        entered: &mut HashSet<*const ()>,
+        flats: &mut Vec<Sig>,
+    ) {
         enum Item<'a> {
             Ty(&'a Ty),
             Row(&'a Row),
             Shape(&'a Shape),
             Sig(&'a Sig),
         }
-        let mut out = Vec::new();
-        let mut left = want.clone();
-        // By address: every row and shape is borrowed from `self` for the whole walk, so no key
-        // names a freed node, and the set is only read by insert, never iterated.
-        let mut entered: HashSet<*const ()> = HashSet::new();
         let mut stack = vec![Item::Sig(self)];
         while let Some(item) = stack.pop()
             && !left.is_empty()
@@ -20569,6 +20724,7 @@ impl Sig {
             match item {
                 Item::Sig(s) => {
                     // `self` may still change, so its facts are not kept; it is entered.
+                    let mut decode = s.has_fwd_needs();
                     if !std::ptr::eq(s, self) {
                         let facts = s.facts();
                         let classes = &facts.classes;
@@ -20579,22 +20735,44 @@ impl Sig {
                         if !any && !facts.internal {
                             continue;
                         }
+                        // A held function is behind an `Arc`, borrowed for the whole walk.
+                        if !entered.insert((s as *const Sig).cast()) {
+                            continue;
+                        }
+                        // Complexity tradeoff (landing round 7, Gemini B1): naive, decode
+                        // whenever it has internal results, O(its flat needs) even when none
+                        // is wanted, O(n²) over n functions each holding one link of a chain.
+                        // Used: decode only if a forward's internal results or the functions
+                        // its types show can hold a wanted variable: O(1) per forward for a
+                        // block whose names or range miss the wanted classes, else the
+                        // smaller side, O(min(|left| · exits, need_count)), no more than the
+                        // decode; and O(top-level parts) of its types.
+                        decode &= any
+                            || s.needs.iter().any(|n| {
+                                let NeedKind::Fwd(fwd) = &n.kind else {
+                                    return false;
+                                };
+                                range.meets_internal(fwd, left)
+                                    || n.tys().any(Ty::holds_internal_fn)
+                            });
                     }
-                    if s.has_fwd_needs() {
+                    if decode {
                         let mut flat = s.clone();
                         flat.needs = s.decoded_needs_cow().into_owned();
                         flat.facts = Facts::default();
-                        for v in flat.first_seen(&left) {
-                            left.remove(&v);
-                            out.push(v);
-                        }
+                        flat.first_seen_in(left, range, out, entered, flats);
+                        // Moving `flat` moves no row, shape or function it holds.
+                        flats.push(flat);
                         continue;
                     }
                     let tys = s
                         .arrows
                         .iter()
                         .flat_map(|a| a.params.iter().chain([&a.result]));
-                    let needs = s.needs.iter().flat_map(Need::tys);
+                    // A forward not decoded holds nothing wanted (see `first_seen`).
+                    let needs = (s.needs.iter())
+                        .filter(|n| !matches!(n.kind, NeedKind::Fwd(_)))
+                        .flat_map(Need::tys);
                     stack.extend(tys.chain(needs).map(Item::Ty));
                 }
                 Item::Row(r) => {
@@ -20616,7 +20794,6 @@ impl Sig {
             }
             stack[at..].reverse();
         }
-        out
     }
 
     /// The signature `s` holds, to be changed: moved out when `s` is its only holder, else
@@ -22832,6 +23009,59 @@ impl Sig {
 /// The class a type variable names: `$k` is class `k`.
 pub fn class_id(v: &str) -> Option<usize> {
     v.strip_prefix('$')?.parse().ok()
+}
+
+/// What [`Sig::first_seen`] wants, bounded once: the least and largest `k` of its class
+/// variables `$k`, and whether it holds any other name, so that most forwards are found to
+/// hold none of it in O(1).
+struct WantRange {
+    lo: usize,
+    hi: usize,
+    names: bool,
+}
+
+impl WantRange {
+    fn of(want: &HashSet<Arc<str>>) -> WantRange {
+        let mut r = WantRange {
+            lo: usize::MAX,
+            hi: 0,
+            names: false,
+        };
+        for v in want {
+            match class_id(v) {
+                Some(k) => (r.lo, r.hi) = (r.lo.min(k), r.hi.max(k)),
+                None => r.names = true,
+            }
+        }
+        r
+    }
+
+    /// Whether an internal result of `fwd` is in `left`, a part of the wanted set. A named
+    /// block's results are names picked from `T`, `U`, ... ([`NameRun`]), never a class; an
+    /// unnamed one's are the classes from `base_class` on. O(1) when that rules them out;
+    /// else the smaller side, each of `left` tested with [`FwdNeed::holds_internal`] or the
+    /// results listed and each looked up, O(min(|left| · exits, need_count)).
+    fn meets_internal(&self, fwd: &FwdNeed, left: &HashSet<Arc<str>>) -> bool {
+        let count = fwd.need_count.saturating_sub(fwd.exits.len());
+        if count == 0 || left.is_empty() {
+            return false;
+        }
+        if fwd.finish_naming.is_some() && !self.names {
+            return false;
+        }
+        if fwd.finish_naming.is_none()
+            && let Some(lo) = fwd.base_class
+            && (self.hi < lo || self.lo >= lo + fwd.need_count)
+            && !self.names
+        {
+            return false;
+        }
+        match left.len() <= count {
+            true => left.iter().any(|v| fwd.holds_internal(v)),
+            false => (fwd.internal_result_tys().iter())
+                .any(|t| t.as_var().is_some_and(|v| left.contains(v))),
+        }
+    }
 }
 
 /// The `n`th name of a signature's own type variables: `T`, `U`, `V`, `W`, `T5`, ….
