@@ -59,7 +59,7 @@ use super::images;
 use super::loops;
 use super::preimage::{
     Classes, Demand, Domains, LetIn, LetPa, Lets, Listed, Shift, TermBounds, follow_own,
-    let_narrowing, let_summary, preimage_listed, relations, witness,
+    let_narrowing, let_summary, preimage_listed, relations, singleton_progression, witness,
 };
 use super::spans::Spans;
 use super::threshold;
@@ -5157,44 +5157,6 @@ fn framed_class(p: &Product) -> Congruence {
     } else {
         p.cell.congruence.element.clone()
     }
-}
-
-/// `(lo, hi, step)` when `set` is `{lo, lo + step, ..., hi}`, at least two singletons with a
-/// common step of at least 2, and `None` otherwise. O(pieces): the step of each pair of
-/// neighbors is compared with the first.
-pub(crate) fn singleton_progression(set: &IntervalSet) -> Option<(Int, Int, Int)> {
-    if set.len() < 2 {
-        return None;
-    }
-    let mut it = set.pieces();
-    let (Some((End::Fin(a0), End::Fin(b0))), Some((End::Fin(a1), End::Fin(b1)))) =
-        (it.next(), it.next())
-    else {
-        return None;
-    };
-    if a0 != b0 || a1 != b1 {
-        return None;
-    }
-    let lo = Int::from(a0);
-    let mut prev = Int::from(a1);
-    let step = &prev - &lo;
-    if step <= Int::ONE {
-        return None;
-    }
-    for (l, u) in it {
-        let (End::Fin(lv), End::Fin(uv)) = (l, u) else {
-            return None;
-        };
-        if lv != uv {
-            return None;
-        }
-        let cur = Int::from(lv);
-        if &cur - &prev != step {
-            return None;
-        }
-        prev = cur;
-    }
-    Some((lo, prev, step))
 }
 
 fn same_framed(a: &Product, b: &Product) -> bool {

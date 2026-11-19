@@ -2274,6 +2274,44 @@ impl<'t> Scoped<'t> {
     }
 }
 
+/// `(lo, hi, step)` when `set` is `{lo, lo + step, ..., hi}`, at least two singletons with a
+/// common step of at least 2, and `None` otherwise. O(pieces): the step of each pair of
+/// neighbors is compared with the first.
+pub(crate) fn singleton_progression(set: &IntervalSet) -> Option<(Int, Int, Int)> {
+    if set.len() < 2 {
+        return None;
+    }
+    let mut it = set.pieces();
+    let (Some((End::Fin(a0), End::Fin(b0))), Some((End::Fin(a1), End::Fin(b1)))) =
+        (it.next(), it.next())
+    else {
+        return None;
+    };
+    if a0 != b0 || a1 != b1 {
+        return None;
+    }
+    let lo = Int::from(a0);
+    let mut prev = Int::from(a1);
+    let step = &prev - &lo;
+    if step <= Int::ONE {
+        return None;
+    }
+    for (l, u) in it {
+        let (End::Fin(lv), End::Fin(uv)) = (l, u) else {
+            return None;
+        };
+        if lv != uv {
+            return None;
+        }
+        let cur = Int::from(lv);
+        if &cur - &prev != step {
+            return None;
+        }
+        prev = cur;
+    }
+    Some((lo, prev, step))
+}
+
 /// The linear stage: the relation of the demand over the box `dom`, the box narrowed to its
 /// projections and whether the box entails the relation, with the refusal that left the latter
 /// undecided; or, where the solver refused a projection, the box with the bounds the box
@@ -2366,7 +2404,7 @@ fn linear(
                 .iter()
                 .map(|(k, v)| {
                     let x = presburger::Atom::Sym(k.clone());
-                    match crate::product::singleton_progression(v) {
+                    match singleton_progression(v) {
                         Some((lo, hi, step)) => {
                             let var = Lin::atom(x);
                             let n = Lin::atom(presburger::Atom::Sym(format!("{k} prog").into()));
