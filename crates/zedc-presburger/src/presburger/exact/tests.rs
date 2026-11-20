@@ -1787,9 +1787,123 @@ fn scaled(f: &Formula, k: i64) -> Formula {
 /// or more only with [`Refusal::Repeats`]).
 #[test]
 fn every_writing_of_a_formula_gets_one_answer() {
+    writings_agree_at(crate::seed::seed(
+        "every_writing_of_a_formula_gets_one_answer",
+    ));
+}
+
+/// [`every_writing_of_a_formula_gets_one_answer`] at seed 17553006884555075817, whose round 4
+/// refused `y` with [`Refusal::Questions`] at the limit of 150000 questions in the writing with
+/// every equation flipped and answered `[-4, 4]` as written
+/// (FAIL-exact-writings-17553006884555075817): the renaming read the signs of the equations as
+/// written (`project_each_with`).
+#[test]
+fn every_writing_at_seed_17553006884555075817() {
+    writings_agree_at(17553006884555075817);
+}
+
+/// [`every_writing_of_a_formula_gets_one_answer`] at seed 16338078841102802578: rounds 3 and 8
+/// refused in the flipped writings what the formula as written answered, the cause of
+/// [`every_writing_at_seed_17553006884555075817`].
+#[test]
+fn every_writing_at_seed_16338078841102802578() {
+    writings_agree_at(16338078841102802578);
+}
+
+/// [`every_writing_of_a_formula_gets_one_answer`] at seed 5302762248333478882: round 22 refused
+/// `x` in the flipped writings, the cause of [`every_writing_at_seed_17553006884555075817`].
+#[test]
+fn every_writing_at_seed_5302762248333478882() {
+    writings_agree_at(5302762248333478882);
+}
+
+/// [`every_writing_of_a_formula_gets_one_answer`] at seed 14168001171561652264, seen failing by
+/// another run (str1) and not on the row's list.
+#[test]
+fn every_writing_at_seed_14168001171561652264() {
+    writings_agree_at(14168001171561652264);
+}
+
+/// [`every_writing_of_a_formula_gets_one_answer`] at seed 6791152268047101565, seen failing by
+/// str1 in a merge check (FAIL-exact-writings-17553006884555075817).
+#[test]
+fn every_writing_at_seed_6791152268047101565() {
+    writings_agree_at(6791152268047101565);
+}
+
+/// [`every_writing_of_a_formula_gets_one_answer`] at seed 17216371871131204067, seen failing by
+/// copr1: round 12 refused one of 322 writings (FAIL-exact-writings-17553006884555075817).
+#[test]
+fn every_writing_at_seed_17216371871131204067() {
+    writings_agree_at(17216371871131204067);
+}
+
+/// Round 4 of seed 17553006884555075817 of [`every_writing_of_a_formula_gets_one_answer`],
+/// written out, so it holds whatever the generator draws. As written and with every equation in
+/// the other sign, alone and with the rows times 3, it gets one answer and one refusal at the
+/// limit of 150000 units and at no limit, and at no limit each of x, y and z is `[-4, 4]`, the
+/// values of the 729 points. Before the fix in `project_each_with`, the renaming read the signs
+/// as written: the names `[y, z, x]` as written here and `[z, y, x]` flipped, and the cover of
+/// `y` used 306,492 units of work under the first (all of `EXACT_WORK`, fast paths included)
+/// and 184,487 under the second, so at the limit the writing as written refused `y` and the
+/// flipped one answered it. Now every writing is named `[y, z, x]`, from `cover_input`, and
+/// at the limit `y` is refused in each (measured 2026-11-20; the cover of `y` costs that much
+/// under those names, a cost of the cover, not of the writing).
+#[test]
+fn a_formula_with_its_equations_flipped_gets_one_answer_at_the_limit() {
+    let f = boxed(Formula::and(vec![
+        Formula::or(vec![
+            eq(&[("x", 3), ("y", -2), ("z", -2)], 3),
+            eq(&[("x", 3), ("y", -2), ("z", 3)], 3),
+            ge(&[("x", 3), ("y", -2), ("z", -1)], 0),
+        ]),
+        Formula::or(vec![
+            Formula::negate(Formula::and(vec![
+                ge(&[("y", 3)], 3),
+                ge(&[("x", 3), ("y", -2), ("z", 3)], 2),
+            ])),
+            ge(&[("x", -3), ("y", 2), ("z", -2)], 4),
+            eq(&[("x", 1), ("y", -3), ("z", 1)], -3),
+            ge(&[("x", 2), ("z", -2)], -4),
+            ge(&[("x", -3), ("y", -3), ("z", -2)], -4),
+            eq(&[("x", 1), ("y", 1), ("z", -1)], -1),
+            ge(&[("x", -2), ("y", -2)], 2),
+        ]),
+    ]));
+    let syms: Vec<Atom> = NAMES.iter().map(|n| a(n)).collect();
+    let want: Vec<IntervalSet> = NAMES.iter().map(|n| brute(&f, n)).collect();
+    assert_eq!(want, vec![IntervalSet::of(-B, B); 3], "the points of {f}");
+    let exact: Vec<Result<IntervalSet, Refusal>> = want.iter().cloned().map(Ok).collect();
+    for limit in [None, Some(150_000)] {
+        EXACT_LIMIT_SET.set(limit);
+        let first = project_each_exact(&f, &syms);
+        for g in [flipped(&f), scaled(&f, 3), scaled(&flipped(&f), 3)] {
+            assert_eq!(
+                project_each_exact(&g, &syms),
+                first,
+                "limit {limit:?}: {f} and {g}"
+            );
+        }
+        EXACT_LIMIT_SET.set(None);
+        let Ok((sets, _)) = &first else {
+            panic!("limit {limit:?}: {first:?} for {f}");
+        };
+        for (got, want) in sets.iter().zip(&exact) {
+            assert!(
+                got.is_err() || got == want,
+                "limit {limit:?}: {got:?} for {f}"
+            );
+        }
+        if limit.is_none() {
+            assert_eq!(sets, &exact, "no limit: {f}");
+        }
+    }
+}
+
+/// The checks of [`every_writing_of_a_formula_gets_one_answer`] on the 24 rounds of `seed`.
+fn writings_agree_at(seed: u64) {
     use super::super::UNFACTORED;
     const LOW: u64 = 150_000;
-    let seed = crate::seed::seed("every_writing_of_a_formula_gets_one_answer");
     let mut rng = Rng::new(seed | 1);
     let window = IntervalSet::of(-W, W);
     let (mut differ, mut wrong) = (Vec::new(), Vec::new());

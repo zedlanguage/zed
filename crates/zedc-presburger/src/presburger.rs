@@ -20072,6 +20072,42 @@ fn project_each_with(f: &Formula, syms: &[Atom], cover: bool) -> Result<EachClas
     if forced::empty(f, &f.conjunct_list()) {
         return Ok(EachClassed::plain(no_points(syms)));
     }
+    // With the cover, the formula is renamed as `cover_input` writes it, not as given
+    // (FAIL-exact-writings-17553006884555075817). Before, the renaming colored `f` as written,
+    // and the colors of [`stable_colors`] read the sign and scale of each row (a term vertex is
+    // colored by its coefficient, a row by its constant), so `t == 0` written as `-t == 0` could
+    // rank the atoms in another order: in round 4 of seed 17553006884555075817 of
+    // `exact::tests::every_writing_of_a_formula_gets_one_answer`, `[z, y, x]` as written and
+    // `[y, z, x]` with every equation's sign flipped. The two renamed formulas are then two
+    // inputs to `cover_input` below, which puts the parts in the order of their new names, so
+    // the cover did different work on each, and at the limit of 150000 questions one writing
+    // refused `y` with `Refusal::Questions` while the other answered `[-4, 4]` (seeds
+    // 16338078841102802578 and 5302762248333478882 the same way, each on a flipped writing).
+    //
+    // Proof that every writing `cover_input` makes one now gets one answer and one refusal:
+    // let `c = cover_input(f) = cover_input(g)` for two such writings (the proof at
+    // [`project_each_as_named`] that those writings share it). Renaming reads only its input,
+    // and is deterministic ([`Renamed::by_structure`]), so both rename `c` to one formula `r`,
+    // or both leave `c` as it is; the symbols asked are renamed by the same map. What follows
+    // reads only `r` (or `c`) and the symbols: [`project_each_as_named`] with the cover reads
+    // `cover_input(r)` and nothing else of its input (its proof). The one step before the
+    // renaming that reads `f` itself, the propagation of [`forced::empty`], answers only the
+    // empty set, which is exact, so a writing it answers gets the answer every writing that is
+    // answered gets. Test: the four rounds above, pinned in
+    // `exact::tests::a_formula_with_its_equations_flipped_gets_one_answer_at_the_limit`.
+    // Without the cover (`cover` false or `meter::EXACT_OFF`), the solver reads `f` as written
+    // (the comment at `project_each_as_named` says why), and the renaming reads `f` as before.
+    // Complexity tradeoff: naive version, the renaming of `f` as written, which costs nothing
+    // more but lets the sign of an equation change the answer at a limit. Used: one more
+    // `cover_input`, O(n log n) in the size of `f` (`signed`, then `canonical_parts`), before
+    // the renaming; `project_each_as_named` writes the renamed formula once more, as before.
+    let canonical;
+    let f = if cover && !meter::EXACT_OFF.get() {
+        canonical = cover_input(f);
+        &canonical
+    } else {
+        f
+    };
     let renamed = (!NAMES_AS_WRITTEN.with(Cell::get))
         .then(|| Renamed::by_structure(f))
         .flatten();
