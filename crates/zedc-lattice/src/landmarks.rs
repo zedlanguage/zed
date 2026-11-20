@@ -71,10 +71,9 @@ impl Mark for i64 {
 
 impl Mark for Value {
     fn marked(&self, marks: &Landmarks) -> bool {
-        match self {
-            Value::Int(n) => marks.ints.contains(&Num::from(*n)),
-            Value::Big(n) => marks.ints.contains(&Num::from(&**n)),
-            v => marks.values.contains(v),
+        match Num::of_integer(self) {
+            Some(n) => marks.ints.contains(&n),
+            None => marks.values.contains(self),
         }
     }
 }

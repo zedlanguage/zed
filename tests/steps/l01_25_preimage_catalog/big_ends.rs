@@ -47,14 +47,6 @@ fn neg(s: &str) -> String {
     (-big(s)).to_string()
 }
 
-fn as_rat(v: &Value) -> Rat {
-    match v {
-        Value::Int(n) => Rat::int(BigInt::from(*n)),
-        Value::Big(r) | Value::Rat(r) => (**r).clone(),
-        other => panic!("not a number: {other:?}"),
-    }
-}
-
 fn cmp(a: &Rat, b: &Rat) -> Ordering {
     a.try_cmp(b).expect("integers compare")
 }
@@ -69,7 +61,10 @@ fn run(body: &Term, x: i64, y: &BigInt) -> Rat {
             Shared::new(t),
         )
     });
-    as_rat(&eval(&bound).expect("the term evaluates"))
+    let v = eval(&bound).expect("the term evaluates");
+    v.as_rat()
+        .unwrap_or_else(|| panic!("not a number: {v:?}"))
+        .into_owned()
 }
 
 /// The grade of `x * c` over `c` from `min` to `max`.

@@ -176,8 +176,7 @@ impl Demand {
     /// Whether `v` meets the demand, exact at any magnitude.
     pub fn holds(&self, v: &Value) -> bool {
         match (self, v) {
-            (Demand::Ints(z), Value::Int(n)) => z.contains(*n),
-            (Demand::Ints(z), Value::Big(n)) => z.contains_end(&Fin(Num::from(&**n))),
+            (Demand::Ints(z), v) => Num::of_integer(v).is_some_and(|n| z.contains_end(&Fin(n))),
             (Demand::Bool(w), Value::Bool(b)) => w == b,
             _ => false,
         }
@@ -4806,11 +4805,8 @@ impl Tx<'_> {
                         }
                     }
                     StepKind::Const(v) => {
-                        let n = match v {
-                            Value::Int(i) => Num::from(i),
-                            Value::Big(b) => Num::from(&*b),
-                            _ => unreachable!(),
-                        };
+                        let n = Num::of_integer(&v)
+                            .unwrap_or_else(|| unreachable!("a constant step holds an int"));
                         let n =
                             mode.map_or_else(|| n.clone(), |m| n.rem_euclid(&Num::from(m as i128)));
                         regular = regular.join(&st.live.minus(&st.xs_at_value(&n)));
@@ -5317,9 +5313,12 @@ impl Tx<'_> {
                 return None;
             }
             let constant = match &step.kind {
-                StepKind::Const(Value::Int(i)) => Some(Num::from(*i)),
-                StepKind::Const(Value::Big(v)) => Some(Num::from(&**v)),
-                StepKind::Const(_) => continue,
+                StepKind::Const(v) => {
+                    let Some(n) = Num::of_integer(v) else {
+                        continue;
+                    };
+                    Some(n)
+                }
                 _ => None,
             };
             let name = if constant.is_some() {

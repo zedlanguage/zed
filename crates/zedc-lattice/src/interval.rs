@@ -1662,11 +1662,14 @@ pub fn bit_word(p: Prim, args: &[IntervalSet]) -> IntervalSet {
     };
     if let Some(vs) = xs.iter().map(one).collect::<Option<Vec<Value>>>() {
         match zed_kernel::bits::word(p, &vs) {
-            Ok(Value::Int(v)) => return IntervalSet::single(v),
-            Ok(Value::Big(v)) => return IntervalSet::point(Num::from(&*v)),
+            Ok(w) => {
+                if let Some(n) = Num::of_integer(&w) {
+                    return IntervalSet::point(n);
+                }
+            }
             Err(zed_kernel::KernelError::Type(_)) => return IntervalSet::empty(),
             // A value the system could not build: the rules below.
-            _ => {}
+            Err(_) => {}
         }
     }
     let b = |i: usize| xs[i].bounds().expect("not empty");

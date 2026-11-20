@@ -724,6 +724,27 @@ impl Value {
         }
     }
 
+    /// The exact rational value of an int of either width or a `rat`; `None` for any other
+    /// value. The shared copy of the `as_rat` that zedc-check and two preimage tests wrote out
+    /// (DRY-numeric-shared-rest).
+    pub fn as_rat(&self) -> Option<Cow<'_, Rat>> {
+        match self {
+            Value::Rat(r) => Some(Cow::Borrowed(r)),
+            v => v.as_integer(),
+        }
+    }
+
+    /// The integer inside, written out; `None` for a value that is no integer, or one whose
+    /// digits the system will not build ([`Rat::to_integer`] refuses it). The shared copy of
+    /// the readings of an int as a `BigInt` in poly.rs and zedc-check (DRY-numeric-shared-rest).
+    pub fn to_bigint(&self) -> Option<BigInt> {
+        match self {
+            Value::Int(n) => Some(BigInt::from(*n)),
+            Value::Big(n) => n.to_integer().ok(),
+            _ => None,
+        }
+    }
+
     /// The value as a key (sec:type_resolution, "Equality and order corner rules"): `-0.0`
     /// becomes `0.0` at any depth, since `0.0 == -0.0` makes the two zeros one key, which then
     /// holds the same bits whichever zero arrived first. NaN is already one value. A value that

@@ -19037,10 +19037,9 @@ impl<'t, 'a> Ck<'t, 'a> {
         let (mut ints, narrowed) = self.ints_here(e);
         let listed = ns.ints_listed();
         if let Some(vs) = &listed {
-            let piece = |v: &Value| match v {
-                Value::Int(n) => (End::of(*n), End::of(*n)),
-                Value::Big(n) => (Fin(Num::from(&**n)), Fin(Num::from(&**n))),
-                _ => (NegInf, PosInf),
+            let piece = |v: &Value| match Num::of_integer(v) {
+                Some(n) => (Fin(n.clone()), Fin(n)),
+                None => (NegInf, PosInf),
             };
             ints = ints.meet(&IntervalSet::from_pieces(vs.iter().map(piece).collect()));
         }
@@ -24994,6 +24993,16 @@ fn default_repairs(name: &str, got: &str, want: &str, both: &str, span: Span) ->
     .collect()
 }
 
+/// The least multiple of 8 at or above `bits >= 0`: the width in whole bytes that holds `bits`
+/// bits, as `byteSwap` needs (DRY-numeric-shared-rest). `bits + 7` cannot overflow: the one
+/// caller passes the [`least_width`] of `byteSwap`, which has no operand below its width
+/// ([`zed_kernel::bits::below_width`] is `None`), so it is the bit count of a built integer, far
+/// below `i64::MAX - 7`.
+fn whole_byte_width(bits: i64) -> i64 {
+    debug_assert!(bits >= 0, "a width is never negative: {bits}");
+    (bits + 7) / 8 * 8
+}
+
 /// A repair of an int `^`: the rewritten code, and the words that follow it, or none.
 type Repair = (String, String);
 
@@ -25566,7 +25575,7 @@ impl Within {
             .filter(|&b| b >= least)
             .collect();
         match listed.is_empty() {
-            true => Within::Bytes(vec![(least + 7) / 8 * 8]),
+            true => Within::Bytes(vec![whole_byte_width(least)]),
             false => Within::Bytes(listed),
         }
     }
@@ -25688,7 +25697,7 @@ fn least_width(p: Prim, slots: &[(Arg<'_>, &Expr)], ranges: &[Option<IntRange>])
     for &i in zed_kernel::bits::below_two_pow_width(p) {
         let h = largest(i)?;
         if positive(&h) {
-            let bits = h.as_integer()?.to_integer().ok()?.bits();
+            let bits = h.to_bigint()?.bits();
             least = least.max(i64::try_from(bits).ok()?);
         }
     }
@@ -25865,7 +25874,7 @@ fn decimal_of(v: &Value) -> String {
     if let Value::Rat(r) = v
         && let Ok(f) = r.to_f64()
         && run(Prim::CastRat, &Value::float(f))
-            .and_then(|b| as_rat(&b))
+            .and_then(|b| b.as_rat().map(Cow::into_owned))
             .as_ref()
             == Some(&**r)
     {
@@ -25961,7 +25970,7 @@ impl<'a> Ck<'_, 'a> {
                 }
                 _ => {
                     if let Some(v) = self.known(x).value {
-                        let r = as_rat(&v)?;
+                        let r = v.as_rat()?.into_owned();
                         constants.push(if neg { r.neg() } else { r });
                         continue;
                     }
@@ -26103,7 +26112,7 @@ impl<'a> Ck<'_, 'a> {
             if l.bare {
                 // A bare integer literal is generic: `7` may be an int, a rat or an f64, so the
                 // word fails always only if it fails on each.
-                let r = matches!(v, Value::Int(_) | Value::Big(_)).then(|| as_rat(&v))??;
+                let r = v.as_integer()?.into_owned();
                 if let Ok(f) = r.to_f64() {
                     values.push(Value::float(f));
                 }

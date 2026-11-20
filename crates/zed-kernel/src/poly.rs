@@ -1498,8 +1498,7 @@ enum Visit<'t> {
 /// `rat`; `None` for any other value, or a number whose digits the system will not build.
 fn constant(v: &Value, carrier: Carrier) -> Option<(BigInt, BigInt)> {
     match v {
-        Value::Int(n) => Some((BigInt::from(*n), BigInt::one())),
-        Value::Big(r) => Some((r.to_integer().ok()?, BigInt::one())),
+        Value::Int(_) | Value::Big(_) => Some((v.to_bigint()?, BigInt::one())),
         Value::Rat(r) if carrier == Carrier::Rat => {
             let (n, d) = r.built_parts().ok()?;
             let sign = if r.is_negative() {
@@ -1518,11 +1517,7 @@ fn constant(v: &Value, carrier: Carrier) -> Option<(BigInt, BigInt)> {
 
 /// A literal exponent: a nonnegative integer.
 fn exponent(v: &Value) -> Option<BigUint> {
-    match v {
-        Value::Int(n) => u64::try_from(*n).ok().map(BigUint::from),
-        Value::Big(r) => r.to_integer().ok()?.to_biguint(),
-        _ => None,
-    }
+    v.to_bigint()?.to_biguint()
 }
 
 /// The most monomials `a ^ n` expands to when `a` has at most `t` monomials (`t >= 1`): the

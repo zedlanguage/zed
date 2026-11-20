@@ -1545,10 +1545,32 @@ pub(crate) fn rem(a: &BigUint, b: &BigUint) -> BigUint {
     if b.bits() <= DIV_LEAF {
         return a % b;
     }
-    if a.bits().saturating_sub(b.bits()) >= b.bits() {
+    if rem_takes_blocks(a, b) {
         return Divisor::new(Cow::Borrowed(b), a.bits()).rem(a);
     }
     div_rem(a, b).1
+}
+
+/// Whether [`rem`] reads `a` in blocks through one [`Divisor`]: exactly where [`div_rem`]
+/// would take [`div_rem_blocks`], a quotient wider than the divisor `b`, which is past
+/// [`DIV_LEAF`], with num-bigint's computed cost and that of long division over `b`'s nonzero
+/// words both above the reciprocal's. The rule of `div_rem`, not `DIV_LEAF` alone
+/// (DRY-numeric-shared-rest): `crossover rem-leaf q`, a dividend of `(q + 1) w` words by `w`,
+/// measured num-bigint's `%` cheaper up to 1878, 889, 413 and 227 words of divisor for `q` =
+/// 2, 4, 16 and 256, near the division's crossovers (`div-leaf`: 899 for 4, 417 for 16, 235
+/// for 256). The blocks taken from 91 words, as `DIV_LEAF` alone took them, did up to 1.208,
+/// 1.168, 1.066 and 1.017 times the cheaper method's work; by `DIV_COST` as built, 1.000,
+/// 1.000, 1.005 and 1.080 (at 128 words, where the blocks dip below num-bigint once), at
+/// the cost of num-bigint's peak memory, up to 4 times the blocks', below the crossover
+/// (2026-11-20). Both sides are measured by `rem-leaf`.
+fn rem_takes_blocks(a: &BigUint, b: &BigUint) -> bool {
+    let (m, n) = (a.bits(), b.bits());
+    if n <= DIV_LEAF || m.saturating_sub(n) < n {
+        return false;
+    }
+    let (qw, bw) = (words(a) - words(b) + 1, words(b));
+    let blocks = newton_cost(qw, bw);
+    blocks < num_bigint_div_cost(qw, bw) && blocks < sparse_div_cost(qw, nonzero_words(b))
 }
 
 /// [`div_rem`] of a quotient wider than the divisor `b`: `a` is read from the top in blocks of
@@ -1570,10 +1592,16 @@ fn sparse_div_cost(qw: usize, nonzero: usize) -> f64 {
 /// the estimate one, and the remainder a cyclic product of the divisor's width, which is one
 /// product's transforms on half the points. A quotient wider than the divisor
 /// ([`div_rem_blocks`]) builds that once, about three products of the divisor's width, and
-/// then costs about one product for each block, its two factors' transforms kept.
+/// then costs about one product for each block, its two factors' transforms kept. A quotient of
+/// `qw` words has a dividend of `aw = qw + bw - 1`, which [`Divisor::blocks`] reads as a first
+/// block of at most `bw` words, by num-bigint, then `(aw - bw) / bw = (qw - 1) / bw` blocks,
+/// rounded up. Not `qw / bw` rounded up, one block more where `qw` is 1 more than a multiple
+/// of `bw`: `crossover rem-leaf`, a dividend of `(q + 1) bw` words, then took num-bigint's
+/// division up to 2048 words of divisor for `q = 2` where the blocks did 0.632 times its work
+/// from 1898 words (DRY-numeric-shared-rest, 2026-11-20).
 fn newton_cost(qw: usize, bw: usize) -> f64 {
     match qw > bw {
-        true => (qw.div_ceil(bw) as f64 + 3.0) * transform_cost(2 * bw),
+        true => ((qw - 1).div_ceil(bw) as f64 + 3.0) * transform_cost(2 * bw),
         false => 8.0 * transform_cost(2 * qw) / 3.0 + transform_cost(bw),
     }
 }
@@ -2908,7 +2936,10 @@ fn divisor_way(d: &BigUint, a_bits: u64) -> Way {
     // division from 91 to 235 words, 1.9 to 2.6 times num-bigint's work, where `div_rem` had
     // costed the reciprocal (CROSSOVER-bench, `crossover div-leaf 256 1`, 2026-11-12;
     // COMPLEXITY.md K30).
-    let qw = (a_bits.div_ceil(64) as usize).saturating_sub(len).max(len);
+    // The quotient's words as `div_rem` counts them, `words(a) - words(d) + 1`; the `+ 1` was
+    // missing, so the costs here read a dividend one word narrower than `div_rem`'s
+    // (DRY-numeric-shared-rest, 2026-11-20).
+    let qw = ((a_bits.div_ceil(64) as usize).saturating_sub(len) + 1).max(len);
     if n <= DIV_LEAF || num_bigint_divides(qw, d) {
         return Way::Leaf;
     }
@@ -3897,6 +3928,18 @@ pub mod crossover {
         super::div_rem_past_leaf(a, b)
     }
 
+    /// `a mod b` by the blocks of one `super::Divisor`, as `super::rem` takes it where
+    /// `super::div_rem` would take its blocks, here whatever the sizes; `b > 0`.
+    pub fn rem_by_blocks(a: &BigUint, b: &BigUint) -> BigUint {
+        super::Divisor::new(std::borrow::Cow::Borrowed(b), a.bits()).rem(a)
+    }
+
+    /// Whether `super::rem` takes the blocks of a `super::Divisor` for `a mod b`, not
+    /// num-bigint's `%` (nor `super::div_rem`); `b > 0`.
+    pub fn rem_takes_blocks(a: &BigUint, b: &BigUint) -> bool {
+        super::rem_takes_blocks(a, b)
+    }
+
     /// `(a / b, a mod b)` by long division over the nonzero words of `b`, which has at least
     /// two words; `a >= b`.
     pub fn div_rem_sparse(a: &BigUint, b: &BigUint) -> (BigUint, BigUint) {
@@ -4228,6 +4271,26 @@ mod tests {
         assert!(matches!(div.by, By::Sparse));
         let x = (random(3, 600) % &d) << (64 * 313) | random(4, 313);
         assert_eq!(div.div_rem(&x), x.div_rem(&d));
+    }
+
+    /// [`newton_cost`] charges a quotient of `qw` words, wider than the divisor's `bw`, the
+    /// blocks [`Divisor::blocks`] reads after its first: `(qw - 1) / bw` rounded up, which is
+    /// `qw / bw` rounded up less one where `qw` is 1 more than a multiple of `bw`.
+    #[test]
+    fn the_cost_of_the_blocks_counts_the_blocks_read() {
+        for bw in 1..=5usize {
+            let d = (BigUint::one() << (64 * bw - 1)) + 1u32;
+            let div = Divisor::new(Cow::Borrowed(&d), 64 * 8 * bw as u64);
+            for qw in bw + 1..=6 * bw + 1 {
+                let a = (BigUint::one() << (64 * (qw + bw - 1) - 1)) + 3u32;
+                let mut steps = 0usize;
+                div.blocks(&a, |_, _| steps += 1);
+                let blocks = (qw - 1).div_ceil(bw);
+                assert_eq!(steps, blocks + 1, "bw {bw} qw {qw}");
+                let cost = (blocks as f64 + 3.0) * transform_cost(2 * bw);
+                assert_eq!(newton_cost(qw, bw), cost, "bw {bw} qw {qw}");
+            }
+        }
     }
 
     #[test]

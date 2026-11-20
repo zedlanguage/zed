@@ -1276,11 +1276,7 @@ fn family(keys: Ty, values: Ty) -> Ty {
 /// The value of the integer literal `e`, `-` before it included.
 fn int_literal(e: &Expr) -> Option<BigInt> {
     match &e.kind {
-        ExprKind::Int { radix, digits } => match Value::int_text(digits, *radix).ok()?? {
-            Value::Int(n) => Some(BigInt::from(n)),
-            Value::Big(r) => r.to_integer().ok(),
-            _ => None,
-        },
+        ExprKind::Int { radix, digits } => Value::int_text(digits, *radix).ok()??.to_bigint(),
         ExprKind::Unary(UnaryOp::Neg, x) => int_literal(x).map(|n| -n),
         _ => None,
     }
@@ -1329,11 +1325,7 @@ fn span_of(t: &Ty) -> Option<BigInt> {
     let vs = t.set.ints_listed()?;
     let ns = vs
         .iter()
-        .map(|v| match v {
-            Value::Int(n) => Some(BigInt::from(*n)),
-            Value::Big(r) => r.to_integer().ok(),
-            _ => None,
-        })
+        .map(Value::to_bigint)
         .collect::<Option<Vec<_>>>()?;
     Some(ns.iter().max()? - ns.iter().min()?)
 }

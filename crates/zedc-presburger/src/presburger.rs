@@ -4061,6 +4061,12 @@ fn progression_meets(target: &Int, coef: &Int, offset: &OffsetHull, lo: &Int, hi
                 (target - &offset.lo).mod_floor(&offset.step).is_zero()
             });
     }
+    // The x in `lo..=hi` with `low <= coef * x <= high`. Not through [`row_range`] and
+    // [`meet_range`] (DRY-numeric-shared-rest): the two rows `coef x - low >= 0` and
+    // `high - coef x >= 0` give the same ends, but cost two more negations and the clones of
+    // the ranges: 15% more instructions on a loop of 58,080 calls that also builds their
+    // inputs, small and 2^100-wide (2026-11-20). The residue below is a congruence on top of
+    // that range, a different job.
     let low = target - &offset.hi;
     let high = target - &offset.lo;
     let (l, h) = if coef.is_positive() {
@@ -21602,13 +21608,13 @@ pub fn row_box(f: &Formula, syms: &[Atom]) -> Vec<IntervalSet> {
 }
 
 /// The bounds that one-term rows give each atom, lower and upper.
-type OneTerm<'a> = HashMap<&'a Atom, (Option<Int>, Option<Int>)>;
+type OneTerm<'a> = HashMap<&'a Atom, IntRange>;
 
 /// The bounds that the rows of one term of the conjunction `d` give each of their atoms,
 /// `None` when one of them, or a lower bound above an upper one, shows `d` has no point. A
 /// disjunction within `d` is not read.
 fn one_term_bounds(d: &Formula) -> Option<OneTerm<'_>> {
-    let mut out: HashMap<&Atom, (Option<Int>, Option<Int>)> = HashMap::new();
+    let mut out: OneTerm<'_> = HashMap::new();
     let mut stack = vec![d];
     while let Some(g) = stack.pop() {
         match g {
@@ -21616,26 +21622,21 @@ fn one_term_bounds(d: &Formula) -> Option<OneTerm<'_>> {
             Formula::Or(ds) if ds.is_empty() => return None,
             Formula::Con(c) if c.lin.terms.len() == 1 => {
                 let (x, a) = c.lin.terms.iter().next().expect("one term");
-                let (l, u) = int_bounds([(a.clone(), c.lin.constant.clone(), c.rel)])?;
-                let e = out.entry(x).or_insert((None, None));
-                if let Some(l) = l
-                    && e.0.as_ref().is_none_or(|o| *o < l)
-                {
-                    e.0 = Some(l);
-                }
-                if let Some(u) = u
-                    && e.1.as_ref().is_none_or(|o| u < *o)
-                {
-                    e.1 = Some(u);
+                let b = int_bounds([(a.clone(), c.lin.constant.clone(), c.rel)])?;
+                // A meet only narrows, so a range once crossed stays crossed: stopping at the
+                // first gives the answer the scan of all of them at the end gave. Cost of the
+                // shared [`meet_range`] against the inline meet it replaced
+                // (DRY-numeric-shared-rest): its emptiness compare on each row, 2.6% more
+                // instructions on 401 rows with the crossed row read last (2026-11-20), the
+                // rows after a crossing are no longer read.
+                if meet_range(out.entry(x).or_insert((None, None)), b) {
+                    return None;
                 }
             }
             _ => {}
         }
     }
-    let crossed = out
-        .values()
-        .any(|b| matches!(b, (Some(l), Some(u)) if u < l));
-    (!crossed).then_some(out)
+    Some(out)
 }
 
 /// [`project_each`]'s answer for a formula with no point.

@@ -424,9 +424,21 @@ pub fn row_range(a: &Int, k: &Int, eq: bool) -> (IntRange, bool) {
         let v = -&k.div_floor(a);
         ((Some(v.clone()), Some(v)), !k.mod_floor(a).is_zero())
     } else if a.is_positive() {
-        ((Some((-k).div_ceil(a)), None), false)
+        ((Some(row_bound(a, k)), None), false)
     } else {
-        ((None, Some(k.div_floor(&-a))), false)
+        ((None, Some(row_bound(a, k))), false)
+    }
+}
+
+/// The one finite end of [`row_range`]`(a, k, false)`, for `a` not zero: the least `x` with
+/// `a·x + k >= 0`, `⌈-k / a⌉`, for `a > 0`, and the greatest, `⌊k / -a⌋`, for `a < 0`. For a
+/// caller that branches on the sign of `a` itself (DRY-numeric-shared-rest). One division and
+/// one negation: `⌈-k / a⌉ = -⌊k / a⌋`, where `(-k).div_ceil(a)` negated three times.
+pub fn row_bound(a: &Int, k: &Int) -> Int {
+    if a.is_positive() {
+        -&k.div_floor(a)
+    } else {
+        k.div_floor(&-a)
     }
 }
 
@@ -2186,6 +2198,18 @@ impl Num {
     pub const ZERO: Num = Num(Word::Small(0));
     /// One.
     pub const ONE: Num = Num(Word::Small(1));
+
+    /// The int `v` of either width, exact at any size (a kept power stays kept, as
+    /// `From<&Rat>`); `None` for a value that is no int. The shared reading of an int
+    /// constant as an interval end, in place of a match on `Value::Int` and `Value::Big` at
+    /// each reader (DRY-numeric-shared-rest).
+    pub fn of_integer(v: &zed_kernel::Value) -> Option<Num> {
+        match v {
+            zed_kernel::Value::Int(n) => Some(Num::from(*n)),
+            zed_kernel::Value::Big(n) => Some(Num::from(&**n)),
+            _ => None,
+        }
+    }
 
     /// The value, written out when kept, once the system gives a byte for each bit of the
     /// widest number the writing builds (`Kept::widths`); [`TooLarge`] names that memory when

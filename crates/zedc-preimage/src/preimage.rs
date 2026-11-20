@@ -115,8 +115,7 @@ impl Demand {
     /// Whether `v` meets the demand, exact at any magnitude.
     pub fn holds(&self, v: &Value) -> bool {
         match (self, v) {
-            (Demand::Ints(z), Value::Int(n)) => z.contains(*n),
-            (Demand::Ints(z), Value::Big(n)) => z.contains_end(&Fin(Num::from(&**n))),
+            (Demand::Ints(z), v) => Num::of_integer(v).is_some_and(|n| z.contains_end(&Fin(n))),
             (Demand::Bool(w), Value::Bool(b)) => w == b,
             _ => false,
         }
@@ -13821,8 +13820,9 @@ fn class_of(term: &Term, classes: &Classes) -> Option<Congruence> {
         Congruence::Class { modulus, residue } => Some((modulus, residue)),
     };
     match term {
-        Term::Lit(Value::Int(v)) => Some(Congruence::single(*v)),
-        Term::Lit(Value::Big(v)) => Some(Congruence::single(Num::from(&**v))),
+        Term::Lit(v @ (Value::Int(_) | Value::Big(_))) => {
+            Num::of_integer(v).map(Congruence::single)
+        }
         Term::Var(x) => Some(classes.get(x).cloned().unwrap_or(Congruence::top())),
         Term::Let(x, _, body) => class_of(body, &unbound(classes, x)),
         Term::Prim(p, xs) => match (p, xs.as_slice()) {
@@ -13846,11 +13846,7 @@ fn class_of(term: &Term, classes: &Classes) -> Option<Congruence> {
             (Prim::Mod, [a, Term::Lit(k)]) => {
                 // `x mod k` is Euclidean, so in 0..k; when k divides the modulus it is one value,
                 // and otherwise it is x's residue modulo gcd(m, k).
-                let k = match k {
-                    Value::Int(k) => Num::from(*k),
-                    Value::Big(k) => Num::from(&**k),
-                    _ => return None,
-                };
+                let k = Num::of_integer(k)?;
                 if k.signum() <= 0 {
                     return None;
                 }

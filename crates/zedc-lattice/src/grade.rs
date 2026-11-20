@@ -419,10 +419,11 @@ impl<'t> Grader<'_, 't> {
 
     /// `a ^ n`, `n` the literal `e` (an exponent that is not a literal has no rule).
     fn pow(&self, a: &Node, e: &Term) -> Node {
-        let n = match e {
-            Term::Lit(Value::Int(n)) => Num::from(*n),
-            Term::Lit(Value::Big(n)) => Num::from(&**n),
-            _ => return self.opaque(),
+        let Some(n) = (match e {
+            Term::Lit(v) => Num::of_integer(v),
+            _ => None,
+        }) else {
+            return self.opaque();
         };
         let s = self.signs(a);
         let constant = a.grade == Some(Tonicity::Const);

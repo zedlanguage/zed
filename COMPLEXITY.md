@@ -1133,6 +1133,20 @@ POLY-nf section); a better model, not another
 constant, would lower them. The kernel `LEAF_DIGITS` stayed at 1024 here: at 2048 the sum over
 its sizes was 1.0279 times less, within its spread of 1.0340.
 
+`rem` (DRY-numeric-shared-rest, 2026-11-20, load 40 to 89). `rem-leaf q`, a dividend of
+`(q + 1) w` words by `w`, num-bigint's `%` against the blocks of one `Divisor`, which `rem`
+took for every divisor past `DIV_LEAF` with a quotient at least as wide. Measured crossovers
+1898, 899, 417 and 230 words for `q` = 2, 4, 16, 256; the blocks from 91 words did up to
+1.208, 1.168, 1.066 and 1.017 times the cheaper method's work. `rem` now takes the blocks
+exactly where `div_rem` takes `div_rem_blocks`, by `DIV_COST`, after one correction in
+`newton_cost`: a quotient of `qw` words is `(qw - 1) / bw` blocks rounded up, not `qw / bw`,
+which charged one block too many where `qw` is 1 more than a multiple of `bw` (every
+`rem-leaf` shape; no `div-leaf` shape) and took num-bigint up to 2048 words for `q = 2`, 1.58
+times the work. Worst as built now 1.000, 1.000, 1.0048 and 1.0804 (one dip of the blocks at
+128 words for `q = 256`); the five `div-leaf` rows unchanged, all at their crossovers. Below
+the crossover num-bigint's peak memory is up to 5.9 times the blocks'. `Divisor`'s own choice
+(`divisor_way`) now counts the quotient's words as `div_rem` does, `words(a) - words(d) + 1`.
+
 Measured again 2026-11-15 (TEST-meter-allocator-bias), with `Meter::work` counting on the
 meter's own heap (`zed-alloc-count/src/meter.rs`), whose instructions per call do not depend on
 the heap's history. Two runs of `crossover all` gave the same counts, and the spread of repeated

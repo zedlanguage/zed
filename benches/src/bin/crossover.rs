@@ -15,6 +15,8 @@
 //! - `div-leaf [q d]`: `DIV_LEAF` and `DIV_COST`, num-bigint's division against the division
 //!   past the leaf, `(q + d) w - 1` by `d w` dense words, a quotient of about `q w` (`1 1`,
 //!   `1 4`, `4 1`, `16 1` and `256 1` in `all`).
+//! - `rem-leaf [q]`: `DIV_LEAF` and `DIV_COST` in `rem`, num-bigint's `%` against the blocks
+//!   of one `Divisor`, `(q + 1) w` by `w` dense words (16 and 256 in `all`).
 //! - `div-rows`: `SPARSE_WORD` and `SPARSE_STEP`, long division over the divisor's nonzero
 //!   words against the division by a reciprocal, `2w - 1` by `w` dense words.
 //! - `recip`: `RECIP_LEAF`, a reciprocal of `p` bits started from num-bigint's division at `p`
@@ -326,6 +328,59 @@ fn div_leaf(args: &[String]) -> ExitCode {
         &mut Meter::new(),
         &format!("div-leaf {q} {d}"),
         &format!("DIV_LEAF {} bits, DIV_COST", x::DIV_LEAF),
+        &ladder(16, to, 2),
+        TOLERANCE,
+    );
+    status(verdict.holds())
+}
+
+/// `rem-leaf [q]`: `DIV_LEAF` and `DIV_COST` in `rem`, num-bigint's `%` against the blocks of
+/// one `Divisor`, `(q + 1) w` by `w` dense words, a quotient of about `q w` (16 and 256 in
+/// `all`): the wide dividends `rem` reads in blocks where `div_rem` would
+/// (DRY-numeric-shared-rest).
+fn rem_leaf(args: &[String]) -> ExitCode {
+    let q: usize = args.first().map_or(16, |s| s.parse().expect("a multiple"));
+    assert!(q >= 2, "rem-leaf q: a quotient wider than the divisor");
+    let note = move |w: usize| format!(" ({} by {w})", (q + 1) * w);
+    let inputs = move |w: usize| {
+        let mut rng = Rng::new(w as u64);
+        let b = random(&mut rng, w);
+        let a = random(&mut rng, (q + 1) * w);
+        let ones = |n: usize| (BigUint::from(1u32) << (64 * n)) - 1u32;
+        vec![(a, b), (ones((q + 1) * w), ones(w))]
+    };
+    let bench = Crossover {
+        unit: "words",
+        note: &note,
+        inputs: &inputs,
+        below: Method {
+            name: "num-bigint",
+            run: &|(a, b): &Pair| a % b,
+        },
+        above: Method {
+            name: "blocks",
+            run: &|(a, b): &Pair| x::rem_by_blocks(a, b),
+        },
+        takes_above: &|(a, b): &Pair| x::rem_takes_blocks(a, b),
+        constant: Some(Constant {
+            name: "DIV_COST",
+            built: x::DIV_COST,
+            flip: &|(a, b): &Pair| x::div_flip(a, b),
+            below_at_most: true,
+        }),
+    };
+    let to = match q {
+        ..=16 => 2048,
+        _ => 512,
+    };
+    let verdict = bench.report(
+        &mut Meter::new(),
+        &format!("rem-leaf {q}"),
+        &format!(
+            "DIV_LEAF {} bits, DIV_COST {} in rem",
+            x::DIV_LEAF,
+            x::DIV_COST
+        ),
         &ladder(16, to, 2),
         TOLERANCE,
     );
@@ -1109,7 +1164,7 @@ type Bench = (
 );
 
 /// Every benchmark, with its arguments in `all`; `print-never-slower` is not a threshold.
-const BENCHES: [Bench; 43] = [
+const BENCHES: [Bench; 45] = [
     ("mul", mul, &["1"]),
     ("mul", mul, &["4"]),
     ("mul", mul, &["32"]),
@@ -1119,6 +1174,8 @@ const BENCHES: [Bench; 43] = [
     ("div-leaf", div_leaf, &["4", "1"]),
     ("div-leaf", div_leaf, &["16", "1"]),
     ("div-leaf", div_leaf, &["256", "1"]),
+    ("rem-leaf", rem_leaf, &["16"]),
+    ("rem-leaf", rem_leaf, &["256"]),
     ("div-rows", div_rows, &[]),
     ("recip", recip, &[]),
     ("gcd-leaf", gcd_leaf, &[]),

@@ -9228,7 +9228,7 @@ fn run(p: Prim, v: &Value) -> Option<Value> {
 fn float_exact(p: Prim, v: &Value) -> Option<Value> {
     let f = run(p, v).filter(|f| !matches!(f, Value::Atom(_)))?;
     let back = run(Prim::CastRat, &f)?;
-    (as_rat(&back)? == as_rat(v)?).then_some(f)
+    (back.as_rat()? == v.as_rat()?).then_some(f)
 }
 
 /// Whether the numeric cast `w`, `int`, `f64` or `f32`, gives back the number `v` itself: `int`
@@ -11178,15 +11178,6 @@ fn unsuffixed_exact(l: &Lit, held: &[Carrier]) -> Option<(Carrier, Value)> {
     })
 }
 
-/// The exact rational value of an int or rat `v`.
-fn as_rat(v: &Value) -> Option<Rat> {
-    match v {
-        Value::Int(n) => Some(Rat::int((*n).into())),
-        Value::Big(r) | Value::Rat(r) => Some((**r).clone()),
-        _ => None,
-    }
-}
-
 /// The message for the decimal literal `l` beside an operand of carrier `int` of the operator
 /// `what`, as in `x * 2.0` with `x: int` (DESIGN.md sec:diagnostics, the worked example at an
 /// operator). `name` is the operand's name, where it is a name, with the two edits that cast it
@@ -13033,9 +13024,9 @@ fn else_operand(c: &str) -> String {
 /// The ints of the range `r`, as an interval: `int[1..=9]` is `[1..=9]` (DESIGN.md L1.24).
 pub fn written_ints(r: &WrittenRange) -> IntervalSet {
     let end = |v: &Option<Value>, open: End| match v {
-        Some(Value::Int(n)) => End::of(*n),
-        Some(Value::Big(n)) => Fin(Num::from(&**n)),
-        Some(other) => unreachable!("a range's bound is an int, not {other:?}"),
+        Some(v) => {
+            int_end(v).unwrap_or_else(|| unreachable!("a range's bound is an int, not {v:?}"))
+        }
         None => open,
     };
     IntervalSet::range(end(&r.low, NegInf), end(&r.high, PosInf))
@@ -13057,11 +13048,7 @@ pub(super) fn written_hull(ints: &IntervalSet) -> Option<WrittenRange> {
 
 /// The int `v` as an end of an interval, exact at any size; `None` for a value that is no int.
 pub(super) fn int_end(v: &Value) -> Option<End> {
-    match v {
-        Value::Int(n) => Some(End::of(*n)),
-        Value::Big(n) => Some(Fin(Num::from(&**n))),
-        _ => None,
-    }
+    Num::of_integer(v).map(Fin)
 }
 
 /// The exact keys ([`Sig::keys`], row RANGE-literal-keys) of a family whose keys are the ints
@@ -13110,11 +13097,7 @@ impl ParamKeys {
     /// (DESIGN.md sec:grouping) in place of the listed ints of the key type.
     pub fn span(&self, part: Option<usize>) -> Option<num_bigint::BigInt> {
         let (_, r) = self.ranges.iter().find(|(p, _)| *p == part)?;
-        let int = |v: &Option<Value>| match v {
-            Some(Value::Int(n)) => Some(num_bigint::BigInt::from(*n)),
-            Some(Value::Big(n)) => n.to_integer().ok(),
-            _ => None,
-        };
+        let int = |v: &Option<Value>| v.as_ref()?.to_bigint();
         Some(int(&r.high)? - int(&r.low)?)
     }
 }
@@ -13192,10 +13175,8 @@ fn listed_at_least_zero(ints: &KType) -> bool {
 /// Whether every value `r` holds is shown to be a multiple of 8: its listed values each are, or
 /// each piece of its interval is one such value.
 fn whole_bytes(r: &IntRange) -> bool {
-    let eight = |v: &Value| {
-        v.as_integer()
-            .is_some_and(|n| Num::from(&*n).mod_floor(&Num::from(8)).is_zero())
-    };
+    let eight =
+        |v: &Value| Num::of_integer(v).is_some_and(|n| n.mod_floor(&Num::from(8)).is_zero());
     // Each piece of the interval one multiple of 8, as a test `w == 8 || w == 16` leaves it:
     // one pass over the pieces.
     let point = |(a, b): &(End, End)| matches!((a, b), (Fin(a), Fin(b)) if a == b && eight(&Value::from(a)));
@@ -13287,11 +13268,10 @@ impl Known {
 
     /// The int `v`, exact at any size.
     fn of(v: Value) -> Self {
-        let ints = match &v {
-            Value::Int(n) => IntervalSet::single(*n),
-            Value::Big(n) => IntervalSet::point(Num::from(&**n)),
-            _ => return Known::top(),
+        let Some(n) = Num::of_integer(&v) else {
+            return Known::top();
         };
+        let ints = IntervalSet::point(n);
         Known {
             ints,
             value: Some(v),
@@ -13445,24 +13425,21 @@ impl<'a> Ck<'_, 'a> {
     ) -> Option<(WrittenRange, End, End)> {
         let mut fixed = true;
         let mut bound = |ck: &mut Self, e: &'a Expr| -> Option<Num> {
-            match ck.known(e).value {
-                Some(Value::Int(n)) => Some(Num::from(n)),
-                Some(Value::Big(n)) => Some(Num::from(&*n)),
-                _ => {
-                    let code = ck.code(Some(e.span)).unwrap_or("this bound").to_string();
-                    ck.error(
-                        e.span,
-                        format!(
-                            "the bound `{code}` of the range of `{}` is not an int the program's \
-                             text fixes. A bound must be an int literal, or a name bound to one, \
-                             as `n = 10;`. To repair it, write the bound as an int",
-                            name
-                        ),
-                    );
-                    fixed = false;
-                    None
-                }
+            let n = ck.known(e).value.as_ref().and_then(Num::of_integer);
+            if n.is_none() {
+                let code = ck.code(Some(e.span)).unwrap_or("this bound").to_string();
+                ck.error(
+                    e.span,
+                    format!(
+                        "the bound `{code}` of the range of `{}` is not an int the program's \
+                         text fixes. A bound must be an int literal, or a name bound to one, \
+                         as `n = 10;`. To repair it, write the bound as an int",
+                        name
+                    ),
+                );
+                fixed = false;
             }
+            n
         };
         let lo = match low.as_deref() {
             Some(e) => bound(self, e).map(Fin),
@@ -15341,7 +15318,12 @@ mod tests {
                     assert!(value_kept("f64", &x), "f64({x:?})");
                     let Value::Float(f) = x else { panic!("{x:?}") };
                     let back = run(Prim::CastRat, &x).expect("a rat");
-                    assert_eq!(as_rat(&back), Some(r.clone()), "rat({})", f.get());
+                    assert_eq!(
+                        back.as_rat().map(Cow::into_owned),
+                        Some(r.clone()),
+                        "rat({})",
+                        f.get()
+                    );
                 }
             }
         }

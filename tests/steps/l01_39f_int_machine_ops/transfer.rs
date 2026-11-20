@@ -14,11 +14,7 @@ use zedc::store::interval::{
 
 /// Whether the value `v` lies in `s`, at any size.
 fn holds(s: &IntervalSet, v: &Value) -> bool {
-    match v {
-        Value::Int(n) => s.contains(*n),
-        Value::Big(n) => s.contains_end(&Fin(Num::from(&**n))),
-        _ => false,
-    }
+    Num::of_integer(v).is_some_and(|n| s.contains_end(&Fin(n)))
 }
 
 fn end(n: u128) -> End {

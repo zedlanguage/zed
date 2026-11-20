@@ -230,18 +230,21 @@ pub(crate) fn check(test: &Test, outcome: bool, text: &dyn Fn(usize) -> String) 
             }
         }
     }
-    // Each root's box: the meet of its names' boxes moved by their offsets.
+    // Each root's box: the meet of its names' boxes moved by their offsets. A moved bound past
+    // `i128` is left out, as an offset past it is: the box only grows, so fewer parts are found
+    // to hold on all of it, which adds edges, never drops one. (`l - o` unchecked overflowed for
+    // an offset near `i128::MAX`, a panic in a debug build, as `l - 1` did in two_pins.rs.)
     let mut lo: Vec<Option<i128>> = vec![None; k];
     let mut hi: Vec<Option<i128>> = vec![None; k];
     for (v, name) in names.iter().enumerate() {
         let (r, o) = uf.find(v);
         let Some(o) = o.to_i128() else { continue };
         let (l, h, _) = &test.boxes[name];
-        if let Some(l) = l {
-            lo[r] = Some(lo[r].map_or(l - o, |x| x.max(l - o)));
+        if let Some(l) = l.and_then(|l| l.checked_sub(o)) {
+            lo[r] = Some(lo[r].map_or(l, |x| x.max(l)));
         }
-        if let Some(h) = h {
-            hi[r] = Some(hi[r].map_or(h - o, |x| x.min(h - o)));
+        if let Some(h) = h.and_then(|h| h.checked_sub(o)) {
+            hi[r] = Some(hi[r].map_or(h, |x| x.min(h)));
         }
     }
     // The parts on one name (holes) add no edge.
@@ -1293,5 +1296,54 @@ impl Say<'_> {
             steps,
             repair: self.repair(&nest, outcome),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn lin(terms: &[(&str, i128)], c: i128) -> Lin {
+        Lin {
+            terms: (terms.iter())
+                .map(|&(n, x)| (Atom::Sym(n.into()), Int::from(x)))
+                .collect(),
+            constant: Int::from(c),
+        }
+    }
+
+    /// `x == y - i128::MAX` in the base moves `y`'s box `-5..=5` by an offset of `i128::MAX`,
+    /// past `i128` at one end: that bound is left out. The unchecked `l - o` panicked here.
+    #[test]
+    fn a_box_moved_past_i128_is_left_out() {
+        let c = i128::MAX;
+        let test = Test {
+            base: vec![
+                (0, lin(&[("x", 1), ("y", -1)], c)),
+                (1, lin(&[("x", -1), ("y", 1)], -c)),
+            ],
+            kept: vec![0, 1],
+            parts: vec![Part {
+                text: 4,
+                cases: vec![
+                    Case {
+                        text: 2,
+                        atoms: vec![(2, lin(&[("x", 1), ("z", -1)], 0))],
+                        whole: true,
+                    },
+                    Case {
+                        text: 3,
+                        atoms: vec![(3, lin(&[("z", 1)], 0))],
+                        whole: true,
+                    },
+                ],
+            }],
+            boxes: ["x", "y", "z"]
+                .into_iter()
+                .map(|n| (n.into(), (Some(-5), Some(5), "int[-5..=5]".to_string())))
+                .collect(),
+        };
+        // Either verdict is sound; the point is that the box is built without overflow.
+        let _ = check(&test, true, &|i| format!("t{i}"));
     }
 }

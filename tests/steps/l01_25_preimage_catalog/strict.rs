@@ -52,14 +52,6 @@ fn rat(n: i64, d: i64) -> Rat {
     Rat::new(BigInt::from(n), BigInt::from(d)).expect("a nonzero denominator")
 }
 
-fn as_rat(v: &Value) -> Option<Rat> {
-    match v {
-        Value::Int(n) => Some(Rat::int(BigInt::from(*n))),
-        Value::Big(r) | Value::Rat(r) => Some((**r).clone()),
-        _ => None,
-    }
-}
-
 fn cmp(a: &Rat, b: &Rat) -> Ordering {
     a.try_cmp(b).expect("small numbers compare")
 }
@@ -121,7 +113,7 @@ fn run(t: &Term, env: &[(&str, Value)], arith: Arith) -> Option<Rat> {
             }
         }
     }
-    let v = as_rat(&eval(&bind(t, env)).ok()?)?;
+    let v = eval(&bind(t, env)).ok()?.as_rat()?.into_owned();
     let small = |e: i64| Rat::int(BigInt::from(e));
     if arith == Arith::Checked
         && (cmp(&v, &small(-128)) == Ordering::Less || cmp(&v, &small(127)) == Ordering::Greater)

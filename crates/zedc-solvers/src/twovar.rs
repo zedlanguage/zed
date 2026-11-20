@@ -132,7 +132,7 @@ type Split = (IntRange, Vec<Line>, Vec<Line>);
 /// bound `y` above and below, with `x` read negated where `flip` is set; `None` when a row with
 /// neither variable, or the bounds of `x`, show that the rows have no point.
 fn split(rows: &[(&[Term], &Int)], x: usize, y: Option<usize>, flip: bool) -> Option<Split> {
-    let mut xs: (Option<Int>, Option<Int>) = (None, None);
+    let mut xs: IntRange = (None, None);
     let (mut upper, mut lower): (Vec<Line>, Vec<Line>) = (Vec::new(), Vec::new());
     for (a, k) in rows {
         let at = |v: usize| {
@@ -235,7 +235,7 @@ pub fn point(
 /// programs in two variables can be solved in O(log) arithmetic steps (Eisenbrand and Rote,
 /// "Fast 2-variable integer programming", IPCO 2001); the scan is simpler, exact at any
 /// magnitude, and reuses the envelopes and counts of [`point`].
-pub fn ends(rows: &[(&[Term], &Int)], x: usize, y: usize) -> Option<(Option<Int>, Option<Int>)> {
+pub fn ends(rows: &[(&[Term], &Int)], x: usize, y: usize) -> Option<IntRange> {
     let lo = least_x(rows, x, y, false)?;
     let hi = least_x(rows, x, y, true)?;
     Some((lo, hi.map(|v| -&v)))
@@ -292,7 +292,7 @@ fn piece(
     lb: &Line,
     left: &Option<Q>,
     right: &Option<Q>,
-    xs: &(Option<Int>, Option<Int>),
+    xs: &IntRange,
     want: bool,
 ) -> Option<(Int, Int)> {
     let mut range = xs.clone();
@@ -368,7 +368,7 @@ fn piece(
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum TwoVarProj {
     /// Exact finite union of disjoint closed intervals (an absent end infinite).
-    Ranges(Vec<(Option<Int>, Option<Int>)>),
+    Ranges(Vec<IntRange>),
     /// Some narrow strip `0 <= u(x) - l(x) < 1` contains an internal hole or periodic stride.
     Holed,
 }
@@ -494,7 +494,7 @@ pub fn project_convex(rows: &[(&[Term], &Int)], x: usize, y: Option<usize>) -> T
     let l = least(&negs);
     let (mut i, mut j) = (0, 0);
     let mut left: Option<Q> = None;
-    let mut out: Vec<(Option<Int>, Option<Int>)> = Vec::new();
+    let mut out: Vec<IntRange> = Vec::new();
     let one = Q::of(Int::ONE);
     loop {
         let ni = u.get(i + 1).and_then(|e| e.1.clone());
@@ -644,7 +644,7 @@ mod tests {
     }
 
     /// The rows `c0·x + c1·y + k >= 0` as `ends` reads them.
-    fn ends_of(rows: &[([i64; 2], i64)]) -> Option<(Option<Int>, Option<Int>)> {
+    fn ends_of(rows: &[([i64; 2], i64)]) -> Option<IntRange> {
         with_refs(rows, |refs| ends(refs, 0, 1))
     }
 

@@ -64,7 +64,7 @@ use super::preimage::{
 };
 use super::spans::Spans;
 use super::threshold;
-use zedc_int::int::{Int, IntRange, row_range};
+use zedc_int::int::{Int, IntRange, row_bound, row_range};
 use zedc_lattice::affine::Bounds;
 use zedc_lattice::cell::{Cell, Entry, Premise, Premises};
 use zedc_lattice::interval::{End, IntervalSet, Num};
@@ -390,17 +390,9 @@ impl Product {
     /// Whether `v` is a value of this element: of its type, in its finite set, and an integer
     /// in its interval and its congruence.
     pub fn contains(&self, v: &Value) -> bool {
-        let ints = match v {
-            Value::Int(n) => {
-                self.ints().contains(*n) && self.cell.congruence.element.contains(&Num::from(*n))
-            }
-            Value::Big(n) => {
-                let n = Num::from(&**n);
-                self.ints().contains_end(&End::Fin(n.clone()))
-                    && self.cell.congruence.element.contains(&n)
-            }
-            _ => true,
-        };
+        let ints = Num::of_integer(v).is_none_or(|n| {
+            self.cell.congruence.element.contains(&n) && self.ints().contains_end(&End::Fin(n))
+        });
         let finite = match &self.cell.finite.element {
             FiniteSet::Top => true,
             FiniteSet::Set(s) => s.contains(v),
@@ -11887,7 +11879,8 @@ impl Scope {
                     // that arm. Such a test narrows nothing (NARROW-ne-rat-divisor).
                     (Term::Var(x), Term::Lit(v)) if equal || !convex => {
                         if let Some(p) = self.names.get_mut(x)
-                            && (int_lit(v).is_none() || !p.ty.element.subtype(&!&Type::int()))
+                            && (Num::of_integer(v).is_none()
+                                || !p.ty.element.subtype(&!&Type::int()))
                             && equality(p, v, equal, prem)
                         {
                             changed.push(x.clone());
@@ -11895,7 +11888,7 @@ impl Scope {
                     }
                     (Term::Prim(Prim::Mod, m), Term::Lit(r)) if equal => {
                         if let [Term::Var(x), Term::Lit(c)] = &m[..]
-                            && let (Some(r), Some(c)) = (int_lit(r), int_lit(c))
+                            && let (Some(r), Some(c)) = (Num::of_integer(r), Num::of_integer(c))
                             && !c.is_zero()
                             && let Some(p) = self.names.get_mut(x)
                         {
@@ -11912,7 +11905,7 @@ impl Scope {
                     // classes left are not one class, and the congruence keeps them all.
                     (Term::Prim(Prim::Mod, m), Term::Lit(r)) => {
                         if let [Term::Var(x), Term::Lit(c)] = &m[..]
-                            && let (Some(r), Some(c)) = (int_lit(r), int_lit(c))
+                            && let (Some(r), Some(c)) = (Num::of_integer(r), Num::of_integer(c))
                             && c.abs() == Num::from(2)
                             && (r.is_zero() || r == Num::ONE)
                             && let Some(p) = self.names.get_mut(x)
@@ -16672,15 +16665,6 @@ fn is_test(t: &Term) -> bool {
     )
 }
 
-/// The integer literal `v`, of any size.
-fn int_lit(v: &Value) -> Option<Num> {
-    match v {
-        Value::Int(n) => Some(Num::from(*n)),
-        Value::Big(n) => Some(Num::from(&**n)),
-        _ => None,
-    }
-}
-
 /// The product of a literal equality's outcome on `p`: the literal itself, or every value but
 /// it, excluded by complement in the type, the interval and the finite set. Gives whether the
 /// interval changed.
@@ -16690,7 +16674,7 @@ fn equality(p: &mut Product, v: &Value, equal: bool, prem: &Premises) -> bool {
         p.ty.meet(&lit.ty.element, prem);
         p.cell.finite.meet(&lit.cell.finite.element, prem);
         let mut met = false;
-        if let Some(n) = int_lit(v) {
+        if let Some(n) = Num::of_integer(v) {
             met = p.meet_ints(IntervalSet::point(n.clone()), prem);
             p.cell.congruence.meet(&Congruence::single(n), prem);
         }
@@ -17545,7 +17529,7 @@ fn lower_row(g: &Formula) -> Option<(NamePair, Int, Int)> {
             return None;
         };
         k.is_positive()
-            .then(|| (n.clone(), -&c.lin.constant.div_floor(k)))
+            .then(|| (n.clone(), row_bound(k, &c.lin.constant)))
     };
     let ((x, a), (y, b)) = (unary(left)?, unary(right)?);
     if x < y {
@@ -18911,11 +18895,11 @@ impl HalfLineContext {
             };
             let mut apply = |r_other: &Int, rhs: &Int| -> bool {
                 if r_other.is_positive() {
-                    let b = -&rhs.div_floor(r_other);
+                    let b = row_bound(r_other, rhs);
                     w_lo = Some(w_lo.take().map_or(b.clone(), |o| o.max(b)));
                     true
                 } else if r_other.is_negative() {
-                    let b = rhs.div_floor(&-r_other);
+                    let b = row_bound(r_other, rhs);
                     w_hi = Some(w_hi.take().map_or(b.clone(), |o| o.min(b)));
                     true
                 } else {
@@ -19944,17 +19928,19 @@ impl PartFace {
                     two = Some((cu, cv, c.lin.constant.clone()));
                 }
             } else if !cu.is_zero() && unary.is_none() {
-                if cu.is_positive() {
-                    unary = Some((UnaryKind::UGe, -&c.lin.constant.div_floor(&cu)));
+                let kind = if cu.is_positive() {
+                    UnaryKind::UGe
                 } else {
-                    unary = Some((UnaryKind::ULe, c.lin.constant.div_floor(&-&cu)));
-                }
+                    UnaryKind::ULe
+                };
+                unary = Some((kind, row_bound(&cu, &c.lin.constant)));
             } else if !cv.is_zero() && unary.is_none() {
-                if cv.is_positive() {
-                    unary = Some((UnaryKind::VGe, -&c.lin.constant.div_floor(&cv)));
+                let kind = if cv.is_positive() {
+                    UnaryKind::VGe
                 } else {
-                    unary = Some((UnaryKind::VLe, c.lin.constant.div_floor(&-&cv)));
-                }
+                    UnaryKind::VLe
+                };
+                unary = Some((kind, row_bound(&cv, &c.lin.constant)));
             }
         }
         let (a, b, c) = two?;
@@ -21166,9 +21152,9 @@ fn stair_row(g: &Formula) -> Option<(Arc<str>, Arc<str>, Int, Int)> {
             return None;
         };
         if k.is_positive() {
-            lo = Some((n.clone(), -&c.lin.constant.div_floor(k)));
+            lo = Some((n.clone(), row_bound(k, &c.lin.constant)));
         } else if k.is_negative() {
-            hi = Some((n.clone(), c.lin.constant.div_floor(&-k)));
+            hi = Some((n.clone(), row_bound(k, &c.lin.constant)));
         }
     }
     let ((x, a), (y, b)) = (lo?, hi?);
@@ -21205,19 +21191,14 @@ impl Scope {
                         return Some((x.clone(), y.clone()));
                     }
                 }
+                // `p x <= v` is the row `-p x + v >= 0`.
                 (false, true) => {
-                    if p.is_positive() {
-                        xh = xh.min(End::Fin(Num::from(&v.div_floor(&p))));
-                    } else {
-                        xl = xl.max(End::Fin(Num::from(&-&v.div_floor(&-&p))));
-                    }
+                    let (l, h) = row_ends(&Num::from(&-&p), &Num::from(v));
+                    (xl, xh) = (xl.max(l), xh.min(h));
                 }
                 (true, false) => {
-                    if q.is_positive() {
-                        yh = yh.min(End::Fin(Num::from(&v.div_floor(&q))));
-                    } else {
-                        yl = yl.max(End::Fin(Num::from(&-&v.div_floor(&-&q))));
-                    }
+                    let (l, h) = row_ends(&Num::from(&-&q), &Num::from(v));
+                    (yl, yh) = (yl.max(l), yh.min(h));
                 }
                 (false, false) => planes.push((p, q, v.clone())),
             }
@@ -22137,6 +22118,19 @@ fn top(k: &Num, p: &Product) -> Option<Option<Num>> {
     })
 }
 
+/// The `x` with `a·x + k >= 0`, for `a` not zero, as interval ends: `[⌈-k / a⌉, +inf)` for
+/// `a > 0`, `(-inf, ⌊k / -a⌋]` for `a < 0`. The one reading of a row as ends here
+/// (DRY-numeric-shared-rest): [`row_bound`] over `Num`. `Num` holds a kept power such as
+/// `2^2^100` that `Int` cannot (`Int::from(&Num)` writes the digits), so the `Int` form is not
+/// reached through a conversion; `Num::div_floor` keeps the kept form. One division.
+fn row_ends(a: &Num, k: &Num) -> (End, End) {
+    if a.signum() > 0 {
+        (End::Fin(-&k.div_floor(a)), End::PosInf)
+    } else {
+        (End::NegInf, End::Fin(k.div_floor(&-a)))
+    }
+}
+
 /// For each row, its greatest value over the box given by `get` and how many of its names
 /// are unbounded on the side that raises it; `None` when a name's interval is empty.
 fn sums(rows: &[Row], get: &impl Fn(&str) -> Product) -> Option<Vec<(Num, usize)>> {
@@ -22169,10 +22163,9 @@ fn range(rows: &[Row], sums: &[(Num, usize)], n: &Arc<str>, p: &Product) -> Opti
             Some(v) => (s - &v, *free),
             None => (s.clone(), free - 1),
         };
-        match c.signum() {
-            _ if free > 0 => {}
-            1 => up = up.max(End::Fin(-&m.div_floor(c))),
-            _ => down = down.min(End::Fin(m.div_floor(&-c))),
+        if free == 0 {
+            let (l, h) = row_ends(c, &m);
+            (up, down) = (up.max(l), down.min(h));
         }
     }
     (up <= down).then_some((up, down))
@@ -22415,11 +22408,9 @@ impl Scope {
                                         None => (s_val.clone(), free - 1),
                                     };
                                     if row_free == 0 {
-                                        if c.signum() == 1 {
-                                            *up = up.clone().max(End::Fin(-&m.div_floor(c)));
-                                        } else {
-                                            *down = down.clone().min(End::Fin(m.div_floor(&-c)));
-                                        }
+                                        let (l, h) = row_ends(c, &m);
+                                        *up = up.clone().max(l);
+                                        *down = down.clone().min(h);
                                     }
                                 }
                             }
@@ -22739,11 +22730,8 @@ impl Scope {
                 }
                 if ts.len() == 1 {
                     let (n, k) = ts.iter().next()?;
-                    let bound = if k.signum() > 0 {
-                        IntervalSet::range(End::Fin(-&c.div_floor(k)), End::PosInf)
-                    } else {
-                        IntervalSet::range(End::NegInf, End::Fin(c.div_floor(&-k)))
-                    };
+                    let (l, h) = row_ends(k, &c);
+                    let bound = IntervalSet::range(l, h);
                     let d = dom.get_mut(n)?;
                     *d = d.meet(&bound);
                     empty |= d.is_empty();
@@ -22874,6 +22862,47 @@ mod tests {
         assert_eq!(
             RayHull::default().least(&(Int::ONE, Int::ONE, Int::ZERO)),
             None
+        );
+    }
+
+    /// [`row_ends`] over `Num` gives the ends [`row_range`] gives over `Int`, for every sign of
+    /// `a` and `k` and the remainders around a division, and the brute-force least or greatest
+    /// `x` with `a x + k >= 0`; on a kept power `k = 2^2^70`, which `Int` cannot hold, it
+    /// gives `-k / a` for `a = -1` and `a = 2` without writing the digits.
+    #[test]
+    fn row_ends_over_num_agree_with_row_range_over_int() {
+        let fin = |e: Option<Int>| e.map(|n| End::Fin(Num::from(&n)));
+        for a in (-7i64..=7).filter(|&a| a != 0) {
+            for k in -30i64..=30 {
+                let (r, _) = row_range(&Int::from(a), &Int::from(k), false);
+                let (l, h) = row_ends(&Num::from(a), &Num::from(k));
+                assert_eq!(
+                    (l.clone(), h.clone()),
+                    (
+                        fin(r.0).unwrap_or(End::NegInf),
+                        fin(r.1).unwrap_or(End::PosInf)
+                    ),
+                    "a={a} k={k}"
+                );
+                let holds = |x: i64| a * x + k >= 0;
+                if a > 0 {
+                    let x = (-40..=40).find(|&x| holds(x)).expect("a least x");
+                    assert_eq!(l, End::Fin(Num::from(x)), "a={a} k={k}");
+                } else {
+                    let x = (-40..=40).rev().find(|&x| holds(x)).expect("a greatest x");
+                    assert_eq!(h, End::Fin(Num::from(x)), "a={a} k={k}");
+                }
+            }
+        }
+        let big = Num::pow2(&Num::pow2(&Num::from(70)));
+        assert_eq!(
+            row_ends(&Num::from(-1), &big),
+            (End::NegInf, End::Fin(big.clone()))
+        );
+        let half = big.div_floor(&Num::from(2));
+        assert_eq!(
+            row_ends(&Num::from(2), &-&big),
+            (End::Fin(half), End::PosInf)
         );
     }
 
