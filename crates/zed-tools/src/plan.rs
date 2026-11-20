@@ -35,7 +35,7 @@ use std::collections::hash_map::Entry;
 use std::fmt::Write;
 use std::ops::Range;
 
-use crate::text::read_text;
+use crate::text::{self, read_text};
 use crate::{Outcome, impl_root, say};
 
 /// The heading of the table the tool reads; the table ends at the next `## ` heading.
@@ -229,25 +229,14 @@ fn sentence(text: &str) -> Option<Range<usize>> {
 }
 
 /// The byte range of the two conflict sections in `text`: from the start of the `SAME` heading
-/// to the start of the next `## ` heading after `CROSS`, or the end of the text; `None` when
-/// the file does not have both headings, each a line of its own. tools/plan_merge.sh takes out
-/// the same lines.
+/// to the start of the next `#` or `## ` heading after `CROSS`, or the end of the text; `None`
+/// when the file does not have both headings, each a line of its own, `CROSS` after `SAME`.
+/// tools/plan_merge.sh takes out the same lines (it ends at `## ` alone; the lines of the
+/// sections are table rows and `- ` items, never a `# ` heading).
 fn sections(text: &str) -> Option<Range<usize>> {
-    let at = |heading: &str, from: usize| {
-        text[from..]
-            .match_indices(heading)
-            .map(|(i, _)| from + i)
-            .find(|&i| {
-                (i == 0 || text.as_bytes()[i - 1] == b'\n')
-                    && text[i + heading.len()..].starts_with('\n')
-            })
-    };
-    let same = at(SAME, 0)?;
-    let cross = at(CROSS, same)?;
-    let end = text[cross + CROSS.len()..]
-        .find("\n## ")
-        .map_or(text.len(), |i| cross + CROSS.len() + i + 1);
-    Some(same..end)
+    let same = text::section(text, SAME)?.start;
+    let cross = text::section(&text[same..], CROSS)?;
+    Some(same..same + cross.end)
 }
 
 /// Writes to `out` the counts of a table (items, edges, levels and the highest level), the line
@@ -360,7 +349,7 @@ fn check_counts(text: &str, out: &mut String) -> Result<(bool, [usize; 4]), Stri
             "line {}: the file holds the sections \"File conflicts at the same level\" and \"File \
              conflicts across levels\", which a rebase leaves stale; `conflicts` prints them, and \
              `plan --fix` takes them out",
-            text[..r.start].matches('\n').count() + 1
+            zedc::source::line_col(text.as_bytes(), r.start).0
         );
         bad += 1;
     }

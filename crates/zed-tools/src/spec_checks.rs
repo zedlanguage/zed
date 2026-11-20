@@ -336,10 +336,8 @@ pub fn undefined_builds(design: &str) -> Result<Vec<String>, String> {
     let b = bullet(design)?;
     let names = defined(b);
     let start = b.as_ptr() as usize - design.as_ptr() as usize;
-    let (first, last) = (
-        design[..start].matches('\n').count() + 1,
-        design[..start + b.len()].matches('\n').count() + 1,
-    );
+    let line = |at: usize| zedc::source::line_col(design.as_bytes(), at).0;
+    let (first, last) = (line(start), line(start + b.len()));
     Ok(before_build(design)
         .into_iter()
         .filter(|(line, word)| {

@@ -3,6 +3,7 @@
 //! way. `str` orders by code point, as Python's strings do.
 
 use std::fmt::Write;
+use std::ops::Range;
 
 use zedc::parse::is_space;
 
@@ -813,4 +814,54 @@ pub fn right(s: &str, n: usize) -> String {
 /// The last component of the path `path`.
 pub fn base_name(path: &str) -> &str {
     path.rsplit('/').next().expect("rsplit yields one item")
+}
+
+/// The bytes of the Markdown section of `text` whose heading is the first line equal to
+/// `heading` (such as `## Items by level`): from the start of that line to the start of the
+/// next heading of the same or a higher level (`#` to as many `#` as `heading` has, then a
+/// space), or to the end of the text. `None` when no line equals `heading`. One pass over the
+/// text: O(length).
+pub fn section(text: &str, heading: &str) -> Option<Range<usize>> {
+    let hashes = |l: &str| l.bytes().take_while(|&b| b == b'#').count();
+    let level = hashes(heading);
+    let mut start = None;
+    let mut at = 0;
+    for line in text.split_inclusive('\n') {
+        let l = line.strip_suffix('\n').unwrap_or(line);
+        match start {
+            None if l == heading => start = Some(at),
+            Some(s) if (1..=level).contains(&hashes(l)) && l[hashes(l)..].starts_with(' ') => {
+                return Some(s..at);
+            }
+            _ => {}
+        }
+        at += line.len();
+    }
+    start.map(|s| s..text.len())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A section runs to the next heading of its level or higher, not of a lower one, and the
+    /// heading must be the whole line.
+    #[test]
+    fn section_runs_to_the_next_heading_of_its_level() {
+        let text = "# T\n\n## A\n\nx\n### A.1\n\ny\n## B\nz\n# U\n";
+        let a = section(text, "## A").unwrap();
+        assert_eq!(&text[a], "## A\n\nx\n### A.1\n\ny\n");
+        let a1 = section(text, "### A.1").unwrap();
+        assert_eq!(&text[a1], "### A.1\n\ny\n");
+        let b = section(text, "## B").unwrap();
+        assert_eq!(&text[b], "## B\nz\n");
+        let u = section(text, "# U").unwrap();
+        assert_eq!(&text[u], "# U\n");
+        assert_eq!(section(text, "## C"), None);
+        assert_eq!(section("x ## A\n## A b\n", "## A"), None);
+        // `##A` and `#hash` are not headings, so they do not end the section.
+        let t = "## A\n##A\n#hash\n## B";
+        assert_eq!(&t[section(t, "## A").unwrap()], "## A\n##A\n#hash\n");
+        assert_eq!(&t[section(t, "## B").unwrap()], "## B");
+    }
 }
