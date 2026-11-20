@@ -84,15 +84,30 @@ pub(super) fn recovering(
             continue;
         }
         // The failing declaration begins at its line: a declaration kept from that line, as
-        // the head of `f(x) = { … } test { … }` before a trailer that fails, is part of it.
+        // the head of `f(x) = { … } test { … }` before a trailer that fails, is part of it. So
+        // is one kept that reaches into that line, `f(…) = x +` above a line at the first
+        // column `"${x}".len; )` that fails at `)`, and the failing one then begins where that
+        // one begins. Why: every token is then in a kept declaration or a skipped range, never
+        // both, so the holes kept are the holes of the tokens outside `skipped`, which is how
+        // `with_holes` and `Builder::new` (ast) count them; with a kept declaration that
+        // reaches into a skipped range the two counts differ and a hole is built from another
+        // hole's tree (test `l01_08_parser::recovery_edges::
+        // a_declaration_kept_up_to_a_failing_line_inside_it_is_skipped_with_it`). The kept
+        // declarations are in order and do not overlap, and each begins at or after `floor`
+        // or ends before it, so only the last ones can reach `b`. The loop pops from the end, so
+        // the declaration it tests next ends at or before the start of the one just popped: once
+        // `b` moves down to that start the loop stops, and every declaration still kept ends at
+        // or before `b`. `b` stays at or after `floor`, since a popped declaration ends after
+        // `b` and so begins at or after `floor`.
         let floor = skipped.last().map_or(0, |d| d.end);
-        let b = begins_at(text, tokens, s, floor);
+        let mut b = begins_at(text, tokens, s, floor);
         let mut dropped = Vec::new();
         while let Some(&(node, h)) = kids.last()
-            && p.nodes[node].start >= b
+            && p.nodes[node].end > b
         {
             kids.pop();
             holes.truncate(h);
+            b = b.min(p.nodes[node].start);
             dropped.extend(defines(&toks[p.nodes[node].start..p.nodes[node].end]));
         }
         let r = resumes_at(text, tokens, s);

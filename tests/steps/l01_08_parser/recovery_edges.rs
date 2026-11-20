@@ -3,8 +3,9 @@
 //! or backticks of its own; and a grammar whose `Unit` does not end in `END` (read with
 //! `parse_with`) is recovered declaration by declaration too.
 
+use zedc::ast::unit_all_errors;
 use zedc::lex::lex;
-use zedc::parse::{Error, Grammar, TOP, parse, parse_with};
+use zedc::parse::{Error, Grammar, TOP, parse, parse_unit, parse_with};
 
 fn error(text: &str) -> Error {
     let tokens = lex(text).unwrap();
@@ -53,4 +54,33 @@ fn a_unit_rule_with_no_end_is_recovered_too() {
     let text = "a;";
     let tokens = lex(text).unwrap();
     assert!(parse_with(&g, text, &tokens, "Unit", 1).is_ok());
+}
+
+/// A declaration that parses, `f(…) = x + "${x}".len;`, whose second line begins at the first
+/// column, followed on that line by a token that fails, `)`: the failing declaration begins at
+/// that line (`begins_at`), inside the one that parsed. The one that parsed is then part of the
+/// failing one, so its string hole is skipped with it, and the hole of `h` below is built from
+/// its own tree. Before the fix the declaration of `f` was kept with its hole while the builder
+/// skipped the hole's token, so the holes were counted against the wrong trees and the build
+/// stopped at "a hole's expression is taken once" (proofdoc3a, 2026-11-20).
+#[test]
+fn a_declaration_kept_up_to_a_failing_line_inside_it_is_skipped_with_it() {
+    let text =
+        "f(positional x: int) = x +\n\"${x}\".len; )\n\nh(positional y: int) = \"${y * 2}\";\n";
+    let tokens = lex(text).unwrap();
+    let (tree, errors) = parse_unit(text, &tokens, TOP);
+    assert_eq!(errors.len(), 1, "{errors:?}");
+    // The 15 tokens of the first two lines, from `f` to `)`.
+    assert_eq!(tree.skipped, vec![0..15_usize]);
+    // `f` once from the declaration parsed alone and once as the declaration dropped; the
+    // front end reads the names as a set (`front::Broken::defines`).
+    assert!(errors[0].recovery.defines.iter().all(|n| n == "f"));
+    assert!(!errors[0].recovery.defines.is_empty());
+    let stmts = unit_all_errors(text, &tokens, &tree).unwrap();
+    let shown = format!("{stmts:?}");
+    assert_eq!(stmts.len(), 1, "{shown}");
+    assert!(
+        shown.contains("\"y\"") && !shown.contains("\"x\""),
+        "{shown}"
+    );
 }
