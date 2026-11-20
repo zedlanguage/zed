@@ -274,6 +274,15 @@ impl Search {
     }
 
     /// Relaxes the next edge of the vertex being settled, to a vertex `allow` admits.
+    ///
+    /// One edge per call, so a caller can interleave two searches edge by edge; `place`
+    /// counts the edges of `v` read, and `settling` is cleared once it passes the last. The
+    /// relaxation is Dijkstra's (doi:10.1007/BF01386390): a vertex settled this epoch is
+    /// skipped, since its distance is final, and one not yet seen this epoch or reached by a
+    /// shorter path gets `x + ell[e]` and a heap entry; an older entry of the same vertex is
+    /// larger and stays in the heap, and [`Search::peek`] drops it as settled. Exactness rests
+    /// on every `ell[e]` being at least 0, which holds as built: `ell` is the step's weight `c`
+    /// with each negative one clipped to 0 (the loop over `g.out(u)` in the step).
     fn relax_one<H>(
         &mut self,
         g: &Graph,

@@ -998,8 +998,15 @@ const ROOT_CHECK_PRIMES: [u64; 3] = [
 /// `q - 1` before it looks for a root wider than one word: if `o == r ^ p` then
 /// `o ^ ((q - 1) / p) == 1` modulo `q` unless `q` divides `o`, and a number that is no `p`-th
 /// power passes one such `q` with chance about `1 / p`, since the `p`-th powers are one in `p`
-/// of the units modulo `q`. No prime below it is 1 modulo an index above `FILTER_BOUND / 2`,
-/// so each index wider than a word also gets the least prime that is 1 modulo it ([`Filter`]).
+/// of the units modulo `q`. No prime below it is 1 modulo an index above `FILTER_BOUND / 2`.
+/// Proof: the indices are odd primes `p` ([`OddPart::filter`]); a prime `q` that is 1 modulo
+/// `p` is `q = k * p + 1` with `k >= 1`, and `q` is odd (`q = 2` would need `p = 1`), so
+/// `k * p` is even, and as `p` is odd, `k` is even, `k >= 2`; then `q >= 2 * p + 1`, which for
+/// `p > 512` exceeds 1025. So each index wider than a word also gets the least prime that is
+/// 1 modulo it ([`Filter`]): without it such an index would meet no prime of the filter.
+/// Test: `least_roots_agree_with_trial_and_with_powers_of_large_bases`, at the exponents 521
+/// and 1042 = 2 * 521, where the index 521 passes or fails by its `Filter::wide` prime alone;
+/// fixed exponents, it cannot catch a wrong residue at an index it does not reach.
 /// The bound sets cost only, never the answer: a rejection is proved by the residue argument
 /// above, and an index that passes is decided by [`OddPart::root`]. 1024 gives the 171 odd
 /// primes below it, whose residues come from one remainder tree; the code records no
