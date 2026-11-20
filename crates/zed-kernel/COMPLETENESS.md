@@ -1190,3 +1190,60 @@ Counts: 265 lines. Closed by a test with a control 12 (`empty.rs`), by proof 11 
 Open 242, carried to TEST-kernel-unreached-paths-8: `empty.rs` 210 (the 222 of the
 thirteenth round less 411-413, 4380, 10768-10770, 10772-10774, 12425 and 12826), `empty/sweep.rs`
 20, `print.rs` 6 (734, 1072, 1794, 2038, 2117, 2132), `bdd.rs` 6.
+
+Fifteenth round (kernel18, 2026-11-19), row TEST-kernel-unreached-paths-8. Coverage measured
+at origin/main 3234d9327 the way the thirteenth round did: `run_tests.sh --cov` over the eight
+groups (`zed_kernel`, `l01_22_type_representation`, `l01_23_subtyping`,
+`l01_23_groups_and_refusals`, `l01_26_type_resolution`, `l01_26a_generic_literals`,
+`l01_29_diagnostics`, `l01_29_repairs_and_printing`), then `--each-test` for `group_oracle`,
+`refusals` and `sweep_agreement` (the whole `group_oracle` piece runs past its limit when
+instrumented), read with `llvm-cov show` over those test binaries and `libzed_kernel.so`.
+The fourteenth round's 265 lines, carried from c53a7410d to 3234d9327: 11 (`print.rs`) are gone
+by its proofs, 6 (`tuples_on` 6578-6593 at c53a7410d) were deleted by a later commit, 10 are
+reached, and 238 count 0 (`empty.rs` 206, `empty/sweep.rs` 20, `bdd.rs` 6, `print.rs` 6; list
+in `wt/coverage/TEST-kernel-unreached-paths-8-base-3234d9327.txt`).
+
+The fourteenth round's 23 lines, checked: the 11 `print.rs` proofs in `Printer::list` were read
+again and hold. Of its 12 `empty.rs` lines, 9 count above 0 at 3234d9327 and 10 at this
+round's head (412 is reached by the seed 39491 test below). Two still count 0: the arm
+`None => *shared_none.insert(self.no_keys(&shared).await)` of `find_rep` and its closing brace
+(10891 and 10895 at 3234d9327, 10929 and 10933 at 830393ab0); the same arm's copy at 10971 and
+10975 counts 0 too. No test reaches this arm with a key set not yet in `shared_none`.
+
+A bug fixed, with a test red before the fix: the meets of seed 39491 were Empty in four orders
+of their definitions and Refused(Group) in the order [2, 4, 0, 3, 1] (the class of
+GROUP-order-verdicts). In that order the first search proves the fourth member empty, but only
+past a fork (its cause is `Refusal::Fork`), and since the group's decider had refused it,
+`group_verdicts` refused it at once for that reason, without the fork stages
+(`refine_tuple_forks`) a member refused at a fork alone gets. Which member a fork is put on
+depends on the order the search meets the types, so the verdict did too. Now such a member goes
+on with the undecided members to the fork stages, and only if still refused after them is its
+reason set back to `Refusal::Group`, so the messages of members refused by the decider do not
+change. Test `group_oracle::meets_of_seed_39491_agree_across_orders` (fails before the fix, at
+3234d9327 with the test alone). The line that sets the reason back (`empty.rs` 495 at
+830393ab0) counts 0: no test has a member refused by the decider, proved empty past a fork and
+still refused after the fork stages. It is carried below.
+
+Closed this round, numbered at 3234d9327:
+
+| Line | Closed by | Test or site | Control |
+|---|---|---|---|
+| `empty.rs` 412 (`group_verdicts`), 532 (`refine_tuple_forks`: a member proved Empty at the fork stage) | test | `group_oracle::meets_of_seed_39491_agree_across_orders` | the test fails before the fix |
+| `empty.rs` 9488, 9552, `check_chain_witness`: the empty list against a type; the search for the carrier's head stopping at a tail of another link | test | `the_check_of_a_list_witness_passes_no_list_outside_the_type` | as below |
+| `empty.rs` 9614, 9635, 9649, 9657, 9661, 9676, 9686, `verify_step`: another link or stop, a value beside the atoms, a second stop or link name, a payload not of pairs alone, one row of pairs (a payload that may also be a struct), two self-loops with different items, two rows that do not loop | test | `the_check_of_a_list_witness_passes_no_list_outside_the_type`: twelve list systems, eleven with tails the check gives up on, every list of up to four items from 1 and 2; no list outside the type (`Type::contains`) passes, and every list of the plain type passes | each line was shown reached by a probe printing at it; a pass in place of the `return None` at 9614 or at 9676 fails the test (`a link of another name: [1, 1] passed, not in the type`; `two self-looping rows with different items: [1, 2, 2] passed`). At 9635, 9649, 9657 and 9686 a pass instead fails no test: later steps of the walk still reject those lists |
+| `empty.rs` 9690, `verify_step`: no self-looping row | proof, `debug_assert!` | `rows` has two rows or more, each row is either a self-loop (its head goes into `loop_heads`) or the one `chain_row`, and a second non-loop row returns at 9686; so `loop_heads` has a row. The proof is at the site | none |
+| `empty.rs` 9730-9732, 9734, 9760-9762, 9764, `unfold`: a tail it cannot read, on a path and at its start | test | the same test | the same |
+| `empty.rs` 9949, 9950, 9959, 9979, 9982, 9987, 9996, the hints and the walk of each row | test | the same test, which also tries each hint (`ChainHint::Miss(0)` to `Miss(len + 1)`, and `Len`) on each row of the link payload and requires the answer given with no hint (the hint's doc: one that does not hold costs only the row's walk), plus a row whose tail never stops | `ChainHint::Miss(_) => true` in place of `false` fails it (`plain: [1, 1] with Miss(0) on a row`) |
+
+Not closed, noted: `lift`'s jumps of `2^17` (9933-9934) need a chain of 131072 links or more,
+a benchmark-size input; the reason the loop is needed is in the comment at the site.
+
+Counts, from the coverage run at 830393ab0 (the same groups and per-test pieces; 1304 pieces,
+the two whole-group pieces `group_oracle` and `sweep_agreement` past their limit when
+instrumented at load 62 to 202, and 268 per-test pieces, 0 failed): of the 238 lines, 26 count
+above 0 and 1 is removed by proof. Open 212, carried to TEST-kernel-unreached-paths-9, listed at
+830393ab0 in `wt/coverage/TEST-kernel-unreached-paths-8-kernel18-830393ab0.txt`: `empty.rs` 180
+(the 179 carried and 495 above; `find_prefix_chains` 31, `check_chain_witness` 19, `tuples_on`
+16, the list fallback in `decided` 11, `find_rep` 9, `chain_rep` 8, `morphisms` 6,
+`Side::mentions` 5, the rest spread over many functions), `empty/sweep.rs` 20, `print.rs` 6,
+`bdd.rs` 6.
