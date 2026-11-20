@@ -73,17 +73,35 @@ impl std::fmt::Debug for Spans {
 static PRIORITIES: Priorities = Priorities::new(4);
 
 /// The priority of the span `[l, h]`: the run's random polynomial of degree 4 at a random
-/// polynomial hash of `(l, h)` ([`Priorities::hash`]). Spans of distinct hash streams take
-/// priorities that are 5-wise independent and uniform but for a tie of probability at most
-/// `1/2^58` a pair, so every node's depth is `O(log k)` in expectation for every set of spans
-/// (Seidel and Aragon 1996, Theorem 3.3 and section 6; the proof is in module
+/// polynomial hash ([`Priorities::hash`]) of the ends as [`end_key`]s, not as `Num`s. `Num`'s
+/// `Hash` writes an end in `i64` as 8 bytes and one past it as 16 with nothing between, so two
+/// spans can write one stream (`[0, 2^64 - 1]` and `[-2^64, 0]` both write `0^8, 0xff^8, 0^8`)
+/// and would tie whatever the draw. An [`end_key`] writes its variant first (8 bytes), and the
+/// variant fixes the length of what follows (16 bytes for `Ok`, 1 for `Err`), so the stream of
+/// a pair of keys is read back into the pair: distinct pairs of keys write distinct streams.
+///
+/// The bound. A stream is at most 48 bytes, 6 words and the length word, at most 14 symbols
+/// (two a word, module [`zed_kernel::priority`]), so two spans of distinct keys tie with
+/// probability at most `15/p < 1/2^58` a pair (`p = 2^64 - 59`); the priorities are otherwise
+/// 5-wise independent and uniform, and every node's depth is `O(log k)` in expectation for
+/// every set of spans (Seidel and Aragon, "Randomized search trees", Algorithmica 16, 1996,
+/// doi:10.1007/BF01940876, Theorem 3.3 and section 6: 5-wise independence suffices for
+/// logarithmic expected depth; the full comment and the proof are in module
 /// [`zed_kernel::priority`]), where the fixed hash this replaces had no bound for chosen spans
-/// (COMPLEXITY.md K123). A `Num` outside `i128` hashes by its sign alone (`Num`'s `Hash`), so
-/// spans that differ only in such ends tie whatever the draw, each adding at most one to a
-/// depth: not proved small for chosen spans with ends past `i128` (cost only: a priority
-/// sets a node's place in the treap, never which spans it holds).
+/// (COMPLEXITY.md K123). Two ends outside `i128` of one sign have one key, so spans that
+/// differ only in such ends tie whatever the draw, each adding at most one to a depth: not
+/// proved small for chosen spans with ends past `i128` (cost only: a priority sets a node's
+/// place in the treap, never which spans it holds). Test
+/// `spans_of_one_num_hash_stream_take_two_priorities` (the two spans above, which tied before
+/// [`end_key`]); it cannot catch a tie of probability `15/p`, nor measure the depth.
 fn priority(l: &Num, h: &Num) -> u64 {
-    PRIORITIES.hash(&(l, h))
+    PRIORITIES.hash(&(end_key(l), end_key(h)))
+}
+
+/// An end as a hash key: its value when it is in `i128`, else its sign, the variant telling
+/// the two apart ([`priority`]).
+fn end_key(n: &Num) -> Result<i128, i8> {
+    n.to_i128().ok_or_else(|| n.signum())
 }
 
 /// Whether `a` goes above `b` in the heap of priorities: the higher priority, ties by key.
@@ -347,5 +365,17 @@ mod tests {
             }
             assert_eq!(again, s);
         }
+    }
+
+    /// `Num`'s `Hash` writes an end in `i64` as 8 bytes and an end past it as 16, with nothing
+    /// between two ends, so `[0, 2^64 - 1]` and `[-2^64, 0]` write the same 24 bytes
+    /// (`0^8, 0xff^8, 0^8`, little-endian). Their priorities must still be drawn apart: they
+    /// tie with probability at most `15/p` ([`priority`]), where hashing the two `Num`s as they
+    /// are made them tie under every draw.
+    #[test]
+    fn spans_of_one_num_hash_stream_take_two_priorities() {
+        let a = (num(0), Num::from((1i128 << 64) - 1));
+        let b = (Num::from(-(1i128 << 64)), num(0));
+        assert_ne!(priority(&a.0, &a.1), priority(&b.0, &b.1));
     }
 }
