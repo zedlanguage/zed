@@ -362,8 +362,8 @@ fn layout(source: &str, steps: &[Step], numbers: &[usize]) -> Layout {
     // its characters, only under its first and last on a rule it shares with the rest of its
     // chain, and a step whose text overlaps another's without either holding the other, or one
     // on a chain whose stretches share neither a first nor a last column (`f(g(h(x)))`), gets
-    // no mark at all, only its range in its step line. Why: underlines that nest cannot share a row,
-    // so a line whose steps nest d deep, such as a sum `a0 + a1 + … + an` whose every partial
+    // no mark at all, only its range in its step line. Why: underlines that nest cannot share a
+    // row, so a line whose steps nest d deep, such as a sum `a0 + a1 + … + an` whose every partial
     // sum is a step, would print d rows of up to L columns, O(d·L), quadratic when d grows with
     // L; any layout that draws each nested extent as one connected mark needs as many rows, so
     // the chain's extents must be split into ends. Which stretches: those on a chain of heavy

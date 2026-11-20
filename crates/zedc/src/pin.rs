@@ -100,11 +100,11 @@ pub type Address = Option<Result<Addressed, TooLarge>>;
 /// definition, in dependency order, addressed with each name it uses of an earlier definition
 /// read as that definition's address, and the unit addressed by those it exports, each export
 /// by its address and the names a call may write, its parameters' and those inside its type
-/// ([`canon::export_address`], DESIGN.md sec:units). O(t log t) for definitions of size t in all, the canonicalizer's cost,
-/// O(B) for the bytes of their string literals at all their nodes, each written as its bytes
-/// (author answer A106, 2026-11-20), O(p) for the bytes of the exports' parameter names, and
-/// O(e log e) for e exports. `unit` is elaborated and not evaluated, so its strings are
-/// literals of the source, names or target names, never one computed by `++` (row
+/// ([`canon::export_address`], DESIGN.md sec:units). O(t log t) for definitions of size t in all,
+/// the canonicalizer's cost, O(B) for the bytes of their string literals at all their nodes, each
+/// written as its bytes (author answer A106, 2026-11-20), O(p) for the bytes of the exports'
+/// parameter names, and O(e log e) for e exports. `unit` is elaborated and not evaluated, so its
+/// strings are literals of the source, names or target names, never one computed by `++` (row
 /// PROOF-address-reads-literals-only, proof in crates/zedc-zir/src/canon/serial.rs).
 pub fn address(unit: &Arc<Unit>, exports: &Exports) -> Result<Addressed, TooLarge> {
     let mut known: HashMap<&str, ContentAddress> = HashMap::with_capacity(unit.defs.len());

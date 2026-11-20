@@ -2,12 +2,12 @@
 //! input is read once, whole, the wave runs, and each output is written once, at the end.
 //!
 //! An input `Lines` port is the family of its lines, keyed by line from 0; a `Files`
-//! port is a lookup, `Path ->? String | #ioError(op:, path:, why:)`, answered by the world at each path read and
-//! kept, so the wave sees one value per path. An output `Lines` port takes one whole-value
-//! push, a `String` (one line) or a family of them (one line per entry, in key order); keyed
-//! and multi-site pushes arrive at layer L7. The writes are buffered and committed when the
-//! wave ends, each with its acknowledgment, `#ok` or `#ioError(op:, path:, why:)`; the program has no name
-//! for the acknowledgment, so a failed write takes the default policy and aborts the wave.
+//! port is a lookup, `Path ->? String | #ioError(op:, path:, why:)`, answered by the world at each
+//! path read and kept, so the wave sees one value per path. An output `Lines` port takes one
+//! whole-value push, a `String` (one line) or a family of them (one line per entry, in key order);
+//! keyed and multi-site pushes arrive at layer L7. The writes are buffered and committed when the
+//! wave ends, each with its acknowledgment, `#ok` or `#ioError(op:, path:, why:)`; the program has
+//! no name for the acknowledgment, so a failed write takes the default policy and aborts the wave.
 //!
 //! A [`Record`] holds every input the wave read and the content address of its program, so
 //! [`Program::replay`] runs it again without reading the world, and only against that program
@@ -425,9 +425,9 @@ pub(crate) fn refusal(text: &str, stmts: &[Stmt], e: ast::Error) -> Vec<Diagnost
 }
 
 /// Writes each warning of `warnings`, of the unit read from `file`, which is `at`, that
-/// `suppress` does not name to `out` as `file:` then the warning, then, under `--addresses`, its address on a
-/// line of its own: what `zedc run` and `zedc test` print before they run the unit. Each source
-/// line is shown once over the warnings printed ([`Quoted`]).
+/// `suppress` does not name to `out` as `file:` then the warning, then, under `--addresses`, its
+/// address on a line of its own: what `zedc run` and `zedc test` print before they run the unit.
+/// Each source line is shown once over the warnings printed ([`Quoted`]).
 pub(crate) fn write_warnings(
     out: &mut dyn Write,
     file: &str,
@@ -567,8 +567,8 @@ impl Program {
     /// once, at the first wave or replay. Taking the term before staging also bounds the
     /// cost: staging evaluates build-stage terms, so the staged term can hold a string `++` built
     /// (the program of l01_36a_executables/doubling.rs holds one of 2^63 bytes in shared
-    /// nodes), and a string is written as its bytes (author answer A106, 2026-11-20). Before staging
-    /// every string the term holds is a literal of the source, so the cost is that of
+    /// nodes), and a string is written as its bytes (author answer A106, 2026-11-20). Before
+    /// staging every string the term holds is a literal of the source, so the cost is that of
     /// [`Ports::address`] on the program's text (row PROOF-address-reads-literals-only, proof
     /// in crates/zedc-zir/src/canon/serial.rs).
     pub fn address(&self) -> Result<ContentAddress, String> {
@@ -1474,11 +1474,11 @@ fn command_inner(
 }
 
 /// The program in `file`, built for the machine zedc runs on with the options `on` turned on
-/// ([`crate::unit::package_build`]) and staged ([`Program::stage`]), its warnings that `suppress` does not name
-/// written to `stderr` as `zedc run` writes them, then a line for each address `suppress` names
-/// that no warning has; or the exit status and message: 2 when the file cannot be read or
-/// resolved to the place its addresses name ([`crate::place::Place`]) or an option of `on` is
-/// not one its manifest declares, 1 when the program is rejected (by its package, by the front
+/// ([`crate::unit::package_build`]) and staged ([`Program::stage`]), its warnings that `suppress`
+/// does not name written to `stderr` as `zedc run` writes them, then a line for each address
+/// `suppress` names that no warning has; or the exit status and message: 2 when the file cannot be
+/// read or resolved to the place its addresses name ([`crate::place::Place`]) or an option of `on`
+/// is not one its manifest declares, 1 when the program is rejected (by its package, by the front
 /// end or by `program`), each rejection as `file:line:col: why` and its derivation, followed,
 /// under `--addresses`, by its address, and then a line for each rejection `suppress` names,
 /// since a rejection cannot be suppressed.
@@ -1894,7 +1894,8 @@ mod tests {
         };
         let p = program(stmts, Arc::clone(unit)).expect("one `main`");
         assert!(Arc::ptr_eq(&p.unit, unit));
-        // A refused program, one with no `main`, leaves the front end's unit for the tables, which still read it.
+        // A refused program, one with no `main`, leaves the front end's unit for the tables, which
+        // still read it.
         let front = Db::new().front("f(positional x: int) = x;\n");
         let Ok((stmts, unit, _)) = &*front else {
             panic!("the unit is accepted")

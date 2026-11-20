@@ -1,10 +1,10 @@
 //! The address of a diagnostic and its suppression (DESIGN.md sec:diagnostics, items
 //! DIAG-suppress, DIAG-suppress-rest and DIAG-addr-root). Each diagnostic has an address,
 //! printed under it as `address: <hex>` only with `--addresses`, that is the same on every run of
-//! the same file, from any directory; `--suppress <address>` on `zedc run`, `replay`, `build` and `test` leaves the
-//! warning at that address unprinted. The program is the same with or without it: suppression changes
-//! only what is printed. A rejection cannot be suppressed, and an address that names nothing
-//! is reported.
+//! the same file, from any directory; `--suppress <address>` on `zedc run`, `replay`, `build` and
+//! `test` leaves the warning at that address unprinted. The program is the same with or without it:
+//! suppression changes only what is printed. A rejection cannot be suppressed, and an address that
+//! names nothing is reported.
 //!
 //! The address has two parts. The front end gives each diagnostic the part its unit's text
 //! decides ([`Diagnostic::address`]), so one text read from two files is compiled once

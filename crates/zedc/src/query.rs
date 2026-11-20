@@ -7,14 +7,14 @@
 //! exports of the units it imports, which hold no text position, so an edit inside a unit that
 //! keeps its names resolves none of its importers again; each unit a resolution reads is in its
 //! key as its path, a tag byte (resolved import, failed import, or prelude) and then the number
-//! of its exports or why the import failed. The front end (lexing through elaboration) is keyed by the
-//! unit's text and the build it is compiled for (step L2.8d), since every structure before
+//! of its exports or why the import failed. The front end (lexing through elaboration) is keyed by
+//! the unit's text and the build it is compiled for (step L2.8d), since every structure before
 //! the kernel terms carries byte spans and so
 //! changes with any edit. Step L2.8 adds a unit's content address, keyed by its text as the front
 //! end is and computed from the front end's result, so a build that checks or writes the pins of
-//! many importers of one unit addresses it once. A row of a function's `test` table is keyed by its check and the
-//! definitions the check reaches, and a row of `main`'s table by its key, its value, the
-//! ports, and the definitions `main` and those terms reach: kernel terms carry no spans, so
+//! many importers of one unit addresses it once. A row of a function's `test` table is keyed by its
+//! check and the definitions the check reaches, and a row of `main`'s table by its key, its value,
+//! the ports, and the definitions `main` and those terms reach: kernel terms carry no spans, so
 //! an edit that leaves those definitions alone (a comment, another function, another row)
 //! reuses the row's result. This cutoff is the point of the structure.
 //!

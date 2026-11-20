@@ -421,13 +421,13 @@ impl Package {
     }
 
     /// Each problem as `zedc` prints it, the package's files lying under `root`, the path the
-    /// command line reached the root by: as [`Package::report`], each followed, under `--addresses`, by its
-    /// address on a line of its own, `  address: <hex>`, as every diagnostic prints it, its file's part
-    /// found from the file's path under the package root ([`InFile::named`]), never from
-    /// `root`; then a line for each problem whose address `suppress` names, since a rejection
-    /// cannot be suppressed. After [`Package::report`], O(t) for problems whose files' names
-    /// total t bytes, each name counted once per problem: a hash of it, one BLAKE3 hash and one
-    /// lookup in the suppressed set per problem.
+    /// command line reached the root by: as [`Package::report`], each followed, under
+    /// `--addresses`, by its address on a line of its own, `  address: <hex>`, as every diagnostic
+    /// prints it, its file's part found from the file's path under the package root
+    /// ([`InFile::named`]), never from `root`; then a line for each problem whose address
+    /// `suppress` names, since a rejection cannot be suppressed. After [`Package::report`], O(t)
+    /// for problems whose files' names total t bytes, each name counted once per problem: a hash of
+    /// it, one BLAKE3 hash and one lookup in the suppressed set per problem.
     pub fn report_on_disk(&self, root: &Path, suppress: &mut Suppress) -> Vec<String> {
         let mut out = Vec::with_capacity(self.problems.len());
         let mut refused = Vec::new();

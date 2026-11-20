@@ -826,9 +826,9 @@ impl Site<'_> {
             .collect();
         if let Some(q) = reversed(p) {
             match mark.ints {
-                // H2, where neither operand is a literal, whose neighbors move the bound: the second
-                // of the two points next to the border, derived in MUTATION.md 3.1 (module doc,
-                // the H2 entry of the literature).
+                // H2, where neither operand is a literal, whose neighbors move the bound: the
+                // second of the two points next to the border, derived in MUTATION.md 3.1 (module
+                // doc, the H2 entry of the literature).
                 true if mark.literal == [false; 2] => {
                     let (step, word) = match p {
                         Prim::Lt | Prim::Ge => (Prim::Sub, " - 1"),
