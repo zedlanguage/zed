@@ -9516,8 +9516,7 @@ fn envelope(mut lines: Vec<(Int, Int)>) -> Vec<(Option<Q>, Int, Int)> {
 /// Shared by [`envelope`], `extend`'s `hull_of` (DRY-numeric-shared; two copies before,
 /// the same test written with the operands named apart) and [`UpperHull::of`], whose upper
 /// hull of points `(p, q)` is this envelope of lines `p·x + q`; the test is
-/// [`crate::upper_hull::not_above`] on `(pa, qa)`, `(pb, qb)` and `(pc, qc)`, negated on both
-/// sides.
+/// [`not_above`] on `(pa, qa)`, `(pb, qb)` and `(pc, qc)`, negated on both sides.
 ///
 /// Complexity tradeoff: naive version, each line tested against every pair of the others,
 /// O(n³) products. Used: the monotone chain (Andrew, "Another efficient algorithm for convex
@@ -9533,7 +9532,7 @@ pub(crate) fn upper_envelope<T>(lines: &[T], line: impl Fn(&T) -> (&Int, &Int)) 
             continue;
         }
         while let [.., a, b] = hull[..] {
-            if crate::upper_hull::not_above(line(&lines[a]), line(&lines[b]), (pc, qc)) {
+            if not_above(line(&lines[a]), line(&lines[b]), (pc, qc)) {
                 hull.pop();
             } else {
                 break;
@@ -9542,6 +9541,17 @@ pub(crate) fn upper_envelope<T>(lines: &[T], line: impl Fn(&T) -> (&Int, &Int)) 
         hull.push(j);
     }
     hull
+}
+
+/// Whether `b` lies on or below the line from `a` to `c`, for `a.0 < b.0 < c.0`: the cross
+/// product of `b - a` and `c - a` is at least 0. In the dual picture, where the point `(p, q)`
+/// stands for the line `p·x + q`, it says that line `b` is nowhere above both `a` and `c`,
+/// the test `upper_envelope` pops by. Kept here beside it, not in `upper_hull`, which uses
+/// both, so that the two files import in one direction only (`s_01f_import_graph`).
+pub fn not_above(a: (&Int, &Int), b: (&Int, &Int), c: (&Int, &Int)) -> bool {
+    let (bx, by) = (b.0 - a.0, b.1 - a.1);
+    let (cx, cy) = (c.0 - a.0, c.1 - a.1);
+    &bx * &cy >= &by * &cx
 }
 
 impl<'c> CoreClasses<'c> {

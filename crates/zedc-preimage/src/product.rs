@@ -6390,6 +6390,37 @@ impl Block {
         below.then(|| at.clone())
     }
 
+    /// The part of chain key `k` other than `skip` (a part of the key with ends `skip_ends`)
+    /// whose ends lie at or below every other such part's in every place, when there is one.
+    /// The parts are ordered by their ends, so only the first part that is not `skip` can be
+    /// below all the others; at each place the least end of the others is the least end of
+    /// the key, or the next one when that value is `skip`'s alone (`chain_ends` counts them).
+    /// O(e log k) for e places.
+    fn chain_least_without(
+        &self,
+        k: &Arc<Vec<ChainAtom>>,
+        skip: &PartAt,
+        skip_ends: &[Int],
+    ) -> Option<PartAt> {
+        let (ends, at) = self.chains.get(k)?.iter().find(|(_, j)| j != skip)?;
+        let places = self.chain_ends.get(k)?;
+        let below = ends.len() == places.len()
+            && skip_ends.len() == places.len()
+            && ends
+                .iter()
+                .zip(skip_ends)
+                .zip(places)
+                .all(|((e, s), place)| {
+                    let mut values = place.iter();
+                    match values.next() {
+                        Some((m, 1)) if m == s => values.next().is_some_and(|(m2, _)| m2 == e),
+                        Some((m, _)) => m == e,
+                        None => false,
+                    }
+                });
+        below.then(|| at.clone())
+    }
+
     /// The parts that `fired_chains[k]` (`subset`) held back and that a part `at` of chain key
     /// `k`, with ends `ends`, found idle does not certify, or `None` when it certifies them all.
     /// It certifies a part whose ends lie at or above its own ([`chain_below`]): it implies that
@@ -7973,6 +8004,21 @@ impl Block {
                         // subsumption certifies them otherwise. O(log j) per chain. When the
                         // chain has no least part, or the half-line certificate (`keep`) skips
                         // it, every part is pushed as before.
+                        //
+                        // Complexity tradeoff (PERF-l139-under9, persist): naive version, when
+                        // the half-line certificate skips the least part, every part of the
+                        // chain is read and tried by `keep`, O(j) per chain, so a test whose
+                        // names move wakes and tries all j parts of the chains before it:
+                        // O(k^2) parts over a run of k, 9.4M instructions of 852M at k = 64
+                        // (2,079 `keep` calls). Used: the chain is passed over whole, O(log j).
+                        // Proof that no part P of the chain is lost: `keep` is false only when
+                        // the half-line certificate holds for the least part Q, which says each
+                        // value of each name of Q in its box has an integer point of the base
+                        // and Q ([`HalfLineContext`]). Q's ends lie at or below P's in every
+                        // place and the parts of one chain key have the same terms
+                        // ([`Block::chain_least`]), so Q implies P, and the same points satisfy
+                        // the base and P: a projection of P narrows no box, so waking P changes
+                        // nothing, as for a part `keep` itself skips.
                         let mut push_bucket = |bucket: &RecessionBucket| {
                             for at in &bucket.unchained {
                                 if keep(at) {
@@ -7980,10 +8026,10 @@ impl Block {
                                 }
                             }
                             for ck in bucket.chains.keys() {
-                                if let Some(least) = next.chain_least(ck)
-                                    && keep(&least)
-                                {
-                                    lazy_chains.push((ck.clone(), least));
+                                if let Some(least) = next.chain_least(ck) {
+                                    if keep(&least) {
+                                        lazy_chains.push((ck.clone(), least));
+                                    }
                                     continue;
                                 }
                                 for (_, at) in next.chains.get(ck).into_iter().flatten() {
@@ -14292,7 +14338,28 @@ impl Scope {
                     Some(rest) => rest.iter().any(|j| j != &i),
                     None => b.chains.get(k).is_some_and(|m| m.len() > 1),
                 };
-                if has_other {
+                // Complexity tradeoff: naive version, `idle` (an elimination, about 0.38M
+                // instructions at k = 16 in `persist`) on this part first, and the half-line
+                // certificate of the rest of the chain only when that fails; the half-line
+                // certificate held for each of the 6 parts `idle` refused and `idle` held for
+                // the other 8 of 14, 5.34M instructions at k = 16 and none at k = 2. Used: the
+                // half-line certificate first, O(log j + e) to find the least of the rest of j
+                // parts with e ends and O(r) for the certificate over r rows
+                // ([`Scope::chain_rest_halfline_idle`], whose proof shows every other part of the
+                // chain idle), and `idle` only when it fails. Tradeoffs: when the certificate
+                // holds, this part's verdict and ends are not recorded in `certified` and
+                // `certified_chains`, and the parts held back are left unqueued and not held,
+                // being idle; the walk of a moved name tries the same certificate first
+                // ([`Scope::enqueue_chain_in_case`]). Only in a case: outside a case no test
+                // input of l01_39 dequeued a part again after this dismissal (counted
+                // 2026-11-20, temporary probe: 277 dismissals in the 73 family tests, none
+                // followed by a wake of a part of the chain), so a control that removed the
+                // wake could not go red there, and the gain measured is in a case (`persist`).
+                let rest_idle = self.in_case
+                    && has_other
+                    && subset.is_none()
+                    && self.chain_rest_halfline_idle(&b, k, &i, c_ends, &mut halfline_ctx);
+                if has_other && !rest_idle {
                     let now_idle = !self.bottom && !b.ray_managed && self.idle(&b, part);
                     certified.insert(i.clone(), now_idle);
                     if now_idle {
@@ -14399,6 +14466,7 @@ impl Scope {
                             allow_self,
                             &mut certified,
                             &mut certified_chains,
+                            &mut halfline_ctx,
                             &mut queued,
                             &mut work,
                         );
@@ -14498,6 +14566,7 @@ impl Scope {
                                         allow_self,
                                         &mut certified,
                                         &mut certified_chains,
+                                        &mut halfline_ctx,
                                         &mut queued,
                                         &mut work,
                                     );
@@ -14582,6 +14651,38 @@ impl Scope {
         self.record(b, &start, &due, &ran, &released_loop);
     }
 
+    /// Whether the half-line certificate ([`Scope::part_halfline_idle`]) holds, at the current
+    /// names, for the part of chain key `k` that lies below every part of it other than `cur`
+    /// ([`Block::chain_least_without`]), which then stands for all of them. Never for a block
+    /// whose rays an aggregate manages, which the certificate is not used on either where a
+    /// dequeued part is tested ([`Scope::project_block`]).
+    ///
+    /// Proof that every other part of the chain is then idle. Let R be that part and P any
+    /// other part of the key but `cur`. R's ends lie at or below P's in every place, so R
+    /// implies P, as in [`Scope::idle_by_chain`]'s proof, and R and the base imply P and the
+    /// base. The certificate says that R and the base hold at some point over every value of
+    /// the box; that point satisfies P and the base, so P is idle by the same certificate.
+    /// The caller leaves such parts unqueued. Each has been projected once already: a part
+    /// whose key has no entry in [`Scope::projected`] is due when its block is projected,
+    /// since a new part is due ([`Block::enter`]) and each entry removed puts its part in
+    /// [`Block::forgot`], due at the next update, or drops the blocks ([`Seen::drop_blocks`]),
+    /// so the parts left unqueued keep the rule that a first projection is always made. A
+    /// part left unqueued is woken again when one of its names moves later, as a part
+    /// certified idle when dequeued is.
+    fn chain_rest_halfline_idle(
+        &self,
+        b: &Block,
+        k: &Arc<Vec<ChainAtom>>,
+        cur: &PartAt,
+        cur_ends: &[Int],
+        halfline_ctx: &mut BTreeMap<NamePair, Option<HalfLineContext>>,
+    ) -> bool {
+        !b.ray_managed
+            && b.chain_least_without(k, cur, cur_ends)
+                .and_then(|at| b.parts.get(&at).cloned())
+                .is_some_and(|p| !b.managed(&p) && self.part_halfline_idle(b, &p, halfline_ctx))
+    }
+
     #[allow(clippy::too_many_arguments)]
     fn enqueue_chain_in_case(
         &mut self,
@@ -14591,6 +14692,7 @@ impl Scope {
         allow_self: bool,
         certified: &mut BTreeMap<PartAt, bool>,
         certified_chains: &mut BTreeMap<Arc<Vec<ChainAtom>>, Vec<Int>>,
+        halfline_ctx: &mut BTreeMap<NamePair, Option<HalfLineContext>>,
         queued: &mut BTreeSet<PartAt>,
         work: &mut std::collections::VecDeque<PartAt>,
     ) {
@@ -14601,6 +14703,15 @@ impl Scope {
         {
             if &least_at == cur && !allow_self {
                 if b.chains.get(&ck).is_none_or(|m| m.len() <= 1) {
+                    return;
+                }
+                // The half-line certificate of the rest first, then `idle` of this part only
+                // when it fails: either one leaves the rest unqueued, and the certificate costs
+                // O(log j + e + r) where `idle` is an elimination (see the post-projection test
+                // in [`Scope::project_block`]).
+                if lp.chain.as_ref().is_some_and(|(_, ends)| {
+                    self.chain_rest_halfline_idle(b, &ck, cur, ends, halfline_ctx)
+                }) {
                     return;
                 }
                 let now_idle = match certified.get(cur) {

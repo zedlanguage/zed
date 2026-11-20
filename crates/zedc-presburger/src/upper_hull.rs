@@ -3,19 +3,10 @@
 //! (PERF-l139-ray-hull, moved here from `zedc-preimage`'s `RayHull` so that other crates can
 //! use it).
 
+pub use crate::presburger::not_above;
 use crate::presburger::upper_envelope;
 use zed_collections::search::first_true;
 use zedc_int::int::Int;
-
-/// Whether `b` lies on or below the line from `a` to `c`, for `a.0 < b.0 < c.0`: the cross
-/// product of `b - a` and `c - a` is at least 0. In the dual picture, where the point `(p, q)`
-/// stands for the line `p·x + q`, it says that line `b` is nowhere above both `a` and `c`,
-/// the test `presburger::upper_envelope` pops by.
-pub fn not_above(a: (&Int, &Int), b: (&Int, &Int), c: (&Int, &Int)) -> bool {
-    let (bx, by) = (b.0 - a.0, b.1 - a.1);
-    let (cx, cy) = (c.0 - a.0, c.1 - a.1);
-    &bx * &cy >= &by * &cx
-}
 
 /// The upper convex hull of a set of points, as its vertices from least `x` to greatest, no
 /// three on a line, of each `x` only the point of greatest `y`.
