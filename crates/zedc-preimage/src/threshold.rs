@@ -18,15 +18,15 @@
 //! end are the limits of the bounds there.
 //!
 //! Proof of the claims above, step by step at the code that relies on each: why the least and
-//! greatest members exist and the propagation finds them, at [`members`]; why a run at an
-//! unbounded end gives the limit, at [`At`]; why the hub's values that pass are `p..=c*` and
-//! the names' bounds are those at `p`, and why the searches end, at [`rising`]; the mirror at
-//! [`solve`]; the join at [`mixed`]. The smaller-of-two step, checked: for two points `s` and
+//! greatest members exist and the propagation finds them, at `members`; why a run at an
+//! unbounded end gives the limit, at `At`; why the hub's values that pass are `p..=c*` and
+//! the names' bounds are those at `p`, and why the searches end, at `rising`; the mirror at
+//! [`solve`]; the join at `mixed`. The smaller-of-two step, checked: for two points `s` and
 //! `t` that pass and `u` their componentwise minimum, `u_x` is `s_x` or `t_x`, so it is one of
 //! `x`'s values; `x <= U` holds at `u` because `u_x <= s_x`; `y >= L` holds because both
 //! `s_y` and `t_y` are at least `L`; and a part `x <= U || y >= L` holds because either both
 //! `s_y, t_y >= L`, or one of them, say `s_y`, is below `L`, so `s_x <= U` and `u_x <= U`. The
-//! maximum is the same with the arms' roles swapped. [`members`] does not use this step; it
+//! maximum is the same with the arms' roles swapped. `members` does not use this step; it
 //! proves directly that its result is the least point.
 //!
 //! Tests: `l01_39_scope_relations::xst::threshold` compares [`solve`] with enumeration on
@@ -432,10 +432,10 @@ fn mirrored(sys: &System) -> System {
 /// O(N log N), and the binary search for the hub's greatest value that passes makes O(log W)
 /// of them.
 ///
-/// Every coefficient at most 0: [`mirrored`] is the component in `w' = -w`, whose
-/// coefficients are at least 0 (`x + k*w = x + (-k)*w'`), so [`rising`] solves it; the names'
+/// Every coefficient at most 0: `mirrored` is the component in `w' = -w`, whose
+/// coefficients are at least 0 (`x + k*w = x + (-k)*w'`), so `rising` solves it; the names'
 /// bounds are the same, and the hub's values are negated back. A coefficient of 0 counts as
-/// neither sign, so a component with all coefficients 0 goes to [`rising`], where (1) of its
+/// neither sign, so a component with all coefficients 0 goes to `rising`, where (1) of its
 /// proof holds with equality. The mirror adds O(N + P) for the hub's P pieces
 /// (`IntervalSet::neg`), once.
 pub fn solve(sys: &System) -> Answer {

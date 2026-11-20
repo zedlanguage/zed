@@ -246,7 +246,7 @@ pub fn preimage(term: &Term, inputs: &Domains, demand: &Demand) -> Preimage {
 /// [`preimage`], the domains of the names in `listed` being sets whose members the source
 /// lists (`x: {0, 1, 2}`), each holding no member the source does not list: a box over them
 /// may be enumerated (`enumerate`). A domain the source gives as a range (`int[0..=2]`) is
-/// not listed, whatever its width. Its cost beyond [`preimage`]'s is that of [`enumerate`],
+/// not listed, whatever its width. Its cost beyond [`preimage`]'s is that of `enumerate`,
 /// `O(L)` evaluations of the term for the `L` members the source lists, given there.
 pub fn preimage_listed(
     term: &Term,
@@ -1920,14 +1920,14 @@ fn keep_all(fs: Vec<Formula>) -> Formula {
 /// when it is an integer, so a term over any other carrier is `None`.
 ///
 /// Proof that, when every name of `inputs` holds only `int`s, every linear term read stands
-/// for an integer and its operation is the interpreter's. By induction on [`Walk::lin_at`]:
+/// for an integer and its operation is the interpreter's. By induction on `Walk::lin_at`:
 /// a constant is read only as `Value::Int` or `Value::Big` (any other value is `None`); a
 /// free name is an atom only when `cx.has` it (`Node::Var`, otherwise `None`), and `cx` is
 /// `inputs`; a bound name or a call reads the term it is bound to, or the callee's body over
 /// the arguments' terms, so over integers; and the operations read (`+`, `-`, unary `-`,
 /// `*`, `x ^ 0`, `x ^ 1`, `x ^ 2`, `div` and `mod`, `min`, `max`, `abs`, `if`) take integers
 /// to integers with the integer meaning; a power by any other exponent is `None`. The
-/// comparisons of [`Walk::formula_at`] compare such terms. So the one premise is the
+/// comparisons of `Walk::formula_at` compare such terms. So the one premise is the
 /// caller's filter, which is not checked here. Tests: `l01_38_presburger::carrier`
 /// (`float_associativity_is_not_proved`, `rational_and_generic_parameters_are_not_read_as_integers`,
 /// `a_float_times_zero_and_a_float_power_are_not_read_as_integers`, and the others there,
@@ -10207,7 +10207,7 @@ impl<'m, 't> Walk<'m, 't> {
     /// other variable are those without it.
     ///
     /// The steps in full. (1) Every read of a scope is [`Tx::lookup`] of the name `x` of a term
-    /// `Node::Var(x)` the walk is at (each `lookup` call in this file is so; [`Walk::followed`]
+    /// `Node::Var(x)` the walk is at (each `lookup` call in this file is so; `Tx::followed`
     /// too), and a free name is read from `cx` by its text, which for `c` holds `#`, which no
     /// written name holds ([`Tx::canonical`]). (2) Let `e_p` be the scope [`Walk::canonical_env`]
     /// makes when it binds `p` ([`Tx::bind`], a persistent map updated at one name). Every pair
@@ -12320,18 +12320,18 @@ impl LetPa {
     /// and changes it where an input changes, pays for those inputs alone (item
     /// PA-let-narrow-many).
     ///
-    /// Why this is [`LetPa::image`] over those integers. (1) [`Tot`] is a sum of one
+    /// Why this is [`LetPa::image`] over those integers. (1) `Tot` is a sum of one
     /// contribution per term, each a finite part and counts of infinite ends, no value and no
-    /// domain, and [`Tot::plus`] adds them componentwise: a commutative group, with
-    /// [`Tot::put`] at `k = -1` the inverse of `k = 1`. (2) The shift of `v`
-    /// ([`Sep::shift`]) is its new contribution, the bounds of its term as it stands over
+    /// domain, and `Tot::plus` adds them componentwise: a commutative group, with
+    /// `Tot::put` at `k = -1` the inverse of `k = 1`. (2) The shift of `v`
+    /// (`Sep::shift`) is its new contribution, the bounds of its term as it stands over
     /// `ints`, less the one `tot` holds for it, its bounds when put in times the factors taken
     /// since (`scale / at`, exact). So `tot + shift(v)` is `tot` with `v`'s contribution
     /// replaced, and so on for each input `s` sums, provided `s` holds at most one shift of
-    /// each input (the caller's tree keeps one per input). (3) [`Tot::bounds`] reads the
-    /// sums and counts as [`Sep::bounds`] reads the terms one by one: no value wins (the sum
+    /// each input (the caller's tree keeps one per input). (3) `Tot::bounds` reads the
+    /// sums and counts as `Sep::bounds` reads the terms one by one: no value wins (the sum
     /// has a value only where every term has one), then no domain, then the infinite end that
-    /// moves a bound outward ([`Val::plus`]). The one difference: `Sep::bounds` stops at the
+    /// moves a bound outward (`Val::plus`). The one difference: `Sep::bounds` stops at the
     /// first term with no domain or no value, so with both it may give `None` where this
     /// gives the empty set, which is also sound. Test: `l01_39a_bit_words::bench::scaling::
     /// a_chain_of_sums_under_a_test_of_each_input_reads_each_summary_from_the_one_before` and
@@ -12361,7 +12361,7 @@ impl LetPa {
     /// formed from `base` and a few more terms costs those terms (`O(m log k)`).
     ///
     /// Why an input not listed has the same shift in both: the shift of `v` over given
-    /// integers ([`Sep::shift`]) reads only whether the sum keeps a total, `v`'s entry
+    /// integers (`Sep::shift`) reads only whether the sum keeps a total, `v`'s entry
     /// `(pa, at, bounds)` of `terms` and the sum's `scale`. With both keeping a total (else
     /// `None` above), the scales equal and the entry equal in both maps (no `Update`,
     /// `Add` or `Remove` at `v` in their difference), both read the same values, so both give

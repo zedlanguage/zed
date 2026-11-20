@@ -85,7 +85,7 @@ impl Ord for Address {
     /// once a run makes a closure of it (`ReadsMemo`), so an address used as a map key keeps
     /// its place after a run (plan row TEST-reads-memo-not-in-key): the only reader of that
     /// memo is `Shared::reads_memo`, which is `pub(crate)` in zed-kernel (src/term.rs), so no
-    /// code in this crate can read it, and this reads the digest, the node id and [`order`].
+    /// code in this crate can read it, and this reads the digest, the node id and `order`.
     /// Test `address::tests::a_run_of_the_canonical_term_does_not_change_the_address`; it
     /// cannot catch a later change that makes the memo public and reads it here.
     fn cmp(&self, other: &Address) -> Ordering {

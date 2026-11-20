@@ -4710,7 +4710,7 @@ pub type PartKey = (Arc<Formula>, Option<Arc<str>>);
 /// conjunct reaches it only through the values that group leaves that variable, of which the
 /// names' products keep only the interval and class the constraints' own part gives; so this
 /// rule is sound but not exact: a part not made due can be coarser than the enumeration
-/// (the proof and the example at [`Split::with`]). So a constraint on other names alone
+/// (the proof and the example at `Split::with`). So a constraint on other names alone
 /// does not make a conjunct's part due, and a new
 /// constraint costs the parts that hold two variables of its group and not the block's (the walk
 /// `v_i + w <= 0 || v_(i+1) - w >= 1` through the shared name `w`). The
