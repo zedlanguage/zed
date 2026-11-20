@@ -3061,6 +3061,32 @@ fn cells_whose_union_arms_differ_in_order_agree_across_orders() {
     verdicts_agree_across_orders("cells", gen_cells, &[1588], (true, true));
 }
 
+/// A system of the mixed family (seed 146, found 2026-11-20, TEST-kernel-unreached-paths-13)
+/// that `other_families_agree_across_orders` drew in four runs of 32 (ZED_TEST_SEED 1, 10, 12
+/// and 14), the one system those runs share; it is the only system of them on which the search
+/// reaches two of its branches (`empty.rs`, TEST-kernel-unreached-paths-13 in COMPLETENESS.md).
+/// It agrees in every order tried, and with the pool of values (`compare`): its two members are
+/// both inhabited, and the pool finds a value of each.
+#[test]
+fn the_mixed_system_of_seed_146_agrees_across_orders_and_with_its_pool() {
+    verdicts_agree_across_orders("mixed", gen_mixed, &[146], (true, true));
+    let sys = gen_mixed(&mut Rng::new(146));
+    let mut tally = Tally::default();
+    compare(&sys, "mixed146", &mut tally);
+    let t = &tally;
+    assert_eq!((t.systems, t.members, t.rejected), (1, 2, 0), "{t:?}");
+    assert_eq!(
+        (t.empty, t.inhabited, t.refused, t.open),
+        (0, 2, 0, 0),
+        "{t:?}"
+    );
+    assert_eq!(
+        (t.reruns, t.unsettled, t.conservative, t.missed, t.searched),
+        (0, 0, 0, 0, 0),
+        "{t:?}"
+    );
+}
+
 /// Groups of four, five and six definitions of the X14 family give the same verdicts in every
 /// order tried, up to the reason of a refusal (GROUP-closure-order).
 #[test]

@@ -827,9 +827,10 @@ impl<A: Literal> Form<A> {
     fn holds(&self, e: &Arc<Expr<A>>) -> bool {
         let is_e = |p: &Part<A>| matches!(p, Part::Expr(x) if Arc::ptr_eq(x, e));
         match self {
-            // Not reached: the one caller, `Connect::negate`, asks this of a form only in its
-            // branch for a choice, which it takes after its branch for a form `Not` declined, so
-            // the form is an `Or` or an `And`. Kept so that the answer holds for every form.
+            // Not reached by product code: the one caller, `Connect::negate`, asks this of a form
+            // only in its branch for a choice, which it takes after its branch for a form `Not`
+            // declined, so the form is an `Or` or an `And`. Kept so that the answer holds for
+            // every form; the test `a_form_not_holds_its_operand_alone` checks it.
             Form::Not(p) => is_e(p),
             Form::Or(p, q) | Form::And(p, q) => is_e(p) || is_e(q),
         }

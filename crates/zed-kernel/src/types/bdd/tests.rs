@@ -3077,6 +3077,37 @@ fn a_clause_reads_a_shared_operand_once() {
     assert_eq!(r.clause(), Some((vec![atom(4), atom(5)], vec![])));
 }
 
+/// Item TEST-kernel-unreached-paths-13: the complement of `!x_0` kept as an expression of the
+/// literal `x_0`, a form only tests make (product code makes `Form::Not` only of an expression,
+/// `Connect::negate`), is `x_0`, kept as a complement that is no expression (`Expr::link`), the
+/// same when asked again; made from the form as written (`Part::of_form`), it is `x_0` too.
+#[test]
+fn the_complement_of_the_complement_of_a_literal_kept_as_an_expression_is_the_literal() {
+    let l0 = Part::literal(atom(0));
+    let e = Part::not_expr(l0.clone());
+    assert_eq!(e.not(), l0);
+    let Part::Expr(x) = &e else {
+        unreachable!("`Part::not_expr` makes an expression")
+    };
+    assert_eq!(x.complement.get(), Some(&l0), "the complement kept");
+    assert_eq!(e.not(), l0, "the complement kept, read again");
+    assert_eq!(Part::of_form(Form::Not(l0.clone())).not(), l0);
+}
+
+/// Item TEST-kernel-unreached-paths-13: the operand of a form `Not` is held by it, and nothing
+/// else is (`Form::holds`, whose one caller asks it only of an `Or` or an `And`).
+#[test]
+fn a_form_not_holds_its_operand_alone() {
+    let e = Part::not_expr(Part::literal(atom(0)));
+    let n = Part::not_expr(e.clone());
+    let (Part::Expr(x), Part::Expr(y)) = (&e, &n) else {
+        unreachable!("`not_expr` makes an expression");
+    };
+    assert!(y.form().holds(x));
+    assert!(!y.form().holds(y));
+    assert!(!x.form().holds(x), "the operand of `x` is a literal");
+}
+
 #[test]
 fn disjoint_disjuncts_read_a_shared_union_once() {
     let n = |i| Part::not_expr(Part::literal(atom(i)));

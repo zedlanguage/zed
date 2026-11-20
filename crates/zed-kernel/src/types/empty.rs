@@ -3208,10 +3208,25 @@ impl Search {
 
     /// Takes out the blame of `c` added from epoch `ep` on, keeping the blame of other types in
     /// its order. The epochs of the blame rise, so its start is found by binary search.
+    ///
+    /// `blame` is `Some` here (TEST-kernel-unreached-paths-13; this was a `let ... else` that
+    /// returned no blame, which no test reached). Proof:
+    /// 1. `Search::blame` is fixed for the life of a search. It is set only where a search is
+    ///    built: `Some(Blames::default())` in `group_verdicts`, `refine_tuple_forks` and
+    ///    `Type::empty_past_forks`, and `None` through the derived `Search::default()` everywhere
+    ///    else. No code assigns it after that (every other use reads it or changes its
+    ///    contents through `as_ref`, `as_mut` or `&mut`), and `Search` is not `Clone`.
+    /// 2. The four callers, `take_fork`, `discard_since`, `take_all_since` and
+    ///    `take_blame_on_false`, reach this call only with `(c, ep)` taken out of a snapshot that
+    ///    is `Some` (`snap?`, or `let Some(..) = snap else { return; }`), of the search they
+    ///    are called on (`self.fork_snapshot()` of the same `Searching`, at every call site).
+    /// 3. A snapshot is made only by `fork_snapshot`, which returns `None` when `blame` is
+    ///    `None` (`s.blame.as_ref()?`).
+    ///
+    /// By 2 and 3 this search had `blame` set when the snapshot was made, and by 1 it still has.
     fn take_blame_since(&mut self, c: Option<usize>, ep: usize) -> Vec<(usize, Refusal)> {
-        let Some(b) = &mut self.blame else {
-            return Vec::new();
-        };
+        let b = (self.blame.as_mut())
+            .expect("a snapshot is made only in a search with blame (proof above)");
         let start = b.partition_point(|&(_, _, e)| e < ep);
         let mut saved = Vec::new();
         let mut k = start;
@@ -5163,9 +5178,14 @@ impl<'m> Searching<'m> {
                     s.canonical_ready[t] = false;
                 }
             }
-            if let Some(blame) = &mut s.blame {
-                blame.retain(|&(x, _, _)| x >= reset.len() || !reset[x]);
-            }
+            // `blame` is `Some` (TEST-kernel-unreached-paths-13; this was an `if let` whose
+            // other branch no test reached). Proof: the one call of this function is
+            // `d.settle_canonical_blame(&undecided)` in `group_verdicts`, whose `d` is built
+            // there with `blame: Some(Blames::default())`, and `blame` is fixed for the life of
+            // a search (the proof at `Search::take_blame_since`, step 1).
+            let blame = (s.blame.as_mut())
+                .expect("only `group_verdicts` settles blame, in a search with blame");
+            blame.retain(|&(x, _, _)| x >= reset.len() || !reset[x]);
             for (t, &r) in reset.iter().enumerate() {
                 if r {
                     for (packed, _) in s.take_reads(t) {
@@ -5606,9 +5626,16 @@ impl<'m> Searching<'m> {
                 s.push_read(c, packed, ep);
             }
         }
-        if let Some(b) = &mut s.blame {
-            b.extend(blame.into_iter().map(|(x, r)| (x, r, ep)));
-        }
+        // `blame` is `Some` (TEST-kernel-unreached-paths-13; this was an `if let` whose other
+        // branch no test reached). Proof: a `ForkSave` is made only by `take_fork`,
+        // `take_all_since` and `take_blame_on_false` (directly, or through `empty_fork`, which
+        // returns what `take_fork` gives; `forked_holds` and the lists of blamed arms only keep
+        // those), each after taking `(c, ep)` out of a snapshot that is `Some`, of this same
+        // search; so by steps 2 and 3 of the proof at `Search::take_blame_since` this search has
+        // `blame`, and by its step 1 it still has.
+        let b = (s.blame.as_mut())
+            .expect("a fork's save is made only in a search with blame (proof above)");
+        b.extend(blame.into_iter().map(|(x, r)| (x, r, ep)));
     }
 
     /// Whether one of `ts` is empty, tried in order up to the first that is without a fork, or
@@ -14894,13 +14921,27 @@ fn affine_lists_empty(t: &Type) -> Option<bool> {
             },
         }
     }
+    // An operand's states are closed under its steps (TEST-kernel-unreached-paths-13; the two
+    // arms below answered 3, which no test reached). Proof: the loop that builds `own` pushes,
+    // for each state `i` it adds, every type `st.named` or `st.rest` of `i` steps to onto `todo`;
+    // each type popped from `todo` gets its number (made then, or found in `number`) and is in
+    // `own` (added, or already there) unless the function returned `None`. So when the loop
+    // ends, `number[r]` is in `own` for every type `r` that `step` gives from a state of `own`.
+    // Also `own` holds one or two states: it is cut at a third (`own.len() > 2` returns `None`),
+    // and an empty `own` (no rows) returns `None` at `start`. Hence for `[x]` a step goes to `x`
+    // or nowhere, and no third shape of `own` occurs.
     let act = |own: &[usize], v: Option<&Value>| -> u8 {
         let to = |i: usize| step(&states[i], v).map(|r| number[r]);
         match own {
             [x] => match to(*x) {
                 None => 0,
-                Some(y) if y == *x => 1,
-                Some(_) => 3,
+                Some(y) => {
+                    assert_eq!(
+                        y, *x,
+                        "a state steps only to a state of its operand (proof above)"
+                    );
+                    1
+                }
             },
             [x, y] => match (to(*x), to(*y)) {
                 (None, None) => 0,
@@ -14908,7 +14949,7 @@ fn affine_lists_empty(t: &Type) -> Option<bool> {
                 (Some(a), Some(b)) if a == *y && b == *x => 2,
                 _ => 3,
             },
-            _ => 3,
+            _ => unreachable!("an operand has one or two states (proof above)"),
         }
     };
     // Per operand: whether it constrains the end, and the change it needs (first state to the

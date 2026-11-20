@@ -5399,26 +5399,7 @@ fn r6_oracle_run_with(what: &'static str, count: usize, np_max: u64, nr_max: u64
     let mut counts = std::collections::BTreeMap::new();
     for i in 0..count {
         let x = r6_random_input(&mut g, np_max, nr_max, alt_rows);
-        let truth = r6_oracle(&x);
-        let t = r6_input_type(&x, &format!("_r6o{seed}_{i}"));
-        Type::forget_emptiness();
-        let ch = t.chain_verdict();
-        Type::forget_emptiness();
-        let v = t.verdict();
-        let wrong = |y: &Verdict| {
-            matches!(
-                (y, truth),
-                (Verdict::Empty, true) | (Verdict::Inhabited, false)
-            )
-        };
-        assert!(
-            !wrong(&v),
-            "verdict {v:?} truth {truth} on {x:?}, ZED_TEST_SEED={seed}"
-        );
-        assert!(
-            !ch.as_ref().is_some_and(wrong),
-            "chains {ch:?} truth {truth} on {x:?}, ZED_TEST_SEED={seed}"
-        );
+        let (truth, v, ch) = r6_check(&x, &format!("_r6o{seed}_{i}"), seed);
         *counts
             .entry(format!("truth {truth} {v:?} chains {ch:?}"))
             .or_insert(0usize) += 1;
@@ -5426,6 +5407,103 @@ fn r6_oracle_run_with(what: &'static str, count: usize, np_max: u64, nr_max: u64
     for (k, c) in &counts {
         eprintln!("r6 oracle seed {seed} {k}: {c}");
     }
+}
+
+/// Checks the verdict and the chain sweep's verdict of `x`, built with suffix `tag`, against the
+/// oracle, cold; returns the oracle's answer and the two verdicts. `seed` is printed on failure.
+fn r6_check(x: &R6Input, tag: &str, seed: u64) -> (bool, Verdict, Option<Verdict>) {
+    let truth = r6_oracle(x);
+    let t = r6_input_type(x, tag);
+    Type::forget_emptiness();
+    let ch = t.chain_verdict();
+    Type::forget_emptiness();
+    let v = t.verdict();
+    let wrong = |y: &Verdict| {
+        matches!(
+            (y, truth),
+            (Verdict::Empty, true) | (Verdict::Inhabited, false)
+        )
+    };
+    assert!(
+        !wrong(&v),
+        "verdict {v:?} truth {truth} on {x:?}, ZED_TEST_SEED={seed}"
+    );
+    assert!(
+        !ch.as_ref().is_some_and(wrong),
+        "chains {ch:?} truth {truth} on {x:?}, ZED_TEST_SEED={seed}"
+    );
+    (truth, v, ch)
+}
+
+/// A case of `r6_carrier_and_chains_against_brute_force_4` (seed 3, input 322, found
+/// 2026-11-20, TEST-kernel-unreached-paths-13) on which the chain sweep counts the refused
+/// elements a side row's link meets (`empty/sweep.rs`, the loop over `side_units`). Random seeds
+/// reached the line in eight runs of 32.
+#[test]
+fn r6_a_side_row_counted_by_head() {
+    let h = |cof, mask| R6Head { cof, mask };
+    use R6Tail::{Car, End, Node};
+    let x = R6Input {
+        carrier: Some(h(true, 1)),
+        pool: vec![
+            (true, h(true, 1), Car, None),
+            (false, h(true, 0), Node(0), Some(h(true, 0))),
+            (false, h(false, 1), End, None),
+            (false, h(true, 2), Node(1), Some(h(true, 0))),
+            (true, h(true, 1), Car, None),
+            (false, h(true, 0), Node(4), None),
+            (false, h(false, 1), End, None),
+            (false, h(true, 2), Node(5), None),
+        ],
+        taken: vec![(h(true, 6), Node(5))],
+        refused: vec![
+            (h(true, 2), Node(2)),
+            (h(true, 0), Node(0)),
+            (h(true, 2), Node(6)),
+            (h(true, 0), Car),
+            (h(true, 6), Node(4)),
+            (h(true, 0), Node(1)),
+        ],
+    };
+    assert_eq!(
+        r6_check(&x, "_r6sidecount", 3),
+        (false, Verdict::Empty, None),
+        "the oracle finds no word; the verdict is `Empty` and the chain sweep declines"
+    );
+}
+
+/// A case of `r6_carrier_and_chains_against_brute_force_4` (seed 3, input 376, found
+/// 2026-11-20, TEST-kernel-unreached-paths-13) on which the search's row of the taken rows' heads
+/// less the refused rows' heads holds a value (`empty.rs`, `row_rep(&safe, ..)` returns it).
+/// Random seeds reached the line in five runs of 32.
+#[test]
+fn r6_a_safe_row_holds_a_value() {
+    let h = |cof, mask| R6Head { cof, mask };
+    use R6Tail::{End, Node};
+    let x = R6Input {
+        carrier: Some(h(true, 0)),
+        pool: vec![
+            (true, h(true, 4), End, Some(h(true, 4))),
+            (true, h(true, 2), End, None),
+            (true, h(true, 4), Node(1), Some(h(true, 4))),
+            (false, h(true, 0), Node(0), None),
+            (true, h(true, 4), End, None),
+            (true, h(true, 2), End, None),
+            (true, h(true, 4), Node(5), None),
+            (false, h(true, 0), Node(4), None),
+        ],
+        taken: vec![(h(true, 2), Node(2))],
+        refused: vec![
+            (h(false, 7), End),
+            (h(false, 7), Node(7)),
+            (h(true, 1), Node(5)),
+        ],
+    };
+    assert_eq!(
+        r6_check(&x, "_r6safe", 3),
+        (true, Verdict::Inhabited, None),
+        "the oracle finds a word; the verdict is `Inhabited` and the chain sweep declines"
+    );
 }
 
 /// 500 random inputs (800 until TEST-bench-move-l0123, author P169: 0.50 s alone, now about

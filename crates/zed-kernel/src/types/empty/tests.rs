@@ -1123,6 +1123,15 @@ fn types_that_meet_are_joined_at_the_seeds_that_split_by_order() {
     }
 }
 
+/// A seed of [`types_that_meet_are_joined_in_random_groups_holding_lower_types`] whose cases
+/// place a nonempty tuple of shapes as a group's witness (`empty.rs`, `horn_witness_group`,
+/// `Rep::Tuple(vs) => !vs.is_empty()`; found 2026-11-20, TEST-kernel-unreached-paths-13).
+/// Random seeds reached that line in about half of the runs.
+#[test]
+fn types_that_meet_are_joined_at_a_seed_that_places_a_tuple_witness() {
+    joined_in_random_groups_holding_lower_types(5);
+}
+
 /// 400 cases of random groups from `seed` ([`check_classes`]).
 fn joined_in_random_groups_holding_lower_types(seed: u64) {
     let mut s = Xorshift64::new(seed | 1);

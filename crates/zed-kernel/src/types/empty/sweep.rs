@@ -1845,7 +1845,14 @@ pub(super) fn list_sweep_checked(t: &Type) -> Option<Option<Value>> {
             let v = actual?;
             check_actual(t, &v).then_some(Some(v))
         }
-        Verdict::Refused(_) => None,
+        // Not reached (TEST-kernel-unreached-paths-13; this arm answered `None`, which no test
+        // reached). Proof: `list_sweep_value` gives no refusal. Each of its returns is one of
+        // `None` (written out, or by `?` on an `Option`), `Some(Verdict::Inhabited)` (after the
+        // short escape), `Some(Verdict::Empty)` (no open class, or `sw.walk` finding no list),
+        // or the closure `witness`, whose own returns are `None` and `Some(Verdict::Inhabited)`;
+        // its body ends in a `loop` with no `break` of its own (the one `break` leaves the inner
+        // `while let`), so no value falls out of the end.
+        Verdict::Refused(r) => unreachable!("the list sweep refused ({r:?}); it never does"),
     }
 }
 

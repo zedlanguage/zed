@@ -231,6 +231,41 @@ fn random_parts_of_one_choice_per_component_are_decided_as_enumeration_decides_t
     });
 }
 
+/// A part of `random_parts_of_one_choice_per_component_are_decided_as_enumeration_decides_them`
+/// (ZED_TEST_SEED=5, draw 63, found 2026-11-20, TEST-kernel-unreached-paths-13) on which the
+/// pass picks the rest of a component both ways (`empty.rs`, `Choices::rest_choice`): a value of
+/// no open cell on component 1, which is `top`, and the first open cell not mentioned on
+/// component 0, which holds 0, 1 and 3. Random seeds reached those lines in one run of six.
+#[test]
+fn a_part_whose_rest_is_chosen_both_by_cell_and_by_a_value_of_no_cell() {
+    let chain = |rows: &[(usize, usize, bool)]| Box::new(F::Chain(rows.to_vec()));
+    let not = |f: Box<F>| Box::new(F::Not(f));
+    let f = F::Or(
+        Box::new(F::And(
+            not(chain(&[
+                (0, 1, true),
+                (0, 1, true),
+                (0, 0, false),
+                (0, 1, false),
+                (0, 0, true),
+                (0, 1, false),
+            ])),
+            not(chain(&[
+                (0, 2, true),
+                (0, 1, true),
+                (0, 3, false),
+                (0, 2, false),
+            ])),
+        )),
+        chain(&[(1, 0, false), (1, 1, false), (1, 0, false), (1, 0, false)]),
+    );
+    let boxed = vec![vec![0, 1, 3], (0..VALUES).chain([OUTSIDE]).collect()];
+    let b = Type::tuple(vec![Type::union_all([0, 1, 3].map(lit)), Type::top()]);
+    zed_tests::deep::on_small_stack(|| {
+        decide_in(&b, &boxed, 2, &f);
+    });
+}
+
 /// A random decision list or exclusive or on the components `on`, under one `!` or none.
 fn random_leaf(g: &mut Rng, on: &[usize]) -> F {
     let atom = |g: &mut Rng| (on[g.below(on.len())], g.below(VALUES));
