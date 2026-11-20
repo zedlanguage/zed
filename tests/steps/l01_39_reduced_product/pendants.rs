@@ -455,7 +455,12 @@ fn points(cons: &[Cmp], boxes: &BTreeMap<String, Piece>, far: i64, exact: bool) 
         for &(from, to, w) in &z_edges {
             edge(from, to, w);
         }
-        // Floyd and Warshall's closure, a row `i` with no path to `k` skipped whole.
+        // Floyd and Warshall's closure, a row `i` with no path to `k` skipped whole (R. W. Floyd,
+        // "Algorithm 97: Shortest path", CACM 5(6):345, 1962, doi:10.1145/367766.368168;
+        // S. Warshall, "A theorem on Boolean matrices", JACM 9(1):11-12, 1962,
+        // doi:10.1145/321105.321107; Crossref 2026-11-20, texts not read: the triple loop with
+        // `k` outermost is the standard one, from memory). Checked only through the tests below,
+        // which compare this brute force with the solver.
         for k in 0..size {
             for i in 0..size {
                 let ik = d[i * size + k];
@@ -591,6 +596,19 @@ enum Lp {
 /// pivots on the at most 3 + 6 names and some 40 rows of a random part. Fourier-Motzkin
 /// elimination of the other names would be shorter to write but can square the rows at each
 /// of up to 8 eliminations.
+///
+/// Sources: V. Chvátal, Linear Programming, W. H. Freeman, 1983, ch. 3 (a book, no DOI);
+/// J. Edmonds, "Systems of distinct representatives and linear algebra", J. Res. NBS 71B(4):241,
+/// 1967, doi:10.6028/jres.071b.033; E. H. Bareiss, "Sylvester's identity and multistep
+/// integer-preserving Gaussian elimination", Math. Comp. 22(103):565-578, 1968,
+/// doi:10.1090/s0025-5718-1968-0226829-0; D. Avis, "A revised implementation of the reverse
+/// search vertex enumeration algorithm" (the paper of lrs), in Polytopes — Combinatorics and
+/// Computation, Birkhäuser, 2000, pp. 177-198, doi:10.1007/978-3-0348-8438-9_9; R. G. Bland,
+/// "New finite pivoting rules for the simplex method", Math. Oper. Res. 2(2):103-107, 1977,
+/// doi:10.1287/moor.2.2.103. Checked 2026-11-20: the DOIs on Crossref; no text was read, so the
+/// sketches above are from memory. No test checks this function alone: it is checked through
+/// the tests below, which compare the brute force it bounds with the solver, so an error that
+/// widens a bound only slows them and one that narrows it shows as a mismatch there.
 fn lp_max(rows: &[(Vec<i64>, i64)], objective: &[i64]) -> Lp {
     /// Pivots on `t[p][q]`, `p` a constraint row (from 2).
     fn pivot(t: &mut [Vec<Num>], den: &mut Num, basis: &mut [usize], p: usize, q: usize) {
@@ -709,8 +727,13 @@ fn has_point(rows: &[(Vec<i64>, i64)]) -> bool {
 }
 
 /// Whether some integer `x` has `a · x <= b` for each row `(a, b)` of `le` and `a · x == b` for
-/// each of `eq`, by the Omega test (Pugh, "A practical algorithm for exact array dependence
-/// analysis", CACM 35(8), 1992), exact for any rows, with no bound on `x`.
+/// each of `eq`, by the Omega test (W. Pugh, "A practical algorithm for exact array dependence
+/// analysis", CACM 35(8):102-114, 1992, doi:10.1145/135226.135233; first as "The Omega test: a
+/// fast and practical integer programming algorithm for dependence analysis", Supercomputing
+/// '91, pp. 4-13, doi:10.1145/125826.125848), exact for any rows, with no bound on `x`. Checked
+/// 2026-11-20: the DOIs on Crossref; the text was not read, so the sketch below, the splinter
+/// bound included, is from memory. `the_omega_oracle_agrees_with_enumeration` checks it against
+/// enumeration on small boxed systems.
 ///
 /// An equation is divided by the gcd of its coefficients (no integer point where that does not
 /// divide its constant), then its coefficients are brought to one of `±1` by Euclid's algorithm
@@ -4087,4 +4110,68 @@ fn a_conjunction_gets_one_answer_for_every_naming() {
 fn a_joined_conjunction_gets_one_answer_for_every_naming() {
     check_refused_case(12527472341280287461, 21, true, (1, 2, 0));
     check_refused_case(18417449267567745209, 5, true, (1, 1, 1));
+}
+
+/// [`omega`], the oracle every test above relies on, against enumeration: random systems of up
+/// to 5 rows and 1 equation on 3 variables, coefficients in `-4..=4`, each variable boxed to
+/// `-5..=5` so enumeration is exact. Coefficients of magnitude above 1 on both sides of a
+/// variable make the elimination inexact, so cases reach the dark shadow and Pugh's splinters;
+/// the test requires over 100 cases with coefficients of 2 or more and of -2 or less (it does
+/// not count the splinters themselves). It catches a wrong dark-shadow constant, a splinter
+/// range cut short and a wrong change of variables on an equation; it cannot catch an error
+/// that shows only on more variables or larger coefficients than these.
+#[test]
+fn the_omega_oracle_agrees_with_enumeration() {
+    let (mut r, seed) = Rng::fresh("the omega oracle against enumeration");
+    let n = 3;
+    let mut inexact = 0;
+    for case in 0..1500 {
+        let mut le: Vec<(Vec<i64>, i64)> = Vec::new();
+        for _ in 0..r.int(1, 5) {
+            le.push(((0..n).map(|_| r.int(-4, 4)).collect(), r.int(-12, 12)));
+        }
+        let eq: Vec<(Vec<i64>, i64)> = (0..r.int(0, 1))
+            .map(|_| ((0..n).map(|_| r.int(-4, 4)).collect(), r.int(-12, 12)))
+            .collect();
+        for v in 0..n {
+            let unit = |s: i64| {
+                (0..n)
+                    .map(|w| if w == v { s } else { 0 })
+                    .collect::<Vec<_>>()
+            };
+            le.push((unit(1), 5));
+            le.push((unit(-1), 5));
+        }
+        let dot = |a: &[i64], x: &[i64]| a.iter().zip(x).map(|(p, q)| p * q).sum::<i64>();
+        let mut enumerated = false;
+        'points: for x0 in -5..=5i64 {
+            for x1 in -5..=5i64 {
+                for x2 in -5..=5i64 {
+                    let x = [x0, x1, x2];
+                    if le.iter().all(|(a, b)| dot(a, &x) <= *b)
+                        && eq.iter().all(|(a, b)| dot(a, &x) == *b)
+                    {
+                        enumerated = true;
+                        break 'points;
+                    }
+                }
+            }
+        }
+        let num = |(a, b): &(Vec<i64>, i64)| -> Row {
+            (a.iter().map(|x| Num::from(*x)).collect(), Num::from(*b))
+        };
+        let has_big_pair = le.iter().any(|(a, _)| a.iter().any(|c| *c >= 2))
+            && le.iter().any(|(a, _)| a.iter().any(|c| *c <= -2));
+        inexact += usize::from(has_big_pair);
+        let found = omega(le.iter().map(num).collect(), eq.iter().map(num).collect());
+        assert_eq!(
+            found, enumerated,
+            "seed {seed} case {case}: omega says {found}, enumeration {enumerated}, on \
+             rows {le:?} (a · x <= b) and equations {eq:?}"
+        );
+    }
+    assert!(
+        inexact > 100,
+        "seed {seed}: only {inexact} cases with coefficients of magnitude 2+"
+    );
 }
