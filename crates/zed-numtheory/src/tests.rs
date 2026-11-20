@@ -1059,3 +1059,100 @@ mod controls {
         assert_ne!(wrong, shares_a_factor_by_pairs(&vals));
     }
 }
+
+/// `coprime_base_u64` gives `cb S`: elements above 1, distinct and pairwise coprime; each
+/// input's pairs by increasing element, each `k >= 1`, rebuilding the input; and the
+/// elements are the classes of primes by proportional exponent vectors over the inputs
+/// (two primes are in one element of `cb S` exactly when their vectors are proportional, the
+/// definition the zed-kernel tests use), checked through `factor`: the primes of one element
+/// have proportional vectors, and those of two elements do not. On every pair and triple of
+/// 1 to 40, the edge words, and random lists of products of small primes and random words.
+#[test]
+fn the_word_coprime_base_is_natural() {
+    fn natural(xs: &[u64]) {
+        let (base, ks) = coprime_base_u64(xs);
+        for (i, &a) in base.iter().enumerate() {
+            assert!(a > 1, "{xs:?}: {base:?}");
+            for &b in &base[i + 1..] {
+                assert_eq!(gcd_u64(a, b), 1, "{xs:?}: {base:?}");
+            }
+        }
+        assert_eq!(ks.len(), xs.len());
+        for (&x, k) in xs.iter().zip(&ks) {
+            assert!(k.windows(2).all(|w| w[0].0 < w[1].0), "{x}: {k:?}");
+            let mut prod = 1u128;
+            for &(e, m) in k {
+                assert!(m >= 1);
+                prod *= u128::from(base[e as usize]).pow(u32::try_from(m).expect("below 64"));
+            }
+            assert_eq!(prod, u128::from(x), "{xs:?}: {base:?} {k:?}");
+        }
+        // The exponent vector of each prime over the inputs, divided by the gcd of its entries.
+        let primitive = |p: u64| -> Vec<u64> {
+            let v: Vec<u64> = (xs.iter())
+                .map(|&x| {
+                    let (mut x, mut e) = (x, 0);
+                    while x.is_multiple_of(p) {
+                        x /= p;
+                        e += 1;
+                    }
+                    e
+                })
+                .collect();
+            let g = v.iter().fold(0, |g, &e| gcd_u64(g, e));
+            v.iter().map(|e| e / g).collect()
+        };
+        let classes: Vec<Vec<Vec<u64>>> = (base.iter())
+            .map(|&c| factor(c).into_iter().map(|(p, _)| primitive(p)).collect())
+            .collect();
+        for (i, c) in classes.iter().enumerate() {
+            assert!(c.windows(2).all(|w| w[0] == w[1]), "{xs:?}: {base:?}");
+            for d in &classes[i + 1..] {
+                assert_ne!(c[0], d[0], "{xs:?}: {base:?}");
+            }
+        }
+    }
+    natural(&[]);
+    natural(&[1]);
+    for a in 1..=40u64 {
+        for b in 1..=40u64 {
+            natural(&[a, b]);
+            for c in [1u64, 2, 6, 9, 12, 27, 30, 36] {
+                natural(&[a, b, c]);
+            }
+        }
+    }
+    let edges: Vec<u64> = EDGES.iter().copied().filter(|&e| e > 0).collect();
+    natural(&edges);
+    natural(&[
+        4_294_967_291u64 * 4_294_967_291,
+        4_294_967_291,
+        2 * 4_294_967_291,
+    ]);
+    natural(&[1 << 63, 1 << 62, 4, 8, 3 << 61]);
+    natural(&[3u64.pow(40), 9, 3u64.pow(40), 1]);
+    let mut next = words("the_word_coprime_base_is_natural");
+    let smalls = [2u64, 3, 5, 7, 11, 13];
+    for _ in 0..2000 {
+        let k = 1 + next() % 12;
+        let xs: Vec<u64> = (0..k)
+            .map(|_| match next() % 4 {
+                0 => next() | 1,
+                1 => (next() >> 4) * smalls[(next() % 6) as usize],
+                // A product of small prime powers, each at most 13^5; a factor that would
+                // pass 2^64 is left out.
+                _ => (0..next() % 6).fold(1u64, |w, _| {
+                    let q = smalls[(next() % 6) as usize].pow(1 + (next() % 5) as u32);
+                    w.checked_mul(q).unwrap_or(w)
+                }),
+            })
+            .collect();
+        natural(&xs);
+    }
+}
+
+#[test]
+#[should_panic(expected = "a coprime base of positive integers, given 0")]
+fn the_word_coprime_base_refuses_0() {
+    coprime_base_u64(&[6, 0]);
+}

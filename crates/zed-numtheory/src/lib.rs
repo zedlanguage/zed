@@ -325,6 +325,118 @@ fn take_least_prime(table: &[u16], x: &mut u32) -> u32 {
     p
 }
 
+/// The natural coprime base of the words `xs`, each above 0, and for each input, in the order
+/// given, `(e, k)` with `k >= 1` the multiplicity of element `e` in it, for each element that
+/// shares a prime with it, by increasing `e`. The elements are pairwise coprime, each above 1,
+/// in no set order; an input 1 has no pair. The word form of zed-kernel
+/// `num::coprime::coprime_base_exponents`, which calls it for a few word inputs (plan row
+/// PERF-coprime-base-wide-few; the switchover is measured there).
+///
+/// Method, factor refinement (Bach, Driscoll and Shallit, "Factor refinement", J. Algorithms
+/// 15(2), 1993, pp. 199-222, doi:10.1006/jagm.1993.1038; sections 1 and 2 read, as cited at
+/// the head of zed-kernel `num/coprime.rs`; p. 201: "given m = m1 m2, we compute
+/// d = gcd(m1, m2) and write m = (m1/d)(d^2)(m2/d)", continued "until all factors are
+/// relatively prime". The steps here are those of zedc-int's copy before
+/// PERF-coprime-base-wide-few, which divide every power of `d` out of each side at once
+/// instead of one): a list `todo` starts
+/// with the inputs above 1 and `base` empty. Take `x` from `todo`. If no element of `base`
+/// shares a prime with `x`, `x` joins `base`. Otherwise, for the first `b` with
+/// `g = gcd(b, x) > 1`, `b` leaves `base`, every power of `g` is divided out of `b` and of `x`,
+/// and what is left of each, and `g`, go back to `todo`, each where it is above 1. Then the
+/// multiplicity of each element in each input, by division.
+///
+/// Proof, with `Omega(v)` the count of prime factors of `v` with multiplicity and `T` the
+/// closure of the inputs `S`. Source: D. J. Bernstein, "Factoring into coprimes in essentially
+/// linear time", J. Algorithms 54(1), 2005, pp. 1-30, doi:10.1016/j.jalgor.2004.04.009,
+/// Section 7 (read in the author's preprint, cr.yp.to/lineartime/dcba-20040404.pdf, as cited
+/// in zed-kernel `num/coprime.rs`): `T` is the least set holding `S` and 1 closed under
+/// products, exact quotients and gcds, `cb S` the minimal elements of `T - {1}`, and Theorem
+/// 7.3: a coprime base of `S` inside `T - {1}` is `cb S`.
+/// 1. It ends. Let `W` be the sum of `Omega` over `base` and `todo`. A step that moves `x` to
+///    `base` keeps `W` and shortens `todo` by one. A step that splits `b = g^i b'` and
+///    `x = g^j x'` (`i, j >= 1`) replaces `Omega(b) + Omega(x)` by `Omega(b') + Omega(x') +
+///    Omega(g) = Omega(b) + Omega(x) - (i + j - 1) Omega(g)`, less by at least 1, as
+///    `Omega(g) >= 1`. So `(W, len todo)` falls in the order of pairs at each step, and `W`
+///    starts at most at `63 k` for `k` inputs (a word is below `2^64`); so at most `63 k`
+///    splits, and at most `k + 3 * 63 k` moves.
+/// 2. `base` stays pairwise coprime: `x` joins it only when coprime to each element, and a
+///    split only takes an element out.
+/// 3. Each input stays a product of powers of the members of `base` and `todo`: true at the
+///    start, and a split removes `b` and `x` but keeps `b = g^i b'` and `x = g^j x'` with
+///    `b'`, `x'` and `g` put back (those equal to 1 left out). At the end `todo` is empty, so
+///    each input is a product of powers of `base`, and `base` is a coprime base of `S`.
+/// 4. Each member of `base` and `todo` is in `T`: the inputs are; `g` is a gcd, and `b'` and
+///    `x'` exact quotients by powers of `g` (products), of members of `T`.
+/// 5. By 2 to 4 and Theorem 7.3, `base` is `cb S`.
+/// 6. The multiplicities: an input `v` is `prod e^(k_e)` over the base (step 3), the `e`
+///    pairwise coprime, so `k_e` is the count of exact divisions of `v` by `e` alone.
+///
+/// Cost: each move scans `base` with one word gcd an element, and `base` holds at most one
+/// element per distinct prime of the inputs, at most `15 k` (a word has at most 15 distinct
+/// primes, as the product of the first 16 primes passes `2^64`); with the at most `4 * 63 k`
+/// moves of step 1 that is O(k^2) word gcds, and the multiplicities O(k^2) divisions more.
+// Complexity tradeoff: Bernstein's algorithms (zed-kernel `num::coprime::by_halves`) cost
+// O(M(N) log^2 N) in all, near linear in `k`, but each step on big integers holds an
+// allocation and the product and remainder trees: on two or three inputs of one word, as the
+// roots of `3^e * 9^(e + 1)` against `3^(3e + 2)`, 2.5 to 15 times the instructions of this
+// loop (zed-kernel `num::bench::the_word_crossover_axis`, k = 2: 2,239 against 5,486 on two
+// primes, 2,630 against 40,458 on two products of shared primes). This loop is quadratic in
+// `k`, so zed-kernel calls it only up to the measured switchover `num::coprime::WORD_INPUTS`
+// (12 inputs, where distinct primes cross; the measurements on both sides are at its
+// definition, author decision A96). Tests: `tests::the_word_coprime_base_is_natural`, and in
+// zed-kernel `num::coprime::tests::the_paths_agree_at_the_word_switchover`.
+pub fn coprime_base_u64(xs: &[u64]) -> (Vec<u64>, Vec<Vec<(u32, u64)>>) {
+    assert!(
+        !xs.contains(&0),
+        "a coprime base of positive integers, given 0"
+    );
+    let mut base: Vec<u64> = Vec::new();
+    let mut todo: Vec<u64> = xs.iter().copied().filter(|&x| x > 1).collect();
+    while let Some(x) = todo.pop() {
+        let shared = (base.iter().enumerate())
+            .find_map(|(i, &b)| Some((i, gcd_u64(b, x))).filter(|&(_, g)| g > 1));
+        let Some((i, g)) = shared else {
+            base.push(x);
+            continue;
+        };
+        let b = base.swap_remove(i);
+        todo.extend(
+            [without(b, g), without(x, g), g]
+                .into_iter()
+                .filter(|&v| v > 1),
+        );
+    }
+    let exponents = (xs.iter())
+        .map(|&x| {
+            let mut rest = x;
+            let mut ks = Vec::new();
+            for (e, &c) in base.iter().enumerate() {
+                let mut k = 0;
+                while rest.is_multiple_of(c) {
+                    rest /= c;
+                    k += 1;
+                }
+                if k > 0 {
+                    let e = u32::try_from(e)
+                        .expect("fewer than 2^32 elements: at most 15 for each input");
+                    ks.push((e, k));
+                }
+            }
+            debug_assert_eq!(rest, 1, "{x} is a product of powers of the base (step 3)");
+            ks
+        })
+        .collect();
+    (base, exponents)
+}
+
+/// `v` with every factor `g` divided out, for `g >= 2`.
+fn without(mut v: u64, g: u64) -> u64 {
+    while v.is_multiple_of(g) {
+        v /= g;
+    }
+    v
+}
+
 /// `prime[i]` holds when `2 i + 1` is prime, for `i < ceil(n / 2)`: every odd number below `n`,
 /// and `n` itself when it is odd. The sieve of Eratosthenes over the odd numbers, in
 /// O(n log log n) steps and `n / 2` bytes. Each odd prime `q` strikes its odd multiples from

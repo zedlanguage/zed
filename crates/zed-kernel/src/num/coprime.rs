@@ -1,13 +1,14 @@
 //! The natural coprime base of a list of positive integers, and each integer factored over it:
 //! the copy for zedc-check (`check/coprime.rs`, which roots share a prime) and
 //! zedc-presburger (`modular.rs` `coprime_factorization`, the moduli over pairwise coprime
-//! bases), plan row DRY-coprime-bases-one. zedc-int (`Core::same`, the equality of products of
-//! powers) keeps its own factor refinement for a measured reason, stated at its
-//! `coprime_base`: on its inputs, a few integers of many bits sharing small primes, the `ppi`
-//! and pair steps here take gcds of two wide numbers, O(M(n) log n), where refinement takes
-//! gcds against small elements and strips powers, O(M(n)); 22.8e9 instructions against 2.1e9
-//! on `l01_24 equality_over_a_wide_odd_base_scales_with_its_bits`, ratio 11.9 against 9.2
-//! (2026-11-20). Plan row PERF-coprime-base-wide-few.
+//! bases), plan row DRY-coprime-bases-one, and zedc-int (`Core::same`, the equality of
+//! products of powers, by `coprime_base_exponents`), plan row PERF-coprime-base-wide-few. Its
+//! inputs are often one integer of many bits among a few small ones that share its primes; on
+//! those Bernstein's `ppi` and pair steps take gcds of two wide numbers, O(M(n) log n), so such
+//! inputs take `with_one_wide` (gcds against the small ones and strips of their powers,
+//! O(M(n)), proved there) under the bound proved at `one_wide`. A few inputs of one word each
+//! take factor refinement on words (`zed_numtheory::coprime_base_u64`) up to the measured
+//! switchover `WORD_INPUTS`.
 //!
 //! Source: D. J. Bernstein, "Factoring into coprimes in essentially linear time", J.
 //! Algorithms 54(1), 2005, pp. 1-30, doi:10.1016/j.jalgor.2004.04.009. Checked 2026-11-19 in
@@ -68,12 +69,12 @@
 //! triple of small inputs, ones, equal inputs, powers, and inputs past one word; benches
 //! `num::bench::the_coprime_base_of_*`.
 
-use std::borrow::Borrow;
+use std::borrow::{Borrow, Cow};
 
 use num_bigint::BigUint;
-use num_traits::One;
+use num_traits::{One, ToPrimitive, Zero};
 
-use super::{div_rem_uint, gcd_uint, mul_uint, trees};
+use super::{div_rem_uint, gcd_uint, mul_uint, rem_uint, trees};
 
 /// The natural coprime base of some positive integers and each one written over it.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
@@ -87,16 +88,301 @@ pub struct CoprimeBase {
     pub factors: Vec<Vec<(u32, BigUint)>>,
 }
 
+/// The natural coprime base of some positive integers and the multiplicity of each element in
+/// each integer: what [`CoprimeBase`] gives with each factor `q = e ^ k` replaced by `k`.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct CoprimeExponents {
+    /// The elements, as [`CoprimeBase::elements`].
+    pub elements: Vec<BigUint>,
+    /// For each input, in the order given, `(e, k)` with `k >= 1` the multiplicity of
+    /// `elements[e]` in the input, for each element that shares a prime with it, by increasing
+    /// `e`. A multiplicity is below the bits of its input, so it fits in a `u64`.
+    pub exponents: Vec<Vec<(u32, u64)>>,
+}
+
 /// The natural coprime base `cb S` of `xs` and each of `xs` over it, every `x` above 0 (see
 /// the module comment for the method and its proof). Inputs may repeat. For 4 and 8 the
 /// base is 2 (4 = 2^2, 8 = 2^3); for 6 and 12 it is 2 and 3; for 4 alone it is 4, and for 1
 /// alone it is empty.
 ///
+/// At most `WORD_INPUTS` inputs, each of one word, take the word path (`words`); one input
+/// much wider than all the others together (the condition at `one_wide`) takes
+/// `with_one_wide`, O(M(n)) for `n` bits at a fixed width of the others; all other inputs take
+/// `by_halves`, Bernstein's algorithms.
+pub fn coprime_base<L: Borrow<BigUint>>(xs: &[L]) -> CoprimeBase {
+    // At most `WORD_INPUTS` word inputs, the measured switchover documented there.
+    if let Some(ws) = words(xs) {
+        let (elements, exponents) = zed_numtheory::coprime_base_u64(&ws);
+        // `c ^ k` divides a word input, so it is a word and `k < 64`.
+        let factors = (exponents.into_iter())
+            .map(|ks| {
+                (ks.into_iter())
+                    .map(|(e, k)| {
+                        let k = u32::try_from(k).expect("a multiplicity in a word is below 64");
+                        (e, BigUint::from(elements[e as usize].pow(k)))
+                    })
+                    .collect()
+            })
+            .collect();
+        let elements = elements.into_iter().map(BigUint::from).collect();
+        return CoprimeBase { elements, factors };
+    }
+    let Some(w) = one_wide(xs) else {
+        return by_halves(xs);
+    };
+    let (mut out, ks) = with_one_wide(xs, w);
+    // `pow_uint` by squaring, O(M(n)) for each of the at most `m` elements of the wide input,
+    // `m` the bits of the others (proved at `with_one_wide`).
+    out.factors[w] = (ks.into_iter())
+        .map(|(e, k)| (e, super::pow_uint(&out.elements[e as usize], k)))
+        .collect();
+    out
+}
+
+/// [`coprime_base`] with multiplicities in place of factors, for zedc-int `Core::same`, which
+/// compares products of powers by their exponents over the base. On the wide input of
+/// `with_one_wide` the multiplicities are found without building the powers; on the word path
+/// they are counted by word divisions; on every other input each factor `q` of element `e` is
+/// divided by `e` ([`strip`]), O(M(bits q)).
+pub fn coprime_base_exponents<L: Borrow<BigUint>>(xs: &[L]) -> CoprimeExponents {
+    // At most `WORD_INPUTS` word inputs, the measured switchover documented there.
+    if let Some(ws) = words(xs) {
+        let (elements, exponents) = zed_numtheory::coprime_base_u64(&ws);
+        let elements = elements.into_iter().map(BigUint::from).collect();
+        return CoprimeExponents {
+            elements,
+            exponents,
+        };
+    }
+    let (base, wide) = match one_wide(xs) {
+        Some(w) => {
+            let (base, ks) = with_one_wide(xs, w);
+            (base, Some((w, ks)))
+        }
+        None => (by_halves(xs), None),
+    };
+    let mut exponents: Vec<Vec<(u32, u64)>> = (base.factors.into_iter())
+        .map(|f| {
+            (f.into_iter())
+                .map(|(e, q)| (e, multiplicity(q, &base.elements[e as usize])))
+                .collect()
+        })
+        .collect();
+    if let Some((w, ks)) = wide {
+        exponents[w] = ks;
+    }
+    CoprimeExponents {
+        elements: base.elements,
+        exponents,
+    }
+}
+
+/// The most inputs, each of one word, that the word path takes: `zed_numtheory::
+/// coprime_base_u64`, factor refinement on words, O(k^2) word gcds for `k` inputs (proved
+/// there), against `by_halves`, near linear in `k` but with an allocation in each step on big
+/// integers and the product and remainder trees.
+///
+/// A measured switchover, not a proved bound: the largest `k` at which the word path is the
+/// cheaper on every family of `num::bench::the_word_crossover_axis` (author decision A96),
+/// which keeps `k = WORD_INPUTS` and `k = WORD_INPUTS + 1` on its axis. Instructions/bytes,
+/// measured 2026-11-20 on Linux x86_64, load 71.5 of 32 cores (the counts are instructions, so
+/// the load moves them little):
+///
+/// | family   | k  | word path     | `by_halves`     |
+/// |----------|----|---------------|-----------------|
+/// | distinct | 12 | 14,634/1,504  | 14,987/2,964    |
+/// | shared   | 12 | 37,473/1,504  | 666,066/64,580  |
+/// | random   | 12 | 121,101/1,504 | 724,070/56,884  |
+/// | distinct | 13 | 16,389/1,592  | 15,578/3,137    |
+/// | shared   | 13 | 41,350/1,592  | 798,578/79,905  |
+/// | random   | 13 | 161,572/1,848 | 879,475/70,769  |
+///
+/// Only the distinct primes (no prime shared, refinement's worst case: each new input is tried
+/// against every element before it) cross here; on shared and random words the word path
+/// stays the cheaper past `k = 128`, so a later caller with many shared words may want a
+/// switch on more than the count. Rerun the bench for each target platform and after a change
+/// to code generation.
+///
+/// What relies on it: only the cost. Both paths give `cb S` (Bernstein's Theorem 7.3, proved
+/// at each), so any value gives the same answers; `tests::the_paths_agree_at_the_word_
+/// switchover` holds the two paths equal at `WORD_INPUTS` and one more. Used by `words`, the
+/// one test of the path, so by `coprime_base` and `coprime_base_exponents`. Its first caller
+/// is zedc-int `Core::same`, whose roots are mostly a few small integers (l01_24
+/// `equal_cores_scale_with_the_bits_of_the_exponent`, roots 9 and 3, and 6, 2 and 3).
+pub(super) const WORD_INPUTS: usize = 12;
+
+/// The inputs as words when there are at most [`WORD_INPUTS`] of them and each is below
+/// `2^64`; otherwise `None`.
+fn words<L: Borrow<BigUint>>(xs: &[L]) -> Option<Vec<u64>> {
+    if xs.len() > WORD_INPUTS {
+        return None;
+    }
+    xs.iter().map(|x| x.borrow().to_u64()).collect()
+}
+
+/// The `k` of `q = e ^ k`, for `e >= 2` and `q` a power of it.
+fn multiplicity(mut q: BigUint, e: &BigUint) -> u64 {
+    let k = strip(&mut q, e);
+    debug_assert!(
+        q.is_one(),
+        "a factor over a coprime base is a power of its element"
+    );
+    k
+}
+
+/// The index `w` of the one wide input that [`with_one_wide`] takes, when there is one: the
+/// first of the widest inputs, when the bits `m` of all the other inputs above 1 together are
+/// at most `log2` of its bits `n` (`m <= floor(log2 n)`); otherwise `None`. Every input must be
+/// above 0. With `m > 0` the condition makes `w` strictly the widest, since then some other
+/// input has between 2 and `m` bits and `m < n`.
+// Complexity tradeoff: the condition is the proved bound under which `with_one_wide` costs no
+// more in order than the general path's bound, not a timed switch. `with_one_wide` costs
+// O(m M(n)) plus the general path on `O(m)` inputs of at most `m` bits each (proved there);
+// with `m <= log2 n` that is O(M(n) log n), and the general path costs at least one `ppi` of
+// the wide input, O(M(n) log n) by Bernstein's Theorem 11.1 bound on its rounds (`lg lg a + 1`
+// squarings and gcds of numbers of up to `n` bits). Measured on zedc-int `Core::same`, where a
+// wide root meets a few small ones (`l01_24 equality_over_a_wide_odd_base_scales_with_its_bits`
+// and `equality_over_a_wide_base_scales_with_its_bits`, `m` = 4): see `with_one_wide`. Both
+// sides of the condition are measured by `num::bench::the_one_wide_crossover_axis` (author
+// decision A96).
+pub(super) fn one_wide<L: Borrow<BigUint>>(xs: &[L]) -> Option<usize> {
+    let mut wide: Option<(usize, u64)> = None;
+    let mut all = 0u64;
+    for (i, x) in xs.iter().enumerate() {
+        let b = x.borrow().bits();
+        assert!(b > 0, "a coprime base of positive integers, given 0");
+        if b < 2 {
+            continue;
+        }
+        all += b;
+        if wide.is_none_or(|(_, n)| b > n) {
+            wide = Some((i, b));
+        }
+        // Stop once the condition cannot hold. Proof: with `n` the widest seen so far and the
+        // final widest `n' >= n`, the final `m` is at least `all - n`. If the final widest is
+        // still to come, every input seen is among the others, so `m >= all >= all - n`. If it
+        // has been seen, it is the current widest, and the rest seen are among the others, so
+        // `m >= all - n`. And `floor(log2 n') <= 63`, since `n'` is a `u64`. So `all - n > 63`
+        // makes `m > floor(log2 n')`, and the answer is `None`. Without this stop the scan
+        // reads the bits of every input, about 33 instructions each: 3% of
+        // `num::bench::the_coprime_base_of_the_first_n_primes_scales`, whose answer the scan
+        // never changes. 63 is the bit width of `u64` less 1, not a tuned value. A zero input
+        // after the stop is refused by `by_halves`, which checks every input.
+        if wide.is_some_and(|(_, n)| all - n > 63) {
+            return None;
+        }
+    }
+    let (w, n) = wide?;
+    (all - n <= u64::from(n.ilog2())).then_some(w)
+}
+
+/// The natural coprime base of `xs` when `xs[w]` is wide (`n` bits) and the others above 1 are
+/// `m` bits together, with the multiplicity of each element in `xs[w]`: the base and the factors
+/// of every input but `w`, whose list is left empty, and the `(e, k)` of `xs[w]` by increasing
+/// `e`.
+///
+/// Method. Let `P` be the product of the other inputs. Strip the powers of `d_0 = gcd(xs[w],
+/// P)` from `t = xs[w]` ([`strip`], `k_0 >= 1` of them), then of `d_1 = gcd(t, d_0)`, and so
+/// on until `d_r = 1`. The base is `cb` of the other inputs and the `d_i`, by the general path
+/// ([`by_halves`], on inputs of at most `m` bits each), with what is left of `t` added when it
+/// is above 1. The multiplicity of an element `e` in `xs[w]` is the sum over `i` of `k_i` times
+/// that of `e` in `d_i`.
+///
+/// Proof, with `x = xs[w]` and `T` the closure of the inputs `S` (D. J. Bernstein, "Factoring
+/// into coprimes in essentially linear time", J. Algorithms 54(1), 2005, pp. 1-30,
+/// doi:10.1016/j.jalgor.2004.04.009, Section 7, quoted in the module comment: `T` is the least
+/// set holding `S` and 1 closed under products, exact quotients and gcds; Theorem 7.3: a
+/// coprime base of `S` inside `T - {1}` is `cb S`). The descent of steps 1 to 3 is not from
+/// that paper; its proof is all here:
+/// 1. Each `d_i` divides the `t` it is stripped from, so `k_i >= 1`: `d_0 = gcd(x, P)` divides
+///    `x`, and `d_(i+1) = gcd(t_(i+1), d_i)` divides `t_(i+1)`.
+/// 2. Invariant: every prime of `P` that divides `t_i` divides `d_i`. At `i = 0`, a prime of
+///    `P` and of `x` divides `gcd(x, P)`. If it holds at `i` and a prime `p` of `P` divides
+///    `t_(i+1)`, it divides `t_i` (a divisor of it), so `p | d_i`, so `p | gcd(t_(i+1), d_i)`.
+/// 3. The rounds end, at most `Omega(d_0) <= log2 d_0 <= m` of them (`Omega` the count of
+///    prime factors with multiplicity): `strip` leaves `d_i` not dividing `t_(i+1)`, so
+///    `d_(i+1) = gcd(t_(i+1), d_i)` is a proper divisor of `d_i`, and `Omega(d_(i+1)) <
+///    Omega(d_i)`. At the end `d_r = 1`, so by step 2 the last `t` has no prime of `P`, and
+///    `x = t * prod d_i ^ k_i` by construction.
+/// 4. The result is pairwise coprime: the elements of `cb` of the others and the `d_i` are, and
+///    each has only primes of `P` (each `d_i` divides `P`), which `t` has none of.
+/// 5. It is a coprime base of `S`: each other input is a product of powers of `cb` of a set
+///    holding it, and `x` is by step 3, with the multiplicity of `e` the sum given above.
+/// 6. Each element lies in `T`: `P` is a product, `d_0` a gcd, `t_(i+1) = t_i / d_i ^ k_i` an
+///    exact quotient and `d_(i+1)` a gcd, all of members of `T`; `cb U` of a set `U` of
+///    members of `T` is by its definition (Section 7) a set of members of the closure of `U`,
+///    which lies inside `T` since `T` is closed and holds `U`; and the last `t` is in `T`.
+/// 7. By Theorem 7.3 a coprime base of `S` inside `T - {1}` is `cb S`, the result of
+///    [`by_halves`] on the same inputs.
+///
+/// Cost: `P` and `d_0` cost O(M(m)) and O(n) (`gcd_uint` reduces `x` modulo the narrow `P`,
+/// streamed over its words when `P` has at most 64 bits); each of the at most `m` rounds costs
+/// a `strip` of `t` (O(M(n)), proved at `strip`) and a gcd of `t` and the narrow `d_i` (O(n)
+/// again); the general path runs on at most `m` other inputs and `m` divisors of `P`, of at
+/// most `m` bits each, O(m^2) bits, polynomial in `m`; the multiplicities in the `d_i` are
+/// strips of numbers of at most `m` bits. So O(m M(n) + poly(m)), which is O(M(n)) at a fixed
+/// `m`. Complexity tradeoff: the general path on the same inputs runs `ppi` and the pair steps
+/// on `x` itself, gcds of two numbers of `n` bits each, O(M(n) log n): on
+/// `l01_24 equality_over_a_wide_odd_base_scales_with_its_bits` (roots `3^n * 2`, 3 and 2, `n` =
+/// 2^20) 22.8e9 instructions at the first size and 11.9 times that at 8 times the size, past
+/// the limit 10.5 (DRY-coprime-bases-one, 2026-11-20); factor refinement, zedc-int's copy
+/// before PERF-coprime-base-wide-few, took the same strips and gcds against each element, which
+/// is O(M(n)) here too, but O(k^2) gcds for `k` elements on the general inputs.
+pub(super) fn with_one_wide<L: Borrow<BigUint>>(
+    xs: &[L],
+    w: usize,
+) -> (CoprimeBase, Vec<(u32, u64)>) {
+    let x = xs[w].borrow();
+    let others: Vec<usize> = (0..xs.len()).filter(|&i| i != w).collect();
+    let p = (others.iter())
+        .map(|&i| xs[i].borrow())
+        .fold(BigUint::one(), |p, y| mul_uint(&p, y));
+    let mut t = x.clone();
+    let mut d = gcd_uint(&t, &p);
+    let mut ds: Vec<(BigUint, u64)> = Vec::new();
+    while !d.is_one() {
+        let k = strip(&mut t, &d);
+        debug_assert!(k >= 1, "each d divides the t it is stripped from (step 1)");
+        let next = gcd_uint(&t, &d);
+        ds.push((d, k));
+        d = next;
+    }
+    let mut inputs: Vec<&BigUint> = others.iter().map(|&i| xs[i].borrow()).collect();
+    inputs.extend(ds.iter().map(|(d, _)| d));
+    let inner = by_halves(&inputs);
+    let mut ks = vec![0u64; inner.elements.len()];
+    let mut factors = inner.factors.into_iter();
+    let mut out = CoprimeBase {
+        elements: Vec::new(),
+        factors: vec![Vec::new(); xs.len()],
+    };
+    for &i in &others {
+        out.factors[i] = factors.next().expect("one factor list for each input");
+    }
+    for ((_, k), f) in ds.iter().zip(factors) {
+        for (e, q) in f {
+            ks[e as usize] += k * multiplicity(q, &inner.elements[e as usize]);
+        }
+    }
+    out.elements = inner.elements;
+    if !t.is_one() {
+        out.elements.push(t);
+        ks.push(1);
+    }
+    let ks = (ks.into_iter().enumerate())
+        .filter(|&(_, k)| k > 0)
+        .map(|(e, k)| (index(e), k))
+        .collect();
+    (out, ks)
+}
+
+/// The natural coprime base of `xs` by Bernstein's algorithms, for any inputs above 0.
+///
 /// First, which inputs share a prime with any other, by [`shares_a_factor`]: an input that
 /// shares none is its own element, its one factor itself. Only the others go through the
 /// halves (Algorithm 18.1, `base_by_halves`) and are then split over their base (Algorithm
 /// 15.3, `split`) to get their factors.
-pub fn coprime_base<L: Borrow<BigUint>>(xs: &[L]) -> CoprimeBase {
+pub(super) fn by_halves<L: Borrow<BigUint>>(xs: &[L]) -> CoprimeBase {
     let mut out = CoprimeBase {
         elements: Vec::new(),
         factors: vec![Vec::new(); xs.len()],
@@ -132,6 +418,105 @@ pub fn coprime_base<L: Borrow<BigUint>>(xs: &[L]) -> CoprimeBase {
     }
     out.elements.extend(base);
     out
+}
+
+/// The multiplicity `k` of `c >= 2` in `rest`, divided out of it. For `c` a power of 2, `2^t`,
+/// `k` is the trailing zeros of `rest` over `t`, rounded down, taken out by one shift.
+/// Otherwise, after one division by `c`, which ends it when `c` does not divide `rest`, the
+/// powers `P_i = c ^ (2^i)` are built by squaring. A power is tested against `rest` by its
+/// remainder when its bits are at least the square of the bits of the last one tested (`c`
+/// first) and their square is at most the bits of `rest`. The squaring stops at the first
+/// `P_J` that fails such a test or is above `rest`, with `x = rest mod P_J`, or at the last
+/// `P_(J-1)` whose square is surely above `rest`, with `x = rest`. Either way the multiplicity
+/// left is below `2^J`, `x` has it, and `x` is below `P_J`. From `i = J - 1` down to 0, `x` is
+/// replaced by `x / P_i`, adding `2^i` to `k`, when `P_i` divides it, and by `x mod P_i` when
+/// not, which has the same multiplicity, below `2^i`, since `c` to that multiplicity plus one
+/// divides `P_i`; either way `x` is below `P_i` after, so the widths halve. Last, `rest` is
+/// divided once by `c ^ k`, the product of the `P_i` of the binary digits of `k`. With the
+/// kernel's arithmetic a test of `P_i` costs about `n log d` for `n` bits of `rest` and `d` of
+/// `P_i`, and the tested `log d` at least double and stay below `log n / 2`, so the tests cost
+/// O(n log n); the squares and the steps down cost O(M(w)) for `w` the bits of `P_J`, at most
+/// `n` and at most about the square of the bits of `c ^ k`; and the last division
+/// O(n log (k bits(c))). So `strip` costs O(M(n)) = O(n log n), and about O(n) for a small
+/// `c ^ k` (item SCALE-fix-strip-odd). Dividing all of `rest` by each `P_i` on the way up cost
+/// O(n log^2 n), and num-bigint's division made that O(n^2) for a small `c`; building the
+/// powers up to the width of `rest` before any test cost O(M(n)) for every `k`, and grew 85
+/// times in bytes on `equality_over_a_wide_base_scales_with_its_bits`. (Moved from zedc-int
+/// `int.rs` by PERF-coprime-base-wide-few, 2026-11-20, with its tests.)
+pub fn strip(rest: &mut BigUint, c: &BigUint) -> u64 {
+    if c.count_ones() == 1 {
+        let t = c.bits() - 1;
+        let k = rest.trailing_zeros().expect("rest is at least 1") / t;
+        *rest >>= k * t;
+        return k;
+    }
+    let (q, r) = div_rem_uint(rest, c);
+    if !r.is_zero() {
+        return 0;
+    }
+    *rest = q;
+    let mut pows: Vec<Cow<'_, BigUint>> = vec![Cow::Borrowed(c)];
+    // The bits of the last power tested by its remainder.
+    let mut tested = 0u64;
+    let mut x: Cow<'_, BigUint> = loop {
+        let top = pows.last().expect("the power left by the last step");
+        if **top > *rest {
+            pows.pop();
+            break Cow::Borrowed(&*rest);
+        }
+        // Complexity tradeoff: a test by remainder costs about `n log d`, the kernel's division
+        // of `n` bits by `d` (about ten products of `d` bits for each `d` bits of `rest`). It
+        // ends the squaring early when `c ^ k` is small, which keeps `strip` near O(n) there;
+        // above `d = sqrt(n)` the squares left cost less than a test, so none is made there.
+        // Without tests the squares cost O(M(n)) whatever `k` (85 times the bytes from 65536 to
+        // 524288 bits on `equality_over_a_wide_base_scales_with_its_bits`); with a test at
+        // every width allowed by the first rule the odd-base test took 13.9 times the
+        // instructions from 2^19 to 2^22 digits, against 11.1 (2026-11-07).
+        if top.bits() >= tested * tested && top.bits() * top.bits() <= rest.bits() {
+            tested = top.bits();
+            let r = rem_uint(rest, top);
+            if !r.is_zero() {
+                pows.pop();
+                break Cow::Owned(r);
+            }
+        }
+        // `top ^ 2` is at least `2 ^ (2 (bits - 1))`.
+        if 2 * (top.bits() - 1) >= rest.bits() {
+            break Cow::Borrowed(&*rest);
+        }
+        let square = mul_uint(top, top);
+        pows.push(Cow::Owned(square));
+    };
+    let mut more = 0u64;
+    for (i, pw) in pows.iter().enumerate().rev() {
+        let (q, r) = div_rem_uint(&x, pw);
+        x = Cow::Owned(match r.is_zero() {
+            true => {
+                more += 1 << i;
+                q
+            }
+            false => r,
+        });
+    }
+    drop(x);
+    // The smaller powers first, so that each product is of a number by a wider one.
+    let divisor = pows
+        .iter()
+        .enumerate()
+        .filter(|(i, _)| more >> i & 1 == 1)
+        .map(|(_, pw)| pw)
+        .fold(None, |acc: Option<Cow<'_, BigUint>>, pw| {
+            Some(match acc {
+                None => Cow::Borrowed(&**pw),
+                Some(a) => Cow::Owned(mul_uint(&a, pw)),
+            })
+        });
+    if let Some(d) = divisor {
+        let (q, r) = div_rem_uint(rest, &d);
+        debug_assert!(r.is_zero(), "c ^ {more} divides what is left");
+        *rest = q;
+    }
+    1 + more
 }
 
 /// For each of `xs` (each at least 1), whether it shares a prime factor with another of them.
@@ -222,6 +607,22 @@ fn merged(p: Vec<BigUint>, q: Vec<BigUint>) -> Vec<BigUint> {
     }
     if q.is_empty() {
         return p;
+    }
+    // Two singletons, as at every lowest merge of `base_by_halves`: `cb({a} ∪ {b})` is
+    // `cb{a, b}`, which `pair_base` (Algorithm 13.2) gives from `a` and `b` themselves, its
+    // steps 2-3 and 13 printing the parts `ppo(a, b)` and `ppo(b, a)` that the two `split`s
+    // below would take out. So the two remainder trees and the sorts are skipped; the answer is
+    // the same set, and this function's output has no set order. It serves the lowest merges
+    // of lists longer than `WORD_INPUTS` or with an input wider than a word. Measured
+    // 2026-11-20 by running the bench set with and without it (instructions, which the load
+    // moves little): without it, l01_24 `equality_over_a_wide_base_scales_with_its_bits`
+    // (`(2^n * 3)^1000`) costs 1.32% more at its first size and 0.26% more at 8 times it, and
+    // l01_29 `bounding_a_chain_of_products` (products by even numbers) 0.07% more; no bench
+    // costs less.
+    if let ([a], [b]) = (&p[..], &q[..]) {
+        let mut base = Vec::new();
+        pair_base(&mut base, a.clone(), b.clone());
+        return base;
     }
     let (pr, qr): (Vec<&BigUint>, Vec<&BigUint>) = (p.iter().collect(), q.iter().collect());
     let (mut of_p, p_out) = split(&pr, &qr);
@@ -451,21 +852,18 @@ mod tests {
         BigUint::from(v)
     }
 
-    /// The prime factors of `n > 0` with their exponents, by trial division.
-    fn primes_of(mut n: u64) -> BTreeMap<u64, u32> {
-        let mut out = BTreeMap::new();
-        let mut p = 2;
-        while p * p <= n {
-            while n.is_multiple_of(p) {
-                *out.entry(p).or_insert(0) += 1;
-                n /= p;
-            }
-            p += 1;
-        }
-        if n > 1 {
-            *out.entry(n).or_insert(0) += 1;
-        }
-        out
+    /// The prime factors of `n > 0` with their exponents, by `zed_numtheory::factor` (tested
+    /// on its own in zed-numtheory; trial division took about 2^32 steps on a word with two
+    /// prime factors near 2^32, as the word path's tests have).
+    fn primes_of(n: u64) -> BTreeMap<u64, u32> {
+        (zed_numtheory::factor(n).into_iter())
+            .map(|(p, e)| {
+                (
+                    p,
+                    u32::try_from(e).expect("an exponent in a word is below 64"),
+                )
+            })
+            .collect()
     }
 
     /// `cb S` by its definition through exponent vectors: two primes are in one element when
@@ -551,9 +949,365 @@ mod tests {
         cb
     }
 
+    /// `coprime_base` is `cb S` with valid factors, and on word inputs (the word path when there
+    /// are at most `WORD_INPUTS` of them) `by_halves` gives the same elements and factors, so
+    /// both paths are held to the definition.
     fn check(xs: &[u64]) {
         let bx: Vec<BigUint> = xs.iter().map(|&x| big(x)).collect();
-        valid(&bx, Some(&by_primes(xs)));
+        let cb = valid(&bx, Some(&by_primes(xs)));
+        assert_eq!(by_value(&cb), by_value(&by_halves(&bx)), "{xs:?}");
+        exponents_are_the_factors(&bx);
+    }
+
+    /// The elements sorted and each input's factors as (element, power) sorted, so that two
+    /// results that list the elements in different orders compare.
+    type ByValue = (Vec<BigUint>, Vec<Vec<(BigUint, BigUint)>>);
+    fn by_value(cb: &CoprimeBase) -> ByValue {
+        let mut elements = cb.elements.clone();
+        elements.sort();
+        let factors = (cb.factors.iter())
+            .map(|f| {
+                let mut v: Vec<_> = (f.iter())
+                    .map(|(e, q)| (cb.elements[*e as usize].clone(), q.clone()))
+                    .collect();
+                v.sort();
+                v
+            })
+            .collect();
+        (elements, factors)
+    }
+
+    /// `coprime_base_exponents` gives the elements of `coprime_base` in its order, and for each
+    /// factor `q` of element `c` the `k` with `c ^ k = q`.
+    fn exponents_are_the_factors(xs: &[BigUint]) {
+        let cb = coprime_base(xs);
+        let ex = coprime_base_exponents(xs);
+        assert_eq!(ex.elements, cb.elements, "{xs:?}");
+        assert_eq!(ex.exponents.len(), xs.len());
+        for (ks, fs) in ex.exponents.iter().zip(&cb.factors) {
+            assert_eq!(ks.len(), fs.len(), "{xs:?}: {ks:?}");
+            for (&(e, k), (f, q)) in ks.iter().zip(fs) {
+                assert_eq!(e, *f, "{xs:?}");
+                assert!(k >= 1, "{xs:?}");
+                let c = &cb.elements[e as usize];
+                assert_eq!(&crate::num::pow_uint(c, k), q, "{xs:?}: {c} ^ {k}");
+            }
+        }
+    }
+
+    /// `xs` takes the one-wide path, and it gives what the general path gives on the same
+    /// inputs: the same elements and the same factors of each input.
+    fn both_paths(xs: &[BigUint]) {
+        let w = one_wide(xs).unwrap_or_else(|| panic!("{xs:?} has no one wide input"));
+        let others: u64 = (xs.iter().enumerate())
+            .filter(|&(i, x)| i != w && x.bits() > 1)
+            .map(|(_, x)| x.bits())
+            .sum();
+        assert!(others <= u64::from(xs[w].bits().ilog2()));
+        let general = by_value(&by_halves(xs));
+        assert_eq!(by_value(&valid(xs, None)), general, "{xs:?}");
+        // `with_one_wide` itself, as `coprime_base` may take the word path on word inputs.
+        let (mut one, ks) = with_one_wide(xs, w);
+        one.factors[w] = (ks.into_iter())
+            .map(|(e, k)| (e, crate::num::pow_uint(&one.elements[e as usize], k)))
+            .collect();
+        assert_eq!(by_value(&one), general, "{xs:?}");
+        exponents_are_the_factors(xs);
+    }
+
+    fn pow(p: u64, k: u64) -> BigUint {
+        crate::num::pow_uint(&big(p), k)
+    }
+
+    /// PERF-coprime-base-wide-few: the one-wide path against the general path on the inputs
+    /// it is for (zedc-int `Core::same`'s roots `3^n * 2`, 3 and 2 and `2^n * 3`, 2 and 3) and
+    /// on adversarial ones: shared primes at unequal exponents, one input a power of another,
+    /// the wide input a power of a small one times one more factor of it (two rounds of the
+    /// descent), a power of 2 against 4 (an odd exponent left over), the wide input coprime to
+    /// the rest, ones and repeats among the others, the wide input alone, and widths from 2
+    /// bits to past the division leaf of 4096 bits.
+    #[test]
+    fn the_one_wide_path_gives_the_general_base() {
+        let n = 5000;
+        let cases: Vec<Vec<BigUint>> = vec![
+            vec![pow(3, n) * 2u32, big(3), big(2)],
+            vec![pow(2, n) * 3u32, big(2), big(3)],
+            vec![big(12), pow(2, 500) * pow(3, 777)],
+            vec![pow(2, 1000) * pow(3, 1000), big(6)],
+            vec![pow(6, 999) * 2u32, big(6)],
+            vec![big(10), pow(10, 700)],
+            vec![big(4), pow(2, 1001)],
+            vec![big(9), pow(3, 1001)],
+            vec![big(4), big(8), pow(2, 300) * pow(5, 100)],
+            vec![big(6), pow(5, 500) * 7u32],
+            vec![big(1), big(3), pow(3, 600) * pow(7, 90), big(3), big(1)],
+            vec![pow(7, 3000)],
+            vec![big(1), pow(5, 40), big(1)],
+            vec![big(2), big(3), big(5), big(7), pow(210, 300) * pow(7, 11)],
+            vec![big(15), pow(3, 2000) * pow(5, 1999) * (pow(2, 64) + 1u32)],
+        ];
+        for xs in &cases {
+            both_paths(xs);
+        }
+        // Random: up to four others from small values, of at most 12 bits together, and a wide
+        // input of their primes at random exponents times random odd words, at least `2^m` bits.
+        let (mut rng, seed) = crate::seed::Rng::fresh("the_one_wide_path_gives_the_general_base");
+        let smalls = [1u64, 2, 3, 4, 5, 6, 7, 8, 9, 10, 12, 15, 18, 30];
+        for case in 0..200 {
+            let mut xs: Vec<BigUint> = Vec::new();
+            let mut m = 0u64;
+            for _ in 0..1 + rng.below(4) {
+                let y = rng.pick(&smalls);
+                let b = u64::from(64 - y.leading_zeros());
+                if y > 1 && m + b > 12 {
+                    continue;
+                }
+                if y > 1 {
+                    m += b;
+                }
+                xs.push(big(y));
+            }
+            let mut x = big(1);
+            for p in [2u64, 3, 5, 7] {
+                x *= pow(p, rng.below_u64(1500));
+            }
+            for _ in 0..rng.below(3) {
+                x *= rng.next_u64() | 1;
+            }
+            // At least 2 bits, so that `x` is above 1 when the others are all 1.
+            while x.bits() < (1 << m).max(2) {
+                x *= rng.next_u64() | 1;
+            }
+            let at = rng.below(xs.len() + 1);
+            xs.insert(at, x);
+            assert!(one_wide(&xs).is_some(), "case {case}, seed {seed}");
+            both_paths(&xs);
+        }
+    }
+
+    /// Where `one_wide` changes path: the bits `m` of the others at `floor(log2 n)` for `n`
+    /// bits of the widest take the one-wide path, and one more bit does not. Ones count for
+    /// nothing; two widest inputs of equal width never take it unless all else is 1.
+    #[test]
+    fn the_one_wide_condition_at_its_boundary() {
+        // 3 is 2 bits; 8 to 15 are 4 bits, `floor(log2 4)` = 2.
+        assert_eq!(one_wide(&[big(3), big(8)]), Some(1));
+        assert_eq!(one_wide(&[big(15), big(3), big(1)]), Some(0));
+        // 7 is 3 bits.
+        assert_eq!(one_wide(&[big(7), big(8)]), None);
+        // 2 and 3 are 4 bits; `2^15` is 16 bits (log 4), `2^14` 15 bits (log 3).
+        assert_eq!(one_wide(&[big(2), big(1 << 15), big(3)]), Some(1));
+        assert_eq!(one_wide(&[big(2), big(1 << 14), big(3)]), None);
+        assert_eq!(one_wide(&[big(1 << 20), big(1 << 20)]), None);
+        assert_eq!(one_wide(&[big(1), big(1 << 20), big(1)]), Some(1));
+        assert_eq!(one_wide(&[big(1), big(1)]), None);
+        assert_eq!(one_wide::<BigUint>(&[]), None);
+        // Both sides give the natural base.
+        for xs in [[big(3), big(8)], [big(7), big(8)], [big(6), big(12)]] {
+            valid(&xs, None);
+            assert_eq!(by_value(&coprime_base(&xs)), by_value(&by_halves(&xs)));
+        }
+        // The wide input last, after others of 20 bits together and ones: `2^(2^20)` has
+        // `2^20 + 1` bits, `floor(log2)` 20.
+        let mut late: Vec<BigUint> = [3u64, 5, 7, 9, 11, 1, 1].map(big).to_vec();
+        late.extend([big(13), big(1), pow(2, 1 << 20)]);
+        assert_eq!(
+            late[..9]
+                .iter()
+                .map(|x| x.bits())
+                .filter(|&b| b > 1)
+                .sum::<u64>(),
+            20
+        );
+        assert_eq!(one_wide(&late), Some(9));
+        late.insert(0, big(2));
+        assert_eq!(one_wide(&late), None);
+    }
+
+    /// `one_wide`'s condition by a scan of every input, with no early stop.
+    fn one_wide_by_full_scan(xs: &[BigUint]) -> Option<usize> {
+        let bits: Vec<u64> = xs.iter().map(|x| x.bits()).collect();
+        let n = bits.iter().copied().filter(|&b| b > 1).max()?;
+        let w = bits
+            .iter()
+            .position(|&b| b == n)
+            .expect("the widest is one of them");
+        let m: u64 = bits.iter().copied().filter(|&b| b > 1).sum::<u64>() - n;
+        (m <= u64::from(n.ilog2())).then_some(w)
+    }
+
+    /// `one_wide`'s early stop (once the bits of the others seen pass 63) gives the answer of
+    /// the full scan: random lists, half of up to 7 inputs of 1 to 4 bits (where the condition
+    /// often holds) and half of up to 199 inputs of 1 to 70 bits (where the stop is reached),
+    /// with ones among them and, in two thirds, one power of 3 of 102 to 1,624 bits at a random
+    /// place.
+    #[test]
+    fn the_one_wide_stop_agrees_with_the_full_scan() {
+        let (mut rng, seed) =
+            crate::seed::Rng::fresh("the_one_wide_stop_agrees_with_the_full_scan");
+        let (mut some, mut none) = (0, 0);
+        for case in 0..2000 {
+            let (k, top) = if case % 2 == 0 { (8, 4) } else { (200, 70) };
+            let k = rng.below(k);
+            let mut xs: Vec<BigUint> = (0..k)
+                .map(|_| match rng.below(4) {
+                    0 => big(1),
+                    _ => pow(2, rng.below(top) as u64) + big(1),
+                })
+                .collect();
+            if rng.below(3) != 0 {
+                let at = rng.below(xs.len() + 1);
+                xs.insert(at, pow(3, 1 << (6 + rng.below(5))));
+            }
+            let want = one_wide_by_full_scan(&xs);
+            assert_eq!(one_wide(&xs), want, "case {case}, seed {seed}");
+            if want.is_some() { some += 1 } else { none += 1 }
+        }
+        assert!(
+            some > 100 && none > 100,
+            "both answers met: {some} and {none}"
+        );
+    }
+
+    #[test]
+    #[should_panic(expected = "a coprime base of positive integers, given 0")]
+    fn a_zero_input_after_the_one_wide_stop_is_refused() {
+        let mut xs: Vec<BigUint> = zed_numtheory::first_primes(40)
+            .into_iter()
+            .map(big)
+            .collect();
+        xs.push(big(0));
+        assert_eq!(one_wide(&xs), None);
+        coprime_base(&xs);
+    }
+
+    #[test]
+    #[should_panic(expected = "a coprime base of positive integers, given 0")]
+    fn a_zero_input_is_refused_before_either_path() {
+        coprime_base(&[pow(2, 100), big(0)]);
+    }
+
+    #[test]
+    #[should_panic(expected = "a coprime base of positive integers, given 0")]
+    fn a_zero_input_is_refused_on_the_word_path() {
+        coprime_base(&[big(6), big(0)]);
+    }
+
+    /// PERF-coprime-base-wide-few: the word path (`words`, `zed_numtheory::coprime_base_u64`)
+    /// against the definition and `by_halves`, through `check`. Where `words` changes path: at
+    /// `WORD_INPUTS` word inputs it takes them, at one more or with one input of 65 bits it
+    /// does not. Adversarial words: the largest word, the top bit alone, powers of 2 up to the
+    /// top bit, the square of the largest prime below 2^32, a word that is a power of another
+    /// input, repeats and ones, and chains in which each input shares a prime with the next.
+    /// Random: lists of up to `WORD_INPUTS` products of small primes at random exponents, and
+    /// random words, some times a random small prime.
+    #[test]
+    fn the_word_path_gives_the_general_base() {
+        let ws: Vec<u64> = (1..=WORD_INPUTS as u64).map(|i| i * 6).collect();
+        let bx: Vec<BigUint> = ws.iter().map(|&w| big(w)).collect();
+        assert_eq!(words(&bx), Some(ws.clone()));
+        check(&ws);
+        let mut more = bx.clone();
+        more.push(big(7));
+        assert_eq!(words(&more), None);
+        let mut wide = bx[1..].to_vec();
+        wide.push(pow(2, 64));
+        assert_eq!(words(&wide), None);
+        let p32 = 4_294_967_291u64;
+        check(&[u64::MAX]);
+        check(&[u64::MAX, 3, 5, 17, 257, 65537, 641, 6_700_417]);
+        check(&[1 << 63, 1 << 62, 4, 8, 3 << 61]);
+        check(&[p32 * p32, p32, p32 * 2]);
+        check(&[3u64.pow(40), 9, 3u64.pow(40), 1, 1]);
+        check(&[6, 10, 15, 21, 35, 77, 143, 221]);
+        check(&[2 * 3, 3 * 5, 5 * 7, 7 * 11, 11 * 13, 13 * 2]);
+        check(&[
+            2u64.pow(60),
+            2u64.pow(6) * 3,
+            3u64.pow(30) * 2,
+            6u64.pow(20),
+        ]);
+        let (mut rng, seed) = crate::seed::Rng::fresh("the_word_path_gives_the_general_base");
+        let smalls = [2u64, 3, 5, 7, 11, 13];
+        for case in 0..300 {
+            let k = 1 + rng.below(WORD_INPUTS);
+            let ws: Vec<u64> = (0..k)
+                .map(|_| {
+                    if rng.below(4) == 0 {
+                        let w = rng.next_u64() | 1;
+                        return if rng.below(2) == 0 {
+                            w
+                        } else {
+                            (w >> 4) * rng.pick(&smalls)
+                        };
+                    }
+                    let mut w = 1u64;
+                    for _ in 0..rng.below(5) {
+                        let p = rng.pick(&smalls);
+                        for _ in 0..1 + rng.below(6) {
+                            if let Some(v) = w.checked_mul(p) {
+                                w = v;
+                            }
+                        }
+                    }
+                    w
+                })
+                .collect();
+            let bx: Vec<BigUint> = ws.iter().map(|&w| big(w)).collect();
+            assert!(words(&bx).is_some(), "case {case}, seed {seed}");
+            check(&ws);
+        }
+    }
+
+    /// The two paths agree at the switchover `WORD_INPUTS` (author decision A96): at
+    /// `WORD_INPUTS` inputs `coprime_base` takes the word path and at one more the general one,
+    /// so on lists of both lengths `zed_numtheory::coprime_base_u64` is run directly and its
+    /// elements and powers held equal to `by_halves`'s, and `coprime_base` to both. Families as
+    /// on `num::bench::the_word_crossover_axis`: distinct primes, products of three shared
+    /// primes, random words at the top bit; and random products of small primes.
+    #[test]
+    fn the_paths_agree_at_the_word_switchover() {
+        let (mut rng, seed) = crate::seed::Rng::fresh("the_paths_agree_at_the_word_switchover");
+        let primes = zed_numtheory::first_primes(2 * WORD_INPUTS + 2);
+        let smalls = [2u64, 3, 5, 7, 11, 13];
+        for k in [WORD_INPUTS, WORD_INPUTS + 1] {
+            let mut lists = vec![primes[..k].to_vec()];
+            for case in 0..50 {
+                lists.push(match case % 3 {
+                    0 => (0..k)
+                        .map(|_| (0..3).map(|_| primes[rng.below(k)]).product())
+                        .collect(),
+                    1 => (0..k).map(|_| rng.next_u64() | 1 << 63).collect(),
+                    _ => (0..k)
+                        .map(|_| (0..1 + rng.below(4)).map(|_| rng.pick(&smalls)).product())
+                        .collect(),
+                });
+            }
+            for ws in lists {
+                let bx: Vec<BigUint> = ws.iter().map(|&w| big(w)).collect();
+                assert_eq!(words(&bx).is_some(), k <= WORD_INPUTS, "k {k}");
+                let (elements, exponents) = zed_numtheory::coprime_base_u64(&ws);
+                let word = CoprimeBase {
+                    factors: (exponents.into_iter())
+                        .map(|ks| {
+                            (ks.into_iter())
+                                .map(|(e, n)| {
+                                    (e, crate::num::pow_uint(&big(elements[e as usize]), n))
+                                })
+                                .collect()
+                        })
+                        .collect(),
+                    elements: elements.into_iter().map(big).collect(),
+                };
+                let general = by_value(&by_halves(&bx));
+                assert_eq!(by_value(&word), general, "k {k}, {ws:?}, seed {seed}");
+                assert_eq!(
+                    by_value(&coprime_base(&bx)),
+                    general,
+                    "k {k}, {ws:?}, seed {seed}"
+                );
+            }
+        }
     }
 
     #[test]
@@ -800,6 +1554,89 @@ mod tests {
             }
             assert_eq!(dense_values(&xs), None);
             assert_eq!(shares_a_factor(&xs), shares_a_factor_by_pairs(&xs), "k {k}");
+        }
+    }
+
+    /// (Moved from zedc-int `int.rs` with `strip` by PERF-coprime-base-wide-few.)
+    #[test]
+    fn stripping_a_power_of_2_agrees_with_dividing_once_per_factor() {
+        for t in [1u32, 2, 3, 7, 64, 65, 200] {
+            let c = BigUint::from(1u32) << t;
+            for (z, odd) in [
+                (0u32, 1u32),
+                (1, 3),
+                (6, 5),
+                (64, 7),
+                (199, 1),
+                (1000, 9),
+                (1001, 1),
+            ] {
+                let mut rest = BigUint::from(odd) << z;
+                let (mut want, mut k) = (rest.clone(), 0u64);
+                while (&want % &c).is_zero() {
+                    want /= &c;
+                    k += 1;
+                }
+                assert_eq!(strip(&mut rest, &c), k, "t = {t}, z = {z}");
+                assert_eq!(rest, want, "t = {t}, z = {z}");
+            }
+        }
+    }
+
+    /// Item SCALE-fix-strip-odd: `strip` by a factor that is not a power of 2, odd, even,
+    /// composite, a power of another, or wider than a word, against dividing once per factor,
+    /// on `c ^ k * u` for multiplicities `k` around powers of 2 and random `u`, some with a
+    /// divisor and a quotient past the kernel's division leaf of 4096 bits, where it weighs
+    /// num-bigint's division against its others (it picks num-bigint at these widths). (Moved
+    /// from zedc-int `int.rs` with `strip` by PERF-coprime-base-wide-few.)
+    #[test]
+    fn stripping_any_factor_agrees_with_dividing_once_per_factor() {
+        let (mut rng, _) =
+            crate::seed::Rng::fresh("stripping_any_factor_agrees_with_dividing_once_per_factor");
+        let wide = BigUint::from_slice(&[0x8000_0001, 0x1234_5679, 0xdead_beef, 0x7]);
+        let factors = [
+            BigUint::from(3u32),
+            BigUint::from(5u32),
+            BigUint::from(6u32),
+            BigUint::from(9u32),
+            BigUint::from(15u32),
+            BigUint::from(12u32),
+            BigUint::from(u64::MAX),
+            wide,
+        ];
+        let ks = [
+            0u64, 1, 2, 3, 7, 8, 9, 63, 64, 65, 255, 1000, 4095, 4096, 6000,
+        ];
+        for c in &factors {
+            // The largest `k` with `c ^ k` of at most 20,000 bits: from 6435 bits (`wide ^ 65`)
+            // to 18,000 (`5 ^ 6000`).
+            let top = ks.iter().copied().filter(|k| k * c.bits() <= 20_000).max();
+            for k in ks {
+                if k * c.bits() > 20_000 {
+                    continue;
+                }
+                for words in [1usize, 2, 40, 300] {
+                    // A `u` of 300 words only at the largest `k`, once for each factor: the
+                    // last division then has a divisor and a quotient past 4096 bits, and
+                    // the test stays small.
+                    if words == 300 && Some(k) != top {
+                        continue;
+                    }
+                    let u = BigUint::from_slice(
+                        &(0..2 * words)
+                            .map(|_| rng.next_u64() as u32)
+                            .collect::<Vec<_>>(),
+                    ) + 1u32;
+                    let mut rest = c.pow(u32::try_from(k).unwrap()) * &u;
+                    let (mut want, mut times) = (rest.clone(), 0u64);
+                    while (&want % c).is_zero() {
+                        want /= c;
+                        times += 1;
+                    }
+                    assert_eq!(strip(&mut rest, c), times, "c = {c}, k = {k}, u = {u}");
+                    assert_eq!(rest, want, "c = {c}, k = {k}, u = {u}");
+                }
+            }
         }
     }
 }

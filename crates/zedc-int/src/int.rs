@@ -13,9 +13,10 @@ use num_bigint::{BigInt, BigUint, Sign};
 use num_integer::Integer;
 use num_traits::{One, Zero};
 use zed_kernel::bits::BitLen;
+use zed_kernel::num::coprime::coprime_base_exponents;
 use zed_kernel::num::{
-    TooLarge, div_floor_int, div_rem_uint, gcd_uint, mod_floor_int, mul_int, mul_uint, pow_uint,
-    read_digits, rem_uint, room, to_decimal, trees,
+    TooLarge, div_floor_int, gcd_uint, mod_floor_int, mul_int, mul_uint, pow_uint, read_digits,
+    room, to_decimal, trees,
 };
 use zed_numtheory::{
     bezout_i128, gcd_big_u64, gcd_u64, gcd_u128, inverse_mod_2_64, is_prime, next_prime,
@@ -1236,174 +1237,6 @@ fn pow_mod_pow2(x: &BigUint, e: u64, mask: &BigUint) -> BigUint {
     out
 }
 
-/// A coprime base of integers at least 2: integers at least 2, pairwise coprime, such that
-/// each given integer is a product of their powers (for 4 and 8, the base 2; for 6, 2 and 3,
-/// the base 2 and 3). An integer that shares a factor `g > 1` with an element of the base
-/// replaces that element by `g` and the two parts of them prime to `g` ([`strip`], which takes
-/// every power of `g` out at once, so `2^n * 3` against 2 is one replacement, not `n`), each to
-/// be placed in turn. Each replacement divides the product of all the integers not yet placed
-/// and the base by at least `g`, so there are at most as many as the bits of that product, and
-/// in fact at most about as many as its distinct prime factors, each with one gcd per element.
-///
-/// Kept beside zed-kernel's `num::coprime::coprime_base`, the copy zedc-check and
-/// zedc-presburger call, for a measured reason (DRY-coprime-bases-one, 2026-11-20): this
-/// crate's inputs are a few integers of many bits that share small primes, and on them the
-/// kernel's routine (Bernstein's: D. J. Bernstein, "Factoring into coprimes in essentially
-/// linear time", J. Algorithms 54(1), 2005, doi:10.1016/j.jalgor.2004.04.009, the full comment
-/// at the head of zed-kernel `num/coprime.rs`; its `ppi` and pair steps take gcds of two
-/// numbers of `n` bits each, O(M(n) log n)) did far more work than this one (gcds against
-/// small elements and [`strip`], O(M(n))):
-/// `l01_24 equality_over_a_wide_odd_base_scales_with_its_bits` took 22.8e9 instructions at its
-/// first size against 2.1e9, and 11.9 times the work at 8 times the size against 9.2, past the
-/// limit 10.5; `equality_over_a_wide_base_scales_with_its_bits` took 482e6 against 2.2e6
-/// (ratio 9.8 against 6.5). This copy's cost grows with the count of
-/// inputs times the count of elements, which the kernel's avoids; the plan row
-/// PERF-coprime-base-wide-few gives the kernel a path for such inputs, after which this copy
-/// goes.
-fn coprime_base<'a>(xs: impl Iterator<Item = &'a BigUint>) -> Vec<BigUint> {
-    let mut base: Vec<BigUint> = Vec::new();
-    let mut todo: Vec<BigUint> = xs.cloned().collect();
-    while let Some(mut x) = todo.pop() {
-        if x.is_one() {
-            continue;
-        }
-        let shared = base.iter().enumerate().find_map(|(i, b)| {
-            let g = gcd_uint(b, &x);
-            (!g.is_one()).then_some((i, g))
-        });
-        match shared {
-            None => base.push(x),
-            Some((i, g)) => {
-                let mut b = base.swap_remove(i);
-                strip(&mut b, &g);
-                strip(&mut x, &g);
-                todo.push(b);
-                todo.push(x);
-                todo.push(g);
-            }
-        }
-    }
-    base
-}
-
-/// The exponents of `∏ b ^ e` over a coprime `base` of which every `b` is a product of
-/// powers, one per element of the base.
-fn exponents_over<'a>(
-    base: &[BigUint],
-    powers: impl Iterator<Item = (&'a BigUint, &'a BigUint)>,
-) -> Vec<BigUint> {
-    let mut out = vec![BigUint::ZERO; base.len()];
-    for (b, e) in powers {
-        let mut rest = b.clone();
-        for (c, x) in base.iter().zip(&mut out) {
-            let k = strip(&mut rest, c);
-            if k > 0 {
-                *x += e * k;
-            }
-        }
-        debug_assert!(rest.is_one(), "a coprime base of {b}");
-    }
-    out
-}
-
-/// The multiplicity `k` of `c >= 2` in `rest`, divided out of it. For `c` a power of 2, `2^t`,
-/// `k` is the trailing zeros of `rest` over `t`, rounded down, taken out by one shift.
-/// Otherwise, after one division by `c`, which ends it when `c` does not divide `rest`, the
-/// powers `P_i = c ^ (2^i)` are built by squaring. A power is tested against `rest` by its
-/// remainder when its bits are at least the square of the bits of the last one tested (`c`
-/// first) and their square is at most the bits of `rest`. The squaring stops at the first
-/// `P_J` that fails such a test or is above `rest`, with `x = rest mod P_J`, or at the last
-/// `P_(J-1)` whose square is surely above `rest`, with
-/// `x = rest`. Either way the multiplicity left is below `2^J`, `x` has it, and `x` is below
-/// `P_J`. From `i = J - 1` down to 0, `x` is replaced by `x / P_i`, adding `2^i` to `k`, when
-/// `P_i` divides it, and by `x mod P_i` when not, which has the same multiplicity, below `2^i`,
-/// since `c` to that multiplicity plus one divides `P_i`; either way `x` is below `P_i` after,
-/// so the widths halve. Last, `rest` is divided once by `c ^ k`, the product of the `P_i` of
-/// the binary digits of `k`. With the kernel's arithmetic a test of `P_i` costs about
-/// `n log d` for `n` bits of `rest` and `d` of `P_i`, and the tested `log d` at least double
-/// and stay below `log n / 2`, so the tests cost O(n log n); the squares and the steps down cost O(M(w)) for `w` the bits of
-/// `P_J`, at most `n` and at most about the square of the bits of `c ^ k`; and the last
-/// division O(n log (k bits(c))). So `strip` costs O(M(n)) = O(n log n), and about O(n) for a
-/// small `c ^ k` (item SCALE-fix-strip-odd). Dividing all of `rest` by each `P_i` on the way
-/// up cost O(n log^2 n), and num-bigint's division made that O(n^2) for a small `c`; building
-/// the powers up to the width of `rest` before any test cost O(M(n)) for every `k`, and grew
-/// 85 times in bytes on `equality_over_a_wide_base_scales_with_its_bits`.
-fn strip(rest: &mut BigUint, c: &BigUint) -> u64 {
-    if c.count_ones() == 1 {
-        let t = c.bits() - 1;
-        let k = rest.trailing_zeros().expect("rest is at least 1") / t;
-        *rest >>= k * t;
-        return k;
-    }
-    let (q, r) = div_rem_uint(rest, c);
-    if !r.is_zero() {
-        return 0;
-    }
-    *rest = q;
-    let mut pows: Vec<Cow<'_, BigUint>> = vec![Cow::Borrowed(c)];
-    // The bits of the last power tested by its remainder.
-    let mut tested = 0u64;
-    let mut x: Cow<'_, BigUint> = loop {
-        let top = pows.last().expect("the power left by the last step");
-        if **top > *rest {
-            pows.pop();
-            break Cow::Borrowed(&*rest);
-        }
-        // Complexity tradeoff: a test by remainder costs about `n log d`, the kernel's division
-        // of `n` bits by `d` (about ten products of `d` bits for each `d` bits of `rest`). It
-        // ends the squaring early when `c ^ k` is small, which keeps `strip` near O(n) there;
-        // above `d = sqrt(n)` the squares left cost less than a test, so none is made there.
-        // Without tests the squares cost O(M(n)) whatever `k` (85 times the bytes from 65536 to
-        // 524288 bits on `equality_over_a_wide_base_scales_with_its_bits`); with a test at
-        // every width allowed by the first rule the odd-base test took 13.9 times the
-        // instructions from 2^19 to 2^22 digits, against 11.1 (2026-11-07).
-        if top.bits() >= tested * tested && top.bits() * top.bits() <= rest.bits() {
-            tested = top.bits();
-            let r = rem_uint(rest, top);
-            if !r.is_zero() {
-                pows.pop();
-                break Cow::Owned(r);
-            }
-        }
-        // `top ^ 2` is at least `2 ^ (2 (bits - 1))`.
-        if 2 * (top.bits() - 1) >= rest.bits() {
-            break Cow::Borrowed(&*rest);
-        }
-        let square = mul_uint(top, top);
-        pows.push(Cow::Owned(square));
-    };
-    let mut more = 0u64;
-    for (i, pw) in pows.iter().enumerate().rev() {
-        let (q, r) = div_rem_uint(&x, pw);
-        x = Cow::Owned(match r.is_zero() {
-            true => {
-                more += 1 << i;
-                q
-            }
-            false => r,
-        });
-    }
-    drop(x);
-    // The smaller powers first, so that each product is of a number by a wider one.
-    let divisor = pows
-        .iter()
-        .enumerate()
-        .filter(|(i, _)| more >> i & 1 == 1)
-        .map(|(_, pw)| pw)
-        .fold(None, |acc: Option<Cow<'_, BigUint>>, pw| {
-            Some(match acc {
-                None => Cow::Borrowed(&**pw),
-                Some(a) => Cow::Owned(mul_uint(&a, pw)),
-            })
-        });
-    if let Some(d) = divisor {
-        let (q, r) = div_rem_uint(rest, &d);
-        debug_assert!(r.is_zero(), "c ^ {more} divides what is left");
-        *rest = q;
-    }
-    1 + more
-}
-
 impl Atom {
     /// The value to `bits` bits.
     fn approx(&self, bits: u64) -> Approx {
@@ -1476,10 +1309,14 @@ impl Core {
 
     /// Whether two cores have one value. The atoms on which they differ in form are taken
     /// from both by one merge of their atom lists, with exponents less those of the other;
-    /// the integers among them are written over a coprime base ([`coprime_base`]), on which a
-    /// product of powers has one form, so `6 ^ e * 5 ^ f` and `2 ^ e * 3 ^ e * 5 ^ f`
-    /// are found equal by 6, 2 and 3 alone. The cost is that of the coprime base of the
-    /// integers written differently, nothing for the atoms the cores share.
+    /// the integers among them are written over their natural coprime base (zed-kernel's
+    /// `num::coprime::coprime_base_exponents`), on which a product of powers has one form, so
+    /// `6 ^ e * 5 ^ f` and `2 ^ e * 3 ^ e * 5 ^ f` are found equal by 6, 2 and 3 alone. The
+    /// cost is that of the coprime base of the integers written differently, nothing for the
+    /// atoms the cores share; for a few roots of one word each (6, 2 and 3) the kernel's word
+    /// path, O(k^2) word gcds for `k` roots up to its measured switchover `WORD_INPUTS`; for
+    /// one wide root among a few small ones (`3^n * 2` against 3 and 2) the kernel's one-wide
+    /// path, O(M(n)) at a fixed width of the small ones.
     // Complexity tradeoff: two cores whose roots differ in form are taken to differ here,
     // though two roots of different radicands may have one value (the floor cube roots of
     // `2 ^ (3 * e + 1)` and of `2 ^ (3 * e + 1) + 1`), so such cores are found equal only by
@@ -1548,8 +1385,23 @@ impl Core {
         if l.is_empty() || r.is_empty() {
             return false;
         }
-        let base = coprime_base(l.iter().chain(&r).map(|(b, _)| *b));
-        exponents_over(&base, l.into_iter()) == exponents_over(&base, r.into_iter())
+        // The roots of both sides in one list, `l` first, so that the multiplicities of the
+        // first `l.len()` are those of `l`.
+        let roots: Vec<&BigUint> = l.iter().chain(&r).map(|(b, _)| *b).collect();
+        let base = coprime_base_exponents(&roots);
+        let (kl, kr) = base.exponents.split_at(l.len());
+        // The exponent of each element in `prod b ^ e`: the sum of `e * k` over the roots `b`
+        // in which the element has multiplicity `k`.
+        let over = |side: &[(&BigUint, &BigUint)], ks: &[Vec<(u32, u64)>]| {
+            let mut out = vec![BigUint::ZERO; base.elements.len()];
+            for ((_, e), k) in side.iter().zip(ks) {
+                for &(c, k) in k {
+                    out[c as usize] += *e * k;
+                }
+            }
+            out
+        };
+        over(&l, kl) == over(&r, kr)
     }
 
     /// The order of the values: equal in form, else at 64 bits, else by [`Core::same`], else
@@ -3377,87 +3229,6 @@ mod tests {
             least_root(BigUint::from(1u32) << 4099u32),
             (BigUint::from(2u32), BigUint::from(4099u32))
         );
-    }
-
-    #[test]
-    fn stripping_a_power_of_2_agrees_with_dividing_once_per_factor() {
-        for t in [1u32, 2, 3, 7, 64, 65, 200] {
-            let c = BigUint::from(1u32) << t;
-            for (z, odd) in [
-                (0u32, 1u32),
-                (1, 3),
-                (6, 5),
-                (64, 7),
-                (199, 1),
-                (1000, 9),
-                (1001, 1),
-            ] {
-                let mut rest = BigUint::from(odd) << z;
-                let (mut want, mut k) = (rest.clone(), 0u64);
-                while (&want % &c).is_zero() {
-                    want /= &c;
-                    k += 1;
-                }
-                assert_eq!(strip(&mut rest, &c), k, "t = {t}, z = {z}");
-                assert_eq!(rest, want, "t = {t}, z = {z}");
-            }
-        }
-    }
-
-    /// Item SCALE-fix-strip-odd: `strip` by a factor that is not a power of 2, odd, even,
-    /// composite, a power of another, or wider than a word, against dividing once per factor,
-    /// on `c ^ k * u` for multiplicities `k` around powers of 2 and random `u`, some with a
-    /// divisor and a quotient past the kernel's division leaf of 4096 bits, where it weighs
-    /// num-bigint's division against its others (it picks num-bigint at these widths).
-    #[test]
-    fn stripping_any_factor_agrees_with_dividing_once_per_factor() {
-        let (mut rng, _) =
-            crate::seed::Rng::fresh("stripping_any_factor_agrees_with_dividing_once_per_factor");
-        let wide = BigUint::from_slice(&[0x8000_0001, 0x1234_5679, 0xdead_beef, 0x7]);
-        let factors = [
-            BigUint::from(3u32),
-            BigUint::from(5u32),
-            BigUint::from(6u32),
-            BigUint::from(9u32),
-            BigUint::from(15u32),
-            BigUint::from(12u32),
-            BigUint::from(u64::MAX),
-            wide,
-        ];
-        let ks = [
-            0u64, 1, 2, 3, 7, 8, 9, 63, 64, 65, 255, 1000, 4095, 4096, 6000,
-        ];
-        for c in &factors {
-            // The largest `k` with `c ^ k` of at most 20,000 bits: from 6435 bits (`wide ^ 65`)
-            // to 18,000 (`5 ^ 6000`).
-            let top = ks.iter().copied().filter(|k| k * c.bits() <= 20_000).max();
-            for k in ks {
-                if k * c.bits() > 20_000 {
-                    continue;
-                }
-                for words in [1usize, 2, 40, 300] {
-                    // A `u` of 300 words only at the largest `k`, once for each factor: the
-                    // last division then has a divisor and a quotient past 4096 bits, and
-                    // the test stays small.
-                    if words == 300 && Some(k) != top {
-                        continue;
-                    }
-                    let u = BigUint::from_slice(
-                        &(0..2 * words)
-                            .map(|_| rng.next_u64() as u32)
-                            .collect::<Vec<_>>(),
-                    ) + 1u32;
-                    let mut rest = c.pow(u32::try_from(k).unwrap()) * &u;
-                    let (mut want, mut times) = (rest.clone(), 0u64);
-                    while (&want % c).is_zero() {
-                        want /= c;
-                        times += 1;
-                    }
-                    assert_eq!(strip(&mut rest, c), times, "c = {c}, k = {k}, u = {u}");
-                    assert_eq!(rest, want, "c = {c}, k = {k}, u = {u}");
-                }
-            }
-        }
     }
 
     #[test]

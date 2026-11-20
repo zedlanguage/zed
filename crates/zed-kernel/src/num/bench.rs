@@ -39,6 +39,109 @@ fn the_coprime_base_of_the_first_primes_scales() {
     });
 }
 
+/// PERF-coprime-base-wide-few: both paths of `coprime::coprime_base` on both sides of the
+/// condition at `coprime::one_wide` (author decision A96). One input `x` of about `n` bits, the
+/// first `k` primes to random exponents (each about `n / 2k` bits) times random odd words, and
+/// the `k` primes as the other inputs, `m` bits together; the condition `m <= floor(log2 n)`
+/// holds for the smaller `k`. `with_one_wide` is correct for any wide input (its proof does not
+/// use the condition), so both paths run on every case, their bases are held equal, and the
+/// instructions and bytes of each are printed. The switch is set by the proved bound, not by
+/// these numbers. Run again for each target platform and after a change to code generation.
+#[test]
+fn the_one_wide_crossover_axis() {
+    let mut meter = crate::scaling::Meter::new();
+    let mut rng = crate::seed::Rng::new(0x5eed_c0b1);
+    let primes = zed_numtheory::first_primes(10);
+    for n in [1u64 << 12, 1 << 15] {
+        for k in 1..=primes.len() {
+            let ps = &primes[..k];
+            let mut x = BigUint::one();
+            for &p in ps {
+                let e = n / (2 * k as u64 * BigUint::from(p).bits());
+                x *= pow_uint(&BigUint::from(p), e + rng.below_u64(e / 4 + 1));
+            }
+            while x.bits() < n {
+                x *= rng.next_u64() | 1;
+            }
+            let mut xs = vec![x];
+            xs.extend(ps.iter().map(|&p| BigUint::from(p)));
+            let m: u64 = xs[1..].iter().map(BigUint::bits).sum();
+            let (mut one, mut halves) = (None, None);
+            let fast = meter.work(|| one = Some(coprime::with_one_wide(&xs, 0)));
+            let general = meter.work(|| halves = Some(coprime::by_halves(&xs)));
+            let (mut one, _) = one.expect("run by the meter");
+            let mut halves = halves.expect("run by the meter");
+            one.elements.sort();
+            halves.elements.sort();
+            assert_eq!(one.elements, halves.elements, "n {n}, k {k}");
+            println!(
+                "bench ONE_WIDE n={n} k={k} m={m} one_wide_side={} one_wide={}/{} halves={}/{}",
+                coprime::one_wide(&xs).is_some(),
+                fast.units,
+                fast.bytes,
+                general.units,
+                general.bytes
+            );
+        }
+    }
+}
+
+/// PERF-coprime-base-wide-few: the word path of `coprime::coprime_base_exponents`
+/// (`zed_numtheory::coprime_base_u64`, factor refinement, O(k^2) word gcds) against the general
+/// path (`coprime::by_halves`) on `k` word inputs, on both sides of the measured switchover
+/// `coprime::WORD_INPUTS` (author decision A96). Three families: the first `k` primes (no prime
+/// shared, refinement's worst case, each tried against every element before it); products of
+/// three primes drawn from the first `k` (many shared); and random words at the top bit, which
+/// share little. Prints the instructions and bytes of each method and holds their bases equal.
+/// The switchover is the largest `k` at which the word path is the cheaper on every family;
+/// the measurements on both sides of it are at `coprime::WORD_INPUTS`. Run
+/// again for each target platform and after a change to code generation.
+#[test]
+fn the_word_crossover_axis() {
+    let mut meter = crate::scaling::Meter::new();
+    let mut rng = crate::seed::Rng::new(0x5eed_c0b2);
+    let primes = zed_numtheory::first_primes(512);
+    // Every `k` up to 16, where the families cross, then the sizes beyond; `WORD_INPUTS` and the
+    // one past it are always on the axis, so a change to the constant keeps both sides measured.
+    let mut ks: Vec<usize> = (1..=16)
+        .chain([24, 32, 48, 64, 96, 128, 192, 256, 384, 512])
+        .collect();
+    ks.extend([coprime::WORD_INPUTS, coprime::WORD_INPUTS + 1]);
+    ks.sort_unstable();
+    ks.dedup();
+    for k in ks {
+        let distinct: Vec<u64> = primes[..k].to_vec();
+        let shared: Vec<u64> = (0..k)
+            .map(|_| {
+                (0..3)
+                    .map(|_| primes[rng.below_u64(k as u64) as usize])
+                    .product()
+            })
+            .collect();
+        let wide: Vec<u64> = (0..k).map(|_| rng.next_u64() | 1 << 63).collect();
+        for (family, ws) in [("distinct", distinct), ("shared", shared), ("random", wide)] {
+            let xs: Vec<BigUint> = ws.iter().map(|&w| BigUint::from(w)).collect();
+            let (mut by_words, mut halves) = (None, None);
+            let word = meter.work(|| by_words = Some(zed_numtheory::coprime_base_u64(&ws)));
+            let general = meter.work(|| halves = Some(coprime::by_halves(&xs)));
+            let (mut by_words, _) = by_words.expect("run by the meter");
+            let mut halves = halves.expect("run by the meter").elements;
+            by_words.sort_unstable();
+            halves.sort();
+            let by_words: Vec<BigUint> = by_words.into_iter().map(BigUint::from).collect();
+            assert_eq!(by_words, halves, "{family} k {k}");
+            println!(
+                "bench WORDS family={family} k={k} word_side={} words={}/{} halves={}/{}",
+                k <= coprime::WORD_INPUTS,
+                word.units,
+                word.bytes,
+                general.units,
+                general.bytes
+            );
+        }
+    }
+}
+
 /// Both methods of `coprime::shares_a_factor` on both sides of the table method's condition
 /// (author decision A96): k values `1 + i * stride`, the largest about `k * stride`, so the
 /// condition (largest value at most the bits of all the values) holds only for the small

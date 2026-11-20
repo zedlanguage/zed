@@ -6,6 +6,8 @@
 
 use std::collections::HashSet;
 
+use zed_kernel::num::coprime::{CoprimeExponents, coprime_base, strip};
+
 use super::*;
 
 /// `2^k` as an [`Int`].
@@ -763,7 +765,7 @@ fn a_coprime_base_of_each_shape_of_input() {
         ("30 and 1", n(&[30, 1]), vec![30]),
     ];
     for (case, xs, want) in cases {
-        let mut base = coprime_base(xs.iter());
+        let mut base = coprime_base(&xs).elements;
         assert!(is_coprime_base_of(&base, &xs), "{case}: {base:?}");
         base.sort();
         assert_eq!(base, n(&want), "{case}");
@@ -771,8 +773,35 @@ fn a_coprime_base_of_each_shape_of_input() {
     // Wide inputs sharing a wide factor.
     let p = BigUint::from(10u32).pow(30u32) + 57u32;
     let xs = vec![&p * 6u32, &p * &p * 35u32, BigUint::from(14u32)];
-    let base = coprime_base(xs.iter());
+    let base = coprime_base(&xs).elements;
     assert!(is_coprime_base_of(&base, &xs), "wide: {base:?}");
+    // The roots `Core::same` meets on `l01_24 equality_over_a_wide_odd_base_scales_with_its_bits`,
+    // which take the kernel's one-wide path: `3^200 * 2`, 3 and 2.
+    let xs = vec![
+        BigUint::from(3u32).pow(200u32) * 2u32,
+        BigUint::from(3u32),
+        BigUint::from(2u32),
+    ];
+    let mut base = coprime_base(&xs).elements;
+    assert!(is_coprime_base_of(&base, &xs), "one wide: {base:?}");
+    base.sort();
+    assert_eq!(base, n(&[2, 3]), "one wide");
+}
+
+/// The exponent of each element of the base in `prod b ^ e`, as `Core::same` sums it from
+/// `coprime_base_exponents` (the roots of `l` and then of `r` in one list).
+fn exponents_over(
+    base: &CoprimeExponents,
+    from: usize,
+    powers: &[(BigUint, BigUint)],
+) -> Vec<BigUint> {
+    let mut out = vec![BigUint::ZERO; base.elements.len()];
+    for ((_, e), ks) in powers.iter().zip(&base.exponents[from..]) {
+        for &(c, k) in ks {
+            out[c as usize] += e * k;
+        }
+    }
+    out
 }
 
 #[test]
@@ -793,12 +822,13 @@ fn exponents_over_a_coprime_base_rebuild_each_product() {
         ),
     ];
     for (case, powers) in cases {
-        let base = coprime_base(powers.iter().map(|(b, _)| b));
-        let exps = exponents_over(&base, powers.iter().map(|(b, e)| (b, e)));
-        assert_eq!(exps.len(), base.len(), "{case}");
+        let roots: Vec<&BigUint> = powers.iter().map(|(b, _)| b).collect();
+        let base = coprime_base_exponents(&roots);
+        let exps = exponents_over(&base, 0, &powers);
+        assert_eq!(exps.len(), base.elements.len(), "{case}");
         // Each base element's exponent is the sum over the powers of its multiplicity in b
         // times e.
-        for (c, x) in base.iter().zip(&exps) {
+        for (c, x) in base.elements.iter().zip(&exps) {
             let want: BigUint = powers
                 .iter()
                 .map(|(b, e)| {
@@ -812,9 +842,10 @@ fn exponents_over_a_coprime_base_rebuild_each_product() {
     // Two products equal as values have equal exponents over a common base: 4^3 · 9 = 8^2 · 3^2.
     let l = [(n(4), n(3)), (n(9), n(1))];
     let r = [(n(8), n(2)), (n(3), n(2))];
-    let base = coprime_base(l.iter().chain(&r).map(|(b, _)| b));
+    let roots: Vec<&BigUint> = l.iter().chain(&r).map(|(b, _)| b).collect();
+    let base = coprime_base_exponents(&roots);
     assert_eq!(
-        exponents_over(&base, l.iter().map(|(b, e)| (b, e))),
-        exponents_over(&base, r.iter().map(|(b, e)| (b, e)))
+        exponents_over(&base, 0, &l),
+        exponents_over(&base, l.len(), &r)
     );
 }
