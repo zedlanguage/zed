@@ -68,6 +68,7 @@ fn kind_name(k: &NeedKind) -> &'static str {
         NeedKind::Order { .. } => "Order",
         NeedKind::NoInt(_) => "NoInt",
         NeedKind::Power(_) => "Power",
+        NeedKind::Push { .. } => "Push",
         NeedKind::InDomain { .. } => "InDomain",
         NeedKind::Sum => "Sum",
         NeedKind::Entries => "Entries",

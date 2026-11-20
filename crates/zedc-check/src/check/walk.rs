@@ -13556,6 +13556,16 @@ impl<'t, 'a> Ck<'t, 'a> {
                 self.power_on(&on, p, span);
                 Ty::empty()
             }
+            // At the push, not at the call: the push's text is what the message quotes, and the
+            // call is in the notes of the path from it to the use (`also_notes` below).
+            NeedKind::Push {
+                port,
+                site,
+                bubbles,
+            } => {
+                self.pushed(&on, port, *site, *bubbles);
+                Ty::empty()
+            }
             NeedKind::InDomain { .. } => Ty::empty(),
             NeedKind::Into { what, ty } => {
                 if !self.reorder_forwarded(n, &on, ty) {
@@ -13958,10 +13968,15 @@ impl<'t, 'a> Ck<'t, 'a> {
         let Some(f) = self.fate_along(&sites) else {
             return false;
         };
-        if !(&(&extra - &f.drop) & &f.stop).is_empty()
-            || !self.gives_within(&got.without(&extra), r, binds, what, span)
-        {
+        if !self.gives_within(&got.without(&extra), r, binds, what, span) {
             return false;
+        }
+        // An atom the body stops is rejected where it stops (MSG-atom-stop-in-body), and goes
+        // no further; the others go to `pass_needs`.
+        self.stopped_in_body(what, &f, &(&extra - &f.drop), &sites, span);
+        let extra = &extra - &f.stopped();
+        if extra.is_empty() {
+            return true;
         }
         let with = got.of_piece(&Piece::Set(extra.clone()));
         self.need_passed
@@ -16742,6 +16757,39 @@ impl<'t, 'a> Ck<'t, 'a> {
                 Some(t) => self.no_int(&t, d, span),
                 None => {
                     self.need(r, NeedKind::NoInt(d.clone()), false, span);
+                }
+            }
+        }
+    }
+
+    /// The check of a push to `port` of the value at `span`, on each type variable of its
+    /// type `t`, as [`Self::no_int_vars`] records its own: on a class with no type yet, a
+    /// [`NeedKind::Push`] need, met on what flows into the class, at each call of the
+    /// function whose parameter it is; on a class with a type by now, [`Ck::pushed`] on that
+    /// type (row PORT-untyped-arg). Before, a push of such a value was not checked at all,
+    /// and `h(x, out: Lines) { out <- x; }` called as `h(x: 5, out: m.stdout)` failed only
+    /// at run time (test `bubble::a_body_s_push_of_an_untyped_parameter_is_checked_at_each_call`).
+    ///
+    /// Left unchecked, as every push of one was before: a variable no class stands for
+    /// (`class_root` gives none), and a class whose type still holds a variable, which would
+    /// need this check again on that variable; neither is known to reach a push (unproved),
+    /// and the run-time check of the push still stops a value that is not text. Cost: one
+    /// find and at most one need per variable of `t`.
+    pub(super) fn push_vars(&mut self, t: &Ty, port: &str, span: Span, bubbles: bool) {
+        for v in &t.vars {
+            let Some(r) = self.class_root(v) else {
+                continue;
+            };
+            match self.classes[r].resolved.clone() {
+                Some(known) if known.vars.is_empty() => self.pushed(&known, port, span, bubbles),
+                Some(_) => {}
+                None => {
+                    let kind = NeedKind::Push {
+                        port: port.into(),
+                        site: span,
+                        bubbles,
+                    };
+                    self.need(r, kind, false, span);
                 }
             }
         }

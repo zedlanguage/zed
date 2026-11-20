@@ -1700,6 +1700,7 @@ fn debug_need<'a>(n: &'a Need, parts: &mut Vec<Dbg<'a>>) {
         | NeedKind::Narrow(Narrow::Loose | Narrow::Atom(_))
         | NeedKind::NoInt(_)
         | NeedKind::Power(_)
+        | NeedKind::Push { .. }
         | NeedKind::Sum
         | NeedKind::Entries
         | NeedKind::Reduce(..)
@@ -5068,6 +5069,20 @@ pub enum NeedKind {
     /// the base holds no int, and the exponent holds no int or only ints listed at least 0
     /// (CHK-need-bound). The error's words are made where the `^` is.
     Power(Arc<PowerUse>),
+    /// A push to the port `port`, written at `site`, of a value whose type is a class not
+    /// known where the push is written, as `out <- x` in `h(x, out: Lines) { out <- x; }`:
+    /// what flows into the class is checked as a push written there is (zedc-check's
+    /// `Ck::pushed`), so `h(x: 5, out: m.stdout)` is rejected at the push and
+    /// `h(x: "a", out: m.stdout)` is accepted (row PORT-untyped-arg). `bubbles` is whether
+    /// the push is a statement of `main`'s body, where `#ioError` ends the run.
+    Push {
+        /// The port's name where the push is written.
+        port: Arc<str>,
+        /// The pushed value's text, which the error quotes and stands at.
+        site: Span,
+        /// Whether `#ioError` may reach the push.
+        bubbles: bool,
+    },
     /// `sum` of the value: a tuple of numbers, whose sum the use gives (CHK-need-bound).
     Sum,
     /// The entries of the value, a family: what `map`, `where`, `flatMap` and `group` pass
@@ -6193,6 +6208,15 @@ impl Need {
                 NeedKind::Data(what, does) => NeedKind::Data(what.clone(), *does),
                 NeedKind::NoInt(d) => NeedKind::NoInt(d.clone()),
                 NeedKind::Power(p) => NeedKind::Power(p.clone()),
+                NeedKind::Push {
+                    port,
+                    site,
+                    bubbles,
+                } => NeedKind::Push {
+                    port: port.clone(),
+                    site: *site,
+                    bubbles: *bubbles,
+                },
                 NeedKind::Sum => NeedKind::Sum,
                 NeedKind::Entries => NeedKind::Entries,
                 NeedKind::SumMethod { site, beside } => NeedKind::SumMethod {
@@ -6463,6 +6487,7 @@ impl Need {
                 | NeedKind::Data(..)
                 | NeedKind::NoInt(_)
                 | NeedKind::Power(_)
+                | NeedKind::Push { .. }
                 | NeedKind::InDomain { .. }
                 | NeedKind::Sum
                 | NeedKind::Entries
@@ -6511,6 +6536,7 @@ impl Need {
             | NeedKind::Data(..)
             | NeedKind::NoInt(_)
             | NeedKind::Power(_)
+            | NeedKind::Push { .. }
             | NeedKind::InDomain { .. }
             | NeedKind::Sum
             | NeedKind::Entries
@@ -6558,6 +6584,7 @@ impl Need {
             | NeedKind::Data(..)
             | NeedKind::NoInt(_)
             | NeedKind::Power(_)
+            | NeedKind::Push { .. }
             | NeedKind::InDomain { .. }
             | NeedKind::Sum
             | NeedKind::Entries
@@ -28445,6 +28472,7 @@ pub mod r10_hash {
     const TAG_NK_CONCAT: u64 = 0x2016;
     const TAG_NK_ZIP: u64 = 0x2017;
     const TAG_NK_INDOMAIN: u64 = 0x2018;
+    const TAG_NK_PUSH: u64 = 0x2019;
 
     #[inline]
     pub fn mod_p(x: u128) -> u64 {
@@ -29928,6 +29956,16 @@ pub mod r10_hash {
                 NeedKind::Power(p) => {
                     self.emit(TAG_NK_POWER);
                     self.emit_power_use(p);
+                }
+                NeedKind::Push {
+                    port,
+                    site,
+                    bubbles,
+                } => {
+                    self.emit(TAG_NK_PUSH);
+                    self.emit_str(port);
+                    self.emit_span(*site);
+                    self.emit_bool(*bubbles);
                 }
                 NeedKind::Sum => self.emit(TAG_NK_SUM),
                 NeedKind::Entries => self.emit(TAG_NK_ENTRIES),

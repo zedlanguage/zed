@@ -4,7 +4,10 @@
 
 use zed_tests::scaling;
 
-use super::super::bubble::{body_of_bindings, chain_of_helpers, helpers_giving_their_atom};
+use super::super::bubble::{
+    body_of_bindings, body_pushing_parameters, chain_of_helpers, helpers_giving_their_atom,
+    helpers_pushing_their_parameter,
+};
 use super::super::scaling::resolved;
 
 #[test]
@@ -20,6 +23,26 @@ fn many_calls_giving_a_body_s_atom_scale() {
 fn a_chain_of_calls_passing_a_body_s_atom_on_scale() {
     let units = resolved(100, chain_of_helpers);
     scaling::check("a chain of n calls passing a body's atom on", 100, |n| {
+        let info = units[&n].check();
+        assert!(info.errors.is_empty(), "{:?}", info.errors);
+    });
+}
+
+/// The check of a push of an untyped parameter is one need per push, met at each call
+/// (row PORT-untyped-arg): linear in the pushes and calls.
+#[test]
+fn many_pushes_of_untyped_parameters_scale() {
+    let units = resolved(200, helpers_pushing_their_parameter);
+    scaling::check("n helpers each pushing its untyped parameter", 200, |n| {
+        let info = units[&n].check();
+        assert!(info.errors.is_empty(), "{:?}", info.errors);
+    });
+}
+
+#[test]
+fn a_body_pushing_many_untyped_parameters_scales() {
+    let units = resolved(200, body_pushing_parameters);
+    scaling::check("a body pushing n untyped parameters", 200, |n| {
         let info = units[&n].check();
         assert!(info.errors.is_empty(), "{:?}", info.errors);
     });

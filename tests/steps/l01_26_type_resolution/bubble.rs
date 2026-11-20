@@ -476,16 +476,190 @@ fn an_atom_one_reader_handles_and_another_passes_on_reaches_the_call() {
 
 #[test]
 fn an_atom_a_body_drops_with_an_underscore_is_still_rejected() {
-    // `_` drops no loose failure (DESIGN.md sec:failure): the atom stops there, and the call
-    // keeps its rejection.
-    let errors = type_errors(
-        "h(args) { _ = args[0] ++ \"!\"; return \"y\"; }\n\
-         main(m: MainArgs) {\n  m.stdout <- h(args: m.args);\n}\n",
+    // `_` drops no loose failure (DESIGN.md sec:failure, crossing (7)): the atom stops there,
+    // and is rejected there, naming the call that makes it, with the repair as code; the
+    // call's value, `"y"`, holds no atom, so the write is not rejected (MSG-atom-stop-in-body).
+    let src = |stmt: &str| {
+        format!(
+            "h(args) {{ {stmt} return \"y\"; }}\n\
+             main(m: MainArgs) {{\n  m.stdout <- h(args: m.args);\n}}\n"
+        )
+    };
+    assert_eq!(
+        type_errors(&src("_ = args[0] ++ \"!\";")),
+        [
+            "`_` drops a loose failure: `args[0]` may be #outOfBounds when `h` is called as \
+          `h(args: m.args)`. Try `_ = args[0] ++ \"!\" else #ok;` instead. \
+          [_ = args[0] ++ \"!\";]"
+        ],
     );
-    assert_eq!(errors.len(), 1, "{errors:?}");
-    assert!(
-        errors[0].starts_with("`h` gives String | #outOfBounds here, which is not String"),
-        "{errors:?}"
+    // The repair the message gives is accepted, and runs.
+    prints(
+        "bubble_underscore_repaired",
+        &src("_ = args[0] ++ \"!\" else #ok;"),
+        "y\n",
+    );
+}
+
+#[test]
+fn an_atom_a_body_drops_in_a_statement_is_rejected_at_the_statement() {
+    // An expression statement drops its value (crossing (7)); a call there that writes to
+    // `out` is legal, so the body alone, with no type on `args`, is accepted, and the atom
+    // the call makes is rejected at the statement.
+    let src = |stmt: &str| {
+        format!(
+            "say(s: String, out: Lines) {{ out <- s; }}\n\
+             h(args, out: Lines) {{ {stmt} }}\n\
+             main(m: MainArgs) {{\n  h(args: m.args, out: m.stdout);\n}}\n"
+        )
+    };
+    assert_eq!(
+        type_errors(&src("say(s: args[0], out: out);")),
+        [
+            "A statement drops a loose failure: `args[0]` may be #outOfBounds when `h` is called \
+          as `h(args: m.args, out: m.stdout)`. Try `_ = say(s: args[0], out: out) else #ok;` \
+          instead. [say(s: args[0], out: out);]"
+        ],
+    );
+    // The headline's repair is accepted and, with no arguments, skips the call; handling
+    // the read itself keeps the call.
+    prints(
+        "bubble_statement_dropped",
+        &src("_ = say(s: args[0], out: out) else #ok;"),
+        "",
+    );
+    prints(
+        "bubble_statement_repaired",
+        &src("say(s: args[0] else \"none\", out: out);"),
+        "none\n",
+    );
+}
+
+#[test]
+fn an_atom_a_default_under_a_written_type_takes_is_rejected_at_the_default() {
+    // A default is a value of its parameter's written type (crossing (5)): the atom a read
+    // through an undeclared parameter makes there, once the call binds it, is a type error
+    // at the default, whose repairs are an `else` or the wider type.
+    let src = |param: &str| {
+        format!(
+            "h(positional xs, {param}) = s ++ \"!\";\n\
+             main(m: MainArgs) {{\n  m.stdout <- h(m.args);\n}}\n"
+        )
+    };
+    // The default's own type is `String` whatever `xs` holds, so `h` alone is accepted; a
+    // default of `xs[0]` alone has no type until a call, and `h`'s own check refuses it
+    // (the message of row MSG-default-unknown-type).
+    assert_eq!(
+        type_errors(&src("s: String = \"<\" ++ xs[0]")),
+        [
+            "The default of `s` is not `String`: `\"<\" ++ xs[0]` may be #outOfBounds when `h` \
+          is called as `h(m.args)`. Try `s: String | #outOfBounds = \"<\" ++ xs[0]` instead. \
+          [s: String = \"<\" ++ xs[0]]"
+        ],
+    );
+    prints(
+        "bubble_default_repaired",
+        &src("s: String = \"<\" ++ xs[0] else \"none\""),
+        "none!\n",
+    );
+}
+
+#[test]
+fn an_atom_a_body_writes_to_a_port_is_rejected_at_the_write() {
+    // A port write takes no loose failure (crossing (8)): the body alone, with no type on
+    // `args`, is accepted, and the atom the call makes is rejected at the write in the body.
+    let src = |stmt: &str| {
+        format!(
+            "h(args, out: Lines) {{ {stmt} }}\n\
+             main(m: MainArgs) {{\n  h(args: m.args, out: m.stdout);\n}}\n"
+        )
+    };
+    // Pushed as it is, the value's type at the call is `String | #outOfBounds`, which the
+    // push's own check refuses (row PORT-untyped-arg); before, nothing refused it and the
+    // run pushed #outOfBounds and exited 1.
+    assert_eq!(
+        type_errors(&src("out <- args[0];")),
+        [
+            "A `Lines` port takes a `String` or a family of strings: `out <- args[0] : String | \
+          #outOfBounds`. Try `out <- args[0] else \"\";` instead. [args[0]]"
+        ],
+    );
+    // Through an operation, the atom is one the call makes in the body (`gives_made`), and
+    // the write is where it stops.
+    assert_eq!(
+        type_errors(&src("out <- args[0] ++ \"!\";")),
+        [
+            "A port write does not take a loose failure: `args[0]` may be #outOfBounds when `h` \
+          is called as `h(args: m.args, out: m.stdout)`, and `out <- args[0] ++ \"!\"` writes \
+          it. [out <- args[0] ++ \"!\";]"
+        ],
+    );
+    prints(
+        "bubble_write_repaired",
+        &src("out <- args[0] else \"none\";"),
+        "none\n",
+    );
+}
+
+#[test]
+fn a_body_s_push_of_an_untyped_parameter_is_checked_at_each_call() {
+    // A `Lines` port takes text or a family of strings. The push in `h` has no type to check
+    // where it is written, so each call checks what it passes (row PORT-untyped-arg): `5` is
+    // rejected at the push, a string and a family of strings are accepted and printed.
+    let src = |arg: &str| {
+        format!(
+            "h(x, out: Lines) {{ out <- x; }}\n\
+             main(m: MainArgs) {{\n  h(x: {arg}, out: m.stdout);\n}}\n"
+        )
+    };
+    assert_eq!(
+        type_errors(&src("5")),
+        [
+            "A `Lines` port takes a `String` or a family of strings: `out <- x : 5`. Try \
+          `out <- \"${x}\";` instead. [x]"
+        ],
+    );
+    // The row's own example: a positional parameter, given `3`.
+    assert_eq!(
+        type_errors(
+            "say(positional s, out: Lines) { out <- s; }\n\
+             main(m: MainArgs) {\n  say(3, out: m.stdout);\n}\n"
+        ),
+        [
+            "A `Lines` port takes a `String` or a family of strings: `out <- s : 3`. Try \
+          `out <- \"${s}\";` instead. [s]"
+        ],
+    );
+    prints("bubble_push_string", &src("\"a\""), "a\n");
+    prints("bubble_push_family", &src("[\"a\", \"b\"]"), "a\nb\n");
+}
+
+#[test]
+fn an_atom_a_body_holds_in_a_display_reaches_the_caller_as_data() {
+    // A display holds the atom as data (crossing (2)): the call's type is a display of
+    // `String | #outOfBounds`, so the caller's `else` takes it, and without that `else` the
+    // caller's write is where it stops.
+    let src = |e: &str, tail: &str| {
+        format!(
+            "h(args) = {e};\n\
+             main(m: MainArgs) {{\n  m.stdout <- h(args: m.args)[0]{tail};\n}}\n"
+        )
+    };
+    prints(
+        "bubble_display_data",
+        &src("[args[0]]", " else \"none\""),
+        "none\n",
+    );
+    rejected_at_write_of(
+        &src("[args[0]]", ""),
+        "h(args: m.args)[0]",
+        "(h(args: m.args)[0])",
+        "String",
+    );
+    prints(
+        "bubble_display_repaired",
+        &src("[args[0] else \"none\"]", " else \"none\""),
+        "none\n",
     );
 }
 
@@ -503,6 +677,32 @@ pub(super) fn helpers_giving_their_atom(n: usize) -> String {
     }
     src.push_str("  m.stdout <- a0;\n}\n");
     src
+}
+
+/// `n` helpers, each pushing its untyped parameter to a port, and `main` calling each with a
+/// string (the benchmark `bench::bubble::many_pushes_of_untyped_parameters_scale`).
+pub(super) fn helpers_pushing_their_parameter(n: usize) -> String {
+    let mut src: String = (0..n)
+        .map(|i| format!("p{i}(x, out: Lines) {{ out <- x; }}\n"))
+        .collect();
+    src.push_str("main(m: MainArgs) {\n");
+    for i in 0..n {
+        src.push_str(&format!("  p{i}(x: \"{i}\", out: m.stdout);\n"));
+    }
+    src.push_str("}\n");
+    src
+}
+
+/// One helper pushing each of its `n` untyped parameters to a port, called once (the
+/// benchmark `bench::bubble::a_body_pushing_many_untyped_parameters_scales`).
+pub(super) fn body_pushing_parameters(n: usize) -> String {
+    let params: String = (0..n).map(|i| format!("x{i}, ")).collect();
+    let pushes: String = (0..n).map(|i| format!("  out <- x{i};\n")).collect();
+    let args: String = (0..n).map(|i| format!("x{i}: \"{i}\", ")).collect();
+    format!(
+        "p({params}out: Lines) {{\n{pushes}}}\n\
+         main(m: MainArgs) {{\n  p({args}out: m.stdout);\n}}\n"
+    )
 }
 
 /// `n` helpers, each passing on the atom of the one before it, and `main` handling it at the

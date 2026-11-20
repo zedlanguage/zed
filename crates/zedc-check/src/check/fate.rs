@@ -35,22 +35,56 @@ use zed_kernel::types::Type as KType;
 use zedc_resolve::resolve::Ref;
 use zedc_resolve::resolve::tables::Tables;
 use zedc_syntax::ast::{
-    BinaryOp, Expr, ExprKind, Function, Param, Pattern, RangeEnd, Stmt, StmtKind, StrPart, Target,
+    BinaryOp, Expr, ExprKind, Function, IndexKey, Param, Pattern, RangeEnd, Stmt, StmtKind,
+    StrPart, Target,
 };
 use zedc_syntax::lex::Span;
 
 use super::atom_pattern::matched_by;
 use zedc_types::ty::atoms;
 
+/// What stands at a place an atom may not reach, for the message that names it there
+/// (plan row MSG-atom-stop-in-body). The first four are type errors at that place by DESIGN.md
+/// sec:failure, *Where a loose atom stops*; the last is a place where DESIGN keeps the atom in
+/// a type the program can name, as data in a display or the value of a loop, which this table
+/// does not follow yet (plan row CHK-fate-unwalked-forms).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum Boundary {
+    /// `_ = e`: `_` drops no loose failure (crossing (7)).
+    Underscore,
+    /// An expression statement, whose value is dropped (crossing (7)).
+    Statement,
+    /// A write `p <- value` to a port (crossing (8)).
+    Write { value: Span },
+    /// The default `default` of a parameter under the written type `ty` (crossing (5)).
+    Default { ty: Span, default: Span },
+    /// Any other: a display, a loop, a reader in another body, `a, b = e`, a guard.
+    Other,
+}
+
+/// The atoms `atoms` stop at the place `at`, where `how` stands.
+#[derive(Clone, Debug)]
+pub(super) struct Stop {
+    pub atoms: KType,
+    pub at: Span,
+    pub how: Boundary,
+}
+
 /// Where the atoms that an expression's value holds go in its body: those of `drop` are
-/// handled, those of `stop` reach a place an atom may not reach, and every other atom reaches
-/// the body's result. `drop` and `stop` are disjoint.
+/// handled, those of each of `stops` reach the place it names, which an atom may not reach,
+/// and every other atom reaches the body's result.
+///
+/// The atom sets of `drop` and of each stop are pairwise disjoint: a stop holds only atoms
+/// no earlier stop holds, so an atom has one place where it is first stopped. That keeps the
+/// list as short as the number of atom sets the body's patterns split the atoms into, plus
+/// one, whatever the number of places that stop: every [`Fate::stop`] holds every atom, so
+/// once one is in the list, a later one adds nothing ([`Fate::add_stops`]).
 #[derive(Clone, Debug)]
 pub(super) struct Fate {
     /// The atoms handled on the way.
     pub drop: KType,
-    /// The atoms stopped on the way.
-    pub stop: KType,
+    /// The atoms stopped on the way, each set with the first place that stops it.
+    pub stops: Vec<Stop>,
 }
 
 impl Fate {
@@ -58,15 +92,19 @@ impl Fate {
     fn result() -> Fate {
         Fate {
             drop: KType::empty(),
-            stop: KType::empty(),
+            stops: Vec::new(),
         }
     }
 
-    /// A place no atom may reach.
-    fn stop() -> Fate {
+    /// The place `at`, where `how` stands, which no atom may reach.
+    fn stop(at: Span, how: Boundary) -> Fate {
         Fate {
             drop: KType::empty(),
-            stop: atoms(),
+            stops: vec![Stop {
+                atoms: atoms(),
+                at,
+                how,
+            }],
         }
     }
 
@@ -74,28 +112,49 @@ impl Fate {
     fn drop_all() -> Fate {
         Fate {
             drop: atoms(),
-            stop: KType::empty(),
+            stops: Vec::new(),
+        }
+    }
+
+    /// The atoms stopped on the way, wherever each is stopped.
+    pub fn stopped(&self) -> KType {
+        self.stops.iter().fold(KType::empty(), |s, x| &s | &x.atoms)
+    }
+
+    /// Adds `more` to the stops, each without the atoms `except` and those of an earlier
+    /// stop, so the sets stay disjoint; a stop left with no atom is not kept.
+    fn add_stops(&mut self, more: &[Stop], except: &KType) {
+        for s in more {
+            let atoms = &(&s.atoms - except) - &self.stopped();
+            if !atoms.is_empty() {
+                self.stops.push(Stop { atoms, ..s.clone() });
+            }
         }
     }
 
     /// A handler of the atoms `k` on the way to `self`: `e else #a -> d`.
     fn handling(&self, k: &KType) -> Fate {
-        Fate {
+        let mut out = Fate {
             drop: &self.drop | k,
-            stop: &self.stop - k,
-        }
+            stops: Vec::new(),
+        };
+        out.add_stops(&self.stops, k);
+        out
     }
 
     /// `inner`, the fate of an expression in a body that a call in another body makes, then
     /// `self`, the fate of that call: the atoms `inner` sends to its body's result go on as
     /// `self` sends them. An atom is handled where it is first handled and stopped where it
     /// is first stopped, so the two compose as `drop = inner.drop ∪ (self.drop − inner.stop)`
-    /// and `stop = inner.stop ∪ (self.stop − inner.drop)`, disjoint since each pair is.
+    /// and `stop = inner.stop ∪ (self.stop − inner.drop)`, disjoint since each pair is; each
+    /// atom of `stop` keeps the place that first stops it, `inner`'s before `self`'s.
     pub fn after(&self, inner: &Fate) -> Fate {
-        Fate {
-            drop: &inner.drop | &(&self.drop - &inner.stop),
-            stop: &inner.stop | &(&self.stop - &inner.drop),
-        }
+        let mut out = Fate {
+            drop: &inner.drop | &(&self.drop - &inner.stopped()),
+            stops: inner.stops.clone(),
+        };
+        out.add_stops(&self.stops, &inner.drop);
+        out
     }
 }
 
@@ -117,14 +176,22 @@ impl Fates {
                 readers.entry(b).or_default().push(*span);
             }
         }
+        // In the order of the text, so that the place a message names, the first reader's
+        // stop, does not depend on the order of a hash map: O(U log U).
+        readers.values_mut().for_each(|r| r.sort_unstable());
         let mut w = Walk {
             t,
             readers,
             at: HashMap::new(),
             bodies: 0,
         };
-        // The unit's top level is a body of its own, whose statements no call reaches.
-        w.stmts(unit, &Fate::stop(), 0);
+        // The unit's top level is a body of its own, whose statements no call reaches, so the
+        // place of this stop is never named.
+        let all = Span {
+            start: 0,
+            end: t.text.map_or(0, str::len),
+        };
+        w.stmts(unit, &Fate::stop(all, Boundary::Other), 0);
         Fates { at: w.at }
     }
 
@@ -157,9 +224,15 @@ impl Walk<'_, '_> {
         self.expr(e, Fate::result(), b);
         for p in params {
             if let Some(d) = &p.default {
-                let f = match p.ty {
+                let f = match &p.ty {
                     None => self.bound(self.t.id(p.span, &p.name), b),
-                    Some(_) => Fate::stop(),
+                    Some(ty) => Fate::stop(
+                        p.span,
+                        Boundary::Default {
+                            ty: ty.span,
+                            default: d.span,
+                        },
+                    ),
                 };
                 self.expr(d, f, b);
             }
@@ -184,25 +257,47 @@ impl Walk<'_, '_> {
                 let f = match &targets[..] {
                     [Target::Name(n, _)] => self.bound(self.t.id(s.span, n), b),
                     // `_ = e` and `a, b = e` are boundaries of their own.
-                    _ => Fate::stop(),
+                    [Target::Wild] => Fate::stop(s.span, Boundary::Underscore),
+                    _ => Fate::stop(s.span, Boundary::Other),
                 };
                 self.expr(value, f, b);
             }
             // `return e;`, or a trailing expression: the block's value.
             StmtKind::Return(es) if es.len() == 1 => self.expr(&es[0], ret.clone(), b),
-            StmtKind::Return(es) => es.iter().for_each(|e| self.expr(e, Fate::stop(), b)),
-            StmtKind::Expr(e) | StmtKind::While(e) | StmtKind::Until(e) => {
-                self.expr(e, Fate::stop(), b)
+            StmtKind::Return(es) => {
+                let f = Fate::stop(s.span, Boundary::Other);
+                es.iter().for_each(|e| self.expr(e, f.clone(), b))
             }
-            StmtKind::Push { value, .. } => self.expr(value, Fate::stop(), b),
+            StmtKind::Expr(e) => self.expr(e, Fate::stop(s.span, Boundary::Statement), b),
+            StmtKind::Push { value, .. } => {
+                let how = Boundary::Write { value: value.span };
+                self.expr(value, Fate::stop(s.span, how), b)
+            }
+            StmtKind::While(e) | StmtKind::Until(e) => {
+                self.expr(e, Fate::stop(s.span, Boundary::Other), b)
+            }
             StmtKind::Function(f) => self.function(f),
             StmtKind::Method(m) => self.function(&m.function),
             StmtKind::Annotated { decl, .. } | StmtKind::Local(decl) => self.stmt(decl, ret, b),
-            // An indexed definition's and an `initial` value's expressions have no fate here,
-            // so an atom a call there meets keeps its rejection.
-            StmtKind::Initial(_)
-            | StmtKind::IndexedDef(_)
-            | StmtKind::Break
+            // An `initial` value is loop state and an indexed definition's value an entry of a
+            // family (DESIGN.md sec:failure, crossings (6) and (2)): DESIGN keeps the atom in
+            // their types, which this table does not follow, so an atom stops there, with
+            // the keys and domains around it.
+            StmtKind::Initial(i) => {
+                let f = Fate::stop(s.span, Boundary::Other);
+                self.keys(&i.keys, &f, b);
+                self.expr(&i.value, f, b);
+            }
+            StmtKind::IndexedDef(d) => {
+                let f = Fate::stop(s.span, Boundary::Other);
+                self.keys(&d.keys, &f, b);
+                self.expr(&d.value, f.clone(), b);
+                for x in &d.boundary {
+                    self.keys(&x.keys, &f, b);
+                    self.expr(&x.value, f.clone(), b);
+                }
+            }
+            StmtKind::Break
             | StmtKind::Struct(_)
             | StmtKind::Type(_)
             | StmtKind::Import(_)
@@ -210,29 +305,41 @@ impl Walk<'_, '_> {
         }
     }
 
+    /// The keys `ks` of an indexed definition, a boundary value or an `initial` entry, each
+    /// key and domain with the fate `f`.
+    fn keys(&mut self, ks: &[IndexKey], f: &Fate, b: u32) {
+        for k in ks {
+            match k {
+                IndexKey::In { set: e, .. } | IndexKey::At(e) => self.expr(e, f.clone(), b),
+            }
+        }
+    }
+
     /// Where the value of a binding to binder `x` in body `b` sends its atoms: an atom is
     /// handled where every reader handles it, and stopped where some reader stops it. A
     /// binding read nowhere drops its value, atoms and all.
     fn bound(&self, x: usize, b: u32) -> Fate {
-        let mut out = Fate::drop_all();
+        let mut drop = atoms();
+        let mut stops = Fate::result();
         for r in self.readers.get(&x).into_iter().flatten() {
             let f = match self.at.get(r) {
                 Some((f, rb)) if *rb == b => f.clone(),
-                _ => Fate::stop(),
+                _ => Fate::stop(*r, Boundary::Other),
             };
-            out = Fate {
-                drop: &out.drop & &f.drop,
-                stop: &out.stop | &f.stop,
-            };
+            drop = &drop & &f.drop;
+            stops.add_stops(&f.stops, &KType::empty());
         }
-        out.drop = &out.drop - &out.stop;
-        out
+        Fate {
+            drop: &drop - &stops.stopped(),
+            stops: stops.stops,
+        }
     }
 
     /// Records `e`'s fate `f` in body `b`, then its parts'.
     fn expr(&mut self, e: &Expr, f: Fate, b: u32) {
         self.at.insert(e.span, (f.clone(), b));
-        let stop = Fate::stop;
+        // A part of `e` whose atoms stop at `e`.
+        let stop = || Fate::stop(e.span, Boundary::Other);
         match &e.kind {
             ExprKind::Int { .. }
             | ExprKind::Float { .. }
@@ -327,12 +434,22 @@ impl Walk<'_, '_> {
                 self.expr(v, stop(), b);
             }),
             ExprKind::Record(fs) => fs.iter().for_each(|(_, x)| self.expr(x, stop(), b)),
-            // The parts of a `with` update and of a remap's `into` levels are not walked: an
-            // atom a call there meets has no fate, and keeps its rejection.
-            ExprKind::With { of, .. }
-            | ExprKind::Remap { of, .. }
-            | ExprKind::Read { of, .. }
-            | ExprKind::Spread { of, .. } => self.expr(of, stop(), b),
+            // A `with` update's new values are fields of a record, and a remap's `into` levels
+            // make the keys and values of a family: data, where an atom stops (as for a
+            // display, above).
+            ExprKind::With { of, updates } => {
+                self.expr(of, stop(), b);
+                updates.iter().for_each(|u| self.expr(&u.value, stop(), b));
+            }
+            ExprKind::Remap { of, levels, .. } => {
+                self.expr(of, stop(), b);
+                for l in levels.iter().flatten() {
+                    for x in l.key.iter().chain(&l.reduce) {
+                        self.expr(x, stop(), b);
+                    }
+                }
+            }
+            ExprKind::Read { of, .. } | ExprKind::Spread { of, .. } => self.expr(of, stop(), b),
             ExprKind::Reduce { of, op } => {
                 self.expr(of, stop(), b);
                 self.expr(op, stop(), b);

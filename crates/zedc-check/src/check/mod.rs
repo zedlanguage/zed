@@ -4760,11 +4760,15 @@ impl<'t, 'a> Ck<'t, 'a> {
             if !left.is_empty()
                 && let Some(f) = self.fate_along(&sites)
             {
-                left = &left - &f.drop;
-                if (&left & &f.stop).is_empty() {
-                    out = out.union(&with.of_piece(&Piece::Set(left)));
-                    left = KType::empty();
+                // An atom the body stops is rejected at the place that stops it; every other
+                // one the body does not handle is the call's.
+                let reaching = &left - &f.drop;
+                self.stopped_in_body(what, &f, &reaching, &sites, span);
+                let reaching = &reaching - &f.stopped();
+                if !reaching.is_empty() {
+                    out = out.union(&with.of_piece(&Piece::Set(reaching)));
                 }
+                left = KType::empty();
             }
             if !left.is_empty() {
                 return Err(format!(
@@ -4801,6 +4805,159 @@ impl<'t, 'a> Ck<'t, 'a> {
             f = fates.of(*s)?.after(&f);
         }
         Some(f)
+    }
+
+    /// Rejects each of the atoms `atoms` that the fate `f` stops, at the place in a body
+    /// that stops it, for the call at `span` of `what`, which makes them at the last of
+    /// `sites` (`args[0]`, once `args` is `m.args`).
+    ///
+    /// The message stands where the atom is lost, a statement, `_` or a default in the body,
+    /// and names the call that makes it, since the body alone, with no type on its
+    /// parameter, makes no atom there (plan row MSG-atom-stop-in-body; DESIGN.md
+    /// sec:failure, *Where a loose atom stops*, crossings (5) and (7), whose repairs it
+    /// gives as code). O(the stops of `f`), a list as short as the body's handlers allow
+    /// ([`fate::Fate`]), on the error path only.
+    fn stopped_in_body(
+        &mut self,
+        what: &str,
+        f: &fate::Fate,
+        atoms: &KType,
+        sites: &[Span],
+        span: Span,
+    ) {
+        let text = self.t.text;
+        // The code at `s`, its first line only, so that a loop or a block a message names
+        // takes one line.
+        let code = |s: Span| match text {
+            Some(t) => {
+                let c = &t[s.start..s.end];
+                match c.split_once('\n') {
+                    Some((first, _)) => format!("{} …", first.trim_end()),
+                    None => c.to_string(),
+                }
+            }
+            None => "…".to_string(),
+        };
+        let made = sites.last().copied().unwrap_or(span);
+        let (call, made_code) = (code(span), code(made));
+        for s in &f.stops {
+            let k = &s.atoms & atoms;
+            if k.is_empty() {
+                continue;
+            }
+            let k = Ty::set(k);
+            let when = format!("when {what} is called as `{call}`");
+            // Each headline shows the code that loses the atom with what it is at this call,
+            // and ends with a repair that is code the program can hold as written; a repair
+            // that needs a value only the author knows is a note, with `…` in its place.
+            let site = code(s.at);
+            let (message, repairs) = match s.how {
+                fate::Boundary::Underscore => {
+                    let stmt = site.trim_end().trim_end_matches(';');
+                    let fix = format!("{stmt} else #ok;");
+                    (
+                        format!(
+                            "`_` drops a loose failure: `{made_code}` may be {k} {when}. Try \
+                             `{fix}` instead."
+                        ),
+                        vec![
+                            "`_` drops only a failure the program names, as the default of \
+                             an `else` names it"
+                                .to_string(),
+                            format!("repair: write a default for the value, as `{fix}`"),
+                        ],
+                    )
+                }
+                fate::Boundary::Default { ty, default } => {
+                    // The parameter's name is its text before the `:` of its type, after
+                    // `positional` if that is written.
+                    let name = code(Span {
+                        start: s.at.start,
+                        end: ty.start,
+                    });
+                    let name = name.trim_end().trim_end_matches(':').trim_end();
+                    let name = name.rsplit(' ').next().unwrap_or(name);
+                    let (ty, d) = (code(ty), code(default));
+                    let wide = format!("{name}: {ty} | {k} = {d}");
+                    (
+                        format!(
+                            "The default of `{name}` is not `{ty}`: `{d}` may be {k} {when}. \
+                             Try `{wide}` instead."
+                        ),
+                        vec![
+                            format!(
+                                "repair: give a value of `{ty}` in place of {k}, as \
+                                 `{name}: {ty} = {d} else …`"
+                            ),
+                            format!("repair: write the type that holds the failure, as `{wide}`"),
+                        ],
+                    )
+                }
+                fate::Boundary::Statement => {
+                    let stmt = site.trim_end().trim_end_matches(';');
+                    let fix = format!("_ = {stmt} else #ok;");
+                    (
+                        format!(
+                            "A statement drops a loose failure: `{made_code}` may be {k} \
+                             {when}. Try `{fix}` instead."
+                        ),
+                        vec![
+                            "a statement's value is dropped, and a loose failure is dropped \
+                             only where the program names it, as the default of an `else` \
+                             names it"
+                                .to_string(),
+                            format!("repair: write a default for the value, as `{fix}`"),
+                        ],
+                    )
+                }
+                fate::Boundary::Write { value } => {
+                    let (v, port) = (
+                        code(value),
+                        code(Span {
+                            start: s.at.start,
+                            end: value.start,
+                        }),
+                    );
+                    let port = port.trim_end().trim_end_matches("<-").trim_end();
+                    (
+                        format!(
+                            "A port write does not take a loose failure: `{made_code}` may be \
+                             {k} {when}, and `{port} <- {v}` writes it."
+                        ),
+                        vec![format!(
+                            "repair: give the value to write in place of {k}, as \
+                             `{port} <- {} else …;`",
+                            else_operand(&v)
+                        )],
+                    )
+                }
+                // DESIGN keeps the atom here, in a type the program can name, and the table
+                // of fates does not follow it there yet: the program is refused as one this
+                // version does not support, not as wrong.
+                fate::Boundary::Other => (
+                    zedc_base::rejection::not_yet(&format!(
+                        "A loose failure that `{made_code}` may be {when}, {k}, held at \
+                         `{site}`,"
+                    )),
+                    vec![format!(
+                        "repair: handle the failure where it is made, as `{made_code} else …`, \
+                         with the value to use in its place"
+                    )],
+                ),
+            };
+            let mut notes = vec![
+                Note {
+                    span: made,
+                    text: format!("the loose failure {k} enters here, {when}"),
+                },
+                Note {
+                    span,
+                    text: format!("the call `{call}`"),
+                },
+            ];
+            notes.extend(repairs.into_iter().map(|text| Note { span: s.at, text }));
+            self.error_with(s.at, message, notes);
+        }
     }
 
     /// Records that the call at `span` passes by the atoms `k` of its argument at `at`.
@@ -7581,6 +7738,14 @@ impl<'t, 'a> Ck<'t, 'a> {
             }
             None => t,
         };
+        // A value whose type holds a variable no class of numbers stands for, as `x` in
+        // `h(x, out: Lines) { out <- x; }`, has no type to check here; its classes are checked
+        // as they become known ([`Self::push_vars`]). The checks below decide nothing on such
+        // a type: `takes` needs a plain type, and each error needs no variable.
+        if !t.vars.is_empty() {
+            self.push_vars(t, port, span, bubbles);
+            return;
+        }
         let strings = |t: &KType| t.subtype(&KType::string());
         let plain = |t: &Ty| t.tuples.is_empty() && t.vars.is_empty();
         let not_found = KType::atom("notFound");
