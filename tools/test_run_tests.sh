@@ -419,7 +419,21 @@ check "in the run's namespace the build's deps folder holds the test binary alon
 check "the piece starts its binary again and passes" "0" "$rc"
 [ "$rc" = 0 ] || cat "$logs.out"
 check "the run deletes its copy of the build" "" "$(ls -d "$(last_run)/cargo" 2>/dev/null)"
-check "and leaves no copy to delete" "" "$(ls -d build/run-copy-dropped 2>/dev/null)"
+check "and leaves no copy to delete" "" "$(ls -d "build/run-copy-dropped/$(basename "$(last_run)")" 2>/dev/null)"
+# Runs of one checkout that end at the same time each delete their copy: merge_check runs
+# several parts at once. When every run renamed its copy to the one name build/run-copy-dropped,
+# a run that found another's copy there kept its own, or deleted the other's under it.
+for i in 0 1 2 3; do
+  tools/run_tests.sh --logs "$logs/at-once-$i" --only '^l01_06_lexer_tokens$' >"$logs.at-once-$i" 2>&1 &
+done
+wait
+kept=
+for i in 0 1 2 3; do
+  r=$(readlink -f "$logs/at-once-$i/latest")
+  [ -n "$r" ] && [ ! -e "$r/cargo" ] || kept="$kept $i"
+  [ ! -e "build/run-copy-dropped/${r##*/}" ] || kept="$kept $i(dropped)"
+done
+check "four runs that end at once each delete their copy of the build" "" "$kept"
 fi
 # Two runs at once on one log directory both run to the end, each in a directory of its own
 # (NO-LOCKS-optimistic); until then the second stopped at once, as the run lock was held. Both

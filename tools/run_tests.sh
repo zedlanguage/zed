@@ -454,28 +454,33 @@ mount_short_clone() {
     sleep 2
   done
 }
-# Deletes the run's copy of the build, <log directory>/cargo (make_run_copy, below). As for the
-# clone, it is first renamed to build/run-copy-dropped, so the delete names its target in full
-# (the author's rule), and a leftover of a run killed while deleting is deleted first. Two runs
-# ending at the same moment: the second rename fails while the first run's copy is there, and
-# that copy is left with its run's logs, which TOOL-test-logs-prune deletes. In this namespace
-# the folders of the copy that the pieces mounted the build's folders on are empty, since each
-# piece mounted them in a namespace of its own, and --one-file-system keeps rm out of any mount.
+# Deletes the run's copy of the build, <log directory>/cargo (make_run_copy, below). The copy is
+# first renamed into the folder build/run-copy-dropped, under the name of the run's log
+# directory, and then that whole folder is deleted, so the delete names its target in full (the
+# author's rule) and needs no lock (NO-LOCKS). Runs of one checkout that end at the same time
+# share the folder: each rename is atomic and under a name of its own, and each run's delete
+# takes every entry it finds, so the last delete leaves none, a leftover of a run killed while
+# deleting included. A run whose rename finds the folder gone (another run's delete took it
+# after this run made it) makes it again and renames again; that repeats only while other runs'
+# deletes keep ending in between, each of which has made progress. A delete that meets an entry
+# renamed in after it read the folder says it could not remove the folder; the delete of the run
+# that renamed it in takes it. In this namespace the folders
+# of the copy that the pieces mounted the build's folders on are empty, since each piece mounted
+# them in a namespace of its own, and --one-file-system keeps rm out of any mount.
 drop_run_copy() {
   [ -n "$out" ] && [ -e "$out/cargo" ] || return 0
-  if [ -e /home/luke/Work/wt/.build-root/build/run-copy-dropped ]; then
-    if [ -L /home/luke/Work/wt/.build-root/build/run-copy-dropped ] ||
-      [ "$(realpath -e /home/luke/Work/wt/.build-root/build/run-copy-dropped)" != \
-        /home/luke/Work/wt/.build-root/build/run-copy-dropped ]; then
-      echo "/home/luke/Work/wt/.build-root/build/run-copy-dropped is not a directory; it is left in place."
+  while :; do
+    if [ -L /home/luke/Work/wt/.build-root/build/run-copy-dropped ]; then
+      echo "/home/luke/Work/wt/.build-root/build/run-copy-dropped is a symbolic link; it is left in place."
       return 1
     fi
-    rm -rf --one-file-system --preserve-root=all /home/luke/Work/wt/.build-root/build/run-copy-dropped
-  fi
-  if ! mv -T "$out/cargo" /home/luke/Work/wt/.build-root/build/run-copy-dropped; then
-    echo "The run's copy of the build, $out/cargo, could not be renamed for deletion; it is left with the run's logs."
-    return 1
-  fi
+    mkdir -p /home/luke/Work/wt/.build-root/build/run-copy-dropped &&
+      mv -T "$out/cargo" "/home/luke/Work/wt/.build-root/build/run-copy-dropped/${out##*/}" && break
+    if [ ! -e "$out/cargo" ] || [ -e /home/luke/Work/wt/.build-root/build/run-copy-dropped ]; then
+      echo "The run's copy of the build, $out/cargo, could not be renamed for deletion; it is left with the run's logs."
+      return 1
+    fi
+  done
   rm -rf --one-file-system --preserve-root=all /home/luke/Work/wt/.build-root/build/run-copy-dropped
 }
 # What a run undoes as it ends, however it ends: it unmounts its short-addresses clone, lazily,
