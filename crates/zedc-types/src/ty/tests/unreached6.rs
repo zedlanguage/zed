@@ -445,6 +445,75 @@ fn a_function_held_inside_another_hashes_by_its_summary_as_walked_in_place() {
     }
 }
 
+/// D's hash of functions nested `k` deep, level `i` owning `M{i}` and holding the variables of
+/// every level around it and the root's `P` (a tracked parameter), `R` (an own need result)
+/// and `Q` (owned by none), is the walk with every function in place: the shape whose
+/// summaries carry `O(k)` outer variables, kept in a [`r10_hash::FreeWeights`] whose weights
+/// are scaled where a summary is met, and corrected from plain tokens only where a scope owns
+/// the variable. The root owns either few variables, so the owned ones are found by its own
+/// set, or many, so they are found by the summary's ([`r10_hash::Encoder`]'s
+/// `apply_nested`).
+#[test]
+fn functions_nested_each_holding_every_outer_variable_hash_as_walked_in_place() {
+    use r10_hash::{R_BASE, encode_sig_stream, flat_need_summary};
+    let owning = |t: Ty, own: &str| {
+        let mut s = one_of(t, int());
+        s.own.insert(own.into());
+        s.note_held();
+        fty(s)
+    };
+    let nest = |k: usize, leaf: &str| {
+        (0..k).rev().fold(var(leaf), |t, i| {
+            let mut items: Vec<Ty> = (0..=i).map(|j| var(&format!("M{j}"))).collect();
+            items.extend([var("P"), var("R"), var("Q"), t]);
+            owning(Ty::tuple(items), &format!("M{i}"))
+        })
+    };
+    let need = |on: Ty, kind: NeedKind, result: Option<Ty>| Need {
+        on,
+        kind,
+        result,
+        span: Span { start: 0, end: 1 },
+        alike: Arc::from([]),
+        via: CallPath::default(),
+    };
+    for k in 1..10 {
+        let mut hashes = Vec::new();
+        for leaf in ["P", "R", "Q", "M0"] {
+            for extra in [0, 3 * k + 5] {
+                let at = format!("k {k}, leaf {leaf}, {extra} more own");
+                let t = nest(k, leaf);
+                let mut own: BTreeSet<Arc<str>> =
+                    ["P", "R", "T"].into_iter().map(Arc::from).collect();
+                own.extend((0..extra).map(|j| Arc::from(format!("X{j}"))));
+                let ranks = [(Arc::from("R"), 3)].into_iter().collect();
+                let params = [Arc::from("P")].into_iter().collect();
+                let n = need(var("T"), NeedKind::Index(t.clone()), Some(var("R")));
+                let summed = flat_need_summary(&n, &own, &ranks, &params, R_BASE, false);
+                let walked = flat_need_summary(&n, &own, &ranks, &params, R_BASE, true);
+                assert_eq!(summed.body, walked.body, "{at}");
+                assert_eq!(summed.s_rank, walked.s_rank, "{at}");
+                assert_eq!(summed.s_params, walked.s_params, "{at}");
+                let mut s = bsig(vec![ex(vec![t.clone()], var("R"))], 1, &[]);
+                s.own.extend(own.iter().cloned());
+                s.needs = vec![
+                    need(var("T"), NeedKind::Index(int()), Some(var("R"))),
+                    need(var("T"), NeedKind::Index(t.clone()), None),
+                ];
+                s.note_held();
+                let summed = encode_sig_stream(&s, R_BASE, false).0;
+                assert_eq!(summed, encode_sig_stream(&s, R_BASE, true).0, "{at}");
+                hashes.push(summed);
+            }
+        }
+        // The leaves are told apart, so the equalities above test something.
+        let mut distinct = hashes.clone();
+        distinct.sort_unstable();
+        distinct.dedup();
+        assert_eq!(distinct.len(), hashes.len(), "k {k}");
+    }
+}
+
 /// The summary kept by the function `t` holds, after a signature holding it in an arrow is
 /// hashed.
 fn types_summary(t: &Ty) -> Option<r10_hash::NestedSummary> {

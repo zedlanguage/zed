@@ -3681,8 +3681,9 @@ fn landing6_variables_read_by_held_functions_agree_with_e() {
     let (sc, sf) = (Arc::new(c).settle(&solve), Arc::new(f).settle(&solve));
     assert_eq!(*sc, *sf);
     assert_eq!(sc.digest(), sf.digest());
-    // With the arrows emptied the needs alone give the order: the same variables, the place
-    // of the held-read one aside (see the doc).
+    // With the arrows emptied the needs alone give the order: the same variables in the same
+    // order (landing round 8, Gemini NB-4: the comment allowed another place for the held-read
+    // one, which the exact comparison below does not).
     for class in [false, true] {
         let (mut c, _) = landing6_held_read_pair(class);
         for a in &mut c.arrows {
@@ -3702,6 +3703,42 @@ fn landing6_variables_read_by_held_functions_agree_with_e() {
         ev.order.sort();
         assert_eq!(dv.order, ev.order, "`Need::vars_in`, class: {class}");
     }
+}
+
+/// Landing round 8 (chainland1, the premise of the pruning in `walk_vars`): a walk of a type's
+/// variables does not enter a function whose facts hold no name, no class and no internal
+/// result (`Sig::holds_no_var`), so every variable a compact forward's held functions read
+/// from around (`held_outer`) must be among the names of its facts, as it is in the flat
+/// signature, where a variable outside is also a name. The checker keeps no such forward
+/// (`#4-outer`); a public caller may list the variable in `held_outer` and not in
+/// `held_names`, and the walk then left it out.
+#[test]
+fn landing8_a_variable_read_from_around_and_not_listed_as_held_is_a_name_of_the_facts() {
+    use std::sync::Arc;
+    use zedc_types::ty::{Ty, Vars};
+    let (mut c, _) = landing6_held_read_pair(false);
+    let NeedKind::Fwd(fwd) = &mut c.needs[0].kind else {
+        unreachable!()
+    };
+    Arc::make_mut(fwd).held_names.remove("OuterQ");
+    c.facts = Default::default();
+    let f = flat_of(&c);
+    assert!(
+        f.facts().names.contains("OuterQ"),
+        "control: {:?}",
+        f.facts().names
+    );
+    assert!(c.facts().names.contains("OuterQ"), "{:?}", c.facts().names);
+    let (tc, tf) = (Ty::func(Arc::new(c)), Ty::func(Arc::new(f)));
+    let (mut dv, mut ev) = (Vars::default(), Vars::default());
+    tc.vars_in(&mut dv);
+    tf.vars_in(&mut ev);
+    assert!(
+        ev.order.iter().any(|v| &**v == "OuterQ"),
+        "control: {:?}",
+        ev.order
+    );
+    assert_eq!(dv.order, ev.order);
 }
 
 /// Landing round 6, Gemini L6-B2: a function the callee holds that reads a written variable

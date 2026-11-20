@@ -228,6 +228,9 @@ fn the_mersenne_arithmetic_agrees_with_division() {
         }
         // `b = P` is read as 0.
         assert_eq!(m61::add(a, P), a, "{a} + P");
+        if a != 0 {
+            assert_eq!(m61::mul(a, m61::inv(a)), 1, "1 / {a}");
+        }
     }
     let bp = BigUint::from(P);
     for &b in xs.iter().take(40) {

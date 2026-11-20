@@ -2688,10 +2688,30 @@ fn walk_vars<'a>(mut stack: Vec<VarWalk<'a>>, out: &mut Vars) {
             VarWalk::Ty(t) => t,
         };
         t.vars.iter().for_each(|v| add(out, v));
-        stack.extend(t.tuples.iter().filter(|r| !r.0.fixed).map(VarWalk::Row));
+        // A row, payload shape or function whose kept bits or facts hold no variable and no
+        // compact forward with internal results adds no name and no mark, so it is not
+        // entered: its bits are made from its parts' (`VarBits::ty`), a function's from its
+        // facts (`Sig::bits`), and the facts hold every variable a walk of it adds (the types
+        // `sig_tys` gives, each forward's `held_names` and `held_classes`, and its internal
+        // results as `internal`; `VarFacts::of`).
+        // Complexity tradeoff (FAIL-map-chain-needs-quadratic, the nest of maps in l08_02):
+        // naive version, entering each row that is not `fixed` and each function held: a row
+        // holding a function with no variable is not fixed, so the type that n nested map
+        // lambdas give the outermost holds every function below it, each entered at each
+        // level asked (`r10_get_or_build_summary` asks each lambda's result), O(n) each and
+        // O(n^2) in all (13.43 times the work from 100 to 800 levels, release build). Used:
+        // the row's bits, as for payload shapes, and `Sig::holds_no_var`, O(1) each once
+        // made: 7.80. Test: l08_02 `bench::a_deeper_nest_of_n_maps_each_reading_a_fold_runs_in_linear_time`.
+        stack.extend(
+            t.tuples
+                .iter()
+                .filter(|r| !r.0.bits.is_empty())
+                .map(VarWalk::Row),
+        );
         let open = t.payload_shapes().filter(|s| !s.bits.is_empty());
         stack.extend(open.map(VarWalk::Shape));
-        stack.extend(t.fns.iter().map(|s| VarWalk::Held(s)));
+        let held = t.fns.iter().filter(|s| !s.holds_no_var());
+        stack.extend(held.map(|s| VarWalk::Held(s)));
         stack[from..].reverse();
     }
 }
@@ -4201,7 +4221,14 @@ impl VarFacts {
                     // O(log v) per name, beside the insert above.
                     g.binds |= !fwd.held_outer.contains(nm);
                 }
+                // A variable outside is a name as well, as in a flat signature (`tys`, `held`
+                // add it to both): `walk_vars` does not enter a function whose facts hold no
+                // name (`Sig::holds_no_var`), and a public caller may list it here and not in
+                // `held_names` (landing round 8, chainland1:
+                // `landing8_a_variable_read_from_around_and_not_listed_as_held_is_a_name_of_the_facts`).
+                // O(1) per name already added (`Added`).
                 for ov in &fwd.held_outer {
+                    g.add_to(false, ov, &mut added);
                     if !s.own.contains(ov) {
                         add(&mut g.outer, ov);
                     }
@@ -5214,6 +5241,12 @@ pub struct FwdNeed {
     /// Cached `VarFacts::outer` from functions held inside `callee`'s needs. Empty on every
     /// forward the checker keeps: one whose held functions read a variable from around the
     /// callee is refused (`#4-outer`, landing round 6), since the steps do not place it.
+    /// A name in both this set and [`Self::held_names`] is taken as read from around only, so
+    /// a public caller whose held functions both bind and read one spelling must rename one of
+    /// them apart: otherwise the compact facts say it binds none where the flat signature
+    /// binds it (landing round 8, Gemini NB-9; the checker builds neither, `#4-own-vars` and
+    /// `#4-outer`). Each name here is also a name of the facts ([`VarFacts::of`]), whether
+    /// or not it is listed in `held_names`.
     pub held_outer: BTreeSet<Arc<str>>,
     /// Whether a function held, outside functions, in the needs the block stands for holds a
     /// variable that is not its own. The flat needs show such a function to
@@ -5337,7 +5370,11 @@ impl FwdNeed {
     /// `held_classes`) first appears among its steps ([`FwdNeed::var_steps`]), as the leaf
     /// needs show it: pairs (i, v), v to be placed before step i (after the last at
     /// `var_steps.len()`), sorted by i. Empty, with no decode, when both sets are empty, as on
-    /// every forward the checker keeps (`#4`, `#4-outer`).
+    /// every forward the checker keeps (`#4`, `#4-outer`). A read variable is placed at a
+    /// boundary between steps, so it cannot fall between two internal results of one
+    /// [`FwdVarStep::InternalRun`] of length 2 or more; a public caller whose flat needs put
+    /// it there gets an order that differs from the flat signature's (landing round 8, Gemini
+    /// NB-7).
     ///
     /// The steps give the first appearance of each caller variable and of each run of
     /// internal results in the leaf needs, in order, and the internal results are named in
@@ -6096,9 +6133,10 @@ impl Need {
                 },
                 NeedKind::Fwd(fwd) => {
                     let mut renames: HashMap<Arc<str>, Arc<str>> = HashMap::new();
-                    // The variables of `sigma` and `exits` that `f` put another type than a
-                    // variable in place of.
-                    let mut replaced: HashSet<Arc<str>> = HashSet::new();
+                    // Whether `f` put another type than a variable in place of a variable of
+                    // `sigma` or `exits` (landing round 8, Claude NB2: a set only tested for
+                    // emptiness).
+                    let mut replaced = false;
                     let mut non_var_subst = false;
                     let mut note = |old_t: &Ty, new_t: &Ty| {
                         if new_t != old_t {
@@ -6108,7 +6146,7 @@ impl Need {
                                 }
                                 (ov, _) => {
                                     non_var_subst = true;
-                                    replaced.extend(ov.cloned());
+                                    replaced |= ov.is_some();
                                 }
                             }
                         }
@@ -6146,7 +6184,7 @@ impl Need {
                     // checker's mappings decode first ([`Replacer::must_decode`],
                     // [`Settle::must_decode`], [`Sig::flat_for`]). O(#renames) lookups.
                     assert!(
-                        replaced.is_empty() && !renames.values().any(|u| fwd.holds_internal(u)),
+                        !replaced && !renames.values().any(|u| fwd.holds_internal(u)),
                         "a compact forward is mapped only by renaming its arguments and exits \
                          to variables that are not its internal results; decode it first with \
                          `Sig::flat_for`"
@@ -20426,8 +20464,11 @@ impl Sig {
     }
 
     /// Its hash (`M47`–`M57`, `M65`), made at the first call from its parts in `O(1)` per compact
-    /// link, each function it holds by its own hash: so it is asked of a signature held in a type,
-    /// which no longer changes.
+    /// link, each function it holds that holds no variable from around it by its own hash, and
+    /// each other one by its summary (`r10_hash::NestedSummary`), its outer variables placed
+    /// in the scopes around as a walk in place would (landing round 8, Claude Q7.5-2: the
+    /// comment said every held function was hashed by its own hash). So it is asked of a
+    /// signature held in a type, which no longer changes.
     pub fn digest(&self) -> u64 {
         let hash = |s: &Sig| {
             *s.facts
@@ -28612,7 +28653,7 @@ pub mod r10_hash {
         deferring: bool,
         /// For each variable left out (`deferring`), the sum of the powers of `r` at its
         /// places, from the start of the stream.
-        free_w: HashMap<Arc<str>, u64>,
+        free_w: FreeWeights,
         /// Whether a variable left out has no plain token (a class number `>= P`), whose token
         /// would depend on the scopes it is met in otherwise than linearly.
         free_large: bool,
@@ -28637,22 +28678,23 @@ pub mod r10_hash {
     #[derive(Default)]
     struct Sums {
         s_rank: u64,
-        s_params: Vec<(Arc<str>, u64)>,
+        s_params: HashMap<Arc<str>, u64>,
         span_contrib: u64,
         s_span_start: u64,
         s_span_end: u64,
         s_map_lambda_true: u64,
         fallback_large_id: bool,
-        free_w: Vec<(Arc<str>, u64)>,
+        free_w: FreeWeights,
         free_large: bool,
     }
 
     /// The hash of a function held in a type, as walked inside a function around it, made
-    /// once with its outer variables left out (`Encoder::deferring`). Each token of a set of
-    /// variables is the sum of the tokens of its variables, so the walk's hash is `part.val`
-    /// plus, for each outer variable `v`, `w_v` times the token `v` gets in the scopes it is
-    /// met in, `w_v` the sum of the powers of `r` at its places (`free`); and its side sums
-    /// gain `w_v` times the power where it is met. Naive: walk the function again at each
+    /// once with its outer variables at their plain tokens (`Encoder::deferring`). Each token
+    /// of a set of variables is the sum of the tokens of its variables, so the walk's hash is
+    /// `part.val` plus, for each outer variable `v`, `w_v` times the token `v` gets in the
+    /// scopes it is met in less its plain token, `w_v` the sum of the powers of `r` at its
+    /// places (`free`): nothing for a variable no scope there owns. Its side sums gain `w_v`
+    /// times the power where it is met. Naive: walk the function again at each
     /// place, inside the scopes of every function around it, which recursed once a level and
     /// overflowed the stack for functions nested deep, each holding the outermost one's
     /// variable (row FAIL-l0126-stack-overflow-after-d), and read the scopes at a cost of
@@ -28663,10 +28705,105 @@ pub mod r10_hash {
     pub enum NestedSummary {
         Summary {
             part: PartHash,
-            free: Vec<(Arc<str>, u64)>,
+            free: FreeWeights,
             fallback_large_id: bool,
         },
         Direct,
+    }
+
+    /// The weight of each variable a summarizing walk leaves to the functions around
+    /// (`Encoder::deferring`): the sum of the powers of `r` at its places, read as `scale`
+    /// times the stored value. A summary is met at a place of power `a`, which multiplies every
+    /// weight by `a`: here one product on `scale` (and its inverse). The map is persistent
+    /// (`imbl`), so a summary and the walks that meet it share it, and two are joined by adding
+    /// the smaller one's entries to the larger.
+    ///
+    /// Naive (the first version): a list, copied and multiplied entry by entry wherever the
+    /// summary is met. A function nested `n` deep, each level holding variables of the
+    /// outermost function, leaves `k` variables at depth `k`, so making the summaries and
+    /// meeting them cost `O(n^2)` (row FAIL-l0126-stack-overflow-after-d; benches
+    /// `n_families_keyed_by_calls_of_a_parameter` 14.9x and the curried lambdas of l01_26
+    /// timed out). Here: a summary met costs `O(1)` for the scaling plus `O(s log m)` for the
+    /// `s` entries of the smaller of the two maps joined (`m` the larger), and one inverse
+    /// modulo `P` (61 squarings) when the scale changes. Adding the smaller set to the larger
+    /// is the weighted-union heuristic (Cormen, Leiserson, Rivest and Stein, *Introduction to
+    /// Algorithms*, 3rd ed., section 21.2, Theorem 21.1: with it, linked-list disjoint sets
+    /// take `O(m + n lg n)` for `m` operations of which `n` make sets, since an element moved
+    /// lands in a set at least twice the size of its old one). The sets here may share
+    /// variables, which that argument does not cover: a join of two maps that share keys
+    /// still costs the smaller one's size, but the result need not double. On the nested
+    /// shapes above each level adds `O(1)` new entries to its child's map, which is adopted
+    /// whole, so the total is `O(n log n)`.
+    #[derive(Clone, Debug)]
+    pub struct FreeWeights {
+        scale: u64,
+        /// `1 / scale mod P`.
+        inv: u64,
+        map: imbl::HashMap<Arc<str>, u64>,
+    }
+
+    impl Default for FreeWeights {
+        fn default() -> Self {
+            FreeWeights {
+                scale: 1,
+                inv: 1,
+                map: imbl::HashMap::new(),
+            }
+        }
+    }
+
+    impl FreeWeights {
+        pub fn len(&self) -> usize {
+            self.map.len()
+        }
+
+        pub fn is_empty(&self) -> bool {
+            self.map.is_empty()
+        }
+
+        /// The weight of `v`, if it is left out.
+        pub fn get(&self, v: &str) -> Option<u64> {
+            self.map.get(v).map(|&x| mul_p(x, self.scale))
+        }
+
+        /// Each variable with its weight, in no fixed order.
+        pub fn iter(&self) -> impl Iterator<Item = (&Arc<str>, u64)> {
+            self.map.iter().map(|(v, &x)| (v, mul_p(x, self.scale)))
+        }
+
+        /// Adds `w` to the weight of `v`.
+        fn add(&mut self, v: &Arc<str>, w: u64) {
+            let x = mul_p(w, self.inv);
+            let e = self.map.entry(v.clone()).or_insert(0);
+            *e = add_p(*e, x);
+        }
+
+        /// Drops `v`.
+        fn remove(&mut self, v: &str) {
+            self.map.remove(v);
+        }
+
+        /// Every weight times `a`. `a` is a power of `R_BASE`, the only base summaries are made
+        /// at, so it is not 0 modulo `P` and has an inverse.
+        fn scaled(mut self, a: u64) -> Self {
+            if self.map.is_empty() || a == 1 {
+                return self;
+            }
+            debug_assert!(a % P != 0, "a power of a base other than 0 modulo P");
+            self.scale = mul_p(self.scale, a);
+            self.inv = mul_p(self.inv, zed_numtheory::m61::inv(a));
+            self
+        }
+
+        /// Adds the weights of `other`, the smaller map's entries to the larger.
+        fn join(&mut self, mut other: FreeWeights) {
+            if other.map.len() > self.map.len() {
+                std::mem::swap(self, &mut other);
+            }
+            for (v, x) in other.map {
+                self.add(&v, mul_p(x, other.scale));
+            }
+        }
     }
 
     /// A row or a payload shape that [`Encoder::memoized`] walks.
@@ -28743,7 +28880,7 @@ pub mod r10_hash {
                 next_ctx: 1,
                 base_pow: 1,
                 deferring: false,
-                free_w: HashMap::new(),
+                free_w: FreeWeights::default(),
                 free_large: false,
                 missing: Vec::new(),
                 decoded: 0,
@@ -28787,7 +28924,13 @@ pub mod r10_hash {
         /// each path to a shared row, `O(2^d)` for a row shared at each of `d` levels (test
         /// `a_row_met_many_times_in_the_parameters_is_walked_twice`, `d = 40`). Here: a hash
         /// map lookup by (address, context), so each row is walked once per context it is met
-        /// in, `O(nodes * contexts)`, at the cost of one lookup and one multiply a row. A row
+        /// in, `O(nodes * contexts)`, at the cost of one lookup and one multiply a row. The
+        /// contexts are the distinct scope stacks the walk pushes; a function held inside
+        /// another that reads its variables was walked in place under each scope around it,
+        /// which made them `2^depth` for a nest shared at each level (landing review round 8,
+        /// Claude F4 and Q7.5-3, Gemini NB-10). It is now hashed once by its summary
+        /// (`NestedSummary`, `apply_nested`), so nesting adds no context (test
+        /// `functions_holding_an_outer_variable_in_an_arrow_and_a_need_hash_once_each`). A row
         /// that holds no variable gives the same tokens in every context; one that holds
         /// variables gives tokens that read only `scopes` (fixed by `ctx`), `tracked_params`
         /// (fixed for the encoder) and `r`. The walk starts from an empty `part`, with the
@@ -28829,9 +28972,8 @@ pub mod r10_hash {
             self.s_map_lambda_true =
                 add_p(self.s_map_lambda_true, mul_p(rel.s_map_lambda_true, at));
             self.fallback_large_id |= rel.fallback_large_id;
-            for (v, s) in &rel.free_w {
-                let e = self.free_w.entry(v.clone()).or_insert(0);
-                *e = add_p(*e, mul_p(*s, at));
+            if !rel.free_w.is_empty() {
+                self.free_w.join(rel.free_w.clone().scaled(at));
             }
             self.free_large |= rel.free_large;
         }
@@ -28909,17 +29051,19 @@ pub mod r10_hash {
             }
         }
 
-        /// Takes the side sums out, leaving them at zero.
+        /// Takes the side sums out, leaving them at zero: `O(1)`, the maps are moved. The
+        /// first version copied the maps into lists and back, `O(size)` at each row filled,
+        /// which with the weights of a function nested `k` deep cost `O(k)` a row.
         fn take_sums(&mut self) -> Sums {
             Sums {
                 s_rank: std::mem::take(&mut self.s_rank),
-                s_params: std::mem::take(&mut self.s_params).into_iter().collect(),
+                s_params: std::mem::take(&mut self.s_params),
                 span_contrib: std::mem::take(&mut self.span_contrib),
                 s_span_start: std::mem::take(&mut self.s_span_start),
                 s_span_end: std::mem::take(&mut self.s_span_end),
                 s_map_lambda_true: std::mem::take(&mut self.s_map_lambda_true),
                 fallback_large_id: std::mem::take(&mut self.fallback_large_id),
-                free_w: std::mem::take(&mut self.free_w).into_iter().collect(),
+                free_w: std::mem::take(&mut self.free_w),
                 free_large: std::mem::take(&mut self.free_large),
             }
         }
@@ -28927,13 +29071,13 @@ pub mod r10_hash {
         /// Puts back side sums taken by [`Encoder::take_sums`].
         fn put_sums(&mut self, s: Sums) {
             self.s_rank = s.s_rank;
-            self.s_params = s.s_params.into_iter().collect();
+            self.s_params = s.s_params;
             self.span_contrib = s.span_contrib;
             self.s_span_start = s.s_span_start;
             self.s_span_end = s.s_span_end;
             self.s_map_lambda_true = s.s_map_lambda_true;
             self.fallback_large_id = s.fallback_large_id;
-            self.free_w = s.free_w.into_iter().collect();
+            self.free_w = s.free_w;
             self.free_large = s.free_large;
         }
 
@@ -29041,9 +29185,13 @@ pub mod r10_hash {
                     continue;
                 }
                 match tok_var_plain(v) {
-                    // A variable of a function around the one being summarized: its token is
-                    // read where the summary is met ([`NestedSummary`]).
-                    Some(_) if in_ty && self.deferring => free_hits.push(v),
+                    // A variable of a function around the one being summarized: hashed by its
+                    // plain token, which is corrected where the summary is met and a scope
+                    // owns the variable ([`NestedSummary`]).
+                    Some(tv) if in_ty && self.deferring => {
+                        sum = add_p(sum, tv);
+                        free_hits.push(v);
+                    }
                     None if in_ty && self.deferring => {
                         self.free_large = true;
                         any_large = true;
@@ -29080,8 +29228,7 @@ pub mod r10_hash {
                     *e = add_p(*e, pos_pow);
                 }
                 for v in free_hits {
-                    let e = self.free_w.entry(v.clone()).or_insert(0);
-                    *e = add_p(*e, pos_pow);
+                    self.free_w.add(v, pos_pow);
                 }
                 self.emit(sum);
             } else {
@@ -29261,53 +29408,82 @@ pub mod r10_hash {
             self.emit_sig(s);
         }
 
-        /// Adds a function's summary at the present place: its hash with each outer
-        /// variable's token as `emit_var_set` gives it in the present scopes, times the
-        /// variable's weight, and the side sums those tokens add there. An outer variable no
-        /// present scope owns is plain and tracks no parameter, as inside a function the walk
-        /// holds two scopes or more; in an encoder that is itself summarizing, it is left out
-        /// again.
-        fn apply_nested(&mut self, part: PartHash, free: &[(Arc<str>, u64)], fallback: bool) {
+        /// Adds a function's summary at the present place: its hash, which holds each outer
+        /// variable by its plain token, corrected for each outer variable a present scope owns
+        /// by its weight times the token `emit_var_set` gives it there less the plain one; and
+        /// the side sums those tokens add there. An outer variable no present scope owns keeps
+        /// its plain token and tracks no parameter, as inside a function the walk holds two
+        /// scopes or more; in an encoder that is itself summarizing, its weight is passed on
+        /// to the functions around (`free_w`).
+        ///
+        /// The owned variables are found from the smaller side: each of the summary's `f`
+        /// variables looked up in the scopes, or each variable the scopes own looked up in the
+        /// summary, `O(min(f, own) * depth)` for `depth` scopes. Naive (the first version):
+        /// every outer variable looked up and copied up, `O(f * depth)`, which for a function
+        /// nested `n` deep with `f` growing by one a level was `O(n^2)` in all (row
+        /// FAIL-l0126-stack-overflow-after-d; see [`FreeWeights`]). The weights passed on are
+        /// the summary's map less the owned ones, shared and scaled in `O(1)` and joined
+        /// smaller into larger.
+        fn apply_nested(&mut self, part: PartHash, free: &FreeWeights, fallback: bool) {
             let at = self.abs_pow();
             let mut val = part.val;
             let plain = |v: &str| {
                 tok_var_plain(v).expect("a summary leaves out no variable without a plain token")
             };
-            for (v, w) in free {
-                let wat = mul_p(*w, at);
-                let tok = match self.scopes.iter().rev().find(|sc| sc.own.contains(v)) {
-                    Some(sc) => {
-                        if sc.phase == ScopePhase::Needs
-                            && let Some(&rank) = sc.mat_result_ranks.get(v)
+            // Each owned variable with its weight and the innermost scope that owns it.
+            let mut owned: Vec<(Arc<str>, u64, usize)> = Vec::new();
+            let own_total: usize = self.scopes.iter().map(|sc| sc.own.len()).sum();
+            if free.len() <= own_total {
+                for (v, w) in free.iter() {
+                    if let Some(i) = self.scopes.iter().rposition(|sc| sc.own.contains(v)) {
+                        owned.push((v.clone(), w, i));
+                    }
+                }
+            } else {
+                for (i, sc) in self.scopes.iter().enumerate() {
+                    for v in &sc.own {
+                        if let Some(w) = free.get(v)
+                            && !self.scopes[i + 1..]
+                                .iter()
+                                .any(|inner| inner.own.contains(v))
                         {
-                            if sc.is_root {
-                                self.s_rank = add_p(self.s_rank, wat);
-                            }
-                            tok_need_rank(rank)
-                        } else {
-                            let mut tv = plain(v);
-                            if sc.phase == ScopePhase::Arrows
-                                && let Some(&rank) = sc.mat_result_ranks.get(v)
-                            {
-                                tv = mul_p(tv, add_p(C_ARROW_RANK, (rank as u64 + 1) % P));
-                            }
-                            if sc.is_root
-                                && (self.tracked_params.as_ref()).is_some_and(|tp| tp.contains(v))
-                            {
-                                let e = self.s_params.entry(v.clone()).or_insert(0);
-                                *e = add_p(*e, wat);
-                            }
-                            tv
+                            owned.push((v.clone(), w, i));
                         }
                     }
-                    None if self.deferring => {
-                        let e = self.free_w.entry(v.clone()).or_insert(0);
-                        *e = add_p(*e, wat);
-                        continue;
+                }
+            }
+            for (v, w, i) in &owned {
+                let sc = &self.scopes[*i];
+                let wat = mul_p(*w, at);
+                let tok = if sc.phase == ScopePhase::Needs
+                    && let Some(&rank) = sc.mat_result_ranks.get(v)
+                {
+                    if sc.is_root {
+                        self.s_rank = add_p(self.s_rank, wat);
                     }
-                    None => plain(v),
+                    tok_need_rank(rank)
+                } else {
+                    let mut tv = plain(v);
+                    if sc.phase == ScopePhase::Arrows
+                        && let Some(&rank) = sc.mat_result_ranks.get(v)
+                    {
+                        tv = mul_p(tv, add_p(C_ARROW_RANK, (rank as u64 + 1) % P));
+                    }
+                    if sc.is_root && (self.tracked_params.as_ref()).is_some_and(|tp| tp.contains(v))
+                    {
+                        let e = self.s_params.entry(v.clone()).or_insert(0);
+                        *e = add_p(*e, wat);
+                    }
+                    tv
                 };
-                val = add_p(val, mul_p(*w, tok));
+                val = add_p(val, mul_p(*w, sub_p(tok, plain(v))));
+            }
+            if self.deferring && free.len() > owned.len() {
+                let mut passed = free.clone();
+                for (v, _, _) in &owned {
+                    passed.remove(v);
+                }
+                self.free_w.join(passed.scaled(at));
             }
             self.part = self.part.concat(PartHash { val, pow: part.pow });
             self.fallback_large_id |= fallback;
@@ -30138,7 +30314,7 @@ pub mod r10_hash {
             } else {
                 NestedSummary::Summary {
                     part: enc.part,
-                    free: enc.free_w.into_iter().collect(),
+                    free: enc.free_w,
                     fallback_large_id: enc.fallback_large_id,
                 }
             };

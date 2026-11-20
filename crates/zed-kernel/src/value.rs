@@ -1117,7 +1117,7 @@ const B: u64 = 0x07b3_a9e1_d2c4_f583;
 
 // `a · b`, `x^e` and `a - b` modulo `P`, for operands below `P` (`const`, so [`POW_R`] is
 // built with the same product at compile time).
-use zed_numtheory::m61::{mul as field_mul, pow_word as field_pow, sub as field_sub};
+use zed_numtheory::m61::{inv as field_inv, mul as field_mul, sub as field_sub};
 
 /// `POW_R[j][d] = R^(d · 16^j) mod P`, for the 16 base-16 digits of a `u64` exponent.
 static POW_R: [[u64; 16]; 16] = {
@@ -1138,7 +1138,7 @@ static POW_R: [[u64; 16]; 16] = {
 };
 
 /// `R^e mod P`, one table product for each base-16 digit of `e`.
-// Complexity tradeoff: by squaring (`field_pow`), up to 61 squarings and 61 products; every
+// Complexity tradeoff: by squaring (`m61::pow_word`), up to 61 squarings and 61 products; every
 // entry of a hashed map with an integer key that does not follow the one before asks this, and
 // it took 82% of `bench::hashing_a_map_after_each_change_scales` (perf, 2026-11-19). Used: a
 // fixed table of 256 powers (2 KB, built at compile time), 16 products whatever `e`. Both give
@@ -1147,11 +1147,6 @@ fn pow_r(e: u64) -> u64 {
     (0..16).fold(1, |r, j| {
         field_mul(r, POW_R[j][((e >> (4 * j)) & 15) as usize])
     })
-}
-
-/// `1 / x mod P`, for `x` not 0 modulo `P` (Fermat).
-fn field_inv(x: u64) -> u64 {
-    field_pow(x, P - 2)
 }
 
 /// The residues `n mod P` and `n mod (P - 1)` of an integer `n`, `Int` or `Big`; none for any
@@ -5016,7 +5011,7 @@ mod tests {
             es.push(x % (P - 1));
         }
         for e in es {
-            assert_eq!(pow_r(e), field_pow(R, e), "e = {e}");
+            assert_eq!(pow_r(e), zed_numtheory::m61::pow_word(R, e), "e = {e}");
         }
     }
 

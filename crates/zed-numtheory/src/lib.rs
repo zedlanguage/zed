@@ -464,6 +464,12 @@ pub mod m61 {
             (add(mul(h, self.pows[k]), fold8(s)), mul(p, self.pows[k]))
         }
     }
+
+    /// `1 / a mod P`, for `0 < a < P`: `a^(P - 2)`, since `a^(P - 1) = 1` (Fermat's little
+    /// theorem, `P` prime). 61 squarings and 60 products ([`pow_word`]).
+    pub const fn inv(a: u64) -> u64 {
+        pow_word(a, P - 2)
+    }
 }
 
 /// The seed and generator of a random test, new on each run and printed, shared with the step

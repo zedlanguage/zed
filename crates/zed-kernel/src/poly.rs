@@ -828,7 +828,7 @@ impl<'t> Identity<'t> {
                     if d == 0 {
                         return None;
                     }
-                    m61::mul(residue(a), m61::pow(d, &BigUint::from(P - 2)))
+                    m61::mul(residue(a), m61::inv(d))
                 }
                 Node::Leaf(l) => at[*l as usize],
                 Node::Add(a, b) => m61::add(vals[*a], vals[*b]),

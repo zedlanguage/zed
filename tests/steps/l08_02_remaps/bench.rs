@@ -813,11 +813,25 @@ const N_NEST: usize = 50;
 
 #[test]
 fn a_nest_of_n_maps_each_reading_a_fold_runs_in_linear_time() {
+    nest_of_maps_scales(N_NEST);
+}
+
+/// The nest above at 100 and 800 levels. Under D, a walk of each lambda's result for its
+/// variables entered every function held below it, none of which holds a variable (row
+/// FAIL-map-chain-needs-quadratic): 10.46 times the work at 50 and 400, under the limit,
+/// against 13.43 at 100 and 800 (release build). Since the walk skips a row or function that
+/// holds no variable (`walk_vars`): 7.56 and 7.80.
+#[test]
+fn a_deeper_nest_of_n_maps_each_reading_a_fold_runs_in_linear_time() {
+    nest_of_maps_scales(2 * N_NEST);
+}
+
+fn nest_of_maps_scales(n_nest: usize) {
     // `.map` calls nested n deep, alternately over a one-entry `int` and `f64` family, each
     // lambda reading `top` of its own row and of the row of the `.map` around it: at depth i,
     // i calls that decide `top`'s fold are in force (`Instancing::pushed`), and each read takes
     // the identity of the one that checked it (row REDUCE-generic-identity-values, form 2).
-    let srcs = scaling::inputs(N_NEST, |n| {
+    let srcs = scaling::inputs(n_nest, |n| {
         let mut body = String::from("0");
         for i in (0..n).rev() {
             let (fam, outer) = match (i % 2, i) {
@@ -845,7 +859,7 @@ fn a_nest_of_n_maps_each_reading_a_fold_runs_in_linear_time() {
     scaling::check(
         "`.map` calls nested n deep over one-entry `int` and `f64` families, each reading a \
          `max` fold of its row and of the row around, whole path",
-        N_NEST,
+        n_nest,
         run,
     );
 }

@@ -11,7 +11,11 @@
 //!   `vars_order`) and once in E, whose `vars_order` merges the two variables by name
 //!   (Claude Q2.3; `Sig::vars_marks` says so). A variable bound to the compact signature
 //!   itself lists its internal names twice in both. Under such a binding (`Ctx::under`) the
-//!   order is compared with each internal name once, on both sides; under every other, as is.
+//!   order is compared with each internal name once, on both sides. Under every other, a
+//!   signature that holds two different compact signatures with the same internal results
+//!   lists each such name once per held signature in D and once in E, for the same reason;
+//!   D's count must then equal the number of held signatures whose marks name it, and the
+//!   orders are compared with each internal name once (landing round 8).
 //!
 //! `Need::map_tys` refuses every compact forward and `Need::replace` refuses a binding that
 //! must decode (landing round 6, Claude Q2.2), so those operations may panic in D and not in
@@ -59,6 +63,12 @@ impl Ctx {
     }
 }
 
+/// The internal results of the forwards of `s` and of every function it holds at any depth.
+/// Landing review round 8, Claude F2: with those of its own forwards only, a signature that
+/// holds other functions with kept forwards gave battery differences that are all the accepted
+/// one of Q2.3 (1,412 on `b06_codex_shared.zed`), among which a real one would be lost. The
+/// held ones are read from the marks of a walk of the signature held in a type, as its order
+/// gives them.
 fn internal_names(s: &Sig) -> BTreeSet<Arc<str>> {
     let mut out = BTreeSet::new();
     for n in &s.needs {
@@ -69,6 +79,12 @@ fn internal_names(s: &Sig) -> BTreeSet<Arc<str>> {
                     .filter_map(Ty::as_var)
                     .cloned(),
             );
+        }
+    }
+    let hold = Sig::one(vec![], vec![], Ty::func(Arc::new(Sig::clone(s))));
+    for m in hold.vars_marks() {
+        for run in &m.runs {
+            out.extend(run.names::<Arc<str>>());
         }
     }
     out
@@ -121,7 +137,35 @@ fn cmp_sig(label: &str, c: &Sig, f: &Sig, cx: &Ctx, out: &mut Found) {
             once_each_internal(oc, &cx.internal),
             once_each_internal(of, &cx.internal),
         ),
-        false => (oc, of),
+        false => {
+            // Landing review round 8: a signature that holds two different compact
+            // signatures with the same internal results (the copy `add_arrows_of` adds beside
+            // the original, or the copies `fresh` makes of one function held twice, as `h{i}`
+            // of "held shared" holds `h{i-1}`) lists each such name once per held signature in
+            // D, each from its own mark, and once in E, whose `vars_order` merges the variables
+            // by name: the difference of Q2.3 again. So each internal name D lists more than
+            // once must come from that many marks of different signatures, and E must list it
+            // at most once; the orders are then compared with each internal name once.
+            for v in &cx.internal {
+                let count = |o: &[Arc<str>]| o.iter().filter(|x| *x == v).count();
+                let (in_d, in_e) = (count(&oc), count(&of));
+                let sigs: BTreeSet<usize> = (c.vars_marks().iter())
+                    .filter(|m| m.runs.iter().any(|r| r.names::<Arc<str>>().contains(v)))
+                    .map(|m| m.sig)
+                    .collect();
+                if in_d > 1 && (in_d != sigs.len() || in_e > 1) {
+                    bad(
+                        "an internal name once per held signature",
+                        format!("{v} {in_d} times, from {} signatures", sigs.len()),
+                        format!("{v} {in_e} times"),
+                    );
+                }
+            }
+            (
+                once_each_internal(oc, &cx.internal),
+                once_each_internal(of, &cx.internal),
+            )
+        }
     };
     bad("order_with_marks", format!("{oc:?}"), format!("{of:?}"));
     bad(
@@ -451,10 +495,23 @@ fn bindings(c: &Arc<Sig>, vis: &[Arc<str>], internal: &BTreeSet<Arc<str>>) -> Ve
     binds
 }
 
-/// The pairs: each signature with a forward of a chain of four by `f`, of three by a lambda,
-/// and of a function whose lambdas read a parameter, each also with its arrows emptied; and
-/// the unfinished forward of the last, with its arrows kept and emptied.
-fn pairs() -> Vec<Pair> {
+/// The sets of pairs, each run by tests of its own so that each test runs in under 60 s.
+#[derive(Clone, Copy, PartialEq)]
+enum Set {
+    /// Each signature with a forward of a chain of four by `f`, of three by a lambda, and of
+    /// a function whose lambdas read a parameter, each also with its arrows emptied, and the
+    /// unfinished forward of the function whose lambdas read a parameter, with its arrows
+    /// kept and emptied.
+    Base,
+    /// Those of a program whose signatures hold other functions with kept forwards, shared
+    /// (Codex's `b06`), each also with its arrows emptied.
+    Shared,
+    /// As `Shared`, the functions held nested two chains deep (`c02`).
+    Nested,
+}
+
+/// The pairs of the sets `sets`.
+fn pairs(sets: &[Set]) -> Vec<Pair> {
     let mut out: Vec<Pair> = Vec::new();
     let mut from_src = |name: &str, src: &str| {
         let (e, _) = run_with_cfg(src, R10Config::eager());
@@ -478,14 +535,45 @@ fn pairs() -> Vec<Pair> {
             out.push((format!("{name}#{id} bare"), Arc::new(bare), Arc::new(bf)));
         }
     };
-    from_src("chain f 4", &chain_src(4, "f", false));
-    from_src("chain lambda 3", &chain_src(3, "lambda", false));
     let held = "h0(positional a, positional m) = m.map((x: int) -> a).map((x: int) -> a);\n\
                 h1(positional a, positional m) = h0(a, m);\n";
-    from_src("held lambda", held);
-    for clear in [false, true] {
-        let (c, f) = unfinished_pair(held, clear);
-        out.push((format!("unfinished held clear={clear}"), c, f));
+    if sets.contains(&Set::Base) {
+        from_src("chain f 4", &chain_src(4, "f", false));
+        from_src("chain lambda 3", &chain_src(3, "lambda", false));
+        from_src("held lambda", held);
+    }
+    // Landing review round 8, Claude F2: signatures that hold other functions with kept
+    // forwards, shared (Codex's `b06`) and nested two chains deep (`c02`).
+    if sets.contains(&Set::Shared) {
+        let mut shared = String::from("h0(positional f, positional m) = m.map(f).map(f);\n");
+        // Three levels where `b06` has six: the shape (each level holds the one below twice)
+        // is what the battery needs, and six take over 60 s.
+        for i in 1..=3 {
+            let j = i - 1;
+            shared.push_str(&format!(
+                "h{i}(positional f, positional m) = (h0(f, m), h{j}, h{j});\n"
+            ));
+        }
+        shared.push_str("top(positional f, positional m) = (h3, m.map(f));\n");
+        from_src("held shared", &shared);
+    }
+    let nested = "h0(positional f, positional m) = m.map(f);\n\
+                  h1(positional f, positional m) = h0(f, m).map(f);\n\
+                  h2(positional f, positional m) = h1(f, m).map(f);\n\
+                  k0(positional f, positional m) = m.map(f);\n\
+                  k1(positional f, positional m) = k0(f, m).map(f);\n\
+                  k2(positional f, positional m) = k1(f, m).map(f);\n\
+                  p(positional f, positional m) = ((h2, k2), h1(f, m).map(f));\n\
+                  q(positional f, positional m) = (p(f, m), (k2, h2), k1(f, m));\n\
+                  r(positional f, positional m) = (q, q(f, m));\n";
+    if sets.contains(&Set::Nested) {
+        from_src("held nested", nested);
+    }
+    if sets.contains(&Set::Base) {
+        for clear in [false, true] {
+            let (c, f) = unfinished_pair(held, clear);
+            out.push((format!("unfinished held clear={clear}"), c, f));
+        }
     }
     out
 }
@@ -501,8 +589,24 @@ fn ctx(name: &str, c: &Sig) -> Ctx {
 /// Every pair through the battery, at the top level.
 #[test]
 fn landing6_battery_top() {
+    battery_top(&[Set::Base]);
+}
+
+/// As `landing6_battery_top`, on `Set::Shared`.
+#[test]
+fn landing6_battery_top_shared() {
+    battery_top(&[Set::Shared]);
+}
+
+/// As `landing6_battery_top`, on `Set::Nested`.
+#[test]
+fn landing6_battery_top_nested() {
+    battery_top(&[Set::Nested]);
+}
+
+fn battery_top(sets: &[Set]) {
     let mut found = Found::default();
-    for (name, c, f) in pairs() {
+    for (name, c, f) in pairs(sets) {
         let cx = ctx(&name, &c);
         cmp_sig(&format!("{name} as is"), &c, &f, &cx, &mut found);
         let vis = visible_names(&f, &cx.internal);
@@ -518,8 +622,18 @@ fn landing6_battery_top() {
 /// `Outside -> W`, with `W` an internal result, makes the clash of Q2.3.
 #[test]
 fn landing6_battery_held() {
+    battery_held(&[Set::Base]);
+}
+
+/// As `landing6_battery_held`, on `Set::Shared` and `Set::Nested`.
+#[test]
+fn landing6_battery_held_holding() {
+    battery_held(&[Set::Shared, Set::Nested]);
+}
+
+fn battery_held(sets: &[Set]) {
     let mut found = Found::default();
-    for (name, c, f) in pairs() {
+    for (name, c, f) in pairs(sets) {
         let wrap = |s: &Arc<Sig>| {
             Arc::new(Sig::one(
                 vec![],
@@ -599,7 +713,10 @@ fn landing6_clash_programs() {
 
 /// Calls that reach `instantiated` (walk.rs): a callee with a compact forward, a parameter
 /// whose variable stands inside a function type, and a literal argument for a parameter that
-/// a held lambda reads.
+/// a held lambda reads. None of the three `landing6_instantiated_*` tests depends on the
+/// decode in `instantiated` (`flat_for`): each passes with it taken out. The test that does is
+/// `landing6_call_fixing_a_parameter_a_held_lambda_reads_agrees_with_e` (landing review round
+/// 8, Claude NB4).
 #[test]
 fn landing6_instantiated_programs() {
     let defs = [
