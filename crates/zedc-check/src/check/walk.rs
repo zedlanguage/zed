@@ -6628,8 +6628,7 @@ impl<'t, 'a> Ck<'t, 'a> {
     /// The expression of the argument `a` at the parameter of type `p` that
     /// [`Self::int_param_division`] goes on to read: a `/` of integer literals alone at a
     /// parameter that takes `int` and no carrier of `/`, outside a trial. It reads no state
-    /// but `trying`, so [`Self::apply_one`] asks it before its loop over the arguments too, to
-    /// leave out the arguments that call may take. It costs O(1), and one walk of `a`'s text
+    /// but `trying`. It costs O(1), and one walk of `a`'s text
     /// ([`open_lits`]), O(size of `a`), where the parameter takes `int` alone among the
     /// carriers.
     fn int_division_at(&self, a: &Arg<'a>, p: &Ty) -> Option<&'a Expr> {
@@ -14223,13 +14222,22 @@ impl<'t, 'a> Ck<'t, 'a> {
         what: &str,
         span: Span,
     ) -> bool {
-        let bare = without_needs(s);
+        self.fits_bare(s, p, binds) && self.needs_fit(s, p, binds, what, span)
+    }
+
+    /// The first half of [`Self::fit_needs`]: `s` without its needs fits `p`, whose function
+    /// types are exactly one, binding the variables of `p` in `binds`.
+    fn fits_bare(&mut self, s: &Sig, p: &Ty, binds: &mut Binds) -> bool {
+        p.fns.len() == 1 && self.sub(&Ty::func(Arc::new(without_needs(s))), p, binds)
+    }
+
+    /// The second half of [`Self::fit_needs`]: `s` applied to the parameters of `p`'s one
+    /// function type, with the variables of `p` read in `binds`, gives its result
+    /// ([`Self::needs_hold`]), or the application wrote its own errors.
+    fn needs_fit(&mut self, s: &Arc<Sig>, p: &Ty, binds: &Binds, what: &str, span: Span) -> bool {
         let [q] = p.fns.iter().collect::<Vec<_>>()[..] else {
             return false;
         };
-        if !self.sub(&Ty::func(Arc::new(bare)), p, binds) {
-            return false;
-        }
         let q = q.replace(binds);
         let from = self.errors.len();
         self.needs_hold(s, &q, what, span) || self.errors.len() > from
@@ -17127,9 +17135,34 @@ impl<'t, 'a> Ck<'t, 'a> {
     /// around sees only its signature, which a call instantiates with new classes; and a
     /// range is closed only for a forward kept in the signature of the function that ends,
     /// whose watched roots are all of that level (`r10_after_resolve_and_detach`, the `f8`
-    /// test forces the rest). The open sub-case is an expression of the body whose type
-    /// holds such a variable by another route (row PROOF-push-vars-other-route). So the verdict relies on no claim about one
-    /// (standing rule: refuse what is not proved): it is read as no value; the push is
+    /// test forces the rest). The two ways a value reaches here (row
+    /// PROOF-push-vars-other-route, 2026-11-20):
+    /// - A need ([`NeedKind::Push`], met at a call or by `generalize`): the value is
+    ///   `self.bound(value, binds)`, and [`Self::bound`] (mod.rs) replaces every variable that
+    ///   is not a class (`is_class` false: named, closed or out of range) and that `binds`
+    ///   leaves unbound by the unknown `_`; the classes of the root then become `on`. So such
+    ///   a variable reaches here only inside a type `binds` or `on` gives: at a call, the
+    ///   caller's argument types, which are types of expressions of the caller's body, the
+    ///   case below; at `generalize`, a class's type, which holds no variable but its own
+    ///   (the invariant at `Class::resolved`). The need of a push in an inner function on a
+    ///   class of the function around, beside the inner function's own parameter, is this
+    ///   way: the inner parameter is named when the inner function ends, and is read as `_`
+    ///   at the outer end (test
+    ///   `bubble::a_push_in_an_inner_function_of_a_class_around_and_its_own_parameter_is_checked`).
+    /// - A push written in the body ([`Self::pushed`] from the statement): the value's type
+    ///   is the type of an expression of the body being checked. Not proved: that such a type
+    ///   holds only classes, the level rule of `generalize` (a class of an ended inner level
+    ///   is named only if no class of a level around was joined to it, and an inner function
+    ///   is seen around it only through its signature, instantiated with new classes). 60
+    ///   probe programs of row PROOF-push-vars-other-route found none that reaches this arm:
+    ///   locals bound to lambdas and to functions defined after, calls of functions defined
+    ///   later, functions passed to and returned by calls (`two(later)(x)`), `map` with a
+    ///   named function, inner functions with their own port parameter, and pushes in lambdas
+    ///   of a class around; recursion, a declared type on a local and a struct's type
+    ///   parameters are refused before the check in this version.
+    ///
+    /// So the verdict relies on no claim about such a variable (standing rule: refuse what
+    /// is not proved): it is read as no value; the push is
     /// refused with its usual message if the rest of the value fails whatever it becomes
     /// (adding values to a type never makes [`push_takes`] hold where it failed), and else
     /// refused as a form this version does not check ([`PushVars::Unfollowed`]). Before
@@ -24318,71 +24351,86 @@ impl<'t, 'a> Ck<'t, 'a> {
     /// Binds each variable of the parameter `p` that no other argument binds to `Never`, for an
     /// argument with no value: a union with the empty type.
     ///
-    /// Proof that the binding [`Self::apply_one`]'s loop over the arguments ends with is the
-    /// same in any order of the arguments (EMPTY-arg-needs, 042103e29):
-    /// 1. Inside that loop `binds` is written only by [`Ck::sub`] (directly, or through
-    ///    [`Self::fit_needs`]), and here. `Ck::sub` is `Ty::sub_with`, whose one write to the
-    ///    caller's binding is [`Binds::unite`] at the binding of a piece to a variable (zedc-types
-    ///    ty.rs, "binds.unite(v.clone(), &of.of_piece(p))"): `v` becomes what it was bound to,
-    ///    if anything, joined with the piece. The other writes of `binds` in `apply_one` (the
-    ///    carrier of a variable bound by literals alone, the widening of a bounded variable to
-    ///    its carriers) come before or after the loop.
+    /// Proof that [`Self::apply_one`]'s verdict on a call, and the binding it ends with, are the
+    /// same in any order of the arguments, as far as the binding goes (EMPTY-arg-needs,
+    /// 042103e29; rows PROOF-never-bind-order-fit-needs, PROOF-bind-never-open-cases):
+    /// 1. Inside the loop over the arguments `binds` is written only by [`Ck::sub`] (directly,
+    ///    or through [`Self::fits_bare`]) and here. `Ck::sub` is `Ty::sub_with`, whose one write
+    ///    to the caller's binding is [`Binds::unite`] at the binding of a piece to a variable
+    ///    (zedc-types ty.rs, "binds.unite(v.clone(), &of.of_piece(p))"), which binds `v` to
+    ///    what it was bound to, if anything, joined with the piece. The other writes of `binds`
+    ///    in `apply_one` (the carrier of a variable bound by literals alone, the widening of a
+    ///    bounded variable to its carriers) come before or after the loop.
     /// 2. `or_insert_with(v, Ty::empty)` leaves a bound `v` as it is and binds an unbound one to
     ///    the empty type. Since `Never` is the identity of union, it is `unite(v, Never)` on a
     ///    `v` that is bound, and on one that is not it binds `v` to the same type `unite` would.
     /// 3. So every write in the loop joins a type into `v`'s binding, and union is commutative
     ///    and associative: the final binding of each `v` is the union of what the arguments
-    ///    join into it, in any order.
+    ///    join into it, in any order, if each argument joins the same types in every order.
+    /// 4. Each does, since no step of the loop reads the binding made so far in a way that the
+    ///    order could change. `binds` is `Binds::new()`, whose `bounds`, `ceilings` and `free`
+    ///    are none, and nothing in `apply_one` sets them: in zedc-types only the binding a
+    ///    comparison of signatures makes for itself gets them (`Binds::bounded`, "b.free =
+    ///    Some(cx.free.clone())" and "b.ceilings = ..." in `of_arrow`). The reads of the
+    ///    caller's binding that `Ty::sub_with` makes, read on 2026-11-20 (every `binds.` and
+    ///    `b.` read of zedc-types ty.rs):
+    ///    - `admits` returns at "let Some(m) = binds.bound(v) else { return true; }", before
+    ///      it reads `binds.get(v)`; `bound_alone` returns at "binds.bound(v)?"; the ceiling
+    ///      check reads `binds.ceiling(v)` and `ceilings`, none here;
+    ///    - `Cx::through_fn` and `Cx::read_at` read the binding through `Cx::held_own`, which
+    ///      returns nothing where "!b.binds_own()", `bounds` and `free` both none;
+    ///    - the memo key `Compared::new` copies the map and its digest, so two orders that
+    ///      bind differently so far meet different memo entries; the memo gives the answer the
+    ///      comparison would (assumed at the memo in ty.rs, not proved there);
+    ///    - [`Binds::unite`] reads `v`'s binding to join to it (step 1).
+    ///    - `closed_binds` reads a binding of its own, not the caller's, and the literal and
+    ///      class steps of the loop read no binding but through `Ck::sub`.
+    /// 5. The needs of a function argument are the one read of the binding a step's verdict
+    ///    hung on: [`Self::fit_needs`] read `q.replace(binds)`, and [`Self::needs_hold`] gives
+    ///    different verdicts on `T` bound to `Never`, to `1`, or not yet bound (read as `_`).
+    ///    So the loop runs only [`Self::fits_bare`] there, a `Ck::sub` (step 4), and keeps the
+    ///    function in `held`; after the loop, when it refused no argument, [`Self::needs_fit`]
+    ///    checks each on the final binding, the same in every order by step 3. A refused call
+    ///    checks none: its binding holds only the arguments before the refused one.
+    /// 6. A refused call drops `binds`: [`Self::apply_one`] returns `Err` with a message built
+    ///    from the arguments alone.
     ///
-    /// Reads of the binding made so far, inside the loop (row PROOF-never-bind-order-fit-needs):
-    /// 4. The piece binder's `admits` reads `binds.get(v)` with empty bindings filtered out
-    ///    (`filter(|b| !b.is_empty())`), so a `v` bound to `Never` reads there as one not
-    ///    bound, whether the argument of no value came before or not.
-    /// 5. [`Self::fit_needs`] reads `q.replace(binds)`, and [`Self::needs_hold`] does not give
-    ///    the same verdict on `Never` at `v` as on `v` not yet bound, read as `_`.
-    ///    Counterexample, with `h(positional x) = x(1)` and `f(positional n: Never)`:
-    ///    `ap(h, n)` with `ap(positional g: (T) -> T, positional y: T) = g(y)` checked `h` with
-    ///    `T` not bound and rejected the call ("a call of `x` does not take every value, and
-    ///    this value is `_`"), while `pa(n, h)` with the parameters the other way round
-    ///    checked `h` on `Never` and took it. Of 100 programs probed on 2026-11-20 with a
-    ///    written `(T) -> ...` slot, 11 split so, with the bodies `x(1)`, `x[0]` and `x == 1`.
-    ///    With an untyped slot, `g`, the slot is a class, and [`Self::apply_one`] takes its
-    ///    class branch and never reaches `fit_needs` (240 programs, all alike).
-    /// 6. The fix: [`Self::apply_one`] runs this function, before its loop, on each argument
-    ///    the loop would run it on, chosen by the loop's own tests in its order, which for an
-    ///    argument of the empty type read no binding and no state the loop changes. These
-    ///    tests are: not grouped, no literal, `class_of_ty(p)` none,
-    ///    [`Self::int_division_at`] none, and [`adopted`] `Ok(None)`. `generic_parts` gives
-    ///    `None` there, since `only_tuple` of the empty type is none, and so does `read_arg`,
-    ///    since the empty type lists no number. Then every read in the loop sees `Never`, or
-    ///    `Never` joined with what earlier arguments bound, at each such `v`, in any order. By
-    ///    step 2 that is the binding the other arguments give, joined with `Never`, so the
-    ///    reads of step 4 and the final binding of step 3 are as before. The call in the loop
-    ///    is then `or_insert_with` on a bound `v`, which changes nothing.
-    /// 7. A refused call drops `binds`: [`Self::apply_one`] returns `Err` with a message built
-    ///    from the arguments alone, so a binding made before the loop leaves no trace there.
+    /// The cases these steps close, each once open:
+    /// - `Never` beside a function argument (0fd9e0b77): `ap(h, n)` with `ap(positional g: (T)
+    ///   -> T, positional y: T)`, `h(positional x) = x(1)` and `n: Never` checked `h` with `T`
+    ///   not bound and refused the call, while `pa(n, h)` checked it on `Never` and took it.
+    ///   0fd9e0b77 bound `Never` before the loop; the needs now read the final binding, which
+    ///   holds that `Never` (step 2), so the pass before the loop, and the case it left out (an
+    ///   argument of type `Never` that [`Self::int_division_at`] gives, which the loop binds at
+    ///   its place), are gone.
+    /// - Another argument that binds the same variable to a value: `Ck::instantiated` binds `T`
+    ///   from the arguments before this function where it can, but not from a literal at a
+    ///   parameter that holds `T` beside other types. With `tri(positional g: (T) -> T,
+    ///   positional y: T, positional z: T | bool) = 1`, `tri(h, n, 1)` checked `h` on `Never`
+    ///   and took the call, which applies `1`, and `tri(1, n, h)` checked it on `1` and refused
+    ///   it. Both now refuse it (step 5).
     ///
-    /// Not proved: an argument of the empty type that [`Self::int_division_at`] gives, a `/`
-    /// of integer literals alone at a parameter that takes `int` alone among the carriers,
-    /// where [`Self::int_param_division`] then does not take it. The loop still binds it, at
-    /// its place, as before. No such argument of type `Never` is known. Not proved either: that
-    /// [`Self::needs_hold`] gives one verdict whatever order the arguments that bind a
-    /// variable to a value have, beside one of no value (48 programs probed, all alike; test
-    /// below).
+    /// Not proved: that the steps of the loop that change the classes of the function around
+    /// ([`Self::join`], [`Self::restrict`], [`Self::flow`], [`Self::need`]) leave the same classes in
+    /// every order, which [`Self::needs_fit`] then reads; and that two functions in `held`,
+    /// checked in the order of the arguments, give the verdict they give in the other order.
+    /// 1800 programs (75 bodies and literals, 24 orders of four arguments) gave one verdict and
+    /// one count of errors in every order on 2026-11-20.
     ///
-    /// Tests:
-    /// - `l01_26_type_resolution::never::an_argument_of_type_never_binds_before_a_function_with_needs_in_either_order`:
-    ///   the counterexample and four more, both orders. It was red before step 6.
-    /// - `an_int_in_place_of_never_is_checked_alike_in_either_order`: the negative control.
-    /// - `a_function_with_needs_is_checked_alike_beside_never_and_an_int_in_every_order`: six
-    ///   orders of three arguments, three bodies.
-    /// - `an_argument_of_type_never_binds_alike_before_or_after_a_function_with_needs`: an
-    ///   untyped slot, so it does not reach `fit_needs`.
+    /// Tests, in l01_26_type_resolution/never.rs:
+    /// - `an_argument_of_type_never_binds_before_a_function_with_needs_in_either_order`: the
+    ///   first case, both orders. Red before 0fd9e0b77.
+    /// - `a_function_with_needs_is_checked_on_the_binding_of_every_argument_in_every_order`:
+    ///   the second case, six orders, with a negative control. Red before
+    ///   PROOF-bind-never-open-cases (three orders took the call).
+    /// - `two_functions_with_needs_are_checked_alike_in_every_order`: 24 orders, a refused call
+    ///   among them.
+    /// - `an_int_in_place_of_never_is_checked_alike_in_either_order`,
+    ///   `a_function_with_needs_is_checked_alike_beside_never_and_an_int_in_every_order` and
+    ///   `an_argument_of_type_never_binds_alike_before_or_after_a_function_with_needs`.
     ///
-    /// None of these catches a need whose verdict differs on `Never` and on `_` beyond the
-    /// bodies listed. The final binding is checked by
-    /// `an_argument_of_type_never_binds_its_variable_to_never` (13 programs) and
-    /// `calls_with_never_and_with_int_do_not_meet` (two orders of two calls).
+    /// The final binding is checked by `an_argument_of_type_never_binds_its_variable_to_never`
+    /// (13 programs) and `calls_with_never_and_with_int_do_not_meet` (two orders of two calls).
     fn bind_never(&self, p: &Ty, binds: &mut Binds) {
         let mut vars = Vars::default();
         p.vars_in(&mut vars);
@@ -24663,41 +24711,25 @@ impl<'t, 'a> Ck<'t, 'a> {
         // error lists every refused literal of the call, `h(1.0f64, true, 2.5f64)` both the
         // `1.0f64` and the `2.5f64` (row MSG-one-error-later-literals).
         let mut refused: Option<(usize, String)> = None;
-        // Each argument with no value, `Never`, binds the variables of its parameter to `Never`
-        // before any argument is checked, so that a function argument whose body has needs is
-        // checked on `Never` there whether it comes before or after ([`Self::fit_needs`]; proof
-        // at [`Self::bind_never`], row PROOF-never-bind-order-fit-needs). The tests are the
-        // loop's own, in its order, for an argument of the empty type: not grouped, no literal,
-        // a parameter that is no class, none that [`Self::int_param_division`] may take, and
-        // no adoption ([`adopted`]); the loop's other steps change nothing for that type
-        // ([`Self::generic_parts`] and [`Self::read_arg`] give `None`). Before this pass,
-        // `ap(h, n)` with `ap(positional g: (T) -> T, positional y: T)`, `h(positional x) =
-        // x(1)` and `n: Never` checked `h` with `T` not yet bound, read as `_`, and rejected
-        // the call, while `pa(n, h)` took it.
-        // Complexity tradeoff: one more pass over the `a` arguments, O(a), beside the loop's
-        // O(a); an argument of the empty type costs O(1) more, or one walk of its text,
-        // O(its size), at a parameter that takes `int` alone among the carriers, the walk
-        // [`Self::int_param_division`] makes again in the loop. The alternatives: checking
-        // the function arguments again after the loop costs a second check of their needs;
-        // walking the arguments of no value first in the loop changes the argument a refused
-        // call names first.
-        // Tests: `l01_26_type_resolution::never::an_argument_of_type_never_binds_before_a_function_with_needs_in_either_order`
-        // (red before this pass), its negative control
-        // `an_int_in_place_of_never_is_checked_alike_in_either_order`, and
-        // `a_function_with_needs_is_checked_alike_beside_never_and_an_int_in_every_order`.
-        for (i, a) in args.iter().enumerate() {
-            let Some(a) = a.as_ref().filter(|a| !grouped[i] && a.ty.is_empty()) else {
-                continue;
-            };
-            let p = &arrow.params[i];
-            if a.lit.is_none()
-                && self.class_of_ty(p).is_none()
-                && self.int_division_at(a, p).is_none()
-                && matches!(adopted(a, p, self.rough), Ok(None))
-            {
-                self.bind_never(p, &mut binds);
-            }
-        }
+        // The function arguments whose bodies have needs, by index, with the parameter each
+        // fits: the loop binds the variables of the parameter from each ([`Self::fits_bare`]),
+        // and their needs are checked after it, on the binding all the arguments give
+        // ([`Self::needs_fit`]; proof at [`Self::bind_never`], rows
+        // PROOF-never-bind-order-fit-needs and PROOF-bind-never-open-cases). Checking the
+        // needs in the loop read the binding of the arguments before the function alone, so
+        // the verdict hung on the order of the parameters: with `h(positional x) = x(1)`,
+        // `n: Never` and `tri(positional g: (T) -> T, positional y: T, positional z: T |
+        // bool) = 1`, `tri(h, n, 1)` checked `h` on `T` bound to `Never` and took the call,
+        // while `tri(1, n, h)` checked it on `1` and refused it; `T` is `1` in both.
+        // Complexity tradeoff: a list of at most `a` entries, O(a) beside the loop's O(a), and
+        // each need checked once, as before. The alternatives: checking the needs in the loop
+        // and again after it costs a second check of each; binding the arguments of no value
+        // before the loop (0fd9e0b77) fixed the order of `Never` beside a function alone, not
+        // of another argument that binds the same variable, as the `1` above.
+        // Tests: `l01_26_type_resolution::never::a_function_with_needs_is_checked_on_the_binding_of_every_argument_in_every_order`
+        // (red before this), `an_argument_of_type_never_binds_before_a_function_with_needs_in_either_order`
+        // and `a_function_with_needs_is_checked_alike_beside_never_and_an_int_in_every_order`.
+        let mut held: Vec<(usize, Arc<Sig>, &Ty)> = Vec::new();
         'args: for (i, a) in args.iter().enumerate() {
             let Some(a) = a else {
                 continue;
@@ -24786,9 +24818,8 @@ impl<'t, 'a> Ck<'t, 'a> {
             // An argument with no value, `Never`, is in every parameter type and gives each
             // variable of its parameter no value: the variable is bound to `Never` unless
             // another argument binds it, and a need on it is checked on `Never`, not on the
-            // unknown. The pass before this loop bound these variables already, and this binds
-            // nothing more but in the one case it leaves out (proof, and that case, at
-            // [`Self::bind_never`]).
+            // unknown: the needs are checked after this loop, on the binding every argument
+            // gives (`held`; proof at [`Self::bind_never`]).
             if ty.is_empty() {
                 self.bind_never(p, &mut binds);
                 continue;
@@ -24811,7 +24842,11 @@ impl<'t, 'a> Ck<'t, 'a> {
                     None => match &piece {
                         Piece::Fn(s) if let Some(ok) = self.fn_into_classes(s, p, what, span) => ok,
                         Piece::Fn(s) if s.holds_needs() && !p.fns.is_empty() => {
-                            self.fit_needs(s, p, &mut binds, what, span)
+                            let ok = self.fits_bare(s, p, &mut binds);
+                            if ok {
+                                held.push((i, s.clone(), p));
+                            }
+                            ok
                         }
                         _ => self.sub(&ty.of_piece(&piece), p, &mut binds),
                     },
@@ -24838,6 +24873,19 @@ impl<'t, 'a> Ck<'t, 'a> {
                     refused = Some((i, self.rejected_at(what, args, Some((i, &piece, p)))));
                     break 'args;
                 }
+            }
+        }
+        // The needs of the function arguments, in their order, on the binding the loop ends
+        // with, when it refused no argument. A refused call stops the loop where the binding
+        // holds only the arguments before the refused one, and a need checked on it reported
+        // errors that hung on the order of the parameters (`x` is 1 in one order, `_` in
+        // another, none in a third, with the call refused in all): the call's refusal stands
+        // alone.
+        for (i, s, p) in held.into_iter().filter(|_| refused.is_none()) {
+            if !self.needs_fit(&s, p, &binds, what, span) {
+                let piece = Piece::Fn(s);
+                refused = Some((i, self.rejected_at(what, args, Some((i, &piece, p)))));
+                break;
             }
         }
         if let Some((i, message)) = refused {

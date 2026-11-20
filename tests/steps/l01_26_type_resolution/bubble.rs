@@ -917,3 +917,36 @@ fn small_instances_of_the_bubble_benchmarks_are_accepted() {
     prints("bubble_chain", &chain_of_helpers(3), "none\n");
     prints("bubble_bindings", &body_of_bindings(3), "none\n");
 }
+
+#[test]
+fn a_push_in_an_inner_function_of_a_class_around_and_its_own_parameter_is_checked() {
+    // The push in `g` holds `x`, a class of `h`, and `y`, `g`'s own parameter, which is named
+    // when `g` ends. Each call is checked with what it passes for both: `y` at the call of
+    // `g`, `x` at the call of `h` (row PROOF-push-vars-other-route, the need way at
+    // `Ck::push_vars` in zedc-check). A number for either is refused; strings are taken.
+    let src = |y: &str, x: &str| {
+        format!(
+            "h(x, out: Lines) {{ g(positional y, o: Lines) {{ o <- [x, y]; }} g({y}, o: out); }}\n\
+             main(m: MainArgs) {{ h(x: {x}, out: m.stdout); }}\n"
+        )
+    };
+    assert_eq!(
+        type_errors(&src("5", "\"a\"")),
+        [
+            "A `Lines` port takes a `String` or a family of strings: `o <- [x, y] : (0 | 1) -> \
+          int | \"a\"`. [[x, y]]"
+        ],
+    );
+    assert_eq!(
+        type_errors(&src("\"b\"", "5")),
+        [
+            "A `Lines` port takes a `String` or a family of strings: `o <- [x, y] : (0 | 1) -> 5 \
+          | String`. [[x, y]]"
+        ],
+    );
+    prints(
+        "bubble_push_inner_function",
+        &src("\"b\"", "\"a\""),
+        "a\nb\n",
+    );
+}

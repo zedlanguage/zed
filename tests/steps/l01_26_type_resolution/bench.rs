@@ -21,6 +21,7 @@ mod held_functions;
 mod is_chains;
 mod literals;
 mod named_calls;
+mod never;
 mod never_operands;
 mod no_common_value;
 mod ordered_tuples;

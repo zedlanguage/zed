@@ -581,6 +581,104 @@ fn a_function_with_needs_is_checked_alike_beside_never_and_an_int_in_every_order
     }
 }
 
+/// The orders of `(a0, …)`'s parameters, for the tests of order below: each permutation of
+/// `0..n`, `n!` of them.
+fn orders(n: usize) -> Vec<Vec<usize>> {
+    if n == 0 {
+        return vec![vec![]];
+    }
+    let mut out = Vec::new();
+    for o in orders(n - 1) {
+        for k in 0..=o.len() {
+            let mut o = o.clone();
+            o.insert(k, n - 1);
+            out.push(o);
+        }
+    }
+    out
+}
+
+/// The text of `f(positional n: Never) = q(…)` with `q`'s parameters `ps` in the order `o` and
+/// the arguments `args` in the same order, after the declarations `decls`.
+fn ordered(decls: &str, ps: &[(&str, &str)], args: &[&str], o: &[usize]) -> String {
+    let params: Vec<String> = (o.iter())
+        .map(|&k| format!("positional {}: {}", ps[k].0, ps[k].1))
+        .collect();
+    let args: Vec<&str> = o.iter().map(|&k| args[k]).collect();
+    format!(
+        "q({}) = 1;\n{decls}f(positional n: Never) = q({});\n",
+        params.join(", "),
+        args.join(", ")
+    )
+}
+
+/// A literal at a parameter that holds `T` beside other types, `T | bool`, is bound to `T` by
+/// the loop over the arguments, not before it (`Ck::instantiated` binds a literal only at a
+/// parameter that is `T` alone), so the needs of `h` are checked on `T` = `1` whatever the
+/// order: `x(1)` and `x[0]` cannot take `1`, and the call is refused in all six orders, with
+/// one error. Before PROOF-bind-never-open-cases the needs were checked at `h`'s place in the
+/// loop, on the binding of the arguments before it: `q(h, n, 1)`, `q(h, 1, n)` and `q(n, h,
+/// 1)` checked `h` on `Never` and took the call, which runs `h(1)` and applies `1`; the other
+/// three refused it. A `true` there falls in `bool` and binds nothing, so `h` is checked on
+/// `Never` and taken in every order: the negative control.
+#[test]
+fn a_function_with_needs_is_checked_on_the_binding_of_every_argument_in_every_order() {
+    for (other, body, lit, want) in [
+        ("T | bool", "x(1)", "1", Some("`x` is 1, not a function")),
+        ("T | #a", "x(1)", "1", Some("`x` is 1, not a function")),
+        ("T | bool", "x[0]", "1", Some("`[0]` takes a tuple, not 1")),
+        ("T | bool", "x(1)", "true", None),
+        ("T | bool", "x[0]", "true", None),
+    ] {
+        let ps = [("g", "(T) -> T"), ("y", "T"), ("z", other)];
+        let h = format!("h(positional x) = {body};\n");
+        for o in orders(3) {
+            let text = ordered(&h, &ps, &["h", "n", lit], &o);
+            let errors = type_errors(&text);
+            match want {
+                Some(w) => assert!(
+                    errors.len() == 1 && errors[0].starts_with(w),
+                    "{text}: {errors:?}"
+                ),
+                None => assert_eq!(errors, Vec::<String>::new(), "{text}"),
+            }
+            assert_eq!(sig(&text, "f"), "Never -> 1", "{text}");
+        }
+    }
+}
+
+/// Two functions with needs, an argument of no value and a literal that binds the same
+/// variable, in all 24 orders: one verdict, the same number of errors, and one type of `f`.
+/// The needs of both are checked after the loop on the binding all four give; a call the loop
+/// refuses (a bounded `x + 1` does not fit `(T) -> T` by itself) reports that refusal alone. Before
+/// PROOF-bind-never-open-cases a function before the refused argument had its needs checked
+/// on the binding so far, adding an error that hung on the order (`x` is 1, `_`, or none).
+#[test]
+fn two_functions_with_needs_are_checked_alike_in_every_order() {
+    let ps = [
+        ("g", "(T) -> T"),
+        ("k", "(T) -> T"),
+        ("y", "T"),
+        ("z", "T | bool"),
+    ];
+    // A call refused by the loop is of type `Never`; one whose needs wrote their own errors is
+    // taken, of `q`'s result `1`.
+    for (b1, b2, lit, count, result) in [
+        ("x(1)", "x[0]", "1", 2, "1"),
+        ("x(1)", "x + 1", "1", 1, "Never"),
+        ("x + 1", "x(1)", "1", 1, "Never"),
+        ("x(1)", "x", "true", 0, "1"),
+    ] {
+        let decls = format!("h1(positional x) = {b1};\nh2(positional x) = {b2};\n");
+        for o in orders(4) {
+            let text = ordered(&decls, &ps, &["h1", "h2", "n", lit], &o);
+            let errors = type_errors(&text);
+            assert_eq!(errors.len(), count, "{text}: {errors:?}");
+            assert_eq!(sig(&text, "f"), format!("Never -> {result}"), "{text}");
+        }
+    }
+}
+
 /// Evaluation is neither strict nor lazy, so an argument of type `Never` leaves a call of a
 /// declared function without a value only where the substituted body needs it: the call's type
 /// is the substituted result, with no rule that any argument of no value makes it `Never`
@@ -730,4 +828,27 @@ fn the_rejection_of_a_value_passed_on_past_an_argument_of_no_value_shows_where_i
         ),
         "{notes:?}"
     );
+}
+
+/// A call of `n` functions with needs, each beside an argument of no value, and a `true` at
+/// `T | bool`, all at parameters of one variable `T`: the loop keeps each function in `held`
+/// and checks its needs after the loop, on `T` = `Never`.
+pub(super) fn functions_beside_never(n: usize) -> String {
+    let ps: String = (0..n)
+        .map(|i| format!("positional g{i}: (T) -> T, positional y{i}: T, "))
+        .collect();
+    let args: String = (0..n).map(|_| "h, n, ").collect();
+    format!(
+        "q({ps}positional z: T | bool) = 1;\nh(positional x) = x(1);\n\
+         f(positional n: Never) = q({args}true);\n"
+    )
+}
+
+/// A small instance of the benchmark
+/// `bench::never::functions_with_needs_beside_never_scale`: taken, of `q`'s result.
+#[test]
+fn functions_with_needs_beside_never_are_taken() {
+    let text = functions_beside_never(3);
+    assert_eq!(type_errors(&text), Vec::<String>::new(), "{text}");
+    assert_eq!(sig(&text, "f"), "Never -> 1", "{text}");
 }
