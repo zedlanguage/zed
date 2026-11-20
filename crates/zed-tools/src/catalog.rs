@@ -19,7 +19,8 @@
 //! - `row ID`, or several separated by commas: plan rows of `docs/plan_dag.md` that provide it;
 //! - one or more Zed texts in backticks, separated by commas, each an expression of the grammar
 //!   of `SPEC_DIR/DESIGN.md` whose defined words lie in Zed₀ (layer 24 or below, the bound of
-//!   the bootstrap subset in DESIGN.md step M0.8); a name the words table does not list stands for a value.
+//!   the bootstrap subset in DESIGN.md step M0.8); a name the words table does not list stands for
+//!   a value.
 //!
 //! With `--write` the tool rewrites the table from the index, keeping each routine's Zed column
 //! and giving a new routine `missing`. Without it the tool checks the catalog: the routines the
@@ -622,8 +623,8 @@ const fn sig(word: &'static str, positional: Count) -> Sig {
 /// words whose result depends on a width; the views of a string one (L1.39c); `sqrt` one and
 /// `fma` three (row FLOAT-sqrt); the family
 /// operations their receiver and the operands of the kernel table (sec:kernel): `foldl(init,
-/// op)`, `foldr(op, init)`, `.sort(asc f, …)`, `.sort()` (the key `x -> x`, sec:order) or `.sort(by: le)`, and one operand for the
-/// others.
+/// op)`, `foldr(op, init)`, `.sort(asc f, …)`, `.sort()` (the key `x -> x`, sec:order) or
+/// `.sort(by: le)`, and one operand for the others.
 const SIGS: &[Sig] = &[
     sig("String", Count::Exactly(1)),
     sig("int", Count::Exactly(1)),
@@ -773,8 +774,8 @@ fn args<'t>(
 
 /// The problem with the words of the Zed text `t`, parsed as `nodes` from `toks` with root
 /// `root`, if any: every name it reads is an operand, a parameter of a lambda the name lies
-/// in, or a word that `words` or the prelude defines, and every word it calls or reads as a member is
-/// one of [`SIGS`], given the arguments listed there.
+/// in, or a word that `words` or the prelude defines, and every word it calls or reads as a member
+/// is one of [`SIGS`], given the arguments listed there.
 // Complexity tradeoff: linear in the text; one walk binds each lambda parameter on entering
 // its lambda and unbinds it on leaving, so a name is checked against the parameters in scope
 // by one hash lookup, with no walk up its ancestors, and against the fixed tables `SIGS` and

@@ -1,7 +1,7 @@
 //! Readers and checks of the spec's prose, which this repository does not hold: the `sync`
 //! tool runs the checks on the spec checkout, the tests built with the feature `spec` run the
-//! readers and the checks on DESIGN.md in place, and the tests run both on small documents of their own.
-//! [`kernel_rules`] gives the names no message prints; [`serial_tables`] gives the tables of
+//! readers and the checks on DESIGN.md in place, and the tests run both on small documents of their
+//! own. [`kernel_rules`] gives the names no message prints; [`serial_tables`] gives the tables of
 //! step M0.7's serialization; [`prelude_laws`] compares the prelude laws DESIGN.md states with
 //! `docs/mathlib-study.md`; [`build_modes`] checks the "Build modes" bullet and every kind of
 //! build DESIGN.md names (plan row BUILD-modes).

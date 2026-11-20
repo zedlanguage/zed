@@ -1,6 +1,6 @@
 //! The hand-run tools of the Zed implementation. The grammar tools check the grammar and the
-//! fences of a spec checkout and report the layers of programs; `sync` runs the checks of the spec's
-//! prose; `progress` writes the spec's PROGRESS.md; `cite` checks
+//! fences of a spec checkout and report the layers of programs; `sync` runs the checks of the
+//! spec's prose; `progress` writes the spec's PROGRESS.md; `cite` checks
 //! that every section label and step id cited is defined in DESIGN.md; `plan` checks this
 //! repository's plan DAG; `conflicts` writes the plan's file-conflict lists; `step_targets`
 //! writes the test target of each step folder into `tests/Cargo.toml`; `imports` names every
