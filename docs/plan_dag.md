@@ -6041,6 +6041,16 @@ Each pair below is at one level, shares a file and is not yet done. No path of n
 | 0 | MSG-too-large-cast-origin, MSG-list-value-printed-by-arrows | `crates/zedc-check/src/check/` |
 | 0 | MSG-too-large-cast-origin, MSG-tuple-generic-headline | `crates/zedc-check/src/check/` |
 | 0 | MSG-too-large-cast-origin, TEST-generic-operand-messages-reached | `crates/zedc-check/src/check/walk/fp_ops.rs`, `crates/zedc-check/src/check/walk.rs` |
+| 0 | TEST-kernel-unreached-paths-10, TEST-kernel-unreached-paths-9 | `crates/zed-kernel/src/types/`, `crates/zed-kernel/COMPLETENESS.md` |
+| 0 | TEST-kernel-unreached-paths-10, DRY-len-as-u32-checked | `crates/zed-kernel/src/types/empty/names.rs` |
+| 0 | TEST-kernel-unreached-paths-10, LIMITS-remove-all | `crates/zed-kernel/src/types/`, `crates/zed-kernel/COMPLETENESS.md` |
+| 0 | TEST-kernel-unreached-paths-10, REFUSAL-front-u6-subset | `crates/zed-kernel/src/types/empty.rs` |
+| 0 | TEST-kernel-unreached-paths-10, REFUSAL-front-u6-keys | `crates/zed-kernel/src/types/empty.rs` |
+| 0 | TEST-kernel-unreached-paths-10, PERF-kernel-box-union-search | `crates/zed-kernel/src/types/empty.rs` |
+| 0 | TEST-kernel-unreached-paths-10, FAIL-print-meet-unnamed-bound | `crates/zed-kernel/src/types/print.rs` |
+| 0 | TEST-kernel-unreached-paths-10, PERF-row-hash-tied-digest | `crates/zed-kernel/src/types/bdd/set/`, `crates/zed-kernel/src/types/bdd.rs`, `crates/zed-kernel/src/types/empty.rs`, `crates/zed-kernel/src/types/empty/escape.rs`, `crates/zed-kernel/src/types/print.rs`, `crates/zed-kernel/src/types/rec/group.rs` |
+| 0 | TEST-kernel-unreached-paths-10, PERF-guarded-function-walk | `crates/zed-kernel/src/types/`, `crates/zed-kernel/COMPLETENESS.md` |
+| 0 | TEST-kernel-unreached-paths-10, FP-ops-order | `crates/zed-kernel/src/types/` |
 | 0 | TEST-kernel-unreached-paths-9, DRY-len-as-u32-checked | `crates/zed-kernel/src/types/empty/names.rs` |
 | 0 | TEST-kernel-unreached-paths-9, REFUSAL-front-u6-subset | `crates/zed-kernel/src/types/empty.rs` |
 | 0 | TEST-kernel-unreached-paths-9, REFUSAL-front-u6-keys | `crates/zed-kernel/src/types/empty.rs` |
@@ -9056,7 +9066,7 @@ Each line below names a path and the open items that touch it, by level, when th
 - `crates/zed-kernel/src/term.rs`: level 4: L6.6; level 8: L2.4; level 19: L2.10; level 20: L3.2; level 21: L4.1; level 23: L3.4, L6.7; level 27: L3.8; level 29: L3.20; level 34: L3.21; level 36: L4.4, L5.1; level 37: L5.3; level 40: L6.5; level 42: FOLD-unique; level 49: L7.1; level 50: L7.2; level 52: PREIMAGE-reindex; level 58: L15.2
 - `crates/zed-kernel/src/text.rs`: level 39: L5.6; level 44: L6.16; level 45: STR-cursor
 - `crates/zed-kernel/src/types.rs`: level 0: PERF-row-hash-tied-digest, PROOF-meet-rows-finite; level 1: LIT-power-expression; level 7: L2.5; level 8: REFUSAL-reverse-words; level 15: L2.7; level 17: L1.40e; level 26: L3.7; level 37: L5.2; level 49: L7.1; level 50: L7.1b, L7.2; level 52: L7.4, L9.1; level 53: L10.2; level 54: L10.3
-- `crates/zed-kernel/src/types/`: level 0: DRY-len-as-u32-checked, FAIL-print-meet-unnamed-bound, FAIL-ratio-kernel-bdd-print, GROUP-layered-nowitness, PERF-kernel-box-union-search, PERF-parity-cold-verdict, PERF-row-hash-tied-digest, REFUSAL-front-u6-keys, REFUSAL-front-u6-subset, TEST-kernel-unreached-paths-9; level 1: PERF-escape-big-heads-scaling, PERF-set-tied-digest-depth, TIME-kernel-benches-over-cap-high-load; level 3: A5-print; level 4: T2, TYPE-display-shared; level 6: SETTLE-rounds; level 7: L2.5; level 8: REFUSAL-reverse-words, SET-type-check; level 15: L2.7; level 25: L6.4; level 26: L3.7; level 63: L12.2e; level 64: UNITS-info-prelude
+- `crates/zed-kernel/src/types/`: level 0: DRY-len-as-u32-checked, FAIL-print-meet-unnamed-bound, FAIL-ratio-kernel-bdd-print, GROUP-layered-nowitness, PERF-kernel-box-union-search, PERF-parity-cold-verdict, PERF-row-hash-tied-digest, REFUSAL-front-u6-keys, REFUSAL-front-u6-subset, TEST-kernel-unreached-paths-10, TEST-kernel-unreached-paths-9; level 1: PERF-escape-big-heads-scaling, PERF-set-tied-digest-depth, TIME-kernel-benches-over-cap-high-load; level 3: A5-print; level 4: T2, TYPE-display-shared; level 6: SETTLE-rounds; level 7: L2.5; level 8: REFUSAL-reverse-words, SET-type-check; level 15: L2.7; level 25: L6.4; level 26: L3.7; level 63: L12.2e; level 64: UNITS-info-prelude
 - `crates/zed-kernel/src/types/bdd.rs`: level 0: PERF-row-hash-tied-digest; level 1: PERF-set-tied-digest-depth; level 4: T2; level 6: SETTLE-rounds; level 7: L2.5
 - `crates/zed-kernel/src/types/bdd/bench.rs`: level 0: FAIL-ratio-kernel-bdd-print; level 1: TIME-kernel-benches-over-cap-high-load
 - `crates/zed-kernel/src/types/empty.rs`: level 0: GROUP-layered-nowitness, PERF-kernel-box-union-search, PERF-parity-cold-verdict, PERF-row-hash-tied-digest, REFUSAL-front-u6-keys, REFUSAL-front-u6-subset; level 7: L2.5; level 8: REFUSAL-reverse-words; level 15: L2.7
