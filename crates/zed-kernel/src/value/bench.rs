@@ -136,6 +136,28 @@ fn hashing_a_list_after_each_join_scales() {
     });
 }
 
+/// One map `base` of the n keys `0 ..< n`, joined by `++` to n lists of one entry, on either
+/// side. Each join tests that `base` is a list (`Family::may_be_list`): its ends and count, then
+/// whether all its keys are integers, which the first join reads from all n keys and every later
+/// join from the answers `base`'s branches kept (`btree::Map::all_keys`), O(1); the join itself
+/// is O(log n). So O(n log n) in all; testing every key at each join took O(n^2)
+/// (PROOF-sweep-zed-kernel).
+#[test]
+fn joining_one_map_to_many_lists_scales() {
+    crate::scaling::check_order("one map of n keys joined to n lists", 20_000, 1, |n| {
+        let base = Family::from_map(
+            (0..n as i64)
+                .map(|k| (Value::Int(k), Value::Int(k)))
+                .collect(),
+        );
+        for i in 0..n as i64 {
+            let one = Family::of([(0_i64, i)]);
+            std::hint::black_box(base.concat(&one).expect("lists join"));
+            std::hint::black_box(one.concat(&base).expect("lists join"));
+        }
+    });
+}
+
 /// A family nested 200,000 levels deep, each family the value of the one above, is digested:
 /// the families are summed from the innermost out by `fill`, with no stack per level.
 #[test]

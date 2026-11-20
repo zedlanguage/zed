@@ -2989,11 +2989,28 @@ impl Family {
         Some(Family(Entries::Seq(Arc::new(chain)), fresh_id(), 0))
     }
 
-    /// Whether the family may be a list, its keys the integers `0 ..< n`, read in O(1): a list
-    /// made by `++`; a range from 0; a map whose least key is `0` and whose greatest is
-    /// `n - 1` for its `n` entries. Not proved for a map: a key of another kind between `0` and
-    /// `n - 1` in the total order, `0.5`, with an integer missing, passes; the checker admits
-    /// `++` only on lists (`zedc-check` `list_concat_end`), so no checked program gives one.
+    /// Whether the family is a list, its keys exactly the integers `0 ..< n` for its `n`
+    /// entries: a list made by `++`; a range from 0; a map whose least key is `0`, whose
+    /// greatest is `n - 1`, and all of whose keys are `Value::Int`s.
+    ///
+    /// Proof for a map: its keys are `n` distinct values (a map holds a key once). Each is a
+    /// `Value::Int`, so an integer, and the order of two `Value::Int`s is that of the integers
+    /// (`number_cmp` compares exact values first). The least is `0` and the greatest `n - 1`,
+    /// so each key is an integer in `[0, n - 1]`, a set of `n` integers; `n` distinct members
+    /// of a set of `n` are all of it (pigeonhole), so the keys are exactly `0 ..< n`. The test
+    /// of kind is needed: numbers of other kinds lie between integers in the total order
+    /// (`0.5r`, `1r`, `1.0`, `1.0f32` all between `0` and `2`), and before it a map with such a
+    /// key and an integer missing passed, and `++` then joined it as a list whose leaf lacks a
+    /// key `Chain` reads (PROOF-sweep-zed-kernel, found by proofdoc2;
+    /// `tests::a_map_with_a_key_of_another_kind_between_its_ends_is_no_list`). An integer key
+    /// is never a `Value::Big` in `[0, n - 1]`, as a `Big` is never in the `i64` range, so
+    /// testing for `Value::Int` loses no list.
+    // Complexity tradeoff: the naive test of every key costs O(n) a `++`, so `base ++ [i]` for
+    // i < n over one map `base` took O(n^2). Used: the ends and the count, O(log n), then
+    // `btree::Map::all_keys`, which keeps its answer in the branches the map shares with its
+    // copies: O(n) the first time a map is joined, O(1) after while unchanged, O(d log n) after
+    // d changes (proof at `all_keys`). Measured by
+    // `value::bench::joining_one_map_to_many_lists_scales`.
     fn may_be_list(&self) -> bool {
         match &self.0 {
             Entries::Seq(_) => true,
@@ -3002,6 +3019,7 @@ impl Family {
             Entries::Map(m) => match (m.get_min(), m.get_max()) {
                 (Some((Value::Int(0), _)), Some((Value::Int(last), _))) => {
                     u128::try_from(*last).is_ok_and(|l| l + 1 == m.len() as u128)
+                        && m.all_keys(&|k| matches!(k, Value::Int(_)))
                 }
                 (None, None) => true,
                 _ => false,
@@ -5672,6 +5690,59 @@ mod tests {
         ];
         for f in &not_lists {
             assert!(xs.concat(f).is_none() && f.concat(&xs).is_none(), "{f}");
+        }
+    }
+
+    /// A map whose least key is `0`, whose greatest is `n - 1` and which has `n` entries, but
+    /// one of whose keys is a number of another kind, is no list (PROOF-sweep-zed-kernel; found
+    /// by proofdoc2, docs/proofs-audit/proofdoc2.md): `0.5r`, `1r`, `1.0` and `1.0f32` all lie
+    /// between `0` and `2` in the total order (`number_cmp`), and none is the integer `1`. Before
+    /// the fix `concat` joined such a map as a list, and a read of the joined list then panicked
+    /// or gave a wrong entry. Large maps check every position of the odd key (first leaf, middle,
+    /// last leaf), and a change to a map already read must not leave a stale answer kept.
+    #[test]
+    fn a_map_with_a_key_of_another_kind_between_its_ends_is_no_list() {
+        let rat = |num: i64, den: i64| {
+            Value::rat(Rat::new(BigInt::from(num), BigInt::from(den)).expect("a nonzero den"))
+        };
+        let i = Value::Int;
+        let xs = list_of(0, 3);
+        for odd in [rat(1, 2), rat(1, 1), Value::float(1.0), Value::float32(1.0)] {
+            let f = Family::from_map(
+                [(i(0), i(0)), (odd, i(1)), (i(2), i(2))]
+                    .into_iter()
+                    .collect(),
+            );
+            assert!(xs.concat(&f).is_none() && f.concat(&xs).is_none(), "{f}");
+        }
+        let n = 1000;
+        // `xs ++ f` once `f` is the list `[0, …, n - 1]`, built entry by entry.
+        let joined = Family::of((0..3).chain(0..n).enumerate().map(|(k, v)| (k as i64, v)));
+        for j in [1, 2, n / 2, n - 2] {
+            let half = rat(2 * j - 1, 2);
+            let entries = (0..n).map(|k| match k == j {
+                true => (half.clone(), i(k)),
+                false => (i(k), i(k)),
+            });
+            let mut f = Family::from_map(entries.collect());
+            assert!(
+                xs.concat(&f).is_none() && f.concat(&xs).is_none(),
+                "odd key at {j}"
+            );
+            // Made a list by a change: the answer kept for `f` before must not be read.
+            let m = f.0.built_map_mut();
+            assert!(m.remove(&half));
+            m.insert(i(j), i(j));
+            assert_eq!(cat(&xs, &f), joined, "odd key at {j} replaced");
+            assert_eq!(cat(&f, &xs).count(), i(n + 3));
+            // And back: a list already read made a non-list by a change.
+            let m = f.0.built_map_mut();
+            assert!(m.remove(&i(j)));
+            m.insert(half.clone(), i(j));
+            assert!(
+                xs.concat(&f).is_none() && f.concat(&xs).is_none(),
+                "odd key at {j}"
+            );
         }
     }
 

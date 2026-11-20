@@ -428,10 +428,31 @@ fn changes_after_sums(seed: u64, shared: bool) -> [u32; 10] {
     ARMS.with(|a| a.get())
 }
 
-/// One change to `m`, with its sums filled before and checked after, on the map and on the copy
-/// kept from before when `shared`.
+/// The one key test of these tests' calls of [`Map::all_keys`]: the key is not 700. Keys are
+/// drawn below 1500, so the answer turns as 700 goes in and out of the map.
+fn plain(k: &u64) -> bool {
+    *k != 700
+}
+
+/// [`Map::all_keys`] of `m` by [`plain`] and the number of keys it tested.
+fn counted_all_keys(m: &M) -> (bool, usize) {
+    let tested = std::cell::Cell::new(0);
+    let all = m.all_keys(&|k| {
+        tested.set(tested.get() + 1);
+        plain(k)
+    });
+    (all, tested.get())
+}
+
+/// One change to `m`, with its sums and key answers filled before and checked after, on the map
+/// and on the copy kept from before when `shared`.
 fn change_once(m: &mut M, shared: bool, insert: bool, k: u64, step: u64, seed: u64) {
     assert_eq!(m.sum(&mut term), fresh_sum(m), "seed {seed} step {step}");
+    assert_eq!(
+        m.all_keys(&plain),
+        m.keys().all(plain),
+        "seed {seed} step {step}"
+    );
     let kept = shared.then(|| m.clone());
     match insert {
         true => m.insert(k, step),
@@ -446,13 +467,77 @@ fn change_once(m: &mut M, shared: bool, insert: bool, k: u64, step: u64, seed: u
         "seed {seed} step {step}"
     );
     assert_eq!(counted_sum(m), (fresh_sum(m), 0), "seed {seed} step {step}");
+    // The key answer after the change is a fresh scan's; a second call at an inner root tests
+    // no key, as a kept answer stops it either at its end or at the branch that failed.
+    let fresh = m.keys().all(plain);
+    assert_eq!(counted_all_keys(m).0, fresh, "seed {seed} step {step}");
+    let inner = matches!(m.root, Some(Node::Inner(_)));
+    let again = counted_all_keys(m);
+    assert_eq!(
+        (again.0, again.1 == 0 || !inner),
+        (fresh, true),
+        "seed {seed} step {step}"
+    );
     if let Some(kept) = kept {
         assert_eq!(
             kept.sum(&mut term),
             fresh_sum(&kept),
             "seed {seed} step {step}"
         );
+        assert_eq!(
+            kept.all_keys(&plain),
+            kept.keys().all(plain),
+            "seed {seed} step {step}"
+        );
     }
+}
+
+/// An inner root's kept key answers: the first call tests every key, a second none, whether all
+/// pass or one fails; a change tests only the keys on its path again, and a copy kept from
+/// before the change keeps its own answer.
+#[test]
+fn an_unchanged_inner_root_tests_no_key() {
+    // Every key but 700, which `plain` refuses.
+    let n = 5000_u64;
+    let mut m: M = (0..n).filter(|&k| k != 700).map(|k| (k, k)).collect();
+    assert_eq!(counted_all_keys(&m), (true, n as usize - 1));
+    assert_eq!(counted_all_keys(&m), (true, 0));
+    let copy = m.clone();
+    // A change, here a value replaced and then a key taken out, clears the answers on its path
+    // only: the next call tests at most the keys of the nodes there and of the siblings a mend
+    // rebuilt, 2 (MAX + 1) a level.
+    let height = m.root.as_ref().map_or(0, Node::height);
+    for change in [true, false] {
+        match change {
+            true => m.insert(1234, 1),
+            false => m.remove(&1234),
+        };
+        let (all, tested) = counted_all_keys(&m);
+        let bound = 2 * (MAX + 1) * (height + 1);
+        assert!(all && tested > 0 && tested <= bound, "{tested} keys tested");
+    }
+    m.insert(700, 1);
+    let (all, tested) = counted_all_keys(&m);
+    assert!(!all && tested > 0 && tested <= n as usize);
+    assert_eq!(
+        counted_all_keys(&m),
+        (false, 0),
+        "the failed branch's answer is kept"
+    );
+    assert_eq!(
+        counted_all_keys(&copy),
+        (true, 0),
+        "the copy keeps its answer"
+    );
+    assert!(M::default().all_keys(&plain));
+}
+
+/// A branch of families' entries is 152 bytes: 144 before it kept its key answer
+/// (`Branch::keys`), the cost `Map::all_keys` states.
+#[test]
+fn a_branch_of_values_is_152_bytes() {
+    use crate::value::Value;
+    assert_eq!(size_of::<Branch<Value, Value>>(), 152);
 }
 
 /// A map held in one leaf keeps its sum: a second sum, and a copy's, read no entry, and no entry

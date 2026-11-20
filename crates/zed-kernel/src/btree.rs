@@ -14,8 +14,8 @@ use std::cmp::Ordering;
 use std::iter::{self, FusedIterator};
 use std::mem;
 use std::sync::Arc;
-use std::sync::atomic::AtomicU64;
 use std::sync::atomic::Ordering::Relaxed;
+use std::sync::atomic::{AtomicU8, AtomicU64};
 
 /// The most entries a node holds.
 const MAX: usize = 16;
@@ -52,6 +52,7 @@ impl<K: Clone, V: Clone> Take for Branch<K, V> {
             child: self.child.clone(),
             next: self.next.take(),
             sum: AtomicU64::new(self.sum.load(Relaxed)),
+            keys: AtomicU8::new(self.keys.load(Relaxed)),
         }
     }
 }
@@ -128,7 +129,19 @@ struct Branch<K, V> {
     /// new branch, which clears it; a copy of the branch, or the branch moved whole (`Take`),
     /// keeps it, since it holds the same child and entry.
     sum: AtomicU64,
+    /// Whether every key beneath the child and in `next` passes the test of [`Map::all_keys`]:
+    /// [`KEYS_UNREAD`] while not known, else [`KEYS_ALL`] or [`KEYS_NOT_ALL`]. It is written at
+    /// exactly the places `sum` is, cleared by `new`, `child_mut` and `next_mut` and carried by
+    /// a copy and by `Take`, so it is right whenever `sum` is (proof at [`Map::all_keys`]).
+    keys: AtomicU8,
 }
+
+/// [`Branch::keys`] while no answer is kept.
+const KEYS_UNREAD: u8 = 0;
+/// [`Branch::keys`] when every key the branch covers passes the test.
+const KEYS_ALL: u8 = 1;
+/// [`Branch::keys`] when some key the branch covers fails the test.
+const KEYS_NOT_ALL: u8 = 2;
 
 /// The modulus of [`Map::sum`], the prime `2^61 - 1` ([`zed_numtheory::m61`]).
 pub(crate) const SUM_MODULUS: u64 = zed_numtheory::m61::P;
@@ -152,12 +165,13 @@ pub(crate) fn join(a: u64, b: u64) -> u64 {
 }
 
 impl<K, V> Branch<K, V> {
-    /// The branch of `child` and the entry `next` after it, no sum kept.
+    /// The branch of `child` and the entry `next` after it, no sum or key answer kept.
     fn new(child: Node<K, V>, next: Option<(K, V)>) -> Self {
         Branch {
             child,
             next,
             sum: AtomicU64::new(UNSUMMED),
+            keys: AtomicU8::new(KEYS_UNREAD),
         }
     }
 
@@ -168,15 +182,17 @@ impl<K, V> Branch<K, V> {
         Branch::new(self.child, next)
     }
 
-    /// The child, to be changed: the kept sum is cleared first.
+    /// The child, to be changed: the kept sum and key answer are cleared first.
     fn child_mut(&mut self) -> &mut Node<K, V> {
         *self.sum.get_mut() = UNSUMMED;
+        *self.keys.get_mut() = KEYS_UNREAD;
         &mut self.child
     }
 
-    /// The entry after the child, to be changed: the kept sum is cleared first.
+    /// The entry after the child, to be changed: the kept sum and key answer are cleared first.
     fn next_mut(&mut self) -> &mut Option<(K, V)> {
         *self.sum.get_mut() = UNSUMMED;
+        *self.keys.get_mut() = KEYS_UNREAD;
         &mut self.next
     }
 }
@@ -196,6 +212,7 @@ impl<K: Clone, V: Clone> Clone for Branch<K, V> {
             child: self.child.clone(),
             next: self.next.clone(),
             sum: AtomicU64::new(self.sum.load(Relaxed)),
+            keys: AtomicU8::new(self.keys.load(Relaxed)),
         }
     }
 }
@@ -469,6 +486,58 @@ impl<K, V> Map<K, V> {
             Some(n) => node(n, f),
             None => {}
         }
+    }
+
+    /// Whether `test` holds for every key; true for no keys. `test` must be the one test every
+    /// call on a map of this `K` and `V` is made with, since a branch keeps its answer for the
+    /// next call of any map that shares it; the families' (`value::Family::may_be_list`: the key
+    /// is a `Value::Int`) is the only one outside this module's tests.
+    // Complexity tradeoff: the naive check tests every key, O(n) a call, which made `base ++ [i]`
+    // for i < n over one map `base` take O(n^2). Used: each branch keeps whether all the keys
+    // beneath its child and in its entry pass (`Branch::keys`), so a call on a map unchanged
+    // since the last tests no key at an inner root and loads at most MAX + 1 kept answers, O(1);
+    // after d changes it tests the O(d log n) keys of the nodes on their paths; the first call
+    // O(n). A leaf root keeps no answer (its word holds its sum) and tests its at most MAX keys,
+    // O(1). A call stops at the first branch that fails; the branches it passed keep their
+    // answers, and the one that failed keeps `KEYS_NOT_ALL`, so the next call stops there too
+    // without testing a key. Tradeoff: one byte a branch, 8 with alignment (144 to 152 bytes for
+    // `Branch<Value, Value>`), and branches are one slot in about 9 to 17, so about 0.5% of a
+    // map's memory.
+    //
+    // Proof that a kept answer is right: `keys` is written at exactly the places `sum` is: set to
+    // KEYS_UNREAD by `Branch::new` (so by `with_next`), `child_mut` and `next_mut`, copied by
+    // `Clone` and `Take`, and stored by the fold below from the child and the entry it covers.
+    // The proof at [`Map::sum`] shows each change to a branch's `child` or `next` goes through
+    // `child_mut`, `next_mut` or `with_next` (a mend clears both siblings by `child_mut`, in the
+    // same call and before anything reads them, beside its writes to their entries), or builds a
+    // new branch, and that a copy or a `Take` carries the same
+    // child and entry. So a kept KEYS_ALL or KEYS_NOT_ALL was computed from the child and entry
+    // the branch holds now. Its child's own kept answers are right by induction on the height
+    // (a leaf child keeps none and is tested whole). The answer read is then the conjunction
+    // over the branches of the root, each the conjunction over its child's keys and its entry's
+    // key, which covers every key once, since each entry of a B-tree sits in one node. Checked
+    // by `btree::tests::change_once` (after every change of
+    // `kept_sums_survive_every_arm_of_a_change`, every arm of a mend: the answer equals a fresh
+    // scan, a second call tests no key, and a copy kept from before keeps its own answer) and
+    // `btree::tests::an_unchanged_inner_root_tests_no_key`.
+    pub(crate) fn all_keys(&self, test: &impl Fn(&K) -> bool) -> bool {
+        fn node<K, V>(n: &Node<K, V>, test: &impl Fn(&K) -> bool) -> bool {
+            match n {
+                Node::Leaf(s) => s.iter().all(|(k, _)| test(k)),
+                Node::Inner(bs) => bs.iter().all(|b| match b.keys.load(Relaxed) {
+                    KEYS_UNREAD => {
+                        // The depth is the tree's height, O(log n).
+                        let all =
+                            node(&b.child, test) && b.next.as_ref().is_none_or(|(k, _)| test(k));
+                        b.keys
+                            .store(if all { KEYS_ALL } else { KEYS_NOT_ALL }, Relaxed);
+                        all
+                    }
+                    kept => kept == KEYS_ALL,
+                }),
+            }
+        }
+        self.root.as_ref().is_none_or(|n| node(n, test))
     }
 
     /// The entries of `self` and `other` side by side in step, the i-th of one with the i-th of
