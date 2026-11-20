@@ -148,3 +148,8 @@ zedc-presburger = { workspace = true, features = ["two-at-a-time"] }
 # And target-lexicon, under cranelift-codegen, with `std`, which cranelift-reader (through
 # zed-clif) gives it in the workspace build.
 target-lexicon = { version = "0.13.5", features = ["std"] }
+# And rustc-hash, under cranelift-codegen, with its default features, which zed-clif gives it in
+# the workspace build; zed-kernel, zedc-base and zedc-presburger asked for them too until
+# 0f0b8c410 removed it, so a build of the compiler crates without zed-clif (merge_check.sh
+# after a zed-numtheory change) was refused.
+rustc-hash = { version = "2.1.3", features = ["std"] }
