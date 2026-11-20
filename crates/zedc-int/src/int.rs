@@ -1027,7 +1027,7 @@ impl OddPart {
     /// `64 * p < n`, for `n` the bits of `o`, and the least prime `q = k * p + 1` is found by
     /// trying `k = 2, 4, ...`, about `ln q` tries ([`is_prime`]). All the residues come from
     /// one remainder tree ([`remainders`]): the primes, multiplied into words, are `O(n / 64)`
-    /// bits together, so the tree costs `O(M(n))`, where one division of `o` per word cost
+    /// bits together, so the tree costs `O(M(n) log n)`, where one division of `o` per word cost
     /// `O(n)` per index and `O(n^2 / log n)` in all.
     fn filter(&self) -> &Filter {
         self.filter.get_or_init(|| {
@@ -1154,6 +1154,20 @@ impl OddPart {
 /// `x` is reduced modulo `P` once, and each remainder modulo the two products below it. For
 /// `B` the bits of `P` the cost is that of the one division and O(M(B) log k) for `k` moduli,
 /// where one division of `x` a modulus costs O(bits of `x`) each.
+//
+// Source: D. J. Bernstein, "Fast multiplication and its applications", in Algorithmic Number
+// Theory, MSRI Publications 44, Cambridge University Press, 2008, pp. 325-384,
+// https://cr.yp.to/lineartime/multapps-20080515.pdf. Section 12 (product tree) and section 18
+// (remainder tree): "The root of the remainder tree is h mod f1 f2 ... ft. If t ≤ 1 then
+// that's the complete tree. If t ≥ 2 then the left subtree is the remainder tree of h,
+// f1, ..., fs, and the right subtree is the remainder tree of h, fs+1, ..., ft" (18.2); 18.3
+// gives O(n (lg n)^2 lg lg n) operations over the FFT, an O(M(n) log n) bound. Departures:
+// integers rather than polynomials (the integer case of 18.6 and 18.7), and the kernel pairs
+// the leaves in order rather than splitting at s = ⌈t/2⌉, which keeps the depth ⌈lg t⌉.
+// Checked 2026-11-20 against the author's copy. Tests:
+// `tests::a_remainder_tree_gives_each_remainder`, every tree shape of 0 to 9 word moduli
+// against one division each, and the kernel's `the_remainders_agree_with_one_division_a_leaf`;
+// neither measures the cost.
 fn remainders(x: &BigUint, ms: &[u64]) -> Vec<u64> {
     let leaves: Vec<BigUint> = ms.iter().map(|&m| BigUint::from(m)).collect();
     let levels = trees::product_tree(&leaves);
