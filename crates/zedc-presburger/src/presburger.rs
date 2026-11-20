@@ -14946,30 +14946,11 @@ impl Tied {
     }
 }
 
-/// `Σ c·x + k`, written as [`Lin`] writes a term.
+/// `Σ c·x + k`, written as [`Lin`] writes a term ([`zedc_lattice::affine::write_sum`]).
 fn sum_of<'a>(terms: impl Iterator<Item = (String, &'a Int)>, k: &Int) -> String {
     let mut out = String::new();
-    for (x, c) in terms {
-        let m = c.abs();
-        match (out.is_empty(), c.is_negative()) {
-            (true, true) => out.push('-'),
-            (true, false) => {}
-            (false, true) => out.push_str(" - "),
-            (false, false) => out.push_str(" + "),
-        }
-        if m == Int::ONE {
-            out.push_str(&x);
-        } else {
-            out.push_str(&format!("{m} * {x}"));
-        }
-    }
-    if out.is_empty() {
-        out = k.to_string();
-    } else if k.is_positive() {
-        out.push_str(&format!(" + {k}"));
-    } else if k.is_negative() {
-        out.push_str(&format!(" - {}", k.abs()));
-    }
+    zedc_lattice::affine::write_sum(&mut out, terms, k, |out, x| fmt::Write::write_str(out, &x))
+        .expect("a String takes any text");
     out
 }
 

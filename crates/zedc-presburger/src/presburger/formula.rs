@@ -13,6 +13,7 @@ use std::sync::{Arc, OnceLock};
 
 use zed_kernel::value::fresh_id;
 use zedc_int::int::Int;
+use zedc_lattice::affine::write_sum;
 
 /// A variable of a relation.
 #[derive(Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Debug)]
@@ -592,37 +593,9 @@ impl Lin {
 }
 
 impl Lin {
-    /// Writes the term, each symbol through `name`.
+    /// Writes the term, each symbol through `name` ([`write_sum`]).
     fn show(&self, f: &mut fmt::Formatter<'_>, name: Names) -> fmt::Result {
-        let mut first = true;
-        for (a, c) in &self.terms {
-            let (sign, m) = if c.is_negative() {
-                ("-", -c)
-            } else {
-                ("+", c.clone())
-            };
-            match (first, sign) {
-                (true, "-") => write!(f, "-")?,
-                (true, _) => {}
-                (false, s) => write!(f, " {s} ")?,
-            }
-            if m == Int::ONE {
-                a.show(f, name)?;
-            } else {
-                write!(f, "{m} * ")?;
-                a.show(f, name)?;
-            }
-            first = false;
-        }
-        if first {
-            write!(f, "{}", self.constant)
-        } else if self.constant.is_positive() {
-            write!(f, " + {}", self.constant)
-        } else if self.constant.is_negative() {
-            write!(f, " - {}", -&self.constant)
-        } else {
-            Ok(())
-        }
+        write_sum(f, &self.terms, &self.constant, |f, a| a.show(f, name))
     }
 }
 

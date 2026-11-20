@@ -20,6 +20,8 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
 
+use zedc_int::int::Int;
+
 use super::interval::{End, IntervalSet, Num};
 use super::landmarks::Landmarks;
 use super::lattice::Lattice;
@@ -94,28 +96,98 @@ impl Affine {
 }
 
 impl fmt::Display for Affine {
-    /// `n`, `-n`, `2 * n - m + 1`, `0`.
+    /// `n`, `-n`, `2 * n - m + 1`, `0` ([`write_sum`]).
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        for (i, (s, c)) in self.terms.iter().enumerate() {
-            let negative = c.signum() < 0;
-            let (sign, k) = (if negative { "-" } else { "+" }, c.abs());
-            match i {
-                0 if negative => write!(f, "-")?,
-                0 => {}
-                _ => write!(f, " {sign} ")?,
-            }
-            if k != Num::ONE {
-                write!(f, "{k} * ")?;
-            }
-            write!(f, "{}", s.0)?;
+        write_sum(f, &self.terms, &self.constant, |f, s| f.write_str(&s.0))
+    }
+}
+
+/// A coefficient of a sum that [`write_sum`] writes: an integer of either kind.
+pub trait Coefficient: fmt::Display + Sized {
+    /// Whether it is below zero.
+    fn negative(&self) -> bool;
+    /// Whether it is above zero.
+    fn positive(&self) -> bool;
+    /// Its absolute value.
+    fn magnitude(&self) -> Self;
+    /// Whether it is one.
+    fn is_one(&self) -> bool;
+}
+
+impl Coefficient for Num {
+    fn negative(&self) -> bool {
+        self.signum() < 0
+    }
+    fn positive(&self) -> bool {
+        self.signum() > 0
+    }
+    fn magnitude(&self) -> Num {
+        self.abs()
+    }
+    fn is_one(&self) -> bool {
+        *self == Num::ONE
+    }
+}
+
+impl Coefficient for Int {
+    fn negative(&self) -> bool {
+        self.is_negative()
+    }
+    fn positive(&self) -> bool {
+        self.is_positive()
+    }
+    fn magnitude(&self) -> Int {
+        self.abs()
+    }
+    fn is_one(&self) -> bool {
+        *self == Int::ONE
+    }
+}
+
+/// Writes the sum `Σ c·x + k` to `out` as a program writes it: `n`, `-n`, `2 * n - m + 1`,
+/// `0`. Each term in the order given is its sign (`-` before the first when it is below zero,
+/// ` - ` or ` + ` before each later one), its coefficient's absolute value and ` * ` unless
+/// that is one, and its symbol, which `symbol` writes; then the constant with its sign unless
+/// it is zero, or the constant alone when there is no term. The one writer of a linear sum
+/// (row DRY-text-shared): the `Affine` bounds here, the presburger `Lin` terms (and through
+/// them `Con`) and the rows of a tie the presburger solver refuses (`sum_of`) each had a copy,
+/// all three writing the same text. zed-kernel's `Poly` writer places signs the same way but
+/// writes rational coefficients over a shared denominator and monomials, with the constant as
+/// one of the terms, and zed-kernel is below this crate, so it keeps its own. O(the length
+/// written).
+pub fn write_sum<'c, W, C, X>(
+    out: &mut W,
+    terms: impl IntoIterator<Item = (X, &'c C)>,
+    constant: &C,
+    mut symbol: impl FnMut(&mut W, X) -> fmt::Result,
+) -> fmt::Result
+where
+    W: fmt::Write + ?Sized,
+    C: Coefficient + 'c,
+{
+    let mut first = true;
+    for (x, c) in terms {
+        match (first, c.negative()) {
+            (true, true) => out.write_str("-")?,
+            (true, false) => {}
+            (false, true) => out.write_str(" - ")?,
+            (false, false) => out.write_str(" + ")?,
         }
-        let c = &self.constant;
-        match (self.terms.is_empty(), c.signum()) {
-            (true, _) => write!(f, "{c}"),
-            (false, 0) => Ok(()),
-            (false, -1) => write!(f, " - {}", c.abs()),
-            (false, _) => write!(f, " + {c}"),
+        let m = c.magnitude();
+        if !m.is_one() {
+            write!(out, "{m} * ")?;
         }
+        symbol(out, x)?;
+        first = false;
+    }
+    if first {
+        write!(out, "{constant}")
+    } else if constant.positive() {
+        write!(out, " + {constant}")
+    } else if constant.negative() {
+        write!(out, " - {}", constant.magnitude())
+    } else {
+        Ok(())
     }
 }
 
@@ -594,5 +666,67 @@ impl fmt::Display for Bounds {
         } else {
             write!(f, "[{l}..={u}]")
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::fmt::Write;
+
+    use super::*;
+
+    /// The sum with `terms` (name, coefficient) and constant `k`, written with coefficients of
+    /// both kinds; the two must agree.
+    fn written(terms: &[(&str, i64)], k: i64) -> String {
+        let nums: Vec<(&str, Num)> = terms.iter().map(|&(x, c)| (x, Num::from(c))).collect();
+        let ints: Vec<(&str, Int)> = terms.iter().map(|&(x, c)| (x, Int::from(c))).collect();
+        let (mut a, mut b) = (String::new(), String::new());
+        write_sum(
+            &mut a,
+            nums.iter().map(|(x, c)| (*x, c)),
+            &Num::from(k),
+            |o, x| o.write_str(x),
+        )
+        .unwrap();
+        write_sum(
+            &mut b,
+            ints.iter().map(|(x, c)| (*x, c)),
+            &Int::from(k),
+            |o, x| o.write_str(x),
+        )
+        .unwrap();
+        assert_eq!(a, b, "Num and Int coefficients write the same sum");
+        a
+    }
+
+    #[test]
+    fn a_sum_is_written_with_one_sign_between_terms_and_no_unit_coefficient() {
+        /// The terms (name, coefficient), the constant and the text expected.
+        type Case = (&'static [(&'static str, i64)], i64, &'static str);
+        let cases: &[Case] = &[
+            (&[], 0, "0"),
+            (&[], 5, "5"),
+            (&[], -5, "-5"),
+            (&[("n", 1)], 0, "n"),
+            (&[("n", -1)], 0, "-n"),
+            (&[("n", 2), ("m", -1)], 1, "2 * n - m + 1"),
+            (&[("n", -3), ("m", 1)], -4, "-3 * n + m - 4"),
+            (&[("n", 1), ("m", -2)], 0, "n - 2 * m"),
+            (&[("n", 0)], 0, "0 * n"),
+        ];
+        for &(terms, k, want) in cases {
+            assert_eq!(written(terms, k), want, "terms {terms:?}, constant {k}");
+        }
+        let affine = Affine {
+            terms: [
+                (Sym("n".into()), Num::from(2)),
+                (Sym("m".into()), Num::from(-1)),
+            ]
+            .into_iter()
+            .collect(),
+            constant: Num::from(1),
+        };
+        // The terms come in symbol order.
+        assert_eq!(affine.to_string(), "-m + 2 * n + 1");
     }
 }
