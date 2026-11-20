@@ -10,7 +10,7 @@ use std::sync::{Arc, LazyLock, Mutex, OnceLock, PoisonError, Weak};
 use super::unfold::{ENVS, Show, eval, thread};
 use super::{Checked, Def, Env, Expr, Freed, Group, Node, Rejection, Shape, free, same};
 use crate::digest::Digest;
-use crate::types::{Type, bytes, defs, mix};
+use crate::types::{Type, Verdict, bytes, defs, mix};
 use zed_graph::{IdSource, on_cycle};
 
 /// The accepted groups, one per distinct definition list, by the digest of the definitions
@@ -471,14 +471,30 @@ impl Group {
                  argument gives a smaller type, so it may be empty",
             );
         }
+        // Why a value at every parameter `empty` is enough: `L -> V` with `V` empty holds a value
+        // only when `L` is empty, so its emptiness moves against a recursive `L`; with `V`
+        // inhabited, `L -> V` holds a value for every `L` and cannot flip. `V` is monotone in its
+        // parameters (`shrinks` is false above), so a value at all of them `empty` is a value at
+        // every argument. That needs a proof of a value: `Type::is_empty` answers `false` for a
+        // type whose search it refuses, so the verdict is asked, and a refusal is a flaw as an
+        // empty type is (PROOF-kernel-proofdoc3a-gaps (i): until then a refused `V` admitted the
+        // group). Test:
+        // `l01_23_subtyping::group_refusal::a_guarantee_whose_value_type_is_refused_is_rejected`.
         let n = self.0.defs[0].params.len();
-        if eval(v, &Arc::new(Env::ground(vec![Type::empty(); n]))).is_empty() {
-            return Some(match n {
+        match eval(v, &Arc::new(Env::ground(vec![Type::empty(); n]))).verdict() {
+            Verdict::Inhabited => None,
+            Verdict::Empty => Some(match n {
                 0 => "is empty",
                 _ => "is empty when every parameter is `empty`",
-            });
+            }),
+            Verdict::Refused(_) => Some(match n {
+                0 => "may be empty: the checker can neither show it empty nor find a value in it",
+                _ => {
+                    "may be empty when every parameter is `empty`: the checker can neither show \
+                     it empty nor find a value in it"
+                }
+            }),
         }
-        None
     }
 
     /// Where the expression `s` of definition `def` narrows a domain within it, as `k` says.

@@ -122,6 +122,38 @@ fn message(t: &Type) -> String {
     site.detail.expect("the decider's reason")
 }
 
+/// The admission check (`value_flaw` in zed-kernel types/rec/group.rs) accepts a recursive
+/// guarantee only over a value type shown to hold a value: `L -> V` with `V` empty holds a value
+/// only when `L` is empty, so its emptiness would move against `L`. `A` of [`refused`] has a
+/// value, but the checker neither finds one nor shows it empty, and `is_empty` answers `false`
+/// for it. Before PROOF-kernel-proofdoc3a-gaps (i) the check read that `false` as a value and
+/// accepted `type T = T -> A`; it now asks the verdict and refuses the group, as it refuses an
+/// empty value type. The refusal costs a group that is monotone in fact (the check is
+/// sufficient, not necessary); accepting a refused value type would accept one whose value type
+/// may be empty.
+#[test]
+fn a_guarantee_whose_value_type_is_refused_is_rejected() {
+    Type::forget_emptiness();
+    let a = group(placed(IN_ORDER)).swap_remove(0);
+    assert_eq!(a.verdict(), Verdict::Refused(Refusal::Group));
+    assert!(!a.is_empty(), "a refused type counts as inhabited");
+    let a = Expr::Type(a);
+    let defs = vec![Def {
+        name: "T".into(),
+        params: vec![],
+        body: Expr::Morphism(Box::new(r(0)), Box::new(r(0)), Box::new(a)),
+    }];
+    let e = Group::new(defs).expect_err("a value type that may be empty is refused");
+    assert!(
+        e.message.contains(
+            "whose value type `A` may be empty: the checker can neither show it empty nor find \
+             a value in it"
+        ),
+        "{}",
+        e.message
+    );
+}
+
 /// The members go to the search, which decides none of them; before this item the search's own
 /// cause was given, so the first assertion fails there.
 #[test]

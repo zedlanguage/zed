@@ -68,8 +68,9 @@ impl Type {
     }
 
     /// The type in the surface syntax at `at`, each recursive member written by the name its
-    /// group gives it, as `L(int | #x)`; a part of a definition kept unevaluated, and an atom's
-    /// payload that is a recursive type as a whole, are unfolded once. A part used more than once
+    /// group gives it, as `L(int | #x)`; a part of a definition kept unevaluated is unfolded
+    /// once (an atom's payload is never a recursive type as a whole: sub-case (c) at
+    /// `Printer::force_cycles`). A part used more than once
     /// gets a definition placed before the type, as with [`Type::surface`], and a part used once
     /// is written where it stands, so the text is linear in the type's graph. Several types
     /// written together share their definitions ([`Type::surfaces_by_name`]).
@@ -729,8 +730,8 @@ impl Printer<'_> {
     // Claim: every cycle of the texts passes through a recursive type that is either named in
     // `forced` or pushed on `unfolded` by [`Printer::ty`], so naming the unfolded ones on a
     // cycle leaves no cycle for [`Printer::heights`] (which else panics on user input, "every
-    // cycle passes through a recursive type with a definition"). Proof (PROOF-sweep-zed-kernel),
-    // in sub-cases, (a) and (b) proved and (c) not:
+    // cycle passes through a recursive type with a definition"). Proof (PROOF-sweep-zed-kernel;
+    // (c) by PROOF-kernel-open-subcases), in sub-cases (a), (b) and (c), all proved:
     // - Depth. A node of parts holds the column types of the rows its tuple parts name, its
     //   atoms' payloads, and the three types of each morphism its morphism part names; a
     //   recursive node holds the arguments of its key, not its unfolding, which
@@ -772,13 +773,27 @@ impl Printer<'_> {
     //   cycle runs through a recursive node in `forced` or `unfolded`. The edges out of
     //   `forced` are cut below, so a cycle left passes through `unfolded`, which is named.
     // - (b) Proved: E4 keeps depth for every payload that is a node of parts, as above.
-    // - (c) Not proved: a payload that is a recursive node as a whole, whose `p()` gives its
-    //   unfolding's parts, which may hold deeper types. `Expr::Atom` writes the tuple of its
-    //   operands as a payload, a node of parts, and `AtomPart::not` and `Atoms::zip` build
-    //   payloads by `-`, `&` and `|`, which build nodes of parts; it is not shown that no
-    //   operation answers with a recursive node equal to the payload. The arm of `ty` for such
-    //   a payload, written out in full with `ctx` set, takes the unfolding branch like any
-    //   other, but no test reaches it.
+    // - (c) Proved: no payload is a recursive node as a whole, so (b) covers every payload.
+    //   An `AtomPart` is visible only in the module `types` and its submodules, where only
+    //   `types.rs` and `empty.rs` build one (read 2026-11-20 by a search for `AtomPart {`);
+    //   its payload is set only by the following, each
+    //   giving a node of parts, by induction over the order the types were made:
+    //   `AtomPart::all` and `AtomPart::none` (`PAYLOADS`, a union of two universes, and
+    //   `EMPTY`); `AtomPart::zip` (`Type::zip`) and `AtomPart::not` (`Type::payloads() - p`,
+    //   `Type::minus`); `Type::atom_part` (`Type::empty()`, or `payload & Type::payloads()`, a
+    //   `Type::zip`); `flat_part` and `nonflat_part` in empty.rs (`Type::empty()`,
+    //   `Type::payloads()`, or a payload already made, copied); `Atoms::zip`, `join`, `not`,
+    //   `minus` and `set` (an `AtomPart::zip` or `not`, or a part already made, copied); and
+    //   `Type::rewrite_levels` (what `level` gives, which it asserts in every build is a node of
+    //   parts). `Type::zip` answers an operand only from `zip_at_once`, which requires both
+    //   operands to be nodes of parts (`let (Node::Parts(..), Node::Parts(..))`), and else
+    //   `Type::new`; `Type::minus` answers `self` only when it is `EMPTY`, and else
+    //   `Type::new`; and `Type::new` makes `Node::Parts` on both of its paths. So `ty` never
+    //   meets a recursive node with `ctx` set: `ctx` is set only at an atom's payload
+    //   (`Item::Ty(Some(name), part.payload)` in `atom`), at the E4 targets `&all - t` and
+    //   `except` (built by `Type::minus` and `Type::zip`, nodes of parts), and at a recursive
+    //   node's body, which carries on a `ctx` it was given. The unfolding taken in `ty` for a
+    //   recursive node with `ctx` set is kept as written, though no input reaches it.
     // Tests: `a_cycle_of_parts_written_by_name_is_defined`,
     // `groups_whose_printing_met_a_cycle_without_a_recursive_type_build_and_print`,
     // `a_cycle_of_parts_inside_every_value_but_one_atom_payload_is_defined` (both E4 edges over
@@ -1121,8 +1136,9 @@ impl Printer<'_> {
     fn ty(&mut self, ctx: &Ctx, t: &Type) -> Text {
         if let Node::Rec(r) = &*t.0 {
             // Written by name, a member is `name(args)`. A part kept unevaluated has no name, and
-            // an atom's payload that is a recursive type as a whole has none of its own to follow
-            // the atom's: each is unfolded once, as `#c(int, L(int))`, the recursive types inside
+            // an atom's payload that is a recursive type as a whole (no type has one: (c) at
+            // `Printer::force_cycles`) would have none of its own to follow the atom's: each is
+            // unfolded once, as `#c(int, L(int))`, the recursive types inside
             // by name. An unfolding that is itself a recursive node gets a definition, as without
             // names, and so does one met again inside its own unfolding, as the part `#a | R0` of
             // `R0 = (#a, (#a | R0))` is inside `(#a, #a | R0) | #a`, since a cycle written out
@@ -1414,8 +1430,11 @@ impl Printer<'_> {
     ) -> Text {
         // An operand: a leaf as text, otherwise a node of its own.
         // Every operand is one of a form's, and no form has a leaf operand: `Part::connect` folds
-        // a leaf away from an `Or` or `And`, `Part::of_form` asserts it, and both callers of
-        // `Part::not_expr` outside tests pass a `Part::Expr` (`Connect::negate`).
+        // a leaf away from an `Or` or `And`, `Part::of_form` asserts it, both callers of
+        // `Part::not_expr` outside tests pass a `Part::Expr` (`Connect::negate`), and the third
+        // maker of forms, bdd.rs `xor::halves` (the `Or` of an exclusive or's two meets, made
+        // when first read), proves at its site that neither meet is constant, so no leaf, and
+        // asserts it (`Form::assert_no_leaf_operand`).
         let operand = |me: &mut Printer, (q, not): &(Part<A>, bool)| match q.is_leaf() {
             Some(_) => unreachable!("no operand of a form is a leaf"),
             None => me.refer(item(q, *not)),
@@ -1638,7 +1657,12 @@ impl Printer<'_> {
         // other atoms, and the one form puts `!c` in block k, the first block of that
         // function; no atom is in two blocks, so `c` is not in the block after it. The
         // twelfth and thirteenth rounds' coverage found the merge never made
-        // (TEST-kernel-unreached-paths-7), and it is removed.
+        // (TEST-kernel-unreached-paths-7), and it is removed. No test checks the shape's
+        // absence: had a list that shape, `b & c` would print unmerged and read back as the same
+        // type (inferred), so `types::print::tests::random_types_print_alike_in_every_order_of_their_atoms`,
+        // `l01_22_type_representation::surface::a_few_unions_differences_and_intersections_of_rows_read_back_as_the_same_type`
+        // and `l01_29_repairs_and_printing::printed::every_printed_type_parses_back_to_itself`
+        // would all pass; they check that what is printed is right, not that it is shortest.
         let mut texts: Vec<(Vec<Text>, Vec<Text>)> = Vec::with_capacity(m);
         for (k, (_, lits)) in list.blocks.iter().enumerate() {
             let (mut first, mut taken) = (Vec::new(), Vec::new());
@@ -1687,7 +1711,10 @@ impl Printer<'_> {
         // block k + 2 has the value of block k, and is written `true` unless a turn at k + 1
         // turned it over, which gives block k + 1 a class of its own. So the text after a
         // turn always has a value. The twelfth and thirteenth rounds' coverage found neither
-        // case made (TEST-kernel-unreached-paths-7); the asserts below keep the proof checked.
+        // case made (TEST-kernel-unreached-paths-7); the asserts below keep the proof checked,
+        // run by `types::print::tests::random_types_print_alike_in_every_order_of_their_atoms`
+        // and `::only_a_part_holding_values_outside_every_atom_prints_the_top_type`, on their
+        // random draws only.
         debug_assert!(
             (list.blocks.last()).is_none_or(|(v, _)| *v != list.tail),
             "the default of a list in its one form is the value its last block does not have"
@@ -1712,8 +1739,14 @@ impl Printer<'_> {
                 // `first` (or in the meet there) and each taken one in `taken`, so the two are not
                 // both empty, and the text after it is not the text of this block. (A block's set
                 // is a `Cell::block: Arc<Set<A>>`, a treap node that holds a literal, so
-                // `set::iter` yields one at least.)
+                // `set::iter` yields one at least.) Test (PROOF-kernel-proofdoc3a-gaps (l)): the
+                // assert below, run by `types::print::tests::random_types_print_alike_in_every_order_of_their_atoms`
+                // (random lists in every order of their atoms); a list outside its draws is not
+                // checked.
                 (false, false) => next.map(|_| match (taken.is_empty(), first.len()) {
+                    _ if cfg!(debug_assertions) && first.is_empty() && taken.is_empty() => {
+                        unreachable!("a block of value `false` writes a literal")
+                    }
                     (false, _) => Class::Diff,
                     (true, 1) if every && k + 1 == m => first[0].class,
                     (true, _) => Class::And,

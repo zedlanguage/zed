@@ -723,6 +723,25 @@ impl Type {
                 return false;
             }
         }
+        // Who reads a refused `false` as "inhabited" (PROOF-kernel-proofdoc3a-gaps (i)): the 145
+        // calls outside tests on 2026-11-20 (zedc-check 79, zedc-types ty.rs 48, this crate
+        // 17, zedc-preimage 1), each read at its site. 85 keep more, answer "unknown", take the
+        // general path or change only a message, so a refusal costs precision alone. 49 may then
+        // report an error or a warning that a proof would have spared: a spurious "not a
+        // subtype" from fewer shapes tried (zedc-types `member`, `Bound::lists`,
+        // `Pins::lists`; `universes` here), "takes a function, and this value is ..."
+        // (zedc-check `only_fn`), a loose failure at `_` (`discard`), a stop or a missing need
+        // (`pass_needs`, `stopped_in_body`, `gives_made`, `apply_demanding`), and the like; 12
+        // of them ask of a meet with a scalar carrier, which no search refuses. None of these
+        // accepts a program on the strength of a `false`. One did: rec/group.rs `value_flaw`
+        // admitted a recursive guarantee over a value type it read as inhabited; it asks the
+        // verdict since (test
+        // `l01_23_subtyping::group_refusal::a_guarantee_whose_value_type_is_refused_is_rejected`).
+        // Two pass the answer on, each documented as unproved for "no": zedc-types `Ty::is_empty`
+        // and this crate's `KType::subtype`. Two here read `false` as a value under
+        // `is_flat_type` (the group decider's `And` and `Diff` arms), sound if a flat type's
+        // search is never refused (inferred: a flat type holds no tuple, payload atom or
+        // morphism, where every refusal arises; not proved).
         if let Some(b) = MEMO.with(|m| m.borrow().get(self).copied()) {
             return b;
         }
@@ -757,49 +776,60 @@ impl Type {
             // component left `self` inhabited alone and empty after a query that kept that
             // component empty.
             // Claim: `is_empty` is a function of the type alone, whatever earlier queries left
-            // in `MEMO` (PROOF-sweep-zed-kernel). Proved in sub-cases (i) and (ii); (iii) is
-            // not proved.
-            // Where `MEMO` enters: the search above is not `strict`, so `Search::met` answers a
-            // type kept in `MEMO` from it, without numbering it or searching under it. That is
-            // the one read of `MEMO` in a search; the others are the read and the front sweep
-            // at the top of this function, and they decide `self` itself.
-            // Soundness (module comment): every step that answers empty is a proof, so a type
-            // answered empty has no value. By induction over the order in which entries were
-            // written to `MEMO` (here, after the front sweep, and from the search below), every
-            // kept "empty" is then a proof too: the search that wrote it read only earlier
-            // entries, each a proof or an "inhabited", and an "inhabited" read never makes a
-            // sound step answer empty.
-            // (i) `self` has a value. Every path answers false, since "true" would be a proof
-            // of emptiness. Proved.
-            // (ii) `self` has no value, and the search with today's `MEMO` and the search with
-            // an empty `MEMO` both prove it. Both answer true. Proved.
-            // (iii) `self` has no value, and one of the two searches proves it while the other
-            // is refused (a fork, where `empty_past_forks` and `fork::decide` also fail, or a
-            // tuple split) and answers false. This is the only way the answer can depend on
-            // `MEMO`: a kept answer skips the subtree that holds the fork or the split, or a
-            // fresh search reaches a fork that a kept answer would have skipped. Not proved:
-            // it needs every refused search to be refused for any `MEMO`, and the search's
-            // incompleteness (module comment: coNP-hard tuple parts, the subset construction at
-            // a fork) gives no such guarantee. No case is known.
-            // Evidence for (iii): `order_free` over seeds 0 to 199 in
+            // in `MEMO` (PROOF-sweep-zed-kernel; proved in full by PROOF-kernel-open-subcases).
+            // Let F(t) be what this function answers for `t` on a thread whose `MEMO` is empty.
+            // Proof that every call answers F(self), by induction over the calls in the order
+            // they end (a call made inside another ends first).
+            // (1) `MEMO` is read in one place, the lookup of `self` at the top of this function.
+            // `Search::met` reads none since PROOF-kernel-open-subcases, and nothing else in the
+            // crate names `MEMO` (`forget_emptiness` clears it).
+            // (2) `MEMO` is written in two places, each with `self` and this call's answer: after
+            // the front sweep, and after a search no fork or split refused (below). By the
+            // induction hypothesis every earlier call answered F of its type, so every entry is
+            // (t, F(t)), and the lookup at the top answers F(self) when it finds `self`.
+            // (3) When it does not, the sweep, the search, `empty_past_forks` and `fork::decide`
+            // run, and none of them reads `MEMO`. This search is not `strict`, so it reads no
+            // group's verdict or shared value (`Searching::group_verdict` and
+            // `Searching::shared` return `None` first for such a search), hence no `VERDICTS`,
+            // `SHARED`, `DECIDING` or value of `STORES` through them. The other kept tables are
+            // each a function of the type asked, by the argument at its declaration: `HEIGHTS`
+            // (proved there, with a test), `VERDICTS` (decided by `group_verdicts` from the group
+            // alone, for any `Type::verdict` call they make), and `PAST_FORKS` (the
+            // answer of `empty_past_forks`, whose search, like this one, reads no `MEMO`).
+            // `CLASSES` is read by `Search::class` for the numbers of the values built, which
+            // depend on the groups decided before; by its doc a value given two classes is tested
+            // twice and never answered for another value, so the answers do not depend on the
+            // numbers (inferred from that doc, not proved here). A call of `is_empty` they make
+            // answers F of its type by the induction hypothesis. So this call answers what a
+            // call on an empty `MEMO` answers: F(self).
+            // What it rests on: the arguments at `VERDICTS` and `PAST_FORKS` that each is a
+            // function of the type, and the `CLASSES` step above; this proof adds none to them.
+            // Until PROOF-kernel-open-subcases the claim was open in one sub-case: `met` answered
+            // a type found in `MEMO` without searching under it, and every type a search
+            // numbered was kept with the answer it had inside that search, so a search could
+            // skip a fork that a fresh search met (or meet one a kept answer would have skipped),
+            // and an empty type could be proved empty after one query and refused, so counted
+            // inhabited, after another. Cost of the fix: a type an earlier query decided is
+            // searched again when a later search reaches it; measured on the benchmarks of
+            // `types::empty` and l01_23 (numbers in PROOF-kernel-open-subcases's ledger line).
+            // Tests: `order_free` over seeds 0 to 199 in
             // `l01_23_groups_and_refusals::judgments::bench`, the pinned seed
             // 10511391382961984112 in `judgments.rs`, and
             // `l01_23_groups_and_refusals::refusals::is_empty_of_a_closure_over_a_key_type_does_not_depend_on_an_earlier_query`,
             // which meets each of the 82 kinds of `rfx_case` as the key type of a closure and
-            // asks each type fresh and after the other.
-            // If (iii) happens, a subtype answer depends on the queries asked before it. No
-            // answer is wrong (a type not proved empty counts as inhabited), but checking is not
-            // deterministic. A fix would drop the `MEMO` read in `Search::met`, at the cost of
-            // searching again every type an earlier query decided. The fork stages (module
-            // `fork`) decide some of the rest exactly: COMPLEXITY.md K137.
+            // asks each type fresh and after the other. They passed before the fix too: no case
+            // of the old sub-case was ever found. The fork stages (module `fork`) decide some of
+            // the refused searches exactly: COMPLEXITY.md K137.
             return s.refused == Some(Refusal::Fork)
                 && (self.empty_past_forks()
                     || matches!(fork::decide(self), Some(fork::Decided::Empty)));
         }
-        MEMO.with(|m| {
-            m.borrow_mut()
-                .extend(s.types.iter().cloned().zip(s.answer.iter().copied()))
-        });
+        // Only `self`'s own answer is kept: an answer the search gave a type below `self` is its
+        // answer as a part of `self`'s search, which need not be what `is_empty` gives that
+        // type asked alone (its own search may be refused where this one was not, or the
+        // reverse), so keeping it would make a later `is_empty` of that type depend on the
+        // queries before it.
+        MEMO.with(|m| m.borrow_mut().insert(self.clone(), b));
         b
     }
 
@@ -2530,9 +2560,22 @@ fn shares(all: &[(u64, u64)], none: &[(u64, u64)]) -> Lengths {
 // Where the premise comes from: both callers pass classes whose shares sum to exactly one
 // (`greedy_length` calls this only when `sum == whole`, `shares` only when `sum == denom`),
 // each share `1 / ρ` with `ρ` the product over the primes of the period of `q / min(q, q0)`,
-// which depends on the period alone and is at most it. `Σ p <= n` over the distinct periods is
-// the callers' fact that each distinct period is the length of its own cycle of definitions;
-// it is not checked here.
+// which depends on the period alone and is at most it.
+// Proof of `Σ p <= n` over the distinct periods (PROOF-kernel-proofdoc3a-gaps (i)), `n` the
+// distinct list types the search walks: both callers pass a subset of `Meet::none` (`kept`
+// and `meeting` filter `none`, which `residue_classes` and `split_on` pass on unchanged; the
+// split classes go to `all`, never here), and every class of `Meet::none` comes from
+// `Search::cycle`, through the `read` closure of the pure-cycle reader
+// (`(c.period, (c.at + 1) % c.period)`). The period
+// `c.period` of `Search::find_cycle` is the number of steps from `t` back to `t`, and the
+// types on the way are pairwise distinct, since `seen` stops the walk at the first type met
+// twice and only a return to `t` itself is a cycle; so a class of period `p` names a cycle of
+// exactly `p` distinct types. `list_step` is a function of its type, so each type has one next
+// type, and two cycles that share a type share every type after it, all of them: distinct
+// cycles are disjoint. Choose one cycle for each distinct period; they are distinct, so
+// disjoint, and `Σ p` over the distinct periods is at most the types on them, at most `n`.
+// Several classes may share one period and one cycle (the rotations); the bound counts each
+// period once, as the cost argument above needs.
 // The bound above is for a list with no meeting pair. With one, the search stops at the first
 // pair it finds, and the work before is still bounded: the group pairs read are all pairs of
 // groups `0..a` and the pairs `(a, b')` with `b' < b`, all found apart, so the groups
@@ -3160,6 +3203,27 @@ impl Search {
         self.give_ups += 1;
         // A speculative value search keeps its uncertainty counter, but no permanent
         // refusal cause: the surrounding proof did not rely on that search.
+        // Proof that dropping the cause loses no proof of emptiness (PROOF-kernel-proofdoc3a-gaps
+        // (a)). (1) `open_forks` is turned on at two sites only: the value search `rep` begins
+        // when `blame` is set (`blame_search`), and `refine`, called only from the tuple value
+        // search of `find_rep`; both are value searches. (2) A value search ends with a value,
+        // built from values of its components and tested against every tuple type of the type
+        // (`row_rep`, the `rep` doc), so a value is a value whatever the search counted as
+        // inhabited on the way; or with none, which "means only that, never that `t` is empty"
+        // (`rep` doc; at the scan in `find_rep`: "Abandoning a witness attempt supplies no
+        // emptiness proof"). (3) Inside, the readers that turn "shown inhabited" into a step of
+        // an emptiness proof (`shown`, for `no_morphism`'s promised keys; `try_piece`, for the
+        // side `refine` keeps) accept it only when `give_ups` did not change, and the count is
+        // kept above, so no such step rests on a part counted inhabited here. (4) Where
+        // `push_open_forks` set a mark, `pop_open_forks` truncates `blame` to its length before
+        // the search, and drops the table entries made in it, so a cause pushed here would be
+        // dropped anyway. So a dropped cause names a give-up whose search gives no verdict a
+        // root reads. Not proved: an `answer` entry set to inhabited inside an open-fork search
+        // that `push_open_forks` did not mark (a decision under way, `deciding` not empty), and
+        // read after it by a proof of emptiness through some other reader than (3). No reader
+        // of that kind was found, but the readers of `answer` were not all traced. Tested only
+        // by `group_oracle::meets_whose_parts_differ_in_order_agree_across_orders` (the verdicts
+        // agree across orders).
         if self.open_forks && self.blame.is_some() {
             return;
         }
@@ -3381,7 +3445,7 @@ impl Search {
     }
 
     /// The answer for `t` when it is known: a type met before in this search, read by the type
-    /// being decided, or one kept from an earlier search. Otherwise `t` is numbered, read by the
+    /// being decided. Otherwise `t` is numbered, read by the
     /// type being decided and marked as being decided itself, and its number is given.
     fn met(&mut self, t: &Type) -> ControlFlow<bool, usize> {
         if let Some(&i) = self.ids.get(t) {
@@ -3404,11 +3468,10 @@ impl Search {
             }
             return ControlFlow::Break(self.answer[i]);
         }
-        if !self.strict
-            && let Some(b) = MEMO.with(|m| m.borrow().get(t).copied())
-        {
-            return ControlFlow::Break(b);
-        }
+        // No kept answer of `Type::is_empty` is read here: whether `t` is kept depends on the
+        // queries asked before, so a search that read it could skip in one order the subtree it
+        // walks in another, and be refused in one and not the other (sub-case (iii) at
+        // `Type::is_empty`, PROOF-kernel-open-subcases).
         let i = self.types.len();
         self.ids.insert(t.clone(), i);
         self.types.push(t.clone());
@@ -7075,6 +7138,13 @@ impl<'m> Searching<'m> {
     /// of that structure; `Some(None)` when no tuple of the box is in `f`; else the box with
     /// each variable's component cut to the piece the solution chooses, all of whose tuples
     /// are in `f`. Each cell is compared with its component's pieces once.
+    ///
+    /// Source of the solver: B. Aspvall, M. F. Plass and R. E. Tarjan, "A linear-time algorithm
+    /// for testing the truth of certain quantified boolean formulas", Inform. Process. Lett.
+    /// 8(3):121-123, 1979, doi:10.1016/0020-0190(79)90002-4 (Crossref checked 2026-11-20),
+    /// quoted at [`TwoSat::solve`]; the reading into clauses is Plaisted and Greenbaum's, cited
+    /// and proved at [`read_two_sat`]. Tests: `read_two_sat_agrees_with_enumeration_on_built_and_random_parts`
+    /// and `the_value_shown_for_a_two_cnf_holds_every_clause`.
     async fn two_sat(&'m self, g: &Region, f: &Part<Row>) -> Option<Option<Vec<Type>>> {
         // For each component cut, its variable, the piece its literal `true` stands for, and
         // the rest of the component.
@@ -8393,6 +8463,28 @@ impl<'m> Searching<'m> {
         // `s == Some(stop_name)` (`stop_name` is `c.stop`), `l == link_name` (the loops keep a
         // cycle only with `c.link == link_name`), `next == x`, and `norm_head(c.item)` is
         // `c.item`, its first arm, which is `carrier_head`.
+        // Proof that a type `is_carrier` accepts holds, among the lists the plan reads, exactly
+        // the carrier's lists (PROOF-kernel-proofdoc3a-gaps (i)). The carrier `C` is a cycle that
+        // `Search::find_cycle` found with period 1 and `at == 0` (both loops above), so its one
+        // step, `list_step(C)`, is `(Some(stop_name), link_name, carrier_head, C)`: `find_cycle`
+        // walks `list_step` from `C`, returns to `C` after one step (`period` counts the steps),
+        // takes the stop at step 0 (`at`) and records that step's link and item. As values, a
+        // type with step `(Some(s), l, e, n)` is the atom `s` or `l(x, y)` with `x` in `e`, `y` in
+        // `n` (`list_step`), so `C` is the least set holding `stop_name` and every
+        // `link_name(x, y)` with `x` in `carrier_head` and `y` in `C`; a list is finite, so by
+        // induction on its length this set is unique. Every head the plan reads lies in
+        // `carrier_head`: with a carrier among the taken rows (`has_top_carrier`), every value of
+        // `t` is a link whose head is `carrier_head` and whose rest is in `C`; else each taken
+        // head and each head of a row walked is tested `settles(h, carrier_head, false)`, `h -
+        // carrier_head` empty, or the plan is not made. So within the lists whose items are in
+        // `carrier_head`, a type `cand` with step `(Some(stop_name), link_name, h, cand)` and
+        // `norm_head(h) == carrier_head` (`h & carrier_head` is `carrier_head`) is the least set
+        // with `stop_name` and the links of `carrier_head` items to itself: the same equation,
+        // so the same set, `C`'s lists. A type in `carrier_set` is a carrier found above, a
+        // member of the one cycle. Tested by `l01_23_groups_and_refusals::refusals::
+        // chains_to_two_carriers_of_one_cycle_with_other_heads_agree_with_the_oracle`
+        // (TEST-kernel-unreached-paths-4: a second carrier accepted by its step, with heads that
+        // differ from the carrier's, against the oracle).
         let is_carrier = |cand: &Type| -> bool {
             if carrier_set.contains(cand) {
                 return true;
@@ -13402,9 +13494,11 @@ impl At<'_> {
 /// (2) An operand of an expression `Form::Or(a, b)` or `Form::And(a, b)`, and `Form::Not` of
 /// an expression is read through to that expression. bdd.rs makes every expression in its
 /// `mod build`, whose `Part::expr` is private (a compiler check): `Part::connect` folds a leaf
-/// operand away, `Part::not_expr` makes no `Or` or `And`, and `Part::of_form` takes only a
+/// operand away, `Part::not_expr` makes no `Or` or `And`, `Part::of_form` takes only a
 /// form an expression already had (`Source::Form`), so its operands are no leaves by the same
-/// rule. See `Form` in bdd.rs.
+/// rule, and `xor::halves`, the third maker of an `Or`, gives the two meets of an exclusive or
+/// over two or more atoms, neither constant and so no leaf (the proof and assertion at its
+/// site). See `Form` in bdd.rs.
 #[derive(Clone, Copy)]
 enum Operand<'p> {
     Literal(Literal2),
@@ -13488,6 +13582,24 @@ fn shape<'p>(
 /// and a solution sets the first `vars` variables to a value of `f`). Each node and arm is read
 /// once from the root and once as a meet, from a stack, so the time and the clauses are
 /// linear in the part's nodes.
+///
+/// Source: D. A. Plaisted and S. Greenbaum, "A structure-preserving clause form translation",
+/// J. Symbolic Comput. 2(3):293-304, 1986, doi:10.1016/S0747-7171(86)80028-1 (Crossref
+/// checked 2026-11-20; the paper's text not read, so the step is proved here rather than
+/// quoted), whose translation names a subformula by a new variable with implications in one
+/// direction only; the solver is Aspvall, Plass and Tarjan's, cited and quoted at
+/// [`TwoSat::solve`]. Proof that the clauses are satisfiable exactly when `f` is
+/// (PROOF-kernel-proofdoc3a-gaps (j)): `f` is an `and` of `or`s of at most two operands, each a
+/// literal or a meet `m = x_1 & ... & x_k` of literals, and the clauses are, for each `or`, the
+/// clause of its two operands with each meet replaced by its variable `g_m`, and for each meet
+/// `!g_m | x_i` for every `i`. (1) A value `v` of `f` over the `vars` variables, extended by
+/// `g_m = m(v)`, satisfies every clause: `!g_m | x_i` holds as `g_m` true means every `x_i`
+/// true, and an `or`'s clause holds as one of its operands is true at `v` and `g_m = m(v)`.
+/// (2) A solution `w` of the clauses, cut to the first `vars` variables, is a value of `f`:
+/// for each `or`, one operand's literal or `g_m` is true at `w`, and `g_m` true gives every
+/// `x_i` true, so `m` holds there; so each `or`, and the `and` of them, holds. Tests:
+/// `read_two_sat_agrees_with_enumeration_on_built_and_random_parts` and
+/// `the_value_shown_for_a_two_cnf_holds_every_clause`.
 fn read_two_sat(
     f: &Part<Row>,
     vars: usize,
