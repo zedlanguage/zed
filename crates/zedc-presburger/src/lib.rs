@@ -33,7 +33,9 @@
 //!   `a·z <= α`, `a, b > 0`, give `a·β <= b·α`; sec. 2.3.2, the dark shadow
 //!   `b·α - a·β >= (a - 1)·(b - 1)`, every integer point of which has an integer `z` above it,
 //!   equal to the real shadow when `a = 1` or `b = 1` (an exact projection, taken when every
-//!   lower or every upper coefficient of `z` is 1), and otherwise the splinters: with `a` the
+//!   lower or every upper coefficient of `z` is 1), and otherwise the splinters (the paper
+//!   says "a set of planes that are parallel to a lower bound"; "splinter" is the later name,
+//!   used in this crate): with `a` the
 //!   largest upper coefficient, for each lower bound `b·z >= β` the problem with
 //!   `b·z = β + i` for each `0 <= i <= (a·b - a - b) / a`; the problem has an integer point
 //!   exactly when the dark shadow or a splinter has one; sec. 2.3.3, "An Omega test nightmare",
