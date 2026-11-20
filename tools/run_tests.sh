@@ -1151,7 +1151,27 @@ split="
 # binary's 98 other tests together (24 s, each of the others 1.2 s or less). It is four tests of
 # 30 histories, 3.0 to 3.9 s each alone at load 52, each a piece (TEST-preimage-unit-piece-load,
 # 2026-11-20).
+# zedc_types's piece ran past its limit of 33 s at load 52 (merge of
+# PROOF-flat-vars-instantiated-clash, 2026-11-20) and took 27.67 s alone at load 58: its 143
+# correctness tests take 39.3 s of CPU, 32.3 s of it in the eight below of 1 s or more (9.5,
+# 8.0, 4.2, 3.7, 2.7, 2.0, 1.1 and 1.1 s, alone at load 47 to 72), the other 135 together
+# 7.1 s. Each of the eight is a piece, and so is the test of the index of arrows on wider
+# shapes (0.7 s), whose name holds that of the index of arrows, which the other piece skips
+# (TEST-zedc-types-lib-split, 2026-11-20). The slowest, of the index of functions, still took
+# 30.1 s at load 64 against 41 s as a piece, so it is split into four parts of 750 cases.
 alone="
+  zedc_types::ty::tests::functions_met_through_the_index_are_those_met_pair_by_pair_part_1
+  zedc_types::ty::tests::functions_met_through_the_index_are_those_met_pair_by_pair_part_2
+  zedc_types::ty::tests::functions_met_through_the_index_are_those_met_pair_by_pair_part_3
+  zedc_types::ty::tests::functions_met_through_the_index_are_those_met_pair_by_pair_part_4
+  zedc_types::ty::tests::a_shape_held_as_is_out_of_written_order_gives_no_wrong_verdict
+  zedc_types::ty::tests::a_generic_arrow_fits_where_some_binding_of_its_variable_fits
+  zedc_types::ty::tests::pinned_shapes_are_those_of_the_rule_of_one_shape
+  zedc_types::ty::tests::bound_shapes_agree_with_trying_every_shape
+  zedc_types::ty::tests::the_index_of_arrows_gives_the_verdict_of_every_set_of_arrows
+  zedc_types::ty::tests::the_index_of_arrows_gives_the_verdict_of_every_set_of_arrows_on_wider_shapes
+  zedc_types::ty::tests::tuples_met_and_subtracted_through_the_index_are_those_of_every_pair
+  zedc_types::ty::tests::tuples_that_hold_a_value_through_the_index_are_those_of_every_tuple
   zedc_preimage::preimage::tests::summaries_read_again_give_what_reading_the_term_again_gives_seed_7776978274844439420
   zedc_preimage::product::tests::projected_entries_after_joins_of_random_cases_hold_at_the_joins_snapshot_part_1
   zedc_preimage::product::tests::projected_entries_after_joins_of_random_cases_hold_at_the_joins_snapshot_part_2

@@ -213,6 +213,30 @@ check "--each-test runs the tests of a split step's pieces, filtered and --exact
 check "--each-test runs the tests of pieces with --exact and --skip" \
   "$(listed_by_libtest '^(zedc_preimage|zed_kernel)(-|::)')" \
   "$(run --list --reuse-table --each-test --only '^(zedc_preimage|zed_kernel)$' | sort)"
+# zedc_types's slow correctness tests run as pieces of their own, and the binary's other tests as
+# one piece that skips them (TEST-zedc-types-lib-split: the one piece of 143 tests ran past its
+# limit of 33 s at load 52). That piece's `--skip` matches anywhere in a name, so the pieces
+# together must still run each correctness test: a skipped name inside another (the index of
+# arrows on wider shapes) needs a line of its own in run_tests.sh's alone list.
+check "zedc_types's slow tests are pieces of their own" \
+  "$(printf 'zedc_types::ty::tests::%s\n' a_generic_arrow_fits_where_some_binding_of_its_variable_fits \
+    a_shape_held_as_is_out_of_written_order_gives_no_wrong_verdict bound_shapes_agree_with_trying_every_shape \
+    functions_met_through_the_index_are_those_met_pair_by_pair_part_1 \
+    functions_met_through_the_index_are_those_met_pair_by_pair_part_2 \
+    functions_met_through_the_index_are_those_met_pair_by_pair_part_3 \
+    functions_met_through_the_index_are_those_met_pair_by_pair_part_4 pinned_shapes_are_those_of_the_rule_of_one_shape \
+    the_index_of_arrows_gives_the_verdict_of_every_set_of_arrows \
+    the_index_of_arrows_gives_the_verdict_of_every_set_of_arrows_on_wider_shapes \
+    tuples_met_and_subtracted_through_the_index_are_those_of_every_pair \
+    tuples_that_hold_a_value_through_the_index_are_those_of_every_tuple | sort)" \
+  "$(echo "$pieces" | awk '$1 ~ /^zedc_types::/ { print $1 }' | sort)"
+types_bin=$(echo "$pieces" | awk '$1 ~ /^zedc_types-/ { print $3; exit }')
+check "zedc_types's pieces together run each of its correctness tests once" \
+  "$("$types_bin" --list --format terse --skip bench:: | sed -n 's/: test$//p' | sort)" \
+  "$(echo "$pieces" | awk '$1 ~ /^zedc_types(-|::)/' | while read -r _ _ bin args; do
+    # shellcheck disable=SC2086
+    "$bin" --list --format terse $args | sed -n 's/: test$//p'
+  done | sort)"
 check "a listing with --only leaves the table of all pieces" "$(echo "$all" | sort)" "$(selected .)"
 out=$(run --reuse-table --only '^zedc$')
 rc=$?

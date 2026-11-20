@@ -25056,12 +25056,38 @@ mod tests {
     /// (`FNS_ALL`), so no pair the index leaves out has a function in its meet. Function types
     /// of one or two parameters, of one to three arrows each exact or partial, over random
     /// unions of atoms, scalars, literals, payloads and, at times, a variable, `_` or a
-    /// function, so that the permissions share a class, differ in one, or have none.
+    /// function, so that the permissions share a class, differ in one, or have none. 750 cases
+    /// of the 3000 the check draws in all; the parts below are tests apart, each a piece of
+    /// tools/run_tests.sh, since the 3000 in one test took 30.1 s at load 64 against a limit of
+    /// 41 s (TEST-zedc-types-lib-split, 2026-11-20). Each part draws its own seed, as the one
+    /// test did; its counts stay far from the bounds asserted (about 60% of the cases keep a
+    /// function, against 5%; about 52% of the comparisons are within, against 10% to 90%).
     #[test]
-    fn functions_met_through_the_index_are_those_met_pair_by_pair() {
-        let mut rng = Rng::new(crate::seed::seed(
-            "functions_met_through_the_index_are_those_met_pair_by_pair",
-        ));
+    fn functions_met_through_the_index_are_those_met_pair_by_pair_part_1() {
+        functions_met_checked("functions_met_through_the_index_are_those_met_pair_by_pair_part_1");
+    }
+
+    /// The second 750 cases of [`functions_met_checked`].
+    #[test]
+    fn functions_met_through_the_index_are_those_met_pair_by_pair_part_2() {
+        functions_met_checked("functions_met_through_the_index_are_those_met_pair_by_pair_part_2");
+    }
+
+    /// The third 750 cases of [`functions_met_checked`].
+    #[test]
+    fn functions_met_through_the_index_are_those_met_pair_by_pair_part_3() {
+        functions_met_checked("functions_met_through_the_index_are_those_met_pair_by_pair_part_3");
+    }
+
+    /// The fourth 750 cases of [`functions_met_checked`].
+    #[test]
+    fn functions_met_through_the_index_are_those_met_pair_by_pair_part_4() {
+        functions_met_checked("functions_met_through_the_index_are_those_met_pair_by_pair_part_4");
+    }
+
+    /// The check of the parts above, on 750 random cases drawn from the seed of `test`.
+    fn functions_met_checked(test: &str) {
+        let mut rng = Rng::new(crate::seed::seed(test));
         let function = |rng: &mut Rng| {
             let width = 1 + rng.below(2);
             let k = if width == 1 { 1 + rng.below_u64(3) } else { 1 };
@@ -25084,7 +25110,7 @@ mod tests {
         };
         let (mut cases, mut kept, mut wrong) = (0, 0, Vec::new());
         let (mut subs, mut within) = (0, 0);
-        for _ in 0..3000 {
+        for _ in 0..750 {
             let (a, b) = (side(&mut rng), side(&mut rng));
             FNS_ALL.set(true);
             let every = a.meet(&b);
