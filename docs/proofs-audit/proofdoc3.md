@@ -43,7 +43,7 @@ The list holds 373 entries (one commit in one crate): 140 in zedc-types, 198 in
 zedc-presburger, 18 in zedc-solvers and 17 in zedc-int, ordered by score. This pass read 12
 of them, 11 in zedc-types and 1 in zedc-int, in order of score, each message and each site it
 names. It also completed one zedc-solvers site that no entry read here names. The sites were
-read on 46b9d5d88 and checked again after a rebase onto origin/main of 2026-11-20 (9ffbe5a4d).
+read on 46b9d5d88 and checked again after a rebase onto origin/main of 2026-11-20 (bd4504e9b).
 The pass then stopped, for lack of room: it started no new entry, and the rest are listed
 under "Not read:". A first triage of more entries, done by helpers that were stopped on
 order, is not used here, as its verdicts were not checked against the code.
