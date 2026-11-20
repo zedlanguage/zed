@@ -42,15 +42,15 @@ const PICK: &str = "pick(positional c: bool, positional d: bool) = \
                     if c { #e(code: 1) } else { if d { #e } else { 3 } };\n";
 
 #[test]
-fn a_pattern_with_a_payload_keeps_the_atom_in_the_type() {
-    // DESIGN.md step L1.27: "The pattern form `e else #a -> d` removes `#a` from the type when
-    // the pattern has no payload; a pattern with a payload keeps the atom in the type, since
-    // other payloads may remain."
+fn a_field_pattern_removes_the_payloads_that_have_its_fields() {
+    // DESIGN.md step L1.27: "A field pattern of names and `_` alone, as `#e(code:)`, matches
+    // every payload that has the fields it names, so it removes those payloads and keeps the
+    // bare `#e` and every payload without such a field."
     assert_eq!(sig(PICK, "pick"), "(bool, bool) -> 3 | #e | #e(code: 1)");
     let with = format!(
         "{PICK}f(positional c: bool, positional d: bool) = pick(c, d) else #e(code:) -> 0;\n"
     );
-    assert_eq!(sig(&with, "f"), "(bool, bool) -> 0 | 3 | #e | #e(code: 1)");
+    assert_eq!(sig(&with, "f"), "(bool, bool) -> 0 | 3 | #e");
     let without =
         format!("{PICK}f(positional c: bool, positional d: bool) = pick(c, d) else #e -> 0;\n");
     assert_eq!(sig(&without, "f"), "(bool, bool) -> 0 | 3");
@@ -86,29 +86,63 @@ fn an_empty_payload_pattern_strips_that_atom_alone() {
 }
 
 #[test]
-fn a_payload_pattern_that_binds_its_field_keeps_the_atom_for_underscore() {
-    // `code` is bound from the payload; `#e` stays in the type even where the one payload the
-    // value can hold is handled, so `_` still sees a loose failure and rejects it.
+fn a_field_pattern_that_matches_every_payload_removes_the_atom_for_underscore() {
+    // `code` is bound from the payload, and the one payload the value can hold has the field
+    // `code`, so the pattern handles `#e` whole: the type has no `#e`, and `_` sees no loose
+    // failure (DESIGN.md step L1.27: "`f(positional c: bool) = pick(c) else #e(code:) -> code;`
+    // has the type `bool -> 1 | 3`, and `_ = pick(c) else #e(code:) -> code;` drops no loose
+    // failure").
     let one = "pick(positional c: bool) = if c { #e(code: 1) } else { 3 };\n";
     let bound = format!("{one}f(positional c: bool) = pick(c) else #e(code:) -> code;\n");
-    assert_eq!(sig(&bound, "f"), "bool -> 1 | 3 | #e(code: 1)");
-    assert_eq!(value(&format!("{bound}y = f(true);\n"), "y"), "1");
+    assert_eq!(sig(&bound, "f"), "bool -> 1 | 3");
+    assert_eq!(
+        value(&format!("{bound}y = f(true);\nz = f(false);\n"), "y"),
+        "1"
+    );
+    assert_eq!(
+        value(&format!("{bound}y = f(true);\nz = f(false);\n"), "z"),
+        "3"
+    );
     assert_eq!(
         type_errors(&format!(
             "{one}f(positional c: bool) = {{ _ = pick(c) else #e(code:) -> code; 1 }};\n"
         )),
-        [
-            "`_` drops a loose failure this value may be, #e(code: 1): `_` drops only a failure \
-             the program names, as the default of an `else` names it, and this one would be \
-             dropped with nothing in the text saying so. [_ = pick(c) else #e(code:) -> code;]"
-        ]
+        Vec::<String>::new()
     );
+    // The control: the bare pattern handles it too.
     assert_eq!(
         type_errors(&format!(
             "{one}f(positional c: bool) = {{ _ = pick(c) else #e -> 0; 1 }};\n"
         )),
         Vec::<String>::new()
     );
+}
+
+#[test]
+fn a_field_pattern_keeps_a_payload_without_its_field() {
+    // A payload that lacks the field `code` fails the pattern, so it stays in the type and
+    // `_` still rejects it (DESIGN.md step L1.27: "A payload pattern keeps in the type each
+    // payload the type holds that it can fail to match").
+    let two = "pick(positional c: bool) = if c { #e(code: 1) } else { #e(why: 2) };\n";
+    let bound = format!("{two}f(positional c: bool) = pick(c) else #e(code:) -> code;\n");
+    assert_eq!(sig(&bound, "f"), "bool -> 1 | #e(why: 2)");
+    let run = format!("{bound}y = f(true);\nz = f(false);\n");
+    assert_eq!(value(&run, "y"), "1");
+    assert_eq!(value(&run, "z"), "#e(why: 2)");
+    assert_eq!(
+        type_errors(&format!(
+            "{two}f(positional c: bool) = {{ _ = pick(c) else #e(code:) -> code; 1 }};\n"
+        )),
+        [
+            "`_` drops a loose failure this value may be, #e(why: 2): `_` drops only a failure \
+             the program names, as the default of an `else` names it, and this one would be \
+             dropped with nothing in the text saying so. [_ = pick(c) else #e(code:) -> code;]"
+        ]
+    );
+    // A pattern naming two fields takes only the payloads with both.
+    let both = "pick(positional c: bool) = if c { #e(code: 1, why: 2) } else { #e(code: 3) };\n\
+                f(positional c: bool) = pick(c) else #e(code:, why:) -> why;\n";
+    assert_eq!(sig(both, "f"), "bool -> 2 | #e(code: 3)");
 }
 
 #[test]

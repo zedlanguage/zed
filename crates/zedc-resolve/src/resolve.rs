@@ -3781,8 +3781,12 @@ impl Resolver<'_> {
             } => {
                 let h = match pattern {
                     None => Some(Handle::Loose),
-                    // `#a()` matches only the atom with an empty payload, which no handle
-                    // names; like every pattern with a payload, it gets none.
+                    // A handle names an atom with every payload. `#a()` matches only the atom
+                    // with an empty payload, and a field pattern `#e(code:)` only the payloads
+                    // with its fields (DESIGN.md step L1.27), so neither gets one: an
+                    // undeclared parameter's type takes no atom from it (`param_ty` in
+                    // zedc-check), and a call passing it such an atom is checked as without
+                    // the pattern.
                     Some(Pattern::Atom {
                         name,
                         fields,

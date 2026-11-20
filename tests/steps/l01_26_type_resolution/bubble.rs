@@ -712,7 +712,7 @@ fn a_body_s_else_whose_atom_pattern_has_parts_passes_the_atom_on() {
     // `#outOfBounds()` takes only the atom whose payload is the empty tuple; the miss atom of
     // `args[0]` has none, so it is not handled there and passes on to the call (row
     // CHK-fate-unwalked-forms), which gives `String | #outOfBounds` to the write. A pattern
-    // with a payload leaves the atom in the type (step L1.27). The control: the bare
+    // keeps in the type each payload it can fail to match (step L1.27). The control: the bare
     // `#outOfBounds` handles it. The other forms of the row, `#outOfBounds(..)`, a binding
     // `#outOfBounds(i)` and a name `e`, are refused by the parser or by resolution and never
     // reach the checker.

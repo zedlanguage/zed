@@ -249,7 +249,8 @@ fn the_repair_for_an_atom_with_a_payload_is_the_bare_pattern() {
         errors_given(&repaired(&errors[0], 0), &v),
         Vec::<String>::new()
     );
-    // A pattern with a payload keeps the atom in the type (step L1.27), so it would not do.
+    // `#circle` here has any payload, which `#circle(r:)` can fail to match, so the pattern
+    // keeps the atom in the type (step L1.27) and would not do.
     let with_payload = IF.replace("if v ", "if (v else #circle(r:) -> true) ");
     let left = errors_given(&with_payload, &v);
     assert_eq!(left.len(), 1, "{left:?}");

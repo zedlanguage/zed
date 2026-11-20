@@ -1464,6 +1464,24 @@ impl<'t, 'a> Ck<'t, 'a> {
                         };
                         self.narrowed(&v, &narrow, e.span).union(&d)
                     }
+                    // A field pattern whose fields are bound by name, `#e(code:)`, matches
+                    // each payload of `v` that has those fields, so it removes those payloads,
+                    // as a `match` arm with the same pattern takes them (DESIGN.md step
+                    // L1.27). A positional payload of names, `#bug(m)`, is refused by
+                    // resolution until step L2.3 and reaches the last arm.
+                    // The parser gives a field pattern `items: Some(vec![])`, the parentheses
+                    // being written.
+                    Some(Pattern::Atom {
+                        name,
+                        fields,
+                        items,
+                        ..
+                    }) if !fields.is_empty() && items.as_deref().is_none_or(<[_]>::is_empty) => {
+                        match super::fields_payload_ty(name, fields, &v) {
+                            Some(taken) => self.narrowed(&v, &Narrow::Not(taken), e.span).union(&d),
+                            None => v.union(&d),
+                        }
+                    }
                     Some(_) => v.union(&d),
                 };
                 m.ty(t);

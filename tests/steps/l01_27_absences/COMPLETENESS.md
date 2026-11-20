@@ -26,7 +26,7 @@ rule 6 of sec:type_resolution, and sec:tour_methods (`_` drops a loose failure o
 | An atom literal as the default | same | |
 | The pattern form with an atom default | same | |
 | The pattern form names one atom, keeps the rest | `loose.rs` `the_pattern_form_handles_the_atom_it_names_and_keeps_the_rest` | |
-| Pattern with a payload keeps the atom | `loose.rs` `a_pattern_with_a_payload_keeps_the_atom_in_the_type`, `a_payload_pattern_that_binds_its_field_keeps_the_atom_for_underscore` | |
+| A payload pattern removes the payloads it matches whole, and keeps the rest | `loose.rs` `a_field_pattern_removes_the_payloads_that_have_its_fields`, `a_field_pattern_that_matches_every_payload_removes_the_atom_for_underscore`, `a_field_pattern_keeps_a_payload_without_its_field` | a positional `#bug(m)` is resolved at step L2.3 |
 | `else` on a value with no loose atom: accepted, value unchanged | `edges.rs` `else_on_a_value_with_no_loose_atom_leaves_the_value` | the warning DESIGN gives there is step L2.12e |
 | The three absences stay three facts | `loose.rs` `the_three_absences_stay_three_facts` | |
 | `?.` carries the atom; `else` after it | `loose.rs` `a_loose_atom_flows_through_safe_navigation`; `edges.rs` `else_after_safe_navigation_strips_what_it_carried` | |
