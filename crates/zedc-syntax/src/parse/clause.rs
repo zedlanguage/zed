@@ -1924,6 +1924,16 @@ pub(super) fn kind(tok: &Tok) -> Kind {
     }
 }
 
+/// The positions the parser reads, the tokens `tokens` of `text`: each token's kind and text,
+/// then one `END` position.
+pub fn positions<'t>(text: &'t str, tokens: &[Token]) -> Vec<(Kind, &'t str)> {
+    tokens
+        .iter()
+        .map(|t| (kind(&t.tok), &text[t.span.start..t.span.end]))
+        .chain([(Kind::End, "")])
+        .collect()
+}
+
 /// Whether a parse of `toks` as rule `start` gets past token `edit`: succeeds, or fails only
 /// after it.
 pub(super) fn reaches(

@@ -10,6 +10,7 @@ use std::path::PathBuf;
 // (`zed_alloc_count::metered`, TEST-meter-allocator-bias).
 zed_alloc_count::meter_entry_points!();
 
+pub mod bellman_ford_moore;
 pub mod check;
 pub mod deep;
 pub mod fences;

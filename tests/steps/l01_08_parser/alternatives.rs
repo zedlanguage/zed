@@ -7,37 +7,12 @@ use std::collections::{BTreeSet, HashSet};
 use std::path::Path;
 
 use zed_tests::trees::sx;
-use zedc::lex::{Tok, Token, lex};
-use zedc::parse::{Expr, Grammar, Kind, TOP, Tree, grammar, literal_matches, marked_rule, parse};
+use zedc::lex::lex;
+use zedc::parse::{
+    Expr, Grammar, Kind, TOP, Tree, grammar, literal_matches, marked_rule, parse, positions,
+};
 
 use super::grammar_cases::CASES;
-
-/// The kind the grammar gives the token `t`, as `IDENT`, `INT` and the rest name it.
-fn kind(t: &Tok) -> Kind {
-    match t {
-        Tok::Name(_) => Kind::Ident,
-        Tok::Wildcard => Kind::Wild,
-        Tok::Int { .. } => Kind::Int,
-        Tok::Float { .. } => Kind::Float,
-        Tok::Rat(_) => Kind::Rat,
-        Tok::Str(_) => Kind::Str,
-        Tok::Atom(_) => Kind::Atom,
-        Tok::Annot(_) => Kind::Annot,
-        Tok::Infix(_) => Kind::Infix,
-        Tok::Keyword(_) => Kind::Keyword,
-        Tok::Op(_) => Kind::Op,
-    }
-}
-
-/// The positions the parser reads, as `parse` builds them: each token's kind and text, then
-/// one `END` position.
-fn positions<'t>(text: &'t str, tokens: &[Token]) -> Vec<(Kind, &'t str)> {
-    tokens
-        .iter()
-        .map(|t| (kind(&t.tok), &text[t.span.start..t.span.end]))
-        .chain([(Kind::End, "")])
-        .collect()
-}
 
 /// The text of the positions `start..end`, joined by one space; `END` has none.
 fn span_text(toks: &[(Kind, &str)], start: usize, end: usize) -> String {

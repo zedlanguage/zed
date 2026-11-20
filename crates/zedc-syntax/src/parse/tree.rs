@@ -9,7 +9,7 @@ use std::ops::Range;
 use std::sync::OnceLock;
 
 use super::case;
-use super::clause::{self, Clause, kind};
+use super::clause::{self, Clause};
 use super::engine::{Expected, Node, Parser};
 use super::grammar::{Grammar, Kind};
 use crate::lex::{Part, Span, Tok, Token};
@@ -256,11 +256,7 @@ pub(super) fn parse_one<'t>(
     ring: u32,
     end: Span,
 ) -> Result<Open<'t>, Error> {
-    let toks: Vec<(Kind, &str)> = tokens
-        .iter()
-        .map(|t| (kind(&t.tok), &text[t.span.start..t.span.end]))
-        .chain([(Kind::End, "")])
-        .collect();
+    let toks = clause::positions(text, tokens);
     let span = |i: usize| tokens.get(i).map_or(end, |t| t.span);
     let mut p = Parser::new(g, ring, toks.as_slice());
     let matched = match p.rule_node(start, 0, false) {

@@ -46,11 +46,7 @@ pub(super) fn recovering(
     ring: u32,
     end: Span,
 ) -> (Tree, Vec<Error>) {
-    let toks: Vec<(Kind, &str)> = tokens
-        .iter()
-        .map(|t| (kind(&t.tok), &text[t.span.start..t.span.end]))
-        .chain([(Kind::End, "")])
-        .collect();
+    let toks = clause::positions(text, tokens);
     let mut p = Parser::new(g, ring, toks.as_slice());
     if let Some((_, root)) = p
         .rule_node(unit, 0, false)

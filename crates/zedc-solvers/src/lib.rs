@@ -9,6 +9,12 @@ pub mod negsssp;
 pub mod twovar;
 pub mod utvpi;
 
+/// The reference search the negative-cycle searches are tested against, shared with the step
+/// tests.
+#[cfg(test)]
+#[path = "../../../tests/src/bellman_ford_moore.rs"]
+mod bellman_ford_moore;
+
 /// The seed and generator of a random test, new on each run and printed, shared with the step
 /// tests.
 #[cfg(test)]

@@ -1167,6 +1167,7 @@ dependencies = [
  "zed-rt",
  "zed-tools",
  "zedc",
+ "zedc-int",
  "zedc-presburger",
 ]
 

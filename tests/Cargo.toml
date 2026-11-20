@@ -327,6 +327,8 @@ zed-graph.workspace = true
 zed-kernel.workspace = true
 zed-native = { workspace = true, features = ["counts"] }
 zed-rt = { workspace = true, features = ["counts"] }
+# The integers of tests/src/bellman_ford_moore.rs, which zedc-solvers' tests also compile.
+zedc-int.workspace = true
 stacker.workspace = true
 unicode-normalization = "0.1.26"
 num-bigint = "0.4.8"

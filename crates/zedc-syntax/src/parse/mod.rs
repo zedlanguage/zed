@@ -21,7 +21,7 @@ mod grammar;
 mod recover;
 mod tree;
 
-pub use clause::{Clause, RESERVED};
+pub use clause::{Clause, RESERVED, positions};
 pub use engine::{Expected, Input, Node, Parser, literal_matches};
 pub use grammar::{Alt, Expr, Grammar, Kind, Line, Rule, is_space, marked_rule, split_line};
 

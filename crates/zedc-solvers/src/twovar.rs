@@ -630,8 +630,9 @@ pub fn project_convex(rows: &[(&[Term], &Int)], x: usize, y: Option<usize>) -> T
 mod tests {
     use super::*;
 
-    /// The rows `c0·x + c1·y + k >= 0` as `ends` reads them.
-    fn ends_of(rows: &[([i64; 2], i64)]) -> Option<(Option<Int>, Option<Int>)> {
+    /// `f` of the rows `c0·x + c1·y + k >= 0`, over variables 0 and 1, as the searches of this
+    /// file read rows.
+    fn with_refs<R>(rows: &[([i64; 2], i64)], f: impl FnOnce(&[(&[Term], &Int)]) -> R) -> R {
         let terms: Vec<(Vec<Term>, Int)> = (rows.iter())
             .map(|(c, k)| {
                 let t = (0..2).filter(|&i| c[i] != 0).map(|i| (i, Int::from(c[i])));
@@ -639,7 +640,12 @@ mod tests {
             })
             .collect();
         let refs: Vec<(&[Term], &Int)> = terms.iter().map(|(t, k)| (&t[..], k)).collect();
-        ends(&refs, 0, 1)
+        f(&refs)
+    }
+
+    /// The rows `c0·x + c1·y + k >= 0` as `ends` reads them.
+    fn ends_of(rows: &[([i64; 2], i64)]) -> Option<(Option<Int>, Option<Int>)> {
+        with_refs(rows, |refs| ends(refs, 0, 1))
     }
 
     #[test]
@@ -705,14 +711,7 @@ mod tests {
 
     /// The rows `c0·x + c1·y + k >= 0` as `point` reads them, over `x` and, when `y`, `y`.
     fn point_of(rows: &[([i64; 2], i64)], y: bool, want: bool) -> Option<(Int, Int)> {
-        let terms: Vec<(Vec<Term>, Int)> = (rows.iter())
-            .map(|(c, k)| {
-                let t = (0..2).filter(|&i| c[i] != 0).map(|i| (i, Int::from(c[i])));
-                (t.collect(), Int::from(*k))
-            })
-            .collect();
-        let refs: Vec<(&[Term], &Int)> = terms.iter().map(|(t, k)| (&t[..], k)).collect();
-        point(&refs, 0, y.then_some(1), want)
+        with_refs(rows, |refs| point(refs, 0, y.then_some(1), want))
     }
 
     #[test]
@@ -820,14 +819,7 @@ mod tests {
     }
 
     fn proj_of(rows: &[([i64; 2], i64)], y: bool) -> TwoVarProj {
-        let terms: Vec<(Vec<Term>, Int)> = (rows.iter())
-            .map(|(c, k)| {
-                let t = (0..2).filter(|&i| c[i] != 0).map(|i| (i, Int::from(c[i])));
-                (t.collect(), Int::from(*k))
-            })
-            .collect();
-        let refs: Vec<(&[Term], &Int)> = terms.iter().map(|(t, k)| (&t[..], k)).collect();
-        project_convex(&refs, 0, y.then_some(1))
+        with_refs(rows, |refs| project_convex(refs, 0, y.then_some(1)))
     }
 
     #[test]

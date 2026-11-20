@@ -627,13 +627,12 @@ mod bench;
 
 #[cfg(test)]
 mod tests {
-    use zed_graph::{Order, Worklist};
-
     use super::{
         At, Int, Search, Shared, bf_dijkstra, goldberg_radzik, graph, integer_empty,
         integer_empty_by, integer_point, integer_point_by, negated, negsssp, odd_zero_cycle,
         potential, race, reversed, rounded,
     };
+    use crate::bellman_ford_moore::bellman_ford_moore;
     use crate::seed::Rng;
 
     /// The rows `x0 - x1 >= 0`, `x1 - x0 >= 0`, `1 - x0 - x1 >= 0`, and with `odd` also
@@ -695,29 +694,6 @@ mod tests {
             assert!(search(&graph).is_none());
             assert!(search(&feasible).is_some());
         }
-    }
-
-    /// The reference search: Bellman–Ford–Moore with a first-in first-out queue, which has
-    /// found a negative cycle when a node is taken from the queue for the n + 1st time.
-    fn bellman_ford_moore(out: &[Vec<(usize, Int)>]) -> Option<Vec<Int>> {
-        let n = out.len();
-        let mut d = vec![Int::ZERO; n];
-        let mut taken = vec![0usize; n];
-        let mut queue = Worklist::all(n, Order::Fifo);
-        while let Some(u) = queue.pop() {
-            taken[u] += 1;
-            if taken[u] > n {
-                return None;
-            }
-            for (v, w) in &out[u] {
-                let to = &d[u] + w;
-                if to < d[*v] {
-                    d[*v] = to;
-                    queue.push(*v);
-                }
-            }
-        }
-        Some(d)
     }
 
     /// A function giving a graph built for an answer.
