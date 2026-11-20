@@ -157,10 +157,14 @@
 //!   §4.3.1, Algorithm D (long division). From memory, not checked: the book was not read.
 //! - J. W. Cooley, J. W. Tukey, "An algorithm for the machine calculation of complex Fourier
 //!   series", Math. Comp. 19(90):297-301, 1965, doi:10.1090/S0025-5718-1965-0178586-1
-//!   (Crossref checked; the text was not read, so the sketch is from memory, not checked):
-//!   a transform of `2^k` points splits into two of half the points joined by butterflies
-//!   `(x + r y, x - r y)`, O(n log n) in all. [`Field::forward`] does this over the integers
-//!   modulo a prime in place of the complex numbers.
+//!   (read: the radix-2 case, equations (14)-(20), and (22)): "The algorithm with r = 2 is
+//!   derived by expressing the indices in the form" of their binary digits; each step (20)
+//!   involves "only the two storage locations" whose indices differ in one bit, and the
+//!   result comes out "in such an order that the index of an X must have its binary bits
+//!   put in reverse order" (22). So a transform of `2^k` points is `k`
+//!   stages of butterflies `(x + r y, x - r y)`, O(n log n) in all, in bit-reversed order.
+//!   [`Field::forward`] does this over the integers modulo a prime in place of the complex
+//!   numbers.
 //! - P. L. Montgomery, "Modular multiplication without trial division", Math. Comp.
 //!   44(170):519-521, 1985, doi:10.1090/S0025-5718-1985-0777282-X (Crossref checked; the text
 //!   was not obtained, so the sketch is from memory, not checked): with `R = 2^64` and
