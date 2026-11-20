@@ -315,6 +315,13 @@ fn charge_units(units: u64) -> Result<(), Refusal> {
     }
 }
 
+/// Whether a question's meter is running on this thread, so that [`charge`] and
+/// [`charge_pieces`] count: `modular::sweep_split` counts its walk's events, the charge it makes
+/// before the walk, only then, since with no meter the charge does nothing.
+pub(super) fn running() -> bool {
+    METER.get().is_some()
+}
+
 /// Whether the question running is past its limit: a search that reads a refusal as no point
 /// stops at once, since the question's answer is then refused whatever it finds.
 pub(super) fn spent() -> bool {

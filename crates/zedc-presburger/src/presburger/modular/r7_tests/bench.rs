@@ -95,6 +95,28 @@ fn a_window_of_n_periods_scale() {
 /// The size of [`a_window_of_n_periods_scale`].
 const N_PERIODS: usize = 5_000;
 
+/// The peak bytes `sweep_bounded` holds on [`a_window_of_n_periods_scale`]'s inputs at `n` and
+/// at `8n` periods are within twice each other (PERF-sweep-lazy-pieces): the pieces of the large
+/// moduli are made one waiting event per run at a time ([`LargeMerge`]), so the memory is
+/// O(runs + lists + q), the same at both sizes, where making all `P` pieces first held Θ(P),
+/// about 8 times as much at `8n`. The total allocated (the `bytes` of `check_order`) still
+/// grows with `P`, as each event makes its place's `Int`s, so it cannot show this.
+#[test]
+fn a_window_of_n_periods_peak_bytes_stay_flat() {
+    let peak = |n: usize| {
+        let (l, h, units, clauses) = wide_clauses(20, n as i64, true);
+        let (out, live) = zed_alloc_count::live(|| sweep_bounded(&l, &h, &units, &clauses));
+        assert!(matches!(out, RegimeOut::Empty));
+        live.peak
+    };
+    let (small, large) = (peak(N_PERIODS), peak(8 * N_PERIODS));
+    eprintln!("bench a window of n periods, peak bytes: n={N_PERIODS} peak={small}/{large}");
+    assert!(
+        large < 2 * small,
+        "peak bytes {small} at n = {N_PERIODS} and {large} at 8n"
+    );
+}
+
 #[test]
 fn pncx_fixed_chain_scale() {
     let inputs = scaling::inputs(60_000, fixed_chain);

@@ -834,6 +834,102 @@ fn every_split_of_the_moduli_decides_a_regime_as_testing_each_point_does() {
     );
 }
 
+/// PERF-sweep-lazy-pieces: [`LargeMerge`] gives, in order, the places where each list's set is
+/// entered or left and the lists whose state changes there, as making every piece on `[l, e]`
+/// with `concrete_intervals_in_span`, joining each list's with `intervals::coalesce` and taking
+/// the low end `a` and `b + 1` (where `b < e`) of each joined piece does (the sweep before this
+/// change, whose event count the meter's charge keeps). Over 500 drawn sets of 1 to 5 lists of 0
+/// to 3 literals, moduli 1 to 60, a literal's interval now and then all of `[0, m)` (so a run's
+/// end and its next start are at one place) and lists whose pieces overlap (so a count changes
+/// where no state does), on windows of 1 to 500 points.
+#[test]
+fn the_merge_of_large_pieces_gives_the_ends_of_the_joined_pieces() {
+    let mut state = 0x1a2e_9e3c_u64;
+    let mut below = |n: i64| {
+        state = state
+            .wrapping_mul(6364136223846793005)
+            .wrapping_add(1442695040888963407);
+        ((state >> 33) % n as u64) as i64
+    };
+    let (mut passed_over, mut touching) = (0usize, 0usize);
+    for _ in 0..500 {
+        let mut owned: Vec<Vec<(Int, ResidueSet)>> = Vec::new();
+        for _ in 0..1 + below(5) {
+            let mut list = Vec::new();
+            for _ in 0..below(4) {
+                let m = 1 + below(60);
+                let mut s: ResidueSet = Vec::new();
+                for _ in 0..1 + below(2) {
+                    let (a, b) = if below(4) == 0 {
+                        (0, m - 1)
+                    } else {
+                        let a = below(m);
+                        (a, a + below(m - a))
+                    };
+                    s.push((Int::from(a), Int::from(b)));
+                }
+                list.push((Int::from(m), s));
+            }
+            owned.push(list);
+        }
+        let lists: Vec<Vec<(&Int, &ResidueSet)>> = owned
+            .iter()
+            .map(|list| list.iter().map(|(m, s)| (m, s)).collect())
+            .collect();
+        let l = Int::from(below(400) - 200);
+        let e = &l + &Int::from(below(500));
+        let mut want: BTreeMap<Int, BTreeSet<(usize, bool)>> = BTreeMap::new();
+        let mut raw_ends: BTreeSet<Int> = BTreeSet::new();
+        for (j, list) in lists.iter().enumerate() {
+            let mut raw = Vec::new();
+            for (m, s) in list {
+                for (ra, rb) in s.iter() {
+                    raw.extend(concrete_intervals_in_span(&l, &e, m, ra, rb));
+                }
+            }
+            for (a, b) in &raw {
+                raw_ends.insert(a.clone());
+                raw_ends.insert(b + &Int::ONE);
+            }
+            for (a, b) in intervals::coalesce(raw) {
+                want.entry(a).or_default().insert((j, true));
+                if b < e {
+                    want.entry(&b + &Int::ONE).or_default().insert((j, false));
+                }
+            }
+        }
+        let mut merge = LargeMerge::new(&l, &e, &lists);
+        let mut got: BTreeMap<Int, BTreeSet<(usize, bool)>> = BTreeMap::new();
+        let mut last: Option<Int> = None;
+        while let Some(at) = merge.next_change() {
+            assert!(last.as_ref().is_none_or(|p| *p < at), "places out of order");
+            let changed: BTreeSet<(usize, bool)> =
+                merge.changed.iter().map(|&j| (j, merge.holds[j])).collect();
+            assert_eq!(changed.len(), merge.changed.len(), "a list given twice");
+            got.insert(at.clone(), changed);
+            last = Some(at);
+        }
+        assert_eq!(got, want, "lists {owned:?} on [{l}, {e}]");
+        passed_over += raw_ends
+            .iter()
+            .filter(|x| **x <= e && !want.contains_key(*x))
+            .count();
+        touching += owned
+            .iter()
+            .flatten()
+            .filter(|(m, s)| s.iter().any(|(a, b)| a.is_zero() && *b == m - &Int::ONE))
+            .count();
+    }
+    assert!(
+        passed_over >= 200,
+        "only {passed_over} raw ends where no state changes"
+    );
+    assert!(
+        touching >= 200,
+        "only {touching} literals over all residues"
+    );
+}
+
 /// [`cheapest_split`]'s choice is the `k` of least bound `U_k`, the least `k` at a tie, with
 /// each bound computed here from its definition (each sum formed again at each `k`), over 300
 /// drawn sets of 1 to 8 moduli from 2 to 400 with weights 1 to 4, spans 0 to 100,000, and

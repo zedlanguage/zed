@@ -3334,14 +3334,6 @@ fn cheapest_split(span: &Int, weights: &BTreeMap<Int, u128>, lists: u128) -> (us
     (best.1, best.2)
 }
 
-/// What a step of [`sweep_split`]'s walk along `[l, e]` changes.
-enum Edge {
-    /// `x` enters, or leaves, a piece of a unit over a large modulus.
-    Unit(bool),
-    /// `x` enters, or leaves, the pieces of clause `j`'s literals over large moduli.
-    Clause(usize, bool),
-}
-
 /// The least point of `[l, e]` that every unit and every clause holds, or `Empty`, where `e -
 /// l` is below the lcm of the moduli ([`sweep_bounded`]), and `small` (lcm `q`, which fits
 /// `usize`) holds the moduli read modulo `q`; every other modulus is large. `Undecided` where a
@@ -3350,13 +3342,14 @@ enum Edge {
 /// Proof. (1) A literal `x mod m in s` with `m` small holds at `x` exactly when `x mod q`
 /// lies in the residues `r` of `[0, q)` with `r mod m in s`, since `m` divides `q`, so `x mod
 /// m = (x mod q) mod m`; those residues are `concrete_intervals_in_span(0, q - 1, m, ...)`.
-/// (2) The pieces on `[l, e]` of each unit over a large modulus, coalesced, and of the
-/// literals over large moduli of each clause, coalesced, are normal lists: disjoint and not
-/// adjacent, so `x` enters a list's set at the low end `a` of a piece and leaves it at `b +
-/// 1`, and at no other place. Between two consecutive places where some list is entered or
-/// left (the events), every unit over a large modulus holds everywhere or nowhere, and so does
-/// every clause's part over large moduli: the events cut `[l, e]` into segments, each with one
-/// state. (3) On a segment where a large unit fails, or a clause with no small literal has its
+/// (2) The pieces on `[l, e]` of each unit over a large modulus, and of the literals over
+/// large moduli of each clause, joined where they overlap or touch, are normal lists: disjoint
+/// and not adjacent, so `x` enters a list's set at the low end `a` of a joined piece and leaves
+/// it at `b + 1`, and at no other place. [`LargeMerge`] yields exactly those places, in order,
+/// with the lists whose state changes there (its proof). Between two consecutive places where
+/// some list is entered or left (the events), every unit over a large modulus holds everywhere
+/// or nowhere, and so does every clause's part over large moduli: the events cut `[l, e]` into
+/// segments, each with one state. (3) On a segment where a large unit fails, or a clause with no small literal has its
 /// large part false, no point lies. Elsewhere `x` of the segment is a point exactly when each
 /// small unit holds and each clause whose large part is false there (an active clause) has a
 /// small literal that holds, all of which depend on `x mod q` alone, by (1). The tree holds, for
@@ -3374,15 +3367,25 @@ enum Edge {
 ///
 /// Complexity tradeoff: the naive way, testing each point, is O((e - l + 1) L) for `L`
 /// literals; cutting every modulus into pieces is O(N_0 log N_0) ([`sweep_bounded`]). Used: `P`
-/// pieces of the large moduli, sorted, O(P log P); the small literals read modulo `q`, O(q +
-/// sum over them of |s| (q div m + 2)); and for each of the at most `2 P` events and each
+/// pieces of the large moduli, made in order by [`LargeMerge`], O(P log S) for the `S`
+/// intervals of residues of the large literals (`S <= P`); the small literals read modulo `q`,
+/// O(q + sum over them of |s| (q div m + 2)); and for each of the at most `2 P` events and each
 /// clause and unit at the start, one addition to the tree for each interval of residues that
 /// clause or unit forbids, `I_j` of them, plus one search for each segment, O(log q) each. In
-/// all O(P log P + q + (sum over clauses j of (2 P_j + 1) I_j + sum over small units of I_u +
+/// all O(P log S + q + (sum over clauses j of (2 P_j + 1) I_j + sum over small units of I_u +
 /// P) log q), with `P_j` the pieces of clause `j`'s large part: linear in the number of
 /// clauses when each has few pieces and few forbidden intervals, where meeting each active
-/// clause on each segment is O(P L). Space O(P + q + sum I_j). Under a cover's meter each part
-/// is charged before it is done.
+/// clause on each segment is O(P L). Under a cover's meter each part is charged before it is
+/// done: the walk's events and tree steps are counted by a first pass of [`LargeMerge`] with no
+/// tree, so the charge is the exact count the walk then makes (the same as when the pieces were
+/// all made and sorted first), at twice the merge's time and only while a meter runs.
+///
+/// Space (PERF-sweep-lazy-pieces): before, the `P` pieces were all made, joined and sorted as
+/// up to `2 P` events, Theta(P) space, which `r7_tests::bench::a_window_of_n_periods_scale`
+/// grew with the number of periods of its window. Used: the pieces made lazily in order of
+/// their ends, one waiting event per interval of residues, so space is O(S + L + q + sum I_j)
+/// for `L` units and clauses, whatever the width of `[l, e]`; the time bound is unchanged up
+/// to the factor `log S <= log P` in place of `log P`.
 fn sweep_split(
     l: &Int,
     e: &Int,
@@ -3414,60 +3417,45 @@ fn sweep_split(
     if charge(cut.saturating_add(lift)).is_err() {
         return RegimeOut::Undecided;
     }
-    let pieces = |lo: &Int, hi: &Int, lits: &mut dyn Iterator<Item = (&Int, &ResidueSet)>| {
-        let mut v = Vec::new();
+    let top = Int::from(q - 1);
+    // The residues of `[0, q)` a set of small literals does not allow, as items of the tree:
+    // O(q) intervals at most, as the tree has items.
+    let forbidden = |lits: &mut dyn Iterator<Item = (&Int, &ResidueSet)>| -> Vec<(usize, usize)> {
+        let mut allowed = Vec::new();
         for (m, s) in lits {
             for (ra, rb) in s {
-                v.extend(concrete_intervals_in_span(lo, hi, m, ra, rb));
+                allowed.extend(concrete_intervals_in_span(&Int::ZERO, &top, m, ra, rb));
             }
         }
-        intervals::coalesce(v)
-    };
-    let top = Int::from(q - 1);
-    // The residues of `[0, q)` a set of small literals does not allow, as items of the tree.
-    let forbidden = |lits: &mut dyn Iterator<Item = (&Int, &ResidueSet)>| -> Vec<(usize, usize)> {
-        let allowed = pieces(&Int::ZERO, &top, lits);
-        intervals::complement(&allowed, Int::ZERO, top.clone())
+        intervals::complement(&intervals::coalesce(allowed), Int::ZERO, top.clone())
             .into_iter()
             .map(|(a, b)| (residue_item(&a), residue_item(&b)))
             .collect()
     };
     let mut tree = zed_collections::min_add::MinAdd::new(q);
-    let mut events: Vec<(Int, Edge)> = Vec::new();
-    let mut large_units = 0usize;
+    // The lists of [`LargeMerge`]: each unit over a large modulus, then each clause's literals
+    // over large moduli (none for a clause with no large literal, whose large part is false
+    // everywhere).
+    let mut lists: Vec<Vec<(&Int, &ResidueSet)>> = Vec::new();
     for (m, s) in unit_mods {
         if small.contains(m) {
             for (a, b) in forbidden(&mut std::iter::once((m, s))) {
                 tree.add(a, b, 1);
             }
         } else {
-            large_units += 1;
-            for (a, b) in pieces(l, e, &mut std::iter::once((m, s))) {
-                events.push((a, Edge::Unit(true)));
-                if b < *e {
-                    events.push((&b + &Int::ONE, Edge::Unit(false)));
-                }
-            }
+            lists.push(vec![(m, s)]);
         }
     }
+    let large_units = lists.len();
     // Each clause's forbidden residues, `None` for a clause with no small literal; every clause
     // is active before `l`.
     let mut clause_forbids: Vec<Option<Vec<(usize, usize)>>> = Vec::with_capacity(clauses.len());
     let mut dead = 0usize;
-    let mut toggles: u128 = 0;
-    for (j, cl) in clauses.iter().enumerate() {
+    for cl in clauses {
         let has_small = cl.keys().any(|m| small.contains(m));
         let forbids =
             has_small.then(|| forbidden(&mut cl.iter().filter(|(m, _)| small.contains(m))));
-        let large = pieces(l, e, &mut cl.iter().filter(|(m, _)| !small.contains(m)));
-        let width = forbids.as_ref().map_or(1, |f| f.len() as u128);
-        toggles = toggles.saturating_add((2 * large.len() as u128 + 1).saturating_mul(width));
-        for (a, b) in large {
-            events.push((a, Edge::Clause(j, true)));
-            if b < *e {
-                events.push((&b + &Int::ONE, Edge::Clause(j, false)));
-            }
-        }
+        lists.push(cl.iter().filter(|(m, _)| !small.contains(m)).collect());
         match &forbids {
             Some(f) => {
                 for &(a, b) in f {
@@ -3478,34 +3466,63 @@ fn sweep_split(
         }
         clause_forbids.push(forbids);
     }
-    // The tree's work for the events and searches, charged before the walk.
-    if charge(toggles.saturating_add(events.len() as u128 + 1)).is_err() {
-        return RegimeOut::Undecided;
-    }
-    events.sort_unstable_by(|x, y| x.0.cmp(&y.0));
-    let (mut i, mut start, mut inside) = (0usize, l.clone(), 0usize);
-    loop {
-        while i < events.len() && events[i].0 == start {
-            match events[i].1 {
-                Edge::Unit(true) => inside += 1,
-                Edge::Unit(false) => inside -= 1,
-                Edge::Clause(j, sat) => {
-                    let d = if sat { -1 } else { 1 };
-                    match &clause_forbids[j] {
-                        Some(f) => {
-                            for &(a, b) in f {
-                                tree.add(a, b, d);
-                            }
-                        }
-                        None if sat => dead -= 1,
-                        None => dead += 1,
-                    }
+    // The tree's work for the events and searches, charged before the walk: each event (a list
+    // entered or left) once, and for clause `j`, entered `c_j` times, `(2 c_j + 1)` times the
+    // intervals it forbids (1 with none). These are the counts of the walk below, which makes
+    // the same events (by the proof of [`LargeMerge`]); a first merge with no tree counts them.
+    // With no meter the charge does nothing, so the count is made only under one.
+    if super::meter::running() {
+        let mut count = LargeMerge::new(l, e, &lists);
+        let (mut events, mut entered) = (0u128, vec![0u128; clauses.len()]);
+        while count.next_change().is_some() {
+            for &j in &count.changed {
+                events += 1;
+                if j >= large_units && count.holds[j] {
+                    entered[j - large_units] += 1;
                 }
             }
-            i += 1;
         }
-        let end = match events.get(i) {
-            Some((at, _)) => at - &Int::ONE,
+        let toggles = clause_forbids
+            .iter()
+            .zip(&entered)
+            .fold(0u128, |t, (f, c)| {
+                let width = f.as_ref().map_or(1, |f| f.len() as u128);
+                t.saturating_add((2 * c + 1).saturating_mul(width))
+            });
+        if charge(toggles.saturating_add(events + 1)).is_err() {
+            return RegimeOut::Undecided;
+        }
+    }
+    let mut merge = LargeMerge::new(l, e, &lists);
+    let mut at = merge.next_change();
+    let (mut start, mut inside) = (l.clone(), 0usize);
+    loop {
+        if at.as_ref() == Some(&start) {
+            for &j in &merge.changed {
+                let holds = merge.holds[j];
+                if j < large_units {
+                    if holds {
+                        inside += 1;
+                    } else {
+                        inside -= 1;
+                    }
+                    continue;
+                }
+                let d = if holds { -1 } else { 1 };
+                match &clause_forbids[j - large_units] {
+                    Some(f) => {
+                        for &(a, b) in f {
+                            tree.add(a, b, d);
+                        }
+                    }
+                    None if holds => dead -= 1,
+                    None => dead += 1,
+                }
+            }
+            at = merge.next_change();
+        }
+        let end = match &at {
+            Some(next) => next - &Int::ONE,
             None => e.clone(),
         };
         if inside == large_units && dead == 0 {
@@ -3521,9 +3538,160 @@ fn sweep_split(
                 }
             }
         }
-        match events.get(i) {
-            Some((at, _)) => start = at.clone(),
+        match &at {
+            Some(next) => start = next.clone(),
             None => return RegimeOut::Empty,
+        }
+    }
+}
+
+/// One interval of residues `[ra, rb]` of a literal `x mod m in s` over a large modulus, read
+/// along `[l, e]` one block `[base, base + m)` at a time: its pieces are `[max(base + ra, l),
+/// min(base + rb, e)]` where not empty.
+struct ResidueRun<'a> {
+    /// The list of [`LargeMerge`] the literal belongs to.
+    list: usize,
+    m: &'a Int,
+    ra: &'a Int,
+    rb: &'a Int,
+    /// The low end of the current block, a multiple of `m`.
+    base: Int,
+    /// The high end of the current piece.
+    end: Int,
+    /// Whether the event waiting in the heap is the current piece's low end (else its high
+    /// end plus one).
+    entering: bool,
+}
+
+/// The places along `[l, e]` where a list of residue literals over large moduli (each a unit,
+/// or a clause's large part, of [`sweep_split`]) is entered or left, in increasing order, each
+/// with the lists whose state changes there ([`LargeMerge::next_change`]), made lazily: a
+/// k-way merge, by a heap, of the pieces of each interval of residues, one event of each
+/// waiting (PERF-sweep-lazy-pieces).
+///
+/// Proof. (1) Order: each run's events are the low end `a` of a piece, then its high end plus
+/// one `b + 1 > a` (where `b < e`), then the low end of its next block's piece, at least `b +
+/// 1`, since `(base + m) + ra >= base + rb + 1` as `ra >= 0` and `rb <= m - 1`; only the first
+/// block is clipped by `l`,
+/// and every later low end `base + ra` is above `l`, as `base > l`. So each event pushed is at or
+/// after the one just popped, and the heap pops all events in increasing order of place (a
+/// k-way merge); `next_change` takes every event at one place before it looks at the lists, an
+/// event pushed at the same place included (`a = b + 1` when `[ra, rb]` is all of `[0, m)`).
+/// (2) Counts: after the events at places up to `x`, `count[j]` is the number of pieces of list
+/// `j` with `a <= x` less those with `b + 1 <= x`, that is (as `a <= b`) the number holding
+/// `x`, so list `j` holds at `x` exactly when `count[j] > 0`. (3) Changes: `holds[j]` is kept
+/// equal to `count[j] > 0` after each place, for the lists an event there touched (no other
+/// count changed), so it changes exactly where the union of the list's pieces is entered or left,
+/// the low ends of its joined pieces and their high ends plus one, at most `e`: the events of
+/// [`sweep_split`]'s proof (2). A place where counts change and no list's state does is passed
+/// over, so the walk's segments and tree steps are those of the joined pieces.
+///
+/// Complexity tradeoff: making every piece on `[l, e]`, joining each list's and sorting the ends
+/// (as before) takes O(P log P) time and Theta(P) space for `P` pieces. Used: O(log S) a piece
+/// for the `S` runs, with space O(S + lists): the window's width changes the time only.
+struct LargeMerge<'a> {
+    l: &'a Int,
+    e: &'a Int,
+    runs: Vec<ResidueRun<'a>>,
+    /// The waiting event of each run not done, by place and then run.
+    heap: MinHeap<(Int, usize)>,
+    /// For each list, the number of its pieces that hold the place last taken.
+    count: Vec<usize>,
+    /// For each list, whether it holds at the place last taken: `count > 0`.
+    holds: Vec<bool>,
+    /// The lists whose state changed at the place [`LargeMerge::next_change`] last gave.
+    changed: Vec<usize>,
+    /// The lists an event touched at the place being taken, with repeats.
+    touched: Vec<usize>,
+}
+
+impl<'a> LargeMerge<'a> {
+    /// The merge of `lists`, every list not holding before `l`.
+    fn new(l: &'a Int, e: &'a Int, lists: &[Vec<(&'a Int, &'a ResidueSet)>]) -> LargeMerge<'a> {
+        let mut merge = LargeMerge {
+            l,
+            e,
+            runs: Vec::new(),
+            heap: MinHeap::new(),
+            count: vec![0; lists.len()],
+            holds: vec![false; lists.len()],
+            changed: Vec::new(),
+            touched: Vec::new(),
+        };
+        for (list, lits) in lists.iter().enumerate() {
+            for &(m, s) in lits {
+                for (ra, rb) in s {
+                    // The block of `l`, or the next one where the interval ends before `l`.
+                    let mut base = &l.div_floor(m) * m;
+                    if &(&base + rb) < l {
+                        base = &base + m;
+                    }
+                    merge.runs.push(ResidueRun {
+                        list,
+                        m,
+                        ra,
+                        rb,
+                        base,
+                        end: Int::ZERO,
+                        entering: true,
+                    });
+                    merge.enter(merge.runs.len() - 1);
+                }
+            }
+        }
+        merge
+    }
+
+    /// Makes run `i`'s piece in its current block and pushes its low end, or ends the run where
+    /// the block starts past `e`. The piece is empty only then: its block ends at or after `l`
+    /// (`base + rb >= l`, by [`LargeMerge::new`] for the first and `base > l` after), so
+    /// `max(base + ra, l) <= min(base + rb, e)` fails only where `base + ra > e`, and every
+    /// later block starts further on.
+    fn enter(&mut self, i: usize) {
+        let (l, e) = (self.l, self.e);
+        let run = &mut self.runs[i];
+        let a = (&run.base + run.ra).max(l.clone());
+        let b = (&run.base + run.rb).min(e.clone());
+        if a <= b {
+            run.end = b;
+            run.entering = true;
+            self.heap.push((a, i));
+        }
+    }
+
+    /// The next place where some list is entered or left, with those lists in `changed` and
+    /// their new states in `holds`; `None` past the last.
+    fn next_change(&mut self) -> Option<Int> {
+        loop {
+            let at = self.heap.peek()?.0.clone();
+            self.touched.clear();
+            while self.heap.peek().is_some_and(|(place, _)| *place == at) {
+                let (_, i) = self.heap.pop().expect("an event was peeked");
+                let run = &mut self.runs[i];
+                let list = run.list;
+                if run.entering {
+                    self.count[list] += 1;
+                    if run.end < *self.e {
+                        run.entering = false;
+                        self.heap.push((&run.end + &Int::ONE, i));
+                    }
+                } else {
+                    self.count[list] -= 1;
+                    run.base = &run.base + run.m;
+                    self.enter(i);
+                }
+                self.touched.push(list);
+            }
+            self.changed.clear();
+            for &j in &self.touched {
+                if (self.count[j] > 0) != self.holds[j] {
+                    self.holds[j] = !self.holds[j];
+                    self.changed.push(j);
+                }
+            }
+            if !self.changed.is_empty() {
+                return Some(at);
+            }
         }
     }
 }
