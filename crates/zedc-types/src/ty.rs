@@ -2973,15 +2973,37 @@ impl<'b> Replacer<'b> {
         // `held_classes`, the classes the held functions read from around, is filled only by a
         // negative control that drops `#4`; it is tested as `held_outer` is (landing round 6,
         // Gemini L6-B2).
-        let binds_outer = |fwd: &FwdNeed| {
-            let read = |set: &BTreeSet<Arc<str>>| {
-                if self.binds.len() < set.len() {
-                    (self.binds.keys()).any(|v| set.contains(v) && bound(v).is_some())
-                } else {
-                    set.iter().any(|v| bound(v).is_some())
+        let read = |set: &BTreeSet<Arc<str>>| {
+            if self.binds.len() < set.len() {
+                (self.binds.keys()).any(|v| set.contains(v) && bound(v).is_some())
+            } else {
+                set.iter().any(|v| bound(v).is_some())
+            }
+        };
+        let binds_outer = |fwd: &FwdNeed| read(&fwd.held_outer) || read(&fwd.held_classes);
+        // A renaming hides nothing (`Mode::Rename`): on the flat needs it renames a variable a
+        // held function binds as well (`T -> Fresh` on `h1` of `h0(m) = m.map(id)` renames
+        // `id`'s `T`), which the kept forward's callee, shared, cannot show; so a renaming that
+        // binds a held name decodes, as one that binds an internal result does (chainE1,
+        // Neon's round 4, gap 1: the digests differed and `fits_sig` refused both ways). The
+        // other modes hide the variables a function binds, so they never reach a held name.
+        // A held name that is a class (`$k`) does not decode: the one renaming that binds
+        // a class is the naming of `Ck::finished_with` (classes to their names; `Ck::shown`
+        // renames only types with no held names left), which finishes the forward's callee
+        // first, so the callee writes the name the renaming gives the class in E's flat needs,
+        // and the held names are read again from it after (`Ck::r10_refresh_held_names`).
+        // Decoding there would decode every link of a chain of `.map(id)`, whose held name is
+        // `id`'s `$0` until then (test `r10_chain_of_maps_by_id_decodes_no_link`: n - 1
+        // decodes). O(min(#binds, h) log) for h held names, as `binds_outer`.
+        let renames_named = |v: &Arc<str>| class_id(v).is_none() && bound(v).is_some();
+        let renames_held = |fwd: &FwdNeed| {
+            self.mode == Mode::Rename
+                && match self.binds.len() < fwd.held_names.len() {
+                    true => {
+                        (self.binds.keys()).any(|v| fwd.held_names.contains(v) && renames_named(v))
+                    }
+                    false => fwd.held_names.iter().any(renames_named),
                 }
-            };
-            read(&fwd.held_outer) || read(&fwd.held_classes)
         };
         let typed = (fwd.sigma.iter().map(|(_, t)| t))
             .chain(fwd.exits.iter().map(|(_, t)| t))
@@ -2996,6 +3018,7 @@ impl<'b> Replacer<'b> {
             || (!hides_own && binds_internal(fwd))
             || targets_internal(fwd)
             || (self.mode != Mode::Outside && binds_outer(fwd))
+            || renames_held(fwd)
     }
 
     /// The variables of the types `binds` puts in place of others, at any depth: listed at the
@@ -5299,6 +5322,30 @@ pub struct FwdNeed {
 }
 
 impl FwdNeed {
+    /// The held names of a forward to `callee` ([`FwdNeed::held_names`]): the names the
+    /// functions held in `callee`'s leaf needs list ([`VarFacts::names`]), those of a child
+    /// forward through its own held names. Read where a forward is admitted
+    /// (`Ck::r10_get_or_build_summary`) and again wherever its callee is replaced by a
+    /// finished copy (`Ck::r10_finish_one_fwd_callee`, `Ck::r10_refresh_held_names`), which
+    /// writes a held class by its name (`id`'s `$0` as `T`): kept from the admission, the
+    /// held names would list `$0` where E's flat needs hold `T`, and the readers of the facts
+    /// (`Cx::open`, `read_alike`) and the renaming test of `Replacer::must_decode_fwd` would
+    /// read a name the callee no longer holds (chainE1, Neon's round 4, gap 2). Cost: one pass
+    /// over `callee`'s needs, the facts of each type cached, so O(#needs + h log h) for h
+    /// names; on a chain link `#needs` is O(1).
+    pub fn held_names_of(callee: &Sig) -> BTreeSet<Arc<str>> {
+        let mut out = BTreeSet::new();
+        for n in &callee.needs {
+            match &n.kind {
+                NeedKind::Fwd(child) => out.extend(child.held_names.iter().cloned()),
+                _ => n
+                    .tys()
+                    .for_each(|t| out.extend(t.var_facts().names.iter().cloned())),
+            }
+        }
+        out
+    }
+
     /// Materializes the `need_count` result `Ty`s for this block (`O(need_count)`).
     pub fn materialize_result_tys(&self) -> Vec<Ty> {
         let mut results: Vec<Option<Ty>> = vec![None; self.need_count];
@@ -15876,7 +15923,16 @@ fn read_alike(s: &Sig, se: &Env, qe: &Env) -> bool {
         a.result.vars_in(&mut vs);
     }
     s.needs.iter().for_each(|n| n.vars_in(&mut vs));
-    vs.order.iter().all(|v| se.get(v) == qe.get(v))
+    // A compact forward's held names ([`FwdNeed::held_names`]) are variables of the flat
+    // needs, which E's walk meets inside the held functions and `Need::vars_in` leaves out
+    // (it walks the steps): read them too, so that the same variables are compared as on
+    // the flat form (chainE1, Neon's round 4, gap 3; `h1` of `h0(m) = m.map(id)` gave
+    // `[U, V, T]` under E and `[U, V]` here). O(h) more per forward for h held names.
+    let held_alike = s.needs.iter().all(|n| match &n.kind {
+        NeedKind::Fwd(fwd) => fwd.held_names.iter().all(|v| se.get(v) == qe.get(v)),
+        _ => true,
+    });
+    held_alike && vs.order.iter().all(|v| se.get(v) == qe.get(v))
 }
 
 /// What [`Cx::open`] gives: the mark, the arrows of each signature as read, the bounds, the

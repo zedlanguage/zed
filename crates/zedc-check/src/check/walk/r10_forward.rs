@@ -7,8 +7,8 @@ use std::sync::Arc;
 
 use zedc_syntax::lex::Span;
 use zedc_types::ty::{
-    Arrow, Binds, CallPath, EVERY, FwdFinishNaming, FwdVarStep, MapWord, NameRun, Names, Need,
-    NeedKind, OTHER, Sig, SkipIndex, Ty, VarFacts, Vars, class_id, current_held_var_snapshot,
+    Arrow, Binds, CallPath, EVERY, FwdFinishNaming, FwdNeed, FwdVarStep, MapWord, NameRun, Names,
+    Need, NeedKind, OTHER, Sig, SkipIndex, Ty, VarFacts, Vars, class_id, current_held_var_snapshot,
     fresh_name, fresh_variable_span_stats_indexed, r10_hash,
 };
 
@@ -174,7 +174,9 @@ impl<'t, 'a> Ck<'t, 'a> {
         let mut all_mentioned_vars = Vars::default();
         let mut on_mentioned_vars = Vars::default();
         let mut held_free = 0usize;
-        let mut held_names: BTreeSet<Arc<str>> = BTreeSet::new();
+        // The names the held functions bind (part (B) below), as `FwdNeed::held_names_of`
+        // gives them: the same routine runs again where a finished callee replaces this one.
+        let held_names = FwdNeed::held_names_of(sig);
         let mut held_outer: BTreeSet<Arc<str>> = BTreeSet::new();
         let mut held_foreign_fn = false;
         let mut held_classes: BTreeSet<Arc<str>> = BTreeSet::new();
@@ -241,7 +243,6 @@ impl<'t, 'a> Ck<'t, 'a> {
                         tie_uf.union_group(gv.order.iter());
                     }
                     held_free = held_free.max(fwd.held_free);
-                    held_names.extend(fwd.held_names.iter().cloned());
                     held_outer.extend(fwd.held_outer.iter().cloned());
                     held_foreign_fn |= fwd.held_foreign_fn;
                     held_classes.extend(fwd.held_classes.iter().cloned());
@@ -337,7 +338,7 @@ impl<'t, 'a> Ck<'t, 'a> {
                         // It is not a class of the level being checked (`Ck::is_class`
                         // is false of the named classes of a function that ended and of the
                         // closed internal ones; a signature's nest binds only those and
-                        // names). E meets it in the flat needs in five places, and D gives
+                        // names). E meets it in the flat needs in seven places, and D gives
                         // each the same: (1) the steps and `sig_walk`: a bound variable is
                         // never `visible` (no caller variable is bound inside the callee's
                         // held function), so E's walk adds it to `vars_order` where D's
@@ -386,6 +387,21 @@ impl<'t, 'a> Ck<'t, 'a> {
                         // `id`'s `$0` would stay (Neon's round 3, gap 1: `a = h1`); `shown`
                         // decodes such a type first, untagged, to the flat needs E shows
                         // (test `chain_e1_a_top_value_holding_a_kept_forward_is_shown_as_e_shows_it`).
+                        // (6) A renaming (`Sig::renamed`, `Mode::Rename` in zedc-types) hides
+                        // nothing, so on the flat needs it renames a held function's bound
+                        // variable too; `Replacer::must_decode_fwd` decodes a forward whose
+                        // held names it binds (Neon's round 4, gap 1). `Mode::Replace` hides a
+                        // nested signature's own variables, and `Mode::Outside` does not enter
+                        // functions, so they leave a held name as the callee does. (7)
+                        // `read_alike` (`fits_sig`) reads each variable of the needs, which E's
+                        // walk meets inside the held functions: it reads the held names as well
+                        // (gap 3). (6), (7) and `Sig::facts` read the held names, which must be
+                        // the names the callee now writes: finishing a callee writes a held
+                        // class by its name (`id`'s `$0` as `T`), so they are read again from
+                        // the finished callee (`FwdNeed::held_names_of`, in
+                        // `Ck::r10_finish_one_fwd_callee` and, after the naming that reads
+                        // the admitted ones, `Ck::r10_refresh_held_names`; gap 2). Test
+                        // `chain_e1_held_names_are_renamed_compared_and_listed_as_e_does`.
                         // One kind stays refused, under the old label: a function whose nest
                         // keeps a compact forward with internal results (`VarFacts::internal`).
                         // Its internal results are not names the facts list but runs the
@@ -407,9 +423,6 @@ impl<'t, 'a> Ck<'t, 'a> {
                             intrinsic_fails.insert("#4-own-vars");
                         }
                         held_free = held_free.max(vf.free);
-                        for nm in vf.names {
-                            held_names.insert(nm);
-                        }
                         for ov in vf.outer {
                             if !sig.own.contains(&ov) {
                                 held_outer.insert(ov);

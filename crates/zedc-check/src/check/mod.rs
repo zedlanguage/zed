@@ -5648,8 +5648,11 @@ impl<'t, 'a> Ck<'t, 'a> {
     /// so `Need::map_tys_in` gives back the same `Arc` (`NeedKind::Fwd(fwd.clone())`), not
     /// a copy. [`Self::r10_promote_open_fwds`] copies signatures with `Need::with_held_fns`,
     /// which may walk one shared function at two places, but copies no forward: a
-    /// checker-made forward's `sigma` and `exits` hold bare variables only (`#5`, `#6`,
-    /// `#14`; `Settle::must_decode` decodes one that a settle would give another type), and
+    /// checker-made forward's `sigma` and `exits` hold bare variables only (`sigma` by `#14`
+    /// with `#2`, `#17` and `#21d` in `r10_try_admit`, `exits` as
+    /// [`Self::build_fwd_need_from_open`] makes them; `Replacer::must_decode` and
+    /// `Settle::must_decode` decode one that a replacement or a settle would give another
+    /// type; Neon's round 4 note: `#5` and `#6` constrain the callee, not these), and
     /// [`Self::build_fwd_need_from_open`] takes `on_vars` and `var_ties` from the same
     /// parameter types and exits, so `with_held_fns` meets no function in them and
     /// `Need::map_tys_in` gives back the same `Arc` (Neon's round 3, gap 2,
@@ -5881,6 +5884,11 @@ impl<'t, 'a> Ck<'t, 'a> {
                         changed = true;
                         let mut updated = (**child_fwd).clone();
                         updated.callee = nc;
+                        // The finished callee writes held classes by their names; the forward
+                        // lists them so (Neon's round 4, gap 2). No caller's naming reads a
+                        // forward inside a callee, so this is safe here, unlike the caller's
+                        // own forwards (`r10_refresh_held_names`).
+                        updated.held_names = ty::FwdNeed::held_names_of(&updated.callee);
                         updated.digest_summary = None;
                         let mut nn = n.clone();
                         nn.kind = NeedKind::Fwd(Arc::new(updated));
@@ -6219,10 +6227,83 @@ impl<'t, 'a> Ck<'t, 'a> {
             .filter_map(|v| rename(v, false))
             .collect();
         let out = made.renamed_runs_replaced(s, to, runs, b);
-        if !callee_changed {
-            return out;
+        let out = match callee_changed {
+            true => Self::r10_refresh_fwd_digests(&out),
+            false => out,
+        };
+        Self::r10_refresh_held_names(&out, &mut fwd_memo.held_names)
+    }
+
+    /// `s`, a signature [`Self::finished_with`] has named, with the held names of each of its
+    /// forwards, and of those of the functions it holds at any depth, read again from their
+    /// callees ([`ty::FwdNeed::held_names_of`]), which the finishing changed (`id`'s `$0` written
+    /// `T`; Neon's round 4, gap 2: the facts of `h1` in `h0(m) = m.map(id); h1(m) = h0(m)`
+    /// listed `$0` where E's list `T`).
+    ///
+    /// Why only here: the naming above reads the held names the forwards were admitted with,
+    /// as classes (`printed` gives `$0` the key of its class, as E's flat needs hold the
+    /// class), and a function held in `s` gives its held names to `s`'s facts. So no held
+    /// name is read again before `s` is named; a forward inside a callee, which no caller's
+    /// naming reads, is refreshed where its callee is finished
+    /// ([`Self::r10_finish_one_fwd_callee`]).
+    /// Proof that the names read again are E's: where `finished_with` keeps a forward, no
+    /// held name was named apart, solved, or left `$k` in the callee (`unnamed`), so each held
+    /// class is written in the finished callee by the name `printed` gave it, the name E's
+    /// renaming gives it in the flat needs; a held name that is not a class is written as it
+    /// was. `held_names_of` reads the names the callee's held functions list, which are those
+    /// names.
+    /// Complexity tradeoff: one pass over the arrows and needs of `s`'s own level, and of each
+    /// function it holds that lists held names, each such function once in the pass
+    /// (`memo`, by address), as [`Self::r10_finish_held_fwds`]: O(size of the levels with
+    /// held names) over the pass, plus O(#needs of a callee) per forward. A walk with no memo
+    /// would cost the depth of the nest at each signature, O(n^2) on a chain of n functions
+    /// each returning one that holds the one before.
+    fn r10_refresh_held_names(s: &Arc<Sig>, memo: &mut FlatMemo) -> Arc<Sig> {
+        if s.facts().fwd_names.is_empty() {
+            return s.clone();
         }
-        Self::r10_refresh_fwd_digests(&out)
+        if let Some((_, done)) = memo.get(&Arc::as_ptr(s)) {
+            return done.clone();
+        }
+        let mut fns_changed = false;
+        let mut fwds_changed = false;
+        let mut copy = (**s).clone();
+        let mut fin = |t: &Ty| -> Ty {
+            if t.fns.is_empty() && t.tuples.is_empty() && t.payloads.is_empty() {
+                return t.clone();
+            }
+            t.with_held_fns(|f| {
+                let nf = Self::r10_refresh_held_names(f, memo);
+                fns_changed |= !Arc::ptr_eq(&nf, f);
+                nf
+            })
+        };
+        for a in &mut copy.arrows {
+            for p in &mut a.params {
+                *p = fin(p);
+            }
+            a.result = fin(&a.result);
+        }
+        for n in &mut copy.needs {
+            if !matches!(n.kind, NeedKind::Fwd(_)) {
+                *n = n.map_tys(&mut fin);
+            } else if let NeedKind::Fwd(fwd) = &mut n.kind {
+                let names = ty::FwdNeed::held_names_of(&fwd.callee);
+                if names != fwd.held_names {
+                    Arc::make_mut(fwd).held_names = names;
+                    fwds_changed = true;
+                }
+            }
+        }
+        let out = match fns_changed || fwds_changed {
+            true => {
+                copy.facts = Default::default();
+                Arc::new(copy)
+            }
+            false => s.clone(),
+        };
+        memo.insert(Arc::as_ptr(s), (s.clone(), out.clone()));
+        out
     }
 
     /// `s` with the callee of each of its own compact forwards finished
@@ -14661,6 +14742,9 @@ struct FinishMemo {
     /// of its own, with its forwards' callees finished and its own variables as they were
     /// ([`Ck::r10_finish_held_fwds`]).
     held: FlatMemo,
+    /// Each finished signature with the held names of its forwards, and of those of the
+    /// functions it holds, read again from their callees ([`Ck::r10_refresh_held_names`]).
+    held_names: FlatMemo,
 }
 
 /// Whether two lists of runs name the same names the same way: O(runs).

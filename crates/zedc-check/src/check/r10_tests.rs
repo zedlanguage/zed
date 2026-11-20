@@ -4403,4 +4403,78 @@ fn chain_e1_a_top_value_holding_a_kept_forward_is_shown_as_e_shows_it() {
     }
 }
 
+/// chainE1, Neon's round 4. A finished signature keeping a forward with held names (`h1` over
+/// `h0(m) = m.map(id)`, and over a function whose held variable is bounded) lists the names
+/// E's flat signature lists (gap 2: D listed `id`'s `$0` where the finished callee writes
+/// `T`), and gives E's digest, `==` and `fits_sig` after a renaming, a replacement or a
+/// replacement outside functions of each of its names (gap 1: renaming `T` gave other
+/// digests and `fits_sig` false both ways). Both failed before the fix. The last part wraps
+/// `h1` in two bounded signatures whose variable is named as the held one, for `read_alike`
+/// (gap 3); its verdicts agreed before the fix as well, so it guards only.
+#[test]
+fn chain_e1_held_names_are_renamed_compared_and_listed_as_e_does() {
+    use std::sync::Arc;
+    use zedc_types::ty::{Binds, Carrier, Ty};
+    let progs = [
+        "id(positional x) = x;\nh0(positional m) = m.map(id);\nh1(positional m) = h0(m);\n",
+        "k(positional g: (y: T) -> T for T in int | f64) = 0;\nh0(positional m) = m.map(k);\nh1(positional m) = h0(m);\n",
+    ];
+    for src in progs {
+        let (e, _) = run_with_cfg(src, R10Config::eager());
+        let (d, _) = run_with_cfg(src, R10Config::default());
+        assert!(e.errors.is_empty(), "{src}: {:?}", e.errors);
+        assert_info_eq(src, &e, &d);
+        let es = e.sigs.values().last().expect("E h1");
+        let ds = d.sigs.values().last().expect("D h1");
+        assert!(ds.has_fwd_needs(), "{src}: D keeps h1's forward");
+        assert_eq!(es.facts().names, ds.facts().names, "{src}: facts names");
+        for from in ["T", "U", "V", "$0"] {
+            for to in ["Fresh", "T", "U"] {
+                let b: Binds = [(Arc::<str>::from(from), Ty::var(to.into()))].into();
+                for (mode, er, dr) in [
+                    ("renamed", es.renamed(&b), ds.renamed(&b)),
+                    ("replace", es.replace(&b), ds.replace(&b)),
+                    (
+                        "replace_outside",
+                        es.replace_outside(&b),
+                        ds.replace_outside(&b),
+                    ),
+                ] {
+                    let ok = er.digest() == dr.digest()
+                        && er == dr
+                        && fits_sig(&er, &dr)
+                        && fits_sig(&dr, &er);
+                    assert!(ok, "{src}: {mode} {from} -> {to}\n  E: {er:?}\n  D: {dr:?}");
+                }
+            }
+        }
+    }
+    let src = "k(positional g: (y: T) -> (z: T) -> T for T in int | f64) = 0;\nh0(positional m) = m.map(k);\nh1(positional m) = h0(m);\np(positional x) = (x, h1);\n";
+    let (e, _) = run_with_cfg(src, R10Config::eager());
+    let (d, _) = run_with_cfg(src, R10Config::default());
+    assert!(e.errors.is_empty(), "{:?}", e.errors);
+    assert_info_eq(src, &e, &d);
+    let ep = e.sigs.values().last().expect("E p");
+    let dp = d.sigs.values().last().expect("D p");
+    let v = ep.own.iter().next().expect("p's own variable").clone();
+    let big = Carrier::Int.bit() | Carrier::F64.bit() | Carrier::Rat.bit();
+    let small = Carrier::Int.bit() | Carrier::F64.bit();
+    let t: Arc<str> = "T".into();
+    let to_t: Binds = [(v.clone(), Ty::var(t.clone()))].into();
+    let mk = |s: &Sig, m: u8| {
+        let mut s = s.renamed(&to_t);
+        s.own.remove(&v);
+        s.own.remove(&t);
+        s.bounds.insert(t.clone(), m);
+        s
+    };
+    let (pe, qe) = (mk(ep, big), mk(ep, small));
+    let (pd, qd) = (mk(dp, big), mk(dp, small));
+    assert_eq!(
+        (fits_sig(&pd, &qd), fits_sig(&qd, &pd)),
+        (fits_sig(&pe, &qe), fits_sig(&qe, &pe)),
+        "fits_sig of the bounded wrappers"
+    );
+}
+
 mod landing6_battery;
