@@ -408,13 +408,15 @@ FAILED: tools/test_merge_check.sh select, rc=1
     command grep -a -o -E '^self select|FAILED: tools/test_merge_check.sh [a-z]+, rc=[0-9]+'
     echo "${PIPESTATUS[0]}")"
 # Step 0b (TOOL-merge-check-run-tests-self): each failing part of tools/test_run_tests.sh refuses
-# the branch; a failing list also stops select and table, which read its table, and those show
-# as failed with empty logs, not with the passing logs of the run before.
+# the branch; a failing list also stops select and table, which read its table, and short, which
+# starts after it, and those show as failed with empty logs, not with the passing logs of the run
+# before.
 for p in list table trace; do
   want="merge check: FAILED: tools/test_run_tests.sh $p"
   [ $p = list ] && want="$want
 merge check: FAILED: tools/test_run_tests.sh select
-merge check: FAILED: tools/test_run_tests.sh table"
+merge check: FAILED: tools/test_run_tests.sh table
+merge check: FAILED: tools/test_run_tests.sh short"
   check "a failing part $p of tools/test_run_tests.sh refuses the branch with exit 1" "$want
 1" "$(STUB_RT_FAIL=$p "$check_script" --base base 2>&1 |
     command grep -a -o -E '^merge check: FAILED: tools/test_run_tests.sh [a-z]+'

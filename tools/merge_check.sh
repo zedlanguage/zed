@@ -15,8 +15,10 @@
 #     and the next;
 #  0b. when tools/run_tests.sh, tools/test_run_tests.sh or tools/test_lib.sh changed: runs every
 #     part of tools/test_run_tests.sh, list then select then table (select and table read the
-#     table list publishes, in one log directory), and fresh, short, copy, concurrent and trace beside
-#     that chain (each in a log directory of its own), each part under max(60, the piece limit) s:
+#     table list publishes, in one log directory), short after list and beside select and table
+#     (list and short both mount the short-addresses clone, and a run waits while another has
+#     it), and fresh, copy, concurrent and trace beside that chain (each in a log directory of
+#     its own), each part under max(60, the piece limit) s:
 #     the header of test_run_tests.sh gives each part 60 s, and list alone took 30 to 57 s at load
 #     36 to 76. The parts start after the build of the tests they list, which runs first with no
 #     limit, before step 0's timed parts too. Fails if the build or any part fails
@@ -899,9 +901,17 @@ if [ -n "$rtself" ] && [ -z "$list" ]; then
     exit 1
   fi
   # The parts' verdicts are read from their logs.
+  # short starts when list has ended: both list fresh with the short-addresses clone, and a run
+  # waits while another has it mounted, so beside list short spent list's time (30 to 57 s) out
+  # of its own 60 s (killed at 60 s at load 52 on 2026-11-20; 6 to 11 s alone). select and table
+  # reuse list's table and mount no clone, so short runs beside them.
   (
-    (rt_part list && rt_part select && rt_part table) &
-    for p in fresh short copy concurrent trace; do rt_part "$p" & done
+    (rt_part list && {
+      rt_part short &
+      rt_part select && rt_part table
+      wait
+    }) &
+    for p in fresh copy concurrent trace; do rt_part "$p" & done
     wait
   ) &
   rtpids+=($!)
