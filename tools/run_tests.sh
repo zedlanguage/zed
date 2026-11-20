@@ -26,7 +26,8 @@
 # name without its hash, e.g. zedc, deep_heap, short-l01_37_oracle), matches the extended regular
 # expression; a piece of a binary split per test also matches as <group>::<test>, and a piece
 # named with its binary's hash (a library's unit tests, a benchmark) as <group>[::<path>] with the
-# hash taken off. A pattern with :: that names tests inside a whole-binary piece (zed_kernel::btree::)
+# hash taken off. --only given more than once selects the union, its expressions joined by |
+# as terms of one expression. A pattern with :: that names tests inside a whole-binary piece (zed_kernel::btree::)
 # runs each test it matches as a piece of its own, with --exact. A test binary
 # whose source lies in a step folder under another name (deep_types in l01_22_type_representation)
 # has that folder as a second group, so a selection of the step runs it too. A pattern that
@@ -112,7 +113,10 @@ while [ $# -gt 0 ]; do
         echo "--only needs a non-empty extended regular expression"
         exit 2
       fi
-      only=$2
+      # A second --only adds its expression as one more alternative: `only=$2` alone kept the
+      # last, so --only m0_03_grammar_tools --only zed_meter_settings ran the meter piece alone
+      # and passed (tools4, 2026-11-20). Each term is then checked by check_terms.
+      only=${only:+$only|}$2
       shift
       ;;
     --doc) doc=1 ;;

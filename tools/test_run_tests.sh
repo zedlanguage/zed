@@ -226,6 +226,15 @@ check "the term the message gives selects the step" "m0_03_grammar_tools" "$(sel
 check "a union whose terms all select pieces selects both" \
   "$(printf '%s\n' m0_03_grammar_tools "$(by_binary l01_36_cranelift deep_heap)" | sort)" \
   "$(selected '^l01_36_cranelift$|^(m0_03_grammar_tools)$')"
+# A second --only adds to the first; it used to replace it, so a run named two groups and ran one.
+check "--only given twice selects the union" \
+  "$(printf '%s\n' m0_03_grammar_tools "$(by_binary zedc)" | sort)" \
+  "$(run --list --reuse-table --only '^(m0_03_grammar_tools)$' --only '^(zedc)$' | sort)"
+out=$(run --list --reuse-table --only '^(m0_03_grammar_tools)$' --only 'no_piece_is_named_this')
+rc=$?
+check "a second --only that selects no piece stops the run" \
+  "1 --only: the term 'no_piece_is_named_this' of '^(m0_03_grammar_tools)\$|no_piece_is_named_this' selects no piece, so the run would pass without running what it names." \
+  "$rc $out"
 out=$(run --list --reuse-table --only 'm0_03_grammar_tools::')
 rc=$?
 check "the term alone stops the run with the same hint" "1 NO PIECE MATCHES --only 'm0_03_grammar_tools::'
