@@ -578,8 +578,11 @@ type Set = u32;
 /// The set of no names.
 const EMPTY: Set = 0;
 
-/// A node of a set of names as a big-endian Patricia trie (Okasaki and Gill, "Fast Mergeable
-/// Integer Maps", 1998).
+/// A node of a set of names as a big-endian Patricia trie (C. Okasaki and A. Gill, "Fast
+/// mergeable integer maps", Workshop on ML, 1998, pp. 77-86; no DOI, not found on Crossref,
+/// from memory, not checked: a binary trie on the bits of the keys whose branch nodes keep the
+/// common prefix and the first differing bit, so a union of two maps walks only where they
+/// differ).
 #[derive(Clone, Copy, PartialEq, Eq, Hash)]
 enum SetNode {
     Empty,

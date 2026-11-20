@@ -7,8 +7,10 @@ use std::collections::{BTreeMap, BinaryHeap};
 /// items of one cycle, in order along it. The ready items wait in a heap, smallest first, each
 /// counting the dependencies it still waits on, so the order takes `O((n + e) log n)`.
 ///
-/// Kahn's method (A. Kahn, "Topological sorting of large networks", Communications of the
-/// ACM 5(11), 558-562, 1962) with a heap in place of its queue. Tarjan's search (`cycles` below)
+/// Kahn's method (A. B. Kahn, "Topological sorting of large networks", Communications of the
+/// ACM 5(11), 558-562, 1962, doi:10.1145/368996.369025, Crossref 2026-11-20, not read: take a
+/// node no remaining edge enters, output it, remove its edges, repeat) with a heap in place of
+/// its queue. Tarjan's search (`cycles` below)
 /// alone also gives an order, the components in the order it closes them, in `O(n + e)`; it is
 /// not used for the order because that order follows the depth-first search, not the text,
 /// and the order here fixes the order of the checks and so of the messages (DESIGN
@@ -72,7 +74,8 @@ pub fn topo_around_cycles(deps: &[Vec<usize>], items: usize) -> (Vec<usize>, Vec
 /// The strongly connected components of the nodes not `done` that hold a cycle, each as its
 /// items, those below `items`, in increasing order, the components in order of their least
 /// item, by [`zed_graph::tarjan`] (R. Tarjan, "Depth-First Search and Linear Graph
-/// Algorithms", SIAM Journal on Computing 1(2), 146-160, 1972): each node and edge is visited
+/// Algorithms", SIAM Journal on Computing 1(2), 146-160, 1972, doi:10.1137/0201010, Crossref
+/// 2026-11-20): each node and edge is visited
 /// once, then the components are sorted, `O(n + e + c log c)`.
 fn cycles(deps: &[Vec<usize>], items: usize, done: &[bool]) -> Vec<Vec<usize>> {
     let n = deps.len();

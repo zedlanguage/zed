@@ -337,7 +337,10 @@ impl<'g, I: Input + ?Sized> Parser<'g, I> {
         // (COMPLEXITY.md F86). A hash map keyed by position and rule took 6% to 27% more
         // instructions and, its table scattered over memory, 1.9 times the cycles.
         // Complexity tradeoff (COMPLEXITY.md row F86): naive version, that hash map, O(1) a
-        // lookup with SipHash. Used: a list of the position's entries in a `Vec`, scanned,
+        // lookup with SipHash (the standard library's default hash: J.-P. Aumasson and D. J.
+        // Bernstein, "SipHash: a fast short-input PRF", INDOCRYPT 2012, LNCS 7668,
+        // pp. 489-508, doi:10.1007/978-3-642-34931-7_28, Crossref 2026-11-20). Used: a list
+        // of the position's entries in a `Vec`, scanned,
         // O(2R) a lookup at worst for R rules (342 for this grammar), 4.6 to 13.6 entries on
         // average. Tradeoff: a grammar whose positions hold many entries would pay the scan;
         // the bound is a constant of the grammar, not of the input.

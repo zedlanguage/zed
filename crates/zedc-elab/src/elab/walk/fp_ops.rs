@@ -753,7 +753,10 @@ impl<'a> Elab<'a> {
     // Complexity tradeoff: the naive form, the union of `a` and `fam k in n ..< n + m:
     // b[k - n]`, reads `b`'s m entries and adds them to `a`'s tree, O(m log(n + m)), so a chain
     // of `[x] ++ acc` is O(n²). Used: `ListConcat`, which shares both lists in a finger tree of
-    // lists (Hinze and Paterson 2006; `Family::concat`, plan row PERF-list-concat-shared),
+    // lists (R. Hinze and R. Paterson, "Finger trees: a simple general-purpose data
+    // structure", J. Functional Programming 16(2), 2006, pp. 197-217,
+    // doi:10.1017/s0956796805005769, Crossref 2026-11-20, not read: concatenation in
+    // O(log min(p, q)) amortized; `Family::concat`, plan row PERF-list-concat-shared),
     // O(log min(p, q)) for operands joined from p and q lists, O(1) amortized in a chain; a
     // walk over the result builds its map once, O(n + m).
     pub(super) fn list_concat_term(&mut self, a: Term, b: Term) -> Term {
