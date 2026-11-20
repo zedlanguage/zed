@@ -1556,3 +1556,35 @@ Not proved, left open: `empty.rs` 5608 (5628), `s.current` `None`, and 5527 (554
 TEST-kernel-unreached-paths-14: the 125 lines (among them `tuples_on`, `morphisms`,
 `Side::mentions` 13047-13052 (12997-13002), `find_prefix_chains` 9166-9168 and 9283, the
 morphism with bounds not recursive of the group builder 17640-17641 (17604-17605)).
+
+Twenty-first round (kernel24, 2026-11-20), row TEST-kernel-unreached-paths-14. Base origin/main
+e0e534bbc, where the 125 lines of the twentieth round's list stand at the numbers it gives (with
+its `print.rs` lines at their numbers on main). Line numbers below are at the base, then in
+parentheses after this round's edits. Nine coverage runs of the base, under `ZED_TEST_SEED` 1 to
+9, left all 125 lines at 0. The lines that drawn cases reach only under other seeds were found by
+splitting each run's profile by test (`--each-test`, one profile per test) and running the
+drawing tests with seeds one by one; each such case is now a fixed test that names its seed and
+draw.
+
+| Line | Closed by | Test or site | Control |
+|---|---|---|---|
+| 9257 (9257), the `}` (no witness) of the `if` that returns `ChainPlan::Inhabited` with `w0_full` | test | the case `s6-277` (seed 6, draw 277) in `r7_random_carrier_plus_chains_both_orders_against_bruteforce` (sweep_agreement.rs), its brute-force witness `[2, 0, 1, 0]` asserted | a verdict that is given is checked against brute force in both orders (`check_case`); a panic there fails it (reach only) |
+| 12263 (12263), `Some(false)` of `valid` for an `Or` of two parts not apart, none valid, not satisfiable, in `read` | test | `seed_4_draw_37_of_the_small_set_tuples_is_decided` (witnesses.rs; `check_small_sets`, the body of the random test, now a function it calls) | a panic there fails it (reach only) |
+| 15003 (15008), `_ => return None` of `edge` in `affine_lists_empty`: three operands swap on one integer | test | `a_parity_meet_with_an_integer_that_keeps_both_states` (setop.rs): Empty, and `more(0, nil)`, `more(1, more(1, nil))` not members | the same operands with S2 and S3 swapped on 0 hold `more(0, nil)` and are Inhabited |
+| 15028 (15033), the `}` (an operand naming the integer that keeps its state) of `if a == 2` in the loop that sets `flips` | test | `a_parity_meet_whose_unnamed_integers_swap_three_operands_is_searched` (setop.rs): Inhabited, holds `more(7, more(1, nil))`, not `nil` | the member and non-member asserted alongside the verdict |
+| 17605 (17610), `(Verdict::Inhabited, _)` of `l.subtype_verdict(&u)` (a key promised and not permitted) for a morphism with bounds not recursive, in `system` | test | `a_morphism_promising_more_than_it_permits_is_empty_in_a_group` (admission.rs): `m(top(), int(), r(0))` Empty | `m(empty(), int(), r(0))` Inhabited |
+| `print.rs` 2053 (2053), `return` of `remember` while collecting | test | `an_inexact_text_is_printed_while_collecting` (print/tests.rs): `#a(tuple)`, not exact | `#a(..)` of `atom_with("a", top())`, exact |
+| `print.rs` 2147 (2151), `Class::Of(j)` in `write_out` | proof | a text of class `Of` is one `Seg::Node` (made only at `put`, line 646); the loop above leaves a text that is not one node; now `unreachable!` | none |
+| `sweep.rs` 1158, 1164 (gone), the kept walks of `walk` | dead code removed | `Sweep::walk`: `walk` is called only at the two `return match sw.walk(..)` of `list_sweep_value`, whose `Sweep` is made new by each call (`Sweep::default()`), so a `Sweep` walks once and a kept walk is never read; the field `walked` and the enum `Step` are gone | the group tests pass as before |
+
+Counts: a coverage run of this round's edits, started 2026-11-20T18:57:55Z with no edit while it
+ran (`ZED_TEST_SEED` 1, `--each-test`, 1269 pieces, 0 failed, load 44.6 to 70.5), reads only the
+binaries it built; it counts 4 functions of mismatched data, against 16 in the twentieth round's
+run. Of the 125 lines, 6 are reached (each by its new test: none was reached under seeds 1 to 9
+before), 1 is a guard with a proof, 2 are removed, and 116 are open. `sweep.rs` 1175 and 1176,
+the arm of a link with no tuple type in `walk`, are one line in the rewritten `walk`, 1170
+(`return Some(None)`), still at 0: it needs a tail link with neither a bare atom nor a tuple type,
+and no proof was found that `list_sweep_value` never meets one. The 115 open lines after the edits
+(`empty.rs` 95, `empty/sweep.rs` 14, `bdd.rs` 2, `print.rs` 4) are carried to
+TEST-kernel-unreached-paths-15, listed at b2d657f5e, this round's code commit, in
+/home/luke/Work/wt/coverage/TEST-kernel-unreached-paths-14-kernel24-b2d657f5e.txt.
