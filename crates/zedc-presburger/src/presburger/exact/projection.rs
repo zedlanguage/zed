@@ -26,6 +26,11 @@
 //!
 //! Both are measured against each other and against the old cell in
 //! docs/handoff/PRES-pugh-findings.md; they are switched by [`METHOD`] for that comparison.
+//!
+//! Published work used in this file. Each site names the author; the full citation is in the
+//! crate's `lib.rs`, "References". Pugh 1991, doi:10.1145/125826.125848, and 1992,
+//! doi:10.1145/135226.135233; Komuravelli, Gurfinkel and Chaki 2014,
+//! doi:10.1007/978-3-319-08867-9_2, whose entry also covers Cooper's method.
 
 use std::cell::Cell;
 use std::collections::{BTreeMap, BTreeSet, HashSet};

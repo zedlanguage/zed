@@ -351,7 +351,8 @@ impl FoldNode {
 // directly to the root, copying a single `B`-bit written offset onto `Omega(n)` atoms in
 // `O(n * B)` time and bytes (`r6_tests::pncx_wide_affine_alias_scale`: 50.6x bytes and 13.4x
 // instructions for 8x size, 391.9 MB at n = 1024). Linking by subtree size without compressing
-// offsets keeps tree height at most `floor(log2 n)` (Tarjan and van Leeuwen 1984) while leaving
+// offsets keeps tree height at most `floor(log2 n)` (Tarjan and van Leeuwen 1984,
+// doi:10.1145/62.2160; the full comment is in zed-graph `union_find.rs`) while leaving
 // every edge offset stored on a single tree edge (O(S) total stored bits for total input
 // bit-length S). Dense `usize` indices keep tree walks and LCA queries allocation-free without
 // `HashMap` lookups or `Atom` clones; LCA cancellation in `rewrite_lin_full` and `union` avoids
@@ -3233,7 +3234,8 @@ fn coprime_factorization(moduli: &BTreeSet<Int>) -> ModBase {
 // factorization in O(B) word operations when the largest cofactor is at most
 // the cofactors' B bits (the table method), and in O(M(B) log k) otherwise (one
 // product/remainder tree). Failure gives no verdict and Bernstein's general
-// method continues. Bench: pncx_common_factor_scale (table side); the tree side
+// method continues (doi:10.1016/j.jalgor.2004.04.009; the full comment is in zed-kernel
+// `num/coprime.rs`, at its head). Bench: pncx_common_factor_scale (table side); the tree side
 // is over the limit of 10.5 at every size that fits in 60 s (plan row
 // PERF-negated-chain-unsolved, U1; its bench pncx_common_factor_tree_side_scale is
 // deferred in wt/scratch/deferred-tests/PERF-negated-chain-unsolved.rs).

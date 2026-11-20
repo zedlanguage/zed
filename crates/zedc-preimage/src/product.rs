@@ -36,6 +36,47 @@
 //! A binding time is [`Time::Build`] for a value known when the program is built and
 //! [`Time::Run`] for one known only when it runs; a meet takes the earlier and a join the
 //! later.
+//!
+//! Published work used in this file. Each use names the paper at the code; the full citation,
+//! the part used and how it was checked are in this crate's `lib.rs`, section "References"
+//! (Pugh, Seidel and Aragon, Tarjan, Blelloch et al., Driscoll et al., Sarnak and Tarjan,
+//! Freuder and Shostak are described in full in zedc-presburger's `lib.rs`, "References").
+//!
+//! - Pugh's Omega test, Supercomputing '91, doi:10.1145/125826.125848, and CACM 35(8), 1992,
+//!   doi:10.1145/135226.135233, with Fourier-Motzkin elimination: `impl Scope`, fn `atoms_of`,
+//!   fn `eliminate`, fn `covers`, `impl ArmNormals`.
+//! - Dijkstra 1959, doi:10.1007/BF01386390 (full comment at the head of zed-graph `heap.rs`):
+//!   fn `put_in`, fn `negative_without_gaps`, struct and `impl Repair`, `impl Scope`.
+//! - Bellman 1958, doi:10.1090/qam/102435, and Shostak, J. ACM 28(4), 1981,
+//!   doi:10.1145/322276.322288: `impl NameProducts` (fn `hold`), `impl Scope`.
+//! - Galler and Fischer, CACM 7(5), 1964, doi:10.1145/364099.364331, and Tarjan, J. ACM 22(2),
+//!   1975, doi:10.1145/321879.321884: `impl NameProducts`.
+//! - Blelloch, Ferizovic and Sun, SPAA 2016, doi:10.1145/2935764.2935768 (full comment at the
+//!   head of zed-kernel `treap_set.rs`): `impl Product`.
+//! - Okasaki 1998, doi:10.1017/cbo9780511530104: the persistent list's `IntoIterator`.
+//! - Pearce and Kelly, ACM JEA 11, doi:10.1145/1187436.1210590: fn `put_in`, `impl Repair`.
+//! - Dietz and Sleator, STOC 1987, doi:10.1145/28395.28434, and Bender, Cole, Demaine,
+//!   Farach-Colton and Zito, ESA 2002, doi:10.1007/3-540-45749-6_17: `impl Potential`.
+//! - Driscoll, Sarnak, Sleator and Tarjan, JCSS 38(1), 1989, doi:10.1016/0022-0000(89)90034-2,
+//!   and Sarnak and Tarjan, CACM 29(7), 1986, doi:10.1145/6138.6151: fn `linked`, `impl Block`,
+//!   `impl Scope`, fn `pst_hi_gt`.
+//! - Amagata, Yamada, Ji and Hara, arXiv 2405.05601, and Averkov and Schymura, Math. Prog.
+//!   194, 2022, doi:10.1007/s10107-021-01623-4: `impl Block`, fn `pst_hi_gt`.
+//! - Schulte and Stuckey, TOPLAS 31(1), 2008, doi:10.1145/1452044.1452046: fn
+//!   `finiteness_mask`, `impl Block`, `impl Scope`.
+//! - Holm, de Lichtenberg and Thorup, J. ACM 48(4), 2001, doi:10.1145/502090.502095 (named as
+//!   not used): `impl Split`.
+//! - Overmars and van Leeuwen, JCSS 23(2), 1981, doi:10.1016/0022-0000(81)90012-x: the lower
+//!   hull tree.
+//! - Karr, Acta Informatica 6(2), 1976, doi:10.1007/BF00268497 (cited in zedc-presburger's
+//!   `lib.rs`, "References"; the join is zedc-presburger `hull.rs`): `impl Scope`.
+//! - Freuder, J. ACM 29(1), 1982, doi:10.1145/322290.322292; Jeavons and Cooper, AI 79(2),
+//!   1995, doi:10.1016/0004-3702(95)00107-7; Cotton and Maler, SAT 2006,
+//!   doi:10.1007/11814948_19; Ramalingam, Song, Joskowicz and Miller, Algorithmica 23(3), 1999,
+//!   doi:10.1007/pl00009261; Cucker, Koiran and Smale, J. Symb. Comput. 27(1), 1999,
+//!   doi:10.1006/jsco.1998.0242; Cousot and Cousot, POPL 1979, doi:10.1145/567752.567778;
+//!   Bessière, Régin, Yap and Zhang, AI 165(2), 2005, doi:10.1016/j.artint.2005.02.004 (named
+//!   as not used): `impl Scope`.
 
 use imbl::ordmap::DiffItem;
 use std::cell::RefCell;

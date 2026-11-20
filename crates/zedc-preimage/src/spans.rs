@@ -9,10 +9,12 @@
 //! that watch one member all move each time it is taken out, so `m` holes cut one after
 //! another at that member cost `Θ(k·m)`. An index by `l` alone, or by `h` alone, visits each
 //! live span that starts (or ends) inside the run, `Θ(k·m)` again. Used: a treap (Seidel and
-//! Aragon, "Randomized search trees", Algorithmica 16, 1996) ordered by `(l, h)` with a
+//! Aragon, "Randomized search trees", Algorithmica 16, 1996, doi:10.1007/BF01940876; the full
+//! comment is in module [`zed_kernel::priority`]) ordered by `(l, h)` with a
 //! priority drawn at random once per run ([`priority`]), each node holding the least `h` below
 //! it, as McCreight's priority search tree answers a three-sided query ("Priority search
-//! trees", SIAM J. Comput. 14, 1985): the spans with `l` in a range and `h` below a bound in
+//! trees", SIAM J. Comput. 14, 1985, doi:10.1137/0214021, cited in this crate's `lib.rs`,
+//! References): the spans with `l` in a range and `h` below a bound in
 //! `O((f + 1) log k)` expected for `f` found, where the tree's depth is `O(log k)` in
 //! expectation over the draw for every set of spans. In a run the shape depends on the set
 //! alone, so two trees of one set are equal as values; the shape is never shown (the tree's

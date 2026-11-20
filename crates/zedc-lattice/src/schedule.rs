@@ -9,7 +9,9 @@
 //! asking for one node at a time, and which node it asks for next may depend on the answers it
 //! has. A component that holds a once node is refused ([`Refusal`]).
 //!
-//! The search is Tarjan's (DESIGN.md \[Tarjan72\]), the workspace's one copy of it
+//! The search is Tarjan's (DESIGN.md \[Tarjan72\]: R. E. Tarjan, SIAM J. Comput. 1(2), 1972,
+//! doi:10.1137/0201010; the full comment is in zed-graph `lib.rs`, at its head and fn
+//! `tarjan`), the workspace's one copy of it
 //! ([`zed_graph::Search`]), run again for each demand on the graph as it has grown: one
 //! depth-first search with an explicit stack, each node visited once and each read walked once, the components emitted as they
 //! close, every component a node reads closed before it. A once node is polled with each answer

@@ -15,7 +15,9 @@
 //! either side. The order compares bounds the same way, so it is sound and not complete:
 //! `int[0..=n]` is below `int[..=m]` only when its union's end is at most `m`'s floor, or it
 //! has a bound with the terms of `m`. Widening widens the union and keeps only the symbolic
-//! bounds the old element had, so a chain of widenings is finite.
+//! bounds the old element had, so a chain of widenings is finite. The widening and narrowing
+//! operators are P. and R. Cousot's (POPL 1977, doi:10.1145/512950.512973); the full comment
+//! is at the head of `iterate.rs`.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;

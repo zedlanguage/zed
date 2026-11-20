@@ -1,5 +1,7 @@
 //! The affine hull of a set of integer points (Karr's join, step L1.39): the affine equalities
 //! that hold at every point, and the join that keeps the equalities two sets both satisfy.
+//! Karr: M. Karr, "Affine relationships among variables of a program", Acta Informatica 6(2),
+//! 1976, doi:10.1007/bf00268497; the full citation is in the crate's `lib.rs`, "References".
 //!
 //! The equalities are kept in reduced row echelon form over the rationals, each row scaled to
 //! integers with no common factor and its first coefficient positive. No row mentions another

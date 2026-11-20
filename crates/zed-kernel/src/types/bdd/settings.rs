@@ -1,7 +1,8 @@
 //! Persistent ordered sets of settings, each an atom and a value, for [`Part::forced`]: treaps
 //! whose union and intersection split one set at the other's root and join the halves, so `k`
 //! settings meet `n` in `O(k log(n/k + 1))` expected time (Blelloch, Ferizovic and Sun, "Just
-//! join for parallel ordered sets", SPAA 2016, Theorem 4 of the full version, for independent
+//! join for parallel ordered sets", SPAA 2016, doi:10.1145/2935764.2935768, Theorem 4 of the
+//! full version, for independent
 //! priorities, cited in full and quoted in module `bdd::list::treap`; for the 8-wise
 //! independent priorities here, module [`crate::priority`]), where adding the smaller set's
 //! settings to the larger one at a time takes `O(k log n)`.

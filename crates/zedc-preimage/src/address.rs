@@ -372,7 +372,8 @@ impl Canon {
             // read under k bindings of its free names is renamed k times
             // ([`Canon::canonical`]). Nothing is given up: every term gets its address. Why: an
             // address that does not depend on the bindings around a shared part (Maziarz et
-            // al., "Hashing modulo alpha-equivalence", PLDI 2021, O(n log² n)) hashes each
+            // al., "Hashing modulo alpha-equivalence", PLDI 2021, doi:10.1145/3453483.3454088,
+            // cited in this crate's `lib.rs`, References; O(n log² n)) hashes each
             // part with the places of its free names, not a term that can be compared part by
             // part, and the trusted base needs that comparison. Trigger: two shared parts of F
             // free names each, joined at n nodes (n·F inserts), or a part of size m under k

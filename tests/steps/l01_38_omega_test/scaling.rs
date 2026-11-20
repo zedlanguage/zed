@@ -204,7 +204,8 @@ pub(super) fn odd_cycle(n: usize) -> Formula {
 }
 
 /// `n` disjoint copies of Pugh's example, shifted: each part has two variables and is decided
-/// exactly, and each is empty.
+/// exactly, and each is empty (Pugh 1992, doi:10.1145/135226.135233, sec. 2.3.3, quoted in
+/// zedc-presburger `lib.rs`, "References").
 pub(super) fn pugh_pairs(n: usize) -> Formula {
     let mut r = Vec::new();
     for i in 0..n {

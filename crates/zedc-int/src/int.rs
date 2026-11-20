@@ -1034,7 +1034,10 @@ impl OddPart {
 
     /// The [`Filter`] of `o`. The indices wider than a word are the odd primes `p` with
     /// `64 * p < n`, for `n` the bits of `o`, and the least prime `q = k * p + 1` is found by
-    /// trying `k = 2, 4, ...`, about `ln q` tries ([`is_prime`]). All the residues come from
+    /// trying `k = 2, 4, ...`, about `ln q` tries ([`is_prime`]: Miller-Rabin with bases that
+    /// decide every 64-bit number, Miller 1976, doi:10.1016/S0022-0000(76)80043-8, and Rabin
+    /// 1980, doi:10.1016/0022-314X(80)90084-0; the full comment is in zed-numtheory `factor.rs`,
+    /// at its head and fn `is_prime`). All the residues come from
     /// one remainder tree ([`remainders`]): the primes, multiplied into words, are `O(n / 64)`
     /// bits together, so the tree costs `O(M(n) log n)`, where one division of `o` per word cost
     /// `O(n)` per index and `O(n^2 / log n)` in all.
@@ -1245,12 +1248,15 @@ fn pow_mod_pow2(x: &BigUint, e: u64, mask: &BigUint) -> BigUint {
 /// Kept beside zed-kernel's `num::coprime::coprime_base`, the copy zedc-check and
 /// zedc-presburger call, for a measured reason (DRY-coprime-bases-one, 2026-11-20): this
 /// crate's inputs are a few integers of many bits that share small primes, and on them the
-/// kernel's routine (Bernstein's, whose `ppi` and pair steps take gcds of two numbers of `n`
-/// bits each, O(M(n) log n)) did far more work than this one (gcds against small elements and
-/// [`strip`], O(M(n))): `l01_24 equality_over_a_wide_odd_base_scales_with_its_bits` took
-/// 22.8e9 instructions at its first size against 2.1e9, and 11.9 times the work at 8 times the
-/// size against 9.2, past the limit 10.5; `equality_over_a_wide_base_scales_with_its_bits`
-/// took 482e6 against 2.2e6 (ratio 9.8 against 6.5). This copy's cost grows with the count of
+/// kernel's routine (Bernstein's: D. J. Bernstein, "Factoring into coprimes in essentially
+/// linear time", J. Algorithms 54(1), 2005, doi:10.1016/j.jalgor.2004.04.009, the full comment
+/// at the head of zed-kernel `num/coprime.rs`; its `ppi` and pair steps take gcds of two
+/// numbers of `n` bits each, O(M(n) log n)) did far more work than this one (gcds against
+/// small elements and [`strip`], O(M(n))):
+/// `l01_24 equality_over_a_wide_odd_base_scales_with_its_bits` took 22.8e9 instructions at its
+/// first size against 2.1e9, and 11.9 times the work at 8 times the size against 9.2, past the
+/// limit 10.5; `equality_over_a_wide_base_scales_with_its_bits` took 482e6 against 2.2e6
+/// (ratio 9.8 against 6.5). This copy's cost grows with the count of
 /// inputs times the count of elements, which the kernel's avoids; the plan row
 /// PERF-coprime-base-wide-few gives the kernel a path for such inputs, after which this copy
 /// goes.

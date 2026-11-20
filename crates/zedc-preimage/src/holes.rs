@@ -301,7 +301,8 @@ fn meet<'a>(members: impl Iterator<Item = (&'a [(Int, Int)], &'a Int)>) -> Vec<(
 // Complexity tradeoff: naive version, an implicit equality found by a shortest-path search
 // from each name for a cycle of weight 0 back to it, O(n m), or by the closure of the
 // constraints. Used: one point of the system, which the search for the greatest point has
-// already found, and the components of the edges tight at it (Tarjan, the same
+// already found, and the components of the edges tight at it (Tarjan 1972,
+// doi:10.1137/0201010, full comment in zed-graph `lib.rs`, fn `tarjan`; the same
 // `components`), O(n + m), then one sweep per component over its pieces, O(p log p).
 // Tradeoffs: none in what is found, as every cycle of weight 0 is tight at any point; the
 // tight edges are built once, O(m) memory.
@@ -563,6 +564,8 @@ impl Run<'_> {
     /// The greatest values of the names of component `c` over their hulls, from their caps:
     /// by Dijkstra on the reduced weights when the potential holds at every edge of the
     /// component, otherwise by label correcting. The values found are then the potential.
+    /// Dijkstra 1959, doi:10.1007/BF01386390, and Bellman 1958, doi:10.1090/qam/102435; the
+    /// full comments are at the heads of zed-graph `heap.rs` and `worklist.rs`.
     ///
     /// Complexity tradeoff: without a potential at every name of the component, label
     /// correcting (Bellman–Ford with a queue) costs O(n m) at worst on the component's `n`
@@ -636,7 +639,8 @@ impl Run<'_> {
 
     /// Least distances within component `c` from `sources`, each with its starting value,
     /// going on from a name only where `on` allows it, by Dijkstra on the reduced weights of
-    /// the potential, which [`Run::hull`] has set at every name of the component.
+    /// the potential, which [`Run::hull`] has set at every name of the component. Dijkstra
+    /// 1959, doi:10.1007/BF01386390; the full comment is at the head of zed-graph `heap.rs`.
     ///
     /// The search keeps each name's label less its potential, a distance over the reduced
     /// weights `w + p(v) - p(z)`, and adds the potential back at the end. An edge whose reduced

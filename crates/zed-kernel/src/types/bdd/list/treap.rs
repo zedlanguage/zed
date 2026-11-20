@@ -17,7 +17,8 @@
 //! In this module: `join` is JOIN2, merging the facing spines of the two trees, higher priority
 //! first, which is JOIN's recursion with no middle key; `split` is one walk down the search
 //! path that hands each node to the left or right result, the standard treap split (Seidel and
-//! Aragon, module [`crate::priority`]) rather than the paper's split by JOIN, with the same
+//! Aragon 1996, doi:10.1007/BF01940876; the full comment is in module [`crate::priority`], at
+//! the head of `priority.rs`) rather than the paper's split by JOIN, with the same
 //! result, since a treap's shape is fixed by its keys and priorities. Departures: the paper's
 //! priorities are independent and uniform; here they are the 8-wise or 5-wise independent draw
 //! of module [`crate::priority`], under which the bounds used are proved there. The size kept

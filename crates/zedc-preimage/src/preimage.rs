@@ -778,7 +778,9 @@ enum Split {
 /// variables for the split input, one flat disjunct for each piece ([`residue_relation`]); the
 /// box is narrowed to its projection over the box's hull, linear in the pieces
 /// ([`project_classes`]); and the box is exact when every member lies in the set of its
-/// class, a sweep over the pieces with the classes marked in a Fenwick tree, `O(P log P)` for
+/// class, a sweep over the pieces with the classes marked in a Fenwick tree (Fenwick 1994,
+/// doi:10.1002/spe.4380240306; full comment at the head of zed-collections `fenwick.rs`),
+/// `O(P log P)` for
 /// `P` pieces, with no Presburger decision ([`covers`]). Before the first transfer such an
 /// answer is kept, and the transfer and the split over its box run as
 /// without it ([`preimage_in`]): over that narrower box the split may be exact where over the
@@ -1231,7 +1233,9 @@ fn in_class(lo: &End, hi: &End, class: &IntervalSet, m: i128) -> Option<Interval
 /// sweep over the ends of the pieces of `out` and of every set, in order, with the classes
 /// whose set holds the stretch up to the next end marked in a Fenwick tree over the classes:
 /// a stretch within `out` is covered when every class of its remainders is marked, one range
-/// of classes, or two where the remainders wrap past `m`. `O(P log P)` for `P` pieces.
+/// of classes, or two where the remainders wrap past `m`. `O(P log P)` for `P` pieces. The
+/// tree is Fenwick's (doi:10.1002/spe.4380240306; full comment at the head of zed-collections
+/// `fenwick.rs`).
 fn covers(out: &IntervalSet, sets: &[&IntervalSet], cuts: &[i128], m: i128) -> bool {
     // At each end a piece starts (+1) or stops (-1): a set's, of class `Some(j)`, or `out`'s.
     let mut ends: Vec<(End, i64, Option<usize>)> = Vec::new();
@@ -3853,7 +3857,9 @@ struct Projection {
 // Complexity tradeoff: naive version, a call that does not hold its callee's claim reads the
 // callee's body again, O(m) a call for a callee of m links, O(n·m) over a chain of n links.
 // Used: the callee's canonical relation with every variable but the canonical atoms and the
-// inputs eliminated (Fourier–Motzkin with the dark shadow, exact or nothing), made once per
+// inputs eliminated (Fourier–Motzkin with the dark shadow of Pugh, CACM 35(8), 1992,
+// doi:10.1145/135226.135233, sec. 2.3.2, cited in this crate's `lib.rs`, References; exact or
+// nothing), made once per
 // callee and key (`Memo::projections`) and written at each call's arguments, O(the rows left)
 // a call (one or two rows for one parameter; 8.0 times the bytes from 50 to 400 links).
 // Tradeoffs: memory for one projection per callee and key; where the relation or a
@@ -7996,7 +8002,8 @@ impl<'m, 't> Walk<'m, 't> {
     /// nodes of the tree that meet `ranges` ([`cls_clamp`], [`cls_zip`]), the others replaced by
     /// one placeholder leaf each: `O((r + L_r) log n)` for `r` ranges and the `L_r` leaves that
     /// meet them, as a range query of a segment tree (Bentley, "Solutions to Klee's rectangle
-    /// problems", 1977) visits the nodes on the paths to the range's ends. Cost: the result is
+    /// problems", 1977, unpublished, no DOI, cited in this crate's `lib.rs`, References) visits
+    /// the nodes on the paths to the range's ends. Cost: the result is
     /// not cached, as the full summary is ([`Walk::by_class`]), so an arm read in full
     /// elsewhere too is read twice; and a bound ([`Bound`]) is checked only over the classes
     /// read, which can accept a term the full summary refused for a class that no case reads.
@@ -12660,7 +12667,8 @@ static PIECE_PRIORITIES: zed_kernel::priority::Priorities =
 /// Distinct pieces tie with probability at most `11/2^64` a pair; the priorities are otherwise
 /// 5-wise independent and uniform, and every node's depth is `O(log n)` in expectation for
 /// every set of pieces (Seidel and Aragon, "Randomized search trees", Algorithmica 16, 1996,
-/// Theorem 3.3 and section 6; the proof is in module [`zed_kernel::priority`]), where the fixed
+/// doi:10.1007/BF01940876, Theorem 3.3 and section 6; the full comment and the proof are in
+/// module [`zed_kernel::priority`]), where the fixed
 /// hash this replaces had no bound for chosen pieces (COMPLEXITY.md K123). The shape is never
 /// shown: the nodes' sums (`vals`, `span`, `dense`, `len`) and their tags are the same for every
 /// shape.
@@ -12918,7 +12926,8 @@ fn slice_treap(root: Tree, lo: &End, hi: &End) -> Tree {
 /// pieces' ends ([`add_into`]): each piece of the smaller adds its line to the stretch of
 /// the larger it covers by one tag. Splitting the larger by the `m` sorted cuts of a treap
 /// costs `O(m log(n / m + 1))` expected time, as for the union of two treaps by splitting
-/// and joining (Blelloch, Ferizovic and Sun, "Just join for parallel ordered sets", 2016):
+/// and joining (Blelloch, Ferizovic and Sun, "Just join for parallel ordered sets", 2016,
+/// doi:10.1145/2935764.2935768; the full comment is at the head of zed-kernel `treap_set.rs`):
 /// a cut at a node splits only the part of the larger between its ancestors' cuts. So a
 /// chain of `d` sums, each with an operand of `O(1)` pieces, costs `O(d log d)` steps on
 /// numbers.
@@ -13829,6 +13838,8 @@ fn class_test(term: &Term, classes: &Classes) -> Option<bool> {
 
 /// The class of the integer `term` at every point with each input in its class, by Granger's
 /// arithmetic of congruences, exact at every size; `None` for a form it does not cover.
+/// Granger 1989, doi:10.1080/00207168908803778; the full comment is in zedc-lattice
+/// `lattice.rs`, enum `Congruence`.
 fn class_of(term: &Term, classes: &Classes) -> Option<Congruence> {
     let parts = |c: Congruence| match c {
         Congruence::Bottom => None,

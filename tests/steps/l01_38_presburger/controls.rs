@@ -57,7 +57,9 @@ fn a_relation_of_any_size_is_decided() {
 #[test]
 fn a_question_between_the_shadows_is_decided() {
     // Pugh's example: 27 <= 11x + 13y <= 45, -10 <= 7x - 9y <= 4 has no integer point, its
-    // dark shadow is empty and its real shadow is not; two variables are decided exactly.
+    // dark shadow is empty and its real shadow is not; two variables are decided exactly (Pugh
+    // 1992, doi:10.1145/135226.135233, sec. 2.3.3, quoted in zedc-presburger `lib.rs`,
+    // "References").
     let l = |a: i128, b: i128, k: i128| {
         Lin::atom(Atom::Sym("x".into()))
             .times(a)

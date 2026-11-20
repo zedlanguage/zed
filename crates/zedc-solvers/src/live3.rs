@@ -29,6 +29,10 @@
 //!
 //! The answer is complete, so it does not depend on the order of the variables; the point
 //! found may.
+//!
+//! Sources: Lenstra 1983 (doi:10.1287/moor.8.4.538), Lenstra, Lenstra and Lovász 1982
+//! (doi:10.1007/bf01457454) and Megiddo 1984 (doi:10.1145/2422.322418); the full citations,
+//! with what was checked, are in the crate's `lib.rs`, section "References".
 
 use std::borrow::Borrow;
 use std::cmp::Ordering;

@@ -137,7 +137,8 @@ fn verdicts_of_undecided_groups_scale() {
 ///
 /// Size: n 128 until TEST-bench-move-l0123 (author P169), then 1024, held there because
 /// `largest_group` walked from every definition, O(n²); now 8192 (TEST-largest-group-scc,
-/// `largest_group` by Tarjan's algorithm), 1x 85 to 106 ms, ratio 8.0 to 8.1 by instructions
+/// `largest_group` by Tarjan's algorithm, doi:10.1137/0201010, full comment in zed-graph
+/// `lib.rs`, fn `tarjan`), 1x 85 to 106 ms, ratio 8.0 to 8.1 by instructions
 /// and 7.9 by bytes, at load 31. The 1x stays short of 1 s because the whole test is held
 /// under 20 s: at 65536 the 1x took 0.88 s (ratio 8.09) but the test 85 s, since the first
 /// run of each size, which `scaling::check` also holds to the limit, does about 4 times the

@@ -35,9 +35,10 @@ static TAKEN: zed_graph::IdSource = zed_graph::IdSource::starting_at(0);
 /// 17 to 33 times the work at n and 8n on such a chain). Each interval takes its own number,
 /// below `P` for any run, so the priorities of the intervals of a tree are 5-wise independent
 /// and uniform, and every node's depth is `O(log n)` in expectation (Seidel and Aragon,
-/// "Randomized search trees", Algorithmica 16, 1996, Theorem 3.3 and section 6; the proof is in
-/// module [`zed_kernel::priority`]), where the fixed sequence this replaces had no bound for
-/// chosen intervals (COMPLEXITY.md K123). On one thread the numbers an operation takes depend
+/// "Randomized search trees", Algorithmica 16, 1996, doi:10.1007/BF01940876, Theorem 3.3 and
+/// section 6; the full comment and the proof are in module [`zed_kernel::priority`]), where
+/// the fixed sequence this replaces had no bound for chosen intervals (COMPLEXITY.md K123). On
+/// one thread the numbers an operation takes depend
 /// only on the intervals, never on the shape. Not proved: while other threads take numbers at
 /// the same time, which number an interval gets depends on their timing, which the draw can
 /// change; the bound assumes it does not (cost only: the number sets the tree's shape, and the

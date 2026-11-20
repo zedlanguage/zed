@@ -109,7 +109,9 @@ fn a_ray_with_holes_is_a_tail_and_a_filled_one_is_not() {
 
 #[test]
 fn the_omega_nightmare_has_no_point() {
-    // Pugh 1992: 27 <= 11x + 13y <= 45, -10 <= 7x - 9y <= 4 has no integer point.
+    // Pugh 1992: 27 <= 11x + 13y <= 45, -10 <= 7x - 9y <= 4 has no integer point (CACM 35(8),
+    // doi:10.1145/135226.135233, sec. 2.3.3, "An Omega test nightmare"; cited and quoted in the
+    // crate's `lib.rs`, "References").
     let rows = vec![
         row(&[("x", 11), ("y", 13)], -27, Rel::Ge),
         row(&[("x", -11), ("y", -13)], 45, Rel::Ge),

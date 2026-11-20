@@ -7,6 +7,10 @@
 //! of each at n and 8n: rows of three terms, the coefficients' bit size, columns seen only
 //! through two aggregates, a UTVPI hub with and without cycles, and three variables in many
 //! rows.
+//!
+//! Goldberg and Radzik's search, named below: A. V. Goldberg and T. Radzik, Applied Mathematics
+//! Letters 6(3), 1993, doi:10.1016/0893-9659(93)90022-f, full comment at the head of
+//! zedc-solvers `utvpi.rs`; BF-Dijkstra is cited in zedc-solvers `lib.rs`, "References".
 
 use std::sync::Arc;
 

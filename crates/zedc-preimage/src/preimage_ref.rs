@@ -81,7 +81,8 @@
 //! pass in topological order), in a 1D state (`State1d`): the input's values partitioned into
 //! intervals by the value each takes at the current node, kept in a persistent value-ordered AVL
 //! tree with path copying (Adelson-Velsky and Landis 1962; persistence by path copying as in
-//! Driscoll, Sarnak, Sleator and Tarjan, "Making data structures persistent", JCSS 38, 1989), so
+//! Driscoll, Sarnak, Sleator and Tarjan, "Making data structures persistent", JCSS 38, 1989,
+//! doi:10.1016/0022-0000(89)90034-2, cited in this crate's `lib.rs`, References), so
 //! that a branch shares the unchanged subtrees of both arms. A shift or a negation relabels the
 //! tree through a lazy tag on its nodes, and a positive quotient (`a = q*c + r`,
 //! `tree_division`) maps it in one O(p) pass over its p pieces; a remainder met while the state
@@ -90,7 +91,8 @@
 //! excluded piece, bounded by moduli written in the program and not by the input range or the
 //! chain length. A chain of guards over affine links is solved by an endpoint sweep that keeps
 //! the composed affine map in a segment tree of affine maps (the composition of affine maps is
-//! associative; J. L. Bentley, "Solutions to Klee's rectangle problems", 1977), one O(log n)
+//! associative; J. L. Bentley, "Solutions to Klee's rectangle problems", 1977, unpublished,
+//! no DOI, cited in this crate's `lib.rs`, References), one O(log n)
 //! update per guard endpoint (`Tx::affine_guards`). Terms that read two or more inputs, and step
 //! shapes the 1D state does not cover, keep main's memo. The transfer itself follows no paper;
 //! the papers are those of the data structures.
@@ -3312,7 +3314,9 @@ impl<'t> Tx<'t> {
     // pieces at each step would cost O(p) per step, O(n^2) on a chain of n links; the tree
     // costs O(log p) per step when each operation at a step follows a bounded number of
     // root-to-leaf paths, O(n log n) in all. The join primitives are those of Blelloch,
-    // Ferizovic and Sun, "Just join for parallel ordered sets" (SPAA 2016): `tree_node` joins
+    // Ferizovic and Sun, "Just join for parallel ordered sets" (SPAA 2016,
+    // doi:10.1145/2935764.2935768; the full comment is at the head of zed-kernel
+    // `treap_set.rs`): `tree_node` joins
     // trees of heights h1, h2 in O(|h1 - h2| + 1) and keeps the AVL bound, height at most
     // 1.44 log2(p + 2) for p nodes; `tree_restrict` is their split, two paths;
     // `tree_apply` and `tree_push` are O(1).
@@ -3472,11 +3476,11 @@ impl<'t> Tx<'t> {
     // {j + 1} with each label of the at most 5 keys of B_j that meet [-2, 2]. Each such label
     // lies in [j + 2, M], so `IntervalSet::join`'s two `is_subset` tests stop at once (the
     // one-piece fast path, or the first step of the walk) and `union` of one piece with p
-    // pieces costs O(log p) time and new nodes (Blelloch, Ferizovic and Sun 2016, interval.rs
-    // `union`). So a link costs O(log n) time and bytes, O(n log n) in all. The leaves (`Input`
-    // at A_0 and B_0) run once in `solve_1d`: `eval_diagonal` costs O(n log n) (a seek per
-    // node, O(1) nodes by (C), then the sort in `from_pieces` of at most 15 (m + 1) + 1 pieces by
-    // (D)). The proof covers
+    // pieces costs O(log p) time and new nodes (Blelloch, Ferizovic and Sun 2016,
+    // doi:10.1145/2935764.2935768, interval.rs `union`). So a link costs O(log n) time and
+    // bytes, O(n log n) in all. The leaves (`Input` at A_0 and B_0) run once in `solve_1d`:
+    // `eval_diagonal` costs O(n log n) (a seek per node, O(1) nodes by (C), then the sort in
+    // `from_pieces` of at most 15 (m + 1) + 1 pieces by (D)). The proof covers
     // `inverse_states` only, as K124 does, not the rest of `preimage_in`.
     // Measured (BENCH-ref-memo-normal-min-gap-bytes): first-run bytes per link rise by 4,065
     // to 4,947 at each doubling from 128 to 8192 and the rise does not grow, as O(log n) path
@@ -6122,6 +6126,8 @@ fn class_test(term: &Term, classes: &Classes) -> Option<bool> {
 
 /// The class of the integer `term` at every point with each input in its class, by Granger's
 /// arithmetic of congruences; `None` for a form it does not cover or a class too fine to hold.
+/// Granger 1989, doi:10.1080/00207168908803778; the full comment is in zedc-lattice
+/// `lattice.rs`, enum `Congruence`.
 fn class_of(term: &Term, classes: &Classes) -> Option<Congruence> {
     // A class as (modulus, residue) in i128, and back, `None` when it leaves u64 and i64.
     let parts = |c: Congruence| match c {

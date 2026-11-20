@@ -200,7 +200,8 @@ impl<'f> Parts<'f> {
             kids[v] = mine;
         }
         let n = nodes.len();
-        // Each part after all that hold it (Kahn's order, last ready first).
+        // Each part after all that hold it (Kahn's order, last ready first; Kahn 1962,
+        // doi:10.1145/368996.369025; the full comment is in zed-graph `order.rs`).
         let mut left: Vec<usize> = parents.iter().map(Vec::len).collect();
         let mut order = Vec::with_capacity(n);
         zed_graph::kahn(

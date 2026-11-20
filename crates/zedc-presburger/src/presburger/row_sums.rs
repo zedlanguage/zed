@@ -161,6 +161,12 @@
 //! have a common step and rows divided by the gcd of their coefficients, then the join once
 //! more on the rows so reduced (PRES-overlap-sums-exact-subclasses; its proofs, its scored
 //! table of the classes not taken, and its literature are in that module's note).
+//!
+//! Published work used in this file, besides the "Papers" paragraph above. Each site names
+//! the author; the full citation is in the crate's `lib.rs`, "References". Bellman 1957 (a
+//! book, no DOI); Horowitz and Sahni 1974, doi:10.1145/321812.321823; Bringmann 2017,
+//! doi:10.1137/1.9781611974782.69; Dechter 1999, doi:10.1016/s0004-3702(99)00059-4; Cuthill
+//! and McKee 1969, doi:10.1145/800195.805928.
 
 use std::borrow::Cow;
 use std::cell::Cell;

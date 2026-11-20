@@ -1,4 +1,8 @@
 //! The benchmarks of `stages.rs` (TEST-bench-move-l0138), run by `tools/run_tests.sh --bench`.
+//! Goldberg and Radzik's search: A. V. Goldberg and T. Radzik, Applied Mathematics Letters
+//! 6(3), 1993, doi:10.1016/0893-9659(93)90022-f, full comment at the head of zedc-solvers
+//! `utvpi.rs`; BF-Dijkstra and Duong's search are cited in zedc-solvers `lib.rs`, "References",
+//! and Bellman–Ford–Moore in `tests/src/bellman_ford_moore.rs`.
 
 use crate::scaling::decides;
 use crate::stages::*;

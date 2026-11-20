@@ -2552,7 +2552,8 @@ impl<'t, 'a> Ck<'t, 'a> {
     // O(n²) (ATOM-nested-sq). A variable met at an earlier binding is not examined again
     // unless it is at the top of `v`: its class was fixed there, or left to a call or to the
     // function's end, and a later binding that adds to it holds it, or a variable merged
-    // with it, at the top or in a shape it makes. Each class costs a find, O(α(N)), and at
+    // with it, at the top or in a shape it makes. Each class costs a find, O(log N) (union by
+    // rank with no path compression; check/mod.rs, struct `Class`), and at
     // most three passes over its l literals ([`Ck::lits_take`]), O(l); the name's type is
     // rebuilt with the carriers in place, O(size of `v` outside the shapes holding no
     // variable bound). A class of literals alone reaches one binding: the name then reads
@@ -2814,7 +2815,8 @@ impl<'t, 'a> Ck<'t, 'a> {
     /// its variable a type, so it keeps the carrier [`Self::class_takes`] reads, and the need
     /// is checked at that carrier, as before. Returns whether `k` follows `p`.
     // Complexity tradeoff: naive version, merge `k` into `p` as an arithmetic operator does,
-    // O(α(N)) and the literals moved, which removes from `p` the carriers `k` cannot take,
+    // O(log N) (check/mod.rs, struct `Class`) and the literals moved, which removes from `p`
+    // the carriers `k` cannot take,
     // against L1.26a. Used: one binder copied, O(1) (its component chain is shared), and one
     // pass over the l literals of `k` for their own carriers, O(l); each class of literals
     // alone is a side of one comparison only, so each literal is read once here.
@@ -8179,7 +8181,8 @@ impl<'t, 'a> Ck<'t, 'a> {
     // from the text, which would keep the cast exact at `f64` too but must bound every
     // intermediate value (`2^2000 - 2^2000` is a NaN at `f64`) through every name read, O(size
     // of the expressions read) per cast. Used: the class's flags and one restriction of its
-    // mask, O(α(N)) for the find in a union of N classes, then the operand's type rebuilt as
+    // mask, O(log N) for the find in a union of N classes (union by rank with no path
+    // compression; check/mod.rs, struct `Class`), then the operand's type rebuilt as
     // `int` with its atoms, O(size of its atoms). Before names were fixed where they are bound
     // (LIT-name-int-fixed), this also rejected the cast where a later use had taken `int`
     // from the class; that use is now rejected itself, at the use. Before CAST-int-f64-lit-class
@@ -8224,7 +8227,8 @@ impl<'t, 'a> Ck<'t, 'a> {
     // is rejected at the call, and a class left with no carrier rejects the cast here. Before
     // this the cast read `x.ty.set` alone, and `f(positional x) = int(x)` with `f(0.5)` was
     // accepted and stopped at run time. Complexity: one walk of the pieces of `x.ty`, and a
-    // restriction of each class among them, O(α(N)) for the find in a union of N classes.
+    // restriction of each class among them, O(log N) for the find in a union of N classes
+    // (union by rank with no path compression; check/mod.rs, struct `Class`).
     fn int_not_whole(&mut self, x: &Arg<'a>, values: Option<&WordOperand>, span: Span) {
         let parts = [KType::rat(), KType::f64(), KType::f32()];
         let floats = Carrier::Rat.bit() | Carrier::F64.bit() | Carrier::F32.bit();
@@ -24358,10 +24362,12 @@ impl<'t, 'a> Ck<'t, 'a> {
     /// Complexity tradeoff: the naive way asks, for each literal, whether any other argument
     /// reaches its variable through the needs, a walk of the arguments and the needs for each
     /// literal, `O(l (a + n))`. Here one walk of the arguments' parts and the needs' variables
-    /// puts the variables in sets that a need ties together (union by size with path
-    /// halving), each set marked fixed once with the place that fixed it first and whether
-    /// another place did too, then each literal looks up its set: `O(a + n + l)` times the
-    /// inverse Ackermann function, for `a` parts, `n` variables in needs and `l` literals.
+    /// puts the variables in sets that a need ties together (`zed_graph::UnionFind`, union by
+    /// rank with path halving), each set marked fixed once with the place that fixed it first
+    /// and whether another place did too, then each literal looks up its set: `O(a + n + l)`
+    /// times the inverse Ackermann function, for `a` parts, `n` variables in needs and `l`
+    /// literals (Tarjan and van Leeuwen, JACM 31(2), 1984, doi:10.1145/62.2160; the full
+    /// comment is at the head of zed-graph `union_find.rs`).
     /// The walks keep their own stacks, since tuple displays nest as deep as the text.
     fn unfixed_args(
         &mut self,

@@ -4,7 +4,8 @@
 //! conjunction or disjunction (by the root of its sequence), a run of one symbol repeated,
 //! or a chunk of two or more symbols. The parse is that of Mehlhorn, Sundar and Uhrig
 //! ("Maintaining dynamic sequences under equality tests in polylogarithmic time",
-//! Algorithmica 17, 1997): at even levels each run of one symbol becomes a run symbol, and at
+//! Algorithmica 17, 1997, doi:10.1007/bf02522825, cited in the crate's `lib.rs`, "References"):
+//! at even levels each run of one symbol becomes a run symbol, and at
 //! odd levels, where no two neighbors are equal, deterministic coin tossing (Cole and
 //! Vishkin) colors each symbol from its number and those of the four before it, and a chunk
 //! starts at each symbol whose color is above both its neighbors'. Each choice depends only on

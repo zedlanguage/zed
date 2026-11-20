@@ -1633,7 +1633,9 @@ impl<A: Literal> Part<A> {
         }
         // Keyed by `Digest`, one finalizer step per id: with the standard map's SipHash, hashing
         // was about 47% of a run that evaluates 4000 parts on 64 assignments each, and `Digest`
-        // halves that run's instructions (COMPLEXITY.md K104). The ids come from one counter
+        // halves that run's instructions (COMPLEXITY.md K104; SipHash: Aumasson and Bernstein
+        // 2012, doi:10.1007/978-3-642-34931-7_28, full comment in `digest.rs`, type
+        // `FixedState`). The ids come from one counter
         // shared by every part, so a vector indexed by id would first need a numbering walk
         // with a map of its own.
         let mut memo: HashMap<u64, bool, BuildHasherDefault<Digest>> = HashMap::default();

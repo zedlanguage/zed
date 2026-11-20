@@ -83,7 +83,8 @@ fn printing_a_wide_number_scales() {
 }
 
 /// A product of two dense numbers of n words, by `Rat::mul` and so `zed_kernel::num::mul_int`:
-/// transforms modulo three primes, O(n log n), where num-bigint's Toom-3 is O(n^1.465).
+/// transforms modulo three primes, O(n log n), where num-bigint's Toom-3 is O(n^1.465) (the
+/// sources of both are cited in zed-kernel `num/fast.rs`, "Sources").
 #[test]
 fn a_dense_product_scales() {
     // Measured 2026-11-14 at a load of about 35, six benchmarks at once: about 0.48 µs a

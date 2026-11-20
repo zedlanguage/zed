@@ -268,7 +268,8 @@ fn corner_cases() {
         None
     );
     assert!(solve(&[row([2, 4, 6], -4), row([-2, -4, -6], 5)]).is_some());
-    // Huge coefficients: 10^30 times Pugh's rows in `x` and `y`, a slab in `z`.
+    // Huge coefficients: 10^30 times Pugh's rows in `x` and `y`, a slab in `z` (Pugh 1992,
+    // doi:10.1145/135226.135233, sec. 2.3.3, quoted in zedc-presburger `lib.rs`).
     let big = (0..30).fold(int(1), |p, _| &p * &int(10));
     let scaled = |a: [i64; 3], k: i64| (a.map(|c| &big * &int(c)), &big * &int(k));
     let pugh = [

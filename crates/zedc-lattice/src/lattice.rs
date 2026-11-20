@@ -14,7 +14,9 @@ use super::interval::{End, IntervalSet, Num};
 use super::landmarks::{Landmarks, Mark};
 
 /// A lattice of the store, with the widening that bounds its ascending chains and the
-/// narrowing that bounds its descending ones.
+/// narrowing that bounds its descending ones. The two operators are P. and R. Cousot's
+/// (POPL 1977, doi:10.1145/512950.512973); the full comment, with this crate's departure, is
+/// at the head of `iterate.rs`.
 pub trait Lattice: Clone + PartialEq + fmt::Debug {
     /// The least element: no value.
     fn bottom() -> Self;
@@ -61,6 +63,21 @@ impl Lattice for IntervalSet {
 /// A congruence class `residue mod modulus`, or the bottom. Modulus 0 is the one value
 /// `residue`, and modulus 1 is every integer. The residue is kept in `0..modulus`. Both are
 /// [`Num`]s, so a class past the 64-bit range is held exactly.
+///
+/// Source: P. Granger, "Static analysis of arithmetical congruences", International Journal of
+/// Computer Mathematics 30(3-4), 1989, pp. 165-190, doi:10.1080/00207168908803778 (Crossref
+/// checked 2026-11-20; the text was not read, so this sketch is from memory of the paper). The
+/// lattice of the classes `aZ + b` and the bottom, ordered by inclusion: the join of `aZ + b`
+/// and `a'Z + b'` is `gcd(a, a', b - b')Z + b`, the meet is empty or, by the Chinese remainder
+/// theorem, a class modulo `lcm(a, a')`; the arithmetic on classes is
+/// `(aZ + b) ± (a'Z + b') = gcd(a, a')Z + (b ± b')` and
+/// `(aZ + b)(a'Z + b') = gcd(aa', ab', a'b)Z + bb'`. Departures: none in the lattice; the
+/// widening is the join, as the lattice has no infinite ascending chain (each strict step
+/// divides the modulus). The same arithmetic is used by zedc-preimage `preimage.rs` and
+/// `preimage_ref.rs`, fn `class_of`. Tests:
+/// `l01_24_refinement_lattices::complete::congruence_join_and_meet_on_every_kind_of_operand`
+/// checks join, widening and meet on every kind of operand against classes worked by hand; it
+/// does not test the arithmetic of `class_of`.
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub enum Congruence {
     /// No value.
@@ -238,7 +255,10 @@ impl Lattice for Congruence {
 // from a type's literals, `O(n)` per step whatever changed; `k` tests on a callee of `k`
 // literals cost `O(k^2)`. Used: the treap, `O(m log(n/m + 1))` per operation and `O(log n)`
 // for an operation on two sets made from one set by a cut; cost a pointer per member and three
-// words per node more than a B-tree.
+// words per node more than a B-tree. The bounds: Blelloch, Ferizovic and Sun, "Just join for
+// parallel ordered sets", SPAA 2016, doi:10.1145/2935764.2935768, Theorem 4, on treaps of
+// Seidel and Aragon, Algorithmica 16, 1996, doi:10.1007/BF01940876; the full comments are at
+// the heads of zed-kernel `treap_set.rs` and `priority.rs`.
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub enum FiniteSet<T: Elem> {
     /// Exactly these values.

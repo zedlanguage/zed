@@ -39,6 +39,11 @@
 //! from an implicant takes the whole projection of that implicant, so each implicant gives at
 //! most one such cell. The work is counted (`Work`), never timed, so where the loop is
 //! stopped is the same on every run.
+//!
+//! Published work used in this file. Each site names the author; the full citation is in the
+//! crate's `lib.rs`, "References". Monniaux 2010, doi:10.1007/978-3-642-14295-6_51; Bjørner and
+//! Janota 2015, doi:10.29007/vv21; Pugh 1991, doi:10.1145/125826.125848, and 1992,
+//! doi:10.1145/135226.135233; Freuder 1982, doi:10.1145/322290.322292.
 // Complexity tradeoff: naive version, one decision of `f` with the symbol at each value of
 // `h` (as the per-value check of the step 1 measurement did): exact, |h| questions for each
 // symbol, and nothing for an unbounded `h`. Pugh's exact projection (the Omega test's

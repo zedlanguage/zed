@@ -19,10 +19,11 @@ use zedc_presburger::presburger::Lin;
 /// have distinct streams and tie with probability at most `(S + 1)/p` a pair for streams of
 /// `S` symbols; the priorities are otherwise 5-wise independent and uniform, and every
 /// node's depth is `O(log n)` in expectation for every set of divisors (Seidel and Aragon,
-/// "Randomized search trees", Algorithmica 16, 1996, Theorem 3.3 and section 6; the proof is in
-/// module [`zed_kernel::priority`]), where the fixed hash this replaces had no bound for chosen
-/// divisors (COMPLEXITY.md K123). A set's number depends on the shape, and so on the draw, and
-/// is only compared for equality, never ordered or shown.
+/// "Randomized search trees", Algorithmica 16, 1996, doi:10.1007/BF01940876, Theorem 3.3 and
+/// section 6; the full comment and the proof are in module [`zed_kernel::priority`]), where
+/// the fixed hash this replaces had no bound for chosen divisors (COMPLEXITY.md K123). A set's
+/// number depends on the shape, and so on the draw, and is only compared for equality, never
+/// ordered or shown.
 static PRIORITIES: Priorities = Priorities::new(5);
 
 /// A set of divisors: the number of its root node, [`EMPTY`] for none.

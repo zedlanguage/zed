@@ -198,11 +198,11 @@ static PRIORITIES: Priorities = Priorities::new(6);
 /// probability at most `(S + 1)/p` a pair for names of `S` symbols; the priorities are
 /// otherwise 5-wise independent and uniform, and every node's depth is `O(log h)` in
 /// expectation for every set of names (Seidel and Aragon, "Randomized search trees",
-/// Algorithmica 16, 1996, Theorem 3.3 and section 6; the proof is in module
-/// [`zed_kernel::priority`]), where the fixed hash this replaces had no bound for chosen names
-/// (COMPLEXITY.md K123). In a run the shape depends on the names alone; it is never shown, and
-/// a subtree's sum is the same for every shape, since every [`Sum::plus`] here adds exact
-/// integers and joins sets of premises.
+/// Algorithmica 16, 1996, doi:10.1007/BF01940876, Theorem 3.3 and section 6; the full comment
+/// and the proof are in module [`zed_kernel::priority`]), where the fixed hash this replaces
+/// had no bound for chosen names (COMPLEXITY.md K123). In a run the shape depends on the names
+/// alone; it is never shown, and a subtree's sum is the same for every shape, since every
+/// [`Sum::plus`] here adds exact integers and joins sets of premises.
 fn prio(key: &str) -> u64 {
     PRIORITIES.hash(key)
 }

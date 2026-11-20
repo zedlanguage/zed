@@ -79,6 +79,22 @@
 //! and a refusal met in narrowing is kept in `product::Scope::refusals`, which
 //! `product::Scope::warnings` reports as one warning each, with the constraint it was asked of.
 //! Every integer, written or derived, is unbounded.
+//!
+//! Published work used in this file. Each site names the author; the full citation, with what
+//! was read and how it was checked, is in the crate's `lib.rs`, "References". Pugh 1991,
+//! doi:10.1145/125826.125848, and 1992, doi:10.1145/135226.135233 (the Omega test: exact and
+//! dark shadows, splinters, the `mod^` step); Shostak 1981, doi:10.1145/322276.322288, Bellman
+//! 1958, doi:10.1090/qam/102435, and Dijkstra 1959, doi:10.1007/bf01386390 (difference rows as
+//! a graph, its negative cycles and shortest paths); Lenstra 1983, doi:10.1287/moor.8.4.538;
+//! Meyer 1974, doi:10.1007/bf01585518; Monniaux 2010, doi:10.1007/978-3-642-14295-6_51; Freuder
+//! 1982, doi:10.1145/322290.322292; Dechter 1999, doi:10.1016/s0004-3702(99)00059-4; Kahn 1962,
+//! doi:10.1145/368996.369025; Tarjan 1972, doi:10.1137/0201010; Sleator and Tarjan 1983,
+//! doi:10.1016/0022-0000(83)90006-5; Cuthill and McKee 1969, doi:10.1145/800195.805928;
+//! Berkholz, Bonsma and Grohe, doi:10.1007/s00224-016-9686-0; Cardon and Crochemore 1982,
+//! doi:10.1016/0304-3975(82)90016-0, with Paige and Tarjan 1987, doi:10.1137/0216062; Andrew
+//! 1979, doi:10.1016/0020-0190(79)90072-3; Fenwick 1994, doi:10.1002/spe.4380240306 (the type
+//! is zed-collections `fenwick.rs`, full comment at its head); Bringmann and Wellnitz 2021,
+//! doi:10.1137/1.9781611976465.107.
 
 use std::borrow::Cow;
 use std::cell::{Cell, OnceCell, RefCell};
@@ -7760,6 +7776,8 @@ fn cells_without(a: &[(usize, usize)], b: &[(usize, usize)]) -> CellSet {
 }
 
 /// The first index from `from` of a run of `a` that ends at or after `x`, by exponential search.
+/// O(log d) for a run d places on (Bentley and Yao 1976, doi:10.1016/0020-0190(76)90071-5; the
+/// full comment is in zed-collections `search.rs`, fn `gallop`).
 fn gallop(a: &[(usize, usize)], from: usize, x: usize) -> usize {
     zed_collections::search::gallop(a, from, |r| r.1 < x)
 }

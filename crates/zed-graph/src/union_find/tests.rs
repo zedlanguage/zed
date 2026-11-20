@@ -129,7 +129,9 @@ mod bench {
     use super::{Rng, UnionFind};
     use crate::scaling;
 
-    /// `n` elements and `n` unions of random pairs, then a find of each: O(n α(n)).
+    /// `n` elements and `n` unions of random pairs, then a find of each: O(n α(n)), the bound
+    /// of Tarjan and van Leeuwen 1984 (JACM 31(2), doi:10.1145/62.2160); the full comment is
+    /// at the head of `union_find.rs`.
     fn churn(n: usize, pairs: &[(usize, usize)]) -> usize {
         let mut uf = UnionFind::new(n);
         for &(a, b) in pairs {

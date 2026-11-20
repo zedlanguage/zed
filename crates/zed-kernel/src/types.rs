@@ -802,7 +802,9 @@ enum Step<'a> {
 }
 
 /// The pairs of node ids [`order()`] found equal, hashed by `digest::Digest`: the default hasher
-/// seeds itself per set and runs SipHash on each pair (EMPTY-morphism-next).
+/// seeds itself per set and runs SipHash on each pair (EMPTY-morphism-next). SipHash: Aumasson
+/// and Bernstein 2012, doi:10.1007/978-3-642-34931-7_28; the full comment is in `digest.rs`,
+/// type `FixedState`.
 type Equal = HashSet<(u64, u64), std::hash::BuildHasherDefault<crate::digest::Digest>>;
 
 /// The order of the pair in `first`, the order of contents that `Ord` gives every type, row,
@@ -3580,7 +3582,8 @@ type CompoundKey = (bool, bool, u64, Vec<(usize, u64)>);
 /// (PERF-deep-ops-slow): the keys are flags, ids and digests the kernel drew, never a program's
 /// text, so the map hashes them by [`crate::digest::Digest`] with no seed, as its doc allows;
 /// SipHash-1-3 over each key showed in the profile of a deep tuple (GSX-unsolved made more
-/// compound types a level), the lookup O(1) either way.
+/// compound types a level), the lookup O(1) either way. SipHash: Aumasson and Bernstein 2012,
+/// doi:10.1007/978-3-642-34931-7_28; the full comment is in `digest.rs`, type `FixedState`.
 type CompoundTypes = crate::digest::DigestMap<Arc<CompoundKey>, (u64, Weak<Node>)>;
 thread_local! {
     static COMPOUND_TYPES: RefCell<CompoundTypes> = RefCell::new(CompoundTypes::default());
@@ -5563,7 +5566,8 @@ impl Filer {
     /// The keys of the column type `t`: those of every type it reaches through first columns
     /// ([`firsts`]). The types are walked depth first, and the types that reach each other, as
     /// a type recursive in its first component does itself, are filed together when the walk
-    /// leaves the first of them (Tarjan's strongly connected components, [`zed_graph::Search`]),
+    /// leaves the first of them (Tarjan's strongly connected components, [`zed_graph::Search`];
+    /// Tarjan 1972, doi:10.1137/0201010, full comment in zed-graph `lib.rs`, fn `tarjan`),
     /// each with the keys of all of them and of the types below them, which were filed before.
     // Complexity tradeoff: the naive form, one walk per column with a visited set that lives
     // for the walk, read every type the column reaches again for each column, O(n²) for a
@@ -8921,7 +8925,8 @@ pub mod rec {
         // by a walk of its own reachable part, O(N) per member and O(N²) on one strongly
         // connected component; numbering by written order is O(N) but makes a reordered group a
         // second type. Used: color refinement with Hopcroft's smaller-half rule
-        // (`crate::refine`), O((N + M) log N), plus the O(N log N) comparisons of the starting
+        // (`crate::refine`; Hopcroft 1971, doi:10.1016/b978-0-12-417750-5.50022-1, cited at the
+        // head of `refine.rs`), O((N + M) log N), plus the O(N log N) comparisons of the starting
         // sort. Given up: memory for the graph (a vertex per node and per place, an arc per
         // child) and a log factor over the written-order numbering; bisimilar members fall into
         // one class.

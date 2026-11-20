@@ -242,7 +242,10 @@ pub fn dag_idom<I: IntoIterator<Item = usize>>(
 mod tests {
     use super::{Lift, dag_idom};
 
-    /// A step of xorshift64; started at a value that is not 0.
+    /// A step of xorshift64; started at a value that is not 0. The shifts 13, 7, 17 are
+    /// Marsaglia's (G. Marsaglia, "Xorshift RNGs", J. Stat. Softw. 8(14), 2003,
+    /// doi:10.18637/jss.v008.i14); the full comment is in tests/src `seed.rs`, struct
+    /// `Xorshift64`.
     fn next(state: &mut u64) -> u64 {
         *state ^= *state << 13;
         *state ^= *state >> 7;

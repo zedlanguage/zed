@@ -3,7 +3,11 @@
 //! topological order, the two-phase iteration strategy with widening and narrowing, the
 //! tonicity and interval-revision tables, and the cell that holds a fact's elements with the
 //! premises each rests on (step L1.24). Step M0.5 fixes the constants and algorithms these
-//! sections leave open; each module names its prelude source.
+//! sections leave open; each module names its prelude source. The weak topological order and
+//! the iteration are Bourdoncle's (F. Bourdoncle, "Efficient chaotic iteration strategies with
+//! widenings", FMPA 1993, LNCS 735, doi:10.1007/BFb0039704), with the widening and narrowing
+//! of P. and R. Cousot (POPL 1977, doi:10.1145/512950.512973); the full comments are at the
+//! heads of zedc-lattice `wto.rs` and `iterate.rs`.
 
 pub use zedc_int::int;
 pub use zedc_lattice::affine;

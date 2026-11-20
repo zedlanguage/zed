@@ -11965,7 +11965,8 @@ fn open_lits(e: &Expr) -> Option<OpenLits> {
 /// displays compared pair by pair ([`paired`]) take each pair so.
 ///
 /// Complexity tradeoff: a body finds this by a class per operation, merged as each operator
-/// is walked ([`Ck::lits_take`]), O(|e| α(|e|)); here the text alone decides it, one walk of
+/// is walked ([`Ck::lits_take`]), O(|e| log |e|) (a find is O(log N): union by rank with no
+/// path compression, struct `Class`); here the text alone decides it, one walk of
 /// each side ([`open_lits`]), O(|e|). The naive walk, of each operation at each operator over
 /// it, would cost the size times the depth.
 fn f64_operands(e: &Expr) -> Vec<&Expr> {
@@ -14439,7 +14440,9 @@ impl Handled {
 /// nothing for `b`: a binding passes atoms from its name to its value, not back.
 ///
 /// The `B` binders and `R` regions are the nodes of a graph whose `E` edges run from each
-/// node to the nodes whose atoms it takes. Tarjan's algorithm ([`zed_graph::tarjan`]) finds
+/// node to the nodes whose atoms it takes. Tarjan's algorithm ([`zed_graph::tarjan`]; R. E.
+/// Tarjan, SIAM J. Comput. 1(2), 1972, doi:10.1137/0201010; the full comment is in zed-graph
+/// `lib.rs`, at its head and fn `tarjan`) finds
 /// its strongly connected components with every component a node takes from finished
 /// first, and gives each component the union of its own handlers and what it takes, so
 /// the whole is `O(B + R + E)` unions; a cycle, such as a name bound to a value that uses

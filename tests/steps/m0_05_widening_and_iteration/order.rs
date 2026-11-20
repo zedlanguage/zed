@@ -33,7 +33,8 @@ const SIX: [[usize; 3]; 6] = [
     [2, 1, 0],
 ];
 
-/// The order in Bourdoncle's notation, each cell printed by its name.
+/// The order in Bourdoncle's notation, each cell printed by its name (Bourdoncle 1993,
+/// doi:10.1007/BFb0039704; the full comment is in zedc-lattice `wto.rs`, at its head).
 fn by_name(eq: &System, order: &[Element]) -> String {
     fn put(eq: &System, e: &Element, out: &mut Vec<String>) {
         match e {

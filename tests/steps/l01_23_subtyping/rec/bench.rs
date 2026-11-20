@@ -37,7 +37,8 @@ fn writing_an_irregular_occurrence_scales_with_its_depth() {
 fn recursive_definitions_scale() {
     // The check for contractiveness searched from each definition in turn, so a chain of `d`
     // definitions took `O(d²)` steps (ratio 31); one pass of Tarjan's components now finds
-    // the cycles. A body nested `d` deep had each part kept unevaluated copied, walked for
+    // the cycles (Tarjan 1972, doi:10.1137/0201010, full comment in zed-graph `lib.rs`, fn
+    // `tarjan`). A body nested `d` deep had each part kept unevaluated copied, walked for
     // recursive occurrences and named in full, and an atom's payload was copied to test a
     // value, each once per level: `O(d²)` (ratio 68). The body is now a shared tree whose
     // nodes know whether they mention the group, a part's name is made when it is printed,

@@ -36,7 +36,8 @@ pub const RANDOM_INSTANCES: usize = 512;
 
 /// The generator of every random test, SplitMix64, so that every random instance is
 /// reproducible from its seed. It lives in [`crate::seed`], which the crates' own unit tests
-/// compile in too.
+/// compile in too. SplitMix64: Steele, Lea and Flood, OOPSLA 2014, doi:10.1145/2660193.2660195;
+/// the full comment is in `seed.rs`, fn `mix`.
 pub use crate::seed::Rng;
 
 /// The integers of the instance, `-8..=8`.

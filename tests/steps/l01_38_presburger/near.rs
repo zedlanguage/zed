@@ -1,5 +1,6 @@
 //! Duong's near-linear search for a potential (`zedc::store::negsssp`, item UTVPI-NEAR) against
-//! Bellman–Ford–Moore on small random graphs, and its scaling alone.
+//! Bellman–Ford–Moore on small random graphs, and its scaling alone. The citations are in
+//! `tests/src/bellman_ford_moore.rs`, at its head.
 
 use zed_tests::bellman_ford_moore::bellman_ford_moore;
 use zed_tests::instances::Rng;

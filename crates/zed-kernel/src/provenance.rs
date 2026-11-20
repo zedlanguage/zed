@@ -723,7 +723,8 @@ pub(crate) struct Holds {
 }
 
 /// The hasher of the maps of [`Holds`]: `digest::Digest`, a few multiplications per id in
-/// place of the default hasher's SipHash.
+/// place of the default hasher's SipHash (Aumasson and Bernstein 2012,
+/// doi:10.1007/978-3-642-34931-7_28; the full comment is in `digest.rs`, type `FixedState`).
 type ById = std::hash::BuildHasherDefault<crate::digest::Digest>;
 
 /// What [`Holds::of`] does next.

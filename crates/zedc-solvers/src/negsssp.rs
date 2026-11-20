@@ -13,6 +13,11 @@
 //! first in vertex order, so the result depends only on the graph. COMPLEXITY.md C24 gives the
 //! bound and the measurements.
 //!
+//! Goldberg's scaling (doi:10.1137/s0097539792231179), BF-Dijkstra (Dinitz and Itzhak,
+//! doi:10.1016/j.jda.2017.01.001), Dijkstra (doi:10.1007/bf01386390), Bellman–Ford–Moore
+//! (Bellman, doi:10.1090/qam/102435) and Thorup's queue (doi:10.1145/780542.780566): the full
+//! citations, with what was checked, are in the crate's `lib.rs`, section "References".
+//!
 //! The work is done in units, a heap pop or an edge examined, and the caller's `tick` is called
 //! once per unit, with the units the search expects still to need once it has an estimate; an
 //! error from it ends the search with that error. `utvpi` uses this to run Goldberg and

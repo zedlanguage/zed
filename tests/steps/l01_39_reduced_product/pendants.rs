@@ -758,7 +758,8 @@ fn has_point(rows: &[(Vec<i64>, i64)]) -> bool {
 /// shadow (each constant less `(l - 1)(u - 1)`) has one, none if the real shadow has none, and
 /// otherwise exactly where one of the splinters has one: the equations `l · x_j = L + i` for
 /// each lower bound `L <= l · x_j` and `0 <= i <= (l · m - l - m) / m`, `m` the greatest
-/// coefficient of an upper bound (Pugh's theorem). Each step leaves out a variable, or adds an
+/// coefficient of an upper bound (Pugh's theorem: Pugh 1992, doi:10.1145/135226.135233, cited
+/// in zedc-presburger `lib.rs`, "References"). Each step leaves out a variable, or adds an
 /// equation that then does, so the recursion ends.
 ///
 /// Complexity tradeoff: exponential in the variables in the worst case (each elimination can

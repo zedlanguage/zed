@@ -151,7 +151,11 @@ fn potential_by(out: &[Vec<(usize, Int)>], search: Search) -> Option<Vec<Int>> {
 /// is never tight between halves). These implications over the halves, each with its twin
 /// `¬v → ¬u`, are a 2-SAT problem whose implication graph is the graph of the tight edges, solved
 /// by its strongly connected components (Aspvall, Plass and Tarjan, "A linear-time algorithm for
-/// testing the truth of certain quantified boolean formulas", IPL 8, 1979): it has no solution
+/// testing the truth of certain quantified boolean formulas", IPL 8(3), 121-123, 1979,
+/// doi:10.1016/0020-0190(79)90002-4, Crossref checked 2026-11-20, not read; the components are
+/// Tarjan's, `zed_graph::components`, whose full comment is in zed-graph `lib.rs`, fn
+/// `tarjan`; the test `halves_on_tight_edges_are_rounded_together` checks the result against
+/// `odd_zero_cycle`): it has no solution
 /// exactly when some `u` and `¬u` share a component. Then the tight cycle through both is a
 /// zero-weight cycle of the graph whose part from `u` to `¬u` weighs `s(¬u) - s(u) = -2 s(u)`,
 /// odd, so the rows have no integer point (Lahiri and Musuvathi); otherwise the rounding is one.

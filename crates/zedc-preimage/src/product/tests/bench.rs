@@ -11,11 +11,12 @@
 use super::*;
 
 /// Components ranked each right after the first, so that the ranks between run out again
-/// and again, are ranked again `O(log n)` times each on average (Bender et al.): from
-/// 8,000 to 64,000 components the number ranked again grows under the limit of 13 of 2026-11-13 for
-/// order n (9.8 times measured, 1.24 log2 n each; below n = 4,000,
-/// while the ranks fill up, the count each grows faster than `log n`); ranking each later
-/// component again, the naive version, would grow it 64 times.
+/// and again, are ranked again `O(log n)` times each on average (Bender et al., ESA 2002,
+/// doi:10.1007/3-540-45749-6_17, cited in the crate's `lib.rs`, References, and sketched in
+/// `product.rs`, impl `Potential`): from 8,000 to 64,000 components the number ranked again
+/// grows under the limit of 13 of 2026-11-13 for order n (9.8 times measured, 1.24 log2 n each;
+/// below n = 4,000, while the ranks fill up, the count each grows faster than `log n`); ranking
+/// each later component again, the naive version, would grow it 64 times.
 #[test]
 fn ranks_given_in_one_place_scale() {
     let moved = |n: usize, front: bool| -> usize {

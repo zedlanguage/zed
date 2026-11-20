@@ -39,8 +39,9 @@ fn growth() -> Formula {
 /// question is refused for the same cause, and `v` is refused with it: the cause is returned
 /// with the symbol. With the one disjunction alone, the row `v >= 0` is distributed into its
 /// blocks, so the refused disjunct's block reads `v` and is projected by Pugh's exact
-/// projection, which finds its points (`x = 4, w = 0, y = 0, z = 1` is one): `v` is `0..`
-/// exactly, and nothing is refused.
+/// projection (Pugh 1992, doi:10.1145/135226.135233, cited in zedc-presburger
+/// `lib.rs`, "References"), which finds its points (`x = 4, w = 0, y = 0, z = 1` is one): `v`
+/// is `0..` exactly, and nothing is refused.
 #[test]
 fn the_cause_of_a_refused_disjunct_is_returned() {
     let f = Formula::and(vec![

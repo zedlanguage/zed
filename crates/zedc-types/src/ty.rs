@@ -924,11 +924,13 @@ impl Ty {
 /// Complexity tradeoff: naive version, the derived `==`, one recursion per level, O(paths):
 /// `2^n` for two types of `n` shared nodes built apart (n = 2,000 did not finish in 60 s), and
 /// a stack overflow at 100,000 levels on 2 MiB. Used: the union-find above, O((n + m) α) for
-/// types of `n` and `m` nodes as graphs, with recursion while the stack has room and `left`
-/// after. Tradeoffs: the table's memory, one entry per shared node met; nodes are keyed by
-/// address, which is sound only because the borrowed operands keep every recorded node alive
-/// for the whole comparison (the table never outlives it); the `Arc::strong_count` test that
-/// skips unshared nodes is a constant-factor saving, not needed for the answer.
+/// types of `n` and `m` nodes as graphs (union by size with path halving, `Same::root`; the
+/// bound is Tarjan and van Leeuwen's, JACM 31(2), 1984, doi:10.1145/62.2160, whose full
+/// comment is at the head of zed-graph `union_find.rs`), with recursion while the stack has
+/// room and `left` after. Tradeoffs: the table's memory, one entry per shared node met; nodes
+/// are keyed by address, which is sound only because the borrowed operands keep every recorded
+/// node alive for the whole comparison (the table never outlives it); the `Arc::strong_count`
+/// test that skips unshared nodes is a constant-factor saving, not needed for the answer.
 /// COMPLEXITY.md row F118.
 #[derive(Default)]
 struct Same<'a> {
@@ -22244,10 +22246,12 @@ impl Walk {
     // `_`, and the variables named by scanning the text once per name, O(n²) in the size n of
     // the type; used, one count per variable, lowered as the types inside a union written `_`
     // are taken out, each type and each place once, a union-find over the variables that are
-    // printed as one, the places of each union sorted once to count a variable once in it, and a
-    // hash map from each variable to its name ([`defs::name_vars`]), so the two walks and the
-    // naming are O(n log n) (COMPLEXITY.md F169). Memory: one node per type of
-    // the text and one entry per place of a variable.
+    // printed as one (path halving with the least number kept as root, O(m log_{1 + m/n} n)
+    // for m ≥ n operations: Tarjan and van Leeuwen, JACM 31(2), 1984, doi:10.1145/62.2160,
+    // whose full comment is at the head of zed-graph `union_find.rs`), the places of each union
+    // sorted once to count a variable once in it, and a hash map from each variable to its name
+    // ([`defs::name_vars`]), so the two walks and the naming are O(n log n) (COMPLEXITY.md
+    // F169). Memory: one node per type of the text and one entry per place of a variable.
     fn plan(&mut self, scope: &mut Scope) -> Option<Plan> {
         let root: Vec<usize> = (0..scope.same.len()).map(|k| scope.root(k)).collect();
         // Each variable counts once in a union: `x` and what `x else 0` leaves of it are one.

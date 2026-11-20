@@ -203,8 +203,10 @@ struct Long<'a> {
 // `doubled_texts_of_2_to_40_bytes_are_named`, `naming_n_and_8n_nodes`.
 //
 // The tables do not hash with the standard SipHash, which was a fifth of the work of a flat
-// string (row PERF-canon-flat-strings). The memo of nodes is keyed by addresses and the held
-// labels by the given content hash, so both take the unseeded `Digest`. A rule of level 0 is a
+// string (row PERF-canon-flat-strings; SipHash: Aumasson and Bernstein 2012,
+// doi:10.1007/978-3-642-34931-7_28, full comment in `digest.rs`, type `FixedState`). The memo
+// of nodes is keyed by addresses and the held labels by the given content hash, so both take
+// the unseeded `Digest`. A rule of level 0 is a
 // block of the text's own bytes, which a program chooses, so the table of rules takes the
 // seeded `TextState`, one seed per dictionary (it was FxHash, with no seed, which let a text
 // choose blocks that share a slot; DRY-sorted-structures-2 job 3). The canonical parse reads

@@ -1,5 +1,8 @@
 //! The weak topological order against its declarative definition.
 //!
+//! Bourdoncle 1993, doi:10.1007/BFb0039704; the full comment is in zedc-lattice `wto.rs`, at
+//! its head.
+//!
 //! The definition, written here without Bourdoncle's stack: run a depth-first search from
 //! the roots in order, visiting successors in the order of their lists, and number the
 //! vertices in preorder and in finish order. Group the vertices into strongly connected components by

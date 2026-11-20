@@ -285,6 +285,8 @@ impl Rat {
         let listed = product(&primes);
         let form_ok = den.is_positive()
             && primes.windows(2).all(|w| w[0] < w[1])
+            // `is_prime` is exact on every u64 (Miller 1976 and Rabin 1980 with deciding bases;
+            // the full comment is in zed-numtheory `factor.rs`, at its head and fn `is_prime`).
             && pows.iter().all(|(p, e)| !e.is_zero() && is_prime(*p))
             && gcd(&num, &den).is_one()
             && gcd_uint(num.magnitude(), &listed).is_one()

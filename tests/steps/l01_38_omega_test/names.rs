@@ -518,7 +518,8 @@ fn every_order_and_naming_of_a_chain_of_equalities_gives_one_answer() {
     assert_eq!(seen.len(), 1, "{seen:?}");
 }
 
-/// Pugh's example between `x[n / 2]` and `x[n / 2 + 1]` of a chain of `n` steps
+/// Pugh's example (Pugh 1992, doi:10.1145/135226.135233, sec. 2.3.3, quoted in zedc-presburger
+/// `lib.rs`, "References") between `x[n / 2]` and `x[n / 2 + 1]` of a chain of `n` steps
 /// `3·x[i + 1] - 2·x[i] + 5 >= 0` and `2·x[i] - 3·x[i + 1] + 5 >= 0` over `n + 1` variables, as
 /// `scaling::pugh_in_a_chain` builds it: each elimination is dark, and the splinters are
 /// searched.

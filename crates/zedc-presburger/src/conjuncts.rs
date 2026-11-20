@@ -7,6 +7,14 @@
 //! and two relations made from one by a few changes are compared, and their differing
 //! conjuncts found, in time near the number of changes. The conjuncts are in the order of
 //! formulas, so a relation does not depend on the order its conjuncts were added in.
+//!
+//! Published work used in this file. Each site names the author; the full citation is in the
+//! crate's `lib.rs`, "References". Karr 1976, doi:10.1007/bf00268497 (the join is in
+//! `hull.rs`); Shostak 1981, doi:10.1145/322276.322288; Tarjan 1975, doi:10.1145/321879.321884
+//! (union by rank and path compression); Blelloch, Ferizovic and Sun 2016,
+//! doi:10.1145/2935764.2935768, and Brown and Tarjan 1979, doi:10.1145/322123.322127 (union of
+//! ordered sets, as `vendor/imbl` runs it); Holm, de Lichtenberg and Thorup 2001,
+//! doi:10.1145/502090.502095.
 
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet, VecDeque};
 use std::fmt;

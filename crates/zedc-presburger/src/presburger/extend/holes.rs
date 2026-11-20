@@ -39,9 +39,10 @@ static PRIORITIES: Priorities = Priorities::new(8);
 /// one-to-one, so distinct intervals have distinct streams and tie with probability at most
 /// `(S + 1)/p` a pair for streams of `S` symbols). The priorities are otherwise 5-wise
 /// independent and uniform, and every node's depth is `O(log n)` in expectation for every set
-/// of holes (Seidel and Aragon, "Randomized search trees", Algorithmica 16, 1996, Theorem 3.3
-/// and section 6; the proof is in module [`zed_kernel::priority`]), where the fixed hash this
-/// replaces had no bound for chosen intervals (COMPLEXITY.md K123). The shape is never shown.
+/// of holes (Seidel and Aragon, "Randomized search trees", Algorithmica 16, 1996,
+/// doi:10.1007/BF01940876, Theorem 3.3 and section 6; the full comment and the proof are in
+/// module [`zed_kernel::priority`]), where the fixed hash this replaces had no bound for chosen
+/// intervals (COMPLEXITY.md K123). The shape is never shown.
 fn prio_of(lo: &Int, hi: &Int) -> u64 {
     PRIORITIES.hash(&(lo, hi))
 }

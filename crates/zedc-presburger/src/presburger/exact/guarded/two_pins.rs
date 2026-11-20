@@ -40,6 +40,11 @@
 //! where it is exact (a pair with a side of coefficient 1) and leaves forms with a common
 //! factor to the join; here the dark shadow and the splinters make every pair exact, and a
 //! common factor gives a class.
+//!
+//! Published work used in this file. Each site names the author; the full citation is in the
+//! crate's `lib.rs`, "References". Kahn 1962, doi:10.1145/368996.369025; Pugh 1991,
+//! doi:10.1145/125826.125848, and 1992, doi:10.1145/135226.135233 (real and dark shadows);
+//! Zaslavsky 1975, doi:10.1090/memo/0154; Chazelle and Dobkin 1987, doi:10.1145/7531.24036.
 
 use std::collections::HashMap;
 

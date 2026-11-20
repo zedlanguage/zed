@@ -21,10 +21,12 @@
 //! writer's own" and "every case but this one", so the graph has O(N) nodes and edges for a
 //! test of N atom terms, and a path through them stands for exactly one edge of the naive
 //! graph. Tarjan's algorithm (R. Tarjan, "Depth-first search and linear graph algorithms",
-//! SIAM J. Comput. 1(2), 1972) then costs O(N). The two union-finds (`zed_graph`'s
+//! SIAM J. Comput. 1(2), 1972, doi:10.1137/0201010; the full comment is in zed-graph `lib.rs`,
+//! fn `tarjan`) then costs O(N). The two union-finds (`zed_graph`'s
 //! `OffsetUnionFind` and `UnionFind`) keep the root this code chooses and halve paths, which is
 //! O(N log N) for N operations (R. Tarjan and J. van Leeuwen, "Worst-case analysis of set union
-//! algorithms", J. ACM 31(2), 1984), not the O(N α(N)) of union by rank: the root is chosen
+//! algorithms", J. ACM 31(2), 1984, doi:10.1145/62.2160; the full comment is at the head of
+//! zed-graph `union_find.rs`), not the O(N α(N)) of union by rank: the root is chosen
 //! because the failure reported is the first in root order, and the O(N log N) of the other
 //! two kinds bounds the total anyway. The covered-part test, the repair and the
 //! steps are O(N log N) too, so the classification is O(N log N). Measured on a chain of k

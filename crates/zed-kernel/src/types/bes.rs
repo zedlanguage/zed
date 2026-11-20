@@ -682,7 +682,8 @@ fn delete_cascade(g: &Bes, u_set: &[u32], t_sccs: &[Vec<u32>], sc: &mut Scratch)
     while let Some(w) = sc.queue.pop() {
         // A node of a tuple component died; if the component is a simple cycle, that breaks it
         // into a chain. Every queued node has a component: `t_sccs` is `components` of `u_set`
-        // (Tarjan from every node of `u_set`, so each lies in one), the loop above set
+        // (Tarjan from every node of `u_set`, so each lies in one; Tarjan 1972,
+        // doi:10.1137/0201010, full comment in zed-graph `lib.rs`, fn `tarjan`), the loop above set
         // `t_comp` from it, and only nodes of `u_set` are queued (`kill` of a component, and a
         // parent `p` with `in_sub[p]`, which holds of `u_set` alone here). By the same proof
         // each such parent `p` has a component, so `cp` below is never `u32::MAX`.

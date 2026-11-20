@@ -41,6 +41,11 @@
 //! variable and substituted; the crate root's References) extended to guarded definitions; the
 //! interval reading of the values given a pin is interval constraint propagation over the
 //! definition order.
+//!
+//! Published work used in this file. Each site names the author; the full citation is in the
+//! crate's `lib.rs`, "References". Kahn 1962, doi:10.1145/368996.369025; Tarjan 1975,
+//! doi:10.1145/321879.321884 (union by size with path compression); Pugh 1991,
+//! doi:10.1145/125826.125848.
 
 use std::cell::RefCell;
 use std::collections::{HashMap, HashSet};

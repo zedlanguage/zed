@@ -32,7 +32,8 @@ static PRIORITIES: Priorities = Priorities::new(9);
 /// and tie with probability at most `(S + 1)/p` a pair for streams of `S` symbols; the
 /// priorities are otherwise 5-wise independent and uniform, and every node's depth is
 /// `O(log n)` in expectation for every set of pivots (Seidel and Aragon, "Randomized search
-/// trees", Algorithmica 16, 1996, Theorem 3.3 and section 6; the proof is in module
+/// trees", Algorithmica 16, 1996, doi:10.1007/BF01940876, Theorem 3.3 and section 6; the full
+/// comment and the proof are in module
 /// [`zed_kernel::priority`]), where the fixed hash this replaces had no bound for chosen pivots
 /// (COMPLEXITY.md K123). The shape is never shown: [`Rows`] is read and printed in order.
 fn prio_of(key: &Atom) -> u64 {

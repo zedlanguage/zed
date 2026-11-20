@@ -2,7 +2,10 @@
 //! the structure alone. A coloring is stable when any two vertices of one color have, for every
 //! color, as many neighbors of that color. A popped color class R refines every class by the
 //! number of neighbors in R each of its vertices has. After a split, the largest new class is
-//! not pushed unless the old one was waiting (Hopcroft's rule, "process the smaller half"), so a
+//! not pushed unless the old one was waiting (Hopcroft's rule, "process the smaller half": J.
+//! Hopcroft, "An n log n algorithm for minimizing states in a finite automaton", Theory of
+//! Machines and Computations, Academic Press, 1971, pp. 189-196,
+//! doi:10.1016/b978-0-12-417750-5.50022-1; Crossref, not read), so a
 //! vertex is in O(log N) refining classes in all: O((N + M) log N) for N vertices and M arcs.
 //! New colors are numbered in the increasing order of (old color, number of neighbors), never
 //! by a hash, so two isomorphic graphs whose starting colors correspond get the same color at

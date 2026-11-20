@@ -1219,7 +1219,9 @@ pub fn cap_pieces(mut pieces: Vec<(End, End)>, limit: usize) -> Vec<(End, End)> 
 
 impl IntervalSet {
     /// The widening `self ∇ next` (step M0.5), for `next` the value that the join would give,
-    /// which contains `self`.
+    /// which contains `self`. The operator is P. and R. Cousot's (POPL 1977,
+    /// doi:10.1145/512950.512973), moved to landmarks; the full comment is at the head of
+    /// `iterate.rs`.
     ///
     /// Each finite endpoint of `next` moves outward to the nearest target: an endpoint of
     /// `self`, of either role, or a landmark; with none on that side, to the infinity there.

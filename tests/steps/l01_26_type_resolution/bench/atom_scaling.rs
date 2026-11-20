@@ -208,7 +208,8 @@ fn one_call_passing_the_atoms_of_many_arguments_by_scales() {
 #[test]
 fn a_parameter_trimmed_through_a_chain_of_names_scales() {
     // Each name's set is the next one's with one atom added, in the order Tarjan's walk
-    // finishes them.
+    // finishes them (Tarjan 1972, doi:10.1137/0201010, full comment in zed-graph `lib.rs`, fn
+    // `tarjan`).
     let units = resolved(4000, chain_of_computed_names);
     scaling::check(
         "a parameter trimmed through a chain of n names",

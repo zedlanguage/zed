@@ -1458,7 +1458,8 @@ fn the_cover_gives_one_answer_in_every_order_of_the_parts() {
 fn fast_path_uses_the_full_work_limit_and_zero_allowance_walks_nothing() {
     let arms: Vec<Formula> = (0..=30).map(|k| eq(&[("x", 1)], -2 * k)).collect();
     // `y - 2 * x == 0` skips `certified_domains` (`-2` is not unit), while `direct`
-    // eliminates `y` by Pugh's unit-coefficient shadow with zero solver questions.
+    // eliminates `y` by Pugh's unit-coefficient shadow with zero solver questions (Pugh 1992,
+    // doi:10.1145/135226.135233, sec. 2.3.2, cited in the crate's `lib.rs`, "References").
     let f = Formula::and(vec![eq(&[("y", 1), ("x", -2)], 0), Formula::or(arms)]);
     let want =
         IntervalSet::from_pieces((0..=30).map(|k| (End::of(2 * k), End::of(2 * k))).collect());
@@ -4279,7 +4280,8 @@ fn open_tangents(k: usize) -> (Formula, Vec<Atom>, Vec<IntervalSet>) {
 }
 
 /// Names over an open polygon of many true edges (`open_tangents`): before PRES-two-pin-prune
-/// each name read every half-plane, O(h²) a name (Fourier-Motzkin and Pugh's dark shadow).
+/// each name read every half-plane, O(h²) a name (Fourier-Motzkin and Pugh's dark shadow; Pugh
+/// 1991, doi:10.1145/125826.125848, cited in the crate's `lib.rs`, "References").
 #[test]
 fn names_over_an_open_polygon_of_many_true_edges_cost_log_of_them() {
     let used = exact_work_at(open_tangents, TANGENT_SIZES);

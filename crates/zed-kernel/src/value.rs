@@ -3470,7 +3470,9 @@ impl ReadSet {
     /// The slot a search for `pair` starts at: each id folded in by one 64 by 64 to 128 bit
     /// multiply, whose two halves are added by exclusive or. Ids come from one counter in the
     /// runtime, not from input. SipHash took 60 to 80% more instructions per pair of families
-    /// than splitmix64's finalizer on each id, and that finalizer 45 more per pair than this.
+    /// than splitmix64's finalizer on each id, and that finalizer 45 more per pair than this
+    /// (SipHash: doi:10.1007/978-3-642-34931-7_28, full comment in `digest.rs`, type
+    /// `FixedState`; SplitMix: doi:10.1145/2660193.2660195, full comment there at fn `step`).
     #[inline(always)]
     fn home(&self, (a, b): Pair) -> usize {
         let fold = |x: u64| {

@@ -36,7 +36,8 @@ fn comparing_with_the_known_list_scales_with_its_length() {
 #[test]
 fn the_tool_scales_with_the_number_of_files() {
     // Inputs are built before timing. The ring is one long component, so Tarjan's explicit
-    // stack is as deep as the crate is large, and the report names all n files twice.
+    // stack is as deep as the crate is large, and the report names all n files twice (Tarjan
+    // 1972, doi:10.1137/0201010, full comment in zed-graph `lib.rs`, fn `tarjan`).
     let n = 400;
     let inputs = [ring(n), ring(FACTOR * n)];
     check("imports, by files in one cycle", n, |m| {
