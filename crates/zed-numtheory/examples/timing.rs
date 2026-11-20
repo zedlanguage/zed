@@ -14,15 +14,16 @@ use zed_numtheory::{
     factor, gcd_u64, gcd_u128, is_prime, least_prime_factors, m61, odd_primes_below,
 };
 
-/// splitmix64: a fixed stream of words.
-fn words(mut s: u64) -> impl FnMut() -> u64 {
-    move || {
-        s = s.wrapping_add(0x9e37_79b9_7f4a_7c15);
-        let mut z = s;
-        z = (z ^ (z >> 30)).wrapping_mul(0xbf58_476d_1ce4_e5b9);
-        z = (z ^ (z >> 27)).wrapping_mul(0x94d0_49bb_1331_11eb);
-        z ^ (z >> 31)
-    }
+/// The shared test generator, for its fixed streams.
+#[path = "../../../tests/src/seed.rs"]
+#[allow(dead_code, reason = "the timings draw only words")]
+mod seed;
+
+/// A fixed stream of words from `s` (`seed::Rng::new`), the same on every run, so two runs time
+/// the same inputs.
+fn words(s: u64) -> impl FnMut() -> u64 {
+    let mut rng = seed::Rng::new(s);
+    move || rng.next_u64()
 }
 
 /// The best of three times of `f(n)`, in milliseconds.

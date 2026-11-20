@@ -11,15 +11,11 @@ fn euclid(mut a: u128, mut b: u128) -> u128 {
     a
 }
 
-/// A deterministic stream of words (splitmix64).
-fn words(mut s: u64) -> impl FnMut() -> u64 {
-    move || {
-        s = s.wrapping_add(0x9e37_79b9_7f4a_7c15);
-        let mut z = s;
-        z = (z ^ (z >> 30)).wrapping_mul(0xbf58_476d_1ce4_e5b9);
-        z = (z ^ (z >> 27)).wrapping_mul(0x94d0_49bb_1331_11eb);
-        z ^ (z >> 31)
-    }
+/// The random words of the test `test`, from the shared generator with a new seed each run,
+/// printed (`crate::seed::Rng::fresh`).
+fn words(test: &str) -> impl FnMut() -> u64 {
+    let (mut rng, _) = crate::seed::Rng::fresh(test);
+    move || rng.next_u64()
 }
 
 /// The edge words: 0, 1, 2, small primes and powers of 2, and the largest values.
@@ -56,7 +52,7 @@ fn the_word_gcds_agree_with_euclid() {
             );
         }
     }
-    let mut next = words(1);
+    let mut next = words("the_word_gcds_agree_with_euclid");
     for _ in 0..10_000 {
         let (a, b, c) = (next(), next(), next() >> 40);
         // A common factor `c`, so that the gcd is not nearly always 1.
@@ -78,7 +74,7 @@ fn the_word_gcds_agree_with_euclid() {
 
 #[test]
 fn the_big_remainder_and_gcd_by_a_word_agree_with_num_bigint() {
-    let mut next = words(2);
+    let mut next = words("the_big_remainder_and_gcd_by_a_word_agree_with_num_bigint");
     for n in 0..40 {
         let x: BigUint = (0..n).fold(BigUint::from(0u8), |x, _| (x << 64u32) + next());
         let ds = [
@@ -110,7 +106,7 @@ fn the_big_remainder_and_gcd_by_a_word_agree_with_num_bigint() {
 
 #[test]
 fn products_and_powers_modulo_a_word_agree_with_num_bigint() {
-    let mut next = words(3);
+    let mut next = words("products_and_powers_modulo_a_word_agree_with_num_bigint");
     let mut moduli: Vec<u64> = EDGES.iter().copied().filter(|&m| m > 0).collect();
     moduli.extend((0..20).map(|_| next()));
     for &m in &moduli {
@@ -176,7 +172,7 @@ fn bezout_signed_before(a: i128, b: i128) -> Option<(i128, i128)> {
 
 #[test]
 fn bezout_cofactors_give_the_gcd_and_are_the_least() {
-    let mut next = words(6);
+    let mut next = words("bezout_cofactors_give_the_gcd_and_are_the_least");
     let mut xs: Vec<i128> = (-40..=40).collect();
     xs.extend([
         i128::MAX,
@@ -220,7 +216,7 @@ fn bezout_cofactors_give_the_gcd_and_are_the_least() {
 #[test]
 fn the_mersenne_arithmetic_agrees_with_division() {
     use m61::P;
-    let mut next = words(4);
+    let mut next = words("the_mersenne_arithmetic_agrees_with_division");
     let mut xs = vec![0, 1, 2, P - 2, P - 1, 1 << 60, (1 << 60) + 1];
     xs.extend((0..200).map(|_| next() % P));
     for &a in &xs {
@@ -262,7 +258,7 @@ fn the_inverse_seed_is_right_in_five_bits() {
 
 #[test]
 fn inverses_modulo_2_64_are_inverses() {
-    let mut next = words(5);
+    let mut next = words("inverses_modulo_2_64_are_inverses");
     let mut xs = vec![
         1,
         3,
@@ -305,7 +301,7 @@ fn powers_modulo_2_64_agree_with_num_bigint() {
 
 #[test]
 fn odd_roots_modulo_2_64_are_the_one_odd_root() {
-    let mut next = words(9);
+    let mut next = words("odd_roots_modulo_2_64_are_the_one_odd_root");
     // Indices 1, odd primes, and odd composites (the function needs only an odd index).
     for p in [
         1u64,

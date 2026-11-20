@@ -55,9 +55,10 @@
 
 use std::cell::Cell;
 
+use zed_numtheory::gcd_u128 as gcd;
 use zedc_lattice::interval::{End, IntervalSet, Num};
 
-use super::rows::{Row, Rows, gcd};
+use super::rows::{Row, Rows};
 
 /// Why a projection was answered here.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

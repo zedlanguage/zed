@@ -288,13 +288,8 @@ mod tests {
     #[test]
     fn montgomery_arithmetic_agrees_with_division() {
         use crate::{mul_mod, pow_mod};
-        let mut s = 0x2545_f491_4f6c_dd1du64;
-        let mut next = move || {
-            s ^= s << 13;
-            s ^= s >> 7;
-            s ^= s << 17;
-            s
-        };
+        let (mut rng, _) = crate::seed::Rng::fresh("montgomery_arithmetic_agrees_with_division");
+        let mut next = move || rng.next_u64();
         let mut moduli = vec![3, 5, 9, 15, 25, 561, 1_000_003, (1 << 61) - 1];
         moduli.extend([
             (1 << 63) - 1,
