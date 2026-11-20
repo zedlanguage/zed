@@ -81,9 +81,10 @@ fn strip(n: i64) -> Formula {
 ///
 /// Measured (2026-11-19, four runs at load5 27 to 36 on 32 cores): `line n=4000` 551,792 units
 /// at 1.3 to 2.5 ns a unit, `sides h=60` 627,888 at 0.1 to 0.3 ns, `strip n=4000` 558,464 at
-/// 4.7 to 8.1 ns; 15 to 25 ms at the limit. The reading's units cost far less time than the cover's (26.5 to 27.8 ns a unit,
-/// `exact_cover`), so it stops at its allowance well before 250 ms; it is charged more than its
-/// time, not less (the shadows of `u_values` at 16 units a pair of half-planes, a few ns each).
+/// 4.7 to 8.1 ns; 15 to 25 ms at the limit. The reading's units cost far less time than the cover's
+/// (26.5 to 27.8 ns a unit, `exact_cover`), so it stops at its allowance well before 250 ms; it is
+/// charged more than its time, not less (the shadows of `u_values` at 16 units a pair of
+/// half-planes, a few ns each).
 #[test]
 fn the_two_pin_reading_takes_a_bounded_time_per_unit_of_work() {
     let names = ["p", "q", "y"];

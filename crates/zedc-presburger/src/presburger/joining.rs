@@ -122,16 +122,16 @@ impl Formula {
     // Complexity tradeoff: naive version (before PRES-again-monotone), a compound `g || !g`,
     // with `g` a conjunction or disjunction, was not found and stayed a disjunction: sound, but
     // each later test split into its cases, and the exact cover asked about both, past its
-    // limit on `l01_39_scope_relations::families::audit_seed_126_no_wider_set_from_a_narrower_start`
-    // (3.05 M units without the disjunction, refused with it), so a narrower start kept a wider
-    // set. Looking `g` up hashed it through its whole depth on every `Formula::or`, and
-    // `map_cons`, `nnf` and `forget` call `or` once per `Or` node, so a nested or/and formula
-    // cost its size times its depth (62 times the work for 8 times the depth, measured at
-    // d = 500 to 4000). Used: a compound node's hash is now found once and kept with it
-    // (`deep`, `Shared::keep_sig`), and the compound disjuncts are hashed only when some
-    // disjunct is the negation of a compound, so the lookup costs O(1) per disjunct once each
-    // node's hash is kept, O(size) over all calls, and a call with no such negation costs
-    // what it did. Tests in `l01_39_scope_relations::linked`:
+    // limit on
+    // `l01_39_scope_relations::families::audit_seed_126_no_wider_set_from_a_narrower_start` (3.05 M
+    // units without the disjunction, refused with it), so a narrower start kept a wider set.
+    // Looking `g` up hashed it through its whole depth on every `Formula::or`, and `map_cons`,
+    // `nnf` and `forget` call `or` once per `Or` node, so a nested or/and formula cost its size
+    // times its depth (62 times the work for 8 times the depth, measured at d = 500 to 4000). Used:
+    // a compound node's hash is now found once and kept with it (`deep`, `Shared::keep_sig`), and
+    // the compound disjuncts are hashed only when some disjunct is the negation of a compound, so
+    // the lookup costs O(1) per disjunct once each node's hash is kept, O(size) over all calls, and
+    // a call with no such negation costs what it did. Tests in `l01_39_scope_relations::linked`:
     // `a_disjunction_of_a_constraint_and_its_complement_is_true` and
     // `a_nested_or_and_formula_is_built_and_mapped_in_time_near_its_size`.
     fn complementary(fs: &[Formula]) -> bool {
@@ -505,8 +505,9 @@ impl Joining {
 thread_local! {
     /// Whether [`Formula::and_keeping`] and [`Formula::or_keeping`] join as they did before
     /// [`Joining`], and the translator joins a chain of `&&` or `||` two at a time
-    /// (`preimage::Tx::two_at_a_time`): for the tests that compare the two (ST-formula-k2). Only with
-    /// the feature `two-at-a-time`, which the crate that holds `preimage` turns on for its tests.
+    /// (`preimage::Tx::two_at_a_time`): for the tests that compare the two (ST-formula-k2). Only
+    /// with the feature `two-at-a-time`, which the crate that holds `preimage` turns on for its
+    /// tests.
     pub static TWO_AT_A_TIME: Cell<bool> = const { Cell::new(false) };
 }
 

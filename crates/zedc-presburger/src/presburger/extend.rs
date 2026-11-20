@@ -150,11 +150,11 @@ struct Summaries {
 type Key = (Id, Vec<Atom>);
 
 /// A definition `d` and the definitions it reaches (its cone), projected onto the atoms of its
-/// key, which holds the variables `d` defines that others read: the integer points of the disjunction of `pieces`,
-/// each a conjunction, read on these atoms, are those of the cone (exact, [`shadow`] with its
-/// dark shadows). Each piece is one case of `d` (a branch of an `if`, of `min`, `max` or `abs`,
-/// one side of a `!=`) with one piece of the summary below it, those with no point dropped
-/// ([`decide`]) and those written alike kept once (LOAD-chain-sep-rest). Every
+/// key, which holds the variables `d` defines that others read: the integer points of the
+/// disjunction of `pieces`, each a conjunction, read on these atoms, are those of the cone (exact,
+/// [`shadow`] with its dark shadows). Each piece is one case of `d` (a branch of an `if`, of `min`,
+/// `max` or `abs`, one side of a `!=`) with one piece of the summary below it, those with no point
+/// dropped ([`decide`]) and those written alike kept once (LOAD-chain-sep-rest). Every
 /// other atom of the cone is projected out, the symbols too: a question is asked of the
 /// summaries and the parts beside them together, existentially, so projecting an atom out is
 /// exact when nothing else read with the summary reads it, and each atom anything else reads
@@ -246,10 +246,10 @@ impl Extending {
     // kept part is decided with the summaries as well, and its point, which a summary does not
     // give since it projects out the atoms of the definitions, is found only when a conjunction
     // that extends it is asked ([`Extending::fill`], LOAD-chain-sep-rest): with every
-    // definition it reaches, as above, once for each such conjunction. The same holds for the negation of a
-    // conjunction whose part fails only at points its call's arguments do not reach (`p(x) =
-    // q(x: 2 * x)`, `q` failing at odd values alone) and whose other parts never fail: decided
-    // whole (LOAD-chain-affine).
+    // definition it reaches, as above, once for each such conjunction. The same holds for the
+    // negation of a conjunction whose part fails only at points its call's arguments do not reach
+    // (`p(x) = q(x: 2 * x)`, `q` failing at odd values alone) and whose other parts never fail:
+    // decided whole (LOAD-chain-affine).
     pub fn defined(&mut self, f: &Formula, def: &dyn Fn(u32) -> Formula) -> Answers {
         self.defined_with(f, def, &|_| None)
     }
@@ -344,8 +344,8 @@ impl Extending {
         // p(x: x + 3)`, `p`'s point at its lowest `x`, below `q`'s range once moved) extends the
         // point of `q` with the callee's constraints fixed there, as it did when `p` was
         // translated at `x + 3`, instead of being decided whole twice, once for the answer and
-        // once for the point (80 links: 1.6 to 2.2 s with the largest part alone, 0.39 s now, 0.44 s
-        // when each link translated its callee again). A part that holds nowhere settles it.
+        // once for the point (80 links: 1.6 to 2.2 s with the largest part alone, 0.39 s now,
+        // 0.44 s when each link translated its callee again). A part that holds nowhere settles it.
         // Otherwise it is decided whole.
         // Complexity tradeoff: each other part tried reads the rest of the conjunction, the
         // largest part among it, so a link that extends none costs O(its kept parts times the
@@ -360,9 +360,10 @@ impl Extending {
         // LOAD-call-summary), so the drifting chain `p{i}(x) = q(x: x) && p{i-1}(x: x + 3) && x
         // < 1000 * i`, whose `q` point serves each link, reads O(1) rows a link and not the
         // chain (160 links: 1.80 s before, 0.13 s now; test
-        // `l01_38_omega_test::one_scope::the_questions_of_a_drifting_chain_scale`). Each face is exact, so the point is
-        // found where the whole one would be; where the solver refuses the question with faces,
-        // or none is read, the question is asked with the parts themselves, as before.
+        // `l01_38_omega_test::one_scope::the_questions_of_a_drifting_chain_scale`). Each face is
+        // exact, so the point is found where the whole one would be; where the solver refuses the
+        // question with faces, or none is read, the question is asked with the parts themselves, as
+        // before.
         // A part with a disjunction or a negation (an `if`, `min`, `max`, `abs`, `!=`, an
         // `||`, a `div` or `mod` by a variable) has a face too, its disjunctions kept as
         // clauses, each clause said once (LOAD-disj-residue, [`clauses_once`]): the chain with
@@ -1066,7 +1067,8 @@ fn put(holes: &mut BTreeMap<Atom, Holes>, a: Atom, h: Holes) {
 }
 
 /// The atoms outside `keep` that a two-term equality among `rows`, their coefficient 1 or -1 in
-/// it, sets to `c * b + d` with `b` in `keep`, by the atom: `(c, b, d)`, the first such row in the order of `rows` setting it.
+/// it, sets to `c * b + d` with `b` in `keep`, by the atom: `(c, b, d)`, the first such row in the
+/// order of `rows` setting it.
 /// Time of the rows.
 fn bindings(rows: &[Con], keep: &HashSet<Atom>) -> HashMap<Atom, (Int, Atom, Int)> {
     let mut out: HashMap<Atom, (Int, Atom, Int)> = HashMap::new();
@@ -3828,8 +3830,8 @@ impl Summaries {
                     roots = Arc::new(imbl::OrdSet::unit(id));
                 }
                 self.branch_roots.insert(id, roots);
-                // Complexity tradeoff: checking every functional leaf through its symbols against every
-                // frontier would restore O(F*A) key probes. Propagate persistent sets of
+                // Complexity tradeoff: checking every functional leaf through its symbols against
+                // every frontier would restore O(F*A) key probes. Propagate persistent sets of
                 // functional-leaf identities with the root traversal and index their owner
                 // incidences once. Cost is directed-union work plus indexed incidences;
                 // empty sets share one input. This reproduces key even for zero-symbol
@@ -4563,7 +4565,8 @@ fn pairs(rows: &[Con]) -> Vec<(Int, Atom, usize, usize)> {
 /// through the pair). Pairs are taken by `m`, then atom; a pair a rewrite has changed is
 /// skipped: its rows must still be opposite with constants adding to `m - 1`, since rows that
 /// bound `m * v` more loosely (`y <= 3 * q <= y + 5`) leave `v` two values, and reading another
-/// row through them is not exact (`q <= 0 && q >= 1` would become `-2 <= y <= 0`). Time of the rows rewritten, each found through the rows holding its atom.
+/// row through them is not exact (`q <= 0 && q >= 1` would become `-2 <= y <= 0`). Time of the rows
+/// rewritten, each found through the rows holding its atom.
 // Complexity tradeoff: naive version, each pair scans every row for its atom, O(p r t) for
 // p pairs over r rows of t terms. Used: the rows holding each atom, kept as rows are
 // rewritten, so each pair reads only its atom's rows, O(r t + w t) term visits for w
@@ -4831,7 +4834,8 @@ fn normalize_own_leaf(
 // Complexity tradeoff: recomputing the other t-1 contributions for each of t
 // bounded atoms cost O(t²) arithmetic operations without producing t² outputs.
 // Maintain lower/upper row totals and update the changed atom's contribution in
-// place: O(t log t) tree probes and O(t) arithmetic operations, O(t) stored contributions (replacing the old cloned atom list).
+// place: O(t log t) tree probes and O(t) arithmetic operations, O(t) stored contributions
+// (replacing the old cloned atom list).
 // This reproduces the old in-place atom order exactly, including bounds tightened
 // earlier in the same row; it is not a simultaneous/weaker propagation sweep.
 fn tighten_bounded_row(row: &Con, bounds: &mut BTreeMap<Atom, (Int, Int)>) -> bool {
@@ -5447,12 +5451,12 @@ fn convex_integer_rays(pieces: &BTreeSet<Vec<Con>>) -> Option<Vec<Con>> {
 // in last, so a piece hidden by a tie, or the nearer one where it fails, stays apart: exact,
 // more pieces. `max(H div 2, x + y - 9)`: n^2.06 to 80 links before (21.4 G instructions), 4
 // pieces at each link and n^1.1 to n^1.6 with it (2.8 G at 80 links, 20.6 G at 320); the
-// rest is the coefficients growing one bit a link, LOAD-max-div-bits. Tradeoffs: one hash map and one ordered map for each group; two pieces whose
-// union is no interval of one form (`x <= 2` and `x >= 4` with a point at 3, or two forms
-// changing at once) stay apart, exact but more pieces; a gap whose decision is refused is
-// taken to have a point. `max(H - 1, x mod 5 + x div 7 - 9)`: n^2.0 from 10 to 80 links
-// before the gap test (0.67 to 32.6 G instructions, one piece more every few links), n^1.0
-// with it (0.63 to 5.8 G).
+// rest is the coefficients growing one bit a link, LOAD-max-div-bits. Tradeoffs: one hash map and
+// one ordered map for each group; two pieces whose union is no interval of one form (`x <= 2` and
+// `x >= 4` with a point at 3, or two forms changing at once) stay apart, exact but more pieces; a
+// gap whose decision is refused is taken to have a point. `max(H - 1, x mod 5 + x div 7 - 9)`:
+// n^2.0 from 10 to 80 links before the gap test (0.67 to 32.6 G instructions, one piece more every
+// few links), n^1.0 with it (0.63 to 5.8 G).
 fn merge_pieces(pieces: BTreeSet<Vec<Con>>) -> Vec<Vec<Con>> {
     // Complexity tradeoff: indexing every form constructs r rests of r rows, O(r²),
     // even when the union has no pair that could merge (R5-C38, beyond I18's cached forms).
@@ -6356,9 +6360,9 @@ mod tests {
     #[test]
     fn envelope_lean_merge_and_decide_keep_the_integer_points_of_small_systems() {
         // Cross-review of LOAD-max-div-xr, round 3 (Codex): 50 random systems of five rows over
-        // three atoms in the box [-2, 2]³, from a new seed each run. `envelope` and `lean` (rows forward and
-        // reversed) keep exactly the integer points of the box, `merge_pieces` of two such
-        // pieces keeps their union, and `decide_cons` agrees with the points
+        // three atoms in the box [-2, 2]³, from a new seed each run. `envelope` and `lean` (rows
+        // forward and reversed) keep exactly the integer points of the box, `merge_pieces` of two
+        // such pieces keeps their union, and `decide_cons` agrees with the points
         // ([`small_pieces_checked`]).
         let (mut rng, _) = crate::seed::Rng::fresh(
             "envelope_lean_merge_and_decide_keep_the_integer_points_of_small_systems",

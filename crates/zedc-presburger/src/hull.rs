@@ -8,11 +8,11 @@
 //! row's pivot. A new row's pivot is its atom the fewest rows mention, the first of them on a
 //! tie, so that adding it rewrites as few rows as it can: rows `x1 - x2`, `x1 - x3`, … each
 //! take their last atom and rewrite none, where taking `x1` would rewrite every row before.
-//! Two hulls of one set may then have different rows. A row `t` means `t == 0`. The rows are in persistent maps, so a hull made from another
-//! by a few changes shares the rest with it, and the join of the two finds the rows that
-//! differ in time near their number: the rows by pivot are a treap whose shape its pivots fix
-//! (module `rows`), so the subtrees two such hulls share sit at the same places in both.
-//! Coefficients are unbounded integers.
+//! Two hulls of one set may then have different rows. A row `t` means `t == 0`. The rows are in
+//! persistent maps, so a hull made from another by a few changes shares the rest with it, and the
+//! join of the two finds the rows that differ in time near their number: the rows by pivot are a
+//! treap whose shape its pivots fix (module `rows`), so the subtrees two such hulls share sit at
+//! the same places in both. Coefficients are unbounded integers.
 
 mod rows;
 

@@ -78,10 +78,10 @@ pub(super) struct OneRow {
 }
 
 impl OneRow {
-    /// A formula, given as its top-level conjuncts (`Formula::conjunct_list`), read as a box and one
-    /// row, when it is a conjunction of constraints with no product atom, and such a box and row;
-    /// `None` for any other formula. A conjunct other than a constraint fails it before any list
-    /// is made.
+    /// A formula, given as its top-level conjuncts (`Formula::conjunct_list`), read as a box and
+    /// one row, when it is a conjunction of constraints with no product atom, and such a box and
+    /// row; `None` for any other formula. A conjunct other than a constraint fails it before any
+    /// list is made.
     // Complexity tradeoff: the solver's elimination of the row's n atoms copies the shrinking
     // row at each step, O(n²) term work, and a projection repeats that for each end it bisects.
     // Here the ends are kept in an ordered map and the row's two sums are made once, O(n log n);

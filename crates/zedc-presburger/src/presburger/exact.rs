@@ -246,12 +246,12 @@ pub(super) fn exact_each_checked(
     // Complexity tradeoff: the certificate is O(r·t) for r conjuncts of t terms, then O(r·t) for
     // each of the P pieces of `h`, with no question; the part is prepared for it once
     // (`guarded::prepare`), not once a name, and a part with more atoms than its definitions
-    // plus 2 is rejected there for all its names (PRES-groupA-forward-per-part); the loop of the cover asks at least one
-    // question a value where each value is its own cell (guards-beyond: one for each value of
-    // `i`, each a run of the solver on the whole formula, O(v·r·t) or more for v values), and on
-    // the chain of absolute values the reading alone spent 2,971,100 of 3,100,000 units at 1,100
-    // levels, all of them at 8,800, against the certificate's 70,512 and 563,312. Where it
-    // declines, its work, at most the part's allowance, is taken from the reading and the
+    // plus 2 is rejected there for all its names (PRES-groupA-forward-per-part); the loop of the
+    // cover asks at least one question a value where each value is its own cell (guards-beyond: one
+    // for each value of `i`, each a run of the solver on the whole formula, O(v·r·t) or more for v
+    // values), and on the chain of absolute values the reading alone spent 2,971,100 of 3,100,000
+    // units at 1,100 levels, all of them at 8,800, against the certificate's 70,512 and 563,312.
+    // Where it declines, its work, at most the part's allowance, is taken from the reading and the
     // fast paths, never from the loops (PRES-cover-bench-guards-beyond, -chains-abs).
     let mut certified: HashMap<&Atom, Classed> = HashMap::new();
     let mut once: Vec<(Option<ReadOnce>, u64)> = Vec::with_capacity(parts.len());
@@ -315,7 +315,8 @@ pub(super) fn exact_each_checked(
         // Complexity tradeoff: `members[i]` already holds the answered symbols of part `i` in
         // the order of `sorted`, so this reads O(k_i) entries per part and O(n) in all. Scanning
         // all of `sorted` for each part, as 0ac1dccff did, was O(parts · n) = O(n²) hash lookups
-        // when every part is small (`independent_stages_scale`: 10.514, FAIL-bench-independent-stages).
+        // when every part is small (`independent_stages_scale`: 10.514,
+        // FAIL-bench-independent-stages).
         let want: BTreeMap<&Atom, IntervalSet> = (members[i].iter())
             .filter(|(s, _)| !certified.contains_key(*s))
             .map(|(s, h)| (*s, (*h).clone()))
@@ -3001,10 +3002,10 @@ fn shared_cells(
         // the loop). The cell's own work meets this step's allowance, which is part of the
         // symbols' `k·L` ([`exact_each`]); the `size` and [`PIECE`]s read are charged past it
         // ([`Work::exempt`]), O(size) a symbol (LIMITS-shared-step-allowance). `points` is not
-        // empty here: the step returned above where `f` has no point, and the loop above read every point,
-        // so `read == points.len() >= 1`. The parts of the cell with holes and its strides are
-        // dropped: the ranges `c` alone are values of `s` with a point, as in `cells_cover`, and
-        // what they leave is asked or left to the symbol's own cover.
+        // empty here: the step returned above where `f` has no point, and the loop above read every
+        // point, so `read == points.len() >= 1`. The parts of the cell with holes and its strides
+        // are dropped: the ranges `c` alone are values of `s` with a point, as in `cells_cover`,
+        // and what they leave is asked or left to the symbol's own cover.
         let (c, _, _) = cell(f, &points[read - 1], s, &HashSet::new(), &h.hull(), work)?;
         work.exempt(|w| {
             w.read(size)?;
@@ -3260,14 +3261,14 @@ fn point_cells(
 
 /// The exact projection of the conjunction `rows` onto each atom it reads, where every row
 /// reads one atom except rows `>=` over one linear form `t` that differ only in their constant
-/// (`t + k >= 0`, the least `k` standing for all); `None` for other rows. Each atom `x` alone in its rows has an interval `D_x`. Then `v` is in the
-/// projection onto `a` where `v` is in `D_a` and `c_a·v + k + Σ_{x ≠ a} max_{D_x} c_x·x >= 0`:
-/// each other atom takes, independently of the rest, the end of its own interval that
-/// makes its term largest, and an interval of integers attains its maximum term at an end (or
-/// the term is unbounded above, and every `v` in `D_a` has a point). Exact over the integers,
-/// as every step names a point. Where the rows have no point (an empty interval, an
-/// equation `k·x = c` with `k` not dividing `c`, or an atom of the form left with no value,
-/// which happens exactly when `k + Σ max c_x·x < 0`, that is, when no point meets the form),
+/// (`t + k >= 0`, the least `k` standing for all); `None` for other rows. Each atom `x` alone in
+/// its rows has an interval `D_x`. Then `v` is in the projection onto `a` where `v` is in `D_a` and
+/// `c_a·v + k + Σ_{x ≠ a} max_{D_x} c_x·x >= 0`: each other atom takes, independently of the rest,
+/// the end of its own interval that makes its term largest, and an interval of integers attains its
+/// maximum term at an end (or the term is unbounded above, and every `v` in `D_a` has a point).
+/// Exact over the integers, as every step names a point. Where the rows have no point (an empty
+/// interval, an equation `k·x = c` with `k` not dividing `c`, or an atom of the form left with no
+/// value, which happens exactly when `k + Σ max c_x·x < 0`, that is, when no point meets the form),
 /// the projection onto every atom is empty ([`nothing`]).
 // Complexity tradeoff: naive version, a cover per symbol ([`projected`] for each atom,
 // eliminating the others one by one), O(n) each and O(n²) for the n atoms of the form (`wide`
@@ -4138,13 +4139,14 @@ fn met(
 /// projections, each exact by [`met`]'s rule for one disjunction.
 ///
 /// PRES-cover-moduli-two-disjunctions (pres8, 2026-11-20): in every group of the 16 cases of
-/// l01_25 `s22::the_cover_answers_where_the_solver_alone_answered_on_three_shapes_at_moduli_5_and_7`
+/// l01_25
+/// `s22::the_cover_answers_where_the_solver_alone_answered_on_three_shapes_at_moduli_5_and_7`
 /// declined here before this change (14 still refused when it was made, after
-/// PRES-project-each-naming), one disjunction is the outer `if` of the shape (`if x >= 0 {c}
-/// else {y}`, `if y >= 0 {c} else {y}` or `if c >= 1 {y} else {-y}`), 2 blocks, and the other the remainder chain, 8 to
-/// 27 blocks; the two share the chain's result atom (and `s`), so the group is one and the
-/// cover asked 11 to 36 questions of the whole formula, past `EXACT_LIMIT`. Distributed, 2
-/// copies of the chain.
+/// PRES-project-each-naming), one disjunction is the outer `if` of the shape
+/// (`if x >= 0 {c} else {y}`, `if y >= 0 {c} else {y}` or `if c >= 1 {y} else {-y}`), 2 blocks, and
+/// the other the remainder chain, 8 to 27 blocks; the two share the chain's result atom (and `s`),
+/// so the group is one and the cover asked 11 to 36 questions of the whole formula, past
+/// `EXACT_LIMIT`. Distributed, 2 copies of the chain.
 ///
 /// Complexity tradeoff: naive version, declining (`None`), so the cover asks its questions of
 /// the whole formula, each O(size) work, one for each few values of the answer. Used: first
@@ -4563,8 +4565,8 @@ fn cut_at_shared(
 }
 
 /// A progression of values of a cell: `lo`, `lo + step`, ..., `hi`, `step` 2 or more. `absent`
-/// holds the residues modulo `step` that a residue question of [`cells_cover`] found no point of `f`
-/// in, with `s` from `lo` to `hi`: empty when the cell makes it.
+/// holds the residues modulo `step` that a residue question of [`cells_cover`] found no point of
+/// `f` in, with `s` from `lo` to `hi`: empty when the cell makes it.
 struct Stride {
     step: Int,
     lo: Int,

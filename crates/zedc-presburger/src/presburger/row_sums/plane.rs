@@ -582,12 +582,12 @@ mod tests {
     /// Random rows over two atoms `x` and `y`, with up to two atoms an equation defines and one
     /// atom of no row, each atom over up to three ranges: wherever the polygons answer, with no
     /// allowance, each set is that of the points, and so wherever `project` (the allowance of
-    /// rows with no plan) answers, whose answers are those within its allowance. The counts are printed, not asserted, since they
-    /// depend on the draws (PROOF-plane-route-bounds): at this seed the polygons answer 2,962
-    /// of 6,000, 1,666 of those with no point and 349 with a defined atom and a point, and
-    /// decline the rest (a pair `2·y >= ..`, `-3·y >= ..`; a defined atom `2·x + 2·y`; an
-    /// atom defined by an equation over `x` alone); `project` answers the share of those its
-    /// allowance holds, printed as `route`.
+    /// rows with no plan) answers, whose answers are those within its allowance. The counts are
+    /// printed, not asserted, since they depend on the draws (PROOF-plane-route-bounds): at this
+    /// seed the polygons answer 2,962 of 6,000, 1,666 of those with no point and 349 with a defined
+    /// atom and a point, and decline the rest (a pair `2·y >= ..`, `-3·y >= ..`; a defined atom
+    /// `2·x + 2·y`; an atom defined by an equation over `x` alone); `project` answers the share of
+    /// those its allowance holds, printed as `route`.
     #[test]
     fn projections_are_those_of_the_points() {
         let mut seed = 0x2545_F491_4F6C_DD1D_u64;

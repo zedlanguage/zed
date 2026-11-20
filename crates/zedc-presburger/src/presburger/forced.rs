@@ -185,7 +185,8 @@ pub(super) fn empty(f: &Formula, conjuncts: &Conjuncts) -> bool {
 // about 500K). The constructors (`Formula::and`, `Formula::or`) absorb `true` and `false` but
 // keep a constraint of no atom. Trigger: a projected formula whose only seed is such a part.
 // Tests: `l01_38_presburger::one_row::a_forced_contradiction_projects_to_empty_in_linear_work`
-// and `l01_38_presburger::one_row::a_formula_with_no_first_step_is_projected_without_the_propagation`.
+// and
+// `l01_38_presburger::one_row::a_formula_with_no_first_step_is_projected_without_the_propagation`.
 fn may_start(conjuncts: &Conjuncts) -> bool {
     let mut ends: Vec<(&Atom, Option<Int>, Option<Int>)> = Vec::new();
     for g in conjuncts.iter() {
@@ -656,10 +657,10 @@ mod trial {
 
         /// Whether the formula holds once the variables are tried at their bounds in rounds
         /// (`Some(false)` when it is false there or a contradiction is found, `None` when it is
-        /// still undecided), and how many rounds set some variable. A round gives every variable not yet known
-        /// that has a bound that bound, its lower one when it has two, all at once, and the
-        /// propagation then continues; the next round sets the variables that propagation has
-        /// bounded since. The rounds end when one sets nothing, the formula has its value, or a
+        /// still undecided), and how many rounds set some variable. A round gives every variable
+        /// not yet known that has a bound that bound, its lower one when it has two, all at once,
+        /// and the propagation then continues; the next round sets the variables that propagation
+        /// has bounded since. The rounds end when one sets nothing, the formula has its value, or a
         /// contradiction is found. No round tries a second value for a variable, and no value
         /// is undone: the rounds search nothing.
         ///

@@ -187,7 +187,8 @@ fn small_systems_project_to_their_enumerated_values() {
 
 /// A goal held early stops the projection: the repaired unit's rows (`w == 0` put in) onto
 /// `x` make 1,562 parts with every splinter, and far fewer once `[4, 7]` and `[9, +inf)`, the
-/// goal of its first cell, are held (`exact::tests::every_name_of_the_repaired_unit_has_its_exact_answer`).
+/// goal of its first cell, are held
+/// (`exact::tests::every_name_of_the_repaired_unit_has_its_exact_answer`).
 /// The rows `Σ c[j]·x[start + j] + k >= 0` of the first 8 windows of the window system of
 /// `l01_38_presburger::exp_families` (width 3, 2 rows a window, n = 12, seed 1096302828291),
 /// the smallest prefix of its windows whose projection onto `x0` builds a shadow past the limit

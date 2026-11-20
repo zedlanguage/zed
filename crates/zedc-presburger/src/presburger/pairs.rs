@@ -50,7 +50,8 @@ use super::formula::{Factor, Lin};
 /// that share variables cost O(|s| × |p|) for each pair read, and no bound better than the
 /// products themselves is known for that case. Tests:
 /// `tests::the_pairs_kept_are_those_left_by_expanding_every_product` (against the naive
-/// method) and `l01_38_presburger::ladder::products_whose_factors_one_sum_on_the_factors_joins_scale`.
+/// method) and
+/// `l01_38_presburger::ladder::products_whose_factors_one_sum_on_the_factors_joins_scale`.
 pub(super) fn kept(
     rows: &[&Lin],
     pairs: &[(usize, usize)],

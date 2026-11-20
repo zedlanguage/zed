@@ -132,14 +132,14 @@
 //! 24.1M). The cross-review of PRES-overlap-fast (2026-11-13) replaced the lists by words of 64
 //! keys with signature groups and joins of whole words (round 1), and then added the
 //! intervals of full words, projection by intervals, buffers kept between steps, and a
-//! schedule of the race (round 2); a set of intervals alone and a set of repeated words were smaller but grew
-//! more than 10.5 times from k = 64 to 512. Two sums whose shared atoms have different
-//! coefficients in each (1 and 2 in one, 1 in the other) split the shared atoms into classes
-//! whose box is the product of their ranges, so the race's bound on the method's work was
-//! loose and the method waited for the solver: 3,873M instructions decided at k = 64. PRES-overlap-coeffs
-//! (2026-11-13) splits the shared atoms by their ratio into two groups and joins the two at
-//! once ([`Fused`], [`lattice`]): 167.7M decided at k = 64 and 76.7M at k = 512 under the
-//! race. Sumsets by FFT (K. Koiliaris
+//! schedule of the race (round 2); a set of intervals alone and a set of repeated words were
+//! smaller but grew more than 10.5 times from k = 64 to 512. Two sums whose shared atoms have
+//! different coefficients in each (1 and 2 in one, 1 in the other) split the shared atoms into
+//! classes whose box is the product of their ranges, so the race's bound on the method's work was
+//! loose and the method waited for the solver: 3,873M instructions decided at k = 64.
+//! PRES-overlap-coeffs (2026-11-13) splits the shared atoms by their ratio into two groups and
+//! joins the two at once ([`Fused`], [`lattice`]): 167.7M decided at k = 64 and 76.7M at k = 512
+//! under the race. Sumsets by FFT (K. Koiliaris
 //! and C. Xu, "A faster pseudopolynomial time algorithm for subset sum", SODA 2017; K.
 //! Bringmann, "A near-linear pseudopolynomial time algorithm for subset sum", SODA 2017) cost
 //! O(W log W log n) for the sumset of n atoms whose sums span W, against O(n · log m · W/64)
@@ -661,11 +661,11 @@ pub(super) fn project(
         // each symbol's hull (`Hull::tighten`), and on overlapping sums each question is a
         // subset-sum problem, NP-complete, so with no count it ran 14 to 60 s on
         // `overlap_rows(16)` (PRES-solver-projection-uncounted); counted, it is refused with
-        // `Refusal::Questions` once past `meter::EXACT_LIMIT`, as the cover is. Without the cover (`old_exact` false: the
-        // test controls `project_each_solver` and `meter::EXACT_OFF`) the solver's projection is
-        // the union of the hulls of its disjuncts, coarser than the exact set
-        // (FAIL-projection-not-exact: `[1, 5]` where the set is {1, 3, 5}), so that path refuses,
-        // which keeps the written conditions, rather than answer coarser (author P197).
+        // `Refusal::Questions` once past `meter::EXACT_LIMIT`, as the cover is. Without the cover
+        // (`old_exact` false: the test controls `project_each_solver` and `meter::EXACT_OFF`) the
+        // solver's projection is the union of the hulls of its disjuncts, coarser than the exact
+        // set (FAIL-projection-not-exact: `[1, 5]` where the set is {1, 3, 5}), so that path
+        // refuses, which keeps the written conditions, rather than answer coarser (author P197).
         // Complexity tradeoff: a question past the join's limit costs the join's work up to
         // `JOIN_LIMIT`, then the solver's projection, up to `meter::EXACT_LIMIT`, and the
         // cover's, up to `meter::EXACT_LIMIT` for each symbol, against the join's
@@ -3285,7 +3285,8 @@ impl Joins {
                         s = (s.0.max(a), s.1.min(b));
                     }
                     (Some((_, _, lo)), Some((k, true))) if l.abs() == 1 => {
-                        // l = 1: s = -k - σ, the digit `-k - lo - lc - u`; l = -1: `k + lo - lc + u`.
+                        // l = 1: s = -k - σ, the digit `-k - lo - lc - u`; l = -1:
+                        // `k + lo - lc + u`.
                         let c = if l == 1 { -k - lo - lc } else { k + lo - lc };
                         side = Some(Side::Eq {
                             reflect: l == 1,

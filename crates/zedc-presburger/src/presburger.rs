@@ -26,18 +26,18 @@
 //! into one variable (`quotient`), a unimodular change of variables that keeps every
 //! integer point. Two cases are then decided exactly whatever the eliminations would do. Rows
 //! over two variables or fewer are decided by counting the integer points under each piece of
-//! their upper and lower envelopes ([`zedc_solvers::twovar`]). Rows `±x ± y + k >= 0` are decided by
-//! the parity test on the zero-weight cycles of their tight constraint graph
-//! ([`zedc_solvers::utvpi`]); once they are shown to have a point, exact eliminations that add terms
-//! are allowed, since each keeps that form, and they are taken only when a model is wanted.
+//! their upper and lower envelopes ([`zedc_solvers::twovar`]). Rows `±x ± y + k >= 0` are decided
+//! by the parity test on the zero-weight cycles of their tight constraint graph
+//! ([`zedc_solvers::utvpi`]); once they are shown to have a point, exact eliminations that add
+//! terms are allowed, since each keeps that form, and they are taken only when a model is wanted.
 //!
 //! When every elimination left would add terms, the box test decides what it can, in one pass
 //! over the terms and with no linear program: each variable's bounds are tightened once by
 //! every row from the bounds its bound rows give (`bounds`); the rows are empty when one of
 //! them is below zero at every point of that box, have a point when one of five points of the
 //! box holds every row (the point nearest zero, the lower and upper corners, and the two
-//! midpoints, `box_point`), are decided completely by [`zedc_solvers::live3`] when three variables are
-//! live, and are refused otherwise. At the first inexact elimination
+//! midpoints, `box_point`), are decided completely by [`zedc_solvers::live3`] when three variables
+//! are live, and are refused otherwise. At the first inexact elimination
 //! the real shadow is tested once (`relaxed_empty`): real-shadow eliminations are taken
 //! while each adds no terms, and the box test ends it; empty, it shows the problem empty. From
 //! there on the dark shadow is solved, whose points are points of the problem. When it has
@@ -60,9 +60,9 @@
 //! removes a disjunct, so the rounds are at most the disjuncts. No
 //! disjunct left is no point. A point is then sought by taking, for each disjunction in turn,
 //! the first disjunct that meets the base with the disjuncts already taken, disjuncts and
-//! disjunctions being sorted first, so that the order they are written in changes nothing. Where none does,
-//! each disjunct whose addition to the base empties it by the rule above is removed, until
-//! none is, and the search runs again; where it fails again, the question is refused. A
+//! disjunctions being sorted first, so that the order they are written in changes nothing. Where
+//! none does, each disjunct whose addition to the base empties it by the rule above is removed,
+//! until none is, and the search runs again; where it fails again, the question is refused. A
 //! projection is the meet, over the disjunctions, of the union over each one's disjuncts of
 //! the projection of the base with that disjunct; with two disjunctions or more left, each
 //! finite bound is then moved inward by halving the step, only where the formula with the
@@ -326,7 +326,8 @@ fn satisfiable_written(f: &Formula) -> Result<Option<Model>, Refusal> {
             // O(n log n) map/arithmetic operations, O(n) storage; solver models inside
             // pick and probe are unchanged. A caller receives a valid point, possibly a
             // different point from the old public entry. Arbitrary-precision arithmetic
-            // retains its bit cost. Test: one_row::a_box_and_an_extreme_row_build_their_models_in_near_linear_work.
+            // retains its bit cost. Test:
+            // one_row::a_box_and_an_extreme_row_build_their_models_in_near_linear_work.
             let conjuncts = f.conjunct_list();
             if let Some(b) = one_row::OneRow::of(&conjuncts) {
                 if !b.exists() {
@@ -453,7 +454,8 @@ fn satisfiable_inner(f: &Formula) -> Result<Option<Model>, Refusal> {
         // O(n log n) pass of [`drop_by_bounds`] before it, which costs at most the same order as
         // the propagations `settle` makes and removes the disjuncts it would have to test. Tests:
         // `l01_39_reduced_product::pendants::rewritten_parts_of_seed_8087861239740142386_are_decided_alike`,
-        // `l01_38_omega_test::bench::probe::twin_chains_of_absolute_values_scale`. COMPLEXITY.md row C47.
+        // `l01_38_omega_test::bench::probe::twin_chains_of_absolute_values_scale`.
+        // COMPLEXITY.md row C47.
         if drop_by_bounds(&mut p, &|_| false).is_none() {
             return Ok(None);
         }
@@ -496,16 +498,16 @@ fn satisfiable_inner(f: &Formula) -> Result<Option<Model>, Refusal> {
 /// `names::a_joined_equation_whose_sign_only_the_names_choose_gives_one_answer`), and held
 /// with both signs it made benchmarks of reflections and overlaps (l01_38 `cell_sweep`,
 /// zedc_presburger `r5_hull_tests`, `r5_orbit_tests`) two to four times slower. So the
-/// writing of such an equation can still change the answer (PRES-solve-equation-sign). The solver's elimination order reads the coefficients and signs
-/// of the rows (`stable_colors`, `canonical`), so without this step the same formula with a
-/// row times 3, or an equation written as two rows, could be answered one way and refused for
-/// [`Refusal::Growth`] or [`Refusal::Shadows`] the other (FAIL-rewrite-growth-both,
-/// FAIL-pendants-growth-scaled-seed). Cost: O(n log n) in the size of `f` per question, against
-/// O(n) for passing it as written; a node written so already is kept with its id, so the memos
-/// keyed by id still find it. Measured on 38,000 equations, half with their sides swapped
-/// (bench `decide_scales_over_one_class_of_equalities`): 3.8e8 instructions against 1.7e8 as
-/// written, and 8.1 times the work at 8 times the size against 8.2; the rest is the copy of
-/// the conjunction that a changed row needs, since a constraint is held by value. Other ways
+/// writing of such an equation can still change the answer (PRES-solve-equation-sign). The solver's
+/// elimination order reads the coefficients and signs of the rows (`stable_colors`, `canonical`),
+/// so without this step the same formula with a row times 3, or an equation written as two rows,
+/// could be answered one way and refused for [`Refusal::Growth`] or [`Refusal::Shadows`] the other
+/// (FAIL-rewrite-growth-both, FAIL-pendants-growth-scaled-seed). Cost: O(n log n) in the size of
+/// `f` per question, against O(n) for passing it as written; a node written so already is kept with
+/// its id, so the memos keyed by id still find it. Measured on 38,000 equations, half with their
+/// sides swapped (bench `decide_scales_over_one_class_of_equalities`): 3.8e8 instructions against
+/// 1.7e8 as written, and 8.1 times the work at 8 times the size against 8.2; the rest is the copy
+/// of the conjunction that a changed row needs, since a constraint is held by value. Other ways
 /// weighed: asking again with the other sign of each
 /// equation (`Signs::Both`, `Signs::Opposite`) where the chosen one is refused, as
 /// [`project_each`] does, answered one more part in a sweep of 960 seeds of 60 parts each and
@@ -645,10 +647,11 @@ fn decide_named(f: &Formula) -> Result<bool, Refusal> {
 //    join into one. [`decide_named`] answers exactly.
 // Not proved: that the model [`satisfiable_named`] gets for a group names only atoms of that
 // group, so `Model::extend` never overwrites another group's value (an auxiliary variable a
-// solver adds for one group could share its number with one of another). Evidence: the tests of FAIL-or-if-tie-refusal and a
-// census of 1,000 random four-variable systems (716 decided against 682 before, no answer
-// depending on names). If false, a formula could be called non-empty, or given a model
-// that is no point of it, where the whole-formula path refused: unsound.
+// solver adds for one group could share its number with one of another). Evidence: the tests
+// of FAIL-or-if-tie-refusal and a census of 1,000 random four-variable systems (716 decided
+// against 682 before, no answer depending on names). If false, a formula could be called
+// non-empty, or given a model that is no point of it, where the whole-formula path refused:
+// unsound.
 // Complexity tradeoff: union and find over the conjuncts, joined at each atom to the first
 // conjunct that holds it, with path halving: O(n log n) for the n terms of `f`, where joining
 // every pair of conjuncts that share an atom would be O(c^2) for c conjuncts. The groups are
@@ -1731,7 +1734,8 @@ fn flips(t: &Lin) -> bool {
 fn sign_by_terms(t: &Lin) -> Ordering {
     // The coefficients of `-t`, sorted, are those of `t`, sorted, negated and reversed, so one
     // sorted list of references serves both and no coefficient is copied, where two copied and
-    // sorted lists cost two vectors per equation (bench `decide_scales_over_one_class_of_equalities`).
+    // sorted lists cost two vectors per equation (bench
+    // `decide_scales_over_one_class_of_equalities`).
     let mut up: Vec<&Int> = t.terms.values().collect();
     up.sort_unstable();
     let n = up.len();
@@ -1822,8 +1826,8 @@ fn decide_kept_status(
             // Given up: a run whose removals the bounds do not show still moves one disjunction
             // per round. A complete solution re-tests, when a disjunct joins the base, only the
             // disjunctions that share an atom with it. Tests:
-            // `l01_38_omega_test::bench::probe::twin_chains_of_absolute_values_scale`, COMPLEXITY.md row
-            // C47 (PROJECT-abs-chain-quadratic).
+            // `l01_38_omega_test::bench::probe::twin_chains_of_absolute_values_scale`,
+            // COMPLEXITY.md row C47 (PROJECT-abs-chain-quadratic).
             if drop_by_bounds(&mut p, &|_| false).is_none() {
                 return Ok(false);
             }
@@ -2134,11 +2138,12 @@ impl Renamed {
     /// The case: `(if m > 0 { 2 } else { 0 }) + (if u > 0 { 2 } else { 0 }) != k`, the
     /// disjunctions `(m <= 0 && q0 == 0) || (m >= 1 && q0 == 2)` and the same over `u` and `q1`
     /// beside `!(q0 + q1 == k)`. Exchanging `m` with `u` and `q0` with `q1` together maps it
-    /// onto itself, but no exchange of `m` with `u` alone does, so [`Numbered::ties_are_symmetries`],
-    /// which tries the exchanges of one tie at a time, finds the atoms tied and the formula was
-    /// settled only by [`settle_tied`]'s choice of the disjuncts of least color: decided when
-    /// that choice happened to answer it (k = 1, 2, 3 asked whether it can be true), refused
-    /// otherwise (FAIL-tie-sum-ne-constant-refused, FAIL-ladder-rung2-front-disagree).
+    /// onto itself, but no exchange of `m` with `u` alone does, so
+    /// [`Numbered::ties_are_symmetries`], which tries the exchanges of one tie at a time, finds the
+    /// atoms tied and the formula was settled only by [`settle_tied`]'s choice of the disjuncts of
+    /// least color: decided when that choice happened to answer it (k = 1, 2, 3 asked whether it
+    /// can be true), refused otherwise (FAIL-tie-sum-ne-constant-refused,
+    /// FAIL-ladder-rung2-front-disagree).
     ///
     /// Method (individualization and refinement, as in McKay and Piperno's nauty and Traces,
     /// one level deep): the atoms of `tie` are given colors by their order of names and the
@@ -2643,8 +2648,9 @@ impl<'a> Numbered<'a> {
 
     /// Whether `map`, a permutation of the atoms that moves only atoms among `touched`, gives the
     /// formula again ([`Numbered::swaps_onto_itself`]); `own` says of a constraint with no
-    /// product, given by its number, that it is its own image without writing it out. `work` holds the lists of a
-    /// check, cleared here, so that the many swaps of one tie check allocate them once.
+    /// product, given by its number, that it is its own image without writing it out. `work` holds
+    /// the lists of a check, cleared here, so that the many swaps of one tie check allocate them
+    /// once.
     // Complexity tradeoff: naive version, new lists at each swap, a few allocations each, which
     // on one row over k = 3920 atoms that share colors (`l01_38_presburger::bench::one_row::
     // residue_and_ends_of_a_row_scale`) were most of the 16 MB the swaps of the tie check
@@ -3078,15 +3084,16 @@ fn settle_as_sets(mut p: Parts) -> Result<Option<AsSets>, Refusal> {
 /// integer points under every naming, since [`shadow`] eliminates an atom only where that is
 /// exact over the integers, so a test that the solver answers answers alike, and no mark
 /// claims a point the base lacks (a tied component's atoms keep their own names, so no map
-/// back moves them onto another component's atoms). Not proved: that the solver refuses a test of those rows under every naming
-/// or none; a disjunct it refuses under one naming and answers under another, and whose linked
-/// rows it refuses, is still marked by the names (plan row PROOF-tied-projection-refusal-names:
-/// two tied copies of a chain with no point, `false` under most namings and refused with
-/// `Growth` under 2 to 4 of 40, which step refuses not traced). Renaming such a component canonically
-/// needs a canonical labeling, exponential in the worst case; leaving it without a projection
-/// tests each disjunct against the whole group, O(k r) for k disjunctions over r rows, which
-/// made `decide_scales_over_a_sum_of_conditionals_tied_jointly` 19.2 times the instructions at
-/// 8n and `satisfiable_on_disjuncts_with_loose_rows_scales` run past its limit.
+/// back moves them onto another component's atoms). Not proved: that the solver refuses a test of
+/// those rows under every naming or none; a disjunct it refuses under one naming and answers under
+/// another, and whose linked rows it refuses, is still marked by the names (plan row
+/// PROOF-tied-projection-refusal-names: two tied copies of a chain with no point, `false` under
+/// most namings and refused with `Growth` under 2 to 4 of 40, which step refuses not traced).
+/// Renaming such a component canonically needs a canonical labeling, exponential in the worst case;
+/// leaving it without a projection tests each disjunct against the whole group, O(k r) for k
+/// disjunctions over r rows, which made `decide_scales_over_a_sum_of_conditionals_tied_jointly`
+/// 19.2 times the instructions at 8n and `satisfiable_on_disjuncts_with_loose_rows_scales` run past
+/// its limit.
 // Complexity tradeoff: naive version, the projections made over the names as given, as
 // before: O((m + k) log k), with the answer depending on the names. A complete version would
 // rename tied components by a canonical labeling, exponential in the worst case
@@ -3460,13 +3467,14 @@ impl Alone<'_> {
 /// each has a disjunct with no disjunction of its own that `proven` marks; otherwise `None`.
 /// Only those disjuncts may be taken. Settling left disjuncts that it did not show empty,
 /// and `proven` ([`AsSets::proven`]) marks those shown to have a point with the base: each
-/// was tested against a projection of the base or the rows linked to it ([`settle_as_sets`]). A disjunct that [`solve`] refused is not marked and never taken,
-/// even when it comes first: taking it would read a refusal as a point. The rows a disjunct
-/// is linked to are linked to no other disjunction, so the points of separate groups
-/// combine into one point of the base with every disjunct taken. Whether `p` has such a
-/// point is then fixed by the links, which no renaming changes; [`Alone::point`] finds one
-/// so that its answer does not change with the names either. The groups are found by union
-/// and find over the atoms with path halving, linking each row and each disjunction's atoms.
+/// was tested against a projection of the base or the rows linked to it ([`settle_as_sets`]). A
+/// disjunct that [`solve`] refused is not marked and never taken, even when it comes first: taking
+/// it would read a refusal as a point. The rows a disjunct is linked to are linked to no other
+/// disjunction, so the points of separate groups combine into one point of the base with every
+/// disjunct taken. Whether `p` has such a point is then fixed by the links, which no renaming
+/// changes; [`Alone::point`] finds one so that its answer does not change with the names either.
+/// The groups are found by union and find over the atoms with path halving, linking each row and
+/// each disjunction's atoms.
 fn alone<'a>(p: &'a Parts, proven: &[Vec<bool>]) -> Option<Alone<'a>> {
     let mut ids: HashMap<&'a Atom, usize> = HashMap::new();
     let mut parent = UnionFind::default();
@@ -5149,7 +5157,8 @@ mod cell_sweep {
             })
             .collect();
         if live_top.is_empty() {
-            // Test: `cell_sweep_empty_tests::a_disjunction_whose_every_disjunct_is_dead_inside_holds_no_cell`.
+            // Test:
+            // `cell_sweep_empty_tests::a_disjunction_whose_every_disjunct_is_dead_inside_holds_no_cell`.
             return Some(ResolvedOr::Empty);
         }
         let any_top_pay = live_top
@@ -5330,7 +5339,8 @@ mod cell_sweep {
                 }
             }
             if pieces.is_empty() {
-                // Test: `cell_sweep_empty_tests::a_disjunction_whose_leaves_lie_outside_their_guards_holds_no_cell`.
+                // Test:
+                // `cell_sweep_empty_tests::a_disjunction_whose_leaves_lie_outside_their_guards_holds_no_cell`.
                 return Some(ResolvedOr::Empty);
             }
             if !any_top_pay {
@@ -5717,7 +5727,8 @@ mod cell_sweep {
         }
     }
 
-    /// Dihedral involution monoid over `{ v -> v, v -> c_0 - v }`: `Both` represents `{ v, c_0 - v }`.
+    /// Dihedral involution monoid over `{ v -> v, v -> c_0 - v }`: `Both` represents
+    /// `{ v, c_0 - v }`.
     #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
     enum InvOp {
         Id,
@@ -6611,7 +6622,8 @@ mod cell_sweep {
         !(lo, hi).is_empty()
     }
 
-    /// Decides `a * x + b * k + d == 0` for `(x, k) ∈ x_span × k_span` in closed form via [`Int::bezout`].
+    /// Decides `a * x + b * k + d == 0` for `(x, k) ∈ x_span × k_span` in closed form via
+    /// [`Int::bezout`].
     fn holds_2var_eq(a: &Int, b: &Int, d: &Int, x_span: &Span, k_span: &Span) -> bool {
         if a.is_zero() {
             return holds_1var_eq(b, d, k_span);
@@ -7197,7 +7209,8 @@ mod cell_sweep {
                 let (pid, aff) = parse_def_eq(c, q, x, pk, &orient.known_defs)?;
                 let is_id = aff.c.is_zero() && aff.bk.is_zero();
                 let is_flip = if pid == 0 {
-                    // Base step on `x`: either `q = x` (`bx = 1, c = 0`) or `q = c_0 - x` (`bx = -1`).
+                    // Base step on `x`: either `q = x` (`bx = 1, c = 0`) or `q = c_0 - x`
+                    // (`bx = -1`).
                     if aff.bx == Int::ONE && is_id {
                         false
                     } else if aff.bx == -&Int::ONE {
@@ -10222,7 +10235,8 @@ fn specialize_con(c: &Con, free: &BTreeSet<Atom>, model: &Model) -> Con {
 // walk the same constraints. What is given up: nothing, the specialized constraint is the one
 // [`specialize_con`] gives; a model changed without [`TermValues::moved`] or
 // [`TermValues::clear`] would give wrong repairs, so both callers do one at each change.
-// Tests: `l01_38_omega_test::bench::names::decide_scales_over_a_sum_of_conditionals_other_than_a_constant`.
+// Tests:
+// `l01_38_omega_test::bench::names::decide_scales_over_a_sum_of_conditionals_other_than_a_constant`.
 #[derive(Default)]
 struct TermValues(DigestMap<usize, Int>);
 
@@ -10353,7 +10367,8 @@ fn own_repair_in(
 // the cost of [`local_repair`] alone. What is given up: nothing a [`local_repair`] finds, since
 // it still runs when this finds nothing; the point found can differ from the one
 // [`local_repair`] would give (other variables keep their values), so a later choice of
-// [`pick`] can differ. Tests: `l01_39_reduced_product::follow::bench::nested_sums_of_one_input_scale`.
+// [`pick`] can differ. Tests:
+// `l01_39_reduced_product::follow::bench::nested_sums_of_one_input_scale`.
 fn least_read_repair(
     acc: &[Con],
     near: &Near,
@@ -10571,10 +10586,12 @@ pub(super) fn fresh_stamp() -> u64 {
 /// NP-complete (graph 3-coloring is such a formula: one disjunction of three colors per
 /// node, one row per edge), so a search that backtracks is exponential in the disjunctions.
 /// Trigger: two or more disjunctions whose disjuncts conflict through shared variables,
-/// whatever the size. Tests: `l01_38_omega_test::omega::each_cause_of_a_refusal_has_its_own_message`
-/// (four tasks in three slots), `l01_38_omega_test::omega::a_disjunct_refused_by_the_solver_is_reported_by_its_own_cause`.
-/// COMPLEXITY.md rows S16 and S18. A complete solution would backtrack over the disjuncts
-/// (DPLL(T) with learned conflicts), exponential in the worst case.
+/// whatever the size. Tests:
+/// `l01_38_omega_test::omega::each_cause_of_a_refusal_has_its_own_message` (four tasks in three
+/// slots),
+/// `l01_38_omega_test::omega::a_disjunct_refused_by_the_solver_is_reported_by_its_own_cause`.
+/// COMPLEXITY.md rows S16 and S18. A complete solution would backtrack over the disjuncts (DPLL(T)
+/// with learned conflicts), exponential in the worst case.
 ///
 /// The disjunctions are first read with [`by_halves`] (`fast`), each disjunct that no point
 /// answers asked of the constraints taken projected onto its disjunction's atoms; a disjunct
@@ -10715,13 +10732,14 @@ fn pick_reading<'a>(
     cause: bool,
     settled: &mut bool,
 ) -> Result<(Model, Vec<&'a Parts>), Refusal> {
-    // Complexity tradeoff: naive `pick_by(..., false)` calls `solve(&cs, true)` on the full `k`-atom
-    // component whenever the current model misses both arms of a disjunction, costing `Theta(k^2)`
-    // across `k` disjunctions (`quotient` unpacking onto the greatest atom on unbounded unit rows, or
-    // `batch` walking fractional splits on bounded unit rows). `try_pick_disjoint_wide` maintains the
-    // exact active suffix maximum (`BTreeSet`) or Fenwick prefix split over `DisjointWide` unit rows in
-    // `O(k log k)` total time; formulas outside that two-point disjoint-unit-row shape return `None`
-    // and run `pick_by` unchanged. Test: `l01_38_presburger::slack_scale::sat_half_decide_scales`.
+    // Complexity tradeoff: naive `pick_by(..., false)` calls `solve(&cs, true)` on the full
+    // `k`-atom component whenever the current model misses both arms of a disjunction, costing
+    // `Theta(k^2)` across `k` disjunctions (`quotient` unpacking onto the greatest atom on
+    // unbounded unit rows, or `batch` walking fractional splits on bounded unit rows).
+    // `try_pick_disjoint_wide` maintains the exact active suffix maximum (`BTreeSet`) or Fenwick
+    // prefix split over `DisjointWide` unit rows in `O(k log k)` total time; formulas outside that
+    // two-point disjoint-unit-row shape return `None` and run `pick_by` unchanged. Test:
+    // `l01_38_presburger::slack_scale::sat_half_decide_scales`.
     if !fast && let Some(res) = try_pick_disjoint_wide(p, deep) {
         return res;
     }
@@ -11015,7 +11033,8 @@ fn pick_reading<'a>(
                 // each was found to hold by that walk, and each disjunct on the way has its
                 // constraints holding, so it is taken with the model unchanged. A disjunct taken
                 // earlier in its disjunction leaves the part unread. So the model is the same when
-                // the part is reached again, and its mark holds. Test `l01_39_scope_relations::deep_condition::the_search_for_a_point_tests_each_part_of_a_deep_test_a_bounded_number_of_times`
+                // the part is reached again, and its mark holds. Test
+                // `l01_39_scope_relations::deep_condition::the_search_for_a_point_tests_each_part_of_a_deep_test_a_bounded_number_of_times`
                 // counts the parts tested ([`parts_tested`]) (COMPLEXITY S31).
                 if m.iter().any(|(a, v)| model.get(a) != Some(v)) {
                     stamp = fresh_stamp();
@@ -11055,9 +11074,9 @@ fn take(cons: &[Con], acc: &mut Linked, near: &mut Near) {
     }
 }
 
-/// The constraints taken so far by [`pick`] or [`settle`], indexed for [`local_repair`]: each constraint of
-/// two or more atoms under each of its atoms, and the constraints of one atom as that atom's
-/// bounds. A repair then costs the constraints that link its atoms to others and two bounds
+/// The constraints taken so far by [`pick`] or [`settle`], indexed for [`local_repair`]: each
+/// constraint of two or more atoms under each of its atoms, and the constraints of one atom as that
+/// atom's bounds. A repair then costs the constraints that link its atoms to others and two bounds
 /// for each atom, not every constraint an atom has had alone: on a chain of `k` guards
 /// `i >= j` on one input, listing them made the repair of each of the `k` levels cost `k`.
 #[derive(Clone, Default)]
@@ -11973,8 +11992,8 @@ fn by_halves<E>(
 // about 240 small calls of [`settle`] read no projection and of the three over 62
 // disjunctions two read 62 and 61 and one none, yet every projection was made. Now a range
 // is projected at most once, when a leaf first asks, so the work is that of the ranges above
-// the leaves that ask, never more than before: `cross_dead` 600.6 M to 508.1 M instructions at `k = 32`,
-// 1,336 M to 1,092 M at 64 (PERF-s22-cross-dead-first-runs).
+// the leaves that ask, never more than before: `cross_dead` 600.6 M to 508.1 M instructions at
+// `k = 32`, 1,336 M to 1,092 M at 64 (PERF-s22-cross-dead-first-runs).
 fn by_halves_lazy<E>(
     rows: Vec<Con>,
     keep: &[BTreeSet<Atom>],
@@ -12036,12 +12055,13 @@ fn by_halves_general<E>(
         meter::charge(rows.len() as u64 + 1).ok()?;
         // Each row once: a copy adds nothing to the system it is in, but it is projected again.
         // Complexity tradeoff (PREIMAGE-tie-indep-let): naive version, the rows as given, which on
-        // items that each bring and return one row over atoms all of them share (the inputs `n`, `m`
-        // of the nested tests of `n + m`, `l01_39_reduced_product::follow`, where each level's
+        // items that each bring and return one row over atoms all of them share (the inputs `n`,
+        // `m` of the nested tests of `n + m`, `l01_39_reduced_product::follow`, where each level's
         // projection and each leaf give `n + m == 1` again) gives the i-th leaf about `i/2` copies
-        // to project, O(k²) for k items: 42 ms of leaf projections at 512 items, 1.5 ms at 64. Used:
-        // a hash set of the rows, O(rows) expected per projection, which is already the cost of
-        // [`linked_to`]. Test: `l01_39_reduced_product::follow::bench::nested_sums_of_one_input_scale`.
+        // to project, O(k²) for k items: 42 ms of leaf projections at 512 items, 1.5 ms at 64.
+        // Used: a hash set of the rows, O(rows) expected per projection, which is already the cost
+        // of [`linked_to`]. Test:
+        // `l01_39_reduced_product::follow::bench::nested_sums_of_one_input_scale`.
         // The set holds references, so no row is copied (PERF-guards-nesting-ratio: a copy of
         // each row at each level of the halving).
         let first: Vec<bool> = {
@@ -12182,8 +12202,8 @@ fn probe(p: Parts, kept: &HashSet<u64>) -> Result<Option<Parts>, Refusal> {
 /// Complexity tradeoff: testing each piece of a set of values of one atom costs one search of
 /// the whole formula per piece that the rounds by halves cannot refute together, O(h·n) for a
 /// domain of `h` pieces over a formula of size `n` (holes of `x` on difference chains, 128 to
-/// 1024 pieces: 12.55 times the work for 8 times the pieces, limit 12.57 of 2026-11-10; 66 to 1015 rounds
-/// for 128 to 2048). Keeping the set untested asks nothing of it (6 to 69 rounds; 7.4 times
+/// 1024 pieces: 12.55 times the work for 8 times the pieces, limit 12.57 of 2026-11-10; 66 to 1015
+/// rounds for 128 to 2048). Keeping the set untested asks nothing of it (6 to 69 rounds; 7.4 times
 /// with the set left out of each search, [`search_by_halves`]),
 /// at the price of a piece with no point that the set keeps: it can widen a hull or leave it
 /// inexact, the same in every order. Measured against the probe of every piece over the
@@ -12435,7 +12455,8 @@ fn probe_kept_status(
             // [`refuted_by_links`].
             let mut base = Near::default();
             take(&p.cons, &mut Linked::default(), &mut base);
-            // For each disjunct, whether the search with it forced found no point ([`search_by_halves`]).
+            // For each disjunct, whether the search with it forced found no point
+            // ([`search_by_halves`]).
             let mut single_failed: Vec<Vec<bool>> =
                 p.ors.iter().map(|o| vec![false; o.len()]).collect();
             // The points this round has found so far; with `stop`, the first one ends the probe.
@@ -12559,8 +12580,9 @@ fn probe_kept_status(
                         live_held.push(false);
                         continue;
                     }
-                    // A disjunct whose forced search already failed in [`search_by_halves`] is not searched
-                    // forward again; the propagation and the backward search below still test it.
+                    // A disjunct whose forced search already failed in [`search_by_halves`] is not
+                    // searched forward again; the propagation and the backward search below still
+                    // test it.
                     let mut point = if single_failed[i][at] {
                         None
                     } else {
@@ -12568,24 +12590,26 @@ fn probe_kept_status(
                     };
                     if point.is_none() {
                         if slack_status != Some(SlackStatus::Immune) {
-                            // Complexity tradeoff: a disjunct that no point holds, no implied bound and
-                            // no linked test ([`refuted_by_links`]) removes is still tested by one
-                            // propagation of all the parts, so `r` such
-                            // disjuncts cost `r` propagations of the whole formula, and failed-literal
-                            // probing is polynomial, not `O(n log n)`, when `r` grows with `n` and the
-                            // disjuncts share no bound of one atom that [`learn`] finds. Why: `settle`
-                            // does not report which disjuncts its proof covers, and an undoable
-                            // (trail-based) propagation does not help, since on a chain each refutation's
-                            // own propagation runs through the whole chain. Each refuted disjunct also
-                            // costs [`learn`]: for each bound of one atom it writes, an exponential and a
-                            // binary search over the `m` bounds the other disjuncts write on that atom, up
-                            // to about `2 log2 m + 1` tests, each one [`bounds_refute`] (one propagation
-                            // of bounds, `O(n log n)`) and, when that does not refute, one `settle`. The
-                            // search usually ends on a bound that has a point, and that test always costs
-                            // a `settle`. So when no learned bound removes a later disjunct, `r` refuted
-                            // disjuncts cost up to `O(r log m)` settles, not `r`. Counted on
-                            // 2026-11-12 (item TESTS-split-reversed-boxes): the projection onto `i`
-                            // of `l01_38_omega_test::probe::projecting_guards_beyond_the_inputs_scales`
+                            // Complexity tradeoff: a disjunct that no point holds, no implied bound
+                            // and no linked test ([`refuted_by_links`]) removes is still tested by
+                            // one propagation of all the parts, so `r` such
+                            // disjuncts cost `r` propagations of the whole formula, and
+                            // failed-literal probing is polynomial, not `O(n log n)`, when `r`
+                            // grows with `n` and the disjuncts share no bound of one atom that
+                            // [`learn`] finds. Why: `settle` does not report which disjuncts its
+                            // proof covers, and an undoable (trail-based) propagation does not
+                            // help, since on a chain each refutation's own propagation runs through
+                            // the whole chain. Each refuted disjunct also costs [`learn`]: for each
+                            // bound of one atom it writes, an exponential and a binary search over
+                            // the `m` bounds the other disjuncts write on that atom, up to about
+                            // `2 log2 m + 1` tests, each one [`bounds_refute`] (one propagation of
+                            // bounds, `O(n log n)`) and, when that does not refute, one `settle`.
+                            // The search usually ends on a bound that has a point, and that test
+                            // always costs a `settle`. So when no learned bound removes a later
+                            // disjunct, `r` refuted disjuncts cost up to `O(r log m)` settles, not
+                            // `r`. Counted on 2026-11-12 (item TESTS-split-reversed-boxes): the
+                            // projection onto `i` of
+                            // `l01_38_omega_test::probe::projecting_guards_beyond_the_inputs_scales`
                             // makes one propagation here at 16 and at 128 guards, and 4 and 2 calls
                             // of [`learn`] in all, with 6 and 10 settles in them; `decide` on the
                             // same formula (`guards_beyond_the_inputs_scale`) and the preimage of
@@ -12594,21 +12618,23 @@ fn probe_kept_status(
                             // bounds of the parts answer them first. Trigger: disjuncts without a
                             // point whose proofs differ by more than a bound of one atom. Tests:
                             // `projecting_guards_beyond_the_inputs_scales` reaches it and measures
-                            // it; `l01_25_preimage_catalog::s22::chain_cross_above_its_width_scales`
+                            // it;
+                            // `l01_25_preimage_catalog::s22::chain_cross_above_its_width_scales`
                             // measured it when the cross family reached it (cross at 12 and 96,
                             // COMPLEXITY.md S22: 40.0 times the bytes with one propagation per
-                            // disjunct, 10.1 times with [`learn`]). A
-                            // complete solution is a `settle` that returns, with each refutation, the
-                            // constraints its proof used (a conflict explanation), so that one propagation
-                            // removes every disjunct those constraints exclude. The linked test is that
-                            // explanation for the case where it is one disjunction reached through a
-                            // private atom; it costs at most one more `settle` of a part of the formula
-                            // before the one of the whole, so the worst case stays `O(n)` per disjunct.
-                            // Tests: `l01_38_presburger::ladder::a_chain_of_guarded_remainders_scales`
+                            // disjunct, 10.1 times with [`learn`]). A complete solution is a
+                            // `settle` that returns, with each refutation, the constraints its
+                            // proof used (a conflict explanation), so that one propagation removes
+                            // every disjunct those constraints exclude. The linked test is that
+                            // explanation for the case where it is one disjunction reached through
+                            // a private atom; it costs at most one more `settle` of a part of the
+                            // formula before the one of the whole, so the worst case stays `O(n)`
+                            // per disjunct. Tests:
+                            // `l01_38_presburger::ladder::a_chain_of_guarded_remainders_scales`
                             // (COMPLEXITY.md PRES-guarded-chain). When `SlackIndex` certifies
-                            // `SlackStatus::Immune`, fixing `d` leaves every other variable's projected
-                            // interval unchanged so `settle` removes zero disjuncts and is skipped in
-                            // `O(1)`.
+                            // `SlackStatus::Immune`, fixing `d` leaves every other variable's
+                            // projected interval unchanged so `settle` removes zero disjuncts and
+                            // is skipped in `O(1)`.
                             let mut q = Parts {
                                 cons: p.cons.clone(),
                                 ors: p.ors.iter().filter(|o| !o.is_empty()).cloned().collect(),
@@ -12620,7 +12646,8 @@ fn probe_kept_status(
                             };
                             q.put(&d);
                             if matches!(settle(q, false), Ok(None)) {
-                                // The disjunction without `d`, which the formula is equal to without it.
+                                // The disjunction without `d`, which the formula is equal to
+                                // without it.
                                 let rest: Vec<Rc<Parts>> =
                                     live.iter().chain(&ds[at + 1..]).cloned().collect();
                                 learn(&p, rest, &d, &mut implied);
@@ -13055,8 +13082,8 @@ fn read_order(units: &[Unit<'_>], x: Option<&Atom>) -> Vec<usize> {
 
 /// Removes from the disjunctions of `p` each disjunct that the bounds of the atoms, propagated
 /// as [`bounds_refute`] propagates them (in its order backward and then forward, twice, with no
-/// extra bound), leave without a point, but those `spared`; `None` when the bounds show that `p` has
-/// no point, else whether a disjunct was removed. Every bound propagated is implied by `p`, so
+/// extra bound), leave without a point, but those `spared`; `None` when the bounds show that `p`
+/// has no point, else whether a disjunct was removed. Every bound propagated is implied by `p`, so
 /// a disjunct removed has no point of `p`, and removing it leaves the points of `p` as they
 /// were: [`probe_kept`] would remove it too, by a propagation of the whole formula
 /// ([`settle`]) for each.
@@ -13339,29 +13366,30 @@ fn point_with(
 /// Complexity tradeoff: one search per disjunct, as [`probe_to`] made before (item
 /// PROJECT-canon-precision, method (b)), costs `r` searches of the whole formula for `r`
 /// disjuncts no earlier point holds, `O(r n log n)`, which grew with `n` on the difference
-/// chain (39.4 times the bytes at `8n`, limit 13.2 of 2026-11-10), the three-atom chain (16.6 times) and the
-/// wide named disjunction (25.8 times), measured after batch 101. Here a set of `s` forced disjuncts that has a point costs one
-/// search, and one without costs two more, of its halves, so that `f` disjuncts with no point
-/// cost `O(f log r)` searches and the others `O(f log r + 1)` together: on those chains, where
-/// the disjuncts that no greedy point holds all have a point together, one search does all.
-/// The disjuncts are forced in rounds: one whose bounds of one atom exclude those of a
-/// disjunct forced before it in the round waits for the next. Taken a round each, a
-/// disjunction of `m` cases that exclude each other, each with a point, cost `m` rounds of one
-/// search each, `O(m n log n)`: 20.1 times the bytes at `8n` (limit 14.1 of 2026-11-10) on a chain whose
-/// cases each read one stage (`exclusive_cases`). Here the first search of a round that finds
-/// a point also settles the disjuncts left waiting ([`hold_waiting`]): each is marked held
-/// when the point, with the atoms that only that disjunct's disjunction reads moved
-/// ([`own_repair_in`]), satisfies it, which costs `O(d log n)` for a disjunct of `d`
+/// chain (39.4 times the bytes at `8n`, limit 13.2 of 2026-11-10), the three-atom chain (16.6
+/// times) and the wide named disjunction (25.8 times), measured after batch 101. Here a set of `s`
+/// forced disjuncts that has a point costs one search, and one without costs two more, of its
+/// halves, so that `f` disjuncts with no point cost `O(f log r)` searches and the others
+/// `O(f log r + 1)` together: on those chains, where the disjuncts that no greedy point holds all
+/// have a point together, one search does all. The disjuncts are forced in rounds: one whose bounds
+/// of one atom exclude those of a disjunct forced before it in the round waits for the next. Taken
+/// a round each, a disjunction of `m` cases that exclude each other, each with a point, cost `m`
+/// rounds of one search each, `O(m n log n)`: 20.1 times the bytes at `8n` (limit 14.1 of
+/// 2026-11-10) on a chain whose cases each read one stage (`exclusive_cases`). Here the first
+/// search of a round that finds a point also settles the disjuncts left waiting ([`hold_waiting`]):
+/// each is marked held when the point, with the atoms that only that disjunct's disjunction reads
+/// moved ([`own_repair_in`]), satisfies it, which costs `O(d log n)` for a disjunct of `d`
 /// constraints, so the `m` cases cost one search and `O(m log n)` repairs, 10.0 times the
 /// bytes at `8n`. What is given up: a case whose point needs an atom moved that another
 /// disjunction or the rest of the formula reads is not repaired and still waits for a round of
 /// its own, as before; such cases cost what they cost before. Forced all in one round (method
 /// (c)), such cases share no point, so their halves cost a search each down to one case: the
 /// chain of guarded remainders took 77.7
-/// times the bytes at `8n` (limit 15.4 of 2026-11-10); in rounds 8.8 times. On the remainder chains `m` stops at the classes of the modulus (spread and
-/// sliced chains, sizes 8 to 64: 6.8 and 7.5 times the work, limit 17.6 of 2026-11-10; 32 to 256: 7.5 and
-/// 11.1 times). A set of values of one atom, which would cost a round per piece, is not
-/// tested here ([`one_atom_set`] in [`probe_unhandled`]).
+/// times the bytes at `8n` (limit 15.4 of 2026-11-10); in rounds 8.8 times. On the remainder chains
+/// `m` stops at the classes of the modulus (spread and sliced chains, sizes 8 to 64: 6.8 and 7.5
+/// times the work, limit 17.6 of 2026-11-10; 32 to 256: 7.5 and 11.1 times). A set of values of one
+/// atom, which would cost a round per piece, is not tested here ([`one_atom_set`] in
+/// [`probe_unhandled`]).
 /// When most disjuncts have no point (`f` near `r`), the halving adds up to `2r` searches to
 /// the propagation each of them costs anyway, a constant factor. The held marks come from
 /// the disjuncts [`pick`] took, read once each, not from a test of every disjunct at each
@@ -13371,11 +13399,11 @@ fn point_with(
 /// (COMPLEXITY.md PROJECT-canon-precision).
 // Complexity tradeoff (PRES-stop-prefix): with `stop`, the searches end at the first point,
 // which is all [`has_point`] asks when it falls back to [`batched_prefix`], so that probe
-// costs no more than the one [`found`] makes up to the same point. Naive version: [`probe_to`] with `stop` skipped these searches
-// and the removals before them, so its first point came from one forward search per disjunct
-// in order, a different path from [`found`]'s: cheaper where an early disjunct has a point,
-// but it refused where these searches find one (12 of 3,000 random formulas, where
-// [`satisfiable`] answered and [`decide`] refused). Used: the same removals and searches as
+// costs no more than the one [`found`] makes up to the same point. Naive version: [`probe_to`] with
+// `stop` skipped these searches and the removals before them, so its first point came from one
+// forward search per disjunct in order, a different path from [`found`]'s: cheaper where an early
+// disjunct has a point, but it refused where these searches find one (12 of 3,000 random formulas,
+// where [`satisfiable`] answered and [`decide`] refused). Used: the same removals and searches as
 // without `stop`, at most the searches [`found`] makes, stopped at the first point; a search
 // that finds no point costs what it costs without `stop`.
 fn search_by_halves(
@@ -13401,9 +13429,9 @@ fn search_by_halves(
     // `f` of them have no point because the formula bounds one atom they all bound, as on a
     // chain of `k` guards `i >= j` beyond the inputs (`f` near `k/4`), those `2f` searches cost
     // `O(k^2)` while [`learn`] removes them all with `O(log k)` propagations (41.0 times the
-    // bytes at `8k` from 16, limit 15.4 of 2026-11-12, ledger PROBE-guards). And a search that fails without
-    // the bound, which the search does not see, fails again for each other disjunct alone
-    // (`k/2` more there, each with a point). Used: a disjunct whose search alone fails is
+    // bytes at `8k` from 16, limit 15.4 of 2026-11-12, ledger PROBE-guards). And a search that
+    // fails without the bound, which the search does not see, fails again for each other disjunct
+    // alone (`k/2` more there, each with a point). Used: a disjunct whose search alone fails is
     // handed to [`learn`] at once, whose bounds every later search takes, and a disjunct they
     // exclude is not searched but marked failed (47.3 M and 440.6 M bytes, 9.3 times). The
     // bounds stay here: handed back to [`probe_kept_status`], they changed what its later
@@ -13804,13 +13832,14 @@ impl Parts {
     // The nested shapes are near linear (`Formula::and` and `Formula::or` keep a named part
     // whole): tests in `l01_39_reduced_product::named_test`
     // `arms_of_a_wide_named_conjunction_at_each_tier_take_time_near_linear_in_the_depth`,
-    // `..._wide_named_disjunction_at_each_tier_...`, `..._wide_named_disjunction_required_at_each_tier_...`
-    // and `arms_of_a_chain_of_named_{conjunctions,disjunctions}_take_time_near_linear_in_its_length`,
-    // COMPLEXITY.md S31b. A complete solution holds a shared conjunction as a shared chunk of
-    // the base and a shared disjunction as one shared list (`Rc<[Rc<Parts>]>`), and lets
-    // `settle`, `pick` and `witness` read a chunk or a disjunction they have already met once
-    // per model; reading a repeated disjunction once can change which disjuncts `pick` takes,
-    // so the models it returns must then be checked against the present ones.
+    // `..._wide_named_disjunction_at_each_tier_...`,
+    // `..._wide_named_disjunction_required_at_each_tier_...` and
+    // `arms_of_a_chain_of_named_{conjunctions,disjunctions}_take_time_near_linear_in_its_length`,
+    // COMPLEXITY.md S31b. A complete solution holds a shared conjunction as a shared chunk of the
+    // base and a shared disjunction as one shared list (`Rc<[Rc<Parts>]>`), and lets `settle`,
+    // `pick` and `witness` read a chunk or a disjunction they have already met once per model;
+    // reading a repeated disjunction once can change which disjuncts `pick` takes, so the models it
+    // returns must then be checked against the present ones.
     fn of(f: Formula) -> Parts {
         /// The shared parts known to hold (`yes`) and known not to hold (`no`) where a part is
         /// made: those conjoined on the way down, and the shared disjuncts beside a disjunct.
@@ -14048,9 +14077,9 @@ impl Parts {
     }
 
     /// Whether the parts hold at `values` (read as [`Parts::holds`] reads them), and if so, in
-    /// `out`, the parts and, below them, the first disjunct of each disjunction that holds there, each before
-    /// the disjuncts taken below it and the disjunctions read last to first, the order in
-    /// which [`pick`] reads them. A disjunction is read until a disjunct holds, and each part
+    /// `out`, the parts and, below them, the first disjunct of each disjunction that holds there,
+    /// each before the disjuncts taken below it and the disjunctions read last to first, the order
+    /// in which [`pick`] reads them. A disjunction is read until a disjunct holds, and each part
     /// is entered at most once, so the cost is at most the size of the parts. A part found not
     /// to hold is marked with `stamp`, and a part so marked is not entered again: a caller
     /// passes a new stamp whenever `values` change.
@@ -14591,10 +14620,10 @@ fn settle(mut p: Parts, search: bool) -> Result<Option<Parts>, Refusal> {
         // Complexity tradeoff: when `probe_kept` refutes one arm of `r` 2-way unary disjunctions
         // via `SlackIndex`, `p.ors` enters `settle` with `r` 1-element disjunctions `[d]`. Testing
         // and absorbing them one-by-one inside `one` called `solve(&base.cons, true)` up to `r`
-        // times (`O(r * k)` = `O(k^2)`). Absorbing 1-element unary disjunctions (`terms.len() <= 1`)
-        // into `base` upfront evaluates `solve(&base.cons, ...)` once (`O(k)`) with identical
-        // semantics because unary bounds never widen row arity or introduce eliminations. Test:
-        // `l01_38_presburger::slack_scale::ss_decide_scales`.
+        // times (`O(r * k)` = `O(k^2)`). Absorbing 1-element unary disjunctions
+        // (`terms.len() <= 1`) into `base` upfront evaluates `solve(&base.cons, ...)` once (`O(k)`)
+        // with identical semantics because unary bounds never widen row arity or introduce
+        // eliminations. Test: `l01_38_presburger::slack_scale::ss_decide_scales`.
         let drained = if UNIT_RESCAN.with(Cell::get) {
             drain_unary_rescan(&mut p.ors, &mut base, &mut near)
         } else {
@@ -14927,8 +14956,8 @@ pub fn systems_solved() -> u64 {
 // refused run (the model is an ordered map; measured 8.1 times the instructions at 8n,
 // `bench::division_pairs_scale`); no system the Omega test answers costs more. The refused
 // run itself grew faster on these systems (56 times at 50 to 400 pairs); the tradeoff below
-// (FAIL-omega-pairs-shadows-cost) stops it before the splinters. A point checked against every row proves
-// the answer, so nothing rests on the modular solver beyond the point it gives; its answers
+// (FAIL-omega-pairs-shadows-cost) stops it before the splinters. A point checked against every row
+// proves the answer, so nothing rests on the modular solver beyond the point it gives; its answers
 // that the rows are empty are not taken here, and a refusal stays a refusal where it gives no
 // point. Only its runs that read no names are made, so whether the refusal becomes a point
 // does not turn on the names. Tests: `modular::r7_tests::division_pairs_with_a_lower_bound_
@@ -15028,15 +15057,17 @@ fn point_past_refusal<C: std::borrow::Borrow<Con>>(cons: &[C]) -> Option<Model> 
 /// stay, as before. Done here, on the solver's input, and not where a conjunction is built
 /// ([`Joining`]): there a row dropped by the equation of one operand changed where the
 /// tighter row of a later operand stood, so a chain joined in one pass and two at a time gave
-/// two orders of one conjunction (`presburger::tests::a_chain_joined_in_one_pass_is_built_as_joined_two_at_a_time`,
-/// seed 15348137064077058214).
+/// two orders of one conjunction
+/// (`presburger::tests::a_chain_joined_in_one_pass_is_built_as_joined_two_at_a_time`, seed
+/// 15348137064077058214).
 // Complexity tradeoff: one hash per equation and one per row, each over its k terms with the
 // sign of its first coefficient turned positive, and the terms compared only against the
 // equations of the same hash, one equation kept per set of terms so that a bucket grows by
 // hash collisions alone: O(T) expected for T terms of `cons`, nothing copied when no row is
 // dropped. Naive version: compare each row with every equation, O(m²) for m constraints.
 // Tests `presburger::tests::the_solver_reads_an_equation_beside_a_row_it_implies_as_the_equation`
-// and `l01_38_omega_test::bench::names::satisfiable_scales_over_equalities_each_beside_a_row_they_imply`
+// and
+// `l01_38_omega_test::bench::names::satisfiable_scales_over_equalities_each_beside_a_row_they_imply`
 // (8.85 times the work at 8n; the naive version 42.4 times, at a quarter of the size).
 fn without_rows_equations_imply(cons: Vec<&Con>) -> Vec<&Con> {
     // The hash of `terms` with the sign of the first coefficient turned positive.
@@ -15697,8 +15728,9 @@ fn least(held: Option<Refusal>, r: Refusal) -> Refusal {
 /// unit-coefficient equation `sum_{j=0..vars-1} s * x_j + k_0 == 0` (`s in {-1, 1}`) sequentially,
 /// rewriting the remaining `O(m)`-term row at each step in `Theta(m^2)`. Because every elimination
 /// is unit-coefficient (exact, zero dark/gray gap), Fourier-Motzkin projection onto suffix slices
-/// in `keys` order reduces to prefix sums `[PL[t], PH[t]]` of the unary integer bounds `[l_u, h_u]`,
-/// and back-substitution with [`Int::nearest_zero`] constructs the identical witness in `O(m log m)`.
+/// in `keys` order reduces to prefix sums `[PL[t], PH[t]]` of the unary integer bounds
+/// `[l_u, h_u]`, and back-substitution with [`Int::nearest_zero`] constructs the identical witness
+/// in `O(m log m)`.
 /// Components with unbounded variables, non-unit or multiple wide rows, or duplicate colors among
 /// unfixed variables (beyond the corner/empty box checks) return `None` and run `Omega` unchanged.
 /// Test: `l01_38_presburger::slack_scale::ss_decide_scales`.
@@ -17399,9 +17431,10 @@ impl System {
     /// functions of the rows (and the colors of the variables), and so are the counts of
     /// [`System::shrinking`] where a tie is read from them: [`System::shrink`] reads only the
     /// rows held (`opposites`, the rows themselves), none by index, and every count is that of
-    /// the rows held when [`System::least`] gives such a tie ([`System::shrink`] states why). A symmetry keeps the rows, so it keeps each count, and
-    /// the ranks that made the tie. Checked against all permutations of the variables, for
-    /// every system of a stated family, under every naming: `tie_group_tests`.
+    /// the rows held when [`System::least`] gives such a tie ([`System::shrink`] states why). A
+    /// symmetry keeps the rows, so it keeps each count, and the ranks that made the tie. Checked
+    /// against all permutations of the variables, for every system of a stated family, under every
+    /// naming: `tie_group_tests`.
     ///
     /// Complexity tradeoff: naive version, refine from each tied variable in turn, one
     /// refinement per tied variable, O(t·N log N) for t tied variables and N vertices, which
@@ -17559,14 +17592,15 @@ impl System {
     /// `q1_local::growth_of_offsets_laid_end_to_end`, is not written once per variable (written
     /// so, that test took 28.5 times the bytes for 8 times the size). Why: knowing exactly
     /// whether an elimination adds terms needs the rows it writes, and the count that
-    /// `Sides::fill` keeps per row cannot see cancellation or rows held already. Trigger: a variable of d rows whose d^2 / 4 pairs
-    /// mostly write rows held already or constants, its rows changed by many steps before the
-    /// counts are needed; the size of the system plays no part. Rows of a bounded number of
-    /// variables each, as in `q1_local::sliding_windows_of_four_are_decided`, give z = O(1)
-    /// per count and O(1) counts per step. A complete solution would keep, per pair of rows,
-    /// whether it writes a new row, renewed as rows come and go. The count is exact: a bound
-    /// with another row is counted without writing a row only when no other pair writes a
-    /// row over the same variables, and written and compared otherwise.
+    /// `Sides::fill` keeps per row cannot see cancellation or rows held already. Trigger: a
+    /// variable of d rows whose d^2 / 4 pairs mostly write rows held already or constants, its rows
+    /// changed by many steps before the counts are needed; the size of the system plays no part.
+    /// Rows of a bounded number of variables each, as in
+    /// `q1_local::sliding_windows_of_four_are_decided`, give z = O(1) per count and O(1) counts per
+    /// step. A complete solution would keep, per pair of rows, whether it writes a new row, renewed
+    /// as rows come and go. The count is exact: a bound with another row is counted without writing
+    /// a row only when no other pair writes a row over the same variables, and written and compared
+    /// otherwise.
     ///
     /// What the count reads: the rows of `x[j]` and their opposites, and whether rows over
     /// the variables of those rows other than `x[j]` are held ([`System::over_the_rest`],
@@ -17918,8 +17952,8 @@ fn bounds(sys: &System) -> Option<Bounds> {
 }
 
 /// The bounds `lo`, `hi` of each variable, each tightened once by every wide row
-/// `Σ a[i]·x[i] + k >= 0` of `wide` from those bounds, all rows at the same time ([`bounds`]); `None` when
-/// some variable is left with no value. One pass over the terms.
+/// `Σ a[i]·x[i] + k >= 0` of `wide` from those bounds, all rows at the same time ([`bounds`]);
+/// `None` when some variable is left with no value. One pass over the terms.
 fn tightened<'r>(
     lo: Vec<Option<Int>>,
     hi: Vec<Option<Int>>,
@@ -18720,10 +18754,11 @@ impl Omega {
                 // `l01_38_presburger::oracle::rows_of_three_terms_tight_at_a_corner_match_enumeration`
                 // (67 times with its seed test),
                 // `l01_25_preimage_catalog::random::exact_test_preimages_are_the_projection_of_the_points_that_meet_the_demand`
-                // (42) and `l01_39_reduced_product::random::the_closed_path_condition_and_the_scope_agree_on_emptiness`
+                // (42) and
+                // `l01_39_reduced_product::random::the_closed_path_condition_and_the_scope_agree_on_emptiness`
                 // (44); FAIL-open-sides-bench-ratio gives the scaling with it (8.99 against 51.6
-                // with the deferral off). If false, the Omega test can answer "no point" where
-                // one exists or the reverse: unsound.
+                // with the deferral off). If false, the Omega test can answer "no point" where one
+                // exists or the reverse: unsound.
                 if let Some(js) = self.deferred() {
                     for j in js {
                         let rows = self.sys.eliminate(j, false);
@@ -18786,9 +18821,10 @@ impl Omega {
                     // checked against Bellman-Ford, and in
                     // `l01_38_omega_test::scaling::random_rows_of_two_unit_coefficients_with_a_point_are_decided`
                     // and `model_keys`, which check the model; the enumeration tests
-                    // `forest_answers_match_enumeration` and `random_unit_rows_agree_with_enumeration`
-                    // never reach it. If false, the Omega test can answer "no point" where one
-                    // exists or the reverse, or give a model that is no point: unsound.
+                    // `forest_answers_match_enumeration` and
+                    // `random_unit_rows_agree_with_enumeration` never reach it. If false, the Omega
+                    // test can answer "no point" where one exists or the reverse, or give a model
+                    // that is no point: unsound.
                     if let [j] = js[..]
                         && let Some(defs) = self.sys.pendants(j)
                     {
@@ -18976,9 +19012,9 @@ impl Omega {
             // `l01_38_omega_test::stages::rows_the_one_pass_test_does_not_show_empty_stay_refused`,
             // `l01_38_omega_test::scaling::the_box_stage_with_a_hub_in_one_row_per_block_scales`.
             // COMPLEXITY.md rows S18, Q1-ROWBOX, Q1-LOCAL and Kept "Fourier–Motzkin pairs". A
-            // complete solution would run the growing eliminations of the full Omega test (or another
-            // complete Presburger procedure) and accept their exponential worst case, or find a
-            // structural class of growing systems over four variables or more decidable in
+            // complete solution would run the growing eliminations of the full Omega test (or
+            // another complete Presburger procedure) and accept their exponential worst case, or
+            // find a structural class of growing systems over four variables or more decidable in
             // O(n log n).
             let Some((lo, hi)) = bounds(&self.sys) else {
                 return Leaf::Empty;
@@ -19577,12 +19613,13 @@ impl Omega {
     // No proof covers every step, and a step added later that reads a variable's index would
     // break it. The counts of `System::shrinking` are those of the rows held when a tie is
     // read from them (`System::shrink` states why), and `System::touch` marks every variable
-    // of fewest rows, none by index. Evidence: `l01_38_omega_test::names::ties_taken_by_a_swap_agree_with_enumeration`
-    // (200 random symmetric systems against enumeration, under both namings) and
+    // of fewest rows, none by index. Evidence:
+    // `l01_38_omega_test::names::ties_taken_by_a_swap_agree_with_enumeration` (200 random symmetric
+    // systems against enumeration, under both namings) and
     // `a_tie_that_a_swap_maps_onto_itself_is_decided`. No test reaches the branch of
-    // [`broken_swap`] where a swap fails. If false, the answer can depend on the names (an
-    // answer under one naming, a refusal under another). Each run is still an exact
-    // elimination order, so no answer is wrong: determinism and precision only.
+    // [`broken_swap`] where a swap fails. If false, the answer can depend on the names (an answer
+    // under one naming, a refusal under another). Each run is still an exact elimination order, so
+    // no answer is wrong: determinism and precision only.
     fn untie(&mut self, least: Option<Least>, taken: impl Fn(isize) -> bool) -> Option<Least> {
         let Some((fill, Err(t))) = least else {
             return least;
@@ -20237,11 +20274,12 @@ fn project_each_as_named(f: &Formula, syms: &[Atom], cover: bool) -> Result<Each
     // its proof there; `certified_domains` only difference rows and forests it
     // certifies exact (its proof). `two_var_domains` only a formula whose every disjunct
     // reduces by unit equalities to rows over at most two atoms, projected exactly by
-    // `twovar::project_convex` (its proof), and it refuses where a strip has holes. Each of these answers the exact set `E`, a finite union of
-    // ranges, with no cause, and none can answer where `E` has holes without end, as no finite
-    // union of ranges is such a set. Any other answer is the cover's: `E`, or with holes
-    // without end the set `exact::ended` reads from `E` alone, with the cause `Repeats`. So
-    // every writing that is answered gets one set and one cause, functions of `E`.
+    // `twovar::project_convex` (its proof), and it refuses where a strip has holes. Each of these
+    // answers the exact set `E`, a finite union of ranges, with no cause, and none can answer where
+    // `E` has holes without end, as no finite union of ranges is such a set. Any other answer is
+    // the cover's: `E`, or with holes without end the set `exact::ended` reads from `E` alone, with
+    // the cause `Repeats`. So every writing that is answered gets one set and one cause, functions
+    // of `E`.
     // The solver alone keeps `f` as written, as before the cover. The canonical order once
     // cost `l01_38_omega_test::bench::disj_groups::row_sums::
     // a_chain_of_overlapping_sums_is_decided_and_projected_in_n_log_n` its time limit (past
@@ -20303,7 +20341,8 @@ fn project_each_as_named(f: &Formula, syms: &[Atom], cover: bool) -> Result<Each
     // Uncounted, `overlap_rows(16)` ran 14 to 60 s here (PRES-solver-projection-uncounted).
     // Counted on every path instead, the 26 test pieces of that row's attempt 1 were refused
     // that answer today, so only this path, which answered nothing before, is counted.
-    // Test: `l01_38_omega_test::disj_groups::row_sums::each_family_is_answered_alike_on_both_sides_of_the_join_limit`.
+    // Test:
+    // `l01_38_omega_test::disj_groups::row_sums::each_family_is_answered_alike_on_both_sides_of_the_join_limit`.
     let solver_found_counted = || {
         let mut work = meter::Work {
             used: 0,
@@ -21413,7 +21452,8 @@ fn projections_met(a: Result<Each, Refusal>, b: Result<Each, Refusal>) -> Result
 // whole projection problem. Trigger: a projection whose atoms share a color. Tests:
 // `l01_38_omega_test::omega::twin_definitions_are_merged_before_a_tied_projection` and
 // `l01_38_omega_test::omega::twin_definitions_merge_in_time_near_linear` (control: the
-// pairwise comparison failed it, 16.2 times the bytes at 8 times the size, limit 14.1 of 2026-11-10).
+// pairwise comparison failed it, 16.2 times the bytes at 8 times the size, limit 14.1 of
+// 2026-11-10).
 // COMPLEXITY.md row PROJECT-box-half-open. With `factors_too` (FAIL-presburger-propagation-seed)
 // one more pass renames the products, a hash lookup for each factor, O(P) for P products, and
 // a collision among them repeats the call once without factors. The tied decision that calls
@@ -21776,11 +21816,11 @@ impl Boxed {
 /// [-7, 6]). Why: the exact projection of rows the solver refuses is an integer program over
 /// four variables or more, and propagating the bounds to their fixed point can take a number
 /// of rounds that grows with the constants, not the rows. Trigger: a question or a symbol the
-/// solver refuses. Tests: `l01_39_reduced_product::pendants::parts_once_answered_by_how_they_were_written_give_one_answer`,
+/// solver refuses. Tests:
+/// `l01_39_reduced_product::pendants::parts_once_answered_by_how_they_were_written_give_one_answer`,
 /// `l01_39_reduced_product::pendants::refused_projections_keep_the_box_of_their_rows`,
 /// `l01_38_omega_test::omega::the_box_of_refused_rows_scales`. COMPLEXITY.md row
-/// PROJECT-growth-box. A complete solution would decide the integer program (see
-/// `Omega::run`).
+/// PROJECT-growth-box. A complete solution would decide the integer program (see `Omega::run`).
 ///
 /// Each set and each refusal is the same for every naming of the atoms, as the reduced
 /// product's tests require, since [`project_each`] asks every question renamed by its
@@ -22370,14 +22410,14 @@ impl Level {
         // ([`disjunction_hulls`] rows of one term) join the base, so that each disjunct is
         // projected with them. Before, a disjunct was projected with the base alone, so a bound
         // that needs another disjunction's rows was missed: with `y == -1 || y == 2` (a set with
-        // a hole, written as one disjunct for each of its pieces), `w <= 1` and `z + 2·w >= 1 || z + 3·y >= 3`, the
-        // second disjunct with `y` free left `z` unbounded below, and so did the meet, where
-        // `-1 <= y <= 2` written as two rows, a wider set, gives `z >= -3`: a narrower input
-        // gave a wider output (row PRES-monotone-rules, C7; audit seeds 51, 55, 65, 88, 93, 107
-        // and 109 of `l01_39_scope_relations::families`). The rows hold at every point of the
-        // parts, so the projection stays sound, and a row of one term joins no two groups of the
-        // base ([`Linked`]), so the groups each disjunct is asked with are those it had, each
-        // with its bounds.
+        // a hole, written as one disjunct for each of its pieces), `w <= 1` and
+        // `z + 2·w >= 1 || z + 3·y >= 3`, the second disjunct with `y` free left `z` unbounded
+        // below, and so did the meet, where `-1 <= y <= 2` written as two rows, a wider set, gives
+        // `z >= -3`: a narrower input gave a wider output (row PRES-monotone-rules, C7; audit seeds
+        // 51, 55, 65, 88, 93, 107 and 109 of `l01_39_scope_relations::families`). The rows hold at
+        // every point of the parts, so the projection stays sound, and a row of one term joins no
+        // two groups of the base ([`Linked`]), so the groups each disjunct is asked with are those
+        // it had, each with its bounds.
         // Complexity tradeoff: naive version, each disjunct projected with every row the
         // disjunctions imply, which joins groups of the base through rows of two terms or more
         // and makes each disjunct's question read the joined groups (measured as the negative
@@ -22472,10 +22512,11 @@ impl Level {
         // projection; where a leaf keeps a core of many atoms (a dense group) the questions read
         // that core, at worst the whole group as before. A symbol the projection refuses is asked
         // again of the whole group (at worst the naive cost plus the projection), so no answer is
-        // given up; where the whole group was refused, the projection may answer, narrower and sound
-        // (FAIL-batch-single-hull-seed: batch hulls depended on which symbols were asked). Tests
-        // `by_halves_against_old::batch_and_single_hulls_are_exact_on_a_chain_of_sums` and the
-        // benchmark `by_halves_against_old::bench::hulls_of_linked_copies_are_projected_in_linear_work`,
+        // given up; where the whole group was refused, the projection may answer, narrower and
+        // sound (FAIL-batch-single-hull-seed: batch hulls depended on which symbols were asked).
+        // Tests `by_halves_against_old::batch_and_single_hulls_are_exact_on_a_chain_of_sums` and
+        // the benchmark
+        // `by_halves_against_old::bench::hulls_of_linked_copies_are_projected_in_linear_work`,
         // COMPLEXITY.md rows FAIL-batch-single-hull-seed and PERF-hull-linked-copies-under9.
         let mut projected: HashMap<usize, HashMap<Atom, Result<IntervalSet, Refusal>>> =
             HashMap::new();
@@ -22986,29 +23027,30 @@ impl Level {
         }
         let n_ors = ors.len();
         // Complexity tradeoff: each bound is tightened by about `2 log2 w` questions of the formula
-        // (of the symbol's group alone, where its groups have points), `w` the hull's width, unless a
-        // point of the formula at the end shows it (see [`tighten_each`]). First each disjunct that
-        // the base and the rows the disjunctions imply show empty is removed ([`drop_jointly_empty`]), and the hull is met with the bounds that the
-        // base and the rows the disjunctions left imply ([`disjunction_hulls`]) give, below; where
-        // those rows are exact (each disjunction alone, or a few on one stage once their empty
-        // disjuncts are gone, decide what its forms may be) the point at each end is found and no
-        // question is asked, so a chain of `n` three-atom stages costs O(n log n)
-        // (`x[i + 1] - x[i] - y[i] >= 0`, `1 <= y[i] <= 2`, `x[i + 1] - x[i] + y[i] == 4 || == 5`:
-        // 0.16 s at 128 stages, where it was 41.6 s; with `x[i + 1] - x[i]` in {3, 7} and
-        // `x[i + 1] - x[i] + y[i]` in {6, 9}, which force 7 where the rows allow 4: 0.08, 0.16 and
-        // 2.0 s at 64, 128 and 1024 stages, where it was 7.7 s at 64, plan item DISJ-dpll). What is
-        // given up: no answer, only time, where disjunctions leave out the end of a hull only by
-        // case reasoning, a disjunct empty with each choice of disjuncts elsewhere but not with
-        // their hulls (`x` in {0, 2} with `y` in {0, 2} and `x + y` in {1, 3}): the bound of the
-        // rows has no point, the bisection asks empty questions, the solver may refuse each with
-        // the implied rows (its count of an elimination does not make [`shadow`]'s trial) and
-        // [`probe`] tests each disjunct by a propagation of the whole formula, O(n²) solves or more
-        // for each question. Why: finding a point of a conjunction of disjunctions of linear rows
-        // is NP-complete, and a search that backtracks over the disjuncts (DPLL(T)) is exponential
-        // in the worst case. Trigger: disjunctions that only by cases leave out the end of a hull
-        // that their rows allow. Tests: `l01_38_omega_test::disj_groups` (the hulls of small chains
-        // against their points counted one by one, and the two chains above at `n` and `8n`);
-        // COMPLEXITY.md row DISJ-incremental.
+        // (of the symbol's group alone, where its groups have points), `w` the hull's width, unless
+        // a point of the formula at the end shows it (see [`tighten_each`]). First each disjunct
+        // that the base and the rows the disjunctions imply show empty is removed
+        // ([`drop_jointly_empty`]), and the hull is met with the bounds that the base and the rows
+        // the disjunctions left imply ([`disjunction_hulls`]) give, below; where those rows are
+        // exact (each disjunction alone, or a few on one stage once their empty disjuncts are gone,
+        // decide what its forms may be) the point at each end is found and no question is asked, so
+        // a chain of `n` three-atom stages costs O(n log n) (`x[i + 1] - x[i] - y[i] >= 0`,
+        // `1 <= y[i] <= 2`, `x[i + 1] - x[i] + y[i] == 4 || == 5`: 0.16 s at 128 stages, where it
+        // was 41.6 s; with `x[i + 1] - x[i]` in {3, 7} and `x[i + 1] - x[i] + y[i]` in {6, 9},
+        // which force 7 where the rows allow 4: 0.08, 0.16 and 2.0 s at 64, 128 and 1024 stages,
+        // where it was 7.7 s at 64, plan item DISJ-dpll). What is given up: no answer, only time,
+        // where disjunctions leave out the end of a hull only by case reasoning, a disjunct empty
+        // with each choice of disjuncts elsewhere but not with their hulls (`x` in {0, 2} with `y`
+        // in {0, 2} and `x + y` in {1, 3}): the bound of the rows has no point, the bisection asks
+        // empty questions, the solver may refuse each with the implied rows (its count of an
+        // elimination does not make [`shadow`]'s trial) and [`probe`] tests each disjunct by a
+        // propagation of the whole formula, O(n²) solves or more for each question. Why: finding a
+        // point of a conjunction of disjunctions of linear rows is NP-complete, and a search that
+        // backtracks over the disjuncts (DPLL(T)) is exponential in the worst case. Trigger:
+        // disjunctions that only by cases leave out the end of a hull that their rows allow. Tests:
+        // `l01_38_omega_test::disj_groups` (the hulls of small chains against their points counted
+        // one by one, and the two chains above at `n` and `8n`); COMPLEXITY.md row
+        // DISJ-incremental.
         // A hull with one finite end is tightened at that end too, searched toward the value of
         // the symbol at a point of the formula (item PRES-pendants-wider: `z0 <= 25` of seed 14
         // case 271 of `l01_39_reduced_product::pendants`, left at 27 before), and an infinite end
@@ -23101,17 +23143,18 @@ impl Level {
                     &summary
                 }
             };
-            // Complexity tradeoff (PRES-disj-regressions): a question the solver refuses is not asked
-            // again. Naive version (I21 of PRES-disj-cost-xr): asked again without the removals by
-            // bounds ([`drop_by_bounds`]), which made the hulls of `random2` cases 98, 1063 and 2992
-            // exact at up to a second ask per refused question: 1.77 times main's instructions on
-            // `overlap_rows` projected at k = 16, and 2.78 G more over the 3,000 `random2` formulas.
-            // Without it, 98 and 2992 are exact now (other changes of PRES-disj-cost-xr answer them),
-            // and the hull of `y4` in 1063 holds 16 and 17 where its one point has 17, as on main.
-            // No test made before the second ask was found to tell when it answers: asking again only
-            // where a removal fixed an atom that another row names, with its value put in, cost 1.96
-            // times the instructions on that `overlap_rows` projection, and putting the values in on
-            // every ask left two other `random2` hulls coarser than main (cases 1018 and 2306). Test:
+            // Complexity tradeoff (PRES-disj-regressions): a question the solver refuses is not
+            // asked again. Naive version (I21 of PRES-disj-cost-xr): asked again without the
+            // removals by bounds ([`drop_by_bounds`]), which made the hulls of `random2` cases 98,
+            // 1063 and 2992 exact at up to a second ask per refused question: 1.77 times main's
+            // instructions on `overlap_rows` projected at k = 16, and 2.78 G more over the 3,000
+            // `random2` formulas. Without it, 98 and 2992 are exact now (other changes of
+            // PRES-disj-cost-xr answer them), and the hull of `y4` in 1063 holds 16 and 17 where
+            // its one point has 17, as on main. No test made before the second ask was found to
+            // tell when it answers: asking again only where a removal fixed an atom that another
+            // row names, with its value put in, cost 1.96 times the instructions on that
+            // `overlap_rows` projection, and putting the values in on every ask left two other
+            // `random2` hulls coarser than main (cases 1018 and 2306). Test:
             // `l01_38_omega_test::disj_groups::a_hull_question_refused_after_the_removals_by_bounds_keeps_its_point`.
             let ask: Ask = if sets {
                 |f, _, status| {
@@ -23180,9 +23223,10 @@ type Presettled = (Result<Option<Parts>, Refusal>, bool);
 /// product reads a free atom costs the disjunct's atoms at each level, O(k^2) in a nest).
 /// Why: the form that makes every equal projection equal is the projection's own normal
 /// form, the Hermite normal form of the free atoms' columns, a change of the projection,
-/// not of its key. Tests: `l01_38_presburger::shared::a_linked_nest_projects_in_time_linear_in_its_depth`
-/// (the nest at k and 8k, and its answers against the ways counted one by one), `twin_linked_nests_project_in_time_linear_in_their_depth`; COMPLEXITY.md row
-/// PRES-below-key.
+/// not of its key. Tests:
+/// `l01_38_presburger::shared::a_linked_nest_projects_in_time_linear_in_its_depth` (the nest at k
+/// and 8k, and its answers against the ways counted one by one),
+/// `twin_linked_nests_project_in_time_linear_in_their_depth`; COMPLEXITY.md row PRES-below-key.
 fn shift_free(mut rows: Vec<Con>, free: impl Fn(&Atom) -> bool) -> Vec<Con> {
     let mut factors: HashSet<Atom> = HashSet::new();
     let mut at: BTreeMap<Atom, Vec<usize>> = BTreeMap::new();
@@ -23246,12 +23290,13 @@ type Projected = (Rc<Parts>, Vec<(usize, IntervalSet)>);
 // `[3..=4, 100..=200]`; a choice one disjunction inside is read exactly
 // (`a_choice_one_level_inside_a_branch_is_read_with_the_rest_of_the_branch`). The level's own
 // formula holds the whole nest below it, and tightening over it at each level costs the nest
-// once for each level above: measured on this code, `arms_of_a_capped_test_take_time_near_linear_in_its_depth`
-// then takes 51.1 times the work from d = 30 to 240 (limit 24), O(d²) (COMPLEXITY S31). It is
-// triggered by two disjunctions or more at a level below the top, one of them with a disjunct
-// whose disjunctions have disjunctions of their own. A complete answer would need each level's
-// formula decided incrementally from the level below's; in general the exact bound decides
-// whether a nest of disjunctions of linear constraints has a point, which is NP-complete.
+// once for each level above: measured on this code,
+// `arms_of_a_capped_test_take_time_near_linear_in_its_depth` then takes 51.1 times the work from
+// d = 30 to 240 (limit 24), O(d²) (COMPLEXITY S31). It is triggered by two disjunctions or more at
+// a level below the top, one of them with a disjunct whose disjunctions have disjunctions of their
+// own. A complete answer would need each level's formula decided incrementally from the level
+// below's; in general the exact bound decides whether a nest of disjunctions of linear constraints
+// has a point, which is NP-complete.
 fn summarize(cons: &[Con], seen: &[Option<Vec<Projected>>], syms: &[Atom]) -> Formula {
     let own = |p: &Parts| -> Vec<Formula> { p.cons.iter().cloned().map(Formula::Con).collect() };
     let mut fs: Vec<Formula> = cons.iter().cloned().map(Formula::Con).collect();
@@ -26380,8 +26425,8 @@ fn forest_component_domains(
 /// The bounds that the row `lin >= 0` gives each of its atoms from the bounds `b` of the
 /// others, pushed onto `out` as rows `x - lo >= 0` and `hi - x >= 0`: with `M` the greatest
 /// value of the other terms and the constant, `k·x >= -M`, so `x >= ⌈-M/k⌉` for `k > 0` and
-/// `x <= ⌊M/-k⌋` for `k < 0`. An atom for which `b` gives nothing is unbounded. The sum is taken once, so
-/// the cost is linear in the row's terms.
+/// `x <= ⌊M/-k⌋` for `k < 0`. An atom for which `b` gives nothing is unbounded. The sum is taken
+/// once, so the cost is linear in the row's terms.
 fn row_bounds<'a>(lin: &Lin, b: impl Fn(&Atom) -> Option<&'a Ends>, out: &mut Vec<Con>) {
     let most = |a: &Atom, k: &Int| -> Option<Int> {
         let (lo, hi) = b(a)?;
@@ -26536,8 +26581,9 @@ fn disjunction_bounds(
 /// since each replacement only raises the row's left side. Each atom is tied to its nearest
 /// source alone, and to none where two are nearest, so that no name chooses
 /// ([`Differences::search`], two searches from all the sources at once, not through `z`);
-/// such an atom counts with its own bound from `b`. A row is read once, a sum kept for each source among its atoms', so the
-/// cost is O(m log n) for m rows over n atoms. An equality is read as two rows.
+/// such an atom counts with its own bound from `b`. A row is read once, a sum kept for each source
+/// among its atoms', so the cost is O(m log n) for m rows over n atoms. An equality is read as two
+/// rows.
 fn eliminate(
     g: &Differences,
     b: &HashMap<Atom, Ends>,
@@ -28337,7 +28383,8 @@ fn find_tied_point(p: &Parts, color: &HashMap<Atom, usize>, want: bool) -> Optio
         // 1. Under a renaming the row's items are permuted and their keys kept (`color` is a
         //    renaming-invariant coloring; weights and values come from coefficients and bounds).
         //    So the sorted key sequence is the same, and with it the weight sequence `w_of`, since
-        //    items of equal key have equal `weight`. Only the order of items within a tie can change.
+        //    items of equal key have equal `weight`.
+        //    Only the order of items within a tie can change.
         // 2. `solve_ord` is the identity, and `sweep_row` reads of each item only `weight` (into
         //    `w_of`) and `low_arm`/`high_arm`, which choose a slot of `hit_table[loc]`, not
         //    whether it is set. So `plan.any_hit` being `Some` depends only on `w_of` and the row
@@ -30700,8 +30747,8 @@ pub(super) mod tests {
     }
 
     /// The system the seed 2724104729 drew for [`hull_sides_on_random_conjunctions_are_the_sides`]
-    /// (TEST-hull-skip-growth-tie), one of the two Growth refusals in 24,402 seeds: six rows over `a`,
-    /// `b`, `c`, `d` and the disjunction `left || right` below. `hull_side` gives 0 as the
+    /// (TEST-hull-skip-growth-tie), one of the two Growth refusals in 24,402 seeds: six rows over
+    /// `a`, `b`, `c`, `d` and the disjunction `left || right` below. `hull_side` gives 0 as the
     /// greatest `c`; checking that a point has `c >= 0` is refused with Growth, from `right`:
     /// its system has four live variables and no elimination left that keeps the rows from
     /// growing, and the box test decides nothing (the refusal `Leaf::Refused(Refusal::Growth)`
@@ -30764,16 +30811,16 @@ pub(super) mod tests {
 
     /// The system the seed 1498315485863 drew for
     /// [`hull_sides_on_random_conjunctions_are_the_sides`] (TEST-hull-skip-growth-tie), the
-    /// one seed of 24,402 with a Tie refusal: `d >= -3 && b >= -20 && a + b == 2d - 18 && 3c + d <= 19
-    /// && a >= 11 && 2c + 5d >= -7`. `hull_side` finds no least `c` and no greatest `d`;
-    /// checking either asks [`unbounded`], whose question over the directions of the rays,
-    /// `a' >= 0, b' >= 0, a' + b' == 2d', ...`, has `a'` and `b'` alike in every row, and the
-    /// two share the rows of `a' + b' == 2d'`: no structure tells them apart, so it is refused
-    /// with Tie (the refusal's doc, `Refusal::Tie`). That refusal is the documented one, and
-    /// this test pins it; a tie like this one, a true symmetry whose answer does not depend on
-    /// the choice, is the case row PRES-tie-symmetry would accept. The answer is still found:
-    /// `a == 11, b == 4t - 19, c == -t, d == 5 + 2t` is a point for every `t >= 0`, so `c` has
-    /// no least value and `d` no greatest, as `hull_side` gives.
+    /// one seed of 24,402 with a Tie refusal:
+    /// `d >= -3 && b >= -20 && a + b == 2d - 18 && 3c + d <= 19 && a >= 11 && 2c + 5d >= -7`.
+    /// `hull_side` finds no least `c` and no greatest `d`; checking either asks [`unbounded`],
+    /// whose question over the directions of the rays, `a' >= 0, b' >= 0, a' + b' == 2d', ...`, has
+    /// `a'` and `b'` alike in every row, and the two share the rows of `a' + b' == 2d'`: no
+    /// structure tells them apart, so it is refused with Tie (the refusal's doc, `Refusal::Tie`).
+    /// That refusal is the documented one, and this test pins it; a tie like this one, a true
+    /// symmetry whose answer does not depend on the choice, is the case row PRES-tie-symmetry would
+    /// accept. The answer is still found: `a == 11, b == 4t - 19, c == -t, d == 5 + 2t` is a point
+    /// for every `t >= 0`, so `c` has no least value and `d` no greatest, as `hull_side` gives.
     #[test]
     fn a_hull_side_past_a_tie_is_refused() {
         let ge = |terms: &[(&str, i128)], k: i128| {
@@ -31561,8 +31608,8 @@ mod by_halves_against_old {
     /// The hull of `v0` over [`seed_1446_case_7`] is `[1, 4]`; batch and single projection give
     /// it, with no cause. The exact set, checked with no projection: each of 1 to 4 has the
     /// point listed below (`holds` evaluates the formula), and no point has `v0` at 0 or above
-    /// 4. By hand: rows 3, 4 and 8 give `v3 >= v2 + v7`, `v4 + 2 >= v3 + v8` and `v8 >= v4 + v7`, so
-    /// `v2 + 2·v7 <= 2`; then `v1 <= v2 - v10 <= 2` and `v0 <= v1 + 2 <= 4`. At `v0 = 0` the
+    /// 4. By hand: rows 3, 4 and 8 give `v3 >= v2 + v7`, `v4 + 2 >= v3 + v8` and `v8 >= v4 + v7`,
+    /// so `v2 + 2·v7 <= 2`; then `v1 <= v2 - v10 <= 2` and `v0 <= v1 + 2 <= 4`. At `v0 = 0` the
     /// disjunction reads `v5 == v1 + 4`, `v5 >= v1 + 3` or `v1 == v5 + 6`; the last needs
     /// `v1 >= 6`, so `v5 >= v1 + 3 >= 3`. Rows 2, 10, 9 and 8 give
     /// `v2 >= v1 + v10 >= v1 + v6 + v9 - 1 >= v1 + v6 + v5 + v4 + v7 - 1`, and with
@@ -32620,8 +32667,8 @@ mod forced_against_solver {
             Forced::Empty => match &m {
                 // The solver's answer is wrong when the point it gives is none of `f`, as it was
                 // with `x` and the product `x * y` both fixed beside a row of parity over a value
-                // a disjunction defines until PRES-product-parity ([`bounds_agree_with_the_solver`]):
-                // counted apart.
+                // a disjunction defines until PRES-product-parity
+                // ([`bounds_agree_with_the_solver`]): counted apart.
                 Some(s) if is_point(f, s) != Some(true) => {
                     eprintln!(
                         "the solver's point of {f} is none of it ({:?}): {s:?}",

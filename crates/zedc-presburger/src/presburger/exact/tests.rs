@@ -941,11 +941,12 @@ fn evens_tied(k: i64) -> Formula {
 
 /// The work limit on both sides: allowed exactly the work the cover of [`evens_tied`] takes,
 /// the solver's work for its questions included and that of its fast path left out (`tried`:
-/// `direct` reads the rows and fails, three disjunctions grouped through `z`), it answers with the exact set (the even values); allowed one unit
-/// less, it refuses ([`Refusal::Questions`]) and never answers with the solver's set, which
-/// has values with no point (PRES-pugh-work-budget). The work is counted, so a second run
-/// uses the same. Before `tried` had an allowance of its own, the failed fast path was
-/// charged to the limit, and the cover was refused at the limit its loop needs.
+/// `direct` reads the rows and fails, three disjunctions grouped through `z`), it answers with the
+/// exact set (the even values); allowed one unit less, it refuses ([`Refusal::Questions`]) and
+/// never answers with the solver's set, which has values with no point (PRES-pugh-work-budget). The
+/// work is counted, so a second run uses the same. Before `tried` had an allowance of its own, the
+/// failed fast path was charged to the limit, and the cover was refused at the limit its loop
+/// needs.
 #[test]
 fn the_work_limit_is_met_alike_on_both_sides() {
     let f = evens_tied(20);
@@ -1224,9 +1225,9 @@ fn the_pendants_part_of_row_3_refuses_b_for_its_refused_question() {
 
 /// The questions of the cover on a stride, as the remainder reading writes one (`y == 2·q
 /// + r` with `r == 0`), and on remainders kept in a range (`x == 1024·q + r` with `r` in
-/// `0..=36`), each in a box: the even values of `y` (but -4 and -2, which a case leaves out) from one point, along the direction that
-/// keeps the equation (`directions`); a run of 37 values of `x` from each point, with `q`
-/// fixed (`strides_fixed`).
+/// `0..=36`), each in a box: the even values of `y` (but -4 and -2, which a case leaves out) from
+/// one point, along the direction that keeps the equation (`directions`); a run of 37 values of `x`
+/// from each point, with `q` fixed (`strides_fixed`).
 #[test]
 fn strides_and_remainders_are_covered_a_few_points_each() {
     let f = Formula::and(vec![
@@ -2612,8 +2613,9 @@ fn decomposable_formula(rng: &mut Rng, names: &[&str], depth: u32) -> Formula {
 /// `read_once` answers each name of a random decomposable formula with the values that trying
 /// the points in the box gives, and whether there is a point; blocks with two rows over the same
 /// two names, or an equation over two, take the elimination of each name instead of `forest`.
-/// Negative controls: with the parting disjunctions not checked (`escaped |= ctx[x] && live[x] > reading`
-/// removed), or with `forest`'s message from a parent leaving out its own rows, this test fails.
+/// Negative controls: with the parting disjunctions not checked
+/// (`escaped |= ctx[x] && live[x] > reading` removed), or with `forest`'s message from a parent
+/// leaving out its own rows, this test fails.
 #[test]
 fn decomposable_formulas_project_to_the_values_of_their_points() {
     let seed = crate::seed::seed("decomposable_formulas_project_to_the_values_of_their_points");

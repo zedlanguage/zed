@@ -229,9 +229,10 @@ pub const SOLVER_UNIT: u64 = 100;
 /// (`shadow_logged`), each piece of a cell the cover cuts from its gap (`exact::cover`), and
 /// none for a call whose solver answer is already empty (`exact_each`). Replayed on every
 /// cover the step tests and the benchmarks make (28,838 and about 9,030 covers, run at
-/// [`EXACT_LIMIT`] at loads of 36 to 65 on 32 cores), none then took more CPU time than its prediction;
-/// the least ratio was 1.09 (`bench::exact_cover::the_cover_takes_a_bounded_time_per_unit_of_work`,
-/// record 1, load 62) and in the step tests 1.82. COMPLEXITY.md, PRES-work-charge-fit.
+/// [`EXACT_LIMIT`] at loads of 36 to 65 on 32 cores), none then took more CPU time than its
+/// prediction; the least ratio was 1.09
+/// (`bench::exact_cover::the_cover_takes_a_bounded_time_per_unit_of_work`, record 1, load 62) and
+/// in the step tests 1.82. COMPLEXITY.md, PRES-work-charge-fit.
 // Complexity tradeoff: one factor for all solver steps and one for question rows is the
 // naive charge; a factor per site fit by a linear program held on the data it was fit on
 // and not on held-out data (round 3, least ratio 0.42 on the benchmarks), so a per-site fit
@@ -242,10 +243,10 @@ pub(super) const SOLVER_STEP: u64 = 100;
 /// passes each question makes over its formula before the solver's first charged step
 /// (`signed`, `forced`, `row_sums`, `reduced`, `modular_answer`, `Renamed::of`, `absorbed`,
 /// the hulls of its disjunctions and `drop_by_bounds`), none of which charge the meter. Timed
-/// on the cover of record 1 of `bench::exact_cover::the_cover_takes_a_bounded_time_per_unit_of_work`
-/// (1,001 questions of 10 rows): 23, 2, 8, 18, 17, 14, 6 and 17 µs a question, about 95 µs
-/// with the timer's own cost taken out, 9.5 µs a row; that cover took 84 to 105 ms of CPU time
-/// at loads of 55 to 72.
+/// on the cover of record 1 of
+/// `bench::exact_cover::the_cover_takes_a_bounded_time_per_unit_of_work` (1,001 questions of 10
+/// rows): 23, 2, 8, 18, 17, 14, 6 and 17 µs a question, about 95 µs with the timer's own cost taken
+/// out, 9.5 µs a row; that cover took 84 to 105 ms of CPU time at loads of 55 to 72.
 // Complexity tradeoff: at 100 (8 µs a row) that cover was charged 1,157,868 units, a
 // prediction of 94.6 ms, and ran 1.02 times it at load 72 and under it (105 ms) at load 62.
 // At 150 it was safe (least ratio 1.43) but refused one more cover of the step tests (s22
@@ -267,9 +268,9 @@ pub(super) const PIECE: u64 = 16;
 /// (the list sorted into a set and joined to the cell, and the gap and the values found cut and
 /// joined by it), about 370 ns more, measured on a cover that lists 1,958,315 values at loads
 /// of 75 to 90 on 32 cores (s22 `split_pieces_reach_each_kind_of_touched`, PRES-pugh-xr
-/// round 3, F): 526 ns, so 7 units of 80 ns. With the round-3 fit of [`SOLVER_STEP`] (45) 7 was the least
-/// whole charge with no cover over its prediction: at 6 that cover took 1.006 times its prediction.
-/// With [`SOLVER_STEP`] at 100 that check is not repeated (PRES-work-charge-fit).
+/// round 3, F): 526 ns, so 7 units of 80 ns. With the round-3 fit of [`SOLVER_STEP`] (45) 7 was the
+/// least whole charge with no cover over its prediction: at 6 that cover took 1.006 times its
+/// prediction. With [`SOLVER_STEP`] at 100 that check is not repeated (PRES-work-charge-fit).
 // Complexity tradeoff: before, a listed value was charged 1 unit, which left the sets built
 // from the list uncounted, and that cover was refused at the limit after 1.5 s of CPU time,
 // six times the 250 ms the limit stands for (QUESTIONS A99). Naive alternative: charge each

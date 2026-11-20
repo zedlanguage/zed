@@ -2732,9 +2732,9 @@ impl Blocks {
     }
 
     /// Checks the forest, for tests: each conjunct of the forest is in the block that holds
-    /// it and each conjunct held is in a block, conjuncts that share an atom other than a name are in one block, each name is
-    /// mentioned, and each name's conjuncts by block, and its moving conjuncts' counts by block
-    /// ([`Blocks::moving_blocks`]), are those of the blocks; the parent
+    /// it and each conjunct held is in a block, conjuncts that share an atom other than a name are
+    /// in one block, each name is mentioned, and each name's conjuncts by block, and its moving
+    /// conjuncts' counts by block ([`Blocks::moving_blocks`]), are those of the blocks; the parent
     /// links are exactly the pairs of a block and a name it mentions, each tree has one root
     /// that every node's links lead to, and the labels of the trees are those links'
     /// components; each tree's counts are those of its conjuncts and names.

@@ -353,11 +353,11 @@ fn two_tied_remainder_rows_are_answered_alike_under_every_naming() {
 }
 
 /// PROOF-modular-tied-rows-names: on two and three tied remainder rows, with names drawn at
-/// random and those of `u`, `v` and `w` in each of their orders, [`modular::solve_modular`] and [`decide`]
-/// never give two verdicts: each run of `solve_modular` is exact, so a point or an empty answer
-/// is the formula's own, whichever readings the names choose. Whether `solve_modular` answers
-/// at all may turn on the names (PERF-negated-chain-unsolved, U4); this test asserts only what
-/// holds under every naming.
+/// random and those of `u`, `v` and `w` in each of their orders, [`modular::solve_modular`] and
+/// [`decide`] never give two verdicts: each run of `solve_modular` is exact, so a point or an empty
+/// answer is the formula's own, whichever readings the names choose. Whether `solve_modular`
+/// answers at all may turn on the names (PERF-negated-chain-unsolved, U4); this test asserts only
+/// what holds under every naming.
 #[test]
 fn solve_modular_never_gives_two_verdicts_on_tied_remainder_rows() {
     let (mut rng, _) = Rng::fresh("solve_modular_never_gives_two_verdicts_on_tied_remainder_rows");

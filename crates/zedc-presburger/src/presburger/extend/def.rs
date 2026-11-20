@@ -19,7 +19,8 @@ pub(super) struct Def {
 impl Def {
     /// The definition `f`, `None` where no summary is made of it: one that defines no variable it
     /// reads. A product of variables is read as an atom of its own, as the solver reads it
-    /// ([`decide`](super::super::decide)), and the definitions of its factors as inputs. Time of `f`.
+    /// ([`decide`](super::super::decide)), and the definitions of its factors as inputs. Time of
+    /// `f`.
     pub(super) fn of(f: Formula, def: &dyn Fn(u32) -> Formula) -> Option<Def> {
         let id = Id::any(&f);
         let reads = reads(&f);
@@ -53,7 +54,8 @@ pub(super) fn free(f: &Formula) -> bool {
 }
 
 /// The atoms `f` reads, a product with its factors: the solver reads a product as an atom of
-/// its own ([`decide`](super::super::decide)), and its factors' definitions are among those `f` reaches ([`reached`](super::reached)).
+/// its own ([`decide`](super::super::decide)), and its factors' definitions are among those `f`
+/// reaches ([`reached`](super::reached)).
 pub(super) fn reads(f: &Formula) -> BTreeSet<Atom> {
     let mut out = BTreeSet::new();
     for a in f.atoms() {

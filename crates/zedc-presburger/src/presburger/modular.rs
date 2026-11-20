@@ -516,7 +516,8 @@ impl UnitUf {
     }
 
     /// Returns `[min_{v = +root + d} d, min_{v = -root + d} d]` over all atoms in `root`'s tree
-    /// in one bottom-up pass (each edge offset is added or subtracted at most twice, O(S) bit work).
+    /// in one bottom-up pass (each edge offset is added or subtracted at most twice, O(S) bit
+    /// work).
     fn min_offsets_of(&self, root: &Atom) -> [Option<Int>; 2] {
         let Some(&root_id) = self.ids.get(root) else {
             return [Some(Int::ZERO), None];
@@ -806,9 +807,9 @@ fn rewrite_lin_full(
 // Complexity tradeoff: a conjunction `C && (D1 || ... || Dk)` is not split into `k` solves of
 // `C && Di` (R5-CLAUDE-5): that split cost O(k |C|) when no part had a point, which made
 // `l01_39_reduced_product::named_test::arms_of_named_limits_in_side_by_side_tiers_take_time_near_linear_in_the_depth`
-// take 17.1 times the work for 8 times the depth (limit 14.2 of 2026-11-11). It was added for the `fails`
-// questions of pairs (I3.2), which the zero witness and the batched remainder check now answer
-// near-linearly (`one_scope::the_fails_questions_of_pairs_scale`,
+// take 17.1 times the work for 8 times the depth (limit 14.2 of 2026-11-11). It was added for the
+// `fails` questions of pairs (I3.2), which the zero witness and the batched remainder check now
+// answer near-linearly (`one_scope::the_fails_questions_of_pairs_scale`,
 // `pncx_probe::pncx_pairs_scale`, `pncx_probe::pncx_disj_scale` pass without it). What is
 // given up: such a formula goes to the general path whole; no answer of the 5,000-formula
 // enumeration test changed (sat 4277, empty 712, refused 11 with and without the split).
@@ -867,9 +868,9 @@ fn solve_modular_whole(f: &Formula, want_model: bool) -> Option<Option<Model>> {
         }
     }
 
-    // Check all constraints in the DAG for products, at least one non-unit coefficient, and collect all atoms.
-    // `Formula::walk` and not `Formula::cons`, which is written in presburger.rs: a call of it
-    // here would close an import cycle with presburger.rs (step S.1f). The list is the same.
+    // Check all constraints in the DAG for products, at least one non-unit coefficient, and collect
+    // all atoms. `Formula::walk` and not `Formula::cons`, which is written in presburger.rs: a call
+    // of it here would close an import cycle with presburger.rs (step S.1f). The list is the same.
     let mut all_cons = Vec::new();
     f.walk(&mut |c| all_cons.push(c));
     if all_cons.is_empty() {
@@ -907,7 +908,8 @@ fn solve_modular_whole(f: &Formula, want_model: bool) -> Option<Option<Model>> {
         }));
     }
 
-    // Step 1: Constant equalities propagation (`k * a + c == 0`) and Unit equalities (`a = ±b + d`).
+    // Step 1: Constant equalities propagation (`k * a + c == 0`) and Unit equalities
+    // (`a = ±b + d`).
     let mut fixed: HashMap<Atom, Int> = HashMap::new();
     let mut uf = UnitUf::new();
     for a in &all_atoms {
@@ -916,8 +918,8 @@ fn solve_modular_whole(f: &Formula, want_model: bool) -> Option<Option<Model>> {
 
     // Complexity tradeoff: repeating the pass over every row until a pass fixes nothing costs
     // one pass per atom fixed in a chain (`2 a_i == 2 a_(i+1)` written so that each pass fixes
-    // one more), O(n^2) rows read (R7-CLAUDE-1, `r7_tests::bench::pncx_fixed_chain_scale`), and a pass
-    // that only joined two classes stopped the loop, so a row read before the join was never
+    // one more), O(n^2) rows read (R7-CLAUDE-1, `r7_tests::bench::pncx_fixed_chain_scale`), and a
+    // pass that only joined two classes stopped the loop, so a row read before the join was never
     // read again and the result followed the order of the rows. A FIFO worklist reads each row
     // O(log n) times, but if a wide unit equality `a = b + B` is processed before small unit
     // equalities, later small unions on the same component cross the wide edge `O(n)` times,
@@ -1201,10 +1203,11 @@ fn solve_modular_whole(f: &Formula, want_model: bool) -> Option<Option<Model>> {
         }
         let x_root = candidate_x?;
 
-        // Step 5: Collect top-level bounds on `(x_root, q_root)` to identify GlobalQuot vs LocalQuot.
+        // Step 5: Collect top-level bounds on `(x_root, q_root)` to identify GlobalQuot vs
+        // LocalQuot.
         // A constraint with terms `{x_root: c_x, q_root: c_q}` and `|c_x| == 1`, `|c_q| = m >= 2`:
-        // Normalize by dividing by `|c_x|`: wait, if `|c_x| > 1` in a 1-term constraint on `q_root`,
-        // `c_x == 0`. In a 2-term constraint, `|c_x| == 1` (already checked above).
+        // Normalize by dividing by `|c_x|`: wait, if `|c_x| > 1` in a 1-term constraint on
+        // `q_root`, `c_x == 0`. In a 2-term constraint, `|c_x| == 1` (already checked above).
         #[derive(Default)]
         struct QuotBounds {
             s_x: i8,
@@ -1252,7 +1255,8 @@ fn solve_modular_whole(f: &Formula, want_model: bool) -> Option<Option<Model>> {
             if entry.m != m {
                 return None;
             }
-            // Express `lin` as `t * (entry.s_x * x - entry.sigma_q * m * q) + constant`, where `t = ±1`.
+            // Express `lin` as `t * (entry.s_x * x - entry.sigma_q * m * q) + constant`, where
+            // `t = ±1`.
             let t: i8 = if c_x.is_positive() { 1 } else { -1 };
             let expected_cq = if (-t * entry.sigma_q) > 0 {
                 m.clone()
@@ -1297,7 +1301,8 @@ fn solve_modular_whole(f: &Formula, want_model: bool) -> Option<Option<Model>> {
             if let (Some(lo), Some(hi)) = (qb.lo, qb.hi) {
                 let w = &hi - &lo;
                 if w < qb.m {
-                    // `lo <= x - sigma_q * m * q <= hi`  <=>  `0 <= (x - lo) - sigma_q * m * q <= w`.
+                    // `lo <= x - sigma_q * m * q <= hi`  <=>
+                    // `0 <= (x - lo) - sigma_q * m * q <= w`.
                     global_quots.insert(
                         q_root,
                         GlobalQuot {
@@ -1312,7 +1317,8 @@ fn solve_modular_whole(f: &Formula, want_model: bool) -> Option<Option<Model>> {
             }
         }
 
-        // Verify every 1-term constraint in `all_cons` is either on `x_root` or on a `global_quots` key.
+        // Verify every 1-term constraint in `all_cons` is either on `x_root` or on a `global_quots`
+        // key.
         for c in &all_cons {
             let lin = rewrite_lin_full(&c.lin, &fixed, &uf, &rem_defs);
             if lin.terms.len() == 1 {
@@ -1378,8 +1384,9 @@ fn solve_modular_whole(f: &Formula, want_model: bool) -> Option<Option<Model>> {
             return None;
         }
 
-        // Step 7: Add top-level narrowed windows of `global_quots` (`w < m - 1`) as unit congruences,
-        // and separate `root_node.clauses` into global bounds, global unit congruences, and clauses.
+        // Step 7: Add top-level narrowed windows of `global_quots` (`w < m - 1`) as unit
+        // congruences, and separate `root_node.clauses` into global bounds, global unit
+        // congruences, and clauses.
         let mut global_bounds = Domain::all();
         // Complexity tradeoff: accumulated restrictions can rebuild O(s^2) pieces.
         // As in fold_and, collect restrictions before intersecting them, so
@@ -1416,7 +1423,8 @@ fn solve_modular_whole(f: &Formula, want_model: bool) -> Option<Option<Model>> {
             }
         }
 
-        // Step 8: Merge clauses sharing the same modular part `D` via `(D || B1) && (D || B2) <=> D || (B1 && B2)`.
+        // Step 8: Merge clauses sharing the same modular part `D` via
+        // `(D || B1) && (D || B2) <=> D || (B1 && B2)`.
         // Complexity tradeoff: repeated intersection scans an accumulated domain
         // O(c^2) times in the worst case. Group the uncut domains, then intersect
         // in a balanced tree, O(s log c) interval operations for s input intervals.
@@ -1527,13 +1535,13 @@ fn solve_modular_whole(f: &Formula, want_model: bool) -> Option<Option<Model>> {
             RegimeOut::Undecided => true,
         };
 
-        // Complexity tradeoff: naive version, branching over the residues of every base, exponential
-        // in the number of bases (a conjunction of clauses of residues under several coprime moduli
-        // encodes CNF-SAT, so no exact polynomial method is known for all of them). Used: the CRT
-        // fixpoint, hole cutting on segments shorter than a modulus, the forbidden-box share bound
-        // with conditional expectations, and one level of single-base splitting, each O(n log n) on
-        // one segment. The segments are walked by `walk_segments`, whose cost is bounded there. What
-        // is given up: nothing is refused here; a segment these
+        // Complexity tradeoff: naive version, branching over the residues of every base,
+        // exponential in the number of bases (a conjunction of clauses of residues under several
+        // coprime moduli encodes CNF-SAT, so no exact polynomial method is known for all of them).
+        // Used: the CRT fixpoint, hole cutting on segments shorter than a modulus, the
+        // forbidden-box share bound with conditional expectations, and one level of single-base
+        // splitting, each O(n log n) on one segment. The segments are walked by `walk_segments`,
+        // whose cost is bounded there. What is given up: nothing is refused here; a segment these
         // steps leave undecided sends the whole formula to the solver's general path, which then
         // answers, or refuses, as it did before, at its own cost. Tests:
         // `one_scope::easy_clause_systems_over_several_moduli_keep_their_answers`,
@@ -1852,7 +1860,8 @@ fn fold_leaf(
         let k_eff = if gq.sigma_q > 0 { k.clone() } else { -k };
         let q_dom = bound_domain_1d(&k_eff, &lin.constant, c.rel, negated);
         // Map each interval `[ql, qh]` of `div_floor(s_x * x + c_lo, m)` to `x`:
-        // `ql <= floor((s_x * x + c_lo) / m) <= qh` <=> `m * ql <= s_x * x + c_lo <= m * qh + m - 1`.
+        // `ql <= floor((s_x * x + c_lo) / m) <= qh` <=>
+        // `m * ql <= s_x * x + c_lo <= m * qh + m - 1`.
         let mut x_pieces = Vec::new();
         for (ql, qh) in q_dom.pieces {
             let s_lo = ql.map(|l| &(&gq.m * &l) - &gq.c_lo);
@@ -2792,7 +2801,8 @@ impl BaseInfo {
     }
 }
 
-/// Projects a residue set `s` modulo `q` onto `z in [0, q / stride - 1]` under `r = u + stride * z`.
+/// Projects a residue set `s` modulo `q` onto `z in [0, q / stride - 1]` under
+/// `r = u + stride * z`.
 fn project_stride(s: &[(Int, Int)], u: &Int, stride: &Int) -> ResidueSet {
     if *stride == Int::ONE {
         return s.to_vec();
@@ -3186,9 +3196,10 @@ fn solve_short_x_interval(
 /// `r7_tests::every_split_of_the_moduli_decides_a_regime_as_testing_each_point_does` (against
 /// testing each point), `r7_tests::a_wide_window_cut_by_large_moduli_is_answered_under_the_meter`
 /// and `r7_tests::a_window_of_200_bits_is_answered_under_the_meter` (refused by the meter
-/// before this change), `l01_38_omega_test::one_scope::no_question_of_a_random_chain_with_negations_is_refused_at_seed_13254895221319191796`
-/// and `one_scope::a_chain_over_a_short_window_of_many_moduli_has_no_question_refused` (each
-/// past 60 s without this sweep); the choice of split: `r7_tests::the_split_is_the_one_of_least_bound`;
+/// before this change),
+/// `l01_38_omega_test::one_scope::no_question_of_a_random_chain_with_negations_is_refused_at_seed_13254895221319191796`
+/// and `one_scope::a_chain_over_a_short_window_of_many_moduli_has_no_question_refused` (each past
+/// 60 s without this sweep); the choice of split: `r7_tests::the_split_is_the_one_of_least_bound`;
 /// scaling: `bench::one_scope::the_questions_of_a_chain_over_a_short_window_of_many_moduli_scale`,
 /// `r7_tests::bench::clauses_over_a_window_of_200_bits_scale` and
 /// `r7_tests::bench::a_window_of_n_periods_scale`.
@@ -3349,8 +3360,9 @@ fn cheapest_split(span: &Int, weights: &BTreeMap<Int, u128>, lists: u128) -> (us
 /// with the lists whose state changes there (its proof). Between two consecutive places where
 /// some list is entered or left (the events), every unit over a large modulus holds everywhere
 /// or nowhere, and so does every clause's part over large moduli: the events cut `[l, e]` into
-/// segments, each with one state. (3) On a segment where a large unit fails, or a clause with no small literal has its
-/// large part false, no point lies. Elsewhere `x` of the segment is a point exactly when each
+/// segments, each with one state. (3) On a segment where a large unit fails, or a clause with no
+/// small literal has its large part false, no point lies.
+/// Elsewhere `x` of the segment is a point exactly when each
 /// small unit holds and each clause whose large part is false there (an active clause) has a
 /// small literal that holds, all of which depend on `x mod q` alone, by (1). The tree holds, for
 /// each residue `r`, the number of small units and active clauses that forbid it (whose
@@ -4026,7 +4038,8 @@ fn consolidate_prime_powers(powers: &BTreeMap<Int, ResidueSet>, max_q: &Int) -> 
 }
 
 /// Core solver on pairwise coprime bases `bases_info[0..t]` with allowed residue sets
-/// `allowed[0..t]` (in `z_i in [0, bases_info[i].z_max_q - 1]`) and clauses `clauses` on `[lo, hi]`.
+/// `allowed[0..t]` (in `z_i in [0, bases_info[i].z_max_q - 1]`) and clauses `clauses` on
+/// `[lo, hi]`.
 fn solve_coprime_system(
     lo: &Option<Int>,
     hi: &Option<Int>,
@@ -4536,8 +4549,9 @@ fn solve_coprime_connected(
             return RegimeOut::Empty;
         };
 
-        // Check if the progression `x = r0 + m0 * y` meets `[lo, hi]`, and if `m0` reduces `[lo, hi]`
-        // so that some unfixed base `z_max_q > hi_y - lo_y` has single-residue exclusions!
+        // Check if the progression `x = r0 + m0 * y` meets `[lo, hi]`, and if `m0` reduces
+        // `[lo, hi]` so that some unfixed base `z_max_q > hi_y - lo_y` has single-residue
+        // exclusions!
         let (lo_y, hi_y) = match y_span(lo, hi, &r0, &m0) {
             Some(span) => span,
             None => return RegimeOut::Empty,
@@ -4553,10 +4567,10 @@ fn solve_coprime_connected(
                 };
             }
             // Short-period hole cutting in `y`-space: for any unfixed base `i` with
-            // `bases_info[i].z_max_q > hy - ly` whose forbidden set consists of single residues `z_f`,
-            // each forbidden `z_f` maps to a single residue `r_y` modulo `z_max_q`, cutting at most 1
-            // integer out of `[ly, hy]`! Why: `z = r0_z + m0_z * y`, and when `m0_z` has an
-            // inverse modulo `z_q` (the only case cut below), `z == z_f (mod z_q)` holds exactly
+            // `bases_info[i].z_max_q > hy - ly` whose forbidden set consists of single residues
+            // `z_f`, each forbidden `z_f` maps to a single residue `r_y` modulo `z_max_q`, cutting
+            // at most 1 integer out of `[ly, hy]`! Why: `z = r0_z + m0_z * y`, and when `m0_z` has
+            // an inverse modulo `z_q` (the only case cut below), `z == z_f (mod z_q)` holds exactly
             // when `y == (z_f - r0_z) * inv_m0 (mod z_q)`, one class; `[ly, hy]` holds
             // `width_y + 1 <= z_q` integers, so it meets that class at most once. The cut below
             // does not rely on this: it cuts every interval `concrete_intervals_in_span` returns.
@@ -5200,10 +5214,10 @@ fn build_model(
 type PairGroups<'a> = BTreeMap<(Option<&'a Span>, &'a Int, &'a Int), Vec<(&'a Int, &'a Int)>>;
 
 /// The bounds that triples of clauses force (Codex's R3-CODEX-6, proved there): three clauses
-/// `x mod a == a_j || x mod b == b_j || x in D`, with one interval or empty `D`, the three `a_j` distinct
-/// and the three `b_j` distinct, force `x` into `D`, since outside `D` the one value of `x mod a`
-/// and the one of `x mod b` satisfy at most two of them. Clauses are grouped by `(D, a, b)`; a
-/// group tests for a matching of three pairs, independently of the order in which
+/// `x mod a == a_j || x mod b == b_j || x in D`, with one interval or empty `D`, the three `a_j`
+/// distinct and the three `b_j` distinct, force `x` into `D`, since outside `D` the one value of
+/// `x mod a` and the one of `x mod b` satisfy at most two of them. Clauses are grouped by
+/// `(D, a, b)`; a group tests for a matching of three pairs, independently of the order in which
 /// the clauses were written. O(c log c) operations for c clauses.
 ///
 /// Complexity tradeoff: without this bound the walk visits every regime below `D` on the

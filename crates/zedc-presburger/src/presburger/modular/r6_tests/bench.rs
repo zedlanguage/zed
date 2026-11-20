@@ -1,7 +1,7 @@
 //! The benchmarks of `r6_tests`, run by `tools/run_tests.sh --bench` and left out of its
 //! default run (TEST-bench-move-crates). The correctness tests that keep a small instance of
-//! what each checks besides the ratio are `the_benchmark_inputs_have_their_answers_at_small_sizes`, and
-//! for the graph cores `pncx_bipartite_core`, `pncx_prism_models` and `pncx_wheel_models`.
+//! what each checks besides the ratio are `the_benchmark_inputs_have_their_answers_at_small_sizes`,
+//! and for the graph cores `pncx_bipartite_core`, `pncx_prism_models` and `pncx_wheel_models`.
 //!
 //! The graph-coloring benchmarks stay at n = 32, the size they had (1x a few milliseconds),
 //! and do not reach the 1 s size the other benchmarks have: their witness is one integer

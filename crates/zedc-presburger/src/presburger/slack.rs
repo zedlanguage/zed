@@ -15,8 +15,8 @@
 //! exact integer row subtraction ([`reduce_subset_wide_eqs`]); [`DisjointWide`] generalizes
 //! [`super::one_row::OneRow`] to any number of pairwise atom-disjoint rows (unit-coefficient
 //! equations and arbitrary-coefficient inequalities) with unary bounds, giving `O(1)` per-atom
-//! projections and `O(|K| log k)` multi-atom projections; [`super::SlackIndex`] certifies in `O(1)` per
-//! disjunct when fixing a disjunct either refutes its row or leaves every other variable's
+//! projections and `O(|K| log k)` multi-atom projections; [`super::SlackIndex`] certifies in `O(1)`
+//! per disjunct when fixing a disjunct either refutes its row or leaves every other variable's
 //! projected interval unchanged (`SlackStatus::Immune`); and [`FastGreedy`] uses a weight-sorted
 //! persistent segment tree so every greedy walk over `k` arbitrary weights runs in strict
 //! worst-case `O(log W log k)` time (`O(k log k log W)` across all `2k` probes, both untied and
@@ -50,7 +50,8 @@ pub(super) fn has_product_con(c: &Con) -> bool {
 /// Whenever `E_1 : sum_{a in S_1} c_a a + k_1 == 0` (`c_a in {-1, +1}`, `|S_1| >= 2`) has its
 /// support `S_1` contained in a strictly wider unit-coefficient equation `E_2` with uniform ratio
 /// `s in {-1, +1}` (`coef_2(a) == s * coef_1(a)` for all `a in S_1`), replacing `E_2` by
-/// `E_2 - s * E_1` preserves the exact set of integer solutions (`E_1 && E_2 <=> E_1 && (E_2 - s E_1)`).
+/// `E_2 - s * E_1` preserves the exact set of integer solutions
+/// (`E_1 && E_2 <=> E_1 && (E_2 - s E_1)`).
 ///
 /// Complexity tradeoff: naive pairwise elimination checks all `O(m^2)` pairs of equations. Here
 /// equations are processed in non-decreasing support size and an `owner` map points each atom to
@@ -1355,7 +1356,8 @@ pub(super) fn sweep_row(
             continue;
         }
 
-        // Forward `pick_by` walk (`x_star` down to `0`, which is `k_r - 1 - x_star .. k_r` on `w_rev`).
+        // Forward `pick_by` walk (`x_star` down to `0`, which is `k_r - 1 - x_star .. k_r` on
+        // `w_rev`).
         let mut sum_below = bit_sum(&bit, x_star);
         if loc < x_star && solve_pos[loc] < split {
             sum_below = &sum_below - &w_of[loc];
@@ -1449,14 +1451,15 @@ pub(super) fn sweep_row_unbounded(disjs: Vec<DisjInfo>, target: Int, use_fast: b
     let gmax2 = ord_by_atom[1];
 
     // Right-to-left suffix maxima `main_m[0] > main_m[1] > ... > main_m[r - 1] == 0` of
-    // `disjs[u].atom` (the exact sequence of `quotient` unpack targets along `pick_by(..., false)`),
-    // plus the disjoint exposed sub-chains `exposed[q]` inside `(main_m[q], main_m[q - 1])` (after
-    // `main_m[0]` where `q == 0`): the indices that join the chain when `loc == main_m[q]` is
-    // removed, each above every name before it but `main_m[q]` (`sum_q |exposed[q]| <= k_r - r`).
-    // Before 2026-11-14 they were taken inside `(main_m[q + 1], main_m[q])`, where every name lies
-    // below `main_m[q + 1]`, so they were always empty: the walk of such a `loc` skipped the names
-    // that join the chain, and `fill_row_model`, which takes them, failed on 1090 of 28894 slow hits
-    // of the random rows of `unbounded_row_tests` (row TEST-presburger-unreached-paths).
+    // `disjs[u].atom` (the exact sequence of `quotient` unpack targets along
+    // `pick_by(..., false)`), plus the disjoint exposed sub-chains `exposed[q]` inside
+    // `(main_m[q], main_m[q - 1])` (after `main_m[0]` where `q == 0`): the indices that join the
+    // chain when `loc == main_m[q]` is removed, each above every name before it but `main_m[q]`
+    // (`sum_q |exposed[q]| <= k_r - r`). Before 2026-11-14 they were taken inside
+    // `(main_m[q + 1], main_m[q])`, where every name lies below `main_m[q + 1]`, so they were
+    // always empty: the walk of such a `loc` skipped the names that join the chain, and
+    // `fill_row_model`, which takes them, failed on 1090 of 28894 slow hits of the random rows of
+    // `unbounded_row_tests` (row TEST-presburger-unreached-paths).
     let mut inc_m: Vec<usize> = Vec::new();
     for u in 0..k_r {
         if inc_m
