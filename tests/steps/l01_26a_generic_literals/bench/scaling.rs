@@ -619,7 +619,11 @@ fn the_type_of_an_if_holding_a_power_of_literals_prints_the_power_when_run() {
 /// 2026-11-20). Run alone it reads 1.0.
 #[test]
 fn the_power_when_run_passes_after_other_tests_in_one_process() {
-    let run = std::process::Command::new(std::env::current_exe().expect("this test binary"))
+    // Killed when this process ends, as `scaling::fresh_command` does for its children.
+    let mut command =
+        std::process::Command::new(std::env::current_exe().expect("this test binary"));
+    zed_meter_settings::kill_with_parent(&mut command);
+    let run = command
         .args([
             "bench::scaling::the_type_of_an_if_holding_a_power_of_literals_prints_the_power_when_checked",
             "bench::scaling::the_type_of_an_if_holding_a_power_of_literals_prints_the_power_when_run",
