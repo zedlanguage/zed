@@ -10119,7 +10119,14 @@ impl Bound {
                 continue;
             }
             // Guards no input reaches (row TEST-types-unreached-paths-4): `exact` is made for
-            // this bucket, so each `r` is in it.
+            // this bucket, so each `r` is in it. Step by step (proofdoc4c): both callers in
+            // [`Comparing::search`], through [`Bound::grow`], pass `shapes = choices.bucket(g,
+            // id)`, which is `groups[g].bucket(id)`, and `exact = groups[g].exact(id, ..)`, whose
+            // lists [`Group::exact`] files from that same slice, shape by shape; that slice lists
+            // shapes in written order, rising (pushed by index `i` from an `enumerate`, [`Filed::new`] into [`Choices::new`]), so
+            // `binary_search` finds each `r` of it. Test: `unreached4::a_member_with_no_keyed_
+            // variable_reads_the_shapes_pinned_under_any_variable` reaches this loop; no test can
+            // reach the false branch, which is the claim.
             for &(r, j) in exact.get(v).into_iter().flatten() {
                 if bucket.binary_search(&r).is_ok() {
                     added.entry(r).or_default().push((j, w.clone()));
@@ -10643,6 +10650,21 @@ impl<'m, 's> Comparing<'m, 's> {
         // (the other uses ask whether it is in `rigid` or `fns`, which hold made names only),
         // and its mask is in the key ([`Cx::read_key`]). Refused or not, the verdict is kept
         // with why, as by name.
+        // The other fields of [`Cx`], each checked against this proof (proofdoc4c, 37dad5731):
+        // `rigid`, `fns`, `made` and `count` hold only names made by [`Cx::fresh`] (above);
+        // `own`, `owned` and `own_bounds` are written by [`Cx::open`] for the signatures it
+        // opens, so they are part of the opening; `closed`, `kept_read`, `filed`,
+        // `fitted_written` and `fitted_alone` are memos keyed by node numbers or by signature
+        // addresses kept alive with their entries, as `kept_rows` is; `why` is read only by the
+        // outermost [`fits_in`], and `names` only by the printing of a message; `unchosen` is
+        // set aside by [`Self::begin_alone`] below and taken back by [`Self::end_alone`], so a
+        // refusal made before does not reach the verdict kept, and the one made inside is kept
+        // with it. One step rests on a claim not
+        // proved: that a memo answers alike wherever it is read holds for `compared` only under
+        // the assumption at [`Cx::compared`] (PROOF-sweep-zedc-types). Tests:
+        // `kinds::function_types_nested_whose_inner_levels_hold_the_outer_variable_fit` and its
+        // negative control (l01_22); they check verdicts on nests, and cannot catch a key that
+        // leaves out an input no test varies between two meetings of one pair.
         let read_key = self.cx.borrow().read_key(s, se, &q, &qe);
         let kept = (self.cx.borrow().fitted_read.get(&read_key)).map(|(_, _, f)| f.clone());
         if let Some((ok, why)) = kept {
@@ -11019,7 +11041,13 @@ impl<'m, 's> Comparing<'m, 's> {
         // int) -> U,)) -> int for U in int | f64` did not fit the same type with `T`, though
         // `(h: (y: int) -> U) -> int`, with no tuple, did: the `U` of one function was compared
         // with the `T` of the other as itself, which nothing binds. Sound: this is the rule of
-        // one shape, the fallback taken above where the form is not made.
+        // one shape, the fallback taken above where the form is not made. Tests (both red with
+        // this skip turned off, 62c5ace4b): l01_22 `kinds::a_generic_function_type_holding_a_
+        // function_of_its_variable_fits_itself_renamed`, with controls that must not fit, and
+        // l01_26 `bounds::functions_in_tuples_whose_bounded_variables_only_they_hold_fit_under_
+        // other_names`. What they cannot catch: a shape that holds a piece only together with
+        // another, which the rule of one shape does not see; such a `t` here gets no fit, a
+        // false no (the precision given up, 62c5ace4b), never a false yes.
         //
         // Complexity tradeoff: naive, as before, the kernel for every tuple, which gave this
         // wrong no. Used: the kernel elsewhere; here each piece of `t` tried against the shapes
@@ -13281,6 +13309,12 @@ type DomainKey = (u64, bool, Option<Arc<str>>);
 /// kind and, by name, the same name. Equal domains hash alike ([`KType::scalars_digest`]). A
 /// collision of two hashes only puts two domains in one part, which is then compared as
 /// before. A function of no arrows has no key: it is not of the empty domain.
+///
+/// Tests (3189a1922): l01_23 `judgments::functions_at_one_place_whose_tuples_all_meet_are_
+/// decided` and l01_22 `kinds::functions_unlike_on_both_sides_at_one_place_are_refused`, which
+/// fail with no key made (the negative control of that commit); they check fixed domains of
+/// booleans, numbers and strings, and cannot catch a domain two different kernel sets hash to
+/// alike, which the argument above shows harmless.
 ///
 /// Complexity tradeoff: the union of the arrows' parameter types, made only where there are
 /// two or more, O(size of the signature) once for each function at a spot split, the cost of
@@ -20354,6 +20388,15 @@ impl Domains {
         // where both do. Before (FAIL-types-partial-arrow-value-type), the lookups were met, and
         // the `#notFound` of a miss went into an exact result: `int -> #b | #notFound`. Cost:
         // one hash lookup for each arrow, and the meets of the results merged.
+        // Why "exact where either is": an exact arrow `D -> V1` answers every key of `D` with a
+        // value of `V1`; a function also within the partial `D ->? V2` answers each key it
+        // answers with a value of `V2`, so it answers every key of `D` with a value of both,
+        // which is `D -> V1 & V2`. Two partial arrows give a function that may miss a key in
+        // either, so their merge stays partial. Tests (proofdoc4c, f3970ac46):
+        // l01_23 `judgments::a_meet_of_an_exact_and_a_partial_arrow_over_one_domain_is_one_arrow`
+        // and l01_26 `fits::a_partial_arrow_keeps_its_value_type_apart_from_its_lookup_type`;
+        // they check two written programs each, not every pairing of exact and partial
+        // arrows over one domain.
         let mut at: HashMap<&[Ty], usize> = HashMap::new();
         let mut merged: Vec<Arrow> = Vec::with_capacity(m.arrows.len());
         for a in &m.arrows {

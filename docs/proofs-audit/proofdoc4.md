@@ -620,7 +620,75 @@ Not read:
 
 ## proofdoc4c: zedc-types, and `Sig::standing_twice`
 
-Not started.
+Base commit 1915d2375. Each entry of /home/luke/Work/wt/proofdoc4-lists/c.txt was read in full:
+its message, its zedc-types diff, and every comment line it added, then the code that relies on
+each claim as it stands on main, at its current site (all in `crates/zedc-types/src/ty.rs`
+unless named). Where a later commit rewrote a claim, the claim checked is the one the code now
+rests on. The open sub-cases already marked at their sites under row PROOF-sweep-zedc-types
+(`Cx::compared`, the binding that no search shrinks while it lives, recall under `b`, `admits`
+facts F2 and F3, the equal-signature step of `fits_in`, the ceilings) were found still marked;
+none is closed here.
+
+| Crate | Entries read | Found | Already there | Added or completed | Marked unproved | Corrected |
+|---|---|---|---|---|---|---|
+| zedc-types | 45 | 40 | 35 | 5 | 0 | 0 |
+
+| Source | Claim | Code site | Status |
+|---|---|---|---|
+| 2143bead4 | `Same` keys only by root address; `RunRenames`; `some_value`; run marks keyed by ROOT | `Same`, `RunRenames`, `some_value`, `RunMark`/`sig_walk` | Already there |
+| 1233ccd22 | pins of variables bound alone keep the rule of one shape | `struct Bound` (trie proof, left-out proof, lists proof) | Already there; "nothing shrinks a binding while a search lives" stays Not proved at the site (PROOF-sweep-zedc-types) |
+| f3970ac46 | the arrow merge of `Domains` is exact where either arrow is | `Domains` arrow merge, before `at: HashMap<&[Ty], usize>` | Completed: each step, and tests l01_23 `judgments::a_meet_of_an_exact_and_a_partial_arrow_over_one_domain_is_one_arrow`, l01_26 `fits::a_partial_arrow_keeps_its_value_type_apart_from_its_lookup_type`, with what they cannot catch |
+| f2297a652 | `left_out_by_vars`; union pins; trie cost O((k + 1) log n); no place twice on a path | `left_out_by_vars`, `Bound`, `BoundTrie`, `Bound::pin` | Already there |
+| 13e376cb7 | a pinned shape that leaves the member out is passed, not failed | `Bound` left-out proof | Already there; pins holding while bindings grow is the open sub-case above |
+| 5d9bad32b | `Cx::open` renames apart; ceilings needed only where a tuple holds a value; `Binds::of_arrow` | `Cx::open`, `Binds::of_arrow` (Pierce and Turner, DOI at the site) | Already there |
+| 09f77b6f3 | `held_as_is` holds out of written order; `unbound_carriers` | `held_as_is`, `unbound_carriers` | Already there |
+| 37dad5731 | `fits_read` answers alike wherever a reading is met: its key holds every input | `fits_read`, before `read_key` | Completed: each other field of `Cx` classed; the `compared` step rests on the assumption at `Cx::compared` (PROOF-sweep-zedc-types); tests l01_22 `kinds::function_types_nested_whose_inner_levels_hold_the_outer_variable_fit` and control |
+| ced805157 | `Cx::read` of a payload, O(n) with its memo | `Cx::read` | Already there |
+| 08e6206a4 | `Domains::meet` and its outside union | `Domains::meet`, `Pairs::fns_met` | Already there (proofdoc3c) |
+| 18cc11692 | a partial arrow prints `->?` and reads back partial | `Sig::parts` | Already there |
+| 475e582ff | test cases built by hand, each derived | `mod tests` | Already there |
+| 62c5ace4b | `sub_near` skips the form where the other side holds a function of its own variable | `sub_near` | Completed: tests l01_22 `kinds::a_generic_function_type_holding_a_function_of_its_variable_fits_itself_renamed`, l01_26 `bounds::functions_in_tuples_whose_bounded_variables_only_they_hold_fit_under_other_names`, and that a missed case is a false no, never a false yes |
+| 64eede4ce | `Domains::within` keeps the unknown; `Domains::plain` | `Domains::plain` (PROOF-domains-plain-meet) | Already there |
+| 76705768a | a list type is refused in a bound check | `kernel_form` | Already there |
+| 7da6fc4a6 | a printed clause binds only written variables | `Scope::written` | Already there |
+| e7180d4db | `fits_in` reads only held entries of `bound_fns` | `Cx::bound_in_fns`, `held_reading` | Already there |
+| 69844cb07 | the printer hoists a clause inside a key or bound union | `PrintAt::Member`, `Print::Closes` | Already there |
+| 7fc4ac500 | skipping parts with no variable keeps the counts | `Shared::closed` | Already there |
+| 922be74e7 | `PrintAt::Listed` places | `PrintAt::Any` (the claim reversed by the grammar later) | Already there |
+| afbdffe42 | a derivation's text lifts repeated tuples, linear text | `defs::lift` | Already there |
+| d4ce3868b | `closed_left_out` changes no verdict or binding | `Searched::closed_left_out`, `some_value` | Already there |
+| f26b8a8e5 | `permitted` skips only where `instances` gives `None` from its walk | `permitted` | Already there |
+| e70d43315 | `every_arrow_fits`, `answers_within`, the least instance | `answers_within`, `instances`, `instance_within` (rewritten proofs) | Already there |
+| 2981d4645 | `Domains::plain` by the branches of `Ty::meet` | `Domains::plain` | Already there |
+| 83920e1d6 | `some_value` gives a rational zero | `some_value` | Already there |
+| 83a509ae3 | `Dense` ranks and intervals | `Dense` | Already there |
+| a98079c36 | a message names each scope of a comparison | `Scope::of_comparison` | Already there |
+| b59ca2ae8 | parentheses only where precedence needs them | `PrintAt` | Already there |
+| bcb0fcb93 | a power's base holds no int | `NeedKind::Power` | Already there |
+| c38724eb5 | `var_steps` order; `must_decode` cases | `sig_walk`, `Replacer::must_decode` | Already there |
+| d20413aae | an equal signature fits; `equal_fits` | `fits_in`, `equal_fits` | Already there; the reflexivity step stays Not proved at `fits_in` (PROOF-sweep-zedc-types) |
+| f0bde0d35 | each assumption the comparison makes | the ASSUME sites listed above | Already there (each proved since or still marked) |
+| fed6e73e4 | forward naming; step order | `sig_walk`, `RunMark` | Already there |
+| feeafc10c | printer parentheses | `PrintAt` | Already there |
+| 0e50ec37c | uses alike kept by kind | `Need::alike` | Already there |
+| 2ec6b9418 | `fits_alone` (1)-(4); `answers_within` sound | `fits_alone`, `answers_within` | Already there |
+| 3189a1922 | domains that fit have equal keys; a collision only merges parts | `domain_key` | Completed: tests l01_23 `judgments::functions_at_one_place_whose_tuples_all_meet_are_decided`, l01_22 `kinds::functions_unlike_on_both_sides_at_one_place_are_refused`, with what they cannot catch |
+| 405650a5b | `VarFacts::add_to` cost; SipHash | `VarFacts::add_to` (DOI 10.1007/978-3-642-34931-7_28) | Already there |
+| 4ef43bf6c | nine guards no input reaches | `Replace::made_held`, `Need::site_mut`, `fits_alone`, `Bound::pin` | Already there but `Bound::pin`: completed (both callers pass one bucket's slice and its own `exact`; the slice rises) |
+
+No code claim: bbae90d38 (the claim is zedc-check's), 0d87a73ca, 25ef78dd1, 2b3e706f1,
+444cdb15b (the claim is tested in zed-kernel).
+
+Not read: 7028f23a2 7d9e078c0 995200322 9d877b65c a3cee3606 b623e6fe0 c1e5a82e3 d493d34a3
+e5a605a6e e82d77ca9 1c2b6a270 305ad0293 400b14585 65f995fee 6945f496b 6e2e39396 6ebe63b42
+701def5c6 875e58597 9778881e0 a034e80cd a619cb307 a670bd1cb a9443c314 af8174807 d20f8009e
+ee79685e4 01063a0ca 03e64b6da 148a42eb4 1d9291f72 22dd31a36 27e8e2464 2e3a7b0a4 2f99f5283
+47be53825 493ff031b 6704ae0ff 67dd99e3a 69526a75a 718e9ecda 7a54c17f9 807260a3b 811505cca
+8412a61b4 92a76ed89 9b35c8ab0 9e8f139f1 b5317f47c b991293a4 c289ffeca cbc003938 d2a97b1f9
+e6dfb6877 eb6e0ad7f 06d1dc49c 08d2feda8 0de5b565c 205591658 29bf6b297 2d09ac322 3248fbce2
+3e597380e 3fd923c4a 453066558 47681f229 47b73bd8f 4abfd2ae1 620307b4c 65a9230a8 78f2ca158
+81f3d8487 929e7e04a 9b5729b46 a16eb1e6e bd7d5aa55 c1dfb00f7 d18e52a0a d6a84bc7c dd8b42f68
+df3fa8308 e2ef08f39 ea2effe91 fb5f2416f, and the `Sig::standing_twice` claim of 305ad0293.
 
 ## proofdoc4d: zedc-check
 
