@@ -11,7 +11,8 @@
 //! [`search`]: binary search for the border of a monotone predicate over a range of integers,
 //! and the overflow-free midpoint it halves with.
 //!
-//! [`fenwick`]: a Fenwick tree, for prefix sums or prefix maxima under changes to single items.
+//! [`fenwick`]: a Fenwick tree, for prefix sums under changes to single items, or prefix maxima
+//! under raises of single items.
 
 // Loaded for its num-bigint only (see Cargo.toml): nothing here names it, and a crate never named
 // is never loaded, so this dylib would carry its own copy of num-bigint beside zed-numtheory's.

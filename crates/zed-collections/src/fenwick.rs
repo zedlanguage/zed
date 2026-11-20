@@ -7,6 +7,23 @@
 //! serves prefix sums of integers and prefix maxima under an order of the caller's. Node `r`
 //! (counting from 1) holds the combination of the items `r - lowbit(r) .. r`, where
 //! `lowbit(r)` is the lowest set bit of `r`; it is stored at `r - 1`.
+//!
+//! A change must be one each node can take without knowing the item's old value: an addition
+//! for sums, but for maxima only a raise. A lowered item would leave its old value in the nodes
+//! above it, so maxima of items that can fall need another structure.
+
+// Source: P. M. Fenwick, "A new data structure for cumulative frequency tables", Software:
+// Practice and Experience 24(3):327-336, 1994, doi:10.1002/spe.4380240306 (checked on Crossref
+// 2026-11-20). Not read: no free copy was found. The scheme above (node `r` covers `lowbit(r)`
+// items ending at `r`; an update adds `lowbit` to climb, a prefix clears it to descend; a
+// search for a cumulative value halves a power-of-two step) is the paper's as it is commonly
+// described, recalled from memory, not checked against the text. Departure: nodes hold any
+// combination with an identity, not only frequencies, which is sound for any associative
+// combination in `prefix` and `descend`, and for `update` only when the change distributes
+// over the combination (an addition over sums, a raise over maxima). Test:
+// `tests::prefixes_and_descents_match_an_array`, sums and maxima of every prefix and every
+// descent against a plain array after each of 3n random changes, for every n up to 33; it
+// raises maxima only, and it does not measure the O(log n) cost.
 
 /// A Fenwick tree over `n` items, each node a `T`.
 #[derive(Clone, Debug)]

@@ -141,6 +141,21 @@ pub fn try_last_true<T: Midpoint, E>(
 /// 1976), then binary search in the last step. O(log d) calls of `pred` for an answer `d` past
 /// `from`, so a walk of a sorted list by many searches, each from where the last stopped, costs
 /// no more than a merge.
+//
+// Source: J. L. Bentley and A. C. Yao, Information Processing Letters 5(3):82-87, 1976,
+// doi:10.1016/0020-0190(76)90071-5; read in the preprint SLAC-PUB-1679, November 1975,
+// https://www.osti.gov/servlets/purl/1318069. Section 2, Algorithm B1 (Binary Search): "the
+// first stage of the algorithm determines m = ⌊lg n⌋ + 1 by successively evaluating F(2^i - 1)
+// for i = 1, 2, ... until F(2^m - 1) = B", then "a standard bounded binary search on those
+// 2^(m-1) elements", "so the total cost is C_B1(n) = 2⌊lg n⌋ + 1". Here the probes are at
+// `from + 2^i - 1` (`lo + step`, `step` doubling), and the second stage is `partition_point`.
+// Departures: the search first asks at `from` itself, so an answer of `from` costs one call;
+// the slice ends, so the doubling stops at `a.len()`; and it uses B1, not the paper's B2 or
+// its later algorithms, which take lg n + O(lg lg n) calls instead of 2 lg n: the merge walks
+// this serves are O(log d) either way, and B1 is the simplest. Checked 2026-11-20 against
+// the preprint's page 5. Test: `tests::gallop_matches_a_scan`, every start and border of
+// every list up to 40 long against a scan, with at most 2⌊lg(d + 1)⌋ + 3 calls for an answer
+// `d` past `from`; it does not reach lists longer than 40.
 pub fn gallop<T>(a: &[T], from: usize, mut pred: impl FnMut(&T) -> bool) -> usize {
     if a.get(from).is_none_or(|x| !pred(x)) {
         return from;
