@@ -7,7 +7,9 @@
 //! when some literal of the clause is true, and otherwise ends at `y`. So the trivial models of
 //! the theory are the satisfying assignments of the formula. A second family needs no equation:
 //! fields of no arguments with the laws `a != b || b != c`, one per triple, are the 2-colorings
-//! of a 3-uniform hypergraph, which is NP-complete to decide (Lovász 1973). A third needs no
+//! of a 3-uniform hypergraph, which is NP-complete to decide (L. Lovász, "Coverings and
+//! colorings of hypergraphs", Proc. 4th Southeastern Conf. on Combinatorics, Graph Theory and
+//! Computing, 1973, pp. 3-12; no DOI; from memory, not checked). A third needs no
 //! field: one law that is an `||` of `&&`s holds exactly when a 3-CNF is unsatisfiable
 //! (`unsat_law`), so deciding one law is coNP-complete, and the report refuses such a law once
 //! its conjunctive normal form is past the compile-time budget.
@@ -165,7 +167,10 @@ fn nae_fano_has_no_model() {
 }
 
 /// The pigeonhole formula: `h + 1` pigeons each in one of `h` holes, no two in one hole. It is
-/// unsatisfiable, and every resolution refutation of it has 2^Ω(h) clauses (Haken 1985).
+/// unsatisfiable, and every resolution refutation of it has 2^Ω(h) clauses (A. Haken, "The
+/// intractability of resolution", Theoret. Comput. Sci. 39:297-308, 1985,
+/// doi:10.1016/0304-3975(85)90144-6; Crossref 2026-11-20, text not read). The bound is the
+/// reason the test expects growth; the test measures the search, it does not check the bound.
 fn pigeonhole(h: usize) -> (usize, Vec<Clause>) {
     let var = |p: usize, j: usize| p * h + j;
     let mut clauses: Vec<Clause> = (0..=h)
@@ -202,7 +207,9 @@ fn dead_ends_grow_exponentially_on_pigeonholes() {
 
 /// The dead ends of the exhaustive search on random 3-CNF with 5 clauses per variable, most of
 /// them unsatisfiable: a measurement for the report, since random 3-CNF of fixed density needs
-/// resolution refutations of size 2^Ω(n) (Chvátal and Szemerédi 1988) but the constant is small
+/// resolution refutations of size 2^Ω(n) (V. Chvátal and E. Szemerédi, "Many hard examples for
+/// resolution", JACM 35(4):759-768, 1988, doi:10.1145/48014.48016; Crossref 2026-11-20, text
+/// not read) but the constant is small
 /// enough that the growth looks polynomial below about 100 variables.
 #[test]
 fn dead_ends_on_random_3_cnf() {
