@@ -101,13 +101,27 @@ pub fn expr_kids_mut<'a>(kind: &'a mut ExprKind, out: &mut Vec<&'a mut Expr>) {
     }
 }
 
+/// What [`expr_kids`] gives for a block `{ … }`: each caller says which it wants, since a
+/// block is the one expression whose children are statements, not expressions.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Blocks {
+    /// Nothing: the caller walks a block's statements itself, because what a statement
+    /// means differs from one reader to the next (the checker's `blocking` walk records each
+    /// `<-` with the function that runs it, and pushes a block's statements as statements).
+    Skip,
+    /// The expressions directly in the block's statements, as [`stmts_exprs`] lists them: for
+    /// a caller that asks a question of every expression below a node, such as whether it
+    /// reads a name (the checker's remap `mentions`), and that would miss a read written
+    /// only inside `{ … }` if blocks were skipped (FAIL-remap-mentions).
+    Enter,
+}
+
 /// Gives `push` the expressions directly in `kind`, in the order [`expr_kids_mut`] lists
-/// them, except a block's: a reader that does not change the tree walks a block's statements
-/// itself, since what a statement means differs from one reader to the next (the checker's
-/// `blocking` walk, say, records each `<-` with the function that runs it). The read-only twin of
-/// [`expr_kids_mut`]: Rust gives no one body for `&` and `&mut`, so the two sit side by side
-/// and a test (`ast/walk/tests.rs`) checks that they list the same expressions.
-pub fn expr_kids<'a>(kind: &'a ExprKind, push: &mut impl FnMut(&'a Expr)) {
+/// them; for a block, those of its statements with [`Blocks::Enter`], none with
+/// [`Blocks::Skip`]. The read-only twin of [`expr_kids_mut`]: Rust gives no one body for `&`
+/// and `&mut`, so the two sit side by side and a test (`ast/walk/tests.rs`) checks that they
+/// list the same expressions, blocks included, with [`Blocks::Enter`].
+pub fn expr_kids<'a>(kind: &'a ExprKind, blocks: Blocks, push: &mut impl FnMut(&'a Expr)) {
     match kind {
         ExprKind::Int { .. }
         | ExprKind::Float { .. }
@@ -116,8 +130,11 @@ pub fn expr_kids<'a>(kind: &'a ExprKind, push: &mut impl FnMut(&'a Expr)) {
         | ExprKind::Atom(_)
         | ExprKind::Name(_)
         | ExprKind::This
-        | ExprKind::Section(..)
-        | ExprKind::Block(_) => {}
+        | ExprKind::Section(..) => {}
+        ExprKind::Block(stmts) => match blocks {
+            Blocks::Skip => {}
+            Blocks::Enter => stmts_exprs(stmts, push),
+        },
         ExprKind::Str(parts) => (parts.iter()).for_each(|p| match p {
             StrPart::Hole(e) => push(e),
             StrPart::Text(_) => {}
@@ -309,6 +326,103 @@ fn key_kids<'a>(keys: &'a mut [IndexKey], out: &mut Vec<&'a mut Expr>) {
 
 fn param_kids<'a>(params: &'a mut [Param], out: &mut Vec<&'a mut Expr>) {
     out.extend(params.iter_mut().filter_map(|p| p.default.as_mut()));
+}
+
+/// Gives `push` the expressions directly in the statements `stmts`, in the order
+/// [`stmts_exprs_mut`] lists them: its read-only twin, with the private twins below of
+/// `stmt_kids`, `leaf_kids` and the rest, checked against them by a test
+/// (`ast/walk/tests.rs`).
+pub fn stmts_exprs<'a>(stmts: &'a [Stmt], push: &mut impl FnMut(&'a Expr)) {
+    for s in stmts {
+        stmt_kids_ref(&s.kind, push);
+    }
+}
+
+/// The read-only twin of `stmt_kids`.
+fn stmt_kids_ref<'a>(mut kind: &'a StmtKind, push: &mut impl FnMut(&'a Expr)) {
+    loop {
+        match kind {
+            StmtKind::Local(decl) => kind = &decl.kind,
+            StmtKind::Annotated { annots, decl } => {
+                annots.iter().for_each(|a| annot_kids_ref(a, push));
+                kind = &decl.kind;
+            }
+            leaf => return leaf_kids_ref(leaf, push),
+        }
+    }
+}
+
+/// The read-only twin of `leaf_kids`.
+fn leaf_kids_ref<'a>(kind: &'a StmtKind, push: &mut impl FnMut(&'a Expr)) {
+    match kind {
+        StmtKind::Local(_) | StmtKind::Annotated { .. } => stmt_kids_ref(kind, push),
+        StmtKind::Initial(i) => {
+            key_kids_ref(&i.keys, push);
+            push(&i.value);
+        }
+        StmtKind::Bind { value, .. }
+        | StmtKind::Push { value, .. }
+        | StmtKind::While(value)
+        | StmtKind::Until(value)
+        | StmtKind::Expr(value) => push(value),
+        StmtKind::IndexedDef(IndexedDef {
+            keys,
+            value,
+            boundary,
+            ..
+        }) => {
+            key_kids_ref(keys, push);
+            push(value);
+            for BoundaryItem { keys, value, .. } in boundary {
+                key_kids_ref(keys, push);
+                push(value);
+            }
+        }
+        StmtKind::Return(es) => es.iter().for_each(&mut *push),
+        StmtKind::Function(f) => function_kids_ref(f, push),
+        StmtKind::Method(m) => function_kids_ref(&m.function, push),
+        StmtKind::Struct(Struct { fields, .. }) => {
+            for f in fields {
+                if let Field::Typed {
+                    default: Some(d), ..
+                } = f
+                {
+                    push(d);
+                }
+            }
+        }
+        StmtKind::Type(_) | StmtKind::Import(_) | StmtKind::Break => {}
+        StmtKind::UnitAnnot(a) => annot_kids_ref(a, push),
+    }
+}
+
+/// The read-only twin of `function_kids`.
+fn function_kids_ref<'a>(f: &'a Function, push: &mut impl FnMut(&'a Expr)) {
+    (f.params.iter()).for_each(|p| p.default.iter().for_each(&mut *push));
+    push(&f.body);
+    for (a, b) in &f.tests {
+        push(a);
+        push(b);
+    }
+    (f.given.iter())
+        .flat_map(|t| &t.ports)
+        .for_each(|p| push(&p.value));
+}
+
+/// The read-only twin of `annot_kids`.
+fn annot_kids_ref<'a>(a: &'a Annot, push: &mut impl FnMut(&'a Expr)) {
+    a.positional.iter().for_each(&mut *push);
+    a.named.iter().for_each(|(_, e)| push(e));
+}
+
+/// The read-only twin of `key_kids`.
+fn key_kids_ref<'a>(keys: &'a [IndexKey], push: &mut impl FnMut(&'a Expr)) {
+    for k in keys {
+        match k {
+            IndexKey::In { set, .. } => push(set),
+            IndexKey::At(e) => push(e),
+        }
+    }
 }
 
 #[cfg(test)]

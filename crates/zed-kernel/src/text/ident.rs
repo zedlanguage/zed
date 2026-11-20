@@ -101,6 +101,30 @@ pub fn numbered(base: &str, from: usize, free: impl Fn(&str) -> bool) -> (usize,
 /// `$k`, which is kept as it is; a caller that keys on binders rather than naming them maps
 /// `$k` further (zedc-zir `canon::binders::unnumbered`). A message names a binder by it
 /// (DESIGN.md sec:diagnostics). Linear in the length of the name.
+///
+/// No kernel name is `$k@j`, a temporary with a binder number after it, which this would cut
+/// to `$k` (TEST-written-name-k-at-j). Proof, by the sites that make the two characters (every
+/// `format!`, `push` and `write!` of the crates that make names, read on 2026-11-19):
+/// - An `@` is put after a name only by elaboration's renaming, `{x}@{k}` (zedc-elab:
+///   `Elab::new` in elab/state.rs, the instancing in elab/identities.rs, the binders of a
+///   copied body in elab/walk.rs), and `x` there is always a resolver binder's name, which is
+///   a lexed name ([`is_name`]: letters, digits, `_` and a final `'`) or one the syntax tree
+///   builder or the resolver makes, `<left>` and `<right>` of a section and `this`: none
+///   holds a `$`. The checker's `{x}@{id}` and `{x}@p{i}` (zedc-check arms.rs `var`,
+///   walk.rs) name its own type facts and never reach a kernel term.
+/// - A `$` begins a name only at `Elab::temp`, `${n}` with `n` counted from 1, and at
+///   zedc-stage's `CUT_READ`, `$0`; neither name is renamed after it is made, since the
+///   renamings above rename resolver binders only, and the later passes name their binders
+///   `\0…` (zedc-zir) or add `#…` (zedc-preimage), never `@`. The ZIR readers, text and
+///   binary, take a `$` binder only as `$` and digits (zedc-zir zir/text.rs `not_a_binder`).
+///
+/// A third form holds both characters: the thunk of a default argument, `{f}${p}`, with `f`
+/// and `p` the kernel names of the function and its parameter (zedc-elab elab/walk.rs,
+/// `Frame::FnDefault`), as `h3$x@4`. It is a definition, not a binder a message names; this
+/// gives `h3$x` for it, and `f` for `f@2$x@4`. The test
+/// `no_temporary_carries_a_binder_number` (tests/steps/l01_16_elaboration/complete.rs)
+/// elaborates programs that make temporaries inside renamed scopes and thunks, and finds no
+/// `$k@j`.
 pub fn written_name(kernel: &str) -> &str {
     kernel
         .split_once('@')
@@ -142,6 +166,9 @@ mod tests {
         assert_eq!(written_name("x'@12"), "x'");
         assert_eq!(written_name("x@1@2"), "x");
         assert_eq!(written_name("$4"), "$4");
+        // The thunk of a default argument (see `written_name`'s comment).
+        assert_eq!(written_name("h3$x@4"), "h3$x");
+        assert_eq!(written_name("f@2$x@4"), "f");
     }
 
     #[test]

@@ -2,7 +2,7 @@
 //! the L1 surface that step L1.16 elaborates, with its value under the interpreter, and each
 //! error elaboration reports for a form, at each place the form can stand.
 
-use super::{errors, term, value};
+use super::{elab, errors, term, value};
 
 /// The value of `x` in `text`, for each `(text, value)` of `cases`.
 fn values(cases: &[(&str, &str)]) {
@@ -190,6 +190,55 @@ fn blocks_nest_and_each_binder_gets_its_own_kernel_name() {
     assert_eq!(value(text, "x"), "3");
     // `_` binds nothing, so it needs no name.
     values(&[("_ = 1; x = 2;", "2"), ("x = { y = 1; y + 1 };", "2")]);
+}
+
+/// The first kernel name of the form `$k@j` in `text`, a temporary `$k` with a number after
+/// it: `$`, one digit or more, `@`, and the digits after it. Linear in the length of `text`:
+/// the digits are read only after a `$`, and the runs read after two `$` do not overlap.
+fn temporary_with_number(text: &str) -> Option<&str> {
+    let b = text.as_bytes();
+    let digits = |from: usize| b[from..].iter().take_while(|c| c.is_ascii_digit()).count();
+    (0..b.len()).filter(|&i| b[i] == b'$').find_map(|i| {
+        let k = digits(i + 1);
+        let at = i + 1 + k;
+        (k > 0 && b.get(at) == Some(&b'@')).then(|| &text[i..at + 1 + digits(at + 1)])
+    })
+}
+
+/// TEST-written-name-k-at-j: `written_name` (zed_kernel::text::ident) cuts a kernel name at
+/// its first `@`, and keeps a temporary `$k` whole; a name `$k@j` would lose its number and
+/// read as `$k`. The programs below try to make one: temporaries (`add[n]`, a missing
+/// argument filled by a lambda `$k -> …`) made inside a scope elaboration renames (a block
+/// that shadows a name, a function instanced at two calls, a chain of default arguments,
+/// whose thunks are named `f$x@k`), and sections, whose parameters are named by the builder.
+/// No kernel name of their elaboration is `$k@j`, while `$k` and `x@k` both occur, so the
+/// programs reach both renamings. The proof that no program does is at `written_name`.
+#[test]
+fn no_temporary_carries_a_binder_number() {
+    let programs = [
+        "add(positional a, positional b) = a + b;\n\
+         a = 1;\nx = { a = 2; inc = add[a]; { a = 3; inc(a) } } + a;\n",
+        "add(positional a, positional b) = a + b;\n\
+         f(n: int) = { g = add[n]; { n = 1; g(n) } };\ny = f(n: 2) + f(n: 3);\n",
+        "s = [1, 2, 3] >< (+);\nt = { s = [4] >< (*); s };\nu = [(+), (-)];\n",
+        &super::scaling::chain(3),
+    ];
+    let (mut temporaries, mut numbered) = (0, 0);
+    for src in programs {
+        let u = elab(src).unwrap_or_else(|e| panic!("{src}: {e:?}"));
+        for d in &u.defs {
+            let text = format!("{} {} {}", d.name, d.kernel, d.term);
+            assert_eq!(temporary_with_number(&text), None, "{src}\n{text}");
+            temporaries += text.matches('$').count();
+            numbered += text.matches('@').count();
+        }
+    }
+    assert!(
+        temporaries > 0 && numbered > 0,
+        "{temporaries} `$`, {numbered} `@`"
+    );
+    assert_eq!(temporary_with_number("($12@3 + x@1)"), Some("$12@3"));
+    assert_eq!(temporary_with_number("h3$x@4 $1 x@2 $"), None);
 }
 
 #[test]

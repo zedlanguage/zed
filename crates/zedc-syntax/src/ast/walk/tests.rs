@@ -18,7 +18,7 @@
 //! negative literal in a pattern (a pattern, not walked: the walk lists the expressions that
 //! are run, the ones an operator or a call reads).
 
-use super::{expr_kids, expr_kids_mut, stmts_exprs_mut};
+use super::{Blocks, expr_kids, expr_kids_mut, stmts_exprs, stmts_exprs_mut};
 use crate::ast::{Expr, ExprKind, Stmt, unit};
 use crate::lex::{Span, lex};
 use crate::parse::{TOP, parse_unit};
@@ -183,47 +183,93 @@ fn random_programs_give_each_expression_its_own_span() {
     }
 }
 
-/// The first expression of `text` whose children [`expr_kids`] and [`expr_kids_mut`] list
-/// differently, or `None`; a block, whose statements `expr_kids` leaves to its caller, is
-/// skipped. `text` must build.
-fn kids_differ(text: &str) -> Option<String> {
-    let tokens = lex(text).expect("lexes");
+/// The first node of `text` whose children the read-only walk ([`stmts_exprs`], and
+/// [`expr_kids`] with [`Blocks::Enter`]) and the changing one ([`stmts_exprs_mut`],
+/// [`expr_kids_mut`]) list differently, or `None`; an error if `text` does not build. With
+/// [`Blocks::Skip`] a block lists nothing, which the test below checks apart.
+fn kids_differ(text: &str) -> Result<Option<String>, String> {
+    let tokens = lex(text).map_err(|e| format!("lexing: {e:?}"))?;
     let (tree, errors) = parse_unit(text, &tokens, TOP);
-    assert!(errors.is_empty(), "parses: {errors:?}");
-    let mut stmts = unit(text, &tokens, &tree).expect("builds");
+    if !errors.is_empty() {
+        return Err(format!("parsing: {errors:?}"));
+    }
+    let mut stmts = unit(text, &tokens, &tree).map_err(|e| format!("building: {e:?}"))?;
+    let mut read = Vec::new();
+    stmts_exprs(&stmts, &mut |k| read.push(k.span));
     let mut work: Vec<&mut Expr> = Vec::new();
     stmts_exprs_mut(&mut stmts, &mut work);
+    let written: Vec<Span> = work.iter().map(|k| k.span).collect();
+    if read != written {
+        return Ok(Some(format!(
+            "at the top: stmts_exprs gives {read:?}, stmts_exprs_mut {written:?}"
+        )));
+    }
     while let Some(e) = work.pop() {
         let mut read = Vec::new();
-        expr_kids(&e.kind, &mut |k| read.push(k.span));
+        expr_kids(&e.kind, Blocks::Enter, &mut |k| read.push(k.span));
+        let mut skipped = 0;
+        expr_kids(&e.kind, Blocks::Skip, &mut |_| skipped += 1);
         let at = work.len();
         let block = matches!(e.kind, ExprKind::Block(_));
         let span = e.span;
         let Expr { kind, .. } = e;
         expr_kids_mut(kind, &mut work);
         let written: Vec<Span> = work[at..].iter().map(|k| k.span).collect();
-        if !block && read != written {
-            return Some(format!(
+        if read != written {
+            return Ok(Some(format!(
                 "at {span:?}: expr_kids gives {read:?}, expr_kids_mut {written:?}"
-            ));
+            )));
+        }
+        let want = if block { 0 } else { written.len() };
+        if skipped != want {
+            return Ok(Some(format!(
+                "at {span:?}: expr_kids with Blocks::Skip gives {skipped} children, not {want}"
+            )));
         }
     }
-    None
+    Ok(None)
 }
 
+/// Statements of every kind the statement walk lists expressions of, at the top and inside a
+/// block: an annotation with arguments, `local`, a struct field's default, a function's
+/// parameter default and tests, an indexed definition with a boundary, `initial`, a push,
+/// `while`, `return`.
+const STATEMENTS: &str = "struct P { x: int = 1 + 2, y: int }\n\
+     @stack(bytes: 65536) f(n: int = 3) = n + 1\n  test { 1 -> 2, 2 -> 3 }\n\
+     local g(a: int) = { b = a * 2; return b; };\n\
+     d[i in 0..<3] = d[i - 1] + 1 with d[-1] = 0;\n\
+     r = loop t { while t < 3; initial c = 0; c' = c + t; };\n\
+     main(m: MainArgs) { w = { k = 1; k + 2 }; m.stdout <- [\"${w}\"]; }";
+
 /// DRY-text-shared job 10: the read-only and the changing walk list the same children, in
-/// the same order, over every desugaring and the random programs of the tests above.
+/// the same order, blocks included, over every desugaring, statements of each kind, the
+/// random programs of the tests above and the programs of the repository.
 #[test]
 fn the_read_only_walk_lists_the_children_the_changing_one_does() {
     for text in DESUGARINGS {
-        assert_eq!(kids_differ(text), None, "in\n{text}");
+        assert_eq!(kids_differ(text), Ok(None), "in\n{text}");
     }
     let block = "f(n: int) = { m = n + 1; if m > 2 { [m, 3] } else { [0] } };";
-    assert_eq!(kids_differ(block), None, "in\n{block}");
+    assert_eq!(kids_differ(block), Ok(None), "in\n{block}");
+    assert_eq!(kids_differ(STATEMENTS), Ok(None), "in\n{STATEMENTS}");
     for seed in 0..400u64 {
         let text = Gen(Rng::new(seed)).program();
-        assert_eq!(kids_differ(&text), None, "seed {seed}, in\n{text}");
+        assert_eq!(kids_differ(&text), Ok(None), "seed {seed}, in\n{text}");
     }
+    let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+    let mut files = Vec::new();
+    zed_files(&root.join("zed"), &mut files);
+    zed_files(&root.join("tests/steps"), &mut files);
+    let mut built = 0;
+    for f in &files {
+        let text = std::fs::read_to_string(f).expect("a .zed file reads");
+        match kids_differ(&text) {
+            Ok(None) => built += 1,
+            Ok(Some(why)) => panic!("{why}, in {}", f.display()),
+            Err(_) => {}
+        }
+    }
+    assert!(built > 0, "no .zed file built");
 }
 
 /// The `.zed` files under `dir`, sorted.

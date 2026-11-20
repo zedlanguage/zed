@@ -2,7 +2,7 @@
 //! pattern outside it is rejected with the menu of the diagnostics row "Collision
 //! (T-Reindex)" (DESIGN.md sec:remap_law, sec:grouping, sec:diagnostics).
 
-use crate::source::{rejected, same};
+use crate::source::{all_errors, rejected, same};
 
 // ---- The worked collision (sec:remap_law, "The illegal move"; its menu and repairs on `sales`
 // are in `rules`) ----
@@ -186,6 +186,45 @@ fn a_square_that_is_not_monotone_collides() {
     // `k * k` is not in the catalog on keys of either sign: -1 and 1 meet at 1.
     let src = "m = { -1 -> 1, 1 -> 2 };\nx = m as (k -> v) into (k * k -> v);\n";
     rejected(src, &["k * k", "into (k * k -> k -> v)"]);
+}
+
+#[test]
+fn the_component_blamed_is_the_one_that_reads_the_lost_key_inside_a_block() {
+    // FAIL-remap-mentions: the message names the key component that reads the lost binder,
+    // here `i`, read only in a statement of a block. The walk that looks for the read skipped
+    // blocks, so it found no component reading `i` and blamed the first, `j * 1`, which keeps
+    // `j` apart. (`{ i * 0 }` is a set display, not a block, and was blamed rightly.)
+    let src =
+        "m = {1 -> {2 -> 3}};\nx = m as (i -> j -> v) into (j * 1 -> { k = i * 0; k } -> v);\n";
+    assert_eq!(
+        all_errors(src),
+        [
+            "Cannot show that `{ k = i * 0; k }` keeps the keys of `i` apart: `into (j * 1 -> { \
+             k = i * 0; k } -> v)`. Try `into (j * 1 -> { k = i * 0; k } -> i -> v)` instead.\n  \
+             no entry of the witness catalog shows `{ k = i * 0; k }` one-to-one; the nearest is \
+             a function proved one-to-one.\n  write the residue:           into (j * 1 -> { k = \
+             i * 0; k } -> i -> v)\n      keeps each value under its i\n  or drop the values \
+             too:      into (j * 1 -> { k = i * 0; k } -> i -> _)\n      keeps each i and drops \
+             its value\n  or say how the values merge: into (j * 1 -> { k = i * 0; k } -> i >< \
+             op -> v)\n      merges each { k = i * 0; k }'s values with op, which must be \
+             associative\n  or supply a witness:         prove `{ k = i * 0; k }` one-to-one; \
+             an `@injective` claim counts only at proof grade\n  or write the check:          \
+             `group` by the key, then a fold that keeps each key's one value and gives \
+             `#collision` where there are more [m as (i -> j -> v) into (j * 1 -> { k = i * 0; \
+             k } -> v)]"
+        ],
+        "{src}"
+    );
+    // A block that binds its own `i` reads that one, not the key: no component reads the
+    // key `i`, and the first is blamed.
+    let src =
+        "m = {1 -> {2 -> 3}};\nx = m as (i -> j -> v) into (j * 1 -> { i = 5; i * 0 } -> v);\n";
+    rejected(
+        src,
+        &[
+            "Cannot show that `j * 1` keeps the keys of `i` apart: `into (j * 1 -> { i = 5; i * 0 } -> v)`.",
+        ],
+    );
 }
 
 #[test]

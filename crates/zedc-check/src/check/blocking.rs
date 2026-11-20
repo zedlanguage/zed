@@ -24,8 +24,8 @@ use imbl::Vector;
 use zedc_resolve::resolve::tables::{ListKey, Tables};
 use zedc_resolve::resolve::{Kind, Ref, Resolution, prelude_layer};
 use zedc_syntax::ast::{
-    Annot, Expr, ExprKind, Field, Function, IndexKey, Note, Param, Stmt, StmtKind, Struct, Target,
-    TypeKind, expr_kids,
+    Annot, Blocks, Expr, ExprKind, Field, Function, IndexKey, Note, Param, Stmt, StmtKind, Struct,
+    Target, TypeKind, expr_kids,
 };
 use zedc_syntax::lex::Span;
 
@@ -481,7 +481,10 @@ impl<'t, 'a> Walk<'t, 'a> {
             | ExprKind::SortKey { .. } => {}
         }
         let at = todo.len();
-        expr_kids(&e.kind, &mut |k| todo.push((Part::Expr(k), owner)));
+        // A block has returned above, its statements pushed as statements, so `Skip`.
+        expr_kids(&e.kind, Blocks::Skip, &mut |k| {
+            todo.push((Part::Expr(k), owner))
+        });
         todo[at..].reverse();
     }
 

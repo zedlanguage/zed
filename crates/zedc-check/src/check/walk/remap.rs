@@ -12,7 +12,7 @@ use num_traits::{One, Signed, Zero};
 
 use crate::check::*;
 use zedc_base::rejection::{Row, not_yet};
-use zedc_syntax::ast::{RemapLevel, Target};
+use zedc_syntax::ast::{Blocks, RemapLevel, Target};
 
 /// A remap whose source is checked or being checked: its levels' keys and leaf are checked one
 /// after another with the binders in scope.
@@ -945,14 +945,18 @@ impl<'t, 'a> Ck<'t, 'a> {
         ranged.or_else(|| span_of(t))
     }
 
-    /// Whether the expression `e` reads the key binder `i` of `s`.
+    /// Whether the expression `e` reads the key binder `i` of `s`, anywhere below it: inside
+    /// a block `{ … }` too ([`Blocks::Enter`]), since a key component written as a block that
+    /// reads `i` only in its statements is the one that loses `i`, and skipping blocks blamed
+    /// the first other component instead (FAIL-remap-mentions). A name the block binds is not
+    /// the binder: [`Self::key_binder`] matches the resolved binder, not the text.
     fn mentions(&self, s: &RemapF<'a>, e: &'a Expr, i: usize) -> bool {
         let mut todo = vec![e];
         while let Some(e) = todo.pop() {
             if self.key_binder(s, e) == Some(i) {
                 return true;
             }
-            zedc_syntax::ast::expr_kids(&e.kind, &mut |k| todo.push(k));
+            zedc_syntax::ast::expr_kids(&e.kind, Blocks::Enter, &mut |k| todo.push(k));
         }
         false
     }
