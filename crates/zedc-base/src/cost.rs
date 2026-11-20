@@ -245,6 +245,14 @@ fn sweep(regions: &[Region], spans: &[Span], devices: usize) -> Vec<u64> {
         ));
     }
     events.sort_unstable();
+    // Why the subtraction below never wraps: the events sort by (device, time, kind, region),
+    // and each region's end event sorts after its start. If end > start, the end comes at a
+    // later time; otherwise (length 0, or a start at `u64::MAX` whose end saturates to it) the
+    // end is END_OF_INSTANT = 2 at the same time, after START = 1. So a region's footprint is
+    // added to `running` before it is taken off. Tests: tests/steps/m0_06_cost_scalarization
+    // overlap.rs `a_static_schedule_counts_what_runs_at_each_instant`, `huge_sizes_saturate`
+    // and `the_footprint_agrees_with_its_definition` (random timings against
+    // `footprints_by_instants`, which sums each instant directly); random cases only.
     let mut peak = vec![0u64; devices];
     let mut running = vec![0u128; devices];
     let mut kept = vec![0u128; devices];
@@ -297,6 +305,18 @@ impl Load {
 
     /// `self` and `b` at once on a device of one core: one region runs at a time, in either
     /// order, so one part is at most at its peak while the other holds at most what it keeps.
+    // Proof of the bound: at any instant at most one region runs on the device. If it is one of
+    // `self`'s, `self` holds at most `self.peak` (the bytes of a part depend only on which of
+    // its own regions have run, so the state is one of `self` alone, which its peak bounds by
+    // induction over the nesting), and `b` has no region running, so it holds only the
+    // retained bytes of its finished regions, at most `b.kept` since retained bytes are not
+    // negative. The other case is symmetric, and with no region running each part holds at
+    // most its kept bytes, below either sum. The bound is reached: run all of `b`, then
+    // `self` up to the state of its peak, which gives `self.peak + b.kept`, and the other order
+    // gives the other sum. Tests: tests/steps/m0_06_cost_scalarization overlap.rs
+    // `a_device_of_one_core_holds_the_peak_of_the_worse_order` and
+    // `the_footprint_agrees_with_its_definition` (random nestings, equality with
+    // `footprints_by_states`, which lists every state the order allows); random cases only.
     fn interleaved(self, b: Load) -> Load {
         Load {
             peak: self
@@ -510,6 +530,20 @@ pub fn dominates(a: &[u64], b: &[u64]) -> bool {
 // better for more than three quantities. The scalar is computed once per feasible plan,
 // O(P · (devices + edges)), and the pick's order is compared only for a pair where one
 // dominates. Memory: one cost vector and one scalar per feasible plan.
+// Two steps of the proof above in full. (1) A dominator precedes in the sort: a <= b in every
+// quantity and a != b give a first index where a < b, with equality before it, so a sorts
+// strictly before b lexicographically; the sort is by vector alone, so plans with equal
+// vectors, which never dominate each other, may sit in any order. (2) "Beats" is the meet of
+// dominance (a strict partial order) and (scalar, `order`) < (a strict total order on distinct
+// plans), so it is transitive and irreflexive. Every plan that beats b precedes b, and if it
+// was dropped, a kept plan before it beats it and so beats b; hence b is dropped exactly when
+// some plan in `front` at its turn beats it.
+// Tests: tests/steps/m0_06_cost_scalarization mod.rs
+// `the_frontier_keeps_incomparable_plans_and_drops_dominated_ones`, overlap.rs
+// `the_frontier_keeps_a_dominated_plan_that_ties_and_comes_first_at_a_found_seed` and
+// `the_footprint_is_monotone_so_pruning_to_the_frontier_keeps_the_pick`, and peak.rs
+// `the_peak_is_monotone_so_pruning_to_the_frontier_keeps_the_pick` (random plans: the pick
+// over the frontier equals the pick over all). Random seeds, not a proof.
 pub fn frontier(plans: &[Plan], target: &Target) -> Vec<Plan> {
     let mut live: Vec<(&Plan, Vec<u64>, u64)> = plans
         .iter()

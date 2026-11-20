@@ -6325,6 +6325,11 @@ impl<'t, 'a> Ck<'t, 'a> {
             // and never checked, so the end of the walk could not catch it.
             // With the fixes off (a test mode, TEST-random-sweep-off) the uses to check stay
             // on the class with no discharge, as before FAIL-random-pow-destructured-literal.
+            // Test: tests/steps/l01_26_type_resolution/soundness.rs
+            // `a_literal_component_is_no_negative_int_exponent` (one to three calls, top level
+            // and inside a function), and the random programs of
+            // `accepted_random_programs_raise_no_type_error`; neither proves that `Into` and
+            // `Data` are the only kinds the mask meets.
             let (kept, bounds): (Vec<_>, Vec<_>) = std::mem::take(&mut self.classes[r].uses)
                 .into_iter()
                 .partition(|(_, n)| matches!(n.kind, NeedKind::Into { .. } | NeedKind::Data(..)));
@@ -8340,6 +8345,19 @@ impl<'t, 'a> Ck<'t, 'a> {
     /// word's operand takes, and one subset test against one interval, `O(log p)` for `p`
     /// pieces ([`IntervalSet::is_subset`]); building the text as well would print a type at
     /// each cast.
+    // Proof that an int n with |n| <= 2^53 is exact in f64: binary64 has a 53-bit significand
+    // (52 bits stored and the leading 1; IEEE 754-2019, table 3.5), so it holds every integer of
+    // at most 53 bits, which is every n with |n| < 2^53; and 2^53 = 1 * 2^53 is a power of 2
+    // within the exponent range. 2^53 + 1 is the least positive integer it does not hold. The
+    // answer is a yes only where `Self::ints_of` gives a superset of the ints `x` may be (its
+    // own proof) and that superset lies in [-2^53, 2^53], so each run-time value lies there.
+    // Tests: tests/steps/l01_26_type_resolution/exact_casts.rs
+    // `a_bounded_int_beside_a_decimal_is_offered_both_casts` and
+    // `a_bounded_int_compared_with_an_f64_is_offered_its_cast` (bounded within 0..=100 and
+    // unbounded), and tests/steps/l01_29_repairs_and_printing/casts.rs
+    // `the_widening_cast_to_f64_is_offered_where_f64_holds_each_value_of_a_range_or_a_literal`
+    // (ranges ending at ±2^53 and at 2^53 + 1). They check chosen ranges, not every superset
+    // `Self::ints_of` can give.
     fn exact_in_f64(&mut self, x: &Arg<'a>) -> bool {
         let ns = &x.ty.set & &KType::int();
         let Some(e) = x.expr.filter(|_| !ns.is_empty()) else {
@@ -14641,6 +14659,15 @@ impl<'t, 'a> Ck<'t, 'a> {
     /// Complexity tradeoff: the naive method builds the base, as the run would, at the cost of
     /// its size; used: the base's bounds, read once by span ([`Self::least_built`]), and the
     /// same O(1) comparison as for a fixed base.
+    // The bound in full: a part x of L bits has |x| >= 2^(L - 1); with |k'| >= k >= 1 for each
+    // exponent k', |x^k'| >= 2^(k(L - 1)) (L >= 2 for a part past 64 bits, so |x| >= 2 and the
+    // power grows with |k'|), and a number at least 2^m has at least m + 1 bits.
+    // Tests: tests/steps/l01_29_repairs_and_printing/too_large.rs
+    // `a_power_past_the_address_space_is_rejected_with_its_least_size`,
+    // `the_bound_is_exact_at_the_address_space` (exponents 2^61 - 1 and 2^61 on each side of
+    // 2^67 bits),
+    // `a_negative_exponent_is_bounded_by_its_magnitude` and
+    // `a_power_of_a_base_the_types_bound_is_rejected`. Chosen programs, not a proof.
     fn too_large_power(&mut self, a: &'a Expr, e: &'a Expr, span: Span) -> bool {
         let space_bits = 1u128 << (ADDRESS_BYTES_LOG2 + 3);
         let (rat, widths, exact, proof) = match self.fixed_value(a) {
@@ -16539,6 +16566,11 @@ impl<'t, 'a> Ck<'t, 'a> {
     /// `h((3, 0))` also holds `a - 5` of the body), refusing every int; the path costs O(d)
     /// per need at each call ([`Self::floors_at`]) and lets the call check the part's own
     /// ints. COMPLEXITY.md CHK-pow-component-bound.
+    // Tests: tests/steps/l01_26_type_resolution/soundness.rs
+    // `a_literal_component_is_no_negative_int_exponent` and
+    // `component_exponents_give_one_error_per_call_below_zero`: destructured and bracketed
+    // parts, accepted at a part of 3 and refused at -3. Chosen shapes only; the proof rests on
+    // the resolver refusing a second binding of a name, which these tests do not try.
     fn open_place(&self, mut e: &'a Expr) -> Option<(usize, Vec<PathStep>)> {
         let mut seen = HashSet::new();
         // Innermost step first; reversed at the end.
@@ -20350,6 +20382,12 @@ impl<'t, 'a> Ck<'t, 'a> {
     /// arrows of `e` and `s`, O(a_e · a_s · params) comparisons, done once per function
     /// passed; the naive alternative, a test on every call, costs the same at run time on each
     /// call where no test is needed. The test itself is O(a_s · params) at each call.
+    // Tests: tests/steps/l01_26_type_resolution/function_variance.rs
+    // `a_call_through_a_partial_slot_outside_the_domain_misses` (the guard gives `#notFound`
+    // on a key outside the domain), `a_partial_slot_takes_a_function_on_a_narrower_range`,
+    // `a_wider_domain_is_rejected_and_its_lambda_accepted` and
+    // `a_domain_no_test_can_read_is_refused`. They check chosen signatures; a cover test that
+    // wrongly said "covered" for some other pair of arrows would skip the guard unseen.
     fn domain_guard(
         &self,
         s: &Sig,
@@ -25533,6 +25571,18 @@ fn either_root(roots: &mut coprime::Roots, a: &Coef, b: &Coef) -> Option<coprime
 /// `coprime` gives the parts used), where it costs set lookups ([`coprime::Roots::settle`]): a
 /// chain
 /// of `n` products costs O(n) here and O(n log^2 n) lookups at the end.
+// The gcd step, in full: with gcd(p, q) = 1 and gcd(r, s) = 1, let g = gcd(pr, qs). A prime
+// dividing g divides p or r, and q or s; it cannot divide both p and q, nor both r and s, so
+// it divides p and s, or r and q; its multiplicity in g is then that in gcd(p, s) or in
+// gcd(r, q). So g = gcd(p, s) * gcd(r, q), and the six coprimality checks below (two for the
+// gcd, four for the kept primes) are exactly the conditions under which the kernel keeps `pr`
+// and `qs` whole. The bit bound: |a| >= 2^(L1 - 1) and |b| >= 2^(L2 - 1) give
+// |ab| >= 2^(L1 + L2 - 2), which has at least L1 + L2 - 1 bits, the `bits` written in `times`.
+// Tests: tests/steps/l01_29_repairs_and_printing/too_large.rs (rejections with the summed bit
+// lengths, and `a_product_or_quotient_that_may_cancel_or_build_nothing_proves_nothing` for
+// the cases that must give `None`), and bench/too_large.rs
+// `bounding_a_chain_of_rat_products_scales` for the O(n) cost. They check chosen programs,
+// not every pair of roots; a wrong `coprime_now` answer on a pair no test builds is not caught.
 fn product_built(roots: &mut coprime::Roots, op: BinaryOp, x: &Built, y: &Built) -> Option<Built> {
     let [p, q] = &x.parts;
     let [r, s] = match op {
@@ -26737,6 +26787,11 @@ impl<'a> Ck<'_, 'a> {
     // of p pieces; the naive way, listing the ints of the key's interval, is O(b - a) again.
     // A key that is an operation on literals is walked once by [`Ck::kept`], O(its size), at
     // the one read whose key it is.
+    // Tests: tests/steps/l03_15a_fp_ops_run/cases.rs
+    // `a_read_of_exact_keys_at_a_known_key_has_no_miss` (known keys, listed ints and the
+    // intervals of RANGE-read-key-intervals), and zed-kernel types/tests.rs
+    // `ints_listed_are_the_ints_the_type_holds` for the listed ints. They check chosen and
+    // random cases; the soundness of `Ck::ints_here` itself rests on its own proof.
     fn exact_key_read(&mut self, sig: &Sig, x: &Arg<'a>) -> Option<bool> {
         let keys = sig.keys.as_ref()?;
         // A key that is an operation on bare integer literals alone with no `/`, as `1 + 1`
@@ -28200,6 +28255,11 @@ fn rebuilt_too(mut d: Coercion, steps: &[PlaceStep], c: Coercion) -> Option<Coer
 /// deep as the type nests, which a deep value overflows (the stack rule of
 /// [`Ck::coercion`]); this walk keeps its own stack of pairs. A place `a` does not rebuild
 /// takes `b`'s subtree whole, in O(1); so each place of `b` is visited at most once.
+// Tests: `rebuildings_of_one_place_join_where_their_tests_agree` and
+// `a_deep_join_keeps_its_own_stack` (depth 100 000) in this file's tests, and
+// tests/steps/l01_26_type_resolution/function_variance.rs
+// `a_function_rebuilt_in_two_ways_at_one_call_gets_both`. No test reaches the `false` for two
+// coercions of one type, since by the argument above no program does.
 fn join_coercions(a: &mut Coercion, b: Coercion) -> bool {
     let mut stack = vec![(a, b)];
     while let Some((a, b)) = stack.pop() {
@@ -28337,6 +28397,17 @@ fn writable(text: &str) -> bool {
 /// Cost: one visit of each function, row and payload shape, each entered once by its address
 /// (a shared one is reached by many paths), on an explicit stack, since types nest as deep as
 /// the text.
+// Proof that the address keys of `seen` are safe (DRY-pointer-memos-keep-alive, c4937d86c):
+// (1) each key is the address of a `Sig` behind an `Arc` in `t.fns`, of a row's component
+// buffer (`&**r` derefs `Row` to its `Vec<Ty>`'s slice), or of a `ShapeData`, all reached
+// from `t` through shared borrows; `t` is borrowed for the whole call and nothing here drops
+// or builds a type, so every keyed object lives until the return, and two live objects of
+// nonzero size never share a start address. (2) Every empty row's buffer has the same
+// dangling address (`Vec::new` allocates nothing), so a second empty row is skipped; it has
+// no component to push, so skipping it changes no answer. That dangling address is the
+// alignment of `Ty`, never the address of a heap `Sig` or `ShapeData`. (3) `seen` is only
+// read by `insert`, never iterated, so the answer does not depend on address order.
+// No test checks the address keys; the tests of the callers check answers only.
 fn holds_fn(t: &Ty, pick: &dyn Fn(&Sig) -> bool) -> bool {
     let mut seen: HashSet<*const ()> = HashSet::new();
     let mut stack: Vec<&Ty> = vec![t];
@@ -28539,6 +28610,13 @@ fn range_need_of<'n>(s: &Sig, n: &'n Need) -> Option<(usize, &'n IntDomain)> {
 /// replaced by its copy: rebuilding it by `Ty::union` would hash each signature whole, the
 /// depth below it again at each depth, the square of the depth in all. Two functions that
 /// differ only in their needs stay two, which the comparison reads as the same type twice.
+// Proof that the address keys of `done` are safe (DRY-pointer-memos-keep-alive, c4937d86c):
+// each key is `s` or a `Sig` behind an `Arc` held in a result of a signature reached from `s`,
+// all through shared borrows of `s`, which outlives the call; the copies made here (`bare`)
+// are new allocations, kept in `done` until the return, so none can take the address of a
+// key, and none is ever a key (keys come only from the walk of `s`). Each key is inserted once
+// (the `contains_key` test before it), and `done` is never iterated.
+// No test checks the address keys; the tests of `Ck::needs_hold` check answers only.
 fn without_needs(s: &Sig) -> Sig {
     let mut done: HashMap<*const Sig, Option<Arc<Sig>>> = HashMap::new();
     let mut stack: Vec<(&Sig, bool)> = vec![(s, false)];

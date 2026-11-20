@@ -11512,6 +11512,17 @@ fn binary_prim(op: BinaryOp) -> Option<Prim> {
 //   it needs MIX-budget's switch and that record; left to CONST-fold-budget-failure.
 // - A fixed bound per step (this one): 8. Deterministic and local; the cost is that a fold
 //   over the bound is unknown even on a machine that could compute it.
+// Why the verdict is the same on every machine: inside `fixed_room` each of the kernel's asks
+// for memory is compared with this constant and not passed to the allocator (zed-kernel
+// `fixed_room` and `room`), so whether a fold succeeds depends only on the values folded.
+// The claim rests on every large build of `eval` asking `room` first (the kernel's claim, not
+// checked here); a build that skipped the ask would be made or abort the build on a small
+// machine, the machine's failure as DESIGN.md has it, and so would not change a verdict.
+// Tests: tests/steps/l01_29_diagnostics/fold_machine.rs
+// `a_fold_past_the_bound_is_refused_under_every_limit`,
+// `a_fold_within_the_bound_is_made_under_every_limit` (no limit and two RLIMIT_DATA limits),
+// `the_bound_is_exact` and `a_fold_does_not_depend_on_another`; they try three limits, not
+// every machine.
 const FOLD_ASK_BITS: u64 = 1 << 27;
 
 /// `p` on the values `args` by the kernel's one evaluator ([`eval()`]), every step's memory

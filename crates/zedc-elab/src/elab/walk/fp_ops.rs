@@ -334,6 +334,11 @@ impl<'a> Elab<'a> {
     // which on `a ..` never ends; the walk does O(links) work and the `gen`'s O(log k) step
     // per entry asked, k the deciding entry's position, so O(k (links + log k)), and keeps
     // the k frames. `.first` applies the links once more at the deciding entry, O(links).
+    // Tests: tests/steps/l03_02_map_run/runs.rs, the RANGE-open-walk rows of `cases` (each
+    // stream against the bounded range `a ..< b` that holds the deciding entry, run three
+    // ways) and `the_first_prime_from_n_read_from_stdin`. They check that the answers agree on
+    // chosen streams. If a later link form passed the key to its function, the argument above
+    // would fail for it, and these tests would not show it unless one used such a link.
     pub(super) fn stream_term(
         &mut self,
         src: Term,

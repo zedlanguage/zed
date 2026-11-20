@@ -89,6 +89,12 @@ impl<'a> Elab<'a> {
         // parameters open (`Ty::may_hold_needs` in zedc-types, which names the one
         // unproved gap: an atom whose payload is not listed). Taking too many calls only
         // refuses more: a call taken here gives no body.
+        // Tests: tests/steps/l08_02_remaps/empty.rs
+        // `a_function_a_call_returns_and_runs_at_another_carrier_is_not_compiled_yet` (h3 and
+        // the forms that hold the function deeper, refused) and
+        // `a_call_whose_result_holds_the_function_at_any_depth_is_one_it_may_run_after` (each
+        // such call recorded). They check chosen shapes; the gap `Ty::may_hold_needs` names is
+        // not checked by them.
         // Cost: one lookup per entry of each decided call, O(e) for e entries, as before.
         for (&call, folds) in &info.fold_calls {
             for &(s, _) in folds {

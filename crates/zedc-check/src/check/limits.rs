@@ -88,6 +88,16 @@ impl<'a> Ck<'_, 'a> {
         value: Option<Value>,
     ) -> Option<u128> {
         let space: i128 = 1 << ADDRESS_BYTES_LOG2;
+        // Why the two `expect`s below hold: a `Value::Big` is an integer outside the i64 range,
+        // never a fraction (its definition, zed-kernel value.rs `Value`), so its denominator is
+        // 1 and `built_parts` gives its numerator; under the guard it is positive and at most
+        // 2^64 = `space`, which has 65 bits, so it is built and fits a `u128`. A value in
+        // [1, 2^63 - 1] is a `Value::Int` and takes the first arm, so the two arms together
+        // accept exactly 1..=2^64. Tests: completeness.rs
+        // `a_memory_limit_is_a_positive_int_of_bytes_within_the_address_space`, and
+        // tests/steps/l01_29_diagnostics main_limits.rs
+        // `the_largest_memory_limit_is_the_address_space_and_a_larger_one_names_it` (1, 2^63 - 1,
+        // 2^63, 2^64 - 1, 2^64 accepted; 2^64 + 1, 2^65, 2^(2^70) refused); chosen values only.
         let why = match value {
             Some(Value::Int(b)) if b > 0 => return Some(u128::from(b.unsigned_abs())),
             Some(Value::Int(_)) => format!(

@@ -1411,6 +1411,10 @@ fn recovered(mut rows: Vec<Lin>) -> BTreeSet<Atom> {
     //     Conversely a row with one nonzero entry, at b, is c·e_b with c ≠ 0, so e_b is in the
     //     span. Non-pivot rows are empty (length 0), so the filter below reads exactly the
     //     pivot rows with one entry. ∎
+    // Tests: tests/steps/l08_02_remaps/rules.rs `div_and_mod_together_recover_the_key` and
+    // `affine_packing_and_one_stride_short` (an atom recovered from two rows, and one that is
+    // not); they check chosen patterns, not random row sets, so an elimination fault on a row
+    // set no test builds is not caught.
     rows.iter()
         .filter(|r| r.len() == 1)
         .flat_map(|r| r.keys().copied())

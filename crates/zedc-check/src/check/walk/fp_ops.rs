@@ -1149,6 +1149,11 @@ impl<'t, 'a> Ck<'t, 'a> {
     /// where `L = U`, every key sure, and that set is empty or `[0, n - 1]`.
     // Complexity tradeoff: O(k log k) for listed keys and O(1) for exact ones (`key_ints`);
     // `known_count` alone would need the keys listed, O(n) for a range of n.
+    // Why `L = U` and the set being `[0, n - 1]` give the count: `L` is the set of keys every
+    // value surely holds and `U` the set it may hold, so `L = U` fixes the key set; a set of n
+    // distinct ints with least 0 and greatest n - 1 that is one interval holds exactly n ints.
+    // Tests: tests/steps/l03_15a_fp_ops_run cases.rs `a_range_with_literal_ends_has_exact_keys`
+    // and `a_zip_of_ranges_with_unequal_keys_is_rejected`; chosen ranges only.
     fn ranks_count(sigs: &[Arc<Sig>]) -> Option<Num> {
         let (l, u) = Self::key_ints(sigs)?;
         if l != u {
