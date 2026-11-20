@@ -81,7 +81,7 @@ pub fn remainders<L: Borrow<BigUint>>(
         return Vec::new();
     }
     let top = rem_uint(x, &tree_product(leaves, levels));
-    descend(top, leaves, levels, |r, v| rem_uint(r, v))
+    descend(top, leaves, levels, rem_uint)
 }
 
 /// `(P / m) mod m` for each leaf `m` of `leaves`, every leaf above 0, with `P` their product,
