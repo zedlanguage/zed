@@ -34,7 +34,7 @@ The lines still not reached are listed at the end of the table, each with its re
 | The version tag separates rule sets | `rules::the_version_tag_separates_rule_sets` |
 | Two normal forms share a serialization only when equal | `rules::two_normal_forms_share_a_serialization_only_when_equal` |
 | Primitive numbers fixed, each used once, reaching the address | `prim_codes::*` |
-| Domain normal form: finite set met in, endpoints moved onto the class, least class, pieces joined, every empty domain one form | `domains::one_set_of_integers_has_one_normal_form`, `domains::the_normal_form_admits_the_same_integers_and_is_unique` |
+| Domain normal form: finite set met in, endpoints moved onto the class, least class, pieces joined, every empty domain one form, a class built with its fields normalized | `domains::one_set_of_integers_has_one_normal_form`, `domains::the_normal_form_admits_the_same_integers_and_is_unique`, `domains::a_class_built_with_its_fields_has_the_normal_form_of_the_same_class` |
 | Domain ends at -∞ and ∞, at ±2^70, at the `i64` boundaries; classes of modulus 2^70; already normal, and distinct from no domain | `cases::domain_endpoints_and_classes_past_64_bits_have_addresses_of_their_own` |
 | `Domain::ints`, the interval with no other fact | `cases::domain_endpoints_and_classes_past_64_bits_have_addresses_of_their_own` |
 | `address_of_body` equals `address` of the definition with no domain and no facets | `cases::a_body_held_in_place_has_the_address_of_its_definition` |
