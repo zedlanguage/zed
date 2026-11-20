@@ -317,6 +317,9 @@ mod bench;
 #[cfg(test)]
 mod tests;
 
+#[cfg(test)]
+mod units;
+
 mod biconnected;
 pub use biconnected::{biconnected, block_of_edges};
 

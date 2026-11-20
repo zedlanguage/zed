@@ -6,6 +6,8 @@ use std::collections::{BTreeMap, HashMap};
 use super::{Search, Walk, components, on_cycle};
 use crate::scaling;
 
+mod units;
+
 /// A graph of `n` nodes and `4n` edges, from node `v` to `3v + 1`, `5v + 2`, `v + 1` and
 /// `v / 2`, wrapped modulo `n`: long cycles and many components of one node.
 fn spread(n: usize) -> Vec<Vec<usize>> {

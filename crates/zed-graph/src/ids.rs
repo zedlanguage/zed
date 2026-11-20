@@ -26,8 +26,24 @@ impl IdSource {
 
     /// The first of `count` consecutive numbers, none drawn before: for a node that also
     /// names a second thing by its id plus one (a BDD cell and its complement).
+    ///
+    /// Panics with "drawing {count} numbers from {first} passes u64::MAX" when the draw would
+    /// carry the count past `u64::MAX`.
     pub fn take(&self, count: u64) -> u64 {
-        self.0.fetch_add(count, Ordering::Relaxed)
+        let first = self.0.fetch_add(count, Ordering::Relaxed);
+        // `fetch_add` wraps: a draw past `u64::MAX` would leave the count at the low numbers,
+        // and the next draws would give numbers already drawn, two nodes with one id. Draws
+        // from 0 reach `u64::MAX` only after 584 years (above), so the case is a start set near
+        // the top or a huge `count`; it is refused here. The draws are numbered `first ..
+        // first + count`, all at most `u64::MAX` exactly when `first + count` does not overflow,
+        // which `checked_add` tests. Once it fails the count has wrapped already, and a draw
+        // racing on another thread may get a reused number; the panic names the fault, and it
+        // costs one branch per draw (TEST-dry-shared-units: before, the wrap was silent).
+        assert!(
+            first.checked_add(count).is_some(),
+            "drawing {count} numbers from {first} passes u64::MAX"
+        );
+        first
     }
 }
 
