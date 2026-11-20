@@ -327,7 +327,10 @@ fn a_signature_writes_each_need_as_the_derived_debug_of_the_need_writes_it() {
             key: y(),
             site: at(1),
         },
-        NeedKind::Index(y()),
+        NeedKind::Index {
+            key: y(),
+            site: Some(at(1)),
+        },
         NeedKind::Destructure { i: 1, n: 2 },
         NeedKind::Call {
             what: word.clone(),

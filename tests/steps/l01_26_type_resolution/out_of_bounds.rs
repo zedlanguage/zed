@@ -80,27 +80,46 @@ fn a_handler_for_not_found_leaves_out_of_bounds_in_the_type() {
 }
 
 #[test]
-fn a_map_parameter_and_a_generic_read_keep_not_found() {
+fn a_map_parameter_keeps_not_found_and_a_generic_read_misses_as_its_argument() {
     assert_eq!(
         sig("get(m: int ->? String, k: int) = m(k);", "get"),
         "(m: int ->? String, k: int) -> String | #notFound"
     );
-    // The arguments passed as an `int ->? String`, and to a function whose parameter has no
-    // written type, are read with `#notFound`, at run time too.
-    let src = "get(m: int ->? String, k: int) = m(k);\n\
-               pick(a, k) = a[k];\n\
-               main(m: MainArgs) {\n  \
-               i = int(m.stdin[0]) else 0;\n  \
-               viaMap = get(m: m.args, k: i) else #notFound -> \"map miss\";\n  \
-               viaPick = pick(a: m.args, k: i) else #notFound -> \"generic miss\";\n  \
-               m.stdout <- \"${viaMap} | ${viaPick}\";\n}\n";
+    // The arguments passed as an `int ->? String` are read with `#notFound`; passed to a
+    // function whose parameter has no written type, they are read as the argument is, with
+    // `#outOfBounds` (CHK-index-else-bubble; zed ATOM-BUBBLE-STUDY.md, bug 2), at run time too.
+    // Before, the generic read missed with `#notFound`, fixed when `pick` was checked.
+    let src = |atom: &str| {
+        format!(
+            "get(m: int ->? String, k: int) = m(k);\n\
+             pick(a, k) = a[k];\n\
+             main(m: MainArgs) {{\n  \
+             i = int(m.stdin[0]) else 0;\n  \
+             viaMap = get(m: m.args, k: i) else #notFound -> \"map miss\";\n  \
+             viaPick = pick(a: m.args, k: i) else {atom} -> \"generic miss\";\n  \
+             m.stdout <- \"${{viaMap}} | ${{viaPick}}\";\n}}\n"
+        )
+    };
     let at = |line: &str| {
-        let out = run("oob_map_kept", src, &format!("{line}\n"), &["--", "a"]);
+        let out = run(
+            "oob_map_kept",
+            &src("#outOfBounds"),
+            &format!("{line}\n"),
+            &["--", "a"],
+        );
         assert_eq!((out.status, out.stderr.as_str()), (0, ""), "{line}");
         out.stdout
     };
     assert_eq!(at("0"), "a | a\n");
     assert_eq!(at("1"), "map miss | generic miss\n");
+    // The old handler, on `#notFound`, leaves the argument's atom to the write.
+    assert_eq!(
+        type_errors(&src("#notFound")),
+        ["A `Lines` port takes a `String` or a family of strings: \
+             `m.stdout <- \"${viaMap} | ${viaPick}\" : String | #outOfBounds`. \
+             Try `m.stdout <- (\"${viaMap} | ${viaPick}\") else \"\";` instead. \
+             [\"${viaMap} | ${viaPick}\"]"]
+    );
 }
 
 #[test]

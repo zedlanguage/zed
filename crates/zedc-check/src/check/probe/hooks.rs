@@ -58,7 +58,7 @@ fn key_hash(key: &(NeedKind, bool)) -> u64 {
 fn kind_name(k: &NeedKind) -> &'static str {
     match k {
         NeedKind::Component { .. } => "Component",
-        NeedKind::Index(_) => "Index",
+        NeedKind::Index { .. } => "Index",
         NeedKind::Destructure { .. } => "Destructure",
         NeedKind::Call { .. } => "Call",
         NeedKind::Data(..) => "Data",

@@ -39,6 +39,7 @@
 pub(crate) use zedc_types::kernel_type;
 pub mod blocking;
 mod coprime;
+mod fate;
 #[doc(hidden)]
 pub use coprime::Pool;
 mod limits;
@@ -2213,6 +2214,10 @@ struct Ck<'t, 'a> {
     /// Those atoms, each with the variables of the need's argument at `i`, for the call whose
     /// needs are checked to pass by at its own arguments of those variables.
     need_passed: Vec<NeedPass>,
+    /// The unit's statements, where [`fate::Fates`] finds where an atom a body makes goes.
+    unit: &'a [Stmt],
+    /// The fates of the unit's expressions, built the first time a check needs one.
+    fates: Option<fate::Fates>,
     /// Which arguments of the application a check of a need is about to make hold a
     /// variable of the need: only their atoms may pass by to the call around, the first
     /// application taking it.
@@ -2423,8 +2428,11 @@ struct Ck<'t, 'a> {
 type CarrierReads = HashMap<(KType, Carrier), Option<Result<Ty, Value>>>;
 
 /// Atoms that a function value applied in a check of a need passed by (rule 6 of
-/// sec:type_resolution): the value's name, the variables of the need's argument, the atoms.
-type NeedPass = (Arc<str>, Vec<Arc<str>>, KType);
+/// sec:type_resolution), or that a need gave beyond what its body expected: the value's
+/// name, the variables of the need's argument, the atoms, and the need's sites from the
+/// callee's body inward ([`Ck::sites_of`]) with a type that holds the atoms' payloads, which
+/// tell where in the body an atom no argument gives goes ([`Ck::fate_along`]).
+type NeedPass = (Arc<str>, Vec<Arc<str>>, KType, (Vec<Span>, Ty));
 
 /// A call whose needs are being checked ([`Ck::call_frames`]): its positional arguments, where
 /// the call shows them, the names of its parameters, and the parameter that holds each
@@ -2776,6 +2784,8 @@ impl<'t, 'a> Ck<'t, 'a> {
             folds: BTreeMap::new(),
             refused: Vec::new(),
             need_passed: Vec::new(),
+            unit: &[],
+            fates: None,
             need_args: None,
             call_frames: Vec::new(),
             need_from: None,
@@ -3052,7 +3062,10 @@ impl<'t, 'a> Ck<'t, 'a> {
             }
         };
         let kind = match &n.kind {
-            NeedKind::Index(t) => NeedKind::Index(cut(t, &w[0])),
+            NeedKind::Index { key, site } => NeedKind::Index {
+                key: cut(key, &w[0]),
+                site: *site,
+            },
             NeedKind::Call {
                 what,
                 positional,
@@ -4703,7 +4716,11 @@ impl<'t, 'a> Ck<'t, 'a> {
     /// the checks of its needs since the `start`th found a function value omits (rule 6 of
     /// sec:type_resolution): at each argument whose parameter holds a variable of the need's
     /// argument, the atoms of it the argument holds. Inside another check they go on to the
-    /// call around it. Gives the atoms passed by, or an error for atoms no argument gives.
+    /// call around it. An atom no argument gives is one the callee's body made, and goes
+    /// where the body sends it from the need's site ([`fate::Fate`]): handled, or to the
+    /// body's result, so the call gives it (DESIGN.md sec:failure, *Where a loose atom
+    /// stops*). Gives the atoms passed by and given, or an error for atoms no argument gives
+    /// that the body stops or sends nowhere known.
     fn pass_needs(
         &mut self,
         what: &str,
@@ -4714,7 +4731,7 @@ impl<'t, 'a> Ck<'t, 'a> {
     ) -> Result<Ty, String> {
         let mut out = Ty::empty();
         let passed: Vec<NeedPass> = self.need_passed.drain(start..).collect();
-        for (inner, vars, k) in passed {
+        for (inner, vars, k, (sites, with)) in passed {
             let mut covered = KType::empty();
             for (i, (p, a)) in params.iter().zip(args).enumerate() {
                 let Some(a) = a else {
@@ -4734,7 +4751,18 @@ impl<'t, 'a> Ck<'t, 'a> {
                 }
                 covered = &covered | &c;
             }
-            let left = &k - &covered;
+            let mut left = &k - &covered;
+            // Only atoms left over ask for the fates, so a call whose arguments give every
+            // atom builds no table.
+            if !left.is_empty()
+                && let Some(f) = self.fate_along(&sites)
+            {
+                left = &left - &f.drop;
+                if (&left & &f.stop).is_empty() {
+                    out = out.union(&with.of_piece(&Piece::Set(left)));
+                    left = KType::empty();
+                }
+            }
             if !left.is_empty() {
                 return Err(format!(
                     "{inner}, which {what} applies, does not take {}, and no argument of \
@@ -4744,6 +4772,32 @@ impl<'t, 'a> Ck<'t, 'a> {
             }
         }
         Ok(out)
+    }
+
+    /// The sites of need `n`, outermost first: its own, in the body of the function whose
+    /// need it is, then each site of the path that a call in a body passed it on by, the
+    /// last the use itself. O(d) for a path of d calls.
+    fn sites_of(n: &Need) -> Vec<Span> {
+        let mut sites = vec![n.span];
+        n.via.for_each_note(|s, _| sites.push(s));
+        sites
+    }
+
+    /// Where an atom made at the last of `sites` goes in the body of the outermost
+    /// ([`Self::sites_of`]): each site's fate in its own body ([`fate::Fates`]), from the
+    /// innermost out, each site but the last being a call whose result the next one in
+    /// takes. `None` if a site has no fate.
+    fn fate_along(&mut self, sites: &[Span]) -> Option<fate::Fate> {
+        let (t, unit) = (self.t, self.unit);
+        let fates = self
+            .fates
+            .get_or_insert_with(|| fate::Fates::build(t, unit));
+        let (last, rest) = sites.split_last()?;
+        let mut f = fates.of(*last)?.clone();
+        for s in rest.iter().rev() {
+            f = fates.of(*s)?.after(&f);
+        }
+        Some(f)
     }
 
     /// Records that the call at `span` passes by the atoms `k` of its argument at `at`.
@@ -8838,7 +8892,15 @@ impl AlikeSite {
 
 /// The use `kind` without the call in the text it stands for, if it is a call need: the key
 /// of uses alike ([`Class::known`], [`Ck::widened_only`]). Borrowed, with no copy, for every
-/// other use.
+/// other use. A read need keeps its read ([`NeedKind::Index`]), as a bracket's need keeps its
+/// bracket: each call records at the read whether a miss is `#outOfBounds` (`Info::dense`),
+/// so each read has its need. Keyed without it, two reads alike would be one need, and the
+/// later read would take the first's verdict when the check ends, along chains of reads
+/// paired in the functions between; a read paired so with one a call meets directly gets
+/// verdicts from two places that the call checks never compare.
+/// Complexity tradeoff: r reads `c[k]` alike in a body called at c places are r needs met
+/// c times, O(r·c), where one need was O(r + c); r counts reads with one key type on one
+/// class, few in practice.
 fn site_free(kind: &NeedKind) -> Cow<'_, NeedKind> {
     match kind {
         NeedKind::Call {

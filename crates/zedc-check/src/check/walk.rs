@@ -68,6 +68,7 @@ pub fn check_with<'a>(t: &Tables<'a>, unit: &'a [Stmt]) -> Info {
             .chain(t.res.type_vars.iter().map(String::as_str)),
     );
     let mut ck = Ck::new(t, Ck::fixes_checked);
+    ck.unit = unit;
     // A misused output port stops the check, as the builder's rejection of a read of `m.stdout`
     // stops the build: the walk would read the port as the value of its type, and its errors,
     // a port given to `len` among them, would offer repairs that read the port.
@@ -1968,7 +1969,7 @@ impl<'t, 'a> Ck<'t, 'a> {
                 let x = m.take_arg();
                 let dense = self.dense_read(&v, span);
                 let within = self.within_count(of, x.expr);
-                let t = self.at_key(&v, x, Some(of.span), span, dense, within);
+                let t = self.at_key(&v, x, Some(of.span), None, span, dense, within);
                 m.ty(t);
             }
             Frame::AtIndex(v, i, of, span) => {
@@ -8740,6 +8741,7 @@ impl<'t, 'a> Ck<'t, 'a> {
             if let Some(&n) = self.info.brackets.get(&f) {
                 self.info.brackets.insert(l, n);
             }
+            self.dense_of_alike(l, f);
         }
         // Each remap whose need [`Ck::share_alike`] left out ([`Ck::alike_remaps`]) takes the
         // witness entries of the remap whose need it kept, which that need's checks wrote; the
@@ -13304,7 +13306,7 @@ impl<'t, 'a> Ck<'t, 'a> {
         self.call_frames.pop();
         // A use checked on a value that flowed in has no call whose argument gave the atoms.
         let passed: Vec<NeedPass> = self.need_passed.drain(start..).collect();
-        for (inner, _, k) in passed {
+        for (inner, _, k, _) in passed {
             let atoms = Ty::set(k);
             let message = format!(
                 "{inner} does not take {atoms}: an atom an argument holds passes by a call to the \
@@ -13441,7 +13443,7 @@ impl<'t, 'a> Ck<'t, 'a> {
             NeedKind::Call { positional, .. } => {
                 Some(positional.iter().map(Ty::holds_vars).collect())
             }
-            NeedKind::Index(t) => Some(vec![t.holds_vars()]),
+            NeedKind::Index { key, .. } => Some(vec![key.holds_vars()]),
             _ => None,
         };
         // Each positional argument of the use that is a parameter of the call whose need it
@@ -13467,13 +13469,17 @@ impl<'t, 'a> Ck<'t, 'a> {
         }
         let start = self.refused.len();
         let out = match &n.kind {
+            // A read through a parameter whose type is not written misses as the family the
+            // call binds it to misses ([`Self::dense_met`]), not as the class the body read.
             NeedKind::Component { i, key, site } => {
                 let key = Arg::of(key.clone());
-                self.at_index(&on, *i, key, None, Some(*site), span, false)
+                let dense = self.dense_met(&on, Some(*site), span);
+                self.at_index(&on, *i, key, None, Some(*site), span, dense)
             }
-            NeedKind::Index(k) => {
-                let k = Arg::of(self.bound(k, binds));
-                self.at_key(&on, k, None, span, false, false)
+            NeedKind::Index { key, site } => {
+                let k = Arg::of(self.bound(key, binds));
+                let dense = self.dense_met(&on, *site, span);
+                self.at_key(&on, k, None, *site, span, dense, false)
             }
             NeedKind::Destructure { i, n } => self.component(&on, *i, *n, span),
             NeedKind::Call {
@@ -13677,7 +13683,7 @@ impl<'t, 'a> Ck<'t, 'a> {
         // of it, where every entry that is no atom has the one type the read gives: then a
         // function the read gives is rebuilt in that argument by rebuilding every such entry
         // ([`CallFrame::entries`], [`Coercion::Entries`]).
-        if let (Some(r), NeedKind::Component { .. } | NeedKind::Index(_)) = (&n.result, &n.kind)
+        if let (Some(r), NeedKind::Component { .. } | NeedKind::Index { .. }) = (&n.result, &n.kind)
             && entries_alike(&on, &out)
             && let Some(frame) = self.call_frames.last_mut()
         {
@@ -13693,14 +13699,16 @@ impl<'t, 'a> Ck<'t, 'a> {
         for (what, i, k) in self.refused.drain(start..).collect::<Vec<_>>() {
             let t = match &n.kind {
                 NeedKind::Call { positional, .. } => positional.get(i),
-                NeedKind::Index(t) if i == 0 => Some(t),
+                NeedKind::Index { key, .. } if i == 0 => Some(key),
                 _ => None,
             };
             let mut vars = Vars::default();
             if let Some(t) = t {
                 t.vars_in(&mut vars);
             }
-            self.need_passed.push((what, vars.order, k));
+            let with = Ty::set(k.clone());
+            self.need_passed
+                .push((what, vars.order, k, (Self::sites_of(n), with)));
         }
         out
     }
@@ -13908,7 +13916,9 @@ impl<'t, 'a> Ck<'t, 'a> {
         // What the use gives is within its result: a variable there joins it, as for an
         // argument, and one it leaves unbound gives nothing.
         if let Some(r) = &n.result {
-            if !self.gives_within(&got, r, binds, what, span) {
+            if !self.gives_within(&got, r, binds, what, span)
+                && !self.gives_made(n, &got, r, binds, what, span)
+            {
                 let why = got.refused(r);
                 let (got, r) = (self.text(&got), self.text(r));
                 let menu = [format!(
@@ -13951,6 +13961,42 @@ impl<'t, 'a> Ck<'t, 'a> {
     /// as at a parameter of that type ([`Self::piece_into`]): `r` restricts its carriers,
     /// `int` in `if p[0] < 5 { p[0] } else { 0 }`, as the literal is restricted at `h(1)` of
     /// the same body. The cost is that of the pieces of `got`.
+    /// After [`Self::gives_within`] refused `got`, what need `n` gives, at its result `r`:
+    /// whether `got` lies within `r` but for loose atoms `r` does not hold, which the body
+    /// made where the need's use is and which no argument of the call gives, as
+    /// `#outOfBounds` from `args[0]` in `h(args) = args[0] ++ "!"` called on `m.args`. Those
+    /// atoms go where the body sends them from the use ([`Self::fate_along`]): if none is
+    /// stopped, they are given to [`Self::pass_needs`], which adds those the body does not
+    /// handle to the call's result (DESIGN.md sec:failure, *Where a loose atom stops*; plan
+    /// row CHK-index-else-bubble). Run on the error path only.
+    fn gives_made(
+        &mut self,
+        n: &Need,
+        got: &Ty,
+        r: &Ty,
+        binds: &mut Binds,
+        what: &str,
+        span: Span,
+    ) -> bool {
+        let extra = &got.loose() - &r.loose();
+        if extra.is_empty() {
+            return false;
+        }
+        let sites = Self::sites_of(n);
+        let Some(f) = self.fate_along(&sites) else {
+            return false;
+        };
+        if !(&(&extra - &f.drop) & &f.stop).is_empty()
+            || !self.gives_within(&got.without(&extra), r, binds, what, span)
+        {
+            return false;
+        }
+        let with = got.of_piece(&Piece::Set(extra.clone()));
+        self.need_passed
+            .push((what.into(), Vec::new(), extra, (sites, with)));
+        true
+    }
+
     fn gives_within(
         &mut self,
         got: &Ty,
@@ -19208,7 +19254,27 @@ impl<'t, 'a> Ck<'t, 'a> {
     /// or an unknown value may be a family that misses with `#notFound`, so it reads as one.
     /// The verdict is recorded for the elaborator, which writes the read that answers
     /// `#outOfBounds`; a site checked twice keeps it only if both checks gave it.
+    ///
+    /// A class among `v`'s pieces, a parameter whose type is not written, gives no verdict
+    /// here: its read is a need, and each call that binds the class to a family gives the
+    /// verdict at the read ([`Self::dense_met`]), so `h(args) = args[0] else #outOfBounds ->
+    /// "x"` called as `h(args: m.args)` misses with `#outOfBounds`, the miss of a
+    /// `CommandLine` (row CHK-index-else-bubble). Recorded here as `false`, as before, the
+    /// read was written as an application, which misses with `#notFound` at every call.
     fn dense_read(&mut self, v: &Ty, span: Span) -> bool {
+        let Some(dense) = self.dense_of(v) else {
+            return false;
+        };
+        *self.info.dense.entry(span).or_insert(dense) &= dense;
+        dense
+    }
+
+    /// Whether `v` is a family whose keys are one integer interval, every key present, or a
+    /// tuple, and is such a family at least once ([`Self::dense_read`]); `None` where `v` is
+    /// no function: tuples, atoms and classes, whose reads ask nothing of the verdict (a
+    /// tuple misses with `#outOfBounds` either way, and a class's read is its need). One
+    /// pass over `v`'s pieces.
+    fn dense_of(&self, v: &Ty) -> Option<bool> {
         let mut family = false;
         let mut dense = true;
         for p in v.pieces() {
@@ -19219,24 +19285,77 @@ impl<'t, 'a> Ck<'t, 'a> {
                 }
                 Piece::Tuple(_) => {}
                 p if p.is_atoms() => {}
-                _ => dense = false,
+                Piece::Var(_) if self.class_of(&p).is_some() => {}
+                _ => (family, dense) = (true, false),
             }
         }
-        let dense = family && dense;
-        *self.info.dense.entry(span).or_insert(dense) &= dense;
+        family.then_some(dense)
+    }
+
+    /// The verdict of [`Self::dense_read`] for the read written at `site` on a parameter
+    /// whose type is not written, met at a call at `span` that binds it to `v`: recorded at
+    /// `site` for the elaborator, which writes the read once for every call. So a call whose
+    /// family misses otherwise than one an earlier call passed is rejected, as a bracket met
+    /// with two meanings is ([`Self::bracket_met_both`]); a call that binds it to no function
+    /// records nothing. While trying a repair, the verdict is given and not recorded, since
+    /// the types of a try may not be those the check keeps. A need with no site, which no
+    /// read makes, misses with `#notFound`, as it did. O(size of `v`) and one lookup.
+    fn dense_met(&mut self, v: &Ty, site: Option<Span>, span: Span) -> bool {
+        let (Some(site), Some(dense)) = (site, self.dense_of(v)) else {
+            return false;
+        };
+        if self.trying {
+            return dense;
+        }
+        match self.info.dense.get(&site).copied() {
+            Some(was) if was != dense => self.dense_met_both(v, dense, span),
+            Some(_) => {}
+            None => {
+                self.info.dense.insert(site, dense);
+            }
+        }
         dense
+    }
+
+    /// The error of a call at `at` that passes `v` to a read on a parameter whose type is not
+    /// written, where `v` misses with `#outOfBounds` if `dense` and else with `#notFound`, and
+    /// another call passed a value that misses with the other atom: the calls share the read's
+    /// one term ([`Self::dense_met`]).
+    fn dense_met_both(&mut self, v: &Ty, dense: bool, at: Span) {
+        let t = self.text(v);
+        let (one, other) = match dense {
+            true => ("#outOfBounds", "#notFound"),
+            false => ("#notFound", "#outOfBounds"),
+        };
+        self.error_offering(
+            at,
+            format!(
+                "this call passes {t}, which gives {one} for a key it lacks, to a read on a \
+                 parameter whose type is not written, and another call passes a value that \
+                 gives {other}: the read is one for every call, so it cannot give both"
+            ),
+            [
+                "repair: write the parameter's type, so that every call passes one kind of value"
+                    .to_string(),
+            ],
+        );
     }
 
     /// `v[x]` with `x` no literal: an application of each function `v` may be, and a
     /// computed index of each tuple `v` may be. With `dense`, a family misses with
     /// `#outOfBounds` ([`Self::dense_read`]). With `of`, the span of `v` as written, a key
-    /// outside a function's keys is rejected ([`Self::key_outside`]). With `within`, the key
-    /// is shown to be one of the family's keys ([`Self::within_count`]), so the read finds it.
+    /// outside a function's keys is rejected ([`Self::key_outside`]). With `site`, the read
+    /// written there on a parameter with no written type is met at a call, at `span`, and a
+    /// class it meets takes a need that keeps the site, so a call further out records its
+    /// verdict there ([`Self::dense_met`]). With `within`, the key is shown to be one of the
+    /// family's keys ([`Self::within_count`]), so the read finds it.
+    #[allow(clippy::too_many_arguments)]
     fn at_key(
         &mut self,
         v: &Ty,
         x: Arg<'a>,
         of: Option<Span>,
+        site: Option<Span>,
         span: Span,
         dense: bool,
         within: bool,
@@ -19340,7 +19459,10 @@ impl<'t, 'a> Ck<'t, 'a> {
                     self.not_applicable(&shown, span);
                 }
                 Piece::Var(_) if let Some(k) = self.class_of(&p) => {
-                    let kind = NeedKind::Index(x.ty.clone());
+                    let kind = NeedKind::Index {
+                        key: x.ty.clone(),
+                        site: Some(site.unwrap_or(span)),
+                    };
                     self.note_widened(&kind, &[(&x.ty, x.at)]);
                     let r = self.need(k, kind, true, span);
                     out = out.union(&r);
@@ -19623,6 +19745,17 @@ impl<'t, 'a> Ck<'t, 'a> {
         }
         if self.bracket_plain.contains(&kept) {
             self.bracket_plain.insert(left);
+        }
+        self.dense_of_alike(left, kept);
+    }
+
+    /// Gives the bracket at `left`, whose need [`Self::share_alike`] left out for the one at
+    /// `kept`, the verdict on a miss the calls recorded at `kept` ([`Self::dense_met`]), which
+    /// `left`'s own need would have recorded alike, met at the same calls on the same types.
+    /// O(1).
+    fn dense_of_alike(&mut self, left: Span, kept: Span) {
+        if let Some(&d) = self.info.dense.get(&kept) {
+            self.info.dense.insert(left, d);
         }
     }
 

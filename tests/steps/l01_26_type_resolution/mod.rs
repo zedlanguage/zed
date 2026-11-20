@@ -13,6 +13,7 @@ mod atom_scaling;
 mod bench;
 mod boundaries;
 mod bounds;
+mod bubble;
 mod calls;
 mod curried_classes;
 mod cycles;

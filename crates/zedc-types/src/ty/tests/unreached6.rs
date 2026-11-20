@@ -36,6 +36,11 @@ fn f(p: Ty, r: Ty) -> Ty {
     Ty::func(Arc::new(one_of(p, r)))
 }
 
+/// The need of a read `v[k]` with a key of type `key`, written at no site.
+fn index(key: Ty) -> NeedKind {
+    NeedKind::Index { key, site: None }
+}
+
 fn var(v: &str) -> Ty {
     Ty::var(v.into())
 }
@@ -256,7 +261,7 @@ fn a_row_shared_in_the_arrows_and_the_needs_hashes_as_rows_built_apart() {
         s.own.insert("R".into());
         s.needs = vec![Need {
             on: var("T"),
-            kind: NeedKind::Index(in_need),
+            kind: index(in_need),
             result: Some(var("R")),
             span: Span { start: 0, end: 1 },
             alike: Arc::from([]),
@@ -382,7 +387,7 @@ fn a_function_held_inside_another_hashes_by_its_summary_as_walked_in_place() {
     };
     let with_need = |leaf: &str| {
         let mut s = one_of(int(), int());
-        s.needs = vec![need(var("T"), NeedKind::Index(var(leaf)), None)];
+        s.needs = vec![need(var("T"), index(var(leaf)), None)];
         s.note_held();
         fty(s)
     };
@@ -406,7 +411,7 @@ fn a_function_held_inside_another_hashes_by_its_summary_as_walked_in_place() {
         for (k, t) in types.iter().enumerate() {
             let at = format!("{leaf}, type {k}");
             // In a need, with the side sums a need's summary takes.
-            let n = need(var("T"), NeedKind::Index(t.clone()), Some(var("R")));
+            let n = need(var("T"), index(t.clone()), Some(var("R")));
             let own = ["P", "R", "T"].into_iter().map(Arc::from).collect();
             let ranks = [(Arc::from("R"), 3)].into_iter().collect();
             let params = [Arc::from("P")].into_iter().collect();
@@ -420,8 +425,8 @@ fn a_function_held_inside_another_hashes_by_its_summary_as_walked_in_place() {
             let mut s = bsig(vec![ex(vec![t.clone()], var("R"))], 1, &[]);
             s.own.extend(["P", "R"].map(Arc::from));
             s.needs = vec![
-                need(var("T"), NeedKind::Index(int()), Some(var("R"))),
-                need(var("T"), NeedKind::Index(t.clone()), None),
+                need(var("T"), index(int()), Some(var("R"))),
+                need(var("T"), index(t.clone()), None),
             ];
             s.note_held();
             let summed = encode_sig_stream(&s, R_BASE, false);
@@ -488,7 +493,7 @@ fn functions_nested_each_holding_every_outer_variable_hash_as_walked_in_place() 
                 own.extend((0..extra).map(|j| Arc::from(format!("X{j}"))));
                 let ranks = [(Arc::from("R"), 3)].into_iter().collect();
                 let params = [Arc::from("P")].into_iter().collect();
-                let n = need(var("T"), NeedKind::Index(t.clone()), Some(var("R")));
+                let n = need(var("T"), index(t.clone()), Some(var("R")));
                 let summed = flat_need_summary(&n, &own, &ranks, &params, R_BASE, false);
                 let walked = flat_need_summary(&n, &own, &ranks, &params, R_BASE, true);
                 assert_eq!(summed.body, walked.body, "{at}");
@@ -497,8 +502,8 @@ fn functions_nested_each_holding_every_outer_variable_hash_as_walked_in_place() 
                 let mut s = bsig(vec![ex(vec![t.clone()], var("R"))], 1, &[]);
                 s.own.extend(own.iter().cloned());
                 s.needs = vec![
-                    need(var("T"), NeedKind::Index(int()), Some(var("R"))),
-                    need(var("T"), NeedKind::Index(t.clone()), None),
+                    need(var("T"), index(int()), Some(var("R"))),
+                    need(var("T"), index(t.clone()), None),
                 ];
                 s.note_held();
                 let summed = encode_sig_stream(&s, R_BASE, false).0;
@@ -592,7 +597,7 @@ fn level_in_arrow_and_need(inner: Ty, open: bool) -> Ty {
     s.own.insert("R".into());
     s.needs = vec![Need {
         on: var("R"),
-        kind: NeedKind::Index(row),
+        kind: index(row),
         result: Some(var("R")),
         span: Span { start: 0, end: 1 },
         alike: Arc::from([]),

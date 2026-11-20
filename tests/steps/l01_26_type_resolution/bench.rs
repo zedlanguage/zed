@@ -6,6 +6,7 @@
 mod always_fails;
 mod atom_scaling;
 mod bounds;
+mod bubble;
 mod cycles;
 mod deep_ops;
 mod deep_scaling;

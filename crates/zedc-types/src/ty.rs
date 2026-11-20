@@ -1555,7 +1555,13 @@ fn debug_need<'a>(n: &'a Need, parts: &mut Vec<Dbg<'a>>) {
             Dbg::Leaf(site),
             Dbg::Text(" }"),
         ]),
-        NeedKind::Index(t) => parts.extend([Dbg::Text("Index("), Dbg::Ty(t), Dbg::Text(")")]),
+        NeedKind::Index { key, site } => parts.extend([
+            Dbg::Text("Index { key: "),
+            Dbg::Ty(key),
+            Dbg::Text(", site: "),
+            Dbg::Leaf(site),
+            Dbg::Text(" }"),
+        ]),
         NeedKind::Map { f, word, lambda } => parts.extend([
             Dbg::Text("Map { f: "),
             Dbg::Ty(f),
@@ -4978,7 +4984,17 @@ pub enum NeedKind {
         site: Span,
     },
     /// `v[k]` with a key of this type: an application.
-    Index(Ty),
+    Index {
+        /// The key's type.
+        key: Ty,
+        /// Where the read is written, kept as the need is copied into a caller, as a
+        /// bracket's site is ([`NeedKind::Component`]): a call that binds the receiver to a
+        /// family records there whether a miss is `#outOfBounds` (zedc-check's `Info::dense`,
+        /// row CHK-index-else-bubble). `None` for a need no read makes. Part of the need's key
+        /// in the checker's table of needs met, as a bracket's site is, so each read has its
+        /// own need (zedc-check's `site_free` says why).
+        site: Option<Span>,
+    },
     /// `a, b, ... = v` into `n` names: component `i` of a tuple of exactly `n`.
     Destructure {
         /// The component.
@@ -6127,7 +6143,10 @@ impl Need {
                     key: key.clone(),
                     site: *site,
                 },
-                NeedKind::Index(k) => NeedKind::Index(f(k)),
+                NeedKind::Index { key, site } => NeedKind::Index {
+                    key: f(key),
+                    site: *site,
+                },
                 NeedKind::Map { f: g, word, lambda } => NeedKind::Map {
                     f: f(g),
                     word: *word,
@@ -6452,7 +6471,7 @@ impl Need {
                 | NeedKind::Reduce(..)
                 | NeedKind::Payload { .. }
                 | NeedKind::Narrow(_) => (None, &[], &[], &[], &[], &[]),
-                NeedKind::Index(k)
+                NeedKind::Index { key: k, .. }
                 | NeedKind::Order { other: k, .. }
                 | NeedKind::Concat { other: k, .. }
                 | NeedKind::Zip { other: k, .. }
@@ -6499,7 +6518,7 @@ impl Need {
             | NeedKind::Payload { .. }
             | NeedKind::Narrow(Narrow::Loose | Narrow::Atom(_)) => Vec::new(),
             NeedKind::Component { key: t, .. }
-            | NeedKind::Index(t)
+            | NeedKind::Index { key: t, .. }
             | NeedKind::Map { f: t, .. }
             | NeedKind::Group { f: t, .. }
             | NeedKind::Level { f: t, .. }
@@ -6546,7 +6565,7 @@ impl Need {
             | NeedKind::Payload { .. }
             | NeedKind::Narrow(Narrow::Loose | Narrow::Atom(_)) => Vec::new(),
             NeedKind::Component { key: t, .. }
-            | NeedKind::Index(t)
+            | NeedKind::Index { key: t, .. }
             | NeedKind::Map { f: t, .. }
             | NeedKind::Group { f: t, .. }
             | NeedKind::Level { f: t, .. }
@@ -27413,7 +27432,10 @@ mod tests {
         let int = || Ty::carrier(Carrier::Int);
         let need = || Need {
             on: Ty::var("A".into()),
-            kind: NeedKind::Index(int()),
+            kind: NeedKind::Index {
+                key: int(),
+                site: None,
+            },
             result: None,
             span: Span { start: 0, end: 1 },
             alike: Arc::from([]),
@@ -29837,9 +29859,10 @@ pub mod r10_hash {
                     self.emit_ty(key);
                     self.emit_span(*site);
                 }
-                NeedKind::Index(k) => {
+                NeedKind::Index { key, site } => {
                     self.emit(TAG_NK_INDEX);
-                    self.emit_ty(k);
+                    self.emit_ty(key);
+                    self.emit_opt(site.as_ref(), |e, &s| e.emit_span(s));
                 }
                 NeedKind::Destructure { i, n: len } => {
                     self.emit(TAG_NK_DESTRUCTURE);

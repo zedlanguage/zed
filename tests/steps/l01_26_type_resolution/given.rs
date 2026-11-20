@@ -1,6 +1,6 @@
 //! A test on what a use of an undeclared parameter gives narrows it at each call (rule 3):
-//! `args[k] else ""` in the body of `r(fs, args, k)` holds no `#notFound` where a call binds
-//! `args` to a `CommandLine`, so `fs` is never given one. Before, the `else` kept the whole
+//! `args[k] else ""` in the body of `r(fs, args, k)` holds no `#outOfBounds`, the atom it
+//! misses with, where a call binds `args` to a `CommandLine`, so `fs` is never given one. Before, the `else` kept the whole
 //! type variable of `args[k]`, the call bound it to `String | #notFound`, and the program was
 //! rejected with "this function, which `r` applies, does not take #notFound" (repair
 //! CHK-index-else, found writing the L1.36a test programs).
@@ -44,14 +44,17 @@ fn the_argument_named_first_is_the_same() {
 
 #[test]
 fn an_else_on_the_one_atom_narrows_as_well() {
-    let helper = "r(fs, args, k) = fs[args[k] else #notFound -> \"\"];";
+    // `args[k]` on a `CommandLine` misses with `#outOfBounds` (CHK-index-else-bubble).
+    let helper = "r(fs, args, k) = fs[args[k] else #outOfBounds -> \"\"];";
     assert_eq!(read_two("given_atom", helper), "hello|missing\n");
 }
 
 #[test]
 fn an_is_test_narrows_its_other_branch() {
+    // `args[k]` on a `CommandLine` misses with `#outOfBounds` (CHK-index-else-bubble); the
+    // helper gives `#notFound` for it, which `main` handles.
     let helper =
-        "r(fs, args, k) { p = args[k]; return if p is #notFound { #notFound } else { fs[p] }; }";
+        "r(fs, args, k) { p = args[k]; return if p is #outOfBounds { #notFound } else { fs[p] }; }";
     assert_eq!(read_two("given_is", helper), "hello|missing\n");
 }
 
@@ -67,9 +70,11 @@ fn a_function_value_applied_to_the_narrowed_value_takes_no_atom() {
 #[test]
 fn a_test_that_leaves_the_atom_is_still_rejected() {
     // `else #ioError -> ""` and `is #ioError` handle an atom `args[k]` never gives, so its
-    // `#notFound` still reaches `fs`, which does not take it.
-    let expected = "this function, which `r` applies, does not take #notFound, and no argument \
-                    of this call gives it. [r(fs: fs, args: m.args, k: 0)]";
+    // `#outOfBounds` passes through `fs[…]` to `r`'s result (CHK-index-else-bubble), which
+    // `main` does not handle: the write is rejected.
+    let expected = "A `Lines` port takes a `String` or a family of strings: \
+                    `m.stdout <- \"${a}|${b}\" : String | #outOfBounds`. \
+                    Try `m.stdout <- (\"${a}|${b}\") else \"\";` instead. [\"${a}|${b}\"]";
     for helper in [
         "r(fs, args, k) = fs[args[k] else #ioError -> \"\"];",
         "r(fs, args, k) { p = args[k]; return if p is #ioError { \"\" } else { fs[p] }; }",
