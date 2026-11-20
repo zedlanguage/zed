@@ -35845,8 +35845,13 @@ mod cell_sweep_empty_tests {
     /// A formula swept, dropped, and a second one built with its disjuncts at the freed
     /// addresses is read as itself, not as the first (row DOC-proofs-in-comments-audit; the
     /// proof is at `cell_sweep::cells_of`, at `pure_memo`). The first has no point, the second
-    /// has one; each answer is checked against `has_point`. The reuse of an address is checked
-    /// too, so the test fails rather than passes vacuously if the allocator stops reusing them.
+    /// has one; each answer is checked against `has_point`. No allocator promises to give a
+    /// freed address to the next allocation, so the second formula is built again, each try
+    /// kept alive so that the next one cannot take its addresses, until one has a disjunct at
+    /// an address of the first; after 100,000 tries the test stops and says it could not set up
+    /// its case, rather than pass without testing anything. Negative control (proofdoc1,
+    /// 2026-11-20): with `resolve_disj` changed for the run to keep the addresses of dead nodes
+    /// from one call to the next, this test fails, reading the second formula as `Ok(false)`.
     #[test]
     fn cell_sweep_reads_new_parts_at_the_address_of_dropped() {
         let empty = [
@@ -35862,12 +35867,19 @@ mod cell_sweep_empty_tests {
         let before = addresses(&first);
         assert_eq!(cell_sweep::decide_by_cells(&first), Some(Ok(false)));
         drop(first);
-        let second = guarded(guards, full);
-        let after = addresses(&second);
-        assert!(
-            after.iter().any(|a| before.contains(a)),
-            "no disjunct of the second formula took a freed address: {before:x?} {after:x?}"
-        );
+        let mut kept = Vec::new();
+        let second = loop {
+            let p = guarded(guards, full);
+            if addresses(&p).iter().any(|a| before.contains(a)) {
+                break p;
+            }
+            kept.push(p);
+            assert!(
+                kept.len() < 100_000,
+                "could not set up the case: no disjunct of 100,000 new formulas took an \
+                 address of the dropped one"
+            );
+        };
         assert_eq!(cell_sweep::decide_by_cells(&second), Some(Ok(true)));
         assert_eq!(has_point(second), Ok(true));
     }
