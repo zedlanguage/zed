@@ -4,14 +4,18 @@
 use std::collections::BTreeMap;
 
 use crate::scaling;
+use crate::seed::Rng;
 use crate::{
-    BitSet, Dijkstra, Lift, MinHeap, OffsetUnionFind, Order, Worklist, block_of_edges, dag_idom,
-    kahn, make_after_needs, post_order, reach, sources,
+    BitSet, Dijkstra, IdSource, Lift, MinHeap, OffsetUnionFind, Order, Worklist, block_of_edges,
+    dag_idom, kahn, make_after_needs, post_order, reach, sources,
 };
 
 /// A number spread over `0..m` by a multiplicative hash (Knuth's constant
 /// `2^64 / golden ratio`, odd, so `i -> i * K` permutes the words): inputs with no order
-/// a routine could exploit, the same at every run.
+/// a routine could exploit, the same at every run. Not random, though: taken mod `m`, its
+/// value mod each power of two dividing `m` is a function of `i` alone, so its inputs at `n`
+/// and `8n` differ in structure; a routine whose cost depends on that structure, as a search
+/// does, takes [`random_weighted_graph`]'s draws instead (PERF-dijkstra-ratio-9).
 fn spread(i: usize, m: usize) -> usize {
     (i as u64).wrapping_mul(0x9E37_79B9_7F4A_7C15) as usize % m
 }
@@ -83,19 +87,42 @@ fn a_heap_built_from_a_list_takes_linear_time() {
     });
 }
 
-/// Small instances: `dijkstra_agrees_with_bellman_ford_on_random_graphs`. O(e log e).
+/// A random graph of `m` nodes, each with 4 edges out to nodes drawn uniformly from `0..m`, of
+/// weights drawn uniformly from `1..=10`: the same distribution at every size, drawn by
+/// SplitMix64 ([`Rng`], whose comment cites Steele, Lea and Flood 2014) from the fixed seed 1.
+///
+/// Why not [`spread`] (PERF-dijkstra-ratio-9). Until 2026-11-20 this graph was built with
+/// `spread(4v + k, m)` for the heads and `spread(v + k, 10) + 1` for the weights. `spread` is a
+/// multiplicative hash taken mod `m`, so the residue of a head mod every power of two dividing
+/// `m` is a function of `4v + k` alone (2^5 divides 100,000, 2^8 divides 800,000), and the weight
+/// of edge `k` of `v` is the weight of edge `k - 1` of `v + 1`: the graphs at `n` and `8n` were
+/// two differently structured graphs, not one family at two sizes. Their searches took 1.187
+/// heap entries per node at 100,000 and 1.293 at 800,000 (the entries made stale by a later
+/// lowering, below), and the bench measured T(8n)/T(n) = 9.672, above the 9.44 that
+/// `8 ln(8n) / ln n` gives at n = 100,000. The same search at 12,500, 100,000, 800,000 and
+/// 6,400,000 nodes took 1.297, 1.187, 1.293 and 1.349 entries per node, up and down, and the
+/// ratios of its instructions were 8.42, 9.67 and 9.22: noise of the input, not a growth of the
+/// search. On the graph drawn here the entries per node are 1.22 at every size from 12,500 to
+/// 6,400,000 (the law of large numbers), and the ratio is what the search's cost predicts
+/// (see the comment of [`Dijkstra`] in `heap.rs`, "Cost, measured").
+fn random_weighted_graph(m: usize) -> Vec<Vec<(usize, u64)>> {
+    let mut rng = Rng::new(1);
+    (0..m)
+        .map(|_| {
+            (0..4)
+                .map(|_| (rng.below(m), rng.below_u64(10) + 1))
+                .collect::<Vec<_>>()
+        })
+        .collect()
+}
+
+/// Small instances: `dijkstra_agrees_with_bellman_ford_on_random_graphs`. O(e log e): see the
+/// comment of [`Dijkstra`] in `heap.rs`, "Cost, measured", for the bound and for how the
+/// measured instructions of this bench follow it.
 #[test]
 fn dijkstra_takes_n_log_n_time() {
     let n = 100_000;
-    let graphs = scaling::inputs(n, |m| {
-        (0..m)
-            .map(|v| {
-                (0..4)
-                    .map(|k| (spread(4 * v + k, m), (spread(v + k, 10) + 1) as u64))
-                    .collect::<Vec<_>>()
-            })
-            .collect::<Vec<_>>()
-    });
+    let graphs = scaling::inputs(n, random_weighted_graph);
     scaling::check("Dijkstra on n nodes and 4n edges", n, |m| {
         let g = &graphs[&m];
         let mut d: Dijkstra<usize, u64, Vec<u64>> = Dijkstra::new(vec![u64::MAX; m]);
@@ -109,6 +136,70 @@ fn dijkstra_takes_n_log_n_time() {
         }
         assert!(settled > 0);
     });
+}
+
+/// Calls `draw` `m` times, split evenly over `threads` threads (`m` a multiple of `threads`).
+///
+/// The threads wait at a barrier until all have started, so they draw at once at every size.
+/// Without it, at `n` = 2^20 (32,768 draws a thread) the first threads were done before the
+/// last had started, and the draws met less contention than at `8n`: the compare-and-swap
+/// draws measured 9.40, 9.99 and 10.27 times the instructions at `8n` in three runs (load 49 to
+/// 51), where `fetch_add`, which never retries, measured 7.9.
+fn draw_on_threads(m: usize, threads: usize, draw: &(dyn Fn() -> u64 + Sync)) {
+    if threads == 1 {
+        for _ in 0..m {
+            std::hint::black_box(draw());
+        }
+        return;
+    }
+    let all_started = std::sync::Barrier::new(threads);
+    std::thread::scope(|s| {
+        for _ in 0..threads {
+            s.spawn(|| {
+                all_started.wait();
+                for _ in 0..m / threads {
+                    std::hint::black_box(draw());
+                }
+            });
+        }
+    });
+}
+
+/// Small instances: `ids::tests`. O(1) a draw with no other thread drawing; see the comment
+/// of [`IdSource::take`] for contention (FAIL-idsource-take-wrap-race). The draws on 1 and
+/// on 32 threads are each checked at `n` and `8n`, and each is printed beside the same draws
+/// by `AtomicU64::fetch_add`, which `take` used before it checked for the top by a compare
+/// and swap: instructions (of the run's threads, by the meter) and elapsed nanoseconds.
+#[test]
+fn id_draws_take_linear_time_and_cost_near_fetch_add() {
+    use std::sync::atomic::{AtomicU64, Ordering};
+    for (threads, n) in [(1, 1 << 20), (32, 1 << 22)] {
+        scaling::check_instructions_only(
+            &format!("IdSource::next, n draws on {threads} threads"),
+            n,
+            1,
+            |m| {
+                let ids = IdSource::starting_at(1);
+                draw_on_threads(m, threads, &|| ids.next());
+            },
+        );
+        for m in [n, 8 * n] {
+            let mut meter = scaling::Meter::new();
+            let mut cost = |draw: &(dyn Fn() -> u64 + Sync)| {
+                let start = std::time::Instant::now();
+                let work = meter.work(|| draw_on_threads(m, threads, draw));
+                (work.units, start.elapsed().as_nanos())
+            };
+            let ids = IdSource::starting_at(1);
+            let (take_units, take_ns) = cost(&|| ids.next());
+            let add = AtomicU64::new(1);
+            let (add_units, add_ns) = cost(&|| add.fetch_add(1, Ordering::Relaxed));
+            eprintln!(
+                "ids: {m} draws on {threads} threads: take {take_units} instr {take_ns} ns, \
+                 fetch_add {add_units} instr {add_ns} ns"
+            );
+        }
+    }
 }
 
 /// Small instances: `kahn_places_exactly_the_nodes_no_cycle_reaches_in_a_topological_order`.

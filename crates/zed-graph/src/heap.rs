@@ -129,6 +129,50 @@ pub fn reduced<D: Ord>(r: D, zero: &D) -> Result<D, NegativeReducedWeight> {
 /// (see the module's notes). The caller reads the edges of each node [`Dijkstra::pop`] gives
 /// and [`Dijkstra::lower`]s their heads, so it decides where the search stops and which edges
 /// it follows; [`reduced`] checks each weight it adds.
+///
+/// # Cost, proved
+///
+/// Take a search from `s` starts in which the caller, as above, lowers only the heads of the
+/// edges of the nodes [`Dijkstra::pop`] gives, every weight 0 or more, and let `e` be the
+/// number of edges out of the nodes it gives. Then it pushes at most `s + e` entries, takes at
+/// most `s + e`, and costs O((s + e) log(s + e)) comparisons:
+///
+/// 1. A node comes up at its label at most once. Say `v` comes up at `d`. Every entry still
+///    queued has a key of `d` or more (the heap gives its least first), and every later
+///    lowering is to such a key plus a weight of 0 or more, so to `d` or more; [`Dijkstra::lower`]
+///    refuses any value not below the label `d`, so `v` is never queued again. The entries of
+///    `v` queued before were pushed at labels strictly above `d` (each push lowers the label
+///    strictly), so they come up stale.
+/// 2. So the caller reads the edges of each node once, and makes at most one lowering per edge
+///    read: at most `e` lowerings, each pushing one entry, plus the `s` starts.
+/// 3. Each entry is taken at most once, so at most `s + e` are taken, and the heap never holds
+///    more than `s + e`. A push of a binary heap costs at most `log2(h)` comparisons and a pop
+///    at most `2 log2(h)` at size `h`, so the heap costs O((s + e) log(s + e)); the rest is
+///    O(1) per entry and per edge read, plus the labels' cost (O(n) to make a vector of `n`, or
+///    a map lookup per lowering).
+///
+/// With `n` nodes, one start and `e = 4n`, that is O(n log n).
+///
+/// # Cost, measured
+///
+/// The bench `dijkstra_takes_n_log_n_time` (PERF-dijkstra-ratio-9, 2026-11-20) runs this
+/// search on a random graph of `m` nodes with 4 edges each. Counting instructions retired, `P`
+/// entries taken and `W = Σ log2(heap size)` over the takes, the fit
+/// `instructions = 39.0·W + 193·P + 227·m` made on `m` = 12,500, 100,000 and 800,000 predicts
+/// the instructions at 6,400,000 within 0.001%: no part of the search grows faster than the
+/// sum of the heap's `log2(h)`. `P/m` is 1.215, 1.221, 1.219 and 1.219 at the four sizes, and
+/// `W/P`, the mean `log2` of the heap's size at a take, is 11.67, 14.69, 17.68 and 20.68: up by
+/// 3 = log2(8) at each step, as a heap of a fixed share of the nodes is. The ratios
+/// T(8m)/T(m) are 9.163, 8.968 and 8.875. The heap's term alone grows by `8·(L + 3)/L` for a
+/// mean log size `L` (9.61 from 100,000, since `L` = 14.69 is below `log2 m` = 16.6, the heap
+/// holding a share of the nodes); the linear terms grow by 8, and they hold 40% of the
+/// instructions at 100,000, which brings the whole to 8.97, below the goal of 9 and below
+/// `8 ln(8m)/ln m` = 9.44.
+///
+/// An indexed heap with decrease-key would take each node once (`P = m`, not 1.22·m). It was
+/// not built: it is a second heap kept beside [`MinHeap`], and for the map labels of
+/// zedc-preimage its position store would be a map too, a `log` factor per sift step. Not
+/// measured.
 #[derive(Clone, Debug)]
 pub struct Dijkstra<K, D, L> {
     heap: MinHeap<(D, K)>,
