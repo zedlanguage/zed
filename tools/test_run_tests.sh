@@ -320,6 +320,11 @@ fi
 # waits while another run of the checkout has it mounted. A warm clone lists in 1.5 s at load 74.
 if want short; then
 logs=build/test-run-tests-short
+# merge_check runs the parts at once, so a run here may find the clone mounted by another part's
+# run, or still used by the processes of one that ended (seen next to `list`), wait and say so;
+# those lines are left out of the output compared.
+others() { grep -v -e '^Waiting for the run that has the short-addresses clone mounted at ' \
+  -e '^Waiting for the processes of an ended run that still use the short-addresses clone'; }
 # A test inside a short-addresses piece is selected as short-<group>::<path>, one piece each,
 # run with --exact in the piece's folder (TOOL-short-piece-test-filter: such a pattern built the
 # clone and selected nothing). The piece's binary lies in the listing's clone, unmounted when the
@@ -329,13 +334,13 @@ plain=$(run --list --only '^zed_kernel::treap_set::' | sed 's/^zed_kernel-[0-9a-
 check "zed_kernel's treap_set module has more than one test" "yes" \
   "$([ "$(echo "$plain" | wc -l)" -gt 1 ] && echo yes)"
 check "a module of short-zed_kernel selects its tests, one piece each" "$plain" \
-  "$(run --list --only '^short-zed_kernel::treap_set::' | sort)"
+  "$(run --list --only '^short-zed_kernel::treap_set::' | others | sort)"
 check "each runs its one test --exact in crates/zed-kernel" "" "$(awk '{ t = $1; sub(/^short-zed_kernel::/, "", t)
   if (NF != 5 || $2 != "crates/zed-kernel" || $4 != "--exact" || $5 != t) print }' "$(last_run)/pieces")"
 bin37=$(run --list --only '^l01_37_oracle$' >/dev/null && awk 'NR == 1 { print $3 }' "$(last_run)/pieces")
 t37=$("$bin37" --list --format terse | sed -n 's/: test$//p' | head -1)
 check "a test of a short-addresses step is selected as short-<step>::<test>" "short-l01_37_oracle::$t37" \
-  "$(run --list --only "^short-l01_37_oracle::$t37\$")"
+  "$(run --list --only "^short-l01_37_oracle::$t37\$" | others)"
 # A process that still uses the clone when its run ends (TOOL-short-clone-umount-busy: a rustc
 # still exiting when a run killed during the clone's build ran its EXIT trap) is played by a
 # sleep holding a file of the clone open, started while run a lists. Run a then unmounted its
@@ -356,17 +361,17 @@ holder=$!
 wait "$a"
 rc_a=$?
 check "the sleep held run a's clone while run a ended" "yes" "$([ -d "/proc/$holder" ] && echo yes)"
-check "a run whose clone is still in use ends with no message" "0 $plain" "$rc_a $(sort "$logs.a")"
+check "a run whose clone is still in use ends with no message" "0 $plain" "$rc_a $(others <"$logs.a" | sort)"
 check "and leaves no mount" "" "$(findmnt -rn -t overlay -o TARGET | grep -- "-$a/short-clone\$")"
 tools/run_tests.sh --logs "$logs" --list --only '^short-zed_kernel::treap_set::' >"$logs.b" 2>&1 &
 b=$!
-while [ -d "/proc/$b" ] && ! grep -q Waiting "$logs.b"; do sleep 0.1; done
+while [ -d "/proc/$b" ] && ! grep -q '^Waiting for the processes' "$logs.b"; do sleep 0.1; done
 kill "$holder"
 wait "$b"
 rc_b=$?
-check "a run started meanwhile waits for that process, then lists" "0 Waiting for the processes of an ended run that still use the short-addresses clone to end.
-$plain" "$rc_b $(grep -v '^short-' "$logs.b")
-$(grep '^short-' "$logs.b" | sort)"
+check "a run started meanwhile waits for that process, then lists" "0 waited
+$plain" "$rc_b $(grep -q '^Waiting for the processes of an ended run' "$logs.b" && echo waited)
+$(others <"$logs.b" | sort)"
 fi
 # Two runs at once on one log directory both run to the end, each in a directory of its own
 # (NO-LOCKS-optimistic); until then the second stopped at once, as the run lock was held. Both
