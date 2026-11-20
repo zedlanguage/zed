@@ -283,11 +283,15 @@ impl Int {
     // Algorithm 1. Its section 2.2 sums the cost as
     // D(n) = sum_i 2^i M(n/2^i) + O(n log n), and Theorem 1 gives "2K(n) + O(n log n) steps"
     // for 2n digits by n over Karatsuba. Over Toom-3 (A. L. Toom, Soviet Math. Doklady 3, 1963;
-    // S. A. Cook, PhD thesis, Harvard, 1966; both from memory, not checked), M(n) = n^log3(5) =
-    // n^1.465 and the sum is O(M(n)); the 1.52 above is the slope measured over the sizes
-    // tried, where Karatsuba's n^1.585 still takes part (zed-kernel `num::fast::DIV_POWER`, 2.79
-    // to 2.90 times per doubling). Checked 2026-11-20: num-bigint's source read for which
-    // methods it uses; the report read (section 2.2, Theorem 1). The tests named above check the
+    // S. A. Cook, PhD thesis, Harvard, 1966, pp. 51-53; R. P. Brent and P. Zimmermann, "Modern
+    // Computer Arithmetic", v0.5.1, arXiv:1004.4710, section 1.3.3, p. 8, "O(n^ν) with
+    // ν = log(2r − 1)/ log r" at r = 3 parts; all three read 2026-11-20 and quoted in
+    // zed-kernel `num::fast`, module doc, "Sources"), M(n) = n^log3(5) = n^1.465, and the sum
+    // is O(M(n)) since its terms 2^i M(n/2^i) = M(n) (2/2^1.465)^i fall geometrically; the
+    // 1.52 above is the slope measured over the sizes tried, where Karatsuba's n^1.585 still
+    // takes part (zed-kernel `num::fast::DIV_POWER`, 2.79 to 2.90 times per doubling).
+    // Checked 2026-11-20: num-bigint's source read for which methods it uses; the report read
+    // (section 2.2, Theorem 1). The tests named above check the
     // quotients and the growth, not which method num-bigint runs.
     pub fn div_floor(&self, m: &Int) -> Int {
         match (&self.0, &m.0) {

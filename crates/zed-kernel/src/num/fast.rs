@@ -235,17 +235,37 @@
 //!   these `2r + 1` values, part III, "knowing the values of the polynomial P^2(x) of degree
 //!   2r at 2r + 1 points, computes its coefficients by the known formulas", part IV evaluates
 //!   at `2^q`. Toom squares (a product follows from squares) and lets `r` grow with `n`, for
-//!   a size below `n c^sqrt(log n)`. Toom-3 is his scheme for two numbers at a fixed `r = 2`:
-//!   three parts, five points, `n^log3(5)`; that form is from memory, not checked against a
-//!   source. Cook's thesis was not read (no copy found; a guessed author-page URL returned a
-//!   web page). Retried 2026-11-20, 16:41-16:56 UTC, by the allpapers ladder: OpenAlex,
-//!   Unpaywall, CORE and dblp know only Cook and Aanderaa's 1969 paper (doi:10.2307/1995359,
-//!   whose AMS PDF answered 403); Harvard's catalog (record 990038153110203941) holds the
-//!   thesis on paper (HU 90.8929.5) and microfilm (Film Mas T3302) only; archive.org and
-//!   LibGen had no copy, five rounds; Google Scholar served its "Verifying" page every round;
-//!   Anna's Archive answered 403 or a parked page; a grounded web search (agy) timed out twice.
-//!   Not used here; it is num-bigint's product, modeled by
-//!   [`TOOM_COST`] and [`TOOM_POWER`].
+//!   a size below `n c^sqrt(log n)`. Cook's thesis, chapter III, "Positive results", section
+//!   16, "The Toom algorithm for multiplication", pp. 51-53, read 2026-11-20 in the scans D. J.
+//!   Bernstein keeps at http://cr.yp.to/bib/1966/cook.html (cook/01.jpg to 03.jpg; the pages
+//!   carry no numbers, which are MCA's, below). Cook multiplies two numbers instead of
+//!   squaring, "Toom's method (slightly modified)": "divide the expansions of m and n into
+//!   r + 1 segments of q digits each", `P(x) = Σ α_k x^k` and `Q(x) = Σ β_k x^k` with
+//!   `M = P(b^q)`, `N = Q(b^q)`; then "(16.4) m_k = P(k), n_k = Q(k), k = 0,1,...,2r", the
+//!   products `m_k n_k` "by applying the general method all over again", and "(16.5) γ0 + γ1
+//!   k + γ2 k^2 + ... + γ_2r k^2r = m_k n_k" is solved for the coefficients. Like Toom, Cook
+//!   lets `r` grow, `r = 2^[sqrt(log q)]`, for `T(n) ≤ n 2^(5 sqrt(log n))` Turing machine
+//!   steps. The cost at a fixed number of parts is stated in R. P. Brent and P. Zimmermann,
+//!   "Modern Computer Arithmetic", version 0.5.1, arXiv:1004.4710, section 1.3.3, "Toom-Cook
+//!   multiplication", p. 8 (read 2026-11-20, arXiv PDF): "Toom-Cook r-way reduces one n-word
+//!   product to 2r − 1 products of about n/r words, thus costs O(n^ν) with ν = log(2r −
+//!   1)/ log r", and "The case r = 3 is known as Toom-Cook 3-way"; its `r` counts parts, one
+//!   more than Toom's and Cook's. So Toom-3 is three parts, five products of a third the size,
+//!   `T(n) = 5 T(n/3) + O(n)`, which by the master theorem is `O(n^log3(5))`, `log3(5) =
+//!   1.46497`. MCA's reference [76] gives the cr.yp.to URL and its notes put Toom-Cook in
+//!   the thesis at "[76, pp. 51–77]". Departures: num-bigint's Toom-3 evaluates at 0, 1, -1,
+//!   -2 and infinity (num-bigint 0.4.8 `src/biguint/multiplication.rs`, line 325, "w(t) at
+//!   t = 0, 1, -1, -2 and inf", with an interpolation that "is given by Bodrato", line 380;
+//!   read 2026-11-20), not at Cook's 0..2r, and stops its recursion at a fixed size; neither
+//!   changes the exponent, which counts only the five products of a third the size. The
+//!   search before the scans were found (2026-11-20, 16:41-16:56 UTC): OpenAlex, Unpaywall,
+//!   CORE and dblp know only Cook and Aanderaa's 1969 paper (doi:10.2307/1995359); Harvard's
+//!   catalog (record 990038153110203941) holds the thesis on paper and microfilm only; archive.org,
+//!   LibGen, Google Scholar and Anna's Archive gave nothing. None of this code runs Toom's
+//!   method; it is num-bigint's product, modeled by [`TOOM_COST`] and [`TOOM_POWER`], whose
+//!   exponent the instruction counts there check (6.48 to 7.19 units per `l s^0.465` over 512
+//!   to 24,576 words); a wrong exponent would show as a drift of that ratio with size, a
+//!   wrong constant would not show except as a crossover moved from its measured place.
 //!
 //! Tests: `tests::products_agree_with_num_bigint` and
 //! `tests::factor_products_agree_with_num_bigint` check the transform, REDC, the lazy reduction
@@ -329,7 +349,14 @@ const TOOM_COST: f64 = 5.8;
 #[cfg(test)]
 const TOOM_COST: f64 = f64::INFINITY;
 
-/// `log3(5) - 1`, the exponent of the narrower factor in [`TOOM_COST`].
+/// `log3(5) - 1`, the exponent of the narrower factor in [`TOOM_COST`]: Toom-3 makes five
+/// products of a third the size, `T(n) = 5 T(n/3) + O(n) = O(n^log3(5))`, `log3(5) =
+/// 1.46497` (R. P. Brent and P. Zimmermann, "Modern Computer Arithmetic", v0.5.1,
+/// arXiv:1004.4710, section 1.3.3, p. 8, "O(n^ν) with ν = log(2r − 1)/ log r", `r = 3`
+/// parts; with Toom 1963 and Cook's 1966 thesis, pp. 51-53, quoted with the sources in the
+/// module doc, "Sources", all read 2026-11-20). The 0.465 is that value rounded, checked by
+/// the measured units per `l s^0.465` above, which stay within 6.48 to 7.19 from 512 to
+/// 24,576 words.
 const TOOM_POWER: f64 = 0.465;
 
 /// The bits at or below which the divisor, or the quotient, goes to num-bigint's division,

@@ -4235,7 +4235,25 @@ fn prim_on(p: Prim, vals: &[Value]) -> Result<Value, KernelError> {
         // rounds; Sci-Hub (scihub-cli, 16:49, 16:50 and 16:54) met a blocked mirror page and
         // 403s; Google Scholar served its "Verifying" page; Anna's Archive answered 403 or a
         // parked page; a grounded web search (agy, 16:50-16:53) found no free legal copy and
-        // named only the IEEE Xplore, ISO and IEC store pages. What was read, 2026-11-20,
+        // named only the IEEE Xplore, ISO and IEC store pages. Retried again 2026-11-20,
+        // 18:05-18:35 UTC (logs in wt/cd-xr/DOC-cite/cite3): allpapers-locate found no free
+        // text; LibGen's one file for the DOI (md5 5f03fc44..., 60037 bytes, 10 pages) is the
+        // same title page and filler, and its title searches for "754-2019" and "60559" list
+        // only journal articles and a 13-page DIN 60559 of 1992; Sci-Hub's mirrors answered a
+        // DDoS-Guard or "Just a moment" page or 403. Because the 2019 text stays unread, what
+        // this rule takes from 754 rests on two readable sources. First, D. Hough, chair of the
+        // revision, "IEEE Standard for Floating-Point Arithmetic revision due in 2019", revised
+        // June 18, 2019, PDF from the working group's pages,
+        // grouper.ieee.org/groups/msc/ANSI_IEEE-Std-754-2019/background/ieee-computer.pdf, read
+        // in full 2026-11-20: "754-2008 veterans ... intended 754-2019 to be an upwardly
+        // compatible bug-fix-and-minor-enhancements revision. The bug fixes are many, and
+        // mostly refinements of language and elimination of accidental inconsistencies; the
+        // description of comparison
+        // operations was substantially rewritten to better clarify the original intent." Its
+        // list of new operations (quantum, tanPi, aSinPi, aCosPi, the augmented operations,
+        // {min,max}imum..., the payload operations) names neither squareRoot nor
+        // fusedMultiplyAdd, and "All new operations are 'recommended' ... to retain upward
+        // compatibility from 754-2008". Second, the 2008 text itself. What was read, 2026-11-20,
         // PDF (Sci-Hub, verification only), is the 2008 edition, IEEE Std 754-2008,
         // doi:10.1109/IEEESTD.2008.4610935, whose clauses 5 and 7 the 2019 revision keeps
         // under the same numbers. Section 5.1, p. 16: "every operation shall be performed as if

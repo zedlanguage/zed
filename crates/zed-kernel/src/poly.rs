@@ -1818,8 +1818,17 @@ impl<K: Key> Poly<K> {
     /// to merging: when runs differ in length, an optimum merge pattern comes from Huffman's
     /// method (the book points to its exercise 2.3.4.5-10), which, after dummy runs of length
     /// 0 are added, merges the P shortest runs again and again until one is left; here P = 2,
-    /// so no dummy runs are needed. Read 2026-11-20 in a scanned copy from LibGen, kept out of
-    /// the repository and used only to check this comment. It reads each term once
+    /// so no dummy runs are needed. The book's words: "An optimum pattern for this general
+    /// situation can be constructed without difficulty by using Huffman's method (exercise
+    /// 2.3.4.5-10), which may be stated in merging language as follows: 'First add (1 − S) mod
+    /// (P − 1) dummy runs of length 0. Then repeatedly merge together the P shortest existing
+    /// runs until only one run is left.'" Read 2026-11-20 in two printings of the 2nd edition
+    /// from LibGen, kept out of the repository and used only to check this comment: the first
+    /// printing, March 1998 (DjVu scan, md5 faa9b342...), and the electronic version by
+    /// Mathematical Sciences Publishers (PDF, md5 29624069..., PDF page 379); both print the
+    /// passage on p. 361 under the running head "5.4.9 DISKS AND DRUMS 361". The 1st edition,
+    /// 1973 (DjVu scan, md5 d81ad95a...), has the same words over pp. 365-366, so p. 361
+    /// holds for the 2nd edition only. It reads each term once
     /// per level of the merge tree it sits at, O(T log k) at most and O(T + k log k) for one
     /// large part and k small ones, plus O(k log k) for the heap.
     ///

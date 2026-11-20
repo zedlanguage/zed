@@ -238,8 +238,14 @@ impl Env {
     // 16:41-16:56 UTC: allpapers-locate found no record of it (its best guess, Namba's
     // "Some improvements on Utah standard lisp", doi:10.1145/12917.12922, is another paper);
     // archive.org and LibGen had no copy over five rounds; Google Scholar served its
-    // "Verifying" page every round; a grounded web search (agy) timed out twice.
-    // The attribution and
+    // "Verifying" page every round; a grounded web search (agy) timed out twice. Retried
+    // again 2026-11-20, 18:05-18:40 UTC (logs in wt/cd-xr/DOC-cite/cite3): allpapers-locate
+    // three times, 5 minutes apart (OpenAlex did not answer twice, then the same wrong guess;
+    // Namba's paper, read in a Sci-Hub copy, is on Utah Standard Lisp and never names Goto);
+    // CiNii, archive.org's full-text search and OpenAlex's full-text search found only later
+    // papers that cite the report; Google Scholar and Bing served bot checks; agy timed out
+    // again. So the source read in its place, for both the attribution and the idea used
+    // here, is the paper that follows. The attribution and
     // the report number are as J.-C. Filliâtre and S. Conchon give them, "Type-safe modular
     // hash-consing", ACM Workshop on ML 2006, 12-19, doi:10.1145/1159876.1159880, reference
     // [9], whose section 1 says "Hash-consing is a technique to share purely functional data
