@@ -22270,6 +22270,7 @@ impl<'t, 'a> Ck<'t, 'a> {
     ///    `truncate` of an open need in `replay_one`. The `split_off` sites push some errors back
     ///    with their ids, so an error removed may be found again, with its row unchanged by 1;
     ///    its removal is still logged, so the cache only reads more than it must.
+    ///
     /// So between the read and now, a good place `j` can turn bad only if `found(id_j)` stops
     /// giving an error, which needs a removal of id `id_j <= max` after the read; `cuts` holds,
     /// for each removal, the smallest id removed (by 2, the id of the first error at `from`),

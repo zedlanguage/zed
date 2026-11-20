@@ -1123,6 +1123,7 @@ impl<'t, 'a> Ck<'t, 'a> {
     ///   only where both are finite; an operand of unresolved type records a need and is
     ///   checked again at each call with its type resolved (row ZIP-generic-operands), so
     ///   no variable reaches the arrow.
+    ///
     /// So every sure set of int keys is finite, `of` reads it exactly, and the message is
     /// right. What the tests cannot catch: a site added later that makes a data signature
     /// with an exact arrow on an infinite int type; the search above must be made again then.
