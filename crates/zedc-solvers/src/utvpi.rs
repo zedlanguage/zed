@@ -338,8 +338,8 @@ fn race(out: &[Vec<(usize, Int)>]) -> Option<Vec<Int>> {
     // the pairs take no step while the units they have done exceed it, and resume if it rises:
     // they never spend more than the leader is expected still to need, so a race that Duong's
     // search wins costs about twice its units rather than five times (RACE-constant). On that
-    // family it takes 24.2M to 198M instructions (8.2 times), and the three families above stay at 7.8
-    // to 8.1 times. A graph that holds that family and its reverse in one component is slow in
+    // family it takes 24.2M to 198M instructions (8.2 times), and the three families above stay at
+    // 7.8 to 8.1 times. A graph that holds that family and its reverse in one component is slow in
     // both directions, so Duong's search finishes first; with its constant factor lowered
     // (`negsssp`: BF-Dijkstra tried first at each step, padded balls peeled off, the next
     // potential doubled when that helps, scans over the negative edges only) the race grows 21.2
