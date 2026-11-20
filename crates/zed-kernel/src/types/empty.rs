@@ -2616,6 +2616,21 @@ struct Cell {
     open: bool,
 }
 
+/// The number of value kinds [`Searching::outer_kinds`] gives a bit, one for each carrier of a
+/// type's parts: bit 0 the Booleans, 1 to 4 the integers, rationals, floats and strings, 5 the
+/// atoms, 6 the tuples ([`TUPLE_KIND`]), 7 the structs, 8 the functions and 9 the `f32`s. The
+/// kind test of [`Searching::region`] reads each of these bits; one it skips counts as a kind no
+/// value has, so a part whose values are all of that kind is called empty there. That happened
+/// when the `f32` carrier (bit 9) was added with the test still reading nine bits (test
+/// `a_region_whose_only_kind_is_f32_is_not_empty_by_kind`). `outer_kinds` asserts in debug
+/// builds that it sets no bit at or above this count.
+const KINDS: u16 = 10;
+
+/// The bit of [`Searching::outer_kinds`] that says a type has tuples ([`KINDS`]). Where it is the
+/// only kind that fails a region's formula, [`Searching::region`] reads the tuple lengths instead
+/// of building the meet.
+const TUPLE_KIND: u16 = 1 << 6;
+
 /// A box of tuples, one type per component, and where each tuple type of a part stands on it
 /// component by component: missing it, holding it, or open on it. A tuple type that misses a
 /// component of the box, or holds it, still does when the box shrinks, so a component that
@@ -2963,8 +2978,15 @@ enum Each<'a> {
     },
 }
 
+/// The flag of a read packed by [`pack_read`]: set when the read did not depend on whether the
+/// node read is empty (`empty_dep` false), clear when it did. The node's index is kept in the
+/// other bits. It is the top bit because no index reaches it: a node read is an index into
+/// `readers` and `reads`, `Vec`s, whose lengths are at most `isize::MAX` = 2^(BITS - 1) - 1, so
+/// every index is below 2^(BITS - 1) and its top bit is clear. [`unpack_read`] relies on this to
+/// give back the index and the flag apart; the value itself is not tuned.
 const NON_EMPTY_READ: usize = 1 << (usize::BITS - 1);
 
+/// A read of the node `node` as one word ([`NON_EMPTY_READ`]).
 #[inline]
 fn pack_read(node: usize, empty_dep: bool) -> usize {
     if empty_dep {
@@ -5822,7 +5844,7 @@ impl<'m> Searching<'m> {
             // Complexity tradeoff: testing a varying column first unfolds n common
             // constraints in n contexts, O(n^2) on the morphism result family. Cache
             // each node's outer carriers and choose one shared column in O(incidences).
-            // Nine Boolean evaluations with row lookups cost O((part nodes + incidences) log n);
+            // One Boolean evaluation per kind ([`KINDS`]) with row lookups cost O((part nodes + incidences) log n);
             // its mandatory fields are met pairwise through the cut memo, O(n log n).
             // Mandatory rows are a sufficient syntactic subset (forced_factors), not
             // a full analysis of common atoms hidden under union arms. Only a false
@@ -5871,7 +5893,7 @@ impl<'m> Searching<'m> {
             // check, where that meet is built and found empty, so no answer changes.
             let operands = || std::iter::once(&g.r[j]).chain(taken.iter().map(|a| &a[j]));
             let within = operands().fold(u16::MAX, |b, t| b & self.outer_kinds(t));
-            let failing = (0..9).map(|bit| 1u16 << bit).fold(0, |failing, bit| {
+            let failing = (0..KINDS).map(|bit| 1u16 << bit).fold(0, |failing, bit| {
                 let fails = within & bit != 0
                     && f.eval3(&|a| {
                         let k = g.index[a];
@@ -5885,10 +5907,9 @@ impl<'m> Searching<'m> {
                     }) != Some(false);
                 failing | if fails { bit } else { 0 }
             });
-            const TUPLE: u16 = 1 << 6;
             g.structural_empty = match failing {
                 0 => true,
-                TUPLE => {
+                TUPLE_KIND => {
                     let ps: Vec<_> = operands().map(Type::p).collect();
                     !Tuples::may_meet(&ps.iter().map(|p| &p.tuples).collect::<Vec<_>>())
                 }
@@ -5985,10 +6006,13 @@ impl<'m> Searching<'m> {
             bits |= u16::from(l.cofinite || !l.values.is_empty()) << (j + 1);
         }
         bits |= u16::from(p.atoms.cofinite() || !p.atoms.names().is_empty()) << 5;
-        bits |= u16::from(p.tuples.rest || !p.tuples.lens.is_empty()) << 6;
+        if p.tuples.rest || !p.tuples.lens.is_empty() {
+            bits |= TUPLE_KIND;
+        }
         bits |= u16::from(p.structs) << 7;
         bits |= u16::from(p.morphisms.is_leaf() != Some(false)) << 8;
         bits |= u16::from(p.f32s.cofinite || !p.f32s.values.is_empty()) << 9;
+        debug_assert!(bits >> KINDS == 0, "a kind bit at or above KINDS");
         self.s().outer_kinds.insert(t.node_id(), bits);
         bits
     }

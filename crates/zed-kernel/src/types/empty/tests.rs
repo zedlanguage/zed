@@ -402,6 +402,54 @@ fn a_region_lists_each_tuple_type_once() {
     assert_eq!(g.opens, [1, 1]);
 }
 
+/// The kind test of a region reads every kind bit of `outer_kinds`, `f32` too (`KINDS`): a part
+/// whose only values are tuples of `f32` is not empty by kind. With nine bits read, the `f32`
+/// bit was left out, such a region was called empty, and so were `(f32) - (int)` and every
+/// type below, and `(f32)` was called a subtype of `(int)`.
+#[test]
+fn a_region_whose_only_kind_is_f32_is_not_empty_by_kind() {
+    let (f, i) = (Type::f32, Type::int);
+    let one = |a: Type| Type::tuple(vec![a]);
+    let two = |a: Type, b: Type| Type::tuple(vec![a, b]);
+    for (t, len) in [(one(f()), 1), (two(f(), f()), 2)] {
+        assert!(!t.is_empty(), "{len}");
+        let g = region(vec![Type::top(); len], &t.p().tuples.lens[&len]);
+        assert!(!g.structural_empty, "{len}");
+    }
+    let not_empty = [
+        ("(f32) - (int)", &one(f()) - &one(i())),
+        (
+            "((f32) | (int)) - (int)",
+            &(&one(f()) | &one(i())) - &one(i()),
+        ),
+        (
+            "(f32, f32) - (int, _)",
+            &two(f(), f()) - &two(i(), Type::top()),
+        ),
+        ("(f32) & (f32 | int)", &one(f()) & &one(&f() | &i())),
+        (
+            "((f32) - (int)) & ((f32) - (string))",
+            &(&one(f()) - &one(i())) & &(&one(f()) - &one(Type::string())),
+        ),
+        (
+            "(f32, f32) - (f32, int) - (int, f32)",
+            &(&two(f(), f()) - &two(f(), i())) - &two(i(), f()),
+        ),
+        ("(f32 | int) - (int)", &one(&f() | &i()) - &one(i())),
+        (
+            "(f32, _) - (_, int)",
+            &two(f(), Type::top()) - &two(Type::top(), i()),
+        ),
+    ];
+    for (name, t) in &not_empty {
+        assert!(!t.is_empty(), "{name}");
+    }
+    assert!(!one(f()).subtype(&one(i())));
+    let either = &two(i(), Type::top()) | &two(Type::top(), i());
+    assert!(!two(f(), f()).subtype(&either));
+    assert!(one(f()).subtype(&one(&f() | &i())));
+}
+
 /// Tuple types with one type in a component share its cell there, which is tested once
 /// for all of them; a type that holds the box there is closed, and one open on it is open.
 #[test]

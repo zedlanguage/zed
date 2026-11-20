@@ -441,6 +441,15 @@ const TRANSFORM_COST: f64 = 7.1;
 /// 240 words, which 1.68 to 1.72 puts at the crossover, so 1.7. [`SPARSE_STEP`] is not fitted;
 /// the benchmark's divisors have too few nonzero words for its share to show.
 const SPARSE_WORD: f64 = 1.7;
+/// The cost of a step of [`sparse_div_rem`] besides its words, in the units of
+/// [`TRANSFORM_COST`] ([`SPARSE_WORD`]). It is 20 from the 2026-11-05 timings (NUM-subquad) and
+/// has not been fitted since: the `crossover div-rows` divisors are dense, so the per-word
+/// term decides there, and a fit needs divisors with few nonzero words, where the step term
+/// is most of [`sparse_div_cost`] (row MEASURE-sparse-step-fit). Only choices between methods
+/// with the same quotient and remainder read it, through [`sparse_div_cost`]: long division or
+/// the reciprocal in [`div_rem_past_leaf`], num-bigint or [`div_rem_past_leaf`] in
+/// [`num_bigint_divides`], and the blocks or not in [`rem_takes_blocks`]; so a wrong value costs
+/// time and never an answer.
 const SPARSE_STEP: f64 = 20.0;
 
 /// The number of 64-bit words of `x`.
@@ -1697,7 +1706,7 @@ fn div_rem_blocks(a: &BigUint, b: &BigUint) -> (BigUint, BigUint) {
 }
 
 /// The cost of [`sparse_div_rem`] of a quotient of `qw` words by a divisor with `nonzero`
-/// nonzero words.
+/// nonzero words, by [`SPARSE_WORD`] and [`SPARSE_STEP`] (where each comes from).
 fn sparse_div_cost(qw: usize, nonzero: usize) -> f64 {
     (qw as f64 + 1.0) * (SPARSE_WORD * nonzero as f64 + SPARSE_STEP)
 }

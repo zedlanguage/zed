@@ -1111,9 +1111,19 @@ const P: u64 = btree::SUM_MODULUS;
 /// keys alone. Families whose integer keys all lie in one run of fewer than `2^61 - 2` values
 /// never meet it.
 const R: u64 = 0x0d8e_4e27_c47d_124f;
-/// `G(n) = A + B · n` for an integer value `n` (`value_term`).
+/// `G(n) = A + B · n` for an integer value `n` (`value_term`). The values are arbitrary
+/// words below `P`, fixed so the hash is the same on every run; none is tuned. The closed form
+/// of a range (`range_sum`, `Σ (A + B·i) R^i = R^lo ((A + B·lo) S0 + B S1)`) is an identity
+/// in the field for every `A` and `B`, so no sum rests on their values, and equal families
+/// hash alike whatever they are. What rests on them: the field operations take operands below
+/// `P` (checked below), and `B` must not be 0, or every integer value would have the term `A`
+/// and the families `{i: m}` and `{i: n}` would hash alike for all `m`, `n`. That other
+/// families hash apart holds only with high probability, as for any hash; `==` still tells
+/// apart the families a hash map meets with one hash, so a collision costs a comparison and
+/// never an answer (the `Hash for Value` comment).
 const A: u64 = 0x1a3f_5c2b_9e8d_7061;
 const B: u64 = 0x07b3_a9e1_d2c4_f583;
+const _: () = assert!(A < P && B < P && B != 0 && 1 < R && R < P);
 
 // `a · b`, `x^e` and `a - b` modulo `P`, for operands below `P` (`const`, so [`POW_R`] is
 // built with the same product at compile time).
