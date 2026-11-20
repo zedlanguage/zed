@@ -356,6 +356,30 @@ fn a_bounded_variable_beside_a_free_one_takes_only_what_its_bound_holds() {
     }
 }
 
+/// A bounded `B` of `s` meets a variable `W` of `q` bounded to one carrier beside a value of
+/// another carrier of `B`'s bound. `W in int` is read as `int` (`Cx::open` keeps a variable
+/// with a mask only for a bound of two carriers or more), so `B` takes `int` and `f64` at its
+/// one place, and `s` fits `q` in either written order: the early refusal in `accepts`
+/// (`admits`) would miss this fit if a one-carrier mask reached it, since `bounds_hold`
+/// accepts `B` bound to `W | f64` there through `one_place`.
+#[test]
+fn a_bounded_variable_beside_a_variable_of_one_carrier_takes_each_carrier_of_its_bound() {
+    use zedc::check::ty::fits_sig;
+    let s = "(x: (B,)) -> (B,) for B in int | f64";
+    for q in [
+        "(x: (int,) | (f64,)) -> (int,) | (f64,)",
+        "(x: (W,) | (f64,)) -> (W,) | (f64,) for W in int",
+        "(x: (f64,) | (W,)) -> (W,) | (f64,) for W in int",
+    ] {
+        let s = parse_type(s).unwrap_or_else(|e| panic!("{e}"));
+        let q = parse_type(q).unwrap_or_else(|e| panic!("{e}"));
+        assert!(fits_sig(&s.fns[0], &q.fns[0]), "{q} in {s}");
+    }
+    let s = parse_type("(x: B) -> B for B in int | f64").unwrap_or_else(|e| panic!("{e}"));
+    let q = parse_type("(x: W | f64) -> W | f64 for W in int").unwrap_or_else(|e| panic!("{e}"));
+    assert!(fits_sig(&s.fns[0], &q.fns[0]), "{q} in {s}");
+}
+
 /// The two types `bounded_or_free(n, "(int,)")` reads to, built from their parts with no text:
 /// the benchmark `a_signature_of_many_bounded_variables_beside_a_free_one_fits_in_time_near_its_size`
 /// builds its inputs so (FAIL-bench-bounded-beside-free-near-limit). Reading the two texts at

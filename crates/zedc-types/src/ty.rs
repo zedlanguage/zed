@@ -7278,7 +7278,9 @@ impl Piece {
 /// the index of its variables a replacement reads (`BindKeys`): made at the first replacement
 /// and kept as the binding changes, so each replacement starts in `O(1)` and not in the size
 /// of the binding, which a call of `n` needs each replaced with the call's binding of `n`
-/// variables would pay `n` times.
+/// variables would pay `n` times. Test: this file's `the_index_of_a_binding_follows_its_changes`
+/// (after each change, a replacement through the kept index equals one through an index made
+/// anew); it checks the answers, not the cost.
 #[derive(Clone, Default)]
 pub struct Binds {
     map: BindMap,
@@ -10389,7 +10391,10 @@ impl Pins {
     /// `c.set`, and `c` has no tuples or functions); and at a site inside a shape nothing else
     /// is bound. So the piece is not held, whatever the bindings so far. Rigidity does not
     /// change while a name lives: the names made rigid or functions are new ones, forgotten
-    /// with their scope ([`Cx::forget`]).
+    /// with their scope ([`Cx::forget`]). Test: this file's
+    /// `pinned_shapes_are_those_of_the_rule_of_one_shape` (3000 random signatures of tuple
+    /// shapes, the verdict against trying every shape in written order); it cannot catch a
+    /// case its generator does not draw, nor one it refuses.
     fn lists(&self, xs: &[&Ty], cx: &Cx) -> Vec<Rc<[usize]>> {
         let special = |w: &Arc<str>| cx.rigid.contains_key(w) || cx.fns.contains_key(w);
         let mut out = vec![self.free.clone()];
@@ -16096,16 +16101,44 @@ async fn accepts<'m>(
     // search of the bounds of the signature ([`Binds::bound`]) and a check of the piece alone
     // ([`var_mask`], O(log n) and O(1) expected), as what the variable is bound to was checked
     // when bound; so the binding keeps the cost of a union.
-    // Assumption, not proved (ASSUME-documented): `admits` never refuses a piece that
-    // `bounds_hold` would accept for the same variable once the search ends, so the early
-    // refusal only skips bindings that would fail later. It needs each variable's mask
-    // (`var_mask`, from `cx.rigid` or `cx.own_bounds`) to be known when `admits` runs: a
-    // `Var(w)` with no mask goes to `piece_within`, which asks for `OTHER`, while `bounds_hold`
-    // with the mask known tests `mq & !m == 0`. The masks are set at `Cx::open`, before any
-    // parameter is compared. Evidence: the ty.rs tests,
-    // `a_bounded_variable_beside_a_free_one_takes_only_what_its_bound_holds` (n from 2 to 5),
-    // and 1,326 test pieces passing. If false, a fit is missed and a correct program is
-    // rejected: precision only.
+    // Claim (ASSUME-documented, now proved but for the two facts (F2) and (F3) below): `admits`
+    // refuses a piece for `v` only where [`bounds_hold`] would refuse `v`'s final binding, so
+    // the early refusal skips only bindings that would fail later. If false, a fit is missed
+    // and a correct program is rejected: precision only, never a wrong yes.
+    // Facts used. (F1) Every mask [`var_mask`] gives holds two carriers or more, or `OTHER`:
+    // the only writers of `cx.rigid` and `cx.own_bounds` outside the unit tests are
+    // [`Cx::open`] (`cx.rigid.insert` under `!one(m)`) and [`Cx::keep_own`], called with a
+    // bound only from the arm of [`Cx::open`] that a bound `m` with `one(m)` does not reach
+    // (that one is read as `Read::Mask`, its carrier). So `mask_carrier(var_mask(w))` is
+    // `None` and `carrier_of(Var(w))` is `None` for every `w` with a mask. (F2) The final
+    // binding holds every piece bound to `v` while the search lives (`unite` only adds); that
+    // nothing else shrinks a binding during one search is not proved, row
+    // PROOF-sweep-zedc-types. (F3) The masks read here are those read by `bounds_hold`:
+    // [`Cx::forget`] removes names only at the end of the [`fits_in`] that made them, after
+    // every `bounds_hold` of its arrows; that no binding of an outer comparison holds a name a
+    // nested `fits_in` made and forgot is not proved (same row). (F4) `piece_within(p, m)`
+    // reads `p` alone, and the union of a binding with `p` keeps `p` a piece up to a merge of
+    // pieces of no carrier, where the test asks only `m & OTHER`: so a piece refused alone is
+    // refused in every binding that holds it.
+    // Proof, by the branch of `admits` that refuses. (1) `v` bound to nothing, `p = Var(w)`
+    // with mask `mw`, refused as `mw & !m != 0`: a final binding of `Var(w)` alone fails the
+    // same test in `bounds_hold`; one of more pieces is read piece by piece, and
+    // `piece_within(Var(w), m)` is false by (F1) (no carrier, and a variable with a mask). (2)
+    // Refused by `piece_within(p, m)` (`v` bound to nothing and `p` not a variable with a
+    // mask, or bound to `b` that is not one variable with a mask): the final binding holds `p`
+    // (F2) and is not one variable with a mask (it holds `p`, or `b` and `p`), so
+    // `bounds_hold` reads it piece by piece and refuses at `p` (F4). (3) `v` bound to `Var(w)`
+    // with mask `mw`, `p` another piece: by (F1) `mask_carrier(mw)` is `None`, so every such
+    // `p` is refused; the final binding holds `Var(w)` and `p`, so it is read piece by piece,
+    // and `piece_within(Var(w), m)` is false by (F1). A one-carrier mask would break (3): the
+    // union `Var(w) | p` with `p` of another carrier in `m` passes `bounds_hold` through
+    // [`one_place`], so (F1) is what the proof rests on. The refusal by the ceiling is argued
+    // at [`ceilings`]. Tests: `l01_26_type_resolution::bounds::
+    // a_bounded_variable_beside_a_free_one_takes_only_what_its_bound_holds` (n from 2 to 5)
+    // and `a_bounded_variable_beside_a_variable_of_one_carrier_takes_each_carrier_of_its_bound`
+    // (a bound of one carrier on `q`'s side is read as its carrier, (F1)); they cannot catch a
+    // failure of (F2) or (F3), which needs a search that shrinks a binding or a name kept past
+    // its comparison.
     let cx = c.cx.borrow();
     let admits = |v: &Arc<str>| {
         // A piece outside the variable's ceiling is not bound to it either: bound so, the result
@@ -16722,6 +16755,10 @@ impl Cx<'_> {
     /// Cost: a lookup of the names `w` holds ([`Cx::held_own`]), and only where one is
     /// unbound, a walk of `w`'s types for their variables and a reading of the types paired,
     /// O(size of the two functions), once for each comparison that meets such a function.
+    ///
+    /// Tests: `a_bounded_variable_only_a_function_parameter_holds_fits_under_any_name`, in
+    /// this file's tests and in `l01_26_type_resolution::deep_ops`; fixed examples under
+    /// several names, they cannot catch a pairing of places other than the ones they write.
     fn through_fn(&mut self, f: &Sig, fe: &Env, w: &Arc<str>, b: &Binds) -> Option<Vec<(Ty, Ty)>> {
         if !b.binds_own() {
             return None;
@@ -16992,7 +17029,10 @@ async fn every_arrow_fits<'m>(
 /// types carry two domain bounds"), are each within the other (FAIL-types-exact-never-domain:
 /// before, the exact arrow of `Never -> v` asked for a cover by an exact arrow, which
 /// `Never ->? v` lacks). Cost: one flag test per parameter of `q`'s arrows; the copy without
-/// them only where one is left out.
+/// them only where one is left out. Test: `l01_23_groups_and_refusals::judgments::
+/// an_exact_and_a_partial_arrow_over_never_are_one_type` (both directions); a fixed example,
+/// it cannot catch a parameter type that is empty but not proved so, which stays and asks
+/// for a cover as before (a wrong no only).
 async fn covers<'m>(s: &Sig, sas: &[Arrow], qas: &[Arrow], c: &'m Comparing<'m, '_>) -> bool {
     let keyless = |a: &Arrow| a.params.iter().any(Ty::is_empty);
     let kept: Vec<Arrow>;
@@ -17562,6 +17602,10 @@ fn rest_bound(s: &Sig, mut b: Binds, c: &Comparing<'_, '_>) -> Binds {
 /// tried, exact, `6^v` comparisons for `v` variables; used: at most one comparison for each
 /// carrier of one variable (6), and a hash lookup for the rest, which the cover paid for.
 /// Cost: a walk of the parameter types and one replacement per instance.
+///
+/// Tests: this file's `an_arrow_with_a_variable_of_several_carriers_takes_the_keys_of_each`
+/// and `a_bounded_variable_is_an_instance_only_at_whole_carriers`; fixed examples, they cannot
+/// catch a wrong no from an instance not tried (the given-up cases above), only a wrong yes.
 fn instances(s: &Sig, sa: &Arrow, cx: &Cx) -> Option<Vec<Arrow>> {
     let mut vs = Vars::default();
     sa.params.iter().for_each(|p| p.vars_in(&mut vs));
@@ -18675,6 +18719,9 @@ async fn met<'m>(
 /// the partial arrows of `s`, which a family or a bounded morphism has one or two of, made once
 /// for the comparison by [`Cx::open`]; [`met`] then makes one more [`meet_within`] per instance
 /// at each of its two places, only where an instance's value type differs from the one read.
+///
+/// Tests: this file's `a_partial_arrow_holding_a_bindable_variable_narrows_at_its_binding`;
+/// a fixed example, it cannot catch the cases given up above (a wrong no only).
 #[derive(Default)]
 struct Narrowing {
     arrows: Vec<Arrow>,
@@ -19605,7 +19652,10 @@ impl Domains {
     // (`Domains::held`), not one kernel verdict for each parameter type of each pair as before
     // (FAIL-types-meet-fn-fn-domains).
     // Given up: a function type [`Domains::inhabited_fn`] does not prove inhabited is not
-    // a witness.
+    // a witness. Test: `l01_23_groups_and_refusals::judgments::
+    // a_meet_of_functions_over_a_function_domain_and_another_domain_is_empty`; a fixed
+    // example, it cannot catch a witness wrongly proved, which would make a meet empty that
+    // holds a function (a wrong yes): that rests on the proofs at [`Domains::witness`].
     fn kinds_apart((s, ds): (&Sig, &Domains), q: &Sig) -> bool {
         let n = q.params.len();
         let open = |t: &Ty| !t.vars.is_empty() || t.dynamic;
@@ -19743,7 +19793,11 @@ impl Domains {
     // function another way, a value outside one `U_h` and another `w` outside another, and a
     // `G_h` holding a key against the `A`s where `q` takes several function types and no `w`
     // is the function of no key: none is compared, and the meet is kept, which is sound, only
-    // less narrow.
+    // less narrow. Tests: `l01_23_groups_and_refusals::judgments::
+    // a_meet_of_functions_over_function_domains_that_differ_is_empty` and
+    // `a_meet_of_functions_over_functions_of_results_sharing_no_value_is_within_each_side`;
+    // fixed examples, they cannot catch a meet made empty by a step of the proof above that
+    // fails on a shape they do not write.
     fn fns_apart((s, ds): (&Sig, &Domains), q: &Sig) -> bool {
         let closed =
             |u: &Ty| u.vars.is_empty() && !u.dynamic && u.set.functions_leaf() == Some(false);
@@ -20038,7 +20092,9 @@ impl Domains {
     // the thread's stack than one level (the rule at [`Pairs::alone`]); case (a) reads the one
     // value type once from below, linear in its size. Given up: a union of a function type
     // and data among the value types, and several value types without kernel types: not
-    // claimed, which only leaves a meet kept.
+    // claimed, which only leaves a meet kept. Tests: `ty/tests/unreached6.rs`
+    // `inhabited_fn_reads_each_kind_of_value_type` and
+    // `inhabited_fn_enters_a_signature_met_twice_once`; fixed examples of each kind.
     fn inhabited_fn(g: &Sig) -> bool {
         let mut seen: HashSet<*const Sig> = HashSet::new();
         let mut work = vec![g];
