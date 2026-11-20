@@ -2839,6 +2839,39 @@ fn r7_random_carrier_plus_chains_both_orders_against_bruteforce() {
             );
             Type::forget_emptiness();
         }
+        // Case 277 under `ZED_TEST_SEED=6`, kept (TEST-kernel-unreached-paths-14): the only
+        // draw of seeds 1 to 9 on which `find_prefix_chains` tries to kill the refused row and
+        // fails (`try_kill` false), six times in all. Inhabited by [2, 0, 1, 0]: the positive row
+        // puts 0 second, the row `cons({0}, L)` and the one through node 0 leave 2 first, the row
+        // through node 3 leaves no list of one or two items, and of three the rows through
+        // nodes 1 and 5 leave none.
+        {
+            let p = |cof: bool, mask: u8| Pred { cof, mask };
+            use TailRef::{Car, End, Node};
+            let case = ChainCase {
+                car_head: p(true, 0),
+                nodes: vec![
+                    (false, p(false, 1), Car),
+                    (false, p(true, 4), Node(0)),
+                    (false, p(true, 8), Node(1)),
+                    (true, p(true, 0), End),
+                    (false, p(true, 1), End),
+                    (false, p(true, 0), Node(4)),
+                    (false, p(false, 1), Car),
+                ],
+                pos: vec![(p(true, 0), Node(6))],
+                neg: vec![
+                    (p(false, 1), Car),
+                    (p(true, 4), Node(0)),
+                    (p(true, 8), Node(1)),
+                    (p(true, 0), Node(3)),
+                    (p(true, 0), Node(5)),
+                ],
+            };
+            assert_eq!(brute_force_inhabited(&case), Some(vec![2, 0, 1, 0]));
+            check_case(&case, "s6-277");
+            Type::forget_emptiness();
+        }
         let mut chain_decided = 0usize;
         let mut chain_empty = 0usize;
         let mut chain_inhab = 0usize;

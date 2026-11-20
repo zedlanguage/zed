@@ -14813,6 +14813,11 @@ type NamedRows = (BTreeMap<Value, Type>, Option<(BTreeSet<Value>, Type)>);
 // `bounded_parity_singletons_obey_further_integer_constraints`. When the function answers none
 // always, the search still decides each meet and every parity test passes, so they do not
 // check that the class is taken, only that its answers are right.
+// `a_parity_meet_with_an_integer_that_keeps_both_states` has a named integer that keeps the
+// state of the operands naming it (the class answers empty, and its control is joined to the
+// ground and searched), and
+// `a_parity_meet_whose_unnamed_integers_swap_three_operands_is_searched` has the unnamed
+// integers swap three operands, which `edge` gives up on (TEST-kernel-unreached-paths-14).
 fn affine_lists_empty(t: &Type) -> Option<bool> {
     let mut names = [None, None];
     let (root_stop, f) = list_rows(t, &mut names)?;

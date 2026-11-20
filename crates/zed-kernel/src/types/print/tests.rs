@@ -4,7 +4,7 @@
 //! built on a thread of its own with a salt has its atoms in another order.
 
 use super::super::bdd::Part;
-use super::super::{Op, Row, SALT, Type};
+use super::super::{Op, Row, SALT, Type, Universe};
 use super::defs::{collect, lift, plain};
 use crate::seed::Rng;
 use crate::value::Value;
@@ -906,4 +906,19 @@ fn a_meet_whose_operands_share_a_part_folds_the_meet_in_it() {
         let text = (&xk & &(&m & &xk)).surface().to_string();
         assert!(text.contains("(Never ->? 1)"), "{k}: {text}");
     }
+}
+
+/// A text with no syntax is printed while a message collects its parts, and `remember` keeps
+/// none of it: `#a` with every tuple as its payload prints `#a(tuple)`, which is not exact, so
+/// `Printer::remember` returns at once. The control, `#a` with any payload, prints `#a(..)`,
+/// exact (TEST-kernel-unreached-paths-14: no test printed an inexact text while collecting).
+#[test]
+fn an_inexact_text_is_printed_while_collecting() {
+    let _on = collect();
+    let s = Type::atom_with("a", &Type::universe(Universe::Tuple)).surface();
+    assert!(!s.exact, "{s}");
+    assert_eq!(plain(&s.root), "#a(tuple)");
+    let c = Type::atom_with("a", &Type::top()).surface();
+    assert!(c.exact, "{c}");
+    assert_eq!(plain(&c.root), "#a(..)");
 }

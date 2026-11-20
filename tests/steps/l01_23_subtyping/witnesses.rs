@@ -216,31 +216,48 @@ fn random(r: &mut Rng, depth: usize, n: usize) -> E {
     }
 }
 
+/// Checks the verdict of `e`, a combination of tuples of `n` components, against listing its
+/// tuples; returns the verdict.
+fn check_small_sets(e: &E, n: usize, run: &str) -> Verdict {
+    let tuples = (0..3usize.pow(n as u32)).map(|k| {
+        (0..n)
+            .map(|j| (k / 3usize.pow(j as u32) % 3) as u8)
+            .collect::<Vec<_>>()
+    });
+    let empty = !tuples.into_iter().any(|v| holds(e, &v));
+    let t = build(e);
+    Type::forget_emptiness();
+    let v = t.verdict();
+    let want = match empty {
+        true => Verdict::Empty,
+        false => Verdict::Inhabited,
+    };
+    assert_eq!(v, want, "{t} ({run})");
+    v
+}
+
+/// Draw 37 of `tuples_of_small_sets_are_decided_and_shown` under `ZED_TEST_SEED=4`, kept
+/// (TEST-kernel-unreached-paths-14): a type of 3-tuples whose exclusive-or reading meets a
+/// `|` of two parts that are not apart, neither valid, with no choice in either
+/// (`sat == Some(false)` in the kernel's `read`), which only that seed's draws reached. The
+/// draws before it are made and dropped, so the generator is where the random test had it.
+#[test]
+fn seed_4_draw_37_of_the_small_set_tuples_is_decided() {
+    let mut r = Rng::new(4);
+    for i in 0..37 {
+        random(&mut r, 7, 2 + i % 3);
+    }
+    let e = random(&mut r, 7, 2 + 37 % 3);
+    check_small_sets(&e, 2 + 37 % 3, "ZED_TEST_SEED=4, draw 37");
+}
+
 #[test]
 fn tuples_of_small_sets_are_decided_and_shown() {
     // Ran 1500 types from seed 7, over 300 empty and 300 inhabited; now 300 from a new seed
     // each run, printed, over 50 of each (TEST-bench-move-l0123, author P169: random tests run
     // fewer cases).
     let (mut r, seed) = Rng::fresh("random tuples of small sets");
-    // Checks the verdict of `e`, a combination of tuples of `n` components, against listing
-    // its tuples; returns the verdict.
-    let check = |e: &E, n: usize, run: &str| -> Verdict {
-        let tuples = (0..3usize.pow(n as u32)).map(|k| {
-            (0..n)
-                .map(|j| (k / 3usize.pow(j as u32) % 3) as u8)
-                .collect::<Vec<_>>()
-        });
-        let empty = !tuples.into_iter().any(|v| holds(e, &v));
-        let t = build(e);
-        Type::forget_emptiness();
-        let v = t.verdict();
-        let want = match empty {
-            true => Verdict::Empty,
-            false => Verdict::Inhabited,
-        };
-        assert_eq!(v, want, "{t} ({run})");
-        v
-    };
+    let check = check_small_sets;
     let mut seen = BTreeMap::new();
     for i in 0..300 {
         let n = 2 + i % 3;

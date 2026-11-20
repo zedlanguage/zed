@@ -842,6 +842,104 @@ fn a_parity_meet_with_a_second_link_atom_is_inhabited() {
     assert!(!t.is_empty());
 }
 
+/// A state of a list linked by `more` and ending in `nil`: it holds `nil` when it `accepts`,
+/// and `more(h, s)` for each step `(h, s)`, to the state defined `s`-th.
+fn more_state(name: &str, accepts: bool, steps: Vec<(Type, usize)>) -> Def {
+    let mut arms = Vec::new();
+    if accepts {
+        arms.push(nil());
+    }
+    for (h, s) in steps {
+        arms.push(Expr::Atom("more".into(), vec![Expr::Type(h), r(s)]));
+    }
+    def(name, Expr::Union(arms))
+}
+
+/// The meet of the group's last member, the defs given then the meet of the members named.
+fn meet_of(mut defs: Vec<Def>, of: Vec<usize>) -> Type {
+    defs.push(def("M", Expr::And(of.into_iter().map(r).collect())));
+    Group::new(defs).unwrap().instance(vec![]).pop().unwrap()
+}
+
+/// The two states of a parity operand, defined `at` and `at + 1`: `v` keeps the state, every
+/// other integer swaps it, and state `at` accepts when `even`, else `at + 1` does.
+fn keeps_one(at: usize, v: usize, even: bool) -> [Def; 2] {
+    let other = &Type::int() - &lit(v);
+    [
+        more_state(
+            &format!("S{at}"),
+            even,
+            vec![(lit(v), at), (other.clone(), at + 1)],
+        ),
+        more_state(
+            &format!("S{}", at + 1),
+            !even,
+            vec![(lit(v), at + 1), (other, at)],
+        ),
+    ]
+}
+
+/// `affine_lists_empty` with an integer, 0, that keeps the state of two operands it names, which
+/// no test had (TEST-kernel-unreached-paths-14): the lists with an even count of items other
+/// than 0 met with those with an odd count. Every other integer swaps both, so the two are
+/// joined, and the count they need is both even and odd: empty. The control swaps the second
+/// operand on 0 instead (an odd count of 0): the second operand is then joined to the ground,
+/// the class proves nothing, and the search finds `more(0, nil)`.
+#[test]
+fn a_parity_meet_with_an_integer_that_keeps_both_states() {
+    let [a0, a1] = keeps_one(0, 0, true);
+    let [b0, b1] = keeps_one(2, 0, false);
+    let t = meet_of(vec![a0, a1, b0, b1], vec![0, 2]);
+    let one = |v: i64, tail: Value| Value::atom_with("more", vec![Value::Int(v), tail]);
+    for w in [
+        one(0, Value::atom("nil")),
+        one(1, one(1, Value::atom("nil"))),
+    ] {
+        assert!(!t.contains(&w), "{w:?}");
+    }
+    Type::forget_emptiness();
+    assert_eq!(t.verdict(), Verdict::Empty);
+    let [a0, a1] = keeps_one(0, 0, true);
+    let other = &Type::int() - &lit(0);
+    let control = meet_of(
+        vec![
+            a0,
+            a1,
+            more_state("S2", false, vec![(lit(0), 3), (other.clone(), 2)]),
+            more_state("S3", true, vec![(lit(0), 2), (other, 3)]),
+        ],
+        vec![0, 2],
+    );
+    assert!(control.contains(&one(0, Value::atom("nil"))));
+    Type::forget_emptiness();
+    assert_eq!(control.verdict(), Verdict::Inhabited);
+}
+
+/// `affine_lists_empty` gives up when the integers no operand names swap three constraining
+/// operands, which no test reached (TEST-kernel-unreached-paths-14): the lists of even length,
+/// those with an odd count of items other than 7, and those with an even count of items other
+/// than 8. Each of 7 and 8 swaps two, which the class takes; the unnamed ones swap all three, an
+/// equation of three unknowns, so the search decides. `more(7, more(1, nil))` is in all three.
+#[test]
+fn a_parity_meet_whose_unnamed_integers_swap_three_operands_is_searched() {
+    let even = more_state("S0", true, vec![(Type::int(), 1)]);
+    let odd = more_state("S1", false, vec![(Type::int(), 0)]);
+    let [b0, b1] = keeps_one(2, 7, false);
+    let [c0, c1] = keeps_one(4, 8, true);
+    let t = meet_of(vec![even, odd, b0, b1, c0, c1], vec![0, 2, 4]);
+    let w = Value::atom_with(
+        "more",
+        vec![
+            Value::Int(7),
+            Value::atom_with("more", vec![Value::Int(1), Value::atom("nil")]),
+        ],
+    );
+    assert!(t.contains(&w));
+    assert!(!t.contains(&Value::atom("nil")));
+    Type::forget_emptiness();
+    assert_eq!(t.verdict(), Verdict::Inhabited);
+}
+
 /// Small instance of `bench::meets_of_k_members_scale`: the meet of a few even-length lists is
 /// settled with no search when an endless list is among them, and searched once otherwise; a
 /// meet of one member is a difference, which the decider settles with no search since

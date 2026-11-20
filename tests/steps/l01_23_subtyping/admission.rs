@@ -6,8 +6,8 @@
 //! `M` is a morphism type with guarantee, permission and value type, `A` a meet, `D` a
 //! difference, `T` a pair and `U` a union; `R0` and `R1` are the group's definitions.
 
-use zed_kernel::types::Type;
 use zed_kernel::types::rec::{Def, Expr, Group};
+use zed_kernel::types::{Type, Verdict};
 use zedc::lex::lex_fence;
 use zedc::parse::{TOP, parse};
 
@@ -97,6 +97,27 @@ fn the_named_groups() {
     for (name, bodies, ok) in cases {
         assert_eq!(accepted(bodies), ok, "{name}");
     }
+}
+
+/// The member of a group that is a morphism type whose guarantee and permission are closed and
+/// whose value type is the member: the group's system reads the morphism by its bounds alone
+/// (TEST-kernel-unreached-paths-14: no test had a guarantee outside its permission there).
+/// `R0 = M(top, int, R0)` promises every key and permits only integers, so it has no value;
+/// the control `R0 = M(empty, int, R0)` promises none, and the empty morphism is one.
+#[test]
+fn a_morphism_promising_more_than_it_permits_is_empty_in_a_group() {
+    let member = |l: Expr| {
+        let defs = vec![Def {
+            name: "R0".into(),
+            params: vec![],
+            body: m(l, int(), r(0)),
+        }];
+        Group::new(defs).unwrap().instance(vec![]).pop().unwrap()
+    };
+    Type::forget_emptiness();
+    assert_eq!(member(top()).verdict(), Verdict::Empty);
+    Type::forget_emptiness();
+    assert_eq!(member(empty()).verdict(), Verdict::Inhabited);
 }
 
 #[test]

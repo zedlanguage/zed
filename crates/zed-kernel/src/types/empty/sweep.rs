@@ -177,9 +177,6 @@ struct Sweep {
     heads: Vec<Type>,
     head_ids: ByType<usize>,
     classes: BTreeMap<(usize, Vec<usize>), Classes>,
-    /// The walk of each link alone: `Some(Some((value, next)))` for a step or an end, `Some(None)`
-    /// for empty.
-    walked: Vec<Option<Option<Step>>>,
     /// Per head and index, for the list being checked, the end of the held stretch the index
     /// starts: the index itself when its item is not in the head ([`Sweep::first_miss`]).
     misses: HashMap<(usize, usize), usize>,
@@ -1150,61 +1147,38 @@ impl Sweep {
     }
 
     /// Whether the link `x` alone holds a value, and its list: the chain walked until a bare
-    /// atom, a link with no tuple type, or a repeat, each link's answer kept. `None` when a
-    /// head has no value `pick` makes.
+    /// atom, a link with no tuple type, or a repeat. `None` when a head has no value `pick`
+    /// makes.
+    // Each link's walk was kept in a field until TEST-kernel-unreached-paths-14, for walks that
+    // meet one walked before. None does: `walk` is called only by `list_sweep_value`, twice,
+    // and each call returns its answer, so a `Sweep` (made new by each call of
+    // `list_sweep_value`) walks once; the kept answers were never read (count 0 over seeds 1
+    // to 9). One walk is O(L) for the L links it meets, plus the picks of their heads.
     fn walk(&mut self, x: usize) -> Option<Option<(Vec<Value>, Arc<str>)>> {
-        if self.walked.len() < self.links.len() {
-            self.walked.resize(self.links.len(), None);
-        }
         let mut path = Vec::new();
         let mut on_path = BTreeSet::new();
         let mut y = x;
-        let end = loop {
-            if let Some(w) = &self.walked[y] {
-                break w.is_some();
-            }
+        let last = loop {
             if !on_path.insert(y) {
-                break false;
+                return Some(None);
             }
             let l = &self.links[y];
             if let Some(a) = self.es[l.e].iter().next() {
-                self.walked[y] = Some(Some(Step::End(a.clone())));
-                break true;
+                break a.clone();
             }
             if l.head == NONE {
-                self.walked[y] = Some(None);
-                break false;
+                return Some(None);
             }
             path.push(y);
             y = l.tail;
         };
+        // The heads are picked last link first, as when the walks were kept.
+        let mut items = Vec::with_capacity(path.len());
         for &p in path.iter().rev() {
-            let (head, tail) = (self.links[p].head, self.links[p].tail);
-            self.walked[p] = Some(match end {
-                true => Some(Step::Item(self.pick(head)?, tail)),
-                false => None,
-            });
+            items.push(self.pick(self.links[p].head)?);
         }
-        if !end {
-            return Some(None);
-        }
-        let mut items = Vec::new();
-        let mut y = x;
-        loop {
-            match &self.walked[y] {
-                Some(Some(Step::End(a))) => return Some(Some((items, a.clone()))),
-                Some(Some(Step::Item(v, next))) => {
-                    items.push(v.clone());
-                    y = *next;
-                }
-                // Each entry of `walked` is written once, where it was `None`, and the path is
-                // written last link first, so an `Item(_, next)` is written only after
-                // `walked[next]` holds an `Item` or an `End`, also when `pick` gives up part way.
-                // With `end` the walk stopped at such an entry, so every `Item` from `x` leads
-                // to an `End`; `next` is kept in the entry, so links changed later do not matter.
-                _ => unreachable!("a walk that ends is kept on its path"),
-            }
-        }
+        items.reverse();
+        Some(Some((items, last)))
     }
 
     /// Whether the link `x` of `plain` holds the list of `items` ending in the bare atom `last`,
@@ -1510,13 +1484,6 @@ impl Plain {
             required,
         }
     }
-}
-
-/// One step of a walk: an item and the link after it, or the bare atom that ends the list.
-#[derive(Clone)]
-enum Step {
-    Item(Value, usize),
-    End(Arc<str>),
 }
 
 /// The threads: each at a link, taken or not, alive or not; by kind; their events by depth.

@@ -2143,8 +2143,12 @@ impl Printer<'_> {
             i = j;
             text = self.texts[i].as_ref().expect("visited");
         }
+        // A text of class `Of` is one `Seg::Node` (the proof is at `put`), and the loop above
+        // leaves `text` at a text that is not one node, so its class is not `Of`
+        // (TEST-kernel-unreached-paths-14: the arm that read the class of `Of` here was never
+        // reached).
         let class = match text.class {
-            Class::Of(j) => self.class(j, named),
+            Class::Of(_) => unreachable!("a text of class Of is one node"),
             c => c,
         };
         let wrap = !at.admits(class);
