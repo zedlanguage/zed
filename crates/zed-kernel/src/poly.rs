@@ -1808,12 +1808,17 @@ impl<K: Key> Poly<K> {
     /// for k parts of T terms in all, O(k^2) for a chain of k names. Merging balanced halves
     /// (the plan row's other option) reads O(T log k) terms, but reads a part of most of the
     /// terms at each of the log k levels. Merging the two smallest first is the optimal merge
-    /// pattern of sorted lists (D. A. Huffman, "A method for the construction of
-    /// minimum-redundancy codes", Proc. IRE 40(9), 1952; D. E. Knuth, The Art of Computer
-    /// Programming vol. 3, section 5.4.9): it reads each term once per level of the merge tree
-    /// it sits at, O(T log k) at most and O(T + k log k) for one large part and k small ones,
-    /// plus O(k log k) for the heap. Sizes are counted in terms, not words, so a part of few
-    /// wide coefficients may be merged later than its words would place it. The plan row's
+    /// pattern of sorted lists: D. A. Huffman, "A method for the construction of
+    /// minimum-redundancy codes", Proc. IRE 40(9):1098-1101, 1952,
+    /// doi:10.1109/JRPROC.1952.273898 (Crossref and the text checked 2026-11-20), whose step
+    /// combines "the two least probable messages" into one; with a list's length as its weight
+    /// this is the merge pattern, which D. E. Knuth, The Art of Computer Programming vol. 3,
+    /// section 5.4.9, applies to merging (from memory, not checked). It reads each term once
+    /// per level of the merge tree it sits at, O(T log k) at most and O(T + k log k) for one
+    /// large part and k small ones, plus O(k log k) for the heap. Test:
+    /// `a_chain_of_sums_is_one_sum` checks the result; the order of merging is not tested.
+    /// Sizes are counted in terms, not words, so a part of few wide coefficients may be merged
+    /// later than its words would place it. The plan row's
     /// first option, one map of all the terms, would still sort its T terms at the end,
     /// O(T log T), and would need its own handling of the parts' denominators, which
     /// [`Poly::add`] already brings to their lcm. Measured on a chain of n names times
@@ -2084,11 +2089,19 @@ impl<K: Key> Poly<K> {
     /// and `c_i c_j = c_j c_i`, a square needs only the `t (t - 1) / 2` pairs `i < j`, each
     /// counted twice, and the `t` pairs `i = j`: `t (t + 1) / 2` products and a sort of
     /// `t (t - 1) / 2`, about half the work and half the memory. This is the halving of
-    /// schoolbook squaring of numbers carried to sparse polynomials, as in Monagan and
-    /// Pearce's heap powering ("Sparse polynomial powering using heaps", CASC 2012); their
-    /// heap merge (after Johnson, "Sparse polynomial arithmetic", 1974) is a sort and a merge
-    /// here. The doubling is done once per merged monomial, not once per pair: a shift costs a
-    /// pass over the coefficient's words, so per pair it would add `t (t - 1) / 2` passes where
+    /// schoolbook squaring of numbers carried to sparse polynomials, as in M. Monagan and R.
+    /// Pearce, "Sparse polynomial powering using heaps", CASC 2012, LNCS, pp. 236-247,
+    /// doi:10.1007/978-3-642-32973-9_20 (Crossref checked 2026-11-20; no free copy found, so
+    /// that the paper halves the pairs of a square is from memory, not checked). Their heap
+    /// merge is after S. C. Johnson, "Sparse polynomial arithmetic", ACM SIGSAM Bull. 8(3):63-71,
+    /// 1974, doi:10.1145/1086837.1086847 (Crossref and the text checked 2026-11-20): the
+    /// candidate products are kept in "a heap", "the per term cost of the process of running the
+    /// heap is at most order of log n". Here it is a sort and a merge instead. Tests:
+    /// `a_square_counts_each_unordered_pair_once` and
+    /// `a_square_by_its_pairs_once_agrees_with_the_general_product`.
+    ///
+    /// The doubling is done once per merged monomial, not once per pair: a shift costs a pass
+    /// over the coefficient's words, so per pair it would add `t (t - 1) / 2` passes where
     /// a square with many equal monomials needs few; and doubling one factor before the
     /// products widens a coefficient of 64 bits to two words for every pair it is in. Measured
     /// in instructions by `crossover poly-square 256` (gaps 1 to 512): doubling each pair took
@@ -2199,9 +2212,17 @@ impl<K: Key> Poly<K> {
     /// whose pairs fall on `s` indices spread over a span much longer than `s`, far fewer than
     /// `t1 t2`, pays more than its output by either: `((x + y)^k + x)^2` has `3k + 3` terms of
     /// about `2k` bits, about `6 k^2` bits, against `k^3` words for the dense and `k^4 / 4096`
-    /// word products for the sparse product. The support product (after Arnold and Roche,
-    /// "Output-sensitive algorithms for sumset and sparse polynomial multiplication", ISSAC 2015)
-    /// folds both sides modulo `z^p - 1` for a prime `p` near `s`, which maps index `i` to
+    /// word products for the sparse product. The support product is after A. Arnold and D. S.
+    /// Roche, "Output-sensitive algorithms for sumset and sparse polynomial multiplication",
+    /// ISSAC 2015, ACM, pp. 29-36, doi:10.1145/2755996.2756653, arXiv:1501.05296 (Crossref and
+    /// the arXiv source checked 2026-11-20). Its sparse product's cost "is softly linear in the
+    /// combined size of the inputs, output, and the sumset of the supports of the inputs", and
+    /// it works modulo `x^p - 1`, where "reduction modulo (x^p-1) 'hashes' exponent e ∈ supp(F)
+    /// to e rem p". Departures: the paper's algorithms are randomized (Monte Carlo); here the
+    /// primes are drawn from a digest and every slot is checked exactly, as below. Tests:
+    /// `the_support_product_agrees_with_the_sparse_one` and
+    /// `the_product_takes_the_support_product_where_it_is_cheaper`. The support product folds
+    /// both sides modulo `z^p - 1` for a prime `p` near `s`, which maps index `i` to
     /// slot `i mod p`, and multiplies the folds densely: `O(s log s)` in `s` slots per round, with
     /// rounds of falling size, so `O(n log n)` in the output when the coefficients are not much
     /// wider than the output's. Its primes are drawn from the sides' content digest, so the work

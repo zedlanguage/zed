@@ -126,16 +126,21 @@ pub fn text_hasher() -> <TextState as std::hash::BuildHasher>::Hasher {
 /// The hasher of a content hash that must be the same in every run, such as a digest whose
 /// value reaches an order, a number shown to the user, or a test's expected output: the standard
 /// library's SipHash-1-3 with both keys zero (`DefaultHasher::new`), so the hash of a value is
-/// fixed for one build of the standard library. SipHash-c-d (J.-P. Aumasson and D. J.
-/// Bernstein, "SipHash: a fast short-input PRF", INDOCRYPT 2012, section 2): the state is four
-/// words `v0..v3` set from the 128-bit key `k0, k1` xored with four constants; each 8-byte word
-/// `m` of the input (the last padded with the length) is xored into `v3`, then `c` SipRounds of
-/// add-rotate-xor, then xored into `v0`; at the end `0xff` is xored into `v2`, `d` SipRounds
-/// run, and the hash is `v0 ^ v1 ^ v2 ^ v3`. The standard library takes `c = 1, d = 3` (the
-/// paper recommends `c = 2, d = 4`); here the key is `k0 = k1 = 0`, so the hash is a fixed
-/// function, not a PRF: it keeps the mixing, not the secret. It reads a value's bytes as one stream, so a
-/// text hashes as its `str` does. A program could choose values that collide, so a map whose keys
-/// are a program's text takes [`TextState`]; and SipHash costs several times foldhash's
+/// fixed for one build of the standard library. SipHash-c-d: J.-P. Aumasson and D. J.
+/// Bernstein, "SipHash: a fast short-input PRF", INDOCRYPT 2012, LNCS 7668, pp. 489-508,
+/// doi:10.1007/978-3-642-34931-7_28 (Crossref and the authors' copy, cr.yp.to, checked
+/// 2026-11-20). Section 2: the state is four words `v0..v3` set from the 128-bit key `k0, k1`
+/// xored with four constants; each 8-byte word `m` of the input (the last padded with null
+/// bytes and "ending with a byte encoding the positive integer b mod 256") is xored into `v3`,
+/// then `c` SipRounds of add-rotate-xor, then xored into `v0`; at the end "SipHash-c-d xors the
+/// constant ff to the state: v2 ⊕= ff", `d` SipRounds run, and the hash is `v0 ^ v1 ^ v2 ^ v3`.
+/// The paper's "fast proposal is thus SipHash-2-4"; the standard library takes `c = 1, d = 3`
+/// (its own documentation, from memory, not checked); here the key is `k0 = k1 = 0`, so the
+/// hash is a fixed function, not a PRF: it keeps the mixing, not the secret. Test:
+/// `the_fixed_and_digest_hashes_are_the_ones_they_replaced` checks it is `DefaultHasher::new`,
+/// not that that is SipHash-1-3. It reads a value's bytes as one stream, so a text hashes as its
+/// `str` does. A program could choose values that collide, so a map whose keys are a program's
+/// text takes [`TextState`]; and SipHash costs several times foldhash's
 /// instructions per word, so a hash that need not be fixed takes [`Digest`] or [`text_hash`].
 /// The one copy of the `BuildHasherDefault::<DefaultHasher>` the compiler wrote at each such
 /// site before (DRY-sorted-structures-2, job 3).
@@ -157,9 +162,15 @@ pub fn fixed_hasher() -> std::hash::DefaultHasher {
 /// [`Digest`], and the combination of two digests that `value` and `types` build theirs with;
 /// also the step of `zedc_preimage::address`'s digest of terms (DRY-sorted-structures, row 2).
 ///
-/// The constants are splitmix64's (S. Vigna, after Steele, Lea and Flood 2014): the golden-ratio
-/// increment `0x9e37_79b9_7f4a_7c15` and the multipliers and shifts 30, 27, 31 of its
-/// finalizer, a bijection of `u64` that mixes every input bit into every output bit. The
+/// The constants are splitmix64's: S. Vigna, `splitmix64.c` (2015, public domain,
+/// <https://prng.di.unimi.it/splitmix64.c>), "a fixed-increment version of Java 8's
+/// SplittableRandom generator", which is G. L. Steele Jr., D. Lea and C. H. Flood, "Fast
+/// splittable pseudorandom number generators", OOPSLA 2014, ACM, pp. 453-472,
+/// doi:10.1145/2660193.2660195 (Crossref and Vigna's source checked 2026-11-20; the constants
+/// here equal his). The golden-ratio increment `0x9e37_79b9_7f4a_7c15` and the multipliers
+/// and shifts 30, 27, 31 of its finalizer, a bijection of `u64` ("xorshifts and
+/// multiplications by odd constants are invertible", Vigna) that mixes the input bits into
+/// the output bits (an avalanche claim not tested here). The
 /// rotation by 29 of `h` before the xor makes the step depend on the order of the words, so
 /// `step(step(0, a), b)` and `step(step(0, b), a)` differ; `bdd::set::tests` inverts the step
 /// in each argument and relies on these exact constants.
