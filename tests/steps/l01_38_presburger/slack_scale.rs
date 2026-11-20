@@ -50,21 +50,26 @@ pub(super) fn weights(k: usize) -> Vec<i64> {
         .collect()
 }
 
+pub(super) use zed_tests::scaling::squares_mod;
+
 /// Tie-free weights up to `k = 1026`: prime `2053 > 1022 + 1023`, so `i^2 != j^2 (mod 2053)`
 /// for all `0 <= i < j <= 1026`, while keeping `w_i in [3000, 5052]` (`max_w < 2 * min_w`).
 pub(super) fn weights_untied(k: usize) -> Vec<i64> {
-    (0..k)
-        .map(|i| 3000 + 37 * (i as i64) * (i as i64) % 2053)
-        .collect()
+    squares_mod(k, 3000, 2053)
 }
 
 /// Tie-free weights up to `k = 4105`, as [`weights_untied`] with the prime `8209 > 2 * 4104`,
 /// so `i^2 != j^2 (mod 8209)` for all `0 <= i < j <= 4104`, and `w_i in [9000, 17208]`
 /// (`max_w < 2 * min_w`).
 pub(super) fn weights_distinct(k: usize) -> Vec<i64> {
-    (0..k)
-        .map(|i| 9000 + 37 * (i as i64) * (i as i64) % 8209)
-        .collect()
+    squares_mod(k, 9000, 8209)
+}
+
+/// Tie-free weights up to `k = 5524`, as [`weights_untied`] with the prime `11047`, and
+/// `w_i in [12000, 23046]` (`max_w < 2 * min_w`): for the untied halves of benchmarks whose `8k`
+/// passes the range of [`weights_distinct`].
+pub(super) fn weights_wide(k: usize) -> Vec<i64> {
+    squares_mod(k, 12000, 11047)
 }
 
 pub(super) fn choice_sum(w: &[i64], t: i64) -> Formula {
@@ -342,11 +347,16 @@ fn small_subset_sums_are_found_with_the_slack_probes() {
 /// `k/2` rows `y_{2r} + y_{2r+1} = w_{2r}` over two-point atoms, with one inequality over every
 /// atom.
 pub(super) fn build_many_linked(k: usize) -> Formula {
-    let w = weights(k);
+    build_many_linked_by(&weights(k))
+}
+
+/// [`build_many_linked`] over the weights `w`.
+pub(super) fn build_many_linked_by(w: &[i64]) -> Formula {
+    let k = w.len();
     let names: Vec<String> = (0..k).map(|i| format!("y{i}")).collect();
     let mut fs: Vec<Formula> = names
         .iter()
-        .zip(&w)
+        .zip(w)
         .map(|(n, &wi)| Formula::or(vec![eq(&[(n, 1)], 0), eq(&[(n, 1)], -wi)]))
         .collect();
     for r in 0..k / 2 {

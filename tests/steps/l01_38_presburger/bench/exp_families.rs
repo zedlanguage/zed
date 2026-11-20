@@ -36,10 +36,14 @@ costs!(dark_chain_decide, dark_chain, "x0", 'd', 16, 1, 2);
 costs!(dark_chain_satisfiable, dark_chain, "x0", 's', 16, 1, 2);
 costs!(dark_chain_project_each, dark_chain, "x0", 'p', 260, 1, 2);
 costs!(dark_chain_answers, dark_chain, "x0", 'a', 16, 1, 2);
-costs!(skew_block_decide, skew_block, "a0", 'd', 550, 1, 2);
+// skew_block's `decide`, `project_each` and `answers` took 17.7 s, 22.2 s and 21.5 s at k = 550,
+// 340 and 360 at load 38 (2026-11-20), and `answers` passed its limit of 23 s at load 36, so
+// their sizes are halved; the work grows 2.0 to 2.1 times a doubling, so the ratio is the same
+// from either start.
+costs!(skew_block_decide, skew_block, "a0", 'd', 275, 1, 2);
 costs!(skew_block_satisfiable, skew_block, "a0", 's', 370, 1, 2);
-costs!(skew_block_project_each, skew_block, "a0", 'p', 340, 1, 2);
-costs!(skew_block_answers, skew_block, "a0", 'a', 360, 1, 2);
+costs!(skew_block_project_each, skew_block, "a0", 'p', 170, 1, 2);
+costs!(skew_block_answers, skew_block, "a0", 'a', 180, 1, 2);
 costs!(nest_point_decide, nest_point, "x0", 'd', 2500, 1, 2);
 costs!(nest_point_satisfiable, nest_point, "x0", 's', 2600, 1, 2);
 costs!(nest_point_answers, nest_point, "x0", 'a', 1900, 1, 2);
@@ -71,8 +75,21 @@ costs!(subset_sum_decide, subset_sum, "y0", 'd', 200, 1, 1);
 costs!(subset_sum_satisfiable, subset_sum, "y0", 's', 200, 1, 1);
 costs!(subset_sum_answers, subset_sum, "y0", 'a', 200, 1, 1);
 // `project_each`: the method answers first (0.28M at 16, 1.68M at 128, 6.0 times), where the
-// solver answered first before (54.8M at 16, 594M at 128).
-costs!(subset_sum_project_each, subset_sum, "y0", 'p', 200, 1, 1);
+// solver answered first before (54.8M at 16, 594M at 128). The weights are distinct at every
+// size ([`subset_sum_untied`]): those of [`subset_sum`] repeat from i = 496, so k = 200 and 400
+// were untied and 800 and 1600 tied, and only the tied sizes paid the test of their ties
+// (`Renamed::by_structure` in `project_each`, PRES-project-each-naming): 12.1 times the
+// instructions from 200 to 1600 (17.3M and 210.5M, against 9.9M and 73.7M on main at
+// d7e7d86d0, 7.45 times).
+costs!(
+    subset_sum_project_each,
+    subset_sum_untied,
+    "y0",
+    'p',
+    200,
+    1,
+    1
+);
 
 /// A test that `op` on the window systems of seeds 0..20 costs work of order `n log n` in all,
 /// from `n` to `8n`, `n` at least 12. No bound is stated for the splinter search these reach

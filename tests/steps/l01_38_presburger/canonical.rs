@@ -81,7 +81,7 @@ fn distinct(c: &BTreeMap<Atom, u64>) -> usize {
 }
 
 /// All k! permutations of 0..k, the j-th by the factorial digits of j.
-fn permutations(k: usize) -> Vec<Vec<usize>> {
+pub(super) fn permutations(k: usize) -> Vec<Vec<usize>> {
     let count: usize = (1..=k).product();
     let perms: Vec<Vec<usize>> = (0..count)
         .map(|mut j: usize| {

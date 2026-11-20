@@ -25,16 +25,30 @@ fn a_box_and_one_row_scale() {
     });
 }
 
+/// The weights are distinct at both sizes (`slack_scale::weights_distinct`, distinct to 4105).
+/// With [`weights`], which repeat from `i = 496`, the atoms of the small size have each its own
+/// color and 3504 of the 3920 of the large size share one with another, so the two sizes took
+/// different paths: the large one alone paid the test of its ties (`Renamed::by_structure` in
+/// `project_each`, PRES-project-each-naming), 12.4 times the instructions of the small for
+/// target zero (44.8M and 557.5M, against 22.0M and 170.7M on main at d7e7d86d0, 7.8 times).
 #[test]
 fn residue_and_ends_of_a_row_scale() {
     let k = 490;
+    fn distinct(k: usize) -> Vec<i128> {
+        let w = crate::slack_scale::weights_distinct(k);
+        w.into_iter().map(i128::from).collect()
+    }
     for (name, build, answer) in [
         (
             "target zero",
-            (|k| choice_sum(&weights(k), 0)) as fn(usize) -> Formula,
+            (|k| choice_sum(&distinct(k), 0)) as fn(usize) -> Formula,
             true,
         ),
-        ("even weights, odd target", parity, false),
+        (
+            "even weights, odd target",
+            |k| parity_by(&distinct(k)),
+            false,
+        ),
     ] {
         let (small, large) = (build(k), build(scaling::FACTOR * k));
         let (ys, yl) = (names(k), names(scaling::FACTOR * k));

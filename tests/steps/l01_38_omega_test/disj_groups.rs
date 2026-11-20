@@ -863,13 +863,18 @@ pub(super) mod row_sums {
     /// `y_0 + .. + y_(a-1) == t1` and `y_b + .. + y_(k-1) == t2`, a = 2k/3, b = k/3: two sums
     /// that share the atoms `y_b .. y_(a-1)` (the family of QUESTIONS A87).
     pub(crate) fn overlap_rows(k: usize) -> Case {
-        let w = weights(k);
+        overlap_rows_by(&weights(k))
+    }
+
+    /// [`overlap_rows`] over the weights `w`, one atom each.
+    pub(crate) fn overlap_rows_by(w: &[i64]) -> Case {
+        let k = w.len();
         let (a, b) = (2 * k / 3, k / 3);
         Case {
-            ranges: two_values(&w),
+            ranges: two_values(w),
             rows: vec![
-                (ones(k, 0, a), even(&w, 0, a), true),
-                (ones(k, b, k), even(&w, b, k), true),
+                (ones(k, 0, a), even(w, 0, a), true),
+                (ones(k, b, k), even(w, b, k), true),
             ],
         }
     }
@@ -1340,6 +1345,11 @@ pub(super) mod row_sums {
                 );
             }
         }
+        // With the cover off the solver reads `f` as written, not `cover_input`'s writing, so
+        // its rows reach the join in another order and its units are its own: under the names
+        // `project_each` gives by structure, `overlap_rows(16)` takes 1,501 units with the cover
+        // and 1,454 without, and answered at 1,500 (PRES-project-each-naming).
+        let (u, _) = solver_alone(|| units_of(ask));
         assert_eq!(
             solver_alone(|| at_limit(u - 1, ask)),
             (Err(Refusal::Work), false),
@@ -1658,7 +1668,11 @@ pub(super) mod row_sums {
         /// span more than `2^62`, so the join has no plan (at k = 6 they do not, and it plans); each atom is scaled by its one value besides 0, each row is divided by
         /// `10^15`, and the join answers the rows of `overlap_rows(k)`.
         pub(crate) fn overlap_scaled(k: usize, step: i128) -> Big {
-            let case = super::overlap_rows(k);
+            overlap_scaled_by(&super::overlap_rows(k), step)
+        }
+
+        /// [`overlap_scaled`] of the case `case` in place of `overlap_rows(k)`.
+        pub(crate) fn overlap_scaled_by(case: &super::Case, step: i128) -> Big {
             Big {
                 ranges: (case.ranges.iter())
                     .map(|r| {
@@ -1682,8 +1696,15 @@ pub(super) mod row_sums {
         const STEP: i128 = 1_000_000_000_000_000;
 
         /// The scaled family with no plan, answered exactly; and its negative control, the same
-        /// with one atom's value 1 more, so the gcd of its row's coefficients is 1 and the keys
-        /// still pass `2^62`: no class answers.
+        /// with the value of `y_(k/3)`, an atom of both rows, 1 more, so the gcd of each row's
+        /// coefficients is 1 and the keys still pass `2^62`: no class answers. The control had
+        /// the 1 on `y_(k-1)`, which only the second row reads: the first row kept its factor
+        /// `10^15`, and dividing it out shrank its keys, so whether the join then had a plan
+        /// depended on the order of the rows. At k = 9 it had none under the written names and
+        /// one under the names `project_each` gives by structure (PRES-project-each-naming),
+        /// where the classes answered all 9 atoms exactly (`Joined(202)`, each set the one over
+        /// the points); with the 1 on `y_0` it was the other way round. With the 1 on an atom
+        /// of both rows, neither naming answers (2026-11-20, k = 9 and 12).
         #[test]
         fn sums_of_values_with_a_common_factor_past_2_62_are_answered_by_scaling() {
             for k in [9, 12, 15] {
@@ -1696,12 +1717,12 @@ pub(super) mod row_sums {
                 assert!(matches!(reduced.by, ReducedBy::Joined(_)), "k = {k}");
             }
             // The control goes to the solver, whose work on these values grows quickly with k
-            // (2026-11-19: 0.1 s at k = 9; 22 s for k = 9, 12 and 15 together), so it is asked
-            // at k = 9 alone.
+            // (2026-11-19: 0.1 s at k = 9; 22 s for k = 9, 12 and 15 together; 2026-11-20, the 1
+            // on `y_(k/3)`: 0.2 s at k = 9), so it is asked at k = 9 alone.
             let k = 9;
             let mut control = overlap_scaled(k, STEP);
-            control.ranges[k - 1][1].0 += 1;
-            control.ranges[k - 1][1].1 += 1;
+            control.ranges[k / 3][1].0 += 1;
+            control.ranges[k / 3][1].1 += 1;
             let want = control.brute();
             let t = std::time::Instant::now();
             let (answered, reduced) = control.projected(None, &want);

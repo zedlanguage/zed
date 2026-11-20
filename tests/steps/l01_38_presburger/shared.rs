@@ -1003,23 +1003,41 @@ fn taking_a_shared_part_out_keeps_the_holes_of_a_projection() {
     }
 }
 
-/// Formula 9 of seed 0x5f5b, `2 c >= -4 && !(...)`, whose projection narrows when the shared
-/// part `2 b >= 2` is taken out of the negated disjunction: the narrower sets hold every value
-/// of a point in the window. The random tests reach this case about once in 200 formulas.
-/// The solver alone (`solver_alone`) reads the formula as written and narrows `b` from
-/// (-inf, inf) to (-inf, 0]; with the exact cover both writings give the exact sets, `b` in
-/// (-inf, 0], so the same.
+/// Formula 2161 of seed 0x5f5b, `d == 2 && !(...)`, whose projection by the solver alone
+/// (`solver_alone`, which reads the formula as written) narrows when the shared part
+/// `3 b <= 2 && (3 b <= -4 || 2 a + b == 0)` is taken out of the negated disjunction: the
+/// narrower sets hold every value of a point in the window. With the exact cover both writings
+/// give the exact sets, so the same.
+///
+/// Formula 9 of the same seed, `2 c >= -4 && !(...)`, was this test's case until
+/// `project_each` renamed every question by its structure (PRES-project-each-naming): under its
+/// written names the solver alone narrows `b` from (-inf, inf) to (-inf, 0] once `2 b >= 2` is
+/// taken out, but under the names its structure gives it (every naming now gets those) the
+/// solver alone gives `b` in (-inf, inf) both ways, coarser than the exact (-inf, 0] (inside the
+/// negation `3 c <= 4 || 3 c >= 4` always holds, so `b <= 0`). The solver alone is a test
+/// control; with the cover, the default, both namings give the exact sets. The control below
+/// (`NAMES_AS_WRITTEN`) asks formula 9 under its written names, where the narrowing shows.
 #[test]
 fn a_shared_part_taken_out_narrows_a_projection() {
-    let mut rng = Rng::new(0x5F5B);
-    let f = (0..10)
-        .map(|_| random_tiers(&mut rng))
-        .last()
-        .expect("ten formulas");
-    let c = solver_alone(|| factoring_loses_no_precision([(9, f.clone())]));
+    use zedc::store::presburger::NAMES_AS_WRITTEN;
+    let f = tiers_formula(0x5F5B, 2161);
+    let c = solver_alone(|| factoring_loses_no_precision([(2161, f.clone())]));
     assert_eq!((c.same, c.narrower, c.answered), (0, 1, 0), "{c:?}");
-    let c = factoring_loses_no_precision([(9, f)]);
+    let c = factoring_loses_no_precision([(2161, f)]);
     assert_eq!((c.same, c.narrower, c.answered), (1, 0, 0), "{c:?}");
+    let f = tiers_formula(0x5F5B, 9);
+    let c = solver_alone(|| factoring_loses_no_precision([(9, f.clone())]));
+    assert_eq!((c.same, c.narrower, c.answered), (1, 0, 0), "{c:?}");
+    let c = factoring_loses_no_precision([(9, f.clone())]);
+    assert_eq!((c.same, c.narrower, c.answered), (1, 0, 0), "{c:?}");
+    NAMES_AS_WRITTEN.with(|n| n.set(true));
+    let c = solver_alone(|| factoring_loses_no_precision([(9, f)]));
+    NAMES_AS_WRITTEN.with(|n| n.set(false));
+    assert_eq!(
+        (c.same, c.narrower, c.answered),
+        (0, 1, 0),
+        "control: {c:?}"
+    );
 }
 
 /// The counts of [`factoring_loses_no_precision`]: projections the same as the formula's as
@@ -1264,4 +1282,48 @@ fn formula_67_of_seed_15455823323744612893_gets_one_set_for_d_however_written() 
     let (each, causes) = factored.expect("answered");
     assert_eq!(each[3], Ok(IntervalSet::top()), "formula 67: {f}");
     assert_eq!(causes, vec![Refusal::Repeats], "formula 67: {f}");
+}
+
+/// Formula 59 of seed 7188958203037625264 of
+/// [`taking_a_shared_part_out_of_a_disjunction_loses_no_precision`] (PRES-project-each-naming),
+/// `b == 0 && d >= 4 && !((u && 3 c <= -1) || (u && c >= -4) || (u && c <= 0 && 3 d <= 1))`
+/// with one shared part `u`, `a == -3 && 3 a + b <= -1`, under each of the 24 namings of its
+/// atoms: every `c` has a point (with `a != -3`), and taking `u` out leaves a disjunction over
+/// `c` that always holds, so the factored formula leaves `c` out. Once `project_each` renamed
+/// every question by its structure, `c` was asked under the name `#2` that the second
+/// renaming, of the factored formula, gave `a`, and came out `..=-4, -2..`, the set of `a`;
+/// `Renamed::there_all` now names an atom left out by a rank of its own.
+#[test]
+fn an_atom_the_factored_formula_leaves_out_keeps_its_own_set() {
+    use zedc::store::interval::IntervalSet;
+    use zedc::store::presburger::project_each;
+    let base = ["a", "b", "c", "d"];
+    for p in super::canonical::permutations(4) {
+        let n = |x: usize| base[p[x]];
+        let (a, b, c, d) = (n(0), n(1), n(2), n(3));
+        let u = and(vec![
+            row(&[(a, -1)], 3, true),
+            row(&[(a, -3), (b, -1)], 1, false),
+        ]);
+        let f = and(vec![
+            row(&[(b, 1)], 0, true),
+            row(&[(d, 1)], 4, false),
+            not(or(vec![
+                and(vec![u.clone(), row(&[(c, -3)], 1, false)]),
+                and(vec![u.clone(), row(&[(c, 1)], -4, false)]),
+                and(vec![
+                    u.clone(),
+                    row(&[(c, -1)], 0, false),
+                    row(&[(d, -3)], -1, false),
+                ]),
+            ])),
+        ]);
+        if p == [0, 1, 2, 3] {
+            assert_eq!(f, tiers_formula(7_188_958_203_037_625_264, 59), "the copy");
+        }
+        let syms: Vec<Atom> = [a, b, c, d].map(|n| Atom::Sym(n.into())).into();
+        let (each, _) = project_each(&f, &syms).expect("answered");
+        assert_eq!(each[2], Ok(IntervalSet::top()), "naming {p:?}: {f}");
+        factoring_loses_no_precision([(format!("59, naming {p:?}"), f)]);
+    }
 }

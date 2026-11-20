@@ -2425,7 +2425,11 @@ fn random_conjunction(rng: &mut Rng, n: usize) -> Vec<Row> {
                 c[rng.below(n)] = rng.int(-9, 9);
             }
             let k = rng.int(-30, 30);
-            if rng.below(4) == 0 { eq(&c, k) } else { ge(&c, k) }
+            if rng.below(4) == 0 {
+                eq(&c, k)
+            } else {
+                ge(&c, k)
+            }
         })
         .collect();
     let half = rng.int(5, 40);
@@ -2484,7 +2488,9 @@ fn every_naming_of_a_conjunction_gets_one_projection() {
     assert_eq!(answers(false).len(), 1, "{:?}", answers(false));
     // Each set answered is the set of values over the points of the box.
     let f = formula(&rows, &[0, 1, 2, 3, 4]);
-    let syms: Vec<Atom> = (0..5).map(|i| Atom::Sym(Arc::from(format!("v{i}")))).collect();
+    let syms: Vec<Atom> = (0..5)
+        .map(|i| Atom::Sym(Arc::from(format!("v{i}"))))
+        .collect();
     let (sets, _) = project_each(&f, &syms).expect("answered");
     let mut want = vec![std::collections::BTreeSet::new(); 5];
     let mut p = [-7i64; 5];

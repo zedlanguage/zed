@@ -69,13 +69,24 @@ fn target(w: &[i64]) -> i64 {
 /// `y[i] == 0 || y[i] == w[i]` for each i, and `Σ y[i] == t`, t no subset sum of the weights:
 /// k separate disjunctions and one row over all of them, no point.
 pub(super) fn subset_sum(k: usize) -> Formula {
-    let w = weights(k);
+    subset_sum_by(&weights(k))
+}
+
+/// [`subset_sum`] over the weights `1000 + 37 i² mod 3203`, between 1000 and 4202 and distinct
+/// to k = 1602 (`slack_scale::squares_mod`): the weights of [`subset_sum`] repeat from i = 496.
+pub(super) fn subset_sum_untied(k: usize) -> Formula {
+    subset_sum_by(&crate::slack_scale::squares_mod(k, 1000, 3203))
+}
+
+/// [`subset_sum`] over the weights `w`.
+fn subset_sum_by(w: &[i64]) -> Formula {
+    let k = w.len();
     let names: Vec<String> = (0..k).map(|i| format!("y{i}")).collect();
-    let mut fs: Vec<Formula> = (names.iter().zip(&w))
+    let mut fs: Vec<Formula> = (names.iter().zip(w))
         .map(|(y, &w)| Formula::or(vec![eq(&[(y, 1)], 0), eq(&[(y, 1)], -w)]))
         .collect();
     let terms: Vec<(&str, i64)> = names.iter().map(|n| (n.as_str(), 1)).collect();
-    fs.push(eq(&terms, -target(&w)));
+    fs.push(eq(&terms, -target(w)));
     Formula::and(fs)
 }
 

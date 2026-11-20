@@ -789,6 +789,16 @@ pub fn inputs<T>(n: usize, make: impl Fn(usize) -> T) -> std::collections::HashM
     [n, FACTOR * n].into_iter().map(|m| (m, make(m))).collect()
 }
 
+/// `base + 37 i^2 mod p` for `i < k`, distinct for `k <= (p + 1) / 2` when `p` is a prime other
+/// than 37: `37 i^2 = 37 j^2 (mod p)` gives `p | (i - j)(i + j)`, and for `0 <= i < j < k` both
+/// factors lie in `1..p`. Weights for the inputs of a scaling check that must not repeat at
+/// either size: where the small size has distinct weights and the large one repeats some, the
+/// atoms of equal weight can share a color, and only the large size pays the test of those ties
+/// in `project_each` (PRES-project-each-naming), so the two sizes take two paths.
+pub fn squares_mod(k: usize, base: i64, p: i64) -> Vec<i64> {
+    (0..k as i64).map(|i| base + 37 * i * i % p).collect()
+}
+
 /// [`check_order`] for work of order `n` or `n log n`: every pass of the compiler and runtime.
 pub fn check(what: &str, n: usize, run: impl Fn(usize) + Sync) {
     check_order(what, n, 1, run)

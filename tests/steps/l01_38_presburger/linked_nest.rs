@@ -163,6 +163,16 @@ fn twin_linked_nests_project_as_written_out_and_keep_every_value() {
     }
 }
 
+/// The twin nests held once and written out get one naming by structure: `Formula::cons` lists
+/// a part held in two places once, and the coloring that read that list named the two
+/// writings apart, so held once `x3` was refused (`Disjuncts`) where written out it was
+/// answered, and `y3`, which the formula's symmetry pairs with `x3`, was answered in both
+/// (PRES-project-each-naming).
+#[test]
+fn twin_nests_held_once_and_written_out_are_named_alike() {
+    twin_projects_as_written_out(3, &WEIGHTS[1], (4, 2));
+}
+
 /// The twin nests of depth `k` and weights `weight(i)` with `x{k} + y{k} == m h + r`: the pair
 /// held once projects as the pair written out, and each projection holds every value of the
 /// ways counted one by one.

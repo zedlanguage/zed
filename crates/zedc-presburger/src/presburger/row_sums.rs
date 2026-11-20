@@ -2912,10 +2912,32 @@ impl Plan {
                 order.push(j)
             }
         }
+        // Within a group the atoms go by the span of their values, least first, then by atom:
+        // the tables of the group's first t atoms ([`Groups::push`]) are built in this order,
+        // and their sizes depend on it. By atom alone the order was that of the names, so the
+        // work changed with the naming: on
+        // `l01_38_omega_test::bench::disj_groups::row_sums::two_overlapping_sums_with_coefficients_one_and_two_of_64_and_512_atoms_scale`
+        // at k = 14400, 8.7M units under the names `y0 ..` and past [`JOIN_LIMIT`] (20M, then
+        // a refusal `Questions` from the cover) under the names that `project_each` gives by
+        // structure, which put the atoms of coefficient 2 before those of 1
+        // (PRES-project-each-naming). By span: 9.62M under both, and 3.49M under both at
+        // k = 1800, where the names gave 3.99M and 11.2M. Least first keeps the early tables
+        // small, as in the subset-sum tables of Bellman's method, whose widths are the sums of
+        // the spans taken so far.
+        // Complexity tradeoff: one more comparison of two numbers per comparison of the sort,
+        // O(a log a) as before. Not proved: that least span first is the order of least work.
+        // The order still goes by name among atoms of one signature, one span and both wanted
+        // or both not, so the work can still differ with the naming there; `project_each`
+        // renames by structure first, which fixes the names wherever it does not tie atoms.
+        let span = |j: usize| {
+            let d = &rows.domains[j];
+            d[d.len() - 1].1 - d[0].0
+        };
         order.sort_unstable_by(|&a, &b| {
             sigs.sig(a)
                 .cmp(sigs.sig(b))
                 .then(wanted(a).cmp(&wanted(b)))
+                .then(span(a).cmp(&span(b)))
                 .then(a.cmp(&b))
         });
         let mut groups = Groups::with_capacity(order.len(), sigs.rows.len());

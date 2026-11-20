@@ -252,8 +252,8 @@ mod classes {
     use zed_tests::scaling;
     use zedc::store::presburger::{Atom, JOIN_LIMIT_SET, REDUCED, ReducedBy, project_each};
 
-    use crate::disj_groups::row_sums::classes::{Big, overlap_scaled};
-    use crate::disj_groups::row_sums::v;
+    use crate::disj_groups::row_sums::classes::{Big, overlap_scaled_by};
+    use crate::disj_groups::row_sums::{overlap_rows_by, v};
 
     /// `n + 1` atoms each in `0..=4` or `8..=12`, and the rows `y_i + 40·y_(i+1) == t_i` of
     /// one point: the coefficient 40 is greater than the width 12 of the term `y_i`, so each
@@ -333,10 +333,20 @@ mod classes {
         }
     }
 
-    /// `overlap_rows(k)` with its values times `10^15`, with no plan: scaled, then joined.
+    /// `overlap_rows(k)` with its values times `10^15`, with no plan: scaled, then joined. The
+    /// weights are distinct at both sizes (`scaling::squares_mod` with the prime 2053, distinct
+    /// to k = 1027). Those of `overlap_rows`, `1000 + 37 i^2 mod 991`, repeat from i = 496, so
+    /// at k = 128 no two atoms shared a color and at 1024, 187 pairs did, and only the large
+    /// size paid the test of its ties (`Renamed::by_structure` in `project_each`,
+    /// PRES-project-each-naming): 10.30 times the instructions (14.7M and 151.7M, against 9.2M
+    /// and 63.2M on main at d7e7d86d0, 6.88 times).
     #[test]
     fn overlapping_sums_of_scaled_values_are_projected_in_n_log_n() {
-        let inputs = scaling::inputs(128, |k| overlap_scaled(k, 1_000_000_000_000_000).formula());
+        let make = |k| {
+            let case = overlap_rows_by(&scaling::squares_mod(k, 3000, 2053));
+            overlap_scaled_by(&case, 1_000_000_000_000_000).formula()
+        };
+        let inputs = scaling::inputs(128, make);
         scaling::check_order("overlapping sums of scaled values projected", 128, 1, |k| {
             answered(&inputs[&k], &[v(0), v(k / 2), v(k - 1)], None);
         });

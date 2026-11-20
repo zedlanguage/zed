@@ -145,10 +145,14 @@ fn sat_half_tied_512_is_deterministic_and_scales() {
         drop(project_each(if m == k { &small } else { &large }, &y0));
     });
 
-    let build_u = |n: usize| half_sum(&weights_untied(n));
+    // Untied at both sizes: [`weights_untied`] is tie-free only to 1026, so at 5360 its atoms
+    // tied and the large size alone paid the test of its ties (`Renamed::by_structure` in
+    // `project_each`, PRES-project-each-naming): 12.2 times the instructions of the small
+    // (70.7M and 864.2M, against 34.0M and 256.5M on main at d7e7d86d0, 7.5 times).
+    let build_u = |n: usize| half_sum(&weights_wide(n));
     let (u_s, u_l) = (build_u(k), build_u(scaling::FACTOR * k));
     let (pu_l, _) = project_each(&u_l, &y0).expect("sat_half_untied project, large");
-    assert_eq!(pu_l[0], Ok(pt_set(&[0, 3000])));
+    assert_eq!(pu_l[0], Ok(pt_set(&[0, 12000])));
     scaling::check_order("project_each: sat_half_untied", k, 1, |m| {
         drop(project_each(if m == k { &u_s } else { &u_l }, &y0));
     });
@@ -158,11 +162,14 @@ fn sat_half_tied_512_is_deterministic_and_scales() {
 fn two_rows_scales() {
     let k = 690;
     let y0 = [sym("y0")];
-    let u_8 = build_two_rows(&weights_untied(8));
+    let u_8 = build_two_rows(&weights_wide(8));
     assert_eq!(decide(&u_8), Ok(true));
+    // Untied at both sizes, as in `sat_half_tied_512_is_deterministic_and_scales`: with
+    // [`weights_untied`], tie-free only to 1026, the large size alone was tied, 11.4 times the
+    // instructions of the small in `project_each` (PRES-project-each-naming).
     let (u_s, u_l) = (
-        build_two_rows(&weights_untied(k)),
-        build_two_rows(&weights_untied(scaling::FACTOR * k)),
+        build_two_rows(&weights_wide(k)),
+        build_two_rows(&weights_wide(scaling::FACTOR * k)),
     );
     // Satisfiable by construction; the solver alone refuses k = 64.
     assert_eq!(decide(&u_s), Ok(true));
@@ -170,7 +177,7 @@ fn two_rows_scales() {
     let m_l = satisfiable(&u_l).expect("decided").expect("satisfiable");
     assert!(u_l.holds(&m_l));
     let (pu_l, _) = project_each(&u_l, &y0).expect("two_rows_untied project, large");
-    assert!(pu_l[0].as_ref().expect("interval").contains(3000));
+    assert!(pu_l[0].as_ref().expect("interval").contains(12000));
     scaling::check_order("decide: two_rows_untied", k, 1, |m| {
         drop(decide(if m == k { &u_s } else { &u_l }));
     });
@@ -422,11 +429,20 @@ fn many_linked_rows_project_each_fails_the_order_check() {
 /// The same family with the join of row sums (module `row_sums`): the first row forces
 /// `y0 = w_0 = 1000` and `y1 = 0`, since `w_1 = 1037`, and the inequality holds whenever a value
 /// is 0, so `y0` is exactly {1000}; `project_each` is near linear.
+///
+/// The weights are distinct at both sizes ([`squares_mod`] with the prime 16001, distinct to
+/// 8001). With [`weights`], which repeat from `i = 496`, the atoms of the small size have each
+/// its own color and 1981 groups of the large size share one, so the two sizes took different
+/// paths: the large one alone paid the test of its ties and the second coloring
+/// (`Renamed::by_structure` in `project_each`, PRES-project-each-naming), 12.4 times the
+/// instructions of the small (118.7M and 1,466.6M, against 58.3M and 465.7M on main at
+/// d7e7d86d0, 8.0 times).
 #[test]
 fn many_linked_rows_project_each_scales_with_the_method() {
     let k = 1000;
     let y0 = [sym("y0")];
-    let (s, l) = (build_many_linked(k), build_many_linked(scaling::FACTOR * k));
+    let build = |n: usize| build_many_linked_by(&squares_mod(n, 1000, 16001));
+    let (s, l) = (build(k), build(scaling::FACTOR * k));
     scaling::check_order(
         "project_each: many linked rows, with the method",
         k,

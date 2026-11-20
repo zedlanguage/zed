@@ -98,12 +98,13 @@ impl Formula {
     /// `ctx` at the root, and `down(node, c)` at each part directly under a node reached with
     /// `c`. `up(node, c, results)` gives a node's result from its parts' results, in order.
     /// A shared part reached again with a context it was folded with takes its result from
-    /// then, so `up` is called once for each distinct part and context.
-    pub(super) fn fold<C: Copy + Eq + Hash, R: Clone>(
-        &self,
+    /// then, so `up` is called once for each distinct part and context. `up` is handed the
+    /// parts of the formula itself, so its results may borrow them ([`super::Numbered::of`]).
+    pub(super) fn fold<'a, C: Copy + Eq + Hash, R: Clone>(
+        &'a self,
         ctx: C,
         down: impl Fn(&Formula, C) -> C,
-        mut up: impl FnMut(&Formula, C, Vec<R>) -> R,
+        mut up: impl FnMut(&'a Formula, C, Vec<R>) -> R,
     ) -> R {
         /// A node whose parts are being folded, the parts left, where its parts' results
         /// start in the list of results, and its key when it is shared.

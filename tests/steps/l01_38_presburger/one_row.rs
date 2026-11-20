@@ -77,7 +77,12 @@ pub(super) fn choice_sum(w: &[i128], t: i128) -> Formula {
 
 /// Even weights and an odd target near half their sum: no point, by parity.
 pub(super) fn parity(k: usize) -> Formula {
-    let w: Vec<i128> = weights(k).iter().map(|w| 2 * w).collect();
+    parity_by(&weights(k))
+}
+
+/// [`parity`] over the weights `2 w`.
+pub(super) fn parity_by(w: &[i128]) -> Formula {
+    let w: Vec<i128> = w.iter().map(|w| 2 * w).collect();
     let half = w.iter().sum::<i128>() / 2;
     choice_sum(&w, half + 1 - half % 2)
 }

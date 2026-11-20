@@ -1996,8 +1996,15 @@ impl Renamed {
     /// atom has its own color or the atoms that share one are symmetric, [`Naming::Tied`]
     /// otherwise; never [`Naming::Kept`].
     fn ranked(f: &Formula) -> Naming {
-        let (atoms, _, color) = Self::colored(f);
-        let plain = Self::plain_by(&atoms, &color);
+        Self::ranked_colored(f, &Self::colored(f))
+    }
+
+    /// [`Renamed::ranked`] with `f`'s coloring ([`Renamed::colored`]) given.
+    fn ranked_colored(
+        f: &Formula,
+        (atoms, _, color): &(Vec<Atom>, Vec<Con>, Vec<usize>),
+    ) -> Naming {
+        let plain = Self::plain_by(atoms, color);
         let ties: Vec<Vec<Atom>> = (plain.chunk_by(|&p, &q| color[p] == color[q]))
             .filter(|c| c.len() > 1)
             .map(|c| c.iter().map(|&i| atoms[i].clone()).collect())
@@ -2008,7 +2015,8 @@ impl Renamed {
         if let Some(vars) = ties.first()
             && !Numbered::of(f).ties_are_symmetries(&ties)
         {
-            return Naming::Tied(vars.clone(), atoms.into_iter().zip(color).collect());
+            let colors = atoms.iter().cloned().zip(color.iter().copied()).collect();
+            return Naming::Tied(vars.clone(), colors);
         }
         let from: Vec<Atom> = plain.iter().map(|&i| atoms[i].clone()).collect();
         let tied =
@@ -2019,10 +2027,16 @@ impl Renamed {
     /// `f` renamed by its structure alone, with a disjunction or without one: by
     /// [`Renamed::ranked`], or where that ties two atoms, by [`Renamed::untied`]; `None` where
     /// both leave two atoms tied. Two namings of one formula give one renamed formula.
+    // Complexity tradeoff: naive version, `ranked` and `untied` each color `f`
+    // ([`Renamed::colored`]), which on the tied formula of
+    // `l01_38_presburger::bench::slack_scale::many_linked_rows_project_each_scales_with_the_method`
+    // (k = 8000) was about a fifth of this function's time. Used: one coloring, read by both;
+    // the cost is that of one coloring, O(L log L) for L links ([`stable_colors`]).
     fn by_structure(f: &Formula) -> Option<Renamed> {
-        match Self::ranked(f) {
+        let colored = Self::colored(f);
+        match Self::ranked_colored(f, &colored) {
             Naming::Renamed(r) => Some(r),
-            Naming::Tied(..) => Self::untied(f),
+            Naming::Tied(..) => Self::untied_colored(f, colored),
             Naming::Kept => None,
         }
     }
@@ -2060,7 +2074,14 @@ impl Renamed {
     // `l01_38_omega_test::names` rename every system and compare the answers.
     // A tie the pair coloring leaves goes to [`Renamed::individualized`].
     fn untied(f: &Formula) -> Option<Renamed> {
-        let (atoms, joins, color) = Self::colored(f);
+        Self::untied_colored(f, Self::colored(f))
+    }
+
+    /// [`Renamed::untied`] with `f`'s coloring ([`Renamed::colored`]) given.
+    fn untied_colored(
+        f: &Formula,
+        (atoms, joins, color): (Vec<Atom>, Vec<Con>, Vec<usize>),
+    ) -> Option<Renamed> {
         let (rows, groups) = nesting(f, &joins);
         let nested = stable_colors(&atoms, &rows, &groups, &[]);
         let mut by_pair: Vec<usize> = (0..atoms.len()).collect();
@@ -2202,8 +2223,18 @@ impl Renamed {
 
     /// The atoms of `f` with the rows that join each product to its factors, those rows, and
     /// the color of each atom ([`stable_colors`]) over the constraints of `f` and those rows.
+    // Each constraint is read once by its content: `Formula::cons` lists a part held in two
+    // places once and a part written out twice twice, so with its list the colors of the twin
+    // nests of `l01_38_presburger::linked_nest::twin_projects_as_written_out` differed between
+    // the two writings, and so did the names and, through `pick`'s order, a refusal (`x3`
+    // refused held once, answered written out, at k = 3, w = [1, 3, 5, 7], `x3 + y3 == 4 h +
+    // 2`). The pair coloring and [`Numbered`] already join equal parts ([`nesting()`]).
+    // Complexity tradeoff: one hash set of the constraints, O(C) for C constraints listed,
+    // against the coloring's O(L log L).
     fn colored(f: &Formula) -> (Vec<Atom>, Vec<Con>, Vec<usize>) {
+        let mut seen: HashSet<&Con> = HashSet::new();
         let mut cons = f.cons();
+        cons.retain(|c| seen.insert(*c));
         let mut atoms: BTreeSet<Atom> = BTreeSet::new();
         for c in &cons {
             atoms.extend(c.lin.terms.keys().cloned());
@@ -2265,16 +2296,47 @@ impl Renamed {
         Renamed { f, from, to, tied }
     }
 
-    /// The new name of `a`; an atom not in the formula keeps its own.
-    fn there(&self, a: &Atom) -> Atom {
-        rename(&self.to, a)
+    /// The new names of `syms`, the atoms a projection asks about. An atom not in the formula,
+    /// alone or as a factor of a product, is named `#n` for the ranks after those of the
+    /// formula's atoms, in the order of `syms`: keeping its own name could give it one of the
+    /// new names when the formula was renamed before ([`project_each_with`] renames it, and
+    /// [`project_each_named`] renames the factored formula again), and it would then be asked
+    /// as the atom of that name and given that atom's set (formula 59 of seed
+    /// 7188958203037625264 of
+    /// `l01_38_presburger::shared::taking_a_shared_part_out_of_a_disjunction_loses_no_precision`:
+    /// `c`, left out once the shared part was taken out, was named `#2` and given `a`'s set,
+    /// `..=-4, -2..`, where every `c` has a point). A name of the user's never starts with `#`.
+    // Complexity tradeoff: naive version, each atom renamed alone (`rename`), O(1) each.
+    // Used: the same, and where an atom is not in the formula, one copy of the map of new
+    // names, O(A) for its A atoms, against the projection, which reads every part. Test:
+    // `l01_38_presburger::shared::an_atom_the_factored_formula_leaves_out_keeps_its_own_set`.
+    fn there_all(&self, syms: &[Atom]) -> Vec<Atom> {
+        let absent =
+            |x: Atom| (matches!(x, Atom::Sym(_)) && !self.to.contains_key(&x)).then_some(x);
+        let left_out: Vec<Atom> = (syms.iter())
+            .flat_map(|a| match a {
+                Atom::Product(x, y) => vec![absent(x.atom()), absent(y.atom())],
+                Atom::Sym(_) | Atom::Aux(_) => vec![absent(a.clone())],
+            })
+            .flatten()
+            .collect();
+        if left_out.is_empty() {
+            return syms.iter().map(|a| rename(&self.to, a)).collect();
+        }
+        let mut to = self.to.clone();
+        for a in left_out {
+            let n = self.from.len() + to.len() - self.to.len();
+            to.entry(a).or_insert_with(|| Arc::from(format!("#{n}")));
+        }
+        syms.iter().map(|a| rename(&to, a)).collect()
     }
 
     /// The atom that `a`, a new name or one kept, stands for.
     fn back(&self, a: &Atom) -> Atom {
         let of = |s: &Arc<str>| {
             let k = s.strip_prefix('#').and_then(|k| k.parse::<usize>().ok());
-            k.map(|k| &self.from[k])
+            // A rank past `from` is one [`Renamed::there_all`] gave an atom not in the formula.
+            k.and_then(|k| self.from.get(k))
         };
         match a {
             Atom::Sym(s) => of(s).map_or_else(|| a.clone(), Atom::clone),
@@ -2333,11 +2395,17 @@ impl Renamed {
 /// A formula's distinct parts, each numbered by its structure, so that two parts with the same
 /// constraints, written alike, under the same connectives, with the parts of a conjunction or
 /// disjunction in any order, have one number ([`Renamed::of`]).
-struct Numbered {
+// Complexity tradeoff: naive version, each constraint copied twice, into `cons` and `con`,
+// O(T) allocations for the T terms of the formula: on one row over k atoms that share colors
+// (`l01_38_presburger::bench::one_row::residue_and_ends_of_a_row_scale`, k = 3920) the copies
+// were 24 MB of the 41 MB that the check of ties ([`Numbered::ties_are_symmetries`]) added to
+// each question renamed (row PRES-project-each-naming). Used: both borrow the constraints of
+// the formula, O(1) each beyond the hash of the constraint.
+struct Numbered<'a> {
     /// The number of each constraint.
-    cons: HashMap<Con, usize>,
+    cons: HashMap<&'a Con, usize>,
     /// The constraint of each part numbered that is one.
-    con: Vec<Option<Con>>,
+    con: Vec<Option<&'a Con>>,
     /// The number of each compound part, by its connective (`0` negation, `1` conjunction,
     /// `2` disjunction) and the numbers of its parts, sorted.
     keys: HashMap<(u8, Vec<usize>), usize>,
@@ -2358,9 +2426,9 @@ struct Numbered {
     root: usize,
 }
 
-impl Numbered {
+impl<'a> Numbered<'a> {
     /// The parts of `f` numbered.
-    fn of(f: &Formula) -> Numbered {
+    fn of(f: &'a Formula) -> Numbered<'a> {
         let mut s = Numbered {
             cons: HashMap::new(),
             con: Vec::new(),
@@ -2382,8 +2450,8 @@ impl Numbered {
                         return n;
                     }
                     let n = s.add(3, Vec::new());
-                    s.cons.insert(c.clone(), n);
-                    s.con[n] = Some(c.clone());
+                    s.cons.insert(c, n);
+                    s.con[n] = Some(c);
                     for a in c.lin.terms.keys() {
                         let factors = match a {
                             Atom::Product(x, y) if x == y => {
@@ -2454,7 +2522,9 @@ impl Numbered {
     // `decide_on_tied_disjunctions_scales` test it. If it did, tied atoms would be renamed as
     // interchangeable when they are not, and the answer could depend on the names chosen.
     fn ties_are_symmetries(&self, ties: &[Vec<Atom>]) -> bool {
-        (ties.iter()).all(|t| t.windows(2).all(|w| self.swaps_onto_itself(&w[0], &w[1])))
+        let mut work = Remap::default();
+        (ties.iter())
+            .all(|t| (t.windows(2)).all(|w| self.swaps_onto_itself(&w[0], &w[1], &mut work)))
     }
 
     /// Whether swapping the atoms `a` and `b`, which are not products, everywhere in the
@@ -2480,7 +2550,7 @@ impl Numbered {
     // Tests: `l01_38_omega_test::names::a_tie_that_every_swap_maps_onto_itself_is_renamed` and
     // `l01_38_omega_test::names::decide_on_tied_disjunctions_scales`, whose leaves every swap maps
     // onto themselves. COMPLEXITY.md row NAME-ties-or.
-    fn swaps_onto_itself(&self, a: &Atom, b: &Atom) -> bool {
+    fn swaps_onto_itself(&self, a: &Atom, b: &Atom, work: &mut Remap) -> bool {
         let swap = |x: &Atom| {
             if x == a {
                 b.clone()
@@ -2497,7 +2567,7 @@ impl Numbered {
             let (ka, kb) = (c.lin.terms.get(a), c.lin.terms.get(b));
             ka.is_some() && ka == kb
         };
-        self.maps_onto_itself(&[a, b], &swap, &own)
+        self.maps_onto_itself(&[a, b], &swap, &own, work)
     }
 
     /// Whether the permutation `to` of the atoms that are not products, each atom it moves
@@ -2509,31 +2579,44 @@ impl Numbered {
     fn permutes_onto_itself(&self, to: &HashMap<Atom, Atom>) -> bool {
         let moved: Vec<&Atom> = to.keys().collect();
         let map = |x: &Atom| to.get(x).cloned().unwrap_or_else(|| x.clone());
-        self.maps_onto_itself(&moved, &map, &|_| false)
+        self.maps_onto_itself(&moved, &map, &|_| false, &mut Remap::default())
     }
 
     /// Whether `map`, a permutation of the atoms that moves only atoms among `touched`, gives the
     /// formula again ([`Numbered::swaps_onto_itself`]); `own` says of a constraint with no
-    /// product that it is its own image without writing it out.
+    /// product that it is its own image without writing it out. `work` holds the lists of a
+    /// check, cleared here, so that the many swaps of one tie check allocate them once.
+    // Complexity tradeoff: naive version, new lists at each swap, a few allocations each, which
+    // on one row over k = 3920 atoms that share colors (`l01_38_presburger::bench::one_row::
+    // residue_and_ends_of_a_row_scale`) were most of the 16 MB the swaps of the tie check
+    // allocated. Used: the lists of `work`, cleared and kept; the same O(1) work per part read.
     fn maps_onto_itself(
         &self,
         touched: &[&Atom],
         map: &dyn Fn(&Atom) -> Atom,
         own: &dyn Fn(&Con) -> bool,
+        work: &mut Remap,
     ) -> bool {
         let swap = |x: Atom| map(&x);
         let factor = |x: &Factor| Factor::of(&swap(x.atom())).expect("a swapped factor");
-        let mut starts: Vec<usize> = (touched.iter())
-            .filter_map(|a| self.uses.get(*a))
-            .flatten()
-            .copied()
-            .collect();
-        zed_collections::sorted::sort_dedup(&mut starts);
-        // The new number of each part changed, the parts changed of each part above one, and
-        // the parts left to read, lowest first.
-        let mut now: HashMap<usize, usize> = HashMap::new();
-        let mut changed: HashMap<usize, Vec<usize>> = HashMap::new();
-        let mut left: BTreeSet<(u32, usize)> = BTreeSet::new();
+        let Remap {
+            starts,
+            now,
+            changed,
+            left,
+            count,
+        } = work;
+        starts.clear();
+        now.clear();
+        changed.clear();
+        left.clear();
+        starts.extend(
+            (touched.iter())
+                .filter_map(|a| self.uses.get(*a))
+                .flatten()
+                .copied(),
+        );
+        zed_collections::sorted::sort_dedup(starts);
         let moved = |n: usize,
                      m: usize,
                      now: &mut HashMap<usize, usize>,
@@ -2545,8 +2628,8 @@ impl Numbered {
                 left.insert((self.height[p], p));
             }
         };
-        for n in starts {
-            let c = self.con[n].as_ref().expect("a constraint numbered");
+        for &n in starts.iter() {
+            let c = self.con[n].expect("a constraint numbered");
             if !self.product[n] && own(c) {
                 continue;
             }
@@ -2566,7 +2649,7 @@ impl Numbered {
             };
             match self.cons.get(&image) {
                 None => return false,
-                Some(&m) if m != n => moved(n, m, &mut now, &mut changed, &mut left),
+                Some(&m) if m != n => moved(n, m, now, changed, left),
                 Some(_) => {}
             }
         }
@@ -2575,7 +2658,7 @@ impl Numbered {
             let times =
                 |k: usize| kids.partition_point(|&x| x <= k) - kids.partition_point(|&x| x < k);
             // Each part changed counted out as it was and in as it is now.
-            let mut count: Vec<(usize, isize)> = Vec::new();
+            count.clear();
             for &k in &changed.remove(&p).unwrap_or_default() {
                 let t = times(k) as isize;
                 count.push((k, -t));
@@ -2592,11 +2675,24 @@ impl Numbered {
             parts.sort_unstable();
             match self.keys.get(&(self.kind[p], parts)) {
                 None => return false,
-                Some(&m) => moved(p, m, &mut now, &mut changed, &mut left),
+                Some(&m) => moved(p, m, now, changed, left),
             }
         }
         !now.contains_key(&self.root)
     }
+}
+
+/// The lists of one check of [`Numbered::maps_onto_itself`], kept between the checks of one
+/// tie: the constraints to read first, the new number of each part changed, the parts changed
+/// of each part above one, the parts left to read, lowest first, and the count of a part's
+/// parts changed.
+#[derive(Default)]
+struct Remap {
+    starts: Vec<usize>,
+    now: HashMap<usize, usize>,
+    changed: HashMap<usize, Vec<usize>>,
+    left: BTreeSet<(u32, usize)>,
+    count: Vec<(usize, isize)>,
 }
 
 /// The refusal of a formula whose atoms `vars` share a color ([`Naming::Tied`]) and whose
@@ -19794,20 +19890,32 @@ const SOLVER: meter::Solver = meter::Solver {
 // `l01_39_reduced_product::pendants::refused_parts_projected_exactly_by_pendants_fourth_quarter_rest`.
 // COMPLEXITY.md row PROJECT-each-canon.
 fn project_each_with(f: &Formula, syms: &[Atom], cover: bool) -> Result<EachClassed, Refusal> {
+    // A formula the propagation shows empty has no point under any naming, and the propagation
+    // reaches one state in every order (`forced`'s module doc; `trial::Trial::holds` proves
+    // it), so its answer needs no renaming. Complexity tradeoff: naive version, the renaming
+    // first, which on the paired chain of
+    // `l01_38_presburger::bench::one_row::a_forced_contradiction_projects_to_empty_in_linear_work`
+    // (k = 16000) cost 2.0G instructions beyond main's 1.7G for the whole answer, almost all
+    // of it the second coloring of [`Renamed::untied`]. Used: the propagation first, O(n), and
+    // O(c) for the c top-level conjuncts where they give it no first step ([`forced::empty`]);
+    // a formula it does not show empty pays that pass and is then renamed, and the propagation
+    // runs again after [`cover_input`], which may show an emptiness the formula as written
+    // hides.
+    if forced::empty(f, &f.conjunct_list()) {
+        return Ok(EachClassed::plain(no_points(syms)));
+    }
     let renamed = (!NAMES_AS_WRITTEN.with(Cell::get))
         .then(|| Renamed::by_structure(f))
         .flatten();
     match renamed {
         Some(r) => {
-            let there: Vec<Atom> = syms.iter().map(|a| r.there(a)).collect();
+            let there = r.there_all(syms);
             project_each_as_named(&r.f, &there, cover)
                 .map(|e| EachClassed {
                     sets: (e.sets.into_iter())
                         .map(|s| s.map_err(|e| r.back_refusal(e)))
                         .collect(),
-                    causes: (e.causes.into_iter())
-                        .map(|e| r.back_refusal(e))
-                        .collect(),
+                    causes: (e.causes.into_iter()).map(|e| r.back_refusal(e)).collect(),
                 })
                 .map_err(|e| r.back_refusal(e))
         }
@@ -19815,13 +19923,10 @@ fn project_each_with(f: &Formula, syms: &[Atom], cover: bool) -> Result<EachClas
     }
 }
 
-/// [`project_each_with`] of `f` under its own names: the formula renamed by its structure
-/// ([`Renamed::by_structure`]), or as written where its structure ties two atoms.
-fn project_each_as_named(
-    f: &Formula,
-    syms: &[Atom],
-    cover: bool,
-) -> Result<EachClassed, Refusal> {
+/// [`project_each_with`] of `f` under the names `f` has, with no renaming: [`project_each_with`]
+/// passes the formula renamed by its structure ([`Renamed::by_structure`]), or the formula as
+/// written where its structure ties two atoms or [`NAMES_AS_WRITTEN`] is set.
+fn project_each_as_named(f: &Formula, syms: &[Atom], cover: bool) -> Result<EachClassed, Refusal> {
     // Complexity tradeoff: projecting a contradiction by repeatedly settling the whole
     // formula can cost O(k^2) on k paired disjunctions in a chain. The forced propagator
     // already used by decide visits each part/term through its incidence queues, O(n)
@@ -19882,8 +19987,9 @@ fn project_each_as_named(
     // writing and refused in another. With the cover turned off (`meter::EXACT_OFF`) the
     // solver reads `f` as written: `cover_input` writes a shared part `u` of one row as that
     // row, which [`factored`] did not take out, and so it lost the narrowing of seed 0x5f5b's
-    // formula 9 (`b` in (-inf, inf) where the formula as written gives (-inf, 0]; test
-    // `l01_38_presburger::shared::a_shared_part_taken_out_narrows_a_projection`).
+    // formula 9 under its written names (`b` in (-inf, inf) where the formula as written gives
+    // (-inf, 0]); test, now on its formula 2161, with formula 9 as written as its control:
+    // `l01_38_presburger::shared::a_shared_part_taken_out_narrows_a_projection`.
     let written;
     let f = if cover && !meter::EXACT_OFF.get() {
         written = cover_input(f);
@@ -20892,7 +20998,7 @@ fn project_each_named(f: &Formula, syms: &[Atom]) -> Result<Each, Refusal> {
     {
         return tied.expect("a tied projection");
     }
-    let there: Vec<Atom> = syms.iter().map(|s| r.there(s)).collect();
+    let there = r.there_all(syms);
     let renamed = project_each_inner(&r.f, &there)
         .map_err(|e| r.back_refusal(e))
         .map(|(each, skipped)| {
