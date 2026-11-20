@@ -315,14 +315,21 @@ pub mod m61 {
     /// The Mersenne prime `2^61 - 1`.
     pub const P: u64 = (1 << 61) - 1;
 
+    // `#[inline]` on the four word routines: they are a few instructions each, and without it
+    // a caller in another crate (zed-kernel's text hash, its map sums) calls them out of line,
+    // which `perf` showed as the larger part of the cost of hashing a long text
+    // (FAIL-bench-string-scaling-near-limit, 2026-11-20).
+
     /// `a + b mod P`, for `a < P` and `b <= P` (`b = P` is read as 0, so `sub(a, 0)` needs no
     /// special case): `a + b < 2P < 2^62`, and one subtraction brings it below `P`.
+    #[inline]
     pub const fn add(a: u64, b: u64) -> u64 {
         let s = a + b;
         if s >= P { s - P } else { s }
     }
 
     /// `a - b mod P`, for `a, b < P`: `a + (P - b)`, with `P - b` in `1..=P` ([`add`]).
+    #[inline]
     pub const fn sub(a: u64, b: u64) -> u64 {
         add(a, P - b)
     }
@@ -333,6 +340,7 @@ pub mod m61 {
     // measured the same (`examples/timing.rs`, 2^20 dependent products: 4.9 ms and 5.0 ms), so
     // the fold is kept for being one `const` routine with a proof, not for speed. Division by a
     // modulus known only at run time (`mul_mod`) is the slow case.
+    #[inline]
     pub const fn mul(a: u64, b: u64) -> u64 {
         let x = (a as u128) * (b as u128);
         // `2^61 = 1 (mod P)`, so the high part adds to the low part, and one subtraction ends
@@ -357,6 +365,7 @@ pub mod m61 {
 
     /// `b^e mod P`, for `b < P`, by squaring over the bits of `e`: at most 64 squarings and 64
     /// products. `0^0 = 1`.
+    #[inline]
     pub const fn pow_word(mut b: u64, mut e: u64) -> u64 {
         let mut r = 1;
         while e > 0 {
@@ -367,6 +376,93 @@ pub mod m61 {
             e >>= 1;
         }
         r
+    }
+
+    /// A sum `s` of at most eight residues, each below `P`, reduced below `P`.
+    ///
+    /// Proof. `s <= 8 (P - 1) < 2^64`, so the sum did not wrap, and `s = hi 2^61 + lo` with
+    /// `hi = s >> 61 <= 7` and `lo = s & P <= P`. As `2^61 = 1 (mod P)`, `s = hi + lo (mod P)`,
+    /// and `r = hi + lo <= P + 7`; one subtraction of `P` leaves `r - P <= 7 < P`.
+    #[inline]
+    const fn fold8(s: u64) -> u64 {
+        let r = (s & P) + (s >> 61);
+        if r >= P { r - P } else { r }
+    }
+
+    /// The polynomial hash of byte strings for one base `B < P`: for the bytes `b_0 .. b_(n-1)`,
+    /// `h = Σ (b_i + 1) B^(n - 1 - i) mod P`, with `B^n mod P`, the power a caller needs to
+    /// join the hash of one string to the hash of the next (`h(xy) = h(x) B^|y| + h(y)`).
+    /// zed-kernel `Text::poly_hash` is the user; its doc comment holds the source (Karp and
+    /// Rabin 1987, doi:10.1147/rd.312.0249) and its departures from it.
+    ///
+    /// Method. The hash by Horner's rule, `h <- h B + (b + 1)`, costs one product and one sum
+    /// modulo `P` per byte, and each product waits on the one before it. Here eight bytes are
+    /// taken at once: `h <- h B^8 + Σ_j (b_j + 1) B^(7 - j)`, which is Horner's rule regrouped,
+    /// so the hash is the same number. The eight terms are read from tables `digits[j][b] =
+    /// (b + 1) B^(7 - j) mod P`, made once by [`PolyBytes::new`] (8 · 256 words, 16 KiB); their
+    /// sum is reduced by one fold (`fold8`), and one product by `B^8` joins it to the hash.
+    /// A tail of `k < 8` bytes uses the tables `8 - k ..= 7`, whose powers are `B^(k - 1 - j)`
+    /// for its byte `j`, and the product `B^k`.
+    // Complexity tradeoff: both are O(n) for n bytes. Horner's rule costs two products modulo
+    // `P` per byte (the hash and the power), about 41 instructions per byte when the products
+    // were called out of line (`perf`, the l01_36 `string_scaling` benches,
+    // FAIL-bench-string-scaling-near-limit). Here a byte costs one table load and one addition,
+    // and eight bytes share two products and one fold: about 5 instructions per byte, for 16
+    // KiB of tables made at compile time. A wider step (sixteen bytes) would need a second fold
+    // per step, as sixteen residues can pass 2^64. Tests:
+    // `tests::the_eight_byte_hash_is_horners_rule`, and zed-kernel
+    // `text::tests::the_poly_hash_of_a_text_is_its_bytes_hash`.
+    pub struct PolyBytes {
+        /// `B^k mod P` for `k` in `0..=8`.
+        pows: [u64; 9],
+        /// `digits[j][b] = (b + 1) B^(7 - j) mod P`.
+        digits: [[u64; 256]; 8],
+    }
+
+    impl PolyBytes {
+        /// The tables for the base `b`, which must be below `P`.
+        pub const fn new(b: u64) -> Self {
+            assert!(b < P, "the base of a hash modulo P is below P");
+            let mut pows = [1; 9];
+            let mut k = 1;
+            while k <= 8 {
+                pows[k] = mul(pows[k - 1], b);
+                k += 1;
+            }
+            let mut digits = [[0; 256]; 8];
+            let mut j = 0;
+            while j < 8 {
+                let mut x = 0;
+                while x < 256 {
+                    // `x + 1 <= 256 < P`, as `mul` needs.
+                    digits[j][x] = mul(x as u64 + 1, pows[7 - j]);
+                    x += 1;
+                }
+                j += 1;
+            }
+            PolyBytes { pows, digits }
+        }
+
+        /// The hash of `bytes` and `B` to their length, both modulo `P`.
+        pub fn hash(&self, bytes: &[u8]) -> (u64, u64) {
+            let (words, tail) = bytes.as_chunks::<8>();
+            let (mut h, mut p) = (0, 1);
+            let b8 = self.pows[8];
+            for w in words {
+                let mut s = 0;
+                for (j, &x) in w.iter().enumerate() {
+                    s += self.digits[j][usize::from(x)];
+                }
+                h = add(mul(h, b8), fold8(s));
+                p = mul(p, b8);
+            }
+            let k = tail.len();
+            let mut s = 0;
+            for (j, &x) in tail.iter().enumerate() {
+                s += self.digits[8 - k + j][usize::from(x)];
+            }
+            (add(mul(h, self.pows[k]), fold8(s)), mul(p, self.pows[k]))
+        }
     }
 }
 

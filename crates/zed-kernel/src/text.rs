@@ -645,14 +645,18 @@ const POLY_B: u64 = 0x0f3d_5b79_a2c4_e681;
 // `a · b` and `a + b` modulo `2^61 − 1`, for operands below it.
 use zed_numtheory::m61::{add as poly_add, mul as poly_mul};
 
+/// The tables of the eight-bytes-at-a-time hash for the base `B`, made at compile time.
+static POLY: zed_numtheory::m61::PolyBytes = zed_numtheory::m61::PolyBytes::new(POLY_B);
+
 /// The hash of `bytes` ([`Text::poly_hash`]) and `B` to their length, modulo `2^61 − 1`.
+// Complexity tradeoff: O(n) either way. Horner's rule one byte at a time cost about 41
+// instructions per byte (two products modulo `2^61 − 1` per byte, called out of line), which
+// made the hashes of 64 KB literals most of the l01_36 `string_scaling` appending benches and
+// had them killed at the time limit (FAIL-bench-string-scaling-near-limit). The shared
+// `zed_numtheory::m61::PolyBytes` takes eight bytes per step from tables, the same hash, about
+// 5 instructions per byte; its comment has the method and the proof.
 fn poly_bytes(bytes: &[u8]) -> (u64, u64) {
-    bytes.iter().fold((0, 1), |(h, p), &b| {
-        (
-            poly_add(poly_mul(h, POLY_B), u64::from(b) + 1),
-            poly_mul(p, POLY_B),
-        )
-    })
+    POLY.hash(bytes)
 }
 
 /// What one node of a text's tree holds ([`Text::piece`]).

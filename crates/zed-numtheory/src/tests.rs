@@ -249,6 +249,33 @@ fn the_mersenne_arithmetic_agrees_with_division() {
     assert_eq!(m61::pow(u64::MAX, &BigUint::from(1u8)), u64::MAX % P);
 }
 
+/// The polynomial hash of `bytes` by Horner's rule, one byte at a time, and `b` to their length:
+/// the definition `m61::PolyBytes::hash` is checked against.
+fn horner(b: u64, bytes: &[u8]) -> (u64, u64) {
+    bytes.iter().fold((0, 1), |(h, p), &x| {
+        (m61::add(m61::mul(h, b), u64::from(x) + 1), m61::mul(p, b))
+    })
+}
+
+#[test]
+fn the_eight_byte_hash_is_horners_rule() {
+    use m61::P;
+    let mut next = words("the_eight_byte_hash_is_horners_rule");
+    for b in [0, 1, 2, P - 1, 0x0f3d_5b79_a2c4_e681, next() % P] {
+        let poly = m61::PolyBytes::new(b);
+        // Every tail length, and every chunk boundary up to eight chunks, with random bytes, all
+        // 0xFF (the largest digits, the largest sum before a fold) and all zero bytes.
+        let mut lens: Vec<usize> = (0..=72).collect();
+        lens.extend((0..8).map(|_| (next() % 5000) as usize));
+        for n in lens {
+            let random: Vec<u8> = (0..n).map(|_| next() as u8).collect();
+            for bytes in [random, vec![0xFF; n], vec![0; n]] {
+                assert_eq!(poly.hash(&bytes), horner(b, &bytes), "base {b}, {n} bytes");
+            }
+        }
+    }
+}
+
 #[test]
 fn the_inverse_seed_is_right_in_five_bits() {
     for x in (1..32u64).step_by(2) {
