@@ -377,6 +377,32 @@ fn arms_of_a_test_whose_small_choice_misses_the_bound_keep_every_range() {
     }
 }
 
+/// The shared step of the cover reads `heavy` with the allowance only for what its structure
+/// does not bound (LIMITS-shared-step-allowance): its reading, 1.35M units at depth 180, is
+/// charged past the allowance, so a smaller limit changes neither the answer nor the work.
+/// Before, the reading met the allowance (5 times the limit), and at limits 30,000, 100,000 and
+/// 200,000 the step gave up and each symbol was covered alone: 2.68M, 2.90M and 4.43M units
+/// against 1.97M with the step whole.
+#[test]
+fn a_small_limit_leaves_the_shared_reading_of_a_deep_test_whole() {
+    use zedc::store::presburger::exact::{EXACT_LIMIT_SET, EXACT_WORK};
+    let run = |limit: Option<u64>| {
+        EXACT_LIMIT_SET.set(limit);
+        let w = EXACT_WORK.get();
+        let h = x_hulls(heavy(180));
+        EXACT_LIMIT_SET.set(None);
+        (h, EXACT_WORK.get() - w)
+    };
+    let (hulls, work) = run(None);
+    assert_eq!(
+        hulls,
+        ["[0..=10, 20..=30, 100..=200]", "[..]"].map(String::from)
+    );
+    for limit in [30_000, 100_000, 200_000, 500_000] {
+        assert_eq!(run(Some(limit)), (hulls.clone(), work), "limit {limit}");
+    }
+}
+
 /// `100 <= x <= 200 || (0 <= x <= 10 && (q >= 0 && inner || q <= -1 && 3 <= x <= 4) && (y >= 1
 /// && x >= 5 || q <= -1))`: a branch whose first choice holds `inner`, a choice between `x`
 /// and `y` of opposite signs, beside a second choice that needs `y >= 1` and `x >= 5`.

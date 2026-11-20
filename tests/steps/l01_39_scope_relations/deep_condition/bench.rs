@@ -179,3 +179,25 @@ fn the_search_for_a_point_tests_each_part_of_a_deeper_test_a_bounded_number_of_t
     // `the_search_for_a_point_tests_each_part_of_a_deep_test_a_bounded_number_of_times`).
     on_a_deep_stack(|| parts_tested_per_level([60, 480]));
 }
+
+#[test]
+fn arms_of_a_test_whose_small_choice_misses_the_bound_take_time_near_linear_past_the_shared_allowance()
+ {
+    // At 720 the shared step of the cover reads 5.3M units, at 5760 42.6M, past the 15.3M
+    // (5 times `EXACT_LIMIT`) it was once given; past about depth 2,050 it gave up there and
+    // every symbol was covered alone, 92M units at 5760 against 62.5M now
+    // (LIMITS-shared-step-allowance).
+    on_a_deep_stack(|| {
+        let tests: BTreeMap<usize, Term> = [720, 5760]
+            .map(|d| (d, if_(heavy(d), lit(1), lit(2))))
+            .into();
+        let scope = ints(&level_names());
+        scaling::check(
+            "arms of a test whose small choice misses the bound, past the shared allowance",
+            720,
+            |d| {
+                std::hint::black_box(arms(&tests[&d], &scope));
+            },
+        );
+    });
+}

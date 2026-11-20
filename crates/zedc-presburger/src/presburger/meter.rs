@@ -122,6 +122,30 @@ impl Work {
         self.charge(rows.saturating_mul(QUESTION_ROW))
     }
 
+    /// `run`, its charges counted as any others (in `used` and [`EXACT_WORK`]) but not against
+    /// the limit: the limit is moved up by exactly what `run` charged. Only for a step whose
+    /// work its own structure bounds and that runs no solver step and no elimination (no
+    /// [`Work::metered`], [`Work::ask`] or `eliminate`): with the limit out of the way such a
+    /// step cannot run on without end, and every step that can still meets the limit.
+    /// Used by `exact::shared_cells` (row LIMITS-shared-step-allowance).
+    pub(super) fn exempt<T>(
+        &mut self,
+        run: impl FnOnce(&mut Work) -> Result<T, Refusal>,
+    ) -> Result<T, Refusal> {
+        let (before, limit) = (self.used, self.limit);
+        self.limit = u64::MAX;
+        let out = run(self);
+        self.limit = limit.saturating_add(self.used - before);
+        out
+    }
+
+    /// Moves the limit up by `units`: room a step declares for itself, such as the rows
+    /// `exact::quick_search` may read, given on top of the limit (row
+    /// LIMITS-shared-step-allowance).
+    pub(super) fn credit(&mut self, units: u64) {
+        self.limit = self.limit.saturating_add(units);
+    }
+
     /// `run`, its work counted by the solver's meter ([`charge`]) and charged here, the meter
     /// given the work left: refused with [`Refusal::Questions`] where it passes the limit,
     /// whatever `run` returned, since a step that reads a spent meter as no point (as

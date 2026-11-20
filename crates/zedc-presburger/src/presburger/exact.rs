@@ -283,9 +283,24 @@ pub(super) fn exact_each_checked(
     // no reading, and the phase would only add questions where [`direct`] asks none
     // (`tests::fast_path_uses_the_full_work_limit_and_zero_allowance_walks_nothing`). Its work
     // goes into `once[i].1`, the `w` charged below, from an allowance of `k·L` less what the
-    // certificates and the reading spent (`allowed`), so the bound `4·k·L` below is unchanged;
-    // a certified symbol's share of `w` comes off a fast allowance it no longer uses.
-    // Complexity tradeoff: see [`shared_cells`].
+    // certificates and the reading spent (`allowed`); a certified symbol's share of `w` comes
+    // off a fast allowance it no longer uses. The allowance meets only the step's work that its
+    // structure does not bound (`cell`, whose projections and eliminations run the solver, and
+    // the questions); its reading, which grows with the part, is charged past it
+    // ([`Work::exempt`] for `point_cells` and its own reads, [`Work::credit`] of the declared
+    // room of each `quick_search`), so `tried` returns at most `allowed` used and `w <= k·L`
+    // still, which the even charge below needs. The call's work is then at most `4·k·L` plus
+    // that reading, O((k + 1)·T·α(T) + k·size) for T the terms of the part (see
+    // [`shared_cells`]); the covers it stands in for read the part at least once a symbol.
+    // Complexity tradeoff: before, the reading met the allowance too, a fixed `k·L` (15.3M
+    // units for the 5 names of `deep_condition`'s `heavy`) that does not grow with the part: the
+    // step read 10.67M at depth 1,440 and gave up past about 2,050, and every symbol was then
+    // covered alone, 92M units at depth 5,760 where the step alone now answers in 62.5M (55M
+    // against 31.3M at 2,880), a change of method at a size set by no cost model
+    // (LIMITS-shared-step-allowance, the no-thresholds rule). Naive alternatives: no allowance
+    // at all, which leaves `cell`'s eliminations and the solver runs of `quick_search`'s leaves
+    // with no bound; or a larger fixed one, which only moves the crossing. See also
+    // [`shared_cells`].
     let mut small_points: Vec<Vec<Model>> = vec![Vec::new(); parts.len()];
     let mut shared: Vec<HashMap<Atom, IntervalSet>> = vec![HashMap::new(); parts.len()];
     for (i, p) in parts.iter().enumerate() {
@@ -979,7 +994,14 @@ fn quick_search(
                         }
                     }
                 }
-                if read > room {
+                // The branch's own rows count too: `read` takes them only where the branch is
+                // cut or ends, and `f` is a DAG walked as a tree, so one branch can take rows
+                // past any bound in the size of `f` (a kept conjunction used at many places,
+                // `Formula::and_keeping`). Without `took` here the walk was bounded by the
+                // unfolded tree of `f`, not by `room` (LIMITS-shared-step-allowance; test
+                // `tests::quick_search_stops_at_its_room_on_a_branch_longer_than_its_formula`).
+                if read + took > room {
+                    read += took;
                     break 'run None;
                 }
             }
@@ -2882,6 +2904,25 @@ fn read_once(f: &Formula, work: &mut Work) -> Result<Option<ReadOnce>, Refusal> 
 // costs what it cost before. Where `I` is a forest of two-atom rows the cells are exact
 // projections; elsewhere a line can be narrower than the projection, and the symbol is then
 // left to its own cover, never answered wrongly.
+// What meets `work`'s limit (the allowance of [`exact_each`]): `cell` (its eliminations and
+// projections run the solver) and each question, the work with no bound of its own. Charged
+// past it (row LIMITS-shared-step-allowance):
+// - `point_cells` and this step's reads of `size`, 1, `want` and [`PIECE`]s, with
+//   [`Work::exempt`]: `point_cells` runs no solver step, only [`implicant`] (each shared part
+//   walked once, by its `seen`), [`row_groups`] (union-find, O(t·α(t)) for t terms),
+//   [`forest`] and [`star`] (linear, by their notes) and a loop over the implicant's columns,
+//   so O(T·α(T)) for T the terms of the part; it runs once a point, and the points are at most
+//   k + 1 (one found first, then one a symbol, each symbol asking once);
+// - the declared room of each [`quick_search`] and [`quick_point`] (`2·(size + 2)` rows,
+//   [`SOLVER_UNIT`] each), with [`Work::credit`], at most k + 1 of them. Only the declared room
+//   is credited; what a search reads past it (the last step's count, a decision's disjuncts or
+//   a leaf's rows) meets the limit, as all of it did before, and the solver runs at its leaves
+//   (`point_of`) meet the limit too, so room credited and not read is at most `k + 1` rooms
+//   more for them.
+// Measured on `deep_condition`'s `heavy` (5 names): the step reads 5.3M units at depth 720 and
+// 42.6M at 5,760 (`point_cells` 16.1M, the rooms of two `quick_search`s 12.7M), all reading, no
+// question; the allowance is 15.3M (`deep_condition::bench::arms_of_a_test_whose_small_choice_
+// misses_the_bound_take_time_near_linear_past_the_shared_allowance`).
 fn shared_cells(
     f: &Formula,
     size: u64,
@@ -2891,7 +2932,9 @@ fn shared_cells(
     work: &mut Work,
 ) -> Result<(), Refusal> {
     if points.is_empty() {
-        if let Some(m) = quick_point(f, 2 * (size + 2), work)? {
+        let room = 2 * (size + 2);
+        work.credit(SOLVER_UNIT.saturating_mul(room));
+        if let Some(m) = quick_point(f, room, work)? {
             points.push(m);
         } else {
             work.question(size)?;
@@ -2920,13 +2963,13 @@ fn shared_cells(
     // loop (`order` holds it once), and it reads one point, not every point found.
     for s in &order {
         while read < points.len() {
-            point_cells(f, &points[read], &want, size, &mut found, work)?;
+            work.exempt(|w| point_cells(f, &points[read], &want, size, &mut found, w))?;
             read += 1;
         }
         let Some(h) = want.get(s) else {
             continue;
         };
-        work.read(1)?;
+        work.exempt(|w| w.read(1))?;
         let mut gap = h.minus(found.get(s).unwrap_or(&none));
         if gap.is_empty() {
             out.insert(s.clone(), h.clone());
@@ -2945,15 +2988,18 @@ fn shared_cells(
         // O(k·q·size) for q points, up to O(k²·size). Used: one cell per symbol, at one point,
         // `size` units read plus the cell's own charged work and [`PIECE`] for each of its
         // pieces and one more, O(k·size) plus the cells' work over the k symbols (the sum above
-        // the loop), charged to this step's allowance, which is part of the symbols' `k·L`
-        // ([`exact_each`]), so the bound `4·k·L` holds as before. `points` is not empty here:
-        // the step returned above where `f` has no point, and the loop above read every point,
+        // the loop). The cell's own work meets this step's allowance, which is part of the
+        // symbols' `k·L` ([`exact_each`]); the `size` and [`PIECE`]s read are charged past it
+        // ([`Work::exempt`]), O(size) a symbol (LIMITS-shared-step-allowance). `points` is not
+        // empty here: the step returned above where `f` has no point, and the loop above read every point,
         // so `read == points.len() >= 1`. The parts of the cell with holes and its strides are
         // dropped: the ranges `c` alone are values of `s` with a point, as in `cells_cover`, and
         // what they leave is asked or left to the symbol's own cover.
         let (c, _, _) = cell(f, &points[read - 1], s, &HashSet::new(), &h.hull(), work)?;
-        work.read(size)?;
-        work.charge(PIECE.saturating_mul(c.len() as u64 + 1))?;
+        work.exempt(|w| {
+            w.read(size)?;
+            w.charge(PIECE.saturating_mul(c.len() as u64 + 1))
+        })?;
         gap = gap.minus(&c);
         let e = found.entry(s.clone()).or_insert_with(IntervalSet::empty);
         *e = e.join(&c);
@@ -2979,8 +3025,11 @@ fn shared_cells(
         // question where it gives up: at most that much more than before for each question. On
         // `heavy` both of its questions are answered so, with 1.44M and 1.73M units at depth
         // 1,440 (the step 10.67M units in all at depth 1,440, 1.35M at 180: 7.9 times at 8
-        // times the depth, against the allowance 15.3M).
-        let answer = match quick_search(f, Some(&within), 2 * (size + 2), work)? {
+        // times the depth). The declared room is credited past the allowance ([`Work::credit`],
+        // see above [`shared_cells`]), which met it before and so gave up past depth about 2,050.
+        let room = 2 * (size + 2);
+        work.credit(SOLVER_UNIT.saturating_mul(room));
+        let answer = match quick_search(f, Some(&within), room, work)? {
             Quick::Point(m) => Some(m),
             Quick::Empty => None,
             Quick::Unknown => {
@@ -2999,10 +3048,10 @@ fn shared_cells(
         }
     }
     while read < points.len() {
-        point_cells(f, &points[read], &want, size, &mut found, work)?;
+        work.exempt(|w| point_cells(f, &points[read], &want, size, &mut found, w))?;
         read += 1;
     }
-    work.read(want.len() as u64)?;
+    work.exempt(|w| w.read(want.len() as u64))?;
     for (s, h) in want {
         if found.get(s).is_some_and(|r| h.is_subset(r)) {
             out.insert(s.clone(), h);

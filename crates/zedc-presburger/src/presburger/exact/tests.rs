@@ -3723,6 +3723,39 @@ fn searched(f: &Formula) -> &'static str {
     }
 }
 
+/// [`quick_search`] reads at most its room and one branch's last row more, where one branch
+/// takes far more plain rows than the formula holds: four rows in a kept conjunction
+/// (`Formula::and_keeping`), that one twice, and so on 16 deep, 20 parts and 4 constraints
+/// read once each (room 12 rows) but 262,144 rows walked as a tree. Before the room counted
+/// the branch's own rows, the search took all 262,144 before it gave up (26,214,400 units,
+/// row LIMITS-shared-step-allowance).
+#[test]
+fn quick_search_stops_at_its_room_on_a_branch_longer_than_its_formula() {
+    let mut f = Formula::and(vec![
+        x_ge(0),
+        ge(&[("x", -1)], 10),
+        ge(&[("y", 1)], 0),
+        ge(&[("y", -1)], 10),
+    ]);
+    for _ in 0..16 {
+        f = Formula::and_keeping(vec![f.clone(), f], |_| true);
+    }
+    let room = 2 * (constraints(&f) + 2);
+    assert_eq!(room, 12);
+    let mut work = Work {
+        used: 0,
+        limit: u64::MAX,
+        solver: SOLVER,
+    };
+    let got = quick_search(&f, None, room, &mut work);
+    assert!(matches!(got, Ok(Quick::Unknown)), "not given up");
+    assert!(
+        work.used <= SOLVER_UNIT * (room + 1),
+        "{} units for a room of {room} rows",
+        work.used
+    );
+}
+
 /// `x >= k` and `x <= k`.
 fn x_ge(k: i64) -> Formula {
     ge(&[("x", 1)], -k)
