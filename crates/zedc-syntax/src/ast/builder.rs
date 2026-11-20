@@ -1097,8 +1097,8 @@ impl<'a, 's> Builder<'a, 's> {
                             // token: before the fix in `parse/recover.rs` (the loop that drops a
                             // kept item reaching past the skip), recovery kept a declaration
                             // overlapping a skipped line and this `expect` failed; this test
-                            // reaches that case: `l01_08_parser::recovery_edges::
-                            // a_declaration_kept_up_to_a_failing_line_inside_it_is_skipped_with_it`.
+                            // reaches that case:
+                            // `l01_08_parser::recovery_edges::a_declaration_kept_up_to_a_failing_line_inside_it_is_skipped_with_it`.
                             let e = self.done[hole].take();
                             hole += 1;
                             StrPart::Hole(e.expect("a hole's expression is taken once")?)

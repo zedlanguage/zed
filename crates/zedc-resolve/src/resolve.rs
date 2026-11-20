@@ -2048,7 +2048,8 @@ impl Resolver<'_> {
                 // (zedc-elab walk.rs `stream_read`) reads the stream by the same `open_stream`
                 // and elaborates it as written when a link resolved to `Ref::Bound`, so the two
                 // agree; a program with such a link is refused here first. Test: l03_02_map_run
-                // types `a_function_of_the_program_named_like_a_read_is_not_given_a_range_with_no_upper_end`,
+                // types
+                // `a_function_of_the_program_named_like_a_read_is_not_given_a_range_with_no_upper_end`,
                 // cases `own_map` and `own_where` (and `own_first`, `own_any` for the guards
                 // on the read); it tries one link each, not a chain with a bound link inside.
                 Task::OpenStream(e) => match stream_link(e) {
