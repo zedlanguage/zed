@@ -332,6 +332,15 @@ struct Module<'a> {
     /// Its child modules a `#[path]` attribute places, which are not read: a path through one
     /// leads outside the graph.
     placed: HashSet<&'a str>,
+    /// A function's body, not a module: the items and `use` declarations written in the body,
+    /// whose scope is the body (the Rust Reference, "Block expressions": "the items declared
+    /// in a block are in scope for the whole block"). A name it does not give is read in its
+    /// parent, and `self` and `super` in it mean what they mean in the module the function is
+    /// in ([`Builder::module_of`]). Before this, such items went unrecorded while an `impl` in
+    /// the body was recorded, so the `impl` had no type (zedc-presburger's `Sets` and
+    /// `Found`): its methods were drawn from every untyped call of their names, and a body's
+    /// type that has the name of an imported one was taken for that one.
+    block: bool,
 }
 
 /// A `use` declaration's leaf: the path it names, in the module it is written in.
@@ -391,6 +400,9 @@ struct FnRec<'a> {
     /// The path, from `module`, of the module its visibility opens it to: empty for a private
     /// function, `super` for `pub(super)`, `crate` for `pub` and `pub(crate)`.
     vis: Vec<&'a str>,
+    /// The block module of its body, where the names of the body are read; its signature is
+    /// read in `module`, which does not see the body's items.
+    body: usize,
 }
 
 /// An `impl` block.
@@ -816,9 +828,10 @@ impl<'a> Builder<'a> {
         let mut i = 0;
         while let Some(&(t, line)) = toks.get(i) {
             let here = *scopes.last().expect("the file's own module stays open");
+            // A function's body holds items as a module does, in its block module.
             let item_level = braces
                 .last()
-                .is_none_or(|o| matches!(o, Opening::Module(_)));
+                .is_none_or(|o| matches!(o, Opening::Module(_) | Opening::Fn(_)));
             let in_impl = match braces.last() {
                 Some(&Opening::Impl(id)) => Some(id),
                 _ => None,
@@ -835,10 +848,16 @@ impl<'a> Builder<'a> {
                 path_attr = true;
             }
             match t {
-                Tok::Open => braces.push(opens.get(&at).copied().unwrap_or(Opening::Other)),
+                Tok::Open => {
+                    let o = opens.get(&at).copied().unwrap_or(Opening::Other);
+                    if let Opening::Fn(id) = o {
+                        scopes.push(self.fns[id].body);
+                    }
+                    braces.push(o);
+                }
                 Tok::Semi => path_attr = false,
                 Tok::Close => {
-                    if matches!(braces.pop(), Some(Opening::Module(_))) {
+                    if matches!(braces.pop(), Some(Opening::Module(_) | Opening::Fn(_))) {
                         scopes.pop();
                     }
                 }
@@ -1073,6 +1092,17 @@ impl<'a> Builder<'a> {
                 _ => k += 1,
             }
         }
+        // Complexity tradeoff: one block module for every function with a body, made here
+        // rather than only for the bodies that declare an item. Rust's items in a block are in
+        // scope for the whole block, before their declaration too, so a module made at the
+        // first item would miss the nested functions and `impl` blocks read before it; a
+        // second pass over the tokens to find those bodies first would read every file twice.
+        // The cost is one module (empty tables allocate nothing; `dir` is one string) per
+        // function and, for a name a body does not give, one more lookup in empty tables, so
+        // the work stays linear in the tokens.
+        let dir = self.modules[module].dir.clone();
+        let body = self.module(file, Some(module), dir);
+        self.modules[body].block = true;
         self.fns.push(FnRec {
             file,
             module,
@@ -1082,6 +1112,7 @@ impl<'a> Builder<'a> {
             method,
             ret,
             vis: visibility(toks, mate, at),
+            body,
         });
         Some((self.fns.len() - 1, k))
     }
@@ -1149,8 +1180,19 @@ impl<'a> Builder<'a> {
             bound: HashMap::new(),
             globs: Vec::new(),
             placed: HashSet::new(),
+            block: false,
         });
         self.modules.len() - 1
+    }
+
+    /// The module `x` is or is in: `x` past every block module around it.
+    fn module_of(&self, mut x: usize) -> usize {
+        while self.modules[x].block {
+            x = self.modules[x]
+                .parent
+                .expect("a block module is made inside a module");
+        }
+        x
     }
 
     /// Reads the tree of a `use` declaration from `i`, just after the keyword, into bindings of
@@ -1250,8 +1292,10 @@ impl<'a> Builder<'a> {
             let child = module.children.get(seg).map(|&c| Res::Module(c));
             *at = match seg {
                 "crate" if *pos == 0 => Res::Module(module.root),
-                "self" => Res::Module(x),
-                "super" => module.parent.map_or(Res::Outside, Res::Module),
+                "self" => Res::Module(self.module_of(x)),
+                "super" => self.modules[self.module_of(x)]
+                    .parent
+                    .map_or(Res::Outside, Res::Module),
                 _ => {
                     let mut found = if last { None } else { child };
                     if found.is_none() && module.placed.contains(seg) {
@@ -1277,6 +1321,14 @@ impl<'a> Builder<'a> {
                     }
                     match found {
                         Some(r) => r,
+                        // A name a function's body does not give is read where the function
+                        // is: the next block out, then its module. Each turn moves one step
+                        // up the module tree and reads the same segment again, so a path
+                        // costs at most the depth of nested bodies more.
+                        None if *pos == 0 && module.block => {
+                            *at = module.parent.map_or(Res::Outside, Res::Module);
+                            continue;
+                        }
                         // Another crate, a local name or a type parameter.
                         None if *pos == 0 => Res::Outside,
                         // A name a macro brings in (see the module comment).
@@ -2230,7 +2282,11 @@ impl<'b, 'a> Walk<'b, 'a> {
                 f.self_def = self.b.fns[id].imp.and_then(|m| self.b.impls[m].def);
                 f.body = Some((i, self.mate[i]));
                 self.frames.push(f);
+                // The signature is read in the function's module, which does not see the
+                // body's items; the body is read in its block module.
                 self.params(id);
+                let body = self.b.fns[id].body;
+                self.frames.last_mut().expect("just pushed").module = body;
                 return;
             }
             _ => {}

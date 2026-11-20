@@ -413,6 +413,67 @@ fn a_call_of_a_method_written_apart_imports_its_file() {
 }
 
 #[test]
+fn a_type_declared_in_a_function_body_holds_its_own_methods() {
+    // `Local` is declared in a function body in `a.rs`, its `impl` beside it, as
+    // zedc-presburger's `Sets` and `Found` are. Its type is found, so its method `find` is not
+    // one written apart from an unknown type: the call `y.find()` in `b.rs`, whose receiver is
+    // not typed, imports nothing, and the call `l.find()` in the body reaches its own file.
+    let g = graph(&[
+        ("lib.rs", "mod a;\nmod b;\n"),
+        (
+            "a.rs",
+            "pub fn f() {\n    struct Local;\n    impl Local {\n        fn find(&self) {}\n    }\n\
+             \x20   let l = Local;\n    l.find();\n}\n",
+        ),
+        ("b.rs", "pub fn g() { let y = other::make(); y.find(); }\n"),
+    ]);
+    assert_eq!(g.loose_impls, 0);
+    assert_eq!(edges(&g), Vec::<String>::new());
+    // A type of the body hides an imported type of the same name, in the body only: the body's
+    // `impl Local` and `l.m()` belong to the body's `Local`, so `c.rs` does not import `tm.rs`,
+    // where the module's `Local` has its own `m`; `d.rs` calls that `m` and does.
+    let g = graph(&[
+        ("lib.rs", "mod t;\nmod tm;\nmod c;\nmod d;\n"),
+        ("t.rs", "pub struct Local;\n"),
+        (
+            "tm.rs",
+            "use crate::t::Local;\nimpl Local {\n    pub fn m(&self) {}\n}\n",
+        ),
+        (
+            "c.rs",
+            "use crate::t::Local;\npub fn h() {\n    struct Local;\n    impl Local {\n        \
+             fn m(&self) {}\n    }\n    let l = Local;\n    l.m();\n}\n",
+        ),
+        (
+            "d.rs",
+            "use crate::t::Local;\npub fn k(l: &Local) { l.m(); }\n",
+        ),
+    ]);
+    assert_eq!(g.loose_impls, 0);
+    assert_eq!(
+        edges(&g),
+        [
+            "tm.rs -> t.rs",
+            "c.rs -> t.rs",
+            "d.rs -> t.rs",
+            "d.rs -> tm.rs"
+        ]
+    );
+    // `self` in a body names the module the function is in, not the body: `self::T` is the
+    // module's `T`, whose method `m` is written in `tm.rs`, so the typed call imports it.
+    let g = graph(&[
+        ("lib.rs", "mod e;\nmod tm;\n"),
+        (
+            "e.rs",
+            "pub struct T;\npub fn f() {\n    let x = self::T;\n    x.m();\n}\n",
+        ),
+        ("tm.rs", "impl crate::e::T {\n    pub fn m(&self) {}\n}\n"),
+    ]);
+    assert_eq!((g.loose_impls, g.unknown_calls), (0, 0));
+    assert_eq!(edges(&g), ["e.rs -> tm.rs", "tm.rs -> e.rs"]);
+}
+
+#[test]
 fn the_receiver_is_typed_through_patterns_closures_and_wrappers() {
     // Each call's receiver is typed, so only `A::m` (in `am.rs`) is drawn, never `B::m` (in
     // `bm.rs`), and no call falls back to every file with an `m`.
