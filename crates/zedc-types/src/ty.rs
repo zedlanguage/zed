@@ -1429,7 +1429,7 @@ fn write_debug(start: Dbg, f: &mut dyn fmt::Write, mut cut: Option<Cut<'_>>) -> 
                 Dbg::Sig(s) => Some(DebugPart::Sig(s)),
                 _ => None,
             };
-            if let Some(text) = part.and_then(|p| cut(p)) {
+            if let Some(text) = part.and_then(cut) {
                 f.write_str(&text)?;
                 continue;
             }
