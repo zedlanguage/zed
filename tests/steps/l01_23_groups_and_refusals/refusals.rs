@@ -4522,6 +4522,82 @@ fn holes_not_nested_as_prefixes_are_not_matched_greedily() {
     assert_eq!(t.verdict(), Verdict::Inhabited);
 }
 
+/// The type of `r5_greedy` with other heads: `U1 = cons(1, L)`, `U{i+2} = cons(uh[i], U{i+1})`,
+/// `P = cons(ph[0], cons(ph[1], .. L))`, and the type `P` minus the union of `U{r}` for `r` in
+/// `roots` (`L` is a list of `int`).
+fn r5_spine(uh: &[Type], ph: &[Type], roots: &[usize], tag: &str) -> Type {
+    let mut defs = vec![
+        def(
+            &format!("L{tag}"),
+            Expr::Union(vec![nil(), cons(int(), r(0))]),
+        ),
+        def(&format!("U1{tag}"), cons(Expr::Type(lit(1)), r(0))),
+    ];
+    for (i, h) in uh.iter().enumerate() {
+        defs.push(def(
+            &format!("U{}{tag}", i + 2),
+            cons(Expr::Type(h.clone()), r(i + 1)),
+        ));
+    }
+    let mut p = r(0);
+    for h in ph.iter().rev() {
+        p = cons(Expr::Type(h.clone()), p);
+    }
+    defs.push(def(&format!("P{tag}"), p));
+    let ts = u4_inst(defs);
+    let neg = roots.iter().fold(Type::empty(), |u, &i| &u | &ts[i]);
+    &ts[uh.len() + 2] - &neg
+}
+
+/// Two variants of `r5_greedy` whose spine has a node whose head meets no hole (`U2`'s head is
+/// `int`), so the prefix chains' `try_kill` passes over the steps from 2 (not only from the
+/// first uncommitted one), commits a hole at a step that is not the first uncommitted, and,
+/// in the first, meets a committed step and a step whose hole leaves its head empty
+/// (`empty.rs`, `find_prefix_chains`, "A free step passed over"; found 2026-11-20,
+/// TEST-kernel-unreached-paths-11: no test reached these lines). The first is empty and the
+/// second inhabited, each as the brute-force oracle over lists of up to 6 ints in 0..6 finds.
+#[test]
+fn a_spine_node_whose_head_meets_no_hole_is_passed_over() {
+    let not = |i: i64| &Type::int() - &lit(i);
+    let i = Type::int;
+    let samples: Vec<Value> = (0..6).map(Value::Int).collect();
+    let cases = [
+        (
+            r5_spine(
+                &[i(), not(3), not(4), not(5)],
+                &[i(), &lit(3) | &lit(5), lit(1), lit(1), lit(1)],
+                &[3, 4, 5],
+                "_r5spine_e",
+            ),
+            Verdict::Empty,
+        ),
+        (
+            r5_spine(
+                &[i(), not(3), not(4)],
+                &[i(), &lit(3) | &lit(5), lit(1), lit(1)],
+                &[3, 4],
+                "_r5spine_i",
+            ),
+            Verdict::Inhabited,
+        ),
+    ];
+    for (t, want) in cases {
+        assert_eq!(
+            list_oracle_inhabited(&t, &samples, 6),
+            want == Verdict::Inhabited,
+            "the oracle: {t}"
+        );
+        Type::forget_emptiness();
+        assert_eq!(t.verdict(), want, "{t}");
+        Type::forget_emptiness();
+        let chain = t.chain_verdict();
+        assert!(
+            chain.is_none() || chain == Some(want),
+            "the prefix chains: {t}"
+        );
+    }
+}
+
 /// Round 5: a negative chain group killed at one step and started again by a later token kept
 /// the earlier token's scheduled jumps, which overflowed `active - jumping_next` in the prefix
 /// chains. The formula is satisfiable (x2 = x3 = x4 = false).
@@ -8898,6 +8974,79 @@ fn lists_the_prefix_chains_leave_to_the_search_agree_with_the_oracle() {
         };
         assert_eq!(t.verdict(), want, "{what}: {t}");
     }
+}
+
+/// Two lines of `find_prefix_chains` no test reached before 2026-11-20
+/// (TEST-kernel-unreached-paths-11). First, a chain step whose tail, besides `nil` and the
+/// link, has another bare atom (`other`), in a positive or a refused row: `step_of` declines
+/// (the arm `_ => return None`), so the prefix chains give no verdict and the search decides.
+/// Second, a top carrier row whose head is empty (a list of a meet of disjoint pairs): the
+/// prefix chains answer `Empty` at once. As a control, the same shape with the head `int` is
+/// answered `Inhabited`, so the `Empty` comes from the head. Each verdict is the oracle's, on
+/// lists of up to 4 items of 0 to 3 and the two booleans.
+#[test]
+fn a_tail_with_another_atom_and_a_carrier_with_an_empty_head_in_the_prefix_chains() {
+    let samples = [
+        Value::Int(0),
+        Value::Int(1),
+        Value::Int(2),
+        Value::Int(3),
+        Value::Bool(false),
+        Value::Bool(true),
+    ];
+    let la = list_named(Type::int(), "_pcoa");
+    let bad = &(&Type::atom("nil") | &Type::atom("other")) | &cell(&Type::int(), &la);
+    let pair = |x: Type, y: Type| Type::tuple(vec![x, y]);
+    let never = &pair(Type::int(), Type::int()) & &pair(Type::bool(), Type::int());
+    let le = list_named(never.clone(), "_pcoe");
+    let li = list_named(Type::int(), "_pcoi");
+    let cases: Vec<(&str, Type, Option<Verdict>)> = vec![
+        (
+            "another atom in a positive row",
+            &(&cell(&lit(1), &bad) & &cell(&Type::int(), &la)) - &cell(&lit(2), &la),
+            None,
+        ),
+        (
+            "another atom in a refused row",
+            &(&cell(&lit(1), &la) & &cell(&Type::int(), &la)) - &cell(&lit(2), &bad),
+            None,
+        ),
+        (
+            "a top carrier with an empty head",
+            &cell(&never, &le) - &cell(&lit(1), &la),
+            Some(Verdict::Empty),
+        ),
+        (
+            "the control: a top carrier with the head int",
+            &cell(&Type::int(), &li) - &cell(&lit(1), &la),
+            Some(Verdict::Inhabited),
+        ),
+    ];
+    for (what, t, chain) in cases {
+        Type::forget_emptiness();
+        let want = match list_oracle_inhabited(&t, &samples, 4) {
+            true => Verdict::Inhabited,
+            false => Verdict::Empty,
+        };
+        Type::forget_emptiness();
+        assert_eq!(t.chain_verdict(), chain, "the prefix chains, {what}: {t}");
+        Type::forget_emptiness();
+        assert_eq!(t.chain_verdict_expanded(), chain, "expanded, {what}: {t}");
+        Type::forget_emptiness();
+        assert_eq!(t.verdict(), want, "{what}: {t}");
+    }
+    // A value whose tail is the atom itself, which no list refuses. The oracle reads lists
+    // only, so the witness is checked instead. (With `step_of` changed to pass over the atom
+    // instead of declining, every case here still passed, 2026-11-20: a later test declines
+    // too, so this test shows the line is reached and the verdict right, not that the line is
+    // needed.)
+    let t = &(&cell(&lit(1), &bad) & &cell(&Type::int(), &bad)) - &cell(&Type::int(), &la);
+    let v = Value::atom_with("cons", vec![Value::Int(1), Value::atom("other")]);
+    assert!(t.contains(&v), "{t} holds [1 | other]");
+    Type::forget_emptiness();
+    assert_eq!(t.chain_verdict(), None, "the prefix chains: {t}");
+    Type::forget_emptiness();
+    assert_eq!(t.verdict(), Verdict::Inhabited, "{t}");
 }
 
 #[test]

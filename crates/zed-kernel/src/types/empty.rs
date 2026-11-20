@@ -8408,48 +8408,38 @@ impl<'m> Searching<'m> {
             run: 0,
             jump: None,
         }];
-        let mut node_of: ByType<Option<usize>> = ByType::new();
+        // The node of each type a walk has reached. Only nodes are kept, never a failure: a walk
+        // that fails returns `None`, and both callers (the positive rows and the negative rows
+        // below) then return `None` from `find_prefix_chains` with `?`, and `node_of` is local, so
+        // no lookup ever follows a failure. (Until TEST-kernel-unreached-paths-11 the map also
+        // kept each failed type as `None`, and the arm that read such an entry was never run in
+        // any test: by the argument above it cannot run.)
+        let mut node_of: ByType<usize> = ByType::new();
         for car in &carriers {
-            node_of.insert(car.clone(), Some(0));
+            node_of.insert(car.clone(), 0);
         }
         let mut canon_node: HashMap<(bool, Type, Option<Type>, usize), usize, Digests> =
             HashMap::default();
 
         let mut walk = |start: &Type, nodes: &mut Vec<ChainNode>| -> Option<usize> {
             if let Some(&res) = node_of.get(start) {
-                return res;
+                return Some(res);
             }
             let mut path: Vec<(Type, bool, Type, Option<Type>)> = Vec::new();
             let mut visiting: TypeSet = TypeSet::default();
             let mut cur = start.clone();
             let base = loop {
-                if let Some(&res) = node_of.get(&cur) {
-                    if let Some(idx) = res {
-                        break idx;
-                    }
-                    for (ty, _, _, _) in path {
-                        node_of.insert(ty, None);
-                    }
-                    return None;
+                if let Some(&idx) = node_of.get(&cur) {
+                    break idx;
                 }
                 if is_carrier(&cur) {
-                    node_of.insert(cur, Some(0));
+                    node_of.insert(cur, 0);
                     break 0;
                 }
                 if !visiting.insert(cur.clone()) {
-                    node_of.insert(cur, None);
-                    for (ty, _, _, _) in path {
-                        node_of.insert(ty, None);
-                    }
                     return None;
                 }
-                let Some((has_stop, h, emit, next)) = step_of(&cur) else {
-                    node_of.insert(cur, None);
-                    for (ty, _, _, _) in path {
-                        node_of.insert(ty, None);
-                    }
-                    return None;
-                };
+                let (has_stop, h, emit, next) = step_of(&cur)?;
                 path.push((cur, has_stop, h, emit));
                 cur = next;
             };
@@ -8458,13 +8448,18 @@ impl<'m> Searching<'m> {
             while let Some((ty, has_stop, h, emit)) = path.pop() {
                 let d_child = nodes[child].depth;
                 let (depth, run, jump) = if d_child == 0 {
-                    if emit.is_some() {
-                        node_of.insert(ty, None);
-                        for (rem, _, _, _) in path {
-                            node_of.insert(rem, None);
-                        }
-                        return None;
-                    }
+                    // Never a step with a row beside its carrier rows (`emit`) here. Proof: (1)
+                    // only node 0 has depth 0, since every node pushed below has depth
+                    // `d_child + 1 >= 1`; (2) `node_of` maps a type to 0 only for the carriers
+                    // (above) and for a type `is_carrier` accepts (the loop above), and the
+                    // canonical nodes pushed below are numbered from 1; (3) so `d_child == 0`
+                    // means the step's `next` was accepted by `is_carrier`, a pure function of
+                    // the type (`carrier_set`, `list_step` and `norm_head` do not change during
+                    // the walk); (4) `step_of` gives `emit` only with a `chain_row`, whose tail is
+                    // its `next` and is a row `is_carrier` rejected. (3) and (4) contradict, so
+                    // `emit` is `None` (TEST-kernel-unreached-paths-11: the arm that returned
+                    // `None` for it was never run in any test).
+                    debug_assert!(emit.is_none(), "a step into the carrier has no chain row");
                     (1, 1, None)
                 } else if d_child >= 2
                     && nodes[child].has_stop == has_stop
@@ -8489,7 +8484,7 @@ impl<'m> Searching<'m> {
                     });
                     id
                 });
-                node_of.insert(ty, Some(idx));
+                node_of.insert(ty, idx);
                 child = idx;
             }
             Some(child)
@@ -8982,11 +8977,19 @@ impl<'m> Searching<'m> {
         for step in 2..=max_step + 1 {
             let pos_jumps = std::mem::take(&mut pos_jumps_at[step]);
             let mut pos_to_activate: Vec<usize> = Vec::with_capacity(pos_jumps.len());
+            // Each positive group's `active` is the number of its entries still waiting in
+            // `pos_jumps_at`. Proof: `activate_pos` is the one place that adds to `active`, by 1,
+            // and it pushes one entry for the group in the same step, at index
+            // `target_step + run > target_step` (`run >= 1`); the loop below is the one place that
+            // takes from it, by 1, once for each entry it takes; nothing else writes a positive
+            // group's `active` or entries (the writes of `active = 0` below are of negative
+            // groups). So every entry taken here, or read at `step + 1` below, finds `active >= 1`
+            // (TEST-kernel-unreached-paths-11: the three tests of `active > 0` on positive
+            // entries never failed in any test).
             for (g_idx, u) in pos_jumps {
-                if pos_groups[g_idx].active > 0 {
-                    pos_groups[g_idx].active -= 1;
-                    pos_to_activate.push(u);
-                }
+                debug_assert!(pos_groups[g_idx].active > 0, "an entry counts in `active`");
+                pos_groups[g_idx].active -= 1;
+                pos_to_activate.push(u);
             }
             for u in pos_to_activate {
                 activate_pos(
@@ -9045,6 +9048,30 @@ impl<'m> Searching<'m> {
                 && active_pos.iter().all(|&g_idx| pos_groups[g_idx].has_stop);
             let neg_stop_now = neg_depth1[step].iter().any(|&u| nodes[u].has_stop)
                 || active_neg.iter().any(|&g_idx| neg_groups[g_idx].has_stop);
+            // At the last step, `max_step + 1`, this returns. Proof. Say a node of depth `d`
+            // activated at step `s` arrives at step `s + d - 1`: there it is a depth-1 node in
+            // `pos_depth1` or `neg_depth1`. (1) Every activation keeps the arrival: a row's
+            // node is activated at step 2 and arrives at `d + 1 <= max_step`, since
+            // `max_step = 1 + ` the greatest depth; a group's entry pushed at step `t` for a node
+            // of depth `d` and run `r` sits at `t + r` and names `jump`, of depth `d - r` (`walk`
+            // gives a node either `run 1` and `jump` its child, of depth `d - 1`, or its child's
+            // `run + 1` and `jump`; `expand_chain_runs` gives `run 1` and the child), activated
+            // at `t + r` and arriving at `t + d - 1`, the same step; the nodes put in
+            // `covered_neg_at[step + 1]` are keys of `target_rem`, each the node of an entry in
+            // `neg_jumps_at[step + 1]` (directly or as a group's `jump_target`, set from those
+            // entries at this step and read only while `multi_target` is false), so activating it
+            // at `step + 1` is its own arrival again. (2) So at step `max_step + 1` no node is
+            // in `pos_depth1` or `neg_depth1`, and every entry still waiting would land a node of
+            // depth `>= 1` arriving after `max_step`: there is none, so after the entries of this
+            // step are taken each group's `active` is 0 (a positive group's `active` counts its
+            // waiting entries, proof at the start of the step; a negative group's is at most that
+            // count, since it is added to by 1 with each push, taken from by 1 with each entry
+            // taken only while above 0, and otherwise only set to 0), and the `retain`s above
+            // (on `listed`, which is `active > 0`) leave `active_pos` and `active_neg` empty. (3)
+            // Then `pos_stop_now` holds (every test is over an empty list) and `neg_stop_now`
+            // fails, and this returns. So the loop never ends by running out of steps, and no
+            // step after it runs (TEST-kernel-unreached-paths-11: the test `step > max_step`
+            // here, and the `None` after the loop, were never run in any test).
             if pos_stop_now && !neg_stop_now {
                 return (!had_loose).then_some(ChainPlan::Inhabited {
                     stop: stop_name,
@@ -9053,9 +9080,7 @@ impl<'m> Searching<'m> {
                     hints: Vec::new(),
                 });
             }
-            if step > max_step {
-                return None;
-            }
+            debug_assert!(step <= max_step, "the last step returns above");
 
             let mut r0 = carrier_head.clone();
             let mut pos_seen: TypeSet = TypeSet::default();
@@ -9142,11 +9167,16 @@ impl<'m> Searching<'m> {
                         }
                         *greedy_unsafe |= passed(&witness_heads[0]).await;
                     }
-                    let start_s = if spine_all_holes {
-                        *next_uncommitted_s
-                    } else {
-                        2
-                    };
+                    // The scan starts at the first step not yet committed in order. Without every
+                    // hole (`spine_all_holes` false) that is step 2: `next_uncommitted_s` starts at
+                    // 2 and is moved only under `spine_all_holes`, which is set before the sweep
+                    // and never changed during it, so the two are one. (Until
+                    // TEST-kernel-unreached-paths-11 this read `if spine_all_holes {
+                    // *next_uncommitted_s } else { 2 }`; the test
+                    // `a_spine_node_whose_head_meets_no_hole_is_passed_over` reaches the second
+                    // arm, and both arms gave the same step there, as the argument says they must.)
+                    debug_assert!(spine_all_holes || *next_uncommitted_s == 2);
+                    let start_s = *next_uncommitted_s;
                     for s in start_s..step {
                         if committed_step[s] || !step_exact[s] {
                             if spine_all_holes && s == *next_uncommitted_s {
@@ -9195,11 +9225,12 @@ impl<'m> Searching<'m> {
                     // Check whether keeping `h1` allows stopping right after `step`.
                     let mut pos_allows_stop_next = true;
                     for &(g_idx, u) in &pos_jumps_at[step + 1] {
+                        // `active >= 1`: an entry still waiting counts in it (proof above, at
+                        // the entries taken at `step`).
                         let pg = &mut pos_groups[g_idx];
-                        if pg.active > 0 {
-                            pg.jumping_next += 1;
-                            pg.jumping_stop_next |= !nodes[u].has_stop;
-                        }
+                        debug_assert!(pg.active > 0, "an entry counts in `active`");
+                        pg.jumping_next += 1;
+                        pg.jumping_stop_next |= !nodes[u].has_stop;
                     }
                     for &g_idx in &active_pos {
                         let pg = &mut pos_groups[g_idx];
@@ -9429,11 +9460,12 @@ impl<'m> Searching<'m> {
 
             if !had_loose && !forced_stop_forbid {
                 for &(g_idx, u) in &pos_jumps_at[step + 1] {
+                    // `active >= 1`: an entry still waiting counts in it (proof above, at the
+                    // entries taken at `step`).
                     let pg = &mut pos_groups[g_idx];
-                    if pg.active > 0 {
-                        pg.jumping_next += 1;
-                        pg.jumping_stop_next |= !nodes[u].has_stop;
-                    }
+                    debug_assert!(pg.active > 0, "an entry counts in `active`");
+                    pg.jumping_next += 1;
+                    pg.jumping_stop_next |= !nodes[u].has_stop;
                 }
                 let mut pos_allows_stop_next = true;
                 for &g_idx in &active_pos {
@@ -9475,7 +9507,7 @@ impl<'m> Searching<'m> {
             witness_heads.push(r0);
         }
 
-        None
+        unreachable!("the last step of the sweep returns (proof at `pos_stop_now`)")
     }
 
     /// Builds and independently verifies the witness list of a [`ChainPlan::Inhabited`] plan,
