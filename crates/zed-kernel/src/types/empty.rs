@@ -334,11 +334,12 @@ fn group_verdicts(members: &[Type]) {
             Some(false) if s.rep(m).is_some() => Verdict::Inhabited,
             // Complexity tradeoff: groups in `C_group` with `&` or `\` already ran
             // `horn_witness_group` once above in `O(S + n*k)` time (Dowling & Gallier 1984
-            // event-driven Horn propagation, without materializing plain height-`n` `Value`s in
-            // `Type::contains_kept`), avoiding `O(n²)` per-member `find_rep` searches on wide
-            // tuple differences (`xr_r2_bench_cgroup_long_tuples_and_many_diffs_scales`); only a
-            // member outside `C_group` whose value the shared search did not build falls back to
-            // a search of its own (COMPLEXITY.md K56).
+            // event-driven Horn propagation, cited in full at `horn_witness_group`, without
+            // materializing plain height-`n` `Value`s in `Type::contains_kept`), avoiding
+            // `O(n²)` per-member `find_rep` searches on wide tuple differences
+            // (`xr_r2_bench_cgroup_long_tuples_and_many_diffs_scales`); only a member outside
+            // `C_group` whose value the shared search did not build falls back to a search of
+            // its own (COMPLEXITY.md K56).
             Some(false) => {
                 if !horn_tried {
                     horn_tried = true;
@@ -2159,6 +2160,20 @@ type ResidueValue = ((u64, u64), BigInt);
 /// entries of `none` that meet `all` and each other, or with no pair when the shares sum below
 /// one: Hunter's bound (Hunter 1976) keeping one edge, a forest of one edge. Each residue is the
 /// one for which the expectation of `g` is least, counted exactly in integers.
+///
+/// Sources: P. Raghavan, "Probabilistic construction of deterministic algorithms:
+/// approximating packing integer programs", J. Comput. System Sci. 37(2):130-143, 1988,
+/// doi:10.1016/0022-0000(88)90003-7; D. Hunter, "An upper bound for the probability of a
+/// union", J. Appl. Probab. 13(3):597-603, 1976, doi:10.2307/3212481. Both checked in Crossref
+/// 2026-11-20; neither text was obtained (the free copy of Raghavan's paper came back as a web
+/// page, and no free copy of Hunter's was found), so the following is from memory, not
+/// checked. Raghavan fixes the random choices one at a time, each to the value that keeps an
+/// upper bound on the conditional probability of failure (the pessimistic estimator) from
+/// rising. Hunter bounds the probability of a union by the sum of the events' probabilities
+/// less the probabilities of the pairwise meets along the edges of a spanning tree. Departure:
+/// only one edge is kept, and the proof below does not rest on either paper. Tests:
+/// `the_residue_length_agrees_with_a_scan` and
+/// `greedy_length_handles_three_primes_disjoint_pairs_and_deep_trees` in `empty/tests.rs`.
 ///
 /// Proof that a length is found whenever the rule (`shares`, on the classes
 /// `residue_classes` gives) finds one: `g(n) ≥ [n is in some class of none]` for every `n`,
@@ -4012,10 +4027,17 @@ impl Heights {
     ///
     /// Each node's bound is kept in `HEIGHTS` ([`height_bounds`]); the nodes not yet bounded that
     /// `root` reaches are bounded together by Knuth's generalization of Dijkstra's algorithm
-    /// (Knuth, "A generalization of Dijkstra's algorithm", Inf. Proc. Letters 6, 1977): each
-    /// rule's height is `add` (0 or 1) plus the highest of its children's, a superior function,
-    /// so the nodes are settled in order of height and each rule is ready once its last child is
-    /// settled.
+    /// (D. E. Knuth, "A generalization of Dijkstra's algorithm", Inform. Process. Lett.
+    /// 6(1):1-5, 1977, doi:10.1016/0020-0190(77)90002-3; Crossref and the text checked
+    /// 2026-11-20): each rule's height is `add` (0 or 1) plus the highest of its children's, a
+    /// superior function in Knuth's sense (§1: nondecreasing in each argument and at least
+    /// their maximum), so the nodes are settled in order of height, as the general algorithm of
+    /// §3 settles next the nonterminal of least tentative value (its step 4), and each rule is
+    /// ready once its last child is settled. Knuth notes that with a priority queue the time is
+    /// a constant times m log n plus the total length of the productions. Departure: a rule's
+    /// value is computed once, when its last child is settled. Test:
+    /// `every_value_found_lies_within_its_types_height_bounds` in `empty/tests.rs` checks the
+    /// bounds against the values found; that they are the least bounds is not tested.
     // Complexity tradeoff: O(E log E) for the E rules and children of the types and shared
     // `PayloadNode`s reached and not bounded before, each once until the kept bounds are dropped.
     // Naive alternatives: iterating all `p.atoms.payloads()` per type costs `Theta(n^2 log n)`
@@ -4217,7 +4239,8 @@ impl Heights {
     /// ([`height_bounds`]).
     // Complexity tradeoff: one walk of the types and shared `PayloadNode`s `t` reaches that are
     // not bounded yet, by Tarjan's algorithm for the cycles (Tarjan, "Depth-first search and
-    // linear graph algorithms", SIAM J. Comput. 1, 1972), O(V + E) for the V nodes and E
+    // linear graph algorithms", SIAM J. Comput. 1(2):146-160, 1972, doi:10.1137/0201010; the
+    // workspace's one copy and its tests are `zed_graph::Search`), O(V + E) for the V nodes and E
     // children, plus each tuple part's clauses once, O(its literals times its length), plus
     // `least_height`, O(E log E); kept for every search ([`height_bounds`]). Naive alternative:
     // decide each meet by the search, which walks the shorter list once for each pair of lengths
@@ -14323,10 +14346,12 @@ impl<'a> Walked<'a> {
 // per call of `joined`, and `overlaps` is called for about n checks of the ring, O(n^2) in all
 // (`l01_29_diagnostics::bench::group_site::naming_the_head_group_scales`, T(8n)/T(n) about 34;
 // measured: 32,000 binds per direction-1 run at 8,000 definitions). Used: the coarsest stable
-// coloring of the trie ([`crate::refine::Refine`], Paige and Tarjan 1987 with Hopcroft's
-// smaller-half rule), O((N + K) log N) for N nodes and K children, once per group (each group
-// is cached in `GROUPS`), plus O(N log N) comparisons of the nodes' contents in the starting
-// sort. Given up: memory for the refinement's arrays, O(N + K), while the group is made.
+// coloring of the trie ([`crate::refine::Refine`], which cites R. Paige and R. E. Tarjan,
+// "Three partition refinement algorithms", SIAM J. Comput. 16(6):973-989, 1987,
+// doi:10.1137/0216062, with Hopcroft's smaller-half rule), O((N + K) log N) for N nodes and K
+// children, once per group (each group is cached in `GROUPS`), plus O(N log N) comparisons of
+// the nodes' contents in the starting sort. Given up: memory for the refinement's arrays,
+// O(N + K), while the group is made.
 fn quotient(nodes: Vec<GroupNode>) -> (Vec<GroupNode>, Vec<usize>) {
     let v = nodes.len();
     // The nodes' starting colors: by what they hold, the lower types in their order.
@@ -14711,8 +14736,28 @@ type NamedRows = (BTreeMap<Value, Type>, Option<(BTreeSet<Value>, Type)>);
 // version: dense Gaussian elimination, O(L k min(L, k)) for L integers and k operands, cubic.
 // Given up: a usable integer that swaps three or more constraining operands, an operand of
 // three or more states, a nondeterministic operand, or an integer that keeps one state and
-// leaves the other; each goes to the search as before. Test:
-// `l01_23_subtyping::setop::a_parity_meet_with_a_second_link_atom_is_inhabited`.
+// leaves the other; each goes to the search as before.
+//
+// Source: T. J. Schaefer, "The complexity of satisfiability problems", STOC 1978, pp. 216-226,
+// doi:10.1145/800133.804350 (Crossref and text checked 2026-11-20). Theorem 2.1 lists the
+// classes of relations whose satisfiability is polynomial, among them case (e): "Every
+// relation in S is affine", a relation that is the solution set of a system of linear
+// equations over GF(2). The paper decides such a system by Gaussian elimination; the code
+// departs from it because each usable integer here swaps at most two operands, so the system
+// is a graph's incidence matrix, whose column space is read off its connected parts by
+// union-find instead.
+//
+// Tests: `l01_23_subtyping::setop::a_parity_meet_with_a_second_link_atom_is_inhabited` checks
+// an inhabited meet is not called empty. Six tests of `l01_23_subtyping::setop` fail when this
+// function answers `Some(true)` always (checked 2026-11-20 by that mutation):
+// `the_product_of_a_few_parity_lists_has_a_singleton`,
+// `the_parity_singleton_is_found_across_names_and_operand_orders`,
+// `diagonal_parity_agrees_with_boolean_equations`,
+// `diagonal_parity_proofs_require_every_allowed_symbol_to_be_counted`,
+// `random_parity_meets_answered_empty_hold_no_short_list` and
+// `bounded_parity_singletons_obey_further_integer_constraints`. When the function answers none
+// always, the search still decides each meet and every parity test passes, so they do not
+// check that the class is taken, only that its answers are right.
 fn affine_lists_empty(t: &Type) -> Option<bool> {
     let mut names = [None, None];
     let (root_stop, f) = list_rows(t, &mut names)?;
@@ -15371,7 +15416,9 @@ fn joined(tops: Vec<Top>, dir: usize) -> zed_graph::UnionFind {
     // in `by_place_from_the_end`, COMPLEXITY.md K35), placing `(i, g.id)` per cell and chain step
     // costs `Theta(n^2)` placements (`18.0x` at `64 -> 512`). Recording `(y_root, g.id) -> (j, y)`
     // once a deep `single_chain` root is read lets any later cell `i` with zero other active/pending
-    // branches and `min_gid[i] > g.id` (Tarjan topological order, Tarjan 1972) join `j` in `O(1)`
+    // branches and `min_gid[i] > g.id` (Tarjan topological order: Tarjan's search completes a
+    // component after every component it reaches, SIAM J. Comput. 1(2):146-160, 1972,
+    // doi:10.1137/0201010, as `zed_graph::Search` documents) join `j` in `O(1)`
     // with zero lost merges and an identical partition (`O(S log S)` in all), when `j` has no
     // node waiting (`pending_cnt[j] == 0`). Why: placing `g` for `i` at `y_root` walks the same
     // nodes as `j`'s placement, `g` merging no nodes and its lower groups placed for `i` for the
@@ -15991,9 +16038,13 @@ fn component_carrier(f: &Part<Row>, j: usize, unfold: bool) -> Option<(u16, bool
 // type per row; that version separated values within one universe (`1` from `2`), which the
 // masks do not, and no test of the l01_23 groups needs it (measured: the full l01_23 and
 // zed-kernel suites pass with the masks). Exact emptiness of a meet of cyclic types is
-// tree-automata intersection, EXPTIME-complete in the number of conjuncts (Seidl 1994), left to
-// the search; directional single-spine `overlaps` merged `M0` with `int` when reversed on seed
-// 1865.
+// tree-automata intersection, EXPTIME-complete in the number of conjuncts, left to the search
+// (H. Seidl, "Haskell overloading is DEXPTIME-complete", Inform. Process. Lett. 52(2):57-60,
+// 1994, doi:10.1016/0020-0190(94)00130-8; Crossref and text checked 2026-11-20: Theorem 4
+// shows that emptiness of the intersection of a sequence of deterministic top-down tree
+// automata is DEXPTIME-hard. Membership in EXPTIME, by building the product automaton, is not
+// stated there and is from memory, not checked against a source); directional single-spine
+// `overlaps` merged `M0` with `int` when reversed on seed 1865.
 fn disjoint_top_carriers(ts: &[Type]) -> bool {
     if ts.len() < 2 {
         return false;
@@ -16120,8 +16171,13 @@ fn flat_tuple_subtrahend(r_ty: &Type, xs_tys: &[Type]) -> Option<Type> {
 // (plus finite flat-box sub-checks on non-recursive subtrahends) by tracking `Inh(X)` (`[[X]] !=
 // \emptyset`) and `NonFlat(X)` (`[[X]] \cap Val_nonflat != \emptyset`) in a monotone two-layer
 // Boolean equation system solved in linear time (`bes::decide`, following Dowling & Gallier 1984
-// linear-time Horn / least-fixed-point reachability and Lu & Cleary 1998 regular type emptiness),
-// whereas general intersection/complementation of recursive tree automata is EXPTIME-complete.
+// linear-time Horn / least-fixed-point reachability, cited in full at `horn_witness_group`, and
+// L. Lu and J. G. Cleary, "An emptiness algorithm for regular types with set operators",
+// arXiv:cs/9811015, 1998, whose abstract presents "an algorithm to decide the emptiness of a
+// regular type expression with set operators" without assuming tuple distributivity; arXiv
+// record checked 2026-11-20, the body not read, so what this code shares with its algorithm is
+// from memory, not checked), whereas general intersection/complementation of recursive tree
+// automata is EXPTIME-complete.
 fn exact_flat_diff_decide(
     env: &Arc<Env>,
     answers: &mut [Option<bool>],
@@ -16472,10 +16528,21 @@ fn exact_flat_diff_decide(
 // `P` premises over all rules (at most the total arity, O(N)), each slot is seeded and popped
 // once and each premise decremented once, O(N + P) hash and queue steps, plus one `s.rep` per
 // closed node and one `s.show` per rule fired. Method: the linear-time Horn satisfiability
-// algorithm of Dowling and Gallier (1984), one counter of unmet premises per rule. Naive
-// alternative (XR-group-order-5 round 2, g2): build plain values and test each with
-// `member_known`, which walks the value and took Θ(n³) (over 60 s) on a chain of n members
-// whose values nest.
+// algorithm of W. F. Dowling and J. H. Gallier, "Linear-time algorithms for testing the
+// satisfiability of propositional Horn formulae", J. Logic Programming 1(3):267-284, 1984,
+// doi:10.1016/0743-1066(84)90014-1 (Crossref and the text checked 2026-11-20): its algorithms
+// "run in time O(N), where N is the total number of occurrences of literals" (abstract). Its
+// Algorithm 2 (§4) keeps for each clause `numargs`, the count of its premises not yet true,
+// and for each letter the list of clauses it is a premise of; a clause whose count reaches 0
+// joins a queue, and taking it sets its conclusion true and decrements the counts of the
+// clauses on that letter's list. Departure: a rule's conclusion is a node's value or nonflat
+// value, and firing it also builds that value. Test:
+// `meets_and_differences_seeds_agree_or_are_listed` in
+// tests/steps/l01_23_groups_and_refusals/group_oracle.rs compares the verdicts with a pool of
+// values; the bench `xr_r2_bench_cgroup_long_tuples_and_many_diffs_scales` there checks the
+// scaling, which the verdicts cannot. Naive alternative (XR-group-order-5 round 2, g2): build
+// plain values and test each with `member_known`, which walks the value and took Θ(n³) (over
+// 60 s) on a chain of n members whose values nest.
 fn horn_witness_group(members: &[Type], s: &mut Search) {
     enum Action {
         Id,
