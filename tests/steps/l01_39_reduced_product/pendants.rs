@@ -4074,3 +4074,22 @@ fn the_whole_part_keeps_the_parity_an_equality_forces_at_seed_113425404634046836
 fn an_equation_beside_a_row_it_implies_is_projected_as_when_split() {
     refused_names_in(7683774971210369151, 10, true);
 }
+
+/// Case 0 of seed 2537877658227229631 (FAIL-pendants-refused-boxes-2537877658227229631): a
+/// part with no `||`, projected under its own names, gave `z0` and `b` refused (Growth) as
+/// written and `z0 ..= 4`, `b >= -3` renamed, since the order of its rows and of its names
+/// followed the names. Each such part is now projected under names given by its structure
+/// (`presburger::project_each_asked`), so every naming gets one answer.
+#[test]
+fn a_conjunction_gets_one_answer_for_every_naming() {
+    check_refused_case(2537877658227229631, 0, false, (0, 0, 0));
+}
+
+/// The two parts of two joined pieces FAIL-pendants-refused-boxes-2537877658227229631 also
+/// found answered differently as written and renamed: case 21 of seed 12527472341280287461
+/// and case 5 of seed 18417449267567745209.
+#[test]
+fn a_joined_conjunction_gets_one_answer_for_every_naming() {
+    check_refused_case(12527472341280287461, 21, true, (1, 2, 0));
+    check_refused_case(18417449267567745209, 5, true, (1, 1, 1));
+}

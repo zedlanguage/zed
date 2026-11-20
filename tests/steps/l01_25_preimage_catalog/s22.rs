@@ -3388,9 +3388,12 @@ fn refused_where_the_solver_answered(
 /// refused (373e5d22a, 2026-11-19): each has a group in `direct` with two disjunctions that
 /// both read the projected symbol and share a remainder atom, which neither the rule for one
 /// disjunction nor `cut_at_shared` answers (PRES-cover-moduli-two-disjunctions). Modulus,
-/// seed, shape, k.
+/// seed, shape, k. Since the reduced product asks its questions renamed by the colors of their
+/// atoms (FAIL-pendants-refused-boxes-2537877658227229631, `presburger::project_each_boxed`),
+/// `(5, 1, "arms over x", 13)` is answered and `(7, 2, "a test of the chain", 2)`, whose term
+/// has the two disjunctions on `x mod 7` and the same box of `x`, -60..=60, is refused
+/// (`Refusal::Questions`): which of these the cover answers depends on the order of the rows.
 const REFUSED_WITH_TWO_DISJUNCTIONS: [(i64, u64, &str, usize); 24] = [
-    (5, 1, "arms over x", 13),
     (5, 2, "arms of x and y", 5),
     (5, 2, "arms of x and y", 13),
     (5, 2, "arms over x", 5),
@@ -3405,6 +3408,7 @@ const REFUSED_WITH_TWO_DISJUNCTIONS: [(i64, u64, &str, usize); 24] = [
     (7, 1, "a test of the chain", 5),
     (7, 1, "a test of the chain", 13),
     (7, 2, "arms of x and y", 5),
+    (7, 2, "a test of the chain", 2),
     (7, 2, "arms over x", 2),
     (7, 2, "arms over x", 5),
     (7, 2, "arms over x", 13),

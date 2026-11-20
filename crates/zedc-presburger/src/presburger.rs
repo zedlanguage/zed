@@ -1988,6 +1988,13 @@ impl Renamed {
         if !f.chooses() {
             return Naming::Kept;
         }
+        Self::ranked(f)
+    }
+
+    /// [`Renamed::of`] for a formula with a disjunction or without one: renamed where each
+    /// atom has its own color or the atoms that share one are symmetric, [`Naming::Tied`]
+    /// otherwise; never [`Naming::Kept`].
+    fn ranked(f: &Formula) -> Naming {
         let (atoms, _, color) = Self::colored(f);
         let plain = Self::plain_by(&atoms, &color);
         let ties: Vec<Vec<Atom>> = (plain.chunk_by(|&p, &q| color[p] == color[q]))
@@ -21344,9 +21351,46 @@ impl Boxed {
 /// `l01_38_omega_test::omega::the_box_of_refused_rows_scales`. COMPLEXITY.md row
 /// PROJECT-growth-box. A complete solution would decide the integer program (see
 /// `Omega::run`).
+///
+/// The question is projected renamed by the colors of its atoms (`Renamed::ranked`), with or
+/// without a disjunction, so that each set and each refusal is the same for every naming of
+/// the atoms, as the reduced product's tests require: the solver orders rows and symbols by
+/// name where nothing else orders them (`projected_hulls` sorts the rows, and
+/// `symbols_by_structure` starts from the least symbol), and the Omega test refuses some
+/// orders of elimination (`Refusal::Growth`) where it decides others
+/// (FAIL-pendants-refused-boxes-2537877658227229631: case 0 of that seed of
+/// `l01_39_reduced_product::pendants::refused_projections_of_random_parts_keep_sound_boxes`, a
+/// conjunction with no disjunction, gave `z0` the set `..=4` as written and refused it with
+/// the box `..=7` with the names reversed, since [`project_each`] keeps the names of a formula
+/// with no disjunction, `Renamed::of`). A question whose atoms the coloring ties, other than
+/// by a symmetry, is projected as written, as before. [`project_each`] itself still answers a
+/// formula with no disjunction under its own names (row PRES-project-each-naming).
+// Complexity tradeoff: naive version, the question projected as written, whose answer depends
+// on the names. Used: one color refinement and one renamed copy per question, O(L log L) for
+// L links of its graph ([`Renamed::colored`], [`stable_colors`]) and O(n) for the copy,
+// against the projection, which reads every part at least once. Tradeoff: that cost on every
+// question, where most answers did not depend on the names. Tests:
+// `l01_39_reduced_product::pendants::a_conjunction_gets_one_answer_for_every_naming`,
+// `l01_39_reduced_product::pendants::a_joined_conjunction_gets_one_answer_for_every_naming`.
 pub fn project_each_boxed(f: &Formula, syms: &[Atom]) -> Boxed {
     let lean = without_box_true_disjunctions(f);
-    let (each, skipped, whole) = match project_each(lean.as_ref().unwrap_or(f), syms) {
+    let asked = lean.as_ref().unwrap_or(f);
+    let projected = match Renamed::ranked(asked) {
+        Naming::Renamed(r) => {
+            let there: Vec<Atom> = syms.iter().map(|a| r.there(a)).collect();
+            project_each(&r.f, &there)
+                .map(|(each, skipped)| {
+                    let each = (each.into_iter())
+                        .map(|s| s.map_err(|e| r.back_refusal(e)))
+                        .collect();
+                    let skipped = (skipped.into_iter()).map(|e| r.back_refusal(e)).collect();
+                    (each, skipped)
+                })
+                .map_err(|e| r.back_refusal(e))
+        }
+        _ => project_each(asked, syms),
+    };
+    let (each, skipped, whole) = match projected {
         Ok((each, skipped)) => (each, skipped, None),
         Err(e) => (
             syms.iter().map(|_| Err(e.clone())).collect(),
