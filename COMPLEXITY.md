@@ -33,6 +33,25 @@ nanoseconds of each size there; each check also prints a `bench` line with them.
 
 Status: `open`, `fixed` (with the test that checks it), `kept` (with the reason).
 
+Papers named in the rows below are cited in full at the code: the citation with its DOI or
+arXiv id, the part of the paper used, the departures, how it was checked and the test. The rows
+name a paper; this list gives the file that cites it.
+
+| Paper | Cited in full in | Rows |
+|---|---|---|
+| Berkholz, Bonsma and Grohe, color refinement (with Paige and Tarjan) | `zed-kernel/src/refine.rs` | S32 |
+| Blelloch, Ferizovic and Sun, "Just Join" (with PAM) | `zed-kernel/src/types/bdd/list/treap.rs` | INTERVAL-persistent, K32, K122-K124, K138, KERNEL-bdd-rejoin-bytes |
+| Seidel and Aragon, treaps | `zed-kernel/src/priority.rs` | K122, K123, PA-bind-cost, ST-class-case-holes, KERNEL-bdd-rejoin-bytes |
+| Okasaki and Gill, big-endian Patricia tries (with Morrison) | `zed-kernel/src/types/print/uses.rs` | K110, ENDS |
+| Karp and Rabin, fingerprints | `zed-kernel/src/text.rs` (`Text::poly_hash`) | K117 |
+| Hinze and Paterson, finger trees (with Kaplan and Tarjan) | `zed-kernel/src/text.rs` | C29, F223 |
+| Goto 1974, hash-consing (with Boehm, Atkinson and Plass, ropes) | `zed-kernel/src/types/rec/unfold.rs` | PERF-part-name-nested |
+| Driscoll, Sarnak, Sleator and Tarjan, path copying | `zed-kernel/src/types.rs` | ST-walk-orders |
+| Mehlhorn, Sundar and Uhrig, signature encoding | `zed-kernel/src/text/names.rs` | S31b, STAGE-joined-eq-build, Z34 |
+| Schönhage, Stehlé and Zimmermann, Möller, Bernstein, Brent and Zimmermann: fast gcd, division and radix conversion | `zed-kernel/src/num/fast.rs` | C31 |
+| Mushtak and Lemire, fast number parsing | `zed-kernel/src/num/float_text.rs` | F179 |
+| Crochemore and Perrin, Two-Way search | `zed-kernel/src/words.rs` | F221 |
+
 ## Store (`crates/zedc/src/store`)
 
 | ID | Where | Class | Status |
