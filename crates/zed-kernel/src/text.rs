@@ -507,9 +507,10 @@ fn deep(size: Size, front: Digit, middle: Text, back: Digit) -> Text {
 // eject and catenation", from "redundant digital representations used to avoid carry
 // propagation in binary counting"; checked 2026-11-19 against the abstract and Crossref, the
 // structure itself not read, since it is not used here.) Trigger: pushes onto one version
-// whose ends are full down its middles. Test: `text::tests::a_chain_of_joins_allocates_a_
-// constant_per_join` (the chain), and `joins_in_any_order_keep_the_tree_balanced_and_the_
-// text_whole` (any reuse, the text); COMPLEXITY.md C29.
+// whose ends are full down its middles. Test:
+// `text::tests::a_chain_of_joins_allocates_a_constant_per_join` (the chain), and
+// `joins_in_any_order_keep_the_tree_balanced_and_the_text_whole` (any reuse, the text);
+// COMPLEXITY.md C29.
 /// `t` then the part `p`, of the height of `t`'s parts.
 fn push_back(t: &Text, p: Text) -> Text {
     let size = t.size() + p.size();

@@ -99,8 +99,10 @@ impl F64 {
     ///
     /// Proof that the test is exactly "is a NaN": a binary64 value is a NaN if and only if its
     /// 11 exponent bits are all ones and its 52 significand bits are not all zero (IEEE Std
-    /// 754-2019, doi:10.1109/IEEESTD.2019.8766229, section 3.4; the section number is from
-    /// memory, not checked, as the standard was not read). With the sign bit cleared, the bits
+    /// 754-2019, doi:10.1109/IEEESTD.2019.8766229, section 3.4, "Binary interchange format
+    /// encodings"; the standard was not read, and the section's title was checked 2026-11-20
+    /// against the contents in the publisher's preview of ISO/IEC 60559:2020, the same text;
+    /// the rule itself is from memory). With the sign bit cleared, the bits
     /// read as an unsigned integer are `e * 2^52 + m` with `e < 2^11` and `m < 2^52`; they
     /// exceed `0x7FF0_0000_0000_0000 = (2^11 - 1) * 2^52` exactly when `e = 2^11 - 1` and
     /// `m > 0`, since `e < 2^11 - 1` gives at most `(2^11 - 2) * 2^52 + 2^52 - 1`, below it.
@@ -2361,9 +2363,8 @@ mod chain {
     // and pushes onto that same tree again and again pays O(log n) new nodes for each of those
     // pushes; the list is the same. Why: an O(1) bound under any reuse of an old version needs
     // Hinze and Paterson's lazy middle (cited in full in `crate::text`) or Kaplan and Tarjan's
-    // catenable deques (H. Kaplan and R. E. Tarjan, "Purely functional, real-time deques with
-    // catenation", J. ACM 46(5):577-603, 1999, doi:10.1145/324133.324139; Crossref checked
-    // 2026-11-20, the text not read, so the O(1) worst case is from memory, not checked), a cell
+    // catenable deques (cited in full in `crate::text`, where the O(1) worst case is quoted from
+    // the abstract), a cell
     // written after the node is shared or several times the code here. Test:
     // `value::tests::lists_joined_in_any_shape_are_equal_and_read_alike`.
     /// `t` then the part `p`, of the height of `t`'s parts.

@@ -16192,10 +16192,15 @@ fn flat_tuple_subtrahend(r_ty: &Type, xs_tys: &[Type]) -> Option<Type> {
 // linear-time Horn / least-fixed-point reachability, cited in full at `horn_witness_group`, and
 // L. Lu and J. G. Cleary, "An emptiness algorithm for regular types with set operators",
 // arXiv:cs/9811015, 1998, whose abstract presents "an algorithm to decide the emptiness of a
-// regular type expression with set operators" without assuming tuple distributivity; arXiv
-// record checked 2026-11-20, the body not read, so what this code shares with its algorithm is
-// from memory, not checked), whereas general intersection/complementation of recursive tree
-// automata is EXPTIME-complete.
+// regular type expression with set operators" without assuming tuple distributivity), whereas
+// general intersection/complementation of recursive tree automata is EXPTIME-complete. Lu and
+// Cleary's paper, read 2026-11-20 from its arXiv LaTeX source, decides the general problem by a
+// tabled top-down evaluation over conjunctions of type atoms (section 3, two reduction rules);
+// its section 5 bounds it by O(2^|atoms(E0)|) and its conclusion says "The algorithm is
+// exponential in time." Departure: this code does not run that algorithm; it shares the
+// problem only. It runs where the systems `judge` reads first left a member open,
+// decides in linear time the groups of `C_group`, which the paper does not single out, and
+// returns `None` on any other group, leaving its open members open.
 fn exact_flat_diff_decide(
     env: &Arc<Env>,
     answers: &mut [Option<bool>],

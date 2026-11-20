@@ -21,8 +21,14 @@
 //! follow §3-4, case for case.
 //!
 //! Departures. (1) Big-endian: the branching bit is the highest bit in which two keys differ,
-//! not the lowest, so the keys are in order left to right (the paper's §5; the copy read here
-//! has only pp. 77-82, sections 1-4, so §5 is not quoted). (2) A merge that changes nothing
+//! not the lowest, so the keys are in order left to right. The paper's §5, "Big-endian Patricia
+//! Trees": "The only changes required are to the mask and branchingBit functions", with
+//! `fun mask (k,m) = andb (orb (k,m-1), notb m)`, which sets the bits below `m` to one, so that
+//! "every key in the left subtree of a Br node is now less than or equal to the prefix in that
+//! node". Here `mask` sets `m` and the bits below it to zero instead, which §5 also names ("We
+//! could simply set all the invalid bits to zero"): the prefix is then not a search key, and
+//! nothing here searches by comparing with it. §5 finds the highest differing bit with a loop;
+//! `branching_bit` takes it from `ilog2`, one leading-zero count. (2) A merge that changes nothing
 //! returns the old node (`rebuild`, the `ptr_eq` test in `union`), so maps share subtrees, and a
 //! branch records whether some key below is used twice (`many`), which the paper does not have.
 //! (3) The keys and bits are `u32`, compared unsigned. J. Midtgaard, "QuickChecking Patricia
@@ -35,10 +41,14 @@
 //! big-endian trie: it fails when the two comparisons of bits in `union` are made signed.
 //!
 //! Checked 2026-11-19: pp. 77-82 read in full from the authors' PDF (Wayback copy of
-//! ittc.ku.edu/~andygill/papers/IntMap98.pdf, six pages); §5 and §6 not read. Midtgaard's §4
-//! ("The Bug and Some Potential Fixes") read from a preprint PDF. Morrison not read. All three
-//! citations confirmed in Crossref except Okasaki and Gill's, which has no DOI: its first page,
-//! 77, is printed on the PDF; the last page, 86, comes from the authors' page and is not checked.
+//! ittc.ku.edu/~andygill/papers/IntMap98.pdf, six pages). Checked 2026-11-20: the whole paper,
+//! printed pp. 77-86, read from Okasaki's PostScript (Wayback copy of
+//! eecs.usma.edu/webs/people/okasaki/ml98maps.ps, ten pages), §5 quoted above. Midtgaard's §4
+//! ("The Bug and Some Potential Fixes") read from a preprint PDF. Morrison read 2026-11-20 from
+//! the journal's PDF (OpenAlex's cached copy) for its abstract and the "Trie Structure"
+//! paragraph: "the index records only true branches", which "reduces the number of index rows
+//! to only twice the number of starts"; the §3 quote above is Okasaki and Gill's account of it.
+//! All three citations confirmed in Crossref except Okasaki and Gill's, which has no DOI.
 //! Tests: the tests below compare `get` with the keys put in, over 2000 keys spread across all
 //! 32 bits, in two halves merged; they catch a lost or misplaced key, not a slow merge.
 

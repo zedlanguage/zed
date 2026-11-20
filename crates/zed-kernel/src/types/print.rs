@@ -756,12 +756,17 @@ impl Printer<'_> {
     /// digests (step BDD-atom-order). Each node gets a rank by its contents, as in the tree
     /// isomorphism test of Aho, Hopcroft and Ullman (A. V. Aho, J. E. Hopcroft and J. D. Ullman,
     /// "The Design and Analysis of Computer Algorithms", Addison-Wesley, 1974, section 3.2,
-    /// Example 3.2; from memory, not checked: the book was not available here; the section
-    /// number is the likeliest error): the nodes are taken by height, those of one height
+    /// Example 3.2, pp. 84-86. The book itself was not read (no free copy); checked 2026-11-20
+    /// against F. Ingels, "Revisiting Tree Isomorphism: An Algorithmic Bric-a-Brac",
+    /// arXiv:2309.14441, which reproduces the example's text with minor changes of notation,
+    /// "First, assign to all leaves in T1 and T2 the integer 0", then ranks the nodes one level
+    /// at a time by the sorted tuples of their children's integers, and against the pages
+    /// NetworkX's documentation gives): the nodes are taken by height, those of one height
     /// ordered by their tokens, a child by its rank, each group's elements sorted first; a
     /// recursive type is a leaf ranked by its name, since every cycle passes through one. The
-    /// walk's order is then found again, and with it the names' numbers. Departure: the book
-    /// ranks trees; here the texts form a graph cut at recursive types. Tests:
+    /// walk's order is then found again, and with it the names' numbers. Departures: the book
+    /// ranks trees level by level; here the texts form a graph cut at recursive types, and the
+    /// nodes go by height, so that every child of a node is ranked before the node. Tests:
     /// `random_types_print_alike_in_every_order_of_their_atoms` and
     /// `a_union_of_tuple_types_less_another_prints_alike_in_every_order` catch a text that
     /// depends on the atoms' order; neither checks the `O(t log t)` bound.
