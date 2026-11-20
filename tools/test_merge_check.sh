@@ -1,7 +1,9 @@
 #!/bin/bash
 # Tests the selection of tools/merge_check.sh on a workspace of its own in a git repository,
 # build/test-merge-check, which it keeps from run to run (it deletes nothing; each run writes every
-# file again and commits it as the new base). Run from a checkout's root, through zrun
+# file again and commits exactly the files of the list toy_files as the new base, and each case
+# commits only the file it changes, so a file an earlier run left behind is in no commit; see the
+# comment at toy_files). Run from a checkout's root, through zrun
 # (`/home/luke/Work/wt/zrun tools/test_merge_check.sh [select | record]`). With an argument it runs
 # that part of the cases alone, in a workspace of its own (build/test-merge-check-<part>), so the
 # two parts can run at once: run so, each took 11 to 12 s at load 74; the whole, 17 s at load 70.
@@ -42,7 +44,7 @@ mkdir -p "$ZED_SPEC_DIR"
 git -C "$ZED_SPEC_DIR" config user.name test
 git -C "$ZED_SPEC_DIR" config user.email test@localhost
 echo "# spec" >"$ZED_SPEC_DIR/DESIGN.md"
-git -C "$ZED_SPEC_DIR" add -A
+git -C "$ZED_SPEC_DIR" add -- DESIGN.md
 git -C "$ZED_SPEC_DIR" commit -q --allow-empty -m "spec"
 fails=0
 . tools/test_lib.sh || exit 2
@@ -144,14 +146,56 @@ fi
 exit ${STUB_RC:-0}
 EOF
 chmod +x tools/run_tests.sh
-git add -A
+# The base commit holds exactly the files written above, the list toy_files, staged on an index
+# built from nothing (TOOL-merge-selftest-stale-toy). Why: the toy is kept from run to run and the
+# script may delete nothing in it (the rm rules forbid a path built from $ws). A run killed in a
+# case leaves that case's file behind, untracked or committed on the commit HEAD was left at (the
+# select part's last case adds new.txt at the root). The old base, `git add -A` on top of that HEAD,
+# took such a file into base, and from then on every run failed the case that adds it ("a file added
+# at the root selects the group that stat'ed the root": with new.txt already in base the change is
+# no longer an added file at the root); seen by flake1 on 2026-11-20 after merge_check killed the
+# select part at its limit.
+# Why this is enough: (1) `git read-tree --empty` empties only the index (no ref moves, the working
+# tree is untouched), so base's tree is exactly toy_files, whatever HEAD and the index held before;
+# (2) each case commits only the file it changes (`git add -- "$1"` in change_on_base, map_after and
+# main_moves; `git commit -a` in the record part stages only tracked files), so a left-behind file
+# enters no commit; (3) tools/merge_check.sh reads only commits and tracked files (`git diff <base>
+# HEAD`, `git ls-files`, `git status --untracked-files=no`), so an untracked file changes none of
+# its output; clippy compiles the toy, but the left-behind files are .txt files no crate includes.
+# A left-behind file is then reported by name below, and the run goes on; a case that appends to
+# one (map_after new.txt) still adds it as a new file, since base does not hold it.
+# A file written above but missing from toy_files is not in base: the cases that read it fail, and
+# the note below names it on every run.
+# Checked by: a run with a new.txt planted at the root failed that case with the old base (rc 1,
+# 45 of 46 ok) and passes with this one; the same with data/new.txt in the record part.
+toy_files=(
+  .gitignore Cargo.toml
+  crates/a/Cargo.toml crates/a/src/lib.rs
+  crates/b/Cargo.toml crates/b/src/lib.rs crates/b/src/m/mod.rs crates/b/src/gen.rs
+  crates/c/Cargo.toml crates/c/src/lib.rs crates/c/src/inl.rs crates/c/src/m/mod.rs crates/c/data/table.rs
+  crates/tool/Cargo.toml crates/tool/src/lib.rs crates/rootuse/Cargo.toml crates/rootuse/src/lib.rs
+  crates/lnk/Cargo.toml crates/lnk/src/lib.rs crates/feat/Cargo.toml crates/feat/src/lib.rs
+  tests/Cargo.toml tests/src/lib.rs tests/src/seed.rs tests/src/helper.rs tests/src/wrap.rs
+  tests/src/viamod.rs tests/src/inl.rs tests/src/nest.rs
+  tests/steps/x/mod.rs tests/steps/y/mod.rs tests/full/main.rs tests/full/w/mod.rs tests/full/z/mod.rs
+  tools/spec_groups.sh tools/test_merge_check.sh tools/test_run_tests.sh tools/test_lib.sh tools/run_tests.sh
+  docs/notes.md docs/plan.md data/notes.txt
+)
+git read-tree --empty
+git add -- "${toy_files[@]}" || exit 1
 git commit -q --allow-empty -m base
 git tag -f base >/dev/null
+mapfile -t stray < <(git ls-files --others --exclude-standard)
+# The toy's path relative to the checkout's root: $ws is the path under zrun's fixed mount, which
+# outside zrun can name another worktree's toy.
+[ ${#stray[@]} -eq 0 ] ||
+  printf 'test_merge_check: files in build/test-merge-check%s of this checkout that no commit holds (left by an earlier run, or missing from toy_files); no case reads them, delete them by hand: %s\n' \
+    "${part:+-$part}" "${stray[*]}"
 # Commits a change to the file $1 on the base (a line ${2:-// changed}).
 change_on_base() {
   git checkout -q --detach base
   echo "${2:-// changed}" >>"$1"
-  git add -A
+  git add -- "$1"
   git commit -q -m "change $1"
 }
 # Commits a change as change_on_base does and prints the selection's last line. A case that runs
@@ -418,7 +462,7 @@ map_after() {
   git checkout -q --detach base
   mkdir -p "$(dirname "$1")"
   echo "${2:-// changed}" >>"$1"
-  git add -A
+  git add -- "$1"
   git commit -q -m "change $1"
   "$check_script" --base base --reads "$map" --groups 2>&1 |
     command grep -a -E '^merge check: (groups|the map|no package|tests/full)' | sed "s|$map|MAP|"
@@ -474,7 +518,7 @@ git tag -f upstream base >/dev/null
 main_moves() {
   git checkout -q --detach upstream
   echo "${2:-// changed}" >>"$1"
-  git add -A
+  git add -- "$1"
   git commit -q -m "main: change $1"
   git tag -f upstream >/dev/null
   git cherry-pick branch >/dev/null
