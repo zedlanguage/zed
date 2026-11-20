@@ -2246,9 +2246,11 @@ impl Renamed {
     // refused held once, answered written out, at k = 3, w = [1, 3, 5, 7], `x3 + y3 == 4 h +
     // 2`). The pair coloring and [`Numbered`] already join equal parts ([`nesting()`]).
     // Complexity tradeoff: one hash set of the constraints, O(C) for C constraints listed,
-    // against the coloring's O(L log L).
+    // against the coloring's O(L log L). The set is a `TextSet` (foldhash, seeded), not the
+    // standard SipHash set: a constraint holds a program's names, the set is only asked, never
+    // iterated, and SipHash was most of this set's cost (PERF-project-each-renaming-cost).
     fn colored(f: &Formula) -> (Vec<Atom>, Vec<Con>, Vec<usize>) {
-        let mut seen: HashSet<&Con> = HashSet::new();
+        let mut seen: TextSet<&Con> = TextSet::default();
         let mut cons = f.cons();
         cons.retain(|c| seen.insert(*c));
         let mut atoms: BTreeSet<Atom> = BTreeSet::new();
@@ -2417,14 +2419,22 @@ impl Renamed {
 // were 24 MB of the 41 MB that the check of ties ([`Numbered::ties_are_symmetries`]) added to
 // each question renamed (row PRES-project-each-naming). Used: both borrow the constraints of
 // the formula, O(1) each beyond the hash of the constraint.
+// Complexity tradeoff (PERF-project-each-renaming-cost): naive version, the standard maps,
+// SipHash-1-3 over every key: on `l01_38_presburger::bench::slack_scale` `sat_half` at k = 5360
+// the hashing of constraints, atoms and lists of part numbers was about a fifth of the
+// renaming's instructions. Used: the shared hashers of `zed_kernel::digest`, a `TextMap` (foldhash,
+// seeded at random) for the maps keyed by constraints and atoms, which hold a program's names,
+// and a `DigestMap` for the map keyed by part numbers, which the compiler drew. Every map here
+// and in [`Remap`] is only asked and filled, never iterated, so its order reaches no result;
+// the cost per key is the same O(1) expected, with fewer instructions per word hashed.
 struct Numbered<'a> {
     /// The number of each constraint.
-    cons: HashMap<&'a Con, usize>,
+    cons: TextMap<&'a Con, usize>,
     /// The constraint of each part numbered that is one.
     con: Vec<Option<&'a Con>>,
     /// The number of each compound part, by its connective (`0` negation, `1` conjunction,
     /// `2` disjunction) and the numbers of its parts, sorted.
-    keys: HashMap<(u8, Vec<usize>), usize>,
+    keys: DigestMap<(u8, Vec<usize>), usize>,
     /// The connective of each part numbered, `3` for a constraint.
     kind: Vec<u8>,
     /// The numbers of the parts of each part numbered, sorted; none for a constraint.
@@ -2436,8 +2446,13 @@ struct Numbered<'a> {
     /// Whether each part numbered is a constraint with a product among its terms.
     product: Vec<bool>,
     /// The constraints numbered that each atom other than a product occurs in, alone or as a
-    /// factor of a product.
-    uses: HashMap<Atom, Vec<usize>>,
+    /// factor of a product, in increasing order, each with the atom's coefficient there when
+    /// it is a term of that constraint and none when it is only a factor of a product.
+    uses: TextMap<Atom, Vec<(usize, Option<&'a Int>)>>,
+    /// The number of each constraint of one term whose atom is not a product, by that atom,
+    /// its coefficient, the constant and the comparison: the whole constraint, since a
+    /// constraint is its terms, its constant and its comparison ([`Con`]).
+    single: TextMap<(&'a Atom, &'a Int, &'a Int, Rel), usize>,
     /// The number of the formula.
     root: usize,
 }
@@ -2446,15 +2461,16 @@ impl<'a> Numbered<'a> {
     /// The parts of `f` numbered.
     fn of(f: &'a Formula) -> Numbered<'a> {
         let mut s = Numbered {
-            cons: HashMap::new(),
+            cons: TextMap::default(),
             con: Vec::new(),
-            keys: HashMap::new(),
+            keys: DigestMap::default(),
             kind: Vec::new(),
             kids: Vec::new(),
             parents: Vec::new(),
             height: Vec::new(),
             product: Vec::new(),
-            uses: HashMap::new(),
+            uses: TextMap::default(),
+            single: TextMap::default(),
             root: 0,
         };
         let root = f.fold(
@@ -2468,21 +2484,25 @@ impl<'a> Numbered<'a> {
                     let n = s.add(3, Vec::new());
                     s.cons.insert(c, n);
                     s.con[n] = Some(c);
-                    for a in c.lin.terms.keys() {
+                    for (a, k) in &c.lin.terms {
                         let factors = match a {
                             Atom::Product(x, y) if x == y => {
                                 s.product[n] = true;
-                                vec![x.atom()]
+                                vec![(x.atom(), None)]
                             }
                             Atom::Product(x, y) => {
                                 s.product[n] = true;
-                                vec![x.atom(), y.atom()]
+                                vec![(x.atom(), None), (y.atom(), None)]
                             }
-                            Atom::Sym(_) | Atom::Aux(_) => vec![a.clone()],
+                            Atom::Sym(_) | Atom::Aux(_) => vec![(a.clone(), Some(k))],
                         };
-                        for x in factors {
-                            s.uses.entry(x).or_default().push(n);
+                        for (x, k) in factors {
+                            s.uses.entry(x).or_default().push((n, k));
                         }
+                    }
+                    if let (1, false) = (c.lin.terms.len(), s.product[n]) {
+                        let (x, k) = c.lin.terms.first_key_value().expect("one term");
+                        s.single.insert((x, k, &c.lin.constant, c.rel), n);
                     }
                     n
                 }
@@ -2579,9 +2599,25 @@ impl<'a> Numbered<'a> {
         // A constraint with no product that holds `a` and `b` at one coefficient is its own
         // image: found from the two terms, not by writing the constraint out swapped, which on
         // one row over all of `k` tied atoms (`subset_sum`) cost O(k) at each of k swaps.
-        let own = |c: &Con| {
-            let (ka, kb) = (c.lin.terms.get(a), c.lin.terms.get(b));
-            ka.is_some() && ka == kb
+        // Complexity tradeoff (PERF-project-each-renaming-cost): naive version, the two
+        // coefficients looked up in the constraint's map of terms, O(log t) comparisons of
+        // atoms (names) for t terms, about 2300 instructions a swap on the row over all 5360
+        // atoms of `sat_half` (`l01_38_presburger::bench::slack_scale`). Used: the coefficients
+        // that `uses` lists with each constraint, found by binary search on the constraint
+        // numbers, O(log u) comparisons of numbers for the u constraints of the atom. The same
+        // answer: for a constraint `n` with no product every atom of it is one of its terms,
+        // listed once in `uses` with `n` and its coefficient, so the coefficient found is the
+        // one in the map of terms, and none when the atom is not in `n`.
+        let (ua, ub) = (self.uses.get(a), self.uses.get(b));
+        let coefficient =
+            |u: Option<&Vec<(usize, Option<&'a Int>)>>, n: usize| -> Option<&'a Int> {
+                let u = u?;
+                let i = u.binary_search_by_key(&n, |e| e.0).ok()?;
+                u[i].1
+            };
+        let own = |n: usize| {
+            let ka = coefficient(ua, n);
+            ka.is_some() && ka == coefficient(ub, n)
         };
         self.maps_onto_itself(&[a, b], &swap, &own, work)
     }
@@ -2595,12 +2631,12 @@ impl<'a> Numbered<'a> {
     fn permutes_onto_itself(&self, to: &HashMap<Atom, Atom>) -> bool {
         let moved: Vec<&Atom> = to.keys().collect();
         let map = |x: &Atom| to.get(x).cloned().unwrap_or_else(|| x.clone());
-        self.maps_onto_itself(&moved, &map, &|_| false, &mut Remap::default())
+        self.maps_onto_itself(&moved, &map, &|_: usize| false, &mut Remap::default())
     }
 
     /// Whether `map`, a permutation of the atoms that moves only atoms among `touched`, gives the
     /// formula again ([`Numbered::swaps_onto_itself`]); `own` says of a constraint with no
-    /// product that it is its own image without writing it out. `work` holds the lists of a
+    /// product, given by its number, that it is its own image without writing it out. `work` holds the lists of a
     /// check, cleared here, so that the many swaps of one tie check allocate them once.
     // Complexity tradeoff: naive version, new lists at each swap, a few allocations each, which
     // on one row over k = 3920 atoms that share colors (`l01_38_presburger::bench::one_row::
@@ -2610,7 +2646,7 @@ impl<'a> Numbered<'a> {
         &self,
         touched: &[&Atom],
         map: &dyn Fn(&Atom) -> Atom,
-        own: &dyn Fn(&Con) -> bool,
+        own: &dyn Fn(usize) -> bool,
         work: &mut Remap,
     ) -> bool {
         let swap = |x: Atom| map(&x);
@@ -2618,35 +2654,68 @@ impl<'a> Numbered<'a> {
         let Remap {
             starts,
             now,
-            changed,
             left,
             count,
         } = work;
         starts.clear();
         now.clear();
-        changed.clear();
         left.clear();
         starts.extend(
             (touched.iter())
                 .filter_map(|a| self.uses.get(*a))
                 .flatten()
-                .copied(),
+                .map(|e| e.0),
         );
         zed_collections::sorted::sort_dedup(starts);
+        // Complexity tradeoff (PERF-project-each-renaming-cost): naive version, a set of the
+        // parts left, by height, beside a map from each to a new list of its parts changed: one
+        // allocation per part above a part changed, about a sixth of a swap of `sat_half`
+        // (`l01_38_presburger::bench::slack_scale`). Used: one ordered set of triples (height of
+        // the part above, the part above, its part changed), so the parts changed of a part are
+        // the run of triples that follows its first; O(log L) per triple for the L triples left
+        // as before, and no list allocated per part above (the set allocates a node per eleven
+        // triples, as the set of parts left did per eleven parts). No triple is put in twice,
+        // since a part changes at most once and lists each part it is in once (`parents`), and
+        // none is put in for a part after its run is read, since a part above holds only parts
+        // lower than itself, which are read first.
         let moved = |n: usize,
                      m: usize,
-                     now: &mut HashMap<usize, usize>,
-                     changed: &mut HashMap<usize, Vec<usize>>,
-                     left: &mut BTreeSet<(u32, usize)>| {
+                     now: &mut DigestMap<usize, usize>,
+                     left: &mut BTreeSet<(u32, usize, usize)>| {
             now.insert(n, m);
             for &p in &self.parents[n] {
-                changed.entry(p).or_default().push(n);
-                left.insert((self.height[p], p));
+                left.insert((self.height[p], p, n));
             }
         };
         for &n in starts.iter() {
             let c = self.con[n].expect("a constraint numbered");
-            if !self.product[n] && own(c) {
+            // Complexity tradeoff (PERF-project-each-renaming-cost): naive version, the image
+            // of every constraint written out (a new map of terms) and hashed whole to find its
+            // number, about 2500 instructions for a constraint of one term, which made most of
+            // the 30000 of one swap of `sat_half` (`l01_38_presburger::bench::slack_scale`, one
+            // disjunction `y == 0 || y == w` per atom); the swaps of the tie check grow with the
+            // number of tied atoms. Used, for a constraint `k * x + c rel 0` of one term whose
+            // atom is not a product: its image is `k * map(x) + c rel 0`, and `map(x)` is not a
+            // product either (`map` moves only atoms that are not products), so the image is a
+            // part of the formula exactly when `single` holds `(map(x), k, c, rel)`, and then it
+            // is that constraint, since a constraint is its terms, constant and comparison. The
+            // same answer in O(1) expected, with no map built and four words hashed; when
+            // `map(x)` is `x` the image is the constraint itself, as below. Other constraints
+            // go the general way. Tests: `l01_38_omega_test::names` (ties renamed or refused),
+            // COMPLEXITY.md row PERF-project-each-renaming-cost.
+            if let (1, false) = (c.lin.terms.len(), self.product[n]) {
+                let (x, k) = c.lin.terms.first_key_value().expect("one term");
+                let y = map(x);
+                if &y == x {
+                    continue;
+                }
+                match self.single.get(&(&y, k, &c.lin.constant, c.rel)) {
+                    None => return false,
+                    Some(&m) => moved(n, m, now, left),
+                }
+                continue;
+            }
+            if !self.product[n] && own(n) {
                 continue;
             }
             let terms = c.lin.terms.iter().map(|(x, k)| {
@@ -2665,20 +2734,28 @@ impl<'a> Numbered<'a> {
             };
             match self.cons.get(&image) {
                 None => return false,
-                Some(&m) if m != n => moved(n, m, now, changed, left),
+                Some(&m) if m != n => moved(n, m, now, left),
                 Some(_) => {}
             }
         }
-        while let Some((_, p)) = left.pop_first() {
+        while let Some((h, p, first)) = left.pop_first() {
             let kids = &self.kids[p];
             let times =
                 |k: usize| kids.partition_point(|&x| x <= k) - kids.partition_point(|&x| x < k);
             // Each part changed counted out as it was and in as it is now.
             count.clear();
-            for &k in &changed.remove(&p).unwrap_or_default() {
+            let mut k = first;
+            loop {
                 let t = times(k) as isize;
                 count.push((k, -t));
                 count.push((now[&k], t));
+                match left.first() {
+                    Some(&(g, q, next)) if (g, q) == (h, p) => {
+                        left.pop_first();
+                        k = next;
+                    }
+                    _ => break,
+                }
             }
             count.sort_unstable();
             let same = count
@@ -2691,7 +2768,7 @@ impl<'a> Numbered<'a> {
             parts.sort_unstable();
             match self.keys.get(&(self.kind[p], parts)) {
                 None => return false,
-                Some(&m) => moved(p, m, now, changed, left),
+                Some(&m) => moved(p, m, now, left),
             }
         }
         !now.contains_key(&self.root)
@@ -2699,15 +2776,15 @@ impl<'a> Numbered<'a> {
 }
 
 /// The lists of one check of [`Numbered::maps_onto_itself`], kept between the checks of one
-/// tie: the constraints to read first, the new number of each part changed, the parts changed
-/// of each part above one, the parts left to read, lowest first, and the count of a part's
-/// parts changed.
+/// tie: the constraints to read first, the new number of each part changed, the parts left to
+/// read, lowest first, each with its parts changed (a triple of height, part and part changed
+/// for each), and the count of a part's parts changed. The map is keyed by part numbers, so it
+/// is a `DigestMap` ([`Numbered`]).
 #[derive(Default)]
 struct Remap {
     starts: Vec<usize>,
-    now: HashMap<usize, usize>,
-    changed: HashMap<usize, Vec<usize>>,
-    left: BTreeSet<(u32, usize)>,
+    now: DigestMap<usize, usize>,
+    left: BTreeSet<(u32, usize, usize)>,
     count: Vec<(usize, isize)>,
 }
 
@@ -20149,10 +20226,55 @@ fn project_each_as_named(f: &Formula, syms: &[Atom], cover: bool) -> Result<Each
 /// edges; sorting costs O(sum d log d) comparisons. A comparison may read a whole
 /// pair of sub-DAGs, but never unfolds shared trees. The naive alternative, ordering
 /// just the points already found, cannot undo different work spent finding them.
+// Complexity tradeoff (PERF-project-each-renaming-cost): naive version, the standard SipHash
+// set and map, and the pair compared first put in the set of pairs seen, which made each of the
+// O(sum d log d) comparisons allocate a set and hash a pair even when the parts compared are
+// disjunctions of constraints alone (`l01_38_presburger::bench::slack_scale` `sat_half`, k =
+// 5360). Used: the first pair is not put in the set, since it is never met again (proof: each
+// later pair holds a proper part of the first part compared, and a part is not a proper part of
+// itself in a formula, which is a finite DAG), so the set is made only for pairs below; the set
+// is a `DigestSet`, its keys being ids, and the interning map a `TextMap`, its keys holding
+// constraints, so a program's names; both are only asked and filled, never iterated. Same
+// O(sum d log d) comparisons, each without the allocation and with fewer instructions per hash.
 fn canonical_parts(f: &Formula) -> Formula {
     fn cmp(a: &Formula, b: &Formula) -> Ordering {
+        // The steps the walk below takes first, without its stack: the ranks, then two
+        // constraints compared, then the number of parts and the first parts' ranks and, for
+        // two constraints, the first parts themselves. The walk pops `(a, b)` and makes these
+        // same comparisons in this order before any other, so when one of them is not equal it
+        // is the walk's answer; otherwise the walk runs from the start. Disjunctions of
+        // constraints, such as the `y == 0 || y == w` of each atom of `sat_half`, differ at
+        // the first parts, so most comparisons end here with no allocation.
+        let order = a.rank().cmp(&b.rank());
+        if !order.is_eq() {
+            return order;
+        }
+        if let (Formula::Con(a), Formula::Con(b)) = (a, b) {
+            return a.cmp(b);
+        }
+        if Id::any(a) == Id::any(b) {
+            return Ordering::Equal;
+        }
+        let (ka, kb) = (a.kids(), b.kids());
+        let order = ka.len().cmp(&kb.len());
+        if !order.is_eq() {
+            return order;
+        }
+        if let (Some(x), Some(y)) = (ka.first(), kb.first()) {
+            let order = x.rank().cmp(&y.rank());
+            if !order.is_eq() {
+                return order;
+            }
+            if let (Formula::Con(x), Formula::Con(y)) = (x, y) {
+                let order = x.cmp(y);
+                if !order.is_eq() {
+                    return order;
+                }
+            }
+        }
         let mut stack = vec![(a, b)];
-        let mut seen = HashSet::new();
+        let mut seen: DigestSet<(Id, Id)> = DigestSet::default();
+        let mut first = true;
         while let Some((a, b)) = stack.pop() {
             let order = a.rank().cmp(&b.rank());
             if !order.is_eq() {
@@ -20166,7 +20288,7 @@ fn canonical_parts(f: &Formula) -> Formula {
                 continue;
             }
             let ids = (Id::any(a), Id::any(b));
-            if ids.0 == ids.1 || !seen.insert(ids) {
+            if ids.0 == ids.1 || (!std::mem::take(&mut first) && !seen.insert(ids)) {
                 continue;
             }
             let (a, b) = (a.kids(), b.kids());
@@ -20183,7 +20305,7 @@ fn canonical_parts(f: &Formula) -> Formula {
         Con(Con),
         Part(Id),
     }
-    let mut intern: HashMap<(u8, Vec<Child>), Formula> = HashMap::new();
+    let mut intern: TextMap<(u8, Vec<Child>), Formula> = TextMap::default();
     f.fold(
         (),
         |_, ()| (),
