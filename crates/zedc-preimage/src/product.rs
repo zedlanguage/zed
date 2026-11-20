@@ -105,6 +105,7 @@ use super::preimage::{
 };
 use super::spans::Spans;
 use super::threshold;
+use zed_collections::search::first_true;
 use zedc_int::int::{Int, IntRange, row_bound, row_range};
 use zedc_lattice::affine::Bounds;
 use zedc_lattice::cell::{Cell, Entry, Premise, Premises};
@@ -115,6 +116,7 @@ use zedc_lattice::revision::{self, Op, reduce_congruence};
 use zedc_presburger::conjuncts::{self, BlockId, Conjuncts, Edge, Uses};
 use zedc_presburger::hull::Hull;
 use zedc_presburger::presburger::{self, Atom, Con, Factor, Formula, Lin, Rel};
+use zedc_presburger::upper_hull::UpperHull;
 use zedc_solvers::linear::Q;
 use zedc_stage::defs::written_name;
 use zedc_stage::stage;
@@ -21584,31 +21586,10 @@ fn least_of(x: Option<Int>, y: Option<Int>) -> Option<Int> {
     }
 }
 
-/// The first `i` in `lo..hi` for which `holds(i)`, or `hi`, when `holds` is false and then
-/// true over the range: O(log(hi - lo)) calls.
-fn first_holding(mut lo: usize, mut hi: usize, holds: impl Fn(usize) -> bool) -> usize {
-    while lo < hi {
-        let mid = lo + (hi - lo) / 2;
-        if holds(mid) {
-            hi = mid;
-        } else {
-            lo = mid + 1;
-        }
-    }
-    lo
-}
-
-/// Whether `b` lies on or below the line from `a` to `c`, for points `(j, d)` with
-/// `a.0 < b.0 < c.0`: the cross product of `b - a` and `c - a` is at least 0.
-fn ray_not_above(a: &(Int, Int), b: &(Int, Int), c: &(Int, Int)) -> bool {
-    let (bj, bd) = (&b.0 - &a.0, &b.1 - &a.1);
-    let (cj, cd) = (&c.0 - &a.0, &c.1 - &a.1);
-    &bj * &cd >= &bd * &cj
-}
-
 /// The upper convex hull of the rays `(j, d)` of a ray group, all with `j > 0`, as its
-/// vertices from least `j` to greatest, no three on a line: the least [`ray_bound`] a row
-/// gives over the rays is at one of them ([`RayHull::least`]).
+/// vertices from least `j` to greatest, no three on a line ([`UpperHull`], which builds and
+/// keeps it): the least [`ray_bound`] a row gives over the rays is at one of them
+/// ([`RayHull::least`]).
 ///
 /// Why a vertex: for a row `(p, q, c)` with `p > 0`, the bound over the ray `(j, d)` is the
 /// floor of `(c - p*d) / (p*j + q)`, which is minus the slope from the point
@@ -21620,61 +21601,18 @@ fn ray_not_above(a: &(Int, Int), b: &(Int, Int), c: &(Int, Int)) -> bool {
 ///
 /// Persistent (`imbl::Vector`), so that a block's copies share it.
 #[derive(Clone, Default)]
-struct RayHull(imbl::Vector<(Int, Int)>);
+struct RayHull(UpperHull);
 
 impl RayHull {
     /// The hull of `rays`, given in increasing order of `(j, d)`, in O(R) for R rays
-    /// (Andrew's monotone chain, one pass).
+    /// ([`UpperHull::of`]).
     fn of<'a>(rays: impl Iterator<Item = &'a (Int, Int)>) -> RayHull {
-        let mut v: Vec<(Int, Int)> = Vec::new();
-        for r in rays {
-            // Of two rays at one `j`, the later has the greater `d` and stands above.
-            if v.last().is_some_and(|l| l.0 == r.0) {
-                v.pop();
-            }
-            while v.len() >= 2 && ray_not_above(&v[v.len() - 2], &v[v.len() - 1], r) {
-                v.pop();
-            }
-            v.push(r.clone());
-        }
-        RayHull(v.into_iter().collect())
+        RayHull(UpperHull::of(rays))
     }
 
-    /// Takes in the ray `(j, d)` in O(log^2 R): the vertices it hides are a run on each side
-    /// of it, each run found by a binary search, and cut out by splitting the vector.
-    ///
-    /// Why runs: on the left, the vertex `h_t` stays if the slope of the edge into it is
-    /// greater than the slope from it to the new point `P`. The slope from `h_t` to `P` is a
-    /// mean of the slope of the edge out of `h_t` and the slope from `h_(t+1)` to `P`, and the
-    /// edge slopes fall from left to right; so a vertex that goes has every later one on the
-    /// left go too, and those that stay are a prefix. The right side is the mirror image.
+    /// Takes in the ray `(j, d)` in O(log^2 R) ([`UpperHull::insert`]).
     fn insert(&mut self, j: &Int, d: &Int) {
-        let p = (j.clone(), d.clone());
-        let v = &self.0;
-        let m = v.len();
-        let (left_end, right_start) = match v.binary_search_by(|h| h.0.cmp(j)) {
-            Ok(i) if &v[i].1 >= d => return,
-            Ok(i) => (i, i + 1),
-            Err(i) => {
-                if i > 0 && i < m && ray_not_above(&v[i - 1], &p, &v[i]) {
-                    return;
-                }
-                (i, i)
-            }
-        };
-        // The first vertex on the left that goes: `h_t` with the turn `h_(t-1), h_t, P` not
-        // to the right.
-        let lo = first_holding(1, left_end, |t| ray_not_above(&v[t - 1], &v[t], &p)).min(left_end);
-        // The first vertex on the right that stays.
-        let hi = first_holding(right_start, m, |s| {
-            s + 1 == m || !ray_not_above(&p, &v[s], &v[s + 1])
-        });
-        let mut left = self.0.clone();
-        let right = left.split_off(hi);
-        left.truncate(lo);
-        left.push_back(p);
-        left.append(right);
-        self.0 = left;
+        self.0.insert(j, d);
     }
 
     /// The least [`ray_bound`] of the row `(p, q, c)`, `p >= 0` and `q > 0`, over the rays,
@@ -21688,7 +21626,7 @@ impl RayHull {
     /// between them, at least the edge's, and the next edge is less steep than this one, so
     /// it is not the steeper either.
     fn least(&self, (p, q, c): &(Int, Int, Int)) -> Option<Int> {
-        let v = &self.0;
+        let v = self.0.vertices();
         if v.is_empty() {
             return None;
         }
@@ -21697,7 +21635,7 @@ impl RayHull {
         }
         // The edge from `h_i` to `h_(i+1)` is no steeper than the slope from `Q` to `h_i`:
         // `(d' - d) / (j' - j) <= (p*d - c) / (p*j + q)`, both denominators positive.
-        let i = first_holding(0, v.len() - 1, |i| {
+        let i = first_true(0, v.len() - 1, |&i| {
             let ((j0, d0), (j1, d1)) = (&v[i], &v[i + 1]);
             &(d1 - d0) * &(&(p * j0) + q) <= &(&(p * d0) - c) * &(j1 - j0)
         });
@@ -22852,6 +22790,8 @@ mod tests {
 
     mod bench;
 
+    use zedc_presburger::upper_hull::not_above;
+
     /// [`RayHull::least`] gives the least [`ray_bound`] over every ray, for hulls built at
     /// once ([`RayHull::of`]) and ray by ray in a shuffled order ([`RayHull::insert`]), with
     /// rays at one `j`, on one line and under the hull, and rows with `p = 0`.
@@ -22889,10 +22829,10 @@ mod tests {
                 grown.insert(j, d);
             }
             for hull in [&built, &grown] {
-                let v: Vec<_> = hull.0.iter().cloned().collect();
+                let v: Vec<_> = hull.0.vertices().iter().collect();
                 for w in v.windows(3) {
                     assert!(
-                        !ray_not_above(&w[0], &w[1], &w[2]),
+                        !not_above((&w[0].0, &w[0].1), (&w[1].0, &w[1].1), (&w[2].0, &w[2].1)),
                         "a vertex under the hull"
                     );
                 }

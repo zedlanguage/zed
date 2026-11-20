@@ -9513,14 +9513,19 @@ fn envelope(mut lines: Vec<(Int, Int)>) -> Vec<(Option<Q>, Int, Int)> {
 /// `pa < pb < pc`) is under `max(a, c)` everywhere when at the crossing of `a` and `c`,
 /// `x = (qa - qc) / (pc - pa)`, it is under `a`: `(pb - pa)·(qa - qc) <= (qa - qb)·(pc - pa)`,
 /// with both differences of slopes above zero, so the cross-multiplied form keeps the order.
-/// Shared by [`envelope`] and `extend`'s `hull_of` (DRY-numeric-shared; two copies before,
-/// the same test written with the operands named apart).
+/// Shared by [`envelope`], `extend`'s `hull_of` (DRY-numeric-shared; two copies before,
+/// the same test written with the operands named apart) and [`UpperHull::of`], whose upper
+/// hull of points `(p, q)` is this envelope of lines `p·x + q`; the test is
+/// [`crate::upper_hull::not_above`] on `(pa, qa)`, `(pb, qb)` and `(pc, qc)`, negated on both
+/// sides.
 ///
 /// Complexity tradeoff: naive version, each line tested against every pair of the others,
 /// O(n³) products. Used: the monotone chain (Andrew, "Another efficient algorithm for convex
 /// hulls in two dimensions", IPL 9(5), 1979) on the sorted lines, each index pushed and popped
 /// at most once, O(n) products after the caller's O(n log n) sort. Tradeoffs: none.
-fn upper_envelope<T>(lines: &[T], line: impl Fn(&T) -> (&Int, &Int)) -> Vec<usize> {
+///
+/// [`UpperHull::of`]: crate::upper_hull::UpperHull::of
+pub(crate) fn upper_envelope<T>(lines: &[T], line: impl Fn(&T) -> (&Int, &Int)) -> Vec<usize> {
     let mut hull: Vec<usize> = Vec::new();
     for j in 0..lines.len() {
         let (pc, qc) = line(&lines[j]);
@@ -9528,8 +9533,7 @@ fn upper_envelope<T>(lines: &[T], line: impl Fn(&T) -> (&Int, &Int)) -> Vec<usiz
             continue;
         }
         while let [.., a, b] = hull[..] {
-            let ((pa, qa), (pb, qb)) = (line(&lines[a]), line(&lines[b]));
-            if &(pb - pa) * &(qa - qc) <= &(qa - qb) * &(pc - pa) {
+            if crate::upper_hull::not_above(line(&lines[a]), line(&lines[b]), (pc, qc)) {
                 hull.pop();
             } else {
                 break;

@@ -251,6 +251,7 @@
 pub mod conjuncts;
 pub mod hull;
 pub mod presburger;
+pub mod upper_hull;
 
 /// The scaling test of the rule of low complexity, shared with the step tests.
 #[cfg(test)]

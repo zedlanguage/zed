@@ -91,6 +91,80 @@ impl<T: Ord + Clone> Uses<T> {
     pub fn set(&self, name: &str) -> Option<&OrdSet<T>> {
         self.0.get(name)
     }
+
+    /// [`Uses::add`], through the last change `last` made ([`Last`]).
+    pub fn add_with(&mut self, name: &Arc<str>, t: &T, last: &mut Last<T>) {
+        self.change(name, t, true, last);
+    }
+
+    /// [`Uses::remove`], through the last change `last` made ([`Last`]).
+    pub fn remove_with(&mut self, name: &Arc<str>, t: &T, last: &mut Last<T>) {
+        self.change(name, t, false, last);
+    }
+
+    /// Adds (`add`) or removes `t` at `name`: when `last` made the same change to a set equal
+    /// by pointer to the one at `name`, its result is taken in O(1); otherwise the change is
+    /// made and kept in `last`.
+    fn change(&mut self, name: &Arc<str>, t: &T, add: bool, last: &mut Last<T>) {
+        let now = self.0.get(name);
+        if let Some((v, a, before, after)) = &last.0
+            && *a == add
+            && v == t
+            && match (before, now) {
+                (Some(x), Some(y)) => x.ptr_eq(y),
+                (None, None) => true,
+                _ => false,
+            }
+        {
+            match after {
+                Some(s) => {
+                    self.0.insert(name.clone(), s.clone());
+                }
+                None => {
+                    self.0.remove(name);
+                }
+            }
+            return;
+        }
+        let before = now.cloned();
+        if add {
+            self.add(name, t);
+        } else {
+            self.remove(name, t);
+        }
+        last.0 = Some((t.clone(), add, before, self.0.get(name).cloned()));
+    }
+}
+
+/// The last change made through [`Uses::add_with`] or [`Uses::remove_with`]: the value,
+/// whether it was added, and the set at the name before and after (`None` for no set), so that
+/// the same change to a set equal by pointer to the one before takes the one after in O(1).
+/// The result is the same set: a persistent set is not changed once shared, so sets equal by
+/// pointer hold the same values, and the change depends on the values and `t` alone.
+// Complexity tradeoff: naive version, each index of a conjunct's names (`users`, `moving` and
+// `free` of [`Conjuncts`], `syms` and `forest` of [`Blocks`]) inserted the conjunct into its own
+// set at each name, O(log d) comparisons of formulas and a path copy of O(log d) nodes for a
+// name of d conjuncts, though the sets of one name are often one persistent set (a name none of
+// whose conjuncts is in a star or bounds it alone has the same set in all five), and two names
+// that every conjunct mentions both of have one set too. Used: the last change is kept, and a
+// set equal by `ptr_eq` to its set before takes its set after: O(log d) for the first set
+// changed, O(1) for each set shared with it after, and the map's own O(log n) descent at the
+// name for each, so the indexes go on sharing their sets. Tradeoffs: a set that matches no kept
+// change costs as before, the set before kept alive by `last` can make a set held nowhere else
+// copied along its path rather than changed in place (the same O(log d)), and an index that is
+// changed between two others (`eq_users`) goes through plain `add` so as not to replace the kept
+// change. Trigger of the old cost: stair_holes_mix, whose k disjunctions all mention `x` and
+// `y`, inserted each into eight sets of k conjuncts, 1,518M of 15,107M instructions at k =
+// 16,384 and 142M of 1,688M at 2,048 (callgrind). Test
+// `l01_39_scope_relations::families::bench::stair_holes_mix_scales`; COMPLEXITY.md row
+// PERF-l139-shared-uses.
+#[derive(Clone, Debug)]
+pub struct Last<T: Ord + Clone>(Option<(T, bool, Option<OrdSet<T>>, Option<OrdSet<T>>)>);
+
+impl<T: Ord + Clone> Default for Last<T> {
+    fn default() -> Self {
+        Last(None)
+    }
 }
 
 impl<T: Ord + Clone + Default> Uses<(usize, T)> {
@@ -198,6 +272,9 @@ pub struct Conjuncts {
     // box_cases: 8,192 vs 128). Used: a persistent `Uses` index holding only `Rel::Eq`
     // constraints, O(s log e) per equality added/removed and O(1) when none exist.
     eq_users: Uses<Arc<Formula>>,
+    /// The last change to `users`, `moving` and `free`, which share a name's set while they
+    /// hold the same conjuncts there ([`Last`]).
+    last: Last<Arc<Formula>>,
     /// The blocks of the conjuncts: the forest of the conjuncts of no star, and each star's
     /// conjuncts as a block of its own outside it ([`Blocks::detach`]).
     blocks: Blocks,
@@ -1397,9 +1474,9 @@ impl Conjuncts {
                     continue;
                 }
                 if want {
-                    self.index.free.add(h, &g);
+                    self.index.free.add_with(h, &g, &mut self.last);
                 } else {
-                    self.index.free.remove(h, &g);
+                    self.index.free.remove_with(h, &g, &mut self.last);
                 }
                 self.tie(h, &ns, want, &mut log);
                 for y in ns.iter().filter(|y| *y != h) {
@@ -1780,11 +1857,11 @@ impl Conjuncts {
         let ns = names(&g);
         let is_eq = matches!(&*g, Formula::Con(c) if c.rel == Rel::Eq);
         for n in &ns {
-            self.users.add(n, &g);
+            self.users.add_with(n, &g, &mut self.last);
+            self.index.moving.add_with(n, &g, &mut self.last);
             if is_eq {
                 self.eq_users.add(n, &g);
             }
-            self.index.moving.add(n, &g);
         }
         if let Some(n) = alone(&g) {
             self.index.solo.add(&n, &g);
@@ -1866,11 +1943,11 @@ impl Conjuncts {
         let ns = names(g);
         let is_eq = matches!(&**g, Formula::Con(c) if c.rel == Rel::Eq);
         for n in &ns {
-            self.users.remove(n, g);
+            self.users.remove_with(n, g, &mut self.last);
+            self.index.moving.remove_with(n, g, &mut self.last);
             if is_eq {
                 self.eq_users.remove(n, g);
             }
-            self.index.moving.remove(n, g);
         }
         if let Some(n) = alone(g) {
             self.index.solo.remove(&n, g);
@@ -2113,6 +2190,9 @@ pub struct Blocks {
     // `l01_39_reduced_product::scaling::tests_on_the_hubs_of_many_stars_in_an_eager_scope_scale`;
     // COMPLEXITY.md row C49.
     forest: Uses<Arc<Formula>>,
+    /// The last change to `syms` and `forest`, which share a name's set while they hold the
+    /// same conjuncts there ([`Last`]).
+    last: Last<Arc<Formula>>,
 
     /// The conjuncts that mention each atom that is not a name.
     shared: OrdMap<Atom, OrdSet<Arc<Formula>>>,
@@ -2545,9 +2625,9 @@ impl Blocks {
                 continue;
             };
             if was_in && !to_in {
-                self.forest.remove(x, g);
+                self.forest.remove_with(x, g, &mut self.last);
             } else if to_in && !was_in {
-                self.forest.add(x, g);
+                self.forest.add_with(x, g, &mut self.last);
             }
             if let Some(w) = was
                 && let Some(by_name) = self.at.get_mut(&w)
@@ -3253,7 +3333,7 @@ impl Blocks {
     pub fn add(&mut self, g: &Arc<Formula>) {
         for a in g.atoms() {
             match a {
-                Atom::Sym(n) => self.syms.add(&n, g),
+                Atom::Sym(n) => self.syms.add_with(&n, g, &mut self.last),
                 a => {
                     self.shared.entry(a).or_default().insert(g.clone());
                 }
@@ -3607,7 +3687,7 @@ impl Blocks {
     fn unuse(&mut self, g: &Arc<Formula>) {
         for a in g.atoms() {
             match a {
-                Atom::Sym(n) => self.syms.remove(&n, g),
+                Atom::Sym(n) => self.syms.remove_with(&n, g, &mut self.last),
                 a => {
                     if let Some(s) = self.shared.get_mut(&a) {
                         s.remove(g);
@@ -4317,6 +4397,55 @@ mod tests {
             l.plus(&Lin::atom(Atom::Sym((*n).into())).times(*k))
         });
         Formula::Con(Con { lin, rel })
+    }
+
+    /// `add_with` and `remove_with` through one `Last` give the sets plain `add` and `remove`
+    /// give, step by step, over adds and removes of present and absent values, a set emptied
+    /// and a name with no set; and two names given the same values in turn share one set.
+    #[test]
+    fn uses_through_the_last_change_equal_plain_uses() {
+        let names: Vec<Arc<str>> = ["x", "y", "z"].iter().map(|n| Arc::from(*n)).collect();
+        let mut with = Uses::<u32>::default();
+        let mut plain = Uses::<u32>::default();
+        let mut last = Last::default();
+        // A fixed linear congruential sequence, so the run is the same each time.
+        let mut s: u64 = 12345;
+        for step in 0..4000 {
+            s = s
+                .wrapping_mul(6364136223846793005)
+                .wrapping_add(1442695040888963407);
+            let t = ((s >> 33) % 7) as u32;
+            let add = (s >> 40) % 3 != 0;
+            // Mostly the same value at x then y, as an index of a conjunct's names gives it.
+            let at: Vec<&Arc<str>> = if (s >> 45) % 4 == 0 {
+                vec![&names[2]]
+            } else {
+                vec![&names[0], &names[1]]
+            };
+            for n in at {
+                if add {
+                    with.add_with(n, &t, &mut last);
+                    plain.add(n, &t);
+                } else {
+                    with.remove_with(n, &t, &mut last);
+                    plain.remove(n, &t);
+                }
+                assert_eq!(
+                    with,
+                    plain,
+                    "step {step}: {} {t} at {n}",
+                    if add { "add" } else { "remove" }
+                );
+            }
+        }
+        let mut shared = Uses::<u32>::default();
+        let mut last = Last::default();
+        for t in 0..50 {
+            shared.add_with(&names[0], &t, &mut last);
+            shared.add_with(&names[1], &t, &mut last);
+        }
+        assert!(shared.set("x").unwrap().ptr_eq(shared.set("y").unwrap()));
+        assert_eq!(shared.count("x"), 50);
     }
 
     #[test]
