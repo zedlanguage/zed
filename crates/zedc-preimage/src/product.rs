@@ -8167,7 +8167,10 @@ impl Block {
     /// whose diff skips what they share, in O((c + m) log k) for `c` changes and `m` names of
     /// the members of a star (each one's free conjuncts diffed); the names' products changed
     /// since the keep are walked until they outnumber the block's names `u`, then those names
-    /// are compared, O(min(c', u) log n) for `c'` such changes and `n` names in all, where
+    /// are compared, O(min(c', u) log n) for `c'` such changes and `n` names in all (the
+    /// walk also reads the `s` updates that only change the framing, so it reads
+    /// `s + min(c', u + 1)` items; the proof in the body that the whole walk is still
+    /// O(u log n) is at its `same_framed` note), where
     /// walking every one was O(c' log n), with `c'` growing with the tests on other blocks,
     /// O(k²) in all for `k` stars each checked after each test; a star's leaf is looked up,
     /// O(log n), where diffing all the stars was O(k) for `k` stars made since; a constraint
@@ -13478,6 +13481,24 @@ impl Scope {
             let before = self.names.view().clone();
             // The names whose bounds may have changed since the last projection, so that the
             // stars it finds are those of the bounds as they are.
+            //
+            // Proof that the first arm gives what [`Scope::due`] reads `moved` as (the names
+            // that differ, by `same_framed`, between the names as last projected and the names
+            // now, in key order), the claim the second arm computes directly:
+            // 1. The guard `names.ptr_eq(&last)` makes the names as last projected the map
+            //    `last` itself.
+            // 2. `differ` was filled by one walk of `last.diff(&self.names)` above, and
+            //    `self.names` has not changed since: nothing between that walk and here writes it.
+            // 3. That walk keeps a name exactly when the second arm's `filter_map` does: an `Add`
+            //    or a `Remove` always, an `Update` when `!same_framed(a, p)`, with the same `a`
+            //    and new product as the second arm's `a` and `b`.
+            // 4. `imbl`'s `diff` yields the items in key order, each key once, so `differ` is in
+            //    key order with no repeat.
+            // 5. The walk stops early only after it sets `self.bottom`, and the outer loop then
+            //    breaks at `if self.bottom` before reaching this `match`, so a cut-short `differ`
+            //    is never read here.
+            // So both arms give the same list (reader a1b of proofdoc4b asked for a debug
+            // assertion; the five steps above close the claim, so none is added).
             let moved: Vec<Arc<str>> = match &self.seen.projection {
                 Some((names, _)) if moved_since && names.ptr_eq(&last) => differ,
                 Some((names, _)) => names
@@ -13821,8 +13842,10 @@ impl Scope {
     // block-cut tree, has no cycle: a cycle through two components would lie in one
     // biconnected piece, so they would be one component. Harary, "Graph Theory",
     // Addison-Wesley 1969, ch. 3 (block-cut tree), and Hopcroft and Tarjan, "Algorithm 447:
-    // efficient algorithms for graph manipulation", CACM 16(6), 1973,
-    // doi:10.1145/362248.362272; both written from memory, not checked against the text.
+    // efficient algorithms for graph manipulation", CACM 16(6), 1973, pp. 372-378,
+    // doi:10.1145/362248.362272 (title, authors, volume, issue and pages checked against
+    // Crossref 2026-11-20; the text not read). Harary is cited from memory (a book, no DOI)
+    // and not checked; the argument above does not depend on either text.
     // `Blocks::well_formed` checks the forest (parent links and one root a tree) in tests; it
     // does not check that the blocks are the biconnected components.
     // A bound comes back only through the name it left by: a block `c` is put on the worklist
@@ -16910,7 +16933,8 @@ impl Scope {
     // This uses plan row PERF-l139-family's interval-constraint-propagation idea, with exact
     // integer fibers rather than the residual supports of AC-2001 (Bessiere, Regin,
     // Yap and Zhang, "An optimal coarse-grained arc consistency algorithm", Artificial
-    // Intelligence 165(2), 2005) or watched literals.
+    // Intelligence 165(2), 2005, pp. 165-185, doi:10.1016/j.artint.2005.02.004, checked
+    // against Crossref 2026-11-20, the text not read; named as not used) or watched literals.
     // Review round 3 of PERF-l139-wake, with a finite optimizer not kept: omitting this gives hop
     // R=21.38, hopon=22.08, hopb=35.29, hoponb=35.36; retaining it gives
     // 8.62, 8.89, 12.62, 12.66. Without that finite optimizer, the kept
@@ -24437,7 +24461,9 @@ impl Scope {
 // projection, versus retain just the two extreme slopes per intercept in O(r log r).
 // A middle row is a convex combination of its extremes, so removing it preserves all
 // real and integer points. This is the common-intercept case of the envelope method
-// named in plan row PERF-l139-family (F. P. Preparata and M. I. Shamos, Computational Geometry: An Introduction, Springer-Verlag, 1985),
+// named in plan row PERF-l139-family (F. P. Preparata and M. I. Shamos, Computational
+// Geometry: An Introduction, Springer-Verlag, 1985, doi:10.1007/978-1-4612-1098-6, checked
+// against Crossref 2026-11-20, the book not read),
 // using ordered grouping rather than a dynamic general half-plane hull. Projection
 // syntax may still affect refusals; this is tested by families::projection_shortcut_cases.
 // Measured in review round 3 (allocator calls, 8n ratio), persist: without this rule R=26.29, with it R=12.66;
@@ -24450,7 +24476,8 @@ impl Scope {
 // point where the two kept rows hold. So the dropped rows are implied, and every other
 // conjunct is kept as it is. No sign or size of a, b, c is used. The book is cited only
 // for the method; this argument does not depend on it (Preparata and Shamos,
-// doi:10.1007/978-1-4612-1098-6, DOI from memory, not checked). Test:
+// doi:10.1007/978-1-4612-1098-6, DOI checked against Crossref 2026-11-20, the book not
+// read). Test:
 // `tests::extreme_base_and_compact_abs_keep_every_integer_point` (this file); it cannot
 // catch an error at a point outside [-6, 6]^3 or with names other than x, y, z.
 fn extreme_base(cons: &[&Arc<Formula>]) -> Formula {
@@ -24605,7 +24632,8 @@ impl Scope {
     // unboundedness. Measured in review round 3, star: R=7.19, against 7.60 without this
     // certificate; work at 8n falls from 666544 to 447009 allocations. This
     // elementary recession-cone certificate replaces general half-plane hull construction (Preparata and Shamos, Computational Geometry: An Introduction,
-    // Springer-Verlag, 1985) on this fragment, without enumerating integer points.
+    // Springer-Verlag, 1985, doi:10.1007/978-1-4612-1098-6, checked against Crossref
+    // 2026-11-20, the book not read) on this fragment, without enumerating integer points.
     // Proof, per conjunction of `rest` (pendant `x - w + k >= 0`, so `x >= w - k`, as
     // `s = 1`, `sigma = -1`; `x` unbounded above, checked): the unary rows meet the
     // interval domains, which stay intervals; with at most one other row `r`, `range` gives

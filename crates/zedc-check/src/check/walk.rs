@@ -11034,7 +11034,7 @@ impl<'a> Ck<'_, 'a> {
         // NARROW-negated-star, which also covers the read under such an arm that was already
         // 20.1 times before this change (`else { popCount(ai) }`, `k` = 12 and 96). Asking every
         // arm, without the subtype test, made
-        // `l01_39a_bit_words::scaling::two_hubs_on_one_block_settle_in_time_linear_in_the_tests`
+        // `l01_39a_bit_words::bench::scaling::two_hubs_on_one_block_settle_in_time_linear_in_the_tests`
         // take 19.8 times the instructions. Test:
         // `l01_26_type_resolution::bench::scaling::a_chain_of_tests_is_linear_in_its_length`.
         // COMPLEXITY.md C34.
@@ -11891,7 +11891,7 @@ impl<'a> Ck<'_, 'a> {
                         // a cut at a box's corner. Trigger: many tests among two hubs that many
                         // stars share, in a scope that is not lazy; or a hub related to a name
                         // that is not a hub of its leaves nor a satellite of them.
-                        // Test: `l01_39a_bit_words::scaling::related_hubs_settle_in_time_linear_in_the_tests`.
+                        // Test: `l01_39a_bit_words::bench::scaling::related_hubs_settle_in_time_linear_in_the_tests`.
                         // COMPLEXITY.md C26. A complete solution keeps a feasible point and
                         // settles the cone of a read on demand (the design note of
                         // NARROW-hub-settle, revision of 2026-11-04).
