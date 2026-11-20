@@ -6,7 +6,7 @@
 //! The method is that of F. Cucker, P. Koiran and S. Smale, "A polynomial time algorithm for
 //! Diophantine equations in one variable", J. Symbolic Comput. 27(1):21-29, 1999,
 //! doi:10.1006/jsco.1998.0242 (checked 2026-11-20 against Crossref and the paper's text). Its
-//! Theorem 1: "There is a polynomial time algorithm which given input f ∈ Z[t] decides whether
+//! Theorem 1: "There is a polynomial time algorithm which given input f ∈ Z\[t\] decides whether
 //! f has an integer root and, moreover, the algorithm outputs the set of integer roots of f",
 //! in the sparse encoding: polynomial in the number of terms and the bits of the coefficients
 //! and exponents, and not in the degree. What is taken from it and what is not:
@@ -22,7 +22,7 @@
 //! - Step 3 replaces the paper's proof of Theorem 1 (section 3), which isolates the roots of
 //!   the chain `p_1, ..., p_k` (each `p_(i+1)` the derivative of `p_i` with its power of `t`
 //!   divided out) one level at a time by its Proposition 1, with a branch and bound whose
-//!   number of intervals is not proved (see [`positive_roots`]).
+//!   number of intervals is not proved (see `positive_roots`).
 //! - The paper's remark that a nonzero integer root divides `a_k`, the coefficient of the
 //!   least exponent, is not used to list candidates; the search is bounded by 1 plus the
 //!   largest coefficient instead (`positive_roots`).

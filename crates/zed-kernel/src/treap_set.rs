@@ -14,7 +14,7 @@
 //! - G. E. Blelloch and M. Reid-Miller, "Fast set operations using treaps", SPAA '98, ACM,
 //!   pp. 16-26, 1998, doi:10.1145/277651.277660. Crossref checked 2026-11-20; the text was not
 //!   obtained, so what it says is taken from the paper below, which credits it: "Blelloch and
-//!   Reid-Miller later show that similar algorithms for treaps [7], are optimal for work (i.e.
+//!   Reid-Miller later show that similar algorithms for treaps \[7\], are optimal for work (i.e.
 //!   Θ(m log(n/m + 1)))".
 //! - G. E. Blelloch, D. Ferizovic and Y. Sun, "Just join for parallel ordered sets", SPAA 2016,
 //!   ACM, pp. 253-264, doi:10.1145/2935764.2935768 (Crossref and the text checked 2026-11-20).
@@ -24,7 +24,7 @@
 //!   work `O(m log(n/m + 1))` for sizes `m <= n`, "in expectation for treaps". The full citation
 //!   and the treap JOIN (Figure 5) are also in `types::bdd::list::treap`.
 //!
-//! Departures: the recursion runs on an explicit stack ([`combine`]), and it stops early at
+//! Departures: the recursion runs on an explicit stack (`combine`), and it stops early at
 //! shared subtrees and at results of an operand's size (below); neither changes the bound.
 //! Tests: `every_operation_agrees_with_a_btree_set` checks the results against
 //! `std::collections::BTreeSet`; no test measures the work bound, which rests on Theorem 4.
