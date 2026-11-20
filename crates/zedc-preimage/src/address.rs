@@ -179,84 +179,27 @@ struct Kid<'t> {
     binds: Vec<&'t Arc<str>>,
 }
 
-impl<'t> Kid<'t> {
-    fn held(s: &'t Shared) -> Self {
-        Kid {
-            term: s,
-            node: Some(s),
-            binds: Vec::new(),
-        }
-    }
-
-    fn inline(t: &'t Term) -> Self {
-        Kid {
-            term: t,
-            node: None,
-            binds: Vec::new(),
-        }
-    }
-
-    fn under(mut self, binds: Vec<&'t Arc<str>>) -> Self {
-        self.binds = binds;
-        self
-    }
-}
-
 /// The parts of `t`, in the order [`Canon::rebuild`] reads their canonical forms, each with the
-/// names it is under. The scopes are those of `zedc::zir::canon::binders`: a lambda binds its
-/// parameters in its body, a `let` its name in its body and not in its value, a match arm the
-/// names of its pattern, a family its key in its body, and a definedness `fix` the family and
-/// the key in its body; a lattice `fix` binds nothing.
+/// names it is under: the kernel's walk `zed_kernel::term::walk::kids`, whose scopes are the
+/// evaluator's and those of `zedc::zir::canon::binders`: a lambda binds its parameters in its
+/// body, a `let` its name in its body and not in its value, a match arm the names of its
+/// pattern, a family its key in its body, and a definedness `fix` the family and the key in
+/// its body; a lattice `fix` binds nothing.
 fn kids(t: &Term) -> Vec<Kid<'_>> {
-    match t {
-        Term::Lit(_) | Term::Var(_) | Term::PrimFn(_) | Term::Read(_) => Vec::new(),
-        Term::Lam(ps, b) => vec![Kid::held(b).under(ps.iter().collect())],
-        Term::App(g, args) => std::iter::once(Kid::held(g))
-            .chain(args.iter().map(Kid::inline))
-            .collect(),
-        Term::Prim(_, args) => args.iter().map(Kid::inline).collect(),
-        Term::Let(x, e, b) => vec![Kid::held(e), Kid::held(b).under(vec![x])],
-        Term::If(c, a, b) => vec![Kid::held(c), Kid::held(a), Kid::held(b)],
-        Term::Match(s, arms) => std::iter::once(Kid::held(s))
-            .chain(arms.iter().map(|(p, a)| {
-                let mut names = Vec::new();
-                p.binders(|x| names.push(x));
-                Kid::inline(a).under(names)
-            }))
-            .collect(),
-        Term::Fam { domain, var, body } => {
-            vec![Kid::held(domain), Kid::held(body).under(vec![var])]
-        }
-        Term::Reindex { family, kf, vf, .. } => {
-            vec![Kid::held(family), Kid::held(kf), Kid::held(vf)]
-        }
-        Term::Discard { family, sel } => vec![Kid::held(family), Kid::held(sel)],
-        Term::Fold {
-            family,
-            op,
-            identity,
-            ..
-        } => [family, op]
-            .into_iter()
-            .chain(identity)
-            .map(Kid::held)
-            .collect(),
-        Term::Fix {
-            init,
-            step,
-            this,
-            key,
-            kind,
-            ..
-        } => match kind {
-            FixKind::Definedness => vec![Kid::held(init), Kid::held(step).under(vec![this, key])],
-            FixKind::Lattice { join } => vec![Kid::held(init), Kid::held(step), Kid::held(join)],
-        },
-        Term::Gen {
-            init, step, guard, ..
-        } => vec![Kid::held(init), Kid::held(step), Kid::held(guard)],
-        Term::Push(_, v) => vec![Kid::held(v)],
-    }
+    let mut out = Vec::new();
+    zed_kernel::term::walk::kids(t, |k, b| {
+        let mut binds = Vec::new();
+        b.each(|x| binds.push(x));
+        out.push(Kid {
+            term: k.term(),
+            node: match k {
+                zed_kernel::term::walk::Kid::Shared(s) => Some(s),
+                zed_kernel::term::walk::Kid::Inline(_) => None,
+            },
+            binds,
+        });
+    });
+    out
 }
 
 /// The binder names in scope, each with the height it is renamed to.
@@ -347,7 +290,12 @@ impl Canon {
     /// The first walk: the height and free names of each part held in a node, and the heights
     /// of the arms of each match, each node read once.
     fn read(&mut self, root: &Term) {
-        let mut todo = vec![Read::Enter(Kid::inline(root), None)];
+        let root = Kid {
+            term: root,
+            node: None,
+            binds: Vec::new(),
+        };
+        let mut todo = vec![Read::Enter(root, None)];
         let mut done: Vec<Info> = Vec::new();
         while let Some(step) = todo.pop() {
             match step {

@@ -19,6 +19,7 @@
 
 use std::sync::Arc;
 
+use zed_kernel::term::walk::{Built, kids, rebuild};
 use zed_kernel::term::{FixKind, Pattern, Shared, Term};
 
 /// Whether the binder `name` at level `level` is canonical: spelled as `level` itself.
@@ -156,112 +157,37 @@ fn children(t: &Term) -> Vec<&Term> {
     out
 }
 
-/// Calls `f` on each subterm of a term that binds nothing, in order.
+/// Calls `f` on each subterm of a term that binds nothing, in order: the parts
+/// [`kids`] gives, each of which such a term binds nothing over.
 pub(crate) fn each_child<'t>(t: &'t Term, mut f: impl FnMut(&'t Term)) {
-    match t {
-        Term::Lit(_) | Term::Var(_) | Term::PrimFn(_) | Term::Read(_) => {}
-        Term::App(g, args) => {
-            f(g);
-            args.iter().for_each(f);
-        }
-        Term::Prim(_, args) => args.iter().for_each(f),
-        Term::If(c, a, b) => [c, a, b].into_iter().for_each(|t| f(t)),
-        Term::Reindex { family, kf, vf, .. } => [family, kf, vf].into_iter().for_each(|t| f(t)),
-        Term::Discard { family, sel } => [family, sel].into_iter().for_each(|t| f(t)),
-        Term::Fold {
-            family,
-            op,
-            identity,
-            ..
-        } => [family, op].into_iter().chain(identity).for_each(|t| f(t)),
-        Term::Fix {
-            init, step, kind, ..
-        } => {
-            f(init);
-            f(step);
-            if let FixKind::Lattice { join } = kind {
-                f(join);
-            }
-        }
-        Term::Gen {
-            init, step, guard, ..
-        } => [init, step, guard].into_iter().for_each(|t| f(t)),
-        Term::Push(_, v) => f(v),
-        Term::Lam(..) | Term::Let(..) | Term::Match(..) | Term::Fam { .. } => {
-            unreachable!("binding forms are handled by the caller")
-        }
-    }
+    binds_nothing(t);
+    kids(t, |k, _| f(k.term()));
 }
 
-/// `t` with each child replaced by `f(child)`, for a term that binds nothing.
+/// `t` with each child replaced by `f(child)`, in order, for a term that binds nothing: the
+/// parts [`kids`] gives, put back by [`rebuild`].
 pub(crate) fn map_children(t: &Term, f: &mut impl FnMut(&Term) -> Term) -> Term {
-    let a = |t: &Shared, f: &mut dyn FnMut(&Term) -> Term| Shared::new(f(t));
-    match t {
-        Term::Lit(_) | Term::Var(_) | Term::PrimFn(_) | Term::Read(_) => t.clone(),
-        Term::App(g, args) => Term::App(a(g, f), args.iter().map(&mut *f).collect()),
-        Term::Prim(p, args) => Term::Prim(*p, args.iter().map(f).collect()),
-        Term::If(c, x, y) => Term::If(a(c, f), a(x, f), a(y, f)),
-        Term::Reindex {
-            family,
-            kf,
-            vf,
-            witness,
-        } => Term::Reindex {
-            family: a(family, f),
-            kf: a(kf, f),
-            vf: a(vf, f),
-            witness: witness.clone(),
-        },
-        Term::Discard { family, sel } => Term::Discard {
-            family: a(family, f),
-            sel: a(sel, f),
-        },
-        Term::Fold {
-            family,
-            op,
-            identity,
-            depth,
-            ev,
-        } => Term::Fold {
-            family: a(family, f),
-            op: a(op, f),
-            identity: identity.as_ref().map(|i| a(i, f)),
-            depth: *depth,
-            ev: ev.clone(),
-        },
-        Term::Fix {
-            init,
-            step,
-            this,
-            key,
-            kind,
-            ev,
-        } => Term::Fix {
-            init: a(init, f),
-            step: a(step, f),
-            this: this.clone(),
-            key: key.clone(),
-            kind: match kind {
-                FixKind::Lattice { join } => FixKind::Lattice { join: a(join, f) },
-                FixKind::Definedness => FixKind::Definedness,
-            },
-            ev: ev.clone(),
-        },
-        Term::Gen {
-            init,
-            step,
-            guard,
-            pos,
-        } => Term::Gen {
-            init: a(init, f),
-            step: a(step, f),
-            guard: a(guard, f),
-            pos: *pos,
-        },
-        Term::Push(port, v) => Term::Push(port.clone(), a(v, f)),
-        Term::Lam(..) | Term::Let(..) | Term::Match(..) | Term::Fam { .. } => {
-            unreachable!("binding forms are handled by the caller")
-        }
+    binds_nothing(t);
+    let mut parts = Vec::new();
+    kids(t, |k, _| parts.push(Built::Term(f(k.term()))));
+    rebuild(t, parts)
+}
+
+/// Stops on a term that binds a name over a part, which each caller of [`each_child`] and
+/// [`map_children`] handles itself; a definedness `fix`, which binds `this` and `key` over its
+/// step, is one (the copy of the kernel's walk kept here before row DRY-text-shared let it
+/// through as binding nothing; no caller passed one).
+fn binds_nothing(t: &Term) {
+    if let Term::Lam(..)
+    | Term::Let(..)
+    | Term::Match(..)
+    | Term::Fam { .. }
+    | Term::Fix {
+        kind: FixKind::Definedness,
+        ..
+    } = t
+    {
+        unreachable!("binding forms are handled by the caller")
     }
 }
 

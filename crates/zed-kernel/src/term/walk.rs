@@ -4,6 +4,10 @@
 //! subterms once, and `Debug` writes each part once: a part held in a [`Shared`] node that two
 //! places reach, and that is not a name, primitive or plain literal, is written `#n=…` at the
 //! first place and `#n#` at each later one, `n` counted from 1 in the order written.
+//!
+//! It also holds the one walk over a term's parts, [`kids`], with the names bound over each,
+//! and its inverse [`rebuild`], and the walk over the names a pattern binds
+//! ([`Pattern::binders`]), which the crates above use in place of copies of their own.
 
 use std::collections::hash_map::Entry;
 use std::collections::{HashMap, HashSet};
@@ -750,15 +754,29 @@ impl fmt::Debug for Pattern {
 /// A part of a term: a subterm held in a [`Shared`] node, or one held in place (an argument of
 /// a call or primitive, the body of a `match` arm).
 #[derive(Clone, Copy)]
-pub(crate) enum Kid<'a> {
+pub enum Kid<'a> {
+    /// A subterm held in a [`Shared`] node.
     Shared(&'a Shared),
+    /// A subterm held in place.
     Inline(&'a Term),
+}
+
+impl<'a> Kid<'a> {
+    /// The subterm, wherever it is held.
+    pub fn term(self) -> &'a Term {
+        match self {
+            Kid::Shared(s) => s,
+            Kid::Inline(t) => t,
+        }
+    }
 }
 
 /// The names a term binds over one of its parts.
 #[derive(Clone, Copy)]
-pub(crate) enum Binds<'a> {
+pub enum Binds<'a> {
+    /// No name.
     Nothing,
+    /// A lambda's parameters, or the one name of a `let` or a `fam`.
     Names(&'a [Arc<str>]),
     /// The `this` and `key` of a definedness `fix`, over its step.
     Two(&'a Arc<str>, &'a Arc<str>),
@@ -811,7 +829,7 @@ impl Pattern {
 
 impl<'a> Binds<'a> {
     /// Calls `each` on every name bound, in the order written.
-    pub(crate) fn each(self, mut each: impl FnMut(&'a Arc<str>)) {
+    pub fn each(self, mut each: impl FnMut(&'a Arc<str>)) {
         match self {
             Binds::Nothing => {}
             Binds::Names(xs) => xs.iter().for_each(each),
@@ -842,7 +860,7 @@ impl<'a> Binds<'a> {
 /// `reindex`, `discard`, `fold` and `gen`, a push's value, and a lattice `fix`'s init, step and
 /// join (its `this` and `key` name nothing: the step and join are functions the ascent calls,
 /// `Wait::LatticeStep`). Tests: `eval::binder_tests`.
-pub(crate) fn kids<'a>(t: &'a Term, mut each: impl FnMut(Kid<'a>, Binds<'a>)) {
+pub fn kids<'a>(t: &'a Term, mut each: impl FnMut(Kid<'a>, Binds<'a>)) {
     use Binds::Nothing;
     let mut sh = |s: &'a Shared, b: Binds<'a>| each(Kid::Shared(s), b);
     match t {
@@ -902,6 +920,140 @@ pub(crate) fn kids<'a>(t: &'a Term, mut each: impl FnMut(Kid<'a>, Binds<'a>)) {
         Term::Gen {
             init, step, guard, ..
         } => [init, step, guard].into_iter().for_each(|s| sh(s, Nothing)),
+    }
+}
+
+/// A part given to [`rebuild`]: a term, or the node to hold where the part is held in a
+/// [`Shared`] node (as the parts of `print::dag` that every place holding them shares).
+pub enum Built {
+    /// A term, put in a new node where the part is held in one.
+    Term(Term),
+    /// A node, held as it is.
+    Shared(Shared),
+}
+
+impl Built {
+    /// The term, which a part held in place must be.
+    pub fn term(self) -> Term {
+        match self {
+            Built::Term(t) => t,
+            Built::Shared(_) => unreachable!("a part held in place is given as a term"),
+        }
+    }
+
+    /// The node to hold: the one given, or the term in a new one.
+    pub fn shared(self) -> Shared {
+        match self {
+            Built::Term(t) => Shared::new(t),
+            Built::Shared(s) => s,
+        }
+    }
+}
+
+/// `t` with its parts replaced by `parts`, in the order [`kids`] gives them: the inverse of
+/// [`kids`], so `rebuild(t, ps)` holds `ps` where `t` holds its parts, and every other field
+/// of `t`. A part [`kids`] gives as [`Kid::Inline`] must be a [`Built::Term`]; one it gives as
+/// [`Kid::Shared`] may be either, a term put in a new node. O(the parts of `t`).
+pub fn rebuild(t: &Term, parts: impl IntoIterator<Item = Built>) -> Term {
+    let mut ps = parts.into_iter();
+    let mut next = || ps.next().expect("a part for each part");
+    match t {
+        Term::Lit(_) | Term::Var(_) | Term::PrimFn(_) | Term::Read(_) => t.clone(),
+        Term::Lam(xs, _) => Term::Lam(xs.clone(), next().shared()),
+        Term::Push(x, _) => Term::Push(x.clone(), next().shared()),
+        Term::App(_, args) => {
+            let f = next().shared();
+            Term::App(f, args.iter().map(|_| next().term()).collect())
+        }
+        Term::Prim(p, args) => Term::Prim(*p, args.iter().map(|_| next().term()).collect()),
+        Term::Let(x, _, _) => {
+            let a = next().shared();
+            Term::Let(x.clone(), a, next().shared())
+        }
+        Term::If(..) => {
+            let (a, b) = (next().shared(), next().shared());
+            Term::If(a, b, next().shared())
+        }
+        Term::Match(_, arms) => {
+            let e = next().shared();
+            Term::Match(
+                e,
+                arms.iter()
+                    .map(|(p, _)| (p.clone(), next().term()))
+                    .collect(),
+            )
+        }
+        Term::Fam { var, .. } => {
+            let domain = next().shared();
+            Term::Fam {
+                domain,
+                var: var.clone(),
+                body: next().shared(),
+            }
+        }
+        Term::Reindex { witness, .. } => {
+            let (family, kf) = (next().shared(), next().shared());
+            Term::Reindex {
+                family,
+                kf,
+                vf: next().shared(),
+                witness: witness.clone(),
+            }
+        }
+        Term::Discard { .. } => {
+            let family = next().shared();
+            Term::Discard {
+                family,
+                sel: next().shared(),
+            }
+        }
+        Term::Fold {
+            identity,
+            depth,
+            ev,
+            ..
+        } => {
+            let (family, op) = (next().shared(), next().shared());
+            Term::Fold {
+                family,
+                op,
+                identity: identity.as_ref().map(|_| next().shared()),
+                depth: *depth,
+                ev: ev.clone(),
+            }
+        }
+        Term::Fix {
+            this,
+            key,
+            kind,
+            ev,
+            ..
+        } => {
+            let (init, step) = (next().shared(), next().shared());
+            let kind = match kind {
+                FixKind::Lattice { .. } => FixKind::Lattice {
+                    join: next().shared(),
+                },
+                FixKind::Definedness => FixKind::Definedness,
+            };
+            Term::Fix {
+                init,
+                step,
+                this: this.clone(),
+                key: key.clone(),
+                kind,
+                ev: ev.clone(),
+            }
+        }
+        Term::Gen { pos, .. } => {
+            let (init, step) = (next().shared(), next().shared());
+            Term::Gen {
+                init,
+                step,
+                guard: next().shared(),
+                pos: *pos,
+            }
+        }
     }
 }
 

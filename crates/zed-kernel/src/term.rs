@@ -11,7 +11,7 @@ use std::sync::{Arc, OnceLock};
 
 use crate::deep;
 
-pub(crate) mod walk;
+pub mod walk;
 use crate::types::Type;
 use crate::value::Value;
 use crate::value::{Id, fresh_id};

@@ -11,7 +11,7 @@ use std::sync::Arc;
 
 use crate::seed::Xorshift64;
 use crate::term::build::{app, lam, let_, lit, prim, var};
-use crate::term::walk::{Kid, kids};
+use crate::term::walk::{Built, Kid, kids, rebuild};
 use crate::term::{Evidence, FixKind, GuardPos, Pattern, Prim, Shared, Term, Witness};
 use crate::value::Value;
 
@@ -890,4 +890,106 @@ fn a_pattern_gives_and_renames_its_binders_in_the_order_written() {
         k += 1;
     });
     assert_eq!(k, depth);
+}
+
+/// A term of each form with parts, its `i`th part `part(i)` in the order the form's fields are
+/// written, which is the order the walks `kids` replaced (in `zedc-zir` canon/binders.rs and
+/// `zedc-preimage` address.rs) gave them.
+fn every_form(part: &dyn Fn(i64) -> Term) -> Vec<Term> {
+    let s = |i| sh(part(i));
+    vec![
+        Term::Lam(vec!["x".into()], s(0)),
+        Term::App(s(0), vec![part(1), part(2)]),
+        prim(Prim::Tuple, vec![part(0), part(1)]),
+        Term::Let("x".into(), s(0), s(1)),
+        Term::If(s(0), s(1), s(2)),
+        Term::Match(s(0), vec![(bind("x"), part(1)), (Pattern::Wild, part(2))]),
+        Term::Fam {
+            domain: s(0),
+            var: "x".into(),
+            body: s(1),
+        },
+        Term::Reindex {
+            family: s(0),
+            kf: s(1),
+            vf: s(2),
+            witness: Witness::Residue,
+        },
+        Term::Discard {
+            family: s(0),
+            sel: s(1),
+        },
+        Term::Fold {
+            family: s(0),
+            op: s(1),
+            identity: Some(s(2)),
+            depth: 1,
+            ev: Evidence::new(),
+        },
+        Term::Fold {
+            family: s(0),
+            op: s(1),
+            identity: None,
+            depth: 1,
+            ev: Evidence::new(),
+        },
+        fix(part(0), part(1), "this", "k", FixKind::Definedness),
+        fix(part(0), part(1), "this", "k", lattice(part(2))),
+        Term::Gen {
+            init: s(0),
+            step: s(1),
+            guard: s(2),
+            pos: GuardPos::After,
+        },
+        Term::Push("p".into(), s(0)),
+    ]
+}
+
+/// Row DRY-text-shared made `kids` and `rebuild` the one walk over a term's parts: `kids` gives
+/// each form's parts in the order its fields are written, `rebuild` puts parts back in that
+/// order, and `rebuild(t, kids(t))` is `t`, holding each node given as a node. Seen red with
+/// `rebuild` reading a `let`'s value and body the other way round.
+#[test]
+fn rebuild_puts_back_the_parts_kids_gives_in_the_same_order() {
+    let lits = every_form(&|i| lit(i));
+    let moved = every_form(&|i| lit(100 + i));
+    for (t, want) in lits.iter().zip(&moved) {
+        let mut got = Vec::new();
+        kids(t, |k, _| got.push(k.term().clone()));
+        let n = got.len() as i64;
+        assert_eq!(got, (0..n).map(lit).collect::<Vec<_>>(), "{t:?}");
+        let parts = (0..n).map(|i| Built::Term(lit(100 + i)));
+        assert_eq!(&rebuild(t, parts), want, "{t:?}");
+    }
+    for seed in 1..=20_000u64 {
+        let mut g = Gen {
+            rng: Xorshift64::new(seed.wrapping_mul(0x9E37_79B9_7F4A_7C15) | 1),
+            pool: Vec::new(),
+            share: true,
+            names: 4,
+            nest: true,
+        };
+        let t = g.term(5);
+        let (mut held, mut parts, mut fresh) = (Vec::new(), Vec::new(), Vec::new());
+        kids(&t, |k, _| {
+            if let Kid::Shared(s) = k {
+                held.push(s.id());
+            }
+            parts.push(match k {
+                Kid::Shared(s) => Built::Shared(s.clone()),
+                Kid::Inline(u) => Built::Term(u.clone()),
+            });
+            fresh.push(Built::Term(k.term().clone()));
+        });
+        let back = rebuild(&t, parts);
+        assert_eq!(back, t, "seed {seed}");
+        let mut ids = Vec::new();
+        kids(&back, |k, _| {
+            if let Kid::Shared(s) = k {
+                ids.push(s.id());
+            }
+        });
+        assert_eq!(ids, held, "seed {seed}: each node given is held");
+        assert_eq!(rebuild(&t, fresh), t, "seed {seed}");
+    }
 }

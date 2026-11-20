@@ -21,7 +21,7 @@
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
-use crate::term::walk::{Binds, Kid, kids, small};
+use crate::term::walk::{Binds, Built, Kid, kids, rebuild, small};
 use crate::term::{Prim, Shared, Term};
 use crate::value::Value;
 
@@ -211,134 +211,6 @@ fn choose(
         }
     }
     (named, reads)
-}
-
-/// A part built for [`rebuild`]: a term, or a shared node every place of a labeled part holds.
-enum Built {
-    Term(Term),
-    Shared(Shared),
-}
-
-impl Built {
-    fn term(self) -> Term {
-        match self {
-            Built::Term(t) => t,
-            Built::Shared(_) => unreachable!("a labeled part is held in a shared node"),
-        }
-    }
-
-    fn shared(self) -> Shared {
-        match self {
-            Built::Term(t) => Shared::new(t),
-            Built::Shared(s) => s,
-        }
-    }
-}
-
-/// `t` with its parts replaced by `parts`, in the order [`kids`] gives them.
-fn rebuild(t: &Term, parts: Vec<Built>) -> Term {
-    type Parts = std::vec::IntoIter<Built>;
-    let next = |ps: &mut Parts| ps.next().expect("a part for each part").term();
-    let sh = |ps: &mut Parts| ps.next().expect("a part for each part").shared();
-    let mut ps = parts.into_iter();
-    match t {
-        Term::Lit(_) | Term::Var(_) | Term::PrimFn(_) | Term::Read(_) => t.clone(),
-        Term::Lam(xs, _) => Term::Lam(xs.clone(), sh(&mut ps)),
-        Term::Push(x, _) => Term::Push(x.clone(), sh(&mut ps)),
-        Term::App(_, args) => {
-            let f = sh(&mut ps);
-            Term::App(f, args.iter().map(|_| next(&mut ps)).collect())
-        }
-        Term::Prim(p, args) => Term::Prim(*p, args.iter().map(|_| next(&mut ps)).collect()),
-        Term::Let(x, _, _) => {
-            let a = sh(&mut ps);
-            Term::Let(x.clone(), a, sh(&mut ps))
-        }
-        Term::If(..) => {
-            let (a, b) = (sh(&mut ps), sh(&mut ps));
-            Term::If(a, b, sh(&mut ps))
-        }
-        Term::Match(_, arms) => {
-            let e = sh(&mut ps);
-            Term::Match(
-                e,
-                arms.iter()
-                    .map(|(p, _)| (p.clone(), next(&mut ps)))
-                    .collect(),
-            )
-        }
-        Term::Fam { var, .. } => {
-            let domain = sh(&mut ps);
-            Term::Fam {
-                domain,
-                var: var.clone(),
-                body: sh(&mut ps),
-            }
-        }
-        Term::Reindex { witness, .. } => {
-            let (family, kf) = (sh(&mut ps), sh(&mut ps));
-            Term::Reindex {
-                family,
-                kf,
-                vf: sh(&mut ps),
-                witness: witness.clone(),
-            }
-        }
-        Term::Discard { .. } => {
-            let family = sh(&mut ps);
-            Term::Discard {
-                family,
-                sel: sh(&mut ps),
-            }
-        }
-        Term::Fold {
-            identity,
-            depth,
-            ev,
-            ..
-        } => {
-            let (family, op) = (sh(&mut ps), sh(&mut ps));
-            Term::Fold {
-                family,
-                op,
-                identity: identity.as_ref().map(|_| sh(&mut ps)),
-                depth: *depth,
-                ev: ev.clone(),
-            }
-        }
-        Term::Fix {
-            this,
-            key,
-            kind,
-            ev,
-            ..
-        } => {
-            let (init, step) = (sh(&mut ps), sh(&mut ps));
-            let kind = match kind {
-                crate::term::FixKind::Lattice { .. } => {
-                    crate::term::FixKind::Lattice { join: sh(&mut ps) }
-                }
-                crate::term::FixKind::Definedness => crate::term::FixKind::Definedness,
-            };
-            Term::Fix {
-                init,
-                step,
-                this: this.clone(),
-                key: key.clone(),
-                kind,
-                ev: ev.clone(),
-            }
-        }
-        Term::Gen { pos, .. } => {
-            let (init, step) = (sh(&mut ps), sh(&mut ps));
-            Term::Gen {
-                init,
-                step,
-                guard: sh(&mut ps),
-                pos: *pos,
-            }
-        }
-    }
 }
 
 /// What a node's text is built in.
