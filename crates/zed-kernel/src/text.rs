@@ -3,14 +3,43 @@
 //! ordered and printed by its text alone (DESIGN.md: "ropes are a representation and never
 //! enter identity").
 //!
-//! The tree is a finger tree of blocks (Hinze and Paterson, "Finger trees: a simple
-//! general-purpose data structure", JFP 16(2), 2006), persistent and shared: a deep tree keeps
-//! one to four parts at each end and a tree of nodes of two or three parts between them, whose
-//! parts are one level higher. A join that adds a block at either end builds `O(1)` new nodes,
-//! amortized over a chain of joins each made on the result of the one before, as a `foldl` of
-//! `++` makes them (DESIGN.md: `++` is O(1)); a join of two longer texts builds `O(log m)`, `m`
-//! the number of blocks of the shorter. Holding every prefix of a chain of `n` joins keeps
-//! `O(n)` nodes (COMPLEXITY.md C29).
+//! The tree is a finger tree of blocks, persistent and shared: a deep tree keeps one to four
+//! parts at each end and a tree of nodes of two or three parts between them, whose parts are
+//! one level higher. A join that adds a block at either end builds `O(1)` new nodes, amortized
+//! over a chain of joins each made on the result of the one before, as a `foldl` of `++` makes
+//! them (DESIGN.md: `++` is O(1)); a join of two longer texts builds `O(log m)`, `m` the number
+//! of blocks of the shorter. Holding every prefix of a chain of `n` joins keeps `O(n)` nodes
+//! (COMPLEXITY.md C29).
+//!
+//! Source. R. Hinze and R. Paterson, "Finger trees: a simple general-purpose data structure",
+//! Journal of Functional Programming 16(2), 197-217, 2006 (online 2005),
+//! doi:10.1017/S0956796805005769. What is taken, in the paper's terms and this module's:
+//! - section 3.1: `Deep` holds a prefix digit, a middle finger tree of `Node`s, and a suffix
+//!   digit, "allowing between one and four subtrees at each level" (`Tree::Deep`, `Digit`);
+//!   level `n` holds 2-3 trees of depth `n` (`Tree::Node`, parts of two or three);
+//! - section 3.2: the deque operations `◁` and `▷` (`push_front`, `push_back`): a push onto
+//!   a digit of four moves three into the middle as a `Node3`; digits of two or three are
+//!   "safe", of one or four "dangerous", and only a dangerous digit carries to the next level,
+//!   so "at most half of the operations descend one level, at most a quarter two levels", which
+//!   is the `O(1)` amortized bound above;
+//! - section 3.3: concatenation `app3 xs ts ys`, which joins the inner digits and the list
+//!   between them into nodes with `nodes` and recurses on the middles (`concat`, `nodes`,
+//!   the same grouping: two parts or four as `Node2`s, otherwise `Node3`s first), "the total
+//!   time taken is Θ(log(min{n1, n2}))";
+//! - section 4.2: each node caches its measure, here the monoid of (bytes, characters) added
+//!   (`Size`), so `len` is `O(1)`.
+//!
+//! Departure: the paper's `O(1)` amortized bound holds "even in a persistent setting" because
+//! the middle of each `Deep` is suspended by lazy evaluation (section 3.2, the debit argument).
+//! The tree here is strict, so the bound holds for a chain of joins each made on the last
+//! result, not for pushes repeated onto one old version (the tradeoff comment at
+//! `push_back`). Checked 2026-11-19 against the paper's text (the publisher's PDF, sections
+//! 3.1-3.3 and 4.2) and its Crossref metadata. Tested by `text::tests::assert_balanced`, used by
+//! `joins_in_any_order_keep_the_tree_balanced_and_the_text_whole` and
+//! `a_long_chain_either_way_is_balanced_read_and_dropped`, which checks every digit holds one
+//! to four parts, every node two or three, every level its parts' height, and every cached size
+//! their sum; and by `a_chain_of_joins_allocates_a_constant_per_join` for the amortized bound
+//! on a chain. No test measures the `O(log m)` of a join of two long texts.
 //!
 //! Every tree, node and block is itself a [`Text`], whose blocks in order are its text: a text
 //! held as one block is the part a join puts in a tree, with nothing added. A tree of `b`
@@ -185,12 +214,25 @@ impl Text {
         }
     }
 
-    /// A hash of the text's bytes, the same for equal texts however they are held: the
-    /// polynomial hash of Karp and Rabin ("Efficient randomized pattern-matching algorithms",
-    /// IBM J. Res. Dev. 31(2), 1987), the sum of `(b_i + 1) · B^(n − 1 − i)` modulo the prime
-    /// `2^61 − 1` over the `n` bytes `b_i`. The hash of a join is the hash of its first part
-    /// times `B` to the length of the second, plus the hash of the second, so each distinct
-    /// node of the tree is hashed once from its parts.
+    /// A hash of the text's bytes, the same for equal texts however they are held: the sum of
+    /// `(b_i + 1) · B^(n − 1 − i)` modulo the prime `2^61 − 1` over the `n` bytes `b_i`. The
+    /// hash of a join is the hash of its first part times `B` to the length of the second, plus
+    /// the hash of the second, so each distinct node of the tree is hashed once from its parts.
+    ///
+    /// Source. R. M. Karp and M. O. Rabin, "Efficient randomized pattern-matching algorithms",
+    /// IBM Journal of Research and Development 31(2), 249-260, 1987, doi:10.1147/rd.312.0249.
+    /// Section 3 reads a bit string as the integer `H(X) = Σ x_i 2^(n−i)` and takes as
+    /// fingerprint `H_p(X) = H(X) mod p` for a prime `p` drawn at random below `M`; a
+    /// fingerprint is updated as the text grows by a multiply and an add modulo `p`, which is
+    /// the join rule above. Departures: the digits here are bytes plus one, not bits, so a
+    /// leading zero byte changes the hash; the base is the fixed odd `B` (`POLY_B`), not 2;
+    /// and the modulus is the fixed Mersenne prime `2^61 − 1`, not a random prime, so the
+    /// paper's bound on the chance of a false match does not apply, and texts chosen to collide
+    /// collide (the tradeoff below). Checked 2026-11-19 against the paper's text (section 3)
+    /// and its Crossref metadata. Tested by `text::tests::the_poly_hash_of_a_text_is_its_bytes_
+    /// hash`, which catches a join rule that differs from hashing the bytes in one block (a
+    /// wrong power, a wrong order of parts) and a hash blind to the order of two bytes or to a
+    /// leading zero byte; it cannot catch a poor choice of `B`.
     // Complexity tradeoff: a hash that reads the bytes in order (FNV-1a, `Hash for Text`) costs
     // O(N) for N bytes, and a string doubled k times is 2^k bytes held in O(k) nodes, so a
     // type that holds such a string as a literal read 2^62 bytes when the build made it (item
@@ -459,7 +501,12 @@ fn deep(size: Size, front: Digit, middle: Text, back: Digit) -> Text {
 // AVL tree this replaced; the text is the same. Why: an `O(1)` bound that holds under any
 // reuse of an old version needs the middle suspended and forced later (Hinze and Paterson's
 // lazy middle) or the regular digits of Kaplan and Tarjan's catenable deques, a cell written
-// after the node is shared or several times the code here. Trigger: pushes onto one version
+// after the node is shared or several times the code here. (H. Kaplan and R. E. Tarjan,
+// "Purely functional, real-time deques with catenation", J. ACM 46(5), 577-603, 1999,
+// doi:10.1145/324133.324139: "worst-case running time of O(1) for each push, pop, inject,
+// eject and catenation", from "redundant digital representations used to avoid carry
+// propagation in binary counting"; checked 2026-11-19 against the abstract and Crossref, the
+// structure itself not read, since it is not used here.) Trigger: pushes onto one version
 // whose ends are full down its middles. Test: `text::tests::a_chain_of_joins_allocates_a_
 // constant_per_join` (the chain), and `joins_in_any_order_keep_the_tree_balanced_and_the_
 // text_whole` (any reuse, the text); COMPLEXITY.md C29.
