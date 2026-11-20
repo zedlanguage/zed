@@ -408,22 +408,24 @@ pub(super) fn step_shape(x: &Type, link: &str, stop: &str) -> Option<(StepShape,
             _ => return None,
         }
     }
-    let (rows, structs) = match l_payload {
-        None => (Vec::new(), false),
-        Some(l_payload) => {
-            let xq = l_payload.p();
-            if xq.tuples.rest || xq.tuples.lens.len() != 1 || !xq.tuples.lens.contains_key(&2) {
-                return None;
-            }
-            (xq.tuples.lens[&2].union_rows()?, xq.structs)
-        }
+    // No `link`: `x`'s lists are `stop` or none, as with no rows below.
+    let Some(l_payload) = l_payload else {
+        return has_stop.then_some((StepShape::Stop, false));
     };
+    let xq = l_payload.p();
+    if xq.tuples.rest || xq.tuples.lens.len() != 1 || !xq.tuples.lens.contains_key(&2) {
+        return None;
+    }
+    // Typed, so that the import graph (zed-tools `imports`, test group s_01f) reads
+    // `rows.is_empty()` as a call on a `Vec` and not as `Type::is_empty`, written in `empty.rs`,
+    // which would close a cycle `empty.rs` -> `shared.rs` -> `empty.rs`.
+    let rows: Vec<Row> = xq.tuples.lens[&2].union_rows()?;
     // No rows: `x` has no `link` of a pair (the union of no rows holds no pair), so its lists are
     // `stop` or none; the empty type is no step.
     if rows.is_empty() {
-        return has_stop.then_some((StepShape::Stop, structs));
+        return has_stop.then_some((StepShape::Stop, xq.structs));
     }
-    Some((StepShape::Rows { has_stop, rows }, structs))
+    Some((StepShape::Rows { has_stop, rows }, xq.structs))
 }
 
 /// How [`follow`] ended.
