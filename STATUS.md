@@ -2646,27 +2646,7 @@ Regenerated at each change of state from the work board (docs/plan_dag.md nodes 
 
 | item | stage | started | last event |
 |---|---|---|---|
-| BENCH-list-literal-draw-spread | running | 2026-11-17 03:50 | P368 bundle: same bench file as PERF-kernel-types-ratio-10-483, whose 10.483 is inferred to be this list check under another draw |
-| BUILD-root-toolchain-pin | impl attempt 1 | 2026-11-17 03:19 | merge-tools2 started; worktree /home/luke/Work/wt/trees/merge-tools2 from dfad7eff5 |
-| BUILD-shared-root-dylib-race | impl attempt 1 | 2026-11-17 03:19 | started in /home/luke/Work/wt/trees/dylib-race; hypothesis: dylibs have unhashed names (deps/libX.so) so any build of another feature set or a stale uplifted co |
-| CLIF-shim | running | 2026-11-17 03:19 | clif-shim started in /home/luke/Work/wt/trees/clif-shim (branch wt/clif-shim at 6f5080476): crate zed-clif, C functions over Cranelift 0.137.1, tests s07b_clif_ |
-| FAIL-linear-question-tuple-callee-per-caller | running | 2026-11-17 03:19 | overnight spawn (P367) |
-| FAIL-remap-computed-key-need-site-product | running | 2026-11-17 03:19 | overnight spawn (P367) |
-| MERGE-full-by-dependency | impl attempt 1 | 2026-11-17 03:19 | merge-tools2 started; worktree /home/luke/Work/wt/trees/merge-tools2 from dfad7eff5 |
-| MERGE-spec-lag-by-pin | impl attempt 1 | 2026-11-17 03:19 | merge-tools2 started; worktree /home/luke/Work/wt/trees/merge-tools2 from dfad7eff5 |
-| MSG-concat-need-repair-template | running | 2026-11-17 02:25 | bundled with ZIP-count-facts (P368): same file walk/fp_ops.rs and test group l03_15a_fp_ops_run |
-| PERF-kernel-types-ratio-10-483 | running | 2026-11-17 03:19 | bench-ratios started in /home/luke/Work/wt/trees/bench-ratios (branch wt/bench-ratios at 6f5080476); also the bigint power benchmark at 10.0 reported by lit-top |
-| PERF-quoting-bench-ratio | running | 2026-11-17 03:19 | bench-ratios started in /home/luke/Work/wt/trees/bench-ratios (branch wt/bench-ratios at 6f5080476); also the bigint power benchmark at 10.0 reported by lit-top |
-| SPEC-c14-answer | running | 2026-11-17 03:28 | os-errors started; spec worktree wt/os-errors-spec at 152089b, plan worktree wt/trees/os-errors at 98c7ab5f9 / load 32.36 20.90 18.60 |
-| STUDY-os-error-map | running | 2026-11-17 03:19 | os-errors started; spec worktree wt/os-errors-spec at 152089b, plan worktree wt/trees/os-errors at 98c7ab5f9 / load 32.36 20.90 18.60 |
-| SYNC-copies-refresh-2 | running | 2026-11-17 03:21 | overnight spawn (P367) |
-| TEST-bench-select-one | running | 2026-11-17 03:45 | bundled with MERGE-full-by-dependency (P368): same fix as TOOLS-only-lib-pieces |
 | TEST-periodic-correctness | running | 2026-11-17 03:33 | P368 recurring |
-| TONIC-strict | impl attempt 1 | 2026-11-17 03:19 | started; worktree wt/trees/tonic-strict at 6f5080476; load 2.95 7.95 16.21 |
-| TOOLS-only-lib-pieces | running | 2026-11-17 03:45 | bundled with MERGE-full-by-dependency (P368): same file tools/run_tests.sh, --only selection |
-| XR-map-chain-rounds-7-9 | running | 2026-11-16 22:42 | author P342: micro-proof cross-review rounds 7-9; worktree /home/luke/Work/wt/trees/xr-chain2 |
-| XR-xor-shape-round-7-high | running | 2026-11-17 03:06 | one escalation round at high: Q6 degree-4 independence, tied-input ratio 10.07-11.64 vs 10.5 |
-| ZIP-count-facts | running | 2026-11-17 01:12 | overnight spawn (P367) |
 
 Merged into local main and not yet pushed (0 commits); the push follows one full test run on the merged tree:
 
