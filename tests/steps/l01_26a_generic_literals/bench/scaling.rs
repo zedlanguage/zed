@@ -611,6 +611,32 @@ fn the_type_of_an_if_holding_a_power_of_literals_prints_the_power_when_run() {
     });
 }
 
+/// The bench above passes run after other tests of this binary in one process, as a run of the
+/// whole binary or of a filter matching several tests runs it. Before the run at n moved to a
+/// new process there too, the run at n found zedc's once-built memos filled by the tests before
+/// it, and the run at 8n, in a new process, built them: 1.6 times the bytes against a limit of
+/// 1.31, failing 6 times in 6 (FAIL-lr4-bench-annotation-update; found by proofdoc4d,
+/// 2026-11-20). Run alone it reads 1.0.
+#[test]
+fn the_power_when_run_passes_after_other_tests_in_one_process() {
+    let run = std::process::Command::new(std::env::current_exe().expect("this test binary"))
+        .args([
+            "bench::scaling::the_type_of_an_if_holding_a_power_of_literals_prints_the_power_when_checked",
+            "bench::scaling::the_type_of_an_if_holding_a_power_of_literals_prints_the_power_when_run",
+            "scaling::the_type_of_an_if_holding_a_power_of_literals_prints_the_power",
+            "--exact",
+            "--test-threads=1",
+        ])
+        .output()
+        .expect("running this test binary");
+    let out = String::from_utf8_lossy(&run.stdout);
+    assert!(
+        run.status.success() && out.contains("test result: ok. 3 passed"),
+        "{out}\n{}",
+        String::from_utf8_lossy(&run.stderr)
+    );
+}
+
 // The decimal conversion runs on `num::fast` products at both sizes from n = 1000; at n = 500
 // the smaller runs on num-bigint's Toom-3, of a lower constant, and the ratio was 14.6
 // (2026-11-13). At n = 1000 it was over the limit of 10.5 (TESTS-scaling-limit-10_5). The larger
