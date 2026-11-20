@@ -1060,6 +1060,27 @@ pub fn escaped(c: char) -> Option<char> {
 mod tests {
     use super::*;
 
+    /// TEST-dry-shared-units: over every `char`, exactly the seven escapes of DESIGN.md
+    /// sec:lexical stand for a character, each the one it names.
+    #[test]
+    fn exactly_seven_characters_escape() {
+        let mut want = vec![
+            ('n', '\n'),
+            ('t', '\t'),
+            ('r', '\r'),
+            ('0', '\0'),
+            ('\\', '\\'),
+            ('"', '"'),
+            ('$', '$'),
+        ];
+        want.sort();
+        let got: Vec<(char, char)> = (0..=0x10FFFF)
+            .filter_map(char::from_u32)
+            .filter_map(|c| Some((c, escaped(c)?)))
+            .collect();
+        assert_eq!(got, want);
+    }
+
     // Every expected text below is a literal or a plain `String` built by `push_str`, never
     // text the rope wrote out, so a fault in `join` or in reading shows as a difference.
     // `Text::len` is the kept count; `str::len` of `flat` is the length of the text read.

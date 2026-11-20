@@ -367,4 +367,54 @@ mod tests {
             assert_eq!(digest_hash(&(n.as_str(), i)), d.finish());
         }
     }
+
+    /// TEST-dry-shared-units: `step(0, x)` is SplitMix64's output for the state `x + γ` (Vigna's
+    /// `splitmix64.c`: the state is advanced by γ = 0x9e3779b97f4a7c15, then mixed), so the step
+    /// from 0 over 0, γ, 2γ gives the reference generator's first three outputs seeded with 0.
+    /// The values were computed by a transcription of `splitmix64.c` apart from this crate
+    /// (2026-11-20); they pin the constants `bdd::set::tests` relies on.
+    #[test]
+    fn the_step_from_zero_is_splitmix64() {
+        const GAMMA: u64 = 0x9e37_79b9_7f4a_7c15;
+        let outs: Vec<u64> = (0..3u64).map(|k| step(0, k.wrapping_mul(GAMMA))).collect();
+        assert_eq!(
+            outs,
+            [
+                0xe220_a839_7b1d_cdaf,
+                0x6e78_9e6a_a1b9_65f4,
+                0x06c4_5d18_8009_454f
+            ]
+        );
+    }
+
+    /// The step is a bijection in each argument (a rotation, an xor, an addition and the
+    /// invertible finalizer), so no two of many words give one value from one `h`, and no two
+    /// of many `h` from one word; and it depends on the order of the words. Negative control:
+    /// a step that ignores `h` (only the finalizer of `x`) gives one value for every `h`, which
+    /// the second check catches.
+    #[test]
+    fn the_step_is_one_to_one_in_each_argument_and_depends_on_order() {
+        use std::collections::HashSet;
+        let (mut rng, _) = crate::seed::Rng::fresh("the_step_is_one_to_one_in_each_argument");
+        let words: Vec<u64> = (0..20_000)
+            .map(|_| rng.next_u64())
+            .chain([0, 1, u64::MAX])
+            .collect();
+        let h = rng.next_u64();
+        let distinct = |f: &dyn Fn(u64) -> u64| words.iter().map(|&w| f(w)).collect::<HashSet<_>>();
+        assert_eq!(distinct(&|x| step(h, x)).len(), words.len());
+        assert_eq!(distinct(&|g| step(g, h)).len(), words.len());
+        let ordered = |f: &dyn Fn(u64, u64) -> u64| {
+            (words.windows(2))
+                .filter(|w| w[0] != w[1])
+                .all(|w| f(f(0, w[0]), w[1]) != f(f(0, w[1]), w[0]))
+        };
+        assert!(ordered(&step));
+        let ignores_h = |_: u64, x: u64| step(0, x);
+        assert_eq!(distinct(&|g| ignores_h(g, h)).len(), 1);
+        assert!(
+            !ordered(&|g, x| step(0, x) ^ g),
+            "an xor of the words is caught as unordered"
+        );
+    }
 }

@@ -73,3 +73,68 @@ fn the_shared_factor_crossover_axis() {
         }
     }
 }
+
+/// A number of `words` words from a fixed linear congruential sequence (Knuth's MMIX
+/// constants), its top word not zero: the benches need the same inputs on every run.
+fn bench_number(words: usize, seed: u64) -> BigUint {
+    let mut x = seed;
+    let mut ds: Vec<u32> = Vec::with_capacity(2 * words);
+    for _ in 0..words {
+        x = (x.wrapping_mul(6364136223846793005)).wrapping_add(1442695040888963407);
+        ds.extend([x as u32, (x >> 32) as u32]);
+    }
+    if let Some(top) = ds.last_mut() {
+        *top |= 1 << 31;
+    }
+    BigUint::from_slice(&ds)
+}
+
+/// TEST-dry-shared-units: [`rem_uint`] and [`div_floor_int`] of a number of n words by a fixed
+/// one of 1024 words. The quotient is wider than the divisor, so `fast::rem` reads the
+/// dividend in blocks through one `Divisor` and `fast::div_rem` takes `div_rem_blocks`: n /
+/// 1024 blocks of O(M(1024)) each, linear in n for this divisor. 1024 words is past every
+/// measured crossover of `rem_takes_blocks` (227 to 1878 words for quotients 256 to 2 times
+/// the divisor, `fast.rs`), so both sizes take the blocks.
+#[test]
+fn remainders_by_a_fixed_wide_divisor_scale() {
+    let n = 1 << 14;
+    let d = bench_number(1024, 7);
+    let di = BigInt::from(d.clone());
+    let numbers = crate::scaling::inputs(n, |m| BigInt::from(bench_number(m, 3)));
+    crate::scaling::check_order(
+        "a number of n words mod and div one of 1024 words",
+        n,
+        1,
+        |m| {
+            let a = &numbers[&m];
+            assert!(!rem_uint(a.magnitude(), &d).is_zero());
+            assert!(!div_floor_int(a, &di).is_zero());
+        },
+    );
+}
+
+/// TEST-dry-shared-units: [`rem_uint`] and [`div_rem_uint`] of a number of n words by one odd
+/// word, at or below `DIV_LEAF`, so num-bigint's long division, O(n); and [`gcd_uint`] of the
+/// same pair, whose odd part of 64 bits sends it to `gcd_big_u64`, one pass over the words
+/// with no allocation, O(n). The half gcd itself, O(M(n) log n), and `inverse_mod_uint` and
+/// the product and remainder trees, of the same order, are over the limit at every size that
+/// fits in 60 s; their scaling test is deferred to plan row RADIX-nlog2-10_5
+/// (`a_gcd_of_wide_numbers_scales` in wt/scratch/deferred-tests/RADIX-nlog2-10_5.rs).
+#[test]
+fn divisions_and_gcds_by_one_word_scale() {
+    let n = 1 << 16;
+    // 2^64 - 59, the largest prime below 2^64.
+    let p = BigUint::from(0xFFFF_FFFF_FFFF_FFC5u64);
+    let numbers = crate::scaling::inputs(n, |m| bench_number(m, 5) << 3u32);
+    crate::scaling::check_order(
+        "a number of n words mod, div and gcd one odd word",
+        n,
+        1,
+        |m| {
+            let a = &numbers[&m];
+            let r = rem_uint(a, &p);
+            assert_eq!(div_rem_uint(a, &p).1, r);
+            assert!(!gcd_uint(a, &p).is_zero());
+        },
+    );
+}

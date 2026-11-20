@@ -1479,7 +1479,7 @@ pub fn mod_floor_int(a: &BigInt, m: &BigInt) -> BigInt {
 /// `a^-1 mod m` for `m` above zero, below `m`, or `None` when `a` and `m` have a common
 /// factor, for integers held outside a [`Rat`]: the binary half gcd with its steps kept
 /// (`num::fast::inverse_mod`), O(M(n) log n), where the extended Euclidean algorithm is
-/// O(n^2).
+/// O(n^2). Panics with "a modulus above 0" for `m` zero.
 pub fn inverse_mod_uint(a: &BigUint, m: &BigUint) -> Option<BigUint> {
     fast::inverse_mod(a, m)
 }
@@ -2257,6 +2257,9 @@ pub fn literal_f32(text: &str) -> Result<f32, LiteralRounding> {
 
 #[cfg(test)]
 mod bench;
+
+#[cfg(test)]
+mod units;
 
 #[cfg(test)]
 mod tests {

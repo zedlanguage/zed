@@ -177,4 +177,116 @@ mod tests {
         assert_eq!(found, [(0, "f"), (2, "x'"), (19, "c_2"), (26, "y")]);
         assert_eq!(names("é x").collect::<Vec<_>>(), [(3, "x")]);
     }
+
+    /// The names of `text` by the grammar read directly (TEST-dry-shared-units): every maximal
+    /// run of `[A-Za-z0-9_]` is a name when it starts with a letter, or with `_` and is longer
+    /// than one character, and then takes one `'` after it. With `prime` false it never takes
+    /// the `'`, the negative control's mistake.
+    fn naive_names(text: &str, prime: bool) -> Vec<(usize, String)> {
+        let b = text.as_bytes();
+        let word = |c: u8| c.is_ascii_alphanumeric() || c == b'_';
+        let (mut out, mut i) = (Vec::new(), 0);
+        while i < b.len() {
+            if !word(b[i]) {
+                i += 1;
+                continue;
+            }
+            let start = i;
+            while i < b.len() && word(b[i]) {
+                i += 1;
+            }
+            let run = &text[start..i];
+            if b[start].is_ascii_alphabetic() || (b[start] == b'_' && run.len() > 1) {
+                let mut end = i;
+                if prime && b.get(i) == Some(&b'\'') {
+                    end += 1;
+                }
+                out.push((start, text[start..end].to_string()));
+            }
+        }
+        out
+    }
+
+    /// Random texts over letters, digits, `_`, `'`, a character beyond ASCII and punctuation,
+    /// each with a printed seed (`ZED_TEST_SEED` repeats a run).
+    fn random_texts(name: &str) -> Vec<String> {
+        let (mut rng, _) = crate::seed::Rng::fresh(name);
+        let alphabet = ['a', 'Z', '_', '0', '9', '\'', 'é', ' ', '(', '+'];
+        (0..4000)
+            .map(|_| {
+                let len = rng.below(12);
+                (0..len).map(|_| rng.pick(&alphabet)).collect()
+            })
+            .collect()
+    }
+
+    fn found(text: &str) -> Vec<(usize, String)> {
+        names(text).map(|(i, n)| (i, n.to_string())).collect()
+    }
+
+    #[test]
+    fn names_agree_with_the_grammar_read_directly() {
+        for text in random_texts("names_agree_with_the_grammar_read_directly") {
+            assert_eq!(
+                found(&text),
+                naive_names(&text, true),
+                "the names of {text:?}"
+            );
+            // Each name found is a name alone, ends where `name_end` puts it, and every name
+            // `is_name` takes is found whole.
+            for (i, n) in found(&text) {
+                assert!(is_name(&n), "{n:?} in {text:?}");
+                assert_eq!(name_end(&text, i), Some(i + n.len()));
+            }
+            assert_eq!(
+                is_name(&text),
+                found(&text) == [(0, text.clone())],
+                "{text:?}"
+            );
+        }
+    }
+
+    /// Negative control: a reading of names that drops the `'` differs from `names` on some
+    /// random text, so the property test above can fail.
+    #[test]
+    fn names_without_the_prime_are_caught() {
+        let texts = random_texts("names_without_the_prime_are_caught");
+        assert!(texts.iter().any(|t| found(t) != naive_names(t, false)));
+    }
+
+    #[test]
+    fn a_name_ends_at_the_end_of_the_text_and_never_starts_inside_a_character() {
+        assert_eq!(name_end("ab", 2), None);
+        assert_eq!(name_end("", 0), None);
+        assert_eq!(name_end("x", 0), Some(1));
+        assert_eq!(name_end("x'", 0), Some(2));
+        assert_eq!(name_end("_1", 0), Some(2));
+        // `é` is two bytes; its second byte starts nothing, and a name may start after it.
+        assert_eq!(name_end("éx", 1), None);
+        assert_eq!(name_end("éx", 2), Some(3));
+        assert_eq!(name_end("xé", 0), Some(1));
+        assert!(!is_name_start('_') && !is_name_start('1') && !is_name_start('é'));
+        assert!(is_name_continue('_') && is_name_continue('9') && !is_name_continue('\''));
+        assert!(!is_name_continue('é'));
+    }
+
+    /// A position past the end breaks `name_end`'s precondition and the slice refuses it.
+    #[test]
+    #[should_panic(expected = "out of range")]
+    fn a_position_past_the_text_is_refused() {
+        name_end("ab", 3);
+    }
+
+    #[test]
+    fn numbered_names_skip_every_taken_suffix() {
+        let taken: std::collections::HashSet<String> = (1..=50)
+            .map(|k| format!("t{k}"))
+            .chain(["t".to_string()])
+            .collect();
+        let free = |n: &str| !taken.contains(n);
+        assert_eq!(fresh("t", free), "t51");
+        assert_eq!(numbered("t", 51, free), (51, "t51".to_string()));
+        assert_eq!(numbered("t", 60, free), (60, "t60".to_string()));
+        assert_eq!(numbered("u", 0, free), (0, "u0".to_string()));
+    }
 }

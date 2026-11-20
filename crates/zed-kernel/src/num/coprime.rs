@@ -450,7 +450,7 @@ mod tests {
         let mut out = BTreeMap::new();
         let mut p = 2;
         while p * p <= n {
-            while n % p == 0 {
+            while n.is_multiple_of(p) {
                 *out.entry(p).or_insert(0) += 1;
                 n /= p;
             }

@@ -148,3 +148,44 @@ fn a_chain_a_million_long_either_way_is_balanced_read_and_dropped() {
         drop(t);
     }
 }
+
+/// TEST-dry-shared-units: [`ident::names`] of a text of n names and numbers, one pass over its
+/// bytes, O(n), and [`prose::and_list`] of n items, O(the length of the result).
+#[test]
+fn the_names_of_a_text_and_a_list_of_n_items_scale() {
+    let texts = crate::scaling::inputs(1 << 16, |n| {
+        let items: Vec<String> = (0..n).map(|i| format!("x_{i}'")).collect();
+        let text: String = (0..n).map(|i| format!("f(x{i}') + 12ab - _ * ")).collect();
+        (items, text)
+    });
+    crate::scaling::check(
+        "the names of a text of n terms and a list of n items",
+        1 << 16,
+        |n| {
+            let (items, text) = &texts[&n];
+            assert_eq!(ident::names(text).count(), 2 * n);
+            assert!(prose::and_list(items).len() > n);
+        },
+    );
+}
+
+/// TEST-dry-shared-units: n names of one base from [`ident::numbered`], each from the suffix
+/// after the last, with the n odd suffixes below 2n taken: O(n) lookups, where trying from 1
+/// each time would be O(n²) (its documented tradeoff).
+#[test]
+fn numbered_names_scale() {
+    let taken = crate::scaling::inputs(1 << 14, |n| {
+        (0..n)
+            .map(|k| format!("t{}", 2 * k + 1))
+            .collect::<std::collections::HashSet<_>>()
+    });
+    crate::scaling::check("n numbered names beside n taken", 1 << 14, |n| {
+        let taken = &taken[&n];
+        let mut from = 1;
+        for _ in 0..n {
+            let (k, name) = ident::numbered("t", from, |s| !taken.contains(s));
+            assert!(k % 2 == 0 && name.len() > 1);
+            from = k + 1;
+        }
+    });
+}

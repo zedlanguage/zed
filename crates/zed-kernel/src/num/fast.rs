@@ -1658,8 +1658,13 @@ fn div_rem_by_reciprocal(a: &BigUint, b: &BigUint) -> (BigUint, BigUint) {
 }
 
 /// `a mod b` for `b` not zero, as [`div_rem`] finds it. A quotient wider than `b` is not built:
-/// [`Divisor::rem`] reads `a` block by block and keeps only the remainder.
+/// [`Divisor::rem`] reads `a` block by block and keeps only the remainder. Panics with "a
+/// division by zero" for `b` zero, as [`div_rem`] does.
 pub(crate) fn rem(a: &BigUint, b: &BigUint) -> BigUint {
+    // A zero `b` has 0 bits, so it went to num-bigint's `%` below, which panics with "attempt
+    // to divide by zero": the same refusal as `div_rem`'s, worded differently
+    // (TEST-dry-shared-units, `units::refused`). One message for both, checked first.
+    assert!(!b.is_zero(), "a division by zero");
     // Complexity tradeoff: a divisor of at most `DIV_LEAF` bits goes to num-bigint's long
     // division, O(DIV_LEAF m) for `m` bits, linear, as every step of a `Divisor` would send it
     // there anyway; the blocks of a `Divisor` would then each be one division of
@@ -2816,9 +2821,16 @@ fn gcd_using(a: &BigUint, b: &BigUint, leaf: u64, lift: u64) -> BigUint {
 /// `a^-1 mod m` for `m` above zero, or `None` when `a` and `m` have a common factor. The odd
 /// part `o` of `m` by [`inverse_mod_odd`], the power `2^e` by [`inverse_mod_pow2`], joined by
 /// the Chinese remainder theorem: `x = x1 + o ((x2 - x1) o^-1 mod 2^e)`, below `o 2^e = m`.
-/// O(M(n) log n).
+/// O(M(n) log n). Panics with "a modulus above 0" for `m` zero.
 pub(crate) fn inverse_mod(a: &BigUint, m: &BigUint) -> Option<BigUint> {
-    let e = m.trailing_zeros()?;
+    // `m = 0` had `trailing_zeros` give `None`, so the answer was `None` for every `a`: wrong
+    // for `a = 1`, which is its own inverse in the integers (the ring modulo 0), and silent.
+    // No caller passes it (the one in zedc-presburger, `modular::inverse_mod`, reduces `a` by
+    // `m` first, which already panics on zero), so the precondition the doc states is now
+    // checked (TEST-dry-shared-units, `units::refused::an_inverse_mod_zero`).
+    assert!(!m.is_zero(), "a modulus above 0");
+    // Unreachable: `m` is not zero, so it has a lowest set bit.
+    let e = m.trailing_zeros().expect("a modulus above 0 has a set bit");
     let o = m >> e;
     let x1 = match o.is_one() {
         true => BigUint::zero(),
