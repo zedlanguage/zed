@@ -2,9 +2,10 @@
 //! run (TEST-bench-move-crates, author P169 and P178: a test that measures work at two sizes, or
 //! needs an unusual size such as a depth past a thread's stack, is a benchmark). What they check
 //! besides the ratios is checked at small sizes by the tests of `stack.rs`: that a run is on the
-//! stack mapped for it and gives its result by `tests::a_run_is_on_its_own_stack_and_gives_its_result`,
-//! and that a stack under a memory limit grows as the run reaches it, by `GROW` at a time, and
-//! not again on a second run as deep, by `tests::a_stack_under_a_memory_limit_grows_as_the_run_reaches_it`.
+//! stack mapped for it and gives its result by
+//! `tests::a_run_is_on_its_own_stack_and_gives_its_result`, and that a stack under a memory limit
+//! grows as the run reaches it, by `GROW` at a time, and not again on a second run as deep, by
+//! `tests::a_stack_under_a_memory_limit_grows_as_the_run_reaches_it`.
 
 use std::sync::atomic::{AtomicUsize, Ordering};
 

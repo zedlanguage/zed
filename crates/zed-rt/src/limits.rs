@@ -6,11 +6,12 @@
 //!
 //! - `memory: b`: the soft `RLIMIT_DATA` is set to `b` more than the process held before the
 //!   run (the compiler's data for `zedc run`; the decoded program and the runtime for an
-//!   executable), its hard limit left as inherited. An allocation past it is refused: the kernel's numbers ask the system
-//!   first and stop with "Memory limit of `main` passed" ([`zed_kernel::value::under_memory_limit`]);
-//!   an allocation that Rust's allocator reports by aborting the process stops at the abort
-//!   (`on_abort`); and the run's stack, reserved without access and made writable as it grows
-//!   (`crate::stack`), stops when the kernel refuses a part of it.
+//!   executable), its hard limit left as inherited. An allocation past it is refused: the kernel's
+//!   numbers ask the system first and stop with "Memory limit of `main` passed"
+//!   ([`zed_kernel::value::under_memory_limit`]); an allocation that Rust's allocator reports by
+//!   aborting the process stops at the abort (`on_abort`); and the run's stack, reserved without
+//!   access and made writable as it grows (`crate::stack`), stops when the kernel refuses a part of
+//!   it.
 //! - `cpu: d`: the soft `RLIMIT_CPU` is `d` rounded up to whole seconds, its unit, and the hard
 //!   limit that plus the grace period of `@kill`, at least a second more, so that the kernel's
 //!   `SIGXCPU` at the soft limit reaches the handler (`on_cpu`) before its `SIGKILL` at the

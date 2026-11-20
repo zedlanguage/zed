@@ -394,8 +394,9 @@ impl Stack {
 //
 // Tests: `tests::a_stack_under_a_memory_limit_grows_as_the_run_reaches_it` and
 // `tests::stacks_under_a_memory_limit_grow_each_on_its_own` run step 3 (they pass only if
-// `mprotect_raw` makes the stack writable); `a_stack_past_the_memory_limit_stops_the_run_with_status_3`
-// runs step 4; `a_fault_outside_the_stacks_ends_the_process_as_sigsegv_does` runs step 5;
+// `mprotect_raw` makes the stack writable);
+// `a_stack_past_the_memory_limit_stops_the_run_with_status_3` runs step 4;
+// `a_fault_outside_the_stacks_ends_the_process_as_sigsegv_does` runs step 5;
 // `errno_is_kept_across_faults_the_handler_serves` checks `errno` across step 3, and
 // `errno_is_restored_when_a_fault_changes_it` checks step 6, as its control: with the restore
 // removed it fails. What the tests cannot catch: an action before this one that is not fit
