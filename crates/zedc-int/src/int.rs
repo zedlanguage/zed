@@ -13,7 +13,6 @@ use num_bigint::{BigInt, BigUint, Sign};
 use num_integer::Integer;
 use num_traits::{One, Zero};
 use zed_kernel::bits::BitLen;
-use zed_kernel::num::coprime::coprime_base;
 use zed_kernel::num::{
     TooLarge, div_floor_int, div_rem_uint, gcd_uint, mod_floor_int, mul_int, mul_uint, pow_uint,
     read_digits, rem_uint, room, to_decimal, trees,
@@ -1225,24 +1224,69 @@ fn pow_mod_pow2(x: &BigUint, e: u64, mask: &BigUint) -> BigUint {
     out
 }
 
-/// The exponents of `∏ b ^ e` over the `elements` of a coprime base, one per element, given
-/// the exponents `e` and the factors of each `b` over the base in the same order (zed-kernel's
-/// `num::coprime::CoprimeBase::factors`): for each factor `(i, q)` of `b`, `q` a power of
-/// `elements[i]`, the multiplicity `k` of the element in `q` ([`strip`]) adds `e * k` to
-/// exponent `i`. The cost is one `strip` per factor, where the coprime base this crate had
-/// before DRY-coprime-bases-one stripped every `b` by every element.
-fn exponents_over<'a>(
-    elements: &[BigUint],
-    exps: impl Iterator<Item = &'a BigUint>,
-    factors: &[Vec<(u32, BigUint)>],
-) -> Vec<BigUint> {
-    let mut out = vec![BigUint::ZERO; elements.len()];
-    for (e, fs) in exps.zip(factors) {
-        for (i, q) in fs {
-            let (mut q, c) = (q.clone(), &elements[*i as usize]);
-            out[*i as usize] += e * strip(&mut q, c);
-            debug_assert!(q.is_one(), "a factor of a power of {c}");
+/// A coprime base of integers at least 2: integers at least 2, pairwise coprime, such that
+/// each given integer is a product of their powers (for 4 and 8, the base 2; for 6, 2 and 3,
+/// the base 2 and 3). An integer that shares a factor `g > 1` with an element of the base
+/// replaces that element by `g` and the two parts of them prime to `g` ([`strip`], which takes
+/// every power of `g` out at once, so `2^n * 3` against 2 is one replacement, not `n`), each to
+/// be placed in turn. Each replacement divides the product of all the integers not yet placed
+/// and the base by at least `g`, so there are at most as many as the bits of that product, and
+/// in fact at most about as many as its distinct prime factors, each with one gcd per element.
+///
+/// Kept beside zed-kernel's `num::coprime::coprime_base`, the copy zedc-check and
+/// zedc-presburger call, for a measured reason (DRY-coprime-bases-one, 2026-11-20): this
+/// crate's inputs are a few integers of many bits that share small primes, and on them the
+/// kernel's routine (Bernstein's, whose `ppi` and pair steps take gcds of two numbers of `n`
+/// bits each, O(M(n) log n)) did far more work than this one (gcds against small elements and
+/// [`strip`], O(M(n))): `l01_24 equality_over_a_wide_odd_base_scales_with_its_bits` took
+/// 22.8e9 instructions at its first size against 2.1e9, and 11.9 times the work at 8 times the
+/// size against 9.2, past the limit 10.5; `equality_over_a_wide_base_scales_with_its_bits`
+/// took 482e6 against 2.2e6 (ratio 9.8 against 6.5). This copy's cost grows with the count of
+/// inputs times the count of elements, which the kernel's avoids; the plan row
+/// PERF-coprime-base-wide-few gives the kernel a path for such inputs, after which this copy
+/// goes.
+fn coprime_base<'a>(xs: impl Iterator<Item = &'a BigUint>) -> Vec<BigUint> {
+    let mut base: Vec<BigUint> = Vec::new();
+    let mut todo: Vec<BigUint> = xs.cloned().collect();
+    while let Some(mut x) = todo.pop() {
+        if x.is_one() {
+            continue;
         }
+        let shared = base.iter().enumerate().find_map(|(i, b)| {
+            let g = gcd_uint(b, &x);
+            (!g.is_one()).then_some((i, g))
+        });
+        match shared {
+            None => base.push(x),
+            Some((i, g)) => {
+                let mut b = base.swap_remove(i);
+                strip(&mut b, &g);
+                strip(&mut x, &g);
+                todo.push(b);
+                todo.push(x);
+                todo.push(g);
+            }
+        }
+    }
+    base
+}
+
+/// The exponents of `∏ b ^ e` over a coprime `base` of which every `b` is a product of
+/// powers, one per element of the base.
+fn exponents_over<'a>(
+    base: &[BigUint],
+    powers: impl Iterator<Item = (&'a BigUint, &'a BigUint)>,
+) -> Vec<BigUint> {
+    let mut out = vec![BigUint::ZERO; base.len()];
+    for (b, e) in powers {
+        let mut rest = b.clone();
+        for (c, x) in base.iter().zip(&mut out) {
+            let k = strip(&mut rest, c);
+            if k > 0 {
+                *x += e * k;
+            }
+        }
+        debug_assert!(rest.is_one(), "a coprime base of {b}");
     }
     out
 }
@@ -1417,8 +1461,7 @@ impl Core {
 
     /// Whether two cores have one value. The atoms on which they differ in form are taken
     /// from both by one merge of their atom lists, with exponents less those of the other;
-    /// the integers among them are written over their natural coprime base (zed-kernel's
-    /// `num::coprime::coprime_base`, the one copy since DRY-coprime-bases-one), on which a
+    /// the integers among them are written over a coprime base ([`coprime_base`]), on which a
     /// product of powers has one form, so `6 ^ e * 5 ^ f` and `2 ^ e * 3 ^ e * 5 ^ f`
     /// are found equal by 6, 2 and 3 alone. The cost is that of the coprime base of the
     /// integers written differently, nothing for the atoms the cores share.
@@ -1490,11 +1533,8 @@ impl Core {
         if l.is_empty() || r.is_empty() {
             return false;
         }
-        let roots: Vec<&BigUint> = l.iter().chain(&r).map(|(b, _)| *b).collect();
-        let cb = coprime_base(&roots);
-        let (lf, rf) = cb.factors.split_at(l.len());
-        exponents_over(&cb.elements, l.iter().map(|(_, e)| *e), lf)
-            == exponents_over(&cb.elements, r.iter().map(|(_, e)| *e), rf)
+        let base = coprime_base(l.iter().chain(&r).map(|(b, _)| *b));
+        exponents_over(&base, l.into_iter()) == exponents_over(&base, r.into_iter())
     }
 
     /// The order of the values: equal in form, else at 64 bits, else by [`Core::same`], else

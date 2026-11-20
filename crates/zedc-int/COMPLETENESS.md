@@ -62,6 +62,6 @@ end with an empty top level instead, tested).
 | `strip` by a power of 2: fewer zeros than the factor has, zeros not a multiple of its exponent, rest 1 | `tests::stripping_a_power_of_2_agrees_with_dividing_once_per_factor`, `stripping_a_power_of_2_by_a_power_of_2` |
 | `strip` by other factors: odd, even, composite, a power, wider than a word, multiplicities around powers of 2, past the kernel's division leaf | `tests::stripping_any_factor_agrees_with_dividing_once_per_factor` |
 | `strip` by a factor that does not divide; by a factor equal to the rest | `stripping_a_power_of_2_by_a_power_of_2` |
-| `coprime_base` (zed-kernel's, as `Core::same` reads it): empty, only ones, one prime, a composite alone, 4 and 8, 6 2 3, coprime already, equal inputs, 12 and 18, 2^20·3 and 2, 10 15 6, wide inputs sharing a wide factor | `a_coprime_base_of_each_shape_of_input` |
-| `exponents_over` (over the kernel's factors): no powers, one, shared factors, exponent 0, an exponent past a word; two equal products have equal exponents | `exponents_over_a_coprime_base_rebuild_each_product` |
+| `coprime_base`: empty, only ones, one prime, a composite alone, 4 and 8, 6 2 3, coprime already, equal inputs, 12 and 18, 2^20·3 and 2, 10 15 6, wide inputs sharing a wide factor | `a_coprime_base_of_each_shape_of_input` |
+| `exponents_over`: no powers, one, shared factors, exponent 0, an exponent past a word; two equal products have equal exponents | `exponents_over_a_coprime_base_rebuild_each_product` |
 | Interaction with language features (units, unions, ports, staging and the rest) | None needed: `Int` is the solver's arithmetic, below the language; its language-level uses are tested in the step groups that reach it (L1.24, L1.38) |

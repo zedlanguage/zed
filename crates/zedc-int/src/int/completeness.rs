@@ -732,10 +732,8 @@ fn a_coprime_base_of_each_shape_of_input() {
         ("10, 15 and 6", n(&[10, 15, 6]), vec![2, 3, 5]),
         ("30 and 1", n(&[30, 1]), vec![30]),
     ];
-    // The base is zed-kernel's (DRY-coprime-bases-one); these cases stay as the test of what
-    // `Core::same` reads from it.
     for (case, xs, want) in cases {
-        let mut base = coprime_base(&xs).elements;
+        let mut base = coprime_base(xs.iter());
         assert!(is_coprime_base_of(&base, &xs), "{case}: {base:?}");
         base.sort();
         assert_eq!(base, n(&want), "{case}");
@@ -743,7 +741,7 @@ fn a_coprime_base_of_each_shape_of_input() {
     // Wide inputs sharing a wide factor.
     let p = BigUint::from(10u32).pow(30u32) + 57u32;
     let xs = vec![&p * 6u32, &p * &p * 35u32, BigUint::from(14u32)];
-    let base = coprime_base(&xs).elements;
+    let base = coprime_base(xs.iter());
     assert!(is_coprime_base_of(&base, &xs), "wide: {base:?}");
 }
 
@@ -764,13 +762,9 @@ fn exponents_over_a_coprime_base_rebuild_each_product() {
             vec![(n(18), BigUint::from(1u32) << 100u32), (n(12), n(7))],
         ),
     ];
-    let over = |powers: &[(BigUint, BigUint)]| {
-        let cb = coprime_base(&powers.iter().map(|(b, _)| b).collect::<Vec<_>>());
-        let exps = exponents_over(&cb.elements, powers.iter().map(|(_, e)| e), &cb.factors);
-        (cb.elements, exps)
-    };
     for (case, powers) in cases {
-        let (base, exps) = over(&powers);
+        let base = coprime_base(powers.iter().map(|(b, _)| b));
+        let exps = exponents_over(&base, powers.iter().map(|(b, e)| (b, e)));
         assert_eq!(exps.len(), base.len(), "{case}");
         // Each base element's exponent is the sum over the powers of its multiplicity in b
         // times e.
@@ -788,10 +782,9 @@ fn exponents_over_a_coprime_base_rebuild_each_product() {
     // Two products equal as values have equal exponents over a common base: 4^3 · 9 = 8^2 · 3^2.
     let l = [(n(4), n(3)), (n(9), n(1))];
     let r = [(n(8), n(2)), (n(3), n(2))];
-    let cb = coprime_base(&l.iter().chain(&r).map(|(b, _)| b).collect::<Vec<_>>());
-    let (lf, rf) = cb.factors.split_at(l.len());
+    let base = coprime_base(l.iter().chain(&r).map(|(b, _)| b));
     assert_eq!(
-        exponents_over(&cb.elements, l.iter().map(|(_, e)| e), lf),
-        exponents_over(&cb.elements, r.iter().map(|(_, e)| e), rf)
+        exponents_over(&base, l.iter().map(|(b, e)| (b, e))),
+        exponents_over(&base, r.iter().map(|(b, e)| (b, e)))
     );
 }

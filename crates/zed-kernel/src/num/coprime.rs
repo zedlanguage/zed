@@ -1,8 +1,13 @@
 //! The natural coprime base of a list of positive integers, and each integer factored over it:
-//! the one copy for zedc-int (`Core::same`, the equality of products of powers), zedc-check
-//! (`check/coprime.rs`, which roots share a prime) and zedc-presburger (`modular.rs`
-//! `coprime_factorization`, the moduli over pairwise coprime bases), plan row
-//! DRY-coprime-bases-one.
+//! the copy for zedc-check (`check/coprime.rs`, which roots share a prime) and
+//! zedc-presburger (`modular.rs` `coprime_factorization`, the moduli over pairwise coprime
+//! bases), plan row DRY-coprime-bases-one. zedc-int (`Core::same`, the equality of products of
+//! powers) keeps its own factor refinement for a measured reason, stated at its
+//! `coprime_base`: on its inputs, a few integers of many bits sharing small primes, the `ppi`
+//! and pair steps here take gcds of two wide numbers, O(M(n) log n), where refinement takes
+//! gcds against small elements and strips powers, O(M(n)); 22.8e9 instructions against 2.1e9
+//! on `l01_24 equality_over_a_wide_odd_base_scales_with_its_bits`, ratio 11.9 against 9.2
+//! (2026-11-20). Plan row PERF-coprime-base-wide-few.
 //!
 //! Source: D. J. Bernstein, "Factoring into coprimes in essentially linear time", J.
 //! Algorithms 54(1), 2005, pp. 1-30, doi:10.1016/j.jalgor.2004.04.009. Checked 2026-11-19 in
