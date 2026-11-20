@@ -21090,7 +21090,7 @@ impl Sig {
     ///      (`Replacer::must_decode_fwd`): a binding of an internal result (`binds_internal`)
     ///      and a bound type, or a new name, that holds an internal result's spelling
     ///      (`targets_internal`, in every mode). [`Sig::add_arrows_of`] decodes both sides.
-    ///    The decoded form has no runs, so it holds no clash.
+    ///      The decoded form has no runs, so it holds no clash.
     /// 4. Where the check does tag (`r10_flat_ty`, `r10_flat_held`, each caller but
     ///    `Ck::shown`), each internal result is written as its name, a NUL and the forward's
     ///    address, and no other variable holds a NUL: a class is `$k`, a made-up name is
