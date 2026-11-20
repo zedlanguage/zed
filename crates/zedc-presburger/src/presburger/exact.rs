@@ -682,8 +682,9 @@ impl Conflict {
 /// the others waiting; each part taken carries the decision that holds it (`None` at the
 /// top). Where a branch fails, the search goes back by conflict-directed backjumping (CBJ;
 /// P. Prosser, "Hybrid algorithms for the constraint satisfaction problem", Computational
-/// Intelligence 9(3):268–299, 1993, doi:10.1111/j.1467-8640.1993.tb00310.x, §3.3,
-/// `cbj-label` and `cbj-unlabel`, read in full text from CORE work 59827248). The paper, for
+/// Intelligence 9(3):268–299, 1993, doi:10.1111/j.1467-8640.1993.tb00310.x, §3.3, pp. 277–279,
+/// `cbj-label` and `cbj-unlabel`, read in full text from CORE work 59827248, checked again
+/// against that text on 2026-11-19 with the allpapers skill). The paper, for
 /// variables `v[1..n]` taken in order: "CBJ maintains a conflict set `conf-set[i]` for each
 /// variable ... When a consistency check fails between `v[i]` and `v[h]`, h is added to the
 /// set `conf-set[i]`. ... If there are no remaining values to be tried in
@@ -740,6 +741,62 @@ impl Conflict {
 // in no conflict. That is O(1) branches a level, each O(1) rows past the one descent, and
 // conflicts of at most 2 tips: O(d log a) in all, and the leaf of the point (outer_0 and
 // `100 <= x <= 200`) has O(1) rows (COMPLEXITY.md row BENCH-deep-small-choice).
+//
+// Proof that a backjump never passes over a branch with a point (PROOF-quick-search-backjump-
+// sound, 2026-11-19). Tests: `a_backjump_never_passes_over_a_branch_with_a_point` (one case
+// for each way of getting a step below wrong) and
+// `quick_search_on_rows_of_one_atom_finds_a_point_wherever_one_exists` (random, no room
+// limit). Each wrong jump named below was run as a negative control against them, not
+// committed, and was caught. Prosser gives no proof of CBJ ("An informal proof of the
+// completeness of CBJ, using induction, has been given by Tsang (1992)", p. 279); this one
+// follows the same induction, over the departures (1)–(4) above.
+//
+// Terms. The branches of `f ∧ within` form a tree: a node is a disjunction (or a `t != 0`)
+// at a place in the formula tree (a subformula shared by several parents counts once for each
+// place), and a leaf is a full choice of disjuncts, a term of the disjunctive normal form.
+// Every point of `f ∧ within` holds the rows of some leaf. Decision j of the path is a place
+// p_j with the disjunct c_j taken there now. Its disjunction is reached only through the
+// disjunct c_up(j) of decision up(j) < j (or always, where `up` is `None`). A part held by j
+// (reached from c_j through conjunctions and negations, not through another decision) is in
+// every leaf that takes c_j at p_j. For a conflict C, cl(C) is its tips, the decisions that
+// hold them (`up`, the `up` of that, and so on) and the decisions `0..=upto`. cl(C) is
+// closed under `up`, and `deepest` is its largest member. Valid(C) means: every leaf that
+// takes c_j at p_j for each j in cl(C) has no point, or was already given to `point_of`.
+//
+// (a) Each failure gives a valid conflict. A cut by an empty range: the two rows that gave
+// its ends have no common integer, and each is held by `l_at` or `h_at` (or by none), so it
+// is in every leaf that takes those choices and the choices above them. None of those leaves
+// has a point: the rows are read with each atom as its own value, which allows at least the
+// points of the formula. On a tie of ends the shallower holder is kept; its row gives the
+// same end. A false row, or an empty disjunction, held by `at`: the same with one part. A
+// leaf where `point_of` gives no point: cl is every decision of the path, and the one leaf
+// that takes all of them is this leaf, already given to `point_of`.
+//
+// (b) The jump passes over no point. Let C be valid and h = deepest(C). Decisions `0..=h`
+// stay. The frames deeper than h are dropped with their disjuncts untried, as `cbj-unlabel`
+// (lines 5–9) resets `conf-set[j]` and the domain of each j in h+1..=i. Each disjunct
+// dropped, and each leaf below it, takes c_j for every j <= h, so for every j in cl(C), a
+// subset of `0..=h`. By Valid(C) none of those leaves has a point, unless it was tried.
+//
+// (c) The conflict a decision passes up is valid. A frame d lives only while decisions
+// `0..d` stay, and each disjunct a of d that is tried and gives no point joins exactly one
+// conflict C_a into it, with deepest(C_a) = d, valid with c_d = a (by induction on the order
+// in which the search finishes subtrees, from (a) and this step). For `t != 0` the second
+// branch, cut where the decision is made, gives its conflict at once. Once every disjunct is
+// tried, `Conflict::without` gives C' = (the union of the C_a, less d) with up(d) added: d is
+// the deepest, so no other tip is held through d, and `upto = d` becomes d - 1. Let L be a
+// leaf that takes c_j for every j in cl(C'). L takes c_up(d) and the choices above it, so it
+// reaches p_d and takes there some disjunct a. Every j in cl(C_a) other than d is below d
+// and in cl(C'), so L takes c_j, and by Valid(C_a) L has no point or was tried. So Valid(C').
+// Without up(d) a leaf need not reach p_d, and the step fails (negative control 1); with the
+// conflict of only the last disjunct, in place of the union, it fails too (control 5).
+//
+// (d) The answers. A point is given only after `holds_as` shows it holds `f` and `within`.
+// `Empty` is given only when a valid conflict has an empty cl, so every leaf has no point or
+// was given to `point_of`, and only when no leaf was (`leaf_without_point` is false): so no
+// leaf, and no point of `f ∧ within`, exists. `Unknown` claims nothing. A point can be missed
+// only in a leaf given to `point_of` (the solver refused its rows), and then the answer is
+// `Unknown`, never `Empty`.
 fn quick_search(
     f: &Formula,
     within: Option<&Formula>,

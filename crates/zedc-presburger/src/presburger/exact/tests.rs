@@ -3705,6 +3705,127 @@ fn quick_search_answers_as_the_points_of_the_box() {
     assert!(wrong.is_empty(), "seed {seed}: {wrong:#?}");
 }
 
+/// [`quick_search`] on `f` with no room limit: `"point"` (checked to hold `f`), `"empty"` or
+/// `"unknown"`.
+fn searched(f: &Formula) -> &'static str {
+    let mut work = Work {
+        used: 0,
+        limit: u64::MAX,
+        solver: SOLVER,
+    };
+    match quick_search(f, None, u64::MAX, &mut work).unwrap() {
+        Quick::Point(m) => {
+            assert!(f.holds(&m), "{m:?} is not a point of {f}");
+            "point"
+        }
+        Quick::Empty => "empty",
+        Quick::Unknown => "unknown",
+    }
+}
+
+/// `x >= k` and `x <= k`.
+fn x_ge(k: i64) -> Formula {
+    ge(&[("x", 1)], -k)
+}
+fn x_le(k: i64) -> Formula {
+    ge(&[("x", -1)], k)
+}
+
+/// Each formula has a point in exactly one branch that a backjump to the wrong decision passes
+/// over, so a jump that skipped a branch with a point gives `"empty"` (or `"unknown"`) for it.
+/// The wrong jump each case catches, all run as negative controls (the proof at
+/// [`quick_search`]): (1) a decision whose disjuncts all failed passes up its set without the
+/// decision that holds its disjunction (`Conflict::without` dropping `up`); (2) the jump goes
+/// to the decision before the deepest of the conflict; (3, 4) a cut's conflict keeps only the
+/// decision of one end of the empty range; (5) a decision's conflict is replaced by the
+/// conflict of its last disjunct instead of joined with it; (6) a leaf where `point_of` finds
+/// no point is given an empty conflict. Case 7 is the `t != 0` decision, case 8 a formula with
+/// no point, which must be shown empty.
+#[test]
+fn a_backjump_never_passes_over_a_branch_with_a_point() {
+    let and = Formula::and;
+    let or = Formula::or;
+    let cases = [
+        // (1) Decision 1, `x >= 10 || x >= 20` inside the first disjunct of decision 0, fails
+        // on `x <= 5` alone; without decision 0, which holds it, the jump leaves the search.
+        and(vec![
+            x_le(5),
+            or(vec![
+                and(vec![x_ge(0), or(vec![x_ge(10), x_ge(20)])]),
+                x_le(3),
+            ]),
+        ]),
+        // (2) The only decision fails at `x >= 10`; its second disjunct holds the point.
+        and(vec![or(vec![x_ge(10), x_le(3)]), x_le(5)]),
+        // (3) `x >= 10` (decision 1) meets `x <= 5` (decision 0): conflict {0, 1}. Kept as {0}
+        // alone, the jump passes over `x >= 0`, the branch of the point.
+        and(vec![
+            or(vec![x_le(5), x_le(-100)]),
+            or(vec![x_ge(10), x_ge(0)]),
+        ]),
+        // (4) The mirror of (3): the lower end is held by decision 0, the upper by decision 1.
+        and(vec![
+            or(vec![x_ge(0), x_ge(100)]),
+            or(vec![x_le(-10), x_le(5)]),
+        ]),
+        // (5) Decision 1's first disjunct fails on decision 0's `x <= 5`, its second on
+        // `y <= 60`, held by none: the union {0, 1}, less 1, sends the search to decision 0's
+        // `x <= 50`. The second conflict alone, {1}, less 1, is empty.
+        and(vec![
+            ge(&[("y", -1)], 60),
+            or(vec![x_le(5), x_le(50)]),
+            or(vec![x_ge(10), and(vec![x_ge(0), ge(&[("y", 1)], -70)])]),
+        ]),
+        // (6) The first disjunct reaches its leaf, where `x + y <= 0` with `x, y >= 1` has no
+        // point but no row of one atom shows it; the second, `x = 3`, holds the point.
+        or(vec![
+            and(vec![
+                ge(&[("x", -1), ("y", -1)], 0),
+                x_ge(1),
+                ge(&[("y", 1)], -1),
+            ]),
+            eq(&[("x", 1)], -3),
+        ]),
+        // (7) `x != 0` with `-5 <= x <= 0`: `x >= 1` is cut, `x <= -1` holds the point.
+        and(vec![Formula::negate(eq(&[("x", 1)], 0)), x_le(0), x_ge(-5)]),
+        // (8) No point: every branch is cut.
+        and(vec![
+            or(vec![x_ge(10), x_ge(20)]),
+            or(vec![x_le(5), x_le(3)]),
+        ]),
+    ];
+    let want = ["point"; 7].into_iter().chain(["empty"]);
+    for (k, (f, want)) in cases.iter().zip(want).enumerate() {
+        assert_eq!(searched(f), want, "case {}: {f}", k + 1);
+    }
+}
+
+/// [`quick_search`] on random formulas whose every row has one atom ([`one_atom_constraint`]),
+/// in the box, with no room limit, against trying each of the 729 points. Every branch with no
+/// point is then cut by its rows of one atom, so no leaf fails without a proof and the answer
+/// is decided: a point where the box has one, `Empty` where it has none, never `Unknown`. A
+/// backjump that passed over a branch with a point would give `Empty` where a point exists,
+/// which the test with a room ([`quick_search_answers_as_the_points_of_the_box`]) can miss when
+/// the room runs out first.
+#[test]
+fn quick_search_on_rows_of_one_atom_finds_a_point_wherever_one_exists() {
+    let seed =
+        crate::seed::seed("quick_search_on_rows_of_one_atom_finds_a_point_wherever_one_exists");
+    let mut rng = Rng::new(seed | 1);
+    let (mut wrong, mut counts) = (Vec::new(), [0u32; 2]);
+    for round in 0..2000 {
+        let f = boxed(formula_of(&mut rng, 6, one_atom_constraint));
+        let any = !brute(&f, "x").is_empty();
+        let got = searched(&f);
+        counts[usize::from(any)] += 1;
+        if got != if any { "point" } else { "empty" } {
+            wrong.push(format!("round {round}: {got}, points: {any}: {f}"));
+        }
+    }
+    println!("seed {seed}: no point, a point {counts:?}");
+    assert!(wrong.is_empty(), "seed {seed}: {wrong:#?}");
+}
+
 /// The family `wide_pairs` of l01_39 at `k` names: one disjunction of two arms, each the
 /// conjunction of `z(j) + z(j+1) >= 0` (`-` in the other arm) over the adjacent pairs of `z0`
 /// to `z(k-1)`. It has no definition, so the forward certificate declines for every name.
