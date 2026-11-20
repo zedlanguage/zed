@@ -2689,3 +2689,67 @@ fn audit_seed_48_keeps_the_hole_in_z() {
         );
     }
 }
+
+/// A chain part dismissed in a case by the half-line certificate of the least of the chain's other
+/// parts (`Scope::chain_rest_halfline_idle`, after a projection in `Scope::project_block`), and
+/// woken again later in the same case (PERF-l139-chain-rest-wake-test). `x + y >= 20 || x - y >=
+/// 20` (L, `x >= 20 - |y|`) and `x + 3y >= 20 || x - 3y >= 20` (W, `x >= 20 - 3|y|`) are one chain:
+/// L implies W. In the case `y <= -50 && x >= 30` (boxes `x >= 45`, `y <= -50`) W is dequeued,
+/// and after W's projection L, the least of the rest, passes the certificate and is dismissed; L
+/// is then woken again in the same case at the same boxes. In the other case,
+/// `-5 <= y <= -3`, L gives `x >= 15` (from `x - y >= 20`) where the test's own `x >= 14` and W
+/// (`x >= 5` there) give `x >= 14`, so the join's `x >= 15` needs L applied in both cases. The
+/// scope's facts equal the oracle's.
+///
+/// Negative control, run with a temporary probe on 2026-11-20 (not kept): skip every wake of a
+/// part dismissed by `chain_rest_halfline_idle` or by the walk, after its dismissal, in the same
+/// case lineage only (the set cleared at each case start and at each one-case join). This test
+/// stays green under that control, as did every other input tried (more than 100 hand-made
+/// variants and more than 8,000 random cases of `split(j, c)` chains with star, base rows and
+/// nested cases): no fact changed. In each dismissal of the least part by another part that was
+/// traced (four), the least part was entailed by the box when it was dismissed, and entailment
+/// survives every later narrowing, so its wake adds nothing. A red needs the least part dismissed
+/// while only half-line idle (every value of each name supported, the box not inside it), which
+/// the certificate allows, and a later narrowing in the same lineage that makes it bite. No input
+/// found reaches that state. The likely reason (inferred, not proved): where a case has later
+/// narrowings, a moved name reaches the chain through `Block::update`'s lazy wake of the least
+/// part alone, which skips the whole chain while that part passes the certificate, so W is not
+/// dequeued and does not dismiss L; the traced dismissals by W were all in cases whose atoms are
+/// narrowed at once, with no narrowing after. So this test pins the path and the facts, and
+/// the wake is not shown to be needed.
+#[test]
+fn a_chain_part_dismissed_in_a_case_by_the_rest_is_woken_again() {
+    let split = |j: i64, c: i64| {
+        or(
+            ge(add(var("x"), times(j, "y")), int(c)),
+            ge(sub(var("x"), times(j, "y")), int(c)),
+        )
+    };
+    let f = Family {
+        names: ["a", "x", "y"].into_iter().map(Arc::from).collect(),
+        tests: vec![
+            star(),
+            split(1, 20),
+            ge(add(var("x"), var("y")), int(-5)),
+            and(
+                split(3, 20),
+                and(
+                    and(le(var("y"), int(-3)), ge(var("x"), int(14))),
+                    or(
+                        ge(var("y"), int(-5)),
+                        and(le(var("y"), int(-50)), ge(var("x"), int(30))),
+                    ),
+                ),
+            ),
+        ],
+        join: None,
+        window: vec![("x".into(), -30, 80), ("y".into(), -60, 30)],
+    };
+    let want = "a=[-5..] x=[15..] y=[..=-50, -5..=-3]";
+    check_family(
+        &f,
+        "the chain's least part woken after its dismissal",
+        want,
+        want,
+    );
+}
