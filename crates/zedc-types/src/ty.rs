@@ -15829,6 +15829,12 @@ impl<'m> Pairs<'m, (MeetAt, MeetAt), Ty> {
                 let q = &q;
                 // Equal signatures have equal digests (`Hash for Sig` hashes the digest, and a
                 // set of functions relies on it), so unequal digests answer `==` at once.
+                // Not proved (proofdoc4c) where one signature keeps a compact forward and the
+                // other its flat needs: `==` decodes the forward ([`Sig::same_needs_and_own`])
+                // and the digest hashes its summary (`r10_hash`); that the two digests agree is
+                // the test row FAIL-map-chain-d6-digest owes. Where they differ, `equal` is
+                // false, the meet is made by [`Domains::meet`] and holds the same functions as
+                // `s`, and `have` may keep it twice: time is lost, never a function.
                 // Complexity tradeoff: `==` alone walks the two signatures as deep as they
                 // agree, and a meet of functions over functions nested `n` deep, met again one
                 // level down at each level ([`Domains::keys_apart`]), walked O(n) at each level,
@@ -24101,6 +24107,10 @@ impl Sig {
     /// `L .. U -> V` (DESIGN.md sec:type_language: a message prints a morphism type in that
     /// form when its bounds differ). Each reads back to the arrows the checker denotes it by.
     /// An exact arrow that may answer `#notFound` is written as an arrow, `K -> V | #notFound`.
+    /// Test: l01_22 `kinds::morphism_types_print_as_written_and_read_back` (each form, a tuple
+    /// key, an exact arrow to `V | #notFound`: printed as written, read back equal). It cannot
+    /// catch a form the parser reads to other arrows than the checker's denotation where the
+    /// two readings print alike, since it compares printed text and `==` of the read types.
     fn morphism(&self) -> Option<Morphism<'_>> {
         let [p] = &self.params[..] else {
             return None;
@@ -29422,7 +29432,11 @@ pub mod r10_hash {
     // on them: only the time of a lookup. Equal signatures make equal token streams whatever
     // the constants are, so they have equal digests: that is the property `Hash for Sig` and
     // the two tests `s.digest() == q.digest() && s == q` (in the meet of functions and in
-    // `fits`) rely on, and it does not depend on the values. Two different streams can share a
+    // `fits`) rely on, and it does not depend on the values. Not proved (proofdoc4c) for two
+    // signatures equal only after a compact forward is decoded ([`Sig::same_needs_and_own`]):
+    // their streams differ, a summary against flat needs, and their digests agree only if the
+    // summary hashes as the flat needs do, which the test of row FAIL-map-chain-d6-digest is
+    // to check. Two different streams can share a
     // digest (a fixed base and fixed tokens, see the module note), and each of those sites then
     // compares the signatures themselves, so a collision costs one full comparison, never a
     // wrong answer. Different families are kept apart only with high probability, not by

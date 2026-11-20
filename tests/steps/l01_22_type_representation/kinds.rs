@@ -3278,3 +3278,20 @@ fn an_own_variable_of_an_outer_comparison_and_one_of_the_same_name_inside_print_
     );
     assert_eq!(type_errors(&src), Vec::<String>::new(), "{src}");
 }
+
+/// A function type written as a morphism type (`Sig::morphism`), `K ->? V` or `L .. U -> V`,
+/// prints in that form and reads back to the same type; an exact arrow that may answer
+/// `#notFound` prints as an arrow, and a key that is a tuple keeps its parentheses.
+#[test]
+fn morphism_types_print_as_written_and_read_back() {
+    for (written, printed) in [
+        ("int ->? String", "int ->? String"),
+        ("((int, int)) ->? int", "((int, int)) ->? int"),
+        ("#a .. (#a | #b) -> int", "#a .. (#a | #b) -> int"),
+        ("(int) -> int | #notFound", "int -> int | #notFound"),
+    ] {
+        let t = ty(written);
+        assert_eq!(t.to_string(), printed, "{written}");
+        assert_eq!(ty(printed), t, "{written}");
+    }
+}
