@@ -230,6 +230,14 @@ impl fmt::Debug for IntsListed {
 // checks random callees of spaced and adjacent literal arms both ways at a fixed seed, and
 // `the_shape_reaches_both_verdicts` shows the programs reach both verdicts. It cannot catch a
 // wrong shortcut on a shape the generator does not build, such as literals past `i64`.
+// The unit tests check each shortcut alone against the walk it skips, as exactly equal sets:
+// `the_listed_shortcuts_give_what_the_walks_give` (2000 rounds at a fixed seed: sets of runs
+// and gaps, `i0` all the set's points or a part of them, `x` inside `i0` or not; each shortcut
+// must answer in more than 100 rounds, so none passes by never answering; `ints_among` of the
+// set, a larger one and a smaller one), and `the_members_kept_by_an_interval_are_those_a_filter_keeps`
+// for `fills` and `kept_in`. They build the record `(i0, v0)` by hand with the condition its
+// readers rest on, so they cannot catch a writer that breaks it;
+// `reductions_record_only_intervals_and_sets_of_the_same_integers` checks the writer.
 fn listed_shortcuts_on() -> bool {
     #[cfg(feature = "preimage-ref")]
     return listed_shortcuts::on();
@@ -416,6 +424,17 @@ impl Product {
     /// Whether no value has this element once its domains are reduced
     /// ([`Product::reduce_domains`]): its type is empty, or holds integers alone while its
     /// interval or its class holds none, which the reduction carries into the type.
+    /// Proof that `true` means the reduction empties it: [`Product::reduce_domains_now`] only
+    /// meets the interval and the class (`meet_ints`, `congruence.meet`), so an empty interval
+    /// or a `Bottom` class stays so, and its step "The type from the other domains" then meets
+    /// the type with `!int`; a type inside `int` met with `!int` is empty. The other way is
+    /// not claimed: a product the reduction empties by other means (a finite set against the
+    /// interval) gives `false`, and is found empty after its projection as before, so the
+    /// callers in `Scope::reduce_with` lose no case, only the early exit. Tests in
+    /// `l01_39_scope_relations::xst::s4`: `a_case_a_bound_empties_is_dropped_in_each_order`,
+    /// `a_case_a_class_empties_is_dropped` and its variants (the result), and
+    /// `a_chain_raise_in_reverse_narrows_in_near_linear_time` (the cost). They do not try a
+    /// type of integers and other values, where `false` is required.
     fn empties(&self) -> bool {
         self.is_empty()
             || ((self.ints().is_empty() || self.cell.congruence.element == Congruence::Bottom)
@@ -585,6 +604,16 @@ impl Product {
     // literals 3 apart. Used: two inclusion tests that pass by the subtrees the sets share,
     // `O(d log k)` for the `d` paths a test changed. Given up: nothing; otherwise the meet is
     // made as before.
+    // Not proved: the bound `O(d log k)` for `v0.is_subset(vs)` when the two trees are not one
+    // (`ptr_eq` is `O(1)`). `TreapSet::is_subset` is `combine(Minus, ..)` (zed-kernel
+    // `treap_set.rs`), which answers a pair of shared subtrees at once (`at_once`), but at
+    // each pair it does not share it splits one tree at the other's root key, `O(height)`,
+    // rebuilding that path. Open sub-case: that the pairs not shared number `O(d)` and their
+    // splits `O(d log k)` in all, not `O(d log^2 k)`, for `v0` made from `vs` by the cuts of
+    // `kept_in` or `kept_by_listed`. Measured only: 8.79 and 8.61 times the instructions from
+    // k = 64 to 512 in `l01_39_reduced_product::arm_test_through_call::bench::tests_on_a_callee_of_k_spaced_literal_arms_scale`
+    // (73ed87c26), under the limit of 10.5. The `IntervalSet::is_subset` bound is the one its
+    // own comment states (zedc-lattice `interval.rs`).
     fn ints_among(&self, vs: &TreapSet<Value>) -> bool {
         if !listed_shortcuts_on() {
             return false;
@@ -602,6 +631,15 @@ impl Product {
 
     /// The reductions between this product's own domains, once each; whether one changed a
     /// domain. Each change is a meet, so the product only descends.
+    ///
+    /// The callers loop `while p.reduce_domains() {}`. `true` means a strict descent:
+    /// `Entry::meet` (zedc-lattice cell.rs) returns `true` only when the met element differs
+    /// from the old one. Not proved: that the loop ends, that is, that no infinite chain of
+    /// rounds each changes a domain. The interval and congruence domains have infinite
+    /// descending chains, so this needs each round's arguments to come from finitely many
+    /// values. Open sub-case: a product whose finite set is `Top` and whose type lists no
+    /// integers, where only `reduce_congruence` narrows the interval and the congruence, and
+    /// `reduce_congruence` is not shown idempotent; the other sub-cases are not checked either.
     ///
     /// Complexity tradeoff (CHECK-literal-union-cost): naive version, every call reduces,
     /// which relists the type's literals and the finite set, O(k) or more for k listed values,
@@ -842,7 +880,8 @@ impl Product {
 // the interval and the set rebuilt, `O(k log k)` per reduction, so `k` tests on a callee of
 // `k` literals cost `O(k^2 log k)`. Used: cuts of the persistent treap (module
 // `zed_kernel::treap_set`; Blelloch, Ferizovic and Sun, "Just join for parallel ordered sets",
-// SPAA 2016), `O(log k)` when `x` is one piece, as for a run of literals narrowed by a test,
+// SPAA 2016, doi:10.1145/2935764.2935768; the `O(log n)` expected cut and join bounds used are
+// stated, with the quoted text, at the head of zed-kernel `treap_set.rs`), `O(log k)` when `x` is one piece, as for a run of literals narrowed by a test,
 // and `O(min(k', p) log max(k', p))` otherwise. Cost: an interval of many pieces against a set
 // of many members, as the even numbers below `2k` narrowed at random, still walks
 // `min(k', p)`. Test:
@@ -912,7 +951,12 @@ fn cut(vs: &TreapSet<Value>, lo: &End, hi: &End) -> TreapSet<Value> {
 /// `false` otherwise, which only costs the meet it would skip.
 // Proof: the members of `vs` are distinct integers; if they lie in `x` and number as many as
 // `x` has integers, they are all of them, so the points of `vs` are `x` and meeting `x` with
-// them gives `x`.
+// them gives `x`. That they lie in `x`: `inside` says so, or, read here, `x` is one piece
+// `[a, b]` with `a <= first` and `last <= b`, and every member, an integer (the class test),
+// lies between `first` and `last`. Since distinct integers inside `x` number at most the
+// integers of `x`, comparing the counts by `>=` would answer as `==` does; the unit test
+// `the_members_kept_by_an_interval_are_those_a_filter_keeps` asserts that bound
+// (TEST-ints-listed-shortcut-off), so a test of `fills` cannot tell the two apart.
 // Complexity tradeoff (CHECK-literal-union-spaced): naive, the meet with `points(vs)` made
 // whenever `x` has more than one piece: `O(k)` to build the points and `O(k)` for the meet's
 // inclusion test, as the two trees share nothing; `k` tests on a callee of `k` literals 3
@@ -964,6 +1008,28 @@ impl fmt::Display for Product {
 /// set holds the literals the source lists (a type's literals, a literal equated with the
 /// name) and the one member of a one-member interval, never the members of a wider interval,
 /// so the list is no longer than what the source lists.
+// Proof, by the writers of `cell.finite` in this crate, each of which adds members only in
+// these ways or keeps a subset of a set already there:
+// - `Cell::literal` (`zedc_lattice::cell`), for a literal or a statically run value
+//   (`run_static`, `forward_prim`): one member.
+// - `Product::reduce_domains_now`: from the type, its own literal set (`Type::ints_set`) or
+//   `Type::values_listed`, which lists only a type written as a list (the proof at
+//   `values_listed`); otherwise only meets, which keep a subset (`kept_in`, `kept_by_listed`).
+//   An interval enters the type only as its one member (the `a == b` case there), never as
+//   the members of a wider interval.
+// - `Scope::atom_names` (one bool) and `equality` (the literal itself, or a subset with one
+//   value taken out).
+// - `Scope::zero_reached`: the integer roots of a test `t == 0` in one name; these are not
+//   literals of the source, but they number at most the terms of `t` as written (each factor
+//   of a product read apart, the proof at `zed_kernel::poly::roots::term_roots`), so they too
+//   are bounded by what the source writes.
+// - A join of two arms (`FiniteSet::join`, set union): at most the sum of the two lists.
+// A finite set once made reaches the type as its literals (`Type::ints_of`), and so the type's
+// literals hold no more than the lists above. Tests:
+// `l01_39_reduced_product::controls::a_listed_set_is_enumerated_and_a_range_is_not`,
+// `l01_39_reduced_product::controls::ranges_of_every_width_list_nothing`; they cannot catch a
+// writer added later that lists an interval, so a new writer of `cell.finite` must be added
+// here.
 fn listed(p: &Product) -> Option<Vec<i64>> {
     let FiniteSet::Set(vs) = &p.cell.finite.element else {
         return None;
@@ -1002,6 +1068,24 @@ pub struct NameProducts {
 /// `low` holds with every value of the hub, and one in `[start, H - gap]` with `H`. The leaf
 /// keeps a value at most `low` (checked when the row is admitted, and its base product is not
 /// written after), so every value of the hub keeps a witness and the row narrows no hub.
+///
+/// Proof that the leaf's product, its base met with [`PendantRow::allowed`], is exactly the
+/// leaf's values the row and the hub's integers allow: a leaf value `v <= low` makes the
+/// second side true for every hub value. A value `v` with `low < v < start` makes both sides
+/// false (the first needs `v >= start`). A value `v >= start` makes the row true exactly with
+/// a hub value at least `v + gap`; the greatest hub integer is `H` (the upper end of an
+/// [`IntervalSet`] is a member, its pieces being closed), so such a value exists exactly when
+/// `v <= H - gap`; with no upper end `H` every `v >= start` has one. The leaf's own conjuncts
+/// are in its base product alone (no other conjunct mentions it, checked at admission), so
+/// meeting the two is the whole of what the scope knows of it. The hub is not narrowed: each
+/// hub value has the witness `lo`, the leaf's least value, `lo < low` (checked in
+/// [`Scope::extend_pendant`], `Int::from(lo) >= row.low` refused). The base product is not
+/// written after: [`NameProducts::set_fresh`] and `DerefMut` materialize first, and a path
+/// refuses a pendant leaf ([`NameProducts::member`]), so a later test on the leaf goes to the
+/// solver with the row in the relation. Test: `linear_moved_on_pendants_matches_the_solver`
+/// (tests/steps/l01_39_scope_relations/xst/s4.rs) compares each admitted scope with the
+/// solver's under `preimage-ref`; it covers the shapes `linear_moved` and `pendant_mix` make,
+/// not every row this admits.
 #[derive(Clone, PartialEq, Debug)]
 struct PendantRow {
     hub: Arc<str>,
@@ -1819,6 +1903,29 @@ pub struct Scope {
     /// The written constraints already enumerated, each as its address with the values of its
     /// static names. A second enumeration removes nothing more: the members a constraint holds
     /// at do not depend on the interval, which already lies within them.
+    // Proof, for a key `(k, statics)` with at most one open name `n` (`Scope::enumerate_on`):
+    // (1) The key is inserted only after its constraint `c` (the term of `k` with `statics`
+    // substituted) was evaluated at each listed member, or closed with no open name; the
+    // `continue`s that skip a member list return before the insert. (2) `c` at `n = v` is
+    // `Evaluator::new(World::new()).run(let n = v in c)`, a closed term run in a fresh world,
+    // so its answer depends on `k`, `statics` and `v` alone. (3) The first enumeration meets
+    // `n`'s interval with the members where `c` gave `true`; the reduction then cuts the
+    // finite set to that interval (`Product::reduce_domains_now`). (4) Within a scope every
+    // later write to `n` is a meet, and a join keeps a key only when both sides hold it (the
+    // `enumerated.diff` in `Scope::join`) and joins the two sides' intervals and finite sets
+    // by exact union (`IntervalSet::join`, `FiniteSet::join`), so `n`'s integers stay among
+    // members where `c` gave `true`. So a second run would keep every integer of the interval
+    // that the finite set lists, and meet the interval with nothing smaller than the
+    // reduction already does. With `n` static at `v` (the extra key `enumerate_on` inserts),
+    // `c` gave `true` at `v`, so the second run changes nothing either.
+    // (5) A key reads the old value of a name only until that name is bound again: when `x`
+    // shadows a name in scope, `Scope::bind_with` unwrites the constraints on `x` and removes
+    // their keys here, so the same constraint written again of the new `x` (the same
+    // address, the same statics) is enumerated again. Before that removal the key stayed and
+    // the new `x` was not narrowed (sound, less precise). Test, red before the removal and
+    // green after: `product::tests::a_constraint_on_a_shadowing_name_is_enumerated_again`.
+    // Other tests: `enumeration_keeps_the_members_a_written_constraint_holds_at` (one
+    // enumeration; it cannot catch a skipped second one).
     pub enumerated: imbl::OrdSet<Enumerated>,
     /// The top-level parts of the relation already projected: its constraints together, and
     /// each other conjunct with them, each with what it was projected with and the intervals
@@ -1828,6 +1935,16 @@ pub struct Scope {
     /// projection replaces, so the map holds one entry for each part of the relation, not one
     /// for each change of the equalities or constraints a part is projected with
     /// ([`PartKey`]).
+    ///
+    /// Why the bound holds: a key is a conjunct with the leaf of its star or `None`, so a
+    /// conjunct has at most two keys (its star's block and the hubs' block). An insert under a
+    /// key replaces that key's entry, and when a conjunct leaves the relation, `Scope::due`
+    /// removes every key that starts with it (the range over `(g, None)..` for each `g`
+    /// gone); the key of the constraints' own part is its least constraint, so it goes when
+    /// that one does. So the map holds at most two entries for each conjunct now in the
+    /// relation. Test: `l01_39_reduced_product::scaling::bench::
+    /// changes_of_one_block_hold_bounded_memory` (commit 2673c19fa); it cannot catch an entry
+    /// left by a path that drops a conjunct other than through `Scope::due`.
     pub projected: imbl::OrdMap<PartKey, (PartWith, Projected)>,
     /// Whether the scope is under `@exact`.
     pub exact: bool,
@@ -2053,10 +2170,18 @@ impl KeptTests {
     // Θ(k) narrowings for k tests on `n`, Θ(k·m) for m moves (61 times the bytes at 8n,
     // `split_moved_often_scales`, with that method). Used: the ends' triggers in the order
     // of their values, so a move of an end takes the triggers it passes as a range,
-    // O(log k + f) for f of them, each passed once since a name's ends move only inward as
-    // tests narrow it; the classes are each looked at only when the name's class moves,
-    // which along one line of tests is a refinement, at most about log2 of the width of the
-    // name's range times, O(c) for c classes then. A case left empty inside the name's ends
+    // O(log k + f) for f of them, each returned once: every address this adds to `out` is
+    // forgotten by [`Scope::narrow_kept_again`] with all its triggers before the next call
+    // (`self.kept.forget(&k)` for each `k` of `due`), and a test narrowed again is kept anew
+    // only with the cases still live, so the trigger of a case found empty is not made again
+    // (a name's ends do not only move inward: a join or a new binding widens them, so the
+    // forget, not the order of the ends, is what makes each trigger found once); the classes
+    // are each looked at only when the name's class moves, which along one line of tests is a
+    // refinement, and each refinement at least doubles the modulus (the new modulus is a
+    // multiple of the old, not equal to it): at most about log2 of the width of the name's
+    // range times while the range is finite and wider than the modulus. Not proved: a bound
+    // on the class moves of a name with an unbounded range other than the number of tests
+    // that move its class. O(c) for c classes then. A case left empty inside the name's ends
     // by a hole: naive, each case's span looked at after each move, Θ(k) a move; used, the
     // members `before` had and `p` lacks (`IntervalSet::lost_to`, O(d log p + r) for the d
     // paths of the shared tree that differ and r pieces taken out), and for each piece the
@@ -2316,6 +2441,10 @@ impl Drop for Basis {
     fn drop(&mut self) {
         let Some(s) = self.0.take() else { return };
         // At thread exit the queue is gone and the scope is dropped where it is.
+        // Depth: dropping one `Parts` drops its maps, their `Binding`s and so any `Lazy` whose
+        // last copy it held, and so that `Lazy`'s `Basis`; with `running` set, that inner drop
+        // only queues its parts and returns. So the stack holds one `Parts` drop at a time,
+        // whatever the chain's length, and the loop below drops the queue one by one.
         let _ = DROPPING.try_with(|(running, queue)| {
             if running.get() {
                 queue.borrow_mut().push(*s);
@@ -2376,6 +2505,22 @@ impl View<'_> {
     /// `x_k` from `x_(k-2)` read at that of `x_(k-1)`, which differ at a few names, where
     /// checking each input cost `O(k)` a binding and the chain `Θ(d²)` (item PA-walk-multi).
     /// The answer is the same whichever read it starts from.
+    ///
+    /// Proof: the tree holds one leaf for each `v` of `vars` the scope has, and that leaf
+    /// ([`Held::leaf`]) is a function of four things only: `held.made` at `v`, `held.orders`
+    /// at `v`, the scope's product of `v` and its order of `v`. A tree made afresh
+    /// (`images::fresh`) computes exactly that. A tree from the last read `r` of the same
+    /// summary resets each key where `r`'s names or orders differ from this scope's
+    /// (`images::changed` yields every added, removed or updated key of the two maps), so
+    /// at every other key all four agree and the old leaf is the right one; a key the scope
+    /// gained or lost is among the changed ones, so membership is right too. A tree from the
+    /// read `r` of another summary `base` also resets the keys where the two summaries'
+    /// `vars`, `made` maps or orders differ (and is not used unless both were made in a scope,
+    /// `Made::Scope`), so the same holds. `images::updated` returns `None` past `limit`
+    /// changes, and the fresh tree is used. Test: none compares an updated tree with a fresh
+    /// one; `l01_39_reduced_product::if_shortcut::one_pass_and_transfer_agree_on_random_blocks`
+    /// compares the walk with the reference walk, which reads summaries by this same code, so
+    /// it cannot catch a wrong tree.
     ///
     /// Complexity tradeoff: naive version, each input of the summary checked at each read,
     /// O(k) a read, Θ(k²) for k reads of summaries over k inputs (1,680 leaves set at k = 40,
@@ -2574,6 +2719,25 @@ impl Lazy {
     /// The summary, made first when it was not. The summaries of the names its term reads are
     /// made before it, those they read before them, and so on, by a loop over a stack rather
     /// than by recursion; each is made once.
+    ///
+    /// Proof that the loop ends, makes each once and cannot deadlock. A pending summary's
+    /// parts are taken by [`Scope::summarize`] (called from `Scope::bind_with`) before its own
+    /// binding is inserted, so every summary it waits on belongs to a binding made earlier,
+    /// whose `Lazy` was made earlier. "Waits on" therefore follows creation order strictly
+    /// and has no cycle: the stack holds a chain of ever older summaries, each pushed at most
+    /// once per summary that waits on it, and each pass either makes the top (`Pending` to
+    /// `Made`, never back) or pushes only pending ones older than it. A summary is made with
+    /// its own lock held, so a second reader, on this thread or another, finds `Made` and pops
+    /// it. Every lock taken while another is held (the `filter` on `b.summary.lock()`, and the
+    /// [`View::summary`] reads inside `summarize_free`) is of an older summary, so locks are
+    /// always taken newest first and two threads cannot wait on each other.
+    /// That the summary made here equals the one made at the binding: the parts are copies of
+    /// the scope's `names`, `bindings` and `orders` at the binding (`Scope::basis`), taken
+    /// only when the scope is reachable (`Scope::summarizes`), and `summarize_free` is a
+    /// method of `View`, which holds those three and `bottom: false` only. Test:
+    /// `l01_39_reduced_product::if_shortcut::a_chain_of_bindings_is_walked_and_dropped`
+    /// (a chain read and unread); it cannot catch a deadlock between threads, since the
+    /// walk runs on one thread.
     fn get(&self) -> Option<Arc<Held>> {
         let mut todo = vec![self.clone()];
         while let Some(top) = todo.last().cloned() {
@@ -2839,6 +3003,39 @@ impl Seen {
     /// for the key stays while the block keeps the part, so a later record taken away finds
     /// the block too; the entry of a block that no longer holds the part is removed when
     /// found, so each entry is passed over once after its part goes. COMPLEXITY.md row C26.
+    ///
+    /// Proof that every kept block holding the part of `key` is marked, and only such blocks.
+    /// (a) `at` names the part of `key` exactly: the constraints' part has the key `(least,
+    /// leaf)` with `least` a `Formula::Con` (`Split::constraints`) and the place `(true,
+    /// least)` (`Block::add_constraints`); every other part has the key `(g, leaf)` with `g`
+    /// its conjunct, not a `Con` (`Split::part`), and the place `(false, g)`
+    /// (`Block::enter`). So `(is Con, formula)` inverts the map from key to place. (b) For
+    /// each block `B` in `blocks` and each part of `B` with key `k`, `B.id` is in
+    /// `owners[k]`. By induction on the writes of the two maps: an entry of `blocks` is
+    /// written only by `Scope::keep` (and here, which adds to `forgot` only); `keep` adds
+    /// `B.id` under every key of `B.added`, and `Block::add_part` pushes the key of each part
+    /// it adds; `Block::of` adds all its parts that way; `Block::update` keeps the id, starts
+    /// `added` empty and adds through `add_part`, so a part it adds is covered by that keep
+    /// and a part it keeps from the kept block was covered at an earlier keep. An id is taken
+    /// out of `owners[k]` only below, when the block lacks `at`, so lacks the part; and
+    /// `Seen::drop_blocks` clears both maps together. So the loop marks every kept block
+    /// holding the part of `key`. (c) It may also mark a block that holds `at` under another
+    /// key: the leaf of a key is the block's leaf, `None` in the forest, and an apart block's
+    /// leaf is fixed for its id within one lineage of the relation (proof at the star check of
+    /// `Block::update`), but `Scope::narrow_node` puts back the relation from before a test
+    /// (`std::mem::replace(&mut self.relation, before)`) while `seen` keeps blocks whose ids
+    /// that relation may issue again, so an id kept under `(g, x)` can come to name the star
+    /// of another leaf `y` holding `(false, g)` under `(g, y)`. Such a mark is extra, (e).
+    /// (d) Cost: each id removed here was added by one keep, so the removals over a lineage
+    /// cost no more than the keeps. (e) What a mark does: [`Scope::block`] puts each part of
+    /// `forgot` among those it may project and still skips it when its record holds
+    /// (`Scope::is_projected`) and nothing fired; a mark is never a loss. A block missed would
+    /// keep a part not due whose record is gone, which narrows the names less than a
+    /// projection from scratch: a loss of precision, not of soundness. Tests: the joins of
+    /// `l01_39_reduced_product::scaling::a_lazy_scope_settles_the_hubs_of_a_star_under_
+    /// disjunctions_as_the_eager_one` and the `*_give_the_projection_from_scratch` tests of
+    /// case_wake.rs compare with a projection from scratch; none names this function, and
+    /// none can catch an extra mark, which costs time only.
     fn drop_part(&mut self, key: &PartKey) {
         let Some(ids) = self.owners.get(key) else {
             return;
@@ -2980,6 +3177,14 @@ impl Order {
     /// (FAIL-linked-held-wider-seed). Placed this way, a leaf whose star the next relation
     /// changes is placed again by that sync, as every other leaf is. In O(log n), as
     /// [`Order::place`].
+    ///
+    /// The invariant kept: each leaf's place is the one [`Order::place`] gives it against the
+    /// relation and names recorded. `sync` keeps it by placing every leaf whose star, class,
+    /// conjuncts or product differ from those recorded, and this keeps it by placing `x`
+    /// against the recorded ones. With no relation recorded nothing is placed here: the next
+    /// `sync` then places the leaf of every star (its `None` arm). Test:
+    /// `a_star_unmarked_by_a_join_is_projected_again_when_its_hub_moves`; it cannot catch a
+    /// caller that changes `relation` or `names` without `sync`.
     fn unmark(&mut self, x: &Arc<str>) {
         self.projected.remove(x);
         if let Some(relation) = self.relation.take() {
@@ -3158,6 +3363,14 @@ impl fmt::Debug for Seen {
 /// ([`Conjuncts::gapped`], [`Scope::sync_bounds`]). Every cycle `C` of edges, which lies in
 /// one component, then has a weight of at least the sum of the gaps of its names, which is
 /// what makes shortest paths with holes the projection ([`Scope::shortest`]).
+/// Proof: the reduced weight of an edge `s → x` of weight `k` is `q_s + k - g_x - q_x`, for
+/// `q` the potential and `g` the gap ([`pair_weight`] subtracts the gap of the name the edge
+/// enters), and it is zero or more at every edge, as each insertion checks ([`put_in`]). Summed
+/// over the edges of `C`, each name of `C` is entered once and left once, so the `q` cancel and
+/// the sum is the weight of `C` less the sum of the gaps of its names, which is zero or more.
+/// Test: `…::holes_put_in_a_ladder_built_first_are_linear` (listed below) builds such cycles;
+/// no test reads the potential's values directly, so a wrong potential that still lets every
+/// projection answer correctly is not caught.
 ///
 /// Complexity tradeoff: naive version, one value for every name with the potential holding at
 /// every edge, as before item PRODUCT-lin-rows; built edge by edge it ends with no slack along
@@ -3369,6 +3582,14 @@ impl Potential {
             // fit at one end before a range is ranked again, and ranks put between two of
             // them still halve 32 times. COMPLEXITY.md row ST-chain-raise-reverse-log; test
             // `product::tests::ranks_given_one_after_another_at_an_end_rank_no_other_again`.
+            // Derivation: the first rank of an empty order is the middle, `-1 + (2^62 + 1) / 2
+            // = 2^61 - 1` (the `_` arm: `after` is `None` and `b` is `RANKS`); from there each
+            // rank given after the last steps `END_STEP = 2^32` while the gap to `RANKS` is at
+            // least `2^33`, so about `2^61 / 2^32 = 2^29` ranks fit before the step falls
+            // below `END_STEP`, and the same holds below the first rank down to 0. Two
+            // neighbors `END_STEP` apart take `log2(2^32) = 32` middle ranks between them
+            // before the gap is 1. The rank is inside `(a, b)`: the step is at least 1 since
+            // `b - a >= 2`, and at most `(b - a) / 2 < b - a`; in the `None` arm, `a = -1`.
             let r = match (after, b) {
                 (Some(_), RANKS) => a + ((b - a) / 2).min(END_STEP),
                 (None, b) if b < RANKS => b - ((b - a) / 2).min(END_STEP),
@@ -3420,7 +3641,12 @@ impl Potential {
 const RANKS: i64 = 1 << 62;
 
 /// The step between ranks given one after another at an end of a [`Potential`]'s order
-/// ([`Potential::rank_after`]).
+/// ([`Potential::rank_after`]). Why `2^32`: it splits the 62 bits of [`RANKS`] between the
+/// two ways ranks are given without ranking a range again, `2^(61 - 32) = 2^29` in a row at
+/// one end (from the middle rank `2^61`) and 32 halvings between two ranks given there; a
+/// larger step gives fewer ranks in a row, a smaller one fewer halvings. Nothing relies on the
+/// exact value for correctness: any step of at least 1 keeps the rank inside its gap (see
+/// the derivation at `rank_after`); only how often a range is ranked again depends on it.
 const END_STEP: i64 = 1 << 32;
 
 /// A strongly connected component of the edges of a [`Potential`], or several merged.
@@ -3842,7 +4068,9 @@ fn put_in(
 /// more, so its first part `p(x) + k - g(y) - p(y)` is 0 or more, with `g(y)` the gap of the
 /// edge's head, and a gap is the length of a run of integers left out, 0 or more
 /// ([`hole_gap`]); so each reduced weight without the gaps, `p(x) + k - p(y)`, is 0 or more,
-/// and Dijkstra's search gives least distances. A path's reduced weight is its weight plus
+/// and Dijkstra's search gives least distances (Dijkstra 1959, doi:10.1007/BF01386390;
+/// zed-graph `Dijkstra`, which queues a node only when its label falls, so each node comes up
+/// once at its least label). A path's reduced weight is its weight plus
 /// `p(v) - p(u)`, so the least cycle through `e` is as stated. Every cycle through `e` lies
 /// in `cu`, as for [`Repair`], so edges to other components are not followed. An edge whose
 /// reduced weight is below zero, or a name with no value, is `Err`, as for [`Repair::step`].
@@ -3929,7 +4157,8 @@ struct Repair {
     end: Arc<str>,
     /// How far each name reached moves, below zero, the least found so far, its labels; the
     /// names reached, least move first. The weight of an edge is its reduced weight before
-    /// its tail moves, 0 or more, so this is Dijkstra's search.
+    /// its tail moves, 0 or more, so this is Dijkstra's search (Dijkstra 1959,
+    /// doi:10.1007/BF01386390).
     moves: Dijkstra<Arc<str>, Pair, BTreeMap<Arc<str>, Pair>>,
     /// The name and edge each name reached was last reached by.
     via: BTreeMap<Arc<str>, (Arc<str>, Arc<Formula>, bool)>,
@@ -4066,7 +4295,11 @@ impl Repair {
 /// within the components ranked from `cv` to `cu`, run in step, one conjunct each in turn,
 /// and the first to finish decides. When the forward one finishes, the components it found,
 /// `cv` among them, move in their order to just after `cu`: each edge out of them goes to one
-/// of them or to a component ranked after `cu`, so every edge goes up the order again. When
+/// of them or to a component ranked after `cu`, so every edge goes up the order again. (Out
+/// edges: one to a component within the window is followed, so it reaches a found one; none
+/// goes below `cv`, since every edge but the new one went up the order and the found ones
+/// rank at least `cv`. In edges: from a component not found, which stays at a rank at most
+/// `cu`'s, or the new edge from `cu`; both now go up. The backward case is the mirror.) When
 /// the backward one finishes, those it found move likewise to just before `cv`. When the
 /// search found the end it goes towards, the edge closes a cycle: the components it found
 /// that reach that end lie on it ([`on_cycle`]), and are merged into one
@@ -4474,8 +4707,11 @@ pub type PartKey = (Arc<Formula>, Option<Arc<str>>);
 /// constraints (`linked`) that holds two variables of the conjunct or more: `n + m <= 14`
 /// bounds the points of `m >= 10 || n <= -9` though it is on neither of its terms (item
 /// LAZY-hub-coarse, where `n` kept `10` for `4`). A group that holds one variable of the
-/// conjunct reaches it only through that variable's interval, which the constraints' own part
-/// gives, so a constraint on other names alone does not make a conjunct's part due, and a new
+/// conjunct reaches it only through the values that group leaves that variable, of which the
+/// names' products keep only the interval and class the constraints' own part gives; so this
+/// rule is sound but not exact: a part not made due can be coarser than the enumeration
+/// (the proof and the example at [`Split::with`]). So a constraint on other names alone
+/// does not make a conjunct's part due, and a new
 /// constraint costs the parts that hold two variables of its group and not the block's (the walk
 /// `v_i + w <= 0 || v_(i+1) - w >= 1` through the shared name `w`). The
 /// constraints are shared, as the key is ([`PartKey`]).
@@ -4572,6 +4808,11 @@ fn factors(g: &Formula) -> BTreeSet<Factor> {
 // Complexity tradeoff: a `zed_graph::UnionFind` (union by rank, path halving) over the v
 // variables of the c constraints, O((c + v) log v) with the maps, as the rest of `Split::new`.
 // The groups are numbered in the order of `at`, so the root rule does not show.
+// Corrected count (proofs-in-comments audit): the first loop reads each variable of each
+// constraint once (a map entry, O(log v), and a union, O(α) amortized by the paper cited at
+// `zed_graph::union_find`), and the last copies each constraint (O(t) for its t terms), so
+// the bound is O((T + v) log v) for T terms of the constraints in all, which is the
+// O((c + v) log v) above only when each constraint has a bounded number of terms.
 #[allow(clippy::type_complexity)]
 fn linked(cons: &[&Arc<Formula>]) -> (Vec<(BTreeSet<Factor>, Vec<Con>)>, BTreeMap<Factor, usize>) {
     let mut at: BTreeMap<Factor, usize> = BTreeMap::new();
@@ -5042,6 +5283,32 @@ impl Split {
     /// leaves -10..=10); a group that holds one of them reaches `g` only through that
     /// variable's interval, which the constraints' own part keeps, and a group that holds none
     /// does not reach it. Item LAZY-hub-coarse.
+    ///
+    /// Corrected (proofs-in-comments audit): "only through that variable's interval" is not
+    /// exact. What holds: the groups have no variable in common, so the constraints are the
+    /// conjunction of the groups' constraints on disjoint sets of variables, and the points
+    /// of `g` and the constraints are the points of `g` whose variable `y` held by a group `G`
+    /// of one of `g`'s variables lies in `S_y`, the projection of `G` onto `y`, with `G`
+    /// satisfiable for each group `G` holding none of `g`'s variables (an empty such group
+    /// empties the constraints' own part, which reports it). So `G` reaches `g` only through
+    /// `S_y`. But the names' products keep of `S_y` only what the constraints' own part
+    /// projects onto `y`, its interval and class, and `S_y` can have holes neither shows:
+    /// `0 <= y - 3*z <= 1` leaves `y` the residues 0 and 1 modulo 3. A part not made due after
+    /// such a group changes keeps the products it gave, which hold (sound: a constraint gone
+    /// only widens, the proof in [`Block::reframe`], and a constraint added is a narrowing
+    /// missed), but its ends can be coarser than the enumeration's. Example: `0 <= x <= 10`,
+    /// `y - 3*z >= 0`, then `(x >= 10 && y == 5) || x <= 0`, then `y - 3*z <= 1`. The last
+    /// constraint is on the term `y - 3*z`, which `g` does not compare; its group `{y, z}`
+    /// holds one variable of `g`; the names of the constraints do not change; and it moves no
+    /// product (`y` and `z` stay unbounded, as the residues 0 and 1 modulo 3 are no class). So
+    /// `g`'s part is not due, and `x` keeps the upper end `10`, where the enumeration gives
+    /// `0..=0` (`y == 5` needs `3*z` in `4..=5`). Run (proofs-in-comments audit, through
+    /// `Scope::assume` and `settled`): the lazy scope gives `x` in `{0, 10}`, and so does the
+    /// eager scope, so the eager projection of the arm misses the residues too and the loss is
+    /// not of this rule alone; the test is not kept, as it fails, and is filed as a plan row
+    /// with its text. Not proved: that any rule here gives the enumeration's ends; open
+    /// sub-case: a group that holds one variable `y` of a part whose `S_y` is not its
+    /// interval and class.
     // Complexity tradeoff: naive version, every constraint of the block in `with`, so that each
     // constraint added or gone made every part due, O(k) projections for k parts, O(k^2) for k
     // tests on a term no part compares (the walk through a shared name). Used: the groups that
@@ -5207,6 +5474,20 @@ fn framed_class(p: &Product) -> Congruence {
     }
 }
 
+// Why no answer changes: the integers a product holds are those of `ints()` in its class (the
+// congruence holds of the integer values only, zedc-lattice cell.rs). A class of modulus 1
+// holds every integer, and one of modulus 0 and residue `v` holds `v` alone, which is all of
+// `ints()` when `ints()` is `v..=v`; these are the products `classed` calls unclassed, and
+// for them the class leaves `ints()` as it is. So when `same_framed(a, b)`, either both are
+// unclassed and both hold `ints()`, or both are classed with the same class element and the
+// same `ints()`; either way they hold the same integers. A product classed on one side and
+// not on the other gives a framed class of modulus 1 on one side only, which a classed product
+// never has (`classed` is false at modulus 1), so they are not `same_framed`; the check may
+// thus report a change where the integers are the same, which costs a wake and changes no
+// answer. Only the integers are compared, as the raw comparison this replaced also compared
+// only `ints()` and the class; that each caller (the snapshots and wakes that call this or
+// `framed_class`) needs no more of a product than its integers is not checked here. Not
+// checked by a test that names this function.
 fn same_framed(a: &Product, b: &Product) -> bool {
     a.ints() == b.ints() && framed_class(a) == framed_class(b)
 }
@@ -5443,6 +5724,15 @@ fn cone_shape(g: &Formula) -> Option<ConeKey> {
 /// an entry is held under a variable of `v` other than the one with the most entries, so the
 /// entries of the others are read and counted, and one counted once is taken if the one with
 /// the most also holds it. O((p + v) log k) for the p entries read and k entries in all.
+///
+/// Proof that the result is exactly the entries held under two variables of `v` or more:
+/// each `index[x]` is a set, so an entry's count in `read` is the number of variables of `v`
+/// other than `most` it is held under. Count 2 or more: taken, and right. Count 1: it is
+/// held under two of `v` exactly when also under `most`, which is what is checked. Count 0
+/// (not in `read`): it is held under `most` at most, one variable, so leaving it out is
+/// right. With `v` empty, `most` is `None` and nothing is read. The choice of `most` only
+/// changes the cost. Test: `lazy::a_bound_on_two_names_of_a_disjunction_assumed_after_it_bounds_its_points`
+/// through [`Block::reframe`]; none calls this function alone.
 fn holding_two<T: Ord + Clone>(
     index: &imbl::OrdMap<Factor, imbl::OrdSet<T>>,
     v: &BTreeSet<Factor>,
@@ -5529,6 +5819,14 @@ impl Users {
     // parts, and skips the sets of the aggregates that hold without reading them.
     fn due(&self, stair: bool, ray: bool) -> impl Iterator<Item = &PartAt> {
         // A part has one role, so no part is in two of the sets and the merge gives each once.
+        // Why one role: the part's key `PartAt` is `(false, g)` for the part of conjunct `g`,
+        // or `(true, least constraint)` for the constraints' part, and `Block::add_part` sets
+        // `role = Role::of(of)` with `of` that `g`, or `None` for the constraints' part, so the
+        // role is a function of the key; `of_role(part.role)` removes it from the same set it
+        // was put in. Why the order: each set is ordered by `PartAt`, and the merge takes the
+        // least head each step, so the output is the sorted union. Test:
+        // `product::tests::due_users_are_the_parts_of_the_aggregates_that_do_not_hold_in_order`;
+        // it fills `Users` by hand, so it cannot catch a writer that gives one key two roles.
         let mut heads = [
             Some(self.plain.iter()),
             (!stair).then(|| self.stair.iter()),
@@ -5921,6 +6219,19 @@ impl Block {
     /// `g` allows only narrow as conjuncts come, and each refusal of `shape` is one atom's or
     /// one disjunction's, for a given hub: `g`'s refusal under each hub it allows holds in any
     /// set that holds `g`.
+    ///
+    /// Proof, against `threshold::shape` and `threshold::read` (`threshold.rs`), for a set `S`
+    /// holding `g`: (1) a refusal while `shape` turns a conjunct into rows (`at_least_zero`
+    /// failing, a non-name atom, more than two names) depends on that conjunct alone, so if
+    /// `g` is refused there, `S` is refused when `g` is reached, if not before. (2) Else `g`
+    /// has a row of exactly two names (the `pair` test), so the hubs of `S`, the intersection
+    /// over its two-name rows, are a subset of the hubs of `[g]`; an empty set leaves no
+    /// candidate and `S` is refused. (3) For a hub `h`, `read` refuses only at one row
+    /// (`bound(t, h)`) or one two-armed disjunction (its two `bound`s, their sides, the
+    /// same name on both); nothing in it reads the other rows. As `shape(&[g])` is `None`,
+    /// `read` refuses `g`'s rows under every hub of `[g]`, so under every hub of `S`, so
+    /// `shape(S)` is `None`. Used by `Scope::project_block` to skip `shape` on a block whose
+    /// `unshaped` set is not empty. Test: none checks this directly.
     fn unshaped(g: &Arc<Formula>) -> bool {
         let pair = g.cons().into_iter().any(|c| {
             let syms = c.lin.terms.keys().filter(|a| matches!(a, Atom::Sym(_)));
@@ -6161,6 +6472,17 @@ impl Block {
     /// Refreshes `part.with` on demand when `part` was skipped during a certified-idle
     /// outside-case [`Block::reframe`] (`outer.ver` advanced) and is later read by
     /// [`Scope::block`], [`Scope::settle`], or [`Scope::record`].
+    ///
+    /// Why `with_ver == outer.ver` means `with` is current: every `Split` gets its `ver` from
+    /// `next_split_ver` (one shared counter, so no two splits share a `ver`) in `Split::new`
+    /// and in `Split::update` whenever a constraint is removed or added; `update` with no change
+    /// returns a clone, the same split. `outer` is replaced only in `Block::reframe`
+    /// (`self.outer = split.clone()`). So equal versions mean `with` was computed against this
+    /// `outer`. Every reader that uses `with` refreshes first: `Scope::block` before
+    /// `is_projected` on a part that is not `fired`; a `fired` part is only queued there and is
+    /// refreshed in `Scope::settle` before it projects; `Scope::record` before it writes.
+    /// Test: none checks a stale `with` directly; a missed refresh shows as a part projected
+    /// again or not at all in family tests.
     fn ensure_part_with(&mut self, at: &PartAt) {
         let target = self.outer.ver;
         if let Some(p) = self.parts.get(at)
@@ -6181,6 +6503,28 @@ impl Block {
     /// side (where every constraint mentioning `n` is `Rel::Ge` with unit coefficient of the
     /// matching sign). Under those conditions, no other part's projection onto any hub or onto
     /// `n` can narrow further.
+    ///
+    /// Proof (take the `+inf` side; the `-inf` side is the same with signs flipped). Facts:
+    /// (a) the loop below returns false on any formula that is not a `Formula::Con`, so every
+    /// part of the block is a conjunction of rows, and every row that mentions `n` is
+    /// `n + r >= 0` with `r` free of `n`; such a row stays true when `n` grows. (b) `old` is the
+    /// domain of `n` at the end of the last projection (`names_at`, set in `Block::update` and
+    /// `Scope::record`), and that projection left every name inside every part's projection.
+    /// Let `old = [olo, +inf)`, `new = [nlo, +inf)`, `nlo >= olo`, and every other name unchanged
+    /// (a name that also changed is woken on its own, by the callers in `Block::update` and
+    /// `Scope::record`). Take a part `P` and a hub value `h` in its old domain. By (b), `h` has a
+    /// witness in `P` with `n = a0 >= olo`. By (a), the same witness with `n = max(a0, nlo)` still
+    /// satisfies `P` and lies in `new`, so the projection of `P` onto `h`'s name is unchanged.
+    /// The projection of `P` onto `n` is `[m_P, +inf)` for some `m_P` (by (a) it is up-closed),
+    /// and (b) gives `m_P <= olo <= nlo`, so meeting it with `new` gives `new` again. Hence no part
+    /// narrows any name and the wake is skipped.
+    /// Not proved: fact (b) when the last projection stopped before every part of this block ran
+    /// (a part left unprojected by an idle certificate). If (b) fails there, the skip keeps a
+    /// wider domain than a full projection would give; the result is less narrow but still
+    /// holds every solution, since a skipped wake only omits a narrowing.
+    /// Tests: no unit test calls this function; it runs only inside block projections, so a
+    /// wrong skip shows only as a wider result in a family test. No test builds a block where
+    /// (b) fails.
     fn leaf_only_tightened(
         &self,
         n: &Arc<str>,
@@ -6534,12 +6878,32 @@ impl Block {
     /// so `g ∧ split.base` preserves the exact projection of `split.base` onto every `n != v`.
     /// Symmetrically, a valid `u`-face move preserves every `n != u` (in particular `v`).
     /// Together `{v} ∩ {u} = ∅`, so `g` narrows no name and may be skipped inside a case.
+    /// The same holds for the projection of `g` with any subset of the base rows (the rows of
+    /// its own group, `PartWith`): every row of the subset meets the same sign condition, so the
+    /// same moves stay inside it. Facts used: `g` mentions only `u` and `v` (`rkey.2` is `None`);
+    /// "not reported on an edge" means "holds at every integer point of it", which is the
+    /// exactness of `BoxFaceIndex::report_edges`.
+    /// Test: `lower_hull_tree_and_box_face_index_match_the_oracle` (random single-edge queries
+    /// equal brute force; for two edges, every part not reported holds on one of them). It does
+    /// not check the sign conditions on `split.base` above; those run only in family tests.
+    /// Cost: the `O(r + log k + output)` above is the cost when no part is reported and every
+    /// `ThreshHullTrie` path is short. In full: O(r) for the rows, and per edge and bucket
+    /// O(depth * log k) when nothing is reported, O(depth * (m + 1) * log^2 k) for `m` reported
+    /// parts, where `depth` is the trie depth, at most min(k, bits of the longest
+    /// `int_ord_bytes` key), so at most 136 for thresholds that fit in an `i128`.
     // Complexity tradeoff: naive version, bounded-box families (`box_cases`, `box_cases_y`) have
     // an empty recession cone and fall back to waking all k parts of `recession[rkey]` on every
     // case (and every box move in `Block::update`), causing 4,032 `Scope::idle` checks at k = 64
     // (22.56x and 21.38x instructions at 8n). Used: index each two-variable arm's dual point in
-    // a persistent Overmars-van Leeuwen `LowerHullTree` guarded by a rotation-free
+    // a persistent Overmars-van Leeuwen (JCSS 23(2), 1981, doi:10.1016/0022-0000(81)90012-x)
+    // `LowerHullTree` guarded by a rotation-free
     // `ThreshHullTrie` on any unary arm: O(log^2 k) insert, O(log k) query when 0 parts fail.
+    // Corrected: those two bounds hold per trie node; insert touches O(depth) node hulls and a
+    // query O(depth) canonical subtrees ([`ThreshHullTrie`]), so they are O(depth * log^2 k) and
+    // O(depth * log k). A Patricia trie on k keys has depth at most k - 1 and at most the key
+    // length in bits, so depth is a constant (<= 136) for `i128` thresholds; only thresholds
+    // past `i128` with long distinct keys make it grow, and then the input itself has that many
+    // bits per threshold. Not measured: no benchmark uses thresholds past `i128`.
     // COMPLEXITY.md PERF-refused-shape-disjunctions-quadratic.
     fn box_face_uncertified(
         &self,
@@ -6652,6 +7016,45 @@ impl Block {
     /// group, a class or hole on a group variable, an unsatisfied unary base row, or an empty
     /// strict recession cone), leaving non-managed parts of `rkey` to fall back to chain-least
     /// / full wakeup.
+    ///
+    /// Proof that a part not returned narrows no name. Let `B` be the integer points of the
+    /// box `names` that satisfy `split.base`, and `z0` in `B` (`B` empty: nothing to narrow).
+    /// It suffices that for each name `n` some move `z0 + t m` with `n` unmoved stays in `B`
+    /// and satisfies the part for `t` large: then the projection of the part and the base onto
+    /// `n` is that of the base alone, which the constraints' own part gives. What the moves
+    /// may use, from the checks above: the group of `u`, `v` (and `w`) holds no other name, so
+    /// a base row on none of them shares no name with them and is not moved; a row on them is
+    /// `>=` on `u`, `v`, `w` alone; a one-name row holds on the whole box (`unary_holds`);
+    /// `u`, `v` have one hole-free piece each (`only`) and no class, and so has `w` when a row
+    /// mentions it; the rows on `u` and `v` both are `uv_rows_full`, those with `w` are
+    /// `aux_rows`. A part's closed failure arc ([`recession_shape`]) is the set of directions
+    /// `r` with `a.r <= 0` for every arm `a`, one convex arc, as an intersection of half-planes.
+    /// Hub buckets (parts on `u`, `v` only). `pos_v`: `v` unbounded above and every row of
+    /// `uv_rows_full` has `coeff(v) > 0`; move `v` up by `t`, and `w`, if an aux row
+    /// `s w + p.(u, v) + c >= 0` exists, by `t |p_v|` in the sign `s` (`|s| = 1`, `w`
+    /// unbounded that way, checked); every row holds, the box holds, `u` is unmoved. A part
+    /// not reported at the ray `(0, 1)` has `(0, 1)` outside its arc, so an arm with `a_v > 0`,
+    /// which holds for `t` large. So `u` is kept; `neg_v` alike with `(0, -1)`; both
+    /// (`uv_rows_full` empty, `v` unbounded both ways) need no report, since a part on `u` and
+    /// `v` has an arm with `a_v != 0` (two-name keys mention `v`), one of `(0, 1)` and
+    /// `(0, -1)` lies outside its arc. `pos_u`/`neg_u` keep `v` the same way. With an aux row,
+    /// `w` is kept by a direction `d` of the open sector of [`open_cone_sector`]: every normal
+    /// (the aux row's `p`, the rows, the finite box sides) has `n.d > 0`, so `u`, `v` move by
+    /// `t d` with `w` fixed inside `B` (a finite side's inward normal makes `d` move away from
+    /// it, and the other side is open); `report_sector` reports the parts whose arc holds the
+    /// closed sector, so a part not reported misses a direction of the open sector, an open set
+    /// of directions holding a rational one `d`, along which one arm grows. Without an aux row
+    /// `w` is in no row and unmoved by the two axis moves. The `closed_cone_ray` fallback has
+    /// its own proof below. Leaf buckets (a third name `w` in one sign `sign` on some arms):
+    /// `has_pos` needs `w` unbounded above and every aux row with `s > 0`; moving `w` up keeps
+    /// every row (each aux row grows, the others do not hold `w`) and `u`, `v`, and a
+    /// `pos_leaf` part has an arm with `a_w > 0`; `w` is kept by the sector move as above;
+    /// `has_neg` alike. The output is the union of all reports, so a part not in it passes
+    /// every move above. Tests: the unit test
+    /// `priority_search_tree_and_recession_arcs_match_the_oracle` (the arcs, the ray reports
+    /// and `open_cone_sector` against exact evaluation over a grid of directions) and the
+    /// random tests of `case_wake.rs` on two and three names; they compare intervals with the
+    /// projection from scratch and cannot show which of the moves above a skip relied on.
     fn recession_cone_uncertified(
         &self,
         rkey: &RecKey,
@@ -7115,6 +7518,14 @@ impl Block {
             }
             for k in holding_two(&self.chain_vars, v) {
                 if let Some(least) = self.chain_least(&k) {
+                    // Skipping the whole key when its least part is managed drops no part
+                    // that is not: an aggregate holds only when no part has `Role::Other`
+                    // (`aggregable`), and the parts of one key have one role then. `stair_row`
+                    // and `upper_disjunction` read only the terms, which one key fixes (an
+                    // `Abs` atom pairs `y` with `-y`, so neither shape forms one); `ray_row`
+                    // also needs one constant on all arms, and a part of the key without it
+                    // is `Other`. Read from those three functions and `Role::of`; no test
+                    // builds a key whose parts have two roles.
                     if self.parts.get(&least).is_some_and(|p| self.managed(p)) {
                         continue;
                     }
@@ -7251,6 +7662,24 @@ impl Block {
     /// constraints alone, which the constraints' own part, woken in the case, gives: waking
     /// `g` narrows nothing. Names of the group the part does not mention are covered alike:
     /// they are never moved except as escapes, which are blocked.
+    ///
+    /// The steps in integers. Take `w0 = N d + s` (or `N d`) with `N = 2 + max |s.r|` over the
+    /// rows and arms `r`: a row with `d.r > 0` has `w0.r >= N - |s.r| > 0`, one with `d.r = 0`
+    /// has `w0.r = s.r`, which is [`cone_grows`] on `cone_dot`; each moved name keeps the sign
+    /// `t` of `d` on it, as `|s| <= 1 < N`, which is the `free(keyed[i], t > 0)` the loop
+    /// checks. Then `w = w0 + C sum t_e e` over the escapes chosen (`here` less the moved
+    /// names), `C = 1 + max |w0.r|`: an escape is off the key, so in no arm, and of the sign
+    /// `t_e` of its coefficient in every row, so it adds `C |k_e| >= C` to each row it is in
+    /// and nothing below 0 to any; every row and the arm `a` get `w.r > 0`. For `z0` in `B`
+    /// and an integer `lambda >= max (c_r - r.z0) / w.r`, `z0 + lambda w` meets every row and
+    /// `a`; a moved name or escape is unbounded the way it moves and has no class (`free`), so
+    /// for `lambda` large it is past the last finite end of its interval set. `B` empty makes
+    /// both projections empty. The constraints' own part is due whenever `case_groups` is
+    /// set: [`Block::reframe`] puts it in `due` through `add_constraints` as it sets them, and
+    /// [`Scope::block`] projects it unless it is recorded with those constraints and the names
+    /// as they are. Tests: `case_wake::tests_on_punctured_lines_at_seed_5` fails when this
+    /// returns `true` always; `case_wake::four_name_disjunctions_match_the_projection_from_scratch_when_their_directions_close`
+    /// passes either way, so a wrong `true` on four names is caught by no test.
     fn cone_certified(&self, ck: &ConeKey, names: &imbl::OrdMap<Arc<str>, Product>) -> bool {
         if !self.split.eqs.is_empty() {
             return false;
@@ -7413,6 +7842,15 @@ impl Block {
         }
         // A name the constraints mention now and not before, or before and not now, is
         // still mentioned by each conjunct's part when each conjunct mentions it.
+        // Proof: the formula of the part of a conjunct `g` is `g` and the constraints together
+        // (`Split::formula`), so its names are `syms(g)` with `base_syms`. `mentions[n]`
+        // counts the conjuncts' parts with `n` among `syms(g)` (`Block::add_part`, once a part,
+        // as `syms` is a set; taken back in `remove_part`), and `conjuncts` is the number of
+        // those parts, so `kept(n)` says `n` is in `syms(g)` of every one. When that holds for
+        // each name of `then` not in `now` and of `now` not in `then`, `syms(g)` with `then`
+        // equals `syms(g)` with `now` for every part, so no part's names change. The
+        // constraints' own part, whose names are `base_syms` alone, is taken away and added
+        // again below. Test: none checks this check alone.
         let (then, now) = (&self.split.base_syms, &split.base_syms);
         let constraints = usize::from(self.split.constraints().is_some());
         let conjuncts = self.parts.len() - constraints;
@@ -7463,6 +7901,11 @@ impl Block {
             // Inside a case (`!groups`), `removed_cons` come only from an inner join dropping a
             // branch-local constraint already projected on its branch, which only relaxes `cons`
             // and cannot narrow any part; only `added_cons` add new variable links.
+            // Proof that a removal needs no wake, wherever it comes from: with constraints
+            // `C' ⊆ C`, every point of a part `g` and `C` in the box is one of `g` and `C'`, so
+            // the projection of `g ∧ C'` onto each name holds that of `g ∧ C`; a part that was
+            // projected or certified idle under `C` with the names as they are narrows nothing
+            // more under `C'`. Widening the names after the drop is the join's work, not this.
             for g in added_cons {
                 note(g);
             }
@@ -7471,6 +7914,25 @@ impl Block {
             let s = if is_now { &now_split } else { &then_split };
             vars.insert(s.groups[&i].0.clone());
         }
+        // Proof that the groups read hold every part whose groups in [`Split::with`] change
+        // between `then_split` and `now_split`, `D` the constraints added or gone between them.
+        // A group is a connected component of the variables, a constraint linking all of its
+        // own (`linked`; `Split::add_one` merges every group `c` touches into one), so one
+        // variable of `c` finds its group, as `note` reads it. Let a part hold two variables
+        // of a group `G'` of `now_split` that is not a group of `then_split` with the same
+        // constraints. (a) If no constraint of `D` has a variable in `G'`, the constraints on
+        // `G'`'s variables are the same in both, so `G'` is a group of both, against the
+        // assumption. (b) If an added `c` has one, `G'` is `c`'s group now, read. (c) Else
+        // only constraints gone touch `G'`: its constraints now were there before, so `G'`
+        // lies within one group then, which holds a variable of a gone `c` and so is `c`'s
+        // group then, read; the part holds two of its variables. A group of `then_split` that
+        // is not one of `now_split` is the same with the two swapped. A part holding two
+        // variables of neither kind is held by the same groups with the same constraints in
+        // both, so its [`PartWith`] gains or loses nothing through the groups. `holding_two`
+        // finds every part holding two variables of a set read. Test:
+        // `lazy::a_bound_on_two_names_of_a_disjunction_assumed_after_it_bounds_its_points`
+        // checks case (b) once; no test makes `D` hold a constraint added and one gone that
+        // touch one group (case (c) beside (b)).
         self.split = split;
         due.extend(self.add_constraints());
         let mut on: BTreeSet<PartAt> = changed
@@ -7495,10 +7957,10 @@ impl Block {
         // and expand only if that least part remains non-idle after its projection; all other
         // shapes wake every matching part via [`holding_two`]. References: N. Sarnak and R. E.
         // Tarjan, "Planar point location using persistent search trees", CACM 29(7), 1986,
-        // pp. 669-679; D. Amagata et al., "Efficient algorithms for top-k stabbing queries on
+        // pp. 669-679, doi:10.1145/6138.6151; D. Amagata et al., "Efficient algorithms for top-k stabbing queries on
         // weighted interval data", arXiv:2405.05601, 2024; G. Averkov and M. Schymura,
         // "Complexity of linear relaxations in integer programming", Math. Program. 194, 2022,
-        // pp. 191-227; C. Schulte and P. J. Stuckey, "Efficient constraint propagation engines",
+        // pp. 191-227, doi:10.1007/s10107-021-01623-4; C. Schulte and P. J. Stuckey, "Efficient constraint propagation engines",
         // arXiv:cs/0611009, 2006.
         if groups {
             for v in vars.iter().filter(|v| v.len() >= 2) {
@@ -7591,6 +8053,15 @@ impl Block {
         // by `a + 2 * y >= 3` hid the part `x + y >= -1 || x + 3 * z >= -4` from the later
         // `y >= 2 * a - 1`, which bounds it from the other side. COMPLEXITY.md C52,
         // LAZY-hub-finite, LAZY-hub-unsolved.
+        // Why skipping is sound: a firing only adds parts to `due` and `fired`, so that they
+        // are projected again; a part not fired keeps the products it already gave, which hold.
+        // An entry is spent only when the block is kept ([`Scope::keep`] moves `spends` into
+        // `Scope::spent`), and the join keeps the union ([`Scope::join`]).
+        // Not proved: "once on a path". Within one update `spent` is not yet updated, so when
+        // several changed constraints of that update reach the same entry (`key`) with
+        // overlapping ranges, its f parts are read once per such constraint, O(c * f) for c of
+        // them rather than O(f). Open sub-case: a bound on c for one entry in one update; a set
+        // of the keys fired in this call, checked beside `spent`, would close it.
         if !groups {
             for t in changed {
                 for c in self.split.on.get(t).into_iter().flatten() {
@@ -7720,6 +8191,24 @@ impl Block {
         }
         // A star's block is made with a new id ([`conjuncts::Blocks::detach`]) and its leaf's
         // entry goes only with the block, so no other leaf's star becomes this block.
+        // Proof. (1) Within one lineage of a relation every id is new: `Blocks::fresh`
+        // (zedc-presburger conjuncts.rs) is the only writer of `next` and adds 1, and every
+        // block, in the forest or apart, takes its id from it. (2) `index.stars` is written only
+        // in `Conjuncts::flush`: `stars.insert(x, b)` with `b = blocks.detach(..)`, a fresh id,
+        // and `stars.remove(x)` together with `blocks.undetach` of its block; a star whose
+        // members are unchanged keeps its entry and id. So in one lineage an id is the star of
+        // one leaf at most, ever, and `star(x) == Some(self.id)` holds exactly while the block
+        // made for `x` is still `x`'s star. (3) Whatever the lineage, the test itself compares
+        // `self.leaf`'s star with `self.id`, and two leaves never share a star's id in one
+        // relation (2), so another leaf's star never passes it. Lineages do mix:
+        // `Scope::narrow_node` puts back the relation from before a test under a `seen` whose
+        // blocks may hold ids that relation issues again, so `self.id` may name a later star
+        // of the same leaf with other members. That case is still sound, since what follows
+        // diffs the members, the free conjuncts and the names against the kept ones and rejects
+        // a change of `wide`; it is not "the same block", only the same leaf. Tests: the star
+        // tests of `l01_39_reduced_product::scaling` (`a_lazy_scope_settles_the_hubs_of_a_star_
+        // under_disjunctions_as_the_eager_one`, `distinct_disjunctions_among_the_hubs_of_a_star_
+        // are_each_kept`); none makes an id issued twice, which only this argument covers.
         if self.apart && self.leaf.as_ref().and_then(|x| relation.star(x)) != Some(self.id) {
             return None;
         }
@@ -7797,6 +8286,14 @@ impl Block {
         // before it, O(u log r) comparisons for r runs. The set kept the first of two equal
         // parts and gave them in order; the stable sort and `dedup_by` keep the first and give
         // the same order, so the same parts are due in the same order and no answer changes.
+        // The steps: `BTreeSet::insert` of a value equal under `Ord` to one there leaves the
+        // one there (std docs); `Vec::sort` is stable, so equal parts stay in the order pushed,
+        // and `dedup_by(|a, b| ..)` is passed the later of two neighbors as `a` and removes it
+        // when the closure is true (std docs), here when the two are equal under `Ord`
+        // (`a.1.cmp(&b.1).is_eq()`, the order the set used); so the first pushed of each run
+        // of equal parts is kept, and the kept parts are in `Ord` order, as the set's were. The
+        // bound O(u log r) is that of the standard library's run-adaptive merge sort, from
+        // memory: its docs promise O(u log u) in the worst case only.
         // Measured (`probe_l139`, hopb, k = 16): 5.9M instructions fewer. Prior work: building
         // a set from a sorted run in one pass, as `BTreeSet::from_iter` does, instead of
         // inserting each element.
@@ -7889,6 +8386,30 @@ impl Block {
 
         // The names whose products changed: the changes since the block was kept while they
         // are no more than its names, else each of its names compared.
+        // Proof that the walk loses no name. Let C be the users `n` of the block with
+        // `!same_framed_opt(names_at[n], names[n])` and `!leaf_only_tightened`, the list the
+        // comparison below makes. (1) Each `n` of C is an item of the difference: `Product`'s
+        // `eq` is the derived equality of its domains, so equal products have equal `ints()`
+        // and class and are `same_framed`; two products that are not are unequal, and a name
+        // present on one side only is an `Add` or `Remove` (`imbl::OrdMap::diff`, vendor/imbl).
+        // (2) The walk skips only an `Update` that is `same_framed`, which is not in C, and a
+        // `leaf_only_tightened` name, which is not in C either; every other item is pushed. So
+        // a walk that ends without the break has pushed all of C. (3) A walk that breaks, or
+        // the scan path (which sets `walked` past `users.len()`), clears the list and makes C
+        // itself. The walk may push more than C: names not the block's users, which give
+        // nothing below (the note at [`Block::users_cheaper_than_diff`]), and an `Add` or
+        // `Remove` of a product `same_framed` with the top, which `same_framed_opt` leaves out;
+        // that note's "an `Add` or `Remove` differs by `same_framed_opt` too" misses this case.
+        // An extra name only wakes parts, which are then projected or found idle: a cost,
+        // never a loss. Cost: the `same_framed` updates are not counted in `walked`, so the
+        // walk reads `s + min(c', u + 1)` items for `s` such updates, not `min(c', u)` as the
+        // doc of [`Block::update`] says; but the difference is taken only when `u (log2 N + 1)
+        // > N` ([`Block::users_cheaper_than_diff`]), so the whole walk, at most the N items of
+        // the difference, is O(u log N), and the comparison of the u names after a break is
+        // O(u log N) too. Tests: the l01_39 random tests that compare with a projection from
+        // scratch (`l01_39_scope_relations::linked::shortest_paths_give_the_intervals_of_the_
+        // projection_block_by_block`); whether one reaches the break is not counted, and none
+        // can catch an extra name.
         // Complexity tradeoff: naive version, `next.due_users(n)` wakes every recession and
         // puncture part mentioning `n` whenever `n` moves (e.g. `x` moving `[0,1] -> [0,0]`
         // and back in `hopb`, or `x` moving at `join` in `persist`), enqueueing all `k` parts
@@ -8199,6 +8720,17 @@ pub enum Unbind {
 /// constraint it was asked of, as printed, how the scope came to ask it, and the cause. The
 /// order of the fields is the order of the reports: by constraint, then by how it was asked,
 /// then by cause, so that it does not depend on the order the questions were met in.
+// Proof: a derived `Ord` on a struct is lexicographic in the fields' declaration order (the
+// `std::cmp::Ord` documentation, "Derivable", quoted from memory: "a lexicographic ordering
+// based on the top-to-bottom declaration order of the struct's members"; on an enum, by
+// variant order, then by the fields). `Asked`, `Cause`, `presburger::Refusal` and
+// `loops::Looped` derive `Ord` too, over their content alone (no counter, address or time;
+// `Arc<T>` compares its `T`), so a `Refused` is ordered by what it says. `Scope::refusals`
+// and `Scope::refused_by` are ordered maps and sets keyed by it, so `Scope::warnings` reads
+// them in that order whatever order `Scope::refuse` and the join inserted them in. Test:
+// `l01_39_reduced_product::refused::two_refused_arms_joined_give_both_warnings_in_one_order`
+// (both orders of two arms); it cannot catch a field added later that records when a
+// question was met.
 #[derive(Clone, PartialEq, Eq, PartialOrd, Ord, Debug)]
 pub struct Refused {
     /// The test or the part of the linear relation the question was asked of.
@@ -8682,6 +9214,17 @@ impl Scope {
     /// Settling can give a finer product than the eager scope holds: an eager part projected
     /// before a constraint on another term of its names is not due again, and keeps the
     /// coarser product (`Scope::refresh`, seed 22671 of `l01_39_scope_relations::lazy`).
+    /// So "gives the eager product" above is to be read as "gives the eager product or one
+    /// below it": at a settled leaf the two are equal or the settled one is finer, never
+    /// coarser. Both are sound, since settling only meets the leaf with the projection of a
+    /// star of conjuncts the scope holds and with [`Scope::reduce`]'s reductions, each a meet
+    /// with what the relation implies. The star's projection onto its hubs is
+    /// [`Conjuncts::star`] in zedc-presburger `conjuncts.rs`, argued there. Test:
+    /// `l01_39_scope_relations::lazy::a_join_settles_a_star_it_drops_or_whose_core_gains_a_disjunction::the_eager_join_is_as_tight_as_the_lazy_one_at_these_seeds`
+    /// (seeds 116, 237, 272, 2220, 22490, 22671), which compares the two at those seeds only
+    /// and cannot catch a leaf where the lazy scope is coarser at other seeds. Not proved:
+    /// that a lazy scope is never coarser than the eager one at a leaf that is not stale;
+    /// the paragraph above argues it for stale leaves only.
     pub fn lazy(mut self) -> Scope {
         self.lazy = true;
         self
@@ -9001,6 +9544,32 @@ impl Scope {
     // at 200 `let`s). Tradeoffs: the scope is still copied when `x` shadows a name or `p` is empty; bindings must be
     // undone in the reverse order they were made. Tests: `l01_39_reduced_product::scaling`
     // and `a_binding_forgets_what_held_of_the_name_it_shadows`; COMPLEXITY.md row S8.
+    //
+    // The claim "nothing else in the scope then mentions `x`" (proofs audit, proofdoc4b), as
+    // `bind_with`'s shadowing path makes it. What a reduction reads as a fact about `x`:
+    // (1) the relation: `Relation::forget(x)`, after the stars it changes are settled;
+    // (2) the written constraints: each address in `written_by.of(x)` is unwritten;
+    // (3) the kept tests: each in `kept.by.of(x)` is forgotten; (4) the ends of one-name tests:
+    // both `direct` entries of `x` are removed; (5) `x`'s product is replaced by `p`. So no
+    // constraint of the scope links `x` to another name, and the reduction of `p` alone
+    // (the `reduce_domains` loop) is all the reduction `x` needs. That part holds.
+    // The claim is false as written: these records still hold entries on the old `x`.
+    // - `enumerated`: false, see the enumerated fault at `Scope::enumerated` (a constraint
+    //   written again of the new `x` is not enumerated again; sound, less precise).
+    // - `spent` (keys `(x, y, end, side)`, `Block::reframe`): an entry spent for a part on the
+    //   old `x` stays spent, so a part of the new `x` found by the same entry is not
+    //   projected for it on this path of tests. Sound (projection only narrows), less
+    //   precise; the same kind of fault as `enumerated`, no test. Proposed fix: drop the
+    //   entries naming `x` here as well.
+    // - `refused_by` / `refusals`: questions on the old `x` stay under the name `x`, so
+    //   `refused_on` of the new `x` also returns them (a warning about the shadowed value).
+    //   Elaboration renames a shadowing binder (`x@k`, see `Scope::refused_by`), so this is
+    //   inferred to arise only through a direct caller of `bind`; not checked.
+    // - `exactly`, `potential`, `projected`, `seen`: caches and points, not facts. `exactly[x]`
+    //   is used only when it lies in the new `x`'s interval and class (`Scope::admits`), and
+    //   the verdict of `enumerate_exactly` does not depend on it (proof there); `potential`
+    //   is a point of difference constraints and none is left on `x`; `projected` and `seen`
+    //   compare `x`'s product, which changed, so the parts and stars on `x` are due again.
     pub fn bind(&mut self, x: &Arc<str>, p: Product, e: &Shared) -> Unbind {
         self.bind_with(x, p, e, None)
     }
@@ -9205,6 +9774,23 @@ impl Scope {
         let gone: Vec<Address> = self.written_by.of(x).cloned().collect();
         for k in &gone {
             self.unwrite(k);
+            // The keys of `k`'s enumerations were of the old `x`: the same constraint written
+            // again of the new `x` must be enumerated again ([`Scope::enumerated`]). A key is
+            // `(address, statics)` in tuple order and the empty statics list is the least, so
+            // the keys of `k` are the run from `(k, [])` while the address is `k`. Every
+            // constraint that mentions `x`, with `x` open or static, is in `gone`
+            // (`written_by`), so no key that reads the old `x` stays. Cost O((1 + e) log E)
+            // for `e` keys removed of `E`; each key is removed at most once after its insert.
+            // Test: `product::tests::a_constraint_on_a_shadowing_name_is_enumerated_again`.
+            let keys: Vec<Enumerated> = self
+                .enumerated
+                .range((k.clone(), Vec::new())..)
+                .take_while(|e| &e.0 == k)
+                .cloned()
+                .collect();
+            for e in &keys {
+                self.enumerated.remove(e);
+            }
         }
         let gone: Vec<Address> = self.kept.by.of(x).cloned().collect();
         for k in &gone {
@@ -9263,6 +9849,14 @@ impl Scope {
     /// differ, each `O(log n)`. With `before` `None` (names on difference paths whose exact
     /// map is not built), each cache takes `x`'s entry alone: the same map, since the names now
     /// are `before` with that entry, without building the exact map.
+    ///
+    /// Proof that the rebase is that same map, `cache` with `x`'s entry as now. The callers
+    /// ([`Scope::bind_with`] on its fresh path, [`Scope::unbind`] of `Unbind::Fresh`) take
+    /// `before` and then change only `x` (`set_fresh`), so `now(n) = before(n)` for every
+    /// `n != x`. `out` starts as `now` and, for each `n != x` where `cache` differs from
+    /// `before`, takes `cache`'s entry (or its absence). For any other `n != x`,
+    /// `out(n) = now(n) = before(n) = cache(n)`. So `out` is `cache` at every `n != x`, and
+    /// `now` at `x`. With `cache` the same map as `before` (`ptr_eq`) this is `now` itself.
     fn seen_fresh(&mut self, x: &Arc<str>, before: Option<&imbl::OrdMap<Arc<str>, Product>>) {
         // Complexity tradeoff (COMPLEXITY.md PA-let-block): naive, the caches left as they
         // were, so each test diffs every name bound since the last reduction, Θ(k) at the k-th
@@ -9314,6 +9908,24 @@ impl Scope {
         // The order of an eager scope's leaves ([`Order::sync`]) is such a cache too; `x`, in
         // no conjunct, is no star's leaf, so the order has nothing to place for it. A lazy
         // scope keeps no order, and its empty one would cost every name to rebase.
+        // Proof that the next `Order::sync` places every leaf as it would without this rebase.
+        // The rebase changes the recorded names at `x` alone (it makes `cache` with `x`'s entry
+        // as now, as this function's doc comment says), so the only
+        // leaf `sync` may now skip is `x`, which its names' difference no longer touches.
+        // (1) `Order::place` reads the names only at the leaf it places (`names.get(x)`), so
+        // every other leaf's place against the recorded names is unchanged. (2) `x` is in no
+        // conjunct of the relation now, and a star of `x` is the block of the conjuncts that
+        // mention `x` (`Conjuncts::star`), so `place` of `x` against the relation now only
+        // takes `x` out (`unplace`). (3) `x` has no place already, unless the relation the
+        // order recorded had a star of `x`; then the stars differ between that relation and
+        // the one `sync` is given, and its stars' difference touches `x` anyway. If by that
+        // `sync` a conjunct on `x` has come, the conjuncts' difference touches `x`. A lazy scope
+        // keeps no order: each call of `sync` and `mark` is under `!self.lazy`, and
+        // `Scope::eager_on` sets a default order when a lazy scope turns eager; so skipping
+        // it there costs nothing and changes nothing. Test of the cost:
+        // `if_shortcut::bench::one_pass_and_transfer_scale_on_deep_nests` (16.7 times the work
+        // at 8 times k without this rebase, 9.0 with it); no test checks the order's places
+        // after the rebase apart from the answers of the other scope tests.
         if !self.lazy {
             rebase(&mut self.seen.order.names);
         }
@@ -9427,6 +10039,33 @@ impl Scope {
     // once per case. A scope with no kept test pays one look at an empty map. The written
     // constraints: see [`Scope::written_dead`]; those looked at are the ones written since
     // `before` (the diff of two persistent maps) and those on a name fixed since.
+    //
+    // Proof that narrowing again is sound (it drops no state that reaches the scope):
+    // 1. A test enters `kept` only in [`Scope::join_kept`], after the scope became the join
+    //    of the test's cases, each case the scope narrowed by the test giving `true`: so the
+    //    test held at every state of the scope when it was kept.
+    // 2. It holds at every state of each later scope that still keeps it: a later assume only
+    //    narrows (`assume_with` starts from a clone and narrows it), so its states are a subset;
+    //    a new binding of a name the test reads forgets the test (`self.kept.by.of(x)` in
+    //    `Scope::bind_with`); a join of two scopes keeps only the tests both keep
+    //    ([`KeptTests::join`]), so the test held on each side's states and so on their union.
+    // 3. Narrowing by a test that holds at every state keeps every state (each narrowing step
+    //    keeps the values at which the test can give `true`). So step 1 to 3 give: the scope
+    //    after narrowing again by `t.test` has every state it had. A trigger that does not fire
+    //    leaves the join's product, which holds every case's, so it loses precision only.
+    // The premises passed are those the test was kept under: they record why a product
+    // narrowed (zedc-lattice cell.rs `Premises`), and do not change what is narrowed.
+    // Termination: each round with `due` not empty forgets at least one test (each of `due` is
+    // in `kept` when `dead` and `written_dead` return it), and narrowing by it keeps it again
+    // only through `join_kept` with its cases that are not bottom. The case that fired is
+    // bottom there when narrowing is monotone (a case made from a narrower scope has a
+    // narrower product, and the trigger says that product meets the name's in no value), so
+    // each test is kept again with fewer cases, and a test with fewer than two is not kept.
+    // Not proved here: that monotonicity of `case_list` in its scope, for every kind of case;
+    // the tests that drop a case in each order (tests/steps/l01_39_scope_relations/xst/s4.rs,
+    // `a_case_a_class_empties_is_dropped_when_the_class_comes_last`,
+    // `a_case_a_bound_empties_is_dropped_from_a_test_with_no_relation`,
+    // `split_class_last_drops_each_kept_case`) end, but cannot show it for every case.
     fn narrow_kept_again(&mut self, before: &Scope, reduce: fn(&mut Scope)) {
         let mut since = before.names.clone();
         let mut since_written = before.written.clone();
@@ -9574,6 +10213,21 @@ impl Scope {
     // preimage still recurses on the depth of the term (T2-mid), so the scaling test stops at
     // 256 levels. Test `l01_39_reduced_product::scaling::tests_read_through_the_functions_they_call_scale`;
     // COMPLEXITY.md row S24.
+    //
+    // Proof that the closed test reads each name as the function read it where it was bound.
+    // Facts: `Scope::bind_with` gives each binding `self.clock`, then adds 1, so a later
+    // binding has a larger order, and a name bound again (shadowed) gets the new order in
+    // `orders`; `Scope::unbind` restores the whole scope saved before a shadowing bind, orders
+    // included. (1) A function `f` of order `o` is reached only when every name it reads has
+    // no order or an order below `o`; such a name's binding now in scope was made before `f`
+    // and not replaced since (a replacement would carry an order above `o`), so it is the
+    // binding `f`'s body saw. (2) The reached functions are bound in increasing order, the
+    // first outermost (the sort, then the fold over the reversed list), so a reached `g` that
+    // `f` reads, of order below `o`, is bound outside `f`'s `let`, and every other name stays
+    // free and is read from this scope, the same binding by (1). (3) A function is pushed at
+    // most once (`seen`). Cost: each name popped once, `stage::free` of each function looked
+    // at (reached or left unbound) once, and the sort of the r reached: O((r + s) log(r + s))
+    // for s the sizes of the functions looked at, the log from the ordered sets.
     fn close(&self, test: &Term) -> Option<Term> {
         let mut seen: BTreeSet<Arc<str>> = BTreeSet::new();
         let mut todo: Vec<Arc<str>> = stage::free(test).into_iter().collect();
@@ -9642,7 +10296,8 @@ impl Scope {
     /// projected, once, with `kept`, the sets it left its variables. The same question asked
     /// again in this scope keeps the meet of the sets of each time, each of which holds every
     /// value the question allows here, so the sets do not depend on the order the questions
-    /// were met in. `names` are the names of the scope its constraint mentions, under each of
+    /// were met in (the proof, for any number of meetings, at [`kept_meet`]; the meet of sets
+    /// that each hold the allowed values holds them too). `names` are the names of the scope its constraint mentions, under each of
     /// which it is found (`Scope::refused_by`): a question its text shows alike may be asked of
     /// an outer `x` and again of an inner `x` that shadows it, and is then found under both.
     /// O(log k) in the k refusals kept, O(m log m) in the m variables of `kept`, and O(n log k)
@@ -9661,6 +10316,17 @@ impl Scope {
     /// binding: a question on an outer `x` is not found by an inner `x` that shadows it. Once
     /// each, in the order of [`Refused`], with the sets it left its variables. O(m log k + q
     /// log q) for m names among k questions and the q questions found (`Scope::refused_by`).
+    /// Corrected bound (proofdoc4b): the m look-ups cost O(m log k); a question found under
+    /// several of the names is collected once per name, so the sort and dedup cost O(t log t)
+    /// for the t pairs of a name and a question found (q <= t <= m q), and the q look-ups in
+    /// `refusals` cost O(q log k). In all O(m log k + t log t + q log k); the O(m log k + q log
+    /// q) above holds when each question is found under O(1) of the names.
+    /// Why every question is found: `refused_by` lists `r` under `n` exactly when `r` is a key
+    /// of `refusals` and `n` is among the names given with it. `Scope::refuse` inserts both
+    /// together (`index_refused`), nothing removes either, and `Scope::join` takes the union
+    /// of both maps, name by name for `refused_by`, so the pair stays in step. Tests
+    /// `l01_39_reduced_product::refused` (look-ups, and scaling at 4,096 and 32,768
+    /// questions, each on few names, so they do not exercise a large t).
     pub fn refused_on<'n>(
         &self,
         names: impl IntoIterator<Item = &'n str>,
@@ -9754,7 +10420,8 @@ impl Scope {
     // part R into each side, so k joins in a row cost 2^k connectives. Used: the conjuncts the
     // sides share are found by the difference of their persistent sets (`Conjuncts`) and kept
     // once; the rest becomes one `Formula::either` of the two remainders, with the equalities
-    // both sides hold (Karr's join, `Scope::hull`); the cost follows the conjuncts the sides
+    // both sides hold (Karr's join, `Scope::hull`; Karr 1976, doi:10.1007/BF00268497, full
+    // citation in zedc-presburger `lib.rs`, "References"); the cost follows the conjuncts the sides
     // differ in, and each join of differing sides adds one disjunction. Tradeoffs: no cap, so a
     // scope keeps every conjunct; a relation with disjunctions is decided by a greedy choice
     // with one level of lookahead (`Refusal::Disjuncts` where both fail) and projected per
@@ -9772,7 +10439,7 @@ impl Scope {
     // persistent sets after a first join, O((classes + differ) log n). Tradeoffs: a class
     // that fails the check costs its leaves as before, and a second `join_settled`; a class
     // that passes leaves its leaves stale in the join, settled when read. Tests:
-    // `l01_39a_bit_words::scaling::reads_under_the_else_arms_of_satellites_of_two_hubs_scale`,
+    // `l01_39a_bit_words::bench::scaling::reads_under_the_else_arms_of_satellites_of_two_hubs_scale`,
     // `l01_39_scope_relations::lazy::a_join_settles_the_leaves_whose_core_differs_as_settling_every_name_does`;
     // COMPLEXITY.md row C40.
     //
@@ -9884,13 +10551,18 @@ impl Scope {
         // A hub moved in a lazy join leaves the stars at it stale where the join holds it as
         // one side does, with that side's free conjuncts: each such star is that side's, whose
         // leaf is settled when read; otherwise each leaf at it is settled on both sides.
+        // Not proved (proofdoc4b): `within` asks only that the join's free conjuncts at `h`
+        // contain side `s`'s, not that they equal them. The open sub-case is a join that holds
+        // at `h` a free conjunct `s` lacks (one from the other side): no argument here shows
+        // that a star at `h` is then still `s`'s, so that settling its leaf on read gives the
+        // projection the join holds. The test named below checks cost, not this case.
         // Complexity tradeoff (NARROW-or-order): naive version, every leaf hanging at each hub
         // moved settled on both sides, O(k) projections per join for k stars at the hub, and
         // O(k²) over k tests of `a_i >= n || a_i >= 5` on the hub `n`. Used: one comparison of
         // the hub's interval and class and one difference of its free conjuncts per side,
         // O(log n + c) for c conjuncts that differ; a hub the join holds unlike both sides
         // costs its leaves as before. COMPLEXITY.md row C54; test
-        // `l01_39a_bit_words::scaling::a_hub_settles_its_scopes_in_time_linear_in_the_tests`.
+        // `l01_39a_bit_words::bench::scaling::a_hub_settles_its_scopes_in_time_linear_in_the_tests`.
         if !eager {
             for n in &moved {
                 if [self, other].iter().any(|s| as_side(s, n)) {
@@ -9979,6 +10651,8 @@ impl Scope {
         for g in mine.iter().chain(&theirs) {
             seeds.extend(conjuncts::names(g));
         }
+        // Karr 1976, doi:10.1007/BF00268497; full citation in zedc-presburger `lib.rs`,
+        // "References", and the join itself is zedc-presburger `hull.rs`.
         // The equalities of two or more atoms that hold on both sides (Karr's join), which the
         // disjunction of the relations holds but no projection of one of its parts finds. Each
         // side implies them, so each side's rest holds where they do as it holds with their
@@ -10051,6 +10725,20 @@ impl Scope {
         // A part projected on both sides is projected within the join: each side's
         // intervals lie within its projection, and the join's within their union. A part
         // projected with other equalities or constraints on the two sides is not.
+        //
+        // Why: keeping the entry only skips projecting the part again, and a skipped
+        // projection never drops a point, so the join is sound in any case; what is at stake is
+        // precision. For an exact projection the join's box loses none: a name's integers in
+        // the join are the union of the sides' (`IntervalSet::join`, the union), so each
+        // value is a value on one side, where that side's box was a fixed point of the part,
+        // so some point of the part within that side's box has that value; that point lies
+        // within the join's box, so the projection would keep the value. This reads the
+        // integers alone: a class the join widens is not argued here. Where the projection of
+        // a part is not exact, the join may skip a narrowing it would find.
+        // Tests: `case_wake::a_test_joined_from_cases_projects_the_whole_block` and
+        // `case_wake::tests_after_a_join_of_cases_that_recorded_one_part_differently_give_the_projection_from_scratch`
+        // (each later test against the projection from scratch); they cannot catch a narrowing
+        // skipped by an inexact projection, which gives a wider answer, not a wrong one.
         let mut projected = self.projected.clone();
         let mut seen = self.seen.clone();
         for d in self.projected.diff(&other.projected) {
@@ -10244,7 +10932,11 @@ impl Scope {
     /// 8` of the case `a + 2 * b == 1000` beside `a <= 2 || b >= 8`: the shared relation gives
     /// it again, and stated it would add one conjunct to the join at each such test. A bound
     /// no tighter than the other side's holds of the join's product of the name, so the
-    /// disjunction does not need it.
+    /// disjunction does not need it. Soundness: each end of [`Scope::direct`] holds of every
+    /// state of this side (its doc; `Scope::bind` and the unbind drop a name's ends, and
+    /// later narrowing only removes states), so a conjunct stated from it leaves this side's
+    /// set of states unchanged, and the disjunction of the two sides still holds exactly the
+    /// join's states.
     fn stated(&self, other: &Scope, mine: &[Arc<Formula>], theirs: &[Arc<Formula>]) -> Formula {
         let mut out: Vec<Formula> = Vec::new();
         let mut seen: BTreeSet<Arc<str>> = BTreeSet::new();
@@ -10594,11 +11286,20 @@ impl Scope {
     // a path, the row pushed on the relation's pending list) and a test on the hub O(log n)
     // (`NameProducts::bound`); reading a leaf O(log² n), the exact map O(n log² n) once per
     // version. The argument is the support argument of Freuder, "A sufficient condition for
-    // backtrack-free search", JACM 29(1), 1982 (a tree of binary constraints, each arc
+    // backtrack-free search", JACM 29(1), 1982, doi:10.1145/322290.322292 (lib.rs
+    // References; a tree of binary constraints, each arc
     // consistent, leaves every value reachable), here with the explicit witness `y <= low`
-    // that holds with every hub value. The leaf's own product has two values at most `low`
+    // that holds with every hub value (the full step at [`PendantRow`]; the code relies on the
+    // witness alone, not on Freuder's theorem). The leaf's own product has two values at most `low`
     // and the hub two values at least, so the box of the second case gives the join no
-    // affine equality (Karr's join, which the solver's path takes). Tradeoffs: the leaf must
+    // affine equality (Karr's join, which the solver's path takes; Karr 1976,
+    // doi:10.1007/BF00268497, full citation in zedc-presburger `lib.rs`, "References"). Where
+    // each is checked: the leaf is one piece `lo..=hi` (`p.ints().only()`) with `lo < low` and
+    // `hi >= start > low`, so `lo` and `lo + 1` are both values at most `low`; a hub put on a
+    // path here has `lo < hi` ([`NameProducts::member`]). A hub already on a path may have one
+    // value `c`; then the join's one equality is `hub = c`, the hub's own product, which the
+    // scope holds anyway; the second case's box spans every other direction. So the join of
+    // the two cases has no equality the products lack. Tradeoffs: the leaf must
     // be on no path, a pendant of no other row and in no other conjunct (the relation at the
     // mark of the last admission, or unary bounds alone), the test must hold under no
     // premises, and the leaf a plain integer interval with no premises; a later test on a
@@ -10916,6 +11617,15 @@ impl Scope {
     /// that a test that fails costs what it narrows and not the names in scope. A nest of `k`
     /// tests that each fail in one case, on `k` names, is then `O(k)` narrowings and not
     /// `O(k²)` (`Scope::reduce_case`).
+    // Why reading the case is unchanged: `Scope::get` returns `Product::bottom` for any name
+    // once `bottom` is set, so a failing case reads as the emptied one would, and only the
+    // shown scope pays `Scope::empty_if_bottom` (`Scope::reduce`). Why O(k): a failing case
+    // is a copy of the persistent scope (O(1)) plus what its narrowing touches, and no step
+    // of `reduce_case` walks the names in scope. Tests:
+    // `l01_39_reduced_product::scaling::a_failing_case_reads_every_name_as_empty` (the reading)
+    // and `scaling::bench::a_failing_case_costs_its_test_and_not_the_names_in_scope` (the
+    // cost). A caller that reads `names` directly, not through `get`, would see the names as
+    // they were; the tests cannot catch such a caller.
     pub fn assume_case(&self, test: &Term, outcome: bool, premises: &Premises) -> Scope {
         self.assume_with(test, outcome, premises, Scope::reduce_case)
     }
@@ -10989,9 +11699,19 @@ impl Scope {
     /// is never done. Used: the integer roots of a sparse polynomial of t terms, whose
     /// coefficients have at most B bits, in time polynomial in t and B and not in the degree
     /// (Cucker, Koiran and Smale, "A polynomial time algorithm for Diophantine equations in one
-    /// variable", J. Symbolic Comput. 27 (1999)), [`zed_kernel::poly::roots::integer_roots`];
-    /// then one evaluation of each constraint on `x` at each of the at most t distinct roots
-    /// the algorithm leaves after its gap split, and O(1) for a `t` with no root. Given up: a
+    /// variable", J. Symbolic Comput. 27 (1999), doi:10.1006/jsco.1998.0242; full comment at
+    /// zed-kernel `poly/roots.rs`), [`zed_kernel::poly::roots::integer_roots`];
+    /// then one evaluation of each constraint on `x` at each of the at most 2t - 1 distinct
+    /// integer roots, and O(1) for a `t` with no root. Corrected (proofdoc4b): this said "at
+    /// most t"; `x^3 - x` has t = 2 terms and the 3 roots -1, 0, 1. The bound 2t - 1 is
+    /// Descartes' rule of signs (cited from memory): a real polynomial of t nonzero terms has
+    /// at most t - 1 positive roots (as many as the sign changes of its coefficients, at most
+    /// t - 1), at most t - 1 negative ones (the same for `t(-x)`), and the root 0. The cost
+    /// stays O(t) evaluations per constraint. A product `term_roots` reads factor by factor
+    /// has the union of its factors' roots, at most the sum of each factor's 2t_i - 1, which
+    /// can be fewer terms than the product multiplied out. What the code relies on is that `term_roots`
+    /// lists every integer root in `[lo, hi]` (its doc): then a state where `t` is 0 has `x`
+    /// at a listed root, so meeting `x` with them removes no such state. Given up: a
     /// polynomial in two or more open names, whose integer roots are not a finite list in
     /// general (Hilbert's tenth problem for several variables); `Scope::reaches` answers it.
     pub fn zero_reached(&self, t: &Term, premises: &Premises) -> (bool, imbl::OrdSet<RootFailure>) {
@@ -11554,7 +12274,8 @@ impl Scope {
         // products: each case adds the relations of its tests and bounds its products hold.
         // So the test's relation replaces it, but for the equalities of two atoms or more the
         // join of the cases states at the top (Karr's join), which a projection of the test's
-        // relation onto each name does not find.
+        // relation onto each name does not find. Karr 1976, doi:10.1007/BF00268497; full
+        // citation in zedc-presburger `lib.rs`, "References"; the join is its `hull.rs`.
         if !self.bottom {
             let narrowed = std::mem::replace(&mut self.relation, before);
             let eqs: Vec<Formula> = self
@@ -11748,6 +12469,21 @@ impl Scope {
     // unclassed interval; `Scope::is_projected` still checks `outer_with == p.with` at the next
     // block update. Reference: P. Cousot and R. Cousot, "Systematic design of program analysis
     // frameworks", POPL '79, 1979, pp. 269-282 (monotone fixed-point preservation across joins).
+    // What a restore relies on: a record `(with, snapshot)` in `projected` says the part was
+    // projected with `with` and left its names as in the snapshot, so projecting it again with
+    // the same `with` and the same names gives the same names, and the block skips it
+    // (`Scope::is_projected`). Every name of the snapshot but the leaf is checked here to hold
+    // exactly the integers and framed class it held then, and `with` is checked at the next
+    // update; the key's formula is still in the relation, and so is its star. For the leaf:
+    // the part bounds it by a half-line in the hubs, and the leaf now lies within its old
+    // interval, which that half-line held, so projecting again leaves the leaf as it is.
+    // Not proved: that projecting again leaves the hubs as they are. The leaf's set is
+    // narrower than when the part was projected, so a hub value whose only leaf values in
+    // the part lay in the old interval and not in the new one would be cut by a new
+    // projection and is kept by the restore. The restored record then gives a wider hub than
+    // projecting would (an over-approximation, sound, but not the same answer). Open
+    // sub-case: a star part whose leaf a case narrowed at the end its half-line bounds. No
+    // test is named that checks a restore against a fresh projection.
     fn join_preserving_outer(&self, cases: Vec<Scope>) -> Scope {
         let mut s = join_cases(cases);
         if s.bottom {
@@ -12005,6 +12741,18 @@ impl Scope {
         // tests that relate it to others.
         // Under `@exact`, where written constraints that share a name are enumerated
         // together, it is kept.
+        // The steps of the second case: `Scope::enumerate` runs a constraint only when at most
+        // one of its names is open (`open.len() <= 1`), so with two or more open names the
+        // written copy removes nothing either way. With one open name `x` and the others
+        // `y_i` of one value `v_i` each, the test `x + sum(s_i * y_i) + c >= 0`, each `s_i`
+        // one or minus one, is the bound `x >= -c - sum(s_i * v_i)`; the relation holds the
+        // same row, and `Scope::reduce` projects it again once a product changed (the doc of
+        // `reduce`), over intervals that are the points `v_i`, so the projection gives that
+        // bound with no rounding, the coefficient of `x` being one or minus one. The first
+        // case rests on `exact` from `Scope::atom_names`: the preimage met into the interval
+        // is then the whole set of values that meet the test. Test: none named here compares
+        // either case with and without its written copy; a test is still to be named or
+        // written (row TEST-atom-written-copy).
         if !(exact && inputs.len() == 1 && free.len() == 1) && !unit {
             let kept = if outcome {
                 test.clone()
@@ -12084,6 +12832,13 @@ impl Scope {
                     }
                     // `x mod 2 != r` leaves the one other class; for a modulus above 2 the
                     // classes left are not one class, and the congruence keeps them all.
+                    // Proof: `mod` is the Euclidean remainder (zed-kernel eval.rs, `Prim::Mod
+                    // => x.rem_euclid(&y)`; zedc-int int.rs `Num::rem_euclid`, "in
+                    // `0..abs(d)`"), so an integer `x` has `x mod 2` and `x mod -2` in {0, 1},
+                    // and `!= r` for `r` in {0, 1} is `== 1 - r`. A member of `x` that is not
+                    // an integer is not touched: the congruence holds of the integer values
+                    // alone (zedc-lattice cell.rs `Cell::congruence`). `r` outside {0, 1} is
+                    // left alone, since `!=` then holds at every integer.
                     (Term::Prim(Prim::Mod, m), Term::Lit(r)) => {
                         if let [Term::Var(x), Term::Lit(c)] = &m[..]
                             && let (Some(r), Some(c)) = (Num::of_integer(r), Num::of_integer(c))
@@ -12168,19 +12923,61 @@ impl Scope {
         // summary); the preimage of a congruence test over an interval is exact, so it gives
         // no refusal. The meet above reads `x mod c` as the remainder in `0..|c|`, the reading
         // the congruence test's arms already rest on.
+        // The steps, checked against the code (proofdoc4b). (1) Exact: the test is `x mod c ==
+        // r` (or `x mod 2 != r`, the class `1 - r`) with `free == {x}`, and `mod` is Euclidean
+        // (zed-kernel eval.rs, `Prim::Mod => x.rem_euclid(&y)`), so at an integer it holds exactly in
+        // the class `r mod |c|` for `r` in `0..|c|` and nowhere for any other `r`. The first
+        // is met by `Congruence::meet`, exact by the Chinese remainder theorem (zedc-lattice
+        // lattice.rs, `impl Lattice for Congruence`); the second meets the type with `!int`,
+        // which empties the name, of `int` type here (`inputs[0] == x`). The integers of `x`
+        // are those of its interval in its class ([`Product::contains`]), so the product
+        // holds exactly the values that give the outcome, and `exact` is rightly `true`:
+        // [`Scope::atom`] then keeps neither the relation nor the written copy. (2) The
+        // correction to "so it gives no refusal": the preimage of the test is not always
+        // exact, as over more than two periods of `c` or an unbounded interval (preimage.rs
+        // `mod_pre`, "not exact"; `wide`, "its box, not exact ... the refusal"), and then
+        // gave a refusal; that refusal named a test the congruence holds exactly, so leaving
+        // it out drops no fact the scope lacks. (3) Not proved, and false in one sub-case:
+        // that nothing downstream loses. Readers of the interval alone (`Product::ints`) see
+        // the interval without the class, not the listed values the preimage gave: sound,
+        // as a superset, but less precise. [`Scope::through_terms`] reads a binding with a
+        // term and no summary backward from `ints()` alone (`Demand::Ints`), before any
+        // reduction, so `if x >= 0 && x <= 9 { z = x div 2; if z mod 2 == 1 { 1 } else { 2 }
+        // } else { 3 }` no longer narrowed `x` in the `true` arm to `[2..=3, 6..=7]` as the
+        // listed `z` in `{1, 3}` did. Fixed: the shortcut is not taken for a name bound by a
+        // term that reads another name of the scope, the only terms `through_terms` reads (a
+        // parameter, bound to itself, `x = x`, is skipped there by its `later` check, as `x`
+        // is not bound before itself); such a name takes the preimage as before 68b13f979,
+        // which lists its values for `through_terms`. Test, red before (`x` `[0..=9]`) and
+        // green after:
+        // `l01_39_reduced_product::let_terms::a_congruence_test_of_a_div_by_a_constant_
+        // narrows_its_input`. Interval readers other than `through_terms` (`Product::ints`)
+        // still see the interval without the class on a name with no term: sound, less
+        // precise, row PRES-interval-strided-piece. And the ends the reduction later moves in to the class are
+        // not recorded in [`Scope::direct`], which the preimage's meet did (`one` below), so
+        // [`Scope::stated`] cannot state them at a join: open whether a join loses a case by
+        // it. Tests: `l01_39_scope_relations::xst::s4::the_holes_cut_leave_each_x_one_range_
+        // and_one_class` (one range and the class) and `holes_cut_one_at_a_time_drop_each_
+        // case` (the values); neither builds a name with a term or a join that reads `direct`.
         // Complexity tradeoff: naive version, the preimage of the test taken as for any other
         // test, which lists each value of the class in the name's interval as a range of its
         // own ([`preimage_listed`]'s split by remainders), O(v) for v values, and the name then
         // held as v ranges, read by every later part that frames it as v disjuncts: O(k v)
         // for k tests (`xst::s4::bench::holes_cut_one_at_a_time_scale`). Used: the congruence
         // alone, O(1), and the interval keeps one range (PRES-interval-strided-piece, stage
-        // 2). A test of more names, or of a name read through a summary, takes the preimage
-        // as before.
+        // 2). A test of more names, of a name read through a summary, or of a name bound by a
+        // term (whose term is read backward from the values listed), takes the preimage as
+        // before, O(v) a test.
         if let Some((x, met)) = &class_of
             && inputs.len() == 1
             && free.len() == 1
             && &inputs[0] == x
             && self.view().summary(x).is_none()
+            && !(self.bindings.get(x).and_then(|b| b.term.as_ref())).is_some_and(|e| {
+                stage::free(e)
+                    .iter()
+                    .any(|n| n != x && self.names.contains_key(n))
+            })
         {
             if *met {
                 changed.push(x.clone());
@@ -12504,10 +13301,45 @@ impl Scope {
     /// when it is first shown, since nothing narrows or binds a name in it after
     /// ([`Scope::narrow`], [`Scope::bind`]) and its copies share the emptied names.
     ///
+    /// Why once is enough: `bottom` is never set back to `false` (only a new scope starts
+    /// with `false`, and with `Emptied(false, ..)`; `Scope::extend_path`, the one place that
+    /// assigns `bottom` from a variable, returns at once when it is set), and no change to
+    /// `names` in a scope with `bottom` set adds a name that is not the bottom:
+    /// `Scope::narrow`, `Scope::narrow_node`, `Scope::exclude`, `Scope::meet_type` and
+    /// `Scope::extend_pendant` return at once; `Scope::bind_with` inserts a name only when
+    /// `!self.bottom`, and otherwise returns the saved copy before it writes; `unbind` of a
+    /// fresh name only takes one out; the other writes (`meet_name`, `meet_own`, the
+    /// reduction's `reduce_domains`) meet a name's product, and a meet of the bottom stays
+    /// the bottom (inferred from `Product::meet_ints` meeting the integers, not read in
+    /// full). So the names emptied here stay the bottom while the flag `emptied.0` is set; a
+    /// copy (`Clone`) carries the flag with the emptied names.
+    ///
     /// The names are found from those a copy of the scope last emptied, by the bindings that
     /// differ: the names of a scope are those it was made with and those it binds
     /// ([`Scope::bind`]), each binding in `orders`, so two scopes made from one differ in their
     /// names only where their orders differ.
+    ///
+    /// Proof of the last sentence, for two scopes sharing `emptied.1` (copies, and the joins
+    /// of `Scope::join_settled`, which keep `self`'s `emptied.1`): the scopes that do not come from one
+    /// another have their own (`Scope::of`, `Emptied::default()`). The sites that add or take
+    /// away a key of `names` are: `Scope::bind_with`, which on its fresh path sets `x` in
+    /// `names`, `bindings` and `orders` together, on its saved path inserts `x` in `names` and
+    /// `orders` together (or, in a bottom scope, neither), and `Scope::unbind`, which undoes
+    /// one of these (removing both, or restoring the saved copy). Every other write to `names`
+    /// (`meet_type`, `meet_name`, the reductions, `narrow`) reads the product of a key it finds
+    /// there first and puts it back at that key, and the join's names start from `self`'s
+    /// (`Scope::join_settled`, `self.names.view().clone()`) with `self`'s orders. A rebinding of a key
+    /// both scopes have changes its order (an `Update` in the difference) and not its
+    /// membership, which the loop rightly leaves. So, key by key, the two scopes' names
+    /// differ only at an `Add` or `Remove` of `orders`, where the loop reads `self.names`. The
+    /// filter on the count is a second check only: a result with the right count and wrong
+    /// keys would pass it. Not proved: that no write to `names` outside the sites listed here
+    /// adds or removes a key (checked by reading each write a search of this file for
+    /// `self.names.insert`, `self.names = ` and `set_fresh` finds, in November 2026), and
+    /// that the join's later inserts touch only keys `self` has.
+    /// Test: `l01_39_reduced_product::if_shortcut::one_pass_and_transfer_agree_on_random_blocks`
+    /// compares the names of each arm with the reference walk, which empties by the same
+    /// code, so it cannot catch a wrong key set common to both.
     ///
     /// Complexity tradeoff: the naive emptying makes the bottom of each name, `O(n)` for `n`
     /// names, so that a walk showing an arm no state reaches below each of `d` nested
@@ -12982,6 +13814,41 @@ impl Scope {
     /// when it does (an echo, below), the tree is projected as a whole once. With
     /// `whole`, every tree of blocks is projected as a whole: its constraints together, and
     /// each other conjunct with them.
+    // Proofs of the claims above (proofs audit, proofdoc4b).
+    // The forest: `Blocks` (zedc-presburger conjuncts.rs) makes the blocks the biconnected
+    // components of the graph of conjunct groups and names. Two biconnected components share
+    // at most one vertex (a cut vertex), and the graph of components and cut vertices, the
+    // block-cut tree, has no cycle: a cycle through two components would lie in one
+    // biconnected piece, so they would be one component. Harary, "Graph Theory",
+    // Addison-Wesley 1969, ch. 3 (block-cut tree), and Hopcroft and Tarjan, "Algorithm 447:
+    // efficient algorithms for graph manipulation", CACM 16(6), 1973,
+    // doi:10.1145/362248.362272; both written from memory, not checked against the text.
+    // `Blocks::well_formed` checks the forest (parent links and one root a tree) in tests; it
+    // does not check that the blocks are the biconnected components.
+    // A bound comes back only through the name it left by: a block `c` is put on the worklist
+    // with `cause` the names whose move by a neighbor put it there. If `c`'s projection moves a
+    // name of its `cause`, that is the echo below and the tree is projected whole once, then
+    // skipped (`whole_trees`). Otherwise `c` moves only names past it, and from a name `m` not
+    // in its cause the tree path back to the block that caused `c` goes through `c` and the
+    // cause name, since `c` shares one name with each neighbor and the tree has no cycle. So
+    // following the causes back from any projection walks the tree without stepping back
+    // through the name it came by, which is a path of the block-cut tree: it ends, within the
+    // tree's blocks, at a block due at the start (its cause empty). Hence the worklist ends,
+    // and "costs each block once" holds for one bound passed from one block. Corrected: a
+    // block is projected once for each origin (a block with an empty cause: due at the start,
+    // or put on the worklist from another tree) whose bound reaches it, since by the walk
+    // above each origin's bound reaches a block along one tree path at most once; `queued`
+    // merges only the pushes made before the block is popped. Example: `b1 - x - c - y - d -
+    // z - b2`, `b1` and `b2` due: `b1` moves `x`, `b2` moves `z`, `c` (cause `x`) moves
+    // nothing, `d` (cause `z`) moves `y`, and `c` is projected a second time (cause `y`). So
+    // O(origins × blocks of the tree) projections a tree, not one a block.
+    // Stars (blocks apart) are no echo: their projection onto the hubs bounds each hub alone,
+    // read again it gives what was met already ([`Conjuncts::star`]). The by-holes and
+    // shortest-path branches push blocks of other trees only (`blocks.tree(c) != t`).
+    // Tests: `l01_39_scope_relations::nests::two_parts_that_pass_a_bound_back_and_forth_reach_the_empty_scope`
+    // (the echo), `l01_39_scope_relations::linked::if_statements_that_leave_a_ladder_block_by_block_give_the_projection`;
+    // neither counts projections per block, so they cannot catch a block projected more often
+    // than the bound above.
     fn project(&mut self, due: Due, whole: bool) {
         if !whole && self.gaps.holds(&self.relation, &self.names) {
             return;
@@ -13094,6 +13961,14 @@ impl Scope {
             // refuse the tree ([`Scope::by_holes`]). Otherwise `k` holes in one test on a cycle
             // of `k` names with no slack each lowered the potential round the cycle before
             // failing, Θ(k²).
+            // Proof that this case is now O(k log k) a test: a raise works on a copy of the
+            // potential and keeps it only when `put_in` finds no cycle of negative weight, so a
+            // raise that fails changes nothing; on a cycle with no slack the first seed whose
+            // gap grew fails, at the cost of its one search, and the loop breaks, so the tree
+            // costs one failed raise and one call of [`Scope::by_holes`] on one cycle,
+            // O((k + h) log N) there ([`holes`]). Still open (item O7, COMPLEXITY.md S25):
+            // raises that all hold, as on a chain with slack, each moving O(k) names, O(k² log k)
+            // (`linked::bench::holes_piled_in_the_names_of_a_chain_take_quadratic_time`).
             for (&t, at) in &fresh {
                 if !at.added.is_empty() {
                     match self.repair(&relation, t, &at.added) {
@@ -13386,6 +14261,20 @@ impl Scope {
     /// In O(N log N) for the tree's names, conjuncts and the pieces of its names' integers, as
     /// [`holes`]: the conjuncts are found by a search from the block's names with a visited set.
     /// A refused tree's raises cost as [`Scope::raise`] states.
+    ///
+    /// Proof of the ends: the graph holds every conjunct of tree `t` (the search takes each
+    /// conjunct of `t` at a name it reached, and `t` is connected through its names), each a
+    /// difference or a bound, or the tree goes block by block; each name's integers are its
+    /// product's met with its bounds; so the integer points of `graph` are those of the tree,
+    /// and [`holes::solve`] gives their ends exactly (proofs in `holes`). The potential passed
+    /// is the scope's, which, where it holds with gaps 0 or more, holds plainly.
+    /// Not proved: the O(N log N). The search reads `relation.mentioning(n)`, every conjunct
+    /// at `n`, including those of blocks apart from the forest, which it then skips; a name of
+    /// the tree that is also a hub of `k` blocks apart costs O(k log n) at each call, the
+    /// pattern [`tree_edges`] left for `Blocks::in_forest` (COMPLEXITY.md C49). Proposed:
+    /// read `blocks.in_forest(&n)` as `tree_edges` does. Also, [`holes`] is O(N log N) only
+    /// where the potential holds at each component of more than one cycle; elsewhere its
+    /// label correcting is O(n m) (its `Run::hull` tradeoff, as after `Scope::reseed`).
     fn by_holes(&mut self, relation: &Conjuncts, t: BlockId, b: BlockId, paths: bool) -> Ends {
         let blocks = relation.blocks();
         let mut seen: BTreeSet<Arc<str>> = BTreeSet::new();
@@ -13564,7 +14453,9 @@ impl Scope {
     /// greatest values of `x` and `y` among those of any two points, so a greatest bound of
     /// each name taken to its own integers, the search's fixed point, is at or above every
     /// point, and is a point when no bound crosses the least (Jeavons and Cooper, "Tractable
-    /// constraints on ordered domains", Artificial Intelligence 79, 1995); the same holds of
+    /// constraints on ordered domains", Artificial Intelligence 79, 1995,
+    /// doi:10.1016/0004-3702(95)00107-7; Shostak's is doi:10.1145/322276.322288; both are
+    /// described in this module's header and lib.rs "References"); the same holds of
     /// the least bounds. Why no name takes other holes than its own: write `g_y` for the gap of
     /// `y` the potential holds with, at least the longest run of integers it leaves out between
     /// its ends `L_y` and `H_y`, and `d(y)` for the least weight of a path from `v` to `y`
@@ -13640,7 +14531,7 @@ impl Scope {
     /// lowers the potential of each name `x` by the least reduced distance from `v` to `x`
     /// plus `γ`, where that is below zero, found by a Dijkstra search from `v` over those names
     /// alone (Cotton and Maler, "Fast and flexible difference constraint propagation for
-    /// DPLL(T)", SAT 2006). `Ok(Some(u))` when the edge closes a cycle of negative weight, so
+    /// DPLL(T)", SAT 2006, doi:10.1007/11814948_19; see lib.rs "References"). `Ok(Some(u))` when the edge closes a cycle of negative weight, so
     /// that no point meets the tree's difference constraints; `Err` when the search reads a
     /// name the potential lacks, or an edge with a negative reduced weight, and then nothing
     /// has changed. A conjunct other than a difference constraint or a bound has no edge, and
@@ -13679,6 +14570,14 @@ impl Scope {
     /// potential falls, of `n` names, and once more for each cycle of weight 0 tied; an edge
     /// against the order of the components costs those the search that ends first finds
     /// ([`reorder`]).
+    ///
+    /// Tests of the argument: `l01_39_scope_relations::linked::
+    /// shortest_paths_give_the_intervals_of_the_projection_block_by_block`, `…::
+    /// shortest_paths_with_holes_and_sums_between_give_the_projection_block_by_block` and its
+    /// seeds, which hold every step's intervals to the projection from scratch: a potential
+    /// that failed at an edge not read would show as a bound past the projection's. They
+    /// cannot catch a fault that only trees larger than theirs, or a cycle of weight 0 through
+    /// more names than they build, reach.
     fn repair(
         &mut self,
         relation: &Conjuncts,
@@ -13735,6 +14634,13 @@ impl Scope {
     /// the gap alone, with no edge to read. Whether `x` is now within its gap, or has a class
     /// or no product, which no raise changes.
     ///
+    /// Proof of the two effects: the reduced weight of an edge `s → x` of weight `k` is
+    /// `q_s + k - g_x - q_x` ([`Potential`], [`pair_weight`]). With the growth `Δ = g - was`,
+    /// `q_x` becomes `q_x - Δ` and `g_x` becomes `g_x + Δ`, so for `s ≠ x` that is
+    /// `q_s + k - g_x - Δ - q_x + Δ`, unchanged; an edge `x → y` has `q_x - Δ + k - g_y - q_y`,
+    /// lowered by `Δ`, and a loop `x → x` too. So only the edges out of `x`, which `out` holds,
+    /// can fall below zero, and [`put_in`] repairs them as it does edges added; the second part
+    /// of the pair at `x` is kept, since no edge's tie changes.
     /// In O((r + their edges) log n) for the `r` names of the component of `x` whose
     /// potential falls ([`Potential`]): O(log n) for a name on no cycle, as each name of a
     /// chain or a ladder is. A projection stops raising a tree at the first raise that fails
@@ -13820,7 +14726,7 @@ impl Scope {
     // the changed seeds and those lowered, O((s + a + m) log n) per projection (8.6 times).
     // Tradeoffs: correctness rests on every other edge holding at the fixed point the last
     // projection left, so `Seeds::changed` must record every change of a seed's product.
-    // Test `l01_39a_bit_words::scaling::tests_that_equate_each_reading_to_a_hub_read_the_hub_once_each`;
+    // Test `l01_39a_bit_words::bench::scaling::tests_that_equate_each_reading_to_a_hub_read_the_hub_once_each`;
     // COMPLEXITY.md row NARROW-hub-seed-edges.
     fn bound_pass(
         &self,
@@ -13881,6 +14787,23 @@ impl Scope {
         // seed held at the bounds of its ends at the fixed point, and comes from a name
         // unchanged since, at whose bound it holds, or from a changed one, from which the search
         // below starts.
+        //
+        // The steps. A label is read from the name's product ([`Scope::ends`]). At the last
+        // projection every edge `a -> b` of weight `w` held: `H_b <= H_a + w`. The names whose
+        // products changed since are the `moved` of [`Scope::due`], which puts each in both
+        // `names` and `changed`, and a name a block of another tree moved is put in both too
+        // (`at.changed.extend(from)` in `Scope::project`); so a name not in `changed` has the
+        // product it had then. Take an edge not of a conjunct added. Neither end in `changed`:
+        // both bounds are as they were, and it holds. Its head in `changed`: it is read here.
+        // Its tail in `changed`: the tail is a seed, and the search starts from it. Its tail
+        // lowered by this pass: the search pushes the tail and reads it. So every edge that
+        // can lower a bound is read, and the bounds found are the fixed point.
+        // Tests: `l01_39a_bit_words::bench::scaling::tests_that_equate_each_reading_to_a_hub_read_the_hub_once_each`
+        // and `scaling::a_test_the_relation_carries_to_each_reading_names_the_path_to_it_only`
+        // (and its three variants). They cannot catch a product changed without being in the
+        // `moved` that [`Scope::due`] is given, which would leave an edge into it unread; that
+        // `moved` lists every product changed since the last projection is the caller's
+        // contract, not checked here.
         let mut edges: Vec<Edge> = Vec::new();
         for s in &seeds.changed {
             edges.extend(
@@ -14205,6 +15128,26 @@ impl Scope {
     /// one value; the block's conjuncts are then projected together once, which gives the
     /// fixed point the steps tend to, and the worklist stops. That is an event of the
     /// projection, not a count of steps or a size.
+    // Proofs of the claims above (proofs audit, proofdoc4b).
+    // "Gives the fixed point the steps tend to", corrected: each per-part projection keeps
+    // every point of the block's conjunction (it meets each name with a set holding that
+    // name's values over the part's points, and a point of the conjunction is one of the
+    // part's), so every step, and any limit of the steps, holds the conjunction's box. The
+    // whole-block projection gives that box when `project_part` is exact, so its result is
+    // no wider than the fixed point and may be narrower (a parity the parts drop); when it
+    // is not exact, see the assumption at `again` below (precision only).
+    // The worklist ends, for the pushes made by a move: a name's move trips `again` once the
+    // name is already in `moved`, except a move by the initial star base, whose names are
+    // credited once in `moved_by_base` (the next other move removes the credit, the one after
+    // trips `again`), and a move of the leaf, which pushes nothing (proof at the leaf below).
+    // So each name pushes its users at most twice before the loop breaks, and the pushes are
+    // at most the parts due at the start plus 2 Σ_n (users of n). Not proved: the pushes made
+    // without a move (a chain part found not idle pushes the rest of its chain;
+    // `b.released` pushes the parts it releases). The open sub-case is a part popped again
+    // only through these pushes, its projection moving nothing; it needs a bound on how often
+    // `certified` and `released` let one part through, which this audit did not read.
+    // Tests: `l01_39_scope_relations::nests::two_parts_that_pass_a_bound_back_and_forth_reach_the_empty_scope`
+    // and its bench; neither counts pops a part.
     fn project_block(&mut self, mut b: Block, due: Vec<PartAt>) {
         let start = self.names.view().clone();
         let (was_stair, was_ray) = (b.stair_managed, b.ray_managed);
@@ -14307,6 +15250,23 @@ impl Scope {
         // no move back and forth. Every part of a star mentions the leaf, through the star's
         // own conjunct, so otherwise each move of it projected all of them (item
         // NARROW-lazy-settle).
+        //
+        // Proof that skipping the leaf's moves loses nothing. (1) `x`, the leaf, is a star's
+        // only while its product is unbounded on the side away from its hubs (`sync_bounds`,
+        // [`Conjuncts::star`] in zedc-presburger), and the star's conjuncts that mention `x`
+        // all bound it from the hubs' side ("a star bounds its leaf on one side only", same
+        // doc); the hubs' free conjuncts in the block's core do not mention it. So no part
+        // narrows `x` on the away side, and in this loop `x` moves only on the hubs' side.
+        // (2) A part's conjuncts at `x`, say `x >= f_i(hubs)`, hold for a large enough `x`
+        // whatever the hubs are, since `x` has members past every bound on that side (same
+        // doc: "a conjunct of two hubs or more holds for a large enough `x`"). So eliminating
+        // `x` gives a formula over the other names that does not read `x`'s interval: a move
+        // of `x` changes no other name's projection. (3) Even if it did, skipping a part only
+        // keeps its last projection, made with a wider `x`, which still holds every point:
+        // a loss of precision, never of soundness. Tests: the lazy and eager scopes agree on
+        // `l01_39_reduced_product::scaling::a_lazy_scope_settles_the_hubs_of_a_star_under_
+        // disjunctions_as_the_eager_one` and on the random seeds of
+        // `l01_39_scope_relations::lazy`; they cannot catch a precision loss both scopes share.
         let leaf = b.leaf.clone();
         let mut work: std::collections::VecDeque<PartAt> = due.iter().cloned().collect();
         // Complexity tradeoff: naive version, `PartAt` orders `(false, conjunct)` before
@@ -14350,6 +15310,7 @@ impl Scope {
             // another part or contribute a movement to again. Pugh, "The Omega
             // test: a fast and practical integer programming algorithm for dependence
             // analysis", Proceedings of Supercomputing '91, ACM/IEEE, 1991, pp. 4-13,
+            // doi:10.1145/125826.125848,
             // sec. 2.3.2, supplies the dark-shadow slack (a-1)(b-1). Parallel normalization and
             // non-growing elimination are described at eliminate: unlike the round-2 version of
             // this test, the number of rows is bounded by the input shape including box ends.
@@ -14378,7 +15339,8 @@ impl Scope {
             // hopb unchanged (its chain keys all differ). Measured at 8n (instructions):
             // star_extra 14.8 to 10.1 times, coordmix_floor 12.0 to 10.2, chain 10.9 to 10.2
             // (XR-l139-family). Prior work: the certificate is the Omega test's exactness
-            // check (Pugh, "The Omega test", Supercomputing '91, pp. 4-13); taking the least
+            // check (Pugh, "The Omega test", Supercomputing '91, pp. 4-13,
+            // doi:10.1145/125826.125848); taking the least
             // element of a chain under implication is subsumption, as in clause subsumption.
             if !b.ray_managed
                 && self.projected.contains_key(&part.key)
@@ -14958,8 +15920,24 @@ impl Scope {
     /// a star leaf or `step` tightened `x` in `coordmix*` wrote O(k^2) snapshots and diffed
     /// O(k^2) records at the join). Used: O((|due| + |ran|) log k) inside cases, keeping an older
     /// snapshot on certified-idle parts, which is conservative for [`Scope::is_projected`] and
-    /// exact when the join restores the outer domain (Sarnak and Tarjan, CACM 29(7), 1986).
+    /// exact when the join restores the outer domain (Sarnak and Tarjan, CACM 29(7), 1986,
+    /// doi:10.1145/6138.6151, for the path-copied maps whose nodes the kept entries share).
     /// COMPLEXITY.md row C26.
+    ///
+    /// Proof of the two claims. [`Scope::is_projected`] reads an entry `(w, snap)` of
+    /// `projected` and answers yes only when `w` is the part's `with` and `snap` its names'
+    /// snapshot now. An entry kept here was written by an earlier `record` or
+    /// [`Scope::project_due`] for the part at that `(w, snap)`, after it projected or was
+    /// certified idle there, so a later yes from it is a yes for inputs at which the part
+    /// was settled; keeping it in place of the case's snapshot writes no new claim
+    /// (conservative). Within a case `p.with` keeps the outer key ([`Block::reframe`]), so
+    /// once the join gives each of the part's names its outer product back, the kept entry
+    /// matches and the part is not projected again, as it would not have been had the case
+    /// never run (exact). A part a case's constraints can narrow is woken through `fired`,
+    /// which [`Scope::block`] reads before `is_projected`, so the outer entry does not hide it
+    /// inside the case. Tests: `case_wake::tests_after_a_join_of_cases_that_recorded_one_part_differently_give_the_projection_from_scratch`
+    /// and the random tests of `case_wake.rs`; they compare final intervals with the
+    /// projection from scratch and cannot catch an extra projection, only a skipped one.
     fn record(
         &mut self,
         mut b: Block,
@@ -14986,12 +15964,53 @@ impl Scope {
                 // to drop `p.key` and push all `k` parts into `block.forgot` (`37.8M` Ir in
                 // `persist` at k = 16). Keeping the existing outer entry is strictly more
                 // conservative and preserves O(1) join sharing.
+                // Why it is sound: `is_projected` answers true only when the stored `with` and
+                // the stored snapshot of the part's names both equal the current ones, and the
+                // kept entry was written at those inputs by a projection of this part or by an
+                // idle certificate for it (below), either of which shows that projecting at them
+                // narrows nothing more. So a later hit skips only such a projection; the
+                // worst a stale entry does is miss, and a miss projects again.
                 if self.projected.contains_key(&p.key) {
                     continue;
                 }
                 writes.insert(at.clone());
             }
         } else {
+            // Outside a case: why the parts not written keep their records, and what a written
+            // record claims (the claim of 3f2a92b63, "every other part was projected with its
+            // names' intervals and classes as they still are, so its record stays"). (1) No
+            // record can make an answer unsound: an entry only lets [`Scope::block`] skip a
+            // projection of its part, and a projection only meets the names with what the
+            // part implies, so a skipped one leaves them wider. Every case below is about
+            // precision, that is, agreement with a projection from scratch. (2) A part `P` that
+            // is not written is not in `ran`, `due` or `released_loop`, and for every name `n`
+            // whose product moved in its integers or class from `start` to now, `P` is not in
+            // `due_users(n)`: so `P` is not a user of a moved name, or `n` is the leaf and only
+            // tightened (`Block::leaf_only_tightened`), or an aggregate stands for `P` (stair or
+            // ray, `Block::managed`, which `project_block` does not project while it holds,
+            // and whose record it never writes). In the first case the snapshot of
+            // `P`'s names is the same as at `start`, framed, so its entry matches now exactly
+            // when it matched at `start`; in the second the entry's snapshot of the leaf no
+            // longer matches, a miss and one more projection later, never a hit it should not
+            // have; in the third the part is made due once the aggregate stops holding
+            // ([`Block::released`]). (3) A written part is due, released, ran, or a
+            // user of a moved name, and its entry records the names as they are at the end.
+            // On the loop's normal end (the work list empty) each such part was last taken
+            // from the list after the last move of each of its names but the leaf and its own
+            // last projection: the loop puts back `due_users(n)` of every moved `n`
+            // ([`Scope::project_block`]), and it then ran or was found idle by a certificate
+            // at those products. A move of the leaf wakes no part; `project_block`'s proof
+            // that skipping it loses nothing covers that. Not proved: (a) that a part's own
+            // projection, run again at its output, narrows nothing more (the loop does not
+            // put back the part that moved a name, unless an aggregate moved it,
+            // `aggregated`); (b) the ends by `break`: `again` projects the whole block once,
+            // or not at all when `repeat`, and a refused or inexact projection there leaves
+            // the written parts recorded at products they may narrow further; `empty` and
+            // `bottom` end with a name empty. Each is a loss of precision only, by (1). Tests:
+            // `l01_39_reduced_product::scaling::tightenings_beside_disjunctions_leave_the_
+            // scope_made_again` (compared with `forget_projections`) and the random ladders of
+            // `l01_39_scope_relations::linked`; they compare final intervals and cannot catch
+            // a record written in a case that no later test reads.
             for at in due.iter().chain(released_loop) {
                 if !b.managed(&b.parts[at]) {
                     writes.insert(at.clone());
@@ -15377,6 +16396,24 @@ impl Scope {
         if self.relation.class_leaves(c).next().is_none() {
             return (false, None);
         }
+        // Proof that the bound below is the one `core_leaf_bound` would find from all the
+        // class's conjuncts now. (1) `core_leaf_bound` is the meet, over the parts of the core,
+        // of `part_leaf_bound(g and base)`, `base` the constraints together (its doc comment;
+        // that site's own argument is row PROOF-preimage-core-leaf-bound, owned elsewhere).
+        // (2) `added_among` returns `Some` only when the kept record was made with the free
+        // conjuncts at each hub as `old` has them, no name the kept conjuncts mention has
+        // changed its product since (`kept.names` against `self.names`), and every change of
+        // the free conjuncts at the hubs from `old` to now adds a conjunct that is not a
+        // constraint; a removal or an added constraint gives `None`. A hub new to the class
+        // has no kept free set and a non-empty one in `old` only if a conjunct was there, which
+        // the first loop sees. (3) So `base` is unchanged, every kept part is the same formula
+        // over names with the same products, and `part_leaf_bound` of it, which reads only
+        // those products (`Scope::framed`), is unchanged; the new core is the old one with
+        // `added`. (4) The meet is associative and commutative, so the old meet met with each
+        // added part's bound is the meet over the new core. Each added `g` must be
+        // `leaf_literal`, as the full path asks of the whole core. Test:
+        // `l01_39_reduced_product::scaling::an_eager_scope_with_many_distinct_disjunctions_among_the_hubs_of_a_star_scales`
+        // measures cost only; no test compares this bound with `core_leaf_bound` of the core.
         if let Some(kept) = self.seen.bounds.get(c)
             && let Some(added) = self.added_among(old, &hubs, kept)
         {
@@ -15627,6 +16664,17 @@ impl Scope {
                 // No conjunction of what is left has a point, so neither has `part`: each of
                 // its names is empty, as below where the whole is `false`, not only the names
                 // of the pendant and its form.
+                // The steps: `unbounded_unit` writes `p.x` as every integer for each
+                // conjunction it does not skip, so all names empty means it skipped every
+                // conjunction, each one for a constant row below 0, an empty domain or a row
+                // whose greatest sum is below 0, none of which has a point; `part` is the
+                // pendant and `rest`, so a point of `part` is one of some conjunction of
+                // `rest`, as `conjunctions` gives them all here (the steps at
+                // `unbounded_unit`). Before proofdoc4b it read only a bare constraint as an
+                // atom and dropped an arm `!(x >= 1) && !(y >= 1)` of the one disjunction
+                // (which `one_disjunction` admits); it now reads a negated constraint so too,
+                // test `conjunctions_keep_an_arm_of_negated_constraints`, red before, green
+                // after.
                 return Some(
                     count
                         .into_keys()
@@ -15775,6 +16823,18 @@ impl Scope {
         // Measured in review round 3 of PERF-l139-wake (allocator calls, 8n ratio): hopb/hoponb R=14.66/14.53 without, 12.75/12.65 with;
         // both-size totals increase about 18-19k here, largely startup work.
         // This measured ratio gain is not an asymptotic complexity claim.
+        // Proof that the chosen `x` is a pendant as the single route needs: `x` occurs in no
+        // other conjunct (`count == 1`), has coefficient 1 or -1, one interval and no class
+        // (`gapped` below), and the row is `>= 0` with x's interval unbounded on the side
+        // that raises the row, so a value of `x` meets the row for every value of the form.
+        // The other names of count 1 stay in the form, each of coefficient 1 or -1 and one
+        // interval with no class (checked here); a sum of such terms takes every integer
+        // between the sums of its ends (a sum of integer intervals with unit coefficients is
+        // an integer interval), so the form's integer image is the image of the hulls, the
+        // fact the single route rests on. The comment's "finite" is not checked and not
+        // needed: an infinite end gives an infinite end of the image. A second name unbounded
+        // on its raising side refuses (`free.replace`), keeping `x` unique. Tests:
+        // `families::projection_shortcut_cases` and the hopb, hoponb families it was measured on.
         let (x, k) = if multiple {
             if !allow_multi || c.rel != Rel::Ge {
                 return None;
@@ -16000,6 +17060,10 @@ impl Scope {
     /// constraints that are new, mention a name that has changed, or have left the enumerated
     /// ones since the last enumeration are looked at, found by the persistent maps'
     /// difference: whether a constraint is due depends on these alone.
+    // "Once for its static names" holds per binding of each name: a binding that shadows a
+    // name drops the keys of its constraints (`Scope::bind_with`), so the same constraint
+    // written again of the new binding is enumerated again. Proof and test at the doc of
+    // `Scope::enumerated`, step (5).
     ///
     /// Complexity tradeoff: a constraint is enumerated only when at most one of its names is
     /// open, its form shows that it ends (`stage::ends`), and the name's members are listed
@@ -16082,6 +17146,30 @@ impl Scope {
                 // changed names, O(m log m) for m changed names. Test
                 // `l01_39_scope_relations::xst::s4::bench::points_written_after_scale`;
                 // COMPLEXITY.md row BENCH-points-written-after-68b13f979.
+                // Checked against the code (proofdoc4b). (1) Here `open` is empty, so only the
+                // `[]` arm of [`Scope::enumerate_on`] runs: it sets `bottom` or records a key and
+                // a root failure, and changes no product, so the main pass reads the same statics.
+                // (2) The main pass also requires `free.iter().all(|n| self.names.contains_key(n))`;
+                // here a name not in the base map gives no static (`NameProducts::read` returns
+                // `self.base.get(name)` for a name off every path and pendant, and every path
+                // member is in the base map, `NameProducts::len`), so `statics.len() !=
+                // free.len()` drops it the same way; not proved for a pendant name outside the
+                // base map. (3) `extend_path` returns at its first line when `self.bottom` or
+                // `!self.written.is_empty()`, so its `self.bottom = bottom` never clears an
+                // empty scope here; `unbind`, `narrow_linear`, `join_kept` and `narrow_node`
+                // replace the whole scope (`*self = ...`), as stated. (4) Not proved: "reports a
+                // root failure as it would in the main pass" holds for each constraint
+                // evaluated, but not for the set evaluated before the `false`. The main pass
+                // goes in address order and this pass by name, fewest constraints first, and
+                // both stop at the first `false`; [`Scope::zero_reached`] returns
+                // `root_failures` even when the scope is empty, and the checker reports them. So
+                // a closed constraint that fails at a root, ahead of the `false` one in address
+                // order but on a name with more constraints, was reported before and is not now
+                // (or the reverse). Either order drops the failures after the first `false`,
+                // which QUESTIONS A81 calls errors: a flaw of the main pass as well. Proposed
+                // fix: on a `false` here, go on evaluating the closed constraints that can fail
+                // at a root (`key.1` names a `rooted` name) before returning. The test above
+                // counts work and has no root; no test covers this order.
                 changed.sort_by_key(|n| self.written_by.count(n));
                 for n in &changed {
                     if !self.names.read(n).is_some_and(|p| p.value().is_some()) {
@@ -16276,6 +17364,40 @@ impl Scope {
     /// is bottom does not depend on the point kept: a group is found to have no point only
     /// by the search of the whole group, which is what the search of each group in full
     /// would find.
+    // Proof of the last two sentences (proofs audit, proofdoc4b). Write G for a group of the
+    // taken constraints (`Scope::taken`, `Scope::group`) and P for `exactly`.
+    // (a) Sound: `bottom` is set in one place, when `witness` gives `Some(None)` for the
+    // conjunction of a whole group over the box of its open names (`witness`, preimage.rs:
+    // "`Some(None)` when there is none"). The groups share no open name, and a point of the
+    // scope meets every taken constraint, so it would give a point of that group: none exists.
+    // (b) Invariant I, after a call: every taken constraint of a group not cut by a `None`
+    // answer holds at P, and P gives each of its open names a value in that name's interval
+    // and class. It holds after the first call (every constraint is due, `last` is `None`).
+    // (c) Termination and cost: products do not change in a call, so `admits` is fixed; a
+    // successful extension gives each of its free names an admitted value, and only a whole
+    // group search changes or removes a value already there, for names it then puts in
+    // `searched`, after which no constraint on them is read in this call. So each name is
+    // freed and given a value at most once, a constraint returns to `todo` only when one of
+    // its names was so given (or once, as a due constraint no longer taken), and the loop
+    // runs at most `|due| + 2 * sum over names of |written_by(n)|` times: the constraints due
+    // and those they reach.
+    // (d) I is kept: a constraint not due has the same names, products and statics as at the
+    // last call (any change of a free name is in `names.diff` and makes it due), so the same
+    // taken term and admitted values; its names' values in P changed in this call only by an
+    // extension, which puts it back in `todo`. Every constraint popped is either met at P (the
+    // extension), or its whole group is searched: a point (P then meets the group), no point
+    // (bottom), or no answer (its names leave P). A join keeps this side's P with this side's
+    // `seen.enumeration` (`Scope::join`), and a name the join changed is in the diff, so I
+    // carries over.
+    // (e) Complete as a whole-group search: if a group G has no point, some constraint of G is
+    // due (else by (d) all of G held at P, a point), and no extension can meet all of G, so the
+    // loop reaches a constraint of G that P cannot meet and searches G whole, the same term
+    // and box a search of every group would give, so the same answer from `witness`.
+    // Tests: `l01_39_reduced_product::exact::an_exact_scope_with_no_point_meeting_its_constraints_is_bottom`,
+    // `…::exact::constraints_that_share_no_name_are_searched_apart`,
+    // `l01_39_reduced_product::scaling::reductions_under_exact_after_each_constraint_keep_a_point`.
+    // They cannot catch a group whose point is kept over many reductions and only then lost
+    // (step (e) after (d)); no test builds that history.
     fn enumerate_exactly(&mut self, last: Option<&Enumeration>) {
         let mut due: BTreeSet<Address> = BTreeSet::new();
         match last {
@@ -16419,6 +17541,18 @@ impl Scope {
     /// The group of a taken constraint whose open names are `open`: the conjunction of the
     /// taken constraints linked to it by shared open names, in the order of their addresses, and
     /// their open names. Each constraint and name is visited once.
+    // Proof (proofs audit, proofdoc4b). A name enters `todo` once: the first names come from a
+    // set, and a later one only when `names` does not yet hold it, which then inserts it. A
+    // constraint is taken (`self.taken`) once: `seen` admits each address once. The scan of
+    // `written_by.of(n)` meets a constraint once for each of its names that enters `todo`, so
+    // the cost is O(Σ_n |written_by(n)| log W) over the group's names plus one `taken` a
+    // constraint; "visited once" holds of the names and of the `taken` calls. The result is
+    // the group: a constraint is taken here exactly when it is reached through a chain of
+    // shared open names (`more` are its open names), and the `BTreeMap` on addresses gives
+    // the order. The `expect` holds: the one caller, `enumerate_exactly`, passes the open
+    // names of a constraint `k` that `taken` took just before with `self` unchanged, and
+    // `written_by` is the inverse of `written` (kept so by the writes; read, not proved here),
+    // so `k` is met and taken again here.
     fn group(&self, open: impl IntoIterator<Item = Arc<str>>) -> (Term, BTreeSet<Arc<str>>) {
         let mut names: BTreeSet<Arc<str>> = open.into_iter().collect();
         let mut todo: Vec<Arc<str>> = names.iter().cloned().collect();
@@ -16533,6 +17667,22 @@ fn ids<'n>(nodes: &'n [Node], s: &'n [(usize, bool)]) -> impl Iterator<Item = (u
 /// sides before it through the names' products alone ([`Scope::exclude`]), so the sides
 /// those products hold exactly come first. A literal, then a comparison of a name with a
 /// literal, then any other comparison, then any other test, then a nest or an `if`.
+// Proofs of the order claims (proofs audit, proofdoc4b). The code gives the five ranks in the
+// order the doc lists. "Those products hold exactly", corrected to "most often": a literal
+// side needs no product; `x op c` for an integer `x` is held exactly by an interval with
+// holes; a comparison of a name with a literal of another carrier, or `x op y`, may not be.
+// The order decides precision only, never soundness: a later case assumes what the products
+// say of the sides before it ([`Scope::exclude`]), and a side the products hold loosely
+// leaves that case knowing less, so it keeps more points, not fewer.
+// The ids (`Tree::of`), by induction on height: at one height the nodes are sorted by
+// `form`, and a new id is given at each change of `form`, so two nodes share an id exactly
+// when their forms are equal; a nest's form is its connective and its sides' (rank, id,
+// polarity) list, sorted and with repeats dropped, so by the induction two nests share an id
+// exactly when they differ only in the order of their sides (or in a repeated side). Atoms
+// compare by their text, and `next` grows with height, so ids order by height, then form.
+// No hash is read. One gap, not checked: two different atoms with the same text get one id
+// and are not merged (`dedup_by` also compares terms), so `sort_by_key` keeps them in the
+// written order; this needs `Term`'s text to tell apart any two terms the scope reads apart.
 fn rank(n: &Node) -> u8 {
     match (&n.kind, n.term) {
         (Kind::Lit(_), _) => 0,
@@ -16716,6 +17866,16 @@ impl<'a> Tree<'a> {
     /// The test of node `n` with each nest written as `&&` or `||` over its sides, nested in a
     /// balanced way, and each `if` with a boolean arm as its connective: a term the size of the
     /// node's subtree, and of depth logarithmic in the length of each nest.
+    // Proof (proofs audit, proofdoc4b). `Tree::of` pushes a fresh node for each side or arm
+    // (`add`), so each node but the root is below exactly one node and has a larger index
+    // than it; a side dropped as a repeat is below none. So `below` holds each node of the
+    // subtree once, and building in falling index builds every node after the nodes below it,
+    // which is the `expect` in `take`; each is taken once, by its one parent. Size: each node
+    // gives its own term, a `!` at most, and a nest of `s` sides `s - 1` binary nodes from
+    // [`balanced`], so O(the subtree's size), within a factor of three, not equal to it
+    // (corrected). Depth: [`balanced`] halves the level each round, ⌈log2 s⌉ for `s` sides,
+    // so the depth is the sum of those over a path down the tree, plus the `!`s and `if`s.
+    // Time O(m log m) for the subtree's `m` nodes (the sort and the map).
     fn term_at(&self, n: usize) -> Term {
         // The nodes below `n`, each once: a node is a side or an arm of one node.
         let mut below = vec![n];
@@ -16828,6 +17988,16 @@ fn balanced(p: Prim, mut level: Vec<Term>) -> Term {
 /// for the copies of the cases' conjuncts, and the one reduction is the caller's. Given up:
 /// nothing; over the groups that narrow by disjunctions, every answer is the same with and
 /// without the reductions of the joins (NARROW-many-relational-sides).
+// Soundness without the reductions: `Scope::join` holds every state either side holds, and a
+// reduction only removes states the scope's own facts exclude, so the unreduced join of the
+// pairs holds every state of every case, as the reduced one does; the caller's one reduction
+// then narrows it soundly. Not proved: that the answers are equal in general. A reduced
+// product reduced after a join of joins need not equal one reduced at each level, since a
+// reduction of an inner join may narrow a domain that the outer join then keeps narrower;
+// this is measured on the groups above only (COMPLEXITY.md F158, test
+// `l01_39_scope_relations::two_disjunctions::bench`), not shown for every formula. Open
+// sub-case: a join whose reduction narrows an interval by a congruence or a finite set that
+// neither case alone gives.
 fn join_cases(mut cases: Vec<Scope>) -> Scope {
     while cases.len() > 1 {
         let mut it = std::mem::take(&mut cases).into_iter();
@@ -16901,6 +18071,19 @@ fn follow<'t>(t: &'t Term) -> Option<Follow<'t>> {
 /// chain `d` deep of `if` tests, each comparing the `if` below with a literal, cost about `2^d`
 /// that way (6.1 s at `d = 12`), and `d` times the plain chain when found once per test.
 /// `l01_39_reduced_product::follow` tests both (COMPLEXITY.md row F69).
+// Proof, and its open part (proofs audit, proofdoc4b). `follow` accepts only `let v = x in
+// m op v` (or `v op m`) with `m` a match on `v` whose arms are `is f64`, `is rat` or `is f32`,
+// each to a constant, and last `_ -> own` ([`follow_own`], preimage.rs). With `x` a name
+// whose product's type is a subtype of `int`, every value `x` takes is an integer, so the
+// comparison equals `x op own` exactly when no `is` arm matches an integer value: the match
+// then takes `_`, and `v` is `x`. No `is` arm matches an integer: the evaluator matches
+// `is t` by `t.contains(v)` (zed-kernel eval.rs, `(Pattern::Is(t), v) => t.contains(v)`),
+// which decides an `Int` or `Big` value by the type's `ints` part alone (types.rs
+// `Type::member`, `Value::Int(_) | Value::Big(_) => p.ints.contains(v)`), and `f64`, `rat`
+// and `f32` are built with only their own part cofinite and `ints` empty (types.rs
+// `SCALARS`). This matters: were an integer a `rat`, an arm built per carrier, an operation
+// on literals evaluated at `rat`, could differ from `own`. The native run time's `heap.rs`
+// `is_in` is taken to agree with the evaluator (not traced).
 fn plain_comparison(t: &Term, scope: &Scope) -> Option<Term> {
     let f = follow(t)?;
     let Term::Var(x) = f.value else {
@@ -17203,6 +18386,14 @@ impl<'m> Run<'m> {
             }
             // A literal in each arm: the value is the literal of each arm some state reaches,
             // which the walk's scopes of the arms tell, so the test is not assumed again.
+            // Why this is `Run::forward_at`'s value of the `if`: there each arm is read by
+            // `leaf`, which gives `Product::bottom()` in a scope no state reaches and
+            // `Product::literal(v)` otherwise; its scopes are `assume(c, o, &none)` and the
+            // walk's are `assume(c, o, &prem)`, which have the same elements, as a premise
+            // changes no element (see the arm below), so one is bottom exactly when the other
+            // is; and `Product::literal` carries no premise either way. Test: the reference
+            // walk `arms_and_value_by_transfer`, compared with this one by the tests of
+            // `l01_39_reduced_product::if_shortcut`.
             Term::If(c, a, b)
                 if self.shortcut && matches!((&**a, &**b), (Term::Lit(_), Term::Lit(_))) =>
             {
@@ -17220,6 +18411,32 @@ impl<'m> Run<'m> {
             // transfer, which assumes those tests with no premise, is the join without them.
             // A union only adds premises, and a premise changes no element, so the transfer's
             // value has the same elements and the premises of this one but those.
+            //
+            // Proof, by induction on the term below this `if`, of: every product the walk
+            // makes here has the element the transfer (`Run::forward_at`) makes at the same
+            // place, and its premises are the transfer's premises together with some of
+            // `D = premises[from..]`. (1) The two assume the same test with the same outcome in
+            // scopes that agree in elements; they differ only in the `premises` argument
+            // (`prem` in `Run::walk_arms`, none in `forward_at`). An element never depends on a
+            // premise: `Entry::meet`, `join` and `widen` (zedc-lattice `cell.rs`) compute the
+            // element from the elements alone and only add premises, and no code of this file
+            // branches on a premise set (the one reader, `Entry::proof_grade`, looks for
+            // `Premise::Widened`, which no walk makes). (2) A meet adds premises only when the
+            // element changes (`Entry::meet`), and the elements agree, so both add at the same
+            // places, the walk's set holding `prem` (in `D`) beside the transfer's. (3) A `let`,
+            // a primitive and a call are read alike by both (`walk_value_at` and `forward_at`;
+            // a call is a `leaf` in both), and a scope no state reaches gives `bottom` in both
+            // (the first lines of each). (4) An inner `if` pushes its own premise after `from`,
+            // so it lies in `D`. Then `Premises::without(D)` (zedc-lattice `cell.rs`, argued
+            // there) removes exactly the parts of `D`, by id: `D` is sorted by when it was made,
+            // as `without` needs, since `walk_arms` makes each premise just before pushing it,
+            // on the walk's one thread. A premise of the transfer is never in `D`: the transfer
+            // adds none, so each of its premises was made before `from`. So the
+            // result is the transfer's value, premises included (`Premises` compare as sets).
+            // Test: `l01_39_reduced_product::if_shortcut::one_pass_and_transfer_agree_on_random_blocks`
+            // and `..._on_deep_nests` compare the two values with `==` on `Product`, which
+            // compares each entry's premises too; they cannot catch a term outside the
+            // generator's forms, such as a call or a test on a non-integer.
             //
             // Complexity tradeoff: the naive value walks the arms and then reads the whole
             // `if` again with the transfer (`Run::forward`), which binds each `let` below once
@@ -17443,6 +18660,21 @@ fn forward_term(op: Prim, args: &[Term], xs: Vec<Product>) -> Product {
 
 /// [`forward`] of a primitive whose arguments have the elements `xs`: its value when every
 /// argument has one, else the revision table's transfer over integers.
+// Why the result holds every value `op` gives (proofs audit, proofdoc4b). Given: each
+// argument's value lies in its product `xs[i]` (the callers `Run::forward_at` and
+// `Run::walk_value_at` forward each argument once, in order, in the scope it is read in).
+// (1) Every argument has one value: `op` of those literals is run as a closed term in a fresh
+// world (`run_static`), so its value is the one value of the primitive there. (2) Else the
+// result starts at `Product::top()`, which holds every value, with the time the join of the
+// arguments' times. (3) An integer operator on one or two integer arguments: the value is an
+// integer (or there is none, as at `x div 0`), and `revision::forward` (zedc-lattice
+// revision.rs) is "an interval containing `op` of every choice of members of the operands";
+// a one-argument operator reads only `xs[0]`, and `y = top` is a superset of anything. (4) A
+// bit word of its arity on integer (or `f64`) arguments: `interval::bit_word` (zedc-lattice
+// interval.rs) bounds each word by its operands' hulls, proved word by word in its doc.
+// `reduce_domains` then only meets, so it keeps every value. Tests:
+// `l01_25_preimage_catalog::ranges` and the transfer tests named at `revision::forward` and
+// `bit_word`; they check chosen terms, not every operator at every interval.
 fn forward_prim(op: Prim, xs: Vec<Product>) -> Product {
     if let Some(vs) = xs.iter().map(Product::value).collect::<Option<Vec<_>>>() {
         let t = Term::Prim(op, vs.into_iter().map(|v| Term::Lit(v.clone())).collect());
@@ -17652,7 +18884,10 @@ fn classed(p: &Product) -> bool {
 }
 
 /// The length of the longest run of integers `ints` leaves out between its ends, 0 for one
-/// interval or none: `O(1)`, kept by the set ([`IntervalSet::max_gap`]).
+/// interval or none, kept by the set ([`IntervalSet::max_gap`]): `O(1)` for each node of its
+/// tree that does not hold its run yet, so `O(p)` for its `p` pieces the first time a set is
+/// asked and `O(log p)` after a one-piece change to a set already asked, not `O(1)` always
+/// (zedc-lattice interval.rs `gap` fills a node's `OnceCell` from its children).
 fn hole_gap(ints: &IntervalSet) -> Int {
     Int::from(&ints.max_gap())
 }
@@ -17809,6 +19044,47 @@ fn one_disjunction(t: &Formula) -> Option<usize> {
 // part or snapshot is visited: reflected supports prove it cannot narrow.
 // A certificate is used only while the whole relation and both domains match;
 // otherwise the original worklist, including its again rule, runs unchanged.
+//
+// Proof that `Scope::lower_gap_test` gives the exact marginals. Setting, from its guards:
+// `written` empty; the relation holds only clauses `x >= a_i || y >= b_i` (`lower_row`,
+// integer thresholds by `row_bound`) and at most one `x + y <= c` (`upper_sum`), all on one
+// pair (`other` empty, `pairs` one key); neither name has a class; the caller
+// `Scope::narrow` adds `!exact && !in_case`. Both orders of the pair agree: `lower_row`
+// sorts by name, and `upper_sum` reads a `BTreeMap<Atom, Int>` whose `Atom::Sym` order is
+// the derived name order (zedc-presburger formula.rs). Let X0 = [xl, xh] and Y0 = [yl, yh]
+// be the domains when the certificate starts (one interval each, checked) and R the set the
+// clauses cut from X0 x Y0.
+// (1) Formula. Let yh >= b_i and xh >= a_i for every i (checked per row; a row that fails
+// returns false). With no sum every v in X0 has the point (v, yh), so R's marginals are X0
+// and Y0. With the sum, v in X0 has a point iff some y has
+// max(yl, max{b_i : a_i > v}) <= y <= min(yh, c - v); as every b_i <= yh, that is iff
+// v <= c - yl and, for each i with a_i > v, b_i <= c - v, i.e. iff v <= c - yl and v lies
+// in no gap [c - b_i + 1, a_i - 1]. So the x marginal is X0 ∩ (..=c - yl) minus the gaps,
+// and by symmetry the y marginal is Y0 ∩ (..=c - xl) minus the gaps [c - a_i + 1, b_i - 1].
+// The code computes exactly this: the meet with (..=c - lo) and one `minus` per row;
+// `IntervalSet::range` is empty when lo > hi, so a gap with c - b_i >= a_i - 1 removes
+// nothing.
+// (2) Steps. When the certificate holds (`holds`: `at` is set, `sync` found no change in
+// the relation since, and both names still equal `at`'s sets), the domains are the
+// marginals x', y' of R over X0 x Y0. A new row then gives x' ∩ (..=c - yl) minus its gaps,
+// which by (1) and induction equals the full formula, provided xl, xh, yl, yh are still the
+// ends of X0 and Y0: the check `x.bounds() == xends` (and for y) keeps them, and a step
+// that would move an end returns false with nothing changed. Projecting over x' x y' is the
+// same as over X0 x Y0, since every point of R lies in x' x y'. A sum arriving after k
+// clauses (`upper` some, no earlier sum) applies all k rows at once from the domains, which
+// are then X0 and Y0 (no sum means no gap was cut). Starting needs the relation to hold
+// only sums (`relation.len() == upper.len()`), so no earlier clause is left out.
+// (3) Hence `Scope::project` may return at once when `holds`: the names are the exact
+// marginals of the whole relation. `Conjuncts::and` may drop a clause implied by another
+// (zedc-presburger conjuncts.rs); R is unchanged, so the marginals are too.
+// Cost: `holds` and `sync` compare imbl sets that share all but one path (imbl's `diff`
+// passes by shared nodes; `IntervalSet` equality is O(d log p), interval.rs `PartialEq`);
+// one `minus` of a single piece is O(log p) (interval.rs `IntervalSet::minus`); a sum after
+// k clauses scans the k rows once.
+// Tests: `families::stair_holes_against_the_oracle` (k = 1..3, three orders, the sum
+// first or last) and `families::projection_shortcut_cases` (case D1) in
+// tests/steps/l01_39_scope_relations/families.rs. They cannot catch an error outside the
+// oracle's window or on names that are not the pair `x`, `y`.
 #[derive(Clone, Default, PartialEq, Debug)]
 struct LowerGaps {
     relation: imbl::OrdSet<Arc<Formula>>,
@@ -18135,6 +19411,20 @@ fn cross(a: &[Int; 2], b: &[Int; 2]) -> Int {
 /// Whether `t` is a nonnegative combination of `gens`, vectors of the plane. By Carathéodory's
 /// theorem for cones it is one of at most two of them, and the two that bound it most closely
 /// on each side span it if any pair does: O(m) for m vectors.
+///
+/// Proof (`t` is never zero: callers pass an axis). Carathéodory's theorem for cones
+/// (C. Carathéodory, Math. Ann. 64 (1907) 95-115, doi:10.1007/BF01449883; DOI checked on
+/// Crossref 2026-11-20, the paper not read; the statement is the standard one)
+/// puts `t` in the cone of at most 2 of the vectors when it is in the cone at all. One vector
+/// spans `t` exactly when it points the same way (`cross` zero, dot positive). Two that are
+/// not parallel span it exactly when they lie strictly on opposite sides of `t` (a pair on one
+/// side, or with `-t`, gives only vectors on that side) and the angle from the one on the
+/// right to the one on the left, through `t`, is less than π, that is `cross(r, l) > 0`.
+/// Among vectors on the left (`cross(t, g) > 0`, all within an open half-plane, so `cross`
+/// orders them by angle) `left` keeps the one nearest `t`, and `right` likewise; their
+/// angle is the least of any such pair, so if they fail every pair fails.
+/// Test: `tests::staircase_queries_and_plane_cones_match_a_scan` compares it with a test of
+/// every pair by Cramer's rule, for vectors with entries in -3..=3.
 fn in_cone(t: &[Int; 2], gens: &[[Int; 2]]) -> bool {
     let mut left: Option<&[Int; 2]> = None;
     let mut right: Option<&[Int; 2]> = None;
@@ -18299,9 +19589,18 @@ fn pst_hi_gt<X: Ord>(a: &PstEntry<X>, b: &PstEntry<X>) -> bool {
 /// Persistent leaf-oriented AVL priority search tree over intervals `(lo, hi, at)` supporting
 /// 2D dominance / stabbing queries `lo <= q1 && hi >= q2` in deterministic `O(log k + output)`
 /// worst-case time, with `O(log k)` insertion and removal. Every tree walk follows children of
-/// strictly decreasing `height`, a topological order.
+/// strictly decreasing `height`, a topological order. The query bound is proved at
+/// [`Pst::report`]. Not proved: `O(log k)` removal. `remove_empty_leaf` calls `balanced` at
+/// each level of the path, an AVL deletion can rotate at O(log k) levels, and each rotation
+/// pushes up to two slots down a subtree (`push_down`, O(height)), so the bound the code
+/// shows is O(log^2 k); insertion rotates at one level, O(log k). Open: a proof that the
+/// slots pushed down by a cascade of rotations stop within O(1) levels each, or the bound
+/// stated as O(log^2 k).
 /// References: N. Sarnak and R. E. Tarjan, "Planar point location using persistent search
-/// trees", CACM 29(7), 1986, pp. 669-679; D. Amagata, J. Yamada, Y. Ji, and T. Hara,
+/// trees", CACM 29(7), 1986, pp. 669-679, doi:10.1145/6138.6151 (path copying, used for the
+/// `Arc` nodes); E. M. McCreight, "Priority search trees", SIAM J. Comput. 14(2), 1985,
+/// pp. 257-276, doi:10.1137/0214021 (a heap on `hi` over a search tree on `lo`; here leaf
+/// oriented, with slots, as in the proof at [`Pst::report`]); D. Amagata, J. Yamada, Y. Ji, and T. Hara,
 /// "Efficient algorithms for top-k stabbing queries on weighted interval data",
 /// arXiv:2405.05601, 2024.
 #[derive(Clone)]
@@ -18619,6 +19918,28 @@ impl<X: Ord + Clone> Pst<X> {
     /// Appends every entry `(lo, hi, at)` in `self` with `lo <= *q1 && hi >= *q2` to `out`, in
     /// `O(log k + output)` time: at each depth at most one visited node has `slot.lo > *q1`
     /// while `slot.hi >= *q2`, and every other visited node emits its `slot` to `out`.
+    ///
+    /// Proof. Invariants, kept by `push_down`, `pop_slot`, `pulled_branch` and the rotations,
+    /// and asserted after every step of the unit test
+    /// `priority_search_tree_and_recession_arcs_match_the_oracle`: (H) a slot is above every
+    /// slot below it in the order of `pst_hi_gt`, `(hi, lo, at)`; (E) a node with no slot has
+    /// no slot below it; (K) every key of `left` is below `right.min_key()`, so the keys of a
+    /// node lie in one range of the key order `(lo, hi, at)`; (P) each entry sits in one slot,
+    /// on the path from the root to its own leaf (`push_down` routes it by its key).
+    /// Soundness: a subtree skipped for `s.1 < q2` holds only entries with `hi <= s.hi < q2`
+    /// (H); one skipped for no slot holds none (E); a right subtree skipped for
+    /// `right.min_key().0 > q1` holds only entries of leaves in it (P), all with `lo > q1`
+    /// (K). Every entry not skipped is visited and pushed when `lo <= q1`.
+    /// Cost. The keys with `lo <= q1` are a prefix of the key order, so at one depth at most one
+    /// node's key range holds keys both inside and outside the prefix. A node all of whose
+    /// keys are in the prefix has `slot.lo <= q1` and emits when it does not stop at once. A
+    /// node none of whose keys are in it is reached only as a left child (a right child of it
+    /// is skipped), so its parent has its least key too; up that chain of left children the
+    /// root has none in the prefix, which is then empty, and only the leftmost node of each
+    /// depth is visited. So the nodes with `slot.hi >= q2` and `slot.lo > q1` are at most one
+    /// per depth, O(log k) by the AVL heights (asserted by the same test); the nodes that stop
+    /// at once are children of the other two kinds; O(log k + output) in all. The test checks
+    /// the entries reported against a model, not the count of nodes visited.
     fn report(&self, q1: &X, q2: &X, out: &mut Vec<PartAt>) {
         let Some(n) = &self.0 else {
             return;
@@ -18669,6 +19990,15 @@ fn unary_guard_arm(g: &Formula) -> Option<Con> {
 }
 
 /// Whether `guard` (a unary `Rel::Ge` row on one symbol) holds at every integer in `names`.
+///
+/// Proof: the row is `k*n + c >= 0`. For `k > 0` its left side grows with `n`, so it holds on
+/// all of `[lo, hi]` exactly when it holds at `lo`, which must be finite; `k < 0` is the same at
+/// `hi`; `k = 0` is the constant test. A classed product or a missing name returns false
+/// (no claim). Callers use a true result to skip every disjunction under one `PunctureKey`:
+/// each such `g` has `unary_guard_arm(g) == pk.2`, an arm of `g`, so `g` holds on the whole box
+/// and its part projects as the conjunction's other parts already do.
+/// Test: `puncture_context_guard_and_base_tightening_are_exact` (both outcomes, `k < 0` only;
+/// the `k > 0` and `k = 0` branches are unchecked).
 fn guard_entailed(guard: Option<&Con>, names: &imbl::OrdMap<Arc<str>, Product>) -> bool {
     let Some(c) = guard else {
         return false;
@@ -18857,6 +20187,15 @@ impl PunctureContext {
         // them. For a single linear inequality `a*x + d*y + e >= 0` over a finite box `[xd] x [yd]`,
         // the exact integer projection onto `x` and `y` is given by plugging the extreme corner of
         // the other variable (which is an integer).
+        // Proof: an integer `x` is in the projection iff some integer `y` in `yd` has
+        // `a*x + d*y + e >= 0`, iff `a*x + e + max_{y in yd} d*y >= 0`; that maximum is `d*yd.1`
+        // for `d >= 0` and `d*yd.0` for `d < 0`, both integers in `yd`, so `row_range` of
+        // `a*x + rx >= 0` is the exact range. The other rows of `base` do not narrow it: the loop
+        // above returned `None` unless every one-name row holds on the whole box, every two-name
+        // row on `{x, y}` has the same terms as `row` (kept as the tightest, smallest constant),
+        // and the one row with the leaf (`pendant`) is satisfied by a large enough leaf, since the
+        // leaf's domain is checked below to be `[low, +inf)` with coefficient 1 (else `None`).
+        // Test: `puncture_context_guard_and_base_tightening_are_exact` (`base_is_due = true`).
         if base_is_due && (!a.is_zero() || !d.is_zero()) {
             let (ox, oy) = (xd.clone(), yd.clone());
             let max_dy = if d.is_negative() {
@@ -18926,6 +20265,20 @@ impl PunctureContext {
                 // box (which attains `leaf`'s exact post-`(true, least)` lower bound) is reached
                 // at one of the <= 4 integer breakpoints where the unit-coefficient line meets
                 // the box edges.
+                // Proof (case `|a| = 1`; `|d| = 1` swaps the names): for an integer `y` the
+                // `x`-fiber is `xd` cut by `x >= -(e + d*y)/a` (or `<=`), whose end is an integer
+                // because `|a| = 1`. The best `x` for `cx*x` is one end of that fiber, so the
+                // objective in `y` is `cy*y + cx*clip(L(y))` with `L` linear: piecewise linear
+                // with kinks only where `L(y)` crosses `xd.0` or `xd.1`, and the set of `y` with a
+                // nonempty fiber is an interval ending at `yd` ends or at those crossings. A
+                // piecewise linear function of an integer is largest at an end of its interval or
+                // at the floor or ceiling of a kink. The candidates below are exactly those: the
+                // two `yd` ends plus floor and ceiling of both crossings (so up to six points, not
+                // four; the "<= 4" above counts crossings), each skipped when its fiber is empty.
+                // `a = 0` or `d = 0`: the row does not link `x` and `y`, the box is a rectangle and
+                // `(vx, vy)` is already its best corner.
+                // Not tested: no unit test reaches this branch (`value < 0`); the puncture test's
+                // pendant row is satisfied at `(vx, vy)`.
                 let mut best: Option<(Int, (Int, Int))> = None;
                 let mut consider = |px: Int, py: Int| {
                     let sc = &(&cx * &px) + &(&cy * &py);
@@ -19033,6 +20386,27 @@ impl PunctureContext {
 ///    arm for every integer `t >= 0` (supporting every value of `free_axis`), while
 ///    `(w0, end, v0)` satisfies the optional star leaf row for every `w0` in `dom(w)` (since
 ///    `s * w0 >= s * w_end` and `(w_end, end, v0)` already holds).
+///    `is_idle` asks for both arms (`has_ray && has_witness`): step 1 supports every value of
+///    the other name, step 2 every value of `free_axis` and of `w`.
+/// 3. `Rays` mode: both axes are unbounded on a side where every `uv_row` has a coefficient of
+///    that sign (`pos_u`/`neg_u`, `pos_v`/`neg_v`), so for any value of one name, sending the
+///    other to that infinity satisfies every `uv_row` and the box, and `w -> s * inf` satisfies
+///    the leaf row. With a leaf row, `twovar::point` found a point of `Q(w_end)` (box, `uv_rows`,
+///    leaf row at `w_end`), which as in step 2 supports every `w0` in `dom(w)`. An arm with
+///    `a · d > 0` for every listed ray `d` holds far enough along `d`.
+/// 4. The base part `(true, least)` (`Scope::part_halfline_idle` with `part.of == None`, used
+///    only when the base mentions no name but `u`, `v` and the leaf): `of` returning `Some` is
+///    the whole certificate. Steps 1 to 3 without an arm show that every value of `u`, `v` and
+///    `w` in its box extends to a point of the base: in `HalfLine` mode the free name's values
+///    by `(end + t * free_sign, v0)`, the other name's by `free_axis -> free_sign * inf`, `w`'s
+///    by `(end, v0)`; in `Rays` mode as in step 3. So projecting the base narrows nothing.
+///
+/// The rows reach `of` only in the forms these steps use: `of` returns `None` on an equation,
+/// a classed box, a constant row that fails, a one-name row that fails at its box end, or a
+/// row on a name other than `u`, `v`, `w`.
+/// Tests: `closed_cone_and_halfline_refuse_infeasible_leaf_slice` (`Rays` mode with a leaf row,
+/// both the refusal and an idle and a non-idle arm). No unit test builds `HalfLine` mode or the
+/// base-part use in step 4; those run only inside family tests.
 enum HalfLineMode {
     HalfLine {
         free_axis: usize,
@@ -19533,7 +20907,12 @@ fn hull_line_le_at(l1: &HullPt, l2: &HullPt, r1: &HullPt, r2: &HullPt, x_sep: &S
 
 /// Persistent leaf-oriented AVL tree storing 2D dual points ordered by slope, with each internal
 /// node carrying the lower-hull bridge `(p_l, p_r)` between its subtrees (Overmars & van Leeuwen,
-/// "Maintenance of configurations in the plane", JCSS 23(2), 1981, pp. 166-204).
+/// "Maintenance of configurations in the plane", JCSS 23(2), 1981, pp. 166-204,
+/// doi:10.1016/0022-0000(81)90012-x). Used from it: the bridge of two hulls separated by a
+/// slope is found by descending both subtrees, one level per step (`find_bridge`), so a path of
+/// O(log k) AVL nodes costs O(log^2 k). Test: `lower_hull_tree_and_box_face_index_match_the_oracle`
+/// checks AVL balance, the bridge at every node, and every query against brute force on random
+/// inputs; it does not measure the cost bounds.
 ///
 /// Worst-case persistent insert/remove: O(log^2 k) (O(log k) path nodes, each computing a bridge
 /// in O(log k)). Minimum evaluation `min_eval(v_q)`: O(log k). Reporting all `m` violating parts
@@ -19633,7 +21012,8 @@ impl HullNode {
     }
 
     /// Lower common tangent `(p*, q*)` between left subtree `l` and right subtree `r` in
-    /// O(height(l) + height(r)) by descending one level per step (Overmars & van Leeuwen 1981).
+    /// O(height(l) + height(r)) by descending one level per step (Overmars & van Leeuwen 1981,
+    /// JCSS 23(2), doi:10.1016/0022-0000(81)90012-x; see [`LowerHullTree`]).
     fn find_bridge(l: &HullNode, r: &HullNode) -> (HullPt, HullPt) {
         let x_sep = l.max_slope();
         let mut u = l;
@@ -20639,6 +22019,20 @@ impl PairRecession {
 
 /// Counter-clockwise boundary rays `(r1, r2)` of the non-empty open 2D cone
 /// `{ d : n · d > 0 for all n in normals }`, or `None` when that open cone is empty.
+///
+/// Proof. Read each normal `n` in the frame of the first, `n0 = (p, q)`: `(bx, by) = (n0 . n,
+/// n0 x n)`. The first alone gives the open half-plane between `n0` turned by -90 degrees
+/// (`(q, -p)`, frame `(0, -1)`) and by +90 (`(-q, p)`, frame `(0, 1)`). A normal with
+/// `by > 0` lies counter-clockwise of `n0` and cuts the low side at `n` turned by -90,
+/// `(n1, -n0)`, frame `(by, -bx)`; `by < 0` cuts the high side at `n` turned by +90, frame
+/// `(-by, bx)`; `by = 0` is `n0`'s direction (`bx > 0`, no cut) or the opposite (empty). All
+/// frame rays have a first coordinate `>= 0`, an arc of angle π in which [`Turn`]'s order is
+/// the angle order, so the cone is the open arc from the greatest low cut to the least high
+/// cut, empty when they do not satisfy `lo < hi`. A zero normal gives `bx = by = 0` and
+/// `None`. Test: `priority_search_tree_and_recession_arcs_match_the_oracle` checks, for 100
+/// random two-normal sectors, that a part is reported exactly when no arm is positive at
+/// either end ray (or at the middle ray of a half-plane sector). It uses two normals only,
+/// so a fault that needs three or more is not caught.
 fn open_cone_sector(normals: &[[Int; 2]]) -> Option<(Turn, Turn)> {
     let first = normals.first()?;
     let (p, q) = (&first[0], &first[1]);
@@ -20677,6 +22071,23 @@ fn open_cone_sector(normals: &[[Int; 2]]) -> Option<(Turn, Turn)> {
 /// or `None` when that closed cone is `{0}`. Used when `open_cone_sector` is empty (e.g., opposing
 /// normals `[-1, -1]` and `[1, 1]` in `persist`) together with an explicit integer feasibility
 /// witness of the base at the leaf's finite end.
+///
+/// Soundness (what the callers rely on): every `Some(d)` has passed `ok`, so `d != 0` and
+/// `n · d >= 0` for every normal; the result is in the cone whatever the angle bookkeeping does.
+/// Completeness (`None` only for the cone `{0}`) affects only how often a certificate is found.
+/// Its argument: all angles are in the frame of `first` (`(bx, by)` are `n`'s coordinates
+/// there), and every ray with `first · d >= 0` lies on the half circle from `-perp` to `+perp`,
+/// where `Turn` order is angle order. Each other normal with `by > 0` raises the lower end to
+/// its own perpendicular, `by < 0` lowers the upper end, and `by = 0, bx > 0` adds nothing, so
+/// with no opposite normal the cone is the arc `[rot_lo, rot_hi]`, nonzero iff
+/// `rot_lo <= rot_hi`, and `orig_lo` is its lower boundary ray. An opposite normal
+/// (`by = 0, bx < 0`) leaves only the line `±perp(first)`. A lower end that was raised excludes
+/// `-perp` (its normal has `by > 0`, so `n · (-perp) < 0`) and a lowered upper end excludes
+/// `+perp`; so if neither current candidate passes `ok` (which reads every normal, later ones
+/// too), both directions of the line are out and the cone is `{0}`.
+/// Test: `closed_cone_and_halfline_refuse_infeasible_leaf_slice` (through
+/// `Block::recession_uncertified` and `HalfLineContext::of`); no test calls this function
+/// directly, so the `None` return inside the opposite-normal branch is unchecked.
 fn closed_cone_ray(normals: &[[Int; 2]]) -> Option<Turn> {
     let first = normals.first()?;
     let (p, q) = (&first[0], &first[1]);
@@ -20730,6 +22141,19 @@ fn closed_cone_ray(normals: &[[Int; 2]]) -> Option<Turn> {
 /// optionally a third consistent-sign symbol `w` (`leaf` when `leaf` is present, or a unique
 /// least-mentioned consistent-sign symbol on a three-symbol disjunction) into its closed angular
 /// failure arcs `{ r != 0 : a_m · (r_u, r_v, 0) <= 0 for all arms m }` on `(-π, π]`.
+///
+/// Proof that the arc is the one closed arc of the failure set. With `b = -(a_u, a_v)` per arm
+/// (`bs`), the set is `{ r : b . r >= 0 for all b }`, an intersection of closed half-planes,
+/// so one closed convex arc of angle at most π (or a point pair when two `b` are opposite,
+/// each end kept only when every `b` holds at it). The cuts are those of
+/// [`open_cone_sector`] with `>=` for `>`: so `rot_lo > rot_hi` is the empty set and equal
+/// ends a single ray. An arc that passes π is stored as `[lo, π]` and `(-π, hi]` in `linear`
+/// for ray and plain sector queries, and as `(lo, hi)` with `lo > hi` in `wraps` for sectors
+/// that pass π themselves ([`RecessionBucket::report_sector`]). Arms with `a_u = a_v = 0` (on
+/// `w` alone) cut nothing and are left out of `bs`. Test: the oracle test named at
+/// [`open_cone_sector`] compares the ray reports for every nonzero direction in
+/// `[-5, 5]^2` with exact evaluation, on 80 random two-name parts; three-name parts (with a
+/// `w`) are covered only by the `case_wake` random tests.
 fn recession_shape(g: &Formula, leaf: Option<&Arc<str>>) -> Option<PartRecession> {
     let Formula::Or(arms) = g else {
         return None;
@@ -21055,7 +22479,8 @@ impl ArmNormals {
 ///
 /// In the frame of the end ([`turned`]), an arm whose normals `N` do not hold `(1, 0)` in their
 /// cone holds it in the cone of `N` and `q` exactly when `(1, 0)` lies in the cone of `q` and
-/// one normal `n` of `N` (Carathéodory's theorem for cones of the plane), that is when `q`
+/// one normal `n` of `N` (Carathéodory's theorem for cones of the plane, doi:10.1007/BF01449883,
+/// cited with its proof at [`in_cone`]), that is when `q`
 /// lies strictly within π of `n` on the other side of the axis. The directions so allowed are
 /// an open arc about the axis, from `-l` to `-r` for `l` the normal above the axis nearest it
 /// and `r` the one below, closed at the axis on a side with no normal. Every arm's arc holds
@@ -21108,6 +22533,21 @@ fn bounds_at(
     // splits all share the equalities, `Block::reframe`, so `with.1` holds none when `with.0`
     // is empty), such a row holds no name an arm's row lacks, so [`cancelled`] adds no row,
     // and the pair of names it gives below is the arms' own pair, there already.
+    // The steps, against the code: `cancelled` sums `r` only with a row that holds a name `r`
+    // lacks (its filter `new`), and every arm row holds exactly `own`'s two names, so a kept row
+    // of `with` (all its names in `own`) is never summed, and the rows `derive` makes are the
+    // arm's own; `eqs()` reads `context` alone, so it is empty too when no row of `with` is an
+    // equality; `dropped` reads `names` only. `ones` stays empty (no arm row is on one name), so
+    // the loop over `context` below and the `[u, v]` rule add no pair. So `context` empty and
+    // `context` the kept rows give the same `ArmNormals` and the same entries.
+    // Not proved: that `with.1` holds no equality when `with.0` is empty. `with.0` is the
+    // part's own split's equalities (`Split::with`), while the groups in `with.1` are read
+    // from `Block::outer`, the split outside the cases of a test; the step needs every
+    // equality of `outer` to be among the constraints of the split within the case. A case
+    // adds its constraints to the block's, but no check was made here that no constraint of
+    // `outer` is dropped or rewritten within a case. An equality of two names, one of them
+    // in `own`, in `with.1` and skipped here, would lose the rows `cancelled` gives on the
+    // other name.
     // Complexity tradeoff: naive version, every row of `with` read and kept, then read again
     // for each row of each arm, O(w) per call for w rows of `with`: `persist`'s k disjunctions
     // on `x` and `y`, made due by each of its k constraints `x + j*y >= -1000` in their group,
@@ -21232,6 +22672,15 @@ fn bounds_at(
 /// A persistent AVL tree of `x >= a || y <= b`, keyed by `(b, a)`. Each subtree
 /// keeps its greatest `a`, so a prefix bound and a minimax bound take one search path.
 /// Every tree walk follows children of strictly decreasing height, a topological order.
+///
+/// The balance rule is the AVL tree's (G. M. Adelson-Velsky and E. M. Landis, "An algorithm
+/// for the organization of information", Soviet Math. Doklady 3 (1962) 1259-1263; no DOI;
+/// cited from memory): [`Staircase::balanced`] joins two subtrees whose heights differ by at
+/// most 2 with one single or double rotation, so every node's children differ in height by at
+/// most 1 and the height is O(log k) for k distinct keys. Each node is built by
+/// [`Staircase::node`], which recomputes `max_a`, `height` and `size` from its children, so
+/// the rotations keep them. In `remove`, the in-order successor moves up with its `count`
+/// (and is removed from the right subtree with `all`), so no row is lost or duplicated.
 #[derive(Clone, Default)]
 struct Staircase(Option<Arc<StairNode>>);
 
@@ -21387,6 +22836,13 @@ impl Staircase {
         }
     }
     /// `max { a : b < y }`.
+    ///
+    /// Proof: keys are ordered by `(b, a)`, so every key in a node's left subtree has `b`
+    /// no greater than the node's and every key in its right subtree `b` no less. When the
+    /// node's `b < y`, the node and its whole left subtree are in the set, and their greatest
+    /// `a` is the node's `a` or the left subtree's `max_a`; the rest of the set is in the
+    /// right subtree. Otherwise the node and its right subtree have `b >= y` and are outside
+    /// the set, so it lies in the left subtree. One path, O(log k).
     fn lower_x(&self, y: &Int) -> Option<Int> {
         let (mut at, mut best) = (&self.0, None::<Int>);
         while let Some(n) = at {
@@ -21402,6 +22858,12 @@ impl Staircase {
         best
     }
     /// `min { b : a > x }`.
+    ///
+    /// Proof: the least `b` in the set belongs to the first key of the set in key order. If
+    /// the left subtree's `max_a > x`, some key there is in the set and every left key comes
+    /// before the node, so the first is in the left subtree (and one exists, so the search
+    /// there succeeds). Else no left key is in the set; if the node's `a > x` it is the
+    /// first; else the first is in the right subtree. One path, O(log k).
     fn upper_y(&self, x: &Int) -> Option<Int> {
         let mut at = &self.0;
         while let Some(n) = at {
@@ -21423,6 +22885,26 @@ impl Staircase {
     /// `min_i max(b_i, f(max_{j <= i} a_j))` over the rows in order of `b`, for `f` that does
     /// not increase, `None` standing for no bound: the least upper bound on y that the rows
     /// `x >= a_i || y <= b_i` and `y <= f(x)` allow.
+    ///
+    /// Proof. Number the rows 1..k in key order, so `b_1 <= ... <= b_k`, and let
+    /// `P_i = max_{j <= i} a_j` and `g(i) = max(b_i, f(P_i))`. With x at its least value
+    /// `A(y) = max { a : b < y }` (any greater x only lowers `f(x)`), an integer y is allowed
+    /// exactly when `y <= f(A(y))` (no bound when no row has `b < y`). (1) The allowed y are
+    /// exactly those with `y <= g(i)` for every i: if `y > b_i` and `y > f(P_i)` then row i
+    /// has `b < y`, so `A(y) >= P_i` and `f(A(y)) <= f(P_i) < y`; conversely if y is not
+    /// allowed, `A(y) = P_j` for the last row j with `b_j < y`, and `y > max(b_j, f(P_j))`.
+    /// So the bound is `min_i g(i)`. (2) `f(P_i) <= b_i` is false and then true along i,
+    /// since `f(P_i)` does not increase and `b_i` does not decrease; for i* the first true
+    /// index, `g(i) = f(P_i) >= f(P_{i*-1})` for i < i* and `g(i) = b_i >= b_{i*}` for
+    /// i >= i*, so the bound is `min(b_{i*}, f(P_{i*-1}))`, a term missing when i* = 1, and
+    /// `f(P_k)` when no index is true. (3) The descent keeps `prefix` = the greatest `a` of
+    /// the keys before the current subtree (unchanged going left; the node's `P` going right),
+    /// so `a` at a node is that node's `P`. It is the search for the first true key: `best`
+    /// ends as `b_{i*}`, and `prefix` as `P` of the last node it went right from, the key just
+    /// before i*. Rows with one key share one node and one `P`, so `count` does not matter.
+    /// Tests: `families::stair_cover_against_the_oracle` and the `coordmix*` oracle tests
+    /// (tests/steps/l01_39_scope_relations/families.rs) check the bounds that use this; they
+    /// use 1 to 3 rows, so a descent of more than two levels is not checked against the oracle.
     // Complexity tradeoff: evaluating the bound at every row costs O(k) per call for k rows;
     // the descent keeps the prefix maximum of `a` and calls `f` once per level, O(log k)
     // calls of `f`.
@@ -21486,6 +22968,29 @@ impl Scope {
     /// Exact box marginals for threshold rows and positive upper half-planes on their two
     /// names. Other disjunctions are still projected normally. Refuses classes, holes,
     /// equalities, a third name, and other half-plane directions; the ordinary rule then runs.
+    ///
+    /// Proof of exactness, for the integer points of the box `[xl, xh] x [yl, yh]` (one
+    /// interval each, no class: checked first) that meet the threshold rows
+    /// `x >= a || y <= b` ([`Staircase`]), the planes `p x + q y <= c` with `p, q > 0`, and
+    /// the upper disjunctions ([`UpperBounds`], each arm such a plane). Every constraint is
+    /// closed under raising x and lowering y, or under lowering both: thresholds hold when x
+    /// rises or y falls, planes and upper disjunctions when either falls. (a) So for fixed y
+    /// the allowed x form an interval whose lower end `max(xl, A(y))`, `A(y) = lower_x(y)`,
+    /// does not fall as y rises and whose upper end does not rise; the x marginal is the
+    /// slice at `y = yl`: lower end `lower_x(yl)`, upper end `xh` and every plane and upper
+    /// disjunction read at `yl` (the loop above and `UpperBounds::x`). (b) For fixed x, the
+    /// allowed y fall downward, so with x at its least value `max(xl, A(y))` the allowed y are
+    /// a downward set above `yl` and its greatest is the least of separate bounds: `yh`;
+    /// `A(y) <= xh`, which is `y <= upper_y(xh)`; for each plane `y <= (c - p xl) / q` and
+    /// `y <= f(A(y))`, which [`Staircase::upper_dec`] solves exactly (`upper_case`); and the
+    /// same two for each upper disjunction (`UpperBounds::y_xl` and `y_tree`). Using `xh`
+    /// already lowered by the planes at `yl` is sound, since `y >= yl` implies it. The lower
+    /// end of y is never raised: if the slice at `yl` is empty every slice is, which shows as
+    /// `l > h` on x. Floors are exact on integers (`div_floor`, positive divisors).
+    /// Tests: `families::stair_cover_against_the_oracle` (1 to 3 rows, boxes up to 1000, and
+    /// free names) and the `coordmix*` and `upper_release_against_the_oracle` tests compare
+    /// the box with the oracle's integer points; they cannot catch an error that shows only
+    /// outside the oracle's window or with more rows than they use.
     // Complexity tradeoff: projecting k threshold rows separately costs O(k) per case.
     // The aggregate query costs O((r + 1) log k) for r base rows. The caller shares the
     // threshold rows' snapshot and walks only ordinary users after a name change. Ordinary
@@ -21761,6 +23266,21 @@ impl Block {
 
     /// The parts an aggregate stood for while it held (`stair`, `ray`) and that none stands for
     /// now: each is projected by itself again, the upper disjunctions as the threshold rows.
+    ///
+    /// These are exactly the parts that were [`Block::managed`] under the old flags and are not
+    /// under the new ones: `managed` is `stair_managed` on [`Role::stair`] (`Stair` and `Upper`)
+    /// or `ray_managed` on `Ray`, and this keeps a role when its flag went from true to false.
+    /// The flags change only in [`Block::update`], [`Scope::cover`] and [`Scope::block`] (which
+    /// sets `ray_managed` to what `update` just gave it from the same names, or on a new block
+    /// whose parts are all due). `update` makes these
+    /// due; [`Scope::project_block`] does so after its first `cover` and after the one in each
+    /// step of its loop. Its other `cover` calls (after `project_threshold`, and after the
+    /// final `project_part(&all)` and the entry-hole projection) end the call right after
+    /// projecting the threshold shape or every part together, and do not release.
+    /// Skipping a projection only leaves a box wider, so a release missed is never unsound.
+    /// Not proved: that the projection of every part together at those exits is at least as
+    /// narrow as each released part's own projection (true when that projection is exact).
+    /// Test: `families::upper_release_against_the_oracle` (y [..=-1] where main gave [..=5]).
     fn released(&self, stair: bool, ray: bool) -> impl Iterator<Item = &PartAt> {
         let (stair, ray) = (stair && !self.stair_managed, ray && !self.ray_managed);
         (self.roles.iter())
@@ -21776,6 +23296,13 @@ impl Block {
     /// Common-ray bound while y <= 0: each member is equivalent to x >= d+j*y,
     /// and a row p*x+q*y <= c with p >= 0 then gives y <= (c-p*d)/(p*j+q)
     /// at integer floors; the least such bound over the distinct (j, d) holds.
+    /// Derivation: a member's arms are `x + b_i y >= d` ([`ray_row`]: x coefficient 1, one
+    /// constant), and at `y <= 0` the arm with the least `b_i = -j` allows the most x, so the
+    /// member is `x >= d + j y`, `j > 0` (`ray_row` refuses `j <= 0`). Then
+    /// `c >= p x + q y >= p d + (p j + q) y` with `p j + q > 0`, so `y <= (c - p d)/(p j + q)`,
+    /// floored since y is an integer. Every member is a conjunct, so the least bound holds.
+    /// It is used only when y's upper end `h <= 0` (checked below), so `y <= 0` holds; the
+    /// bound is sound, not claimed exact. `x >= l` gives `y <= (c - p l)/q` the same way.
     /// Complexity tradeoff: reading the r rows against the R distinct (j, d) at each run
     /// costs O(r R) per run, O(k^2) over k tests that each add a ray; the block keeps the
     /// least bound ([`RayLeast`]) and takes in each ray as it enters, O(r + log^2 R), and
@@ -22000,6 +23527,24 @@ impl RayLeast {
 /// upper end of y and of x over the disjunctions, none where no disjunction bounds it. The
 /// upper end of y is the least of `y_tree`, which depends on the staircase alone, and `y_xl`,
 /// which depends on `xl` alone; that of x, `x`, depends on `yl` alone.
+///
+/// Why the kept values are those of the block's upper disjunctions now: [`Block::add_part`]
+/// takes in each part of role `Upper` as it enters, [`Block::remove_part`] drops the value when
+/// one leaves, and [`Scope::cover_staircase`] builds it anew from every `Upper` part when the
+/// pair or the staircase is not the one it was built for ([`Staircase::same`]);
+/// [`UpperBounds::at_lows`] reads the arms again whenever a lower end differs. Each value is
+/// sound: an integer y meets an arm `p x + q y <= c` exactly when
+/// `y <= floor((c - p x) / q)`, so the disjunction allows `y <= upper_y_at(x)`, which does not
+/// increase in x (p > 0), and `x >= xl` gives `y <= upper_y_at(xl)`; likewise for x at `yl`.
+///
+/// Why the split gives the same value as reading each disjunction whole: disjunction `d` bounds
+/// y by `least_of(T_d, L_d)`, `T_d` from the staircase and `L_d` the arms at `x = xl`; the bound
+/// over all `d` is the least of these, and `least_of` (the minimum, `None` meaning no bound) is
+/// associative and commutative, so it equals `least_of(least_d T_d, least_d L_d)`, which is
+/// `least_of(y_tree, y_xl)`. `at_lows` recomputes `y_xl` and `x` from `arms` (every disjunction
+/// taken in) whenever its end changes, and sets them to `None` for an end that is no bound,
+/// as `take` does. Test: none compares the split against a whole reading; the
+/// coordmix families check only the final answers.
 #[derive(Clone)]
 struct UpperBounds {
     pair: NamePair,
@@ -22199,7 +23744,8 @@ fn eliminate(
     // replaces at least as many rows as it makes; at most the initial number of
     // names disappear and the row count never exceeds its initial value.
     // This is a structural refusal of the certificate, with no size cutoff.
-    // Pugh, The Omega test, Supercomputing '91 (1991), sec. 2.3.2, supplies the dark shadow;
+    // Pugh, The Omega test, Supercomputing '91 (1991), doi:10.1145/125826.125848,
+    // sec. 2.3.2, supplies the dark shadow;
     // its sufficient integer-witness argument is unchanged by refusing a step.
     let ns = both(&rows);
     for n in ns.into_iter().filter(|n| Some(n) != keep) {
@@ -22214,6 +23760,17 @@ fn eliminate(
             }
         }
     }
+    // The steps of the row bound above, with r0 the rows after the box ends and this first
+    // `parallel_rows` (at most the input rows plus two per name of `both`): (a) a
+    // Fourier-Motzkin step on `m` takes out the p + q rows that mention `m` and adds p*q rows;
+    // it runs only when p*q - t <= p + q, where t = 1 when `m` has unit rows `m + l >= 0` and
+    // `-m + h >= 0` with l + h >= 0 (unique, as `parallel_rows` keeps one row per term map):
+    // their pair gives the row of no terms and constant h + l >= 0, which `parallel_rows`
+    // drops. (b) `parallel_rows` only merges rows of one term map and drops true rows, so it
+    // never adds one. (c) The one-sided step drops every row of `u` (at least one) and adds
+    // none. So the count never rises above r0. Each step (a) or (c) takes `m` or `u` out of
+    // every row and brings in no name (`rest` filters `m` out; the other terms come from
+    // existing rows), so the loop ends after at most as many steps as there are names.
     rows = parallel_rows(rows);
     loop {
         let mut counts: BTreeMap<Arc<str>, (usize, usize)> = BTreeMap::new();
@@ -22239,7 +23796,7 @@ fn eliminate(
         // provided no other variable in a dropped row is empty. O(r) per dropped variable;
         // strictly shrinks `rows`. Prior work: Fourier-Motzkin elimination of unbounded one-sided
         // variables (J. B. J. Fourier, 1827; T. S. Motzkin, 1936; W. Pugh, "The Omega test",
-        // Supercomputing '91, 1991).
+        // Supercomputing '91, 1991, doi:10.1145/125826.125848).
         if keep.is_some()
             && let Some(u) = counts.iter().find_map(|(n, &(p, q))| {
                 if Some(n) == keep || (p > 0 && q > 0) || (p == 0 && q == 0) {
@@ -22339,7 +23896,8 @@ fn eliminate(
 // Complexity tradeoff: group equal primitive term maps in O(T log r), retaining
 // their tightest constant. For integer variables gcd division with floor preserves
 // each row exactly. This is parallel-row normalization from Pugh's Omega test
-// (Supercomputing '91, 1991, sec. 2.1: divide a row by the gcd of its coefficients and floor
+// (Supercomputing '91, 1991, doi:10.1145/125826.125848,
+// sec. 2.1: divide a row by the gcd of its coefficients and floor
 // the constant; sec. 2.3: "we also eliminate constraints that are made redundant by a single
 // other constraint (e.g., x + 2y ≥ 0 is made redundant by x + 2y ≥ 5)"; sec. 2.4 finds such
 // pairs by a hash of the coefficients); no pairwise redundancy search is needed.
@@ -22442,6 +24000,35 @@ fn range(rows: &[Row], sums: &[(Num, usize)], n: &Arc<str>, p: &Product) -> Opti
 /// which `f` has the value `value` and `atoms` hold: `f` is read as a union of conjunctions
 /// of atoms, a conjunction kept only where at most one of its members is no atom and does
 /// not have the value asked at every point of the box given by `get`; any other is dropped.
+///
+/// Corrected (proofdoc4b a3c): the union does not always hold every such point; only the
+/// other direction holds. Each point of the box (the hulls of the names' intervals) at which
+/// an output conjunction holds is a point at which `f` has `value`. Proof by induction on
+/// `f`: `atoms_of` is exact over the integers (`!(t >= 0)` is `-t - 1 >= 0`, `!(t == 0)` is
+/// `t >= 1` or `-t >= 1`); a union (an `Or` asked true, an `And` asked false) recurses into
+/// every member; for an intersection, each member left out is `fixed` at `value` on the box
+/// and each other member's rows are kept, so a point of the output is a point of every
+/// member. An intersection with two or more members that are not one conjunction of atoms
+/// gives nothing, so points are lost: `(x >= 1 || y >= 1) && (x <= 0 || y <= 0)` gives no
+/// conjunction though `x = 1, y = 0` holds it. `Scope::idle` needs only the direction
+/// proved (a witness of the output is a witness of `f`).
+///
+/// The whole union, on a shape (proofdoc4b). Call an intersection reached by the recursion
+/// narrow when, after its members `fixed` at `value` are left out, at most one member is not
+/// read as one conjunction of atoms (a constraint, or a negated constraint, whose
+/// `atoms_of` is one conjunction), and every constraint of `f` reads only names. If every
+/// intersection reached is narrow, the union of the output, each conjunction with `atoms`,
+/// holds every point `p` of the box at which `f` has `value` and `atoms` hold. Proof by
+/// induction on `f`, with `p` fixed. A constraint: `atoms_of` lists every conjunction of
+/// its value, exactly (names only, so it is `Some`). `!g`: `g` at `!value`. A union: `p`
+/// has `value` at some member, and the recursion visits every member. An intersection: `p`
+/// has `value` at every member; a member left out is not needed; each member read as atoms
+/// holds at `p` by exactness, so `p` meets the extended `atoms`; with no member left the
+/// extended `atoms` are pushed, and with one member `g` the induction on `g` with the
+/// extended `atoms` gives a conjunction holding `p`. `Scope::unbounded_unit` reads the
+/// output as the whole union and checks the shape (proof at its comment). Before the
+/// negated-constraint branch below, `!(x >= 1) && !(y >= 1)` was not narrow, and that
+/// caller lost the arm's points; test `conjunctions_keep_an_arm_of_negated_constraints`.
 fn conjunctions(
     f: &Formula,
     value: bool,
@@ -22460,11 +24047,22 @@ fn conjunctions(
             let k = atoms.len();
             let mut rest = vec![];
             for g in gs.iter().filter(|g| !fixed(g, value, get)) {
-                match g {
-                    Formula::Con(c) => match atoms_of(c, value).as_deref() {
-                        Some([conj]) => atoms.extend(conj.iter().cloned()),
-                        _ => rest.push(g),
+                // A negated constraint `!c` has the value `value` exactly where `c` has
+                // `!value`, so `atoms_of(c, !value)` reads it as an atom when that is one
+                // conjunction (`!(c >= 0)` is the row `-c - 1 >= 0`, exact over the integers).
+                // Before, only a bare constraint was read so, and an arm
+                // `!(x >= 1) && !(y >= 1)` was dropped though it has points; test
+                // `conjunctions_keep_an_arm_of_negated_constraints`, red before, green after.
+                let (c, v) = match g {
+                    Formula::Con(c) => (Some(c), value),
+                    Formula::Not(n) => match &**n {
+                        Formula::Con(c) => (Some(c), !value),
+                        _ => (None, value),
                     },
+                    _ => (None, value),
+                };
+                match c.and_then(|c| atoms_of(c, v)).as_deref() {
+                    Some([conj]) => atoms.extend(conj.iter().cloned()),
                     _ => rest.push(g),
                 }
             }
@@ -22504,8 +24102,25 @@ fn covers(mut spans: Vec<(End, End)>, lo: &End, hi: &End) -> bool {
 // projections, 35.51x at k = 3 -> 24). Used: two-pointer sweep over sorted `spans` and `ints`
 // pieces in O(s log s + p) for s spans and p pieces (eliminated witness variables in `eliminate`
 // still require `only()`). Reference: W. Pugh, "The Omega test", Supercomputing '91, 1991,
+// doi:10.1145/125826.125848,
 // sec. 2.3.2, for the elimination in `eliminate` that this check serves; the two-pointer sweep
 // itself is not taken from that paper.
+// Proof of the sweep. The spans come from `range` (the only caller is `Scope::idle`), whose
+// ends are `row_ends` values, integers by `div_floor`, or infinite; so `need = b + 1` is the
+// least integer after a span. Invariant: within a piece, every integer from `plo` to
+// `need - 1` lies in a span. Spans are sorted by `(a, b)`; a span with `b < need` covers no
+// integer still needed in this piece or a later one (`need` only grows, pieces ascend), so
+// `idx` passes it for good; a span with `a > need` and every later one (`a` not smaller)
+// misses `need`, so `false` is exact; else the span holds `need` and moves it past `b`, or
+// `b = +inf` covers the rest. A piece ends covered when `need > phi`. A step either passes a
+// span (at most `s` such steps) or moves `need` past the span's `b`, after which that span is
+// passed or the piece ends, so at most `s + p` such steps: O(s log s + p) with the sort.
+// The modulus: when no piece has two integers (and there are two pieces or more), a sound
+// projection could add a class holding every piece, which covering the pieces does not rule
+// out, so `false`. When a piece holds `z` and `z + 1`, a class holding both has modulus 1.
+// Test: `case_wake::tests_beside_holes_and_classes_give_the_projection_from_scratch` and the
+// `star_extra` bench named above; they compare intervals and cannot catch a `false` that
+// costs a projection.
 fn covers_set(mut spans: Vec<(End, End)>, ints: &IntervalSet) -> bool {
     if let Some((lo, hi)) = ints.only() {
         return covers(spans, lo, hi);
@@ -22587,6 +24202,30 @@ impl Scope {
     /// a class, and for every value of each name some integer point of the box of the others
     /// satisfies the part's formula ([`conjunctions`], [`range`]). Each conjunction's rows
     /// are eliminated and summed once for all names it bounds from one side.
+    ///
+    /// Proof that `true` means projecting the part leaves every name as it is. Let f be
+    /// `b.formula(part)` and n a name of f. (1) A point of an output of [`conjunctions`] in
+    /// the box is a point of f (proved at `conjunctions`). (2) For n of `two`,
+    /// [`eliminate`] with `keep = n` returns rows only when no name but n is bounded from both
+    /// sides (else `needed` and `None`); each Fourier-Motzkin step uses the dark shadow, so
+    /// integer values of the remaining names that meet the new rows extend to an integer of
+    /// the eliminated name in its interval (Pugh 1991 sec. 2.3.2, doi:10.1145/125826.125848;
+    /// the interval's ends are rows, and only names of one interval and no class are
+    /// eliminated, `only()`); a one-sided name with no end on its side is dropped with its
+    /// rows, since a large enough value meets them all; `parallel_rows` keeps each row's
+    /// integer points. (3) Every name but n left in the rows has one sign, so the corner of
+    /// the box at its end in that sign raises every row at once (a set's `bounds` are members
+    /// of it; an infinite end gives arbitrarily far members), and [`range`] gives exactly the
+    /// v for which every row holds at that corner with n = v. For n not in `two`, the shared
+    /// elimination leaves n one-sided (its box rows are added only for names of `both`, and a
+    /// sum of rows with n of one sign keeps that sign), and the sparse pass equals `range`
+    /// (proof below). So each span value v of n has an integer point of f with n = v and the
+    /// other names in their sets. (4) `covers_set` holds, so every member of n's set is such
+    /// a v and no class can be proved (proof at `covers_set`). The exact projection of f
+    /// onto n then holds n's set, so a sound projection, met with the set, gives the set back.
+    /// No name moves, so nothing is woken. Not caught: a refusal the projection would report
+    /// (stated at the caller). Tests: `families::projection_shortcut_cases` (cases G1 to G5,
+    /// E1, A26, C1 to C4), which compare facts with the oracle's in a small window.
     fn idle(&self, b: &Block, part: &Part) -> bool {
         // Complexity tradeoff: consult cached structural indexes before reading
         // the base. A constraint-only part is considered only for a free leaf,
@@ -22649,6 +24288,14 @@ impl Scope {
             // (`unary_arms`, k = 12,288) was woken inside a case. Used: one sparse pass over
             // `(r, s)` accumulates per-name `(up, down)` bounds and negative-sum row counts in
             // O(sum(|terms|) log |names| + |names| log |names|), giving identical intervals.
+            // Proof, step by step against `range`: a row without `n` makes `range` refuse when
+            // it is bad (`free == 0`, sum below 0); here `bad_hits[n] == bad_rows` holds exactly
+            // when every bad row holds `n`, so the span is skipped exactly when `range` refuses
+            // for that reason. A row with `n` runs the same `top(c, get(n))`: `None` makes
+            // `range` refuse and sets the entry to `None`, no span, and later rows leave it so;
+            // otherwise the same `m`, `row_free` and `row_ends` meet into `(up, down)`. A name in
+            // no row gets `(-inf, +inf)` from both. Both end with `up <= down`. Tests: the
+            // `families` answers (`unary_arms`) and `case_wake.rs`, which compare intervals.
             let mut bad_rows = 0usize;
             let mut bad_hits: BTreeMap<&Arc<str>, usize> = BTreeMap::new();
             let mut shared_bounds: BTreeMap<&Arc<str>, Option<(End, End)>> = BTreeMap::new();
@@ -22742,9 +24389,11 @@ impl Scope {
         // Used: record the least ends certified idle so far in `certified_chains`, subsuming all
         // higher members in O(e) comparisons (Gemini seat's prototype: `idle_calls` 269 -> 79 at k = 16).
         // Reference: W. Pugh, "A practical algorithm for exact array dependence analysis",
-        // Communications of the ACM 35(8), 1992, pp. 102-114, the journal version of "The Omega
+        // Communications of the ACM 35(8), 1992, pp. 102-114, doi:10.1145/135226.135233,
+        // the journal version of "The Omega
         // test: a fast and practical integer programming algorithm for dependence analysis",
-        // Supercomputing '91 (the comment paired the first title with the second venue); the
+        // Supercomputing '91, doi:10.1145/125826.125848 (the comment paired the first title
+        // with the second venue); the
         // crate root's References.
         if let Some((k, ends)) = &part.chain
             && let Some(q_ends) = certified_chains.get(k)
@@ -22792,6 +24441,17 @@ impl Scope {
 // syntax may still affect refusals; this is tested by families::projection_shortcut_cases.
 // Measured in review round 3 (allocator calls, 8n ratio), persist: without this rule R=26.29, with it R=12.66;
 // compact_abs is also present in both measurements.
+// Proof that the output has the same points as the input. A group holds the rows
+// `a x + b y + c >= 0` with one key (x, y, a, c) (the BTreeMap key below), and `lo`, `hi`
+// are its rows of least and greatest `b`. For a row of the group with b_lo <= b <= b_hi,
+// write b = t b_lo + (1 - t) b_hi with t in [0, 1] (t = 1 when b_lo = b_hi); then
+// a x + b y + c = t (a x + b_lo y + c) + (1 - t) (a x + b_hi y + c) >= 0 at every real
+// point where the two kept rows hold. So the dropped rows are implied, and every other
+// conjunct is kept as it is. No sign or size of a, b, c is used. The book is cited only
+// for the method; this argument does not depend on it (Preparata and Shamos,
+// doi:10.1007/978-1-4612-1098-6, DOI from memory, not checked). Test:
+// `tests::extreme_base_and_compact_abs_keep_every_integer_point` (this file); it cannot
+// catch an error at a point outside [-6, 6]^3 or with names other than x, y, z.
 fn extreme_base(cons: &[&Arc<Formula>]) -> Formula {
     let eligible = |g: &&&Arc<Formula>| {
         matches!(&****g,Formula::Con(c)
@@ -22847,6 +24507,18 @@ type AbsGroups = BTreeMap<(BTreeMap<Atom, Int>, Atom), BTreeMap<Int, (Int, Formu
 // Equivalence preserves integer points; families::projection_shortcut_cases compares the approximate
 // projector's outputs, since equivalence alone does not establish equal refusals.
 // Measured in review round 3 (allocator calls, 8n ratio) without/with: coordmix_floor 26.64/11.97, persist 15.94/12.66.
+// Proof that the output has the same points as the input. (1) A shaped clause is
+// `F + |k y| + c >= 0`: its pair of arms holds iff max(F + k y, F - k y) + c >= 0, and
+// max(k y, -k y) = |k y|; an extra arm `F + d >= 0` with d <= c implies the pair (see
+// inside). (2) In one group (same F and y), a clause (k1, c1) implies (k2, c2) when
+// k1 <= k2 and c1 <= c2, since F + k2 |y| + c2 >= F + k1 |y| + c1 for |y| >= 0. (3) `rows`
+// keeps, per |k|, the clause of least c (a clause with the same k and a larger or equal c
+// is implied by (2)). The loop reads |k| in increasing order and keeps a clause only when
+// its c is below every c kept before; `least` is always the c of a kept clause with a
+// smaller or equal |k|, so each clause it drops is implied by that kept clause, by (2).
+// Unshaped conjuncts are kept as they are. Test:
+// `tests::extreme_base_and_compact_abs_keep_every_integer_point` (this file); it cannot
+// catch an error at a point outside [-6, 6]^3 or with names other than x, y, z.
 fn compact_abs(part: &Formula) -> Formula {
     let mut groups = AbsGroups::new();
     let mut out = vec![];
@@ -22933,6 +24605,35 @@ impl Scope {
     // certificate; work at 8n falls from 666544 to 447009 allocations. This
     // elementary recession-cone certificate replaces general half-plane hull construction (Preparata and Shamos, Computational Geometry: An Introduction,
     // Springer-Verlag, 1985) on this fragment, without enumerating integer points.
+    // Proof, per conjunction of `rest` (pendant `x - w + k >= 0`, so `x >= w - k`, as
+    // `s = 1`, `sigma = -1`; `x` unbounded above, checked): the unary rows meet the
+    // interval domains, which stay intervals; with at most one other row `r`, `range` gives
+    // for u (and for v) exactly the values with a v (a u) in its domain meeting `r` (one row:
+    // the other name has one sign), and a large enough `x` then meets the pendant, so the
+    // joins for u and v are exact for this conjunction. For `x`: if a feasible integer point
+    // z exists (the corner when `sums` has no free name and a sum >= 0; far enough along the
+    // free names otherwise; else the conjunction is skipped or `range` refuses), a ray d among
+    // the six, integer, with each nonzero d[i] toward an infinite end of its domain and
+    // `k·d >= 0`, keeps z + t d an integer point for every t >= 0, since
+    // `k·(z + t d) + c = k·z + c + t (k·d)`; `signs·d < 0` makes `w` fall without bound
+    // along it, so every value of `x` has a point and `top` (met with x's set by the caller)
+    // is exact. Refusing when no ray of the six works is sound (`None`). That `conjunctions`
+    // returns the whole union of `rest` (the sentence above), by its "whole union, on a
+    // shape" lemma; the steps (proofdoc4b). (1) The only caller, `project_by_pendants`, passes
+    // `rest` only when `one_disjunction(t)` is `Some` for each member `t` and the sum is at
+    // most 1, so each `t` is a constraint, `!(c >= 0)` (0), or one of `!(c == 0)` and a
+    // disjunction of constraints, `!(c >= 0)` and conjunctions of those (1), and at most one
+    // member has 1. (2) `Formula::and` (`Joining`) flattens only conjunctions, of which
+    // `rest` has none, drops `true`, gives `false` for an empty disjunction or two equalities
+    // that cannot both hold, and keeps of two constraints on one left-hand side the tighter:
+    // an equal formula whose parts are members of `rest` or constraints. (3) The check below
+    // refuses any constraint of `rest` (`Formula::cons` walks every one) reading other than
+    // names. (4) So the top intersection has at most one member not read as atoms (the one
+    // with 1); inside a disjunction, an arm is a constraint, `!(c >= 0)` or a conjunction of
+    // these, each read as atoms; `!(c == 0)` at true is the union of two rows. Every
+    // intersection reached is narrow. Test `conjunctions_keep_an_arm_of_negated_constraints`
+    // (that `conjunctions` keeps the arm); it cannot catch a later caller that passes
+    // a `rest` of another shape, which would need the lemma's check again.
     fn unbounded_unit(
         &self,
         p: &Pendant,
@@ -23075,6 +24776,103 @@ mod tests {
     mod bench;
 
     use zedc_presburger::upper_hull::not_above;
+
+    /// [`Staircase::lower_x`], [`Staircase::upper_y`] and [`Staircase::upper_case`] match a
+    /// scan of the rows, with repeated keys and up to 40 rows (trees of several levels), and
+    /// [`in_cone`] matches a test of every pair and every single vector by Cramer's rule.
+    /// [`conjunctions`] reads a negated constraint whose negation is one row as an atom, so
+    /// an arm `!(x >= 1) && !(y >= 1)` of a disjunction is kept: before, its two members were
+    /// no atoms and the arm was dropped, and [`Scope::unbounded_unit`], which needs every
+    /// conjunction, narrowed the names past the points of that arm.
+    #[test]
+    fn conjunctions_keep_an_arm_of_negated_constraints() {
+        let sym = |n: &str| Lin::atom(Atom::Sym(n.into()));
+        let ge = |n: &str, k: i64| Formula::Con(Con::ge(&sym(n), &Lin::constant(k)));
+        // Built by the constructors programs reach, which keep `Not(Con)` as it is.
+        let f = Formula::or(vec![
+            Formula::and(vec![
+                Formula::negate(ge("x", 1)),
+                Formula::negate(ge("y", 1)),
+            ]),
+            ge("x", 5),
+        ]);
+        assert!(matches!(&f, Formula::Or(gs) if matches!(&gs[0], Formula::And(_))));
+        let mut out = vec![];
+        conjunctions(&f, true, &mut vec![], &|_: &str| Product::top(), &mut out);
+        assert_eq!(out.len(), 2, "{out:?}");
+        let x: Arc<str> = "x".into();
+        let y: Arc<str> = "y".into();
+        // `-x >= 0` and `-y >= 0`, that is x <= 0 and y <= 0.
+        let arm: Vec<Row> = vec![
+            (BTreeMap::from([(x, Num::from(-1i64))]), Num::ZERO),
+            (BTreeMap::from([(y, Num::from(-1i64))]), Num::ZERO),
+        ];
+        assert!(out.contains(&arm), "{out:?}");
+    }
+
+    #[test]
+    fn staircase_queries_and_plane_cones_match_a_scan() {
+        let mut seed: u64 = 0x9e37_79b9_7f4a_7c15;
+        let mut next = |m: u64| {
+            seed ^= seed << 13;
+            seed ^= seed >> 7;
+            seed ^= seed << 17;
+            seed % m
+        };
+        for _ in 0..300 {
+            let n = next(41) as usize;
+            let rows: Vec<(i64, i64)> = (0..n)
+                .map(|_| (next(21) as i64 - 10, next(21) as i64 - 10))
+                .collect();
+            let mut tree = Staircase::default();
+            for (b, a) in &rows {
+                tree = tree.insert((Int::from(*b), Int::from(*a)));
+            }
+            for v in -12..=12i64 {
+                let lower = rows.iter().filter(|r| r.0 < v).map(|r| r.1).max();
+                assert_eq!(tree.lower_x(&Int::from(v)), lower.map(Int::from));
+                let upper = rows.iter().filter(|r| r.1 > v).map(|r| r.0).min();
+                assert_eq!(tree.upper_y(&Int::from(v)), upper.map(Int::from));
+            }
+            let (p, q, c) = (1 + next(3) as i64, 1 + next(3) as i64, next(21) as i64 - 10);
+            // An integer y is allowed when x = max { a : b < y } (none: any x) meets
+            // `p x + q y <= c`; the allowed y fall downward and include every y <= least b.
+            let allowed = |y: i64| match rows.iter().filter(|r| r.0 < y).map(|r| r.1).max() {
+                None => true,
+                Some(x) => p * x + q * y <= c,
+            };
+            let want = (-200..=200i64).filter(|&y| allowed(y)).max();
+            let got = tree.upper_case(&Int::from(p), &Int::from(q), &Int::from(c));
+            assert_eq!(
+                got,
+                if rows.is_empty() {
+                    None
+                } else {
+                    want.map(Int::from)
+                }
+            );
+        }
+        for _ in 0..3000 {
+            let t = [next(7) as i64 - 3, next(7) as i64 - 3];
+            if t == [0, 0] {
+                continue;
+            }
+            let gens: Vec<[i64; 2]> = (0..next(5))
+                .map(|_| [next(7) as i64 - 3, next(7) as i64 - 3])
+                .collect();
+            let cr = |u: [i64; 2], w: [i64; 2]| u[0] * w[1] - u[1] * w[0];
+            let one = |g: [i64; 2]| cr(t, g) == 0 && t[0] * g[0] + t[1] * g[1] > 0;
+            // t = l g + m h with l = cr(t, h) / cr(g, h) and m = cr(g, t) / cr(g, h).
+            let two = |g: [i64; 2], h: [i64; 2]| {
+                let d = cr(g, h);
+                d != 0 && cr(t, h) * d >= 0 && cr(g, t) * d >= 0
+            };
+            let want = gens.iter().any(|&g| one(g))
+                || gens.iter().any(|&g| gens.iter().any(|&h| two(g, h)));
+            let ints: Vec<[Int; 2]> = gens.iter().map(|g| g.map(Int::from)).collect();
+            assert_eq!(in_cone(&t.map(Int::from), &ints), want, "{t:?} in {gens:?}");
+        }
+    }
 
     /// [`RayHull::least`] gives the least [`ray_bound`] over every ray, for hulls built at
     /// once ([`RayHull::of`]) and ray by ray in a shuffled order ([`RayHull::insert`]), with
@@ -23661,6 +25459,87 @@ mod tests {
             assert_eq!(got, want.into_iter().collect::<Vec<_>>(), "{stair} {ray}");
         }
         assert_eq!(users.due(false, false).count(), 7);
+    }
+
+    /// [`extreme_base`] and [`compact_abs`] keep every integer point of their input (the
+    /// proofs at each): random rows that share keys, checked at every point of [-6, 6]^3.
+    #[test]
+    fn extreme_base_and_compact_abs_keep_every_integer_point() {
+        fn eval(f: &Formula, v: &[i64; 3]) -> bool {
+            match f {
+                Formula::Con(c) => {
+                    let mut t = c.lin.constant.to_i128().expect("small");
+                    for (a, k) in &c.lin.terms {
+                        let Atom::Sym(n) = a else { panic!("a name") };
+                        let i = ["x", "y", "z"]
+                            .iter()
+                            .position(|m| **m == **n)
+                            .expect("x, y, z");
+                        t += k.to_i128().expect("small") * i128::from(v[i]);
+                    }
+                    match c.rel {
+                        Rel::Ge => t >= 0,
+                        Rel::Eq => t == 0,
+                    }
+                }
+                Formula::Not(g) => !eval(g, v),
+                Formula::And(gs) => gs.iter().all(|g| eval(g, v)),
+                Formula::Or(gs) => gs.iter().any(|g| eval(g, v)),
+            }
+        }
+        let same = |f: &Formula, g: &Formula| {
+            for x in -6..=6 {
+                for y in -6..=6 {
+                    for z in -6..=6 {
+                        assert_eq!(eval(f, &[x, y, z]), eval(g, &[x, y, z]), "{f:?} vs {g:?}");
+                    }
+                }
+            }
+        };
+        let mut seed: u64 = 0x2545_f491_4f6c_dd1d;
+        let mut next = |m: u64| {
+            seed ^= seed << 13;
+            seed ^= seed >> 7;
+            seed ^= seed << 17;
+            (seed % m) as i64
+        };
+        let name = |n: &str| Lin::atom(Atom::Sym(Arc::from(n)));
+        let ge = |lin: Lin| Formula::Con(Con { lin, rel: Rel::Ge });
+        for _ in 0..200 {
+            // extreme_base: rows `a x + b w + c >= 0` with w in {y, z}, a in {1, 2}, c in
+            // -2..=2 and b nonzero in -3..=3, so that groups (x, w, a, c) repeat.
+            let rows: Vec<Arc<Formula>> = (0..2 + next(8))
+                .map(|_| {
+                    let w = if next(2) == 0 { "y" } else { "z" };
+                    let b = [-3, -2, -1, 1, 2, 3][next(6) as usize];
+                    Arc::new(ge(name("x")
+                        .times(1 + next(2))
+                        .plus(&name(w).times(b))
+                        .plus(&Lin::constant(next(5) - 2))))
+                })
+                .collect();
+            let refs: Vec<&Arc<Formula>> = rows.iter().collect();
+            let input = Formula::and(rows.iter().map(|g| (**g).clone()).collect());
+            same(&input, &extreme_base(&refs));
+            // compact_abs: clauses `F + k y + c >= 0 || F - k y + c >= 0`, some with a third
+            // arm `F + d >= 0`, d <= c, for F = x + f z, f in {1, 2}.
+            let clauses: Vec<Formula> = (0..2 + next(8))
+                .map(|_| {
+                    let f = name("x").plus(&name("z").times(1 + next(2)));
+                    let (k, c) = (1 + next(3), next(7) - 3);
+                    let mut arms = vec![
+                        ge(f.plus(&name("y").times(k)).plus(&Lin::constant(c))),
+                        ge(f.plus(&name("y").times(-k)).plus(&Lin::constant(c))),
+                    ];
+                    if next(3) == 0 {
+                        arms.push(ge(f.plus(&Lin::constant(c - next(3)))));
+                    }
+                    Formula::Or(presburger::Shared::new(arms))
+                })
+                .collect();
+            let part = Formula::and(clauses);
+            same(&part, &compact_abs(&part));
+        }
     }
 
     /// Gives `pot` a new component without names, ranked by [`Potential::rank_after`] at
@@ -24599,6 +26478,47 @@ mod tests {
             assert!(Arc::ptr_eq(&a.0, &b.0), "{n}: {b:?}, not the outer {a:?}");
         }
         assert_eq!(outer.names.base.diff(&moved.names.base).count(), 1);
+    }
+
+    /// `n * n mod 5 == 1` written and enumerated on `n` among `0..=10` keeps 1, 4, 6, 9; a
+    /// `let` that binds `n` again (it shadows the first) to the same listed set, with the same
+    /// constraint written of the new `n`, is enumerated again and keeps the same four
+    /// ([`Scope::enumerated`]: the keys of the shadowed name's constraints must not stay).
+    #[test]
+    fn a_constraint_on_a_shadowing_name_is_enumerated_again() {
+        use zed_kernel::term::build::{lit, prim, var};
+        let t = prim(
+            Prim::Eq,
+            vec![
+                prim(
+                    Prim::Mod,
+                    vec![prim(Prim::Mul, vec![var("n"), var("n")]), lit(5)],
+                ),
+                lit(1),
+            ],
+        );
+        let listed =
+            Type::union_all((0..=10).map(|v| Type::lit(&Value::Int(v)).expect("an int literal")));
+        let n: Arc<str> = Arc::from("n");
+        let mut s = Scope::new([(n.clone(), Product::of_type(listed.clone()))]);
+        s.write(t.clone());
+        s.reduce();
+        assert_eq!(
+            s.get("n").ints().to_string(),
+            "[1..=1, 4..=4, 6..=6, 9..=9]"
+        );
+        let _shadowed = s.bind(
+            &n,
+            Product::of_type(listed),
+            &Shared::new(Term::Lit(Value::Int(0))),
+        );
+        assert_eq!(s.get("n").ints().to_string(), "[0..=10]");
+        s.write(t);
+        s.reduce();
+        assert_eq!(
+            s.get("n").ints().to_string(),
+            "[1..=1, 4..=4, 6..=6, 9..=9]"
+        );
     }
 
     /// Asks `steps` of a scope of the integers `a`, `x` and `y` in turn, until one leaves no

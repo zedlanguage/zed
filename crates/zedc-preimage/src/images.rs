@@ -240,6 +240,18 @@ pub fn changed<'a, V: PartialEq>(
 /// `changed` names: the names where the two scopes, or the two summaries, differ, each once or
 /// more. `None` when those number `limit` or more, the inputs a tree made afresh would read
 /// ([`fresh`]). `O(m log k)` for `m` names changed.
+///
+/// Why the tree equals the one [`fresh`] makes, so that a read gives the same answer
+/// whichever read it starts from: an input not among `changed` has the same leaf here as in
+/// `base`, or is in neither, provided the caller lists every name where the scopes' products,
+/// the summaries' inputs or anything else the leaf reads differ (`Scope::holds` in
+/// `product.rs` lists names, orders, inputs and what the summaries were made over); each
+/// changed input is set to its leaf here. So the two trees hold the same keys with the same
+/// leaves, and a treap's shape depends on its keys alone (priorities are hashes of the
+/// names, [`Tree`]), so every subtree, and its sum, is the same. Test:
+/// `l01_39_reduced_product::random::every_run_of_a_random_body_reaches_only_arms_that_hold_it`
+/// (2,700 bodies against the interpreter, commit eaef33ced); it cannot catch a caller that
+/// leaves out a difference its bodies never make.
 pub fn updated<'a, P, L: Sum>(
     base: &Tree<L>,
     changed: impl Iterator<Item = &'a Arc<str>>,

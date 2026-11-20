@@ -80,6 +80,14 @@ impl PartialOrd for Address {
 impl Ord for Address {
     /// By digest, then by the canonical terms, compared in a walk that reads each pair of parts
     /// held in nodes once.
+    ///
+    /// It never reads the names a lambda body reads, which the kernel fills on the body's node
+    /// once a run makes a closure of it (`ReadsMemo`), so an address used as a map key keeps
+    /// its place after a run (plan row TEST-reads-memo-not-in-key): the only reader of that
+    /// memo is `Shared::reads_memo`, which is `pub(crate)` in zed-kernel (src/term.rs), so no
+    /// code in this crate can read it, and this reads the digest, the node id and [`order`].
+    /// Test `address::tests::a_run_of_the_canonical_term_does_not_change_the_address`; it
+    /// cannot catch a later change that makes the memo public and reads it here.
     fn cmp(&self, other: &Address) -> Ordering {
         if self.term.id() == other.term.id() {
             return Ordering::Equal;

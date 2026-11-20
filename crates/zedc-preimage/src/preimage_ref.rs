@@ -271,6 +271,13 @@ pub struct Preimage {
 
 /// The value of the closed term `t`, if its form shows that it ends ([`stage::ends`]) and it
 /// evaluates. A term not shown to end stays unevaluated, since a program may loop forever.
+// Proof (proofs audit, proofdoc4b). `eval` runs only after `stage::ends(t)` holds, so the
+// claim rests on `ends` being sound (a `true` only for a term every run of which ends): that
+// is zedc-stage's claim and its proof is at `stage::ends`, not here. A run that fails (a
+// division by zero, a refused primitive) gives `None`, so the caller treats the term as not
+// known, never as a wrong value. "Ends" bounds no time: a term shown to end may still run
+// long (a finite loop over a large range); nothing here limits that. Callers: the two
+// closed-term reads in `Tx` (`s.close(t, env, ..)` then `run_closed`).
 fn run_closed(t: &Term) -> Option<Value> {
     if !stage::ends(t) {
         return None;
@@ -1345,6 +1352,22 @@ impl<'t> Tx<'t> {
 
     /// Whether `a` and `b` are the same term, part by part. Each pair of parts is compared
     /// once, and a part that both share is not looked into.
+    // Proof (proofs audit, proofdoc4b). A `true` means the two terms are equal part by part:
+    // every pair popped either is one number (one term, since a number stands for one term,
+    // [`Terms`]), was seen before (skipping it is safe, since a pair that differs returns
+    // `false` when it is first compared and ends the search), or matches one arm, whose kind,
+    // name, literal, primitive and arity agree and whose parts are pushed. Literals agree only
+    // when of one kind and one value, two floats bitwise (zed-kernel value.rs `number_eq`), so
+    // `0.0` and `-0.0` differ. Names agree by their number, and a `Let` or `Lam` binds the same
+    // names in both, so two equal terms read in one environment read the same bindings. Any
+    // other pair of kinds, a `Follow` among them, gives `false`, which only loses a match. An
+    // `Other` pair is compared by its given terms (`src`, `Some` for every number `add` makes;
+    // a made term is never `Other`), by `Term`'s `==`, which reads the whole of both, so that
+    // pair is looked into in full, corrected from "not looked into" for those parts.
+    // "Each pair once": `seen` admits a pair once, and each admitted pair pushes its parts'
+    // pairs once, so the work is O(the pairs reached), at most the product of the two terms'
+    // part counts, and the term is a DAG, so the search ends. Caller:
+    // `independent_reflections` (`c - plain` against `plain`).
     fn same(&self, a: Tid, b: Tid) -> bool {
         let (mut todo, mut seen) = (vec![(a, b)], HashSet::new());
         let pairs = |todo: &mut Vec<(Tid, Tid)>, s: Span, r: Span, all: &[u32]| {
@@ -5695,6 +5718,8 @@ fn div_pre(z: &IntervalSet, c: i64) -> IntervalSet {
     )
 }
 
+/// The members of `within` with `x mod c` in `z`, Euclidean, and whether that is all of them
+/// and no more. The first and last periods `within` meets are listed exactly and the periods
 /// between them are one piece, so the set has at most `2 * p + 1` pieces for `p` pieces of
 /// remainders, and it is exact when there is no period between them. An unbounded `within`
 /// is kept whole unless every remainder is demanded.

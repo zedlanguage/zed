@@ -116,6 +116,38 @@ fn a_test_of_a_mod_by_a_constant_narrows_its_input() {
     assert_eq!(term_reads(&body).1, 2);
 }
 
+/// A congruence test on a name bound by a term with no summary narrows the term's inputs:
+/// the shortcut of `Scope::atom_names` for `z mod c == r` on one name must not stop at `z`'s
+/// own class (commit 68b13f979, proofs-in-comments audit).
+#[test]
+fn a_congruence_test_of_a_div_by_a_constant_narrows_its_input() {
+    // `if x >= 0 && x <= 9 { z = x div 2; if z mod 2 == 1 { 1 } else { 2 } } else { 3 }`.
+    let body = if_(
+        prim(
+            Prim::And,
+            vec![
+                prim(Prim::Ge, vec![var("x"), int(0)]),
+                prim(Prim::Le, vec![var("x"), int(9)]),
+            ],
+        ),
+        let_(
+            "z",
+            prim(Prim::IntDiv, vec![var("x"), int(2)]),
+            test(prim(
+                Prim::Eq,
+                vec![prim(Prim::Mod, vec![var("z"), int(2)]), int(1)],
+            )),
+        ),
+        int(3),
+    );
+    let a = checked_arms(&body);
+    assert_eq!(ints_of(&a, "((z mod 2) == 1)", true, "x"), "[2..=3, 6..=7]");
+    assert_eq!(
+        ints_of(&a, "((z mod 2) == 1)", false, "x"),
+        "[0..=1, 4..=5, 8..=9]"
+    );
+}
+
 #[test]
 fn a_test_of_a_min_or_max_of_two_terms_of_one_input_narrows_it() {
     // `z = min(x + 1, 10 - x); if z >= 3 { 1 } else { 2 }`: a summary over `x`.

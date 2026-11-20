@@ -89,6 +89,10 @@
 //! - S. Cotton and O. Maler, "Fast and flexible difference constraint propagation for
 //!   DPLL(T)", SAT 2006, LNCS, pp. 170-183, doi:10.1007/11814948_19: on adding an edge, a
 //!   Dijkstra search over reduced costs finds a negative cycle through it or the new bounds.
+//! - E. W. Dijkstra, "A note on two problems in connexion with graphs", Numerische Mathematik
+//!   1, 1959, pp. 269-271, doi:10.1007/BF01386390: least distances from a source with every
+//!   weight 0 or more, each node settled once at its least label (`holes`, over the weights
+//!   reduced by a potential; full comment at the head of zed-graph `heap.rs`).
 //! - C. Bessière, J.-C. Régin, R. H. C. Yap and Y. Zhang, "An optimal coarse-grained arc
 //!   consistency algorithm", Artificial Intelligence 165(2), 2005, pp. 165-185,
 //!   doi:10.1016/j.artint.2005.02.004 (AC-2001; named as not used).
@@ -97,6 +101,15 @@
 //!   keep the bridge of their children's hulls, found by descending one level a step.
 //! - E. M. McCreight, "Priority search trees", SIAM J. Comput. 14(2), 1985, pp. 257-276,
 //!   doi:10.1137/0214021: three-sided range queries in O(log n + f).
+//! - C. Carathéodory, "Über den Variabilitätsbereich der Koeffizienten von Potenzreihen, die
+//!   gegebene Werte nicht annehmen", Math. Ann. 64, 1907, pp. 95-115, doi:10.1007/BF01449883
+//!   (Crossref checked 2026-11-20, not read): a vector in the cone of a set of vectors in `d`
+//!   dimensions is in the cone of `d` of them; used in the plane at `product.rs`, fn `in_cone`
+//!   and fn `bounds_at`.
+//! - G. E. Blelloch and M. Reid-Miller, "Fast set operations using treaps", SPAA 1998,
+//!   pp. 16-26, doi:10.1145/277651.277660: union of treaps of sizes `m <= n` in
+//!   O(m log(n/m + 1)) expected time by split and join; used at `divisors.rs`, the header and
+//!   fn `union`.
 //! - K. Maziarz, T. Ellis, A. Lawrence, A. Fitzgibbon and S. Peyton Jones, "Hashing modulo
 //!   alpha-equivalence", PLDI 2021, doi:10.1145/3453483.3454088 (named as not used).
 //! - P. Cousot and R. Cousot, "Systematic design of program analysis frameworks", POPL 1979,

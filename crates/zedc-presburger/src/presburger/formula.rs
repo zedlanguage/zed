@@ -653,6 +653,13 @@ impl Con {
     /// inequality's constant is rounded down, which at integer points changes no point
     /// (`2x - 1 >= 0` is `x - 1 >= 0`, `2x == 1` is `false`). `None` when `g` is one or the
     /// constraint has no term, so that a constraint written so already is kept as it is.
+    ///
+    /// Proof. With `g` dividing every coefficient, the terms' sum is `g*s` for an integer `s`
+    /// at every integer point, and `s` is the sum of the divided terms. An equation `g*s + k ==
+    /// 0` needs `g | k`, else no point holds it; when `g | k` it is `s + k/g == 0`. An
+    /// inequality `g*s + k >= 0` is `s >= -k/g`, and for integer `s` that is `s >=
+    /// ceil(-k/g) = -floor(k/g)`, so `s + floor(k/g) >= 0`, which `div_floor` gives (it rounds
+    /// toward `-inf` for either sign of `k`, as `g > 0` from `gcd`).
     pub fn reduced(&self) -> Option<Formula> {
         let mut g = Int::ZERO;
         for k in self.lin.terms.values() {

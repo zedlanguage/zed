@@ -1142,9 +1142,13 @@ fn errors_as_each_alone(one: &str, body: &str, use_text: &str, rest: &str) -> Op
 /// meanings or carriers, or make one of them fail, give in either order of the calls the errors
 /// each use would give alone, at each use (row PROOF-need-site-read-only's claim that a check
 /// at a later call reads back from a use's site only the meaning a bracket was given,
-/// `Ck::bracket_meaning`, which `Ck::replay` gives a use left out; tested here for every kind
-/// of use that is paired, at every pair of these arguments, directly and through a generic
-/// function between).
+/// `Ck::bracket_meaning`, which `Ck::replay` gives a use left out; tested here for one use of
+/// each of a bracket with a literal key, `><`, `.sum`, `sum(t)`, `.count` and a remap keyed
+/// by its binder, at every pair of these arguments, directly and through a generic function
+/// between). Not tested here (proofs-in-comments audit): the other kinds of use that are
+/// paired, `.first`, `.last`, `.any(f)`, `.all(f)`, `.find(f)`, `.chunkBy(f)`, `.scan(op)`
+/// and `.reduce(op)` (`LevelWord`, `FoldForm`), a remap with a computed key, and a bracket
+/// whose key is no literal.
 #[test]
 fn uses_alike_at_two_calls_give_the_errors_of_each_use_alone() {
     let args = [

@@ -62,6 +62,24 @@ impl Made {
 /// of `x` and `y`: an operator monotone in each operand, whose extremes over the pieces are
 /// taken at the outer ends of the outer pieces, which are the ends of the hulls. Merging pieces
 /// to cap their number (`map2`) keeps the outer ends.
+///
+/// The steps, for `zedc_lattice::revision::forward`. (1) Each of `+`, `-`, negation, `min` and
+/// `max` is monotone in each operand (`-` falling in its second), so over two intervals its
+/// least value is taken at one corner of their ends and its greatest at another, and
+/// `revision::corners` reads those corners; over the sign parts of two sets, the least of the
+/// parts' least values is the value at the corner of the outer ends, which are the hulls' ends
+/// (negation reads its one operand; the second is `0..=0`). (2) What `map2` does to the parts
+/// keeps the least and greatest value: `regions` and `normal_pieces` sort and merge, which keeps
+/// the union; `cap_pieces` (zedc-lattice interval.rs) merges two neighboring pieces into their
+/// hull, which keeps the first lower end and the last upper end; so the shorter operand's
+/// capped parts have the same hull, and the image's capped pieces the same least and greatest
+/// value. (3) The fast path of `forward` for `+` and `-` on one piece each is the corners
+/// themselves. So the bounds that [`Ints::forward`] reads off the hulls are those of the pieces
+/// [`Ints::list`] makes later, which `list` checks with a `debug_assert_eq!`. Not monotone, so
+/// listed at once: `*`, `div`, `mod`, `abs`, power. Test:
+/// `shared_ints::tests::made_sets_list_as_the_listed_operations_give` (4,000 random chains of 6
+/// steps over every operator, infinite ends one time in five); it cannot catch an operator
+/// added to this list that is not monotone outside `[-60, 60]`.
 fn monotone(op: &Op) -> bool {
     matches!(op, Op::Add | Op::Sub | Op::Neg | Op::Min | Op::Max)
 }
@@ -174,6 +192,16 @@ impl Ints {
     /// Lists the sets this one is made from, then this one, on an explicit stack, since a
     /// chain of `k` levels makes sets `k` deep; a set listed already is not read again, so the
     /// work is that of the sets listed and the links between them.
+    ///
+    /// Why the operands are listed when an entry `(s, true)` is popped (the `expect` in
+    /// `listed`): that entry was pushed just before the entries of `s`'s operands not yet
+    /// listed, so the stack pops them, and everything they push, first; each is listed when
+    /// its own `(o, true)` pops, or was listed already. Why each set is expanded once: a set is
+    /// made only from sets made before it, so no set is below itself, and no second `(s,
+    /// false)` is pushed above `(s, true)`; any other entry of `s` pops after `s` is listed and
+    /// is skipped. So the loop pops O(sets + links) entries and lists each set once. Tests:
+    /// `made_sets_list_as_the_listed_operations_give` (read in random order, so through
+    /// shared sets), `a_long_chain_lists_and_drops` (200,000 deep).
     fn list(&self) {
         let mut todo = vec![(self.clone(), false)];
         while let Some((s, ready)) = todo.pop() {

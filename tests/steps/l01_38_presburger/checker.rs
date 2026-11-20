@@ -1145,3 +1145,21 @@ fn pncx_kept_number_cli() {
         "I4.5 remains: at least one question was silently dropped"
     );
 }
+
+/// A constant written as a power too large to build (3^(2^40), about 1.7·10^12 bits, whose
+/// 8·b memory ask is refused) refuses the question with the message of `Walk::built`'s
+/// `unbuilt` flag (zedc front.rs), not silently: the refused path `pncx_kept_number_cli`
+/// does not reach, as its powers are kept or built.
+#[test]
+fn a_power_too_large_to_build_refuses_the_question() {
+    let rows = "ok(x, y, z, w) = 4 * x - 12 * w - 10 * y - 12 * z + 11 >= 0 && 4 * w + 10 * x - 10 * y - 11 * z - 28 >= 0 && 11 * w + 4 * x - y + 12 * z - 28 >= 0 && -8 * w - 5 * x + 12 * y - z + 31 >= 0";
+    let src = program(
+        &format!("{rows} && x < 3 ^ (2 ^ 40);"),
+        "x: a, y: a, z: a, w: a",
+    );
+    let got = rejection("power-too-large-to-build", &src);
+    assert!(
+        got.contains("whose digits are too many to hold in memory"),
+        "{got}"
+    );
+}

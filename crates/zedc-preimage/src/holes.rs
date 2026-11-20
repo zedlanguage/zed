@@ -25,6 +25,17 @@
 //! as above, or a cycle of edges of weight 0, found as the cycles of the edges tight at the
 //! greatest point (`tie_cycles`). Values between the ends of a name of a component with a
 //! cycle of weight above 0 and a hole may have no point; the ends are exact.
+//!
+//! Proof that the greatest point exists and that every point lies below it: for two points
+//! `x`, `y`, `max(x, y)` is a point, since `max(x_v, y_v) <= max(x_u, y_u) + w` at each edge and
+//! the larger of two integers of a name is one of its integers (each constraint is max-closed:
+//! P. Jeavons and M. C. Cooper, "Tractable constraints on ordered domains", Artificial
+//! Intelligence 79(2), 1995, pp. 327-339, doi:10.1016/0004-3702(95)00107-7). So when each
+//! name's values are bounded above, the max of the points that each reach one name's greatest
+//! value is a point at every name's greatest value; `min` likewise gives the least point. The
+//! infinite ends are made finite integers first, which changes no end ([`solve`]). That
+//! [`greatest`] finds this point exactly, Empty included, is proved at [`greatest`],
+//! [`Run::component`], [`Run::cycle`] and [`Run::hull`]; the negation, at [`solve`].
 
 use std::collections::{BTreeMap, VecDeque};
 
@@ -68,6 +79,42 @@ pub(crate) fn solve(g: &Graph) -> Outcome {
     // A value as large as any the search can reach from a finite one, so that the infinite
     // ends are integers that stay apart from every finite value: `big` is past each finite end
     // plus the sum of the weights, and the infinities are four times it.
+    //
+    // Proof that the infinite ends as `-4 big` and `4 big` change no end, and that `end` below
+    // tells finite from infinite ones. Write `E` for the sum of `|e|` over the finite ends `e`
+    // and `S` for the sum of `|w|` over the edges, so `big = 1 + E + S`.
+    // (1) At the greatest point `x` of any such system bounded above, each `x_v` is a top `b`
+    // of a piece of some name `s` plus the weight of a simple path of edges tight at `x` from
+    // `s` to `v`: let `R` be the names from which `v` is reached by edges tight at `x`; if no
+    // name of `R` were at the top of a piece, `x + 1` on `R` would be a point (edges into `R`
+    // from outside are not tight, so have slack 1 or more; edges out of `R` only loosen), past
+    // `x`. So `|x_v| <= E + S < big` when that top is finite, and `x_v >= 4 big - S > 3 big`
+    // when it is the infinity `4 big`; the least point likewise, by negation.
+    // (2) No point is lost. Given a point of the system without the bounds `±4 big`, take the
+    // greatest point `y` of it below `M`, for `M` past every value of that point; by (1) each
+    // `y_v` is `< big` or `>= M - S`. An edge from a name of the first kind `l` to one of the
+    // second `h` would need `y_h <= y_l + w < 2 big`, so there is none; taking `M - 4 big` from
+    // every `y_h` keeps every edge (within the `h`s each shifts alike; from an `h` to an `l`,
+    // `y_l < big <= y_h - S + w` still), and each `y_h` stays above every finite end, in its
+    // last piece, now within `4 big`: call it `y'`. The same step at the low ends, negated, on
+    // the least point above `-M` of the system with `y'` in it and the tops `4 big`, gives a
+    // point `q` within `±4 big`. Now for a name `v`: if its greatest value `g` without the
+    // bounds is finite, take `M` past a point at `g`; then `y_v = g` and `v` is of the first
+    // kind, so `y'_v = g`, and `max(y', q)` is a point within `±4 big` at `g` (it is no more
+    // than `g` at `v`, as `g` is greatest). If `g` is infinite, take a point with `v` past
+    // `4 big` and `M` past it: `v` is of the second kind, `y'_v > 3 big`, and `max(y', q)`
+    // gives `v` past `3 big` within the bounds. So each finite end is kept, and each infinite
+    // one is past `3 big`; the low ends by negation. Empty is kept too: `q` exists exactly
+    // when some point does.
+    // (3) A finite piece end printed for a name `v` is a finite end `e` of a name `v'` tied to
+    // `v` by equalities (a merge or a cycle of weight 0, which hold at every point), plus
+    // `x_v - x_v'`, the weight of a simple path of those tight edges, so `|.| <= E + S < big`;
+    // an infinite one is `±4 big` plus such a weight, past `3 big`. So `end` below, which keeps
+    // values within `2 big`, keeps exactly the finite ends. The merged weights of [`merge`]
+    // can add up past `big` along a path of classes, but every value read is of (1) to (3).
+    // `wide = 16 big` is past every value: values lie within `±4 big`, a missing path given
+    // `wide` as its weight adds `x_b <= x_a + wide`, which `x_a >= -4 big`, `x_b <= 4 big` imply.
+    // Test: `tests::infinite_ends_stay_infinite`, `tests::small_systems_agree_with_enumeration`.
     let mut big = Int::ONE;
     for d in &g.dom {
         for (a, b) in d {
@@ -109,7 +156,13 @@ pub(crate) fn solve(g: &Graph) -> Outcome {
         Err(Stop::Empty) => return Outcome::Empty,
         Err(Stop::Refused(names, holed)) => return refused(&names, &holed),
     };
-    // The negated system: `-x` in the negated integers, each edge reversed.
+    // The negated system: `-x` in the negated integers, each edge reversed. Proof that its
+    // greatest point, negated, is the least point: `y = -x` maps the points one to one, as
+    // `x_v <= x_u + w` is `y_u <= y_v + w`, the edge `(v, u, w)`, and `x_v in D_v` is
+    // `y_v in -D_v`, whose pieces are `(-b, -a)` in reverse order; negation reverses the order,
+    // so the greatest `y` is the negated least `x`. A potential `p` holds at `(u, v, w)` when
+    // `p_v <= p_u + w`, so exactly when `-p` holds at `(v, u, w)`: `neg_potential` holds where
+    // `m.potential` does. The components and the names with holes are the same, reversed.
     let neg_dom: Vec<Vec<(Int, Int)>> = m
         .dom
         .iter()
@@ -125,8 +178,11 @@ pub(crate) fn solve(g: &Graph) -> Outcome {
     let lo: Vec<Int> = match greatest(&neg_dom, &neg_edges, &neg_potential, &wide) {
         Ok(u) => u.iter().map(|x| -x).collect(),
         Err(Stop::Empty) => return Outcome::Empty,
-        // The components and the names with holes are those of the system, which was not
-        // refused for them; the negated potential can still fail to hold at an edge.
+        // Never taken. The components and the names with holes are those of the system, which
+        // [`greatest`] answered above, so no component has three names with holes or more;
+        // and a refusal from [`Run::paths`] cannot come after [`Run::hull`] (proof there): a
+        // negated potential that fails at an edge sends `hull` to label correcting, not to a
+        // refusal. Kept as a pass-on rather than an `Empty` (commit e275c5f0b).
         Err(Stop::Refused(names, holed)) => return refused(&names, &holed),
     };
     let Some(dom) = tie_cycles(m.dom, &m.edges, &hi) else {
@@ -344,6 +400,16 @@ enum Stop {
 
 /// The greatest point of a merged system, by its components in topological order. `wide` is
 /// past every value the search can reach, finite or not.
+///
+/// Proof, by induction over the components in this order. On entry to a component, `u` at each
+/// of its names is the top of its last piece, lowered by `x_u + w` for each edge into it from
+/// an earlier component's greatest values `x_u`. If every point lies at or below `x` on the
+/// earlier components, every point `y` has `y_v <= y_u + w <= x_u + w`, so `u` bounds every
+/// point above; [`Run::component`] then gives the greatest point of the component under `u`,
+/// or Empty only when it has none, which is then exact. Its values are at most `u`, so every
+/// edge from an earlier component holds, and edges within it hold: the whole is a point at or
+/// above every point, the greatest. Edges go only from earlier components to later ones, as
+/// [`components`] gives them sources first.
 fn greatest(
     dom: &[Vec<(Int, Int)>],
     edges: &[(usize, usize, Int)],
@@ -387,7 +453,12 @@ fn greatest(
 }
 
 /// The strongly connected components of `out` ([`zed_graph::tarjan`]), sources first, the
-/// members of each in the order the search completed them, its first node last.
+/// members of each in the order the search completed them, its first node last. R. E. Tarjan,
+/// "Depth-first search and linear graph algorithms", SIAM J. Computing 1(2), 1972,
+/// pp. 146-160, doi:10.1137/0201010; full comment in zed-graph `lib.rs`, fn `tarjan`. O(n + m).
+/// Why sources first: Tarjan completes a component after every component it reaches, so for an
+/// edge between components the one it leaves comes after the one it enters, and reversing the
+/// list puts it before.
 fn components(out: &[Vec<(usize, Int)>]) -> Vec<Vec<usize>> {
     let n = out.len();
     let mut comps = Vec::new();
@@ -449,7 +520,12 @@ impl Run<'_> {
             })
             .sum();
         if inner == names.len() {
-            // One cycle: each name has one edge in the component.
+            // One cycle: each name has one edge in the component. Proof: [`merge`] keeps one
+            // edge per ordered pair, and in a strongly connected component of two names or
+            // more each name has an edge to another name of it, so `inner == n` leaves each
+            // name exactly one; following them from `r` reaches every name of the component
+            // (it is strongly connected) and comes back to `r`, so the `ok_or` below is never
+            // taken.
             let r = holed.first().copied().unwrap_or(names[0]);
             let mut order = vec![r];
             let mut weights = Vec::new();
@@ -496,6 +572,30 @@ impl Run<'_> {
         }
         // Contraction onto the names with holes (CT): the caps reach each of them through the
         // names without holes, and each reaches the other through those names alone.
+        //
+        // Proof that this is the greatest point under the caps, Empty exact. After `hull`, `u`
+        // is the greatest point over the hulls, so every point `y` has `y <= u`, and `u` holds
+        // at every edge of the component, so every cycle of it weighs 0 or more. Every edge
+        // into a name with holes `h` ends a path whose inner names have no holes, from a name
+        // at `u` or from a name with holes; so every point has `y_h <= U_h` (`reach`, the least
+        // `u_s` plus the path's weight over such paths from any `s`) and, for two of them,
+        // `y_b <= y_a + d_ab`, `y_a <= y_b + d_ba` (`ab`, `ba`, over paths whose inner names
+        // have no holes; `wide` where there is none, a bound every value meets). A path from
+        // `h` back to `h` alone weighs 0 or more, so adds nothing. With `[h]`, `snap_down` of
+        // `U_h` bounds `y_h`; with `[a, b]`, [`Run::cycle`] gives the greatest point of these
+        // bounds on the two names. Every point is at or below those values `g`, and below the
+        // least distances `all` from the caps of the names without holes and from `g`.
+        // Conversely `all` is a point: at a name with holes `all = g`, since a path into it
+        // from a cap of a name without holes, cut at its last name with holes, is either one
+        // of `reach`'s (at least `U_h >= g_h`), or `g` of that name plus a path of `ab`/`ba`
+        // or a cycle (at least `g_h`, as `g` holds at the bounds of two names); every edge
+        // into a name without holes holds by the least distances, and every edge into a name
+        // with holes by the same cut; a name without holes is one piece, at most its cap, so
+        // only `lo` is checked, and when `all` is below it every point is too: no point.
+        // All `map_err` here are never taken: `hull` set the potential to `u`, which holds at
+        // every edge of the component ([`Run::paths`]). Test:
+        // `tests::small_systems_agree_with_enumeration`; the system tests of
+        // `l01_39_scope_relations::holes` (CE-A, the slot booking).
         let unholed = |s: &Run, v: usize| !s.holed(v);
         let caps: Vec<(usize, Int)> = names.iter().map(|&v| (v, self.u[v].clone())).collect();
         let reach =
@@ -538,6 +638,24 @@ impl Run<'_> {
     /// `weights[i]`, the last back to the first, each name capped by `caps[i]`: the map round
     /// the cycle from the first name, `t -> snap(min(c, t + w))` at each name, is built in one
     /// ordered map of pieces, and its greatest `t` with `F(t) >= t` is the first name's value.
+    ///
+    /// Proof (S11 of the cross-review xst). Let `g_0(t) = snap_0(t)`, `g_i(t) =
+    /// snap_i(min(c_i, g_(i-1)(t) + w_(i-1)))` and `F(t) = snap_0(min(c_0, g_(n-1)(t) + w_(n-1)))`,
+    /// `snap_i` the greatest integer of name `i` at or below its input; each is monotone, as
+    /// `+ w`, `min(c, .)` and `snap` are, and the inputs where one has no value are the least
+    /// ones, cut off by `from` (no point has its first name there, since its others would be
+    /// lower still). Let `t*` be the greatest `t` in `from..=c_0` with `F(t) >= t`. (a) `t*` is
+    /// an integer of name 0 and `F(t*) = t*`: if `F(t*) > t*`, then `t' = F(t*) <= c_0` has
+    /// `F(t') >= F(t*) = t'`, past `t*`. (b) `x_0 = t*`, `x_i = g_i(t*)` is a point: each `x_i`
+    /// is an integer of its name at most `c_i`, the edge into each `i >= 1` holds by its `min`,
+    /// and the closing edge by `t* = F(t*) <= g_(n-1)(t*) + w_(n-1)`. (c) Every point `y` under
+    /// the caps has `y_i <= g_i(y_0)`, by induction with monotonicity, so `y_0 <= F(y_0)`, so
+    /// `y_0 <= t*` and `y_i <= g_i(t*) = x_i`. `None` only when no `t` has `F(t) >= t`: no point.
+    /// [`Map::greatest_fixpoint`] scans the pieces from the top: on a constant piece of output
+    /// `v` the greatest such `t` is `min(hi, v)` if at least the piece's `lo`, and on a shift
+    /// piece every `t` has it when the shift is 0 or more, none otherwise. Cost: each `cap` or
+    /// `snap` gap is one `flatten`, which removes the pieces it meets and adds at most three,
+    /// so the pieces ever made are O(n + h), each at O(log N): O((n + h) log N).
     fn cycle(&self, order: &[usize], weights: &[Int], caps: &[Int]) -> Option<Vec<Int>> {
         let d = |v: usize| &self.dom[v];
         let r = order[0];
@@ -618,7 +736,17 @@ impl Run<'_> {
                             let k = queued.entry(z).or_insert(0);
                             *k += 1;
                             // A name queued more times than the component has names lies on
-                            // a cycle of negative weight: no point.
+                            // a cycle of negative weight: no point. Proof that no system with
+                            // a point gets here: count passes of the queue, pass 0 the names
+                            // queued first. After pass `j` each label is at most the least cap
+                            // plus the weight of a path of `j + 1` edges or fewer; with no
+                            // cycle of negative weight the least over all paths is reached by
+                            // a simple one, of `n - 1` edges at most, so no label falls in pass
+                            // `n - 1` or after, and a name is queued at most once per pass
+                            // (`inq`): at most `1 + (n - 1) = n` times. With such a cycle the
+                            // labels on it fall without end, so this or the `lo` test above
+                            // ends the loop; the `lo` test is exact as labels only fall and
+                            // each bounds every point.
                             if *k > names.len() {
                                 return Err(Stop::Empty);
                             }
@@ -647,6 +775,12 @@ impl Run<'_> {
     /// weight is below zero is `Err`: the potential does not hold there, and the search would
     /// no longer take each name once, so its O(m log n) would not hold either. The caller
     /// refuses the component ([`Run::refuse`]).
+    ///
+    /// Proof that no caller gets `Err`: `hull` calls this only when the potential holds at
+    /// every edge of the component (`holds`), and on return sets the potential to `u`, the
+    /// least distances from the caps, which satisfy `u_z <= u_v + w` at every edge of the
+    /// component; every later call, in [`Run::component`], comes after `hull`. So each reduced
+    /// weight is 0 or more and every `map_err(|_| self.refuse(..))` is never taken.
     fn paths(
         &self,
         c: usize,

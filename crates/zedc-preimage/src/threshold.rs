@@ -16,6 +16,26 @@
 //! A hub value that is unbounded is handled as a value past every constant: the propagation
 //! then compares terms `s*T + k` with `T` above every integer, so the bounds at an unbounded
 //! end are the limits of the bounds there.
+//!
+//! Proof of the claims above, step by step at the code that relies on each: why the least and
+//! greatest members exist and the propagation finds them, at [`members`]; why a run at an
+//! unbounded end gives the limit, at [`At`]; why the hub's values that pass are `p..=c*` and
+//! the names' bounds are those at `p`, and why the searches end, at [`rising`]; the mirror at
+//! [`solve`]; the join at [`mixed`]. The smaller-of-two step, checked: for two points `s` and
+//! `t` that pass and `u` their componentwise minimum, `u_x` is `s_x` or `t_x`, so it is one of
+//! `x`'s values; `x <= U` holds at `u` because `u_x <= s_x`; `y >= L` holds because both
+//! `s_y` and `t_y` are at least `L`; and a part `x <= U || y >= L` holds because either both
+//! `s_y, t_y >= L`, or one of them, say `s_y`, is below `L`, so `s_x <= U` and `u_x <= U`. The
+//! maximum is the same with the arms' roles swapped. [`members`] does not use this step; it
+//! proves directly that its result is the least point.
+//!
+//! Tests: `l01_39_scope_relations::xst::threshold` compares [`solve`] with enumeration on
+//! 5,000 random components per sign case (`components_of_*_equal_enumeration`,
+//! `components_with_both_signs_and_a_hub_of_two_values_equal_enumeration`); they cannot catch
+//! a fault that needs names of more than 6 values, a hub of more than 4 values, more than 5
+//! parts or a coefficient outside `-2..=2`, or a fault at an unbounded end, which only the
+//! two hand-built tests `an_unbounded_hub_is_searched_by_doubling` and
+//! `an_unbounded_hub_below_is_searched_by_doubling` reach.
 
 use std::cmp::Ordering;
 use std::collections::{BTreeMap, BTreeSet};
@@ -90,6 +110,22 @@ enum Val {
 }
 
 /// Where the hub is: at a value, or past every integer below or above.
+///
+/// Why a run of [`members`] at `Above` is the limit of its runs at `Value(c)` as `c` grows (and
+/// `Below` as `c` falls, with `c = -T`). Every value the run makes is `a + k*c` from
+/// [`At::plus`], an end of a name's values, or a value [`ceil`] or [`floor`] passes through, so
+/// each is `s*c + k` with `s` a coefficient of the component or 0; the run only compares such
+/// values with each other and with the ends of the names' finitely many pieces. Two affine
+/// functions of `c` compare the same way for all `c` past the point where they cross, and that
+/// way is the order of `(s, k)` pairs, which is the derived order of [`Val`] (`s` first: for
+/// `T` above every integer, `s*T + k < s'*T + k'` exactly when `s < s'`, or `s = s'` and
+/// `k < k'`). [`ceil`] at `s > 0` gives the value itself when the name's values are unbounded
+/// above (for large `c` the last piece holds it) and nothing otherwise (it is past the greatest
+/// value); at `s < 0` the least finite end, or the value itself when the values are unbounded
+/// below; [`floor`] the mirror. So past the largest of the finitely many crossing points, the
+/// run at `Value(c)` takes every branch the symbolic run takes, and its results are the symbolic
+/// ones with `T = c`: `None` at once, or `s*c + k` at every name, whose limit is `k` for
+/// `s = 0` and the infinity of the sign of `s` otherwise, which [`end`] gives.
 #[derive(Clone, Copy, Debug)]
 enum At<'a> {
     Value(&'a Int),
@@ -146,14 +182,53 @@ fn ceil(d: &IntervalSet, v: &Val) -> Option<Val> {
     }
 }
 
-/// The greatest member of `d` at or below `v`; `None` when there is none.
+/// The greatest member of `d` at or below `v`; `None` when there is none. [`ceil`] with the
+/// order reversed, case for case: `+inf` gives the last piece's upper end; `-inf` nothing; a
+/// value past every integer above (`s > 0`) the last piece's finite upper end, or itself when
+/// `d` is unbounded above; one below every integer (`s < 0`) itself when `d` is unbounded
+/// below, else nothing; a finite value itself when a piece holds it, else the upper end of the
+/// nearest piece below it.
+///
+/// Complexity tradeoff: naive version, `ceil(&d.neg(), &-v)` negated back, O(P) for P pieces
+/// because `IntervalSet::neg` builds the whole negated set; [`members`] calls this once per base
+/// upper bound and once per backward firing, so N atoms on a name of P pieces cost O(N * P)
+/// (PROOF audit proofdoc4b, entry 37a8466a1). Used: the O(log P) lookups `last`, `first` and
+/// `piece_at_or_below`. Test: `threshold::tests::bench::
+/// many_upper_bounds_on_a_name_of_many_pieces_cost_near_linear_time` (cost); the enumeration
+/// corpora of `l01_39_scope_relations::xst::threshold` check the answers on bounded sets with
+/// holes (the case `s = 0`); the other cases rest on the case-for-case reading against
+/// [`ceil`] above, as no test is known to reach them.
 fn floor(d: &IntervalSet, v: &Val) -> Option<Val> {
-    let neg = |v: &Val| match v {
-        Val::NegInf => Val::PosInf,
-        Val::PosInf => Val::NegInf,
-        Val::Fin(s, k) => Val::Fin(-s, -k),
-    };
-    ceil(&d.neg(), &neg(v)).map(|v| neg(&v))
+    match v {
+        Val::PosInf => Some(match d.last()? {
+            (_, End::Fin(hi)) => Val::Fin(Int::ZERO, int(hi)),
+            _ => Val::PosInf,
+        }),
+        Val::NegInf => None,
+        Val::Fin(s, k) => match s.cmp(&Int::ZERO) {
+            Ordering::Less => match d.first()? {
+                (End::NegInf, _) => Some(v.clone()),
+                _ => None,
+            },
+            Ordering::Greater => match d.last()? {
+                (_, End::Fin(hi)) => Some(Val::Fin(Int::ZERO, int(hi))),
+                _ => Some(v.clone()),
+            },
+            Ordering::Equal => {
+                let x = End::Fin(Num::from(k));
+                // The last piece whose lower end is at or below `x`.
+                let (_, hi) = d.piece_at_or_below(&x)?;
+                Some(if *hi >= x {
+                    v.clone()
+                } else {
+                    match hi {
+                        End::Fin(hi) => Val::Fin(Int::ZERO, int(hi)),
+                        _ => unreachable!("a piece before a finite end ends finite"),
+                    }
+                })
+            }
+        },
+    }
 }
 
 /// The least or greatest end of `d` as a value; `None` when `d` is empty.
@@ -169,6 +244,41 @@ fn end_of(d: &IntervalSet, least: bool) -> Option<Val> {
 /// The least and the greatest member of the values that pass with the hub at `at`, or `None`
 /// when no value passes there. In time O(N log N) for N atoms: each name's parts are sorted by
 /// threshold, and each part fires once in each direction.
+///
+/// Proof, with the hub at a value `c` (an unbounded end is the limit of these runs, see
+/// [`At`]). Let S be the points, one value per name, that lie in each name's values and pass
+/// every atom at `c`.
+/// (a) Every point of S is at or above `lo` at every step: `lo` starts at each name's least
+///   value; a base `y >= r` sets `lo[y]` to the least member of `y`'s values at or above
+///   `max(lo[y], r)`, which every point of S has or exceeds; a part `x <= t - 1 || y >= r`
+///   fires only when `t <= lo[x]`, so every point of S fails its upper arm and so has
+///   `y >= r`, and `lo[y]` rises to the least member at or above `r`. A `None` from [`ceil`]
+///   means `y` has no value at or above a bound every point of S needs, so S is empty.
+/// (b) When the forward loop ends, every part with `t <= lo[x]` has `lo[y] >= r`: `next[x]`
+///   passes a part only after firing it, which leaves `lo[y] >= r`, and `lo` only rises after;
+///   each rise of `lo[x]` pushes `x` again, so after the last rise of `lo[x]` the loop scans
+///   `fire[x]`, sorted by `t`, past every `t <= lo[x]`. The work list starts with every name.
+/// (c) `hi`, after the base upper bounds and before the backward loop, is each name's greatest
+///   value under its base upper bounds; [`floor`] giving `None` there means no value of `x`
+///   passes them, so S is empty. If some `lo[x] > hi[x]`, every point of S would have a value
+///   above every value of `x` that passes `x`'s base upper bounds, so S is empty. Otherwise
+///   the point `lo` is in S: each `lo[x]` is one of `x`'s values (from [`ceil`] or
+///   [`end_of`]), at most `hi[x]` so under every base upper bound, and at or above every base
+///   lower bound by the first loop; a part holds by its upper arm when `t > lo[x]`, and by (b)
+///   when `t <= lo[x]`. A name left at `-inf` (its values unbounded below and nothing raised
+///   it) is taken at any value of it below every constant at `c`: it then passes every upper
+///   arm on it, it has no base lower bound (that would have made `lo` finite), and a part
+///   whose lower arm is on it either fired, which would have made `lo` finite, or holds by its
+///   upper arm. So S is not empty and `lo` is its componentwise infimum, attained where
+///   finite.
+/// (d) The backward loop is (a) to (c) with the order reversed: a part read as "`y <= r - 1`
+///   forces `x <= s`" fires when `hi[y] < r`, so every point of S is at or below `hi`, and
+///   `hi` is in S by the argument of (c) with the arms swapped (its lower bounds hold since
+///   `hi >= lo` and `lo` passes them). As S is not empty here, the [`floor`] in that loop
+///   cannot give `None`: it would mean no value of `x` lies at or above a point of S at `x`.
+/// Cost: the sorts are O(N log N); each part is fired at most once per loop because `next`
+/// only advances; a name is pushed once at the start and once per firing that raised it, so
+/// O(n + N) pops; each [`ceil`] and [`floor`] is one O(log P) lookup in the name's P pieces.
 fn members(sys: &System, at: At<'_>) -> Option<(Vec<Val>, Vec<Val>)> {
     let n = sys.names.len();
     // The least member: raise lower bounds.
@@ -321,6 +431,13 @@ fn mirrored(sys: &System) -> System {
 /// In time O(N log N log W) for N atoms, W the width of the hub's values: each propagation is
 /// O(N log N), and the binary search for the hub's greatest value that passes makes O(log W)
 /// of them.
+///
+/// Every coefficient at most 0: [`mirrored`] is the component in `w' = -w`, whose
+/// coefficients are at least 0 (`x + k*w = x + (-k)*w'`), so [`rising`] solves it; the names'
+/// bounds are the same, and the hub's values are negated back. A coefficient of 0 counts as
+/// neither sign, so a component with all coefficients 0 goes to [`rising`], where (1) of its
+/// proof holds with equality. The mirror adds O(N + P) for the hub's P pieces
+/// (`IntervalSet::neg`), once.
 pub fn solve(sys: &System) -> Answer {
     if sys.hub.is_empty() || sys.names.iter().any(IntervalSet::is_empty) {
         return Answer::Empty;
@@ -339,6 +456,11 @@ pub fn solve(sys: &System) -> Answer {
 }
 
 /// A hub with coefficients of both signs: solved at each value when it has two or fewer.
+/// Exact: the points that pass are the union of S(c) over the hub's values `c`, so each name's
+/// least value is the least of its least values at each `c` that passes ([`members`]) and its
+/// greatest the greatest, and the hub's values that pass are those `c`. The loop that lists
+/// the values stops at the third, so it costs O(1) whatever the hub's width. Test:
+/// `components_with_both_signs_and_a_hub_of_two_values_equal_enumeration`.
 fn mixed(sys: &System) -> Answer {
     let mut values: Vec<Int> = Vec::new();
     for (lo, hi) in sys.hub.pieces() {
@@ -380,6 +502,29 @@ fn mixed(sys: &System) -> Answer {
 
 /// Every coefficient at least 0: raising the hub only raises the least member and lowers the
 /// greatest, so the hub's values that pass are its least value `p` up to some `c*`.
+///
+/// Proof. Write S(c) for the points that pass with the hub at the integer `c` (as at
+/// [`members`]), over every integer `c`, in the hub's values or not. (1) For `c <= c'`,
+/// S(c') is within S(c): with `k, m >= 0`, `x + k*c <= x + k*c' <= a` and
+/// `y - m*c >= y - m*c' >= b`, so every atom and arm that holds at `c'` holds at `c`. (2) So
+/// the integers `c` with S(c) not empty are all those up to some `c*` (or all, or none), and
+/// the hub's values that pass are the hub's values at or below `c*`, the `cut` below. (3) The
+/// names' bounds are those over the union of S(c) for the hub's values `c` that pass; by (1)
+/// that union is S(p) when `p` is finite, and the least and greatest members at `p` are its
+/// bounds by [`members`]. When the hub has no least value, the union is the union of S(c) as
+/// `c` falls, which grows, so its bounds are the limits of the bounds at `c`, which the run at
+/// `At::Below` gives ([`At`]). (4) The search for `start`: when `members(sys, Below)` passed
+/// (else `Empty` above), the run at `Value(c)` passes for every `c` below the crossing points
+/// ([`At`]), so doubling `step` downward from `min(q, 0)` reaches such a `c` after O(log D)
+/// runs, D the distance from 0 to that point; `start <= q` so `start` is one of the hub's
+/// values or below them, and it passes. (5) The search for the top: when `q` is finite, `start`
+/// passes and `q` fails, so [`search`] finds `c*` by (2); when the hub is unbounded above and
+/// the run at `Above` passes, every large `c` passes ([`At`]) and with (2) every `c` does, so
+/// there is no cut; otherwise every large `c` fails, so doubling `step` from `start` ends after
+/// O(log D) runs, and [`search`] finds `c*` between `start`, which passes, and `fail`, which
+/// does not. `search` asks only values between the two, which by (2) pass on a prefix.
+/// Tests: `an_unbounded_hub_is_searched_by_doubling`, `a_wide_finite_hub_is_searched`, and the
+/// corpora (see the module header for what they cannot catch).
 fn rising(sys: &System) -> Answer {
     let (p, q) = sys
         .hub
@@ -720,4 +865,9 @@ pub fn leaf_row(g: &Formula) -> Option<LeafRow> {
         upper,
         lower,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    mod bench;
 }

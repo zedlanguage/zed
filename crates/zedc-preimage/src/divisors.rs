@@ -6,6 +6,48 @@
 //! ([`Sets::union`]) splits one set by the other's root and joins the parts; equal subtrees end
 //! it at once, and each pair of sets is joined once, so a union costs O(m log(n/m + 1)) for sets
 //! of m ≤ n divisors that share nothing, and O(1) for each subtree the two share.
+//!
+//! Proof that equal sets are one node (the claim `Defined::meet`, `Defined::arm`,
+//! `Shown::arm` and the call keys of `Walk::shared_call_key` in preimage.rs rely on when they
+//! compare two `Set`s with `==`). Write `a ≻ b` for [`Sets::above`]: priority first, then the
+//! divisors' order, a strict total order on distinct divisors since `numbers` gives each
+//! divisor one number and one priority. Invariant: every `Set` made is a treap, its keys in
+//! order to the left and right (search order) and its root `≻` every other key of it (heap
+//! order). It holds of [`EMPTY`] and of [`Sets::single`]; of [`Sets::split`], whose pieces
+//! keep the search order and put `key` above keys of its own old subtree only, so the heap
+//! order too; and of [`Sets::union`], whose root `key` is `≻` both roots and so every key of
+//! both (heap order of each), and whose two sides are unions of keys below and above `key`.
+//! A treap on a set `S` of keys is unique: its root is the `≻`-greatest key of `S`, and its
+//! subtrees are the treaps on the keys of `S` before and after it. So, by induction on the
+//! size, two `Set`s with the same keys have the same root key and, by the induction
+//! hypothesis, the same numbers for their two subtrees, and [`Sets::make`] gives one number
+//! for one `(key, left, right)` (`made`). A number is a set only of the `Sets` that made it:
+//! each `preimage::Tr` holds one, and every table that holds a number (`Memo::defined`,
+//! `Memo::defined_calls`, the third part of a `CallKey`) is filled under that one `Tr`
+//! (`Scoped::relation` puts tables back only with the `Tr` they were made under, a new
+//! `Tr::new` comes with a new run's empty tables, `Tx::start`, and `Tx::relation` clears them).
+//! Tests: `a_set_has_one_node_whatever_order_its_divisors_came_in` (three orders of 50
+//! divisors give one number) and `a_union_holds_the_divisors_of_both_and_no_other`; they cannot
+//! catch a heap-order break that one of these shapes does not reach.
+//!
+//! The cost of a union is that of Blelloch and Reid-Miller's treap union (G. E. Blelloch and
+//! M. Reid-Miller, "Fast set operations using treaps", SPAA 1998, doi:10.1145/277651.277660;
+//! G. E. Blelloch, D. Ferizovic and Y. Sun, "Just join for parallel ordered sets", SPAA 2016,
+//! doi:10.1145/2935764.2935768, section 4 and Theorem 4: split one tree at the other's root
+//! and join the two recursive unions, `O(m log(n/m + 1))` expected work for sizes `m <= n`).
+//! The full citation, how it was checked and the quote are at `zed_kernel::treap_set`'s module
+//! comment (the 1998 text was not obtained; the bound is read from the 2016 paper's
+//! Theorem 4, whose text was checked). The bound needs the priorities random (`PRIORITIES`, below). The departures: the
+//! recursion stops at `a == b` and at a pair met before (`unions`), and both give the
+//! union itself, so the calls made are a subset of the cited recursion's, plus a hash lookup
+//! for each; and `make` looks each node up before making it, O(1) expected for each.
+//! "O(1) for each subtree the two share", in the sense used here: the call on the keys of
+//! `a` and `b` in a range of keys returns at once when the two hold the same keys there, so
+//! the calls made are at the nodes of the union's treap above a key of one set and not the
+//! other. That this count and the splits it makes stay within `O(m log(n/m + 1))` for `m`
+//! such keys is Not proved here: it is the cited analysis applied to those paths, which was
+//! not checked step by step; the test `ladder::the_conditions_of_shared_divisors_scale`
+//! (l01_38_presburger bench) measures the families of RUNG2-definedness at k and 8k.
 
 use std::cmp::Ordering;
 use std::collections::HashMap;
@@ -227,6 +269,20 @@ impl Sets {
     }
 
     /// [`Sets::up`]; `false` once a divisor fails `more`.
+    ///
+    /// Proof that `out` gets, in order, the divisors `d >= from` of `s` up to the first that
+    /// fails `more`, and that the call visits O(depth + found) nodes. The walk is an in-order
+    /// walk that skips a node below `from` and its left subtree (all below it, so below `from`)
+    /// and stops everything at the first `false`; so it pushes the divisors `>= from` in order
+    /// until one fails `more`. A node below `from` is reached only on the search path of
+    /// `from` (a right subtree of a pushed node holds only keys above it). A node `>= from` that
+    /// is not pushed either fails `more` or waits on a left subtree that returned `false`, so
+    /// it is the failing node or one of its ancestors: at most depth + 1 of them. So
+    /// `O(depth + found)`, `O(log n)` expected depth (`PRIORITIES`). The callers
+    /// (`Defined::shown_nonzero` in preimage.rs) pass a `more` that holds on one run of
+    /// consecutive divisors from `from` (one variable part, `Lin`'s order is terms first), so
+    /// stopping at the first failure loses nothing. Test:
+    /// `a_search_finds_the_divisors_of_one_variable_part_from_a_bound`.
     fn up_from(
         &self,
         s: Set,
@@ -258,7 +314,8 @@ impl Sets {
         self.down_from(s, to, more, out);
     }
 
-    /// [`Sets::down`]; `false` once a divisor fails `more`.
+    /// [`Sets::down`]; `false` once a divisor fails `more`. The proof of [`Sets::up_from`]
+    /// with the order reversed.
     fn down_from(
         &self,
         s: Set,

@@ -246,7 +246,8 @@ pub fn preimage(term: &Term, inputs: &Domains, demand: &Demand) -> Preimage {
 /// [`preimage`], the domains of the names in `listed` being sets whose members the source
 /// lists (`x: {0, 1, 2}`), each holding no member the source does not list: a box over them
 /// may be enumerated (`enumerate`). A domain the source gives as a range (`int[0..=2]`) is
-/// not listed, whatever its width.
+/// not listed, whatever its width. Its cost beyond [`preimage`]'s is that of [`enumerate`],
+/// `O(L)` evaluations of the term for the `L` members the source lists, given there.
 pub fn preimage_listed(
     term: &Term,
     inputs: &Domains,
@@ -573,8 +574,29 @@ fn preimage_in(
         // ([`SharedInts`]), each a function of its key alone, as the runs of
         // [`split_residues`] keep them; a narrowed box begins afresh as before. The test
         // `r.dom == *inputs` is `O(p)` for the `p` pieces of the box. Test:
-        // `l01_25_preimage_catalog::powers::reading_a_product_as_a_power_is_linear_in_its_factors`;
+        // `l01_25_preimage_catalog::bench::powers::reading_a_product_as_a_power_is_linear_in_its_factors`;
         // COMPLEXITY.md row PA-bind-cost.
+        // Proof that the forward run answers as one begun afresh. (1) `Tx::start(d, m)` is
+        // `start_from(&begin(d), m)`, and `begin` (free function) reads only `self.lets` and
+        // the box; `preimage_in` writes no `tx.lets` (it is set only in `let_preimage`,
+        // `let_narrowing` and `let_summary`), and the box is equal by value, so `begun` is the
+        // `Begun` a fresh start would make, but for sharing the same `Rc` domains, whose pieces
+        // no run changes (an `IntervalSet` node's only cells are `OnceLock` memos of its
+        // pieces, zedc-lattice interval.rs `Node`). (2) `start_from` resets every field of `Run`
+        // but `marks`, `marked`, `void` and `shadow`, which it takes from `begun`; only `ints`
+        // is then put back. (3) Each entry of `SharedInts` is a function of its key, not of the
+        // run: `inputs` is keyed by the address of an `Rc<IntervalSet>` the entry itself holds
+        // (`Ints::shared`), so no other set takes that address while the entry lives;
+        // `literals` by the literal; `ops` by the operator, whose variants other than `Pow`
+        // carry nothing, and the operands' ids, which no other set takes, ever
+        // (`shared_ints::Ints::id`, `fresh_id`), and a set's content is fixed once made
+        // (`Ints::list` lists `made` once, the same functions each time); `pows`, see
+        // [`Tx::forward_ints`], up to the one sub-case it names. So each lookup that hits
+        // gives the set a fresh run would make, and the run's answer is the same. Not
+        // proved: that `SummaryRead::scope_ints`, `ints` and `total`, read by `begin`, give the
+        // same answer each time (read from their uses as queries, not from a stated
+        // invariant). The test above measures bytes only; no test compares this run with a
+        // fresh one.
         if r.dom == *inputs {
             let ints = std::mem::take(&mut tx.run.ints);
             tx.start_from(&begun, marks.clone());
@@ -1224,6 +1246,24 @@ fn count_touched(kind: impl FnOnce(&mut TouchedPaths) -> &mut u64) {
 
 /// The integers of `lo..=hi` from the first to the last whose remainder by `m` lies in `class`,
 /// one range of remainders, or `None` when there is none.
+///
+/// Why it is that range. The class is `a..=b` with `0 <= a <= b < m`: [`split_classes`]
+/// makes it from consecutive cuts `w0 < w1` in `0..=m` ([`Tx::remainder_cuts`]) as
+/// `w0..=w1 - 1`. For a finite `lo` with remainder `r = lo mod m` (Euclidean, in `0..m`): if `r`
+/// is in `a..=b`, `lo` is a member; if `r < a`, the integers `lo..lo + (a - r)` have remainders
+/// `r..a`, below the class, and `lo + (a - r)` has remainder `a`; if `r > b`, those up to the
+/// next multiple of `m` have remainders `r..m`, above the class, and `lo + (m - r) + a` is the
+/// first with remainder `a`, the next period's, before which the remainders `0..a` are below
+/// it. So `lo` moves to the least member at or above it. For `hi` the same steps down: `r >
+/// b` gives `hi - (r - b)`, remainder `b`, and `r < a` gives `hi - (r + m) + b`, the previous
+/// period's `b`. An infinite end has members of the class beyond every integer and is kept.
+/// The members lie in `lo..=hi`, so when the first is above the last there is none (`None`);
+/// otherwise the range holds the first, the last and every integer between, members and not,
+/// which is what "from the first to the last" says, and what [`mod_pre`] reads. Tests:
+/// `l01_25_preimage_catalog::entries::euclidean_division_and_remainder_by_a_constant_invert_exactly`
+/// (`i mod 10 == 3` over `0..=40` and over `0..=10^9`, more than two periods, so read by the
+/// split) and `l01_25_preimage_catalog::s22::remainders_compared_every_way_are_read_exactly`;
+/// they check fixed classes, the argument covers the rest.
 fn in_class(lo: &End, hi: &End, class: &IntervalSet, m: i128) -> Option<IntervalSet> {
     let Some((Fin(a), Fin(b))) = class.bounds() else {
         unreachable!("a class is a range of remainders")
@@ -1443,6 +1483,22 @@ impl Defined {
     /// ([`DivisorSets::union`]), O(m log(n/m + 1)) for m divisors of one not in the other, and O(1)
     /// for a set met with itself or again with the same set; a set that holds the other keeps
     /// its own `nonzero`.
+    ///
+    /// Proof that the result is the conjunction of the two. Invariant of every `Defined`:
+    /// `nonzero` is equivalent to `d != 0` for each `d` of `divisors`. It holds of
+    /// [`Defined::top`] and [`Defined::failed`] (no divisor, `true`), and of
+    /// [`Defined::with_divisor`] (the new set is the old and `d`; `nonzero` gets `d != 0`, or
+    /// is kept when the set did not change); every other `Defined` is made by these, by
+    /// `meet`, or by `..` from one of them with only `rest` changed ([`Defined::instance`],
+    /// [`Walk::defined_at`], [`Walk::defined_called`], [`Walk::defined_chain`]). Here the
+    /// union `U` is the set of both (`DivisorSets::union`); `U == self.divisors` as numbers
+    /// means the two sets are equal as sets (one node for one set, proof in module
+    /// `divisors`), so `other`'s divisors are among `self`'s and `self.nonzero` alone is
+    /// `d != 0` over `U`; the same for `other`; else both parts are kept. `rest` is the
+    /// conjunction, `true` dropped. Tests: `l01_38_omega_test::one_scope::a_relation_that_divides_by_a_term_holds_where_the_interpreter_gives_true`
+    /// and `l01_38_presburger::ladder::calls_whose_arguments_may_fail_alike_share_one_translation`
+    /// check the conditions against the interpreter on small windows; a dropped divisor that no
+    /// window point sets to 0 is not caught.
     fn meet(self, other: Defined, sets: &mut DivisorSets) -> Defined {
         if other.is_top() {
             return self;
@@ -1520,6 +1576,23 @@ impl Defined {
     /// or `-t - k`, `k >= 1`, and `d != 0` for `t == 0` with `d` `t + k` or `-t - k`,
     /// `k != 0`. A set in order holds the divisors with one variable part together, so each
     /// form costs a search, O(log n), and the divisors it finds.
+    ///
+    /// Proof that each divisor found is not 0 where `f` holds. A constraint is `t >= 0` or
+    /// `t == 0` (`presburger::Rel` has only `Ge` and `Eq`). `Lin`'s order is its terms, then
+    /// its constant (`impl Ord for Lin`, zedc-presburger formula.rs), so the divisors with the
+    /// variable part of `t` lie together, ordered by constant, and [`DivisorSets::up`] from
+    /// `t + 1` while the terms match gives exactly those `t + k` with `k >= 1`;
+    /// [`DivisorSets::down`] to `t - 1` those with `k <= -1`. The cases: `!(t == 0)` makes `t`
+    /// and `-t` not 0; `!(t >= 0)` is `t <= -1`, that is `-t - 1 >= 0`, the next case;
+    /// `t >= 0` gives `t + k >= k >= 1` and `-t - k <= -k <= -1` for `k >= 1`; `t == 0` gives
+    /// `t + k = k` and `-t + k = k`, not 0 for `k != 0`. Anything else adds nothing, which
+    /// only leaves a divisor's condition in place. Tests:
+    /// `l01_38_presburger::ladder::a_refutation_at_a_zero_divisor_is_a_point_where_the_operation_fails`
+    /// (`if n != 0 { x mod n < n || ... }`),
+    /// `ladder::the_families_of_the_benchmarks_are_answered_at_small_sizes` (`guarded_divisors`,
+    /// `n + i == 0 || x mod (n + i) >= 0`) and
+    /// `l01_38_omega_test::one_scope::a_relation_that_divides_by_a_term_holds_where_the_interpreter_gives_true` (`if x mod n >= 1 { x mod (n + 1) > 0 }`); none of
+    /// these guards is `t <= -1` with a divisor `-t - k`, so a wrong `down` form is not caught.
     fn shown_nonzero(sets: &DivisorSets, divisors: Set, f: &Formula, out: &mut Vec<Lin>) {
         use presburger::Rel;
         // The divisors whose variable part is `terms`, from the constant `from` up, or down.
@@ -1579,6 +1652,18 @@ impl Defined {
     /// { 0 }` do, and O(m log(n/m + 1)) for m divisors of the arm not in the guard; then each
     /// part of the guard costs a search, O(log n), where the formula of the `if` costs the
     /// part.
+    ///
+    /// Proof that `true` is right where it is given. With `rest` `true`, `d`'s condition is
+    /// `x != 0` for each divisor `x` of `d` (the invariant at [`Defined::meet`]). The caller,
+    /// [`Walk::defined_at`] at an `if`, meets the result with the guard's condition `dg`,
+    /// whose `nonzero` states `x != 0` for each `x` of `known`, and puts the arm's formula
+    /// beside `g` (`cg` or its negation). So where the `if`'s condition is read, each `x` of
+    /// `known` and each `x` that a part of `g` shows not 0 ([`Defined::shown_nonzero`]) is not
+    /// 0, and when `known` and those cover `d`'s divisors (a union equal to `covered` as a
+    /// number means `d`'s set is a subset, one node for one set, module `divisors`), `d`'s
+    /// condition holds there. The test `shown.len() + |known| < |d|` only skips a union that
+    /// cannot cover `d`. [`Shown::arm`] makes the same test with the shown divisors kept by
+    /// variable part (its caller [`Walk::defined_chain`] was not read for this proof).
     fn arm(d: &Defined, g: &Formula, parts: bool, known: Set, sets: &mut DivisorSets) -> Formula {
         if d.is_top() || !is_true(&d.rest) {
             return d.formula();
@@ -1726,6 +1811,17 @@ impl Shown {
 /// number: each node numbered by its kind and its parts' numbers, and each shared part once,
 /// by its id ([`presburger::Id`]). A key of [`Walk::shared_call_key`] holds the number of each
 /// argument's condition. Time of the nodes not numbered before.
+///
+/// Proof that two formulas have one number exactly when they are equal as trees (the same
+/// kinds, the same constraints, in the same order). By induction on the height: a node's
+/// number is its `Shape`'s, given once by `by_shape`, and the shape is its kind with its
+/// constraint or its parts' numbers, so equal shapes come from equal parts and the converse.
+/// `by_id` only answers again for a part met before: an id names one part, never changed
+/// under it and never reused (`presburger::Id`, `Shared::new` and `Shared::change` give a
+/// fresh id, zedc-presburger formula.rs), so the number it gives is the one its shape
+/// gives. No test checks two formulas made apart but alike for one number beyond
+/// `l01_38_presburger::ladder::calls_whose_arguments_may_fail_alike_share_one_translation`,
+/// whose arguments' `rest` is `true`.
 #[derive(Default)]
 struct FormulaNumbers {
     by_id: HashMap<presburger::Id, u32>,
@@ -1823,6 +1919,21 @@ fn keep_all(fs: Vec<Formula>) -> Formula {
 /// not in `inputs` puts a term that reads it outside the domain, and a literal is read only
 /// when it is an integer, so a term over any other carrier is `None`.
 ///
+/// Proof that, when every name of `inputs` holds only `int`s, every linear term read stands
+/// for an integer and its operation is the interpreter's. By induction on [`Walk::lin_at`]:
+/// a constant is read only as `Value::Int` or `Value::Big` (any other value is `None`); a
+/// free name is an atom only when `cx.has` it (`Node::Var`, otherwise `None`), and `cx` is
+/// `inputs`; a bound name or a call reads the term it is bound to, or the callee's body over
+/// the arguments' terms, so over integers; and the operations read (`+`, `-`, unary `-`,
+/// `*`, `x ^ 0`, `x ^ 1`, `x ^ 2`, `div` and `mod`, `min`, `max`, `abs`, `if`) take integers
+/// to integers with the integer meaning; a power by any other exponent is `None`. The
+/// comparisons of [`Walk::formula_at`] compare such terms. So the one premise is the
+/// caller's filter, which is not checked here. Tests: `l01_38_presburger::carrier`
+/// (`float_associativity_is_not_proved`, `rational_and_generic_parameters_are_not_read_as_integers`,
+/// `a_float_times_zero_and_a_float_power_are_not_read_as_integers`, and the others there,
+/// through the test driver and the checker); a caller that passes a non-`int` name is not
+/// caught here, only by those tests of the two callers.
+///
 /// When `products` holds, a divisor may be a term, which may be 0, where the quotient and the
 /// remainder fail (`Tr::div_mod_by_term`). Each relation then holds exactly where the
 /// interpreter's value of its test is `true`: the test's formula met with the condition that
@@ -1892,12 +2003,15 @@ pub fn relations(terms: &[&Term], inputs: &[Arc<str>], products: bool) -> Option
 // times). Used: one numbering and one translation state for the scope; each body keeps
 // what the runs before found and drops, in time of what it made, what depends on it; a
 // call's relation is kept whole as one shared part, indexed by the names its arguments hold;
-// a body whose call shifts or renames its parameters is read in the callee's coordinates
-// (`Frame`). Each chain is about 8 times per 8 times the links. Tradeoffs: the scope holds
+// a body whose call shifts or renames its parameters is read once over its own atoms, and
+// its call binds those atoms to the arguments (LOAD-chain-affine, `Walk::binding` and
+// `Walk::claimable`; the callee's coordinates, `Frame`, of LOAD-chain-args were removed by
+// b273d0f62). Each chain is about 8 times per 8 times the links. Tradeoffs: the scope holds
 // O(n) entries for the unit's lifetime; a link the kept point does not extend, or a refused
-// question in moved coordinates, is decided whole, O(n²) as before (the comments at
+// question, which is decided again over the inputs so that its refusal names the caller's
+// parameters, is decided whole, O(n²) as before (the comments at
 // `presburger::extend::Extending` and `front::linear_questions`). Tests in
-// `l01_38_omega_test::one_scope`: `the_questions_of_a_chain_of_calls_scale`,
+// `l01_38_omega_test::bench::one_scope`: `the_questions_of_a_chain_of_calls_scale`,
 // `the_questions_of_a_chain_of_tests_scale`,
 // `the_questions_of_a_chain_defining_auxiliary_variables_scale` and
 // `the_questions_of_a_chain_moving_its_argument_scale`; COMPLEXITY.md rows LOAD-chain,
@@ -1915,7 +2029,10 @@ pub struct Scoped<'t> {
     /// the scope the lambda is read in, as a call of it reaches it ([`Callee::Lam`]), so that a
     /// body's relation is the one its callers share (LOAD-chain-affine). The address is a key
     /// only while the term is borrowed, and every key and every body looked up is borrowed for
-    /// `'t`, the life of the scope; the map is read only by `get`, never iterated.
+    /// `'t`, the life of the scope; the map is read only by `get`, never iterated. Two terms
+    /// alive at once never share an address: a `Term` is not zero-sized and holds each of its
+    /// subterms behind a `Shared`, `Vec` or `Arc`, never inline (`zed_kernel::term::Term`), so
+    /// equal addresses are one term, and `Scoped::relation` still checks the parameters.
     lams: HashMap<*const Term, At>,
     /// The bodies read so far, for the names of the atoms of a body that is not one of `lams`.
     read: usize,
@@ -2536,7 +2653,11 @@ struct Tr {
     /// The atoms a caller reads of each relation a call of a function gave, by the relation:
     /// the canonical atoms a claimed call binds, and the atoms of the arguments of a callee's
     /// body read again ([`Scoped::interface`], LOAD-call-summary). Kept when definitions are
-    /// undone, since a stale entry only names atoms no question reads.
+    /// undone, since a stale entry only names atoms no question reads. Why: an entry is keyed
+    /// by the id of its conjunction, and ids are never reused ([`presburger::Id`]), so a stale
+    /// entry is found only through that same conjunction, read again; [`Tr::bound`] only adds
+    /// atoms, so an entry holds every atom a caller reads of it, and at worst more, which keeps
+    /// more atoms in the face ([`Scoped::interface`]) and so loses no point of it.
     interfaces: HashMap<presburger::Id, HashSet<presburger::Atom>>,
     /// Whether a call that does not hold its callee's claim reads the callee's body again
     /// where an elimination over symbols alone does not write the callee, as before
@@ -2635,6 +2756,18 @@ impl Tr {
     }
 
     /// Undoes the definitions from `mark` on, and the pairs and claims among them.
+    ///
+    /// Why popping from the end removes exactly the entries at or past `mark`: each key-order
+    /// list (`made`, `ranked`, `chosen`, `cased`, `claimed`) gets a key only after its map
+    /// missed it, with the length `defs` had then (`pair_by_constant` and `div_mod_by_term`
+    /// push to `made`, `Walk::lin_at` to `ranked` and `chosen`, `Walk::lin_by_class` to
+    /// `cased`, and `Tr::claim` to `claimed`, called from `Walk::binding` only for a lambda
+    /// with no claim). `defs` shrinks only here, to `mark`,
+    /// and this drops every entry at or past `mark`, so every entry left is below the new
+    /// length. By induction each list is nondecreasing in that number, the entries at or past
+    /// `mark` are a suffix, and each key is in its map once while it is in its list, so the
+    /// index `self.claims[lam]` and the others cannot panic. `Tx::relation` clears `pairs` with
+    /// `made` and `cases` with `cased`.
     fn truncate(&mut self, mark: usize) {
         self.defs.truncate(mark);
         while let Some(key) = self.made.last()
@@ -2697,6 +2830,25 @@ impl Tr {
     // digits are the cost of each operation on it; the pair is found by the same key. Why: as
     // an `i128`, a divisor from `2^127` up was read as no constant and the question was
     // dropped with no message. Test: `l01_38_presburger::pncx_probe::pncx_divisor_past_i128_is_read`.
+    // Proof that the definition holds of exactly the kernel's values. The kernel's `div` and
+    // `mod` are `div_euclid` and `rem_euclid` (`zed_kernel::eval::int_binary`). For `c != 0`
+    // the division theorem gives exactly one pair with `a == c·q + r` and `0 <= r < |c|`,
+    // that is `r <= |c| - 1` over the integers, so the three rows hold of the kernel's pair
+    // and of no other. The steps of the division theorem: existence, `q = floor(a / c)` for
+    // `c > 0` and `q = -floor(a / |c|)` for `c < 0` give `r = a - c·q` in `0..=|c| - 1`;
+    // uniqueness, two pairs give `c·(q - q') = r' - r` with `|r' - r| <= |c| - 1`, so
+    // `|c|·|q - q'| < |c|`, `q == q'` and `r == r'`. So every `a div c` and `a mod c` of one
+    // input share the one pair exactly, the Euclidean one of DESIGN (sec:domains).
+    // The bound `|c| - 1` is formed in `Int`, so it is exact for every `c`:
+    // at `c = i128::MIN` an `i128` `abs` would overflow (LOAD-max-div-xr, I44); the test
+    // `r6_numeric_tests::minimum_i128_divisor_keeps_the_full_remainder_interval` checks the
+    // pair at that divisor, `r = i128::MAX` for `a = -1` among them.
+    // The precondition `c != 0` is met by every caller: the `IntDiv | Mod` arm of
+    // `Walk::lin_at` filters `c.is_zero()` out, and [`Tr::instance`] passes a divisor taken
+    // from a `What::ByConstant` definition (directly, or through `Normal::reps`, whose entries copy
+    // those definitions), which only this function makes, from a `c` already nonzero. At
+    // `c == 0` the rows would read `0 <= r <= -1`, false, and drop every point; that is why
+    // the precondition matters, and the test above cannot catch a caller that broke it.
     fn pair_by_constant(&mut self, a: &Lin, c: &Int) -> u32 {
         let key = (a.clone(), Lin::constant(c.clone()));
         if let Some(&n) = self.pairs.get(&key) {
@@ -2729,6 +2881,20 @@ impl Tr {
     /// once for all the terms of one call. `None` when an atom is a product or another
     /// auxiliary variable, whose definition the call would need a copy of. Time of `l` and of
     /// the dividends it reaches not yet in `done`, times the log of the terms.
+    // Proof that the term written is the callee's term at the call. A canonical atom `c` takes
+    // its argument's value at the call, so replacing it by the argument is exact; an input is
+    // the same name in callee and caller, so it stays. A pair (q, r) of the callee has
+    // dividend d over atoms written before it (the `pairs` field of [`Projection`], or, without
+    // `pairs`, a definition made before its pair, as [`Tr::pair_by_constant`] is called on a
+    // term already written); by induction on that order, d written here (`self.instance(&a,
+    // ..)`) is d's value at the call, and for a constant divisor c != 0 the quotient and
+    // remainder with `0 <= r <= |c| - 1` are unique (Euclidean division), so the callee's
+    // (q, r) at the call equal the pair [`Tr::pair_by_constant`] makes or finds for the
+    // written dividend and c, whose definition the solver reads with the call's rows. The
+    // recursion ends since each dividend reaches only pairs before it in that order. `done`
+    // maps each callee pair to the pair it was written as for this call, so a pair read by
+    // several rows of one call is written once (the cost claim). Tests: as for [`projected`],
+    // `l01_38_omega_test::one_scope::answers_are_those_reading_bodies` and its callers.
     fn instance(
         &mut self,
         l: &Lin,
@@ -2837,6 +3003,25 @@ impl Tr {
         let split = Con::eq(a, &n.product(&q)?.plus(&r));
         let zero = Lin::constant(0);
         // `s·n >= 1`, the split, and `0 <= r <= s·n - 1`.
+        // Proof that the definition holds of the values the kernel computes: `s = 1` gives
+        // `n >= 1` and `r <= n - 1 = |n| - 1`; `s = -1` gives `n <= -1` and
+        // `r <= -n - 1 = |n| - 1`. Exactly one of `n >= 1`, `n <= -1`, `n == 0` holds for each
+        // integer `n`, so a premise that fixes the sign leaves one disjunct. For `n != 0` the
+        // division theorem gives exactly one pair with `a == n·q + r` and `0 <= r < |n|`, the
+        // kernel's `div_euclid` and `rem_euclid` (`zed_kernel::eval::int_binary`), so the
+        // disjunct of that sign holds of them and of no other pair. At `n == 0` only the last
+        // disjunct holds and `q`, `r` are free: the operation fails there (`divByZero`), and
+        // `Walk::defined_at` asks `n != 0` of a divisor that is not a constant. The remainder's
+        // own definition is `top`; `Scoped::def` and `Tr::placings` give it its quotient's. The
+        // solver reads `n * q` as an atom, so this is a relaxation of the definition: what it
+        // proves holds, and what it refutes is checked against the interpreter by the tests.
+        // Tests in `l01_38_presburger::mod_symbol`:
+        // `a_remainder_by_a_positive_symbol_is_in_range`,
+        // `a_remainder_by_a_negative_symbol_is_below_its_magnitude`,
+        // `quotient_times_divisor_plus_remainder_is_the_dividend`,
+        // `from_a_divisor_that_may_be_zero_neither_is_proved` and
+        // `the_translation_agrees_with_the_interpreter` (points in `-6..6`, `n == 0` among them);
+        // values outside that range are covered by the argument only.
         let sign = |s: i64| {
             let m = n.times(s);
             Formula::and(vec![
@@ -2946,6 +3131,17 @@ impl What {
 /// nonnegative `a & !b`). `x <= a` fails where only `a` is negative: `bitAnd(-1, 5)` is 5. The
 /// rows bound `x` and do not fix it, so the variable is listed in [`Relation::bit_ands`].
 /// Plan row RUNG2-bit; test `l01_39a_bit_words::rung2`.
+///
+/// The steps: `a = (a & b) + (a & !b)` for every integer, as the two have no set bit in common,
+/// so the sum has no carry (on infinite two's-complement words as on finite ones). `a & !b` is
+/// nonnegative when `a` is (its high bits are clear) or when `b` is negative (then `!b = -b - 1`
+/// is nonnegative), so `x = a & b <= a` in those cases. `x` is nonnegative when `a` or `b` is,
+/// as its high bits are set only where both operands' are. These are bounds only: the variable
+/// is any value they allow, a superset of `a & b`, so a relation that uses them is sound, and
+/// only the countermodel check (`zedc_presburger::linear_reading`, through
+/// [`Relation::bit_ands`]) uses the exact value. Test
+/// `l01_39a_bit_words::rung2::the_bounds_hold_at_x_equal_to_a_and_b_at_every_sign` checks the
+/// rows at `x = a & b` for every pair in -40..=40; operands of more bits are not tried.
 fn bit_and_bounds(x: &Lin, a: &Lin, b: &Lin) -> Formula {
     let zero = Lin::constant(0);
     let nonneg = |l: &Lin| Formula::Con(Con::ge(l, &zero));
@@ -3057,7 +3253,13 @@ type At = (Tid, Eid);
 type Power = Option<(Tid, Eid, Count)>;
 
 /// The number of factors of a power, held exactly. Nested squaring names double the count at
-/// each name, so the count at depth `d` has `d` bits.
+/// each name, so the count at depth `d` has at most `d + 1` bits (`2^d` at the `d`-th nested
+/// squaring name). Proof by induction over [`Tx::joined`]: a leaf counts `1 = 2^0`, and a
+/// product at depth `d` adds two counts of depth at most `d - 1`, each at most `2^(d-1)` by
+/// induction, so its count is at most `2^d`. One add costs `O(d)` and a chain of `d` names
+/// `O(d²)` bits in all. Tests: `l01_25_preimage_catalog::powers::products_and_nested_squares_at_small_sizes_and_past_64_bits`
+/// (depths to 100, squares and Fibonacci nesting) and the bench
+/// `l01_25_preimage_catalog::bench::powers::reading_nested_squares_as_a_power_is_linear_in_their_depth`.
 #[derive(Clone)]
 struct Count(Num);
 
@@ -3198,7 +3400,11 @@ enum Form {
 
 /// The terms of one transfer, each numbered once: the given terms and their parts, and the
 /// terms the transfer makes, each made once. Numbers, not addresses, are what results are
-/// remembered by, so a number is never reused while a result keyed by it is kept.
+/// remembered by, so a number is never reused while a result keyed by it is kept. Why, for
+/// each kind of number: a term's number is never reused, since `Terms` is made only by
+/// `Tx::new` and its `nodes` and `src` only grow; a summary's is never reused (`run.sids`
+/// only grows, `Walk::summon`); a scope's is reused after [`Tx::drop_fresh`] truncates
+/// `scopes`, which first removes every entry keyed by a fresh scope (see there).
 #[derive(Default)]
 struct Terms<'t> {
     nodes: Vec<Node<'t>>,
@@ -3866,6 +4072,37 @@ struct Memo {
 /// `one_scope` bench pieces run past 60 s (`the_questions_of_a_chain_of_tests_scale`: 5.1 s
 /// and ratio 8.18 at load 63 with the reuse, over 26 s without it at load 41): on a chain of
 /// calls the stack grows at every link, so each such entry was read again at every height.
+///
+/// Proof that the first kind is sound where [`Walk::cached`] reuses it (ST-formula-k2-rec,
+/// FAIL-preimage-stop-entry-seed; added by proofdoc4b). Write `base` for the stack's height
+/// when its read began and `now` for the height at a reuse. (a) The stack changes as a stack:
+/// every call of [`Tx::enter`] in the walk is followed by one awaited read and then
+/// [`Tx::leave`] at the place it gave, with no return between (read at each caller by
+/// proofdoc4b), so a read that begins at height `h` ends at `h` with the places below `h`
+/// holding what they held. (b) [`Tx::leave`] to height `p` removes every held entry whose
+/// `base` is above `p` ([`Memo::held`]), so while the entry is in its table the stack has not
+/// been lower than `base` since it was made, and by (a) the places `0..base` hold the lambdas
+/// they held then. (c) The stack holds distinct lambdas ([`Tx::enter`] keys it by body), so a
+/// call of a lambda at a place below `base` finds it at that same place. Now the two cases of
+/// `high`. If `high = base`, [`Walk::cached`] reuses it only for `now <= base`, so by (b)
+/// `now = base` and the stack is the one the read began on: the same read of the same term
+/// in the same scope. If `high = usize::MAX`, the read entered no lambda ([`Run::entered`]
+/// did not move; a sub-entry whose read entered one moves it through [`Tx::reached`]), so
+/// every call it reached stopped, each at a place below `base`; on the stack at `now >=
+/// base`, whose places `0..base` are the same by (b), each such call stops at the same
+/// place by (c), and the read gives the same value and the same `cut`. In both cases the
+/// value is what reading again gives, up to the sub-entries of the second kind it reused,
+/// which are sound and may be finer (the proof above). The reuse passes its `cut` on
+/// ([`Tx::reached`]), so the result that reads it is itself held at that place; its stop was
+/// reported to the run when the entry was made, in the same run: [`Run::keep`] carries tables
+/// into the next class's run only after `tx.back` from the root returns, at height 0, and by
+/// (b) every entry of the first kind (`base > cut >= 0`) was removed by then. Whether a stop
+/// inside the read of a carried entry of the second kind is reported again in the next run,
+/// for `split_classes`' `tx.run.stops.is_empty()`, is not shown here. Tests:
+/// `entries_made_below_a_stop_give_what_reading_the_term_again_gives` and its seeds, which
+/// compare each reuse with reading again (`tests::recheck`), and
+/// `an_entry_that_stops_at_a_lambda_being_read_is_held`; they check drawn and fixed terms,
+/// and the comparison cannot see a difference in a table it does not compare.
 // Complexity tradeoff: for the first kind, the exact test is whether a lambda the read
 // entered is on the stack above where it began, which needs the set of lambdas each entry's
 // read entered: O(l) memory per entry and O(l) per read, for the l lambdas of the term. Used:
@@ -3911,8 +4148,11 @@ struct Projection {
     /// For an integer function, its value term over the same atoms ([`value_projected`]).
     value: Option<Lin>,
     /// Each quotient the rows read, by its number (its remainder numbered after it): its
-    /// dividend, over the symbols kept and the quotients and remainders numbered before it, and
-    /// its divisor, a constant other than 0.
+    /// dividend, over the symbols kept and the quotients and remainders made representatives
+    /// before it ([`Normal::made`] writes a dividend before its pair is chosen; the order is
+    /// that of writing, not of the numbers: a representative of a later number may be written
+    /// first), and its divisor, a constant other than 0. So [`Tr::instance`], which writes a
+    /// pair's dividend before the pair, ends.
     pairs: Arc<HashMap<u32, (Lin, Int)>>,
 }
 
@@ -3931,6 +4171,16 @@ struct Projection {
 /// definition chooses (a disjunction or a negation), an atom is a product or an auxiliary
 /// variable without a definition, a binding binds an atom of `key`, or an atom other than a
 /// kept pair stays ([`presburger::eliminated`]).
+///
+/// The result is exact because each step is: the callee's relation at a call is `r` and the
+/// definitions it reads, with every variable but the canonical atoms read as "for some
+/// value" (as the body read at the call reads them), and [`presburger::eliminated`] gives
+/// exactly that projection or `None` (Fourier-Motzkin with the dark shadow, cited below).
+/// Tests of the answers: `l01_38_omega_test::projection_oracle::
+/// each_answer_through_a_projected_callee_is_the_interpreters_on_a_box` and its random twin,
+/// against the interpreter at every point of a box (the module doc of `projection_oracle`
+/// names this path, `Walk::projection`, as one it covers). They cannot catch an error at a point outside the box, or for a callee
+/// shape their units do not build.
 // Complexity tradeoff: naive version, a call that does not hold its callee's claim reads the
 // callee's body again, O(m) a call for a callee of m links, O(n·m) over a chain of n links.
 // Used: the callee's canonical relation with every variable but the canonical atoms and the
@@ -4012,10 +4262,57 @@ fn projected(tr: &Tr, r: &Formula, key: &[Lin]) -> Option<Projection> {
     // written there (LOAD-call-relation). Each row is written over the kept symbols and pairs
     // ([`Normal`]), and pairs of one dividend and divisor are one: the links of a chain
     // `h{j}(x) = h{j-1}(x: x) && x mod 4 == 1` leave one pair, not one for each link.
+    //
+    // Proof that the rows returned, written at a call by [`Tr::instance`], hold exactly where
+    // the callee's relation holds at the call's arguments. Write R(x, y) for the conjunction
+    // `rows`: x the symbols no seen binding binds (the canonical atoms of `key` and the run's
+    // inputs), y every other atom (bound symbols, auxiliary variables). The callee's relation
+    // at x is "R(x, y) for some y", since every row of every definition reached is in `rows`
+    // (the loop above pushes each seen definition's formula) and no row chooses.
+    // 1. Writing a row ([`Normal::lin`]) replaces an atom by a term equal to it under R: a
+    //    bound symbol `c` by its argument (the row `c == a` of its binding, [`Walk::binding`]),
+    //    the value variable `b` of a claimed integer call by its callee's term written (the
+    //    row `b == v` of the same definition), a quotient or remainder by the representative of
+    //    its written dividend and divisor (step 2). So each written row holds at a point of R
+    //    exactly where the row does; a row that becomes a constant that holds is dropped, one
+    //    that becomes a constant that fails is kept (the projection is then empty, as R is).
+    // 2. Two pairs of one written dividend d and one divisor c are equal under R: each holds
+    //    `d == c·q + r`, `0 <= r <= |c| - 1` (its definition, [`Tr::pair_by_constant`]), and for
+    //    c != 0 the Euclidean quotient and remainder of d by c are unique. So naming them by
+    //    one representative ([`Normal::made`], `by_key`) changes no point of R.
+    // 3. [`presburger::eliminated`] returns rows over the kept atoms (x and the
+    //    representatives P) equivalent to "the written rows hold for some value of the other
+    //    atoms", or `None` (`?` below); so Q(x, P) holds exactly where R holds for some y.
+    // 4. Dropping the rows of a representative's own definition, written: at a call,
+    //    [`Tr::instance`] replaces that representative by a pair made by
+    //    [`Tr::pair_by_constant`] over the dividend written there, whose own definition states
+    //    exactly those rows written at the call, so the call's relation holds them; dropping
+    //    them changes no point the call reads. Only rows equal to them are dropped; a row the
+    //    elimination wrote another way is kept, and is implied, so it changes nothing either.
+    // Facts used: `presburger::eliminated` is exact or `None` (zedc-presburger presburger.rs
+    // `eliminated`, its own comment); each definition's rows are in `rows` (the loop above).
+    // Test: `l01_38_omega_test::one_scope::
+    // each_answer_through_a_projection_kept_over_pairs_is_the_answer_of_the_relation_whole`
+    // (answers and refusals equal to reading the bodies again, and to the body closed and
+    // decided whole) and `the_unit_of_seed_4236942624890658512_is_answered_as_its_bodies_read`.
+    // They cannot catch a unit whose shape the random units do not draw: two parameters, a
+    // binding that reaches itself (the open case at `renamed` below).
     let mut normal = Normal::new(tr, &seen);
     let mut once: HashSet<Con> = HashSet::new();
     let mut written: Vec<Con> = Vec::with_capacity(rows.len());
     for c in &rows {
+        // Not proved: the row `renamed` keeps when [`Normal::lin`] cannot write one of its
+        // atoms. `lin` stops at the first atom with no written form, so a pair later in the
+        // same row may not be in the memo yet; `renamed` then keeps it as it is, and if it is
+        // not its key's representative it is eliminated as a free variable, its tie to the
+        // representative lost (and a bound symbol kept as it is loses its binding row, which
+        // `lin` wrote to `0 == 0` and dropped): the projection would hold at more points than
+        // the callee's relation. An atom with no written form in a row of a definition that
+        // does not choose is a `Bind` variable, alone in its row `b == n`, or a symbol whose
+        // binding reaches itself (the `open` set of [`Normal::atom`]); the open sub-case is
+        // the second: no proof here that claimed calls never bind in a cycle. Proposed fix:
+        // write every atom of the row before renaming, and rename each atom with a written
+        // form to that form.
         let lin = normal.lin(&c.lin).unwrap_or_else(|| normal.renamed(&c.lin));
         if lin.terms.is_empty() {
             let holds = match c.rel {
@@ -4065,6 +4362,12 @@ fn projected(tr: &Tr, r: &Formula, key: &[Lin]) -> Option<Projection> {
 /// binding binds an atom of `key`, or an atom is a product or an auxiliary variable of
 /// another kind (`if`, `min`, `abs`, a quotient by a term), whose definition a call would need
 /// a copy of.
+// Exactness: no atom is eliminated here; each is replaced by a term equal to it under the
+// definitions reached (steps 1 and 2 of the proof in [`projected`]), and any atom with no
+// written form makes the result `None` (`normal.lin(l)?`), so the value written equals `l` at
+// every point of those definitions; [`Tr::instance`] then writes it at the call (its proof).
+// Test: the integer chain of `l01_38_omega_test::one_scope::
+// each_answer_through_a_projection_kept_over_pairs_is_the_answer_of_the_relation_whole`.
 fn value_projected(tr: &Tr, l: &Lin, key: &[Lin]) -> Option<Projection> {
     use presburger::Atom;
     let own: HashSet<&Arc<str>> = (key.iter().flat_map(|l| l.terms.keys()))
@@ -4591,6 +4894,12 @@ fn begin(lets: &Lets, inputs: &Domains) -> Begun {
         None => Vec::new(),
     };
     // An input of a read of no value has none unless `inputs` gives it another domain.
+    // Proof: `r.total().void` counts the inputs of `r` whose scope domain is empty
+    // (`LetPa::term_bounds` sets `void` per leaf, `TermBounds::plus` adds them); `given` counts
+    // those among them that are shadowed. When `void > given`, some empty input is not
+    // shadowed, so the run reads it over the empty domain (see the proof in `Tx::invert_read`,
+    // step (1)) and no point is left. When `void == given`, each empty one is shadowed and read
+    // over its domain in `inputs`, which `is_empty(inputs)` (any domain empty) has checked.
     let void = is_empty(inputs)
         || reads.iter().any(|r| {
             let given = (shadow.iter())
@@ -4676,7 +4985,12 @@ struct Tx<'t> {
     classes: HashMap<(Tid, usize), Arc<str>>,
     /// How the body of a lambda reads the parameter of that name ([`Walk::reads`]). It depends
     /// on the terms alone, and a term's number is never reused ([`Terms`]), so it outlives the
-    /// body being read.
+    /// body being read. Proof that a number keeps its node (proofdoc4b): [`Terms`] only
+    /// pushes to `nodes`, `kids` and `params` (`Terms::number`, `Terms::made`,
+    /// `Terms::own_var`), with no truncation or removal; the one overwrite, `self.nodes[id] = node` in
+    /// `Terms::add`, fills the `Node::Other` that `Terms::number` pushed for `id` in the same
+    /// call, and `add` takes `&mut self` and drains its stack before it returns, so no
+    /// reader sees that placeholder.
     reads: HashMap<(Tid, Name), Reads>,
     /// Within [`split_classes`], each set met with an input's domain ([`Tx::meet_domain`]), so
     /// that the classes whose runs meet one set with the domain share the result.
@@ -4841,7 +5155,14 @@ impl<'t> Tx<'t> {
 
     /// The landmarks a summary's parameters and demands move out to: the terms' integer
     /// literals, the ends of the input domains and of the demand, each with its neighbors. A
-    /// finite set, so a lambda has finitely many summaries. The ends of the input domains are
+    /// finite set, so a lambda has finitely many summaries. Why finite: `Landmarks::of` gives
+    /// three numbers for each of finitely many literals, demand ends and input-domain ends (an
+    /// `IntervalSet` has finitely many pieces). Why that bounds the summaries: a summary is
+    /// keyed by its body, its lambda's scope and, per parameter, a constant, a term or an
+    /// interval set snapped to the landmarks (`Walk::summon`), whose ends are landmarks or
+    /// infinite, and its preimage by the summary and a snapped demand (`Walk::call_back`);
+    /// the terms and scopes are finite because a call of a lambda already being read stops
+    /// (`Tx::enter`). The ends of the input domains are
     /// kept as the domains themselves and found only when a call reads the landmarks
     /// ([`Tx::marks`]).
     ///
@@ -5020,6 +5341,14 @@ impl<'t> Tx<'t> {
 
     /// Drops what the body read by [`Scoped::relation`] made ([`Fresh`]), in time of what it
     /// made. The entries go first, since the scopes they are keyed by are numbered again.
+    ///
+    /// Why no entry keyed by a fresh scope is left: each map keyed by a scope records its
+    /// fresh entries as they are made, memo entries in `Walk::made`, powers in
+    /// `Tx::power_made`, summaries in `Walk::summon` (with their forward results, by the
+    /// summary's number), and `scope_ids` in `Tx::bind`. `Tr::claims` is keyed by scope too,
+    /// but `Walk::claimable` claims only a lambda that is not fresh; `Tr::cases` is read only
+    /// with `by_class`, which `Scoped`'s translation never sets. `run.backs` is keyed by a
+    /// summary's number, which is not reused.
     fn drop_fresh(&mut self) {
         let Some(fresh) = self.fresh.take() else {
             return;
@@ -5303,6 +5632,14 @@ impl<'t> Tx<'t> {
     }
 
     /// Whether the box `r` holds no point of the inputs, as [`Tx::whole`] gives it.
+    ///
+    /// Why a void run with an `r` that narrows nothing is not counted here: [`Tx::whole`]
+    /// then keeps every domain, and when the run is void because an input's domain is empty
+    /// (`is_empty(inputs)` in [`begin`]) that empty domain is kept, so the box still holds no
+    /// point; [`Tx::empty`] says so. Not proved: that a run void by a read
+    /// (`r.total().void > given` in [`begin`]) always leaves some input of that read with an
+    /// empty domain in `whole`'s box; that needs `images::TermRead`'s `void` count tied to
+    /// `ints(v)` being empty for an input `v` not shadowed by `inputs`.
     fn none(&self, r: &Res) -> bool {
         r.none || (self.run.void && !r.dom.is_empty())
     }
@@ -5405,6 +5742,23 @@ impl<'t> Tx<'t> {
     /// `l01_25_preimage_catalog::scopes::a_union_of_boxes_is_exact_when_it_is_a_box`.
     /// COMPLEXITY.md row C14. A complete solution would keep a list (or a decision diagram) of
     /// boxes, exponential in the disjunctions in the worst case.
+    ///
+    /// Why `boxed` gives a box. Write the boxes `A = A_1 × ... × A_n` and `B = B_1 × ... × B_n`,
+    /// a name not in `dom` having its whole domain. (1) One within the other: the union is the
+    /// larger, a box. `small_within` needs every common set within the other's and no name that
+    /// only `large` narrows (where `small` has the whole domain), so `A ⊆ B` name by name;
+    /// `large_within` likewise. (2) `differ <= 1`: `A_i = B_i` for every `i` but at most one `j`,
+    /// so `A ∪ B = A_1 × ... × (A_j ∪ B_j) × ... × A_n`, the per-input join, a box. Neither
+    /// empty (both checked first), so the join is the union and exactness carries over from
+    /// `a` and `b`. Otherwise the hull is not the union: with neither box within the other
+    /// and two inputs where they differ, there are inputs `i != j` and values `u ∈ A_i \ B_i`,
+    /// `w ∈ B_j \ A_j` (at a differing input one side has a value the other lacks; two such
+    /// inputs give both kinds at distinct inputs, else every other input is equal and
+    /// `differ <= 1`), and a hull point with `u` at `i` and `w` at `j` is in neither box. So
+    /// `exact` is false, as the hull is necessary only. A name `dom` narrows
+    /// to its whole domain counts as a difference, so `exact` may be false where the union is a
+    /// box (never the reverse). The test above checks the three cases on `||`; it cannot catch
+    /// a name stored at its whole domain.
     fn union(&self, a: Res, b: Res) -> Res {
         if self.empty(&a) {
             return b;
@@ -5497,7 +5851,7 @@ impl<'t> Tx<'t> {
     // product reached for the life of the transfer; the count is exact (`Count`), so counts
     // that double per level cost O(d²) bits at depth d (row S30b). Nothing refused, no limit on
     // the factors. Test:
-    // `l01_25_preimage_catalog::powers::reading_a_product_as_a_power_is_linear_in_its_factors`;
+    // `l01_25_preimage_catalog::bench::powers::reading_a_product_as_a_power_is_linear_in_its_factors`;
     // COMPLEXITY.md row S30.
     fn read_powers(&mut self, at: At) {
         let mut todo = vec![at];
@@ -5539,8 +5893,8 @@ impl<'t> Tx<'t> {
     /// The product of two powers: one power when their factors are the same term. A free name
     /// is the same input in every scope; any other factor must also be read in the same scope.
     /// Shared operands double the count at each name: `x1 = i * i; x2 = x1 * x1; …` reaches
-    /// `2^64` factors at the 64th name, and the count is exact, so it costs `d` bits to add at
-    /// depth `d`.
+    /// `2^64` factors at the 64th name, and the count is exact, so it costs `d + 1` bits to add
+    /// at depth `d` ([`Count`]).
     fn joined(&self, a: &Power, b: &Power) -> Power {
         let ((s, se, j), (u, ue, k)) = (a.as_ref()?, b.as_ref()?);
         let alike = match (self.node(*s), self.node(*u)) {
@@ -5576,8 +5930,23 @@ impl<'t> Tx<'t> {
         // in all. Used: a power once per exponent and operand, keyed by the exponent's value
         // (`Num`'s hash, O(1) to compute) and the operand's id; its set is a function of those
         // alone (`revision::forward` reads one operand for a power). Test:
-        // `l01_25_preimage_catalog::powers::reading_a_product_as_a_power_is_linear_in_its_factors`;
+        // `l01_25_preimage_catalog::bench::powers::reading_a_product_as_a_power_is_linear_in_its_factors`;
         // COMPLEXITY.md row PA-bind-cost.
+        // Proof. (1) The operand: `Ints::forward` lists a power at once (`monotone` leaves it
+        // out) as `revision::forward(op, a, b)`, which for an operator of arity 1 maps the sign
+        // parts of `a` with the single piece `0..=0` and never reads `b`'s pieces; a set of
+        // one id has one content (`Ints::id`). (2) The exponent: `Exponent` has the one variant
+        // `Num`, so `k.num()` is all of it, and `Num`'s `eq` and `Hash` are those of the value
+        // (zedc-int int.rs, `impl Hash for Num`). Not proved, and false in one sub-case: two
+        // equal exponents in two forms. `Num::pow_by` gives the exact power for a `Small` or
+        // `Big` exponent and `None` for a kept one (`Num::scalar`), and then `pow_end` bounds
+        // the end outward; a value outside `i128` may be held as `Big` or kept (the doc of
+        // `impl Hash for Num`), so the entry holds the set of whichever form was read first.
+        // Both sets hold every power, so the answer stays sound; it may be less precise than
+        // reading the exponent as given, and depends on the order of reading. Among forms that
+        // are not kept a value has one form, so a key of such an exponent gives one set; the
+        // repair is to read a kept exponent afresh, outside `pows` (plan row needed). Whether a
+        // test reaches that case was not checked.
         if let Op::Pow(k) = o {
             return (self.run.ints.pows.entry((k.num().clone(), a.id())))
                 .or_insert_with(|| Ints::forward(o, a, b))
@@ -5691,6 +6060,14 @@ impl<'t> Tx<'t> {
     /// The input the `i`-th parameter of the lambda `(body, lam)` is bound to where its body,
     /// which reads it only as `p[k]`, is read once for every call ([`Walk::formula_by_get`]):
     /// the canonical atom and `.get`, which no written name and no canonical atom holds.
+    ///
+    /// Proof (proofdoc4b). A written name holds no `#` (`crate::lex::name`), and this atom
+    /// does. Every other atom this file makes by `format!` ends in a digit: the canonical
+    /// atom (`{name}#{body}.{lam}`), a class's atom (`{name}#{body}c{i}`, [`identity_classes`]),
+    /// `{p}#q{read}` and `\u{1}{i}.{sid}`; this one ends in `t`. Two of these atoms are equal
+    /// only for one parameter name, body and lambda, since the name holds no `#` and the two
+    /// numbers are split by `.`; one lambda's parameters have distinct names (inferred: not
+    /// checked where a lambda is made), so each parameter has its own atom.
     fn by_get(&self, ps: Span, i: usize, (body, lam): At) -> Arc<str> {
         format!("{}.get", self.canonical(ps, i, (body, lam))).into()
     }
@@ -5933,6 +6310,55 @@ impl<'t> Tx<'t> {
     /// with `x = n + k` and `k` in `0..=10` gives `n >= -10`. That box holds every point of
     /// the preimage, and is not exact, since a point of it need not be one. `O(k)` for `k`
     /// inputs, with the inversion of each term.
+    ///
+    /// Proof that the box keeps every point of the preimage (soundness). Write the sum as
+    /// `x(p) = c + t_1(p_1) + ... + t_k(p_k)`, `t_v = sep.term(..)` the term of input `v`
+    /// ([`Sep`]: the value at a point is the constant plus each term at its input, defined
+    /// where every term is; [`Sep::term`] gives `pa * (scale / at)`, the division exact), and
+    /// `D_v = self.cx.get(v)` the domain of `v`. Take a point `p`, each `p_v` in `D_v`, where
+    /// `x(p)` is defined and lies in `z`.
+    /// 1. Each `t_u(p_u)` is defined (else `x(p)` is not) and lies in `[l_u, h_u]`, the bounds
+    ///    `pa_bounds(t_u, D_u)` gives: [`pa_bounds`] holds every value of the term over its
+    ///    domain, and `None` only when there is none. So when some term gives `None`, no point
+    ///    has a value, the preimage is empty and `Res::none()` is sound.
+    /// 2. `Sums` holds `c` plus the finite lower ends in `lo` and the number of infinite ones
+    ///    in `lo_inf`, and the same for the upper ends. For input `v`, [`Tx::invert_term`]
+    ///    takes `olo` = `lo - l_v` when every lower end is finite, `lo` when `l_v` is the only
+    ///    infinite one, and no bound (`NegInf`) otherwise; `ohi` likewise. So
+    ///    `olo <= c + sum over u != v of t_u(p_u) <= ohi`, an absent bound counting as
+    ///    infinite. An infinite end of either sign is treated as no bound, which only widens.
+    /// 3. `t_v(p_v) = x(p) - (c + sum over u != v of t_u(p_u))`, with `x(p)` in a piece
+    ///    `[zl, zh]` of `z`, lies in `[zl - ohi, zh - olo]`: the piece [`Tx::invert_term`]
+    ///    builds from that piece of `z`. So `t_v(p_v)` lies in the set given to
+    ///    [`Tx::invert_pa`], which keeps every input value (within `D_v`) where the term takes
+    ///    a value in the set it is given; it gives `none` only when there is no such value,
+    ///    and then `p` cannot exist, so returning `Res::none()` is sound.
+    /// 4. Each `own.dom` narrows only `v` (a [`Pa`] reads one input), so the box `r` holds `p`.
+    ///    `r` starts as `Res::unknown()`, so it is never marked exact.
+    ///
+    /// The precision given up, each against the exact preimage:
+    /// - The result is a box, the product of one set per input; the relation between the
+    ///   inputs is lost. `n, k` in `0..=10` with `n + k == 5` gives `n, k` in `0..=5`, which
+    ///   holds `(0, 0)`, of sum 0.
+    /// - The other terms are taken through the interval `[olo, ohi]`, the sum of their bounds
+    ///   over their whole domains: holes in their values are filled, and a [`Pa::Piecewise`]
+    ///   term's bounds may be wider than its values ([`pa_bounds`]). `k` in `{0, 10}` and `n`
+    ///   in `0..=10` with `n + k == 5` gives `n` in `0..=5`, where the exact set is `{5}`.
+    /// - Each piece of `z` is widened by the whole of `[olo, ohi]`, so a hole of `z` narrower
+    ///   than `ohi - olo` is filled.
+    /// - The others' bounds are over their domains `D_u`, not over the sets this inversion
+    ///   narrows them to; there is no second pass.
+    /// - When any input has no domain in `self.cx`, or [`Tx::invert_pa`] gives `None` for any
+    ///   term (an end of a domain outside [`in_range`]), the whole result is `None` and the
+    ///   caller ([`Walk::back`] of a name of `lets`) narrows no input at all.
+    ///
+    /// Tests: soundness against the interpreter on random blocks of sums over two inputs,
+    /// `l01_39a_bit_words::narrowing::a_block_of_tested_lets_is_narrowed_soundly_against_the_interpreter`
+    /// (grid `-40..=40` squared, coefficients at most 2, at most 4 bindings; it cannot catch
+    /// an error that needs three or more inputs or values outside the grid); the bound given,
+    /// `...::a_value_over_two_inputs_narrows_both` (`n >= -3` exactly); the box of
+    /// [`Tx::invert_read`] against this one,
+    /// `l01_39_reduced_product::follow::random_tests_through_term_bounds_narrow_as_reading_every_input_does`.
     fn invert_sep(&self, sep: &Sep, z: &IntervalSet) -> Option<Res> {
         if let Some(pa) = sep.single() {
             return self.invert_pa(&pa, z);
@@ -6038,6 +6464,48 @@ impl<'t> Tx<'t> {
         sep: &Sep,
         z: &IntervalSet,
     ) -> Option<Res> {
+        // Proof that this gives the box of `Tx::invert_sep` (the shadowed part; the slack rule
+        // for the rest is derived at `Sums::wants`).
+        // (1) The domains. `Tx::invert_sep` reads each input `v` over `self.cx.get(v)`. For an
+        //     input of `read` not in `Run::shadow`, that is `read.ints(v)`: when `v` is among
+        //     the run's `inputs`, `begin` put it in the shadow unless its domain equals the
+        //     scope's (`scope_ints`, which is `ints` for an input of a read, images.rs
+        //     `TermRead`); when it is not, `Cx::get` gives the first read's `ints(v)`, and every
+        //     read of a run has the same scope's names, so the same domain. This rests on the
+        //     one caller that gives reads, `View::inputs_and_lets` (product.rs), which makes
+        //     each read by `View::term_read` from its own `self.names`. Inside a lambda,
+        //     `Tx::open` adds only parameters, named `"\u{1}i.sid"`, which no input can be,
+        //     and `Walk::canonical_env` only key atoms, so no context changes an input's
+        //     domain. For a shadowed input, `step` below uses its own domain `d`.
+        // (2) The total. `LetPa::term_bounds` puts `0` in `lo` (`hi`) when that bound is
+        //     infinite and counts it in `lo_inf` (`hi_inf`), and `TermBounds::plus` adds every
+        //     field, so `read.total()` is the field-wise sum of the leaves; taking out a leaf's
+        //     `lo`, `hi`, `lo_inf`, `hi_inf`, `no_val` over `read.ints(v)` and adding those over
+        //     `d` gives the sum over the run's domains, which is what `Tx::invert_sep` sums.
+        //     The other fields (`void`, `wide`, `odd`, the infinite kinds) are not read below.
+        // (3) No term is missed. `Wants::takes` holds of a sum exactly when it holds of one of
+        //     its leaves (it is an `or` of counts and a maximum), and `images::visit` calls `f`
+        //     on each leaf it takes. So a leaf of an input not shadowed is visited exactly when
+        //     its own bounds, which (1) shows are those over the run's domain, are taken; a
+        //     subtree's sum that still holds the old bounds of a shadowed leaf can only make
+        //     the visit enter more subtrees, never skip a leaf that is taken. Every shadowed
+        //     input of `read` is stepped once over `d`, whatever the tree holds: in the visit
+        //     when the next leaf visited is at or past it (`own` is in name order, the order of
+        //     `Sets`, an `imbl::OrdMap`, and of the visit), or after the visit. Stepping a term
+        //     that is not wanted keeps its input's domain (`Sums::wants`), as in
+        //     `Tx::invert_sep`, which steps every term.
+        // (4) The order. An ending step (no value, or an inversion that stops) ends both
+        //     functions the same way; the steps are made in name order, the order of
+        //     `sep.terms`, which `Tx::invert_sep` follows.
+        // Cost: `O(s)` to filter the run's `s` shadowed inputs, beside the bound above; `s` is
+        // at most the inputs given the transfer (`let_narrowing`).
+        // Tests: `l01_39_reduced_product::follow::
+        // random_tests_through_term_bounds_narrow_as_reading_every_input_does` (an input read
+        // over another domain in about a third of its steps, each a meet with the scope's, so
+        // it cannot catch a shadowed domain wider than the scope's, which the proof does not
+        // need, nor reads made in two scopes, which no caller builds); the cost,
+        // `l01_39_reduced_product::scaling::bench::
+        // tests_that_give_an_input_another_domain_read_it_through_the_tree`.
         let own: Vec<(&Arc<str>, &IntervalSet)> = (self.run.shadow.iter())
             .filter(|(k, _)| read.ints(k).is_some())
             .map(|(k, d)| (k, &**d))
@@ -6159,10 +6627,35 @@ impl<'m, 't> Walk<'m, 't> {
     /// message. When the system refuses the memory for it
     /// ([`zed_kernel::num::Rat::to_integer`]) it is `None`, and the relation records that
     /// ([`Scoped::unbuilt`]), so that the question is refused with a message. A preimage
-    /// reads it as kept, unbuilt, as before. Complexity tradeoff: O(the bits of `k`), not of
-    /// its written size: `2 ^ 100000` costs 100000 bits, and `3 ^ 2^32` 6.8·10^9. A complete
-    /// solution would hold a kept power in the solver unbuilt and compare it with the
-    /// formula's other constants by bit length first.
+    /// reads it as kept, unbuilt, as before. Complexity tradeoff: O(M(b)) = O(b log b) time and
+    /// O(b) memory, `b` the bits of `k`, not its written size: `2 ^ 100000` costs 100000 bits,
+    /// and `3 ^ 2^32` 6.8·10^9. A complete solution would hold a kept power in the solver
+    /// unbuilt and compare it with the formula's other constants by bit length first.
+    // Proof of the cost (corrected in the proofs audit; it said O(the bits of `k`), which holds
+    // for the memory and for a power of 2 only). `Rat::to_integer` (zed-kernel num.rs) asks
+    // the system for 8·b bytes before building, a measured factor, not a proved one (its own
+    // comment, COMPLEXITY.md K30), then builds through `num::fast::built`: a power of 2 is a
+    // shift, O(b); any other prime power `p^e` by `num::fast::pow`, squarings whose widths
+    // double up to b, so their costs M(b/2^i) sum to O(M(b)), with M(n) = O(n log n) the
+    // transform product of `num::fast` (its module header); the running product is multiplied
+    // by each power in turn and then by the coefficient (`Rat::integer_built`), each product
+    // at most b bits wide, so O(t·M(b)) for `t` primes, O(M(b)) for the one or few primes of
+    // a written power. `3 ^ 2^32` has 2^32·log2(3) = 6.807·10^9 bits.
+    // Why the value is right: a `Value::Big` is an integer (zed-kernel value.rs, `Value::Big`:
+    // "a [`Rat`] that is an integer"), the precondition of `to_integer`, which returns that
+    // integer built or `TooLarge`; nothing is approximated. The flag: `Scoped::new` alone sets
+    // `asking`, and `Scoped::relation` sets `unbuilt` to false before it reads a body, so
+    // `Scoped::unbuilt` speaks of the last relation only; zedc `front.rs` reads it only when
+    // that relation is `None`, and refuses the question with a message (row
+    // NonLinearQuestion, census kind `PowerMemory`). Outside a scope (`asking` false),
+    // `Num::to_int` gives `None` for a kept power (zedc-int int.rs, `Num::scalar`), so the
+    // term is read as no linear form, as before this function existed. Tests: the build
+    // path, `l01_38_presburger::checker::pncx_kept_number_cli` (`x < 2^200`,
+    // `x < 2^100000`, `x mod 2^200 == 1`, each ending with status 1 and no output, so none
+    // is dropped; it does not read the message). The refused path (memory refused):
+    // `a_power_too_large_to_build_refuses_the_question` in that file (`x < 3 ^ (2 ^ 40)`, whose
+    // 1.7·10^12 bits exceed any memory the tests may ask), which reads the message; it cannot
+    // catch a power refused at a size the memory ask would allow.
     fn built(&self, k: &zed_kernel::num::Rat) -> Option<Int> {
         if !self.with(|tx| tx.asking) {
             return Num::from(k).to_int();
@@ -6407,6 +6900,14 @@ impl<'m, 't> Walk<'m, 't> {
     /// through its bindings, and calls no lambda. A run restricted to a class of remainders
     /// reads the class only at a remainder ([`Walk::back_arith`], [`Walk::residue_test`]), so the
     /// transfer of a term for which this is `false` is the same in every class.
+    ///
+    /// Not proved as written: the run's class index is also read by [`Walk::back_in`] (a test
+    /// `t` in a class, through `by_class(t).get(index)`) and by the `pa` lookup of an `if`
+    /// (`by_class(t).get(index)`), not only at a remainder. Those agree across classes when
+    /// `by_class` of a term this calls `false` gives one summary in every class: shown for
+    /// the branch of `by_class_at` after its `reads_mod` check (one `Pa` for all classes);
+    /// open for a `Some` that `by_class_node` returns before that check on a term that reads
+    /// no remainder. (`pa_line` returns `None` in every split run, the same in each class.)
     fn reads_mod(&'m self, t: Tid, env: Eid) -> Deep<'m, bool> {
         self.cached(
             |m| &mut m.reads_mod,
@@ -7003,7 +7504,10 @@ impl<'m, 't> Walk<'m, 't> {
                 }
             }
             // `min` and `max` are monotone in each operand, so their hull is the operator on
-            // the operands' ends.
+            // the operands' ends. Proof for `min` (`max` is the same with the order reversed):
+            // for `x` in `[la, ha]` and `y` in `[lb, hb]`, `min(la, lb) <= min(x, y)` and
+            // `min(x, y) <= min(ha, hb)`, and `x = la, y = lb` and `x = ha, y = hb` reach the
+            // two ends, so the result is the least interval holding every value.
             Node::Prim(p @ (Prim::Min | Prim::Max), args) if args.len() == 2 => {
                 let ca = self.clip(self.arg(args, 0), env).await?;
                 let cb = self.clip(self.arg(args, 1), env).await?;
@@ -7188,7 +7692,15 @@ impl<'m, 't> Walk<'m, 't> {
     /// another context reaching the same summary may give those other intervals. An input
     /// the body reads has the same interval wherever the summary is reached: an input of the
     /// transfer is the same in every context, and an enclosing parameter is read through the
-    /// lambda's scope, which the summary's key holds.
+    /// lambda's scope, which the summary's key holds. Why: `cx.inputs` is set by
+    /// `Tx::start_from` from what `Tx::begin` made, and changed only by `Tx::open`, which
+    /// adds the call's parameters, and `Tx::shut`, which restores it, so an input of the transfer has one interval in every
+    /// context. A parameter over an interval is the name `\u{1}{i}.{sid}`, made once for the
+    /// summary numbered `sid` (`Walk::summon`) and given that summary's snapped interval; a
+    /// body reaches it only through a scope its `open` bound, and that scope is in the key of
+    /// every summary taken under it, so the key fixes the enclosing summary and its interval.
+    /// Tests: `l01_25_preimage_catalog::scopes::one_function_called_twice_is_summarized_for_each_argument`,
+    /// `l01_25_preimage_catalog::scaling::nested_calls_are_summarized`.
     #[expect(
         clippy::too_many_arguments,
         reason = "the call, its lambda and the caller's arguments, scope, demand and place are each read"
@@ -7536,7 +8048,12 @@ impl<'m, 't> Walk<'m, 't> {
                 // other operand is an integer, since a failing operand fails the term (DESIGN.md
                 // sec:failure; SOUND-exact-oracle: `max(x, 0 mod y) >= 8` with `x` in `[8, 12]`
                 // fails at `y == 0`). When the demand holds the whole forward range, both rays
-                // apply; the upward one is taken.
+                // apply; the upward one is taken. Why the meet below is exact on each side: the
+                // term's value is `min(a, b)` or `max(a, b)` where both are integers, otherwise it
+                // fails, so `max(a, b) >= lo` is `(a >= lo and b is an integer) or (b >= lo and
+                // a is an integer)`; the preimage of `b` under every integer is where `b` is an
+                // integer, and an operand whose forward result cannot fail needs no meet. Test:
+                // `l01_25_preimage_catalog::exact_oracle::min_and_max_read_where_the_other_operand_fails`.
                 let both = (p == Min && up) || (p == Max && down && !up);
                 let either = (p == Min && down && !up) || (p == Max && up);
                 if both || either {
@@ -7586,7 +8103,12 @@ impl<'m, 't> Walk<'m, 't> {
         if let Op::Pow(k) = o
             && k.is_zero()
         {
-            // `c ^ 0` is 1 wherever `c` is an integer.
+            // `c ^ 0` is 1 wherever `c` is an integer, `0 ^ 0` too: the kernel's
+            // `i64::checked_pow` and `Rat::pow` give 1 for exponent 0 (`zed_kernel::eval::int_binary`,
+            // `zed_kernel::num::Rat::pow`), and where `c` fails the term fails, which the
+            // preimage of `c` under every integer leaves out. Tests:
+            // `l01_25_preimage_catalog::s22::a_power_zero_of_a_quotient_by_a_term_is_not_exact_where_the_divisor_is_zero`,
+            // `l01_38_presburger::random::a_power_zero_of_a_quotient_by_a_term_fails_where_the_divisor_is_zero`.
             return if z.contains(1) {
                 self.back(c, env, Demand::Ints(IntervalSet::top())).await
             } else {
@@ -8799,6 +9321,20 @@ impl<'m, 't> Walk<'m, 't> {
     // `z0 + (z1 + …)`, is not read in place and still keeps a term at each `+`, Θ(k²).
     // Test: `l01_39_reduced_product::scaling::a_sum_over_many_names_is_assumed_in_time_near_linear`,
     // COMPLEXITY.md row F154.
+    // Proof that the result and the order of translation are those of the naive version. The
+    // old arm read `lin(arg 0)` and then `lin(arg 1)`; unrolled down the left operands, it
+    // translates the deepest left operand that it does not unroll, then each right operand from
+    // the innermost out, which is the order below. It unrolled an inner sum only through
+    // `Walk::lin`, which returns a kept term without reading again (`Walk::translated`, keyed
+    // by `(t, env)`); the loop stops at an operand with a kept term, or a constant, which
+    // `lin_at` reads first, so both are read through `lin` as before. An inner sum read in place
+    // is a two-operand `Add`/`Sub` whose term `lin_at` would form as `lin(0) ± lin(1)`, the
+    // same parts. `Lin::plus_assign` adds coefficients exactly (zedc-presburger formula.rs),
+    // and the sum is associative, so the term equals the nested `plus`/`minus`. A `None` from
+    // any operand is `None` here, as it was there. What differs: the inner sums read in place
+    // are not kept in `memo.lin` and not logged, so `summed` makes the second meeting go
+    // through `lin`. Test: the scaling test above measures time only; no test found compares
+    // the terms with the naive version.
     async fn lin_sum(&'m self, t: Tid, env: Eid) -> Option<Lin> {
         use Prim::*;
         // The right operands, outermost first, each with whether it is subtracted.
@@ -8837,6 +9373,14 @@ impl<'m, 't> Walk<'m, 't> {
         if let Some(v) = self.constant(t, env).await {
             // A constant past the 64-bit range is read at its size, as `constant_coef` reads
             // it (I4.1): read as no linear form, it dropped the question with no message.
+            // Why no question is now dropped silently here: `Lin::constant` takes an `Int` of
+            // any size, so a `Value::Big` is `None` only when [`Walk::built`] gives `None`; in
+            // a question (`tx.asking`) that is when the system refuses the memory for a power,
+            // and `built` then sets `tx.unbuilt`, which `zedc` front.rs reads
+            // (`scoped.unbuilt()`) to refuse the question with a message. Outside a question
+            // (a preimage) `None` leaves the term unread, as any term not linear is. Tests:
+            // `l01_38_presburger::checker::a_bound_past_the_64_bit_range_keeps_the_question`
+            // (bounds of 2^63 - 1, 2^63 and 2^64); a refused allocation is not tested.
             return match v {
                 Value::Int(n) => Some(Lin::constant(n)),
                 Value::Big(k) => self.built(&k).map(Lin::constant),
@@ -8941,7 +9485,14 @@ impl<'m, 't> Walk<'m, 't> {
                     },
                     IntDiv | Mod => {
                         // A divisor past the 64-bit range is read at its size (R4-CLAUDE-1): read
-                        // as no constant, it dropped the question with no message.
+                        // as no constant, it dropped the question with no message. The divisor
+                        // is now an `Int` of any size ([`Walk::constant_coef`], a power built by
+                        // [`Walk::built`] as for `lin_at` above), and [`Tr::pair_by_constant`]
+                        // defines the pair for any `c != 0` (Euclidean, `0 <= r <= |c| - 1`).
+                        // Tests: `l01_38_presburger::checker::a_bound_past_the_64_bit_range_keeps_the_question`
+                        // (`mod 2^63 - 1`, `mod 2^63`) and
+                        // `l01_38_presburger::pncx_probe::pncx_divisor_past_i128_is_read`
+                        // (2^64 to 2^10000).
                         let k = self.constant_coef(self.arg(args, 1), env).await;
                         if k.is_none() && products {
                             // A divisor that is not a constant: its product with the quotient
@@ -9093,8 +9644,8 @@ impl<'m, 't> Walk<'m, 't> {
     /// So `¬C` at an `if`'s guard, a `!` and the short-circuit operators, which the elaborator
     /// writes as `if`s, needs no condition of its own.
     ///
-    /// Memoized by term and scope, and a call whose arguments cannot fail by its key
-    /// ([`Walk::shared_call_key`]), as the formula is, so it costs O(1) beside each entry of
+    /// Memoized by term and scope, and a call by its key, which holds its arguments'
+    /// conditions when one may fail ([`Walk::shared_call_key`]), as the formula is, so it costs O(1) beside each entry of
     /// the translation: each node of the condition is made once and shared.
     fn defined(&'m self, t: Tid, env: Eid) -> Deep<'m, Option<Defined>> {
         self.translated(
@@ -9201,6 +9752,27 @@ impl<'m, 't> Walk<'m, 't> {
     /// is its formula's or its term's to choose. Otherwise, and where the condition reads an
     /// auxiliary variable the writing cannot copy, it is the callee's body read in the call's
     /// scope ([`Walk::defined_call`]).
+    ///
+    /// Proof that the condition written at the arguments is the call's. A claimable call has
+    /// an empty third part of its key ([`Walk::claimable`]), so no argument may fail: each
+    /// argument's condition is `true`, and its value is its linear term at every point
+    /// ([`Walk::defined`]'s proof). The callee's body read under [`Walk::canonical_env`] is
+    /// read with each parameter bound to its canonical atom (or to the constant or class
+    /// atom the key holds for it, the same in `key` and `k.1`); the condition so made holds
+    /// at a value of those atoms exactly where the body is not an atom there. Putting each
+    /// argument's term for its atom ([`arguments_of`], [`Defined::instance`], which writes a
+    /// quotient or remainder by a constant through [`Tr::instance`] and gives `None` for any
+    /// other auxiliary variable) so gives the condition at the call's values. A key equal to
+    /// the call's own arguments (`key == k.1`) is read at the call's place, with no
+    /// substitution. The `held` path keeps the condition over the canonical atoms and adds
+    /// the binding's constraint `Aux(n) == at`, as [`Walk::formula_called`] does for the
+    /// relation. Not proved here: that this constraint ties the canonical atoms to the
+    /// call's arguments; it is the claim's own proof (the claim table `tr.claims`, not read
+    /// for this audit). Test:
+    /// `l01_38_omega_test::one_scope::a_relation_that_divides_by_a_term_holds_where_the_interpreter_gives_true`
+    /// (`u3` holds the claim, `u5` is written at its arguments, `u8` reads at its place),
+    /// checked against the interpreter on the window -4..4; it cannot catch a fault that shows
+    /// only outside that window.
     // Complexity tradeoff: a call that holds no claim costs its callee's condition, written at
     // its arguments, O(the condition's divisors and parts), or its callee's cone where the
     // condition reads a quotient by a term or another variable of no copy, as a call that
@@ -9325,6 +9897,23 @@ impl<'m, 't> Walk<'m, 't> {
     /// same conditions. Two calls whose arguments were made apart but alike,
     /// `f(x mod n, n) && f(x mod n, n)`, so share one, and k functions, each calling the one
     /// before twice so, are read once each. O(the arguments) beside their translations.
+    ///
+    /// Proof that two calls with one key may share a translation, given that a callee's
+    /// translation reads an argument that cannot fail only through its linear term (the
+    /// premise of [`Walk::call_key`]'s keys, stated in [`Scoped`]'s comment, "each a function of
+    /// its key alone": Not proved here, it is that earlier claim). An argument that may fail
+    /// is read by the callee through its linear term where it is defined, and through its
+    /// condition ([`Walk::defined`] of the argument, which [`Walk::defined_at`] at a `Var`
+    /// and [`Walk::exactly_equal`] read); where it fails its value is `#divByZero`, the one
+    /// failure of the domain (the proof at [`Walk::exactly_equal`]), whatever the argument. Two
+    /// arguments with equal parts of the key have equal conditions: equal set numbers are
+    /// equal sets of divisors (module `divisors`), so equivalent `nonzero` (the invariant at
+    /// [`Defined::meet`]), and equal numbers of `rest` are equal formulas
+    /// ([`FormulaNumbers`]). So at every point the two argument lists have the same values,
+    /// and the callee's relation and condition are the same. An empty `k.2` (no argument may
+    /// fail) is the key of a call that reads its arguments by linear terms alone, as before.
+    /// Test: `l01_38_presburger::ladder::calls_whose_arguments_may_fail_alike_share_one_translation`;
+    /// it cannot catch a callee that reads an argument by more than its term and condition.
     async fn shared_call_key(
         &'m self,
         body: Tid,
@@ -9355,6 +9944,24 @@ impl<'m, 't> Walk<'m, 't> {
     /// ([`Tr::definedness`]): the interpreter compares atoms as data (DESIGN.md M0.9 (a)), and
     /// the one failure of the domain, `#divByZero`, merged with itself is itself, so `a == b`
     /// holds where both are defined and `same` holds, and where both fail.
+    ///
+    /// Proof that the result is exact. (1) An operand here has a linear term or a formula
+    /// (the two callers in [`Walk::formula_at`]), and such an operand takes no atom but
+    /// `#divByZero`: [`Walk::lin_at`] gives `None` for a constant that is not an integer
+    /// ([`Walk::formula_at`] for one that is not a bool), and
+    /// for a quotient or remainder by the constant 0 (`k.filter(|c| !c.is_zero())?`), so the
+    /// only operation it translates that can fail at a point is a quotient or remainder by a
+    /// term ([`Tr::div_mod_by_term`]), which fails with `#divByZero` where the divisor is 0.
+    /// (2) [`Walk::defined`] gives `da` exactly where `a` is not an atom (its proof is there).
+    /// (3) The cases: both defined, the interpreter's `a == b` is `same`, and only the first
+    /// disjunct can hold (the second needs both to fail); both fail, both are `#divByZero`,
+    /// equal, and the second disjunct holds; one fails, an atom and an integer are unequal,
+    /// and neither disjunct holds. Test:
+    /// `l01_38_presburger::ladder::a_point_where_an_operation_fails_is_a_witness_only_where_the_interpreter_agrees`
+    /// (`n == 0 |- x mod n == (x + 1) mod n`) and
+    /// `ladder::each_partial_operation_and_each_place_it_fails_in_agrees_with_the_interpreter`;
+    /// they cannot catch a second failing operation added to `Walk::lin_at` later, which
+    /// would break (1).
     async fn exactly_equal(&'m self, same: Formula, a: Tid, b: Tid, env: Eid) -> Option<Formula> {
         if !self.tr(|tr| tr.definedness) {
             return Some(same);
@@ -9399,7 +10006,8 @@ impl<'m, 't> Walk<'m, 't> {
     ///
     /// Proof that the body's formula is the same under every argument list that passes these
     /// checks, and so the same as under the inputs [`Walk::formula_by_get`] binds: nothing in
-    /// zedc-preimage matches `Prim::Tuple` or `Prim::TupleGet` by name, so each part of the
+    /// zedc-preimage but the check [`Walk::reads`] itself (and a test in `address.rs`) matches
+    /// `Prim::Tuple` or `Prim::TupleGet` by name, so each part of the
     /// walk reads a term `p[k]` by the arm it gives any primitive it does not name, and reads
     /// the parameter `p` only from such a term, since the body names it nowhere else. Those
     /// arms are of two kinds. Some give a fixed answer without reading the operands:
@@ -9414,6 +10022,19 @@ impl<'m, 't> Walk<'m, 't> {
     /// that term, which the same arms read. So the walk reads an argument only through those
     /// three answers, which the checks fix, and the formula is the same for every argument
     /// list; it holds no atom of an argument, since no linear term reads `p[k]`.
+    /// The binding [`Walk::canonical_env`] makes passes the checks too: it binds `p` to a
+    /// `Node::Var` of the input `c.get` at `ROOT`, inserted in `cx.inputs` over every integer,
+    /// and [`Walk::mentions`] of such a name, unbound at `ROOT`, is `cx.has`, `true`. At that
+    /// name [`Walk::reads_mod`] is `false`: `reads_mod_at` gives `None => false` for a
+    /// `Node::Var` that `lookup` does not bind. And [`Walk::defined`] is `true`: `defined_at`
+    /// first asks [`Walk::constant`], whose `constant_at` returns `None` once `mentions` is
+    /// `true`, and then gives `None => Some(Defined::top())` for the unbound `Node::Var`. Not
+    /// checked arm by arm (proofs-in-comments audit): that each arm listed above as giving a
+    /// fixed answer reads no operand. Answers checked by the units of
+    /// `tests/steps/l01_38_omega_test/one_scope.rs` (`tg`, `tw`, `ts` and their callers),
+    /// against the relation of the body closed over the definitions it reaches; they cannot
+    /// catch an arm, added later, that matches
+    /// `Prim::TupleGet` by name.
     // Complexity tradeoff: each call that passes the checks costs O(the size of its arguments)
     // for the checks, and the body is read once for all of them, O(the body); before, each
     // call read the body in its own scope, O(the body) each, Θ(n²) for n calls of a body of n
@@ -9468,6 +10089,12 @@ impl<'m, 't> Walk<'m, 't> {
     // Complexity tradeoff: one visit per distinct part of the body, with an explicit stack and a
     // visited set, since the terms share parts (a visit per path could be exponential); once
     // per lambda and parameter, O(the body), against O(1) for a remembered answer.
+    // Proof that the check sees every occurrence of `p` (proofdoc4b): the match names every
+    // variant of [`Node`] with no `_` arm, and pushes every `Tid` a node holds, except the two
+    // parts of a `p[k]` it accepts and the third field of `Node::Follow`. Those arms are kept
+    // as `Term`s, not numbered, and each is a constant built of literals by primitives alone
+    // ([`follow_own`], [`constant_arm`]), which reads no name. `Reads` is ordered `Not <
+    // ByGet < Other` and `max` keeps the most, so one `Other` part gives `Other`.
     fn reads(&self, body: Tid, p: Name) -> Reads {
         self.with(|tx| {
             if let Some(&r) = tx.reads.get(&(body, p)) {
@@ -9578,6 +10205,47 @@ impl<'m, 't> Walk<'m, 't> {
     /// holds no claim writes `c` as `k` ([`Tr::instance`], [`at_arguments`]): in both, `c` is a
     /// variable that nothing else mentions, fixed to one value, so the solutions over every
     /// other variable are those without it.
+    ///
+    /// The steps in full. (1) Every read of a scope is [`Tx::lookup`] of the name `x` of a term
+    /// `Node::Var(x)` the walk is at (each `lookup` call in this file is so; [`Walk::followed`]
+    /// too), and a free name is read from `cx` by its text, which for `c` holds `#`, which no
+    /// written name holds ([`Tx::canonical`]). (2) Let `e_p` be the scope [`Walk::canonical_env`]
+    /// makes when it binds `p` ([`Tx::bind`], a persistent map updated at one name). Every pair
+    /// (term, scope) the walk reads whose scope holds that binding of `p` has a term that is a
+    /// part of the body `reads` walked, by induction on the walk: the body itself; a part of
+    /// it read in such a scope, or in one that adds a name other than `p` (the body binds no
+    /// `p`); the target of a name bound inside the body (a `let` value or an argument, both
+    /// parts, read in such a scope); the body of a lambda whose scope holds that binding,
+    /// since then the lambda term was read in such a scope, so it is a part, and `reads`
+    /// pushes a lambda's body. Every other target holds no such scope: the other parameters
+    /// are bound to the caller's arguments in the caller's scope or to `Node::Var` of their
+    /// atoms at `ROOT`, and a name bound outside the body is bound in `lam` or a scope before
+    /// it; a callee made outside the body is read in its own scope with its parameters added,
+    /// and a parameter of it named `p` hides ours. (3) So no lookup of `p` ever returns the
+    /// binding (no part is `Node::Var(p)`), and its target, the constant's term or `Node::Var`
+    /// of `c`, is never read: every lookup returns the same, so every arm of the walk gives
+    /// the same formula, term and condition, with no atom `c`; the arms of a `Node::Follow`
+    /// are literals and primitives alone ([`follow_own`], [`constant_arm`]), not walked and
+    /// naming nothing. (4) A claimed call: [`Walk::binding`] keeps the pair `(c, k)` (the
+    /// filter `c != a` keeps it, a constant holds no bound atom), whose definition is
+    /// `c == k`, and [`Scoped::written`] writes `c` as `k` from that pair. A call that holds
+    /// no claim: [`arguments_of`] maps `c` to `k` for [`Tr::instance`] and
+    /// [`Defined::instance`], and [`at_arguments`] the same; a projection keeps the key's
+    /// atoms ([`projected`]), and `c` is not in the relation. (5) A constant argument that
+    /// may fail (`(x mod n) * 0`, whose linear term may be `0`) is never swapped: its condition is
+    /// not `true`, so `conds` is not empty and this returns `None`
+    /// ([`Walk::shared_call_key`]). Not proved: that the two keys are refused alike. The
+    /// scope numbers differ, and with them which memo entries are met, the names
+    /// [`Tx::canonical`] gives a lambda made in the body, and which calls in it
+    /// [`Scoped`]'s `fresh` lets claim; each of those paths is exact by its own proof, so
+    /// the answers agree where both are given, but a path one key takes may refuse where the
+    /// other's does not. Test
+    /// `l01_38_omega_test::one_scope::a_relation_read_under_the_unit_scope_is_the_relation_of_the_closed_body`
+    /// (units `un`, `ur`, `ua` to `ue`: other constants at an unread `k`, a name there, only
+    /// constants, and a callee that reads its constant), which compares the written relation
+    /// with the closed body's up to the numbering of auxiliary variables; it cannot catch a
+    /// body with a lambda, an outer name or a `Node::Follow` in it, which no unit holds, nor
+    /// a refusal that differs.
     // Complexity tradeoff: before, a constant was always itself in the key, so n calls passing n
     // different constants to a parameter the body does not read had n keys and read the body
     // n times, Θ(n²) for a body of n terms (`many(x, k) = 0 + x + ... >= 0` called as
@@ -10735,7 +11403,7 @@ impl Pa {
     }
 
     /// `min(self, c)`, or `max(self, c)` where not `min`, over `dom`, the domain of the input
-    /// ([`clamp_treap`]).
+    /// ([`clamp_treap`]); `None` where a crossing of `c` lies past `i128`, as there.
     fn clamp(&self, min: bool, c: i64, dom: &IntervalSet) -> Option<Pa> {
         let c = Int::from(c);
         let var = match self {
@@ -10748,7 +11416,7 @@ impl Pa {
             }
             Pa::Linear { var, .. } | Pa::Piecewise { var, .. } => var.clone(),
         };
-        let root = clamp_treap(&self.to_treap(dom)?, min, &c);
+        let root = clamp_treap(&self.to_treap(dom)?, min, &c)?;
         Some(Pa::Piecewise { var, root })
     }
 
@@ -11651,6 +12319,25 @@ impl LetPa {
     /// the number of inputs, so a caller that keeps the sum of the inputs' shifts in a tree,
     /// and changes it where an input changes, pays for those inputs alone (item
     /// PA-let-narrow-many).
+    ///
+    /// Why this is [`LetPa::image`] over those integers. (1) [`Tot`] is a sum of one
+    /// contribution per term, each a finite part and counts of infinite ends, no value and no
+    /// domain, and [`Tot::plus`] adds them componentwise: a commutative group, with
+    /// [`Tot::put`] at `k = -1` the inverse of `k = 1`. (2) The shift of `v`
+    /// ([`Sep::shift`]) is its new contribution, the bounds of its term as it stands over
+    /// `ints`, less the one `tot` holds for it, its bounds when put in times the factors taken
+    /// since (`scale / at`, exact). So `tot + shift(v)` is `tot` with `v`'s contribution
+    /// replaced, and so on for each input `s` sums, provided `s` holds at most one shift of
+    /// each input (the caller's tree keeps one per input). (3) [`Tot::bounds`] reads the
+    /// sums and counts as [`Sep::bounds`] reads the terms one by one: no value wins (the sum
+    /// has a value only where every term has one), then no domain, then the infinite end that
+    /// moves a bound outward ([`Val::plus`]). The one difference: `Sep::bounds` stops at the
+    /// first term with no domain or no value, so with both it may give `None` where this
+    /// gives the empty set, which is also sound. Test: `l01_39a_bit_words::bench::scaling::
+    /// a_chain_of_sums_under_a_test_of_each_input_reads_each_summary_from_the_one_before` and
+    /// the random tests of `l01_39a_bit_words::narrowing`, whose outcomes matched the base
+    /// before this path (818 programs, commit b18332dd5); they cannot catch an error in a
+    /// count that only an input with an infinite end and a negative factor reaches.
     pub fn image_shifted(&self, s: &Shift) -> Option<IntervalSet> {
         let end = |v: Val| match v {
             Val::Neg => NegInf,
@@ -11672,6 +12359,17 @@ impl LetPa {
     /// terms they share were put in, so that every shift may differ. Found from the
     /// differences of the persistent maps, which skip the parts the two share: a summary
     /// formed from `base` and a few more terms costs those terms (`O(m log k)`).
+    ///
+    /// Why an input not listed has the same shift in both: the shift of `v` over given
+    /// integers ([`Sep::shift`]) reads only whether the sum keeps a total, `v`'s entry
+    /// `(pa, at, bounds)` of `terms` and the sum's `scale`. With both keeping a total (else
+    /// `None` above), the scales equal and the entry equal in both maps (no `Update`,
+    /// `Add` or `Remove` at `v` in their difference), both read the same values, so both give
+    /// the same shift whatever the history of the two sums. An input of `vars` with no term
+    /// has no shift in either. Test: `l01_39a_bit_words::bench::scaling::
+    /// a_chain_of_sums_under_a_test_of_each_input_reads_each_summary_from_the_one_before`,
+    /// with the random narrowing tests matching the outcomes from before (commit b18332dd5);
+    /// it cannot catch an input missed only when two sums share a scale but not a history.
     pub fn changed_since<'a>(
         &'a self,
         base: &'a LetPa,
@@ -11719,6 +12417,24 @@ impl LetPa {
     ///
     /// Over `dom` the sum keeps its terms' bounds ([`LetPa::form`]), each taken as its term is
     /// put in by [`Sep::add`], at no cost but the terms added.
+    ///
+    /// Proof that the sum is the value. The graph has no cycle: [`LetPa::new`] takes parts that
+    /// already exist and a node is never changed after (it is behind an `Arc`), so a node
+    /// points only at nodes made before it. The value of a node is `rest + Σ c_i * value(p_i)`;
+    /// unfolding it from the root gives `Σ over nodes n of w_n * rest_n`, `w_n` the sum over
+    /// the paths from the root to `n` of the product of the coefficients on the path. The loop
+    /// below finds each `w_n` if every node is read after every node that adds it. The
+    /// stack gives that order reversed: a node `n` is listed when `(n, true)` is popped, and
+    /// each part `p` of `n` is then listed already: either `p` was entered after `n`, so its
+    /// `(p, true)` lay above `(n, true)` on the stack, or `p` was entered before `n` and is
+    /// not still open, since an open `p` has `(p, true)` below `(n, true)`, which makes `n`
+    /// reached from `p` and `p -> ... -> n -> p` a cycle. A node already formed is taken as
+    /// its formed sum times its weight and its parts are not entered: its formed sum is its
+    /// value, so the weight its parts would get through it is counted in that sum. A part also
+    /// reached by another path gets the weight of that path only, which is what is missing.
+    /// Tests: `l01_39a_bit_words::narrowing::a_block_of_tested_lets_is_narrowed_soundly_against_the_interpreter`
+    /// (random blocks of sums, checked against the interpreter); it cannot catch an error in
+    /// a graph deeper than its 4 bindings.
     fn sum(&self, dom: Option<Dom<'_, '_>>) -> Sep {
         // Postorder of the graph, on an explicit stack: a node is entered once (`entered`)
         // and listed after every node it adds.
@@ -12851,7 +13567,10 @@ static PIECE_PRIORITIES: zed_kernel::priority::Priorities =
 
 /// The priority of the piece `lo..=hi`: the run's random polynomial of degree 4 at a random
 /// polynomial hash of its ends as numbers ([`key`], one-to-one on the ends [`in_range`] admits).
-/// Distinct pieces tie with probability at most `11/2^64` a pair; the priorities are otherwise
+/// Distinct pieces tie with probability at most `11/p` a pair (`p = 2^64 - 59`, a little more
+/// than `11/2^64`): the key is two `i128`s, 32 bytes, so the stream is 4 words and the word of
+/// its length, at most `S = 10` symbols (two a word), and two distinct streams tie with
+/// probability at most `(S + 1)/p` (module [`zed_kernel::priority`]); the priorities are otherwise
 /// 5-wise independent and uniform, and every node's depth is `O(log n)` in expectation for
 /// every set of pieces (Seidel and Aragon, "Randomized search trees", Algorithmica 16, 1996,
 /// doi:10.1007/BF01940876, Theorem 3.3 and section 6; the full comment and the proof are in
@@ -12986,6 +13705,22 @@ fn join_treap(left: Tree, right: Tree) -> Tree {
 /// two; both lie in `i128`, since `cut` is above the piece's lower end and at most its upper
 /// end, which [`in_range`] admitted.
 ///
+/// Completed (proofdoc4b): that holds for finite ends only. The callers ([`slice_treap`],
+/// [`add_into`]) cut at `small(v)` and `small(v) + 1` for an end `v` that [`in_range`]
+/// admitted, so `cut` lies in `i128::MIN + 1..=i128::MAX`, and [`split_around`] returns the
+/// piece only when `key(lo) < cut <= key(hi)`. Where the piece's upper end is `PosInf` and
+/// `cut = i128::MAX`, the half above is `Fin(i128::MAX)..`, and where its lower end is
+/// `NegInf` and `cut = i128::MIN + 1`, the half below is `..=Fin(i128::MIN)`: ends that
+/// [`in_range`] does not admit, which [`key`] confuses with the infinities. Neither is kept.
+/// A cut at `small(v) + 1 = i128::MAX` comes from `v = i128::MAX - 1`, a high end, and the
+/// caller keeps only the part below (`slice_treap` takes `.0`; in `add_into` the part above
+/// goes with the walked node's right subtree, which is empty, since no admitted piece lies
+/// above `i128::MAX - 1`, so `add_into` gives `None` for it). Likewise a cut at `small(v) =
+/// i128::MIN + 1` comes from a low end, and only the part above is kept. So every node a
+/// kept part holds has ends in `i128`, and [`key`] stays one to one on them. Test:
+/// `l01_25_preimage_catalog::wide_ends::ends_past_i128_take_the_transfer_before` reads ends
+/// past `i128` only, not ends at `i128::MAX - 1`.
+///
 /// The two halves have priorities of their own ([`prio_of`]), which may exceed those of the
 /// cut piece's ancestors, so they are joined to the two parts only after the split
 /// ([`split_around`]): placed where the piece was, they broke the heap order, and the treaps
@@ -13014,6 +13749,29 @@ type CutPiece = (End, End, Int, Int);
 /// The pieces below `cut`, the piece that holds `cut - 1` and `cut` if one does, with its
 /// line, and the pieces above: a split that makes no node of its own, so both parts keep the
 /// heap order.
+///
+/// Proof, by induction on the height, for a treap `root` (pieces in input order, each
+/// node's `prio` at least its children's). A tree wholly at or above `cut`, or wholly below
+/// it, is returned whole. Otherwise the node's piece is below `cut` (`cut > hi`), at or above
+/// it (`cut <= lo`), or holds `cut - 1` and `cut` (`lo < cut <= hi`); since the pieces are
+/// disjoint and in order, at most one piece of the tree is of the third kind, and it is
+/// returned without a node. In the first two cases the recursion splits one child; the node
+/// is rebuilt with its own `prio` (`node_of`, not `make_node`) over its other child and one
+/// part of the split, whose nodes all come from that child and so have `prio` at most the
+/// node's; so both parts are treaps in input order. The children are read through
+/// [`push_down`], so the node's tag reaches them before the rebuild, which gives the new
+/// node `Tag::ID` over its own already tagged line. Then [`split_at`] joins each half of
+/// the cut piece, `lo..=cut - 1` and `cut..=hi`, both nonempty, to the part on its side;
+/// [`join_treap`] of two treaps, the first wholly below the second, is a treap (its root is
+/// the larger of the two roots, and the recursion joins below it). So both results of
+/// `split_at` are treaps, the halves' priorities [`prio_of`] of their own ends, as a treap
+/// made from those pieces would hold, and the depth bound at [`prio_of`] applies. Cost: one
+/// path, `O(depth)`, then two joins, `O(depth)` each. Tests: `random_treap` builds through
+/// `split_at`, and `a_sum_of_summaries_is_the_sum_at_every_point` checks the values at every
+/// point; neither checks the heap order, which only the depth (and so the cost) relies on:
+/// `a_split_keeps_the_heap_order` (NOT RUN) does; the bench tests
+/// `l01_25_preimage_catalog::bench::s22::chain_probe_all_scales` and `chain_probe_half_scales`
+/// measure the cost.
 fn split_around(root: Tree, cut: i128) -> (Tree, Option<CutPiece>, Tree) {
     let Some(node) = root else {
         return (None, None, None);
@@ -13048,8 +13806,39 @@ fn split_around(root: Tree, cut: i128) -> (Tree, Option<CutPiece>, Tree) {
 /// multiplier 0), so only the nodes whose subtree's values lie on both sides of `c` are
 /// visited: those on the paths to the `m` pieces whose line crosses `c`, `O((m + 1) log n)`
 /// nodes, each joined in `O(log n)`.
-fn clamp_treap(node: &Tree, min: bool, c: &Int) -> Tree {
-    let n = node.as_ref()?;
+///
+/// Correction (proofdoc4b): counting only the pieces whose line crosses `c` is wrong. A node
+/// is visited when its subtree's values lie strictly on both sides of `c`, and that holds for
+/// a subtree of pieces that each lie on one side: constant pieces `0, 10, 0, 10, ...` with `c =
+/// 5` cross nowhere (`m = 0`) and visit every node. The bound that holds, while the bounds are
+/// exact (tags of slope 0, [`Tag::vals`]; [`node_of`] makes `vals` the hull of the subtree's
+/// piece values): `O((m + s + 1) log n)` expected nodes, where `m` counts the pieces with a
+/// value below `c` and one above it, and `s` the switches, the pairs of pieces, consecutive
+/// once the pieces that equal `c` throughout are left out, of which one has a value below `c`
+/// and the other one above. Proof: a visited node's subtree is a run of consecutive pieces
+/// with a value below `c` and one above; it holds a piece counted in `m`, or else one piece
+/// wholly at or below `c` with a value below it and one wholly at or above with a value above,
+/// and between them in the run a switch. So the node is an ancestor of a piece of `m` or of
+/// a switch, `O(log n)` expected ancestors each (Seidel and Aragon, doi:10.1007/BF01940876,
+/// through [`prio_of`]); a child that returns at once costs `O(1)`, two for each visited
+/// node. Each visited node makes at most four joins of `O(log n)` expected, so the time is
+/// `O((m + s + 1) log^2 n)`. With widened bounds (a tag of slope not 0) a subtree may be
+/// visited whose values lie on one side, and the bound is not proved; see [`invert_treap`]'s
+/// tradeoff. Test: `tests::a_clamped_summary_is_the_summary_clamped_at_every_point` checks
+/// the values, not the count.
+///
+/// `None` where a piece end it would make lies past what [`in_range`] admits, so the caller
+/// gives up as it does when [`Pa::to_treap`] refuses the domain. Why the check: a piece with
+/// an infinite end whose line crosses `c` past `i128` (`x - 2^200` on `0..` clamped by
+/// `max(_, 0)` crosses at `2^200`) gives `own` an end past `i128`, and so does `xh.succ()` at
+/// `i128::MAX` under an infinite `hi`; [`make_node`] would panic in [`small`] through
+/// [`prio_of`] and [`key`]. Every end made is checked, so no such end reaches [`make_node`].
+/// Test, red (the panic) before the check and green after:
+/// `tests::a_clamp_whose_crossing_lies_past_i128_is_given_up`.
+fn clamp_treap(node: &Tree, min: bool, c: &Int) -> Option<Tree> {
+    let Some(n) = node.as_ref() else {
+        return Some(None);
+    };
     let (lo, hi) = &n.vals;
     let cv = Val::Fin(c.clone());
     let (kept, at_c) = if min {
@@ -13058,13 +13847,13 @@ fn clamp_treap(node: &Tree, min: bool, c: &Int) -> Tree {
         (*lo >= cv, *hi <= cv)
     };
     if kept {
-        return Some(n.clone());
+        return Some(Some(n.clone()));
     }
     if at_c {
-        return Some(apply_tag(n, &Tag::affine(Int::ZERO, c.clone())));
+        return Some(Some(apply_tag(n, &Tag::affine(Int::ZERO, c.clone()))));
     }
     let (left, right) = push_down(n);
-    let mut out = clamp_treap(&left, min, c);
+    let mut out = clamp_treap(&left, min, c)?;
     // The inputs of the node's own piece whose value lies on the kept side of `c`: one stretch
     // at an end of the piece, or none, since the line is monotone; the rest take `c`.
     let side = if min {
@@ -13088,9 +13877,12 @@ fn clamp_treap(node: &Tree, min: bool, c: &Int) -> Tree {
         }
     }
     for (plo, phi, a, b) in pieces {
+        if !in_range(&IntervalSet::range(plo.clone(), phi.clone())) {
+            return None;
+        }
         out = join_treap(out, Some(make_node(plo, phi, a, b, None, None)));
     }
-    join_treap(out, clamp_treap(&right, min, c))
+    Some(join_treap(out, clamp_treap(&right, min, c)?))
 }
 
 /// The pieces of `root` within `lo..=hi`, whose finite ends lie strictly between the
@@ -13182,6 +13974,25 @@ fn add_into(big: Tree, walk: &Tree, f: &Tag) -> Tree {
 /// taken whole, so the time is `O((m + 1) log n)` for `m` pieces met, counting with them
 /// the pieces of a subtree whose bounds meet `z` where its values do not (bounds widened by
 /// an added line, [`Tag::vals`]). The ends of `z` may have any size.
+///
+/// Correction (proofdoc4b): the bound is not `O((m + 1) log n)` for `m` pieces whose values
+/// meet `z`, even with exact bounds. Bounds are a hull, so a subtree whose pieces' values lie
+/// in two different gaps of `z` has bounds that meet `z` though no value does: pieces of
+/// constant values `0, 10, 0, 10, ...` and `z = 4..=6` visit every node and meet no piece.
+/// The bound that holds, with exact bounds (every tag above has slope 0, so [`Tag::vals`] is
+/// exact, and [`node_of`] makes `vals` the hull of the subtree's piece values): `O((1 + m +
+/// j) log n)` expected nodes visited, where `m` counts the pieces whose values meet `z` and `j`
+/// the pairs of consecutive pieces whose values lie in different gaps of `z`. Proof: a node
+/// whose subtree is entered (its bounds meet `z`, and it is not taken whole) has a piece in
+/// its subtree whose values meet `z`, or two pieces whose values lie in different gaps of `z`
+/// (the hull meets `z` while no value does); its subtree is a run of consecutive pieces, so
+/// in the second case it holds a consecutive pair of the `j`. Either way the node is an
+/// ancestor of a piece counted in `m` or of a piece of a pair counted in `j`. Each piece has
+/// `O(log n)` expected ancestors (Seidel and Aragon, doi:10.1007/BF01940876, through
+/// [`prio_of`]), and a node that returns at once is a child of an entered node, at most two
+/// for each. This counts nodes; the work at each also holds the lookup in `z` and
+/// [`invert_piece`]'s, not counted here. With widened bounds the tradeoff below applies.
+/// No test measures the count; the exactness tests below do not check it.
 ///
 /// Complexity tradeoff: after a line is added to a summary whose values slope the other way
 /// (`n + (if n > 0 { -n } else { 0 })` is 0 for every `n > 0`), a subtree's bounds may be
@@ -13378,6 +14189,14 @@ fn ray(p: Prim, c: i64) -> IntervalSet {
 }
 
 /// Each piece of `z` moved up by `c`, exact.
+///
+/// Why exact: `x` is in the result iff `x - c` is in `z`, so the result is `z + c`, and
+/// `lo..=hi` moves to `lo + c..=hi + c` with infinite ends kept; the map is one to one, so the
+/// pieces stay apart and in order, and no end is rounded (`Num` is unbounded). The callers
+/// pass the sign the inverse needs: the backward transfer of `x + c` and `c + x` shifts by
+/// `-c`, of `x - c` by `+c` ([`Walk::back_arith`]); the clip's forward image of `x + c` by `+c`.
+/// Tests: `l01_25_preimage_catalog::entries::shifts_and_scalings_by_a_constant_invert_exactly`
+/// (`3 * n + 1 >= 10` gives `n [3..]`); they check fixed constants, the argument the rest.
 fn shift(z: &IntervalSet, c: i128) -> IntervalSet {
     let c = Num::from(c);
     let m = |e: &End| match e {
@@ -13392,6 +14211,15 @@ fn shift(z: &IntervalSet, c: i128) -> IntervalSet {
 /// result is exact; the forward image of `{c} - z` would cap the pieces of each sign region
 /// (`revision::map2`) and merge the pieces it moves across zero (plan item S22b). The clip
 /// reads `c - x` by it too (plan item S22b-rest).
+///
+/// Why exact: `x` is in the result iff `c - x` is in `z`, iff `x = c - v` for a `v` in `z`.
+/// `v -> c - v` is one to one and reverses order, so `lo..=hi` maps to `c - hi..=c - lo`, an
+/// infinite end to the opposite infinity, and the pieces, taken in reverse, stay apart and
+/// in order; no end is rounded (`Num` is unbounded). [`Walk::back_arith`] calls it for
+/// `c - x`. Tests:
+/// `l01_25_preimage_catalog::entries::shifts_and_scalings_by_a_constant_invert_exactly`
+/// (`10 - n > 4` gives `n [..=5]`) and
+/// `l01_25_preimage_catalog::constant_minus::reflected_arms_keep_every_piece_of_the_demand`.
 fn reflect(z: &IntervalSet, c: i128) -> IntervalSet {
     let c = Num::from(c);
     let m = |e: &End| match e {
@@ -13403,6 +14231,19 @@ fn reflect(z: &IntervalSet, c: i128) -> IntervalSet {
 }
 
 /// The integers `x` with `x * c` in `z`.
+///
+/// Why exact. For `c = 0`, `x * c = 0` for every `x`: every integer when `0` is in `z`, none
+/// otherwise. For `c > 0`, `lo <= x * c <= hi` iff `lo / c <= x <= hi / c` over the rationals,
+/// iff `ceil(lo / c) <= x <= floor(hi / c)` for an integer `x`. For `c < 0`, dividing by `c`
+/// reverses the inequalities: `ceil(hi / c) <= x <= floor(lo / c)`. `div_floor` is the floor
+/// of the quotient for either sign of `c`, and the ceiling is the floor plus one exactly when
+/// `mod_floor` is not zero (the quotient is not an integer), which `q` computes. An infinite
+/// end stays where `c > 0` and flips where `c < 0` (`-e`). A piece that holds no multiple of
+/// `c` gives `ceil > floor`, an empty range, which [`IntervalSet::from_pieces`] drops; it also
+/// takes the pieces in any order, so the reversed order for `c < 0` is fine, and the results
+/// of disjoint pieces are disjoint since `x -> x * c` is a function. Tests:
+/// `l01_25_preimage_catalog::entries::shifts_and_scalings_by_a_constant_invert_exactly`
+/// (`c` = 3, -2 and 0); fixed constants only, the argument covers the rest.
 fn times_pre(z: &IntervalSet, c: i64) -> IntervalSet {
     if c == 0 {
         return if z.contains(0) {
@@ -13440,6 +14281,18 @@ fn times_pre(z: &IntervalSet, c: i64) -> IntervalSet {
 
 /// The integers `x` with `x div c` in `z`, Euclidean: `x = q * c + r` with `r` in
 /// `0..abs(c)`.
+///
+/// Why exact. The kernel's `div` is Euclidean (zed-kernel `eval.rs`, `div_euclid` and
+/// `checked_div_euclid`), so `x div c = q` iff `q * c <= x <= q * c + abs(c) - 1`, a block of
+/// `abs(c)` integers. For `c > 0` the blocks of `q` and `q + 1` are adjacent and increase with
+/// `q`, so `q` in `lo..=hi` gives `lo * c..=hi * c + abs(c) - 1`; for `c < 0` they decrease
+/// with `q` and are adjacent, so it gives `hi * c..=lo * c + abs(c) - 1`. An infinite end
+/// stays where `c > 0` and flips where `c < 0`. Division by `0` fails, so no `x` has `x div 0`
+/// in `z`: empty. Distinct `q` have disjoint blocks, so the pieces' results are disjoint, and
+/// [`IntervalSet::from_pieces`] takes them in any order. Tests:
+/// `l01_25_preimage_catalog::entries::euclidean_division_and_remainder_by_a_constant_invert_exactly`
+/// (`i div 4 == 2` gives `i [8..=11]`, `i div -4 == 2` gives `i [-8..=-5]`) and
+/// `entries::a_division_that_can_fail_keeps_only_the_points_that_do_not`; fixed constants only.
 fn div_pre(z: &IntervalSet, c: i64) -> IntervalSet {
     if c == 0 {
         return IntervalSet::empty();
@@ -13468,6 +14321,8 @@ fn div_pre(z: &IntervalSet, c: i64) -> IntervalSet {
     )
 }
 
+/// The members of `within` with `x mod c` in `z`, Euclidean, and whether that is all of them
+/// and no more. The first and last periods `within` meets are listed exactly and the periods
 /// between them are one piece, so the set has at most `2 * p + 1` pieces for `p` pieces of
 /// remainders, and it is exact when there is no period between them. An unbounded `within`
 /// is kept whole unless every remainder is demanded.
@@ -13555,6 +14410,22 @@ fn minmax_pre(p: Prim, z: &IntervalSet, c: i64) -> IntervalSet {
 /// `l01_25_preimage_catalog::entries::ranges_of_every_width_are_read_by_one_method`.
 /// COMPLEXITY.md row C18 (thresholds.md replacement 8). A complete solution is `@exact`
 /// ([`exact_preimage`]), branch and prune over the box, at a cost in its points.
+///
+/// Cost, completed (proofdoc4b). Write `L` for the members the source lists over all listed
+/// inputs, `n` for the inputs, `|t|` for the size of the term and `E` for the cost of one
+/// evaluation of it. The axes list each member of each set once, and every set listed is
+/// within its input's domain, so `O(L)` members; at most one axis has more than one member,
+/// so the box has at most `L` points (one when no axis has two). [`enumerate_on`] builds one
+/// term for each point, a copy of `t` under `n` `let`s, `O(|t| + n)`, and evaluates it, `E`;
+/// then it makes each input's set of the members met by [`IntervalSet::from_pieces`] and
+/// counts them sorted, `O(L log L)`. In all `O(L (|t| + n + E) + L log L)`, after
+/// [`stage::ends`], one walk of the term as a tree (ledger ENDS-dag). `E` has no bound here
+/// beyond the term ending; that is what [`stage::ends`] is for. The step "every set listed
+/// is within its input's domain" is inferred, not checked at each writer of the box: the
+/// callers ([`preimage_in`], [`wide`]) pass the transfer's box, whose sets are met with the
+/// domains (for example `v.meet(&r.dom[&k])` in [`preimage_in`] and `x.meet(v)` in
+/// [`boxed_projections`]); were a set wider, the cost would be its width, not `L`. Tests: the
+/// two named above check which boxes are listed, not the cost.
 fn enumerate(term: &Term, dom: &Domains, listed: &Listed, demand: &Demand) -> Option<Whole> {
     let mut axes: Vec<(Arc<str>, Vec<Num>)> = Vec::new();
     for (k, s) in dom {
@@ -13932,6 +14803,19 @@ trait Search {
 /// `demand`, and otherwise halved on its widest input; a single point is evaluated. Every box
 /// is smaller than the one it was split from, so the search ends. `Some(true)` when `search`
 /// stopped it, `None` when a point cannot be run.
+///
+/// Why it ends. Requires every input of `root` bounded at both ends: both callers,
+/// [`witness`] and [`exact_search`], return `None` before calling otherwise, so a box holds
+/// finitely many points. A box popped is narrowed (a meet, never larger), then either dropped,
+/// taken, evaluated as one point, or given to [`halve`]. A box that is not one point has an
+/// input of two or more members, so with `lo < hi` (the `expect` there holds); `mid =
+/// lo + floor((hi - lo) / 2)` has `lo <= mid < hi`, so each half lacks `hi` or `lo` and holds
+/// strictly fewer points than its parent. So each box on the stack has fewer points than its
+/// parent, the tree of boxes has depth at most the root's point count and branching 2, and is
+/// finite. Running one point ends by `stage::ends`, which `witness` checks; `exact_search` is
+/// reached from [`exact_preimage`] under the same check. Test:
+/// `l01_25_preimage_catalog::exact::a_witness_is_the_first_point_found_or_none` (an unbounded
+/// box is not searched); no test measures depth.
 fn branch(
     term: &Term,
     root: Domains,
@@ -14071,7 +14955,10 @@ fn class_of(term: &Term, classes: &Classes) -> Option<Congruence> {
                 Some(Congruence::new(m.gcd(&n), v))
             }
             (Prim::Mul, [a, b]) => {
-                // (r mod m)(s mod n) is rs mod gcd(mn, rn, sm).
+                // (r mod m)(s mod n) is rs mod gcd(mn, rn, sm): (r + mi)(s + nj) =
+                // rs + rnj + smi + mnij, and g divides each of the last three terms (Granger,
+                // Proposition 4.1). Test: `exact::the_classes_alone_decide_a_box_of_any_size`
+                // (5 mod 10 squared is 25 mod 50); it reads no negative residue.
                 let ((m, r), (n, s)) =
                     (parts(class_of(a, classes)?)?, parts(class_of(b, classes)?)?);
                 let g = (&m * &n).gcd(&(&r * &n)).gcd(&(&s * &m));
@@ -14079,7 +14966,13 @@ fn class_of(term: &Term, classes: &Classes) -> Option<Congruence> {
             }
             (Prim::Mod, [a, Term::Lit(k)]) => {
                 // `x mod k` is Euclidean, so in 0..k; when k divides the modulus it is one value,
-                // and otherwise it is x's residue modulo gcd(m, k).
+                // and otherwise it is x's residue modulo gcd(m, k). Not in Granger; the steps:
+                // x = r + mi and x mod k = x - kq. If k | m, x mod k = (r + mi) mod k = r mod k
+                // for every i (m = 0, one value, is this case). Otherwise let g = gcd(m, k):
+                // g | k gives x mod k ≡ x (mod g), and g | m gives x ≡ r (mod g). Test:
+                // `exact::the_classes_alone_decide_a_box_of_any_size` (10 | 50) checks the first
+                // branch only; `tests::the_class_of_a_remainder_is_kept_modulo_the_gcd` checks
+                // both.
                 let k = Num::of_integer(k)?;
                 if k.signum() <= 0 {
                     return None;
@@ -14202,6 +15095,22 @@ mod tests {
             [(0, 0), (3, 3), (5, 5)]
         );
         assert_eq!(ranges_complement(&[], 3), [(0, 2)]);
+    }
+
+    /// [`class_of`] on `x mod k` with `k` not dividing the modulus: with `x` in `1 mod 4`,
+    /// `x mod 6` is odd (1, 5, 3, 1, ... for x = 1, 5, 9, 13), so `1 mod gcd(4, 6) = 1 mod 2`;
+    /// and with `k` dividing it, `x mod 2` is the one value 1.
+    #[test]
+    fn the_class_of_a_remainder_is_kept_modulo_the_gcd() {
+        let classes: Classes = [(Arc::from("x"), Congruence::new(4, 1))].into();
+        let rem = |k: i64| {
+            Term::Prim(
+                Prim::Mod,
+                vec![Term::Var(Arc::from("x")), Term::Lit(Value::Int(k))],
+            )
+        };
+        assert_eq!(class_of(&rem(6), &classes), Some(Congruence::new(2, 1)));
+        assert_eq!(class_of(&rem(2), &classes), Some(Congruence::new(0, 1)));
     }
 
     thread_local! {
@@ -16723,7 +17632,7 @@ mod tests {
             }
             let c = rng.below(31) as i128 - 15;
             let min = rng.below(2) == 0;
-            let clamped = clamp_treap(&root, min, &c.into());
+            let clamped = clamp_treap(&root, min, &c.into()).expect("ends well inside i128");
             for x in -40..=lo + 12 {
                 let want = point(&root, x).map(|v| if min { v.min(c) } else { v.max(c) });
                 assert_eq!(
@@ -16743,6 +17652,32 @@ mod tests {
                     r.vals
                 );
             }
+        }
+    }
+
+    /// `max(x - 2^200, 0)` on `0..`: the line crosses `0` at `2^200`, past `i128`, so the
+    /// clamp would make a piece ending there; it gives up (`None`) instead. Before the check
+    /// in [`clamp_treap`] this panicked in [`small`] ("the summary's ends lie in i128, checked
+    /// by in_range"). `min(x + 2^200, 0)`, the mirror, gives up too. A crossing inside `i128`
+    /// on the same infinite piece is kept: `max(x - 5, 0)` is `0` up to `5` and `x - 5` after.
+    #[test]
+    fn a_clamp_whose_crossing_lies_past_i128_is_given_up() {
+        let far = Int::pow2(200);
+        let root = Some(make_node(End::of(0), PosInf, Int::ONE, -&far, None, None));
+        assert!(clamp_treap(&root, false, &Int::ZERO).is_none());
+        let root = Some(make_node(NegInf, End::of(0), Int::ONE, far, None, None));
+        assert!(clamp_treap(&root, true, &Int::ZERO).is_none());
+        let root = Some(make_node(
+            End::of(0),
+            PosInf,
+            Int::ONE,
+            Int::from(-5i64),
+            None,
+            None,
+        ));
+        let clamped = clamp_treap(&root, false, &Int::ZERO).expect("the crossing lies in i128");
+        for (x, want) in [(0, 0), (5, 0), (6, 1), (100, 95)] {
+            assert_eq!(point(&clamped, x), Some(want), "x = {x}");
         }
     }
 
@@ -16928,6 +17863,30 @@ mod tests {
         check_nodes(&right);
     }
 
+    /// Every node's priority is at least its children's after [`split_at`] (the proof at
+    /// [`split_around`]), on random summaries split at random cuts, some inside a piece.
+    #[test]
+    fn a_split_keeps_the_heap_order() {
+        fn heap(t: &Tree) {
+            let Some(n) = t else {
+                return;
+            };
+            for c in [&n.left, &n.right].into_iter().flatten() {
+                assert!(c.prio <= n.prio, "{} above {}", c.prio, n.prio);
+            }
+            heap(&n.left);
+            heap(&n.right);
+        }
+        let (mut rng, _) = Rng::fresh("a_split_keeps_the_heap_order");
+        for _ in 0..500 {
+            let root = random_treap(&mut rng);
+            heap(&root);
+            let (below, above) = split_at(root, rng.below(90) as i128 - 50);
+            heap(&below);
+            heap(&above);
+        }
+    }
+
     /// The sum and the difference of two random piecewise summaries ([`Pa::plus`]) agree with
     /// the sum point by point, defined where both are; with a line, likewise; and the
     /// preimage of a random set under the sum ([`invert_treap`]) and the sum clamped
@@ -16989,7 +17948,7 @@ mod tests {
                     assert_eq!(hit, want, "round {round}, case {k}, x = {x}, z = {z:?}");
                 }
                 let c = rng.below(31) as i128 - 15;
-                let clamped = clamp_treap(&sum, true, &c.into());
+                let clamped = clamp_treap(&sum, true, &c.into()).expect("ends well inside i128");
                 for x in -60..=60 {
                     assert_eq!(point(&clamped, x), point(&sum, x).map(|v| v.min(c)));
                 }
