@@ -10,22 +10,45 @@
 #   bin/                 <target>-cc, clang with the flags for each sysroot
 #   podman/              storage for tests, apart from the user's own Podman config
 #   rustup/              the context of the image with rustup that s09_release runs
+# After a change of a version here or of the pin, what the old one used stays: its rust-<pin>/,
+# its files under dl/ and its Podman images (TOOL-test-deps-stale-pins). The script deletes
+# nothing; at its end it prints each of them by its literal path or tag, and
+# `tools/fetch_test_deps.sh --stale` prints the same list without fetching anything. Delete them
+# by those literal paths once no checkout still on the old pin needs them. A new version of a
+# sysroot package unpacks over the old one in aarch64/ or riscv64/, and files only the old one
+# had are not found; to be sure of a sysroot, delete it and run the script again.
 set -euo pipefail
+list= # --stale: only print what an earlier version left
+case ${1:-} in
+--stale) list=1 ;;
+'') ;;
+*)
+  echo "usage: tools/fetch_test_deps.sh [--stale]" >&2
+  exit 2
+  ;;
+esac
 deps=${XDG_CACHE_HOME:-$HOME/.cache}/zed-test-deps
-mkdir -p "$deps/dl" "$deps/bin" "$deps/rust"
+[ -n "$list" ] || mkdir -p "$deps/dl" "$deps/bin"
 ubuntu=http://archive.ubuntu.com/ubuntu/pool/main
 rust=https://static.rust-lang.org/dist
 image=docker.io/library/alpine:3.20
+storage=$deps/podman/storage.conf
+kept=() # the entries directly under dl/ that this version uses
 
 fetch() { # url sha256 [file under dl/, by default the url's last part]
-  file=$deps/dl/${3:-$(basename "$1")}
+  file=${3:-$(basename "$1")}
+  kept+=("${file%%/*}")
+  [ -z "$list" ] || return 0
+  file=$deps/dl/$file
   mkdir -p "$(dirname "$file")"
   [ -e "$file" ] || curl -fsSL -m 300 -o "$file" "$1"
   echo "$2  $file" | sha256sum -c --quiet -
 }
 deb() { # sysroot-dir path sha256
-  fetch "$ubuntu/$2" "$3"
   name=$(basename "$2")
+  fetch "$ubuntu/$2" "$3" "$name"
+  kept+=("$name.unpacked")
+  [ -z "$list" ] || return 0
   unpack=$deps/dl/$name.unpacked
   mkdir -p "$unpack" "$deps/$1"
   (pushd "$unpack" >/dev/null && ar x "$deps/dl/$name" && tar xf data.tar.* -C "$deps/$1")
@@ -33,7 +56,40 @@ deb() { # sysroot-dir path sha256
 component() { # path sha256: a component of the official toolchain, path <date>/<name> for a
   # nightly, kept and unpacked under dl/<date>/, so two nightlies' files of one name never mix
   fetch "$rust/$1.tar.xz" "$2" "$1.tar.xz"
+  [ -z "$list" ] || return 0
   tar xf "$deps/dl/$1.tar.xz" -C "$deps/dl/$(dirname "$1")"
+}
+# Prints what this version does not use: the directories rust-* but rust-<pin> (and rust/, which
+# versions before 2026-11-17 made), the entries under dl/ that no fetch above named, and the
+# images in the test storage other than $image and localhost/zed-test-rustup:<pin>. Each is
+# printed as its literal path, or as the podman command that removes the image, to read and
+# then run by hand.
+stale() {
+  found=
+  say() {
+    [ -n "$found" ] || echo "Left by an earlier version or pin, unused by this one (delete by these literal paths once no checkout needs them):"
+    found=1
+    echo "  $1"
+  }
+  for d in "$deps"/rust "$deps"/rust-*; do
+    [ ! -e "$d" ] || [ "$d" = "$deps/rust-$pin" ] || say "$d"
+  done
+  for e in "$deps"/dl/*; do
+    [ -e "$e" ] || continue
+    for k in "${kept[@]}"; do [ "$e" != "$deps/dl/$k" ] || continue 2; done
+    say "$e"
+  done
+  if [ -f "$storage" ]; then
+    images=$(CONTAINERS_STORAGE_CONF=$storage podman --log-level=error images --format '{{.Repository}}:{{.Tag}} {{.ID}}')
+    while read -r tag id; do
+      case $tag in
+      '' | "$image" | "localhost/zed-test-rustup:$pin") ;;
+      '<none>:<none>') say "CONTAINERS_STORAGE_CONF=$storage podman rmi $id   (an untagged image)" ;;
+      *) say "CONTAINERS_STORAGE_CONF=$storage podman rmi $tag" ;;
+      esac
+    done <<<"$images"
+  fi
+  [ -n "$found" ] || echo "Nothing left by an earlier version or pin."
 }
 
 g=g/gcc-15-cross
@@ -69,6 +125,13 @@ component 2026-11-18/rustc-nightly-$host 579543c68dd2bd8384b5a814dbfa6e9a9699747
 component 2026-11-18/rust-std-nightly-$host cea426225a818c536a0b152f6f7132a24d46599803df59957274b9004d116b3a
 component 2026-11-18/rust-std-nightly-aarch64-unknown-linux-gnu 41ca4f4537ba435a94e6b6ce9f3418c4d90dafe7258a353f2d802103cfeb2eb5
 component 2026-11-18/rust-std-nightly-riscv64gc-unknown-linux-gnu 772fa3d5c76abd667083a32a63a89fe8b24ff19e273ba4bd08bf0ddc16a1a74f
+# rustup-init, for the image at the end.
+fetch https://static.rust-lang.org/rustup/archive/1.29.3/x86_64-unknown-linux-musl/rustup-init 1552169aba2836777136ccff7a381e95c17233b5d8250cd5e10ae3cb971bfcfc
+# Every file under dl/ is named above.
+if [ -n "$list" ]; then
+  stale
+  exit 0
+fi
 date=${pin#nightly-}
 mkdir -p "$deps/rust-$pin/lib/rustlib"
 cp -a "$deps/dl/$date/rustc-nightly-$host/rustc/." "$deps/rust-$pin/"
@@ -96,11 +159,10 @@ CONTAINERS_STORAGE_CONF=$deps/podman/storage.conf podman --log-level=error pull 
 # The image localhost/zed-test-rustup:<pin>, with rustup, the toolchain the root's
 # rust-toolchain.toml pins and an older default, 1.98.0, for the full piece s09_release, which
 # checks that rustup picks the pin over the default (BUILD-toolchain-pin-rustup). The test runs
-# the container with no network, so rustup and both toolchains are installed here, at build time. rustup-init is the musl build (the image is Alpine), checked by
-# its SHA-256 like every file above; rustup checks each toolchain it installs against the SHA-256
+# the container with no network, so rustup and both toolchains are installed here, at build time. rustup-init is the musl build (the image is Alpine), fetched
+# above and checked by its SHA-256 like every file there; rustup checks each toolchain it installs against the SHA-256
 # in the release's manifest, fetched over HTTPS. The toolchains need libgcc_s. A new pin needs
 # this script run again; until then the test finds no image of that tag.
-fetch https://static.rust-lang.org/rustup/archive/1.29.3/x86_64-unknown-linux-musl/rustup-init 1552169aba2836777136ccff7a381e95c17233b5d8250cd5e10ae3cb971bfcfc
 mkdir -p "$deps/rustup"
 install -m 755 "$deps/dl/rustup-init" "$deps/rustup/rustup-init"
 cat >"$deps/rustup/Containerfile" <<IMAGE
@@ -115,3 +177,4 @@ CONTAINERS_STORAGE_CONF=$deps/podman/storage.conf podman --log-level=error build
   -t "localhost/zed-test-rustup:$pin" "$deps/rustup"
 touch "$deps/done"
 echo "$deps ready"
+stale
