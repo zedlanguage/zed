@@ -354,9 +354,15 @@ impl Canon {
             if matches!(t, Term::Match(..)) && i > 0 {
                 self.arms.get_mut(&owner).expect("the arms reserved")[slot + i - 1] = part.height;
             }
-            out.height = out
+            // A height counts the binders along one path down the term, each node at most once
+            // (a term holds no cycle), so it is at most the term's binders. Nothing bounds those
+            // below 2^32, so the sum is checked: unchecked, it wrapped to a wrong height in a
+            // release build (DRY-len-as-u32-checked, 2026-11-20).
+            let below = part
                 .height
-                .max(part.height + to_u32(kid.binds.len(), "binders"));
+                .checked_add(to_u32(kid.binds.len(), "binders"))
+                .unwrap_or_else(|| panic!("more than {} binders nested in a term", u32::MAX));
+            out.height = out.height.max(below);
             let mut free = part.free;
             for x in kid.binds {
                 free.remove(x);
@@ -1093,6 +1099,29 @@ mod tests {
         let mut a = Address::of(t);
         a.digest &= 0xff;
         a
+    }
+
+    /// The height of `(x) -> x` with its body's height given.
+    fn height_over_one_binder(body: u32) -> u32 {
+        let part = Info {
+            height: body,
+            free: OrdSet::new(),
+        };
+        Canon::default()
+            .combine(&lam(&["x"], var("x")), vec![part], None, 0)
+            .height
+    }
+
+    #[test]
+    fn a_height_at_u32_max_is_kept() {
+        assert_eq!(height_over_one_binder(u32::MAX - 1), u32::MAX);
+    }
+
+    #[test]
+    #[should_panic(expected = "more than 4294967295 binders nested in a term")]
+    fn a_height_past_u32_max_is_refused() {
+        // Unchecked, `u32::MAX + 1` wrapped to 0 in a release build.
+        height_over_one_binder(u32::MAX);
     }
 
     #[test]
