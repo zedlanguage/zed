@@ -17,7 +17,8 @@
 #  2. When at least $MAIN_WATCH_MIN (15) landings are unchecked, it runs every test
 #     (tools/run_tests.sh --full) and every benchmark (--bench, a run apart) on main's head, in its
 #     own worktree under /home/luke/Work/wt/trees, made and seeded for this run (a per-run copy;
-#     two watchers never share one) and removed when the run ends green.
+#     two watchers never share one) and removed when the run ends green, after its build is
+#     published as the central build (build-publish.sh).
 #  3. Each failure is confirmed: the piece is run again alone. One that passes alone is a flake,
 #     recorded in main-watch-flakes.log with both summary lines, and not bisected. A confirmed
 #     failure that was never seen to pass during this check is run at the last checked commit; if
@@ -71,7 +72,8 @@
 # MAIN_WATCH_HOME the directory of the shared files (/home/luke/Work/wt), MAIN_WATCH_REPO the
 # repository (/home/luke/Work/zed-impl), MAIN_WATCH_TREES where worktrees go ($home/trees),
 # MAIN_WATCH_PREPARE the command run on a new worktree (seed-build.sh), MAIN_WATCH_REMOVE the one
-# that removes it (worktree-remove.sh), MAIN_WATCH_RUN the command that runs pieces (called in the
+# that removes it (worktree-remove.sh), MAIN_WATCH_PUBLISH the one that publishes its build once
+# its head is checked (build-publish.sh), MAIN_WATCH_RUN the command that runs pieces (called in the
 # worktree as `<cmd> <log dir> test|bench [piece...]`, printing tools/run_tests.sh's summary lines
 # `<piece> rc=<rc> ...` and BUILD FAILED; no piece named means all), MAIN_WATCH_FIXER the fixing
 # agent (`<cmd> <brief> <worktree>`), MAIN_WATCH_POLLS the number of polls before it exits
@@ -88,6 +90,7 @@ full=${MAIN_WATCH_FULL---full}
 zrun=${MAIN_WATCH_ZRUN:-/home/luke/Work/wt/zrun}
 prepare=${MAIN_WATCH_PREPARE:-/home/luke/Work/wt/seed-build.sh}
 remove=${MAIN_WATCH_REMOVE:-/home/luke/Work/wt/worktree-remove.sh}
+publish=${MAIN_WATCH_PUBLISH:-/home/luke/Work/wt/build-publish.sh}
 template=${MAIN_WATCH_TEMPLATE:-$home/main-watch-fix-brief.md}
 landings=$home/landings.log
 checked_file=$home/main-watch.checked
@@ -434,6 +437,15 @@ check() {
       echo "$head $(ts)" >"$checked_file.$$" && mv -T "$checked_file.$$" "$checked_file"
       runlog "checked $(short "$head"): every test and benchmark passes ($(landings_in "$c0" "$head" | wc -l) landings since $(short "$c0"))"
       say "checked $(short "$head"): everything passes"
+      # The worktree's build, of a head where everything passes, becomes the central build that
+      # seed-build.sh gives each new worktree (TOOLS-clippy-cold-per-worktree). Since the
+      # merge batches stopped on 2026-11-19 nothing else publishes it, and a central build 1062
+      # commits behind main seeded clippy no better than an empty one (zedc-check after a change
+      # to zed-graph: 75 and 106 s, against 87 and 107 s empty and 17 and 24 s seeded from a
+      # current build, 2026-11-20). A failed publish leaves the old central build and does not
+      # stop the watcher.
+      [ -z "$copy" ] || "$publish" "$copy" >>"$logroot/publish.log" 2>&1 ||
+        say "publishing the build of $copy failed ($logroot/publish.log); the central build is unchanged"
       [ -z "$copy" ] || "$remove" "$copy" >>"$logroot/remove.log" 2>&1 || say "could not remove $copy ($logroot/remove.log)"
       copy=
       return 0

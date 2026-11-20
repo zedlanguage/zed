@@ -82,7 +82,9 @@ echo "$(git rev-parse HEAD) $(date -u +%FT%TZ) $dir $(git branch --show-current)
 EOF
   printf '#!/bin/bash\ntrue\n' >"$t/bin/prepare"
   printf '#!/bin/bash\ngit -C "$1" worktree remove --force "$(realpath -e "$1")"\n' >"$t/bin/remove"
-  chmod +x "$t/bin/run" "$t/bin/fix" "$t/bin/prepare" "$t/bin/remove"
+  # The publisher of a checked worktree's build (build-publish.sh): records the worktree's commit.
+  printf '#!/bin/bash\ngit -C "$1" rev-parse HEAD >>"$MW_STATE/published"\n' >"$t/bin/publish"
+  chmod +x "$t/bin/run" "$t/bin/fix" "$t/bin/prepare" "$t/bin/remove" "$t/bin/publish"
   # The template holds every placeholder; the fixer reads the "Failing pieces:" line.
   printf '%s\n' '# {{ROW}} attempt {{ATTEMPT}}' 'Commit {{COMMIT}} of {{LANDING}}.' \
     'Failing pieces: {{PIECES}}' '{{EARLIER}}' 'Base {{BASE}}, worktree {{WORKTREE}}, branch {{BRANCH}}.' \
@@ -90,6 +92,7 @@ EOF
     >"$t/template"
   export MAIN_WATCH_HOME=$t/home MAIN_WATCH_REPO=$t/repo MAIN_WATCH_TREES=$t/trees \
     MAIN_WATCH_PREPARE=$t/bin/prepare MAIN_WATCH_REMOVE=$t/bin/remove MAIN_WATCH_RUN=$t/bin/run \
+    MAIN_WATCH_PUBLISH=$t/bin/publish \
     MAIN_WATCH_FIXER=$t/bin/fix MAIN_WATCH_TEMPLATE=$t/template MAIN_WATCH_POLL=0 MAIN_WATCH_POLLS=2 \
     MW_STATE=$t/state
   unset MW_FIX MW_FIX_BREAK
@@ -170,6 +173,7 @@ $b fix: bench:b_beta" "$(fixedby | while read -r c f; do echo "$c $(git -C "$t/r
       "$([ "${#o[@]}" = 5 ] && [ "${o[0]}" -lt "${o[1]}" ] && [ "$(command grep -a -c ': fixed by' "$t/out")" = 2 ] &&
         [ "$(command grep -a -n ': fixed by' "$t/out" | tail -1 | cut -d: -f1)" -lt "${o[3]}" ] && [ "${o[3]}" -lt "${o[4]}" ] && echo yes)"
     check "two: the head after the fixes is checked" "$(head_of)" "$(checked)"
+    check "two: only the checked head's build is published" "$(head_of)" "$(cat "$t/state/published" 2>/dev/null)"
     check "two: two fix landings" 22 "$(wc -l <"$t/home/landings.log")"
     check "two: the ledger rows end done" "FAIL-main-${a:0:9}
 FAIL-main-${b:0:9}" "$(command grep -a '"state":"done"' "$t/home/ledger.jsonl" | sed 's/.*"id":"\([^"]*\)".*/\1/')"
@@ -214,6 +218,7 @@ $(breaker b_beta)" "$(opened | sed -n 1,2p)"
     check "failfix: no second poll" - "$(order '^main-watch: poll 2:')"
     check "failfix: the checked commit is unchanged" "$c0" "$(checked)"
     check "failfix: one fix attempt" 1 "$(wc -l <"$t/state/fixer.log")"
+    check "failfix: no build is published" "" "$(cat "$t/state/published" 2>/dev/null)"
     ;;
   nofix)
     # Fixers that land but fix nothing: three attempts, then stuck.
@@ -238,6 +243,7 @@ $(breaker b_beta)" "$(opened | sed -n 1,2p)"
     check "clean: no culprit" "" "$(opened)"
     check "clean: no fixer ran" 0 "$(cat "$t/state/fixer.log" 2>/dev/null | wc -l)"
     check "clean: the head is checked" "$(head_of)" "$(checked)"
+    check "clean: the checked head's build is published" "$(head_of)" "$(cat "$t/state/published" 2>/dev/null)"
     check "clean: the flake is recorded" 1 "$(command grep -a -c 'test:t_flaky' "$t/home/main-watch-flakes.log")"
     ;;
   few)
