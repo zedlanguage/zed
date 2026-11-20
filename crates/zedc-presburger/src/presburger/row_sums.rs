@@ -390,8 +390,10 @@ impl Rows {
 /// (`y10` before `y2`), and with it the benchmark
 /// `bench::disj_groups::row_sums::a_chain_of_overlapping_sums_is_decided_and_projected_in_n_log_n`
 /// passed 20 s, where the order written took 0.09 s at m = 9,600 (PRES-cover-canonical-row-sums).
-/// The order depends only on the rows and their order as given, which is all the join reads, so
-/// the proof in `project_each_with` that every writing with one `cover_input` gets one answer
+/// The order depends only on the rows and their order as given, which is all the join reads,
+/// and on the atoms' numbers, which follow their names ([`Rows::of`] sorts the domains by atom),
+/// which `cover_input` fixes too; so the order is a function of `cover_input`, and the proof
+/// in `project_each_with` that every writing with one `cover_input` gets one answer
 /// holds as before.
 // Complexity tradeoff: the rows of each atom listed and sorted once by their count of shared
 // terms, O(t log t) for t terms, and each atom's list walked once in the search, O(t). Naive
@@ -1607,6 +1609,21 @@ impl Set {
 
 /// The least e in `0..n` with `top - e·delta` in `set`, from the intervals of `set` within
 /// the candidates' range, by division: O(words of `set`). Equal to trying e = 0, 1, … in turn.
+///
+/// Proof. The candidates `top - e·delta`, e in `0..=last` with `last = n - 1`, lie in
+/// `[lo, hi]`, whose ends are the candidates at e = 0 and e = `last` by the sign of `delta`.
+/// The keys of a [`Set`] are at least 0 and are `i64`s, so clipping to `[0, i64::MAX]` drops
+/// none, and `i128` holds `last·delta`, below `2^126` in size. For an interval `[a, z]` of the
+/// set, `a <= top - e·delta <= z` holds exactly when `top - z <= e·delta <= top - a`. With
+/// `delta > 0` that is `ceil((top - z)/delta) <= e <= floor((top - a)/delta)` (`div_euclid` by a
+/// positive divisor is the floor); with `delta < 0` and `d = -delta`, `a - top <= e·d <= z - top`,
+/// the same form. Met with `[0, last]`, its least member `e0` is the least e whose candidate lies
+/// in `[a, z]`; the intervals cover the set within `[lo, hi]`, which holds every candidate, so the
+/// least `e0` over them is the least e overall. With `delta = 0` or `last = 0` the one candidate
+/// is `top`, at e = 0. `intervals(u64::MAX)` never declines (no list is longer than `u64::MAX`).
+/// Test: `tests::least_step_finds_the_step_the_walk_finds` (3,000 cases against the walk, keys
+/// below 5,000, `|delta| <= 64`); it cannot catch an overflow near the ends of `i64` or a case
+/// with `delta = 0`, which it does not draw.
 fn least_step(set: &Set, top: i64, delta: i64, n: i64) -> Option<i64> {
     if n <= 0 {
         return None;
@@ -3185,6 +3202,20 @@ impl Plan {
         }
         // With the class sums E and O, r's sum A = λ_rE·E at i, B = λ_rO·O = q + cb at i + 1;
         // r closes as U + A + B + k = 0 for U = u + lo_i, and s = ε·(B − U − k), ε = λ_sE·λ_rE.
+        // The steps, with each key its value less its digit's least (`Digit::lo`): e = E − lce,
+        // o = O − lco in 0..=h, u = U − lo_i, v = S − lo_s, and every λ here 1 or −1, so λ² = 1.
+        // q: with λ_rO = 1, B = O = o + lco, so q = o and cb = lco; with −1, B = −(o + lco) =
+        // (h − o) − h − lco, so q = h − o (`Reflect(h)`) and cb = −h − lco. Either way B = q + cb.
+        // From r, A = −(U + B + k) = −(u + q + kk) with kk = k + lo_i + cb, and E = λ_rE·A: with
+        // λ_rE = 1, e = −lce − kk − (u + q), so u + q = Reflect(−lce − kk)(e); with −1,
+        // e = u + q + kk − lce, so u + q = Shift(lce − kk)(e). s: λ_sE·E = ε·A, and
+        // λ_sO·O = 2·λ_sE·λ_rE·λ_rO·O = 2ε·B (as O = λ_rO·B), so S = ε·(A + 2B) = ε·(B − U − k)
+        // = ε·(c − (u − q + h)) with c = h + cb − lo_i − k. With ε = 1,
+        // v = Reflect(c − lo_s)(u − q + h); with −1, v = Shift(−c − lo_s)(u − q + h).
+        // Test: `l01_38_omega_test::disj_groups::two_overlapping_sums_with_coefficients_one_and_
+        // two_are_answered_exactly`, against enumeration; it does not count which of the eight
+        // sign cases (λ_rE, λ_rO, ε) each family reaches, so it cannot show that every one is
+        // run, nor reach least values `lo` far from 0.
         let (lce, lco, h) = (
             ge.digits[0].lo,
             go.digits[0].lo,
@@ -3827,6 +3858,14 @@ impl Plan {
     /// and the constants beside it, A96), not counted steps: a node of theirs and a unit of
     /// the join are measured on the same build by
     /// `tests::bench::the_route_and_the_join_on_both_sides_of_the_allowance`.
+    /// The tables are built by `firsts` then `rest` with or without the polygons, the calls
+    /// of [`Plan::prefixes`] in its order, and [`Plan::step`] charges by `t`, the group and
+    /// `k` alone, so both runs meet the limit at the same step. Test:
+    /// `tests::the_polygons_of_the_route_are_never_more_than_the_join_spends` checks each step
+    /// above on the four families of `tests::grid`, both sides of the allowance; it cannot
+    /// catch a charge that differs between the two only on rows of another shape, nor the
+    /// measured constants going stale on another machine (they are printed by the bench, not
+    /// asserted).
     // Complexity tradeoff: before PERF-plane-allowance-join-bound the polygons ran before the
     // join, allowed a bound read from the plan (the first atom's table of each group and the
     // ranges after it, 198,275 units on `grid(1, 64, 40)`), each node charged one unit; the

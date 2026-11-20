@@ -35,18 +35,30 @@ section below, its own worktree and its own merges. Lists: /home/luke/Work/wt/pr
 ## proofdoc4a: zedc-presburger, first 108 entries
 
 Part 1 of the list, entries 1 to 25 in score order, base commit 1915d2375; part 2, entries 26
-to 65, base commit 57ba7215b. For each entry the whole message and the whole diff under
-`crates/zedc-presburger` were read, and each claim was checked at the code that relies on it
-on main today.
+to 65, base commit 57ba7215b; part 3, entries 66 to 108, base commit b3be07e47. For each entry
+the whole message and the whole diff under `crates/zedc-presburger` were read, and each claim
+was checked at the code that relies on it on main today.
 
 | Crate | Entries read | Found | Already there | Added or completed | Marked unproved | Corrected |
 |---|---|---|---|---|---|---|
-| zedc-presburger | 65 | 68 | 46 | 15 | 3 | 0 |
+| zedc-presburger | 108 | 116 | 64 | 42 | 3 | 0 |
 
-Of the 68, four are counted in no column: they are no longer relied on, since the code they
-described is gone: the race's bound (24981fcda), a research-branch behavior (4033def30), the
-foreign-factor rule of `products` (e8fea7860) and the batch and single hulls agreeing
-(3e3db6907).
+Of the 116, seven are counted in no column: they are no longer relied on, since the code they
+described is gone: the race's bound (24981fcda, and again ec537c0b1), a research-branch
+behavior (4033def30), the foreign-factor rule of `products` (e8fea7860), the batch and single
+hulls agreeing (3e3db6907), the cancellation of products through opposite signs (f0ce6ac5e)
+and the two facts `plane::allowance` rested on (c4964f39a).
+
+One code change, in part 3 (8590c4d2b): the proof that `two_pins.rs` `bounded` reads a part
+exactly from the polygon of its kept half-planes assumed the queue leaves no redundant row,
+which nothing checked; a redundant row would leave corners of the polygon outside the region.
+`bounded` now checks in O(V) that every kept row crosses its edge forward (the next row is
+above zero at the corner before), and declines otherwise, so the part is read by its rows,
+which is exact. The proof is written at the site in four steps. No input that the old code
+answered wrong was found: the new test
+`edges_tests::a_polygon_found_holds_every_half_plane_at_every_corner` (20,000 seeded systems)
+passes with and without the check, so it is counted under "Added or completed", not
+"Corrected".
 
 | Source | Claim | Code site | Status |
 |---|---|---|---|
@@ -118,15 +130,59 @@ foreign-factor rule of `products` (e8fea7860) and the batch and single hulls agr
 | 5bde6551f | `force`: a term with `\|c_i\| > W − w_i` takes one value; `scaled` keeps the points | row_sums/classes.rs `force`, `scaled` | Already there (each step checked) |
 | 66e347e86 | Every bound `drop_by_bounds` propagates is implied, so a removed disjunct has no point | presburger.rs `drop_by_bounds` | Completed: the invariant proof over `narrow` and `narrow_or`; stale test paths fixed at three sites |
 | 7bdf8c1f1 | `two_ranges_of_one_value` exact; n²/2 pieces in bits; emptiness as hard as 3SUM; the class of `Classed::join_all` | exact.rs `two_ranges_of_one_value`, `two_distributed`; refusal.rs `Classed::join_all` | Already there (the ternary bound checked); the tests and what they cannot catch named at both sites |
+| 8e3867d18 | The pairs counted before the cut are those charged at least `PIECE`, so a cut refuses only what the limit would | exact.rs `past_what_is_left` | Completed: the five steps (pairs counted, no `credit` on the path, `exempt`, the same strict test, `tried`) |
+| 94f38f6d3 | The union over blocks is exact | exact.rs `block_set` | Already there |
+| 94f38f6d3 | The hull's ends may be added to each block | exact.rs `block_set` | Completed: union and meet commute with meeting the hull |
+| 96a4e186b | `along_shared_atoms`' order depends only on the rows, so one `cover_input` gets one answer | row_sums.rs `along_shared_atoms` | Completed: atom numbers follow names (`Rows::of` sorts by atom), which `cover_input` fixes |
+| 9758548e8 | The dark shadow of the chained pipeline makes at most 4 rows per elimination | bench omega.rs `project_each_on_a_chained_pipeline_scales` | Already there (the invariant checked) |
+| 9e786fe17 | A disjunction the box makes true can be left out | presburger.rs `without_box_true_disjunctions` | Completed: one step said "hull is empty" where the hull is every value (no bound); corrected in the comment, the code was right |
+| a1a2a3c63 | `least_step` equals the walk | row_sums.rs `least_step` | Completed: the interval division proof, the test and its limits |
+| a1a2a3c63 | The join stops at the same operation on every run | row_sums.rs module note | Already there (no hash order is read) |
+| aa8366a07 | `join_lone_disjuncts` keeps the points | presburger.rs `join_lone_disjuncts` | Completed: why the final `retain` removes only the disjunctions emptied there; "never coarser" stays marked "Assumption, not proved" |
+| ec537c0b1 | The four maps of a fused pair | row_sums.rs `Plan::fused` | Completed: the derivation of each map from the class sums |
+| ec537c0b1 | `lattice`'s five parts cover the points | row_sums.rs `lattice` | Already there |
+| ec537c0b1 | The doubling race costs at most 4 times | (removed) | No longer relied on (removed by a1a2a3c63) |
+| f0186c022 | Two-term rows never widen a base row under elimination | presburger.rs `narrow_disjunction_hulls` | Completed: the pairing step (a row of w terms with a row of two gives at most w) |
+| f0ce6ac5e | Products cancel only through opposite signs | presburger.rs `products` | No longer relied on: replaced by `pairs::kept` |
+| f4c033ccd | The ray cap of `lean`; `envelope` keeps the rows the others do not imply; dropping free division pairs keeps integer satisfiability | extend.rs `lean`, `envelope`, `without_free_pairs_for` | Already there (each step checked) |
+| f4c033ccd | `hull_of` may cut the ends at the form's bounds | extend.rs `hull_of` | Completed: the upper-envelope steps for both ends, tests and what they cannot catch |
+| fb9b82a6a | The box test of two-term rows; dominated rows dropped in any order; the shrink count; pivots keep equality lengths; `repivot` renews one slot per variable | presburger.rs `implies_in_box`, `System::dominated`, `System::shrink`, `Equalities::repivot` | Already there (each step checked) |
+| 030a2d36d | Treap priorities: ties at most (S + 1)/p a pair, 5-wise independent, O(log n) expected depth | hull/rows.rs, extend/holes.rs, extend/images/intervals.rs `prio_of` | Already there (DOI at each site; the (S + 1)/p bound checked) |
+| 136017dd7 | A settled fast reading gives the slow reading's refusal and cause; `Repair::Empty` shows no point | presburger.rs `pick_reading`, `local_repair_status` | Completed: the step through `TermValues::specialize`, the tests and what they cannot catch |
+| 28a3d9acb | The shared step keeps the call within 4·k·L | exact.rs `exact_each` | Completed: the test named and what it cannot catch |
+| 32acdc5eb | The treap tie bound restated | the three `prio_of` sites | Already there (as 030a2d36d) |
+| 384b173ac | `Cursor` holds its iterator borrowing the conjuncts | conjuncts.rs `Cursor` | Already there (the borrow is in the type) |
+| 384b173ac | `UpperHull` keeps the upper envelope | upper_hull.rs `UpperHull::of`, `insert`; presburger.rs `upper_envelope` | Completed: Andrew's DOI at both sites, the envelope's "everywhere" step, the test and its range |
+| 4e48ee579 | `dark_is_real`; the dark shadow is exact where it equals the real | presburger.rs `Side1::dark_is_real`, `shadow` step (5) | Already there (equal floors give the same integer bound, checked) |
+| 4e48ee579 | The summaries of a chain are exact | extend.rs `Summary` | Completed: the link step ∃y.(d ∧ ∃z.B) = ∃yz.(d ∧ B), the facts used, the test and what it cannot catch |
+| 54ddb1f80 | `satisfiable` drops the disjuncts the bounds refute, which have no point | presburger.rs `satisfiable_inner` `ask` | Completed: the proof it rests on (`drop_by_bounds`), what `None` means, what the test cannot catch |
+| 5dfd87a78 | A factor's hull over its own part equals its hull over all premises where they have a point | presburger.rs `products` | Completed: the restriction and join steps, the empty case, two tests; a stale test path corrected |
+| 6e72af6bd | `project_each` answers empty sets where the forced propagation proves the formula empty | presburger.rs `project_each_as_named`; forced.rs | Completed: the step written at the site; stale test paths fixed in two places |
+| 711b27b81 | `learn` no longer records the implied bounds of a lone remaining disjunct | presburger.rs `learn` | Already there (leaving out implied facts cannot make an answer wrong) |
+| 72d5f383f | Faces holding nowhere show the conjunction holds nowhere | extend.rs `Faces::free` | Already there |
+| 72d5f383f | A point `Faces::free` finds is a point of the conjunction | extend.rs `Faces::free`; residues.rs `Reading` | Completed: the extension and join steps (`Within` only narrows) |
+| 7d23ca0c7 | Faces of parts with disjunctions are exact projections; clauses and congruences said once | extend.rs `project`, `projected`, `clauses_once`, `congruences_once` | Already there (each step checked) |
+| 7dda7ea0d | `PartCache`: a later symbol reaching a step that does not read it gets the same outcome at the same charge | exact.rs `PartCache`, `exact_each_checked` | Completed: the same-limit step, the test and what it cannot catch |
+| 7f771ec77 | A kept atom passed between halves leaves `projected_each` equal to `by_halves` | presburger.rs `projected_each` | Completed: each step checked; what the test cannot catch added |
+| 83ebfff6e | The sign `flips` chooses reads the equation, not the names; the meet of the writings' projections is sound | presburger.rs `flips`, `project_each_written`, `meet_each` | Completed: the two tests and what they cannot catch |
+| 8575c70cc | A disjunct `refuted_by_links` removes has no point with `p` | presburger.rs `refuted_by_links` | Completed: the steps and the test; a stale test path fixed in `probe` |
+| 8590c4d2b | `edges`: the kept half-planes are the part's polygon | two_pins.rs `bounded` | Completed with a code change: the proof needed every kept row to cross its edge, which nothing checked; the O(V) check, the four-step proof and a new test added (see above) |
+| 8590c4d2b | The stretch length is concave; the open ends follow the dark shadow | two_pins.rs `poly_values`, `u_values` | Already there |
+| 889492a23 | Pushing ancestor unary bounds into blocks, and an empty met box, keep the answers exact | exact.rs `read_once` pass 0 | Completed: steps 1 to 3, the tests and what they cannot catch |
+| a3273dbda | `shadow`'s trial elimination is exact; `point_of` extends a point of the rows left; implied rows give sound hull bounds | presburger.rs `shadow`, `point_of`, `project_parts` | Already there (rests on PROOF-shadow-exact) |
+| a54f1b103 | A point at the end of a sound hull, or past it, shows the end is the bound | presburger.rs `Hull::tighten` | Completed: the step, two tests against brute force, what they cannot catch |
+| aabf487cc | The polygons, where they answer, cost no more than the join they replace | row_sums.rs `Plan::project` | Completed: the join with no limit is `Plan::prefixes`, the same calls in the same order, and `Plan::step` charges by its inputs alone; the test and what it cannot catch |
+| ac67403b3 | The one-term rows of `disjunction_hulls` keep the part's points and join no two groups | presburger.rs `Level::open` | Completed: the step through each disjunct implying the rows; what the test cannot catch |
+| ace60e16b | `eliminated` is exact over the integers or `None` | presburger.rs `eliminated`, `shadow` | Already there (PROOF-shadow-exact) |
+| c4964f39a | The two facts `plane::allowance` rests on | row_sums.rs (removed) | No longer relied on: aabf487cc replaced the allowance by the join's own tables |
+| d73f3c8e1 | The reading's even charge sums to `w`, each at most L; the call stays within 4·k·L | exact.rs `exact_each` | Already there (each step checked) |
+| f060dbed1 | The join-based merges of the block indexes cost O(W log W) in all | conjuncts.rs `Blocks::at`, `moving_at`, `names_in`, `pairs`, `merge` | Completed: the DOIs of Blelloch–Ferizovic–Sun, Brown–Tarjan and Tarjan 1975 at the five sites |
+| f835ff861 | Each built case is empty, gives its answer or makes its kind | presburger.rs `BOX_EMPTY`, `ANSWERS`, `LADDERS` | Already there (the arithmetic of `BOX_EMPTY` checked; each case has its own test) |
 
-No code claim: zedc-presburger 7bfd6bba8 1faf391fd 53b114449 65446a377.
+No code claim: zedc-presburger 7bfd6bba8 1faf391fd 53b114449 65446a377 ed1f1be11 f548497ad
+9f8961b3b b2ba71b22.
 
-Not read: 8e3867d18 94f38f6d3 96a4e186b 9758548e8
-9e786fe17 a1a2a3c63 aa8366a07 ec537c0b1 ed1f1be11 f0186c022 f0ce6ac5e f4c033ccd f548497ad
-fb9b82a6a 030a2d36d 136017dd7 28a3d9acb 32acdc5eb 384b173ac 4e48ee579 54ddb1f80 5dfd87a78
-6e72af6bd 711b27b81 72d5f383f 7d23ca0c7 7dda7ea0d 7f771ec77 83ebfff6e 8575c70cc 8590c4d2b
-889492a23 9f8961b3b a3273dbda a54f1b103 aabf487cc ac67403b3 ace60e16b b2ba71b22 c4964f39a
-d73f3c8e1 f060dbed1 f835ff861 (later parts of this section).
+Not read: none.
 
 ## proofdoc4b: zedc-preimage, and the two zedc-preimage claims
 

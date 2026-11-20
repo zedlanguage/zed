@@ -2177,9 +2177,10 @@ pub struct Blocks {
     // `Blocks::merge`, `O(W log^2 n)` over balanced merges. Used: nested by `BlockId` first
     // (`OrdMap<BlockId, OrdMap<Arc<str>, OrdSet<Arc<Formula>>>>`) so `Blocks::merge` removes
     // a block's whole inner map and merges it with join-based `OrdMap::union_with` +
-    // `OrdSet::union` (Blelloch, Ferizovic and Sun, SPAA 2016; Brown and Tarjan, JACM 1979),
-    // `O(W log W)` total over all merges, while `Blocks::advance` still looks up `(b, x)` in
-    // `O(log n)`. COMPLEXITY.md row PERF-satellite-random-under9-redesign.
+    // `OrdSet::union` (Blelloch, Ferizovic and Sun, SPAA 2016, doi:10.1145/2935764.2935768;
+    // Brown and Tarjan, JACM 1979, doi:10.1145/322123.322127), `O(W log W)` total over all
+    // merges, while `Blocks::advance` still looks up `(b, x)` in `O(log n)`. COMPLEXITY.md
+    // row PERF-satellite-random-under9-redesign.
     at: OrdMap<BlockId, OrdMap<Arc<str>, OrdSet<Arc<Formula>>>>,
     /// The conjuncts of the forest's blocks, not those apart from it, that mention each name
     /// as an atom of its own: the entries of `syms` whose block is in the forest.
@@ -2231,18 +2232,19 @@ pub struct Blocks {
     // Complexity tradeoff: naive version, a flat `OrdMap<(BlockId, Arc<str>), usize>` cost
     // `O(k log n)` per merge (`O(W log^2 n)` over balanced merges). Used: nested by `BlockId`
     // (`OrdMap<BlockId, OrdMap<Arc<str>, (usize, BlockId)>>`) merged by join-based
-    // `OrdMap::union_with_key` (Blelloch, Ferizovic and Sun, SPAA 2016; Brown and Tarjan,
-    // JACM 1979), `O(W log W)` total over all merges, while `names_of(b)` reads `b`'s inner
-    // map directly in ascending name order. COMPLEXITY.md row
-    // PERF-satellite-random-under9-redesign.
+    // `OrdMap::union_with_key` (Blelloch, Ferizovic and Sun, SPAA 2016,
+    // doi:10.1145/2935764.2935768; Brown and Tarjan, JACM 1979, doi:10.1145/322123.322127),
+    // `O(W log W)` total over all merges, while `names_of(b)` reads `b`'s inner map directly
+    // in ascending name order. COMPLEXITY.md row PERF-satellite-random-under9-redesign.
     names_in: OrdMap<BlockId, OrdMap<Arc<str>, (usize, BlockId)>>,
     /// For each block, the count of its conjuncts on each ordered pair of names `(u, v)` and
     /// no other atom ([`pair`]); none zero.
     // Complexity tradeoff: naive version, a flat `OrdMap<(BlockId, Arc<str>, Arc<str>), usize>`
     // cost `O(p log n)` per merge (`O(n log^2 n)` over balanced merges). Used: nested by
     // `BlockId` (`OrdMap<BlockId, OrdMap<(Arc<str>, Arc<str>), usize>>`) merged by join-based
-    // `OrdMap::union_with` (Blelloch, Ferizovic and Sun, SPAA 2016; Brown and Tarjan,
-    // JACM 1979), `O(n log n)` total over all merges; `Blocks::cut` still queries `(b, u, v)`
+    // `OrdMap::union_with` (Blelloch, Ferizovic and Sun, SPAA 2016,
+    // doi:10.1145/2935764.2935768; Brown and Tarjan, JACM 1979, doi:10.1145/322123.322127),
+    // `O(n log n)` total over all merges; `Blocks::cut` still queries `(b, u, v)`
     // in `O(log n)`. COMPLEXITY.md row PERF-satellite-random-under9-redesign.
     pairs: OrdMap<BlockId, OrdMap<NamePair, usize>>,
 }
@@ -3173,21 +3175,23 @@ impl Blocks {
         // block-local indexes (`members`, `names_in`, `at`, `pairs`) are nested by `BlockId`
         // and merged with the join-based B+Tree `union`/`union_with_key` added to
         // `vendor/imbl` (Blelloch, Ferizovic and Sun, "Just Join for Parallel Ordered Sets",
-        // SPAA 2016, arXiv:1602.02120), O(m log(n/m + 1)) for m keys into n, which sums to
-        // O(n log n) over any merge tree (Brown and Tarjan, "A fast merging algorithm", JACM
-        // 26(2), 1979); (2) the indexes keyed by conjunct or name (`of`, `up`, `moving_at`) are
-        // not rewritten: `uf_merge(b, keep)` records `b -> keep` in the persistent union-find
-        // `uf` (union by rank, path compression on `&mut self`; Tarjan, JACM 22(2), 1975),
-        // O(log n) per merged-away block, and a read resolves its block through `uf`; `moving_at`
-        // is keyed by stable tags (`names_in`'s second field) and changed only for the names
-        // both blocks hold, which `names_in`'s `union_with_key` finds, at most one per name
-        // per merge it survives. Cost: a read of `of`, `up` or `moving_at` follows at most
-        // log₂ n `uf` links when not compressed; `moving_blocks(n)` resolves tags and sorts
-        // when `n` is in two or more blocks; `uf` is never compacted, so it keeps one entry
-        // per merged-away block; `Blocks::union` still relabels the smaller tree of `tree_of`
-        // node by node, O(n log² n) over unions (about 2% of the satellite bench's run, Opus
-        // seat). Merge alone now grows 9.06 times at 8n (callgrind, Gemini seat; 11.7 before),
-        // and `stars_formed_in_the_block_of_a_satellite_take_time_near_the_block` 9.336 (9.763
+        // SPAA 2016, doi:10.1145/2935764.2935768, arXiv:1602.02120), O(m log(n/m + 1)) for m
+        // keys into n, which sums to O(n log n) over any merge tree (Brown and Tarjan, "A fast
+        // merging algorithm", JACM 26(2), 1979, doi:10.1145/322123.322127); (2) the indexes
+        // keyed by conjunct or name (`of`, `up`, `moving_at`) are not rewritten:
+        // `uf_merge(b, keep)` records `b -> keep` in the persistent union-find `uf` (union by
+        // rank, path compression on `&mut self`; Tarjan, JACM 22(2), 1975,
+        // doi:10.1145/321879.321884), O(log n) per merged-away block, and a read resolves its
+        // block through `uf`; `moving_at` is keyed by stable tags (`names_in`'s second field)
+        // and changed only for the names both blocks hold, which `names_in`'s
+        // `union_with_key` finds, at most one per name per merge it survives. Cost: a read of
+        // `of`, `up` or `moving_at` follows at most log₂ n `uf` links when not compressed;
+        // `moving_blocks(n)` resolves tags and sorts when `n` is in two or more blocks; `uf`
+        // is never compacted, so it keeps one entry per merged-away block; `Blocks::union`
+        // still relabels the smaller tree of `tree_of` node by node, O(n log² n) over unions
+        // (about 2% of the satellite bench's run, Opus seat). Merge alone now grows 9.06
+        // times at 8n (callgrind, Gemini seat; 11.7 before), and
+        // `stars_formed_in_the_block_of_a_satellite_take_time_near_the_block` 9.336 (9.763
         // before). COMPLEXITY.md row PERF-satellite-random-under9-redesign.
         let mut keep_members = self.members.remove(&keep).unwrap_or_default();
         let mut keep_names = self.names_in.remove(&keep).unwrap_or_default();

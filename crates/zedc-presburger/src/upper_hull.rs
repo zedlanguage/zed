@@ -14,7 +14,8 @@ use zedc_int::int::Int;
 /// Complexity tradeoff: naive version, the hull built again from all `R` points at each new
 /// point, O(R) each (O(R log R) unsorted). Used: [`UpperHull::of`] builds it once by the
 /// monotone chain (A. M. Andrew, "Another efficient algorithm for convex hulls in two
-/// dimensions", Information Processing Letters 9(5), 1979), O(R) on sorted points, and
+/// dimensions", Information Processing Letters 9(5), 1979, pp. 216-219,
+/// doi:10.1016/0020-0190(79)90072-3), O(R) on sorted points, and
 /// [`UpperHull::insert`] takes a point in O(log^2 R): two binary searches for the vertices it
 /// hides and a split of the persistent vector (`imbl::Vector`, O(log R) per index and per
 /// split). Tradeoffs: a point cannot be taken out; a caller whose points leave builds the hull
@@ -44,7 +45,13 @@ impl UpperHull {
     /// greater than the slope from it to the new point `P`. The slope from `h_t` to `P` is a
     /// mean of the slope of the edge out of `h_t` and the slope from `h_(t+1)` to `P`, and the
     /// edge slopes fall from left to right; so a vertex that goes has every later one on the
-    /// left go too, and those that stay are a prefix. The right side is the mirror image.
+    /// left go too, and those that stay are a prefix. In steps: `h_t` goes when the slope into
+    /// it is at most the slope from it to `P`; the slope of the edge out of `h_t` is below the
+    /// slope into it, so below that mean, so the slope from `h_(t+1)` to `P`, the mean's other
+    /// term, is above the mean, and above the slope of the edge into `h_(t+1)`: `h_(t+1)` goes.
+    /// The right side is the mirror image. Test: `the_hull_built_at_once_and_point_by_point_is_
+    /// the_hull` (600 random sets against the hull by its definition); it cannot catch an
+    /// error that needs coordinates outside `-5..=5` or more than 14 points.
     pub fn insert(&mut self, x: &Int, y: &Int) {
         let v = &self.0;
         let m = v.len();

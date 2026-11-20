@@ -297,6 +297,9 @@ pub(super) fn exact_each_checked(
     // still, which the even charge below needs. The call's work is then at most `4·k·L` plus
     // that reading, O((k + 1)·T·α(T) + k·size) for T the terms of the part (see
     // [`shared_cells`]); the covers it stands in for read the part at least once a symbol.
+    // Test: `tests::a_part_certified_in_part_shares_only_what_direct_declined` (answers equal with
+    // the step off, `SHARED_OFF`, and the work of both within `4·k·L`); it cannot catch an
+    // exempt reading that grows past the `O(...)` above.
     // Complexity tradeoff: before, the reading met the allowance too, a fixed `k·L` (15.3M
     // units for the 5 names of `deep_condition`'s `heavy`) that does not grow with the part: the
     // step read 10.67M at depth 1,440 and gave up past about 2,050, and every symbol was then
@@ -1200,6 +1203,13 @@ fn cover(
 /// with the largest allowance it holds for (every allowance where the note is of a block whose
 /// elimination does not end, the allowance of the run where it is of a refusal); `refused`
 /// counts the symbols refused by `quick` or `whole`, steps that do not read the symbol.
+/// The same outcome needs the same work and the same limit too: `quick` is used only at no
+/// work used and `whole` only at the work used when it was asked, and every symbol's loop runs
+/// under the one `limit` of the call ([`exact_each_checked`]), so a step reached again starts
+/// where it did and stops where it did. Test: `tests::the_covers_answer_alike_with_and_without_
+/// what_the_symbols_before_learned_part_*` (`PART_CACHE_OFF`); random formulas over four
+/// symbols seldom reach these steps, so it cannot catch an outcome reused where the step reads
+/// the symbol after all.
 // Complexity tradeoff: naive version, each of the k symbols of a part runs `quick_point`,
 // `direct` and asks `f` alone again, O(k·|f|) where `|f|` is O(k): at 1,024 symbols in
 // `disjoint::bench::the_join_of_arms_on_many_disjoint_refused_groups_reduced_scales`, 4.9 s in
@@ -2519,6 +2529,21 @@ fn read_once(f: &Formula, work: &mut Work) -> Result<Option<ReadOnce>, Refusal> 
     // Pass 0, top-down with an undo stack: cumulative ancestor unary bounds `cur_box`, pushing
     // active ancestor bounds into each leaf block over the atoms it reads, and marking `And`
     // nodes whose cumulative box becomes empty (`box_unsat`, handling nested disjoint intervals).
+    // Why the answers stay exact (PRES-cover-unary-push-down), in steps:
+    // 1. A point of `f` that a node's subformula `s` helps to hold, in the tree read here (only
+    //    `And` and `Or`, negations pushed to the rows as they are read), holds every `unary`
+    //    bound of every `And` above `s`: an `And` holds only where each of its parts does.
+    //    Call their meet `U` (`cur_box` on entering `s`).
+    // 2. At every point that holds `U`, `s` and `s ∧ U'` agree for any `U'` that `U` implies,
+    //    so putting `U'` beside `s` changes no point of `f`. The rows pushed into a block are
+    //    `U` on the block's own atoms, which `U` implies.
+    // 3. An `And` whose `U` with its own bounds is empty (`box_unsat`) holds at no point that
+    //    reaches it from the root, by 1, so it may be read as false, though each interval was
+    //    not empty alone (CE2) and even where no wide row of it reads the atom (CE2b).
+    // Tests: exact/tests/push_down.rs (CE1, CE1b, CE2, CE2b and CE3, from Gemini's round 3 of
+    // XR-cover-hybrid, and an outer box over `wide_pairs(512)`), checked against sets written
+    // by hand; they cannot catch an error on a shape none of the six builds, such as a box met
+    // at three levels.
     enum BoxStep {
         Enter(usize),
         Exit(Vec<(Atom, Option<Ends>)>),
@@ -3667,7 +3692,10 @@ fn others(rows: &[Con], s: &Atom) -> HashSet<Atom> {
 /// Why the ends may be added: every value of `s` with a point of the formula lies in the
 /// solver's set (`exact_each`), so in its hull, and the projection of `rows ∧ within` is that of
 /// `rows` met with `within`. Where `rows` is a disjunct of a part of a split formula whose other
-/// part has no point, the answer is made empty by `exact_each` anyway.
+/// part has no point, the answer is made empty by `exact_each` anyway. [`direct`] combines the
+/// blocks' sets only by union and meet, and both commute with meeting the hull `H`:
+/// `(A ∩ H) ∪ (B ∩ H) = (A ∪ B) ∩ H` and `(A ∩ H) ∩ (B ∩ H) = (A ∩ B) ∩ H`. So its answer is the
+/// exact projection met with `H`, which is the exact projection, since that lies in `H`.
 fn block_set(
     rows: &[Con],
     s: &Atom,
@@ -4308,6 +4336,13 @@ fn two_distributed(
 /// any is formed: each costs at least [`PIECE`] (a pair whose ranges do not meet is charged
 /// `PIECE`; one that is formed reads at least one row, [`super::meter::SOLVER_UNIT`] units,
 /// more), so `pairs · PIECE` units past what is left would be refused at the limit in any case.
+/// The steps: the pairs counted are exactly those the loops charge at least `PIECE` (the count
+/// is of the pairs whose ranges meet, a block with no point having the empty range; on the
+/// path with no ranges, of the pairs of blocks with a point); no [`Work::credit`] lies on a
+/// pair's path (it is called only from [`shared_cells`], which only `exact_each_checked`
+/// calls), and [`Work::exempt`], also only there, moves `used` and `limit` alike; the meter
+/// refuses once `used > limit`, the strict test this one makes on `used + pairs · PIECE`; and
+/// [`tried`] maps that refusal and `Ok(None)` both to `None`.
 /// Declining then gives the answer that refusal gives (`None` from [`tried`]) at the cost of
 /// the count alone, O((p + q) log(p + q)) ([`zed_collections::intervals::meeting_count`]),
 /// instead of the limit's worth of pairs: the fast allowance of [`has_points`] is one for all

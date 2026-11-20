@@ -184,9 +184,10 @@ pub(super) fn empty(f: &Formula, conjuncts: &Conjuncts) -> bool {
 // test saves (about 15K instructions on a formula of a dozen parts, where the projection costs
 // about 500K). The constructors (`Formula::and`, `Formula::or`) absorb `true` and `false` but
 // keep a constraint of no atom. Trigger: a projected formula whose only seed is such a part.
-// Tests: `l01_38_presburger::one_row::a_forced_contradiction_projects_to_empty_in_linear_work`
-// and
-// `l01_38_presburger::one_row::a_formula_with_no_first_step_is_projected_without_the_propagation`.
+// Tests: `a_forced_contradiction_projects_to_empty_in_linear_work` in
+// `l01_38_presburger::bench::one_row`, and
+// `a_formula_with_no_first_step_is_projected_without_the_propagation` in
+// `l01_38_presburger::one_row`.
 fn may_start(conjuncts: &Conjuncts) -> bool {
     let mut ends: Vec<(&Atom, Option<Int>, Option<Int>)> = Vec::new();
     for g in conjuncts.iter() {

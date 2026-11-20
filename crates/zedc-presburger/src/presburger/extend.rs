@@ -163,7 +163,17 @@ type Key = (Id, Vec<Atom>);
 /// and a variable of a definition that reads symbols alone, as `x div 3` does, left or kept
 /// with the symbols when a projection leaves any atom): read existentially with the rest, they
 /// keep the piece exact (LOAD-max-div-xr). Such a variable is a function of the symbols, one of
-/// a fixed set, so the atoms of the pieces stay bounded along a chain.
+/// a fixed set, so the atoms of the pieces stay bounded along a chain. The step from one link
+/// to the next: with `z` the atoms projected out below and `y` those projected out here, `∃y.
+/// (d ∧ ∃z. B) = ∃y z. (d ∧ B)` because no atom of `z` is read by `d` (each atom `d` reads is
+/// in the key below), so the summary made from the summary below is the cone projected.
+/// Exactness of each projection rests on [`shadow_whole`] (PROOF-shadow-exact) and on
+/// [`envelope`] and [`lean`] keeping the integer points (proved at each). Test:
+/// `l01_38_omega_test::one_scope::summaries_of_definitions_give_the_answers_of_the_definitions`
+/// compares each answer with [`decide`] on the whole and, where that refuses, with the values
+/// of the input from -300 to 300; it checks whether a question holds, not the pieces
+/// themselves, so it cannot catch a summary wrong only at points no question asked reads, or
+/// wrong only where the whole is refused and the point lies outside -300..=300.
 #[derive(Clone)]
 struct Summary {
     pieces: Vec<Vec<Con>>,
@@ -776,7 +786,12 @@ impl Faces {
     /// faces hold nowhere (by their intervals and residues left, [`residues::read`], or by the
     /// solver), and `None` where no part has a face, an atom a face projects out is read
     /// beside it, or the solver refuses, so that the conjunction is then decided whole, as
-    /// before. A point found here is a point of the conjunction, so it answers where the solver
+    /// before. A point found here is a point of the conjunction (the steps: the point's values on
+    /// a face's atoms are a point of the face, which as the part's projection extends to a point
+    /// of the part and its definitions; the atoms that extension sets are those the face projects
+    /// out, read by nothing beside it and so by no other part's extension, so the extensions
+    /// join into one point; [`Reading::Within`] bounds only narrow, keeping each atom outside the
+    /// holes), so it answers where the solver
     /// refuses the conjunction whole (`Err(Shadows)` on chains whose congruences meet moved
     /// holes); those answers are checked point by point in the random tests. The faces holding
     /// nowhere shows that the conjunction holds nowhere (LOAD-holes-mod): each face is the
@@ -4078,6 +4093,20 @@ fn hull_of(
             drop.insert(line.2);
         }
     }
+    // Why the ends may be cut at the bounds `[l, u]` of the form `f`. Each line `(m, b)` is the
+    // row `e·y + g·f + c >= 0` ([`group_lines`], `e` 1 or -1) read as `e·y >= m·f + b` with
+    // `m = -g`, `b = -c`, so what the group asks of `e·y` is the upper envelope over `f`. The
+    // slopes on the envelope rise strictly (one line a slope), and two neighbors `p` (slope
+    // `ma`) and `q` (slope `mb > ma`) cross where `(mb - ma)·f = ba - bb`; `q` is above `p`
+    // only where `(mb - ma)·f > ba - bb`. At the right end, where `(mb - ma)·u <= ba - bb`,
+    // every `f <= u` has `mb·f + bb <= ma·f + ba`, so the row of `q` holds wherever that of `p`
+    // does and `q` is dropped; at the left end, where `(mb - ma)·l >= ba - bb`, every `f >= l`
+    // has `p` at or below `q`, so `p` is dropped. Each loop then tests the new end pair the same
+    // way. This holds over the reals, so over the integers. Tests:
+    // `envelope_and_lean_cap_rays_by_form_bounds` and
+    // `envelope_lean_merge_and_decide_keep_the_integer_points_of_small_systems` (brute force
+    // over small systems); they cannot catch a case outside the small systems' range of
+    // coefficients and bounds.
     if let Some((lo, hi)) = bounds {
         if let Some(u) = hi {
             while let [.., p, q] = hull[..] {

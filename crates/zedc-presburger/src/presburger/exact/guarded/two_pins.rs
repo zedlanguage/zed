@@ -1120,11 +1120,32 @@ fn hull(halves: &[Form]) -> Option<Vec<(Form, bool)>> {
 
 /// The bounded polygon of the rows `rows` left by [`hull`], checked against all of `halves`.
 fn bounded(halves: &[Form], mut rows: Vec<Form>) -> Option<Polygon> {
-    // The check: the kept normals turn by less than half a turn from each to the next, so the
-    // kept half-planes cut a bounded convex polygon whose corners are those of neighbors; and
-    // every half-plane of the part holds at the corner least along its normal (found by binary
-    // search, [`Polygon::ends`]), so it holds on the whole polygon and the part's polygon is
-    // that one. O(h log V) for the V kept.
+    // The check, in steps, for the V rows kept, `n_i` the normal of row `i`, inward:
+    // 1. The rows are in the order of their normals' angles over one turn ([`hull`] keeps them
+    //    in cyclic order; the rotation starts at the least), and `cross(n_i, n_{i+1}) > 0` for
+    //    each `i`, the last with the first too: each step turns by less than half a turn, and
+    //    the steps sum to exactly one turn.
+    // 2. Corner `i` is where lines `i` and `i + 1` meet. Edge `i` runs from corner `i - 1` to
+    //    corner `i` along line `i`, in the direction `t_i = (B_i, -A_i)`, whose left normal is
+    //    `n_i`; write corner `i - 1` = corner `i` - L_i·t_i. Row `i + 1` is 0 at corner `i`, so
+    //    at corner `i - 1` it is `-L_i·(n_{i+1}·t_i) = L_i·cross(n_i, n_{i+1})`, of the sign of
+    //    `L_i` by 1. The second loop below asks it to be positive: every edge runs forward.
+    // 3. Then the corners make a convex polygon with the `n_i` inward: from corner `i`, the
+    //    offset along `n_i` of the corners met going round changes on edge `j` by
+    //    `L_j·cross(t_i, t_j)`, positive while `t_j` is less than half a turn past `t_i` and
+    //    negative after (by 1, the angles rise through one turn), so the offset rises and then
+    //    falls back to 0 at corner `i - 1`, and every corner is on the inner side of every
+    //    line `i`. The polygon is then the intersection of the half-planes of its edges (a
+    //    convex polygon is the intersection of the half-planes of its edges), which are rows.
+    // 4. Every half-plane of the part holds at the corners least and greatest along its normal
+    //    (found by binary search over the angles, [`Polygon::ends`], valid for a convex polygon
+    //    in this order), so on the whole polygon; and every point of the part's region holds the
+    //    kept rows, so lies in the polygon. So the part's region is the polygon.
+    // Without step 2 a row kept by the queue but crossing no edge (redundant) would leave
+    // corners outside the region; the queue keeps none on the systems of
+    // `edges_tests::a_polygon_found_holds_every_half_plane_at_every_corner`, but that was not
+    // proved, so it is checked here in O(V), and a failure reads the part by its rows (exact).
+    // O(V + h log V) for the V kept.
     let mut first = 0;
     for i in 1..rows.len() {
         if angle_cmp((rows[i].0, rows[i].1), (rows[first].0, rows[first].1))?.is_lt() {
@@ -1140,6 +1161,11 @@ fn bounded(halves: &[Form], mut rows: Vec<Form>) -> Option<Polygon> {
             return None;
         }
         corners.push(point(f, g)?);
+    }
+    for i in 0..n {
+        if at(&rows[(i + 1) % n], corners[(i + n - 1) % n])? <= 0 {
+            return None;
+        }
     }
     let poly = Polygon { rows, corners };
     for f in halves {
@@ -2141,5 +2167,71 @@ mod merge_runs_tests {
             [(min, 0), (2, max)]
         );
         assert_eq!(merge_runs(vec![(min + 1, 0), (min, min)]), [(min, 0)]);
+    }
+}
+
+#[cfg(test)]
+mod edges_tests {
+    use super::{Convex, Form, at, edges};
+
+    /// Random systems of 3 to 8 half-planes `A·p + B·q + C >= 0` (`|A|, |B| <= 4`), each
+    /// through or just inside one point `(p0, q0)` (so that many lines meet at a corner) or with
+    /// `|C| <= 12`; bounded or not, empty or not. Where [`edges`] gives a polygon, every corner
+    /// of it holds every half-plane, so the region is not empty and no half-plane dropped cuts
+    /// it, and the integer points of `[-40, 40]²` within its edges are those within all the
+    /// half-planes (PRES-two-pin-edges: "a half-plane dropped holds at every corner of the kept
+    /// ones"). It cannot show that the check in [`bounded`] is needed: with that check removed
+    /// it still passes (the queue alone met the claim on every system here), so it catches an
+    /// error of the queue or of the corners, not a missing check.
+    #[test]
+    fn a_polygon_found_holds_every_half_plane_at_every_corner() {
+        let mut s: u64 = 0x9e37_79b9_7f4a_7c15;
+        let mut next = |m: i128| -> i128 {
+            s = s
+                .wrapping_mul(6_364_136_223_846_793_005)
+                .wrapping_add(1_442_695_040_888_963_407);
+            ((s >> 33) % (2 * m as u64 + 1)) as i128 - m
+        };
+        let mut found = 0;
+        for _ in 0..20_000 {
+            let h = 3 + (next(2) + 2) as usize + (next(1) + 1) as usize;
+            let (p0, q0) = (next(3), next(3));
+            let halves: Vec<Form> = (0..h)
+                .map(|_| {
+                    let (a, b) = (next(4), next(4));
+                    let c = if next(1) >= 0 {
+                        next(1).max(0) - a * p0 - b * q0
+                    } else {
+                        next(12)
+                    };
+                    (a, b, c)
+                })
+                .filter(|f| f.0 != 0 || f.1 != 0)
+                .collect();
+            let Some(poly) = edges(&halves) else {
+                continue;
+            };
+            found += 1;
+            for j in 0..poly.n() {
+                for f in &halves {
+                    assert!(
+                        at(f, poly.corner(j)).unwrap() >= 0,
+                        "{halves:?}: corner {j}"
+                    );
+                }
+            }
+            for p in -40..=40 {
+                for q in -40..=40 {
+                    let holds = |f: &Form| f.0 * p + f.1 * q + f.2 >= 0;
+                    let by_edges = (0..poly.n()).all(|i| holds(&poly.row(i)));
+                    assert_eq!(
+                        by_edges,
+                        halves.iter().all(holds),
+                        "{halves:?} at ({p}, {q})"
+                    );
+                }
+            }
+        }
+        assert!(found > 1000, "only {found} polygons");
     }
 }
