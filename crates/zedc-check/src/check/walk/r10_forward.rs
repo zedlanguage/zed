@@ -302,15 +302,22 @@ impl<'t, 'a> Ck<'t, 'a> {
                         // the kept forward differ only in the leaf needs, and the functions
                         // they hold, which `sig_walk` does not enter, placing their variables
                         // by the steps instead. A function `f` held in a leaf need (a `Map`'s
-                        // operand: `#4` refuses a function in any other need) whose facts do
+                        // operand, or a data family that `#4` passes, `Ty::function_in`; the
+                        // tests below run on every leaf need alike) whose facts do
                         // not set `binds` has no own variable, bound, held name or internal
                         // result at any depth (`VarFacts::of` sets the bit for each and
                         // `VarFacts::held` ORs it up), so every variable it holds is free in
-                        // it. A free class of `f` is in `all_mentioned_vars` (`need_deep_vars`
-                        // enters held functions), so it is own to the callee (`#4`) and a
-                        // parameter or result (`#6`); a free name that is not a class is in
-                        // `f`'s `outer`, so own to the callee (`#4-outer`) and again a
-                        // parameter or result (`#6`). In the flat form, then, `f` holds only
+                        // it. A free variable of `f` spelled as a class (`$k`) is in
+                        // `all_mentioned_vars` (`need_deep_vars` enters held functions), so it
+                        // is own to the callee (by `#4` if it is still a class, by the
+                        // `#4-outer` test after the loop if it is not) and a parameter or
+                        // result (`#6`). A free
+                        // name of `f` not so spelled is in `f`'s `outer` (`VarFacts::tys`;
+                        // without `binds`, `f`'s names are all in `outer`), so it is refused:
+                        // by `#4-outer` when it is not own to the callee, and just below when
+                        // it is (a name own to the callee would stay in `held_names` though
+                        // E's decode replaces it, Neon's case). So every kept forward has
+                        // `held_names` empty, and in the flat form `f` holds only
                         // the caller types the decode puts for parameters and results, where
                         // E's walk meets them; `need_deep_vars` walks `f` with the same walk
                         // (`walk_vars`, through `Ty::vars_in`), so the steps record them in
@@ -339,6 +346,16 @@ impl<'t, 'a> Ck<'t, 'a> {
                         for ov in vf.outer {
                             if !sig.own.contains(&ov) {
                                 held_outer.insert(ov);
+                            } else if !self.is_class(&ov) {
+                                // A name own to the callee that is not a class, free in `f`:
+                                // E's decode replaces it by the caller's type, while the kept
+                                // forward still lists it in `held_names`, so the caller's
+                                // facts would bind it and name the caller apart from E
+                                // (PROOF-map-chain-d-skip-and-admit, point b; found by Neon).
+                                // `generalize` puts only classes in `own`, so no checker input
+                                // is known to reach it; refused so that the proof needs no
+                                // premise on `own`. O(1) per name, beside the lookup above.
+                                intrinsic_fails.insert("#4-outer");
                             }
                         }
                         for cv in vf.classes {
