@@ -412,6 +412,24 @@ fn the_odd_sieve_agrees_with_trial_division() {
     assert!(!odd_primes_below(25)[12]);
 }
 
+/// `is_prime` agrees with the sieve at every `n` below `psi_3 = 25326001`, where it uses one,
+/// two or three bases, and says no to `psi_1`, `psi_2` and `psi_3`, the composites that pass
+/// those bases, and to the least that pass the first four (`psi_4 = 3215031751`). Here, not in
+/// `factor.rs`'s tests, since the sieve is in `lib.rs`, which uses `factor.rs`: the test there
+/// closed an import cycle (step S.1f).
+#[test]
+fn primality_agrees_with_the_sieve_below_psi_3() {
+    const PSI_3: u64 = 25_326_001;
+    let odd = odd_primes_below(PSI_3);
+    for n in 0..PSI_3 {
+        let want = n == 2 || (n % 2 == 1 && odd[(n / 2) as usize]);
+        assert_eq!(is_prime(n), want, "{n}");
+    }
+    for psi in [2047, 1_373_653, PSI_3, 3_215_031_751] {
+        assert!(!is_prime(psi), "{psi}");
+    }
+}
+
 #[test]
 fn the_first_primes_are_the_primes_in_order() {
     let want: Vec<u64> = (2..20_000).filter(|&q| prime_by_trial(q)).collect();

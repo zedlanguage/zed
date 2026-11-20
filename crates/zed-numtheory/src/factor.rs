@@ -321,22 +321,6 @@ mod tests {
         }
     }
 
-    /// `is_prime` agrees with the sieve at every `n` below `psi_3 = 25326001`, where it uses one,
-    /// two or three bases, and says no to `psi_1`, `psi_2` and `psi_3`, the composites that pass
-    /// those bases, and to the least that pass the first four (`psi_4 = 3215031751`).
-    #[test]
-    fn primality_agrees_with_the_sieve_below_psi_3() {
-        const PSI_3: u64 = 25_326_001;
-        let odd = crate::odd_primes_below(PSI_3);
-        for n in 0..PSI_3 {
-            let want = n == 2 || (n % 2 == 1 && odd[(n / 2) as usize]);
-            assert_eq!(is_prime(n), want, "{n}");
-        }
-        for psi in [2047, 1_373_653, PSI_3, 3_215_031_751] {
-            assert!(!is_prime(psi), "{psi}");
-        }
-    }
-
     /// NUM-expect-audit: the 64-bit corner cases: squares and products of the largest primes
     /// below `2^32`, Carmichael numbers and strong pseudoprimes to small bases, prime powers,
     /// `2^64 - 1` and the largest 64-bit prime.
