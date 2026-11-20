@@ -11,6 +11,8 @@ mod bug;
 mod codegen;
 #[cfg(unix)]
 mod exe;
+#[cfg(test)]
+mod fnv;
 mod hooks;
 mod legal;
 #[cfg(target_os = "linux")]
