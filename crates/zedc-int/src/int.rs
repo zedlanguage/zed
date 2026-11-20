@@ -883,7 +883,13 @@ impl Approx {
 
     /// `self ^ exp`, for `self >= 0`, by squaring: `O(bits of exp)` products. Each product
     /// adds a relative error of at most `2^-bits`, and a power multiplies the relative error
-    /// by its exponent.
+    /// by its exponent (to first order; this says only how precise the result is). The result
+    /// holds the true power whatever the error: `r` starts exact at 1, and each step is a
+    /// [`Approx::mul`] of two intervals of values at least 0, whose ends are the products of
+    /// the ends (both `lo` at least 0, so `lo * lo'` is the least product and `hi * hi'` the
+    /// greatest), and whose [`Approx::truncate`] rounds `lo` down and `hi` up. So by induction
+    /// on the steps, `r.lo * 2^r.shift <= self^e <= r.hi * 2^r.shift` for the exponent `e`
+    /// read so far.
     fn pow(&self, exp: &BigUint, bits: u64) -> Approx {
         let mut r = Approx::exact(BigInt::from(1u32));
         for i in (0..exp.bits()).rev() {
@@ -1699,6 +1705,15 @@ fn root_approx(rad: &Kept, k: &BigUint, bits: u64) -> (Approx, Option<bool>) {
     let q_min = Integer::div_floor(&l_min, &k_int);
     let q_max = Integer::div_ceil(&l_max, &k_int);
     let t = (&q_min - bits).max(BigInt::ZERO);
+    // `at` is called with `q_min` and `q_max` only. `q - t >= 0`: `l_min >= 0`, so `q_min >= 0`
+    // and `q_max >= q_min` (`l_max >= l_min`, since `rad < 2^l_max` and `rad >= 2^l_min`);
+    // when `t == 0` this is `q >= 0`, and when `t > 0`, `q - t >= q_min - t == bits >= 0`.
+    // That `q - t` fits a `u64`: when `t > 0`, `q_max - t <= bits + (l_max - l_min) / k + 2`,
+    // and `l_max - l_min` is the difference of the bits of `a.hi` and `a.lo` plus 1, both
+    // held in memory. Not proved: the case `t == 0` with `a.lo <= 0` (the interval of `rad`
+    // reaches 0, as a kept sum of large terms that nearly cancel can), where `l_min` is 0 and
+    // `q_max` is bounded only by `l_max = a.shift + a.hi.bits()`, the bits of the upper end of
+    // `rad`, which for a kept power could exceed `2^64` with `k` small; no test reaches it.
     let at = |q: &BigInt| {
         BigInt::from(1u32) << u64::try_from(&(q - &t)).expect("at most the bits of the bound")
     };
