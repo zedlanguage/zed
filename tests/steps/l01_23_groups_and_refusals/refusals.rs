@@ -5374,6 +5374,69 @@ fn r6_carrier_and_chains_against_brute_force_4() {
     r6_oracle_run_with("r6 oracle 4", 500, 4, 6, true);
 }
 
+/// A case of `r4_exact_classes_random_and_short_escape` (seed 3, trial 55, found 2026-11-20,
+/// TEST-kernel-unreached-paths-11) on which the sweep's minimum-length pass meets a link with no
+/// head (`empty/sweep.rs`, `links[y].head == NONE`): `r3_spec(2, 1, 0, 2, true)` with the head
+/// of node 1 drawn empty (mask 0, where the spec has `{1}`). The oracle finds a word, and the
+/// verdict must agree in both orders; random seeds reached the line in three runs of six.
+#[test]
+fn r4_a_link_with_an_empty_head() {
+    let (mut ns, roots, all) = r3_spec(2, 1, 0, 2, true);
+    ns[1].mask = 0;
+    assert!(r3_oracle(&ns, &roots, all), "the oracle finds a word");
+    let a = r3_build(&ns, &roots, all, false, "r4emptyhead", 0);
+    let b = r3_build(&ns, &roots, all, true, "r4emptyhead", 0);
+    Type::forget_emptiness();
+    assert_eq!(
+        a.sweep_verdict(),
+        b.sweep_verdict(),
+        "the sweep in both orders"
+    );
+    for t in [&a, &b] {
+        Type::forget_emptiness();
+        assert_eq!(t.verdict(), Verdict::Inhabited);
+        Type::forget_emptiness();
+        assert!(!t.is_empty());
+    }
+}
+
+/// A case of `r6_carrier_and_chains_against_brute_force_4` (seed 1, input 379, found
+/// 2026-11-20, TEST-kernel-unreached-paths-11) on which the sweep's open class holds the head
+/// of a side row (`empty/sweep.rs`, "A side row on the open class"), so the sweep declines and
+/// the search decides. The oracle finds no word; random seeds reached the line in one run of
+/// four.
+#[test]
+fn r6_a_side_row_on_the_open_class() {
+    let h = |cof, mask| R6Head { cof, mask };
+    use R6Tail::{End, Node};
+    let x = R6Input {
+        carrier: Some(h(false, 1)),
+        pool: vec![
+            (true, h(true, 2), End, Some(h(true, 0))),
+            (false, h(true, 4), Node(0), None),
+            (true, h(true, 7), End, None),
+            (true, h(true, 2), End, None),
+            (false, h(true, 4), Node(3), None),
+            (true, h(true, 7), End, None),
+        ],
+        taken: vec![(h(false, 1), Node(3))],
+        refused: vec![
+            (h(true, 0), Node(0)),
+            (h(false, 6), Node(1)),
+            (h(true, 0), Node(0)),
+            (h(true, 6), Node(0)),
+        ],
+    };
+    assert!(!r6_oracle(&x), "the oracle finds no word");
+    let t = r6_input_type(&x, "_r6sideopen");
+    Type::forget_emptiness();
+    assert_eq!(t.sweep_verdict(), None, "the sweep declines");
+    Type::forget_emptiness();
+    assert_eq!(t.verdict(), Verdict::Empty);
+    Type::forget_emptiness();
+    assert!(t.is_empty());
+}
+
 /// A comb where no place of a root separates except its first: `F_e = cons(int \ {e mod 2},
 /// F_(e-1))`, roots `F_d` for even `d`, `P` of length `n` with `{0, 7}` first and `{j mod 2, 7}`
 /// at place `j`. The node `F_e` separates the places `j` of parity `e`, which no even root

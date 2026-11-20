@@ -4958,3 +4958,40 @@ fn a_cpoly_group_split_at_two_components_with_forked_recursion_is_inhabited_in_b
         );
     }
 }
+
+/// `R0 = (empty .. R1 -> int)` and `R1 = ((empty .. R1 -> R0) | (R1, R1)) \ #none`, a group
+/// with a `\` that the systems of `judge` leave open, so `exact_flat_diff_decide` reads it
+/// (TEST-kernel-unreached-paths-11). It reads two morphisms whose key is recursive: `R0`'s
+/// body, whose value `int` is inhabited, so `R0` has a closure (`fn _ = 0`) and is set to
+/// `Top` in both layers; and the operand of `R1`, whose value `R0` is recursive, where the
+/// function gives the group up (`None`) and the search decides. Both members hold a closure, so
+/// both are inhabited. The random systems of `partial_morphisms_are_never_called_empty_with_a_value`
+/// reached the second arm under some seeds and the first under none of 48 (measured
+/// 2026-11-20): their `-` form puts `\ #none` around every body, so no morphism is a whole body.
+#[test]
+fn a_morphism_with_a_recursive_key_is_read_by_the_flat_difference_decider() {
+    let mor = |l: E, u: E, v: E| E::Mor(Box::new(l), Box::new(u), Box::new(v));
+    let sys = vec![
+        mor(E::Empty, r(1), E::Int),
+        diff(
+            E::Union(vec![mor(E::Empty, r(1), r(0)), tup(vec![r(1), r(1)])]),
+            E::Atom("none"),
+        ),
+    ];
+    let seen = truth(&sys, CAP).seen;
+    for i in 0..sys.len() {
+        assert!(matches!(seen[i], Seen::Member(_)), "R{i} holds a value");
+        // Each member first, cold, so the decider runs from it.
+        Type::forget_emptiness();
+        let ts = kernel(&sys, &format!("mor_rec_key{i}"));
+        let t = ts[i].as_ref().expect("built");
+        assert_eq!(
+            t.verdict(),
+            Verdict::Inhabited,
+            "R{i} of {}",
+            show_system(&sys)
+        );
+        Type::forget_emptiness();
+        assert!(!t.is_empty(), "R{i} of {}", show_system(&sys));
+    }
+}

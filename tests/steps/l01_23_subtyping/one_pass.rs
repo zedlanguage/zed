@@ -321,6 +321,66 @@ fn random_meets_of_lists_and_exclusive_ors_are_decided_as_enumeration_decides_th
     });
 }
 
+/// Two parts of `random_meets_of_lists_and_exclusive_ors_are_decided_as_enumeration_decides_them`
+/// (seed 1, found 2026-11-20, TEST-kernel-unreached-paths-11), each decided against the
+/// enumeration on its box: an `|` of two decision lists on three components, on which the
+/// sweep over points removes a top count that falls to zero; and an `|` of a negated meet with
+/// an `|` of exclusive ors, on a box of single cells, whose first operand is valid, so the `|`
+/// is valid without reading the pair. Random seeds reached each line in one run of four.
+#[test]
+fn two_meets_drawn_at_random_are_decided_as_enumeration_decides_them() {
+    let boxed = |vs: &[&[usize]]| -> (Type, Vec<Vec<usize>>) {
+        let types = (vs.iter())
+            .map(|v| match v.contains(&OUTSIDE) {
+                true => Type::top(),
+                false => Type::union_all(v.iter().map(|&x| lit(x))),
+            })
+            .collect();
+        (Type::tuple(types), vs.iter().map(|v| v.to_vec()).collect())
+    };
+    let all: &[usize] = &[0, 1, 2, 3, OUTSIDE];
+    let lists = F::Or(
+        Box::new(F::Chain(vec![
+            (1, 0, false),
+            (1, 0, false),
+            (1, 3, true),
+            (2, 3, true),
+            (2, 2, false),
+            (2, 3, false),
+        ])),
+        Box::new(F::Chain(vec![
+            (0, 2, true),
+            (1, 2, true),
+            (0, 1, true),
+            (1, 1, true),
+            (0, 3, false),
+            (1, 2, true),
+        ])),
+    );
+    let (t, vs) = boxed(&[all, all, all]);
+    assert!(decide_in(&t, &vs, 3, &lists), "{lists:?} is inhabited");
+    let valid_first = F::Or(
+        Box::new(F::Not(Box::new(F::And(
+            Box::new(F::Chain(vec![
+                (0, 1, true),
+                (2, 3, true),
+                (2, 3, false),
+                (1, 3, true),
+            ])),
+            Box::new(F::Xor(vec![(2, 1), (1, 0), (1, 3)])),
+        )))),
+        Box::new(F::Or(
+            Box::new(F::Not(Box::new(F::Xor(vec![(3, 2), (3, 1)])))),
+            Box::new(F::Xor(vec![(3, 2), (3, 3)])),
+        )),
+    );
+    let (t, vs) = boxed(&[&[0], all, &[2, 3], &[2, 3]]);
+    assert!(
+        decide_in(&t, &vs, 4, &valid_first),
+        "{valid_first:?} is inhabited"
+    );
+}
+
 /// Random parts with some `&` of operands of any form on shared components, a third of them
 /// an `&` of three lists or exclusive ors, which the pass does not read, and of a union of
 /// tuple types on component 0, so that the part is false where every tuple type is (the

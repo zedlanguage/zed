@@ -887,6 +887,46 @@ fn the_sweep_agrees_on_random_positive_chains() {
     assert_eq!((b.swept, b.inhabited), (2, 2), "the built case: {b:?}");
 }
 
+/// A case of [`the_sweep_agrees_on_random_positive_chains`] (seed 5, case 115, found
+/// 2026-11-20, TEST-kernel-unreached-paths-11) on which the fork's first pass closes with no
+/// word (`fork.rs`, `Some(Err(()))` of `unforked`): `D1 = cons(1, D2) | cons(int \ 1, D2)` less
+/// `D2 = cons(int \ 8, L) | cons(int \ 9, L)`, where `int \ 8` and `int \ 9` are cofinite holes
+/// (`HOLES`). Every word of `D1` is `[x, y, ...]` with `x` an int and `[y, ...]` in `L`; its tail
+/// `D2` puts it in `L`, and `x` is in `int \ 8` or in `int \ 9`, whose union is `int`, so it is in
+/// `D2`: the type is empty. Random seeds reached the line in about one run in three.
+#[test]
+fn a_positive_chain_whose_holes_cover_the_head_is_empty() {
+    let ds = vec![
+        D {
+            nil: true,
+            rows: vec![(INT, 0)],
+        },
+        D {
+            nil: false,
+            rows: vec![(ONE, 2), (INT & !ONE, 2)],
+        },
+        D {
+            nil: false,
+            rows: vec![(HOLES[0], 0), (HOLES[1], 0)],
+        },
+    ];
+    let spec = Spec { groups: vec![ds] };
+    let term = Term {
+        pos: vec![(0, 1)],
+        neg: vec![(0, 2)],
+    };
+    assert!(!spec.inhabited(&term), "the oracle: D1 \\ D2 is empty");
+    let mut tally = Tally::default();
+    both_orders(
+        &mut tally,
+        &spec,
+        &term,
+        "_holescover",
+        "holes cover the head",
+    );
+    assert_eq!((tally.cases, tally.empty), (2, 2), "{tally:?}");
+}
+
 /// The cases of [`the_sweep_agrees_on_random_positive_chains`], drawn from `rng`.
 fn random_positive_chains(mut rng: Rng) -> Tally {
     let mut tally = Tally::default();
