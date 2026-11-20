@@ -4680,6 +4680,8 @@ mod cell_sweep {
         whole: &Span,
         memo: &mut DigestMap<usize, Rc<Vec<Span>>>,
     ) -> Vec<Span> {
+        // `memo` is keyed by addresses of nodes under `ds`, alive while the caller's
+        // `cells_of` call lives. Proof: see `cells_of` in this module, at `pure_memo`.
         let mut stack: Vec<(&Parts, bool)> = Vec::new();
         for d in ds {
             let ptr = Rc::as_ptr(d) as usize;
@@ -5022,6 +5024,8 @@ mod cell_sweep {
         whole: &Span,
         pure_memo: &mut DigestMap<usize, Rc<Vec<Span>>>,
     ) -> Option<ResolvedOr> {
+        // Keys are addresses of nodes under `o`, alive for the call. Proof: see `cells_of`
+        // in this module, at `pure_memo`.
         let mut nodes: DigestMap<usize, DisjNode<'a>> = DigestMap::default();
         let mut stack: Vec<(&'a Parts, bool)> = Vec::new();
         for d in o {
@@ -6664,6 +6668,23 @@ mod cell_sweep {
             return Some(Ok(false));
         };
 
+        // Proof that no key of `pure_memo` (here), or of `nodes` in `resolve_disj`, or of
+        // `memo` in `resolve_pure_or`, names a freed node that a new node then takes
+        // (dryC1, c4937d86c, asked for this proof; row DOC-proofs-in-comments-audit):
+        // 1. Every key is the address of a `Parts` reached from `p.ors` through `Rc`s: the
+        //    stacks of both walks start at the disjuncts of one `o` in `p.ors` and push only
+        //    the `Rc`s in `u.ors` of a node already on them.
+        // 2. `p` is borrowed shared for the whole call, and `Parts::ors` is a plain
+        //    `Vec<Vec<Rc<Parts>>>`, not behind a `Cell` or `RefCell`, so no `Rc` reached from
+        //    `p` is dropped or replaced while the call runs; each node so reached stays alive.
+        // 3. The three maps are locals of this call (`nodes` a local of `resolve_disj`), so
+        //    they are dropped before `p`'s borrow ends, and no key outlives its node.
+        // Hence an address in a map names one node for the map's whole life. The value is also
+        // a function of the key alone within one call: `x` and `whole` are fixed here.
+        // Test: `cell_sweep_empty_tests::cell_sweep_reads_new_parts_at_the_address_of_dropped`,
+        // which drops one formula and builds another in the same slot; it checks a reused
+        // address across calls, which step 3 covers; no test can free a node within one call,
+        // since step 2 is enforced by the borrow checker, not by a test.
         let mut pure_memo: DigestMap<usize, Rc<Vec<Span>>> = DigestMap::default();
         let mut pure_ors: Vec<Vec<Span>> = Vec::new();
         let mut items: Vec<EqItem> = Vec::new();
@@ -7578,6 +7599,9 @@ fn by_cells(p: &Parts, solving: bool) -> Option<Result<bool, Refusal>> {
     if p.ors.is_empty() {
         return None;
     }
+    // `walk` is keyed by part addresses (`parts`, and lists of them in `ors`). No key names a
+    // freed part (DOC-proofs-in-comments-audit): each is a part under `p`, which is borrowed
+    // for this call, and `walk` is a local, so the argument at `cells_of` holds here too.
     let mut walk = BoundedWalk::default();
     let all: Vec<Bounded> = (p.ors.iter().flatten()).map(|d| walk.part(d)).collect();
     let atoms = met_atoms(&all);
@@ -8360,6 +8384,15 @@ impl CellView {
                 ranked.push((count, ptr, first_lo, piece));
             }
         }
+        // The tie-break by address makes the order differ from run to run. Proof that no
+        // answer depends on it (DOC-proofs-in-comments-audit): the one caller, `try_join`,
+        // reads of the order only (1) `pieces[0].count()`, the largest count, the same in every
+        // order; (2) a `joins` key, whose value is `cells_join` of all the pieces' runs, a
+        // union, the same in every order, and whose entry holds the pieces, so every address
+        // in a key stays alive while the key does; (3) `as_slice()` of a one-piece list. So
+        // only which `joins` entries are hit can change, which costs time, not answers. The
+        // order is a function of the addresses alone within one run, so a list made twice in
+        // one walk gets one key.
         ranked.sort_by_key(|(count, ptr, lo, _)| (std::cmp::Reverse(*count), *ptr, *lo));
         ranked.into_iter().map(|(_, _, _, p)| p).collect()
     }
@@ -8997,6 +9030,14 @@ fn cells_contract(cons: &[&Con], shared: impl Fn(&Atom) -> bool) -> Option<Vec<C
 /// constraint left is a bound of one atom or an equality `u == ±v + c`, the cells are decided
 /// together by [`cells_point`]; else each by [`solve`].
 fn cells_of<'p>(p: &'p Parts, x: &Atom, solving: bool) -> Option<Result<bool, Refusal>> {
+    // `memo` and `owns` are keyed by part addresses. Proof that no key names a freed part
+    // (DOC-proofs-in-comments-audit): every key is `Rc::as_ptr` of a part reached from
+    // `p.ors` through `Rc`s; `p` is borrowed shared for this call, and `Parts::ors` is a
+    // plain `Vec` with no `Cell`, so no part under `p` is dropped while the call runs; `walk`
+    // is a local, dropped before the borrow ends. The other maps (`joins`, `meets`,
+    // `base_meets`) hold the `Rc`s whose addresses they are keyed by (see each field). The
+    // proof is the one at `pure_memo` in `mod cell_sweep`, whose test drops a formula and
+    // reads a new one at its address.
     let mut walk = CellWalk {
         x,
         cells: Vec::new(),
@@ -11951,6 +11992,24 @@ fn by_halves_lazy<E>(
     by_halves_general(rows, keep, leaf)
 }
 
+// Proof of the O((m + k) log k) bound stated at [`by_halves`], for a chain of k items whose
+// projections stay small (PERF-dead2-chained-ratio, 2516a0d3d, where the proof was in
+// COMPLEXITY.md and at the bench only; put here for DOC-proofs-in-comments-audit):
+// 1. The ranges form a binary tree over `0..k`, of depth ⌈log₂ k⌉; the ranges at one depth
+//    are disjoint, so at each depth each item lies in one range.
+// 2. On a chain the rows a range's projection keeps are O(its items + the rows its leaves
+//    returned), so one depth projects O(m + k) rows in all. This step is counted, not
+//    proved: 2,820 to 22,560 projections (8 times) and the row counts below.
+// 3. Each projection is linear in its rows: `linked_to` visits each row and atom once,
+//    O(t) expected with hash lookups; `shadow`, on rows of at most three terms with
+//    coefficients ±1, eliminates each atom from O(1) rows read and made.
+// 4. So each depth costs O(m + k), and the ⌈log₂ k⌉ depths O((m + k) log k).
+// Measured: 16,761 to 179,120 rows projected from 470 to 3760 stages, 10.69 times, k log₂ k
+// at both sizes; instruction ratio 9.63 against the 10.70 that P300 predicts. Test:
+// l01_38_omega_test `bench::omega::project_each_on_a_chained_pipeline_scales`, which checks
+// the ratio at two sizes only. Not proved: step 2, on chains in general and on any system
+// that is not a chain; where `shadow` keeps a core of the system whole, a projection is up
+// to O(m) rows and the bound is O(m k), as the doc at `by_halves` says.
 fn by_halves_general<E>(
     rows: Vec<Con>,
     keep: &[BTreeSet<Atom>],
@@ -35768,6 +35827,49 @@ mod cell_sweep_empty_tests {
         );
         assert_eq!(cell_sweep::decide_by_cells(&p), Some(Ok(false)));
         assert_eq!(has_point(p), Ok(false));
+    }
+
+    /// The addresses of every disjunct of `p`, the keys the sweep's memos use.
+    fn addresses(p: &Parts) -> Vec<usize> {
+        let mut out = Vec::new();
+        let mut stack: Vec<&Parts> = vec![p];
+        while let Some(u) = stack.pop() {
+            for d in u.ors.iter().flatten() {
+                out.push(Rc::as_ptr(d) as usize);
+                stack.push(d);
+            }
+        }
+        out
+    }
+
+    /// A formula swept, dropped, and a second one built with its disjuncts at the freed
+    /// addresses is read as itself, not as the first (row DOC-proofs-in-comments-audit; the
+    /// proof is at `cell_sweep::cells_of`, at `pure_memo`). The first has no point, the second
+    /// has one; each answer is checked against `has_point`. The reuse of an address is checked
+    /// too, so the test fails rather than passes vacuously if the allocator stops reusing them.
+    #[test]
+    fn cell_sweep_reads_new_parts_at_the_address_of_dropped() {
+        let empty = [
+            [(Some(10), None, 1), (None, Some(-10), 2)],
+            [(Some(11), None, 3), (None, Some(-11), 4)],
+        ];
+        let full = [
+            [(Some(-3), Some(-1), 1), (Some(-6), Some(-4), 2)],
+            [(Some(1), Some(3), 3), (Some(4), Some(6), 4)],
+        ];
+        let guards = [(None, Some(0)), (Some(1), None)];
+        let first = guarded(guards, empty);
+        let before = addresses(&first);
+        assert_eq!(cell_sweep::decide_by_cells(&first), Some(Ok(false)));
+        drop(first);
+        let second = guarded(guards, full);
+        let after = addresses(&second);
+        assert!(
+            after.iter().any(|a| before.contains(a)),
+            "no disjunct of the second formula took a freed address: {before:x?} {after:x?}"
+        );
+        assert_eq!(cell_sweep::decide_by_cells(&second), Some(Ok(true)));
+        assert_eq!(has_point(second), Ok(true));
     }
 }
 

@@ -3567,6 +3567,59 @@ fn landing7_held_read_keeps_its_place_in_vars_order() {
     assert_eq!(compact.vars_order(), flat.vars_order());
 }
 
+/// DOC-proofs-in-comments-audit (dryC1, c4937d86c, asked that [`RunMark`]'s claim be proved
+/// again; the proof is at `RunMark` in zedc-types): the marks of a signature held in an `Arc`
+/// name it by the `Arc`'s address, and a signature made at that address after the first is
+/// dropped reads marks of its own, since marks are kept on the signature (`Facts`), not in a
+/// table keyed by address. The control shows the one way the claim fails: a signature whose
+/// marks were read and that then moves keeps its old address in them, which is why
+/// `generalize` drops the facts before `Arc::new`.
+#[test]
+fn run_marks_name_a_new_signature_at_the_address_of_one_dropped() {
+    use std::sync::Arc;
+    let (d, _) = run_with_cfg(&chain_src(4, "f", false), R10Config::default());
+    let (_, held, _) = sig_with_hidden(&d);
+    let held: &Sig = &held;
+    let own_marks = |s: &Sig, at: usize| s.vars_marks().iter().filter(|m| m.sig == at).count();
+
+    let first = Arc::new(Sig::clone(held));
+    let at = Arc::as_ptr(&first) as usize;
+    let count = own_marks(&first, at);
+    assert!(count > 0, "control: the signature's own forward has marks");
+    drop(first);
+    // The allocator does not promise the freed address to the next `Arc`, so signatures are
+    // made, and kept so that each try gets a new block, until one has it.
+    let mut kept = Vec::new();
+    let second = loop {
+        let s = Arc::new(Sig::clone(held));
+        if Arc::as_ptr(&s) as usize == at {
+            break s;
+        }
+        kept.push(s);
+        assert!(
+            kept.len() < 100_000,
+            "no new signature took the dropped one's address"
+        );
+    };
+    assert_eq!(
+        own_marks(&second, at),
+        count,
+        "the new signature's marks name it"
+    );
+
+    let bare = Sig::clone(held);
+    let before = &bare as *const Sig as usize;
+    assert_eq!(own_marks(&bare, before), count);
+    let moved = Arc::new(bare);
+    let after = Arc::as_ptr(&moved) as usize;
+    assert_ne!(after, before);
+    assert_eq!(
+        (own_marks(&moved, before), own_marks(&moved, after)),
+        (count, 0),
+        "control: a signature moved after its marks are read names its old address"
+    );
+}
+
 /// Landing round 6, Gemini L6-B5: `Need::on_holds_var` read a compact forward's kept `.on`
 /// variables only, so an internal result that a later map has as its `.on` was not found.
 #[test]

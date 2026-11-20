@@ -949,6 +949,15 @@ struct Same<'a> {
     /// Hashed by the kernel's [`zed_kernel::digest::Digest`], the hasher of ids and addresses:
     /// the keys are addresses the allocator chose, never a program's text, so it needs no seed
     /// (DRY-sorted-structures-2, job 3, which removed the folded multiply this table had alone).
+    // Proof that no key names a freed node (checked again for DOC-proofs-in-comments-audit,
+    // as dryC1 asked in c4937d86c): (1) keys are put in only by `Same::root`, called only from
+    // `Same::assumed`; (2) its callers `alike_rows`, `alike_shapes` and `func` (impl `Nodes`
+    // for `Same`) pass `Arc::as_ptr` of operands typed `&'a`; (3) a `Same<'a>` cannot outlive
+    // `'a`, which the borrow checker enforces, and one is made for each comparison
+    // (`Lazy::same`, `Sig::eq`). So each key names a node alive for the table's whole life.
+    // Test: `equality_reads_a_new_type_at_the_address_of_one_dropped`, which checks a type
+    // made at a dropped one's address compares as itself, from a new table; a node freed
+    // while the table lives cannot be written in a test, since that program does not compile.
     ids: zed_kernel::digest::DigestMap<*const (), (*const (), usize)>,
     /// The functions the rows and shapes on the path to the pair now compared keep as held or
     /// unchecked, on the left and on the right ([`Same::shared_sigs`]).
@@ -2869,6 +2878,24 @@ impl PartialEq for RunRenames {
 /// those of rows and shapes the input holds: each walk ([`Replacer`], [`Subst`], [`Widen`],
 /// [`HeldFns`], [`Settle`]) is made and dropped within one call that borrows the input, so no key names a
 /// freed node, and the maps are only read by key, never iterated.
+// Proof, step by step (checked again for DOC-proofs-in-comments-audit, as dryC1 asked in
+// c4937d86c):
+// 1. A key is put in only by `made_row`, `made_shape`, `known_row` or `known_shape` (and
+//    `made_held`/`known_held` for the `sigs` and `families` maps), each given a node `rebuild`
+//    reached; `rebuild` pushes only `Step`s borrowed (`&'a`) from the roots it was given,
+//    never a type it made (`binding`'s result is joined into the output, not walked).
+// 2. Each walker is a local of one call that borrows its roots: `Ty::subst`,
+//    `Ty::with_held_fns`, `Ty::settle`, `Sig::settle`, `Ty::carriers` (`Widen`),
+//    `Absorb::ty`, `Absorb::sig`, `Sig::replace_in`, `Need::replace_in`, `Ty::replace_in`.
+// 3. A root a walker makes itself, the decoded flat form of a signature
+//    (`Replacer::decoded`, `Settle::known_held`), is pushed on the walker's `kept` before it is
+//    walked, so it lives as long as the memos.
+// 4. The one memo kept past a call, [`Renamings`], keeps each signature walked and each
+//    flat form (`Renaming::walked`) for as long as the memos.
+// So every key names a node alive while its map lives. Tests:
+// `renamings_read_a_new_signature_built_after_one_dropped` (step 4: the memo keeps a dropped
+// signature's address in use); steps 1 to 3 rest on the code read above, and no test can free
+// a root during a walk, since the borrow checker forbids it.
 #[derive(Default)]
 struct Made {
     rows: HashMap<*const RowData, Row>,
@@ -8469,6 +8496,11 @@ fn some_value(t: &Ty, cx: &Cx, own: Option<(&str, Carrier)>) -> Result<Value, Op
         // closed shapes were searched and counted as failed, refusing a correct yes.
         Carrier::Rat => Some(Value::rat(zed_kernel::Rat::int(0.into()))),
     };
+    // Keyed by row address. Proof that no key names a freed row (DOC-proofs-in-comments-audit,
+    // as dryC1 asked in c4937d86c): each key is `r.addr()` of a row a `Step<'a>` borrows
+    // from `t`, and `t` is borrowed for the whole call, which owns `made`, so every row named
+    // is alive while the map is. The borrow checker enforces this; no test can free a row
+    // during the call.
     let mut made: HashMap<*const (), Value> = HashMap::new();
     let mut out: Vec<Value> = Vec::new();
     let mut stack = vec![Step::Visit(t)];
@@ -13737,6 +13769,30 @@ pub struct RunMark {
     /// The address of the signature that holds the forward, as a key only: never read through.
     /// The walk that found it borrows that signature, and a signature whose order is kept
     /// holds the ones its marks name, so the address names no other while either lives.
+    // Proof, step by step (checked again for DOC-proofs-in-comments-audit, as dryC1 asked in
+    // c4937d86c). The claim: while a signature S whose marks are kept (`facts.4`) lives, each
+    // mark's `sig` is the address of S or of a signature S holds through an `Arc`.
+    // 1. `sig_walk(s, ..)` is the only maker of a mark; it writes the address of the `s` it
+    //    walks. `walk_vars` enters only signatures in `t.fns` of a type it walks, which are
+    //    `Arc<Sig>` in S's arrows and needs: their addresses are heap addresses, fixed while S
+    //    holds the `Arc`s. A held signature's kept marks are copied as they are; they name it or
+    //    signatures it holds, by this same claim for it.
+    // 2. `facts.4` is filled only by `Sig::vars_order_and_marks`, with the root walked at its
+    //    address at that moment. A clone gets empty facts (`impl Clone for Facts`), and
+    //    `Sig::unwrap_to_change` empties them, so only a move can carry them to a new address.
+    // 3. The production callers (`sig_vars` and `vars_marks` in zedc-check) ask it of a
+    //    signature in an `Arc`, which never moves, except `generalize` in walk.rs, which asks
+    //    it of the bare signature it is building and then empties `facts` on every path to
+    //    `Arc::new` (in its `else` branch and in `r10_name_compact_sig_in_generalize`).
+    // 4. The one reader, `finished_with`, keys runs by these addresses while it holds `s` and a
+    //    copy of `b` (`_held_for_runs`), so every signature named is alive while the keys are
+    //    read, and no new one can take its address.
+    // Not proved: step 3 is a fact about the callers today, not enforced: a new caller that
+    // reads the marks of a bare signature and then moves it would leave the root's own marks
+    // naming the old address, and `RunRenames::get` would then miss its forwards (control in
+    // zedc-check `run_marks_name_a_new_signature_at_the_address_of_one_dropped`).
+    // A `Vars` reused over several walks keeps `marked` by address; the only `Vars` whose
+    // marks are read (`finished_with`) is made for one walk, so no stale key there.
     pub sig: usize,
     /// The place of the forward among that signature's needs.
     pub need: usize,
@@ -23497,6 +23553,72 @@ mod tests {
             assert_ne!(second, first, "up {up}: the second root read as the first");
             assert_eq!(second, Approx::default().of(&slot, up), "up {up}");
         }
+    }
+
+    /// A tuple compared through `==` ([`Same`], whose table is keyed by row addresses),
+    /// dropped, and a second tuple whose row takes the first row's address, compares as
+    /// itself, not as the first (DOC-proofs-in-comments-audit, as dryC1 asked in c4937d86c):
+    /// each comparison makes its own table, which borrows both operands for its life. The
+    /// allocator does not promise to give the freed row's address to the next row, so tuples
+    /// are made, and kept so that each try gets a new block, until one row has it.
+    #[test]
+    fn equality_reads_a_new_type_at_the_address_of_one_dropped() {
+        let tuple = |c| Ty::tuple(vec![Ty::dynamic(), Ty::carrier(c)]);
+        let first = tuple(Carrier::Int);
+        let address = Arc::as_ptr(&first.tuples[0].0);
+        assert!(first == tuple(Carrier::Int));
+        drop(first);
+        let mut kept = Vec::new();
+        let slot = loop {
+            let t = tuple(Carrier::Bool);
+            if Arc::as_ptr(&t.tuples[0].0) == address {
+                break t;
+            }
+            kept.push(t);
+            assert!(
+                kept.len() < 100_000,
+                "no new row took the dropped one's address"
+            );
+        };
+        assert!(
+            slot != tuple(Carrier::Int),
+            "the second tuple read as the first"
+        );
+        assert!(slot == tuple(Carrier::Bool));
+    }
+
+    /// A signature renamed through one [`Renamings`], whose memos are keyed by the addresses
+    /// of the functions walked, and then dropped by its caller, cannot give its function's
+    /// address to a new signature: the memo keeps each signature walked (`Renaming::walked`),
+    /// so a later one is read as itself (DOC-proofs-in-comments-audit, as dryC1 asked in
+    /// c4937d86c; the proof is at [`Made`]).
+    #[test]
+    fn renamings_read_a_new_signature_built_after_one_dropped() {
+        let v = |n: &str| Ty::var(n.into());
+        let outer = |inner: Ty| {
+            let f = Arc::new(Sig::one(vec![], vec![], inner));
+            Arc::new(Sig::one(vec![], vec![], Ty::func(f)))
+        };
+        let to: Binds = [("$1".into(), v("T"))].into();
+        let b: Binds = [("$2".into(), Ty::set(KType::int()))].into();
+        let mut made = Renamings::default();
+        let mut slot = outer(Ty::tuple(vec![v("$1"), v("$2")]));
+        let address = Arc::as_ptr(&slot.arrows[0].result.fns[0]);
+        let first = made.renamed_replaced(&slot, to.clone(), b.clone());
+        assert_eq!(*first, slot.renamed(&to).replace(&b));
+        drop(first);
+        slot = outer(Ty::tuple(vec![v("$2"), v("$1"), v("$1")]));
+        assert_ne!(
+            Arc::as_ptr(&slot.arrows[0].result.fns[0]),
+            address,
+            "the memo keeps the first function alive"
+        );
+        let second = made.renamed_replaced(&slot, to.clone(), b.clone());
+        assert_eq!(
+            *second,
+            slot.renamed(&to).replace(&b),
+            "the second read as the first"
+        );
     }
 
     /// A signature whose parameter holds `_` beside `int` is printed with `_` alone, as the
