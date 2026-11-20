@@ -230,6 +230,92 @@ fn least_prime_factors_in_blocks(top: u32, block: usize) -> Vec<u16> {
 /// blocks). Measured: COMPLEXITY.md, row FAIL-bench-least-prime-factors-scaling.
 const SIEVE_BLOCK: usize = 1 << 15;
 
+/// The largest prime below 2^16. No prime lies in `65522..=65535` (65537 is the next), which
+/// the test `largest_prime_below_2_16_is_65521` checks by trial division.
+const LARGEST_PRIME_BELOW_2_16: u16 = 65_521;
+
+/// The table entry of a prime held by none of the values in [`shares_a_factor_by_table`]; a
+/// prime held by `c` of them (counted up to 2) has `PRIME_HELD_BY_NONE - c`. All three are
+/// above every least prime factor a composite up to `u32::MAX` can have (at most
+/// `LARGEST_PRIME_BELOW_2_16`). It is the marker [`least_prime_factors`] writes for a prime,
+/// so its table is used as built.
+const PRIME_HELD_BY_NONE: u16 = PRIME;
+/// The entry of a prime held by two or more of the values.
+const PRIME_HELD_BY_TWO: u16 = PRIME_HELD_BY_NONE - 2;
+const _: () = assert!(LARGEST_PRIME_BELOW_2_16 < PRIME_HELD_BY_TWO);
+
+/// For each of `vals`, each in `1..=top`, whether it shares a prime factor with another of
+/// them (equal values above 1 share one; a value 1 shares none), by a table of least prime
+/// factors up to `top`. O(top + B) word operations for values of `B` bits in all, and
+/// 2 top bytes. The one copy, used by zed-kernel `num::coprime::shares_a_factor` (moved here
+/// from zedc-presburger `modular.rs` by DRY-coprime-bases-one, 2026-11-20).
+///
+/// One `u16` entry per number up to `top`: 0 for a number the sieve has not reached; for a
+/// composite, its least prime factor; for a prime, a marker `PRIME_HELD_BY_NONE - c` that also
+/// holds `c`, the number of values the prime divides, counted up to 2.
+///
+/// Why 16 bits are enough. A composite `j <= top <= u32::MAX < 2^32` has a least prime factor
+/// `p` with `p^2 <= j < 2^32`, so `p < 2^16`, and as a prime `p <= 65521`, the largest prime
+/// below 2^16. The three markers 65533 to 65535 are above that, so a marker is never read as a
+/// factor nor a factor as a marker, and `c` stops at 2, so a marker never goes below 65533.
+/// Primes cannot be stored as themselves (a prime up to `u32::MAX` takes 32 bits), which is why
+/// a prime gets a marker: its least prime factor is the number itself, the index of the entry.
+///
+/// The table is built by the segmented sieve of [`least_prime_factors`], in fewer than
+/// `3 top + 6542` writes for any `top < 2^32` (the proof and the constant are there).
+/// Factoring a value `v` through the table takes one division per prime factor counted with
+/// multiplicity, at most `log2 v` of them.
+// Complexity tradeoff: the first form kept `least: Vec<u32>` (4 top bytes) and a separate
+// count `held: Vec<u8>` (top bytes), 5 top + 4 pi(top) bytes; this one keeps both in one
+// `Vec<u16>`, 2 top bytes, with the same steps. The cost is a compare per read to tell a
+// marker from a factor. The gcd of every pair is O(k^2) gcds for `k` values. Benches: zed-kernel
+// `num::bench::the_coprime_base_of_the_first_primes_scales` and zedc-presburger
+// `pncx_coprime_dense_scale` and `pncx_common_factor_scale`; COMPLEXITY.md C31c.
+pub fn shares_a_factor_by_table(vals: &[u32], top: u32) -> Vec<bool> {
+    let mut table = least_prime_factors(top);
+    // The counts: each value adds one to the marker count of each of its distinct primes. The
+    // reads of the table between the writes see markers whose counts have changed, which still
+    // read as primes, so the factoring is unchanged.
+    for &v in vals {
+        let mut x = v;
+        while x > 1 {
+            let p = take_least_prime(&table, &mut x);
+            let e = &mut table[p as usize];
+            *e = (*e - 1).max(PRIME_HELD_BY_TWO);
+        }
+    }
+    vals.iter()
+        .map(|&v| {
+            let mut x = v;
+            while x > 1 {
+                if table[take_least_prime(&table, &mut x) as usize] == PRIME_HELD_BY_TWO {
+                    return true;
+                }
+            }
+            false
+        })
+        .collect()
+}
+
+/// The least prime factor of `x`, `2 <= x`, from the table of [`shares_a_factor_by_table`]
+/// once its sieve has passed `x`: the entry of a composite, or `x` itself for a prime's
+/// marker.
+fn least_prime_factor(table: &[u16], x: u32) -> u32 {
+    match table[x as usize] {
+        e if e >= PRIME_HELD_BY_TWO => x,
+        e => u32::from(e),
+    }
+}
+
+/// The least prime factor `p` of `*x` (`*x >= 2`), with every factor `p` divided out of `*x`.
+fn take_least_prime(table: &[u16], x: &mut u32) -> u32 {
+    let p = least_prime_factor(table, *x);
+    while x.is_multiple_of(p) {
+        *x /= p;
+    }
+    p
+}
+
 /// `prime[i]` holds when `2 i + 1` is prime, for `i < ceil(n / 2)`: every odd number below `n`,
 /// and `n` itself when it is odd. The sieve of Eratosthenes over the odd numbers, in
 /// O(n log log n) steps and `n / 2` bytes. Each odd prime `q` strikes its odd multiples from

@@ -110,9 +110,9 @@ fn bounding_a_chain_of_products_with_several_roots_scales() {
 #[test]
 fn bounding_a_chain_of_products_whose_roots_all_share_a_prime_scales() {
     // Plan row CONST-coprime-base-shared-primes: the `n / 2` even numerator roots all share 2,
-    // so the batch gcd leaves them all to the coprime base by halves (`coprime::coprime_base`),
-    // O(M(N) log^3 N), where factor refinement split each against every element before it,
-    // O(n^2) gcds.
+    // so the batch gcd leaves them all to the coprime base by halves (zed-kernel's
+    // `num::coprime::coprime_base`, since DRY-coprime-bases-one), a polylogarithmic factor over
+    // M(N), where factor refinement split each against every element before it, O(n^2) gcds.
     let srcs = scaling::inputs(N_ROOTS, |n| even_chain(n, false));
     scaling::check(
         "a chain of n products by even numbers and quotients by odd ones, the square of the \

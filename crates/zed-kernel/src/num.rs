@@ -17,6 +17,7 @@
 //! was before the powers.
 
 mod bound;
+pub mod coprime;
 mod digit_text;
 mod fast;
 mod float_text;

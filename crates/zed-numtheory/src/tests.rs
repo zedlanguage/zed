@@ -527,3 +527,87 @@ fn the_first_primes_are_the_primes_in_order() {
     // Past several doublings of the bound: the 100000th prime is 1299709.
     assert_eq!(first_primes(100_000).last(), Some(&1_299_709));
 }
+
+/// `shares_a_factor_by_table` by its definition, a gcd of every pair.
+fn shares_a_factor_by_pairs(vals: &[u32]) -> Vec<bool> {
+    (0..vals.len())
+        .map(|i| (0..vals.len()).any(|j| j != i && gcd_u64(vals[i].into(), vals[j].into()) != 1))
+        .collect()
+}
+
+/// The table's count of the values a prime divides stops at 2, so a prime held by many values
+/// does not run its marker down into the least prime factors, nor wrap a count: 300 even
+/// values, and 601 (a prime), give 300 answers of true and one of false. (Written by the
+/// orchestrator for the earlier `u8` count, which overflowed past 255 without the stop; moved
+/// from zedc-presburger with the table.)
+#[test]
+fn the_table_count_of_a_prime_held_by_many_values_does_not_wrap() {
+    let mut vals: Vec<u32> = (1..=300).map(|k| 2 * k).collect();
+    vals.push(601);
+    let mut want = vec![true; 300];
+    want.push(false);
+    assert_eq!(shares_a_factor_by_table(&vals, 601), want);
+}
+
+/// The fact the `u16` table of `shares_a_factor_by_table` rests on: 65521 is the largest prime
+/// below 2^16, so the least prime factor of a composite up to `u32::MAX` (at most the square
+/// root, below 2^16) is at most 65521 and never one of the three prime markers 65533 to 65535.
+/// The bound is reached: 65521^2 is at most `u32::MAX`.
+#[test]
+fn largest_prime_below_2_16_is_65521() {
+    let p = u64::from(LARGEST_PRIME_BELOW_2_16);
+    assert!(prime_by_trial(p));
+    assert!((p + 1..1 << 16).all(|n| !prime_by_trial(n)));
+    assert!(p.pow(2) <= u64::from(u32::MAX));
+    const { assert!(LARGEST_PRIME_BELOW_2_16 < PRIME_HELD_BY_TWO) };
+}
+
+/// Every entry of the `u16` table reads back as its number's least prime factor, by trial
+/// division, up to a `top` with composites whose least prime factor is large (`251^2`,
+/// `251 * 257`); and after every value up to `top` is counted twice, every prime's marker is at
+/// its last count and still reads as that prime, so each value shares a factor with its copy
+/// (except 1).
+#[test]
+fn the_shared_factor_table_reads_every_least_prime_factor() {
+    let top = 251 * 257;
+    let lpf = |n: u32| {
+        (2..)
+            .find(|d| d * d > n || n.is_multiple_of(*d))
+            .filter(|d| d * d <= n)
+            .unwrap_or(n)
+    };
+    let table = least_prime_factors(top);
+    for x in 2..=top {
+        assert_eq!(least_prime_factor(&table, x), lpf(x), "{x}");
+    }
+    let mut small: Vec<u32> = (1..=top).collect();
+    small.extend(1..=top);
+    let want: Vec<bool> = small.iter().map(|&v| v > 1).collect();
+    assert_eq!(shares_a_factor_by_table(&small, top), want);
+    // And each value once, against the pairwise answer, on the values near `top`.
+    let near: Vec<u32> = (top - 40..=top).collect();
+    assert_eq!(
+        shares_a_factor_by_table(&near, top),
+        shares_a_factor_by_pairs(&near)
+    );
+}
+
+/// The table gives the pairwise answer on arithmetic progressions `start + i stride`, with
+/// shared and unshared primes, ones, and repeats.
+#[test]
+fn the_shared_factor_table_agrees_with_the_pairs() {
+    for start in 1..7u32 {
+        for stride in [0u32, 1, 2, 3, 5, 6, 30, 97, 210] {
+            for n in [1u32, 2, 3, 5, 8, 13, 40, 120] {
+                let vals: Vec<u32> = (0..n).map(|i| start + i * stride).collect();
+                let top = start + (n - 1) * stride;
+                assert_eq!(
+                    shares_a_factor_by_table(&vals, top),
+                    shares_a_factor_by_pairs(&vals),
+                    "{vals:?}"
+                );
+            }
+        }
+    }
+    assert_eq!(shares_a_factor_by_table(&[], 1), Vec::<bool>::new());
+}

@@ -24,7 +24,8 @@ use std::rc::Rc;
 
 use imbl::OrdSet;
 use num_bigint::BigUint;
-use zed_kernel::num::{div_rem_uint, gcd_uint, mul_uint, trees};
+use zed_kernel::num::coprime::coprime_base;
+use zed_kernel::num::gcd_uint;
 
 /// A set of roots: an index into [`Roots::sets`].
 pub(super) type SetId = u32;
@@ -425,218 +426,34 @@ fn disjoint(
     known
 }
 
-/// For each root of `roots`, distinct numbers above 1, the indices of the elements of a coprime
-/// base it is a product of: pairwise coprime numbers, each of whose primes divide exactly the
-/// same roots, so that two roots share a prime exactly when their lists meet.
+/// For each root of `roots`, distinct numbers above 1, the indices of the elements of their
+/// natural coprime base that it is a product of powers of: pairwise coprime numbers above 1,
+/// each prime of a root in exactly one of them, so that two roots share a prime exactly when
+/// their lists meet. By zed-kernel's `num::coprime::coprime_base` (Bernstein, "Factoring into
+/// coprimes in essentially linear time", J. Algorithms 54(1), 2005,
+/// doi:10.1016/j.jalgor.2004.04.009; the method, its proof and its cost are in that module's
+/// comment), the one copy for zedc-int, zedc-presburger and this crate (DRY-coprime-bases-one,
+/// 2026-11-20).
 ///
 /// Complexity tradeoff: the naive method refines the base one root at a time, splitting each
 /// against every element that shares a factor with it (factor refinement, Bach, Driscoll and
 /// Shallit, "Factor refinement", J. Algorithms 15(2), 1993, pp. 199-222,
-/// doi:10.1006/jagm.1993.1038, Crossref 2026-11-20, not read), O(n) gcds a root and O(n^2) in all,
-/// as for `n` wide even numbers, all of which share 2. Used: first, which roots share a prime
-/// with any other, by Bernstein's product and remainder trees (D. J. Bernstein, "How to find
-/// smooth parts of integers", draft of 2004-05-10, cr.yp.to/factorization/smoothparts-20040510
-/// .pdf, Algorithm 2.1: "Compute z ← p1 · · · pm using a product tree", then "z mod x1, ...,
-/// z mod xn using a remainder tree", then `(z mod x_k)^(2^e) mod x_k` by repeated squaring and
-/// its gcd with `x_k`; read 2026-11-20). Departure, the batch gcd: the product is of the roots
-/// themselves, not of primes, and the remainder is taken modulo `r^2`, since
-/// `(P mod r^2) / r = (P / r) mod r`, the product of the other roots modulo `r`; so a root
-/// `r` shares none exactly when `gcd(r, (P mod r^2) / r)` is 1. The tree costs O(M(N) log n)
-/// for `n` roots of `N` bits in all (`mul_uint`, by transforms past 512 words; `rem_uint`,
-/// O(M) by Newton's reciprocal), plus one gcd a root. Each root that shares none is its own
-/// element; the `m` that share one get a coprime base by halves ([`coprime_base`]),
-/// O(M(N) log^3 N), where factor refinement costs O(m e) gcds for `e` elements.
+/// doi:10.1006/jagm.1993.1038, Crossref 2026-11-20, not read), O(n) gcds a root and O(n^2) in
+/// all, as for `n` wide even numbers, all of which share 2. Used: the kernel first finds which
+/// roots share a prime with any other (`num::coprime::shares_a_factor`: a table of least prime
+/// factors when the largest root is at most the bits of all of them, O(N) word operations for
+/// `N` bits in all; otherwise the product tree and the remainder tree, `gcd(r, (P / r) mod r)`,
+/// O(M(N) log n)); each that shares none is its own element, and the others get the base by
+/// halves (Algorithm 18.1), O(M(N) log N log n) a merge and a factor `log n` for the halves.
+/// This file had its own copy of the halves, which kept only which primes a root has, not
+/// their exponents (6 for the roots 6 and 12, where the natural base is 2 and 3), and so
+/// skipped Algorithm 13.2's pair bases; that is the one cost the kernel adds, at most `2N` bits
+/// of pairs a merge (proved in the kernel's module comment). Benches: `bench::too_large` here
+/// (`bounding_a_chain_of_products_*`, `settling_checks_of_one_set_against_unions_from_one_pool
+/// _scales`) and the kernel's `the_coprime_base_of_the_first_primes_scales`.
 fn base_of(roots: &[Rc<BigUint>]) -> Vec<Vec<u32>> {
-    if roots.is_empty() {
-        return Vec::new();
-    }
-    let leaves: Vec<&BigUint> = roots.iter().map(|r| &**r).collect();
-    // `(P / r) mod r` for each root `r` by the kernel's remainder tree on `P mod node^2`
-    // ([`trees::cofactors_mod_leaves`]); for a lone root it is `1 mod r`, so it shares none.
-    let cofactors = trees::cofactors_mod_leaves(&leaves, &trees::product_tree(&leaves));
-    let mut base: Vec<Vec<u32>> = vec![Vec::new(); roots.len()];
-    let mut next = 0u32;
-    let mut shared: Vec<usize> = Vec::new();
-    for (i, (r, c)) in leaves.iter().zip(&cofactors).enumerate() {
-        if gcd_uint(r, c).bits() == 1 {
-            base[i].push(next);
-            next += 1;
-        } else {
-            shared.push(i);
-        }
-    }
-    let shared_roots: Vec<&BigUint> = shared.iter().map(|&i| leaves[i]).collect();
-    for (i, elements) in shared.iter().zip(coprime_base(&shared_roots).1) {
-        base[*i] = elements.into_iter().map(|e| next + e).collect();
-    }
-    base
-}
-
-/// `x mod m` for each `m` of `ms`, above 0, by the kernel's remainder tree over their product
-/// tree ([`trees::remainders`]): O(M(X + B) log k) for `x` of `X` bits and `k` moduli of `B`
-/// bits in all, where one division a modulus is O(k M(X)).
-fn rems_of(x: &BigUint, ms: &[&BigUint]) -> Vec<BigUint> {
-    trees::remainders(x, ms, &trees::product_tree(ms))
-}
-
-/// `c` with every prime of `a` taken out, Bernstein's `ppo(c, a)` ("Factoring into coprimes in
-/// essentially linear time", section 11): divide `c` by `g = gcd(c, a)`, then by the gcd with
-/// `g^2`, and so on, until the gcd is 1. A prime left in `c` is in each `g` before, and its
-/// exponent in the divisor doubles each time, so it takes O(log e) gcds for exponents up to
-/// `e`, where dividing by `gcd(c, a)` alone until it is 1 takes `e`.
-fn without_primes_of(c: &BigUint, a: &BigUint) -> BigUint {
-    let mut c = c.clone();
-    let mut g = gcd_uint(&c, a);
-    while g.bits() > 1 {
-        c = div_rem_uint(&c, &g).0;
-        g = gcd_uint(&c, &mul_uint(&g, &g));
-    }
-    c
-}
-
-/// A coprime base of `roots`, numbers above 1, and the indices of the elements of each root,
-/// by halves: the base of each half, then the two merged ([`merged`]), as Bernstein's `cb`
-/// ("Factoring into coprimes in essentially linear time", J. Algorithms 54(1), 2005, pp. 1-30,
-/// doi:10.1016/j.jalgor.2004.04.009, section 18: Algorithm 18.1 computes `cb S` by halves, the
-/// base of each half, then 17.3's `cb(P ∪ Q)` of the two; the numbering checked in the
-/// author's preprint, cr.yp.to dcba-20040404, on 2026-11-20).
-/// The primes of each element divide exactly the roots whose lists hold it, and each prime of
-/// a root is in one element of its list. Only that is used, not the exponents, so an element
-/// may hold primes Bernstein's base keeps apart: `6` for the roots 6 and 12, where his is 2
-/// and 3.
-///
-/// Complexity tradeoff: Bernstein merges two bases by `cbmerge` (section 17), which extends one
-/// base by `2 log n` products of parts of the other (`cbextend`, section 16) to keep track of
-/// exponents, for O(M(N) log^4 N) or so. Here only which primes a root has counts, not their
-/// exponents, so a merge finds each pair of elements that meet and their gcd in one descent of
-/// a product tree (as Bernstein's `split`, section 15), O(M(N) log^2 N) a merge and
-/// O(M(N) log^3 N) for the base, the elements of each level of the halves at most `N` bits in
-/// all. Each root's list is the union of its elements' lists in the merge, which are disjoint,
-/// O(t) for `t` primes over all roots a level.
-// Proof of the bit bound above (ASSUME-documented): every element of a base `merged` makes
-// divides the product `P` of the roots below it (a rest divides its `a`, a gcd divides `a`,
-// and by induction each `a` divides `P`), and the elements are pairwise coprime, so their
-// product divides `P`. Each element is at least 2, so its bits are at most twice its log2,
-// and the elements of one level of the halves, over disjoint roots, total at most 2N bits.
-// In one level of the descent in `merged`, the divisors held for one `a` divide `a` and
-// products of disjoint parts of `q`, which are coprime, so they also total at most twice
-// the bits of `a`. So the bound holds with 2N for N, and the cost above stands.
-fn coprime_base(roots: &[&BigUint]) -> (Vec<BigUint>, Vec<Vec<u32>>) {
-    match roots {
-        [] => (Vec::new(), Vec::new()),
-        [r] => (vec![(*r).clone()], vec![vec![0]]),
-        _ => {
-            let (left, right) = roots.split_at(roots.len() / 2);
-            let (p, p_lists) = coprime_base(left);
-            let (q, q_lists) = coprime_base(right);
-            let (base, p_in, q_in) = merged(&p, &q);
-            let lists = (p_lists.iter().map(|l| (l, &p_in)))
-                .chain(q_lists.iter().map(|l| (l, &q_in)))
-                .map(|(l, into)| l.iter().flat_map(|&e| into[e as usize].iter().copied()))
-                .map(|l| l.collect())
-                .collect();
-            (base, lists)
-        }
-    }
-}
-
-/// The coprime base of two coprime bases `p` and `q`, each a list of pairwise coprime numbers
-/// above 1, and the indices of the elements each element of `p` and of `q` becomes: for each
-/// `a` of `p` and `b` of `q` that meet, their gcd; `a` with the primes of `q` taken out and `b`
-/// with those of `p`, where above 1.
-///
-/// The pairs that meet come from one descent of the product tree of `q`: each `a` that meets
-/// `q` at all starts at the root with `gcd(a, prod q)`, and at each node goes on to each child
-/// with the gcd with that child's product, where above 1, so that at a leaf `b` it holds a
-/// number with the primes `a` and `b` share. The remainders of a child's product modulo the
-/// numbers that reach it are one remainder tree ([`rems_of`]). A level of the tree holds each
-/// part of `q` once and divisors of each `a` that are pairwise coprime, so it costs
-/// O(M(N) log N) for `N` bits in all, O(M(N) log^2 N) for the descent.
-fn merged(p: &[BigUint], q: &[BigUint]) -> (Vec<BigUint>, Vec<Vec<u32>>, Vec<Vec<u32>>) {
-    let p: Vec<&BigUint> = p.iter().collect();
-    let q: Vec<&BigUint> = q.iter().collect();
-    // The gcd of each element with the product of the other base: the primes it shares.
-    let shared_with = |a: &[&BigUint], b: &[&BigUint], b_tree: &[Vec<BigUint>]| {
-        let all = trees::tree_product(b, b_tree);
-        (rems_of(&all, a).iter().zip(a))
-            .map(|(r, x)| gcd_uint(x, r))
-            .collect::<Vec<_>>()
-    };
-    let (p_tree, q_tree) = (trees::product_tree(&p), trees::product_tree(&q));
-    let p_meets = shared_with(&p, &q, &q_tree);
-    let q_meets = shared_with(&q, &p, &p_tree);
-    // The descent: at each level, the node, the element of `p` and the divisor of it that
-    // reach the node, in the order of the nodes.
-    let mut at: Vec<usize> = Vec::new();
-    let mut from: Vec<u32> = Vec::new();
-    let mut held: Vec<BigUint> = Vec::new();
-    for (i, g) in p_meets.iter().enumerate() {
-        if g.bits() > 1 {
-            at.push(0);
-            from.push(i as u32);
-            held.push(g.clone());
-        }
-    }
-    let below = (q_tree.iter().rev().skip(1))
-        .map(|l| l.iter().collect::<Vec<_>>())
-        .chain([q.clone()]);
-    for level in below {
-        let (mut next_at, mut next_from, mut next_held) = (Vec::new(), Vec::new(), Vec::new());
-        let mut start = 0;
-        while start < at.len() {
-            let node = at[start];
-            let end = start + at[start..].iter().take_while(|&&n| n == node).count();
-            let (left, right) = (2 * node, 2 * node + 1);
-            if right >= level.len() {
-                // A node carried up has one child, of the same product.
-                next_at.extend(std::iter::repeat_n(left, end - start));
-                next_from.extend_from_slice(&from[start..end]);
-                next_held.extend(held[start..end].iter_mut().map(std::mem::take));
-            } else {
-                let ms: Vec<&BigUint> = held[start..end].iter().collect();
-                for child in [left, right] {
-                    for (k, r) in rems_of(level[child], &ms).iter().enumerate() {
-                        let g = gcd_uint(ms[k], r);
-                        if g.bits() > 1 {
-                            next_at.push(child);
-                            next_from.push(from[start + k]);
-                            next_held.push(g);
-                        }
-                    }
-                }
-            }
-            start = end;
-        }
-        (at, from, held) = (next_at, next_from, next_held);
-    }
-    // The elements: each part of `p` and of `q` without the other's primes, then each gcd.
-    let mut base: Vec<BigUint> = Vec::new();
-    let mut p_in = rests(&p, &p_meets, &mut base);
-    let mut q_in = rests(&q, &q_meets, &mut base);
-    for ((b, a), g) in at.iter().zip(&from).zip(held) {
-        base.push(g);
-        let e = (base.len() - 1) as u32;
-        p_in[*a as usize].push(e);
-        q_in[*b].push(e);
-    }
-    (base, p_in, q_in)
-}
-
-/// Each of `xs` with the primes of its gcd of `meets` taken out, pushed to `base` where above
-/// 1, and the list of the one index it takes there, or none.
-fn rests(xs: &[&BigUint], meets: &[BigUint], base: &mut Vec<BigUint>) -> Vec<Vec<u32>> {
-    (xs.iter().zip(meets))
-        .map(|(x, g)| {
-            let rest = match g.bits() > 1 {
-                true => without_primes_of(x, g),
-                false => (*x).clone(),
-            };
-            if rest.bits() <= 1 {
-                return Vec::new();
-            }
-            base.push(rest);
-            vec![(base.len() - 1) as u32]
-        })
+    (coprime_base(roots).factors.into_iter())
+        .map(|f| f.into_iter().map(|(e, _)| e).collect())
         .collect()
 }
 
@@ -682,13 +499,16 @@ mod tests {
         (2..n).filter(|&q| zed_numtheory::is_prime(q)).collect()
     }
 
-    /// The base by halves of `ns`: its elements are above 1 and pairwise coprime; each root's
-    /// list holds exactly the elements it shares a prime with, once each; every prime of an
-    /// element of the list divides the root, and every prime of the root is in the list.
+    /// The kernel's base of `ns`, as `base_of` reads it: its elements are above 1 and pairwise
+    /// coprime; each root's list holds exactly the elements it shares a prime with, once each,
+    /// in increasing order; each factor is a power of its element, and the factors of a root
+    /// multiply to it, so every prime of the root is in its list. (The base by halves of this
+    /// file was replaced by the kernel's by DRY-coprime-bases-one; these inputs, the shapes
+    /// `bench::too_large` builds, stay as its test here.)
     fn a_valid_base(ns: &[BigUint]) {
-        let rs: Vec<&BigUint> = ns.iter().collect();
-        let (base, lists) = coprime_base(&rs);
-        assert_eq!(lists.len(), ns.len());
+        let cb = coprime_base(ns);
+        let base = &cb.elements;
+        assert_eq!(cb.factors.len(), ns.len());
         for (i, a) in base.iter().enumerate() {
             assert!(a.bits() > 1, "{a} in {ns:?}");
             for b in &base[i + 1..] {
@@ -696,22 +516,22 @@ mod tests {
             }
         }
         let one = BigUint::from(1u8);
-        for (r, list) in ns.iter().zip(&lists) {
+        for (r, factors) in ns.iter().zip(&cb.factors) {
             let meets: Vec<u32> = (0..base.len() as u32)
                 .filter(|&e| gcd_uint(r, &base[e as usize]).bits() > 1)
                 .collect();
-            let mut held = list.clone();
-            held.sort_unstable();
-            assert_eq!(held, meets, "{r} of {ns:?}: {base:?}");
-            for &e in list {
-                assert_eq!(
-                    without_primes_of(&base[e as usize], r),
-                    one,
-                    "{r}: {base:?}"
-                );
+            let list: Vec<u32> = factors.iter().map(|(e, _)| *e).collect();
+            assert_eq!(list, meets, "{r} of {ns:?}: {base:?}");
+            for (e, q) in factors {
+                let (mut q, b) = (q.clone(), &base[*e as usize]);
+                while q != one {
+                    let (d, m) = (&q / b, &q % b);
+                    assert!(m.bits() == 0, "{r}: a factor not a power of {b}");
+                    q = d;
+                }
             }
-            let all = (list.iter()).fold(one.clone(), |acc, &e| acc * &base[e as usize]);
-            assert_eq!(without_primes_of(r, &all), one, "{r} of {ns:?}: {base:?}");
+            let all = (factors.iter()).fold(one.clone(), |acc, (_, q)| acc * q);
+            assert_eq!(&all, r, "{r} of {ns:?}: {base:?}");
         }
     }
 
@@ -751,7 +571,7 @@ mod tests {
                 .map(BigUint::from),
         );
         a_valid_base(&all);
-        // High exponents, which `without_primes_of` takes out by squaring.
+        // High exponents.
         let pow = |b: u64, e: u32, m: u64| BigUint::from(b).pow(e) * m;
         a_valid_base(&[pow(2, 200, 3), pow(2, 100, 5), pow(3, 50, 2), pow(5, 3, 1)]);
         a_valid_base(&[pow(2, 300, 1), pow(2, 1, 3), pow(3, 999, 7)]);
@@ -761,22 +581,6 @@ mod tests {
         many.push(pow(2, 40000, 1));
         many.push(pow(3, 40000, 5));
         a_valid_base(&many);
-    }
-
-    #[test]
-    fn the_remainders_and_prime_parts_agree_with_division() {
-        let x = BigUint::from(3u8).pow(500) + 17u8;
-        for k in 1..=6 {
-            let ms = big(&primes(30)[..k]);
-            let refs: Vec<&BigUint> = ms.iter().collect();
-            let want: Vec<BigUint> = ms.iter().map(|m| &x % m).collect();
-            assert_eq!(rems_of(&x, &refs), want);
-        }
-        let n = |v: u64| BigUint::from(v);
-        assert_eq!(without_primes_of(&(n(2).pow(1000) * 3u8), &n(2)), n(3));
-        assert_eq!(without_primes_of(&(n(2).pow(1000) * 3u8), &n(6)), n(1));
-        assert_eq!(without_primes_of(&n(45), &n(4)), n(45));
-        assert_eq!(without_primes_of(&n(2 * 9 * 125), &n(15)), n(2));
     }
 
     #[test]

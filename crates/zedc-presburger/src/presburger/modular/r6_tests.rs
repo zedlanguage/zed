@@ -114,7 +114,7 @@ fn pncx_coprime_base_exhaustive_small_inputs() {
         for b in a..32 {
             for c in b..40 {
                 let inputs = BTreeSet::from([Int::from(a), Int::from(b), Int::from(c)]);
-                let fs = coprime_factorization(&inputs).unwrap();
+                let fs = coprime_factorization(&inputs);
                 let bases: BTreeSet<_> = fs.values().flatten().map(|(b, _)| b).collect();
                 for &a in &bases {
                     for &b in &bases {

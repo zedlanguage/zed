@@ -15,7 +15,7 @@ use num_bigint::{BigInt, BigUint};
 use num_traits::Zero;
 use zed_collections::intervals;
 use zed_graph::MinHeap;
-use zed_kernel::num::{gcd_uint, trees};
+use zed_kernel::num::{coprime, trees};
 use zedc_int::int::Int;
 
 use super::formula::{Atom, Con, Formula, Id, Lin, Model, Rel};
@@ -2566,9 +2566,7 @@ fn solve_regime_step(
     // (`literal_to_base_cnf`); with one base for the formula, 76 of the 5,000 formulas of
     // `one_scope::one_variable_modular_formulas_match_enumeration` were refused, against 69.
     // `max_q[i]` is the largest power `bases[i]^E` that divides one of the moduli.
-    let Some(mod_base) = coprime_factorization(&all_moduli) else {
-        return RegimeOut::Undecided;
-    };
+    let mod_base = coprime_factorization(&all_moduli);
     let mut used: BTreeSet<&Int> = BTreeSet::new();
     for fs in mod_base.values() {
         used.extend(fs.iter().map(|(b, _)| b));
@@ -3170,168 +3168,38 @@ fn from_uint(v: BigUint) -> Int {
     Int::from(BigInt::from(v))
 }
 
-/// For each of `vals` (each at least 1), whether it shares a prime factor with another of
-/// them. Equal values above 1 share one; a value 1 shares none.
-// Complexity tradeoff: the general method is the product tree and the remainder tree,
-// O(M(B) log k) for `k` values of `B` bits in all, which on k word-size values is 15 to 25
-// times the work at 8 times the values (products of 82 to 872 words at 512 to 4096 values,
-// multiplied and divided by num-bigint below the transform sizes; perf, 2026-11-19). When the
-// largest value `V` is at most `B`, a table of least prime factors up to `V` costs no more
-// than reading the input, O(V + B) = O(B) word operations and about 2 V + 4 pi(V) + 4 k bytes,
-// so that case is answered from the table. The condition is the one under which the table
-// method is proved linear in the input size; it is not a timed crossover. Measured 2026-11-19
-// (instructions, values 1 + i * stride, `pncx_shared_factor_crossover_axis`, load 47 to 50):
-// wherever the condition holds the table took 2.6 to 29 times fewer instructions than the
-// tree (16 values up to 61: 7,131 against 18,297; 4096 values up to 16,381: 1,198,814
-// against 35,079,991) and fewer bytes; beyond it the table is still the cheaper up to `V` of
-// about 2 `B` at 16 values and 4 to 13 `B` at 128 to 4096 values, and the dearer after that
-// (4096 values up to 4,193,281, `B` = 86,008: 176.8 M against 80.1 M). So `V <= c B` with a
-// larger fixed `c` would also be linear and cheaper; `c` = 1 needs no timing to justify it.
-// Both methods give the same answer (`pncx_shared_factor_methods_agree`). What is left on
-// the tree: wide values, and values sparser than one in `log2 V` (`V > B`); no method of
-// lower order than O(M(B) log k) is known for those (Bernstein 2005 gives B^(1 + o(1))), and
-// the tree side is 15 to 18 times the work at 8 times the values. Benches:
-// `pncx_common_factor_scale` and `pncx_coprime_dense_scale` (table side); the tree side's
-// `pncx_common_factor_tree_side_scale` is deferred to plan row PERF-negated-chain-unsolved in
-// wt/scratch/deferred-tests/PERF-negated-chain-unsolved.rs; COMPLEXITY.md C31c.
-fn shares_a_factor(vals: &[Int]) -> Vec<bool> {
-    match dense_values(vals) {
-        Some((small, top)) => shares_a_factor_by_table(&small, top),
-        None => shares_a_factor_by_tree(vals),
-    }
-}
-
-/// `vals` as `u32` with their largest, when every value is in `1..=u32::MAX` and the largest
-/// is at most the number of bits of all of them together. A largest value over `u32::MAX`
-/// that passed the second condition would need more than 2^32 bits of values.
-fn dense_values(vals: &[Int]) -> Option<(Vec<u32>, u32)> {
-    let mut small = Vec::with_capacity(vals.len());
-    let mut bits = 0u64;
-    for v in vals {
-        let x = u32::try_from(v.to_i128()?).ok()?;
-        if x == 0 {
-            return None;
-        }
-        small.push(x);
-        bits += v.bits();
-    }
-    let top = small.iter().copied().max()?;
-    (u64::from(top) <= bits).then_some((small, top))
-}
-
-/// `shares_a_factor` by one product tree and one remainder tree: `gcd(v, (P / v) mod v)` for
-/// the product `P` of all values. O(M(B) log k).
-fn shares_a_factor_by_tree(vals: &[Int]) -> Vec<bool> {
-    let leaves = uint_leaves(vals);
-    let cof = trees::cofactors_mod_leaves(&leaves, &trees::product_tree(&leaves));
-    (leaves.iter().zip(&cof))
-        .map(|(v, c)| gcd_uint(v, c).bits() != 1)
-        .collect()
-}
-
-/// The largest prime below 2^16. No prime lies in `65522..=65535` (65537 is the next), which
-/// `largest_prime_below_2_16_is_65521` checks by trial division.
-const LARGEST_PRIME_BELOW_2_16: u16 = 65_521;
-
-/// The table entry of a prime held by none of the values; a prime held by `c` of them (counted
-/// up to 2) has `PRIME_HELD_BY_NONE - c`. All three are above every least prime factor a
-/// composite up to `u32::MAX` can have (at most `LARGEST_PRIME_BELOW_2_16`). It is the marker
-/// [`zed_numtheory::least_prime_factors`] writes for a prime, so its table is used as built.
-const PRIME_HELD_BY_NONE: u16 = zed_numtheory::PRIME;
-/// The entry of a prime held by two or more of the values.
-const PRIME_HELD_BY_TWO: u16 = PRIME_HELD_BY_NONE - 2;
-const _: () = assert!(LARGEST_PRIME_BELOW_2_16 < PRIME_HELD_BY_TWO);
-
-/// `shares_a_factor` for values in `1..=top`, by a table of least prime factors up to `top`.
-/// O(top + B) word operations for values of `B` bits in all, and 2 top bytes.
-///
-/// One `u16` entry per number up to `top`: 0 for a number the sieve has not reached; for a
-/// composite, its least prime factor; for a prime, a marker `PRIME_HELD_BY_NONE - c` that also
-/// holds `c`, the number of values the prime divides, counted up to 2.
-///
-/// Why 16 bits are enough. A composite `j <= top <= u32::MAX < 2^32` has a least prime factor
-/// `p` with `p^2 <= j < 2^32`, so `p < 2^16`, and as a prime `p <= 65521`, the largest prime
-/// below 2^16. The three markers 65533 to 65535 are above that, so a marker is never read as a
-/// factor nor a factor as a marker, and `c` stops at 2, so a marker never goes below 65533.
-/// Primes cannot be stored as themselves (a prime up to `u32::MAX` takes 32 bits), which is why
-/// a prime gets a marker: its least prime factor is the number itself, the index of the entry.
-///
-/// The table is built by the segmented sieve of Eratosthenes of
-/// [`zed_numtheory::least_prime_factors`], in fewer than `3 top + 6542` writes for any
-/// `top < 2^32` (O(top log log top) in general; the proof and the constant are there; it
-/// replaced a linear sieve of O(top) steps whose scattered writes missed the cache, 11 to 14
-/// times the time at 8 times `top`, FAIL-bench-least-prime-factors-scaling). Factoring a value
-/// `v` through the table takes one division per prime factor counted with multiplicity, at
-/// most `log2 v` of them.
-// Complexity tradeoff: the first form kept `least: Vec<u32>` (4 top bytes) and a separate
-// count `held: Vec<u8>` (top bytes), 5 top + 4 pi(top) bytes; this one keeps both in one
-// `Vec<u16>`, 2 top bytes, with the same steps. The cost is a compare
-// per read to tell a marker from a factor. Bench `pncx_coprime_dense_scale` and
-// `pncx_common_factor_scale`; COMPLEXITY.md C31c.
-fn shares_a_factor_by_table(vals: &[u32], top: u32) -> Vec<bool> {
-    let mut table = zed_numtheory::least_prime_factors(top);
-    // The counts: each value adds one to the marker count of each of its distinct primes. The
-    // reads of the table between the writes see markers whose counts have changed, which still
-    // read as primes, so the factoring is unchanged.
-    for &v in vals {
-        let mut x = v;
-        while x > 1 {
-            let p = take_least_prime(&table, &mut x);
-            let e = &mut table[p as usize];
-            *e = (*e - 1).max(PRIME_HELD_BY_TWO);
-        }
-    }
-    vals.iter()
-        .map(|&v| {
-            let mut x = v;
-            while x > 1 {
-                if table[take_least_prime(&table, &mut x) as usize] == PRIME_HELD_BY_TWO {
-                    return true;
-                }
-            }
-            false
-        })
-        .collect()
-}
-
-/// The least prime factor of `x`, `2 <= x`, from the table of `shares_a_factor_by_table` once
-/// its sieve has passed `x`: the entry of a composite, or `x` itself for a prime's marker.
-fn least_prime_factor(table: &[u16], x: u32) -> u32 {
-    match table[x as usize] {
-        e if e >= PRIME_HELD_BY_TWO => x,
-        e => u32::from(e),
-    }
-}
-
-/// The least prime factor `p` of `*x` (`*x >= 2`), with every factor `p` divided out of `*x`.
-fn take_least_prime(table: &[u16], x: &mut u32) -> u32 {
-    let p = least_prime_factor(table, *x);
-    while x.is_multiple_of(p) {
-        *x /= p;
-    }
-    p
-}
-
-/// Each modulus with its factors `(b, b^e)` over one set of pairwise coprime bases `b`.
+/// Each modulus with its factors `(b, b^e)` over one set of pairwise coprime bases `b`, by
+/// increasing `b`; `b^e` is the largest power of `b` that divides the modulus.
 type ModBase = BTreeMap<Int, Vec<(Int, Int)>>;
 
-/// Factors every modulus in `moduli` over a pairwise coprime base. A modulus coprime to all the
-/// others is its own base; these are found together by `shares_a_factor`: from a table of least
-/// prime factors, in O(N) word operations, when the largest modulus is at most `N`, and
-/// otherwise by one product tree and one remainder tree
-/// (`P mod m^2` for the product `P` of all moduli gives `gcd(m, P / m)`), in O(M(N) log k) for
-/// `k` moduli of `N` bits in all, where `M` is the cost of multiplying numbers of `N` bits.
+/// Factors every modulus in `moduli` over their natural coprime base, by zed-kernel's
+/// `num::coprime::coprime_base` (D. J. Bernstein, "Factoring into coprimes in essentially
+/// linear time", J. Algorithms 54(1), 2005, doi:10.1016/j.jalgor.2004.04.009; the method, the
+/// proof that its base is the natural one, and its cost are in that module's comment). That is
+/// the one copy for zedc-int, zedc-check and this crate (DRY-coprime-bases-one, 2026-11-20).
+/// This file had its own copy over `Int` (Algorithms 11.3, 11.4, 13.2, 16.2, 17.3, 18.1 and
+/// 21.2), which gave no answer where a product tree was not as built; the kernel's has no
+/// such path, so every set of moduli is factored. The natural coprime base is unique
+/// (Bernstein, Theorem 7.3), so both copies give the same factors.
 ///
-/// Complexity tradeoff: pairwise refinement and scanning each base per modulus cost
-/// O(k^2) arithmetic operations. Bernstein's Algorithms 11.3, 11.4, 13.2,
-/// 15.3, 16.2, 17.3, 18.1 and 21.2 use product trees and sparse factor
-/// propagation instead, essentially linear in the total bits with fast
-/// arithmetic (a polylogarithmic factor, not a proved O(n log n) bound).
-/// No modulus or answer is given up. Tests: pncx_common_factors_reconstruct_inputs,
-/// pncx_coprime_factorization_has_its_answers; benches pncx_common_factor_scale and
-/// pncx_coprime_dense_scale (table side). pncx_shared_formula_axis is deferred to plan row
+/// A modulus coprime to all the others is its own base; the kernel finds these first by
+/// `num::coprime::shares_a_factor`: from a table of least prime factors, in O(N) word
+/// operations, when the largest modulus is at most `N`, and otherwise by one product tree and
+/// one remainder tree, in O(M(N) log k) for `k` moduli of `N` bits in all, where `M` is the
+/// cost of multiplying numbers of `N` bits.
+///
+/// Complexity tradeoff: pairwise refinement and scanning each base per modulus cost O(k^2)
+/// arithmetic operations; the kernel's product trees cost O(M(N) log N log k) a merge, with a
+/// factor `log k` for the halves (a polylogarithmic factor, not a proved O(n log n) bound).
+/// Before it, `common_factorization` recognizes moduli `g q_i` with the `q_i` coprime to each
+/// other and to `g` in O(N) or O(M(N) log k), where the kernel's halves would merge all `k`
+/// moduli, as every one shares `g`. No modulus or answer is given up. Tests:
+/// pncx_common_factors_reconstruct_inputs, pncx_coprime_factorization_has_its_answers;
+/// benches pncx_common_factor_scale and pncx_coprime_dense_scale (table side). The tree side
+/// (pncx_shared_formula_axis, pncx_common_factor_tree_side_scale and the kernel's
+/// the_coprime_base_of_distinct_primes_scales) is deferred to plan row
 /// PERF-negated-chain-unsolved in wt/scratch/deferred-tests/PERF-negated-chain-unsolved.rs.
-fn coprime_factorization(moduli: &BTreeSet<Int>) -> Option<ModBase> {
+fn coprime_factorization(moduli: &BTreeSet<Int>) -> ModBase {
     let ms: Vec<Int> = moduli.iter().filter(|m| **m > Int::ONE).cloned().collect();
     // A modulus 1 (if any) has no factors.
     let mut out: ModBase = moduli
@@ -3340,33 +3208,28 @@ fn coprime_factorization(moduli: &BTreeSet<Int>) -> Option<ModBase> {
         .map(|m| (m.clone(), Vec::new()))
         .collect();
     if ms.is_empty() {
-        return Some(out);
+        return out;
     }
     if let Some(complete) = common_factorization(&ms) {
         out.extend(complete);
-        return Some(out);
+        return out;
     }
-    let mut rest: Vec<Int> = Vec::new();
-    for (m, shared) in ms.iter().zip(shares_a_factor(&ms)) {
-        if shared {
-            rest.push(m.clone());
-        } else {
-            out.insert(m.clone(), vec![(m.clone(), m.clone())]);
-        }
+    let cb = coprime::coprime_base(&uint_leaves(&ms));
+    let bases: Vec<Int> = cb.elements.into_iter().map(from_uint).collect();
+    for (m, fs) in ms.into_iter().zip(cb.factors) {
+        let mut fs: Vec<(Int, Int)> = (fs.into_iter())
+            .map(|(e, q)| (bases[e as usize].clone(), from_uint(q)))
+            .collect();
+        fs.sort();
+        out.insert(m, fs);
     }
-    let (bases, factors, _) = coprime_base_and_factors(rest)?;
-    for (m, fs) in factors {
-        out.insert(
-            m,
-            fs.into_iter().map(|(i, q)| (bases[i].clone(), q)).collect(),
-        );
-    }
-    Some(out)
+    out
 }
 
 /// A shared factor with independent cofactors needs no base refinement.
 // Complexity tradeoff: pairwise refinement is quadratic on g p_i. A running
-// gcd, followed by `shares_a_factor` on the cofactors, recognizes the complete
+// gcd, followed by the kernel's `num::coprime::shares_a_factor` on the cofactors (each at
+// least 1, as `g` divides every modulus), recognizes the complete
 // factorization in O(B) word operations when the largest cofactor is at most
 // the cofactors' B bits (the table method), and in O(M(B) log k) otherwise (one
 // product/remainder tree). Failure gives no verdict and Bernstein's general
@@ -3386,7 +3249,7 @@ fn common_factorization(ms: &[Int]) -> Option<ModBase> {
     if qs.iter().any(|q| q.gcd(&g) != Int::ONE) {
         return None;
     }
-    if shares_a_factor(&qs).contains(&true) {
+    if coprime::shares_a_factor(&uint_leaves(&qs)).contains(&true) {
         return None;
     }
     Some(
@@ -3403,105 +3266,6 @@ fn common_factorization(ms: &[Int]) -> Option<ModBase> {
             })
             .collect(),
     )
-}
-
-fn gcd_ppi_ppo(a: &Int, c: &Int) -> (Int, Int, Int) {
-    let mut x = a.gcd(c);
-    let gout = x.clone();
-    let mut y = a.div_floor(&x);
-    loop {
-        let g = x.gcd(&y);
-        if g == Int::ONE {
-            return (gout, x, y);
-        }
-        x = &x * &g;
-        y = y.div_floor(&g);
-    }
-}
-
-fn ppi(a: &Int, c: &Int) -> Int {
-    gcd_ppi_ppo(a, c).1
-}
-
-/// Algorithm 11.4 of Bernstein (2005): returns `(gcd(a, b), ppg(a, b), pple(a, b))`.
-fn gcd_ppg_pple(a: &Int, b: &Int) -> (Int, Int, Int) {
-    let mut y = a.gcd(b);
-    let gout = y.clone();
-    let mut x = a.div_floor(&y);
-    loop {
-        let g = x.gcd(&y);
-        if g == Int::ONE {
-            return (gout, x, y);
-        }
-        x = &x * &g;
-        y = y.div_floor(&g);
-    }
-}
-
-fn two_power(mut a: Int, mut n: usize) -> Int {
-    while n > 0 {
-        a = &a * &a;
-        n -= 1;
-    }
-    a
-}
-
-/// Algorithm 13.2 of Bernstein (2005), iterative explicit stack: appends the natural coprime base
-/// of `{a, b}` to `out`.
-fn append_cb_pair(out: &mut Vec<Int>, a0: Int, b0: Int) {
-    enum Task {
-        Pair(Int, Int),
-    }
-    let mut stack = vec![Task::Pair(a0, b0)];
-    while let Some(Task::Pair(a_in, b)) = stack.pop() {
-        if a_in <= Int::ONE {
-            if b > Int::ONE {
-                out.push(b);
-            }
-            continue;
-        }
-        if b <= Int::ONE {
-            out.push(a_in);
-            continue;
-        }
-        if a_in == b {
-            out.push(a_in);
-            continue;
-        }
-        let (_, a, r) = gcd_ppi_ppo(&a_in, &b);
-        if r > Int::ONE {
-            out.push(r);
-        }
-        if a <= Int::ONE {
-            out.push(b);
-            continue;
-        }
-        let (mut g, mut h, mut c) = gcd_ppg_pple(&a, &b);
-        let c0 = c.clone();
-        let mut x = c0.clone();
-        let mut n: usize = 1;
-        let mut sub_calls: Vec<(Int, Int)> = Vec::new();
-        loop {
-            let g_sq = &g * &g;
-            let (ng, nh, nc) = gcd_ppg_pple(&h, &g_sq);
-            g = ng;
-            h = nh;
-            c = nc;
-            let d = c.gcd(&b);
-            x = &x * &d;
-            let y = two_power(d.clone(), n - 1);
-            sub_calls.push((c.div_floor(&y), d));
-            if h == Int::ONE {
-                break;
-            }
-            n += 1;
-        }
-        // Push in reverse so execution order matches Bernstein's recursive order.
-        stack.push(Task::Pair(b.div_floor(&x), c0));
-        for (sa, sb) in sub_calls.into_iter().rev() {
-            stack.push(Task::Pair(sa, sb));
-        }
-    }
 }
 
 /// Balanced binary product; multiplication costs are included in the bit cost.
@@ -3523,288 +3287,6 @@ fn prod_slice(items: &[Int]) -> Int {
         cur = next;
     }
     cur.pop().unwrap_or(Int::ONE)
-}
-
-/// Product tree in a flat arena. Construction, traversal and destruction all
-/// use explicit storage; no call stack grows with the number of inputs.
-struct ProdEntry {
-    prod: Int,
-    tag: Option<usize>,
-    children: Option<(usize, usize)>,
-}
-struct ProdNode {
-    prod: Int,
-    nodes: Vec<ProdEntry>,
-}
-
-fn build_prod_tree(items: &[(usize, Int)]) -> Option<ProdNode> {
-    if items.is_empty() {
-        return None;
-    }
-    let mut nodes: Vec<_> = items
-        .iter()
-        .map(|(tag, v)| ProdEntry {
-            prod: v.clone(),
-            tag: Some(*tag),
-            children: None,
-        })
-        .collect();
-    let mut level: Vec<usize> = (0..nodes.len()).collect();
-    while level.len() > 1 {
-        let mut next = Vec::with_capacity(level.len().div_ceil(2));
-        for pair in level.chunks(2) {
-            if pair.len() == 1 {
-                next.push(pair[0]);
-                continue;
-            }
-            let (l, r) = (pair[0], pair[1]);
-            let prod = &nodes[l].prod * &nodes[r].prod;
-            next.push(nodes.len());
-            nodes.push(ProdEntry {
-                prod,
-                tag: None,
-                children: Some((l, r)),
-            });
-        }
-        level = next;
-    }
-    Some(ProdNode {
-        prod: nodes[level[0]].prod.clone(),
-        nodes,
-    })
-}
-
-/// Sparse divisibility traversal: discard a subtree as soon as its product
-/// shares no prime factor with the remaining input. The output contains only
-/// the nontrivial factors of that input.
-// None only if `tree` is not as `build_prod_tree` makes it: no node, or a node with neither a
-// tag nor children. No stop is reachable (I6.12); the caller refuses.
-fn split_sparse(a: &Int, tree: &ProdNode, out: &mut Vec<(usize, Int)>) -> Option<()> {
-    if *a <= Int::ONE {
-        return Some(());
-    }
-    let mut stack = vec![(tree.nodes.len().checked_sub(1)?, a.clone())];
-    while let Some((i, cur)) = stack.pop() {
-        let node = &tree.nodes[i];
-        let b = ppi(&cur, &node.prod);
-        if b <= Int::ONE {
-            continue;
-        }
-        if let Some(tag) = node.tag {
-            out.push((tag, b));
-            continue;
-        }
-        // build_prod_tree creates either a tagged leaf or an internal node
-        // with both child indices; this branch has already excluded a leaf.
-        let (l, r) = node.children?;
-        stack.push((r, b.clone()));
-        stack.push((l, b));
-    }
-    Some(())
-}
-
-/// Algorithm 16.2 of Bernstein (2005) with sparse collision filtering: `cb(P union {b})`.
-fn cb_extend(p: Vec<Int>, b: Int) -> Option<Vec<Int>> {
-    if b <= Int::ONE {
-        return Some(p);
-    }
-    if p.is_empty() {
-        return Some(vec![b]);
-    }
-    let indexed: Vec<(usize, Int)> = p.iter().cloned().enumerate().collect();
-    // p.is_empty() returned above; indexed has exactly p.len() leaves.
-    let tree = build_prod_tree(&indexed)?;
-    let (g, a, r) = gcd_ppi_ppo(&b, &tree.prod);
-    if g == Int::ONE {
-        let mut out = p;
-        out.push(b);
-        return Some(out);
-    }
-    let mut hits: Vec<(usize, Int)> = Vec::new();
-    split_sparse(&a, &tree, &mut hits)?;
-    let mut s_by_idx: HashMap<usize, Int> = hits.into_iter().collect();
-
-    let mut result = Vec::with_capacity(p.len() + 2);
-    if r > Int::ONE {
-        result.push(r);
-    }
-    for (idx, p_i) in p.into_iter().enumerate() {
-        if let Some(s_i) = s_by_idx.remove(&idx) {
-            append_cb_pair(&mut result, p_i, s_i);
-        } else {
-            result.push(p_i);
-        }
-    }
-    Some(result)
-}
-
-/// Algorithm 17.3 of Bernstein (2005) enhanced with coprime fast-path and active-subset filtering:
-/// merges two coprime bases `p` and `q` into `cb(p union q)`.
-fn cb_merge(p: Vec<Int>, q: Vec<Int>) -> Option<Vec<Int>> {
-    if p.is_empty() {
-        return Some(q);
-    }
-    if q.is_empty() {
-        return Some(p);
-    }
-    let p_idx: Vec<(usize, Int)> = p.iter().cloned().enumerate().collect();
-    let q_idx: Vec<(usize, Int)> = q.iter().cloned().enumerate().collect();
-    // Both empty-input branches returned; each indexed list has its input's length.
-    let p_tree = build_prod_tree(&p_idx)?;
-    let q_tree = build_prod_tree(&q_idx)?;
-    let g = p_tree.prod.gcd(&q_tree.prod);
-    if g == Int::ONE {
-        let mut out = Vec::with_capacity(p.len() + q.len());
-        out.extend(p);
-        out.extend(q);
-        return Some(out);
-    }
-
-    // Separate `p` and `q` into untouched coprime elements and colliding elements.
-    let mut p_hits = Vec::new();
-    split_sparse(&g, &p_tree, &mut p_hits)?;
-    let p_hit_set: HashSet<usize> = p_hits.into_iter().map(|(i, _)| i).collect();
-
-    let mut q_hits = Vec::new();
-    split_sparse(&g, &q_tree, &mut q_hits)?;
-    let q_hit_set: HashSet<usize> = q_hits.into_iter().map(|(i, _)| i).collect();
-
-    let mut untouched = Vec::new();
-    let mut s_active = Vec::new();
-    for (i, v) in p.into_iter().enumerate() {
-        if p_hit_set.contains(&i) {
-            s_active.push(v);
-        } else {
-            untouched.push(v);
-        }
-    }
-    let mut q_active = Vec::new();
-    for (i, v) in q.into_iter().enumerate() {
-        if q_hit_set.contains(&i) {
-            q_active.push(v);
-        } else {
-            untouched.push(v);
-        }
-    }
-
-    if q_active.len() == 1 {
-        // The branch condition is q_active.len() == 1; no intervening mutation.
-        let mut merged = cb_extend(s_active, q_active.pop()?)?;
-        merged.extend(untouched);
-        return Some(merged);
-    }
-
-    let n = q_active.len();
-    let mut bits = 1usize;
-    // n is the length of an allocated Vec<Int>, whose elements occupy more
-    // than one byte, so its ceiling log2 is below usize::BITS.
-    while (1usize << bits) < n {
-        bits += 1;
-    }
-    for bit_i in 0..bits {
-        let mut r0 = Vec::new();
-        let mut r1 = Vec::new();
-        for (k, v) in q_active.iter().enumerate() {
-            if ((k >> bit_i) & 1) == 0 {
-                r0.push(v.clone());
-            } else {
-                r1.push(v.clone());
-            }
-        }
-        s_active = cb_extend(s_active, prod_slice(&r0))?;
-        s_active = cb_extend(s_active, prod_slice(&r1))?;
-    }
-    s_active.extend(untouched);
-    Some(s_active)
-}
-
-// The coprime base, each modulus as base indices with powers, and the powers of each base.
-type CoprimeBase = (Vec<Int>, BTreeMap<Int, Vec<(usize, Int)>>, Vec<Vec<Int>>);
-// A slice of moduli with the bases still to split over it (Algorithm 21.2).
-type FactorJob<'a> = (&'a [Int], Vec<(usize, Int)>);
-
-/// Algorithm 18.1 + 21.2 of Bernstein (2005): computes the sorted natural coprime base `bases` of
-/// `moduli`, the prime-power-like factor list `mod_factors[m] = [(base_idx, q_{m, idx})]` for each
-/// `m`, and `base_all_powers[base_idx]` (sorted powers dividing any `m`).
-// None only where a product tree is not as built (see `split_sparse`).
-fn coprime_base_and_factors(mut moduli: Vec<Int>) -> Option<CoprimeBase> {
-    moduli.retain(|m| *m > Int::ONE);
-    zed_collections::sorted::sort_dedup(&mut moduli);
-    if moduli.is_empty() {
-        return Some((Vec::new(), BTreeMap::new(), Vec::new()));
-    }
-
-    // Bottom-up merge tree for Algorithm 18.1 (`cb`).
-    let mut level: Vec<Vec<Int>> = moduli.iter().cloned().map(|m| vec![m]).collect();
-    while level.len() > 1 {
-        let mut next = Vec::with_capacity(level.len().div_ceil(2));
-        let mut it = level.into_iter();
-        while let Some(p) = it.next() {
-            if let Some(q) = it.next() {
-                next.push(cb_merge(p, q)?);
-            } else {
-                next.push(p);
-            }
-        }
-        level = next;
-    }
-    let mut bases = level.pop().unwrap_or_default();
-    bases.retain(|b| *b > Int::ONE);
-    zed_collections::sorted::sort_dedup(&mut bases);
-
-    let num_bases = bases.len();
-    let mut mod_factors: BTreeMap<Int, Vec<(usize, Int)>> = BTreeMap::new();
-    let mut base_powers_set: Vec<BTreeSet<Int>> = vec![BTreeSet::new(); num_bases];
-
-    // Simultaneous divide-and-conquer factorization (Algorithm 21.2).
-    let initial_p: Vec<(usize, Int)> = bases.iter().cloned().enumerate().collect();
-    let mut stack: Vec<FactorJob<'_>> = vec![(&moduli[..], initial_p)];
-
-    while let Some((s_slice, p_sub)) = stack.pop() {
-        if s_slice.is_empty() || p_sub.is_empty() {
-            continue;
-        }
-        if s_slice.len() == 1 {
-            let m = &s_slice[0];
-            // Empty p_sub was excluded at this frame's entry.
-            let p_tree = build_prod_tree(&p_sub)?;
-            let mut facs = Vec::new();
-            split_sparse(m, &p_tree, &mut facs)?;
-            facs.sort_by_key(|&(idx, _)| idx);
-            for &(idx, ref q) in &facs {
-                base_powers_set[idx].insert(q.clone());
-            }
-            mod_factors.insert(m.clone(), facs);
-            continue;
-        }
-        let p_tree = build_prod_tree(&p_sub)?;
-        let mid = s_slice.len() / 2;
-        for half in [&s_slice[mid..], &s_slice[..mid]] {
-            let y = prod_slice(half);
-            let z = ppi(&p_tree.prod, &y);
-            let mut hits = Vec::new();
-            split_sparse(&z, &p_tree, &mut hits)?;
-            hits.sort_by_key(|&(idx, _)| idx);
-            let q_sub: Vec<(usize, Int)> = hits
-                .into_iter()
-                .map(|(idx, _)| (idx, bases[idx].clone()))
-                .collect();
-            stack.push((half, q_sub));
-        }
-    }
-
-    let base_all_powers: Vec<Vec<Int>> = base_powers_set
-        .into_iter()
-        .enumerate()
-        .map(|(i, mut set)| {
-            if set.is_empty() {
-                set.insert(bases[i].clone());
-            }
-            set.into_iter().collect()
-        })
-        .collect();
-
-    Some((bases, mod_factors, base_all_powers))
 }
 
 enum ConsolidateOut {

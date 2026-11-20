@@ -136,12 +136,16 @@ fn pncx_common_factor_scale() {
 }
 
 /// The first n odd primes: no shared factor, and every modulus is its own base. On the table
-/// side of `shares_a_factor` at both sizes (asserted on the inputs).
+/// side of the kernel's `shares_a_factor` at both sizes (asserted on the inputs). (The bench
+/// of both its methods on both sides of their condition is zed-kernel's
+/// `the_shared_factor_crossover_axis` since DRY-coprime-bases-one.)
 #[test]
 fn pncx_coprime_dense_scale() {
     let inputs = scaling::inputs(32_000, |n| {
         let primes = odd_primes(n);
-        assert!(dense_values(&primes.iter().cloned().collect::<Vec<_>>()).is_some());
+        assert!(on_the_table_side(
+            &primes.iter().cloned().collect::<Vec<_>>()
+        ));
         primes
     });
     scaling::check_order(
@@ -149,40 +153,8 @@ fn pncx_coprime_dense_scale() {
         32_000,
         1,
         |n| {
-            let facs = coprime_factorization(&inputs[&n]).expect("factored");
+            let facs = coprime_factorization(&inputs[&n]);
             assert_eq!(facs.len(), n);
         },
     );
-}
-
-/// Both methods of `shares_a_factor` on both sides of the table method's condition (author
-/// decision A96): k values `1 + i * stride`, the largest about `k * stride`, so the condition
-/// (largest value at most the bits of all the values) holds only for the small strides.
-/// Prints the instructions and bytes of each method and holds their answers equal. The switch
-/// is set by the proved bound, not by these numbers; they show the table is also the cheaper
-/// method on its own side, and for how far beyond it. Run again for each target platform and
-/// after a change to code generation.
-#[test]
-fn pncx_shared_factor_crossover_axis() {
-    let mut meter = scaling::Meter::new();
-    for k in [16u32, 128, 1024, 4096] {
-        for stride in [1u32, 4, 16, 64, 256, 1024] {
-            let small: Vec<u32> = (0..k).map(|i| 1 + i * stride).collect();
-            let vals: Vec<Int> = small.iter().map(|&v| Int::from(i64::from(v))).collect();
-            let top = 1 + (k - 1) * stride;
-            let bits: u64 = vals.iter().map(Int::bits).sum();
-            let (mut by_table, mut by_tree) = (Vec::new(), Vec::new());
-            let table = meter.work(|| by_table = shares_a_factor_by_table(&small, top));
-            let tree = meter.work(|| by_tree = shares_a_factor_by_tree(&vals));
-            assert_eq!(by_table, by_tree);
-            println!(
-                "bench SHARED_FACTOR k={k} stride={stride} largest={top} bits={bits} table_side={} table={}/{} tree={}/{}",
-                dense_values(&vals).is_some(),
-                table.units,
-                table.bytes,
-                tree.units,
-                tree.bytes
-            );
-        }
-    }
 }

@@ -531,7 +531,7 @@ fn shared_moduli(n: usize) -> BTreeSet<Int> {
 fn pncx_common_factors_reconstruct_inputs() {
     for n in 1..50 {
         let ms = shared_moduli(n);
-        let facs = coprime_factorization(&ms).unwrap();
+        let facs = coprime_factorization(&ms);
         let bases: BTreeSet<_> = facs.values().flatten().map(|(b, _)| b).collect();
         for a in &bases {
             for b in bases.iter().filter(|b| *b < a) {
@@ -544,94 +544,16 @@ fn pncx_common_factors_reconstruct_inputs() {
     }
 }
 
-/// `shares_a_factor` by its definition, a gcd of every pair.
-fn shares_a_factor_by_pairs(vals: &[Int]) -> Vec<bool> {
-    (0..vals.len())
-        .map(|i| (0..vals.len()).any(|j| j != i && vals[i].gcd(&vals[j]) != Int::ONE))
-        .collect()
-}
-
-/// The table method and the tree method of `shares_a_factor` give the pairwise answer on
-/// arithmetic progressions on both sides of the table method's condition (the largest value
-/// at most the bits of all the values): each method is run on every case, whichever side
-/// the case is on, and `shares_a_factor` itself takes the table on 164 of the 384.
-#[test]
-fn pncx_shared_factor_methods_agree() {
-    let (mut table_side, mut tree_side) = (0, 0);
-    for start in 1..7u32 {
-        for stride in [1u32, 2, 3, 5, 6, 30, 97, 210] {
-            for n in [1u32, 2, 3, 5, 8, 13, 40, 120] {
-                let small: Vec<u32> = (0..n).map(|i| start + i * stride).collect();
-                let vals: Vec<Int> = small.iter().map(|&v| Int::from(i64::from(v))).collect();
-                let top = start + (n - 1) * stride;
-                let want = shares_a_factor_by_pairs(&vals);
-                assert_eq!(shares_a_factor_by_table(&small, top), want, "{small:?}");
-                assert_eq!(shares_a_factor_by_tree(&vals), want, "{small:?}");
-                assert_eq!(shares_a_factor(&vals), want, "{small:?}");
-                match dense_values(&vals) {
-                    Some(dense) => {
-                        assert_eq!(dense, (small, top));
-                        table_side += 1;
-                    }
-                    None => tree_side += 1,
-                }
-            }
-        }
-    }
-    assert_eq!((table_side, tree_side), (164, 220));
-}
-
-/// Where `shares_a_factor` changes method: 97 (7 bits) with 90 ones is 97 bits of values, so
-/// the largest value, 97, is at most the bits and the table answers; with 89 ones it is not.
-/// Zero, a negative value, a value over `u32::MAX` and no values at all go to the tree.
-#[test]
-fn pncx_shared_factor_method_boundary() {
-    let with_ones = |v: Int, ones: usize| {
-        let mut vals = vec![v];
-        vals.extend(vec![Int::ONE; ones]);
-        vals
-    };
-    assert_eq!(
-        dense_values(&with_ones(Int::from(97), 90)).map(|(_, top)| top),
-        Some(97)
-    );
-    assert_eq!(dense_values(&with_ones(Int::from(97), 89)), None);
-    for ones in [89, 90] {
-        let vals = with_ones(Int::from(97), ones);
-        assert_eq!(shares_a_factor(&vals), vec![false; ones + 1]);
-    }
-    // Equal values above 1 share a factor on both sides; a value 1 shares none.
-    for ones in [0, 200] {
-        let mut vals = with_ones(Int::from(97), ones);
-        vals.push(Int::from(97));
-        assert_eq!(dense_values(&vals).is_some(), ones == 200);
-        let mut want = vec![false; ones + 2];
-        want[0] = true;
-        want[ones + 1] = true;
-        assert_eq!(shares_a_factor(&vals), want);
-    }
-    let wide = (0..5).fold(Int::ONE, |v, _| &v * &Int::from(1i64 << 40));
-    for odd in [
-        Int::ZERO,
-        Int::from(-3),
-        Int::from(1i64 << 32),
-        wide.clone(),
-    ] {
-        assert_eq!(dense_values(&with_ones(odd, 300)), None);
-    }
-    assert_eq!(
-        dense_values(&with_ones(Int::from(i64::from(u32::MAX)), 0)),
-        None
-    );
-    assert_eq!(dense_values(&[]), None);
-    assert_eq!(shares_a_factor(&[]), Vec::<bool>::new());
-    // A wide value among small ones: the tree, with the pairwise answer.
-    let vals = vec![Int::from(6), wide, Int::from(35), Int::from(11)];
-    assert_eq!(shares_a_factor(&vals), vec![true, true, false, false]);
+/// Whether `vals` (each at least 1) are on the table side of the kernel's
+/// `num::coprime::shares_a_factor`.
+fn on_the_table_side(vals: &[Int]) -> bool {
+    coprime::dense_values(&uint_leaves(vals)).is_some()
 }
 
 /// `coprime_factorization` gives the same factors on the table side and on the tree side of
-/// `shares_a_factor`, with a shared factor and without one.
+/// the kernel's `shares_a_factor`, with a shared factor and without one, each modulus's
+/// factors by increasing base. (The methods of `shares_a_factor` and where it changes from one
+/// to the other are tested in zed-kernel, `num::coprime::tests`, since DRY-coprime-bases-one.)
 #[test]
 fn pncx_coprime_factorization_has_its_answers() {
     let int = |v: i64| Int::from(v);
@@ -641,19 +563,19 @@ fn pncx_coprime_factorization_has_its_answers() {
         (vec![3, 5, 7, 11, 13], true),
         (vec![1009, 1013, 1019], false),
     ] {
-        assert_eq!(dense_values(&ints(&cofactors)).is_some(), table);
+        assert_eq!(on_the_table_side(&ints(&cofactors)), table);
         let ms: BTreeSet<Int> = cofactors.iter().map(|p| int(2 * p)).collect();
         let want: ModBase = cofactors
             .iter()
             .map(|p| (int(2 * p), vec![(int(2), int(2)), (int(*p), int(*p))]))
             .collect();
-        assert_eq!(coprime_factorization(&ms), Some(want));
+        assert_eq!(coprime_factorization(&ms), want);
     }
     // No shared factor: 6, 10 and 15 are factored over 2, 3 and 5, and each of the others is
     // its own base.
     for (others, table) in [(vec![7, 11, 13], true), (vec![7, 11, 1013], false)] {
         let all: Vec<i64> = [6, 10, 15].into_iter().chain(others.clone()).collect();
-        assert_eq!(dense_values(&ints(&all)).is_some(), table);
+        assert_eq!(on_the_table_side(&ints(&all)), table);
         let ms: BTreeSet<Int> = all.iter().map(|m| int(*m)).collect();
         let mut want: ModBase = others
             .iter()
@@ -662,11 +584,7 @@ fn pncx_coprime_factorization_has_its_answers() {
         for (m, a, b) in [(6, 2, 3), (10, 2, 5), (15, 3, 5)] {
             want.insert(int(m), vec![(int(a), int(a)), (int(b), int(b))]);
         }
-        let mut got = coprime_factorization(&ms).expect("factored");
-        for fs in got.values_mut() {
-            fs.sort();
-        }
-        assert_eq!(got, want);
+        assert_eq!(coprime_factorization(&ms), want);
     }
 }
 
@@ -676,7 +594,7 @@ fn pncx_coprime_factorization_has_its_answers() {
 fn pncx_common_factor_bench_inputs_are_on_the_table_side() {
     for n in [512, 4096] {
         let cofactors: Vec<Int> = odd_primes(n).into_iter().collect();
-        assert!(dense_values(&cofactors).is_some());
+        assert!(on_the_table_side(&cofactors));
     }
 }
 
@@ -827,72 +745,6 @@ fn the_benchmark_inputs_have_their_answers_at_small_sizes() {
     }
 }
 
-/// The table's count of the values a prime divides stops at 2, so a prime held by many values
-/// does not run its marker down into the least prime factors, nor wrap a count: 300 even
-/// values, and 601 (a prime), give 300 answers of true and one of false. (Written by the
-/// orchestrator for the earlier `u8` count, which overflowed past 255 without the stop.)
-#[test]
-fn pncx_table_count_of_a_prime_held_by_many_values_does_not_wrap() {
-    let mut vals: Vec<Int> = (1..=300i64).map(|k| Int::from(2 * k)).collect();
-    vals.push(Int::from(601));
-    let (small, top) = dense_values(&vals).expect("the table side");
-    let mut want = vec![true; 300];
-    want.push(false);
-    assert_eq!(shares_a_factor_by_table(&small, top), want);
-    assert_eq!(shares_a_factor(&vals), want);
-}
-
-/// The fact the `u16` table of `shares_a_factor_by_table` rests on: 65521 is the largest prime
-/// below 2^16, so the least prime factor of a composite up to `u32::MAX` (at most the square
-/// root, below 2^16) is at most 65521 and never one of the three prime markers 65533 to 65535.
-/// The bound is reached: 65521^2 is at most `u32::MAX`. (A table up to values near `u32::MAX`
-/// cannot be built in a test: the table side needs the largest value at most the bits of all
-/// the values, about 2^27 values, and the table takes 8 GB.)
-#[test]
-fn largest_prime_below_2_16_is_65521() {
-    let is_prime = |n: u32| {
-        n >= 2
-            && (2..)
-                .take_while(|d| d * d <= n)
-                .all(|d| !n.is_multiple_of(d))
-    };
-    assert!(is_prime(u32::from(LARGEST_PRIME_BELOW_2_16)));
-    assert!((u32::from(LARGEST_PRIME_BELOW_2_16) + 1..1 << 16).all(|n| !is_prime(n)));
-    assert!(u64::from(LARGEST_PRIME_BELOW_2_16).pow(2) <= u64::from(u32::MAX));
-    const { assert!(LARGEST_PRIME_BELOW_2_16 < PRIME_HELD_BY_TWO) };
-}
-
-/// Every entry of the `u16` table reads back as its number's least prime factor, by trial
-/// division, up to a `top` with composites whose least prime factor is large (`251^2`,
-/// `251 * 257`); and after every value up to `top` is counted twice, every prime's marker is at
-/// its last count and still reads as that prime, so each value shares a factor with its copy
-/// (except 1).
-#[test]
-fn pncx_shared_factor_table_reads_every_least_prime_factor() {
-    let top = 251 * 257;
-    let lpf = |n: u32| {
-        (2..)
-            .find(|d| d * d > n || n.is_multiple_of(*d))
-            .filter(|d| d * d <= n)
-            .unwrap_or(n)
-    };
-    let table = zed_numtheory::least_prime_factors(top);
-    for x in 2..=top {
-        assert_eq!(least_prime_factor(&table, x), lpf(x), "{x}");
-    }
-    let mut small: Vec<u32> = (1..=top).collect();
-    small.extend(1..=top);
-    let want: Vec<bool> = small.iter().map(|&v| v > 1).collect();
-    assert_eq!(shares_a_factor_by_table(&small, top), want);
-    // And each value once, against the pairwise answer, on the values near `top`.
-    let near: Vec<u32> = (top - 40..=top).collect();
-    let vals: Vec<Int> = near.iter().map(|&v| Int::from(i64::from(v))).collect();
-    assert_eq!(
-        shares_a_factor_by_table(&near, top),
-        shares_a_factor_by_pairs(&vals)
-    );
-}
-
 /// `combine_crt_tree` on pairwise coprime moduli (the tree path: odd counts carry a node up)
 /// and on moduli sharing a factor (the pairwise path), against the congruences themselves;
 /// a conflicting pair gives `None`.
@@ -936,10 +788,11 @@ fn the_crt_tree_solves_its_congruences() {
     assert_eq!(combine_crt_tree(conflict), None);
 }
 
-/// The kernel's trees as this file uses them, on wide values (40 words each, and 1 among
-/// them): remainders of `x` and `-x` against `mod_floor`, `x` a multiple of one value so a
-/// remainder 0 occurs on the negative side; shared factors against the pairwise answer, with
-/// a repeated value and a product of two others among them.
+/// The kernel's trees as this file uses them, on wide values (40 words each): remainders of
+/// `x` and `-x` against `mod_floor`, `x` a multiple of one value so a remainder 0 occurs on
+/// the negative side. (Its other half, shared factors of wide values against the pairwise
+/// answer, is zed-kernel's `the_shared_factors_of_wide_values_are_the_pairwise_ones` since
+/// DRY-coprime-bases-one.)
 #[test]
 fn the_kernel_trees_agree_on_wide_values() {
     let mut seed: u64 = 0x9e37_79b9_7f4a_7c15;
@@ -958,21 +811,11 @@ fn the_kernel_trees_agree_on_wide_values() {
         v
     };
     for k in [1usize, 2, 3, 16, 17] {
-        let mut vals: Vec<Int> = (0..k).map(|_| wide()).collect();
+        let vals: Vec<Int> = (0..k).map(|_| wide()).collect();
         let x = &vals.iter().fold(Int::ONE, |a, v| &(&a * v) + &Int::from(3)) * &vals[0];
         for point in [x.clone(), -&x, Int::ZERO] {
             let want: Vec<_> = vals.iter().map(|m| point.mod_floor(m)).collect();
             assert_eq!(batch_remainders(&point, &vals), want, "k {k}");
         }
-        vals.push(Int::ONE);
-        if k >= 3 {
-            vals.push(vals[1].clone());
-            vals.push(&vals[0] * &vals[2]);
-        }
-        assert_eq!(
-            shares_a_factor_by_tree(&vals),
-            shares_a_factor_by_pairs(&vals),
-            "k {k}"
-        );
     }
 }
