@@ -1814,9 +1814,12 @@ impl<K: Key> Poly<K> {
     /// doi:10.1109/JRPROC.1952.273898 (Crossref and the text checked 2026-11-20), whose step
     /// combines "the two least probable messages" into one; with a list's length as its weight
     /// this is the merge pattern, which D. E. Knuth, The Art of Computer Programming vol. 3,
-    /// section 5.4.9, applies to merging (from memory, not checked: the book has no DOI or free
-    /// copy; on 2026-11-20 LibGen listed the 2nd edition of vol. 3, but its file server
-    /// answered "error code: 504" for every book tried that day). It reads each term once
+    /// 2nd ed., Addison-Wesley, 1998, no DOI, section 5.4.9, "Disks and Drums", p. 361, applies
+    /// to merging: when runs differ in length, an optimum merge pattern comes from Huffman's
+    /// method (the book points to its exercise 2.3.4.5-10), which, after dummy runs of length
+    /// 0 are added, merges the P shortest runs again and again until one is left; here P = 2,
+    /// so no dummy runs are needed. Read 2026-11-20 in a scanned copy from LibGen, kept out of
+    /// the repository and used only to check this comment. It reads each term once
     /// per level of the merge tree it sits at, O(T log k) at most and O(T + k log k) for one
     /// large part and k small ones, plus O(k log k) for the heap. Test:
     /// `a_chain_of_sums_is_one_sum` checks the result; the order of merging is not tested.

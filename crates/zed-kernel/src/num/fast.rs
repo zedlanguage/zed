@@ -121,10 +121,15 @@
 //!   essential; if one tries to use positive quotients 0 < q < 2^(k+1), the algorithm no
 //!   longer terminates."
 //! - R. P. Brent, P. Zimmermann, Modern Computer Arithmetic, Cambridge University Press,
-//!   2010, doi:10.1017/CBO9780511921698. Read in the authors' version 0.5.1 (2024),
-//!   arXiv:1004.4710, whose numbering may differ from the printed book. Algorithm 3.5
-//!   ApproximateReciprocal (§3.4) takes a reciprocal of the top `h` words and refines it by
-//!   one Newton step; Lemma 3.4.2: "If β is a power of two satisfying β ≥ 8, and
+//!   2010, doi:10.1017/CBO9780511921698. Read in the authors' version 0.5.1 (November 26,
+//!   2024), arXiv:1004.4710, whose numbering may differ from the printed book; checked again
+//!   on 2026-11-20 (FIX-history-uses-attributions) against the text of the arXiv PDF: the
+//!   quotes below are verbatim, Algorithm 3.5 and Lemma 3.4.2 are in §3.4.1 (p. 112), and
+//!   Algorithms 1.25 FastIntegerInput and 1.26 FastIntegerOutput in §1.7.2 (pp. 42-43). This
+//!   file's reciprocal and radix conversions are from this book, not from Brent's "An improved
+//!   Monte Carlo factorization algorithm" (BIT 20, 1980), which an older sweep named for them.
+//!   Algorithm 3.5 ApproximateReciprocal (§3.4.1) takes a reciprocal of the top `h` words and
+//!   refines it by one Newton step; Lemma 3.4.2: "If β is a power of two satisfying β ≥ 8, and
 //!   β^n/2 ≤ A < β^n, then the output X ... satisfies: AX < β^2n < A(X + 2)". Departure:
 //!   [`approx_reciprocal`] works in bits (β = 2, outside the lemma's `β ≥ 8`) and starts each
 //!   step from `h = ceil((p + 3) / 2)` bits, and it promises only `t (X + 2) >= 2^2k`. The
@@ -134,6 +139,10 @@
 //!   FastIntegerOutput (§1.7.2) prints `A` as `Output(Q) || 0^(k - len(r)) || r` with
 //!   `(Q, R) = DivRem(A, B^k)`, and "has complexity O(M(n) log n)"; [`to_decimal`] is that
 //!   recursion, with the powers `10^(L 2^i)` fixed in advance and their reciprocals shared.
+//!   Algorithm 1.25 FastIntegerInput (§1.7.2) joins the digit values in pairs, `ℓ ← [ℓ0 +
+//!   bℓ1, ℓ2 + bℓ3, ...]`, then `(b, k) ← (b^2, ⌈k/2⌉)`, until one is left, and "has
+//!   complexity O(M(n) log n)"; [`read_digits_by`] is that loop, over leaves of `leaf` digits
+//!   rather than single digits.
 //! - C. Burnikel, J. Ziegler, "Fast Recursive Division", research report MPI-I-98-1-022,
 //!   Max-Planck-Institut für Informatik, October 1998,
 //!   <https://pure.mpg.de/rest/items/item_1819444_4/component/file_2599480/content>: "Its
@@ -154,9 +163,15 @@
 //!   integer output as fast as input with "D. Bernstein's scaled remainder tree \[21\] and the
 //!   middle product". This file does not use the scaled tree; it divides by Newton reciprocals.
 //! - D. E. Knuth, The Art of Computer Programming, vol. 2, 3rd ed., Addison-Wesley, 1997,
-//!   §4.3.1, Algorithm D (long division). From memory, not checked: the book was not read
-//!   (2026-11-20: no DOI, no free copy; LibGen lists the 3rd edition, and its file server
-//!   answered "error code: 504" for each copy tried).
+//!   §4.3.1, Algorithm D (long division), no DOI. Read 2026-11-20 in a scanned copy of the
+//!   3rd edition from LibGen, kept out of the repository and used only to check this entry:
+//!   Algorithm D ("Division of nonnegative integers") begins on p. 272, beside Theorem B on
+//!   the same page, which bounds the trial quotient digit, estimated from the leading digits,
+//!   between the true digit and the true digit plus 2 once the divisor's leading digit is at
+//!   least half the base; step D1 ("Normalize") scales both operands so that this holds.
+//!   `sparse_div_rem` keeps the
+//!   digit-at-a-time window of the algorithm but skips the divisor's zero words, a departure
+//!   that the book does not describe.
 //! - J. W. Cooley, J. W. Tukey, "An algorithm for the machine calculation of complex Fourier
 //!   series", Math. Comp. 19(90):297-301, 1965, doi:10.1090/S0025-5718-1965-0178586-1
 //!   (read: the radix-2 case, equations (14)-(20), and (22)): "The algorithm with r = 2 is

@@ -269,12 +269,15 @@ fn log2_sum(x: &Product<'_>) -> Option<(f64, usize)> {
 /// (`c 2^-46 / 63 < 2.04cu`), and below 64 bits it is the prime's case. So every term is
 /// within a relative `r = (3c + 6)u`. Recursive summation of `N` terms at least 0 adds a
 /// relative `gamma(N - 1) = (N - 1)u / (1 - (N - 1)u)`: N. J. Higham, "Accuracy and Stability
-/// of Numerical Algorithms", 2nd ed., SIAM, 2002, doi:10.1137/1.9780898718027, section 4.2
-/// (recursive summation, `|E_n| <= gamma(n - 1) sum |x_i|`; `gamma(n) = nu / (1 - nu)` is
-/// defined in section 3.1). The DOI, title and year were checked on Crossref 2026-11-20; the
-/// section numbers and the bound are from memory, not checked, as the book was not obtained
-/// (2026-11-20: Sci-Hub has no copy; LibGen has no record under the DOI, and its copy found by
-/// title, a DjVu, came back as "503 Service Temporarily Unavailable").
+/// of Numerical Algorithms", 2nd ed., SIAM, 2002, doi:10.1137/1.9780898718027 (DOI, title
+/// and year checked on Crossref 2026-11-20). Read 2026-11-20 in a scanned copy from LibGen,
+/// kept out of the repository and used only to check this comment: section 3.1, Lemma 3.1,
+/// p. 63, defines `gamma(n) = nu / (1 - nu)` under `nu < 1`; section 4.2, pp. 81-82, analyses
+/// Algorithm 4.1 (any order of the `n - 1` additions, recursive summation among them) and
+/// gives the first-order bound (4.4), `|E_n| <= (n - 1)u sum |x_i| + O(u^2)`, then the
+/// backward result that the computed sum is the exact sum of the terms `x_i (1 + e_i)` with
+/// `|e_i| <= gamma(n - 1)`, since no term takes part in more than `n - 1` additions. With
+/// terms at least 0 that gives `|E_n| <= gamma(n - 1) sum x_i`, the bound used here.
 /// The bound is also the plain one: each of the `N - 1` additions rounds by at most `u` on a
 /// partial sum at most `S`. `the_f64_check_needs_its_margin` shows a margin is needed (with
 /// none, some verdicts are wrong); no test shows this margin is enough, which rests on the

@@ -4265,8 +4265,11 @@ fn prim_on(p: Prim, vals: &[Value]) -> Result<Value, KernelError> {
         // see the `sqrt` rule); the two special values in the 2008 edition (PDF, Sci-Hub,
         // verification only), section 9.2.1, "Special values", p. 44: "pow (x, ±0) is 1 for any
         // x (even a zero, quiet NaN, or infinity)" and "pow (+1, y) is 1 for any y (even a quiet
-        // NaN)"; Rust's `powf` gives both. C99 Annex F.9.4.4 states them too, from memory, not
-        // read. Departure: Zed gives NaN for both,
+        // NaN)"; Rust's `powf` gives both. C99 Annex F.9.4.4, "The pow functions", states them
+        // too; read 2026-11-20 in the WG14 committee draft N1256 (ISO/IEC 9899:TC3, September
+        // 7, 2007, open-std.org/jtc1/sc22/wg14/www/docs/n1256.pdf, p. 461): "pow(+1, y)
+        // returns 1 for any y, even a NaN" and "pow(x, ±0) returns 1 for any x, even a NaN".
+        // Departure: Zed gives NaN for both,
         // on purpose. Tests: `l01_36_cranelift::pow_nan` and `l01_39_reduced_product::pow_nan`,
         // which check that both cases give NaN here; a wrong memory of the standard would not
         // change what they check.

@@ -759,22 +759,27 @@ impl Printer<'_> {
     /// on the order the parts' operands and literals were found in, which follows the atoms'
     /// digests (step BDD-atom-order). Each node gets a rank by its contents, as in the tree
     /// isomorphism test of Aho, Hopcroft and Ullman (A. V. Aho, J. E. Hopcroft and J. D. Ullman,
-    /// "The Design and Analysis of Computer Algorithms", Addison-Wesley, 1974, section 3.2,
-    /// Example 3.2, pp. 84-86. The book itself was not read: it has no DOI and no free copy, and
-    /// on 2026-11-20 LibGen's PDF and DjVu copies came back four times as a 504 or 503 error
-    /// page. The example's number is as Ingels gives it ("[Example 3.2]"), the section as
-    /// Ingels places the radix sort it applies ("Section 3.2, p.77"), and the pages as
-    /// NetworkX's documentation gives them; checked 2026-11-20
-    /// against F. Ingels, "Revisiting Tree Isomorphism: An Algorithmic Bric-a-Brac",
-    /// arXiv:2309.14441, which reproduces the example's text with minor changes of notation,
-    /// "First, assign to all leaves in T1 and T2 the integer 0", then ranks the nodes one level
-    /// at a time by the sorted tuples of their children's integers, and against the pages
-    /// NetworkX's documentation gives): the nodes are taken by height, those of one height
-    /// ordered by their tokens, a child by its rank, each group's elements sorted first; a
-    /// recursive type is a leaf ranked by its name, since every cycle passes through one. The
-    /// walk's order is then found again, and with it the names' numbers. Departures: the book
-    /// ranks trees level by level; here the texts form a graph cut at recursive types, and the
-    /// nodes go by height, so that every child of a node is ranked before the node. Tests:
+    /// "The Design and Analysis of Computer Algorithms", Addison-Wesley, 1974, no DOI; read
+    /// 2026-11-20 in a scanned copy from LibGen, kept out of the repository and used only to
+    /// check this comment: section 3.2, "Radix sorting", Example 3.2, pp. 84-85, with Theorem
+    /// 3.3 and its proof, pp. 85-86. Step 1: "Assign to all leaves of T1 and T2 the integer 0."
+    /// Then, one level at a time towards the roots, each nonleaf gets the tuple of its sons'
+    /// integers in nondecreasing order, the tuples of a level are sorted by Algorithm 3.2 (a
+    /// lexicographic radix sort of strings of varying length), and the distinct tuples get the
+    /// integers 1, 2, ... in sorted order; the trees are isomorphic when the roots get the same
+    /// integer, in O(n) time. The corollary on p. 86 puts a vertex's label first in its tuple,
+    /// which is what the tokens do here. This agrees with the secondary sources checked before
+    /// the book was read, F. Ingels, "Revisiting Tree Isomorphism: An Algorithmic
+    /// Bric-a-Brac", arXiv:2309.14441, and NetworkX's documentation): the nodes are taken by
+    /// height, those of one height ordered by their tokens, a child by its rank, each group's
+    /// elements sorted first; a recursive type is a leaf ranked by its name, since every cycle
+    /// passes through one. The walk's order is then found again, and with it the names'
+    /// numbers. Departures: the book's level of a vertex is "the height of the tree minus the
+    /// depth of v" (section 2.4, p. 52), so leaves sit on many levels and the book puts each
+    /// level's leaves at the front of its list; here the texts form a graph cut at recursive
+    /// types, which has no single root to count depth from, and the nodes go by their own
+    /// height, which also ranks every child of a node before the node. The sort is a
+    /// comparison sort, not the book's radix sort, hence `O(t log t)` below. Tests:
     /// `random_types_print_alike_in_every_order_of_their_atoms` and
     /// `a_union_of_tuple_types_less_another_prints_alike_in_every_order` catch a text that
     /// depends on the atoms' order; neither checks the `O(t log t)` bound.

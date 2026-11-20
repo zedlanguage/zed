@@ -70,8 +70,12 @@ use chain::Chain;
 /// "9.6 new {min,max}imum{,Number,Magnitude,MagnitudeNumber} operations are recommended; NaN
 /// and signed zero handling are changed from 754-2008 5.3.1", and A. Fog's note
 /// nan-propagation.pdf, 2018: "The new functions named maximum and minimum are certain to
-/// propagate NaNs". That `-0.0` is below `0.0` in them is from memory, not checked; the C23
-/// draft N3096 (`fminimum`), the next rung, timed out. Test:
+/// propagate NaNs". That `-0.0` is below `0.0` was read 2026-11-20 in the C23 working draft
+/// N3096 (ISO/IEC 9899:2023, April 1, 2023, open-std.org/jtc1/sc22/wg14/www/docs/n3096.pdf),
+/// 7.12.12.5, "The fminimum functions", p. 270 (the operation table of F.3, p. 508, pairs
+/// the IEC 60559 `minimum` with `fminimum`): "For these functions, −0 is considered less
+/// than +0"; F.10.9.4 (p. 531) says they "treat NaNs like other functions in `<math.h>`", that is, a NaN in gives a NaN
+/// out. The IEEE text itself is still unread. Test:
 /// `min_and_max_put_the_negative_zero_below_and_nan_absorbs` (the step tests of value
 /// representation), which checks both zeros in both orders and NaN in either place.
 pub(crate) fn ieee_min_max(min: bool, a: f64, b: f64) -> f64 {
