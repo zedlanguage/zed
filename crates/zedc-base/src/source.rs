@@ -225,7 +225,8 @@ pub fn line_col(bytes: &[u8], offset: usize) -> (usize, usize) {
 /// the end, before its line break, of the line holding `to`. `\r\n`, `\r` and `\n` each end
 /// a line, as for [`line_col`]; [`load`] leaves only `\n`, and a text that did not pass
 /// through it (a test's, a tool's) still breaks where [`line_col`] counts a new line.
-/// O(length of those lines).
+/// `from` and `to` must be character boundaries of `text`; slicing it panics at any other
+/// offset ("is not a char boundary"). O(length of those lines).
 pub fn line_bounds(text: &str, from: usize, to: usize) -> (usize, usize) {
     let breaks = ['\r', '\n'];
     let start = text[..from].rfind(breaks).map_or(0, |i| i + 1);
@@ -303,6 +304,83 @@ mod tests {
         );
         // The line and column agree with the bounds.
         assert_eq!(line_col(text.as_bytes(), b), (2, 1));
+    }
+
+    /// `line_bounds` read directly: back from `from` to the character after the last `\r` or
+    /// `\n` before it, forward from `to` to the first at or after it.
+    fn naive_bounds(text: &str, from: usize, to: usize) -> (usize, usize) {
+        let b = text.as_bytes();
+        let brk = |c: u8| c == b'\r' || c == b'\n';
+        let mut s = from;
+        while s > 0 && !brk(b[s - 1]) {
+            s -= 1;
+        }
+        let mut e = to;
+        while e < b.len() && !brk(b[e]) {
+            e += 1;
+        }
+        (s, e)
+    }
+
+    /// Every text of up to five parts from `a`, `\r`, `\n`, `\r\n`, `é` and a space:
+    /// 1 + 6 + 6^2 + ... + 6^5 = 9331 texts.
+    fn short_texts() -> Vec<String> {
+        let parts = ["a", "\r", "\n", "\r\n", "é", " "];
+        let mut level = vec![String::new()];
+        let mut all = level.clone();
+        for _ in 0..5 {
+            level = (level.iter())
+                .flat_map(|t| parts.iter().map(move |p| format!("{t}{p}")))
+                .collect();
+            all.extend(level.iter().cloned());
+        }
+        all
+    }
+
+    /// TEST-dry-shared-units: the bounds agree with the rule read directly at every ordered
+    /// pair of character boundaries of every text of up to five parts from `a`, `\r`, `\n`,
+    /// `\r\n`, `é` (two bytes) and a space, 9331 texts. Negative control:
+    /// `a_bound_past_the_line_break_is_caught`.
+    #[test]
+    fn line_bounds_agree_with_the_rule_read_directly() {
+        let texts = short_texts();
+        assert_eq!(texts.len(), 9331);
+        for text in texts {
+            let cuts: Vec<usize> = (0..=text.len())
+                .filter(|&i| text.is_char_boundary(i))
+                .collect();
+            for &from in &cuts {
+                for &to in cuts.iter().filter(|&&to| to >= from) {
+                    assert_eq!(line_bounds(&text, from, to), naive_bounds(&text, from, to));
+                }
+            }
+        }
+        assert_eq!(line_bounds("", 0, 0), (0, 0));
+        assert_eq!(line_bounds("\n", 1, 1), (1, 1));
+        assert_eq!(line_bounds("\r\n", 1, 1), (1, 1));
+    }
+
+    /// Negative control: bounds that take only `\n` as a break, as the copies DRY-text-shared
+    /// replaced did, differ from the rule on some text, so the test above can fail.
+    #[test]
+    fn a_bound_past_the_line_break_is_caught() {
+        let only_newline = |text: &str, from: usize, to: usize| {
+            let start = text[..from].rfind('\n').map_or(0, |i| i + 1);
+            let end = text[to..].find('\n').map_or(text.len(), |i| to + i);
+            (start, end)
+        };
+        assert!(short_texts().iter().any(|t| {
+            (0..=t.len())
+                .filter(|&i| t.is_char_boundary(i))
+                .any(|i| only_newline(t, i, i) != naive_bounds(t, i, i))
+        }));
+    }
+
+    /// The documented precondition broken: an offset inside a character.
+    #[test]
+    #[should_panic(expected = "is not a char boundary")]
+    fn a_bound_inside_a_character_is_refused() {
+        line_bounds("éx", 1, 1);
     }
 
     /// `first_not_nfc` cuts before a character of combining class 0 whose NFC quick check is

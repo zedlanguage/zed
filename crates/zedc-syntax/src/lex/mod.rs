@@ -261,4 +261,25 @@ mod tests {
             assert_eq!(in_parens(c), want, "{c}");
         }
     }
+
+    /// TEST-dry-shared-units: the boundaries of the depth count: an empty group, nested groups,
+    /// a `(` never closed, a `)` with no `(`, a token before or after the group, two groups side
+    /// by side, and spaces around one group.
+    #[test]
+    fn empty_and_unbalanced_parentheses() {
+        for (c, want) in [
+            ("()", true),
+            ("(())", true),
+            ("(()", false),
+            ("())", false),
+            (")(", false),
+            ("(a)b", false),
+            ("a(b)", false),
+            ("((a)(b))", true),
+            ("(a)(b)", false),
+            (" ( a ) ", true),
+        ] {
+            assert_eq!(in_parens(c), want, "{c}");
+        }
+    }
 }

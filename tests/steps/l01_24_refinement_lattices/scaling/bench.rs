@@ -4,6 +4,39 @@
 
 use super::*;
 
+/// TEST-dry-shared-units: `affine::write_sum` of n terms with coefficients of both signs:
+/// O(the length written), its documented cost. Its output is checked in
+/// zedc-lattice affine.rs's tests. The sum is written to a counter of its bytes, not a
+/// `String`: a growing `String` doubles its buffer, so the bytes it allocates depend on where
+/// the length falls between two powers of two, 16 times at 8n in one run, though the text is
+/// 8 times as long. The counter allocates nothing, and neither does `write_sum` for words that
+/// fit a machine word, so only the work is measured.
+#[test]
+fn a_sum_of_n_terms_is_written_in_its_length() {
+    use std::fmt::Write;
+    use zedc::store::int::Int;
+    /// Counts the bytes written to it.
+    struct Count(usize);
+    impl Write for Count {
+        fn write_str(&mut self, s: &str) -> std::fmt::Result {
+            self.0 += s.len();
+            Ok(())
+        }
+    }
+    let sums = scaling::inputs(1 << 14, |n| {
+        (0..n)
+            .map(|i| (format!("x{i}"), Int::from(i as i128 - n as i128 / 2)))
+            .collect::<Vec<_>>()
+    });
+    scaling::check_instructions_only("writing a sum of n terms", 1 << 14, 1, |n| {
+        let mut s = Count(0);
+        let terms = sums[&n].iter().map(|(x, c)| (x.as_str(), c));
+        zedc::store::affine::write_sum(&mut s, terms, &Int::from(7), |o, x| o.write_str(x))
+            .unwrap();
+        assert!(s.0 > n);
+    });
+}
+
 /// `scaling.rs`'s sweep of the six operators at its old count, 600 pairs, moved here
 /// (TEST-bench-move-l0123, author P178: many cases are a benchmark); 60 pairs stay there as
 /// `an_image_holds_every_result_and_keeps_to_the_most_pieces_of_a_region`.

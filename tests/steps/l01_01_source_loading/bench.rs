@@ -7,6 +7,19 @@ mod random;
 
 use zed_tests::scaling::{check, check_instructions_only, inputs};
 
+/// TEST-dry-shared-units: `zedc::source::line_bounds` at the middle of a line of n bytes
+/// between two others: one search back and one forward over that line, O(its length). It
+/// allocates nothing, so only the work is measured.
+#[test]
+fn the_bounds_of_a_long_line_scale() {
+    const N: usize = 1 << 20;
+    let texts = inputs(N, |n| format!("a\n{}\nb", "x".repeat(n)));
+    check_instructions_only("line_bounds in a line of n bytes", N, 1, |n| {
+        let mid = 2 + n / 2;
+        assert_eq!(zedc::source::line_bounds(&texts[&n], mid, mid), (2, 2 + n));
+    });
+}
+
 use super::scaling::{
     base_with_marks, crlf_lines, late_bad_byte, loads_nfc_lines, maybe_starters, nfc_lines,
     places_every_offset, rejects_base_with_marks, rejects_late_bad_byte, rejects_maybe_starters,

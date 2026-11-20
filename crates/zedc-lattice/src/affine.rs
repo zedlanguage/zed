@@ -731,4 +731,27 @@ mod tests {
         // The terms come in symbol order.
         assert_eq!(affine.to_string(), "-m + 2 * n + 1");
     }
+
+    /// TEST-dry-shared-units: coefficients and constants past `i64` and at its ends are
+    /// written whole, with their sign moved out of the magnitude: (2^64 - 1)^2 =
+    /// 2^128 - 2^65 + 1 = 340282366920938463426481119284349108225, and `i64::MIN`, whose
+    /// magnitude has no `i64`.
+    #[test]
+    fn a_sum_of_wide_coefficients_is_written_whole() {
+        let word = Int::from(i128::from(u64::MAX));
+        let wide = &word * &word;
+        let neg = -&wide;
+        let min = Int::from(i128::from(i64::MIN));
+        let terms = [("a", &wide), ("b", &neg), ("c", &min)];
+        let mut s = String::new();
+        write_sum(&mut s, terms, &neg, |o, x| o.write_str(x)).unwrap();
+        let m = "340282366920938463426481119284349108225";
+        assert_eq!(
+            s,
+            format!("{m} * a - {m} * b - 9223372036854775808 * c - {m}")
+        );
+        let mut s = String::new();
+        write_sum(&mut s, [("a", &min)], &min, |o, x| o.write_str(x)).unwrap();
+        assert_eq!(s, "-9223372036854775808 * a - 9223372036854775808");
+    }
 }

@@ -4,6 +4,19 @@
 
 use zed_tests::scaling::{check, inputs};
 
+/// TEST-dry-shared-units: `zedc::lex::in_parens` of one group of n operands, `(a0 + a1 + ...)`:
+/// one lexing of the text and one pass over its tokens, the O(length) of its comment.
+#[test]
+fn one_group_of_n_operands_scales() {
+    let texts = inputs(20_000, |n| {
+        let terms: Vec<String> = (0..n).map(|i| format!("a{i}")).collect();
+        format!("({})", terms.join(" + "))
+    });
+    check("in_parens of one group of n operands", 20_000, |n| {
+        assert!(zedc::lex::in_parens(&texts[&n]));
+    });
+}
+
 use super::scaling::{
     code_lines, doc_comments, keywords_and_operators, lexes_a_doc_a_statement,
     lexes_every_keyword_and_operator, lexes_two_names, nested_comments, renders_a_line_a_line,
