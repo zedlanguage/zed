@@ -2592,14 +2592,14 @@ fn the_check_of_a_list_witness_passes_no_list_outside_the_type() {
         for l in &lists {
             Type::forget_emptiness();
             let value = (l.iter().rev()).fold(Value::atom("nil"), |rest, &x| {
-                Value::atom_with("cons", vec![Value::Int(x.into()), rest])
+                Value::atom_with("cons", vec![Value::Int(x), rest])
             });
             let check = |hints: Vec<(crate::types::Row, ChainHint)>| {
                 let (t2, items) = (t.clone(), l.clone());
                 Search::default().run(move |d| {
                     Box::pin(async move {
                         let ids: Vec<usize> = (items.iter())
-                            .map(|&x| d.s().show(Rep::Value(Value::Int(x.into()))))
+                            .map(|&x| d.s().show(Rep::Value(Value::Int(x))))
                             .collect();
                         let (link, stop) = ("cons".into(), "nil".into());
                         d.check_chain_witness(&t2, &link, &ids, &stop, &hints).await
