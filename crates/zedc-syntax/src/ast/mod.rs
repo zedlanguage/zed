@@ -54,6 +54,42 @@ use crate::parse::{Tree, grammar};
 use builder::{Bare, Builder, Built, Level, Mains, Methods};
 pub use walk::{Blocks, expr_kids, expr_kids_mut, stmts_exprs, stmts_exprs_mut};
 
+// Why the shape of a node is known. The builder here and in `builder`, `stmts`, `types` and
+// `infix` reads a parse node by its rule's name, its alternative and its children, and where
+// the grammar allows only some shapes it says so with an `unreachable!` or an `expect` whose
+// text is the grammar rule (`"Lambda = (Name | '(' Params? ')') '->' body"`) or what follows
+// from it (`"Loop ends in its block"`). Each such site points here. The argument:
+//
+// 1. The grammar is the text of `zed/grammar/syntax.peg` and `notation.peg`, fixed at build
+//    time (`parse::grammar`), so the facts below are about one fixed grammar.
+// 2. The parser (`parse::engine`, `Parser::run`) builds a node only when an alternative of a
+//    rule matches, and never for a `~R` alternative: that match is the node of `R` (`if
+//    alt.pass { self.kids[*base] }`). The node's `kids` are the nodes pushed while that
+//    alternative's expression matched, in order of position: a rule reference pushes the one
+//    node of its match (`self.kids.push(node)` after `Frame::Rule` ends); a literal, a token
+//    kind or `head` pushes none; a failed branch of a choice, sequence, loop or separated
+//    list truncates `kids` to the mark it began at; `&e` and `!e` truncate to their mark
+//    whether they match or not (`Frame::And`, `Frame::Not`); the branch markers pushed by a
+//    choice are split out into `branches` (`split_kids`). Left-recursive growth (`grown`)
+//    keeps the longest match of the rule, a node built by the same steps.
+// 3. So the rules of a node's children, in order, are a word of the alternative's expression
+//    read with every rule reference as one letter and every other part as nothing, each
+//    letter a node of the rule named there or of a rule reached from it through `~`
+//    alternatives. The root a recovered unit builds (`recover::recovering`) is the `Unit`
+//    alternative `Item* END` over the declarations kept, which is such a word too.
+// 4. A site that reads child `i`, or splits off the first or last child, or matches on the
+//    rule name of a child, relies only on this: its message names the alternative whose
+//    words it relies on, and the words of that alternative have the child it reads.
+//
+// The test `l01_08_parser::grammar_shape::every_node_s_children_match_its_alternative` checks
+// steps 2 and 3 on every node of every unit under `zed/` and the steps' `zed/` folders, of
+// every case of `zed/grammar/cases.txt` that parses, and of written texts for the rules those
+// leave out: it computes the words of each alternative and fails on a node whose children are
+// not one, or a node of a `~` alternative (a negative control, the children reversed, fails
+// it at once). Step 4 is read at each site against its rule in `syntax.peg`; a change to the
+// grammar that changes a rule a site names must change the site, and the test does not see
+// that the message names the rule correctly, only that the tree is shaped as the grammar is.
+
 /// The expression of `tree`, parsed as `Expr` from `tokens` of `text`.
 pub fn build(text: &str, tokens: &[Token], tree: &Tree) -> Result<Expr, Error> {
     expr(text, tokens, tree, tree.root)
@@ -262,6 +298,7 @@ impl<'a, 's> Builder<'a, 's> {
             "Lambda" => self.lambda(n),
             // Left-recursive: `a else b else c` arrives as ((a else b) else c).
             "Expr12" => {
+                // Shape: see "Why the shape of a node is known" above; `~Or` builds no node.
                 let [l, t] = kids[..] else {
                     unreachable!("Expr12 = Expr12 ElseTail | ~Or")
                 };
@@ -269,7 +306,10 @@ impl<'a, 's> Builder<'a, 's> {
                 self.else_tail(e, t)
             }
             "Or" | "And" | "Additive" | "Multiplicative" | "Equality" | "Compare" => {
-                // The operator is the token before the right operand.
+                // The operator is the token before the right operand. Shape: see "Why the
+                // shape of a node is known" above; each of these alternatives that builds a
+                // node is `L op R`, its operator a literal between its two children, and every
+                // operator these alternatives name is one `BinaryOp::of_token` reads.
                 let op = self.op(self.tree.nodes[kids[1]].start - 1);
                 let op =
                     BinaryOp::of_token(op).expect("Or to Multiplicative join by a binary operator");
@@ -325,6 +365,8 @@ impl<'a, 's> Builder<'a, 's> {
             }
             "Infix" => self.infix_call(n),
             "OpFunction" => {
+                // Shape: see "Why the shape of a node is known" above; `BinaryOp::of_token`
+                // reads all sixteen `BinOp` literals.
                 let op = self.op(self.tree.nodes[n].start + 1);
                 let op = BinaryOp::of_token(op)
                     .expect("OpFunction = '(' BinOp ')', each BinOp a binary operator");
@@ -347,6 +389,8 @@ impl<'a, 's> Builder<'a, 's> {
             // yet, so its node gives the error naming its layer.
             "Prefix" if self.tree.name(kids[0]) == "AnnotExpr" => self.node(kids[0]),
             "Prefix" => {
+                // Shape: see "Why the shape of a node is known" above; the `AnnotExpr`
+                // alternative is read on the line before.
                 let op = self.op(self.tree.nodes[n].start);
                 let op = UnaryOp::of_token(op).expect("Prefix = ('-' | '!') Prefix");
                 let e = self.node(kids[0])?;
@@ -365,6 +409,7 @@ impl<'a, 's> Builder<'a, 's> {
             }
             "AtomExpr" => {
                 let i = self.tree.nodes[n].start;
+                // Shape: see "Why the shape of a node is known" above (`AtomExpr = ATOM`).
                 let Tok::Atom(a) = &self.tokens[i].tok else {
                     unreachable!("an ATOM token")
                 };
@@ -404,6 +449,7 @@ impl<'a, 's> Builder<'a, 's> {
             "Match" => self.matching(n),
             // The body is a block that may export nothing: a loop's value is its last frame.
             "Loop" => {
+                // Shape: see "Why the shape of a node is known" above.
                 let (&body, label) = kids.split_last().expect("Loop ends in its block");
                 let label: Option<String> = label
                     .first()
@@ -419,6 +465,8 @@ impl<'a, 's> Builder<'a, 's> {
                     span,
                 })
             }
+            // Cannot be reached: `make` calls this only for a rule `forms` maps to
+            // `Form::Expr`, and the thirty names listed there are the thirty arms above.
             _ => unreachable!("make builds only these rules as expressions"),
         }
     }
@@ -438,6 +486,8 @@ impl<'a, 's> Builder<'a, 's> {
     /// A lambda: `Name '->' body` or `'(' Params? ')' '->' body`.
     fn lambda(&mut self, n: usize) -> Result<Expr, Error> {
         let kids = self.kids(n);
+        // Shape: see "Why the shape of a node is known" above; the children are `[Name,
+        // body]`, `[Params, body]` or `[body]`.
         let body = *kids.last().expect("Lambda ends in its body");
         let params = match kids {
             [_] => Vec::new(),
@@ -465,6 +515,7 @@ impl<'a, 's> Builder<'a, 's> {
     /// `of` followed by the `ElseTail` node `t`.
     fn else_tail(&mut self, of: Expr, t: usize) -> Result<Expr, Error> {
         let kids = self.kids(t);
+        // Shape: see "Why the shape of a node is known" above.
         let (pattern, default) = match kids {
             [p, d] => (Some(self.pattern(*p)?), self.node(*d)?),
             [d] => (None, self.node(*d)?),
@@ -503,6 +554,7 @@ impl<'a, 's> Builder<'a, 's> {
                 return Ok(self.main_files(span));
             }
             "CallSuffix" => {
+                // Shape: see "Why the shape of a node is known" above.
                 let (positional, named, curry) = match node.kids[..] {
                     [] => (Vec::new(), Vec::new(), false),
                     [args] => self.args(args, span)?,
@@ -561,7 +613,10 @@ impl<'a, 's> Builder<'a, 's> {
             (3, &[_, unordered]) => return Err(self.later(unordered)),
             // `as` and `into`, a remap (sec:remap_law).
             (8, _) => return self.remap(of, t),
-            // `with f(…)` and `without f(…)` attach and drop a facet (sec:facets).
+            // `with f(…)` and `without f(…)` attach and drop a facet (sec:facets). Shape: see
+            // "Why the shape of a node is known" above; the arms above take the alternatives
+            // of layers 2, 3 and 8, and those left, of layers 7 and 12, begin with `with` and
+            // `without` (the `into` arm is never taken).
             _ => {
                 let kind = match self.word(self.tree.nodes[t].start) {
                     "into" => "the remap",
@@ -581,6 +636,8 @@ impl<'a, 's> Builder<'a, 's> {
             if self.tree.layer(u) != 2 {
                 return Err(self.later(u));
             }
+            // Shape: see "Why the shape of a node is known" above; layer 2 is `Name ('.'
+            // Name)* '=' Expr`.
             let (&value, names) = self.kids(u).split_last().expect("Update ends in its value");
             let path: Vec<&str> = (names.iter())
                 .map(|&k| self.word(self.tree.nodes[k].start))
@@ -636,6 +693,8 @@ impl<'a, 's> Builder<'a, 's> {
     /// remap with both halves. So does `(m as (…)) into (…)`, which means the same: `as` alone
     /// only names the source's levels, and the `into` pattern then binds them by those names.
     fn remap(&mut self, of: Expr, t: usize) -> Result<Expr, Error> {
+        // Shape: see "Why the shape of a node is known" above; both layer-8 alternatives of
+        // `ReduceTail` read their pattern first, then `Suffix*`.
         let (&pattern, suffixes) = (self.kids(t).split_first())
             .expect("a remap tail holds its pattern after the parenthesis");
         // The pattern's `)` is the token after its last.
@@ -737,6 +796,9 @@ impl<'a, 's> Builder<'a, 's> {
                 // Until a value follows, the field is the variable of its name.
                 fields.push((name.into(), self.body(k)?));
             } else {
+                // Shape: see "Why the shape of a node is known" above. In `Name ':' (Lambda
+                // | Expr12)?` a value comes after its name, and a value is followed by `,` or
+                // `}`, never `:`, so the first child is a name.
                 let value = self.node(k)?;
                 fields
                     .last_mut()
@@ -785,6 +847,8 @@ impl<'a, 's> Builder<'a, 's> {
         let kind = if map {
             let mut out = Vec::with_capacity(entries.len());
             for &e in entries {
+                // Shape: see "Why the shape of a node is known" above; an entry of one child
+                // in a map was refused above (`odd`).
                 let &[k, v] = self.kids(e) else {
                     unreachable!("Entry = Expr12 '->' Expr12")
                 };
@@ -806,6 +870,9 @@ impl<'a, 's> Builder<'a, 's> {
     /// `InPattern`, whose `Binder`s are names or `_`, and the source.
     fn for_expr(&mut self, n: usize) -> Result<Expr, Error> {
         let kids = self.kids(n);
+        // Shape: see "Why the shape of a node is known" above; the children are the
+        // generator, each `MoreGen`, the guard if written, and the block, and a `MoreGen` is
+        // refused below, so what is left between is the guard or nothing.
         let (&generator, rest) = kids.split_first().expect("For = 'for' Generator …");
         let (&body, rest) = rest.split_last().expect("For ends in its block");
         if let Some(&more) = rest.iter().find(|&&k| self.tree.name(k) == "MoreGen") {
@@ -835,6 +902,7 @@ impl<'a, 's> Builder<'a, 's> {
     /// The `match` of node `n`: the value matched, then each `Arm`, which holds its pattern,
     /// its guard if written, and its value.
     fn matching(&mut self, n: usize) -> Result<Expr, Error> {
+        // Shape: see "Why the shape of a node is known" above, here and for each `Arm`.
         let (&of, arms) = self
             .kids(n)
             .split_first()

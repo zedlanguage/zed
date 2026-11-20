@@ -29,6 +29,8 @@ const BINARY: [&str; 3] = ["Additive", "Multiplicative", "Power"];
 impl Builder<'_, '_> {
     /// The call that the `Infix` node `n`, `a ~f~ b`, is.
     pub(super) fn infix_call(&mut self, n: usize) -> Result<Expr, Error> {
+        // Shape: see "Why the shape of a node is known" (`ast/mod.rs`), here and at the INFIX
+        // token below: the `~Additive` alternative makes no `Infix` node.
         let [l, r] = self.kids(n)[..] else {
             unreachable!("Infix = Infix INFIX Additive | ~Additive")
         };
@@ -97,6 +99,8 @@ impl Builder<'_, '_> {
         let (mut op, mut x) = (None, r);
         loop {
             if BINARY.contains(&tree.name(x)) {
+                // Shape: see "Why the shape of a node is known" (`ast/mod.rs`): each of the
+                // three rules' node-building alternatives is operand, operator literal, operand.
                 let [left, right] = tree.nodes[x].kids[..] else {
                     unreachable!("a binary arithmetic node has two operands")
                 };

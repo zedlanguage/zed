@@ -92,6 +92,8 @@ impl Builder<'_, '_> {
     /// The annotations and declaration of node `n`, an `Annotated`. An annotation with
     /// parentheses is an `Annot` node; a bare one is an `ANNOT` token of `n` itself.
     fn annotated(&mut self, n: usize) -> Result<StmtKind, Error> {
+        // Shape: see "Why the shape of a node is known" (`ast/mod.rs`), here and in the walk
+        // below: before the `Decl`, each token begins an `Annot` child or is an `ANNOT`.
         let (&d, nodes) = self.kids(n).split_last().expect("Annotated ends in a Decl");
         let mut annots = Vec::new();
         let mut nodes = nodes.iter().peekable();
@@ -128,6 +130,7 @@ impl Builder<'_, '_> {
     /// not end in `...`, since an annotation is not a call that can be curried.
     fn annot(&mut self, n: usize) -> Result<Annot, Error> {
         let node = &self.tree.nodes[n];
+        // Shape: see "Why the shape of a node is known" (`ast/mod.rs`), here and below.
         let Tok::Annot(name) = &self.tokens[node.start].tok else {
             unreachable!("Annot = ANNOT …")
         };
@@ -200,6 +203,8 @@ impl Builder<'_, '_> {
                 notes: Vec::new(),
             })
         };
+        // Shape: see "Why the shape of a node is known" (`ast/mod.rs`), here and at the string
+        // two tokens on, after the `(`.
         let Tok::Annot(name) = &self.tokens[node.start].tok else {
             unreachable!("Pin = ANNOT '(' STRING ','? ')'")
         };
@@ -252,6 +257,8 @@ impl Builder<'_, '_> {
                     .map(|&k| self.node(k))
                     .collect::<Result<_, _>>()?,
             ),
+            // Shape: see "Why the shape of a node is known" (`ast/mod.rs`), for this arm and
+            // the `Initial`, `IndexedDef` and `TypeDecl` arms below.
             "PlainBinding" => {
                 let (&value, targets) = kids.split_last().expect("PlainBinding ends in a value");
                 StmtKind::Bind {
@@ -378,6 +385,8 @@ impl Builder<'_, '_> {
     // Complexity: one pass over the a arms, each tested on its last child in O(1): O(a).
     fn if_stmt(&mut self, d: usize) -> Result<Expr, Error> {
         let kids = self.kids(d);
+        // Shape: see "Why the shape of a node is known" (`ast/mod.rs`), here and in
+        // `arm_ends_in_statement`, which is called only with an arm `b` among these kids.
         // `'if' head(Expr12) Block ('else' 'if' head(Expr12) Block)* ('else' Block)? ';'`: pairs
         // of a condition and its arm, then the `else` arm when the count is odd.
         let (pairs, last) = match kids.len() % 2 {
@@ -619,6 +628,7 @@ impl Builder<'_, '_> {
         };
         let mut items = Vec::new();
         for &item in self.kids(b) {
+            // Shape: see "Why the shape of a node is known" (`ast/mod.rs`).
             let [name, keys @ .., value] = self.kids(item) else {
                 unreachable!("BoundaryItem = Name ('[' IndexKey ']')+ '=' Expr")
             };
@@ -636,6 +646,7 @@ impl Builder<'_, '_> {
     fn keys(&mut self, keys: &[usize]) -> Result<Vec<IndexKey>, Error> {
         keys.iter()
             .map(|&k| {
+                // Shape: see "Why the shape of a node is known" (`ast/mod.rs`).
                 Ok(match *self.kids(k) {
                     [name, set] => IndexKey::In {
                         name: self.word(self.tree.nodes[name].start).into(),
@@ -653,6 +664,8 @@ impl Builder<'_, '_> {
     /// brought in twice with equal forms is one field at its first place (DESIGN.md
     /// sec:introspection).
     fn structure(&mut self, n: usize) -> Result<Struct, Error> {
+        // Shape: see "Why the shape of a node is known" (`ast/mod.rs`), here and at each
+        // `StructField` below; the caller builds only the layer-2 alternative.
         let (&name, kids) = self
             .kids(n)
             .split_first()
@@ -725,6 +738,8 @@ impl Builder<'_, '_> {
     /// its kid `skip`, after the receiver's.
     fn function(&mut self, n: usize, skip: usize) -> Result<Function, Error> {
         let kids = self.kids(n);
+        // Shape: see "Why the shape of a node is known" (`ast/mod.rs`), here and at the
+        // `Body` below: both its alternatives begin with the expression or block.
         let (&body, head) = kids.split_last().expect("Function ends in its body");
         let name: String = self.word(self.tree.nodes[kids[skip]].start).into();
         let is_main = skip == 0 && name == "main";

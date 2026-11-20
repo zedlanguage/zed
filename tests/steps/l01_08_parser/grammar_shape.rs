@@ -2,10 +2,14 @@
 //! a `~` alternative leaves no node of its own, and each form is a rule of its own, so a message
 //! names the form written.
 
+use std::collections::BTreeSet;
+use std::path::PathBuf;
+
 use zed_tests::trees::sx;
 use zedc::ast::build;
 use zedc::lex::lex;
-use zedc::parse::{Grammar, TOP, parse, parse_with};
+use zedc::parse::Expr as Peg;
+use zedc::parse::{Grammar, TOP, Tree, grammar, parse, parse_unit, parse_with};
 
 /// The bracketing of `text` as `start`.
 fn tree(text: &str, start: &str) -> String {
@@ -175,4 +179,203 @@ fn spaces_around_a_power_change_nothing() {
     assert_eq!(expr("-x^2"), "(- (^ x 2))");
     assert_eq!(expr("2^-1"), "(^ 2 (- 1))");
     assert_eq!(expr("a^b^c"), "(^ a (^ b c))");
+}
+
+/// The positions in `kids` (the rules of a node's children, in order) that a match of `e` from
+/// position `i` can end at, reading a child for each rule `e` names and nothing for a literal,
+/// a token kind or a lookahead, whose children the parser drops (`Frame::And`, `Frame::Not`
+/// truncate its children to their mark). `stands[r]` holds the rules whose node is a match of
+/// `r`: `r`, and through each `~R` alternative of `r` the rules that stand for `R`.
+fn ends(e: &Peg, kids: &[usize], i: usize, stands: &[BTreeSet<usize>]) -> BTreeSet<usize> {
+    let many = |e: &Peg, from: BTreeSet<usize>| {
+        // Every end reached by zero or more matches: each new end is matched from once, and
+        // the ends lie in 0..=kids.len(), so this stops.
+        let (mut all, mut todo) = (from.clone(), from.into_iter().collect::<Vec<_>>());
+        while let Some(j) = todo.pop() {
+            for k in ends(e, kids, j, stands) {
+                if all.insert(k) {
+                    todo.push(k);
+                }
+            }
+        }
+        all
+    };
+    let seq = |es: &[Peg], from: BTreeSet<usize>| {
+        es.iter().fold(from, |at, e| {
+            at.into_iter()
+                .flat_map(|j| ends(e, kids, j, stands))
+                .collect()
+        })
+    };
+    match e {
+        Peg::Rule(r) => match kids.get(i) {
+            Some(k) if stands[*r].contains(k) => BTreeSet::from([i + 1]),
+            _ => BTreeSet::new(),
+        },
+        Peg::Seq(es) => seq(es, BTreeSet::from([i])),
+        Peg::Choice(es) => es.iter().flat_map(|e| ends(e, kids, i, stands)).collect(),
+        Peg::Star(x) => many(x, BTreeSet::from([i])),
+        Peg::Plus(x) => many(x, ends(x, kids, i, stands)),
+        Peg::Sep(two) => {
+            let [sep, x] = &**two;
+            let first = ends(x, kids, i, stands);
+            many(&Peg::Seq(vec![sep.clone(), x.clone()]), first)
+        }
+        Peg::Opt(x) => {
+            let mut out = ends(x, kids, i, stands);
+            out.insert(i);
+            out
+        }
+        Peg::SetHead(x) | Peg::ClearHead(x) => ends(x, kids, i, stands),
+        Peg::And(_) | Peg::Not(_) | Peg::Lit(_) | Peg::Kind(_) | Peg::Head => BTreeSet::from([i]),
+        Peg::Class(_) | Peg::Any | Peg::Undefined(_) => {
+            unreachable!("the parser's grammar is read by `Grammar::read`")
+        }
+    }
+}
+
+/// The rule each `~R` alternative passes to.
+fn passed(e: &Peg) -> Option<usize> {
+    match e {
+        Peg::Rule(r) => Some(*r),
+        Peg::Seq(es) => es.iter().find_map(passed),
+        _ => None,
+    }
+}
+
+/// Every `.zed` unit under `zed/` (the corpus, the prelude and the fences) and in the steps'
+/// `zed/` folders, the folders `l01_29_repairs_and_printing::order::units` walks and more.
+fn units() -> Vec<(PathBuf, String)> {
+    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let mut dirs = vec![root.join("../zed")];
+    for step in std::fs::read_dir(root.join("steps")).unwrap() {
+        dirs.push(step.unwrap().path().join("zed"));
+    }
+    let mut out = Vec::new();
+    while let Some(dir) = dirs.pop() {
+        let Ok(entries) = std::fs::read_dir(&dir) else {
+            continue;
+        };
+        for e in entries {
+            let path = e.unwrap().path();
+            if path.is_dir() {
+                dirs.push(path);
+            } else if path.extension().is_some_and(|x| x == "zed") {
+                let text = zedc::source::load(&std::fs::read(&path).unwrap()).unwrap();
+                out.push((path, text));
+            }
+        }
+    }
+    out.sort();
+    out
+}
+
+/// The premise of the grammar-shape `unreachable!` and `expect` sites of the syntax-tree
+/// builder (zedc-syntax `ast/mod.rs`, "Why the shape of a node is known"): every node the
+/// parse builds is of an alternative that builds a node, and its children, read by rule, are a
+/// match of that alternative's expression, each child a node of the rule the expression names
+/// there or of a rule that stands for it through `~` alternatives. Checked on every node
+/// reached from the root, and from the roots of the string holes, of every corpus and step
+/// unit and of every case of `zed/grammar/cases.txt` that parses; the rules with an alternative
+/// that builds a node but no node in any of these are printed, since no node of theirs is
+/// checked here.
+#[test]
+fn every_node_s_children_match_its_alternative() {
+    let g = grammar();
+    let n = g.rules.len();
+    // `stands[r]`: `r` and every rule a chain of `~` alternatives from `r` reaches, found by
+    // a search with a visited set from each rule (O(r · a) for a alternatives in all).
+    let mut stands = vec![BTreeSet::new(); n];
+    for (r, set) in stands.iter_mut().enumerate() {
+        let mut todo = vec![r];
+        while let Some(q) = todo.pop() {
+            if set.insert(q) {
+                let alts = g.rules[q].alts.iter().filter(|a| a.pass);
+                todo.extend(alts.filter_map(|a| passed(&a.expr)));
+            }
+        }
+    }
+    let mut seen = vec![false; n];
+    let mut checked = 0usize;
+    let mut check = |tree: &Tree, from: &str| {
+        let mut trees = vec![tree];
+        while let Some(t) = trees.pop() {
+            trees.extend(&t.holes);
+            let mut stack = vec![t.root];
+            while let Some(m) = stack.pop() {
+                let node = &t.nodes[m];
+                let alt = &g.rules[node.rule].alts[node.alt];
+                let name = &g.rules[node.rule].name;
+                assert!(!alt.pass, "{from}: a node of a `~` alternative of {name}");
+                let kids: Vec<usize> = node.kids.iter().map(|&k| t.nodes[k].rule).collect();
+                let names: Vec<&str> = kids.iter().map(|&k| g.rules[k].name.as_str()).collect();
+                assert!(
+                    ends(&alt.expr, &kids, 0, &stands).contains(&kids.len()),
+                    "{from}: a node of {name}, alternative {}, has the children {names:?}",
+                    node.alt
+                );
+                seen[node.rule] = true;
+                checked += 1;
+                stack.extend(&node.kids);
+            }
+        }
+    };
+    for (path, text) in units() {
+        // A fence sketch may hold text the lexer refuses (`…`); it builds no tree.
+        let Ok(tokens) = lex(&text) else {
+            continue;
+        };
+        check(
+            &parse_unit(&text, &tokens, TOP).0,
+            &path.display().to_string(),
+        );
+    }
+    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let cases = std::fs::read_to_string(root.join("../zed/grammar/cases.txt")).unwrap();
+    for line in cases
+        .lines()
+        .filter(|l| !l.trim().is_empty() && !l.starts_with('#'))
+    {
+        // `Rule[@ring] ::: text ::: tree`, a line break written `⏎`, as `cases.rs` reads it.
+        let [start, text, _] = line.split(" ::: ").map(str::trim).collect::<Vec<_>>()[..] else {
+            panic!("a case is `Rule ::: text ::: tree`: {line}");
+        };
+        let (start, ring) = match start.split_once('@') {
+            Some((s, r)) => (s, r.parse().unwrap()),
+            None => (start, TOP),
+        };
+        let text = text.replace('⏎', "\n");
+        if let Ok(tokens) = lex(&text)
+            && let Ok(tree) = parse(&text, &tokens, start, ring)
+        {
+            check(&tree, line);
+        }
+    }
+    // The rules with a node that neither the units nor the cases build. `AnnotEnd`, `KeyOp`
+    // and `JoinExpr` are read only inside `&` and `!`, whose children are dropped, so no node
+    // of theirs is ever kept.
+    let written = [
+        ("Unit", "initial s: int = 0 with carryForward;"),
+        (
+            "Unit",
+            "main(m: MainArgs) { m.stdout <- m.args[0] else \"\"; }\n\
+             test with main::args = \"a\", out = 1 { \"\" -> \"a\\n\" }",
+        ),
+        ("Expr", "a ~max~ b ~min~ c"),
+        ("Unit", "x: !int = 1;"),
+        ("Unit", "x: 2^3 * 5 = 40;"),
+        ("Unit", "x: ? = 1;"),
+        ("DocFence", "f: int -> int\nf(1)"),
+    ];
+    for (start, text) in written {
+        let tokens = lex(text).unwrap();
+        let tree = parse(text, &tokens, start, TOP).unwrap_or_else(|e| panic!("{text}: {e}"));
+        check(&tree, text);
+    }
+    let unseen: Vec<&str> = (0..n)
+        .filter(|&r| !seen[r] && g.rules[r].alts.iter().any(|a| !a.pass))
+        .map(|r| g.rules[r].name.as_str())
+        .collect();
+    eprintln!("{checked} nodes checked; rules with no node checked: {unseen:?}");
+    assert!(checked > 0);
 }

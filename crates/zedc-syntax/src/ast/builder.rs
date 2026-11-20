@@ -320,6 +320,9 @@ impl<'t> Methods<'t> {
         while let Some((n, owner)) = stack.pop() {
             let kids = &tree.nodes[n].kids;
             match tree.name(n) {
+                // Shape: see "Why the shape of a node is known" (`ast/mod.rs`): a `Method` has
+                // its receiver, its name and its `Body` at least; the guard alone makes the
+                // `expect` hold.
                 "Method" if kids.len() >= 3 => {
                     let (&body, head) = kids.split_last().expect("a method ends in its body");
                     let result = head.iter().any(|&k| tree.name(k) == "Result");
@@ -898,6 +901,10 @@ impl<'a, 's> Builder<'a, 's> {
     }
 
     /// The operator token at `i`, as the lexer's static text.
+    // Shape: see "Why the shape of a node is known" (`ast/mod.rs`). Each caller passes the
+    // token of an operator literal of its node's alternative (`ast/mod.rs` binary operators,
+    // `OpFunction` and `Prefix`; `neglit.rs`; `infix.rs` `clash`), and the lexer makes each
+    // such literal a `Tok::Op`, or a `Tok::Keyword` for `div` and `mod`.
     pub(super) fn op(&self, i: usize) -> &'static str {
         match self.tokens[i].tok {
             Tok::Op(o) | Tok::Keyword(o) => o,
@@ -912,11 +919,14 @@ impl<'a, 's> Builder<'a, 's> {
         bound: Option<usize>,
         f: impl FnOnce(&mut Self, usize) -> Result<T, Error>,
     ) -> Result<RangeEnd<T>, Error> {
+        // Shape: see "Why the shape of a node is known" (`ast/mod.rs`). The callers are the
+        // `Range` arm (`op` begins its `RangeTail`) and `RangePat` (`op` follows its first
+        // `SignedLit`); in both rules a bound follows `..<` and `..=` and none follows `..`.
         Ok(match (self.word(op), bound) {
             ("..<", Some(b)) => RangeEnd::Below(f(self, b)?),
             ("..=", Some(b)) => RangeEnd::Through(f(self, b)?),
             ("..", None) => RangeEnd::Open,
-            _ => unreachable!("RangeTail = '..<' Additive | '..=' Additive | '..'"),
+            _ => unreachable!("RangeTail = '..<' Infix | '..=' Infix | '..', and RangePat alike"),
         })
     }
 
@@ -1044,6 +1054,9 @@ impl<'a, 's> Builder<'a, 's> {
     }
 
     /// The literal of token `i`, written in `span`, which holds its grouping parentheses.
+    // Shape: see "Why the shape of a node is known" (`ast/mod.rs`). The callers are the
+    // `Literal` node and the `SignedLit` pattern (after its `-`, if any), so token `i` is an
+    // INT, FLOAT, RAT or STRING, or the keyword `true` or `false`.
     pub(super) fn literal_at(&mut self, i: usize, span: Span) -> Result<Expr, Error> {
         let kind = match &self.tokens[i].tok {
             Tok::Int { radix, digits } => ExprKind::Int {
@@ -1063,6 +1076,29 @@ impl<'a, 's> Builder<'a, 's> {
                     out.push(match p {
                         Part::Text(t) => StrPart::Text(Arc::clone(t)),
                         Part::Hole { .. } => {
+                            // Why the hole's expression is here, and taken once. In
+                            // `with_holes` (ast/mod.rs) each level's holes get the list places
+                            // `first..first + h`, in token order, over the tokens that
+                            // `!tree.skips` keeps; `Builder::new` counts `holes[i]` over the same
+                            // tokens with the same filter, so `first + holes[i]` is the place of
+                            // token `i`'s first hole and the places of its holes follow. A
+                            // level's places are pushed after the level itself, so they are
+                            // above its index, and `with_holes` builds the levels from the last
+                            // down, filling `done[j]` for every `j` above the level before the
+                            // level is built: each hole is `Some` when first read. Each place
+                            // belongs to one hole of one level, and token `i`'s literal is built
+                            // once: only a `Literal` or `SignedLit` node calls `literal_at` on a
+                            // STRING token (`literal`, `make_pattern`), neither rule holds the
+                            // other (syntax.peg `Literal`, `SignedLit`), and `fill` makes each
+                            // node of the tree once. So no place is read twice. Tested by the
+                            // string-hole tests (`l01_19_whole_file_ports::main_args::
+                            // a_main_in_a_string_hole_is_built`, nested holes in the lexer's
+                            // tests). The argument needs the tree to keep no node over a skipped
+                            // token: before the fix in `parse/recover.rs` (the loop that drops a
+                            // kept item reaching past the skip), recovery kept a declaration
+                            // overlapping a skipped line and this `expect` failed; this test
+                            // reaches that case: `l01_08_parser::recovery_edges::
+                            // a_declaration_kept_up_to_a_failing_line_inside_it_is_skipped_with_it`.
                             let e = self.done[hole].take();
                             hole += 1;
                             StrPart::Hole(e.expect("a hole's expression is taken once")?)

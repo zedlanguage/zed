@@ -36,6 +36,9 @@ impl Builder<'_, '_> {
         let kids = self.kids(n);
         let node = &self.tree.nodes[n];
         let span = self.span(n);
+        // Shape: see "Why the shape of a node is known" (`ast/mod.rs`), for each arm below.
+        // The `_` arm cannot be reached: `forms` maps to `Form::Type` the same fourteen rule
+        // names as the arms here, and only `Form::Type` calls this function.
         let kind = match self.tree.name(n) {
             "Type" if kids.len() == 1 => return self.ty(kids[0]),
             "Type" if kids.len() == 2 && self.tree.name(kids[1]) == "TypeBounds" => {
@@ -168,6 +171,9 @@ impl Builder<'_, '_> {
         let first = self.ty(kids[0])?;
         let mut ts = if self.tree.nodes[kids[0]].rule == self.tree.nodes[n].rule {
             let mut first = first;
+            // A kid of the node's own rule is a node of that rule's first alternative (the
+            // `~` alternative makes no node of its own), so `make_type` built it in the
+            // `TypeOr` or `TypeAnd` arm, to a `Union` or an `And`.
             match &mut first.kind {
                 TypeKind::Union(ts) | TypeKind::And(ts) => mem::take(ts),
                 _ => unreachable!("a chain builds to its list"),
@@ -194,6 +200,8 @@ impl Builder<'_, '_> {
     fn range_lit(&mut self, n: usize) -> Result<(Bound, RangeEnd<Bound>), Error> {
         let node = &self.tree.nodes[n];
         let mut bounds = node.kids.iter().copied();
+        // Shape: see "Why the shape of a node is known" (`ast/mod.rs`); the lexer reads
+        // `..<`, `..=` and `..` as single tokens, longest first.
         let (low, op) = if self.word(node.start) == "_" {
             (None, node.start + 1)
         } else {
@@ -230,6 +238,8 @@ impl Builder<'_, '_> {
 
     fn arrow_params(&mut self, n: usize) -> Result<Vec<TypeParam>, Error> {
         let node = &self.tree.nodes[n];
+        // Shape: see "Why the shape of a node is known" (`ast/mod.rs`): the second alternative
+        // gives two or more `TypeParam` kids, and the third its `Name` and its type.
         match node.kids[..] {
             [] => Ok(Vec::new()),
             [first, ..] if self.tree.name(first) == "TypeParam" => {
@@ -246,6 +256,7 @@ impl Builder<'_, '_> {
 
     fn type_param(&mut self, n: usize) -> Result<TypeParam, Error> {
         let node = &self.tree.nodes[n];
+        // Shape: see "Why the shape of a node is known" (`ast/mod.rs`).
         Ok(match node.kids[..] {
             [name, ty] => TypeParam {
                 name: Some(self.word(self.tree.nodes[name].start).into()),
@@ -375,6 +386,9 @@ impl Builder<'_, '_> {
     pub(super) fn make_pattern(&mut self, n: usize) -> Result<Pattern, Error> {
         let node = &self.tree.nodes[n];
         let span = self.span(n);
+        // Shape: see "Why the shape of a node is known" (`ast/mod.rs`), for each arm below.
+        // Only `AtomPattern` falls through to the end: `forms` maps to `Form::Pattern` the
+        // eight rule names of the arms and `AtomPattern`, and only `Form::Pattern` calls this.
         match self.tree.name(n) {
             "NamePat" => return Ok(Pattern::Name(self.word(node.start).into(), span)),
             "WildPat" => return Ok(Pattern::Wild(span)),
