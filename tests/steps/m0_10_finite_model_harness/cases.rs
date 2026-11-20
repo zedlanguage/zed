@@ -108,7 +108,10 @@ fn the_random_generator_repeats_from_its_seed_and_stays_in_range() {
     let ys: Vec<u64> = (0..16).map(|_| b.next_u64()).collect();
     assert_eq!(xs, ys);
     assert_ne!(Rng::new(43).next_u64(), xs[0]);
-    // SplitMix64 from the state 0 (Steele, Lea and Flood 2014).
+    // SplitMix64 from the state 0 (G. L. Steele, D. Lea and C. H. Flood, "Fast splittable
+    // pseudorandom number generators", OOPSLA 2014, doi:10.1145/2660193.2660195; DOI checked on
+    // Crossref 2026-11-20, the paper not read). The value is the one `seed_tests` checks for
+    // `mix(0)`, taken from the JDK's SplittableRandom, which implements the paper's generator.
     assert_eq!(Rng::new(0).next_u64(), 0xe220_a839_7b1d_cdaf);
     let mut r = Rng::new(1);
     let ints: Vec<i64> = (0..2_000).map(|_| r.int(-8, 8)).collect();
