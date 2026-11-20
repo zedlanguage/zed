@@ -62,17 +62,41 @@ use zed_numtheory::{factor, gcd_big_u64, is_prime, mul_mod, pow_mod_big, rem_big
 // attributes". Sketch: roundTiesToEven delivers the representable value nearest the exact
 // result and, of two equally near, the one with an even least significant digit;
 // roundTiesToAway delivers, of two equally near, the one larger in magnitude. Here the
-// "representable values" are the whole numbers, so even means an even whole number. How
-// checked, 2026-11-20: the section number and title against the contents in the publisher's
-// preview of ISO/IEC 60559:2020 (the same text). The 2019 text was not readable (see the
-// `sqrt` rule in `eval.rs`); the definitions were read 2026-11-20, PDF, in the 2008 edition,
-// doi:10.1109/IEEESTD.2008.4610935, subsection 4.3.1, "Rounding-direction attributes to
-// nearest", p. 16: roundTiesToEven, "if the two nearest floating-point numbers bracketing an
-// unrepresentable infinitely precise result are equally near, the one with an even least
-// significant digit shall be delivered"; roundTiesToAway, "the one with larger magnitude".
-// The working group's list of 2019 changes says only that the roundTiesToEven definition
-// was "extended to cover the unusual case when both nearest neighbors are odd", which cannot
-// happen for whole numbers. Departure: the
+// "representable values" are the whole numbers, so even means an even whole number. Read
+// 2026-11-20 in the 2019 text (the copy named at the `sqrt` rule in `eval.rs`), 4.3.1,
+// "Rounding-direction attributes to nearest", p. 27: roundTiesToEven, "the floating-point
+// number nearest to the infinitely precise result shall be delivered; if the two nearest
+// floating-point numbers bracketing an unrepresentable infinitely precise result are equally
+// near, the one with an even least significant digit shall be delivered; if that is not
+// possible, the one larger in magnitude shall be delivered"; roundTiesToAway, "if the two
+// nearest ... are equally near, the one with larger magnitude shall be delivered". The case
+// "if that is not possible" (two odd neighbors, for one-digit precision) cannot happen for
+// whole numbers, of which one of any two neighbors is even. And 4.3.2, "Directed rounding
+// attributes", p. 27: roundTowardPositive gives the number "closest to and no less than the
+// infinitely precise result", roundTowardNegative the one "closest to and no greater than"
+// it, roundTowardZero the one "closest to and no greater in magnitude than" it; these are
+// `ceil`, `floor` and `trunc` here.
+//
+// Every one of these rules is monotone: x <= y gives round(x) <= round(y). The standard
+// states this only for conversions to and from character sequences (5.12.2, NOTE 1, p. 46,
+// "Conversions are monotonic"), so here is the proof from the definitions above, for any
+// set of representable values (floats with their infinities, or whole numbers). Directed:
+// roundTowardNegative(x) is the greatest value <= x, and every value <= x is <= y, so it is
+// <= roundTowardNegative(y); roundTowardPositive is the mirror image, and roundTowardZero is
+// roundTowardNegative on x >= 0 and roundTowardPositive on x <= 0, both monotone and both 0
+// at 0. To nearest: let r = round(x), s = round(y), x <= y, and suppose s < r. Let f(t) =
+// |t - s| - |t - r|; for s < r it is -(r - s) up to s, 2t - r - s between, r - s from r on,
+// so f does not decrease. r nearest to x gives f(x) >= 0, s nearest to y gives f(y) <= 0, so
+// 0 <= f(x) <= f(y) <= 0 and f(x) = f(y) = 0, which forces x = y = (r + s) / 2: one tie
+// broken two ways. But both tie rules pick one of the two neighbors by a fixed property (even
+// digit, or larger magnitude), so they pick the same one, r = s, a contradiction. Overflow:
+// 4.3.1 sends every result of magnitude at least b^emax (b - b^(1-p) / 2) to the infinity of
+// its sign. If y is at or past that bound, round(y) = +inf is above every value; if x is at
+// or past its negative, round(x) = -inf is below every value; otherwise x and y both lie
+// inside, where the nearest values are finite and the proof above applies. (Whole numbers
+// have no largest one, so this case does not arise for `Rat::round_whole`.) zedc-lattice
+// `grade.rs` relies on this proof.
+// Departure: the
 // standard rounds to a float format; `Rat::round_whole` rounds an exact rational to an integer,
 // so no precision or overflow enters. Tests: `l01_18_scalar_interpreter::rounding`, which
 // checks ties at both signs under both rules (it catches a tie sent the wrong way, not a

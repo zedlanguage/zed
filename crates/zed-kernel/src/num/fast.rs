@@ -237,7 +237,7 @@
 //!   at `2^q`. Toom squares (a product follows from squares) and lets `r` grow with `n`, for
 //!   a size below `n c^sqrt(log n)`. Cook's thesis, chapter III, "Positive results", section
 //!   16, "The Toom algorithm for multiplication", pp. 51-53, read 2026-11-20 in the scans D. J.
-//!   Bernstein keeps at http://cr.yp.to/bib/1966/cook.html (cook/01.jpg to 03.jpg; the pages
+//!   Bernstein keeps at <http://cr.yp.to/bib/1966/cook.html> (cook/01.jpg to 03.jpg; the pages
 //!   carry no numbers, which are MCA's, below). Cook multiplies two numbers instead of
 //!   squaring, "Toom's method (slightly modified)": "divide the expansions of m and n into
 //!   r + 1 segments of q digits each", `P(x) = Σ α_k x^k` and `Q(x) = Σ β_k x^k` with
@@ -252,8 +252,8 @@
 //!   1)/ log r", and "The case r = 3 is known as Toom-Cook 3-way"; its `r` counts parts, one
 //!   more than Toom's and Cook's. So Toom-3 is three parts, five products of a third the size,
 //!   `T(n) = 5 T(n/3) + O(n)`, which by the master theorem is `O(n^log3(5))`, `log3(5) =
-//!   1.46497`. MCA's reference [76] gives the cr.yp.to URL and its notes put Toom-Cook in
-//!   the thesis at "[76, pp. 51–77]". Departures: num-bigint's Toom-3 evaluates at 0, 1, -1,
+//!   1.46497`. MCA's reference \[76\] gives the cr.yp.to URL and its notes put Toom-Cook in
+//!   the thesis at "\[76, pp. 51–77\]". Departures: num-bigint's Toom-3 evaluates at 0, 1, -1,
 //!   -2 and infinity (num-bigint 0.4.8 `src/biguint/multiplication.rs`, line 325, "w(t) at
 //!   t = 0, 1, -1, -2 and inf", with an interpolation that "is given by Bodrato", line 380;
 //!   read 2026-11-20), not at Cook's 0..2r, and stops its recursion at a fixed size; neither

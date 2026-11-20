@@ -341,9 +341,13 @@ fn casts_between_number_kinds() {
         // The largest `f32` is exact; the next `f64` above it rounds back to it, as IEEE 754
         // rounds below `f32::MAX + ulp/2`; that midpoint, a tie, rounds to the even side,
         // the infinity, at either sign. Citation: IEEE Std 754-2019,
-        // doi:10.1109/IEEESTD.2019.8766229, sections 4.3 and 7.4 ("Overflow"); the full comment
-        // on the rounding rule is in `num.rs`, enum `Rounding`, and the narrowing is at
-        // `words.rs`, `Prim::CastF32` on a `Value::Float`.
+        // doi:10.1109/IEEESTD.2019.8766229, sections 4.3 and 7.4 ("Overflow"), read
+        // 2026-11-20: 4.3.1, p. 27, sends a result "with magnitude at least b^emax × (b − ½
+        // b^(1−p))", here exactly `f32::MAX + ulp/2`, to the infinity of its sign, and 7.4,
+        // p. 53, "roundTiesToEven and roundTiesToAway carry all overflows to ∞ with the sign of
+        // the intermediate result"; the full comment on the rounding rule is in `num.rs`, enum
+        // `Rounding`, and the narrowing, with the arithmetic of that bound, is at `words.rs`,
+        // `Prim::CastF32` on a `Value::Float`.
         (
             Prim::CastF32,
             Value::float(f64::from(f32::MAX)),

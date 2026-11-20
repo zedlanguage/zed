@@ -60,22 +60,18 @@ use chain::Chain;
 /// `f64::minimum` is not stable, and `f64::min` returns the other operand of a NaN. Source:
 /// IEEE Std 754-2019, doi:10.1109/IEEESTD.2019.8766229 (the full citation is at the `sqrt`
 /// and `fma` rule in `eval.rs`), section 9.6, "Minimum and maximum operations", the operations
-/// `minimum` and `maximum`. The section number and title were checked 2026-11-20 against the
-/// contents in the publisher's preview of ISO/IEC 60559:2020 (the same text). The 2019 text
-/// was not read: the LibGen and Sci-Hub copies are a title page and filler (see the `sqrt` rule
-/// in `eval.rs`), and the 2008 edition, which was read, has no such operation (its 5.3.1
-/// `minNum` returns the number when the other operand is a quiet NaN, p. 19). Read
-/// 2026-11-20 instead, HTML and PDF, from the working group's pages
-/// (grouper.ieee.org/groups/msc/ANSI_IEEE-Std-754-2019/background/): the list of changes,
-/// "9.6 new {min,max}imum{,Number,Magnitude,MagnitudeNumber} operations are recommended; NaN
-/// and signed zero handling are changed from 754-2008 5.3.1", and A. Fog's note
-/// nan-propagation.pdf, 2018: "The new functions named maximum and minimum are certain to
-/// propagate NaNs". That `-0.0` is below `0.0` was read 2026-11-20 in the C23 working draft
-/// N3096 (ISO/IEC 9899:2023, April 1, 2023, open-std.org/jtc1/sc22/wg14/www/docs/n3096.pdf),
-/// 7.12.12.5, "The fminimum functions", p. 270 (the operation table of F.3, p. 508, pairs
-/// the IEC 60559 `minimum` with `fminimum`): "For these functions, −0 is considered less
-/// than +0"; F.10.9.4 (p. 531) says they "treat NaNs like other functions in `<math.h>`", that is, a NaN in gives a NaN
-/// out. The IEEE text itself is still unread. Test:
+/// `minimum` and `maximum`. Read 2026-11-20 in the 2019 text (the copy named at the `sqrt`
+/// rule in `eval.rs`), 9.6, p. 69: "minimum(x, y) is x if x < y, y if y < x, and a quiet NaN if
+/// either operand is a NaN, according to 6.2. For this operation, −0 compares less than +0.
+/// Otherwise (i.e., when x = y and signs are the same) it is either x or y", and "maximum(x,
+/// y) is x if x > y, y if y > x, and a quiet NaN if either operand is a NaN ... For this
+/// operation, +0 compares greater than −0". On equal values of the same sign the two
+/// operands are the same float, so taking `a` there is the standard's "either x or y". The
+/// 2008 edition has no such operation (its 5.3.1 `minNum` returns the number when the other
+/// operand is a quiet NaN, p. 19). The C23 working draft N3096 (ISO/IEC 9899:2023, April 1,
+/// 2023, open-std.org/jtc1/sc22/wg14/www/docs/n3096.pdf), read the same day, pairs the IEC
+/// 60559 `minimum` with `fminimum` (F.3, p. 508) and says the same in 7.12.12.5, p. 270: "For
+/// these functions, −0 is considered less than +0". Test:
 /// `min_and_max_put_the_negative_zero_below_and_nan_absorbs` (the step tests of value
 /// representation), which checks both zeros in both orders and NaN in either place.
 pub(crate) fn ieee_min_max(min: bool, a: f64, b: f64) -> f64 {
@@ -115,12 +111,12 @@ impl F64 {
     /// Proof that the test is exactly "is a NaN": a binary64 value is a NaN if and only if its
     /// 11 exponent bits are all ones and its 52 significand bits are not all zero (IEEE Std
     /// 754-2019, doi:10.1109/IEEESTD.2019.8766229, section 3.4, "Binary interchange format
-    /// encodings"; the section's title was checked 2026-11-20 against the contents in the
-    /// publisher's preview of ISO/IEC 60559:2020, the same text; the 2019 text was not
-    /// readable, so the rule was read 2026-11-20, PDF, in the 2008 edition,
-    /// doi:10.1109/IEEESTD.2008.4610935, section 3.4, p. 9: "If E = 2^w − 1 and T ≠ 0, then r
-    /// is qNaN or sNaN and v is NaN regardless of S", with w = 11 exponent bits and T the 52
-    /// trailing significand bits for binary64). With the sign bit cleared, the bits
+    /// encodings", read 2026-11-20 in the 2019 text, the copy named at the `sqrt` rule in
+    /// `eval.rs`, p. 19: "If E = 2^w − 1 and T ≠ 0, then r is qNaN or sNaN and v is NaN
+    /// regardless of S"; its other cases, E = 2^w − 1 with T = 0 (an infinity), 1 ≤ E ≤ 2^w − 2
+    /// (normal) and E = 0 (zero or subnormal), are not NaNs, which gives the "only if"; w = 11
+    /// exponent bits and T the 52 trailing significand bits for binary64, Table 3.5, p. 23; the
+    /// 2008 edition, 3.4, p. 9, has the same words). With the sign bit cleared, the bits
     /// read as an unsigned integer are `e * 2^52 + m` with `e < 2^11` and `m < 2^52`; they
     /// exceed `0x7FF0_0000_0000_0000 = (2^11 - 1) * 2^52` exactly when `e = 2^11 - 1` and
     /// `m > 0`, since `e < 2^11 - 1` gives at most `(2^11 - 2) * 2^52 + 2^52 - 1`, below it.
@@ -808,15 +804,14 @@ impl Value {
     // the relations less, equal, greater and unordered; a NaN is unordered with every value,
     // itself included, so `==`, `<`, `<=`, `>` and `>=` are false on it and `!=` is true; and
     // comparisons ignore the sign of zero, so `-0.0 == 0.0`. Rust's `f64::partial_cmp`, `==`
-    // and `<` follow the same rule, and the code relies on them. How checked, 2026-11-20: the
-    // section number and title against the contents in the publisher's preview of ISO/IEC
-    // 60559:2020 (the same text as IEEE 754-2019); the 2019 text itself was not readable (see
-    // the `sqrt` rule in `eval.rs`), and the working group's list of changes says 5.11 was
-    // "reorganized and rewritten for clarity". The rule was read 2026-11-20, PDF, in the 2008
-    // edition, doi:10.1109/IEEESTD.2008.4610935, section 5.11, p. 29: "Four mutually exclusive
-    // relations are possible: less than, equal, greater than, and unordered ... Every NaN shall
-    // compare unordered with everything, including itself. Comparisons shall ignore the sign
-    // of zero (so +0 = −0)". Tests in `l01_17_value_representation::edges`:
+    // and `<` follow the same rule, and the code relies on them. Read 2026-11-20 in the 2019
+    // text (the copy named at the `sqrt` rule in `eval.rs`), 5.11, p. 43: "Four mutually
+    // exclusive relations are possible: less than, equal, greater than, and unordered;
+    // unordered arises when at least one operand is a NaN. Every NaN shall compare unordered
+    // with everything, including itself. Comparisons shall ignore the sign of zero (so +0 =
+    // −0)". The 2008 edition, 5.11, p. 29, read the same day, has the same sentences; the
+    // working group's list of changes says 5.11 was "reorganized and rewritten for clarity".
+    // Tests in `l01_17_value_representation::edges`:
     // `the_two_zeros_compare_equal_under_ieee` and
     // `nan_is_unordered_and_its_negation_is_the_canonical_nan`, which catch a NaN read as
     // ordered or the zeros told apart; they cannot catch a departure of Rust's own float

@@ -53,16 +53,16 @@ use pow5::POW5;
 /// A binary floating-point format that a literal is read to. The precisions and exponent ranges
 /// of binary64, binary32 and binary16 are those of IEEE Std 754-2019,
 /// doi:10.1109/IEEESTD.2019.8766229, section 3.6, "Interchange format parameters"; bfloat16 is
-/// not in the standard. Section number and title checked 2026-11-20 against the contents in the
-/// publisher's preview of ISO/IEC 60559:2020. The 2019 text was not readable (see the `sqrt`
-/// rule in `eval.rs`); the table was read 2026-11-20, PDF, in the 2008 edition,
-/// doi:10.1109/IEEESTD.2008.4610935, Table 3.5, p. 13: p = 11, 24, 53 and emax = 15, 127, 1023
-/// for binary16, 32 and 64, with emin = 1 − emax (3.3); binary64 and binary32 also match
-/// Rust's `f64` and `f32` constants. A reading that rounds to infinity or zero follows section
-/// 5.12, "Details of conversion between floating-point data and external character
-/// sequences": 5.12.2, p. 32, a sequence "larger in exponent range than the destination
-/// binary format ... shall be correctly rounded ... according to the applicable rounding
-/// direction", so past the largest finite value it rounds to infinity as in 4.3.1.
+/// not in the standard. Read 2026-11-20 in the 2019 text (the copy named at the `sqrt` rule in
+/// `eval.rs`), Table 3.5, "Binary interchange format parameters", p. 23: p = 11, 24, 53 and
+/// emax = 15, 127, 1023 for binary16, 32 and 64; and 3.3, p. 17, "emin shall be 1 − emax for
+/// all formats". The 2008 edition, Table 3.5, p. 13, read the same day, has the same values;
+/// binary64 and binary32 also match Rust's `f64` and `f32` constants. A reading that rounds
+/// to infinity or zero follows section 5.12, "Details of conversion between floating-point
+/// data and external character sequences": 5.12.2, p. 46, a sequence "larger in exponent
+/// range than the destination binary format ... shall be correctly rounded ... according to
+/// the applicable rounding direction", so past the largest finite value it rounds to infinity
+/// as in 4.3.1.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum FloatFormat {
     /// binary64: 53 bits of precision, exponents `-1022..=1023`.

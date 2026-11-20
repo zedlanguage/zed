@@ -85,17 +85,18 @@ pub(crate) fn word(p: Prim, x: &Value) -> Result<Value, KernelError> {
         (Prim::CastF32, Value::Float32(_)) | (Prim::CastF64, Value::Float(_)) => x.clone(),
         // An `f64` is narrowed as a float, not through its exact rational, which has no sign
         // of zero: `f32(-0.0f64)` is `-0.0f32`. `as f32` is the IEEE 754 narrowing: nearest,
-        // ties to even, the infinity of its sign past `f32::MAX + ulp/2`, and the NaN kept.
-        // Citation: IEEE Std 754-2019, doi:10.1109/IEEESTD.2019.8766229, section 5.4.2,
-        // "Conversion operations for floating-point formats", rounded by roundTiesToEven
-        // (section 4.3; the full comment on the rounding rules is in `num.rs`, enum
-        // `Rounding`). The 2019 text was not readable (see the `sqrt` rule in `eval.rs`);
-        // read 2026-11-20, PDF, in the 2008 edition, doi:10.1109/IEEESTD.2008.4610935,
-        // subsection 5.4.2, p. 22, there titled "Conversion operations for floating-point
-        // formats and decimal character sequences": convertFormat "to a narrower precision in
-        // the same radix ... shall be rounded as specified in Clause 4", and 4.3.1, p. 16, an
-        // exact result of magnitude at least b^emax (b − ½ b^(1−p)) "shall round to ∞ with no
-        // change in sign".
+        // ties to even, the infinity of its sign at or past `f32::MAX + ulp/2`, and the NaN
+        // kept. Citation: IEEE Std 754-2019, doi:10.1109/IEEESTD.2019.8766229, section 5.4.2,
+        // "Conversion operations for floating-point formats and decimal character sequences",
+        // rounded by roundTiesToEven (section 4.3; the full comment on the rounding rules is
+        // in `num.rs`, enum `Rounding`). Read 2026-11-20 in the 2019 text (the copy named at
+        // the `sqrt` rule in `eval.rs`): 5.4.2, p. 34, convertFormat "to a narrower precision
+        // in the same radix, the result shall be rounded as specified in Clause 4"; 4.3.1,
+        // p. 27, "an infinitely precise result with magnitude at least b^emax × (b − ½
+        // b^(1−p)) shall round to ∞ with no change in sign", which for binary32 (b = 2, emax =
+        // 127, p = 24) is 2^127 (2 - 2^-24) = `f32::MAX + ulp/2`, `f32::MAX` being 2^127 (2 -
+        // 2^-23) and its ulp 2^104. The 2008 edition, 5.4.2, p. 22, and 4.3.1, p. 16, read the
+        // same day, has the same words.
         (Prim::CastF32, Value::Float(f)) => Value::float32(f.get() as f32),
         (Prim::CastInt | Prim::CastRat | Prim::CastF64 | Prim::CastF32, _) => {
             if x.number_kind().is_none() {

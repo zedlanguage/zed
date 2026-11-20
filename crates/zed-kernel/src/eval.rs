@@ -4225,45 +4225,32 @@ fn prim_on(p: Prim, vals: &[Value]) -> Result<Value, KernelError> {
         // `-0.0`, and a negative or NaN operand of `sqrt`, a NaN operand of `fma`, or
         // `fma(inf, 0, c)` gives NaN (DESIGN.md sec:linalg, machine operations). Method: IEEE
         // Std 754-2019, "IEEE Standard for Floating-Point Arithmetic", IEEE, 2019,
-        // doi:10.1109/IEEESTD.2019.8766229 (Crossref), section 5.4.1, "Arithmetic operations",
-        // which lists `squareRoot` and `fusedMultiplyAdd` among the operations rounded once.
-        // The 2019 text was not read: the copies on LibGen and Sci-Hub (10 and 15 pages) carry
-        // the title and abstract and then filler text, and the contents of the publisher's
-        // preview of ISO/IEC 60559:2020, the same text, stop at "5.4 formatOf
-        // general-computational operations". Retried 2026-11-20, 16:41-16:56 UTC:
-        // allpapers-locate found no free text; LibGen's standards search had no file over five
-        // rounds; Sci-Hub (scihub-cli, 16:49, 16:50 and 16:54) met a blocked mirror page and
-        // 403s; Google Scholar served its "Verifying" page; Anna's Archive answered 403 or a
-        // parked page; a grounded web search (agy, 16:50-16:53) found no free legal copy and
-        // named only the IEEE Xplore, ISO and IEC store pages. Retried again 2026-11-20,
-        // 18:05-18:35 UTC (logs in wt/cd-xr/DOC-cite/cite3): allpapers-locate found no free
-        // text; LibGen's one file for the DOI (md5 5f03fc44..., 60037 bytes, 10 pages) is the
-        // same title page and filler, and its title searches for "754-2019" and "60559" list
-        // only journal articles and a 13-page DIN 60559 of 1992; Sci-Hub's mirrors answered a
-        // DDoS-Guard or "Just a moment" page or 403. Because the 2019 text stays unread, what
-        // this rule takes from 754 rests on two readable sources. First, D. Hough, chair of the
-        // revision, "IEEE Standard for Floating-Point Arithmetic revision due in 2019", revised
-        // June 18, 2019, PDF from the working group's pages,
-        // grouper.ieee.org/groups/msc/ANSI_IEEE-Std-754-2019/background/ieee-computer.pdf, read
-        // in full 2026-11-20: "754-2008 veterans ... intended 754-2019 to be an upwardly
-        // compatible bug-fix-and-minor-enhancements revision. The bug fixes are many, and
-        // mostly refinements of language and elimination of accidental inconsistencies; the
-        // description of comparison
-        // operations was substantially rewritten to better clarify the original intent." Its
-        // list of new operations (quantum, tanPi, aSinPi, aCosPi, the augmented operations,
-        // {min,max}imum..., the payload operations) names neither squareRoot nor
-        // fusedMultiplyAdd, and "All new operations are 'recommended' ... to retain upward
-        // compatibility from 754-2008". Second, the 2008 text itself. What was read, 2026-11-20,
-        // PDF (Sci-Hub, verification only), is the 2008 edition, IEEE Std 754-2008,
-        // doi:10.1109/IEEESTD.2008.4610935, whose clauses 5 and 7 the 2019 revision keeps
-        // under the same numbers. Section 5.1, p. 16: "every operation shall be performed as if
-        // it first produced an intermediate result correct to infinite precision and with
-        // unbounded range, and then rounded". Section 5.4.1, p. 21, lists squareRoot, which
-        // "has a positive sign for all operands ≥ 0, except that squareRoot(−0) shall be −0",
-        // and fusedMultiplyAdd, which "computes (x × y) + z as if with unbounded range and
-        // precision, rounding only once to the destination format". Section 7.2, p. 37,
-        // gives the default result NaN for "squareRoot if the operand is less than zero" and
-        // for "fusedMultiplyAdd(0, ∞, c) or fusedMultiplyAdd(∞, 0, c)". Cost:
+        // doi:10.1109/IEEESTD.2019.8766229 (Crossref). Read 2026-11-20 in a copy of the IEEE
+        // Xplore PDF of the standard, 84 pages, found by a grounded web search (agy, 18:16-18:21
+        // UTC) after the free services had failed (verification only; the copy and the
+        // records of every service tried, 16:41-18:21 UTC, are outside the repository, in
+        // wt/cd-xr/DOC-cite/cite2 and cite3). Section 5.1, "Overview", p. 29: "each of the
+        // computational operations specified by this standard that returns a numeric result
+        // shall be performed as if it first produced an intermediate result correct to
+        // infinite precision and with unbounded range, and then rounded that intermediate
+        // result, if necessary, to fit in the destination's format". Section 5.4.1,
+        // "Arithmetic operations", p. 33: "The operation squareRoot(x) computes √ x. It has a
+        // positive sign for all operands ≥ 0, except that squareRoot(−0) shall be −0", and
+        // "The operation fusedMultiplyAdd(x, y, z) computes (x × y) + z as if with unbounded
+        // range and precision, rounding only once to the destination format". Section 7.2,
+        // "Invalid operation", p. 52: the default result of an invalid operation "shall be a
+        // quiet NaN", and the invalid operations include "squareRoot if the operand is less
+        // than zero" and "fusedMultiplyAdd(0, ∞, c) or fusedMultiplyAdd(∞, 0, c) unless c is a
+        // quiet NaN; if c is a quiet NaN then it is implementation defined whether the invalid
+        // operation exception is signaled". With a quiet NaN `c` the result is still a NaN, by
+        // section 6.2, "Operations with NaNs", p. 48: "For an operation with quiet NaN inputs,
+        // except as stated otherwise, if a floating-point result is to be delivered the result
+        // shall be a canonical quiet NaN". Zed has no signaling NaN and no exception flags, so
+        // only these results are used. Departure: none in the results; every NaN is then
+        // stored as the canonical one (`value.rs`, at the canonical NaN's bits; test
+        // `a_nan_from_sqrt_is_the_canonical_nan`). The 2008 edition
+        // (doi:10.1109/IEEESTD.2008.4610935, read earlier the same day) has the same words in
+        // 5.4.1 (p. 21). Cost:
         // O(1), one hardware instruction each (or the C library's `fma` on a host without
         // FMA). Measured: test `l01_18_scalar_interpreter::sqrt_fma` runs
         // n = 2048 and 8n calls of each word, 14225721 and 113703294 instructions, 8.0 times
@@ -4282,15 +4269,15 @@ fn prim_on(p: Prim, vals: &[Value]) -> Result<Value, KernelError> {
         // tested first. Source: IEEE Std 754-2019, doi:10.1109/IEEESTD.2019.8766229 (full
         // citation at the `sqrt` and `fma` rule above), section 9.2, "Additional mathematical
         // operations", which recommends `pow` and lists its special values: `pow(x, ±0)` is 1
-        // for every `x`, a NaN included, and `pow(+1, y)` is 1 for every `y`, a NaN included.
-        // How checked, 2026-11-20: the 2019 section number and title against the contents in
-        // the publisher's preview of ISO/IEC 60559:2020 (the 2019 text itself was not readable,
-        // see the `sqrt` rule); the two special values in the 2008 edition (PDF, Sci-Hub,
-        // verification only), section 9.2.1, "Special values", p. 44: "pow (x, ±0) is 1 for any
-        // x (even a zero, quiet NaN, or infinity)" and "pow (+1, y) is 1 for any y (even a quiet
-        // NaN)"; Rust's `powf` gives both. C99 Annex F.9.4.4, "The pow functions", states them
-        // too; read 2026-11-20 in the WG14 committee draft N1256 (ISO/IEC 9899:TC3, September
-        // 7, 2007, open-std.org/jtc1/sc22/wg14/www/docs/n1256.pdf, p. 461): "pow(+1, y)
+        // for every `x`, a quiet NaN included, and `pow(+1, y)` is 1 for every `y`, a quiet NaN
+        // included. Read 2026-11-20 in the 2019 text (the copy named at the `sqrt` rule),
+        // 9.2.1, "Special values", p. 63: "pow (x, ±0) is 1 if x is not a signaling NaN" and
+        // "pow (+1, y) is 1 for any y (even a quiet NaN)". The 2008 edition, 9.2.1, p. 44, read
+        // the same day, words the first "pow (x, ±0) is 1 for any x (even a zero, quiet NaN, or
+        // infinity)"; Zed has no signaling NaN, so the two agree here. Rust's `powf` gives
+        // both. C99 Annex F.9.4.4, "The pow functions", states them too; read 2026-11-20 in the
+        // WG14 committee draft N1256 (ISO/IEC 9899:TC3, September 7, 2007,
+        // open-std.org/jtc1/sc22/wg14/www/docs/n1256.pdf, p. 461): "pow(+1, y)
         // returns 1 for any y, even a NaN" and "pow(x, ±0) returns 1 for any x, even a NaN".
         // Departure: Zed gives NaN for both,
         // on purpose. Tests: `l01_36_cranelift::pow_nan` and `l01_39_reduced_product::pow_nan`,

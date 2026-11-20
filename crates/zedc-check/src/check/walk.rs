@@ -5641,10 +5641,14 @@ impl<'t, 'a> Ck<'t, 'a> {
                     // "The sign bit". Sketch: a sum of two operands of opposite sign that is
                     // exactly zero is `+0` under every rounding direction but toward negative,
                     // and `x + x` keeps the sign of `x` when `x` is a zero; so `-0 + -0` is
-                    // `-0`, `-0 + +0` is `+0`, and `-0 + x` is `x` for every `x`. How checked,
-                    // 2026-11-20: the section number and title against the contents in the
-                    // publisher's preview of ISO/IEC 60559:2020; the rule is from memory, the
-                    // standard is paywalled and was not read. Rust's `+` on `f64` and `f32`
+                    // `-0`, `-0 + +0` is `+0`, and `-0 + x` is `x` for every `x` (a nonzero
+                    // `x` is the exact sum, so no rounding enters). Read 2026-11-20 in the 2019
+                    // text (the copy named at zed-kernel `eval.rs`, fn `prim_on`,
+                    // `Prim::Sqrt`), 6.3, p. 50: "When the sum of two operands with opposite
+                    // signs ... is exactly zero, the sign of that sum ... shall be +0 under all
+                    // rounding-direction attributes except roundTowardNegative", and "under all
+                    // rounding-direction attributes, when x is zero, x + x and x − (−x) have
+                    // the sign of x". Rust's `+` on `f64` and `f32`
                     // follows it under the default rounding. Test, in `l08_02_remaps::empty`:
                     // `a_sum_of_an_empty_f64_level_is_minus_zero_and_a_product_one`, which
                     // catches `0.0` used as the identity; it reads Rust's `+`, so it cannot
