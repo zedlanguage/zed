@@ -1,5 +1,6 @@
 //! The scaling half of `ref_memo.rs` (plan item PERF-ref-memo-quadratic): each of the 48
-//! families of the item's benchmark at n and 8n, held to the plan's limit
+//! families of the item's benchmark, and the one-input shapes of PROOF-preimage-ref-chain-cost,
+//! at n and 8n, held to the plan's limit
 //! (`scaling::LIMIT`) in instructions and bytes, with no wider limit for any family; each
 //! answer grows at most 8 times (`output_grid` demands four values, 4n pieces). The answers
 //! of every family at small sizes are checked against the interpreter in `ref_memo.rs`.
@@ -112,6 +113,15 @@ scaling_tests! {
     pow2_small_scales: "pow2_small" at 8;
     pow2_wide_scales: "pow2_wide" at 64;
     random_chains_scales: "random_chains" at 64;
+    // PROOF-preimage-ref-chain-cost: the step shapes `Tx::back_doubt` named as possibly
+    // quadratic. `coef2_guard` read 14.8 here and 31.1 at 32 before `x + x` became a product
+    // by 2 in `Tx::step_1d_at`; 7.9 to 8.0 at 16, 32 and 64 after.
+    coef2_guard_scales: "coef2_guard" at 16;
+    normal_mul3_chain_scales: "normal_mul3_chain" at 16;
+    // At 128: it read 11.81 at 16 and 8.34 at 128 (load 52), the ratio falling as n grows. No
+    // bound on the pieces the product's inverse visits per link is proved (`Tx::back_doubt`);
+    // the cost is measured only.
+    normal_div_neg2_chain_scales: "normal_div_neg2_chain" at 128;
 }
 
 /// PROOF-round-down-piece-bound at the sizes the benchmark above times, which need a large

@@ -741,6 +741,47 @@ pub(super) fn family(name: &str, n: usize) -> Vec<(Term, Domains, Demand)> {
             ]);
             one(chain(n, var("i"), g, |j, t| sub_c(j % 5, t)), ds)
         }
+        // PROOF-preimage-ref-chain-cost: the shapes `Tx::back_doubt` names as kept on the old
+        // memo. A guard `i + i <= j`, which `difference_guard` does not read (coefficient 2).
+        "coef2_guard" => {
+            let g = |j| prim(Prim::Le, prim(Prim::Add, var("i"), var("i")), int(j));
+            one(
+                chain(n, var("i"), g, |j, t| sub_c(j % 5, t)),
+                i_in(-1000, 1000),
+            )
+        }
+        // Guards on `i` and `m` in turn, both over `[-1000, 1000]`: the guards of two links
+        // join to two coordinates.
+        "alternating_2var" => {
+            let g = |j: i64| prim(Prim::Le, var(if j % 2 == 0 { "i" } else { "m" }), int(j));
+            one(chain(n, var("i"), g, |j, t| sub_c(j % 5, t)), i_and_m())
+        }
+        // An independent bit per guard with centers that vary, so no common center.
+        "indep_varying" => {
+            let bit = |j: i64| prim(Prim::Ge, var(&format!("b{j}")), int(1));
+            one(
+                chain(n, var("z"), bit, |j, t| sub_c(j % 5, t)),
+                bits(n, 1, 25),
+            )
+        }
+        // Nested remainders by 7 and 64 under the guards of `alternating_2var`.
+        "alternating_moduli" => {
+            let g = |j: i64| prim(Prim::Le, var(if j % 2 == 0 { "i" } else { "m" }), int(j));
+            let ms = [7, 64];
+            let t = chain(n, var("i"), g, move |j, t| {
+                sub_c(j % 5, prim(Prim::Mod, t, int(ms[j as usize % 2])))
+            });
+            one(t, i_and_m())
+        }
+        // Scalar inverses that do not map pieces one to one: `t * 3`, and `t / -2`.
+        "normal_mul3_chain" => one(
+            steps(n, |j, t| sub_c(j % 5, prim(Prim::Mul, t, int(3)))),
+            mega(),
+        ),
+        "normal_div_neg2_chain" => one(
+            steps(n, |j, t| sub_c(j % 5, prim(Prim::IntDiv, t, int(-2)))),
+            mega(),
+        ),
         _ => panic!("no family {name}"),
     }
 }
@@ -788,7 +829,8 @@ fn output_grid_answers_have_k_n_pieces() {
 }
 
 /// The families that `bench::ref_memo` times, each named once.
-pub(super) const FAMILIES: [&str; 44] = [
+pub(super) const FAMILIES: [&str; 47] = [
+    "coef2_guard",
     "const2_narrow",
     "const2_wide",
     "const_base_wide",
@@ -815,6 +857,7 @@ pub(super) const FAMILIES: [&str; 44] = [
     "nested_moduli_mod7",
     "normal_add_base",
     "normal_div_chain",
+    "normal_div_neg2_chain",
     "normal_holey_guards",
     "normal_incompatible_moduli",
     "normal_min_gap",
@@ -822,6 +865,7 @@ pub(super) const FAMILIES: [&str; 44] = [
     "normal_mod_chain",
     "normal_mul_base",
     "normal_mul_chain",
+    "normal_mul3_chain",
     "normal_named",
     "normal_named_modguard",
     "normal_named_reflection",
@@ -835,13 +879,25 @@ pub(super) const FAMILIES: [&str; 44] = [
     "pow2_wide",
 ];
 
-/// Every family `bench::ref_memo` times, at 1 to 4 links (`output_grid` at 8): the reference preimage holds every
+/// Families of terms that read two or more inputs, on the memo of `Tx::back_doubt`, that
+/// `bench::ref_memo` does not time: their work grows faster than n (row
+/// PERF-ref-memo-multi-input; T(8n)/T(n) 13.2 at 16 and 25.2 at 64 for `alternating_2var`, 12.1
+/// at 4 and 101 at 8 for `alternating_moduli`, 12.1 at 12 and 183 at 24 for `indep_varying`).
+/// Their answers are checked here with the timed families.
+const UNTIMED_FAMILIES: [&str; 3] = ["alternating_2var", "alternating_moduli", "indep_varying"];
+
+/// Every family `bench::ref_memo` times, at 1 to 4 links (`output_grid` at 8), and the
+/// [`UNTIMED_FAMILIES`]: the reference preimage holds every
 /// point of `[-12, 12]` on each input (within its domain) that meets the demand, and, where
 /// it is marked exact, every point of it there meets the demand, by the interpreter. The
 /// benchmarks time these families at 2 to 1280 links and check only their work.
 #[test]
 fn every_family_the_benchmarks_time_is_answered_soundly_at_small_sizes() {
-    for name in FAMILIES.iter().chain(&["random_chains"]) {
+    for name in FAMILIES
+        .iter()
+        .chain(&["random_chains"])
+        .chain(&UNTIMED_FAMILIES)
+    {
         // `output_grid` demands four odd values, so it needs 8 links.
         let sizes = if *name == "output_grid" { 8..=8 } else { 1..=4 };
         for n in sizes {

@@ -118,9 +118,10 @@
 //! piece, linear in a modulus literal (so exponential in its bits). Not proved in general: the
 //! O(log n) cost per link is proved for `normal_round_down` and `normal_min_gap` only (the
 //! proofs at `Tx::inverse_states`); for the other families the bound is measured, and
-//! `Tx::back_doubt` names the shapes that keep main's memo and may still be quadratic, and the
-//! unaligned scalar inverses that can visit every partition (row
-//! PROOF-preimage-ref-chain-cost). Nested remainders do not
+//! `Tx::back_doubt` lists, each with its measured family (PROOF-preimage-ref-chain-cost), the
+//! shapes that keep main's memo and the products and quotients that visit every piece of the
+//! state. Terms that read two or more inputs grow faster than n on that memo (row
+//! PERF-ref-memo-multi-input). Nested remainders do not
 //! meet that bound: each link costs the pieces of its state, which the listing keeps large
 //! whatever the answer, so the chain costs O(n s) for s state pieces. Measured on
 //! `nested_moduli_eq_4096` with the constants of n = 6 mod 10 next to the root (an answer of
@@ -129,7 +130,8 @@
 //! (REF-nested-moduli-state). Measured T(8n)/T(n), the
 //! larger of the instruction and byte ratios, over the 48 families of the scaling tests
 //! (`l01_25_preimage_catalog::ref_memo`, load about 37 on 32 cores): at most 10.6
-//! (`normal_abs_gap`), 9.0 to 10.4 on six more (`normal_min_gap`, `normal_round_down`,
+//! (`normal_abs_gap`, whose test has since left the tree for row REF-normal-abs-gap), 9.0 to
+//! 10.4 on six more (`normal_min_gap`, `normal_round_down`,
 //! `pathological_abs`, `normal_holey_guards`, `normal_mod_chain`, `normal_div_chain`), under 9 on
 //! the rest; `output_grid` (four values demanded, 4n pieces) 8.0 from 64 to 512 links, and with
 //! 64 and 512 values demanded at 1024 links (8 times the pieces) 5.0 times the instructions and
@@ -2517,11 +2519,32 @@ impl<'t> Tx<'t> {
     // staircases, so the former second input ordering and its conversions are removed.
     // The measured scalar, named-call, multi-input-frontier and common-difference
     // families cost about O(n log n). This is output-sensitive: an explicit staircase
-    // selecting n isolated values can require n^2 output pieces. Unsupported step shapes,
-    // independent guard coordinates and unresolved nested periodic constraints retain
-    // the old memo, which can still be quadratic. General unaligned scalar inverses can
-    // also visit every current partition. These remaining cases are not measured by
-    // the 48 families. Tests: `l01_25_preimage_catalog::ref_memo` (the scaling of each
+    // selecting n isolated values can require n^2 output pieces.
+    //
+    // The shapes that keep the old memo, each measured by a family of
+    // `l01_25_preimage_catalog::ref_memo` (PROOF-preimage-ref-chain-cost; T(8n)/T(n), the larger
+    // of the instruction and byte ratios, load 46 to 68 on 32 cores):
+    // - A step with no `StepKind`, in a term that reads one input: `i + i <= j`
+    //   (`coef2_guard`) read 14.8 at 16 and 31.1 at 32 on the memo. `x + x` of one variable is
+    //   now the product by 2 in `Tx::step_1d_at` (proof there): 7.9 to 8.0 at 16, 32 and 64.
+    //   Any other step with no kind (`i * i`, a sum of two different subterms of `i`) still
+    //   falls to the memo, with no bound proved.
+    // - Guards on two or more inputs: `alternating_2var` (guards on `i` and `m` in turn) read
+    //   13.2 at 16, 16.2 at 32 and 25.2 at 64; `indep_varying` (one bit input per guard) 20.9 at
+    //   6, 12.1 at 12 and 183 at 24. With the guards of `alternating_2var` a point (i, m) has p
+    //   failed links on `i` and q on `m`, and t = ±i + C(p, q) on each of the (n/2)^2 cells; a
+    //   method that visits each cell is quadratic. That the memo does so is inferred from the
+    //   ratios, not traced. Superlinear, row PERF-ref-memo-multi-input.
+    // - Nested remainders: in a term that reads one input they are settled by
+    //   `State1d::modulo_bounded` (the `nested_moduli_*` families, cost in the header). Under
+    //   guards on two inputs they stay on the memo: `alternating_moduli` read 12.1 at 4 and 101
+    //   at 8, row PERF-ref-memo-multi-input.
+    // - Products and quotients that do not map pieces one to one (`State1d::inverse` for
+    //   |c| > 1, a quotient by c < -1) visit every piece of the state: `normal_mul3_chain` read
+    //   8.05 at 16 and `normal_div_neg2_chain` 11.8 at 16 and 8.3 at 128. Measured only: no
+    //   bound on the pieces visited per link is proved.
+    // The multi-input families are not timed (`ref_memo::UNTIMED_FAMILIES`); their answers are
+    // checked against the interpreter. Tests: `l01_25_preimage_catalog::ref_memo` (the scaling of each
     // family, main's changed answers, calls 22, 45 and 86). COMPLEXITY.md C56.
     fn back_doubt(&mut self, t: Tid, env: Eid, d: &Demand, dd: &IntervalSet) -> Res {
         let dd = match d {
@@ -3299,6 +3322,27 @@ impl<'t> Tx<'t> {
                             }
                             (Min | Max, Some(c), _) => ((b, env), StepKind::MinMax(p, c, (b, env))),
                             (Min | Max, _, Some(c)) => ((a, env), StepKind::MinMax(p, c, (a, env))),
+                            // `x + x` with both arguments one variable read in one environment
+                            // (PROOF-preimage-ref-chain-cost, family `coef2_guard`): the two
+                            // reads are the same value v, and v + v = 2 v for every integer v, so
+                            // the step is the product by 2, whose inverse in the one-input state
+                            // is exact. Without this arm the sum has no step, the guard
+                            // `i + i <= j` gets an inexact box, and the whole chain fell back to
+                            // the memo of `Tx::back_doubt`: 14.8 times the instructions from 16
+                            // to 128 links and 31.1 from 32 to 256 (load 59.9 and 67.5). Only
+                            // variables are compared: equal larger subterms would need a walk of
+                            // both at every sum (O(size) each), and no family has one. Test:
+                            // `ref_memo::every_family_the_benchmarks_time_is_answered_soundly_at_small_sizes`
+                            // (answers checked against the interpreter) and the bench
+                            // `coef2_guard_scales`.
+                            (Add, None, None)
+                                if matches!(
+                                    (self.node(a), self.node(b)),
+                                    (Node::Var(x), Node::Var(y)) if x == y
+                                ) =>
+                            {
+                                ((a, env), StepKind::Mul(2, (a, env)))
+                            }
                             _ => return None,
                         };
                         ok(
