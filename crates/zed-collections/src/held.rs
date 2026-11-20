@@ -70,4 +70,47 @@ mod tests {
         assert_eq!(*held.put("last".to_string()), "last");
         assert_eq!(*firsts[0], "0");
     }
+
+    /// Counts at and around each block's end, up to 2^12 + 1 (TEST-dry-shared-units): each
+    /// value stays at the address it was put at while the later blocks are made, the `n`th
+    /// value lands in block `log2 n`, and dropping the holder drops each value once. No
+    /// negative control: a `Vec` that grows may or may not move its items (realloc can grow a
+    /// block in place), so no faulty holder fails this check on every run.
+    #[test]
+    fn values_keep_their_addresses_across_block_ends_and_drop_once() {
+        use std::rc::Rc;
+        for count in [1usize, 2, 3, 4, 7, 8, 9, 4095, 4096, 4097] {
+            let token = Rc::new(());
+            let held = Held::default();
+            let mut at: Vec<*const (usize, Rc<()>)> = Vec::new();
+            for i in 0..count {
+                let r = held.put((i, token.clone()));
+                assert_eq!(r.0, i);
+                at.push(r);
+            }
+            assert_eq!(held.used.get(), count);
+            // Walk the blocks: block k holds 2^k slots, all full but the last.
+            let (mut block, mut k, mut seen) = (Some(&held.first), 0, 0);
+            while let Some(b) = block {
+                assert_eq!(b.slots.len(), 1 << k, "count {count}: block {k}");
+                for slot in b.slots.iter() {
+                    if let Some(v) = slot.get() {
+                        assert_eq!(std::ptr::from_ref(v), at[v.0], "count {count}: {}", v.0);
+                        assert_eq!(v.0, seen, "count {count}: in order");
+                        seen += 1;
+                    }
+                }
+                (block, k) = (b.next.get().map(|n| &**n), k + 1);
+            }
+            assert_eq!(seen, count);
+            assert_eq!(k, count.ilog2() + 1, "count {count}: blocks made");
+            assert_eq!(Rc::strong_count(&token), count + 1);
+            drop(held);
+            assert_eq!(
+                Rc::strong_count(&token),
+                1,
+                "count {count}: each dropped once"
+            );
+        }
+    }
 }

@@ -154,4 +154,65 @@ mod tests {
             }
         }
     }
+
+    /// A hasher that sends every value to one bucket, so every lookup meets every other value:
+    /// the ids rest on equality alone.
+    #[derive(Default)]
+    struct OneBucket;
+
+    impl std::hash::Hasher for OneBucket {
+        fn finish(&self) -> u64 {
+            0
+        }
+
+        fn write(&mut self, _: &[u8]) {}
+    }
+
+    /// The interner under a hasher of the caller's (TEST-dry-shared-units): `S` is used, ids
+    /// agree with the search under every value colliding, `insert` says new exactly once per
+    /// value, and after `clear` the ids start again at 0 and agree again. The negative control:
+    /// the ids the search gives the values in another order differ on some draw, so the check
+    /// of the order first seen is not vacuous.
+    #[test]
+    fn ids_under_a_hasher_of_the_callers_and_after_clear() {
+        type Colliding = std::hash::BuildHasherDefault<OneBucket>;
+        let (mut rng, _) = Rng::fresh("ids_under_a_hasher_of_the_callers_and_after_clear");
+        let mut t: Interner<u64, Colliding> = Interner::default();
+        let mut caught = false;
+        for round in 0..100 {
+            t.clear();
+            assert!(t.is_empty(), "round {round}");
+            let xs: Vec<u64> = (0..rng.below(50)).map(|_| rng.below_u64(20)).collect();
+            let mut news = 0;
+            let ids: Vec<usize> = xs
+                .iter()
+                .map(|&x| {
+                    let (id, new) = t.insert(x);
+                    news += usize::from(new);
+                    id
+                })
+                .collect();
+            let (want_ids, want_values) = by_search(&xs);
+            assert_eq!(ids, want_ids, "round {round}: {xs:?}");
+            assert_eq!(t.values(), want_values, "round {round}");
+            assert_eq!((news, t.len()), (want_values.len(), want_values.len()));
+            let mut reversed = xs.clone();
+            reversed.reverse();
+            caught |= by_search(&reversed).1 != want_values;
+        }
+        assert!(
+            caught,
+            "the negative control of the order first seen was never caught"
+        );
+    }
+
+    /// The value of an id not given panics, naming the id and the count.
+    #[test]
+    fn an_id_not_given_is_refused() {
+        let mut t: Interner<char> = Interner::default();
+        t.intern('a');
+        let p = std::panic::catch_unwind(|| t[1]).expect_err("panics");
+        let text = p.downcast_ref::<String>().expect("a formatted message");
+        assert_eq!(text, "index out of bounds: the len is 1 but the index is 1");
+    }
 }

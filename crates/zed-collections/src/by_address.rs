@@ -109,4 +109,32 @@ mod tests {
         assert!(ByAddress::new(&a) == ByAddress::new(&a.clone()));
         assert!(ByAddress::new(&a) != ByAddress::new(&b));
     }
+
+    /// The hash of a key is that of its bare address, as `Borrow<*const T>` requires
+    /// (TEST-dry-shared-units): under one fixed hasher the two agree, a key holds one strong
+    /// count while it lives, and a lookup by the bare address finds each of many keys. The
+    /// negative control: the hash of the value, which equal values of two addresses share,
+    /// is not the hash of the address.
+    #[test]
+    fn the_hash_is_the_bare_addresss_and_the_key_holds_one_count() {
+        use std::hash::{BuildHasher, BuildHasherDefault, DefaultHasher};
+        let fixed = BuildHasherDefault::<DefaultHasher>::default();
+        let values: Vec<Arc<u64>> = (0..64).map(Arc::new).collect();
+        let mut memo: HashMap<ByAddress<u64>, usize> = HashMap::new();
+        let mut caught = false;
+        for (i, v) in values.iter().enumerate() {
+            let key = ByAddress::new(v);
+            assert_eq!(fixed.hash_one(&key), fixed.hash_one(Arc::as_ptr(v)));
+            caught |= fixed.hash_one(&key) != fixed.hash_one(**v);
+            assert!(Arc::ptr_eq(key.get(), v));
+            memo.insert(key, i);
+            assert_eq!(Arc::strong_count(v), 2, "the key holds one count");
+        }
+        assert!(caught, "the negative control of the hash was never caught");
+        for (i, v) in values.iter().enumerate() {
+            assert_eq!(memo.get(&Arc::as_ptr(v)), Some(&i));
+        }
+        drop(memo);
+        assert!(values.iter().all(|v| Arc::strong_count(v) == 1));
+    }
 }

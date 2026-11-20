@@ -1058,6 +1058,11 @@ version = "0.0.0"
 dependencies = [
  "num-bigint",
  "num-integer",
+ "perf-event2",
+ "rustix",
+ "stacker",
+ "zed-alloc-count",
+ "zed-meter-settings",
  "zed-numtheory",
 ]
 

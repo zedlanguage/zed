@@ -96,5 +96,15 @@ mod tests {
         );
         // `to_u32` keeps `u32::MAX`, which a table with that marker would read as the marker.
         assert_eq!(to_u32(max, "slots"), u32::MAX);
+        // A bound of 0 keeps no id, and the top of `usize` is named in full
+        // (TEST-dry-shared-units).
+        assert_eq!(
+            refusal(|| to_u32_below(0, 0, "slots")),
+            "more than 0 slots: 0"
+        );
+        assert_eq!(
+            refusal(|| to_u32(usize::MAX, "nodes")),
+            format!("more than 4294967295 nodes: {}", usize::MAX)
+        );
     }
 }

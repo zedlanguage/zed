@@ -54,7 +54,17 @@ impl<T> Fenwick<T> {
 
     /// Calls `f` on each node that covers item `i`, O(log n) of them, lowest first: the change
     /// of item `i` made in every node that combines it, as `+= d` for sums.
+    ///
+    /// # Panics
+    ///
+    /// When `i` is not below [`Self::len`], with the message "Fenwick::update of item {i} in a
+    /// tree of {n} items". Until TEST-dry-shared-units such a change was dropped with no
+    /// error: node `i + 1` and every node above it lie past the end, so the loop below ran
+    /// no step (and `i + 1` overflowed at `usize::MAX`).
+    #[track_caller]
     pub fn update(&mut self, i: usize, mut f: impl FnMut(&mut T)) {
+        let n = self.nodes.len();
+        assert!(i < n, "Fenwick::update of item {i} in a tree of {n} items");
         let mut r = i + 1;
         while r <= self.nodes.len() {
             f(&mut self.nodes[r - 1]);
@@ -64,7 +74,19 @@ impl<T> Fenwick<T> {
 
     /// The fold of `f` from `init` over nodes that together cover the items `0..i` once each,
     /// O(log n) of them: for sums, the sum of the first `i` items. `i` at most [`Self::len`].
+    ///
+    /// # Panics
+    ///
+    /// When `i` is past [`Self::len`], with the message "Fenwick::prefix of {i} items in a tree
+    /// of {n} items". Without the check the first step indexes node `i - 1`, past the end, and
+    /// panics with the index of a node, not the prefix asked for.
+    #[track_caller]
     pub fn prefix<A>(&self, i: usize, init: A, mut f: impl FnMut(A, &T) -> A) -> A {
+        let n = self.nodes.len();
+        assert!(
+            i <= n,
+            "Fenwick::prefix of {i} items in a tree of {n} items"
+        );
         let (mut r, mut acc) = (i, init);
         while r > 0 {
             acc = f(acc, &self.nodes[r - 1]);
@@ -137,5 +159,108 @@ mod tests {
                 }
             }
         }
+    }
+
+    // Longer trees, the ends, and the preconditions (TEST-dry-shared-units).
+
+    use crate::seed::Rng;
+
+    /// Random lengths up to 3000, against an array: prefix sums of random places after random
+    /// changes, sums near `i64::MAX` taken by wrapping so no step overflows, and the count of
+    /// nodes each update and prefix reads, at most `floor(log2 n) + 1`. The faulty update that
+    /// changes only the item's own node, its negative control, is caught by the same sums.
+    #[test]
+    fn long_trees_match_an_array() {
+        let (mut rng, _) = Rng::fresh("long_trees_match_an_array");
+        let mut caught = false;
+        for round in 0..60 {
+            let n = 1 + rng.below(3000);
+            let bound = n.ilog2() + 1;
+            let mut tree = Fenwick::new(n, 0u64);
+            let mut faulty = Fenwick::new(n, 0u64);
+            let mut items = vec![0u64; n];
+            for _ in 0..200 {
+                let i = rng.below(n);
+                let small = rng.below_u64(1000);
+                let d = rng.pick(&[1, u64::MAX, u64::MAX / 3, small]);
+                items[i] = items[i].wrapping_add(d);
+                let mut read = 0;
+                tree.update(i, |s| {
+                    read += 1;
+                    *s = s.wrapping_add(d);
+                });
+                assert!(
+                    read <= bound,
+                    "round {round}: update read {read} nodes of {n}"
+                );
+                faulty.nodes[i] = faulty.nodes[i].wrapping_add(d);
+                let j = rng.below(n + 1);
+                let want = items[..j].iter().fold(0u64, |a, x| a.wrapping_add(*x));
+                let mut read = 0;
+                let got = tree.prefix(j, 0u64, |a, s| {
+                    read += 1;
+                    a.wrapping_add(*s)
+                });
+                assert_eq!(got, want, "round {round}: prefix {j} of {n}");
+                assert!(
+                    read <= bound,
+                    "round {round}: prefix read {read} nodes of {n}"
+                );
+                caught |= faulty.prefix(j, 0u64, |a, s| a.wrapping_add(*s)) != want;
+            }
+        }
+        assert!(caught, "the negative control of update was never caught");
+    }
+
+    /// An empty tree: no prefix but the empty one, and the descent stops at once.
+    #[test]
+    fn an_empty_tree() {
+        let t: Fenwick<i32> = Fenwick::new(0, 0);
+        assert!(t.is_empty());
+        assert_eq!(t.len(), 0);
+        assert_eq!(t.prefix(0, 7, |a, s| a + s), 7);
+        assert_eq!(t.descend(5, |_, _| unreachable!()), (0, 5));
+        let one = {
+            let mut t = Fenwick::new(1, 0i32);
+            t.update(0, |s| *s += 4);
+            t
+        };
+        assert_eq!(one.prefix(1, 0, |a, s| a + s), 4);
+        assert_eq!(one.descend(0, |a, s| (a + s < 5).then_some(a + s)), (1, 4));
+        assert_eq!(one.descend(0, |a, s| (a + s < 4).then_some(a + s)), (0, 0));
+    }
+
+    /// The text of the panic of `f`, which must panic.
+    fn panic_text(f: impl FnOnce() + std::panic::UnwindSafe) -> String {
+        let p = std::panic::catch_unwind(f).expect_err("it panics");
+        p.downcast_ref::<String>()
+            .cloned()
+            .expect("a formatted message")
+    }
+
+    /// An item past the end, for an update, and a prefix past the end.
+    #[test]
+    fn places_past_the_end_are_refused() {
+        assert_eq!(
+            panic_text(|| Fenwick::new(3, 0i32).update(3, |s| *s += 1)),
+            "Fenwick::update of item 3 in a tree of 3 items"
+        );
+        assert_eq!(
+            panic_text(|| Fenwick::new(0, 0i32).update(usize::MAX, |s| *s += 1)),
+            format!(
+                "Fenwick::update of item {} in a tree of 0 items",
+                usize::MAX
+            )
+        );
+        assert_eq!(
+            panic_text(|| {
+                Fenwick::new(3, 0i32).prefix(4, 0, |a, s| a + s);
+            }),
+            "Fenwick::prefix of 4 items in a tree of 3 items"
+        );
+        // At the end itself both are kept.
+        let mut t = Fenwick::new(3, 0i32);
+        t.update(2, |s| *s += 1);
+        assert_eq!(t.prefix(3, 0, |a, s| a + s), 1);
     }
 }

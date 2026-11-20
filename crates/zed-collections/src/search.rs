@@ -156,7 +156,16 @@ pub fn try_last_true<T: Midpoint, E>(
 // the preprint's page 5. Test: `tests::gallop_matches_a_scan`, every start and border of
 // every list up to 40 long against a scan, with at most 2⌊lg(d + 1)⌋ + 3 calls for an answer
 // `d` past `from`; it does not reach lists longer than 40.
+//
+// `from` must be at most `a.len()`. Past it the answer `from` would lie outside `from..=a.len()`,
+// the range the result is read in; a build with debug assertions panics there instead
+// (TEST-dry-shared-units; `tests::gallop_from_past_the_end_panics_in_a_debug_build`).
 pub fn gallop<T>(a: &[T], from: usize, mut pred: impl FnMut(&T) -> bool) -> usize {
+    debug_assert!(
+        from <= a.len(),
+        "search::gallop from {from}, past the end {}",
+        a.len()
+    );
     if a.get(from).is_none_or(|x| !pred(x)) {
         return from;
     }
@@ -299,5 +308,172 @@ mod tests {
                 }
             }
         }
+    }
+
+    // Random searches against scans at every width, and the regressions of the copies the
+    // module replaced (TEST-dry-shared-units).
+
+    use crate::seed::Rng;
+
+    /// The most questions a search of a range `w` wide may ask, `ceil(log2(w + 1))`, as the
+    /// functions promise; `w` as `u128`, so the whole of `u64` and `i64` fits.
+    fn most_questions(w: u128) -> u32 {
+        (w + 1).next_power_of_two().ilog2()
+    }
+
+    /// Random borders in random ranges near the ends and the middle of `i64`, `u64`, `u16` and
+    /// `usize`, by `first_true` and `last_true`, against the border itself, with the questions
+    /// counted and each asked inside the range; the faulty search that asks `hi` (`mid_up` in
+    /// `first_true`), caught by the question at the known end.
+    #[test]
+    fn random_borders_at_every_width_are_found() {
+        let (mut rng, _) = Rng::fresh("random_borders_at_every_width_are_found");
+        macro_rules! width {
+            ($t:ty) => {{
+                let picks = [<$t>::MIN, <$t>::MAX, 0, <$t>::MAX / 2];
+                let mut caught = false;
+                for round in 0..3000 {
+                    let near = |rng: &mut Rng| {
+                        let at = rng.pick(&picks);
+                        let bits = rng.below(20);
+                        let d = rng.below_u64(1 << bits) as $t;
+                        if at == <$t>::MAX {
+                            at - d
+                        } else {
+                            at.saturating_add(d)
+                        }
+                    };
+                    let (x, y) = (near(&mut rng), near(&mut rng));
+                    let (lo, hi) = (x.min(y), x.max(y));
+                    let w = (hi as i128 - lo as i128) as u128;
+                    let t = if rng.below(8) == 0 {
+                        hi
+                    } else {
+                        near(&mut rng).clamp(lo, hi)
+                    };
+                    let mut asked = 0;
+                    let got = first_true(lo, hi, |&i| {
+                        assert!(lo <= i && i < hi, "round {round}: {i} outside {lo}..{hi}");
+                        asked += 1;
+                        i >= t
+                    });
+                    assert_eq!(got, t, "round {round}: first_true {lo} {hi} {t}");
+                    assert!(asked <= most_questions(w), "round {round}: {asked} for {w}");
+                    let mut asked = 0;
+                    let got = last_true(lo, hi, |&i| {
+                        assert!(lo < i && i <= hi, "round {round}: {i} outside {lo}<..={hi}");
+                        asked += 1;
+                        i <= t
+                    });
+                    assert_eq!(got, t, "round {round}: last_true {lo} {hi} {t}");
+                    assert!(asked <= most_questions(w), "round {round}: {asked} for {w}");
+                    // The control: `first_true` halving at `mid_up` asks `hi`, the end it knows,
+                    // once its range is two wide; cut off at 200 questions, since where `hi`
+                    // answers true it no longer shrinks.
+                    let (mut l, mut h) = (lo, hi);
+                    for _ in 0..200 {
+                        if l >= h {
+                            break;
+                        }
+                        let mid = <$t>::mid_up(&l, &h);
+                        caught |= mid == hi;
+                        if mid >= t { h = mid } else { l = mid + 1 }
+                    }
+                }
+                assert!(
+                    caught,
+                    "the negative control of {} was never caught",
+                    stringify!($t)
+                );
+            }};
+        }
+        width!(i64);
+        width!(u64);
+        width!(u16);
+        width!(usize);
+    }
+
+    /// two_pins.rs `full_dark` took its peak's midpoint as `peak.0 + (peak.1 - peak.0) / 2`,
+    /// which overflows `i128` where the two ends have opposite signs and are far apart
+    /// (DRY-sorted-structures-2 job 4, 2b3e706f1); the shared midpoint does not.
+    #[test]
+    fn the_midpoint_of_ends_of_opposite_sign_does_not_overflow() {
+        let old = |lo: i128, hi: i128| hi.checked_sub(lo).map(|d| lo + d / 2);
+        for (lo, hi) in [(i128::MIN, i128::MAX), (i128::MIN, 1), (-1, i128::MAX)] {
+            assert_eq!(old(lo, hi), None, "the old form overflows at ({lo}, {hi})");
+        }
+        assert_eq!(i128::mid_down(&i128::MIN, &i128::MAX), -1);
+        assert_eq!(i128::mid_up(&i128::MIN, &i128::MAX), 0);
+        assert_eq!(i128::mid_down(&i128::MIN, &1), i128::MIN / 2);
+        // ceil((i128::MAX - 1) / 2) = ceil((2^127 - 2) / 2) = 2^126 - 1.
+        assert_eq!(i128::mid_up(&-1, &i128::MAX), (1 << 126) - 1);
+        // A peak at either end of the whole type is found.
+        assert_eq!(first_true(i128::MIN, i128::MAX, |_| true), i128::MIN);
+        assert_eq!(last_true(i128::MIN, i128::MAX, |_| true), i128::MAX);
+        // The midpoints of every pair of `i8` against the exact mean, and std's signed
+        // `midpoint`, rounded toward zero, would stop a search on a negative range.
+        for lo in i8::MIN..=i8::MAX {
+            for hi in lo..=i8::MAX {
+                let sum = i16::from(lo) + i16::from(hi);
+                assert_eq!(i16::from(i8::mid_down(&lo, &hi)), sum.div_euclid(2));
+                assert_eq!(i16::from(i8::mid_up(&lo, &hi)), -(-sum).div_euclid(2));
+            }
+        }
+        assert_eq!((-3i8).midpoint(-2), -2, "std's midpoint is the end hi");
+    }
+
+    /// The failure of the first question is passed on with no second question, by both.
+    #[test]
+    fn a_failure_is_passed_on_at_once() {
+        let mut asked = 0;
+        let r = try_last_true(i64::MIN, i64::MAX, |_| {
+            asked += 1;
+            Err::<bool, _>("no")
+        });
+        assert_eq!((r, asked), (Err("no"), 1));
+        let r = try_first_true(3u8, 3, |_| Err::<bool, ()>(()));
+        assert_eq!(r, Ok(3), "an empty range asks nothing");
+    }
+
+    /// The gallop on random sorted lists up to 5000 long, from random starts, against
+    /// `partition_point`, with at most `2 floor(log2(d + 1)) + 3` questions for an answer `d`
+    /// past `from`; the bound is shown to reject a linear walk, which asks `d` questions, on
+    /// some draw (its negative control).
+    #[test]
+    fn gallop_matches_partition_point_on_long_lists() {
+        let (mut rng, _) = Rng::fresh("gallop_matches_partition_point_on_long_lists");
+        let mut caught = false;
+        for round in 0..500 {
+            let n = rng.below(5001);
+            let mut a: Vec<u32> = (0..n).map(|_| rng.below(1 << 14) as u32).collect();
+            a.sort_unstable();
+            let from = rng.below(n + 1);
+            let x = rng.below(1 << 14) as u32;
+            let want = from + a[from..].partition_point(|&v| v < x);
+            let mut asked = 0u32;
+            let got = gallop(&a, from, |&v| {
+                asked += 1;
+                v < x
+            });
+            assert_eq!(got, want, "round {round}: n={n} from={from} x={x}");
+            let d = (want - from + 1) as u32;
+            assert!(asked <= 2 * d.ilog2() + 3, "round {round}: {asked} for {d}");
+            // The control: a linear walk from `from` asks `d` questions, over the bound for
+            // every `d` past 8.
+            caught |= d > 2 * d.ilog2() + 3;
+        }
+        assert!(caught, "the negative control of gallop was never caught");
+    }
+
+    /// `from` past the end, in a build with debug assertions (the test builds are).
+    #[test]
+    fn gallop_from_past_the_end_panics_in_a_debug_build() {
+        if !cfg!(debug_assertions) {
+            return;
+        }
+        assert_eq!(gallop(&[1, 2, 3], 3, |_| true), 3);
+        let p = std::panic::catch_unwind(|| gallop(&[1, 2, 3], 4, |_| true)).expect_err("panics");
+        let text = p.downcast_ref::<String>().expect("a formatted message");
+        assert_eq!(text, "search::gallop from 4, past the end 3");
     }
 }

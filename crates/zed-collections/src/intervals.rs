@@ -156,10 +156,22 @@ impl<T: Discrete> Interval for (Option<T>, Option<T>) {
 /// Appends `r` to the normal list `out`, keeping it normal: an empty `r` is dropped, and one
 /// that overlaps or touches the last interval is joined to it. `r`'s lower end must be at or
 /// above the lower end of every interval of `out`. O(1).
+///
+/// # Panics
+///
+/// In a build with debug assertions, when `r` is non-empty and its lower end is below that of
+/// the last interval of `out`: `absorb` would join it to that interval, or append it out of
+/// order, and give a list that is not normal with no error (TEST-dry-shared-units). Since
+/// `out` is normal, its last interval has the greatest lower end, so one comparison checks
+/// the whole precondition.
 pub fn push<I: Interval>(out: &mut Vec<I>, r: I) {
     if r.is_empty() {
         return;
     }
+    debug_assert!(
+        out.last().is_none_or(|last| last.cmp_lo(&r).is_le()),
+        "intervals::push: an interval whose lower end is below that of the last interval"
+    );
     let r = match out.last_mut() {
         Some(last) => match last.absorb(r) {
             None => return,
@@ -259,17 +271,34 @@ pub fn minus<T: Discrete>(a: &[(T, T)], b: &[(T, T)]) -> Vec<(T, T)> {
     out
 }
 
-/// The integers of `lo..=hi` outside the intervals of `list`, non-empty and sorted by lower end
-/// (they may overlap or nest), as a normal list. O(|list|).
+/// The integers of `lo..=hi` outside the intervals of `list`, sorted by lower end (they may
+/// overlap or nest; an empty one is skipped), as a normal list; empty where `lo > hi`.
+/// O(|list|).
 ///
 /// The end so far is the greatest upper end read, not the last one: an interval nested in an
 /// earlier one, as `(2, 3)` after `(0, 5)`, must not bring it back (DRY-sorted-structures D2,
 /// where two of the three copies kept the last).
+///
+/// An empty interval is skipped, as [`complement_spans`] skips one. Until TEST-dry-shared-units
+/// the list had to hold none, unchecked: `(5, 2)` in `0..=9` gave `[(0, 4), (3, 9)]`, two
+/// intervals that overlap, since its lower end opened a gap and its upper end closed one.
+///
+/// # Panics
+///
+/// In a build with debug assertions, when the lower ends of `list` decrease: the gap before
+/// an interval is read from the end so far, which an earlier lower end would put wrong.
 pub fn complement<T: Discrete>(list: &[(T, T)], lo: T, hi: T) -> Vec<(T, T)> {
     let mut out = Vec::with_capacity(list.len() + 1);
     // The least integer of `lo..=hi` that no interval read so far holds.
     let mut next = lo;
-    for (l, h) in list {
+    for (k, (l, h)) in list.iter().enumerate() {
+        debug_assert!(
+            k == 0 || list[k - 1].0 <= *l,
+            "intervals::complement: intervals not sorted by lower end"
+        );
+        if l > h {
+            continue;
+        }
         if next > hi || *l > hi {
             break;
         }
@@ -449,6 +478,425 @@ mod tests {
         assert_eq!(
             complement_spans(&[(Some(0), Some(i8::MAX))]),
             [(None, Some(-1))]
+        );
+    }
+
+    // Random lists over windows of integers at the ends of each type, against their members
+    // (TEST-dry-shared-units). The tests above reach `0..8` and `-4..=4`; these reach the least
+    // and greatest value of `u8`, `i8`, `i128`, `u64` and `usize`, where the copies the module
+    // replaced overflowed.
+
+    use crate::seed::Rng;
+    use std::fmt::Debug;
+
+    /// The members of `list`, intervals of a window of `w` integers of `T`, one `bool` each at
+    /// its place `off(v)`; an empty interval holds none.
+    fn members<T: Discrete + Copy>(
+        list: &[(T, T)],
+        w: usize,
+        off: &impl Fn(T) -> usize,
+    ) -> Vec<bool> {
+        let mut m = vec![false; w];
+        for &(l, h) in list {
+            if l <= h {
+                m[off(l)..=off(h)].fill(true);
+            }
+        }
+        m
+    }
+
+    /// The normal list of the members `m` of a window: its maximal runs.
+    fn runs_of<T: Copy>(m: &[bool], at: &impl Fn(usize) -> T) -> Vec<(T, T)> {
+        let mut out = Vec::new();
+        let mut i = 0;
+        while i < m.len() {
+            if m[i] {
+                let start = i;
+                while i + 1 < m.len() && m[i + 1] {
+                    i += 1;
+                }
+                out.push((at(start), at(i)));
+            }
+            i += 1;
+        }
+        out
+    }
+
+    /// Whether `list` is normal, read through `Discrete` alone, so at every width.
+    fn normal<T: Discrete>(list: &[(T, T)]) -> bool {
+        list.iter().all(|(l, h)| l <= h) && list.windows(2).all(|w| !w[1].0.at_most_succ(&w[0].1))
+    }
+
+    /// Up to 6 intervals of a window of `w`: mostly short, one in eight to the window's end,
+    /// one in eight from its start, one in eight empty.
+    fn draw<T: Copy>(rng: &mut Rng, w: usize, at: &impl Fn(usize) -> T) -> Vec<(T, T)> {
+        (0..rng.below(7))
+            .map(|_| {
+                let l = if rng.below(8) == 0 { 0 } else { rng.below(w) };
+                let h = match rng.below(8) {
+                    0 if l > 0 => l - 1 - rng.below(l.min(3)),
+                    1 => w - 1,
+                    _ => (l + rng.below(6)).min(w - 1),
+                };
+                (at(l), at(h))
+            })
+            .collect()
+    }
+
+    /// `coalesce` keeping the last upper end, not the greatest: the D2 fault, the negative
+    /// control of the coalesce check.
+    fn coalesce_keeping_the_last_end<T: Discrete + Copy>(mut v: Vec<(T, T)>) -> Vec<(T, T)> {
+        v.retain(|(l, h)| l <= h);
+        v.sort_by_key(|r| r.0);
+        let mut out: Vec<(T, T)> = Vec::new();
+        for r in v {
+            match out.last_mut() {
+                Some(last) if r.0.at_most_succ(&last.1) => last.1 = r.1,
+                _ => out.push(r),
+            }
+        }
+        out
+    }
+
+    /// `intersect` passing over the interval that ends last, not first: the negative control of
+    /// the intersect check.
+    fn intersect_passing_the_wrong_one<T: Discrete + Copy>(
+        a: &[(T, T)],
+        b: &[(T, T)],
+    ) -> Vec<(T, T)> {
+        let mut out = Vec::new();
+        let (mut i, mut j) = (0, 0);
+        while let (Some(x), Some(y)) = (a.get(i), b.get(j)) {
+            if let Some(m) = x.meet(y) {
+                out.push(m);
+            }
+            if x.ends_by(y) {
+                j += 1;
+            } else {
+                i += 1;
+            }
+        }
+        out
+    }
+
+    /// `minus` taking away from each interval of `a` only the first interval of `b` that meets
+    /// it: the negative control of the minus check.
+    fn minus_first_only<T: Discrete + Copy>(a: &[(T, T)], b: &[(T, T)]) -> Vec<(T, T)> {
+        a.iter()
+            .flat_map(|x| {
+                let first: Vec<(T, T)> = b.iter().filter_map(|y| x.meet(y)).take(1).collect();
+                minus(&[*x], &first)
+            })
+            .collect()
+    }
+
+    /// The `complement` of the copies D2 fixed (modular.rs `res_complement`, preimage.rs
+    /// `ranges_complement`): the end so far is the last upper end read, not the greatest. The
+    /// regression control of D2 and the negative control of the complement check.
+    fn complement_keeping_the_last_end<T: Discrete + Copy>(
+        list: &[(T, T)],
+        lo: T,
+        hi: T,
+    ) -> Vec<(T, T)> {
+        let mut out = Vec::new();
+        let mut next = lo;
+        for &(l, h) in list {
+            if next > hi || l > hi {
+                break;
+            }
+            if l > next {
+                out.push((next, l.pred().expect("l > next")));
+            }
+            match h.succ() {
+                Some(s) => next = s,
+                None => return out,
+            }
+        }
+        if next <= hi {
+            out.push((next, hi));
+        }
+        out
+    }
+
+    /// Random lists in a window of `w` integers of `T` (`at` the integer at a place, `off` the
+    /// place of an integer) against the same operations on their members, each result normal;
+    /// and a faulty form of each operation, its negative control, caught by the same check on
+    /// some draw.
+    fn window_matches_members<T: Discrete + Copy + Debug>(
+        rng: &mut Rng,
+        w: usize,
+        at: impl Fn(usize) -> T,
+        off: impl Fn(T) -> usize,
+    ) {
+        let mut caught = [false; 5];
+        for round in 0..400 {
+            let (ra, rb) = (draw(rng, w, &at), draw(rng, w, &at));
+            let (ma, mb) = (members(&ra, w, &off), members(&rb, w, &off));
+            let a = coalesce(ra.clone());
+            assert_eq!(a, runs_of(&ma, &at), "round {round}: coalesce {ra:?}");
+            assert!(normal(&a), "round {round}: {a:?}");
+            caught[0] |= coalesce_keeping_the_last_end(ra.clone()) != a;
+            let b = coalesce(rb.clone());
+            // Pushed in the order of their lower ends, the intervals give what coalesce gives.
+            let mut sorted = ra.clone();
+            sorted.sort_by_key(|r| r.0);
+            let mut pushed = Vec::new();
+            for &r in &sorted {
+                push(&mut pushed, r);
+            }
+            assert_eq!(pushed, a, "round {round}: push {sorted:?}");
+            let by = |f: fn(bool, bool) -> bool| -> Vec<(T, T)> {
+                let m: Vec<bool> = ma.iter().zip(&mb).map(|(&x, &y)| f(x, y)).collect();
+                runs_of(&m, &at)
+            };
+            let u = union(&a, &b);
+            assert_eq!(u, by(|x, y| x || y), "round {round}: union {a:?} {b:?}");
+            caught[1] |= a.iter().chain(&b).copied().collect::<Vec<_>>() != u;
+            let m = intersect(&a, &b);
+            assert_eq!(m, by(|x, y| x && y), "round {round}: intersect {a:?} {b:?}");
+            caught[2] |= intersect_passing_the_wrong_one(&a, &b) != m;
+            let d = minus(&a, &b);
+            assert_eq!(d, by(|x, y| x && !y), "round {round}: minus {a:?} {b:?}");
+            caught[3] |= minus_first_only(&a, &b) != d;
+            // The complement of the raw list sorted (overlapping, nested and empty intervals
+            // in it) over a random range, `lo > hi` included, or over the whole window.
+            let (lo, hi) = match rng.below(4) {
+                0 => (0, w - 1),
+                _ => (rng.below(w), rng.below(w)),
+            };
+            let want: Vec<bool> = (0..w).map(|i| lo <= i && i <= hi && !ma[i]).collect();
+            let c = complement(&sorted, at(lo), at(hi));
+            assert_eq!(
+                c,
+                runs_of(&want, &at),
+                "round {round}: complement {sorted:?} {lo} {hi}"
+            );
+            let non_empty: Vec<(T, T)> = sorted.iter().copied().filter(|(l, h)| l <= h).collect();
+            caught[4] |= complement_keeping_the_last_end(&non_empty, at(lo), at(hi)) != c;
+        }
+        let names = ["coalesce", "union", "intersect", "minus", "complement"];
+        for (name, caught) in names.iter().zip(caught) {
+            assert!(caught, "the negative control of {name} was never caught");
+        }
+    }
+
+    /// Windows of 64 at each end of `i128`, `u64` and `usize` and around 0, and the whole of
+    /// `u8` and `i8`.
+    #[test]
+    fn random_lists_match_their_members_at_the_ends_of_each_type() {
+        let (mut rng, _) = Rng::fresh("random_lists_match_their_members_at_the_ends_of_each_type");
+        window_matches_members(&mut rng, 256, |i| i as u8, usize::from);
+        window_matches_members(
+            &mut rng,
+            256,
+            |i| (i as i16 - 128) as i8,
+            |v| (i16::from(v) + 128) as usize,
+        );
+        for base in [i128::MIN, -32, i128::MAX - 63] {
+            window_matches_members(&mut rng, 64, |i| base + i as i128, |v| (v - base) as usize);
+        }
+        for base in [0, u64::MAX - 63] {
+            window_matches_members(&mut rng, 64, |i| base + i as u64, |v| (v - base) as usize);
+        }
+        let base = usize::MAX - 63;
+        window_matches_members(&mut rng, 64, |i| base + i, |v| v - base);
+    }
+
+    /// Regressions of the copies DRY-sorted-structures-2 job 1 replaced (6da69df6f), each old
+    /// form written out beside the shared one, with `wrapping_add` and `wrapping_sub` for the
+    /// `+ 1` and `- 1` the old forms wrote: in a build with overflow checks they panicked there,
+    /// and in one without they wrapped to the wrong answer shown.
+    #[test]
+    fn the_copies_replaced_overflowed_at_the_ends_of_the_type() {
+        // presburger.rs `cells_join`: an interval joined the last when `l <= last.1 + 1`.
+        let old_join = |v: &[(usize, usize)]| {
+            let mut out: Vec<(usize, usize)> = Vec::new();
+            for &(l, h) in v {
+                match out.last_mut() {
+                    Some(last) if l <= last.1.wrapping_add(1) => last.1 = last.1.max(h),
+                    _ => out.push((l, h)),
+                }
+            }
+            out
+        };
+        let v = [(0, usize::MAX), (3, 4)];
+        assert_eq!(old_join(&v), [(0, usize::MAX), (3, 4)], "not normal");
+        assert_eq!(coalesce(v.to_vec()), [(0, usize::MAX)]);
+        // presburger.rs `cells_minus`: the rest after `b[k]` started at `b[k].1 + 1`.
+        let rest_after = |e: usize| e.wrapping_add(1);
+        assert_eq!(rest_after(usize::MAX), 0, "the rest would start again at 0");
+        assert_eq!(minus(&[(0, usize::MAX)], &[(5, usize::MAX)]), [(0, 4)]);
+        assert_eq!(
+            minus(&[(7, usize::MAX)], &[(0, 3), (9, usize::MAX)]),
+            [(7, 8)]
+        );
+        // two_pins.rs `merge_runs`: runs joined when `e >= l - 1`, which at `l == i128::MIN`
+        // compared `e` with `i128::MAX`.
+        let old_joins = |e: i128, l: i128| e >= l.wrapping_sub(1);
+        assert!(!old_joins(5, i128::MIN), "two overlapping runs kept apart");
+        assert_eq!(
+            coalesce(vec![(i128::MIN, 5), (i128::MIN, i128::MIN)]),
+            [(i128::MIN, 5)]
+        );
+        // residues.rs `complement` did not clip an interval past `m - 1`: within `0..=9`, the
+        // interval `(7, 12)` leaves `0..=6`.
+        assert_eq!(complement(&[(7u64, 12)], 0, 9), [(0, 6)]);
+        assert_eq!(
+            complement(&[(0u64, 3), (5, u64::MAX)], 0, u64::MAX),
+            [(4, 4)]
+        );
+    }
+
+    /// `complement_spans` keeping the last upper end read, not the greatest: the negative
+    /// control of the spans check.
+    fn complement_spans_keeping_the_last_end(
+        list: &[(Option<i8>, Option<i8>)],
+    ) -> Vec<(Option<i8>, Option<i8>)> {
+        let mut out = Vec::new();
+        let mut next: Option<i8> = None;
+        for &(l, h) in list.iter().filter(|s| !s.is_empty()) {
+            if let Some(l) = l
+                && next.is_none_or(|n| l > n)
+                && let Some(before) = l.pred()
+            {
+                out.push((next, Some(before)));
+            }
+            match h.map(|h| h.succ()) {
+                None | Some(None) => return out,
+                Some(s) => next = s,
+            }
+        }
+        out.push((next, None));
+        out
+    }
+
+    /// Random lists of spans of `i8`, an end unbounded one time in four, against their members
+    /// as 256 `bool`s: an unbounded end reaches the end of the type, so the members are exact.
+    /// The results are compared by their members, since a bounded end at the type's end and an
+    /// unbounded one hold the same integers.
+    #[test]
+    fn random_spans_of_i8_match_their_members() {
+        type Span = (Option<i8>, Option<i8>);
+        let (mut rng, _) = Rng::fresh("random_spans_of_i8_match_their_members");
+        let off = |v: i8| (i16::from(v) + 128) as usize;
+        let of = |list: &[Span]| {
+            let mut m = [false; 256];
+            for (l, h) in list {
+                let (l, h) = (l.map_or(0, off), h.map_or(255, off));
+                if l <= h {
+                    m[l..=h].fill(true);
+                }
+            }
+            m
+        };
+        let spans_normal = |list: &[Span]| {
+            list.iter().all(|s| !s.is_empty())
+                && list.iter().skip(1).all(|s| s.0.is_some())
+                && list.iter().rev().skip(1).all(|s| s.1.is_some())
+                && list.windows(2).all(|w| match (w[0].1, w[1].0) {
+                    (Some(h), Some(l)) => !l.at_most_succ(&h),
+                    _ => false,
+                })
+        };
+        fn end(rng: &mut Rng) -> Option<i8> {
+            (rng.below(4) != 0).then(|| rng.int(-128, 127) as i8)
+        }
+        fn draw(rng: &mut Rng) -> Vec<Span> {
+            (0..rng.below(6)).map(|_| (end(rng), end(rng))).collect()
+        }
+        let mut caught = false;
+        for round in 0..2000 {
+            let (ra, rb) = (draw(&mut rng), draw(&mut rng));
+            let (a, b) = (coalesce(ra.clone()), coalesce(rb.clone()));
+            assert_eq!(of(&a), of(&ra), "round {round}: coalesce {ra:?}");
+            assert!(spans_normal(&a), "round {round}: {a:?}");
+            let (ma, mb) = (of(&a), of(&b));
+            let u = union(&a, &b);
+            assert!(spans_normal(&u), "round {round}: {u:?}");
+            let m = intersect(&a, &b);
+            assert!(spans_normal(&m), "round {round}: {m:?}");
+            let mut sorted = ra.clone();
+            sorted.sort_by_key(|s| s.0);
+            let c = complement_spans(&sorted);
+            assert!(
+                spans_normal(&c),
+                "round {round}: complement {sorted:?} = {c:?}"
+            );
+            let (mu, mm, mc) = (of(&u), of(&m), of(&c));
+            for i in 0..256 {
+                assert_eq!(mu[i], ma[i] || mb[i], "round {round}: union at {i}");
+                assert_eq!(mm[i], ma[i] && mb[i], "round {round}: meet at {i}");
+                assert_eq!(mc[i], !ma[i], "round {round}: complement at {i}");
+            }
+            caught |= of(&complement_spans_keeping_the_last_end(&sorted)) != of(&c);
+        }
+        assert!(
+            caught,
+            "the negative control of complement_spans was never caught"
+        );
+    }
+
+    /// D2: the complement after a nested interval, against the old copies' form.
+    #[test]
+    fn the_complement_after_a_nested_interval_starts_after_the_outer_one() {
+        let list = [(0u8, 5), (2, 3)];
+        assert_eq!(complement_keeping_the_last_end(&list, 0, 9), [(4, 9)]);
+        assert_eq!(complement(&list, 0, 9), [(6, 9)]);
+        assert_eq!(coalesce_keeping_the_last_end(list.to_vec()), [(0, 3)]);
+        assert_eq!(coalesce(list.to_vec()), [(0, 5)]);
+    }
+
+    /// An empty interval in the list of `complement` is skipped; before TEST-dry-shared-units it
+    /// opened a gap at its lower end and closed one at its upper end.
+    #[test]
+    fn complement_skips_an_empty_interval() {
+        assert_eq!(complement(&[(5u8, 2)], 0, 9), [(0, 9)]);
+        assert_eq!(
+            complement(&[(1u8, 1), (5, 2), (7, 8)], 0, 9),
+            [(0, 0), (2, 6), (9, 9)]
+        );
+        assert_eq!(complement(&[(1u8, 1)], 5, 2), [], "lo > hi is empty");
+        assert_eq!(complement::<u8>(&[], 9, 9), [(9, 9)]);
+    }
+
+    /// The text of the panic of `f`, which must panic.
+    fn panic_text(f: impl FnOnce() + std::panic::UnwindSafe) -> String {
+        let p = std::panic::catch_unwind(f).expect_err("it panics");
+        p.downcast_ref::<&str>()
+            .map(|s| s.to_string())
+            .or_else(|| p.downcast_ref::<String>().cloned())
+            .expect("a text message")
+    }
+
+    /// Each precondition broken, in a build with debug assertions (the test builds are).
+    #[test]
+    fn a_broken_precondition_panics_in_a_debug_build() {
+        if !cfg!(debug_assertions) {
+            return;
+        }
+        let text = panic_text(|| {
+            let mut out = vec![(5u8, 6)];
+            push(&mut out, (0, 1));
+        });
+        assert_eq!(
+            text,
+            "intervals::push: an interval whose lower end is below that of the last interval"
+        );
+        let text = panic_text(|| {
+            let mut out = vec![(Some(0i8), Some(1))];
+            push(&mut out, (None, Some(5)));
+        });
+        assert!(text.starts_with("intervals::push"), "{text}");
+        // An empty interval is dropped before the check: it adds no integer.
+        let mut out = vec![(5u8, 6)];
+        push(&mut out, (3, 0));
+        assert_eq!(out, [(5, 6)]);
+        let text = panic_text(|| {
+            complement(&[(5u8, 6), (0, 1)], 0, 9);
+        });
+        assert_eq!(
+            text,
+            "intervals::complement: intervals not sorted by lower end"
         );
     }
 }

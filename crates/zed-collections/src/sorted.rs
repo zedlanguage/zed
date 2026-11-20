@@ -282,5 +282,214 @@ mod tests {
         let named = [("a".to_string(), 1), ("c".to_string(), 3)];
         assert_eq!(sorted_get(&named, "c"), Some(&3));
         assert_eq!(sorted_get(&named, "b"), None);
+        assert_eq!(sorted_get::<u32, u32, u32>(&[], &0), None);
+        let ends = [(u64::MIN, 'a'), (u64::MAX, 'z')];
+        assert_eq!(sorted_get(&ends, &u64::MAX), Some(&'z'));
+        assert_eq!(sorted_get(&ends, &u64::MIN), Some(&'a'));
+        assert_eq!(sorted_get(&ends, &1), None);
+    }
+
+    // Random lists against naive references (TEST-dry-shared-units), each with a faulty form as
+    // its negative control, caught by the same check on some draw.
+
+    use crate::seed::Rng;
+
+    /// A strictly increasing list of up to `n` items of `lo..lo + w`, `lo` drawn near either end
+    /// of `u64` or near 0.
+    fn increasing(rng: &mut Rng, n: usize, w: u64) -> Vec<u64> {
+        let lo = rng.pick(&[0, u64::MAX - w + 1, 1 << 40]);
+        let mut v: Vec<u64> = (0..rng.below(n + 1))
+            .map(|_| lo + rng.below_u64(w))
+            .collect();
+        v.sort_unstable();
+        v.dedup();
+        v
+    }
+
+    /// The three sorts with duplicates removed against a scan that keeps the first of each,
+    /// on lists with many repeats; the faulty form of `sort_dedup_by`, one sort by the order
+    /// and a `dedup` (DEDUP-keyed-sort-interleaved), is caught.
+    #[test]
+    fn sorts_with_duplicates_removed_match_a_scan() {
+        let (mut rng, _) = Rng::fresh("sorts_with_duplicates_removed_match_a_scan");
+        let mut caught = false;
+        for round in 0..2000 {
+            let n = rng.below(40);
+            let v: Vec<(u8, u8)> = (0..n)
+                .map(|_| (rng.below(4) as u8, rng.below(3) as u8))
+                .collect();
+            let mut first: Vec<(u8, u8)> = Vec::new();
+            for x in &v {
+                if !first.contains(x) {
+                    first.push(*x);
+                }
+            }
+            let mut want = first.clone();
+            want.sort();
+            let mut got = v.clone();
+            sort_dedup(&mut got);
+            assert_eq!(got, want, "round {round}: sort_dedup {v:?}");
+            // By the key: the first item of each key in `v`, in the order of the keys.
+            let mut want: Vec<(u8, u8)> = Vec::new();
+            for x in &v {
+                if !want.iter().any(|y| y.0 == x.0) {
+                    want.push(*x);
+                }
+            }
+            want.sort_by_key(|x| x.0);
+            let mut got = v.clone();
+            sort_dedup_by_key(&mut got, |x| x.0);
+            assert_eq!(got, want, "round {round}: sort_dedup_by_key {v:?}");
+            // By an order coarser than equality: each item once, at its first place, in the
+            // stable order of the key.
+            let mut want = first.clone();
+            want.sort_by_key(|x| x.0);
+            let mut got = v.clone();
+            sort_dedup_by(&mut got, |x, y| x.0.cmp(&y.0));
+            assert_eq!(got, want, "round {round}: sort_dedup_by {v:?}");
+            let mut old = v.clone();
+            old.sort_by_key(|x| x.0);
+            old.dedup();
+            caught |= old != want;
+        }
+        assert!(
+            caught,
+            "the negative control of sort_dedup_by was never caught"
+        );
+        let mut empty: Vec<u8> = Vec::new();
+        sort_dedup(&mut empty);
+        sort_dedup_by(&mut empty, u8::cmp);
+        sort_dedup_by_key(&mut empty, |&x| x);
+        assert!(empty.is_empty());
+    }
+
+    /// `merge`, `merge_into` and `union_all` against a sort of the items joined, on lists near
+    /// the ends of `u64`; `merge_into` with an `out` that holds items from a call before; the
+    /// faulty union of many lists, the lists joined unsorted, is caught.
+    #[test]
+    fn unions_of_random_lists_match_a_sort() {
+        let (mut rng, _) = Rng::fresh("unions_of_random_lists_match_a_sort");
+        let mut out = vec![7u64; 5];
+        let mut caught = false;
+        for round in 0..2000 {
+            let (a, b) = (increasing(&mut rng, 30, 64), increasing(&mut rng, 30, 64));
+            let mut want: Vec<u64> = a.iter().chain(&b).copied().collect();
+            sort_dedup(&mut want);
+            assert_eq!(merge(&a, &b), want, "round {round}: {a:?} {b:?}");
+            let keep = |x: &u64| x % 3 != 0;
+            merge_into(&a, &b, keep, &mut out);
+            let kept: Vec<u64> = want.iter().copied().filter(keep).collect();
+            assert_eq!(out, kept, "round {round}: merge_into {a:?} {b:?}");
+            let lists: Vec<Vec<u64>> = (0..rng.below(9))
+                .map(|_| increasing(&mut rng, 8, 64))
+                .collect();
+            let mut want: Vec<u64> = lists.iter().flatten().copied().collect();
+            sort_dedup(&mut want);
+            let joined: Vec<u64> = lists.iter().flatten().copied().collect();
+            caught |= joined != want;
+            assert_eq!(union_all(lists.clone()), want, "round {round}: {lists:?}");
+        }
+        assert!(caught, "the negative control of union_all was never caught");
+        assert_eq!(union_all(vec![vec![3u8, 9]]), [3, 9]);
+        assert_eq!(union_all(vec![Vec::<u8>::new(); 7]), Vec::<u8>::new());
+        assert_eq!(merge::<u8>(&[], &[]), Vec::<u8>::new());
+    }
+
+    /// `merge_join` against a scan of the two lists, with repeats in each list (the documented
+    /// form: a first copy is paired, a second comes alone), and its `size_hint` checked at each
+    /// step against the steps left; the faulty join that pairs nothing is caught.
+    #[test]
+    fn merge_join_matches_a_scan_with_repeats() {
+        let (mut rng, _) = Rng::fresh("merge_join_matches_a_scan_with_repeats");
+        let mut caught = false;
+        for round in 0..2000 {
+            let draw = |rng: &mut Rng| {
+                let mut v: Vec<u8> = (0..rng.below(12)).map(|_| rng.below(6) as u8).collect();
+                v.sort_unstable();
+                v
+            };
+            let (a, b) = (draw(&mut rng), draw(&mut rng));
+            // The scan: the same walk written with indices.
+            let mut want: Vec<Joined<u8, u8>> = Vec::new();
+            let (mut i, mut j) = (0, 0);
+            while i < a.len() || j < b.len() {
+                if j == b.len() || (i < a.len() && a[i] < b[j]) {
+                    want.push(Joined::Left(a[i]));
+                    i += 1;
+                } else if i == a.len() || b[j] < a[i] {
+                    want.push(Joined::Right(b[j]));
+                    j += 1;
+                } else {
+                    want.push(Joined::Both(a[i], b[j]));
+                    (i, j) = (i + 1, j + 1);
+                }
+            }
+            let mut it = merge_join(&a, &b, u8::cmp);
+            let mut got = Vec::new();
+            loop {
+                let (low, high) = it.size_hint();
+                let left = want.len() - got.len();
+                assert!(low <= left && Some(left) <= high, "round {round}: hint");
+                let Some(step) = it.next() else { break };
+                got.push(match step {
+                    Joined::Left(x) => Joined::Left(*x),
+                    Joined::Right(y) => Joined::Right(*y),
+                    Joined::Both(x, y) => Joined::Both(*x, *y),
+                });
+            }
+            assert_eq!(got, want, "round {round}: {a:?} {b:?}");
+            // Every item of each list is met once, in its order.
+            let lefts: Vec<u8> = got
+                .iter()
+                .filter_map(|j| match j {
+                    Joined::Left(x) | Joined::Both(x, _) => Some(*x),
+                    Joined::Right(_) => None,
+                })
+                .collect();
+            assert_eq!(lefts, a, "round {round}");
+            let unpaired: Vec<Joined<u8, u8>> = a
+                .iter()
+                .map(|&x| Joined::Left(x))
+                .chain(b.iter().map(|&y| Joined::Right(y)))
+                .collect();
+            caught |= unpaired != want;
+        }
+        assert!(
+            caught,
+            "the negative control of merge_join was never caught"
+        );
+        let a = [1u8, 1, 2];
+        let b = [1u8];
+        let j: Vec<_> = merge_join(&a, &b, u8::cmp).collect();
+        assert_eq!(
+            j,
+            [Joined::Both(&1, &1), Joined::Left(&1), Joined::Left(&2)]
+        );
+    }
+
+    /// `sorted_get` on random keys near the ends of `u64` against a scan; the faulty lookup by
+    /// a search for the first key at or above, which finds a neighbor, is caught.
+    #[test]
+    fn sorted_get_matches_a_scan_on_random_keys() {
+        let (mut rng, _) = Rng::fresh("sorted_get_matches_a_scan_on_random_keys");
+        let mut caught = false;
+        for round in 0..2000 {
+            let keys = increasing(&mut rng, 20, 40);
+            let pairs: Vec<(u64, usize)> = keys.iter().copied().zip(0..).collect();
+            let at = keys.first().copied().unwrap_or(0);
+            let k = at.wrapping_add(rng.below_u64(48)).wrapping_sub(4);
+            let want = pairs.iter().find(|p| p.0 == k).map(|p| &p.1);
+            assert_eq!(
+                sorted_get(&pairs, &k),
+                want,
+                "round {round}: {k} in {keys:?}"
+            );
+            let near = pairs.get(pairs.partition_point(|p| p.0 < k)).map(|p| &p.1);
+            caught |= near != want;
+        }
+        assert!(
+            caught,
+            "the negative control of sorted_get was never caught"
+        );
     }
 }
