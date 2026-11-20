@@ -39,7 +39,8 @@
 //! exact elimination, "A practical algorithm for exact array dependence analysis", CACM 35(8),
 //! 1992, sec. 2.2 of the expanded text: an equality with a unit coefficient is solved for that
 //! variable and substituted; the crate root's References) extended to guarded definitions; the
-//! interval reading of the values given a pin is interval constraint propagation over the definition order.
+//! interval reading of the values given a pin is interval constraint propagation over the
+//! definition order.
 
 use std::cell::RefCell;
 use std::collections::{HashMap, HashSet};
@@ -589,8 +590,8 @@ fn at_most(a: &Int, hi: Option<&Int>, k: &Int) -> IntervalSet {
 }
 
 /// The pins at which `f` (negated where `neg`) holds for every value in its atoms' intervals.
-// Complexity tradeoff: one visit of each shared part per sign (memo by `Id`), O(size of f); the tree
-// walk without the memo is exponential in the sharing depth (DAG visited set, P207). The parts
+// Complexity tradeoff: one visit of each shared part per sign (memo by `Id`), O(size of f); the
+// tree walk without the memo is exponential in the sharing depth (DAG visited set, P207). The parts
 // waiting for their children are on an explicit stack, not the call stack: a recursive walk
 // overflowed the stack on a chain 24,000 rules deep (FAIL-ids-shared-parts-stack-overflow,
 // `bench::ids::passes_over_shared_parts_take_time_linear_in_the_distinct_parts`).
