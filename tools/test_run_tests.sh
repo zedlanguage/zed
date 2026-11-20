@@ -175,6 +175,15 @@ check "a benchmark of a library matches by its name without the hash, alone" \
   "zed_kernel::btree::bench::insertion_lookup_and_difference_scale_as_n_log_n" \
   "$(run --list --reuse-table --bench --only '^zed_kernel::btree::bench::insertion_lookup_and_difference_scale_as_n_log_n$' |
     sed 's/^zed_kernel-[0-9a-f]*::/zed_kernel::/')"
+# The short-addresses build keeps 8 bits of each digest, where the zed-kernel benchmarks measure
+# ties of digests, not the method (bdd's parity bench asserts 1,024 distinct priority points and
+# gets 256), so short-zed_kernel runs the unit tests alone and a --bench run makes no short- piece
+# of it (3f857488a, FAIL-bench-main-f215d9c90; TEST-short-benches-full-digest, found by dryS2,
+# where 24 of 48 failed bench pieces were short-zed_kernel).
+benches_k=$(run --list --reuse-table --bench --only 'zed_kernel')
+check "--bench over zed_kernel selects its benchmarks" "yes" \
+  "$([ "$(echo "$benches_k" | grep -c '^zed_kernel-[0-9a-f]*::')" -gt 0 ] && echo yes)"
+check "--bench over zed_kernel selects no short- piece" "" "$(echo "$benches_k" | grep '^short-')"
 out=$(run --list --reuse-table --bench --only '^zed_kernel::btree::bench::no_benchmark_is_named_this$')
 rc=$?
 check "a benchmark name without the hash that matches nothing exits non-zero" \
