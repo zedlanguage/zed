@@ -7,9 +7,9 @@
 //!
 //! What these tests cannot catch: crossings zedc does not compile yet (a binding with a
 //! declared type, a declared result type, `loop`, `for`, struct and type declarations, struct
-//! grammars), whose rules the rows that build those forms carry; and calls of functions with
-//! undeclared parameters, whose atom choice CHK-index-else-bubble fixes (`args[0]` in such a
-//! body gives `#notFound` today where the call passes a `CommandLine`).
+//! grammars), whose rules the rows that build those forms carry. Calls of functions with
+//! undeclared parameters give the atom of the argument they bind, `#outOfBounds` for a
+//! `CommandLine` (CHK-index-else-bubble; the cases of CHK-atom-boundary-cases below).
 
 use zed_tests::step_helpers::l01_19a_command_line::run;
 
@@ -145,12 +145,85 @@ fn a_call_statement_that_only_writes_is_legal_and_one_with_a_value_is_not() {
     // Negative control: a statement whose value is not `()` drops a result, and is rejected.
     let bad = "w(positional xs, o: Lines) {\n  o <- \"x\";\n  xs[0]\n}\nmain(m: MainArgs) {\n  \
         w(m.args, o: m.stderr);\n  m.stdout <- \"done\";\n}\n";
+    // The atom is the one `xs[0]` gives for the `CommandLine` the call binds `xs` to
+    // (CHK-atom-boundary-cases (3); before CHK-index-else-bubble it was `#notFound`).
     rejected(
         "stmt_bad",
         bad,
         &[
-            "Result of `w` is unused",
+            "Result of `w` is unused: `w(m.args, o: m.stderr) : String | #outOfBounds`",
             "_ = w(m.args, o: m.stderr) else #ok;",
         ],
     );
+    // The repair the message shows is accepted.
+    let fixed = "w(positional xs, o: Lines) {\n  o <- \"x\";\n  xs[0]\n}\nmain(m: MainArgs) {\n  \
+        _ = w(m.args, o: m.stderr) else #ok;\n  m.stdout <- \"done\";\n}\n";
+    let (status, stdout, stderr) = run0("stmt_fixed", fixed);
+    assert_eq!(
+        (status, stdout.as_str(), stderr.as_str()),
+        (0, "done\n", "x\n"),
+        "{fixed}"
+    );
+}
+
+// The cases of CHK-atom-boundary-cases (zed ATOM-BUBBLE-STUDY.md, Appendix 2): crossings
+// through a function whose parameter has no written type, where the call binds it to
+// `m.args`, so that a read in the body gives `#outOfBounds`.
+
+#[test]
+fn an_inferred_function_result_holds_the_atom_of_its_argument() {
+    // Crossing (3), probe levels/fn_result_inferred: before, the call gave `#notFound`.
+    let src = |a: &str| {
+        format!(
+            "g(positional xs) = xs[0];\nmain(m: MainArgs) {{\n  a = {a};\n  m.stdout <- a;\n}}\n"
+        )
+    };
+    prints(
+        "fn_result_inferred",
+        &src("g(m.args) else #outOfBounds -> \"none\""),
+        "none\n",
+    );
+    rejected(
+        "fn_result_inferred_bad",
+        &src("g(m.args)"),
+        &[AT_WRITE, "`m.stdout <- a : String | #outOfBounds`"],
+    );
+}
+
+#[test]
+fn an_untyped_default_takes_the_atom_of_its_read() {
+    // Crossing (5), probe levels/param_default_untyped: `s` takes the default's type, atom
+    // included, and `++` passes it on to `h`'s result.
+    let src = |tail: &str| {
+        format!(
+            "h(positional xs, s = xs[0]) = s ++ \"!\";\n\
+             main(m: MainArgs) {{\n  m.stdout <- h(m.args){tail};\n}}\n"
+        )
+    };
+    prints("default_untyped", &src(" else \"none\""), "none\n");
+    rejected(
+        "default_untyped_bad",
+        &src(""),
+        &[AT_WRITE, "`m.stdout <- h(m.args) : String | #outOfBounds`"],
+    );
+}
+
+#[test]
+fn underscore_names_the_atom_a_call_gives() {
+    // Crossing (7), probe levels/stmt_underscore_call: before, the message named `#notFound`.
+    let src = |rhs: &str| {
+        format!(
+            "g(positional xs) = xs[0];\n\
+             main(m: MainArgs) {{\n  _ = {rhs};\n  m.stdout <- \"done\";\n}}\n"
+        )
+    };
+    rejected(
+        "underscore_call_bad",
+        &src("g(m.args)"),
+        &[
+            "`_` drops a loose failure this value may be, #outOfBounds",
+            "_ = … else #ok;",
+        ],
+    );
+    prints("underscore_call", &src("g(m.args) else #ok"), "done\n");
 }
