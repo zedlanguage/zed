@@ -789,3 +789,54 @@ fn the_seeds_of_results_holding_functions_raise_no_type_error() {
         assert!(r.functions > 0, "seed {seed}: no program skipped");
     }
 }
+
+/// The seed whose program `r = (f64(2.5), (-1.5 + (2)^2))`, after its functions, gave a value
+/// outside the type of `r`: the top level typed the display `Never`, while its second
+/// component, an operation on literals, was rejected and then took `f64`. The display keeps
+/// the type each component was given, with that one `f64`. Run with the sets of functions the
+/// test of random programs made when it found the fault.
+#[test]
+fn the_seed_of_a_display_typed_never_runs_inside_its_type() {
+    let seed = 4_877_959_526_508_188_689;
+    assert_sound(seed, &run_programs(seed, SETS));
+}
+
+/// A tuple display or an atom whose part is an operation on literals that takes `f64` at the
+/// top level has the type of each part, that one `f64`: before the fix each was `Never`. The
+/// controls, whose types were already right, keep them: a part that takes no `f64`, a part
+/// bound to a name first, a pattern that takes the tuple apart, and a function's result.
+#[test]
+fn a_display_with_a_part_that_takes_f64_has_each_parts_type() {
+    for (p, want) in [
+        ("r = (1, 0.5 + 2*2);\n", "(1, f64)"),
+        ("r = (1, 1.5 + (2)^2);\n", "(1, f64)"),
+        ("r = (1, (2, 0.5 + 2*2));\n", "(1, (2, f64))"),
+        ("r = #a(0.5 + 2*2);\n", "#a(f64)"),
+        ("r = (1, #a(0.5 + 2*2));\n", "(1, #a(f64))"),
+        // Controls.
+        ("r = (1, 2^2);\n", "(1, int)"),
+        ("r = (1, 0.5 + 4);\n", "(1, f64)"),
+        ("x = 0.5 + 2^2;\nr = (1, x);\n", "(1, f64)"),
+        ("a, b = (1, 0.5 + 2*2);\nr = b;\n", "f64"),
+        ("g() = (1, 0.5 + 2*2);\nr = g();\n", "(1, f64)"),
+    ] {
+        let (i, _) = info(p);
+        assert!(i.errors.is_empty(), "{p}rejected: {:?}", i.errors);
+        assert_eq!(i.tops["r"].to_string(), want, "{p}");
+    }
+}
+
+/// The comparison of two displays whose parts take `f64` ([`retyped`] at `==`) is a `bool`,
+/// as before the fix; the control compares displays with no such part.
+#[test]
+fn a_comparison_of_displays_with_parts_that_take_f64_is_a_bool() {
+    for p in [
+        "r = (1, 0.5 + 2*2) == (1, 4.5);\n",
+        "r = (2.5, 0.5 + 2*2) == (2.5, 4.5f64);\n",
+        "r = (1, 2) == (1, 2);\n",
+    ] {
+        let (i, _) = info(p);
+        assert!(i.errors.is_empty(), "{p}rejected: {:?}", i.errors);
+        assert_eq!(i.tops["r"].to_string(), "bool", "{p}");
+    }
+}

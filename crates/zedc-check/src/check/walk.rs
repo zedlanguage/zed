@@ -6672,7 +6672,7 @@ impl<'t, 'a> Ck<'t, 'a> {
         }
         let v = match new.is_empty() {
             true => v.clone(),
-            false => retyped(v, value, &new),
+            false => retyped(v, value, &new, &self.seen),
         };
         (taken, v)
     }
@@ -6999,8 +6999,8 @@ impl<'t, 'a> Ck<'t, 'a> {
             }
         }
         if !new.is_empty() {
-            x.ty = retyped(&x.ty, a, &new);
-            y.ty = retyped(&y.ty, b, &new);
+            x.ty = retyped(&x.ty, a, &new, &self.seen);
+            y.ty = retyped(&y.ty, b, &new, &self.seen);
         }
     }
 
@@ -26695,15 +26695,30 @@ fn out_of_bounds(r: Ty, key: &Ty, sig: &Sig) -> Ty {
     }
 }
 
-/// The type `t` of the tuple display `e`, with the component of each span of `new` of the
-/// type `new` gives it, made bottom up: a display's type is the row of its components'
-/// types ([`Ck::tuple_step`]). The walk keeps its own stack, since displays nest as deep as
-/// the text; it costs the size of `e`.
-fn retyped(t: &Ty, e: &Expr, new: &HashMap<Span, Ty>) -> Ty {
+/// The type `t` of the value `e`, written as tuple displays and atoms with a payload
+/// ([`value_parts`]), with the part of each span of `new` of the type `new` gives it, made
+/// bottom up: a display's type is the row of its components' types ([`Ck::tuple_step`]), an
+/// atom's is the atom of its payload's types ([`Ck::atom_step`]). The walk keeps its own
+/// stack, since displays nest as deep as the text; it costs the size of `e`.
+///
+/// Where `t` is empty, the display or atom was typed while one of its parts was still the
+/// empty type its rejection gives, and so is empty itself, with no row or payload left to
+/// read the other parts' types from. Each part's type is then the one the walk gave it, kept
+/// in `seen`: `(1, 0.5 + 2*2)` at the top level was `Never` and is `(1, f64)` (the random
+/// program of seed 4877959526508188689, whose value the run found outside `Never`). A part
+/// `seen` holds nothing for stays empty, as before. It costs one lookup per part, so the walk
+/// stays O(size of `e`).
+fn retyped(t: &Ty, e: &Expr, new: &HashMap<Span, Ty>, seen: &HashMap<Span, Seen<'_>>) -> Ty {
     enum Step<'e> {
         Visit(Ty, &'e Expr),
         Make(usize),
+        // The atom `#name` of so many items, then the named fields.
+        Atom(&'e str, usize, &'e [(String, Expr)]),
     }
+    let was = |e: &Expr| {
+        let c = seen.get(&e.span).and_then(|(c, _)| c.clone());
+        c.unwrap_or_else(Ty::empty)
+    };
     let mut todo = vec![Step::Visit(t.clone(), e)];
     let mut out: Vec<Ty> = Vec::new();
     while let Some(step) = todo.pop() {
@@ -26723,12 +26738,40 @@ fn retyped(t: &Ty, e: &Expr, new: &HashMap<Span, Ty>) -> Ty {
                         todo.push(Step::Make(cs.len()));
                         todo.extend(cs.into_iter().zip(es).rev().map(|(c, e)| Step::Visit(c, e)));
                     }
+                    (ExprKind::Tuple(es), None) if t.is_empty() => {
+                        todo.push(Step::Make(es.len()));
+                        todo.extend(es.iter().rev().map(|e| Step::Visit(was(e), e)));
+                    }
+                    (
+                        ExprKind::Call {
+                            callee,
+                            positional,
+                            named,
+                            curry: false,
+                            ..
+                        },
+                        _,
+                    ) if t.is_empty()
+                        && let ExprKind::Atom(name) = &callee.kind =>
+                    {
+                        todo.push(Step::Atom(name, positional.len(), named));
+                        let parts = positional.iter().chain(named.iter().map(|(_, e)| e));
+                        todo.extend(parts.rev().map(|e| Step::Visit(was(e), e)));
+                    }
                     _ => out.push(t),
                 }
             }
             Step::Make(n) => {
                 let cs = out.split_off(out.len() - n);
                 out.push(Ty::of_row(ty::Row::new(cs)));
+            }
+            Step::Atom(name, n, named) => {
+                let mut fields = out.split_off(out.len() - named.len()).into_iter();
+                let items = out.split_off(out.len() - n);
+                let fields = (named.iter())
+                    .map(|(k, _)| (Arc::from(k.as_str()), fields.next().expect("a field")))
+                    .collect();
+                out.push(Ty::atom_of(name, items, fields));
             }
         }
     }
