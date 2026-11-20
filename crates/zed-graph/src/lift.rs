@@ -23,9 +23,10 @@
 //! both nodes together by the largest jumps that keep them apart, the textbook use of the same
 //! table, not taken from this paper (from memory, not checked against a source). This module
 //! cited before the same authors' "The LCA Problem Revisited", LATIN 2000, LNCS 1776,
-//! pp. 88-94, doi:10.1007/10719839_9, section 2; that text was read on 2026-11-20 and holds no binary lifting: its section 2 gives definitions and its
-//! section 3 a sparse table over intervals of power-of-two length, answering a range-minimum
-//! query in O(1), the Euler-tour method the tradeoff below compares with. Tests:
+//! pp. 88-94, doi:10.1007/10719839_9, section 2; that text was read on 2026-11-20 and holds no
+//! binary lifting: its section 2 gives definitions and its section 3 a sparse table over intervals
+//! of power-of-two length, answering a range-minimum query in O(1), the Euler-tour method the
+//! tradeoff below compares with. Tests:
 //! `the_lowest_common_ancestor_agrees_with_the_walk_up_the_parents` compares `lca` and
 //! `up_to(a, d)` with a walk up the parents, and
 //! `the_lowest_common_ancestor_by_doubling_agrees_on_a_tree_parting_at_many_depths` compares

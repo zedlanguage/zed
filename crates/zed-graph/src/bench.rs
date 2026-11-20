@@ -16,7 +16,8 @@ fn spread(n: usize) -> Vec<Vec<usize>> {
         .collect()
 }
 
-/// Small instances: `components_are_the_classes_of_mutual_reach_numbered_in_reverse_topological_order`.
+/// Small instances:
+/// `components_are_the_classes_of_mutual_reach_numbered_in_reverse_topological_order`.
 #[test]
 fn the_components_of_a_large_graph_take_linear_time() {
     let n = 200_000;
