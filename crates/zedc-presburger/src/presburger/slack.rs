@@ -1240,9 +1240,10 @@ pub(super) struct RowPlan {
 
 // Complexity tradeoff: naive `probe_kept` runs a separate `point_with` (`pick_by(..., true)` and
 // `pick_by(..., false)`) per unheld disjunct, costing `Theta(k_r^2 log k_r)` per bounded unit row.
-// Here `sweep_row` exploits Hopcroft color-order invariance (`Rel::Ge < Rel::Eq` in `Linked::meet`
-// keeps `-a_i + w_i >= 0` intact when `a_z == v_z` is added, so `solve_ord` is invariant across all
-// `2 k_r` probes), simulating the initial LP split via a Fenwick tree and all greedy walks via
+// Here `sweep_row` relies on an order that does not change between probes (`Rel::Ge < Rel::Eq`
+// in `Linked::meet` keeps `-a_i + w_i >= 0` intact when `a_z == v_z` is added, so `solve_ord`
+// is the same for all `2 k_r` probes), simulating the initial LP split via a Fenwick tree
+// (Fenwick 1994, in the crate's references) and all greedy walks via
 // `FastGreedy` in `O(k_r log k_r log W)` total time. What is given up: searches outside single-axis
 // greedy walks (general subset sum, NP-complete). Test:
 // `l01_38_presburger::slack_scale::sat_half_decide_scales`.

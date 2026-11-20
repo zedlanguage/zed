@@ -52,6 +52,10 @@
 //!   coordinates, 2026-11-20, finds no point, and none with 45 raised to 46); a dark shadow
 //!   written with `a·b` in place of `(a - 1)·(b - 1)` drops points, which the projection tests
 //!   against enumeration (`small_systems_project_to_their_enumerated_values`) catch.
+//!   A machine-checked proof of the test, including the dark shadow, is in Brănici-Faraon,
+//!   Ciobâcă and Gratie, "Formalizing the Omega test in Dafny", EPTCS 452, 2026,
+//!   pp. 67-81, doi:10.4204/eptcs.452.5 (Crossref 2026-11-20); it was consulted when the
+//!   dark-shadow rule here was reviewed, and not read for this note.
 //! - G. B. Dantzig and B. C. Eaves, "Fourier-Motzkin elimination and its dual", J. Combinatorial
 //!   Theory A 14(3), 1973, pp. 288-297, doi:10.1016/0097-3165(73)90004-6; Pugh's sec. 2.3.1
 //!   cites it for Fourier-Motzkin elimination. J. B. J. Fourier (1827) and T. S. Motzkin,
@@ -77,8 +81,31 @@
 //!   doi:10.1007/s10703-016-0249-4: model-based projection for linear integer arithmetic,
 //!   which keeps of Cooper's method, for the model at hand, only the one disjunct that model
 //!   satisfies. Crossref and the arXiv listing; not read.
+//! - M. Karr, "Affine relationships among variables of a program", Acta Informatica 6(2), 1976,
+//!   pp. 133-151, doi:10.1007/bf00268497: the affine equalities that hold on a set of points,
+//!   kept in echelon form, and the join of two such sets of equalities (`hull`). Crossref; not
+//!   read.
+//! - H. W. Lenstra Jr., "Integer programming with a fixed number of variables", Mathematics of
+//!   Operations Research 8(4), 1983, pp. 538-548, doi:10.1287/moor.8.4.538: integer
+//!   feasibility in fixed dimension in polynomial time; the three-variable case is decided by
+//!   `zedc_solvers::live3`, whose crate docs sketch the method. Crossref; not read.
+//! - M. R. Garey and D. S. Johnson, *Computers and Intractability*, W. H. Freeman, 1979, problem
+//!   AN2, simultaneous incongruences, NP-complete; named where an exact projection of
+//!   congruences is given up. A book; from memory, not checked.
 //!
 //! ## Graphs and constraint networks
+//!
+//! - A. B. Kahn, "Topological sorting of large networks", CACM 5(11), 1962, pp. 558-562,
+//!   doi:10.1145/368996.369025: repeatedly take a node with no edge into it from the nodes not
+//!   yet taken ("Kahn's order"). Crossref; not read.
+//! - E. W. Dijkstra, "A note on two problems in connexion with graphs", Numerische Mathematik
+//!   1(1), 1959, pp. 269-271, doi:10.1007/bf01386390; R. Bellman, "On a routing problem",
+//!   Quarterly of Applied Mathematics 16(1), 1958, pp. 87-90, doi:10.1090/qam/102435
+//!   (Bellman-Ford, the tests' reference for difference rows). Crossref; not read.
+//! - J. Holm, K. de Lichtenberg and M. Thorup, "Poly-logarithmic deterministic fully-dynamic
+//!   algorithms for connectivity, minimum spanning tree, 2-edge, and biconnectivity", J. ACM
+//!   48(4), 2001, pp. 723-760, doi:10.1145/502090.502095: named in `conjuncts` as the bound
+//!   not taken. Crossref; not read.
 //!
 //! - R. E. Tarjan, "Depth-first search and linear graph algorithms", SIAM J. Comput. 1(2), 1972,
 //!   pp. 146-160, doi:10.1137/0201010: biconnected components and strongly connected components
@@ -111,7 +138,11 @@
 //!   J. Cardon and M. Crochemore, "Partitioning a graph in O(|A| log2 |V|)", Theoretical
 //!   Computer Science 19(1), 1982, pp. 85-98, doi:10.1016/0304-3975(82)90016-0. R. Paige and
 //!   R. E. Tarjan, "Three partition refinement algorithms", SIAM J. Comput. 16(6), 1987,
-//!   pp. 973-989, doi:10.1137/0216062. Both: Crossref; not read.
+//!   pp. 973-989, doi:10.1137/0216062. Both: Crossref; not read. J. Hopcroft, "An n log n
+//!   algorithm for minimizing states in a finite automaton", Theory of Machines and
+//!   Computations, Academic Press, 1971, pp. 189-196, doi:10.1016/b978-0-12-417750-5.50022-1:
+//!   after a split, refine by all the new classes but the largest ("process the smaller half"),
+//!   so each element is in O(log n) refining classes. Crossref; not read.
 //!
 //! ## Sets, trees and persistence
 //!
@@ -161,6 +192,14 @@
 //!   and D. Lemire, G. Ssi-Yan-Kai and O. Kaser, "Consistently faster and smaller compressed
 //!   bitmaps with Roaring", ibid. 46(11), 2016, pp. 1547-1569, doi:10.1002/spe.2402. Crossref;
 //!   not read.
+//! - P. M. Fenwick, "A new data structure for cumulative frequency tables", Software: Practice
+//!   and Experience 24(3), 1994, pp. 327-336, doi:10.1002/spe.4380240306: node `i` covers the
+//!   `i & -i` entries ending at `i`, so a prefix query or an update visits O(log n) nodes.
+//!   Crossref; not read.
+//! - J.-P. Aumasson and D. J. Bernstein, "SipHash: a fast short-input PRF", INDOCRYPT 2012,
+//!   LNCS 7668, pp. 489-508, doi:10.1007/978-3-642-34931-7_28: the standard library's default
+//!   hash, named where a faster unkeyed hash (FxHash) replaces it for keys no input chooses.
+//!   Crossref; not read.
 //!
 //! ## Geometry
 //!
@@ -173,6 +212,11 @@
 //!   not read; the uses' "Theorem 3" of Chazelle and Dobkin is from memory, not checked.
 //! - G. Montúfar, R. Pascanu, K. Cho and Y. Bengio, "On the number of linear regions of deep
 //!   neural networks", NIPS 2014, arXiv 1402.1869: the arXiv listing; not read.
+//! - T. Zaslavsky, "Facing up to arrangements: face-count formulas for partitions of space by
+//!   hyperplanes", Memoirs of the AMS 1(154), 1975, doi:10.1090/memo/0154: `c` lines in the
+//!   plane cut it into at most `1 + c + c(c-1)/2` regions, with equality in general position.
+//!   Crossref; not read (the count is elementary: the `k`-th line crosses at most `k - 1`
+//!   earlier lines and so adds at most `k` regions).
 //!
 //! ## Numbers and sums
 //!
