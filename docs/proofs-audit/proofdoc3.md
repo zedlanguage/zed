@@ -31,7 +31,200 @@ marked Not proved at the site with the open sub-case.
 
 ## proofdoc3a: zed-kernel (read only), lower crates, front-end crates, zedc-preimage, untraced sites
 
-Not yet written.
+Read on main at 46b9d5d88. The list holds 345 entries (one commit in one crate, 281 commits):
+142 in zed-kernel, 136 in zedc-preimage, 67 in the lower and front-end crates. Each entry
+read had its message read in full and then the code that relies on each claim, as it is on that
+base. The entries were split over helpers, who were stopped on the orchestrator's order
+before they finished; this pass then checked every edit they made against the code, step by
+step, and took the rest of the work over in order. Of the 345, 173 were read and 172 are
+listed under "Not read".
+
+zed-kernel is read only (kernel24 and kernel25 own it), so its claims are reported, not edited.
+Its rows below are the helpers' readings. This pass re-checked four of them against the code:
+bes.rs `decide` has no "Not proved" marker (`command grep -a -c -i "not proved" bes.rs` prints
+0); priority.rs cites the cross-review record for the degree-7 finger bound in place of the
+steps; and poly.rs F2 (four calls of `Budget::new(LIMIT)` on one path of `Identity::decide`:
+`too_wide` calls `folded_bases`, which makes one, from both `factored` and `decide`, and each
+of those makes its own) and F1 (the `Poly::pow` sentence). None of the gaps is named in row
+PROOF-sweep-zed-kernel (checked against its text), except the one marked so.
+
+Two faults were found and fixed, each with a test red first:
+
+- zedc-preimage spans.rs `priority` hashed the two `Num` ends as they are. `Num`'s `Hash`
+  writes an end in `i64` as 8 bytes and one past it as 16, with nothing between, so
+  `[0, 2^64 - 1]` and `[-2^64, 0]` write the same 24 bytes and tie under every draw. It now
+  hashes `end_key`s (`Result<i128, i8>`: the variant first, which fixes the length of the
+  rest), so distinct pairs of keys write distinct streams, and the tie bound `15/p` is proved
+  at the site. Test `spans::tests::spans_of_one_num_hash_stream_take_two_priorities` (red:
+  equal priorities; green after). Cost only: a priority never changes which spans a treap holds.
+- zedc-syntax parse/recover.rs kept a declaration that reaches into a line that then fails
+  (`f(…) = x +` above a line at the first column that fails at `)`). The token counts of
+  `with_holes` and `Builder::new` then differ, and the builder's `expect("a hole's expression is
+  taken once")` failed. The loop now drops every kept declaration that ends after the failing
+  line's start, moving that start down to the dropped one's start. Test
+  `l01_08_parser::recovery_edges::a_declaration_kept_up_to_a_failing_line_inside_it_is_skipped_with_it`
+  (red: the panic at builder.rs; green after).
+
+| Crate | Found | Already there | Added or completed | Marked unproved | Corrected |
+|---|---|---|---|---|---|
+| zed-kernel (80 of 142 entries read) | 71 | 54 | 0 (read only; 11 gaps reported) | 6 (all already marked at the site) | 0 (read only; 2 false sentences reported) |
+| zedc-preimage (51 of 136 read) | 35 | 12 | 18 | 3 | 2 |
+| zedc-presburger (80870e234 only) | 3 | 3 | 0 | 0 | 0 |
+| zedc-syntax | 2 | 0 | 1 | 0 | 1 |
+| zedc | 3 | 2 | 1 | 0 | 0 |
+| zed-collections | 3 | 1 | 2 | 0 | 0 |
+| zed-graph | 2 | 1 | 1 | 0 | 0 |
+| zed-numtheory | 3 | 3 | 0 | 0 | 0 |
+| zed-rt | 3 | 1 | 1 | 1 | 0 |
+| zed-tools | 2 | 1 | 0 | 0 | 1 |
+| zedc-zir | 3 | 2 | 0 | 1 | 0 |
+| zedc-resolve | 1 | 0 | 1 | 0 | 0 |
+| zedc-stage | 1 | 1 | 0 | 0 | 0 |
+| zedc-lattice | 1 | 0 | 1 | 0 | 0 |
+| zed-native | 1 | 1 | 0 | 0 | 0 |
+
+zed-kernel, already there (54 claims, the helpers' readings): 3ac71c151, 2ba5d8788, 86150ff67,
+56e9e1fc6, 1b18cee1c, 5ec318c98, 299e38768, 8596f59ce, 8b55fc92c, 5e7dc557b, 71100fdf0,
+f86104e1d, 87553695b, 1a51ce141, f31c2310a, badba0482, f2329fde4, 32acdc5eb, 3dbee8ea8,
+4c7dac8b4, 197c7de2b, afbdffe42, 46897f128, 6567a6bfe, a1704042b, b8802ec53, d81f448e5 (the
+two assertions), f8b286311 (exactness), 18ebecd2f, a52bd454f, b5643d1b2, fe5968d36, e5b5ea82e,
+1679fe8c6, 0a3429bfa, f24b492bf, ac8f22b35, fed6e73e4, b602e0cde, 8c2710fc5, 7cd0c9e58 (at
+its first sites), 25c813fcd, 35cbbb966, 432f2d455, 63eccf955, a02d270c5, bea44d4a5, c53a7410d,
+d67def0d2, de439fba5, fc7cfde43. Already marked at the site: f0bde0d35 (two "Assumption, not
+proved" sites), 8abbc466e and 521de84af (`is_empty` a function of the type alone; named in
+PROOF-sweep-zed-kernel), priority.rs's random bytes, roots.rs `positive_roots` (row
+ROOTS-interval-bound).
+
+| Source | Claim | Code site | Status |
+|---|---|---|---|
+| 5d72f0689 | Dropping a cause found over an open fork loses no emptiness proof | zed-kernel types/empty.rs `give_up`, the `find_rep` open-fork scan | gap: stated, not argued; only the order test `group_oracle::meets_whose_parts_differ_in_order_agree_across_orders` checks it |
+| 7740e3ac7 | `decide` never kills a node through `delete_cascade` | zed-kernel types/bes.rs `decide` | gap (confirmed): the message says no proof was found, and the site has no "Not proved" marker |
+| 1ba844398, d4541f819, 1eaf7b0bb | No operand of a form is a leaf | zed-kernel types/print.rs `Printer::part`; types/empty.rs `Operand` doc | gap: true, but both arguments leave out the third maker, `xor::halves` (which proves it at its own site) |
+| 299e38768, 8b55fc92c, 3189a1922 | `delete_cascade`'s need-0 `unreachable!`; `Canon`/`spelled` order on hash ties; print's `(false, false)` arm | zed-kernel bes.rs, types.rs, types/print.rs | gap: argued, no test named |
+| d81f448e5 | The join-based set operations do the finger-bound work with priorities of degree 7 | zed-kernel priority.rs module doc | gap (confirmed): a sketch; the event bound from 8-wise independence and the charging step are in the cross-review record, not at the site |
+| 4c7dac8b4, 6567a6bfe, 18ebecd2f | `ints_listed`; `Bdd::reaching`'s two arms; eval.rs `atom_name`; refused.rs `meet_operands` | zed-kernel types.rs, types/bdd.rs, eval.rs, types/empty/refused.rs | gap: no test named, or not what the test cannot catch |
+| 1679fe8c6 | The platform's `f64::log2` is within 16 ulps (`LOG2_ULPS`, read by `by_logs`) | zed-kernel num/bound.rs | gap: the site says no glibc bound was found and calls the value "taken large", but does not say "Not proved" |
+| 0a3429bfa | `a X < 2^2p <= a (X + 2)` for `approx_reciprocal` | zed-kernel num/fast.rs `approx_reciprocal`, `reciprocal_from` | gap: the cited lemma needs `β >= 8`; widths the test skips are not proved, and `reciprocal_from` checks `e in (0, 2x)` only by `debug_assert` |
+| 3189a1922 | Equal scalar sets hash alike | zed-kernel types.rs `Type::scalars_digest` | gap: an `f64`/`f32` set has a finite-list and a complement form; the argument is about program text, not computed types; no test named |
+| 3a7b10812 | A base whose powers are wide in turn is sound to expand | zed-kernel poly.rs `Identity::folded_bases`, `too_wide` | gap: true by induction over build order (a wrong `folded` value lies only above the first refused node, which `too_wide` returns), not written |
+| 3a7b10812 | "The shape check refuses a wide exponent of anything but 0, 1 and -1" | zed-kernel poly.rs `Poly::pow` | false sentence (F1, inferred: `folded_bases` expands before the shape check, so `(2 ^ E) ^ E` with E = 2^64 + 1 reaches this branch; the value is not read) |
+| 5e95a07dc | "A refusal costs at most the limit" | zed-kernel poly.rs `LIMIT` doc; `factored` says "at most twice" | false sentence (F2, confirmed by reading: up to four budgets of `LIMIT` on one path) |
+| 7cd0c9e58 | `TwoSat::solve` (Aspvall, Plass and Tarjan) and Plaisted-Greenbaum at their users | zed-kernel types/empty.rs `Searching::two_sat`, `read_two_sat` | gap: no citation or DOI at the second users |
+| 86b17eae2, b037a40ba | `Id`/`fresh_id` monotone; escape.rs `cells_windows`; deep.rs `Queue` | zed-kernel value.rs, escape.rs, deep.rs | gap: argued; no test named; `cells_windows`' necessity step missing |
+| 25c813fcd | `union_all` joins in pairs | zed-kernel types.rs `Type::union_all` | gap: the proof covers `rest` only; moving literal-only and atom-only types to the end can change the pairing (inferred); the test excludes them |
+| 35cbbb966, 432f2d455, a02d270c5 | bdd.rs (a) and (c); `Printer::list`; eval.rs `held` `Entries`; words.rs casts | zed-kernel | gap: no test named |
+| 7b7a83c4b | A type whose `list_step` is `(Some(stop), link, carrier_head, itself)` holds the carrier's lists | zed-kernel types/empty.rs `find_prefix_chains`, `is_carrier` | gap: `find_cycle` not cited; the set equality is not argued |
+| 8abbc466e | Counting a fork-refused type as inhabited is safe | zed-kernel types/empty.rs `Type::is_empty` | gap: the callers that read `false` as inhabited are not listed |
+| de439fba5 | `meeting_pair`: Σ p <= n over the periods | zed-kernel types/empty.rs `meeting_pair` | gap: cost premise, not set up anywhere named |
+| e4f209295 | Arnold-Roche sumset; the nine-moment packing has no carry | zed-kernel poly.rs `sumset`, `coefficients` | gap: no citation at the second sites; the no-carry step is not written |
+| 86150ff67 | `Held::put`: the slot exists and is empty | zed-collections held.rs `Held::put` | already there |
+| 09287a709, 8e3867d18 | `meeting_pairs` k <= n; `meeting_count` by binary searches | zed-collections intervals.rs | completed: the `None` upper end, why each predicate holds on a prefix, the tests and what they do not time |
+| 86150ff67, e204348f4 | `IdSource::take` refuses a draw past `u64::MAX` | zed-graph ids.rs | already there |
+| e204348f4 | Lazy-deletion Dijkstra cost | zed-graph heap.rs `Dijkstra` | completed: the starts are distinct (callers negsssp.rs, product.rs twice, holes.rs checked); with a repeat the count still holds |
+| 86150ff67, fe770de11 | `split` (c = p - 2); `m61::fold8`; Miller-Rabin bases, Montgomery form | zed-numtheory factor.rs, lib.rs | already there |
+| 86150ff67, 86322e10b | `on_fault` async-signal-safe; `RLIMIT_CPU` grace | zed-rt stack.rs, limits.rs `cpu` | already there |
+| 2ab9f29af | `write_bytes` rounds down and allocates nothing | zed-rt limits.rs `write_bytes` | added: both proofs (`10 * part < 2^64` for every shift), the tests |
+| 86322e10b | Under the memory limit every SIGABRT is an allocation refusal | zed-rt limits.rs `on_abort` | Not proved, marked at the site |
+| 86150ff67, b691d27f5 | The untyped-call join is O(p√p) | zed-tools imports.rs `untyped_imports` | already there |
+| 26e179519 | The plan row reader is "one pass" | zed-tools plan.rs `rows` | corrected: a fixed number of passes a line, so O(length); the per-line proof added |
+| e5b5ea82e | The facet dedup after the sort needs `Value::cmp` total and `Equal` exactly at `==` | zedc-zir canon/mod.rs `sorted_facets` | Not proved, marked at the site |
+| f075a1c0b, 86b17eae2 | Every string an address writes is a source literal; occurrence ids from one walk | zedc-zir canon/serial.rs, zir/lower.rs `Places`; pointers in zedc | already there |
+| f24b492bf | A stream link named by the program's own function makes `a ..` refused, so elaboration sees only prelude links | zedc-resolve resolve.rs `Task::OpenStream` | completed: the refusal path through the `Call`, `Member` and `Range` arms; new tests `l03_02_map_run::types::own_map`, `own_where` (a program's own `map` and `where`) |
+| d2bc324d2 | A lattice fix binds no name in `subs` | zedc-stage stage.rs | already there |
+| fe770de11 | A different count or hash proves two `IntervalSet`s differ | zedc-lattice interval.rs `impl PartialEq` | added: by induction over `node`'s combine; a collision falls to the exact walk; test `tests::check_tree` |
+| 18ebecd2f | `atom_name` never fails for a compiled program | zed-native hooks.rs, pointing to zed-kernel eval.rs | already there |
+| 18ebecd2f, fe770de11 | `placed` names the expression first; the m61 suppress hash | zedc run.rs, suppress/addresses.rs | already there |
+| (untraced site) | A unit that gains a pin has text | zedc unit.rs `Package::pinned`, `write_pins` | added: `writes.units` gains an entry only in `pin_units`, after taking the text; `load` is the only writer of `text` after `add`; tests l02_08_import_pinning; the `unreachable!` cannot be reached by a test |
+| (untraced site) | Each grammar-shape `unreachable!` and `expect` in the AST builder holds | zedc-syntax ast/mod.rs "Why the shape of a node is known" (steps 1-4), pointers at each site in builder.rs, stmts.rs, types.rs, infix.rs | added: the class argument once (a node's kids are those of one alternative of its rule, the lexer's token kinds, `forms`' dispatch), and test `l01_08_parser::grammar_shape::every_node_s_children_match_its_alternative`, which walks the trees of the parser tests against the grammar; the range `unreachable!` text now names `Infix`, as syntax.peg does, not `Additive` |
+| (untraced site) | The hole's expression is there and taken once | zedc-syntax ast/builder.rs, string holes | corrected: false on a recovered tree before the recover.rs fix above; the argument (places `first + holes[i]`, levels built from the last down, one `literal_at` a STRING) is at the site with both tests |
+| 526f13c51 | `close` memo on `((t, env), local)` gives the unmemoized value; `x\0binder` captures no name | zedc-preimage preimage.rs `Walk::close` | completed: five steps (the memo caches a pure function; why `local` is in the key; program names cannot hold `\0`, the elaborator's fresh names only `@`, `$` and digits), test `l01_25_preimage_catalog::scaling::a_name_closed_into_a_call_is_not_taken_by_its_parameters` and its limit |
+| 526f13c51 | The exact search holds only the inputs the term reads | preimage.rs `split_read` | completed: unread inputs change no value (`stage::free`), which justifies `several <= 1` in `exact_search` and the lowest unread values in the witness |
+| faf0c362b | A pendant form's interval range over the boxes holds every value | product.rs `Scope::form_hull` | completed: the proof by steps, two tests, their limit |
+| 31b60eac9 | Clipping the state to the forward image drops no input | preimage_ref.rs `Tx::inverse_states` | completed: `step.fwd` holds every value the node takes; the ref_memo tests |
+| 31b60eac9 | The transfer reads one-input chains in O(n log n + output) | preimage_ref.rs module header | Not proved in general, marked: O(log n) a link is proved for `normal_round_down` and `normal_min_gap` only; `Tx::back_doubt` names the shapes still quadratic |
+| 59165be60 | Comparing a block's users finds the map difference's names, in O(min(u log N, N)) | product.rs `Block::users_cheaper_than_diff` | completed: both callers checked (`gained_hole_since`, `Block::update`) |
+| d80e81d08 | A box bound moved past `i128` may be left out | loops.rs `check` | already there |
+| 021d032f6 | Union by size keeps paths O(log n) | product.rs `impl NameProducts`, `link` | completed: the depth step and the DOIs (Galler-Fischer, Tarjan, Okasaki); no test of exactness against the solver named |
+| 76bb9d4cf | The sum of two summaries is exact where both are defined | preimage.rs `add_treaps`, `add_into` | completed: the exactness argument (the tag maps v to v + a·x + b; an empty subtree gives `None`), the tests |
+| 76bb9d4cf, 6c9a44905, fe279f292, 94a359bbb, 3b58ce432, 48efce6c9 | `Tag::vals`; `value_at`; `Pa::by_sign`; `compare_untranslated`; the round-down piece bounds; `normal_min_gap` O(log n) | preimage.rs, preimage_ref.rs | already there |
+| e5b5ea82e, 80870e234 | The spans priority affects cost only, with logarithmic expected depth | spans.rs `priority` | corrected: the fault above |
+| 80870e234 | The other treap priorities draw from the run's random polynomial | divisors.rs, images.rs, preimage.rs `prio_of`; zedc-presburger hull/rows.rs, extend/holes.rs, extend/images/intervals.rs | already there (rewritten since 80870e234 to the kernel's `Priorities`, Seidel-Aragon DOI and a pointer to the proof; holes.rs hashes `Int`s, whose derived `Hash` writes the variant first: inferred to keep the streams distinct, not checked against num-bigint) |
+| 6c9a44905 | `pa_bounds` gives the least and the greatest value | preimage.rs `pa_bounds` | corrected: only bounds for a `Piecewise` summary (holes of `dom`, `in_range`, `Tag::vals` widening); `None` means no value; the five callers read it as bounds |
+| 6254ad0c2 | `invert_read` gives `invert_sep`'s box inverting only the terms wider than the slack | preimage.rs `Sums::wants` | completed: the slack rule derived, the tests and their limit |
+| e22a4f8fa, 8ee7ea8dd | An eager scope projects again only the stars whose leaf bound moves | product.rs `Scope::moved_blocks`, `cut_leaves` | completed: the bench path corrected, two exactness tests named |
+| e22a4f8fa, 8ee7ea8dd | The meet of the parts' leaf bounds equals the projection | product.rs `Scope::core_leaf_bound` | Not proved, marked with the open case (`x == h1 + h2`) |
+| 4e3f47abc, c35c1a3ec, 384b173ac | Listed-ints shortcuts; `negative_without_gaps`; `RayHull::least` | product.rs | completed: the tests named, with their limits |
+| fe279f292 | Each binding is read at most once a test, after every binding that could narrow it | product.rs `Scope::through_terms` | completed: the heap-order argument (a max-heap; `later` skips a term at or past the current order; `seen`) |
+| f0186c022 | The `min`/`max`/`abs` hull rows keep two terms and every point | preimage.rs, the hull rows | completed: the Fourier-Motzkin pairing and the substitution steps, tests |
+| 34989b330 | A progression box as a range and a congruence has the same points | preimage.rs `linear`, `within_out` | completed: `hi = lo + (m - 1) d`, and `k` read as "for some k" |
+| 5764ed800 | One-sided Pearce-Kelly reordering; order-maintenance ranks | product.rs `impl Potential`, `reorder` | completed: the DOI doi:10.1145/1187436.1210590 at both (copied from the module doc) |
+| 7bfd6bba8 | The bounds a refusal keeps do not depend on the order it was met in | product.rs `kept_meet`, `Scope::join_settled` | completed: the order proof (meet and join are set intersection and union, a left-out variable means the whole line) |
+| 1ffeb360d | `closed_cone_ray` certificates; `eliminate` drops one-sided names, the dark shadow gives a witness | product.rs `Block::recession_uncertified`, `eliminate` | already there; the Pugh DOI added at `eliminate` (the entry's other sites not read) |
+| 364dd4a15 | `Tx::forget` keeps failed translations because "a failure names no auxiliary variable" | preimage.rs `Tx::forget` | Not proved, marked: argued for the `At` tables, open for `CallKey` tables |
+| 564bef57c | A refused projection keeps the box stage's bounds | preimage.rs `boxed_projections`, product.rs `project_part` | already there (pointing to zedc-presburger `row_box`) |
+
+No code claim:
+
+- zed-kernel: ba41f402c, 7d9e078c0, 6b87a1c3a, 3256dd649, 5484ed5fc, 90117acd2, 9ad003d0c,
+  0797f08e9, 002cb0cce, 181885f72, 0b3c8f079, 1a9277873, 83e0f8843.
+- zedc-preimage: 6ff7e1be7, 5627a332e, 6f5899e66, 9f8961b3b, b2ba71b22, d20f8009e, fe770de11,
+  295d02151, 6b87a1c3a, f167d40b0, 5168f5a37, 93541eaf7, a2359acb2, c80855b33 (judged from the
+  messages), 475e582ff, ad40b4107, 1faf391fd, 2b3e706f1, 251d01b97, 6b5ea79c2, 32acdc5eb,
+  6da69df6f, c92272bf0, de91d5230, f61c8809e. Not traced: e22a4f8fa's `Carried::longer` and
+  `Arms::push_names` (in zedc-check now; proofdoc3b's table has `Carried::longer`).
+- Other crates: 1679fe8c6 and 9f8961b3b (zedc-zir), 475e582ff (zed-graph), a1704042b,
+  7d0cc8d9f, 86322e10b (zedc-resolve), 7d0cc8d9f, 86322e10b, 9f8961b3b (zedc), 32acdc5eb,
+  86322e10b, 9f8961b3b, 86b17eae2 (zed-native), 9f8961b3b, 86b17eae2 (zed-rt), 26f8d7d35,
+  86322e10b (zedc-stage), 7d9e078c0 (zedc-lattice, zed-tools).
+
+Not read (e62be00e0, 9379f755c, 46322ca2c and 1ffeb360d were started, not finished):
+
+- zed-kernel (62): 00171c62b, 00a508032, 0b1008760, 0e8168cc1, 10cc98a38, 19311b3fe,
+  1a78001da, 1f50505a3, 1fcf49287, 222adf91b, 26f8d7d35, 2ab9f29af, 2de401ae4, 3204ef377,
+  34a583731, 37148785d, 3ffbadf75, 40733faeb, 465fc2167, 570acb0a8, 5970a932f, 59a32b29b,
+  5a5276a82, 5dcfdad0a, 6017477df, 60f594a97, 6ae1d9048, 6bb9bb93f, 6ebe63b42, 6ff237028,
+  7d0cc8d9f, 8183b743b, 81a60d522, 86322e10b, 877fc8603, 8878228af, 8c5ccccb9, 929e7e04a,
+  94b14f925, 967100aca, 9778881e0, 9bc1e50d4, 9e3cc1480, a74161bb4, b8b284a09, bc75c1615,
+  c5168f1b3, c9205d30b, cb68d7fec, d18e52a0a, d2bc324d2, d694e2a26, ddc1ec274, e3ee7d064,
+  e60e73504, e62be00e0, e7b12dd2e, f075a1c0b, f48ec1bf4, f91eac49c, fa271b3f2, fe770de11
+- zedc-preimage (85): 030a2d36d, 0b8979ea4, 0ddc1c581, 0e8df04e7, 11f5598ba, 127a9c7a7,
+  1354133f0, 16fe26be8, 1aff02482, 1c8fda1de, 1dc603590, 1f9051e98, 1ffeb360d, 23c5a37c0,
+  25ef78dd1, 2673c19fa, 268eebefe, 28cfdafe3, 2df2801ba, 2fc841e15, 34e5a4454, 36279a9f9,
+  37a8466a1, 3cdd34f55, 3db038e2c, 3f2a92b63, 3fb4bb8e4, 46322ca2c, 47dbe05b9, 4c163dca4,
+  53622f271, 58489bea9, 5eba9712b, 5ff79522f, 614b9d0cf, 635687ff7, 65bf4b76c, 669d3d2d0,
+  68416f089, 68b13f979, 69c4cdd32, 6a79d26fb, 6aeb43eff, 701def5c6, 73ed87c26, 7a7417966,
+  7bb934574, 7c47ed27d, 83079757e, 84ed8e51d, 875e58597, 8bf067d56, 8c8b49f18, 8ecea2e9f,
+  9322ec490, 94ad265c0, 97e69e64a, 99fb0bc99, 9c56b1189, 9d757cc8c, 9dd3c3158, 9e3cc1480,
+  a27a35c15, ab07cdcd9, ace60e16b, b18332dd5, b1ab5efcb, b991293a4, c1cd72c8d, c4c6e7e3e,
+  c8cac82fa, ca4ccc654, ce1450451, d8026ecb5, dcd3018d1, e1dd4b593, e275c5f0b, e802f7960,
+  e8981310f, eaef33ced, ebd6faee5, f060dbed1, f0bde0d35, fe51539ce, fffe13699
+- zedc (5): 181885f72, 51ae6534c, 8c5ccccb9, bc75c1615, be476c3a4
+- zed-native (5): 181885f72, 59a32b29b, 9379f755c, be476c3a4, d9d8729bb
+- zedc-resolve (3): 51ae6534c, bea44d4a5, d18e52a0a
+- zedc-zir (3): 51ae6534c, bea44d4a5, d9d8729bb
+- zedc-syntax (2): 51ae6534c, d18e52a0a
+- zed-numtheory (2): 929e7e04a, fad56b903
+- zed-rt (2): 181885f72, d9d8729bb
+- zed-tools (2): 51ae6534c, bea44d4a5
+- zedc-lattice (1): bea44d4a5
+
+Rows proposed to proofdoc3 for the claims left open (none existed in plan_dag.md; the sites
+that may be edited name them):
+
+| Row | Claim and site | Join |
+|---|---|---|
+| PROOF-kernel-proofdoc3a-gaps | the zed-kernel gaps of the table above (read only here) | L1.41-join-zed-kernel-correct |
+| FIX-poly-limit-comments | poly.rs F1 and F2: the two false comment sentences | L1.41-join-zed-kernel-numeric |
+| PROOF-preimage-forget-callkey | preimage.rs `Tx::forget` keeps failures under a `CallKey` | L1.41-join-zedc-preimage-correct |
+| PROOF-preimage-core-leaf-bound | product.rs `Scope::core_leaf_bound` against the projection | L1.41-join-zedc-preimage-correct |
+| PROOF-preimage-ref-chain-cost | preimage_ref.rs: O(log n) a link beyond two families | L1.41-join-zedc-preimage-perf |
+| PROOF-value-cmp-total | value.rs `Value::cmp` total and agreeing with `==`, read by zedc-zir `sorted_facets` (the site named this id before; it had no row) | L1.41-join-other-crates |
+| PROOF-rt-abort-is-allocation | zed-rt limits.rs `on_abort`: every abort under the limit is an allocation refusal | L1.41-join-other-crates |
+| FAIL-lr4-bench-annotation-update | l01_08 `lr4_assoc` annotation list and update path benches at 10.9 times (limit 10.5), on the base | L1.41-join-zedc-syntax |
+
+`l01_38_presburger` `bench::exp_families::shared_sums_project_each` fails on the base too
+(11.00 times at k = 16 and 128, by instruction counts); row PRES-growth-exp-families already
+covers that family.
 
 ## proofdoc3b: zedc-check, zedc-elab, zedc-base, and the moved commits
 
