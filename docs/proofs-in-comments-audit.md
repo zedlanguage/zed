@@ -44,3 +44,11 @@ Not swept: the commits each table of the second pass lists as not read (proofdoc
 proofdoc2b: 28 at score 4 or more and all 382 entries below), proofdoc2a's high-ranked commits
 whose code moved to zedc-check, zedc-elab and zedc-types, and the sites proofdoc2a names as not
 traced. They are row DOC-proofs-in-comments-audit-rest-2.
+
+The third pass, row DOC-proofs-in-comments-audit-rest-2, reads those:
+
+- [proofdoc3](proofs-audit/proofdoc3.md): one table, a section per helper (proofdoc3a:
+  zed-kernel read only, the lower crates, the front-end crates, zedc-preimage, 80870e234 and
+  the untraced sites; proofdoc3b: zedc-check, zedc-elab, zedc-base and the moved commits;
+  proofdoc3c: zedc-types, zedc-presburger, zedc-solvers, zedc-int). Counts are added as each
+  section lands.
