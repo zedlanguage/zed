@@ -493,12 +493,14 @@ pub fn keyed(t: &Term, free: &FreeNames<'_>) -> Term {
 }
 
 /// The binder name `x` with the number elaboration gave it dropped: the part before `@` of
-/// `x@k`, and `$` for a temporary `$k`. A written name holds neither `@` nor `$`.
+/// `x@k` ([`written_name`](zed_kernel::text::ident::written_name)), and `$` for a temporary
+/// `$k`, which `written_name` keeps whole: here every temporary keys alike, so two terms that
+/// differ only in which temporary they use get one key. A written name holds neither `@`
+/// nor `$`.
 fn unnumbered(x: &str) -> &str {
-    match x.split_once('@') {
-        Some((written, _)) => written,
-        None if x.starts_with('$') => "$",
-        None => x,
+    match zed_kernel::text::ident::written_name(x) {
+        w if w.starts_with('$') => "$",
+        w => w,
     }
 }
 

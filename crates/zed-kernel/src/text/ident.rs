@@ -95,6 +95,18 @@ pub fn numbered(base: &str, from: usize, free: impl Fn(&str) -> bool) -> (usize,
         .expect("finitely many names are taken, so some suffix is free")
 }
 
+/// The name the program wrote for the binder whose kernel name is `kernel`: the kernel name
+/// itself, or the part before the first `@` where elaboration renamed the binder `x@k`
+/// (`Elab::new`). A written name holds no `@` ([`is_name`]), and neither does a temporary
+/// `$k`, which is kept as it is; a caller that keys on binders rather than naming them maps
+/// `$k` further (zedc-zir `canon::binders::unnumbered`). A message names a binder by it
+/// (DESIGN.md sec:diagnostics). Linear in the length of the name.
+pub fn written_name(kernel: &str) -> &str {
+    kernel
+        .split_once('@')
+        .map_or(kernel, |(written, _)| written)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -121,6 +133,15 @@ mod tests {
         assert_eq!(name_end("1x", 0), None);
         assert_eq!(name_end("é", 0), None);
         assert!(is_name("x_1'") && !is_name("_") && !is_name("x y") && !is_name(""));
+    }
+
+    #[test]
+    fn a_written_name_drops_the_number_elaboration_gave() {
+        assert_eq!(written_name("x"), "x");
+        assert_eq!(written_name("x@3"), "x");
+        assert_eq!(written_name("x'@12"), "x'");
+        assert_eq!(written_name("x@1@2"), "x");
+        assert_eq!(written_name("$4"), "$4");
     }
 
     #[test]
