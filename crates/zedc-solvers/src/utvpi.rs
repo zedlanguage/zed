@@ -30,11 +30,20 @@
 //! need ([`negsssp::Progress`]).
 //!
 //! \[UTVPI\]: S. K. Lahiri and M. Musuvathi, "An Efficient Decision Procedure for UTVPI
-//! Constraints", FroCoS 2005.
+//! Constraints", FroCoS 2005, LNCS, pp. 168–183, doi:10.1007/11559306_9.
 //! \[GR\]: A. V. Goldberg and T. Radzik, "A heuristic improvement of the Bellman-Ford
-//! algorithm", Applied Mathematics Letters 6 (1993), 3–6.
+//! algorithm", Applied Mathematics Letters 6(3) (1993), 3–6, doi:10.1016/0893-9659(93)90022-f.
 //! \[BFCT\]: B. V. Cherkassky and A. V. Goldberg, "Negative-cycle detection algorithms",
-//! Mathematical Programming 85 (1999), 277–311.
+//! Mathematical Programming 85(2) (1999), 277–311, doi:10.1007/s101070050058.
+//! \[CKNR\]: A. Cassis, A. Karrenbauer, A. Nusser and P. L. Rinaldi, "Algorithm engineering of
+//! SSSP with negative edge weights", arXiv 2502.11999 (2025): its appendix gives the BAD-GOR
+//! family and its augmentation that the tests below build.
+//!
+//! The three journal and conference entries were checked on Crossref (authors, title, venue,
+//! volume, pages) and the arXiv entry on its listing, on 2026-11-20; the papers were not read
+//! for this note, so the sketches above are from memory of them, and the tests
+//! (`bad_gor_augmented_has_a_potential_that_holds_on_every_edge` and the others below) check the
+//! behavior the code relies on.
 
 use super::linear::Term;
 use super::negsssp;

@@ -19,8 +19,19 @@
 //! Radzik's search and BF-Dijkstra ([`Rounds`]) one unit each after each unit of this one,
 //! until together they have done more units than this one expects still to need.
 //!
-//! \[D\]: T. Duong, "Deterministic negative-weight single-source shortest paths in near-linear
-//! time", arXiv 2609.05590 (2026).
+//! \[D\]: K. Duong, "Size-sensitive padded decompositions for faster deterministic
+//! negative-weight shortest paths", arXiv 2609.05590 (2026). The abstract: a deterministic
+//! algorithm for single-source shortest paths with integer weights at least `-W` in
+//! `O((m + n log log n) log² n log(nW))` time; v2 improves v1 by a factor `log log n`. The title
+//! and author were checked on the arXiv listing (v1 and v2 carry the same title) on 2026-11-20;
+//! an earlier version of this comment gave the author as "T. Duong" and another title. The
+//! `l.` numbers above are lines of the v2 LaTeX source (`paper_v2.tex`), checked the same day:
+//! l.509 sets `τ` to "the largest power of two at most (log L)/2", so `τ >= 4` needs
+//! `L >= 256`, and l.809 and l.831 take the case `τ < 4` by "\cref{lem:local} directly on X".
+//! The bound in COMPLEXITY.md C24 is for the local branch built here, inferred from the paper's
+//! lemmas. Tests: this module's `the_round_bound_agrees_with_bellman_ford` and the others
+//! below, the `utvpi` tests, and the benchmark `duong_scales_alone`
+//! (tests/steps/l01_38_presburger/bench/near.rs).
 
 use std::cell::Cell;
 use std::convert::Infallible;

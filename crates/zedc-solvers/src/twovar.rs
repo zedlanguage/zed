@@ -233,7 +233,8 @@ pub fn point(
 /// prefixes. O(m log m) for `m` rows, plus O(log w) floor sums for the width `w` of that
 /// piece, each logarithmic in the coefficients; no feasibility question is asked. Integer
 /// programs in two variables can be solved in O(log) arithmetic steps (Eisenbrand and Rote,
-/// "Fast 2-variable integer programming", IPCO 2001); the scan is simpler, exact at any
+/// "Fast 2-variable integer programming", IPCO 2001, LNCS, pp. 78-89,
+/// doi:10.1007/3-540-45535-3_7, Crossref 2026-11-20, not read); the scan is simpler, exact at any
 /// magnitude, and reuses the envelopes and counts of [`point`].
 pub fn ends(rows: &[(&[Term], &Int)], x: usize, y: usize) -> Option<IntRange> {
     let lo = least_x(rows, x, y, false)?;
@@ -471,7 +472,10 @@ fn convex_strip(ua: &Line, lb: &Line, a: Int, b: Int) -> Option<Option<(Int, Int
 /// is hole-free, and `TwoVarProj::Holed` otherwise.
 ///
 /// Complexity tradeoff: naive version, Pugh's Omega projection (W. Pugh, "A practical algorithm
-/// for exact array dependence analysis", CACM 35(8), 1992, sec. "Projection") emits O(b)
+/// for exact array dependence analysis", CACM 35(8), 1992, doi:10.1145/135226.135233, the
+/// planes of sec. 2.3.2 of the authors' expanded text, `b·z = β + i` for
+/// `0 <= i <= (a·b - a - b)/a`, later called splinters, which sec. 4, "Projection of Integer
+/// Programming Problems", projects together with the dark shadow) emits O(b)
 /// splinters for a lower bound with coefficient `b` and upper coefficient `a >= 2`, taking O(k)
 /// splinters per projection on `persist` (`x + k*y >= -1000`, `x - (j+2)*y >= 0`) and O(k^2)
 /// across k tests; or the general solver + cover (`Level::open` + `solve_omega` + `exact_each`).
