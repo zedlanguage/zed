@@ -1133,6 +1133,15 @@ pub const CASES: &[(&str, &str, u32, &str, &str)] = &[
     ("Arrow#2", "Arrow", 0, "int -> int", "int -> int"),
     ("Arrow#2", "Arrow", 0, "int ->? int", "int ->? int"),
     ("Arrow#3", "Arrow", 0, "int", "int"),
+    ("Arrow#4", "Arrow", 0, "T else 0", "T else 0"),
+    (
+        "TypeElse#0",
+        "TypeElse",
+        0,
+        "T else U else 0",
+        "T else U else 0",
+    ),
+    ("TypeElse#1", "TypeElse", 0, "T | U else 0", "T | U else 0"),
     ("ArrowParams#0", "ArrowParams", 0, "()", "( )"),
     (
         "ArrowParams#1",
