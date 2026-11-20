@@ -35,11 +35,10 @@
 
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 
-use zed_graph::{Order, Worklist};
+use zed_graph::{BitSet, Order, Worklist};
 use zedc::parse::{Expr, Grammar, Kind};
 
 use crate::spec::Spec;
-use crate::split::Bits;
 use crate::text::read_text;
 use crate::{Outcome, arg, say};
 
@@ -555,13 +554,13 @@ pub(crate) struct Sets {
     /// Whether it derives the empty string.
     pub(crate) nullable: Vec<bool>,
     /// The terminals its strings start with.
-    pub(crate) first: Vec<Bits>,
+    pub(crate) first: Vec<BitSet>,
     /// The terminals its strings end with.
-    pub(crate) last: Vec<Bits>,
+    pub(crate) last: Vec<BitSet>,
     /// The terminals that come just before it.
-    pub(crate) before: Vec<Bits>,
+    pub(crate) before: Vec<BitSet>,
     /// The terminals that come just after it.
-    pub(crate) follow: Vec<Bits>,
+    pub(crate) follow: Vec<BitSet>,
 }
 
 impl Sets {
@@ -571,10 +570,10 @@ impl Sets {
         let (n, t) = (cfg.nts.len(), cfg.terms.len());
         let mut s = Sets {
             nullable: vec![false; n],
-            first: vec![Bits::new(t); n],
-            last: vec![Bits::new(t); n],
-            before: vec![Bits::new(t); n],
-            follow: vec![Bits::new(t); n],
+            first: vec![BitSet::new(t); n],
+            last: vec![BitSet::new(t); n],
+            before: vec![BitSet::new(t); n],
+            follow: vec![BitSet::new(t); n],
         };
         let mut uses: Vec<Vec<usize>> = vec![Vec::new(); n];
         for (p, prod) in cfg.prods.iter().enumerate() {
@@ -590,7 +589,7 @@ impl Sets {
             let (nul, first) = s.ends(&prod.rhs, t, true);
             let (_, last) = s.ends(&prod.rhs, t, false);
             let a = prod.lhs as usize;
-            let grew = (nul && !s.nullable[a]) | s.first[a].add(&first) | s.last[a].add(&last);
+            let grew = (nul && !s.nullable[a]) | s.first[a].union(&first) | s.last[a].union(&last);
             s.nullable[a] |= nul;
             if grew {
                 for &q in &uses[a] {
@@ -610,27 +609,27 @@ impl Sets {
             let mut grown = Vec::new();
             // Before: the end of the prefix, or before the left side when the prefix can be
             // empty.
-            let (mut pre, mut pre_null) = (Bits::new(t), true);
+            let (mut pre, mut pre_null) = (BitSet::new(t), true);
             for &x in &prod.rhs {
                 if let Sym::N(b) = x {
                     let mut add = pre.clone();
                     if pre_null {
                         add.union(&s.before[a]);
                     }
-                    if s.before[b as usize].add(&add) {
+                    if s.before[b as usize].union(&add) {
                         grown.push(b as usize);
                     }
                 }
                 s.extend(&mut pre, &mut pre_null, x, t, false);
             }
-            let (mut suf, mut suf_null) = (Bits::new(t), true);
+            let (mut suf, mut suf_null) = (BitSet::new(t), true);
             for &x in prod.rhs.iter().rev() {
                 if let Sym::N(b) = x {
                     let mut add = suf.clone();
                     if suf_null {
                         add.union(&s.follow[a]);
                     }
-                    if s.follow[b as usize].add(&add) {
+                    if s.follow[b as usize].union(&add) {
                         grown.push(b as usize);
                     }
                 }
@@ -646,8 +645,8 @@ impl Sets {
     }
 
     /// Whether `rhs` can be empty, and its first terminals (`first`) or its last.
-    fn ends(&self, rhs: &[Sym], t: usize, first: bool) -> (bool, Bits) {
-        let mut out = Bits::new(t);
+    fn ends(&self, rhs: &[Sym], t: usize, first: bool) -> (bool, BitSet) {
+        let mut out = BitSet::new(t);
         let mut nul = true;
         let mut walk = |x: &Sym| match *x {
             Sym::T(a) => {
@@ -678,10 +677,10 @@ impl Sets {
 
     /// Puts `x` at the end of a string (or at its start, `first`) whose last (first) terminals
     /// are `acc` and whose emptiness is `nul`.
-    fn extend(&self, acc: &mut Bits, nul: &mut bool, x: Sym, t: usize, first: bool) {
+    fn extend(&self, acc: &mut BitSet, nul: &mut bool, x: Sym, t: usize, first: bool) {
         match x {
             Sym::T(a) => {
-                *acc = Bits::new(t);
+                *acc = BitSet::new(t);
                 acc.insert(a as usize);
                 *nul = false;
             }
@@ -818,7 +817,7 @@ impl Llp<'_> {
                 }));
                 let first = &self.sets.first[b];
                 out.extend(first.iter().map(|v| (back(v as u32), Move::Reset(sym))));
-                if self.sets.nullable[b] && c.ahead != NONE && !first.has(c.ahead as usize) {
+                if self.sets.nullable[b] && c.ahead != NONE && !first.contains(c.ahead as usize) {
                     out.push((back(c.ahead), Move::Push(sym)));
                 }
             }
@@ -984,7 +983,7 @@ pub fn check(g: &Grammar, unit: &str, rules: &[Retag]) -> Result<Report, String>
     }
     // The terminals before each terminal.
     for prod in &cfg.prods {
-        let (mut acc, mut nul) = (Bits::new(t), true);
+        let (mut acc, mut nul) = (BitSet::new(t), true);
         for &x in &prod.rhs {
             if let Sym::T(a) = x {
                 let mut b = acc.clone();

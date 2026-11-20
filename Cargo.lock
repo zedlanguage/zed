@@ -1391,6 +1391,7 @@ dependencies = [
  "blake3",
  "imbl",
  "num-bigint",
+ "zed-graph",
  "zed-kernel",
  "zedc-base",
  "zedc-int",

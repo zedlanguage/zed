@@ -62,24 +62,10 @@ impl Legalized {
     }
 }
 
-/// A set of node numbers (see [`Legalized`]), one bit each.
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
-pub struct Swapped(Vec<u64>);
-
-impl Swapped {
-    /// Whether node `n` was swapped.
-    pub fn contains(&self, n: usize) -> bool {
-        self.0.get(n / 64).is_some_and(|w| w >> (n % 64) & 1 == 1)
-    }
-
-    fn insert(&mut self, n: usize) {
-        let i = n / 64;
-        if self.0.len() <= i {
-            self.0.resize(i + 1, 0);
-        }
-        self.0[i] |= 1 << (n % 64);
-    }
-}
+/// The numbers of the nodes legalization swapped (see [`Legalized`]), one bit each: node `n`
+/// was swapped when `contains(n)`. The shared set of small numbers, kept under this name since
+/// it is what the back ends read it as.
+pub type Swapped = zed_graph::BitSet;
 
 /// The operator the program wrote for a swapped node of operator `p`.
 pub fn written(p: Prim) -> Prim {

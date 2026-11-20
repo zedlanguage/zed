@@ -21,7 +21,7 @@
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::fmt::Write as _;
 
-use zed_graph::{Order, Worklist};
+use zed_graph::{BitSet, Order, Worklist};
 use zedc::parse::{Expr, Grammar, Kind, Parser, TOP};
 
 use crate::spec::{Spec, zed_fences};
@@ -32,59 +32,15 @@ use crate::{Outcome, arg, impl_root, say};
 /// The number of token kinds, the variants of [`Kind`], of which `End` is the last.
 const KINDS: usize = Kind::End as usize + 1;
 
-/// A set of small numbers, as bits.
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
-pub(crate) struct Bits(Vec<u64>);
-
-impl Bits {
-    /// The empty set of numbers below `n`.
-    pub(crate) fn new(n: usize) -> Bits {
-        Bits(vec![0; n.div_ceil(64)])
-    }
-
-    pub(crate) fn insert(&mut self, i: usize) {
-        self.0[i / 64] |= 1 << (i % 64);
-    }
-
-    pub(crate) fn has(&self, i: usize) -> bool {
-        self.0[i / 64] & (1 << (i % 64)) != 0
-    }
-
-    /// Adds `other`'s numbers.
-    pub(crate) fn union(&mut self, other: &Bits) {
-        for (a, b) in self.0.iter_mut().zip(&other.0) {
-            *a |= b;
-        }
-    }
-
-    /// Adds `other`'s numbers, and says whether any was new.
-    pub(crate) fn add(&mut self, other: &Bits) -> bool {
-        let mut grew = false;
-        for (a, b) in self.0.iter_mut().zip(&other.0) {
-            grew |= b & !*a != 0;
-            *a |= b;
-        }
-        grew
-    }
-
-    pub(crate) fn iter(&self) -> impl Iterator<Item = usize> + '_ {
-        self.0.iter().enumerate().flat_map(|(w, &bits)| {
-            (0..64)
-                .filter(move |b| bits & (1 << b) != 0)
-                .map(move |b| w * 64 + b)
-        })
-    }
-}
-
 /// What the scan needs to know of an expression, read without order or lookahead.
 #[derive(Clone, Debug, PartialEq, Eq)]
 struct Sum {
     /// Whether it can match no tokens.
     nullable: bool,
     /// The terminals its first test can read at its start.
-    first: Bits,
+    first: BitSet,
     /// The terminals it can end with, at depth 0 after them.
-    last: Bits,
+    last: BitSet,
     /// Whether some match leaves a bracket open: only a lookahead may.
     opens: bool,
     /// Whether some match ends by closing a bracket opened before it: only a lookahead may.
@@ -95,8 +51,8 @@ impl Sum {
     fn empty(n: usize) -> Sum {
         Sum {
             nullable: true,
-            first: Bits::new(n),
-            last: Bits::new(n),
+            first: BitSet::new(n),
+            last: BitSet::new(n),
             opens: false,
             closes: false,
         }
@@ -115,7 +71,7 @@ struct Out<'a> {
     /// The rule being walked, for messages.
     rule: &'a str,
     /// The pairs at depth 0, by first terminal, when they are collected.
-    pairs: Option<&'a mut Vec<Bits>>,
+    pairs: Option<&'a mut Vec<BitSet>>,
     /// The rules called at depth 0.
     at0: Vec<usize>,
     /// The rules called anywhere.
@@ -250,7 +206,7 @@ impl<'g> Reading<'g> {
                 match bracket(s) {
                     // A bracket alone, outside a sequence that closes it.
                     Some((true, _)) => {
-                        sum.last = Bits::new(n);
+                        sum.last = BitSet::new(n);
                         sum.opens = true;
                     }
                     Some((false, _)) => {
@@ -335,7 +291,7 @@ impl<'g> Reading<'g> {
                     match open.pop() {
                         Some(o) if o == b => {
                             if open.is_empty() {
-                                acc.last = Bits::new(self.n);
+                                acc.last = BitSet::new(self.n);
                                 acc.last.insert(t);
                             }
                         }
@@ -360,7 +316,7 @@ impl<'g> Reading<'g> {
         }
         if !open.is_empty() {
             acc.opens = true;
-            acc.last = Bits::new(self.n);
+            acc.last = BitSet::new(self.n);
         }
         acc
     }
@@ -409,7 +365,7 @@ pub struct Splitter {
     /// Each kind's terminal number.
     kinds: [Option<usize>; KINDS],
     /// For each terminal, the terminals that follow it at depth 0 in some item.
-    follow: Vec<Bits>,
+    follow: Vec<BitSet>,
     /// How many terminals there are.
     pub terminals: usize,
     /// How many pairs there are.
@@ -462,7 +418,7 @@ impl Splitter {
         }
         // The pairs of the rules called at depth 0 from the item rule, each once; the problems
         // of every rule it calls.
-        let mut follow = vec![Bits::new(r.n); r.n];
+        let mut follow = vec![BitSet::new(r.n); r.n];
         let mut problems = BTreeSet::new();
         let mut seen = vec![false; g.rules.len()];
         let mut at0 = vec![false; g.rules.len()];
@@ -533,7 +489,7 @@ impl Splitter {
     fn joined(&self, a: [Option<usize>; 2], b: [Option<usize>; 2]) -> bool {
         a.iter()
             .flatten()
-            .any(|&x| b.iter().flatten().any(|&y| self.follow[x].has(y)))
+            .any(|&x| b.iter().flatten().any(|&y| self.follow[x].contains(y)))
     }
 
     /// The cuts of `toks`, a program's tokens without `END`: the positions where a segment
