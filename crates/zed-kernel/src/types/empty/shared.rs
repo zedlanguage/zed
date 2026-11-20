@@ -308,6 +308,12 @@ pub(super) fn only_atoms(p: &Parts) -> bool {
         && p.morphisms.is_leaf() == Some(false)
 }
 
+/// Whether `p` has no value but atoms of finitely many names: no scalar, record, tuple or
+/// function, and not every atom name.
+pub(super) fn finite_atoms_only(p: &Parts) -> bool {
+    !p.structs && p.tuples.is_default() && only_atoms(p) && !p.atoms.cofinite()
+}
+
 /// The parts of one step of a list, as [`list_step`] gives them.
 pub(super) type Step = (Option<std::sync::Arc<str>>, std::sync::Arc<str>, Type, Type);
 
@@ -315,12 +321,7 @@ pub(super) type Step = (Option<std::sync::Arc<str>>, std::sync::Arc<str>, Type, 
 /// rest; none when `t` is not of that shape.
 pub(super) fn list_step(t: &Type) -> Option<Step> {
     let p = t.p();
-    if p.structs
-        || p.tuples.rest
-        || !p.tuples.lens.is_empty()
-        || !only_atoms(&p)
-        || p.atoms.cofinite()
-    {
+    if !finite_atoms_only(&p) {
         return None;
     }
     let (mut stop, mut link) = (None, None);
@@ -359,11 +360,192 @@ pub(super) fn list_step(t: &Type) -> Option<Step> {
     Some((stop, name, atoms[0][0].clone(), atoms[0][1].clone()))
 }
 
+/// One step of a list type of the link atom `link` and the stop atom `stop`, as the two chain
+/// readers read it: `find_prefix_chains` (its `step_of`) and `check_chain_witness` (its
+/// `verify_step`), which before TEST-kernel-unreached-paths-12 each held a copy of this reading.
+pub(super) enum StepShape {
+    /// The type is one step of a list ([`list_step`]) of these atoms: whether it holds `stop`,
+    /// the item and the rest.
+    List(bool, Type, Type),
+    /// The type is `stop` and nothing else.
+    Stop,
+    /// The type holds `stop` when `has_stop`, and `link` of each pair in the union of `rows`, one
+    /// row or more, and of no other pair.
+    Rows { has_stop: bool, rows: Vec<Row> },
+}
+
+/// The step of `x` ([`StepShape`]), and whether the payload of `link` in `x` also holds records
+/// (`structs` of its parts). No record is a pair, so the step decides every list of `x` either
+/// way; it is `x` itself only without records. None when `x` holds a value other than `stop`
+/// and `link` atoms, another atom, a bare `link`, `stop` with a payload, a payload of `link` with
+/// a tuple of a length other than two, or pairs that are not a union of rows
+/// ([`Part::union_rows`](super::super::bdd::Part::union_rows)). Cost: that of [`list_step`], and
+/// one pass over the atom names of `x` and the pair part of its payload.
+pub(super) fn step_shape(x: &Type, link: &str, stop: &str) -> Option<(StepShape, bool)> {
+    if let Some((s, l, h, next)) = list_step(x) {
+        if *l != *link || s.as_deref().is_some_and(|st| st != stop) {
+            return None;
+        }
+        // `list_step` takes no payload with records.
+        return Some((StepShape::List(s.is_some(), h, next), false));
+    }
+    let xp = x.p();
+    if !finite_atoms_only(&xp) {
+        return None;
+    }
+    let mut has_stop = false;
+    let mut l_payload: Option<Type> = None;
+    for (n, a) in xp.atoms.names() {
+        match (a.bare, a.payload == Type::empty()) {
+            (true, true) if **n == *stop => has_stop = true,
+            // Never met: the atoms are finite (tested above), and `Atoms::set`, the one writer of
+            // `names` (module `types::atoms`), keeps no name whose part is `AtomPart::none()`
+            // there.
+            (false, true) => unreachable!("a finite atoms map lists a name with no part"),
+            (false, false) if **n == *link && l_payload.is_none() => {
+                l_payload = Some(a.payload.clone());
+            }
+            _ => return None,
+        }
+    }
+    let (rows, structs) = match l_payload {
+        None => (Vec::new(), false),
+        Some(l_payload) => {
+            let xq = l_payload.p();
+            if xq.tuples.rest || xq.tuples.lens.len() != 1 || !xq.tuples.lens.contains_key(&2) {
+                return None;
+            }
+            (xq.tuples.lens[&2].union_rows()?, xq.structs)
+        }
+    };
+    // No rows: `x` has no `link` of a pair (the union of no rows holds no pair), so its lists are
+    // `stop` or none; the empty type is no step.
+    if rows.is_empty() {
+        return has_stop.then_some((StepShape::Stop, structs));
+    }
+    Some((StepShape::Rows { has_stop, rows }, structs))
+}
+
+/// How [`follow`] ended.
+pub(super) enum PathEnd<K> {
+    /// At a type `known` gave this for.
+    Known(K),
+    /// At a type met before on the path, at this index of it: the path from there is a cycle.
+    Cycle(usize),
+    /// At this type, which `step` gave no step for.
+    Stuck(Type),
+}
+
+/// Follows the steps of a functional graph on types from `start`: at each type, first `known`
+/// (a type already read), then whether the type is on the path already (a cycle), then `step`,
+/// which gives what the caller keeps of the type and the next type. Gives the path, each type
+/// stepped with what `step` gave, in order, and how it ended. The walks of the two chain readers
+/// (`find_prefix_chains` and `check_chain_witness`) share it; before TEST-kernel-unreached-paths-12
+/// each held a copy. Cost: per type on the path, one call of `known`, one of `step`, and one
+/// lookup and one insert in a map keyed by type (expected O(1), [`ByType`]); each type is
+/// stepped at most once, since a second visit ends the walk as a cycle.
+pub(super) fn follow<K, S>(
+    start: &Type,
+    mut known: impl FnMut(&Type) -> Option<K>,
+    mut step: impl FnMut(&Type) -> Option<(S, Type)>,
+) -> (Vec<(Type, S)>, PathEnd<K>) {
+    let mut path: Vec<(Type, S)> = Vec::new();
+    let mut at: ByType<usize> = ByType::new();
+    let mut cur = start.clone();
+    loop {
+        if let Some(k) = known(&cur) {
+            return (path, PathEnd::Known(k));
+        }
+        if let Some(&i) = at.get(&cur) {
+            return (path, PathEnd::Cycle(i));
+        }
+        let Some((s, next)) = step(&cur) else {
+            return (path, PathEnd::Stuck(cur));
+        };
+        at.insert(cur.clone(), path.len());
+        path.push((cur, s));
+        cur = next;
+    }
+}
+
 #[cfg(test)]
 mod tests {
-    use super::{ByType, Tied};
-    use crate::types::Type;
+    use super::{ByType, PathEnd, StepShape, Tied, follow, step_shape};
+    use crate::types::{Type, Universe};
+    use crate::value::Value;
     use std::collections::BTreeMap;
+
+    /// [`follow`] on the functional graph `k0 → k1 → … → k5 → k2` of atom types: from `k0` it
+    /// ends in the cycle at index 2 with the path `k0 … k5`; with `k4` known it ends there with the
+    /// path `k0 … k3`; and with `k3` given no step it is stuck at `k3` with the path `k0 … k2`.
+    /// Each type is stepped at most once.
+    #[test]
+    fn follow_ends_at_a_known_type_a_cycle_or_a_type_with_no_step() {
+        let k = |i: usize| Type::atom(&format!("k{i}"));
+        let next: BTreeMap<Type, Type> =
+            (0..6).map(|i| (k(i), k(if i == 5 { 2 } else { i + 1 }))).collect();
+        let names = |path: &[(Type, usize)]| path.iter().map(|(_, s)| *s).collect::<Vec<_>>();
+        let mut steps = 0;
+        let (path, end) = follow(
+            &k(0),
+            |_| None::<()>,
+            |t| {
+                steps += 1;
+                let i = (0..6).position(|i| k(i) == *t).expect("a key");
+                Some((i, next[t].clone()))
+            },
+        );
+        assert_eq!(names(&path), [0, 1, 2, 3, 4, 5]);
+        assert!(matches!(end, PathEnd::Cycle(2)));
+        assert_eq!(steps, 6, "each type stepped once");
+        let step = |t: &Type| {
+            let i = (0..6).position(|i| k(i) == *t).expect("a key");
+            (i != 3).then(|| (i, next[t].clone()))
+        };
+        let (path, end) = follow(&k(0), |t| (*t == k(4)).then_some(40), step);
+        assert_eq!(names(&path), [0, 1, 2]);
+        assert!(matches!(end, PathEnd::Stuck(ref t) if *t == k(3)));
+        let (path, end) = follow(&k(0), |t| (*t == k(2)).then_some(20), step);
+        assert_eq!(names(&path), [0, 1]);
+        assert!(matches!(end, PathEnd::Known(20)));
+        let (path, end) = follow(&k(2), |t| (*t == k(2)).then_some(20), step);
+        assert!(path.is_empty());
+        assert!(matches!(end, PathEnd::Known(20)));
+    }
+
+    /// [`step_shape`] with the link `cons` and the stop `nil`: a list step, the stop alone,
+    /// two rows with and without records beside them, one row beside records (which
+    /// `list_step` refuses), and the shapes it refuses: records with no pair beside the stop,
+    /// another link or stop name, a second bare atom, an integer beside the atoms, and a payload
+    /// of another length beside the pairs.
+    #[test]
+    fn step_shape_reads_the_steps_of_a_list() {
+        let lit = |i: i64| Type::lit(&Value::Int(i)).expect("an integer");
+        let (nil, end) = (Type::atom("nil"), Type::atom("end"));
+        let pair = |h: i64, tail: &Type| Type::atom_with("cons", &Type::tuple(vec![lit(h), tail.clone()]));
+        let records = Type::atom_with("cons", &Type::universe(Universe::Struct));
+        let shape = |x: &Type| step_shape(x, "cons", "nil");
+        let one = &nil | &pair(1, &end);
+        assert!(matches!(shape(&one), Some((StepShape::List(true, h, t), false)) if h == lit(1) && t == end));
+        assert!(matches!(shape(&nil), Some((StepShape::Stop, false))));
+        // A payload with no pair has no part of length two, and is refused.
+        assert!(shape(&(&nil | &records)).is_none());
+        let two = &pair(1, &end) | &pair(2, &nil);
+        let rows_of = |x: &Type| match shape(x) {
+            Some((StepShape::Rows { has_stop, rows }, structs)) => Some((has_stop, rows.len(), structs)),
+            _ => None,
+        };
+        assert_eq!(rows_of(&two), Some((false, 2, false)));
+        assert_eq!(rows_of(&(&(&two | &nil) | &records)), Some((true, 2, true)));
+        assert_eq!(rows_of(&(&pair(1, &end) | &records)), Some((false, 1, true)));
+        // Refused: another link, another stop, an integer, a payload of three items.
+        assert!(step_shape(&one, "node", "nil").is_none());
+        assert!(step_shape(&one, "cons", "end").is_none());
+        assert!(shape(&(&two | &end)).is_none(), "a second bare atom");
+        assert!(shape(&(&two | &lit(5))).is_none());
+        let three = Type::atom_with("cons", &Type::tuple(vec![lit(1), lit(2), lit(3)]));
+        assert!(shape(&(&two | &three)).is_none());
+    }
 
     /// Every operation of [`ByType`] agrees with a `BTreeMap` on 600 atoms. In the
     /// short-addresses build, whose digests keep 8 bits, many of the atoms share a digest, so

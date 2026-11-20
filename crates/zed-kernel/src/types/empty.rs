@@ -90,7 +90,10 @@ use super::{
 use crate::digest::{DigestMap, DigestSet};
 use crate::frames::{Deep, Stack};
 use crate::value::Value;
-use shared::{ByType, ChainHint, ChainPlan, Digests, Literal2, TwoSat, list_step, only_atoms};
+use shared::{
+    ByType, ChainHint, ChainPlan, Digests, Literal2, PathEnd, StepShape, TwoSat, finite_atoms_only,
+    follow, list_step, only_atoms, step_shape,
+};
 
 /// The numbers of the types of a search, one number for the types equal but for definition
 /// names ([`blind`]): two renamed copies of a group, and two types that hold them, have one
@@ -1581,6 +1584,12 @@ struct Building {
 /// current decision has used.
 #[derive(Default)]
 struct Search {
+    /// Test only: how many calls of [`Searching::member_known`] answer before one answers
+    /// `None`, once. The values of the tests of the check of a list witness are values shown
+    /// (`Rep::Value`), whose membership is always known, so without this no test reaches the
+    /// refusals of `check_chain_witness` on an unknown member (TEST-kernel-unreached-paths-12).
+    #[cfg(test)]
+    unknown_in: Option<usize>,
     /// Each type read, by its number here; a type built apart from an equal one is compared
     /// with it in full once per read.
     ids: Ids,
@@ -3262,9 +3271,9 @@ impl Search {
             self.ids.remove(&ty);
         }
         self.answer.truncate(mark);
-        if self.canonical_ready.len() > mark {
-            self.canonical_ready.truncate(mark);
-        }
+        // `Vec::truncate` leaves a vector no longer than `mark` as it is, so no test of the
+        // length is needed (a test here was never false, TEST-kernel-unreached-paths-12).
+        self.canonical_ready.truncate(mark);
         if self.blamed_node.len() > mark {
             self.blamed_node.truncate(mark);
         }
@@ -8021,19 +8030,8 @@ impl<'m> Searching<'m> {
     /// types, with every `Inhabited` answer verified by [`Searching::chain_rep`].
     async fn sweep_verdict(&'m self, t: &Type) -> Option<Verdict> {
         let p = t.p();
-        if p.bools == 0
-            && !p.ints.cofinite
-            && p.ints.values.is_empty()
-            && !p.rats.cofinite
-            && p.rats.values.is_empty()
-            && !p.floats.cofinite
-            && p.floats.values.is_empty()
-            && !p.f32s.cofinite
-            && p.f32s.values.is_empty()
-            && !p.strings.cofinite
-            && p.strings.values.is_empty()
+        if only_atoms(&p)
             && !p.structs
-            && p.morphisms.is_leaf() == Some(false)
             && !p.atoms.cofinite()
             && p.atoms.names().is_empty()
             && !p.tuples.rest
@@ -8159,22 +8157,7 @@ impl<'m> Searching<'m> {
     // general decider runs unchanged.
     async fn find_prefix_chains(&'m self, t: &Type) -> Option<ChainPlan> {
         let p = t.p();
-        if p.bools != 0
-            || p.ints.cofinite
-            || !p.ints.values.is_empty()
-            || p.rats.cofinite
-            || !p.rats.values.is_empty()
-            || p.floats.cofinite
-            || !p.floats.values.is_empty()
-            || p.f32s.cofinite
-            || !p.f32s.values.is_empty()
-            || p.strings.cofinite
-            || !p.strings.values.is_empty()
-            || p.structs
-            || p.morphisms.is_leaf() != Some(false)
-            || !p.tuples.is_default()
-            || p.atoms.cofinite()
-        {
+        if !finite_atoms_only(&p) {
             return None;
         }
         let mut link: Option<(std::sync::Arc<str>, Type)> = None;
@@ -8302,61 +8285,19 @@ impl<'m> Searching<'m> {
         };
 
         let step_of = |x: &Type| -> Option<(bool, Type, Option<Type>, Type)> {
-            if let Some((s, l, h, next)) = list_step(x) {
-                if l != link_name || s.as_ref().is_some_and(|st| *st != stop_name) {
-                    return None;
+            let (has_stop, rows) = match step_shape(x, &link_name, &stop_name)? {
+                // A payload with records beside the pairs is not a list step: the plan would
+                // read `x` as its lists alone, and a record under `link` is a value of `x` that
+                // is no list (R7-C2, as at the root above).
+                (_, true) => return None,
+                (StepShape::List(s, h, next), false) => {
+                    return Some((s, norm_head(&h), None, next));
                 }
-                return Some((s.is_some(), norm_head(&h), None, next));
-            }
-            let xp = x.p();
-            if xp.bools != 0
-                || xp.ints.cofinite
-                || !xp.ints.values.is_empty()
-                || xp.rats.cofinite
-                || !xp.rats.values.is_empty()
-                || xp.floats.cofinite
-                || !xp.floats.values.is_empty()
-                || xp.f32s.cofinite
-                || !xp.f32s.values.is_empty()
-                || xp.strings.cofinite
-                || !xp.strings.values.is_empty()
-                || xp.structs
-                || xp.morphisms.is_leaf() != Some(false)
-                || !xp.tuples.is_default()
-                || xp.atoms.cofinite()
-            {
-                return None;
-            }
-            let mut has_stop = false;
-            let mut l_payload: Option<Type> = None;
-            for (n, a) in xp.atoms.names() {
-                match (a.bare, a.payload == Type::empty()) {
-                    (true, true) if *n == stop_name => has_stop = true,
-                    // Not met: the atoms are finite (tested above), so `Atoms::set`, the one
-                    // writer of `names` (module `types::atoms`), keeps no name whose part is
-                    // `AtomPart::none()`.
-                    (false, true) => unreachable!("a finite atoms map lists a name with no part"),
-                    (false, false) if *n == link_name && l_payload.is_none() => {
-                        l_payload = Some(a.payload.clone());
-                    }
-                    _ => return None,
+                (StepShape::Stop, false) => {
+                    return Some((true, Type::empty(), None, carriers[0].clone()));
                 }
-            }
-            let Some(l_payload) = l_payload else {
-                return has_stop.then(|| (true, Type::empty(), None, carriers[0].clone()));
+                (StepShape::Rows { has_stop, rows }, false) => (has_stop, rows),
             };
-            let xq = l_payload.p();
-            if xq.structs
-                || xq.tuples.rest
-                || xq.tuples.lens.len() != 1
-                || !xq.tuples.lens.contains_key(&2)
-            {
-                return None;
-            }
-            let rows = xq.tuples.lens[&2].union_rows()?;
-            if rows.len() < 2 {
-                return None;
-            }
             let mut car_heads: BTreeSet<Type> = BTreeSet::new();
             let mut car_tail: Option<Type> = None;
             let mut chain_row: Option<(Type, Type)> = None;
@@ -8372,26 +8313,16 @@ impl<'m> Searching<'m> {
                     return None;
                 }
             }
-            // Never empty: `rows` has two rows or more (tested above), each row either adds its
-            // head to `car_heads` or is taken as `chain_row`, and a second row of the second
-            // kind returns above; so at most one row is `chain_row` and at least one is in
-            // `car_heads` (TEST-kernel-unreached-paths-9; the same proof as `verify_step`'s
-            // `loop_heads` in `check_chain_witness`).
-            debug_assert!(
-                !car_heads.is_empty(),
-                "two rows or more, at most one not a carrier"
-            );
-            let mut car_iter = car_heads.into_iter();
-            let first_car = car_iter.next().expect("non-empty");
-            let joined_car = car_iter.fold(first_car, |acc, h| self.cut(&acc, &h, Cut::Join));
+            // The carrier rows' heads joined: exact, as a list is in the union of the rows into
+            // the carrier exactly when its first item is in one of their heads and its rest in
+            // the carrier. With no chain row they are the step; beside a chain row they are its
+            // exit (`emit`); with none, the chain row alone is the step (a row reads as
+            // `list_step` reads it; `step_shape` gives one row or more, so `chain_row` and
+            // `joined_car` are not both none, and the `?` below never returns).
+            let joined_car = (car_heads.into_iter()).reduce(|acc, h| self.cut(&acc, &h, Cut::Join));
             match chain_row {
-                None => Some((
-                    has_stop,
-                    joined_car,
-                    None,
-                    car_tail.expect("car_heads non-empty"),
-                )),
-                Some((h_next, next)) => Some((has_stop, h_next, Some(joined_car), next)),
+                None => Some((has_stop, joined_car?, None, car_tail?)),
+                Some((h_next, next)) => Some((has_stop, h_next, joined_car, next)),
             }
         };
 
@@ -8442,30 +8373,26 @@ impl<'m> Searching<'m> {
             HashMap::default();
 
         let mut walk = |start: &Type, nodes: &mut Vec<ChainNode>| -> Option<usize> {
-            if let Some(&res) = node_of.get(start) {
-                return Some(res);
-            }
-            let mut path: Vec<(Type, bool, Type, Option<Type>)> = Vec::new();
-            let mut visiting: TypeSet = TypeSet::default();
-            let mut cur = start.clone();
-            let base = loop {
-                if let Some(&idx) = node_of.get(&cur) {
-                    break idx;
-                }
-                if is_carrier(&cur) {
-                    node_of.insert(cur, 0);
-                    break 0;
-                }
-                if !visiting.insert(cur.clone()) {
-                    return None;
-                }
-                let (has_stop, h, emit, next) = step_of(&cur)?;
-                path.push((cur, has_stop, h, emit));
-                cur = next;
+            // The path from `start` to a type with a node or a carrier; a cycle of steps that
+            // reaches neither, or a type that is no step, fails.
+            let (mut path, end) = follow(
+                start,
+                |cur| match node_of.get(cur) {
+                    Some(&idx) => Some(idx),
+                    None if is_carrier(cur) => {
+                        node_of.insert(cur.clone(), 0);
+                        Some(0)
+                    }
+                    None => None,
+                },
+                |cur| step_of(cur).map(|(has_stop, h, emit, next)| ((has_stop, h, emit), next)),
+            );
+            let PathEnd::Known(base) = end else {
+                return None;
             };
 
             let mut child = base;
-            while let Some((ty, has_stop, h, emit)) = path.pop() {
+            while let Some((ty, (has_stop, h, emit))) = path.pop() {
                 let d_child = nodes[child].depth;
                 let (depth, run, jump) = if d_child == 0 {
                     // Never a step with a row beside its carrier rows (`emit`) here. Proof: (1)
@@ -9748,57 +9675,26 @@ impl<'m> Searching<'m> {
         let verify_step = |x: &Type,
                            intern_head: &mut dyn FnMut(&Type) -> usize|
          -> Option<(bool, usize, Option<(usize, usize)>, Type)> {
-            if let Some((s, l, h, next)) = list_step(x) {
-                if l != *link || s.as_ref().is_some_and(|st| st != stop) {
-                    return None;
+            // Records in the payload of `link` (the `bool` of `step_shape`) are left out here,
+            // where `find_prefix_chains` refuses them; the answer is still exact. Proof: (1) the
+            // check decides whether one list is in `t`, the list `chain_rep` shows, built only
+            // as `Rep::Atom(link, Rep::Tuple(vec![item, rest]))` over `Rep::Value(stop)`, so
+            // every value it asks of a step `x` is `stop` or `link` of a pair; (2) `link` of a
+            // pair `(i, r)` is in `x` exactly when `(i, r)` is in the payload of `link`
+            // (`Atoms`, one payload type a name), and a pair is in that payload exactly when
+            // it is in its part of tuples of length two, since the record part (`structs`)
+            // holds records alone, no tuple; (3) so the rows decide each value asked, with or
+            // without records beside them. Refusing them here would only pass no list through
+            // such a step, wrongly: test
+            // `the_check_of_a_list_witness_is_membership_beside_records` (red with `(_, true)
+            // => return None` here, TEST-kernel-unreached-paths-12).
+            let (has_stop, rows) = match step_shape(x, link, stop)?.0 {
+                StepShape::List(s, h, next) => return Some((s, intern_head(&h), None, next)),
+                StepShape::Stop => {
+                    return Some((true, intern_head(&Type::empty()), None, x.clone()));
                 }
-                return Some((s.is_some(), intern_head(&h), None, next));
-            }
-            let xp = x.p();
-            if xp.bools != 0
-                || xp.ints.cofinite
-                || !xp.ints.values.is_empty()
-                || xp.rats.cofinite
-                || !xp.rats.values.is_empty()
-                || xp.floats.cofinite
-                || !xp.floats.values.is_empty()
-                || xp.f32s.cofinite
-                || !xp.f32s.values.is_empty()
-                || xp.strings.cofinite
-                || !xp.strings.values.is_empty()
-                || xp.structs
-                || xp.morphisms.is_leaf() != Some(false)
-                || !xp.tuples.is_default()
-                || xp.atoms.cofinite()
-            {
-                return None;
-            }
-            let mut has_stop = false;
-            let mut l_payload: Option<Type> = None;
-            for (n, at) in xp.atoms.names() {
-                match (at.bare, at.payload == Type::empty()) {
-                    (true, true) if n == stop => has_stop = true,
-                    // Never met: the atoms are finite (tested above), and `Atoms::set`, the one
-                    // writer of `names` (module `types::atoms`), keeps no name whose part is
-                    // `AtomPart::none()` there.
-                    (false, true) => unreachable!("a finite atoms map lists a name with no part"),
-                    (false, false) if n == link && l_payload.is_none() => {
-                        l_payload = Some(at.payload.clone());
-                    }
-                    _ => return None,
-                }
-            }
-            let Some(l_payload) = l_payload else {
-                return has_stop.then(|| (true, intern_head(&Type::empty()), None, x.clone()));
+                StepShape::Rows { has_stop, rows } => (has_stop, rows),
             };
-            let xq = l_payload.p();
-            if xq.tuples.rest || xq.tuples.lens.len() != 1 || !xq.tuples.lens.contains_key(&2) {
-                return None;
-            }
-            let rows = xq.tuples.lens[&2].union_rows()?;
-            if rows.len() < 2 {
-                return None;
-            }
             let self_loop = |cand: &Type| -> Option<Type> {
                 let (s, l, h_loop, next) = list_step(cand)?;
                 (s.as_ref() == Some(stop) && l == *link && next == *cand).then_some(h_loop)
@@ -9851,9 +9747,11 @@ impl<'m> Searching<'m> {
                     intern_head(&item.expect("the exit's tail loops")),
                 )
             });
-            // One group left: `rows` has two rows or more (tested above), so `groups` has one
-            // group or two, and with two the exit was taken out above
-            // (TEST-kernel-unreached-paths-8, KERNEL-verify-step-self-loop-tail).
+            // One group left: `rows` has one row or more (`StepShape::Rows`), so `groups` has
+            // one group or two, and with two the exit was taken out above
+            // (TEST-kernel-unreached-paths-8, KERNEL-verify-step-self-loop-tail). One row is one
+            // group, read as `list_step` reads it (a row only `step_shape` gives: beside records,
+            // which `list_step` refuses).
             debug_assert!(groups.len() == 1, "one chain group");
             let (_, next, heads) = groups.pop().expect("one chain group");
             Some((has_stop, intern_head(&join(heads)), emit, next))
@@ -9867,26 +9765,32 @@ impl<'m> Searching<'m> {
         let mut unfold = |start: &Type,
                           intern_head: &mut dyn FnMut(&Type) -> usize|
          -> Option<usize> {
-            if let Some(&res) = node_of.get(start) {
-                return res;
-            }
-            let mut path: Vec<(Type, bool, usize, Option<(usize, usize)>)> = Vec::new();
-            let mut seen_on_path: ByType<usize> = ByType::new();
-            let mut cur = start.clone();
-            let mut child = loop {
-                if let Some(&res) = node_of.get(&cur) {
-                    if let Some(idx) = res {
-                        break idx;
+            // The path from `start` to a type read before (a node, or a failure), to a cycle,
+            // which becomes nodes on a cycle, or to a type that is no step.
+            let (mut path, end) = follow(
+                start,
+                |cur| node_of.get(cur).copied(),
+                |cur| {
+                    verify_step(cur, intern_head)
+                        .map(|(has_stop, head, emit, next)| ((has_stop, head, emit), next))
+                },
+            );
+            let mut child = match end {
+                PathEnd::Known(Some(idx)) => idx,
+                PathEnd::Known(None) | PathEnd::Stuck(_) => {
+                    if let PathEnd::Stuck(cur) = end {
+                        node_of.insert(cur, None);
                     }
-                    for (ty, _, _, _) in path {
+                    for (ty, _) in path {
                         node_of.insert(ty, None);
                     }
                     return None;
                 }
-                if let Some(&cyc_start) = seen_on_path.get(&cur) {
+                PathEnd::Cycle(cyc_start) => {
                     let cyc_len = path.len() - cyc_start;
                     let base_id = nodes.len();
-                    for (offset, (ty, has_stop, head, emit)) in path.drain(cyc_start..).enumerate()
+                    for (offset, (ty, (has_stop, head, emit))) in
+                        path.drain(cyc_start..).enumerate()
                     {
                         let next_id = base_id + (offset + 1) % cyc_len;
                         let id = nodes.len();
@@ -9903,21 +9807,11 @@ impl<'m> Searching<'m> {
                         });
                         node_of.insert(ty, Some(id));
                     }
-                    break base_id;
+                    base_id
                 }
-                let Some((has_stop, head, emit, next)) = verify_step(&cur, intern_head) else {
-                    node_of.insert(cur, None);
-                    for (ty, _, _, _) in path {
-                        node_of.insert(ty, None);
-                    }
-                    return None;
-                };
-                seen_on_path.insert(cur.clone(), path.len());
-                path.push((cur, has_stop, head, emit));
-                cur = next;
             };
 
-            while let Some((ty, has_stop, head, emit)) = path.pop() {
+            while let Some((ty, (has_stop, head, emit))) = path.pop() {
                 let (run, jump) = if !nodes[child].on_cycle
                     && nodes[child].has_stop == has_stop
                     && nodes[child].head == head
@@ -11788,6 +11682,16 @@ impl<'m> Searching<'m> {
     /// Whether the value numbered `v` is in `u`, or `None` when that is not known. What is not
     /// known is kept as such, so a second test of the pair is not read as a sure "no".
     fn member_known(&'m self, v: usize, u: &Type) -> Deep<'m, Option<bool>> {
+        #[cfg(test)]
+        {
+            let mut s = self.s();
+            if let Some(k) = s.unknown_in {
+                s.unknown_in = k.checked_sub(1);
+                if k == 0 {
+                    return Stack::ready(None);
+                }
+            }
+        }
         let v = {
             let mut s = self.s();
             if matches!(&s.shown[v], Rep::Of { of: Some(m), .. } if m == u) {

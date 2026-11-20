@@ -2822,8 +2822,8 @@ fn the_check_of_a_list_witness_passes_no_list_outside_the_type() {
 /// the loop answers at once (`break 'walk Some(true)`).
 #[test]
 fn the_check_of_a_list_witness_is_membership_on_chains_with_exits() {
-    use super::super::rec::{Expr, Group};
-    use fork_inputs::{cons, def, lit, nil, r};
+    use super::super::rec::Expr;
+    use fork_inputs::{cons, lit, nil, r};
     let ty = |t: Type| Expr::Type(t);
     let one = || ty(lit(1));
     let nine = || ty(lit(9));
@@ -2900,6 +2900,74 @@ fn the_check_of_a_list_witness_is_membership_on_chains_with_exits() {
             ])],
         ),
     ];
+    assert_check_is_membership(systems);
+}
+
+/// Item TEST-kernel-unreached-paths-12: the check of a list witness
+/// (`Searching::check_chain_witness`) on lists whose link payloads hold records beside their
+/// pairs: its answer is membership (`Type::contains`), both ways, for every list of up to five
+/// items from `1`, `2` and `9`. No record is a pair, so a list is in such a step exactly when it
+/// is in its rows; the check reads the rows and leaves the records out (proof at `verify_step`).
+/// Negative control: `verify_step` refusing a step with records (`(_, true) => return None` on
+/// its `step_shape`, as `find_prefix_chains` does) passes no list of one item or more through
+/// these steps, and this test fails; so does reading one row beside records as no step, as
+/// `verify_step` did before (`rows.len() < 2`).
+#[test]
+fn the_check_of_a_list_witness_is_membership_beside_records() {
+    use super::super::rec::Expr;
+    use fork_inputs::{cons, lit, nil, r};
+    let ty = |t: Type| Expr::Type(t);
+    let int = || ty(Type::int());
+    let records = || {
+        ty(Type::atom_with(
+            "cons",
+            &Type::universe(crate::types::Universe::Struct),
+        ))
+    };
+    let systems: Vec<(&str, Vec<Expr>)> = vec![
+        (
+            "records at the root, two rows beside records, one row beside records on a cycle",
+            vec![
+                Expr::Union(vec![nil(), cons(int(), r(1)), records()]),
+                Expr::Union(vec![
+                    nil(),
+                    cons(ty(lit(1)), r(2)),
+                    cons(ty(lit(9)), r(3)),
+                    records(),
+                ]),
+                Expr::Union(vec![nil(), cons(ty(lit(2)), r(0)), records()]),
+                Expr::Union(vec![nil(), cons(ty(lit(9)), r(3))]),
+            ],
+        ),
+        (
+            "a chain of one row beside records, an exit of 9 into a loop of 2",
+            vec![
+                Expr::Union(vec![nil(), cons(ty(lit(1)), r(1)), records()]),
+                Expr::Union(vec![nil(), cons(int(), r(2)), cons(ty(lit(9)), r(3)), records()]),
+                Expr::Union(vec![nil(), cons(ty(lit(1)), r(0)), records()]),
+                Expr::Union(vec![nil(), cons(ty(lit(2)), r(3))]),
+            ],
+        ),
+        (
+            "a self-looping tail beside records",
+            vec![
+                Expr::Union(vec![nil(), cons(ty(lit(1)), r(1))]),
+                Expr::Union(vec![nil(), cons(int(), r(1)), records()]),
+            ],
+        ),
+    ];
+    assert_check_is_membership(systems);
+}
+
+/// For each system (its definitions, `W0` first), asserts that the check of a list witness
+/// (`Searching::check_chain_witness`) on `W0` is membership (`Type::contains`) for every list of
+/// up to five items from `1`, `2` and `9`, and that some lists are in `W0` and some are not.
+/// Then, for each list and each k, the check with its k-th test of a member answering "not
+/// known" (the test-only `Search::unknown_in`) passes no list outside `W0`, and refuses some
+/// list inside: the refusals of the check on an unknown member (TEST-kernel-unreached-paths-12).
+fn assert_check_is_membership(systems: Vec<(&str, Vec<super::super::rec::Expr>)>) {
+    use super::super::rec::Group;
+    use fork_inputs::def;
     let mut lists: Vec<Vec<i64>> = vec![vec![]];
     for k in 0..5 {
         let longer: Vec<Vec<i64>> = (lists.iter())
@@ -2908,6 +2976,7 @@ fn the_check_of_a_list_witness_is_membership_on_chains_with_exits() {
             .collect();
         lists.extend(longer);
     }
+    let mut unknown_refused = 0;
     for (name, bodies) in systems {
         let defs = (bodies.into_iter().enumerate())
             .map(|(k, b)| def(&format!("W{k}"), b))
@@ -2944,9 +3013,32 @@ fn the_check_of_a_list_witness_is_membership_on_chains_with_exits() {
             } else {
                 outside += 1;
             }
+            // The same check with the k-th test of a member answering "not known", for each k
+            // the check reaches: it may then refuse the list, and never passes one outside.
+            for k in 0.. {
+                Type::forget_emptiness();
+                let (t2, items) = (t.clone(), l.clone());
+                let (ok, fired) = Search::default().run(move |d| {
+                    Box::pin(async move {
+                        d.s().unknown_in = Some(k);
+                        let ids: Vec<usize> = (items.iter())
+                            .map(|&x| d.s().show(Rep::Value(Value::Int(x))))
+                            .collect();
+                        let (link, stop) = ("cons".into(), "nil".into());
+                        let ok = d.check_chain_witness(&t2, &link, &ids, &stop, &[]).await;
+                        (ok, d.s().unknown_in.is_none())
+                    })
+                });
+                assert!(!ok || member, "{name}: {l:?} with test {k} unknown, check passes");
+                unknown_refused += usize::from(member && !ok);
+                if !fired {
+                    break;
+                }
+            }
         }
         assert!(inside > 0 && outside > 0, "{name}: lists on both sides");
     }
+    assert!(unknown_refused > 0, "some list refused on an unknown member");
 }
 
 /// Item KERNEL-verify-step-self-loop-tail: a chain of tails ending in a tail that loops on
@@ -3344,4 +3436,60 @@ fn a_payload_shared_by_three_atoms_gives_each_component_once() {
         .into();
     assert_eq!(wraps, want);
     assert!(items.is_empty());
+}
+
+/// The numbers of a search's types ([`Ids`]): a type numbered again keeps one entry with its
+/// new number, a type not held is removed as a no-op, and the last type of a digest removed
+/// leaves no list behind (TEST-kernel-unreached-paths-12). Negative control: `insert` pushing
+/// where a key is held leaves the old number found first.
+#[test]
+fn a_type_numbered_again_keeps_one_entry_and_a_type_not_held_is_not_removed() {
+    let (t, u) = (Type::int(), Type::atom("q"));
+    let mut ids = Ids::default();
+    ids.insert(t.clone(), 1);
+    ids.insert(t.clone(), 2);
+    assert_eq!(ids.get(&t), Some(&2));
+    assert_eq!(ids.0[&t.digest()].len(), 1, "one entry for the type");
+    ids.remove(&u);
+    assert_eq!(ids.get(&t), Some(&2), "removing a type not held keeps the others");
+    ids.remove(&t);
+    assert_eq!(ids.get(&t), None);
+    assert!(ids.0.is_empty(), "no list left for the digest");
+}
+
+/// A type that is not a recursive member is not refused by a group decider, whatever it
+/// holds (`Type::refused_by_group`); and the roots of carriers put the types that are not
+/// recursive first (`carrier_root_order`), whatever their order among the members
+/// (TEST-kernel-unreached-paths-12).
+#[test]
+fn types_that_are_not_recursive_are_not_refused_by_a_group_and_come_first_among_roots() {
+    let list = fork_inputs::list(Type::int());
+    for t in [Type::int(), Type::atom("nil"), &Type::atom("nil") | &Type::int()] {
+        assert!(!t.refused_by_group(), "{t}");
+    }
+    assert!(matches!(&*list.0, Node::Rec(_)));
+    assert_eq!(carrier_root_order(&[list.clone(), Type::int()]), [1, 0]);
+    assert_eq!(carrier_root_order(&[Type::int(), list]), [0, 1]);
+}
+
+/// The key value of a value ([`leaf`]): the last value along first components and atom
+/// tuple payloads; the empty tuple for an atom of an empty payload; none for an atom with a
+/// struct payload, a path or a family (TEST-kernel-unreached-paths-12).
+#[test]
+fn the_leaf_of_a_value_follows_first_components_and_stops_at_records_and_paths() {
+    let one = Value::Int(1);
+    let nested = Value::tuple(vec![Value::atom_with("a", vec![one.clone(), Value::Int(2)])]);
+    assert_eq!(leaf(&nested), Some(one.clone()));
+    assert_eq!(leaf(&Value::atom("b")), Some(Value::atom("b")));
+    assert_eq!(leaf(&Value::atom_with("c", vec![])), Some(Value::tuple(Vec::new())));
+    assert_eq!(leaf(&Value::tuple(Vec::new())), Some(Value::tuple(Vec::new())));
+    let record = Value::atom_named("d", vec![("x".into(), one.clone())]).expect("a record");
+    assert_eq!(leaf(&record), None);
+    assert_eq!(leaf(&Value::tuple(vec![record])), None);
+    assert_eq!(leaf(&Value::path(vec![one.clone()])), None);
+    let family = Value::merge_failures([Value::atom("e"), Value::atom("f")]);
+    let Value::Atom(a) = &family else { panic!("an atom") };
+    let inner = a.payload.as_ref().expect("a payload").as_slice()[0].clone();
+    assert!(matches!(inner, Value::Family(_)));
+    assert_eq!(leaf(&inner), None);
 }
