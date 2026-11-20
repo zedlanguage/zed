@@ -3384,6 +3384,29 @@ fn refused_where_the_solver_answered(
     refused
 }
 
+/// The three shapes of [`the_cover_answers_where_the_solver_alone_answered_on_three_shapes_at_moduli_5_and_7`]
+/// at moduli 5 and 7, seeds 1 to 3 and k = 1, 2, 5, 13, against the interpreter at every point
+/// of the box `[-60, 60]²` ([`check`]): every point that meets the demand lies in the preimage,
+/// and an exact preimage holds no other. That test checks only that the cover's box of `x`
+/// lies inside the solver's, which a point dropped by both, or a cover that answers a narrower
+/// box, would pass; this one fails there (FAIL-s22-cover-moduli-5-7: where the cases the cover
+/// answers changed with d85e3b436, each answer was checked so).
+#[test]
+fn the_cover_on_three_shapes_at_moduli_5_and_7_matches_the_interpreter() {
+    let (ds, d) = (xy_in(60), Demand::Bool(true));
+    for m in [5, 7] {
+        for seed in 1..=3 {
+            for shape in ["arms of x and y", "arms over x", "a test of the chain"] {
+                for k in [1, 2, 5, 13] {
+                    let t = remainder_shape(shape, moved_remainder_chain(seed, k, "x", m));
+                    let p = preimage(&t, &ds, &d);
+                    check(&t, &ds, &d, &p, (-60, 60));
+                }
+            }
+        }
+    }
+}
+
 /// The cases of [`the_cover_answers_where_the_solver_alone_answered_on_three_shapes_at_moduli_5_and_7`]
 /// refused (373e5d22a, 2026-11-19): each has a group in `direct` with two disjunctions that
 /// both read the projected symbol and share a remainder atom, which neither the rule for one
@@ -3393,14 +3416,20 @@ fn refused_where_the_solver_answered(
 /// `(5, 1, "arms over x", 13)` is answered and `(7, 2, "a test of the chain", 2)`, whose term
 /// has the two disjunctions on `x mod 7` and the same box of `x`, -60..=60, is refused
 /// (`Refusal::Questions`): which of these the cover answers depends on the order of the rows.
-const REFUSED_WITH_TWO_DISJUNCTIONS: [(i64, u64, &str, usize); 24] = [
-    (5, 2, "arms of x and y", 5),
+/// It depends on the points found too: since `shared_cells` finds the point of a gap by
+/// `quick_search` before it asks the solver (d85e3b436, BENCH-deep-small-choice), it starts
+/// from other points, and `(5, 2, "arms of x and y", 5)`, `(5, 3, "a test of the chain", 5)`
+/// and `(7, 2, "a test of the chain", 5)` are answered, each matching the interpreter
+/// ([`the_cover_on_three_shapes_at_moduli_5_and_7_matches_the_interpreter`]), while
+/// `(7, 3, "a test of the chain", 5)` is refused (FAIL-s22-cover-moduli-5-7). No search gave
+/// `Quick::Empty` on these cases: of the 130 gaps of all five shapes, 89 got a point, 41 went
+/// to the solver, and the solver found a point in each, so no backjump passed over a point.
+const REFUSED_WITH_TWO_DISJUNCTIONS: [(i64, u64, &str, usize); 22] = [
     (5, 2, "arms of x and y", 13),
     (5, 2, "arms over x", 5),
     (5, 2, "arms over x", 13),
     (5, 2, "a test of the chain", 13),
     (5, 3, "arms over x", 13),
-    (5, 3, "a test of the chain", 5),
     (7, 1, "arms of x and y", 5),
     (7, 1, "arms of x and y", 13),
     (7, 1, "arms over x", 5),
@@ -3412,11 +3441,11 @@ const REFUSED_WITH_TWO_DISJUNCTIONS: [(i64, u64, &str, usize); 24] = [
     (7, 2, "arms over x", 2),
     (7, 2, "arms over x", 5),
     (7, 2, "arms over x", 13),
-    (7, 2, "a test of the chain", 5),
     (7, 2, "a test of the chain", 13),
     (7, 3, "arms of x and y", 13),
     (7, 3, "arms over x", 5),
     (7, 3, "arms over x", 13),
+    (7, 3, "a test of the chain", 5),
     (7, 3, "a test of the chain", 13),
 ];
 
