@@ -4014,11 +4014,15 @@ fn met(
         let r = parent.find(a0 + j);
         groups.entry(r).or_default().2.push(j);
     }
-    // `R ∧ Bi` for each block `Bi`, every row copied charged.
+    // `R ∧ Bi` for each block `Bi`, every row copied charged, and at least one unit a block, so
+    // that empty blocks are not copied free (round-1 cross-review of
+    // PRES-cover-moduli-two-disjunctions, gemini seat: m empty blocks on each side of two
+    // disjunctions made m² copies for O(m) work,
+    // `two_disjunctions_empty_blocks_charge_work_per_block`).
     let distribute = |group: &[Con], blocks: &[Vec<Con>], work: &mut Work| {
         let mut out = Vec::with_capacity(blocks.len());
         for b in blocks {
-            work.read((group.len() + b.len()) as u64)?;
+            work.read(((group.len() + b.len()) as u64).max(1))?;
             let mut block = group.to_vec();
             block.extend(b.iter().cloned());
             out.push(block);
@@ -4076,13 +4080,12 @@ fn met(
                     None => return Ok(None),
                 }
             }
-            (_, [], [_, _, ..]) => {
-                let have = if cut {
-                    cut_at_shared(group, ors, &alts, s, work)?
-                } else {
-                    None
-                };
-                match (have, ors.as_slice()) {
+            // Only where `cut`: the inner call of `cut_at_shared` (cut false) declines a group
+            // of two or more disjunctions, so the cut stays linear (round-1 cross-review,
+            // gemini seat: distributing there made three disjunctions quadratic, and two that
+            // the cut declines distributed twice).
+            (_, [], [_, _, ..]) if cut => {
+                match (cut_at_shared(group, ors, &alts, s, work)?, ors.as_slice()) {
                     (Some(true), _) => Classed::plain(IntervalSet::range(End::NegInf, End::PosInf)),
                     (Some(false), _) => Classed::plain(IntervalSet::empty()),
                     (None, [i, j]) => {
@@ -4115,10 +4118,19 @@ fn met(
 
 /// The projection onto `s` of a group of [`met`] with rows `group` and exactly two disjunctions
 /// of blocks `a` and `b` (no projected part), where [`cut_at_shared`] does not answer it (the
-/// group reads `s`, or no atom is shared by both): each block `Ai` of the disjunction with fewer
-/// blocks is met with the rows, and `(R ∧ Ai) ∧ (B1 ∨ … ∨ Bm)` is a group of rows and one
-/// disjunction, which [`met`] projects exactly as the union of the projections of
-/// `R ∧ Ai ∧ Bj`; the answer is the union over `i`. `None` where one of those is not shown exact.
+/// group reads `s`, or no atom is shared by both): the answer is the union over the pairs
+/// `(i, j)` of the projections of `R ∧ Ai ∧ Bj`, each a group of rows that [`met`] projects,
+/// over only the pairs that can have a point. `None` where one of those is not shown exact.
+///
+/// Which pairs: each block's range of each atom that a row of it reads alone bounds, met with
+/// the group's ([`atom_ranges`]); a block with no point by these is left out, and a pair whose
+/// ranges miss on an atom has no point ([`ranges_meet`]). The pairs are found by a sweep over one
+/// atom `t` ([`sweep_atom`]): only the pairs whose ranges of `t` meet
+/// ([`zed_collections::intervals::meeting_pairs`], Bentley and Wood 1980), all pairs where no
+/// atom is bounded on both sides. Every pair with a point is among them: at that point `t` lies
+/// in the range of both blocks, so the two ranges meet. The sweep is the round-1 cross-review's
+/// (gemini seat, its patch's per-block ranges and interval sweep, rewritten here on
+/// `unary_bound` and the shared `meeting_pairs`).
 ///
 /// Exact: `R ∧ (A1 ∨ … ∨ Ap) ∧ B` is `(R ∧ A1 ∧ B) ∨ … ∨ (R ∧ Ap ∧ B)` (conjunction distributes
 /// over disjunction), and a value of `s` has a point of a disjunction exactly when it has a
@@ -4129,7 +4141,7 @@ fn met(
 /// l01_25 `s22::the_cover_answers_where_the_solver_alone_answered_on_three_shapes_at_moduli_5_and_7`
 /// declined here before this change (14 still refused when it was made, after
 /// PRES-project-each-naming), one disjunction is the outer `if` of the shape (`if x >= 0 {c}
-/// else {y}`, or `if c >= 1 {y} else {-y}`), 2 blocks, and the other the remainder chain, 8 to
+/// else {y}`, `if y >= 0 {c} else {y}` or `if c >= 1 {y} else {-y}`), 2 blocks, and the other the remainder chain, 8 to
 /// 27 blocks; the two share the chain's result atom (and `s`), so the group is one and the
 /// cover asked 11 to 36 questions of the whole formula, past `EXACT_LIMIT`. Distributed, 2
 /// copies of the chain.
@@ -4137,17 +4149,20 @@ fn met(
 /// Complexity tradeoff: naive version, declining (`None`), so the cover asks its questions of
 /// the whole formula, each O(size) work, one for each few values of the answer. Used: first
 /// [`two_ranges_of_one_value`], O(N log N) for N rows, where every row reads one value; else
-/// p = min(|A|, |B|) calls of [`met`] with one disjunction, the i-th copying |R| + |Ai| +
-/// rows(B) rows here and (|R| + |Ai|) · q more in [`met`], q = max(|A|, |B|): O(p·q·|R| +
-/// q·rows(small) + p·rows(large)) rows copied, each charged to `work`, plus the p·q block
-/// projections and the union ([`Classed::join_all`]). Linear in the larger disjunction for a
-/// fixed smaller one (the outer `if` above: 2), and quadratic, O(|A| · |B|), where both grow,
-/// even where the answer is empty (two disjunctions of n disjoint ranges each of a value `t`
-/// other than `s`, met through a row other than `s == t`: 59.5 times the work per eightfold n
-/// before [`two_ranges_of_one_value`] took the case `s == t`). A large product is refused at
-/// the allowance of [`tried`] and goes to the cover as before; nothing answered before is
-/// refused for it (the cover's loop then runs with its own whole limit). The quadratic case
-/// is QUESTIONS.md A171 for the author.
+/// the ranges, O(rows(A) + rows(B) + p·|R|) for p = |A|, q = |B| (each block's map starts from
+/// the group's ranges it reads), the sweep, O((p + q) log(p + q) + k) for the k pairs whose
+/// ranges of `t` meet, and for each of those a check, O(atoms bounded), and, where it passes, a
+/// copy of |R| + |Ai| + |Bj| rows and its projection; then the union ([`Classed::join_all`]).
+/// Where the blocks of each side are pairwise disjoint on `t` (the remainder chain's blocks
+/// are, and two partitions of one atom are), k <= p + q (proof at `meeting_pairs`: each pair
+/// is given to its interval that ends first, which is given at most one), so the whole is
+/// O((p + q) log(p + q) + (p + q)·|R| + rows): two disjunctions of n disjoint ranges each,
+/// empty answer, 58.55 times the instructions per eightfold n before the sweep (round-1
+/// gemini seat's test `two_disjunctions_disjoint_on_shared_atom_scale_near_linear`), below 9
+/// with it. Where they are not, up to p·q pairs: that answer alone can have p·q/2 pieces
+/// (below), so no method is linear there; a large product is refused at the allowance of
+/// [`tried`] and goes to the cover as before, and nothing answered before is refused for it.
+/// That quadratic case is QUESTIONS.md A171 for the author.
 ///
 /// Why no method is linear in |A| + |B| in general (counting rows and pieces, as `work` does):
 /// the answer alone can have |A| · |B| pieces. Let `A` be the blocks `t == M·2^i` (i < n) and
@@ -4183,26 +4198,177 @@ fn two_distributed(
     if TWO_DISTRIBUTED_OFF.get() {
         return Ok(None);
     }
+    // A disjunction with a block of no rows holds at every point (that block, the empty
+    // conjunction, does), so the group is its rows with the other disjunction alone, which
+    // [`met`] projects by its rule for one disjunction, linear in the group: one pass over the
+    // blocks here instead of |A|·|B| pairs (round-1 gemini seat's test
+    // `two_disjunctions_empty_blocks_charge_work_per_block`: 57.6 times the instructions per
+    // eightfold m before this, every pair formed).
+    work.read((a.len() + b.len()) as u64)?;
+    let true_in = |blocks: &[Vec<Con>]| blocks.iter().any(Vec::is_empty);
+    if let Some(other) = (true_in(a).then_some(b)).or_else(|| true_in(b).then_some(a)) {
+        let rows: usize = group.len() + other.iter().map(Vec::len).sum::<usize>();
+        work.read((rows as u64).max(1))?;
+        let parts = vec![
+            Part::Rows(group.to_vec()),
+            Part::Alts(other.to_vec(), Dirs::new()),
+        ];
+        let Some(p) = met(parts, s, within, false, work)? else {
+            return Ok(None);
+        };
+        return Ok(as_set(p, s, within, work)?.map(|(p, _)| p));
+    }
     if let Some(set) = two_ranges_of_one_value(group, a, b, s, work)? {
         return Ok(Some(set));
     }
-    let (small, large) = if a.len() <= b.len() { (a, b) } else { (b, a) };
-    let mut each = Vec::with_capacity(small.len());
-    let large_rows: u64 = large.iter().map(|b| b.len() as u64).sum();
-    for block in small {
-        work.read((group.len() + block.len()) as u64 + large_rows)?;
+    work.read(group.len() as u64)?;
+    let empty = || Ok(Some(Classed::plain(IntervalSet::empty())));
+    let Some(held) = atom_ranges(group, &HashMap::new()) else {
+        return empty();
+    };
+    let ranges = |blocks: &[Vec<Con>], work: &mut Work| -> Result<Vec<_>, Refusal> {
+        let mut out = Vec::with_capacity(blocks.len());
+        for block in blocks {
+            work.read((block.len() as u64).max(1))?;
+            out.push(atom_ranges(block, &held));
+        }
+        Ok(out)
+    };
+    let (ra, rb) = (ranges(a, work)?, ranges(b, work)?);
+    let t = sweep_atom(&ra, &rb);
+    let mut each = Vec::new();
+    let mut pair = |i: usize, j: usize, work: &mut Work| -> Result<Option<()>, Refusal> {
+        let (Some(ma), Some(mb)) = (&ra[i], &rb[j]) else {
+            return Ok(Some(()));
+        };
+        if !ranges_meet(ma, mb) {
+            work.charge(PIECE)?;
+            return Ok(Some(()));
+        }
+        work.read(((group.len() + a[i].len() + b[j].len()) as u64).max(1))?;
         let mut rows = group.to_vec();
-        rows.extend(block.iter().cloned());
-        let parts = vec![Part::Rows(rows), Part::Alts(large.to_vec(), Dirs::new())];
-        let Some(p) = met(parts, s, within, false, work)? else {
+        rows.extend(a[i].iter().cloned());
+        rows.extend(b[j].iter().cloned());
+        let Some(p) = met(vec![Part::Rows(rows)], s, within, false, work)? else {
             return Ok(None);
         };
         let Some((p, _)) = as_set(p, s, within, work)? else {
             return Ok(None);
         };
         each.push(p);
+        Ok(Some(()))
+    };
+    match t {
+        Some(t) => {
+            // Each block's range of `t`; a block with no point, the empty range.
+            let on_t = |m: &Option<HashMap<Atom, IntRange>>| -> IntRange {
+                match m {
+                    Some(m) => (m.get(t).or(held.get(t)).cloned()).unwrap_or((None, None)),
+                    None => (Some(Int::from(1)), Some(Int::from(0))),
+                }
+            };
+            let ia: Vec<IntRange> = ra.iter().map(on_t).collect();
+            let ib: Vec<IntRange> = rb.iter().map(on_t).collect();
+            work.read((ia.len() + ib.len()) as u64)?;
+            for (i, j) in zed_collections::intervals::meeting_pairs(&ia, &ib) {
+                if pair(i, j, work)?.is_none() {
+                    return Ok(None);
+                }
+            }
+        }
+        None => {
+            for i in 0..a.len() {
+                for j in 0..b.len() {
+                    if pair(i, j, work)?.is_none() {
+                        return Ok(None);
+                    }
+                }
+            }
+        }
     }
     Ok(Some(Classed::join_all(each)))
+}
+
+/// The range of each atom that a row of `rows` reads alone bounds, met with that atom's range in
+/// `held` (the rows the block is met with); `None` where the rows have no point by these ranges
+/// alone (a row of one atom with no root, a constant row that is false, or two ranges of one atom
+/// that do not meet). Rows of two or more atoms, or of a product, bound nothing here.
+///
+/// Sound: every point of `rows ∧ held` has each atom in the range of each row of it alone
+/// ([`super::slack::unary_bound`], by [`row_range`]) and in its range in `held`, so in their meet;
+/// an empty meet, no point.
+fn atom_ranges(rows: &[Con], held: &HashMap<Atom, IntRange>) -> Option<HashMap<Atom, IntRange>> {
+    let mut out: HashMap<Atom, IntRange> = HashMap::new();
+    for c in rows {
+        let Some((x, r, none)) = super::slack::unary_bound(c) else {
+            continue;
+        };
+        if none {
+            return None;
+        }
+        let Some(x) = x else { continue };
+        let range =
+            (out.entry(x.clone())).or_insert_with(|| held.get(&x).cloned().unwrap_or((None, None)));
+        meet_range(range, r);
+        if range_is_empty(range) {
+            return None;
+        }
+    }
+    Some(out)
+}
+
+/// Whether two blocks' ranges ([`atom_ranges`], each already met with the group's) meet on every
+/// atom both bound. Where they do not, the pair `R ∧ Ai ∧ Bj` has no point (its atom would lie in
+/// two ranges that do not meet). An atom bounded by one block only is bounded in the other by the
+/// group alone, which the first already met, so it cannot separate them. O(min(|ma|, |mb|)).
+fn ranges_meet(ma: &HashMap<Atom, IntRange>, mb: &HashMap<Atom, IntRange>) -> bool {
+    let (small, big) = if ma.len() <= mb.len() {
+        (ma, mb)
+    } else {
+        (mb, ma)
+    };
+    small.iter().all(|(x, r)| {
+        big.get(x)
+            .is_none_or(|q| !range_is_empty(&range_meet(r, q)))
+    })
+}
+
+/// The atom on which [`two_distributed`] sweeps its pairs: one that a block of each side bounds,
+/// with a lower end on one side and an upper end on the other (only such an atom can separate a
+/// pair), the one most blocks of both sides bound at both ends; ties by the order of atoms, so
+/// the same atom on every run whatever the order of the maps. `None` where no atom separates.
+/// Any choice gives the same answer; the choice changes only how many pairs are formed.
+fn sweep_atom<'a>(
+    ra: &'a [Option<HashMap<Atom, IntRange>>],
+    rb: &'a [Option<HashMap<Atom, IntRange>>],
+) -> Option<&'a Atom> {
+    // For each atom: blocks with a lower end, an upper end, and both.
+    let count = |ranges: &'a [Option<HashMap<Atom, IntRange>>]| {
+        let mut n: BTreeMap<&'a Atom, (usize, usize, usize)> = BTreeMap::new();
+        for (x, (lo, hi)) in ranges.iter().flatten().flatten() {
+            let e = n.entry(x).or_default();
+            e.0 += lo.is_some() as usize;
+            e.1 += hi.is_some() as usize;
+            e.2 += (lo.is_some() && hi.is_some()) as usize;
+        }
+        n
+    };
+    let (na, nb) = (count(ra), count(rb));
+    let mut best: Option<((usize, usize, usize), &'a Atom)> = None;
+    for (x, &(al, ah, ab)) in &na {
+        let Some(&(bl, bh, bb)) = nb.get(x) else {
+            continue;
+        };
+        let opposed = ah.min(bl) + al.min(bh);
+        if opposed == 0 {
+            continue;
+        }
+        let key = (ab.min(bb), ab + bb, opposed);
+        if best.as_ref().is_none_or(|(k, _)| key > *k) {
+            best = Some((key, *x));
+        }
+    }
+    best.map(|(_, x)| x)
 }
 
 /// The projection onto `s` of the group of [`two_distributed`] where one row of `group` is
@@ -4306,9 +4472,9 @@ fn two_ranges_of_one_value(
 /// read by every one of them (the least such, so the same on every run), the group is projected
 /// onto `t` by [`met`] itself, which joins its items through atoms other than `t` only, and has
 /// a point exactly when that projection is not empty. `None` where no atom is shared by all, or
-/// where the projection onto `t` declines (three or more disjunctions in one of its groups;
-/// that inner call cuts no further, but distributes a group of exactly two disjunctions by
-/// [`two_distributed`], at its cost).
+/// where the projection onto `t` declines (two or more disjunctions in one of its groups: that
+/// inner call cuts no further and does not distribute, so the cut stays linear; the caller
+/// then distributes a group of exactly two by [`two_distributed`]).
 ///
 /// PRES-cover-refusals-moduli: in the 48 cases at moduli 5 and 7 of the l01_25 test
 /// `the_cover_answers_where_the_solver_alone_answered_on_two_shapes_at_moduli_5_and_7`, 10
@@ -4318,8 +4484,7 @@ fn two_ranges_of_one_value(
 /// remainder atom, does not answer them: the disjunction over `x` alone reads no remainder,
 /// so at every value of `q1` two disjunctions remain. Cost: one pass over the atoms of the
 /// disjunctions to find `t`, then [`met`] on the group, linear in its rows and blocks plus
-/// their projections, the same as the group would cost were it answered directly (with the
-/// cost of [`two_distributed`] where a group of it has exactly two disjunctions); one
+/// their projections, the same as the group would cost were it answered directly; one
 /// cut per group, never nested, so a chain of tied groups cannot multiply it. Measured
 /// (release, instructions less the startup run, 2026-11-18): 8.35 and 8.38 times the work per
 /// eightfold n at m = 5 (n 64 to 4096), 8.18 and 8.24 at m = 40; eight times m costs no more

@@ -238,6 +238,51 @@ pub fn intersect<I: Interval>(a: &[I], b: &[I]) -> Vec<I> {
     out
 }
 
+/// Every pair `(i, j)` such that `a[i]` and `b[j]` hold an integer in common, each pair once,
+/// in a fixed order (by the lower end of the interval that starts second, then by index). The
+/// lists need not be sorted or normal; an empty interval meets nothing.
+///
+/// The one-dimensional case of the sweep of Bentley and Wood (1980), "An optimal worst case
+/// algorithm for reporting intersections of rectangles", IEEE Trans. Computers C-29(7),
+/// 571-577, doi:10.1109/TC.1980.1675628 (checked against Crossref): the intervals of both lists
+/// are taken by lower end, and each is met with the intervals of the other list taken before it
+/// and still kept. Each pair is found once, when its second interval is taken: the first is
+/// still kept then, since an interval is dropped only when it misses an interval `z` taken
+/// after it, and `z`'s lower end is at or above its own, so it ends below `z`'s lower end, at
+/// or below that of every interval taken later, and misses them all too. The same argument
+/// makes the drop safe.
+///
+/// Complexity tradeoff: naive version, every pair met, O(|a|·|b|). Used: a sort, O(n log n) for
+/// n = |a| + |b|, then one meet for each pair reported and one for each interval dropped (each
+/// interval is dropped at most once), O(n log n + k) time for k pairs and O(n + k) space. Where
+/// the intervals of `a` are pairwise disjoint, and those of `b` too, k <= n: give each pair to
+/// its interval that ends first (either, at a tie); that interval's upper end lies in the
+/// other, and the other list's intervals are disjoint, so each interval is given at most one
+/// pair. Tested by `meeting_pairs_are_every_pair_that_meets_once`.
+pub fn meeting_pairs<I: Interval>(a: &[I], b: &[I]) -> Vec<(usize, usize)> {
+    let at = |&(side, i): &(usize, usize)| if side == 0 { &a[i] } else { &b[i] };
+    let mut order: Vec<(usize, usize)> = ((a.iter().enumerate()).map(|(i, r)| (0, i, r)))
+        .chain((b.iter().enumerate()).map(|(j, r)| (1, j, r)))
+        .filter(|(_, _, r)| !r.is_empty())
+        .map(|(side, i, _)| (side, i))
+        .collect();
+    order.sort_by(|x, y| at(x).cmp_lo(at(y)).then(x.cmp(y)));
+    let mut kept: [Vec<usize>; 2] = [Vec::new(), Vec::new()];
+    let mut out = Vec::new();
+    for (side, i) in order {
+        let x = at(&(side, i));
+        kept[1 - side].retain(|&j| {
+            let meets = x.meet(at(&(1 - side, j))).is_some();
+            if meets {
+                out.push(if side == 0 { (i, j) } else { (j, i) });
+            }
+            meets
+        });
+        kept[side].push(i);
+    }
+    out
+}
+
 /// The integers of `a` outside `b`, normal lists, as a normal list. O(|a| + |b|): the
 /// intervals of `b` that end before an interval of `a` starts are passed over once, and those
 /// that meet it are read in turn.
@@ -898,5 +943,37 @@ mod tests {
             text,
             "intervals::complement: intervals not sorted by lower end"
         );
+    }
+
+    /// `meeting_pairs` against every pair met, on random unsorted lists of `i8` intervals with
+    /// open ends (`None`), empty intervals, touching and equal ones; each pair once.
+    #[test]
+    fn meeting_pairs_are_every_pair_that_meets_once() {
+        let (mut rng, _) = Rng::fresh("meeting_pairs_are_every_pair_that_meets_once");
+        let end = |rng: &mut Rng| (rng.below(6) != 0).then(|| rng.below(12) as i8 - 6);
+        for _ in 0..2000 {
+            let list = |rng: &mut Rng| -> Vec<(Option<i8>, Option<i8>)> {
+                (0..rng.below(8)).map(|_| (end(rng), end(rng))).collect()
+            };
+            let (a, b) = (list(&mut rng), list(&mut rng));
+            let mut want = Vec::new();
+            for (i, x) in a.iter().enumerate() {
+                for (j, y) in b.iter().enumerate() {
+                    if x.meet(y).is_some() {
+                        want.push((i, j));
+                    }
+                }
+            }
+            let mut got = meeting_pairs(&a, &b);
+            let n = got.len();
+            got.sort();
+            got.dedup();
+            assert_eq!(got.len(), n, "a pair twice: {a:?} {b:?}");
+            assert_eq!(got, want, "{a:?} {b:?}");
+        }
+        // Disjoint on each side: at most |a| + |b| pairs (the bound in the doc).
+        let a: Vec<(i64, i64)> = (0..100).map(|i| (3 * i, 3 * i + 2)).collect();
+        let b: Vec<(i64, i64)> = (0..100).map(|j| (3 * j + 1, 3 * j + 3)).collect();
+        assert_eq!(meeting_pairs(&a, &b).len(), 199);
     }
 }

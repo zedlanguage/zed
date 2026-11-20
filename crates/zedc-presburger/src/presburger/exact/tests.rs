@@ -5488,3 +5488,550 @@ fn two_ranges_of_one_value_match_enumeration() {
         assert_eq!(got.met(), brute(&f, "x"), "{f}");
     }
 }
+
+/// Q1 audit: `cut_at_shared` calls `met(..., cut = false)` to keep its projection linear and
+/// decline when two disjunctions remain in one group after dropping `t`. Without gating
+/// `two_distributed` by `cut`:
+/// (a) a group of three disjunctions not reading `x` where removing `t` leaves two disjunctions
+///     sharing `u` is answered via `two_distributed` (quadratic in those two) instead of declined;
+/// (b) a group of two disjunctions not reading `x` sharing both `t` and `u` with an unbounded
+///     stride `t == 2*k` runs `two_distributed` twice (once on `t`, failing on the stride, then
+///     again on `x`).
+#[test]
+fn two_disjunctions_cut_at_shared_does_not_invoke_two_distributed() {
+    let x = a("x");
+    // (a) Three disjunctions not reading `x`: all share `t`, and `b`, `c` also share `u`.
+    let a_or = Formula::or(vec![eq(&[("t", 1)], 0), eq(&[("t", 1)], -1)]);
+    let b_or = Formula::or(vec![
+        eq(&[("t", 1), ("u", 1)], -1),
+        eq(&[("t", 1), ("u", 1)], -2),
+    ]);
+    let c_or = Formula::or(vec![
+        eq(&[("t", 1), ("u", -1)], 0),
+        eq(&[("t", 1), ("u", -1)], -1),
+    ]);
+    let three = Formula::and(vec![a_or, b_or, c_or]);
+    let mut work = Work {
+        used: 0,
+        limit: u64::MAX,
+        solver: SOLVER,
+    };
+    let got_three = direct(&three, &x, &IntervalSet::top(), &mut work).unwrap();
+    println!("three_not_reading_x: got={got_three:?} work={}", work.used);
+    assert!(
+        got_three.is_none(),
+        "three disjunctions not reading x where cut leaves two tied should decline, got {got_three:?}"
+    );
+
+    // (b) Two disjunctions not reading `x`, sharing `t` and `u`, with an unbounded stride on `t`
+    // in the last block of `A`: with `two_distributed` allowed when `cut == false`, `cut_at_shared`
+    // pays O(m^2) projecting onto `t` before returning None, and outer `met` pays O(m^2) again.
+    let m = 16i64;
+    let mut a_blocks: Vec<Formula> = (0..m - 1)
+        .map(|i| Formula::and(vec![eq(&[("t", 1)], -i), eq(&[("u", 1)], -i)]))
+        .collect();
+    a_blocks.push(Formula::and(vec![
+        eq(&[("t", 1), ("k", -2)], 0),
+        eq(&[("u", 1)], -m),
+    ]));
+    let b_blocks: Vec<Formula> = (0..m)
+        .map(|j| Formula::and(vec![eq(&[("t", 1), ("u", -1)], -j), ge(&[("u", 1)], -j)]))
+        .collect();
+    let two_double = Formula::and(vec![Formula::or(a_blocks), Formula::or(b_blocks)]);
+    let mut work_on = Work {
+        used: 0,
+        limit: u64::MAX,
+        solver: SOLVER,
+    };
+    let got_two = direct(&two_double, &x, &IntervalSet::top(), &mut work_on).unwrap();
+    assert_eq!(got_two, Some(Classed::plain(IntervalSet::top())));
+    // Compare against the same formula with `x >= 0` added to `a_blocks` so `cut_at_shared`
+    // declines immediately without entering the inner `met`.
+    let mut a_with_x: Vec<Formula> = (0..m - 1)
+        .map(|i| {
+            Formula::and(vec![
+                eq(&[("t", 1)], -i),
+                eq(&[("u", 1)], -i),
+                ge(&[("x", 1)], 0),
+            ])
+        })
+        .collect();
+    a_with_x.push(Formula::and(vec![
+        eq(&[("t", 1), ("k", -2)], 0),
+        eq(&[("u", 1)], -m),
+        ge(&[("x", 1)], 0),
+    ]));
+    let b_blocks2: Vec<Formula> = (0..m)
+        .map(|j| Formula::and(vec![eq(&[("t", 1), ("u", -1)], -j), ge(&[("u", 1)], -j)]))
+        .collect();
+    let two_single = Formula::and(vec![Formula::or(a_with_x), Formula::or(b_blocks2)]);
+    let mut work_single = Work {
+        used: 0,
+        limit: u64::MAX,
+        solver: SOLVER,
+    };
+    let _ = direct(&two_single, &x, &IntervalSet::top(), &mut work_single).unwrap();
+    println!(
+        "double_work_check: without_x={} units, with_x_single_pass={} units",
+        work_on.used, work_single.used
+    );
+    assert!(
+        work_on.used <= work_single.used + work_single.used / 5,
+        "cut_at_shared ran two_distributed before outer met: {} vs {}",
+        work_on.used,
+        work_single.used
+    );
+}
+
+/// Q1 audit: empty blocks (`Formula::top()` inside `Formula::Or(Shared::new(...))`) in two
+/// disjunctions must charge at least one unit per block processed/cloned, so `tried`'s allowance
+/// cannot be bypassed by O(m^2) empty-block work charged as O(m).
+#[test]
+fn two_disjunctions_empty_blocks_charge_work_per_block() {
+    let x = a("x");
+    let make = |m: usize| {
+        let mut a_blocks = vec![Formula::and(vec![eq(&[("y", 1)], 0), eq(&[("x", 1)], 0)])];
+        a_blocks.extend((1..m).map(|_| Formula::top()));
+        let mut b_blocks = vec![Formula::and(vec![eq(&[("y", 1)], 0), eq(&[("x", 1)], 0)])];
+        b_blocks.extend((1..m).map(|_| Formula::top()));
+        Formula::And(Shared::new(vec![
+            Formula::Or(Shared::new(a_blocks)),
+            Formula::Or(Shared::new(b_blocks)),
+        ]))
+    };
+    let mut meter = crate::scaling::Meter::new();
+    let mut counts = Vec::new();
+    for m in [32usize, 256] {
+        let f = make(m);
+        let mut used = 0u64;
+        let w = meter.work(|| {
+            let mut work = Work {
+                used: 0,
+                limit: u64::MAX,
+                solver: SOLVER,
+            };
+            let got = direct(&f, &x, &IntervalSet::top(), &mut work)
+                .unwrap()
+                .expect("answered");
+            assert_eq!(got.met(), IntervalSet::top());
+            used = work.used;
+        });
+        println!(
+            "empty_blocks m={m}: work_units={used} instr={} bytes={}",
+            w.units, w.bytes
+        );
+        counts.push((used, w.units, w.bytes));
+    }
+    let work_ratio = counts[1].0 as f64 / counts[0].0.max(1) as f64;
+    let instr_ratio = counts[1].1 as f64 / counts[0].1.max(1) as f64;
+    println!("empty_blocks ratios (8x m): work={work_ratio:.2}x instr={instr_ratio:.2}x");
+    // A disjunction with an empty block is `true` and is dropped (`two_distributed`), so no
+    // pair is formed: instructions within the scaling limit.
+    assert!(
+        instr_ratio < 10.5,
+        "empty blocks: {instr_ratio:.2}x instructions per 8x m"
+    );
+    // If actual instructions grow quadratically (> 20x), counted work must grow comparably, not 8x.
+    if instr_ratio > 20.0 {
+        assert!(
+            work_ratio > 20.0,
+            "uncharged quadratic empty blocks: work grew {work_ratio:.2}x while instructions grew {instr_ratio:.2}x"
+        );
+    }
+}
+
+/// Q2 verification: base-3 `{0, 1}`-digit (Cantor/Stanley) 3-AP-free lower bound has O(log n)-bit
+/// constants (total input O(n log n) bits) yet produces n^2 distinct values with no 3-term
+/// arithmetic progression, forcing at least n^2/2 pieces even in `Classed` or any union of
+/// arithmetic progressions.
+#[test]
+fn two_disjunctions_cantor_3ap_free_lower_bound() {
+    let x = a("x");
+    let k = 4u32;
+    let n = 1usize << k; // 16
+    let base3 = |idx: usize| -> i64 {
+        let (mut v, mut p, mut m) = (0i64, 1i64, idx);
+        while m > 0 {
+            if m & 1 == 1 {
+                v += p;
+            }
+            p *= 3;
+            m >>= 1;
+        }
+        v
+    };
+    let big_m = 3i64.pow(k); // 81 > 2 * 40 = 80
+    let a_or = Formula::or(
+        (0..n)
+            .map(|i| eq(&[("t", 1)], -(big_m * base3(i))))
+            .collect(),
+    );
+    let b_or = Formula::or(
+        (0..n)
+            .map(|j| eq(&[("t", 1), ("x", -1)], -base3(j)))
+            .collect(),
+    );
+    let f = Formula::and(vec![a_or, b_or]);
+    let mut work = Work {
+        used: 0,
+        limit: u64::MAX,
+        solver: SOLVER,
+    };
+    let set = direct(&f, &x, &IntervalSet::top(), &mut work)
+        .unwrap()
+        .expect("answered");
+    assert_eq!(set.count(), (n * n) as u64);
+    assert!(
+        set.ranges.len() >= n * n / 2,
+        "expected >= {} pieces, got {}",
+        n * n / 2,
+        set.ranges.len()
+    );
+    // Verify no 3 distinct values are in arithmetic progression.
+    let vals: Vec<i64> = set
+        .met()
+        .pieces()
+        .flat_map(|(lo, hi)| lo.to_i64().unwrap()..=hi.to_i64().unwrap())
+        .collect();
+    assert_eq!(vals.len(), n * n);
+    let val_set: HashSet<i64> = vals.iter().copied().collect();
+    for i in 0..vals.len() {
+        for j in (i + 1)..vals.len() {
+            let third = 2 * vals[j] - vals[i];
+            assert!(
+                !val_set.contains(&third),
+                "found 3-AP ({}, {}, {})",
+                vals[i],
+                vals[j],
+                third
+            );
+        }
+    }
+    println!(
+        "cantor_3ap_free n={n} M={big_m}: {} distinct values, {} Classed pieces (max constant {})",
+        vals.len(),
+        set.ranges.len(),
+        big_m * base3(n - 1)
+    );
+}
+
+/// Q3(a) & Q3(b): two disjunctions of `m` blocks each, pairwise disjoint on shared atom `y`
+/// (`y == 2i && x == y` vs `y == 2j + 1 && x >= y`, empty answer), and a variant with `m`
+/// disjoint matching pairs (`y == i && x >= 3i` vs `y == j && x <= 3j + 1`, `m`-piece answer).
+/// Without bounding-box interval sweep both cost Theta(m^2); with the 1D sweep both are O(m log m).
+#[test]
+fn two_disjunctions_disjoint_on_shared_atom_scale_near_linear() {
+    let x = a("x");
+    let disjoint_empty = |m: i64| {
+        let a_or = Formula::or(
+            (0..m)
+                .map(|i| Formula::and(vec![eq(&[("y", 1)], -2 * i), eq(&[("x", 1), ("y", -1)], 0)]))
+                .collect(),
+        );
+        let b_or = Formula::or(
+            (0..m)
+                .map(|j| {
+                    Formula::and(vec![
+                        eq(&[("y", 1)], -(2 * j + 1)),
+                        ge(&[("x", 1), ("y", -1)], 0),
+                    ])
+                })
+                .collect(),
+        );
+        Formula::and(vec![a_or, b_or])
+    };
+    let matching_partitions = |m: i64| {
+        let a_or = Formula::or(
+            (0..m)
+                .map(|i| Formula::and(vec![eq(&[("y", 1)], -i), ge(&[("x", 1)], -3 * i)]))
+                .collect(),
+        );
+        let b_or = Formula::or(
+            (0..m)
+                .map(|j| Formula::and(vec![eq(&[("y", 1)], -j), ge(&[("x", -1)], 3 * j + 1)]))
+                .collect(),
+        );
+        Formula::and(vec![a_or, b_or])
+    };
+    let run_empty = |m: i64| {
+        let f = disjoint_empty(m);
+        let mut work = Work {
+            used: 0,
+            limit: u64::MAX,
+            solver: SOLVER,
+        };
+        let got = direct(&f, &x, &IntervalSet::top(), &mut work)
+            .unwrap()
+            .expect("answered");
+        assert!(got.is_empty(), "m={m}: {got:?}");
+        work.used
+    };
+    let run_match = |m: i64| {
+        let f = matching_partitions(m);
+        let mut work = Work {
+            used: 0,
+            limit: u64::MAX,
+            solver: SOLVER,
+        };
+        let got = direct(&f, &x, &IntervalSet::top(), &mut work)
+            .unwrap()
+            .expect("answered");
+        let want = IntervalSet::from_pieces(
+            (0..m)
+                .map(|j| (End::of(3 * j), End::of(3 * j + 1)))
+                .collect(),
+        );
+        assert_eq!(got.met(), want, "m={m}");
+        work.used
+    };
+    let (u16, u128) = (run_empty(16), run_empty(128));
+    println!(
+        "disjoint_empty work units: m=16 -> {u16}, m=128 -> {u128}, ratio={:.2}x",
+        u128 as f64 / u16.max(1) as f64
+    );
+    crate::scaling::check("two_disj_disjoint_empty", 16, |m| {
+        std::hint::black_box(run_empty(m as i64));
+    });
+    let (m16, m128) = (run_match(16), run_match(128));
+    println!(
+        "matching_partitions work units: m=16 -> {m16}, m=128 -> {m128}, ratio={:.2}x",
+        m128 as f64 / m16.max(1) as f64
+    );
+    crate::scaling::check("two_disj_matching_partitions", 16, |m| {
+        std::hint::black_box(run_match(m as i64));
+    });
+}
+
+/// Q4 correctness: [`Classed::join_all`] agrees with sequential [`Classed::join`] on empty,
+/// single-class, multi-class, coalescing-class, and unbounded inputs, and is independent of input
+/// order.
+#[test]
+fn classed_join_all_matches_sequential_join_and_is_order_independent() {
+    assert_eq!(
+        Classed::join_all(Vec::<Classed>::new()),
+        Classed::plain(IntervalSet::empty())
+    );
+    // All-empty inputs including non-top congruence field.
+    let raw_empty = Classed {
+        ranges: IntervalSet::empty(),
+        class: Congruence::new(Num::from(2), Num::from(1)),
+    };
+    assert_eq!(
+        Classed::join_all(vec![
+            raw_empty.clone(),
+            Classed::plain(IntervalSet::empty())
+        ]),
+        Classed::plain(IntervalSet::empty())
+    );
+    // Classes `0 mod 4` and `2 mod 4` coalesce into `0 mod 2`.
+    let c0 = Classed::new(
+        IntervalSet::of(0, 12),
+        Congruence::new(Num::from(4), Num::from(0)),
+    );
+    let c2 = Classed::new(
+        IntervalSet::of(2, 14),
+        Congruence::new(Num::from(4), Num::from(2)),
+    );
+    let joined = Classed::join_all(vec![c0.clone(), c2.clone()]);
+    assert_eq!(joined, c0.join(&c2));
+    assert_eq!(joined.class, Congruence::new(Num::from(2), Num::from(0)));
+    assert_eq!(joined, Classed::join_all(vec![c2.clone(), c0.clone()]));
+
+    // Mixed: infinite plain range + multiple strided classes in several permutations.
+    let items = vec![
+        Classed::plain(IntervalSet::range(End::of(100), End::PosInf)),
+        c0,
+        c2,
+        Classed::new(
+            IntervalSet::of(-10, 10),
+            Congruence::new(Num::from(3), Num::from(1)),
+        ),
+        Classed::plain(IntervalSet::of(-5, -3)),
+        Classed::plain(IntervalSet::empty()),
+    ];
+    let seq = items
+        .iter()
+        .fold(Classed::plain(IntervalSet::empty()), |acc, x| acc.join(x));
+    let forward = Classed::join_all(items.clone());
+    let mut rev = items.clone();
+    rev.reverse();
+    let backward = Classed::join_all(rev);
+    assert_eq!(forward, seq);
+    assert_eq!(backward, seq);
+    assert_eq!(forward.met(), seq.met());
+}
+
+/// Q4 complexity: `k` two-point sets `{0, 3i + 1}` each have a distinct congruence class
+/// `0 mod (3i + 1)` in `Classed`. Folding classes one by one with `Classed::join` rebuilds the
+/// whole union at each step, O(k^2) time and bytes; merging all pieces once is O(k log k).
+#[test]
+fn classed_join_all_many_distinct_classes_scales() {
+    let make = |k: i64| -> Vec<Classed> {
+        (1..=k)
+            .map(|i| {
+                Classed::plain(IntervalSet::from_pieces(vec![
+                    (End::of(0), End::of(0)),
+                    (End::of(3 * i + 1), End::of(3 * i + 1)),
+                ]))
+            })
+            .collect()
+    };
+    let check_exact = |k: i64| {
+        let got = Classed::join_all(make(k));
+        let mut want = vec![(End::of(0), End::of(0))];
+        want.extend((1..=k).map(|i| (End::of(3 * i + 1), End::of(3 * i + 1))));
+        assert_eq!(got, Classed::plain(IntervalSet::from_pieces(want)));
+    };
+    check_exact(16);
+    crate::scaling::check("classed_join_all_distinct_classes", 64, |k| {
+        let inputs = make(k as i64);
+        std::hint::black_box(Classed::join_all(inputs));
+    });
+}
+
+/// Q3(b) correctness: `two_distributed`'s 1D interval-intersection sweep and multi-atom unary
+/// pruning agree with brute-force enumeration on corner cases (empty disjunction, touching closed
+/// intervals, point-point intersections, unbounded blocks, multi-atom disjoint boxes, strided
+/// blocks with finite `within`) and on 200 random mixed bounded/unbounded/relational groups.
+#[test]
+fn two_disjunctions_sweep_matches_enumeration_and_with_strided_blocks() {
+    let x = a("x");
+    // Empty disjunction inside conjunction.
+    let f_empty = Formula::And(Shared::new(vec![
+        Formula::Or(Shared::new(vec![])),
+        Formula::or(vec![eq(&[("x", 1), ("y", -1)], 0)]),
+    ]));
+    let mut work = Work {
+        used: 0,
+        limit: u64::MAX,
+        solver: SOLVER,
+    };
+    assert_eq!(
+        direct(&f_empty, &x, &IntervalSet::top(), &mut work).unwrap(),
+        Some(Classed::plain(IntervalSet::empty()))
+    );
+
+    // Touching closed intervals `[0, 5]` and `[5, 10]` on `y`, plus unbounded block, plus
+    // multi-atom box disjoint on `z` while intersecting on `y`.
+    let corner = boxed(Formula::and(vec![
+        Formula::or(vec![
+            Formula::and(vec![
+                ge(&[("y", 1)], 0),
+                ge(&[("y", -1)], 5),
+                eq(&[("z", 1)], 0),
+                eq(&[("x", 1), ("y", -1)], 0),
+            ]),
+            Formula::and(vec![
+                ge(&[("y", 1)], -2),
+                ge(&[("y", -1)], 3),
+                eq(&[("z", 1)], -1),
+                eq(&[("x", 1), ("y", -1)], -1),
+            ]),
+            Formula::and(vec![eq(&[("x", 1), ("y", -2)], 0)]),
+        ]),
+        Formula::or(vec![
+            Formula::and(vec![
+                ge(&[("y", 1)], -5),
+                ge(&[("y", -1)], 10),
+                eq(&[("z", 1)], 0),
+                ge(&[("x", 1)], -4),
+            ]),
+            Formula::and(vec![
+                ge(&[("y", 1)], -2),
+                ge(&[("y", -1)], 3),
+                eq(&[("z", 1)], -2),
+                ge(&[("x", 1)], -10),
+            ]),
+        ]),
+    ]));
+    let mut work = Work {
+        used: 0,
+        limit: u64::MAX,
+        solver: SOLVER,
+    };
+    let got_corner = direct(&corner, &x, &IntervalSet::top(), &mut work)
+        .unwrap()
+        .expect("answered");
+    assert_eq!(got_corner.met(), brute(&corner, "x"));
+
+    // Strided blocks with finite `within`: `x == 2k` in one arm, `x == 3k + 1` in another.
+    let strided = Formula::and(vec![
+        Formula::or(vec![
+            Formula::and(vec![eq(&[("y", 1)], 0), eq(&[("x", 1), ("k", -2)], 0)]),
+            Formula::and(vec![eq(&[("y", 1)], -1), eq(&[("x", 1), ("k", -3)], -1)]),
+        ]),
+        Formula::or(vec![
+            Formula::and(vec![eq(&[("y", 1)], 0), ge(&[("x", 1)], 0)]),
+            Formula::and(vec![eq(&[("y", 1)], -1), ge(&[("x", -1)], 8)]),
+        ]),
+    ]);
+    let mut work = Work {
+        used: 0,
+        limit: u64::MAX,
+        solver: SOLVER,
+    };
+    let within = IntervalSet::of(-6, 10);
+    let got_strided = direct(&strided, &x, &within, &mut work)
+        .unwrap()
+        .expect("strided answered");
+    let mut want_strided = Vec::new();
+    for v in -6i64..=10 {
+        let arm0 = v >= 0 && v.rem_euclid(2) == 0;
+        let arm1 = v <= 8 && (v - 1).rem_euclid(3) == 0;
+        if arm0 || arm1 {
+            want_strided.push((End::of(v), End::of(v)));
+        }
+    }
+    assert_eq!(got_strided.met(), IntervalSet::from_pieces(want_strided));
+
+    // 200 random mixed bounded/unbounded/multi-shared-atom groups over x, y, z against enumeration.
+    let mut wrong = Vec::new();
+    let mut declined = 0usize;
+    for seed in [7u64, 313, 8_191, 65_537] {
+        let mut rng = Rng::new(seed);
+        for round in 0..50 {
+            let block = |rng: &mut Rng| {
+                let mut cs = Vec::new();
+                if rng.below(3) != 0 {
+                    let lo = rng.int(-4, 2);
+                    let hi = rng.int(lo, 4);
+                    cs.push(ge(&[("y", 1)], -lo));
+                    cs.push(ge(&[("y", -1)], hi));
+                }
+                if rng.below(2) == 0 {
+                    cs.push(ge(&[("z", 1)], rng.int(-3, 3)));
+                }
+                if rng.below(2) == 0 {
+                    cs.push(ge(&[("z", -1)], rng.int(-3, 3)));
+                }
+                cs.push(eq(
+                    &[("x", 1), ("y", rng.int(-1, 1)), ("z", rng.int(-1, 1))],
+                    rng.int(-3, 3),
+                ));
+                Formula::and(cs)
+            };
+            let na = 1 + rng.below(4) as usize;
+            let nb = 1 + rng.below(4) as usize;
+            let a_or = Formula::or((0..na).map(|_| block(&mut rng)).collect());
+            let b_or = Formula::or((0..nb).map(|_| block(&mut rng)).collect());
+            let f = boxed(Formula::and(vec![
+                ge(&[("y", 1), ("z", -1)], rng.int(-2, 2)),
+                a_or,
+                b_or,
+            ]));
+            let want = brute(&f, "x");
+            let mut fast = u64::MAX;
+            match tried(&mut fast, SOLVER, |w| {
+                direct(&f, &x, &IntervalSet::top(), w)
+            }) {
+                None => declined += 1,
+                Some(set) if set.met() != want => wrong.push(format!(
+                    "seed {seed} round {round}: {set:?}, want {want:?}: {f}"
+                )),
+                Some(_) => {}
+            }
+        }
+    }
+    assert!(wrong.is_empty(), "{wrong:#?}");
+    assert_eq!(declined, 0);
+}

@@ -3326,7 +3326,7 @@ boxes_at_modulus_tests! {
 /// `bench::s22::remainder_chains_in_the_linear_stage_scale`; that check writes a progression
 /// as its range and a congruence since PRES-one-block-changes-goal, and `direct` keeps each
 /// stride as its range met with its class (PRES-direct-stride-answer-downstream). The other
-/// three shapes have 24 refused cases
+/// three shapes had 24 refused cases, none since PRES-cover-moduli-two-disjunctions
 /// ([`the_cover_answers_where_the_solver_alone_answered_on_three_shapes_at_moduli_5_and_7`]).
 #[test]
 fn the_cover_answers_where_the_solver_alone_answered_on_two_shapes_at_moduli_5_and_7() {
