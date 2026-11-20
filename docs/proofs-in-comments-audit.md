@@ -50,5 +50,14 @@ The third pass, row DOC-proofs-in-comments-audit-rest-2, reads those:
 - [proofdoc3](proofs-audit/proofdoc3.md): one table, a section per helper (proofdoc3a:
   zed-kernel read only, the lower crates, the front-end crates, zedc-preimage, 80870e234 and
   the untraced sites; proofdoc3b: zedc-check, zedc-elab, zedc-base and the moved commits;
-  proofdoc3c: zedc-types, zedc-presburger, zedc-solvers, zedc-int). Counts are added as each
-  section lands.
+  proofdoc3c: zedc-types, zedc-presburger, zedc-solvers, zedc-int).
+
+| Section | Entries read | Claims found | Already there | Added or completed | Marked unproved | False |
+|---|---|---|---|---|---|---|
+| proofdoc3a | 173 of 345 | zed-kernel 71 (reported only), zedc-preimage 35, 28 in the other crates | 69 | 19 | 11 | 2 faults fixed with a test red first (zedc-preimage spans.rs priority tie, zedc-syntax recover.rs kept declaration); 2 false zed-kernel comments reported (row FIX-poly-limit-comments) |
+| proofdoc3b | 90 of 365 | zedc-check 89 in 75 entries | 67 | 10 | 0 | 1: `fold_dir_end`'s round bound (row FAIL-fold-rotating-tuple-rounds) |
+| proofdoc3c | 12 in full, 361 through four filters | 31 | 8 | 24 | 2 sub-cases (`find_tied_point`, `root_approx`) | 0 |
+
+The rows filed for what this pass left open are listed in docs/plan_dag.md under row
+DOC-proofs-in-comments-audit-rest-2. The entries not read, and the 361 read only through
+filters, are row DOC-proofs-in-comments-audit-rest-3.
