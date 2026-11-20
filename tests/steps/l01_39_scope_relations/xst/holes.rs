@@ -341,6 +341,11 @@ type Runs = Vec<(Option<i64>, Option<i64>)>;
 /// intervals, some without a bound, by trying each choice of one interval per name and
 /// closing the difference tests with Floyd-Warshall (an extra name fixed at 0 carries the
 /// bounds). The projection of one choice is an interval; the answer is their union.
+///
+/// Floyd-Warshall: R. W. Floyd, "Algorithm 97: Shortest path", CACM 5(6):345, 1962,
+/// doi:10.1145/367766.368168, and S. Warshall, "A theorem on Boolean matrices", JACM
+/// 9(1):11-12, 1962, doi:10.1145/321105.321107 (Crossref 2026-11-20; texts not read, the loop
+/// from memory). A test oracle, checked only by the tests that compare it with the solver.
 fn unbounded_exact(dom: &[Runs], edges: &[(usize, usize, i64)]) -> Vec<Runs> {
     const INF: i64 = i64::MAX / 4;
     let n = dom.len();
@@ -492,7 +497,8 @@ fn exact_case(dom: &[Runs], edges: &[(usize, usize, i64)], what: &str) -> Vec<Ru
         Some(all) => inst.scope().assume(&all, true, &p),
         None => inst.scope(),
     };
-    // Which names reach which along the tests, by Warshall's closure, O(n³) for n <= 4.
+    // Which names reach which along the tests, by Warshall's closure, O(n³) for n <= 4
+    // (Warshall, JACM 9(1):11-12, 1962, doi:10.1145/321105.321107; Crossref 2026-11-20).
     let n = dom.len();
     let mut reach = vec![vec![false; n]; n];
     for &(u, v, _) in edges {

@@ -262,7 +262,11 @@ fn greatest(sys: &System) -> Result<Option<Vec<i64>>, Unsupported> {
         out[u].push((v, w));
         back[v].push(u);
     }
-    // Kosaraju with explicit stacks: each name and edge visited once per pass.
+    // Kosaraju with explicit stacks: each name and edge visited once per pass. Kosaraju did not
+    // publish it; the first paper is M. Sharir, "A strong-connectivity algorithm and its
+    // applications in data flow analysis", Comput. Math. Appl. 7(1):67-72, 1981,
+    // doi:10.1016/0898-1221(81)90008-0 (Crossref 2026-11-20; text not read: one depth-first
+    // pass for the finishing order, a second on the reversed edges in reverse of that order).
     let mut visited = vec![false; n];
     let mut order = vec![];
     for root in 0..n {
@@ -769,7 +773,10 @@ fn scc_composition_answers_the_families() {
     }
 }
 
-/// All-pairs shortest distances by Floyd–Warshall, `None` on a negative cycle.
+/// All-pairs shortest distances by Floyd–Warshall, `None` on a negative cycle (Floyd, CACM
+/// 5(6):345, 1962, doi:10.1145/367766.368168; Warshall, JACM 9(1):11-12, 1962,
+/// doi:10.1145/321105.321107; Crossref 2026-11-20, texts not read). A negative cycle shows as
+/// a negative `d[i][i]` after the loop, the usual test, from memory.
 fn distances(n: usize, edges: &[(usize, usize, i64)]) -> Option<Vec<Vec<Option<i64>>>> {
     let mut d = vec![vec![None; n]; n];
     for (i, row) in d.iter_mut().enumerate() {
