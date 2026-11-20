@@ -1444,7 +1444,8 @@ and `verify_step` does not check `xq.structs`; both go to TEST-kernel-unreached-
 
 Nineteenth round (kernel22, 2026-11-20), row TEST-kernel-unreached-paths-12. Base origin/main
 5810f0957, whose `types/` code is that of 0d68a2523, so the list of the eighteenth round holds
-there as written. Line numbers below are at 0d68a2523, then at 60bca98b1.
+there as written. Line numbers below are at 0d68a2523, then at 023634930 (60bca98b1 before
+the rebase onto 161eba557, which changed no `types/` file).
 
 The two findings:
 
@@ -1475,7 +1476,7 @@ The two findings:
 | `check_chain_witness` 10039-10040, 10143, 10167, 10182, 10193, 10223, 10229, 10245, 10264 (9933-9934, 10037, 10061, 10076, 10087, 10117, 10123, 10139, 10158): the answers on a member not known | test, with the test-only fault flag `Search::unknown_in` | `assert_check_is_membership` (the two membership tests) runs the check again with its k-th `member_known` answering "not known", for each k it reaches, and asserts that no list outside passes and some list inside is refused | the four `break 'walk None` of `let ... else` answered `Some(true)` fail both tests; 10061 and 10076 have no control of their own |
 
 Counts: of the 19 lines, a coverage run of the zed-kernel `types::empty::` tests at 60bca98b1
-(75 pieces, 0 failed) and one of the four list-witness tests with equal items sharing an id (4
+before the rebase (75 pieces, 0 failed) and one of the four list-witness tests with equal items sharing an id (4
 pieces, 0 failed) count all 17 kept lines above 0; 3249 and 8338 are gone. 137 of the 156
 lines are open.
 
