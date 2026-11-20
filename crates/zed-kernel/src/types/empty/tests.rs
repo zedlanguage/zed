@@ -2464,8 +2464,10 @@ fn the_refusals_a_search_gives_up_on_are_ranked_in_a_fixed_order() {
 /// two rows whose tails share a tail it cannot read; and a row whose tail never stops. Every
 /// list of up to four items from `1` and `2` is tried, with no hint and with each hint
 /// ([`ChainHint`]) on each row of the link payload, which must not change the answer. Changing the `return None` for another link or stop, or for two
-/// self-looping rows with different items, into a pass makes this test fail (negative controls,
-/// TEST-kernel-unreached-paths-8).
+/// rows that do not loop, into a pass makes this test fail (negative controls,
+/// TEST-kernel-unreached-paths-8). Since KERNEL-verify-step-self-loop-tail the check reads two
+/// self-looping rows with different items (one as the chain, one as the exit); that system stays
+/// here as a test that the reading passes no list outside the type.
 #[test]
 fn the_check_of_a_list_witness_passes_no_list_outside_the_type() {
     use super::super::rec::{Expr, Group};
@@ -2643,9 +2645,8 @@ fn the_check_of_a_list_witness_passes_no_list_outside_the_type() {
 /// in the loop), with alternating heads (one link a node, so the walk jumps by binary lifting)
 /// or equal heads (runs of links), acyclic or on a cycle, and tails with no stop; one system's
 /// link has one field, so no pair is under it and only the empty list is in it. The acyclic
-/// chains end in `nil` alone: a last tail `nil | cons(h, itself)` would make the row before it
-/// a second loop row of another item, which `verify_step` does not read (the check then answers
-/// `false`, not verified, and the fallback decides the type). Equal items share one shown id, so
+/// chains end in `nil` alone; chains ending in a last tail `nil | cons(h, itself)` are in
+/// `the_check_of_a_list_witness_reads_a_chain_ending_in_a_self_looping_tail`. Equal items share one shown id, so
 /// they form runs: an item in both a chain head and its exit's head stops a jump at that node
 /// (the `emit` stop of the pass walk, `pass_memo` set to 0), and an item leaving the chain for
 /// the loop answers at once (`break 'walk Some(true)`).
@@ -2775,6 +2776,193 @@ fn the_check_of_a_list_witness_is_membership_on_chains_with_exits() {
             }
         }
         assert!(inside > 0 && outside > 0, "{name}: lists on both sides");
+    }
+}
+
+/// Item KERNEL-verify-step-self-loop-tail: a chain of tails ending in a tail that loops on
+/// itself (`Wn = nil | cons(h, Wn)`) with exits into a loop `L` of another item leaves, at the
+/// tail before `Wn`, rows whose tails loop on themselves with two different items; the check of
+/// a list witness (`Searching::check_chain_witness`) reads the rows of one item as the chain and
+/// the others as the exit, the heads of rows with one tail joined (also two loop items with two
+/// rows each, and two rows into one tail that does not loop), and its answer is membership
+/// (`Type::contains`), both ways, for every list of up to five items from `1`, `2` and `9`.
+/// Before, `verify_step` gave up on these tails and the check passed no list through them.
+/// Negative controls: tails of three loop items, of two loop items beside a row that does not
+/// loop, or of two rows into two tails neither of which loops, have no reading as one chain and
+/// one exit, and the check still passes no list of two items or more through them (while some
+/// are in the type).
+#[test]
+fn the_check_of_a_list_witness_reads_a_chain_ending_in_a_self_looping_tail() {
+    use super::super::rec::{Expr, Group};
+    use fork_inputs::{cons, def, lit, nil, r};
+    let ty = |t: Type| Expr::Type(t);
+    let one = || ty(lit(1));
+    let two = || ty(lit(2));
+    let nine = || ty(lit(9));
+    let int = || ty(Type::int());
+    // `W0` first; `true` where the check must read every tail, `false` where it must give up.
+    let systems: Vec<(&str, bool, Vec<Expr>)> = vec![
+        (
+            "a chain into a tail looping on 1, exits of 9 into a loop of 2",
+            true,
+            vec![
+                Expr::Union(vec![nil(), cons(int(), r(1)), cons(nine(), r(4))]),
+                Expr::Union(vec![nil(), cons(int(), r(2)), cons(nine(), r(4))]),
+                Expr::Union(vec![nil(), cons(one(), r(3)), cons(nine(), r(4))]),
+                Expr::Union(vec![nil(), cons(one(), r(3))]),
+                Expr::Union(vec![nil(), cons(two(), r(4))]),
+            ],
+        ),
+        (
+            "alternating heads into a tail looping on int, exits of 9 into a loop of 9",
+            true,
+            vec![
+                Expr::Union(vec![nil(), cons(one(), r(1)), cons(nine(), r(4))]),
+                Expr::Union(vec![nil(), cons(two(), r(2)), cons(nine(), r(4))]),
+                Expr::Union(vec![nil(), cons(one(), r(3)), cons(nine(), r(4))]),
+                Expr::Union(vec![nil(), cons(int(), r(3))]),
+                Expr::Union(vec![nil(), cons(nine(), r(4))]),
+            ],
+        ),
+        (
+            "one exit of 1 and 9 into a loop of 2, a tail looping on 9",
+            true,
+            vec![
+                Expr::Union(vec![nil(), cons(int(), r(1))]),
+                Expr::Union(vec![
+                    nil(),
+                    cons(two(), r(2)),
+                    cons(one(), r(3)),
+                    cons(nine(), r(3)),
+                ]),
+                Expr::Union(vec![nil(), cons(nine(), r(2))]),
+                Expr::Union(vec![nil(), cons(two(), r(3))]),
+            ],
+        ),
+        (
+            "two loop items with two rows each",
+            true,
+            vec![
+                Expr::Union(vec![nil(), cons(int(), r(1))]),
+                Expr::Union(vec![
+                    nil(),
+                    cons(one(), r(2)),
+                    cons(two(), r(2)),
+                    cons(one(), r(3)),
+                    cons(nine(), r(3)),
+                ]),
+                Expr::Union(vec![nil(), cons(nine(), r(2))]),
+                Expr::Union(vec![nil(), cons(two(), r(3))]),
+            ],
+        ),
+        (
+            "two rows into one tail that does not loop",
+            true,
+            vec![
+                Expr::Union(vec![nil(), cons(int(), r(1))]),
+                Expr::Union(vec![nil(), cons(one(), r(2)), cons(nine(), r(2))]),
+                Expr::Union(vec![nil(), cons(two(), r(3))]),
+                Expr::Union(vec![nil(), cons(int(), r(3))]),
+            ],
+        ),
+        (
+            "two tails, neither loops",
+            false,
+            vec![
+                Expr::Union(vec![nil(), cons(int(), r(1))]),
+                Expr::Union(vec![nil(), cons(one(), r(2)), cons(nine(), r(3))]),
+                Expr::Union(vec![nil(), cons(two(), r(3))]),
+                Expr::Union(vec![nil(), cons(int(), nil())]),
+            ],
+        ),
+        (
+            "three loop items",
+            false,
+            vec![
+                Expr::Union(vec![nil(), cons(int(), r(1))]),
+                Expr::Union(vec![
+                    nil(),
+                    cons(one(), r(2)),
+                    cons(nine(), r(3)),
+                    cons(two(), r(4)),
+                ]),
+                Expr::Union(vec![nil(), cons(int(), r(2))]),
+                Expr::Union(vec![nil(), cons(nine(), r(3))]),
+                Expr::Union(vec![nil(), cons(two(), r(4))]),
+            ],
+        ),
+        (
+            "two loop items beside a row that does not loop",
+            false,
+            vec![
+                Expr::Union(vec![nil(), cons(int(), r(1))]),
+                Expr::Union(vec![
+                    nil(),
+                    cons(one(), r(2)),
+                    cons(nine(), r(3)),
+                    cons(two(), r(4)),
+                ]),
+                Expr::Union(vec![nil(), cons(int(), nil())]),
+                Expr::Union(vec![nil(), cons(nine(), r(3))]),
+                Expr::Union(vec![nil(), cons(two(), r(4))]),
+            ],
+        ),
+    ];
+    let mut lists: Vec<Vec<i64>> = vec![vec![]];
+    for k in 0..5 {
+        let longer: Vec<Vec<i64>> = (lists.iter())
+            .filter(|l| l.len() == k)
+            .flat_map(|l| [1, 2, 9].map(|x| [l.clone(), vec![x]].concat()))
+            .collect();
+        lists.extend(longer);
+    }
+    for (name, read, bodies) in systems {
+        let defs = (bodies.into_iter().enumerate())
+            .map(|(k, b)| def(&format!("W{k}"), b))
+            .collect();
+        let t = Group::new(defs)
+            .expect("a group")
+            .instance(vec![])
+            .remove(0);
+        let (mut inside, mut outside) = (0, 0);
+        for l in &lists {
+            Type::forget_emptiness();
+            let value = (l.iter().rev()).fold(Value::atom("nil"), |rest, &x| {
+                Value::atom_with("cons", vec![Value::Int(x), rest])
+            });
+            let (t2, items) = (t.clone(), l.clone());
+            let ok = Search::default().run(move |d| {
+                Box::pin(async move {
+                    // Each value is shown once, so equal items share one id and form runs.
+                    let mut shown: BTreeMap<i64, usize> = BTreeMap::new();
+                    let ids: Vec<usize> = (items.iter())
+                        .map(|&x| {
+                            *(shown.entry(x))
+                                .or_insert_with(|| d.s().show(Rep::Value(Value::Int(x))))
+                        })
+                        .collect();
+                    let (link, stop) = ("cons".into(), "nil".into());
+                    d.check_chain_witness(&t2, &link, &ids, &stop, &[]).await
+                })
+            });
+            let member = t.contains(&value);
+            if read || l.len() < 2 {
+                assert_eq!(ok, member, "{name}: {l:?}, check {ok}, member {member}");
+            } else {
+                assert!(!ok, "{name}: {l:?} passed through a tail with no reading");
+            }
+            if l.len() >= 2 {
+                if member {
+                    inside += 1;
+                } else {
+                    outside += 1;
+                }
+            }
+        }
+        assert!(
+            inside > 0 && outside > 0,
+            "{name}: lists of two items or more on both sides"
+        );
     }
 }
 

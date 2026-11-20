@@ -9722,54 +9722,60 @@ impl<'m> Searching<'m> {
                 let (s, l, h_loop, next) = list_step(cand)?;
                 (s.as_ref() == Some(stop) && l == *link && next == *cand).then_some(h_loop)
             };
-            let mut loop_heads: BTreeSet<Type> = BTreeSet::new();
-            let mut loop_item: Option<Type> = None;
-            let mut loop_tail: Option<Type> = None;
-            let mut chain_row: Option<(Type, Type)> = None;
+            // The rows grouped by where they lead, in the order met: a row whose tail loops on
+            // itself by the loop's item `i` (the tail is then `stop | link(i, itself)`, the
+            // same set for every such tail of item `i`), any other row by its tail. A list is
+            // in `x` exactly when it is `stop` (and `has_stop`), or for some group its first
+            // item is in a head of the group's rows and the rest in their tail (the meaning of
+            // a union of rows); so the heads of one group join into one head, exactly. The
+            // step reads one group as the chain (any tail) and, when there are two, the other,
+            // whose tail must loop, as the exit to its loop (`emit`): exact for either choice
+            // of the exit when both loop (KERNEL-verify-step-self-loop-tail: a chain ending in
+            // a tail `Wn = stop | link(h, Wn)` with exits to a loop `L` of another item leaves
+            // such a pair at the tail before `Wn`). Three groups, or two whose tails do not
+            // loop, have no reading as one chain and one exit, and return `None` (the check
+            // then verifies no list through this step, and the fallback decides).
+            let mut groups: Vec<(Option<Type>, Type, BTreeSet<Type>)> = Vec::new();
             for row in rows {
-                if let Some(h_loop) = self_loop(&row[1]) {
-                    if let Some(ref prev_loop) = loop_item
-                        && *prev_loop != h_loop
-                    {
-                        return None;
+                let item = self_loop(&row[1]);
+                let at = groups.iter().position(|(i, tail, _)| match (i, &item) {
+                    (Some(i), Some(j)) => i == j,
+                    (None, None) => *tail == row[1],
+                    _ => false,
+                });
+                match at {
+                    Some(k) => {
+                        groups[k].2.insert(row[0].clone());
                     }
-                    loop_item = Some(h_loop);
-                    loop_heads.insert(row[0].clone());
-                    if loop_tail.is_none() {
-                        loop_tail = Some(row[1].clone());
+                    None if groups.len() < 2 => {
+                        groups.push((item, row[1].clone(), BTreeSet::from([row[0].clone()])))
                     }
-                } else if chain_row.is_none() {
-                    chain_row = Some((row[0].clone(), row[1].clone()));
-                } else {
-                    return None;
+                    None => return None,
                 }
             }
-            // Never empty: `rows` has two rows or more (tested above), each row either adds
-            // its head to `loop_heads` or is taken as `chain_row`, and a second row of the
-            // second kind returns above; so at most one row is `chain_row` and at least one
-            // is in `loop_heads` (TEST-kernel-unreached-paths-8).
-            debug_assert!(
-                !loop_heads.is_empty(),
-                "two rows or more, at most one not a loop"
-            );
-            let mut loop_iter = loop_heads.into_iter();
-            let first_loop = loop_iter.next().expect("non-empty");
-            let joined_loop = loop_iter.fold(first_loop, |acc, h| self.cut(&acc, &h, Cut::Join));
-            match chain_row {
-                None => Some((
-                    has_stop,
-                    intern_head(&joined_loop),
-                    None,
-                    loop_tail.expect("non-empty"),
-                )),
-                Some((h_next, next)) => {
-                    let emit = (
-                        intern_head(&joined_loop),
-                        intern_head(&loop_item.expect("non-empty")),
-                    );
-                    Some((has_stop, intern_head(&h_next), Some(emit), next))
-                }
-            }
+            let join = |heads: BTreeSet<Type>| -> Type {
+                let mut it = heads.into_iter();
+                let first = it.next().expect("a group has a row");
+                it.fold(first, |acc, h| self.cut(&acc, &h, Cut::Join))
+            };
+            // The exit: the first group whose tail loops, when there are two groups.
+            let exit = match groups.len() {
+                2 => Some(groups.iter().position(|(i, _, _)| i.is_some())?),
+                _ => None,
+            };
+            let emit = exit.map(|k| {
+                let (item, _, heads) = groups.remove(k);
+                (
+                    intern_head(&join(heads)),
+                    intern_head(&item.expect("the exit's tail loops")),
+                )
+            });
+            // One group left: `rows` has two rows or more (tested above), so `groups` has one
+            // group or two, and with two the exit was taken out above
+            // (TEST-kernel-unreached-paths-8, KERNEL-verify-step-self-loop-tail).
+            debug_assert!(groups.len() == 1, "one chain group");
+            let (_, next, heads) = groups.pop().expect("one chain group");
+            Some((has_stop, intern_head(&join(heads)), emit, next))
         };
 
         let mut nodes: Vec<VerifyNode> = Vec::new();
