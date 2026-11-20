@@ -31,7 +31,6 @@
 //! its smallest literal and the rest, not over its tree.
 
 use std::sync::Arc;
-use std::sync::atomic::Ordering as Atomic;
 
 use crate::priority::Priorities;
 use crate::types::bucket::{self, Bucket};
@@ -54,8 +53,10 @@ pub(in crate::types) trait Atom: Ord + Clone + 'static {
 }
 
 /// The next node id. Cells, sets and expressions take their ids from one counter, so an id
-/// names one node among them; ids key the maps of a walk, never addresses.
-pub(super) static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(2);
+/// names one node among them; ids key the maps of a walk, never addresses. The start is 2
+/// because the leaves `false` and `true` have ids 0 and 1 (`Bdd::id`), and a cell takes two
+/// ids, its own and its complement's, `Bdd::List(c, true)` being `c.id + 1`.
+pub(super) static NEXT: zed_graph::IdSource = zed_graph::IdSource::starting_at(2);
 
 /// A literal: an atom and whether it is taken.
 pub(in crate::types) type Key<A> = (A, bool);
@@ -218,7 +219,7 @@ fn make_at<A: Atom>(prio: u64, key: Key<A>, left: Tree<A>, right: Tree<A>) -> Ar
         Err(place) => place,
     };
     let s = Arc::new(Set {
-        id: NEXT.fetch_add(1, Atomic::Relaxed),
+        id: NEXT.next(),
         digest: summed(
             key.0.digest(),
             key.1,

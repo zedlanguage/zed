@@ -39,7 +39,6 @@
 
 use std::collections::HashMap;
 use std::sync::Arc;
-use std::sync::atomic::{AtomicU64, Ordering};
 
 use zed_kernel::Term;
 
@@ -132,7 +131,7 @@ pub struct Db {
 }
 
 /// The number of the next [`Db`] made.
-static STAMPS: AtomicU64 = AtomicU64::new(0);
+static STAMPS: zed_graph::IdSource = zed_graph::IdSource::starting_at(0);
 
 impl Default for Db {
     fn default() -> Self {
@@ -147,7 +146,7 @@ impl Default for Db {
             texts: HashMap::new(),
             exports: HashMap::new(),
             build: Build::default(),
-            stamp: STAMPS.fetch_add(1, Ordering::Relaxed),
+            stamp: STAMPS.next(),
         }
     }
 }
@@ -166,7 +165,7 @@ impl Clone for Db {
             texts: self.texts.clone(),
             exports: self.exports.clone(),
             build: self.build.clone(),
-            stamp: STAMPS.fetch_add(1, Ordering::Relaxed),
+            stamp: STAMPS.next(),
         }
     }
 }

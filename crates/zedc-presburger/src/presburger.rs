@@ -89,7 +89,6 @@ use std::mem;
 use std::ops;
 use std::rc::Rc;
 use std::sync::Arc;
-use std::sync::atomic::{AtomicU64, Ordering as AtomicOrdering};
 
 use imbl::{OrdMap, OrdSet};
 use rustc_hash::{FxHashMap, FxHashSet};
@@ -10415,8 +10414,8 @@ pub fn parts_tested() -> u64 {
 
 /// A stamp no search has used before ([`Parts::witness`]); zero is never one.
 pub(super) fn fresh_stamp() -> u64 {
-    static NEXT: AtomicU64 = AtomicU64::new(1);
-    NEXT.fetch_add(1, AtomicOrdering::Relaxed)
+    static NEXT: zed_graph::IdSource = zed_graph::IdSource::starting_at(1);
+    NEXT.next()
 }
 
 /// A point of `p`, taking for each disjunction in turn the first disjunct that meets the

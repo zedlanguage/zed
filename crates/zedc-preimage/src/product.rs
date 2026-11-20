@@ -4566,10 +4566,10 @@ fn linked(cons: &[&Arc<Formula>]) -> (Vec<(BTreeSet<Factor>, Vec<Con>)>, BTreeMa
 // that round's merge (COMPLEXITY.md XR-l139-gemini). References: N. Sarnak and R. E. Tarjan, "Planar point
 // location using persistent search trees", Communications of the ACM 29(7), 1986,
 // pp. 669-679 (persistent search trees).
-static NEXT_SPLIT_VER: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
+static NEXT_SPLIT_VER: zed_graph::IdSource = zed_graph::IdSource::starting_at(1);
 
 fn next_split_ver() -> u64 {
-    NEXT_SPLIT_VER.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+    NEXT_SPLIT_VER.next()
 }
 
 #[derive(Clone)]

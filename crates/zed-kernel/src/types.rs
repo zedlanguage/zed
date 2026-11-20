@@ -300,8 +300,8 @@ fn free(part: Freed) {
 
 /// A number for local graph walks, never a type's digest, order or printed name.
 fn next_type_node() -> u64 {
-    static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
-    NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+    static NEXT: zed_graph::IdSource = zed_graph::IdSource::starting_at(1);
+    NEXT.next()
 }
 
 /// A type's text and local graph number. Neither takes part in comparing types.
@@ -1396,8 +1396,8 @@ mod atoms {
 
     /// Unique id for [`PayloadNode`] and [`PayloadEntry`], never reused.
     fn next_payload_node() -> u64 {
-        static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
-        NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+        static NEXT: zed_graph::IdSource = zed_graph::IdSource::starting_at(1);
+        NEXT.next()
     }
 
     /// One `(name, bare, payload)` entry shared across path-copied [`PayloadNode`] ancestors,

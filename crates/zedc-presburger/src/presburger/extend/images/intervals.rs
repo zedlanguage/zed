@@ -3,7 +3,6 @@
 //! constant in O(1) (LOAD-max-div-unsolved).
 
 use std::sync::Arc;
-use std::sync::atomic::{AtomicU64, Ordering as AtomicOrdering};
 
 use zed_kernel::priority::Priorities;
 use zedc_int::int::Int;
@@ -26,7 +25,7 @@ pub(super) struct Node {
 static PRIORITIES: Priorities = Priorities::new(10);
 
 /// The number of priorities taken so far in the process.
-static TAKEN: AtomicU64 = AtomicU64::new(0);
+static TAKEN: zed_graph::IdSource = zed_graph::IdSource::starting_at(0);
 
 /// A new interval's priority: the run's random polynomial of degree 4 at the next number of a
 /// count kept for the process. A priority fixes only the tree's shape, never the set it holds,
@@ -44,7 +43,7 @@ static TAKEN: AtomicU64 = AtomicU64::new(0);
 /// change; the bound assumes it does not (cost only: the number sets the tree's shape, and the
 /// intervals the tree holds do not depend on its shape).
 fn prio_of() -> u64 {
-    PRIORITIES.of(TAKEN.fetch_add(1, AtomicOrdering::Relaxed))
+    PRIORITIES.of(TAKEN.next())
 }
 
 fn node(lo: Int, hi: Int, off: Int, prio: u64, left: Tree, right: Tree) -> Tree {

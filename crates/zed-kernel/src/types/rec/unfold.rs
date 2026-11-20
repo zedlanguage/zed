@@ -8,15 +8,16 @@ use std::sync::{Arc, Mutex, OnceLock, PoisonError, Weak};
 
 use super::{At, Def, Env, Key, Node, Shape, same};
 use crate::types::{self, Piece, Rope, TextClass as Class, TextPlace as Place, Type};
+use zed_graph::IdSource;
 
 /// The units begun, over all threads.
-static UNITS: AtomicU64 = AtomicU64::new(0);
+static UNITS: IdSource = IdSource::starting_at(0);
 
 /// The threads that began a unit.
-static THREADS: AtomicU64 = AtomicU64::new(0);
+static THREADS: IdSource = IdSource::starting_at(0);
 
 /// The instances made, over all threads: each instance's number ([`Key::group`]).
-pub(super) static ENVS: AtomicU64 = AtomicU64::new(0);
+pub(super) static ENVS: IdSource = IdSource::starting_at(0);
 
 /// A thread's unit of work under way, from the end of the last (`Type::forget_emptiness`, which
 /// a unit's checker calls first, or the thread's start) to the next: its number, and the
@@ -40,8 +41,8 @@ struct Unit {
 
 thread_local! {
     static UNIT: RefCell<Unit> = RefCell::new(Unit {
-        number: UNITS.fetch_add(1, Ordering::Relaxed),
-        thread: THREADS.fetch_add(1, Ordering::Relaxed),
+        number: UNITS.next(),
+        thread: THREADS.next(),
         made: Vec::new(),
     });
 }
@@ -70,7 +71,7 @@ pub(super) fn thread() -> u64 {
 pub(in crate::types) fn end_unit() {
     let made = UNIT.try_with(|u| {
         let mut u = u.borrow_mut();
-        u.number = UNITS.fetch_add(1, Ordering::Relaxed);
+        u.number = UNITS.next();
         std::mem::take(&mut u.made)
     });
     if let Ok(made) = made {
@@ -88,7 +89,7 @@ fn forget(made: Vec<Weak<Env>>) {
 impl Env {
     pub(super) fn ground(args: Vec<Type>) -> Env {
         Env {
-            id: ENVS.fetch_add(1, Ordering::Relaxed),
+            id: ENVS.next(),
             thread: u64::MAX,
             registered: AtomicU64::new(u64::MAX),
             group: None,

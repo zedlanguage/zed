@@ -1118,6 +1118,7 @@ dependencies = [
  "rustix",
  "target-lexicon",
  "zed-alloc-count",
+ "zed-graph",
  "zed-kernel",
  "zed-native",
  "zed-rt",

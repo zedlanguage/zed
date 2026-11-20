@@ -37,7 +37,6 @@ use std::hash::{Hash, Hasher};
 use std::mem;
 use std::ops::Deref;
 use std::slice;
-use std::sync::atomic::{AtomicU64, Ordering as AtomicOrdering};
 use std::sync::{Arc, LazyLock, OnceLock};
 
 use crate::bits::{BitLen, ceil_midpoint, floor_midpoint};
@@ -1518,7 +1517,7 @@ pub type Id = u64;
 /// The ids a thread draws from, a block at a time, so that threads building values do not
 /// share one counter.
 const BLOCK: Id = 1 << 16;
-static BLOCKS: AtomicU64 = AtomicU64::new(1);
+static BLOCKS: zed_graph::IdSource = zed_graph::IdSource::starting_at(1);
 thread_local! {
     /// The next id of this thread's block, and the end of the block.
     static NEXT: Cell<(Id, Id)> = const { Cell::new((0, 0)) };
@@ -1529,7 +1528,7 @@ pub fn fresh_id() -> Id {
     crate::local::with(&NEXT, |next| {
         let (mut id, mut end) = next.get();
         if id == end {
-            id = BLOCKS.fetch_add(1, AtomicOrdering::Relaxed) * BLOCK;
+            id = BLOCKS.next() * BLOCK;
             end = id + BLOCK;
         }
         next.set((id + 1, end));

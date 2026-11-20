@@ -14,7 +14,6 @@ use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::fmt;
 use std::rc::Rc;
 use std::sync::Arc;
-use std::sync::atomic::{AtomicU64, Ordering};
 
 use zed_kernel::digest::Digest;
 use zed_kernel::frames::{Deep, Stack};
@@ -744,8 +743,8 @@ pub struct NodeId(u64);
 impl NodeId {
     /// The next number.
     fn next() -> NodeId {
-        static NEXT: AtomicU64 = AtomicU64::new(0);
-        NodeId(NEXT.fetch_add(1, Ordering::Relaxed))
+        static NEXT: zed_graph::IdSource = zed_graph::IdSource::starting_at(0);
+        NodeId(NEXT.next())
     }
 }
 

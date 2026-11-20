@@ -1,7 +1,6 @@
 //! Builders for kernel terms and values, shared by the step tests that construct the terms a
 //! program elaborates to (M0.9, M0.10).
 
-use std::sync::atomic::{AtomicUsize, Ordering};
 
 use zed_kernel::term::build::{app, if_, lam, let_, lit, prim, var};
 use zed_kernel::{Evidence, Family, FixKind, Pattern, Prim, Shared, Term, Value, Witness};
@@ -116,12 +115,12 @@ pub fn lines_of(text: &[&[&str]]) -> Value {
 // Derived forms. Each builder binds fresh names, so a term the caller passes in is never
 // captured by a binder the builder adds.
 
-static FRESH: AtomicUsize = AtomicUsize::new(0);
+static FRESH: zed_graph::IdSource = zed_graph::IdSource::starting_at(0);
 
 /// A variable name no other builder or caller uses: `stem` with a numeric suffix after `'`,
 /// which a Zed identifier cannot contain.
 pub fn fresh(stem: &str) -> String {
-    format!("{stem}'{}", FRESH.fetch_add(1, Ordering::Relaxed))
+    format!("{stem}'{}", FRESH.next())
 }
 
 /// `body(t)` with `t` evaluated once: `t` is bound to a fresh name that `body` reads, unless it

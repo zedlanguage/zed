@@ -67,7 +67,6 @@ use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::fmt;
 use std::hash::Hash;
 use std::rc::Rc;
-use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, OnceLock};
 
 use zed_kernel::types::Type;
@@ -11341,7 +11340,7 @@ struct LetNode {
     forced: OnceLock<Sep>,
 }
 
-static LET_IDS: AtomicU64 = AtomicU64::new(0);
+static LET_IDS: zed_graph::IdSource = zed_graph::IdSource::starting_at(0);
 
 impl LetPa {
     /// The summary of `parts` and `rest`: its inputs are those of the part that reads the most,
@@ -11357,7 +11356,7 @@ impl LetPa {
         }
         vars.extend(rest.terms.keys().cloned());
         LetPa(Arc::new(LetNode {
-            id: LET_IDS.fetch_add(1, Ordering::Relaxed),
+            id: LET_IDS.next(),
             vars,
             parts,
             rest,

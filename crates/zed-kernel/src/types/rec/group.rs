@@ -4,14 +4,14 @@
 use std::collections::hash_map::Entry;
 use std::collections::{BTreeSet, HashMap};
 use std::hash::BuildHasherDefault;
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::AtomicU64;
 use std::sync::{Arc, LazyLock, Mutex, OnceLock, PoisonError, Weak};
 
 use super::unfold::{ENVS, Show, eval, thread};
 use super::{Checked, Def, Env, Expr, Freed, Group, Node, Rejection, Shape, free, same};
 use crate::digest::Digest;
 use crate::types::{Type, bytes, defs, mix};
-use zed_graph::on_cycle;
+use zed_graph::{IdSource, on_cycle};
 
 /// The accepted groups, one per distinct definition list, by the digest of the definitions
 /// ([`digest`]). `Def` equality picks the entry, so a digest only narrows the search: equal
@@ -156,7 +156,7 @@ impl Group {
     /// The group of `defs`, if it is contractive, regular and monotone in emptiness.
     /// Equal definitions give one group: the one accepted first.
     pub fn new(defs: Vec<Def>) -> Result<Group, Rejection> {
-        static NEXT: AtomicU64 = AtomicU64::new(0);
+        static NEXT: IdSource = IdSource::starting_at(0);
         let (plain, order, cyclic) = plain(&defs);
         // The numbering, and its hold on the first node of each class, ends with the trees.
         let mut numbering = Numbering::default();
@@ -168,7 +168,7 @@ impl Group {
         let name_hashes: Vec<u64> = defs.iter().map(|d| bytes(d.name.as_bytes())).collect();
         let digest = digest(&defs, &bodies, &name_hashes);
         let g = Group(Arc::new(Checked {
-            number: NEXT.fetch_add(1, Ordering::Relaxed),
+            number: NEXT.next(),
             digest,
             defs,
             name_hashes,
@@ -541,7 +541,7 @@ impl Group {
         }
         let args = key.1.clone();
         let env = Arc::new(Env {
-            id: ENVS.fetch_add(1, Ordering::Relaxed),
+            id: ENVS.next(),
             thread: made_by,
             registered: AtomicU64::new(u64::MAX),
             group: Some(self.clone()),

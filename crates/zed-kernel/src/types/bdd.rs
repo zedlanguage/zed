@@ -951,7 +951,7 @@ impl<A: Literal> Part<A> {
         xor: Option<xor::Tag<A>>,
     ) -> Part<A> {
         Part::Expr(Arc::new(Expr {
-            id: NEXT.fetch_add(1, Atomic::Relaxed),
+            id: NEXT.next(),
             digest,
             name_digest,
             form,
@@ -3182,7 +3182,6 @@ mod list {
     // views once read; a larger constant factor per literal than a plain node.
 
     use std::collections::HashMap;
-    use std::sync::atomic::Ordering as Atomic;
     use std::sync::{Arc, OnceLock, Weak};
 
     use super::set::{self, Key, NEXT, Set, Tree};
@@ -3390,7 +3389,8 @@ mod list {
                 return c;
             }
             let c = Arc::new(Cell {
-                id: NEXT.fetch_add(2, Atomic::Relaxed),
+                // Two ids: the cell's, and `id + 1` for its complement (`Bdd::id`).
+                id: NEXT.take(2),
                 digest: folded(digest(&left), block.digest, digest(&right), pow(&right)),
                 name_digest: folded(
                     name_digest(&left),

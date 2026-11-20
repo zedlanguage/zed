@@ -19,7 +19,6 @@ use std::ffi::OsString;
 use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::process::Command;
-use std::sync::atomic::{AtomicU64, Ordering};
 
 use zedc::suppress::Suppress;
 use zedc::work::{self, Stage};
@@ -893,7 +892,7 @@ struct Scratch {
 }
 
 /// The number of the next attempt at a working directory in this process.
-static ATTEMPT: AtomicU64 = AtomicU64::new(0);
+static ATTEMPT: zed_graph::IdSource = zed_graph::IdSource::starting_at(0);
 
 impl Scratch {
     /// A new working directory for a build of `out`, created and locked. A name taken already
@@ -918,7 +917,7 @@ impl Scratch {
             path.push(format!(
                 ".zed-build.{}.{}",
                 std::process::id(),
-                ATTEMPT.fetch_add(1, Ordering::Relaxed)
+                ATTEMPT.next()
             ));
             let path = PathBuf::from(path);
             let failed = |e: std::io::Error| unwritable(&path, &e, out);

@@ -21,7 +21,13 @@ impl IdSource {
 
     /// The next number, never drawn before.
     pub fn next(&self) -> u64 {
-        self.0.fetch_add(1, Ordering::Relaxed)
+        self.take(1)
+    }
+
+    /// The first of `count` consecutive numbers, none drawn before: for a node that also
+    /// names a second thing by its id plus one (a BDD cell and its complement).
+    pub fn take(&self, count: u64) -> u64 {
+        self.0.fetch_add(count, Ordering::Relaxed)
     }
 }
 
@@ -41,5 +47,15 @@ mod tests {
         });
         all.sort_unstable();
         assert_eq!(all, (2..4002).collect::<Vec<u64>>());
+    }
+
+    /// `take(2)` keeps both numbers from later draws: the next is past them.
+    #[test]
+    fn a_block_taken_is_not_drawn_again() {
+        let ids = IdSource::starting_at(2);
+        assert_eq!(ids.take(2), 2);
+        assert_eq!(ids.next(), 4);
+        assert_eq!(ids.take(2), 5);
+        assert_eq!(ids.next(), 7);
     }
 }
