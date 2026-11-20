@@ -16983,8 +16983,35 @@ impl<'t, 'a> Ck<'t, 'a> {
             }
         };
         let t = &checked;
-        let ok = push_takes(t, &KType::empty());
-        if !ok && !t.dynamic && t.vars.is_empty() && push_takes(t, &io) {
+        // A value whose type holds the unknown `_`, at its top or as an entry of a family, is
+        // refused as a form this version does not check (row CHECK-dynamic-push-unchecked):
+        // `_` is the type of every value, so the value is not known to be text, and the
+        // checker catches each failure it can before the run (DESIGN.md sec:type_resolution,
+        // Soundness). Before, `_` alone passed, its set being empty, and `5 | _` was neither
+        // refused nor waited on: both were left to the run-time check of the port. A tuple or
+        // record holding `_` fails `push_plain` and gets the `Lines` message below. Proof that
+        // the tests below never see `_` where the old ones excluded it: this branch returns
+        // whenever `t.dynamic`, the only place the old `!t.dynamic` tests read it, and on every
+        // entry `push_takes_in` reads. No program known reaches this branch, and that it is
+        // unreachable is NOT proved: the probes of the row (a written `_`, a payload pattern,
+        // recursion) are refused before the check, and a run of l01_19, l01_26, l01_27, l01_29,
+        // cases and catalog with a log here logged no push (chk3, 2026-11-20). The unknown can
+        // still come from the checker's fallbacks (`close` binding a callee's variable that no
+        // argument binds, and a class no signature holds at a level's end), so the refusal
+        // stays. Test
+        // `tests::a_push_of_the_unknown_is_refused`.
+        // Complexity tradeoff: the entries are found once, O(size of the DAG of families) with
+        // a visited set ([`push_entries`]), and shared by the test here and both calls of
+        // [`push_takes_in`]; before, each of the up to two calls found them again, so the push
+        // costs less than it did.
+        let entries = push_entries(t);
+        if t.dynamic || entries.iter().any(|e| e.dynamic) {
+            let what = "a push of a value whose type the checker cannot follow here";
+            self.error(span, zedc_base::rejection::not_yet(what));
+            return;
+        }
+        let ok = push_takes_in(t, &entries, &KType::empty());
+        if !ok && t.vars.is_empty() && push_takes_in(t, &entries, &io) {
             if !bubbles {
                 let what = "a push of a value that may be the atom `#ioError`, other than as a \
                             statement of the body of `main`,";
@@ -16992,7 +17019,7 @@ impl<'t, 'a> Ck<'t, 'a> {
             }
             return;
         }
-        if !ok && !t.dynamic && t.vars.is_empty() {
+        if !ok && t.vars.is_empty() {
             // Each repair is written with the value's code, where the checker has it on one line:
             // an `else` with no pattern writes an empty line for every atom, whichever atoms
             // the value holds, and a string interpolation writes any data as text.
@@ -29671,6 +29698,49 @@ mod tests {
         assert!(last_discharged(Discharge::Refused) > 0);
         assert_eq!(last_discharged(Discharge::Swept), 0);
     }
+
+    /// A push of a value whose type holds the unknown `_`, at its top or as an entry of a
+    /// family, is refused as a form this version does not check (CHECK-dynamic-push-unchecked):
+    /// `_` is the type of every value, so the value is not known to be text. Before, `_` alone
+    /// passed, its set being empty, and `5 | _` and a family of `_` were neither refused nor
+    /// waited on. No program known reaches such a push (the row gives the probes), so the
+    /// test calls [`Ck::pushed`] with the type. Controls: a `String`, and a family of
+    /// strings, pass; an `int` gets the `Lines` message.
+    #[test]
+    fn a_push_of_the_unknown_is_refused() {
+        let res = zedc_resolve::resolve::resolve(&[]).expect("the empty unit resolves");
+        let t = Tables::new(&[], &res);
+        let at = Span { start: 1, end: 2 };
+        let five = Ty::lit(&Value::int(5.into()));
+        let string = Ty::carrier(Carrier::Str);
+        let errors = |ty: &Ty| {
+            let mut ck = Ck::new(&t, Ck::fixes_checked);
+            ck.pushed(ty, "out", at, true);
+            (ck.errors.iter())
+                .map(|e| e.m.text.clone())
+                .collect::<Vec<_>>()
+        };
+        let unfollowed = "a push of a value whose type the checker cannot follow here";
+        for ty in [
+            Ty::dynamic(),
+            five.union(&Ty::dynamic()),
+            int_family(Ty::dynamic()),
+            int_family(string.union(&Ty::dynamic())),
+        ] {
+            let errors = errors(&ty);
+            assert_eq!(errors.len(), 1, "{ty}: {errors:?}");
+            assert!(errors[0].contains(unfollowed), "{ty}: {errors:?}");
+        }
+        for ty in [string.clone(), int_family(string.clone())] {
+            assert_eq!(errors(&ty), Vec::<String>::new(), "{ty}");
+        }
+        let errors = errors(&five);
+        assert_eq!(errors.len(), 1, "{errors:?}");
+        assert!(
+            errors[0].contains("A `Lines` port takes a `String`"),
+            "{errors:?}"
+        );
+    }
 }
 
 /// The steps of a path written after a name, as a program reads them: `[0]` each
@@ -29745,13 +29815,18 @@ fn push_entries(t: &Ty) -> Vec<&Ty> {
 /// key the family lacks, which is not pushed), once each part's set has lost `lose`
 /// ([`Ck::pushed`]). Each function at each depth must be a family (`data`).
 fn push_takes(t: &Ty, lose: &KType) -> bool {
+    push_takes_in(t, &push_entries(t), lose)
+}
+
+/// [`push_takes`] with `entries`, the [`push_entries`] of `t`, found by the caller.
+fn push_takes_in(t: &Ty, entries: &[&Ty], lose: &KType) -> bool {
     let not_found = KType::atom("notFound");
     let families = |u: &Ty| u.fns.iter().all(|s| s.data);
     push_strings(&(&t.set - lose))
         && push_plain(t)
         && families(t)
-        && push_entries(t)
-            .into_iter()
+        && entries
+            .iter()
             .all(|e| push_plain(e) && families(e) && push_strings(&(&(&e.set - &not_found) - lose)))
 }
 
