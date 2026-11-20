@@ -4554,7 +4554,11 @@ fn solve_coprime_connected(
             // Short-period hole cutting in `y`-space: for any unfixed base `i` with
             // `bases_info[i].z_max_q > hy - ly` whose forbidden set consists of single residues `z_f`,
             // each forbidden `z_f` maps to a single residue `r_y` modulo `z_max_q`, cutting at most 1
-            // integer out of `[ly, hy]`!
+            // integer out of `[ly, hy]`! Why: `z = r0_z + m0_z * y`, and when `m0_z` has an
+            // inverse modulo `z_q` (the only case cut below), `z == z_f (mod z_q)` holds exactly
+            // when `y == (z_f - r0_z) * inv_m0 (mod z_q)`, one class; `[ly, hy]` holds
+            // `width_y + 1 <= z_q` integers, so it meets that class at most once. The cut below
+            // does not rely on this: it cuts every interval `concrete_intervals_in_span` returns.
             let width_y = hy - ly;
             let mut y_hole_pieces: Vec<Span> = Vec::new();
             let mut cut_any = false;
@@ -5330,7 +5334,11 @@ fn separate_pair_witness(
     }
     // The residue chosen on each divisor is the first permitted one at or above `lo`, or the
     // last at or below `hi`, never the first in the coordinate's own order: that order follows
-    // the root the names choose (I4.15). With no bound every choice gives a point.
+    // the root the names choose (I4.15). With no bound every choice gives a point: when CRT
+    // combines the choices to `r mod m`, `pick_in_span` with both ends `None` returns a
+    // member of that class, and every point returned is checked by `holds_modular_point`, so
+    // the choice can only lose a witness (which this function does not claim to find), never
+    // give a wrong one.
     let anchored = |pick: &dyn Fn(&Int, &ResidueSet) -> Option<Int>| -> Option<Int> {
         let mut choices = Vec::with_capacity(2 * pairs.len());
         for (a, sa, b, sb) in &pairs {

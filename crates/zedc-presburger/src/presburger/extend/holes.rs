@@ -42,7 +42,11 @@ static PRIORITIES: Priorities = Priorities::new(8);
 /// of holes (Seidel and Aragon, "Randomized search trees", Algorithmica 16, 1996,
 /// doi:10.1007/BF01940876, Theorem 3.3 and section 6; the full comment and the proof are in
 /// module [`zed_kernel::priority`]), where the fixed hash this replaces had no bound for chosen
-/// intervals (COMPLEXITY.md K123). The shape is never shown.
+/// intervals (COMPLEXITY.md K123). The shape is never shown: the tree is a private field of
+/// [`Holes`], and each of its reads gives one answer for every tree over the same intervals:
+/// `len` is a size, `holds` a search by key, `intervals` an in-order walk (which `merged` and
+/// `clauses` read), and `cut` splits and joins by key, so the intervals it leaves depend only
+/// on the intervals it was given. So the priorities choose the cost alone.
 fn prio_of(lo: &Int, hi: &Int) -> u64 {
     PRIORITIES.hash(&(lo, hi))
 }

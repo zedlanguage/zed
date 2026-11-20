@@ -4081,7 +4081,10 @@ fn hull_of(
     bounds: Option<&(Option<Int>, Option<Int>)>,
 ) -> (Vec<usize>, HashSet<usize>) {
     let mut hull = upper_envelope(lines, |(m, b, _)| (m, b));
-    // Every line not on the envelope, by row: each index is on it once at most, and in order.
+    // Every line not on the envelope, by row: each index is on it once at most, and in order,
+    // since `upper_envelope` pushes each `j` of its upward loop at most once and pops only from
+    // the end, so `hull` is an increasing subsequence of `0..lines.len()` and the one forward
+    // walk with `next_if_eq` meets each of its entries at its own `j`.
     let mut drop: HashSet<usize> = HashSet::new();
     let mut on = hull.iter().peekable();
     for (j, line) in lines.iter().enumerate() {

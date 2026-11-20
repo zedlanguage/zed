@@ -15116,7 +15116,10 @@ fn solve_omega<C: std::borrow::Borrow<Con>>(
     let index: BTreeMap<&Atom, usize> = atoms.iter().enumerate().map(|(i, a)| (a, i)).collect();
     // In the order of `canonical`, so that neither the order of the constraints nor the names of
     // the variables decide the order of the work, except among variables that refinement cannot
-    // tell apart, where no choice is made by that order.
+    // tell apart, where no choice is made by that order: a representative of tied members of
+    // one color and one offset only renames the class (proof at [`Ties::representatives`]),
+    // and a choice of elimination among variables refinement cannot tell apart is refused
+    // with `Refusal::Tie` ([`Tied`]) rather than made by place.
     let sorted: Vec<&Con> = rows.into_iter().map(|r| cons[r]).collect();
     // Each equality `x - y == d` ties `x` to `y`: every row is written over one variable of
     // each tied class, the others being offsets from it, so no row is rewritten for them.
@@ -18314,6 +18317,19 @@ impl Equalities {
     /// changes only when one of its variables comes to be held by another equality or ceases
     /// to be, and that variable is then held by at most two equalities, so a change to an
     /// equality renews at most one other slot for each of its variables.
+    ///
+    /// Proof (checked for DOC-proofs-in-comments-audit-rest-2). `pivots` of slot `t` reads
+    /// `t`'s own row (coefficients), `sys.vars[i].key`, and `others(i) = of[i].len() - 1` only
+    /// as `others(i) > 0`. `put` and `clear` of slot `s` change no other slot's row and no
+    /// key, and change `of[i].len()` by one for each variable `i` of `s` alone. So the choice
+    /// of a slot `t != s` can change only when, for some `i` of both, `others(i)` seen from `t`
+    /// crosses zero: `put` taking `of[i].len()` from 1 to 2 (the one other slot, which `put`
+    /// renews), or `clear` taking it from 2 to 1 (the one slot left, which `clear` renews).
+    /// From `c >= 2` to `c + 1`, or back, `others(i)` seen from every other slot stays at
+    /// least 1, so no other choice changes. Counts from 0 to 1 or 1 to 0 concern `s` alone.
+    /// The degree in each key reads `of[p].len()` exactly, not only above zero; `rekey`,
+    /// called before this, renews it in every slot whose pivots hold a changed variable, and
+    /// this function sets it again when the pivots change.
     fn repivot(&mut self, t: usize, sys: &System) {
         let row = &self.rows[t].as_ref().expect("a slot in use").row;
         let new = pivots(row, sys, |i| self.of[i].len() - 1);
@@ -18935,7 +18951,12 @@ impl Omega {
             }
             if self.sys.live <= 3 {
                 // `live3` decides three variables completely, so the order of tied ones
-                // cannot change its answer.
+                // cannot change its answer. Why: whether the rows have an integer point does not
+                // depend on the order of the variables, and `live3::decide` returns a point
+                // exactly when there is one (the argument is at the head of module `live3`); the
+                // order can choose only which point, and a point is a model, not a verdict. The
+                // one other way `triple` gives `None` is an exhausted meter, which `metered()`
+                // turns into Questions (comment in `triple`), so it never stands as Empty.
                 match self.three() {
                     Some(leaf) => return leaf,
                     None => continue,
@@ -21909,7 +21930,12 @@ pub fn row_box(f: &Formula, syms: &[Atom]) -> Vec<IntervalSet> {
         }
     }
     // A disjunction bounds the atoms that every disjunct with a point bounds by its rows of
-    // one term, by the hull of those bounds.
+    // one term, by the hull of those bounds. Why the hull holds every point of the disjunction:
+    // `one_term_bounds` is `None` only for a disjunct with no point (an empty `Or`, rows with no
+    // integer, or crossed ends), which adds none, so skipping it is sound; a point of any other
+    // disjunct lies within that disjunct's own bounds, so within their `min` and `max`; an atom
+    // that some disjunct leaves unbounded is dropped (`own.get(x)?`), and an end missing on
+    // either side stays missing (`zip`). All disjuncts with no point: the disjunction is empty.
     for ds in ors {
         let mut hull: Option<OneTerm<'_>> = None;
         for d in ds {
@@ -28208,9 +28234,23 @@ fn find_tied_point(p: &Parts, color: &HashMap<Atom, usize>, want: bool) -> Optio
 
     let mut plans: Vec<RowPlan> = Vec::with_capacity(num_rows);
     for (r_idx, mut items) in row_disjs.into_iter().enumerate() {
-        // Canonical order: depends ONLY on `(color, weight, low_val, high_val)` — never on `Atom`!
-        // Items with identical `(color, weight, low_val, high_val)` are symmetric and produce the
-        // exact same scalar sequence `w_of` in any atom permutation.
+        // Canonical order: the key is `(color, weight, low_val, high_val)`, never an `Atom`.
+        // Proof that whether a plan is found does not depend on names (checked for
+        // DOC-proofs-in-comments-audit-rest-2):
+        // 1. Under a renaming the row's items are permuted and their keys kept (`color` is a
+        //    renaming-invariant coloring; weights and values come from coefficients and bounds).
+        //    So the sorted key sequence is the same, and with it the weight sequence `w_of`, since
+        //    items of equal key have equal `weight`. Only the order of items within a tie can change.
+        // 2. `solve_ord` is the identity, and `sweep_row` reads of each item only `weight` (into
+        //    `w_of`) and `low_arm`/`high_arm`, which choose a slot of `hit_table[loc]`, not
+        //    whether it is set. So `plan.any_hit` being `Some` depends only on `w_of` and the row
+        //    target (`-base_sum`, a sum of coefficients times bounds), not on names.
+        // 3. Names choose only which atom takes which value in `fill_row_model`; the model is then
+        //    checked by `p.holds`, so a wrong one cannot be returned. Not proved: that this check
+        //    never fails, which would make the `None` it can give name-independent too; it needs
+        //    `try_reduce_subset_wide_eqs` to give a system equivalent to `all_cons`.
+        // The old claim that items of equal key are symmetric (swapping them maps models to
+        // models) is not needed here; a color class need not be an automorphism class.
         items.sort_by(|(ca, da), (cb, db)| {
             ca.cmp(cb)
                 .then_with(|| da.weight.cmp(&db.weight))
