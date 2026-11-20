@@ -11421,6 +11421,15 @@ impl<'m, 's> Comparing<'m, 's> {
     /// where [`Ty::meet`] and [`Ty::diff`] lose no value of the meet and the difference, their
     /// own promise; the choices above do not rest on it.
     ///
+    /// Tests (tests/steps/l01_22_type_representation/kinds.rs):
+    /// `a_payload_shape_is_within_a_union_exactly_when_its_rest_is_empty` draws 1000 payloads
+    /// of two or three small items against unions of one to six, and checks `subtype` against
+    /// the emptiness of the difference; `a_payload_whose_tuple_item_needs_a_split_of_many_components_is_refused`
+    /// checks the pigeonhole rows (2 in 1, 3 in 2), with and without a field arm. What they
+    /// cannot catch: the random test compares two verdicts of the checker, not a count of
+    /// values, so a fault both share passes; and its items are small, so a part that `is_empty`
+    /// cannot prove empty is not reached there; that case rests on the proof above.
+    ///
     /// Cost: before (FAIL-types-shape-rest-many-cuts) each shape of `cut` split every shape
     /// left that it met into up to w shapes, so k shapes of `cut` left up to w^k shapes, and
     /// k nested shapes `#a(0..j, …, 0..j)` with w items left C(k + w - 1, w - 1) shapes where
@@ -12866,12 +12875,14 @@ fn met_at<'a, P: Addressed>(
 /// So the forms made with only those pairs compared hold the form compared exactly when the
 /// forms made with every pair compared do: fewer marks are held only at places no value of the
 /// side compared reaches with them. Proof, at every kind of spot (rows and payloads, nested,
-/// shared, `_` on either side, marks a set of every name holds nested): COMPLEXITY.md,
-/// PROOF-star-pairs, direction 2, which rests on the place lemma ([`Forms::comp`]), the depth
-/// of a node ([`Forms::fns`]) and `Near` listing every node not [`apart`]; it uses only that
-/// every pair of nodes that may share a value is an edge, not the shape of the edges. The early
-/// return on `most` never fires where the edges form stars (the same section, "The pair
-/// count"). Tests: `star_pairs_decide_as_every_pair_in_each_kind_of_spot`,
+/// shared, `_` on either side, marks a set of every name holds nested): PROOF-star-pairs,
+/// direction 2, every step in the body below, which rests on the place lemma ([`Forms::comp`]),
+/// the depth of a node ([`Forms::fns`]) and `Near` listing every node not [`apart`]; it uses
+/// only that every pair of nodes that may share a value is an edge, not the shape of the edges.
+/// The early return on `budget` is a refusal, never a wrong verdict, after which the spot is
+/// paired as before. Where the pairs of functions form stars (in each pair one function is in no
+/// other pair) it fires only when a function stands in two nodes near one node of the other
+/// side; where only the nodes form stars it can fire (the body, "The pair count"). Tests: `star_pairs_decide_as_every_pair_in_each_kind_of_spot`,
 /// `random_unions_of_tuples_with_functions_agree_with_pairing_every_function`,
 /// `functions_at_one_place_whose_tuples_meet_two_each_are_decided`.
 ///
@@ -12908,6 +12919,143 @@ fn star_pairs<P: Placed>(
     left: &[(&P, &[Arc<Sig>])],
     right: &[(&P, &[Arc<Sig>])],
 ) -> Option<Vec<(Arc<Sig>, Arc<Sig>)>> {
+    // Proof (PROOF-star-pairs, every step; COMPLEXITY.md "Proofs" keeps the claim and points
+    // here). [`Comparing::form_verdict`] turns `t <: other` into a kernel question `A ⊆ B` on
+    // forms. Each function `f_i` of `t` gets the mark, the bare atom `"\0fn i"`; on the left a
+    // component holding `f_i` holds that mark. On the right a function `g` holds the marks of
+    // the left functions `fits[g]` lists, one table for the whole comparison. A left `_` is
+    // [`Forms::unknown`], every value but the marks of field names. Other marks: one mark of
+    // field names per field set (the last item of a payload with fields), and [`MERGED`],
+    // which a function holds only in the second verdict (not covered here: [`Merged`]).
+    // [`Forms::level`], at every depth of each kernel type of either form, takes every mark
+    // out of a set that holds every name it does not list ([`Forms::cut`]) and puts every
+    // function's mark, [`MERGED`] among them, into each node that holds every function. Write
+    // `B(R)` for the right form when `fits` holds the pairs `R`; `A` does not depend on `R`.
+    //
+    // Claim. Let `R_spot` be every pair `(f, g)` at one spot ([`PlaceFns::spots`]) with
+    // `f == g` or `f` fitting `g`, and `R_code` the pairs compared: at a starred spot the
+    // pairs this function returns that fit; where one side has one function, every pair that
+    // fits; elsewhere the pairs `form_verdict` compares. When nothing is skipped (`Merged`
+    // empty), `A ⊆ B(R_code)` exactly when `A ⊆ B(R_spot)`. When something is skipped, a
+    // true verdict is still exact (direction 1) and a false one goes to `Merged`.
+    //
+    // Direction 1 (never true when false). `R_code ⊆ R_spot`: a pair returned here joins a
+    // function of a left node to one of a right node at the spot, and is held only if it
+    // fits. Each node of `B` is a union, and the shortcut of [`Forms::form`] that makes a row
+    // with a component of no value empty only grows as marks are added, so `B(R)` grows with
+    // `R`, and `A ⊆ B(R_code) ⊆ B(R_spot)`.
+    //
+    // Direction 2 (never false when true). Assume `A ⊆ B(R_spot)` and take `v ∈ A`. A
+    // position in `v` is a path of component indices. Fix one way `v` is in `A`: a chain of
+    // left nodes (rows, payload shapes) from the top and, below the last, kernel data. An atom
+    // `"\0fn i"` in `v` is real when it is the value of a node's component holding `f_i`, and
+    // fake when it lies inside kernel data or under a left `_` (places holding every function).
+    //
+    // Lemma L (names alike). A kernel atom set lists some names, each with its own part, and
+    // gives every unlisted name one part (`Atoms` in zed-kernel types.rs: "a name not listed
+    // has every payload when `cofinite`, else none"). By induction over parts, Boolean
+    // operations and recursion, renaming one atom at one position keeps membership in any
+    // kernel type that lists neither name, or lists both with one part. No written name starts
+    // with NUL, so the forms list [`MERGED`] and the function marks only (a) through `level`,
+    // which cuts every mark and then puts all function marks or none, as bare atoms, (b)
+    // through [`Forms::unknown`], which lists neither, or (c) as the marks a component holds
+    // itself. So every node that is not a function's marks treats two such names alike.
+    //
+    // Step 1, fakes. Let `v°` be `v` with each fake renamed to [`MERGED`]. By Lemma L, `v° ∈ A`
+    // (each fake lies in left kernel data or a left `_`), so `v° ∈ B(R_spot)`. Fix a chain of
+    // right nodes for it, ending in kernel data, or in `top` or the unknown for a right `_`.
+    // None of these depends on `R`.
+    //
+    // Step 2, real marks. Let `"\0fn i"` be real at position `p`, component `j` of left node
+    // `L` at depth `k`. Either the right chain stops above `p`, or at `p` with a right `_`,
+    // and the holder does not depend on `R`; or it reaches `p`'s parent at a node `ρ` whose
+    // component `j` holds the mark. If that is kernel data it holds every function's mark or
+    // none (Lemma L, (a)), independently of `R`. Else the holder is a function `g` with
+    // `(f_i, g) ∈ R_spot`, and:
+    // - Place lemma ([`Forms::comp`]): `L` and `ρ` are at one `Place`. Both forms hold the
+    //   value at `p`'s parent. Rows of different lengths and atoms of different names share
+    //   no value. A payload is laid out as items, field values, then the mark of the field
+    //   names when it has fields, so two payloads with fields share a value only with equal
+    //   field names and item counts, and one with fields and `n` items shares none with one
+    //   without fields and `n + 1` items: the last item of the latter never holds a mark of
+    //   field names (on the left `level` cuts it at every depth and a `_` is the unknown; on
+    //   the right `cut` takes it out, and a `_` there is the unknown, not `top`).
+    // - Depth lemma ([`Forms::fns`]): both chains have `k` node steps to `p`'s parent.
+    //   `Forms::fns` records a depth only when every chain reaching the node has one length,
+    //   and otherwise files the node at `Any(place)`; the spots are read from the whole right
+    //   side, and a node at one depth in a part of it is at that depth in the whole. So `L`
+    //   and `ρ` are listed at one spot `S`, and `S` is in `left.spots(whole)`.
+    // - Near completeness ([`Near`]): `Near` lists `ρ` for `L`. [`apart`] holds only where two
+    //   components have different classes or are different points; a class is given only to
+    //   a component with no function, `_` or variable, of one carrier, one finitely listed
+    //   atom name, or rows of one length, its form holds only values of that class, and the
+    //   classes are disjoint; a point's form is that one value, and the kernel's equality on
+    //   literals is `Value`'s. So two forms that share a value are never apart. `Near` looks
+    //   up the projections of the keys on the places both groups key, equal exactly when not
+    //   apart there; places either side leaves open are dropped, which only lists more.
+    // - So `(f_i, g) ∈ R_code(S)`: at a starred spot `(L, ρ)` is an edge, so it is returned
+    //   here and held when it fits; where one side has one function every pair is compared;
+    //   elsewhere `f_i` is compared unless skipped, and `f == g` is held by `fs.contains(g)`.
+    //
+    // Step 3. Each holder of a real mark is in `R_code` or does not depend on `R`; each holder
+    // of a fake (now [`MERGED`]) is kernel data, `top` or the unknown, since no function holds
+    // [`MERGED`] when nothing is skipped. So `v° ∈ B(R_code)`. Renaming each fake back keeps it
+    // there by Lemma L, as each lies in a node that is not a function's marks: `v ∈ B(R_code)`.
+    // The same steps with every pair of the comparison in place of `R_spot` give that
+    // reference the same verdict too, since a mark's holder is always at its function's spot.
+    //
+    // The pair count. [`near_fn_pairs`] returns None once the count of pairs read, each edge
+    // `(l, r)` of [`Near`] charged `|fs_l|·|fs_r|`, exceeds `budget` (the functions of both
+    // sides at the spot, counted once per node they stand in); else it gives the pairs of every
+    // edge, whatever their shape. That is a refusal, never a wrong answer, and direction 2 uses
+    // only that every pair of nodes that may share a value is an edge. Where the pairs form
+    // stars (in each pair one of the two functions is in no other pair), charge each pair to
+    // that function: each function is charged at most once, so the pairs are at most `budget`,
+    // provided no pair is read twice. A pair is read twice where a function stands in two
+    // nodes of its side that are both near a node of the other function (the count runs before
+    // `seen` drops the repeat); then the count can exceed `budget` on stars and the spot is
+    // refused, a refusal the claim of the doc above did not cover. Example: `f` in two left
+    // nodes, `g_1`, `g_2`, `g_3` each in one right node near both: the pairs `(f, g_j)` are a
+    // star (each `g_j` in one pair), the reads are 2 · 3 = 6 and `budget` is 2 + 3 = 5.
+    // Whether a written type reaches this is not tested. Corrected here: COMPLEXITY.md claimed
+    // the return never fires when the nodes form stars (`met_l[l] == 1` or `met_r[r] == 1`,
+    // names the code does not have), charging an edge's `|fs_l|·|fs_r|` pairs as `|fs_l|`,
+    // which needs `|fs_r| = 1`. Counterexample: left nodes `l_1`, `l_2` of two functions each,
+    // both near one right node of three: the nodes form a star, the reads are 2 · 6 = 12 and
+    // `budget` is 7. A part of the right side read by `near_form` has a subset of the edges, so
+    // a smaller count.
+    //
+    // Parts by domain ([`by_domain`]). Pairs of two keys are not returned though their nodes
+    // may share a value. Direction 2 needs only every pair that may fit, since `g` holds `f`'s
+    // mark only when `f == g` or `f` fits `g`, and a pair of two keys never fits (proof at
+    // [`domain_key`]); so `B` is the same set. The count is one budget for all parts, and the
+    // edges within parts are a subset of the spot's, so the return fires on no spot it did
+    // not fire on before.
+    //
+    // [`Forms::tie`] (a false verdict with every pair held is a definite no). `tie` numbers
+    // every left function 0 and lets every right function hold `"\0fn 0"`, with as many marks
+    // numbered as there are functions, so its `cut` lists the same marks. Let `R` be any
+    // pairing with `A_R ⊆ B_R`. Take `w` in the left form of `tie` and `w°` with its fakes
+    // renamed to [`MERGED`]; put back at each real position the mark of one function of that
+    // component to get `v° ∈ A_R`, so `v° ∈ B_R` by some chain. At a real position the holder
+    // is a right function, which holds `"\0fn 0"` in `tie`, or a node that does not depend on
+    // `R`, equal in both forms; fakes are held by such nodes too. So `w° ∈ B_tie`, and Lemma L
+    // gives `w ∈ B_tie`. If `tie` gives false, every pairing gives false, `R_spot` among them.
+    //
+    // Not claimed: the second verdict with [`MERGED`] ([`Merged`]); `near_form`'s claim that
+    // the kernel holds `t` in a part exactly when in the whole; that `A ⊆ B` agrees with the
+    // subtype relation (the proof at [`Forms::level`]). Tests (judgments.rs in
+    // tests/steps/l01_23_groups_and_refusals), and what they cannot catch:
+    // `star_pairs_decide_as_every_pair_in_each_kind_of_spot` builds one case per kind of spot
+    // (negative control: `star_pairs` changed to keep only the first edge of each left node
+    // made it fail, run once, not committed); `a_payload_with_fields_never_meets_one_more_item_of_any_value`
+    // checks the place lemma (red before FAIL-forms-nested-marks);
+    // `random_unions_of_tuples_with_functions_agree_with_pairing_every_function`
+    // compares against pairing every function on random unions of small tuples;
+    // `functions_at_one_place_whose_tuples_meet_two_each_are_decided` has nodes near two nodes
+    // each, with both verdicts. None reaches deep nests at shared places or many spots of one
+    // place at once, where the depth lemma's `Any(place)` filing does the work; those rest on
+    // the proof above alone.
     let mut budget: usize = (left.iter().chain(right)).map(|(_, fs)| fs.len()).sum();
     // An `Arc<Sig>` key. Clippy flags its `OnceLock`s; these are its only interior-mutable parts:
     // the `Facts` memo, the member-set and key caches of its unions, rows and shapes, and the
@@ -13637,7 +13785,7 @@ impl Forms {
         // form in which each function at a spot fits each of the other side's there, made
         // with one mark in place of the product of the two sides' functions. Proof that a
         // false verdict here is false for every pairing, marks a set of every name holds
-        // nested included: COMPLEXITY.md, PROOF-star-pairs, `Forms::tie`.
+        // nested included: PROOF-star-pairs, `Forms::tie`, at [`star_pairs`].
         forms.ids = left.all().map(|f| (f.clone(), 0)).collect();
         forms.number_marks();
         forms.fits = right.all().map(|g| (g.clone(), vec![0])).collect();
@@ -13747,6 +13895,31 @@ impl Forms {
     /// true on the types. Before, a set of every atom nested in a tuple or a payload kept the
     /// marks, so `((int) -> int, 1) <: (#_, 1) \ (#a, 1)` held, the function's mark in `#_`.
     ///
+    /// Two cases the induction above needs, and their steps. A recursive node: the induction
+    /// on `k`'s nodes is not well-founded on its unfolding, so it runs on the depth of the
+    /// value `w` instead, which is finite. [`KType::rewrite_levels`] keeps a recursive node
+    /// only where `level` gives back every node of its unfolding unchanged, and gives none
+    /// otherwise (no form, so no verdict to be wrong). A node `level` leaves unchanged holds
+    /// no function (else the marks are put in) and is no set of every name it does not list
+    /// (else `cut` takes the marks out of it, which changes it, the marks being atoms such a
+    /// set holds); so it lists finitely many names, none starting with NUL. So `σ(w) = w` for
+    /// a `w` in it, and a `σ(w) ≠ w` holds a mark at some position, where the unfolded node
+    /// lists no NUL name, so `σ(w)` is not in it: at each depth of `w` the step is the cases
+    /// above. Struct parts and functions are kept as they are on both sides: `σ` maps no value
+    /// inside them (only the components of rows and shapes and the payloads and components of
+    /// kernel atoms and tuples), and a mark inside them is, on both sides, an atom name no part
+    /// lists, like any other (Lemma L at [`star_pairs`]). At L1 a struct part is a bool, so no
+    /// struct field can be written: that case waits for L2.5 (row TEST-nested-marks-struct-fields).
+    ///
+    /// Tests (tests/steps/l01_23_groups_and_refusals/judgments.rs):
+    /// `a_cofinite_atom_set_minus_one_pair_is_a_subtype_of_a_union_holding_a_function`,
+    /// `marks_nested_in_sets_of_every_atom_stand_for_no_function`,
+    /// `the_unknown_checked_is_every_value_not_a_value_of_its_own` (red before),
+    /// `many_nested_sets_of_every_atom_beside_functions_are_decided`. Negative control, run
+    /// once and not committed: [`Forms::deep`] changed to the outer `cut` alone made the first
+    /// two fail. What they cannot catch: none of the four builds a recursive type (read
+    /// 2026-11-20), so the recursive case rests on the steps above alone.
+    ///
     /// Complexity tradeoff: each node is made once per comparison ([`Forms::levels`]): a
     /// type of `n` nodes costs `O(n)` nodes read, plus `O(m)` per node cut for `m` marks
     /// ([`Forms::cut`]) and the tuple parts made again where a component changed
@@ -13807,7 +13980,7 @@ impl Forms {
         // (PROOF-star-pairs) it held them there too, so `#n(1, x: 2) <: #n(1, 2, _)` held: the
         // payload of one item and a field, `(1, 2, fields x)`, met the three items' `(1, 2,
         // _)`. Now a node's form shares no value with that of a node at another place
-        // (COMPLEXITY.md, PROOF-star-pairs, the place lemma).
+        // (PROOF-star-pairs, the place lemma, at [`star_pairs`]).
         if c.dynamic {
             return Some(match end || left {
                 true => (self.unknown.clone()).expect("the marks are numbered first"),
@@ -16939,6 +17112,17 @@ fn fn_holds_own(s: &Sig, f: &Arc<str>, cx: &Cx) -> bool {
 /// owns a variable of the same name. The classes follow the rule of the other names, which
 /// [`VarFacts::outer`] proves for them.
 ///
+/// Tests: `ty::tests::unreached6::a_class_variable_the_nest_owns_is_not_an_outer_one` (the
+/// same class name owned in the nest is left out, and kept where it stands outside every
+/// owner); in tests/steps/l01_26_type_resolution/function_variance.rs,
+/// `a_class_inside_a_function_argument_is_narrowed_at_a_closed_parameter`,
+/// `a_class_in_the_result_of_a_function_argument_is_narrowed`,
+/// `a_class_inside_a_function_argument_nested_is_narrowed` and
+/// `a_class_inside_a_function_argument_is_narrowed_at_a_partial_parameter` (programs whose fit
+/// needs the class found). What they cannot catch: a name owned by two signatures of the nest
+/// at different depths with places between them, which the unit test builds one level of only;
+/// that case rests on the proof above.
+///
 /// Cost: the two persistent sets kept with the signature, walked in order.
 fn outer_or_class(sig: &Sig) -> impl Iterator<Item = &Arc<str>> {
     let facts = sig.facts();
@@ -17074,6 +17258,10 @@ async fn instance_within<'m>(
 /// to `Never` and to types of such values: an atom, tuples, their union; elsewhere `Never` is
 /// no instance, and would fit where none does), with a negative control that
 /// drops the last listed binding: `a_generic_arrow_fits_where_some_binding_of_its_variable_fits`.
+/// What it cannot catch: it tries seven parameter types of `s` holding `B` against every
+/// arrow and pair of arrows over 22 small parameter types of `q`, at three bounds of `B`,
+/// each arrow of one parameter with result `int`; so arrows of several parameters, payloads
+/// with fields and nests deeper than two tuples rest on the proof alone.
 ///
 /// FAIL-types-bindable-union-param-refused: the cover of `(x: (A, bool) | (C, bool))` by
 /// `(x: (C | ((int, U) | (int, U, U),), bool) | (A, bool)) for U in int | f64` binds nothing,
@@ -18268,7 +18456,12 @@ fn binds_nothing(t: &Ty, cx: &Cx) -> bool {
 /// carriers, is also tried at each carrier, where it is the only such variable and stands in
 /// the value types of partial arrows only ([`Narrowing`], with its proof): `((x0: int) ->? B) &
 /// ((x0: int) -> int | f64 | bool) for B in int | f64` fits `(x0: int) -> int` at `B = int`
-/// (FAIL-types-met-bindable-partial-narrow). Elsewhere the mask alone is joined, a wrong no
+/// (FAIL-types-met-bindable-partial-narrow; test
+/// `a_partial_arrow_holding_a_bindable_variable_narrows_at_its_binding`). What the two tests
+/// cannot catch: each is one signature of one exact and one partial arrow of one parameter,
+/// so a yes that rests on several partial arrows joined, or on a variable in some of them
+/// only, is not checked; it rests on the proof above, whose step is the same for each arrow
+/// joined. Elsewhere the mask alone is joined, a wrong no
 /// where an instance would have narrowed. Before, a partial arrow of `s` took no part in
 /// covering an exact arrow of `q`, so `(int ->? #b) & (int -> _)` was refused as within `int ->
 /// #b`.
