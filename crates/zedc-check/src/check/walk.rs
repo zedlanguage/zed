@@ -3482,9 +3482,6 @@ impl<'t, 'a> Ck<'t, 'a> {
         }
         self.level += 1;
         s.level = self.level;
-        if self.pending.len() <= s.level {
-            self.pending.push(Vec::new());
-        }
         self.r10_open_level(s.level);
         self.open_type_vars(s.level);
         let given = std::mem::take(&mut s.given);
@@ -9723,9 +9720,6 @@ impl<'t, 'a> Ck<'t, 'a> {
     ) {
         self.level += 1;
         let level = self.level;
-        if self.pending.len() <= level {
-            self.pending.push(Vec::new());
-        }
         self.r10_open_level(level);
         self.open_type_vars(level);
         let (mut tys, mut ids) = (Vec::new(), Vec::new());
@@ -12401,25 +12395,17 @@ impl<'t, 'a> Ck<'t, 'a> {
             level, self.level,
             "the level that ends is the innermost one"
         );
-        #[cfg(any(test, feature = "forward-probe"))]
-        if !self.r10_uses_sparse() {
-            self.probe_generalize(level);
-        }
         self.r10_f8_before_resolve_if_configured(level);
         // The roots of this level, and the classes whose roots have a type by now: each of
         // the latter takes its root's type in `sig`. A class of a function around goes to
         // that function's list.
         let mut own = Vec::new();
         let mut done = Vec::new();
-        let pending_list = self
-            .r10_take_pending(level)
-            .unwrap_or_else(|| std::mem::take(&mut self.pending[level]));
-        for k in pending_list {
+        for k in self.r10_take_pending(level) {
             let r = self.find(k);
             let at = self.classes[r].level;
             if self.classes[r].resolved.is_none() {
                 if at < level {
-                    self.pending[at].push(k);
                     self.r10_push_outer_pending(at, k);
                     continue;
                 }
@@ -12532,7 +12518,7 @@ impl<'t, 'a> Ck<'t, 'a> {
             sig.needs = self.r10_expand_kept_fwds(needs, level, &mut own, &mut no_done);
             sig.facts = Default::default();
         }
-        if self.r10.cfg.enabled && sig.has_fwd_needs() {
+        if sig.has_fwd_needs() {
             self.r10_name_compact_sig_in_generalize(&mut sig, &own, &outside);
         } else {
             // The classes of this level that are type variables, named in order of appearance.
@@ -12867,10 +12853,7 @@ impl<'t, 'a> Ck<'t, 'a> {
     // newer classes, which holds since a test's class is made after the class it tests.
     fn join_narrowed(&mut self, level: usize) {
         let mut from: Vec<usize> = Vec::new();
-        let pending_list = self
-            .r10_peek_pending(level)
-            .unwrap_or_else(|| self.pending[level].clone());
-        for k in pending_list {
+        for k in self.r10_peek_pending(level) {
             let r = self.find(k);
             if self.classes[r].level == level && !self.classes[r].narrowed_to.is_empty() {
                 from.push(r);
@@ -13121,10 +13104,6 @@ impl<'t, 'a> Ck<'t, 'a> {
         };
         let key = (kind, gives);
         self.r10_on_need(r, &key);
-        #[cfg(any(test, feature = "forward-probe"))]
-        if !self.r10_uses_sparse() {
-            self.probe_need(r, &key, span);
-        }
         // The arguments this use writes, kept under the span of the use the need keeps, the
         // first of equal uses, with those of each equal use met after it: a function each
         // passes on is rebuilt where each writes it ([`Self::need_arg_via`]). One written by a
@@ -24634,22 +24613,11 @@ impl<'t, 'a> Ck<'t, 'a> {
             .collect();
         self.note_fn_uses(&mut frame, sig, &arrow.result);
         self.call_frames.push(frame);
-        #[cfg(any(test, feature = "forward-probe"))]
-        let rec = if !self.r10_uses_sparse() {
-            self.probe_admit(sig, args, partial, span)
-        } else {
-            None
-        };
         let mut left =
             match self.r10_try_admit(what, sig, arrow, args, partial, &mut binds, &defer, span) {
                 Some(l) => l,
                 None => self.replay(what, &sig.needs, &mut binds, defer, span),
             };
-        #[cfg(any(test, feature = "forward-probe"))]
-        if let Some(rec) = rec {
-            let result = arrow.result.replace(&binds);
-            self.probe_recorded(rec, args, &result);
-        }
         let frame = self.call_frames.pop();
         // Each bounded variable's binding is within its bound, and of one carrier, or of
         // other values only: the arrows of an operator each take one. So the classes in it
@@ -29089,7 +29057,7 @@ mod tests {
         let t = Tables::new(&[], &res);
         let mut ck = Ck::new(&t, Ck::fixes_checked);
         ck.level += 1;
-        ck.pending.push(Vec::new());
+        ck.r10_open_level(ck.level);
         let k = ck.class();
         let v: Arc<str> = format!("${k}").into();
         let row = Ty::tuple(vec![Ty::var(v.clone()), Ty::lit(&Value::int(1.into()))]);

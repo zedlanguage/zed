@@ -1,31 +1,32 @@
 //! Expected output of the r10 tests (PROOF-map-chain-d-skip-and-admit, step 2, row
-//! FAIL-e-merge-by-name-internal-result): the output of the eager checker E
-//! (`R10Config::eager`, the flat needs) on each program the tests run E on, recorded while E
-//! existed, so that D can be checked against it once E is removed.
+//! FAIL-e-merge-by-name-internal-result): the output of the eager checker E (the flat needs)
+//! on each program the tests ran E on, recorded while E existed (commit "r10 tests: record E's
+//! output as expected output", where each line was written only after D's text was found
+//! equal to E's). E is removed; D's output on each of those programs is checked against it
+//! ([`check_d`], called by `run_expected`).
 //!
 //! The text of a check is [`info_text`]: every field of [`Info`], each map and set in a fixed
 //! order, every signature in its flat form at every depth ([`deep_flat`]) written by its
 //! `Debug`, which writes every field of a signature (its cached `facts` as `_`), each row,
 //! payload shape and signature it holds written once and named by a hash of its text
-//! ([`Names`]). E's signatures
-//! hold no compact forward, so `deep_flat` leaves their fields as they are; D's are decoded at
-//! every depth. D's text equal to E's means that D's signatures, decoded, are E's field by
-//! field, which is more than the tests compared before (`sig_eq_full` compares the decoded
-//! needs of the top level only, by the `PartialEq` that takes a compact forward and its flat
-//! needs as equal).
+//! ([`Names`]). E's signatures held no compact forward, so `deep_flat` left their fields as
+//! they were; D's are decoded at every depth. D's text equal to E's means that D's
+//! signatures, decoded, are E's field by field, which is more than the tests compared before
+//! (`sig_eq_full` compares the decoded needs of the top level only, by the `PartialEq` that
+//! takes a compact forward and its flat needs as equal).
 //!
 //! `expected.out` holds one line per program: the first 32 hex digits of the BLAKE3 hash of
 //! its source (its key), the length of its text in bytes, and the BLAKE3 hash of the text in
-//! hex. A program is found by its source, so every test that runs E on a program is covered
-//! without a label of its own, and a program two tests run is one line. The text is not
-//! stored: the chains of 100 links write texts of megabytes, and the sweeps check 99 chains of
-//! each form. On a mismatch the test writes where D's text and E's part (while E exists) or
-//! the two lines (after); E's text can be rebuilt from the commit that recorded the file,
-//! which still has E.
+//! hex. A program is found by its source, so every test that runs `run_expected` on a program
+//! is covered without a label of its own, and a program two tests run is one line. The text is
+//! not stored: the chains of 100 links write texts of megabytes, and the sweeps check 99
+//! chains of each form. On a mismatch the test gives the two lines; E's text can be rebuilt
+//! from the commit that recorded the file, which still has E.
 //!
-//! With `ZED_R10_EXPECTED_WRITE=<dir>` set, [`check_e`] writes each program's line to the file
+//! With `ZED_R10_EXPECTED_WRITE=<dir>` set, [`check_d`] writes each program's line to the file
 //! `<dir>/<key>` instead of comparing; a program run twice must write the same line.
-//! `LC_ALL=C sort <dir>/*` is then the new `expected.out`.
+//! `LC_ALL=C sort <dir>/*` is then the new `expected.out`. A line written so is D's output, no
+//! longer checked against E: each changed line must be explained by the change that made it.
 
 use std::collections::{BTreeMap, HashMap};
 use std::fmt::Debug;
@@ -34,8 +35,7 @@ use std::sync::{Arc, OnceLock};
 use zed_collections::by_address::ByAddress;
 use zedc_types::ty::{DebugPart, NodeId, Sig, Ty, debug_cut};
 
-use super::{flat_of, run_raw};
-use crate::check::probe::R10Config;
+use super::flat_of;
 use crate::check::{Info, RemapPlan};
 
 /// The signatures [`deep_flat`] has done, by address: a function a nest holds at several places
@@ -321,28 +321,31 @@ fn expected() -> &'static HashMap<&'static str, &'static str> {
     })
 }
 
-/// Where `a` and `b` first differ, with some text around it, for a failure's message.
-fn first_difference(a: &str, b: &str) -> String {
-    let at = (a.bytes().zip(b.bytes()))
-        .position(|(x, y)| x != y)
-        .unwrap_or(a.len().min(b.len()));
-    let near = |s: &str| {
-        let bytes = &s.as_bytes()[at.saturating_sub(300).min(s.len())..(at + 300).min(s.len())];
-        String::from_utf8_lossy(bytes).into_owned()
-    };
-    format!(
-        "at byte {at} of {} and {}:\n  E: {}\n  D: {}",
-        a.len(),
-        b.len(),
-        near(a),
-        near(b)
-    )
+/// E's output, rebuilt from `d`, D's output on a program [`check_d`] has checked: `d` with each
+/// signature of `calls`, `sigs` and `tops` in its flat form at every depth ([`deep_flat`]),
+/// which is what [`info_text`] writes. Why it is E's: the check found `info_text(d)` equal to
+/// E's text, every field of `Info` and every field of each signature (its cached `facts`,
+/// written as `_`, are left empty here and computed again on use), and `deep_flat` leaves a
+/// signature with no compact forward as it is, so E's text is the text of this `Info`. The tests
+/// that read E's flat signatures (to compare D's compact ones with them) read these.
+/// Complexity: the size of the flat nests, each signature entered once (`deep_flat`'s memo).
+pub(super) fn flat_info(d: &Info) -> Info {
+    let mut memo = Memo::new();
+    let mut e = d.clone();
+    for s in e.calls.values_mut().chain(e.sigs.values_mut()) {
+        *s = deep_flat(s, &mut memo);
+    }
+    for t in e.tops.values_mut() {
+        *t = deep_flat_ty(t, &mut memo);
+    }
+    e
 }
 
-/// Checks `text`, E's text on `src`, against `expected.out`, or with `ZED_R10_EXPECTED_WRITE`
+/// Checks `d`, D's output on `src`, against `expected.out`, or with `ZED_R10_EXPECTED_WRITE`
 /// set writes its line (see the module's comment).
-fn check_expected(src: &str, text: &str) {
-    let (key, line) = (key_of(src), line_of(text));
+pub(super) fn check_d(src: &str, d: &Info) {
+    let text = info_text(d);
+    let (key, line) = (key_of(src), line_of(&text));
     if let Some(dir) = std::env::var_os("ZED_R10_EXPECTED_WRITE") {
         use std::io::Write as _;
         let path = std::path::Path::new(&dir).join(&key);
@@ -357,7 +360,7 @@ fn check_expected(src: &str, text: &str) {
             // must give one text.
             Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {
                 let had = std::fs::read_to_string(&path).expect("the line is read");
-                assert_eq!(had, want, "E gives two texts on one program\n{src}");
+                assert_eq!(had, want, "D gives two texts on one program\n{src}");
             }
             Err(e) => panic!("{}: {e}", path.display()),
         }
@@ -368,21 +371,8 @@ fn check_expected(src: &str, text: &str) {
     };
     assert_eq!(
         *want, line,
-        "the text (length, BLAKE3) of this program differs from the expected output (key \
+        "D's text (length, BLAKE3) on this program differs from the expected output, E's (key \
          {key}); the commit that recorded expected.out still has E, whose text is the \
          expected one\n{src}"
     );
-}
-
-/// Called after each run of E on `src` (`e`): checks that D's text on `src` is E's and that
-/// E's is the expected output.
-pub(super) fn check_e(src: &str, e: &Info) {
-    let (d, _) = run_raw(src, R10Config::default());
-    let (e_text, d_text) = (info_text(e), info_text(&d));
-    assert!(
-        e_text == d_text,
-        "D's text is not E's, {}\n{src}",
-        first_difference(&e_text, &d_text)
-    );
-    check_expected(src, &e_text);
 }

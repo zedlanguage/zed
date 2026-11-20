@@ -108,38 +108,30 @@ impl TieUf {
 
 impl<'t, 'a> Ck<'t, 'a> {
     pub(in crate::check) fn r10_open_level(&mut self, level: usize) {
-        if self.r10.cfg.enabled {
-            self.r10.ensure_level(level);
-        }
-    }
-
-    pub(in crate::check) fn r10_peek_pending(&self, level: usize) -> Option<Vec<usize>> {
-        if !self.r10.cfg.enabled {
-            return None;
-        }
-        Some(
-            self.r10
-                .pending_levels
-                .get(level)
-                .map(PendingLevel::flatten)
-                .unwrap_or_default(),
-        )
-    }
-
-    pub(in crate::check) fn r10_take_pending(&mut self, level: usize) -> Option<Vec<usize>> {
-        if !self.r10.cfg.enabled {
-            return None;
-        }
         self.r10.ensure_level(level);
-        let _ = std::mem::take(&mut self.pending[level]);
-        Some(self.r10.pending_levels[level].flatten())
+    }
+
+    /// The classes the function of `level` resolves when it ends, in the order they were made,
+    /// each admitted forward's classes in its slot (`M63`).
+    pub(in crate::check) fn r10_peek_pending(&self, level: usize) -> Vec<usize> {
+        self.r10
+            .pending_levels
+            .get(level)
+            .map(PendingLevel::flatten)
+            .unwrap_or_default()
+    }
+
+    /// [`Self::r10_peek_pending`] at the end of the function of `level`. The list stays: a
+    /// forward forced at the end reads it again, and [`Self::r10_after_resolve_and_detach`]
+    /// empties it after.
+    pub(in crate::check) fn r10_take_pending(&mut self, level: usize) -> Vec<usize> {
+        self.r10.ensure_level(level);
+        self.r10.pending_levels[level].flatten()
     }
 
     pub(in crate::check) fn r10_push_outer_pending(&mut self, at: usize, k: usize) {
-        if self.r10.cfg.enabled {
-            self.r10.ensure_level(at);
-            self.r10.pending_levels[at].push_class_o1(k);
-        }
+        self.r10.ensure_level(at);
+        self.r10.pending_levels[at].push_class_o1(k);
     }
 
     /// Builds or retrieves an `O(1)`-composable `CalleeSummary` for `sig` without decoding any
@@ -530,9 +522,14 @@ impl<'t, 'a> Ck<'t, 'a> {
         // A name a function of the needs binds that is also own to the callee: E's decode
         // replaces the callee's own by the caller's types, and so the one inside the function
         // too where the two are one name, while the kept forward lists it in `held_names`, for
-        // the caller to name as a variable of its own (Neon's gap 1). Class ids are given once
-        // and the callee's own are classes, so no checker input is known to reach it; refused
-        // so that part (B) of the proof needs no premise. O(h log o) for h held names and o own.
+        // the caller to name as a variable of its own (Neon's gap 1); refused so that part (B)
+        // of the proof needs no premise on how names are given. Checker inputs do reach it:
+        // with a temporary record of each refusal, the groups l08_02_remaps, l03_02_map_run and
+        // l01_26_type_resolution and the l08_02 benchmarks refused 937 calls here, and every one
+        // of them was also refused by `#4`, `#6`, `#14` and `#22` (chainE1, 2026-11-20). So on
+        // those inputs it admits and refuses exactly what the checker did before it was added;
+        // an input where it alone refuses would decode that call, which is correct and costs
+        // what the decode costs. O(h log o) for h held names and o own.
         if held_names.iter().any(|v| sig.own.contains(v)) {
             intrinsic_fails.insert("#4-outer");
         }
@@ -989,7 +986,7 @@ impl<'t, 'a> Ck<'t, 'a> {
         defer: &BTreeSet<Arc<str>>,
         span: Span,
     ) -> Option<Vec<Need>> {
-        if !self.r10.cfg.enabled || sig.needs.is_empty() {
+        if sig.needs.is_empty() {
             return None;
         }
 
@@ -1198,9 +1195,6 @@ impl<'t, 'a> Ck<'t, 'a> {
 
     /// Checks `f2` (`Order` need) and `f1` (exact exposed-key collision) in `Ck::need`.
     pub(in crate::check) fn r10_on_need(&mut self, r: usize, key: &(NeedKind, bool)) {
-        if !self.r10.cfg.enabled {
-            return;
-        }
         assert!(
             !self.r10.forcing,
             "M56(c): Ck::need must never be entered while forcing"
@@ -1240,7 +1234,7 @@ impl<'t, 'a> Ck<'t, 'a> {
 
     /// Pre-`resolve` `f8` negative-control hook (`M28` / `M56(c)`).
     pub(in crate::check) fn r10_f8_before_resolve_if_configured(&mut self, level: usize) {
-        if !self.r10.cfg.enabled || !self.r10.cfg.f8_before_resolve {
+        if !self.r10.cfg.f8_before_resolve {
             return;
         }
         self.r10.ensure_level(level);
@@ -1271,9 +1265,6 @@ impl<'t, 'a> Ck<'t, 'a> {
         own: &mut Vec<usize>,
         done: &mut Vec<usize>,
     ) -> Vec<usize> {
-        if !self.r10.cfg.enabled {
-            return Vec::new();
-        }
         self.r10.ensure_level(level);
         let open_fids: Vec<usize> = self.r10.open_by_level[level]
             .iter()

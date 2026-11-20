@@ -514,8 +514,8 @@ enum Set {
 fn pairs(sets: &[Set]) -> Vec<Pair> {
     let mut out: Vec<Pair> = Vec::new();
     let mut from_src = |name: &str, src: &str| {
-        let (e, _) = run_with_cfg(src, R10Config::eager());
         let (d, _) = run_with_cfg(src, R10Config::default());
+        let e = expected_of(src, &d);
         assert_info_eq(name, &e, &d);
         let mut ids: Vec<_> = (d.sigs.iter())
             .filter(|(_, s)| s.has_fwd_needs())
@@ -671,8 +671,8 @@ fn battery_held(sets: &[Set]) {
 /// `src` checked under E and D, which must agree on every field of `Info`; whether D kept a
 /// forward.
 fn agree(label: &str, src: &str, bad: &mut Vec<String>) -> bool {
-    let (e, _) = run_with_cfg(src, R10Config::eager());
     let (d, _) = run_with_cfg(src, R10Config::default());
+    let e = expected_of(src, &d);
     if let Err(msg) = info_eq_full(label, &e, &d) {
         bad.push(format!("{src}{msg}"));
     }
@@ -701,7 +701,7 @@ fn landing6_clash_programs() {
     }
     let one = chain_src(4, "f", false) + &tails[0].replace('H', "h3");
     let other = chain_src(4, "f", false) + &tails[1].replace('H', "h3");
-    let (e2, _) = run_with_cfg(&other, R10Config::eager());
+    let (e2, _) = run_expected(&other);
     let (d1, _) = run_with_cfg(&one, R10Config::default());
     assert!(info_eq_full("control", &e2, &d1).is_err(), "control");
     for b in &bad {

@@ -2060,8 +2060,8 @@ struct Ck<'t, 'a> {
     /// The other operations that build a number in full within the address space, by span
     /// (`Ck::too_large_build`), judged as [`Self::wide_powers`] are.
     wide_builds: BTreeMap<Span, WideBuild>,
-    /// The classes; class `k` is the type variable `$k`. A plain `Vec<Class>` but under
-    /// `cfg(test)` and the feature `forward-probe` ([`probe`]).
+    /// The classes; class `k` is the type variable `$k`. Those an admitted forward reserves
+    /// are made only when it is forced (`M62`, [`probe::Classes`]).
     classes: probe::Classes<Class>,
     /// The rows and payload shapes [`Self::data`] entered, each holding no unknown: every class
     /// they hold at any depth had a data need from it, which the class keeps, so a later check
@@ -2090,8 +2090,6 @@ struct Ck<'t, 'a> {
     ends: u64,
     /// How many declared functions are being checked, one inside another.
     level: usize,
-    /// The classes each of those functions resolves when it ends, by its level.
-    pending: Vec<Vec<usize>>,
     /// For each level, the rows and payload shapes and the variables [`Ck::fix_bound`] has met
     /// in the bindings of the function being checked there, so each is walked once in its body.
     bound: Vec<Vars>,
@@ -2760,7 +2758,6 @@ impl<'t, 'a> Ck<'t, 'a> {
             gens: Vec::new(),
             ends: 0,
             level: 0,
-            pending: vec![Vec::new()],
             bound: Vec::new(),
             needs: 0,
             discharged: [0; Discharge::ALL.len()],
@@ -4542,7 +4539,6 @@ impl<'t, 'a> Ck<'t, 'a> {
             refused: false,
             unoffered: 0,
         });
-        self.pending[self.level].push(id);
         self.r10.on_class_pushed(self.level, id);
         id
     }
@@ -4559,10 +4555,6 @@ impl<'t, 'a> Ck<'t, 'a> {
     fn touch(&mut self, r: usize) {
         if self.trying {
             self.r10_force_root(r, "f6");
-            #[cfg(any(test, feature = "forward-probe"))]
-            if !self.r10_uses_sparse() {
-                self.classes.event(r, "touch-trying");
-            }
             self.log
                 .push(Undo::Class(r, Box::new(self.classes[r].clone())));
         }
@@ -4713,10 +4705,6 @@ impl<'t, 'a> Ck<'t, 'a> {
                 continue;
             }
             self.r10_force_root(r, "f5");
-            #[cfg(any(test, feature = "forward-probe"))]
-            if !self.r10_uses_sparse() {
-                self.classes.event(r, "lower-walk");
-            }
             self.touch(r);
             self.classes[r].level = level;
             let mut more = Vars::default();
@@ -7113,12 +7101,6 @@ impl<'t, 'a> Ck<'t, 'a> {
         self.finished_with(&s.settle(&|v| self.stale(v)), made, fwd_memo)
     }
 
-    #[inline]
-    #[cfg(any(test, feature = "forward-probe"))]
-    pub(in crate::check) fn r10_uses_sparse(&self) -> bool {
-        self.r10.uses_sparse()
-    }
-
     pub(in crate::check) fn r10_is_closed_internal(&self, k: usize) -> bool {
         if self.classes.is_materialized(k) || !self.r10.uses_sparse() {
             return false;
@@ -7355,7 +7337,7 @@ impl<'t, 'a> Ck<'t, 'a> {
     /// Forces every open forward watching root `k` (`f3`, `f4`, `f5`, `f6`, `f7`).
     /// `r10_force_forward` is a pure leaf copy, so `self.r10.forcing` is never true on entry (`M56(c)`).
     pub(in crate::check) fn r10_force_root(&mut self, k: usize, barrier: &'static str) {
-        if !self.r10.cfg.enabled || self.r10.barrier_skipped(barrier) {
+        if self.r10.barrier_skipped(barrier) {
             return;
         }
         assert!(

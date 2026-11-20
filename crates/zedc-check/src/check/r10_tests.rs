@@ -10,20 +10,25 @@ use crate::check::probe::{
 use crate::check::walk::check_text;
 use zedc_types::ty::{NeedKind, Sig, fits_sig, fwd_decode_count, reset_fwd_decode_count};
 
-/// Checks `text` under `cfg`. A run of E (`R10Config::eager`, exactly) is also checked against
-/// D's run and the expected output ([`expected::check_e`]), so that E's output is recorded
-/// while E exists (row FAIL-e-merge-by-name-internal-result).
-fn run_with_cfg(text: &str, cfg: R10Config) -> (Info, R10Stats) {
-    let is_e = format!("{cfg:?}") == format!("{:?}", R10Config::eager());
-    let (info, stats) = run_raw(text, cfg);
-    if is_e {
-        expected::check_e(text, &info);
-    }
-    (info, stats)
+/// E's output on `text`, for the tests that compared D with the eager checker E before E was
+/// removed (PROOF-map-chain-d-skip-and-admit, step 2): checks `text` under D, the default,
+/// checks D's output against the expected output, E's, recorded while E existed
+/// ([`expected::check_d`]), and gives E's output rebuilt from D's, its signatures flat at every
+/// depth as E made them ([`expected::flat_info`]). The statistics are D's.
+fn run_expected(text: &str) -> (Info, R10Stats) {
+    let (info, stats) = run_with_cfg(text, R10Config::default());
+    (expected_of(text, &info), stats)
+}
+
+/// [`run_expected`] for a test that checked `text` under D itself (`d`), so that the program is
+/// checked once.
+fn expected_of(text: &str, d: &Info) -> Info {
+    expected::check_d(text, d);
+    expected::flat_info(d)
 }
 
 /// Checks `text` under `cfg`: the checker's output and its statistics.
-fn run_raw(text: &str, cfg: R10Config) -> (Info, R10Stats) {
+fn run_with_cfg(text: &str, cfg: R10Config) -> (Info, R10Stats) {
     let tokens = zedc_syntax::lex::lex(text).expect("the unit lexes");
     let (tree, parse_errs) = zedc_syntax::parse::parse_unit(text, &tokens, zedc_syntax::parse::TOP);
     assert!(
@@ -302,10 +307,10 @@ fn assert_info_eq(label: &str, e: &Info, d: &Info) {
 fn r10_m66_zero_decode_and_readers_chain() {
     for (form, expected_compact_len) in [("f", 2usize), ("lambda", 4usize)] {
         let src = chain_src(35, form, false);
-        let (e_info, _) = run_with_cfg(&src, R10Config::eager());
         reset_fwd_decode_count();
         let (d_info, d_stats) = run_with_cfg(&src, R10Config::default());
         let decodes_during_check = fwd_decode_count();
+        let e_info = expected_of(&src, &d_info);
         assert_eq!(
             decodes_during_check, 0,
             "M66 violation on {form} chain without main: expected 0 decodes, got {decodes_during_check}"
@@ -340,25 +345,25 @@ fn r10_m66_zero_decode_and_readers_chain() {
 }
 
 /// Deliverable (a): `D = E` on chains of the given form for every `n` in `lo..=hi`, with exactly
-/// 1 decode (at `main`). The chains to 100 are split into ranges so each test stays under the
-/// 20 s limit: E (the eager checker) costs about n^2.5 per chain, measured 7.8 s for lambda
-/// 2..=50, 34.5 s for 51..=80 and 57.5 s for 81..=100 at load 40 to 48 (neon-retry, 2026-11-18);
-/// each range below is cut for about 8 s at that load.
+/// 1 decode (at `main`); E's output is the expected output ([`expected_of`]). The chains to 100
+/// were split into ranges while E ran beside D, so each test stayed under the 20 s limit: E (the
+/// eager checker) cost about n^2.5 per chain, measured 7.8 s for lambda 2..=50, 34.5 s for
+/// 51..=80 and 57.5 s for 81..=100 at load 40 to 48 (neon-retry, 2026-11-18).
 fn d_equals_e_on_chains(form: &str, lo: usize, hi: usize) {
     for n in lo..=hi {
         let src = chain_src(n, form, true);
-        let (e_info, _) = run_with_cfg(&src, R10Config::eager());
-        assert!(
-            e_info.errors.is_empty(),
-            "{form} n={n} E errors: {:?}",
-            e_info.errors
-        );
         reset_fwd_decode_count();
         let (d_info, d_stats) = run_with_cfg(&src, R10Config::default());
         let decodes = fwd_decode_count();
         assert_eq!(
             decodes, 1,
             "{form} n={n}: expected exactly 1 decode (at main), got {decodes}"
+        );
+        let e_info = expected_of(&src, &d_info);
+        assert!(
+            e_info.errors.is_empty(),
+            "{form} n={n} E errors: {:?}",
+            e_info.errors
         );
         assert_eq!(d_stats.admitted, n - 1, "{form} n={n}: admitted");
         assert_eq!(d_stats.kept_at_generalize, n - 1, "{form} n={n}: kept");
@@ -478,7 +483,7 @@ h1(positional f, positional m, positional x) = {\n\
   y = if x is int { x + 1 } else { 0 };\n\
   (r, y)\n\
 };\n";
-    let (e, _) = run_with_cfg(narrow_beside_fwd, R10Config::eager());
+    let (e, _) = run_expected(narrow_beside_fwd);
     let (d, st) = run_with_cfg(narrow_beside_fwd, R10Config::default());
     assert!(
         st.kept_at_generalize >= 1,
@@ -501,7 +506,7 @@ h1(positional f, positional m, positional x) = {\n\
     // 2. Bad call triggering `instantiated` + `CallPath` outermost-first notes on a 6-link chain
     let mut bad_chain = chain_src(6, "f", false);
     bad_chain.push_str("bad = h5(x -> x + 1, 42);\n");
-    let (e, _) = run_with_cfg(&bad_chain, R10Config::eager());
+    let (e, _) = run_expected(&bad_chain);
     let (d, st) = run_with_cfg(&bad_chain, R10Config::default());
     assert!(!e.errors.is_empty(), "bad_chain must produce a type error");
     assert_eq!(st.kept_at_generalize, 5, "bad_chain keeps h1..h5");
@@ -521,7 +526,7 @@ res = apply2(h1, x -> x + 1, {\"k\" -> 0});\n\
 take_int(positional x: int) = x + 1;\n\
 h_into(positional f, positional m, positional z) = (h0(f, m), take_int(z));\n\
 bad_into = h_into(1);\n";
-    let (e, _) = run_with_cfg(higher_order, R10Config::eager());
+    let (e, _) = run_expected(higher_order);
     let (d, st) = run_with_cfg(higher_order, R10Config::default());
     assert!(st.kept_at_generalize >= 2, "higher_order keeps forwards");
     assert!(!e.errors.is_empty(), "bad_into triggers sig_text");
@@ -534,7 +539,7 @@ bad_into = h_into(1);\n";
     t6_chain.push_str(
         "h10(positional f, positional m, positional t: (T6, T6)) = (h9(f, m).map(f), t);\n",
     );
-    let (e, _) = run_with_cfg(&t6_chain, R10Config::eager());
+    let (e, _) = run_expected(&t6_chain);
     let (d, st) = run_with_cfg(&t6_chain, R10Config::default());
     assert_eq!(
         st.kept_at_generalize, 10,
@@ -557,7 +562,7 @@ fn r10_m66_neg_keep_map_lambda_and_decode_generalize() {
     // needs that differ from E's on `lambda n = 2`, whereas `clear_map_lambda = true`
     // matches E identically.
     let src_l2 = chain_src(2, "lambda", false);
-    let (e_l2, _) = run_with_cfg(&src_l2, R10Config::eager());
+    let (e_l2, _) = run_expected(&src_l2);
     let (d_l2, _) = run_with_cfg(&src_l2, R10Config::default());
     assert_info_eq("m66_lambda_n2_fixed", &e_l2, &d_l2);
     let e_h1 = e_l2.sigs.values().last().expect("E h1");
@@ -633,7 +638,7 @@ fn r10_m31_finish_split_walk_constant_and_neg_controls() {
     let mut nomemo_sigs = Vec::new();
     for n in [10usize, 20, 40, 80] {
         let src = make_split_chain(n);
-        let (e_info, _) = run_with_cfg(&src, R10Config::eager());
+        let (e_info, _) = run_expected(&src);
         let (d_info, d_stats) = run_with_cfg(&src, R10Config::default());
         assert!(
             !e_info.split_folds.is_empty(),
@@ -690,7 +695,7 @@ h1(positional m) = h0(xs -> xs >< max, m);\n\
 h2(positional m) = h1(m);\n\
 a = h2({\"k\" -> {\"a\" -> 1}});\n\
 b = h2({\"k\" -> {\"a\" -> 1.0f64}});\n";
-    let (e_ns, _) = run_with_cfg(nested_split, R10Config::eager());
+    let (e_ns, _) = run_expected(nested_split);
     let (d_ns, d_ns_stats) = run_with_cfg(nested_split, R10Config::default());
     assert!(d_ns_stats.admitted > 0, "nested_split must keep a forward");
     assert_info_eq("m31_nested_split", &e_ns, &d_ns);
@@ -719,11 +724,9 @@ b = h2({\"k\" -> {\"a\" -> 1.0f64}});\n";
 fn r10_m62_op_counts_per_link_f_and_lambda() {
     for form in ["f", "lambda"] {
         let mut d_rows = Vec::new();
-        let mut e_rows = Vec::new();
         for n in [10usize, 20, 40, 80] {
             let src = chain_src(n, form, false);
-            let (_, e_st) = run_with_cfg(&src, R10Config::eager());
-            let (_, d_st) = run_with_cfg(&src, R10Config::default());
+            let (_, d_st) = run_expected(&src);
             eprintln!(
                 "OPCOUNT form={form} mode=D n={n} alloc_classes={} gen_done={} gen_needs={} share_alike={} finish_sigs={} finish_needs={} names_drawn={} records_written={}",
                 d_st.alloc_classes,
@@ -735,19 +738,7 @@ fn r10_m62_op_counts_per_link_f_and_lambda() {
                 d_st.names_drawn,
                 d_st.records_written,
             );
-            eprintln!(
-                "OPCOUNT form={form} mode=E n={n} alloc_classes={} gen_done={} gen_needs={} share_alike={} finish_sigs={} finish_needs={} names_drawn={} records_written={}",
-                e_st.alloc_classes,
-                e_st.generalize_done_items,
-                e_st.generalize_needs_walked,
-                e_st.share_alike_needs_walked,
-                e_st.finish_sigs_walked,
-                e_st.finish_needs_walked,
-                e_st.names_drawn,
-                e_st.records_written,
-            );
             d_rows.push(d_st);
-            e_rows.push(e_st);
         }
 
         // Assert exact constant per-link increments for D between (10->20), (20->40), (40->80)!
@@ -791,30 +782,18 @@ fn r10_m62_op_counts_per_link_f_and_lambda() {
             "records_written",
             [0, 1, 2, 3].map(|i| d_rows[i].records_written),
         );
-
-        // And confirm E is quadratic (40->80 delta > 3.5x of 20->40 delta) on classes/names/records!
-        let e_names_20_40 = e_rows[2].names_drawn - e_rows[1].names_drawn;
-        let e_names_40_80 = e_rows[3].names_drawn - e_rows[2].names_drawn;
-        assert!(
-            e_names_40_80 as f64 / e_names_20_40 as f64 > 3.5,
-            "{form} E names_drawn should grow quadratically"
-        );
     }
 
     // Also test `share_alike` active (an alike bracket site earlier in the unit so `alike_sites`
     // is non-empty on every chain link): `share_alike_needs_walked` must STILL be constant/link!
     let mut sa_d = Vec::new();
-    let mut sa_e = Vec::new();
     for n in [10usize, 20, 40, 80] {
         let mut src = "dup(positional t) = (t[0], t[0]);\n".to_string();
         src.push_str(&chain_src(n, "f", false));
-        let (e_info, e_st) = run_with_cfg(&src, R10Config::eager());
-        let (d_info, d_st) = run_with_cfg(&src, R10Config::default());
-        assert_info_eq(&format!("share_alike_active_n{n}"), &e_info, &d_info);
+        let (_, d_st) = run_expected(&src);
         sa_d.push(d_st.share_alike_needs_walked);
-        sa_e.push(e_st.share_alike_needs_walked);
     }
-    eprintln!("OPCOUNT share_alike_active D={sa_d:?} E={sa_e:?}");
+    eprintln!("OPCOUNT share_alike_active D={sa_d:?}");
     assert_eq!(
         sa_d[2] - sa_d[1],
         2 * (sa_d[1] - sa_d[0]),
@@ -824,10 +803,6 @@ fn r10_m62_op_counts_per_link_f_and_lambda() {
         sa_d[3] - sa_d[2],
         2 * (sa_d[2] - sa_d[1]),
         "D share_alike constant/link: {sa_d:?}"
-    );
-    assert!(
-        (sa_e[3] - sa_e[2]) as f64 / (sa_e[2] - sa_e[1]) as f64 > 3.5,
-        "E share_alike should grow quadratically: {sa_e:?}"
     );
 
     // M62 negative control A: `broken_linear_names: true` reproduces Codex R9's quadratic
@@ -853,7 +828,7 @@ fn r10_m62_op_counts_per_link_f_and_lambda() {
 
     // M62 negative control B: `BrokenNoCounterAdvance` skips ID reservation -> diverges from E!
     let src_b = chain_src(4, "f", false);
-    let (e_b, _) = run_with_cfg(&src_b, R10Config::eager());
+    let (e_b, _) = run_expected(&src_b);
     let (d_b, _) = run_with_cfg(
         &src_b,
         R10Config {
@@ -901,7 +876,7 @@ outer(positional z) = {\n\
 };\n\
 \n\
 bad = outer(42);\n";
-    let (e_info, _) = run_with_cfg(prog, R10Config::eager());
+    let (e_info, _) = run_expected(prog);
     let (d_ok, st_ok) = run_with_cfg(prog, R10Config::default());
     assert_eq!(st_ok.admitted, 2, "M63: both c0 calls admitted");
     assert_eq!(st_ok.forced, 2, "M63: both forwards forced");
@@ -947,7 +922,7 @@ multi(positional c: bool, positional f, positional a, positional b) = {\n\
   _ = a + 1;\n\
   r\n\
 };\n";
-    let (e_u, _) = run_with_cfg(src_union, R10Config::eager());
+    let (e_u, _) = run_expected(src_union);
     let (d_u, st_u) = run_with_cfg(src_union, R10Config::default());
     assert!(
         st_u.refused.get("#14").copied().unwrap_or(0) >= 1,
@@ -974,7 +949,7 @@ multi_tuple(positional f, positional a, positional b) = {\n\
   s = same(a, b);\n\
   (r, s)\n\
 };\n";
-    let (et, _) = run_with_cfg(src_tuple, R10Config::eager());
+    let (et, _) = run_expected(src_tuple);
     let (dt_ok, stt_ok) = run_with_cfg(src_tuple, R10Config::default());
     assert!(
         stt_ok.refused.get("#14").copied().unwrap_or(0) >= 1,
@@ -1026,7 +1001,7 @@ both(positional f, positional m1, positional m2) = {\n\
   s = same(m1, m2);\n\
   (a, b, s)\n\
 };\n";
-    let (e_info, _) = run_with_cfg(src, R10Config::eager());
+    let (e_info, _) = run_expected(src);
     let (d_info, d_stats) = run_with_cfg(src, R10Config::default());
     assert_eq!(d_stats.admitted, 2, "M56(c)(ii): both h0 calls admitted");
     assert_eq!(
@@ -1099,7 +1074,7 @@ fn r10_m31_split_memo_keeps_a_child_shared_with_a_queued_sibling() {
     let run = |no_split_memo| {
         set_next_config(R10Config {
             no_split_memo,
-            ..R10Config::eager()
+            ..R10Config::default()
         });
         let mut ck = Ck::new(&tables, |_, _, _| {});
         ck.info.sigs.insert(0, root.clone());
@@ -1127,26 +1102,19 @@ fn r10_m31_split_memo_matches_the_full_walk_on_a_diamond_program() {
                top(positional xs) = xs >< max;\n\
                i = top({0 -> 1});\n\
                f = top({0 -> 1.0});\n";
-    for d in [false, true] {
-        let base = if d {
-            R10Config::default()
-        } else {
-            R10Config::eager()
-        };
-        let (full_walk, _) = run_with_cfg(
-            src,
-            R10Config {
-                no_split_memo: true,
-                ..base.clone()
-            },
-        );
-        let (memo, _) = run_with_cfg(src, base);
-        assert!(
-            !full_walk.split_needs.is_empty(),
-            "the program splits `top`"
-        );
-        assert_eq!(memo.split_needs, full_walk.split_needs, "D {d}");
-    }
+    let (full_walk, _) = run_with_cfg(
+        src,
+        R10Config {
+            no_split_memo: true,
+            ..R10Config::default()
+        },
+    );
+    let (memo, _) = run_expected(src);
+    assert!(
+        !full_walk.split_needs.is_empty(),
+        "the program splits `top`"
+    );
+    assert_eq!(memo.split_needs, full_walk.split_needs);
 }
 
 /// Landing review B3 (Sol's `lambda-key*.zed`): two maps of one operand that differ only in
@@ -1162,7 +1130,7 @@ fn r10_m66_maps_differing_only_in_the_lambda_bit_agree_with_e() {
          (before, a.map(id), b)\n};\n",
     ] {
         let src = format!("{head}{tail}");
-        let (e, _) = run_with_cfg(&src, R10Config::eager());
+        let (e, _) = run_expected(&src);
         let (d, st) = run_with_cfg(&src, R10Config::default());
         assert_info_eq(&src, &e, &d);
         assert!(st.refused.contains_key("#7'"), "{src}: {:?}", st.refused);
@@ -1299,7 +1267,7 @@ fn r10_neon_round1_programs_agree_with_e() {
     ];
     let mut failed = Vec::new();
     for (name, src) in cases {
-        let (e, _) = run_with_cfg(src, R10Config::eager());
+        let (e, _) = run_expected(src);
         let (d, st) = run_with_cfg(src, R10Config::default());
         if let Err(why) = info_eq_full(name, &e, &d) {
             failed.push(format!(
@@ -1349,7 +1317,7 @@ fn r10_neon_b4_nested_lambdas_name_as_e() {
     let mut failed = Vec::new();
     for (name, body) in bodies {
         let src = format!("{h0}{body}");
-        let (e, _) = run_with_cfg(&src, R10Config::eager());
+        let (e, _) = run_expected(&src);
         let (d, st) = run_with_cfg(&src, R10Config::default());
         assert!(e.errors.is_empty(), "{name}: E errors {:?}", e.errors);
         assert!(st.admitted > 0, "{name}: no forward admitted");
@@ -1459,7 +1427,7 @@ fn r10_inherited_use_on_an_exit_reaches_the_next_level() {
                 wrap2(positional f, positional m) = wrap(f, m);\n";
     for callee in ["wrap2", "wrap", "pair"] {
         let src = format!("{head}{}", tail.replace('X', callee));
-        let (e, _) = run_with_cfg(&src, R10Config::eager());
+        let (e, _) = run_expected(&src);
         let (d, _) = run_with_cfg(&src, R10Config::default());
         assert!(!e.errors.is_empty(), "{callee}: E accepts\n{src}");
         assert_info_eq(&format!("inherited_exit_key_{callee}"), &e, &d);
@@ -1491,7 +1459,7 @@ fn r10_function_held_in_a_forward_block_counts_for_own_variables() {
     ];
     let mut failed = Vec::new();
     for (name, src) in bodies {
-        let (e, _) = run_with_cfg(src, R10Config::eager());
+        let (e, _) = run_expected(src);
         let (d, st) = run_with_cfg(src, R10Config::default());
         assert!(e.errors.is_empty(), "{name}: E errors {:?}", e.errors);
         assert!(st.admitted > 0, "{name}: no forward admitted");
@@ -1650,7 +1618,7 @@ fn r10_result_bound_to_an_arrow_parameter_keeps_the_flat_digest() {
     let src = "h0(positional f, positional m) = m.map(f);\n\
                g(positional f, positional m, positional spare) = {\n  a = m.map(f);\n  \
                b = h0(f, a);\n  (b, spare)\n};\n";
-    let (e, _) = run_with_cfg(src, R10Config::eager());
+    let (e, _) = run_expected(src);
     let (d, st) = run_with_cfg(src, R10Config::default());
     assert_eq!(st.kept_at_generalize, 1);
     assert_info_eq("before the substitution", &e, &d);
@@ -1847,7 +1815,7 @@ fn r10_function_with_own_variables_held_in_a_map_agrees_with_e() {
     let all = (cases.iter().map(|(n, s)| (*n, s.as_str(), false)))
         .chain(controls.iter().map(|(n, s)| (*n, *s, true)));
     for (name, src, control) in all {
-        let (e, _) = run_with_cfg(src, R10Config::eager());
+        let (e, _) = run_expected(src);
         let (d, st) = run_with_cfg(src, R10Config::default());
         assert!(e.errors.is_empty(), "{name}: E errors {:?}", e.errors);
         // Every case and control now keeps a forward: the refusal is gone for them.
@@ -2114,7 +2082,7 @@ fn r10_map_by_a_chain_function_agrees_with_e() {
     }
     let mut failed = Vec::new();
     for (name, src, refusal) in cases {
-        let (e, _) = run_with_cfg(src, R10Config::eager());
+        let (e, _) = run_expected(src);
         let (d, st) = run_with_cfg(src, R10Config::default());
         assert!(e.errors.is_empty(), "{name}: E errors {:?}", e.errors);
         if st.admitted == 0 {
@@ -2209,7 +2177,7 @@ fn r10_closed_sibling_lambdas_name_as_e_does() {
     ];
     let mut failed = Vec::new();
     for (name, src) in bodies {
-        let (e, _) = run_with_cfg(src, R10Config::eager());
+        let (e, _) = run_expected(src);
         let (d, _) = run_with_cfg(src, R10Config::default());
         assert!(e.errors.is_empty(), "{name}: E errors {:?}", e.errors);
         if let Err(why) = info_eq_full(name, &e, &d) {
@@ -2243,7 +2211,7 @@ fn r10_finished_names_never_take_a_run_name() {
         }
         out
     };
-    let (e, _) = run_with_cfg(src, R10Config::eager());
+    let (e, _) = run_expected(src);
     let (d, _) = run_with_cfg(src, R10Config::default());
     let (eo, dov) = (held_own(&e), held_own(&d));
     assert_eq!(eo.len(), dov.len(), "held functions E {eo:?} D {dov:?}");
@@ -2280,7 +2248,7 @@ fn chain2_siblings_src(n: usize) -> String {
 fn r10_chain2_siblings_name_as_e_does() {
     for n in 1..=4 {
         let src = chain2_siblings_src(n);
-        let (e, _) = run_with_cfg(&src, R10Config::eager());
+        let (e, _) = run_expected(&src);
         let (d, _) = run_with_cfg(&src, R10Config::default());
         assert!(e.errors.is_empty(), "n = {n}: E errors {:?}", e.errors);
         info_eq_full(&format!("chain2 siblings n = {n}"), &e, &d).unwrap();
@@ -2340,7 +2308,7 @@ fn r10_promoted_forward_results_are_own_variables() {
         out
     };
     for src in srcs {
-        let (e, _) = run_with_cfg(src, R10Config::eager());
+        let (e, _) = run_expected(src);
         let (d, _) = run_with_cfg(src, R10Config::default());
         assert!(e.errors.is_empty(), "E errors {:?}", e.errors);
         assert_eq!(own_vars(&e), own_vars(&d), "own variables\n{src}");
@@ -2415,7 +2383,7 @@ fn r10_forward_sweep_of_leaves_depths_and_siblings_agrees_with_e() {
         let mut kept = 0;
         let mut mismatches = Vec::new();
         for src in &srcs {
-            let (e, _) = run_with_cfg(src, R10Config::eager());
+            let (e, _) = run_expected(src);
             let (d, st) = run_with_cfg(src, cfg.clone());
             kept += usize::from(st.kept_at_generalize > 0);
             if let Err(why) = info_eq_full("forward sweep", &e, &d) {
@@ -2553,7 +2521,7 @@ fn landing4_bound_name_can_also_be_free_in_a_sibling() {
     use std::sync::Arc;
     use zedc_types::ty::Ty;
 
-    let (d, _) = run_with_cfg("id(positional x) = x;", R10Config::eager());
+    let (d, _) = run_expected("id(positional x) = x;");
     let bound = d.sigs.values().next().unwrap().clone();
     let v = bound.arrows[0].params[0].as_var().unwrap();
     assert!(bound.own.contains(v));
@@ -2674,7 +2642,7 @@ fn landing4_partial_application_of_a_kept_forward_agrees_with_e() {
     ];
     let mut failures = Vec::new();
     for (name, src) in cases {
-        let (e, _) = run_with_cfg(src, R10Config::eager());
+        let (e, _) = run_expected(src);
         let (d, st) = run_with_cfg(src, R10Config::default());
         if let Err(why) = info_eq_full(name, &e, &d) {
             failures.push(format!("{name} (admitted {}): {why}", st.admitted));
@@ -2755,7 +2723,7 @@ fn landing4_replace_closing_a_held_function_keeps_the_flat_digest() {
     use zedc_types::ty::{Binds, Carrier, Ty};
     let src = "h0(positional a, positional m) = m.map((x: int) -> a);\n\
                h1(positional a, positional m) = h0(a, m);\n";
-    let (e, _) = run_with_cfg(src, R10Config::eager());
+    let (e, _) = run_expected(src);
     let (d, _) = run_with_cfg(src, R10Config::default());
     assert_info_eq("closing_initial", &e, &d);
     let (&id, compact) =
@@ -2841,7 +2809,7 @@ fn landing5_need_replace_bypasses_signature_guard() {
     use zedc_types::ty::{Binds, Carrier, Ty};
     let src = "h0(positional a, positional m) = m.map((x: int) -> a);\n\
                h1(positional a, positional m) = h0(a, m);\n";
-    let (e, _) = run_with_cfg(src, R10Config::eager());
+    let (e, _) = run_expected(src);
     let (d, _) = run_with_cfg(src, R10Config::default());
     assert_info_eq("before direct need replacement", &e, &d);
     let (&id, compact) = d.sigs.iter().find(|(_, s)| s.has_fwd_needs()).unwrap();
@@ -2927,7 +2895,7 @@ fn landing5_need_map_tys_leaves_step_order_stale() {
 fn landing5_rename_hidden_result_inside_a_tuple() {
     use std::sync::Arc;
     use zedc_types::ty::{Binds, Ty};
-    let (e, _) = run_with_cfg(&chain_src(4, "f", false), R10Config::eager());
+    let (e, _) = run_expected(&chain_src(4, "f", false));
     let (d, _) = run_with_cfg(&chain_src(4, "f", false), R10Config::default());
     assert_info_eq("before tuple rename", &e, &d);
     let (id, compact, hidden) = sig_with_hidden(&d);
@@ -2956,7 +2924,7 @@ fn landing5_rename_hidden_result_inside_a_tuple() {
 #[test]
 fn landing5_bind_target_is_a_hidden_result() {
     use zedc_types::ty::{Binds, Ty};
-    let (e, _) = run_with_cfg(&chain_src(4, "f", false), R10Config::eager());
+    let (e, _) = run_expected(&chain_src(4, "f", false));
     let (d, _) = run_with_cfg(&chain_src(4, "f", false), R10Config::default());
     assert_info_eq("before binding to hidden result", &e, &d);
     let (id, compact, hidden) = sig_with_hidden(&d);
@@ -3005,7 +2973,7 @@ fn landing5_bind_target_is_a_hidden_result() {
 /// own names once, as a set; the compact one must hash as the flat one does.
 #[test]
 fn landing5_signature_intersection_counts_own_names_once() {
-    let (e, _) = run_with_cfg(&chain_src(4, "f", false), R10Config::eager());
+    let (e, _) = run_expected(&chain_src(4, "f", false));
     let (d, _) = run_with_cfg(&chain_src(4, "f", false), R10Config::default());
     assert_info_eq("before function intersection", &e, &d);
     let (&id, compact) = (d.sigs.iter())
@@ -3312,7 +3280,7 @@ fn landing5_partial_and_permuted_programs_agree_with_e() {
         ),
     ];
     for (name, src) in cases {
-        let (e, _) = run_with_cfg(src, R10Config::eager());
+        let (e, _) = run_expected(src);
         let (d, _) = run_with_cfg(src, R10Config::default());
         assert_info_eq(name, &e, &d);
     }
@@ -3418,7 +3386,7 @@ fn landing7_first_seen_decodes_a_shared_function_once() {
         src.push_str(&format!(
             "top(positional f, positional m) = (h{depth}, m.map(f));\n"
         ));
-        let (e, _) = run_with_cfg(&src, R10Config::eager());
+        let (e, _) = run_expected(&src);
         reset_fwd_decode_count();
         let (d, _) = run_with_cfg(&src, R10Config::default());
         let decodes = fwd_decode_count();
@@ -3798,7 +3766,7 @@ fn landing7_need_with_held_fns_leaves_the_callee() {
     use zedc_types::ty::{Carrier, SParam, Ty};
     let src = "h0(positional a, positional m) = m.map((x: int) -> a);\n\
                h1(positional a, positional m) = h0(a, m);\n";
-    let (e, _) = run_with_cfg(src, R10Config::eager());
+    let (e, _) = run_expected(src);
     let (d, _) = run_with_cfg(src, R10Config::default());
     let (&id, compact) = d.sigs.iter().find(|(_, s)| s.has_fwd_needs()).unwrap();
     let flat = &e.sigs[&id];
@@ -3844,7 +3812,7 @@ fn landing7_need_with_held_fns_leaves_the_callee() {
                k0(positional a, positional m, positional ms) = ms.map((y: int) -> h1(a, m));\n\
                k1(positional a, positional m, positional ms) = k0(a, m, ms);\n\
                k2(positional a, positional m, positional ms) = k1(a, m, ms);\n";
-    let (e, _) = run_with_cfg(src, R10Config::eager());
+    let (e, _) = run_expected(src);
     let (d, _) = run_with_cfg(src, R10Config::default());
     assert!(e.errors.is_empty(), "{:?}", e.errors);
     assert_info_eq("a lambda calling a chain in a leaf need", &e, &d);
@@ -3902,7 +3870,7 @@ fn landing6_need_replace_refuses_a_binding_that_must_decode() {
     use zedc_types::ty::{Binds, Carrier, Ty};
     let src = "h0(positional a, positional m) = m.map((x: int) -> a);\n\
                h1(positional a, positional m) = h0(a, m);\n";
-    let (e, _) = run_with_cfg(src, R10Config::eager());
+    let (e, _) = run_expected(src);
     let (d, _) = run_with_cfg(src, R10Config::default());
     let (&id, compact) = d.sigs.iter().find(|(_, s)| s.has_fwd_needs()).unwrap();
     let a = compact.arrows[0].params[0].as_var().unwrap().clone();
@@ -3949,7 +3917,7 @@ fn landing6_call_fixing_a_parameter_a_held_lambda_reads_agrees_with_e() {
     ];
     for (lib, call) in calls {
         let src = format!("{lib}{call}");
-        let (e, _) = run_with_cfg(&src, R10Config::eager());
+        let (e, _) = run_expected(&src);
         assert!(e.errors.is_empty(), "{src}\n{:?}", e.errors);
         let (d, stats) = run_with_cfg(&src, R10Config::default());
         assert!(stats.kept_at_generalize >= 1, "{src}: a forward is kept");
@@ -4131,7 +4099,7 @@ fn landing6_outer_variable_read_in_a_map_is_refused() {
                 \th1(positional m) = h0(m);\n\
                 \t(q2, r, r2, h1)\n\
                 };\n";
-    let (e, _) = run_with_cfg(read, R10Config::eager());
+    let (e, _) = run_expected(read);
     assert!(e.errors.is_empty(), "{:?}", e.errors);
     let (d, stats) = run_with_cfg(read, R10Config::default());
     assert_eq!(stats.kept_at_generalize, 0);
@@ -4145,7 +4113,7 @@ fn landing6_outer_variable_read_in_a_map_is_refused() {
     );
     assert_info_eq("outer variable read in a map", &e, &d);
     let control = read.replace("-> q)", "-> 1)");
-    let (e, _) = run_with_cfg(&control, R10Config::eager());
+    let (e, _) = run_expected(&control);
     let (d, stats) = run_with_cfg(&control, R10Config::default());
     assert!(stats.kept_at_generalize >= 1, "control keeps a forward");
     assert_info_eq("control", &e, &d);
@@ -4311,7 +4279,7 @@ fn landing7_first_seen_passes_over_a_forward_holding_nothing_wanted() {
                     false => format!("g{i}(positional f, positional m) = (m.map(f), h{i});\n"),
                 });
             }
-            let (e, _) = run_with_cfg(&src, R10Config::eager());
+            let (e, _) = run_expected(&src);
             assert!(e.errors.is_empty(), "{:?}", e.errors);
             reset_fwd_decode_count();
             let (d, _) = run_with_cfg(&src, R10Config::default());
@@ -4331,7 +4299,7 @@ fn landing7_first_seen_passes_over_a_forward_holding_nothing_wanted() {
 fn landing6_permuted_sig_owns_the_internal_results() {
     let src = chain_src(4, "f", false);
     let (d, _) = run_with_cfg(&src, R10Config::default());
-    let (e, _) = run_with_cfg(&src, R10Config::eager());
+    let (e, _) = run_expected(&src);
     // `grew`: the signatures whose compact own set lacks internal results the flat one has,
     // where taking the compact set would fail the first assertion.
     let mut grew = 0;
@@ -4394,7 +4362,7 @@ fn r10_rows_shared_at_40_levels_holding_side_sum_variables_agree_with_e() {
             doubled_src("m[0]", ("(", ")"), "m[t40]")
         ),
     ] {
-        let (e, _) = run_with_cfg(&src, R10Config::eager());
+        let (e, _) = run_expected(&src);
         let (d, _) = run_with_cfg(&src, R10Config::default());
         assert_info_eq(&src, &e, &d);
     }
@@ -4461,7 +4429,7 @@ fn chain_e1_a_top_value_holding_a_kept_forward_is_shown_as_e_shows_it() {
         "h1(positional m) = h0(m);\na = (h1, y -> (y, y));\n",
     ] {
         let src = format!("{head}{tail}");
-        let (e, _) = run_with_cfg(&src, R10Config::eager());
+        let (e, _) = run_expected(&src);
         assert!(e.errors.is_empty(), "{src}: {:?}", e.errors);
         let (d, _) = run_with_cfg(&src, R10Config::default());
         assert!(e.tops.contains_key("a"), "{src}: no top value `a`");
@@ -4486,7 +4454,7 @@ fn chain_e1_held_names_are_renamed_compared_and_listed_as_e_does() {
         "k(positional g: (y: T) -> T for T in int | f64) = 0;\nh0(positional m) = m.map(k);\nh1(positional m) = h0(m);\n",
     ];
     for src in progs {
-        let (e, _) = run_with_cfg(src, R10Config::eager());
+        let (e, _) = run_expected(src);
         let (d, _) = run_with_cfg(src, R10Config::default());
         assert!(e.errors.is_empty(), "{src}: {:?}", e.errors);
         assert_info_eq(src, &e, &d);
@@ -4516,7 +4484,7 @@ fn chain_e1_held_names_are_renamed_compared_and_listed_as_e_does() {
         }
     }
     let src = "k(positional g: (y: T) -> (z: T) -> T for T in int | f64) = 0;\nh0(positional m) = m.map(k);\nh1(positional m) = h0(m);\np(positional x) = (x, h1);\n";
-    let (e, _) = run_with_cfg(src, R10Config::eager());
+    let (e, _) = run_expected(src);
     let (d, _) = run_with_cfg(src, R10Config::default());
     assert!(e.errors.is_empty(), "{:?}", e.errors);
     assert_info_eq(src, &e, &d);

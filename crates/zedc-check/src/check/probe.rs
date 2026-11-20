@@ -1,5 +1,5 @@
-//! Counters for row FAIL-map-chain-step0 AND the sparse class store, M63 pending slots, and
-//! Round 10 fixed-D state (`R10State`, `R10Config`, `R10Stats`, `CalleeSummary`, `OpenForward`).
+//! The sparse class store, M63 pending slots, and the state of the forward needs of design D
+//! (`R10State`, `R10Config`, `R10Stats`, `CalleeSummary`, `OpenForward`).
 //!
 //! Kept as a leaf module (names no item of `check/mod.rs` or `check/walk.rs`) so `zedc-check`
 //! has no import cycle (`tests/steps/s_01f_import_graph`).
@@ -13,18 +13,7 @@ use std::sync::Arc;
 use zedc_syntax::lex::Span;
 use zedc_types::ty::{FwdVarStep, NeedKind, Sig, Ty};
 
-#[cfg(not(any(test, feature = "forward-probe")))]
-pub(super) use off::Classes;
-
-#[cfg(any(test, feature = "forward-probe"))]
-pub(super) use on::Classes;
-#[cfg(any(test, feature = "forward-probe"))]
-pub use on::last_report;
-
-#[cfg(any(test, feature = "forward-probe"))]
-mod hooks;
-#[cfg(test)]
-mod tests;
+pub(super) use store::Classes;
 
 // ===========================================================================
 // Round 10 Fixed-D Configuration, Statistics, Pending Slots & Forward State
@@ -51,7 +40,6 @@ pub enum PendingMode {
 /// Configuration for fixed-D and its negative controls.
 #[derive(Clone, Debug)]
 pub struct R10Config {
-    pub enabled: bool,
     pub store_mode: StoreMode,
     pub pending_mode: PendingMode,
     /// M66 control: force all kept forwards inside `generalize` (quadratic decode).
@@ -84,7 +72,6 @@ pub struct R10Config {
 impl Default for R10Config {
     fn default() -> Self {
         R10Config {
-            enabled: true,
             store_mode: StoreMode::SparseM62,
             pending_mode: PendingMode::SlotsM63,
             decode_in_generalize: false,
@@ -98,15 +85,6 @@ impl Default for R10Config {
             skip_barrier: None,
             drop_conds: HashSet::new(),
             skip_held_names: false,
-        }
-    }
-}
-
-impl R10Config {
-    pub fn eager() -> Self {
-        R10Config {
-            enabled: false,
-            ..R10Config::default()
         }
     }
 }
@@ -152,8 +130,10 @@ pub struct R10Stats {
 }
 
 // The configuration switches are for tests only (landing review B1): a production build has no
-// way to pick a negative control, and turns D off only through `ZED_DISABLE_D` (`env_config`).
-#[cfg(any(test, feature = "forward-probe"))]
+// way to pick a negative control. E, the eager checker D was compared with, is gone (author,
+// QUESTIONS A170: removed once PROOF-map-chain-d-skip-and-admit proved D gives no wrong answer);
+// the r10 tests check D against E's output, recorded as expected output (`r10_tests/expected.out`).
+#[cfg(test)]
 thread_local! {
     static NEXT_CONFIG: RefCell<Option<R10Config>> = const { RefCell::new(None) };
     static PERSISTENT_CONFIG: RefCell<Option<R10Config>> = const { RefCell::new(None) };
@@ -163,13 +143,13 @@ thread_local! {
     static LAST_STATS: RefCell<R10Stats> = RefCell::new(R10Stats::default());
 }
 
-#[cfg(any(test, feature = "forward-probe"))]
+#[cfg(test)]
 pub fn set_next_config(cfg: R10Config) {
     NEXT_CONFIG.with(|c| *c.borrow_mut() = Some(cfg));
 }
 
 /// The configuration a test set for the next check, or for every check on this thread.
-#[cfg(any(test, feature = "forward-probe"))]
+#[cfg(test)]
 fn set_config() -> Option<R10Config> {
     NEXT_CONFIG
         .with(|c| c.borrow_mut().take())
@@ -177,27 +157,12 @@ fn set_config() -> Option<R10Config> {
 }
 
 /// None: a production build takes no configuration from code.
-#[cfg(not(any(test, feature = "forward-probe")))]
+#[cfg(not(test))]
 fn set_config() -> Option<R10Config> {
     None
 }
 
-/// The configuration of a check that no test configured, in every build: E (`R10Config::eager`)
-/// when `disable_d` (the environment sets `ZED_DISABLE_D` to any value, also `0` or the empty
-/// string), D (`R10Config::default`) otherwise
-/// (author, QUESTIONS A170, 2026-11-19: D is the default; E is removed once row
-/// PROOF-map-chain-d-skip-and-admit proves D gives no wrong answer). A test built with
-/// `cfg(test)` takes the same default as a production build; a test that compares D with E
-/// sets each with `set_next_config`.
-fn env_config(disable_d: bool) -> R10Config {
-    if disable_d {
-        R10Config::eager()
-    } else {
-        R10Config::default()
-    }
-}
-
-#[cfg(any(test, feature = "forward-probe"))]
+#[cfg(test)]
 pub fn set_persistent_config(cfg: Option<R10Config>) {
     PERSISTENT_CONFIG.with(|c| *c.borrow_mut() = cfg);
 }
@@ -385,8 +350,7 @@ pub struct R10State {
 
 impl R10State {
     pub fn new_for_ck() -> Self {
-        let cfg =
-            set_config().unwrap_or_else(|| env_config(std::env::var_os("ZED_DISABLE_D").is_some()));
+        let cfg = set_config().unwrap_or_default();
         R10State {
             cfg,
             stats: R10Stats::default(),
@@ -422,7 +386,7 @@ impl R10State {
 
     #[inline]
     pub fn uses_sparse(&self) -> bool {
-        self.cfg.enabled && self.cfg.store_mode == StoreMode::SparseM62
+        self.cfg.store_mode == StoreMode::SparseM62
     }
 
     pub fn ensure_level(&mut self, level: usize) {
@@ -435,10 +399,8 @@ impl R10State {
     }
 
     pub fn on_class_pushed(&mut self, level: usize, id: usize) {
-        if self.cfg.enabled {
-            self.ensure_level(level);
-            self.pending_levels[level].push_class_o1(id);
-        }
+        self.ensure_level(level);
+        self.pending_levels[level].push_class_o1(id);
     }
 
     #[inline]
@@ -448,16 +410,16 @@ impl R10State {
 }
 
 // ===========================================================================
-// Release Sparse Store (when `probe` counters are compiled out)
+// Sparse Class Store (`M62`)
 // ===========================================================================
 
-#[cfg(not(any(test, feature = "forward-probe")))]
-mod off {
+mod store {
     use std::collections::HashMap;
     use std::ops::{Index, IndexMut};
 
-    /// Lean sparse class store for production builds: dense `Vec` when eager or before the first
-    /// reserved range, O(1) sparse `HashMap` for IDs above `dense.len()`.
+    /// Sparse class store: dense `Vec` before the first reserved range (and always under the
+    /// negative control `StoreMode::BrokenNoCounterAdvance`), O(1) sparse `HashMap` for IDs
+    /// above `dense.len()`.
     pub(in crate::check) struct Classes<C> {
         dense: Vec<C>,
         sparse: HashMap<usize, C>,
@@ -575,332 +537,6 @@ mod off {
             self.sparse.get_mut(&k).unwrap_or_else(|| {
                 panic!("M62 VIOLATION: premature write of unmaterialized internal class ${k}")
             })
-        }
-    }
-}
-
-// ===========================================================================
-// Test / Forward-Probe Store (supports both STEP0 eager probe and SparseM62)
-// ===========================================================================
-
-#[cfg(any(test, feature = "forward-probe"))]
-mod on {
-    use std::cell::RefCell;
-    use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
-    use std::io::Write;
-    use std::ops::{Index, IndexMut};
-    use std::panic::Location;
-
-    thread_local! {
-        static LAST: RefCell<String> = const { RefCell::new(String::new()) };
-    }
-
-    /// The report of the last `Ck` dropped on this thread.
-    pub fn last_report() -> String {
-        LAST.with(|l| l.borrow().clone())
-    }
-
-    /// What the store reads of a class: its parent, and the fields D says a forward never
-    /// writes on a class that existed at the call, each shown as text.
-    pub(in crate::check) trait Watched {
-        fn parent(&self) -> usize;
-        fn scalars(&self) -> Vec<(&'static str, String)>;
-    }
-
-    /// The classes, with the counters beside them AND sparse storage for `SparseM62`.
-    pub(in crate::check) struct Classes<C> {
-        pub(in crate::check::probe) v: Vec<C>,
-        pub(in crate::check::probe) sparse: HashMap<usize, C>,
-        pub(in crate::check::probe) logical_len: usize,
-        pub(in crate::check::probe) sparse_enabled: bool,
-        pub(in crate::check::probe) probe: RefCell<Probe>,
-    }
-
-    impl<C> Default for Classes<C> {
-        fn default() -> Self {
-            Classes {
-                v: Vec::new(),
-                sparse: HashMap::new(),
-                logical_len: 0,
-                sparse_enabled: false,
-                probe: RefCell::default(),
-            }
-        }
-    }
-
-    impl<C> Classes<C> {
-        pub fn enable_sparse(&mut self) {
-            self.sparse_enabled = true;
-        }
-
-        pub fn alloc_count(&self) -> usize {
-            self.v.len() + self.sparse.len()
-        }
-
-        pub fn reserve_ids_o1(&mut self, count: usize) -> usize {
-            let lo = self.logical_len;
-            self.logical_len += count;
-            lo
-        }
-
-        pub fn materialize_at(&mut self, id: usize, c: C) {
-            if id < self.v.len() {
-                self.v[id] = c;
-            } else if id == self.v.len() && self.sparse.is_empty() {
-                self.v.push(c);
-            } else {
-                self.sparse.insert(id, c);
-            }
-            if id >= self.logical_len {
-                self.logical_len = id + 1;
-            }
-        }
-
-        pub fn is_materialized(&self, k: usize) -> bool {
-            if !self.sparse_enabled {
-                return k < self.v.len();
-            }
-            k < self.v.len() || self.sparse.contains_key(&k)
-        }
-
-        /// The ids of the classes that have a record, in increasing order (see the copy of
-        /// this store without the probe).
-        pub fn materialized_ids(&self) -> Vec<usize> {
-            let mut ids: Vec<usize> = (0..self.v.len()).collect();
-            let mut rest: Vec<usize> = self.sparse.keys().copied().collect();
-            rest.sort_unstable();
-            ids.extend(rest);
-            ids
-        }
-
-        /// A named event at class `k`, for each open forward that watches it.
-        pub fn event(&mut self, k: usize, what: &'static str) {
-            if !self.sparse_enabled {
-                self.probe.get_mut().event(k, what);
-            }
-        }
-    }
-
-    impl<C: Watched> Classes<C> {
-        pub fn len(&self) -> usize {
-            if self.sparse_enabled {
-                self.logical_len
-            } else {
-                self.v.len()
-            }
-        }
-
-        pub fn push(&mut self, c: C) {
-            if !self.sparse_enabled {
-                self.v.push(c);
-                self.logical_len = self.v.len();
-                return;
-            }
-            let id = self.logical_len;
-            self.logical_len += 1;
-            if id == self.v.len() {
-                self.v.push(c);
-            } else {
-                self.sparse.insert(id, c);
-            }
-        }
-
-        /// The root of `k` by the parents, without counting the reads.
-        pub(in crate::check::probe) fn raw_find(&self, mut k: usize) -> usize {
-            loop {
-                let p = if k < self.v.len() {
-                    self.v[k].parent()
-                } else {
-                    self.sparse[&k].parent()
-                };
-                if p == k {
-                    return k;
-                }
-                k = p;
-            }
-        }
-    }
-
-    impl<C: Watched> Index<usize> for Classes<C> {
-        type Output = C;
-        #[track_caller]
-        fn index(&self, k: usize) -> &C {
-            if !self.sparse_enabled {
-                self.probe.borrow_mut().hit(k, Location::caller());
-                return &self.v[k];
-            }
-            if k < self.v.len() {
-                return &self.v[k];
-            }
-            self.sparse.get(&k).unwrap_or_else(|| {
-                let loc = Location::caller();
-                panic!(
-                    "M62 VIOLATION: premature read of unmaterialized internal class ${k} at {}:{}",
-                    loc.file(),
-                    loc.line()
-                )
-            })
-        }
-    }
-
-    impl<C: Watched> IndexMut<usize> for Classes<C> {
-        #[track_caller]
-        fn index_mut(&mut self, k: usize) -> &mut C {
-            if !self.sparse_enabled {
-                let p = self.probe.get_mut();
-                p.hit(k, Location::caller());
-                if p.recording > 0 && k < p.rec_lo && !p.snaps.contains_key(&k) {
-                    p.snaps.insert(k, self.v[k].scalars());
-                }
-                return &mut self.v[k];
-            }
-            if k < self.v.len() {
-                return &mut self.v[k];
-            }
-            self.sparse.get_mut(&k).unwrap_or_else(|| {
-                let loc = Location::caller();
-                panic!(
-                    "M62 VIOLATION: premature write of unmaterialized internal class ${k} at {}:{}",
-                    loc.file(),
-                    loc.line()
-                )
-            })
-        }
-    }
-
-    impl<C> Drop for Classes<C> {
-        fn drop(&mut self) {
-            // The counts are of the eager path (E) only; D is the default, so a run that
-            // writes them to `ZED_FORWARD_PROBE` sets `ZED_DISABLE_D=1` (landing review
-            // round 8, Gemini).
-            if self.sparse_enabled {
-                return;
-            }
-            let text = self.probe.get_mut().report();
-            if let Ok(path) = std::env::var("ZED_FORWARD_PROBE") {
-                let who = std::thread::current().name().unwrap_or("-").to_string();
-                let mut out = String::new();
-                for line in text.lines() {
-                    out.push_str(&format!("{who}\t{line}\n"));
-                }
-                if let Ok(mut f) = std::fs::OpenOptions::new()
-                    .create(true)
-                    .append(true)
-                    .open(path)
-                {
-                    let _ = f.write_all(out.as_bytes());
-                }
-            }
-            LAST.with(|l| *l.borrow_mut() = text);
-        }
-    }
-
-    pub(in crate::check::probe) type Site = (char, &'static str, u32);
-
-    pub(in crate::check::probe) struct Fwd {
-        pub call: String,
-        pub level: usize,
-        pub size: usize,
-        pub lo: usize,
-        pub hi: usize,
-        pub keys: HashMap<usize, HashSet<u64>>,
-        pub watched: BTreeSet<usize>,
-        pub sites: Vec<Site>,
-        pub seen: HashSet<Site>,
-        pub end: Option<&'static str>,
-    }
-
-    #[derive(Default)]
-    pub(in crate::check::probe) struct Probe {
-        pub recording: usize,
-        pub rec_lo: usize,
-        pub snaps: HashMap<usize, Vec<(&'static str, String)>>,
-        pub keys: Vec<(usize, u64)>,
-        pub fwds: Vec<Fwd>,
-        pub internal: HashMap<usize, Vec<usize>>,
-        pub roots: HashMap<usize, Vec<usize>>,
-        pub admit: BTreeMap<String, u64>,
-        pub scalar: BTreeMap<&'static str, u64>,
-        pub same_use: u64,
-        pub errors: u64,
-    }
-
-    impl Probe {
-        fn watchers(&self, k: usize) -> Vec<(char, usize)> {
-            let mut out = Vec::new();
-            if let Some(fs) = self.internal.get(&k) {
-                out.extend(fs.iter().map(|&f| ('I', f)));
-            }
-            if let Some(fs) = self.roots.get(&k) {
-                out.extend(fs.iter().map(|&f| ('W', f)));
-            }
-            out.retain(|&(_, f)| self.fwds[f].end.is_none());
-            out
-        }
-
-        pub fn add(&mut self, f: usize, site: Site) {
-            let fwd = &mut self.fwds[f];
-            if fwd.seen.insert(site) {
-                fwd.sites.push(site);
-            }
-        }
-
-        fn hit(&mut self, k: usize, at: &'static Location<'static>) {
-            if self.recording > 0 || self.fwds.is_empty() {
-                return;
-            }
-            let file = at.file().rsplit('/').next().unwrap_or(at.file());
-            for (tag, f) in self.watchers(k) {
-                let tag = match tag == 'W' && self.fwds[f].keys.contains_key(&k) {
-                    true => 'R',
-                    false => tag,
-                };
-                self.add(f, (tag, file, at.line()));
-            }
-        }
-
-        pub fn event(&mut self, k: usize, what: &'static str) {
-            if self.recording > 0 {
-                return;
-            }
-            for (_, f) in self.watchers(k) {
-                self.add(f, ('E', what, 0));
-            }
-        }
-
-        fn report(&mut self) -> String {
-            let mut s = String::new();
-            let admit: Vec<String> = (self.admit.iter())
-                .map(|(k, n)| format!("{k}={n}"))
-                .collect();
-            s.push_str(&format!("A {}\n", admit.join(" ")));
-            let scalar: Vec<String> = (self.scalar.iter())
-                .map(|(k, n)| format!("{k}={n}"))
-                .collect();
-            s.push_str(&format!(
-                "S scalar[{}] same_use={} errors={}\n",
-                scalar.join(" "),
-                self.same_use,
-                self.errors
-            ));
-            for f in &self.fwds {
-                let sites: Vec<String> = (f.sites.iter())
-                    .map(|(t, file, line)| match t {
-                        'E' => format!("E:{file}"),
-                        _ => format!("{t}:{file}:{line}"),
-                    })
-                    .collect();
-                s.push_str(&format!(
-                    "F call={} level={} size={} internal={} end={} sites={}\n",
-                    f.call,
-                    f.level,
-                    f.size,
-                    f.hi - f.lo,
-                    f.end.unwrap_or("open"),
-                    sites.join(";")
-                ));
-            }
-            s
         }
     }
 }
