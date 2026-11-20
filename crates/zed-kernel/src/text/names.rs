@@ -63,11 +63,11 @@
 
 use hashbrown::HashTable;
 use hashbrown::hash_table::Entry;
-use rustc_hash::{FxBuildHasher, FxHashMap, FxHashSet};
 use std::hash::BuildHasher;
 use std::sync::Arc;
 
 use super::tree::{Text, Tree};
+use crate::digest::{DigestMap, DigestSet, TextState};
 use crate::machine_int::BitLen;
 
 /// How many symbols to the left a block start reads.
@@ -188,21 +188,26 @@ struct Long<'a> {
 // first meeting, not by bytes. Nothing is refused. Tests `names_are_equal_exactly_when_bytes_are`,
 // `doubled_texts_of_2_to_40_bytes_are_named`, `naming_n_and_8n_nodes`.
 //
-// The tables hash with FxHash, not the standard SipHash: their keys are the dictionary's own
-// numbers and rules, and addresses of nodes, never chosen by an adversary to collide in a table
-// (the canonical parse reads labels, never these hashes), and SipHash was a fifth of the work of
-// a flat string (row PERF-canon-flat-strings). Each rule is kept once, in `rules`, and the table
-// that finds it holds its place there, a word, where a map from rules to numbers held the rule
-// again in each 64-byte slot.
+// The tables do not hash with the standard SipHash, which was a fifth of the work of a flat
+// string (row PERF-canon-flat-strings). The memo of nodes is keyed by addresses and the held
+// labels by the given content hash, so both take the unseeded `Digest`. A rule of level 0 is a
+// block of the text's own bytes, which a program chooses, so the table of rules takes the
+// seeded `TextState`, one seed per dictionary (it was FxHash, with no seed, which let a text
+// choose blocks that share a slot; DRY-sorted-structures-2 job 3). The canonical parse reads
+// labels, never these hashes, so no seed reaches a name. Each rule is kept once, in `rules`,
+// and the table that finds it holds its place there, a word, where a map from rules to numbers
+// held the rule again in each 64-byte slot.
 #[derive(Default)]
 pub struct Names {
     /// The rule of each number from [`FIRST_RULE`] on, in order.
     rules: Vec<Rule>,
-    /// The places in `rules`, found by the FxHash of the rule.
+    /// The places in `rules`, found by the hash of the rule by `text`.
     find: HashTable<usize>,
+    /// The hasher of `find`, seeded at random for each dictionary.
+    text: TextState,
     // The address of a node's tree, kept alive by the `Text` beside it, names the node for
     // identity only, never for order.
-    memo: FxHashMap<usize, (Text, Option<Arc<Sum>>)>,
+    memo: DigestMap<usize, (Text, Option<Arc<Sum>>)>,
     /// The labels the parse reads, in a dictionary made by [`Names::canonical`].
     labels: Option<Labels>,
 }
@@ -213,7 +218,7 @@ struct Labels {
     /// The label of each number from [`FIRST_RULE`] on, in order.
     of: Vec<u128>,
     /// The hashed labels given so far.
-    held: FxHashSet<u128>,
+    held: DigestSet<u128>,
     /// Whether a rule got its number as its label, its hash being held by another.
     collided: bool,
 }
@@ -370,7 +375,7 @@ impl Names {
             labels: Some(Labels {
                 hash,
                 of: Vec::new(),
-                held: FxHashSet::default(),
+                held: DigestSet::default(),
                 collided: false,
             }),
             ..Self::default()
@@ -454,11 +459,11 @@ impl Names {
     /// canonical dictionary gets its label here, once: its hash, or its number when another
     /// rule holds that hash (the module's comment).
     fn rule(&mut self, rule: Rule) -> u64 {
-        let rules = &self.rules;
+        let (rules, text) = (&self.rules, &self.text);
         let place = match self.find.entry(
-            FxBuildHasher.hash_one(rule),
+            text.hash_one(rule),
             |&i| rules[i] == rule,
-            |&i| FxBuildHasher.hash_one(rules[i]),
+            |&i| text.hash_one(rules[i]),
         ) {
             Entry::Occupied(e) => return FIRST_RULE + *e.get() as u64,
             Entry::Vacant(e) => {
@@ -485,9 +490,8 @@ impl Names {
 
     /// Room for `more` new rules in each table that holds one entry per rule.
     fn reserve(&mut self, more: usize) {
-        let rules = &self.rules;
-        self.find
-            .reserve(more, |&i| FxBuildHasher.hash_one(rules[i]));
+        let (rules, text) = (&self.rules, &self.text);
+        self.find.reserve(more, |&i| text.hash_one(rules[i]));
         self.rules.reserve(more);
         if let Some(l) = &mut self.labels {
             l.of.reserve(more);

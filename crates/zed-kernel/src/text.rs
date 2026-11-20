@@ -1343,9 +1343,9 @@ mod tests {
 
     #[test]
     fn equal_texts_hash_alike_however_joined() {
-        use std::hash::{BuildHasher, BuildHasherDefault, DefaultHasher};
+        use std::hash::DefaultHasher;
         let hash = |t: &dyn Fn(&mut DefaultHasher)| {
-            let mut h = BuildHasherDefault::<DefaultHasher>::default().build_hasher();
+            let mut h = crate::digest::fixed_hasher();
             t(&mut h);
             h.finish()
         };
@@ -1397,7 +1397,7 @@ mod tests {
         // full: a read walks the blocks and keeps nothing, so all the reads together allocate
         // only each walk's stack, never the text (COMPLEXITY.md R5, C29). A read that wrote
         // the text out, kept or not, would allocate `n²/2` lines.
-        use std::hash::{BuildHasher, BuildHasherDefault, DefaultHasher};
+        use std::hash::BuildHasher;
         use std::io::Write;
         let line = long('l');
         let n = 500;
@@ -1409,7 +1409,7 @@ mod tests {
             })
             .collect();
         let mut sink = std::io::sink();
-        let hasher = BuildHasherDefault::<DefaultHasher>::default();
+        let hasher = crate::digest::FixedState::default();
         let before = zed_alloc_count::allocated();
         for t in &held {
             write!(sink, "{t}").unwrap();
@@ -1604,7 +1604,7 @@ mod tests {
     fn a_compare_of_two_blocks_allocates_nothing() {
         // Two texts each held as one block compare, test equal and hash with no allocation,
         // the empty text too; a block against a tree allocates the tree's stack only.
-        use std::hash::{BuildHasher, BuildHasherDefault, DefaultHasher};
+        use std::hash::BuildHasher;
         let (a, b, c, e, f) = (
             long('a'),
             Text::from("a".repeat(PIECE)),
@@ -1612,7 +1612,7 @@ mod tests {
             Text::from(""),
             Text::from(""),
         );
-        let hasher = BuildHasherDefault::<DefaultHasher>::default();
+        let hasher = crate::digest::FixedState::default();
         let before = zed_alloc_count::allocated();
         for _ in 0..100 {
             assert_eq!(std::hint::black_box(&a).cmp(&b), Ordering::Equal);

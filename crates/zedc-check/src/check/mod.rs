@@ -15679,8 +15679,7 @@ mod tests {
     /// Its hash, which is read from the digests of its rows, so two types nested deep are
     /// compared without walking them.
     fn digest(t: &Ty) -> u64 {
-        use std::hash::{BuildHasher, BuildHasherDefault, DefaultHasher};
-        BuildHasherDefault::<DefaultHasher>::default().hash_one(t)
+        zed_kernel::digest::fixed_hash(t)
     }
 
     /// `one_shape_per_length` at small sizes, each case of its walk: a type with no tuple is

@@ -15,7 +15,7 @@ use std::sync::Arc;
 
 use imbl::shared_ptr::DefaultSharedPtr;
 use imbl::{GenericHashMap, OrdMap, OrdSet};
-use rustc_hash::FxBuildHasher;
+use zed_kernel::digest::{Digest, TextState};
 
 use super::presburger::{Atom, Con, Factor, Formula, Id, Lin, Model, Rel, Shared};
 use zedc_int::int::Int;
@@ -211,15 +211,18 @@ type NamePair = (Arc<str>, Arc<str>);
 // on a match, O(1) expected a lookup. Correct only where no code reads the map's order:
 // every use of these fields is `get`, `get_mut`, `contains_key`, `insert`, `remove`,
 // `entry` or a sum over `values` (checked by reading each use, PERF-satellite-lookup-hash);
-// the maps inside them stay `OrdMap`, since their keys are read in order. The hasher is
-// fixed (`FxBuildHasher`), so a run does not depend on a random seed. Only the maps read far
+// the maps inside them stay `OrdMap`, since their keys are read in order. The keys are a
+// program's names, so the hasher is the seeded `TextState` (DRY-sorted-structures-2 job 3; it
+// was `FxBuildHasher`, with no seed, which let a program choose names that share a slot):
+// equality, union and lookup of two such maps read keys, never the layout, so each map may
+// draw its own seed, and no result reads the order. Only the maps read far
 // more often than written are hashed: a write to a shared hash map copies a node of up to 32
 // entries, where an `OrdMap` copies a leaf of a few, so hashing `whys`, `ties`, `near` and
 // the `Uses` maps as well lowered the satellite bench to 0.805 of the instructions but raised
 // the chain and ladder benches of linked/bench.rs by up to 1.062 in instructions and 1.151
 // in bytes; with these four alone the satellite bench is 0.980 and no measured bench rose.
 // COMPLEXITY.md row PERF-satellite-lookup-hash.
-type ByName<V> = GenericHashMap<Arc<str>, V, FxBuildHasher, DefaultSharedPtr>;
+type ByName<V> = GenericHashMap<Arc<str>, V, TextState, DefaultSharedPtr>;
 
 /// The class of a star of two hubs or more ([`Conjuncts::star`]): its conjuncts with the leaf
 /// written [`LEAF`], in order. Two stars of one class have the same hubs and the same
@@ -2048,11 +2051,12 @@ pub struct Blocks {
     // comparison, which a key held at the same address answers by its pointer, so O(1)
     // expected a lookup; merged-away block ids are resolved lazily through `uf`, avoiding
     // rewriting `of` for every moved conjunct during `Blocks::merge`. This map is only read
-    // by key, never in order, so no order is lost; its hasher is fixed (`FxBuildHasher` over
-    // the formula's own fixed hash), so a run does not depend on a random seed. Test
+    // by key, never in order, so no order is lost; its hasher is the seeded `TextState` over
+    // the formula's own hash, since a formula holds a program's names (it was `FxBuildHasher`,
+    // with no seed; DRY-sorted-structures-2 job 3). Test
     // `l01_39_scope_relations::xst::s4::a_chain_raise_in_reverse_narrows_in_near_linear_time`;
     // COMPLEXITY.md row ST-chain-raise-reverse-log, PERF-satellite-random-under9-redesign.
-    of: GenericHashMap<Arc<Formula>, BlockId, FxBuildHasher, DefaultSharedPtr>,
+    of: GenericHashMap<Arc<Formula>, BlockId, TextState, DefaultSharedPtr>,
     /// Persistent union-find over merged-away block ids (union by rank with root live id;
     /// path compression on `&mut self` reads): resolves stale block ids stored in `of`, `up`,
     /// and `moving_at` in `O(1)` when unmerged and `<= log₂ n` HAMT hops worst-case
@@ -2065,7 +2069,8 @@ pub struct Blocks {
     // Tradeoff: readers of merged blocks pay `uf` resolution hops (`<= log₂ n` worst-case on
     // branched immutable reads; `O(alpha(n))` amortized on linear `&mut self` walks).
     // Tarjan, JACM 22(2), 1975. COMPLEXITY.md row PERF-satellite-random-under9-redesign.
-    uf: GenericHashMap<BlockId, UfNode, FxBuildHasher, DefaultSharedPtr>,
+    // Keyed by block numbers the compiler drew, so the unseeded `Digest`.
+    uf: GenericHashMap<BlockId, UfNode, std::hash::BuildHasherDefault<Digest>, DefaultSharedPtr>,
     /// Each block's conjuncts.
     members: OrdMap<BlockId, OrdSet<Arc<Formula>>>,
     /// Each node's parent in its tree (a name's parent block may be a merged-away id resolved

@@ -198,35 +198,12 @@ struct Node {
 /// The base of the content hash, below the modulus `P = 2^61 - 1` ([`zed_numtheory::m61`]).
 const R: u64 = 0x0b4f_7e1d_9a35_c2e7 % P;
 
-/// A hasher with fixed keys, so that a set's content hash is the same in every run.
-struct FixedHasher(u64);
-
-impl std::hash::Hasher for FixedHasher {
-    fn write(&mut self, bytes: &[u8]) {
-        for &b in bytes {
-            self.write_u64(u64::from(b));
-        }
-    }
-    fn write_u64(&mut self, v: u64) {
-        self.0 = (self.0 ^ v)
-            .wrapping_mul(0x9e37_79b9_7f4a_7c15)
-            .rotate_left(29);
-    }
-    fn write_i64(&mut self, v: i64) {
-        self.write_u64(v as u64);
-    }
-    fn finish(&self) -> u64 {
-        let x = self.0 ^ (self.0 >> 31);
-        x.wrapping_mul(0xbf58_476d_1ce4_e5b9) ^ (x >> 29)
-    }
-}
-
-/// The hash of one piece, below `P`.
+/// The hash of one piece, below `P`: by the kernel's unseeded [`zed_kernel::digest::Digest`], so
+/// that a set's content hash is the same in every run (DRY-sorted-structures-2, job 3, which
+/// removed the fixed-key hasher this module kept alone; `Digest` takes bytes eight at a time
+/// where it took them one at a time).
 fn piece_hash(piece: &(End, End)) -> u64 {
-    use std::hash::{Hash, Hasher};
-    let mut h = FixedHasher(0x2545_f491_4f6c_dd1d);
-    piece.hash(&mut h);
-    h.finish() % P
+    zed_kernel::digest::digest_hash(piece) % P
 }
 
 /// The integers missing between the upper end `a` of one piece and the lower end `b` of the
@@ -2277,12 +2254,7 @@ mod tests {
     /// count alone never decide equality.
     #[test]
     fn equal_sets_built_differently_hash_alike() {
-        use std::hash::{DefaultHasher, Hash, Hasher};
-        let hash = |s: &IntervalSet| {
-            let mut h = DefaultHasher::new();
-            s.hash(&mut h);
-            h.finish()
-        };
+        let hash = |s: &IntervalSet| zed_kernel::digest::fixed_hash(s);
         let (mut rng, _) = Rng::fresh("equal_sets_built_differently_hash_alike");
         for _ in 0..500 {
             let (a, b) = (random_set(&mut rng, 12, 40), random_set(&mut rng, 12, 40));

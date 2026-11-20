@@ -1166,7 +1166,6 @@ fn r10_m66_maps_differing_only_in_the_lambda_bit_agree_with_e() {
 /// with the cached digest summary cleared are equal, so they hash alike.
 #[test]
 fn r10_equal_forwards_hash_alike_with_or_without_the_digest_summary() {
-    use std::hash::{DefaultHasher, Hash, Hasher};
     let (d, st) = run_with_cfg(&chain_src(3, "f", false), R10Config::default());
     assert_eq!(st.admitted, 2);
     let fwd = d
@@ -1181,11 +1180,7 @@ fn r10_equal_forwards_hash_alike_with_or_without_the_digest_summary() {
     assert!(fwd.digest_summary.is_some());
     let mut without_summary = (**fwd).clone();
     without_summary.digest_summary = None;
-    let hash = |value: &zedc_types::ty::FwdNeed| {
-        let mut h = DefaultHasher::new();
-        value.hash(&mut h);
-        h.finish()
-    };
+    let hash = |value: &zedc_types::ty::FwdNeed| zed_kernel::digest::fixed_hash(value);
     assert_eq!(**fwd, without_summary);
     assert_eq!(hash(fwd), hash(&without_summary));
 }

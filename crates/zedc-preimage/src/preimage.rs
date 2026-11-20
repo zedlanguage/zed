@@ -13986,7 +13986,7 @@ mod tests {
 
     fn made_key<K: Hash, V>(table: Table<K, V>, k: &K) -> u64 {
         use std::hash::Hasher;
-        let mut h = std::hash::DefaultHasher::new();
+        let mut h = zed_kernel::digest::fixed_hasher();
         (table as usize).hash(&mut h);
         k.hash(&mut h);
         h.finish()

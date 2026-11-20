@@ -21,7 +21,7 @@
 use std::cmp::Ordering;
 use std::collections::{BTreeSet, HashMap, HashSet};
 use std::fmt;
-use std::hash::{DefaultHasher, Hash, Hasher};
+use std::hash::{Hash, Hasher};
 use std::mem;
 use std::slice;
 
@@ -671,7 +671,7 @@ impl Formula {
     /// of its own parts.
     fn sig_of(&self, parts: impl Iterator<Item = Sig>) -> Sig {
         // A fixed hasher, so that the number of a formula does not change between runs.
-        let mut h = DefaultHasher::new();
+        let mut h = zed_kernel::digest::fixed_hasher();
         let rank = self.rank();
         h.write_u8(rank);
         let (mut seq, mut pow) = (0u64, 1u64);

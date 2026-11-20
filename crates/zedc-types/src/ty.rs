@@ -73,9 +73,14 @@ pub struct VarSet {
 }
 
 /// The hash of the name `v`, a term of [`VarSet`]'s digest.
+// Fixed, not seeded, though a name is the program's text (DRY-sorted-structures-2, job 3): the
+// digests of names, rows, shapes and bindings are what a type hashes to, so a seed would change
+// from run to run the order of every map keyed by types and the rows a check rebuilds
+// (`VarBits`), and checking is deterministic. Equal digests are always confirmed by comparing
+// the values, so a collision costs time, never a wrong result; plan row
+// HASH-type-digests-seeded weighs a seed against that order.
 fn name_digest(v: &str) -> u64 {
-    use std::hash::{BuildHasher, BuildHasherDefault, DefaultHasher};
-    BuildHasherDefault::<DefaultHasher>::default().hash_one(v)
+    zed_kernel::digest::fixed_hash(v)
 }
 
 impl VarSet {
@@ -231,8 +236,7 @@ struct MembersData<T: Clone + std::hash::Hash + Eq> {
 /// The hash of a member of a [`Members`], a term of its digest: a row and a signature hash the
 /// digest they keep, so O(1).
 fn member_digest<T: std::hash::Hash>(x: &T) -> u64 {
-    use std::hash::{BuildHasher, BuildHasherDefault, DefaultHasher};
-    BuildHasherDefault::<DefaultHasher>::default().hash_one(x)
+    zed_kernel::digest::fixed_hash(x)
 }
 
 impl<T: Clone + std::hash::Hash + Eq> Members<T> {
@@ -567,8 +571,7 @@ impl Row {
     /// FIX-functions-in-tuples (26f8d7d35) took it out of the tuple step no input made one;
     /// it and the facts it set were removed by TEST-types-unreached-paths-3.)
     pub fn new(cs: Vec<Ty>) -> Row {
-        use std::hash::{BuildHasher, BuildHasherDefault, DefaultHasher};
-        let digest = BuildHasherDefault::<DefaultHasher>::default().hash_one(&cs);
+        let digest = zed_kernel::digest::fixed_hash(&cs);
         // Each component's rows and payload shapes keep what they hold at any depth, so this
         // reads the components' outer levels.
         let open = cs.iter().any(|c| !c.closed());
@@ -901,7 +904,10 @@ struct Same<'a> {
     /// first node recorded costs one allocation. Every key is the address of a row, shape or
     /// function reachable from the two operands `==` borrows, so none is freed while the table
     /// lives, and the table is only read by key, never iterated.
-    ids: HashMap<*const (), (*const (), usize), std::hash::BuildHasherDefault<AddressHasher>>,
+    /// Hashed by the kernel's [`zed_kernel::digest::Digest`], the hasher of ids and addresses:
+    /// the keys are addresses the allocator chose, never a program's text, so it needs no seed
+    /// (DRY-sorted-structures-2, job 3, which removed the folded multiply this table had alone).
+    ids: zed_kernel::digest::DigestMap<*const (), (*const (), usize)>,
     /// The functions the rows and shapes on the path to the pair now compared keep as held or
     /// unchecked, on the left and on the right ([`Same::shared_sigs`]).
     above: [Above; 2],
@@ -1270,29 +1276,6 @@ impl Above {
         } else {
             0
         }
-    }
-}
-
-/// The hasher of [`Same`]'s table of nodes by address: one folded multiply of the address. Its
-/// keys are addresses the allocator chose, never a program's text, so it needs no seed; text
-/// goes to [`zed_kernel::digest::TextState`].
-#[derive(Default)]
-struct AddressHasher(u64);
-
-impl std::hash::Hasher for AddressHasher {
-    fn write(&mut self, bytes: &[u8]) {
-        for &b in bytes {
-            self.write_usize(usize::from(b));
-        }
-    }
-
-    fn write_usize(&mut self, x: usize) {
-        let p = u128::from(self.0 ^ x as u64) * 0x9e37_79b9_7f4a_7c15;
-        self.0 = (p as u64) ^ ((p >> 64) as u64);
-    }
-
-    fn finish(&self) -> u64 {
-        self.0
     }
 }
 
@@ -1925,8 +1908,7 @@ impl Shape {
     /// What it keeps of its components and fields is read from their outer levels, and from
     /// what their rows and shapes keep, so it costs the size of their outer levels.
     pub fn new(items: Vec<Ty>, fields: BTreeMap<Arc<str>, Ty>) -> Shape {
-        use std::hash::{BuildHasher, BuildHasherDefault, DefaultHasher};
-        let digest = BuildHasherDefault::<DefaultHasher>::default().hash_one((&items, &fields));
+        let digest = zed_kernel::digest::fixed_hash(&(&items, &fields));
         let cs = || items.iter().chain(fields.values());
         let open = cs().any(|c| !c.closed());
         let dynamic = cs().any(Ty::holds_unknown);
@@ -2773,7 +2755,7 @@ impl RunRenames {
         // Order-free: the sum of the entries' hashes.
         let digest = (map.iter())
             .map(|(k, runs)| {
-                let mut h = std::hash::DefaultHasher::new();
+                let mut h = zed_kernel::digest::fixed_hasher();
                 k.hash(&mut h);
                 for r in runs {
                     (r.start_n, r.count, Arc::as_ptr(&r.skip) as usize).hash(&mut h);
@@ -4267,7 +4249,7 @@ impl VarFacts {
 
 /// The variables a walk of [`VarFacts`] has added, each with whether it went to the classes.
 // Hashed by the seeded text hasher (DRY-sorted-structures, D5): the names are the program's
-// text, which the unseeded `AddressHasher` let a program choose to collide. Only looked up, so
+// text, which the unseeded address hasher it had before let a program choose to collide. Only looked up, so
 // the seed's change of order from run to run reaches no result.
 type Added<'a> = zed_kernel::digest::TextSet<(bool, &'a str)>;
 
@@ -4329,7 +4311,6 @@ impl Default for VarBits {
 impl VarBits {
     /// The bit of the variable `v`.
     fn of_var(v: &str) -> VarBits {
-        use std::hash::{BuildHasher, BuildHasherDefault, DefaultHasher};
         match class_id(v) {
             Some(k) => VarBits {
                 lo: k,
@@ -4338,7 +4319,7 @@ impl VarBits {
                 ..VarBits::default()
             },
             None => VarBits {
-                names: 1 << (BuildHasherDefault::<DefaultHasher>::default().hash_one(v) % 64),
+                names: 1 << (zed_kernel::digest::fixed_hash(v) % 64),
                 ..VarBits::default()
             },
         }
@@ -6910,8 +6891,7 @@ pub struct Binds {
 /// not a hash of the whole map, so a change to one binding changes the digest by its own
 /// terms only: `O(t)` for the type bound, which the change already cost.
 fn bind_digest(v: &str, t: &Ty) -> u64 {
-    use std::hash::{BuildHasher, BuildHasherDefault, DefaultHasher};
-    BuildHasherDefault::<DefaultHasher>::default().hash_one((v, t))
+    zed_kernel::digest::fixed_hash(&(v, t))
 }
 
 /// The map of a [`Binds`]: each variable bound, by name, with its type.
@@ -12989,9 +12969,7 @@ impl<'a> Node<'a> {
                 .map(|(i, c)| (Place::Row(r.len(), i), c))
                 .collect(),
             Node::Shape(n, s) => {
-                use std::hash::{BuildHasher, BuildHasherDefault, DefaultHasher};
-                let names = BuildHasherDefault::<DefaultHasher>::default()
-                    .hash_one(s.fields.keys().collect::<Vec<_>>());
+                let names = zed_kernel::digest::fixed_hash(&s.fields.keys().collect::<Vec<_>>());
                 let len = s.items.len();
                 (s.items.iter().chain(s.fields.values()).enumerate())
                     .map(|(i, c)| (Place::Payload(n.clone(), len, names, i), c))
@@ -23392,8 +23370,7 @@ mod tests {
     /// operations built them (FAIL-types-binding-tuple-shapes-copied).
     #[test]
     fn a_list_of_members_is_shared_by_copies_and_kept_by_each() {
-        use std::hash::{BuildHasher, BuildHasherDefault, DefaultHasher};
-        let hash = |m: &Members<u32>| BuildHasherDefault::<DefaultHasher>::default().hash_one(m);
+        let hash = |m: &Members<u32>| zed_kernel::digest::fixed_hash(m);
         let mut a: Members<u32> = Members::new();
         assert!(a.is_empty() && a.first().is_none() && a.only().is_none());
         assert!(a.insert_new(1) && a.insert_new(2) && !a.insert_new(1));
@@ -24135,8 +24112,7 @@ mod tests {
     /// not (FAIL-types-binding-union-copied).
     #[test]
     fn variable_sets_keep_their_digest_as_they_change() {
-        use std::hash::{BuildHasher, BuildHasherDefault, DefaultHasher};
-        let hash = |s: &VarSet| BuildHasherDefault::<DefaultHasher>::default().hash_one(s);
+        let hash = |s: &VarSet| zed_kernel::digest::fixed_hash(s);
         let names = |ns: &[&str]| -> VarSet { ns.iter().map(|&n| Arc::from(n)).collect() };
         let fresh = |s: &VarSet| -> VarSet { s.iter().cloned().collect() };
         let check = |s: &VarSet| {

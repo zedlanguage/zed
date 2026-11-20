@@ -73,6 +73,12 @@ pub type DigestMap<K, V> = HashMap<K, V, BuildHasherDefault<Digest>>;
 /// A set hashed by [`Digest`], with the keys of a [`DigestMap`].
 pub type DigestSet<K> = HashSet<K, BuildHasherDefault<Digest>>;
 
+/// The [`Digest`] of `x`, the same in every run: for a content hash of ids, numbers or digests.
+pub fn digest_hash<T: std::hash::Hash + ?Sized>(x: &T) -> u64 {
+    use std::hash::BuildHasher;
+    BuildHasherDefault::<Digest>::default().hash_one(x)
+}
+
 /// The hasher of a map or set keyed by a program's text, such as names (DRY-sorted-structures,
 /// row 3): foldhash's fast hasher (O. Peters, foldhash 0.2, the default of hashbrown), seeded at
 /// random (a seed per map beside one global seed drawn at random once per process), so a program
@@ -89,6 +95,56 @@ pub type TextMap<K, V> = HashMap<K, V, TextState>;
 
 /// A set of keys made of a program's text, hashed by [`TextState`].
 pub type TextSet<K> = HashSet<K, TextState>;
+
+/// The one [`TextState`] of the process, seeded at random once: for a hash of text kept and
+/// compared after the call that made it, such as a key made of the hash of a system of
+/// constraints (`zedc_presburger`'s memos of repairs and its rows by terms), and for a
+/// persistent map whose equal contents must hash and iterate alike in one run (`conjuncts`).
+/// A [`TextMap`] that only looks keys up draws its own seed instead.
+static TEXT: std::sync::LazyLock<TextState> = std::sync::LazyLock::new(TextState::default);
+
+/// A copy of the process's one [`TextState`] (see `TEXT`).
+pub fn text_state() -> TextState {
+    TEXT.clone()
+}
+
+/// The hash of the text `x` by the process's one [`TextState`]: the same for equal `x` all
+/// through one run, not chosen by the program (hash flooding needs the seed), and different
+/// from run to run, so it must decide nothing but where a key is kept.
+pub fn text_hash<T: std::hash::Hash + ?Sized>(x: &T) -> u64 {
+    use std::hash::BuildHasher;
+    TEXT.hash_one(x)
+}
+
+/// A hasher of the process's one [`TextState`], for a hash of text written piece by piece; its
+/// `finish` agrees with [`text_hash`] of the same pieces.
+pub fn text_hasher() -> <TextState as std::hash::BuildHasher>::Hasher {
+    use std::hash::BuildHasher;
+    TEXT.build_hasher()
+}
+
+/// The hasher of a content hash that must be the same in every run, such as a digest whose
+/// value reaches an order, a number shown to the user, or a test's expected output: the standard
+/// library's SipHash-1-3 with both keys zero (`DefaultHasher::new`), so the hash of a value is
+/// fixed for one build of the standard library. It reads a value's bytes as one stream, so a
+/// text hashes as its `str` does. A program could choose values that collide, so a map whose keys
+/// are a program's text takes [`TextState`]; and SipHash costs several times foldhash's
+/// instructions per word, so a hash that need not be fixed takes [`Digest`] or [`text_hash`].
+/// The one copy of the `BuildHasherDefault::<DefaultHasher>` the compiler wrote at each such
+/// site before (DRY-sorted-structures-2, job 3).
+pub type FixedState = BuildHasherDefault<std::hash::DefaultHasher>;
+
+/// The hash of `x` by [`FixedState`]: the same in every run.
+pub fn fixed_hash<T: std::hash::Hash + ?Sized>(x: &T) -> u64 {
+    use std::hash::BuildHasher;
+    FixedState::default().hash_one(x)
+}
+
+/// A hasher of [`FixedState`], for a fixed hash written piece by piece; its `finish` agrees with
+/// [`fixed_hash`] of the same pieces.
+pub fn fixed_hasher() -> std::hash::DefaultHasher {
+    std::hash::DefaultHasher::new()
+}
 
 /// The digest `h` with the word `x` added: splitmix64's finalizer of the two, the step of
 /// [`Digest`], and the combination of two digests that `value` and `types` build theirs with;
@@ -181,5 +237,43 @@ mod tests {
             set().into_iter().collect::<Vec<_>>(),
             set().into_iter().collect::<Vec<_>>()
         );
+    }
+
+    /// The process's one text hash: equal text hashes alike in every call, and a copy of the
+    /// state and the piecewise hasher agree with it; unequal text of a small range hashes apart.
+    #[test]
+    fn the_text_hash_is_one_hash_through_the_run() {
+        use std::hash::{Hash, Hasher};
+        let names: Vec<String> = (0..2000).map(|i| format!("x{i}")).collect();
+        let mut seen = HashSet::new();
+        for n in &names {
+            let h = text_hash(n.as_str());
+            assert_eq!(h, text_hash(n.as_str()));
+            assert_eq!(h, text_state().hash_one(n.as_str()));
+            let mut w = text_hasher();
+            n.as_str().hash(&mut w);
+            assert_eq!(h, w.finish());
+            assert!(seen.insert(h), "{n}");
+        }
+    }
+
+    /// The fixed hash is the standard library's SipHash-1-3 with zero keys, which the sites it
+    /// replaced wrote out (`DefaultHasher::new`), and the piecewise hasher agrees with it; the
+    /// digest hash is `Digest`'s. A text hashes as its `str`, in one stream.
+    #[test]
+    fn the_fixed_and_digest_hashes_are_the_ones_they_replaced() {
+        use std::hash::{Hash, Hasher};
+        for i in 0..2000u64 {
+            let n = format!("x{i}");
+            let mut sip = std::hash::DefaultHasher::new();
+            (n.as_str(), i).hash(&mut sip);
+            let mut w = fixed_hasher();
+            (n.as_str(), i).hash(&mut w);
+            assert_eq!(fixed_hash(&(n.as_str(), i)), sip.finish());
+            assert_eq!(w.finish(), sip.finish());
+            let mut d = Digest::default();
+            (n.as_str(), i).hash(&mut d);
+            assert_eq!(digest_hash(&(n.as_str(), i)), d.finish());
+        }
     }
 }

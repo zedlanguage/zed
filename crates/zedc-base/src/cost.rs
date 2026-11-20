@@ -10,7 +10,7 @@
 //!
 //! All arithmetic is on integers and saturates, so the result is the same on every host.
 
-use rustc_hash::FxHashMap;
+use zed_kernel::digest::DigestMap;
 
 use crate::address::ContentAddress;
 
@@ -294,8 +294,9 @@ impl Load {
     }
 }
 
-/// The loads of a part of a plan on the devices that hold its regions.
-type Loads = FxHashMap<usize, Load>;
+/// The loads of a part of a plan on the devices that hold its regions, keyed by device number
+/// (an index the compiler drew, so [`DigestMap`]; read in any order, each into its own slot).
+type Loads = DigestMap<usize, Load>;
 
 /// A part of a plan on the stack of [`nested`]: on one device, held without a map (every region,
 /// and every part whose regions share a device), or on several.

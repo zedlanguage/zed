@@ -45,11 +45,7 @@ fn equal_wide_widths_hash_alike() {
         )
     };
     assert!(matches!(wide().0, Value::Big(_)));
-    let h = |w: &Width| {
-        use std::hash::BuildHasher;
-        std::hash::BuildHasherDefault::<std::collections::hash_map::DefaultHasher>::default()
-            .hash_one(w)
-    };
+    let h = |w: &Width| zed_kernel::digest::fixed_hash(w);
     assert_eq!(h(&wide()), h(&wide()));
     let set: HashSet<Width> = [wide(), wide()].into_iter().collect();
     assert_eq!(set.len(), 1);

@@ -46,10 +46,7 @@
 //!   a round sets is never passed, not even as a hint, since it holds at one point at most
 //!   and would remove the others.
 
-use std::collections::HashMap;
-use std::hash::BuildHasherDefault;
-
-use rustc_hash::FxHasher;
+use zed_kernel::digest::{DigestMap, TextMap};
 use zedc_int::int::Int;
 
 use super::formula::{Atom, Con, Conjuncts, Formula, Id, Model, Rel, one_bound};
@@ -70,10 +67,6 @@ pub(super) enum Forced<'f> {
     /// propagation proved before the rounds, for the solver.
     Undecided(Facts<'f>),
 }
-
-/// A map hashed by [`FxHasher`]: its keys are ids and atoms of one formula, which no one
-/// chooses to collide, and nothing iterates it, so its order reaches no result.
-type FxMap<K, V> = HashMap<K, V, BuildHasherDefault<FxHasher>>;
 
 /// The connective of a part of the formula.
 enum Kind<'f> {
@@ -127,8 +120,9 @@ struct Graph<'f> {
     /// The variables of each constraint, in the order of its terms, which are distinct, each
     /// with its coefficient.
     terms: Vec<(u32, &'f Int)>,
-    /// The number of each atom.
-    numbers: FxMap<&'f Atom, u32>,
+    /// The number of each atom (an atom holds a program's names, so the seeded text hasher;
+    /// only looked up).
+    numbers: TextMap<&'f Atom, u32>,
     vars: Vec<Var<'f>>,
     watch_list: Vec<u32>,
     events: Vec<Event>,
@@ -205,8 +199,8 @@ fn may_start(conjuncts: &Conjuncts) -> bool {
     if ends.len() < 2 {
         return false;
     }
-    let mut at: FxMap<&Atom, (Option<Int>, Option<Int>)> =
-        FxMap::with_capacity_and_hasher(ends.len(), Default::default());
+    let mut at: TextMap<&Atom, (Option<Int>, Option<Int>)> =
+        TextMap::with_capacity_and_hasher(ends.len(), Default::default());
     for (a, lo, hi) in ends {
         let (l, h) = at.entry(a).or_default();
         if let Some(lo) = lo
@@ -235,7 +229,7 @@ impl<'f> Graph<'f> {
     fn of(f: &'f Formula) -> Graph<'f> {
         // A first walk counts the parts, operands and terms, so each list is allocated once.
         let (mut parts, mut kids, mut terms) = (0, 0, 0);
-        let mut seen: FxMap<Id, u32> = FxMap::default();
+        let mut seen: DigestMap<Id, u32> = DigestMap::default();
         let mut stack = vec![(f, 0)];
         while let Some((h, _)) = stack.pop() {
             parts += 1;
@@ -255,7 +249,7 @@ impl<'f> Graph<'f> {
             kid_list: Vec::with_capacity(kids),
             parent_list: Vec::new(),
             terms: Vec::with_capacity(terms),
-            numbers: FxMap::with_capacity_and_hasher(terms, Default::default()),
+            numbers: TextMap::with_capacity_and_hasher(terms, Default::default()),
             vars: Vec::with_capacity(terms),
             watch_list: Vec::new(),
             events: Vec::with_capacity(parts),
@@ -619,8 +613,9 @@ impl<'f> Graph<'f> {
 pub(super) struct Facts<'f> {
     /// The formula the propagation read.
     pub(super) formula: &'f Formula,
-    /// Each atom it fixed, with its value.
-    pub(super) known: FxMap<&'f Atom, Int>,
+    /// Each atom it fixed, with its value: read in an order that reaches no result (into a
+    /// [`Model`], or sorted first).
+    pub(super) known: TextMap<&'f Atom, Int>,
 }
 
 impl Facts<'_> {

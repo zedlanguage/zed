@@ -1090,7 +1090,6 @@ dependencies = [
  "num-integer",
  "num-traits",
  "perf-event2",
- "rustc-hash",
  "rustix",
  "stacker",
  "zed-alloc-count",
@@ -1231,7 +1230,6 @@ name = "zedc-base"
 version = "0.0.0"
 dependencies = [
  "blake3",
- "rustc-hash",
  "unicode-normalization",
  "unicode-width",
  "zed-kernel",
@@ -1339,7 +1337,6 @@ dependencies = [
  "num-bigint",
  "num-traits",
  "perf-event2",
- "rustc-hash",
  "rustix",
  "stacker",
  "zed-alloc-count",

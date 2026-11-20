@@ -10,7 +10,7 @@ use std::cell::Cell;
 use std::collections::{BTreeMap, HashMap};
 use std::sync::Arc;
 
-use rustc_hash::FxHashMap;
+use zed_kernel::digest::DigestMap;
 use zedc_int::int::Int;
 use zedc_lattice::interval::{End, IntervalSet};
 
@@ -340,7 +340,8 @@ pub struct Joining {
     // whole decision after it. The hash costs one pass over the terms and no copy, O(k) for k
     // terms, and the terms are compared only within one list. Nothing iterates the map, so its
     // order plays no part. Test `bench::names::decide_scales_over_one_class_of_equalities`.
-    at: FxHashMap<u64, Vec<usize>>,
+    // Its keys are seeded hashes already ([`Joining::key`]), so the map is a `DigestMap`.
+    at: DigestMap<u64, Vec<usize>>,
     /// Whether an operand decided the whole: `false` met in a conjunction, two constraints on
     /// one term that cannot both hold, or `true` met in a disjunction.
     decided: bool,
@@ -363,7 +364,7 @@ impl Joining {
         Joining {
             and,
             out: Vec::new(),
-            at: FxHashMap::default(),
+            at: DigestMap::default(),
             decided: false,
             added: 0,
         }
@@ -434,7 +435,9 @@ impl Joining {
     /// The hash of the terms and the comparison of `c`, its constant left out.
     fn key(c: &Con) -> u64 {
         use std::hash::{Hash, Hasher};
-        let mut h = rustc_hash::FxHasher::default();
+        // The terms hold a program's names, so the process's seeded text hash, which a program
+        // cannot steer into one list; the same in every call of the run, as the map needs.
+        let mut h = zed_kernel::digest::text_hasher();
         c.rel.hash(&mut h);
         c.lin.terms.hash(&mut h);
         h.finish()

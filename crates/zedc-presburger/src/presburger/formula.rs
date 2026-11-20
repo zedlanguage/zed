@@ -339,10 +339,9 @@ impl Formula {
             g => return Conjuncts::Flat(std::slice::from_ref(g)),
         }
         let mut out = Vec::new();
-        // An id is one number, so the seen set is hashed by `FxHasher`, not by the default
-        // hasher, which reads a per-thread seed on each call and costs more per id.
-        let mut seen: HashSet<Id, std::hash::BuildHasherDefault<rustc_hash::FxHasher>> =
-            HashSet::default();
+        // An id is one number the compiler drew, so the seen set is a `DigestSet`, not the
+        // default hasher, which reads a per-thread seed on each call and costs more per id.
+        let mut seen: zed_kernel::digest::DigestSet<Id> = HashSet::default();
         let mut stack = vec![self];
         while let Some(g) = stack.pop() {
             match g {

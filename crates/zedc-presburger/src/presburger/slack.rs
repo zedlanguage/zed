@@ -25,11 +25,10 @@
 
 use std::cell::Cell;
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
-use std::hash::BuildHasherDefault;
 
-use rustc_hash::FxHasher;
 use zed_collections::fenwick::Fenwick;
 use zed_collections::search::first_true;
+use zed_kernel::digest::TextSet;
 
 use zedc_int::int::{Int, IntRange, meet_range, row_range};
 use zedc_lattice::interval::{End, IntervalSet, Num};
@@ -345,14 +344,14 @@ impl DisjointWide {
         // a coefficient other than ±1, two wide rows sharing an atom) were found while the
         // bounds and the row of each atom were built, so a system refused here paid for maps
         // it then dropped. They are now found first, in one pass over the T terms that borrows
-        // each atom into a set hashed by `FxHasher`, sized once (keys are atoms of one system,
-        // which no one chooses to collide; nothing iterates the set): O(T), with no clone and
-        // no ordered map. The build below runs only for a system it accepts.
+        // each atom into a `TextSet`, sized once (an atom holds a program's names, so the set
+        // takes the seeded text hasher; nothing iterates it): O(T), with no clone and no
+        // ordered map. The build below runs only for a system it accepts.
         let wide_terms = (cons.iter().map(|c| c.borrow().lin.terms.len()))
             .filter(|n| *n > 1)
             .sum();
-        let mut wide_atoms: HashSet<&Atom, BuildHasherDefault<FxHasher>> =
-            HashSet::with_capacity_and_hasher(wide_terms, BuildHasherDefault::default());
+        let mut wide_atoms: TextSet<&Atom> =
+            HashSet::with_capacity_and_hasher(wide_terms, Default::default());
         for c in cons {
             let c = c.borrow();
             if has_product_con(c) {

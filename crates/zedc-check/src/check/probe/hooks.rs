@@ -1,8 +1,6 @@
 //! The hooks of the counters of `probe.rs` that `Ck` calls on its eager path, and their tests.
 
-use std::collections::hash_map::DefaultHasher;
 use std::collections::{BTreeSet, HashMap, HashSet};
-use std::hash::{Hash, Hasher};
 
 use zedc_syntax::lex::Span;
 use zedc_types::ty::{Need, NeedKind, Sig, Ty, Vars, class_id};
@@ -53,9 +51,7 @@ pub(in crate::check) struct Rec {
 }
 
 fn key_hash(key: &(NeedKind, bool)) -> u64 {
-    let mut h = DefaultHasher::new();
-    key.hash(&mut h);
-    h.finish()
+    zed_kernel::digest::fixed_hash(key)
 }
 
 /// The name of a need kind, for the count of calls F1 refuses by kind.

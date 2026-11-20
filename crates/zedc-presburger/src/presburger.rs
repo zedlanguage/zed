@@ -91,7 +91,7 @@ use std::rc::Rc;
 use std::sync::Arc;
 
 use imbl::{OrdMap, OrdSet};
-use rustc_hash::{FxHashMap, FxHashSet};
+use zed_kernel::digest::{DigestMap, DigestSet, TextMap, TextSet, text_hash, text_hasher};
 
 use zed_graph::UnionFind;
 use zed_kernel::refine::Refine;
@@ -1597,7 +1597,7 @@ fn rows_equations_imply(gs: &[&Formula], paired: &BTreeSet<usize>) -> BTreeSet<u
 /// by a hash that `t` and `-t` share, so that no row is copied.
 fn opposite_rows(gs: &[&Formula]) -> BTreeSet<usize> {
     use std::hash::{Hash, Hasher};
-    let mut by: FxHashMap<u64, Vec<usize>> = FxHashMap::default();
+    let mut by: DigestMap<u64, Vec<usize>> = DigestMap::default();
     for (i, g) in gs.iter().enumerate() {
         let Formula::Con(c) = g else { continue };
         let Some((_, first)) = c.lin.terms.first_key_value() else {
@@ -1607,7 +1607,9 @@ fn opposite_rows(gs: &[&Formula]) -> BTreeSet<usize> {
             continue;
         }
         let flip = first.is_negative();
-        let mut h = rustc_hash::FxHasher::default();
+        // Terms hold a program's names: the run's seeded text hash, so no program steers its
+        // rows into one list of `by`, whose keys are then hashes already (`DigestMap`).
+        let mut h = text_hasher();
         for (a, k) in &c.lin.terms {
             a.hash(&mut h);
             if flip { -k } else { k.clone() }.hash(&mut h);
@@ -4380,8 +4382,9 @@ mod cell_sweep {
     use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet, VecDeque};
     use std::rc::Rc;
 
-    use rustc_hash::{FxHashMap, FxHashSet};
+    // Every map and set of this module is keyed by addresses or places, so `Digest`.
     use zed_collections::intervals::{self, Interval};
+    use zed_kernel::digest::{DigestMap, DigestSet};
     use zedc_int::int::Int;
 
     use super::{Atom, AtomBounds, Con, Lin, Parts, Refusal, Rel, Span, bezout, narrow, solve};
@@ -4407,7 +4410,7 @@ mod cell_sweep {
     fn candidate_atoms(p: &Parts) -> Vec<Atom> {
         let mut cands = BTreeSet::new();
         let mut multi_eqs = 0usize;
-        let mut seen = FxHashSet::default();
+        let mut seen = DigestSet::default();
         let mut stack: Vec<&Parts> = vec![&p.ors[0][0]];
         while let Some(u) = stack.pop() {
             let ptr = std::ptr::from_ref(u) as usize;
@@ -4475,7 +4478,7 @@ mod cell_sweep {
         ds: &[Rc<Parts>],
         x: &Atom,
         whole: &Span,
-        memo: &mut FxHashMap<usize, Rc<Vec<Span>>>,
+        memo: &mut DigestMap<usize, Rc<Vec<Span>>>,
     ) -> Vec<Span> {
         let mut stack: Vec<(&Parts, bool)> = Vec::new();
         for d in ds {
@@ -4817,9 +4820,9 @@ mod cell_sweep {
         o: &'a [Rc<Parts>],
         x: &Atom,
         whole: &Span,
-        pure_memo: &mut FxHashMap<usize, Rc<Vec<Span>>>,
+        pure_memo: &mut DigestMap<usize, Rc<Vec<Span>>>,
     ) -> Option<ResolvedOr> {
-        let mut nodes: FxHashMap<usize, DisjNode<'a>> = FxHashMap::default();
+        let mut nodes: DigestMap<usize, DisjNode<'a>> = DigestMap::default();
         let mut stack: Vec<(&'a Parts, bool)> = Vec::new();
         for d in o {
             stack.push((d, false));
@@ -4922,7 +4925,7 @@ mod cell_sweep {
             }
         }
 
-        let mut seen_top = FxHashSet::default();
+        let mut seen_top = DigestSet::default();
         let live_top: Vec<&'a Parts> = o
             .iter()
             .map(Rc::as_ref)
@@ -4947,14 +4950,14 @@ mod cell_sweep {
         // Collect distinct payload equalities and pure-`x` sibling guard spans on payload nodes.
         let mut eqs: Vec<Con> = Vec::new();
         let mut eq_index: HashMap<Con, usize> = HashMap::new();
-        let mut node_pure_guards: FxHashMap<usize, Vec<Vec<Span>>> = FxHashMap::default();
+        let mut node_pure_guards: DigestMap<usize, Vec<Vec<Span>>> = DigestMap::default();
         let mut cuts: Vec<Int> = Vec::new();
 
         // Walk reachable payload skeleton (explicit stack + `visited_pay` set).
         // Reject diamond-shared payload nodes inside one disjunction so the segment-tree DFS walks
         // a strict tree of size at most `s_j`. This walk and the two passes below push only live
         // nodes (`live_top`, and children filtered by `!dead`), so no node they reach is dead.
-        let mut visited_pay = FxHashSet::default();
+        let mut visited_pay = DigestSet::default();
         let mut pstack: Vec<&'a Parts> = live_top.clone();
         while let Some(u) = pstack.pop() {
             let ptr = std::ptr::from_ref(u) as usize;
@@ -4968,7 +4971,7 @@ mod cell_sweep {
             let mut pure_guards = Vec::new();
             for (idx, inner_o) in u.ors.iter().enumerate() {
                 if Some(idx) == info.payload_or {
-                    let mut seen_child = FxHashSet::default();
+                    let mut seen_child = DigestSet::default();
                     for v in inner_o {
                         let vptr = Rc::as_ptr(v) as usize;
                         if !nodes[&vptr].dead && seen_child.insert(vptr) {
@@ -5002,8 +5005,8 @@ mod cell_sweep {
 
         // Precompute complement cell ranges per visited payload node so DFS pushes/pops in O(1)
         // amortized per complement range.
-        let mut node_blocks: FxHashMap<usize, Vec<(usize, usize)>> = FxHashMap::default();
-        let mut node_leaf_eq: FxHashMap<usize, usize> = FxHashMap::default();
+        let mut node_blocks: DigestMap<usize, Vec<(usize, usize)>> = DigestMap::default();
+        let mut node_leaf_eq: DigestMap<usize, usize> = DigestMap::default();
         for &ptr in &visited_pay {
             let info = &nodes[&ptr];
             let mut blocks = Vec::new();
@@ -5062,7 +5065,7 @@ mod cell_sweep {
                     }
                     dfs.push(Frame::Exit(ptr));
                     if let Some(po) = info.payload_or {
-                        let mut seen_child = FxHashSet::default();
+                        let mut seen_child = DigestSet::default();
                         for v in u.ors[po].iter().rev() {
                             let vptr = Rc::as_ptr(v) as usize;
                             if !nodes[&vptr].dead && seen_child.insert(vptr) {
@@ -5189,7 +5192,7 @@ mod cell_sweep {
                         }
                         dfs_g.push(Frame::Exit(ptr));
                         if let Some(po) = info.payload_or {
-                            let mut seen_child = FxHashSet::default();
+                            let mut seen_child = DigestSet::default();
                             for v in u.ors[po].iter().rev() {
                                 let vptr = Rc::as_ptr(v) as usize;
                                 if !nodes[&vptr].dead && seen_child.insert(vptr) {
@@ -5254,7 +5257,7 @@ mod cell_sweep {
 
     fn collect_ors_atoms(ors: &[Vec<Rc<Parts>>], x: &Atom) -> HashSet<Atom> {
         let mut out = HashSet::from([x.clone()]);
-        let mut seen = FxHashSet::default();
+        let mut seen = DigestSet::default();
         let mut stack: Vec<&Parts> = ors.iter().flatten().map(Rc::as_ref).collect();
         while let Some(u) = stack.pop() {
             let ptr = std::ptr::from_ref(u) as usize;
@@ -5293,7 +5296,7 @@ mod cell_sweep {
                 }
             }
         }
-        let mut active_roots = FxHashSet::default();
+        let mut active_roots = DigestSet::default();
         for a in ors_atoms {
             if let Some(&idx) = first_by_atom.get(a) {
                 active_roots.insert(parent.find(idx));
@@ -6461,7 +6464,7 @@ mod cell_sweep {
             return Some(Ok(false));
         };
 
-        let mut pure_memo: FxHashMap<usize, Rc<Vec<Span>>> = FxHashMap::default();
+        let mut pure_memo: DigestMap<usize, Rc<Vec<Span>>> = DigestMap::default();
         let mut pure_ors: Vec<Vec<Span>> = Vec::new();
         let mut items: Vec<EqItem> = Vec::new();
         let mut has_overlap = false;
@@ -7405,17 +7408,17 @@ fn splitting(p: &Parts, atoms: OrdSet<Atom>) -> Vec<Atom> {
     // Complexity tradeoff: rebuilding an R-child key at each of H parents costs O(H R),
     // even when the visited set reads the shared part once. Intern each part's shape once:
     // O(E) expected work and storage for E DAG edges, then one integer lookup per holder.
-    // FxHash: these maps are keyed by addresses and their lists, and SipHash on them cost
+    // `Digest`: these maps are keyed by addresses and their lists, and SipHash on them cost
     // 1.2 % of all instructions on holders_chain.
-    let mut keys: FxHashMap<*const Parts, usize> = FxHashMap::default();
-    let mut shapes: FxHashMap<Vec<*const Parts>, usize> = FxHashMap::default();
+    let mut keys: DigestMap<*const Parts, usize> = DigestMap::default();
+    let mut shapes: DigestMap<Vec<*const Parts>, usize> = DigestMap::default();
     let mut sets = 0usize;
     let mut allowed: HashMap<&Atom, usize> = HashMap::new();
     let mut seen: HashSet<*const Parts> = HashSet::new();
     let mut stack: Vec<&Parts> = vec![p];
     while let Some(u) = stack.pop() {
         for o in &u.ors {
-            let mut twins: FxHashMap<usize, Vec<&Parts>> = FxHashMap::default();
+            let mut twins: DigestMap<usize, Vec<&Parts>> = DigestMap::default();
             for d in o {
                 if seen.insert(Rc::as_ptr(d)) {
                     stack.push(d);
@@ -8176,10 +8179,10 @@ struct CellWalk<'a> {
     /// Each list of pieces joined, with the pieces, so their sets outlive the key.
     joins: HashMap<Vec<PieceKey>, (Vec<CellPiece>, CellPiece)>,
     /// The operands keep every set used in a pointer key alive for this walk.
-    meets: FxHashMap<(ViewKey, ViewKey), (CellView, CellView, CellView)>,
+    meets: DigestMap<(ViewKey, ViewKey), (CellView, CellView, CellView)>,
     /// Full-base intersections cached per unordered pair of physical bases, keeping both bases
     /// alive for the walk so distinct-base views with extras reuse the base intersection.
-    base_meets: FxHashMap<BasePair, BaseMeetEntry>,
+    base_meets: DigestMap<BasePair, BaseMeetEntry>,
     /// Whether some nested part has a one-atom row on an atom (not `x`) that no other part
     /// reads: a disjunction over such payloads is a free choice, and [`Self::spread`] then
     /// goes on past a disjunction it cannot place instead of giving up.
@@ -8796,8 +8799,8 @@ fn cells_of<'p>(p: &'p Parts, x: &Atom, solving: bool) -> Option<Result<bool, Re
         memo: HashMap::new(),
         owns: HashMap::new(),
         joins: HashMap::new(),
-        meets: FxHashMap::default(),
-        base_meets: FxHashMap::default(),
+        meets: DigestMap::default(),
+        base_meets: DigestMap::default(),
         unary_payload: false,
     };
     let Some(whole) = walk.span(&p.cons) else {
@@ -9161,7 +9164,7 @@ fn cells_by_sets(placed: &[(Rc<Vec<Con>>, CellSet)], x: &Atom, cells: &[Span]) -
             sets.entry(at).or_default().extend(cs.iter());
         }
     }
-    let read: rustc_hash::FxHashSet<&Atom> = (sets.values().flatten())
+    let read: TextSet<&Atom> = (sets.values().flatten())
         .flat_map(|c| c.lin.terms.keys())
         .collect();
     let Some(core) = shadow(&all, &|a| a == x || read.contains(a), true) else {
@@ -9236,7 +9239,7 @@ fn cells_by_sets(placed: &[(Rc<Vec<Con>>, CellSet)], x: &Atom, cells: &[Span]) -
 // c rows that every question reads.
 struct CoreClasses<'c> {
     /// The class of each atom of the core other than `x`.
-    class: FxHashMap<&'c Atom, usize>,
+    class: TextMap<&'c Atom, usize>,
     /// The rows of each class.
     rows: Vec<Vec<&'c Con>>,
     /// The rows read with every question: those of the core with no atom but `x`, and the
@@ -9415,7 +9418,7 @@ impl<'c> CoreClasses<'c> {
     fn of(core: &'c [Con], x: &Atom) -> Option<Self> {
         // Union-find over the atoms other than `x`. Roots are only keys of `index` below, whose
         // classes are numbered in the order of the rows, so the root rule does not matter.
-        let mut ids: FxHashMap<&Atom, usize> = FxHashMap::default();
+        let mut ids: TextMap<&Atom, usize> = TextMap::default();
         let mut parent = UnionFind::default();
         for c in core {
             let at: Vec<usize> = (c.lin.terms.keys().filter(|a| *a != x))
@@ -9425,7 +9428,7 @@ impl<'c> CoreClasses<'c> {
                 parent.union(w[0], w[1]);
             }
         }
-        let mut index: FxHashMap<usize, usize> = FxHashMap::default();
+        let mut index: DigestMap<usize, usize> = DigestMap::default();
         let mut rows: Vec<Vec<&Con>> = Vec::new();
         let mut always: Vec<Con> = Vec::new();
         for c in core {
@@ -9952,7 +9955,7 @@ fn specialize_con(c: &Con, free: &BTreeSet<Atom>, model: &Model) -> Con {
 // [`TermValues::clear`] would give wrong repairs, so both callers do one at each change.
 // Tests: `l01_38_omega_test::bench::names::decide_scales_over_a_sum_of_conditionals_other_than_a_constant`.
 #[derive(Default)]
-struct TermValues(FxHashMap<usize, Int>);
+struct TermValues(DigestMap<usize, Int>);
 
 impl TermValues {
     /// The model was replaced: no value kept holds.
@@ -10863,7 +10866,7 @@ struct Linked {
     // depends on its order: [`BaseGroups::roots_of`] sorts the roots, and the other walk over it
     // collects into a `BTreeSet`. Bench
     // `l01_38_omega_test::bench::names::decide_scales_over_guards_told_apart_by_their_nesting`.
-    ids: FxHashMap<Atom, usize>,
+    ids: TextMap<Atom, usize>,
     /// The groups, each rooted at the atom whose group held more constraints (see
     /// [`Linked::add`]); read without path compression, since lookups take `&self`.
     parent: UnionFind,
@@ -10994,14 +10997,14 @@ impl Linked {
 // order of the search, which follows the hash map, decides nothing.
 fn linked_to<'a>(rows: Vec<Con>, atoms: impl Iterator<Item = &'a Atom>) -> Vec<Con> {
     let keep: Vec<bool> = {
-        let mut of: FxHashMap<&Atom, Vec<usize>> = FxHashMap::default();
+        let mut of: TextMap<&Atom, Vec<usize>> = TextMap::default();
         for (i, c) in rows.iter().enumerate() {
             for a in c.lin.terms.keys() {
                 of.entry(a).or_default().push(i);
             }
         }
         let mut keep = vec![false; rows.len()];
-        let mut seen: FxHashSet<&Atom> = FxHashSet::default();
+        let mut seen: TextSet<&Atom> = TextSet::default();
         let mut todo: Vec<&Atom> = Vec::new();
         for a in atoms {
             if let Some((&a, _)) = of.get_key_value(a)
@@ -14488,7 +14491,7 @@ fn settle(mut p: Parts, search: bool) -> Result<Option<Parts>, Refusal> {
 
 /// For each hash of a system asked of [`solve_repair`] and `want`, the systems with that hash,
 /// each with its answer.
-type Repaired = FxHashMap<(u64, bool), Vec<(Vec<Con>, Option<Model>)>>;
+type Repaired = DigestMap<(u64, bool), Vec<(Vec<Con>, Option<Model>)>>;
 
 thread_local! {
     /// The answers of [`solve_repair`] while a probe runs ([`RepairMemo`]): for each hash of a
@@ -14505,7 +14508,7 @@ impl RepairMemo {
     fn open() -> RepairMemo {
         RepairMemo(REPAIRS.with(|m| {
             let mut m = m.borrow_mut();
-            m.is_none() && m.replace(FxHashMap::default()).is_none()
+            m.is_none() && m.replace(Default::default()).is_none()
         }))
     }
 }
@@ -14541,11 +14544,12 @@ fn solve_kept<C: std::borrow::Borrow<Con> + std::hash::Hash>(
     want: bool,
     solve: impl FnOnce(&[C], bool) -> Result<Option<Model>, Refusal>,
 ) -> Result<Option<Model>, Refusal> {
-    use std::hash::BuildHasher;
     if REPAIRS.with(|m| m.borrow().is_none()) {
         return solve(cons, want);
     }
-    let key = (rustc_hash::FxBuildHasher.hash_one(cons), want);
+    // The run's seeded text hash, which `kept` computes alike: the systems hold a program's
+    // names, and the memo lives for a whole unit's check.
+    let key = (text_hash(cons), want);
     let same = |kept: &Vec<Con>| {
         kept.len() == cons.len() && kept.iter().zip(cons).all(|(a, b)| a == b.borrow())
     };
@@ -14721,7 +14725,8 @@ fn without_rows_equations_imply(cons: Vec<&Con>) -> Vec<&Con> {
     fn key(terms: &BTreeMap<Atom, Int>) -> u64 {
         use std::hash::{Hash, Hasher};
         let turned = terms.values().next().is_some_and(|k| k.is_negative());
-        let mut h = rustc_hash::FxHasher::default();
+        // Terms hold a program's names, so the run's seeded text hash.
+        let mut h = text_hasher();
         for (a, k) in terms {
             a.hash(&mut h);
             if turned { -k } else { k.clone() }.hash(&mut h);
@@ -14742,7 +14747,7 @@ fn without_rows_equations_imply(cons: Vec<&Con>) -> Vec<&Con> {
     // terms only, which share a hash by collision alone. A second equation of the same terms
     // is the first, or has no point beside it; then `cons` has no point and is given back
     // whole, whichever equation comes first.
-    let mut eqs: FxHashMap<u64, Vec<usize>> = FxHashMap::default();
+    let mut eqs: DigestMap<u64, Vec<usize>> = DigestMap::default();
     for (i, c) in cons.iter().enumerate() {
         if c.rel == Rel::Eq && !c.lin.terms.is_empty() {
             let places = eqs.entry(key(&c.lin.terms)).or_default();
@@ -16560,7 +16565,7 @@ struct System {
     /// The sum of [`spread`] over the variables of each row ever added, by place.
     sums: Vec<u64>,
     /// The places of the held rows, by that sum ([`System::over_the_rest`]).
-    by_vars: FxHashMap<u64, BTreeSet<usize>>,
+    by_vars: DigestMap<u64, BTreeSet<usize>>,
     /// The places of the held rows of two terms, by their two variables, the lesser first.
     pairs: HashMap<(usize, usize), BTreeSet<usize>>,
     /// The place of the opposite of each held row whose opposite is held, both ways.
@@ -16602,7 +16607,7 @@ impl System {
             near: BTreeSet::new(),
             lengths: BTreeMap::new(),
             sums: Vec::new(),
-            by_vars: FxHashMap::default(),
+            by_vars: DigestMap::default(),
             pairs: HashMap::new(),
             opposites: BTreeMap::new(),
             one_sided: BTreeSet::new(),
@@ -17299,9 +17304,9 @@ impl System {
             with.iter().partition(|(_, r)| r.at(j).is_positive());
         // The rows written by combining, and the sums of [`spread`] over their variables.
         let mut new: BTreeSet<Coefs> = BTreeSet::new();
-        let mut over: FxHashSet<u64> = FxHashSet::default();
+        let mut over: DigestSet<u64> = DigestSet::default();
         // The terms of the row `lo` and `hi` write if it is new, else 0.
-        let write = |lo: &Row, hi: &Row, new: &mut BTreeSet<Coefs>, over: &mut FxHashSet<u64>| {
+        let write = |lo: &Row, hi: &Row, new: &mut BTreeSet<Coefs>, over: &mut DigestSet<u64>| {
             match combine(lo, hi, j, false).normal(false) {
                 Norm::Row(r) if !self.rows.contains_key(&r.a) => {
                     let t = r.a.len();
@@ -19678,7 +19683,7 @@ pub fn project_each_classed(f: &Formula, syms: &[Atom]) -> Result<EachClassed, R
 }
 
 /// The answers of [`project_each`], by formula and symbols.
-type Projections = FxHashMap<(Formula, Vec<Atom>), Result<EachClassed, Refusal>>;
+type Projections = TextMap<(Formula, Vec<Atom>), Result<EachClassed, Refusal>>;
 
 thread_local! {
     /// The answers of [`project_each`] while a [`ProjectionMemo`] is open.
@@ -19694,7 +19699,7 @@ impl ProjectionMemo {
     pub fn open() -> ProjectionMemo {
         ProjectionMemo(PROJECTIONS.with(|m| {
             let mut m = m.borrow_mut();
-            m.is_none() && m.replace(FxHashMap::default()).is_none()
+            m.is_none() && m.replace(Default::default()).is_none()
         }))
     }
 }
@@ -33917,8 +33922,7 @@ mod r4_cells_tests {
 
     /// The systems kept for `rows` and `want` by the open [`RepairMemo`].
     fn kept(rows: &[Con], want: bool) -> usize {
-        use std::hash::BuildHasher;
-        let key = (rustc_hash::FxBuildHasher.hash_one(rows), want);
+        let key = (text_hash(rows), want);
         REPAIRS.with(|m| {
             m.borrow()
                 .as_ref()
@@ -33977,8 +33981,8 @@ mod r4_cells_tests {
             memo: HashMap::new(),
             owns: HashMap::new(),
             joins: HashMap::new(),
-            meets: FxHashMap::default(),
-            base_meets: FxHashMap::default(),
+            meets: DigestMap::default(),
+            base_meets: DigestMap::default(),
             unary_payload: false,
         };
         let expand = |v: &CellView| -> BTreeSet<usize> {
@@ -35028,8 +35032,8 @@ mod r5_empty_view_tests {
             memo: HashMap::new(),
             owns: HashMap::new(),
             joins: HashMap::new(),
-            meets: FxHashMap::default(),
-            base_meets: FxHashMap::default(),
+            meets: DigestMap::default(),
+            base_meets: DigestMap::default(),
             unary_payload: false,
         };
         let many = CellView::of(vec![(0, 0), (2, 2)]);
@@ -35275,8 +35279,8 @@ mod r6_shared_window_tests {
             memo: HashMap::new(),
             owns: HashMap::new(),
             joins: HashMap::new(),
-            meets: FxHashMap::default(),
-            base_meets: FxHashMap::default(),
+            meets: DigestMap::default(),
+            base_meets: DigestMap::default(),
             unary_payload: false,
         };
         let s1 = Rc::new(vec![(0, 0), (2, 3), (5, 5), (7, 9), (11, 12)]);
