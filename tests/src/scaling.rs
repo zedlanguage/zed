@@ -584,8 +584,10 @@ pub(crate) enum Measures {
 /// under (`zed_meter_settings::GLIBC_TUNABLES`), which would otherwise give a verdict other than
 /// the one `tools/run_tests.sh` gives. A binary started without them starts itself again with
 /// them before `main` (crate `zed-meter-settings`), so this stops only where that could not
-/// happen: a setuid binary, an `execve` that failed, `GLIBC_TUNABLES` changed by hand, or a run
-/// under valgrind, which the variable must reach before valgrind starts (TOOL-meter-reexec-profilers).
+/// happen: a setuid binary, an `execve` that failed, `GLIBC_TUNABLES` changed by hand, a thread
+/// already running when the binary started (a library preloaded with `LD_PRELOAD` that starts
+/// one; PROOF-meter-no-thread-before-main), or a run under valgrind, which the variable must
+/// reach before valgrind starts (TOOL-meter-reexec-profilers).
 #[cfg(target_os = "linux")]
 fn stop_unless_the_settings_are_in_effect() {
     zed_alloc_count::ready_to_meter();

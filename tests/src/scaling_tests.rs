@@ -394,6 +394,17 @@ fn run_tests_exports_the_settings_of_the_meter() {
     assert_eq!(exports, [zed_meter_settings::GLIBC_TUNABLES]);
 }
 
+/// When the function of zed-meter-settings in `.init_array` ran, this process had one thread, so
+/// it read the environment raw and could start the binary again (argument at `START` in
+/// crates/zed-meter-settings/src/lib.rs). This binary loads the workspace's dylibs, whose
+/// constructors run before that function; the crate's own test of the same name covers a binary
+/// without them. Fails when a constructor of a library or of the program starts a thread.
+#[cfg(all(target_os = "linux", target_env = "gnu"))]
+#[test]
+fn no_other_thread_exists_when_start_runs() {
+    assert_eq!(zed_meter_settings::threads_at_start(), Some(1));
+}
+
 /// `tools/run_tests.sh --bench` fixes the draw of the treap priorities when `ZED_TREAP_SEED` is
 /// unset, so that a benchmark measures the same draw on every run; a correctness run does not.
 #[test]

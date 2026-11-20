@@ -109,9 +109,19 @@ fn name_of(item: &str) -> &str {
 ///
 /// On Linux with glibc: whether `GLIBC_TUNABLES` held them when the process started, and glibc
 /// honored the variable, which it does unless the process runs setuid or setgid (`AT_SECURE`).
+/// The binary does not start itself again when another thread already ran as it started (a
+/// library preloaded with `LD_PRELOAD` that starts one; argument at `START` in this file), so
+/// there the answer is whether it was started with them.
 /// On other systems there are no such settings, and the answer is true.
 pub fn in_effect() -> bool {
     imp::in_effect()
+}
+
+/// The number of threads of the process when the function in `.init_array` ran, as it counted
+/// them in `/proc/self/task`; `None` if it could not, and on systems other than Linux with
+/// glibc. 1 on every run of this workspace (argument at `START` in this file).
+pub fn threads_at_start() -> Option<usize> {
+    imp::threads_at_start()
 }
 
 /// Whether the process runs under valgrind, where it does not start again (see the module
@@ -125,7 +135,7 @@ pub fn running_on_valgrind() -> bool {
 mod imp {
     use super::{ZED_METER_STARTED_AGAIN, holds_the_settings, with_the_settings};
     use std::ffi::{CStr, CString, c_char, c_int};
-    use std::sync::atomic::{AtomicBool, Ordering::Relaxed};
+    use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering::Relaxed};
 
     /// Set by [`start`] when the process started with the settings in effect.
     static IN_EFFECT: AtomicBool = AtomicBool::new(false);
@@ -146,35 +156,127 @@ mod imp {
     /// it). Each binary of `zed_tests::scaling` links this crate, since `Meter::new` calls
     /// [`super::in_effect`].
     ///
-    /// Why no other thread exists while [`start`] runs, which its SAFETY comments rely on (for
-    /// `std::env::remove_var`, whose contract is that no other thread reads or writes the
-    /// environment meanwhile). A thread exists only once some code has called `clone` with
-    /// `CLONE_THREAD` (`pthread_create` does). Before `start` only three kinds of code run: (a) the
-    /// dynamic loader; (b) the constructors of the shared libraries the binary needs, which for a
-    /// test binary are `libstd-*.so` (the workspace links std dynamically), `libgcc_s.so.1`,
-    /// `libc.so.6` and `ld-linux-x86-64.so.2` (`readelf -d` on the zed-meter-settings test binary,
-    /// 2026-11-20); (c) the earlier entries of the main program's own `.init_array`, which holds two
-    /// entries of 8 bytes (`INIT_ARRAYSZ` 16): this one and, inferred, the C runtime's
-    /// `frame_dummy`; no crate of the workspace puts another function there (`grep` for
-    /// `init_array` and `link_section` under `crates/` and `tests/`), and `Cargo.lock` holds none
-    /// of the crates that do (`ctor`, `linkme`, `inventory`). For (a) and (c) no thread is started
-    /// (the loader maps and relocates; `frame_dummy` registers unwind tables). For (b), checked by
-    /// measurement only: `strace -f -e trace=clone,clone3,execve,prctl` on the test binary started
-    /// without `GLIBC_TUNABLES` shows the `execve` of `/proc/self/exe` and the `prctl` that sets the
-    /// name back with no `clone` before either; the first `clone3` comes from the test harness,
-    /// after `main` (2026-11-20). Not proved: that the constructors of these four libraries start no
-    /// thread on every input and build (the open sub-case is (b); their source was not read, since
-    /// neither glibc's nor std's source is installed here); row PROOF-meter-no-thread-before-main.
-    /// A new dependency with a constructor that starts a thread would break the argument; no test
-    /// catches that, and `a_binary_started_without_the_settings_runs_with_them` would still pass.
+    /// Why [`start`] reads the environment vector raw and calls `std::env::remove_var` only when
+    /// no other thread exists, and why that is the case on every run this workspace makes
+    /// (PROOF-meter-no-thread-before-main, 2026-11-20). `remove_var`'s contract is that no other
+    /// thread reads or writes the environment meanwhile; reading `envp` while another thread calls
+    /// `setenv` could read freed memory.
+    ///
+    /// The check in the code. [`start`] first counts the entries of `/proc/self/task`, the
+    /// kernel's list of the threads of this process (proc(5), "/proc/pid/task"). If it counts
+    /// exactly 1, the calling thread is the only one, and stays so while `start` runs: a new
+    /// thread of a process is made only by one of its threads calling `clone` with
+    /// `CLONE_THREAD` (clone(2); `pthread_create` does), and `start` calls nothing that does
+    /// (`std::fs::read_dir`, `getauxval`, `prctl`, allocation, `execve`). Otherwise (more than
+    /// one, or `/proc` cannot be read) `start` reads the environment only through
+    /// `std::env::vars_os`, which is safe to call with other threads, does not call `remove_var`
+    /// and does not start the binary again (its environment would be read raw); [`in_effect`]
+    /// then says whether `GLIBC_TUNABLES` held the settings, and a scaling test refuses when it
+    /// did not: no verdict rather than another one. The second image with another thread keeps
+    /// the marker in its environment and the name `exe`; a binary it starts inherits the marker
+    /// with `GLIBC_TUNABLES` and runs with the settings, under the first image's name. Tests
+    /// `no_other_thread_exists_when_start_runs` (here, and in `zed_tests`'s own tests, whose
+    /// binary loads the workspace's dylibs) and `a_thread_running_before_start_is_seen`.
+    ///
+    /// Not covered by the check: a child made by `clone` with `CLONE_VM` and without
+    /// `CLONE_THREAD` shares the memory but is another process, not listed in
+    /// `/proc/self/task`; and a signal handler a preloaded library installed that starts a
+    /// thread while `start` runs. No library below does either (the reading below); a library
+    /// preloaded with `LD_PRELOAD` or `LD_AUDIT` that does is not handled.
+    ///
+    /// Why the count is 1 on the runs of this workspace, by reading the code that runs before
+    /// `start`. Sources read 2026-11-20: glibc 2.43 (https://ftp.gnu.org/gnu/glibc/glibc-2.43.tar.xz;
+    /// Fedora runs 2.43-9, whose patches were not read), Rust std at the commit of the toolchain
+    /// (59cbdee2e7b3ee50e44b460561c43c9e3023d9f0, rust-src of
+    /// https://static.rust-lang.org/dist/2026-11-18/), and gcc's libgcc at the head of
+    /// releases/gcc-16 (04a71db17257f5e61efacc1e9a01f5f2cc2face6; Fedora's libgcc 16.2.1-3 is a
+    /// snapshot of 2026-10-29, so the machine code below was read as well).
+    ///
+    /// 1. The order. For a dynamic program the loader first calls `__libc_early_init`
+    ///    (elf/libc_early_init.c:32-51), then `_dl_init` (elf/dl-init.c:79-127): any
+    ///    `DF_1_INITFIRST` object, the main program's `DT_PREINIT_ARRAY` (this binary has none:
+    ///    `readelf -d`), then for every loaded object, dependencies first (lines 119-121),
+    ///    `call_init` (lines 25-76), which runs `DT_INIT` and then each entry of
+    ///    `DT_INIT_ARRAY` in order, and skips the main program (lines 46-48). Then
+    ///    `__libc_start_main` runs the main program's `DT_INIT` and `.init_array` in order
+    ///    (csu/libc-start.c:124-147, called at line 347), then `main`. So before `start` run:
+    ///    the loader, `__libc_early_init`, the constructors of every loaded library, the main
+    ///    program's `DT_INIT`, and the entries of its `.init_array` before this one.
+    /// 2. `__libc_early_init` calls `__ctype_init`, sets `__libc_single_threaded`,
+    ///    `__pthread_early_init` (sysdeps/nptl/pthread_early_init.h:28-57: `getrlimit` and the
+    ///    default thread attributes), `__getrandom_early_init`
+    ///    (sysdeps/unix/sysv/linux/getrandom.c:237: one vDSO call and `sysconf`) and
+    ///    `__ptmalloc_init` (malloc/arena.c:250: the main arena and malloc's tunables). None
+    ///    calls `clone`.
+    /// 3. The loaded libraries (`readelf -d` and `ldd` on this crate's test binary and the
+    ///    workspace's dylibs, 2026-11-20): `ld-linux-x86-64.so.2` (no `DT_INIT`, no
+    ///    `DT_INIT_ARRAY`); `libc.so.6`, whose `.init_array` holds `_init_first`
+    ///    (csu/init-first.c:44-72: stores `argc`, `argv`, `environ`, may set the FPU control
+    ///    word by `__setfpucw`, math/setfpucw.c, then `__init_misc`, misc/init-misc.c, which
+    ///    sets `__progname`), `check_stdfiles_vtables` (libio/vtables.c:544, at most one
+    ///    relaxed store, libio/libioP.h:1011-1015) and `_IO_stdfiles_init`
+    ///    (libio/stdfiles.c:61-70, links the three `FILE`s); `libstd-*.so`, whose
+    ///    `.init_array` holds `ARGV_INIT_ARRAY` (library/std/src/sys/args/unix.rs:102-135,
+    ///    section `.init_array.00099`: two stores, `ARGC` and `ARGV`; the other constructor of
+    ///    std, `RUST_LSE_INIT` in library/std/src/sys/configure_builtins.rs:33-62, is built for
+    ///    aarch64 only) and `frame_dummy`; `libgcc_s.so.1`, whose `.init_array` holds
+    ///    `__cpu_indicator_init` (libgcc/config/i386/cpuinfo.c:58-64, `cpuid` and `xgetbv` into
+    ///    `__cpu_model`) and `frame_dummy`; `librt.so.1`, `libpthread.so.0` and `libdl.so.2`,
+    ///    which libstd needs, and the 17 dylibs of the workspace a step binary loads
+    ///    (`libzed_kernel-*.so` and the others), each with `frame_dummy` alone. Each library's
+    ///    `DT_INIT` is the `_init` of crti (sysdeps/x86_64/crti.S:63-75), which calls
+    ///    `__gmon_start__` only when it is defined; it is weak and undefined here (`nm -D`), so
+    ///    `_init` calls nothing. Each `frame_dummy` (gcc crtstuff.c) jumps to
+    ///    `register_tm_clones`, which returns at once when `.tm_clone_table` is empty; it has
+    ///    size 0 in every one of these objects (`readelf -S`).
+    /// 4. The main program's `DT_INIT` is the same crti `_init`; its `.init_array` holds two
+    ///    entries (`INIT_ARRAYSZ` 16): `frame_dummy`, then this one (the relocations of the
+    ///    array, resolved by `nm`). No crate of the workspace puts another function in
+    ///    `.init_array` (`grep` for `init_array` and `link_section` under `crates/` and
+    ///    `tests/`; this crate's tests add one, see `a_thread_running_before_start_is_seen`),
+    ///    and `Cargo.lock` holds none of the crates that do (`ctor`, `linkme`, `inventory`).
+    ///
+    /// How the reading was checked: `objdump -d` of every function named in 3 and 4 in the
+    /// installed libraries, which shows no `syscall` and no call but to `strrchr`,
+    /// `__setfpucw`, `__stack_chk_fail` and the weak symbols above; `__cpu_indicator_init`
+    /// (0x12f3 bytes) has no call or `syscall`, and its three jump tables jump inside it. And
+    /// `strace -f -e trace=clone,clone3,fork,vfork,execve` on this crate's test binary started
+    /// without `GLIBC_TUNABLES` shows the `execve` of `/proc/self/exe` with no `clone` before
+    /// it; the first `clone3` (the test harness's thread) comes after `main`. What the reading
+    /// cannot catch: a library added later, a new version of these with a constructor that
+    /// starts a thread, or a preloaded one; the check above covers those, and
+    /// `no_other_thread_exists_when_start_runs` fails on them.
     #[used]
     #[unsafe(link_section = ".init_array")]
     static START: extern "C" fn(c_int, *const *const c_char, *const *const c_char) = start;
 
+    /// The threads of this process when [`start`] ran, as it counted them; 0 if it could not.
+    static THREADS_AT_START: AtomicUsize = AtomicUsize::new(0);
+
+    pub(super) fn threads_at_start() -> Option<usize> {
+        Some(THREADS_AT_START.load(Relaxed)).filter(|&n| n > 0)
+    }
+
     extern "C" fn start(_argc: c_int, argv: *const *const c_char, envp: *const *const c_char) {
+        // The check of the argument at `START`.
+        let threads = std::fs::read_dir("/proc/self/task").map_or(0, |d| d.count());
+        THREADS_AT_START.store(threads, Relaxed);
+        // SAFETY: getauxval reads the auxiliary vector the kernel gave the process.
+        let secure = unsafe { libc::getauxval(libc::AT_SECURE) } != 0;
+        if threads != 1 {
+            // Another thread may exist (argument at `START`): the environment is read through
+            // std, which is safe with other threads, and neither changed nor passed on.
+            let tunables = std::env::vars_os()
+                .filter(|(k, _)| k == "GLIBC_TUNABLES")
+                .last()
+                .map(|(_, v)| v.to_string_lossy().into_owned());
+            let held = tunables.as_deref().is_some_and(holds_the_settings);
+            IN_EFFECT.store(held && !secure, Relaxed);
+            return;
+        }
         // SAFETY: glibc passes the program's argument and environment vectors, each ended by a
-        // null pointer, and no other thread exists before `main` (the argument, and its Not
-        // proved sub-case, at `START`).
+        // null pointer, and the calling thread is the only one (checked above; argument at
+        // `START`).
         //
         // Why the `expect`s on `CString::new` below cannot fire: `CString::new` fails only on a
         // NUL byte in its argument. Each environment string here is `CStr::to_bytes` of an entry
@@ -198,8 +300,6 @@ mod imp {
             (name == ZED_METER_STARTED_AGAIN.as_bytes())
                 .then(|| &e[(name.len() + 1).min(e.len())..])
         });
-        // SAFETY: getauxval reads the auxiliary vector the kernel gave the process.
-        let secure = unsafe { libc::getauxval(libc::AT_SECURE) } != 0;
         let held = tunables.as_deref().is_some_and(holds_the_settings);
         IN_EFFECT.store(held && !secure, Relaxed);
         if let Some(name) = again {
@@ -209,9 +309,8 @@ mod imp {
                 // the name of the calling thread, here the only one.
                 unsafe { libc::prctl(libc::PR_SET_NAME, name.as_ptr()) };
             }
-            // SAFETY: no other thread exists before `main` (argument and its Not proved
-            // sub-case at `START`), so no other thread reads the environment while this
-            // changes it. `envp`'s strings were copied into `env` above, so nothing here reads
+            // SAFETY: the calling thread is the only one (checked at the top; argument at
+            // `START`), so no other thread reads the environment while this changes it. `envp`'s strings were copied into `env` above, so nothing here reads
             // the vector `remove_var` may change.
             unsafe { std::env::remove_var(ZED_METER_STARTED_AGAIN) };
             return;
@@ -314,6 +413,10 @@ mod imp {
         true
     }
 
+    pub(super) fn threads_at_start() -> Option<usize> {
+        None
+    }
+
     pub(super) fn running_on_valgrind() -> bool {
         false
     }
@@ -397,6 +500,98 @@ mod tests {
             "{stdout}{}",
             String::from_utf8_lossy(&out.stderr)
         );
+    }
+
+    /// When this crate's function in `.init_array` ran, this process had one thread. Fails when a
+    /// constructor that runs before it (of a library, or of the program) has started a thread:
+    /// [`a_thread_running_before_start_is_seen`] runs it with such a constructor and checks that
+    /// it fails there. Covers only the libraries this binary loads; `zed_tests` has the same test
+    /// for a binary that loads the workspace's dylibs.
+    #[cfg(all(target_os = "linux", target_env = "gnu"))]
+    #[test]
+    fn no_other_thread_exists_when_start_runs() {
+        assert_eq!(threads_at_start(), Some(1));
+    }
+
+    /// Set by [`a_thread_running_before_start_is_seen`] for the runs of this binary in which
+    /// [`THREAD`] starts a thread before this crate's function in `.init_array` runs.
+    const THREAD_BEFORE_START: &str = "ZED_METER_TEST_THREAD_BEFORE_START";
+
+    /// A constructor of this test binary that runs before this crate's (the linker puts the
+    /// sections `.init_array.N` before `.init_array`; checked by the runs below, which see two
+    /// threads) and, when [`THREAD_BEFORE_START`] is set, starts a thread that sleeps until the
+    /// process ends, as a preloaded library could.
+    #[cfg(all(target_os = "linux", target_env = "gnu"))]
+    #[allow(unsafe_code)]
+    #[used]
+    #[unsafe(link_section = ".init_array.65535")]
+    static THREAD: extern "C" fn() = {
+        extern "C" fn thread() {
+            if std::env::var_os(THREAD_BEFORE_START).is_some() {
+                std::thread::spawn(|| {
+                    loop {
+                        std::thread::park();
+                    }
+                });
+            }
+        }
+        thread
+    };
+
+    /// In a run with [`THREAD_BEFORE_START`] set (one of those
+    /// [`a_thread_running_before_start_is_seen`] starts): the function in `.init_array` saw two
+    /// threads, so it neither started the binary again nor removed the marker, and
+    /// [`in_effect`] says whether the binary was started with the settings.
+    #[cfg(all(target_os = "linux", target_env = "gnu"))]
+    #[test]
+    fn with_a_thread_before_start_the_binary_does_not_start_again() {
+        if std::env::var_os(THREAD_BEFORE_START).is_none() {
+            return;
+        }
+        assert_eq!(threads_at_start(), Some(2));
+        let tunables = std::env::var("GLIBC_TUNABLES").ok();
+        let marker = std::env::var(ZED_METER_STARTED_AGAIN).ok();
+        if let Some(name) = marker {
+            // Started as a second image: the marker stays, the settings came with it.
+            assert_eq!(name, "first-name");
+            assert!(in_effect());
+        } else {
+            // Started without the settings: not started again, so still without them.
+            assert_eq!(tunables, None);
+            assert!(!in_effect());
+        }
+    }
+
+    /// This binary started with a thread running before this crate's function in `.init_array`
+    /// (by [`THREAD`]): once without the settings, as a first image, and once with them and the
+    /// marker, as a second image. In each, [`no_other_thread_exists_when_start_runs`] fails
+    /// (the negative control: that test sees the thread) and
+    /// [`with_a_thread_before_start_the_binary_does_not_start_again`] passes.
+    #[cfg(all(target_os = "linux", target_env = "gnu"))]
+    #[test]
+    fn a_thread_running_before_start_is_seen() {
+        for second_image in [false, true] {
+            let mut run = std::process::Command::new(std::env::current_exe().unwrap());
+            run.args(["--exact", "--test-threads=1"])
+                .arg("tests::no_other_thread_exists_when_start_runs")
+                .arg("tests::with_a_thread_before_start_the_binary_does_not_start_again")
+                .env_remove("GLIBC_TUNABLES")
+                .env_remove(ZED_METER_STARTED_AGAIN)
+                .env(THREAD_BEFORE_START, "1");
+            if second_image {
+                run.env("GLIBC_TUNABLES", GLIBC_TUNABLES)
+                    .env(ZED_METER_STARTED_AGAIN, "first-name");
+            }
+            let out = run.output().unwrap();
+            let stdout = String::from_utf8_lossy(&out.stdout);
+            assert!(
+                stdout.contains(" 1 passed; 1 failed;")
+                    && stdout.contains("tests::no_other_thread_exists_when_start_runs ... FAILED")
+                    && stdout.contains("left: Some(2)"),
+                "second image: {second_image}\n{stdout}{}",
+                String::from_utf8_lossy(&out.stderr)
+            );
+        }
     }
 
     /// Set by [`under_valgrind_the_binary_runs_without_starting_again`] for the run of this
