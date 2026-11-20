@@ -2,15 +2,17 @@
 //! of its default run (TEST-bench-move-rest). They hold the comparison with the known list
 //! linear in its length; the tool linear in the files of one cycle, in methods written apart
 //! and called on untyped or typed values, and in many untyped calls of one name, open or
-//! hidden; and untyped calls with no triangle at `n^1.5 log n` in the input (COMPLEXITY.md
-//! F103). What each asserts besides its ratio is checked at small sizes by a test of `mod.rs`.
+//! hidden; in blocks and macro rules that declare types; and untyped calls with no triangle at
+//! `n^1.5 log n` in the input (COMPLEXITY.md F103). What each asserts besides its ratio is
+//! checked at small sizes by a test of `mod.rs`.
 
 use zed_tests::scaling::{FACTOR, check, check_order};
 
 use crate::{
-    half_new_half_stale, hidden_methods_import_nothing, known_list, many_calls,
-    many_calls_import_their_methods, many_hidden, method_ring, no_call_imports_without_a_triangle,
-    no_triangle, one_cycle_of_methods, one_ring_of, ring, untyped_ring,
+    blocks, every_block_holds_its_type, half_new_half_stale, hidden_methods_import_nothing,
+    known_list, many_calls, many_calls_import_their_methods, many_hidden, method_ring,
+    no_call_imports_without_a_triangle, no_triangle, one_cycle_of_methods, one_ring_of, ring,
+    untyped_ring,
 };
 
 #[test]
@@ -104,6 +106,22 @@ fn many_calls_of_a_name_cost_no_more_than_their_methods() {
     check("imports, by many untyped calls of hidden methods", n, |m| {
         hidden_methods_import_nothing(&inputs[usize::from(m != n)]);
     });
+}
+
+#[test]
+fn blocks_that_declare_types_scale_with_their_number() {
+    // Each of n blocks gets one block module, made at its brace after one pass over the tokens
+    // marks it, and each of n macro rules is one step; the input is O(n) bytes (COMPLEXITY.md
+    // F103, IMPORTS-macro-body-items).
+    let n = 400;
+    let inputs = [blocks(n), blocks(FACTOR * n)];
+    check(
+        "imports, by blocks and macro rules that declare types",
+        n,
+        |m| {
+            every_block_holds_its_type(&inputs[usize::from(m != n)]);
+        },
+    );
 }
 
 #[test]

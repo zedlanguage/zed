@@ -339,7 +339,9 @@ struct Module<'a> {
     /// in ([`Builder::module_of`]). Before this, such items went unrecorded while an `impl` in
     /// the body was recorded, so the `impl` had no type (zedc-presburger's `Sets` and
     /// `Found`): its methods were drawn from every untyped call of their names, and a body's
-    /// type that has the name of an imported one was taken for that one.
+    /// type that has the name of an imported one was taken for that one. A block that is not a
+    /// function's body (`{ struct X; … }`, a closure's body, `const _: () = { … };`) is one too
+    /// when it declares an item or a `use` directly ([`holding_items`], [`Opening::Block`]).
     block: bool,
 }
 
@@ -381,6 +383,16 @@ enum Opening {
     Module(usize),
     Impl(usize),
     Fn(usize),
+    /// A block that is not a function's body and declares an item or a `use` directly
+    /// (`{ struct X; … }`, a closure's body, `const _: () = { … };`), with its block module.
+    Block(usize),
+    /// The body of a `macro_rules!` rule (its transcriber), whose items are read as items of
+    /// the module the macro is written in (see the `macro_rules` arm of [`Builder::read`]).
+    Macro,
+    /// An `extern` block, whose items are the enclosing module's or block's: `unsafe extern "C"
+    /// { fn malloc(…); }` declares `malloc` beside the block, not in a scope of its own.
+    Extern,
+    /// Any other brace: a type's or a trait's body, a macro's matcher or input, an expression.
     Other,
 }
 
@@ -501,6 +513,105 @@ type Fields<'a> = Vec<(Field<'a>, (usize, usize))>;
 /// The token at `k`, if any.
 fn tok<'a>(toks: &[(Tok<'a>, usize)], k: usize) -> Option<Tok<'a>> {
     toks.get(k).map(|t| t.0)
+}
+
+/// The braces that hold an item or a `use` declaration directly: an item keyword followed by
+/// its name (`macro_rules` by `!`, `use` by the start of a path) whose innermost bracket is a
+/// brace. [`Builder::read`] gives such a brace a block module when it is a block, not a trait's
+/// body, a macro's matcher or input, or an `extern` block. A keyword inside parentheses or
+/// brackets (a macro's matcher `(struct X)`) marks nothing.
+///
+/// Complexity tradeoff: one pass over the tokens with a stack of the open brackets, O(tokens)
+/// time and O(depth) space, besides the set of marked braces. The naive way, a block module for
+/// every brace that may be a block, would make a module for each `if`, `match` arm and closure
+/// body, most of them empty; a module made at the first item read in a block instead (no pass
+/// first) would leave out the paths and nested functions read before the item, which Rust
+/// scopes to the block too ("the items declared in a block are in scope for the whole block",
+/// the Rust Reference, "Block expressions", as quoted at [`Module::block`]). The pass reads
+/// tokens already lexed, not the text again.
+fn holding_items(toks: &[(Tok<'_>, usize)], mate: &[usize]) -> HashSet<usize> {
+    let (mut open, mut held): (Vec<usize>, HashSet<usize>) = (Vec::new(), HashSet::new());
+    for (i, &(t, _)) in toks.iter().enumerate() {
+        match t {
+            Tok::Open | Tok::LParen | Tok::LBrack => open.push(i),
+            // A close that `mates` left unmatched (in a macro's text) closes nothing.
+            Tok::Close | Tok::RParen | Tok::RBrack => {
+                if open.last().is_some_and(|&o| mate[o] == i) {
+                    open.pop();
+                }
+            }
+            Tok::Ident(word) => {
+                let next = tok(toks, i + 1);
+                let item = match word {
+                    "macro_rules" => next == Some(Tok::Bang),
+                    "use" => matches!(next, Some(Tok::Ident(_) | Tok::Sep | Tok::Open | Tok::Star)),
+                    _ => {
+                        (word == "mod" || ITEMS.contains(&word))
+                            && matches!(next, Some(Tok::Ident(_)))
+                    }
+                };
+                if item
+                    && let Some(&o) = open.last()
+                    && toks[o].0 == Tok::Open
+                {
+                    held.insert(o);
+                }
+            }
+            _ => {}
+        }
+    }
+    held
+}
+
+/// Records what the brackets of the `macro_rules!` definition whose group opens at `k` open:
+/// each rule is a matcher, `=>` and a body, each a bracketed group, the rules separated by `;`.
+/// A body in braces is a [`Opening::Macro`]; the definition's own braces and a matcher in
+/// braces are [`Opening::Other`], tokens rather than code, so none is taken for a block. One
+/// step over each rule's two groups, O(rules).
+fn mark_rules(
+    toks: &[(Tok<'_>, usize)],
+    mate: &[usize],
+    k: usize,
+    opens: &mut HashMap<usize, Opening>,
+) {
+    if !matches!(tok(toks, k), Some(Tok::Open | Tok::LParen | Tok::LBrack)) {
+        return;
+    }
+    if toks[k].0 == Tok::Open {
+        opens.insert(k, Opening::Other);
+    }
+    let (mut j, end) = (k + 1, mate[k]);
+    while j < end {
+        let Some(t) = tok(toks, j) else { return };
+        if !matches!(t, Tok::Open | Tok::LParen | Tok::LBrack) {
+            j += 1;
+            continue;
+        }
+        // `j > k`, so `j - 1` is a token of the definition.
+        let opening = if toks[j - 1].0 == Tok::FatArrow {
+            Opening::Macro
+        } else {
+            Opening::Other
+        };
+        if t == Tok::Open {
+            opens.insert(j, opening);
+        }
+        j = mate[j].max(j) + 1;
+    }
+}
+
+/// The position of the brace that opens the body of the item whose name is at `k`, past its
+/// generics, bounds and `where` clause; none if a `;` ends it first (`trait A = B;`).
+fn body_brace(toks: &[(Tok<'_>, usize)], mate: &[usize], mut k: usize) -> Option<usize> {
+    loop {
+        match tok(toks, k)? {
+            Tok::Open => return Some(k),
+            Tok::Semi | Tok::Close => return None,
+            Tok::Lt => k = after_angle(toks, mate, k),
+            Tok::LParen | Tok::LBrack => k = mate[k] + 1,
+            _ => k += 1,
+        }
+    }
 }
 
 /// The position after the `<…>` that opens at `k`, stepping over bracketed groups.
@@ -818,6 +929,7 @@ impl<'a> Builder<'a> {
         let toks = lex(text);
         let mate = mates(&toks);
         generic_names(&toks, &mate, &mut self.generic);
+        let held = holding_items(&toks, &mate);
         let mut opens: HashMap<usize, Opening> = HashMap::new();
         // What the braces open around the current token opened, and the modules open,
         // innermost last.
@@ -828,10 +940,18 @@ impl<'a> Builder<'a> {
         let mut i = 0;
         while let Some(&(t, line)) = toks.get(i) {
             let here = *scopes.last().expect("the file's own module stays open");
-            // A function's body holds items as a module does, in its block module.
-            let item_level = braces
-                .last()
-                .is_none_or(|o| matches!(o, Opening::Module(_) | Opening::Fn(_)));
+            // A function's body and another block hold items as a module does, in their block
+            // modules; a macro's rule body and an `extern` block hold them for the scope around.
+            let item_level = braces.last().is_none_or(|o| {
+                matches!(
+                    o,
+                    Opening::Module(_)
+                        | Opening::Fn(_)
+                        | Opening::Block(_)
+                        | Opening::Macro
+                        | Opening::Extern
+                )
+            });
             let in_impl = match braces.last() {
                 Some(&Opening::Impl(id)) => Some(id),
                 _ => None,
@@ -849,15 +969,40 @@ impl<'a> Builder<'a> {
             }
             match t {
                 Tok::Open => {
-                    let o = opens.get(&at).copied().unwrap_or(Opening::Other);
-                    if let Opening::Fn(id) = o {
-                        scopes.push(self.fns[id].body);
+                    let before = |k: usize| at.checked_sub(k).map(|p| toks[p].0);
+                    let o = match opens.get(&at) {
+                        Some(&o) => o,
+                        None if before(1) == Some(Tok::Ident("extern"))
+                            || (before(1) == Some(Tok::Str)
+                                && before(2) == Some(Tok::Ident("extern"))) =>
+                        {
+                            Opening::Extern
+                        }
+                        // A brace after `!` is a macro's input, whose tokens are not read as
+                        // code; any other brace not recorded already (a module's, an `impl`'s,
+                        // a function's, a trait's, a macro rule's) is a block.
+                        None if held.contains(&at) && before(1) != Some(Tok::Bang) => {
+                            let dir = self.modules[here].dir.clone();
+                            let block = self.module(file, Some(here), dir);
+                            self.modules[block].block = true;
+                            opens.insert(at, Opening::Block(block));
+                            Opening::Block(block)
+                        }
+                        None => Opening::Other,
+                    };
+                    match o {
+                        Opening::Fn(id) => scopes.push(self.fns[id].body),
+                        Opening::Block(block) => scopes.push(block),
+                        _ => {}
                     }
                     braces.push(o);
                 }
                 Tok::Semi => path_attr = false,
                 Tok::Close => {
-                    if matches!(braces.pop(), Some(Opening::Module(_) | Opening::Fn(_))) {
+                    if matches!(
+                        braces.pop(),
+                        Some(Opening::Module(_) | Opening::Fn(_) | Opening::Block(_))
+                    ) {
                         scopes.pop();
                     }
                 }
@@ -942,16 +1087,53 @@ impl<'a> Builder<'a> {
                         self.impls[imp].target = Some((at + 3, to_semi(&toks, &mate, at + 3)));
                     }
                 }
+                // The items a rule's body declares are read as items of the module (or block)
+                // the macro is written in, the scope `here`. Rust declares them where the macro
+                // is called, once per call, and the tool does not expand calls; it chooses the
+                // macro's own scope because (1) that is where zedc-base's `rows!` (in
+                // `rejection.rs`) is called, the one macro of the repository that declares a
+                // type by a fixed name; (2) an `impl` and a `use` in the body are read there
+                // already, so an `impl` of the body's type finds it; and (3) the imports are
+                // between files, and the body's text is in this file. Called from another
+                // module, the item is that module's in Rust; a path to it through that module
+                // still reaches that module's file, by the rule for a name a macro brings in
+                // (`Res::Item` for a segment the module does not give, see the module comment),
+                // so no import is lost. What it costs: the item is taken for this scope's even
+                // where the macro is not called in it, and so hides a `use` or glob import of
+                // the same name here; where it is called here, Rust rejects the item beside such
+                // a `use` (E0255) and lets it hide the glob's, as the tool does. Only the rules'
+                // bodies are read as code, never their matchers, and only a body in braces: a
+                // body in `( … )` or `[ … ]`, which no macro of the repository has, is read as
+                // tokens, and an `impl` in it of a type it declares is reported without its type.
+                // Items named by a macro's variable (`enum $name`) are never read: `$` is not
+                // part of a name.
                 Tok::Ident("macro_rules") if item_level => {
                     if let (Some(Tok::Bang), Some(Tok::Ident(name))) = (next(1), next(2)) {
                         self.modules[here].items.insert(name);
+                        mark_rules(&toks, &mate, at + 3, &mut opens);
                     }
                 }
                 Tok::Ident(word) if item_level && ITEMS.contains(&word) => {
-                    if let Some(Tok::Ident(name)) = next(1) {
+                    // `static mut X` declares `X`; `const fn f` and `const unsafe fn f` are the
+                    // function `f`, which the `fn` arm records.
+                    let k = if word == "static" && next(1) == Some(Tok::Ident("mut")) {
+                        2
+                    } else {
+                        1
+                    };
+                    if let Some(Tok::Ident(name)) = next(k)
+                        && !(word == "const"
+                            && matches!(name, "fn" | "unsafe" | "async" | "extern"))
+                    {
                         self.modules[here].items.insert(name);
                         if matches!(word, "struct" | "enum" | "union" | "type") {
                             self.def(&toks, &mate, at, (file, here), word, name);
+                        }
+                        // A trait's body declares its methods and types, not the module's.
+                        if word == "trait"
+                            && let Some(b) = body_brace(&toks, &mate, at + 2)
+                        {
+                            opens.insert(b, Opening::Other);
                         }
                     }
                 }
@@ -2278,6 +2460,8 @@ impl<'b, 'a> Walk<'b, 'a> {
                 (f.module, f.self_def, f.body) = (m, None, None);
             }
             Some(&Opening::Impl(id)) => f.self_def = self.b.impls[id].def,
+            // A block in a body keeps the body's locals; its names are read in its module.
+            Some(&Opening::Block(m)) => f.module = m,
             Some(&Opening::Fn(id)) => {
                 f.self_def = self.b.fns[id].imp.and_then(|m| self.b.impls[m].def);
                 f.body = Some((i, self.mate[i]));

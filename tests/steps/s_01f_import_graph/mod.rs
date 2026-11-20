@@ -474,6 +474,199 @@ fn a_type_declared_in_a_function_body_holds_its_own_methods() {
 }
 
 #[test]
+fn an_item_a_macro_rules_body_declares_is_an_item_of_the_macros_module() {
+    // `rows!` declares `enum Row` and an `impl Row` in its body and is called in its own module,
+    // as zedc-base's `rejection.rs` is; a second `impl Row` is written after the call. Both
+    // find the type.
+    let g = graph(&[
+        ("lib.rs", "mod r;\n"),
+        (
+            "r.rs",
+            "macro_rules! rows {\n    ($($row:ident),*) => {\n        pub enum Row { $($row,)* }\n\
+             \x20       impl Row {\n            pub fn count() -> usize { 0 }\n        }\n    };\n}\n\
+             rows! { A, B }\nimpl Row {\n    pub fn name(self) {}\n}\n",
+        ),
+    ]);
+    assert_eq!(g.loose_impls, 0);
+    // Called from another module, the item is still read in the macro's module, the file that
+    // holds its text and its `impl`; a path through the calling module reaches the calling file,
+    // by the rule for a name a macro brings in.
+    let g = graph(&[
+        ("lib.rs", "mod d;\nmod u;\nmod w;\n"),
+        (
+            "d.rs",
+            "macro_rules! make {\n    () => {\n        pub struct Made;\n        impl Made {\n            \
+             pub fn m(&self) {}\n        }\n    };\n}\npub(crate) use make;\n",
+        ),
+        ("u.rs", "crate::d::make!();\n"),
+        ("w.rs", "pub fn f() { let _ = crate::u::Made; }\n"),
+    ]);
+    assert_eq!(g.loose_impls, 0);
+    assert_eq!(edges(&g), ["u.rs -> d.rs", "w.rs -> u.rs"]);
+    // A matcher is not code: `struct Shape` in it declares nothing, so `s: &Shape` is the
+    // imported `Shape`, whose method `m` is written in `tm.rs`.
+    let g = graph(&[
+        ("lib.rs", "mod t;\nmod tm;\nmod c;\n"),
+        ("t.rs", "pub struct Shape;\n"),
+        (
+            "tm.rs",
+            "use crate::t::Shape;\nimpl Shape {\n    pub fn m(&self) {}\n}\n",
+        ),
+        (
+            "c.rs",
+            "use crate::t::Shape;\nmacro_rules! hide {\n    { struct Shape; } => {};\n}\n\
+             pub fn f(s: &Shape) { s.m(); }\n",
+        ),
+    ]);
+    assert_eq!(g.loose_impls, 0);
+    assert_eq!(
+        edges(&g),
+        ["tm.rs -> t.rs", "c.rs -> t.rs", "c.rs -> tm.rs"]
+    );
+}
+
+#[test]
+fn an_item_of_a_block_that_is_not_a_function_body_is_the_blocks() {
+    // A block in a body, a closure's body and a `const _` initializer each declare a type with
+    // its `impl` beside it, as zed-alloc-count's `const _: () = { … }` declares functions: each
+    // `impl` finds its type.
+    let g = graph(&[
+        ("lib.rs", "mod a;\n"),
+        (
+            "a.rs",
+            "const _: () = {\n    struct Z;\n    impl Z {\n        fn z(&self) {}\n    }\n};\n\
+             pub fn f(c: bool) {\n    if c {\n        struct X;\n        impl X {\n            \
+             fn x(&self) {}\n        }\n        X.x();\n    }\n    let k = || {\n        \
+             struct Y;\n        impl Y {\n            fn y(&self) {}\n        }\n        \
+             Y.y();\n    };\n    k();\n}\n",
+        ),
+    ]);
+    assert_eq!(g.loose_impls, 0);
+    // The block's `Local` is the block's only: its `impl Local` is not a method of the imported
+    // `Local`, so `d.rs`, which calls `m` on that one, imports only `tm.rs`, where its `m` is
+    // written; after the block, in the function's body, `Local` is the imported one again, so
+    // `k.m()` in `c.rs` is its `m` too.
+    let g = graph(&[
+        ("lib.rs", "mod t;\nmod tm;\nmod c;\nmod d;\n"),
+        ("t.rs", "pub struct Local;\n"),
+        (
+            "tm.rs",
+            "use crate::t::Local;\nimpl Local {\n    pub fn m(&self) {}\n}\n",
+        ),
+        (
+            "c.rs",
+            "use crate::t::Local;\npub fn h(l: &Local) {\n    {\n        struct Local;\n        \
+             impl Local {\n            pub fn m(&self) {}\n        }\n        Local.m();\n    }\n    \
+             let k: &Local = l;\n    k.m();\n}\n",
+        ),
+        (
+            "d.rs",
+            "use crate::t::Local;\npub fn k(l: &Local) { l.m(); }\n",
+        ),
+    ]);
+    assert_eq!(g.loose_impls, 0);
+    assert_eq!(
+        edges(&g),
+        [
+            "tm.rs -> t.rs",
+            "c.rs -> t.rs",
+            "c.rs -> tm.rs",
+            "d.rs -> t.rs",
+            "d.rs -> tm.rs"
+        ]
+    );
+    // A trait's body is not a block: its `type Hidden` is the trait's, named `Self::Hidden`, so
+    // the bare `Hidden` of its method's parameter is the imported one, whose method `m` is
+    // written in `hm.rs`.
+    let hidden = |e: &'static str| {
+        graph(&[
+            ("lib.rs", "mod h;\nmod hm;\nmod e;\n"),
+            ("h.rs", "pub struct Hidden;\n"),
+            (
+                "hm.rs",
+                "use crate::h::Hidden;\nimpl Hidden {\n    pub fn m(&self) {}\n}\n",
+            ),
+            ("e.rs", e),
+        ])
+    };
+    let g = hidden(
+        "use crate::h::Hidden;\npub trait T {\n    type Hidden;\n    \
+         fn f(&self, x: &Hidden) { x.m(); }\n}\n",
+    );
+    assert_eq!(
+        edges(&g),
+        ["hm.rs -> h.rs", "e.rs -> h.rs", "e.rs -> hm.rs"]
+    );
+    // Nor is a macro's input, which is tokens: its `struct Hidden` declares nothing, and the
+    // paths and calls in it are read as written in `e.rs`.
+    let g = hidden(
+        "use crate::h::Hidden;\nother::quote! {\n    struct Hidden;\n    \
+         fn g(x: &Hidden) { x.m(); }\n}\n",
+    );
+    assert_eq!(
+        edges(&g),
+        ["hm.rs -> h.rs", "e.rs -> h.rs", "e.rs -> hm.rs"]
+    );
+}
+
+/// A crate whose `a.rs` holds `m` blocks in one function, each declaring a type with its
+/// `impl` and calling its method, every other one a closure's body, and a macro of `m` rules
+/// whose bodies declare a type each.
+fn blocks(m: usize) -> Vec<(String, String)> {
+    let mut a = String::from("pub fn f() {\n");
+    for i in 0..m {
+        let open = if i % 2 == 0 { "{" } else { "let _ = || {" };
+        a.push_str(&format!(
+            "    {open}\n        struct X{i};\n        impl X{i} {{\n            fn m(&self) {{}}\n        \
+             }}\n        X{i}.m();\n    }};\n"
+        ));
+    }
+    a.push_str("}\nmacro_rules! many {\n");
+    for i in 0..m {
+        a.push_str(&format!(
+            "    (r{i}) => {{\n        pub struct M{i};\n        impl M{i} {{}}\n    }};\n"
+        ));
+    }
+    a.push_str("}\n");
+    vec![
+        ("lib.rs".to_string(), "mod a;\n".to_string()),
+        ("a.rs".to_string(), a),
+    ]
+}
+
+/// Every `impl` of `files` (made by `blocks`) finds its type, and nothing is imported.
+fn every_block_holds_its_type(files: &[(String, String)]) {
+    let g = Graph::of(files).expect("a crate whose `mod` declarations name files");
+    assert_eq!((g.loose_impls, g.unknown_calls), (0, 0));
+    assert_eq!(edges(&g), Vec::<String>::new());
+}
+
+/// Blocks and macro rules that declare types hold them at small sizes; the time is held in
+/// `bench::blocks_that_declare_types_scale_with_their_number`.
+#[test]
+fn blocks_that_declare_types_hold_them_at_small_sizes() {
+    for m in [1, 2, 7] {
+        every_block_holds_its_type(&blocks(m));
+    }
+}
+
+#[test]
+fn a_static_mut_is_recorded_by_its_name() {
+    // `static mut X` declares `X`, not `mut`: `crate::m::X` goes through the glob import of
+    // `m.rs` to `a.rs`, where `X` is.
+    let g = graph(&[
+        ("lib.rs", "mod a;\nmod m;\nmod u;\n"),
+        ("a.rs", "pub static mut X: u32 = 0;\n"),
+        ("m.rs", "pub use crate::a::*;\n"),
+        (
+            "u.rs",
+            "pub fn f() {\n    unsafe { crate::m::X += 1; }\n}\n",
+        ),
+    ]);
+    assert_eq!(edges(&g), ["m.rs -> a.rs", "u.rs -> a.rs"]);
+}
+
+#[test]
 fn the_receiver_is_typed_through_patterns_closures_and_wrappers() {
     // Each call's receiver is typed, so only `A::m` (in `am.rs`) is drawn, never `B::m` (in
     // `bm.rs`), and no call falls back to every file with an `m`.
