@@ -265,6 +265,20 @@ impl<F: Facts> Demand<'_, F> {
     /// starting there: a breadth-first search over the component's own edges, each node's edges
     /// in their order, the first edge back to the start ending it. Every member waits only on
     /// members or on final nodes, and the component is strongly connected, so a cycle exists.
+    ///
+    /// Proof of the two `expect`s. (1) The one caller, `found`, calls this in its third arm,
+    /// after the arm for components whose members are all iterable, so some member is a once
+    /// node. (2) The edges read here, `reads` of an iterable node and `waits` of a once node
+    /// that did not finish, are the edges the search walked (module doc: an iterable node's
+    /// reads are all walked; a waiting once node's one edge in the component is its wait).
+    /// Tarjan's search closes `members` as a strongly connected component under those edges,
+    /// so `start` has an edge into it from some member `p` along a path inside the component
+    /// (for a component of one node, `start`'s wait is itself: a wait on a node below it on
+    /// the stack would give it a lower link and it would not close alone). The breadth-first
+    /// search marks only members `UNREACHED`, so it follows edges inside the component and
+    /// reaches every member, `p` included; reading `p`'s edges it finds `start` first in the
+    /// test `y == start` and sets `back`. Test: `m0_05_widening_and_iteration::schedule`,
+    /// against the declarative rounds over renumberings and root orders.
     fn cycle(&mut self, members: &[usize]) -> Vec<usize> {
         let facts = &*self.facts;
         let start = members

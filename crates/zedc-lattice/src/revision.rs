@@ -293,6 +293,22 @@ pub fn forward_pow(x: &IntervalSet, n: &IntervalSet) -> IntervalSet {
     if blo.signum() < 0 {
         return IntervalSet::top();
     }
+    // Proof that `[lo, hi]` below holds `x ^ k` for every member `x` of `x` (so `blo <= x <=
+    // bhi`, `x >= 0` here) and every `k` of `n` (so `klo <= k <= khi`, `k >= 0`, and `n` has two
+    // members at least, since the one-member case returned above; so `khi >= klo + 1 >= 1`).
+    // Lower end. If `blo = 0`, `lo = 0 <= x ^ k`, as `x >= 0`. If `blo >= 1`, then `x >= blo >=
+    // 1`, and for a base of at least 1 the power does not fall as either argument rises:
+    // `x ^ k >= blo ^ k >= blo ^ klo`; `lo` is `blo ^ klo` exactly (`Num::pow_by`) or, where
+    // that has no form, a bound below it (`pow_end`, whose doc says why its fallback is below).
+    // Upper end. `bhi = 0`: every `x` is 0, so `x ^ k` is 1 at `k = 0` (a member only when `klo
+    // = 0`) and 0 otherwise; `hi` is 1 or 0 to match. `bhi = 1`: `x` is 0 or 1, so the power is
+    // 0 or 1. `bhi >= 2`: `x ^ k <= bhi ^ k <= bhi ^ khi` by the same monotony (and `0 ^ 0 = 1
+    // <= bhi ^ khi`), and `pow_end` rounds up. An infinite `bhi` or `khi` gives `PosInf`.
+    // A base that may be negative returned `top` above, since `x ^ k` then changes sign with
+    // the parity of `k`. Tests: `a_power_at_a_set_of_exponents_holds_each_power_and_no_more`
+    // (every member pair of the fixed operands, inside WINDOW) and
+    // `l01_29_repairs_and_printing::power_repairs`; they cannot try ends past i64, where the
+    // argument alone covers `pow_end`.
     // `n` has two members at least, so its greatest is at least 1, and `0 ^ hi(n)` is 0.
     let lo = match blo {
         Fin(b) if !b.is_zero() => pow_end(b, &klo.clone().into(), Dir::Down),
@@ -412,6 +428,12 @@ fn map2(
     } else {
         (shrink(ra, nb, na), rb.concat())
     };
+    // Why at most `4(k + 2)` pairs, `k = max(na, nb)`, `m` the other count. The longer list
+    // goes through `regions`, which merges pieces (never adds one) and splits at 0, which adds
+    // at most two pieces (one piece across 0 becomes three), so it has at most `k + 2`. The
+    // shorter is capped to `c = ceil((k + m) / k) <= 2` pieces (as `m <= k`; `c = 1` when `m =
+    // 0`, an empty `b` giving no pair at all) and split at 0, so at most `c + 2 <= 4`. Checked
+    // by `the_interval_operations_scale`, which measures the cost, not this count.
     let f = &f;
     let image: Vec<(End, End)> = pa
         .iter()
@@ -609,6 +631,18 @@ fn roots(k: &Exponent, lo: &End, hi: &End) -> Vec<(End, End)> {
 ///
 /// A base of -1, 0 or 1 never reaches the bound: [`Num::pow_by`] reads it by the parity of
 /// `k`, kept or not.
+///
+/// Proof that the fallback is outward. zedc-int `Num::pow_by` returns `None` only past its
+/// first branch, which answers every `k` that fits `u32`, and past its second, which answers
+/// every base of magnitude at most 1; so here `k > u32::MAX` and `|x| >= 2`. Then `|x ^ k| =
+/// |x| ^ k >= 2 ^ k > 2 ^ u32::MAX = least`. The sign of `x ^ k` is negative exactly when `x <
+/// 0` and `k` is odd. So for a positive power `x ^ k > least` (the `Down` end `least` is below
+/// it, the `Up` end is `PosInf`), and for a negative one `x ^ k < -least` (the `Up` end `-least`
+/// is above it, the `Down` end is `NegInf`). Test:
+/// `l01_24_refinement_lattices::past_i64::an_exponent_with_no_exact_form_bounds_outward`; it
+/// reads a positive base and a negative one at an odd and an even kept exponent, so each sign
+/// of `x ^ k` once; it cannot show the bound is outward for every base, which the argument
+/// covers.
 fn pow_end(x: &Num, k: &Exponent, dir: Dir) -> End {
     if let Some(v) = x.pow_by(k.num()) {
         return Fin(v);
@@ -657,6 +691,7 @@ pub fn reduce_finite(x: &IntervalSet, s: &FiniteSet<i64>) -> (IntervalSet, Finit
         FiniteSet::Top => (x.clone(), FiniteSet::Top),
         FiniteSet::Set(vs) => {
             let kept: FiniteSet<i64> = FiniteSet::of(vs.iter().copied().filter(|&v| x.contains(v)));
+            // `FiniteSet::of` (lattice.rs) always builds `FiniteSet::Set`, never `Top`.
             let FiniteSet::Set(k) = &kept else {
                 unreachable!()
             };

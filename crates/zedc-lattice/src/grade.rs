@@ -134,6 +134,17 @@ pub fn grade(
         arith,
         scope: HashMap::new(),
     };
+    // Why the `unreachable!`, the `expect` and the `split_off` below cannot fail. Invariant:
+    // finishing the tasks pushed by one `Task::Visit(t)` leaves exactly one more item on
+    // `items`. By induction on `t` (`Grader::visit`): a leaf pushes one item; a `Prim` with
+    // `n` arguments pushes `Combine(t)` under `n` visits, which leave `n` items, and `Combine`
+    // takes `n` and pushes one; an `App` with `n` arguments adds the visit of its function,
+    // `n + 1` items, and `Combine` takes `n + 1` (and `combine` removes the first, the
+    // function); a `Let` pushes `Visit(e)` above `Bind`, so `Bind` finds the item of `e` and
+    // pops it, then `Visit(b)` leaves one and `Unbind` takes none. So `split_off` never asks
+    // for more items than there are, `Bind` always finds one, and only `visit` pushes a
+    // `Combine`, for a `Prim` or an `App`, which is why `combine` and the arm below see no
+    // other term.
     let mut tasks = vec![Task::Visit(body)];
     let mut items: Vec<Item> = Vec::new();
     while let Some(task) = tasks.pop() {

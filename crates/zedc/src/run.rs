@@ -501,6 +501,10 @@ pub(crate) fn program(stmts: &[Stmt], unit: Arc<Unit>) -> Result<Program, ast::E
         Some(TypeKind::Name(n)) if n == "Files" => PortKind::Files,
         Some(TypeKind::Name(n)) if n == "CommandLine" => PortKind::CommandLine,
         Some(TypeKind::Arrow { partial: true, .. }) => PortKind::Env,
+        // Cannot happen: `main` is a top-level statement, whose parameters the builder
+        // replaces by those `Builder::main_header` (zedc-syntax ast/stmts.rs) makes, one per
+        // field of `MAIN_INPUTS` the body reads, typed `CommandLine`, `Lines`, `Files`, or
+        // `(String) ->? String` for `env`: the four arms above.
         _ => unreachable!("the parser gives `main` only the parameters of `MainArgs`' inputs"),
     };
     let inputs = main

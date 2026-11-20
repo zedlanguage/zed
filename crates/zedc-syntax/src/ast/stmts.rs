@@ -943,6 +943,8 @@ impl Builder<'_, '_> {
     // Complexity: one pass over the f facets and the a arguments, O(f + a); the atoms seen are
     // at most three, so the repeat check is a scan of a list of at most three, O(1) each.
     fn main_handles(&mut self, t: usize, body: Span) -> Error {
+        // Cannot fail: the one caller, `function`, calls this only under
+        // `self.mains.of(body).is_some_and(..)`.
         let main = self.mains.of(body).expect("a main's body is in the table");
         let row = |span: Span, message: String, notes: Vec<Note>| Error {
             row: Some(Row::SignalDeclarationCannotHold),
@@ -1191,6 +1193,11 @@ impl Builder<'_, '_> {
             }
         }
         let result = (result.transpose()).map_err(|span| main_result_error(self.text, span))?;
+        // Cannot fail: `function` calls this only for a `Function` node named `main` with
+        // `skip == 0`, of a tree in `with_holes`'s `list`, and `Mains::new` adds the last kid
+        // of every such node of every tree of the list (`Mains::bodies`), with this `body`
+        // span. Test: `l01_19_whole_file_ports::main_args::a_main_in_a_string_hole_is_built`,
+        // which panicked here when the table held the text's tree alone.
         let main = self.mains.of(body).expect("a main's body is in the table");
         let (mut inputs, outputs) = *main.uses.borrow();
         // A read of `main::files` in another function opens the port as a read in the body does;

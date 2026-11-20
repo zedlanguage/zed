@@ -78,6 +78,7 @@ pub fn ty(text: &str, tokens: &[Token], tree: &Tree) -> Result<Type, Error> {
 /// The statements of `tree`, parsed as `Unit` from `tokens` of `text`, as [`unit_all_errors`]
 /// gives them, or the first error in written order.
 pub fn unit(text: &str, tokens: &[Token], tree: &Tree) -> Result<Vec<Stmt>, Error> {
+    // Cannot fail: `unit_all_errors` returns `Err(errors)` only under `!errors.is_empty()`.
     unit_all_errors(text, tokens, tree)
         .map_err(|es| es.into_iter().next().expect("an error per failed unit"))
 }
@@ -160,7 +161,7 @@ fn with_holes<'t, R>(
         i += 1;
     }
     let bare = Bare::new();
-    let mains = Mains::new(text, tokens, tree);
+    let mains = Mains::new(text, &list);
     let qualifiers = initial::qualifiers(text, &list);
     let methods = Methods::new(text, tokens, tree);
     let mut done: Vec<Option<Result<Expr, Error>>> = Vec::new();
@@ -869,6 +870,11 @@ impl<'a, 's> Builder<'a, 's> {
 /// literal too long to copy is an error and not an abort.
 pub fn shown(x: &impl fmt::Display) -> Result<String, TooLarge> {
     let mut len = Count(0);
+    // Why the two `expect`s cannot fail: `Count::write_str` and `String`'s `write_str` always
+    // return `Ok`, and `fmt::write` errs only when the writer or `x`'s `Display` does. That
+    // `Display` errs only when its writer errs is the contract of `std::fmt` ("formatting
+    // should only fail if the writer fails"), assumed of every caller's type, not checked
+    // here; a `Display` that returned `Err` on its own would panic here.
     fmt::write(&mut len, format_args!("{x}")).expect("counting cannot fail");
     let mut out = String::new();
     // The literal's characters are counted as its digits: the size named is a number of that

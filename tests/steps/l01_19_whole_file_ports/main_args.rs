@@ -234,3 +234,27 @@ pub(super) fn builds_the_reads(text: &str, n: usize) {
 fn the_reads_after_several_mains_are_built() {
     builds_the_reads(&mains_then_reads(3), 3);
 }
+
+/// A `main` declared in a block inside a string's hole: the builder of the hole's tree finds
+/// it in the table of `main`s (`Mains`), as it does one at the top of the file. Before the
+/// table held the holes' trees, building it panicked ("a main's body is in the table").
+#[test]
+fn a_main_in_a_string_hole_is_built() {
+    for text in [
+        "f() = \"${ { main() -> int { 0 } 1 } }\";\n",
+        "f() = \"${ { main(m: MainArgs) { m.stdout <- m.stdin[0] else \"\"; } 1 } }\";\n",
+    ] {
+        let tokens = zedc::lex::lex(text).unwrap();
+        let tree = zedc::parse::parse(text, &tokens, "Unit", zedc::parse::TOP).unwrap();
+        let _ = zedc::ast::unit(text, &tokens, &tree);
+        let src = format!("{text}main(m: MainArgs) {{\n  m.stdout <- f();\n}}\n");
+        let out = run("main_in_hole", &src, "", &[]);
+        // The inner `main` is a function local to the block, as one in a block outside a
+        // string is; the program runs.
+        assert_eq!(
+            (out.status, out.stdout.as_str(), out.stderr.as_str()),
+            (0, "1\n", ""),
+            "{src}"
+        );
+    }
+}

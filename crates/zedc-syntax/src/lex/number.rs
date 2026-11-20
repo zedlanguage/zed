@@ -116,6 +116,8 @@ fn run_on(text: &str, pos: usize, end: usize, radix: u32) -> Error {
         .char_indices()
         .find(|&(_, c)| !is_name_continue(c))
         .map_or(text.len(), |(i, _)| end + i);
+    // Cannot fail: the one caller calls this only when `text[after..]` starts with a
+    // character continuing a name, and passes `after` as `end`.
     let next = text[end..].chars().next().expect("a character follows");
     let d = &text[pos..end];
     let why = if matches!(next, 'e' | 'E') && radix == 10 && !d.contains(['e', 'E']) {

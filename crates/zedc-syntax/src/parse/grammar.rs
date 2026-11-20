@@ -168,6 +168,9 @@ impl Grammar {
         let lowest = g.lowest_layers();
         for rule in &g.rules {
             for alt in rule.alts.iter().filter(|a| a.pass) {
+                // Cannot fail: `read_with` refuses a `~` alternative with no `marked_rule`
+                // unless `marks_undefined`, and with `open` false it makes no
+                // `Expr::Undefined` (`primary` errs on an undefined name instead).
                 let r = marked_rule(&alt.expr).expect("read above");
                 if alt.layer > lowest[r] {
                     return Err(format!(
@@ -253,6 +256,7 @@ impl Grammar {
                     .iter()
                     .map(|a| a.layer)
                     .min()
+                    // Cannot fail: `read_with` makes each rule with `alts: vec![alt]`.
                     .expect("a rule starts with an alternative")
             })
             .collect()

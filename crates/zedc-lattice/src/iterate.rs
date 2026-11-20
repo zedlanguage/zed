@@ -322,5 +322,17 @@ pub fn narrow<L: Lattice>(eq: &impl Equations<L>, order: &[Element], cells: &mut
         }
         *cells = next;
     }
+    // Why this is not reached. For each cell `v`, the values over the rounds are `x_{i+1} =
+    // x_i Δ y_i` with `y_i = x_i ⊓ eval(v)`, so `y_i ⊑ x_i` as `Lattice::narrow` requires,
+    // and the marks `marks.of(v)` are the same in every round. `Lattice::narrow` (lattice.rs)
+    // promises that every such chain is finite, i.e. ultimately stationary: for the interval
+    // sets by the argument at `IntervalSet::narrow` and `IntervalSet::widen`, for a lattice
+    // with no infinite descending chain because it returns `next`. Each of the finitely many
+    // cells is stationary from some round on, so from the latest of those rounds `next ==
+    // *cells` and the loop returns. Tests:
+    // `m0_05_widening_and_iteration::widening::interval_narrowing_chains_stay_on_the_first_ends_and_the_landmarks`
+    // (the chains of one cell) and `m0_05_widening_and_iteration::invariant` (whole runs);
+    // they cannot catch a `Lattice` implementation that breaks the promise on inputs they do
+    // not draw.
     unreachable!("a chain of narrowings is finite")
 }

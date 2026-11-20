@@ -306,6 +306,10 @@ impl<'g, I: Input + ?Sized> Parser<'g, I> {
         let mut stack = Vec::new();
         let first = self.call(r, pos, head, &mut stack);
         let end = self.run(first, stack)?;
+        // Cannot fail: `run` returns only once `stack` is empty. Either `call` found `r`'s
+        // result at once and pushed its node (the end of `call`), or it pushed a
+        // `Frame::Rule` for `r` at the bottom of `stack`, and `run` pops that frame last,
+        // pushing the node when it matched; `end` is `Some`, so `r` matched.
         let node = self.kids.pop().expect("a matched rule leaves its node");
         Some((end, node))
     }
@@ -579,6 +583,10 @@ impl<'g, I: Input + ?Sized> Parser<'g, I> {
                     }
                     Frame::Not { pos, mark } => {
                         self.kids.truncate(*mark);
+                        // Cannot fail: `saved` is pushed only where an `Expr::Not` pushes its
+                        // `Frame::Not`, and popped only here, as that frame is popped; frames
+                        // leave `stack` only by `stack.pop()` and `run` returns only with
+                        // `stack` empty, so each pop here has its push.
                         (self.far, self.expected) = self.saved.pop().expect("saved by `!`");
                         done = done.is_none().then_some(*pos);
                         stack.pop();
@@ -609,6 +617,8 @@ impl<'g, I: Input + ?Sized> Parser<'g, I> {
                         e = x;
                     }
                     Expr::Choice(alts) => {
+                        // Cannot fail: `Reader::choice` in grammar.rs, the one builder of an
+                        // `Expr::Choice`, makes one only of two or more alternatives.
                         let (x, rest) = alts.split_first().expect("a choice has branches");
                         let mark = self.kids.len();
                         stack.push(Frame::Choice {
@@ -696,6 +706,8 @@ fn iteration<'g>(
     head: bool,
     mark: usize,
 ) -> &'g Expr {
+    // Cannot fail: the two callers pass the `body` of a `Frame::Loop`, one expression
+    // (`slice::from_ref`), or of a `Frame::Sep`, the two of an `Expr::Sep`.
     let (first, rest) = body.split_first().expect("a loop body is not empty");
     if !rest.is_empty() {
         stack.push(Frame::Seq { rest, head, mark });

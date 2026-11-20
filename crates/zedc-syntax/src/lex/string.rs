@@ -362,6 +362,9 @@ fn hole_end(text: &str, open: usize, one_line: bool, holes: &mut Holes) -> Resul
                             None => return Ok(i),
                             Some(Inside::Str { scan, .. }) => scan.i = i + 1,
                             Some(Inside::Hole { .. }) => {
+                                // Cannot fire: an `Inside::Hole` is pushed only at the bottom
+                                // of `stack` or (the `Inside::Str` arm) above an `Inside::Str`,
+                                // so what lies under a popped hole is a string or nothing.
                                 unreachable!("a hole here is inside a string")
                             }
                         }
@@ -511,6 +514,15 @@ fn decode(text: &str, start: usize, end: usize, cuts: &[(usize, usize)]) -> Stri
             !(next < cuts.len() && cuts[next].0 <= p)
         })
         .map(|(_, c)| c);
+    // Why the `expect`s cannot fail. The text of a `Raw::Lit` piece is text `Scan::next_hole`
+    // stepped over, and it hands each `\` to `escape`, which accepts only `\` followed by a
+    // character `escaped` maps, or `\u{h}` with `h` non-empty hex digits naming a `char`; so
+    // each `\` read here is followed by such an escape. `escaped('u')` is `None` (else `escape`
+    // would accept `\u` bare), so the two arms below agree with `escape`. A cut removes only the
+    // indentation at the start of a line of a `"""` string, or a line break next to a
+    // delimiter (`strip`), never text inside an escape, which holds no line break (`\` and a
+    // line break is refused by `escape`). Test: `l01_05_lexer_strings` decodes the escapes;
+    // it cannot catch a new escape added to `escape` but not here.
     let mut out = String::new();
     while let Some(c) = chars.next() {
         if c != '\\' {

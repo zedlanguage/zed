@@ -335,6 +335,20 @@ pub fn weak_topological_order(succ: &[Vec<usize>]) -> Vec<Element> {
         let level = if head_of[v] == NONE { n } else { head_of[v] };
         children[level].push(v);
     }
+    // Why the two `expect`s below cannot fire. (1) Every member `x` of `h`'s component is a
+    // proper descendant of `h` in the traversal's tree, by induction over the heads in
+    // decreasing preorder. A back-edge source `u` of `h` is a descendant of `h`, and the root
+    // of its set is a head processed earlier (larger preorder) that is an ancestor of `u`, so
+    // a descendant of `h`, or `u` itself. An edge `(u, w)` reaches `entries` when the common
+    // ancestor `a` of `u` and `w` is processed, so `h`, processed then or later (preorder at
+    // most `a`'s) and an ancestor of `w` by induction, is an ancestor of `a` (both are
+    // ancestors of `w`), hence of `u`. The traversal finishes a descendant before its ancestor,
+    // so `built[c]` is filled before `h`'s turn in `t.finished`. (2) Each vertex is in exactly
+    // one `children` list (its `head_of`, or `n`), and each list is taken once (a head's in its
+    // own turn, `n`'s at the end), so no `built[c]` is taken twice; `t.finished` holds every
+    // vertex (the traversal starts from each unreached one), so every `built[c]` is filled.
+    // Test: `m0_05_widening_and_iteration::wto`, against the declarative definition on drawn
+    // graphs; it cannot catch a graph shape it does not draw, which the argument covers.
     let mut built: Vec<Option<Element>> = (0..n).map(|_| None).collect();
     for &v in &t.finished {
         built[v] = Some(if is_head[v] {

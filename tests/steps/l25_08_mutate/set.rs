@@ -163,6 +163,9 @@ fn h4_a_decimal_literal_moves_by_one_unit_of_its_last_digit() {
         ("f64", "0.0", "-0.1", "0.1"),
         ("f64", "1.9", "1.8", "2.0"),
         ("f64", "10.0", "9.9", "10.1"),
+        // A carry out of the first digit, and a borrow down to 0 that is not below zero.
+        ("f64", "9.9", "9.8", "10.0"),
+        ("f64", "0.1", "0.0", "0.2"),
         ("f32", "2.5", "2.4", "2.6"),
         ("rat", "2.5r", "2.4r", "2.6r"),
     ] {

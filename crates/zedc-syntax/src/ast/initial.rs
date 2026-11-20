@@ -2171,6 +2171,18 @@ fn every_path<'e>(
             }
         }
     }
+    // Why this and the `Join`'s `unreachable!` cannot fire. Invariant: a `Task::Stmt` or
+    // `Task::Expr`, once it and the tasks it pushed have run, has pushed exactly one entry
+    // net onto `results`. Each arm ends in one of: `results.push` (no kids, or `break`); a
+    // `Task::Join` pushed below its kids; or (`local`, annotated) one `Task::Stmt` for the
+    // declaration, which holds by induction. A `Join` is pushed only there and at the root,
+    // never into a `kids` list, so a kids list holds `Stmt`, `Expr`, `Enter` and `Leave`
+    // tasks, and `Enter`/`Leave` touch only `env`. The kids run before their `Join` (a
+    // stack), each leaving one entry by induction on the walk's depth, and the `Join` pops
+    // `results_of(&kids)` of them, the number of `Stmt` and `Expr` among them, then pushes
+    // one. The root `Join` waits on `stmts.len()` results, and `block` makes one
+    // `Task::Stmt` per statement, so one entry is left. Test: every `initial`/loop test of
+    // step L6 runs this walk; an off-by-one count would panic or pop a wrong entry there.
     let Some((_, must)) = results.pop() else {
         unreachable!("the walk of a body leaves one result");
     };
@@ -2834,6 +2846,16 @@ impl Builder<'_, '_> {
         if let Some(k) = &keyed {
             notes.extend(k.hides.iter().cloned());
         }
+        // Why `(None, None)` cannot happen: `keyed` is `Some` for every write `several` keeps.
+        // (1) `misses(w, scopes, false)` starts at `w.per` as `first_miss` does and lists
+        // every miss `first_miss` would stop at, so it is non-empty once `several` kept the
+        // write, and `misses.last()?` passes. (2) `at`: a `Call` or `Bind` write is made
+        // with `insert: Some(..)` (the three `Write` sites with `key_place` or `tat.end`);
+        // a `Def` write is made only for an `IndexedDef` `d` whose `d.name` ends in `'`, with
+        // `span: s.span`. `d.name` is `Builder::word` of the node's first token and `s.span`
+        // starts at that token (`Builder::span`), so the text at `w.span` starts with
+        // `{name}'`, `name` being `d.name` unprimed. Test: the Collision tests of step L6
+        // reach both arms; none can reach `(None, None)`.
         let code = match (&hoist, &keyed) {
             (Some((_, first, then)), _) => format!("{first} {then}"),
             (None, Some(k)) => k.whole.clone(),
@@ -2885,6 +2907,18 @@ impl Builder<'_, '_> {
         at: Span,
         step: &Step,
     ) -> Error {
+        // Why the two `unreachable!`s cannot fire. `[]`: the caller passes the updates of the
+        // name of one update it found, which is among them. `branch`: the caller calls this
+        // for an update whose name is not in `must`, the `Must::Names` at the root of
+        // `every_path`. An update with `branch: None` is in `must`: the root's context has
+        // `branch: None` (`start`), and every task made with `Role::Alt` or `Role::Some` gets
+        // a context with `branch: Some(..)` (`inside(..)`, `inside_scope(.., b.branch)` with
+        // `b = inside(..)`, or `indexed`, each `Some`); a context otherwise copies its parent's
+        // `branch`, and no other site writes `branch: None`. So a task with `branch: None`
+        // has only `Role::Always` tasks above it, each `Join` unions those kids' sets into its
+        // own, and the update's name reaches the root's set, unless a `Must::All` there made
+        // the caller return before calling this. Test: the "not updated on every path" tests
+        // of step L6 reach the `[one]` and several-update arms.
         let branch = |u: &Update| {
             let Some(b) = u.branch else {
                 unreachable!("an update on every path leaves no path without one")
@@ -3418,6 +3452,9 @@ impl Builder<'_, '_> {
 
     /// The sentinel site `s`, an `initial` statement, read as a [`Site`].
     fn site<'s>(&self, s: &'s Stmt) -> Site<'s> {
+        // Cannot fire: `site` is reached only from `value_for`, `gives` and `drop_name`, all
+        // called from `two_sentinels` with `stmts[e.stmt]` for an `Entry` `e`, and
+        // `entries_of` makes an `Entry` only for a statement where `initial_of` is `Some`.
         let Some(i) = initial_of(unwrapped(s).0) else {
             unreachable!("a sentinel site is an `initial` statement")
         };
@@ -3577,6 +3614,9 @@ impl Builder<'_, '_> {
         };
         let word = |one: bool| if one { "entry" } else { "entries" };
         if b.line.is_some() {
+            // Cannot fail: `entries_of` sets `line: Some` only from `Keys::Written` of the
+            // first key of an `initial` statement (`initial_of` is `Some`, `keys` not empty),
+            // which is just what `keyed` asks.
             let i = keyed(b).expect("a key the text does not fix is written on an `initial`");
             let one = matches!(i.keys[0], IndexKey::At(_)) && b.inner.iter().all(single);
             return format!(
@@ -3647,6 +3687,8 @@ impl Builder<'_, '_> {
             [low, high] => Some(format!(
                 "split this one into two, around the keys the other gives: `{low}` and `{high}`"
             )),
+            // Cannot fire: `runs` above gets at most two pushes, one below `other.lo` and one
+            // above `other.end`.
             _ => unreachable!("a run less another run leaves at most two runs"),
         }
     }

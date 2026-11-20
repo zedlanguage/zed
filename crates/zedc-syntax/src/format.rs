@@ -151,6 +151,11 @@ fn infix_right(b: &Expr) -> u8 {
     }
 }
 
+// Cannot fail today: `BinaryOp::prim` (ast/node.rs) maps the 16 operators to `Or`, `And`,
+// `Eq`, `Ne`, `Lt`, `Le`, `Gt`, `Ge`, `Add`, `Sub`, `Concat`, `Mul`, `Div`, `IntDiv`, `Mod`
+// and `Pow`, and `zed_kernel::print::level::binary` gives each of those a level. Its `_ =>
+// None` arm means a new operator added to `prim` but not to `binary` compiles and panics
+// here on its first format; the format tests of each operator would show it.
 fn binary_level(op: BinaryOp) -> u8 {
     level::binary(op.prim()).expect("each binary operator of the grammar has a level")
 }

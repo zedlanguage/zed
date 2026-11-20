@@ -342,6 +342,21 @@ impl<'a> Tables<'a> {
             .collect()
     }
 
+    /// The binders the statement `s` declares.
+    ///
+    /// Why the `unreachable!`s for the forms of layers L2 and L6 here and in [`what`] cannot
+    /// fire. Claim: no statement of those kinds reaches a `Tables` method. (1) Name resolution
+    /// records each of them in `Resolved::later` (`Resolver::stmt`, resolve.rs: `self.later`
+    /// for a struct, method, type, `local`, indexed definition, `initial`, `while`, `until`,
+    /// `break`, `self.later.push` for an import), wherever it stands, since a function body's
+    /// statements go through the same `Task::Stmt`. (2) `resolve_text` returns `Ok` only when
+    /// `errors` and `later` are both empty. (3) Every caller that builds `Tables` over a
+    /// non-empty unit does so with the resolution `resolve_text` or `resolve` gave
+    /// (zedc front.rs `staged`, mutate.rs `mutants`; the checker's own unit tests build
+    /// `Tables` over an empty unit; other test callers were not each traced). Not checked by the types: `Tables::new` takes any
+    /// `Resolution`, so a new caller passing `resolve_in(..).res` with `later` non-empty
+    /// would reach the panic. Test: none reaches these arms by construction; every
+    /// `not_yet` refusal test of the resolver shows (1) for its form.
     fn binders_of(&self, s: &'a Stmt) -> Vec<usize> {
         match &s.kind {
             StmtKind::Bind { targets, .. } => targets
@@ -682,6 +697,8 @@ impl<'a> Tables<'a> {
         let start = (cycle.iter())
             .map(|&i| (what(items[i]), i))
             .min()
+            // `topo`'s `cycles` keeps a component's nodes below `items`, and a component
+            // holding a cycle has an item, since a join waits only on items.
             .expect("a cycle has a statement")
             .1;
         // The cycle's order: a search from `start` that takes each statement's uses in the
@@ -859,6 +876,9 @@ impl<'a> Tables<'a> {
     /// both are written with the statement's own value, `x' = e` and `e` with each read of `x`
     /// made `x[i-1]`; otherwise with the example of DESIGN.md sec:diagnostics and the name.
     fn step_repair(&self, s: &Stmt, alone: bool) -> String {
+        // The one caller, `cycle_report`, calls this only when `value` holds, which needs
+        // every statement of the cycle, `start` among them, to be a `Bind`. The name: see
+        // [`what`].
         let StmtKind::Bind { targets, value } = &s.kind else {
             unreachable!("a value's statement")
         };
@@ -914,6 +934,19 @@ fn names_bound(s: &Stmt) -> usize {
 
 /// How a message names the statement `s` of a cycle: by the names it binds. Only a statement
 /// that binds a name is in a cycle, since only such a statement is waited on (`deps`).
+///
+/// Proof of that, which the `unreachable!`s for a push, an expression statement, an export
+/// and a unit item, and [`Tables::step_repair`]'s `expect("a value has a name")`, rest on.
+/// In [`Tables::deps`] an edge `user -> on` has `on = item_of[b]` for a binder `b`, or `on`
+/// a join whose entries are `item_of` values; `item_of` maps only the binders
+/// `binders_of(items[i])` to `i`. So an item some node waits on has `binders_of` non-empty.
+/// A cycle `topo_around_cycles` reports is a strongly connected component with more than one
+/// node or a self-edge, so each of its nodes is waited on by a node of it; each of its items
+/// thus binds a name. `binders_of` is empty for a push, an expression statement, an export
+/// and a unit item, and for a `Bind` it lists only its `Target::Name`s, so a `Bind` in a
+/// cycle has a name. The forms of layers L2 and L6: see [`Tables::binders_of`]. Test: the
+/// cycle messages of `l01_16_elaboration` reach `what` on `Bind` and `Function` items only;
+/// no test can build an edge into an item that binds nothing, which is the claim.
 fn what(s: &Stmt) -> String {
     match &s.kind {
         StmtKind::Bind { targets, .. } => {

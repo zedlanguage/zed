@@ -669,6 +669,12 @@ pub fn load(db: &mut Db, files: &dyn Files, roots: &[&str]) -> Package {
             }
             pkg.units[i].parsed = Some(parsed);
         }
+        // The invariant the `unreachable!`s below rest on ("a unit with text is parsed", "a
+        // parsed unit has text"): `parsed` is `Some` exactly when `text` is `Some(Ok(_))`.
+        // These two lines are the only writes of either field after `add` makes the unit with
+        // both `None`, and each unit `add` makes is pushed on `todo` once and popped here once.
+        // `edges[i]` gains an import only above, under `Some(Ok(t))`, so a unit with imports
+        // has text too (`cycle_error`).
         pkg.units[i].text = text;
     }
     edges.resize_with(pkg.units.len(), Vec::new);
@@ -762,6 +768,12 @@ pub fn load(db: &mut Db, files: &dyn Files, roots: &[&str]) -> Package {
                 // A unit whose statements cannot be read has its own errors; the uses of the
                 // names it would define are not checked (step L1.29d).
                 (None, Some(Ok(_)), Some(p)) if p.is_err() => Err(Refused::Unknown),
+                // Cannot happen. `v` is in another component than `u`, so `order` put it
+                // before `u` (`Package::order`), and this loop met it first. Its text is
+                // `Some(Ok(_))` here (the arms above take the rest), so it is parsed (the
+                // invariant at the loader's loop). It is not `Err` (the arm above), so its
+                // parse is `Ok`. This loop resolves every such unit when it meets it, with no
+                // `continue` between the parse and `resolved = Some(r)`, so arm 2 took it.
                 (None, _, _) => {
                     unreachable!("a unit's imports outside its component are put before it")
                 }
@@ -1166,6 +1178,15 @@ fn report(
     search.queue.push(c0);
     search.met[c0] = c;
     let mut head = 0;
+    // The queue never runs out before the `break`. The component is strongly connected and has
+    // a second unit `c1`, so there is a path `c0 → … → c1 → … → c0`. A shortest closed walk
+    // from `c0` back to it repeats no unit, so it takes no self-import (skipped below), and
+    // each unit on it lies in the component (each reaches `c0` and `c0` reaches it). The search
+    // meets each unit of the component it can reach by such imports, and `met` starts at
+    // `UNSEEN` and is set to `c` only in this search, so it meets the last unit before `c0` on
+    // that walk, and taking that unit's imports finds `c0`. Tests: `l02_03_name_resolution::
+    // cycles`, on cycles of two and three units, a self-import on a cycle, and random
+    // packages; they cannot show the queue never empties for every graph, which this covers.
     let (last, close) = 'search: loop {
         let u = *search
             .queue

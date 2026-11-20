@@ -66,6 +66,13 @@ impl Width {
         if !x.is_finite() {
             return Width::F16;
         }
+        // The `expect` cannot fire: `Width::F64.holds(x)` is true for every finite `x`. In
+        // `holds`, `|x| <= f64::MAX`; `m` is at most `frac | 1 << 52 < 2^53` before the shift
+        // and only shrinks; `e` is `-1074` for a subnormal and `field - 1075 >= -1074` for a
+        // normal (`field >= 1`), and the shift only raises it. Tests:
+        // `l01_24_refinement_lattices::complete::float_widths_and_printed_classes` (the least
+        // subnormal `f64::from_bits(1)`, `1e300`) and `float::each_float_has_its_narrowest_width`;
+        // they read sample values, and the argument covers the rest.
         [Width::F16, Width::F32, Width::F64]
             .into_iter()
             .find(|w| w.holds(x))

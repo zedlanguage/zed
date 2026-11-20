@@ -22,6 +22,9 @@ pub fn grammar() -> &'static Grammar {
             include_str!("../../../../zed/grammar/syntax.peg"),
             include_str!("../../../../zed/grammar/notation.peg"),
         ])
+        // The text is fixed at build time, so this and the `rule("Unit")`, `rule("Item")`
+        // and `rule("Expr")` expects either hold on every call or fail on the first; every
+        // parse test (step L1.8 `l01_08_parser` on) runs them.
         .expect("the copied grammar reads")
     })
 }
@@ -306,6 +309,12 @@ pub(super) fn shown(e: &Expected<'_>) -> String {
     match e {
         Expected::Lit(s) => format!("'{s}'"),
         Expected::Name(n) => (*n).into(),
+        // Cannot fire: the engine fails with `Expected::Class` only at an `Expr::Class`,
+        // which `Reader::primary` makes only for `Grammar::read_open`; the parser's grammar
+        // is `grammar()`, read by `Grammar::read`, which refuses a class. `parse_with` takes
+        // any grammar: its callers, the `l01_08_parser` tests, pass grammars from
+        // `Grammar::read` only; a grammar from `read_open` with a class that failed to parse
+        // would reach this.
         Expected::Class => unreachable!("a grammar over tokens holds no character class"),
     }
 }

@@ -377,6 +377,19 @@ pub fn reading(t: &Term) -> Vec<(Option<u32>, Vec<usize>)> {
 impl Reader {
     /// What `root` needs. The parts are read with an explicit stack, each after its own parts,
     /// and each part held in a node only the first time the node is reached.
+    ///
+    /// Why `done.len() - k` does not underflow and the `expect`s here and in [`Reader::needs_of`]
+    /// cannot fire. Invariant: finishing a `(p, None)` entry pushes exactly one number onto
+    /// `done` (a node read before pushes its number; otherwise `p` comes back as `(p,
+    /// Some(k))` below its `k` parts, and that entry takes `k` numbers and pushes one). By
+    /// induction over the stack, when `(p, Some(k))` is popped its `k` parts, pushed above it,
+    /// have each finished and left one number, so `done` holds at least `k`, the top `k`
+    /// being `p`'s parts in reverse order. The root's one entry leaves one number, which the
+    /// final `pop` takes. [`Reader::needs_of`] reads `got`, which holds exactly the `k` needs of the
+    /// parts [`each_part`] gave for `p.term`; its `part()` is called once for each part
+    /// `each_part` gives for that form, so it never asks for a `k + 1`-th. That last step is a
+    /// match between the two functions' arms, not a property of one: a mismatch fires on every
+    /// term of that form, and the step tests of `l01_28_staging` read every term form.
     fn read(&mut self, root: Part<'_>) -> Needs {
         // A part to read, with `None`; or a part whose `k` parts are on their way, with `k`.
         let mut todo = vec![(root, None)];
@@ -806,6 +819,10 @@ impl Sets {
                 zero,
                 one,
             } => (prefix, bit, zero, one),
+            // Cannot fire: `union` returns before calling here when either set is EMPTY
+            // (the one Empty node: `Sets::make` hash-conses every node, and the table starts
+            // with Empty at 0), and the first two arms below take a One on either side,
+            // so `split` sees only Split nodes.
             SetNode::Empty | SetNode::One(_) => unreachable!("a node of two names or more"),
         };
         match (self.nodes[s as usize], self.nodes[t as usize]) {
@@ -940,6 +957,10 @@ impl Frees {
     /// What `root` reads. The parts are read with an explicit stack, each after its own parts,
     /// and each part held in a node only the first time the node is reached: a node reached
     /// again while its own parts are being read would be a part of itself.
+    ///
+    /// `done.len() - k` does not underflow and the final `expect` holds by the stack
+    /// invariant proved at [`Reader::read`], which this loop repeats with [`subs`] for
+    /// `each_part` and [`Frees::combine`] for `needs_of`.
     fn summary(&mut self, root: Part<'_>) -> Summary {
         // A part to read, with `None`; or a part whose `k` parts are on their way, with `k`.
         let mut todo = vec![(root, None)];
@@ -1308,6 +1329,10 @@ impl Maps {
                     NO_MAP
                 }
             }
+            // Cannot fire: nodes are made only through `make` (`Maps::make`, `Sets::make`),
+            // which hash-conses them, and each table starts with its Empty node at 0, so
+            // the only Empty map node is NO_MAP and the only Empty set node is EMPTY, both
+            // returned at the top of this function.
             (MapNode::Empty, _) | (_, SetNode::Empty) => unreachable!("empty, answered above"),
         };
         self.restricted.insert((m, s), r);
@@ -1849,6 +1874,13 @@ impl Scope {
         self.entries.len()
     }
 
+    /// Why the two `expect`s cannot fire. Each pop follows a push of its own (the callers
+    /// pair them: [`Mixer::bind`] / `unknown` with `scope.pop()` or `truncate(n)` back to a
+    /// length read before the pushes), so `entries` is not empty. [`Scope::push`] puts the
+    /// entry's index last in `by_name[name]` as it appends the entry, and pops take entries
+    /// last first, so the last index in `by_name[e.name]` is the entry just popped and the
+    /// list is still there (it is removed only when emptied). Test: every staging test
+    /// with a `let` or a lambda pushes and pops; an unpaired pop would fire there.
     fn pop(&mut self) {
         let e = self.entries.pop().expect("a name in scope");
         let at = self.by_name.get_mut(&e.name).expect("pushed with it");
@@ -2110,6 +2142,11 @@ impl Namer {
     fn canon(&mut self, v: &Value) -> Canon {
         // The tuples and keypaths being read: each, its parts not yet read, and the forms of
         // those read.
+        // Neither the `unreachable!` nor the `expect` below can fire: `known` gives `None`
+        // only for a tuple or a keypath (its other arms give `Some`), and `next` is `None`
+        // only when it was read by `rest.next()` from the iterator of `open`'s top entry,
+        // which is still on `open` then (it starts as `Some(v)`, and after a form is made
+        // the loop returns when `open` is empty, before `next` is read again).
         let mut open: Vec<(&Value, std::slice::Iter<'_, Value>, Vec<Canon>)> = Vec::new();
         let mut next = Some(v);
         loop {
@@ -2228,6 +2265,9 @@ impl Stub {
     /// argument that is the token of a stub of `with` is that stub's lambda, bound to the
     /// token's name.
     fn term_at(&self, key: &Key, with: &[Arc<Stub>]) -> Term {
+        // Cannot fire: `term_at` is called only by [`fill`], whose keys all come from
+        // [`Port::get`] (its only caller), made from a value [`Port::with`] took, which is a
+        // tuple (the proof at `Port::with`).
         let Value::Tuple(args) = &key.value else {
             unreachable!("a stub is asked with the tuple of its arguments")
         };
@@ -2287,6 +2327,18 @@ type Need = (Arc<Stub>, Key, Vec<Arc<Stub>>);
 /// tokens its key holds, when it stops at such an answer (`stop`), and otherwise each call it
 /// made, with its arguments and answer, and whether it made a call at an argument holding a
 /// function (`function`), which is not logged: a part's memo asks again only calls at data.
+///
+/// Why every `lock().expect("one thread")` in this module (on `Run`'s fields, a stub's
+/// `table` and the shared `Namer`) cannot fire. `lock` fails only on a poisoned mutex, one
+/// whose guard was held by a thread that panicked. No thread is started here (this module
+/// spawns none, and the kernel runs a port's call on the calling thread); the mutexes are
+/// here because the kernel's port values must be `Send + Sync`. Each guard is a temporary
+/// dropped at the end of its statement. A panic while one is held unwinds out of the mix,
+/// and every mutex of a mix is owned by that mix's `Run`s, stubs and mixer (the `Namer` is
+/// shared by the stubs and the mixer of one mix only), so they are dropped by the unwinding
+/// and no later lock sees the poison. No caller in the workspace catches such a panic to go
+/// on with the same mix (`catch_unwind` appears only in tests of other crates). Test: none
+/// can reach a poisoned lock; the argument is the check.
 #[derive(Debug, Default)]
 struct Run {
     need: Mutex<Option<Need>>,
@@ -2320,6 +2372,16 @@ impl Port {
     /// The stubs of the run whose tokens are arguments in `key`, or `None` when an argument
     /// is neither such a token nor compared ([`compared`]).
     fn with(&self, key: &Value) -> Option<Vec<Arc<Stub>>> {
+        // Why `key` is a tuple. The kernel asks a port either from `call_port` (zed-kernel
+        // eval.rs, `fn call_port`), which builds `Value::tuple` of the arguments, or from a
+        // read `p[k]` (the `Prim::Get | Prim::TupleGet` arm of the same file), which passes
+        // `k` as it is. A stub's port is named by an atom starting with `#`, which no written
+        // name does ([`token`]), so the only `Term::Read` of it is the callee in its own
+        // lambda `(#0, .., #n) -> port(#0, .., #n)` ([`Stub::lam`]), an application, and
+        // `calls()` is true, so the kernel takes the `call_port` path (eval.rs, the
+        // `V::Source(port) if ...calls()` arm). The same holds for the key of
+        // [`Stub::term_at`], which is a key this function took. Test: every staging test
+        // with a stub reaches this match; none can hand it a non-tuple.
         let Value::Tuple(args) = key else {
             unreachable!("a stub is called with the tuple of its arguments")
         };
@@ -2372,6 +2434,10 @@ impl Lookup for Port {
     }
 
     fn get(&self, value: &Value) -> Result<Value, String> {
+        // Cannot fire: the kernel's `ask_port` (zed-kernel eval.rs) calls `refuses` on the
+        // same key first and stops when it answers `Some`, and `refuses` answers `None`
+        // exactly when `with` answers `Some`; `with` reads only `self.ports`, which does not
+        // change during a run.
         let with = self.with(value).expect("a key the port takes");
         let key = Key::new(&self.stub.names, value);
         let answer = match self.stub.answer(&key) {
@@ -2383,6 +2449,9 @@ impl Lookup for Port {
             }
             None => {
                 fill(&self.stub, &key, with.clone());
+                // Cannot fire: `fill` starts its stack with `(stub, key)`, pops an entry only
+                // when that stub's table holds its key, and returns only on an empty stack;
+                // no table entry is ever removed (only `insert` writes a table).
                 self.stub.answer(&key).expect("filled")
             }
         };
@@ -2529,6 +2598,20 @@ struct Mixer {
     /// bindings of its names, or under functions that answer it alike, is mixed once and the
     /// places share the result.
     memo: HashMap<(u64, Map), usize>,
+    /// Invariant, which is why each `unreachable!("a leaf")` in this impl and the `Item::Part`
+    /// arm of `remember` cannot fire: every index this module uses as a leaf (an
+    /// `Item::Part(at)`, a key of a `Node::Part` map, a value of `recalled`, what `recall`
+    /// and `remember` give) is the index of a `Node::Leaf`. Steps: (1) the trie only grows
+    /// (`push` in `remember` and its `chain`), and no node changes kind (the writes after a
+    /// push, in `remember`, change only a `next` map or a leaf's fields); (2) `remember`
+    /// gives the index it just pushed a Leaf at; (3) `recall` gives a value of `recalled` or
+    /// the `at` of its `Node::Leaf` arm, and `recalled` is written only in that arm; (4) an
+    /// `Item::Part` is made only by `record_part(leaf)`, called only from `take` on an `at`
+    /// its own match found a Leaf; `take` starts from what (2) or (3) gave, and reads further
+    /// items only from leaves' `asked`, which hold `Watch::said` items, made by (4) or as
+    /// `Item::One`; (5) a `Node::Part` map is keyed by an `Item::Part`'s index (in `chain` and
+    /// the insert of `remember`), so by (4) by a leaf. Test: the `l01_28_staging::mix` tests
+    /// recall shared parts and reach each of these matches.
     trie: Vec<Node>,
     /// The names each tree asks of on all its paths, by its root.
     asks: HashMap<usize, Set>,
@@ -2718,6 +2801,8 @@ impl Mixer {
         let (mut lets, mut reads) = (Vec::new(), Vec::new());
         while let Some(j) = todo.pop_last() {
             let f = &entries[j];
+            // Cannot fire: every index on `todo` comes from `Scope::known_below`, which gives
+            // only entries whose `known` is `Some`.
             let known = f.known.as_ref().expect("a build-stage entry");
             if f.arity.is_some() {
                 let s = f.stub.clone()?;
@@ -2741,6 +2826,8 @@ impl Mixer {
         lets.reverse();
         self.ports += 1;
         let port: Arc<str> = format!("#stub{}", self.ports).into();
+        // Cannot fire: `stub`'s one caller, `Mixer::number`, calls it only after
+        // `let Some(arity) = e.arity else { return .. }`.
         let arity = e.arity.expect("a function");
         let params: Vec<Arc<str>> = (0..arity).map(|i| format!("#{i}").into()).collect();
         let args = params.iter().cloned().map(Term::Var).collect();
@@ -2858,6 +2945,10 @@ impl Mixer {
         all.sort_unstable();
         all.into_iter().rev().fold(t.clone(), |body, (i, stub)| {
             let e = &self.scope.entries[i];
+            // Neither `expect` can fire: `closed`'s callers, in `eval`, pass the `lets` of
+            // `Mixer::needs`, each an index `Scope::known_below` gave (so `known` is
+            // `Some`), and pass nonempty `stubs` only after returning when any of them has
+            // no stub.
             let bound = match stub {
                 true => e.stub.as_ref().expect("a stub").lam.clone(),
                 false => e.known.clone().expect("a build-stage entry"),
@@ -2950,6 +3041,7 @@ impl Mixer {
         let entries = &self.scope.entries;
         let ports: Vec<Arc<Stub>> = stubs
             .iter()
+            // Cannot fire: the `any(.. is_none())` above returned otherwise.
             .map(|&i| entries[i].stub.clone().expect("a stub"))
             .collect();
         let calls = Arc::new(Run::default());
@@ -3005,6 +3097,23 @@ impl Mixer {
     fn run_under(&self, t: &Term, free: Set) -> Result<Value, String> {
         let top = self.scope.len();
         let reads = self.scope.reads(self.frees.names_in(free), top);
+        // Why this cannot fire. `Scope::reads` gives `None` only when a name's innermost
+        // build-stage entry has `global == None`; a name with no such entry is a prelude
+        // word or left out. Claim: every entry whose `known` is `Some` has a `global`. By
+        // induction over `Mixer::push`, the one place an entry is made: `known` is `Some`
+        // only when `bind` was given `Stage::Build`, which its callers take from
+        // `Mixer::known` (or give a `Term::Lit`, in the match of values), so the term is a
+        // literal, a lambda, a primitive, or a name `y` that [`Mixer::build`] accepted. For
+        // such a `y`, `build` holds that `y`'s innermost entry is build-stage (`all_known`
+        // of the map from `scope.top`) or that the scope does not bind `y` and it is a
+        // prelude word (`nonwords`, which reads `interp::word`, the same table as the
+        // `interp::prim` of `Scope::reads`); so `y` is among the `reads` `push` computes.
+        // Those `reads` are `Some`, by the induction for the entries below. Their
+        // `Global::At` positions are below `globals.len()`, since `globals` is a stack
+        // pushed exactly when an entry gets a `global` and popped exactly when such an
+        // entry is popped (`Scope::pop`). So `Globals::push` (zed-kernel eval.rs) takes the
+        // term and gives `Some`. Test: every `l01_28_staging` test that evaluates under a
+        // `let` reaches this line.
         let reads =
             reads.expect("each build-stage binding is a literal, lambda, primitive or name");
         let mut ev = Evaluator::new(World::new());
@@ -3097,6 +3206,11 @@ impl Mixer {
             match item {
                 Item::One(p, a) => {
                     let x = self.frees.name(p.name());
+                    // Cannot fire: `take` returned at once on an empty watch stack, and nothing
+                    // in this loop pops one (`record` and `record_part` only read the top;
+                    // `ask` reaches `eval`, `as_written` and the kernel, none of which pops a
+                    // watch; the only pops are in `answer`, after its own push, and in `mix`'s
+                    // `Store`).
                     let w = self.watch.last().expect("not empty");
                     match self.maps.get(w.stamps, x) == self.maps.get(self.scope.stamps, x) {
                         true => self.record(p, a),
@@ -3139,6 +3253,8 @@ impl Mixer {
     fn ask(&mut self, p: &Probe) -> Answer {
         match p {
             Probe::Call(x, k) => {
+                // Cannot fire: a `Probe::Call` is made only in [`Port::get`], at the key of a
+                // value [`Port::with`] took, which is a tuple (the proof at `Port::with`).
                 let Value::Tuple(args) = &k.value else {
                     unreachable!("a call is asked with the tuple of its arguments")
                 };
@@ -3214,6 +3330,8 @@ impl Mixer {
                 (Node::Ask(p, _), _) => {
                     let p = p.clone();
                     let a = self.answer(&p);
+                    // Cannot fire: no trie node changes kind (the invariant at `Mixer::trie`),
+                    // so `at`, matched as an Ask above, is one still after `answer`.
                     let Node::Ask(_, next) = &self.trie[at] else {
                         unreachable!("asked above")
                     };
@@ -3225,6 +3343,8 @@ impl Mixer {
                     continue;
                 }
             };
+            // Cannot fire: the loop's `while let` read `walks.last()`, and the arms that reach
+            // here push or pop nothing on `walks` (the Leaf arm pops and `continue`s).
             walks.last_mut().expect("walking").2 = next;
         }
         reached
@@ -3473,6 +3593,26 @@ impl Mixer {
     // one part. Used: a memo by (node id, map of the names the part reads), O(Q log Q) for Q
     // such pairs, and heap stacks in place of recursion. Tradeoffs: the memo holds one mixed
     // part per pair until the mix ends; a part reached under many maps is mixed once per map.
+    //
+    // Why the `done.pop().expect`s, the `done.len() - k` and the watch `pop().expect` here
+    // cannot fire. Invariant: a `Mix::Part` job, with every job it puts on `todo` (taken
+    // first, as `todo` is a stack), leaves exactly one more `Out` on `done` and the watch
+    // stack as it found it. By cases on [`Mixer::enter`]: (a) a branch that pushes onto
+    // `done` and returns gives one; (b) `Build(t, k)` under `k` part jobs (each `Part`, or
+    // `Under`, which adds a `Truncate` that leaves `done` alone) takes the `k` they gave
+    // and gives one; (c) a `let` the build leaves out pushes only its body's part; (d)
+    // `Let` under the bound term's part pops that one `Out`, then `LetBody` under the
+    // body's part pops the body's and pushes one; (e) `If` under the condition's part pops
+    // it and either pushes one branch's part, or pushes the condition back, or puts
+    // `IfBranches` under both branches' parts, which pops their two and pushes one; (f) a
+    // node not recalled pushes a watch and puts `Store` below the rest of its jobs, and
+    // `Store` pops the one `Out` those give, and that watch, and pushes one. The root job
+    // so leaves one `Out`, which the final `pop` takes. Each case also needs the parts
+    // [`subs`] gives for that form (two for a `let`, three for an `if`, which `enter`
+    // takes with `expect`); that is a match between `subs`' arms and `enter`'s, which
+    // a mismatch breaks on every term of that form, read by the `l01_28_staging` tests.
+    // `Mix::Let` is made only in `enter`'s `Term::Let` arm, with that term, and `LetBody`
+    // only from a `Let` job's term, so their `unreachable!("only a `let` ...")` cannot fire.
     fn mix(&mut self, site: Site<'_>) -> Out {
         let mut todo = vec![Mix::Part(site)];
         let mut done: Vec<Out> = Vec::new();
@@ -3825,6 +3965,11 @@ impl Mixer {
                 }
             }
             Term::Push(port, _) => Term::Push(port.clone(), self.hold(next())),
+            // Cannot fire: `build_from`'s callers in `mix` take `t` from a `Build`,
+            // `LetBody` or `IfBranches` job, so `t` is a term `enter` reached its last
+            // `match` with (or a `let` or an `if`). `enter` returns before that `match` for
+            // a `Lit` or a `PrimFn` (`value` is false for both and `leaf` is true) and for a
+            // `Read`, and the `match`'s first arm keeps a `Var` and a `Fix` as written.
             Term::Lit(_) | Term::Var(_) | Term::PrimFn(_) | Term::Read(_) | Term::Fix { .. } => {
                 unreachable!("leaves and recursions are kept as written")
             }

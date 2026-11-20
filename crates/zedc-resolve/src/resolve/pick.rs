@@ -261,6 +261,29 @@ impl<'a> Index<'a> {
     }
 
     /// What the call with the argument masks `positional` and `named` waits on.
+    ///
+    /// Claim: `Pick::Arm(b)` only when `b` is the one overload of the set that can run the
+    /// call. Steps. (1) An overload that can run the call admits each argument at its place:
+    /// a carrier the argument may take meets the carriers its parameter admits. The facts:
+    /// `of_arg` gives every carrier the argument may take (a literal takes the carrier
+    /// expected, DESIGN.md sec:type_resolution rule 2, hence `NUMERIC` for an integer; any
+    /// form not listed is `ALL`), `of_type` every carrier the written type admits (a name
+    /// other than the prelude's, a refinement or any other form not listed is `ALL`), and a
+    /// value of one carrier never passes as another ("there is no implicit conversion",
+    /// DESIGN.md "Power is hidden; meaning is never implicit"). So the masks meet. (2) For
+    /// one place, `admitting` gives exactly the overloads admitting `m` when there are at
+    /// most two, and two of them when there are more: each bit's `Two` lists the first two
+    /// overloads admitting that bit, so if some bit of `m` is admitted by two or more, that
+    /// bit alone puts two distinct overloads in `out`; else each bit's `Two` lists the one
+    /// overload admitting it, if any, and `out` is their union, cut at two. (3) So
+    /// `[Some(a), None]` at some place means `a` is the only overload admitting that
+    /// argument, and by (1) no other overload can run the call; `[None, _]` means none can.
+    /// (4) The last test checks `a` itself admits every argument; if it does not, no overload
+    /// can run the call and the result is `Undecided`. A place past every overload's
+    /// parameters has no `Two`s, so `admitting` gives none (3). Test:
+    /// `l01_29_diagnostics::overload_cycles` (MSG-overload-false-cycle) checks that a call
+    /// waits on the overload its arguments select and reports no cycle through the others; no test can show a carrier that (1)'s
+    /// facts leave out, since the claim is that there is none.
     fn pick(&self, positional: &[Mask], named: &[(&str, Mask)]) -> Pick {
         let places = (positional.iter().enumerate())
             .map(|(i, &m)| Index::admitting(self.positional.get(i), m))

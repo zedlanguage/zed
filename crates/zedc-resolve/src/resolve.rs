@@ -1326,6 +1326,9 @@ impl Resolver<'_> {
                 type_named(&mut self.type_names, &mut self.type_changes, name, 1);
             }
         }
+        // Cannot fire: either `v.last()` was `Some` with this level, or a `Bound` was just
+        // pushed. The `expect("a scope")` above: see [`Resolver::close`], at least two scopes
+        // stay open.
         let b = v.last_mut().expect("pushed above");
         b.ids.push_back(id);
         b.signatures.insert(signature);
@@ -1421,6 +1424,24 @@ impl Resolver<'_> {
     }
 
     /// Closes the innermost scope, so its names name what they named outside it.
+    ///
+    /// Why the three `expect`s cannot fire, and why each `pop` removes the binding of the
+    /// scope being closed. (1) Scopes: `resolve` opens the two top-level scopes (IMPORTS and
+    /// TOP) and never closes them; every other `open` pushes its `Task::Close` at once
+    /// (`Task::Else`, `Task::Arm`, `Task::For`, `Task::Remap`, `fields`, `type_decl`, the
+    /// function scope, a block), or is `Task::AltBegin`, whose `Task::AltEnd`, which closes,
+    /// is pushed just before it in `pattern`'s `Pattern::Or` arm. `todo` is a stack, so each
+    /// close runs after every task pushed above it, closing the scopes opened in between
+    /// first: opens and closes nest, and `scopes` holds at least the two top-level ones at
+    /// every close. (2) Bindings: for each name `x`, `visible[x]` holds at most one `Bound`
+    /// per level, in increasing level (a `Bound` is pushed at the end at level
+    /// `scopes.len()`, which is above every level in it once the deeper scopes are closed,
+    /// or, for an import, inserted at its level's place by `rposition`). A name is put in
+    /// `scopes[level - 1]` exactly when its level's `Bound` is made (in `bind`, the import
+    /// binding and `fields`). When the scope at level `L` closes, the scopes above `L` are
+    /// closed (1), so each of its names has its level-`L` `Bound` last in `visible`. Test:
+    /// the step tests of name resolution (shadowing in nested blocks and arms) read the
+    /// outer binding after each close; a wrong pop would name the inner one.
     fn close(&mut self) {
         for name in self.scopes.pop().expect("an open scope") {
             let v = self.visible.get_mut(&name).expect("bound in the scope");
@@ -2694,6 +2715,8 @@ impl Resolver<'_> {
                     let mut b = Bound::new(level, Kind::Field, false);
                     b.ids.push_back(id);
                     self.visible.entry(name.clone()).or_default().push(b);
+                    // Cannot fire: `fields` calls `self.open()` at its start, and nothing in
+                    // this loop closes a scope (the `Task::Close` runs after it).
                     self.scopes
                         .last_mut()
                         .expect("opened above")
@@ -2769,6 +2792,12 @@ impl Resolver<'_> {
                 StmtKind::Break => Some("a `break`"),
                 StmtKind::Expr(_) => Some("an expression statement"),
                 StmtKind::Local(_) => Some("a `local` declaration again"),
+                // `decl` is the `decl` of a `StmtKind::Annotated`, or the statement inside the
+                // `local` it is. The only builder of either kind is zedc-syntax ast/stmts.rs
+                // `make_item`, from an `Item`: `Annotated` holds `self.decl(d)` and a `local`
+                // holds `self.decl(inner)`, and `decl` builds the kinds of the grammar's
+                // `Decl` (zed/grammar/syntax.peg, `Annotated = Annot+ Decl`, `Local = 'local'
+                // Decl`), never `Annotated` or `UnitAnnot`, which `make_item` alone builds.
                 StmtKind::Annotated { .. } | StmtKind::UnitAnnot(_) => {
                     unreachable!("an annotated declaration and a unit item are no `Decl`")
                 }
@@ -3452,6 +3481,8 @@ impl Resolver<'_> {
                 let mut pattern = String::new();
                 let mut from = o.span.start;
                 for a in &o.alts[1..] {
+                    // Cannot fire: `one`, true here, holds `a.binder.is_some_and(..)` for
+                    // every alternative.
                     let b = a.binder.expect("checked above");
                     pattern.push_str(&text[from..b.start]);
                     pattern.push_str(first);
@@ -4056,6 +4087,19 @@ impl Resolver<'_> {
                 todo.extend(fields.iter().rev().map(|f| bind(f, *span)));
             }
             Pattern::Or(alts, span) => {
+                // Why the `expect`s on `self.ors` and `self.scopes` in `Task::FirstAltEnd`,
+                // `Task::AltEnd` and `Task::OrEnd` cannot fire: this arm pushes the `OrPat`
+                // and, on `todo`, its `OrEnd` below its alternatives' tasks; only `OrEnd`
+                // pops `ors`, and `todo` is a stack, so while this pattern's `FirstAltEnd` or
+                // `AltEnd` runs, the `OrPat` on top of `ors` is this one (an or-pattern
+                // nested in an alternative pushes and pops its own in between). `start` is
+                // the length of the innermost scope now; the first alternative binds into
+                // that same scope (no scope is opened for it), and a scope's list only grows
+                // until it is closed, so `[start..]` is in range. Each later alternative's
+                // `AltBegin` opens the scope its `AltEnd` reads and closes. The parser gives
+                // `Pattern::Or` one alternative per kid of an `OrPat` node (zedc-syntax
+                // ast/types.rs, `make_pattern`), and the rule `OrPat = '(' Pattern ('|'
+                // Pattern)+ ')'` (zed/grammar/syntax.peg) gives it two or more.
                 let (first, rest) = alts.split_first().expect("OrPat has two alternatives");
                 self.ors.push(OrPat {
                     span: *span,
@@ -4456,6 +4500,8 @@ impl Resolver<'_> {
     /// function type inside its clause that holds it, where a call binds it (DESIGN.md
     /// sec:type_language), so every use stands in that one function type.
     fn type_var(&mut self, n: &str, span: Span) {
+        // Cannot fire: the one caller, `type_name`, calls this only when
+        // `self.tvars.contains_key(n)`.
         let var = self.tvars.get_mut(n).expect("a bounded variable");
         let home = self.arrows.get(var.depth).copied();
         let first = var.first;
@@ -4548,6 +4594,16 @@ impl Resolver<'_> {
     /// its body never is the row "Type variable" (DESIGN.md sec:type_language, rule 4): it ties
     /// nothing to anything. One pass over the table's variables, after the walk counted each
     /// use in `O(1)`.
+    ///
+    /// Why the `expect`s here and in [`Resolver::free_var`] cannot fire, and why `v.pop()`
+    /// removes this table's index. Each `free_open` pushes its `Task::FreeEnd` at once (the
+    /// statement, field-list and signature sites), and `todo` is a stack, so tables open
+    /// and end nested and `free` is not empty at a `FreeEnd`. `free_at[n]` is pushed only in
+    /// `free_var`, with the index `inner` of the innermost table, as `n` is inserted in that
+    /// table's `vars`; so it lists, in increasing order, the open tables whose `vars` hold
+    /// `n`, and its last entry is a table that holds `n` (the `expect` in `free_var`). When
+    /// the innermost table ends, every table above it has ended, so for each `n` it holds,
+    /// its own index is last in `free_at[n]`.
     fn free_end(&mut self) {
         let table = self.free.pop().expect("an open table");
         for name in table.vars.keys() {
@@ -4710,6 +4766,7 @@ impl Resolver<'_> {
             if self.tvars.get(&b.name).is_none_or(|v| v.span != b.span) {
                 continue;
             }
+            // Cannot fire: the `continue` above skips a name `tvars` does not hold.
             let var = self.tvars.remove(&b.name).expect("bound above");
             if var.first.is_none() {
                 self.errors.push(Error {

@@ -209,6 +209,14 @@ fn piece_hash(piece: &(End, End)) -> u64 {
 
 /// The integers missing between the upper end `a` of one piece and the lower end `b` of the
 /// next: both are finite, since only the outer ends are infinite.
+///
+/// Proof: [`node`] is given a piece that lies between its children with at least one integer
+/// missing on each side, which every builder keeps ([`normal_pieces`] merges touching and
+/// overlapping pieces; `join`, `split` and `concat` keep the order). An upper end `+inf` leaves
+/// no integer above it for a later piece, and a lower end `-inf` none below for an earlier one.
+/// The callers, [`gap`] and the `max_gap` tests, pass an upper end with a piece after it and a
+/// lower end with a piece before it. Test: `check_tree` asserts the order and the gaps on
+/// every result of the random set tests.
 fn run_between(a: &End, b: &End) -> Num {
     match (a, b) {
         (Fin(a), Fin(b)) => &(b - a) - &Num::ONE,
@@ -386,6 +394,19 @@ fn join(l: Link, k: Keyed, r: Link) -> Arc<Node> {
     }
 }
 
+/// Proof that the `expect`s here and in the rotations cannot fire (`h` is [`height`], 0 for
+/// `None`; `tl` is a valid AVL tree, as every tree built by [`node`] through [`join`] is, which
+/// `check_tree` asserts on every test result). Precondition: `h(tl) > h(tr) + 1`; [`join`]
+/// calls with it, and the recursive call below with `h(c) > h(tr) + 1`. (1) `c.expect`: in the
+/// `else` branch `h(c) > h(tr) + 1 >= 1`, so `c` is `Some`. (2) `rotate_right(t)`, `t =
+/// node(c, k, tr)`, needs `c` to be `Some`. Balance of `tl` gives `max(h(l), h(c)) = h(tl) - 1`
+/// and `|h(l) - h(c)| <= 1`; as `h(c) <= h(tr) + 1 <= h(tl) - 1`, `h(l) >= h(tl) - 2 >= h(tr)`.
+/// The rotation is taken when `h(t) = max(h(c), h(tr)) + 1 > h(l) + 1`; `h(tr) <= h(l)` rules
+/// out `h(tr)` as the maximum, so `h(c) > h(l) >= 0`, and `c` is `Some`. (3) The outer
+/// `rotate_left`, and the one in the `else` branch, rotate a node built here with `Some` as
+/// its right child. The same proof, mirrored, holds for [`join_left`]. Tests:
+/// `set_operations_agree_with_the_vec_version_on_random_sets` and `check_tree`; they reach
+/// every branch on random sets, and the argument covers the trees they do not draw.
 fn join_right(tl: Arc<Node>, k: Keyed, tr: Link) -> Arc<Node> {
     let (l, x, c) = parts(tl);
     if height(&c) <= height(&tr) + 1 {
@@ -612,6 +633,11 @@ fn last_piece(t: &Link) -> Option<&(End, End)> {
 }
 
 /// The tree of the given pieces, sorted and normalized, balanced: `O(p)`.
+///
+/// The `expect` cannot fire when `pieces` holds at least `count` items: the one caller,
+/// `from_normal`, passes the length of the vector it iterates, and by induction a call with
+/// `count > 0` takes `count / 2` items in its left call, one here, and `count - count / 2 - 1`
+/// in its right call, `count` in all, so each call finds the items it counts.
 fn build(pieces: &mut impl Iterator<Item = (End, End)>, count: usize) -> Link {
     if count == 0 {
         return None;
@@ -744,6 +770,14 @@ impl<'a> Walk<'a> {
     }
 
     /// Replaces the subtree on top by its left subtree, its piece and its right subtree.
+    ///
+    /// Why the `unreachable!` cannot fire: every caller (`is_subset`, `lost_to`, `eq`) opens a
+    /// walk whose top it has just matched as `Step::Tree`. The arms `(Tree, Some(_)) =>
+    /// b.open()` of `lost_to` and `(Some(_), Some(_)) => b.open()` of `eq` match no `Tree` by
+    /// name, but come after the arms for a `Piece` in `y`'s place: in `lost_to` the arm
+    /// `(Tree, Some(Piece))`; in `eq` the arm for two pieces and the arm `x` a `Tree` with
+    /// `size(x) >= size(y)`, which a `Piece` `y` always meets, as [`size`] gives a piece 1 and a
+    /// subtree its count, at least 1. So `y`, the top of `b`, is a `Tree` there.
     fn open(&mut self) {
         let Some(Step::Tree(n)) = self.stack.pop() else {
             unreachable!("only a subtree opens");
@@ -1185,6 +1219,27 @@ pub fn cap_pieces(mut pieces: Vec<(End, End)>, limit: usize) -> Vec<(End, End)> 
     // heap, smallest first and the lower pair on a tie; a gap whose pieces have changed
     // since it was pushed is skipped when it comes up. A piece's lower end never changes,
     // so the heap holds the index of the right piece, not its end.
+    //
+    // Proofs of the `unreachable!` and the `expect` below, and that an entry not skipped is
+    // current. (1) `gap` reads the upper end of a piece that has a piece after it and the lower
+    // end of a piece that has one before it. By the precondition (sorted, disjoint, not
+    // adjacent) such ends are finite: an upper end `+inf` would leave no room for a later
+    // piece, and a lower end `-inf` none for an earlier one. A merge gives piece `at` the upper
+    // end of `right`, which is finite whenever a gap is computed from it again, since that
+    // happens only when `next[at] < n`, so `right` had a piece after it. (2) Invariant: for each
+    // alive piece `i` with `next[i] < n`, the heap holds `(gap(i, next[i]), i, next[i])`. It
+    // holds at the start; a merge of `at` with `right` changes only `next[at]` (and pushes its
+    // new entry) and kills `right` (whose entries are then skipped by `!alive`). (3) An entry
+    // `(g, at, r)` with `alive[at]` and `next[at] == r` is current: `pieces[at].1` changes only
+    // in a merge of `at`, which moves `next[at]` up; `next[at]` only grows (`next[right] >
+    // right`), so it never comes back to `r`; and lower ends never change. (4) While `count >
+    // limit >= 1`, at least two pieces are alive, so by (2) a current entry is in the heap, and
+    // stale entries popped before it never remove it: the `expect` holds. Each pass either
+    // skips one of finitely many pushed entries or lowers `count`, so the loop ends. Tests:
+    // `cap_merges_the_smallest_gap_and_the_lower_pair_on_a_tie`,
+    // `cap_at_or_above_the_count_keeps_the_set`, and
+    // `l01_24_refinement_lattices::scaling::cap_follows_the_merge_rule` against a naive merge;
+    // they check results on fixed and drawn lists, and the argument covers the rest.
     let mut next: Vec<usize> = (1..=n).collect();
     let mut alive = vec![true; n];
     let gap = |left: &(End, End), right: &(End, End)| match (&left.1, &right.0) {
@@ -1591,6 +1646,16 @@ fn ones(e: &Num) -> Num {
 }
 
 /// The finite value of an end known to be finite.
+///
+/// Why the `unreachable!` cannot fire: [`bit_word`] calls it on two kinds of end. (1) The lower
+/// end of an operand met with `int[0..]` (every operand but the `x` of `shl` and `shr`), not
+/// empty by the early return: it is at least 0, so not `-inf`, and a lower end is never `+inf`
+/// ([`IntervalSet::from_pieces`] drops a piece with an infinite end on the wrong side). (2) An
+/// end of a sign part from [`split_signs`] of a piece of that `x`: the lower end of a positive
+/// part (`lo.signum() > 0`, so not `-inf`, and not `+inf` as a lower end) and the upper end of
+/// a negative part (`hi.signum() < 0`, so not `+inf`, and not `-inf` as an upper end). Tests:
+/// `l01_39a_bit_words::transfer` and `l01_39f_int_machine_ops::transfer` over operands with
+/// infinite ends.
 fn fin(e: &End) -> &Num {
     match e {
         Fin(v) => v,
@@ -1691,6 +1756,7 @@ pub fn bit_word(p: Prim, args: &[IntervalSet]) -> IntervalSet {
             Err(_) => {}
         }
     }
+    // `bounds` is `None` only for the empty set, and an empty operand returned above.
     let b = |i: usize| xs[i].bounds().expect("not empty");
     let mask = |h: &End| match h {
         Fin(v) => Fin(ones(&digits(v))),

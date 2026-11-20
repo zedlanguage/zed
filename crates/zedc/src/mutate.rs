@@ -268,6 +268,12 @@ fn neighbors(p: Prim, quotient: bool) -> &'static [Prim] {
         Prim::IntDiv => &[Prim::Mod],
         Prim::Mod => &[Prim::IntDiv],
         Prim::Pow | Prim::Concat => &[],
+        // Cannot happen: the one caller, `operator`, is reached only from the arm of
+        // `Mutants::of` that matches a marked `Term::Prim(p, ms)` against an unmarked
+        // `Term::Prim(p, us)` with `us.len() == 2`. `mark::mark_of` finds a mark on a `Prim`
+        // only when `mark::mutable(p)` holds, or on a `Neg` of a literal, whose unmarked term
+        // is the literal itself (`Term::Lit`, the arm after it), never a `Prim`. The arms
+        // above name the 14 operators `mutable` admits, each once.
         _ => unreachable!("only the operators `elab::mark::mutable` admits are marked"),
     }
 }
@@ -369,6 +375,12 @@ fn decimal(t: &str) -> Option<Decimal<'_>> {
 fn stepped(d: &Decimal<'_>, up: bool) -> String {
     let mut digits: Vec<u8> = d.digits.bytes().collect();
     let negative = !up && digits.iter().all(|&b| b == b'0');
+    // `digits` is not empty: `decimal` returns `None` when no digit is written. The loop below
+    // stops before `i` passes 0: going up, it stops at the first digit below 9 or inserts a
+    // `1` at `i == 0`; going down, `negative` is false, so some digit is not 0, and the borrow
+    // stops at the last such digit. Test: `set::h4_a_decimal_literal_moves_by_one_unit_of_its_
+    // last_digit`, at `0.0`, `0.1`, `1.9`, `9.9` (the inserted `1`) and `10.0`; it cannot
+    // show the loop stops for every digit string, which the argument covers.
     if negative {
         // 0 - 1 = -1, one unit of the last digit below zero.
         *digits.last_mut().expect("a digit") = b'1';

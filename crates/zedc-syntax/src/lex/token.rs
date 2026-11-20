@@ -219,6 +219,10 @@ pub fn text_direction_note(c: char) -> String {
 /// name `repair` offered for it, if there is one. The first such character is named, by its
 /// code point too, since it may look like an ASCII letter (Cyrillic `а`).
 fn non_ascii(word: &str, repair: &Option<String>) -> String {
+    // Cannot fail: `NonAsciiName` is made only by `name::name_or_error` for a
+    // `Word::Foreign(end)`, which `name::word` returns only when the word's run is not ASCII;
+    // `word` is `text[start..end]` with `start` at or before that run (a `#`/`@` sign first),
+    // and `avoid_names` changes only `repair`.
     let c = word
         .chars()
         .find(|c| !c.is_ascii())

@@ -755,6 +755,34 @@ enum Split {
 /// each `S_R` outside that common part whose remainder is in `R`. The other inputs must
 /// have the same sets in every class whose set is not empty, so that the union is a box.
 ///
+/// Proof that the union is the exact preimage. (1) The classes partition the remainders:
+/// [`Tx::remainder_cuts`] starts the cuts with `0` and `m`, clamps every other cut into `[0,
+/// m]` and sorts and dedups them, so the windows `[w0, w1)` of consecutive cuts are disjoint,
+/// not empty, and cover `[0, m)`; and `x mod c` is in `[0, m)` for `m = |c|`, since the
+/// kernel's `mod` is `rem_euclid` (zed-kernel `eval.rs`, `Prim::Mod`), which is also why `x
+/// mod c` and `x mod -c` are one remainder. [`Tx::residue_cuts`] gives more than two cuts, so
+/// at least two classes, which is why `split_classes` finds a group. (2) Each comparison of
+/// the remainder with a constant `v` is constant on a window: `v` and `v + 1` are cuts
+/// (clamped), so a window holding `v` starts at `v` and ends by `v + 1`, the window `{v}`;
+/// any other window lies wholly below `v` or wholly above it. A clamped `v` (below 0 or at
+/// least `m`) has every remainder on one side. So `<`, `<=`, `>`, `>=`, `==` and `!=` with `v`,
+/// on either side, are constant on each window. (3) Write `P` for the exact preimage within
+/// the box and `P_R` for its members whose remainder is in class `R`; by (1), `P` is the
+/// disjoint union of the `P_R`. A run over `R` is used only when its result is exact (`r.exact`
+/// and no stops; otherwise the split is given up), so its set `S_R` for `x` holds exactly the
+/// `x` of `P_R` among those in `R`, and the other inputs' sets are exact too. `x` is in the
+/// union's `x` part iff its own class `R` has `x` in `S_R`: so a member of every `S_R` is
+/// kept whatever its class, and a member of some `S_R` outside them only when its remainder
+/// is in `R`, which is what the loop over `owns` and [`touched`] keeps. The other inputs'
+/// sets are the same in every class with a set (the `same_box` check), so the union of the
+/// boxes is that box with this `x` part. The exactness of each run comes from (2) for the
+/// comparisons in the cut table; a comparison not in it (a remainder against a non-constant)
+/// is read inexactly and then the run's `r.exact` is false. Tests:
+/// `l01_25_preimage_catalog::bench::s22::chain_mod7_scales` and
+/// `l01_25_preimage_catalog::exact_oracle::s22_random_terms_match_the_interpreter`, which
+/// checks each answer that says it is exact against the interpreter; they check results on
+/// fixed and drawn terms, and the argument covers the rest.
+///
 /// Design (COMPLEXITY.md rows S22e-quad and S22e-wide). (A) The runs of the classes share what
 /// they compute without reading the class ([`Kept`]), and a term is read once for every class
 /// as one summary over the classes ([`Walk::by_class`]): an `if` on the remainder takes its arms'
@@ -909,6 +937,11 @@ fn split_classes(
             cuts: cuts.clone(),
             alone: false,
         });
+        // `tx.back` leaves `run.residue` set: it reads it (`as_ref`) and marks `alone` through
+        // `as_mut`, and `run` is replaced only by `Tx::start_from`, which the walk never
+        // calls (its callers are `Tx::start`, `let_summary`, `preimage_in` and this loop, and
+        // `Tx::start` is called by drivers that make their own `Tx`). So the `expect`
+        // below holds.
         let r = tx.back(root, ROOT, demand);
         let exact = r.exact && tx.run.stops.is_empty();
         let Residue { class, alone, .. } = tx.run.residue.take().expect("the class was set above");

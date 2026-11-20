@@ -93,11 +93,40 @@ pub(super) struct MainBody {
 pub(super) type FieldUses = ([Option<Span>; 4], [Option<Span>; 2]);
 
 impl Mains {
-    /// The `main` functions of the text `tree` is the tree of, at any depth of blocks.
-    // Complexity tradeoff: one pass over the tree's nodes, O(n), and a sort of the k mains,
-    // O(k log k); finding each form's `main` then costs O(log k) ([`Mains::at`]) instead of a
-    // walk up the form's ancestors, O(depth) per form.
-    pub(super) fn new(text: &str, tokens: &[Token], tree: &Tree) -> Mains {
+    /// The `main` functions of the text, at any depth of blocks, in the trees of `levels`: the
+    /// text's tree first, then the tree of each string hole. A `main` declared in a block in a
+    /// hole is in the table too, since the builder of the hole's tree asks for it
+    /// ([`Builder::main_header`]); a table of the text's tree alone panicked there.
+    // Complexity tradeoff: one pass over the nodes of the trees, O(n), and a sort of the k
+    // mains, O(k log k); finding each form's `main` then costs O(log k) ([`Mains::at`])
+    // instead of a walk up the form's ancestors, O(depth) per form.
+    pub(super) fn new(text: &str, levels: &[Level]) -> Mains {
+        let mut list = Vec::new();
+        for l in levels {
+            Mains::bodies(text, l.tokens, l.tree, &mut list);
+        }
+        list.sort_by_key(|b| b.body.start);
+        // The body that holds each, by a stack of the bodies open at its start: bodies are
+        // nested or apart, so O(k) in all. They are across trees too: a hole's tree lies in
+        // one string token of the tree around it.
+        let mut outer = Vec::with_capacity(list.len());
+        let mut open: Vec<usize> = Vec::new();
+        for (i, b) in list.iter().enumerate() {
+            while open
+                .last()
+                .is_some_and(|&o| list[o].body.end <= b.body.start)
+            {
+                open.pop();
+            }
+            outer.push(open.last().copied());
+            open.push(i);
+        }
+        let mains = Mains {
+            list,
+            outer,
+            outside: std::cell::Cell::new(None),
+        };
+        let Level { tokens, tree, .. } = levels[0];
         let word = |i: usize| {
             let s = tokens[i].span;
             &text[s.start..s.end]
@@ -106,7 +135,53 @@ impl Mains {
             start: tokens[tree.nodes[n].start].span.start,
             end: tokens[tree.nodes[n].end - 1].span.end,
         };
-        let mut list = Vec::new();
+        // The tokens of `n` are the one word `main`, in any number of parentheses, `((main))`:
+        // a sequence of tokens `(`ᵏ `main` `)`ᵏ parses only as `k` nested `Group`s of the name,
+        // which the builder builds to the name. O(k) for `k` parentheses.
+        let main_word = |n: usize| {
+            let (mut from, mut to) = (tree.nodes[n].start, tree.nodes[n].end);
+            while to - from >= 3 && word(from) == "(" && word(to - 1) == ")" {
+                (from, to) = (from + 1, to - 1);
+            }
+            to - from == 1 && word(from) == "main"
+        };
+        // The reads `main::files` outside every body: a `Postfix` whose operand is the word
+        // `main`, in parentheses or not, and whose suffix is `::files`. `fill` builds deeper nodes first, so a
+        // function written after `main` can be built after `main`'s header, which must already
+        // know of the read. A string hole is a tree of its own, built before the text's, and
+        // [`Builder::main_files`] records the reads in it as it builds them.
+        // Complexity: one walk of the nodes reached from the root, O(n) for n nodes, plus
+        // O(log k) to place each read among k bodies ([`Mains::at`]). The naive method, a
+        // walk of the whole text from `main`'s header when it is built, costs O(n) per `main`,
+        // O(n k) for k `main`s; this walk is done once, before any builder runs.
+        let mut stack = vec![tree.root];
+        while let Some(n) = stack.pop() {
+            let kids = &tree.nodes[n].kids;
+            if let [of, s] = kids[..]
+                && tree.name(n) == "Postfix"
+                && tree.name(s) == "ReadSuffix"
+                && word(tree.nodes[s].end - 1) == "files"
+                && main_word(of)
+                && mains.at(span(n).start).is_none()
+            {
+                mains.read_outside(span(n));
+            }
+            stack.extend_from_slice(kids);
+        }
+        mains
+    }
+
+    /// Adds to `list` the bodies of the `main` functions of `tree`, lexed as `tokens` from
+    /// `text`. O(n) for the n nodes of `tree`.
+    fn bodies(text: &str, tokens: &[Token], tree: &Tree, list: &mut Vec<MainBody>) {
+        let word = |i: usize| {
+            let s = tokens[i].span;
+            &text[s.start..s.end]
+        };
+        let span = |n: usize| Span {
+            start: tokens[tree.nodes[n].start].span.start,
+            end: tokens[tree.nodes[n].end - 1].span.end,
+        };
         for (n, node) in tree.nodes.iter().enumerate() {
             if tree.name(n) != "Function" || word(node.start) != "main" {
                 continue;
@@ -147,60 +222,6 @@ impl Mains {
                 result: result.is_some(),
             });
         }
-        list.sort_by_key(|b| b.body.start);
-        // The body that holds each, by a stack of the bodies open at its start: bodies are
-        // nested or apart, so O(k) in all.
-        let mut outer = Vec::with_capacity(list.len());
-        let mut open: Vec<usize> = Vec::new();
-        for (i, b) in list.iter().enumerate() {
-            while open
-                .last()
-                .is_some_and(|&o| list[o].body.end <= b.body.start)
-            {
-                open.pop();
-            }
-            outer.push(open.last().copied());
-            open.push(i);
-        }
-        let mains = Mains {
-            list,
-            outer,
-            outside: std::cell::Cell::new(None),
-        };
-        // The tokens of `n` are the one word `main`, in any number of parentheses, `((main))`:
-        // a sequence of tokens `(`ᵏ `main` `)`ᵏ parses only as `k` nested `Group`s of the name,
-        // which the builder builds to the name. O(k) for `k` parentheses.
-        let main_word = |n: usize| {
-            let (mut from, mut to) = (tree.nodes[n].start, tree.nodes[n].end);
-            while to - from >= 3 && word(from) == "(" && word(to - 1) == ")" {
-                (from, to) = (from + 1, to - 1);
-            }
-            to - from == 1 && word(from) == "main"
-        };
-        // The reads `main::files` outside every body: a `Postfix` whose operand is the word
-        // `main`, in parentheses or not, and whose suffix is `::files`. `fill` builds deeper nodes first, so a
-        // function written after `main` can be built after `main`'s header, which must already
-        // know of the read. A string hole is a tree of its own, built before the text's, and
-        // [`Builder::main_files`] records the reads in it as it builds them.
-        // Complexity: one walk of the nodes reached from the root, O(n) for n nodes, plus
-        // O(log k) to place each read among k bodies ([`Mains::at`]). The naive method, a
-        // walk of the whole text from `main`'s header when it is built, costs O(n) per `main`,
-        // O(n k) for k `main`s; this walk is done once, before any builder runs.
-        let mut stack = vec![tree.root];
-        while let Some(n) = stack.pop() {
-            let kids = &tree.nodes[n].kids;
-            if let [of, s] = kids[..]
-                && tree.name(n) == "Postfix"
-                && tree.name(s) == "ReadSuffix"
-                && word(tree.nodes[s].end - 1) == "files"
-                && main_word(of)
-                && mains.at(span(n).start).is_none()
-            {
-                mains.read_outside(span(n));
-            }
-            stack.extend_from_slice(kids);
-        }
-        mains
     }
 
     /// Records a read of `main::files` at `span`, outside every body.
@@ -399,6 +420,11 @@ impl<'a, 's> Builder<'a, 's> {
     /// whole as an argument of a call, recorded as pushed to; or why it cannot be read, when the
     /// field is an output read otherwise or `MainArgs` has no such field.
     pub(super) fn main_field(&self, of: Expr, field: &str, span: Span) -> Result<Expr, Error> {
+        // Why this and the `mains.at(span.start)` expects below cannot fail. The one caller,
+        // `Builder::suffix` (mod.rs), calls this only when `main_param(&of)` is `Some`, and
+        // there `span.start` is `of.span.start`, so `mains.at(span.start)` is the `Some` that
+        // `main_param` found (`Mains::at` reads nothing else). `main_use` is called from here
+        // and from `main_files` only after its own `mains.at(span.start).is_some()`.
         let m = self.main_param(&of).expect("a read of main's parameter");
         let error = |message: String| Error {
             row: None,
@@ -483,6 +509,8 @@ impl<'a, 's> Builder<'a, 's> {
     /// `main::files`.
     pub(super) fn main_use(&self, use_: &str, span: Span) -> Expr {
         let main = self.mains.at(span.start).expect("a use inside main's body");
+        // Cannot fail: the callers pass `args`, `stdin` or `env` (`main_field`) or
+        // `main::files` (`main_files`), the four of `MAIN_INPUTS`.
         let i = MAIN_INPUTS
             .iter()
             .position(|u| *u == use_)
@@ -588,6 +616,7 @@ impl<'a, 's> Builder<'a, 's> {
             // in `breaks.rs`, which imports this file).
             [name] => Ok(name.into()),
             [p, field] if Some(p) == m => {
+                // Cannot fail: `m` is `main.and_then(..)`, and `Some(p) == m` holds here.
                 let main = main.expect("m is main's parameter");
                 let i = (field == "stderr") as usize;
                 first_use(&mut main.uses.borrow_mut().1[i], span);

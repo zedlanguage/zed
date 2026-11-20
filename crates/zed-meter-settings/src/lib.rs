@@ -145,13 +145,47 @@ mod imp {
     /// binaries, and test `a_binary_started_without_the_settings_runs_with_them` fails without
     /// it). Each binary of `zed_tests::scaling` links this crate, since `Meter::new` calls
     /// [`super::in_effect`].
+    ///
+    /// Why no other thread exists while [`start`] runs, which its SAFETY comments rely on (for
+    /// `std::env::remove_var`, whose contract is that no other thread reads or writes the
+    /// environment meanwhile). A thread exists only once some code has called `clone` with
+    /// `CLONE_THREAD` (`pthread_create` does). Before `start` only three kinds of code run: (a) the
+    /// dynamic loader; (b) the constructors of the shared libraries the binary needs, which for a
+    /// test binary are `libstd-*.so` (the workspace links std dynamically), `libgcc_s.so.1`,
+    /// `libc.so.6` and `ld-linux-x86-64.so.2` (`readelf -d` on the zed-meter-settings test binary,
+    /// 2026-11-20); (c) the earlier entries of the main program's own `.init_array`, which holds two
+    /// entries of 8 bytes (`INIT_ARRAYSZ` 16): this one and, inferred, the C runtime's
+    /// `frame_dummy`; no crate of the workspace puts another function there (`grep` for
+    /// `init_array` and `link_section` under `crates/` and `tests/`), and `Cargo.lock` holds none
+    /// of the crates that do (`ctor`, `linkme`, `inventory`). For (a) and (c) no thread is started
+    /// (the loader maps and relocates; `frame_dummy` registers unwind tables). For (b), checked by
+    /// measurement only: `strace -f -e trace=clone,clone3,execve,prctl` on the test binary started
+    /// without `GLIBC_TUNABLES` shows the `execve` of `/proc/self/exe` and the `prctl` that sets the
+    /// name back with no `clone` before either; the first `clone3` comes from the test harness,
+    /// after `main` (2026-11-20). Not proved: that the constructors of these four libraries start no
+    /// thread on every input and build (the open sub-case is (b); their source was not read, since
+    /// neither glibc's nor std's source is installed here); row PROOF-meter-no-thread-before-main.
+    /// A new dependency with a constructor that starts a thread would break the argument; no test
+    /// catches that, and `a_binary_started_without_the_settings_runs_with_them` would still pass.
     #[used]
     #[unsafe(link_section = ".init_array")]
     static START: extern "C" fn(c_int, *const *const c_char, *const *const c_char) = start;
 
     extern "C" fn start(_argc: c_int, argv: *const *const c_char, envp: *const *const c_char) {
         // SAFETY: glibc passes the program's argument and environment vectors, each ended by a
-        // null pointer, and no other thread exists before `main`.
+        // null pointer, and no other thread exists before `main` (the argument, and its Not
+        // proved sub-case, at `START`).
+        //
+        // Why the `expect`s on `CString::new` below cannot fire: `CString::new` fails only on a
+        // NUL byte in its argument. Each environment string here is `CStr::to_bytes` of an entry
+        // (in `strings`), which ends before the first NUL, so it holds none; the marker's value
+        // `name` is such a string's suffix in the second image, and in the first the bytes of
+        // `PR_GET_NAME`'s buffer before its first NUL (`CStr::from_bytes_until_nul`); the
+        // tunables text is `String::from_utf8_lossy` of such a string (which writes U+FFFD for a
+        // bad byte, never a NUL) joined by `:` with the items of `GLIBC_TUNABLES`, which hold no
+        // NUL. Tested only on the strings of real runs (test
+        // `a_binary_started_without_the_settings_starts_again_with_them_and_its_name`); the
+        // argument covers the rest.
         let env = unsafe { strings(envp) };
         let tunables = env
             .iter()
@@ -175,8 +209,10 @@ mod imp {
                 // the name of the calling thread, here the only one.
                 unsafe { libc::prctl(libc::PR_SET_NAME, name.as_ptr()) };
             }
-            // SAFETY: no other thread exists before `main`, so no other thread reads the
-            // environment while this changes it.
+            // SAFETY: no other thread exists before `main` (argument and its Not proved
+            // sub-case at `START`), so no other thread reads the environment while this
+            // changes it. `envp`'s strings were copied into `env` above, so nothing here reads
+            // the vector `remove_var` may change.
             unsafe { std::env::remove_var(ZED_METER_STARTED_AGAIN) };
             return;
         }

@@ -326,7 +326,20 @@ fn an_exponent_with_no_exact_form_bounds_outward() {
     // `2 ^ u32::MAX` toward 0 and infinite away from it, and it is sound.
     let s = &two(200) + &Num::ONE;
     let k = 1i128 << 32;
-    let x = forward(&pow(k), &point(s.clone()), &point(s));
+    let x = forward(&pow(k), &point(s.clone()), &point(s.clone()));
+    assert_eq!(
+        x,
+        IntervalSet::range(End::Fin(Num::from(2).pow(u32::MAX)), End::PosInf)
+    );
+    // The mirror case of `pow_end`: a negative base at an odd exponent is at most
+    // `-2 ^ u32::MAX`; at an even one it is positive, the bound above.
+    let neg = -&s;
+    let x = forward(&pow(k + 1), &point(neg.clone()), &point(neg.clone()));
+    assert_eq!(
+        x,
+        IntervalSet::range(End::NegInf, End::Fin(-&Num::from(2).pow(u32::MAX)))
+    );
+    let x = forward(&pow(k), &point(neg.clone()), &point(neg));
     assert_eq!(
         x,
         IntervalSet::range(End::Fin(Num::from(2).pow(u32::MAX)), End::PosInf)

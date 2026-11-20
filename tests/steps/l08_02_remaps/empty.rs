@@ -916,7 +916,7 @@ fn a_function_a_call_returns_and_runs_at_another_carrier_is_not_compiled_yet() {
     // `h3` returns the lambda it is passed, and `p[1]` runs it at `int` after the call ran it
     // at `f64`: one value at two identities, which needs the identity passed when the program
     // runs. Refused, never run at the wrong identity (row REDUCE-identity-escaping-values; the
-    // proof is at the refusal, `Ck::finish`). Each other form keeps the function in a value
+    // proof is at the refusal, zedc-elab `Elab::check_instances`). Each other form keeps the function in a value
     // the call returns, and runs it later at the other carrier: in a family, in a tuple in a
     // family, in a tuple a returned lambda gives, returned by a lambda, bound to a name, made
     // in a block of the called function, or with the fold written in the lambda itself.
