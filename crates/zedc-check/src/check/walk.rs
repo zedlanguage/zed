@@ -5939,10 +5939,15 @@ impl<'t, 'a> Ck<'t, 'a> {
     /// no such value ([`literals_alone`]): a `/` of literals that meets no carrier is rejected, and
     /// a decimal has no value until its carrier is fixed (L1.26b).
     // Complexity tradeoff: one walk of the operation to see that it holds integer literals
-    // alone and one to fold it, O(its size), at the one `if` whose branch it is; an operation
-    // is the branch of at most one `if`, so a nest of them costs O(n) in all. The naive
-    // form, typing the branch by its class, joins the other branch's literal to that class
-    // and gives `int`, or rejects a decimal there.
+    // alone and one to fold it, at the one `if` whose branch it is; an operation is the
+    // branch of at most one `if`, so a nest of them is folded once in all. The fold is
+    // O(its size) in operations, but not in bits: the kernel keeps a power as its exponents,
+    // unbuilt (zed-kernel num.rs, "kept powers"; LIT-power-values), while an operation that
+    // adds to one, as `3^K + 1`, builds the power's binary digits, O(b log² b) for b bits,
+    // which grow with K's value and not with the text (11.3 times the work at 8 times K,
+    // LIT-power-values' measurement; the open row LIT-power-expression keeps such a value
+    // short). The naive form, typing the branch by its class, joins the other branch's
+    // literal to that class and gives `int`, or rejects a decimal there.
     fn kept(&self, e: &Expr, t: &Ty) -> Option<Ty> {
         let k = self.class_of_ty(t)?;
         if !self.classes[self.find(k)].generic {
@@ -16086,6 +16091,14 @@ impl<'t, 'a> Ck<'t, 'a> {
     /// Checks the need `p` of an int `^` on a value of `t` that is its base or its exponent
     /// (CHK-need-bound): a base holds no int, and an exponent holds no int or only ints listed
     /// at least 0.
+    // Why a base takes no int at all, not only no int below 0 (MSG-power-exponent, bcb0fcb93):
+    // the need on the base is made only where the exponent may be below 0, and an int power
+    // with an exponent below 0 has no int value for any int base (`2^-1` is 1/2), so every
+    // int base can fail there, 2 as much as -2. The old need "no int below 0" passed
+    // `p(positional b) = b ^ -1; p(2)`, which stopped in the evaluator. Test: l01_26
+    // soundness::a_power_of_a_parameter_under_a_negative_exponent_takes_no_int (that program
+    // refused, each repair run). It tests a parameter base only, so it cannot catch the
+    // need lost on another path by which a value reaches a base.
     fn power_on(&mut self, t: &Ty, p: &Arc<PowerUse>, span: Span) {
         let ints = &t.set & &KType::int();
         let refused = match p.exponent {
@@ -24816,7 +24829,18 @@ impl<'t, 'a> Ck<'t, 'a> {
         // is read. Bound to the arguments' own values, `f(x, p) = x + p[0]` called as
         // `f(x: 1r, p: (2r, 1))` gave `1r | 2r`, the two literals the call passes, for a value
         // `3r` outside it (LIT-generic-parts-type). Classes, variables and other values stay
-        // as they are. Complexity tradeoff (COMPLEXITY.md F170): naive, a second walk over the
+        // as they are. Why the widened result holds every value the call gives: the body was
+        // checked with the variable standing for any value of its bound's carriers, so its
+        // result type, read under a binding to the whole carrier, covers every value an
+        // operator of that carrier can make from the arguments; a binding to the arguments'
+        // own values covers only those values, which an operator need not return. Tests:
+        // l01_26a_generic_literals parts_type.rs
+        // `a_call_through_a_bounded_variable_has_the_carrier_and_not_the_arguments_values` (18
+        // exact types and values) and `the_static_type_of_each_generated_call_holds_its_value`
+        // (432 generated programs whose static type must hold the evaluator's value; without
+        // the widening 189 of them failed, 044da9bab). They cannot catch a body whose operator
+        // leaves the carrier, which the arrows of each operator exclude, not this code.
+        // Complexity tradeoff (COMPLEXITY.md F170): naive, a second walk over the
         // binding after this check, O(p) for p pieces, reading each piece's class and carrier
         // again; used, the widened binding built in the pass this check makes already, O(p),
         // one union per piece.

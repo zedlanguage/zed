@@ -396,6 +396,21 @@ impl Walk<'_, '_> {
                         Some(k) => f.handling(&k),
                         None => f.clone(),
                     },
+                    // Why passing every atom on is safe here and in the `None` arm above (row
+                    // CHK-fate-unwalked-forms): the atom then goes where `f` sends the `else`
+                    // itself, so it is handled or stopped no earlier than if the `else` were
+                    // absent, and a rejection that would stand without the `else` stands with
+                    // it. An `else` whose pattern
+                    // could bind the atom (a name `e`, `#a(i)`, `#a(..)`) is refused by the
+                    // parser or by resolution before this walk (bbae90d38), so no binding
+                    // carries an atom past this arm. The claim rests on that refusal: were such
+                    // an `else` to arrive, its default could put the bound atom anywhere, and
+                    // the arm would have to stop every atom (`Boundary::Other`), as
+                    // [`scrutinee`] does for a name arm. Test: l01_26 bubble::
+                    // a_body_s_else_whose_atom_pattern_has_parts_passes_the_atom_on reaches the
+                    // `None` arm (`#outOfBounds()`, an atom pattern with parts, the form that
+                    // reaches the checker), with the bare pattern as control; no test reaches
+                    // this arm with a name pattern, as none gets past resolution.
                     Some(_) => f.clone(),
                 };
                 self.expr(of, handled, b);

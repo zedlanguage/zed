@@ -5602,6 +5602,20 @@ impl<'t, 'a> Ck<'t, 'a> {
     // a scan of the needs for each variable, is O(variables × needs). The places were counted
     // by a walk of their own, O(size of `s`), which did not agree with the printer's count
     // (plan row TEST-standing-twice-matches-printer).
+    // Why the meet is the type found, step by step: (1) each `Into { ty }` need on `v` is met at
+    // a call exactly when the argument given for `v` is within `ty` (the need is checked by
+    // `passes_into` at the call, check/walk.rs `Ck::meet`, the `NeedKind::Into` arm); (2) with
+    // every use of `v` of that kind, no other need constrains `v`, so the arguments accepted
+    // are those within every `ty`, which is their meet (`Ty::meet`, zedc-types); (3) a carrier
+    // bound `for V in ...` without `OTHER` also holds at every call, so it is met in as well.
+    // Where two closed types share no value the meet is `Never` and every call is refused, so
+    // `(x: Never) -> int` is the true type (checked by hand in 759ca91d4: two exact arrows of
+    // different domains). Tests:
+    // l01_26 function_variance::a_parameter_with_a_bound_is_printed_with_its_bound (one pass, two
+    // passes met, a pass beside `+`) and l01_27 loose::
+    // the_is_repair_on_a_shared_part_declares_it_at_the_top_level (a variable standing twice
+    // keeps `T`). They cannot catch a wrong meet of types outside those cases (records, partial
+    // arrows of several parameters), which rest on `Ty::meet` and its own tests.
     fn sig_text(&self, s: &Sig) -> String {
         let s = s.solved_with(&|v| self.stale(v));
         let mut passed: HashMap<Arc<str>, Option<Ty>> = HashMap::new();
@@ -11003,7 +11017,9 @@ fn written_alone(src: &str, at: Span, edits: &[(Span, &dyn fmt::Display)]) -> Op
 /// costs one operation per node of `e`, and the reading of its literals ([`lit_value`]).
 ///
 /// Complexity tradeoff: a power at `int` or `rat` has a value whose size grows with its exponent's
-/// value, not with the text, as `3^200000` does, so folding one costs that size. A fix does
+/// value, not with the text, as `3^200000` does. The kernel keeps a power alone as its
+/// exponents, unbuilt (LIT-power-values), but an operation that adds to one, `3^K + 1`, builds
+/// its digits, so folding that costs their size (open row LIT-power-expression). A fix does
 /// not fold one: it names such a value by the operation as written ([`binder_holds`], DESIGN.md
 /// sec:diagnostics, "The value a fix names"), and the checks of a binding read only what the
 /// text gives of a power ([`rat_step`], [`Ck::lit_fit`], [`unfixed_binding`]), so such a
@@ -11341,6 +11357,13 @@ fn rat_step(p: Prim, x: Option<RatFact>, y: Option<RatFact>) -> Option<RatFact> 
         // An exponent the text does not give as a literal, as `2^100 - 1` in
         // `2r^2^100 / 2r^(2^100 - 1)`: a power of a base that is no zero is no zero, whatever
         // its `int` exponent, which is all a `/` by it needs. Its sign and size are not known.
+        // Proof: `rat` is exact, and Q has no zero divisors, so x ≠ 0 gives x^k ≠ 0 for k >= 0
+        // by induction (x^0 = 1, x^(k+1) = x^k·x), and x^-k = 1 / x^k ≠ 0; `nonzero` of `x`
+        // is its own claim ([`RatFact::nonzero`]: a value not `0r`, or a range that excludes
+        // it). Test: l01_26a_generic_literals lazy_carrier.rs
+        // `a_quotient_of_rat_powers_is_exact_in_the_power_form` (`2r^2^100 / 2r^(2^100 - 1)`
+        // is `2r` with no `#divByZero`); it cannot catch a base wrongly read as nonzero, which
+        // rests on [`RatRange`]'s own tests.
         // Complexity tradeoff: O(1), no bound of the power is computed, so an exponent such as
         // `2^100 - 1` costs nothing here; a range with bounds would need the exponent's value.
         (Prim::Pow, Some(x), None) if x.nonzero() => Some(RatFact::Range(RatRange {
@@ -15299,6 +15322,10 @@ pub fn denoted_free(t: &Type, leaves: &Binds, free: &HashSet<Arc<str>>) -> Ty {
 /// in the size of `t`. Each step quotes no part it names but a name, an operand of the one
 /// intersection or difference whose operands all have values, which no other step quotes,
 /// so the text is linear in the size of `t` too.
+// Tests: tests/steps/l01_29_diagnostics/emptied.rs, the cases of each kind of part and the two
+// scaling tests `explaining_a_union_of_empty_tuples` and `explaining_nested_empty_tuples`
+// (time and text measured at n and 8n); they cannot catch a step missing for a kind of part
+// none of them writes.
 fn emptied(t: &Type, out: &mut Vec<Note>) {
     let mut d = Denote {
         leaves: &Binds::new(),
