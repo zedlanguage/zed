@@ -386,8 +386,10 @@ impl Extending {
         // the chain's length, and a clause over two moved atoms. Why: the clauses are merged
         // where they say the same, where they are holes, and where they bound one atom beside
         // one condition, not where one implies another in general; deciding that a clause of
-        // congruences is implied by others is co-NP-hard (simultaneous incongruences, Garey
-        // and Johnson 1979, a book cited in the crate's `lib.rs`, problem AN2). Trigger:
+        // congruences is implied by others is co-NP-hard (Garey and Johnson 1979, p. 249,
+        // problem AN2, simultaneous incongruences, read 2026-11-20; the entry and the
+        // reduction, a clause that holds for every `x` exactly when an AN2 instance has no
+        // solution, are in the crate's `lib.rs`, References). Trigger:
         // `q = (x mod 1009 == 0 || x mod 3 == 1) && ...` in the chain above. Test
         // `l01_38_omega_test::one_scope::each_answer_of_a_random_disjunctive_chain_is_the_answer_of_the_relation_whole`.
         // COMPLEXITY.md row LOAD-disj-residue.
@@ -1341,11 +1343,11 @@ fn projected(
 // disjunctions that read one projected atom keep it, so the face holds that atom and is read
 // with it, and is not smaller than the formula. Why: projecting two disjunctions that share an
 // atom exactly writes out their product, d1 d2 disjuncts and more with each further one, which
-// is exponential in the number of disjunctions; one variable under congruences with distinct
-// moduli encodes the satisfiability of clauses (simultaneous incongruences, NP-complete: Garey
-// and Johnson 1979, cited in the crate's `lib.rs`, problem AN2), so no exact projection of
-// polynomial size is known for it. Trigger: two disjunctions over one `x mod n`, as
-// `(x mod 6 == 1 || y > 0) && (x mod 6 == 5 || z > 0)`. Test
+// is exponential in the number of disjunctions; one variable under congruences encodes 3SAT
+// (Garey and Johnson 1979, p. 249, problem AN2, simultaneous incongruences, NP-complete,
+// "Transformation from 3SAT", read 2026-11-20, quoted in the crate's `lib.rs`, References),
+// so no exact projection of polynomial size is known for it. Trigger: two disjunctions over
+// one `x mod n`, as `(x mod 6 == 1 || y > 0) && (x mod 6 == 5 || z > 0)`. Test
 // `l01_38_omega_test::one_scope::each_answer_of_a_random_disjunctive_chain_is_the_answer_of_the_relation_whole`.
 // COMPLEXITY.md row LOAD-disj-residue. A complete solution needs a projection that keeps such
 // disjunctions in a shared form, a decision diagram over their cases.

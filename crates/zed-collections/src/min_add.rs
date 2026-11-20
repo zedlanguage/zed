@@ -11,11 +11,30 @@
 //! the nodes on the path from the root to the leaf of `i`, and the least value over the range of
 //! `v` is `min[v]` plus the sum of `add` over the strict ancestors of `v`.
 //!
-//! Source: J. L. Bentley, "Solutions to Klee's rectangle problems", Carnegie Mellon University,
-//! 1977 (the segment tree; no DOI, not on Crossref, checked 2026-11-20; not read here, the
-//! scheme recalled from memory as `zedc-preimage` recalls it). The additions kept at the nodes
-//! are the usual variant, checked here by its own proof below, not against a text. Test:
-//! `tests::additions_and_searches_match_an_array`.
+//! Source: J. L. Bentley and D. Wood, "An optimal worst case algorithm for reporting
+//! intersections of rectangles", IEEE Trans. Computers C-29(7), 1980, pp. 571-577,
+//! doi:10.1109/TC.1980.1675628, sec. IV "The segment tree", pp. 573-575, read 2026-11-20 in
+//! full (a copy kept outside the repository). P. 574: "We "mark" with an X every node in the
+//! tree whose interval is contained in X, on the condition that that node's father is not also
+//! contained in X. We call this the canonical covering of X in the tree", and "the algorithm
+//! visits at most four nodes and marks at most two nodes on each of the lg m + 1 levels of the
+//! tree when representing any segment". The nodes that take an addition in `add` below are
+//! exactly the canonical covering of the range, so `add` is their insertion with a number in
+//! place of the segment's name, and its O(log n) bound is theirs. Departures: they keep at a
+//! node the list of segments that mark it and answer which segments cover a point; this tree
+//! keeps the sum of the additions and the least value over the node's range (`min`), and
+//! answers the first item at most a bound, which the paper does not do, so `min` and
+//! `first_at_most` rest on the proofs below, not on the paper. The paper credits "a very
+//! similar structure" to J. L. Bentley, "Algorithms for Klee's rectangle problems",
+//! unpublished notes, Carnegie-Mellon Univ., 1977 (its reference 2); J. van Leeuwen and D.
+//! Wood, "The measure problem for rectangular ranges in d-space", Utrecht Univ. report
+//! RUU-CS-79-06, 1979, <https://dspace.library.uu.nl/handle/1874/15897>, p. 20, reference 1
+//! (read 2026-11-20), cite the same notes as "Solutions to Klee's rectangle problems". The
+//! notes were not found under either title (no DOI, not on Crossref, 2026-11-20) and are not
+//! read. Test:
+//! `tests::additions_and_searches_match_an_array`; it compares with an array on random
+//! operations for n from 0 to 40, so it cannot catch a cost above O(log n) that still gives
+//! right answers.
 //!
 //! Proof of `add`: a node wholly inside the range takes the addition in `add` and `min`; a node
 //! that meets the range only in part passes it to its children and sets `min` again from theirs

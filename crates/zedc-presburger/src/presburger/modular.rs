@@ -3153,8 +3153,10 @@ fn solve_short_x_interval(
 /// rest, where every split has many pieces or a large `q`, holds the simultaneous
 /// incongruences (units `x mod b_i in [0, b_i) - {a_i}`, an empty set of points exactly when
 /// no `x` misses every `a_i mod b_i`): problem AN2 of Garey and Johnson, "Computers and
-/// Intractability" (1979), NP-complete (not read here: the catalog entry recalled from
-/// memory, checked 2026-11-20 only against the papers below, which do not state it). Read
+/// Intractability" (1979), Appendix, sec. A7.1, p. 249, NP-complete, read 2026-11-20 in a
+/// scan: "Is there an integer x such that, for 1 <= i <= n, x !≡ a_i (mod b_i)?" (the whole
+/// entry, and the proof that the window `[l, e]` keeps it as hard, are in the crate's
+/// `lib.rs`, References). So deciding that the set is empty is co-NP-complete. Also read
 /// 2026-11-20 (allpapers, full text): Deppert, Jansen and Klein, "Fuzzy Simultaneous
 /// Congruences", arXiv:2002.07746, which states that k-Simultaneous Congruences, a point
 /// meeting `k` of `n` congruences, "is NP-complete in the weak sense" (Leung and Whitehead)

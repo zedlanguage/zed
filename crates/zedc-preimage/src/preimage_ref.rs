@@ -91,8 +91,8 @@
 //! excluded piece, bounded by moduli written in the program and not by the input range or the
 //! chain length. A chain of guards over affine links is solved by an endpoint sweep that keeps
 //! the composed affine map in a segment tree of affine maps (the composition of affine maps is
-//! associative; J. L. Bentley, "Solutions to Klee's rectangle problems", 1977, unpublished,
-//! no DOI, cited in this crate's `lib.rs`, References), one O(log n)
+//! associative; Bentley and Wood 1980, doi:10.1109/TC.1980.1675628, sec. IV, p. 574, quoted
+//! in this crate's `lib.rs`, References), one O(log n)
 //! update per guard endpoint (`Tx::affine_guards`). Terms that read two or more inputs, and step
 //! shapes the 1D state does not cover, keep main's memo. The transfer itself follows no paper;
 //! the papers are those of the data structures.

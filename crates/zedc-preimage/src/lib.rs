@@ -101,13 +101,21 @@
 //!   alpha-equivalence", PLDI 2021, doi:10.1145/3453483.3454088 (named as not used).
 //! - P. Cousot and R. Cousot, "Systematic design of program analysis frameworks", POPL 1979,
 //!   pp. 269-282, doi:10.1145/567752.567778.
-//! - J. L. Bentley, "Solutions to Klee's rectangle problems", unpublished notes, Carnegie Mellon
-//!   University, 1977 (the segment tree): no DOI, not found on Crossref; from memory, not
-//!   checked. G. M. Adelson-Velsky and E. M. Landis (1962), the AVL tree, and F. P. Preparata
-//!   and M. I. Shamos, *Computational Geometry: An Introduction*, Springer, 1985; R. T.
-//!   Rockafellar, *Convex Analysis*, Princeton, 1970, sec. 8, and A. Schrijver, *Theory of
-//!   Linear and Integer Programming*, Wiley, 1986, sec. 8.2 (recession cones): books, not
-//!   checked.
+//! - J. L. Bentley and D. Wood, "An optimal worst case algorithm for reporting intersections of
+//!   rectangles", IEEE Trans. Computers C-29(7), 1980, pp. 571-577, doi:10.1109/TC.1980.1675628
+//!   (the segment tree), read 2026-11-20 in full. Sec. IV, p. 574: a segment is kept at "every
+//!   node in the tree whose interval is contained in X, on the condition that that node's
+//!   father is not also contained in X", and "the algorithm visits at most four nodes and
+//!   marks at most two nodes on each of the lg m + 1 levels"; so a range query or update
+//!   touches O(log m) nodes, the bound used here. Their reference 2, "a very similar
+//!   structure", is J. L. Bentley, "Algorithms for Klee's rectangle problems", unpublished
+//!   notes, Carnegie-Mellon Univ., 1977, which van Leeuwen and Wood (Utrecht report
+//!   RUU-CS-79-06, 1979, p. 20, reference 1, read 2026-11-20) cite as "Solutions to Klee's
+//!   rectangle problems": not found under either title, not read. G. M. Adelson-Velsky and E. M.
+//!   Landis (1962), the AVL tree, and F. P. Preparata and M. I. Shamos, *Computational
+//!   Geometry: An Introduction*, Springer, 1985; R. T. Rockafellar, *Convex Analysis*,
+//!   Princeton, 1970, sec. 8, and A. Schrijver, *Theory of Linear and Integer Programming*,
+//!   Wiley, 1986, sec. 8.2 (recession cones): books, not checked.
 
 pub mod address;
 mod divisors;

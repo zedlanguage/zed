@@ -89,9 +89,25 @@
 //!   Operations Research 8(4), 1983, pp. 538-548, doi:10.1287/moor.8.4.538: integer
 //!   feasibility in fixed dimension in polynomial time; the three-variable case is decided by
 //!   `zedc_solvers::live3`, whose crate docs sketch the method. Crossref; not read.
-//! - M. R. Garey and D. S. Johnson, *Computers and Intractability*, W. H. Freeman, 1979, problem
-//!   AN2, simultaneous incongruences, NP-complete; named where an exact projection of
-//!   congruences is given up. A book; from memory, not checked.
+//! - M. R. Garey and D. S. Johnson, *Computers and Intractability: A Guide to the Theory of
+//!   NP-Completeness*, W. H. Freeman, 1979, ISBN 0-7167-1044-7 (a book, no DOI), Appendix,
+//!   sec. A7.1 "Divisibility problems", p. 249, problem AN2, SIMULTANEOUS INCONGRUENCES, read
+//!   2026-11-20 in a scan of a later printing (an "Update for the Current Printing", p. 339,
+//!   lists corrections; AN2 is not among them), kept outside the repository: "INSTANCE:
+//!   Collection {(a_1,b_1), ..., (a_n,b_n)} of ordered pairs of positive integers, with a_i <=
+//!   b_i for 1 <= i <= n. QUESTION: Is there an integer x such that, for 1 <= i <= n, x !≡ a_i
+//!   (mod b_i)? Reference: [Stockmeyer and Meyer, 1973]. Transformation from 3SAT." The
+//!   appendix lists NP-complete problems, so AN2 is NP-complete, and its complement (every
+//!   integer meets some `a_i mod b_i`) is co-NP-complete. Two consequences used in this crate,
+//!   each proved here: (1) AN2 over a window `[l, e]` is as hard, since `x` may be taken
+//!   modulo the product `P` of the `b_i`, so the window `[0, P - 1]`, whose ends have
+//!   polynomially many bits, holds a solution exactly when one exists; (2) deciding that a
+//!   clause of congruences holds for every `x`, the clause `x mod b_1 == a_1 || ... || x mod
+//!   b_n == a_n` (with `a_i = b_i` read as residue 0), is co-NP-hard, since it holds for
+//!   every `x` exactly when the AN2 instance has no solution; deciding that a clause is
+//!   implied by others includes this case (no others). Used where an exact projection of
+//!   congruences is given up (`presburger/extend.rs`) and where `sweep_bounded` refuses
+//!   (`presburger/modular.rs`). Stockmeyer and Meyer 1973 (the entry's source) not read.
 //!
 //! ## Graphs and constraint networks
 //!

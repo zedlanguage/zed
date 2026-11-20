@@ -8034,8 +8034,8 @@ impl<'m, 't> Walk<'m, 't> {
     /// instructions, 10.7 times, from k = 8 to 64). Used: the operation applied only in the
     /// nodes of the tree that meet `ranges` ([`cls_clamp`], [`cls_zip`]), the others replaced by
     /// one placeholder leaf each: `O((r + L_r) log n)` for `r` ranges and the `L_r` leaves that
-    /// meet them, as a range query of a segment tree (Bentley, "Solutions to Klee's rectangle
-    /// problems", 1977, unpublished, no DOI, cited in this crate's `lib.rs`, References) visits
+    /// meet them, as a range query of a segment tree (Bentley and Wood 1980,
+    /// doi:10.1109/TC.1980.1675628, sec. IV, p. 574, quoted in this crate's `lib.rs`) visits
     /// the nodes on the paths to the range's ends. Cost: the result is
     /// not cached, as the full summary is ([`Walk::by_class`]), so an arm read in full
     /// elsewhere too is read twice; and a bound ([`Bound`]) is checked only over the classes

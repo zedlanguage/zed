@@ -563,7 +563,8 @@ fn split_of(weights: &BTreeMap<Int, u128>, k: usize) -> Option<(BTreeSet<&Int>, 
 
 /// Under a cover's meter, `sweep_bounded` is charged its work before it does it
 /// (`meter::charge_pieces`). The units `x mod p in [0, p) - {r_p}` for the 12 primes from 101
-/// to 157 on `[0, 2000000]` are simultaneous incongruences (problem AN2), the class that
+/// to 157 on `[0, 2000000]` are simultaneous incongruences (Garey and Johnson 1979, p. 249,
+/// problem AN2, quoted in the crate's `lib.rs`, References), the class that
 /// [`cheapest_split`] leaves costly at every split: cutting every modulus makes about 2 * 12 *
 /// 2000000 / 125 = 380,000 pieces, 6,100,000 units past [`meter::EXACT_LIMIT`]'s 3,100,000, and
 /// reading the smallest primes modulo their product costs more (the bound of each split is
