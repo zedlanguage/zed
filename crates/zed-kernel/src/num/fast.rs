@@ -56,7 +56,8 @@
 //! step: with `a` odd and `b = 2^j b'`, `b'` odd, choose `q`, `|q| < 2^j`, with `a + q b'`
 //! divisible by `2^(j+1)` ([`inverse_mod_pow2`] gives `q`), and replace the pair by
 //! `(b', (a + q b') / 2^j)`. This keeps the gcd's odd part ([`gcd`] divides each number by its
-//! own power of two first and multiplies the result by the smaller power at the end), and is the 2 by 2 integer matrix `[[0, 2^j], [2^j, q]]` over `2^2j` ([`Mat`]).
+//! own power of two first and multiplies the result by the smaller power at the end), and is
+//! the 2 by 2 integer matrix `[[0, 2^j], [2^j, q]]` over `2^2j` ([`Mat`]).
 //! Because the steps work from the low end, the steps whose halvings total at most `k` depend
 //! only on `a` and `b` modulo `2^(2k+1)`: no carry from the high bits reaches them, which is
 //! why the binary form is used rather than the classical half gcd, which works from the high
@@ -66,8 +67,8 @@
 //! recursion's leaf ([`half_leaf`], at or below [`HALF_LEAF`]) runs on 128-bit integers, which
 //! the residues and matrix entries provably never exceed. [`gcd`] repeats one half gcd and one
 //! step until the second number is zero, and hands what is left to num-bigint's Stein gcd at
-//! or below [`GCD_LEAF`]. Reference: Stehlé and Zimmermann, "A binary recursive gcd
-//! algorithm", ANTS 2004.
+//! or below [`GCD_LEAF`]. Reference: Stehlé and Zimmermann (2004) and Möller (2008), cited
+//! in full under "Sources" below.
 //!
 //! **Printing** ([`to_decimal`], [`to_decimal_split`]). The powers `10^(L 2^i)`, `L` being
 //! [`PRINT_LEAF`], are built once by squaring. `x` is written as `high 10^(L 2^i) + low` by one
@@ -97,6 +98,63 @@
 //! num-bigint's division is taken by a computed cost, [`DIV_COST`], as [`TOOM_COST`] is for
 //! products (CROSSOVER-bench, 2026-11-12). Open for the port: a cheaper first reciprocal or
 //! cached powers, which would lower the split's fixed costs and with them [`PRINT_WHOLE`].
+//!
+//! # Sources
+//!
+//! Each was checked on 2026-11-20: DOIs against Crossref, quotes against the text named.
+//!
+//! - D. Stehlé, P. Zimmermann, "A binary recursive gcd algorithm", Algorithmic Number Theory
+//!   (ANTS 2004), Lecture Notes in Computer Science, Springer, pp. 411-425,
+//!   doi:10.1007/978-3-540-24847-7_31. Lemma 1 (GB division): for `ν2(a) < ν2(b)` there is
+//!   one `(q, r)` with `r = a + q b / 2^(ν2(b) - ν2(a))`, `|q| < 2^(ν2(b) - ν2(a))` and
+//!   `ν2(r) > ν2(b)`; this is [`step`]. Lemma 7: if `a' = a mod 2^(2k+1)` and
+//!   `b' = b mod 2^(2k+1)`, then up to the first remainder of valuation above `k` the GB
+//!   quotients of the two pairs are equal; this is why [`half`] works on residues. Theorem 4:
+//!   Fast-GB-gcd takes `O(M(n) log n)`. Departures: the pair is kept with its powers of two
+//!   divided out, as in Möller's form below, and the leaf runs on 128-bit integers.
+//! - N. Möller, "On Schönhage's algorithm and subquadratic integer gcd computation", Math.
+//!   Comp. 77(261):589-607, 2008 (Crossref dates it 2007, online first),
+//!   doi:10.1090/S0025-5718-07-02017-0. Section 4, p. 596, restates Stehlé and Zimmermann's
+//!   algorithm as `hgcd-b`, whose step 7, `(A; B) <- (α, β) + 2^(ℓ1 - 2 j1) M (A'; B')`,
+//!   lifts the residues' pair by the matrix applied to the high parts; [`half`]'s `lift` is
+//!   that step. p. 595: "The use of quotients in the symmetric interval −2^k < q < 2^k is
+//!   essential; if one tries to use positive quotients 0 < q < 2^(k+1), the algorithm no
+//!   longer terminates."
+//! - R. P. Brent, P. Zimmermann, Modern Computer Arithmetic, Cambridge University Press,
+//!   2010, doi:10.1017/CBO9780511921698. Read in the authors' version 0.5.1 (2024),
+//!   arXiv:1004.4710, whose numbering may differ from the printed book. Algorithm 3.5
+//!   ApproximateReciprocal (§3.4) takes a reciprocal of the top `h` words and refines it by
+//!   one Newton step; Lemma 3.4.2: "If β is a power of two satisfying β ≥ 8, and
+//!   β^n/2 ≤ A < β^n, then the output X ... satisfies: AX < β^2n < A(X + 2)". Departure:
+//!   [`approx_reciprocal`] works in bits (β = 2, outside the lemma's `β ≥ 8`) and starts each
+//!   step from `h = ceil((p + 3) / 2)` bits, and it promises only `t (X + 2) >= 2^2k`. The
+//!   lemma's proof does not cover that case; the test `approximate_reciprocals_keep_their_bounds`
+//!   checks the bound for every `t` of 5 to 13 bits and for edge and random `t` at 15 widths up
+//!   to 30,001 bits, and cannot prove it for the widths it skips. Algorithm 1.26
+//!   FastIntegerOutput (§1.7.2) prints `A` as `Output(Q) || 0^(k - len(r)) || r` with
+//!   `(Q, R) = DivRem(A, B^k)`, and "has complexity O(M(n) log n)"; [`to_decimal`] is that
+//!   recursion, with the powers `10^(L 2^i)` fixed in advance and their reciprocals shared.
+//! - C. Burnikel, J. Ziegler, "Fast Recursive Division", research report MPI-I-98-1-022,
+//!   Max-Planck-Institut für Informatik, October 1998,
+//!   <https://pure.mpg.de/rest/items/item_1819444_4/component/file_2599480/content>: "Its
+//!   running time is 2K(n) + O(n log n) for division of a 2n-digit number by an n-digit number
+//!   where K(n) is the Karatsuba multiplication time." Not used here; it is num-bigint's
+//!   division, against which this file is measured.
+//! - A. Schönhage, "Schnelle Berechnung von Kettenbruchentwicklungen", Acta Inform.
+//!   1(2):139-144, 1971, doi:10.1007/BF00289520. Its summary: a method of Knuth for the gcd
+//!   and continued fraction "is modified in such a way that only O(n(lg n)^2(lglg n))
+//!   elementary steps are used for u,v<2^n". Modern Computer Arithmetic §1.9 (Notes and
+//!   References): "The first subquadratic gcd algorithm was published by Knuth ... The correct
+//!   complexity O(n log^2 n log log n) was given by Schönhage". Cited for the gcd only; it is
+//!   not a radix-conversion paper.
+//! - D. J. Bernstein, "Scaled remainder trees", draft, 2004,
+//!   <https://cr.yp.to/arith/scaledmod-20040820.pdf>. Abstract: U mod p1, U mod p2, ... can
+//!   be computed "in time n(lg n)^(2+o(1))"; the paper's algorithm has a smaller o(1). Cited
+//!   for radix conversion in O(M(n) log n): Modern Computer Arithmetic, Exercise 1.35, makes
+//!   integer output as fast as input with "D. Bernstein's scaled remainder tree [21] and the
+//!   middle product". This file does not use the scaled tree; it divides by Newton reciprocals.
+//! - D. E. Knuth, The Art of Computer Programming, vol. 2, 3rd ed., Addison-Wesley, 1997,
+//!   §4.3.1, Algorithm D (long division). From memory, not checked: the book was not read.
 //!
 //! **At the port to Zed.** The results must stay those of num-bigint's operations, which the
 //! unit tests compare at every leaf setting. What depends on measurement and is to be measured
@@ -1468,17 +1526,17 @@ pub(crate) fn div_rem(a: &BigUint, b: &BigUint) -> (BigUint, BigUint) {
     // (`num_bigint_div_cost`, fitted to its measured work) is at most the cheaper of the other
     // two methods' (`past_leaf_cost`), as `mul` takes num-bigint's product by `TOOM_COST`.
     // num-bigint 0.4.8 divides by Knuth's algorithm D (The Art of Computer Programming, vol. 2,
-    // 4.3.1) up to 64 words and above by Burnikel and Ziegler's recursive division (C.
-    // Burnikel, J. Ziegler, "Fast Recursive Division", Max-Planck-Institut fur Informatik,
-    // MPI-I-98-1-022, 1998), whose cost is that of its products, Toom-3, O(n^1.465); its
-    // work was measured to grow 2.79 to 2.90 times per doubling of `2w` by `w` (2026-11-12), so
-    // `DIV_POWER` 1.52, against about four squarings, O(n log n) each, by the reciprocal. The
-    // plan row asked for one threshold at the measured crossover; the curves cross at 3192 words
-    // for `2w` by `w`, 919 for a quotient of a quarter of the divisor's words, 899 for four
-    // times, 417 for sixteen times and 242 for 256 times them (2026-11-12, `crossover
-    // div-leaf`), so no one leaf sits at every crossover, and `DIV_LEAF` alone at 64 words did
-    // up to 3.38 times the least work. With `DIV_COST` fitted over the five shapes together
-    // the worst is 1.089 (COMPLEXITY.md, "Crossovers"). Both sides are tested by
+    // 4.3.1) up to 64 words and above by Burnikel and Ziegler's recursive division (both cited
+    // in full in the module's "Sources"), whose cost is that of its products, Toom-3,
+    // O(n^1.465); its work was measured to grow 2.79 to 2.90 times per doubling of `2w` by
+    // `w` (2026-11-12), so `DIV_POWER` 1.52, against about four squarings, O(n log n) each,
+    // by the reciprocal. The plan row asked for one threshold at the measured crossover; the
+    // curves cross at 3192 words for `2w` by `w`, 919 for a quotient of a quarter of the
+    // divisor's words, 899 for four times, 417 for sixteen times and 242 for 256 times them
+    // (2026-11-12, `crossover div-leaf`), so no one leaf sits at every crossover, and
+    // `DIV_LEAF` alone at 64 words did up to 3.38 times the least work. With `DIV_COST`
+    // fitted over the five shapes together the worst is 1.089 (COMPLEXITY.md, "Crossovers").
+    // Both sides are tested by
     // `tests::quotients_agree_with_num_bigint` and
     // `tests::wide_quotients_agree_with_num_bigint`; the growth above it by
     // `dividing_a_wide_number_scales` (COMPLEXITY.md K30, "Crossovers"; ZED_PORT_GAPS.md,
@@ -1823,7 +1881,8 @@ fn reciprocal_from(x: &BigUint, k: u64, leaf: u64) -> BigUint {
 /// the points of a product of `p / 2` bits by `p / 2`, so the whole about 5/3 of a product of
 /// `p` bits by `p`. `tw` as for
 /// [`Field::forward`], of at least [`cyclic_points`]`(p)` points. Brent and Zimmermann, Modern
-/// Computer Arithmetic (2010), Algorithm 3.5, in bits rather than words.
+/// Computer Arithmetic (2010), Algorithm 3.5, in bits rather than words; the module's
+/// "Sources" gives the lemma, why it does not cover bits, and the test that checks the bound.
 fn approx_reciprocal(a: &BigUint, p: u64, tw: &Roots, leaf: u64) -> BigUint {
     debug_assert_eq!(a.bits(), p);
     let mut sizes = vec![p];
@@ -2270,7 +2329,8 @@ impl Half {
 /// pair they reach, `R (a, b) / 2^2j`. The steps depend only on `a` and `b` modulo
 /// `2^(2k+1)`, so the first half is found from those residues of half the width
 /// ([`half_low`]), and the rest from the pair it reaches (Stehlé and Zimmermann, "A binary
-/// recursive gcd algorithm", ANTS 2004). O(M(k) log k).
+/// recursive gcd algorithm", ANTS 2004, Lemma 7; cited in full in the module's "Sources").
+/// O(M(k) log k).
 ///
 /// Complexity tradeoff: `R` is `r2 (q r1)`, a product of two matrices of about `k / 2` bits,
 /// and the pair is `r2 (a3, b3) / 2^2j2` from the pair `(a3, b3)` that `r2` was found from,
@@ -2353,8 +2413,9 @@ fn half(a: BigInt, b: BigInt, k: u64, want: Want, lift: u64) -> Half {
 /// them by the high parts only, `bits(a) - w` bits, but needs that pair, one more product of
 /// a matrix by a pair inside the recursion. When the products are num-bigint's (entries of
 /// at most `MUL_LEAF` words, where [`matrix_product`] takes them one by one), whose cost grows
-/// with the product of the widths, the lift is cheaper (Möller's `hgcd-b`, "On Schönhage's
-/// algorithm and subquadratic integer gcd computation", Math. Comp. 2008): [`bezout`] of
+/// with the product of the widths, the lift is cheaper (Möller's `hgcd-b`, step 7, "On
+/// Schönhage's algorithm and subquadratic integer gcd computation", Math. Comp. 2008, §4;
+/// cited in full in the module's "Sources"): [`bezout`] of
 /// Fibonacci pairs takes 8 % fewer instructions at 356 words and 11 % fewer at 711. Above,
 /// the transforms of [`Mat::apply`] are planned for the quotient, about `bits(a) - k` bits,
 /// the same size as the lift's products, so the lift only adds the residues' pair: a gcd of
@@ -2651,13 +2712,14 @@ fn gcd_using(a: &BigUint, b: &BigUint, leaf: u64, lift: u64) -> BigUint {
     let _hold = HoldRoots::open();
     // Complexity tradeoff: the half gcd costs O(M(n) log n) = O(n log^2 n), a log factor above
     // a product, accepted because no faster gcd is known: the subquadratic gcds (Schönhage 1971;
-    // the binary recursive gcd of Stehlé and Zimmermann, ANTS 2004, used here; Möller 2008)
-    // all take O(M(n) log n) (author decision A47, 2026-11-09; COMPLEXITY.md C31). The
-    // scaling test holds it to the limit of work of order n log^2 n. Below `GCD_LEAF`,
-    // `stein_odd` runs 2-adic Lehmer passes (up to 30 halvings per pass in 128-bit registers,
-    // applied in one pass over two reusable word buffers) and drops to 128-bit and 64-bit Stein
-    // registers once both operands fit in two words, avoiding num-bigint's per-step shift
-    // allocations while keeping O(n^2) bounded to the leaf width with a 30x smaller pass count.
+    // the binary recursive gcd of Stehlé and Zimmermann, ANTS 2004, used here; Möller 2008;
+    // all in the module's "Sources") all take O(M(n) log n) (author decision A47, 2026-11-09;
+    // COMPLEXITY.md C31). The scaling test holds it to the limit of work of order n log^2 n.
+    // Below `GCD_LEAF`, `stein_odd` runs 2-adic Lehmer passes (up to 30 halvings per pass in
+    // 128-bit registers, applied in one pass over two reusable word buffers) and drops to
+    // 128-bit and 64-bit Stein registers once both operands fit in two words, avoiding
+    // num-bigint's per-step shift allocations while keeping O(n^2) bounded to the leaf width
+    // with a 30x smaller pass count.
     // Measured on 2026-11-06: 1.8 s at 32768 words, 11.0 s at 131072; Stein's gcd is faster
     // below about 300 words at load 1 (2026-11-06), 512 to 1024 at load 45 to 75 (2026-11-05);
     // see `GCD_LEAF`. Test `a_gcd_of_wide_numbers_scales`, deferred to plan row
@@ -3292,11 +3354,11 @@ pub fn to_decimal_split_at(x: &BigUint, handoff: usize) -> String {
     // Complexity tradeoff: the digits are written by halves, each level of the recursion
     // dividing by one power of ten, so the cost is O(M(n) log n) = O(n log^2 n), a log factor
     // above a product, accepted because no faster radix conversion is known: the subquadratic
-    // method (Schönhage 1971; the scaled remainder tree of Bernstein, 2004; Brent and
-    // Zimmermann, Modern Computer Arithmetic, 2010, section 1.7) takes O(M(n) log n) (author
-    // decision A47, 2026-11-09; COMPLEXITY.md C31), against num-bigint's O(n^2). Tested by
-    // `printing_a_wide_number_scales` and `writing_a_wide_end_scales` (COMPLEXITY.md K30,
-    // K81).
+    // method (Brent and Zimmermann, Modern Computer Arithmetic, 2010, section 1.7.2; the
+    // scaled remainder tree of Bernstein, 2004; both in the module's "Sources") takes
+    // O(M(n) log n) (author decision A47, 2026-11-09; COMPLEXITY.md C31), against
+    // num-bigint's O(n^2). Tested by `printing_a_wide_number_scales` and
+    // `writing_a_wide_end_scales` (COMPLEXITY.md K30, K81).
     let n = top.bits();
     // The quotient has at most `k` bits, and the reciprocal of `top` is taken to `p = k`
     // bits, only what it needs: the levels below do not derive theirs from it (see
@@ -3797,9 +3859,10 @@ pub(super) const LEAF_DIGITS: usize = 2048;
 pub(super) fn read_digits_by(digits: &str, leaf: usize) -> BigUint {
     // Complexity tradeoff: reading by halves costs one widest product per level, `log2(n /
     // leaf)` levels, O(M(n) log n) = O(n log^2 n), a log factor above a product, accepted
-    // because no faster radix conversion is known: the subquadratic method (Schönhage 1971;
-    // Bernstein, "Scaled remainder trees", 2004; Brent and Zimmermann, Modern Computer
-    // Arithmetic, 2010, section 1.7) takes O(M(n) log n) (author decision A47, 2026-11-09;
+    // because no faster radix conversion is known: the subquadratic method (Brent and
+    // Zimmermann, Modern Computer Arithmetic, 2010, section 1.7.2, Algorithm 1.25
+    // FastIntegerInput; Bernstein, "Scaled remainder trees", 2004; both in the module's
+    // "Sources") takes O(M(n) log n) (author decision A47, 2026-11-09;
     // COMPLEXITY.md C31), against num-bigint's O(n^2). The scaling tests of reading hold it to
     // the limit of work of order n log^2 n.
     //
