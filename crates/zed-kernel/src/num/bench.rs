@@ -216,6 +216,61 @@ fn remainders_by_a_fixed_wide_divisor_scale() {
     );
 }
 
+/// TEST-kernel-num-rat-units: [`Rat::rem_euclid`] and [`Rat::div_euclid`] of a negative plain
+/// integer of n words by the fixed one of 1024 words of the bench above. `rem_euclid` takes
+/// `rem` (one `fast::Divisor`, blocks of the dividend, O(n) for this divisor) and `euclid`
+/// (`|m| - r`, O(1024) words); `div_euclid` takes `fast::div_euclid`, whose quotient is wider
+/// than the divisor, so `div_rem_blocks`, O(n) for this divisor, and its memory is asked as the
+/// divisor's transforms and twice the dividend's width (the arm of `div_euclid` that the unit
+/// tests do not reach, at `num.rs` "`k > n`").
+#[test]
+fn euclidean_remainders_and_quotients_of_negative_integers_scale() {
+    let n = 1 << 14;
+    let m = Rat::int(BigInt::from(bench_number(1024, 7)));
+    let numbers = crate::scaling::inputs(n, |w| Rat::int(-BigInt::from(bench_number(w, 3))));
+    crate::scaling::check_order(
+        "a negative number of n words rem_euclid and div_euclid one of 1024 words",
+        n,
+        1,
+        |w| {
+            let a = &numbers[&w];
+            let r = a.rem_euclid(&m).unwrap();
+            assert!(!r.is_negative() && !r.is_zero() && r < m);
+            assert!(a.div_euclid(&m).unwrap().is_negative());
+        },
+    );
+}
+
+/// TEST-kernel-num-rat-units: the kept path of `Rat::sum`, two integers of n words times the
+/// same kept power `3^(2^20)`. The common power factors out unbuilt, so the sum is the sum of
+/// the two coefficients (a product by the empty power, 1, and a sum, O(n)) and `Rat::build`'s
+/// test of whether 3 divides the result (one pass over its words, O(n)); nothing of
+/// `3^(2^20)`, 1.66 million bits, is built.
+#[test]
+fn a_sum_sharing_a_kept_power_scales_with_its_coefficients() {
+    let n = 1 << 14;
+    let three = power(3, 1 << 20);
+    let terms = crate::scaling::inputs(n, |w| {
+        let [a, b] = [3u64, 5].map(|s| {
+            let r = three
+                .mul(&Rat::int(BigInt::from(bench_number(w, s))))
+                .unwrap();
+            assert!(!r.is_plain());
+            r
+        });
+        (a, b)
+    });
+    crate::scaling::check_order(
+        "a sum of two numbers of n words times one kept power",
+        n,
+        1,
+        |w| {
+            let (a, b) = &terms[&w];
+            assert!(!a.add(b).unwrap().is_plain());
+        },
+    );
+}
+
 /// TEST-dry-shared-units: [`rem_uint`] and [`div_rem_uint`] of a number of n words by one odd
 /// word, at or below `DIV_LEAF`, so num-bigint's long division, O(n); and [`gcd_uint`] of the
 /// same pair, whose odd part of 64 bits sends it to `gcd_big_u64`, one pass over the words

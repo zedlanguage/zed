@@ -426,4 +426,78 @@ mod tests {
             "an xor of the words is caught as unordered"
         );
     }
+
+    /// `ZED_TEXT_SEED` (TEST-kernel-num-rat-units), read once per process, so each case runs in
+    /// a child process of this test binary that runs this test alone. In the child: the `n`-th
+    /// [`TextState`] this thread makes is foldhash's state seeded with `step(seed, n)`, and the
+    /// process's text hash ([`text_hash`], [`text_state`]) the one seeded with `seed` itself;
+    /// with the variable unset, both are drawn at random. In the parent: a seed gives the same
+    /// hashes in every run, two seeds differ, spaces around the number are trimmed, `2^64 - 1`
+    /// is taken, `2^64` and a word stop the run naming the value, and two runs with no seed
+    /// differ. Negative controls, each run once: `default` seeding the `n`-th state with
+    /// `step(seed, n + 1)`, caught in the child; `text_seed` not trimming, caught in the parent.
+    #[test]
+    fn a_text_seed_fixes_every_text_hash_and_a_bad_one_stops_the_run() {
+        use foldhash::fast::SeedableRandomState;
+        const TEST: &str =
+            "digest::tests::a_text_seed_fixes_every_text_hash_and_a_bad_one_stops_the_run";
+        const CHILD: &str = "ZED_KERNEL_TEXT_SEED_CHILD";
+        let words = ["", "x", "a name of more than sixteen bytes"];
+        if std::env::var_os(CHILD).is_some() {
+            let states = [TextState::default(), TextState::default()];
+            let hashes = |s: &dyn Fn(&str) -> u64| words.map(s);
+            let made = states.each_ref().map(|s| hashes(&|w| s.hash_one(w)));
+            let process = hashes(&|w| text_hash(w));
+            assert_eq!(process, hashes(&|w| text_state().hash_one(w)));
+            if let Some((seed, shared)) = text_seed() {
+                for (n, h) in made.iter().enumerate() {
+                    let want = SeedableRandomState::with_seed(step(seed, n as u64), shared);
+                    assert_eq!(*h, hashes(&|w| want.hash_one(w)), "state {n}");
+                }
+                let want = SeedableRandomState::with_seed(seed, shared);
+                assert_eq!(process, hashes(&|w| want.hash_one(w)));
+            }
+            println!("hashes {made:?} {process:?}");
+            return;
+        }
+        let run = |seed: Option<&str>| {
+            let mut child = std::process::Command::new(std::env::current_exe().unwrap());
+            child
+                .args(["--exact", TEST, "--test-threads=1", "--nocapture"])
+                .env(CHILD, "1")
+                .env_remove("ZED_TEXT_SEED");
+            if let Some(s) = seed {
+                child.env("ZED_TEXT_SEED", s);
+            }
+            child.output().unwrap()
+        };
+        let hashes = |seed: Option<&str>| {
+            let out = run(seed);
+            let err = String::from_utf8_lossy(&out.stderr);
+            assert!(out.status.success(), "ZED_TEXT_SEED={seed:?}: {err}");
+            let text = String::from_utf8_lossy(&out.stdout);
+            // The harness writes `test <name> ... ` before the line on the same line.
+            let line = text.split_once("hashes [").map(|(_, h)| h.lines().next());
+            line.flatten()
+                .unwrap_or_else(|| panic!("no hashes: {text}"))
+                .to_owned()
+        };
+        let at42 = hashes(Some("42"));
+        assert_eq!(at42, hashes(Some("42")));
+        assert_eq!(at42, hashes(Some(" 42\n")));
+        assert_ne!(at42, hashes(Some("43")));
+        assert_ne!(at42, hashes(Some(&u64::MAX.to_string())));
+        assert_ne!(
+            hashes(None),
+            hashes(None),
+            "unset, the seeds are drawn at random"
+        );
+        for bad in ["18446744073709551616", "x", ""] {
+            let out = run(Some(bad));
+            let err = String::from_utf8_lossy(&out.stderr);
+            assert!(!out.status.success(), "{bad:?} was taken");
+            let names = format!("ZED_TEXT_SEED is {bad:?}, not a decimal number below 2^64");
+            assert!(err.contains(&names), "{bad:?}: {err}");
+        }
+    }
 }
