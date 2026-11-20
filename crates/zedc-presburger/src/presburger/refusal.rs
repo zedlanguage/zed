@@ -7,7 +7,7 @@
 //! cycle, which Zed forbids between files (DESIGN.md sec:units; ZED_PORT_GAPS.md gap 10). The
 //! parent re-exports every public name, so `presburger::Refusal` and the rest are unchanged.
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::fmt;
 use std::sync::Arc;
 
@@ -539,6 +539,36 @@ impl Classed {
             return Classed::new(self.ranges.join(&other.ranges), self.class.clone());
         }
         Classed::plain(self.met().join(&other.met()))
+    }
+
+    /// The union of `sets`, as [`Classed::join`] of each in turn gives it, with the ranges of
+    /// each class gathered and made one set at once.
+    // Complexity tradeoff: naive version, `set = set.join(&p)` for each of k sets; a join of
+    // one class is `Classed::new` over the whole union, O(p) for p ranges so far, so k sets of
+    // one range each cost O(k^2) (the union of a disjunction of k blocks, `exact::blocks_set`,
+    // before PRES-cover-moduli-two-disjunctions). Used: the ranges of each class listed, then
+    // sorted and merged once (`IntervalSet::from_pieces`, O(P log P) for P ranges in all, O(P)
+    // bytes) and `Classed::new` once per class, O(P log P) in all; the sets of different classes
+    // are then joined as before, listed, O(c·v) for c classes and v values, the cost
+    // `Classed::join` already has for two classes. The groups are kept in the order their
+    // class first came, so the answer does not hang on a hash order.
+    pub fn join_all(sets: impl IntoIterator<Item = Classed>) -> Classed {
+        let mut at: HashMap<Congruence, usize> = HashMap::new();
+        let mut groups: Vec<(Congruence, Vec<(End, End)>)> = Vec::new();
+        for c in sets {
+            if c.is_empty() {
+                continue;
+            }
+            let i = *at.entry(c.class.clone()).or_insert_with(|| {
+                groups.push((c.class.clone(), Vec::new()));
+                groups.len() - 1
+            });
+            groups[i].1.extend(c.ranges.into_pieces());
+        }
+        groups
+            .into_iter()
+            .map(|(class, pieces)| Classed::new(IntervalSet::from_pieces(pieces), class))
+            .fold(Classed::plain(IntervalSet::empty()), |set, c| set.join(&c))
     }
 
     /// The intersection: the ranges met, in the meet of the classes (by the Chinese remainder

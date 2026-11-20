@@ -3337,10 +3337,9 @@ fn the_cover_answers_where_the_solver_alone_answered_on_two_shapes_at_moduli_5_a
 
 /// Row PRES-cover-refusals-moduli, the other three shapes of [`REMAINDER_SHAPES`]: as
 /// [`the_cover_answers_where_the_solver_alone_answered_on_two_shapes_at_moduli_5_and_7`], the
-/// cover answers wherever the solver alone answers, with a box of `x` inside the solver's,
-/// except in the cases of [`REFUSED_WITH_TWO_DISJUNCTIONS`], which are refused
-/// (`Refusal::Questions`) and must stay exactly those until PRES-cover-moduli-two-disjunctions
-/// answers them.
+/// cover answers wherever the solver alone answers, with a box of `x` inside the solver's.
+/// The cases of [`ANSWERED_WITH_TWO_DISJUNCTIONS`] were refused (`Refusal::Questions`) until
+/// `exact::two_distributed` (PRES-cover-moduli-two-disjunctions).
 #[test]
 fn the_cover_answers_where_the_solver_alone_answered_on_three_shapes_at_moduli_5_and_7() {
     let refused = refused_where_the_solver_answered(&[
@@ -3348,9 +3347,7 @@ fn the_cover_answers_where_the_solver_alone_answered_on_three_shapes_at_moduli_5
         "arms over x",
         "a test of the chain",
     ]);
-    let mut want = REFUSED_WITH_TWO_DISJUNCTIONS.to_vec();
-    want.sort();
-    assert_eq!(refused, want);
+    assert_eq!(refused, vec![]);
 }
 
 /// The cases of [`REMAINDER_SHAPES`] named in `shapes`, at moduli 5 and 7, seeds 1 to 3 and
@@ -3409,10 +3406,11 @@ fn the_cover_on_three_shapes_at_moduli_5_and_7_matches_the_interpreter() {
 
 /// The negative control of [`the_cover_on_three_shapes_at_moduli_5_and_7_matches_the_interpreter`]:
 /// on each of the cases whose answer changed with d85e3b436, with the residue questions asked
-/// one piece at a time, and with every question named by its structure (the last two;
-/// modulus, seed, shape, k; [`REFUSED_WITH_TWO_DISJUNCTIONS`]), the
-/// cover's answer with one value of `x` that has a point meeting the demand taken out of its
-/// box fails [`check`], so that test would catch a cover that drops such a value.
+/// one piece at a time, with every question named by its structure (the two after those;
+/// modulus, seed, shape, k), and with two disjunctions distributed
+/// ([`ANSWERED_WITH_TWO_DISJUNCTIONS`]), the cover's answer with one value of `x` that has a
+/// point meeting the demand taken out of its box fails [`check`], so that test would catch a
+/// cover that drops such a value.
 #[test]
 fn a_cover_with_one_value_of_x_dropped_fails_the_interpreter_check() {
     use super::{meets, points};
@@ -3422,7 +3420,7 @@ fn a_cover_with_one_value_of_x_dropped_fails_the_interpreter_check() {
         .iter()
         .position(|n| &**n == "x")
         .expect("x is an input");
-    for (m, seed, shape, k) in [
+    let earlier = [
         (5, 2, "arms of x and y", 5),
         (5, 3, "a test of the chain", 5),
         (7, 2, "a test of the chain", 5),
@@ -3434,7 +3432,8 @@ fn a_cover_with_one_value_of_x_dropped_fails_the_interpreter_check() {
         (7, 3, "arms over x", 5),
         (5, 2, "a test of the chain", 13),
         (7, 2, "arms over x", 2),
-    ] {
+    ];
+    for (m, seed, shape, k) in earlier.into_iter().chain(ANSWERED_WITH_TWO_DISJUNCTIONS) {
         let t = remainder_shape(shape, moved_remainder_chain(seed, k, "x", m));
         let p = preimage(&t, &ds, &d);
         assert!(p.refusal.is_none(), "{t}: the cover answers this case");
@@ -3483,7 +3482,12 @@ fn a_cover_with_one_value_of_x_dropped_fails_the_interpreter_check() {
 /// matching the interpreter, and no case answered before is refused. No search gave
 /// `Quick::Empty` on these cases: of the 130 gaps of all five shapes, 89 got a point, 41 went
 /// to the solver, and the solver found a point in each, so no backjump passed over a point.
-const REFUSED_WITH_TWO_DISJUNCTIONS: [(i64, u64, &str, usize); 14] = [
+/// Since `exact::two_distributed` (PRES-cover-moduli-two-disjunctions, 2026-11-20), a group of
+/// rows and two disjunctions is projected by distributing the one with fewer blocks (here the
+/// outer `if` of the shape, 2 blocks, over the chain, 8 to 27), and all 14 are answered, each
+/// matching the interpreter; the list is kept for the negative control
+/// ([`a_cover_with_one_value_of_x_dropped_fails_the_interpreter_check`]).
+const ANSWERED_WITH_TWO_DISJUNCTIONS: [(i64, u64, &str, usize); 14] = [
     (5, 2, "arms of x and y", 13),
     (5, 2, "arms over x", 13),
     (5, 3, "arms over x", 13),

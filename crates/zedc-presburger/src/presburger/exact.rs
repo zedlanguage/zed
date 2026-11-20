@@ -74,7 +74,7 @@ use super::absorbing;
 use super::formula::{Ends, Id};
 pub use super::meter::{
     DIRECT_OFF, EXACT_LIMIT, EXACT_LIMIT_SET, EXACT_OFF, EXACT_QUESTIONS, EXACT_WORK, FAST_WORK,
-    GUARDED_OFF, PART_CACHE_OFF, QUESTION_WORK, SHARED_OFF, SOLVER_UNIT,
+    GUARDED_OFF, PART_CACHE_OFF, QUESTION_WORK, SHARED_OFF, SOLVER_UNIT, TWO_DISTRIBUTED_OFF,
 };
 use super::meter::{PIECE, Solver, Work};
 use super::{Atom, Classed, Con, Each, EachClassed, Factor, Formula, Lin, Model, Refusal, Rel};
@@ -2254,18 +2254,18 @@ fn direct_noting(
                 }
             }
         }
-        let mut set = Classed::plain(IntervalSet::empty());
+        let mut each = Vec::with_capacity(blocks.len());
         for (b, done) in blocks.iter().zip(sets) {
-            let p = match done {
+            each.push(match done {
                 Some(p) => p,
                 None => match block_set(b, s, within, work)? {
                     Some(p) => p,
                     None => return Ok(None),
                 },
-            };
-            set = set.join(&p);
+            });
         }
-        return Ok(Some(set));
+        // One union of all, not one per block ([`Classed::join_all`]).
+        return Ok(Some(Classed::join_all(each)));
     }
     Ok(as_set(last, s, within, work)?.map(|(set, _)| set))
 }
@@ -3750,11 +3750,11 @@ fn block_set(
         ));
     }
     work.charge(PIECE.saturating_mul((ranges.len() as u64).saturating_add(values) + 1))?;
-    let mut set = Classed::plain(IntervalSet::from_pieces(ranges));
-    for c in &strided {
-        set = set.join(c);
-    }
-    Ok(Some(set))
+    // One union of all, not one per class ([`Classed::join_all`]).
+    let plain = Classed::plain(IntervalSet::from_pieces(ranges));
+    Ok(Some(Classed::join_all(
+        std::iter::once(plain).chain(strided),
+    )))
 }
 
 /// A part of [`direct`] as a set: rows projected; a disjunction of blocks, the union of their
@@ -3780,16 +3780,18 @@ fn blocks_set(
     within: &IntervalSet,
     work: &mut Work,
 ) -> Result<Option<(Classed, HashSet<Atom>)>, Refusal> {
-    let mut set = Classed::plain(IntervalSet::empty());
+    let mut each = Vec::with_capacity(blocks.len());
     let mut atoms = HashSet::new();
     for b in blocks {
         let Some(p) = block_set(b, s, within, work)? else {
             return Ok(None);
         };
-        set = set.join(&p);
+        each.push(p);
         atoms.extend(others(b, s));
     }
-    Ok(Some((set, atoms)))
+    // One union of all, not one per block: O(k log k) for k blocks of one range each, where
+    // joining each in turn was O(k^2) ([`Classed::join_all`]).
+    Ok(Some((Classed::join_all(each), atoms)))
 }
 
 /// The union of disjuncts for [`direct`]: where every disjunct is rows or blocks of rows, the
@@ -3827,7 +3829,7 @@ fn joined_parts(
         }
         return Ok(Some(Part::Alts(blocks, dirs.unwrap_or_default())));
     }
-    let mut set = Classed::plain(IntervalSet::empty());
+    let mut each = Vec::with_capacity(parts.len());
     let mut atoms: HashSet<Atom> = HashSet::new();
     let mut dirs: Option<Dirs> = None;
     for p in parts {
@@ -3839,13 +3841,15 @@ fn joined_parts(
         let Some((p, more)) = as_set(p, s, within, work)? else {
             return Ok(None);
         };
-        set = set.join(&p);
+        each.push(p);
         if more.len() > atoms.len() {
             atoms = more.into_iter().chain(atoms).collect();
         } else {
             atoms.extend(more);
         }
     }
+    // One union of all, not one per part ([`Classed::join_all`]).
+    let set = Classed::join_all(each);
     Ok(Some(Part::Set(set, atoms, dirs.unwrap_or_default(), None)))
 }
 
@@ -4154,8 +4158,11 @@ fn two_distributed(
     within: &IntervalSet,
     work: &mut Work,
 ) -> Result<Option<Classed>, Refusal> {
+    if TWO_DISTRIBUTED_OFF.get() {
+        return Ok(None);
+    }
     let (small, large) = if a.len() <= b.len() { (a, b) } else { (b, a) };
-    let mut set = Classed::plain(IntervalSet::empty());
+    let mut each = Vec::with_capacity(small.len());
     let large_rows: u64 = large.iter().map(|b| b.len() as u64).sum();
     for block in small {
         work.read((group.len() + block.len()) as u64 + large_rows)?;
@@ -4168,9 +4175,9 @@ fn two_distributed(
         let Some((p, _)) = as_set(p, s, within, work)? else {
             return Ok(None);
         };
-        set = set.join(&p);
+        each.push(p);
     }
-    Ok(Some(set))
+    Ok(Some(Classed::join_all(each)))
 }
 
 /// Whether a group of [`met`] with rows `group` and two or more disjunctions `ors` of `alts`

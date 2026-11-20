@@ -63,6 +63,10 @@ thread_local! {
     /// Test control: each symbol's covers start with nothing learned by the covers of the
     /// symbols before it (`exact::PartCache`), for the tests that compare the two.
     pub static PART_CACHE_OFF: Cell<bool> = const { Cell::new(false) };
+    /// Test control: a group of rows and two disjunctions is declined as before
+    /// PRES-cover-moduli-two-disjunctions (`exact::two_distributed`), for the tests that show
+    /// what it answers.
+    pub static TWO_DISTRIBUTED_OFF: Cell<bool> = const { Cell::new(false) };
     /// The questions `exact_each` has asked on this thread, read by tests.
     pub static EXACT_QUESTIONS: Cell<u64> = const { Cell::new(0) };
     /// The work `exact_each` has used on this thread, read by tests and benchmarks.

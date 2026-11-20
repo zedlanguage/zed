@@ -927,17 +927,21 @@ fn splitting_a_shared_conjunction_reads_it_once() {
 /// disjunctions tied through `y` and `z` in one group (since PRES-cover-refusals-moduli
 /// `direct` answers `evens` itself, one disjunction with the bound on `z`). No bound implies a
 /// disjunct, `y` having none: the tie `z <= 2k or y <= -1` used before is implied by the box on
-/// `z`, so `direct` dropped it and answered (exactchain1, PRES-cover-bench-regressions).
+/// `z`, so `direct` dropped it and answered (exactchain1, PRES-cover-bench-regressions). A
+/// third, `y + 2z >= 0 or y <= -1`, held there for the same reason, makes the group three
+/// disjunctions: since PRES-cover-moduli-two-disjunctions `direct` answers a group of two
+/// ([`two_distributed`]), and declines three.
 fn evens_tied(k: i64) -> Formula {
     Formula::and(vec![
         evens(k),
         Formula::or(vec![ge(&[("y", 1), ("z", 1)], 0), ge(&[("y", -1)], -1)]),
+        Formula::or(vec![ge(&[("y", 1), ("z", 2)], 0), ge(&[("y", -1)], -1)]),
     ])
 }
 
 /// The work limit on both sides: allowed exactly the work the cover of [`evens_tied`] takes,
 /// the solver's work for its questions included and that of its fast path left out (`tried`:
-/// `direct` reads the rows and fails, two disjunctions grouped through `z`), it answers with the exact set (the even values); allowed one unit
+/// `direct` reads the rows and fails, three disjunctions grouped through `z`), it answers with the exact set (the even values); allowed one unit
 /// less, it refuses ([`Refusal::Questions`]) and never answers with the solver's set, which
 /// has values with no point (PRES-pugh-work-budget). The work is counted, so a second run
 /// uses the same. Before `tried` had an allowance of its own, the failed fast path was
@@ -2463,6 +2467,140 @@ fn two_disjunctions_tied_by_one_atom_get_their_emptiness_answered() {
     assert!(wrong.is_empty(), "{wrong:#?}");
     assert_eq!(declined, 0);
     assert!(empty > 0 && empty < 200, "{empty} of 200 empty");
+}
+
+/// PRES-cover-moduli-two-disjunctions: a group of rows and two disjunctions that both read the
+/// projected `x` and are tied through `y` (as the outer `if` and the remainder chain of the
+/// l01_25 `s22` shapes are through the chain's result) is answered by `direct`, each answer the
+/// set of values of `x` with a point, by trying every point of the box. With
+/// [`TWO_DISTRIBUTED_OFF`] (the code before `two_distributed`) `direct` declines 111 of the 200;
+/// the sizes of the two disjunctions differ (1 to 4 blocks), so either one may be the one
+/// distributed.
+#[test]
+fn two_disjunctions_that_read_the_symbol_are_projected_exactly() {
+    let x = a("x");
+    let (mut wrong, mut declined, mut declined_off, mut empty) = (Vec::new(), 0, 0, 0);
+    for seed in [1u64, 126, 4_242, 99_991] {
+        let mut rng = Rng::new(seed);
+        for round in 0..50 {
+            let block = |rng: &mut Rng| {
+                let c = if rng.below(2) == 0 { 1 } else { -1 };
+                Formula::and(vec![
+                    ge(&[("x", c)], rng.int(-4, 4)),
+                    eq(&[("y", 1), ("x", rng.int(-2, 2))], rng.int(-3, 3)),
+                ])
+            };
+            let xs = (1 + rng.below(4) as usize, 1 + rng.below(4) as usize);
+            let a_or = Formula::or((0..xs.0).map(|_| block(&mut rng)).collect());
+            let b_or = Formula::or((0..xs.1).map(|_| block(&mut rng)).collect());
+            let f = boxed(Formula::and(vec![
+                ge(&[("y", 1), ("z", -1)], rng.int(-2, 2)),
+                a_or,
+                b_or,
+            ]));
+            let want = brute(&f, "x");
+            empty += usize::from(want.is_empty());
+            let run = |off: bool| {
+                TWO_DISTRIBUTED_OFF.set(off);
+                let mut fast = u64::MAX;
+                let got = tried(&mut fast, SOLVER, |w| {
+                    direct(&f, &x, &IntervalSet::top(), w)
+                });
+                TWO_DISTRIBUTED_OFF.set(false);
+                got
+            };
+            declined_off += usize::from(run(true).is_none());
+            match run(false) {
+                None => declined += 1,
+                Some(set) if set.met() != want => wrong.push(format!(
+                    "seed {seed} round {round}: {set:?}, want {want:?}: {f}"
+                )),
+                Some(_) => {}
+            }
+        }
+    }
+    println!("{empty} of 200 empty, {declined} declined, {declined_off} declined before");
+    assert!(wrong.is_empty(), "{wrong:#?}");
+    assert_eq!(declined, 0);
+    assert_eq!(declined_off, 111);
+    assert!(empty < 200, "{empty} of 200 empty");
+}
+
+/// Rows `-4m <= x <= 4m`, a disjunction of 2 blocks (`y <= h && x >= 3y` or
+/// `y > h && x <= 3y + 1`, `h = m/2`, the outer `if` of the s22 shapes) and one of m blocks
+/// (`y == j && 3j <= x <= 3j + 1`, the remainder chain), tied through `y`: the projection onto
+/// `x` is the m pieces `3j..=3j + 1`, which `two_distributed` reads with 2 passes over the m
+/// blocks.
+fn two_over_a_chain(m: i64) -> Formula {
+    let h = m / 2;
+    let chain = (0..m)
+        .map(|j| {
+            Formula::and(vec![
+                eq(&[("y", 1)], -j),
+                ge(&[("x", 1)], -3 * j),
+                ge(&[("x", -1)], 3 * j + 1),
+            ])
+        })
+        .collect();
+    Formula::and(vec![
+        ge(&[("x", 1)], 4 * m),
+        ge(&[("x", -1)], 4 * m),
+        Formula::or(vec![
+            Formula::and(vec![ge(&[("y", -1)], h), ge(&[("x", 1), ("y", -3)], 0)]),
+            Formula::and(vec![ge(&[("y", 1)], -h - 1), ge(&[("x", -1), ("y", 3)], 1)]),
+        ]),
+        Formula::or(chain),
+    ])
+}
+
+/// `direct` on [`two_over_a_chain`] at m and 8m: its counted work and its instructions grow
+/// linearly in m with the smaller disjunction fixed (PRES-cover-moduli-two-disjunctions; the
+/// worst case, both disjunctions growing, is quadratic and proved unavoidable at
+/// `exact::two_distributed`). Before `two_distributed`, `direct` declined it.
+#[test]
+fn two_disjunctions_one_of_fixed_size_cost_linear_work() {
+    let x = a("x");
+    let answer = |m: i64| {
+        let f = two_over_a_chain(m);
+        let mut work = Work {
+            used: 0,
+            limit: u64::MAX,
+            solver: SOLVER,
+        };
+        let set = direct(&f, &x, &IntervalSet::top(), &mut work)
+            .expect("no refusal")
+            .expect("answered");
+        (set, work.used)
+    };
+    let run = |m: i64| {
+        let (set, used) = answer(m);
+        let want = IntervalSet::from_pieces(
+            (0..m)
+                .map(|j| (End::of(3 * j), End::of(3 * j + 1)))
+                .collect(),
+        );
+        assert_eq!(set.met(), want, "m {m}");
+        used
+    };
+    TWO_DISTRIBUTED_OFF.set(true);
+    let mut work = Work {
+        used: 0,
+        limit: u64::MAX,
+        solver: SOLVER,
+    };
+    let before = direct(&two_over_a_chain(8), &x, &IntervalSet::top(), &mut work);
+    TWO_DISTRIBUTED_OFF.set(false);
+    assert!(matches!(before, Ok(None)), "{before:?}");
+    crate::scaling::hold(
+        "two_distributed at m 64 and 512",
+        "units",
+        run(64),
+        run(512),
+        1,
+    );
+    crate::scaling::check("two_distributed", 64, |m| {
+        std::hint::black_box(answer(m as i64));
+    });
 }
 
 /// `x == 2a + b` with `b == 1` and x in `-bound..=bound`, the odd values of the range.
