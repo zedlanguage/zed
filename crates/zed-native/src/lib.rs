@@ -230,7 +230,8 @@ fn object_module() -> Result<ObjectModule, String> {
 ///
 /// Both modes run the same code today: the optimizer whose rewrites a debug build skips
 /// (DESIGN.md "Build modes", layer L23) does not exist yet, so there is nothing for the mode to
-/// select. It is taken so that the oracle runs both builds now (`zedc::build::Mode`).
+/// select. It is taken so that the oracle runs the build the test run asks for
+/// (`zedc::build::Mode`, `zed_tests::oracle::mode`).
 pub fn through(
     mode: zedc::build::Mode,
     fuse: bool,

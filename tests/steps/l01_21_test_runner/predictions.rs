@@ -99,6 +99,6 @@ fn every_enabled_prediction_holds() {
         }
     });
     assert_eq!(failed, Vec::<String>::new());
-    // Four programs run, each under four engines; the pending two load no program.
-    assert_eq!(runs, 16, "native runs, each leaving no cell live");
+    // Four programs run, each under two engines; the pending two load no program.
+    assert_eq!(runs, 8, "native runs, each leaving no cell live");
 }

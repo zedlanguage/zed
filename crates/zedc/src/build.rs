@@ -133,17 +133,19 @@ impl Build {
 /// The mode a build of a program is in (DESIGN.md "Build modes", zed 806bc8c, author answer A25
 /// of 2026-11-20): a debug build runs the optimizer of sec:optimizer without the rewrites that
 /// move code across source lines or functions, and an optimized build runs all of it. No
-/// optimization changes a value or an output in either mode, so the differential oracle
-/// (DESIGN.md steps L1.37 and L7.3, `zed_tests::oracle::native`) runs each program in both and
-/// compares both outputs with the definitional interpreter's.
+/// optimization changes a value or an output in either mode: every rewrite carries a
+/// certificate that it keeps the semantics, revalidated by an independent checker (DESIGN.md
+/// sec:optimizer, "Certificates"; step L3.21). So the two builds are proved equal, and the
+/// differential oracle (DESIGN.md steps L1.37 and L7.3, `zed_tests::oracle::native`) runs only
+/// the build the test run asks for (`zed_tests::oracle::mode`, environment variable
+/// `ZED_BUILD_MODE`), not both (author, 2026-11-20, correcting A25: "if the equivalence of a
+/// debug build and an optimized build is formally proved, then there is no need to run both:
+/// only run the build the user asked for").
 ///
 /// Today both modes select the same code: the optimizer (DESIGN.md layer L23) does not exist
 /// yet, so the native back end (`zed_native::through`) takes the mode and runs one pipeline for
-/// either. The switch exists so that the oracle already runs and compares both builds, and the
-/// optimizer's first rewrite that a debug build skips changes the code at that one place; until
-/// then the oracle's two-mode runs check the harness, not two pipelines (plan row
-/// TEST-oracle-both-modes; its negative control is
-/// `l01_37_oracle::modes::an_optimized_build_that_differs_fails_the_oracle`).
+/// either. The optimizer's first rewrite that a debug build skips changes the code at that one
+/// place (plan row TEST-oracle-both-modes; the tests are `l01_37_oracle::modes`).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Mode {
     /// The debug build: line and function breakpoints work, since no rewrite moves code
@@ -154,7 +156,7 @@ pub enum Mode {
 }
 
 impl Mode {
-    /// Both modes, debug first: the builds the oracle runs each program in.
+    /// Both modes, debug first.
     pub const ALL: [Mode; 2] = [Mode::Debug, Mode::Optimized];
 
     /// The mode's name, for an engine's name in the oracle's report: `debug` or `optimized`.

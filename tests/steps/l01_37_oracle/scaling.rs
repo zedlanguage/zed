@@ -63,11 +63,11 @@ fn off_by_one(t: &Term, ev: &mut Evaluator) -> Result<Value, String> {
 
 pub(super) const OFF: &[Engine<'_>] = &[("off by one", &off_by_one)];
 
-/// Compares the `n` bindings of `front` natively: each is compared under the four engines, and
+/// Compares the `n` bindings of `front` natively: each is compared under both engines, and
 /// none differs.
 pub(super) fn agree_natively(front: &Front, n: usize) {
     let (r, _) = native(|engines| bindings(unit_of(front), engines));
-    assert_eq!((r.compared, r.mismatches.len()), (4 * n, 0));
+    assert_eq!((r.compared, r.mismatches.len()), (2 * n, 0));
 }
 
 /// Compares the `n` bindings of `front` with [`OFF`]: each differs.
@@ -96,9 +96,9 @@ pub(super) fn adds_a_report(n: usize) {
 #[test]
 fn the_inputs_are_compared_as_they_should_be() {
     let three = numbers(3);
-    // The three bindings run together, once under each of the four engines.
+    // The three bindings run together, once under each engine.
     let (r, runs) = native(|engines| bindings(unit_of(&three), engines));
-    assert_eq!((r.compared, runs), (12, 4));
+    assert_eq!((r.compared, runs), (6, 2));
     assert_eq!(r.mismatches, Vec::<String>::new());
     assert_eq!(
         bindings(unit_of(&three), OFF).mismatches,

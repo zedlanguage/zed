@@ -1,5 +1,5 @@
 //! Counterexamples replayed as fixed tests: each failing row the checker reports names the
-//! result of its call, and the call run alone under the interpreter and the four native engines
+//! result of its call, and the call run alone under the interpreter and both native engines
 //! gives that result, in the full build and with `short-addresses`.
 
 use zed_tests::oracle::{self, ENABLED, Report, counterexamples, native};
@@ -25,10 +25,10 @@ fn a_wrong_row_is_replayed_with_the_result_it_names() {
     );
     let ((r, replayed), runs) = native(|engines| counterexamples(WRONG, engines));
     assert_eq!(replayed, 2);
-    assert_eq!(runs, 8, "native runs, each leaving no cell live");
+    assert_eq!(runs, 4, "native runs, each leaving no cell live");
     assert_eq!(r.mismatches, Vec::<String>::new());
-    // Each row under the interpreter and the four native engines (two builds of two plans).
-    assert_eq!(r.compared, 10);
+    // Each row under the interpreter and the two native engines.
+    assert_eq!(r.compared, 6);
 }
 
 #[test]

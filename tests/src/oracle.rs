@@ -10,8 +10,8 @@
 //! each engine and compared with the interpreter's. A program is compared by the bytes of each
 //! port it writes and its exit status, or by its error.
 //!
-//! Each native engine runs in a debug build and in an optimized build (DESIGN.md "Build
-//! modes"; [`native`]), and each build's outputs are compared with the interpreter's.
+//! The native engines run in one build mode, the one the test run asks for ([`mode`]; DESIGN.md
+//! "Build modes"): the two builds are proved equal, so only the asked-for one runs.
 //!
 //! A float whose type carries the reorder facet of `unordered` is to be compared by its type
 //! and keys only; the facet arrives at layer L9, and with it that rule.
@@ -66,36 +66,65 @@ impl Report {
     }
 }
 
-/// The four native engines: a debug build and an optimized build (DESIGN.md "Build modes",
-/// zed 806bc8c: "the oracle runs each program in both modes and checks both outputs against
-/// the definitional interpreter"), each with the plan with fused match release and without it.
-/// Returns what `f` gives and how many native runs it made; every one of those runs, whichever
-/// way it ended, must leave no cell live, and the runtime's report names any it left by type
-/// and allocating node.
+/// The environment variable that names the build mode the oracle runs: `debug` or `optimized`.
+pub const MODE_VARIABLE: &str = "ZED_BUILD_MODE";
+
+/// The build mode the oracle runs, from [`MODE_VARIABLE`]: the one place it is read. Unset, it is
+/// `optimized`, the build that ships and the one that applies the most rewrites.
 ///
-/// Until the optimizer exists both modes run the same code (`zedc::build::Mode`), so the two
-/// modes' runs check this harness: that each mode's output reaches the comparison
-/// (`l01_37_oracle::modes`). Cost: twice the native runs of one mode, a constant factor.
-pub fn native<R>(f: impl FnOnce(&[Engine<'_>]) -> R) -> (R, u64) {
-    native_by(|mode, fuse| Box::new(zed_native::through(mode, fuse)), f)
+/// One mode per run, not both (author, 2026-11-20, correcting A25: "all code that performs
+/// rewrites must prove that the rewritten code has exactly the same semantics as the original
+/// code ... if the equivalence of a debug build and an optimized build is formally proved, then
+/// there is no need to run both: only run the build the user asked for"). Every rewrite carries
+/// a certificate that it keeps the semantics, checked by an independent checker (DESIGN.md
+/// sec:optimizer, "Certificates"; step L3.21), so the two builds are proved equal and running
+/// both would only double the native runs. Until the optimizer exists both modes run the same
+/// code (`zedc::build::Mode`).
+pub fn mode() -> Mode {
+    match mode_of(std::env::var(MODE_VARIABLE).ok().as_deref()) {
+        Ok(mode) => mode,
+        Err(e) => panic!("{e}"),
+    }
 }
 
-/// [`native`], with the engine of each mode and plan made by `make`, which is given the mode
-/// and whether the plan fuses match release: the negative control gives one mode's engines
-/// another output and shows the oracle reports it.
+/// The build mode a value of [`MODE_VARIABLE`] names, `None` being unset; any other value is an
+/// error that names the variable, the value and the two it may take.
+pub fn mode_of(setting: Option<&str>) -> Result<Mode, String> {
+    match setting {
+        None => Ok(Mode::Optimized),
+        Some(s) => Mode::ALL.into_iter().find(|m| m.name() == s).ok_or_else(|| {
+            format!("{MODE_VARIABLE}={s:?} names no build mode: write `debug` or `optimized`, or leave it unset for `optimized`")
+        }),
+    }
+}
+
+/// The two native engines of the build mode the run asks for ([`mode`]): the plan with fused
+/// match release, and without it. Returns what `f` gives and how many native runs it made;
+/// every one of those runs, whichever way it ended, must leave no cell live, and the runtime's
+/// report names any it left by type and allocating node.
+pub fn native<R>(f: impl FnOnce(&[Engine<'_>]) -> R) -> (R, u64) {
+    native_by(
+        mode(),
+        |mode, fuse| Box::new(zed_native::through(mode, fuse)),
+        f,
+    )
+}
+
+/// [`native`] in `mode`, with the engine of each plan made by `make`, which is given the mode
+/// and whether the plan fuses match release: the tests of `l01_37_oracle::modes` count what it
+/// is asked for, and give an engine another output to show the oracle reports it.
 pub fn native_by<R>(
+    mode: Mode,
     make: impl Fn(Mode, bool) -> Box<Through<'static>>,
     f: impl FnOnce(&[Engine<'_>]) -> R,
 ) -> (R, u64) {
-    let made: Vec<(String, Box<Through<'static>>)> = Mode::ALL
-        .iter()
-        .flat_map(|&mode| {
-            [(true, "fused"), (false, "unfused")].map(|(fuse, plan)| {
-                (
-                    format!("native ({}, {plan})", mode.name()),
-                    make(mode, fuse),
-                )
-            })
+    let made: Vec<(String, Box<Through<'static>>)> = [(true, "fused"), (false, "unfused")]
+        .into_iter()
+        .map(|(fuse, plan)| {
+            (
+                format!("native ({}, {plan})", mode.name()),
+                make(mode, fuse),
+            )
         })
         .collect();
     let engines: Vec<Engine<'_>> = made.iter().map(|(n, e)| (n.as_str(), &**e)).collect();
