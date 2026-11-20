@@ -5,7 +5,8 @@
 # max(base, 10.5 × t1), each counted from the phase's own start. Run from a checkout's root;
 # about 25 s. The base here is 1 s, not 20 s, so the test is short; the scaling side's numbers at
 # 20 s are tested in tests/src/scaling_tests.rs (bench_limit_*). It writes only
-# build/test-bench-limit.limit, which each run overwrites and none deletes.
+# build/test-bench-limit.limit and build/test-bench-limit.pid, which each run overwrites and none
+# deletes.
 limit=$(pwd)/tools/bench_limit.sh
 file=$(pwd)/build/test-bench-limit.limit
 mkdir -p build
@@ -45,6 +46,24 @@ check "a line in another form is ignored" "124" "$(run 'echo 2100 >"$ZED_BENCH_L
 check "a command's own exit code is kept" "3" "$(run 'exit 3')"
 "$limit" 1 "$file" bash -c "$(phase 0 2100); sleep 0.3; $(phase 0 0); sleep 0.3"
 check "the file holds the largest limit of a phase at the end" "2100" "$(cat "$file")"
+# A command stopped at its limit takes the processes it started with it: zed_tests::scaling runs
+# each run at 8n in a process of its own, and on 2026-11-20 one of them ran on for 19 minutes,
+# holding 67 to 71 GB, after its test binary was stopped (bench_limit.sh signaled only the
+# command's pid then). The command here starts `sleep 30` and waits on it; 0.2 s after the stop
+# the sleep must be gone. If it is not, the test kills it by its pid, so nothing is left running.
+pidfile=$(pwd)/build/test-bench-limit.pid
+: >"$pidfile"
+"$limit" 1 "$file" bash -c "sleep 30 & echo \$! >'$pidfile'; wait"
+stopped=$?
+sleep 0.2
+child=$(cat "$pidfile")
+if [ -n "$child" ] && kill -0 "$child" 2>/dev/null; then
+  state=running
+  kill -KILL "$child"
+else
+  state=gone
+fi
+check "a command stopped at its limit takes the process it started with it" "124 gone" "$stopped $state"
 # A command that ignores SIGTERM gets SIGKILL 5 s later; not run here (6 s).
 [ "$fails" = 0 ] || { echo "$fails FAILED"; exit 1; }
 echo "all passed"

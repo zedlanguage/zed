@@ -1254,3 +1254,80 @@ fn bench_limit_a_1x_under_20_s_over_10_5_keeps_20_s() {
     assert_eq!(bench_limit_ms(1), 1);
     assert!(bench_limit_ms(1_904_000_000) < 20_000);
 }
+
+/// The variable that gives a process of this test binary its part in
+/// [`a_fresh_child_ends_when_its_parent_is_killed`]: `parent` or `child`.
+const ORPHAN_ROLE: &str = "ZED_SCALING_ORPHAN_ROLE";
+
+/// A process [`fresh_command`] starts for a run at 8n ends when the process that started it is
+/// killed. On 2026-11-20 tools/bench_limit.sh stopped a benchmark at its limit by killing the
+/// test binary only, and its process for the run at 8n (l01_39a_bit_words, rung 2, sizes 600 and
+/// 4800) ran on under systemd for 19 minutes, holding 67 to 71 GB, until it was killed by hand.
+/// Here the test starts this binary as a parent, which starts a child by [`fresh_command`] that
+/// sleeps for 60 s; the test kills the parent with SIGKILL, which no handler can catch, and the
+/// child must end within 5 s. Without the parent-death signal the child sleeps on: the test
+/// failed so before the fix, and kills the child itself then, leaving no process behind.
+#[cfg(target_os = "linux")]
+#[test]
+fn a_fresh_child_ends_when_its_parent_is_killed() {
+    use std::io::{BufRead, Write};
+    use std::process::{Command, Stdio};
+    let me = "scaling_tests::a_fresh_child_ends_when_its_parent_is_killed";
+    let exe = std::env::current_exe().expect("this test binary");
+    match std::env::var(ORPHAN_ROLE).as_deref() {
+        Ok("child") => {
+            std::thread::sleep(Duration::from_secs(60));
+            return;
+        }
+        Ok("parent") => {
+            let mut child = fresh_command(&exe)
+                .args([me, "--exact", "--test-threads=1", "--quiet"])
+                .env(ORPHAN_ROLE, "child")
+                .stdout(Stdio::null())
+                .spawn()
+                .expect("starting the child");
+            println!("\nzed-orphan-child {}", child.id());
+            std::io::stdout().flush().unwrap();
+            // Waits on the child, as `Command::output` in run_in_a_new_process does, until the
+            // test kills this process.
+            child.wait().unwrap();
+            return;
+        }
+        _ => {}
+    }
+    let mut parent = Command::new(&exe)
+        .args([me, "--exact", "--test-threads=1", "--nocapture"])
+        .env(ORPHAN_ROLE, "parent")
+        .stdout(Stdio::piped())
+        .spawn()
+        .expect("starting the parent");
+    let stdout = std::io::BufReader::new(parent.stdout.take().unwrap());
+    let child: i32 = stdout
+        .lines()
+        .map_while(Result::ok)
+        // With one test thread libtest writes `test <name> ... ` before the test's own output,
+        // with no line break, so the line is found wherever it starts.
+        .find_map(|line| line.split_once("zed-orphan-child ")?.1.trim().parse().ok())
+        .expect("the parent names its child");
+    parent.kill().unwrap();
+    parent.wait().unwrap();
+    // Alive: its /proc entry is there and it is not a zombie (state `Z`), which has ended and
+    // waits only to be reaped. Field 3 of /proc/<pid>/stat is the state; the name before it is
+    // in parentheses and may hold spaces, so the state is read after the last `)`.
+    let alive = || {
+        std::fs::read_to_string(format!("/proc/{child}/stat")).is_ok_and(|stat| {
+            stat.rsplit(')')
+                .next()
+                .is_some_and(|rest| !rest.trim_start().starts_with('Z'))
+        })
+    };
+    let start = std::time::Instant::now();
+    while alive() && start.elapsed() < Duration::from_secs(5) {
+        std::thread::sleep(Duration::from_millis(20));
+    }
+    if alive() {
+        let pid = rustix::process::Pid::from_raw(child).expect("a pid above 0");
+        let _ = rustix::process::kill_process(pid, rustix::process::Signal::KILL);
+        panic!("the child {child} of a killed parent was still running 5 s later");
+    }
+}

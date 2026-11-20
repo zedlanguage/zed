@@ -130,6 +130,63 @@ pub fn running_on_valgrind() -> bool {
     imp::running_on_valgrind()
 }
 
+/// Makes the process `command` starts get SIGKILL when the thread that starts it ends, so that a
+/// process `zed_tests::scaling` starts for one check's run does not outlive the test binary
+/// (zed_tests::scaling::fresh_command says why: on 2026-11-20 one ran on for 19 minutes, holding
+/// 67 to 71 GB). It is here because the workspace forbids unsafe code in the crates that compile
+/// the scaling harness, and this crate already holds its process-start hooks.
+///
+/// What the kernel promises (man page PR_SET_PDEATHSIG(2const), Linux man-pages 6.x): "The
+/// parent-death signal is sent upon subsequent termination of the parent thread"; the setting "is
+/// cleared for the child of a fork(2)" and is "preserved across execve(2)", except for a
+/// set-user-ID or set-group-ID binary or one with file capabilities, which a test binary is not.
+/// So it is set in `pre_exec`, in the child between the fork and the exec, and holds in the
+/// program the exec starts. "Parent thread" is the thread that forks; a caller whose spawning
+/// thread may end before the child should not use this.
+///
+/// The race, and its proof: "If the parent thread and all ancestor subreapers have already
+/// terminated by the time of the PR_SET_PDEATHSIG operation, then no parent-death signal is
+/// sent". A parent that dies between the fork and the prctl would leave the child unguarded. So
+/// after the prctl the child reads its parent's pid. If it is still the pid the parent had
+/// before the fork, the parent was alive after the prctl had taken effect (a child's parent pid
+/// changes only when the parent dies, and then to another process), so the parent's death comes
+/// later and sends the signal. If not, the parent has already died; the hook returns an error and
+/// the child exits before the exec (std reports the error to a parent that no longer reads it).
+/// Both pids are read in one pid namespace, which `fork` keeps. A pid reused within that window
+/// by a new process that then becomes the child's parent is impossible: an orphan's new parent
+/// is a subreaper or init, which were running before the fork.
+///
+/// Async-signal safety: the hook runs in the child after a fork of a process with other threads,
+/// so it may call only async-signal-safe functions. `prctl` and `getppid` are system calls; the
+/// errors are made from errno numbers, which allocates nothing.
+///
+/// Cost: with a `pre_exec` hook std forks and execs instead of calling `posix_spawn`; one start
+/// per check's run, nothing next to the run. On other systems it does nothing (the first release
+/// is Linux x86_64 only). Test: zed_tests scaling_tests::a_fresh_child_ends_when_its_parent_is_killed.
+#[cfg(target_os = "linux")]
+#[allow(unsafe_code)]
+pub fn kill_with_parent(command: &mut std::process::Command) {
+    use std::os::unix::process::CommandExt;
+    let parent = std::process::id();
+    // SAFETY: the hook runs in the child between fork and exec and makes only the two
+    // async-signal-safe system calls `prctl` and `getppid`; it allocates nothing.
+    unsafe {
+        command.pre_exec(move || {
+            if libc::prctl(libc::PR_SET_PDEATHSIG, libc::SIGKILL as libc::c_ulong) != 0 {
+                return Err(std::io::Error::last_os_error());
+            }
+            if libc::getppid() as u32 != parent {
+                return Err(std::io::Error::from_raw_os_error(libc::ESRCH));
+            }
+            Ok(())
+        });
+    }
+}
+
+/// Does nothing: the parent-death signal is Linux's (see the Linux version).
+#[cfg(not(target_os = "linux"))]
+pub fn kill_with_parent(_command: &mut std::process::Command) {}
+
 #[cfg(all(target_os = "linux", target_env = "gnu"))]
 #[allow(unsafe_code)]
 mod imp {

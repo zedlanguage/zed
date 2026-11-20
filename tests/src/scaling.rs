@@ -979,6 +979,30 @@ fn note_panic(test: &str, j: usize, payload: &(dyn std::any::Any + Send)) {
     }
 }
 
+/// The command that starts `exe`, this test binary, as the process of one check's run
+/// ([`run_in_a_new_process`]); on Linux that process is killed when this one ends.
+///
+/// Why: tools/bench_limit.sh stops a benchmark past its limit by signaling the test binary. Until
+/// 2026-11-20 it signaled that pid only; the test binary died, its process for the run at 8n
+/// passed to systemd and ran on (l01_39a_bit_words, rung 2, sizes 600 and 4800: 19 minutes, 67 to
+/// 71 GB, killed by hand). Any other way the test binary can die (an outer `timeout` that signals
+/// one pid, the OOM killer, a kill by pid) left the same orphan. So the child asks the kernel for
+/// SIGKILL when its parent ends, `prctl(PR_SET_PDEATHSIG, SIGKILL)`, set between the fork and the
+/// exec ([`zed_meter_settings::kill_with_parent`], which holds the kernel's promise, the proof
+/// that a parent dying between the fork and the prctl is caught too, and the unsafe hook; the
+/// workspace forbids unsafe code in this crate). tools/bench_limit.sh now signals the processes
+/// under the binary too, as a second guard. The signal comes when the thread that forks ends:
+/// here the thread that calls `Command::output`, which waits there until the child ends, so
+/// while this process lives the signal never comes early.
+///
+/// Test: scaling_tests::a_fresh_child_ends_when_its_parent_is_killed (a child of a parent
+/// killed with SIGKILL ends within 5 s; it failed before this).
+pub(crate) fn fresh_command(exe: &std::path::Path) -> std::process::Command {
+    let mut command = std::process::Command::new(exe);
+    zed_meter_settings::kill_with_parent(&mut command);
+    command
+}
+
 /// Runs the run at 8n of the check at place `k` of `test` in a new process of this test binary,
 /// which runs the test alone up to that check (see [`compare_by`]), and gives the work, the
 /// bytes and the elapsed time it measured there. Earlier checks of the test that panicked here
@@ -987,7 +1011,7 @@ fn note_panic(test: &str, j: usize, payload: &(dyn std::any::Any + Send)) {
 /// process.
 fn run_in_a_new_process(test: &str, k: usize, what: &str) -> Option<(Work, u64, u64)> {
     let exe = std::env::current_exe().expect("this test binary");
-    let mut command = std::process::Command::new(&exe);
+    let mut command = fresh_command(&exe);
     command.args([test, "--exact", "--test-threads=1", "--quiet"]);
     // What this process was itself given as a process for one check, and the files a check
     // writes to, which the check writes to from this process.
