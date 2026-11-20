@@ -17285,7 +17285,8 @@ impl Others {
                 };
                 let mut leaves: Vec<u32> = leaves.iter().map(|&v| node[v as usize]).collect();
                 zed_collections::sorted::sort_dedup(&mut leaves);
-                let types: Vec<u32> = (0..m.len() as u32).collect();
+                let types: Vec<u32> =
+                    (0..zed_collections::index::to_u32(m.len(), "nodes")).collect();
                 if let Some(a) = names::absorb(&m, &types, &union) {
                     systems.push((a, leaves.clone(), Some(maps.len())));
                 }
@@ -17353,7 +17354,7 @@ impl Why {
         let mut open: Vec<bool> = (0..graph.len())
             .map(|v| runs.iter().any(|d| d.answers[v] == Answer::Refused))
             .collect();
-        let mut stack: Vec<u32> = (0..graph.len() as u32)
+        let mut stack: Vec<u32> = (0..zed_collections::index::to_u32(graph.len(), "nodes"))
             .filter(|&v| open[v as usize])
             .collect();
         while let Some(v) = stack.pop() {

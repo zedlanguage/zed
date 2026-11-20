@@ -51,7 +51,7 @@ fn holds(p: &Parts, m: &Model) -> bool {
 
 /// Whether `p` has a point with each of `names` in `-1..=9`.
 fn has_point(p: &Parts, names: &[&str]) -> bool {
-    let n = names.len() as u32;
+    let n = to_u32(names.len(), "names");
     (0..11u64.pow(n)).any(|mut code| {
         let mut m = Model::new();
         for a in names {

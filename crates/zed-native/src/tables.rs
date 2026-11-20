@@ -11,6 +11,7 @@ use std::collections::{HashMap, HashSet};
 use std::fmt::Write as _;
 use std::sync::Arc;
 
+use zed_collections::index::to_u32;
 use zed_kernel::{Prim, Value};
 use zedc::zir::legalize::{Legalized, Swapped, nodes_in};
 use zedc::zir::memory::{Mode, Plan, RegionPlan};
@@ -429,7 +430,7 @@ impl Tables {
                     if matches!(node.inputs.len(), 2 | 3) =>
                 {
                     if let Some(p) = Placing::read(table, node.inputs.len() == 3) {
-                        info.placing = Some(self.placings.len() as u32);
+                        info.placing = Some(to_u32(self.placings.len(), "placings"));
                         self.placings.push(p);
                     }
                 }

@@ -16,6 +16,10 @@
 //!
 //! [`held`]: values put in through a shared reference and kept at their places, so that a walk
 //! may borrow from them while it puts in more.
+//!
+//! [`index`]: a count or index converted to `u32`, refused past `u32::MAX`.
+//!
+//! [`intern`]: dense ids for distinct values, and the values back by id.
 
 // Loaded for its num-bigint only (see Cargo.toml): nothing here names it, and a crate never named
 // is never loaded, so this dylib would carry its own copy of num-bigint beside zed-numtheory's.
@@ -23,6 +27,8 @@ extern crate zed_numtheory as _;
 
 pub mod fenwick;
 pub mod held;
+pub mod index;
+pub mod intern;
 pub mod intervals;
 pub mod search;
 pub mod sorted;

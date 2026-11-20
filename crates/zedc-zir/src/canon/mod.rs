@@ -32,9 +32,10 @@ pub mod domain;
 
 mod serial;
 use std::cmp::Ordering;
-use std::collections::HashMap;
 use std::sync::Arc;
 
+use zed_collections::index::to_u32;
+use zed_collections::intern::Interner;
 use zed_kernel::num::TooLarge;
 use zed_kernel::term::Term;
 use zed_kernel::value::Value;
@@ -206,24 +207,15 @@ fn sorted_facets(facets: &[Facet]) -> Vec<Facet> {
     let kept = || facets.iter().filter(|f| !f.hint);
     // Each facet's kind as the index of the kind's first appearance, then each index mapped to
     // the kind's rank in text order.
-    let mut first: HashMap<&str, u32> = HashMap::new();
-    let ids: Vec<u32> = kept()
-        .map(|f| {
-            let next = first.len() as u32;
-            *first.entry(&f.kind).or_insert(next)
-        })
-        .collect();
-    let mut kinds: Vec<(&str, u32)> = first.into_iter().collect();
+    let mut first: Interner<&str> = Interner::default();
+    let ids: Vec<usize> = kept().map(|f| first.intern(&f.kind)).collect();
+    let mut kinds: Vec<(&str, usize)> = first.values().iter().copied().zip(0..).collect();
     kinds.sort_unstable();
     let mut rank = vec![0; kinds.len()];
     for (r, (_, id)) in kinds.into_iter().enumerate() {
-        rank[id as usize] = r as u32;
+        rank[id] = to_u32(r, "facet kinds");
     }
-    let mut keyed: Vec<(u32, &Facet)> = ids
-        .into_iter()
-        .map(|id| rank[id as usize])
-        .zip(kept())
-        .collect();
+    let mut keyed: Vec<(u32, &Facet)> = ids.into_iter().map(|id| rank[id]).zip(kept()).collect();
     keyed.sort_by(|(r, f), (s, g)| r.cmp(s).then_with(|| f.value.cmp(&g.value)));
     // A repeat is a facet whose rank and value compare Equal under the order of the sort, so
     // the dedup uses that order. Proof that this drops every repeat: the sort orders by the

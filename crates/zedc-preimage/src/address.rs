@@ -20,6 +20,7 @@ use std::fmt;
 use std::sync::Arc;
 
 use imbl::{OrdMap, OrdSet};
+use zed_collections::index::to_u32;
 use zed_kernel::{Evidence, FixKind, Grade, GuardPos, Pattern, Shared, Term, Value, Witness};
 
 /// The content address of a term, the key of a written constraint.
@@ -353,7 +354,9 @@ impl Canon {
             if matches!(t, Term::Match(..)) && i > 0 {
                 self.arms.get_mut(&owner).expect("the arms reserved")[slot + i - 1] = part.height;
             }
-            out.height = out.height.max(part.height + kid.binds.len() as u32);
+            out.height = out
+                .height
+                .max(part.height + to_u32(kid.binds.len(), "binders"));
             let mut free = part.free;
             for x in kid.binds {
                 free.remove(x);
@@ -382,7 +385,8 @@ impl Canon {
     fn name(&mut self, n: u32) -> Arc<str> {
         let n = n as usize;
         while self.names.len() <= n {
-            self.names.push(height_name(self.names.len() as u32));
+            self.names
+                .push(height_name(to_u32(self.names.len(), "height names")));
         }
         self.names[n].clone()
     }
@@ -437,7 +441,11 @@ impl Canon {
                                 h
                             }
                         };
-                        numbers.push((1..=kid.binds.len() as u32).map(|i| base + i).collect());
+                        numbers.push(
+                            (1..=to_u32(kid.binds.len(), "binders"))
+                                .map(|i| base + i)
+                                .collect(),
+                        );
                     }
                     let count = parts.len();
                     let enters: Vec<Step<'_>> = parts

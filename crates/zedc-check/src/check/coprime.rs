@@ -24,6 +24,7 @@ use std::rc::Rc;
 
 use imbl::OrdSet;
 use num_bigint::BigUint;
+use zed_collections::index::to_u32;
 use zed_kernel::num::coprime::coprime_base;
 use zed_kernel::num::gcd_uint;
 
@@ -85,7 +86,7 @@ impl Roots {
         if let Some(&set) = self.index.get(&v) {
             return set;
         }
-        let at = self.values.len() as u32;
+        let at = to_u32(self.values.len(), "values");
         let set = self.push_set(Set::Leaf(at));
         self.values.push(v.clone());
         self.index.insert(v, set);
@@ -517,7 +518,7 @@ mod tests {
         }
         let one = BigUint::from(1u8);
         for (r, factors) in ns.iter().zip(&cb.factors) {
-            let meets: Vec<u32> = (0..base.len() as u32)
+            let meets: Vec<u32> = (0..to_u32(base.len(), "base elements"))
                 .filter(|&e| gcd_uint(r, &base[e as usize]).bits() > 1)
                 .collect();
             let list: Vec<u32> = factors.iter().map(|(e, _)| *e).collect();

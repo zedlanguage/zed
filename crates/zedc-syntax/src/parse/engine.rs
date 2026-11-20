@@ -7,6 +7,8 @@
 
 use std::collections::BTreeSet;
 
+use zed_collections::index::to_u32;
+
 use super::grammar::{Expr, Grammar, Kind};
 
 /// What the engine reads: a sequence of positions.
@@ -710,7 +712,7 @@ fn split_kids(kids: &[usize]) -> (Vec<usize>, Vec<(u32, u32)>) {
         if k & BRANCH == 0 {
             nodes.push(k);
         } else {
-            branches.push((nodes.len() as u32, (k & !BRANCH) as u32));
+            branches.push((to_u32(nodes.len(), "parse nodes"), (k & !BRANCH) as u32));
         }
     }
     (nodes, branches)

@@ -4,6 +4,8 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
+use zed_collections::index::to_u32;
+
 use super::super::super::formula::{Factor, Shared};
 use super::super::{Summaries, decide_defined};
 use super::*;
@@ -56,7 +58,7 @@ fn chain(m: i64, count: usize, skip: bool) -> (Vec<Formula>, Vec<Atom>) {
     let mut outputs = Vec::new();
     let mut input = Lin::atom(Atom::Sym("x".into()));
     for _ in 0..count {
-        let n = defs.len() as u32;
+        let n = to_u32(defs.len(), "definitions");
         let q = Lin::atom(Atom::Aux(n));
         let r = Lin::atom(Atom::Aux(n + 1));
         let pair = Formula::And(Shared::new(vec![
@@ -299,7 +301,7 @@ fn monotone_clamp_images_match_independent_inverse_cuts() {
 fn a_changed_modulus_requires_the_divisibility_guard() {
     let (mut defs, outputs) = chain(2, 1, false);
     let input = Lin::atom(outputs[0].clone());
-    let n = defs.len() as u32;
+    let n = to_u32(defs.len(), "definitions");
     let q = Lin::atom(Atom::Aux(n));
     let r = Lin::atom(Atom::Aux(n + 1));
     let pair = Formula::And(Shared::new(vec![
@@ -423,7 +425,7 @@ fn scalar_images_keep_moduli_beyond_signed_i128_and_saturate_the_exponent() {
         let mut outputs = Vec::new();
         let mut input = Lin::atom(Atom::Sym("x".into()));
         for _ in 0..130 {
-            let n = defs.len() as u32;
+            let n = to_u32(defs.len(), "definitions");
             let q = Lin::atom(Atom::Aux(n));
             let r = Lin::atom(Atom::Aux(n + 1));
             let pair = Formula::And(Shared::new(vec![
@@ -472,7 +474,7 @@ fn scalar_images_keep_moduli_beyond_signed_i128_and_saturate_the_exponent() {
 #[test]
 fn prefix_record_certificates_have_concrete_witnesses_for_signed_remainders() {
     fn pair(defs: &mut Vec<Formula>, arg: &Lin, m: i64) -> (Lin, Lin) {
-        let n = defs.len() as u32;
+        let n = to_u32(defs.len(), "definitions");
         let q = Lin::atom(Atom::Aux(n));
         let r = Lin::atom(Atom::Aux(n + 1));
         let f = Formula::And(Shared::new(vec![
@@ -500,7 +502,7 @@ fn prefix_record_certificates_have_concrete_witnesses_for_signed_remainders() {
         let mut outputs = Vec::new();
         for _ in 0..6 {
             let (half, _) = pair(&mut defs, &previous, 2);
-            let out = Atom::Aux(defs.len() as u32);
+            let out = Atom::Aux(to_u32(defs.len(), "definitions"));
             let guard = Formula::Con(Con::ge(&half, &b));
             let f = Formula::Or(Shared::new(vec![
                 Formula::and(vec![
@@ -605,7 +607,7 @@ impl MapStep {
     /// pair, then one choice for each guard from the innermost out, as the front end writes
     /// a nested if.
     fn push(&self, defs: &mut Vec<Formula>, input: &Lin, m: i64) -> Atom {
-        let n = defs.len() as u32;
+        let n = to_u32(defs.len(), "definitions");
         let q = Lin::atom(Atom::Aux(n));
         let r = Lin::atom(Atom::Aux(n + 1));
         let pair = Formula::And(Shared::new(vec![
@@ -619,7 +621,7 @@ impl MapStep {
         let (p, w, c) = self.default;
         let mut value = arm(p, w, c);
         if self.guards.is_empty() {
-            let out = Atom::Aux(defs.len() as u32);
+            let out = Atom::Aux(to_u32(defs.len(), "definitions"));
             defs.push(Formula::And(Shared::new(vec![Formula::Con(Con::eq(
                 &Lin::atom(out.clone()),
                 &value,
@@ -628,7 +630,7 @@ impl MapStep {
         }
         let mut out = None;
         for &(s, p, w, c) in self.guards.iter().rev() {
-            let o = Atom::Aux(defs.len() as u32);
+            let o = Atom::Aux(to_u32(defs.len(), "definitions"));
             let ol = Lin::atom(o.clone());
             let guard = Formula::Con(Con::eq(&r, &Lin::constant(s)));
             defs.push(Formula::Or(Shared::new(vec![
@@ -938,7 +940,7 @@ impl ShiftStep {
                     4 => Formula::Con(Con::eq(r, &s)),
                     _ => Formula::negate(Formula::Con(Con::eq(r, &s))),
                 };
-                let out = Lin::atom(Atom::Aux(defs.len() as u32));
+                let out = Lin::atom(Atom::Aux(to_u32(defs.len(), "definitions")));
                 defs.push(Formula::Or(Shared::new(vec![
                     Formula::and(vec![guard.clone(), Formula::Con(Con::eq(&out, &yes))]),
                     Formula::and(vec![
@@ -959,7 +961,7 @@ fn shift_chain(steps: &[ShiftStep], m: i64) -> (Vec<Formula>, Vec<Atom>) {
     let mut outputs = Vec::new();
     let mut input = Lin::atom(Atom::Sym("x".into()));
     for step in steps {
-        let n = defs.len() as u32;
+        let n = to_u32(defs.len(), "definitions");
         let q = Lin::atom(Atom::Aux(n));
         let r = Lin::atom(Atom::Aux(n + 1));
         let pair = Formula::And(Shared::new(vec![
@@ -1175,7 +1177,7 @@ fn clamp_chain(
 ) -> (Vec<Formula>, Vec<Atom>) {
     let mut defs: Vec<Formula> = Vec::new();
     let pair = |input: &Lin, m: i64, defs: &mut Vec<Formula>| {
-        let n = defs.len() as u32;
+        let n = to_u32(defs.len(), "definitions");
         let q = Lin::atom(Atom::Aux(n));
         let r = Lin::atom(Atom::Aux(n + 1));
         let f = Formula::And(Shared::new(vec![
@@ -1195,7 +1197,7 @@ fn clamp_chain(
     let mut outputs = Vec::new();
     for _ in 0..depth {
         let half = pair(&h, 2, &mut defs);
-        let n = defs.len() as u32;
+        let n = to_u32(defs.len(), "definitions");
         let out = Lin::atom(Atom::Aux(n));
         defs.push(extremum(false, &out, &half, &bound, hulled));
         outputs.push(Atom::Aux(n));

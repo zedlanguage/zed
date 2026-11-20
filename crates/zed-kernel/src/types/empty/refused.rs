@@ -12,6 +12,8 @@ use std::collections::hash_map::Entry;
 use std::collections::{BTreeSet, HashMap, HashSet, VecDeque};
 use std::sync::{Arc, PoisonError};
 
+use zed_collections::index::to_u32;
+
 use super::super::bes::{Answer, Bes, Kind, decide};
 use super::super::rec::{self, Env, Group, Recheck, Rechecked, Why};
 use super::super::{GroupSite, Node, Refusal, Type, Verdict, defs};
@@ -71,7 +73,7 @@ impl Why {
                 if self.open[v as usize] && !leaf {
                     for &w in self.graph.children(v) {
                         if let Entry::Vacant(e) = local.entry(w) {
-                            e.insert(order.len() as u32);
+                            e.insert(to_u32(order.len(), "nodes"));
                             order.push(w);
                         }
                     }

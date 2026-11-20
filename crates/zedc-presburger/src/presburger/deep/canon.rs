@@ -37,6 +37,7 @@ use std::slice;
 
 use num_bigint::BigUint;
 use num_traits::{One, Zero};
+use zed_collections::intern::Interner;
 
 use super::super::formula::{Con, Formula, Id};
 
@@ -64,8 +65,8 @@ enum Sym {
 
 /// The symbols of one call and the results of the shared parts read so far.
 pub(super) struct Canon {
-    syms: Vec<Sym>,
-    ids: HashMap<Sym, S>,
+    /// The symbols, each numbered once (`S` is its id).
+    syms: Interner<Sym>,
     /// Each shared compound part read: the root of its flattened parts for a conjunction or
     /// disjunction, the element for a negation.
     memo: HashMap<Id, Option<S>>,
@@ -81,8 +82,7 @@ struct Build {
 impl Canon {
     pub(super) fn new() -> Canon {
         Canon {
-            syms: Vec::new(),
-            ids: HashMap::new(),
+            syms: Interner::default(),
             memo: HashMap::new(),
         }
     }
@@ -115,13 +115,7 @@ impl Canon {
     }
 
     fn intern(&mut self, s: Sym) -> S {
-        if let Some(&i) = self.ids.get(&s) {
-            return i;
-        }
-        let i = self.syms.len();
-        self.syms.push(s.clone());
-        self.ids.insert(s, i);
-        i
+        self.syms.intern(s)
     }
 
     /// The level of the parse a symbol is made at: 0 for an element.

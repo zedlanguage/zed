@@ -187,10 +187,11 @@ pub(super) fn shares_a_factor_by_tree<L: Borrow<BigUint>>(xs: &[L]) -> Vec<bool>
         .collect()
 }
 
-/// An index into the elements as a `u32`: there are at most as many elements as bits in the
-/// product of the inputs, and the inputs are held in memory, so far fewer than `2^32`.
+/// An index into the elements as a `u32`. There are at most as many elements as bits in the
+/// product of the inputs, which bounds them by the memory the inputs take in bits, not by
+/// `2^32` (512 MiB of inputs is `2^32` bits), so past `u32::MAX` it panics.
 fn index(i: usize) -> u32 {
-    u32::try_from(i).expect("fewer than 2^32 elements of a coprime base")
+    zed_collections::index::to_u32(i, "elements of a coprime base")
 }
 
 /// `cb S` for `xs`, each above 1, by halves (Algorithm 18.1): the base of one input is the

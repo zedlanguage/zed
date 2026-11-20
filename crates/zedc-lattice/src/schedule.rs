@@ -170,9 +170,7 @@ impl<V> Default for Schedule<V> {
 
 /// `v` as a node number of the arrays `waits` and `mark`.
 fn node(v: usize) -> u32 {
-    let n = u32::try_from(v).expect("a build has fewer than 2^32 - 2 facts");
-    assert!(n < UNREACHED, "a build has fewer than 2^32 - 2 facts");
-    n
+    zed_collections::index::to_u32_below(v, UNREACHED, "facts in a build")
 }
 
 impl<V> Schedule<V> {

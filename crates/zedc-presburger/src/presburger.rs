@@ -7603,6 +7603,8 @@ type CellSet = Vec<(usize, usize)>;
 // The cells in both `a` and `b` (`cells_meet`), in any of `all`'s ranges (`cells_join`), and of
 // `a` not in `b` (`cells_minus`): the shared interval-list routines (DRY-sorted-structures-2).
 use zed_collections::fenwick::Fenwick;
+use zed_collections::index::to_u32;
+use zed_collections::intern::Interner;
 use zed_collections::intervals::{
     coalesce as cells_join, intersect as cells_meet, minus as cells_minus,
 };
@@ -9640,7 +9642,7 @@ struct CellItem {
 }
 
 fn cell_atom(a: &Atom, ids: &mut BTreeMap<Atom, u32>) -> u32 {
-    let n = ids.len() as u32;
+    let n = to_u32(ids.len(), "cell atoms");
     *ids.entry(a.clone()).or_insert(n)
 }
 
@@ -26993,18 +26995,9 @@ fn products(
     // The rows multiplied, each once: the linear rows, borrowed, the first of equal ones
     // standing for all, and the bounds of the sides of the factors with a part. A copy of each
     // row for each factor it holds cost O(k²) for one row of k factors.
-    let mut table: Vec<Cow<Lin>> = Vec::with_capacity(linear.len());
-    let mut first: HashMap<&Lin, usize> = HashMap::new();
-    let same: Vec<usize> = linear
-        .iter()
-        .map(|l| {
-            let i = *first.entry(l).or_insert(table.len());
-            if i == table.len() {
-                table.push(Cow::Borrowed(l));
-            }
-            i
-        })
-        .collect();
+    let mut first: Interner<&Lin> = Interner::default();
+    let same: Vec<usize> = linear.iter().map(|l| first.intern(l)).collect();
+    let mut table: Vec<Cow<Lin>> = first.into_values().into_iter().map(Cow::Borrowed).collect();
     // The rows on each factor, as places in `table`, each once.
     let mut on: BTreeMap<Factor, Vec<usize>> = BTreeMap::new();
     let on_linear = |atom: &Atom| -> Vec<usize> {

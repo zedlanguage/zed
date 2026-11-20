@@ -68,7 +68,7 @@ impl Bes {
             !matches!(kind, Kind::Top | Kind::Bot) || children.is_empty(),
             "a constant node has no child"
         );
-        let v = u32::try_from(self.kind.len()).expect("a group has fewer than 2^32 nodes");
+        let v = zed_collections::index::to_u32(self.kind.len(), "nodes in a group");
         self.kind.push(kind);
         self.children.push(children);
         self.parents.push(Vec::new());
@@ -1461,7 +1461,7 @@ mod tests {
                 }
             }
         }
-        for v in 0..g.len() as u32 {
+        for v in 0..zed_collections::index::to_u32(g.len(), "nodes in a group") {
             assert!(
                 !refused(v) || reaches[v as usize],
                 "refused node {v} reaches no refusal along refused nodes in {g:?}"

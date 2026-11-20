@@ -244,9 +244,8 @@ impl<T> Tree<T> {
             c.version = Some(self.version);
             if at == NIL {
                 let slot = match self.free {
-                    NIL => {
-                        u32::try_from(self.nodes.len()).expect("a bucket has fewer than 2³² slots")
-                    }
+                    // Below `NIL`, which marks no slot.
+                    NIL => zed_collections::index::to_u32_below(self.nodes.len(), NIL, "slots"),
                     f => f,
                 };
                 return Step::End(Place {

@@ -19,6 +19,7 @@
 
 use std::collections::HashMap;
 
+use zed_collections::index::to_u32;
 use zedc_syntax::ast::{BinaryOp, Every, Expr, ExprKind, Function, Param, Type, TypeKind, UnaryOp};
 use zedc_syntax::lex::Span;
 
@@ -231,7 +232,7 @@ impl<'a> Index<'a> {
         };
         for &b in arms {
             let a = arm(b, funcs.get(&b)?);
-            let k = ix.arms.len() as u32;
+            let k = to_u32(ix.arms.len(), "arms");
             for (i, &m) in a.positional.iter().enumerate() {
                 if ix.positional.len() <= i {
                     ix.positional.push([Two::default(); BITS]);

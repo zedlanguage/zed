@@ -46,6 +46,7 @@
 //!   a round sets is never passed, not even as a hint, since it holds at one point at most
 //!   and would remove the others.
 
+use zed_collections::index::to_u32;
 use zed_kernel::digest::{DigestMap, TextMap};
 use zedc_int::int::Int;
 
@@ -257,7 +258,7 @@ impl<'f> Graph<'f> {
         };
         stack.push((f, g.add(f)));
         while let Some((h, n)) = stack.pop() {
-            let start = g.kid_list.len() as u32;
+            let start = to_u32(g.kid_list.len(), "child links");
             for k in h.kids() {
                 let shared = Id::of(k);
                 let i = match shared.and_then(|id| seen.get(&id)) {
@@ -274,7 +275,7 @@ impl<'f> Graph<'f> {
                 g.kid_list.push(i);
             }
             if !matches!(h, Formula::Con(_)) {
-                g.parts[n as usize].span = (start, g.kid_list.len() as u32);
+                g.parts[n as usize].span = (start, to_u32(g.kid_list.len(), "child links"));
             }
         }
         g.link();
@@ -283,8 +284,8 @@ impl<'f> Graph<'f> {
 
     /// A new part for `f`, with its variables and coefficients when it is a constraint.
     fn add(&mut self, f: &'f Formula) -> u32 {
-        let n = self.parts.len() as u32;
-        let start = self.terms.len() as u32;
+        let n = to_u32(self.parts.len(), "parts");
+        let start = to_u32(self.terms.len(), "terms");
         let kind = match f {
             Formula::And(_) => Kind::And,
             Formula::Or(_) => Kind::Or,
@@ -299,7 +300,7 @@ impl<'f> Graph<'f> {
         };
         self.parts.push(Part {
             kind,
-            span: (start, self.terms.len() as u32),
+            span: (start, to_u32(self.terms.len(), "terms")),
             parents: (0, 0),
             value: Once::unknown(),
             forced: Latch::lowered(),
@@ -310,8 +311,7 @@ impl<'f> Graph<'f> {
 
     /// The number of the variable `a`.
     fn number(&mut self, a: &'f Atom) -> u32 {
-        // Checked (DRY-sorted-structures, D3): `as u32` wrapped past 2^32 variables.
-        let next = u32::try_from(self.vars.len()).expect("fewer than 2^32 variables");
+        let next = to_u32(self.vars.len(), "variables");
         *self.numbers.entry(a).or_insert_with(|| {
             self.vars.push(Var {
                 atom: a,

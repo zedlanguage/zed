@@ -808,8 +808,8 @@ impl Evaluator {
         let Some(t) = &mut self.trace else {
             return 0;
         };
-        let i = u32::try_from(i).expect("a node has fewer than 2^32 children");
-        let next = At::try_from(t.nodes.len()).expect("a run reaches fewer than 2^32 positions");
+        let i = zed_collections::index::to_u32(i, "children of a node");
+        let next: At = zed_collections::index::to_u32(t.nodes.len(), "positions in a run");
         *t.ids.entry((at, i)).or_insert_with(|| {
             t.nodes.push(t.nodes[at as usize].child(i));
             next

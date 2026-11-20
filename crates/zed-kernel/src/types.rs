@@ -45,6 +45,8 @@ use std::ops::{BitAnd, BitOr, Not, Sub};
 use std::rc::Rc;
 use std::sync::{Arc, Mutex, OnceLock, PoisonError, Weak};
 
+use zed_collections::intern::Interner;
+
 use crate::deep;
 use crate::frames::{Deep, Stack};
 use crate::num::Rat;
@@ -5763,12 +5765,10 @@ type Chain = usize;
 // before, the same bench ran past its 45 s limit.
 #[derive(Default)]
 struct Chains {
-    /// Per chain, its first kind and the chain below it, if any.
-    table: Vec<(Kind, Option<Chain>)>,
+    /// Per chain, its first kind and the chain below it, if any, each numbered once.
+    table: Interner<(Kind, Option<Chain>)>,
     /// Per chain, its number of kinds.
     lens: Vec<usize>,
-    /// The number of each chain in `table`.
-    ids: HashMap<(Kind, Option<Chain>), Chain>,
     /// Per tuple with components, by its id, its chain and its innermost first component. An
     /// id is never given twice in the process (`Items::id`), so an entry stays true of its
     /// sequence whether or not the sequence is still held.
@@ -5780,10 +5780,8 @@ struct Chains {
 impl Chains {
     /// The number of the chain whose first kind is `kind`, above the chain `below`.
     fn intern(&mut self, kind: Kind, below: Option<Chain>) -> Chain {
-        let next = self.table.len();
-        let id = *self.ids.entry((kind.clone(), below)).or_insert(next);
-        if id == next {
-            self.table.push((kind, below));
+        let (id, new) = self.table.insert((kind, below));
+        if new {
             self.lens.push(below.map_or(1, |b| self.lens[b] + 1));
         }
         id
@@ -8965,7 +8963,7 @@ pub mod rec {
         let mut of: Vec<&Arc<Node>> = Vec::new();
         for n in &nodes {
             if !matches!(n.e, Shape::Ref(..)) {
-                vertex[n.at as usize] = of.len() as u32;
+                vertex[n.at as usize] = zed_collections::index::to_u32(of.len(), "vertices");
                 of.push(n);
             }
         }

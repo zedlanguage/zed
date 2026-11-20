@@ -26,6 +26,7 @@
 
 use std::collections::HashMap;
 
+use zed_collections::index::to_u32;
 use zed_kernel::Value;
 use zed_kernel::text::prose::and_list;
 
@@ -177,7 +178,7 @@ pub fn warnings(t: &Tables, unit: &[Stmt], info: &Info) -> Vec<Error> {
 impl<'t, 'a> Walk<'t, 'a> {
     /// A new node for `e`, part of `root` (itself when `None`), to be expanded.
     fn node(&mut self, e: &'a Expr, root: Option<u32>, wrap: bool) -> u32 {
-        let at = u32::try_from(self.nodes.len()).expect("a unit has fewer than 2^32 nodes");
+        let at = to_u32(self.nodes.len(), "nodes in a unit");
         self.nodes.push(Node {
             e,
             kind: Kind::Top,
@@ -263,7 +264,7 @@ impl<'t, 'a> Walk<'t, 'a> {
             let n = &self.nodes[at as usize];
             (n.root, n.wrap)
         };
-        let first = u32::try_from(self.nodes.len()).expect("a unit has fewer than 2^32 nodes");
+        let first = to_u32(self.nodes.len(), "nodes in a unit");
         // Only `+`, `-`, `*`, unary `-` and literals wrap; any other child of a wrapping
         // node is computed exactly, and so reported.
         let kids = |w: &mut Self, es: &[&'a Expr], wrap: bool| {
@@ -492,7 +493,7 @@ impl<'t, 'a> Walk<'t, 'a> {
         let mut values: Vec<Option<Word>> = vec![None; self.nodes.len()];
         let mut crossings = Vec::new();
         let mut stack = Vec::new();
-        for start in 0..self.nodes.len() as u32 {
+        for start in 0..to_u32(self.nodes.len(), "nodes in a unit") {
             stack.push(start);
             while let Some(&i) = stack.last() {
                 match state[i as usize] {

@@ -30,6 +30,7 @@ use std::sync::Arc;
 use num_bigint::{BigInt, BigUint, Sign};
 use num_integer::Integer;
 use num_traits::{One, Signed, ToPrimitive, Zero};
+use zed_collections::index::to_u32;
 use zed_graph::MinHeap;
 
 use crate::digest::{Digest, step};
@@ -437,7 +438,7 @@ impl<'t> Identity<'t> {
         let binder: HashMap<&str, u32> = binders
             .iter()
             .enumerate()
-            .map(|(i, b)| (*b, u32::try_from(i).expect("fewer than 2^32 binders")))
+            .map(|(i, b)| (*b, to_u32(i, "binders")))
             .collect();
         let mut atoms: HashMap<String, u32> = HashMap::new();
         let mut lets: HashMap<&'t str, Vec<usize>> = HashMap::new();
@@ -526,7 +527,7 @@ impl<'t> Identity<'t> {
 
     /// The leaf of the atom whose text is `text`, one per text.
     fn atom(&mut self, atoms: &mut HashMap<String, u32>, text: String) -> usize {
-        let next = u32::try_from(self.names.len()).expect("fewer than 2^32 names");
+        let next = to_u32(self.names.len(), "names");
         let l = match atoms.get(&text) {
             Some(&l) => l,
             None => {
@@ -1373,7 +1374,7 @@ impl<'t> Identity<'t> {
         }
         let mut found = Vec::with_capacity(self.binders);
         for (b, name) in self.names[..self.binders].iter().enumerate() {
-            let v = u32::try_from(b).expect("fewer than 2^32 binders");
+            let v = to_u32(b, "binders");
             let mut reduced: HashMap<(K, u64), u64> = HashMap::new();
             for (k, c) in &cur {
                 let (e, rest) = k.without(ctx, v);

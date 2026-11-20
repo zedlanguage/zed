@@ -35,6 +35,7 @@
 
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 
+use zed_collections::index::to_u32;
 use zed_graph::{BitSet, Order, Worklist};
 use zedc::parse::{Expr, Grammar, Kind};
 
@@ -196,7 +197,7 @@ impl Conv<'_> {
         if let Some(&t) = self.terms.get(name) {
             return t;
         }
-        let t = self.cfg.terms.len() as u32;
+        let t = to_u32(self.cfg.terms.len(), "terminals");
         self.cfg.terms.push(name.to_string());
         self.terms.insert(name.to_string(), t);
         t
@@ -745,7 +746,7 @@ impl Stacks {
     }
 
     fn push(&mut self, top: Sym, rest: u32) -> u32 {
-        let next = self.cells.len() as u32;
+        let next = to_u32(self.cells.len(), "stack cells");
         let id = *self.ids.entry((top, rest)).or_insert(next);
         if id == next {
             self.cells.push((top, rest));
@@ -805,7 +806,7 @@ impl Llp<'_> {
             Sym::N(b) => {
                 let b = b as usize;
                 out.extend(self.by_lhs[b].iter().map(|&q| {
-                    let dot = self.cfg.prods[q].rhs.len() as u32;
+                    let dot = to_u32(self.cfg.prods[q].rhs.len(), "symbols of a production");
                     (
                         Core {
                             prod: q as u32,
@@ -1005,7 +1006,7 @@ pub fn check(g: &Grammar, unit: &str, rules: &[Retag]) -> Result<Report, String>
     let start = llp.by_lhs[cfg.start as usize][0];
     let mut cores = vec![Core {
         prod: start as u32,
-        dot: cfg.prods[start].rhs.len() as u32,
+        dot: to_u32(cfg.prods[start].rhs.len(), "symbols of a production"),
         ahead: NONE,
     }];
     let mut ids: HashMap<Core, usize> = HashMap::from([(cores[0], 0)]);

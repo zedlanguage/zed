@@ -70,6 +70,7 @@ use std::rc::Rc;
 use std::sync::{Arc, OnceLock};
 
 use zed_collections::fenwick::Fenwick;
+use zed_collections::index::to_u32;
 
 use zed_kernel::types::Type;
 use zed_kernel::{Evaluator, Pattern, Prim, Shared, Term, Value, World, eval};
@@ -1733,8 +1734,7 @@ impl FormulaNumbers {
                 Formula::And(_) => Shape::And(ns),
                 Formula::Or(_) => Shape::Or(ns),
             };
-            // Checked (DRY-sorted-structures, D3): `as u32` wrapped past 2^32 shapes.
-            let next = u32::try_from(self.by_shape.len()).expect("fewer than 2^32 shapes");
+            let next = to_u32(self.by_shape.len(), "shapes");
             let n = *self.by_shape.entry(shape).or_insert(next);
             if let Some(id) = id {
                 self.by_id.insert(id, n);
@@ -2632,7 +2632,7 @@ impl Tr {
         if let Some(&n) = self.pairs.get(&key) {
             return n;
         }
-        let n = self.defs.len() as u32;
+        let n = to_u32(self.defs.len(), "definitions");
         self.pairs.insert(key.clone(), n);
         self.made.push(key);
         let (q, r) = (
@@ -2731,7 +2731,7 @@ impl Tr {
     }
 
     fn aux(&mut self, what: What, def: Formula) -> presburger::Atom {
-        let n = self.defs.len() as u32;
+        let n = to_u32(self.defs.len(), "definitions");
         self.defs.push((n, what, def));
         presburger::Atom::Aux(n)
     }
@@ -2755,7 +2755,7 @@ impl Tr {
         if let Some(&k) = self.pairs.get(&key) {
             return Some(pick(k));
         }
-        let k = self.defs.len() as u32;
+        let k = to_u32(self.defs.len(), "definitions");
         let (q, r) = (Lin::atom(Aux(k)), Lin::atom(Aux(k + 1)));
         // Complexity tradeoff: `n * q` is an atom, so a fact that needs it read as a product,
         // beyond the products of premise pairs that `presburger::products` adds, is not
@@ -8604,7 +8604,7 @@ impl<'m, 't> Walk<'m, 't> {
             }
         }
         self.tr(|tr| {
-            let n = tr.defs.len() as u32;
+            let n = to_u32(tr.defs.len(), "definitions");
             let v = Lin::atom(presburger::Atom::Aux(n));
             let def = Formula::or(
                 (cases.iter())
@@ -8733,7 +8733,7 @@ impl<'m, 't> Walk<'m, 't> {
                     if let Some(&n) = tr.choices.get(&key) {
                         return Some(Lin::atom(presburger::Atom::Aux(n)));
                     }
-                    let n = tr.defs.len() as u32;
+                    let n = to_u32(tr.defs.len(), "definitions");
                     tr.choices.insert(key.clone(), n);
                     tr.chosen.push(key);
                     let x = Lin::atom(presburger::Atom::Aux(n));
@@ -8811,7 +8811,7 @@ impl<'m, 't> Walk<'m, 't> {
                             if let Some(n) = known {
                                 return Some(Lin::atom(presburger::Atom::Aux(*n)));
                             }
-                            let n = tr.defs.len() as u32;
+                            let n = to_u32(tr.defs.len(), "definitions");
                             tr.extrema.insert((min, a.clone(), b.clone()), n);
                             tr.ranked.push((min, a.clone(), b.clone()));
                             let x = Lin::atom(presburger::Atom::Aux(n));
@@ -8876,7 +8876,10 @@ impl<'m, 't> Walk<'m, 't> {
                     BitAnd if products => {
                         let (a, b) = (arg(0).await?, arg(1).await?);
                         self.tr(|tr| {
-                            let x = Lin::atom(presburger::Atom::Aux(tr.defs.len() as u32));
+                            let x = Lin::atom(presburger::Atom::Aux(to_u32(
+                                tr.defs.len(),
+                                "definitions",
+                            )));
                             let def = bit_and_bounds(&x, &a, &b);
                             tr.aux(What::BitAnd(a, b), def);
                             Some(x)
@@ -9468,7 +9471,7 @@ impl<'m, 't> Walk<'m, 't> {
             if (pairs.iter()).any(|(_, a)| a.terms.keys().any(|x| atoms.contains(x))) {
                 return None;
             }
-            let n = tr.defs.len() as u32;
+            let n = to_u32(tr.defs.len(), "definitions");
             let b = Lin::atom(Atom::Aux(n));
             let at = value.clone().unwrap_or_else(|| Lin::constant(n as i64));
             let mut parts = vec![Formula::Con(Con::eq(&b, &at))];
@@ -9797,7 +9800,7 @@ impl<'m, 't> Walk<'m, 't> {
                     && !v.terms.keys().any(|a| matches!(a, Atom::Product(..)))
                 {
                     let a = self.tr(|tr| {
-                        let b = Lin::atom(Atom::Aux(tr.defs.len() as u32));
+                        let b = Lin::atom(Atom::Aux(to_u32(tr.defs.len(), "definitions")));
                         tr.aux(
                             What::Value(v.clone(), Vec::new()),
                             Formula::And(presburger::Shared::new(vec![Formula::Con(Con::eq(

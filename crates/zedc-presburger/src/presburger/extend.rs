@@ -5788,6 +5788,7 @@ enum Made {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use zed_collections::index::to_u32;
     mod bench;
 
     fn a(n: u32) -> Atom {
@@ -6816,7 +6817,7 @@ mod tests {
         }
         for j in 0..width {
             for k in 0..depth {
-                let n = defs.len() as u32;
+                let n = to_u32(defs.len(), "definitions");
                 let input = if k > 0 {
                     Lin::atom(a(n - 1))
                 } else if shared {
@@ -6962,7 +6963,7 @@ mod tests {
         let mut defs = Vec::new();
         let mut prev = None;
         for i in 0..n {
-            let first = defs.len() as u32;
+            let first = to_u32(defs.len(), "definitions");
             let input =
                 prev.map_or_else(|| Lin::atom(Atom::Sym("base".into())), |n| Lin::atom(a(n)));
             for branch in 0..2 {
@@ -7127,7 +7128,7 @@ mod tests {
         }
         for i in 0..width {
             for j in 0..depth {
-                let n = defs.len() as u32;
+                let n = to_u32(defs.len(), "definitions");
                 let input = if j != 0 {
                     Lin::atom(a(n - 1))
                 } else if prefix != 0 {
@@ -7334,7 +7335,7 @@ mod tests {
         for i in 0..n {
             let mut parent = n - 1;
             for _ in 0..1 + i % 2 {
-                let k = defs.len() as u32;
+                let k = to_u32(defs.len(), "definitions");
                 defs.push(Formula::And(Shared::new(vec![Formula::Con(Con::eq(
                     &Lin::atom(a(k)),
                     &Lin::atom(a(parent)).plus(&Lin::constant(1)),
@@ -7708,7 +7709,7 @@ mod tests {
         let mut defs = Vec::new();
         let mut rs = BTreeSet::from([x.clone()]);
         for i in 0..width {
-            let q = defs.len() as u32;
+            let q = to_u32(defs.len(), "definitions");
             let r = q + 1;
             let h = q + 2;
             let pair = Formula::And(Shared::new(vec![
@@ -7972,7 +7973,7 @@ mod tests {
     fn twin_union_defs(n: usize) -> Vec<Formula> {
         let mut defs = Vec::new();
         for i in 0..n {
-            let first = defs.len() as u32;
+            let first = to_u32(defs.len(), "definitions");
             for side in [0u32, 1] {
                 let previous = if i == 0 {
                     Lin::atom(Atom::Sym("base".into()))

@@ -86,6 +86,9 @@ use std::collections::{BTreeSet, HashMap};
 use std::hash::{Hash, Hasher};
 use std::rc::Rc;
 
+use zed_collections::index::to_u32_below;
+use zed_collections::intern::Interner;
+
 use super::super::{Lits, Parts, Row, Type};
 use super::shared::{ByType, ChainHint, ChainPlan, Digests, TwoSat, list_step};
 use crate::digest::Digest;
@@ -1081,18 +1084,12 @@ fn decide_counted(t: &Type, counts: &mut (usize, usize)) -> Option<ChainPlan> {
         let wide = strengthened;
 
         // The atoms, one variable each, and their forest at each place.
-        let mut ids: HashMap<(usize, Ints), usize, Digests> = HashMap::default();
-        let mut atom: Vec<(usize, Ints)> = Vec::new();
+        let mut ids: Interner<(usize, Ints), Digests> = Interner::default();
         let mut clause: Vec<[usize; 2]> = Vec::with_capacity(clauses_work.len());
         for atoms in &clauses_work {
             let mut two = [0; 2];
             for (k, (j, a)) in atoms.iter().take(2).enumerate() {
-                let n = atom.len();
-                let id = *ids.entry((*j, a.clone())).or_insert_with(|| {
-                    atom.push((*j, a.clone()));
-                    n
-                });
-                two[k] = id;
+                two[k] = ids.intern((*j, a.clone()));
             }
             // Every clause here has two atoms or more: the fixed point above ends only when it
             // finds no clause of one atom (`narrowed_places` empty), the strengthening only
@@ -1108,6 +1105,7 @@ fn decide_counted(t: &Type, counts: &mut (usize, usize)) -> Option<ChainPlan> {
             }
             clause.push(two);
         }
+        let atom = ids.into_values();
         let mut at_place: HashMap<usize, Vec<usize>> = HashMap::new();
         for (i, (j, _)) in atom.iter().enumerate() {
             at_place.entry(*j).or_default().push(i);
@@ -1560,18 +1558,11 @@ struct Summary {
 
 /// Ids for equal sets: the id of each item, and one copy of each distinct set.
 fn intern<'a>(items: impl Iterator<Item = &'a Ints>) -> (Vec<u32>, Vec<Ints>) {
-    let mut id: HashMap<&Ints, u32, Digests> = HashMap::default();
-    let mut types: Vec<Ints> = Vec::new();
+    let mut sets: Interner<&Ints, Digests> = Interner::default();
     let ids = items
-        .map(|x| {
-            *id.entry(x).or_insert_with(|| {
-                types.push(x.clone());
-                // Checked (DRY-sorted-structures, D3): `as u32` wrapped past 2^32 sets.
-                u32::try_from(types.len() - 1).expect("fewer than 2^32 distinct sets")
-            })
-        })
+        .map(|x| to_u32_below(sets.intern(x), NONE, "distinct sets"))
         .collect();
-    (ids, types)
+    (ids, sets.values().iter().map(|&x| x.clone()).collect())
 }
 
 /// Method A's tables: the block of level `k` at place `j` and node `v` is the `2^k` cells read
@@ -1612,15 +1603,14 @@ impl Blocks {
         // its halves are aligned at level `k - 1`, so only those places get a class: O(l0) for
         // all levels, where every place at every level would cost O(l0 log l0).
         let mut ca = vec![ta.clone()];
-        let mut d: HashMap<(u32, u32), u32, Digests> = HashMap::default();
+        let mut d: Interner<(u32, u32), Digests> = Interner::default();
         for k in 1..=level_of(l0) {
             let (h, pa) = (1usize << (k - 1), &ca[k - 1]);
             let mut na = vec![NONE; l0 + 2];
             d.clear();
             for j in (2..=l0 + 1).step_by(2 * h) {
                 let r = if j + h <= l0 + 1 { pa[j + h] } else { NONE };
-                let n = d.len() as u32;
-                na[j] = *d.entry((pa[j], r)).or_insert(n);
+                na[j] = to_u32_below(d.intern((pa[j], r)), NONE, "block classes");
             }
             ca.push(na);
         }
@@ -1832,16 +1822,12 @@ fn cells_windows(
         .copied()
         .filter(|&v| !nodes[v].head.cof)
         .collect();
-    let mut vid: HashMap<&Value, usize, Digests> = HashMap::default();
+    let mut vid: Interner<&Value, Digests> = Interner::default();
     let mut pvt: Vec<Option<Vec<usize>>> = vec![None; ptypes.len()];
     for &t in &ta[2..=l0] {
         let t = t as usize;
         if pvt[t].is_none() && !ptypes[t].cof {
-            let ids = ptypes[t].vals.iter().map(|x| {
-                let n = vid.len();
-                *vid.entry(x).or_insert(n)
-            });
-            pvt[t] = Some(ids.collect());
+            pvt[t] = Some(ptypes[t].vals.iter().map(|x| vid.intern(x)).collect());
         }
     }
     let nv = vid.len();
@@ -1854,7 +1840,7 @@ fn cells_windows(
         .collect();
     let hv: Vec<Vec<usize>> = htypes
         .iter()
-        .map(|h| h.vals.iter().filter_map(|x| vid.get(x).copied()).collect())
+        .map(|h| h.vals.iter().filter_map(|x| vid.id(&x)).collect())
         .collect();
     let mut excl: Vec<Vec<usize>> = vec![Vec::new(); nv];
     let mut holds: Vec<Vec<usize>> = vec![Vec::new(); nv];

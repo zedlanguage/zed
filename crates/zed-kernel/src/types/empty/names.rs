@@ -15,6 +15,7 @@
 
 use super::super::bes::{Bes, Kind};
 use std::collections::VecDeque;
+use zed_collections::index::to_u32;
 
 /// A copy of `b` without the arms of each union node whose type (`same`, by node) is an arm of
 /// another union node that it reaches through unions, when the dominators or the
@@ -60,7 +61,9 @@ use std::collections::VecDeque;
 /// graph, with the nodes that play alike merged again after it drops arms, until nothing changes.
 pub(super) fn absorb(b: &Bes, same: &[u32], union: &[bool]) -> Option<Bes> {
     // The union nodes, numbered 0..k; `k` is the virtual root of each tree.
-    let unions: Vec<u32> = (0..b.len() as u32).filter(|&v| union[v as usize]).collect();
+    let unions: Vec<u32> = (0..to_u32(b.len(), "nodes"))
+        .filter(|&v| union[v as usize])
+        .collect();
     let k = unions.len();
     if k < 2 {
         return None;
@@ -297,7 +300,7 @@ pub(super) fn contracted(b: &Bes) -> Option<(Bes, Vec<u32>, Vec<u32>)> {
     let mut kept = Vec::new();
     for v in 0..n {
         if rep[v] == v as u32 {
-            id[v] = kept.len() as u32;
+            id[v] = to_u32(kept.len(), "nodes");
             kept.push(v as u32);
         }
     }
@@ -387,7 +390,7 @@ fn bisimilar(b: &Bes, leaf: &[bool], union: &[bool]) -> Option<(Bes, Vec<u32>, V
             for &e in &into[into_at[w as usize]..into_at[w as usize + 1]] {
                 let v = from[e as usize] as usize;
                 if seen[v] == u32::MAX {
-                    seen[v] = count.len() as u32;
+                    seen[v] = to_u32(count.len(), "classes");
                     count.push(0);
                     in_b.push(v as u32);
                 }
@@ -428,7 +431,7 @@ fn bisimilar(b: &Bes, leaf: &[bool], union: &[bool]) -> Option<(Bes, Vec<u32>, V
         .map(|v| {
             let q = p.class[v] as usize;
             if id[q] == u32::MAX {
-                id[q] = first.len() as u32;
+                id[q] = to_u32(first.len(), "classes");
                 first.push(v);
             }
             id[q]
@@ -493,7 +496,7 @@ impl Partition {
         for v in 0..n {
             let k = key(v);
             if of_key[k] == u32::MAX {
-                of_key[k] = start.len() as u32;
+                of_key[k] = to_u32(start.len(), "blocks");
                 start.push(at[k]);
                 end.push(at[k + 1]);
             }
@@ -540,7 +543,7 @@ impl Partition {
         if list.len() < 2 {
             self.compound.pop();
         }
-        self.outer[q as usize] = self.coarse.len() as u32;
+        self.outer[q as usize] = to_u32(self.coarse.len(), "outer blocks");
         self.slot[q as usize] = 0;
         self.coarse.push(vec![q]);
     }
@@ -569,7 +572,7 @@ impl Partition {
             if m == self.end[q] - self.start[q] {
                 continue;
             }
-            let fresh = self.start.len() as u32;
+            let fresh = to_u32(self.start.len(), "blocks");
             let s = self.start[q];
             self.start.push(s);
             self.end.push(s + m);
@@ -580,7 +583,7 @@ impl Partition {
             }
             let c = self.outer[q] as usize;
             self.outer.push(c as u32);
-            self.slot.push(self.coarse[c].len() as u32);
+            self.slot.push(to_u32(self.coarse[c].len(), "blocks"));
             self.coarse[c].push(fresh);
             if self.coarse[c].len() == 2 {
                 self.compound.push(c as u32);

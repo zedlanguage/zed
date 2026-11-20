@@ -27,6 +27,7 @@ use std::cell::Cell;
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 
 use zed_collections::fenwick::Fenwick;
+use zed_collections::index::to_u32;
 use zed_collections::search::first_true;
 use zed_kernel::digest::TextSet;
 
@@ -855,7 +856,7 @@ impl FastGreedy {
 
         fn build_min(nodes: &mut Vec<MinNode>, w: &[Int], nl: usize, nr: usize) -> u32 {
             if nl == nr {
-                let id = nodes.len() as u32;
+                let id = to_u32(nodes.len(), "slack nodes");
                 nodes.push(MinNode {
                     left: 0,
                     right: 0,
@@ -868,7 +869,7 @@ impl FastGreedy {
             let l = build_min(nodes, w, nl, mid);
             let r = build_min(nodes, w, mid + 1, nr);
             let mv = min_opt(&nodes[l as usize].min_val, &nodes[r as usize].min_val);
-            let id = nodes.len() as u32;
+            let id = to_u32(nodes.len(), "slack nodes");
             nodes.push(MinNode {
                 left: l,
                 right: r,
@@ -888,7 +889,7 @@ impl FastGreedy {
         ) -> u32 {
             let cur = nodes[root as usize].clone();
             if nl == nr {
-                let id = nodes.len() as u32;
+                let id = to_u32(nodes.len(), "slack nodes");
                 nodes.push(SumNode {
                     left: 0,
                     right: 0,
@@ -902,7 +903,7 @@ impl FastGreedy {
             } else {
                 (cur.left, sum_add(nodes, cur.right, mid + 1, nr, idx, val))
             };
-            let id = nodes.len() as u32;
+            let id = to_u32(nodes.len(), "slack nodes");
             nodes.push(SumNode {
                 left: nl_id,
                 right: nr_id,
@@ -920,7 +921,7 @@ impl FastGreedy {
         ) -> u32 {
             let cur = nodes[root as usize].clone();
             if nl == nr {
-                let id = nodes.len() as u32;
+                let id = to_u32(nodes.len(), "slack nodes");
                 nodes.push(MinNode {
                     left: 0,
                     right: 0,
@@ -940,7 +941,7 @@ impl FastGreedy {
                 &nodes[nr_id as usize].min_val,
             )
             .map(|m| &m + &cur.add);
-            let id = nodes.len() as u32;
+            let id = to_u32(nodes.len(), "slack nodes");
             nodes.push(MinNode {
                 left: nl_id,
                 right: nr_id,
@@ -966,7 +967,7 @@ impl FastGreedy {
             if ql <= nl && nr <= qr {
                 cur.add = &cur.add + delta;
                 cur.min_val = cur.min_val.map(|m| &m + delta);
-                let id = nodes.len() as u32;
+                let id = to_u32(nodes.len(), "slack nodes");
                 nodes.push(cur);
                 return id;
             }
@@ -978,7 +979,7 @@ impl FastGreedy {
                 &nodes[nr_id as usize].min_val,
             )
             .map(|m| &m + &cur.add);
-            let id = nodes.len() as u32;
+            let id = to_u32(nodes.len(), "slack nodes");
             nodes.push(MinNode {
                 left: nl_id,
                 right: nr_id,

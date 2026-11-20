@@ -142,6 +142,7 @@ use std::hash::Hash;
 use std::rc::Rc;
 use std::sync::Arc;
 
+use zed_collections::index::to_u32;
 use zed_kernel::{Evaluator, Prim, Shared, Term, Value, World, eval};
 
 use End::{Fin, NegInf, PosInf};
@@ -572,7 +573,7 @@ struct Tr {
 
 impl Tr {
     fn aux(&mut self, what: String, def: Formula) -> presburger::Atom {
-        let n = self.defs.len() as u32;
+        let n = to_u32(self.defs.len(), "definitions");
         self.defs.push((n, what, def));
         presburger::Atom::Aux(n)
     }
@@ -1462,7 +1463,7 @@ impl<'t> Tx<'t> {
                 }
             }
         }
-        let next = self.run.sums.len() as u32;
+        let next = to_u32(self.run.sums.len(), "sums");
         let sid = *self.run.sums.entry(((body, lam), sig)).or_insert(next);
         let (mut doms, mut params) = (doms.into_iter(), Vec::new());
         let mut bound = Vec::with_capacity(binds.len());
@@ -2122,7 +2123,7 @@ impl<'t> Tx<'t> {
                 // One level: the parts are shown by their linear forms, in which an auxiliary
                 // variable is its name, so the name costs the size of what it is made of.
                 let what = format!("if {g} then {la} else {lb}");
-                let x = Lin::atom(presburger::Atom::Aux(tr.defs.len() as u32));
+                let x = Lin::atom(presburger::Atom::Aux(to_u32(tr.defs.len(), "definitions")));
                 let def = Formula::or(vec![
                     Formula::and(vec![g.clone(), Formula::Con(Con::eq(&x, &la))]),
                     Formula::and(vec![Formula::negate(g), Formula::Con(Con::eq(&x, &lb))]),
@@ -2162,7 +2163,7 @@ impl<'t> Tx<'t> {
                         let c = (self.constant_int(self.arg(args, 1), env)).filter(|c| *c != 0)?;
                         let a = arg(self, tr, 0)?;
                         // `a == c·q + r` and `0 <= r < |c|`: Euclidean.
-                        let n = tr.defs.len() as u32;
+                        let n = to_u32(tr.defs.len(), "definitions");
                         let (q, r) = (
                             Lin::atom(presburger::Atom::Aux(n)),
                             Lin::atom(presburger::Atom::Aux(n + 1)),
@@ -2186,7 +2187,8 @@ impl<'t> Tx<'t> {
                         } else {
                             arg(self, tr, 1)?
                         };
-                        let x = Lin::atom(presburger::Atom::Aux(tr.defs.len() as u32));
+                        let x =
+                            Lin::atom(presburger::Atom::Aux(to_u32(tr.defs.len(), "definitions")));
                         // `min` takes `a` where `a <= b`, `max` and `abs` where `a >= b`.
                         let (lo, hi) = if p == Min { (&a, &b) } else { (&b, &a) };
                         let first = Con::ge(hi, lo);
@@ -4889,7 +4891,7 @@ impl Tx<'_> {
             let mut defs = Vec::new();
             let mut ids = HashMap::new();
             for m in moduli {
-                let n = defs.len() as u32;
+                let n = to_u32(defs.len(), "definitions");
                 let q = Lin::atom(presburger::Atom::Aux(n));
                 let rem = Lin::atom(presburger::Atom::Aux(n + 1));
                 let a = Lin::atom(presburger::Atom::Sym(x.clone()));
