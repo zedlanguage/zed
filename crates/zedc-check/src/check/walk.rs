@@ -6853,6 +6853,51 @@ impl<'t, 'a> Ck<'t, 'a> {
     /// and one lookup, and the call costs 1.4 times the call with the suffix. The application
     /// itself is still tried, since its type is the operation's type until the call gives it
     /// the carrier.
+    ///
+    /// Claim: every span this spares, put in [`Ck::lit_spared`] at the refusal in
+    /// `apply_demanding`, is taken out again by [`Ck::lit_takes`] before the walk ends, so no
+    /// refused operation is left without its error. The debug assertion at the end of
+    /// [`Self::walk`] checks it; a release build has no check, and a wrong spare there would
+    /// accept a program it must refuse, so the argument is written out. Proof, for a spare at
+    /// `span` inside the argument `e` that `call_sig_step` set as [`Ck::lit_taking`] for the
+    /// slot `j` of the call `s`:
+    ///
+    /// 1. `lit_taking_at` gave `e.span` only at `level == 0`, outside a trial and a run
+    ///    again (`replaying == 0`), for a call not curried, with `lit_op_recorded(e)`,
+    ///    `c = lit_param_carrier(&s.sig, j)` and `lit_fit(e, c).0`. `lit_op_recorded` admits
+    ///    no call, so no other call's `call_sig_step` runs inside the walk of `e` and
+    ///    replaces `lit_taking`; it is reset to `None` when the argument's value returns
+    ///    (the `s.waiting` branch), so the spare reads it only during the walk of `e`.
+    /// 2. The spared span lies in `e`'s text and is in [`Ck::lit_ops`], whose entries are
+    ///    the spans of `Binary` and `Unary` nodes (`lit_op_meets` and `Frame::Unary`). Spans
+    ///    nest, and the parser copies a span only to a `Stmt` or an `Error` (the argument at
+    ///    [`Ck::known`]), so a node whose span lies in `e`'s is `e` or a node under it: the
+    ///    span is that of an operation node under `e`. Every node
+    ///    under `e` is an operation or a bare literal (`lit_op_recorded`), and `lit_takes`
+    ///    pushes every operation node under `e`, down to the literals, onto `nodes`, and
+    ///    removes each one's span from `lit_spared` when `live`.
+    /// 3. The call is applied after its arguments: not curried, `call_sig_step` ends in
+    ///    `as_written`, then `construct`, then `apply`, then `apply_demanding`, still at
+    ///    `level == 0`, so `lit_args_take` runs first there, before any refusal of the call,
+    ///    `follows_error` and misfit included (test cases `z: true + 1` and `z: "a"`). The
+    ///    arguments are `s.got`, indexed by slot, so its index `i` is `j`; the signature is
+    ///    `s.inst` or `s.sig`. `instantiated` keeps a single arrow and replaces type
+    ///    variables only, and the parameter `j` names one carrier and no variable, so
+    ///    `lit_param_carrier` gives the same `c` (test case `g(x: 1 / 2, xs: 3, f: ...)`).
+    /// 4. `lit_args_take` reads `lit_ops.contains(&e.span)`. The walk of `e` at the top
+    ///    level outside a trial records exactly what `lit_op_recorded` reads off the text
+    ///    (its doc); that the two agree is read, not proved by a test of its own: where they
+    ///    did not, the debug assertion fails.
+    /// 5. `lit_takes(e, c)` returns `false` only where `e` holds a `/` or `^` and
+    ///    `!lit_fit(e, c).0`. `lit_fit` reads `e` and `c` alone (its doc; kept in
+    ///    [`Ck::lit_fits`]), and step 1 found it `true`, so `lit_takes` reaches the loop.
+    ///    `live` is `!trying && replaying == 0`, as at the spare.
+    ///
+    /// Tests: `l01_26a_generic_literals::call_arguments::a_rejection_a_call_drops_is_not_built_and_one_that_stands_is_unchanged`
+    /// (each message compared with the run with the spare off), with the debug assertion
+    /// read in every debug test run. They cannot catch a case only a release build meets,
+    /// nor a new form inside `e` that the walk records and `lit_op_recorded` does not, until
+    /// a test writes that form.
     fn lit_spares(&self, span: Span) -> bool {
         self.level == 0
             && !self.trying
@@ -21441,6 +21486,26 @@ impl<'t, 'a> Ck<'t, 'a> {
         // or casts, each trial a check of the whole call that builds its message, so a
         // rejected call of n arguments cost O(n²) (17.7 s at 800 arguments); now one
         // subtype test per argument, O(n) for the call.
+        // Proof that the skip drops no repair (audit proofdoc2b, 2026-11-20):
+        // 1. Each repair below of argument `i` is offered only where [`Self::repaired`]
+        //    accepts the call with argument `i` alone written otherwise.
+        // 2. Under [`params_apart`] the call has one arrow with closed parameters and no
+        //    bound, own variable or need, so [`Self::apply_one`] checks argument `j` against
+        //    `p_j` piece by piece (`sub`, `restrict`, `fn_into_classes`, `fit_needs`), and
+        //    what argument `j` leaves for another is only the classes it restricts and the
+        //    bindings it makes.
+        // 3. [`Self::subtype`] holds only where the comparison binds nothing
+        //    (`Ty::subtype_with`), so `a_i` holds no live class, whose variable it would
+        //    bind: argument `i` restricts no class another argument reads.
+        // 4. So the check of every `j != i`, and the arity and names, are the same with any
+        //    writing of argument `i`, the rejection, which is not at `i`, stays, and the
+        //    trial of `i` fails. One case is left where the rejection is at `i`: a function
+        //    argument with needs, which `fit_needs` may refuse though `subtype` holds; the
+        //    repairs of such an argument are a number's other forms ([`rat_forms`]) and casts,
+        //    which a function does not take, so none is lost (read, not tested).
+        // Test: l01_29_repairs_and_printing scaling
+        // `a_long_call_taking_all_but_one_argument_repairs_that_one`, one rejected argument;
+        // it cannot catch a call whose arguments share a class, which step 3 leaves unskipped.
         let apart = params_apart(sig).then(|| &sig.arrows[0].params);
         for (i, a) in args.iter().enumerate() {
             if let (Some(params), Some(a)) = (apart, a)
@@ -22112,7 +22177,16 @@ impl<'t, 'a> Ck<'t, 'a> {
         // nothing gives a carrier, the types they give it ([`Self::carried_lent`]); `None` for
         // an argument with another fix. A type is lent only to an argument other than the one
         // whose fix failed, and only to one that carries fixes, so where the fixes lie in one
-        // argument or none the table is never read and is not made. Complexity tradeoff:
+        // argument or none the table is never read and is not made. Proof that skipping it
+        // changes no verdict: the table is read only by [`Self::carried_lent`], called below
+        // with the index `i` of a carry of `carried`, which here is the one index `i0` of every
+        // carry. It lends to `j != i` only where `lent[j]` holds the carry's type, and the loop
+        // that fills the table writes `lent[j]` only for a `j` some carry names; so every
+        // `j != i0` keeps `Some(vec![])`, made or not, holds no type, and `carried_lent` finds
+        // one argument and gives `None` either way. The table skipped is the table made with
+        // `lent[i0]` alone changed, and `lent[i0]` is never read at `i = i0`. Tests: the l01_26a
+        // cases with carried fixes in one argument, whose verdicts are unchanged; they do not
+        // test this apart from the rest of the round. Complexity tradeoff:
         // [`Self::unfixed_only`] reads every fix of a carry, and in a nest of n operations
         // each fix rides up every level, as in `((1 + 1) / 1 + 1) / 1 …`, so making the table
         // at every construct cost O(n^2) in all (ratio 10.69 at 8n against 8.01 before the
@@ -22173,9 +22247,44 @@ impl<'t, 'a> Ck<'t, 'a> {
     /// Whether each fix of `fixes` is one of a rejection of literals that nothing gives a
     /// carrier (row UnfixedDecimal), still found. Reads only the fixes not read before
     /// ([`LitsRead`]), and the one found not to be, unless an error was removed since that one
-    /// of the fixes read could be: an error's row never changes, an error removed is not found
-    /// again with that id once the removal ends, and a real error's id is not given to another
-    /// (a trial's errors take the next id, [`Self::next_found`], and are undone after it).
+    /// of the fixes read could be.
+    ///
+    /// Claim: where `read.ok` is `Some((at, max))` and [`Self::kept_since`]`(at, max)` holds,
+    /// every place read as good since then is still good, so it need not be read again. A
+    /// place is good when `found(p.id)` gives an error of row `UnfixedDecimal`. Proof, from
+    /// three facts:
+    /// 1. An error's row never changes after it is made: `row` is set only in
+    ///    [`Self::reject`]; the later writes to a found error (`reject_lits`, the `also` of
+    ///    two rejections, the notes in `group_arg_ops`, `fix_dropped`'s menu) touch other
+    ///    fields. (Read on 6b9edf7fb by a search for `errors.` writes in zedc-check; the
+    ///    `dedup` in `check_given` runs on `info.errors` after the walk.)
+    /// 2. Ids are given in increasing order and a real error's id is never held by another:
+    ///    `reject` gives `next_found` and raises it unless `trying`; every trial (`trial`,
+    ///    `compares`, `try_outside`, `kept_lists`, the unit tests) ends with
+    ///    `undo(&saved)`, which removes the errors it found, so a trial's error, which shares
+    ///    the next id, never stays beside the real error that takes that id after it. So the
+    ///    errors are sorted by id, which `found`'s binary search and `errors_cut` need.
+    /// 3. Errors are removed only at six places, each preceded by [`Self::errors_cut`] on the
+    ///    first place removed: `undo`, the end-of-walk take in `finish` (`errors_cut(0)`), the
+    ///    three `split_off`s (`group_arg_ops`, `rejects_unfixed`, `drop_met`) and the
+    ///    `truncate` of an open need in `replay_one`. The `split_off` sites push some errors back
+    ///    with their ids, so an error removed may be found again, with its row unchanged by 1;
+    ///    its removal is still logged, so the cache only reads more than it must.
+    /// So between the read and now, a good place `j` can turn bad only if `found(id_j)` stops
+    /// giving an error, which needs a removal of id `id_j <= max` after the read; `cuts` holds,
+    /// for each removal, the smallest id removed (by 2, the id of the first error at `from`),
+    /// and an entry popped for a later one of no larger id loses no answer of `kept_since`.
+    /// A place whose error is not found yet (`p.id >= next_found`) is not kept as read, since
+    /// a trial's error may hold that id now and the real one later.
+    ///
+    /// Test: `l01_26a_generic_literals::scaling::carries_in_one_argument_beside_one_that_fails_keep_their_verdicts`
+    /// and the nest `scaling::an_argument_of_divisions_of_literals_on_both_sides_nested_deep_takes_its_carrier`
+    /// (its benchmark has the ratio). When 41739da61 landed, l01_26a, l01_26, l01_29, l03_15a,
+    /// l08_02, l02_03 and zedc-check ran once with a temporary assertion that each cached
+    /// answer equals the naive read, with no difference; that assertion is not kept, so the
+    /// tests now see only verdicts, and a stale answer that changes no verdict in them, or a
+    /// new removal site without `errors_cut`, would pass them. Such a site must call
+    /// `errors_cut` first.
     ///
     /// Complexity tradeoff: the naive way reads every fix of the carry, O(fixes log errors),
     /// and in a nest of n operations each fix rides up every level, so O(n^2 log n) in all
@@ -27135,15 +27244,60 @@ fn retyped(t: &Ty, e: &Expr, new: &HashMap<Span, Ty>, seen: &HashMap<Span, Seen<
 
 /// The type of an array, set or map display whose parts, in the order of the text (a map's
 /// each key then its value), have the types `parts`: the family of its entries (step L3.2),
-/// whose keys are exactly the keys written, so its guarantee and its permission are one type
-/// and it is the one arrow `(K) -> V`. An array's keys are `0..<n`, one interval with every
-/// key present, so a read of it misses with `#outOfBounds`. Made by [`Ck::display_step`] as a
-/// display is walked, and by [`retyped`] where a part's type changes after.
+/// whose keys are exactly the keys written. Where each key's type is one value
+/// ([`Ty::is_one_value`]), as every literal key is, its guarantee and its permission are one
+/// type and it is the one arrow `(K) -> V`. An array's keys are `0..<n`, one interval with
+/// every key present, so a read of it misses with `#outOfBounds`. Made by
+/// [`Ck::display_step`] as a display is walked, and by [`retyped`] where a part's type
+/// changes after.
+///
+/// A key whose type holds more than one value, `n` in `{ n -> 10 }` with `n: int`, is one of
+/// them, not each, so the guarantee is the union `L` of the keys of one value and the
+/// permission the union `U` of all keys: the arrows `(L) -> V` and `U ->? V`, as a written
+/// `L .. U -> V` is read (the bounded arm of `Ck::make` in mod.rs, DESIGN.md sec:types),
+/// or `U ->? V` alone where `L` is empty. DESIGN.md sec:types, "How the bounds propagate",
+/// gives a display `L = U = D` ("Exact by construction"), true where `D` is the set of keys
+/// written; read as the key types, it breaks the condition stated above that table, that
+/// `L` under-approximates the run-time domain, and this follows that condition. Proof that `L` holds only keys the
+/// family holds: a display is built only where each key part gives a value, and a part whose
+/// type is one value `v` gives `v`, so `v` is a key; every key is the value of some part,
+/// so `U` holds every key. Before (found by the audit proofdoc2b, 2026-11-20), the one
+/// arrow `(U) -> V` said every value of `U` is a key: `f(n: int) = { n -> 10 }[n + 1]` was
+/// typed `10` and ran to `#notFound`. Test:
+/// `l03_02_map_run::types::a_key_of_many_values_is_permitted_not_guaranteed`; it reads the
+/// signatures the checker gives, so it cannot catch a reader of the family that ignores the
+/// second arrow.
 // Complexity tradeoff: the key and value types are each one union of the parts' types,
 // `Ty::union_all`, O(n) unions for n parts, each costing the size of the union so far, which
 // for literal keys is a few intervals; the naive alternative, a type per entry kept as its own
-// arrow, would make every lookup and every `map` O(n) in the arrows.
+// arrow, would make every lookup and every `map` O(n) in the arrows. The guarantee is one more
+// union, of the keys of one value, read with one O(1) test of each key's outer level.
 fn display_ty(kind: Display, parts: &[Ty]) -> Ty {
+    let key_parts: Vec<&Ty> = match kind {
+        Display::Array => Vec::new(),
+        Display::Set => parts.iter().collect(),
+        Display::Map => parts.iter().step_by(2).collect(),
+    };
+    if key_parts.iter().any(|k| !k.is_one_value()) {
+        let sure = Ty::union_all(key_parts.iter().copied().filter(|k| k.is_one_value()));
+        let all = Ty::union_all(key_parts.iter().copied());
+        let values = match kind {
+            Display::Map => Ty::union_all(parts.iter().skip(1).step_by(2)),
+            _ => all.clone(),
+        };
+        let partial = Arrow::partial_of(vec![all], values.clone());
+        let mut sig = match sure.is_empty() {
+            true => Sig::of_arrow(super::positional(1), partial),
+            false => {
+                let mut s = Sig::of_arrow(super::positional(1), Arrow::exact(vec![sure], values));
+                s.arrows.push(partial);
+                s
+            }
+        };
+        sig.data = true;
+        sig.note_held();
+        return Ty::func(Arc::new(sig));
+    }
     let (keys, values) = match kind {
         Display::Array => {
             let n = parts.len() as i64;

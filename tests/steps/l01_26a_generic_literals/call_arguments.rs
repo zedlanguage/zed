@@ -149,6 +149,18 @@ fn a_rejection_a_call_drops_is_not_built_and_one_that_stands_is_unchanged() {
             ],
         ),
         ("f(x: f64) = x;\nh() = f(x: 1 / 2);\ny = h();\n", &[]),
+        // A callee with a variable inside a function type is applied at its instance
+        // (`Ck::instantiated`), which keeps the parameter `x: f64` the spare read; a call
+        // whose other argument follows an error still gives its argument the carrier
+        // (`Ck::lit_spares`, proof step 3).
+        (
+            "g(x: f64, xs: T, f: (T) -> T) = x;\ny = g(x: 1 / 2, xs: 3, f: (v) -> v + 1);\n",
+            &[],
+        ),
+        (
+            "f(x: f64, z: int) = x;\ny = f(x: 1 / 2, z: true + 1);\n",
+            &["`+` does not take (true, 1): no arrow of `+` takes these types. [true + 1]"],
+        ),
         ("f(x: f64) = x;\ny = f(x: f(x: 1 / 2) / 2);\n", &[]),
         // One message, no fix (row LIT-call-int-param-fix-unchecked;
         // `a_division_of_literals_at_an_int_or_untyped_parameter_is_still_rejected`).

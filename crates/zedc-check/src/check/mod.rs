@@ -14177,6 +14177,25 @@ impl<'a> Ck<'_, 'a> {
     /// Each binder's value is the same expression in every check of its body, so a body
     /// checked again (a generic function per call) reads the same value. A name read before
     /// its binder is checked memoizes `None`, the safe direction too.
+    ///
+    /// The step "no two such expressions share a span" also needs the other order: a node
+    /// with no value read after a node with a value of the same span would return that value.
+    /// That cannot happen. Spans of the tree nest, so two nodes of one span are an ancestor
+    /// and a descendant; and every `ExprKind` (`zedc-syntax` `ast/node.rs`) has a token of its
+    /// own outside its children (an operator, a keyword, brackets, `->`, `.`, `~f~`, or is a
+    /// leaf), so an ancestor's span is strictly larger. The builder makes no `Expr` with a
+    /// child's span: its sites that copy a span (`ast/stmts.rs` `block`, `ast/builder.rs`)
+    /// build a `Stmt` or an `Error`, and `ast/initial.rs` lowers only the later forms listed
+    /// above, which never reach this walk. (Checked by reading those sites on 6b9edf7fb; a
+    /// new desugaring that wraps an expression in a node of the same span would break it.)
+    ///
+    /// Test: `l03_15a_fp_ops_run::cases::a_range_end_is_known_only_where_every_run_gives_it`
+    /// runs eight accepted programs (closure capture, blocks, bit words called and as
+    /// methods, `div`/`mod` of negatives, ends past 64 bits) and compares the count each
+    /// prints with the run's, and checks nine others (branches, a port value, a call, a
+    /// ranged or lambda parameter, `else`, a local `bitAnd`) are refused. It cannot catch a
+    /// case-5 binder whose value differs between runs in a form not compiled yet (frames),
+    /// nor a span shared by a new desugaring, since no program of this version builds either.
     fn known(&mut self, e: &'a Expr) -> Known {
         if !self.known.contains_key(&e.span) {
             // Each node is entered once: the graph through binders is acyclic, as statements

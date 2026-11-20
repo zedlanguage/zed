@@ -287,6 +287,47 @@ fn a_function_of_the_program_named_like_a_read_is_not_given_a_range_with_no_uppe
     }
 }
 
+/// A key of a map or set display whose type holds more than one value is one of them, not
+/// each, so it is permitted, not guaranteed (`display_ty` in zedc-check walk.rs, found by the
+/// audit proofdoc2b): a read of another key may miss. A key of one value,
+/// as a literal, is still guaranteed, beside a computed one too.
+#[test]
+fn a_key_of_many_values_is_permitted_not_guaranteed() {
+    use zed_tests::step_helpers::l01_26_type_resolution::sig;
+    let mut wrong = Vec::new();
+    for (src, want) in [
+        // Before: `(n: int) -> 10`, and `f(n: 2)` ran to `#notFound`.
+        (
+            "f(n: int) = { n -> 10 }[n + 1];\n",
+            "(n: int) -> 10 | #notFound",
+        ),
+        ("f(n: int) = { n }[n + 1];\n", "(n: int) -> int | #notFound"),
+        (
+            "f(n: int) = { 2 -> 10, n -> 20 }[2];\n",
+            "(n: int) -> 10 | 20",
+        ),
+        (
+            "f(n: int) = { 2 -> 10, n -> 20 }[3];\n",
+            "(n: int) -> 10 | 20 | #notFound",
+        ),
+        // Unchanged: a display of literal keys, whose values a read joins into one type.
+        (
+            "f(n: int) = { 2 -> 10 }[n];\n",
+            "(n: int) -> 10 | #notFound",
+        ),
+        (
+            "f(n: int) = { 2 -> 10, 3 -> 20 }[2];\n",
+            "(n: int) -> 10 | 20",
+        ),
+    ] {
+        let got = sig(src, "f");
+        if got != want {
+            wrong.push(format!("{src}  gave {got}, wanted {want}"));
+        }
+    }
+    assert!(wrong.is_empty(), "{}", wrong.join("\n"));
+}
+
 #[test]
 fn where_over_loose_atoms_is_not_built() {
     // The test of `where` gives the atom, not a verdict, for an entry that is a loose atom,

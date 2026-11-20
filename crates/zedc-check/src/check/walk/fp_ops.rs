@@ -1094,13 +1094,38 @@ impl<'t, 'a> Ck<'t, 'a> {
     /// no exact keys, so that side's `U*` is infinite too, and the first side's `L*` must be
     /// infinite, so no family of either side has exact keys; but these sets are read only
     /// where one family has them (`keyed` in `zip_end`), a finite `L*` on its side. So the
-    /// verdict read here equals the true one in every case. Not proved, in the message only:
-    /// where the region `U_from - L_to` is made larger by an infinite sure set read as empty,
-    /// its least key may be one the other side holds, so the message names that key as one
-    /// "nothing shows" is there. It needs a family whose keys are infinitely many ints each
-    /// surely held, a total arrow on `int` held as data; no form found builds one (displays
-    /// list their keys; ranges, `Lines` inputs and `where` are partial), but that search is
-    /// not a proof.
+    /// verdict read here equals the true one in every case.
+    ///
+    /// The message: where the region `U_from - L_to` were made larger by an infinite sure set
+    /// read as empty, its least key could be one the other side holds, and the message would
+    /// say "nothing shows" it is there. Claim: no family has an infinite sure set of int keys,
+    /// so this never happens. Proof, by the sites that make a signature data (`data = true`,
+    /// `data: true` and `data: <expr>` searched in every zedc crate, 2026-11-20, audit
+    /// proofdoc2b); a site that copies `data` from another signature (`data: s.data` in the
+    /// maps of ty.rs and walk.rs) keeps or substitutes its arrows, so it is covered by the
+    /// site the signature came from, given that no data signature has an exact arrow on a
+    /// type variable (each site below):
+    /// - partial arrows only, so no sure key: `strings_rank`, the `Array` type in `Ck::make`
+    ///   and `port` (a `Lines` input), all in mod.rs; `chunkBy` (here); `read_as_family` and
+    ///   the families of remap.rs; a range (`Ck::range_end` in walk.rs); the errors family of
+    ///   ty.rs (keys not ints). `Ck::key_outside` in walk.rs makes a family for the text of a
+    ///   menu only;
+    /// - a map or set display (`display_ty` in walk.rs): its sure keys are the union of its
+    ///   keys that are one value each, a finite set. Before the audit proofdoc2b
+    ///   (2026-11-20) a key of many values, `{ n -> 10 }` at `n: int`, was a sure key too:
+    ///   the infinite sure set `int`, the case this paragraph needs; test
+    ///   `l03_02_map_run::types::a_key_of_many_values_is_permitted_not_guaranteed`;
+    /// - a list concat ([`Self::list_concat_end`]): exact keys `0 ..< n + m` or the finite
+    ///   union `0 | … | n + m - 1`, else partial;
+    /// - a `zip` (above and [`Self::zip_sig`]): partial where the keys are shown shared by
+    ///   origin; else the sure key type is `U_a` or `U_b`, accepted only where `U_x ⊆ L_y`,
+    ///   and since an infinite `U` is read as `top` and an infinite `L` as empty, that holds
+    ///   only where both are finite; an operand of unresolved type records a need and is
+    ///   checked again at each call with its type resolved (row ZIP-generic-operands), so
+    ///   no variable reaches the arrow.
+    /// So every sure set of int keys is finite, `of` reads it exactly, and the message is
+    /// right. What the tests cannot catch: a site added later that makes a data signature
+    /// with an exact arrow on an infinite int type; the search above must be made again then.
     // Complexity tradeoff: O(k log k) for a family whose key type lists k ints, as an array
     // display, the cost of its type, and O(1) for one with exact keys, against O(b - a) for
     // listing the keys of `a ..< b` as the naive way would (row RANGE-literal-keys); a meet
