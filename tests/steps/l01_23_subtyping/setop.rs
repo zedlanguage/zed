@@ -1090,3 +1090,16 @@ fn cofinite_integer_points_beside_a_few_large_powers() {
 }
 
 mod bench;
+
+/// Item TEST-kernel-unreached-paths-15 (`empty`, a member the parity reading proves empty, met
+/// below a root): the meet `M` of `bounded_parity(2, 1, None)` holds lists over 0 and 1 with an
+/// even count of each and an odd length, and an even count plus an even count is even, so `M`
+/// is empty. As the field of a tuple it is asked by the search as an inner type, and the search
+/// answers it from `diagonal_empty` at once, with no member searched. Control: that answer
+/// skipped (`return Stack::ready(true)` not taken) leaves the field to the search of the
+/// group's members, which also finds it empty, but only after searching members.
+#[test]
+fn a_tuple_with_a_parity_meet_as_a_field_is_empty() {
+    let t = Type::tuple(vec![bounded_parity(2, 1, None), Type::int()]);
+    assert_eq!(verdict_and_searched(&t), (Verdict::Empty, 0));
+}

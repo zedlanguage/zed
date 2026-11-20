@@ -7360,12 +7360,12 @@ impl<'m> Searching<'m> {
         for (j, cells) in order {
             let mut tried = BTreeSet::new();
             let mut taken = false;
-            // A cell closed on the component misses or holds it, so its pieces are the
-            // component and nothing, and narrow nothing.
+            // Every cell of `cells` is still open here (TEST-kernel-unreached-paths-15): only
+            // `Region::close` and `Region::restore` write `open`; each `close` below is undone
+            // by `restore(mark)` but the one on the taken branch, which closes this cell only,
+            // and `cells` is a set; a component not taken leaves the region as it found it.
             for cell in cells {
-                if !g.cells[j][cell].open {
-                    continue;
-                }
+                assert!(g.cells[j][cell].open, "a cell of `order` is still open");
                 let a = g.cells[j][cell].ty.clone();
                 for (c, missed) in [(&a & &g.r[j], false), (&g.r[j] - &a, true)] {
                     if tried.contains(&c) {
@@ -8038,9 +8038,10 @@ impl<'m> Searching<'m> {
             }
         }
         let atoms = f.distinct_atoms();
-        if atoms.is_empty() {
-            return None;
-        }
+        // `taken` or `refused` is non-empty, and both list atoms of `f` (TEST-kernel-unreached-
+        // paths-15): `Bdd::forced_to` gives the list's own literal or its first block's,
+        // `Part::forced` reads the settings of `f`'s own atoms. So `f` has an atom.
+        assert!(!atoms.is_empty(), "a part that forces an atom has one");
         let mut any = Vec::new();
         if taken.len() + refused.len() == atoms.len() {
             let taken_set: BTreeSet<&Row> = taken.iter().collect();
@@ -11989,9 +11990,11 @@ impl<'m> Searching<'m> {
                                 return false;
                             }
                             all_empty = false;
-                            if let Some(gu) = saved {
-                                blamed_false.push(gu);
-                            }
+                            // `atom_non_empty` is written at one place, above, with `(true,
+                            // Some(gu))` or `(false, _)`, and its default is `(false, None)`, so
+                            // a blamed atom always has its blame saved
+                            // (TEST-kernel-unreached-paths-15).
+                            blamed_false.push(saved.expect("a blamed atom has its blame saved"));
                             continue;
                         }
                         let snap = self.fork_snapshot();
@@ -12479,7 +12482,7 @@ impl Choices<'_> {
         x: &Known<'_>,
         y: &Known<'_>,
         not: bool,
-        indexes: &mut HashMap<u64, Index>,
+        indexes: &HashMap<u64, Index>,
         picks: &mut [Option<Choice>],
     ) {
         let shared = shared_on(&x.on, &y.on);
@@ -12493,11 +12496,10 @@ impl Choices<'_> {
             unreachable!("a meet found inhabited is of two lists or exclusive ors")
         };
         let ((px, nx), (py, ny)) = ((lx.0, lx.1 ^ not), (ly.0, ly.1 ^ not));
-        for p in [px, py] {
-            if let Entry::Vacant(e) = indexes.entry(p.id()) {
-                e.insert(self.index(p));
-            }
-        }
+        // Both operands are already indexed (TEST-kernel-unreached-paths-15): this node's `sat`
+        // or `valid` came from `pair` in `read`, on the same leaves `px` and `py` (`not` only
+        // flips their values), and `pair` files both in `read.indexes`, the map `witness`
+        // passes to `extract` and `extract` here. So the lookups in `side` find both.
         let side = |p: &Part<Row>, not: bool| match &indexes[&p.id()] {
             Index::List(l) => Side::List(l, goal(l, !not, &shared)),
             Index::Parity(q) => Side::Parity(q, self.target(q, !not, &shared), !not),

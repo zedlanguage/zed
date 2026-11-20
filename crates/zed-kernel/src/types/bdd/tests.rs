@@ -3346,3 +3346,33 @@ fn a_part_goes_before_itself() {
         assert!(p.before(&p), "{p:?}");
     }
 }
+
+/// Item TEST-kernel-unreached-paths-15 (`Connect::negate`, a choice whose complement is no
+/// expression): `c&x | !c&x` built with `Part::connect` is kept as an expression, a choice on
+/// `c` whose branches are equal, so its complement `choose(c, !x, !x)` is `!x`, a diagram, and
+/// no source is set on it. 40,000 drawn expressions (`random_expr`, depth 5, seeds 1 to 400,
+/// 100 draws each) met no such case. Control: the choice `c&x | !c&y` has an expression as its
+/// complement.
+#[test]
+fn a_choice_with_equal_branches_has_a_diagram_as_complement() {
+    let l = |i: u64| Part::literal(atom(i));
+    let choice = |x: Part<Row>, y: Part<Row>| {
+        Part::connect(
+            Op::Or,
+            Part::connect(Op::And, l(0), x),
+            Part::connect(Op::And, l(0).not(), y),
+        )
+    };
+    let p = choice(l(1), l(1));
+    assert!(matches!(p, Part::Expr(_)), "{p:?}");
+    let n = p.not();
+    assert!(matches!(n, Part::Bdd(_)), "{n:?}");
+    let flipped: Vec<bool> = values(&p).into_iter().map(|v| !v).collect();
+    assert_eq!(values(&n), flipped);
+    assert_eq!(values(&n), values(&l(1).not()));
+    let control = choice(l(1), l(2));
+    let m = control.not();
+    assert!(matches!(m, Part::Expr(_)), "{m:?}");
+    let flipped: Vec<bool> = values(&control).into_iter().map(|v| !v).collect();
+    assert_eq!(values(&m), flipped);
+}

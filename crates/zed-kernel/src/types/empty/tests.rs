@@ -3557,3 +3557,106 @@ fn the_leaf_of_a_value_follows_first_components_and_stops_at_records_and_paths()
     assert!(matches!(inner, Value::Family(_)));
     assert_eq!(leaf(&inner), None);
 }
+
+/// Item TEST-kernel-unreached-paths-15 (`sweep_verdict`, a tuple component the chain search
+/// finds inhabited): `((),)` is one row of one component, `()`, itself one row of no
+/// components, so inhabited, and the tuple with it. Control: the arm `Some(Verdict::Inhabited)
+/// => {}` changed to `all_inhabited = false` gives `None`.
+#[test]
+fn a_tuple_of_the_empty_tuple_is_inhabited_by_the_chain_search() {
+    let t = Type::tuple(vec![Type::tuple(vec![])]);
+    assert_eq!(t.chain_verdict(), Some(Verdict::Inhabited));
+}
+
+/// Item TEST-kernel-unreached-paths-15 (`lists`, a third component whose least `y` is above
+/// the two kept): points `(component, x, y, cell)` `(0, 10, 1)`, `(1, 10, 2)`, `(2, 10, 3)`
+/// and `(0, 8, 5)`, every `y` wanted and only `x = 8`. At `x = 10` the third point is on
+/// neither kept component and its `y` 3 is not below the second least, 2, so the two least stay
+/// `(1, 0)` and `(2, 1)`. At `x = 8` the greatest `y` every component reaches is 2 and the
+/// point there has `y` 5, so it takes the least `y` of another component than its own, 2 on
+/// component 1: the choice is points 3, 1 and 2. Control: the test `best[1].1 == k || y <
+/// best[1].0` changed to `true` keeps `(3, 2)` as the second least, 3 is above 2, and the sweep
+/// answers `None`.
+#[test]
+fn lists_keeps_the_two_least_ys_of_three_components() {
+    let mut xs = [false; 11];
+    xs[8] = true;
+    let gx = Goal {
+        values: &xs,
+        want: true,
+        low: 100,
+        high: 10,
+    };
+    let ys = [true];
+    let gy = Goal {
+        values: &ys,
+        want: true,
+        low: 0,
+        high: 0,
+    };
+    let mut points: Vec<Point> = vec![
+        (0, 10, 1, None),
+        (1, 10, 2, None),
+        (2, 10, 3, None),
+        (0, 8, 5, None),
+    ];
+    assert_eq!(lists(&mut points, 3, &gx, &gy), Some(vec![3, 1, 2]));
+}
+
+/// Item TEST-kernel-unreached-paths-15 (`cycle_meet`, an item type the search finds empty):
+/// `E = (#a | #b, int) - (#a, int) - (#b, int)` is empty, but not as written, and
+/// `#cons(E, L)` with `L = #nil | #cons(E, L)` is a list link whose item type is `E`. The
+/// cycle rule finds the item empty and gives no lengths, so the type is Empty. Control: that
+/// `return None` removed lets the cycle rule read lengths of a list whose items have no
+/// value.
+#[test]
+fn a_list_link_whose_items_are_empty_holds_no_list() {
+    use super::super::rec::{Def, Expr, Group};
+    let (a, b) = (Type::atom("a"), Type::atom("b"));
+    let pair = |h: Type| Type::tuple(vec![h, Type::int()]);
+    let e = &(&pair(&a | &b) - &pair(a)) - &pair(b);
+    assert!(!e.lists_nothing());
+    let ts = Group::new(vec![Def {
+        name: "L".into(),
+        params: vec![],
+        body: Expr::Union(vec![
+            Expr::Type(Type::atom("nil")),
+            Expr::Atom(
+                "cons".into(),
+                vec![Expr::Type(e.clone()), Expr::Ref(0, vec![])],
+            ),
+        ]),
+    }])
+    .unwrap()
+    .instance(vec![]);
+    let t = Type::atom_with("cons", &Type::tuple(vec![e, ts[0].clone()]));
+    Type::forget_emptiness();
+    assert_eq!(t.verdict(), Verdict::Empty);
+}
+
+/// Item TEST-kernel-unreached-paths-15 (`system`, a morphism node whose bounds the verdicts
+/// refuse): `X = nfa() -> top : int | X`, `nfa()` empty but refused for a fork. The node is
+/// recursive only through its value type, so its bounds are read by `subtype_verdict` and
+/// `verdict`, and the refusal leaves the node unknown (`Some(None)`). No key is promised by
+/// an empty guarantee, so the empty morphism is in `X`, and the search finds it Inhabited.
+/// Control: that `Some(None)` changed to `Some(Some(Kind::Bot))` reads the node as empty.
+#[test]
+fn a_morphism_with_refused_bounds_is_left_unknown_by_the_group_system() {
+    use super::super::rec::{Expr, Group};
+    use fork_inputs::{def, nfa, r};
+    let x = Group::new(vec![def(
+        "X",
+        Expr::Morphism(
+            Box::new(Expr::Type(nfa())),
+            Box::new(Expr::Type(Type::top())),
+            Box::new(Expr::Union(vec![Expr::Type(Type::int()), r(0)])),
+        ),
+    )])
+    .unwrap()
+    .instance(vec![])
+    .remove(0);
+    Type::forget_emptiness();
+    assert!(matches!(nfa().verdict(), Verdict::Refused(_)));
+    Type::forget_emptiness();
+    assert_eq!(x.verdict(), Verdict::Inhabited);
+}

@@ -737,9 +737,8 @@ impl Sweep {
 
     /// `run` and `jump` of every link, each chain walked once from a stack: a link on no cycle
     /// whose tail is on no cycle and has its signature lasts one step more than its tail.
-    /// `None` when links on no cycle form a cycle, which a type built from finite terms and
-    /// members on no cycle does not.
-    fn runs(&mut self) -> Option<()> {
+    /// Called right after [`Sweep::merge`], with no link added between (`list_sweep_value`).
+    fn runs(&mut self) {
         let n = self.links.len();
         let mut done = vec![false; n];
         let mut on_path = vec![false; n];
@@ -747,9 +746,15 @@ impl Sweep {
             let mut path = Vec::new();
             let mut y = x;
             while !done[y] {
-                if on_path[y] {
-                    return None;
-                }
+                // Proof that no link repeats on a path (TEST-kernel-unreached-paths-15). The
+                // walk steps from `y` to `z = tail(y)` only when neither is `cyclic`. `merge`
+                // set `tail(y) = rep[t]` for `y`'s tail `t` before the merge, and `rep[t]` is
+                // the first link of `t`'s name, so it has `t`'s name. Cycle names and names
+                // off a cycle come from one counter and are never shared, so `t` is off a cycle
+                // as `z` is. A link `p` off a cycle is named by the key (label, name of its
+                // tail), interned when that tail was already named, so `name[p] > name[t]`.
+                // Each step lowers the name, so a path cannot come back to a link.
+                assert!(!on_path[y], "a link repeats on a path of tails off a cycle");
                 let l = &self.links[y];
                 if l.cyclic || l.head == NONE {
                     let (run, jump) = match l.tail {
@@ -781,7 +786,6 @@ impl Sweep {
                 on_path[p] = false;
             }
         }
-        Some(())
     }
 
     /// The classes of `pos` (a head) by the heads `neg`, kept for each pair. Two values are in
@@ -854,22 +858,24 @@ impl Sweep {
                 add(true, BTreeSet::new(), v);
             }
         }
+        // The bare names from their index (`Atoms::bare`), the names whose part holds the bare
+        // atom. Every name a head lists is one of them (TEST-kernel-unreached-paths-15): a head
+        // is a row's head that `shape` passed by `head_ok`, `h & C` passed by `head_ok`
+        // (`read_head`), or a union or meet of heads (`join`, `meet`); `head_ok` takes finite
+        // atoms whose parts are all bare, a union or meet of such atoms is again such atoms, and
+        // a finite `Atoms` lists no part `AtomPart::none()` (the invariant of `Atoms::set`).
         let mut names: BTreeMap<Arc<str>, BTreeSet<usize>> = BTreeMap::new();
         for (g, t) in &gs {
-            for (a, part) in t.p().atoms.names().iter() {
-                if part.bare {
-                    names.entry(a.clone()).or_default().insert(*g);
-                }
+            for a in t.p().atoms.bare().iter() {
+                names.entry(a.clone()).or_default().insert(*g);
             }
         }
-        for (a, part) in p.atoms.names().iter() {
-            if part.bare {
-                add(
-                    false,
-                    names.get(a).cloned().unwrap_or_default(),
-                    Value::atom(a),
-                );
-            }
+        for a in p.atoms.bare().iter() {
+            add(
+                false,
+                names.get(a).cloned().unwrap_or_default(),
+                Value::atom(a),
+            );
         }
         for (&len, part) in p.tuples.lens.iter() {
             let mut cols: Vec<Vec<Type>> = vec![Vec::new(); len];
@@ -998,14 +1004,20 @@ impl Sweep {
                 let [Value::Int(v)] = &p.ints.values.iter().cloned().collect::<Vec<_>>()[..] else {
                     return None;
                 };
-                let one = Type::lit(&Value::Int(*v))?;
-                if h == &one {
-                    Some((false, Some(*v)))
-                } else if h == &(&Type::int() - &one) {
-                    Some((true, Some(*v)))
-                } else {
-                    None
-                }
+                // `h` is `{v}` or `int - {v}` by whether its integers are cofinite
+                // (TEST-kernel-unreached-paths-15). `h` is a set of integers: with the carrier
+                // `int`, every head is `h' & int` (`read_head`) or a union or meet of such heads;
+                // in the `fixed` branch `h` is made from `int` by meets and differences. A set of
+                // integers that lists the one integer `v` is `{v}` when finite and `int - {v}`
+                // when cofinite. The kind is a candidate only: `check` tests the list it yields.
+                debug_assert!(Type::lit(&Value::Int(*v)).is_some_and(|one| {
+                    *h == if p.ints.cofinite {
+                        &Type::int() - &one
+                    } else {
+                        one
+                    }
+                }));
+                Some((p.ints.cofinite, Some(*v)))
             })
             .collect();
         let full = |h: usize| h != NONE && kinds[h] == Some((true, None));
@@ -1562,16 +1574,25 @@ impl Threads {
 
     fn leave(&mut self, sw: &Sweep, i: usize) {
         let x = self.at[i];
+        // A live thread `i` holds `by_key[key] == i` and is in `kinds[k]`
+        // (TEST-kernel-unreached-paths-15), and `leave` is called only on live threads: on
+        // `alive[i]` in the event loop, and on the members of a `kinds` set, which holds only
+        // live threads (a thread `place` ends is never put in, and one ended on a class leaves
+        // first). `place` puts both in, and it does not overwrite another live thread's key,
+        // since it ends `i` instead when `at_link` finds one. A thread is placed again only
+        // after it leaves, and links do not change after `runs`, so `key` and `sig` are those
+        // `place` read.
         let key = Self::key(sw, self.taken[i], x, self.since[i]);
-        if self.by_key.get(&key) == Some(&i) {
-            self.by_key.remove(&key);
-        }
+        let held = self.by_key.remove(&key);
+        assert_eq!(held, Some(i), "a live thread holds its key");
         let k = (self.taken[i], sw.sig(x));
-        if let Some(set) = self.kinds.get_mut(&k) {
-            set.remove(&i);
-            if set.is_empty() {
-                self.kinds.remove(&k);
-            }
+        let set = self
+            .kinds
+            .get_mut(&k)
+            .expect("a live thread is in its kind");
+        set.remove(&i);
+        if set.is_empty() {
+            self.kinds.remove(&k);
         }
         self.acyclic -= usize::from(!sw.links[x].cyclic);
         self.sub_taken -= usize::from(self.taken[i] && sw.sub[x]);
@@ -1896,7 +1917,7 @@ fn list_sweep_value(t: &Type, actual: &mut Option<Value>) -> Option<Verdict> {
         r.0 = rep[r.0];
     }
     sw.rep = rep;
-    sw.runs()?;
+    sw.runs();
     if let Some((items, last)) = sw.short_escape(&roots)
         && sw.check(&plain, &plain_roots, &items, &last)
     {
@@ -2050,10 +2071,14 @@ fn list_sweep_value(t: &Type, actual: &mut Option<Value>) -> Option<Verdict> {
         }
         let classes = sw.classes(head, per_head.keys().copied().collect());
         let mut base = (0usize, 0usize);
+        // `classes.cof` is drawn from the heads `classes` was given (kept per `(pos, neg)`),
+        // here `per_head`'s keys, and `per_head` does not change after the call
+        // (TEST-kernel-unreached-paths-15).
         for g in &classes.cof {
-            if let Some(c) = per_head.get(g) {
-                base = (base.0 + c.0, base.1 + c.1);
-            }
+            let c = per_head
+                .get(g)
+                .expect("a head of `cof` is a key of `per_head`");
+            base = (base.0 + c.0, base.1 + c.1);
         }
         let mut open = Vec::new();
         for (ci, c) in classes.list.iter().enumerate() {

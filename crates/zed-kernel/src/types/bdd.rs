@@ -3878,18 +3878,17 @@ mod list {
             }
             let mut stack: Vec<(&Cell<A>, bool)> = vec![(self, false)];
             while let Some((c, ready)) = stack.pop() {
-                // Made by another thread since `c` was pushed: the cells of a list are shared
-                // between threads, and `OnceLock` keeps the first atoms set. On one thread this
-                // does not happen. `c` was pushed with no atoms; until it is popped only cells
-                // below it are made, and `c` is not below itself. Nor is a cell made twice in one
-                // walk: the walk starts at a list's root (`Cell::find_by_atoms`), and a cell met
-                // twice in one tree would put its blocks twice in the list, while a list in its
-                // one form holds each atom in one block (module comment). Skipping saves making
-                // the set again, which would give the same atoms; no test makes the race, so no
-                // test reaches this.
-                if c.atoms.get().is_some() {
-                    continue;
-                }
+                // `c` is pushed with no atoms, and on one thread it still has none when popped:
+                // until then only cells below it are made, `c` is not below itself, and no cell
+                // is met twice in one walk (the walk starts at a list's root,
+                // `Cell::find_by_atoms`, and a cell met twice in one tree would put its blocks
+                // twice in the list, while a list in its one form holds each atom in one block,
+                // module comment). The cells of a list are shared between threads, so another
+                // thread may make `c`'s atoms meanwhile. That thread made `c`'s children first,
+                // so none is pushed, and the atoms are made again from them and dropped, since
+                // `OnceLock` keeps the first set; both hold the same atoms. A check for that race
+                // here, which saved the one remaking, was removed (TEST-kernel-unreached-paths-15):
+                // no test can make the race, and the result is the same without it.
                 let kids = [c.left.as_deref(), c.right.as_deref()];
                 if !ready {
                     stack.push((c, true));
