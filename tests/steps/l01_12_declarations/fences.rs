@@ -18,9 +18,10 @@ fn every_unit_builds_or_names_its_layer() {
         }
     }
     assert!(wrong.is_empty(), "{}", wrong.join("\n"));
-    // 23 and 113 at step L1.12; later steps build more.
+    // 23 and 113 at step L1.12; later steps build more. The sec:type_language fence of a type
+    // computed from a schema file (QUESTIONS A72) is the 212th.
     assert!(
-        built >= 23 && built + later == 211,
+        built >= 23 && built + later == 212,
         "built {built}, later {later}"
     );
 }

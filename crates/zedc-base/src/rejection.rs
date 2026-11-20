@@ -125,6 +125,8 @@ rows! {
     PathLeavesPackage =>
         "File read at the compile-time stage by a path that leaves the package root",
     StalePin => "Pinned file whose content no longer matches its pin",
+    // No diagnostic uses this row yet: plan row SCHED-schema-types emits it.
+    SchemaNotInBuild => "Type computed from a schema file the build does not carry",
     ImportCycle => "Import cycle",
     // No diagnostic uses this row yet: plan row L2.12 emits it.
     ImportPathNamesNoUnit => "Import of a path that names no unit",
