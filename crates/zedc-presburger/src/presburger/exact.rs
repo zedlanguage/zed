@@ -1364,13 +1364,36 @@ fn cells_cover(
         // value in such a class, is dropped at once: the odd values between the even ones of a
         // stride, which one question for each would cost as many questions as the answer has
         // pieces.
-        if let Some(st) = strides.pop() {
+        // The question takes one piece of those classes, the first, so that it holds no
+        // disjunction of residues; a piece with no point is kept in the stride's `absent`, and
+        // the stride is asked again for the next piece, until every class no value found is in
+        // has been asked and found empty: then the pieces of the gap are dropped as above.
+        // Complexity tradeoff: naive version, one question with the residues no value found is
+        // in, `j` in their union of q pieces, a disjunction of q intervals that the solver
+        // splits on: on `REMAINDER_SHAPES`' "a test of the chain" at modulus 7, seed 3, k = 5
+        // (s22, FAIL-s22-cover-moduli-5-7), the question of the residues {1..3} ∪ {5..6} cost
+        // 1,421,700 units where that of {1..3} alone cost 319,600, and the cover was refused at
+        // the limit. Used: one question a piece, its answer the same set of points; a stride
+        // asks at most one question for each class a point is then found in (as before) and one
+        // for each piece found empty, at most `step` questions a stride where before it asked
+        // one fewer than the classes found plus one, so at most `step` more questions where
+        // every piece is one class and none has a point. The questions are no larger, each `f`
+        // and four rows. On s22's cases at moduli 5 and 7, 6 of the 22 cases refused before
+        // are answered, and no case answered before is refused
+        // (`s22::the_cover_answers_where_the_solver_alone_answered_on_three_shapes_at_moduli_5_and_7`).
+        if let Some(mut st) = strides.pop() {
             let have = residues(&found, &st, work)?;
             let all = IntervalSet::range(fin(&Int::from(0)), fin(&(&st.step - &Int::from(1))));
-            let other = all.minus(&have);
-            if other.is_empty() {
+            let other = all.minus(&have).minus(&st.absent);
+            let Some((a, b)) = other.first().cloned() else {
+                // Every class with no value found has no point here: the pieces between the
+                // values found are dropped. With `absent` empty, every class has a value.
+                if !st.absent.is_empty() {
+                    gap = gap.minus(&outside(&gap, &st, &have, work)?);
+                }
                 continue;
-            }
+            };
+            let first = IntervalSet::range(a, b);
             work.question(size + 4)?;
             EXACT_QUESTIONS.set(EXACT_QUESTIONS.get() + 1);
             let (t, j) = (Atom::Sym("#t".into()), Atom::Sym("#j".into()));
@@ -1389,14 +1412,17 @@ fn cells_cover(
                 f.clone(),
                 super::member(s, &span),
                 Formula::Con(Con { lin, rel: Rel::Eq }),
-                super::member(&j, &other),
+                super::member(&j, &first),
             ]);
             // A refusal of this question for another cause leaves the gap to the questions by
             // piece; past the work limit, the cover stops here at once.
             match work.ask(&q) {
                 Err(_) if work.used > work.limit => return Err(Refusal::Questions),
                 Err(_) => {}
-                Ok(None) => gap = gap.minus(&outside(&gap, &st, &have, work)?),
+                Ok(None) => {
+                    st.absent = st.absent.join(&first);
+                    strides.push(st);
+                }
                 Ok(Some(m)) => {
                     points.push(m);
                     strides.push(st);
@@ -3981,11 +4007,14 @@ fn cut_at_shared(
     Ok(Some(!set.is_empty()))
 }
 
-/// A progression of values of a cell: `lo`, `lo + step`, ..., `hi`, `step` 2 or more.
+/// A progression of values of a cell: `lo`, `lo + step`, ..., `hi`, `step` 2 or more. `absent`
+/// holds the residues modulo `step` that a residue question of [`cells_cover`] found no point of `f`
+/// in, with `s` from `lo` to `hi`: empty when the cell makes it.
 struct Stride {
     step: Int,
     lo: Int,
     hi: Int,
+    absent: IntervalSet,
 }
 
 /// The residues modulo `st.step` of the values of `found` from `st.lo` to `st.hi`, each piece
@@ -4143,6 +4172,7 @@ fn cell(
                         step: p.step.clone(),
                         lo: first,
                         hi: last,
+                        absent: IntervalSet::empty(),
                     });
                 }
             }
@@ -4292,6 +4322,7 @@ fn progression(
             step: step.clone(),
             lo: Int::from(a),
             hi: Int::from(b),
+            absent: IntervalSet::empty(),
         }),
         _ => None,
     };

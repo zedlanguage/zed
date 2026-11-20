@@ -3407,6 +3407,52 @@ fn the_cover_on_three_shapes_at_moduli_5_and_7_matches_the_interpreter() {
     }
 }
 
+/// The negative control of [`the_cover_on_three_shapes_at_moduli_5_and_7_matches_the_interpreter`]:
+/// on each of the cases whose answer changed with d85e3b436 and with the residue questions
+/// asked one piece at a time (modulus, seed, shape, k; [`REFUSED_WITH_TWO_DISJUNCTIONS`]), the
+/// cover's answer with one value of `x` that has a point meeting the demand taken out of its
+/// box fails [`check`], so that test would catch a cover that drops such a value.
+#[test]
+fn a_cover_with_one_value_of_x_dropped_fails_the_interpreter_check() {
+    use super::{meets, points};
+    let (ds, d) = (xy_in(60), Demand::Bool(true));
+    let names: Vec<Arc<str>> = ds.keys().cloned().collect();
+    let x = names
+        .iter()
+        .position(|n| &**n == "x")
+        .expect("x is an input");
+    for (m, seed, shape, k) in [
+        (5, 2, "arms of x and y", 5),
+        (5, 3, "a test of the chain", 5),
+        (7, 2, "a test of the chain", 5),
+        (5, 2, "arms over x", 5),
+        (7, 1, "arms of x and y", 5),
+        (7, 2, "a test of the chain", 2),
+        (7, 3, "a test of the chain", 5),
+        (7, 3, "a test of the chain", 13),
+        (7, 3, "arms over x", 5),
+    ] {
+        let t = remainder_shape(shape, moved_remainder_chain(seed, k, "x", m));
+        let p = preimage(&t, &ds, &d);
+        assert!(p.refusal.is_none(), "{t}: the cover answers this case");
+        check(&t, &ds, &d, &p, (-60, 60));
+        let met = (points(&ds, &names, (-60, 60)).into_iter())
+            .find(|pt| meets(&t, &names, pt, &d))
+            .expect("a point meets the demand");
+        let mut wrong = p.clone();
+        let dropped = p.domains["x"].minus(&IntervalSet::single(met[x]));
+        wrong.domains.insert("x".into(), dropped);
+        let failed = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            check(&t, &ds, &d, &wrong, (-60, 60))
+        }));
+        assert!(
+            failed.is_err(),
+            "{t}: x = {} dropped passes the check",
+            met[x]
+        );
+    }
+}
+
 /// The cases of [`the_cover_answers_where_the_solver_alone_answered_on_three_shapes_at_moduli_5_and_7`]
 /// refused (373e5d22a, 2026-11-19): each has a group in `direct` with two disjunctions that
 /// both read the projected symbol and share a remainder atom, which neither the rule for one
@@ -3421,32 +3467,33 @@ fn the_cover_on_three_shapes_at_moduli_5_and_7_matches_the_interpreter() {
 /// from other points, and `(5, 2, "arms of x and y", 5)`, `(5, 3, "a test of the chain", 5)`
 /// and `(7, 2, "a test of the chain", 5)` are answered, each matching the interpreter
 /// ([`the_cover_on_three_shapes_at_moduli_5_and_7_matches_the_interpreter`]), while
-/// `(7, 3, "a test of the chain", 5)` is refused (FAIL-s22-cover-moduli-5-7). No search gave
-/// `Quick::Empty` on these cases: of the 130 gaps of all five shapes, 89 got a point, 41 went
-/// to the solver, and the solver found a point in each, so no backjump passed over a point.
-const REFUSED_WITH_TWO_DISJUNCTIONS: [(i64, u64, &str, usize); 22] = [
+/// `(7, 3, "a test of the chain", 5)` was refused: the cell of the point `quick_search` found
+/// for its second symbol made a stride whose residue question, with `j` in {1..3} ∪ {5..6},
+/// cost 1,421,700 units and passed the limit. Since the cover asks a residue question for one
+/// piece of residues at a time (`exact::cells_cover`, FAIL-s22-cover-moduli-5-7), that case
+/// and `(5, 2, "arms over x", 5)`, `(7, 1, "arms of x and y", 5)`,
+/// `(7, 2, "a test of the chain", 2)`, `(7, 3, "a test of the chain", 13)` and
+/// `(7, 3, "arms over x", 5)` are answered, each matching the interpreter, and no case answered
+/// before is refused. No search gave `Quick::Empty` on these cases: of the 130 gaps of all five
+/// shapes, 89 got a point, 41 went to the solver, and the solver found a point in each, so no
+/// backjump passed over a point.
+const REFUSED_WITH_TWO_DISJUNCTIONS: [(i64, u64, &str, usize); 16] = [
     (5, 2, "arms of x and y", 13),
-    (5, 2, "arms over x", 5),
     (5, 2, "arms over x", 13),
     (5, 2, "a test of the chain", 13),
     (5, 3, "arms over x", 13),
-    (7, 1, "arms of x and y", 5),
     (7, 1, "arms of x and y", 13),
     (7, 1, "arms over x", 5),
     (7, 1, "arms over x", 13),
     (7, 1, "a test of the chain", 5),
     (7, 1, "a test of the chain", 13),
     (7, 2, "arms of x and y", 5),
-    (7, 2, "a test of the chain", 2),
     (7, 2, "arms over x", 2),
     (7, 2, "arms over x", 5),
     (7, 2, "arms over x", 13),
     (7, 2, "a test of the chain", 13),
     (7, 3, "arms of x and y", 13),
-    (7, 3, "arms over x", 5),
     (7, 3, "arms over x", 13),
-    (7, 3, "a test of the chain", 5),
-    (7, 3, "a test of the chain", 13),
 ];
 
 /// The constant `c(j)` of level `j` of [`spread_remainder_chain`] and
