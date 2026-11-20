@@ -32,8 +32,8 @@
 //! `mi.map(q -> m.map(r -> (top(r), top(q))))`, the use takes the identity of the call that
 //! checked it (`Info::fold_reads`, `Elab::env_identity`).
 //!
-//! What stays refused, as not supported by this zedc: a fold whose identity no call decides where it
-//! is elaborated (a function the result of a call holds, run later at another identity, as
+//! What stays refused, as not supported by this zedc: a fold whose identity no call decides where
+//! it is elaborated (a function the result of a call holds, run later at another identity, as
 //! `p[1]` of `p = h3(x -> top(x), m["a"])` for `h3(f, y) = (f(y), f)`, which needs the
 //! identity chosen when the program runs: the proof is at `check_instances`, and row
 //! REDUCE-identity-closure-bodies holds the change that would compile it; a block's

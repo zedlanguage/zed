@@ -112,7 +112,8 @@ impl<'a> Elab<'a> {
     /// The function `e` names, if it is a name of one that takes a body for each list of
     /// identities its calls decide, directly or through names bound to it: a top-level
     /// function or one declared in a block whose calls decide folds, or a lambda bound to a
-    /// name in a block whose written body left folds undecided ([`Local`](super::instances::Local)).
+    /// name in a block whose written body left folds undecided
+    /// ([`Local`](super::instances::Local)).
     pub(super) fn instanced(&self, e: &Expr) -> Option<usize> {
         let (ExprKind::Name(_), Some(Ref::Bound(ids))) = (&e.kind, self.t.res.uses.get(&e.span))
         else {

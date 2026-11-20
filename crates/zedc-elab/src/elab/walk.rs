@@ -680,10 +680,10 @@ impl<'a> Elab<'a> {
     }
 
     /// The body of the function `id`, declared by `s` or bound by `s` to a lambda, at the
-    /// identities `env`, as a lambda, with the folds it left undecided. Each binder of the function's statement other than
-    /// the function's own is given a fresh kernel name while its body is elaborated, as
-    /// kernel names are unique in the unit (stage `mix` and a default's `let` rely on it),
-    /// then given back.
+    /// identities `env`, as a lambda, with the folds it left undecided. Each binder of the
+    /// function's statement other than the function's own is given a fresh kernel name while its
+    /// body is elaborated, as kernel names are unique in the unit (stage `mix` and a default's
+    /// `let` rely on it), then given back.
     // Complexity tradeoff: each body costs one elaboration of the function, O(s) for a
     // function of size s, and one search of the binders by start, O(log b); the bodies are
     // as many as the distinct lists of identities the calls decide, at most the calls. The
@@ -4052,16 +4052,16 @@ fn carried(p: Prim, own: [Option<Carrier>; 2], args: &[Term]) -> (bool, Option<C
 // decimal is never an `int`) and keeps its value at `c`, never an `int`, and the run compares
 // the `int` with it, which `Value::surface_eq` gives as `false` whatever the two values
 // (`number_eq`, numbers of two kinds), `true` under `!=`; a value of no number, as `"a"`, is
-// unequal to every number (`param_follows`, `g("a")` with `x == 1 / 2`). That is the value of `x == 0.5` and of `x == 4 / 2` at an `int`
-// (`l01_26a_generic_literals::param_follows`), and `x == 3 / 2 * 2` is `false` at `f(3)`
-// though `3 / 2 * 2` is whole, as `x == 3.0` is; the declared `x: int` is refused, since at
-// one declared carrier a literal takes it exactly or not at all. The old arm stopped there
-// (`1 / 2` has no arrow at `int`), a bug in zedc. (2b) Any other use: the checker takes `int`
-// out of the class and refuses the call at an `int`, so no `int` reaches the arm, a claim of
-// the checker, not of this rewrite, tested for an `if` branch, a call's argument, a tuple, a
-// list, `<` and the arithmetic operators. Row FAIL-generic-eq-int-witness proposed refusing
-// the call at `int` under `==` too; not taken, since that would remove `int` from the class
-// by a comparison. Evidence: `l01_26a_generic_literals::operations` (`FOLDED`, each body's
+// unequal to every number (`param_follows`, `g("a")` with `x == 1 / 2`). That is the value of
+// `x == 0.5` and of `x == 4 / 2` at an `int` (`l01_26a_generic_literals::param_follows`), and
+// `x == 3 / 2 * 2` is `false` at `f(3)` though `3 / 2 * 2` is whole, as `x == 3.0` is; the declared
+// `x: int` is refused, since at one declared carrier a literal takes it exactly or not at all. The
+// old arm stopped there (`1 / 2` has no arrow at `int`), a bug in zedc. (2b) Any other use: the
+// checker takes `int` out of the class and refuses the call at an `int`, so no `int` reaches the
+// arm, a claim of the checker, not of this rewrite, tested for an `if` branch, a call's argument, a
+// tuple, a list, `<` and the arithmetic operators. Row FAIL-generic-eq-int-witness proposed
+// refusing the call at `int` under `==` too; not taken, since that would remove `int` from the
+// class by a comparison. Evidence: `l01_26a_generic_literals::operations` (`FOLDED`, each body's
 // value against a declared carrier; the two `int` tests) and `l25_08_mutate::examples`.
 fn without_int(p: Prim, own: [Option<Carrier>; 2], args: &mut [Term]) -> [Option<Carrier>; 2] {
     use Carrier::{F64, Int};

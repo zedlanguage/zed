@@ -55,7 +55,8 @@ pub(super) struct Elab<'a> {
     /// The term a call leaving a parameter out binds it to, by the function's binder and the
     /// parameter's index.
     pub(super) defaults: HashMap<(usize, usize), Term>,
-    /// The marks of a marked elaboration ([`elaborate_marked`](super::elaborate_marked)), `None` for an ordinary one.
+    /// The marks of a marked elaboration ([`elaborate_marked`](super::elaborate_marked)), `None`
+    /// for an ordinary one.
     pub(super) marks: Option<Vec<Mark>>,
     /// The spans of the checker's errors, by start, each with the greatest end among it and
     /// those before it ([`Self::in_checker_error`]); empty when the checker accepted the unit.

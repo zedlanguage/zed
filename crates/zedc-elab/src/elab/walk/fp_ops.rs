@@ -130,8 +130,9 @@ impl<'a> Elab<'a> {
     // (a) the kernel's `reindex` passes one as the first argument of its key map and value
     // map, and `discard` as the first argument of its selector. The only such maps are built
     // by elaboration (`where_term` in this file, `remap_term` and `group_term` in `walk.rs`),
-    // which bind that argument to a temporary (`Elab::temp`) that no name in the source resolves to, and
-    // read it only under `PathKey` and `PathLen`, which give one of its keys and its length.
+    // which bind that argument to a temporary (`Elab::temp`) that no name in the source resolves
+    // to, and read it only under `PathKey` and `PathLen`, which give one of its keys and its
+    // length.
     // (b) `Prim::Path` is written only as the body of such a key map, and the kernel takes
     // the key map's result apart into keys (`key_of`, `placed` in `eval.rs`). (c) The ZIR
     // readers make one only where the text or binary form holds one, which the writers give
