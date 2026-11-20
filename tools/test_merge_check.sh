@@ -102,6 +102,11 @@ echo '//! z.' >tests/full/z/mod.rs
 # it prints its part and fails the part named by $STUB_SELF_FAIL.
 printf '#!/bin/bash\necho "self $1"\n[ "$1" != "$STUB_SELF_FAIL" ]\n' >tools/test_merge_check.sh
 chmod +x tools/test_merge_check.sh
+# The toy's own tools/test_run_tests.sh (step 0b, TOOL-merge-check-run-tests-self): it prints its
+# part and, as the real one does, "checks failed: <n>" last, 1 for the part named by $STUB_RT_FAIL.
+printf '#!/bin/bash\necho "rt $1"\n[ "$1" != "$STUB_RT_FAIL" ] || { echo "checks failed: 1"; exit 1; }\necho "checks failed: 0"\n' >tools/test_run_tests.sh
+chmod +x tools/test_run_tests.sh
+: >tools/test_lib.sh
 echo '# Notes' >docs/notes.md
 echo '# Plan' >docs/plan.md
 mkdir -p data
@@ -319,9 +324,11 @@ check "a failing run of tests/full stops the check with exit 1" "merge check: FA
     STUB_RC=1 "$check_script" --base base 2>&1 | command grep -a 'FAILED'; echo "${PIPESTATUS[0]}")"
 # The self-tests (MERGE-tools-self-tests): a change to tools/run_tests.sh runs both parts of
 # tools/test_merge_check.sh; a part that fails refuses the branch.
-check "a change to tools/run_tests.sh runs both parts of tools/test_merge_check.sh" \
+check "a change to tools/run_tests.sh runs both parts of tools/test_merge_check.sh and every part of tools/test_run_tests.sh" \
   "merge check: a file tools/test_merge_check.sh tests changed: both its parts run
+merge check: a file tools/test_run_tests.sh tests changed: all its parts run
 merge check: tools/test_merge_check.sh select and record passed
+merge check: tools/test_run_tests.sh list, select, table, fresh, concurrent and trace passed
 merge check: passed
 0" "$(change_on_base tools/run_tests.sh '# changed'
     "$check_script" --base base 2>&1 | command grep -a -E '^merge check: (a file|tools|passed|FAILED)'
@@ -332,6 +339,31 @@ FAILED: tools/test_merge_check.sh select, rc=1
 1" "$(STUB_SELF_FAIL=select "$check_script" --base base 2>&1 |
     command grep -a -o -E '^self select|FAILED: tools/test_merge_check.sh [a-z]+, rc=[0-9]+'
     echo "${PIPESTATUS[0]}")"
+# Step 0b (TOOL-merge-check-run-tests-self): each failing part of tools/test_run_tests.sh refuses
+# the branch; a failing list also stops select and table, which read its table, and those show
+# as failed with empty logs, not with the passing logs of the run before.
+for p in list table trace; do
+  want="merge check: FAILED: tools/test_run_tests.sh $p"
+  [ $p = list ] && want="$want
+merge check: FAILED: tools/test_run_tests.sh select
+merge check: FAILED: tools/test_run_tests.sh table"
+  check "a failing part $p of tools/test_run_tests.sh refuses the branch with exit 1" "$want
+1" "$(STUB_RT_FAIL=$p "$check_script" --base base 2>&1 |
+    command grep -a -o -E '^merge check: FAILED: tools/test_run_tests.sh [a-z]+'
+    echo "${PIPESTATUS[0]}")"
+done
+check "a change to tools/test_run_tests.sh alone runs its parts, not tools/test_merge_check.sh" \
+  "merge check: a file tools/test_run_tests.sh tests changed: all its parts run
+merge check: tools/test_run_tests.sh list, select, table, fresh, concurrent and trace passed
+merge check: passed
+0" "$(change_on_base tools/test_run_tests.sh '# changed'
+    "$check_script" --base base 2>&1 | command grep -a -E '^merge check: (a file|tools|passed|FAILED)'
+    echo "${PIPESTATUS[0]}")"
+check "a change to tools/test_lib.sh runs both test scripts" \
+  "merge check: a file tools/test_merge_check.sh tests changed: both its parts run
+merge check: a file tools/test_run_tests.sh tests changed: all its parts run" \
+  "$(change_on_base tools/test_lib.sh '# changed'
+    "$check_script" --base base --list 2>&1 | command grep -a -E '^merge check: a file')"
 # The map of run-time reads (step 2a): group c read docs/plan.md, step_y listed data, t stat'ed
 # the root, the piece z of tests/full read docs/plan.md; gone, no longer a group of the
 # workspace, read docs/plan.md too, and so did full-gone, no longer a piece.

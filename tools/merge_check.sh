@@ -11,7 +11,16 @@
 #     (MERGE-tools-self-tests). They test this script on a toy workspace, about 12 s each;
 #     tools/run_tests.sh is in the list because this script's cases depend on its --only and
 #     --trace, which the toy's stub imitates. Their result is not recorded: they run on every
-#     check of such a branch;
+#     check of such a branch. tools/test_lib.sh, which both test scripts source, is in this list
+#     and the next;
+#  0b. when tools/run_tests.sh, tools/test_run_tests.sh or tools/test_lib.sh changed: runs every
+#     part of tools/test_run_tests.sh, list then select then table (select and table read the
+#     table list publishes, in one log directory), and fresh, concurrent and trace beside that
+#     chain (each in a log directory of its own), each part under max(60, the piece limit) s:
+#     the header of test_run_tests.sh gives each part 60 s, and list alone took 30 to 57 s at load
+#     36 to 76. Fails if any part fails (TOOL-merge-check-run-tests-self: until 2026-11-20 a change
+#     to the test runner landed without its own tests, cc7961f67 tested by hand). Not recorded
+#     either;
 #  0a. when a Cargo.toml or Cargo.lock changed: fails if some workspace package, built alone
 #     (`cargo tree -p <package>`, dev-dependencies included), gets a crate with features the
 #     workspace build (`cargo tree --workspace`) does not give it. tools/run_tests.sh --only
@@ -221,9 +230,10 @@ mb=$(git merge-base "$base" HEAD) || { echo "merge check: no merge base with $ba
 mapfile -t changed < <(git diff --no-renames --name-only "$mb" HEAD)
 echo "merge check: ${#changed[@]} files changed since $(git rev-parse --short "$mb") ($base)"
 [ ${#changed[@]} -gt 0 ] || exit 0
-selftest=
+selftest= rtself=
 for f in "${changed[@]}"; do
-  case $f in tools/merge_check.sh | tools/test_merge_check.sh | tools/run_tests.sh | tools/spec_groups.sh) selftest=1 ;; esac
+  case $f in tools/merge_check.sh | tools/test_merge_check.sh | tools/run_tests.sh | tools/spec_groups.sh | tools/test_lib.sh) selftest=1 ;; esac
+  case $f in tools/run_tests.sh | tools/test_run_tests.sh | tools/test_lib.sh) rtself=1 ;; esac
 done
 
 meta=$(cargo metadata --no-deps --format-version 1 -q) || { echo "merge check: cargo metadata failed" >&2; exit 1; }
@@ -724,7 +734,7 @@ if [ -n "$reads" ]; then
   [ -z "$u" ] || echo "merge check: the map has no reads of $(wc -l <<<"$u") tests/full pieces, which only compilation selects: $(paste -sd' ' <<<"$u")"
   sel=$(command grep -a . <<<"$sel"$'\n'"$rsel" | sort -u)
 fi
-if [ -z "$sel" ] && [ -z "$selftest" ] && [ -z "$clippy_pkgs" ]; then
+if [ -z "$sel" ] && [ -z "$selftest$rtself" ] && [ -z "$clippy_pkgs" ]; then
   echo "merge check: no package changed; no tests to run"
   exit 0
 fi
@@ -734,6 +744,7 @@ echo "merge check: groups:${s:+ $(paste -sd' ' <<<"$s")}"
 s=$(part_of full "$snew")
 [ -z "$s" ] || echo "merge check: tests/full pieces: $(paste -sd' ' <<<"$s")"
 [ -z "$selftest" ] || echo "merge check: a file tools/test_merge_check.sh tests changed: both its parts run"
+[ -z "$rtself" ] || echo "merge check: a file tools/test_run_tests.sh tests changed: all its parts run"
 
 # The record (see the header): `<commit>`, then `spec <commit>` when the spec checkout's commit
 # is known (tools/spec_groups.sh --commit), then `group <g>` for each group that passed there, then
@@ -861,6 +872,41 @@ write_reads() {
   echo "merge check: the map's reads of $(wc -l <<<"$torun") groups written to $reads"
 }
 
+# Step 0b: the parts of tools/test_run_tests.sh, started here and waited for after step 0, so the
+# two steps run at once. A part that is not run (its chain stopped first) is reported as failed.
+rtparts=(list select table fresh concurrent trace)
+rtpids=()
+if [ -n "$rtself" ] && [ -z "$list" ]; then
+  rlog=$(git rev-parse --path-format=absolute --git-path merge-check-rt)
+  piece_limit
+  rtlimit=$((limit > 60 ? limit : 60))
+  rt_part() { timeout -k 5 "$rtlimit" tools/test_run_tests.sh "$1" >"$rlog-$1.log" 2>&1; }
+  # Emptied first, so a part its chain did not reach shows no line of an earlier check.
+  for p in "${rtparts[@]}"; do : >"$rlog-$p.log"; done
+  (rt_part list && rt_part select && rt_part table) &
+  rtpids+=($!)
+  for p in fresh concurrent trace; do
+    rt_part "$p" &
+    rtpids+=($!)
+  done
+fi
+# Waits for step 0b and fails when a part failed: each part's last line is "checks failed: 0"
+# exactly when it passed (a part killed by its limit has no such line).
+rt_wait() {
+  [ ${#rtpids[@]} -gt 0 ] || return 0
+  local p bad=
+  for p in "${rtpids[@]}"; do wait "$p"; done
+  for p in "${rtparts[@]}"; do
+    if [ "$(tail -n 1 "$rlog-$p.log" 2>/dev/null)" != "checks failed: 0" ]; then
+      [ ! -f "$rlog-$p.log" ] || cat "$rlog-$p.log"
+      echo "merge check: FAILED: tools/test_run_tests.sh $p (limit ${rtlimit}s; log $rlog-$p.log)" >&2
+      bad=1
+    fi
+  done
+  [ -z "$bad" ] || exit 1
+  echo "merge check: tools/test_run_tests.sh list, select, table, fresh, concurrent and trace passed"
+}
+
 # Step 0: the toy cases of this script, each part under the limit of a piece of run_tests.sh.
 if [ -n "$selftest" ] && [ -z "$list" ]; then
   slog=$(git rev-parse --path-format=absolute --git-path merge-check-self)
@@ -880,9 +926,11 @@ if [ -n "$selftest" ] && [ -z "$list" ]; then
       echo "merge check: FAILED: tools/test_merge_check.sh $part, rc=$rc (limit ${limit}s; log $slog-$part.log)" >&2
     fi
   done
-  [ "$r1" -eq 0 ] && [ "$r2" -eq 0 ] || exit 1
+  # On a failure here step 0b is still waited for, so no part outlives the check.
+  [ "$r1" -eq 0 ] && [ "$r2" -eq 0 ] || { rt_wait; exit 1; }
   echo "merge check: tools/test_merge_check.sh select and record passed"
 fi
+rt_wait
 
 # Step 1a: clippy on the selected packages, before the tests (see the header), less those whose
 # clippy passed at the record's commit with the same inputs.
