@@ -347,6 +347,14 @@ extern "C" fn on_fault(
     // SAFETY: the kernel passes a valid `info` for a handler installed with SA_SIGINFO; the
     // records are leaked and never freed; `mprotect` covers a part of a stack's own mapping,
     // whose `high` is not 0, so it is still mapped. Each call is async-signal-safe.
+    // Correction (DOC-proofs-in-comments-audit): `mprotect` is not in the POSIX list of
+    // signal-safety(7), which holds `write`, `_exit`, `sigaction` and `clock_gettime`. Not
+    // proved: that it is safe here rests on glibc on Linux making `mprotect` one system call
+    // with no lock and no buffer, and on the system call setting `errno` only on failure,
+    // after which `stack_stop` ends the process, so the code the signal stopped keeps its
+    // `errno`. Tests: `tests::a_stack_under_a_memory_limit_grows_as_the_run_reaches_it` and
+    // `tests::stacks_under_a_memory_limit_grow_each_on_its_own` run the growth; they cannot
+    // catch a C library whose `mprotect` takes a lock.
     unsafe {
         let at = (*info).si_addr() as usize;
         let mut g = GROWING.load(Ordering::Acquire);

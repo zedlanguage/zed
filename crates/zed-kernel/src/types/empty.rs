@@ -2490,6 +2490,23 @@ fn shares(all: &[(u64, u64)], none: &[(u64, u64)]) -> Lengths {
 ///   It is at most 240 for `p` below 10^6.
 ///
 /// So the cost is O(n · max d(p)) hash operations in place of O(n²).
+// Where the premise comes from: both callers pass classes whose shares sum to exactly one
+// (`greedy_length` calls this only when `sum == whole`, `shares` only when `sum == denom`),
+// each share `1 / ρ` with `ρ` the product over the primes of the period of `q / min(q, q0)`,
+// which depends on the period alone and is at most it. `Σ p <= n` over the distinct periods is
+// the callers' fact that each distinct period is the length of its own cycle of definitions;
+// it is not checked here.
+// The bound above is for a list with no meeting pair. With one, the search stops at the first
+// pair it finds, and the work before is still bounded: the group pairs read are all pairs of
+// groups `0..a` and the pairs `(a, b')` with `b' < b`, all found apart, so the groups
+// `0..b` and `a` are pairwise disjoint, and the sums above, taken over that set, bound the
+// lookups and maps of row `a` before `b`; the rows before it are bounded by the sums over
+// `0..a`, and the pair `(a, b)` that meets costs its two maps and at most the smaller of them
+// in lookups, O(n). So the cost is at most twice the bound plus O(n).
+// Tests: `empty::tests::a_meeting_pair_agrees_with_every_pair` (20000 random lists of up to 6
+// classes, against every pair) checks the answers, not the cost; the cost is measured by
+// `a_list_less_the_rotations_of_one_cycle_scales` (tests/steps l01_23 witnesses bench), which
+// cannot catch a list whose periods have many more divisors than its own.
 fn meeting_pair(classes: &[(u64, u64)]) -> Option<(usize, usize)> {
     let mut groups: Vec<(u64, HashMap<u64, usize>)> = Vec::new();
     let mut slot: HashMap<u64, usize> = HashMap::new();
@@ -6687,6 +6704,9 @@ impl<'m> Searching<'m> {
                 // before it took a forked piece, order `C n` (73.7 times the instructions at 8
                 // times `m`); `take_out_points`, tried first, takes the fork-free pieces in
                 // groups (8.96 times, PERF-take-out-forked-scan). COMPLEXITY.md K118.
+                // No test checks the bound on the passes: the measurement above was not kept,
+                // and no test counts passes, so a change that reopens a cell would show only as
+                // a slower bench.
                 if self.nested_cover(g, &f, &open).await || self.take_out_piece(g, &f, &open).await
                 {
                     continue;

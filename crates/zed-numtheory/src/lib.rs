@@ -598,6 +598,10 @@ pub mod m61 {
     /// Proof. `s <= 8 (P - 1) < 2^64`, so the sum did not wrap, and `s = hi 2^61 + lo` with
     /// `hi = s >> 61 <= 7` and `lo = s & P <= P`. As `2^61 = 1 (mod P)`, `s = hi + lo (mod P)`,
     /// and `r = hi + lo <= P + 7`; one subtraction of `P` leaves `r - P <= 7 < P`.
+    // The callers in `PolyBytes::hash` add at most eight table entries, each `digits[j][b]`
+    // made by `mul`, so each below `P`, as the proof needs. Test:
+    // `tests::the_eight_byte_hash_is_horners_rule` (every tail length, all-0xFF bytes, the
+    // largest sum); it checks the hash against Horner's rule, not the bound on `s` itself.
     #[inline]
     const fn fold8(s: u64) -> u64 {
         let r = (s & P) + (s >> 61);

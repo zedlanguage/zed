@@ -282,6 +282,17 @@ fn split(n: u64) -> u64 {
     // even `p + 5`, so `n / p <= (p + 5) / 2` and `p <= 5`, which leaves `n = 25` alone. So
     // every odd composite but 25 is split by `c = p - 2` at the latest, and 25 is split by a
     // smaller `c` (`factors_agree_with_trial_division`).
+    // The cases of `p <= 5`, written out: `n / p` is odd, at least `p` (as `p` is the least
+    // prime factor) and at most `(p + 5) / 2`. For `p = 3` that leaves `n / p = 3`, and 3 does
+    // not divide `p + 5 = 8`, so `n = 9` is split; for `p = 5` it leaves `n / p = 5`, which
+    // divides 10, so `n = 25`. That first batch is one step (`r = 1`), and `q` starts at 1, so
+    // `g` is the gcd of that one difference with `n` (up to units, as above). Later batches:
+    // `q` keeps the earlier batches' factors, but each earlier `g` was 1, so a new common
+    // factor comes from this batch's differences, which the search from `ys` recomputes with
+    // the same `x`. A `g = n` from the product means every prime of `n` divides some
+    // difference of the batch, so that search stops at a `g > 1`.
+    // The tests check every `n` below 2^16 and some wide `n`; they do not check that `c = p - 2`
+    // is the latest `c` used, only that each call returns a factor.
     unreachable!("some c splits a composite")
 }
 

@@ -1778,6 +1778,17 @@ type Inside<'a> = HashMap<(&'a str, usize, usize), Vec<(usize, usize)>>;
 /// `s_01f_import_graph::bench::untyped_calls_scale_with_the_number_of_files` (real crates' shape, n log
 /// n), `many_calls_of_a_name_cost_no_more_than_their_methods` (n log n) and
 /// `untyped_calls_without_a_triangle_scale_at_the_proven_bound` (p √p).
+// Proof of the p √p bound of the join (copied here from COMPLEXITY.md F103): a pair (c, x) of
+// calling file and name is joined from the smaller side, so it costs min(|imports of c|,
+// |type files of x|) lookups. If x has at most √p type files, the pair costs at most √p, so
+// the G pairs of such names cost at most G √p. Otherwise x has more than √p type files, and as
+// the type files of all names sum to at most p, at most √p names are of this kind; so a file
+// c has at most √p such pairs, each costing at most |imports of c|, and these pairs cost at
+// most √p times the I imports in all. Together at most (G + I) √p <= p √p, as G + I <= p.
+// The lower bound by triangle detection is the reduction in COMPLEXITY.md F103 (Abboud and
+// Vassilevska Williams, FOCS 2014, doi:10.1109/FOCS.2014.53, Conjecture 3). The bench
+// `untyped_calls_without_a_triangle_scale_at_the_proven_bound` checks the upper bound on the
+// reduction's crate only; it cannot catch a crate of another shape that a change makes slower.
 fn untyped_imports<'a>(
     found: &Found,
     files: usize,

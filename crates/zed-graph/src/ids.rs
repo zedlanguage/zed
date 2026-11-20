@@ -35,10 +35,18 @@ impl IdSource {
         // and the next draws would give numbers already drawn, two nodes with one id. Draws
         // from 0 reach `u64::MAX` only after 584 years (above), so the case is a start set near
         // the top or a huge `count`; it is refused here. The draws are numbered `first ..
-        // first + count`, all at most `u64::MAX` exactly when `first + count` does not overflow,
-        // which `checked_add` tests. Once it fails the count has wrapped already, and a draw
-        // racing on another thread may get a reused number; the panic names the fault, and it
-        // costs one branch per draw (TEST-dry-shared-units: before, the wrap was silent).
+        // first + count`; `checked_add` fails exactly when the count left after this draw,
+        // `first + count`, wraps. Proof that no number is given twice without a panic: while no
+        // draw has wrapped, the count only rises, so each draw's numbers lie above every earlier
+        // draw's. The first draw whose `first + count` wraps panics. (The check is one draw
+        // stricter than needed: a draw ending at exactly `u64::MAX` has `first + count = 2^64`,
+        // which wraps to 0, so it panics though its own numbers fit. That costs nothing a
+        // caller can reach, and it keeps the count from reading 0 afterwards.) Once it fails
+        // the count has wrapped already, and a draw racing on another thread may get a reused
+        // number; the panic names the fault, and it costs one branch per draw
+        // (TEST-dry-shared-units: before, the wrap was silent). Test:
+        // `units::ids::a_draw_past_the_largest_number_is_refused` (the start `u64::MAX - 1`,
+        // `take(2)`, the one-draw-early case); it does not check a racing thread.
         assert!(
             first.checked_add(count).is_some(),
             "drawing {count} numbers from {first} passes u64::MAX"

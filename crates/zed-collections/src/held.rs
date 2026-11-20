@@ -45,6 +45,17 @@ impl<T> Held<T> {
         let n = self.used.get() + 1;
         self.used.set(n);
         // The `n`th value goes to block `log2 n`, at `n - 2^k`.
+        // Proof that the slot exists and is empty, so the `expect` below cannot fire (and
+        // `set`, whose error is dropped, does not fail and leave an older value in the slot):
+        // with `k = floor(log2 n)`, `2^k <= n < 2^(k + 1)`, so `0 <= n - 2^k < 2^k`, inside
+        // block `k`, which has `2^k` slots (`Block::new(1 << i)` for block `i`, 1 for the
+        // first). The map from `n >= 1` to `(k, n - 2^k)` is one to one, and each call takes a
+        // new `n`, since `used` only rises and is read and written with no call in between:
+        // `Held` holds a `Cell`, so it is not `Sync`, and nothing between the read and the
+        // write runs code of the caller. So no earlier call wrote this slot. Test:
+        // `tests::values_keep_their_addresses_across_block_ends_and_drop_once` (every block end
+        // up to 2^12 + 1); it cannot check counts near `usize::MAX`, where `used + 1` would
+        // overflow, which needs more values than memory holds.
         let k = n.ilog2();
         let mut block = &self.first;
         for i in 1..=k {
