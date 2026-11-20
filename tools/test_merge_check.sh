@@ -274,6 +274,24 @@ merge check: FAILED: clippy (above)
 change_on_base tests/steps/x/mod.rs
 check "a test target changed alone has clippy run on its package" \
   "merge check: clippy -D warnings on: t" "$(clippy_run | command grep -a 'clippy')"
+# Step 2's narrowing leaves t out of the closure when none of its own files changed, and selects
+# its test targets by use (TOOLS-clippy-cold-per-worktree). A case built to fail if that dropped a
+# test target clippy must see: step_x calls tool::d, which only step_x names, and the branch
+# deprecates d.
+git checkout -q --detach base
+printf '//! tool.\npub fn d() {}\n' >crates/tool/src/lib.rs
+printf '\n#[test]\nfn calls_d() {\n    tool::d();\n}\n' >>tests/steps/x/mod.rs
+git commit -q -a -m "step_x calls tool::d"
+calls_d=$(git rev-parse HEAD)
+printf '//! tool.\n#[deprecated]\npub fn d() {}\n' >crates/tool/src/lib.rs
+git commit -q -a -m "tool: deprecate d"
+check "a change to a crate that only a test target of t names has clippy run on t, which refuses the warning there" \
+  "merge check: clippy -D warnings on: tool t
+#[allow(deprecated)]
+merge check: FAILED: clippy (above)
+1" "$("$check_script" --base "$calls_d" 2>&1 |
+    command grep -a -o -E '^(run_tests.*|merge check: (clippy|passed|FAILED).*)|#\[allow\([a-z_:]+\)\]'
+    echo "${PIPESTATUS[0]}")"
 change_on_base clippy.toml '# changed'
 check "the root's clippy.toml selects every package for clippy and no test" \
   "merge check: the root's clippy configuration changed: clippy runs on every package
