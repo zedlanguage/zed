@@ -14,10 +14,11 @@
 # the selections of steps, modules and tests on the table list published (about 20 of 0.9 to 1.5 s
 # each at load 64 to 94: with the full listing in the same part it ran past 60 s at load 47 to 94,
 # 2026-11-19); `table`, the selections of --bench and --each-test on that table; `fresh`, the
-# listings with --only afresh; `short`, the short-addresses pieces and their clone; `concurrent`,
-# two runs at once on one log directory; and `trace`.
+# listings with --only afresh; `short`, the short-addresses pieces and their clone; `copy`, a
+# piece that starts its binary again after the build is gone; `concurrent`, two runs at once on
+# one log directory; and `trace`.
 # select and table are run after list, with no build of the tests between them. With no part named
-# it runs list, select, table, fresh, short and concurrent one after another.
+# it runs list, select, table, fresh, short, copy and concurrent one after another.
 # Each part has a log directory of its own, under which every run of run_tests.sh writes a
 # directory of its own and points <dir>/latest at it; the parts are run one run at a time, so
 # right after a run, latest is that run's.
@@ -25,9 +26,9 @@ fails=0
 . tools/test_lib.sh || exit 2
 part=${1:-all}
 case $part in
-  all | list | select | table | fresh | short | concurrent | trace) ;;
+  all | list | select | table | fresh | short | copy | concurrent | trace) ;;
   *)
-    echo "usage: tools/test_run_tests.sh [list | select | table | fresh | short | concurrent | trace]"
+    echo "usage: tools/test_run_tests.sh [list | select | table | fresh | short | copy | concurrent | trace]"
     exit 2
     ;;
 esac
@@ -372,6 +373,44 @@ rc_b=$?
 check "a run started meanwhile waits for that process, then lists" "0 waited
 $plain" "$rc_b $(grep -q '^Waiting for the processes of an ended run' "$logs.b" && echo waited)
 $(others <"$logs.b" | sort)"
+fi
+# `copy`: a piece runs the build as it was when its run started (TOOL-run-build-copy): in
+# kernel25's --bench run of 2026-11-20, 124 pieces failed with exit 127 when their test binaries
+# started themselves again (the run at 8n) while a build in the same checkout had deleted the
+# name of libzed_kernel-<hash>.so. The run here is started in a mount namespace of its own, and
+# while its piece waits (tests/src/run_copy_tests.rs) the build's deps folder is made to hold
+# the piece's test binary alone, in that namespace alone, so no other run of the checkout sees
+# it: deps is mounted on a folder of turns/, an empty tmpfs on deps, and the binary from the
+# first mount on an empty file in the tmpfs. The piece then starts its binary again. Before the
+# copy that new process ended as kernel25's did: exit 127, "error while loading shared
+# libraries: lib...-<hash>.so: cannot open shared object file".
+if want copy; then
+logs=build/test-run-tests-copy
+mkdir -p "$logs"
+turns=$(mktemp -d "$PWD/$logs/turns.XXXXXX")
+ZED_TEST_RUN_COPY_TURNS=$turns unshare --mount tools/run_tests.sh --logs "$logs" \
+  --only '^zed_tests::run_copy_tests::a_new_process_of_this_binary_starts_after_the_build_is_gone$' \
+  >"$logs.out" 2>&1 &
+a=$!
+while [ -d "/proc/$a" ] && [ ! -e "$turns/ready" ]; do sleep 0.05; done
+left=none
+if [ -e "$turns/ready" ]; then
+  bin=$(awk 'NR == 1 { print $3 }' "$(last_run)/pieces")
+  deps=${bin%/*}
+  mkdir "$turns/deps"
+  nsenter --target "$a" --mount bash -c 'mount --bind "$1" "$2" && mount -t tmpfs tmpfs "$1" &&
+    : >"$3" && mount --bind "$2/${3##*/}" "$3"' _ "$deps" "$turns/deps" "$bin" &&
+    left=$(nsenter --target "$a" --mount ls -A "$deps")
+fi
+: >"$turns/go"
+wait "$a"
+rc=$?
+check "in the run's namespace the build's deps folder holds the test binary alone while the piece waits" \
+  "${bin##*/}" "$left"
+check "the piece starts its binary again and passes" "0" "$rc"
+[ "$rc" = 0 ] || cat "$logs.out"
+check "the run deletes its copy of the build" "" "$(ls -d "$(last_run)/cargo" 2>/dev/null)"
+check "and leaves no copy to delete" "" "$(ls -d build/run-copy-dropped 2>/dev/null)"
 fi
 # Two runs at once on one log directory both run to the end, each in a directory of its own
 # (NO-LOCKS-optimistic); until then the second stopped at once, as the run lock was held. Both

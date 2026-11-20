@@ -454,6 +454,38 @@ mount_short_clone() {
     sleep 2
   done
 }
+# Deletes the run's copy of the build, <log directory>/cargo (make_run_copy, below). As for the
+# clone, it is first renamed to build/run-copy-dropped, so the delete names its target in full
+# (the author's rule), and a leftover of a run killed while deleting is deleted first. Two runs
+# ending at the same moment: the second rename fails while the first run's copy is there, and
+# that copy is left with its run's logs, which TOOL-test-logs-prune deletes. In this namespace
+# the folders of the copy that the pieces mounted the build's folders on are empty, since each
+# piece mounted them in a namespace of its own, and --one-file-system keeps rm out of any mount.
+drop_run_copy() {
+  [ -n "$out" ] && [ -e "$out/cargo" ] || return 0
+  if [ -e /home/luke/Work/wt/.build-root/build/run-copy-dropped ]; then
+    if [ -L /home/luke/Work/wt/.build-root/build/run-copy-dropped ] ||
+      [ "$(realpath -e /home/luke/Work/wt/.build-root/build/run-copy-dropped)" != \
+        /home/luke/Work/wt/.build-root/build/run-copy-dropped ]; then
+      echo "/home/luke/Work/wt/.build-root/build/run-copy-dropped is not a directory; it is left in place."
+      return 1
+    fi
+    rm -rf --one-file-system --preserve-root=all /home/luke/Work/wt/.build-root/build/run-copy-dropped
+  fi
+  if ! mv -T "$out/cargo" /home/luke/Work/wt/.build-root/build/run-copy-dropped; then
+    echo "The run's copy of the build, $out/cargo, could not be renamed for deletion; it is left with the run's logs."
+    return 1
+  fi
+  rm -rf --one-file-system --preserve-root=all /home/luke/Work/wt/.build-root/build/run-copy-dropped
+}
+# What a run undoes as it ends, however it ends: it unmounts its short-addresses clone, lazily,
+# as a process the run started may still use it (TOOL-short-clone-umount-busy), and deletes its
+# copy of the build.
+at_exit() {
+  ! mountpoint -q "$out/short-clone" || umount -l "$out/short-clone"
+  open_short_clone_work
+  drop_run_copy
+}
 if [ -n "$clone_remove" ]; then
   if [ "$root" != /home/luke/Work/wt/.build-root ]; then
     echo "The short-addresses clone is mounted in the zrun namespace; run" \
@@ -940,8 +972,7 @@ full=$(echo "$bins" | grep '/full-')
 short=
 if [ -n "$short_build" ]; then
   stamp=$(short_clone_stamp)
-  # Lazily: a process the run started may still use the clone (TOOL-short-clone-umount-busy).
-  trap '! mountpoint -q "$out/short-clone" || umount -l "$out/short-clone"; open_short_clone_work' EXIT
+  trap at_exit EXIT
   trap 'exit 129' HUP
   trap 'exit 130' INT
   trap 'exit 143' TERM
@@ -1372,7 +1403,7 @@ piece() {
     -e trace=%file,getdents64 -o "$out/slot-$slot.strace")
   (cd "$root/$dir" && CARGO_MANIFEST_DIR=$root/$dir \
     systemd-run --user --scope --quiet --same-dir --slice=zedtests.slice \
-    "${bound[@]}" "${tracer[@]}" "$@" >"$scratch" 2>&1)
+    "${bound[@]}" bash -c 'in_run_copy "$@"' in_run_copy "$1" "${tracer[@]}" "$@" >"$scratch" 2>&1)
   rc=$?
   if [ -n "$trace" ]; then
     trace_reads "$out/slot-$slot.strace" >"$trace/${name//\//_}.reads"
@@ -1398,6 +1429,107 @@ piece() {
 }
 # piece_limit comes from tools/lib.sh; a piece runs in a new bash, which has only what is exported.
 export -f piece trace_reads piece_limit
+# The pieces run the build as it was when the run made its copy, below (TOOL-run-build-copy,
+# tools7, 2026-11-20). A build in this checkout while a run goes on (an agent's next `zcargo
+# build` or test run, or merge-push's) links each changed file again, and ld.lld deletes the
+# file's name as its link starts and renames the new file in as it ends (strace of ld.lld 21,
+# 2026-11-20: unlink of the output, write of <output>.tmp<random>, rename): during the link the
+# name is gone, and stays gone when the link fails or is stopped. A process started meanwhile
+# from the build failed: in kernel25's --bench run of l01_23 (2026-11-20, logs
+# 20261120T191416.628139286Z-3209242) 124 pieces ended with exit 127, "error while loading
+# shared libraries: libzed_kernel-1d3f0a86d9cd61e6.so: cannot open shared object file", in the
+# run at 8n, a new process of the test binary (tests/src/scaling.rs, run_in_a_new_process),
+# while kernel25 built zed-kernel again in the same checkout. After the link ends, a binary
+# not linked again loads the new library instead ("symbol lookup error", see zrun), and a new
+# process of a test binary linked again is the new build (current_exe names "<path>
+# (deleted)"). So the run copies the profile folder of its test binaries (build/cargo/debug,
+# or release for --bench) to <log directory>/cargo/<profile> before any piece runs: a hard
+# link to each file in the folder and in its deps folder, and an empty folder for each of its
+# other folders (build, examples, incremental, .fingerprint). A hard link shares its file, so
+# nothing is copied, and keeps the file after the build deletes or replaces the name. Each
+# piece then runs in a mount namespace of its own (in_run_copy) in which the copy is mounted on
+# the profile folder and the profile's other folders on the copy's empty ones, so every path is
+# the one the binaries were built with: current_exe, the rpaths, CARGO_BIN_EXE_zedc, the scratch
+# folder found from the test binary's path (tests/src/scratch.rs). The namespace ends with the
+# piece's last process, so nothing is unmounted; no lock is taken (NO-LOCKS-optimistic).
+# The hard links are made from the files where they lie, the overlay's layers (build/upper over
+# the snapshots of build/STACK, or build/cargo in a checkout with no STACK), reached by the
+# checkout's own path ($ZRUN_WORKTREE): a link from the overlay mount to another mount fails with
+# EXDEV, and the layers, the checkout and the snapshots are on one mount of one file system. A
+# name in a higher layer hides it in the lower ones, and a deleted one (a whiteout, a character
+# device) is left out; a folder marked opaque (user.overlay.opaque, zrun mounts with userxattr)
+# hides the lower layers' folder. The module's metacopy and redirect_dir are off (Fedora's
+# default, checked 2026-11-20), so a file in a layer holds its own data and lies at its own path.
+# Cost: one find over each layer's two folders and one ln for all the files, about 1,900 links
+# for debug. What a piece writes in the profile folder goes into the copy, deleted as the run
+# ends (drop_run_copy, above): the prelinked runtime objects (crates/zed-native/src/link.rs,
+# `Prelinked`), made beside the runtime library in deps, are found there when the build's deps
+# held them as the run started, and made again in each run that needs one that was not.
+# A copy is made only under zrun, with the log directory inside the checkout: elsewhere the
+# fixed path drop_run_copy deletes by would not be on the copy's file system.
+# make_run_copy <profile>: makes <log directory>/cargo/<profile>.
+make_run_copy() {
+  local profile=$1 base=$ZRUN_WORKTREE copy layers=() l d sub
+  copy=$base${out#"$root"}/cargo/$profile
+  if [ -e "$root/build/STACK" ]; then
+    layers=("$base/build/upper")
+    while read -r l; do layers+=("$l"); done <"$root/build/STACK"
+  else
+    layers=("$base/build/cargo")
+  fi
+  for sub in "" /deps; do
+    mkdir -p "$copy$sub" || return 1
+    for l in "${layers[@]}"; do
+      d=$l/$profile$sub
+      [ -e "$d" ] || [ -L "$d" ] || continue
+      # Not a folder: a whiteout, the folder deleted in this layer.
+      [ -d "$d" ] && [ ! -L "$d" ] || break
+      find "$d" -mindepth 1 -maxdepth 1 -printf '%y\t%f\t%h\n'
+      [ "$(getfattr --absolute-names --only-values -n user.overlay.opaque "$l/$profile" 2>/dev/null)" != y ] &&
+        [ "$(getfattr --absolute-names --only-values -n user.overlay.opaque "$d" 2>/dev/null)" != y ] || break
+    done | awk -F '\t' '!seen[$2]++' >"$out/copy-$profile.list"
+    awk -F '\t' '$1 == "f" || $1 == "l" { print $3 "/" $2 }' "$out/copy-$profile.list" |
+      xargs -r -d '\n' ln -P -t "$copy$sub" -- || return 1
+    [ -n "$sub" ] || awk -F '\t' -v c="$copy" '$1 == "d" && $2 != "deps" { print c "/" $2 }' \
+      "$out/copy-$profile.list" | xargs -r -d '\n' mkdir -p -- || return 1
+  done
+}
+# in_run_copy <binary> <command...>: runs the command, in a mount namespace of its own with the
+# run's copy of the binary's profile folder mounted on that folder, when the run made one.
+in_run_copy() {
+  local bin=$1 p
+  shift
+  p=${bin#"$root"/build/cargo/}
+  p=${p%%/*}
+  if [[ $bin == "$root"/build/cargo/*/deps/* ]] && [ -d "$out/cargo/$p" ]; then
+    exec unshare --mount bash -c 'mount_run_copy "$@"' mount_run_copy "$out/cargo/$p" "$root/build/cargo/$p" "$@"
+  fi
+  exec "$@"
+}
+# mount_run_copy <copy> <profile folder> <command...>, in in_run_copy's namespace.
+mount_run_copy() {
+  local copy=$1 profile=$2 d
+  shift 2
+  for d in "$copy"/* "$copy"/.[!.]*; do
+    [ -d "$d" ] && [ ! -L "$d" ] && [ "${d##*/}" != deps ] || continue
+    mount --bind "$profile/${d##*/}" "$d" || exit 126
+  done
+  mount --rbind "$copy" "$profile" || exit 126
+  exec "$@"
+}
+export -f in_run_copy mount_run_copy
+if [ "$root" = /home/luke/Work/wt/.build-root ] && [ -n "$ZRUN_WORKTREE" ] && [[ $out == "$root"/build/* ]]; then
+  trap at_exit EXIT
+  trap 'exit 129' HUP
+  trap 'exit 130' INT
+  trap 'exit 143' TERM
+  for p in $(awk '{ print $3 }' "$out/pieces" | sed -n "s|^$root/build/cargo/\([^/]*\)/deps/.*|\1|p" | sort -u); do
+    if ! make_run_copy "$p"; then
+      echo "The run's copy of build/cargo/$p could not be made."
+      exit 1
+    fi
+  done
+fi
 # A test that builds executables (zed_native::link) keeps each one and links it again only when
 # an input of its link changed (crates/zed-native/src/link.rs, `kept`). The runtime archive is
 # one of those inputs, and Cargo builds it again after any change to zed-native or a crate under
@@ -1415,7 +1547,7 @@ warm() {
   start=$(date +%s%N)
   (cd "$root/$dir" && CARGO_MANIFEST_DIR=$root/$dir \
     systemd-run --user --scope --quiet --same-dir --slice=zedtests.slice \
-    "$@" >"$out/warm-$slot.out" 2>&1)
+    bash -c 'in_run_copy "$@"' in_run_copy "$1" "$@" >"$out/warm-$slot.out" 2>&1)
   rc=$?
   : >"$out/warm-$slot.out"
   echo "$name links made before the timed pieces: rc=$rc $((($(date +%s%N) - start) / 1000000))ms"

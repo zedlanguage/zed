@@ -19,6 +19,8 @@ pub mod kernel;
 pub mod layout;
 pub mod oracle;
 pub mod readme;
+#[cfg(test)]
+mod run_copy_tests;
 pub mod scaling;
 #[cfg(test)]
 mod scaling_tests;

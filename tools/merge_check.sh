@@ -15,7 +15,7 @@
 #     and the next;
 #  0b. when tools/run_tests.sh, tools/test_run_tests.sh or tools/test_lib.sh changed: runs every
 #     part of tools/test_run_tests.sh, list then select then table (select and table read the
-#     table list publishes, in one log directory), and fresh, short, concurrent and trace beside
+#     table list publishes, in one log directory), and fresh, short, copy, concurrent and trace beside
 #     that chain (each in a log directory of its own), each part under max(60, the piece limit) s:
 #     the header of test_run_tests.sh gives each part 60 s, and list alone took 30 to 57 s at load
 #     36 to 76. The parts start after the build of the tests they list, which runs first with no
@@ -884,7 +884,7 @@ write_reads() {
 # parts start when it has passed. The build runs in the foreground, before step 0 starts its
 # timed parts too: run beside them, a workspace build (at load 50 on 2026-11-20) pushed
 # tools/test_merge_check.sh select, 15 to 21 s alone, past its 25 s limit.
-rtparts=(list select table fresh short concurrent trace)
+rtparts=(list select table fresh short copy concurrent trace)
 rtpids=()
 if [ -n "$rtself" ] && [ -z "$list" ]; then
   rlog=$(git rev-parse --path-format=absolute --git-path merge-check-rt)
@@ -901,7 +901,7 @@ if [ -n "$rtself" ] && [ -z "$list" ]; then
   # The parts' verdicts are read from their logs.
   (
     (rt_part list && rt_part select && rt_part table) &
-    for p in fresh short concurrent trace; do rt_part "$p" & done
+    for p in fresh short copy concurrent trace; do rt_part "$p" & done
     wait
   ) &
   rtpids+=($!)
@@ -920,7 +920,7 @@ rt_wait() {
     fi
   done
   [ -z "$bad" ] || exit 1
-  echo "merge check: tools/test_run_tests.sh list, select, table, fresh, short, concurrent and trace passed"
+  echo "merge check: tools/test_run_tests.sh list, select, table, fresh, short, copy, concurrent and trace passed"
 }
 
 # Step 0: the toy cases of this script, each part under the limit of a piece of run_tests.sh.
