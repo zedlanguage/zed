@@ -1085,6 +1085,7 @@ dependencies = [
 name = "zed-kernel"
 version = "0.0.0"
 dependencies = [
+ "foldhash",
  "hashbrown 0.17.1",
  "imbl",
  "num-bigint",

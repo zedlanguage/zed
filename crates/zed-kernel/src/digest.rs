@@ -88,7 +88,67 @@ pub fn digest_hash<T: std::hash::Hash + ?Sized>(x: &T) -> u64 {
 /// It is not as strong as SipHash against an attacker who watches timings, which a compiler run on
 /// a written program does not face. Iteration order changes from run to run, so a map of this
 /// hasher must never be iterated where the order reaches a result: look keys up only.
-pub type TextState = hashbrown::DefaultHashBuilder;
+///
+/// A test fixes or varies the seed with the environment variable `ZED_TEXT_SEED`, a decimal
+/// number below 2^64 ([`text_state`]). It holds foldhash's `SeedableRandomState`, which takes a
+/// seed, where hashbrown's default (`foldhash::fast::RandomState`, which this replaced) takes
+/// none; the cost is 8 more bytes per map (16 against 8) and no instruction per hash, since both
+/// build `FoldHasher::with_seed` from a per-map seed and a reference to the shared seed.
+#[derive(Clone, Debug)]
+pub struct TextState(foldhash::fast::SeedableRandomState);
+
+impl Default for TextState {
+    /// A seed of its own: drawn at random, or, when `ZED_TEXT_SEED` is set, made from it and
+    /// the number of states this thread made before ([`text_state`]).
+    fn default() -> TextState {
+        use foldhash::fast::SeedableRandomState;
+        let Some((seed, shared)) = text_seed() else {
+            return TextState(SeedableRandomState::random());
+        };
+        thread_local! {
+            static MADE: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
+        }
+        let n = MADE.replace(MADE.get() + 1);
+        TextState(SeedableRandomState::with_seed(step(seed, n), shared))
+    }
+}
+
+impl std::hash::BuildHasher for TextState {
+    type Hasher = foldhash::fast::FoldHasher<'static>;
+
+    #[inline(always)]
+    fn build_hasher(&self) -> Self::Hasher {
+        self.0.build_hasher()
+    }
+}
+
+/// `ZED_TEXT_SEED`, read once, with the shared seed foldhash makes from it; `None` when it is
+/// unset. A value that is not a decimal number below 2^64 stops the run, so a test never runs
+/// at random while it means to run at a seed.
+fn text_seed() -> Option<(u64, &'static foldhash::SharedSeed)> {
+    static SEED: std::sync::OnceLock<Option<(u64, foldhash::SharedSeed)>> =
+        std::sync::OnceLock::new();
+    let seed = SEED.get_or_init(|| {
+        let s = std::env::var("ZED_TEXT_SEED").ok()?;
+        let seed: u64 = (s.trim().parse())
+            .unwrap_or_else(|_| panic!("ZED_TEXT_SEED is {s:?}, not a decimal number below 2^64"));
+        Some((seed, foldhash::SharedSeed::from_u64(seed)))
+    });
+    seed.as_ref().map(|(n, shared)| (*n, shared))
+}
+
+impl TextState {
+    /// The state of the process's one text hash (`TEXT`): at random, or, when `ZED_TEXT_SEED`
+    /// is set, made from it alone, so that [`text_hash`] is one function of the seed whichever
+    /// thread first hashes.
+    fn of_process() -> TextState {
+        use foldhash::fast::SeedableRandomState;
+        match text_seed() {
+            Some((seed, shared)) => TextState(SeedableRandomState::with_seed(seed, shared)),
+            None => TextState(SeedableRandomState::random()),
+        }
+    }
+}
 
 /// A map keyed by a program's text, hashed by [`TextState`].
 pub type TextMap<K, V> = HashMap<K, V, TextState>;
@@ -101,9 +161,22 @@ pub type TextSet<K> = HashSet<K, TextState>;
 /// constraints (`zedc_presburger`'s memos of repairs and its rows by terms), and for a
 /// persistent map whose equal contents must hash and iterate alike in one run (`conjuncts`).
 /// A [`TextMap`] that only looks keys up draws its own seed instead.
-static TEXT: std::sync::LazyLock<TextState> = std::sync::LazyLock::new(TextState::default);
+static TEXT: std::sync::LazyLock<TextState> = std::sync::LazyLock::new(TextState::of_process);
 
 /// A copy of the process's one [`TextState`] (see `TEXT`).
+///
+/// The seed for tests (TEST-text-map-seed-determinism): when the environment variable
+/// `ZED_TEXT_SEED` is set to a decimal number below 2^64, read once per process, every
+/// [`TextState`] is made from it instead of at random. The process's one state, which this
+/// copies and [`text_hash`] and [`text_hasher`] use, takes the seed itself; each other state,
+/// a [`TextMap`]'s or [`TextSet`]'s own, takes [`step`] of the seed and the number of states its
+/// thread made before, so that two maps still differ in order: with one hash function for every
+/// table, one map's keys inserted into another in the first map's order fill the second's
+/// slots in order, a quadratic case (from memory, not rechecked: rust-lang/rust issue 36481,
+/// 2016, "HashMap is accidentally quadratic", fixed by a seed per map). Unset, as in every run
+/// that is not a test, each seed is drawn at random. A value that does not parse stops the run.
+/// The tests `text_maps_reach_no_result_at_any_seed_*` (tests/steps/m0_12_refusal_census/
+/// seeds.rs) check programs under several seeds and compare their output byte for byte.
 pub fn text_state() -> TextState {
     TEXT.clone()
 }

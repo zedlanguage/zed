@@ -18,6 +18,7 @@ mod cases;
 mod decided;
 mod kinds;
 mod programs;
+mod seeds;
 
 use std::fmt::Write;
 use std::path::Path;

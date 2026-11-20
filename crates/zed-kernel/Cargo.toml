@@ -22,6 +22,7 @@ crate-type = ["rlib", "dylib"]
 [dependencies]
 imbl = "7.0.2"
 hashbrown.workspace = true
+foldhash.workspace = true
 num-bigint = "0.4"
 num-integer = "0.1"
 num-traits = "0.2"
