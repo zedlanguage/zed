@@ -47,6 +47,8 @@ rustix.workspace = true
 zed-alloc-count.workspace = true
 zed-meter-settings.workspace = true
 stacker.workspace = true
+# The keys and hashes of the r10 tests' expected output (`check/r10_tests/expected.rs`).
+blake3.workspace = true
 
 [target.'cfg(target_os = "linux")'.dev-dependencies]
 perf-event2.workspace = true

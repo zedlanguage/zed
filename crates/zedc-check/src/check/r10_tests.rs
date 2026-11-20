@@ -10,7 +10,20 @@ use crate::check::probe::{
 use crate::check::walk::check_text;
 use zedc_types::ty::{NeedKind, Sig, fits_sig, fwd_decode_count, reset_fwd_decode_count};
 
+/// Checks `text` under `cfg`. A run of E (`R10Config::eager`, exactly) is also checked against
+/// D's run and the expected output ([`expected::check_e`]), so that E's output is recorded
+/// while E exists (row FAIL-e-merge-by-name-internal-result).
 fn run_with_cfg(text: &str, cfg: R10Config) -> (Info, R10Stats) {
+    let is_e = format!("{cfg:?}") == format!("{:?}", R10Config::eager());
+    let (info, stats) = run_raw(text, cfg);
+    if is_e {
+        expected::check_e(text, &info);
+    }
+    (info, stats)
+}
+
+/// Checks `text` under `cfg`: the checker's output and its statistics.
+fn run_raw(text: &str, cfg: R10Config) -> (Info, R10Stats) {
     let tokens = zedc_syntax::lex::lex(text).expect("the unit lexes");
     let (tree, parse_errs) = zedc_syntax::parse::parse_unit(text, &tokens, zedc_syntax::parse::TOP);
     assert!(
@@ -4530,4 +4543,5 @@ fn chain_e1_held_names_are_renamed_compared_and_listed_as_e_does() {
     );
 }
 
+mod expected;
 mod landing6_battery;

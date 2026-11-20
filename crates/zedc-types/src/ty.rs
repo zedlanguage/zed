@@ -1350,19 +1350,19 @@ impl std::hash::Hash for Row {
 
 impl fmt::Debug for Row {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write_debug(Dbg::Row(self), f)
+        write_debug(Dbg::Row(self), f, None)
     }
 }
 
 impl fmt::Debug for Ty {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write_debug(Dbg::Ty(self), f)
+        write_debug(Dbg::Ty(self), f, None)
     }
 }
 
 impl fmt::Debug for Sig {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write_debug(Dbg::Sig(self), f)
+        write_debug(Dbg::Sig(self), f, None)
     }
 }
 
@@ -1379,14 +1379,62 @@ enum Dbg<'a> {
     Need(&'a Need),
 }
 
+/// A row, payload shape or signature, as [`debug_cut`] meets it, or a type, which is only ever
+/// the root of a [`debug_cut`] and never given to its `cut`.
+#[derive(Clone, Copy)]
+#[allow(missing_docs)]
+pub enum DebugPart<'a> {
+    Ty(&'a Ty),
+    Row(&'a Row),
+    Shape(&'a Shape),
+    Sig(&'a Sig),
+}
+
+/// What [`write_debug`] writes in place of a row, shape or signature below its start: the text
+/// `cut` gives for it, or, for `None`, its parts as `Debug` writes them.
+type Cut<'c> = &'c mut dyn FnMut(DebugPart<'_>) -> Option<String>;
+
+/// The `Debug` text of `root`, except that each row, payload shape and signature it holds, at
+/// any depth, is written as the text `cut` gives for it, when `cut` gives one. With `cut`
+/// naming each part by a hash of its own text, the text of a part shared by many paths is made
+/// once, not once per path: a row shared at each of n levels is written 2^n times by `Debug`
+/// (the r10 tests' expected output, `zedc-check` `check/r10_tests/expected.rs`, which names
+/// each part so).
+pub fn debug_cut(root: DebugPart<'_>, cut: Cut<'_>) -> String {
+    let mut out = String::new();
+    let start = match root {
+        DebugPart::Ty(t) => Dbg::Ty(t),
+        DebugPart::Row(r) => Dbg::Row(r),
+        DebugPart::Shape(s) => Dbg::Shape(s),
+        DebugPart::Sig(s) => Dbg::Sig(s),
+    };
+    write_debug(start, &mut out, Some(cut)).expect("a String takes any text");
+    out
+}
+
 /// Writes `start` as a derived `Debug` writes it on one line, for `{:#?}` too. A type nests as
 /// deep as the program, and the derived `Debug` recursed once a level (100,000 levels overflowed
 /// a 2 MiB stack), so the writing keeps its own stack, as [`write_parts`] does: each part
-/// expands to the parts it is made of, pushed so that they pop in order.
-fn write_debug(start: Dbg, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+/// expands to the parts it is made of, pushed so that they pop in order. Each row, shape and
+/// signature below `start` is written as `cut` says ([`debug_cut`]), when there is one.
+fn write_debug(start: Dbg, f: &mut dyn fmt::Write, mut cut: Option<Cut<'_>>) -> fmt::Result {
     let mut stack = vec![start];
     let mut parts = Vec::new();
+    let mut below = false;
     while let Some(d) = stack.pop() {
+        if let Some(cut) = cut.as_mut().filter(|_| below) {
+            let part = match d {
+                Dbg::Row(r) => Some(DebugPart::Row(r)),
+                Dbg::Shape(s) => Some(DebugPart::Shape(s)),
+                Dbg::Sig(s) => Some(DebugPart::Sig(s)),
+                _ => None,
+            };
+            if let Some(text) = part.and_then(|p| cut(p)) {
+                f.write_str(&text)?;
+                continue;
+            }
+        }
+        below = true;
         match d {
             Dbg::Text(s) => f.write_str(s)?,
             Dbg::Leaf(x) => write!(f, "{x:?}")?,
@@ -1858,7 +1906,7 @@ impl std::hash::Hash for Shape {
 
 impl fmt::Debug for Shape {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write_debug(Dbg::Shape(self), f)
+        write_debug(Dbg::Shape(self), f, None)
     }
 }
 
@@ -4721,8 +4769,21 @@ impl Drop for ViaLink {
 }
 
 /// The calls that passed a need on ([`Need::via`]).
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Default)]
 pub struct CallPath(pub Option<Arc<ViaLink>>);
+
+/// The links outermost first, as the notes read them ([`CallPath::for_each_note`]), so that a
+/// path built of `Cons` links and the same path with a shared `Join` prefix (the form
+/// [`FwdNeed::decode`] builds) are written alike: which form holds a path is no part of it, as
+/// for `PartialEq` below. The r10 tests' expected output compares signatures by this text
+/// (`zedc-check` `check/r10_tests/expected.rs`). Cost O(d) in the d links, as the notes.
+impl std::fmt::Debug for CallPath {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let mut links = Vec::new();
+        self.for_each_note(|at, text| links.push((at, text.to_string())));
+        f.debug_tuple("CallPath").field(&links).finish()
+    }
+}
 
 impl CallPath {
     /// Prepends one outer link `(at, text)` onto `tail` in O(1).
