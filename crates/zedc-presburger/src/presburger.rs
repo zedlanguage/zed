@@ -23476,7 +23476,27 @@ impl Hull {
         // Complexity tradeoff: bisection asks O(log W) whole decision questions even
         // across a two-point domain's empty gap. Endpoint refutation jumps to the other
         // point in O(1) questions. Immune endpoint refusals use returned status only.
-        let two_point = !HULL_BISECT.with(Cell::get) && {
+        // The test control `HULL_BISECT` turns off every such shortcut, the snapping of each
+        // midpoint to a member of `set` below included: with only the two-point jump off, the
+        // snapping skips the same gap, and `ss_project_each_costs_at_most_four_decides` could
+        // not fail its negative control (294M instructions halving against 283M a decide,
+        // where the plain halving cost 4,616M; FAIL-bench-main-f215d9c90).
+        let shortcuts = !HULL_BISECT.with(Cell::get);
+        let snap_below = |a: &Int, mid: &Int| {
+            if shortcuts {
+                member_at_or_below(&set, mid).filter(|m| m >= a)
+            } else {
+                Some(mid.clone())
+            }
+        };
+        let snap_above = |b: &Int, mid: &Int| {
+            if shortcuts {
+                member_at_or_above(&set, mid).filter(|m| m <= b)
+            } else {
+                Some(mid.clone())
+            }
+        };
+        let two_point = shortcuts && {
             let mut ps = set.pieces();
             matches!((ps.next(), ps.next(), ps.next()),
                 (Some((End::Fin(l0), End::Fin(h0))), Some((End::Fin(l1), End::Fin(h1))), None)
@@ -23528,7 +23548,7 @@ impl Hull {
                     // `overlap_rows(12)` 45 s → 3.9 s, `overlap_rows(16)` over 60 s → 14-22 s.
                     while a < b {
                         let mid = &a + &(&b - &a).div_floor(&two);
-                        match member_at_or_below(&set, &mid).filter(|m| *m >= a) {
+                        match snap_below(&a, &mid) {
                             None => a = &mid + &one,
                             Some(m) if self.none(i, true, &m) => a = &mid + &one,
                             Some(m) => b = m,
@@ -23566,7 +23586,7 @@ impl Hull {
                     };
                     while a < b {
                         let mid = &b - &(&b - &a).div_floor(&two);
-                        match member_at_or_above(&set, &mid).filter(|m| *m <= b) {
+                        match snap_above(&b, &mid) {
                             None => b = &mid - &one,
                             Some(m) if self.none(i, false, &m) => b = &mid - &one,
                             Some(m) => a = m,
