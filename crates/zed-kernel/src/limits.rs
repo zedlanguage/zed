@@ -226,6 +226,11 @@ pub fn count_in_use(count: fn() -> u64, base: u64) {
 /// force or the runtime registered no count. Memory freed and kept for reuse is not counted.
 /// Not proved exact: under `zedc run` the compiler's own data that is freed during the run is
 /// taken off the run's bytes, so the figure may be lower than the run's values by that amount.
+/// Classified (PROOF-sweep-zed-kernel): message only. The one reader of this figure is
+/// `num::room::memory_clause`, which prints it in the message of a step refused under the
+/// limit; the limit itself is enforced by the operating system's count of the run's data
+/// (`RLIMIT_DATA`, set in `zed_rt::limits`), which this figure does not feed. So an error in
+/// it changes one number in that message, never when the run stops or what it computes.
 /// The runtime's own count of its values is plan row MAIN-limits-count. The count when the
 /// system last refused the run memory, if it has ([`refused`]).
 pub fn held() -> Option<u64> {

@@ -4864,7 +4864,13 @@ pub fn memory_repairs(why: &str) -> Vec<String> {
     }
     // A limit is reached before the machine runs out wherever the machine has that much memory
     // free for the run, so the run stops with the limit's message at the same size on every
-    // such machine; not proved for a machine whose other processes hold the rest. The largest
+    // such machine; not proved for a machine whose other processes hold the rest. Classified
+    // (PROOF-sweep-zed-kernel): not a claim about values, and not one the program can prove,
+    // since it is about the other processes of the machine. If it fails, the system refuses
+    // the run memory before the limit is reached, and the run stops with the message of that
+    // refusal (`limits::refused`, `num::room::memory_clause`), at a smaller size; no value
+    // and no verdict changes. What differs is only where, and with which message, a run that
+    // stops anyway stops. The largest
     // power of two of bytes not above this machine's memory is a round amount that can be
     // reached here; any smaller one is as good a repair.
     let limit = match crate::num::machine_memory() {

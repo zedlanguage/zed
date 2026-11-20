@@ -24,6 +24,9 @@
 //! of the fixed digests, and a program can name many atoms of one digest (each step of a digest,
 //! `digest::step`, can be inverted in each argument), whose set is then a path whatever the draw
 //! (PERF-xor-shape-free, COMPLEXITY.md K123; plan row PERF-set-tied-digest-depth).
+//! Classified (PROOF-sweep-zed-kernel): cost only. A large `T0` makes a set deep, up to a path,
+//! and its operations slower; the walks keep stacks of their own (first paragraph), and no
+//! answer reads the shape (next paragraph), so every answer stays the same.
 //!
 //! The shape follows the draw, so nothing printed or ordered reads it (rule
 //! deterministic-checking): a set's digests are sums over its literals ([`make`]), the same for

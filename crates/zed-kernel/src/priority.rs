@@ -114,6 +114,19 @@
 //! the same on every run, rather than a random variable.
 //!
 //! Not proved: the operating system's random bytes are taken as uniform and independent.
+//! Classified (PROOF-sweep-zed-kernel): cost only. The draw sets only the priorities, so only
+//! the shape of each treap, and nothing printed or compared reads a shape (the paragraph on
+//! rule deterministic-checking above; module `types::bdd::set` lists how its digests, order
+//! and exclusive or avoid it; test
+//! `the_output_is_the_same_under_two_draws_of_the_treap_priorities`). With biased bytes the
+//! expected depth bound above may fail, and an operation may take up to `O(n)` per key
+//! instead of `O(log n)`; every answer stays the same. The treaps of `treap_set` and
+//! `types::bdd::set` keep stacks of their own and are dropped in a loop, so even one that is a
+//! path is walked without overflowing the thread's stack. One user does recurse as deep as its
+//! treap: the union and the walk of `zedc_preimage::divisors` ("Recursion as deep as the
+//! treap"). There a draw far from uniform could make the run overflow its stack and stop, a
+//! failure of the run, not a wrong answer. Its expected depth is `O(log n)` under the
+//! assumption (paragraph "The bound" above); no tail bound on the depth is proved here.
 
 use std::sync::OnceLock;
 
