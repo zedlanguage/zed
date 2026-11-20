@@ -152,15 +152,11 @@ fn refused_comparisons(p: Prim, weight_first: bool) -> [Term; 3] {
 /// The bytes of the stack a native run maps (`zed_rt::Stack::new`): memory and swap together,
 /// to a page or two.
 fn native_stack() -> u64 {
-    let info = std::fs::read_to_string("/proc/meminfo").expect("Linux has /proc");
-    let kib = |key: &str| -> u64 {
-        info.lines()
-            .find_map(|l| l.strip_prefix(key))
-            .and_then(|v| v.trim().strip_suffix("kB"))
-            .and_then(|v| v.trim().parse().ok())
+    let bytes = |key: &str| -> u64 {
+        zed_kernel::limits::proc_bytes("/proc/meminfo", key)
             .unwrap_or_else(|| panic!("/proc/meminfo has {key} in kB"))
     };
-    (kib("MemTotal:") + kib("SwapTotal:") + 8) << 10
+    bytes("MemTotal") + bytes("SwapTotal") + (8 << 10)
 }
 
 /// The width, in bits, of the weights of

@@ -70,14 +70,9 @@ fn under_two_limits(name: &str) -> Option<u64> {
 /// Lowers this process's `RLIMIT_DATA` to its data now (`VmData`) plus `margin` bytes, and
 /// checks that twice the margin is then refused.
 fn lower_data_limit(margin: u64) {
-    let status = std::fs::read_to_string("/proc/self/status").expect("Linux has /proc");
-    let kib: u64 = status
-        .lines()
-        .find_map(|l| l.strip_prefix("VmData:"))
-        .and_then(|v| v.trim().strip_suffix("kB"))
-        .and_then(|v| v.trim().parse().ok())
+    let data = zed_kernel::limits::proc_bytes("/proc/self/status", "VmData")
         .expect("/proc/self/status has VmData in kB");
-    let limit = (kib << 10) + margin;
+    let limit = data + margin;
     rustix::process::setrlimit(
         rustix::process::Resource::Data,
         rustix::process::Rlimit {

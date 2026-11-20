@@ -69,14 +69,9 @@ pub fn lower_limit() {
 /// Lowers this process's address-space limit to what it uses now plus `margin` bytes, and
 /// checks that a request of twice the margin is then refused.
 pub fn lower_limit_by(margin: u64) {
-    let status = std::fs::read_to_string("/proc/self/status").expect("Linux has /proc");
-    let kib: u64 = status
-        .lines()
-        .find_map(|l| l.strip_prefix("VmSize:"))
-        .and_then(|v| v.trim().strip_suffix("kB"))
-        .and_then(|v| v.trim().parse().ok())
+    let size = zed_kernel::limits::proc_bytes("/proc/self/status", "VmSize")
         .expect("/proc/self/status has VmSize in kB");
-    let limit = (kib << 10) + margin;
+    let limit = size + margin;
     rustix::process::setrlimit(
         rustix::process::Resource::As,
         rustix::process::Rlimit {

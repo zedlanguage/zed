@@ -142,9 +142,26 @@ pub fn memory() -> Option<(u64, u64)> {
 /// limit on data (`VmData` of `/proc/self/status`, the count `RLIMIT_DATA` limits); `None`
 /// where that file is missing or unreadable.
 pub fn data_bytes() -> Option<u64> {
-    let status = std::fs::read_to_string("/proc/self/status").ok()?;
-    let line = status.lines().find_map(|l| l.strip_prefix("VmData:"))?;
-    let kib: u64 = line.trim().strip_suffix("kB")?.trim().parse().ok()?;
+    proc_bytes("/proc/self/status", "VmData")
+}
+
+/// The bytes of the field `key` of the Linux file `path` (`/proc/self/status`,
+/// `/proc/meminfo`), whose sizes are written in kB, as [`proc_kib`] reads them; `None` where
+/// the file is missing or unreadable, or [`proc_kib`] finds no such field.
+pub fn proc_bytes(path: &str, key: &str) -> Option<u64> {
+    proc_kib(&std::fs::read_to_string(path).ok()?, key)
+}
+
+/// The bytes of the field `key` of `text`, a line `key:` then spaces or tabs, a count and
+/// ` kB`, as Linux writes `VmData:   1234 kB`: the count times 1024 (the kernel's kB is
+/// 1024 bytes, `proc(5)`). `key` is written without its colon, and the colon must follow it,
+/// so `VmData` does not take a line `VmDataX:`. `None` where no line has the field, its value
+/// is not a count in kB, or the bytes pass `u64`. Linear in the length of `text`.
+pub fn proc_kib(text: &str, key: &str) -> Option<u64> {
+    let value = text
+        .lines()
+        .find_map(|l| l.strip_prefix(key)?.strip_prefix(':'))?;
+    let kib: u64 = value.trim().strip_suffix("kB")?.trim().parse().ok()?;
     kib.checked_mul(1024)
 }
 
@@ -267,5 +284,21 @@ mod tests {
     #[test]
     fn the_data_of_this_process_is_read() {
         assert!(data_bytes().is_some_and(|b| b > 0));
+    }
+
+    #[test]
+    fn a_proc_field_is_read_in_kib_and_only_by_its_whole_key() {
+        let status = "Name:\tzed\nVmDataX:\t 7 kB\nVmData:\t    1234 kB\nThreads:\t4\n";
+        assert_eq!(proc_kib(status, "VmData"), Some(1234 * 1024));
+        assert_eq!(proc_kib(status, "VmDat"), None);
+        assert_eq!(proc_kib(status, "Threads"), None);
+        assert_eq!(proc_kib(status, "VmSize"), None);
+        assert_eq!(proc_kib("MemTotal: 0 kB\n", "MemTotal"), Some(0));
+        assert_eq!(proc_kib("MemTotal: x kB\n", "MemTotal"), None);
+        let max = format!("MemTotal: {} kB\n", u64::MAX / 1024);
+        assert_eq!(proc_kib(&max, "MemTotal"), Some(u64::MAX / 1024 * 1024));
+        let over = format!("MemTotal: {} kB\n", u64::MAX / 1024 + 1);
+        assert_eq!(proc_kib(&over, "MemTotal"), None);
+        assert!(proc_bytes("/proc/meminfo", "MemTotal").is_some_and(|b| b > 0));
     }
 }

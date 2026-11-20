@@ -156,12 +156,7 @@ fn given(bits: &BigUint) -> bool {
 /// file is missing or unreadable, and a message then leaves the machine out.
 pub fn machine_memory() -> Option<u64> {
     static MEMORY: OnceLock<Option<u64>> = OnceLock::new();
-    *MEMORY.get_or_init(|| {
-        let info = std::fs::read_to_string("/proc/meminfo").ok()?;
-        let total = info.lines().find_map(|l| l.strip_prefix("MemTotal:"))?;
-        let kib: u64 = total.trim().strip_suffix("kB")?.trim().parse().ok()?;
-        kib.checked_mul(1024)
-    })
+    *MEMORY.get_or_init(|| crate::limits::proc_bytes("/proc/meminfo", "MemTotal"))
 }
 
 /// The end of a message for a value of `size` bytes whose step asked for `ask` bytes and was
