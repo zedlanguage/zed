@@ -10,6 +10,16 @@
 //! enters. A cell's landmarks are those of its loop ([`Scopes`]), so a head stops only at
 //! values written in its loop.
 //!
+//! The strategy is Bourdoncle's (cited in full, with what was checked, in module `wto`).
+//! Widening to reach a post-fixpoint and narrowing to come back down are from P. Cousot and
+//! R. Cousot, "Abstract interpretation: a unified lattice model for static analysis of
+//! programs by construction or approximation of fixpoints", POPL 1977, pp. 238-252,
+//! doi:10.1145/512950.512973 (checked 2026-11-20: the DOI and pages on Crossref; the paper not
+//! read, the operators from memory). The departure is that here they move a bound only to a
+//! landmark or to a value already present, not to infinity at once, so that no delay and no
+//! bound on rounds is needed; `m0_05_widening_and_iteration::invariant` checks that results
+//! are inductive (post-fixpoints), which does not show that narrowing went as low as it could.
+//!
 //! The specification of these rules is prelude source, `zed/prelude/iteration.zed`; this
 //! module is the Rust-hosted checker's copy.
 

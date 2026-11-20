@@ -126,7 +126,8 @@ impl fmt::Display for End {
 ///
 /// The pieces are kept in a persistent balanced search tree ordered by their lower ends (an
 /// AVL tree joined and split as in Blelloch, Ferizovic and Sun, "Just Join for Parallel Ordered
-/// Sets", 2016). A clone shares the whole tree; an operation that builds a new set copies only
+/// Sets", SPAA 2016, doi:10.1145/2935764.2935768; the citation in full is at `join`). A clone
+/// shares the whole tree; an operation that builds a new set copies only
 /// the `O(log p)` nodes on the paths it changes and shares the rest. Each node also holds, for
 /// its subtree, the count of pieces, the first and last ends and a hash of the pieces in
 /// order, so that these are read in `O(1)`, and, once asked for, the longest run of integers
@@ -358,6 +359,24 @@ fn rotate_right(t: Arc<Node>) -> Arc<Node> {
 
 /// The tree of `l`'s pieces, then `k`, then `r`'s, for every piece of `l` below `k` and of `r`
 /// above it: `O(|height(l) - height(r)| + 1)`.
+// G. E. Blelloch, D. Ferizovic and Y. Sun, "Just Join for Parallel Ordered Sets", SPAA 2016,
+// pp. 253-264, doi:10.1145/2935764.2935768; arXiv:1602.02120. Section 3 ("The JOIN
+// Function"), the AVL figure: join(TL, k, TR) is joinRight when h(TL) > h(TR) + 1, joinLeft
+// when h(TR) > h(TL) + 1, and node(TL, k, TR) otherwise; joinRight walks down the right spine
+// of TL to the first subtree c with h(c) <= h(TR) + 1, puts node(c, k, TR) there, and on the
+// way back up makes one single or double rotation where a node's right side has grown two
+// taller than its left. `join_right` and `join_left` follow the figure line for line. Its
+// cost is O(|h(TL) - h(TR)|) (the paper's Theorem for AVL trees), and split, union, meet and
+// difference are built from join alone (section 4 and Figure 1), so that two sets of m <= n
+// pieces cost O(m log(n/m + 1)) (the paper's main theorem). Departures: the keys are pieces,
+// not points, so `union` merges overlapping and touching pieces as it goes (see there); nodes
+// are shared, not changed in place, so a new node is built where the paper rotates; and
+// nothing runs in parallel. Checked 2026-11-20: the DOI, venue and pages on Crossref; the
+// arXiv LaTeX source read (the figure, section 4 and the theorem). The tests:
+// `set_operations_agree_with_the_vec_version_on_random_sets` runs every operation on random
+// sets against a sorted-list version, and `check_tree` asserts on each result that every
+// node's two heights differ by at most 1 and its stored height and summaries are right. They
+// do not measure the cost; `interval_set_operations_scale` in the step tests does.
 fn join(l: Link, k: Keyed, r: Link) -> Arc<Node> {
     let (hl, hr) = (height(&l), height(&r));
     match (l, r) {
@@ -479,7 +498,9 @@ fn absorb_last(t: Link, lo: &mut End, hi: &mut End) -> Link {
 /// The union of the pieces of `a` and `b`. `b` is split around the root piece of `a`, that
 /// piece takes in every piece of `b` it overlaps or touches, and the unions of the two sides
 /// are joined to it after it takes in the pieces of theirs it now touches (Blelloch, Ferizovic
-/// and Sun, "Just Join for Parallel Ordered Sets", 2016). `O(m log(n/m + 1))` for `m <= n`
+/// and Sun, "Just Join for Parallel Ordered Sets", SPAA 2016, doi:10.1145/2935764.2935768,
+/// Figure 1, where one tree is split by the other's root key; here the root piece first takes
+/// in what it overlaps, since a piece is a range, not a key). `O(m log(n/m + 1))` for `m <= n`
 /// pieces: `O(log n)` for one piece and `O(n)` for two sets of `n`, as a merge of two lists.
 fn union(a: Link, b: Link) -> Link {
     let (a, b) = match (a, b) {

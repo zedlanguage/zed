@@ -2,6 +2,24 @@
 //! M0.5), computed by Bourdoncle's algorithm [Bourdoncle, "Efficient chaotic iteration
 //! strategies with widenings", 1993, figure 4].
 //!
+//! F. Bourdoncle, "Efficient chaotic iteration strategies with widenings", Formal Methods in
+//! Programming and Their Applications, Lecture Notes in Computer Science 735, pp. 128-141,
+//! doi:10.1007/BFb0039704. A weak topological order is a well-parenthesized permutation of the
+//! vertices, each pair of parentheses a component whose first vertex is its head, such that
+//! for every edge `u -> v` either `u` comes before `v` or `v` is the head of a component that
+//! holds `u`; the heads are where widening is applied, and every cycle passes through one.
+//! The recursive algorithm finds the strongly connected parts by a depth-first traversal in
+//! the manner of Tarjan's, makes the root of each its head, and orders the rest of the part
+//! again by the same method with the head's edges in removed. Checked 2026-11-20: the DOI,
+//! title, pages and the volume's title on Crossref (which gives no year); the paper not read
+//! (no free copy found), so the definition, the algorithm and the figure number are from
+//! memory. The tests here check three small orders by hand. In the step tests
+//! (`m0_05_widening_and_iteration::wto`), `bourdoncle_agrees_with_the_declarative_definition`
+//! compares the printed order on random graphs with a separate implementation of the recursive
+//! algorithm written there, and `every_backward_edge_goes_to_an_enclosing_head` checks the
+//! definition above. Both rest on the recursive algorithm as recalled here, so an error in
+//! that recollection would pass them.
+//!
 //! A graph has many weak topological orders, and the order of the depth-first traversal picks
 //! one, with it the head of each component and so the widening points. The traversal visits
 //! the vertices, and each vertex's successors, in the order of their keys ([`VertexKey`]): by
@@ -238,10 +256,13 @@ pub fn show(order: &[Element]) -> String {
 /// `O(d·(V + E))` for nesting depth `d`. A vertex is a head when an edge returns to it from its
 /// own subtree, and its component is the part of its subtree that reaches it there, found as a
 /// loop of the loop-nesting forest (the method of Havlak, "Nesting of reducible and irreducible
-/// loops", 1997, with each edge read once as in Ramalingam, "Identifying loops in almost linear
-/// time", 1999): an edge that is not a back edge is filed at the common ancestor of its ends,
-/// the first vertex whose component can hold both. Each level lists its elements in decreasing
-/// order of the time the traversal finished them. The step tests check the result against the
+/// loops", TOPLAS 19(4), 557-567, 1997, doi:10.1145/262004.262005, with each edge read once as
+/// in Ramalingam, "Identifying loops in almost linear time", TOPLAS 21(2), 175-188, 1999,
+/// doi:10.1145/316686.316687; both DOIs checked on Crossref 2026-11-20, the papers not read,
+/// the methods from memory, and the result checked against the recursive algorithm by the
+/// step tests named in the module doc): an edge that is not a back edge is filed at the common
+/// ancestor of its ends, the first vertex whose component can hold both. Each level lists its
+/// elements in decreasing order of the time the traversal finished them. The step tests check the result against the
 /// declarative definition (`m0_05_widening_and_iteration::wto`).
 ///
 /// Complexity tradeoff: the standard algorithm, Bourdoncle's recursive one, traverses each
