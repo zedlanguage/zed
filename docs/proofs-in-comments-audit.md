@@ -13,8 +13,8 @@ status, with counts per crate at its top:
   zedc-lattice in one row). zedc-check 28 found, 13 already there, 14 added; zedc-base 5, 2,
   3; zedc-elab 2, 0, 2. No wrong argument.
 - [proofdoc1](proofs-audit/proofdoc1.md): zedc-types, zedc-presburger, zedc-preimage,
-  zedc-solvers, zedc-int, and first the memos dryC1 named in c4937d86c. zedc-types 14 found,
-  10 already there, 4 added, 1 Not proved; zedc-presburger 9, 3, 6, 1; zedc-preimage 6, 6;
+  zedc-solvers, zedc-int, and first the memos dryC1 named in c4937d86c. zedc-types 20 found,
+  16 already there, 4 added, 1 Not proved; zedc-presburger 9, 3, 6, 1; zedc-preimage 9, 8;
   zedc-solvers 1, 1; zedc-int 1, 1. Every memo dryC1 named is safe; `RunMark` holds by a
   convention of its callers, row TYPES-run-marks-move-safe.
 

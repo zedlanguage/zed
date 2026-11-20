@@ -19,15 +19,17 @@ Counts per crate (found / already there / added or completed / marked unproved /
 
 | Crate | Found | Already there | Added | Not proved | Corrected |
 |---|---|---|---|---|---|
-| zedc-types | 14 | 10 | 4 | 1 | 0 |
+| zedc-types | 20 | 16 | 4 | 1 | 0 |
 | zedc-presburger | 9 | 3 | 6 | 1 | 0 |
-| zedc-preimage | 6 | 6 | 0 | 0 | 0 |
+| zedc-preimage | 9 | 8 | 0 | 0 | 0 |
 | zedc-solvers | 1 | 1 | 0 | 0 | 0 |
 | zedc-int | 1 | 1 | 0 | 0 | 0 |
 
 The `RunMark` proof is in ty.rs, so it is counted under zedc-types (its Not proved is the 1
 there); its test is in zedc-check r10_tests.rs. A row naming several crates is counted under the
-first. The 0588b18b0 row holds no argument and is not counted.
+first. The 0588b18b0 row holds no argument and is not counted; the zedc-preimage row 15657d994
+was not traced (found 9, 8 already there, 1 open). The rows marked proofdoc1b are those that
+agent found in its sweep with their code in these crates; each was read at its site here.
 
 | Source | Claim | Code site | Status |
 |---|---|---|---|
@@ -60,4 +62,13 @@ first. The 0588b18b0 row holds no argument and is not counted.
 | 41a8f58e2, cd8291d7e (gap1) | the min-gap chain's B trees have at most 15 nodes | zedc-preimage preimage_ref.rs, (C) | already there |
 | e94c5eac6 | `Core::same` gets the coprime base of `coprime_base` | zedc-int | already there (proof at zed-numtheory `coprime_base_u64`, proofdoc1a) |
 | running-log 2026-11-19 (neon-retry) | idle readers of `projected` (`contains_key` in product.rs) are not proved, only tested | zedc-preimage product.rs | already there as an open item of the `Scope::record` join tests; not re-proved here |
+| 0a60d5977 (proofdoc1b) | `Comparing::payloads_by_rest` decides exact payload shapes by their rest | zedc-types ty.rs `payloads_by_rest` | already there |
+| 831f1ec0a (proofdoc1b) | shapes pinned in a compressed trie, filed once per grow | zedc-types ty.rs `Bound` | already there |
+| d4d229225 (proofdoc1b) | a partial arrow keeps its value type apart from its lookup type | zedc-types ty.rs `Domains::meet` | already there |
+| 5985ac958 (proofdoc1b) | arrows paired in written order choose only the instance, never a wrong yes | zedc-types ty.rs `Cx::through_fn` | already there |
+| d3ae39af9 (proofdoc1b) | point a, the B1 skip | zedc-types ty.rs `Sig::first_seen` | already there |
+| a934e9cf8, c390deb51, 38a7a62e6 (proofdoc1b) | signature facts memoed once per signature are never stale | zedc-types ty.rs `Sig::holds_needs`, `holds_no_variable`, `holds_only_own_variables` | already there (a signature is not changed once made; a clone starts with no facts; `unwrap_to_change` empties them) |
+| 7f18aade0 (proofdoc1b) | an input read through a summary over several inputs keeps its bounds | zedc-preimage | already there (24 lines of argument added with the code) |
+| 6f0f43d2f (proofdoc1b) | the loop class of S4: a test whose `||` alternatives limit each other's ranges is refused | zedc-preimage | already there (42 lines of argument added with the code) |
+| 15657d994 (proofdoc1b) | remainders read class by class | then crates/zedc/src/store/preimage.rs | not traced to today's file; left to DOC-proofs-in-comments-audit-rest |
 | 0588b18b0 | a placed entry reads its arguments before the buffer is emptied | zedc-presburger meter.rs | no argument at this site (a type alias only); the proof is in zed-native, swept by proofdoc1a |
