@@ -188,12 +188,25 @@ impl Intervals {
 /// ancestor, in the tree built so far, of the nodes with an edge to it. The tree does not
 /// depend on which such order is given. Nodes left out of `order` are left out of the tree.
 ///
-/// Exact on an acyclic graph (K. Cooper, T. Harvey and K. Kennedy, "A Simple, Fast Dominance
-/// Algorithm", 2001, section 3: in topological order one pass of their intersection reaches
-/// the fixed point): the dominators of `v` other than `v` are the nodes on every path from the
-/// root to `v`, the common dominators of its predecessors, and those of a node form the chain
-/// of its ancestors in the tree, so the common ones are the ancestors of the predecessors'
-/// lowest common ancestor and that ancestor is the lowest.
+/// Exact on an acyclic graph: the dominators of `v` other than `v` are the nodes on every path
+/// from the root to `v`, the common dominators of its predecessors, and those of a node form
+/// the chain of its ancestors in the tree, so the common ones are the ancestors of the
+/// predecessors' lowest common ancestor and that ancestor is the lowest.
+///
+/// Source: K. D. Cooper, T. J. Harvey and K. Kennedy, "A Simple, Fast Dominance Algorithm",
+/// Rice University, about 2001 (no DOI; the copy read is undated, its PDF made in 2002). Its
+/// section "The Data-flow Approach" (unnumbered; this comment cited it before as "section 3")
+/// gives the equations "Dom(n) = (∩ over p ∈ preds(n) of Dom(p)) ∪ {n}", solved in reverse
+/// postorder in at most d(G) + 3 passes, d(G) the loop connectedness, and Figure 3 keeps only
+/// the array `doms` of immediate dominators, intersecting two dominator sets by walking up it
+/// from both ends ("intersect"). The paper does not state the acyclic case; it follows from
+/// the equations, since in a topological order every predecessor is final when its node is
+/// read, so one pass is exact. Departure: the walk up `doms` by postorder numbers is replaced
+/// by a lowest common ancestor in O(log n) by binary lifting, and the predecessors are read
+/// forward from their edges. Checked 2026-11-20: the text read; no DOI exists to check.
+/// `immediate_dominators_do_not_depend_on_the_topological_order_on_random_dags` checks the
+/// tree against dominators found by removing each node, on 500 random acyclic graphs of up
+/// to 12 nodes, in several orders; it does not check the time bound.
 // Complexity tradeoff: each edge costs one lowest common ancestor query, O((n + e) log n) time
 // and O(n log n) words, against O(n e) for the iterative data-flow method on bit sets, or
 // Lengauer-Tarjan's O(e α(e, n)) which needs no order but much more code and a depth-first
@@ -369,7 +382,8 @@ mod tests {
                 }
             }
             let dom = dominators_by_removal(n, &kids);
-            // Several topological orders: Kahn's, taking a random ready node each time.
+            // Several topological orders: Kahn's (cited at `order.rs`), taking a random ready
+            // node each time.
             let mut first: Option<Vec<usize>> = None;
             for _ in 0..4 {
                 let mut need = vec![0; n];
