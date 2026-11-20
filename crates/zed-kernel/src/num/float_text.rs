@@ -7,7 +7,7 @@
 //! (DESIGN.md \[MushtakLemire23\]). Its Algorithm 1 is Lemire's (below) with the fallback test
 //! "if (z mod 2^73 = 2^73 − 1 for 64-bit numbers ...) and q ∉ [−27, 55]"; its section "Ruling
 //! out fallback cases" shows, by Legendre's theorem, that such a `v` must be "the denominator
-//! of a convergent of T[q]/2^137", and checking those convergents finds none, so the test never
+//! of a convergent of T\[q\]/2^137", and checking those convergents finds none, so the test never
 //! fires. Checked 2026-11-19 against the arXiv text and Crossref. A significand `w` of at
 //! most 19 digits times `10^q` is one 64 x 128-bit product with the truncated power of five
 //! `POW5[q]`. The paper proves, by the continued-fraction convergents of `POW5[q] / 2^137`, that

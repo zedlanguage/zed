@@ -4,7 +4,7 @@
 //! `q < 0`, where `5^-q` has `b` bits. It is fast_float's table: D. Lemire, "Number parsing at
 //! a gigabyte per second", Software: Practice and Experience 51(8):1700-1727, 2021,
 //! doi:10.1002/spe.2984, §4 ("Fast algorithm"): "The algorithm relies on a precomputed table
-//! of 128-bit values T[q] for decimal exponents q ∈ [−342, 308] (see Appendix B)" (checked
+//! of 128-bit values T\[q\] for decimal exponents q ∈ \[−342, 308\] (see Appendix B)" (checked
 //! 2026-11-19 against the paper's text and Crossref). Extended here to `q = 324` for writing
 //! the smallest subnormal. Each entry is checked against the exact power by
 //! `the_power_table_is_the_truncated_powers_of_five`, which catches any wrong entry.

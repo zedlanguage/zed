@@ -151,7 +151,7 @@
 //!   <https://cr.yp.to/arith/scaledmod-20040820.pdf>. Abstract: U mod p1, U mod p2, ... can
 //!   be computed "in time n(lg n)^(2+o(1))"; the paper's algorithm has a smaller o(1). Cited
 //!   for radix conversion in O(M(n) log n): Modern Computer Arithmetic, Exercise 1.35, makes
-//!   integer output as fast as input with "D. Bernstein's scaled remainder tree [21] and the
+//!   integer output as fast as input with "D. Bernstein's scaled remainder tree \[21\] and the
 //!   middle product". This file does not use the scaled tree; it divides by Newton reciprocals.
 //! - D. E. Knuth, The Art of Computer Programming, vol. 2, 3rd ed., Addison-Wesley, 1997,
 //!   §4.3.1, Algorithm D (long division). From memory, not checked: the book was not read.
