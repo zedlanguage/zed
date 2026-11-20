@@ -54,7 +54,7 @@ The third pass, row DOC-proofs-in-comments-audit-rest-2, reads those:
 
 | Section | Entries read | Claims found | Already there | Added or completed | Marked unproved | False |
 |---|---|---|---|---|---|---|
-| proofdoc3a | 173 of 345 | zed-kernel 71 (reported only), zedc-preimage 35, 28 in the other crates | 69 | 19 | 11 | 2 faults fixed with a test red first (zedc-preimage spans.rs priority tie, zedc-syntax recover.rs kept declaration); 2 false zed-kernel comments reported (row FIX-poly-limit-comments) |
+| proofdoc3a | 173 of 345 | zed-kernel 71 (reported only), zedc-preimage 35, 28 in the other crates | 82 | 26 | 11 | 4 comments corrected; 2 faults fixed with a test red first (zedc-preimage spans.rs priority tie, zedc-syntax recover.rs kept declaration); 2 false zed-kernel comments reported (row FIX-poly-limit-comments) |
 | proofdoc3b | 90 of 365 | zedc-check 89 in 75 entries | 67 | 10 | 0 | 1: `fold_dir_end`'s round bound (row FAIL-fold-rotating-tuple-rounds) |
 | proofdoc3c | 12 in full, 361 through four filters | 31 | 8 | 24 | 2 sub-cases (`find_tied_point`, `root_approx`) | 0 |
 
