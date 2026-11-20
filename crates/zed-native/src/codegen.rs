@@ -881,7 +881,9 @@ impl<M: Module> Gen<'_, M> {
                 }
                 Prim::Sqrt => {
                     // IEEE 754 `squareRoot` (IEEE Std 754-2019, "IEEE Standard for
-                    // Floating-Point Arithmetic", IEEE, 2019, section 5.4.1): one `sqrtsd`,
+                    // Floating-Point Arithmetic", IEEE, 2019, doi:10.1109/IEEESTD.2019.8766229,
+                    // section 5.4.1; how far that is checked is said at the kernel's
+                    // `Prim::Sqrt` in `zed_kernel::eval`): one `sqrtsd`,
                     // O(1). Only an `f64` runs here. An `f32` has no word tag of its own (a
                     // `Word::VAL` in the heap's table), so it takes the kernel call, as all
                     // `f32` arithmetic in native code does; a tag for it would make every
