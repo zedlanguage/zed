@@ -8,9 +8,10 @@
 //! against the fixed hash the priority was before: each fails when Seidel and Aragon's bound puts
 //! the probability of the measured height, for independent uniform priorities, below `1/n`.
 //!
-//! The bound. Seidel and Aragon ("Randomized search trees", Algorithmica 16, 1996, Lemma 4.8): for
-//! independent identically distributed priorities in a treap of `n > 1` nodes, every node `x`,
-//! and every `c > 1`, `Pr[D(x) >= 1 + 2c ln n] < 2 (n/e)^(-c ln(c/e))`, where `D(x)` counts the
+//! The bound. Seidel and Aragon ("Randomized search trees", Algorithmica 16, 1996,
+//! doi:10.1007/BF01940876, Lemma 4.8): for independent identically distributed priorities in a
+//! treap of `n > 1` nodes, every node `x`, and every `c > 1`,
+//! `Pr[D(x) >= 1 + 2c ln n] < 2 (n/e)^(-c ln(c/e))`, where `D(x)` counts the
 //! nodes from `x` to the root, `x` included. A union bound over the `n` nodes gives
 //! `Pr[height >= 1 + 2c ln n] < 2n (n/e)^(-c ln(c/e))`. The tests take `1/n` for the probability
 //! ("with high probability"), so a height `h` fails when `c = (h - 1) / (2 ln n)` has
