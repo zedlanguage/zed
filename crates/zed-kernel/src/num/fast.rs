@@ -127,7 +127,7 @@ use num_integer::Integer;
 use num_traits::{One, Signed, ToPrimitive, Zero};
 
 use super::TooLarge;
-use crate::bits::BitLen;
+use crate::machine_int::BitLen;
 
 /// The 64-bit words at or below which the narrower factor goes to num-bigint's
 /// multiplication, the other methods' costs not computed. Measured on 2026-11-07 at load 34

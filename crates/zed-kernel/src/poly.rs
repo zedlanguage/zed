@@ -32,8 +32,8 @@ use num_integer::Integer;
 use num_traits::{One, Signed, ToPrimitive, Zero};
 use zed_graph::MinHeap;
 
-use crate::bits::BitLen;
 use crate::digest::{Digest, step};
+use crate::machine_int::BitLen;
 use crate::num::{is_prime, mul_cost, mul_int, mul_uint, pow_uint, squares_by_transform};
 use crate::term::{Prim, Term};
 use crate::value::Value;

@@ -39,8 +39,8 @@ use std::ops::Deref;
 use std::slice;
 use std::sync::{Arc, LazyLock, OnceLock};
 
-use crate::bits::{BitLen, ceil_midpoint, floor_midpoint};
 use crate::btree::{self, Hole};
+use crate::machine_int::{BitLen, ceil_midpoint, floor_midpoint};
 use num_bigint::{BigInt, BigUint};
 use num_traits::{One, ToPrimitive, Zero};
 

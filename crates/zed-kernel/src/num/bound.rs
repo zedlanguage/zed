@@ -15,7 +15,7 @@ use num_traits::{One, ToPrimitive, Zero};
 
 use super::fast::{self, built};
 use super::room::{LiteralRounding, TooLarge, room};
-use crate::bits::BitLen;
+use crate::machine_int::BitLen;
 
 /// `coef * prod p^e`, every exponent positive; the coefficient is borrowed from the number it
 /// bounds where it can be, so a wide one is not copied.

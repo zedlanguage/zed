@@ -68,7 +68,7 @@ use std::hash::BuildHasher;
 use std::sync::Arc;
 
 use super::tree::{Text, Tree};
-use crate::bits::BitLen;
+use crate::machine_int::BitLen;
 
 /// How many symbols to the left a block start reads.
 const CL: usize = 8;

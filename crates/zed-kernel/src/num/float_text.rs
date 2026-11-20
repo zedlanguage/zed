@@ -25,7 +25,7 @@
 //! Schubfach takes the even one; and one significant digit where Java asks for two.
 
 use super::LiteralRounding;
-use crate::bits::BitLen;
+use crate::machine_int::BitLen;
 use num_bigint::{BigInt, BigUint};
 use std::cmp::Ordering;
 

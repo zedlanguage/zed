@@ -34,7 +34,7 @@ use num_bigint::{BigInt, BigUint, Sign};
 use num_integer::Integer;
 use num_traits::{One, Pow, Signed, ToPrimitive, Zero};
 
-use crate::bits::BitLen;
+use crate::machine_int::BitLen;
 use bound::{Format, Product};
 pub use factor::is_prime;
 #[doc(hidden)]
