@@ -385,8 +385,8 @@ impl Reader {
     /// induction over the stack, when `(p, Some(k))` is popped its `k` parts, pushed above it,
     /// have each finished and left one number, so `done` holds at least `k`, the top `k`
     /// being `p`'s parts in reverse order. The root's one entry leaves one number, which the
-    /// final `pop` takes. [`Reader::needs_of`] reads `got`, which holds exactly the `k` needs of the
-    /// parts [`each_part`] gave for `p.term`; its `part()` is called once for each part
+    /// final `pop` takes. [`Reader::needs_of`] reads `got`, which holds exactly the `k` needs of
+    /// the parts [`each_part`] gave for `p.term`; its `part()` is called once for each part
     /// `each_part` gives for that form, so it never asks for a `k + 1`-th. That last step is a
     /// match between the two functions' arms, not a property of one: a mismatch fires on every
     /// term of that form, and the step tests of `l01_28_staging` read every term form.
@@ -923,8 +923,8 @@ struct Summary {
 // definitions (O(t · depth) for `free` alone), and reading the term as a tree costs O(2^d)
 // when each of d levels shares one part between two places (F83). Here each part held in a
 // node is summarized once, by the node's id (O(P log P) for P distinct parts), and the names
-// are sets of [`Sets`], so a mix costs the distinct parts plus the unions [`Sets`] bounds. Memory: one summary per node read and the tries of
-// the sets until the next `mix_top` clears them.
+// are sets of [`Sets`], so a mix costs the distinct parts plus the unions [`Sets`] bounds. Memory:
+// one summary per node read and the tries of the sets until the next `mix_top` clears them.
 #[derive(Default)]
 struct Frees {
     names: HashMap<Arc<str>, Name>,
@@ -1675,8 +1675,8 @@ pub fn split(unit: &Unit, name: &str, param: usize, d: &Domain) -> Result<(Term,
 
 /// What the Trick reads of a unit, gathered once for any number of splits: the literal
 /// arguments of the unit's calls once mixed, those of its tests' cases, and a mixer with
-/// every definition bound mixed, as [`mix`] binds it. Splitting `k` functions then costs one mix of the
-/// unit and `k` mixes of their bodies, where each split mixed the whole unit again.
+/// every definition bound mixed, as [`mix`] binds it. Splitting `k` functions then costs one mix of
+/// the unit and `k` mixes of their bodies, where each split mixed the whole unit again.
 // Complexity tradeoff (COMPLEXITY.md F42): the naive split mixes the whole unit to find the
 // calls and binds every definition again for each function split, O(splits × unit) (72.3
 // times the work for 8 times the functions). The specializer mixes and binds once,
@@ -2092,8 +2092,8 @@ fn compared(v: &Value) -> bool {
 }
 
 /// A value as a key of the stage's maps: the value, and its canonical form, by which keys are
-/// equal and ordered. The canonical form names each string by its bytes ([`text::names::Names`]) and
-/// each tuple or keypath by its kind and the forms of its parts ([`Namer`]), so two keys are
+/// equal and ordered. The canonical form names each string by its bytes ([`text::names::Names`])
+/// and each tuple or keypath by its kind and the forms of its parts ([`Namer`]), so two keys are
 /// equal exactly when their values are. The order is that of names, not of bytes, and no
 /// result reads it: each map is only looked up, and the run log is read in the order of the
 /// run (item STAGE-joined-eq-build).
@@ -3089,8 +3089,8 @@ impl Mixer {
     /// globals of the scope ([`Evaluator::run_under`]). Each build-stage binding has a position
     /// among them ([`Entry::global`]): every definition and `let` is bound mixed, so a
     /// build-stage binding is a literal, lambda, primitive or name ([`Mixer::known`]), and each
-    /// name it reads is such a binding or a prelude word. It gives what the run of `t` closed under the
-    /// bindings it needs ([`Mixer::closed`]) gives, since that run's `let`s bind literals,
+    /// name it reads is such a binding or a prelude word. It gives what the run of `t` closed under
+    /// the bindings it needs ([`Mixer::closed`]) gives, since that run's `let`s bind literals,
     /// lambdas, primitives and names alone, each of which gives its value in one step and
     /// cannot fail; and in time linear in `t` and the bindings the run reaches, since a
     /// binding's value is made when the run first reads it.
