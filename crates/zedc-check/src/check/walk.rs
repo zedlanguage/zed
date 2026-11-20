@@ -23713,6 +23713,17 @@ impl<'t, 'a> Ck<'t, 'a> {
         // read on every path. Test:
         // `l01_26_type_resolution::never::a_call_with_an_argument_of_no_value_has_its_substituted_result`.
         // COMPLEXITY.md row C36.
+        //
+        // Proof that the arrow's result is sound there, a type holding every value the call
+        // can give (4db94f302, EMPTY-call-unused): an argument of no value is in every
+        // parameter type, so the arguments meet the arrow's parameters, and the arrow's
+        // result with the call's binding put in ([`Self::apply_one`]) holds every value the
+        // body gives on arguments of those types, as for any call. A call that gives no value
+        // gives none outside that result. So keeping the result only loses precision, where
+        // the body reads the argument on every path. `Demand::All` and `Demand::First` make
+        // the call `Never` only where the call cannot give a value: an operator, a prelude word
+        // and a family lookup read every argument before giving one, and `&&` and `||` read
+        // the first. Test above; it cannot catch a word wrongly given `Demand::Body`.
         if self.level == 0 {
             self.lit_args_take(sig, &mut args);
         }
@@ -24218,7 +24229,37 @@ impl<'t, 'a> Ck<'t, 'a> {
     }
 
     /// Binds each variable of the parameter `p` that no other argument binds to `Never`, for an
-    /// argument with no value: a union with the empty type, so the same in any order.
+    /// argument with no value: a union with the empty type.
+    ///
+    /// Proof that the binding [`Self::apply_one`]'s loop over the arguments ends with is the
+    /// same in any order of the arguments (EMPTY-arg-needs, 042103e29):
+    /// 1. Inside that loop `binds` is written only by [`Ck::sub`] (directly, or through
+    ///    [`Self::fit_needs`]), and here. `Ck::sub` is `Ty::sub_with`, whose one write to the
+    ///    caller's binding is [`Binds::unite`] at the binding of a piece to a variable (zedc-types
+    ///    ty.rs, "binds.unite(v.clone(), &of.of_piece(p))"): `v` becomes what it was bound to,
+    ///    if anything, joined with the piece. The other writes of `binds` in `apply_one` (the
+    ///    carrier of a variable bound by literals alone, the widening of a bounded variable to
+    ///    its carriers) come before or after the loop.
+    /// 2. `or_insert_with(v, Ty::empty)` leaves a bound `v` as it is and binds an unbound one to
+    ///    the empty type. Since `Never` is the identity of union, it is `unite(v, Never)` on a
+    ///    `v` that is bound, and on one that is not it binds `v` to the same type `unite` would.
+    /// 3. So every write in the loop joins a type into `v`'s binding, and union is commutative
+    ///    and associative: the final binding of each `v` is the union of what the arguments
+    ///    join into it, in any order.
+    ///
+    /// Reads of the binding made so far, inside the loop: the piece binder's `admits` reads
+    /// `binds.get(v)` with empty bindings filtered out (`filter(|b| !b.is_empty())`), so a `v`
+    /// bound to `Never` reads there as one not bound, in either order. [`Self::fit_needs`]
+    /// reads `q.replace(binds)`: where the argument of no value comes first, `q` has `Never`
+    /// at `v`; where it comes after, `q` has `v` itself. Not proved (row
+    /// PROOF-never-bind-order-fit-needs): that [`Self::needs_hold`] gives the same verdict on
+    /// both, the open sub-case being a function argument whose body has needs on a variable
+    /// that an argument of no value binds. Test:
+    /// `l01_26_type_resolution::never::an_argument_of_type_never_binds_alike_before_or_after_a_function_with_needs`,
+    /// both orders of one need (`(x, 1)`, `x` holds no function); it cannot catch a need that
+    /// fails on a variable and holds on `Never`, or the reverse. The final binding is
+    /// checked by `an_argument_of_type_never_binds_its_variable_to_never` (13 programs) and
+    /// `calls_with_never_and_with_int_do_not_meet` (two orders of two calls).
     fn bind_never(&self, p: &Ty, binds: &mut Binds) {
         let mut vars = Vars::default();
         p.vars_in(&mut vars);
@@ -24587,7 +24628,9 @@ impl<'t, 'a> Ck<'t, 'a> {
             // An argument with no value, `Never`, is in every parameter type and gives each
             // variable of its parameter no value: the variable is bound to `Never` unless
             // another argument binds it, and a need on it is checked on `Never`, not on the
-            // unknown. Binding is a union, so this is the same in any order of the arguments.
+            // unknown. The binding the loop ends with is the same in any order of the
+            // arguments; one read of a binding made so far is not proved alike (proof and the
+            // open sub-case at [`Self::bind_never`]).
             if ty.is_empty() {
                 self.bind_never(p, &mut binds);
                 continue;
@@ -28576,6 +28619,11 @@ type Recv = Option<(Rc<[Span]>, Option<Rc<Taken>>)>;
 /// keys into nested families (DESIGN.md sec:keypaths), and this proof covers the entries one
 /// level down only.
 ///
+/// Test: `l01_26_type_resolution::function_variance::a_function_taken_from_a_family_argument_misses_outside_its_domain`
+/// (seven programs, read at `2.5` and at `3`). What it cannot catch: keys of tuples (refused,
+/// not rebuilt), families nested more than one level, and a family whose entries have more
+/// than one type (not taken here).
+///
 /// Complexity tradeoff: O(a · |R|) for a arrows of results of size |R|, the comparison of
 /// each result with `out`, once for each read of an entry checked at a call; the naive way,
 /// a test of each entry's value, is O(entries) and needs the values, which the checker does
@@ -29043,6 +29091,9 @@ fn params_apart(sig: &Sig) -> bool {
 ///   names ([`Ck::default_reads`], in the call's frame, which places the variables a need's
 ///   check names); with no needs, neither changes the verdict. Test:
 ///   `l01_29_repairs_and_printing::scaling::division_arguments_with_a_default_reading_another_parameter`.
+///   What it and the test below cannot catch: they use only the defaults `p0` and
+///   `p0 == p1`; none uses a bounded default, a ranged default ([`Ck::default_ints`]) or
+///   `[p0]`, whose steps above rest on the reading alone.
 ///
 /// The refusals matter (TEST-params-own-apart-red): with this forced to true,
 /// `x = f(k * 0.5, k * 0.25); y = x < 1r;` for `f(positional p0, positional p1, p2 = p0) = p2`,

@@ -471,6 +471,22 @@ fn calls_with_never_and_with_int_do_not_meet() {
     }
 }
 
+/// An argument of type `Never` binds its parameter's variable alike before and after an
+/// argument that is a function whose body has needs, `h` here, whose `(x, 1)` needs `x` to
+/// hold no function: the need is checked as the parameter's type gives it in either order
+/// (the proof at the binding of `Never` in zedc-check walk.rs `apply_one`).
+#[test]
+fn an_argument_of_type_never_binds_alike_before_or_after_a_function_with_needs() {
+    let h = "h(positional x) = (x, 1);\n";
+    for text in [
+        format!("ap(positional g, positional y) = g(y);\n{h}f(positional n: Never) = ap(h, n);\n"),
+        format!("pa(positional y, positional g) = g(y);\n{h}f(positional n: Never) = pa(n, h);\n"),
+    ] {
+        assert_eq!(type_errors(&text), Vec::<String>::new(), "{text}");
+        assert_eq!(sig(&text, "f"), "Never -> Never", "{text}");
+    }
+}
+
 /// Evaluation is neither strict nor lazy, so an argument of type `Never` leaves a call of a
 /// declared function without a value only where the substituted body needs it: the call's type
 /// is the substituted result, with no rule that any argument of no value makes it `Never`

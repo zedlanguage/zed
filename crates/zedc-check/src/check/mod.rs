@@ -8989,7 +8989,14 @@ impl Ck<'_, '_> {
     /// at `f64`, and refusing that dropped the fix from the menu
     /// (PROOF-fit-twice-only-arrow-lambda). The replaced fit is logged, and the trial's undo
     /// puts it back. A span inside an arrow lambda keeps the refusal, since the lambda's other
-    /// arrow may read the span at another carrier in the repaired program as well.
+    /// arrow may read the span at another carrier in the repaired program as well. A span the
+    /// trial wrote itself keeps it too ([`Self::walk_read_replaced`] asks that `at` is not in
+    /// [`Self::trial_fits`]): two fits one trial puts at one span would be two readings in one
+    /// repaired program, of which the elaborator builds one. Test:
+    /// `l01_26a_generic_literals::fixes::a_literal_beside_a_call_read_at_f64_lists_the_rat_fix`,
+    /// red with the replacement switched off (3cc339fd1). It cannot catch a second writer of a
+    /// `Read` at one span: that rests on the proof at [`Self::put_read`], whose
+    /// `debug_assert` is checked in debug builds only.
     fn put(&mut self, w: Undo) {
         self.put_from(w, false);
     }
