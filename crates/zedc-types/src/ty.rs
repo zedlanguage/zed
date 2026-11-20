@@ -28206,6 +28206,32 @@ pub mod r10_hash {
     /// Fixed deterministic base `r` (`M59`).
     pub const R_BASE: u64 = 0x13B5_2A7D_94E1_6C3B % P;
 
+    // The token constants below (DOC-magic-constants-sweep, 2026-11-20).
+    //
+    // What they are: each family of numbered names maps its number `k` to the affine token
+    // `C0 + C1 k mod P`: class variables `$k` (`C0_CLS`, `C1_CLS`, [`tok_cls_small`]), need
+    // ranks (`C0_NRANK`, `C1_NRANK`, [`tok_need_rank`]), and fresh variables `T5`, `T6`, ...
+    // (`C0_FIN`, `C1_FIN`); the letters `T`, `U`, `V`, `W` get the four tokens `C_LET`, and
+    // any other name `0x0123_4567_89AB_CDEF + leaf_digest(name)` ([`tok_var_plain`]). The
+    // `TAG_*` are the tokens of the structure of the preorder stream: `0x10xx` for the parts of
+    // a signature, `0x20xx` for the kinds of a need.
+    //
+    // Why affine: the sum of the tokens of a run of numbers is then a closed form, `len C0 +
+    // C1 (sum of k)`, so a run of class or fresh variables is hashed in O(1)
+    // ([`sum_cls_range_o1`], [`sum_fresh_vars_o1`]), and a shift of every rank by `d` adds
+    // `d C1_NRANK` times the rank weight ([`NeedBlockSummary::shift_ranks`]). These are
+    // identities of arithmetic mod `P`, true for any values of the constants.
+    //
+    // Why these values: none of them is special. The hex digits are arbitrary patterns below
+    // 2^61, reduced mod `P`; the tags are small numbers, distinct within the list. What relies
+    // on them: only the time of a lookup. Equal signatures make equal token streams whatever
+    // the constants are, so they have equal digests: that is the property `Hash for Sig` and
+    // the two tests `s.digest() == q.digest() && s == q` (in the meet of functions and in
+    // `fits`) rely on, and it does not depend on the values. Two different streams can share a
+    // digest (a fixed base and fixed tokens, see the module note), and each of those sites then
+    // compares the signatures themselves, so a collision costs one full comparison, never a
+    // wrong answer. Different families are kept apart only with high probability, not by
+    // proof: `C0_CLS + C1_CLS k` can equal a tag or another family's token for some `k`.
     const C0_CLS: u64 = 0x0A1B_2C3D_4E5F_6071 % P;
     const C1_CLS: u64 = 0x1F2E_3D4C_5B6A_7989 % P;
     const C0_FIN: u64 = 0x0516_2738_495A_6B7D % P;
