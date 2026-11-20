@@ -13,6 +13,12 @@ use super::*;
 /// num-bigint's printing, faster there, grows faster: `writing_an_end_below_print_whole_scales`,
 /// deferred to plan row PRINT-below-whole-13 in wt/scratch/deferred-tests/PRINT-below-whole-13.rs.
 /// TEST-bench-move-l0123, author P169: n was 1,280,000 digits, now 2,048,000; 1x 0.21 s at load 60.
+///
+/// The bound (author decision P300, read against the `O(n log^2 n)` it is proved at, the proof
+/// at `zed_kernel::num::to_decimal_split`): 2,048,000 digits are 106,302 words, where the levels
+/// counted from the leaves predict 12.00 and `8 (ln 8n / ln n)^2` 11.13. Measured 2026-11-20
+/// (BENCH-over-nlogn-prediction): 10.05 and 10.20 times the instructions on two runs, 8.87
+/// times the bytes.
 #[test]
 fn writing_a_long_decimal_end_scales() {
     let n = 2_048_000;
@@ -32,6 +38,11 @@ fn writing_a_long_decimal_end_scales() {
 /// held to the limit of 10.5 every scaling test meets; 10.2 times at 65,536 and 524,288 words
 /// (2026-11-13, before TEST-bench-move-l0123).
 /// TEST-bench-move-l0123, author P169: n was 65,536 words, now 131,072; 1x 0.67 s at load 37.
+///
+/// The bound (author decision P300, the proof at `zed_kernel::num::to_decimal_split`): at
+/// 131,072 words the levels counted from the leaves predict 11.88 and `8 (ln 8n / ln n)^2`
+/// 11.07. Measured 2026-11-20 (BENCH-over-nlogn-prediction): 10.12 and 10.20 times the
+/// instructions on two runs, 8.91 times the bytes.
 #[test]
 fn writing_a_wide_end_scales() {
     let n = 1 << 17;

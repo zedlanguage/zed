@@ -13,6 +13,20 @@
 //! label that has a pair at all and joins its nearest-labeled neighbor to it, until its connected
 //! part of the level is one cluster; then the next least label. That is a search by least label,
 //! which [`Level::merge`] runs on the level's edges. O(n log n).
+//!
+//! The ratio from n to 8n points this predicts (author decision P300; checked by
+//! `m0_04_corpus_references::bench::clustering_of_random_points` and its wide twin, 2026-11-20).
+//! The work is a sum of phases, each `a n log2(n / h) + O(n)` with `h` its leaf: the two sorts,
+//! whose comparisons on random input are about `log2 n! = n log2(n / e) + O(log n)` (Stirling;
+//! counted at 4000 and 32,000 points: 49,724 and 494,200 for the points, 9.94 times), the
+//! triangulation of Guibas and Stolfi, `T(n) = 2 T(n / 2) + Θ(n)` down to leaves of 2 or 3 sites,
+//! so `Θ(n log2(n / h))` with `h` in 2..3, and the linear rest (reading, the union-find by size
+//! with path halving, the heap of each level over its O(n) edges in all, and the output map,
+//! O(n log n) with `n log2 n` comparisons at most). The ratio of a sum of positive terms is at
+//! most the largest ratio of its terms (the mediant inequality), and `8 log2(8n / h) /
+//! log2(n / h)` at n = 4000 is 10.19 for `h = 2`, 10.28 for `h = e` and 10.31 for `h = 3`, so
+//! the bound predicts at most 10.31. Measured 2026-11-20: 10.08 times the instructions and 8.78
+//! times the bytes (10.055 and 10.046 in the catalog of 2026-11-18).
 
 mod delaunay;
 

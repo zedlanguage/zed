@@ -406,7 +406,21 @@ fn rebuild<A: Atom>(path: Vec<(&Arc<Set<A>>, bool)>, mut node: Tree<A>) -> Tree<
     node
 }
 
-/// The set with `key` added; its atom is not in the set.
+/// The set with `key` added; its atom is not in the set. One walk down while the nodes stand
+/// above the new one, then the subtree there split at the key and the path made again, as
+/// `bdd::list::treap::insert`.
+///
+/// Proof of the cost, `O(1 + D)` expected, `D` the bound of module [`crate::priority`] on a
+/// node's expected depth (`T0 + n(n - 1)/p + 2c H_n` for `n` keys, `T0` the keys that share
+/// their point with another key; Seidel and Aragon, "Randomized search trees", Algorithmica
+/// 16(4/5), 464-497, 1996, doi:10.1007/BF01940876, checked 2026-11-19 at that module). The
+/// walk above and `split` below together follow the search path of `key` in the old tree, each
+/// node of it made once more and no other node: a search for a key not in a binary search tree
+/// ends below its predecessor or its successor, so the path has at most `1 + max(depth(pred),
+/// depth(succ))` nodes, under `1 + 2D` in expectation. So `O(log n)` expected where no two keys
+/// share a point, and `n` insertions `O(n log n)`; the benchmarks `joining_chains_to_lists_scales`
+/// and `parity_built_a_literal_at_a_time_scales` read against that bound (author decision P300,
+/// BENCH-over-nlogn-prediction, 2026-11-20).
 pub(super) fn insert<A: Atom>(t: Option<&Arc<Set<A>>>, key: Key<A>) -> Arc<Set<A>> {
     let prio = priority(&key);
     let mut path = Vec::new();

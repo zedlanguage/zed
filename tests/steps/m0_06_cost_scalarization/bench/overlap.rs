@@ -24,6 +24,15 @@ fn a_static_schedule_takes_time_within_r_log_r() {
     });
 }
 
+/// The bound (author decision P300, the proof at `zedc::cost::nested`): with `r` a power of
+/// two, a part of `s` regions holds `s` distinct devices while `s <= d = r/4`, and a join of
+/// two such parts grows the larger map to `s` entries, one new table of about `2s` buckets, so
+/// each of the `log2 d` levels `s = 2, 4, .., d` allocates `b r` bytes for one constant `b`
+/// (both sizes are powers of two, so the tables' load is the same at `r` and `8r`). Above `d`
+/// both parts of a join hold all `d` devices and the join allocates nothing. The bytes are
+/// `b r (log2 d + c)`, `c` for the stack and the answer, and predict `8 (15 + c) / (12 + c)`, at
+/// most 10.0 (`c >= 0`). Measured 2026-11-20: 9.76 times the instructions and 9.904 times the
+/// bytes (20,645,504 and 204,476,032), which fits `c = 0.60`.
 #[test]
 fn a_balanced_nesting_takes_time_within_r_log_r() {
     // r/4 devices, region i on device i mod r/4: the parts of each composition share devices,

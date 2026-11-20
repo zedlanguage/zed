@@ -263,7 +263,10 @@ fn hash(i: usize) -> u64 {
 /// triangulation, n log n with little linear work beside it, and a sort's comparisons,
 /// n log₂ n - 1.44 n, grow 10.8 times from 1000 to 8000 points but 10.3 times from 4000 to 32000:
 /// at 1000 the ratio sat at 10.49 of the 10.5 allowed, and a cheaper reading of the numbers
-/// (FAIL-ref-text-reading) pushed it over, though every size got faster.
+/// (FAIL-ref-text-reading) pushed it over, though every size got faster. The bound's prediction
+/// at 4000 (author decision P300, the proof in the module doc of reference 14,
+/// `zed/corpus/ref/src/p14.rs`): each phase is `a n log2(n / h)` with a leaf `h` of 2 to 3, at
+/// most 10.31 times; measured 10.08 times the instructions on 2026-11-20.
 const RANDOM_N: usize = 4000;
 
 /// Points in random places: each coordinate a hash of its position in the input.
@@ -522,6 +525,11 @@ pub(super) const HEAT_STENCIL: Input = Input {
     },
 };
 
+/// One chain `n{i+1}` to `n{i}`. Reference 27 builds its ordered map of parents, O(n log n),
+/// then walks with hashed lookups, n steps and 3n lookups, O(n) expected. Through ordered maps
+/// the walk's comparisons per lookup grew 1.52 times from 10,000 to 80,000 nodes, by the
+/// B-tree's height in whole levels, and the whole 10.15 times; hashed, 8.80 times the
+/// instructions and 8.5 times the bytes (2026-11-20, COMPLEXITY.md REF-p27-hashed-walk).
 pub(super) const PARENT_CHAIN: Input = Input {
     what: "parent chain",
     number: "27",

@@ -1171,6 +1171,21 @@ enum MapNode {
 // COMPLEXITY.md row F83. A complete solution would bound the pairs read, for instance
 // by keying a part by the innermost binding among the names it reads, found by a query on a
 // structure over the scope's positions that needs no set materialized.
+//
+// The nodes of `n` nested binders (author decision P300; checked by
+// `l01_28_staging::bench::scaling::lambdas_50000_deep_are_staged_on_a_2_mib_stack`, 2026-11-20).
+// The names are numbered in the order read, so pushing name `i` copies the path from the root to
+// where `i` joins the trie of the names `0..i`, a Patricia trie on the bits of `i`, whose depth is
+// at most the number of bits, `log2 i + 1`, plus the split it adds: about `log2 n + 5` nodes per
+// push and `n (log2 n + 4.95)` in all (counted 109,728 at n = 6,250 and 1,027,972 at 50,000),
+// `O(n log n)`, each made once in `made`. That table doubles when it holds 7/8 of its buckets, so
+// its rehashes cost about twice its final buckets, which lie between 8/7 and 16/7 of its entries;
+// the step from `2^20` to `2^21` buckets at 917,505 entries makes the rehashes 16 times as many
+// from 6,250 to 50,000 where the nodes are 9.37 times. Measured: coloring 10.225 times, mixing
+// 9.914, predicted 10.21 and 9.90 from the rehash cost counted with `made` made at its final size
+// (the bench's doc gives the numbers). A table made at its final size up front would remove the
+// step, but needs a bound on the nodes known before the walk, which the paragraph above says is
+// not proved for the restrictions.
 struct Maps {
     nodes: Vec<MapNode>,
     sizes: Vec<u32>,

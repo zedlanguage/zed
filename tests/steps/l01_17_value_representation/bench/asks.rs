@@ -23,9 +23,21 @@ fn checking_a_long_float_literal_costs_order_n() {
     });
 }
 
-/// The message for a decimal literal of `n` digits where an int is expected costs O(n).
+/// The message for a decimal literal of `n` digits where an int is expected costs O(n log^2 n):
+/// the checker reads the literal's digits into a `rat` by halves (`zed_kernel::num::read_digits`,
+/// COMPLEXITY.md K41), and the rest is O(n): the test for a factor 2 counts trailing zeros, the
+/// test for a factor 5 is one pass of `divides`, and the scan of the text and the quote in the
+/// message read each byte a bounded number of times. Until 2026-11-20 this test was named
+/// `the_message_for_a_long_literal_costs_order_n`, which the reading never was.
+///
+/// The bound (author decision P300, the proof at `read_digits`): with `LEAF_DIGITS` = 2048 there
+/// are `L = log2(n / 2048)` levels, 10 at `n` = 2^21 and 13 at `8n`, and level `j` costs about
+/// one product of total width `n` by transforms, `a n (11 + j)`, so the reading costs
+/// `a n (11 L + L^2 / 2 + L / 2)` and predicts `8 * 234 / 165` = 11.35 (and `8 (ln 8n / ln n)^2`
+/// 10.45 counted from one digit). Measured 9.54 times the instructions on 2026-11-18 and 10.07
+/// on 2026-11-20 (8.74 times the bytes).
 #[test]
-fn the_message_for_a_long_literal_costs_order_n() {
+fn the_message_for_a_long_literal_costs_n_log_squared_n() {
     // Measured 2026-11-14 at a load of about 35, six benchmarks at once: about 150 ns a
     // digit, 1x 0.31 s, 1.4 GB at 8n. The ratio was 10.3 at 2^16 and is 9.7 here.
     let n = 1 << 21;

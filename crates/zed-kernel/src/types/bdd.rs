@@ -2477,6 +2477,15 @@ impl<A: Literal> Part<A> {
     // `the_emptiness_of_a_meet_of_tuple_differences_scales` over 9 (PERF-kernel-payload-shape-
     // under9). Cost: one word a digest met once, a B-tree node share a tied atom; the atoms are
     // borrowed from the part, never copied for the sets.
+    //
+    // Proof of the bound, on a part of `N` nodes with `m` distinct atoms: the walk of `atoms`
+    // meets each node once (its `seen` set), one hash probe each, `O(N)` expected; each atom met
+    // is one probe of `by_digest`, `O(1)` expected; the `k`-th distinct atom of one digest is
+    // one `BTreeSet` insertion among `k - 1` atoms, at most `O(log k)` comparisons (a B-tree's
+    // height is logarithmic in its keys, for every input). Summed over the classes,
+    // `sum log k <= log m! <= m log m`, so `O(N + m log m)`. Benchmark
+    // `distinct_atoms_of_one_digest_scales` reads it against `8 ln(8n)/ln n` (author decision
+    // P300, BENCH-over-nlogn-prediction, 2026-11-20).
     pub(super) fn distinct_atoms(&self) -> Vec<A> {
         enum Bucket<'a, A> {
             One(&'a A),

@@ -31,6 +31,15 @@ fn roots_scale_in_the_degree_and_in_the_bits() {
 /// lie about the roots), for a root at 4, which the cuts of the interval reach, and for one at
 /// `2^40`, which Newton's method reaches. The method it replaced, a chain of `t` derivatives
 /// of up to `t` terms each, was of order `t^3`: 80.5 times the work at 8 times the terms.
+///
+/// For the root at `2^40` the work is `t log t` (author decision P300: an O(n log n) method is
+/// read against its predicted ratio): the branch and bound spends `2 log2(t) + 8` units on `t`
+/// coefficients, measured at every `t` from 32 to 131,072, each unit O(t) operations on
+/// numbers of one or two words (`zed_kernel::poly::roots::integer_roots`, where the count is
+/// explained; its proof is plan row PROOF-roots-terms-depth). So `T(t) = a t (log2 t + 4)`,
+/// whose ratio from 2,048 to 16,384 coefficients (1,024 and 8,192 here, two coefficients each)
+/// is `8 (14 + 4) / (11 + 4) = 9.60`. Measured 2026-11-20 (BENCH-over-nlogn-prediction item 15):
+/// 9.30 times the instructions and 9.16 times the bytes; 30 and 36 units.
 #[test]
 fn roots_are_linear_in_the_number_of_terms() {
     let large = BigInt::from(1u8) << 40u32;

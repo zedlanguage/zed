@@ -115,6 +115,16 @@ fn ifs_50000_deep_are_staged_on_a_2_mib_stack() {
     staged_on_a_2_mib_stack(Shape::Ifs);
 }
 
+/// The bound (author decision P300, the proof at `Maps` in `crates/zedc-stage/src/stage.rs`):
+/// each of the `n` names pushed copies one path of the scope's trie, about `log2 n + 5` map
+/// nodes, so `n (log2 n + 4.95)` nodes in all (counted: 109,728 at 6,250 and 1,027,972 at 50,000,
+/// 9.37 times), each made once, `O(n log n)`. The table of those nodes doubles as it fills to
+/// 7/8 of its buckets, and its rehashes cost in all about twice its final buckets, which are
+/// `2^17` at 6,250 but `2^21` at 50,000 (1,027,972 passes `7/8 · 2^20`), 16 times. Counted
+/// 2026-11-20 with the table made at its final size up front: coloring 176.4 M and 1,533.6 M
+/// instructions, mixing 212.0 M and 1,818.6 M, so the rehashes cost 46.1 M and 46.2 M at 6,250.
+/// The prediction, that rest plus 16 times the rehashes at 6,250 over the whole at 6,250, is
+/// 10.21 for coloring and 9.90 for mixing; measured 10.225 and 9.914.
 #[test]
 fn lambdas_50000_deep_are_staged_on_a_2_mib_stack() {
     staged_on_a_2_mib_stack(Shape::Lams);

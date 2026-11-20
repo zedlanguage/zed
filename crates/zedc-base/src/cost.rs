@@ -367,6 +367,18 @@ enum Part {
 // O(r log r + devices) expected time. A part on one device, the common case of a region and of
 // a sequence on one device, needs no map, so the nesting of `Schedule::sequence` costs one
 // map per device in all.
+//
+// The ratio from r to 8r this predicts on the balanced nesting of
+// `m0_06_cost_scalarization::bench::overlap::a_balanced_nesting_takes_time_within_r_log_r`
+// (author decision P300, 2026-11-20): r a power of two, region i on device i mod d with
+// d = r/4, the parts joined in pairs. A part of s <= d consecutive regions holds s distinct
+// devices, so the join at level s grows the larger map to s entries, one new table of about
+// 2s buckets (the smaller's s/2 entries move, O(s)): each of the log2 d levels s = 2, 4, .., d
+// costs b r for one constant b, the tables at the same load at r and 8r since both are powers
+// of two. Above d both parts hold all d devices, the moves only add loads and nothing is
+// allocated, O(r) in all. So the work is b r (log2 d + c), c for the rest, and the ratio
+// 8 (log2(8r/4) + c) / (log2(r/4) + c) = 8 (15 + c) / (12 + c) at r = 16,384, at most 10.0.
+// Measured 9.76 times the instructions and 9.904 times the bytes (c = 0.60).
 fn nested(regions: &[Region], steps: &[Nest], target: &Target) -> Option<Vec<u64>> {
     let one_core = |d: usize| target.devices[d].cores <= 1;
     let in_series = |_: usize, x: Load, y: Load| x.then(y);

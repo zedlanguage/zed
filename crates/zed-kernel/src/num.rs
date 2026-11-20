@@ -1849,8 +1849,15 @@ pub fn read_decimal(digits: &str) -> Result<Option<BigUint>, TooLarge> {
 /// 2^j) + low` at level `j`, the top group carried up alone when it has no pair, with each
 /// power `10^(LEAF_DIGITS * 2^j)` the square of the one below. Each level costs about one
 /// widest product, O(M(n)) = O(n log n) with `fast::mul` and `fast::Factor`, and there are
-/// `log2(n / LEAF_DIGITS)` levels, so the whole is O(n log^2 n). A text of at most
-/// `LEAF_DIGITS` digits is read whole, with no power of ten built.
+/// `log2(n / LEAF_DIGITS)` levels, so the whole is O(n log^2 n). In full: with `h` =
+/// `LEAF_DIGITS` and `L = log2(n / h)` levels, the leaves cost O(n h) in all (num-bigint's
+/// reading of `n / h` texts of `h` digits, O(h^2) each), and level `j` joins pairs whose widths
+/// sum to `n` digits, each pair one product of width `w = h 2^j` at `a w log2 w`, so the level
+/// costs `a n (log2 h + j)` and the whole `a n (L log2 h + L^2 / 2 + L / 2) + O(n h)`. Under
+/// author decision P300 that predicts the ratio from `n` to `8n` digits:
+/// 8 * 234 / 165 = 11.35 at `n` = 2^21, read 9.54 (2026-11-18) and 10.07 (2026-11-20) by
+/// `l01_17_value_representation::bench::asks::the_message_for_a_long_literal_costs_n_log_squared_n`.
+/// A text of at most `LEAF_DIGITS` digits is read whole, with no power of ten built.
 ///
 /// # Panics
 ///

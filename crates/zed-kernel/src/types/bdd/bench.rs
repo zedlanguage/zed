@@ -265,10 +265,24 @@ fn joining_chains_to_lists_scales() {
     // of `ZED_TREAP_SEED` 0 to 15 the two chains read 9.11 to 10.32 (2026-11-17,
     // BENCH-list-literal-draw-spread), under the limit at every draw; over `4 * SHAPES`
     // offsets, 9.33 to 9.89.
+    //
+    // The bound is proved for these inputs (author decision P300: an `O(n log n)` method read at
+    // or under `8 ln(8n)/ln n`, 10.18 at 2,048): each literal, the largest key of the block, is
+    // one `set::insert`, whose walk and split follow the path to the largest key, the right
+    // spine, of expected length under `1 + 2D` (the proof at `set::insert`; `D = T0 + n(n -
+    // 1)/p + 2c H_n`, COMPLEXITY K123), and `T0` is 0 here, which the assertion below checks on
+    // every input. The `replace` of the list's one block around it rebuilds `O(1)` cells, and
+    // where the list has an index, its atom entry is one `bdd::list::treap::insert`, `O(log m)`
+    // expected by the same walk. So `m` literals cost `O(m log m)` expected. Measured 2026-11-20
+    // (BENCH-over-nlogn-prediction item 17, default seed): 9.82 and 9.79 times the
+    // instructions (`Or`, `And`) and 9.40 times the bytes, under 10.18; the union 8.02.
     let shapes = scaling::inputs(n, |m| {
         (0..SHAPES)
             .map(|j| {
                 let mut xs: Vec<Row> = (0..m as u64).map(|i| atom(j * SHAPE_STRIDE + i)).collect();
+                let points: std::collections::BTreeSet<u64> =
+                    xs.iter().map(|r| r.digest() % crate::priority::P).collect();
+                assert_eq!(points.len(), m, "atoms at one priority point");
                 xs.sort();
                 xs.into_iter().map(Part::literal).collect::<Vec<_>>()
             })
@@ -334,7 +348,9 @@ fn parity_built_a_literal_at_a_time_scales() {
     // drawn (module `priority`) walks one path, of expected depth at most `T0 + n(n - 1)/p +
     // 2c H_n` (COMPLEXITY K123), and `T0`, the atoms whose point (digest modulo `P`) another atom
     // of the set shares, is 0 here, which the assertion below checks on every input (cross-review
-    // round 3, Sol X3-F1: digests `0` and `P` differ but are one point).
+    // round 3, Sol X3-F1: digests `0` and `P` differ but are one point). The proof of the path
+    // is at `set::insert`. Measured 2026-11-20 (BENCH-over-nlogn-prediction item 19, default
+    // seed): 9.55 times the instructions and 8.94 times the bytes, under 10.40.
     let n = 1 << 10;
     let lits = scaling::inputs(n, |m| {
         (0..SHAPES)
@@ -835,6 +851,14 @@ fn distinct_atoms_of_one_digest_scales() {
     // The union is a balanced tree of expressions, built in linear time: joined with `zip`,
     // the rows would go into one set, whose tied priorities make it a path, quadratic to build
     // (PERF-set-tied-digest-depth), which is not what this measures.
+    //
+    // The bound is proved (author decision P300, read at or under 10.18 from 2,048): the walk
+    // meets each of the `2m - 1` nodes once (its `seen` set), one hash probe each, `O(1)`
+    // expected; the `k`-th row of the digest is one insertion into a `BTreeSet` of `k - 1`
+    // rows, `O(log k)` comparisons in the worst case (a B-tree's height is logarithmic), so
+    // `O(log m!) = O(m log m)` in all (the proof at `Part::distinct_atoms`). Measured 2026-11-20
+    // (BENCH-over-nlogn-prediction item 18): 9.79 times the instructions and 8.02 times the
+    // bytes, under 10.18.
     let n = 1 << 11;
     let unions = scaling::inputs(n, |m| {
         let rows = super::set::tests::rows_of_one_digest(m);

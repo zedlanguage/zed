@@ -71,6 +71,11 @@ fn dividing_a_wide_number_scales() {
 /// (`zed_kernel::num::to_decimal`). When that threshold was 60,000 words, the smaller size was
 /// num-bigint's, and the change of method made 18.5 times the work (2026-11-08, COMPLEXITY.md
 /// K81).
+///
+/// The bound (author decision P300, the proof at `zed_kernel::num::to_decimal_split`): at
+/// 196,608 words the levels counted from the leaves predict 11.68 and `8 (ln 8n / ln n)^2`
+/// 10.96. Measured 2026-11-20 (BENCH-over-nlogn-prediction): 9.98 and 10.04 times the
+/// instructions on two runs, 8.84 times the bytes.
 #[test]
 fn printing_a_wide_number_scales() {
     // Measured 2026-11-14 at a load of about 35, six benchmarks at once: about 3.1 µs a

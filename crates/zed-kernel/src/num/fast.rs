@@ -3459,6 +3459,22 @@ pub fn to_decimal(x: &BigUint) -> String {
 /// leaves, below powers of at most [`PRINT_HANDOFF`] words, are written by num-bigint. The text
 /// is num-bigint's. [`to_decimal`] uses it from [`PRINT_WHOLE`] words; the tests and the
 /// benchmark call it to force the split below there.
+///
+/// Proof of the bound, `x` of `n` words, `h` = [`PRINT_HANDOFF`]: the recursion has `L =
+/// log2(n / h)` levels, and level `i` from the top divides `2^i` parts of about `n / 2^i` words
+/// by one power, each a bounded number of products and one cyclic product of about `n / 2^(i+1)`
+/// words (the module's section on division), so `O(2^i M(n / 2^i)) = O(n log(n / 2^i))` the
+/// level, `M` the transform product, `O(n log n)` for every length up to `2^50` points ([`mul`]
+/// takes the least of three computed costs, one of them that product). The powers, built by
+/// squaring, cost `sum M(n / 2^i) = O(M(n))`; the one Newton reciprocal `O(M(n))`; each derived
+/// reciprocal one product and one cyclic product at its level. The `O(n / h)` leaves cost
+/// `O(h^1.5)` each, `O(n)` for the fixed `h`. Summed, `T(n) = a n (L^2 / 2 + (log2 h + 1/2) L) +
+/// O(n) = O(n log^2 n)`, the `M(n) log n` of COMPLEXITY.md C31 (author decision A47). At `8n`
+/// words `L` grows by 3, so the leading term predicts `8 f(L + 3) / f(L)`, `f` the bracket: 11.88
+/// at 131,072 words and 11.68 at 196,608 (`8 (ln 8n / ln n)^2`, counted from one word, gives 11.07
+/// and 10.96); the linear part lowers the ratio. Benchmarks `writing_a_wide_end_scales`,
+/// `writing_a_long_decimal_end_scales` and `printing_a_wide_number_scales` read under these
+/// (author decision P300, BENCH-over-nlogn-prediction, 2026-11-20).
 pub fn to_decimal_split(x: &BigUint) -> String {
     to_decimal_split_at(x, PRINT_HANDOFF)
 }

@@ -206,14 +206,23 @@ pub fn term_roots(
 /// the degree: for `t` terms whose 1-norm has `B` bits, the split is O(t) additions, and the
 /// search (`positive_roots`) costs O(t) products of numbers of O(B) bits per interval it
 /// keeps, linear in `t` where the roots are few (measured: 7.6 times the work at 8 times the
-/// terms). Given up: the paper's chain of `t` derivatives, O(t^3) evaluations (80.5 times the
-/// work at 8 times the terms), which bounds the number of intervals where this method has no
-/// proven bound; and on dense polynomials with many integer roots, as `(x - 2) … (x - 65)`, the
-/// chain was about 2 times faster (40 against 80 ms at 64 roots), and on a small cubic as
-/// `(x - 4)(x - 5)(x - 7)` about 1.5 times (27 against 42 us), because an interval evaluation
-/// in the monomial basis overestimates across a cluster of roots, and each of its numbers is a
-/// `BigInt`. Hensel lifting of the roots modulo a prime would
-/// cost O(D) per prime and digit, but a repeated root and a prime dividing the discriminant
+/// terms). Where the intervals must be narrow to be decided, the count of them grows with `t`:
+/// on `(x - r)(1 + x^2 + ... + x^(t - 2))` with `r = 2^40`, `t` terms, `positive_roots`
+/// spends exactly `2 log2(t) + 8` units at every `t` from 32 to 131,072 (measured 2026-11-20,
+/// BENCH-over-nlogn-prediction item 15), each O(t) operations on numbers of one or two words:
+/// so the work is `a t (log2 t + 4)`, 1,842 to 2,216 instructions per term and unit. The
+/// enclosures of `positive_on` and `may_hold_a_root` in the monomial form widen with the
+/// terms, so one more cut is needed at each doubling of `t` before the slope's sign is shown
+/// (inferred from the counts; the proof of the count is plan row PROOF-roots-terms-depth). The
+/// depth is at most the bits of the bound, so for coefficients of fixed size the count is
+/// bounded and the work linear once `log2 t` passes them. Given up: the paper's chain of `t`
+/// derivatives, O(t^3) evaluations (80.5 times the work at 8 times the terms), which bounds the
+/// number of intervals where this method has no proven bound; and on dense polynomials with many
+/// integer roots, as `(x - 2) … (x - 65)`, the chain was about 2 times faster (40 against 80 ms
+/// at 64 roots), and on a small cubic as `(x - 4)(x - 5)(x - 7)` about 1.5 times (27 against
+/// 42 us), because an interval evaluation in the monomial basis overestimates across a cluster
+/// of roots, and each of its numbers is a `BigInt`. Hensel lifting of the roots modulo a prime
+/// would cost O(D) per prime and digit, but a repeated root and a prime dividing the discriminant
 /// each need a case of their own. Tests: `l01_39_reduced_product::roots` (scaling in the
 /// degree, the bits and the number of terms).
 pub fn integer_roots(f: &Sparse, lo: Option<&BigInt>, hi: Option<&BigInt>) -> Roots {
@@ -463,11 +472,21 @@ fn scaled(q: &[(u64, BigInt)], x: &BigInt, s: u64) -> BigInt {
 /// instead, the partial list dropped. Proof of the
 /// bound of the whole: the branch and bound spends at most `chain_ends(t)` units and the steps
 /// of the one search that passes it, at most `2 bits(h - l)` plus O(log B) ([`search`]); each
-/// unit is O(t) products of numbers of O(B + s) bits, `s = 2 bits(h)`, which is no more than one
-/// of the chain's evaluations at a stretch's end ([`chain_ends`]); and the chain then costs
-/// what [`chain_roots`] proves, O(t^3) evaluations of numbers of at most `t (B + 1)(B + 2)`
-/// bits. So the whole is at most about twice that, polynomial in `t` and `B`. Both methods are
-/// exact, so the roots do not depend on which answers.
+/// unit is at most 12 passes over the terms, each pass O(t) products or divisions of numbers of
+/// O(B + s) bits, `s = 2 bits(h)`: an interval popped is [`bounds`] of `p` and of the slope,
+/// [`may_hold_a_root`] and two [`positive_on`], and the two [`sign_at`] (three passes each) of
+/// the search it may start, 11 passes; a search step is three [`scaled`] and at most three
+/// [`sign_at`], 12. One of the chain's evaluations at a stretch's end ([`chain_ends`],
+/// [`eval`]) is one pass of O(t) products, so a unit costs a constant number of them, not one:
+/// measured 9.3 to 18.0 of them per unit (`poly::roots::bench`, plan row
+/// BENCH-over-nlogn-prediction item 16, 2026-11-20), on the flat cubic and the cluster of four
+/// roots at `c = 2^16` to `2^1024`, where the budget's units cost 6.4 to 10.2 times the chain's
+/// whole run. The chain then costs what [`chain_roots`] proves, O(t^3) evaluations of numbers
+/// of at most `t (B + 1)(B + 2)` bits. So the whole is at most a constant factor times that
+/// (measured, the phase before the switch and the chain, 7.4 to 11.2 times the chain alone),
+/// polynomial in `t` and `B`. Before item 16 this comment said a unit costs no more than one
+/// end evaluation and the whole about twice the chain, which the measurement refutes. Both
+/// methods are exact, so the roots do not depend on which answers.
 ///
 /// Complexity tradeoff of the switch: the chain alone is O(t^3) evaluations, 80.5 times the
 /// work at 8 times the terms for `t` terms with a root at 4, where the branch and bound is
@@ -475,7 +494,13 @@ fn scaled(q: &[(u64, BigInt)], x: &BigInt, s: u64) -> BigInt {
 /// in `B` on the families above. The budget does not grow with `B`: a budget of the chain's
 /// search steps, O(t^2 B), would let the cubic spend O(B) units of O(M(B)) each before the
 /// switch, against the chain's O(log B) Newton steps there. It is the chain's own proved bound,
-/// not a measured size, so it is not a threshold tuned to a machine.
+/// not a measured size, so it is not a threshold tuned to a machine. On the families that spend
+/// it, the branch and bound so does 6.4 to 10.2 times the chain's work before the chain answers
+/// (above). Dividing the budget by the measured cost of a unit in end evaluations would remove
+/// most of that, but the divisor would be a constant measured on one machine's arithmetic, so it
+/// is not done; charging each unit its proved count of passes, 12, would also remove most of
+/// it, at the price of sending to the chain, O(t^3) evaluations, inputs the branch and bound
+/// finishes between `chain_ends(t) / 12` and `chain_ends(t)` units.
 fn positive_roots(p: &[(u64, BigInt)], a: BigInt, b: Option<BigInt>) -> Vec<BigInt> {
     if p.len() < 2 {
         return Vec::new();
@@ -847,10 +872,12 @@ fn chain_search(
 /// the division is exact); 14 for a cubic. Computed in `u128`: `t^3 < 2^128` for `t < 2^42`,
 /// and `t` terms of at least 32 bytes each are under memory far below that. A sum past
 /// `u64::MAX` is cut to it, which no count of work reaches. Each of `positive_roots`'s units,
-/// an interval or a search
-/// step, is O(t) products of numbers of O(B) bits, no more than one such evaluation, whose
-/// numbers have at least `B` bits: so the branch and bound, stopped past this many units, costs
-/// no more than this part of the chain's bound. Tests: `chain_ends_is_the_sum_it_bounds`.
+/// an interval or a search step, is at most 12 passes of O(t) products or divisions of numbers
+/// of O(B + s) bits (proof at [`positive_roots`]), and one such evaluation is one pass of O(t)
+/// products: so the branch and bound, stopped past this many units, costs a constant factor
+/// times this part of the chain's bound, not at most it. Measured (`poly::roots::bench`,
+/// 2026-11-20): a unit costs 9.3 to 18.0 end evaluations on the families that reach the budget.
+/// Tests: `chain_ends_is_the_sum_it_bounds`.
 fn chain_ends(t: usize) -> u64 {
     let t = t as u128;
     if t < 2 {
@@ -859,6 +886,9 @@ fn chain_ends(t: usize) -> u64 {
     let ends = 2 * ((t - 2) * (t - 1) * t / 6 + t - 1);
     u64::try_from(ends).unwrap_or(u64::MAX)
 }
+
+#[cfg(test)]
+mod bench;
 
 #[cfg(test)]
 mod tests {
