@@ -2361,6 +2361,27 @@ fn a_reordered_function_the_generic_body_also_passes_on_in_another_order_is_refu
     );
 }
 
+/// Row FAIL-reorder-union-slot (proofdoc4d, reading 516e1324a): a body that also passes the
+/// parameter into a slot whose type holds a function of the other order beside an atom, or
+/// beside another function type, is refused as one that passes it on into one function type
+/// is. Before the fix `Ck::reorder_forwarded` searched only the slots that are one function
+/// type alone (`only_fn`), so it put the adapter for `app2` and `app3` called `re` with its
+/// arguments swapped: `a` ran to 33 where a call by name gives 24.
+#[test]
+fn a_reordered_function_the_generic_body_also_passes_into_a_union_slot_is_refused() {
+    let app3 = "app3(k: ((y: int, x: int) -> int) | #none) = k(y: 2, x: 1) else 0;\n";
+    let app4 = "app4(k: ((y: int, x: int) -> int) | ((y: int, x: int) -> f64)) = \
+                { r = k(y: 2, x: 1); if r is int { r } else { 0 } };\n";
+    reorder_refused(
+        &[
+            &format!("{app3}pass(g) = app2(f: g) + app3(k: g);\na = pass(g: re);\n"),
+            &format!("{app3}pass(g) = app3(k: g) + app2(f: g);\na = pass(g: re);\n"),
+            &format!("{app4}pass(g) = app2(f: g) + app4(k: g);\na = pass(g: re);\n"),
+        ],
+        "also passes it on as `",
+    );
+}
+
 /// Row PROOF-reorder-forwarded-uses-complete, use by storing it: a body that puts the
 /// parameter in a tuple, a map or a family and calls it from there is refused.
 #[test]

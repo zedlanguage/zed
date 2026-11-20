@@ -100,7 +100,73 @@ Not started.
 
 ## proofdoc4d: zedc-check
 
-Not started.
+The 153 zedc-check entries of /home/luke/Work/wt/proofdoc4-lists/d.txt, in list order. Each
+entry's message and its whole zedc-check diff were read, then each claim's site as it stands
+on main; the sites were read on origin/main 1915d2375 and rechecked at each merge's rebase.
+Claims in other crates are listed and not counted; they belong to the helper of that crate.
+
+| Crate | Entries read | Found | Already there | Added or completed | Marked unproved | Corrected |
+|---|---|---|---|---|---|---|
+| zedc-check | 20 | 33 | 27 | 3 | 0 | 3 |
+
+| Source | Claim | Code site | Status |
+|---|---|---|---|
+| 516e1324a | `note_fn_uses` costs O(p), plus O(s) only at a call that gives a declared function; naive O(s²) | walk.rs `Ck::note_fn_uses` | already there |
+| 516e1324a | `order_by_names` is O(p) and gives a bijection or none | walk.rs `order_by_names` | already there |
+| 516e1324a | the adapter put at a forwarded argument is right because each other need passes it into a slot of the same order | walk.rs `Ck::reorder_forwarded` | corrected (FAIL-reorder-union-slot): the search for a slot of the other order went through `only_fn` and skipped a slot that holds the function type beside an atom or another member, `((y: int, x: int) -> int) \| #none`; `pass(g) = app2(f: g) + app3(k: g)` was accepted and ran `re` with its arguments swapped (33 for 24). Now every function member of every slot is searched. Test `function_variance::a_reordered_function_the_generic_body_also_passes_into_a_union_slot_is_refused`, red before, green after |
+| 516e1324a | a need that reaches `coerce_forwarded` at a forwarded place passes into a slot of the written order, or into another type that takes no function of another order | walk.rs `Ck::coerce_forwarded` doc | corrected: false for the union slot above before the fix; the doc now states the case and the fix |
+| 549d0d033 | `written_at`: O(n) per message with the memo; naive O(n²) | mod.rs `Ck::written_at` | already there |
+| 549d0d033 | the walk ends on every input | mod.rs `Ck::written_at` | argument added: each pass breaks or inserts into `passed`, a set of the unit's spans; tests named, and what they cannot catch |
+| 5767fe37a | a bare decimal is listed at three carriers, at most three runs | walk.rs, bare-decimal listing | already there |
+| 59fe136e7 | `read_image` complexity | walk.rs `Ck::read_image` | already there (COMPLEXITY.md WALK-read-image-n2) |
+| 5decb7fcc | `widening` reads a listed type by casting each value and back, as `cast_loses` does | mod.rs `widening` | already there |
+| 5decb7fcc | cost: one cast and its inverse per listed value (C66) | mod.rs `widening` | already there |
+| 5decb7fcc | an infinity cast back to `rat` is `#overflow`, so never equal | mod.rs `float_exact` | already there |
+| 5decb7fcc | the carrier rule keeps no value a listed cast changes | mod.rs test `a_cast_keeps_a_listed_value_exactly_where_its_carrier_rule_says` | already there |
+| 61be98168 | `declared_again` is O(step) | mod.rs `declared_again` | already there |
+| 628d33f6d | `kernel_build` sizes a build by the kernel's own `room` asks | mod.rs `kernel_build` | already there |
+| 628d33f6d | `too_large_build`: what builds, the kernel's size, what is left open | walk.rs `Ck::too_large_build` | already there |
+| 628d33f6d | spans nest or are disjoint, so two range reads find an inner operation; O((b + r) log r) | walk.rs `Ck::powers_over_main_limit` | already there |
+| 635687ff7 | the `f64` part's listing gates `call_values` with no change of result | walk.rs `Ck::unfixed_calls` | already there |
+| 65f995fee | `fresh`: O(L + k), k at most one more than the number of names | walk.rs `fresh` | argument added: the names tried are distinct, each failed one is in `words`, `\|words\| <= L`; test named |
+| 65f995fee | a width is tested by both bounds | walk.rs `test_repair` | already there |
+| 6e2e39396 | every chain of remap needs is finite | walk.rs `Ck::remap_of` | argument completed: W is read from the remap alone and every need of a chain is of one remap (`remap_need`, `remap_goes_on`, `remap_met` key it by `e.span`), so W is one number along a chain |
+| 6e2e39396 | `remap_goes_on` cost | walk.rs `Ck::remap_goes_on` | already there |
+| 701def5c6 | `x * x` of one binder is never below 0 | mod.rs, `square` in `Ck::known` | already there |
+| 701def5c6 | a parameter's range is read in O(1) beyond its bounds | mod.rs, the range reading | already there |
+| 7d0cc8d9f | `x ^ k` has at least `k(L - 1) + 1` bits per built part | walk.rs `Ck::too_large_power` | already there |
+| 809f95c53 | `ints_here`: soundness and O(1) table operations per node | walk.rs `Ck::ints_here` | already there |
+| 84f080d6b | `Within::Bytes` is increasing, never empty | walk.rs `Within` | already there |
+| 84f080d6b | `holds_none_of`: one search, O(log p) | walk.rs `Within::holds_none_of` | already there |
+| 86322e10b | `main_limits` O(statements + arguments); `through_names` ends by a visited set | limits.rs | already there |
+| 924583b1b | the refusals of part reads are placed once, at the expression read | walk.rs `Ck::read_in_scope_at` | already there |
+| 9aff48777 | each argument read once per arrow, O(A v log v), "A is at most five for an operator" | walk.rs `Ck::fewest` | corrected: `ORDER` and `EQUAL` past its refused tuples have six arrows (zed-kernel term.rs `Prim::arrows`; `prim_arrows` drops refused ones); comment now says six, with the count per list |
+| 9e3cc1480 | `read_here` gives the same read at every place | walk.rs `Ck::read_here` | already there |
+| 9e4acde1f | the cast takes `rat`, `f64`, `f32` out of an unresolved class; O(log N) find | walk.rs `Ck::int_not_whole` | already there |
+| a034e80cd | `subtracted_args` cost, built only for a printed message | mod.rs `Ck::subtracted_args` | already there |
+
+Other crates, not counted: 5767fe37a and 9aff48777 the arrows of `Prim::arrows` (zed-kernel),
+635687ff7 treap set bounds (zed-kernel) and `Product::meet_type` (zedc-preimage), 809f95c53
+`forward_pow` (zedc-lattice), 86322e10b run-time limits (zed-rt, zed-native), a034e80cd
+`Comparing::diff` (zedc-types).
+
+No code claim: none so far.
+
+Not read: a55b75fd8 a670bd1cb a9443c314 af6a5a696 af8174807 b18332dd5 b2ba71b22 b3469579a
+b7edc27fd bfe7e7956 c50a8965b d20f8009e e7b12dd2e ee79685e4 fe770de11 01063a0ca 03a4f95f2
+0f6b67903 148a42eb4 1cdb4bf0e 275d434e7 2cccffee8 47be53825 4d3221711 55045d490 57434d47b
+578bbc92d 5af4b2f2a 5db8eb317 5ff79522f 60ce2dad4 61299315a 64d244789 6704ae0ff 67dd99e3a
+6817d8ebc 69526a75a 718e9ecda 727dae146 74d26e990 7a7417966 7d0d766ad 7dc27aa9e 81e1bb50f
+84e65bf61 8d9f4f9d2 97beabefa 981ec6c8a 9ad186cfe 9b35c8ab0 9e8f139f1 b3de801c3 b48d21bcd
+b991293a4 ba11fed9c bad0d2e86 bd3c630e0 bea44d4a5 c289ffeca d11373afd d59b4756e d83518eb5
+d9d8729bb da0895a4f df8cea00b e2e0e0612 e6dfb6877 ebd6faee5 ef56f8c84 f240a5462 f38d90beb
+f6c6b1f99 f79ee52bf f8f4ddabb f923d44b9 fffe13699 009e52933 00a508032 019b3519b 06d1dc49c
+0b05cc8cf 0cbb40ab4 131d7f7fd 19514ef8c 1a19cae20 205591658 2059d260b 256d0fc5d 29bf6b297
+30b46ffdb 35f48821c 3b7276f38 3e597380e 3fd923c4a 47681f229 47f742016 480291d0e 4abfd2ae1
+4ce8104bb 4e55a11ba 51ae6534c 5a5ef9670 5ccb21f3f 61590f5c5 620307b4c 650ec1e0a 65fe79c41
+695a25e74 6a1038700 788205304 7b5ff433f 7efc39992 807ba2009 81f3d8487 8824fb555 893f60ac7
+929e7e04a a16eb1e6e a7dba5382 aea083d67 af7540d08 b3c21a87e b5444f558 b6b810dec c8fa18353
+d18e52a0a dd8b42f68 e2ef08f39 e36d97342 e8755d8a1 eaef33ced eb156f28d fbb2b68aa
 
 ## proofdoc4e: zedc-presburger, last 90 entries
 

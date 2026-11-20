@@ -4629,7 +4629,12 @@ impl<'t, 'a> Ck<'t, 'a> {
     // 1. Each need holds `rank`, `remap_rank` of its source when `remap_need` makes it: the
     //    first level L, of the levels `remap_rank` walks (the outer one, 0, and the key levels
     //    below it), holding a variable of a class not yet resolved, and the count C of such
-    //    variable names there; (W, 0) if none, W the number of levels walked. "Further"
+    //    variable names there; (W, 0) if none, W the number of levels walked. W is read from
+    //    the remap `e` alone (`binders.len() - 1`, at least 1, in `remap_rank`), not from the
+    //    source, and every need of a chain is of one remap: `remap_need` records its remap at
+    //    `at: e.span`, and `remap_goes_on` and `remap_met` look `e` up by that span and rank
+    //    and check by it, so `remap_of(e, S)` makes needs of that same `e`. So W is one
+    //    number along a chain, and L <= W at every rank of it. "Further"
     //    (`remap_further`) is L larger, or L equal and C smaller: the order of (W - L, C)
     //    read lexicographically from the left, decreasing, on pairs of natural numbers, which
     //    is well founded, so no sequence of ranks each further than the one before is endless.
@@ -20507,7 +20512,9 @@ impl<'t, 'a> Ck<'t, 'a> {
     /// parameters in `w`'s order. That is right only where every use wants that order: each
     /// other need on `g` passes it into a slot of the same order, and none calls it or uses it
     /// otherwise, and the result does not hold it, where its type would still state its own
-    /// order ([`FnUses`]). Elsewhere the call is refused, with the reason, since a run would
+    /// order ([`FnUses`]). "A slot of the same order" means every function type the slot
+    /// holds, alone or beside atoms and other members (FAIL-reorder-union-slot). Elsewhere the
+    /// call is refused, with the reason, since a run would
     /// call the function with its arguments in the wrong places. Gives whether it took the
     /// need: false where `on` and `w` are not one function type each, the names give no
     /// order or the order is the written one, or the value is not that argument.
@@ -20534,9 +20541,23 @@ impl<'t, 'a> Ck<'t, 'a> {
             return false;
         };
         let (at, call, name) = (arg.at, frame.call, frame.names.get(i).cloned());
+        // Every function type a slot holds, not only a slot that is one function type alone:
+        // a slot `((y: int, x: int) -> int) | #none` takes the value as its function member,
+        // and a call through it names the parameters in that member's order, so the adapter
+        // put for `w` would place them wrongly there (FAIL-reorder-union-slot; before, the
+        // search went through `only_fn` and skipped such a slot, and `pass(g) = app2(f: g) +
+        // app3(k: g)` ran `re` with its arguments swapped). A member whose names do not match
+        // `s`'s (`order_by_names` None) cannot take the value, as before. A member whose order
+        // differs refuses the call even where `s` would not fit that member for its result
+        // type, as in `((x: int, y: int) -> int) | ((y: int, x: int) -> String)`: a refusal
+        // of a program that would run right, never a wrong run. Cost: O(p) per function
+        // member of each slot, the same per member as before per slot.
+        // Test: function_variance.rs,
+        // `a_reordered_function_the_generic_body_also_passes_into_a_union_slot_is_refused`.
         let other = (uses.slots.iter())
-            .filter_map(only_fn)
-            .find(|q| order_by_names(&s, q).is_some_and(|o| o != order));
+            .flat_map(|q| q.fns.iter())
+            .find(|q| order_by_names(&s, q).is_some_and(|o| o != order))
+            .cloned();
         let why = match (other, uses.other, uses.given_back) {
             (Some(q), _, _) => Some((
                 format!(
@@ -20935,11 +20956,14 @@ impl<'t, 'a> Ck<'t, 'a> {
     /// reordering); where it also stands inside another parameter's function type, two
     /// parameters hold it, and `place` finds nothing, so the program is refused before a
     /// merge. [`Self::reorder_forwarded`] puts a [`Fit::Adapter`] at a forwarded place, only
-    /// where every slot the body passes the value into takes its parameters in one order
-    /// other than the written one. A need that reaches this function at that place passes the
-    /// value into a slot of one function type in the written order, and then the reordering
-    /// need refused the call and put nothing, or into another type, which takes no function
-    /// whose parameter names stand in another order, so [`Self::passes_into`] refused it.
+    /// where every function type of every slot the body passes the value into takes its
+    /// parameters in one order other than the written one. A need that reaches this function
+    /// at that place passes the value into a slot whose function types (alone or in a union)
+    /// include one in the written order, and then the reordering need refused the call and put
+    /// nothing (FAIL-reorder-union-slot: before, a function type beside other members was not
+    /// searched, and the adapter was put while such a slot wanted the written order), or into
+    /// a slot that is not one function type and holds none in another order, where
+    /// [`Self::reorder_forwarded`] returned false and [`Self::passes_into`] refused it.
     /// Each case is a test in l01_26_type_resolution/function_variance.rs.
     ///
     /// Cost: [`Self::coercion`] for each such need at each call, which [`holds_fn`] ends at
@@ -26640,7 +26664,13 @@ fn test_repair(
 ///
 /// Complexity tradeoff: testing each number against the texts afresh costs their length per
 /// number tried, O(L·k); one pass collecting their names, then one hash lookup per number,
-/// costs O(L + k), and k is at most one more than the number of names.
+/// costs O(L + k), and k is at most one more than the number of names: the names
+/// [`ident::fresh`] tries, `p`, then `p2`, `p3`, ... ([`ident::numbered`] from 2), are
+/// distinct, and each one tried before the last is in `words`, so at most `|words|` of them
+/// fail; and `|words| <= L`, since each name is at least one byte of the texts. Tests:
+/// tests/steps/l01_29_repairs_and_printing/domain_repairs.rs, whose repairs bind such names;
+/// they would catch a name that reads itself or shadows one the call reads, not a cost above
+/// O(L + k).
 fn fresh(p: &str, texts: &[&str]) -> String {
     let words: HashSet<&str> = (texts.iter())
         .flat_map(|t| ident::names(t).map(|(_, w)| w))
@@ -28127,7 +28157,11 @@ impl<'t, 'a> Ck<'t, 'a> {
             // L1.26a: "each keeps its own value and is fixed where the result is used"): in
             // `x * g(c)` with `x: f64` it is an `f64` at the `f64` arrow. Complexity
             // tradeoff: each such argument is read once per arrow, O(A v log v) for A arrows
-            // and v values its type lists; A is at most five for an operator.
+            // and v values its type lists; A is at most six for an operator: zed_kernel term.rs
+            // `Prim::arrows` gives four for arithmetic (`ARITH`), five or fewer for `/`, `^`
+            // and the casts, and six for an order comparison (`ORDER`: int, f64, rat, f32,
+            // String, bool) and for `==` and `!=` (`EQUAL` past its refused tuples, which
+            // `prim_arrows` leaves out). Corrected from "five" (proofdoc4d, reading 9aff48777).
             let mut reads = Vec::new();
             let mut called = Vec::new();
             let mut ok = (args.iter().zip(&arrow.params).enumerate()).all(|(i, (a, p))| match a {

@@ -2893,6 +2893,21 @@ impl<'t, 'a> Ck<'t, 'a> {
     // memo lives for one message only: a name's origin can change as the check goes on (a test
     // narrows it), and an end kept across messages would make what one prints depend on which
     // was printed first.
+    // Termination, with no appeal to the refusal of recursion: each pass of the loop either
+    // breaks (a memo hit, no next span, or `at` already passed) or inserts `at` into `passed`
+    // (`passed.insert(at)` is the guard of the only arm that goes on), and `passed` holds
+    // spans of the one unit, a finite set, so the loop runs at most once per span of the
+    // unit. A chain that comes back to a span it passed breaks there, at that span. Tests:
+    // tests/steps/l01_29_diagnostics/always_fails.rs
+    // `a_chain_of_two_names_to_a_negated_zero_rat_prints_as_written`,
+    // `a_chain_of_three_names_to_a_negated_zero_rat_prints_as_written`,
+    // `a_chain_of_names_to_zero_rat_prints_its_own_literal`,
+    // `of_two_chains_the_one_that_reaches_the_divisor_prints`,
+    // `a_chain_through_a_shadowed_name_prints_as_written`,
+    // `a_chain_through_a_tuple_component_prints_the_component_as_written`; the cost:
+    // tests/steps/l01_29_repairs_and_printing/bench/scaling.rs
+    // `a_chain_of_names_to_a_negated_zero_prints_in_linear_time`. These check chains that
+    // end at a literal; the break at a span passed twice rests on the argument alone.
     fn written_at(&self, span: Span, memo: &mut HashMap<Span, Span>) -> Span {
         let mut passed = HashSet::new();
         let mut at = span;
