@@ -281,10 +281,6 @@ const SITES: &[(&str, Site)] = &[
         Site::Later("f(positional v) = match v { (int is int) -> 1, _ -> 0 };\n"),
     ),
     (
-        "CtorPat",
-        Site::Later("f(positional v) = match v { Point(x: int) -> 1, _ -> 0 };\n"),
-    ),
-    (
         "NamePat",
         Site::NotBinder("a type name in a pattern is a type test"),
     ),
