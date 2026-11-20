@@ -311,13 +311,27 @@ impl Int {
         }
     }
 
-    /// The symmetric remainder of `self` by `m` (Pugh's `a mod^ m`, "The Omega test", 1992),
-    /// for `m` not zero, with the sign of `m` ignored: `r == self (mod m)` and
+    /// The symmetric remainder of `self` by `m` (Pugh's `a mod^ m` from the Omega test), for `m`
+    /// not zero, with the sign of `m` ignored: `r == self (mod m)` and
     /// `-|m|/2 <= r <= |m|/2`. At exactly half of `|m|` it takes the sign opposite to `self`,
     /// so the function is odd, `(-a).mod_hat(m) == -(a.mod_hat(m))`, and an equality solved
     /// with its sign turned gives the same definition. Pugh's `a - m floor(a/m + 1/2)` lies in
     /// `[-m/2, m/2)` and is not odd at the tie (`-1 mod^ 2 == -1 == 1 mod^ 2`); both satisfy
     /// the two facts the Omega test's equality step needs, the congruence and `|r| <= m/2`.
+    ///
+    /// Source: W. Pugh, "A practical algorithm for exact array dependence analysis", Commun.
+    /// ACM 35(8):102-114, 1992, doi:10.1145/135226.135233. Its "Equality Constraints"
+    /// section (p. 103) takes `m = |a_k| + 1` for the coefficient `a_k` of least absolute
+    /// value and defines "a mod^ b = a - b floor(a/b + 1/2)"; then `a_k mod^ m = -sign(a_k)`,
+    /// a new variable `σ` gets the constraint `m σ = Σ (a_i mod^ m) x_i`, which is solved for
+    /// `x_k`. Checked 2026-11-20 against Crossref and the paper's text. The Omega test was first
+    /// published as W. Pugh, "The Omega test: a fast and practical integer programming
+    /// algorithm for dependence analysis", Supercomputing '91, pp. 4-13, 1991,
+    /// doi:10.1145/125826.125848 (Crossref checked; its text was not obtained). Tested in
+    /// `int::completeness`: `floor_and_ceiling_division_agree_with_num_integer_for_every_sign`
+    /// checks the congruence, `|r| <= |m|/2` and oddness on machine and wide values of every
+    /// sign, and `the_symmetric_remainder_at_half_the_modulus_is_odd` checks the tie. Neither
+    /// checks Pugh's own tie rule, which this function departs from on purpose.
     pub fn mod_hat(&self, m: &Int) -> Int {
         let m = m.abs();
         let r = self.mod_floor(&m);
