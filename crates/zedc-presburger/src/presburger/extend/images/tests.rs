@@ -278,15 +278,7 @@ fn monotone_clamp_images_match_independent_inverse_cuts() {
                         while value(hi) < c {
                             hi *= 2;
                         }
-                        while hi - lo > 1 {
-                            let mid = (hi + lo).div_euclid(2);
-                            if value(mid) >= c {
-                                hi = mid;
-                            } else {
-                                lo = mid;
-                            }
-                        }
-                        hi
+                        first_true(lo + 1, hi, |&mid| value(mid) >= c)
                     };
                     for c in -30i128..=30 {
                         assert_eq!(

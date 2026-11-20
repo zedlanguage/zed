@@ -538,7 +538,7 @@ impl<K: Ord, V> Map<K, V> {
         let mut node = self.root.as_ref()?;
         loop {
             match node {
-                Node::Leaf(s) => return s.binary_search_by(|e| e.0.cmp(k)).ok().map(|i| &s[i].1),
+                Node::Leaf(s) => return zed_collections::sorted::sorted_get(s, k),
                 Node::Inner(bs) => match find(bs, k) {
                     Ok(i) => return Some(&entry(&bs[i]).1),
                     Err(i) => node = &bs[i].child,

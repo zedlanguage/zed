@@ -6987,17 +6987,13 @@ impl Binds {
     /// The ceiling of the variable `v`, if it has one ([`ceilings`]): by binary search, as
     /// the ceilings are in the order of their names.
     fn ceiling(&self, v: &str) -> Option<&Ty> {
-        let ceilings = self.ceilings.as_deref()?;
-        let at = ceilings.binary_search_by(|(w, _)| (**w).cmp(v)).ok()?;
-        Some(&ceilings[at].1)
+        zed_collections::sorted::sorted_get(self.ceilings.as_deref()?, v)
     }
 
     /// The bound of the variable `v`, if it has one: by binary search, as the bounds are in
     /// the order of their names.
     fn bound(&self, v: &str) -> Option<u8> {
-        let bounds = self.bounds.as_deref()?;
-        let at = bounds.binary_search_by(|(w, _)| (**w).cmp(v)).ok()?;
-        Some(bounds[at].1)
+        zed_collections::sorted::sorted_get(self.bounds.as_deref()?, v).copied()
     }
 
     /// Whether `v` is an unbounded own variable of the signature whose arrow binds these

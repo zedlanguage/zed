@@ -7,6 +7,21 @@
 //!
 //! [`intervals`]: sorted lists of disjoint closed intervals of integers, and their union, meet,
 //! difference and complement.
+//!
+//! [`search`]: binary search for the border of a monotone predicate over a range of integers,
+//! and the overflow-free midpoint it halves with.
+//!
+//! [`fenwick`]: a Fenwick tree, for prefix sums or prefix maxima under changes to single items.
 
+pub mod fenwick;
 pub mod intervals;
+pub mod search;
 pub mod sorted;
+
+#[cfg(test)]
+#[path = "../../../tests/src/seed.rs"]
+#[allow(
+    dead_code,
+    reason = "each crate's tests use only some of the generator's draws"
+)]
+mod seed;

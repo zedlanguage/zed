@@ -323,6 +323,7 @@ zedc = { workspace = true, features = ["printed-types", "counts", "preimage-ref"
 zed-tools.workspace = true
 zed-alloc-count.workspace = true
 zed-meter-settings.workspace = true
+zed-collections.workspace = true
 zed-graph.workspace = true
 zed-kernel.workspace = true
 zed-numtheory.workspace = true

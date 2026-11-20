@@ -43,7 +43,8 @@
 
 use std::collections::HashMap;
 
-use zed_kernel::bits::{BitLen, ceil_midpoint, floor_midpoint};
+use zed_collections::search::{try_first_true, try_last_true};
+use zed_kernel::bits::BitLen;
 use zedc_int::int::{Int, Num, i128_div_ceil, i128_div_floor};
 use zedc_lattice::interval::{End, IntervalSet};
 use zedc_lattice::lattice::Congruence;
@@ -1310,21 +1311,29 @@ fn angle_cmp(f: (i128, i128), g: (i128, i128)) -> Option<std::cmp::Ordering> {
 }
 
 /// The least `i` in `[lo, hi)` where `pred` fails, `pred` holding on a prefix (`hi` where it
-/// never fails); `None` where `pred` is `None`.
-fn first_false(
-    mut lo: i128,
-    mut hi: i128,
-    mut pred: impl FnMut(i128) -> Option<bool>,
-) -> Option<i128> {
-    while lo < hi {
-        let m = floor_midpoint(lo, hi);
-        if pred(m)? {
-            lo = m + 1;
-        } else {
-            hi = m;
-        }
+/// never fails); `None` where `pred` is `None`: the shared search, `try_first_true`, on the
+/// predicate negated.
+fn first_false(lo: i128, hi: i128, mut pred: impl FnMut(i128) -> Option<bool>) -> Option<i128> {
+    try_first_true(lo, hi, |&i| pred(i).map(|b| !b).ok_or(())).ok()
+}
+
+/// A question of [`full_dark`]'s searches as the shared search takes it: `Err(None)` past
+/// `i128`, `Err(Some(_))` a refusal.
+fn asked(r: Result<Option<bool>, Refusal>) -> Result<bool, Option<Refusal>> {
+    match r {
+        Ok(Some(b)) => Ok(b),
+        Ok(None) => Err(None),
+        Err(e) => Err(Some(e)),
     }
-    Some(lo)
+}
+
+/// The answer of one of [`full_dark`]'s searches back in its own form: `Ok(None)` past `i128`.
+fn found<T>(r: Result<T, Option<Refusal>>) -> Result<Option<T>, Refusal> {
+    match r {
+        Ok(t) => Ok(Some(t)),
+        Err(None) => Ok(None),
+        Err(Some(e)) => Err(e),
+    }
 }
 
 /// A bounded convex polygon with interior and no three corners on a line, read edge by edge:
@@ -1567,22 +1576,21 @@ fn full_dark(
     long: &Long<'_>,
     work: &mut Work,
 ) -> Result<Option<Option<(i128, i128)>>, Refusal> {
-    let mut peak = (rl, rh);
-    while peak.0 < peak.1 {
-        let m = peak.0 + (peak.1 - peak.0) / 2;
-        let (Some(x), Some(y)) = (len(m, work)?, len(m + 1, work)?) else {
-            return Ok(None);
+    // The least `m` in `[rl, rh)` where the length stops rising, `rh` where it rises
+    // throughout: concave, it rises and then does not. (`m + 1` is at most `rh`.)
+    let peak = try_first_true(rl, rh, |&m| {
+        let (Some(x), Some(y)) = (len(m, work).map_err(Some)?, len(m + 1, work).map_err(Some)?)
+        else {
+            return Err(None);
         };
         let (Some(l), Some(r)) = (y.0.checked_mul(x.1), x.0.checked_mul(y.1)) else {
-            return Ok(None);
+            return Err(None);
         };
-        if l > r {
-            peak.0 = m + 1;
-        } else {
-            peak.1 = m;
-        }
-    }
-    let top = peak.0;
+        Ok(l <= r)
+    });
+    let Some(top) = found(peak)? else {
+        return Ok(None);
+    };
     let Some(at_top) = long(top, work)? else {
         return Ok(None);
     };
@@ -1590,24 +1598,13 @@ fn full_dark(
         return Ok(Some(None));
     }
     // The first value of `[rl, top]` with length at least 1, and the last of `[top, rh]`.
-    let (mut lo, mut hi) = (rl, top);
-    while lo < hi {
-        let m = floor_midpoint(lo, hi);
-        let Some(ok) = long(m, work)? else {
-            return Ok(None);
-        };
-        if ok { hi = m } else { lo = m + 1 }
-    }
-    let d1 = lo;
-    let (mut lo, mut hi) = (top, rh);
-    while lo < hi {
-        let m = ceil_midpoint(lo, hi);
-        let Some(ok) = long(m, work)? else {
-            return Ok(None);
-        };
-        if ok { lo = m } else { hi = m - 1 }
-    }
-    Ok(Some(Some((d1, lo))))
+    let Some(d1) = found(try_first_true(rl, top, |&m| asked(long(m, work))))? else {
+        return Ok(None);
+    };
+    let Some(d2) = found(try_last_true(top, rh, |&m| asked(long(m, work))))? else {
+        return Ok(None);
+    };
+    Ok(Some(Some((d1, d2))))
 }
 
 /// [`u_values`] over a [`Polygon`]: each end, each line's bounds and each gap found by binary
@@ -1989,17 +1986,10 @@ fn open_values<K: Convex>(
         };
         match long(probe, work)? {
             None => return Ok(None),
-            Some(true) => {
-                let (mut lo, mut hi) = (out + 1, probe);
-                while lo < hi {
-                    let m = floor_midpoint(lo, hi);
-                    let Some(ok) = long(m, work)? else {
-                        return Ok(None);
-                    };
-                    if ok { hi = m } else { lo = m + 1 }
-                }
-                break lo;
-            }
+            Some(true) => match found(try_first_true(out + 1, probe, |&m| asked(long(m, work))))? {
+                Some(d1) => break d1,
+                None => return Ok(None),
+            },
             Some(false) => {
                 out = probe;
                 let Some(next) = size.checked_mul(2) else {

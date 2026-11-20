@@ -297,13 +297,13 @@ impl<'a> Elab<'a> {
         let mut key = Vec::with_capacity(sites.len());
         let mut open = false;
         for s in sites {
-            match given.binary_search_by_key(s, |(x, _)| *x) {
-                Ok(i) => {
+            match zed_collections::sorted::sorted_get(given, s) {
+                Some(k) => {
                     self.inst.consumed.insert((at, *s));
-                    key.push(given[i].1.clone());
+                    key.push(k.clone());
                 }
-                Err(_) if !from_env => open = true,
-                Err(_) => match self.env_identity(*s, at) {
+                None if !from_env => open = true,
+                None => match self.env_identity(*s, at) {
                     Some(v) => key.push(v),
                     None => open = true,
                 },

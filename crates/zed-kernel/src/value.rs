@@ -40,9 +40,10 @@ use std::slice;
 use std::sync::{Arc, LazyLock, OnceLock};
 
 use crate::btree::{self, Hole};
-use crate::machine_int::{BitLen, ceil_midpoint, floor_midpoint};
+use crate::machine_int::BitLen;
 use num_bigint::{BigInt, BigUint};
 use num_traits::{One, ToPrimitive, Zero};
+use zed_collections::search::{first_true, last_true};
 
 use crate::deep::{self, Queue};
 use crate::digest::Digest;
@@ -1785,36 +1786,14 @@ fn past(i: &Value, k: &Value, after: bool) -> bool {
 /// suffix of it and those less than it a prefix. At most 64 comparisons, each of one integer
 /// with `k`.
 fn word_beside(lo_end: i64, last_end: i64, k: &Value, after: bool) -> Option<i64> {
-    let past = |i: i64| past(&Value::Int(i), k, after);
-    // The span as `i128`, so that the midpoint and the steps past either end never overflow.
-    let (mut lo, mut hi) = (i128::from(lo_end), i128::from(last_end));
+    let past = |&i: &i64| past(&Value::Int(i), k, after);
     if after {
-        // The least `i` in `lo ..= hi` with `past(i)`, if any.
-        if !past(last_end) {
-            return None;
-        }
-        while lo < hi {
-            let mid = floor_midpoint(lo, hi);
-            match past(mid as i64) {
-                true => hi = mid,
-                false => lo = mid + 1,
-            }
-        }
+        // The least `i` in `lo ..= last` with `past(i)`, if any: `past(last)` is asked first.
+        past(&last_end).then(|| first_true(lo_end, last_end, past))
     } else {
-        // The greatest `i` in `lo ..= hi` with `past(i)`, if any.
-        if !past(lo_end) {
-            return None;
-        }
-        while lo < hi {
-            let mid = ceil_midpoint(lo, hi);
-            match past(mid as i64) {
-                true => lo = mid,
-                false => hi = mid - 1,
-            }
-        }
+        // The greatest `i` in `lo ..= last` with `past(i)`, if any: `past(lo)` is asked first.
+        past(&lo_end).then(|| last_true(lo_end, last_end, past))
     }
-    // `lo` lies in the span, which is all `i64`.
-    Some(lo as i64)
 }
 
 /// [`Span::beside`] for wide ends `lo ..= last`, `lo <= last`. With `near` the end on `k`'s
@@ -1913,27 +1892,12 @@ fn from_beside(lo: &Value, k: &Value, after: bool) -> Result<Option<Value>, TooL
 /// its mirror. O(log n) comparisons for n integers, each O(digits); used only on that refusal,
 /// where `Rat`'s order itself falls back to comparing forms (`impl Ord for Rat`), which the
 /// search then follows as the built map's search would.
-fn search_beside(mut lo: BigInt, mut hi: BigInt, k: &Value, after: bool) -> BigInt {
+fn search_beside(lo: BigInt, hi: BigInt, k: &Value, after: bool) -> BigInt {
     let past = |i: &BigInt| past(&Value::int(i.clone()), k, after);
-    while lo < hi {
-        match after {
-            true => {
-                let mid = &lo + (&hi - &lo) / 2;
-                match past(&mid) {
-                    true => hi = mid,
-                    false => lo = mid + 1,
-                }
-            }
-            false => {
-                let mid = &lo + (&hi - &lo + 1) / 2;
-                match past(&mid) {
-                    true => lo = mid,
-                    false => hi = mid - 1,
-                }
-            }
-        }
+    match after {
+        true => first_true(lo, hi, past),
+        false => last_true(lo, hi, past),
     }
-    lo
 }
 
 thread_local! {

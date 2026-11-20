@@ -519,6 +519,20 @@ impl zed_collections::intervals::Discrete for Int {
     }
 }
 
+/// Unbounded, so the sum cannot overflow: the binary searches of
+/// `zed_collections::search` run over `Int`.
+impl zed_collections::search::Midpoint for Int {
+    #[inline]
+    fn mid_down(lo: &Int, hi: &Int) -> Int {
+        (lo + hi).div_floor(&Int::from(2))
+    }
+
+    #[inline]
+    fn mid_up(lo: &Int, hi: &Int) -> Int {
+        (&(lo + hi) + &Int::ONE).div_floor(&Int::from(2))
+    }
+}
+
 impl fmt::Display for Int {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match &self.0 {

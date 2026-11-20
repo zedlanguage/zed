@@ -6462,10 +6462,7 @@ impl Blocks {
         let after = |k: usize, d: isize| firsts.holding[k] as isize + d > 0;
         let raised = delta.iter().find(|&&(k, d)| after(k, d)).map(|&(k, _)| k);
         let kept = firsts.any.iter().copied().find(|&k| {
-            match delta.binary_search_by_key(&k, |&(k, _)| k) {
-                Ok(at) => after(k, delta[at].1),
-                Err(_) => true,
-            }
+            zed_collections::sorted::sorted_get(&delta, &k).is_none_or(|&d| after(k, d))
         });
         match raised.into_iter().chain(kept).min() {
             Some(k) => self.values[k],

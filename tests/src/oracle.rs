@@ -398,20 +398,17 @@ impl<'a> Runs<'a> {
     /// The position in `ready` of the first definition whose let stops, and its error, given
     /// that the prefix of `ready` of length `ran` runs and all of `ready`, stopping with
     /// `error`, does not.
-    fn first_stop(
-        &mut self,
-        ready: &[usize],
-        mut ran: usize,
-        mut error: String,
-    ) -> (usize, String) {
-        let mut stops = ready.len();
-        while ran + 1 < stops {
-            let mid = ran + (stops - ran) / 2;
+    fn first_stop(&mut self, ready: &[usize], ran: usize, mut error: String) -> (usize, String) {
+        // The answer is the last `mid` that stopped, so `error` ends as its error.
+        let stops = zed_collections::search::first_true(ran + 1, ready.len(), |&mid| {
             match self.run(&ready[..mid], Self::nothing()) {
-                Err(e) => (stops, error) = (mid, e),
-                Ok(_) => ran = mid,
+                Err(e) => {
+                    error = e;
+                    true
+                }
+                Ok(_) => false,
             }
-        }
+        });
         (stops - 1, error)
     }
 

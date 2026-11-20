@@ -7607,9 +7607,12 @@ type CellSet = Vec<(usize, usize)>;
 
 // The cells in both `a` and `b` (`cells_meet`), in any of `all`'s ranges (`cells_join`), and of
 // `a` not in `b` (`cells_minus`): the shared interval-list routines (DRY-sorted-structures-2).
+use zed_collections::fenwick::Fenwick;
 use zed_collections::intervals::{
     coalesce as cells_join, intersect as cells_meet, minus as cells_minus,
 };
+use zed_collections::search::{last_true, try_first_true, try_last_true};
+use zed_collections::sorted::sorted_get;
 
 /// The cells of `a` not in `b`, as [`cells_minus`], found by search for each run of `b`.
 // Complexity tradeoff: a merge of the two lists reads every run of `a`, O(A + B). `spread`
@@ -7654,31 +7657,13 @@ fn cells_without(a: &[(usize, usize)], b: &[(usize, usize)]) -> CellSet {
 
 /// The first index from `from` of a run of `a` that ends at or after `x`, by exponential search.
 fn gallop(a: &[(usize, usize)], from: usize, x: usize) -> usize {
-    if a.get(from).is_none_or(|r| r.1 >= x) {
-        return from;
-    }
-    let (mut lo, mut step) = (from, 1);
-    while lo + step < a.len() && a[lo + step].1 < x {
-        lo += step;
-        step *= 2;
-    }
-    let hi = (lo + step + 1).min(a.len());
-    lo + a[lo..hi].partition_point(|r| r.1 < x)
+    zed_collections::search::gallop(a, from, |r| r.1 < x)
 }
 
 /// The first index from `from` of a run of `a` that starts strictly after `x`, by exponential
 /// search.
 fn gallop_start(a: &[(usize, usize)], from: usize, x: usize) -> usize {
-    if a.get(from).is_none_or(|r| r.0 > x) {
-        return from;
-    }
-    let (mut lo, mut step) = (from, 1);
-    while lo + step < a.len() && a[lo + step].0 <= x {
-        lo += step;
-        step *= 2;
-    }
-    let hi = (lo + step + 1).min(a.len());
-    lo + a[lo..hi].partition_point(|r| r.0 <= x)
+    zed_collections::search::gallop(a, from, |r| r.0 <= x)
 }
 
 /// Canonical disjoint sorted non-adjacent inclusive cell-index windows on a shared [`CellSet`].
@@ -12572,14 +12557,8 @@ fn learn(p: &Parts, rest: Vec<Rc<Parts>>, d: &Parts, implied: &mut Near) {
                 good = at;
                 step *= 2;
             }
-            while bad - good > 1 {
-                let mid = good.midpoint(bad);
-                if none(&ws[mid]) {
-                    good = mid;
-                } else {
-                    bad = mid;
-                }
-            }
+            // `none` holds at `good` and fails at `bad`.
+            let good = last_true(good, bad - 1, |&m| none(&ws[m]));
             let w = &ws[good];
             if upper {
                 implied.tighten(x, Some(w + &Int::ONE), None);
@@ -16389,9 +16368,7 @@ type Moves = Vec<(usize, usize)>;
 /// The coefficients with each variable `v` that `p` moves replaced by its image, in variable
 /// order. O(w log w + w log |p|) for w terms.
 fn moved(a: &[Term], p: &[(usize, usize)]) -> Vec<Term> {
-    moved_by(a, |i| {
-        p.binary_search_by_key(&i, |m| m.0).map_or(i, |at| p[at].1)
-    })
+    moved_by(a, |i| sorted_get(p, &i).copied().unwrap_or(i))
 }
 
 /// The coefficients with each variable `v` replaced by `image(v)`, a permutation, in variable
@@ -16460,8 +16437,7 @@ fn implies_in_box(b: &[Int; 4], p: &[Term], pk: &Int, q: &[Term], qk: &Int) -> b
 impl Row {
     /// The coefficient at `x[j]`, which the row holds.
     fn at(&self, j: usize) -> &Int {
-        let i = self.a.binary_search_by_key(&j, |t| t.0);
-        &self.a[i.expect("the row holds the variable")].1
+        sorted_get(&self.a, &j).expect("the row holds the variable")
     }
 
     fn eval(&self, m: &[Int]) -> Int {
@@ -17487,7 +17463,7 @@ impl System {
         }
         let r = *v.rows.iter().find(|id| **id != l)?;
         let a = self.ids[r].as_ref().expect("a row held");
-        let unit = a[a.binary_search_by_key(&p, |t| t.0).ok()?].1.is_unit();
+        let unit = sorted_get(a, &p)?.is_unit();
         (unit && !self.opposites.contains_key(&r) && !self.opposites.contains_key(&l)).then_some(r)
     }
 
@@ -17525,9 +17501,7 @@ impl System {
         let len = |id: usize| self.ids[id].as_ref().expect("a row held").len();
         let upper = |id: usize| {
             let a = self.ids[id].as_ref().expect("a row held");
-            a[a.binary_search_by_key(&j, |t| t.0).expect("a row of x[j]")]
-                .1
-                .is_negative()
+            sorted_get(a, &j).expect("a row of x[j]").is_negative()
         };
         let l = match (self.own_row(j, a), self.own_row(j, b)) {
             (Some(_), Some(_)) => {
@@ -17557,9 +17531,7 @@ impl System {
                 continue;
             }
             let k = &self.rows[ra].k;
-            let positive = ra[ra.binary_search_by_key(&p, |t| t.0).expect("its own row")]
-                .1
-                .is_positive();
+            let positive = sorted_get(ra, &p).expect("its own row").is_positive();
             let flip = |c: &Int| if positive { -c } else { c.clone() };
             let def = Row {
                 a: (ra.iter())
@@ -24250,13 +24222,11 @@ fn hull_side(c: &Formula, sym: &Atom, m: &Model, dir: i64) -> Result<Option<Int>
         good = next;
         step = &step + &step;
     };
-    let (mut good, mut bad) = (good, bad);
-    let two = Int::from(2);
-    while (&bad - &good).abs() > Int::ONE {
-        let mid = &good + &(&bad - &good).div_floor(&two);
-        if holds(&mid)? { good = mid } else { bad = mid }
-    }
-    Ok(Some(good))
+    // `holds` is true at `good` and false at `bad`, on either side of it.
+    Ok(Some(match good < bad {
+        true => try_last_true(good, &bad - &Int::ONE, holds)?,
+        false => try_first_true(&bad + &Int::ONE, good, holds)?,
+    }))
 }
 
 /// The last value `v` going `dir` from `good`, where `holds(good)`, with `holds(v)`, given that
@@ -27920,7 +27890,8 @@ struct BoundedPickRow {
     solve_ord: Vec<usize>,
     solve_pos: Vec<usize>,
     w_of: Vec<Int>,
-    bit: Vec<Int>,
+    /// The weights of the active positions, in solve order.
+    bit: Fenwick<Int>,
     active_pos: BTreeSet<usize>,
     active_sum: Int,
     rem: Int,
@@ -27929,31 +27900,20 @@ struct BoundedPickRow {
 }
 
 impl BoundedPickRow {
-    fn bit_add(&mut self, mut idx: usize, delta: &Int) {
-        let n = self.solve_ord.len();
-        idx += 1;
-        while idx <= n {
-            self.bit[idx] = &self.bit[idx] + delta;
-            idx += idx.isolate_lowest_one();
-        }
+    fn bit_add(&mut self, idx: usize, delta: &Int) {
+        self.bit.update(idx, |s| *s = &*s + delta);
     }
 
+    /// The longest prefix of the positions whose weights sum below `target`, and what `target`
+    /// leaves past that sum.
     fn fenwick_split(&self, target: &Int) -> (usize, Int) {
-        let n = self.solve_ord.len();
-        if n == 0 || target.is_zero() {
+        if self.bit.is_empty() || target.is_zero() {
             return (0, Int::ZERO);
         }
-        let mut idx = 0usize;
-        let mut acc = Int::ZERO;
-        let mut step = 1usize << n.ilog2();
-        while step > 0 {
-            let next = idx + step;
-            if next <= n && &acc + &self.bit[next] < *target {
-                idx = next;
-                acc = &acc + &self.bit[next];
-            }
-            step >>= 1;
-        }
+        let (idx, acc) = self.bit.descend(Int::ZERO, |acc, node| {
+            let next = acc + node;
+            (next < *target).then_some(next)
+        });
         (idx, target - &acc)
     }
 
@@ -28334,7 +28294,7 @@ fn try_pick_disjoint_wide<'a>(
                 solve_ord,
                 solve_pos,
                 w_of,
-                bit: vec![Int::ZERO; k_r + 1],
+                bit: Fenwick::new(k_r, Int::ZERO),
                 active_pos: (0..k_r).collect(),
                 active_sum,
                 rem: target,

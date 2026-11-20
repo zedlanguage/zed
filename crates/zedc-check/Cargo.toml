@@ -17,6 +17,7 @@ imbl.workspace = true
 num-bigint.workspace = true
 num-integer.workspace = true
 num-traits.workspace = true
+zed-collections.workspace = true
 zed-graph.workspace = true
 zed-kernel.workspace = true
 zed-numtheory.workspace = true

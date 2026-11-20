@@ -31,6 +31,8 @@ use std::collections::hash_map::Entry;
 use std::collections::{BTreeMap, HashMap, HashSet, VecDeque};
 use std::fmt::Write as _;
 
+use zed_collections::sorted::sorted_get;
+
 /// A field of a theory: its name and how many arguments it takes.
 pub struct Field {
     pub name: String,
@@ -955,10 +957,7 @@ impl Theory {
             ix.agrees(e, fixed, chosen)
                 && held.is_none_or(|(s, member)| {
                     let needs = &ix.needs[ix.needs_at[e].clone()];
-                    needs
-                        .binary_search_by_key(&s, |&(p, _)| p)
-                        .ok()
-                        .is_none_or(|i| member.binary_search(&needs[i].1).is_ok())
+                    sorted_get(needs, &s).is_none_or(|c| member.binary_search(c).is_ok())
                 })
         };
         let (mut pairs, mut runs, mut steps) = (0, Vec::new(), 0u64);
@@ -1966,8 +1965,7 @@ impl KeyIndex {
             let (s, c) = needs[i];
             let in_all = kids.iter().all(|&(_, _, k)| {
                 let list = &needs[needs_at[k].clone()];
-                list.binary_search_by_key(&s, |&(p, _)| p)
-                    .is_ok_and(|j| list[j].1 == c)
+                sorted_get(list, &s) == Some(&c)
             });
             if in_all {
                 needs.push((s, c));
@@ -1982,12 +1980,9 @@ impl KeyIndex {
     fn agrees(&self, e: usize, fixed: &[Choice], chosen: &[usize]) -> bool {
         let needs = &self.needs[self.needs_at[e].clone()];
         if chosen.len() < needs.len() {
-            chosen.iter().all(|&s| {
-                needs
-                    .binary_search_by_key(&s, |&(p, _)| p)
-                    .ok()
-                    .is_none_or(|i| needs[i].1 == fixed[s])
-            })
+            chosen
+                .iter()
+                .all(|&s| sorted_get(needs, &s).is_none_or(|c| *c == fixed[s]))
         } else {
             needs
                 .iter()

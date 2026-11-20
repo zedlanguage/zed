@@ -13,5 +13,13 @@ publish.workspace = true
 [lib]
 crate-type = ["rlib", "dylib"]
 
+# BigInt, for the binary search of search.rs over integers of any size.
+[dependencies]
+num-bigint.workspace = true
+
+# Only the tests: the exactness test of the midpoints in search.rs checks them against BigInt.
+[dev-dependencies]
+num-integer.workspace = true
+
 [lints]
 workspace = true

@@ -15,6 +15,7 @@
 //! bisection on the counts of the prefixes of a range with points.
 
 use super::linear::{Q, Term};
+use zed_collections::search::{first_true, last_true};
 use zedc_int::int::{Int, IntRange, meet_range, row_range};
 
 /// The line `(p·x + q) / r`, with `r` above zero.
@@ -348,16 +349,7 @@ fn piece(
     }
     // The least prefix length with a point: the counts are never below zero, so the prefix
     // counts rise.
-    let (mut lo, mut hi) = (Int::ONE, n);
-    let two = Int::from(2);
-    while lo < hi {
-        let mid = (&lo + &hi).div_floor(&two);
-        if count(&s, &mid).is_positive() {
-            hi = mid;
-        } else {
-            lo = &mid + &Int::ONE;
-        }
-    }
+    let lo = first_true(Int::ONE, n, |mid| count(&s, mid).is_positive());
     let v = &(&s + &lo) - &Int::ONE;
     let w = lb.ceil(&v);
     Some((v, w))
@@ -387,7 +379,6 @@ fn convex_strip(ua: &Line, lb: &Line, a: Int, b: Int) -> Option<Option<(Int, Int
     if a > b {
         return Some(None);
     }
-    let two = Int::from(2);
     // Opposite (or zero) slopes: `floor(ua(x)) - ceil(lb(x))` is monotone in `x`, so feasible
     // integers always form a single contiguous interval with zero holes, found in O(log(b - a)).
     if !ua.p.is_negative() && !lb.p.is_positive() {
@@ -397,15 +388,7 @@ fn convex_strip(ua: &Line, lb: &Line, a: Int, b: Int) -> Option<Option<(Int, Int
         if ua.floor(&a) >= lb.ceil(&a) {
             return Some(Some((a, b)));
         }
-        let (mut lo, mut hi) = (a, b.clone());
-        while lo < hi {
-            let mid = (&lo + &hi).div_floor(&two);
-            if ua.floor(&mid) >= lb.ceil(&mid) {
-                hi = mid;
-            } else {
-                lo = &mid + &Int::ONE;
-            }
-        }
+        let lo = first_true(a, b.clone(), |mid| ua.floor(mid) >= lb.ceil(mid));
         return Some(Some((lo, b)));
     }
     if !ua.p.is_positive() && !lb.p.is_negative() {
@@ -415,15 +398,7 @@ fn convex_strip(ua: &Line, lb: &Line, a: Int, b: Int) -> Option<Option<(Int, Int
         if ua.floor(&b) >= lb.ceil(&b) {
             return Some(Some((a, b)));
         }
-        let (mut lo, mut hi) = (a.clone(), b);
-        while lo < hi {
-            let mid = (&(&lo + &hi) + &Int::ONE).div_floor(&two);
-            if ua.floor(&mid) >= lb.ceil(&mid) {
-                lo = mid;
-            } else {
-                hi = &mid - &Int::ONE;
-            }
-        }
+        let hi = last_true(a.clone(), b, |mid| ua.floor(mid) >= lb.ceil(mid));
         return Some(Some((a, hi)));
     }
     // Same nonzero slope sign: since `0 <= ua(x) - lb(x) < 1`, each `x` contributes 0 or 1 to
@@ -439,26 +414,10 @@ fn convex_strip(ua: &Line, lb: &Line, a: Int, b: Int) -> Option<Option<(Int, Int
         return Some(Some((a, b)));
     }
     // First `1`: least `m` in `1..=len` with `count(a, m) > 0`.
-    let (mut lo, mut hi) = (Int::ONE, len.clone());
-    while lo < hi {
-        let mid = (&lo + &hi).div_floor(&two);
-        if count(&a, &mid).is_positive() {
-            hi = mid;
-        } else {
-            lo = &mid + &Int::ONE;
-        }
-    }
+    let lo = first_true(Int::ONE, len.clone(), |mid| count(&a, mid).is_positive());
     let first = &(&a + &lo) - &Int::ONE;
     // Last `1`: least `m` in `lo..=len` with `count(a, m) == tot`.
-    let (mut lo2, mut hi2) = (lo, len);
-    while lo2 < hi2 {
-        let mid = (&lo2 + &hi2).div_floor(&two);
-        if count(&a, &mid) == tot {
-            hi2 = mid;
-        } else {
-            lo2 = &mid + &Int::ONE;
-        }
-    }
+    let lo2 = first_true(lo, len, |mid| count(&a, mid) == tot);
     let last = &(&a + &lo2) - &Int::ONE;
     if (&(&last - &first) + &Int::ONE) == tot {
         Some(Some((first, last)))

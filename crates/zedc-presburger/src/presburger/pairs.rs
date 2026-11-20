@@ -147,10 +147,7 @@ impl<'a> Index<'a> {
 
     /// The coefficient of `w` in row `r`, zero when it has none.
     fn coef(&self, r: usize, w: usize) -> Option<&'a Int> {
-        let vs = &self.vars[r];
-        vs.binary_search_by_key(&w, |&(v, _)| v)
-            .ok()
-            .map(|i| vs[i].1)
+        zed_collections::sorted::sorted_get(&self.vars[r], &w).copied()
     }
 
     /// Whether the coefficient of `w * z` in `r ⊗ s` is not zero.

@@ -1054,6 +1054,10 @@ dependencies = [
 [[package]]
 name = "zed-collections"
 version = "0.0.0"
+dependencies = [
+ "num-bigint",
+ "num-integer",
+]
 
 [[package]]
 name = "zed-corpus-ref"
@@ -1169,6 +1173,7 @@ dependencies = [
  "target-lexicon",
  "unicode-normalization",
  "zed-alloc-count",
+ "zed-collections",
  "zed-corpus-ref",
  "zed-graph",
  "zed-kernel",
@@ -1186,6 +1191,7 @@ dependencies = [
 name = "zed-tools"
 version = "0.0.0"
 dependencies = [
+ "zed-collections",
  "zed-graph",
  "zedc",
  "zedc-presburger",
@@ -1240,6 +1246,7 @@ dependencies = [
  "rustix",
  "stacker",
  "zed-alloc-count",
+ "zed-collections",
  "zed-graph",
  "zed-kernel",
  "zed-meter-settings",
@@ -1260,6 +1267,7 @@ dependencies = [
 name = "zedc-elab"
 version = "0.0.0"
 dependencies = [
+ "zed-collections",
  "zed-kernel",
  "zedc-base",
  "zedc-check",
@@ -1385,6 +1393,7 @@ dependencies = [
  "unicode-script",
  "unicode-security",
  "unicode-width",
+ "zed-collections",
  "zed-kernel",
  "zedc-base",
 ]
@@ -1395,6 +1404,7 @@ version = "0.0.0"
 dependencies = [
  "blake3",
  "imbl",
+ "zed-collections",
  "zed-graph",
  "zed-kernel",
  "zedc-syntax",

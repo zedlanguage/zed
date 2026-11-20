@@ -32,6 +32,7 @@ use std::sync::atomic::Ordering::Relaxed;
 use num_bigint::{BigInt, BigUint, Sign};
 use num_integer::Integer;
 use num_traits::{One, Pow, Signed, ToPrimitive, Zero};
+use zed_collections::sorted::sorted_get;
 
 use crate::machine_int::BitLen;
 use bound::{Format, Product};
@@ -541,9 +542,9 @@ impl Rat {
         let sign = if self.is_negative() { "-" } else { "" };
         // The signed exponents of 2 and 5 in the value, and the coefficients without them.
         let (mut num, mut den) = (self.num.abs(), self.den.clone());
-        let [two, five] = [2, 5].map(|p| match self.pows.binary_search_by_key(&p, |(q, _)| *q) {
-            Ok(i) => self.pows[i].1.clone(),
-            Err(_) => {
+        let [two, five] = [2, 5].map(|p| match sorted_get(&self.pows, &p) {
+            Some(e) => e.clone(),
+            None => {
                 let (up, n) = valuation(std::mem::take(&mut num), p);
                 let (down, d) = valuation(std::mem::take(&mut den), p);
                 (num, den) = (n, d);
@@ -1241,7 +1242,7 @@ impl Rat {
     /// of them divides a coefficient, the coefficients are copied and divided; when `check`,
     /// [`TooLarge`] first if the system refuses the memory for that.
     fn aligned(&self, others: &[(u64, BigInt)], check: bool) -> Result<Cow<'_, Rat>, TooLarge> {
-        let listed = |p: u64| self.pows.binary_search_by_key(&p, |(q, _)| *q).is_ok();
+        let listed = |p: u64| sorted_get(&self.pows, &p).is_some();
         let divides = |p: u64| divides(self.num.magnitude(), p) || divides(self.den.magnitude(), p);
         let new: Vec<u64> = others
             .iter()

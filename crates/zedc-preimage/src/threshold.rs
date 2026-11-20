@@ -455,17 +455,8 @@ fn rising(sys: &System) -> Answer {
 }
 
 /// The greatest value in `pass..fail` that passes, when `pass` passes and `fail` does not.
-fn search(mut pass: Int, mut fail: Int, passes: impl Fn(&Int) -> bool) -> Int {
-    let two = Int::from(2);
-    while &pass + &Int::ONE < fail {
-        let mid = (&pass + &fail).div_floor(&two);
-        if passes(&mid) {
-            pass = mid;
-        } else {
-            fail = mid;
-        }
-    }
-    pass
+fn search(pass: Int, fail: Int, passes: impl Fn(&Int) -> bool) -> Int {
+    zed_collections::search::last_true(pass, &fail - &Int::ONE, passes)
 }
 
 /// A bound that one atom of a component puts on a name: an upper bound `x + k*w <= a` or a

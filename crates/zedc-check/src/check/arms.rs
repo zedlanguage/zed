@@ -43,6 +43,7 @@ use std::rc::Rc;
 use std::sync::Arc;
 
 use imbl::ordmap::DiffItem;
+use zed_collections::search::first_true;
 use zed_kernel::types::Type as KType;
 use zed_kernel::{Prim, Shared, Term};
 
@@ -758,15 +759,15 @@ impl<'a> Arms<'a> {
         }
         // The prefix of `hi` steps gives `x` its product, that of `lo` does not: none does
         // alone, as the lookup that searched for paths found.
-        let (mut lo, mut hi) = (0, steps.len());
-        while hi - lo > 1 {
-            let mid = lo.midpoint(hi);
+        // The answer is the last `mid` found true, so `found` ends as the paths of its prefix.
+        let hi = first_true(1, steps.len(), |&mid| {
             let prefix = paths(&steps[..mid]);
-            match self.explains(k, &prefix, x, false) {
-                true => (hi, found) = (mid, prefix),
-                false => lo = mid,
+            let explains = self.explains(k, &prefix, x, false);
+            if explains {
+                found = prefix;
             }
-        }
+            explains
+        });
         let one = paths(&steps[hi - 1..hi]);
         Some(match self.explains(k, &one, x, false) {
             true => one,

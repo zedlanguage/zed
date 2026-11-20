@@ -11,6 +11,7 @@
 use std::collections::HashMap;
 
 use num_bigint::BigInt;
+use zed_collections::fenwick::Fenwick;
 
 use super::{Expr, ExprKind, IndexKey, RangeEnd, UnaryOp};
 
@@ -109,7 +110,7 @@ pub(super) struct Entry<'s> {
 struct Class {
     /// The sites the class will hold, by first key, one for each distinct key.
     starts: Vec<usize>,
-    tree: Vec<Option<usize>>,
+    tree: Fenwick<Option<usize>>,
 }
 
 /// Whether site `i` ends later than site `j`, the earlier written winning a tie.
@@ -119,33 +120,26 @@ fn later(entries: &[Entry], i: usize, j: Option<usize>) -> bool {
 
 impl Class {
     fn insert(&mut self, entries: &[Entry], i: usize) {
-        let mut r = self
+        let r = self
             .starts
-            .partition_point(|&j| entries[j].lo < entries[i].lo)
-            + 1;
-        while r <= self.tree.len() {
-            if later(entries, i, self.tree[r - 1]) {
-                self.tree[r - 1] = Some(i);
+            .partition_point(|&j| entries[j].lo < entries[i].lo);
+        self.tree.update(r, |node| {
+            if later(entries, i, *node) {
+                *node = Some(i);
             }
-            r += r.isolate_lowest_one();
-        }
+        });
     }
 
     /// A site of the class that meets the run of site `i`, the latest ending.
     fn meets(&self, entries: &[Entry], i: usize) -> Option<usize> {
-        let mut r = match &entries[i].end {
+        let r = match &entries[i].end {
             End::At(h) => self.starts.partition_point(|&j| entries[j].lo <= *h),
             End::Above => self.starts.len(),
         };
-        let mut best = None;
-        while r > 0 {
-            if let Some(j) = self.tree[r - 1]
-                && later(entries, j, best)
-            {
-                best = Some(j);
-            }
-            r &= r - 1;
-        }
+        let best = self.tree.prefix(r, None, |best, node| match *node {
+            Some(j) if later(entries, j, best) => Some(j),
+            _ => best,
+        });
         best.filter(|&j| entries[j].end.reaches(&entries[i].lo))
     }
 }
@@ -211,7 +205,7 @@ impl<'s> Sentinels<'s> {
             .map(|mut starts| {
                 starts.sort_by(|&a, &b| entries[a].lo.cmp(&entries[b].lo));
                 starts.dedup_by(|a, b| entries[*a].lo == entries[*b].lo);
-                let tree = vec![None; starts.len()];
+                let tree = Fenwick::new(starts.len(), None);
                 Class { starts, tree }
             })
             .collect();

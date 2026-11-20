@@ -280,11 +280,7 @@ fn report(dir: &str, graph: &Graph, cycles: &[Vec<usize>], out: &mut String) {
 
 /// The place `f` imports `g`, by binary search in `f`'s sorted imports.
 fn cite_of(graph: &Graph, f: usize, g: usize) -> Option<&Cite> {
-    let imports = &graph.imports[f];
-    imports
-        .binary_search_by_key(&g, |&(h, _)| h)
-        .ok()
-        .map(|i| &imports[i].1)
+    zed_collections::sorted::sorted_get(&graph.imports[f], &g)
 }
 
 /// The keywords that begin an item whose name follows them.

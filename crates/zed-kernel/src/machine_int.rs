@@ -1,5 +1,7 @@
 //! Arithmetic on machine integers that needs nothing else of the crate: the binary size of an
-//! unsigned integer, and the midpoints of two `i128` values with no overflow.
+//! unsigned integer. The midpoints of two `i128` values that were here (`floor_midpoint`,
+//! `ceil_midpoint`) served only binary searches, which now call
+//! `zed_collections::search::{first_true, last_true}`; its `Midpoint` is the one copy.
 //!
 //! This module imports nothing from the crate, so every module may import it without closing an
 //! import cycle (FAIL-kernel-import-cycle-bits, 2026-11-19). These items were in `bits`, which
@@ -36,28 +38,8 @@ macro_rules! bit_len {
 }
 bit_len!(u8, u16, u32, u64, u128, usize);
 
-/// `floor((a + b) / 2)`, for every pair with no overflow: the halves of `a` and `b` (each
-/// shifted down, which floors), plus 1 when both dropped a 1 bit. A bisection over signed
-/// values needs it, as `while lo < hi`, `mid` in `[lo, hi)`: std's signed `midpoint` rounds
-/// toward zero, so it gives `-2` for `(-3, -2)`, the end `hi`, and such a search no longer
-/// shrinks; `lo + (hi - lo) / 2` floors as this does but overflows when `hi - lo` passes
-/// `i128::MAX`. For unsigned values std's `midpoint` floors, and is used.
-pub fn floor_midpoint(a: i128, b: i128) -> i128 {
-    (a >> 1) + (b >> 1) + (a & b & 1)
-}
-
-/// `ceil((a + b) / 2)`, for every pair with no overflow: [`floor_midpoint`] plus 1 when
-/// `a + b` is odd, which is when the low bits differ. The floor is then below the greater
-/// of the two, so the 1 fits. For a bisection that keeps `mid` in `(lo, hi]`, in place of
-/// `hi - (hi - lo) / 2`, which overflows as `lo + (hi - lo) / 2` does.
-pub fn ceil_midpoint(a: i128, b: i128) -> i128 {
-    floor_midpoint(a, b) + ((a ^ b) & 1)
-}
-
 #[cfg(test)]
 mod tests {
-    use num_bigint::BigInt;
-
     use super::*;
 
     /// `bit_len` and `ceil_log2` against their definitions by doubling, at 0, 1, around each
@@ -87,43 +69,5 @@ mod tests {
         assert_eq!(u8::MAX.bit_len(), 8);
         assert_eq!(u8::MAX.ceil_log2(), 8);
         assert_eq!(usize::MAX.ceil_log2(), usize::BITS);
-    }
-
-    /// The floor of the mean against the exact sum in `BigInt`, at the ends of `i128` and
-    /// around zero; and the case std's signed `midpoint` gets wrong for a bisection.
-    #[test]
-    fn the_floor_midpoint_is_exact_at_every_end() {
-        let xs = [
-            i128::MIN,
-            i128::MIN + 1,
-            -3,
-            -2,
-            -1,
-            0,
-            1,
-            2,
-            3,
-            i128::MAX - 1,
-            i128::MAX,
-        ];
-        for &a in &xs {
-            for &b in &xs {
-                let want =
-                    num_integer::Integer::div_floor(&(BigInt::from(a) + b), &BigInt::from(2));
-                assert_eq!(
-                    BigInt::from(floor_midpoint(a, b)),
-                    want,
-                    "floor_midpoint({a}, {b})"
-                );
-                let up = num_integer::Integer::div_ceil(&(BigInt::from(a) + b), &BigInt::from(2));
-                assert_eq!(
-                    BigInt::from(ceil_midpoint(a, b)),
-                    up,
-                    "ceil_midpoint({a}, {b})"
-                );
-            }
-        }
-        assert_eq!(floor_midpoint(-3, -2), -3);
-        assert_eq!((-3i128).midpoint(-2), -2, "std rounds toward zero");
     }
 }

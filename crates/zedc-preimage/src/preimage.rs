@@ -69,6 +69,8 @@ use std::hash::Hash;
 use std::rc::Rc;
 use std::sync::{Arc, OnceLock};
 
+use zed_collections::fenwick::Fenwick;
+
 use zed_kernel::types::Type;
 use zed_kernel::{Evaluator, Pattern, Prim, Shared, Term, Value, World, eval};
 
@@ -1245,24 +1247,11 @@ fn covers(out: &IntervalSet, sets: &[&IntervalSet], cuts: &[i128], m: i128) -> b
     // among them does not matter.
     ends.sort_unstable_by(|a, b| a.0.cmp(&b.0));
     let g = sets.len();
-    let mut tree = vec![0i64; g + 1];
-    let add = |tree: &mut [i64], j: usize, d: i64| {
-        let mut i = j + 1;
-        while i <= g {
-            tree[i] += d;
-            i += i.isolate_lowest_one();
-        }
-    };
+    let mut tree = Fenwick::new(g, 0i64);
+    let add = |tree: &mut Fenwick<i64>, j: usize, d: i64| tree.update(j, |n| *n += d);
     // The number of marked classes below `j`.
-    let below = |tree: &[i64], j: usize| {
-        let (mut i, mut n) = (j, 0);
-        while i > 0 {
-            n += tree[i];
-            i -= i.isolate_lowest_one();
-        }
-        n
-    };
-    let full = |tree: &[i64], (a, b): (usize, usize)| {
+    let below = |tree: &Fenwick<i64>, j: usize| tree.prefix(j, 0, |n, t| n + t);
+    let full = |tree: &Fenwick<i64>, (a, b): (usize, usize)| {
         below(tree, b + 1) - below(tree, a) == (b - a + 1) as i64
     };
     let class = |r: &Num| {

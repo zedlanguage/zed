@@ -945,16 +945,11 @@ fn least_taken_from(rows: &[(Vec<i64>, i64)], u: &[i64], from: i64) -> Option<i6
     while !has_point(&with_range(rows, u, from, from + span - 1)) {
         span = span.checked_mul(2).expect("a value within i64");
     }
-    let (mut lo, mut hi) = (from, from + span - 1);
-    while lo < hi {
-        let m = lo + (hi - lo) / 2;
-        if has_point(&with_range(rows, u, from, m)) {
-            hi = m;
-        } else {
-            lo = m + 1;
-        }
-    }
-    Some(lo)
+    Some(zed_collections::search::first_true(
+        from,
+        from + span - 1,
+        |&m| has_point(&with_range(rows, u, from, m)),
+    ))
 }
 
 /// The values of `u · x` above `q` at the integer points `x` of `rows`, where the rational

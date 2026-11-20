@@ -1,7 +1,8 @@
 //! Sorted lists: sorting with duplicates removed ([`sort_dedup`], [`sort_dedup_by_key`]), the walk
 //! of two sorted lists side by side ([`merge_join`]), and their union in one merge ([`merge_into`],
-//! [`merge`], [`union_all`]).
+//! [`merge`], [`union_all`]), and the lookup of a key in a sorted list of pairs ([`sorted_get`]).
 
+use std::borrow::Borrow;
 use std::cmp::Ordering;
 
 /// `v` sorted, each run of equal items kept once. O(n log n) comparisons, no allocation.
@@ -23,6 +24,17 @@ pub fn sort_dedup<T: Ord>(v: &mut Vec<T>) {
 pub fn sort_dedup_by_key<T, K: Ord>(v: &mut Vec<T>, mut key: impl FnMut(&T) -> K) {
     v.sort_by_key(&mut key);
     v.dedup_by(|x, y| key(x) == key(y));
+}
+
+/// The value paired with `key` in `pairs`, a list of pairs sorted strictly increasing by their
+/// first item, or `None` where no pair has that key. O(log n) comparisons. `key` may be any form
+/// the keys borrow as, so a list keyed by `Rc<str>` is searched with a `&str`.
+pub fn sorted_get<'a, K: Borrow<Q>, Q: Ord + ?Sized, V>(
+    pairs: &'a [(K, V)],
+    key: &Q,
+) -> Option<&'a V> {
+    let i = pairs.binary_search_by(|(k, _)| k.borrow().cmp(key)).ok()?;
+    Some(&pairs[i].1)
 }
 
 /// One step of [`merge_join`]: an item of the first list only, of the second only, or one of each
@@ -201,5 +213,21 @@ mod tests {
         let mut v = vec![(2, 'a'), (1, 'b'), (2, 'c'), (1, 'd'), (0, 'e')];
         sort_dedup_by_key(&mut v, |&(k, _)| k);
         assert_eq!(v, [(0, 'e'), (1, 'b'), (2, 'a')]);
+    }
+
+    /// Every key below, between, at and above the keys of a list, against a scan; and a list
+    /// keyed by `String` searched with a `&str`.
+    #[test]
+    fn sorted_get_matches_a_scan() {
+        for bits in 0..64 {
+            let pairs: Vec<(u32, u32)> = members(bits).into_iter().map(|k| (k, 10 * k)).collect();
+            for k in 0..8 {
+                let want = pairs.iter().find(|p| p.0 == k).map(|p| &p.1);
+                assert_eq!(sorted_get(&pairs, &k), want, "{bits} {k}");
+            }
+        }
+        let named = [("a".to_string(), 1), ("c".to_string(), 3)];
+        assert_eq!(sorted_get(&named, "c"), Some(&3));
+        assert_eq!(sorted_get(&named, "b"), None);
     }
 }

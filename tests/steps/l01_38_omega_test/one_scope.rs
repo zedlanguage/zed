@@ -3806,15 +3806,7 @@ pub(super) fn clamp_equalities_match_inverse_cuts(a: i128, b: i128, offset: i128
             while value(hi) < c {
                 hi *= 2;
             }
-            while hi - lo > 1 {
-                let mid = (hi + lo).div_euclid(2);
-                if value(mid) >= c {
-                    hi = mid;
-                } else {
-                    lo = mid;
-                }
-            }
-            hi
+            zed_collections::search::first_true(lo + 1, hi, |&mid| value(mid) >= c)
         };
         for (j, c) in [-12i128, -9, -1, 0, 1, 9, 12].into_iter().enumerate() {
             let name = format!("t{k}c{j}");

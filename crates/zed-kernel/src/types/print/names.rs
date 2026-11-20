@@ -295,16 +295,8 @@ pub fn fresh_variable_span_stats_indexed(
         let s_hi = skip_num.partition_point(|&x| x < hi);
         (hi - n) - (p_hi - p_n) - (s_hi - s_n)
     };
-    let mut lo = n + rem;
-    let mut hi = n + rem + (held.sorted_numbered.len() - p_n) + (skip_num.len() - s_n);
-    while lo < hi {
-        let mid = lo + (hi - lo) / 2;
-        if unblocked(mid) >= rem {
-            hi = mid;
-        } else {
-            lo = mid + 1;
-        }
-    }
+    let hi = n + rem + (held.sorted_numbered.len() - p_n) + (skip_num.len() - s_n);
+    let lo = zed_collections::search::first_true(n + rem, hi, |&mid| unblocked(mid) >= rem);
     let p_hi = held.sorted_numbered.partition_point(|&x| x < lo);
     let s_hi = skip_num.partition_point(|&x| x < lo);
     let len = (lo - n) as u128;

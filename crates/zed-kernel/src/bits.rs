@@ -33,9 +33,9 @@ use crate::term::Prim;
 use crate::value::Value;
 
 /// Defined in [`crate::machine_int`], which imports nothing of the crate, so `num` and `value`
-/// can use them without an import cycle through this module; re-exported here for the path
+/// can use it without an import cycle through this module; re-exported here for the path
 /// other crates use.
-pub use crate::machine_int::{BitLen, ceil_midpoint, floor_midpoint};
+pub use crate::machine_int::BitLen;
 
 /// Whether `p` is a bit word or an integer machine operation.
 pub fn is_bit_word(p: Prim) -> bool {

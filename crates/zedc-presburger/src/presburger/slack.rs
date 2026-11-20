@@ -28,6 +28,8 @@ use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::hash::BuildHasherDefault;
 
 use rustc_hash::FxHasher;
+use zed_collections::fenwick::Fenwick;
+use zed_collections::search::first_true;
 
 use zedc_int::int::{Int, IntRange, meet_range, row_range};
 use zedc_lattice::interval::{End, IntervalSet, Num};
@@ -1305,22 +1307,14 @@ pub(super) fn sweep_row(
                 hit_table[loc][arm_idx] = HitKind::Exact { split: k_r };
                 continue;
             }
-            let mut lo = 0usize;
-            let mut hi = k_r - 1;
-            while lo < hi {
-                let mid = lo.midpoint(hi);
+            let mut split = first_true(0, k_r - 1, |&mid| {
                 let s = if solve_pos[loc] <= mid {
                     &solve_psum[mid + 1] - &w_of[loc]
                 } else {
                     solve_psum[mid + 1].clone()
                 };
-                if s <= rem {
-                    lo = mid + 1;
-                } else {
-                    hi = mid;
-                }
-            }
-            let mut split = lo;
+                s > rem
+            });
             if solve_ord[split] == loc {
                 split += 1;
             }
@@ -1336,22 +1330,12 @@ pub(super) fn sweep_row(
 
     probes.sort_unstable_by_key(|&(split, loc, arm_idx, _)| (split, loc, arm_idx));
 
-    let mut bit: Vec<Int> = vec![Int::ZERO; k_r + 1];
-    let bit_add = |bit: &mut [Int], mut idx: usize, val: &Int| {
-        idx += 1;
-        while idx <= k_r {
-            bit[idx] = &bit[idx] + val;
-            idx += idx.isolate_lowest_one();
-        }
+    let mut bit = Fenwick::new(k_r, Int::ZERO);
+    let bit_add = |bit: &mut Fenwick<Int>, idx: usize, val: &Int| {
+        bit.update(idx, |s| *s = &*s + val);
     };
-    let bit_sum = |bit: &[Int], mut idx: usize| -> Int {
-        let mut s = Int::ZERO;
-        while idx > 0 {
-            s = &s + &bit[idx];
-            idx -= idx.isolate_lowest_one();
-        }
-        s
-    };
+    let bit_sum =
+        |bit: &Fenwick<Int>, idx: usize| -> Int { bit.prefix(idx, Int::ZERO, |s, t| &s + t) };
 
     let mut cur_split = 0usize;
     let mut full_sum = Int::ZERO;

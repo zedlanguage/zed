@@ -2702,8 +2702,7 @@ impl Layouts {
 
 impl Layout<'_> {
     fn digit(&self, r: usize) -> Option<usize> {
-        let i = self.by_row.binary_search_by_key(&r, |p| p.0).ok()?;
-        Some(self.by_row[i].1)
+        zed_collections::sorted::sorted_get(self.by_row, &r).copied()
     }
 }
 

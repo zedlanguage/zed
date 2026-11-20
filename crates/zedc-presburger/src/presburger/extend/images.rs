@@ -9,6 +9,7 @@ use imbl::OrdSet;
 
 use super::super::formula::{Atom, Con, Formula, Id, Lin, Rel};
 use super::def::{Def, free, reads};
+use zed_collections::search::first_true;
 use zedc_int::int::Int;
 use zedc_int::int::Num;
 
@@ -470,17 +471,10 @@ impl ClampBasis {
         let numerator = &self.a * &self.b;
         let denominator = &self.a + &self.b;
         let target = c - &self.constant;
-        let mut lo = (&(&target - &Int::from(2)) * &numerator).div_floor(&denominator);
-        let mut hi = (&(&target + &Int::from(2)) * &numerator).div_ceil(&denominator);
-        while &hi - &lo > Int::ONE {
-            let mid = (&lo + &hi).div_floor(&Int::from(2));
-            if self.value(&mid) >= *c {
-                hi = mid;
-            } else {
-                lo = mid;
-            }
-        }
-        hi
+        let lo = (&(&target - &Int::from(2)) * &numerator).div_floor(&denominator);
+        let hi = (&(&target + &Int::from(2)) * &numerator).div_ceil(&denominator);
+        // `value(lo) < c <= value(hi)`.
+        first_true(&lo + &Int::ONE, hi, |mid| self.value(mid) >= *c)
     }
     // Complexity tradeoff: constructing 2^k*c takes k coefficient bits even when the
     // min is already the fixed original cut. Saturate exact doubling at that cut:
