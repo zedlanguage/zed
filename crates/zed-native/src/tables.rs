@@ -268,8 +268,9 @@ pub(crate) struct Tables {
     // F223b) left the n families of one count and the same ends (`[0, i, 0]` for each i) in one
     // bucket. A family now hashes by all its entries, kept as sums (PERF-family-hash-count-only,
     // F223e), O(1) for a family built once, so the value is the key: one digest and O(1)
-    // expected compares a constant. Tests `tests::equal_constants_share_one_entry_and_others_do_not`,
-    // and in `l03_15a_fp_ops_run::bench`, `constants_of_families_of_one_size_and_ends_scale` and
+    // expected compares a constant. Tests
+    // `tests::equal_constants_share_one_entry_and_others_do_not`, and in
+    // `l03_15a_fp_ops_run::bench`, `constants_of_families_of_one_size_and_ends_scale` and
     // `a_native_right_nested_chain_of_concatenations_runs_in_n_log_n`.
     const_at: HashMap<Value, usize>,
     /// Whether a `match` fuses its release.
@@ -574,10 +575,11 @@ impl Tables {
     /// asks. Only these get a placed entry, a second copy of the body. None when
     /// [`Tables::arities`] has none.
     // Complexity tradeoff: a placed entry is a second copy of the lambda's body, O(size of the
-    // body) more to compile: the program of `a_placed_call_costs_about_a_direct_call_in_native_code`
-    // at one call, with two functions of 320 parameters, took 489M instructions against 433M
-    // with none (row CALL-callee-places-native). A placed entry for every lambda would copy
-    // every body; this test is O(L + P + N) for L lambdas, P lists and N nodes, by two sets.
+    // body) more to compile: the program of
+    // `a_placed_call_costs_about_a_direct_call_in_native_code` at one call, with two functions of
+    // 320 parameters, took 489M instructions against 433M with none (row
+    // CALL-callee-places-native). A placed entry for every lambda would copy every body; this test
+    // is O(L + P + N) for L lambdas, P lists and N nodes, by two sets.
     pub fn placeable(&self) -> Vec<bool> {
         if self.arities().is_empty() {
             return Vec::new();

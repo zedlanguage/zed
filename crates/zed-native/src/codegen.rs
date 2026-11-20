@@ -1229,8 +1229,9 @@ fn float_op(p: Prim) -> bool {
     )
 }
 
-/// The float comparisons, ordered (`>` and `>=` are legalized to `<` and `<=`), so a NaN compares false as the kernel's do; `==` and
-/// `!=` on floats are the kernel's surface equality and are not inline.
+/// The float comparisons, ordered (`>` and `>=` are legalized to `<` and `<=`), so a NaN compares
+/// false as the kernel's do; `==` and `!=` on floats are the kernel's surface equality and are not
+/// inline.
 fn float_cmp(p: Prim) -> Option<FloatCC> {
     Some(match p {
         Prim::Lt => FloatCC::LessThan,

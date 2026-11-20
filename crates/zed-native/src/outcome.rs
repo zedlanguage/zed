@@ -1,6 +1,7 @@
-//! A native run's outcome and the running of generated code, shared by the JIT ([`run`](crate::run))
-//! and a linked executable's start (`exe`), in a file of its own so that the start does not
-//! import the crate root, which imports it (step S.1f: no import cycle between files).
+//! A native run's outcome and the running of generated code, shared by the JIT
+//! ([`run`](crate::run)) and a linked executable's start (`exe`), in a file of its own so that the
+//! start does not import the crate root, which imports it (step S.1f: no import cycle between
+//! files).
 
 use std::sync::Arc;
 
