@@ -575,17 +575,24 @@ pub(crate) enum Measures {
 /// under (`zed_meter_settings::GLIBC_TUNABLES`), which would otherwise give a verdict other than
 /// the one `tools/run_tests.sh` gives. A binary started without them starts itself again with
 /// them before `main` (crate `zed-meter-settings`), so this stops only where that could not
-/// happen: a setuid binary, an `execve` that failed, or `GLIBC_TUNABLES` changed by hand.
+/// happen: a setuid binary, an `execve` that failed, `GLIBC_TUNABLES` changed by hand, or a run
+/// under valgrind, which the variable must reach before valgrind starts (TOOL-meter-reexec-profilers).
 #[cfg(target_os = "linux")]
 fn stop_unless_the_settings_are_in_effect() {
     zed_alloc_count::ready_to_meter();
     if !zed_meter_settings::in_effect() {
         let args: Vec<String> = std::env::args().collect();
+        // Under valgrind the arguments are those of the binary, after valgrind's own.
+        let valgrind = if zed_meter_settings::running_on_valgrind() {
+            "valgrind <its options> "
+        } else {
+            ""
+        };
         panic!(
             "this scaling test counts work under the C library settings of \
              tools/run_tests.sh, and this process did not start with them, so its verdict could \
              differ from that of tools/run_tests.sh (TEST-scaling-direct-run-verdict). Run it as \
-             GLIBC_TUNABLES='{}' {}",
+             env GLIBC_TUNABLES='{}' {valgrind}{}",
             zed_meter_settings::GLIBC_TUNABLES,
             args.join(" ")
         );

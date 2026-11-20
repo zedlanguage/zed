@@ -19,10 +19,23 @@
 //! that failed) gives no verdict rather than another one. These settings are glibc's; on other
 //! systems this crate does nothing and [`in_effect`] is true.
 //!
-//! The start again happens at most once (proof at [`ZED_METER_STARTED_AGAIN`]). A tool that runs
-//! the binary under its own loader and does not follow `execve` (valgrind with
-//! `--trace-children=no`, the default) sees the process end at the `execve`; such a run sets
-//! `GLIBC_TUNABLES` itself, as the message of `Meter::new` shows.
+//! The start again happens at most once (proof at [`ZED_METER_STARTED_AGAIN`]), and keeps the
+//! process's name: the kernel names a process after the file `execve` is given, here `exe`, so the
+//! first process passes its name in [`ZED_METER_STARTED_AGAIN`] and the second sets it back. `ps`,
+//! `top` and `perf report --sort comm` then show the binary's name, as without the start again,
+//! but for the samples of the dynamic loader's work before `.init_array` runs, which keep `exe`.
+//!
+//! Under valgrind the binary does not start again. Valgrind runs a program under its own loader,
+//! so there `/proc/self/exe` is valgrind's tool binary, which refuses to be started that way
+//! ("valgrind: You cannot run '…' directly"; with `--trace-children=yes`, "mmap(0x58000000, …)
+//! failed in UME"). The binary then runs without the settings: its tests run, and a scaling test
+//! stops with the command to run, which sets `GLIBC_TUNABLES` before valgrind:
+//! `env GLIBC_TUNABLES='…' valgrind <binary> <arguments>`, or, through `systemd-run` (as for the
+//! memory limit of the zedtests.slice), `systemd-run --user -E GLIBC_TUNABLES='…' … valgrind …`,
+//! since a unit `systemd-run` starts does not take the caller's environment. perf follows
+//! `execve` and needs nothing (checked on `l07_03_unit_log_off`: the share of samples with Rust
+//! frames is the same with and without the start again, with frame pointers and with DWARF).
+//! TOOL-meter-reexec-profilers.
 
 /// The settings, in the form `GLIBC_TUNABLES` takes: `name=value` items joined by `:`.
 ///
@@ -51,6 +64,9 @@ glibc.cpu.x86_rep_movsb_threshold=0xffffffffffffffff:\
 glibc.cpu.x86_rep_stosb_threshold=0xffffffffffffffff";
 
 /// The variable a process started again by this crate finds in its environment, and removes.
+///
+/// Its value is the name the process had before the start again (the kernel's `comm`, at most 15
+/// bytes, never a NUL), which the new process sets back with `prctl(PR_SET_NAME)`.
 ///
 /// Proof that a binary starts itself again at most once per start from outside: the function in
 /// `.init_array` calls `execve` only when this variable is absent, and it passes the new process
@@ -98,6 +114,12 @@ pub fn in_effect() -> bool {
     imp::in_effect()
 }
 
+/// Whether the process runs under valgrind, where it does not start again (see the module
+/// comment). On Linux with glibc on x86_64 valgrind's own answer; elsewhere false.
+pub fn running_on_valgrind() -> bool {
+    imp::running_on_valgrind()
+}
+
 #[cfg(all(target_os = "linux", target_env = "gnu"))]
 #[allow(unsafe_code)]
 mod imp {
@@ -136,22 +158,36 @@ mod imp {
             .rev()
             .find_map(|e| e.strip_prefix(b"GLIBC_TUNABLES="))
             .map(|v| String::from_utf8_lossy(v).into_owned());
-        let again = env
-            .iter()
-            .any(|e| e.split(|&b| b == b'=').next() == Some(ZED_METER_STARTED_AGAIN.as_bytes()));
+        // The value of the marker, the name to set back; empty for a marker with no `=`.
+        let again = env.iter().find_map(|e| {
+            let name = e.split(|&b| b == b'=').next()?;
+            (name == ZED_METER_STARTED_AGAIN.as_bytes())
+                .then(|| &e[(name.len() + 1).min(e.len())..])
+        });
         // SAFETY: getauxval reads the auxiliary vector the kernel gave the process.
         let secure = unsafe { libc::getauxval(libc::AT_SECURE) } != 0;
         let held = tunables.as_deref().is_some_and(holds_the_settings);
         IN_EFFECT.store(held && !secure, Relaxed);
-        if again {
+        if let Some(name) = again {
+            if !name.is_empty() {
+                let name = CString::new(name).expect("an environment string has no NUL");
+                // SAFETY: PR_SET_NAME reads a NUL-ended string and keeps its first 15 bytes as
+                // the name of the calling thread, here the only one.
+                unsafe { libc::prctl(libc::PR_SET_NAME, name.as_ptr()) };
+            }
             // SAFETY: no other thread exists before `main`, so no other thread reads the
             // environment while this changes it.
             unsafe { std::env::remove_var(ZED_METER_STARTED_AGAIN) };
             return;
         }
-        if held || secure {
+        if held || secure || running_on_valgrind() {
             return;
         }
+        // The kernel's name of the process, at most 15 bytes and a NUL.
+        let mut name = [0u8; 16];
+        // SAFETY: PR_GET_NAME writes at most 16 bytes, NUL included, to the buffer.
+        unsafe { libc::prctl(libc::PR_GET_NAME, name.as_mut_ptr()) };
+        let name = CStr::from_bytes_until_nul(&name).map_or(&[][..], CStr::to_bytes);
         let mut new_env: Vec<CString> = env
             .iter()
             .filter(|e| !e.starts_with(b"GLIBC_TUNABLES="))
@@ -159,13 +195,58 @@ mod imp {
             .collect();
         let tunables = with_the_settings(tunables.as_deref().unwrap_or(""));
         new_env.push(CString::new(format!("GLIBC_TUNABLES={tunables}")).expect("no NUL"));
-        new_env.push(CString::new(format!("{ZED_METER_STARTED_AGAIN}=1")).expect("no NUL"));
+        let marker = [ZED_METER_STARTED_AGAIN.as_bytes(), b"=", name].concat();
+        new_env.push(CString::new(marker).expect("no NUL"));
         let mut ptrs: Vec<*const c_char> = new_env.iter().map(|c| c.as_ptr()).collect();
         ptrs.push(std::ptr::null());
         // SAFETY: `argv` is the program's own null-ended vector, and `ptrs` is null-ended and
         // points into `new_env`, which lives across the call. execve returns only on failure;
         // the process then goes on without the settings, and `in_effect` says so.
         unsafe { libc::execve(c"/proc/self/exe".as_ptr(), argv, ptrs.as_ptr()) };
+    }
+
+    /// Whether the process runs under valgrind: valgrind's client request
+    /// `RUNNING_ON_VALGRIND`, which valgrind's header `include/valgrind.h` defines as "the number
+    /// of Valgrinds this code is running under. That is, 0 if running natively, 1 if running
+    /// under Valgrind, …". On amd64 a client request is the four rotations of `rdi` below,
+    /// `__SPECIAL_INSTRUCTION_PREAMBLE` (3 + 13 + 61 + 51 = 128 bits, so `rdi` ends as it began),
+    /// then `xchg rbx, rbx`, with `rax` the address of six words (the request code, then five
+    /// arguments) and `rdx` the default; valgrind's translator recognizes the sequence and puts
+    /// the answer in `rdx`, and natively it changes no register and leaves the default, 0.
+    /// `0x1001` is `VG_USERREQ__RUNNING_ON_VALGRIND` of the enum `Vg_ClientRequest` in the same
+    /// header. Read 2026-11-20 in the copy of the header at
+    /// github.com/LouisBrunner/valgrind-macos (`include/valgrind.h.in`, the macros of the amd64
+    /// platforms and the enum), since sourceware.org refused the request; the client request is
+    /// valgrind's interface to programs, kept the same across releases. Checked by running it:
+    /// 0 natively, 1 under valgrind 3.27.1 with the tools none, memcheck and callgrind; test
+    /// `under_valgrind_the_binary_runs_without_starting_again` runs this binary under valgrind.
+    ///
+    /// Other architectures have other sequences, not written here: there valgrind gives the
+    /// failure the module comment describes (the first release is for Linux on x86_64 alone).
+    #[cfg(target_arch = "x86_64")]
+    pub(super) fn running_on_valgrind() -> bool {
+        let request: [u64; 6] = [0x1001, 0, 0, 0, 0, 0];
+        let mut answer: u64 = 0;
+        // SAFETY: natively the sequence changes no register but the flags (`rdi` is rotated by
+        // 128 bits in all) and reads no memory; valgrind reads the six words at `rax`, which live
+        // across the call, and writes only `rdx`.
+        unsafe {
+            std::arch::asm!(
+                "rol rdi, 3",
+                "rol rdi, 13",
+                "rol rdi, 61",
+                "rol rdi, 51",
+                "xchg rbx, rbx",
+                in("rax") request.as_ptr(),
+                inout("rdx") answer,
+            );
+        }
+        answer != 0
+    }
+
+    #[cfg(not(target_arch = "x86_64"))]
+    pub(super) fn running_on_valgrind() -> bool {
+        false
     }
 
     /// The strings of a null-ended vector of C strings.
@@ -196,6 +277,10 @@ mod imp {
     pub(super) fn in_effect() -> bool {
         true
     }
+
+    pub(super) fn running_on_valgrind() -> bool {
+        false
+    }
 }
 
 #[cfg(test)]
@@ -225,12 +310,103 @@ mod tests {
 
     /// Run with or without `GLIBC_TUNABLES`, this binary has started itself again with the
     /// settings by the time a test runs, and the variable that marks the start again is gone.
+    /// Under valgrind, where it does not start again, it runs with the settings exactly when
+    /// valgrind was started with them.
     #[cfg(all(target_os = "linux", target_env = "gnu"))]
     #[test]
     fn a_binary_started_without_the_settings_runs_with_them() {
-        assert!(in_effect());
         let tunables = std::env::var("GLIBC_TUNABLES").unwrap_or_default();
-        assert!(holds_the_settings(&tunables), "{tunables:?}");
+        if running_on_valgrind() {
+            assert_eq!(in_effect(), holds_the_settings(&tunables), "{tunables:?}");
+        } else {
+            assert!(in_effect());
+            assert!(holds_the_settings(&tunables), "{tunables:?}");
+        }
         assert!(std::env::var_os(ZED_METER_STARTED_AGAIN).is_none());
+    }
+
+    /// The kernel's name of this process is the start of the file name of this binary, as when
+    /// it is started directly: the start again sets back the name `execve` of `/proc/self/exe`
+    /// gives (`exe`). Under valgrind every program has the name of valgrind's tool binary
+    /// (`valgrind --tool=none cat /proc/self/comm` prints `none-amd64-linu`), so there is
+    /// nothing to check.
+    #[cfg(all(target_os = "linux", target_env = "gnu"))]
+    #[test]
+    fn the_name_of_the_process_is_that_of_its_binary() {
+        if running_on_valgrind() {
+            return;
+        }
+        let name = std::fs::read_to_string("/proc/self/comm").unwrap();
+        let exe = std::env::current_exe().unwrap();
+        let file = exe.file_name().unwrap().to_str().unwrap();
+        assert_eq!(name.trim_end(), &file[..file.len().min(15)]);
+    }
+
+    /// The two tests above, in this binary started without the settings, so that it starts
+    /// itself again whatever the settings of this run (`tools/run_tests.sh` exports them).
+    #[cfg(all(target_os = "linux", target_env = "gnu"))]
+    #[test]
+    fn a_binary_started_without_the_settings_starts_again_with_them_and_its_name() {
+        let out = std::process::Command::new(std::env::current_exe().unwrap())
+            .args(["--exact", "--test-threads=1"])
+            .arg("tests::a_binary_started_without_the_settings_runs_with_them")
+            .arg("tests::the_name_of_the_process_is_that_of_its_binary")
+            .env_remove("GLIBC_TUNABLES")
+            .env_remove(ZED_METER_STARTED_AGAIN)
+            .output()
+            .unwrap();
+        let stdout = String::from_utf8_lossy(&out.stdout);
+        assert!(
+            out.status.success() && stdout.contains(" 2 passed;"),
+            "{stdout}{}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+    }
+
+    /// Set by [`under_valgrind_the_binary_runs_without_starting_again`] for the run of this
+    /// binary under valgrind it starts.
+    const UNDER_VALGRIND: &str = "ZED_METER_TEST_UNDER_VALGRIND";
+
+    /// Valgrind is seen exactly when the run is under it, which valgrind also shows by preloading
+    /// its library `vgpreload_core` into every program it runs (valgrind 3.27.1 with the tools
+    /// none and memcheck: `LD_PRELOAD=/usr/libexec/valgrind/vgpreload_core-amd64-linux.so…`).
+    /// In the run [`under_valgrind_the_binary_runs_without_starting_again`] starts, without the
+    /// settings, the binary did not start again, so it runs without them.
+    #[cfg(all(target_os = "linux", target_env = "gnu"))]
+    #[test]
+    fn valgrind_is_seen_exactly_under_valgrind() {
+        let preload = std::env::var("LD_PRELOAD").unwrap_or_default();
+        let under = preload.contains("vgpreload_core");
+        assert_eq!(running_on_valgrind(), under, "LD_PRELOAD={preload:?}");
+        if std::env::var_os(UNDER_VALGRIND).is_some() {
+            assert!(under);
+            assert!(!in_effect());
+            assert!(std::env::var_os("GLIBC_TUNABLES").is_none());
+        }
+    }
+
+    /// This binary, started without the settings under valgrind, runs its tests: valgrind's tool
+    /// binary, which `/proc/self/exe` names there, would refuse to be started ("You cannot run
+    /// '…' directly"). Needs valgrind.
+    #[cfg(all(target_os = "linux", target_env = "gnu", target_arch = "x86_64"))]
+    #[test]
+    fn under_valgrind_the_binary_runs_without_starting_again() {
+        let out = std::process::Command::new("valgrind")
+            .args(["-q", "--tool=none"])
+            .arg(std::env::current_exe().unwrap())
+            .args(["--exact", "tests::valgrind_is_seen_exactly_under_valgrind"])
+            .env_remove("GLIBC_TUNABLES")
+            .env_remove(ZED_METER_STARTED_AGAIN)
+            .env(UNDER_VALGRIND, "1")
+            .output()
+            .expect(
+                "this test runs valgrind, which is not installed (Fedora: dnf install valgrind)",
+            );
+        let stdout = String::from_utf8_lossy(&out.stdout);
+        assert!(
+            out.status.success() && stdout.contains(" 1 passed;"),
+            "{stdout}{}",
+            String::from_utf8_lossy(&out.stderr)
+        );
     }
 }
