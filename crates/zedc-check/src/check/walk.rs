@@ -16762,6 +16762,165 @@ impl<'t, 'a> Ck<'t, 'a> {
         }
     }
 
+    /// Checks that a value of `t` may be pushed to a `Lines` port (L1.19): a `String` or a
+    /// family of strings. A failure is disposed of before it reaches a port (sec:failure). A
+    /// family writes its stored entries, so the `#notFound` of a key it lacks is not pushed;
+    /// at L1 the families are the `Lines` and `CommandLine` ports, which store no `#notFound`.
+    ///
+    /// A class of values not yet resolved, as `b` of `b = 2^62;` in `main`, is judged by the
+    /// carriers it may still take: one that can take neither `String` nor a value of no
+    /// carrier (a family is one) holds a number whatever carrier it ends with, so the push is
+    /// rejected now, as a value of those carriers would be, and not at run time. A class that
+    /// may still take a string is left to the run time as before.
+    ///
+    /// A failure of the outside world, `#ioError` loose at the top of the value or as a value
+    /// of the family, bubbles when the rest is strings (DESIGN.md sec:failure, "atoms bubble
+    /// out of an argument", and sec:codecs on a layer's failures, "a loose atom that bubbles
+    /// as `#ioError` does"): the push fails, and where it is a statement of the body of `main`
+    /// (`bubbles`), the failure ends the run of `main`, which exits with 1 having written nothing
+    /// (sec:ports). So `m.stdout <- m.stdin.map(l -> l.upper);` (EXAMPLES.md "[1. Programs
+    /// and ports] 2"), whose lines may be `#ioError`, is taken. The atoms the program makes
+    /// itself, a missed read's `#notFound` or `#outOfBounds` or a cast's `#invalid`, stay
+    /// errors: the program can handle them where it makes them, and every failure the checker
+    /// can catch is caught (DESIGN.md P13 of sec:pillars, the author's words of 2026-11-11).
+    /// A push elsewhere, in a function that takes a port or in a block inside the body, would
+    /// make its failure part of that function's or block's value, which is not built, and is
+    /// refused by name (plan row PUSH-bubble-nested). A family atom is data, and does not
+    /// bubble.
+    ///
+    /// It is written here, beside [`Self::push_vars`], which it calls, and not in `mod.rs`:
+    /// both its callers are in this file, and a call from `mod.rs` into a method of this file
+    /// made `mod.rs` import `walk.rs`, which imports `mod.rs`, closing an import cycle of seven
+    /// files (step S.1f, `tests/steps/s_01f_import_graph`; row
+    /// FAIL-check-import-cycle-d493d34a3).
+    fn pushed(&mut self, t: &Ty, port: &str, span: Span, bubbles: bool) {
+        // Complexity tradeoff: one find per class variable at the top of `t`, O(log N) in a
+        // union of N classes, and one rebuild of `t` where each is a class of numbers, O(|t|);
+        // no scan of a class's literals or uses (test `domain_repairs::a_pushed_chain_…`,
+        // COMPLEXITY.md C61). The other method, resolving the class to a carrier here as the
+        // end of `main` does, costs the same but would fix the carrier before the rest of the
+        // body narrows it; reading the mask decides the push and leaves the class unchanged.
+        let strings_or_other = Carrier::Str.bit() | OTHER;
+        let numbers: Option<Binds> = (!t.vars.is_empty())
+            .then(|| {
+                (t.vars.iter())
+                    .map(|v| {
+                        let r = self.class_of(&Piece::Var(v.clone()))?;
+                        let mask = self.classes[r].mask;
+                        (mask & strings_or_other == 0).then(|| (v.clone(), Ty::of_mask(mask)))
+                    })
+                    .collect()
+            })
+            .flatten();
+        let replaced;
+        let t = match &numbers {
+            Some(binds) => {
+                replaced = t.replace(binds);
+                &replaced
+            }
+            None => t,
+        };
+        // A value whose type holds a variable no class of numbers stands for, as `x` in
+        // `h(x, out: Lines) { out <- x; }`, has no type to check here; its classes are checked
+        // as they become known ([`Self::push_vars`]). The checks below decide nothing on such
+        // a type: `takes` needs a plain type, and each error needs no variable.
+        if !t.vars.is_empty() {
+            self.push_vars(t, port, span, bubbles);
+            return;
+        }
+        let strings = |t: &KType| t.subtype(&KType::string());
+        let plain = |t: &Ty| t.tuples.is_empty() && t.vars.is_empty();
+        let not_found = KType::atom("notFound");
+        // Whether a value of `t` is strings, or a family of strings, once each part's set has
+        // lost what `lose` gives of that part.
+        let takes = |lose: &dyn Fn(&Ty) -> KType| {
+            strings(&(&t.set - &lose(t)))
+                && plain(t)
+                && t.fns.iter().all(|s| {
+                    s.data
+                        && s.arrows.iter().all(|a| {
+                            plain(&a.result)
+                                && strings(&(&(&a.result.set - &not_found) - &lose(&a.result)))
+                        })
+                })
+        };
+        let ok = takes(&|_| KType::empty());
+        // Only `#ioError`, with or without its fields, is lost; every other atom, loose or of a
+        // named family, stays an error below.
+        let io = any_payload("ioError");
+        if !ok && !t.dynamic && t.vars.is_empty() && takes(&|_| io.clone()) {
+            if !bubbles {
+                let what = "a push of a value that may be the atom `#ioError`, other than as a \
+                            statement of the body of `main`,";
+                self.error(span, zedc_base::rejection::not_yet(what));
+            }
+            return;
+        }
+        if !ok && !t.dynamic && t.vars.is_empty() {
+            // Each repair is written with the value's code, where the checker has it on one line:
+            // an `else` with no pattern writes an empty line for every atom, whichever atoms
+            // the value holds, and a string interpolation writes any data as text.
+            let code = (self.t.text)
+                .and_then(|s| s.get(span.start..span.end))
+                .map(str::trim)
+                .filter(|c| !c.is_empty() && !c.contains('\n'));
+            let atoms = !t.atoms().is_empty();
+            let rest = t.without_atoms();
+            let text = strings(&rest.set) && plain(&rest) && rest.fns.is_empty();
+            // The first repair as code, which the headline ends with, and its note.
+            let first = match code {
+                Some(c) if atoms && text => Some((
+                    "write an empty line in place of each atom",
+                    format!("{port} <- {} else \"\";", else_operand(c)),
+                )),
+                Some(c) if atoms && t.fns.is_empty() => Some((
+                    "write the value into a string, and an empty line in place of each atom",
+                    format!("{port} <- \"${{{c}}}\" else \"\";"),
+                )),
+                Some(c) if t.fns.is_empty() => Some((
+                    "write the value into a string",
+                    format!("{port} <- \"${{{c}}}\";"),
+                )),
+                _ => None,
+            };
+            // A literal whose type shows as the literal itself is annotated with its carrier,
+            // as `m.stdout <- 42 : int`.
+            let shown = match self.show(t) {
+                s if code == Some(s.as_str()) => self.show(&t.carriers()),
+                s => s,
+            };
+            let message = match (code, &first) {
+                (Some(c), Some((_, r))) => format!(
+                    "A `Lines` port takes a `String` or a family of strings: `{port} <- {c} : \
+                     {shown}`. Try `{r}` instead."
+                ),
+                (Some(c), None) => format!(
+                    "A `Lines` port takes a `String` or a family of strings: `{port} <- {c} : \
+                     {shown}`."
+                ),
+                (None, _) => format!(
+                    "A `Lines` port takes a `String` or a family of strings: the value pushed to \
+                     `{port}` is {shown}."
+                ),
+            };
+            let mut menu = vec![format!(
+                "the port `{port}` writes each value pushed to it as one line of text"
+            )];
+            menu.push(match first {
+                Some((what, r)) => format!("repair: {what}, as `{r}`"),
+                None => "repair: write the value into a string with `\"${…}\"`".into(),
+            });
+            if atoms {
+                menu.push(
+                    "repair: handle each atom of the value with `match`, giving the line to \
+                     write for it"
+                        .into(),
+                );
+            }
+            self.error_offering(span, message, menu);
+        }
+    }
+
     /// The check of a push to `port` of the value at `span`, on each type variable of its
     /// type `t`, as [`Self::no_int_vars`] records its own: on a class with no type yet, a
     /// [`NeedKind::Push`] need, met on what flows into the class, at each call of the
