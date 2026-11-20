@@ -1528,10 +1528,11 @@ struct Class {
     /// Its type, once the function of its level ends.
     // Invariant: a type here holds no type variable, or is exactly `$k`, the variable of this
     // class's own index `k`; and no variable inside any of its parts either. Proof, by the
-    // four places that write the field: (1) `Ck::resolve` writes a carrier or `$r` of the
-    // class `r` it writes; (2) `Ck::resolve_top_parts` writes a carrier or a union of literal
-    // types and of the types of operations on literals alone outside every function, which
-    // name no class; (3) `walk.rs`, at the end of a level, writes `Ty::dynamic()`, which holds no
+    // four places that write the field (the third in two copies): (1) `Ck::resolve` writes a
+    // carrier or `$r` of the class `r` it writes; (2) `Ck::resolve_top_parts` writes a carrier
+    // or a union of literal types and of the types of operations on literals alone outside
+    // every function, which name no class; (3) `walk.rs`, at the end of a level, and its copy for the forward path
+    // in `walk/r10_forward.rs` (the `r10` generalize), write `Ty::dynamic()`, which holds no
     // variable; (4) the undo of a tried repair (`Undo::Class`) puts back a copy of the same
     // class taken earlier, which held the invariant by induction on the writes. `Ck::class`
     // starts the field at `None`, and `merge` does not touch it. So `Ck::class_root`, which
@@ -2868,12 +2869,14 @@ impl<'t, 'a> Ck<'t, 'a> {
     /// for a zero under one `-`, as `-0r`, with its `-`, at the span of the `-` and the
     /// literal: zero is its own negation, so the value alone does not keep the sign the
     /// program writes ([`signed_number_at`]).
-    /// A value it records spelled otherwise than at its first record is mixed ([`Self::mixed`]),
-    /// and the parts printed so far are forgotten, since they spell literals as they were
-    /// ([`defs::forget_printed`]).
-    // Complexity tradeoff: the new spelling is compared with the first, O(the literal's length),
-    // which reading it cost already; comparing it with every spelling recorded would cost O(k)
-    // for the k recorded, and the first is enough to tell one spelling from two.
+    /// A value it records spelled otherwise than at another record is mixed ([`Self::mixed`]).
+    /// The parts printed so far are forgotten at every record, since a new record may change
+    /// how a literal near it is spelled ([`defs::forget_printed`]).
+    // Complexity tradeoff: the new spelling is compared with one recorded, the one at the
+    // least span (`first_key_value`), O(the literal's length), which reading it cost already;
+    // comparing it with every spelling recorded would cost O(k) for the k recorded. One is
+    // enough: while `v` is not mixed, every spelling recorded for it is the same, so any one
+    // stands for all, and once it is mixed no comparison is made.
     fn spells(&mut self, v: &Value, span: Span) {
         defs::forget_printed();
         match self.spelled.get_mut(v) {
@@ -6050,7 +6053,13 @@ impl<'t, 'a> Ck<'t, 'a> {
     /// function walked twice). (ii) Two calls never share an address: each copy made is kept
     /// alive to the end of `finished_with` (`keep`, and the memo of [`Self::r10_flat_held`],
     /// which keeps each signature it decodes), as `s` is, so no address is freed and given
-    /// again to another forward while the tags are read.
+    /// again to another forward while the tags are read. Tests: r10_tests.rs
+    /// `r10_map_by_a_chain_function_agrees_with_e`, cases
+    /// `two_open_lambdas_each_with_an_internal_result` and
+    /// `open_lambda_with_held_names_beside_the_function`, which compare D's results with E's
+    /// recorded ones. No test makes the allocator give a freed address again, so (ii) rests on
+    /// the argument alone: a change that frees a copy before `finished_with` ends would pass
+    /// them wherever the allocator does not reuse its address.
     /// With `tag` false the results keep their names untagged ([`Self::shown`], which names
     /// nothing apart).
     fn r10_decode_fwd_needs(s: &Arc<Sig>, tag: bool) -> Arc<Sig> {
@@ -7208,9 +7217,10 @@ impl<'t, 'a> Ck<'t, 'a> {
     // Complexity tradeoff: one pass over each of the five tables, each entry looked up among
     // the kept keys by its start in a sorted map, O(E log p) for E entries and p kept keys,
     // plus one insert per copy. The naive way, scanning every pair for each entry, is
-    // O(E·p). The kept keys of two remaps never overlap, since a key that computes holds no
-    // remap, so the key whose start is the last at or before an entry's is the only one
-    // that may hold it.
+    // O(E·p). The kept keys never overlap: they are distinct expressions, whose spans are
+    // nested or disjoint; the keys of two levels of one remap are disjoint, and a key of one
+    // remap holds no other remap's key, since a key that computes holds no remap. So the key
+    // whose start is the last at or before an entry's is the only one that may hold it.
     fn copy_alike_keys(&mut self) {
         if self.alike_keys.is_empty() {
             return;
@@ -7344,7 +7354,9 @@ impl<'t, 'a> Ck<'t, 'a> {
         // An exit that some need of the callee is on is a receiver too. The next level takes
         // its receivers only from `on_vars`, so without the exits a use on an exit was lost
         // there and `#19` let a second call on that exit reserve a new result where E reuses
-        // the key (landing round 2, Sol L2.C1, `inherited-exit-key.zed`).
+        // the key (landing round 2, Sol L2.C1, `inherited-exit-key.zed`). Test: r10_tests.rs
+        // `r10_inherited_use_on_an_exit_reaches_the_next_level`, which checks the callees
+        // `pair`, `wrap` and `wrap2` of that program against E's recorded results.
         on_vars.extend(
             exits
                 .iter()
@@ -8589,7 +8601,12 @@ impl<'t, 'a> Ck<'t, 'a> {
         self.taking(sig, &loose)
     }
 
-    /// Whether the parameter `p` of an arrow of `sig` takes every one of the atoms `loose`.
+    /// Whether the parameter `p` of an arrow of `sig` takes every one of the atoms `loose`:
+    /// by its set, or, for a variable bound in `sig`, by whether its bound may take values
+    /// other than carriers ([`OTHER`]). A parameter that is the unknown, any other variable or
+    /// a class is answered yes without reading a mask. Not proved: that a class parameter
+    /// whose carriers hold no atom (a class of number literals) never stands in an arrow
+    /// before one that takes the atoms, where this choice would pick the earlier arrow.
     fn takes_all(&self, sig: &Sig, p: &Ty, loose: &KType) -> bool {
         if let Some(&m) = p.as_var().and_then(|v| sig.bounds.get(v)) {
             return m & OTHER != 0;
@@ -13561,7 +13578,11 @@ impl fmt::Display for Label<'_> {
 /// The arrows of the primitive `p` from the kernel's table, [`Prim::arrows`], in its order
 /// (KERNEL-prim-arrow-table): each operand a carrier, the result its carrier with the atoms
 /// the table lists. Before, the checker wrote these lists itself, beside the evaluator's match
-/// arms, and nothing tied the two together. O(arrows).
+/// arms, and nothing tied the two together. It leaves out the tuples the table marks
+/// `refused` (zed-kernel term.rs, the field's doc: "the checker builds no arrow from it"):
+/// the evaluator takes them, and the checker refuses them by design, as `==` and `!=` of two
+/// carriers and `min` and `max` of strings and bools, so a call at one finds no arrow and is
+/// refused. O(arrows).
 fn prim_arrows(p: Prim) -> Vec<Arrow> {
     let carrier = |t: ScalarType| match t {
         ScalarType::Bool => Carrier::Bool,
@@ -14976,7 +14997,10 @@ struct NameOrder {
     held_runs: HashMap<Vec<(usize, usize, usize)>, usize>,
     /// The mark of each such copy met after the first, with the index of the first one's item:
     /// its runs are given the names that item is given (Neon's round 2, gap 3; before, the
-    /// mark was dropped and a copy whose runs were named apart kept the old names).
+    /// mark was dropped and a copy whose runs were named apart kept the old names). No known
+    /// program makes a second copy at another address, and no test fills `dups`: the case is
+    /// kept by the argument above, and a change that names a copy apart again would pass the
+    /// tests.
     dups: Vec<(usize, RunMark)>,
 }
 

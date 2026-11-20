@@ -422,6 +422,43 @@ fn a_curried_call_through_a_value_keeps_the_held_function_s_defaults() {
     );
 }
 
+/// A curried call of a generic body met with a function that has no default for the
+/// parameter left out, and with two that have different defaults for it: which function the
+/// checker meets first changes which calls are placed (`unaligned` in walk.rs), and neither
+/// order changes what runs. The curried result is called with the parameter given, so each
+/// function runs on its own `y`; a call of a result that leaves it out is refused while the
+/// function with no default is among those the value may hold.
+#[test]
+fn functions_with_and_without_a_default_curried_alike_run_in_either_order() {
+    let three = "f(x: int, y: int) = x + y;\ng(x: int, y: int = 1) = x * y;\n\
+                 h(x: int, y: int = 2) = x + y + 10;\n";
+    let fns = format!("{three}cur(k) = k(x: 3, ...)(y: 5);\n");
+    runs_to(
+        &format!("{fns}a = cur(k: f) * 10000 + cur(k: g) * 100 + cur(k: h);\n"),
+        "a",
+        "81518",
+    );
+    runs_to(
+        &format!("{fns}a = cur(k: g) * 100 + cur(k: h) + cur(k: f) * 10000;\n"),
+        "a",
+        "81518",
+    );
+    runs_to(
+        &format!("{fns}a = cur(k: h) + cur(k: g) * 100 + cur(k: f) * 10000;\n"),
+        "a",
+        "81518",
+    );
+    let pick = "pick(c: int) = if c == 0 { f } else if c == 1 { g } else { h };\n";
+    runs_to(
+        &format!("{three}{pick}p = pick(c: 1)(x: 3, ...);\na = p(y: 5);\n"),
+        "a",
+        "15",
+    );
+    rejected(&format!(
+        "{three}{pick}p = pick(c: 1)(x: 3, ...);\na = p();\n"
+    ));
+}
+
 /// The function a curried call gives, through a declared function or through a value whose
 /// functions take the arguments alike, may itself reach a call that its function places,
 /// beside one that takes the parameters left out in another order; it carries its own list

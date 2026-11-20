@@ -602,6 +602,10 @@ impl<'t, 'a> Ck<'t, 'a> {
         // and `next`), and the set-once caches of the signatures and types it holds, whose `Hash` and
         // `Eq` read their fixed fields and a digest filled once from those. Nothing behind a shared
         // `Arc` is changed in place, so no key's hash or equality can change while it is held.
+        // Established in zedc-types src/ty.rs: `impl PartialEq for Via` compares `at`, `text` and
+        // `next`, `impl Hash for Via` hashes `at` and `text`, and `impl Hash for Sig` hashes
+        // `Sig::digest`, filled once. That equal signatures hash alike is zedc-types' contract. No
+        // test can show a key changing in a map, which is why the argument is written here.
         #[allow(clippy::mutable_key_type)]
         let mut seen_7p_keys = HashSet::new();
         let mut var_steps = Vec::new();
@@ -943,6 +947,11 @@ impl<'t, 'a> Ck<'t, 'a> {
             // and `next`), and the set-once caches of the signatures and types it holds, whose `Hash` and
             // `Eq` read their fixed fields and a digest filled once from those. Nothing behind a shared
             // `Arc` is changed in place, so no key's hash or equality can change while it is held.
+            // Established in zedc-types src/ty.rs: `impl PartialEq for Via` compares `at`,
+            // `text` and `next`, `impl Hash for Via` hashes `at` and `text`, and `impl Hash for
+            // Sig` hashes `Sig::digest`, filled once. That equal signatures hash alike is
+            // zedc-types' contract. No test can show a key changing in a map, which is why the
+            // argument is written here.
             #[allow(clippy::mutable_key_type)]
             let mut seen_keys = HashSet::new();
             for tpl in &summary.exposed_needs {

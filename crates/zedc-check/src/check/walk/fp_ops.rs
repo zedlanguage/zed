@@ -1451,7 +1451,13 @@ impl<'t, 'a> Ck<'t, 'a> {
     /// the bounds admit into the region (sec:diagnostics, "Undischarged region assertion"):
     /// `[1, 2].zip([1])` holds key `1` on one side only, and a zip of two `Lines` inputs is
     /// rejected too, since nothing shows their counts equal. Proved, the four bounds are one
-    /// set, so the result's keys are sure. A loose atom of either operand passes through.
+    /// set, so the result's keys are sure: for each operand `L ⊆ U` (`L` is a meet that
+    /// includes the first family's sure keys, a union over some of its arrows, and `U` the
+    /// union over all arrows of all families; [`Self::key_bounds`]), so
+    /// `U_a ⊆ L_b ⊆ U_b ⊆ L_a ⊆ U_a`, and every key either side may hold is held by every
+    /// family of both. A loose atom of either operand passes through. Tests:
+    /// `l03_15a_fp_ops_run::cases::zip_pairs_equal_keys`,
+    /// `a_zip_of_ranges_with_unequal_keys_is_rejected` and `concatenation_zip_and_its_law`.
     ///
     /// Each variable of an operand takes the `zip` as at [`Self::list_concat_end`] (row
     /// ZIP-generic-operands): a class resolved to a type takes it on that type; one not yet

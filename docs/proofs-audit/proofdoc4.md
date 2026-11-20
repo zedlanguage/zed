@@ -145,7 +145,7 @@ Claims in other crates are listed and not counted; they belong to the helper of 
 
 | Crate | Entries read | Found | Already there | Added or completed | Marked unproved | Corrected |
 |---|---|---|---|---|---|---|
-| zedc-check | 20 | 33 | 27 | 3 | 0 | 3 |
+| zedc-check | 75 | 137 | 98 | 27 | 3 | 9 |
 
 | Source | Claim | Code site | Status |
 |---|---|---|---|
@@ -182,21 +182,136 @@ Claims in other crates are listed and not counted; they belong to the helper of 
 | 9e3cc1480 | `read_here` gives the same read at every place | walk.rs `Ck::read_here` | already there |
 | 9e4acde1f | the cast takes `rat`, `f64`, `f32` out of an unresolved class; O(log N) find | walk.rs `Ck::int_not_whole` | already there |
 | a034e80cd | `subtracted_args` cost, built only for a printed message | mod.rs `Ck::subtracted_args` | already there |
+| a55b75fd8 | decoded copies keep their addresses: no function walked twice is replaced, no address reused | mod.rs `Ck::r10_decode_fwd_needs` | argument completed: tests named; no test makes the allocator reuse an address, so (ii) rests on the argument |
+| a55b75fd8 | `keep` holds every copy to the end of `finished_with` | mod.rs `r10_promote_open_fwds`, `finished_with` | already there |
+| a55b75fd8 | the `FinishMemo::held` memo is sound | mod.rs `FinishMemo` | already there |
+| a55b75fd8 | a copy of a held function's runs met after the first is named as the first | mod.rs `NameOrder::dups` | argument completed: no known program and no test reach a second copy; said at the site |
+| a670bd1cb | the needs `guarded_needs` drops, and its cost | walk.rs `Ck::guarded_needs` | already there |
+| a670bd1cb | `permuted_sig` cost and `inv` | walk.rs `permuted_sig` | already there |
+| a670bd1cb | `needs_in_order` gives the order the needs were met in | walk.rs `needs_in_order` | already there |
+| a670bd1cb | the `#4-outer` guard no test reaches, O(1) | walk/r10_forward.rs | already there |
+| a9443c314 | an exit some need is on is a receiver at the next level | mod.rs, building `on_vars` | argument completed: test named |
+| a9443c314 | `held_foreign_fn` agrees with `Sig::holds_only_own_variables` | probe.rs field doc | argument completed: test named; the agreement is zedc-types' `FwdNeed::held_foreign_fn` |
+| af6a5a696 | the `Value::Big` arm of the unread-call message, O(the text) | walk.rs, the unread-call message | already there |
+| af8174807 | the `site_free` key | mod.rs `site_free` | already there |
+| af8174807 | calls alike are one need: same shape and class, so the same functions reach both | walk.rs `Ck::need` | argument completed: test and benchmark named |
+| af8174807 | `settle_calls` is O(p) | walk.rs `Ck::settle_calls` | already there |
+| af8174807 | whether a call is placed does not depend on the order the calls are met in | walk.rs `Ck::record_call` doc | corrected: the marks may depend on the order (see 69526a75a below); what runs does not, with the argument at `unaligned` |
+| b18332dd5 | the tree of images updated from an earlier read equals a fresh one | walk.rs `Ck::read_image` | argument added: each input a leaf reads is among the keys reset, and the fold is associative; tests named, and that none compares the two trees |
+| b3469579a | a checked merge's operand is not checked again; the record is keyed by failures | walk.rs `Ck::merged_data` | already there |
+| b3469579a | a record left from an earlier walk with equal failures is skipped soundly | walk.rs `Ck::merged_data` | marked "Not proved here": rests on the errors of a check not being undone outside a trial, not traced |
+| b7edc27fd | a divisor that cancels is zero wherever it is reached | walk.rs `Ck::cancels` | argument added: one binding per name, every coefficient and the constant 0, exact ints and rats; `div` and `mod` take ints, `/` of f64 is excluded by `zero_divisor`; tests named |
+| b7edc27fd | `always_fails_word` | walk.rs `Ck::always_fails_word` | already there |
+| bfe7e7956 | `with_entries`, `entry_classes`: the parameter takes only those entries | walk.rs | already there |
+| d20f8009e | `two_pow_text`, `alias_range` O(1), the alias arm of `Denote`, `read_part` refuses an alias name | walk.rs; read.rs `read_part` | already there |
+| e7b12dd2e | a new spelling compared with one entry tells one spelling from two | mod.rs `Ck::spells` | corrected: the doc said "the first", the code reads the least span; the step "while not mixed every spelling is the same" added; `forget_printed` runs at every record, not only at a change |
+| ee79685e4 | `bound_through_fn` is sound | walk.rs `bound_through_fn` | already there |
+| ee79685e4 | a section and a plain value at one bracket are rejected in either order | walk.rs `Ck::bracket_meaning` | argument added: both orders and the both-at-once case traced to `bracket_met_both` and `bracket_both_here`; test named |
+| ee79685e4 | the group key is deferred | walk.rs, `group` | already there |
+| 01063a0ca | `mutable_key_type` allowed: no key's hash or equality can change while it is held | walk.rs `heads`, `known`; walk/r10_forward.rs, two maps | argument completed at all four sites: where each fact is established in zedc-types ty.rs |
+| 03a4f95f2 | `key_bounds` is linear in the arrows | walk/fp_ops.rs `Ck::key_bounds` | already there |
+| 03a4f95f2 | a zip whose four key bounds are one set has sure keys | walk/fp_ops.rs `Ck::zip_end` | argument added: `L ⊆ U` for each side gives the chain of inclusions; tests named |
+| 03a4f95f2 | `list_concat_end`'s recursion ends | walk/fp_ops.rs | already there |
+| 0f6b67903 | literal repairs come before casts, O(r) | walk.rs `Ck::repairs` | already there |
+| 0f6b67903 | a literal fix adds at most three trials | walk.rs `apart` | already there |
+| 148a42eb4 | an `Entries` need is bound at each call before any use recorded after it | walk.rs `Ck::word_entries` | argument completed: the word calls it through `lambda_entries` before `word_fn` checks the lambda; that `replay` keeps the order is inferred, not traced; tests named |
+| 148a42eb4 | `word_entries`' recursion ends | walk.rs `Ck::word_entries` | corrected: the reason given ("built before the class is resolved") does not hold; replaced by the invariant at `Class::resolved` |
+| 148a42eb4 | a fold by an unknown function on a known family: no `fsig` only where `f_class` holds | walk.rs | already there |
+| 1cdb4bf0e | a class of carriers alone cannot be called | walk.rs, `call_value` | argument completed: `mask & OTHER == 0` means no function, by `Class::mask` and `mask_of`; tests named |
+| 1cdb4bf0e | `gives_within` restricts a class piece through `piece_into` | walk.rs `Ck::gives_within` | argument completed: its doc had been merged into `gives_made`'s; moved back, the closed-`r` limit stated, tests named |
+| 2cccffee8 | `top_f64_leaves` reads each display part once, O(size) | walk.rs `top_f64_leaves` | argument completed: tests and benchmark named |
+| 2cccffee8 | `retyped` gives the type a body gives | walk.rs `retyped` | argument completed: same tests |
+| 2cccffee8 | `display_ty` is O(n) unions | walk.rs `display_ty` | already there |
+| 47be53825 | `fixed_payload_fits`: the fit rules and the open cases | walk.rs `Ck::fixed_payload_fits` | argument completed: tests named |
+| 47be53825 | a checked merge is not checked again | walk.rs `Ck::merged_data` | already there (as b3469579a) |
+| 4d3221711 | the sweep of unchecked uses | walk.rs `Ck::sweep_unchecked_uses` | already there |
+| 55045d490 | `handled` is Tarjan's, O(B + R + E) | mod.rs `handled` | already there (doi:10.1137/0201010) |
+| 57434d47b | `++` takes only `Ranks` | walk/fp_ops.rs `list_concat_end`, `ranks_count` | already there |
+| 57434d47b | `zip` gives the stronger tag | walk/fp_ops.rs | already there |
+| 578bbc92d | the tokens `part_tokens` moves are those a new lex gives | read.rs `part_tokens` | argument completed: the "Not proved" names its row PROOF-part-tokens-slice-lex |
+| 5af4b2f2a | a block that exports nothing writes when a statement writes | ports.rs `silent_tail` | already there |
+| 5db8eb317 | a literal's own join does not ask; a merged class is asked if either was | mod.rs `Class::asked` | already there |
+| 5db8eb317 | `resolve_top_parts` reads each class once | walk.rs `Ck::resolve_top_parts` | already there |
+| 5ff79522f | `refused_notes` is O(m log k) and writes nothing in a trial | walk.rs `Ck::refused_notes` | already there |
+| 5ff79522f | `asked_at` is O(log p) | mod.rs `asked_where` | already there |
+| 60ce2dad4 | `Into` and `Data` uses are met by the mask; the joined use stays an obligation | walk.rs `Ck::resolve_top_parts` | already there |
+| 60ce2dad4 | the sweep's list of discharges | walk.rs `Ck::sweep_unchecked_uses` doc | corrected: it listed a join in `merge` as a discharge, which was removed |
+| 60ce2dad4 | the checker builds no arrow from a tuple the table marks `refused` | mod.rs `prim_arrows` | argument added: the field's contract quoted, and what it costs a call |
+| 61299315a | F189 is O(c + l), and why the float formats | walk.rs | already there |
+| 64d244789 | cycles and names with no value | walk.rs | already there |
+| 6704ae0ff | `r10_finish_fwd_callee` is a post-order on an explicit stack, O(V + E) | walk/r10_forward.rs | already there |
+| 6704ae0ff | the split memo with its `listed` set | walk/r10_forward.rs | already there |
+| 6704ae0ff | `key_watchers`, `open_watchers`, `deferred_open` are O(1) amortized | probe.rs | already there |
+| 6704ae0ff | B3, the key with the lambda cleared | walk/r10_forward.rs | already there |
+| 6704ae0ff | B1, the cfg setters | probe.rs | already there |
+| 6704ae0ff | the ranges of `closed_internal_ranges` are disjoint, which the lookup needs | probe.rs field doc | argument added: each range is one block `reserve_ids_o1` reserves, and `logical_len` never decreases in sparse mode; no test checks it directly |
+| 67dd99e3a | a remap need is made only by `remap_need`, which inserts into `remap_exprs` first | walk.rs, `remap_met` | already there |
+| 67dd99e3a | the plan read from the text is the same at every type | walk/remap.rs `remap_text_plan` | already there |
+| 67dd99e3a | the witness is merged | walk/remap.rs `remap_alone` | already there |
+| 67dd99e3a | `group_of`'s recursion ends | walk.rs `Ck::group_of` | corrected: the reason given does not hold; replaced by the invariant at `Class::resolved` |
+| 67dd99e3a | the writers of `Class::resolved` keep its invariant | mod.rs `Class::resolved` | argument completed: the copy of writer (3) in walk/r10_forward.rs named |
+| 6817d8ebc | `Arms::longer` is O(log s) | arms.rs | already there |
+| 6817d8ebc | soundness without monotonicity | arms.rs | already there |
+| 6817d8ebc | `Carried::around` visits each test once | arms.rs | already there |
+| 69526a75a | `unaligned` is O(p + a) | walk.rs `unaligned` | already there |
+| 69526a75a | `record_call` is undo-logged | walk.rs `Ck::record_call` | already there |
+| 69526a75a | "the conditions are equalities, so each function that agrees with the first agrees with every other" | walk.rs `unaligned` doc | corrected: a side with no default agrees with any default, so the marks depend on the order; why the result does not, at the site; test `functions_with_and_without_a_default_curried_alike_run_in_either_order` (three orders, and the refusal); that the later call is checked against each function of the union is inferred |
+| 727dae146 | `carriers_only` | walk.rs | already there |
+| 727dae146 | masks only narrow | mod.rs `Class::mask` | already there |
+| 74d26e990 | each literal is read once in `follow_param` | walk.rs `Ck::follow_param` | argument completed: by the `binder` guard, which the pass always sets; the old reason holds only through `fix_bound` |
+| 74d26e990 | a class `fix_bound` leaves as it is never meets two parameters | walk.rs `Ck::follow_param` | marked "Not proved" at the site |
+| 7a7417966 | which root survives a union does not change a mark read | mod.rs `VarSets` | already there |
+| 7d0d766ad | `mentions` enters blocks; blocking.rs skips a block that returned | walk/remap.rs; blocking.rs | already there |
+| 7dc27aa9e | `#emptySeparator` exactly where the separator's type holds `""` | walk/fp_ops.rs `strings_end` | already there |
+| 7dc27aa9e | each test reads the separator's type once | walk/fp_ops.rs | already there |
+| 81e1bb50f | two remaps with one computed key go through the same steps | walk/remap.rs `remap_alike` | already there |
+| 81e1bb50f | the tables copied are all a computed key records | mod.rs `copy_alike_keys` | already there |
+| 81e1bb50f | the kept keys never overlap, so one lookup finds the key | mod.rs `copy_alike_keys` | argument completed: the two levels of one remap, by spans of distinct expressions |
+| 84e65bf61 | the domains are nested, so the smallest need per binder decides each call | walk.rs `Ck::floor_on` | already there |
+| 84e65bf61 | the chain's notes are built only for an error | walk.rs `Ck::floors_at` | already there |
+| 8d9f4f9d2 | no later use narrows a class of a comparison's side | walk.rs `Ck::equal_classes` | already there |
+| 8d9f4f9d2 | O(size of the sides + literals) per comparison | walk.rs `Ck::equal_classes` | already there |
+| 981ec6c8a | `bitAnd`, `bitOr`, `bitXor` as values need only `int[0..]` per operand | mod.rs `bit_word_value` | already there |
+| 981ec6c8a | O(1) per use of the name | walk.rs | already there |
+| 9ad186cfe | no expression names an output port | walk.rs | already there |
+| 9b35c8ab0 | `L .. U -> V` as `(L) -> V`, `(U) -> V \| #notFound`; rule 6 takes the first | mod.rs `Denote` | already there |
+| 9b35c8ab0 | what `takes_all` answers | mod.rs `Ck::takes_all` | argument added: by the set, by the bound's `OTHER`, or yes for the unknown, another variable or a class |
+| 9b35c8ab0 | a class parameter whose carriers hold no atom never stands before an arrow that takes the atoms | mod.rs `Ck::takes_all` | marked "Not proved" at the site |
+| 9e8f139f1 | `parse_type` is linear in the text | read.rs `parse_type` | already there |
+| b3de801c3 | a literal lies in another `if` iff the largest end among those starting at or before it reaches past it | mod.rs `Ck::resolve` | already there |
+| b3de801c3 | each operation is read at each carrier at most once | walk.rs `lit_fit` | already there |
+| b3de801c3 | a dead branch is noted alone | walk.rs | already there |
+| b48d21bcd | a key past 64 bits misses a dense family with `#outOfBounds` | walk.rs | argument completed: tests named |
+| b991293a4 | a find in `Class` is O(log N): union by rank, no path compression | mod.rs `find` | already there |
+| ba11fed9c | the spans of a class's operations do not overlap | mod.rs `copied_values` | already there |
+| ba11fed9c | `text_rat` computes no power but of 0, 1 and -1 | mod.rs `rat_step`, `text_rat` | already there |
+| ba11fed9c | `word_unoffered` is O(size of the operand), once per application | walk.rs | already there |
 
 Other crates, not counted: 5767fe37a and 9aff48777 the arrows of `Prim::arrows` (zed-kernel),
 635687ff7 treap set bounds (zed-kernel) and `Product::meet_type` (zedc-preimage), 809f95c53
 `forward_pow` (zedc-lattice), 86322e10b run-time limits (zed-rt, zed-native), a034e80cd
-`Comparing::diff` (zedc-types).
+`Comparing::diff` (zedc-types), a670bd1cb `Sig::first_seen`, `WantRange`, `holds_internal`
+and `Settle::must_decode` (zedc-types), a9443c314 `emit_bounds` and `emit_sig` (zedc-types),
+af6a5a696 `built` and `TooLarge` (zed-kernel), b18332dd5 the treap of images (zedc-preimage,
+doi:10.1007/BF01940876 at the site), b7edc27fd `Ty::meets`, which `key_outside` rests on
+(zedc-types), d20f8009e `fixed_width::name` (zedc-syntax), 47be53825 the `fixed_payload`
+table (zedc-types), 578bbc92d the keyword lookup (zedc-syntax), 5ff79522f `refused_on`
+(zedc-preimage), 64d244789 `order_around_cycles` (zedc-resolve), 6704ae0ff B4 and B5, the
+`Hash` (zedc-types), 7a7417966 `UnionFind` (zed-graph), 7d0d766ad no kernel name is `$k@j`
+(zed-kernel), 7dc27aa9e `split` on an empty separator (zed-kernel), 97beabefa
+`Sig::standing_twice`, moved to zedc-types, 9e8f139f1 `Type::surfaces_by_name` (zedc-types),
+b991293a4 `zed_graph::UnionFind` (zed-graph).
 
-No code claim: none so far.
+Claims gone from main, not counted: af8174807 `call_records` (replaced by `record_call`
+marking the call placed), 275d434e7 `env_config` and `ZED_DISABLE_D` (E was removed in
+f83194447). ee79685e4 `fold_dir_end`'s round bound was not read again: it is known false
+(FAIL-fold-rotating-tuple-rounds).
 
-Not read: a55b75fd8 a670bd1cb a9443c314 af6a5a696 af8174807 b18332dd5 b2ba71b22 b3469579a
-b7edc27fd bfe7e7956 c50a8965b d20f8009e e7b12dd2e ee79685e4 fe770de11 01063a0ca 03a4f95f2
-0f6b67903 148a42eb4 1cdb4bf0e 275d434e7 2cccffee8 47be53825 4d3221711 55045d490 57434d47b
-578bbc92d 5af4b2f2a 5db8eb317 5ff79522f 60ce2dad4 61299315a 64d244789 6704ae0ff 67dd99e3a
-6817d8ebc 69526a75a 718e9ecda 727dae146 74d26e990 7a7417966 7d0d766ad 7dc27aa9e 81e1bb50f
-84e65bf61 8d9f4f9d2 97beabefa 981ec6c8a 9ad186cfe 9b35c8ab0 9e8f139f1 b3de801c3 b48d21bcd
-b991293a4 ba11fed9c bad0d2e86 bd3c630e0 bea44d4a5 c289ffeca d11373afd d59b4756e d83518eb5
+No code claim: b2ba71b22 (test helpers), c50a8965b (message texts), fe770de11 (in zedc-check
+only a test helper calls `zed_numtheory::is_prime`), 275d434e7 (its one claim is gone),
+97beabefa (its one claim moved to zedc-types), 718e9ecda (message text).
+
+Not read: bad0d2e86 bd3c630e0 bea44d4a5 c289ffeca d11373afd d59b4756e d83518eb5
 d9d8729bb da0895a4f df8cea00b e2e0e0612 e6dfb6877 ebd6faee5 ef56f8c84 f240a5462 f38d90beb
 f6c6b1f99 f79ee52bf f8f4ddabb f923d44b9 fffe13699 009e52933 00a508032 019b3519b 06d1dc49c
 0b05cc8cf 0cbb40ab4 131d7f7fd 19514ef8c 1a19cae20 205591658 2059d260b 256d0fc5d 29bf6b297

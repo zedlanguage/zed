@@ -277,6 +277,7 @@ pub struct CalleeSummary {
     pub held_outer: BTreeSet<Arc<str>>,
     /// Whether a function held in the needs, outside functions, holds a variable not its own
     /// (E: [`Sig::holds_only_own_variables`] false on it); see `FwdNeed::held_foreign_fn` in zedc-types.
+    /// Test: r10_tests.rs `r10_function_held_in_a_forward_block_counts_for_own_variables`.
     pub held_foreign_fn: bool,
     pub held_classes: BTreeSet<Arc<str>>,
     pub intrinsic_fails: BTreeSet<&'static str>,
@@ -341,7 +342,19 @@ pub struct R10State {
     /// Open forwards by root and exposed key (`f1`). Scanning every watcher's keys cost O(w) per
     /// need; a lookup costs O(1) plus the forwards it hits, which are then forced.
     pub key_watchers: HashMap<(usize, (NeedKind, bool)), Vec<usize>>,
-    /// Class ranges `lo..hi` of kept forwards, by `lo` (disjoint). A sorted `Vec` with
+    /// Class ranges `lo..hi` of kept forwards, by `lo`. They are disjoint, which the lookup
+    /// in `Ck::r10_is_closed_internal` (`range(..=k).next_back()`, one range) needs: a range
+    /// nested in another would hide it and give a wrong `false`. Proof: each `lo` is taken by
+    /// `reserve_ids_o1(total_results)` (`lo = logical_len; logical_len += count`) in
+    /// walk/r10_forward.rs, and `hi = lo + total_results`, so `lo..hi` is exactly the block
+    /// reserved. (The negative control `StoreMode::BrokenNoCounterAdvance`, r10_tests.rs,
+    /// reserves nothing and may overlap; no check runs in that mode.) `logical_len` never
+    /// decreases: `push` adds 1 in sparse mode and `materialize_at` only raises it; the dense
+    /// `push`, which sets it to `dense.len()`, does not run here, since mod.rs calls
+    /// `enable_sparse()` whenever `uses_sparse()` holds, and `r10_is_closed_internal` returns
+    /// `false` before reading this map when it does not. So two reservations never overlap.
+    /// A range is inserted only in walk/r10_forward.rs, and only where `lo < hi`. No test
+    /// checks this directly. A sorted `Vec` with
     /// `insert` cost O(k) per range kept out of order (an outer forward kept after its inner
     /// ones), O(k^2) in all; the map costs O(log k) per insert and per lookup.
     pub closed_internal_ranges: BTreeMap<usize, usize>,

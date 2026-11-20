@@ -72,10 +72,11 @@ pub fn parse_type(text: &str) -> Result<Ty, String> {
 /// end, given `tokens`, the tokens the whole text has there: the same tokens with their spans
 /// moved to start at `head`, as lexing `head` gives them. A part with a string is lexed again:
 /// a string holds tokens of its own, and a `"""` string reads its indentation from the text.
-// Not proved: that lexing a text from a token's start to another token's start (or the end)
-// gives the tokens the whole text has between them, string tokens apart. It rests on the lexer
-// reading each token from its first byte without looking back, and ending a name, number,
-// operator or comment at a byte that is in neither text past the cut (a token starts there).
+// Not proved (row PROOF-part-tokens-slice-lex): that lexing a text from a token's start to
+// another token's start (or the end) gives the tokens the whole text has between them, string
+// tokens apart. It rests on the lexer reading each token from its first byte without looking
+// back, and ending a name, number, operator or comment at a byte that is in neither text past
+// the cut (a token starts there).
 // Evidence: while this was written, an assertion that the moved tokens equal those of a new lex
 // held on all 914 test pieces of the groups that read printed types (l01_15, l01_19, l01_22,
 // l01_23, l01_26, l01_28, l01_29, l01_31, l01_37a, l02_12, m0_01) and on the 5.6 MB of printed

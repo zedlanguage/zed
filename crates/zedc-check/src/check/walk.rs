@@ -726,8 +726,20 @@ impl<'s> CallShape<'s> {
 /// ([`Ck::place_at`]; row CALL-curried-placed). A name one of the two lacks, and a parameter
 /// left out with no default, are each an error of the call's check against that function.
 ///
-/// Two functions of one value at one call are compared by the first; the conditions are
-/// equalities, so each function that agrees with the first agrees with every other.
+/// Two functions of one value at one call are compared by the first. The tests of the count
+/// and of names and places are equalities, so a function that agrees with the first on them
+/// agrees with every other that does. The test of defaults is not: a side with no default
+/// agrees with any default, so with `f(x: int, y: int)`, `g(x: int, y: int = 1)` and
+/// `h(x: int, y: int = 2)` at `k(x: 3, ...)`, `h` is placed when `g` is first and not when
+/// `f` is. That changes no result, since the side with no default decides what runs: in a
+/// saturated call a parameter left out with no default is an error of the call's check
+/// against that function; in a curried call [`Ck::partial`] copies the parameter of the
+/// first, with no default, into the lambda, and the result's type holds `f`'s parameter
+/// with no default, so a later call that leaves it out is refused and one that gives it runs
+/// no default. A mark too many costs the placing at run time ([`Ck::place_at`]). Test:
+/// `l01_26_type_resolution::function_variance::functions_with_and_without_a_default_curried_alike_run_in_either_order`.
+/// Inferred, not traced: that the later call of a curried result is checked against each
+/// function the union of the result's type holds; the test checks the refusal.
 ///
 /// Complexity tradeoff: a map from name to place for each signature, O(p + a) for p parameters
 /// and a arguments; a search of the parameter list for each argument's name would be O(p·a).
@@ -1975,6 +1987,8 @@ impl<'t, 'a> Ck<'t, 'a> {
                 // A key past 64 bits is no tuple index and no key of a dense family, as a
                 // negative one is not: it is read the same way, so a family whose keys are one
                 // integer interval misses it with `#outOfBounds` (FAIL-ports-key-past-i64).
+                // Tests: l01_19_whole_file_ports::key_past_i64 (a key past 64 bits, keys
+                // beside the boundary, a tuple index past 64 bits).
                 let i = match literal(k, None).map(|l| l.value) {
                     Some(Value::Int(i)) => usize::try_from(i).ok(),
                     Some(Value::Big(_)) => None,
@@ -2837,8 +2851,14 @@ impl<'t, 'a> Ck<'t, 'a> {
     // O(log N) (check/mod.rs, struct `Class`) and the literals moved, which removes from `p`
     // the carriers `k` cannot take,
     // against L1.26a. Used: one binder copied, O(1) (its component chain is shared), and one
-    // pass over the l literals of `k` for their own carriers, O(l); each class of literals
-    // alone is a side of one comparison only, so each literal is read once here.
+    // pass over the l literals of `k` for their own carriers, O(l). Each literal is read
+    // once here per walk: the pass runs only past every guard, and it always ends by setting
+    // `k`'s `binder`, so a later call on `k` returns at `c.binder.is_some()` in O(1) (a trial
+    // that undoes the binder walks the body again, and pays this again with it). A class of
+    // literals alone is also a side of one comparison only: it reaches a name only through a
+    // binding, where [`Self::fix_bound`] gives it its carrier. Not proved: that a class
+    // `fix_bound` leaves as it is (one with no literal that fixes a carrier) never meets two
+    // parameters, where the first to follow would decide its carrier for both.
     fn follow_param(&mut self, k: usize, p: usize) -> bool {
         let (c, q) = (&self.classes[k], &self.classes[p]);
         if k == p || !c.generic || c.binder.is_some() || q.generic || !c.uses.is_empty() {
@@ -4451,12 +4471,20 @@ impl<'t, 'a> Ck<'t, 'a> {
     /// atoms, which pass by a function as by any call (rule 6 of
     /// sec:type_resolution). A class not yet resolved takes the use as a need
     /// ([`NeedKind::Entries`]) and gives its result, a class bound at each call before any use
-    /// recorded after it (FAIL-map-lambda-calls-param-entry); a value of type `_` gives `_`.
-    /// Anything else gives nothing: the word reports it.
+    /// recorded after it (FAIL-map-lambda-calls-param-entry): the word calls this, through
+    /// [`Self::lambda_entries`], before it checks the lambda ([`Self::word_fn`]), so the need
+    /// comes before every need the lambda's body records; that [`Self::replay`] meets a
+    /// callee's needs in the order its body met them is inferred from their being kept
+    /// in a list in that order, not traced. A value of type `_` gives `_`. Anything else
+    /// gives nothing: the word reports it. Tests:
+    /// `l08_02_remaps::empty::map_of_a_parameter_by_a_lambda_calling_a_parameter_runs`,
+    /// `the_other_words_by_a_lambda_calling_a_parameter_run`, and the benchmark
+    /// `l08_02_remaps::bench::map_of_a_parameter_by_a_lambda_calling_a_parameter_runs_in_linear_time`.
     // Complexity tradeoff: one union over the arrows of `x`'s families, O(arrows), as
-    // `map_end` makes, and one need or one recursion per class of `x`; a resolved class's type
-    // holds no class that resolves back to it (it is built before the class is resolved), so
-    // the recursion ends, as at `map_end`.
+    // `map_end` makes, and one need or one recursion per class of `x`. The recursion is one
+    // level deep: by the invariant at `Class::resolved` (check/mod.rs), `Ck::class_root` gives
+    // no root whose type is its own variable, and any other resolved type holds no variable,
+    // so the recursive call meets no class.
     fn word_entries(&mut self, x: &Ty, span: Span) -> Ty {
         let mut out = Ty::empty();
         for p in x.pieces() {
@@ -4560,9 +4588,10 @@ impl<'t, 'a> Ck<'t, 'a> {
     /// `#outOfBounds` dropped as [`Self::group_end`] drops them. `rekey` is rejected whatever
     /// `x` is, by [`Self::group_end`].
     // Complexity tradeoff: one need or one recursion per variable of `x`, plus the cost of
-    // `group_end` on the rest, as at `map`; a resolved class's type holds no class that
-    // resolves back to it (a class is resolved to a type built before it), so the recursion
-    // ends.
+    // `group_end` on the rest, as at `map`. The recursion is one level deep: by the invariant
+    // at `Class::resolved` (check/mod.rs), `Ck::class_root` gives no root whose type is its
+    // own variable, and any other resolved type holds no variable, so the recursive call
+    // meets no class.
     fn group_of(&mut self, x: &Ty, recv: Span, f: Arg<'a>, span: Span, rekey: bool) -> Ty {
         // `group_end` (remap.rs) builds the family; its outer keys are checked here, and
         // `Ck::need` is passed in, since a call from remap.rs of a method written in this file
@@ -6391,7 +6420,8 @@ impl<'t, 'a> Ck<'t, 'a> {
     /// recorded on a class ([`Self::need`]) is an obligation, which a step discharges and
     /// records ([`Discharge`]): checked on the class's type (`generalize`, `resolve_top_parts`,
     /// `powers_bound`), moved into a signature (`generalize`), met by the class's mask
-    /// (`resolve_top_parts`, [`Ck::met_by_mask`]) or joined into an equal use (`merge`). A use
+    /// (`resolve_top_parts`, [`Ck::met_by_mask`]). A `min` or `max` use joined into an equal
+    /// one in `merge` is not discharged there: it stays one obligation, in the use kept. A use
     /// with no discharge still on a class whose type is known (not its own variable) was never
     /// checked, as the needs of FAIL-random-f64-destructured-family and
     /// FAIL-random-pow-destructured-literal were: the kernel then raised a type error on a
@@ -7817,7 +7847,10 @@ impl<'t, 'a> Ck<'t, 'a> {
     /// Not proved: a type variable of the function (a generic parameter whose class was made
     /// one), and the unknown `_`, are taken as fitting, since a caller's argument fixes them;
     /// a class narrowed to the values that are neither carrier still allows a tuple, which
-    /// only a call that passes one shows.
+    /// only a call that passes one shows. Test:
+    /// `l01_27_absences::merge::an_errs_the_program_wrote_with_a_payload_that_is_no_set_of_failures_is_rejected`
+    /// (its eight payloads), with the field, two-item, narrowed-parameter and accepted cases
+    /// beside it in merge.rs, and `#bug` in loose.rs.
     // Complexity tradeoff: one subtype check per piece of the item's type, O(pieces · size of
     // the fixed type), the fixed types being of two or three pieces; the naive form, one
     // subtype check of the whole item, gives no place for a class, which `sub` would bind to
@@ -8682,7 +8715,11 @@ impl<'t, 'a> Ck<'t, 'a> {
                     // alone, as the literal `2` of `(1, 2)` read by `p[1](p[0])`, cannot
                     // be called. A class that may still hold a function is left as it is,
                     // as a variable of the body is, and its call is checked where the
-                    // function is known.
+                    // function is known. A class's mask holds [`OTHER`] wherever it may take a
+                    // value that is no carrier, a function among them ([`Class::mask`],
+                    // [`mask_of`]), so `mask & OTHER == 0` means it holds no function. Test:
+                    // `l01_26a_generic_literals::tuple_arg_pair::a_call_of_a_literal_component_is_rejected_as_one_of_a_string`,
+                    // and `a_call_of_a_function_beside_the_literals_runs` for the class left.
                     if self.classes[self.find(k)].mask & OTHER == 0 {
                         let shown = self.show(&p.ty());
                         self.not_a_function(&s.what, &shown, span);
@@ -8768,8 +8805,10 @@ impl<'t, 'a> Ck<'t, 'a> {
     /// ([`callee_places`]), the function held places the call ([`Self::place_at`]), a curried
     /// one too (row CALL-curried-placed). [`Self::put`] drops a replay's writes, so this one is
     /// logged directly, as [`Self::coerce_forwarded`] logs its, and a trial that is undone
-    /// undoes it. The test is of equalities, so whether a call is placed does not depend on
-    /// the order the checker meets the calls in.
+    /// undoes it. Whether a call is placed may depend on the order the checker meets the
+    /// calls in, where the first function has no default for a parameter left out and two
+    /// later ones have different ones ([`unaligned`], with the example); what the program
+    /// gives does not, by the argument there.
     fn record_call(&mut self, s: &CallValueF<'a>, site: Span, sig: Arc<Sig>) {
         if self.replaying == 0 {
             self.put(Undo::Call(site, Some(sig)));
@@ -11373,7 +11412,24 @@ impl<'a> Ck<'_, 'a> {
     /// `x_k = x_(k-1) + q_k` under a test of each `q_k` reads `x_(k-1)` in the scope of `x_k`
     /// from `x_(k-2)` in that of `x_(k-1)`, which differ at `q_(k-1)`, in `O(log k)`, where
     /// reading its `k - 1` narrowed inputs cost `O(k)` a binding and the chain `Θ(d²)` (item
-    /// PA-let-narrow-many). The result is the same either way.
+    /// PA-let-narrow-many). The result is the same either way. Proof: the leaf of an input
+    /// `v` depends only on whether `v` is in `vars`, on `names.read(v)`, on
+    /// `sum.inputs.get(v)` and on `sum.summary.shift(v, ..)`. Each is among the keys reset:
+    /// `names.changed(&r.names, vars)`, `images::changed(&r.sum.inputs, &sum.inputs)` and
+    /// `sum.summary.changed_since(&r.sum.summary)`, whose contract is that every input whose
+    /// shift may differ is listed ([`LetPa::changed_since`], zedc-preimage); with the two
+    /// sums one `Rc` (`Rc::ptr_eq`) the summary lists none. So every leaf not reset is the
+    /// leaf a fresh tree would make. The total is the in-order fold `left + leaf + right` in
+    /// key order (`images::node`), and `Leaf::plus` is associative (a `Shift::plus` of the
+    /// shift group, zedc-preimage; `usize` addition; the union of premises), so any search
+    /// tree of the same keys and leaves, whatever its shape, gives the same total. Tests:
+    /// `l01_39a_bit_words::bench::scaling::a_chain_of_sums_under_a_test_of_each_input_reads_each_summary_from_the_one_before`
+    /// (counts only), and
+    /// `l01_39a_bit_words::narrowing::a_block_of_tested_lets_is_narrowed_soundly_against_the_interpreter`
+    /// and `l01_39a_bit_words::narrowing::a_block_with_remainders_is_narrowed_soundly_and_keeps_what_it_accepted`
+    /// (soundness on samples against the interpreter). No test compares an updated tree with
+    /// a fresh one, so a key left out of the reset is caught only where it changes a verdict
+    /// on a sample.
     ///
     /// Complexity tradeoff: naive version, every input of the summary read at each binding
     /// (subset check, term bounds and premises), O(k) a read and Θ(d²) for the chain (2,275
@@ -12783,6 +12839,10 @@ impl<'t, 'a> Ck<'t, 'a> {
         // and `next`), and the set-once caches of the signatures and types it holds, whose `Hash` and
         // `Eq` read their fixed fields and a digest filled once from those. Nothing behind a shared
         // `Arc` is changed in place, so no key's hash or equality can change while it is held.
+        // Established in zedc-types src/ty.rs: `impl PartialEq for Via` compares `at`, `text` and
+        // `next`, `impl Hash for Via` hashes `at` and `text`, and `impl Hash for Sig` hashes
+        // `Sig::digest`, filled once. That equal signatures hash alike is zedc-types' contract. No
+        // test can show a key changing in a map, which is why the argument is written here.
         #[allow(clippy::mutable_key_type)]
         let mut heads: HashMap<(Ty, NeedKind, Gives), usize> = HashMap::new();
         // The first site met for each key written with roots, in the order of `needs`.
@@ -13089,6 +13149,10 @@ impl<'t, 'a> Ck<'t, 'a> {
         // and `next`), and the set-once caches of the signatures and types it holds, whose `Hash` and
         // `Eq` read their fixed fields and a digest filled once from those. Nothing behind a shared
         // `Arc` is changed in place, so no key's hash or equality can change while it is held.
+        // Established in zedc-types src/ty.rs: `impl PartialEq for Via` compares `at`, `text` and
+        // `next`, `impl Hash for Via` hashes `at` and `text`, and `impl Hash for Sig` hashes
+        // `Sig::digest`, filled once. That equal signatures hash alike is zedc-types' contract. No
+        // test can show a key changing in a map, which is why the argument is written here.
         #[allow(clippy::mutable_key_type)]
         let mut known = std::mem::take(&mut self.classes[child].known);
         let mut orders = std::mem::take(&mut self.classes[child].orders);
@@ -13223,7 +13287,10 @@ impl<'t, 'a> Ck<'t, 'a> {
         // once, when the check ends ([`Ck::settle_calls`]), O(1) per call. That holds because
         // two calls alike have one shape, the argument count, names and `...` (all part of
         // the key), and stand on one class, so the functions that reach one reach the other:
-        // what is recorded at the first is what would be recorded at the second.
+        // what is recorded at the first is what would be recorded at the second. Tests:
+        // `l01_26_type_resolution::function_variance::named_calls_with_arguments_alike_run`
+        // and the benchmark
+        // `l01_26_type_resolution::bench::function_variance::many_calls_of_a_body_with_many_named_calls_scale`.
         let mut kind = kind;
         let site = match &mut kind {
             NeedKind::Call { site, .. } => site.take(),
@@ -14090,12 +14157,6 @@ impl<'t, 'a> Ck<'t, 'a> {
         });
     }
 
-    /// Whether what a use gave in a replay, `got`, lies within the use's result `r`, binding
-    /// the variables of `r` as `binds`. A class of `got`, as of the literal `1` of `(1, 2)`
-    /// read by `p[0]`, stands for a value its carriers hold, so at a closed `r` it is passed
-    /// as at a parameter of that type ([`Self::piece_into`]): `r` restricts its carriers,
-    /// `int` in `if p[0] < 5 { p[0] } else { 0 }`, as the literal is restricted at `h(1)` of
-    /// the same body. The cost is that of the pieces of `got`.
     /// After [`Self::gives_within`] refused `got`, what need `n` gives, at its result `r`:
     /// whether `got` lies within `r` but for loose atoms `r` does not hold, which the body
     /// made where the need's use is and which no argument of the call gives, as
@@ -14137,6 +14198,16 @@ impl<'t, 'a> Ck<'t, 'a> {
         true
     }
 
+    /// Whether what a use gave in a replay, `got`, lies within the use's result `r`, binding
+    /// the variables of `r` as `binds`. A class of `got`, as of the literal `1` of `(1, 2)`
+    /// read by `p[0]`, stands for a value its carriers hold, so at a closed `r` it is passed
+    /// as at a parameter of that type ([`Self::piece_into`]): `r` restricts its carriers,
+    /// `int` in `if p[0] < 5 { p[0] } else { 0 }`, as the literal is restricted at `h(1)` of
+    /// the same body. Only a closed `r` is tried so: with a variable or `_` in `r` there is no
+    /// one type to restrict to, and `sub`'s answer stands. A piece that is no class is still
+    /// tested by `sub` alone. The cost is that of the pieces of `got`. Tests:
+    /// `l01_26a_generic_literals::tuple_arg_pair::a_component_returned_beside_a_carrier_checks_as_the_literal_alone`
+    /// and `a_first_component_of_another_type_is_rejected`.
     fn gives_within(
         &mut self,
         got: &Ty,
@@ -18036,7 +18107,11 @@ impl<'t, 'a> Ck<'t, 'a> {
     /// r: int) -> int` and then at `(p: int -> int, q: int, r: int | #c) -> int`; skipped by
     /// span, the second context's merge with `r` was not checked, and the program was accepted
     /// or refused by the order of the arrows. The failures, which hold the types of the
-    /// payloads, differ in the two, and only equal failures are skipped.
+    /// payloads, differ in the two, and only equal failures are skipped. Not proved here: a
+    /// record may also be left from an earlier walk of the body where the application merged,
+    /// and found in a later walk where its failures are equal. The skip is sound there if the
+    /// errors the earlier check gave are not undone outside a trial and equal types name the
+    /// same classes, which keep the data needs the earlier check gave them; neither was traced.
     // Complexity tradeoff: one [`ty::merges`] over the operands' atom sets, O(operands)
     // comparisons of shared types, then where they merge one [`Self::data`] walk per operand,
     // O(size of its failures' payload types), the walk the memo of checked rows already bounds,
@@ -20179,7 +20254,16 @@ impl<'t, 'a> Ck<'t, 'a> {
     /// met at `site`, and [`Ck::bracket_plain`] whether a tuple, a family or another value
     /// that is no function met it. A section (more than one parameter) and such a value at
     /// one bracket are rejected in either order of the calls, as one value that may be both
-    /// is. One pass over `v`'s pieces and two lookups.
+    /// is. The plain value first: it sets `bracket_plain`; a later function of `n ≥ 2`
+    /// parameters finds `was_plain`, so it is not recorded, and is rejected by
+    /// [`Self::bracket_met_both`], or by [`Self::bracket_both_here`] where `v` is the
+    /// bracket's own value (`own`). The section first: it records `n` in `brackets`; a later
+    /// plain value has no count and finds `before = m > 1`, and is rejected by
+    /// `bracket_met_both`. A value that is both at once has `other` set, so it is not `alone`
+    /// and is rejected by `bracket_both_here`. A function of one parameter beside a plain
+    /// value is one meaning, and is kept. Test:
+    /// `l01_26_type_resolution::function_variance::brackets_alike_given_two_meanings_each_give_their_error`,
+    /// both orders. One pass over `v`'s pieces and two lookups.
     fn bracket_meaning(&mut self, v: &Ty, site: Span, at: Span, own: bool) -> bool {
         let mut counts = BTreeSet::new();
         let (mut other, mut plain) = (false, false);
@@ -26867,6 +26951,16 @@ impl<'a> Ck<'_, 'a> {
     /// product, as in `2 * x - x - x`, a name bound to a value that is not a constant, as in
     /// `z = x - x`, and any call: such a divisor is not shown zero, and its division keeps
     /// `#divByZero`. COMPLEXITY.md row C38.
+    ///
+    /// Why the divisor is zero whenever it is reached: each name is `Ref::Bound` to one
+    /// binding, so each of its uses reads one value `x_i`, and the divisor is
+    /// `Σ c_i·x_i + Σ k` with every `c_i = 0` and `Σ k = 0`. Ints and rats are exact, so that
+    /// value is 0. `div` and `mod` take ints only (zedc-types `term.rs`, the operator table),
+    /// and the `/` of an f64 or an f32 has no `#divByZero` there; [`Self::zero_divisor`] does
+    /// not call this for a `/` with an operand that meets f64. The caller rejects only where
+    /// the division's atoms then hold `#divByZero` alone. Tests:
+    /// `l01_26_type_resolution::always_fails`, the case `f(x: int) = x div (x - x);` and
+    /// `a_long_divisor_that_cancels_is_one_rejection`.
     fn cancels(&mut self, e: &'a Expr) -> Option<(Vec<String>, bool)> {
         let mut counts: HashMap<usize, (usize, i64)> = HashMap::new();
         let mut names: Vec<String> = Vec::new();
@@ -27475,7 +27569,10 @@ fn top_f64_leaves(e: &Expr) -> Vec<&Expr> {
 /// kept in `seen`: `(1, 0.5 + 2*2)` at the top level was `Never` and is `(1, f64)` (the
 /// random program of seed 4877959526508188689, whose value the run found outside `Never`),
 /// and `[0.5 + 2*2]` was `0 -> Never` and is `0 -> f64`. A part `seen` holds nothing for is
-/// empty, as before. It costs one lookup per part, so the walk stays O(size of `e`).
+/// empty, as before. It costs one lookup per part, so the walk stays O(size of `e`). Tests:
+/// `l01_26a_generic_literals::top_body_agree::an_operation_that_takes_f64_inside_a_display_agrees_in_every_place`,
+/// `a_display_of_many_parts_that_take_f64_is_accepted`, and the benchmark
+/// `l01_26a_generic_literals::bench::top_body_agree::displays_with_parts_that_take_f64_scale`.
 fn retyped(t: &Ty, e: &Expr, new: &HashMap<Span, Ty>, seen: &HashMap<Span, Seen<'_>>) -> Ty {
     enum Step<'e> {
         Visit(Ty, &'e Expr),
