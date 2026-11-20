@@ -1,7 +1,6 @@
 //! Builders for kernel terms and values, shared by the step tests that construct the terms a
 //! program elaborates to (M0.9, M0.10).
 
-
 use zed_kernel::term::build::{app, if_, lam, let_, lit, prim, var};
 use zed_kernel::{Evidence, Family, FixKind, Pattern, Prim, Shared, Term, Value, Witness};
 
