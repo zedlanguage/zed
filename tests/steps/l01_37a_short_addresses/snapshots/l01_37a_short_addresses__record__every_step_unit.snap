@@ -235,7 +235,7 @@ l01_29_diagnostics/zed/narrowed.zed
             Step {
                 line: 3,
                 col: 3,
-                text: "`v` has no declared type; its uses give it _",
+                text: "`v` has no declared type; its uses give it no type yet",
                 source: "f(v) = if v is int { v ++ \"x\" } else { \"y\" };  // ✗ Operator with no arrow at its operands' carrier: `++` does not take an int",
                 width: 1,
             },

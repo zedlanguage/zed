@@ -5109,6 +5109,12 @@ pub enum NeedKind {
         site: Span,
         /// Whether `#ioError` may reach the push.
         bubbles: bool,
+        /// The type of the pushed value, which holds the class, as `$k` of `out <- x` or
+        /// `[$k]` of `out <- [x]`: checked whole, with the class replaced by what flows into
+        /// it and the rest bound as the call binds it, so for `h(x, out: Lines) { out <- [x]; }`,
+        /// `h(x: "a", out: m.stdout)` is accepted and `h(x: 5, out: m.stdout)` rejected with
+        /// the type `0 -> 5` (row PORT-untyped-arg-gaps).
+        value: Ty,
     },
     /// `sum` of the value: a tuple of numbers, whose sum the use gives (CHK-need-bound).
     Sum,
@@ -6239,10 +6245,12 @@ impl Need {
                     port,
                     site,
                     bubbles,
+                    value,
                 } => NeedKind::Push {
                     port: port.clone(),
                     site: *site,
                     bubbles: *bubbles,
+                    value: f(value),
                 },
                 NeedKind::Sum => NeedKind::Sum,
                 NeedKind::Entries => NeedKind::Entries,
@@ -6514,7 +6522,6 @@ impl Need {
                 | NeedKind::Data(..)
                 | NeedKind::NoInt(_)
                 | NeedKind::Power(_)
-                | NeedKind::Push { .. }
                 | NeedKind::InDomain { .. }
                 | NeedKind::Sum
                 | NeedKind::Entries
@@ -6523,7 +6530,8 @@ impl Need {
                 | NeedKind::Reduce(..)
                 | NeedKind::Payload { .. }
                 | NeedKind::Narrow(_) => (None, &[], &[], &[], &[], &[]),
-                NeedKind::Index { key: k, .. }
+                NeedKind::Push { value: k, .. }
+                | NeedKind::Index { key: k, .. }
                 | NeedKind::Order { other: k, .. }
                 | NeedKind::Concat { other: k, .. }
                 | NeedKind::Zip { other: k, .. }
@@ -6563,14 +6571,14 @@ impl Need {
             | NeedKind::Data(..)
             | NeedKind::NoInt(_)
             | NeedKind::Power(_)
-            | NeedKind::Push { .. }
             | NeedKind::InDomain { .. }
             | NeedKind::Sum
             | NeedKind::Entries
             | NeedKind::Reduce(..)
             | NeedKind::Payload { .. }
             | NeedKind::Narrow(Narrow::Loose | Narrow::Atom(_)) => Vec::new(),
-            NeedKind::Component { key: t, .. }
+            NeedKind::Push { value: t, .. }
+            | NeedKind::Component { key: t, .. }
             | NeedKind::Index { key: t, .. }
             | NeedKind::Map { f: t, .. }
             | NeedKind::Group { f: t, .. }
@@ -6611,14 +6619,14 @@ impl Need {
             | NeedKind::Data(..)
             | NeedKind::NoInt(_)
             | NeedKind::Power(_)
-            | NeedKind::Push { .. }
             | NeedKind::InDomain { .. }
             | NeedKind::Sum
             | NeedKind::Entries
             | NeedKind::Reduce(..)
             | NeedKind::Payload { .. }
             | NeedKind::Narrow(Narrow::Loose | Narrow::Atom(_)) => Vec::new(),
-            NeedKind::Component { key: t, .. }
+            NeedKind::Push { value: t, .. }
+            | NeedKind::Component { key: t, .. }
             | NeedKind::Index { key: t, .. }
             | NeedKind::Map { f: t, .. }
             | NeedKind::Group { f: t, .. }
@@ -30083,11 +30091,13 @@ pub mod r10_hash {
                     port,
                     site,
                     bubbles,
+                    value,
                 } => {
                     self.emit(TAG_NK_PUSH);
                     self.emit_str(port);
                     self.emit_span(*site);
                     self.emit_bool(*bubbles);
+                    self.emit_ty(value);
                 }
                 NeedKind::Sum => self.emit(TAG_NK_SUM),
                 NeedKind::Entries => self.emit(TAG_NK_ENTRIES),

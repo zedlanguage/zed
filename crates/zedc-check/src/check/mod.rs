@@ -3629,6 +3629,10 @@ impl<'t, 'a> Ck<'t, 'a> {
                 },
                 (None, _, _) => continue,
             };
+            // A value whose type shows as `_`, a class that no use has narrowed, as `x` in
+            // `h(x, out: Lines) { out <- x; }`, is said to have no type yet: `_` would read as
+            // a type, every value (row MSG-untyped-note-placeholder).
+            let untyped = ty == "_";
             // What this expression shows, in order; pushed reversed so it pops in order.
             let mut next = Vec::new();
             let id = match src {
@@ -3672,6 +3676,7 @@ impl<'t, 'a> Ck<'t, 'a> {
                         span,
                         match (self.defined_open(*id), given) {
                             (false, Some(text)) => text,
+                            (false, None) if untyped => format!("`{name}` has no type yet here"),
                             (false, None) => format!("`{name}` is {ty} here"),
                             (true, _) => format!(
                                 "`{name}` is read here; it is defined as an operation on \
@@ -3683,7 +3688,13 @@ impl<'t, 'a> Ck<'t, 'a> {
                 }
                 Src::Call(id, _) => {
                     let name = &self.t.res.binders[*id].name;
-                    next.push(note(span, format!("this call of `{name}` gives {ty}")));
+                    next.push(note(
+                        span,
+                        match untyped {
+                            true => format!("this call of `{name}` has no type yet"),
+                            false => format!("this call of `{name}` gives {ty}"),
+                        },
+                    ));
                     *id
                 }
                 Src::Other(e) => {
@@ -3732,6 +3743,7 @@ impl<'t, 'a> Ck<'t, 'a> {
                     // program's, so the step names none (DESIGN.md sec:diagnostics, "A `/`
                     // of integer literals").
                     let text = match (&e.kind, self.lit_open.contains(&span)) {
+                        (_, false) if untyped => format!("{what} has no type yet"),
                         (_, false) => format!("{what} {verb} {ty}"),
                         (ExprKind::Binary(BinaryOp::Div, ..), true) => format!(
                             "{what} is an operation on literals alone, so it is a literal too \
@@ -7371,6 +7383,13 @@ impl<'t, 'a> Ck<'t, 'a> {
         self.r10.forcing = false;
     }
 
+    /// Whether `t`, its solved classes replaced by their types, is a class alone: one whose
+    /// root has no type yet, or that became a type variable of its function, which its uses
+    /// left free.
+    fn untyped(&self, t: &Ty) -> bool {
+        (self.settled(t).as_var()).is_some_and(|v| class_id(v).is_some())
+    }
+
     /// `text` with each class variable replaced by its type. A `$k` is left in a text by the
     /// printer only where it is printed by name, inside a signature that bounds it by carriers
     /// (printed alone it is `_`), so a class that is a named type variable is written by its
@@ -7392,9 +7411,29 @@ impl<'t, 'a> Ck<'t, 'a> {
                 .ok()
                 .filter(|&k| k < self.classes.len())
             {
+                // A class still a class is shown by the carriers its uses left it, as
+                // `int | f32 | f64 | rat`, or as having no type yet where they left it every
+                // value: `_` alone would read as a type (row MSG-untyped-note-placeholder).
+                // A class its function's end made a type variable (resolved to its own
+                // variable) has its carriers hidden from `show`, which reads only classes with
+                // no type ([`Self::class_of`]); since a note's `$$k` is read when the message is
+                // printed, after that end, its root's carriers are read here, as the signature
+                // prints them (`T in int | f32 | f64 | rat`).
                 Some(k) => {
-                    let t = self.shown(&self.solved(&Ty::var(format!("${k}").into())));
+                    let solved = self.solved(&Ty::var(format!("${k}").into()));
+                    let t = self.shown(&solved);
+                    let carriers = (solved.as_var().and_then(|v| class_id(v)))
+                        .filter(|&j| j < self.classes.len() && !self.r10_is_closed_internal(j))
+                        .map(|j| self.classes[self.find(j)].mask)
+                        .filter(|&m| m != EVERY && m & OTHER == 0);
                     match t.as_var() {
+                        _ if alone && self.untyped(&solved) => match self.show(&solved) {
+                            s if s != "_" => out.push_str(&s),
+                            _ => match carriers {
+                                Some(m) => out.push_str(&self.show(&Ty::of_mask(m))),
+                                None => out.push_str("no type yet"),
+                            },
+                        },
                         Some(v) if !alone && class_id(v).is_none() => out.push_str(v),
                         _ => out.push_str(&t.to_string()),
                     }

@@ -12432,29 +12432,40 @@ impl<'t, 'a> Ck<'t, 'a> {
         self.r10.stats.generalize_done_items += done.len();
         let mut needs: Vec<(usize, Need)> = Vec::new();
         let mut now = Vec::new();
-        for &r in &own {
-            let uses = std::mem::take(&mut self.classes[r].uses);
-            self.classes[r].known.clear();
-            self.classes[r].orders.clear();
-            self.classes[r].order_of = None;
-            self.classes[r].data = false;
-            match self.classes[r].resolved.clone() {
-                Some(t) if t == Ty::var(format!("${r}").into()) => {
-                    self.discharge(Discharge::Signature, uses.len());
-                    needs.extend(
-                        uses.into_iter()
-                            .map(|(s, n)| (s, self.strip_widened(n, strip))),
-                    )
-                }
-                Some(t) => {
-                    self.discharge(Discharge::Checked, uses.len());
-                    now.extend(uses.into_iter().map(|(_, n)| (n, t.clone())))
-                }
-                None => unreachable!("resolved above"),
-            }
+        // The uses of the classes with a type are checked before those of the type variables
+        // are taken: a check may put a need on a type variable of this level, as a push that
+        // waited on a class with a type now waits on the rest of its value
+        // ([`Self::push_vars`], case (a1)), and that need joins the signature with the rest.
+        // Taken first, a type variable's uses lost such a need. Cost: one more pass over
+        // `own`, O(|own|).
+        let var_of = |ck: &Self, r: usize| {
+            ck.classes[r].resolved.as_ref() == Some(&Ty::var(format!("${r}").into()))
+        };
+        let (vars, typed): (Vec<usize>, Vec<usize>) = own.iter().partition(|&&r| var_of(self, r));
+        let take = |ck: &mut Self, r: usize| {
+            let uses = std::mem::take(&mut ck.classes[r].uses);
+            ck.classes[r].known.clear();
+            ck.classes[r].orders.clear();
+            ck.classes[r].order_of = None;
+            ck.classes[r].data = false;
+            uses
+        };
+        for &r in &typed {
+            let uses = take(self, r);
+            let t = self.classes[r].resolved.clone().expect("resolved above");
+            self.discharge(Discharge::Checked, uses.len());
+            now.extend(uses.into_iter().map(|(_, n)| (n, t.clone())))
         }
         for (n, t) in &now {
             self.check_on(n, t, n.span, None);
+        }
+        for &r in &vars {
+            let uses = take(self, r);
+            self.discharge(Discharge::Signature, uses.len());
+            needs.extend(
+                uses.into_iter()
+                    .map(|(s, n)| (s, self.strip_widened(n, strip))),
+            )
         }
         needs.sort_by_key(|(n, _)| *n);
         let ordered = self.r10_merge_direct_and_kept_needs(&kept_fids, needs);
@@ -13576,12 +13587,30 @@ impl<'t, 'a> Ck<'t, 'a> {
             }
             // At the push, not at the call: the push's text is what the message quotes, and the
             // call is in the notes of the path from it to the use (`also_notes` below).
+            // The pushed value is checked whole, the class replaced by `on` and the rest bound
+            // as the call binds it ([`Self::push_vars`]).
             NeedKind::Push {
                 port,
                 site,
                 bubbles,
+                value,
             } => {
-                self.pushed(&on, port, *site, *bubbles);
+                // Each variable of the class's root is replaced, not only `n.on`: a class joined
+                // to another after the push holds the variable it had there. O(|value|).
+                let value = self.bound(value, binds);
+                let root =
+                    n.on.as_var()
+                        .and_then(|v| class_id(v))
+                        .map(|k| self.find(k));
+                let b: Binds = (value.var_facts().classes.into_iter())
+                    .filter(|v| {
+                        let k = class_id(v)
+                            .filter(|&k| k < self.classes.len() && !self.r10_is_closed_internal(k));
+                        root.is_some() && k.map(|k| self.find(k)) == root
+                    })
+                    .map(|v| (v, on.clone()))
+                    .collect();
+                self.pushed(&value.replace(&b), port, *site, *bubbles);
                 Ty::empty()
             }
             NeedKind::InDomain { .. } => Ty::empty(),
@@ -16826,61 +16855,45 @@ impl<'t, 'a> Ck<'t, 'a> {
     /// files (step S.1f, `tests/steps/s_01f_import_graph`; row
     /// FAIL-check-import-cycle-d493d34a3).
     fn pushed(&mut self, t: &Ty, port: &str, span: Span, bubbles: bool) {
-        // Complexity tradeoff: one find per class variable at the top of `t`, O(log N) in a
-        // union of N classes, and one rebuild of `t` where each is a class of numbers, O(|t|);
-        // no scan of a class's literals or uses (test `domain_repairs::a_pushed_chain_…`,
-        // COMPLEXITY.md C61). The other method, resolving the class to a carrier here as the
-        // end of `main` does, costs the same but would fix the carrier before the rest of the
-        // body narrows it; reading the mask decides the push and leaves the class unchanged.
-        let strings_or_other = Carrier::Str.bit() | OTHER;
-        let numbers: Option<Binds> = (!t.vars.is_empty())
-            .then(|| {
-                (t.vars.iter())
-                    .map(|v| {
-                        let r = self.class_of(&Piece::Var(v.clone()))?;
-                        let mask = self.classes[r].mask;
-                        (mask & strings_or_other == 0).then(|| (v.clone(), Ty::of_mask(mask)))
-                    })
-                    .collect()
-            })
-            .flatten();
-        let replaced;
-        let t = match &numbers {
-            Some(binds) => {
-                replaced = t.replace(binds);
-                &replaced
-            }
-            None => t,
-        };
-        // A value whose type holds a variable no class of numbers stands for, as `x` in
-        // `h(x, out: Lines) { out <- x; }`, has no type to check here; its classes are checked
-        // as they become known ([`Self::push_vars`]). The checks below decide nothing on such
-        // a type: `takes` needs a plain type, and each error needs no variable.
-        if !t.vars.is_empty() {
-            self.push_vars(t, port, span, bubbles);
-            return;
-        }
-        let strings = |t: &KType| t.subtype(&KType::string());
-        let plain = |t: &Ty| t.tuples.is_empty() && t.vars.is_empty();
-        let not_found = KType::atom("notFound");
-        // Whether a value of `t` is strings, or a family of strings, once each part's set has
-        // lost what `lose` gives of that part.
-        let takes = |lose: &dyn Fn(&Ty) -> KType| {
-            strings(&(&t.set - &lose(t)))
-                && plain(t)
-                && t.fns.iter().all(|s| {
-                    s.data
-                        && s.arrows.iter().all(|a| {
-                            plain(&a.result)
-                                && strings(&(&(&a.result.set - &not_found) - &lose(&a.result)))
-                        })
-                })
-        };
-        let ok = takes(&|_| KType::empty());
         // Only `#ioError`, with or without its fields, is lost; every other atom, loose or of a
         // named family, stays an error below.
         let io = any_payload("ioError");
-        if !ok && !t.dynamic && t.vars.is_empty() && takes(&|_| io.clone()) {
+        // The value's type may hold classes, at its top, as `x` in
+        // `h(x, out: Lines) { out <- x; }`, or as the entries of a family, as in `[x]`. Each
+        // class with a type by now, or of numbers, is read as that type; where one is not
+        // known yet, the push is decided now only if the rest of the value fails whatever the
+        // class becomes (each such class read as no value); else the whole value is checked
+        // again as the first such class becomes known ([`NeedKind::Push`]), at each call of
+        // the function whose parameter it is ([`Self::push_vars`]). Before (row
+        // PORT-untyped-arg-gaps) a family of such a class was rejected at once, so
+        // `h(x: "a", out: m.stdout)` for `h(x, out: Lines) { out <- [x]; }` was refused though
+        // it writes the line `a`, and the rest of a value with a class at its top, the `5`
+        // of `if c { x } else { 5 }`, was not checked.
+        // Complexity tradeoff: one find per class variable of `t`, O(log N) in a union of N
+        // classes, one rebuild of `t`, O(|t|), and at most one need per push; no scan of a
+        // class's literals or uses (test `domain_repairs::a_pushed_chain_…`, COMPLEXITY.md
+        // C61). Recording a need per class would check the value once per class at each call
+        // for no other verdict. Resolving a class of numbers to a carrier here, as the end of
+        // `main` does, costs the same but would fix the carrier before the rest of the body
+        // narrows it; reading the mask decides the push and leaves the class unchanged.
+        let (shown, checked) = match self.push_vars(t, &io) {
+            PushVars::Known(t) => (t.clone(), t),
+            PushVars::Fails { shown, checked } => (shown, checked),
+            PushVars::Later(r, value) => {
+                let kind = NeedKind::Push {
+                    port: port.into(),
+                    site: span,
+                    bubbles,
+                    value,
+                };
+                self.need(r, kind, false, span);
+                return;
+            }
+            PushVars::RunTime => return,
+        };
+        let t = &checked;
+        let ok = push_takes(t, &KType::empty());
+        if !ok && !t.dynamic && t.vars.is_empty() && push_takes(t, &io) {
             if !bubbles {
                 let what = "a push of a value that may be the atom `#ioError`, other than as a \
                             statement of the body of `main`,";
@@ -16898,7 +16911,7 @@ impl<'t, 'a> Ck<'t, 'a> {
                 .filter(|c| !c.is_empty() && !c.contains('\n'));
             let atoms = !t.atoms().is_empty();
             let rest = t.without_atoms();
-            let text = strings(&rest.set) && plain(&rest) && rest.fns.is_empty();
+            let text = push_strings(&rest.set) && push_plain(&rest) && rest.fns.is_empty();
             // The first repair as code, which the headline ends with, and its note.
             let first = match code {
                 Some(c) if atoms && text => Some((
@@ -16917,8 +16930,8 @@ impl<'t, 'a> Ck<'t, 'a> {
             };
             // A literal whose type shows as the literal itself is annotated with its carrier,
             // as `m.stdout <- 42 : int`.
-            let shown = match self.show(t) {
-                s if code == Some(s.as_str()) => self.show(&t.carriers()),
+            let shown = match self.show(&shown) {
+                s if code == Some(s.as_str()) => self.show(&shown.carriers()),
                 s => s,
             };
             let message = match (code, &first) {
@@ -16953,36 +16966,108 @@ impl<'t, 'a> Ck<'t, 'a> {
         }
     }
 
-    /// The check of a push to `port` of the value at `span`, on each type variable of its
-    /// type `t`, as [`Self::no_int_vars`] records its own: on a class with no type yet, a
-    /// [`NeedKind::Push`] need, met on what flows into the class, at each call of the
-    /// function whose parameter it is; on a class with a type by now, [`Ck::pushed`] on that
-    /// type (row PORT-untyped-arg). Before, a push of such a value was not checked at all,
-    /// and `h(x, out: Lines) { out <- x; }` called as `h(x: 5, out: m.stdout)` failed only
-    /// at run time (test `bubble::a_body_s_push_of_an_untyped_parameter_is_checked_at_each_call`).
+    /// What [`Self::pushed`] does with the type variables of `t`, the type of a pushed value,
+    /// at its top and as the entries of its families: each class with a type by now, or of
+    /// numbers, is read as that type ([`PushVars::Known`]); the rest wait for what flows into
+    /// the first of them ([`PushVars::Later`]), at each call of the function whose parameter
+    /// it is (row PORT-untyped-arg), unless the value fails whatever they become
+    /// ([`PushVars::Fails`]). `io` is what a push may lose: `#ioError`. Before row
+    /// PORT-untyped-arg a push of such a value was not checked at all, and
+    /// `h(x, out: Lines) { out <- x; }` called as `h(x: 5, out: m.stdout)` failed only at run
+    /// time (test `bubble::a_body_s_push_of_an_untyped_parameter_is_checked_at_each_call`).
     ///
-    /// Left unchecked, as every push of one was before: a variable no class stands for
-    /// (`class_root` gives none), and a class whose type still holds a variable, which would
-    /// need this check again on that variable; neither is known to reach a push (unproved),
-    /// and the run-time check of the push still stops a value that is not text. Cost: one
-    /// find and at most one need per variable of `t`.
-    pub(super) fn push_vars(&mut self, t: &Ty, port: &str, span: Span, bubbles: bool) {
-        for v in &t.vars {
-            let Some(r) = self.class_root(v) else {
+    /// The two cases this check once left to the run time (row PORT-untyped-arg-gaps):
+    ///
+    /// (b) A class whose type still holds a variable: there is none. By the invariant at
+    /// `Class::resolved` (mod.rs), the four writes of that field write a type with no
+    /// variable or the variable `$r` of the class `r` written; a type `$r'` with `r'` in the
+    /// class of `r` stays a variable of that class, since `merge` does not touch the field.
+    /// So a root's type is `None`, its own variable, or a type with no variable, and the
+    /// three arms below are all the cases (the `debug_assert` checks the third).
+    ///
+    /// (a) A variable that `class_root` gives no class for. It splits in two.
+    /// (a1) A class whose type is its own variable: a type variable of the function now
+    /// ending, met here by a need of another class that [`Self::generalize`] checks on that
+    /// class's type. It is reached: in `h(x, y, out: Lines) { out <- [x.upper, y]; }` the
+    /// push waits on `x`, which ends a `String`, and `y` then ends a type variable of `h`
+    /// (test `bubble::a_push_that_waits_on_a_class_typed_at_the_end_waits_on_the_rest`). It is
+    /// read as open: the need goes on it, and `generalize` takes it into the signature,
+    /// since it checks the needs of the classes with a type before it takes those of the
+    /// type variables. Read as no value before, the push was left to the run time, and
+    /// `h(x: "a", y: 5, out: m.stdout)` failed there.
+    /// (a2) Any other variable: one named when its function ended, one of a range `r10`
+    /// closed, or one that names no class (`T`). At a need met at a call there is none:
+    /// [`Self::bound`] replaces each variable of the need's type that is not a class
+    /// (`is_class`: named, closed and out-of-range ones included) and that the call does not
+    /// bind by the unknown, and the call binds the rest to the caller's types. At a push in
+    /// a body none was found (the 1,348 test pieces of the zedc_check, l01_19, l01_29, cases
+    /// and catalog groups, with a panic in this arm, 2026-11-20, and the probes of the row),
+    /// but that is not proved; so the verdict relies on no claim about one: it is read as
+    /// no value, the push is refused if the rest of the value fails whatever it becomes
+    /// (adding values to a type never makes [`push_takes`] hold where it failed), and else
+    /// is left to its run-time check, which stops a value that is not text.
+    ///
+    /// Complexity tradeoff: one find per variable of `t`, O(log N) in a union of N classes,
+    /// and two rebuilds of `t`, O(|t|); the push waits on one open class at a time, so a
+    /// value of v open classes records one need, checked once a call. The naive way, a need
+    /// on each open class, records v needs, each checking the whole value at every call,
+    /// O(v·|t|) a call (COMPLEXITY.md C72).
+    fn push_vars(&self, t: &Ty, io: &KType) -> PushVars {
+        let entries = (t.fns.iter())
+            .filter(|s| s.data)
+            .flat_map(|s| s.arrows.iter())
+            .flat_map(|a| a.result.vars.iter());
+        let vars: BTreeSet<&Arc<str>> = t.vars.iter().chain(entries).collect();
+        if vars.is_empty() {
+            return PushVars::Known(t.clone());
+        }
+        let strings_or_other = Carrier::Str.bit() | OTHER;
+        let mut known = Binds::new();
+        let mut cut = Binds::new();
+        let mut open = None;
+        for &v in &vars {
+            let r = class_id(v)
+                .filter(|_| self.is_class(v))
+                .map(|k| self.find(k));
+            let Some(r) = r else {
+                // (a2): the unknown, which waits on no class. Read as no value, as an open
+                // class is, so that a value whose rest fails is still refused.
+                cut.insert(v.clone(), Ty::empty());
                 continue;
             };
-            match self.classes[r].resolved.clone() {
-                Some(known) if known.vars.is_empty() => self.pushed(&known, port, span, bubbles),
-                Some(_) => {}
-                None => {
-                    let kind = NeedKind::Push {
-                        port: port.into(),
-                        site: span,
-                        bubbles,
-                    };
-                    self.need(r, kind, false, span);
+            let c = &self.classes[r];
+            let own = c
+                .resolved
+                .as_ref()
+                .and_then(Ty::as_var)
+                .and_then(|w| class_id(w));
+            match &c.resolved {
+                // (a1), and a class with no type yet.
+                _ if c.resolved.is_none() || own.map(|k| self.find(k)) == Some(r) => {
+                    if c.mask & strings_or_other == 0 {
+                        known.insert(v.clone(), Ty::of_mask(c.mask));
+                    } else {
+                        open.get_or_insert(r);
+                        cut.insert(v.clone(), Ty::empty());
+                    }
                 }
+                // (b) cannot be: this type holds no variable.
+                Some(k) => {
+                    debug_assert!(k.vars.is_empty(), "the invariant at `Class::resolved`");
+                    known.insert(v.clone(), k.clone());
+                }
+                None => unreachable!("matched by the first arm"),
             }
+        }
+        let shown = t.replace(&known);
+        if cut.is_empty() {
+            return PushVars::Known(shown);
+        }
+        let checked = shown.replace(&cut);
+        match open {
+            _ if !push_takes(&checked, io) => PushVars::Fails { shown, checked },
+            Some(r) => PushVars::Later(r, shown),
+            None => PushVars::RunTime,
         }
     }
 
@@ -29254,6 +29339,47 @@ fn steps_text(path: &[PathStep]) -> String {
             PathStep::Index(k) => format!("[{k}]"),
         })
         .collect()
+}
+
+/// What [`Ck::push_vars`] finds of the type variables of a pushed value.
+enum PushVars {
+    /// The value to check now: its type with each class replaced by its type.
+    Known(Ty),
+    /// The value fails whatever its open classes become: `shown`, its type with the known
+    /// classes replaced, for the message, and `checked`, that type with the open classes
+    /// and the variables of no class read as no value, for the check.
+    Fails { shown: Ty, checked: Ty },
+    /// The value to check again once the class with this root is known, the classes known
+    /// already replaced.
+    Later(usize, Ty),
+    /// The value holds a variable of no class (case (a2) at [`Ck::push_vars`]) and no open
+    /// class, and may be pushed: left to the run-time check of the push.
+    RunTime,
+}
+
+/// Whether the values of `k` are strings.
+fn push_strings(k: &KType) -> bool {
+    k.subtype(&KType::string())
+}
+
+/// Whether `t` holds no tuple and no variable.
+fn push_plain(t: &Ty) -> bool {
+    t.tuples.is_empty() && t.vars.is_empty()
+}
+
+/// Whether a value of `t` is strings, or a family of strings (each entry a string, or the
+/// `#notFound` of a key the family lacks, which is not pushed), once each part's set has lost
+/// `lose` ([`Ck::pushed`]).
+fn push_takes(t: &Ty, lose: &KType) -> bool {
+    let not_found = KType::atom("notFound");
+    push_strings(&(&t.set - lose))
+        && push_plain(t)
+        && t.fns.iter().all(|s| {
+            s.data
+                && s.arrows.iter().all(|a| {
+                    push_plain(&a.result) && push_strings(&(&(&a.result.set - &not_found) - lose))
+                })
+        })
 }
 
 #[cfg(test)]

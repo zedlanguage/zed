@@ -93,7 +93,7 @@ main(m: MainArgs) {
         .unwrap_or_else(|| panic!("{out}"));
     assert_eq!(s[narrowed - 1], "`v` is int here");
     assert!(
-        s[narrowed + 1] == "`v` has no declared type; its uses give it _",
+        s[narrowed + 1] == "`v` has no declared type; its uses give it no type yet",
         "{out}"
     );
 }

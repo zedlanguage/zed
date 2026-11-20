@@ -25,7 +25,7 @@ fn a_default_whose_type_its_uses_exclude_is_rejected() {
         |                  ^--------^ [1, 8, 9]
   [2] 1:19: this `+` gives int | f32 | f64 | rat
   [3] 1:19: `y` is int | f32 | f64 | rat here
-  [4] 1:3: `y` has no declared type; its uses give it _
+  [4] 1:3: `y` has no declared type; its uses give it int | f32 | f64 | rat
   [5] 1:23: this literal, 1, is 1
   [6] 1:26: this literal, 2, is 2
   [7] 1:23: the literal 1 takes int | f32 | f64 | rat
@@ -279,4 +279,57 @@ fn a_value_with_one_origin_names_no_default() {
         out.contains("[5] 3:20: the default `h = g` gives `h` the type of `g`\n"),
         "{out}"
     );
+}
+
+#[test]
+fn a_value_no_use_has_typed_is_said_to_have_no_type_yet() {
+    // A parameter of no written type that its uses leave every value, as `x` pushed alone, has
+    // no type yet: its notes say so and do not print `_`, which would read as the type of every
+    // value (row MSG-untyped-note-placeholder). Its name, its origin, a call of it and another
+    // expression of that type each have one such note.
+    assert_eq!(
+        shown(
+            "h(x, out: Lines) { out <- x; }\n\
+             g(y, out: Lines) { h(x: y, out: out); }\n\
+             main(m: MainArgs) {\n  g(y: 5, out: m.stdout);\n}\n"
+        ),
+        r#"1:27: A `Lines` port takes a `String` or a family of strings: `out <- x : 5`. Try `out <- "${x}";` instead.
+  [1] 1:27: `x` has no type yet here
+      1 | h(x, out: Lines) { out <- x; }
+        |   ^ [2]                   ^ [1, 3, 4, 5, 7]
+  [2] 1:3: `x` has no declared type; its uses give it no type yet
+  [3] 1:27: the port `out` writes each value pushed to it as one line of text
+  [4] 1:27: `g` needs this of its argument here
+  [5] 1:27: `h` needs this of its argument here
+  [6] 2:1: `g` is declared here with no type written for `y` or its result; the type the checker found for `g` is `(y: _, out: [String | #ioError(op: String, path: String, why: String)]) -> ()`
+      2 | g(y, out: Lines) { h(x: y, out: out); }
+        | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  [7] 1:27: repair: write the value into a string, as `out <- "${x}";`"#
+    );
+    let call = shown(
+        "h(f, out: Lines) { out <- f(1); }\n\
+         main(m: MainArgs) {\n  h(f: (k) -> k, out: m.stdout);\n}\n",
+    );
+    assert!(
+        call.contains("\n  [1] 1:27: this call of `f` has no type yet\n"),
+        "{call}"
+    );
+    let other = shown(
+        "h(x, c, out: Lines) { out <- if c { x } else { \"z\" }; }\n\
+         main(m: MainArgs) {\n  h(x: 5, c: false, out: m.stdout);\n}\n",
+    );
+    for note in [
+        "\n  [1]  1:30: this `if` has no type yet\n",
+        "\n  [4]  1:35: this block has no type yet\n",
+        "\n  [5]  1:37: `x` has no type yet here\n",
+        "\n  [6]  1:3: `x` has no declared type; its uses give it no type yet\n",
+    ] {
+        assert!(other.contains(note), "{other}");
+    }
+    for old in [" is _ here", "give it _\n", " gives _\n"] {
+        assert!(
+            !other.contains(old) && !call.contains(old),
+            "{other}\n{call}"
+        );
+    }
 }

@@ -635,6 +635,102 @@ fn a_body_s_push_of_an_untyped_parameter_is_checked_at_each_call() {
 }
 
 #[test]
+fn a_pushed_family_whose_entry_is_an_untyped_parameter_is_checked_at_each_call() {
+    // `[x]` is a family whose entry is the class of `x`: the push waits for it as for `x`
+    // pushed alone, and each call checks the family with the entry it passes, the rest kept
+    // (row PORT-untyped-arg-gaps).
+    let src = |arg: &str| {
+        format!(
+            "h(x, out: Lines) {{ out <- [x]; }}\n\
+             main(m: MainArgs) {{\n  h(x: {arg}, out: m.stdout);\n}}\n"
+        )
+    };
+    assert_eq!(
+        type_errors(&src("5")),
+        ["A `Lines` port takes a `String` or a family of strings: `out <- [x] : 0 -> 5`. [[x]]"],
+    );
+    prints("bubble_push_entry_string", &src("\"a\""), "a\n");
+}
+
+#[test]
+fn a_push_that_waits_on_a_class_typed_at_the_end_waits_on_the_rest() {
+    // The push waits on the first class of its value, `x`'s. At the end of `h`, `x.upper`
+    // has made `x` a `String`, so the push is checked then with `x` a `String`, and waits
+    // again on `y`, by then a type variable of `h`: each call checks what it passes for `y`
+    // (row PORT-untyped-arg-gaps, case (a) at `Ck::push_vars`). Before, such a `y` was read
+    // as no value, and `h(x: "a", y: 5, out: m.stdout)` failed only at run time.
+    let src = |y: &str| {
+        format!(
+            "h(x, y, out: Lines) {{ out <- [x, y, x.upper]; }}\n\
+             main(m: MainArgs) {{\n  h(x: \"a\", y: {y}, out: m.stdout);\n}}\n"
+        )
+    };
+    assert_eq!(
+        type_errors(&src("5")),
+        [
+            "A `Lines` port takes a `String` or a family of strings: `out <- [x, y, x.upper] : \
+          (0 | 1 | 2) -> 5 | String`. [[x, y, x.upper]]"
+        ],
+    );
+    prints("bubble_push_waits_on_rest", &src("\"b\""), "a\nb\nA\n");
+}
+
+#[test]
+fn a_push_whose_known_part_cannot_be_text_is_refused_where_it_is_written() {
+    // The value of the push is `x` or `5`: whatever `x` becomes, `5` is pushed when `c` is
+    // false, so the push is refused in `h` and not left to each call, nor to the run time
+    // (row PORT-untyped-arg-gaps). The call passes a number for `x`, which the `if` joins
+    // with `5`: a string there is refused at the call as well. The control: with `"z"` in
+    // place of `5`, each call checks what it passes for `x`.
+    let src = |e: &str, x: &str| {
+        format!(
+            "h(x, c, out: Lines) {{ out <- if c {{ x }} else {{ {e} }}; }}\n\
+             main(m: MainArgs) {{\n  h(x: {x}, c: false, out: m.stdout);\n}}\n"
+        )
+    };
+    assert_eq!(
+        type_errors(&src("5", "1")),
+        [
+            "A `Lines` port takes a `String` or a family of strings: `out <- if c { x } else \
+          { 5 } : int | f32 | f64 | rat`. Try `out <- \"${if c { x } else { 5 }}\";` instead. \
+          [if c { x } else { 5 }]"
+        ],
+    );
+    assert_eq!(
+        type_errors(&src("\"z\"", "5")),
+        [
+            "A `Lines` port takes a `String` or a family of strings: `out <- if c { x } else \
+          { \"z\" } : 5 | \"z\"`. Try `out <- \"${if c { x } else { \"z\" }}\";` instead. \
+          [if c { x } else { \"z\" }]"
+        ],
+    );
+    prints("bubble_push_known_part", &src("\"z\"", "\"a\""), "z\n");
+}
+
+#[test]
+fn a_body_s_else_whose_atom_pattern_has_parts_passes_the_atom_on() {
+    // `#outOfBounds()` takes only the atom whose payload is the empty tuple; the miss atom of
+    // `args[0]` has none, so it is not handled there and passes on to the call (row
+    // CHK-fate-unwalked-forms), which gives `String | #outOfBounds` to the write. A pattern
+    // with a payload leaves the atom in the type (step L1.27). The control: the bare
+    // `#outOfBounds` handles it. The other forms of the row, `#outOfBounds(..)`, a binding
+    // `#outOfBounds(i)` and a name `e`, are refused by the parser or by resolution and never
+    // reach the checker.
+    let src = |pat: &str| {
+        format!(
+            "h(args) = args[0] else {pat} -> \"none\";\n\
+             main(m: MainArgs) {{\n  m.stdout <- h(args: m.args);\n}}\n"
+        )
+    };
+    rejected_at_write_as(
+        &src("#outOfBounds()"),
+        "h(args: m.args)",
+        "(h(args: m.args))",
+    );
+    prints("bubble_else_bare_pattern", &src("#outOfBounds"), "none\n");
+}
+
+#[test]
 fn an_atom_a_body_holds_in_a_display_reaches_the_caller_as_data() {
     // A display holds the atom as data (crossing (2)): the call's type is a display of
     // `String | #outOfBounds`, so the caller's `else` takes it, and without that `else` the
@@ -701,6 +797,20 @@ pub(super) fn body_pushing_parameters(n: usize) -> String {
     let args: String = (0..n).map(|i| format!("x{i}: \"{i}\", ")).collect();
     format!(
         "p({params}out: Lines) {{\n{pushes}}}\n\
+         main(m: MainArgs) {{\n  p({args}out: m.stdout);\n}}\n"
+    )
+}
+
+/// One helper pushing a family of its `n` untyped parameters and `x0.upper`, called once: the
+/// push waits on `x0`'s class, which the body's end makes a `String`, then on the classes left,
+/// each a type variable of the helper (row PORT-untyped-arg-gaps; the benchmark
+/// `bench::bubble::a_body_pushing_a_family_of_many_untyped_parameters_scales`).
+pub(super) fn body_pushing_a_family(n: usize) -> String {
+    let params: String = (0..n).map(|i| format!("x{i}, ")).collect();
+    let entries: String = (0..n).map(|i| format!("x{i}, ")).collect();
+    let args: String = (0..n).map(|i| format!("x{i}: \"{i}\", ")).collect();
+    format!(
+        "p({params}out: Lines) {{\n  out <- [{entries}x0.upper];\n}}\n\
          main(m: MainArgs) {{\n  p({args}out: m.stdout);\n}}\n"
     )
 }

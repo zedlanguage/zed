@@ -1188,7 +1188,10 @@ fn a_generic_lambda_parameter_is_noted_with_the_entries_it_is_given() {
     for (i, (stmt, want)) in cases.into_iter().enumerate() {
         let src = format!("main(m: MainArgs) {{\n  {stmt}\n}}\n");
         let out = run(&format!("fp_ops/entry_note_{i}"), &src, "", &[]);
-        if out.status == 0 || !out.stderr.contains(want) || out.stderr.contains(" is _ here") {
+        // The placeholder note, as it read before and after row MSG-untyped-note-placeholder.
+        let placeholder =
+            out.stderr.contains(" is _ here") || out.stderr.contains(" has no type yet here");
+        if out.status == 0 || !out.stderr.contains(want) || placeholder {
             wrong.push(format!(
                 "{stmt}\n  want {want}\n  {}",
                 out.stderr.trim_end()
@@ -1222,6 +1225,11 @@ fn an_entry_of_a_generic_parameter_is_not_shown_as_every_value() {
     let out = run("fp_ops/entry_note_generic_param", src, "", &[]);
     assert!(out.status != 0, "{}", out.stderr);
     assert!(!out.stderr.contains("`l` is _ here"), "{}", out.stderr);
+    assert!(
+        !out.stderr.contains("`l` has no type yet here"),
+        "{}",
+        out.stderr
+    );
     assert!(
         out.stderr
             .contains("`zip` reads the entries of a family, and this value is \"a\""),
@@ -1294,7 +1302,10 @@ fn a_generic_lambda_parameter_in_a_refused_tuple_is_noted_with_its_entries() {
     let mut wrong = Vec::new();
     for (i, (src, want)) in cases.into_iter().enumerate() {
         let out = run(&format!("fp_ops/entry_note_tuple_{i}"), &src, "", &[]);
-        if out.status == 0 || !out.stderr.contains(&want) || out.stderr.contains(" is _ here") {
+        // The placeholder note, as it read before and after row MSG-untyped-note-placeholder.
+        let placeholder =
+            out.stderr.contains(" is _ here") || out.stderr.contains(" has no type yet here");
+        if out.status == 0 || !out.stderr.contains(&want) || placeholder {
             wrong.push(format!("{src}\n  want {want}\n  {}", out.stderr.trim_end()));
         }
     }

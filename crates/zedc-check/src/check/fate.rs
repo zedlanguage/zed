@@ -7,7 +7,8 @@
 //! `h(args) = args[0] ++ "!"` gives `#outOfBounds` once `args` is bound to `m.args`. Each such
 //! atom goes where the expression that made it sends it in the body: to the body's result,
 //! so the call gives it, as an operator or a call passes an atom on (rule 6 of
-//! sec:type_resolution); nowhere, where an `else`, an `is` or a `==` handles it; or to a
+//! sec:type_resolution); nowhere, where an `else`, an `is`, a `==` or a `match` arm that names
+//! it handles it; or to a
 //! place an atom may not reach, a statement, `_`, a display or a loop, where the check keeps
 //! its rejection.
 //!
@@ -35,7 +36,7 @@ use zed_kernel::types::Type as KType;
 use zedc_resolve::resolve::Ref;
 use zedc_resolve::resolve::tables::Tables;
 use zedc_syntax::ast::{
-    BinaryOp, Expr, ExprKind, Function, IndexKey, Param, Pattern, RangeEnd, Stmt, StmtKind,
+    Arm, BinaryOp, Expr, ExprKind, Function, IndexKey, Param, Pattern, RangeEnd, Stmt, StmtKind,
     StrPart, Target,
 };
 use zedc_syntax::lex::Span;
@@ -46,8 +47,8 @@ use zedc_types::ty::atoms;
 /// What stands at a place an atom may not reach, for the message that names it there
 /// (plan row MSG-atom-stop-in-body). The first four are type errors at that place by DESIGN.md
 /// sec:failure, *Where a loose atom stops*; the last is a place where DESIGN keeps the atom in
-/// a type the program can name, as data in a display or the value of a loop, which this table
-/// does not follow yet (plan row CHK-fate-unwalked-forms).
+/// a type the program can name, as data in a display or the value of a loop, or one this table
+/// cannot follow, as a `match` arm that binds the atom ([`scrutinee`]).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum Boundary {
     /// `_ = e`: `_` drops no loose failure (crossing (7)).
@@ -58,7 +59,8 @@ pub(super) enum Boundary {
     Write { value: Span },
     /// The default `default` of a parameter under the written type `ty` (crossing (5)).
     Default { ty: Span, default: Span },
-    /// Any other: a display, a loop, a reader in another body, `a, b = e`, a guard.
+    /// Any other: a display, a loop, a reader in another body, `a, b = e`, a guard, a `match`
+    /// arm that may bind the atom.
     Other,
 }
 
@@ -416,7 +418,7 @@ impl Walk<'_, '_> {
             ExprKind::Lambda { params, body } => self.body(params, body),
             ExprKind::Section(_, lambda) => self.expr(lambda, stop(), b),
             ExprKind::Match { of, arms } => {
-                self.expr(of, stop(), b);
+                self.expr(of, f.after(&scrutinee(arms, e.span)), b);
                 for a in arms {
                     if let Some(g) = &a.guard {
                         self.expr(g, stop(), b);
@@ -479,5 +481,163 @@ impl Walk<'_, '_> {
                 }
             }
         }
+    }
+}
+
+/// Where the arms of the `match` at `at` send an atom of its scrutinee, before the `match`'s
+/// own fate: as [`Fate::after`]'s `inner`, its atoms that reach the body's result go on as the
+/// `match` sends them (row CHK-fate-unwalked-forms).
+///
+/// By DESIGN.md sec:failure, *Where a loose atom stops*, an atom bubbles through "the
+/// condition of … a `match`", and "a `match` arm … that names it" handles it (crossing (1)).
+/// The arms are read in order, as the first that matches is taken: an arm with no guard
+/// whose pattern is a bare atom, `#a`, or `#a()`, handles what [`matched_by`] says it
+/// matches, of the atoms no earlier arm took; `_` with no guard handles every atom left. An
+/// atom that no arm can take passes on, as from any condition. An arm this table cannot
+/// read is conservative in the direction that keeps a rejection, as everywhere in this file:
+/// a guarded arm, or an atom pattern with parts (which leaves the atom in the type, step
+/// L1.27), may or may not take the atom, and either way it is handled or goes on to a later
+/// arm, so the arm changes nothing here; a name, an `is` test or an or-pattern may bind the
+/// atom itself, which its body may then put anywhere, so every atom left stops at the
+/// `match`. Resolution refuses `match` until step L2, so only this file's own tests reach it.
+///
+/// Complexity tradeoff: one pass over the arms, each one or two operations on atom sets,
+/// O(a) for a arms; reading a name arm's body as a binding's readers are read
+/// ([`Walk::bound`]) would hand on the atoms it binds exactly, at the cost of walking each
+/// such arm before the scrutinee, and is left until a `match` reaches the checker.
+fn scrutinee(arms: &[Arm], at: Span) -> Fate {
+    let mut out = Fate::result();
+    let mut left = atoms();
+    for a in arms {
+        let taken = match (&a.pattern, &a.guard) {
+            (_, Some(_)) => continue,
+            (
+                Pattern::Atom {
+                    name,
+                    fields,
+                    items,
+                    ..
+                },
+                None,
+            ) => match matched_by(name, fields, items.as_deref()) {
+                Some(k) => k,
+                None => continue,
+            },
+            (Pattern::Wild(_), None) => atoms(),
+            // `left` is not empty here: the loop ends once no atom is left.
+            (Pattern::Name(..) | Pattern::Is { .. } | Pattern::Or(..), None) => {
+                out.stops.push(Stop {
+                    atoms: left,
+                    at,
+                    how: Boundary::Other,
+                });
+                return out;
+            }
+            // A literal, a range, a struct or a tuple matches no atom.
+            (
+                Pattern::Lit(_)
+                | Pattern::Range { .. }
+                | Pattern::Struct { .. }
+                | Pattern::Tuple(..),
+                None,
+            ) => continue,
+        };
+        out.drop = &out.drop | &(&taken & &left);
+        left = &left - &taken;
+        if left.is_empty() {
+            break;
+        }
+    }
+    out
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    mod bench;
+
+    /// The unit of `text`, lexed, parsed and built.
+    fn parsed(text: &str) -> Vec<Stmt> {
+        let tokens = zedc_syntax::lex::lex(text).expect("the unit lexes");
+        let (tree, errors) = zedc_syntax::parse::parse_unit(text, &tokens, zedc_syntax::parse::TOP);
+        assert!(errors.is_empty(), "the unit parses");
+        zedc_syntax::ast::unit(text, &tokens, &tree).expect("the unit builds")
+    }
+
+    /// The span of the scrutinee `x` of the one `match x` in `text`.
+    fn scrutinee_span(text: &str) -> Span {
+        let start = text.find("match x").expect("a `match x`") + "match ".len();
+        Span {
+            start,
+            end: start + 1,
+        }
+    }
+
+    /// The fate of the scrutinee `x` of the one `match x` in the function `text`, its
+    /// `Tables` those of the empty unit: the walk reads no name of these bodies.
+    fn scrutinee_fate(text: &str) -> Fate {
+        let unit = parsed(text);
+        let res = zedc_resolve::resolve::resolve(&[]).expect("the empty unit resolves");
+        let t = Tables::new(&[], &res);
+        let fates = Fates::build(&t, &unit);
+        fates
+            .of(scrutinee_span(text))
+            .expect("the scrutinee has a fate")
+            .clone()
+    }
+
+    fn handled(f: &Fate, name: &str) -> bool {
+        super::super::atom_pattern::any_payload(name).subtype(&f.drop)
+    }
+
+    fn stopped(f: &Fate, name: &str) -> bool {
+        !(&super::super::atom_pattern::any_payload(name) & &f.stopped()).is_empty()
+    }
+
+    /// An arm that names the atom handles it, and an atom no arm names passes on to the
+    /// body's result, as from the condition of an `if`. Before, every atom of a scrutinee
+    /// stopped at the `match` (`Boundary::Other`), so a call whose argument made one was
+    /// refused as not yet supported.
+    #[test]
+    fn a_match_handles_the_atoms_its_arms_name_and_passes_on_the_rest() {
+        let f = scrutinee_fate("f(x) = match x { #a -> 0, #b() -> 1 };\n");
+        assert!(handled(&f, "a"), "{f:?}");
+        assert!(!handled(&f, "c") && !stopped(&f, "c"), "{f:?}");
+        // `#b()` takes only the atom whose payload is the empty tuple.
+        assert!(!handled(&f, "b") && !stopped(&f, "b"), "{f:?}");
+        assert!(
+            super::super::atom_pattern::empty_payload("b").subtype(&f.drop),
+            "{f:?}"
+        );
+    }
+
+    /// The atom that passes on goes where the `match` sends it: here into a tuple, a data
+    /// position, where it stops; the atom an arm names is handled before it gets there.
+    #[test]
+    fn a_match_s_rest_goes_where_the_match_sends_it() {
+        let f = scrutinee_fate("f(x) = (match x { #a -> 0 }, 1);\n");
+        assert!(handled(&f, "a"), "{f:?}");
+        assert!(stopped(&f, "c"), "{f:?}");
+    }
+
+    /// `_` handles every atom left; an arm after it changes nothing.
+    #[test]
+    fn a_wildcard_arm_handles_every_atom() {
+        let f = scrutinee_fate("f(x) = match x { #a -> 0, _ -> 1, y -> y };\n");
+        assert!(handled(&f, "a") && handled(&f, "c"), "{f:?}");
+        assert!(f.stops.is_empty(), "{f:?}");
+    }
+
+    /// Control, which held before the arms were read as it does now: a name arm may bind the
+    /// atom and put it anywhere, so the atoms left stop at the `match`; a guarded arm handles
+    /// nothing, nor does an atom pattern with parts.
+    #[test]
+    fn a_name_arm_stops_the_atoms_left_and_a_guarded_arm_handles_none() {
+        let f = scrutinee_fate("f(x, c) = match x { #b where c -> 1, #d(v:) -> v, y -> y };\n");
+        assert!(!handled(&f, "b") && stopped(&f, "b"), "{f:?}");
+        assert!(!handled(&f, "d") && stopped(&f, "d"), "{f:?}");
+        assert!(stopped(&f, "c"), "{f:?}");
+        assert!(f.stops.iter().all(|s| s.how == Boundary::Other), "{f:?}");
     }
 }

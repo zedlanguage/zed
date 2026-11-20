@@ -5,8 +5,8 @@
 use zed_tests::scaling;
 
 use super::super::bubble::{
-    body_of_bindings, body_pushing_parameters, chain_of_helpers, helpers_giving_their_atom,
-    helpers_pushing_their_parameter,
+    body_of_bindings, body_pushing_a_family, body_pushing_parameters, chain_of_helpers,
+    helpers_giving_their_atom, helpers_pushing_their_parameter,
 };
 use super::super::scaling::resolved;
 
@@ -46,6 +46,23 @@ fn a_body_pushing_many_untyped_parameters_scales() {
         let info = units[&n].check();
         assert!(info.errors.is_empty(), "{:?}", info.errors);
     });
+}
+
+/// Row PORT-untyped-arg-gaps: a push of a family of n untyped parameters waits on one class at
+/// a time (`Ck::push_vars` in zedc-check), and the end of the helper meets it once for the
+/// class it waits on and records one need on the rest; the call checks that need with its n
+/// arguments once. Each step reads the family's n entries once: linear in n.
+#[test]
+fn a_body_pushing_a_family_of_many_untyped_parameters_scales() {
+    let units = resolved(200, body_pushing_a_family);
+    scaling::check(
+        "a body pushing a family of n untyped parameters",
+        200,
+        |n| {
+            let info = units[&n].check();
+            assert!(info.errors.is_empty(), "{:?}", info.errors);
+        },
+    );
 }
 
 #[test]
