@@ -7115,6 +7115,19 @@ impl<'t, 'a> Ck<'t, 'a> {
         {
             self.too_large_build(p, &[a, b], span);
         }
+        // Whether both operands are `int` wherever the checker typed the operation (step L25.8,
+        // MUTATION.md H2, H3 and H11): a comparison's bound moved by one, and the operands of
+        // `^` swapped, are mutants only there.
+        if !self.trying
+            && matches!(
+                op,
+                BinaryOp::Lt | BinaryOp::Le | BinaryOp::Gt | BinaryOp::Ge | BinaryOp::Pow
+            )
+        {
+            let int = |t: &Ty| t.without_atoms().subtype(&Ty::carrier(Carrier::Int));
+            let ints = int(&x.ty) && int(&y.ty);
+            *self.info.ints.entry(span).or_insert(ints) &= ints;
+        }
         match op {
             BinaryOp::Eq | BinaryOp::Ne => {
                 if self.level == 0 {

@@ -134,6 +134,7 @@ fn info_eq_full(label: &str, e: &Info, d: &Info) -> Result<(), String> {
         tops: _,
         passes: _,
         quotients: _,
+        ints: _,
         follows: _,
         witness: _,
         dense: _,
@@ -210,6 +211,9 @@ fn info_eq_full(label: &str, e: &Info, d: &Info) -> Result<(), String> {
     }
     if e.quotients != d.quotients {
         return Err(format!("{label}: quotients mismatch"));
+    }
+    if e.ints != d.ints {
+        return Err(format!("{label}: ints mismatch"));
     }
     if e.follows != d.follows {
         return Err(format!("{label}: follows mismatch"));

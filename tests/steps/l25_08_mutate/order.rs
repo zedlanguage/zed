@@ -15,7 +15,9 @@ fn names(text: &str) -> Vec<String> {
 }
 
 const A: &str = "isMinor(positional age) = age < 18 test { 5 -> true, 40 -> false }\n";
-const B: &str = "limit = 10;\n";
+/// Not a declared constant (`limit = 10;` would have no mutant): a function, whose four
+/// mutants no table reaches.
+const B: &str = "limit(positional n: int) = n + 10;\n";
 const C: &str = "scale(positional x) = x * (2 + 0) test { 3 -> 6 }\n";
 
 #[test]
@@ -31,7 +33,9 @@ fn reordering_declarations_keeps_the_report_order() {
         .collect();
     assert_eq!(
         defs,
-        ["isMinor", "isMinor", "isMinor", "limit", "limit", "scale"]
+        [
+            "isMinor", "isMinor", "isMinor", "limit", "limit", "limit", "limit", "scale"
+        ]
     );
 }
 

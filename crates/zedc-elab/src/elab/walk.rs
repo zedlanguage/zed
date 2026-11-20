@@ -30,7 +30,7 @@ use zedc_syntax::ast::{
 use zedc_syntax::lex::{Span, unread_literal};
 
 use super::instances::{Dropped, Env, Local};
-use super::mark::{Mark, mark_of, mutable};
+use super::mark::{Kind, Mark, arithmetic, mark_of, mutable, op_mark};
 use super::state::{Bind, Elab};
 use fp_ops::Quantifier;
 use zedc_check::check::ty::{Carrier, Sig};
@@ -157,7 +157,7 @@ enum Frame<'a> {
     Tuple,
     Is(&'a Expr),
     Else(&'a Expr),
-    If,
+    If(&'a Expr),
     Str(&'a [StrPart]),
     Pass(Box<PassF<'a>>),
     PassCall(Box<PassF<'a>>),
@@ -1263,7 +1263,7 @@ impl<'a> Elab<'a> {
             // A literal with the suffix `f32` is read at `f32`; any other at `f64`, the format a
             // decimal no use fixes takes (DESIGN.md L1.26a).
             ExprKind::Float { digits: s, forced } => match Value::literal_float(s, *forced) {
-                Ok(v) => lit(v),
+                Ok(v) => Some(self.constant(e, v)),
                 // Without a suffix the literal could have taken `rat`, where it is exact
                 // (DESIGN.md L1.26b), and it is reported here where it stayed at `f64`, as in
                 // `t() = 1e400;`, also when the checker rejected the unit elsewhere, so both
@@ -1289,7 +1289,10 @@ impl<'a> Elab<'a> {
                 }
             },
             ExprKind::Rat(s) => match Rat::decimal(s) {
-                Ok(r) => lit(Value::rat(r.expect("the lexer's rat text is a decimal"))),
+                Ok(r) => {
+                    let v = Value::rat(r.expect("the lexer's rat text is a decimal"));
+                    Some(self.constant(e, v))
+                }
                 Err(r) => self.error(e.span, unread_literal(&r)),
             },
             ExprKind::Bool(b) => lit(Value::Bool(*b)),
@@ -1389,7 +1392,7 @@ impl<'a> Elab<'a> {
                 then,
                 otherwise,
             } => {
-                m.k(Frame::If);
+                m.k(Frame::If(e));
                 m.seq(vec![cond, then, otherwise], false);
                 return;
             }
@@ -3018,10 +3021,23 @@ impl<'a> Elab<'a> {
                 let t = self.else_(got, pattern.as_ref());
                 m.give(t);
             }
-            Frame::If => {
+            Frame::If(e) => {
+                let ExprKind::If {
+                    cond,
+                    then,
+                    otherwise,
+                } = &e.kind
+                else {
+                    unreachable!("an `if`")
+                };
                 let t = all(m.got()).map(|ts| {
                     let [c, a, b]: [Term; 3] = ts.try_into().expect("three terms");
-                    if_(c, a, b)
+                    // A written `if` is marked around its term (MUTATION.md H9).
+                    let mark = Mark {
+                        parts: [cond.span, then.span, otherwise.span],
+                        ..Mark::on(e.span, Kind::If)
+                    };
+                    self.wrap_mark(if_(c, a, b), mark)
                 });
                 m.give(t);
             }
@@ -3414,9 +3430,18 @@ impl<'a> Elab<'a> {
             return Some(self.list_concat_term(a, b));
         }
         let t = |v: bool| Term::Lit(Value::Bool(v));
+        // `&&` and `||` are marked around the `if` they elaborate to (MUTATION.md H7).
+        let gap = Span {
+            start: l.span.end,
+            end: r.span.start,
+        };
+        let bool_mark = |or| Mark {
+            parts: [l.span, r.span, e.span],
+            ..Mark::on(gap, Kind::Bool { or })
+        };
         let p = match *op {
-            BinaryOp::Or => return Some(if_(a, t(true), b)),
-            BinaryOp::And => return Some(if_(a, b, t(false))),
+            BinaryOp::Or => return Some(self.wrap_mark(if_(a, t(true), b), bool_mark(true))),
+            BinaryOp::And => return Some(self.wrap_mark(if_(a, b, t(false)), bool_mark(false))),
             BinaryOp::Eq => Prim::Eq,
             BinaryOp::Ne => Prim::Ne,
             BinaryOp::Lt => Prim::Lt,
@@ -3436,13 +3461,24 @@ impl<'a> Elab<'a> {
         if let Some(marks) = &mut self.marks
             && mutable(p)
         {
+            // An arithmetic operand of an arithmetic operator is not the root of its
+            // expression (MUTATION.md H6).
+            if arithmetic(p) {
+                for (o, t) in [l, r].into_iter().zip(&args) {
+                    if is_arithmetic(o)
+                        && let Some(k) = op_mark(t)
+                    {
+                        marks[k].inner = true;
+                    }
+                }
+            }
             args.push(Term::Lit(Value::Int(marks.len() as i64)));
             marks.push(Mark {
-                span: Span {
-                    start: l.span.end,
-                    end: r.span.start,
-                },
                 quotient: self.info.quotients.get(&e.span) == Some(&true),
+                ints: self.info.ints.get(&e.span) == Some(&true),
+                literal: [numeric(l), numeric(r)],
+                parts: [l.span, r.span, e.span],
+                ..Mark::on(gap, Kind::Op)
             });
         }
         let w = match (self.split_of(l), self.split_of(r)) {
@@ -3554,8 +3590,29 @@ impl<'a> Elab<'a> {
             .is_none()
             .then(|| self.split_of(operand))
             .flatten();
+        // An arithmetic expression under a written `-` is not the root where H6 inserts one
+        // (MUTATION.md H6: that would give the removal of the `-` again).
+        if p == Prim::Neg
+            && is_arithmetic(operand)
+            && let Some(k) = op_mark(&a)
+            && let Some(marks) = &mut self.marks
+        {
+            marks[k].inner = true;
+        }
         let Some((w, keeps)) = w else {
-            return Term::Prim(p, vec![a]);
+            // A written `-` or `!` not on a literal is marked (MUTATION.md H5 and H8). On an
+            // operand built once per carrier (an operation on generic literals alone) it is
+            // not: the build stage folds such an operation to a constant, and the literals in
+            // it are marked.
+            let t = Term::Prim(p, vec![a]);
+            if numeric(e) || !matches!(p, Prim::Neg | Prim::Not) {
+                return t;
+            }
+            let mark = Mark {
+                parts: [operand.span, e.span, e.span],
+                ..Mark::on(e.span, Kind::Unary)
+            };
+            return self.wrap_mark(t, mark);
         };
         let own = self.own_carrier(operand, &a).filter(|_| keeps_carrier(p));
         match per_carrier(p, vec![a], 1) {
@@ -3808,6 +3865,29 @@ fn lit_span(e: &Expr) -> Option<Span> {
         _ => e,
     };
     matches!(inner.kind, ExprKind::Int { .. } | ExprKind::Float { .. }).then_some(inner.span)
+}
+
+/// Whether `e` is a numeric literal, `int`, decimal or `rat`, under at most one `-`: a
+/// constant a mutant changes by its neighbors (MUTATION.md H4), not by the mutants of an
+/// operator on it (H2, H5).
+fn numeric(e: &Expr) -> bool {
+    let inner = match &e.kind {
+        ExprKind::Unary(UnaryOp::Neg, a) => &**a,
+        _ => e,
+    };
+    matches!(
+        inner.kind,
+        ExprKind::Int { .. } | ExprKind::Float { .. } | ExprKind::Rat(_)
+    )
+}
+
+/// Whether `e` is written with an arithmetic operator at its top (`mark::arithmetic`).
+fn is_arithmetic(e: &Expr) -> bool {
+    use BinaryOp::*;
+    matches!(
+        e.kind,
+        ExprKind::Binary(Add | Sub | Mul | Div | IntDiv | Mod | Pow, _, _)
+    )
 }
 
 /// Whether the witnesses `a` and `b` give the same value at run time: the same parameter, or

@@ -14,7 +14,7 @@ use zedc::run;
 use zedc::stage::{self, Remix};
 
 /// `n` functions, each with one operator, one constant and a row of its own, beside a table
-/// of fixed size: `3n + 3` mutants, each of which runs the one row that reaches its
+/// of fixed size: `4n + 4` mutants, each of which runs the one row that reaches its
 /// definition, so the run measures what a mutant's rows cost.
 pub(super) fn unit(n: usize) -> String {
     let mut text =
@@ -31,6 +31,39 @@ pub(super) fn chain(n: usize) -> String {
     format!("f(positional x) = x{};\n", " + 1".repeat(n))
 }
 
+/// `n` copies of a group of definitions that holds every heuristic of MUTATION.md section 6,
+/// H1 to H11, with declared constants beside them (TEST-mutate-set): [`EVERY`] mutants in
+/// each copy.
+pub(super) fn every(n: usize) -> String {
+    let mut text = String::new();
+    for i in 0..n {
+        text += &format!(
+            "lim{i} = 10;\n\
+             c{i}(positional a: int, b: int, x: f64, y: f64) = a < b && x >= y || !(a == {i});\n\
+             d{i}(positional a: int, b: int, step = 1) = if a <= 3 {{ -(a div b) }} else {{ a mod b - step }};\n\
+             e{i}(positional x: f64, s: String) = (x / 2.5 + x * 1.5e-3 > x ^ 2.0, s ++ \"t\");\n"
+        );
+    }
+    text
+}
+
+/// The mutants of one copy of [`every`]: in `c` 17, `||` 4 (H7: no `!` before the written
+/// `!`), `&&` 5 (H7), `<` 2 (H1, H2), `>=` 2 (H1, H3), `==` 1 (H1) and its literal 2 (H4),
+/// `!` 1 (H8); in `d` 12, the `if` 3 (H9), `<=` 1 and its literal 1 (H1, H4), the written `-`
+/// 1 (H5), `div` 2 (H10, H11; under the `-`, no H6), `-` 2 (H10, H11; no H6 at a binary `-`),
+/// `mod` 2 (H10, H11); in `e` 15, `>` 2 (H1, H3), `+` 2 (H10, H6), `/` 2 (H10, H11) and `2.5`
+/// 2, `*` 1 (H10) and `1.5e-3` 2, `^` 1 (H6; no swap at `f64`) and `2.0` 2, `++` 1 (H11).
+/// `lim` and `step` are declared: none.
+pub(super) const EVERY: usize = 17 + 12 + 15;
+
+/// [`every`]`(n)` has `EVERY · n` mutants, each heuristic among them.
+pub(super) fn finds_every_heuristic(text: &str, mut db: Db, n: usize) {
+    let front = db.front(text);
+    let (stmts, unit, _) = front.as_ref().as_ref().unwrap();
+    let found = mutate::mutants(text, stmts, unit).unwrap();
+    assert_eq!(found.len(), EVERY * n);
+}
+
 /// The front end's result for each size, made once, so that only the mutants are timed.
 pub(super) type Warm = Mutex<BTreeMap<usize, (String, Db)>>;
 
@@ -45,8 +78,9 @@ pub(super) fn warm(warm: &Warm, n: usize, make: fn(usize) -> String) -> (String,
     (text.clone(), db.clone())
 }
 
-/// One definition with `n` additions in a chain and a row that checks its sum: `3n` mutants
-/// (each `+` by `-`, each `1` by `0` and by `2`), each of which copies, remixes and runs the
+/// One definition with `n` additions in a chain and a row that checks its sum: `3n + 1` mutants
+/// (each `+` by `-`, each `1` by `0` and by `2`, and `-( … )` around the whole, H6), each of
+/// which copies, remixes and runs the
 /// whole definition, so the run is of order n². `x` is declared `int`, so each `1` is an `int`.
 pub(super) fn chain_with_row(n: usize) -> String {
     format!(
@@ -73,27 +107,27 @@ pub(super) fn finds_the_mutants(text: &str, mut db: Db, at_least: usize) {
     assert!(found.len() >= at_least, "{}", found.len());
 }
 
-/// The `3n + 3` mutants of [`unit`]`(n)` each ran their row; only `x + 0` replaced by `x - 0` in
-/// `g0` passes it.
+/// The `4n + 4` mutants of [`unit`]`(n)` each ran their row; only `x + 0` replaced by `x - 0`
+/// and by `-(x + 0)` in `g0` pass it.
 pub(super) fn runs_the_mutants_of_functions(text: &str, mut db: Db, n: usize) {
     let front = db.front(text);
     let (stmts, unit, _) = front.as_ref().as_ref().unwrap();
     let found = mutate::run(text, stmts, unit, &run::direct).unwrap();
-    assert_eq!(found.len(), 3 * n + 3);
+    assert_eq!(found.len(), 4 * n + 4);
     let detected = found
         .iter()
         .filter(|(_, v)| *v == Verdict::Detected)
         .count();
-    assert_eq!(detected, 3 * n + 2);
+    assert_eq!(detected, 4 * n + 2);
 }
 
-/// The `3n` mutants of a chain of `n` additions with a row each change the sum, and the row
+/// The `3n + 1` mutants of a chain of `n` additions with a row each change the sum, and the row
 /// detects each.
 pub(super) fn runs_the_mutants_of_a_chain(text: &str, mut db: Db, n: usize) {
     let front = db.front(text);
     let (stmts, unit, _) = front.as_ref().as_ref().unwrap();
     let found = mutate::run(text, stmts, unit, &run::direct).unwrap();
-    assert_eq!(found.len(), 3 * n);
+    assert_eq!(found.len(), 3 * n + 1);
     assert!(found.iter().all(|(_, v)| *v == Verdict::Detected));
 }
 
@@ -104,7 +138,7 @@ pub(super) fn remixes_to_a_lambda(unit: &Arc<Unit>, remix: &Mutex<Remix>) {
 }
 
 /// Each benchmark of `bench.rs` at small sizes, through the same assertions: the mutants found
-/// in [`unit`], [`chain`] and [`generic_chain_with_row`], the verdicts of the mutants run on [`unit`], [`chain_with_row`] and
+/// in [`unit`], [`chain`], [`generic_chain_with_row`] and [`every`], the verdicts of the mutants run on [`unit`], [`chain_with_row`] and
 /// [`generic_chain_with_row`], a remix of the generic chain, and that `Remix::mix` gives the
 /// term `mix` gives, which `remixing_a_definition_costs_less_than_mixing_it` times at 400.
 #[test]
@@ -118,6 +152,8 @@ fn the_mutants_of_each_benchmark_unit_at_small_sizes() {
         finds_the_mutants(&text, db, 3 * n);
         let (text, db) = warm(&Warm::default(), n, generic_chain_with_row);
         finds_the_mutants(&text, db, 3 * n);
+        let (text, db) = warm(&Warm::default(), n, every);
+        finds_every_heuristic(&text, db, n);
         for make in [
             chain_with_row as fn(usize) -> String,
             generic_chain_with_row,

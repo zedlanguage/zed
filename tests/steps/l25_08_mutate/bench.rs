@@ -11,8 +11,8 @@ use zedc::query::Db;
 use zedc::stage::{self, Remix};
 
 use super::scaling::{
-    Warm, chain, chain_with_row, finds_the_mutants, generic_chain_with_row, remixes_to_a_lambda,
-    runs_the_mutants_of_a_chain, runs_the_mutants_of_functions, unit, warm,
+    EVERY, Warm, chain, chain_with_row, every, finds_the_mutants, generic_chain_with_row,
+    remixes_to_a_lambda, runs_the_mutants_of_a_chain, runs_the_mutants_of_functions, unit, warm,
 };
 
 #[test]
@@ -29,6 +29,12 @@ fn finding() {
             3,
         ),
         ("finding the mutants of a chain of n additions", chain, 3),
+        // Each heuristic of MUTATION.md section 6, and declared constants (TEST-mutate-set).
+        (
+            "finding the mutants of n groups holding every heuristic",
+            every,
+            EVERY,
+        ),
         // Each `1` is one match on the carrier of `x`, whose arms carry the literal's mark: a
         // constant's mutant gathers one change per arm as the marks meet (MUTATE-generic-constants).
         (

@@ -370,8 +370,8 @@ fn report(x: Value) -> String {
         def: 0,
         at: zed_kernel::provenance::Position::root(),
         also: Vec::new(),
-        was: zedc::mutate::Change::Int(x),
-        to: zedc::mutate::Change::Int(Value::int(BigInt::from(0))),
+        was: zedc::mutate::Change::Num(x, None),
+        to: zedc::mutate::Change::Num(Value::int(BigInt::from(0)), None),
         offset: 0,
     };
     let v = zedc::mutate::Verdict::Undetected("no row reaches it");

@@ -13,7 +13,7 @@ use super::report;
 
 /// Each mutant of `text` as `line:col: \`was\` replaced by \`to\` in \`name\` at path`, in
 /// the order the run reports them, whatever its verdict.
-fn changes(text: &str) -> Vec<String> {
+pub(super) fn changes(text: &str) -> Vec<String> {
     let mut db = Db::new();
     let front = db.front(text);
     let (stmts, unit, _) = front.as_ref().as_ref().expect("the unit compiles");
@@ -50,53 +50,69 @@ fn owned(list: &[(&str, &str)]) -> Vec<(String, String)> {
 }
 
 /// DESIGN: "`<=` with `<`". Each comparison is replaced by the one that differs from it only
-/// at the boundary, and `==` and `!=` by each other; the mutant sits at the operator.
+/// at the boundary, and `==` and `!=` by each other; the mutant sits at the operator. On `int`
+/// operands with no literal, each ordering also has its right operand moved by one across the
+/// boundary (MUTATION.md H2), reported at the operator too.
 #[test]
 fn each_comparison_is_replaced_by_its_boundary_neighbor() {
-    for (op, to) in [
-        ("<", "<="),
-        ("<=", "<"),
-        (">", ">="),
-        (">=", ">"),
-        ("==", "!="),
-        ("!=", "=="),
+    for (op, to, shifted) in [
+        ("<", "<=", Some("a < b - 1")),
+        ("<=", "<", Some("a <= b + 1")),
+        (">", ">=", Some("a > b + 1")),
+        (">=", ">", Some("a >= b - 1")),
+        ("==", "!=", None),
+        ("!=", "==", None),
     ] {
         let text = format!("f(positional a: int, b: int) = a {op} b test {{ (1, 2) -> true }}\n");
-        assert_eq!(
-            changes(&text),
-            [format!("1:34: `{op}` replaced by `{to}` in `f` at .0")],
-            "{text}"
-        );
+        let mut expected = vec![format!("1:34: `{op}` replaced by `{to}` in `f` at .0")];
+        if let Some(s) = shifted {
+            expected.push(format!("1:34: `a {op} b` replaced by `{s}` in `f` at .0"));
+        }
+        assert_eq!(changes(&text), expected, "{text}");
     }
 }
 
-/// DESIGN: "`+` with `-`", and `-` with `+` the same way.
+/// DESIGN: "`+` with `-`", and `-` with `+` the same way. A sum at the root of an arithmetic
+/// expression is also negated whole (H6), and a difference has its operands swapped (H11); a
+/// difference is not negated, since `-(a - b)` is `b - a`.
 #[test]
 fn addition_and_subtraction_are_replaced_by_each_other() {
-    for (op, to) in [("+", "-"), ("-", "+")] {
+    for (op, to, other) in [("+", "-", "-(a + b)"), ("-", "+", "b - a")] {
         let text = format!("f(positional a: int, b: int) = a {op} b test {{ (1, 2) -> 3 }}\n");
         assert_eq!(
             changes(&text),
-            [format!("1:34: `{op}` replaced by `{to}` in `f` at .0")],
+            [
+                format!("1:34: `{op}` replaced by `{to}` in `f` at .0"),
+                format!("1:34: `a {op} b` replaced by `{other}` in `f` at .0"),
+            ],
             "{text}"
         );
     }
 }
 
 /// A product becomes a quotient only on a carrier where `/` is defined on the same operands
-/// and gives the same carrier (rat and f64); a quotient becomes a product on both.
+/// and gives the same carrier (rat and f64); a quotient becomes a product on both, and has its
+/// operands swapped (H11). Each, at the root, is also negated whole (H6), on `int` too.
 #[test]
 fn multiplication_and_division_are_replaced_on_rat_and_f64() {
     for carrier in ["rat", "f64"] {
-        for (op, to) in [("*", "/"), ("/", "*")] {
-            let text = format!(
-                "f(positional a: {carrier}, b: {carrier}) = a {op} b test {{ (1, 2) -> 2 }}\n"
-            );
-            assert_eq!(pairs(&text), owned(&[(op, to)]), "{text}");
-        }
+        let text =
+            format!("f(positional a: {carrier}, b: {carrier}) = a * b test {{ (1, 2) -> 2 }}\n");
+        assert_eq!(
+            pairs(&text),
+            owned(&[("*", "/"), ("a * b", "-(a * b)")]),
+            "{text}"
+        );
+        let text =
+            format!("f(positional a: {carrier}, b: {carrier}) = a / b test {{ (1, 2) -> 2 }}\n");
+        assert_eq!(
+            pairs(&text),
+            owned(&[("/", "*"), ("a / b", "b / a"), ("a / b", "-(a / b)")]),
+            "{text}"
+        );
     }
     let text = "f(positional a: int, b: int) = a * b test { (1, 2) -> 2 }\n";
-    assert_eq!(pairs(text), owned(&[]), "{text}");
+    assert_eq!(pairs(text), owned(&[("a * b", "-(a * b)")]), "{text}");
 }
 
 /// DESIGN: "a constant with its neighbor": an integer constant `n` gives `n - 1` and then
@@ -149,28 +165,43 @@ fn lit_shown(lit: &str) -> &str {
     }
 }
 
-/// A whole-number constant that takes `f64` from its use has its neighbors at `f64`.
+/// A whole-number constant that takes `f64` from its use has its neighbors at `f64`: with
+/// `+` replaced and the sum negated (H6), four mutants.
 #[test]
 fn a_whole_number_on_f64_has_its_neighbors_at_f64() {
     let text = "f(positional a: f64) = a + 2 test { 1.0 -> 3.0 }\n";
     assert_eq!(
         report(text),
-        ["3 mutants: 3 detected, 0 undetected, 0 skipped, 0 not run"]
+        ["4 mutants: 4 detected, 0 undetected, 0 skipped, 0 not run"]
     );
-    assert_eq!(pairs(text).len(), 3, "{text}");
+    assert_eq!(pairs(text).len(), 4, "{text}");
 }
 
 /// The column of an operator mutant is the operator's, after parentheses, line breaks and a
-/// `//` comment between it and its left operand.
+/// `//` comment between it and its left operand; so is that of a mutant of the whole operation
+/// (H11, H6), whose operands keep the text the source gives them.
 #[test]
 fn the_operator_is_found_after_parentheses_and_a_comment() {
     assert_eq!(
         changes("f(positional a: int, b: int) = ((a)) - ((b)) test { (5, 2) -> 3 }\n"),
-        ["1:38: `-` replaced by `+` in `f` at .0"]
+        [
+            "1:38: `-` replaced by `+` in `f` at .0",
+            "1:38: `((a)) - ((b))` replaced by `((b)) - ((a))` in `f` at .0",
+        ]
     );
     assert_eq!(
         changes("f(positional a: int, b: int) = (a) // first\n  + (b) test { (1, 2) -> 3 }\n"),
-        ["2:3: `+` replaced by `-` in `f` at .0"]
+        [
+            "2:3: `+` replaced by `-` in `f` at .0",
+            "2:3: `(a) + (b)` replaced by `-((a) + (b))` in `f` at .0",
+        ]
+    );
+    assert_eq!(
+        changes("f(positional a: int, b: int) = a /* x */ + b test { (1, 2) -> 3 }\n"),
+        [
+            "1:42: `+` replaced by `-` in `f` at .0",
+            "1:42: `a + b` replaced by `-(a + b)` in `f` at .0",
+        ]
     );
 }
 
@@ -196,19 +227,22 @@ fn a_mutant_in_each_place_of_a_body_is_detected_by_a_row_that_reaches_it() {
 }
 
 /// A function with no table of its own is reached through the table of a function that calls
-/// it, so its mutants are detected there: three in `g`, and the two of the constant 2 in `f`
-/// (a product of `int` values has no mutant).
+/// it, so its mutants are detected there: four in `g` (`+`, the negated sum, the constant 1's
+/// two), and three in `f` (the negated product and the constant 2's two; a product of `int`
+/// values has no `/` mutant).
 #[test]
 fn a_callee_s_mutants_are_detected_by_its_caller_s_table() {
     let text = "g(positional a: int) = a + 1;\nf(positional a: int) = g(a) * 2 test { 1 -> 4 }\n";
     assert_eq!(
         report(text),
-        ["5 mutants: 5 detected, 0 undetected, 0 skipped, 0 not run"]
+        ["7 mutants: 7 detected, 0 undetected, 0 skipped, 0 not run"]
     );
 }
 
 /// Each row that reaches a mutant runs until one fails: a mutant the first row passes and the
-/// second fails is detected, and one every row passes is reported with the rows passing.
+/// second fails (`<=`) is detected, and one every row passes is reported with the rows
+/// passing. The constant's neighbor 11 is left out, since on `int` `a < 11` is the `<=` mutant
+/// again (H4).
 #[test]
 fn a_mutant_is_detected_by_any_row_and_undetected_only_when_every_row_passes() {
     assert_eq!(
@@ -216,7 +250,7 @@ fn a_mutant_is_detected_by_any_row_and_undetected_only_when_every_row_passes() {
         [
             "1:28: undetected: `10` replaced by `9` in `f` at .0.1: every row that reaches it \
              passes",
-            "3 mutants: 2 detected, 1 undetected, 0 skipped, 0 not run",
+            "2 mutants: 1 detected, 1 undetected, 0 skipped, 0 not run",
         ]
     );
 }
@@ -280,7 +314,7 @@ fn a_rejection_unit_adds_no_mutant() {
     let (status, out, _) = run(&["--mutate", &a, &b]);
     assert_eq!(status, 0, "{out}");
     assert!(
-        out.ends_with("3 mutants: 3 detected, 0 undetected, 0 skipped, 0 not run\n"),
+        out.ends_with("4 mutants: 4 detected, 0 undetected, 0 skipped, 0 not run\n"),
         "{out}"
     );
     assert!(out.contains(" 1 rejection unit\n"), "{out}");
@@ -296,7 +330,7 @@ fn the_flags_of_zedc_test_follow_mutate() {
     );
     let (status, out, err) = run(&["--mutate", "--target", "x86_64-linux", &a]);
     assert_eq!((status, err.as_str()), (0, ""), "{out}");
-    assert!(out.ends_with("3 mutants: 3 detected, 0 undetected, 0 skipped, 0 not run\n"));
+    assert!(out.ends_with("4 mutants: 4 detected, 0 undetected, 0 skipped, 0 not run\n"));
     let (status, out, _) = run(&["--mutate", "--option", "noSuchOption", &a]);
     assert_eq!(status, 2, "{out}");
 }

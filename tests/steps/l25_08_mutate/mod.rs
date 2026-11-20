@@ -1,4 +1,4 @@
-//! Step L25.8: `zedc test --mutate`. Each operator or integer constant of a definition is
+//! Step L25.8: `zedc test --mutate`. Each operator or inline constant of a definition is
 //! replaced at a time, mutants the build stage proves equal to the original are skipped, the
 //! tables run against the rest, and each mutant no row detects is reported.
 
@@ -8,6 +8,7 @@ mod command;
 mod examples;
 mod order;
 mod scaling;
+mod set;
 
 use zedc::mutate::{self, Verdict};
 use zedc::query::Db;

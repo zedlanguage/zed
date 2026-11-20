@@ -19,7 +19,7 @@ use zedc_types::kernel_type::kernel_type;
 use zedc_types::ty::Carrier;
 
 use super::instances::Instancing;
-use super::mark::Mark;
+use super::mark::{self, Mark};
 
 /// A binding of a scope: source name, kernel name, value.
 pub(super) type Bind = (String, Arc<str>, Term);
@@ -163,18 +163,32 @@ impl<'a> Elab<'a> {
     }
 
     /// The literal `v` of the constant `e`; marked when the elaboration is marked and `e` is
-    /// an integer literal, whatever carrier it adopted.
+    /// a numeric literal, `int`, decimal or `rat` (MUTATION.md H4), whatever carrier it
+    /// adopted.
     pub(super) fn constant(&mut self, e: &Expr, v: Value) -> Term {
+        let numeric = matches!(
+            e.kind,
+            ExprKind::Int { .. } | ExprKind::Float { .. } | ExprKind::Rat(_)
+        );
         match &mut self.marks {
-            Some(marks) if matches!(e.kind, ExprKind::Int { .. }) => {
+            Some(marks) if numeric => {
                 let m = Term::Lit(Value::Int(marks.len() as i64));
-                marks.push(Mark {
-                    span: e.span,
-                    quotient: false,
-                });
+                marks.push(Mark::on(e.span, mark::Kind::Const));
                 Term::Prim(Prim::Neg, vec![Term::Lit(v), m])
             }
             _ => Term::Lit(v),
+        }
+    }
+
+    /// `t` wrapped with the new mark `mark` in a marked elaboration ([`mark::wrap`]); `t`
+    /// itself in an ordinary one.
+    pub(super) fn wrap_mark(&mut self, t: Term, mark: Mark) -> Term {
+        match &mut self.marks {
+            Some(marks) => {
+                marks.push(mark);
+                mark::wrap(t, marks.len() - 1)
+            }
+            None => t,
         }
     }
 

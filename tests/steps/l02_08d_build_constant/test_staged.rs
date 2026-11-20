@@ -399,9 +399,10 @@ main(m: MainArgs) {{
              branch that reaches `slow`\n\
              1 passed, 0 failed, 1 not run, 0 rejection units\n\
              {file}:2:24: undetected: `+` replaced by `-` in `slow`: {why}\n\
+             {file}:2:24: undetected: `n + 2` replaced by `-(n + 2)` in `slow`: {why}\n\
              {file}:2:26: undetected: `2` replaced by `1` in `slow`: {why}\n\
              {file}:2:26: undetected: `2` replaced by `3` in `slow`: {why}\n\
-             17 mutants: 3 detected, 9 undetected, 5 skipped, 0 not run\n",
+             28 mutants: 4 detected, 14 undetected, 10 skipped, 0 not run\n",
             host = host()
         )
     );

@@ -9,21 +9,34 @@ Coverage by llvm-cov over the correctness tests of this group (benchmarks left o
 after this pass: `mutate.rs` lines 83.40% → 86.87%, regions 89.67% → 91.97%; `mark.rs` lines
 84.62% → 92.31%. Each line still not reached is listed below with its reason.
 
+Row TEST-mutate-set (2026-11-20) added the set of QUESTIONS A103 (MUTATION.md section 6, tests
+in `set.rs`, one or more per heuristic) and replaced the two rows that waited for A103. The
+coverage figures above are from P189 and were not measured again.
+
 | Case | Test that covers it | Or the reason none is needed |
 |---|---|---|
 | `<` → `<=`, `<=` → `<`, `>` → `>=`, `>=` → `>`, `==` → `!=`, `!=` → `==`, each at the operator's column | `cases::each_comparison_is_replaced_by_its_boundary_neighbor` | |
 | `+` → `-` and `-` → `+` | `cases::addition_and_subtraction_are_replaced_by_each_other` | |
-| `*` → `/` and `/` → `*` on `rat` and on `f64`; no mutant of `*` on `int` | `cases::multiplication_and_division_are_replaced_on_rat_and_f64`, `examples::a_multiplication_becomes_a_division_only_where_division_is_defined` | |
-| Other operators (`div`, `mod`, `^`, `++`, `&&`, `\|\|`, `!`, unary `-`) | | DESIGN L25.8 names examples ("`<=` with `<`, `+` with `-`, a constant with its neighbor"), not the set. QUESTIONS A103 asks which operators are replaced; row TEST-mutate-set adds the tests after the answer. |
+| `*` → `/` and `/` → `*` on `rat` and on `f64`; no `/` for `*` on `int` (its one mutant is H6) | `cases::multiplication_and_division_are_replaced_on_rat_and_f64`, `examples::a_multiplication_becomes_a_division_only_where_division_is_defined` | |
+| The set of A103 (MUTATION.md section 6, DESIGN L25.8): H1 and H2 at `int`, each comparison | `set::h1_h2_a_comparison_at_int_gives_its_neighbor_and_the_moved_bound`, `set::the_two_points_next_to_a_border_detect_h1_and_h2_and_each_is_needed` | |
+| H3, a comparison reversed away from `int` | `set::h3_a_comparison_not_at_int_is_reversed` | |
+| H4 at an `int` comparison, the neighbor that is H1 again left out, the direction reversed under `-` | `set::h4_the_literal_neighbor_that_is_h1_again_is_left_out` | |
+| H5, a written `-` removed; H6, `-( … )` at the root of an arithmetic tree, not at a binary `-` and not under a written `-` | `set::h5_a_written_minus_is_removed`, `set::h6_a_minus_is_inserted_at_the_root_of_an_arithmetic_expression` | |
+| H7, `&&` and `\|\|` swapped, each operand dropped and negated, no `!` before a written `!` | `set::h7_and_and_or_are_swapped_dropped_and_negated` | |
+| H8, a written `!` removed; H9, an `if` by each branch and its condition negated | `set::h8_a_written_not_is_removed`, `set::h9_an_if_is_replaced_by_each_branch_and_its_condition_negated` | |
+| H10 and H11: `div` and `mod`, operands swapped at `-`, `/`, `div`, `mod`, `^` at `int` and string `++` | `set::h10_h11_the_arithmetic_operators_and_their_operand_order` | |
+| Operators outside the set: `^` replaced, `^` swapped away from `int`, `*` at `int` by `/`, list `++` | `set::the_operators_outside_the_set_give_no_mutant` | |
+| The A103 example with `&&`: verdicts, and the row that detects both survivors | `set::the_a103_example` | Its chain form, `lo <= x < hi`, is in `/home/luke/Work/wt/scratch/deferred-tests/TEST-mutate-set.rs`, for plan row L22.4: zedc refuses chains today. |
+| Declared constants (author, A103): a top-level binding, `rate = 2 * 3`, a local binding, a parameter default; a right side that reads a name is not one | `set::declared_constants_have_no_mutant`, `examples::a_default_constant_has_no_mutant_at_the_calls_that_use_it` | A field default: zedc refuses struct declarations today; the test `a_field_default_has_no_mutant` is in `/home/luke/Work/wt/scratch/deferred-tests/L2.4.rs`, for plan row L2.4. |
 | Integer constant in decimal, `0`, hex, with `_`, at the top of `i64`, past `i64`: `n - 1` then `n + 1`, printed in decimal | `cases::each_form_of_an_integer_constant_gives_its_two_neighbors` | |
 | `-3`: a literal has no sign (sec:grammar `Integer`), so the constant is 3 and the mutants give -2 and -4 | `cases::each_form_of_an_integer_constant_gives_its_two_neighbors` | |
 | Whole-number constant whose use fixes `rat` / `f64`: neighbors at that carrier | `examples::a_whole_number_on_rat_has_its_mutants_at_rat`, `cases::a_whole_number_on_f64_has_its_neighbors_at_f64` | |
-| Constants that are not integers (`2.5`, `0.5r`, strings, `true`) | | Same question, A103: DESIGN does not say what the neighbor of a non-integer constant is. |
+| Decimal literals (`2.5`, `1.5e-3`, `1_000.5`, `2.5r`) by one unit of their last digit, at `f64`, `f32` and `rat`, with an exponent and `_`; a neighbor that rounds to the original skipped | `set::h4_a_decimal_literal_moves_by_one_unit_of_its_last_digit`, `set::h4_a_decimal_neighbor_that_rounds_to_the_original_is_skipped` | |
+| String and boolean literals: no mutant | `set::the_operators_outside_the_set_give_no_mutant` | MUTATION.md 3.7 mutates `int`, `rat` and float literals only. |
 | Neighbor too large for memory (`mutate.rs` `beside`, the `TooLarge` error) and a neighbor whose digits the system will not print (`reported`, "an integer of …") | | Reached only when the system refuses memory for a number about the size of a literal already read from the source; no small, fast test can make that happen (an unusual size, P178). |
-| Operator after parentheses, line breaks and a `//` comment: the column is the operator's | `cases::the_operator_is_found_after_parentheses_and_a_comment` | |
-| `operator_at` finds no operator in the gap (falls back to the gap's start) | | Not reachable from source: a binary operator always has its token between its operands. |
+| Operator after parentheses, line breaks, a `//` comment and a `/* */` comment: the column is the operator's, and the report writes the expression without its comments | `cases::the_operator_is_found_after_parentheses_and_a_comment` | |
+| `operator_at` finds no operator in the gap, or the gap does not lex (falls back to the gap's start) | | Not reachable from source: a binary operator always has its token between its operands, and the gap between two tokens of a lexed unit lexes. |
 | Mutant in a local binding, a tuple, a call's argument, a string interpolation, an `if` condition and both branches | `cases::a_mutant_in_each_place_of_a_body_is_detected_by_a_row_that_reaches_it` | |
-| Mutant in a default constant, one per call that uses it | `examples::a_default_constant_has_a_mutant_at_each_call_that_uses_it` | |
 | Mutant in a function with no table, reached through its caller's table | `cases::a_callee_s_mutants_are_detected_by_its_caller_s_table` | |
 | Mutant in a definition no table reaches | `examples::a_definition_no_table_reaches_has_its_mutants_undetected` | |
 | Mutant reached only by rows of untaken branches (L2.8d) | `l02_08d_build_constant::test_staged::mutate_runs_no_row_that_test_does_not_run` | Covered in the L2.8d group; it needs a build constant. |

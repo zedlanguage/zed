@@ -543,6 +543,9 @@ pub struct Info {
     /// For each `*`, whether `/` is defined wherever the checker typed it: each type it gave
     /// the product holds no `int` (step L25.8, the `*` to `/` mutant).
     pub quotients: HashMap<Span, bool>,
+    /// For each `<`, `<=`, `>`, `>=` and `^`, whether both operands are `int` wherever the
+    /// checker typed it (step L25.8, MUTATION.md: the bound moved by one, and the swapped `^`).
+    pub ints: HashMap<Span, bool>,
     /// Each literal compared by `==` or `!=` with a class that became a type variable, and each
     /// generic literal operand of an operator in such a class (L1.26a), by its span: the
     /// value it takes at each other numeric carrier of the variable's bound that it adopts
@@ -6403,6 +6406,12 @@ impl<'t, 'a> Ck<'t, 'a> {
             .collect();
         for (s, q) in quotients {
             *self.info.quotients.entry(s).or_insert(q) &= q;
+        }
+        let ints: Vec<(Span, bool)> = (self.info.ints.iter())
+            .flat_map(|(s, &q)| moved(s).into_iter().map(move |m| (m, q)))
+            .collect();
+        for (s, q) in ints {
+            *self.info.ints.entry(s).or_insert(q) &= q;
         }
         let refused: Vec<((Span, Refused), Kept)> = (self.refused_at.iter())
             .flat_map(|((s, r), k)| {

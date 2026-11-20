@@ -39,7 +39,7 @@ fn undetected_mutants_do_not_change_the_exit_status() {
              reaches it passes\n\
              {a}:1:33: undetected: `18` replaced by `19` in `isMinor` at .0.1.1.4: every row that \
              reaches it passes\n\
-             3 mutants: 0 detected, 3 undetected, 0 skipped, 0 not run\n"
+             4 mutants: 1 detected, 3 undetected, 0 skipped, 0 not run\n"
         )
     );
 }
@@ -99,7 +99,7 @@ fn several_files_report_as_each_file_alone() {
     );
     let b = unit(
         "batch-b.zed",
-        "limit = 10;\nscale(positional x) = x * (2 + 0) test { 3 -> 6 }\n",
+        "limit(positional n: int) = n + 10;\nscale(positional x) = x * (2 + 0) test { 3 -> 6 }\n",
     );
     // A rejection unit has no mutants.
     let c = unit(
@@ -122,7 +122,7 @@ fn several_files_report_as_each_file_alone() {
     }
     assert_eq!(mutant_lines(&batch), alone);
     assert!(
-        batch.ends_with("10 mutants: 4 detected, 5 undetected, 1 skipped, 0 not run\n"),
+        batch.ends_with("14 mutants: 6 detected, 7 undetected, 1 skipped, 0 not run\n"),
         "{batch}"
     );
 }
