@@ -43,3 +43,44 @@ fn a_refused_part_does_not_refuse_a_cover_other_arrows_give() {
     REFERENCE.set(Reference::None);
     assert!(new && subsets, "index {new}, every set of arrows {subsets}");
 }
+
+/// The signature `(x: $0) -> ()` with `n` compact forwards on `$0`, the `j`th of one internal
+/// result, the class `$(10 n + j)`, and `$0` solved to the tuple of the `n` classes `$1` to
+/// `$n`, none of them internal: [`Settle::must_decode`] asks each of the n variables of the
+/// solution against the n forwards, and answers no. The naive test made n² calls of
+/// [`FwdNeed::holds_internal`]; the index of [`InternalResults`] costs O(n log n)
+/// (PROOF-must-decode-no-compact-solved). Small instances:
+/// `the_index_of_internal_results_holds_what_some_forward_holds`.
+#[test]
+fn n_forwards_with_internal_results_beside_a_class_solved_to_n_variables() {
+    let make = |n: usize| {
+        let mut sig = one_of(Ty::var("$0".into()), Ty::empty());
+        sig.needs = (0..n)
+            .map(|j| Need {
+                on: Ty::var("$0".into()),
+                kind: NeedKind::Fwd(Arc::new(compact_fwd(Some(10 * n + j), 1, &[], None, None))),
+                result: None,
+                span: Span { start: 0, end: 1 },
+                alike: Arc::new([]),
+                via: CallPath::default(),
+            })
+            .collect();
+        let solution = Ty::tuple((1..=n).map(|k| Ty::var(format!("${k}").into())).collect());
+        (Arc::new(sig), solution)
+    };
+    let inputs = crate::scaling::inputs(400, make);
+    crate::scaling::check(
+        "must_decode of n forwards beside n solved variables",
+        400,
+        |n| {
+            let (sig, solution) = &inputs[&n];
+            let solve = |v: &str| (v == "$0").then(|| solution.clone());
+            let settle = Settle {
+                solve: &solve,
+                made: Vec::new(),
+                kept: Vec::new(),
+            };
+            assert!(!settle.must_decode(sig));
+        },
+    );
+}

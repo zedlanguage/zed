@@ -435,6 +435,76 @@ impl NameRun {
     }
 }
 
+/// The names some run of a set of [`NameRun`]s holds, indexed once so that whether a name is one
+/// of them costs one lookup per kind of run, not one per run (PROOF-must-decode-no-compact-solved).
+/// A kind of run is its `held` snapshot and its `skip` index, both by address.
+///
+/// Proof that [`Self::holds`] is `runs.iter().any(|r| r.holds(name))`: [`NameRun::holds`] is
+/// true exactly when `name` has a place `p` (`var_place`) with `start_n <= p < end_n`, `held`
+/// does not take `p` and `skip` does not hold `name`. The runs of one kind share `held` and
+/// `skip` (the same objects, so the same sets), so some run of that kind holds `name` exactly
+/// when `p` lies in the union of the kind's place intervals `[start_n, end_n - 1]` and neither
+/// shared set takes it. A run with `count = 0` holds no name and is left out; one with
+/// `count > 0` has `end_n > start_n`, since its last name lies at or after `start_n`. The union
+/// is kept as a normal list ([`zed_collections::intervals::coalesce`]) and asked by
+/// [`zed_collections::intervals::contains`]. Two kinds with equal sets at different addresses
+/// stay apart, which changes the cost and not the answer. Test:
+/// `tests::the_run_index_holds_what_some_run_holds`.
+// Complexity tradeoff: the naive test asks each of the R runs, O(R · (log(2 + h + s))²) per name
+// for h held and s skipped names. Used: one pass to group the runs and one sort of each group's
+// intervals, O(R log R + R · (log(2 + h + s))²) once, then O(K · (log R + log(2 + h + s))) per
+// name for K kinds. The checker's runs have few kinds: one signature's runs made at `generalize`
+// share one snapshot and one skip index (`Ck::r10_name_compact_sig_in_generalize`), and a
+// renaming keeps each run's kind or gives the new runs one more ([`rename_apart`]).
+#[derive(Clone, Debug, Default)]
+pub struct NameRunIndex {
+    kinds: Vec<RunKind>,
+}
+
+/// One kind of run of a [`NameRunIndex`]: the `held` and `skip` its runs share, and the union
+/// of their places, a normal list.
+#[derive(Clone, Debug)]
+struct RunKind {
+    held: HeldVarSnapshot,
+    skip: Arc<SkipIndex>,
+    places: Vec<(usize, usize)>,
+}
+
+impl NameRunIndex {
+    /// The index of `runs`.
+    pub fn new<'r>(runs: impl IntoIterator<Item = &'r NameRun>) -> Self {
+        let mut at: HashMap<(*const Held, *const SkipIndex), usize> = HashMap::new();
+        let mut kinds: Vec<RunKind> = Vec::new();
+        for run in runs.into_iter().filter(|r| r.count > 0) {
+            let key = (Arc::as_ptr(&run.held.0), Arc::as_ptr(&run.skip));
+            let k = *at.entry(key).or_insert_with(|| {
+                kinds.push(RunKind {
+                    held: run.held.clone(),
+                    skip: run.skip.clone(),
+                    places: Vec::new(),
+                });
+                kinds.len() - 1
+            });
+            kinds[k].places.push((run.start_n, run.end_n() - 1));
+        }
+        for kind in &mut kinds {
+            kind.places = zed_collections::intervals::coalesce(std::mem::take(&mut kind.places));
+        }
+        Self { kinds }
+    }
+
+    /// Whether some run of the index holds `name` ([`NameRun::holds`]).
+    pub fn holds(&self, name: &str) -> bool {
+        var_place(name).is_some_and(|p| {
+            (self.kinds.iter()).any(|kind| {
+                zed_collections::intervals::contains(&kind.places, &p)
+                    && !held_at(&kind.held.0, p)
+                    && !kind.skip.contains(name)
+            })
+        })
+    }
+}
+
 /// The place of a name a [`Names::Variables`] pick can give: `T`, `U`, `V`, `W` at 0 to 3 and
 /// `T{m + 1}` at `m` from 4 on.
 fn var_place(name: &str) -> Option<usize> {
@@ -1012,6 +1082,54 @@ mod tests {
                     run.holds(name),
                     listed.contains(name),
                     "{name} in the run at {start_n} of {count}: {listed:?}"
+                );
+            }
+        }
+    }
+
+    /// Random runs of several kinds (two snapshots of program names, several skip sets, the
+    /// runs overlapping), and every name a pick gives up to place 60 and names none gives:
+    /// [`NameRunIndex::holds`] is whether some run holds the name.
+    #[test]
+    fn the_run_index_holds_what_some_run_holds() {
+        let mut rng = Rng(0x2545_f491_4f6c_dd1d);
+        let all: Vec<String> = (0..60).map(|n| Names::Variables.nth(n)).collect();
+        let odd = ["x", "T0", "T1", "T4", "T05", "Part1", "$3"];
+        for round in 0..400 {
+            let snaps: Vec<HeldVarSnapshot> = (0..2)
+                .map(|_| {
+                    let held: Vec<String> =
+                        (0..rng.below(4)).map(|_| some_name(&mut rng)).collect();
+                    let _program = ProgramNames::hold(held.iter().map(String::as_str));
+                    current_held_var_snapshot()
+                })
+                .collect();
+            let skips: Vec<(usize, Arc<SkipIndex>)> = (0..3)
+                .map(|_| {
+                    let s = rng.below(2);
+                    let skip: Vec<String> =
+                        (0..rng.below(12)).map(|_| some_name(&mut rng)).collect();
+                    let index = SkipIndex::new(skip.iter().map(String::as_str), &snaps[s]);
+                    (s, Arc::new(index))
+                })
+                .collect();
+            let runs: Vec<NameRun> = (0..rng.below(7))
+                .map(|_| {
+                    let (s, skip) = &skips[rng.below(3)];
+                    NameRun {
+                        start_n: rng.below(40),
+                        count: rng.below(10),
+                        skip: skip.clone(),
+                        held: snaps[*s].clone(),
+                    }
+                })
+                .collect();
+            let index = NameRunIndex::new(&runs);
+            for name in all.iter().map(String::as_str).chain(odd) {
+                assert_eq!(
+                    index.holds(name),
+                    runs.iter().any(|r| r.holds(name)),
+                    "round {round}: {name} in {runs:?}"
                 );
             }
         }

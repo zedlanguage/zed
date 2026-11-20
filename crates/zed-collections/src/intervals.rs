@@ -435,9 +435,30 @@ pub fn complement_spans<T: Discrete>(
     out
 }
 
+/// Whether the normal list `list` holds `x`: the last interval whose lower end is at or below
+/// `x` is the only one that can hold it, since the intervals are sorted and disjoint.
+///
+/// Complexity tradeoff: the naive way asks each interval, O(N) for N intervals. Used: one binary
+/// search on the lower ends, O(log N). Test: `tests::contains_matches_bit_sets`.
+pub fn contains<T: Discrete>(list: &[(T, T)], x: &T) -> bool {
+    let after = list.partition_point(|(a, _)| a <= x);
+    after > 0 && list[after - 1].1 >= *x
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Every subset of `0..8` and every integer of `0..=255`: [`contains`] is membership in it.
+    #[test]
+    fn contains_matches_bit_sets() {
+        for x in 0..256u32 {
+            let a = runs(x);
+            for v in 0..=255u8 {
+                assert_eq!(contains(&a, &v), v < 8 && x >> v & 1 == 1, "{a:?} {v}");
+            }
+        }
+    }
 
     /// The members of the subset `bits` of `0..8`.
     fn set(bits: u32) -> Vec<u8> {

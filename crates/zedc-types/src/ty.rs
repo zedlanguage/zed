@@ -18,9 +18,9 @@ use std::sync::Arc;
 use zed_kernel::digest::Digest;
 use zed_kernel::frames::{Deep, Stack};
 pub use zed_kernel::types::names::{
-    FreshVarSpanStats, HeldVarSnapshot, NameItem, NameRun, Names, ProgramNames, SkipIndex,
-    current_held_var_snapshot, fresh_name, fresh_name_with_held, fresh_variable_span_stats_indexed,
-    rename_apart,
+    FreshVarSpanStats, HeldVarSnapshot, NameItem, NameRun, NameRunIndex, Names, ProgramNames,
+    SkipIndex, current_held_var_snapshot, fresh_name, fresh_name_with_held,
+    fresh_variable_span_stats_indexed, rename_apart,
 };
 use zed_kernel::types::order;
 use zed_kernel::types::{Refusal, Spell, TextPlace, Type as KType, Verdict, defs};
@@ -3853,26 +3853,28 @@ impl Settle<'_> {
     /// holds one of the forward's internal results: the flat signature then holds that name
     /// where the solved class stood as well as where the forward's results do, which the
     /// compact one cannot say (landing round 6, Codex and Gemini L6-B1, the [`Settle`] case of
-    /// Codex L5.Codex-hidden-target). The checker never makes such a solution (`stale` gives
-    /// no type that holds a closed internal class), so the test costs only where a forward
-    /// has internal results: one `solve` per class of `s`, and each variable of each type it
-    /// gives asked of each such forward ([`FwdNeed::holds_internal`], O(exits) for a class,
-    /// O(runs) index lookups for a name). That is O(classes + size of the solutions + m · Σ
-    /// cost of `holds_internal`) for m variables in the solutions: a product of the solutions'
-    /// variables and the forwards with internal results, not their sum (landing round 7,
-    /// Codex Q6: the bound first stated left out the product). A common index (the forwards'
-    /// class ranges and name runs, sorted, asked once per variable) would make it O((m + runs)
-    /// · log). It is not built (PERF-settle-must-decode-index, perf24, 2026-11-20): no program
-    /// is known in which one signature has both factors above 0. A temporary probe here
-    /// printed both for every signature this reads, over twelve shapes (the bench
-    /// `l08_02_remaps::bench::n_forwards_with_internal_results_settle_in_linear_time` and the
-    /// shapes listed in its comment): a top-level function's signature keeps its forwards
-    /// with internal results but has no class `stale` solves, and a signature with a solved
-    /// class (a caller's, a local function's, a lambda's, `g` held as a value) has no compact
-    /// forward, since a call or an instantiation decodes it. That bench, n forwards with
-    /// internal results beside a class solved to n variables, is 8.10 times the instructions
-    /// at 8n (787.7M and 6,377M at n = 200 and 1600, load 54). Inferred, not proved: that the
-    /// checker never makes a signature with both; the index would be needed if it did.
+    /// Codex L5.Codex-hidden-target). The checker is not known to make such a solution (`stale`
+    /// gives no type that holds a closed internal class), but nothing here relies on that.
+    ///
+    /// The internal results of all of `s`'s forwards are indexed once ([`InternalResults`]),
+    /// and each variable of each solution is asked of the index once. The index holds a name
+    /// exactly when some forward's [`FwdNeed::holds_internal`] does (proof at
+    /// [`InternalResults`]), so this answers as asking each forward did.
+    // Complexity tradeoff (PROOF-must-decode-no-compact-solved, proof5, 2026-11-20): the naive
+    // test asked each of the m variables of the solutions of each forward with internal results,
+    // O(m · Σ cost of `holds_internal`), a product of the two (landing round 7, Codex Q6).
+    // perf24 (PERF-settle-must-decode-index) found no program in which the checker gives one
+    // signature both factors above 0, over twelve shapes, but could not prove there is none:
+    // `Ck::stale` passes a class solved to a type whose variables lie inside its tuples, payloads
+    // or functions (`is_solved` reads only the outer level), so m > 0 is not ruled out where
+    // a forward is kept. Used: the index, O(F + E log E + R log R + R·(log(2 + h + s))²) to
+    // build for F such forwards, E pieces of class ranges (at most F plus their exits) and R
+    // name runs, then O(log E + K·(log R + log(2 + h + s)) + 1) per variable for K kinds of run
+    // (at most 1 per renaming, see [`NameRunIndex`]): O(classes + size of the solutions + (F +
+    // E + R) log + m · log) in all, a sum, with no product of m and F. Tests:
+    // `tests::the_index_of_internal_results_holds_what_some_forward_holds` (the answers) and
+    // `tests::bench::n_forwards_with_internal_results_beside_a_class_solved_to_n_variables`
+    // (the work at n and 8n on a signature with both factors n).
     fn must_decode(&self, s: &Sig) -> bool {
         let solve = self.solve;
         let fwds = || {
@@ -3894,16 +3896,90 @@ impl Settle<'_> {
         if direct {
             return true;
         }
-        let with_internal: Vec<&FwdNeed> =
-            fwds().filter(|f| f.need_count > f.exits.len()).collect();
-        !with_internal.is_empty()
-            && (s.facts().classes.iter())
-                .filter_map(|v| solve(v))
-                .any(|t| {
-                    let f = t.var_facts();
-                    (f.classes.iter().chain(&f.names))
-                        .any(|u| with_internal.iter().any(|fwd| fwd.holds_internal(u)))
-                })
+        let mut with_internal = fwds().filter(|f| f.need_count > f.exits.len()).peekable();
+        if with_internal.peek().is_none() {
+            return false;
+        }
+        let internal = InternalResults::of(with_internal);
+        (s.facts().classes.iter())
+            .filter_map(|v| solve(v))
+            .any(|t| {
+                let f = t.var_facts();
+                (f.classes.iter().chain(&f.names)).any(|u| internal.holds(u))
+            })
+    }
+}
+
+/// The internal results of a set of compact forwards, indexed once so that whether a name is
+/// one of them costs a few lookups, however many forwards there are ([`Settle::must_decode`]).
+///
+/// Proof that [`Self::holds`] is `fwds.any(|f| f.holds_internal(name))`: each forward is read in
+/// the regime [`FwdNeed::holds_internal`] reads it in, the first that applies.
+///   1. With `finish_naming`, it holds `name` exactly when one of its runs does; its runs go to
+///      one [`NameRunIndex`], which holds `name` exactly when one of its runs does (proof
+///      there).
+///   2. Else with `base_class = lo`, it holds `name` exactly when `name` is `$k` as written
+///      ([`written_class_id`]) with `lo <= k < lo + need_count` and `k - lo` no exit's offset.
+///      That set is the interval `[lo, lo + need_count - 1]` with the offsets of the exits
+///      below `need_count` taken out: cut at each such offset `e`, sorted and once each, it is
+///      the pieces `[lo + from, lo + e - 1]` between consecutive cuts (`from` the place after
+///      the cut before, 0 first, `need_count` the last cut), each kept when not empty. An exit
+///      at or past `need_count` takes out nothing. The pieces of all forwards go to one normal
+///      list ([`zed_collections::intervals::coalesce`]), whose union is the union of the sets.
+///   3. Else it holds the names its [`FwdNeed::internal_result_tys`] list, put in one hash set.
+///
+/// A name is held by some forward exactly when it is in one of the three unions. Test:
+/// `tests::the_index_of_internal_results_holds_what_some_forward_holds`.
+// Complexity tradeoff: see [`Settle::must_decode`]. Regime 3 lists each forward's results,
+// O(need_count), once here where the naive test listed them once per variable asked; only a
+// negative control (`explicit_result_vars`) or a forward with no naming reaches it.
+struct InternalResults {
+    /// The class numbers of the forwards of regime 2, a normal list.
+    classes: Vec<(usize, usize)>,
+    /// The runs of the forwards of regime 1.
+    runs: NameRunIndex,
+    /// The names of the forwards of regime 3.
+    listed: HashSet<Arc<str>>,
+}
+
+impl InternalResults {
+    fn of<'f>(fwds: impl IntoIterator<Item = &'f FwdNeed>) -> Self {
+        let mut classes = Vec::new();
+        let mut runs: Vec<&NameRun> = Vec::new();
+        let mut listed = HashSet::new();
+        for fwd in fwds {
+            if let Some(fin) = &fwd.finish_naming {
+                runs.extend(&fin.runs);
+            } else if let Some(lo) = fwd.base_class {
+                let mut cuts: Vec<usize> = (fwd.exits.iter().map(|(o, _)| *o))
+                    .filter(|&o| o < fwd.need_count)
+                    .collect();
+                zed_collections::sorted::sort_dedup(&mut cuts);
+                let mut from = 0;
+                for e in cuts.into_iter().chain([fwd.need_count]) {
+                    if from < e {
+                        classes.push((lo + from, lo + e - 1));
+                    }
+                    from = e + 1;
+                }
+            } else {
+                let names = fwd.internal_result_tys();
+                listed.extend(names.iter().filter_map(|t| t.as_var().cloned()));
+            }
+        }
+        Self {
+            classes: zed_collections::intervals::coalesce(classes),
+            runs: NameRunIndex::new(runs),
+            listed,
+        }
+    }
+
+    /// Whether some forward of the index holds `name` as an internal result.
+    fn holds(&self, name: &str) -> bool {
+        written_class_id(name)
+            .is_some_and(|k| zed_collections::intervals::contains(&self.classes, &k))
+            || self.runs.holds(name)
+            || self.listed.contains(name)
     }
 }
 
@@ -5570,17 +5646,11 @@ impl FwdNeed {
     // fallback `$j` of a block with none are read in full, O(need_count).
     pub fn holds_internal(&self, name: &str) -> bool {
         let exit_at = |j: usize| self.exits.iter().any(|(o, _)| *o == j);
-        let class = |name: &str| {
-            let k = name.strip_prefix('$')?;
-            (!k.starts_with('+') && (k == "0" || !k.starts_with('0')))
-                .then(|| k.parse::<usize>().ok())
-                .flatten()
-        };
         if let Some(fin) = &self.finish_naming {
             return fin.runs.iter().any(|run| run.holds(name));
         }
         if let Some(lo) = self.base_class {
-            return class(name)
+            return written_class_id(name)
                 .is_some_and(|k| k >= lo && k - lo < self.need_count && !exit_at(k - lo));
         }
         (self.internal_result_tys().iter()).any(|t| t.as_var().is_some_and(|v| &**v == name))
@@ -23781,6 +23851,16 @@ impl Sig {
     }
 }
 
+/// The class `k` of a name written `$k` as [`FwdNeed::materialize_result_tys`] writes one: `k`
+/// in decimal, with no sign and no leading zero. [`class_id`] also reads `$+3` and `$03`, which
+/// no forward writes, so a name spelled so is not taken for a forward's internal result.
+fn written_class_id(name: &str) -> Option<usize> {
+    let k = name.strip_prefix('$')?;
+    (!k.starts_with('+') && (k == "0" || !k.starts_with('0')))
+        .then(|| k.parse::<usize>().ok())
+        .flatten()
+}
+
 /// The class a type variable names: `$k` is class `k`.
 pub fn class_id(v: &str) -> Option<usize> {
     v.strip_prefix('$')?.parse().ok()
@@ -23907,6 +23987,98 @@ mod tests {
             range: None,
         };
         Sig::one(vec![x], vec![t], result)
+    }
+
+    /// A compact forward of `need_count` results, with exits at the offsets `exits` (each an
+    /// open variable `$exit{offset}`), its internal results named by `finish` if given, else
+    /// as classes from `base_class` if given, else by `listed`; no needs of its own are read.
+    fn compact_fwd(
+        base_class: Option<usize>,
+        need_count: usize,
+        exits: &[usize],
+        finish: Option<Vec<NameRun>>,
+        listed: Option<Vec<Arc<str>>>,
+    ) -> FwdNeed {
+        FwdNeed {
+            callee: Arc::new(one_of(Ty::empty(), Ty::empty())),
+            what_note: "g needs this of its argument here".into(),
+            sigma: Vec::new(),
+            exits: (exits.iter())
+                .map(|&o| (o, Ty::var(format!("$exit{o}").into())))
+                .collect(),
+            on_vars: Vec::new(),
+            var_ties: Vec::new(),
+            base_class,
+            explicit_result_vars: listed,
+            var_steps: Vec::new(),
+            gen_naming: None,
+            finish_naming: finish.map(|runs| FwdFinishNaming { runs }),
+            need_count,
+            held_free: 0,
+            held_names: BTreeSet::new(),
+            held_outer: BTreeSet::new(),
+            held_foreign_fn: false,
+            held_classes: BTreeSet::new(),
+            digest_base_rank: 0,
+            digest_summary: None,
+            digest_sigma_ranks: Vec::new(),
+            digest_call_span: None,
+        }
+    }
+
+    /// Random forwards in all three regimes of [`FwdNeed::holds_internal`] (runs, class ranges
+    /// with exits inside and past them, listed names), overlapping, and names of each form and
+    /// spellings no forward writes (`$03`, `$+3`): [`InternalResults::holds`] is whether some
+    /// forward holds the name (PROOF-must-decode-no-compact-solved).
+    #[test]
+    fn the_index_of_internal_results_holds_what_some_forward_holds() {
+        let mut rng = Rng::new(crate::seed::seed(
+            "the_index_of_internal_results_holds_what_some_forward_holds",
+        ));
+        let held = current_held_var_snapshot();
+        let skips: Vec<Arc<SkipIndex>> = [vec![], vec!["U", "T7"], vec!["T", "T6", "T9"]]
+            .into_iter()
+            .map(|s| Arc::new(SkipIndex::new(s, &held)))
+            .collect();
+        let mut names: Vec<String> = (0..70).map(|k| format!("${k}")).collect();
+        names.extend((0..40).map(|n| Names::Variables.nth::<String>(n)));
+        names.extend(["$03", "$+3", "$", "x", "a0", "a5", "$exit0"].map(String::from));
+        for round in 0..500 {
+            let fwds: Vec<FwdNeed> = (0..rng.below(6))
+                .map(|_| {
+                    let need_count = 1 + rng.below(9);
+                    let exits: Vec<usize> = (0..rng.below(4)).map(|_| rng.below(11)).collect();
+                    match rng.below(3) {
+                        0 => {
+                            let runs = (0..1 + rng.below(3))
+                                .map(|_| NameRun {
+                                    start_n: rng.below(30),
+                                    count: rng.below(6),
+                                    skip: skips[rng.below(3)].clone(),
+                                    held: held.clone(),
+                                })
+                                .collect();
+                            compact_fwd(Some(rng.below(50)), need_count, &exits, Some(runs), None)
+                        }
+                        1 => compact_fwd(Some(rng.below(50)), need_count, &exits, None, None),
+                        _ => {
+                            let listed = (0..need_count)
+                                .map(|j| format!("a{}", j + rng.below(3)).into())
+                                .collect();
+                            compact_fwd(None, need_count, &exits, None, Some(listed))
+                        }
+                    }
+                })
+                .collect();
+            let index = InternalResults::of(&fwds);
+            for name in &names {
+                assert_eq!(
+                    index.holds(name),
+                    fwds.iter().any(|f| f.holds_internal(name)),
+                    "round {round}: {name} in {fwds:?}"
+                );
+            }
+        }
     }
 
     /// A root read through one [`Approx`], dropped, and a second root made at its address

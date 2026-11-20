@@ -24,6 +24,18 @@ zedc-syntax.workspace = true
 [lints]
 workspace = true
 
+# The scaling benchmarks of src/ty/tests/bench.rs (tests/src/scaling.rs, which src/lib.rs includes
+# in the unit tests by `#[path]`). zed-alloc-count and zed-meter-settings depend on no crate of
+# the workspace, so these add no cycle.
+[dev-dependencies]
+rustix.workspace = true
+zed-alloc-count.workspace = true
+zed-meter-settings.workspace = true
+stacker.workspace = true
+
+[target.'cfg(target_os = "linux")'.dev-dependencies]
+perf-event2.workspace = true
+
 [features]
 # Records each type printed on a thread with its text, for the test that parses each back
 # (OSP-diag). Off in a release build; zedc's feature `printed-types` turns it on.
