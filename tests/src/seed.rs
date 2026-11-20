@@ -41,12 +41,20 @@ pub fn seed(test: &str) -> u64 {
 /// One step of SplitMix64 from the state `x`: the state's increment, then the finalizer, which
 /// spreads the clock's low bits, which change fastest, over all 64.
 ///
-/// The constants are those of Steele, Lea and Flood, "Fast splittable pseudorandom number
-/// generators", OOPSLA 2014 (`mix64variant13` of Stafford's list): `0x9e37_79b9_7f4a_7c15` is
-/// 2^64 divided by the golden ratio, made odd, so the states `x + k·γ` visit all 2^64 values
-/// before one repeats; the two multipliers and the shifts 30, 27 and 31 are the finalizer that
-/// passes BigCrush on that sequence. [`Rng::next_u64`] and the clock seed of [`seed`] rely on
-/// them; `the_mix_is_splitmix64` checks the first output against the paper's.
+/// The constants are those of G. L. Steele, D. Lea and C. H. Flood, "Fast splittable
+/// pseudorandom number generators", OOPSLA 2014, pp. 453-472, doi:10.1145/2660193.2660195
+/// (`mix64variant13` of Stafford's list): `0x9e37_79b9_7f4a_7c15` is 2^64 divided by the
+/// golden ratio, made odd, so the states `x + k·γ` visit all 2^64 values before one repeats;
+/// the two multipliers and the shifts 30, 27 and 31 are the finalizer that passes BigCrush on
+/// that sequence. [`Rng::next_u64`] and the clock seed of [`seed`] rely on them.
+///
+/// Checked 2026-11-20: Crossref gave the citation above; the paper's text was not read (no free
+/// copy found), so the sketch is from memory. The paper describes the JDK's `SplittableRandom`,
+/// and on JDK 26 `new SplittableRandom(0).nextLong()` printed `e220a8397b1dcdaf` and
+/// `new SplittableRandom(1).nextLong()` printed `910a2dec89025cc1`, which are `mix(0)` and
+/// `mix(1)` here. `the_mix_is_splitmix64` checks both values, so it catches a changed constant,
+/// shift or order of steps; it cannot tell whether the generator is a good one, which rests on
+/// the paper's BigCrush runs.
 ///
 /// A copy of zed-kernel's `digest::step(0, x)`, kept on purpose: this file is compiled by
 /// `#[path]` into the unit tests of zed-graph and zedc-solvers, which do not depend on
@@ -102,13 +110,15 @@ impl Rng {
 
     /// A number in `0..n`: the next 64 bits mod `n`.
     ///
-    /// Why `% n` and not a method free of bias, such as Lemire's ("Fast random integer
-    /// generation in an interval", ACM TOMACS 29(1), 2019). The remainder makes the first
-    /// `2^64 mod n` results more likely by one part in `⌊2^64 / n⌋`, which for any `n` below
-    /// 2^32 is under 2^-32: no test draws enough to see it. And this generator was
-    /// `instances::Rng` before it moved here, whose `below` was `% n`: tests pin cases found
-    /// by sweeps to its seeds (`gen_cells(&mut Rng::new(1140))` in l01_23), and another
-    /// mapping from bits to numbers would draw other cases from the same seeds and lose them.
+    /// Why `% n` and not a method free of bias, such as Lemire's (D. Lemire, "Fast random
+    /// integer generation in an interval", ACM TOMACS 29(1), 2019, article 3, pp. 1-12,
+    /// doi:10.1145/3230636; Crossref, 2026-11-20; named as the road not taken, nothing of it is
+    /// used). The remainder makes the first `2^64 mod n` results more likely by one part in
+    /// `⌊2^64 / n⌋`, which for any `n` below 2^32 is under 2^-32: no test draws enough to see
+    /// it. And this generator was `instances::Rng` before it moved here, whose `below` was
+    /// `% n`: tests pin cases found by sweeps to its seeds (`gen_cells(&mut Rng::new(1140))`
+    /// in l01_23), and another mapping from bits to numbers would draw other cases from the
+    /// same seeds and lose them.
     ///
     /// # Panics
     ///
@@ -181,12 +191,18 @@ impl Rng {
     }
 }
 
-/// Marsaglia's xorshift64 with the shifts 13, 7, 17 ("Xorshift RNGs", J. Stat. Softw. 8(14),
-/// 2003, the triple his paper lists for 64 bits), for the tests whose cases are pinned to its
-/// stream: a seed a sweep found a failure at, a benchmark's input, a chain whose cliff the test
-/// names (`Gen` in zedc-preimage, `chains_are_read_exactly_on_both_sides_of_the_cliff`). Each
-/// of those tests kept a private copy of these lines (DRY-test-helpers); a new test uses
-/// [`Rng`].
+/// Marsaglia's xorshift64 with the shifts 13, 7, 17 (G. Marsaglia, "Xorshift RNGs", J. Stat.
+/// Softw. 8(14), 2003, doi:10.18637/jss.v008.i14): (13, 7, 17) is one of the 275 triples the
+/// paper lists as giving "64×64 matrices T = (I + L^a)(I + R^b)(I + L^c) whose order is
+/// 2^64 − 1", and its example `xor64` is `x^=(x<<13); x^=(x>>7); return (x^=(x<<17));`, the
+/// step below. Checked 2026-11-20: Crossref, and the paper's text (the journal's PDF) read for
+/// the list and the example. `seed_zero_gives_varied_draws` checks the first step from 1 by
+/// hand; no test checks the period, which rests on the paper.
+///
+/// For the tests whose cases are pinned to its stream: a seed a sweep found a failure at, a
+/// benchmark's input, a chain whose cliff the test names (`Gen` in zedc-preimage,
+/// `chains_are_read_exactly_on_both_sides_of_the_cliff`). Each of those tests kept a private
+/// copy of these lines (DRY-test-helpers); a new test uses [`Rng`].
 ///
 /// The seed 0 is replaced by `mix(0)`: 0 is xorshift's fixed point, and the copies this
 /// replaced, seeded from [`seed`] without `| 1`, drew 0 forever under `ZED_TEST_SEED=0`. Any

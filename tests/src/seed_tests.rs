@@ -9,8 +9,12 @@ use crate::seed::{Rng, Xorshift64, mix};
 
 #[test]
 fn the_mix_is_splitmix64() {
-    // The first output of SplitMix64 from the state 0 (Steele, Lea and Flood 2014).
+    // The first output of SplitMix64 from the states 0 and 1 (Steele, Lea and Flood 2014,
+    // doi:10.1145/2660193.2660195): the values the JDK's `SplittableRandom`, the paper's
+    // generator, printed for `new SplittableRandom(0).nextLong()` and `(1)` on JDK 26,
+    // 2026-11-20. Two states, so a changed constant that happens to leave one value alone fails.
     assert_eq!(mix(0), 0xe220_a839_7b1d_cdaf);
+    assert_eq!(mix(1), 0x910a_2dec_8902_5cc1);
 }
 
 /// `ZED_TEST_SEED=0` must run a random test on varied cases. The xorshift64 generators this
