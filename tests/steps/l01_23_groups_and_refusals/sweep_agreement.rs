@@ -1607,7 +1607,8 @@ fn random_clauses(seed: u64, k: usize, m: usize) -> Vec<Vec<(usize, bool)>> {
 /// (PORT-u6-structured-fork, COMPLEXITY.md K137); its t01 and t02 are the U6 cases above and
 /// `_u6a167`, and t03 is `refusals::the_forked_difference_benches_at_16_and_their_controls`.
 /// Each case is checked by [`fork_case`] in both orders against the oracle (or, for t11, the
-/// formula), and pinned at its verdict now. The prototype answers t04 and t05 by its Stage 3
+/// formula), and pinned at its verdict now; t11 is the test after this one
+/// ([`the_prototype_random_3sat_case_is_refused_soundly`]). The prototype answers t04 and t05 by its Stage 3
 /// (the prefix-chain CSP), which is not ported: t04 stays refused, as do the cases the
 /// prototype refuses (t06 to t09, t11), since the first element read already leaves two
 /// negative chains (a fork, for Stage 1) and the answer needs two negative states at once (no
@@ -1722,8 +1723,17 @@ fn the_prototype_fork_stage_cases_are_answered_or_refused_soundly() {
         changed.is_empty(),
         "the verdicts in both orders: {changed:#?}"
     );
-    // t11: 17 random 3-clauses over 4 variables, satisfiable; the oracle's subset construction
-    // would read over a million sets, so the formula gives the answer.
+}
+
+/// t11 of the prototype of [`the_prototype_fork_stage_cases_are_answered_or_refused_soundly`]:
+/// 17 random 3-clauses over 4 variables, satisfiable, as the selector reduction, refused at the
+/// fork in both orders. The oracle's subset construction would read over a million sets, so the
+/// formula gives the answer. A test of its own since PERF-sweep-agreement-near-limit
+/// (2026-11-20): it took 6.7 s of that test's 12.0 s alone at load 56, and that test was the
+/// slowest of the module's piece, which ran past its limit at load 40.
+#[test]
+fn the_prototype_random_3sat_case_is_refused_soundly() {
+    let fork = Verdict::Refused(Refusal::Fork);
     let clauses = random_clauses(0x9e37_79b9_7f4a_7c15, 4, 17);
     let sat = satisfiable(4, &clauses);
     assert!(sat, "t11: the prototype's formula is satisfiable");
@@ -1976,18 +1986,39 @@ fn r7_optional_spine_choices(mut rng: Rng) -> Tally {
 /// first side's subtree is the smaller. Each case is checked against its oracle as in the
 /// random test; a change to a generator moves these cases, and the record in
 /// `crates/zedc-types/COMPLETENESS.md` says how to find new seeds.
+///
+/// One test for each seed since PERF-sweep-agreement-near-limit (2026-11-20): as one test the
+/// four took 10.8 s alone at load 50 to 79, the second slowest test of the module's piece,
+/// which ran past its limit at load 40.
 #[test]
-fn the_random_tests_under_seeds_reaching_rare_paths_agree_with_their_oracles() {
-    for seed in [153, 339] {
-        eprintln!(
-            "positive chains, seed {seed}: {:?}",
-            random_positive_chains(Rng::new(seed))
-        );
-    }
+fn the_random_positive_chains_under_seed_153_agree_with_their_oracle() {
+    eprintln!(
+        "positive chains, seed 153: {:?}",
+        random_positive_chains(Rng::new(153))
+    );
+}
+
+/// See [`the_random_positive_chains_under_seed_153_agree_with_their_oracle`].
+#[test]
+fn the_random_positive_chains_under_seed_339_agree_with_their_oracle() {
+    eprintln!(
+        "positive chains, seed 339: {:?}",
+        random_positive_chains(Rng::new(339))
+    );
+}
+
+/// See [`the_random_positive_chains_under_seed_153_agree_with_their_oracle`].
+#[test]
+fn the_r7_optional_spine_choices_under_seed_11_agree_with_their_oracle() {
     eprintln!(
         "R7 optional spine choices, seed 11: {:?}",
         r7_optional_spine_choices(Rng::new(11))
     );
+}
+
+/// See [`the_random_positive_chains_under_seed_153_agree_with_their_oracle`].
+#[test]
+fn the_random_links_under_seed_12_agree_with_their_oracle() {
     eprintln!("random links, seed 12: {:?}", random_links(Rng::new(12)));
 }
 
