@@ -5398,7 +5398,7 @@ fn joining_classes_keeps_the_run_at_the_union_stride() {
 /// [`Classed::join_all`] equals the pairwise fold of [`Classed::join`] (one form, so `==`) on
 /// 2 000 random lists of up to five sets of mixed classes, single values, plain ranges and
 /// rays with no end on one side, in every place of the list (a ray after a set with a finite
-/// least end is the case the union class takes as gcd 1).
+/// least end is the case the union class takes as gcd 1), and in the reversed order.
 #[test]
 fn joining_mixed_classes_and_rays_agrees_with_the_fold() {
     let mut random = Rng::new(271_828);
@@ -5420,6 +5420,12 @@ fn joining_mixed_classes_and_rays_agrees_with_the_fold() {
             .collect();
         let old = (sets.iter()).fold(Classed::plain(IntervalSet::empty()), |acc, p| acc.join(p));
         assert_eq!(Classed::join_all(sets.iter().cloned()), old, "{sets:?}");
+        // The same form in the reversed order (round-1 cross-review, claude seat).
+        assert_eq!(
+            Classed::join_all(sets.iter().rev().cloned()),
+            old,
+            "reversed {sets:?}"
+        );
     }
 }
 
@@ -6034,4 +6040,137 @@ fn two_disjunctions_sweep_matches_enumeration_and_with_strided_blocks() {
     }
     assert!(wrong.is_empty(), "{wrong:#?}");
     assert_eq!(declined, 0);
+}
+
+// Round-1 cross-review, claude seat (pres8): two of its five tests, judged valid and not
+// covered by the tests above (P328). Its `join_all` test is the check of
+// `joining_mixed_classes_and_rays_agrees_with_the_fold`, which now also checks the reversed
+// order; its disjoint-on-y test repeats the gemini seat's; its cut test asks
+// `cut_at_shared`'s inner call to distribute, which the guard in `met` forbids.
+
+/// Two disjunctions tied through `y` whose blocks give values of `x` in classes of moduli 1 to
+/// 3 (`x == k·y + r`), so that [`two_distributed`]'s union ([`Classed::join_all`]) meets
+/// several classes: every answer is the set found by trying every point of the box.
+#[test]
+fn two_disjunctions_with_strides_are_projected_exactly() {
+    let x = a("x");
+    let (mut wrong, mut declined, mut strided) = (Vec::new(), 0, 0);
+    let mut rng = Rng::new(55_117);
+    for round in 0..200 {
+        let stride = |rng: &mut Rng| {
+            let k = rng.int(1, 3);
+            Formula::and(vec![
+                eq(&[("x", 1), ("y", -k)], -rng.int(-1, 1)),
+                ge(&[("z", 1), ("y", rng.int(-1, 1))], rng.int(-2, 2)),
+            ])
+        };
+        let side = |rng: &mut Rng| {
+            let c = if rng.below(2) == 0 { 1 } else { -1 };
+            Formula::and(vec![
+                ge(&[("y", c)], rng.int(-3, 3)),
+                ge(&[("x", rng.int(-1, 1)), ("z", 1)], rng.int(-3, 3)),
+            ])
+        };
+        let n = (1 + rng.below(3) as usize, 1 + rng.below(4) as usize);
+        let f = boxed(Formula::and(vec![
+            Formula::or((0..n.0).map(|_| stride(&mut rng)).collect()),
+            Formula::or((0..n.1).map(|_| side(&mut rng)).collect()),
+        ]));
+        let want = brute(&f, "x");
+        let mut fast = u64::MAX;
+        match tried(&mut fast, SOLVER, |w| {
+            direct(&f, &x, &IntervalSet::top(), w)
+        }) {
+            None => declined += 1,
+            Some(set) => {
+                strided += usize::from(set.strided().is_some());
+                if set.met() != want {
+                    wrong.push(format!("round {round}: {set:?}, want {want:?}: {f}"));
+                }
+            }
+        }
+    }
+    println!("{declined} of 200 declined, {strided} answered with a class");
+    assert!(wrong.is_empty(), "{wrong:#?}");
+    assert_eq!(
+        declined, 0,
+        "with TWO_DISTRIBUTED_OFF 91 of the 200 decline"
+    );
+}
+
+/// The family of the lower bound at [`two_distributed`]: blocks `t == M·2^i` and
+/// `t == s + 2^j` (i, j < n, `M = 2^(n+3)`) project onto `s` as the n² values `M·2^i - 2^j`,
+/// no three in arithmetic progression, so the answer has at least n²/2 pieces (here n² - n:
+/// `M·2^i - 2` and `M·2^i - 1` are adjacent and make one range), as the doc comment proves.
+#[test]
+fn the_answer_of_two_disjunctions_can_have_n_squared_pieces() {
+    let s = a("s");
+    for n in [3u32, 6] {
+        let m = 1i64 << (n + 3);
+        let f = Formula::and(vec![
+            Formula::or((0..n).map(|i| eq(&[("t", 1)], -(m << i))).collect()),
+            Formula::or(
+                (0..n)
+                    .map(|j| eq(&[("t", 1), ("s", -1)], -(1i64 << j)))
+                    .collect(),
+            ),
+        ]);
+        let mut fast = u64::MAX;
+        let set = tried(&mut fast, SOLVER, |w| {
+            direct(&f, &s, &IntervalSet::top(), w)
+        })
+        .expect("answered");
+        let mut want: Vec<i64> = (0..n)
+            .flat_map(|i| (0..n).map(move |j| (m << i) - (1i64 << j)))
+            .collect();
+        want.sort_unstable();
+        want.dedup();
+        assert_eq!(want.len(), (n * n) as usize);
+        let want =
+            IntervalSet::from_pieces(want.iter().map(|&v| (End::of(v), End::of(v))).collect());
+        assert_eq!(set.met(), want, "n {n}");
+        assert_eq!(set.ranges.len(), (n * n - n) as usize, "n {n}: {set:?}");
+        println!("n {n}: {} pieces, class {:?}", set.ranges.len(), set.class);
+    }
+}
+
+/// Blocks `t == i` and `t - s == j` (i, j < n): no block of the second bounds `t`, so all n²
+/// pairs meet on `t`, and the answer is the one range `-(n-1)..=(n-1)`. With no limit it is
+/// answered exactly. Under an allowance below n² · `PIECE` units, [`two_distributed`] declines
+/// once it has counted the pairs (`past_what_is_left`), with most of the allowance left for
+/// the parts after it in [`has_points`], where before it spent it all forming pairs and was
+/// refused (round-1 cross-review, claude seat F7, codex seat); and it builds no list of n²
+/// pairs.
+#[test]
+fn two_disjunctions_past_the_allowance_decline_before_forming_pairs() {
+    let s = a("s");
+    let family = |n: i64| {
+        Formula::and(vec![
+            Formula::or((0..n).map(|i| eq(&[("t", 1)], -i)).collect()),
+            Formula::or((0..n).map(|j| eq(&[("t", 1), ("s", -1)], -j)).collect()),
+        ])
+    };
+    let mut fast = u64::MAX;
+    let set = tried(&mut fast, SOLVER, |w| {
+        direct(&family(10), &s, &IntervalSet::top(), w)
+    })
+    .expect("answered with no limit");
+    assert_eq!(set.met(), IntervalSet::of(-9, 9));
+    // n = 300: 90,000 pairs, at least 1,440,000 units, past the allowance; the reading of the
+    // 600 blocks before the count costs about 400 units each, the rest is left.
+    let allowance = 1_000_000;
+    let mut fast = allowance;
+    let got = tried(&mut fast, SOLVER, |w| {
+        direct(&family(300), &s, &IntervalSet::top(), w)
+    });
+    println!("n 300, allowance {allowance}: {got:?}, {fast} left");
+    assert!(got.is_none(), "{got:?}");
+    assert!(fast > allowance / 2, "{fast} of {allowance} left");
+    // With no limit the same family is answered: the decline is the allowance's alone.
+    let mut fast = u64::MAX;
+    let set = tried(&mut fast, SOLVER, |w| {
+        direct(&family(100), &s, &IntervalSet::top(), w)
+    })
+    .expect("answered with no limit");
+    assert_eq!(set.met(), IntervalSet::of(-99, 99));
 }

@@ -4160,8 +4160,10 @@ fn met(
 /// empty answer, 58.55 times the instructions per eightfold n before the sweep (round-1
 /// gemini seat's test `two_disjunctions_disjoint_on_shared_atom_scale_near_linear`), below 9
 /// with it. Where they are not, up to p·q pairs: that answer alone can have p·q/2 pieces
-/// (below), so no method is linear there; a large product is refused at the allowance of
-/// [`tried`] and goes to the cover as before, and nothing answered before is refused for it.
+/// (below), so no method is linear there; a product whose pairs pass what is left of the
+/// allowance of [`tried`] is declined once they are counted, before any is formed
+/// ([`past_what_is_left`]), and goes to the cover as before, and nothing answered before is
+/// refused for it.
 /// That quadratic case is QUESTIONS.md A171 for the author.
 ///
 /// Why no method is linear in |A| + |B| in general (counting rows and pieces, as `work` does):
@@ -4172,7 +4174,10 @@ fn met(
 /// right side is below `M` in size, so both sides are 0, and a sum of two powers of 2 is
 /// `2^(k+1)` only as `2^k + 2^k`: `i1 == i2 == i3` and `j1 == j2 == j3`). So a piece, a range
 /// met with one class (an arithmetic progression of members only), holds at most two of
-/// them, and the answer has at least n²/2 pieces. Here M has O(n) bits, so the input has
+/// them, and the answer has at least n²/2 pieces (test
+/// `the_answer_of_two_disjunctions_can_have_n_squared_pieces`, round-1 cross-review, claude seat:
+/// n² - n pieces at n = 3 and 6, as `M·2^i - 2` and `M·2^i - 1` are adjacent and make one
+/// range). Here M has O(n) bits, so the input has
 /// O(n²) bits. The bound holds in bits too, with input of O(n log n) bits (round-1
 /// cross-review, codex seat, checked by its probe `projection-bounds.rs` and by the derivation
 /// here): take for the a_i and b_j the n = 2^d numbers below 3^d whose ternary digits are 0
@@ -4270,6 +4275,10 @@ fn two_distributed(
             let ia: Vec<IntRange> = ra.iter().map(on_t).collect();
             let ib: Vec<IntRange> = rb.iter().map(on_t).collect();
             work.read((ia.len() + ib.len()) as u64)?;
+            let k = zed_collections::intervals::meeting_count(&ia, &ib);
+            if past_what_is_left(k, work) {
+                return Ok(None);
+            }
             for (i, j) in zed_collections::intervals::meeting_pairs(&ia, &ib) {
                 if pair(i, j, work)?.is_none() {
                     return Ok(None);
@@ -4277,6 +4286,10 @@ fn two_distributed(
             }
         }
         None => {
+            let points = |r: &[Option<HashMap<Atom, IntRange>>]| r.iter().flatten().count() as u64;
+            if past_what_is_left(points(&ra).saturating_mul(points(&rb)), work) {
+                return Ok(None);
+            }
             for i in 0..a.len() {
                 for j in 0..b.len() {
                     if pair(i, j, work)?.is_none() {
@@ -4287,6 +4300,22 @@ fn two_distributed(
         }
     }
     Ok(Some(Classed::join_all(each)))
+}
+
+/// Whether `pairs` pairs of [`two_distributed`] would pass what `work` has left, known before
+/// any is formed: each costs at least [`PIECE`] (a pair whose ranges do not meet is charged
+/// `PIECE`; one that is formed reads at least one row, [`super::meter::SOLVER_UNIT`] units,
+/// more), so `pairs · PIECE` units past what is left would be refused at the limit in any case.
+/// Declining then gives the answer that refusal gives (`None` from [`tried`]) at the cost of
+/// the count alone, O((p + q) log(p + q)) ([`zed_collections::intervals::meeting_count`]),
+/// instead of the limit's worth of pairs: the fast allowance of [`has_points`] is one for all
+/// its parts, so a group that spent it all left no fast path for the parts after it (round-1
+/// cross-review, claude seat F7 and codex seat's claim most likely wrong; before
+/// `two_distributed` such a group declined at once). It also bounds the list of pairs that
+/// [`zed_collections::intervals::meeting_pairs`] builds to what is left over `PIECE`, where
+/// before it held all k pairs, up to p·q, whatever the limit (16 bytes each).
+fn past_what_is_left(pairs: u64, work: &Work) -> bool {
+    pairs.saturating_mul(PIECE) > work.limit.saturating_sub(work.used)
 }
 
 /// The range of each atom that a row of `rows` reads alone bounds, met with that atom's range in

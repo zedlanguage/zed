@@ -283,6 +283,41 @@ pub fn meeting_pairs<I: Interval>(a: &[I], b: &[I]) -> Vec<(usize, usize)> {
     out
 }
 
+/// The number of pairs [`meeting_pairs`] gives, found without listing them, so that a caller
+/// can see what the pairs will cost before it forms any.
+///
+/// For non-empty `x` and `y`, `y` lies wholly below `x` exactly when they do not meet and `y`'s
+/// lower end is below `x`'s: if `y`'s upper end were at or above `x`'s lower end, `x`'s lower
+/// end would lie in both. So, with the non-empty intervals of `b` sorted by upper end
+/// ([`Interval::ends_by`]), those wholly below `x` are a prefix (once an upper end is at or
+/// above `x`'s lower end, every later one is too), found by one binary search; with them sorted
+/// by lower end, those wholly above `x` are a suffix, by the same argument with the sides
+/// swapped, and the rest, `not_above`, a prefix. An interval wholly below `x` is not above it,
+/// and every non-empty `y` neither below nor above `x` meets it, so `x` meets
+/// `not_above - below` of them.
+///
+/// Complexity tradeoff: naive version, the length of [`meeting_pairs`]' list, O(n log n + k)
+/// time and O(n + k) space for k pairs, k up to |a|·|b|. Used: two sorts and two binary
+/// searches for each interval of `a`, O(n log n) time and O(n) space whatever k is. Tested by
+/// `meeting_pairs_are_every_pair_that_meets_once`, against the list.
+pub fn meeting_count<I: Interval>(a: &[I], b: &[I]) -> u64 {
+    let mut by_hi: Vec<&I> = b.iter().filter(|y| !y.is_empty()).collect();
+    let mut by_lo = by_hi.clone();
+    by_hi.sort_by(|y, z| match (y.ends_by(z), z.ends_by(y)) {
+        (true, true) => Ordering::Equal,
+        (true, false) => Ordering::Less,
+        _ => Ordering::Greater,
+    });
+    by_lo.sort_by(|y, z| y.cmp_lo(z));
+    let mut count = 0u64;
+    for x in a.iter().filter(|x| !x.is_empty()) {
+        let below = by_hi.partition_point(|y| y.meet(x).is_none() && y.cmp_lo(x).is_lt());
+        let not_above = by_lo.partition_point(|y| !(y.meet(x).is_none() && x.cmp_lo(y).is_lt()));
+        count += (not_above - below) as u64;
+    }
+    count
+}
+
 /// The integers of `a` outside `b`, normal lists, as a normal list. O(|a| + |b|): the
 /// intervals of `b` that end before an interval of `a` starts are passed over once, and those
 /// that meet it are read in turn.
@@ -970,6 +1005,7 @@ mod tests {
             got.dedup();
             assert_eq!(got.len(), n, "a pair twice: {a:?} {b:?}");
             assert_eq!(got, want, "{a:?} {b:?}");
+            assert_eq!(meeting_count(&a, &b), n as u64, "count: {a:?} {b:?}");
         }
         // Disjoint on each side: at most |a| + |b| pairs (the bound in the doc).
         let a: Vec<(i64, i64)> = (0..100).map(|i| (3 * i, 3 * i + 2)).collect();
