@@ -525,7 +525,7 @@ pub fn run(args: &[String], out: &mut String) -> Outcome {
 mod tests {
     use super::{check_plan, fix_plan};
 
-    /// A plan whose table holds `rows`, with a count sentence that is wrong.
+    /// A plan whose table holds `rows`, with a count sentence (wrong, as a rebase leaves it).
     fn plan(rows: &[&str]) -> String {
         let mut t = String::from(
             "# Plan\n\nIt has 0 items, 0 edges and 0 levels (0 to 0).\n\n## Items by level\n\n\
@@ -560,12 +560,11 @@ mod tests {
         assert_eq!(levels, ["0", "3", "2", "0", "1"]);
         assert_eq!(fixed.counts, [5, 4, 4, 3]);
         assert_eq!(fixed.changed, 5);
-        assert!(
-            fixed
-                .text
-                .contains("It has 5 items, 4 edges and 4 levels (0 to 3).")
-        );
+        // The counts are printed by `plan`, not written: the sentence is taken out.
+        assert_eq!(fixed.took_out, ["the count sentence"]);
+        assert!(!fixed.text.contains("It has"), "{}", fixed.text);
         assert!(check_plan(&fixed.text, &mut String::new()).unwrap());
+        assert!(!check_plan(&text, &mut String::new()).unwrap());
     }
 
     /// A cycle is refused, naming the rows on it and the rows after it.
