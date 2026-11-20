@@ -749,4 +749,58 @@ fn a_random_nest_no_point_meets_gives_an_empty_scope() {
     }
 }
 
+/// `y == x mod 5 && u <= v && if u >= -3 { u != v } else { 1 == v }`, the seed
+/// 14150051075272478627 of
+/// [`a_conjunction_of_tests_on_names_apart_narrows_as_the_tests_one_after_the_other`] made
+/// small (row FAIL-scope-conjunction-wider-seed-14150051075272478627). The `mod` side has no
+/// linear relation, so the conjunction has none, and its sides were narrowed one by one: the
+/// cases of the `if` were joined apart from `u <= v`, so the hole `u != v` never met it, and
+/// u kept 6 and v kept -3. Narrowed together, the sides on `u` and `v` give `u < v` in the
+/// case `u >= -3`: u in `-6..=5` and v in `-2..=6`, the values the interpreter finds.
+#[test]
+fn sides_with_a_relation_beside_a_mod_are_narrowed_together() {
+    let p = Premises::new();
+    let ns = ["x", "y", "u", "v"];
+    let s = boxed(&ns, 6);
+    let t = and(
+        prim(Prim::Eq, var("y"), prim(Prim::Mod, var("x"), int(5))),
+        and(
+            prim(Prim::Le, var("u"), var("v")),
+            if_(
+                prim(Prim::Ge, var("u"), int(-3)),
+                prim(Prim::Ne, var("u"), var("v")),
+                prim(Prim::Eq, int(1), var("v")),
+            ),
+        ),
+    );
+    let got = shown(&s.assume(&t, true, &p));
+    // The values each name takes at the points of the box where the test is true.
+    let mut exact = vec![Vec::new(); ns.len()];
+    for e in cube(&names(&ns), 6) {
+        if at(&t, &e) == Some(true) {
+            for (i, n) in ns.iter().enumerate() {
+                let Some(Value::Int(v)) = e.get(*n) else {
+                    unreachable!("every name of the cube is an integer");
+                };
+                exact[i].push(*v);
+            }
+        }
+    }
+    for v in &mut exact {
+        v.sort_unstable();
+        v.dedup();
+    }
+    assert_eq!(exact[2], (-6..=5).collect::<Vec<_>>());
+    assert_eq!(exact[3], (-2..=6).collect::<Vec<_>>());
+    for (i, n) in ns.iter().enumerate() {
+        assert!(
+            exact[i].iter().all(|v| got[i].contains(v)),
+            "{n}: {:?} misses a value of {:?}",
+            got[i],
+            exact[i]
+        );
+    }
+    assert_eq!((&got[2], &got[3]), (&exact[2], &exact[3]), "{t}");
+}
+
 mod bench;

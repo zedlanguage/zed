@@ -11467,6 +11467,44 @@ impl Scope {
         let Some(body) = body else {
             match &tree.nodes[n].kind {
                 Kind::Nest(and, sides) if *and == value && n == 0 => {
+                    // The sides that have a linear relation of their own are narrowed together,
+                    // as one nest, and the others one by one. Side by side, `y == x mod 5 && u
+                    // <= v && if u >= -3 { u != v } else { 1 == v }` lost `u < v`: `u <= v`
+                    // joined the relation, but the cases of the `if` were joined apart from
+                    // it, and within a case the hole `u != v` was not met with `u <= v`; so u
+                    // kept 6 and v kept -3, where the last two sides as one test, or `a` then
+                    // `b`, leave `u <= 5` and `v >= -2` (seed 14150051075272478627 of
+                    // `l01_39_scope_relations::nests::a_conjunction_of_tests_on_names_apart`,
+                    // row FAIL-scope-conjunction-wider-seed-14150051075272478627).
+                    // Soundness: the nest holds exactly when every side does, so narrowing by
+                    // the nest of some sides and then by each other side narrows by tests the
+                    // nest implies, each soundly. Precision, not proved: the group's relation is
+                    // the meet of its sides' relations, and that narrowing by it keeps at least
+                    // what the sides kept one by one is checked by the random nests of
+                    // l01_39_scope_relations at their seeds and by the test
+                    // `sides_with_a_relation_beside_a_mod_are_narrowed_together`.
+                    // Complexity tradeoff: naive, every side alone, one `relation_of` of the
+                    // whole test (above); used, one more `relation_of` per side and one of
+                    // the group, O(s) more for a test of `s` nodes, no further case.
+                    let p = if *and { Prim::And } else { Prim::Or };
+                    let (linear, other): (Vec<_>, Vec<_>) = sides.iter().partition(|&&(k, q)| {
+                        self.relation_of(&signed(tree.term_at(k), q), value)
+                            .is_some()
+                    });
+                    let group = (linear.len() > 1)
+                        .then(|| {
+                            let terms = linear.iter().map(|&&(k, q)| signed(tree.term_at(k), q));
+                            balanced(p, terms.collect())
+                        })
+                        .filter(|g| self.relation_of(g, value).is_some());
+                    if let Some(g) = group {
+                        let (sub, pol) = Tree::of(&g);
+                        self.narrow_linear(&sub, 0, value == pol, prem);
+                        for &(k, q) in other {
+                            self.narrow_linear(tree, k, value == q, prem);
+                        }
+                        return;
+                    }
                     for &(k, p) in sides {
                         self.narrow_linear(tree, k, value == p, prem);
                     }
