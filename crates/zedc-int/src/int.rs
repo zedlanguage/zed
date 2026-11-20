@@ -179,6 +179,9 @@ impl Int {
             // runs the half gcd (with in-place word-buffer Stein below `GCD_LEAF`) at the
             // narrower width, O(M(n) log n), instead of num-bigint's O(n^2) whole-width Stein
             // (LOAD-max-div-xr I25). Test: `int::tests::the_big_gcd_agrees_with_num_bigint`.
+            // Stein's binary gcd is J. Stein, J. Comput. Phys. 1(3):397-405, 1967,
+            // doi:10.1016/0021-9991(67)90047-2, cited with its rules, departures and check in
+            // zed-numtheory's `word.rs` (the doc of `gcd_u64`).
             (Repr::Small(s), Repr::Big(b)) | (Repr::Big(b), Repr::Small(s)) => {
                 let u = s.unsigned_abs();
                 let zs = u.trailing_zeros();
@@ -259,9 +262,23 @@ impl Int {
     /// `self / m` rounded down, for `m` of either sign and not zero. Past `i128` the division
     /// of the magnitudes is the kernel's (`zed_kernel::num::div_floor_int`): num-bigint's own
     /// below its measured crossover and O(M(n)) by a reciprocal above it, where num-bigint's
-    /// `div_floor` alone is O(n^1.52) (Burnikel and Ziegler over Toom-3). Tests:
+    /// `div_floor` alone grows as n^1.52 where measured (Burnikel and Ziegler over Toom-3).
+    /// Tests:
     /// `l01_38_presburger::pncx_probe::floor_division_of_wide_solver_integers_is_exact`; the
     /// growth by `bench::pncx_probe::pncx_wide_floor_division_scales` (COMPLEXITY.md S48).
+    // num-bigint 0.4.8 (src/biguint/division.rs) divides operands above 64 words by
+    // C. Burnikel and J. Ziegler, "Fast Recursive Division", Max-Planck-Institut für Informatik
+    // report MPI-I-98-1-022, 1998,
+    // https://pure.mpg.de/rest/items/item_1819444_4/component/file_2599480/content,
+    // Algorithm 1. Its section 2.2 sums the cost as
+    // D(n) = sum_i 2^i M(n/2^i) + O(n log n), and Theorem 1 gives "2K(n) + O(n log n) steps"
+    // for 2n digits by n over Karatsuba. Over Toom-3 (A. L. Toom, Soviet Math. Doklady 3, 1963;
+    // S. A. Cook, PhD thesis, Harvard, 1966; both from memory, not checked), M(n) = n^log3(5) =
+    // n^1.465 and the sum is O(M(n)); the 1.52 above is the slope measured over the sizes
+    // tried, where Karatsuba's n^1.585 still takes part (zed-kernel `num::fast::DIV_POWER`, 2.79
+    // to 2.90 times per doubling). Checked 2026-11-20: num-bigint's source read for which
+    // methods it uses; the report read (section 2.2, Theorem 1). The tests named above check the
+    // quotients and the growth, not which method num-bigint runs.
     pub fn div_floor(&self, m: &Int) -> Int {
         match (&self.0, &m.0) {
             // In 64 bits when both fit, where a 128-bit division is many times slower; the
