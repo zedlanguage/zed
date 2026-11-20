@@ -51,6 +51,67 @@
 //! forced atoms, which make many settings, 1.019 under each seed, and the benchmarks whose work
 //! follows the drawn shape from 0.975 to 1.056, a new draw giving a new shape.
 //!
+//! The steps of the degree-7 bound (PROOF-kernel-proofdoc3a-gaps (k); the record is
+//! `cd-xr/XR-xor-shape-rounds-4-6/r7/codex/R7_CODEX.md`, R7-Q1 (c), which re-derives the
+//! cross-review's R4 Lemmas 6.2 and 6.3; step 1 below is re-derived here, step 2 is the record's
+//! sketch). Fix the operands `X`, `Y` and every key's point before `q` is drawn; `m <= n` their
+//! sizes, `N <= m + n <= p` the keys in all. Write `w = 1 - x/p` for a priority `x`.
+//!
+//! 1. The event bound. Let `S`, `T` be fixed sets of keys at distinct points, `v` in `S`,
+//!    `u != v` in `T`. Take `u` out of `S` and `v` out of `T` (a set of two or more keys keeps at
+//!    least half of its size; a set of one is the one-maximum case of Seidel and Aragon); write
+//!    `C` for the competitors the two sets share, `A` for those of `S` alone, `B` of `T` alone.
+//!    Fix the priorities `x` of `v` and `y` of `u`. Eight-wise independence leaves the others
+//!    six-wise independent and uniform, so any moment of the counts above `x` or `y` built from
+//!    at most six competitors has its value under full independence. For a sum `Z` of
+//!    independent indicators of mean `mu`, centered terms `Y_i` with `E|Y_i|^k <= Pr[i]`:
+//!    `E (Z - mu)^2 <= mu`, `E (Z - mu)^4 <= mu + 3 mu^2` and
+//!    `E (Z - mu)^6 <= mu + 25 mu^2 + 15 mu^3 <= 41 mu^3` for `mu >= 1` (expand: the terms with
+//!    one index, two indices and three indices). Both endpoints strict maxima means no
+//!    competitor of `C` is above `min(x, y)`, none of `A` above `x`, none of `B` above `y`.
+//!    (i) If `|C|` is at least a third of the larger of `|S|`, `|T|`: by Markov on the sixth
+//!    moment, `Pr <= 41 / (|C| W)^3` with `W = max(w_x, w_y)`, and `E[min(1, K / W^3)] = O(1/|C|^2)`
+//!    for `K = 41/|C|^3` (`W` has density `2W`; split at `W = K^(1/3)`), which is
+//!    `O(1 / (|S| |T|))`. (ii) Otherwise two blocks among `A`, `B`, `C` that are disjoint have
+//!    sizes `a`, `b` at constant fractions of `|S|` and `|T|`, with means `alpha = a w`,
+//!    `beta = b w'` (`w'` the other endpoint's `w`, or `W` for `C`, and `W >= w'`). The mixed
+//!    moments of orders `(4, 2)` and `(2, 4)` use at most six competitors and so factor:
+//!    `Pr <= min(1, 4 / (alpha^2 beta), 4 / (alpha beta^2)) = min(1, 4 / (alpha beta max(alpha, beta)))`.
+//!    Substituting `alpha`, `beta` for `w`, `w'` gives `Pr <= (1/(ab)) J`, `J` the integral
+//!    of that minimum over the positive quadrant, which is finite: on `alpha <= beta`, beyond
+//!    `beta = 1`, it is at most `integral beta^-2 (1 + log(beta^3)) d beta`, and symmetrically.
+//!    Sums over the `p` priorities are at most these integrals plus a term `O(1/p)`, the bound
+//!    being monotone in `w`. So `Pr <= C1 / (|S| |T|)`.
+//! 2. Summing pairs. For two disjoint colors of a sorted sequence, `a` and `b` keys, the sum
+//!    over pairs of opposite colors of `1 / (first color in [v, u] * second color in [v, u])` is
+//!    `O(min(a, b) log(1 + max(a, b)/min(a, b)))`: split `1/(ab) = 1/(b(a + b)) + 1/(a(a + b))`;
+//!    the first part telescopes to at most one per key of the smaller color, and the second is
+//!    bounded by grouping the intervals by dyadic counts of the smaller color, windows of three
+//!    blocks, and concavity of `log` (record, R4 Lemma 6.3; not re-derived here). A key in both
+//!    operands becomes two adjacent copies, one of each color; an interval's counts only fall.
+//! 3. The charging. With all priorities distinct, each node `u` visited at pivot `v` (the root
+//!    the recursion splits at) meets one of these events on fixed sets, `I = [v, u]`, `M(S, k)`
+//!    meaning `k` holds the strict maximum of `S`: the splits of the other operand `B` at `v` in
+//!    `set::union_if_agree`, `set::symmetric` and `settings::combine`, `M((X | Y) & I, v)` and
+//!    `M(B & I, u)` (the current interval excludes every earlier pivot, so the sets are the
+//!    operands cut to `I`); `set::get` in union, a prefix of that split's path; in
+//!    `set::difference_if_agree`, its `get`, the descent of `set::remove`, and the split above a
+//!    removed `v`, `M(Y & I, v)` and `M(X & I, u)`; the `set::join` inside `remove` and the split
+//!    below a removed `v`, `M((X | Y) & I, v)` and `M((X - {v}) & I, u)`; the final joins (of
+//!    `symmetric`, of difference, of `combine` for Meet), `M(D & I, v)` and `M(R & I, u)` with
+//!    `(D, R)` the fixed disjoint `(X & Y, X ^ Y)`, `(Y, X - Y)` and `((X | Y) - (X & Y), X & Y)`.
+//!    Each pair is charged a constant number of times; equal keys cost `O(1)` each, `O(m)` in
+//!    all; a split or join builds no more nodes than it visits. Steps 1 and 2 then bound the
+//!    expected work on the draws with distinct priorities by `C0 m log(1 + n/m)`.
+//! 4. Ties. The draw is not conditioned on distinct priorities (that would break the
+//!    independence); on the other draws the work is at most `64 m N`, and two keys at distinct
+//!    points tie with probability `1/p`, so by the union bound these draws add at most
+//!    `64 m N min(1, delta + N(N - 1)/(2p))`.
+//!
+//! The record checked the events of step 3 on every priority order and operand pair of six
+//! keys, over the four operations (11,430,720 cases, `r7/codex/probes/r7_events.rs`); that
+//! probe is not among the kernel's tests, and no test here measures the bound.
+//!
 //! The bound. Seidel and Aragon's Lemma 6.1: "Let X be a set of n random variables, each
 //! uniformly distributed over a common integer range of size at least n. X has the d-max
 //! property if its random variables are (3d + 2)-wise independent", where the `d`-max property

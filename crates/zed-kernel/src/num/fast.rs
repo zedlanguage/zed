@@ -132,10 +132,12 @@
 //!   refines it by one Newton step; Lemma 3.4.2: "If β is a power of two satisfying β ≥ 8, and
 //!   β^n/2 ≤ A < β^n, then the output X ... satisfies: AX < β^2n < A(X + 2)". Departure:
 //!   [`approx_reciprocal`] works in bits (β = 2, outside the lemma's `β ≥ 8`) and starts each
-//!   step from `h = ceil((p + 3) / 2)` bits, and it promises only `t (X + 2) >= 2^2k`. The
-//!   lemma's proof does not cover that case; the test `approximate_reciprocals_keep_their_bounds`
+//!   step from `h = ceil((p + 3) / 2)` bits, and it promises only `t (X + 2) > 2^2k`. The
+//!   lemma's proof does not cover that case; [`newton`] proves one step in bits and
+//!   [`approx_reciprocal`] the whole by induction over its sizes, at every width
+//!   (PROOF-kernel-proofdoc3a-gaps (e)). The test `approximate_reciprocals_keep_their_bounds`
 //!   checks the bound for every `t` of 5 to 13 bits and for edge and random `t` at 15 widths up
-//!   to 30,001 bits, and cannot prove it for the widths it skips. Algorithm 1.26
+//!   to 30,001 bits. Algorithm 1.26
 //!   FastIntegerOutput (§1.7.2) prints `A` as `Output(Q) || 0^(k - len(r)) || r` with
 //!   `(Q, R) = DivRem(A, B^k)`, and "has complexity O(M(n) log n)"; [`to_decimal`] is that
 //!   recursion, with the powers `10^(L 2^i)` fixed in advance and their reciprocals shared.
@@ -2006,8 +2008,19 @@ fn reciprocal_from(x: &BigUint, k: u64, leaf: u64) -> BigUint {
     let e = sub_around(power_around(2 * k, m), &xy);
     let low = low_power(2 * k).wrapping_sub(first(&xw).wrapping_mul(first(&yw)));
     let (negative, e) = unfold(e, m, low);
-    debug_assert!(!negative, "the estimate is below the reciprocal");
+    // `e in (0, 2x)` is proved at `approx_reciprocal` (`x y < 2^2k < x (y + 2)`), and checked
+    // here in every build, so that a wrong reciprocal stops the run, never a quotient read from
+    // it. The sign is one bit; `e - x < x` costs one subtraction of k bits beside the O(M(k))
+    // of the call, and only when `e >= x`.
+    assert!(
+        !negative && e.iter().any(|&w| w != 0),
+        "the estimate is below the reciprocal"
+    );
     if cmp_words(&e, &xw).is_ge() {
+        assert!(
+            from_words(e) - x < *x,
+            "the estimate is within 2 of the reciprocal"
+        );
         y += 1u32;
     }
     y
@@ -2022,6 +2035,22 @@ fn reciprocal_from(x: &BigUint, k: u64, leaf: u64) -> BigUint {
 /// [`Field::forward`], of at least [`cyclic_points`]`(p)` points. Brent and Zimmermann, Modern
 /// Computer Arithmetic (2010), Algorithm 3.5, in bits rather than words; the module's
 /// "Sources" gives the lemma, why it does not cover bits, and the test that checks the bound.
+///
+/// Proof of the bound at every width, in bits (the lemma's `β >= 8` not needed), by induction
+/// over the list `sizes`, `p = s_0 > s_1 > ... > s_j`, `s_(i+1) = ceil((s_i + 3) / 2)`, built
+/// while `s_i > leaf`. It ends: for `s > 3`, `ceil((s + 3) / 2) < s`, and every caller's
+/// `leaf` is at least 4 (`RECIP_LEAF` is 4 or 64·416; the benchmark hook takes `leaf.max(4)`),
+/// so the loop steps only from a size `s > leaf >= 4`, whose successor is smaller. Base, at `h = s_j`: `x =
+/// floor((2^2h - 1) / a_h)` for `a_h = a >> (p - h)`, the top `h` bits, so `a_h x <= 2^2h - 1 <
+/// 2^2h` and `a_h (x + 1) > 2^2h - 1`, so `a_h (x + 1) >= 2^2h`: the step's premise
+/// `a_h x < 2^2h <= a_h (x + 2)` holds, and so does the bound when `p <= leaf` and no step
+/// runs. Step, from `h = s_(i+1)` to `q = s_i`: the top `h` bits of `top = a >> (p - q)` are
+/// `a >> (p - h)`, of exactly `h` bits as `top` has `q`; `h = ceil((q + 3) / 2)` gives `2h >=
+/// q + 3`, so `l = q - h <= h - 3`: [`newton`]'s premise `l + 3 <= h` holds, and its proof
+/// gives `0 < 2^2q / top - X < 2`, that is `top X < 2^2q < top (X + 2)`. The last step has `q = p` and
+/// `top = a`. So the output has `a X < 2^2p < a (X + 2)`, which is what `reciprocal_from` needs.
+/// Tested by `tests::approximate_reciprocals_keep_their_bounds` at 5 to 13 bits in full and at
+/// 15 widths up to 30,001 bits.
 fn approx_reciprocal(a: &BigUint, p: u64, tw: &Roots, leaf: u64) -> BigUint {
     debug_assert_eq!(a.bits(), p);
     let mut sizes = vec![p];

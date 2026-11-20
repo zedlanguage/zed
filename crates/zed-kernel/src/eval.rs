@@ -2414,7 +2414,11 @@ impl<'t> Machine<'_, 't> {
                 // `Entries` only when some argument is no `V::Data` (a `V::Held` is none). The
                 // loop reads every argument, as a key or a value, and returns at a key that is
                 // no data, so here some value was no data and `parts` is not empty;
-                // `HeldFamily::new` gives `None` only for an empty `parts`.
+                // `HeldFamily::new` gives `None` only for an empty `parts`. Test
+                // (PROOF-kernel-proofdoc3a-gaps (l)):
+                // `l01_17_value_representation::function_in_family::a_display_with_a_key_left_without_a_value_is_refused`
+                // takes each case of the loop (a function alone, a function key after an entry,
+                // a function value before a key, an odd count) and would panic here on any.
                 return match HeldFamily::new(entries)? {
                     Some(f) => Ok(Step::Give(held(parts, Shape::Family(f)))),
                     None => unreachable!("a display with a value that is no data has a part"),
@@ -4057,6 +4061,13 @@ fn int_binary(p: Prim, a: &Value, b: &Value) -> Result<Option<Value>, KernelErro
 /// empty (sec:grammar). `try_shared` of a block returns the block and asks for no memory, so it
 /// cannot fail. Only a term built by hand, as the kernel's own tests build one, gives a joined
 /// name; a refusal there is a fault of the caller, which `Type` names.
+///
+/// No test checks the claim (PROOF-kernel-proofdoc3a-gaps (l)): a joined name fails only when
+/// the system refuses the memory, which no test run limits, so even
+/// `l01_26_type_resolution::random::accepted_random_programs_raise_no_type_error`, which counts
+/// the kernel's type errors, would pass with one. That only these two builders make an atom
+/// primitive is read from the source, not checked; a test that elaborates programs with atoms
+/// and asserts that each name of a `Prim::Atom` is a literal of one block would check both.
 fn atom_name(name: &crate::text::Text) -> Result<Arc<str>, KernelError> {
     name.try_shared().map_err(|_| {
         KernelError::Type(format!(

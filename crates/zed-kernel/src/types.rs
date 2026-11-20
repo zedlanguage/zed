@@ -2507,7 +2507,26 @@ impl Type {
     // for each set (`Bdd`), the form `union_of_literals` builds. Where another type holds tuples,
     // perhaps as an expression (`Part::Expr`), whose form depends on how it is bracketed, nothing
     // is moved. Before PROOF-union-all-expr-parts, the joined type went to the end of `rest`,
-    // which changed the bracketing of the other parts. Tests:
+    // which changed the bracketing of the other parts.
+    // The joined literals and the joined atoms are placed the same way (PROOF-kernel-proofdoc3a-gaps
+    // (g)); before, both went to the end of `rest`, which changed the pairing of the morphisms of
+    // the other types (the test with literal and atom types added fails so: mask 0b1000101010).
+    // Literals: a literal type has the part of nothing in every part but its scalars, as the
+    // empty type and the joined type do, so every other part sees the same types at the same
+    // places; the scalar parts are sets (`Lits`, a sorted set and a cofinite flag, one form per
+    // set), so any bracketing of their unions gives one value, here the union of all of them.
+    // No condition is needed. Atoms: an atom type alone has the part of nothing but in its atoms,
+    // so again every other part is unchanged. Its atoms part is a map from names to payloads,
+    // and a payload is a type whose form may depend on bracketing; so the map is placed only when
+    // (1) no other type in `rest` holds an atom (its atoms part lists no name and is not
+    // cofinite), so the pairs join the atoms of these types alone, and (2) no name is in two of
+    // them, checked by counting: `join` keeps a listed name listed (a listed payload is not the
+    // part of nothing, nor its union with another), so the joined map lists the sum of the
+    // names exactly when no two maps share one. Then each name's payload is joined with the part
+    // of nothing only, so it is that payload under any pairing, and the map, a persistent sorted
+    // map with one form per content, is the one the pairs build. Else the atom types stay as
+    // they came and the join made for the check is dropped: `O(s log l)` steps wasted, and the
+    // `O(k log² k)` of the pairs where names repeat. Tests:
     // `union_all_is_the_union_joined_in_pairs_in_order` and, for the chains of literals,
     // `a_chain_joined_at_once_is_the_chain_joined_literal_by_literal`.
     pub fn union_all(ts: impl IntoIterator<Item = Type>) -> Type {
@@ -2515,8 +2534,12 @@ impl Type {
         // them are never all held at once; the smaller set is added to the larger.
         let (mut first_lits, mut lits): (Option<Type>, Option<Parts>) = (None, None);
         let (mut atoms, mut tuples, mut rest) = (Vec::new(), Vec::new(), Vec::new());
+        // The place in `rest` of the first literal type; the others hold the empty type.
+        let mut lits_at = None;
         for t in ts {
             if t.finite_literals_only() {
+                lits_at.get_or_insert(rest.len());
+                rest.push(Type::empty());
                 match (&first_lits, &mut lits) {
                     (None, _) => first_lits = Some(t),
                     (Some(first), None) => {
@@ -2543,7 +2566,8 @@ impl Type {
                 tuples.push(rest.len());
                 rest.push(t);
             } else if t.atoms_only() && !t.p().atoms.cofinite() {
-                atoms.push(t);
+                atoms.push(rest.len());
+                rest.push(t);
             } else {
                 rest.push(t);
             }
@@ -2568,23 +2592,40 @@ impl Type {
                 }
             }
         }
-        match lits {
-            Some(joined) => rest.push(Type::new(joined)),
-            None => rest.extend(first_lits),
+        if let Some(at) = lits_at {
+            rest[at] = match lits {
+                Some(joined) => Type::new(joined),
+                None => first_lits.expect("a literal type was met"),
+            };
         }
-        if atoms.len() < 2 {
-            rest.extend(atoms);
-        } else {
-            let largest = (0..atoms.len())
-                .max_by_key(|&i| atoms[i].p().atoms.names().len())
+        // The atoms joined into one map take the place of the first atom type, and the empty
+        // type the places of the others, only where no name is in two of them and no other type
+        // in `rest` holds an atom; else they stay as they came (proof above).
+        let atoms_alone = || {
+            (rest.iter().enumerate()).all(|(i, t)| {
+                let a = &t.p().atoms;
+                atoms.binary_search(&i).is_ok() || (!a.cofinite() && a.names().is_empty())
+            })
+        };
+        if atoms.len() > 1 && atoms_alone() {
+            let largest = (atoms.iter().copied())
+                .max_by_key(|&i| rest[i].p().atoms.names().len())
                 .expect("two at least");
-            let mut joined = atoms[largest].p().atoms.clone();
-            for (i, t) in atoms.iter().enumerate() {
+            let mut joined = rest[largest].p().atoms.clone();
+            let mut listed = joined.names().len();
+            for &i in &atoms {
                 if i != largest {
-                    joined.join(&t.p().atoms);
+                    let other = &rest[i].p().atoms;
+                    listed += other.names().len();
+                    joined.join(other);
                 }
             }
-            rest.push(Type::with(|p| p.atoms = joined));
+            if joined.names().len() == listed {
+                rest[atoms[0]] = Type::with(|p| p.atoms = joined);
+                for &i in &atoms[1..] {
+                    rest[i] = Type::empty();
+                }
+            }
         }
         Type::pairwise(rest, Type::empty(), |a, b| a | b)
     }
@@ -2884,6 +2925,8 @@ impl Type {
     /// length they do not list, its structs and its functions are kept as they are. `None` when
     /// `level` gives none for a node, or for a recursive node whose unfolding holds, at any
     /// depth, a node `level` does not give back unchanged: such a node is not made again.
+    /// `level` must give a node of parts, never a recursive node, for the node of parts it is
+    /// given (checked; panics otherwise), since what it gives may become an atom's payload.
     ///
     /// A tuple part is made again from the tuple types it is made of, each replaced by the one
     /// of its components made again (`Part::map_atoms`): a value is in a tuple part exactly
@@ -2956,6 +2999,15 @@ impl Type {
                 }
             };
             let r = level(&node);
+            // `level` gives a node of parts for a node of parts: what it gives becomes an atom's
+            // payload above, and every payload is a node of parts (the proof of sub-case (c) at
+            // `Printer::force_cycles`). The one caller outside tests, zedc-types `Forms::level`,
+            // gives `cut | fns`, `cut` or `set - marks`, each built by `Type::zip` or
+            // `Type::minus` from nodes of parts. Checked here in every build, O(1).
+            assert!(
+                (r.as_ref()).is_none_or(|r| matches!(&*r.0, Node::Parts(..))),
+                "`level` gave a recursive node for a node of parts"
+            );
             memo.insert(t, r);
         }
         memo[self].clone()
@@ -3035,7 +3087,11 @@ impl Type {
     // listed once, and nothing outside them; no other part holds an int. What a caller then
     // concludes about a run-time value rests on the value lying in the type it reads this
     // from, the checker's typing of that value, not on this list. Test:
-    // `types::tests::ints_listed_are_the_ints_the_type_holds`.
+    // `types::tests::ints_listed_are_the_ints_the_type_holds`, on 5 000 random types made of
+    // literals, `int` and other kinds by `|`, `&`, `-` and `!`: every int of a window and two
+    // big ints is listed exactly when held, every listed int is held, and none is listed twice.
+    // It cannot catch a recursive type (the `Type::p` step) or another way of making one, and
+    // it reads `ints` as `contains` does, so it checks the reading, not `Type::member`.
     pub fn ints_listed(&self) -> Option<Vec<Value>> {
         let p = self.p();
         (!p.ints.cofinite).then(|| p.ints.values.iter().cloned().collect())
@@ -3883,15 +3939,41 @@ impl Type {
     /// types that denote one set hash alike: their parts are a set of booleans and, for each
     /// base type, a finite set of literals or the complement of one (`Lits`), every other
     /// part its default (`Parts::scalars_only`), and the digest is made from those alone
-    /// (`Parts::hashes`, each `Lits` by `cofinite` and the sum of its literals' hashes). A
-    /// set has one such form, since each base type is infinite, except `f64` and `f32`, where a
-    /// set could also be listed as the complement of the rest; one of the two lists then holds
-    /// 2^31 literals or more, which no program text writes. Equal hashes do not prove equal
-    /// sets. A recursive node is read through its unfolding. O(1) after the unfolding.
+    /// (`Parts::hashes`, each `Lits` by `cofinite` and the sum of its literals' hashes). Equal
+    /// hashes do not prove equal sets. A recursive node is read through its unfolding. O(1)
+    /// after the unfolding.
+    ///
+    /// Proof that a set given a digest has one form, whether written or computed
+    /// (PROOF-kernel-proofdoc3a-gaps (f)). Booleans are a set of two. For `int`, `rat` and
+    /// `String`, which are infinite, a finite list `L` and the complement of a finite list `C`
+    /// never denote one set. For `f64` and `f32` they can, when `L` and `C` split the base:
+    /// `|L| + |C| = N` for the base's `N` values. A float `Lits` is given a digest only when
+    /// `2 |values| < N` (`Type::F64_VALUES`, `Type::F32_VALUES`); two forms of one set
+    /// that both pass would have `|L| + |C| < N`, so at most one passes, and a set past it has
+    /// no digest, the answer for a type that is not of scalars alone (its caller,
+    /// `domain_key` in zedc-types, then keys no domain, and compares the function as it does
+    /// any other). The cutoff costs one length read per float part (`TreapSet::len`, O(1)) and
+    /// is never reached by a list that fits in memory, half of `f32`'s values being about
+    /// 2^31 literals. Test: `types::tests::a_float_set_has_one_digest_however_it_is_made`.
     pub fn scalars_digest(&self) -> Option<u64> {
         let p = self.p();
-        p.scalars_only().then_some(p.digest)
+        let one_form = |l: &Lits, n: u128| 2 * (l.values.len() as u128) < n;
+        (p.scalars_only()
+            && one_form(&p.floats, Type::F64_VALUES)
+            && one_form(&p.f32s, Type::F32_VALUES))
+        .then_some(p.digest)
     }
+
+    /// The number of `f64` values: the `2^64` bit patterns less the `2 (2^52 - 1)` NaNs, which
+    /// [`crate::value::F64::new`] makes one value, plus that one NaN; `-0.0` and `0.0` differ.
+    /// Odd, so no float list holds exactly half. Test: `a_float_set_has_one_digest_however_it_is_made`
+    /// counts the values among the bit patterns of `f32`'s all-ones exponent, the one case
+    /// where bit patterns and values differ, by the same rule.
+    const F64_VALUES: u128 = (1 << 64) - (1 << 53) + 3;
+
+    /// The number of `f32` values, as [`Type::F64_VALUES`] with `2^32` patterns and
+    /// `2 (2^23 - 1)` NaNs.
+    const F32_VALUES: u128 = (1 << 32) - (1 << 24) + 3;
 
     /// Whether its values of the base type `base`, in the order of [`Split::bases`] (`bool`,
     /// `int`, `rat`, `f64`, `String`, `f32`), are one or more, each listed: what
@@ -9242,6 +9324,14 @@ pub mod rec {
     /// that the order they are written in does not count; operands whose hashes tie keep their
     /// written order, which decides only where two spellings collide in hash. Time linear in the
     /// nodes, besides a sort of each meet's or union's operands.
+    ///
+    /// Tests (PROOF-kernel-proofdoc3a-gaps (l)): pairing by hash, not by written order, is
+    /// checked by `l01_23_groups_and_refusals::refusals::reordered_union_arms_give_equal_members`
+    /// and `::codex_r3_order_seed_10489595623140704143_trial_26` (unions), and for meets only by
+    /// verdict, in `l01_23_groups_and_refusals::group_oracle::meets_whose_parts_differ_in_order_agree_across_orders`
+    /// and `cycle_dup::many_meets_written_in_two_orders_are_read_as_written_once`. No test
+    /// reaches a hash tie: with 64-bit hashes none occurs in practice, and the short-address
+    /// build's collision tests (`l01_37a_short_addresses`) do not take this path.
     fn spelled<'a>(
         (x, xs, xh): (&'a Node, &'a [Def], &[u64]),
         (y, ys, yh): (&'a Node, &'a [Def], &[u64]),

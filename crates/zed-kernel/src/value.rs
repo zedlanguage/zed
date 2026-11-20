@@ -1678,6 +1678,7 @@ thread_local! {
     static NEXT: Cell<(Id, Id)> = const { Cell::new((0, 0)) };
 }
 
+<<<<<<< HEAD
 /// A new id. Block 0 is never drawn, so nothing built non-empty has id 0.
 ///
 /// Why no id is drawn twice. `BLOCKS` hands out each block number `b >= 1` once
@@ -1690,8 +1691,10 @@ thread_local! {
 /// thread's first call or after `2^16` ids on that thread, so `2^48` blocks need `2^48`
 /// threads that each draw an id, or `2^64` ids in all (584 years at 10^9 a second): the
 /// product does not wrap in practice, the same bound as `IdSource`'s own count. Not checked
-/// at run time. Test: the ids are compared only for equality by provenance and walks; no test
-/// draws a large number of blocks.
+/// at run time. The ids are compared only for equality by provenance and walks; no test
+/// draws a large number of blocks. Tests (PROOF-kernel-proofdoc3a-gaps (l)): `zed_graph`
+/// `ids::tests::each_number_is_drawn_once_from_the_start` for `IdSource`, and
+/// `value::tests::fresh_ids_are_distinct_across_threads_and_blocks` for the blocks here.
 pub fn fresh_id() -> Id {
     crate::local::with(&NEXT, |next| {
         let (mut id, mut end) = next.get();
@@ -5230,6 +5233,32 @@ pub(crate) mod key_forms;
 mod tests {
     use super::*;
     use crate::seed::Rng;
+
+    /// Four threads each draw more than two blocks of ids: no id is drawn twice, within a thread
+    /// or across threads, and none is 0, the id of the empty family (the claim at
+    /// [`fresh_id`], PROOF-kernel-proofdoc3a-gaps (l)).
+    #[test]
+    fn fresh_ids_are_distinct_across_threads_and_blocks() {
+        let n = usize::try_from(2 * BLOCK + 3).expect("a count that fits");
+        let drawn: Vec<Vec<Id>> = std::thread::scope(|s| {
+            let threads: Vec<_> = (0..4)
+                .map(|_| s.spawn(|| (0..n).map(|_| fresh_id()).collect::<Vec<Id>>()))
+                .collect();
+            threads
+                .into_iter()
+                .map(|t| t.join().expect("a thread that drew"))
+                .collect()
+        });
+        for ids in &drawn {
+            assert!(
+                ids.windows(2).all(|w| w[0] < w[1]),
+                "ids rise within a thread"
+            );
+        }
+        let all: std::collections::HashSet<Id> = drawn.iter().flatten().copied().collect();
+        assert_eq!(all.len(), 4 * n, "an id drawn twice");
+        assert!(!all.contains(&0), "id 0 drawn");
+    }
 
     impl Family {
         /// [`Family::entry_beside`] at a key whose value these tests can always build.

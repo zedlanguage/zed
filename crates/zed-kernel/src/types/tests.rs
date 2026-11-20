@@ -788,12 +788,14 @@ fn union_all_of_tuple_types_is_the_union_joined_one_at_a_time() {
     assert_eq!(Type::union_all(many.into_iter().rev()), fold);
 }
 
-/// With no type of literals or atoms alone, `union_all` is the union the pairs make on its
-/// types in the order they came, in form, though it joins the tuple types at once
-/// (PROOF-union-all-expr-parts): for every subset, in both orders, of tuple types between
-/// types whose functions, or whose tuples, are expressions (`Part::Expr`), whose form depends
-/// on how they are bracketed. Before, the joined tuples went to the end and the other parts
-/// were bracketed anew.
+/// `union_all` is the union the pairs make on its types in the order they came, in form, though
+/// it joins the tuple types, the literal types and the atom types at once
+/// (PROOF-union-all-expr-parts, PROOF-kernel-proofdoc3a-gaps (g)): for every subset, in both
+/// orders, of tuple, literal and atom types between types whose functions, or whose tuples, are
+/// expressions (`Part::Expr`), whose form depends on how they are bracketed, with atoms whose
+/// payloads are such expressions, under one name and under two. Before, the joined tuples,
+/// literals and atoms went to the end and the other parts were bracketed anew (red on the
+/// literal and atom types before the fix: mask 0b1000101010).
 #[test]
 fn union_all_is_the_union_joined_in_pairs_in_order() {
     let one = |t: Type| Type::tuple(vec![t]);
@@ -827,10 +829,49 @@ fn union_all_is_the_union_joined_in_pairs_in_order() {
         Type::tuple(vec![Type::atom("a"), Type::atom("b")]),
         &Type::partial(int(), int()) | &one(bool()),
     ];
+    // Types of literals alone and of atoms alone, which `union_all` joins apart from the pairs
+    // (PROOF-kernel-proofdoc3a-gaps (g)); the atoms' payloads under one name are expressions,
+    // so their form depends on how they are joined.
+    let lit = |v: Value| Type::lit(&v).expect("a literal");
+    let ts: Vec<Type> = ts
+        .into_iter()
+        .chain([
+            lit(Value::Int(1)),
+            &lit(Value::Bool(true)) | &lit(Value::str("x")),
+            Type::atom_with(
+                "p",
+                &two_meets(
+                    f(int(), bool()),
+                    f(bool(), int()),
+                    f(string(), bool()),
+                    f(int(), int()),
+                ),
+            ),
+            &Type::atom_with(
+                "p",
+                &two_meets(
+                    f(bool(), bool()),
+                    f(string(), int()),
+                    f(int(), string()),
+                    f(bool(), string()),
+                ),
+            ) | &Type::atom("a"),
+            Type::atom_with(
+                "q",
+                &two_meets(
+                    f(string(), string()),
+                    f(int(), bool()),
+                    f(bool(), int()),
+                    f(string(), bool()),
+                ),
+            ),
+        ])
+        .collect();
     let fn_expr = |t: &Type| matches!(t.p().morphisms, Part::Expr(_));
     let tuple_expr = |t: &Type| (t.p().tuples.lens.values()).any(|b| matches!(b, Part::Expr(_)));
     assert!(fn_expr(&ts[1]) && fn_expr(&ts[5]) && tuple_expr(&ts[6]));
-    let (mut exprs, mut alone) = (0, 0);
+    let (mut exprs, mut alone, mut atoms_placed) = (0, 0, 0);
+    let atom_type = |t: &Type| t.atoms_only() && !t.p().atoms.cofinite();
     for mask in 0..1u32 << ts.len() {
         let chosen: Vec<Type> = (0..ts.len())
             .filter(|i| mask & (1 << i) != 0)
@@ -848,11 +889,30 @@ fn union_all_is_the_union_joined_in_pairs_in_order() {
                         .iter()
                         .all(|t| t.tuple_literals_only() || t.holds_no_tuple()),
             );
+            // The atom types placed as one map: two or more, no name in two, no other atom.
+            let mine: Vec<&Type> = chosen.iter().filter(|t| atom_type(t)).collect();
+            let names: usize = mine.iter().map(|t| t.p().atoms.names().len()).sum();
+            let distinct: std::collections::BTreeSet<String> = (mine.iter())
+                .flat_map(|t| {
+                    t.p()
+                        .atoms
+                        .names()
+                        .keys()
+                        .map(|n| n.to_string())
+                        .collect::<Vec<_>>()
+                })
+                .collect();
+            let no_other = chosen.iter().all(|t| {
+                let a = &t.p().atoms;
+                atom_type(t) || (!a.cofinite() && a.names().is_empty())
+            });
+            atoms_placed += usize::from(mine.len() > 1 && names == distinct.len() && no_other);
         }
     }
     assert!(
-        exprs > 100 && alone > 50,
-        "{exprs} unions with an expression, {alone} with the tuples joined at once"
+        exprs > 100 && alone > 50 && atoms_placed > 50,
+        "{exprs} unions with an expression, {alone} with the tuples joined at once, \
+         {atoms_placed} with the atoms joined at once"
     );
 }
 
@@ -987,6 +1047,13 @@ fn ints_listed_are_the_ints_the_type_holds() {
                 for v in window {
                     assert_eq!(ints.contains(&v), t.contains(&v), "{t} at {v:?}");
                 }
+                // Each listed int is held, outside the window too, and none is listed twice
+                // (PROOF-kernel-proofdoc3a-gaps (l)).
+                for v in &ints {
+                    assert!(t.contains(v), "{t} lists {v:?}");
+                }
+                let once: std::collections::BTreeSet<&Value> = ints.iter().collect();
+                assert_eq!(once.len(), ints.len(), "{t} lists an int twice");
             }
             None => {
                 cofinite += 1;
@@ -1086,6 +1153,77 @@ fn lists_values_of_agrees_with_listing_the_meet() {
         }
     }
     assert!(yes > 1000 && no > 1000, "{yes} {no}");
+}
+
+/// [`Type::scalars_digest`] gives one digest to one set of floats however it was made: sets
+/// of `f64` (and of `f32`) built at random by `|`, `&`, `-` and complement from a few
+/// literals, `-0.0`, `0.0` and NaN among them, and the base type, are each read as the pool
+/// literals they hold and whether they hold every value outside the pool; two of one meaning
+/// get one digest, and every one gets a digest. The constants the cutoff uses count the values
+/// as [`crate::value::F32::new`] makes them: among the `2^24` bit patterns of `f32`'s
+/// all-ones exponent, the only ones where patterns and values differ, there are three values.
+#[test]
+fn a_float_set_has_one_digest_however_it_is_made() {
+    let mut odd = std::collections::BTreeSet::new();
+    for m in 0..(1u32 << 24) {
+        let bits = (m >> 23) << 31 | 0xFF << 23 | (m & ((1 << 23) - 1));
+        odd.insert(crate::value::F32::new(f32::from_bits(bits)).get().to_bits());
+    }
+    assert_eq!(odd.len(), 3, "two infinities and one NaN");
+    assert_eq!(
+        Type::F32_VALUES,
+        (1u128 << 32) - (1 << 24) + odd.len() as u128
+    );
+    assert_eq!(
+        Type::F64_VALUES,
+        (1u128 << 64) - (1 << 53) + odd.len() as u128
+    );
+    let pools: [(Type, Vec<Value>); 2] = [
+        (
+            Type::f64(),
+            [0.5, 1.0, -0.0, 0.0, f64::NAN, f64::INFINITY]
+                .map(Value::float)
+                .to_vec(),
+        ),
+        (
+            Type::f32(),
+            [0.5, 1.0, -0.0, 0.0, f32::NAN, f32::INFINITY]
+                .map(Value::float32)
+                .to_vec(),
+        ),
+    ];
+    let (mut rng, _) = crate::seed::Rng::fresh("a_float_set_has_one_digest_however_it_is_made");
+    for (base, pool) in &pools {
+        // A set's meaning: the mask of pool literals it holds and whether it holds the rest.
+        let mut by_meaning: HashMap<(u32, bool), u64> = HashMap::new();
+        for _ in 0..3_000 {
+            let piece = |rng: &mut crate::seed::Rng| match rng.below_u64(8) {
+                0 => (base.clone(), ((1u32 << pool.len()) - 1, true)),
+                1 => (Type::empty(), (0, false)),
+                _ => {
+                    let i = rng.below_u64(pool.len() as u64) as usize;
+                    (Type::lit(&pool[i]).expect("a literal"), (1 << i, false))
+                }
+            };
+            let (mut t, (mut mask, mut rest)) = piece(&mut rng);
+            let full = (1u32 << pool.len()) - 1;
+            for _ in 0..rng.below_u64(5) {
+                let (p, (pm, pr)) = piece(&mut rng);
+                (t, mask, rest) = match rng.below_u64(4) {
+                    0 => (&t | &p, mask | pm, rest || pr),
+                    1 => (&t & &p, mask & pm, rest && pr),
+                    2 => (&t - &p, mask & !pm, rest && !pr),
+                    _ => (&!&t & base, full & !mask, !rest),
+                };
+            }
+            let d = t
+                .scalars_digest()
+                .unwrap_or_else(|| panic!("{t} has a digest"));
+            let seen = *by_meaning.entry((mask, rest)).or_insert(d);
+            assert_eq!(seen, d, "{t}: one set, one digest");
+        }
+        assert!(by_meaning.len() > 20, "{} meanings", by_meaning.len());
+    }
 }
 
 /// The members of the order, `==`, `Debug` and `Display` families that only delegate, which no

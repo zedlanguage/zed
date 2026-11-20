@@ -91,8 +91,8 @@ pub enum Carrier {
 /// `Budget::spend` adds a charge only when `spent + w <= most`, before the operation runs, and
 /// otherwise spends nothing and the operation does not run; by induction on the charges,
 /// `spent <= most` after each. (2) Every `Budget::new(LIMIT)` in this module is one of four:
-/// [`Identity::folded_bases`] (one, and only when some reached wide power has a base of degree
-/// 0), [`Identity::factored`] (one, after its `too_wide`), [`decide`]'s expansion and
+/// `Identity::folded_bases` (one, and only when some reached wide power has a base of degree
+/// 0), `Identity::factored` (one, after its `too_wide`), [`decide`]'s expansion and
 /// [`normal_form`]'s expansion. The only other budget, `Identity::compare`'s, is unbounded and
 /// merges two forms already formed and paid for. (3) [`decide`] runs `factored` at most once,
 /// which calls `too_wide` (one fold) and then makes its own budget; then `too_wide` (a second
@@ -2709,6 +2709,32 @@ fn draw_prime(lambda: u64, rng: &mut u64) -> u64 {
 /// near `lambda`, the caller's estimate of the sums; the next near twice the slots left open,
 /// at least twice the sums left, or near twice the last when a round found none, so the rounds
 /// end however the primes fall.
+///
+/// Source: A. Arnold and D. S. Roche, "Output-sensitive algorithms for sumset and sparse
+/// polynomial multiplication", ISSAC 2015, pp. 29-36, doi:10.1145/2755996.2756653,
+/// arXiv:1501.05296, quoted at `Poly::support_mul` (checked 2026-11-20): reduction modulo
+/// `x^p - 1` "'hashes' exponent e ∈ supp(F) to e rem p". Departure: the paper's sumset is
+/// Monte Carlo; here a sum is taken only from a slot the moments prove holds it alone.
+///
+/// Proof that no moment carries into the next (PROOF-kernel-proofdoc3a-gaps (j)). Write `ha`
+/// and `hb` for the largest of `ra` and `rb` (their last, as the terms are in increasing order),
+/// `P = |ra| |rb|`, and `B = bits(P) + 2 bits(ha) + 2 bits(hb)`; the caller sets `sub =
+/// ceil(B / 32)` words a sub-digit, so `2^B <= 2^(32 sub)`. Every `a^i` with `i <= 2` is at most
+/// `2^(2 bits(ha))` (`a <= ha < 2^bits(ha)` when `ha >= 1`, and `a^i <= 1` when `ha = 0`), and so
+/// for `b^j`. (1) The folds: a sub-digit of `ra`'s fold is a sum over its slot of `1`, `a` or
+/// `a^2`, at most `|ra| 2^(2 bits(ha)) <= P 2^(2 bits(ha)) < 2^B`, as `|rb| >= 1`; and so for
+/// `rb`. So each `add_into` stays inside its sub-digit, and the fold of side A is
+/// `sum_u sum_(d in {0,1,2}) A_(u,d) X^(9u + d)` and of side B `sum_v sum_(e in {0,3,6}) B_(v,e)
+/// X^(9v + e)`, `X = 2^(32 sub)`. (2) The product: a term lands at `9(u + v) + (d + e)`, and
+/// `d + e` runs over 0 to 8 with `d = (d + e) mod 3` and `e = d + e - d`, so the position gives
+/// the slot `u + v` and the pair `(d, e)` back, and no two slots or sub-digits meet. The
+/// coefficient at slot `r`, sub-digit `k = i + 3j`, is `sum_(u + v = r) A_(u,i) B_(v,3j) =
+/// sum a^i b^j` over the pairs `(a, b)` with `a` on slot `u` and `b` on slot `v`, at most `P
+/// 2^(2 bits(ha)) 2^(2 bits(hb)) < 2^B <= X`. Every coefficient of the product in `X` is
+/// below `X`, so the product's base-`X` digits are those coefficients exactly, and `digit`
+/// reads each one. `moment` adds two of them in a `BigUint`, where no width bounds the sum.
+/// Tests: `the_support_product_agrees_with_the_sparse_one` and
+/// `the_product_takes_the_support_product_where_it_is_cheaper`.
 fn sumset(
     ra: &[u128],
     rb: &[u128],
@@ -2795,6 +2821,14 @@ type Side<'a, K> = (&'a [(K, BigInt)], &'a [u128]);
 /// other index. The coefficients found are subtracted from it, and a slot with one index left
 /// gives that index's coefficient exactly. When no candidate leaves an index alone, the next
 /// candidates are drawn from twice as far on, so the rounds end however the primes fall.
+///
+/// Source: the coefficient step of A. Arnold and D. S. Roche, "Output-sensitive algorithms for
+/// sumset and sparse polynomial multiplication", ISSAC 2015, pp. 29-36,
+/// doi:10.1145/2755996.2756653, arXiv:1501.05296, quoted at `Poly::support_mul` (checked
+/// 2026-11-20): once the support is known, the product is folded modulo `x^p - 1` and an
+/// index alone on its slot is read off it. Departure: the paper's primes are drawn at random
+/// and the result is right with high probability; here they come from a digest and only a slot
+/// with one open index is read, so every coefficient taken is exact. Tests as at [`sumset`].
 fn coefficients<K>(
     sides: [Side<K>; 2],
     support: &[u128],

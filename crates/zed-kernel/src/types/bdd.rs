@@ -484,7 +484,12 @@ impl<A: Literal> Bdd<A> {
     /// first literal removed (and `finish` only shortens a list), so it has fewer literals than
     /// every node before it in the chain and is none of them; and two live lists with the same
     /// id are the same list ([`Bdd::id`]: cell ids are drawn two apart from one counter). So no
-    /// id is met twice in the walk, and `n(j+1)` gets its state only from `n(j)`.
+    /// id is met twice in the walk, and `n(j+1)` gets its state only from `n(j)`. Test
+    /// (PROOF-kernel-proofdoc3a-gaps (l)):
+    /// `types::bdd::tests::reaching_visits_the_nodes_a_walk_of_every_path_finds`, on 800
+    /// lists zipped from 6 atoms against a walk of every path: a node met twice would panic at
+    /// one of the two `unreachable!`s below, or be listed twice. Lists made by other routes
+    /// than `zip`, and the premise itself (a leaf on one side of every node), are not checked.
     ///
     /// The nodes of a list follow the literals of each block in the order of their atoms, so
     /// which nodes are the last `hi` of a path depends on the order of the atoms only within a
@@ -2305,7 +2310,10 @@ impl<A: Literal> Part<A> {
             // expression is ever put in `exprs`: each is put there only after the sets of all its
             // cluster's operands are read from `exprs` (`exprs[&x.id]` below, which panics on one
             // missing), so the first of the cycle to be put there would need its operand on the
-            // cycle there before it.
+            // cycle there before it. Test (PROOF-kernel-proofdoc3a-gaps (l)): the assert, run by
+            // `types::bdd::tests::three_valued_operations_keep_the_assignments` on 600 parts,
+            // half of them sharing subexpressions, and a pinned `e & !e`; with the `(e, None)`
+            // check removed it fires (COMPLETENESS.md). A release build does not check it.
             debug_assert!(
                 !exprs.contains_key(&e.id),
                 "an expression's sets are made once"
@@ -4138,7 +4146,12 @@ mod list {
                     // one form (module comment, made so by `finish`, `Bdd::literal_key` and
                     // `Bdd::or_new_literal`; `Bdd::not` keeps the blocks), in which two or more
                     // blocks end in a block of two or more literals, so one left in it. With one
-                    // block, `at == 0` is the arm above.
+                    // block, `at == 0` is the arm above. Test (PROOF-kernel-proofdoc3a-gaps (l)):
+                    // `types::bdd::tests::list_operations_agree_with_plain_lists`, 8 000 random
+                    // steps of `or_literal`, `and_literal`, `not`, `restrict` and `assemble`
+                    // checked against a plain model that builds the one form, so it checks the
+                    // premise as well as reaching this arm; a list made by `zip` and then grown
+                    // here is outside the model.
                     None if at + 1 == n => {
                         unreachable!("the last of two or more blocks holds two or more literals")
                     }

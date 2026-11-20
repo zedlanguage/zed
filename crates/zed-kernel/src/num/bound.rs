@@ -214,10 +214,24 @@ fn by_bit_length(n: &Product<'_>, d: &Product<'_>) -> Option<Ordering> {
 
 /// The error of the system's `log2` on an `f64`, in units in the last place, that
 /// [`by_logs`] allows for. Rust documents the precision of `f64::log2` as unspecified ("non-
-/// deterministic": it calls the platform's libm), and no bound of glibc's was at hand (its
-/// manual's table of known errors could not be fetched, 2026-11-13), so this is the "few ulps"
-/// of the brief, taken large: correctly rounded and the usual libms are within 1 ulp, and a
-/// larger allowance only moves a few more pairs on to the exact bounds, at no measurable cost.
+/// deterministic": it calls the platform's libm). On the one platform of the first release,
+/// Linux x86_64 with glibc (2.43 on the build machine, 2026-11-20), the bound is glibc's own:
+/// sysdeps/ieee754/dbl-64/e_log2.c (glibc master, read 2026-11-20 on the bminor/glibc mirror;
+/// the code of ARM's optimized-routines, in glibc since 2.28) states "Worst-case error is less
+/// than 0.54 ULP (0.55 ULP without fma)" for inputs near 1, and "Worst-case error if |y| >
+/// 0x1p-4: 0.547 ULP (0.550 ULP without fma)" for the rest, each with its rounding steps
+/// listed beside the code. The double format's measured errors, sysdeps/ieee754/dbl-64/
+/// libm-test-ulps (last changed acaad9ab0, 2025-10-27), list no `log2` entry: the test suite
+/// found none above the correctly rounded result. glibc's manual (section "Errors in Math
+/// Functions", read 2026-11-20) promises only "within a few ulp" and flags errors above 9 ulp.
+/// So 16 is more than 29 times glibc's stated bound; a larger allowance only moves a few more
+/// pairs on to the exact bounds, at no measurable cost.
+/// Not proved: the 0.55 ulp figure is the implementer's error analysis in a code comment, not
+/// a published proof, and another libm (musl, a later port, PORTABLE-rt) has its own; a libm
+/// more than 16 ulps off would let `by_logs` answer wrongly. Tested only on the products of
+/// `bit_lengths_and_the_f64_check_decide_products_far_apart`,
+/// `products_close_in_log2_go_on_to_the_exact_bounds` and `the_f64_check_needs_its_margin`,
+/// whose answers are known exactly.
 const LOG2_ULPS: f64 = 16.0;
 
 /// `x` as `m * 2^s` with `m` its leading 64 bits, rounded to an `f64`, and `s` the bits dropped:

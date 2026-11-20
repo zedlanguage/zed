@@ -2146,6 +2146,34 @@ fn cells_windows(
                 }
             }
         } else {
+            // Necessity (PROOF-kernel-proofdoc3a-gaps (l); the sufficiency is at `take`): every
+            // open row `r`, start node `s`, gets every non-empty cell of the window, at place `j`
+            // with `j <= jmax[r]`, node `v`, the ancestor of `s` `j - 2` levels up. Steps:
+            // (i) `v` is a cons node: `ht(v) = ht(s) - (j - 2) >= 1`, as `j <= ht(s) + 1`.
+            // (ii) Some list of `pv[j]` holds `v`. A finite `pl[j]` has a value `x` not in
+            //   `v`'s head (else the cell is empty), and the list of `x` holds the cons nodes
+            //   whose head lacks `x` (the doc above; every value of a finite place is interned
+            //   into `vid`); a cofinite `pl[j]` reads the list of all cons nodes.
+            // (iii) The class filter keeps `v`: `ht(s) = ht(v) + (j - 2)`, and `r` is open, so
+            //   `ht(s) mod md` is in `rs` and `want` puts `(ht(s) - (j - 2)) mod md`, the class of
+            //   `v`, in `ws`, whatever the modulus. (`jmax[r] = min(l0, ht(s) + 1)`, which gives
+            //   the bound in (i).) A node of the right class at the wrong height is an extra
+            //   candidate, not a missed one; the ancestor test in (v) drops it.
+            // (iv) The filters drop only what they must: `seen` a repeat of `v` at the same `j`,
+            //   and the cofinite test a `v` whose head holds all of `pl[j]`, an empty cell.
+            // (v) The row is found: `h = ht(s) <= top`, `r` is in `at_ht[h]` and, being open,
+            //   in `left[h]`, and `tin[s]` lies in `[tin[v], tout[v]]` as `v` is its ancestor.
+            //   `v` is the one ancestor at that height, so `take` sees `(r, j)` once.
+            // (vi) Order: `j` rises in this loop and the windows rise, so each row stops at its
+            //   first kill or third atom, as in the sweep.
+            // Way A (the branch above) is exact by the composition of block summaries at
+            // `Blocks` (a summary with three atoms or a kill wins, else the next is appended up
+            // to the cap), which needs equal class ids to mean equal summaries, as `intern` gives;
+            // not re-derived here. Tests: `types::empty::escape::windows_tests::windows_agree_with_the_walk`
+            // (600 random forests and chains against the naive `walk`, finite and cofinite
+            // heads and places) and
+            // `::a_list_sorted_for_another_modulus_is_sorted_again`; how often the lcm moduli and
+            // the `top + 1` cap are reached is not counted.
             let (md, rs) = &mods[way - 1];
             for j in j0..=j1 {
                 want(*md, rs, j, &mut ws);

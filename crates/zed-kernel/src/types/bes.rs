@@ -660,6 +660,14 @@ fn delete_cascade(g: &Bes, u_set: &[u32], t_sccs: &[Vec<u32>], sc: &mut Scratch)
         //   So `lo[v]` is false.
         // Then `lo[v] == hi[v]` and `v` is not in `u_set`: `need` is at least 1, and a node of
         // `u_set` dies only when a tuple cycle loses its last seed, below.
+        // Tests (PROOF-kernel-proofdoc3a-gaps (l)): the `unreachable!` would panic in
+        // `types::bes::tests::decide_agrees_with_the_game_on_systems_drawn_at_random` and its
+        // `_second_half`, and in `l01_23_groups_and_refusals::bes::a_cycle_left_without_a_seed_is_killed_by_the_cascade`,
+        // `::random_rings_with_union_chords_are_decided_right` and
+        // `::every_decided_answer_is_right_and_independent_of_numbering`. They sample: about
+        // 52 of the 40 000 random draws reach `delete_cascade` (COMPLETENESS.md), none asserts
+        // that one does, and none checks the premise (every node of `u_set` has a child in
+        // `u_set` or with `hi` true) right after `bounds` on systems outside the draws.
         if need == 0 {
             unreachable!("a node of `u_set` has a child that may be inhabited")
         }
@@ -1131,6 +1139,15 @@ pub fn decide(raw: &Bes) -> Decision {
                     }
                     refusals.push(r);
                 }
+                // Not proved: that the cascade, called from here, never kills a node (that every
+                // tuple cycle of a `u_set` reaching this arm has a seed). No proof was found
+                // (7740e3ac7); the 40,000 draws of
+                // `decide_agrees_with_the_game_on_systems_drawn_at_random` never make it kill one,
+                // and `a_tuple_cycle_dies_when_its_last_seed_does` calls the cascade directly to
+                // test the killing path. If the cascade can kill a node from here, that node's
+                // answer rests on the cascade's rule (its doc: a tuple cycle dies once nothing
+                // outside feeds it), which is checked against the game only by those direct
+                // tests and `a_cascade_passes_over_the_dead_and_keeps_what_still_has_a_seed_or_a_child`.
                 None => delete_cascade(g, &u_set, &t_sccs, &mut sc),
             }
         }
