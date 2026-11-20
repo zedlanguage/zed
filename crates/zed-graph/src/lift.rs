@@ -1,7 +1,21 @@
 //! A rooted tree grown leaf by leaf, with each node's ancestors at powers of two (binary
-//! lifting; M. Bender and M. Farach-Colton, "The LCA Problem Revisited", LATIN 2000, section
-//! 2), for lowest common ancestors and ancestors at a given depth in O(log n), and the
-//! immediate dominators of a directed acyclic graph built on it.
+//! lifting, or jump pointers), for lowest common ancestors and ancestors at a given depth in
+//! O(log n), and the immediate dominators of a directed acyclic graph built on it.
+//!
+//! Sources. Jump pointers: each node keeps its ancestors 2^j levels up, so an ancestor at any
+//! depth is reached in O(log n) jumps; M. A. Bender and M. Farach-Colton, "The Level Ancestor
+//! Problem simplified", LATIN 2002, LNCS 2286, pp. 508-515, doi:10.1007/3-540-45995-2_44
+//! (Crossref checked 2026-11-20; the text was not obtained, so that it describes jump pointers
+//! is from memory, not checked). This module cited before the same authors' "The LCA Problem
+//! Revisited", LATIN 2000, LNCS 1776, pp. 88-94, doi:10.1007/10719839_9, section 2; that text
+//! was read on 2026-11-20 and holds no binary lifting: its section 2 gives definitions and its
+//! section 3 a sparse table over intervals of power-of-two length, answering a range-minimum
+//! query in O(1), the Euler-tour method the tradeoff below compares with. Tests:
+//! `the_lowest_common_ancestor_agrees_with_the_walk_up_the_parents` compares `lca` and
+//! `up_to(a, d)` with a walk up the parents, and
+//! `the_lowest_common_ancestor_by_doubling_agrees_on_a_tree_parting_at_many_depths` compares
+//! `lca` with the walk on every pair of a tree that parts at many depths; neither checks the
+//! O(log n) bound.
 
 /// A tree over the nodes `0..n` and one more, the root `n`, grown leaf by leaf: a node not yet
 /// attached hangs from nothing and must not be asked about.
