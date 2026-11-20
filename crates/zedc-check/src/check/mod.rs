@@ -6286,10 +6286,7 @@ impl<'t, 'a> Ck<'t, 'a> {
             if let Some(memo) = &mut flat_memo {
                 b.update_each(|t| *t = Self::r10_flat_ty(t, true, memo));
             }
-            let mut order = NameOrder {
-                top: Arc::as_ptr(s) as usize,
-                ..NameOrder::default()
-            };
+            let mut order = NameOrder::new(s.clone());
             order.add(&vars, s.vars_marks(), |v| {
                 b.get(v).is_none().then(|| printed(v, false)).flatten()
             });
@@ -6380,12 +6377,16 @@ impl<'t, 'a> Ck<'t, 'a> {
         let mut fwd_runs: HashMap<(usize, usize), BTreeMap<usize, Vec<NameRun>>> = HashMap::new();
         let mut moved: HashSet<(usize, usize)> = HashSet::new();
         let mut marks = order.marks.iter();
+        // Each mark is of `s`'s walk or of a type bound in `b` (`Ty::vars_in`), whose marks
+        // hold no root key; `holder(s)` gives the address of the signature that holds the
+        // forward, `s`'s own included, as `RunRenames::get` looks it up (proof at `RunMark`).
         let mut put = |m: &RunMark, runs: &[NameRun]| {
+            let sig = m.holder(s);
             if !same_runs(&m.runs, runs) {
-                moved.insert((m.sig, m.need));
+                moved.insert((sig, m.need));
             }
             fwd_runs
-                .entry((m.sig, m.need))
+                .entry((sig, m.need))
                 .or_default()
                 .insert(m.step, runs.to_vec());
         };
@@ -14732,7 +14733,6 @@ enum Printed {
 /// The variables of a finished signature and the internal runs of the compact forwards it holds,
 /// in the order the eager checker meets them, each once, as [`rename_apart`] takes them
 /// ([`Ck::finished_with`]): a variable as what it prints ([`Printed`]), a run by its mark.
-#[derive(Default)]
 struct NameOrder {
     seen: HashSet<Printed>,
     marked: HashSet<(usize, usize, usize)>,
@@ -14741,9 +14741,10 @@ struct NameOrder {
     keys: Vec<Option<Printed>>,
     items: Vec<NameItem>,
     marks: Vec<RunMark>,
-    /// The address of the signature being named: a mark of another one is of a function it
-    /// holds, whose forward's internal results that function binds.
-    top: usize,
+    /// The signature being named: a mark of another one is of a function it holds, whose
+    /// forward's internal results that function binds. Its `Arc` resolves the marks of its
+    /// own forwards ([`RunMark::holder`]).
+    top: Arc<Sig>,
     /// The runs of each held function's mark met, by starts, counts and skip set: a copy at
     /// another address that holds the same runs is one item ([`NameOrder::mark`]), the index
     /// of that item kept.
@@ -14755,6 +14756,20 @@ struct NameOrder {
 }
 
 impl NameOrder {
+    /// No items yet, for naming `top`.
+    fn new(top: Arc<Sig>) -> NameOrder {
+        NameOrder {
+            seen: HashSet::new(),
+            marked: HashSet::new(),
+            keys: Vec::new(),
+            items: Vec::new(),
+            marks: Vec::new(),
+            top,
+            held_runs: HashMap::new(),
+            dups: Vec::new(),
+        }
+    }
+
     /// `vars` with `marks` placed among them ([`RunMark::at`]), each variable as `printed`
     /// gives it, where it gives one.
     fn add(
@@ -14779,10 +14794,11 @@ impl NameOrder {
     }
 
     fn mark(&mut self, m: &RunMark) {
-        if !self.marked.insert((m.sig, m.need, m.step)) {
+        let sig = m.holder(&self.top);
+        if !self.marked.insert((sig, m.need, m.step)) {
             return;
         }
-        if m.sig != self.top {
+        if sig != Arc::as_ptr(&self.top) as usize {
             // A copy of a held function at another address (one `r10_finish_held_fwds` or a
             // renaming made, its needs cloned) holds the very runs of a copy met before: the
             // eager checker meets one set of variables there, the same names in both copies,

@@ -146,12 +146,14 @@ fn cmp_sig(label: &str, c: &Sig, f: &Sig, cx: &Ctx, out: &mut Found) {
             // by name: the difference of Q2.3 again. So each internal name D lists more than
             // once must come from that many marks of different signatures, and E must list it
             // at most once; the orders are then compared with each internal name once.
+            // In an `Arc`, which a mark's holder is read against (`RunMark::holder`).
+            let root = Arc::new(c.clone());
             for v in &cx.internal {
                 let count = |o: &[Arc<str>]| o.iter().filter(|x| *x == v).count();
                 let (in_d, in_e) = (count(&oc), count(&of));
-                let sigs: BTreeSet<usize> = (c.vars_marks().iter())
+                let sigs: BTreeSet<usize> = (root.vars_marks().iter())
                     .filter(|m| m.runs.iter().any(|r| r.names::<Arc<str>>().contains(v)))
-                    .map(|m| m.sig)
+                    .map(|m| m.holder(&root))
                     .collect();
                 if in_d > 1 && (in_d != sigs.len() || in_e > 1) {
                     bad(

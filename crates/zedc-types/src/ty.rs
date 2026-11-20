@@ -2602,7 +2602,8 @@ enum VarWalk<'a> {
     Ty(&'a Ty),
     Row(&'a Row),
     Shape(&'a Shape),
-    Held(&'a Sig),
+    /// A function a type holds, with its `Arc`, whose address keys its marks ([`RunMark`]).
+    Held(&'a Arc<Sig>),
     /// A variable a compact forward's steps name ([`FwdVarStep::ClassVar`]).
     Var(&'a Arc<str>),
     /// The internal names of one step of a compact forward ([`FwdVarStep::InternalRun`]).
@@ -2624,7 +2625,10 @@ enum VarWalk<'a> {
 /// `Need::map_tys_in` refuses one that does not (landing round 6), so no step adds a variable
 /// the need does not hold. A replacement that renames one variable to another renames the step
 /// as well (`Need::map_tys_in`).
-fn sig_walk<'a>(s: &'a Sig, stack: &mut Vec<VarWalk<'a>>) {
+///
+/// Each mark names `s` by `key`: [`RunMark::ROOT`] when `s` is the root of the walk, else the
+/// address of the `Arc` that holds it (proof at [`RunMark`]).
+fn sig_walk<'a>(s: &'a Sig, key: usize, stack: &mut Vec<VarWalk<'a>>) {
     let from = stack.len();
     for a in &s.arrows {
         stack.extend(a.params.iter().map(VarWalk::Ty));
@@ -2669,7 +2673,7 @@ fn sig_walk<'a>(s: &'a Sig, stack: &mut Vec<VarWalk<'a>>) {
                         }
                         stack.push(VarWalk::Mark(RunMark {
                             at: 0,
-                            sig: s as *const Sig as usize,
+                            sig: key,
                             need: i,
                             step,
                             runs,
@@ -2696,10 +2700,21 @@ fn walk_vars<'a>(mut stack: Vec<VarWalk<'a>>, out: &mut Vars) {
             out.order.push(v.clone());
         }
     };
-    let mark = |out: &mut Vars, m: &RunMark| {
-        if out.marked.insert((m.sig, m.need, m.step)) {
+    // `root` is the key that stands for a mark's `ROOT`: the address of the held function whose
+    // kept marks are copied, or `ROOT` itself for a mark this walk made (proof at [`RunMark`],
+    // step 2).
+    let mark = |out: &mut Vars, m: &RunMark, root: usize| {
+        let sig = match m.sig {
+            RunMark::ROOT => root,
+            at => at,
+        };
+        if out.marked.insert((sig, m.need, m.step)) {
             let at = out.order.len();
-            out.marks.push(RunMark { at, ..m.clone() });
+            out.marks.push(RunMark {
+                at,
+                sig,
+                ..m.clone()
+            });
         }
     };
     // By address: every row, shape and function is borrowed for the whole walk, so no key
@@ -2724,21 +2739,23 @@ fn walk_vars<'a>(mut stack: Vec<VarWalk<'a>>, out: &mut Vars) {
                 }
                 continue;
             }
-            VarWalk::Held(s) => {
-                if held.insert(s as *const Sig) {
-                    match s.facts.4.get() {
-                        // Its marks are placed among its names as its own walk placed them.
+            VarWalk::Held(h) => {
+                let key = Arc::as_ptr(h) as usize;
+                if held.insert(key) {
+                    match h.facts.4.get() {
+                        // Its marks are placed among its names as its own walk placed them,
+                        // its own forwards' marks keyed by its address.
                         Some((order, marks)) => {
                             let mut marks = marks.iter().peekable();
                             for (i, v) in order.iter().enumerate() {
                                 while let Some(m) = marks.next_if(|m| m.at <= i) {
-                                    mark(out, m);
+                                    mark(out, m, key);
                                 }
                                 add(out, v);
                             }
-                            marks.for_each(|m| mark(out, m));
+                            marks.for_each(|m| mark(out, m, key));
                         }
-                        None => sig_walk(s, &mut stack),
+                        None => sig_walk(h, key, &mut stack),
                     }
                 }
                 continue;
@@ -2748,7 +2765,7 @@ fn walk_vars<'a>(mut stack: Vec<VarWalk<'a>>, out: &mut Vars) {
                 continue;
             }
             VarWalk::Mark(m) => {
-                mark(out, &m);
+                mark(out, &m, RunMark::ROOT);
                 continue;
             }
             VarWalk::Ty(t) => t,
@@ -2777,7 +2794,7 @@ fn walk_vars<'a>(mut stack: Vec<VarWalk<'a>>, out: &mut Vars) {
         let open = t.payload_shapes().filter(|s| !s.bits.is_empty());
         stack.extend(open.map(VarWalk::Shape));
         let held = t.fns.iter().filter(|s| !s.holds_no_var());
-        stack.extend(held.map(|s| VarWalk::Held(s)));
+        stack.extend(held.map(VarWalk::Held));
         stack[from..].reverse();
     }
 }
@@ -13835,40 +13852,61 @@ pub struct Vars {
 pub struct RunMark {
     /// How many variables the walk had found when it met the step.
     pub at: usize,
-    /// The address of the signature that holds the forward, as a key only: never read through.
-    /// The walk that found it borrows that signature, and a signature whose order is kept
-    /// holds the ones its marks name, so the address names no other while either lives.
-    // Proof, step by step (checked again for DOC-proofs-in-comments-audit, as dryC1 asked in
-    // c4937d86c). The claim: while a signature S whose marks are kept (`facts.4`) lives, each
-    // mark's `sig` is the address of S or of a signature S holds through an `Arc`.
-    // 1. `sig_walk(s, ..)` is the only maker of a mark; it writes the address of the `s` it
-    //    walks. `walk_vars` enters only signatures in `t.fns` of a type it walks, which are
-    //    `Arc<Sig>` in S's arrows and needs: their addresses are heap addresses, fixed while S
-    //    holds the `Arc`s. A held signature's kept marks are copied as they are; they name it or
-    //    signatures it holds, by this same claim for it.
-    // 2. `facts.4` is filled only by `Sig::vars_order_and_marks`, with the root walked at its
-    //    address at that moment. A clone gets empty facts (`impl Clone for Facts`), and
-    //    `Sig::unwrap_to_change` empties them, so only a move can carry them to a new address.
-    // 3. The production callers (`sig_vars` and `vars_marks` in zedc-check) ask it of a
-    //    signature in an `Arc`, which never moves, except `generalize` in walk.rs, which asks
-    //    it of the bare signature it is building and then empties `facts` on every path to
-    //    `Arc::new` (in its `else` branch and in `r10_name_compact_sig_in_generalize`).
-    // 4. The one reader, `finished_with`, keys runs by these addresses while it holds `s` and a
-    //    copy of `b` (`_held_for_runs`), so every signature named is alive while the keys are
-    //    read, and no new one can take its address.
-    // Not proved: step 3 is a fact about the callers today, not enforced: a new caller that
-    // reads the marks of a bare signature and then moves it would leave the root's own marks
-    // naming the old address, and `RunRenames::get` would then miss its forwards (control in
-    // zedc-check `run_marks_name_a_new_signature_at_the_address_of_one_dropped`).
+    /// Which signature holds the forward: [`RunMark::ROOT`] for the signature whose marks these
+    /// are ([`Sig::vars_marks`]), else the address of the `Arc` of a signature it holds, as a
+    /// key only, never read through. Read through [`RunMark::holder`], which takes the root
+    /// as an `Arc`, so a root's own marks name it wherever it has moved.
+    // Proof, step by step (TYPES-run-marks-move-safe; the claim proofdoc1 left Not proved).
+    // The claim: for a signature S and any mark m in `S.vars_marks()`, and an `Arc` A that
+    // holds S when `m.holder(&A)` is read, `m.holder(&A)` is the address of A's signature
+    // (S itself, at the address it has now) or of an `Arc<Sig>` S holds in its arrows or needs.
+    // 1. `sig_walk(s, key, ..)` is the only maker of a mark, and writes `key`. It is called
+    //    with `ROOT` for the root (`vars_order_and_marks`, `vars_marks_keyed_by_address` aside,
+    //    which is test-only) and with `Arc::as_ptr(h)` for a held `h` (`walk_vars`), never with
+    //    the address of a bare signature: `VarWalk::Held` carries the `&Arc<Sig>` from `t.fns`.
+    // 2. `walk_vars` copies a held `h`'s kept marks with each `ROOT` (h's own forwards, by 1
+    //    for h) replaced by `Arc::as_ptr(h)` (the `root` argument of its `mark`), so `ROOT`
+    //    leaves a walk only in the marks of the signature that walk is the root of.
+    // 3. Every address other than `ROOT` is that of an `Arc<Sig>` met in a type of S (by 1, 2,
+    //    and the same claim for each held `h`, whose own non-root marks name `Arc`s h holds).
+    //    The value behind an `Arc` never moves, and S holds that `Arc` while S's facts are
+    //    the ones read: a clone gets empty facts (`impl Clone for Facts`), and
+    //    `Sig::unwrap_to_change` empties them. (A caller that writes S's public fields keeps
+    //    stale facts of every kind, not only these; `generalize`, the one that does, empties
+    //    `facts` before `Arc::new`.)
+    // 4. `ROOT` is 0, and no `Arc` pointer is null, so `ROOT` is no held signature's key.
+    // So a move of S, as `Arc::new` of a bare S, or `Arc::try_unwrap` then `Arc::new`, carries
+    // only `ROOT` for S's own forwards and resolves to S's new address; the hazard of a root
+    // mark naming the old address cannot arise. The one reader, `finished_with` in
+    // zedc-check, reads the keys while it holds `s` and a copy of `b` (`_held_for_runs`), so
+    // no signature named is freed and no new one can take its address while the keys are read.
+    // Test: zedc-check `run_marks_name_a_new_signature_at_the_address_of_one_dropped`, whose
+    // negative control reads the marks keyed by the root's address and sees the old address.
     // A `Vars` reused over several walks keeps `marked` by address; the only `Vars` whose
     // marks are read (`finished_with`) is made for one walk, so no stale key there.
-    pub sig: usize,
+    sig: usize,
     /// The place of the forward among that signature's needs.
     pub need: usize,
     /// The place of the step among the forward's steps.
     pub step: usize,
     /// The names, as runs.
     pub runs: Vec<NameRun>,
+}
+
+impl RunMark {
+    /// The key of a mark of the root's own forwards: 0, which no `Arc` pointer is (proof at
+    /// the field `sig`, step 4).
+    const ROOT: usize = 0;
+
+    /// The address of the signature that holds the forward, where `root` holds the signature
+    /// whose marks these are: `Arc::as_ptr(root)` for its own forwards, else the address of
+    /// the `Arc` of the function it holds (proof at the field `sig`).
+    pub fn holder(&self, root: &Arc<Sig>) -> usize {
+        match self.sig {
+            RunMark::ROOT => Arc::as_ptr(root) as usize,
+            at => at,
+        }
+    }
 }
 
 impl Vars {
@@ -20826,6 +20864,9 @@ impl Sig {
     /// mark, where the flat signature's order lists the spelling once (landing round 6,
     /// Claude Q2.3). The one reader is `finished_with` in zedc-check; 15 programs built to make
     /// that clash gave D = E on every field of the check (measured, not proved).
+    ///
+    /// A mark names the signature that holds its forward through [`RunMark::holder`], given
+    /// the `Arc` that holds this one, so the marks stay right after this signature moves.
     pub fn vars_marks(&self) -> &[RunMark] {
         &self.vars_order_and_marks().1
     }
@@ -20834,10 +20875,23 @@ impl Sig {
         self.facts.4.get_or_init(|| {
             let mut out = Vars::default();
             let mut stack = Vec::new();
-            sig_walk(self, &mut stack);
+            sig_walk(self, RunMark::ROOT, &mut stack);
             walk_vars(stack, &mut out);
             (out.order.into(), out.marks.into())
         })
+    }
+
+    /// The marks of [`Sig::vars_marks`] as they were made before TYPES-run-marks-move-safe:
+    /// its own forwards named by the address `self` has at the call, which a later move
+    /// leaves behind. Not kept. For the negative control of zedc-check
+    /// `run_marks_name_a_new_signature_at_the_address_of_one_dropped` only.
+    #[doc(hidden)]
+    pub fn vars_marks_keyed_by_address(&self) -> Vec<RunMark> {
+        let mut out = Vars::default();
+        let mut stack = Vec::new();
+        sig_walk(self, self as *const Sig as usize, &mut stack);
+        walk_vars(stack, &mut out);
+        out.marks
     }
 
     /// Whether it holds no variable at any depth, functions it holds included: whether

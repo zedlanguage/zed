@@ -3539,19 +3539,26 @@ fn landing7_held_read_keeps_its_place_in_vars_order() {
 }
 
 /// DOC-proofs-in-comments-audit (dryC1, c4937d86c, asked that [`RunMark`]'s claim be proved
-/// again; the proof is at `RunMark` in zedc-types): the marks of a signature held in an `Arc`
-/// name it by the `Arc`'s address, and a signature made at that address after the first is
-/// dropped reads marks of its own, since marks are kept on the signature (`Facts`), not in a
-/// table keyed by address. The control shows the one way the claim fails: a signature whose
-/// marks were read and that then moves keeps its old address in them, which is why
-/// `generalize` drops the facts before `Arc::new`.
+/// again) and TYPES-run-marks-move-safe (the proof is at `RunMark` in zedc-types): the marks of
+/// a signature held in an `Arc` name it by the `Arc`'s address, and a signature made at that
+/// address after the first is dropped reads marks of its own, since marks are kept on the
+/// signature (`Facts`), not in a table keyed by address. A signature whose marks were read and
+/// that then moves (into an `Arc` from the stack, or out of one by `Arc::try_unwrap` and into
+/// another) names its new address, since its own forwards' marks carry no address. The
+/// negative control reads the marks keyed by the root's address, as before the fix
+/// (`Sig::vars_marks_keyed_by_address`), and finds the old address after the same move.
 #[test]
 fn run_marks_name_a_new_signature_at_the_address_of_one_dropped() {
     use std::sync::Arc;
+    use zedc_types::ty::RunMark;
     let (d, _) = run_with_cfg(&chain_src(4, "f", false), R10Config::default());
     let (_, held, _) = sig_with_hidden(&d);
     let held: &Sig = &held;
-    let own_marks = |s: &Sig, at: usize| s.vars_marks().iter().filter(|m| m.sig == at).count();
+    let own_marks = |s: &Arc<Sig>, at: usize| {
+        (s.vars_marks().iter())
+            .filter(|m| m.holder(s) == at)
+            .count()
+    };
 
     let first = Arc::new(Sig::clone(held));
     let at = Arc::as_ptr(&first) as usize;
@@ -3578,16 +3585,60 @@ fn run_marks_name_a_new_signature_at_the_address_of_one_dropped() {
         "the new signature's marks name it"
     );
 
+    // A move from the stack into an `Arc`, the marks read before it.
     let bare = Sig::clone(held);
     let before = &bare as *const Sig as usize;
-    assert_eq!(own_marks(&bare, before), count);
+    assert_eq!(bare.vars_marks().len(), held.vars_marks().len());
+    let by_address = bare.vars_marks_keyed_by_address();
     let moved = Arc::new(bare);
     let after = Arc::as_ptr(&moved) as usize;
     assert_ne!(after, before);
     assert_eq!(
         (own_marks(&moved, before), own_marks(&moved, after)),
+        (0, count),
+        "a signature moved after its marks are read names its new address"
+    );
+    let old =
+        |marks: &[RunMark], at: usize| (marks.iter()).filter(|m| m.holder(&moved) == at).count();
+    assert_eq!(
+        (old(&by_address, before), old(&by_address, after)),
         (count, 0),
-        "control: a signature moved after its marks are read names its old address"
+        "negative control: marks keyed by the root's address name the old address"
+    );
+
+    // A move out of one `Arc` and into another, its facts kept (`Arc::try_unwrap` does not
+    // empty them, as `Sig::unwrap_to_change` does).
+    let from = Arc::new(Sig::clone(held));
+    let before = Arc::as_ptr(&from) as usize;
+    assert_eq!(own_marks(&from, before), count);
+    let by_address = from.vars_marks_keyed_by_address();
+    let bare = Arc::try_unwrap(from).expect("the one reference");
+    // The freed block is taken by another signature, kept, so that `bare` moves elsewhere.
+    let mut kept = Vec::new();
+    while kept
+        .last()
+        .is_none_or(|s: &Arc<Sig>| Arc::as_ptr(s) as usize != before)
+    {
+        kept.push(Arc::new(Sig::clone(held)));
+        assert!(
+            kept.len() < 100_000,
+            "no new signature took the freed block"
+        );
+    }
+    let moved = Arc::new(bare);
+    let after = Arc::as_ptr(&moved) as usize;
+    assert_ne!(after, before);
+    assert_eq!(
+        (own_marks(&moved, before), own_marks(&moved, after)),
+        (0, count),
+        "a signature moved between `Arc`s names its new address"
+    );
+    let old =
+        |marks: &[RunMark], at: usize| (marks.iter()).filter(|m| m.holder(&moved) == at).count();
+    assert_eq!(
+        (old(&by_address, before), old(&by_address, after)),
+        (count, 0),
+        "negative control: marks keyed by the root's address name the old address"
     );
 }
 
