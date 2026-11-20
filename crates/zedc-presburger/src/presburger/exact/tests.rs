@@ -1838,6 +1838,15 @@ fn every_writing_at_seed_17216371871131204067() {
     writings_agree_at(17216371871131204067);
 }
 
+/// [`every_writing_of_a_formula_gets_one_answer`] at seed 11367085356800913199, seen failing by
+/// kernel22: round 19 refused one of 330 writings at the limit of 150000 where the others answered
+/// with `Repeats`. It fails at 7fb0c6594 as well, before kernel22's zed-kernel changes, so they
+/// are not its cause (FAIL-exact-writings-17553006884555075817).
+#[test]
+fn every_writing_at_seed_11367085356800913199() {
+    writings_agree_at(11367085356800913199);
+}
+
 /// Round 4 of seed 17553006884555075817 of [`every_writing_of_a_formula_gets_one_answer`],
 /// written out, so it holds whatever the generator draws. As written and with every equation in
 /// the other sign, alone and with the rows times 3, it gets one answer and one refusal at the
