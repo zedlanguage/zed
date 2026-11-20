@@ -2038,6 +2038,18 @@ impl Resolver<'_> {
                 // naming the prelude's `map` or `where` is resolved as its call is, its receiver
                 // a stream again; a link naming a binding of the program is an ordinary call,
                 // whose receiver `a ..` is then refused, since that function may walk it.
+                // Why it is refused: the link falls to `self.expr`, whose `Call` arm pushes the
+                // callee as `Task::Expr` (its name is not `any`, `all` or `find`), whose
+                // `Member` arm pushes the receiver as `Task::Expr` (the name is not `first`,
+                // `count` or `last`), and a `Task::Expr` of `a ..`
+                // reaches the `Range` arm of `expr`, which reports `later` (through any number
+                // of links before it, each a `Call` and a `Member` again). Elaboration
+                // (zedc-elab walk.rs `stream_read`) reads the stream by the same `open_stream`
+                // and elaborates it as written when a link resolved to `Ref::Bound`, so the two
+                // agree; a program with such a link is refused here first. Test: l03_02_map_run
+                // types `a_function_of_the_program_named_like_a_read_is_not_given_a_range_with_no_upper_end`,
+                // cases `own_map` and `own_where` (and `own_first`, `own_any` for the guards
+                // on the read); it tries one link each, not a chain with a bound link inside.
                 Task::OpenStream(e) => match stream_link(e) {
                     Some(l) if open_stream(e).is_some() && !self.binds(l.name) => {
                         todo.push(Task::Expr(l.f));

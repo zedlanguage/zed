@@ -82,7 +82,15 @@ fn cells(l: &str) -> Option<Vec<&str>> {
 }
 
 /// The rows of the table in `text`, read as the module comment states; refused with one line per
-/// bad line of the table. One pass over the bytes of the section: O(length).
+/// bad line of the table. O(m) for `m` the length of `text` up to the end of the section.
+// Proof of the bound: `lines` and the search for the heading read each byte before the section
+// once (the search starts at the top of `text`), and nothing after the section's end is read
+// but its first line, which `take_while` refuses. Each line of
+// the section then costs O(its length): the compare with `HEADER` or `DELIMITER`, `cells`
+// (two strips and `table::split_cells`, one pass), the `\|` search over its cells, the digit
+// check and the split of the needs each read the line's bytes a fixed number of times, and a
+// message for a bad line copies at most the line and a fixed text. So the sum is O(length),
+// in a fixed number of passes, not one. Not timed by a test.
 pub(crate) fn rows(text: &str) -> Result<Vec<Row<'_>>, String> {
     let mut lines = text.lines().enumerate();
     lines

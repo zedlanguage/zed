@@ -1494,6 +1494,17 @@ impl PartialEq for IntervalSet {
         let (Some(x), Some(y)) = (&self.root, &other.root) else {
             return self.is_empty() && other.is_empty();
         };
+        // Why a different count or hash proves the sets differ: a set has one list of pieces
+        // (every builder keeps them sorted, apart, and with an integer missing between
+        // neighbors, the invariant at [`node`]), and `count` and `hash` depend on that list
+        // only, not on the tree's shape. For `hash`, by induction on the tree: `node` gives
+        // `H(left) * R^(1 + |right|) + h(piece) * R^|right| + H(right)` modulo `P`, and with
+        // `pow = R^count` for each child that is `Σ h_i * R^(count - 1 - i)` over the pieces
+        // in order, the field comment's formula. Equal hashes prove nothing (a collision
+        // modulo `P`), so the walk below decides them exactly; `R` and `piece_hash` affect
+        // only how often the walk runs, never the answer. Test: `tests::check_tree`, called by
+        // `tests::agrees` on every set the tests build, asserts `(n.hash, n.pow)` against the
+        // formula at each node; it cannot catch a tree shape that no test builds.
         if x.count != y.count || x.hash != y.hash {
             return false;
         }

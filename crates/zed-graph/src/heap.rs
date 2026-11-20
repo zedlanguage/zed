@@ -143,6 +143,13 @@ pub fn reduced<D: Ord>(r: D, zero: &D) -> Result<D, NegativeReducedWeight> {
 ///    refuses any value not below the label `d`, so `v` is never queued again. The entries of
 ///    `v` queued before were pushed at labels strictly above `d` (each push lowers the label
 ///    strictly), so they come up stale.
+///    This needs the starts to be distinct: two equal entries `(d, v)` given to
+///    [`Dijkstra::starting`] would both come up at the label. Every caller passes distinct
+///    starts (zedc-solvers negsssp.rs `0..n`, zedc-preimage product.rs one start, the tests
+///    `[0, 1]`); the others begin with [`Dijkstra::new`] and queue only by
+///    [`Dijkstra::lower`], which queues no repeat. With a repeat the count below still holds,
+///    since every lowering made while reading `v`'s edges again is refused, the labels being
+///    at or below it already.
 /// 2. So the caller reads the edges of each node once, and makes at most one lowering per edge
 ///    read: at most `e` lowerings, each pushing one entry, plus the `s` starts.
 /// 3. Each entry is taken at most once, so at most `s + e` are taken, and the heap never holds

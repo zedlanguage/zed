@@ -522,6 +522,17 @@ impl Package {
     pub fn pinned(&self, path: &str) -> Option<String> {
         let &u = self.index.get(path)?;
         let (_, edits) = self.writes.units.iter().find(|(v, _)| *v == u)?;
+        // Why a unit that gains a pin has text (here and in `write_pins`): `writes.units` gains
+        // an entry only in `pin_units`, for the unit `u` it is at, after `pin_units` has taken
+        // `Some(Ok(text))` from `pkg.units[u].text` (under its own `unreachable!`, "a parsed unit
+        // has text", whose argument is at the end of `load`'s reading loop). `pin_units` runs
+        // once, from `load`, after that loop, and the loop's `pkg.units[i].text = text` is the
+        // only write of a unit's `text` after `add` makes it; nothing in the workspace builds a
+        // `Package` or writes `units` or `writes` but `load` (checked with
+        // `grep -rn 'writes.units\|\.text = \|Package {' crates/`, 2026-11-20). So every unit in
+        // `writes.units` still has the text it was pinned in. Tested by every build that writes a
+        // pin (`tests/steps/l02_08_import_pinning`); a test cannot reach the `unreachable!`, so
+        // none checks it fires.
         let Some(Ok(text)) = &self.units[u].text else {
             unreachable!("a unit that gains a pin has text")
         };
@@ -537,6 +548,7 @@ impl Package {
         let mut failed = Vec::new();
         for (u, edits) in &self.writes.units {
             let unit = &self.units[*u];
+            // A unit that gains a pin has text: the argument is at `Package::pinned`.
             let Some(Ok(text)) = &unit.text else {
                 unreachable!("a unit that gains a pin has text")
             };

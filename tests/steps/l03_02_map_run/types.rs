@@ -268,13 +268,21 @@ fn reads_of_a_range_with_no_upper_end_that_never_end_are_refused() {
 fn a_function_of_the_program_named_like_a_read_is_not_given_a_range_with_no_upper_end() {
     // `.first` and `.any` defined by the program may walk the whole range, so `a ..` passed
     // to them is refused, as it is passed to any function.
+    // A link of the stream named by the program's own `map` or `where` is an ordinary call
+    // too (zedc-resolve resolve.rs `Task::OpenStream`), though the read is the prelude's.
     for (name, body) in [
         ("own_first", "${(0 ..).first}"),
         ("own_any", "${(0 ..).any(x -> x > 3)}"),
+        ("own_map", "${(0 ..).map(x -> x * 2).first}"),
+        ("own_where", "${(0 ..).where(x -> x > 3).any(x -> x > 5)}"),
     ] {
         let src = super::program(name, body);
         let text = std::fs::read_to_string(&src).unwrap();
-        let own = "first(positional xs) = 0;\nany(positional xs, positional p) = true;\n";
+        let own = match name {
+            "own_map" => "map(positional xs, positional f) = xs;\n",
+            "own_where" => "where(positional xs, positional p) = xs;\n",
+            _ => "first(positional xs) = 0;\nany(positional xs, positional p) = true;\n",
+        };
         std::fs::write(&src, format!("{own}{text}")).unwrap();
         let ran = zed_tests::step_helpers::l01_36a_executables::interpreter(&src, &[], &[]);
         assert_ne!(ran.status, 0, "{name}: {}", ran.stdout);

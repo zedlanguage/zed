@@ -115,6 +115,19 @@ impl std::fmt::Write for Line {
 /// signal handler may not allocate; and a limit message
 /// gives the exact count, which the other two leave out. It rounds down, like the checker's,
 /// so a size is never shown above what it is.
+// Proof of the two claims. (1) No allocation: `write!` on a `Line` formats `u64` and `&str`
+// through `core::fmt`, which writes the digits into a stack buffer and hands them to
+// `Line::write_str`, which copies them into the fixed array and drops what passes its end.
+// (2) Rounded down, never above the size: with `s = 10(k+1)`, `n = whole * 2^s + part` and
+// `0 <= part < 2^s`, so `n / 2^s = whole + part / 2^s`; `tenths = floor(10 * part / 2^s)` is at
+// most 9 (as `part < 2^s`) and `whole + tenths / 10 <= n / 2^s`. The product cannot overflow:
+// `10 * part < 10 * 2^60 = 2^63 + 2^61 < 2^64`, and `u128` gives room beyond that. The unit
+// is the largest `k` with `n >> s > 0`, so `whole >= 1`. A part below a tenth of the unit
+// writes no decimal (1025 B is `(1 KiB)`), so "one decimal" above means one where the tenths
+// are not 0. Tests
+// `tests::a_size_is_written_with_its_binary_unit` and
+// `tests::a_size_at_a_unit_boundary_is_written_rounded_down` (0, 1023, 1024, 2047,
+// 2^20 - 1, 2^20, 2^60, u64::MAX); they check text, not that nothing is allocated.
 pub(crate) fn write_bytes(out: &mut Line, n: u64) {
     const UNITS: [&str; 6] = ["KiB", "MiB", "GiB", "TiB", "PiB", "EiB"];
     let _ = write!(out, "{n} B");
@@ -345,6 +358,13 @@ fn in_use() -> u64 {
 /// system refuses an allocation it cannot report otherwise, after writing `memory allocation
 /// of n bytes failed`, so under the limit an abort is that refusal (the runtime's own code
 /// unwinds a panic and never aborts).
+// Not proved: that no other abort happens under the limit. Confirmed only that the workspace
+// sets no `panic = "abort"` (Cargo.toml) and that zed-rt and zed-native call no `abort()`.
+// Open sub-cases: a panic while a panic unwinds, and a panic that reaches the end of an
+// `extern "C"` function (a hook the compiled code calls, or a handler), both abort the process
+// (Rust reference, "Panic": unwinding out of an `extern "C"` function aborts), and this
+// handler would then name the memory limit for what is an internal fault. Row
+// PROOF-rt-abort-is-allocation.
 extern "C" fn on_abort(_: c_int, _: *mut libc::siginfo_t, _: *mut libc::c_void) {
     let mut line = Line::new();
     let _ = line.write_str(

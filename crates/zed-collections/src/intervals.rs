@@ -258,7 +258,14 @@ pub fn intersect<I: Interval>(a: &[I], b: &[I]) -> Vec<I> {
 /// the intervals of `a` are pairwise disjoint, and those of `b` too, k <= n: give each pair to
 /// its interval that ends first (either, at a tie); that interval's upper end lies in the
 /// other, and the other list's intervals are disjoint, so each interval is given at most one
-/// pair. Tested by `meeting_pairs_are_every_pair_that_meets_once`.
+/// pair. (An upper end `None` is no point, but the step still holds: of two disjoint
+/// intervals at most one has no upper end, so an interval with none ends first only against
+/// the one interval of the other list that has none either.) Tested by
+/// `meeting_pairs_are_every_pair_that_meets_once`: the pairs against every pair met on 2,000
+/// random lists of up to 7 intervals, and the bound k <= n on one pair of disjoint lists. It
+/// checks which pairs are given, not the time; the time is measured through the one caller,
+/// zedc-presburger exact.rs `two_distributed`, by
+/// `two_disjunctions_disjoint_on_shared_atom_scale_near_linear`.
 pub fn meeting_pairs<I: Interval>(a: &[I], b: &[I]) -> Vec<(usize, usize)> {
     let at = |&(side, i): &(usize, usize)| if side == 0 { &a[i] } else { &b[i] };
     let mut order: Vec<(usize, usize)> = ((a.iter().enumerate()).map(|(i, r)| (0, i, r)))
@@ -299,7 +306,8 @@ pub fn meeting_pairs<I: Interval>(a: &[I], b: &[I]) -> Vec<(usize, usize)> {
 /// Complexity tradeoff: naive version, the length of [`meeting_pairs`]' list, O(n log n + k)
 /// time and O(n + k) space for k pairs, k up to |a|·|b|. Used: two sorts and two binary
 /// searches for each interval of `a`, O(n log n) time and O(n) space whatever k is. Tested by
-/// `meeting_pairs_are_every_pair_that_meets_once`, against the list.
+/// `meeting_pairs_are_every_pair_that_meets_once`, against the list, on its 2,000 random lists;
+/// it does not measure the time.
 pub fn meeting_count<I: Interval>(a: &[I], b: &[I]) -> u64 {
     let mut by_hi: Vec<&I> = b.iter().filter(|y| !y.is_empty()).collect();
     let mut by_lo = by_hi.clone();

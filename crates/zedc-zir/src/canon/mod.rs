@@ -231,7 +231,12 @@ fn sorted_facets(facets: &[Facet]) -> Vec<Facet> {
     // exactly when `==` says the values are the same (zed-kernel's `impl PartialEq for Value`
     // says so; the test `value_cmp_is_a_total_order_that_agrees_with_equality` checks it,
     // with totality, on every pair and triple of values of every kind, with two broken orders
-    // as negative controls; PROOF-value-cmp-total). Cost, not soundness: a number kept with
+    // as negative controls; PROOF-value-cmp-total). Not proved: that `Value::cmp` is a total
+    // order and Equal exactly when `==` holds for every pair of values. The test reads only
+    // the values of `sample_values`, and zed-kernel value.rs `impl Ord for Value` and
+    // `impl PartialEq for Value` state the agreement without a proof; a pair of kinds or
+    // shapes outside the sample (a family against a family with shared nodes, say) is
+    // unchecked. Cost, not soundness: a number kept with
     // prime powers is written in its kept form (sec:kernel, tags 13 and 14), so of two Equal
     // facet values, `2^64` kept as a power and `2^64` in digits, the one kept is the one
     // written first and the address depends on which; two equal definitions can then have two
