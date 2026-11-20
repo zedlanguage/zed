@@ -82,8 +82,9 @@ fn the_verdicts_of_every_member_of_a_chain_group_scale() {
 /// to 8.7 s, nearly all of it `kernel` at 8n (4.2 to 7.7 s), and the check four runs, the
 /// warm-up at n, n, and 8n twice (0.77, 0.27, 7.6 and 1.4 s): the cold first run at 8n fills
 /// judgments its input keeps, so it is over the limit against the second run at n and is run
-/// again (`Meter::again_when_over`). Every part is near linear in n, so the size sets the
-/// time.
+/// again (`Meter::again_when_over`, removed by author A160 on 2026-11-20: each size now runs
+/// once, so the check is the two first runs). Every part is near linear in n, so the size sets
+/// the time.
 #[test]
 fn the_verdicts_of_every_member_of_one_x14_group_scale() {
     let one = |n: usize| -> Vec<Type> {

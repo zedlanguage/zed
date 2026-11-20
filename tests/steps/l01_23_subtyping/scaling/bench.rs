@@ -236,6 +236,9 @@ fn comparing_exclusive_ors(what: &str, n: usize, k: usize, other: Other, equal: 
 /// runs): 8.43 times from 64 (measured at the old size), 9.67 from 256 and 10.67 from 1024 (1,987M
 /// to 21,207M instructions), over the limit 10.5. The ratio grows with c, so the false
 /// comparison is above linear in c, against the about-linear time the comment below states.
+/// Since author A160 (2026-11-20) each size runs once, and this check fails at 64: 127.9M and
+/// 1,354.0M instructions, 10.58 times, in three runs alone at load 36 to 42 (the old meter, a
+/// warm run at n against the first at 8n, read 10.14). Row PERF-xor-tuple-compare fixes it.
 #[test]
 fn comparing_exclusive_ors_of_tuple_types_scales() {
     // `odd_tuples(c)` and `odd_tuples(c + 1)` differ by the one value `(b + c, b + c)`, so they

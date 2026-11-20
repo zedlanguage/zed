@@ -148,7 +148,7 @@ fn lit(i: usize) -> Type {
 /// its group's judgment while it lives (`Env::members`, `Env::judged`), so on one instance kept
 /// in the inputs every run after the first did about half the work of the first (parity
 /// verdicts at 8n: 28.4 G instructions on the first run, 13.3 G after), and the check, which
-/// compares the first run at 8n with the second at n, found the ratio over and ran 8n again on
+/// then compared the first run at 8n with the second at n, found the ratio over and ran 8n again on
 /// every check: about 18 times the time at n where 10 passes (FAIL-setop-parity-bench-time).
 /// A fresh instance on each run's thread (instances are kept per thread) does the whole work
 /// each time, so the runs compared are alike and the first runs are those the check holds.

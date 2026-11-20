@@ -72,9 +72,11 @@
 # cores raises the limit of the pieces that start under it in proportion. It was 60 s until
 # TEST-bench-split (author P169), which puts the measurements at two sizes in benchmarks, run
 # apart with --bench, and asks each correctness test to take well under 1 s alone. A benchmark
-# piece's limit is the larger of that and 10.5 × t1, t1 the time of its first run at its 1x size,
-# which zed_tests::scaling measures before any larger size and writes for tools/bench_limit.sh
-# (author P214).
+# piece has a limit for each phase, counted from the phase's own start (author A160,
+# 2026-11-20): that limit for each run at n and what comes before it, and the larger of that and
+# 10.5 × t1 for each run at 8n, t1 the time of the run at n before it (author P214), which
+# zed_tests::scaling writes for tools/bench_limit.sh. Until A160 one limit, max(that, 10.5 × the
+# first t1), held the whole piece.
 # --cov <dir> is a coverage run (TEST-cov-run-settings): the build goes to build/cov, apart from
 # build/cargo, with `-C instrument-coverage` added to RUSTFLAGS, and each piece runs as in any
 # other run, with the settings it gives every run (GLIBC_TUNABLES above all, which a test binary
@@ -1163,8 +1165,11 @@ piece() {
   wait=$(((start / 1000 - asked) / 1000))
   # %p: a test may run other programs of the build, each writing a profile of its own.
   [ -z "$cov" ] || export LLVM_PROFILE_FILE=$cov/$name-%p.profraw
-  # A benchmark's limit is max(this limit, 10.5 × t1), t1 the time of its first run at 1x
-  # (author P214): tools/bench_limit.sh reads the raise from the file zed_tests::scaling writes.
+  # A benchmark's run at 8n has max(this limit, 10.5 × t1) from its own start, t1 the time of
+  # its run at n (author P214, A160), and the rest of it this limit, phase by phase:
+  # tools/bench_limit.sh reads the phases from the file zed_tests::scaling writes, and leaves
+  # the largest limit of any phase there, printed as the piece's limit. A piece of several
+  # phases may so take longer in all than the limit it prints.
   if [ "$run_kind" = test ]; then
     bound=(timeout -k 5 "$limit")
   else

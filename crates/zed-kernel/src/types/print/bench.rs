@@ -50,7 +50,8 @@ fn a_union_of_many_numeric_literals_prints_ascending_in_m_log_m() {
 
 /// Small instances: `a_cycle_of_parts_written_by_name_is_defined`. Each ring is printed once
 /// when built, so every run measured is a print after the first, at both sizes: `scaling`
-/// compares the run at `n`, after its warm-up, with the first run at `8n`, and a first print
+/// compared the run at `n`, after its warm-up, with the first run at `8n` (until author A160,
+/// 2026-11-20, since when each size runs once), and a first print
 /// of a ring costs 1.5 times a later one (304 and 192 million instructions at 2,000 parts),
 /// so that comparison measured 9.96 times. Until item PERF-print-by-name-after-plain the
 /// instances that part cycles kept alive (`rec::unfold::Env::forget`) made the first print at

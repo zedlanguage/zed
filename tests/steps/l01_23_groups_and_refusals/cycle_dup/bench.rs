@@ -15,8 +15,9 @@ use super::*;
 /// s): the first run of a size fills each member's judgment, which its input keeps and
 /// `Type::forget_emptiness` does not clear, so the cold first run at 8n is over the limit
 /// against the second run at n, whose judgments the warm-up filled, and is run again
-/// (`Meter::again_when_over`); the first runs are held apart, warm-up against first 8n. Every part is linear in n,
-/// so the size sets the time.
+/// (`Meter::again_when_over`); the first runs were held apart, warm-up against first 8n.
+/// Since author A160 (2026-11-20) each size runs once, so the check is the two first runs.
+/// Every part is linear in n, so the size sets the time.
 #[test]
 fn a_group_of_closures_is_witnessed_in_its_written_size() {
     let n = 32768;

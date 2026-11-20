@@ -16,9 +16,10 @@ use super::*;
 /// One input shared by every run of a size let the first run do work that the later runs found
 /// done: on the second family at 2048 and 16384 types, the warm-up took 321.0M instructions and
 /// 69.1 MB and the measured run at 2048 247.4M and 54.4 MB, while the one run at 16384 was a first
-/// run, 2618.2M and 552.8 MB. The meter compares the second run at n with the first at 8n, so the
-/// ratio came out 10.58, over the limit of 10.5, and only the second run at 8n that the meter takes
-/// when the first is over (`Meter::again_when_over`) brought it to 8.20. At 4f94e70b9 the same
+/// run, 2618.2M and 552.8 MB. The meter then compared the second run at n with the first at 8n,
+/// so the ratio came out 10.58, over the limit of 10.5, and only the second run at 8n that the
+/// meter took when the first was over (`Meter::again_when_over`, removed by author A160 on
+/// 2026-11-20, since when each size runs once) brought it to 8.20. At 4f94e70b9 the same
 /// comparison came to 10.497 or 10.498 from one run to the next, so the check passed at 10.50 in
 /// some runs and in others went over and was measured again at 8.2: the 3.21G and 2.51G
 /// instructions of FAIL-ratio-ring-shared-node. Copies built on the main thread one after another

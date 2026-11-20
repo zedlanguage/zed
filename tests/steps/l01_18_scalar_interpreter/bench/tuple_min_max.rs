@@ -2,8 +2,9 @@
 //! checker's join. The inputs are built in `tuple_min_max.rs`, whose test
 //! `the_benchmark_inputs_give_their_results_at_a_small_size` checks each at a small size.
 //!
-//! Sizes: each check runs about 19 times its 1x case (a warm-up and two runs at n, two at 8n),
-//! and building the inputs at n and 8n costs about as much again for the checker's units, which
+//! Sizes: each check runs about 9 times its 1x case (one run at n, one at 8n, author A160 of
+//! 2026-11-20; about 19 times, a warm-up and two runs at n and two at 8n, when these sizes were
+//! set), and building the inputs at n and 8n costs about as much again for the checker's units, which
 //! are checked once when built. A test must end within about 15 s, so the checker's benchmarks
 //! run 1x in about 0.25 to 0.35 s, below the 0.6 s other benchmarks take. Times are of
 //! 2026-11-14 at a load of about 22 on 32 cores.

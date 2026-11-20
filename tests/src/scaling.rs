@@ -94,13 +94,13 @@
 //! the first's results: the union of 16 and 128 morphism differences
 //! (`l01_23_subtyping::scaling`) took 7.0 times the work from the second run and 48.0 times from
 //! a fresh start (F44). A new thread does not empty the memos a run's input holds, such as a
-//! `Db`'s results or a type's printed text, or a table the process keeps for all threads, so the
-//! first run of each size, which fills them, is held to the limit too: the warm-up at `n`
-//! against the first run at `8n` (SCALE-first-run).
+//! `Db`'s results or a type's printed text, or a table the process keeps for all threads. On a
+//! count of instructions each size runs once (author A160, 2026-11-20), so the run measured at
+//! each size is its first and fills them alike; from SCALE-first-run to A160 a warm-up at `n` was
+//! held against the first run at `8n` for this reason.
 
 use std::cell::Cell;
 use std::hint::black_box;
-use std::sync::atomic::AtomicU64;
 use std::time::{Duration, Instant};
 
 #[cfg(target_os = "linux")]
@@ -223,6 +223,26 @@ fn note_if_near(what: &str, measure: &str, ratio: f64, power: u32) {
 
 /// How many measurements of processor time must all be over the limit before the test fails.
 pub const TRIES: usize = 3;
+
+/// How many runs of each size a meter of processor time or cycles takes the fastest of, in each
+/// of its [`TRIES`] measurements. Author A160 (2026-11-20) has each size run once, unless a
+/// single run's ratio was measured to spread by more than [`TIME_ALLOWANCE`] under load; it
+/// was, so processor time keeps five. Measured by BENCH-limit-counts-setup, 2026-11-20, load
+/// 30 falling to 23 on 32 cores, 120 pairs of single runs at n and 8n of each linear method of
+/// tests/src/scaling_tests.rs, against 20 pairs of the fastest of five:
+///
+/// | method | single runs: min, median, max | fastest of five: min, median, max |
+/// |---|---|---|
+/// | `work(n, 1, 10_000)`, n = 100 | 2.91, 5.58, 9.00 (3.1 times apart) | 2.74, 5.68, 6.48 |
+/// | `work(n, 1, 100_000)`, n = 100 | 4.93, 6.71, 9.47 (1.9 times) | 5.98, 6.53, 8.58 |
+/// | `linear_bytes(n)`, n = 1,000,000 | 5.83, 8.08, 11.20 (1.9 times) | 6.13, 8.17, 10.99 |
+///
+/// No ratio of either kind passed 21 ([`LIMIT`] × [`TIME_ALLOWANCE`]). The fastest of five
+/// cuts the top of the spread (9.00 to 6.48 on the shortest method), which is what keeps a
+/// linear method clear of the limit when load rises; a single run of `work(n, 2, 20)` at 100
+/// and 800, quadratic but short, measured 11.19 to 35.40, under 21 in 87 of 120 runs, so time
+/// cannot tell orders apart at that size either way.
+pub const TIME_RUNS: usize = 5;
 
 /// Runs `f` on a new thread and waits for it, so that every memo a thread keeps starts empty. The
 /// thread's stack is what is left of the caller's, less about 5 KiB of the thread's own, so a
@@ -463,9 +483,15 @@ impl Meter {
 
     /// How many runs to take the least of, and how many measurements must all be over a limit.
     ///
-    /// A count of instructions takes one run of each size and one measurement: with the warm-up
-    /// at n, a check runs n twice and 8n once, about 10 times the time at n. Until
-    /// TEST-scaling-runs it took the least of two runs of each size, 3 runs at n and 2 at 8n,
+    /// A count of instructions takes one run of each size and one measurement: a check runs n
+    /// once and 8n once, about 9 times the time at n (author A160, 2026-11-20: "Just run each
+    /// once"). From TEST-scaling-runs to A160 a warm-up at n ran before the run at n measured,
+    /// and the first run at 8n was held against the warm-up; on 2026-11-15 a second run at 8n
+    /// was added when the first was over the limit or at the note of [`PREFERRED`]
+    /// (FAIL-scaling-cold-8n-bytes, PERF-permission-reverse-first-run), since the run at 8n was
+    /// cold and the run at n measured was not: so a check ran n twice and 8n once or twice, 10
+    /// or 18 times the time at n. With each size run once both runs are cold, and neither is
+    /// needed. Until TEST-scaling-runs it took the least of two runs of each size, 3 runs at n and 2 at 8n,
     /// about 19 times the time at n, so a benchmark whose time at n was the 1 s the author asks
     /// for (P169, P175) did not fit in the 20 s a piece may take. The least of two was meant to
     /// remove the spread of single runs, but measured it barely changes the ratio: 58 checks in
@@ -477,21 +503,14 @@ impl Meter {
     /// `rejecting_many_binders_that_name_types_scales`, whose single runs differ by up to 1.4%
     /// in one process) and by at most 0.05% in bytes, both under the 1% the row allowed. Across
     /// the 5 processes the single-run ratio of each check spread by at most 0.52%, the
-    /// least-of-two ratio by up to 1.26%. The warm-up stays, held against the first run at 8n,
-    /// which is now also the measured run at 8n (see [`compare_by`]). Processor time and cycles
-    /// change with load, so they keep the fastest of five and [`TRIES`] measurements.
-    ///
-    /// The one run at 8n is cold while the run at n follows the warm-up, so a memo filled by the
-    /// first run of each size (one the process keeps, or one in the test's input) counts at 8n
-    /// only. A count of instructions therefore runs 8n a second time when the comparison of the
-    /// first is over the limit, or at the note of [`PREFERRED`] or over it, and takes the least
-    /// of the two (FAIL-scaling-cold-8n-bytes, PERF-permission-reverse-first-run; see
-    /// [`Meter::again_when_over`]).
+    /// least-of-two ratio by up to 1.26%. Processor time and cycles change with load, so they
+    /// keep the fastest of [`TIME_RUNS`] and [`TRIES`] measurements (see [`TIME_RUNS`] for why
+    /// A160's one run of each size does not hold for them).
     fn repeats(&self) -> (usize, usize) {
         if self.instructions {
             (1, 1)
         } else {
-            (5, TRIES)
+            (TIME_RUNS, TRIES)
         }
     }
 
@@ -505,37 +524,20 @@ impl Meter {
         }
     }
 
-    /// Whether a comparison whose one run at the larger size is over the limit, or at the note
-    /// of [`PREFERRED`] or over it, runs that size once more and takes the least of the two: on a count of instructions, which takes one run
-    /// of each size (see [`Meter::repeats`]). Processor time already takes the fastest of five.
-    pub(crate) fn again_when_over(&self) -> bool {
-        self.instructions
-    }
-
     /// At most how many times [`compare`] runs the smaller and the larger size, so that a test
-    /// can build a fresh input for each run before any is timed. On a count of instructions a
-    /// check that passes on its first run at the larger size leaves the last larger input unused
-    /// (see `Meter::again_when_over`).
+    /// can build a fresh input for each run before any is timed: once each on a count of
+    /// instructions (author A160, 2026-11-20), and [`TIME_RUNS`] × [`TRIES`] each on processor
+    /// time or cycles, of which a check that passes on an earlier measurement leaves the rest
+    /// unused.
     pub fn runs(&self) -> (usize, usize) {
         let (least, measurements) = self.repeats();
-        (
-            1 + least * measurements,
-            least * measurements + usize::from(self.again_when_over()),
-        )
+        (least * measurements, least * measurements)
     }
 
-    /// The least work and the least bytes of the runs of `f`.
+    /// The least work and the least bytes of the runs of `f`, as many as [`Meter::repeats`] says.
     pub(crate) fn least(&mut self, f: impl Fn()) -> Work {
-        self.least_with(None, f)
-    }
-
-    /// [`Meter::least`] of `first`, a run of `f` already measured, and as many more runs of `f`
-    /// as make up the meter's count.
-    fn least_with(&mut self, first: Option<Work>, f: impl Fn()) -> Work {
-        let more = self.repeats().0 - usize::from(first.is_some());
-        first
-            .into_iter()
-            .chain((0..more).map(|_| self.work(&f)))
+        (0..self.repeats().0)
+            .map(|_| self.work(&f))
             .reduce(|a, b| Work {
                 units: a.units.min(b.units),
                 bytes: a.bytes.min(b.bytes),
@@ -889,22 +891,21 @@ pub(crate) enum Bound<'a> {
     Given(f64, &'a str),
 }
 
-/// [`compare`] by the given meter and measures. Each run is [`alone`]. Counts of instructions
-/// need one run of each size and one measurement (see [`Meter::repeats`]), and a second run at
-/// the larger size when the first is over the limit (see [`Meter::again_when_over`]), and processor time
-/// the fastest of five and three measurements. The bytes do not change with load, so the first
-/// measurement over the limit fails.
+/// [`compare`] by the given meter and measures. Each run is [`alone`]. A count of instructions
+/// runs each size once, the smaller first, and measures once (author A160, 2026-11-20; see
+/// [`Meter::repeats`]); processor time and cycles take the fastest of [`TIME_RUNS`] runs of
+/// each size and up to [`TRIES`] measurements. The bytes do not change with load, so the first
+/// measurement over the limit fails. The runs at each size are a phase with a time limit of its
+/// own (see [`start_bench_phase`]).
 ///
-/// Before the least is taken, the first run of each size is held to the same limit: the warm-up
-/// at the smaller size against the first run at the larger. A memo that outlives a run's thread
-/// (a table the process keeps and does not key by thread, or one in the test's input, such as a
-/// `Db`'s results or a type's printed text) is filled by the first run of a size, and every later
-/// run of that size finds the work done, so the least of the runs measures memo hits. The
-/// warm-up also builds what the process keeps once for all threads, such as the grammar, which
-/// raises its count a little and so loosens this ratio a little at a small `n`. The bytes of the
-/// first runs are held on every meter, their work only on a count of instructions, since one run
-/// cannot give processor time's three measurements. The body is [`compare_by_dyn`], compiled
-/// once for the reason [`check_by`] gives.
+/// On a count of instructions both runs are the first of their size, so a memo that outlives a
+/// run's thread (a table the process keeps and does not key by thread, or one in the test's
+/// input, such as a `Db`'s results or a type's printed text) is filled at both sizes alike; a
+/// meter of processor time or cycles, whose later runs find it filled, holds the bytes of the
+/// first run of each size to the limit too, but not their work. What
+/// the process builds once for all threads, such as the grammar, counts in the run at the
+/// smaller size only, which raises its count and so loosens the ratio at a small `n`. The body
+/// is [`compare_by_dyn`], compiled once for the reason [`check_by`] gives.
 pub(crate) fn compare_by(
     meter: &mut Meter,
     measures: Measures,
@@ -942,17 +943,14 @@ fn compare_by_dyn(
         key: if meter.instructions { "instr" } else { "work" },
         last: None,
     };
-    let warm_bytes = Cell::new(0);
-    // The first run at 1x, before any at 8n, sets the benchmark's time limit (author P214).
-    // Written after the run, so its work is not counted in the run's.
-    let warm_ns = Cell::new(0);
-    let mut warm = Some(meter.work(|| {
-        let (bytes, ns) = alone(&small);
-        warm_bytes.set(bytes);
-        warm_ns.set(ns);
-    }));
-    raise_bench_limit(warm_ns.get());
-    let mut first_runs = String::new();
+    // The bytes of the first run of each size, on a meter that takes the least of several runs:
+    // a memo that outlives a run's thread (kept by the process or in the test's input) is
+    // filled by the first run of a size, and the later runs find the work done, so the least
+    // measures memo hits. They are held to the limit as the warm-up and the first run at 8n
+    // were before A160, from the runs measured, with no run added; their work is not, since
+    // one run of a count that changes with load cannot give [`TRIES`] measurements. On a count
+    // of instructions each size runs once, so the runs measured are the first.
+    let first_bytes = (Cell::new(None), Cell::new(None));
     let mut seen = Vec::new();
     for _ in 0..meter.repeats().1 {
         // The bytes compared are those `alone` counts inside its thread, not the meter's: those
@@ -963,71 +961,38 @@ fn compare_by_dyn(
         let (small_bytes, large_bytes, large_most) =
             (Cell::new(u64::MAX), Cell::new(u64::MAX), Cell::new(0));
         let (small_ns, large_ns) = (Cell::new(u64::MAX), Cell::new(u64::MAX));
+        // Each size runs once on a count of instructions, n first, and each run is a phase of
+        // the benchmark with a time limit of its own (author A160, 2026-11-20): the phase at n
+        // has the runner's limit, and the phase at 8n max(20 s, [`LIMIT`] × t1) from its own
+        // start, t1 the time the phase at n took (see [`start_bench_phase`]). Until A160 a
+        // warm-up at n ran first, and the run at n measured was the second, held against the
+        // first run at 8n, with a second run at 8n when the first was over the limit or at the
+        // note (FAIL-scaling-cold-8n-bytes, PERF-permission-reverse-first-run): about 10 t1 for
+        // a check that passed, 18 t1 for one that did not, all counted against max(20 s, 10.5
+        // t1) from the start of the piece (BENCH-limit-counts-setup). The two runs measured now
+        // are both the first of their size, so a memo the first run of each size fills (one the
+        // process keeps, or one in the test's input) counts at both sizes alike. What the
+        // process builds once for all sizes, such as the grammar or a table in a `OnceLock`,
+        // counts in the run at n only, which loosens the ratio of a check whose run at n is
+        // small beside that work; no run outside the two measured ones may remove it (A160).
+        let phase = Instant::now();
         let small = meter.least(|| {
             let (bytes, ns) = alone(&small);
             small_bytes.set(small_bytes.get().min(bytes));
             small_ns.set(small_ns.get().min(ns));
+            first_bytes.0.set(first_bytes.0.get().or(Some(bytes)));
         });
-        let run_large = || {
+        // Written after the phase at n, so its work is not counted in either run's.
+        start_bench_phase(Some(phase.elapsed()));
+        let large = meter.least(|| {
             let (bytes, ns) = alone(&large);
             large_bytes.set(large_bytes.get().min(bytes));
             large_most.set(large_most.get().max(bytes));
             large_ns.set(large_ns.get().min(ns));
-        };
-        // The first run at the larger size, before any other: its bytes are the only ones in
-        // `large_bytes` until the rest of the runs.
-        let first = warm.map(|warm| (warm, meter.work(run_large), large_bytes.get()));
-        let mut large = meter.least_with(first.map(|(_, run, _)| run), run_large);
-        // On a count of instructions the run at n measured is the second, after the warm-up, and
-        // the run at 8n the first, so a memo that the first run of each size fills (kept by the
-        // process or in the test's input) counts at 8n and not at n: a method that allocates
-        // 8000 bytes on its first run at n and 64000 on its first at 8n, and nothing after,
-        // compared 0 bytes with 64000 (FAIL-scaling-cold-8n-bytes; 20 checks of
-        // l01_23_subtyping failed so). Three ways to measure 8n warm too were weighed: a warm-up
-        // at 8n, or the least of two runs at 8n, each always, costs 1 + 1 + 8 + 8 = 18 times the
-        // time at n (TEST-scaling-runs's 1 + 1 + 8 = 10 was cut from 19 by dropping the second run
-        // at 8n); comparing the warm-up at n with the run at 8n drops the check of the second run
-        // at n, which catches a first run at n that builds what the process keeps
-        // (`the_bytes_of_the_second_run_at_n_are_held_against_the_run_at_8n`). Taken: run 8n
-        // again only when the comparison of its first run is over the limit, in work or in
-        // bytes, and take the least of the two. Its verdict is that of the least of two runs at
-        // 8n always, since the least is never over when the first is not, and a passing check
-        // still costs 10 times the time at n; only a check over on its cold run costs 18.
-        //
-        // The same holds for the note at [`PREFERRED`] (PERF-permission-reverse-first-run): a
-        // warm run at n against a cold run at 8n compares two states, and a memo in the test's
-        // input that the first run of each size fills in linear time put a linear check over
-        // the note. The reverse case of l01_26's
-        // `the_permission_of_an_overload_is_checked_in_linear_time` read 10.45 times: 38.26M
-        // instructions on the second run at n against 399.8M on the first at 8n, while the first
-        // runs took 50.0M and 399.8M (8.0 times) and the second runs 38.26M and 305.9M (8.0
-        // times; load 27 to 57, 2026-11-15). So 8n runs again also when the work of its first
-        // run is at the note or over it, and the ratio printed, noted, recorded and held is then of the second run at n against the
-        // least of the two at 8n. The verdict and the note are those of always taking the
-        // least of two runs at 8n: the least is never at or over a bound the first run is under.
-        // Only a check at the note or over it on its cold run costs 18 times the time at n; one
-        // under the note costs 10 and prints and records the ratio of the cold run at 8n, which
-        // may be a little over that of the least of two but is under the note either way. The
-        // trigger changes no verdict and no note, so it is not a threshold in the sense of the
-        // standing rule (no-thresholds): it only saves the second run at 8n where it cannot
-        // change the outcome. A bound given by the test prints no note, so it runs again at its
-        // limit only.
-        let note = match bound {
-            Bound::Order(power) => PREFERRED * scale(power),
-            Bound::Given(..) => f64::INFINITY,
-        };
-        let over_now = |large: &Work| {
-            let bytes = large_bytes.get().max(1) as f64 / small_bytes.get().max(1) as f64;
-            let units = large.units as f64 / small.units as f64;
-            (measures == Measures::Both && over(bytes, limit))
-                || over(units, limit * meter.allowance())
-                || units >= note * meter.allowance()
-        };
-        if meter.again_when_over() && over_now(&large) {
-            let again = meter.work(run_large);
-            large.units = large.units.min(again.units);
-            large.bytes = large.bytes.min(again.bytes);
-        }
+            first_bytes.1.set(first_bytes.1.get().or(Some(bytes)));
+        });
+        // What follows, up to the next phase at 8n, has the runner's limit again.
+        start_bench_phase(None);
         line.last = Some(Measured {
             ns: (small_ns.get(), large_ns.get()),
             units: (small.units, large.units),
@@ -1040,35 +1005,21 @@ fn compare_by_dyn(
                  checked by check_instructions_only"
             );
         }
-        if let Some((warm, run, run_bytes)) = first {
-            let ratio = run.units as f64 / warm.units as f64;
-            let warm_bytes = warm_bytes.get();
-            let bytes = run_bytes.max(1) as f64 / warm_bytes.max(1) as f64;
-            let memo = "the runs after the first of a size can find its work done in a memo \
-                        that outlives a run's thread, kept by the process or in the test's \
-                        input, so the first runs are held to the limit too";
-            if measures == Measures::Both && over(bytes, limit) {
+        // Taken once, after the first measurement.
+        if let (Some(small), Some(large)) = (first_bytes.0.take(), first_bytes.1.take())
+            && measures == Measures::Both
+            && meter.repeats().0 > 1
+        {
+            let bytes = large.max(1) as f64 / small.max(1) as f64;
+            if over(bytes, limit) {
                 panic!(
-                    "{what}: the first runs allocated {warm_bytes} and {run_bytes} bytes, \
-                     {bytes:.1} times the bytes; {memo}; {why}"
+                    "{what}: the first runs allocated {small} and {large} bytes, {bytes:.1} times \
+                     the bytes; the runs after the first of a size can find its work done in a \
+                     memo that outlives a run's thread, kept by the process or in the test's \
+                     input, so the first runs are held to the limit too; {why}"
                 );
             }
-            if meter.instructions && over(ratio, limit) {
-                panic!(
-                    "{what}: the first runs took {} and {} {}, {ratio:.1} times the work; \
-                     {memo}; {why}",
-                    warm.units,
-                    run.units,
-                    meter.unit()
-                );
-            }
-            first_runs = format!(
-                "; the first runs took {} and {}, {ratio:.1} times the work, and allocated \
-                 {warm_bytes} and {run_bytes} bytes, {bytes:.1} times the bytes",
-                warm.units, run.units
-            );
         }
-        warm = None;
         let (small_bytes, large_bytes) = (small_bytes.get(), large_bytes.get());
         // Never 0 in the ratio, as [`Meter::work`] counts them; the messages print the counts.
         let bytes = large_bytes.max(1) as f64 / small_bytes.max(1) as f64;
@@ -1100,7 +1051,7 @@ fn compare_by_dyn(
             eprintln!(
                 "{what}: passed: took {} and {} {}, {ratio:.1} times the work; allocated \
                  {small_bytes} and {large_bytes} bytes, {bytes:.1} times the bytes{held}; \
-                 the limit is {limit:.2}{first_runs}{earlier}",
+                 the limit is {limit:.2}{earlier}",
                 small.units,
                 large.units,
                 meter.unit()
@@ -1127,45 +1078,56 @@ fn compare_by_dyn(
     );
 }
 
-/// The variable naming the file a benchmark writes its raised time limit to, in milliseconds,
-/// when it is set (tools/run_tests.sh --bench sets it; tools/bench_limit.sh reads it). A
-/// benchmark's limit is max(20 s, [`LIMIT`] × t1), where t1 is the time of the first run at its
-/// 1x size in the same process (author P214): a benchmark whose run at n takes t1 takes about
-/// 10 t1 for its runs (two at n, one at 8n), so a fixed 20 s failed a benchmark that scaled well
-/// but was large. The ratio of the sizes is held to [`LIMIT`] as before; only the time the piece
-/// may take is raised. The 20 s (raised with load) stays with the runner.
+/// The variable naming the file a benchmark writes the start and the time limit of each of its
+/// phases to, when it is set (tools/run_tests.sh --bench sets it; tools/bench_limit.sh reads
+/// it). Each phase has a limit of its own, counted from its own start (author A160,
+/// 2026-11-20: "The time limit applies to each phase"): the run at n has the runner's limit,
+/// max(20 s, 20 s × load / cores), and the run at 8n max(that, [`LIMIT`] × t1), where t1 is the
+/// time the run at n took (author P214: a fixed 20 s failed a benchmark that scaled well but was
+/// large). Until A160 a benchmark had one limit, max(20 s, 10.5 × t1) counted from the start of
+/// the piece, which held the set-up, the warm-up and the run at n, the run at 8n and any second
+/// run at 8n against the 10.5 t1 meant for the run at 8n, so a benchmark whose ratio passed was
+/// killed when t1 was above about 1.8 s and its ratio above about 9.5
+/// (BENCH-limit-counts-setup). The ratio of the sizes is held to [`LIMIT`] as before.
 pub const BENCH_LIMIT_FILE: &str = "ZED_BENCH_LIMIT_FILE";
 
-/// The time limit in milliseconds that a first run at 1x of `t1_ns` nanoseconds asks for:
-/// [`LIMIT`] × t1, rounded up. The runner takes the larger of this and its own limit.
+/// The time limit in milliseconds that a run at 8n asks for when its run at n took `t1_ns`
+/// nanoseconds: [`LIMIT`] × t1, rounded up. The runner takes the larger of this and its own
+/// limit.
 pub fn bench_limit_ms(t1_ns: u64) -> u64 {
     (LIMIT * t1_ns as f64 / 1e6).ceil() as u64
 }
 
-/// The most [`bench_limit_ms`] asked for in this process, so a benchmark of several checks
-/// keeps the largest.
-static BENCH_LIMIT_MS: AtomicU64 = AtomicU64::new(0);
-
-/// Writes [`bench_limit_ms`]`(t1_ns)` to the file [`BENCH_LIMIT_FILE`] names, if it is set and
-/// the limit is above every one written before in this process. The runner reads it at its next look, within 0.1 s.
-pub(crate) fn raise_bench_limit(t1_ns: u64) {
+/// Starts a new phase of the benchmark's time limit, now, in the file [`BENCH_LIMIT_FILE`]
+/// names, if it is set: given `t1`, the time of the run at n just measured, a phase at 8n of
+/// [`bench_limit_ms`]`(t1)`; given none, a phase with the runner's limit, for what follows a run
+/// at 8n (the next check's inputs and its run at n). The runner reads it at its next look,
+/// within 0.1 s; tools/test_bench_limit.sh tests its side.
+pub(crate) fn start_bench_phase(t1: Option<Duration>) {
     let Some(path) = std::env::var_os(BENCH_LIMIT_FILE) else {
         return;
     };
-    write_bench_limit(std::path::Path::new(&path), t1_ns, &BENCH_LIMIT_MS);
+    let ms = t1.map_or(0, |t1| bench_limit_ms(t1.as_nanos() as u64));
+    write_bench_phase(
+        std::path::Path::new(&path),
+        std::time::SystemTime::now(),
+        ms,
+    );
 }
 
-/// [`raise_bench_limit`] to the file `path`, where `most` holds the most written before. The
-/// limit is written to `<path>.new` and renamed over `path`, so the runner never reads the file
-/// empty or half written.
-pub(crate) fn write_bench_limit(path: &std::path::Path, t1_ns: u64, most: &AtomicU64) {
-    let ms = bench_limit_ms(t1_ns);
-    if most.fetch_max(ms, std::sync::atomic::Ordering::Relaxed) < ms {
-        let new = path.with_extension("new");
-        std::fs::write(&new, format!("{ms}\n"))
-            .and_then(|()| std::fs::rename(&new, path))
-            .unwrap_or_else(|e| panic!("{BENCH_LIMIT_FILE}: writing to {}: {e}", path.display()));
-    }
+/// [`start_bench_phase`] to the file `path`: the line `<start> <ms>`, `start` in milliseconds
+/// since 1970 (the clock tools/bench_limit.sh reads as `EPOCHREALTIME`) and `ms` the limit the
+/// phase asks for, 0 for the runner's. It is written to `<path>.new` and renamed over `path`, so
+/// the runner never reads the file empty or half written.
+pub(crate) fn write_bench_phase(path: &std::path::Path, start: std::time::SystemTime, ms: u64) {
+    let start = start
+        .duration_since(std::time::UNIX_EPOCH)
+        .expect("a clock past 1970")
+        .as_millis();
+    let new = path.with_extension("new");
+    std::fs::write(&new, format!("{start} {ms}\n"))
+        .and_then(|()| std::fs::rename(&new, path))
+        .unwrap_or_else(|e| panic!("{BENCH_LIMIT_FILE}: writing to {}: {e}", path.display()));
 }
 
 /// The variable naming the file every check ([`check_order`], [`compare`] and the rest) appends a
