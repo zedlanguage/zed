@@ -148,8 +148,10 @@ zedc-presburger = { workspace = true, features = ["two-at-a-time"] }
 # And target-lexicon, under cranelift-codegen, with `std`, which cranelift-reader (through
 # zed-clif) gives it in the workspace build.
 target-lexicon = { version = "0.13.5", features = ["std"] }
-# And rustc-hash, under cranelift-codegen, with its default features, which zed-clif gives it in
-# the workspace build; zed-kernel, zedc-base and zedc-presburger asked for them too until
-# 0f0b8c410 removed it, so a build of the compiler crates without zed-clif (merge_check.sh
-# after a zed-numtheory change) was refused.
-rustc-hash = { version = "2.1.3", features = ["std"] }
+# And rustc-hash, under cranelift-codegen, with `std` alone, as zed-clif, zed-tests and
+# zed-benches give it: rustc-hash 2.1.3 defines default = ["std"], so the two sets build the
+# same code, but run_tests.sh and merge_check.sh compare the names. This line gave it its
+# default features until TEST-dry-shared-units, after cdaf3d962 had taken them off zed-clif's,
+# so the workspace build got [default,std] from here and zed-clif alone [std], and merge_check
+# refused every branch that changed a manifest.
+rustc-hash = { version = "2.1.3", default-features = false, features = ["std"] }

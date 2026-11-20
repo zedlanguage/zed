@@ -1041,6 +1041,7 @@ dependencies = [
  "cranelift-module",
  "cranelift-native",
  "cranelift-reader",
+ "foldhash",
  "hashbrown 0.17.1",
  "indexmap",
  "perf-event2",

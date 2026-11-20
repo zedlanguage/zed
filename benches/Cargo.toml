@@ -62,9 +62,9 @@ target-lexicon = { version = "0.13.5", features = ["std"] }
 # The test that `runs` counts on the C library's heap asks the meter's heap whether it owns a
 # block (PERF-crossover-heap).
 zed-alloc-count.workspace = true
-# rustc-hash, under zed-native's cranelift-codegen, with the default features zed-clif gives it
-# in the workspace build (see crates/zed-native/Cargo.toml).
-rustc-hash = { version = "2.1.3", features = ["std"] }
+# rustc-hash, under zed-native's cranelift-codegen, with `std` alone, as every package gives it
+# (see crates/zed-native/Cargo.toml).
+rustc-hash = { version = "2.1.3", default-features = false, features = ["std"] }
 
 [lints]
 workspace = true
