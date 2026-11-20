@@ -335,6 +335,72 @@ impl Stack {
 /// the system refuses, or one in the guard page below the stack, stops the run (exit status 3).
 /// Any other fault is passed to the action before this one, or, with none, ends the process as
 /// `SIGSEGV` does. O(stacks under a limit), one a run.
+///
+/// It saves `errno` on entry and restores it before it returns, so the code the signal stopped
+/// finds `errno` as it left it, whatever [`serve`] or the action before this one did to it.
+//
+// Proof that the handler is async-signal-safe (FAIL-rt-fault-mprotect-signal-safety, which
+// replaced a claim that rested on glibc's `mprotect`, not in the POSIX list).
+//
+// Claim: each operation from the handler's entry to its return, or to the end of the process,
+// is one POSIX lets a signal handler do, or one that touches no state of user space the
+// stopped code could hold half-changed; and the stopped code sees its `errno` unchanged.
+//
+// Facts used:
+// (F1) POSIX, as signal-safety(7) of man-pages 6.13 (man-pages-6.13-3.fc44) gives it, section
+//      "errno": "Fetching and setting the value of errno is async-signal-safe provided that
+//      the signal handler saves errno on entry and restores its value before returning." The
+//      same page lists `write`, `_exit` and `sigaction` as async-signal-safe, and lists neither
+//      `mprotect` nor `syscall`.
+// (F2) glibc's `errno` is `(*__errno_location ())` (`/usr/include/errno.h`:37-38 of
+//      glibc-2.43-9.fc44), so `*libc::__errno_location()` read and written below is the
+//      fetching and setting of `errno` that F1 names.
+// (F3) The growth's system call is made by `mprotect_raw`: one `syscall` (x86_64) or `svc 0`
+//      (AArch64) instruction, with no C library code; its proof is at that function. It
+//      takes no lock and touches no memory of user space, and gives its error in a register,
+//      never in `errno`.
+// (F4) The atomics read (`GROWING`, each record's fields, `BEFORE`'s state in
+//      `OnceLock::get`, `MEMORY_LIMIT` in `memory_limit`) are plain loads of native-width
+//      atomics, which take no lock on any target with `target_has_atomic = "ptr"`, the
+//      targets where `AtomicUsize` and `AtomicPtr` exist.
+//
+// Steps, by the path a fault takes through `serve`:
+// 1. Entry: `__errno_location` and the read of `errno`: safe by F1 and F2, since step 6
+//    restores the value.
+// 2. The search of `GROWING`: loads of atomics (F4) and arithmetic; the records are leaked and
+//    never freed (`Grows`), so each pointer read is to live memory.
+// 3. A fault below a stack's writable part and inside the stack: `mprotect_raw` (F3), then a
+//    store to the record's atomic `writable`, then return. Nothing on this path writes
+//    `errno`.
+// 4. The system refuses the growth, or the fault is in the guard page: `stack_stop`, which
+//    fills a `Line`, a buffer on the handler's stack, through `core::fmt` (no allocation and
+//    no lock: `core` has neither), reads `memory_limit` (F4) and ends in `fault_exit`, which
+//    calls only `write` and `_exit` (F1). It never returns, so step 6 is not needed: the
+//    stopped code never runs again.
+// 5. A fault in no stack under a limit: `OnceLock::get` (F4), then either the action before
+//    this one is called as the kernel would have called it, with the kernel's own arguments:
+//    whoever installed it as a handler of `SIGSEGV` (std's handler of stack overflow, in
+//    practice) made it fit to run in a handler, which this handler cannot check; or
+//    `sigaction`, listed in F1, restores the default action.
+// 6. Return: `serve` returns only from steps 3 and 5, and `on_fault` restores `errno` after
+//    `serve` on every return, which is the condition of F1, and which also undoes any change
+//    the action before this one made to `errno`.
+//
+// Routes not taken, and why: `libc::mprotect` and `libc::syscall` are glibc functions that F1
+// does not list, so their safety would rest on glibc's source rather than on POSIX; rustix's
+// `mprotect` uses its raw backend or libc by its build script (the `use-libc` feature and the
+// `rustix_no_linux_raw` cfg), which another crate of a build can switch, and is only a
+// development dependency of this crate.
+//
+// Tests: `tests::a_stack_under_a_memory_limit_grows_as_the_run_reaches_it` and
+// `tests::stacks_under_a_memory_limit_grow_each_on_its_own` run step 3 (they pass only if
+// `mprotect_raw` makes the stack writable); `a_stack_past_the_memory_limit_stops_the_run_with_status_3`
+// runs step 4; `a_fault_outside_the_stacks_ends_the_process_as_sigsegv_does` runs step 5;
+// `errno_is_kept_across_faults_the_handler_serves` checks `errno` across step 3, and
+// `errno_is_restored_when_a_fault_changes_it` checks step 6, as its control: with the restore
+// removed it fails. What the tests cannot catch: an action before this one that is not fit
+// for a handler, and the AArch64 form of `mprotect_raw`, which the x86_64 machines of the
+// suite do not run.
 extern "C" fn on_fault(
     signal: libc::c_int,
     info: *mut libc::siginfo_t,
@@ -342,19 +408,33 @@ extern "C" fn on_fault(
 ) {
     #[expect(
         unsafe_code,
-        reason = "the fault's address and the remedies are libc calls"
+        reason = "errno is read and written through the C library's pointer to it"
+    )]
+    // SAFETY: `__errno_location` gives the calling thread's `errno`, valid for the thread's
+    // life (F2 of the proof above); it is saved here and restored before the return (F1).
+    unsafe {
+        let errno = libc::__errno_location();
+        let saved = *errno;
+        serve(signal, info, context);
+        #[cfg(test)]
+        if tests::CHANGE_ERRNO.load(Ordering::Relaxed) {
+            *errno = saved.wrapping_add(1);
+        }
+        *errno = saved;
+    }
+}
+
+/// The work of [`on_fault`], apart from saving and restoring `errno`: steps 2 to 5 of its
+/// proof.
+fn serve(signal: libc::c_int, info: *mut libc::siginfo_t, context: *mut libc::c_void) {
+    #[expect(
+        unsafe_code,
+        reason = "the fault's address and the remedies are system calls"
     )]
     // SAFETY: the kernel passes a valid `info` for a handler installed with SA_SIGINFO; the
-    // records are leaked and never freed; `mprotect` covers a part of a stack's own mapping,
-    // whose `high` is not 0, so it is still mapped. Each call is async-signal-safe.
-    // Correction (DOC-proofs-in-comments-audit): `mprotect` is not in the POSIX list of
-    // signal-safety(7), which holds `write`, `_exit`, `sigaction` and `clock_gettime`. Not
-    // proved: that it is safe here rests on glibc on Linux making `mprotect` one system call
-    // with no lock and no buffer, and on the system call setting `errno` only on failure,
-    // after which `stack_stop` ends the process, so the code the signal stopped keeps its
-    // `errno`. Tests: `tests::a_stack_under_a_memory_limit_grows_as_the_run_reaches_it` and
-    // `tests::stacks_under_a_memory_limit_grow_each_on_its_own` run the growth; they cannot
-    // catch a C library whose `mprotect` takes a lock.
+    // records are leaked and never freed; `mprotect_raw` covers a part of a stack's own
+    // mapping, whose `high` is not 0, so it is still mapped, and which only that stack's run
+    // uses. Each operation is async-signal-safe: the proof at `on_fault`.
     unsafe {
         let at = (*info).si_addr() as usize;
         let mut g = GROWING.load(Ordering::Acquire);
@@ -377,12 +457,7 @@ extern "C" fn on_fault(
             }
             let to = writable - (writable - at).div_ceil(GROW) * GROW;
             let to = to.max(low);
-            if libc::mprotect(
-                to as *mut libc::c_void,
-                writable - to,
-                libc::PROT_READ | libc::PROT_WRITE,
-            ) != 0
-            {
+            if mprotect_raw(to, writable - to, libc::PROT_READ | libc::PROT_WRITE) != 0 {
                 stack_stop(high - writable, Some(writable - to));
             }
             r.writable.store(to, Ordering::Relaxed);
@@ -411,6 +486,76 @@ extern "C" fn on_fault(
         }
     }
 }
+
+/// `mprotect(addr, len, prot)` made as the Linux system call itself, with no C library code, for
+/// the handler of faults: 0 when it succeeded, else the error as the kernel gives it, a
+/// negated `errno` value. It writes no `errno`.
+///
+/// # Safety
+///
+/// `[addr, addr + len)` is whole pages of a mapping of this process that nothing relies on
+/// keeping the old access of.
+//
+// Proof of F3 at `on_fault`: the function is one system call instruction between register
+// moves. The kernel's convention, as rustix 1.1.6 uses it for every Linux system call
+// (`src/backend/linux_raw/arch/x86_64.rs`:105-123 `syscall3`, `aarch64.rs`:96-112
+// `syscall3`): on x86_64, `syscall` with the number in `rax`, the arguments in `rdi`, `rsi`
+// and `rdx`, the result in `rax`, and `rcx` and `r11` overwritten; on AArch64, `svc 0` with
+// the number in `x8`, the arguments in `x0` to `x2` and the result in `x0`. The number is
+// `libc::SYS_mprotect`: 10 on x86_64 (libc 0.2.191
+// `src/unix/linux_like/linux/gnu/b64/x86_64/not_x32.rs`:19) and 226 on AArch64
+// (`gnu/b64/aarch64/mod.rs`:774), the values of `__NR_mprotect` in linux-raw-sys 0.12.1
+// (`src/x86_64/general.rs`:2329, `src/aarch64/general.rs`:2541). A system call returns 0 on
+// success and a value in -4095..=-1 on failure, so a result other than 0 is a failure. No
+// memory of user space is read or written by the instruction (the kernel changes page tables
+// only), so the code the signal stopped can hold nothing this call disturbs. x32 is left out
+// (`target_pointer_width = "64"`): its system calls carry another number.
+// Tests: the two tests of growth at `on_fault` (x86_64 form); with another number in `rax`
+// (`SYS_getpid`, tried by hand 2026-11-20) they and the two `errno` tests fail with status 3,
+// so they do reach this call. The AArch64 form is neither run nor compiled here (no AArch64
+// standard library is installed); its registers are rustix's, and its instruction was
+// assembled with `llvm-mc --triple=aarch64-linux-gnu` (LLVM 22.1.8).
+#[expect(unsafe_code, reason = "the system call is inline assembly")]
+unsafe fn mprotect_raw(addr: usize, len: usize, prot: libc::c_int) -> usize {
+    let result: usize;
+    #[cfg(all(target_arch = "x86_64", target_pointer_width = "64"))]
+    // SAFETY: the caller's contract; the registers are those of the kernel's convention above,
+    // and the instruction uses no stack.
+    unsafe {
+        std::arch::asm!(
+            "syscall",
+            inlateout("rax") libc::SYS_mprotect as usize => result,
+            in("rdi") addr,
+            in("rsi") len,
+            in("rdx") prot as usize,
+            lateout("rcx") _,
+            lateout("r11") _,
+            options(nostack, preserves_flags),
+        );
+    }
+    #[cfg(target_arch = "aarch64")]
+    // SAFETY: as for x86_64.
+    unsafe {
+        std::arch::asm!(
+            "svc 0",
+            in("x8") libc::SYS_mprotect as usize,
+            inlateout("x0") addr => result,
+            in("x1") len,
+            in("x2") prot as usize,
+            options(nostack, preserves_flags),
+        );
+    }
+    result
+}
+
+#[cfg(not(any(
+    all(target_arch = "x86_64", target_pointer_width = "64"),
+    target_arch = "aarch64"
+)))]
+compile_error!(
+    "zed-rt's handler of stack faults makes its system call itself (`mprotect_raw`), on x86_64 \
+     and AArch64 only: add this target's form there (row PORTABLE-rt)"
+);
 
 /// Stops a run whose stack, `used` bytes writable, the memory limit of `main` cannot hold:
 /// `more` bytes more the system refused, or none when the stack reached its reservation, which
@@ -483,6 +628,96 @@ mod completeness;
 mod tests {
     use super::*;
     use crate::limits::tests::{in_child, status};
+    use std::sync::atomic::AtomicBool;
+
+    /// Set by `errno_is_restored_when_a_fault_changes_it`: the handler of faults changes
+    /// `errno` after it serves a fault and before it restores it, as a call that sets `errno`
+    /// would, so that the test fails if the restore is removed.
+    pub(super) static CHANGE_ERRNO: AtomicBool = AtomicBool::new(false);
+
+    /// Writes `errno` of the calling thread with `Some(v)`, then reads it. Volatile, so that
+    /// the compiler, which sees that `depth` does not touch `errno`, cannot fold a read after
+    /// it into the write before it.
+    fn errno(set: Option<libc::c_int>) -> libc::c_int {
+        #[expect(
+            unsafe_code,
+            reason = "errno is reached through the C library's pointer"
+        )]
+        // SAFETY: `__errno_location` gives the thread's own `errno`, live for the thread's
+        // life.
+        unsafe {
+            let e = libc::__errno_location();
+            if let Some(v) = set {
+                ptr::write_volatile(e, v);
+            }
+            ptr::read_volatile(e)
+        }
+    }
+
+    /// Runs `depth(5_000)` on a stack under a 64 MiB limit with `errno` set to a value no call
+    /// gives, and returns `errno` after the run and the bytes the stack grew by, which are more
+    /// than its first `GROW` only if the handler served faults.
+    fn errno_across_served_faults() -> (libc::c_int, usize) {
+        crate::limits::enforce(&memory_64_mib()).unwrap();
+        let s = Stack::new().unwrap();
+        let (seen, reached) = s.run(|| {
+            errno(Some(4242));
+            let d = depth(5_000);
+            (errno(None), d)
+        });
+        assert_eq!(reached, 5_000);
+        let (grows, _) = s.grows.as_ref().unwrap();
+        let held = grows.high.load(Ordering::Relaxed) - grows.writable.load(Ordering::Relaxed);
+        (seen, held)
+    }
+
+    /// FAIL-rt-fault-mprotect-signal-safety: the code a served fault stopped finds `errno` as
+    /// it left it.
+    #[test]
+    fn errno_is_kept_across_faults_the_handler_serves() {
+        let Some(out) = in_child(
+            "stack::tests::errno_is_kept_across_faults_the_handler_serves",
+            || {
+                let (seen, held) = errno_across_served_faults();
+                assert!(held > GROW, "no fault was served: {held}");
+                assert_eq!(seen, 4242);
+            },
+        ) else {
+            return;
+        };
+        let (code, err) = status(&out);
+        assert_eq!(
+            code,
+            Some(0),
+            "{err}{}",
+            String::from_utf8_lossy(&out.stdout)
+        );
+    }
+
+    /// FAIL-rt-fault-mprotect-signal-safety, step 6 of the proof at `on_fault`: when the work
+    /// of a served fault changes `errno`, the handler restores it before it returns. The control
+    /// of the restore: with `*errno = saved` removed from `on_fault`, this test fails.
+    #[test]
+    fn errno_is_restored_when_a_fault_changes_it() {
+        let Some(out) = in_child(
+            "stack::tests::errno_is_restored_when_a_fault_changes_it",
+            || {
+                CHANGE_ERRNO.store(true, Ordering::Relaxed);
+                let (seen, held) = errno_across_served_faults();
+                assert!(held > GROW, "no fault was served: {held}");
+                assert_eq!(seen, 4242);
+            },
+        ) else {
+            return;
+        };
+        let (code, err) = status(&out);
+        assert_eq!(
+            code,
+            Some(0),
+            "{err}{}",
+            String::from_utf8_lossy(&out.stdout)
+        );
+    }
 
     /// How deep `depth` goes before it returns.
     pub(super) fn depth(n: u64) -> u64 {
