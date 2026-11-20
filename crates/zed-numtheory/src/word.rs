@@ -5,13 +5,22 @@
 
 /// The greatest common divisor by Stein's binary algorithm: shifts and subtractions, no
 /// division. `gcd(0, b) = b`.
+///
+/// Source: J. Stein, "Computational problems associated with Racah algebra", J. Comput. Phys.
+/// 1(3):397-405, 1967, doi:10.1016/0021-9991(67)90047-2: `gcd(2a, 2b) = 2 gcd(a, b)`, `gcd(2a,
+/// b) = gcd(a, b)` for odd `b`, and `gcd(a, b) = gcd(|a - b|, min(a, b))` for odd `a`, `b`.
+/// Departure: the common power of two is taken out at once by `trailing_zeros` and put back
+/// at the end, and each odd part loses all its twos in one shift, not one bit per step.
+/// Checked 2026-11-20: the DOI on Crossref; the paper not read, the rules from memory (they
+/// are elementary). `the_word_gcds_agree_with_euclid` checks both widths against Euclid's
+/// algorithm on random words with a common factor and on powers of two at the top bit.
 // Tried and not kept: counting the trailing zeros of `b - a` so the count, the `min` and the
-// difference of a step do not wait on one another (the "binary GCD" chapter of Algorithmica,
-// "Algorithms for Modern Hardware"). With both loops in one file, so inlined alike, and timed
-// alternately five times on 2^20 pairs of random words (DRY-number-theory, 2026-11-19, load
-// about 60 on 32 cores), this loop took 64 to 76 ms and that one 77 to 87 ms; on 128-bit words
-// the runs varied too much under the load to tell them apart. COMPLEXITY.md, row
-// DRY-number-theory.
+// difference of a step do not wait on one another (the "binary GCD" chapter of S. Slotin,
+// "Algorithms for Modern Hardware", https://en.algorithmica.org/hpc/algorithms/gcd/). With both
+// loops in one file, so inlined alike, and timed alternately five times on 2^20 pairs of random
+// words (DRY-number-theory, 2026-11-19, load about 60 on 32 cores), this loop took 64 to 76 ms
+// and that one 77 to 87 ms; on 128-bit words the runs varied too much under the load to tell
+// them apart. COMPLEXITY.md, row DRY-number-theory.
 macro_rules! stein {
     ($(#[$doc:meta])* $name:ident, $t:ty) => {
         $(#[$doc])*
@@ -64,8 +73,9 @@ pub const fn mul_mod(a: u64, b: u64, m: u64) -> u64 {
 /// `a^e mod m`, for `m > 0`, by squaring over the bits of `e`: O(log e) products. `0^0 = 1`,
 /// except modulo 1, where everything is 0.
 // Complexity tradeoff: `e` products by `a` are O(e); squaring is O(log e). Montgomery form
-// would save the divisions of `mul_mod` when one modulus serves many products, but costs a
-// conversion in and out, more than it saves for one power of at most 64 squarings.
+// (cited at `factor.rs` `Montgomery`) would save the divisions of `mul_mod` when one modulus
+// serves many products, but costs a conversion in and out, more than it saves for one power of
+// at most 64 squarings.
 pub const fn pow_mod(a: u64, mut e: u64, m: u64) -> u64 {
     let (mut b, mut r) = (a % m, 1 % m);
     while e > 0 {

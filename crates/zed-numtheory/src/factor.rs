@@ -1,5 +1,15 @@
 //! The prime factors of a 64-bit integer: Miller-Rabin with the bases that decide every
 //! 64-bit number, and Pollard's rho in Brent's form to split a composite.
+//!
+//! Sources: G. L. Miller, "Riemann's hypothesis and tests for primality", J. Comput. Syst. Sci.
+//! 13(3):300-317, 1976, doi:10.1016/S0022-0000(76)80043-8, and M. O. Rabin, "Probabilistic
+//! algorithm for testing primality", J. Number Theory 12(1):128-138, 1980,
+//! doi:10.1016/0022-314X(80)90084-0, for the strong-probable-prime test of [`is_prime`] (the
+//! bases are cited there); J. M. Pollard, "A Monte Carlo method for factorization", BIT
+//! 15(3):331-334, 1975, doi:10.1007/BF01933667, and R. P. Brent, BIT 20, 1980 (cited at
+//! `split`), for the rho walk; P. L. Montgomery, 1985 (cited at `Montgomery`), for the
+//! products. Checked 2026-11-20: the four DOIs on Crossref; Miller, Rabin and Pollard not read,
+//! from memory; Brent read.
 
 /// The prime factors of `n` with their multiplicities, in increasing order of prime; empty for
 /// `n <= 1`.
@@ -42,10 +52,18 @@ pub fn factor(n: u64) -> Vec<(u64, u64)> {
 
 use crate::{gcd_u64, inverse_mod_2_64};
 
-/// Products modulo an odd `n > 1` in Montgomery form (Montgomery, "Modular multiplication
-/// without trial division", Math. Comp. 44, 1985): a residue `x` is held as `x R mod n`, for
+/// Products modulo an odd `n > 1` in Montgomery form (P. L. Montgomery, "Modular multiplication
+/// without trial division", Math. Comp. 44(170):519-521, 1985,
+/// doi:10.1090/S0025-5718-1985-0777282-X): a residue `x` is held as `x R mod n`, for
 /// `R = 2^64`, and the product of two held residues `a R` and `b R` is `a b R mod n`, found
-/// with three multiplications and no division.
+/// with three multiplications and no division. The paper's reduction, as usually stated, is
+/// `m = (T mod R) N' mod R` with `N' = -N^-1 mod R`, then `t = (T + m N) / R`, less `N` once if
+/// `t >= N`. Departure: [`Montgomery::reduce`] uses `+N^-1` and subtracts, `(T - m N) / R`,
+/// adding `N` back on a borrow, so no sum can pass `2^128` and `n` may be any odd 64-bit
+/// number. Checked 2026-11-20: the DOI on Crossref; the paper not read (the publisher's site
+/// refused the download), so the statement above is from memory. Nothing here rests on it:
+/// `montgomery_arithmetic_agrees_with_division` checks every operation against plain division,
+/// on moduli up to `2^64 - 1`.
 // Complexity tradeoff: `mul_mod` divides a 128-bit product by `n`, a call of the 128-bit
 // division routine; the form here costs one division per modulus (for `R^2 mod n`) and then
 // three word multiplications per product. Measured by `examples/timing.rs` (COMPLEXITY.md row
@@ -190,11 +208,22 @@ pub fn is_prime(n: u64) -> bool {
 
 /// A factor of the odd composite `n` other than 1 and `n`.
 fn split(n: u64) -> u64 {
-    // Brent's cycle search on `x^2 + c` (Brent, "An improved Monte Carlo factorization
-    // algorithm", BIT 20, 1980), with a new `c` when a cycle closes without a factor. The start
-    // `x = 2` and the first `c = 1` are the usual choices; any start works, and the proof below
-    // shows that `c` running up from 1 always ends. The differences are multiplied in batches
-    // of 128 and one gcd is taken per batch, so the O(log n) gcd costs 1/128 of a product per
+    // Brent's cycle search on `x^2 + c` (R. P. Brent, "An improved Monte Carlo factorization
+    // algorithm", BIT 20(2):176-184, 1980, doi:10.1007/BF01933190), with a new `c` when a cycle
+    // closes without a factor. The loop below is the paper's final algorithm of section 7,
+    // with its names: "repeat x := y; for i := 1 to r do y := f(y); k := 0; repeat ys := y; for
+    // i := 1 to min(m, r - k) do begin y := f(y); q := q × |x - y| mod N end; G := GCD(q, N);
+    // k := k + m until (k > r) or (G > 1); r := 2 × r until G > 1", then, if `G = N`, "repeat
+    // ys := f(ys); G := GCD(|x - ys|, N) until G > 1". Departures: the paper's tests took
+    // `x0 = 0`, `f(x) = x^2 + 3` and `m = 1`; here `x0 = 2`, `c` from 1 and `m = 128`; the inner
+    // loop stops at `k >= r`, which skips only the paper's last batch of `min(m, 0) = 0` steps;
+    // and where the paper stops on "failure" (`G = N` again) the next `c` is tried. Checked
+    // 2026-11-20: the DOI on Crossref and the algorithm read in the paper (the author's scan).
+    // `factors_agree_with_trial_division` and `factors_of_wide_numbers_are_their_primes` check
+    // the factors; they cannot tell this walk from a slower correct one. The start `x = 2` and
+    // the first `c = 1` are the usual choices; any start works, and the proof below shows that
+    // `c` running up from 1 always ends. The differences are multiplied in batches of 128 and
+    // one gcd is taken per batch, so the O(log n) gcd costs 1/128 of a product per
     // step; a batch that overshoots (`g = n`) is searched again one step at a time from `ys`.
     // Any batch size is exact; a larger one saves gcds and costs more steps when a batch
     // overshoots.

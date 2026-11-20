@@ -46,7 +46,7 @@ fn time(what: &str, n: usize, f: &dyn Fn(usize)) {
     );
 }
 
-/// Euclid's gcd, the form Stein's replaced.
+/// Euclid's gcd, the form Stein's replaced (Stein's algorithm is cited at `word.rs`).
 fn euclid(mut a: u64, mut b: u64) -> u64 {
     while b != 0 {
         (a, b) = (b, a % b);
@@ -60,7 +60,7 @@ fn m61_by_division(a: u64, b: u64) -> u64 {
 }
 
 /// Miller-Rabin with all twelve bases and products by division, the form `is_prime` had before
-/// Montgomery products and fewer bases for small `n`.
+/// Montgomery products and fewer bases for small `n` (the sources are cited in `factor.rs`).
 fn is_prime_by_division(n: u64) -> bool {
     use zed_numtheory::{mul_mod, pow_mod};
     const BASES: [u64; 12] = [2, 3, 5, 7, 11, 13, 17, 19, 23, 29, 31, 37];

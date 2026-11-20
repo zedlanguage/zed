@@ -131,7 +131,8 @@ pub fn odd_root_mod_2_64(o: u64, p: u64) -> u64 {
 /// 18446744073709551557, the largest 64-bit prime).
 // Complexity tradeoff: trial division of each candidate `q` costs O(sqrt q) divisions. Here
 // each candidate goes to [`is_prime`] (trial division by the twelve primes to 37, which rejects
-// about 85% of all candidates, then Miller-Rabin with twelve bases, exact on 64 bits): O(log q)
+// about 85% of all candidates, then Miller-Rabin with twelve bases, exact on 64 bits, cited in
+// `factor.rs`): O(log q)
 // products for a prime, and on average about `ln q <= 45` candidates to the next prime (the
 // prime number theorem). The search ends: a prime above `n` exists below `2^64` whenever the
 // answer is `Some`, and otherwise the range runs out at `u64::MAX`.
@@ -148,7 +149,7 @@ pub const PRIME: u16 = u16::MAX;
 /// entry fits a `u16`.
 ///
 /// The segmented sieve of Eratosthenes. The primes `p <= r = isqrt(top)` come from
-/// [`odd_primes_below`] (and 2). The table is filled one block of at least [`SIEVE_BLOCK`]
+/// [`odd_primes_below`] (and 2). The table is filled one block of at least `SIEVE_BLOCK`
 /// entries at a time, and in each block every prime `p <= r`, from the greatest down to 2,
 /// writes `p` at each of its multiples in the block from `p^2` on. Proof that a composite
 /// `j <= top` ends with its least prime factor `p`: `p^2 <= j`, so `p <= r` and `p` writes at
@@ -293,7 +294,13 @@ pub fn first_primes(n: usize) -> Vec<u64> {
 ///   exponents modulo `P - 1` (Fermat), `value.rs` inverts by `x^(P - 2)` and reduces key
 ///   exponents modulo `P - 1`, and `poly.rs` evaluates polynomials at random points, where a
 ///   nonzero polynomial of degree `d` vanishes at no more than `d` of the `P` points
-///   (Schwartz-Zippel);
+///   (Schwartz-Zippel: J. T. Schwartz, "Fast probabilistic algorithms for verification of
+///   polynomial identities", J. ACM 27(4):701-717, 1980, doi:10.1145/322217.322225, and
+///   R. Zippel, "Probabilistic algorithms for sparse polynomials", EUROSAM 1979, LNCS 72,
+///   pp. 216-226, doi:10.1007/3-540-09519-5_73: a nonzero polynomial of total degree `d` is 0
+///   at a point drawn uniformly from `S^n` with probability at most `d / |S|`; one variable
+///   needs only that it has at most `d` roots in a field. Checked 2026-11-20: both DOIs on
+///   Crossref, the papers not read, the statement from memory);
 /// - that the value never changes: hashes made with it (`text.rs` `poly_hash`, `btree.rs` map
 ///   sums, `value.rs` family hashes, zedc-lattice `interval.rs` content hashes, zedc
 ///   `suppress/addresses.rs` text hashes) must be the same on every run;
