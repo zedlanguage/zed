@@ -3384,7 +3384,10 @@ impl Alone<'_> {
     /// each group's outcome is "a point" when some disjunct's system (the group's rows and the
     /// disjunct's constraints) has one, else the least refusal when some system was refused,
     /// else "none". That is a function of the set of outcomes of its systems, and [`solve`]
-    /// answers one system by its rows, whatever their names or order; the groups, their rows
+    /// answers one system by its rows, whatever their names or order (not proved: the doc of
+    /// [`solve`] states it and `solve_names_tests` checks it on random namings, but not every
+    /// choice of the Omega path is traced; open row PROOF-solve-omega-path-renaming, and the
+    /// proof here holds only as far as that does); the groups, their rows
     /// and their disjuncts are fixed by the links, which no renaming changes. The answer is
     /// "none" when some outcome is "none", else the least refusal when some outcome is a
     /// refusal, else the point: a function of the set of outcomes again. Only which point is
@@ -25504,7 +25507,16 @@ impl<'a> Differences<'a> {
     /// (C2-chain-general; `l01_38_presburger::ladder::the_bounds_found_do_not_depend_on_names`).
     /// Each node is expanded at most twice at its least distance, once with one nearest source
     /// and once with none, so the cost is O(m log n) for m edges over n nodes, and the result
-    /// does not depend on the order of the edges. Unless `through_z`, the search does not enter
+    /// does not depend on the order of the edges. The steps: an edge `u → v` of weight `w` is
+    /// the row `v - u <= w`, which the point `p` holds, so its reduced weight is at least 0, and
+    /// as in Dijkstra's search a node popped at its label's distance never gets a smaller one.
+    /// At that distance its label can change only from one source to `None` (a second source,
+    /// or a node with `None`, reaching it at the same distance), and `None` is never changed
+    /// back (the `nd == old` arm keeps it), so `expanded` rises from 0 to 1 to 2 at most, and
+    /// each node's edges are read at most twice. The final labels are the least distance of
+    /// each node and, at that distance, its one nearest source or `None`, which the edges
+    /// alone fix; the order of pops changes only how often a label is rewritten on the way.
+    /// Unless `through_z`, the search does not enter
     /// `z`, so a path is a chain of difference constraints alone and not of a bound on one end
     /// joined to a bound on the other.
     fn search(

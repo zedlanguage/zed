@@ -91,9 +91,11 @@ impl Shift {
     // interval the union fuses (`intervals::union`). Summed over a chain of n steps, with the
     // potential sum over gaps g between ends of log2 g plus 2 log2 m per end, the runs and
     // fusions number O(n p log m), so the chain costs O(n p log m log n) expected, for any
-    // chain, periodic or not (Claude seat, LOAD-max-div-unsolved hybrid round 1; the merge
-    // inequality checked on 20000 random merges, not proved in Lean; cost only, the bound
-    // counts work and no answer reads it). Measured at n and 8n
+    // chain, periodic or not (Claude seat, LOAD-max-div-unsolved hybrid round 1). Not proved:
+    // the merge inequality the sum rests on, that the runs and fusions of one step are paid
+    // by the fall of that potential, is neither written out here nor proved anywhere; it was
+    // checked on 20000 random merges only. Cost only: the bound counts work and no answer
+    // reads it. Measured at n and 8n
     // links (test `the_questions_of_a_chain_of_residue_intervals_scale`; aperiodic, switching
     // and prefixed chains): 8.1 to 8.6 times the instructions. Open: a bound free of log m;
     // a chain interleaving two halves at the finest scale needs about n log2(m / n) runs.

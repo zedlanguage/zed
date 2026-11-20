@@ -34,6 +34,20 @@
 //!
 //! Every answer is exact: no point, a point, or each atom's set of values over all points.
 //! Where it applies the solver's answer is never finer, so no answer becomes coarser.
+//! Not proved as a whole (PROOF-row-sums-join-exact): the claim rests on an invariant written
+//! nowhere in this file, that layer i of [`Plan::layers`] is exactly the set of keys of the
+//! sums on the rows open after group i over the assignments of groups 0..i that meet every
+//! row closed by then, and that [`Plan::back`] marks exactly the keys and sums some
+//! assignment of the later groups completes. Its open steps: (1) [`Group::window`] drops no
+//! prefix of a point, which needs every atom after t to add a most significant digit within
+//! `0..=last - top`; (2) [`Plan::pairs`], [`Plan::word_join`] and [`lattice`] (the fused
+//! pair) each give exactly the pairs [`Plan::meet`] accepts; (3) the key of a layer is one to
+//! one on the sums of its open rows (mixed radix within each digit's range). Each step is
+//! claimed at its site; none is proved here. Checked against enumeration by
+//! `l01_38_omega_test::disj_groups::row_sums::random_shared_sums_are_answered_and_never_coarser_than_the_solver_alone`
+//! and the tests beside it (3 to 7 atoms, one or two rows, ranges of at most 33 values, each
+//! answer against the sets found by enumeration), which cannot catch a fault on shapes the
+//! random cases do not make (three rows or more, wide ranges, many atoms).
 //!
 //! The parity example of A87 (`a1 + a2 + c + d == 4`, `b1 + b2 + c + d == 3`, the `a`s and `b`s
 //! over {0, 2}, `c` and `d` over {0, 1}) shows why the sums cannot be decided one at a time:
@@ -134,16 +148,23 @@
 //! level where a shift spends 1/64 of a word step per key, so they gain only on groups of tens
 //! of thousands of atoms (inferred from these counts, not measured).
 //!
-//! Papers. R. Bellman, *Dynamic Programming*, Princeton University Press, 1957. E. Horowitz and
-//! S. Sahni, "Computing partitions with applications to the knapsack problem", Journal of the
-//! ACM 21(2), 1974. R. Dechter, "Bucket elimination: a unifying framework for reasoning",
-//! Artificial Intelligence 113(1-2), 1999. L. A. Levin, "Universal sequential search
-//! problems", Problems of Information Transmission 9(3), 1973. R. M. Karp, "Reducibility among
-//! combinatorial problems", Complexity of Computer Computations, 1972. D. Pisinger, "Linear
-//! time algorithms for knapsack problems with bounded weights", Journal of Algorithms 33(1),
-//! 1999. Z. Galil and O. Margalit, "An almost linear-time algorithm for the dense subset-sum
-//! problem", SIAM Journal on Computing 20(6), 1991. K. Koiliaris and C. Xu, SODA 2017, and K.
-//! Bringmann, SODA 2017, as above.
+//! Papers. R. Bellman, *Dynamic Programming*, Princeton University Press, 1957 (a book, no
+//! DOI). E. Horowitz and S. Sahni, "Computing partitions with applications to the knapsack
+//! problem", Journal of the ACM 21(2), 1974, doi:10.1145/321812.321823. R. Dechter, "Bucket
+//! elimination: a unifying framework for reasoning", Artificial Intelligence 113(1-2), 1999,
+//! doi:10.1016/s0004-3702(99)00059-4. L. A. Levin, "Universal sequential search problems",
+//! Problems of Information Transmission 9(3), 1973 (not on Crossref, no DOI). R. M. Karp,
+//! "Reducibility among combinatorial problems", Complexity of Computer Computations, 1972,
+//! doi:10.1007/978-1-4684-2001-2_9. D. Pisinger, "Linear time algorithms for knapsack problems
+//! with bounded weights", Journal of Algorithms 33(1), 1999, doi:10.1006/jagm.1999.1034. Z.
+//! Galil and O. Margalit, "An almost linear-time algorithm for the dense subset-sum problem",
+//! SIAM Journal on Computing 20(6), 1991, doi:10.1137/0220072. K. Koiliaris and C. Xu, SODA
+//! 2017, doi:10.1137/1.9781611974782.68, and K. Bringmann, SODA 2017,
+//! doi:10.1137/1.9781611974782.69, as above. The DOIs are those of the crate's `lib.rs`,
+//! "References" (Crossref; the papers not read there). None of these results is a step of an
+//! answer: Karp's and Galil and Margalit's explain costs, Levin's and Pisinger's name methods
+//! not used, and the join's exactness rests on the definitions alone, not on any of them
+//! (it is not proved as a whole: see "Not proved as a whole" above).
 //!
 //! The formula is recognized as: top-level conjuncts each either a constraint (a row, of any
 //! number of atoms, `== 0` or `>= 0`) or a disjunction whose arms each confine one and the same

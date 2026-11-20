@@ -48,7 +48,7 @@
 
 use zed_collections::index::to_u32;
 use zed_kernel::digest::{DigestMap, TextMap};
-use zedc_int::int::Int;
+use zedc_int::int::{Int, row_bound, row_range};
 
 use super::formula::{Atom, Con, Conjuncts, Formula, Id, Model, Rel, one_bound};
 use state::{Countdown, Interval, Latch, Meet, Once};
@@ -533,22 +533,25 @@ impl<'f> Graph<'f> {
         }
         let var = &mut self.vars[x as usize];
         let value = match c.rel {
+            // `a·x + b == 0`: `x == -b / a`, no integer when `a` does not divide `b`
+            // ([`row_range`], whose comment derives it).
             Rel::Eq => {
-                let nb = -&b;
-                if !nb.mod_floor(a).is_zero() {
+                let ((v, _), not_whole) = row_range(a, &b, true);
+                if not_whole {
                     return false;
                 }
-                nb.div_floor(a)
+                v.expect("an equation's value")
             }
-            // `a·x >= -b`: `x >= ceil(-b / a)` for `a > 0`, `x <= floor(b / -a)` for `a < 0`.
+            // `a·x + b >= 0`: `x >= ⌈-b / a⌉` for `a > 0`, `x <= ⌊b / -a⌋` for `a < 0`
+            // ([`row_bound`], whose comment derives both).
             Rel::Ge => {
                 if var.bounds.is_whole() {
                     self.bounded.push(x);
                 }
                 let meet = if a.is_positive() {
-                    var.bounds.meet_lo(-&b.div_floor(a))
+                    var.bounds.meet_lo(row_bound(a, &b))
                 } else {
-                    var.bounds.meet_hi(b.div_floor(&-a))
+                    var.bounds.meet_hi(row_bound(a, &b))
                 };
                 match meet {
                     Meet::Empty => return false,
@@ -709,7 +712,14 @@ mod trial {
         /// whenever its condition becomes true (it is checked when the last value it reads
         /// arrives), so every order of events is a fair chaotic iteration of monotone,
         /// deflationary rules on a lattice of finite height below the start, and all such
-        /// iterations reach that one fixpoint (Knaster–Tarski on the finite lattice). The
+        /// iterations reach that one fixpoint. The steps: let `G` be any state at or below the
+        /// start that no rule changes. Every state of the run is at or above `G`, by induction:
+        /// the start is; and if a state `s` is, a rule `r` gives `r(s)` at or above
+        /// `r(G) = G`, since `r` is monotone. The run ends (finite height, every event a step
+        /// down) in a state `F` that no rule changes (fairness), at or below the start; so `F`
+        /// is at or above every such `G`, `F` among them, and `F` is the greatest of them, the
+        /// same whatever the order of events. (The comment named Knaster–Tarski here before;
+        /// the steps above use nothing from it.) The
         /// first propagation, and each round with its propagation, therefore end in the same
         /// state in every order, a renaming of the atoms renames that state, and a
         /// contradiction is reached in every order or none, in the same round. A round runs

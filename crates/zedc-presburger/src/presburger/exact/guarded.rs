@@ -45,7 +45,8 @@
 //! Published work used in this file. Each site names the author; the full citation is in the
 //! crate's `lib.rs`, "References". Kahn 1962, doi:10.1145/368996.369025; Tarjan 1975,
 //! doi:10.1145/321879.321884 (union by size with path compression); Pugh 1991,
-//! doi:10.1145/125826.125848.
+//! doi:10.1145/125826.125848; Pugh 1992 (the CACM text cited above),
+//! doi:10.1145/135226.135233.
 
 use std::cell::RefCell;
 use std::collections::{HashMap, HashSet};
