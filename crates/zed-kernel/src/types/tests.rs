@@ -1293,3 +1293,37 @@ fn a_membership_reading_f32_values_by_their_spine_agrees_with_contains() {
     }
     assert_eq!(yes, 4);
 }
+
+/// The meet of two recursive lists, `R = () | (0, R)` and `S = () | (0, S) | 1`, holds every
+/// list of zeros, infinitely many values, so it is not known finite and its values are not
+/// listed (PROOF-sweep-zed-kernel: a column met again while its own walk is open must not be
+/// taken as finite).
+#[test]
+fn a_meet_of_two_recursive_lists_is_not_known_finite() {
+    use rec::{Def, Expr, Group};
+    let lit = |n| Type::lit(&Value::Int(n)).expect("a literal");
+    let list = |name: &str, extra: Option<Type>| {
+        let mut arms = vec![
+            Expr::Tuple(vec![]),
+            Expr::Tuple(vec![Expr::Type(lit(0)), Expr::Ref(0, vec![])]),
+        ];
+        arms.extend(extra.map(Expr::Type));
+        let def = Def {
+            name: name.into(),
+            params: vec![],
+            body: Expr::Union(arms),
+        };
+        Group::new(vec![def])
+            .expect("a group")
+            .instance(vec![])
+            .remove(0)
+    };
+    let t = &list("FiniteR", None) & &list("FiniteS", Some(lit(1)));
+    let mut v = Value::tuple(vec![]);
+    for _ in 0..4 {
+        assert!(t.contains(&v), "{t}");
+        v = Value::tuple(vec![Value::Int(0), v]);
+    }
+    assert!(!t.finite(), "{t}");
+    assert!(t.values_listed().is_none(), "{t}");
+}

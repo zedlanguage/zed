@@ -1518,6 +1518,18 @@ fn a_value_in_a_listed_column_type_has_a_key_the_type_lists() {
             k(Type::tuple(Vec::new())),
             vec![kv(Value::tuple(Vec::new()))],
         ),
+        // A negative row: each value is in the positive row only (PROOF-sweep-zed-kernel, the
+        // tuple case of the proof at `Columns::candidates`).
+        (
+            &Type::tuple(vec![k(&lit(1) | &lit(2)), Type::int()])
+                - &Type::tuple(vec![k(lit(1)), Type::bool()]),
+            vec![
+                Value::tuple(vec![kv(int(1)), int(9)]),
+                Value::tuple(vec![kv(int(2)), int(0)]),
+            ],
+        ),
+        // The empty tuple at the top, its own key.
+        (Type::tuple(Vec::new()), vec![Value::tuple(Vec::new())]),
     ];
     let mut filer = Filer::default();
     for (t, values) in &listed {
@@ -1529,7 +1541,12 @@ fn a_value_in_a_listed_column_type_has_a_key_the_type_lists() {
             assert!(filed.keys.contains(&key), "{t} lists the key {key} of {x}");
         }
     }
-    for t in [k(Type::int()), &j(lit(1), Type::int()) | &k(Type::string())] {
+    // A cofinite literal set is not listed, at the top or in a payload.
+    for t in [
+        Type::int(),
+        k(Type::int()),
+        &j(lit(1), Type::int()) | &k(Type::string()),
+    ] {
         assert!(
             !filer.file(&t, Reading::Payloads).listed,
             "{t} is not listed"

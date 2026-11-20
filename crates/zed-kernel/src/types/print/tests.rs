@@ -922,3 +922,49 @@ fn an_inexact_text_is_printed_while_collecting() {
     assert!(c.exact, "{c}");
     assert_eq!(plain(&c.root), "#a(..)");
 }
+
+/// The two edges of the texts that reach a type no node holds, in the proof at
+/// `Printer::force_cycles` (PROOF-sweep-zed-kernel): the complement arm of `Printer::ty`, and
+/// the atom parts turned over in `Printer::items`, each turning over the payload `(ForceL,)`
+/// of `#a`, whose column is a recursive type. Each prints, with names and without, so
+/// `Printer::heights`, which panics on a cycle through no recursive type with a definition,
+/// passes.
+#[test]
+fn a_cycle_of_parts_inside_every_value_but_one_atom_payload_is_defined() {
+    use super::super::rec::{Def, Expr, Group};
+    // `type ForceL = #nil | #c(ForceL); type ForceM = #a(ForceL);`.
+    let defs = vec![
+        Def {
+            name: "ForceL".into(),
+            params: vec![],
+            body: Expr::Union(vec![
+                Expr::Type(Type::atom("nil")),
+                Expr::Atom("c".into(), vec![Expr::Ref(0, vec![])]),
+            ]),
+        },
+        Def {
+            name: "ForceM".into(),
+            params: vec![],
+            body: Expr::Atom("a".into(), vec![Expr::Ref(0, vec![])]),
+        },
+    ];
+    let m = Group::new(defs)
+        .expect("accepted")
+        .instance(vec![])
+        .remove(1);
+    // Every value but `#a(ForceL)` takes the complement arm of `Printer::ty`; without the
+    // structs it does not, and its atoms are written `#_ \ #a(ForceL)` by `Printer::items`,
+    // each atom part turned over.
+    let not_m = !&m;
+    let no_structs = &not_m - &Type::universe(super::super::Universe::Struct);
+    for (t, want) in [
+        (&not_m, "_ \\ #a(ForceL)"),
+        (&!&not_m, "#a(ForceL)"),
+        (&no_structs, "#_ \\ #a(ForceL)"),
+    ] {
+        let named = t.surface_by_name(super::At::Any).to_string();
+        let plain = t.surface().to_string();
+        assert!(named.contains(want), "{named}");
+        assert!(plain.contains("#c("), "{plain}");
+    }
+}

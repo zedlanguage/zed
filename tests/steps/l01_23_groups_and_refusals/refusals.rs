@@ -9972,3 +9972,29 @@ fn witness_gives_a_value_for_types_of_lists() {
         }
     });
 }
+
+/// `Type::is_empty` answers by the type alone, whatever earlier queries left in its memo
+/// (PROOF-sweep-zed-kernel, the claim at "`is_empty` does not depend on MEMO" in
+/// types/empty.rs). Each case `d` of `rfx_case`, empty or not, decided by the front sweep or
+/// by the search, is met again as the key type of a closure `k`, and `k` again as the key
+/// type of `t2`; the search of `t2` reaches `d` only as a key, never as its root. Each of
+/// `t2` and `d` is asked fresh and after the other, and `t2` is empty exactly when `d` is,
+/// by the closure rule.
+#[test]
+fn is_empty_of_a_closure_over_a_key_type_does_not_depend_on_an_earlier_query() {
+    let names = "bool boolfar boundaryinside boundaryoutside chain chainfar clcofront clcofrontones clcofrontsame clcofrontsameblock clcofrontsameones clcofrontshared clmanyheads clmanyheadsfar clstagger clstaggerfar clstaggerholes clstaggerholesin clstaggerholesout cxprivateheads cxprivateheadsfar cxstagger cxstaggerfar cxstaggerwide cxstaggerwidefar emitheads emitheadsfar far groups groupsfar groupsholes groupsholesfar groupssingles groupssinglesfar manyheads manyheadsfar manyheadsfarv0 manyheadsv0 meet mlong mshort multi multifar nil none pair pairfar r10alternating r10big r10mapkeys r10mapvalue r10padded r10sharedfront r10small r5greedy r5remout r9balanced r9cosets r9negswap r9posswap skip1 skipmid some split splitfar stagger staggerfar tuple tuplefar tupleflip tupleflipfar u4boundaryin u4boundaryout u4cofrontones u4cofrontsame u4cofrontsameblock u4cofrontsameones u4cofrontshared u4holesin u4holesout u4width wrap";
+    for (i, name) in names.split(' ').enumerate() {
+        let d = rfx_case(name, 4, &format!("_c1memo{i}"));
+        let k = Type::morphism(d.clone(), d.clone(), Type::empty());
+        let t2 = Type::morphism(k.clone(), k, Type::empty());
+        Type::forget_emptiness();
+        let t2_alone = t2.is_empty();
+        let d_after = d.is_empty();
+        Type::forget_emptiness();
+        let d_alone = d.is_empty();
+        let t2_after = t2.is_empty();
+        assert_eq!(t2_alone, t2_after, "{name}: t2 alone against t2 after d");
+        assert_eq!(d_alone, d_after, "{name}: d alone against d after t2");
+        assert_eq!(t2_alone, d_alone, "{name}: t2 is empty exactly when d is");
+    }
+}

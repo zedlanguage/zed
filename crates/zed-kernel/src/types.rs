@@ -99,7 +99,34 @@ impl Eq for Type {}
 
 impl std::hash::Hash for Type {
     fn hash<H: std::hash::Hasher>(&self, h: &mut H) {
-        // Equal retained types have equal presentation hashes.
+        // Types equal under `==` have equal presentation hashes, as a hash map needs
+        // (PROOF-sweep-zed-kernel):
+        // 1. Outside `hash::blind`: `Type::cmp` answers `Equal` by pointer equality, or after
+        //    `digests_cmp` answered `Equal`. With `NAMED` set it compares the presentation
+        //    digests first; without, the name-free digests and then `named_cmp`, which compares
+        //    the presentation digests unless names are left out. So `Equal` implies equal
+        //    `name_digest`, which is what is hashed.
+        // 2. Inside `hash::blind`, `named_cmp` answers `Equal`, so types equal but for
+        //    definition names compare equal while their presentation hashes may differ; no hash
+        //    of a type or row runs there. `blind` is called only by `Ids::get`, `Ids::insert`
+        //    and `Ids::remove` (`types/empty.rs`), each around a linear search of one list by
+        //    `Type::eq`; `Ids` itself is keyed by the name-free `Type::digest`, outside `blind`,
+        //    and that digest agrees with `==` under `blind` (step 1, without `NAMED`).
+        //    `Type::eq` (`order`, `types`, `walk`, `rec::Key::order`, `Canon::order`) reads
+        //    stored digests, a `HashSet` of node ids, ordered maps and vectors, and builds
+        //    nothing. The one drop in those searches, of the key `Ids::remove`'s `retain`
+        //    removes, could reach `Env::drop`, which looks up `ThreadInstances`, a hash map
+        //    keyed by types; it runs no drop there, since the key is a clone of the entry of
+        //    `Search::types` that `pop_open_forks` holds while it removes it (`met` inserts the
+        //    two together, and only after `Ids::get` missed, so a list holds one key equal to
+        //    it), so the count of that allocation stays above zero.
+        // The assertion checks step 2 on every hash of a test build. Tests:
+        // `equal_types_built_apart_hash_alike`,
+        // `colliding_presentation_hashes_keep_named_graphs_apart`.
+        debug_assert!(
+            !names_blind(),
+            "a type or row is hashed while names are left out"
+        );
         self.name_digest().hash(h);
     }
 }
@@ -694,10 +721,14 @@ impl Eq for Row {}
 
 impl std::hash::Hash for Row {
     fn hash<H: std::hash::Hasher>(&self, h: &mut H) {
-        // Equal rows have equal presentation hashes, as for [`Type`]. Assumption, not proved:
-        // no hashed map of rows is used while `hash::blind` runs, where rows equal but for
-        // definition names compare equal and may hash apart. Evidence: `blind` wraps only the
-        // linear searches of `Ids` in `empty.rs`, as for the hash of `Type`.
+        // Rows equal under `==` have equal presentation hashes, by the proof at the hash of
+        // `Type` (PROOF-sweep-zed-kernel): `Row::cmp` answers `Equal` by pointer equality or
+        // through `digests_cmp` in the same way, and no hash of a row runs inside
+        // `hash::blind`, which the assertion checks in a test build.
+        debug_assert!(
+            !names_blind(),
+            "a type or row is hashed while names are left out"
+        );
         self.name_digest().hash(h);
     }
 }
@@ -3204,8 +3235,18 @@ impl Type {
 /// Answers that change: [`Finiteness::meet_rows`] no longer meets two columns neither known
 /// finite (unless their meet has no tuple types), so a meet of two infinite types
 /// whose meet is finite and holds tuples, found finite before when its unfolding ended, is now
-/// "not known finite". No test of the affected groups depends on one
-/// (not proved that no caller does).
+/// "not known finite". No test of the affected groups depends on one, and no caller does
+/// (PROOF-sweep-zed-kernel B1): every caller of [`Type::finite`], [`Type::values_listed`],
+/// [`Type::each_value`] and [`Type::boxes`] reads false or `None` as "not known", and takes
+/// the general path, never one that needs the type infinite. The callers, read 2026-11-20:
+/// `zedc_stage::stage::trick` keeps the domain whole and says why; `zedc_preimage::product`
+/// (the element test and the cell's facet) does not list the values; in zedc-check,
+/// `check/mod.rs` (the two listings), `check/walk.rs` (the word operands, the numeric parts,
+/// which keep `Ty::set(part)`, the literal repairs, which are not offered, and the remaining
+/// listings) and `check/walk/fp_ops.rs` (the one value of a region) each fall back to the type
+/// as a set, or to no repair; and here `firsts` reads the parts' own tuple types when the
+/// boxes are `None`, and `values_listed` gives `None` with no order. So a weaker answer costs
+/// only precision: a split not made, a list not printed, a repair not offered.
 #[derive(Default)]
 struct Finiteness<'m> {
     stack: Stack<'m>,
@@ -3252,9 +3293,26 @@ impl<'m> Finiteness<'m> {
         let mut unions = HashMap::new();
         let mut order = Vec::new();
         let mut seen: HashSet<Type> = HashSet::new();
+        // The types whose walk is open: visited, and not yet in `order`. A box with an open
+        // column makes the answer `None`, "not known finite" (PROOF-sweep-zed-kernel).
+        // Proof that an open column is a cycle of boxes: the stack is last in, first out, and
+        // a type's `Some` frame is pushed below the frames of its columns, so every frame
+        // popped while that `Some` frame is on the stack was pushed while the type's boxes, or
+        // the boxes of a type pushed by them, were expanded. So the type being expanded is
+        // reached from each open type through a chain of boxes, and a column equal to an open
+        // type closes the chain into a cycle. A walk that skipped such a column, as this one
+        // did before, answered finite for an infinite type: `() | ((0, R) & (0, S))`, with
+        // `R = () | (0, R)` and `S = () | (0, S) | 1`, has the box `(0, t)` of itself, holds
+        // every list of zeros, and was "finite" (test
+        // `types::tests::a_meet_of_two_recursive_lists_is_not_known_finite`). `None` is always
+        // a sound answer here (callers read it as "not known", PROOF B1 at `Finiteness`), so a
+        // finite type whose boxes form a cycle loses only precision. Cost: one insert and one
+        // removal per type and one lookup per column, as the `seen` filter below already makes.
+        let mut open: HashSet<Type> = HashSet::new();
         let mut stack: Vec<(Type, Option<Vec<Row>>)> = vec![(root, None)];
         while let Some((t, done)) = stack.pop() {
             if let Some(boxes) = done {
+                open.remove(&t);
                 order.push((t, boxes));
                 continue;
             }
@@ -3262,10 +3320,18 @@ impl<'m> Finiteness<'m> {
             if leaf || !seen.insert(t.clone()) {
                 continue;
             }
+            open.insert(t.clone());
             let boxes = match merge {
                 true => merge_boxes(self.boxes(&t).await?, &mut unions),
                 false => self.boxes(&t).await?,
             };
+            if boxes
+                .iter()
+                .flat_map(|r| r.iter())
+                .any(|c| open.contains(c))
+            {
+                return None;
+            }
             let below: Vec<Type> = boxes
                 .iter()
                 .flat_map(|r| r.iter())
@@ -3298,6 +3364,30 @@ impl<'m> Finiteness<'m> {
     /// joins of the finite side's box columns, which come before it in its finite order, so
     /// each chain of new types follows a chain down that order and ends. Evidence: the five seeds of
     /// FAIL-group-oracle-order-stack-overflow-seed end, and the listing and group tests pass.
+    ///
+    /// Split into what is proved and what is not (PROOF-sweep-zed-kernel):
+    /// (a) Proved: a question on one [`Finiteness`] ends exactly when the set `U` of types
+    ///     reached through boxes (the root, the columns of its boxes, theirs, and so on, the
+    ///     new meets made here and by [`list_boxes`] included) is finite. Each walk of
+    ///     [`Finiteness::order`] expands a type at most once (`seen`); a `finite` question is
+    ///     asked at most once per type (`known`, `asking`); `meet_columns` descends by
+    ///     [`only_row`], which reads a row only of a `Node::Parts` node and never unfolds a
+    ///     recursive node, so each descent goes down the graph of parts, which is acyclic (a
+    ///     node's components exist before the node is made, so every cycle passes through a
+    ///     recursive node, where `only_row` stops), and ends; and
+    ///     `part_boxes` reads each operand once per pass (its explicit stack and maps). So the
+    ///     work is finite when `U` is, and a type of `U` is reached only by such a step.
+    /// (b) Proved: `U` is finite when no step meets two types neither of which is `top` or
+    ///     equal to the other, that is, when each path of each diagram takes one tuple type and
+    ///     each meet of the parts has boxes on one side only. Then `meet_types` and this
+    ///     function return one of their arguments (their first two arms), so every column in
+    ///     `U` is a component of a row written in the root's diagrams, at some depth, and the
+    ///     root has finitely many.
+    /// (c) Not proved: the general case, where a meet makes a new type that is a meet again;
+    ///     the assumption above, with its evidence, is what is relied on there. A type of `U`
+    ///     met again inside its own walk now ends the walk with "not known finite" (`open` in
+    ///     [`Finiteness::order`]), so a cycle of boxes no longer hides an infinite type, but a
+    ///     chain of new types that never repeats is not ruled out.
     async fn meet_rows(&'m self, r: &Row, s: &Row) -> Row {
         let mut columns = Vec::with_capacity(r.len());
         for (x, y) in r.iter().zip(s) {

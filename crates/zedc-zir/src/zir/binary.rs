@@ -928,12 +928,22 @@ impl<'a> R<'a> {
                     pows.push((self.n()?, self.big()?));
                 }
                 let r = match Rat::from_kept(num, den, pows) {
-                    Some(r) if rational || r.is_integer() => Arc::new(r),
+                    Some(r) if rational || r.is_integer() => r,
                     _ => return self.err(at, "a number not in the form it is kept in"),
                 };
                 match rational {
-                    true => Value::Rat(r),
-                    false => Value::Big(r),
+                    true => Value::Rat(Arc::new(r)),
+                    // A `Big` is never in the 64-bit range: an integer there is an `Int`
+                    // (`Value::integer`), and the order and the keys of maps rely on it. The
+                    // writer gives tag 12 only to a `Big`, so a tag-12 integer in the range is
+                    // damaged data (test `a_kept_wide_integer_in_the_64_bit_range_is_refused`).
+                    false => match Value::integer(r) {
+                        v @ Value::Big(_) => v,
+                        _ => {
+                            return self
+                                .err(at, "an integer in the 64-bit range written as a wide one");
+                        }
+                    },
                 }
             }
             4 => Value::float(f64::from_bits(self.n()?)),

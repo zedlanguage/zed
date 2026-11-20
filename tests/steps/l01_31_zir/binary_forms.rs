@@ -194,6 +194,35 @@ fn a_count_past_the_end_of_the_data_is_refused() {
     );
 }
 
+/// A wide integer in kept form (tag 12) whose value is in the 64-bit range is refused: that
+/// integer is an `Int` (`Value::integer`), and read as a `Big` it would be unequal to the same
+/// `Int`, so a different key, and ordered by its sign alone (PROOF-sweep-zed-kernel). One past
+/// the range, 2^64, still reads, as the `Big` it is.
+#[test]
+fn a_kept_wide_integer_in_the_64_bit_range_is_refused() {
+    let good = constant("305419896");
+    let tag = at(&good, &[&[1u8][..], &word(0x1234_5678)].concat());
+    // Tag 12, the sign, a magnitude of `limbs`, no powers; then the rest of the graph.
+    let kept = |limbs: &[u64]| {
+        let mut b = vec![12u8, 0];
+        b.extend(word(limbs.len() as u64));
+        limbs.iter().for_each(|&l| b.extend(word(l)));
+        b.extend(word(0));
+        [&good[..tag], &b[..], &good[tag + 9..]].concat()
+    };
+    assert_eq!(
+        binary::decode(&kept(&[0x1234_5678])),
+        Err(format!(
+            "byte {tag}: an integer in the 64-bit range written as a wide one"
+        ))
+    );
+    let wide = binary::decode(&kept(&[0, 1])).expect("2^64 reads as a wide integer");
+    assert!(
+        format!("{wide:?}").contains("18446744073709551616"),
+        "{wide:?}"
+    );
+}
+
 #[test]
 fn a_port_named_main_and_a_field_is_refused() {
     let good = bytes(

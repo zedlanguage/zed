@@ -722,15 +722,64 @@ impl Printer<'_> {
     // Every unfolded type on a cycle is named, not a least set of them that cuts every cycle
     // (a least feedback vertex set, NP-hard), so a cycle through two of them names both, as
     // the printer without names would.
-    // Assumption, not proved (ASSUME-documented): every cycle of the texts passes through a
-    // recursive type that is either named in `forced` or pushed on `unfolded` by
-    // [`Printer::ty`], so naming the unfolded ones on a cycle leaves no cycle for
-    // [`Printer::heights`]. A part written out in full in an atom's payload (`ctx` set) takes
-    // the same branch of `ty`, but no test reaches it: `Expr` cannot build that system, since
-    // an atom's payload is always a tuple. Evidence: `a_cycle_of_parts_written_by_name_is_defined`,
-    // `groups_whose_printing_met_a_cycle_without_a_recursive_type_build_and_print`, and a sweep
-    // of 240,000 `gen_cells` seeds (480,000 systems) with no panic. If false, `heights` panics
-    // on user input ("every cycle passes through a recursive type with a definition").
+    // Claim: every cycle of the texts passes through a recursive type that is either named in
+    // `forced` or pushed on `unfolded` by [`Printer::ty`], so naming the unfolded ones on a
+    // cycle leaves no cycle for [`Printer::heights`] (which else panics on user input, "every
+    // cycle passes through a recursive type with a definition"). Proof (PROOF-sweep-zed-kernel),
+    // in sub-cases, (a) and (b) proved and (c) not:
+    // - Depth. A node of parts holds the column types of the rows its tuple parts name, its
+    //   atoms' payloads, and the three types of each morphism its morphism part names; a
+    //   recursive node holds the arguments of its key, not its unfolding, which
+    //   `Rec::unfolding` makes later and keeps in a cache. Each is an `Arc` whose fields are set
+    //   when it is made, so a type holds only older types, and its depth `d` (0 for one that
+    //   holds none, else one more than the greatest depth of a type it holds) is finite. A node
+    //   of the texts has the depth `D`: `d(t)` for `Item::Ty(_, t)`, and for `Item::Tuples` or
+    //   `Item::Morphisms` of a part `p`, one more than the greatest `d` of a type its literals
+    //   hold.
+    // - Edges. Every `Seg::Node` of a text is made by `refer`; its calls fall in five kinds.
+    //   E1, to a type the node holds: a row's columns (`row`), an atom's payload (`atom`), the
+    //   arguments of a member written `name(args)`, the three types of a morphism (`morphism`),
+    //   and the types of an arrow folded by `meet_text`, each `==` a literal's own field or
+    //   `Never` (its `named`), so the same node as that field's. `D` drops. E2, from
+    //   `Item::Ty(_, t)` to its own tuple or morphism part (`tuples`, `items`): `D` does not
+    //   grow. E3, from a part to an operand of its expression, turned over or not (`part`):
+    //   `D` does not grow, and the operand is a strict subexpression, so a chain of E3 ends.
+    //   E4, from `Item::Ty(_, t)` to a type made there: `!t` (the arm with every atom, the rest
+    //   of the tuples and the structs), `payloads() - t` (the same arm in a payload) and
+    //   `except` (`tuples`, the rest of the tuples), and, as E1 above, an atom's payload turned
+    //   over, `payloads() - P` (`items` with every atom, and the payloads of `!t`). E5, from a
+    //   recursive node to its unfolding: outside a payload and by name it is `name(args)`, E1;
+    //   else `ty` pushes it on `unfolded` or sets `forced` and refers to the body. Only E5 can
+    //   make `D` grow.
+    // - E4 keeps depth, for a payload `P` that is a node of parts. The code of `bdd` is
+    //   generic over `Literal`, which has no constructor, so every literal of a `not`, `zip` or
+    //   `minus` is one of its operands', and `payloads()` holds no type; so `!t`, `payloads() -
+    //   t` and `except` hold the columns of `t`'s rows and morphisms, and, as payloads, the
+    //   types `payloads() - P` for payloads `P` of `t`; and `payloads() - P` holds only the
+    //   columns of `P`'s rows, since `P.p()` of a node of parts is its own parts. So the target
+    //   has `D` at most `d(t)`. Nor does the target take an E4 arm of its own: `!t` has a finite
+    //   set of atoms and no rest of the tuples, `payloads() - t` no structs and no rest, and
+    //   `except` no atoms, no structs and no rest (`Tuples::not` turns `rest` over).
+    // - (a) Proved, given E4 keeps depth: every cycle has an E5 edge. Around a cycle `D`
+    //   returns to its start, so a cycle with an E1 edge also has an edge where `D` grows, an
+    //   E5. A cycle with neither has `D` constant and only E2, E3 and E4 edges: a part node has
+    //   no edge out but E1 and E3, so once at a part the cycle stays among parts on E3 edges,
+    //   which end; with no part node, only E4 edges, and the target of one takes no E4. So the
+    //   cycle runs through a recursive node in `forced` or `unfolded`. The edges out of
+    //   `forced` are cut below, so a cycle left passes through `unfolded`, which is named.
+    // - (b) Proved: E4 keeps depth for every payload that is a node of parts, as above.
+    // - (c) Not proved: a payload that is a recursive node as a whole, whose `p()` gives its
+    //   unfolding's parts, which may hold deeper types. `Expr::Atom` writes the tuple of its
+    //   operands as a payload, a node of parts, and `AtomPart::not` and `Atoms::zip` build
+    //   payloads by `-`, `&` and `|`, which build nodes of parts; it is not shown that no
+    //   operation answers with a recursive node equal to the payload. The arm of `ty` for such
+    //   a payload, written out in full with `ctx` set, takes the unfolding branch like any
+    //   other, but no test reaches it.
+    // Tests: `a_cycle_of_parts_written_by_name_is_defined`,
+    // `groups_whose_printing_met_a_cycle_without_a_recursive_type_build_and_print`,
+    // `a_cycle_of_parts_inside_every_value_but_one_atom_payload_is_defined` (both E4 edges over
+    // a payload whose column is recursive), and a sweep of 240,000 `gen_cells` seeds (480,000
+    // systems) with no panic.
     fn force_cycles(&mut self) {
         if self.unfolded.is_empty() {
             return;

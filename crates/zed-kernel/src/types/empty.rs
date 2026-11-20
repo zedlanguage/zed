@@ -756,16 +756,42 @@ impl Type {
             // with components after it, so a fork met before the search reached an empty
             // component left `self` inhabited alone and empty after a query that kept that
             // component empty.
-            // Assumption, not proved (ASSUME-documented): that `is_empty` is now a function of
-            // the type alone, whatever earlier queries left in `MEMO`. The search above is not
-            // `strict`, so it reads `MEMO`; a kept answer can let it finish where a fresh search
-            // would meet a fork, and the answer then comes from `MEMO`, not from the strict
-            // `empty_past_forks`. Evidence: `order_free` over seeds 0 to 199 in
-            // `l01_23_groups_and_refusals::judgments::bench` and the pinned seed
-            // 10511391382961984112 in `judgments.rs`. If false, a subtype answer depends on the
-            // queries asked before it: no answer is wrong (a type not proved empty counts as
-            // inhabited, and every empty answer is a proof), but checking is not deterministic.
-            // The fork stages (module `fork`) decide some of the rest exactly: COMPLEXITY.md K137.
+            // Claim: `is_empty` is a function of the type alone, whatever earlier queries left
+            // in `MEMO` (PROOF-sweep-zed-kernel). Proved in sub-cases (i) and (ii); (iii) is
+            // not proved.
+            // Where `MEMO` enters: the search above is not `strict`, so `Search::met` answers a
+            // type kept in `MEMO` from it, without numbering it or searching under it. That is
+            // the one read of `MEMO` in a search; the others are the read and the front sweep
+            // at the top of this function, and they decide `self` itself.
+            // Soundness (module comment): every step that answers empty is a proof, so a type
+            // answered empty has no value. By induction over the order in which entries were
+            // written to `MEMO` (here, after the front sweep, and from the search below), every
+            // kept "empty" is then a proof too: the search that wrote it read only earlier
+            // entries, each a proof or an "inhabited", and an "inhabited" read never makes a
+            // sound step answer empty.
+            // (i) `self` has a value. Every path answers false, since "true" would be a proof
+            // of emptiness. Proved.
+            // (ii) `self` has no value, and the search with today's `MEMO` and the search with
+            // an empty `MEMO` both prove it. Both answer true. Proved.
+            // (iii) `self` has no value, and one of the two searches proves it while the other
+            // is refused (a fork, where `empty_past_forks` and `fork::decide` also fail, or a
+            // tuple split) and answers false. This is the only way the answer can depend on
+            // `MEMO`: a kept answer skips the subtree that holds the fork or the split, or a
+            // fresh search reaches a fork that a kept answer would have skipped. Not proved:
+            // it needs every refused search to be refused for any `MEMO`, and the search's
+            // incompleteness (module comment: coNP-hard tuple parts, the subset construction at
+            // a fork) gives no such guarantee. No case is known.
+            // Evidence for (iii): `order_free` over seeds 0 to 199 in
+            // `l01_23_groups_and_refusals::judgments::bench`, the pinned seed
+            // 10511391382961984112 in `judgments.rs`, and
+            // `l01_23_groups_and_refusals::refusals::is_empty_of_a_closure_over_a_key_type_does_not_depend_on_an_earlier_query`,
+            // which meets each of the 82 kinds of `rfx_case` as the key type of a closure and
+            // asks each type fresh and after the other.
+            // If (iii) happens, a subtype answer depends on the queries asked before it. No
+            // answer is wrong (a type not proved empty counts as inhabited), but checking is not
+            // deterministic. A fix would drop the `MEMO` read in `Search::met`, at the cost of
+            // searching again every type an earlier query decided. The fork stages (module
+            // `fork`) decide some of the rest exactly: COMPLEXITY.md K137.
             return s.refused == Some(Refusal::Fork)
                 && (self.empty_past_forks()
                     || matches!(fork::decide(self), Some(fork::Decided::Empty)));
@@ -5008,16 +5034,55 @@ impl Columns {
     /// where they are `Some`, ascending: of the component that leaves the fewest, the rows of
     /// the key sets listing its key and the open rows of its column. Every other row has a
     /// column that does not hold its component.
-    // Assumption, not proved: a value in a column type that `Filer` files as listed under
-    // `Reading::Payloads` has its key among that type's keys. Argued by induction along the
-    // walk to the key: a scalar or bare atom is in a type only where its literal set or its
-    // name's `bare` lists it, and cofinite sets or names leave the type unlisted; a tuple is in
-    // a listed part only through a row, whose first column then holds its first component; an
-    // atom with a tuple payload only through its name's payload type, which `Atoms::payloads`
-    // names unless it lists nothing; and `Filer` gives a type the union of the keys it reaches,
-    // listed only when all are. Evidence: the test
-    // `a_value_in_a_listed_column_type_has_a_key_the_type_lists`, red with the payload types
-    // left unread; and the answers of the tests of `types::empty`, unchanged.
+    // Proof that a value in a column type `t` that `Filer` files as listed under
+    // `Reading::Payloads` has its key (`leaf`) among the keys `t` is filed with
+    // (PROOF-sweep-zed-kernel). "In" is `Type::contains`. By induction on the size of the
+    // value. Values are finite trees (`Value` and its items are immutable `Arc` trees), so the
+    // induction is well founded. Types may be recursive; the proof needs no induction on them,
+    // because `Filer::file` gives every type in a strongly connected group the keys of all of
+    // them and of every type below, and makes the group listed only when each of them and each
+    // type below is listed (`FileWalk::found`, `merged`). So for every type `u` reached from
+    // `t`, the keys of `t` include those of `u`, and `t` listed means `u` listed.
+    //
+    // Let `v` be in a listed type `u` with key `leaf(v)`. Each case below either finds the key
+    // among `u`'s own keys (`Visit::new` in types.rs) or finds a smaller value with the same
+    // key in a listed type below `u`:
+    // - `v` a bool: `u` holds it only if its bit is set, and `Visit::new` lists both set bits.
+    // - `v` an integer, rational, float or string: listed means no literal set of `u` is
+    //   cofinite, so `u` holds `v` only if `v` is among the listed literals, which are keys.
+    // - `v` a bare atom `#a`: listed means the atom names are not cofinite, so `u` holds `#a`
+    //   only if `#a` is a listed name with its bare atom, which is in `Atoms::bare`, and those
+    //   names are keys.
+    // - `v` the empty tuple: its key is itself. `u` holds it only if its length-0 part is true
+    //   when every row is true (a row of length 0 holds the empty tuple), and `firsts` lists
+    //   the empty tuple in exactly that case.
+    // - `v` a tuple `(x, ...)` of length n > 0: its key is `leaf(x)`. Listed means
+    //   `tuples.rest` is false, so `u` holds `v` only if its length-n part is true when each row
+    //   is given whether it holds `v`. Listed also means that part is false when every row is
+    //   false (`firsts`: `listed &= !part.eval(&|_| false)`). So some row the part reads holds
+    //   `v`; otherwise the two readings would give every row the same value and the part the
+    //   same answer. The step needs no monotone part: it holds for any Boolean function of the
+    //   rows, rows read only negatively included. That row is among `distinct_atoms`, which
+    //   keeps every atom `Part::atoms` visits, and `walk_atoms` (bdd.rs) visits every node of
+    //   every diagram and both operands of every expression. So `x` is in that row's first
+    //   column, which `firsts` files below `u`, and `x` is smaller than `v`.
+    // - `v` an atom `#k(args)` with a tuple payload: its key is the key of the tuple `args`,
+    //   and `u` holds `v` only if `#k` is a listed name and `args` is in its payload type `P`.
+    //   An empty `P` (`lists_nothing`) holds nothing, so `P` is in the payload tree
+    //   (`Atoms::set` adds every other one, and `payload_dag` is either the chain of every
+    //   entry added, while none was overwritten or removed, or that tree), which `Visit::new`
+    //   files below `u`. If `args` is empty, the key is the empty tuple, which `P` lists by the
+    //   case above. Otherwise the first argument is in a first column of `P`, below `u`, by the
+    //   tuple case, and it is smaller than `v`.
+    // - `v` a struct atom, a family, a path, or a value whose walk meets one: `leaf` gives
+    //   `None`, so there is no key to list and nothing to prove.
+    // Keys are compared by `Value`'s `==` and order, which agree (the proof at `impl Hash for
+    // Value` in value.rs, and `Ord for Value`). `Search::key` follows the same walk on reps: a
+    // `Rep::Atom` goes to its payload's tuple, and a rep with no `Value` form gives `None`,
+    // which puts the row on the open list, always safe.
+    // Test: `a_value_in_a_listed_column_type_has_a_key_the_type_lists`, red with the payload
+    // types left unread; it covers each case above, a negative row and the empty tuple at the
+    // top included.
     fn candidates(&self, keys: &[Option<Value>]) -> Vec<usize> {
         let at = |j: usize, k: &Value| {
             let sets = self.by[j].get(k).map_or(&[][..], Vec::as_slice);

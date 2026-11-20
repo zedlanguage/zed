@@ -1115,18 +1115,59 @@ fn eq(a: &Value, b: &Value) -> bool {
 impl Eq for Value {}
 
 /// Hashes the value's digest (`digest`): two values equal under `==` hash alike, so a value
-/// can key a hash map. For a boolean, number or string, `==` is `Value::scalar_cmp` giving
-/// `Equal`. Unlike the order, the hash of a value of many parts costs its size.
-// Assumption, not proved (ASSUME-documented): `digest` gives values equal under `==` one
-// hash in every form: `-0.0` and `0.0` differ under both, every NaN is the canonical one
-// (`F64::new`), a `Big` is never in the 64-bit range, a `Rat` hashes by `Rat::residues`,
-// a string by its text however joined, a sequence by its content whether shared or not.
-// The argument is case by case, in the docs of `leaf_digest`, `digest` and `Rat::residues`.
-// Evidence: `eval/tests.rs` (TEST-kernel-hash-keys), `equal_keys_hash_alike_in_every_form`
-// and `an_index_whose_hash_reads_sharing_is_caught`, with negative controls. Every
-// `HashMap<Value, _>` needs it, among them a definedness fix's `index` (`position`).
-// If false, a lookup misses an equal key, and a read of a key in the domain gives
-// `#notFound`: a wrong answer, so unsound, not a refusal.
+/// can key a hash map. Unlike the order, the hash of a value of many parts costs its size.
+// Proof that `a == b` implies `digest(a) == digest(b)` (PROOF-sweep-zed-kernel), by the arms
+// of `eq`:
+// 1. Values of different variants are never equal: `number_eq` requires one variant (so an
+//    `Int` never equals a `Big`, and an `F64` never equals an `F32`), and `scalar_cmp`
+//    compares two bools, two strings or two numbers with each other and any other pair by
+//    `kind`, which differs for the pairs that reach it. So each variant can be taken alone.
+// 2. Bool and `Int`: equal means the same bits; `leaf_digest` writes those bits.
+// 3. `Big`: equal means the same integer; `leaf_digest` writes `integer_residues`, a function
+//    of the integer alone (a negative value is negated mod each modulus). That a `Big` is never
+//    in the 64-bit range is not needed here (step 1); the order and the keys of maps need it,
+//    and `Value::int`, `Value::integer` and the ZIR reader (`zedc_zir::zir::binary`, tag 12)
+//    keep it.
+// 4. `Rat`: `Rat::eq` compares two plain forms by numerator and denominator, otherwise the two
+//    forms brought to one by `aligned`, otherwise the fields (`form_cmp`); in every branch equal
+//    forms have one value. `leaf_digest` writes `Rat::residues`, which reduces N/D to lowest
+//    terms first, so it is a function of the value, not of the form.
+// 5. `Float` and `Float32`: `F64::eq` and `F32::eq` compare `to_bits`, and `number_eq`'s `cmp`
+//    is `total_cmp`, also equal exactly on equal bits. `leaf_digest` writes the bits. So `-0.0`
+//    and `0.0` are unequal and hash apart, and two NaNs are equal only with equal bits; no NaN
+//    needs to be canonical.
+// 6. `Str`: equal means equal bytes; `leaf_digest` writes `poly_hash`, the polynomial hash of
+//    the bytes, which `Text` combines over joins, so it does not depend on how the text was
+//    built.
+// 7. Tuple, path and atom: `eq` compares the parts in order (an atom's name, field names and
+//    payload, as `Atom`'s derived equality does); `with_sequence` digests the tag, then the
+//    same parts, and an atom's field names by content (`Fields` derefs to them; its id is never
+//    hashed). A shared sequence keeps a digest computed from its content alone. By induction on
+//    depth, equal parts give equal digests.
+// 8. A bounded family (map, range, list made by `++`): `families_eq` makes two ranges equal by
+//    `ends`, and any other two equal only when `size` agrees and `same_entries` or the walk
+//    under `Relation::Identity` finds one set of entries (under `shallow` it answers false,
+//    which only makes `==` stricter). `leaf_digest` writes the tag, `size` and `family_sum`, a
+//    sum mod P = 2^61 - 1 of one term per entry: `value_term(v) * R^e` for an integer key of
+//    residue e, `mix(digest k, value_term(v)) % P` for any other key, joined with the
+//    `btree::NEG_ZERO` flag of `holds_neg_zero`. Each term depends only on its entry and the sum
+//    is commutative, so the shape of the tree does not matter. `map_sum` steps `w * R` only
+//    after the key `Int(i - 1)`, where `w * R = R^e`; `range_sum` is the closed form of the
+//    same sum over the integers of the range; a list made by `++` adds its parts' sums, each
+//    times R^offset, which is the sum of the joined entries (R^(P - 1) = 1). So equal entries
+//    give equal size and sum.
+// 9. A range with no upper end, `a ..`: `leaf_digest` writes its low end. `families_eq` reaches
+//    `Family::size`, which stops the run for it (`walked_unbounded`), so `==` never answers
+//    for such a value and the claim holds for it with no content. That stop is not reached by
+//    a program: `==`, `!=`, printing, and binding `a ..` to a name or passing it are refused at
+//    compile time (plan rows RANGE-open-walk, RANGE-open-names), so the evaluator never holds
+//    it where `==` or a hash map would read it.
+// Tests: `equal_values_hash_alike` (drawn cases), `equal_families_hash_alike_in_every_form`,
+// `equal_texts_hash_alike_however_joined`, and in `eval/tests.rs` (TEST-kernel-hash-keys)
+// `equal_keys_hash_alike_in_every_form` and `an_index_whose_hash_reads_sharing_is_caught`,
+// with negative controls. Every `HashMap<Value, _>` relies on this, among them a definedness
+// fix's `index` (`position`): if it failed, a lookup would miss an equal key and a read of a
+// key in the domain would give `#notFound`, a wrong answer.
 impl Hash for Value {
     fn hash<H: Hasher>(&self, state: &mut H) {
         state.write_u64(digest(self));
