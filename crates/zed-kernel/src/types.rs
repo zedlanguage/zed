@@ -2468,9 +2468,15 @@ impl Type {
     // in place of the largest operand's would copy every name of a union of a large type with
     // a small one, quadratic in space over a chain of such unions
     // (`l01_23_subtyping::rec::recursive_definitions_scale`: 32.2 times the bytes from 100 to
-    // 800 definitions). The maps are imbl B-trees, persistent by path copying (Driscoll,
-    // Sarnak, Sleator and Tarjan, "Making data structures persistent", JCSS 38(1), 1989): an
-    // insert copies the nodes on its path only while another map shares them. Measured by
+    // 800 definitions). The maps are imbl B-trees, persistent by path copying: J. R. Driscoll,
+    // N. Sarnak, D. D. Sleator and R. E. Tarjan, "Making data structures persistent", J. Comput.
+    // System Sci. 38(1):86-124, 1989, doi:10.1016/0022-0000(89)90034-2, §4 p. 116, credit it to
+    // Myers, Krijnen and Meertens, Reps et al. and Swart: "copying the entire access path and
+    // all other changed nodes each time an insertion or deletion occurs ... O(log n) space and
+    // time in the worst case per insertion or deletion" (the paper's own node copying saves the
+    // log factor in space; imbl does not use it). Checked 2026-11-19 against the paper's text
+    // and Crossref; imbl's code not read for this. An insert here copies the nodes on its path
+    // only while another map shares them. Measured by
     // `l01_27_absences::scaling::the_repairs_for_a_family_of_many_atoms_scale`: 9.06 times the
     // instructions from 1000 to 8000 atoms joined in pairs, 8.67 now, with 17% and 20% fewer
     // instructions at the two sizes.

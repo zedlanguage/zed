@@ -2,7 +2,13 @@
 //! rational built (DESIGN.md sec:domains, step L1.26b), and writing an `f64` as the shortest
 //! decimal that reads back to it (sec:reduction).
 //!
-//! Reading follows Mushtak and Lemire (DESIGN.md \[MushtakLemire23\]). A significand `w` of at
+//! Reading follows N. Mushtak and D. Lemire, "Fast number parsing without fallback", Software:
+//! Practice and Experience 53(7):1467-1471, 2023, doi:10.1002/spe.3198, arXiv:2212.06644
+//! (DESIGN.md \[MushtakLemire23\]). Its Algorithm 1 is Lemire's (below) with the fallback test
+//! "if (z mod 2^73 = 2^73 − 1 for 64-bit numbers ...) and q ∉ [−27, 55]"; its section "Ruling
+//! out fallback cases" shows, by Legendre's theorem, that such a `v` must be "the denominator
+//! of a convergent of T[q]/2^137", and checking those convergents finds none, so the test never
+//! fires. Checked 2026-11-19 against the arXiv text and Crossref. A significand `w` of at
 //! most 19 digits times `10^q` is one 64 x 128-bit product with the truncated power of five
 //! `POW5[q]`. The paper proves, by the continued-fraction convergents of `POW5[q] / 2^137`, that
 //! for `q` outside `-27..=55` the error of the truncation never reaches bit 73 of the product's
@@ -19,10 +25,15 @@
 //! read. When the two round alike, that is the literal's float; otherwise the literal's digits
 //! are compared with the decimal digits of the halfway point between the two floats.
 //!
-//! Writing is Giulietti's Schubfach ("The Schubfach way to render doubles", 2020, as in Java's
-//! `DoubleToDecimal`), with its powers of ten taken from the same table, changed for the rule
-//! of sec:reduction: the shortest digits, and of two equally near the larger magnitude, where
-//! Schubfach takes the even one; and one significant digit where Java asks for two.
+//! Writing is Giulietti's Schubfach (R. Giulietti, "The Schubfach way to render doubles", 2020,
+//! a preprint with no DOI or arXiv id, the method of OpenJDK's `DoubleToDecimal`; from memory,
+//! not checked: neither the preprint nor the OpenJDK source was read for this comment), with
+//! its powers of ten taken from the same table, changed for the rule of sec:reduction: the
+//! shortest digits, and of two equally near the larger magnitude, where Schubfach takes the
+//! even one; and one significant digit where Java asks for two. Tests: `shown_as_before_on_*`
+//! and `show_f32_writes_the_shortest_text_that_reads_back_at_f32` check that each written float
+//! reads back to itself and is the shortest; they catch a wrong or long text, not a departure
+//! from Schubfach's steps.
 
 use super::LiteralRounding;
 use crate::machine_int::BitLen;

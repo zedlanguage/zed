@@ -1,10 +1,13 @@
 //! The 128-bit powers of five read by [`super`]: `POW5[q + 342]`, for `q` in `-342..=324`, is
 //! the integer in `[2^127, 2^128)` that is `5^q` times a power of two, truncated: the leading
 //! 128 bits of `5^q` for `q >= 0` (exact for `q <= 55`), and `floor(2^(127 + b) / 5^-q)` for
-//! `q < 0`, where `5^-q` has `b` bits. It is fast_float's table (Lemire 2021, "Number parsing
-//! at a gigabyte per second", appendix B), extended to `q = 324` for writing the smallest
-//! subnormal. Each entry is checked against the exact power by
-//! `the_power_table_is_the_truncated_powers_of_five`.
+//! `q < 0`, where `5^-q` has `b` bits. It is fast_float's table: D. Lemire, "Number parsing at
+//! a gigabyte per second", Software: Practice and Experience 51(8):1700-1727, 2021,
+//! doi:10.1002/spe.2984, §4 ("Fast algorithm"): "The algorithm relies on a precomputed table
+//! of 128-bit values T[q] for decimal exponents q ∈ [−342, 308] (see Appendix B)" (checked
+//! 2026-11-19 against the paper's text and Crossref). Extended here to `q = 324` for writing
+//! the smallest subnormal. Each entry is checked against the exact power by
+//! `the_power_table_is_the_truncated_powers_of_five`, which catches any wrong entry.
 
 /// `POW5[q + 342]`: `5^q`, scaled by a power of two into `[2^127, 2^128)`, truncated.
 pub(super) static POW5: [u128; 667] = [

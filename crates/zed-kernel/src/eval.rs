@@ -4128,10 +4128,14 @@ fn prim_on(p: Prim, vals: &[Value]) -> Result<Value, KernelError> {
         // format: Rust's `sqrt` and `mul_add` are both correctly rounded, `sqrt(-0.0)` is
         // `-0.0`, and a negative or NaN operand of `sqrt`, a NaN operand of `fma`, or
         // `fma(inf, 0, c)` gives NaN (DESIGN.md sec:linalg, machine operations). Method: IEEE
-        // Std 754-2019, "IEEE Standard for Floating-Point Arithmetic", IEEE, 2019, section
-        // 5.4.1. Cost: O(1), one hardware instruction each (or the C library's `fma` on a host
-        // without FMA). Measured: test `l01_18_scalar_interpreter::sqrt_fma` runs n = 2048 and
-        // 8n calls of each word, 14225721 and 113703294 instructions, 8.0 times the work.
+        // Std 754-2019, "IEEE Standard for Floating-Point Arithmetic", IEEE, 2019,
+        // doi:10.1109/IEEESTD.2019.8766229 (Crossref), section 5.4.1, "Arithmetic operations",
+        // which lists `squareRoot` and `fusedMultiplyAdd` among the operations rounded once.
+        // Section number and wording from memory, not checked: the standard is paywalled and
+        // was not read. Cost: O(1), one hardware instruction each (or the C library's `fma` on
+        // a host without FMA). Measured: test `l01_18_scalar_interpreter::sqrt_fma` runs
+        // n = 2048 and 8n calls of each word, 14225721 and 113703294 instructions, 8.0 times
+        // the work.
         (Prim::Sqrt, [Float(a)]) => Value::float(a.get().sqrt()),
         (Prim::Sqrt, [Float32(a)]) => Value::float32(a.get().sqrt()),
         (Prim::Fma, [Float(a), Float(b), Float(c)]) => {

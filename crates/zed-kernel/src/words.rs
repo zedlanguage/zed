@@ -336,8 +336,15 @@ fn rank(pieces: impl Iterator<Item = Value>) -> Family {
 /// since it matches at every position, again and again: it gives the failure
 /// `#emptySeparator`, for every `s` (author decision P314).
 // Complexity tradeoff: the naive search tests `sep` at each offset of `s`, O(n·m) for n bytes
-// of `s` and m of `sep`. Used: the standard library's `str::split`, the Two-Way search
-// (Crochemore and Perrin, "Two-way string-matching", JACM 38(3), 1991), O(n + m) in all, then
+// of `s` and m of `sep`. Used: the standard library's `str::split`, whose `StrSearcher` is the
+// Two-Way search of M. Crochemore and D. Perrin, "Two-way string-matching", J. ACM 38(3):650-674,
+// 1991, doi:10.1145/116825.116845 (Crossref; the library's comment gives pp. 651-675): the
+// pattern is cut at a critical factorization, `sep = u v`, its right part `v` matched left to
+// right and then `u` right to left, shifting by the period of `sep` or by `max(|u|, |v|) + 1`,
+// O(n + m) time in all and O(1) space. Checked 2026-11-19 by reading `core::str::pattern`
+// (`TwoWaySearcher`, which cites the paper), not the paper. Test: `split_keeps_every_piece`
+// (tests/steps/l03_15a_fp_ops_run/kernel.rs) compares pieces with expected lists, overlapping
+// separators included; it catches a wrong piece, not a slow search. Then
 // one copy of each piece, O(n) bytes in all, and the rank built from the sorted keys, O(k) for k
 // pieces. Tradeoff: a string held as joined blocks is first written out into one buffer,
 // O(n) more memory for the time of the call, since the search reads one `&str`; a search across

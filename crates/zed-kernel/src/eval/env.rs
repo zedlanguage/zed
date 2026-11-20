@@ -20,9 +20,17 @@ use std::rc::Rc;
 // binding allocated a whole 16-entry leaf (about 1.2 KB) for an empty environment, or copied
 // the leaf with each of its entries for a shared one: about 650 instructions a binding and,
 // with dropping the leaves, 15% of a law test (callgrind, law_04). Used: an AVL tree of one
-// binding per node behind `Rc` (Adelson-Velsky and Landis 1962; path copying as in Driscoll,
-// Sarnak, Sleator and Tarjan 1989): a binding copies the O(log n) nodes on its path, each one
-// entry, and updates in place the nodes no other environment shares (`Rc::make_mut`). The
+// binding per node behind `Rc`. The tree: G. M. Adel'son-Vel'skii and E. M. Landis, "An
+// algorithm for the organization of information", Soviet Math. Doklady 3:1259-1263, 1962 (no
+// DOI; from memory, not checked: no copy found): the heights of a node's two subtrees differ by
+// at most one, restored after an insert by one or two rotations, so the height is O(log n).
+// Path copying: Driscoll, Sarnak, Sleator and Tarjan, "Making data structures persistent", J.
+// Comput. System Sci. 38(1):86-124, 1989, doi:10.1016/0022-0000(89)90034-2, §4 p. 116, which
+// credits it to Myers and others: "copying the entire access path and all other changed nodes
+// each time an insertion or deletion occurs", O(log n) time and space per update (checked
+// 2026-11-19 against the paper's text). A binding copies the O(log n) nodes on its path, each
+// one entry, and updates in place the nodes no other environment shares (`Rc::make_mut`), a
+// departure from pure path copying that changes no version another environment can read. The
 // bounds are those of the B+ tree, O(log n) a binding or lookup and O(1) a copy; the constant
 // is smaller for the small environments a run makes, and an environment of many names
 // allocates more, smaller nodes per binding (log2 n against log16 n).

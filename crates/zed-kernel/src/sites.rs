@@ -18,7 +18,13 @@
 //!
 //! Method: a table beside the code, keyed by a position in it, as DWARF's line number program
 //! maps machine addresses to source lines (DWARF Debugging Information Format Committee,
-//! *DWARF Debugging Information Format, Version 5*, 2017, section 6.2). The plan row names a
+//! *DWARF Debugging Information Format, Version 5*, February 13, 2017,
+//! <https://dwarfstd.org/doc/DWARF5.pdf>, section 6.2, "Line Number Information", p. 148: "If
+//! space were not a consideration, the information provided in the .debug_line section could be
+//! represented as a large matrix, with one row for each instruction in the emitted object
+//! code", with columns for the source file, line and column among others; the program encodes
+//! that matrix compactly. Here the table is a hash map, not an encoded program, since it lives
+//! in memory only. Checked 2026-11-19 against the standard's text). The plan row names a
 //! table built at lowering; lowering reads terms, which hold no spans, so the spans are taken
 //! here, where elaboration still has them, and lowering turns this table into one by graph
 //! node (`lower_sited` in `zedc_zir::zir::lower`).
