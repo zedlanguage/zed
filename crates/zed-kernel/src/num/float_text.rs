@@ -56,7 +56,8 @@ use pow5::POW5;
 /// not in the standard. Read 2026-11-20 in the 2019 text (the copy named at the `sqrt` rule in
 /// `eval.rs`), Table 3.5, "Binary interchange format parameters", p. 23: p = 11, 24, 53 and
 /// emax = 15, 127, 1023 for binary16, 32 and 64; and 3.3, p. 17, "emin shall be 1 − emax for
-/// all formats". The 2008 edition, Table 3.5, p. 13, read the same day, has the same values;
+/// all formats". The 2008 edition, Table 3.5, p. 13: an earlier pass on 2026-11-20 recorded
+/// the same values; this pass compared with that record only, not with the 2008 text;
 /// binary64 and binary32 also match Rust's `f64` and `f32` constants. A reading that rounds
 /// to infinity or zero follows section 5.12, "Details of conversion between floating-point
 /// data and external character sequences": 5.12.2, p. 46, a sequence "larger in exponent

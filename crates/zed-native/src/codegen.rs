@@ -1195,8 +1195,33 @@ fn int_cmp(p: Prim) -> Option<IntCC> {
 /// [`Gen::float_word`] makes canonical: a NaN in either position gives the NaN, and `-0.0` is
 /// below `0.0` (DESIGN.md sec:reduction, item 5). `min` and `max` on ints run in the kernel.
 /// Citation: IEEE Std 754-2019, doi:10.1109/IEEESTD.2019.8766229, section 9.6, "Minimum and
-/// maximum operations"; the full comment is in zed-kernel `value.rs`, fn `ieee_min_max`. The
-/// WebAssembly rule is from memory, not checked against the WebAssembly specification.
+/// maximum operations"; the full comment is in zed-kernel `value.rs`, fn `ieee_min_max`.
+///
+/// WebAssembly rule: WebAssembly Core Specification, "WebAssembly 3.0 (2026-11-16)" draft,
+/// section Execution, Numerics, Floating-Point Operations,
+/// <https://webassembly.github.io/spec/core/exec/numerics.html#op-fmin>, read 2026-11-20.
+/// For fmin_N(z1, z2): "If either z1 or z2 is a NaN, then return an element of nans_N{z1, z2}.
+/// Else if either z1 or z2 is a negative infinity, then return negative infinity. Else if
+/// either z1 or z2 is a positive infinity, then return the other value. Else if both z1 and z2
+/// are zeroes of opposite signs, then return negative zero. Else return the smaller value of
+/// z1 and z2." fmax_N is the same with the infinities swapped, "positive zero"
+/// and "the larger value". These are IEEE `minimum` and `maximum` except for the NaN's bits:
+/// nans_N leaves the sign and, for a non-canonical input NaN, the payload open, and
+/// [`Gen::float_word`] replaces any NaN by `NAN_BITS`, so the word is the kernel's.
+///
+/// Cranelift's own text, cranelift-codegen-meta 0.137.1 (the version in Cargo.lock),
+/// `src/shared/instructions.rs`, read 2026-11-20: fmin is "Floating point minimum, propagating
+/// NaNs using the WebAssembly rules. If either operand is NaN, this returns NaN with an
+/// unspecified sign." fmax has the same text with "maximum". That Cranelift's lowering keeps
+/// the WebAssembly zero rule is not stated there; the test checks it.
+///
+/// Checked by tests/steps/l01_36_cranelift/minmax.rs, tests
+/// `every_pair_of_corner_values_in_both_orders_agrees` and
+/// `the_named_cases_give_the_ieee_values`: native and kernel agree bit for bit on every pair of
+/// the corner values (the NaN, both zeros, both infinities, a number of each sign) in both
+/// orders, at both optimization levels. They cannot catch a NaN input with another payload or
+/// sign (only `f64::NAN` is used, though `float_word` makes any NaN canonical) or a target
+/// other than the x86_64 host.
 fn float_op(p: Prim) -> bool {
     matches!(
         p,

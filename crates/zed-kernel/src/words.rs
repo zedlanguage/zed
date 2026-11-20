@@ -95,8 +95,9 @@ pub(crate) fn word(p: Prim, x: &Value) -> Result<Value, KernelError> {
         // p. 27, "an infinitely precise result with magnitude at least b^emax × (b − ½
         // b^(1−p)) shall round to ∞ with no change in sign", which for binary32 (b = 2, emax =
         // 127, p = 24) is 2^127 (2 - 2^-24) = `f32::MAX + ulp/2`, `f32::MAX` being 2^127 (2 -
-        // 2^-23) and its ulp 2^104. The 2008 edition, 5.4.2, p. 22, and 4.3.1, p. 16, read the
-        // same day, has the same words.
+        // 2^-23) and its ulp 2^104. The 2008 edition, 5.4.2, p. 22, and 4.3.1, p. 16: an
+        // earlier pass on 2026-11-20 quoted the same words; this pass compared with that quote
+        // only, not with the 2008 text.
         (Prim::CastF32, Value::Float(f)) => Value::float32(f.get() as f32),
         (Prim::CastInt | Prim::CastRat | Prim::CastF64 | Prim::CastF32, _) => {
             if x.number_kind().is_none() {
