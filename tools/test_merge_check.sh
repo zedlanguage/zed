@@ -106,6 +106,11 @@ echo 'notes' >data/notes.txt
 # <dir>/groups and, as the paths it read, the lines `g <path>` of $STUB_READS.
 cat >tools/run_tests.sh <<'EOF'
 #!/bin/bash
+# The groups with a short-addresses piece: $STUB_SHORT, or by default every group of the toy.
+if [ "$1" = --short-groups ]; then
+  printf '%s\n' ${STUB_SHORT-a b c feat lnk rootuse s_01f_import_graph step_x step_y t tool}
+  exit 0
+fi
 echo "run_tests $*"
 t= o=
 while [ $# -gt 0 ]; do
@@ -152,6 +157,10 @@ check "a crate's source selects it, its dependents and s_01f, not the crate besi
 check "a crate no one depends on selects its own unit tests and s_01f" \
   "merge check: groups: $(sorted "$(short c s_01f_import_graph)")" \
   "$(groups_after crates/c/src/lib.rs)"
+# TOOL-run-tests-empty-filter: short-<group> only for a group with a short-addresses piece.
+check "a selected group gets short-<group> only when tools/run_tests.sh --short-groups names it" \
+  "merge check: groups: $(sorted c s_01f_import_graph short-c)" \
+  "$(STUB_SHORT=c groups_after crates/c/src/lib.rs)"
 check "a file in a step folder selects that step alone" \
   "merge check: groups: $(sorted "$(short step_x)")" \
   "$(groups_after tests/steps/x/mod.rs)"
@@ -219,7 +228,7 @@ git checkout -q --detach base
 echo "// changed" >>crates/c/src/lib.rs
 git commit -q -a -m "change c"
 check "a passing run passes the anchored selection to tools/run_tests.sh" \
-  "run_tests --only ^($(sorted "$(short c s_01f_import_graph)" | tr ' ' '|'))\$ 3
+  "run_tests --skip-other-kind --only ^($(sorted "$(short c s_01f_import_graph)" | tr ' ' '|'))\$ 3
 merge check: passed
 0" \
   "$("$check_script" --base base 3 2>&1 | command grep -a -E '^(run_tests|merge check: (passed|FAILED))'; echo "${PIPESTATUS[0]}")"
@@ -244,19 +253,19 @@ full_run() {
 check "a file in a piece's folder of tests/full selects that piece alone, run with --full" \
   "merge check: groups:
 merge check: tests/full pieces: z
-run_tests --full --only ^(full-z)\$ 6
+run_tests --full --skip-other-kind --only ^(full-z)\$ 6
 merge check: passed" "$(full_run tests/full/z/mod.rs)"
 check "tests/full/main.rs selects every piece of tests/full" \
   "merge check: groups:
 merge check: tests/full pieces: w z
-run_tests --full --only ^(full-w|full-z)\$ 6
+run_tests --full --skip-other-kind --only ^(full-w|full-z)\$ 6
 merge check: passed" "$(full_run tests/full/main.rs)"
 all_b=$(sorted "$(short b s_01f_import_graph step_x step_y t)")
 check "a crate that a step helper of the package of tests/full names selects every target and piece using the helper, the pieces run with --full after the local groups" \
   "merge check: groups: $all_b
 merge check: tests/full pieces: w
-run_tests --only ^($(tr ' ' '|' <<<"$all_b"))\$ 6
-run_tests --full --only ^(full-w)\$ 6
+run_tests --skip-other-kind --only ^($(tr ' ' '|' <<<"$all_b"))\$ 6
+run_tests --full --skip-other-kind --only ^(full-w)\$ 6
 merge check: passed" "$(full_run crates/b/src/lib.rs)"
 check "a crate the package of tests/full does not depend on selects no piece" \
   "merge check: groups: $(sorted "$(short c s_01f_import_graph)")" \
@@ -358,7 +367,7 @@ main_moves() {
 }
 check "with no record, every selected group runs, and the record is written" \
   "merge check: to run: $all_c
-run_tests --only ^($(tr ' ' '|' <<<"$all_c"))\$ 6
+run_tests --skip-other-kind --only ^($(tr ' ' '|' <<<"$all_c"))\$ 6
 merge check: passed
 0" "$(record_run base --reads "$ws/target/map-record")"
 check "a passing run writes the map file of each group that ran, from the trace" "commit $(git rev-parse HEAD)
@@ -385,7 +394,7 @@ merge check: passed (every selected group passed at the record's commit, with th
 check "the record now names the rebased commit" "$(git rev-parse HEAD)" "$(head -n 1 "$rec")"
 main_moves docs/plan.md
 check "main moved by a file a group read at run time: that group runs" "merge check: to run: c
-run_tests --only ^(c)\$ 6
+run_tests --skip-other-kind --only ^(c)\$ 6
 merge check: passed
 0" "$(record_run upstream)"
 check "the group that ran keeps its reads in the new record" "read c docs/plan.md
@@ -434,8 +443,8 @@ git tag -f branch >/dev/null
 check "local groups and a piece of tests/full run in two calls, the second with --full" \
   "merge check: to run: $all_c
 merge check: tests/full pieces to run: z
-run_tests --only ^($(tr ' ' '|' <<<"$all_c"))\$ 6
-run_tests --full --only ^(full-z)\$ 6
+run_tests --skip-other-kind --only ^($(tr ' ' '|' <<<"$all_c"))\$ 6
+run_tests --full --skip-other-kind --only ^(full-z)\$ 6
 merge check: passed
 0" "$(record_run base --reads "$ws/target/map-full")"
 check "the record holds the piece of tests/full and what it read, from the trace of its own call" \
@@ -451,8 +460,8 @@ main_moves docs/plan.md
 check "main moved by a file the piece read at run time: the piece runs again with --full" \
   "merge check: to run: c short-s_01f_import_graph
 merge check: tests/full pieces to run: z
-run_tests --only ^(c|short-s_01f_import_graph)\$ 6
-run_tests --full --only ^(full-z)\$ 6
+run_tests --skip-other-kind --only ^(c|short-s_01f_import_graph)\$ 6
+run_tests --full --skip-other-kind --only ^(full-z)\$ 6
 merge check: passed
 0" "$(record_run upstream)"
 # A group whose pieces read a file of the spec checkout must be one tools/spec_groups.sh names
@@ -465,14 +474,14 @@ git commit -q -a -m "branch: change the step x"
 sx=$(sorted "$(short step_x)")
 echo 'step_x spec:DESIGN.md' >>"$STUB_READS"
 check "a group that read the spec and that spec_groups.sh names passes" "merge check: to run: $sx
-run_tests --only ^($(tr ' ' '|' <<<"$sx"))\$ 6
+run_tests --skip-other-kind --only ^($(tr ' ' '|' <<<"$sx"))\$ 6
 merge check: passed
 0" "$(record_run base)"
 : >"$rec"
 echo 'short-step_x spec:EXAMPLES.md' >>"$STUB_READS"
 check "a group that read the spec and that spec_groups.sh does not name fails, and no record is written" \
   "merge check: to run: $sx
-run_tests --only ^($(tr ' ' '|' <<<"$sx"))\$ 6
+run_tests --skip-other-kind --only ^($(tr ' ' '|' <<<"$sx"))\$ 6
 merge check: FAILED: tools/spec_groups.sh (above)
 1" "$(record_run base; cat "$rec")"
 # The spec's commit in the record (MERGE-spec-push-check): a group that read the spec runs again
@@ -488,7 +497,7 @@ echo "more" >>"$ZED_SPEC_DIR/DESIGN.md"
 git -C "$ZED_SPEC_DIR" commit -q -a -m "spec: more"
 check "the spec moved: the group that read it runs, the other does not, and the record names the new commit" \
   "merge check: to run: step_x
-run_tests --only ^(step_x)\$ 6
+run_tests --skip-other-kind --only ^(step_x)\$ 6
 merge check: passed
 0
 spec $(git -C "$ZED_SPEC_DIR" rev-parse HEAD)" "$(record_run base; sed -n 2p "$rec")"

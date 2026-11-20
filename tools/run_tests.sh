@@ -30,8 +30,15 @@
 # runs each test it matches as a piece of its own, with --exact. A test binary
 # whose source lies in a step folder under another name (deep_types in l01_22_type_representation)
 # has that folder as a second group, so a selection of the step runs it too. A pattern that
-# matches no piece stops the run with an error. The short-addresses build is made only when a
-# short- piece is selected, in a clone of build/cargo kept in build/short-clone from run to run;
+# matches no piece stops the run with an error, and so does a pattern one of whose terms matches
+# none (its alternatives at the top level, a part ^(a|b|...)$ being a term per alternative): the
+# run would pass on the other terms' pieces without running what that term names
+# (TOOL-run-tests-empty-filter). A term <group>:: where <group> is one piece, such as a step
+# folder, gets the term that selects it, ^(<group>)$. --skip-other-kind, which
+# tools/merge_check.sh passes, notes and does not run a term that names a group whose pieces are
+# all of the other kind (a test target with benchmarks alone, in a run without --bench).
+# --short-groups prints the groups that have a short- piece and runs nothing. The
+# short-addresses build is made only when a short- piece is selected, in a clone of build/cargo kept in build/short-clone from run to run;
 # such a run must go through /home/luke/Work/wt/zrun, and --short-clone-remove deletes the clone
 # (through zrun too) and runs nothing. --doc adds the check that the documentation of the whole
 # workspace builds, which is off by default; --no-doc is accepted and changes nothing. Every run
@@ -94,6 +101,7 @@ args=$*
 # The tests that read the spec's DESIGN.md and EXAMPLES.md in place (feature `spec` of the tests
 # crate, author P371) are always built: a local run never leaves them out.
 features=--features=zed-tests/spec full_suite= only= list= reuse= logs= doc= jobs=6 clone_remove= run_kind=test each_test= cov= trace=
+short_groups= skip_other_kind=
 while [ $# -gt 0 ]; do
   case $1 in
     --full) full_suite=1 ;;
@@ -112,6 +120,8 @@ while [ $# -gt 0 ]; do
     --list) list=1 doc= ;;
     --reuse-table) reuse=1 ;;
     --short-clone-remove) clone_remove=1 ;;
+    --short-groups) short_groups=1 ;;
+    --skip-other-kind) skip_other_kind=1 ;;
     --logs)
       if [ $# -lt 2 ] || [ -z "$2" ]; then
         echo "--logs needs a directory"
@@ -138,7 +148,7 @@ while [ $# -gt 0 ]; do
       ;;
     [1-9]*) jobs=$1 ;;
     *)
-      echo "unknown argument: $1 (usage: tools/run_tests.sh [--full] [--bench] [--each-test] [--only <ERE>] [--doc] [--list] [--reuse-table] [--logs <dir>] [--cov <dir>] [--trace <dir>] [--short-clone-remove] [jobs])"
+      echo "unknown argument: $1 (usage: tools/run_tests.sh [--full] [--bench] [--each-test] [--only <ERE>] [--skip-other-kind] [--doc] [--list] [--reuse-table] [--logs <dir>] [--cov <dir>] [--trace <dir>] [--short-clone-remove] [--short-groups] [jobs])"
       exit 2
       ;;
   esac
@@ -147,6 +157,17 @@ done
 if [ -n "$reuse" ] && [ -z "$list" ]; then
   echo "--reuse-table needs --list"
   exit 2
+fi
+# short_steps names the steps of the short-addresses build.
+short_steps="l01_37a_short_addresses l01_37_oracle"
+# short_libs names the packages whose unit tests also run in the short-addresses build, each as
+# the piece short-<package with - made _>: the zed-kernel unit tests reach the lines taken only
+# when digests tie (the `ByType` buckets, the orders by contents after a tie), which no other
+# test reaches (TEST-kernel-units-short-addresses, 2026-11-18).
+short_libs="zed-kernel"
+if [ -n "$short_groups" ]; then
+  printf '%s\n' $short_steps ${short_libs//-/_}
+  exit 0
 fi
 if [ -n "$only" ]; then
   { [[ x =~ $only ]]; } 2>/dev/null
@@ -490,87 +511,11 @@ split_benchmarks() {
     done
   done
 }
-# Writes the pieces of the table $1 of the kind the run is of that --only selects to
-# $out/pieces, one per line: its name, directory and command. A line of the table is a piece's
-# kind, group and step folder, then those. With --each-test, each selected piece of the run's kind
-# becomes a piece per test it runs, <its name before the first ::>::<test> running
-# `--exact <test>`.
-select_pieces() {
-  local k group step name dir bin args first t
-  read -r first _ <"$1"
-  if [ "$first" != test ] && [ "$first" != bench ]; then
-    echo "$1 is a table of pieces of an older tools/run_tests.sh, without the kind of each"
-    echo "piece; run tools/run_tests.sh --list without --only to write it again."
-    exit 1
-  fi
-  [ -z "$trace" ] || : >"$trace/groups"
-  while read -r k group step name dir bin args; do
-    [ "$k" = "$run_kind" ] || continue
-    [ "$k" = test ] || args="${args:+$args }--nocapture"
-    if ! selected "$group" "$name" && ! selected "$step" "$name"; then
-      # A piece of a binary named with its hash, not selected as a whole, still gives each of
-      # its tests whose <group>::<test> --only matches as a piece of its own, run as with
-      # --each-test, so that --only '^zed_kernel::btree::' runs those unit tests of the library
-      # (TOOLS-only-lib-pieces). Only a pattern with :: can match such a name, so only then is
-      # the binary's list read (once per binary, as above). A benchmark is a piece per test
-      # already, so this is for correctness pieces alone.
-      [[ $k == test && $only == *::* && $name =~ ^$group-[0-9a-f]+(::|$) ]] || continue
-      list_binary "$bin"
-      for t in $(piece_tests "$bin" $args); do
-        [[ $group::$t =~ $only ]] || continue
-        [ -z "$trace" ] || echo "${name%%::*}::$t $group $step" >>"$trace/groups"
-        echo "${name%%::*}::$t $dir $bin --exact $t"
-      done
-      continue
-    fi
-    if [ -z "$each_test" ]; then
-      [ -z "$trace" ] || echo "$name $group $step" >>"$trace/groups"
-      echo "$name $dir $bin${args:+ $args}"
-      continue
-    fi
-    list_binary "$bin"
-    for t in $(piece_tests "$bin" $args); do
-      [ -z "$trace" ] || echo "${name%%::*}::$t $group $step" >>"$trace/groups"
-      echo "${name%%::*}::$t $dir $bin --exact $t"
-    done
-  done <"$1" >"$out/pieces"
-  if [ ! -s "$out/pieces" ]; then
-    local among=
-    [ "$run_kind" = test ] || among=" among the benchmarks"
-    if [ -n "$only" ]; then
-      echo "NO PIECE MATCHES --only '$only'$among${each_test:+ (or the pieces it selects run no test)}"
-    else
-      echo "NO PIECE TO RUN$among"
-    fi
-    exit 1
-  fi
-}
-if [ -n "$reuse" ]; then
-  if [ ! -s "$logbase/table" ]; then
-    echo "--reuse-table: no $logbase/table; run tools/run_tests.sh --list without --only first"
-    exit 1
-  fi
-  select_pieces "$logbase/table"
-  cut -d ' ' -f 1 "$out/pieces"
-  exit 0
-fi
-# A run without --only writes the table of every piece; a run with it, a table of its own.
-table=$out/table
-[ -z "$only" ] || table=$out/listing
-# The step folder of each test binary of tests/Cargo.toml whose source lies in a step folder of
-# another name: deep_types, deep_search, deep_heap, deep_values and deep_scaling.
-declare -A step_of
-while read -r b s; do
-  step_of[$b]=$s
-done < <(awk '
-  /^\[\[test\]\]/ { name = "" }
-  /^name = "/ { name = $3; gsub(/"/, "", name) }
-  /^path = "steps\// && name != "" { split($3, p, "/"); if (p[2] != name) print name, p[2] }
-' tests/Cargo.toml)
 # The alternatives at the top level of the extended regular expression $1, one per line: it is
-# split at each | outside parentheses, bracket expressions and escapes.
+# split at each | outside parentheses, bracket expressions and escapes. Fails when a ) closes a
+# parenthesis that was not opened (terms, below, reads the inside of ^(...)$ with it).
 alternatives() {
-  local re=$1 n=${#1} i=0 j depth=0 cur= c rest close
+  local re=$1 n=${#1} i=0 j depth=0 cur= c rest close unopened=
   while [ "$i" -lt "$n" ]; do
     c=${re:i:1}
     case $c in
@@ -596,7 +541,10 @@ alternatives() {
         continue
         ;;
       \() depth=$((depth + 1)) ;;
-      \)) depth=$((depth - 1)) ;;
+      \))
+        depth=$((depth - 1))
+        [ "$depth" -ge 0 ] || unopened=1
+        ;;
       \|)
         if [ "$depth" = 0 ]; then
           echo "$cur"
@@ -608,7 +556,186 @@ alternatives() {
     cur+=$c i=$((i + 1))
   done
   echo "$cur"
+  [ -z "$unopened" ]
 }
+# Writes the pieces of the table $1 of the kind the run is of that --only selects to
+# $out/pieces, one per line: its name, directory and command. A line of the table is a piece's
+# kind, group and step folder, then those. With --each-test, each selected piece of the run's kind
+# becomes a piece per test it runs, <its name before the first ::>::<test> running
+# `--exact <test>`.
+select_pieces() {
+  local k group step name dir bin args first t
+  # The groups and steps of the table's pieces of the run's kind, for the hints of check_terms,
+  # and those of the other kind, for --skip-other-kind.
+  local -A groups others
+  read -r first _ <"$1"
+  if [ "$first" != test ] && [ "$first" != bench ]; then
+    echo "$1 is a table of pieces of an older tools/run_tests.sh, without the kind of each"
+    echo "piece; run tools/run_tests.sh --list without --only to write it again."
+    exit 1
+  fi
+  [ -z "$trace" ] || : >"$trace/groups"
+  # Besides $out/pieces, the loop writes to fd 3 ($out/chosen) the group, step and name each
+  # selected piece was selected by (its name before --each-test split it), for check_terms.
+  while read -r k group step name dir bin args; do
+    [ "$k" = "$run_kind" ] || { others[$group]=1 others[$step]=1 && continue; }
+    groups[$group]=1 groups[$step]=1
+    [ "$k" = test ] || args="${args:+$args }--nocapture"
+    if ! selected "$group" "$name" && ! selected "$step" "$name"; then
+      # A piece of a binary named with its hash, not selected as a whole, still gives each of
+      # its tests whose <group>::<test> --only matches as a piece of its own, run as with
+      # --each-test, so that --only '^zed_kernel::btree::' runs those unit tests of the library
+      # (TOOLS-only-lib-pieces). Only a pattern with :: can match such a name, so only then is
+      # the binary's list read (once per binary, as above). A benchmark is a piece per test
+      # already, so this is for correctness pieces alone.
+      [[ $k == test && $only == *::* && $name =~ ^$group-[0-9a-f]+(::|$) ]] || continue
+      list_binary "$bin"
+      for t in $(piece_tests "$bin" $args); do
+        [[ $group::$t =~ $only ]] || continue
+        [ -z "$trace" ] || echo "${name%%::*}::$t $group $step" >>"$trace/groups"
+        echo "$group $step ${name%%::*}::$t" >&3
+        echo "${name%%::*}::$t $dir $bin --exact $t"
+      done
+      continue
+    fi
+    if [ -z "$each_test" ]; then
+      [ -z "$trace" ] || echo "$name $group $step" >>"$trace/groups"
+      echo "$group $step $name" >&3
+      echo "$name $dir $bin${args:+ $args}"
+      continue
+    fi
+    list_binary "$bin"
+    for t in $(piece_tests "$bin" $args); do
+      [ -z "$trace" ] || echo "${name%%::*}::$t $group $step" >>"$trace/groups"
+      echo "$group $step $name" >&3
+      echo "${name%%::*}::$t $dir $bin --exact $t"
+    done
+  done <"$1" >"$out/pieces" 3>"$out/chosen"
+  local among=
+  [ "$run_kind" = test ] || among=" among the benchmarks"
+  if [ ! -s "$out/pieces" ]; then
+    # Under --skip-other-kind, --only naming groups of the other kind alone is not an error:
+    # check_terms stops the run on any other term, or notes each such group.
+    if [ -n "$skip_other_kind" ] && [ -n "$only" ]; then
+      check_terms
+      echo "--skip-other-kind: nothing to run$among"
+      exit 0
+    fi
+    if [ -n "$only" ]; then
+      echo "NO PIECE MATCHES --only '$only'$among${each_test:+ (or the pieces it selects run no test)}"
+      while IFS= read -r t; do group_hint "$t"; done < <(terms "$only")
+    else
+      echo "NO PIECE TO RUN$among"
+    fi
+    exit 1
+  fi
+  [ -z "$only" ] || check_terms
+}
+# The terms of --only, one per line: its alternatives at the top level (alternatives, below),
+# with a part ^(B1|...|Bn)$ split into ^(B1)$ ... ^(Bn)$, which select the same pieces, since
+# each anchor applies to every alternative inside the parentheses. So the one part
+# ^(g1|g2|...)$ of tools/merge_check.sh's --only is a term per group.
+terms() {
+  local a body inner
+  while IFS= read -r a; do
+    body=${a#'^('}
+    body=${body%')$'}
+    # alternatives fails when a ) closes more than was opened, as in ^(a)|(b)$ read as a)|(b.
+    if [ "^($body)\$" = "$a" ] && inner=$(alternatives "$body"); then
+      while IFS= read -r a; do
+        echo "^($a)\$"
+      done <<<"$inner"
+    else
+      echo "$a"
+    fi
+  done < <(alternatives "$1")
+}
+# A term written <group>:: (with ^, parentheses or a final $ or not) selects only the pieces
+# named <group>::<path>; when <group> is a group or step of the run's kind, prints the term that
+# selects it, since a step folder that is not split per module or test is one piece named after
+# the folder, which <group>:: does not match (TOOL-run-tests-empty-filter). Reads the groups of
+# select_pieces.
+group_hint() {
+  [[ $1 =~ ^\^?\(?([A-Za-z0-9_-]+)\)?::\)?\$?$ ]] || return 0
+  local g=${BASH_REMATCH[1]}
+  [ -z "${groups[$g]+x}" ] ||
+    echo "No piece is named $g::<path>; '^($g)\$' selects the pieces of $g."
+}
+# Stops the run when a term of --only selects no piece that select_pieces chose: the run would
+# otherwise pass on the other terms' pieces without running what that term names
+# (TOOL-run-tests-empty-filter: --only '^l01_36_cranelift$|m0_03_grammar_tools::' ran l01_36's
+# 142 pieces and passed, though no piece is named m0_03_grammar_tools::<path>). A term matches a
+# chosen piece as selected does, on its group, step and name. A term that is one anchored name,
+# ^name$ or ^(name)$ (each term of tools/merge_check.sh's --only), is looked up in a hash of the
+# strings each chosen piece matches as: O(1) a term after O(pieces) to fill it, where matching
+# each term against each piece would be O(terms × pieces), 300 × 3,000 for a merge check. Any
+# other term is matched against the chosen pieces until one matches, at most O(pieces) a term,
+# the cost the selection itself paid for that term inside --only's regular expression.
+check_terms() {
+  local t g s n x name saved=$only bad=
+  local -A have
+  while read -r g s n; do
+    have[$n]=1
+    for x in "$g" "$s"; do
+      have[$x]=1
+      [[ $n == "$x"* ]] || have[$x::$n]=1
+      [[ $n =~ ^$x-[0-9a-f]+(::.*)?$ ]] && have[$x${BASH_REMATCH[1]}]=1
+    done
+  done <"$out/chosen"
+  name='^\^(\(([A-Za-z0-9_:-]+)\)|([A-Za-z0-9_:-]+))\$$'
+  while IFS= read -r t; do
+    if [[ $t =~ $name ]]; then
+      x=${BASH_REMATCH[2]}${BASH_REMATCH[3]}
+      [ -z "${have[$x]+x}" ] || continue
+      # --skip-other-kind (tools/merge_check.sh, which names every test target of the packages a
+      # change reaches): a group or step whose pieces are all of the other kind, such as a test
+      # target holding benchmarks alone, is noted and not run.
+      if [ -n "$skip_other_kind" ] && [ -n "${others[$x]+x}" ] && [ -z "${groups[$x]+x}" ]; then
+        if [ "$run_kind" = test ]; then
+          echo "--skip-other-kind: $x has benchmarks alone, which a run without --bench does not run"
+        else
+          echo "--skip-other-kind: $x has no benchmark, which a run with --bench runs alone"
+        fi
+        continue
+      fi
+    else
+      only=$t
+      while read -r g s n; do
+        selected "$g" "$n" || selected "$s" "$n" || continue
+        only=
+        break
+      done <"$out/chosen"
+      [ -n "$only" ] || { only=$saved && continue; }
+      only=$saved
+    fi
+    echo "--only: the term '$t' of '$only' selects no piece$among, so the run would pass without running what it names."
+    group_hint "$t"
+    bad=1
+  done < <(terms "$only")
+  [ -z "$bad" ] || exit 1
+}
+if [ -n "$reuse" ]; then
+  if [ ! -s "$logbase/table" ]; then
+    echo "--reuse-table: no $logbase/table; run tools/run_tests.sh --list without --only first"
+    exit 1
+  fi
+  select_pieces "$logbase/table"
+  cut -d ' ' -f 1 "$out/pieces"
+  exit 0
+fi
+# A run without --only writes the table of every piece; a run with it, a table of its own.
+table=$out/table
+[ -z "$only" ] || table=$out/listing
+# The step folder of each test binary of tests/Cargo.toml whose source lies in a step folder of
+# another name: deep_types, deep_search, deep_heap, deep_values and deep_scaling.
+declare -A step_of
+while read -r b s; do
+  step_of[$b]=$s
+done < <(awk '
+  /^\[\[test\]\]/ { name = "" }
+  /^name = "/ { name = $3; gsub(/"/, "", name) }
+  /^path = "steps\// && name != "" { split($3, p, "/"); if (p[2] != name) print name, p[2] }
+' tests/Cargo.toml)
 # Whether the alternative $1 of --only selects a piece of the test binary of group $2 in step
 # folder $3. A piece's name is its group or <group>::<path>, and it matches as <group>::<name> or
 # <step>::<name> too (selected above), so an alternative selects one of the binary's pieces when it
@@ -627,14 +754,8 @@ wants() {
 # packages: a step folder's binary or another test of a package with --test, a command's unit
 # tests with --bin, and a library's unit tests with -p <package> --lib. The groups are the names
 # cargo gives the binaries, the target's name with each - made _. The short-addresses build and
-# tests/full are selected below, by their pieces' names, as before; short_steps names the steps of
-# the short-addresses build.
-short_steps="l01_37a_short_addresses l01_37_oracle"
-# short_libs names the packages whose unit tests also run in the short-addresses build, each as
-# the piece short-<package with - made _>: the zed-kernel unit tests reach the lines taken only
-# when digests tie (the `ByType` buckets, the orders by contents after a tie), which no other
-# test reaches (TEST-kernel-units-short-addresses, 2026-11-18).
-short_libs="zed-kernel"
+# tests/full are selected below, by their pieces' names, as before (short_steps and short_libs,
+# above, name the short-addresses build's steps and packages).
 # The short-addresses pieces build in a clone mounted in the zrun namespace (see below), so a
 # run that selects one stops here, before any build, when it does not run through zrun. A
 # piece is selected by `wants`, as the other binaries are below, so that an alternative naming a

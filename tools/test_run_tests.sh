@@ -204,6 +204,70 @@ check "a pattern matching nothing exits non-zero with a message" "1 NO PIECE MAT
 out=$(run --list --reuse-table --only '(')
 rc=$?
 check "an invalid pattern exits 2" "2 --only: not a valid extended regular expression: (" "$rc $out"
+# Each term of --only must select a piece (TOOL-run-tests-empty-filter): with
+# '^l01_36_cranelift$|m0_03_grammar_tools::' a run passed on l01_36's pieces alone, since the step
+# m0_03 is one piece named m0_03_grammar_tools and no piece is named m0_03_grammar_tools::<path>.
+out=$(run --list --reuse-table --only '^l01_36_cranelift$|m0_03_grammar_tools::')
+rc=$?
+check "a term that selects no piece stops the run though another term selects pieces" \
+  "1 --only: the term 'm0_03_grammar_tools::' of '^l01_36_cranelift\$|m0_03_grammar_tools::' selects no piece, so the run would pass without running what it names.
+No piece is named m0_03_grammar_tools::<path>; '^(m0_03_grammar_tools)\$' selects the pieces of m0_03_grammar_tools." \
+  "$rc $out"
+check "the term the message gives selects the step" "m0_03_grammar_tools" "$(selected '^(m0_03_grammar_tools)$')"
+check "a union whose terms all select pieces selects both" \
+  "$(printf '%s\n' m0_03_grammar_tools "$(by_binary l01_36_cranelift deep_heap)" | sort)" \
+  "$(selected '^l01_36_cranelift$|^(m0_03_grammar_tools)$')"
+out=$(run --list --reuse-table --only 'm0_03_grammar_tools::')
+rc=$?
+check "the term alone stops the run with the same hint" "1 NO PIECE MATCHES --only 'm0_03_grammar_tools::'
+No piece is named m0_03_grammar_tools::<path>; '^(m0_03_grammar_tools)\$' selects the pieces of m0_03_grammar_tools." \
+  "$rc $out"
+# tools/merge_check.sh writes its groups as one part ^(g1|g2|...)$, which is a term per group.
+out=$(run --list --reuse-table --only '^(m0_03_grammar_tools|no_group_is_named_this|zedc)$')
+rc=$?
+check "a group of a merge check's --only that selects no piece stops the run" \
+  "1 --only: the term '^(no_group_is_named_this)\$' of '^(m0_03_grammar_tools|no_group_is_named_this|zedc)\$' selects no piece, so the run would pass without running what it names." \
+  "$rc $out"
+check "a merge check's --only whose groups all select pieces selects them all" \
+  "$(printf '%s\n' m0_03_grammar_tools "$(by_binary zedc)" | sort)" "$(selected '^(m0_03_grammar_tools|zedc)$')"
+# Its inside, m0_03_grammar)(_tools|_nothing)(s?, holds a | outside its own parentheses; read as two
+# terms, ^(m0_03_grammar)(_tools)$ and ^(_nothing)(s?)$, the second would select nothing.
+check "a part ^(...)\$ whose first parenthesis closes before its end is one term" \
+  "m0_03_grammar_tools" "$(selected '^(m0_03_grammar)(_tools|_nothing)(s?)$')"
+out=$(run --list --reuse-table --bench --only '^l01_15_|^m0_08_')
+rc=$?
+check "--bench stops a run whose term selects no benchmark" \
+  "1 --only: the term '^m0_08_' of '^l01_15_|^m0_08_' selects no piece among the benchmarks, so the run would pass without running what it names." \
+  "$rc $out"
+# A merge check names every test target of a package, deep_scaling too, whose pieces are all
+# benchmarks: --skip-other-kind notes it instead of stopping the run, and excuses nothing else.
+out=$(run --list --reuse-table --only '^(deep_scaling|zedc)$')
+rc=$?
+check "a group with benchmarks alone stops a run without --skip-other-kind" \
+  "1 --only: the term '^(deep_scaling)\$' of '^(deep_scaling|zedc)\$' selects no piece, so the run would pass without running what it names." \
+  "$rc $out"
+out=$(run --list --reuse-table --skip-other-kind --only '^(deep_scaling|zedc)$')
+rc=$?
+check "--skip-other-kind notes a group with benchmarks alone and runs the others" \
+  "0 --skip-other-kind: deep_scaling has benchmarks alone, which a run without --bench does not run
+$(by_binary zedc)" \
+  "$rc $(command grep -a -- '^--skip-other-kind' <<<"$out")
+$(command grep -a -v -- '^--skip-other-kind' <<<"$out" | sort)"
+out=$(run --list --reuse-table --skip-other-kind --only '^(deep_scaling)$')
+rc=$?
+check "--skip-other-kind with groups of benchmarks alone runs nothing and passes" \
+  "0 --skip-other-kind: deep_scaling has benchmarks alone, which a run without --bench does not run
+--skip-other-kind: nothing to run" "$rc $out"
+out=$(run --list --reuse-table --skip-other-kind --only '^(no_group_is_named_this|zedc)$')
+rc=$?
+check "--skip-other-kind still stops a run whose group has no piece of either kind" \
+  "1 --only: the term '^(no_group_is_named_this)\$' of '^(no_group_is_named_this|zedc)\$' selects no piece, so the run would pass without running what it names." \
+  "$rc $out"
+check "--short-groups names the groups with a short-addresses piece" \
+  "l01_37a_short_addresses l01_37_oracle zed_kernel" "$(run --short-groups | paste -sd' ')"
+check "each group --short-groups names has its piece short-<group>" \
+  "$(run --short-groups | sed 's/^/short-/' | sort)" \
+  "$(selected "^($(run --short-groups | sed 's/^/short-/' | paste -sd'|'))\$")"
 fi
 if want fresh; then
 logs=build/test-run-tests-fresh

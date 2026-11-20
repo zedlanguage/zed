@@ -45,7 +45,7 @@
 #     A group is the test binary of a target with `test = true` and no required features (so not
 #     tests/full, which needs --full): a lib's or bin's unit tests, named after the target, and
 #     each [[test]]; a selected group g selects the piece short-g too, where one exists (the
-#     short-addresses build of l01_37a_short_addresses and l01_37_oracle).
+#     short-addresses build of the groups `tools/run_tests.sh --short-groups` prints).
 #     The pieces of the full battery are groups too, each named full-<piece> after its folder
 #     tests/full/<piece>/, as tools/run_tests.sh names them. A file under tests/full/<piece>/
 #     selects that piece alone, and any other file under tests/full/ (main.rs) every piece
@@ -644,9 +644,12 @@ select_groups() {
   [ -n "$full_all" ] || fullsel=$(for p in "${!full[@]}"; do [ -d "tests/full/$p" ] && echo "full-$p"; done | sort)
   groups+=$'\n'$(printf '%s\n' "${!direct[@]}")
   [ ${#crate_srcs[@]} -gt 0 ] && groups+=$'\ns_01f_import_graph'
-  # A test target built with the feature short-addresses runs as the piece short-<group> too.
+  # A test target built with the feature short-addresses, one tools/run_tests.sh --short-groups
+  # names, runs as the piece short-<group> too. Only those: --only '^(short-<group>)$' for any
+  # other group selects no piece, which tools/run_tests.sh refuses (TOOL-run-tests-empty-filter).
   groups=$(command grep -a . <<<"$groups" | sort -u)
-  [ -n "$groups" ] && groups+=$'\n'$(sed 's/^/short-/' <<<"$groups")
+  [ -n "$groups" ] &&
+    groups+=$'\n'$(command grep -a -x -F -f <(tools/run_tests.sh --short-groups) <<<"$groups" | sed 's/^/short-/')
   sel=$(command grep -a . <<<"$groups"$'\n'"$fullsel" | sort -u)
 }
 
@@ -855,7 +858,9 @@ for kind in local full; do
     trace=(--trace "$tdir")
     tdirs+=("$tdir")
   fi
-  tools/run_tests.sh "${full[@]}" --only "^($(paste -sd'|' <<<"$run"))\$" "${trace[@]}" $list "$jobs" ||
+  # --skip-other-kind: a test target with benchmarks alone (deep_scaling, zedc_binary) is
+  # named, since its package's test targets are, and has no piece to run here.
+  tools/run_tests.sh "${full[@]}" --skip-other-kind --only "^($(paste -sd'|' <<<"$run"))\$" "${trace[@]}" $list "$jobs" ||
     { echo "merge check: FAILED: $([ "$kind" = full ] && echo tests/full || echo tests) (above)" >&2; exit 1; }
 done
 # The groups whose pieces read a file of the spec checkout must be those tools/spec_groups.sh
