@@ -945,9 +945,10 @@ fn expand_pow(base: &BigUint, exp: &BigUint) -> BigUint {
 // with `p | q - 1` (residues from one remainder tree per base), and its Newton root carries
 // the inverse from step to step. Tradeoffs: the remainder tree is built once per base as soon
 // as one wide root is looked for, even when few indices reach it; the filters are a necessary
-// condition only, so an index that passes them still costs its root. Results unchanged (unit tests against trial roots).
-// Test `l01_24_refinement_lattices::scaling::the_cube_of_a_wide_end_scales_with_its_bits`;
-// COMPLEXITY.md row S46.
+// condition only, so an index that passes them still costs its root. Results unchanged (unit tests
+// against trial roots). Test
+// `l01_24_refinement_lattices::scaling::the_cube_of_a_wide_end_scales_with_its_bits`; COMPLEXITY.md
+// row S46.
 fn least_root(mut b: BigUint) -> (BigUint, BigUint) {
     let mut m = BigUint::from(1u32);
     // r >= 2, so r ^ p has at least p + 1 bits.
