@@ -9,7 +9,15 @@
 //! word: an operand already past the word was widened upstream or given, and only the
 //! operation that crosses is reported. The left operand of `mod 2^k`, k at most 64, built
 //! from `+`, `-`, `*` and unary `-`, is computed in wrapping arithmetic (sec:domains), and
-//! nothing in it, or in the modulus, is reported.
+//! nothing in it, or in the modulus, is reported. The wrapped value gives the exact result:
+//! taking an integer modulo 2^64 keeps `+`, `-`, `*` and unary `-` (a ring map), and so does
+//! taking a residue modulo 2^64 further modulo 2^k, since 2^k divides 2^64 for k at most 64.
+//! So the operand computed modulo 2^64 and then taken modulo 2^k is the integer value taken
+//! modulo 2^k, and the result in `0..<2^k` is the low k bits of the 64-bit word. A literal
+//! past 64 bits is taken modulo 2^64 by the same map. Not proved here: that the build
+//! computes this operand in wrapping arithmetic. This module relies on it only to report
+//! nothing there; the site that does it is in the elaborator or later, was not traced, and
+//! no test here names it.
 //!
 //! The warning names the value, the widths of the operands (the narrowest of `i8`, `i16`,
 //! `i32` and `i64` that holds each) and the interval the operation gives, and shows the

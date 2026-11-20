@@ -1138,6 +1138,16 @@ enum Part<'a> {
 /// alone holds (`Rc::get_mut` is `Some` only where no other `Rc` or `Weak` points at it), and
 /// moved, not copied, onto the list, which frees each tuple once as it pops it; a shared
 /// tuple is left in place, and its drop only lowers its count.
+///
+/// That every drop returns after one level rests on a fact of the trees, not of this code:
+/// no `Rc` of a tree is held twice inside that tree. Were one held twice, both slots would be
+/// left in place, and the drop of the last would free the tuple through a loop of its own,
+/// one frame deeper for each such level. The fact holds: `parts` (walk.rs) makes each inner
+/// `Rc<[Part]>` fresh from a `Vec`, the one other constructor wraps the root (`Part::Tuple`
+/// over `written`), clones are held outside the tree, and `Branch` holds no `Part`. Test
+/// `l01_26_type_resolution::literals::pairing_a_deep_comparison_frees_its_literals_on_a_small_stack`
+/// (depth 16,384 on a 512 KiB stack); it builds no shared inner tuple, so it cannot catch a
+/// change that makes one.
 // Complexity tradeoff: one pass over the unshared tuples, O(their parts), with a list as
 // long as the tuples still to free and one allocation, the empty tuple, made at the first
 // inner tuple only; a tuple of literals alone frees as before, with neither. The drop the
@@ -1531,7 +1541,8 @@ struct Class {
     // four places that write the field (the third in two copies): (1) `Ck::resolve` writes a
     // carrier or `$r` of the class `r` it writes; (2) `Ck::resolve_top_parts` writes a carrier
     // or a union of literal types and of the types of operations on literals alone outside
-    // every function, which name no class; (3) `walk.rs`, at the end of a level, and its copy for the forward path
+    // every function, which name no class; (3) `walk.rs`, at the end of a level, and its copy
+    // for the forward path
     // in `walk/r10_forward.rs` (the `r10` generalize), write `Ty::dynamic()`, which holds no
     // variable; (4) the undo of a tried repair (`Undo::Class`) puts back a copy of the same
     // class taken earlier, which held the invariant by induction on the writes. `Ck::class`
@@ -2090,6 +2101,17 @@ struct Ck<'t, 'a> {
     /// they hold at any depth had a data need from it, which the class keeps, so a later check
     /// of data that meets one again has nothing to add and does not enter it. Kept in the log
     /// while a repair is tried, since a trial undoes the classes' needs.
+    ///
+    /// The class keeps the need: a union gives the root the `data` of either side
+    /// (`c.data |= data` in the unions of classes, walk.rs), and a trial that undoes a need
+    /// also undoes the entry here (`Undo::DataChecked`). The one place that clears the flag is
+    /// the end of the class's level ([`Ck::generalize`], `take`), where the class is
+    /// generalized and its uses are taken. Not proved: that no row entered here and holding a
+    /// class generalized so is met by a data check after its level ends. A signature is
+    /// instantiated with fresh classes, so its rows are new nodes, which is the expected
+    /// route; a row that outlived its level would skip the check. Test: the unit test
+    /// `a_trial_undone_after_the_memo_entered_a_row_leaves_no_memo` (walk.rs tests); it does
+    /// not cover a row met after its level ended.
     data_checked: HashSet<NodeId>,
     /// The applications, by span, whose operands' failures merge and were each checked as
     /// data outside a trial ([`Self::merged_data`]), each with the failures the merge passes
@@ -2103,7 +2125,17 @@ struct Ck<'t, 'a> {
     /// The rows and payload shapes [`Self::bound`] found to hold only classes at any depth,
     /// each with the level it was at and that level's count of ends (`gens`): a class stays a
     /// class until the function of its level ends and names it, and a class's level only goes
-    /// down, so the entry holds while that level has not ended since. A later replay that
+    /// down, so the entry holds while that level has not ended since. The level only goes
+    /// down: a class is made with a level once ([`Ck::class`], a class made in `need` at its
+    /// root's level, a forced forward's class at the forward's), [`Ck::lower`] sets a level
+    /// only when it is below the class's, and a union keeps the smaller of the two
+    /// (`c.level.min(level)`, walk.rs); no other write sets it. A trial's undo may put back a
+    /// class with a higher level (`Undo::Class`), but it puts back the entries here made
+    /// since as well (`Undo::Clean`), so no entry outlives the level it was made at. Tests:
+    /// the benches `l01_26_type_resolution::bench::scaling::rows_shared_on_many_paths_scale_in_a_function`
+    /// and `..._in_its_call`, which fail on a memo that misses, and a run with
+    /// `ZEDC_CHECK_CLEAN` set (`check_clean`), which recomputes each hit. Not traced: whether a
+    /// row here can hold a forward's class before the forward is forced. A later replay that
     /// meets one has no variable in it to make unknown and does not enter it. Kept in the log
     /// while a repair is tried, since a trial undoes the classes it joined.
     clean: HashMap<NodeId, (usize, u64)>,
@@ -2226,10 +2258,13 @@ struct Ck<'t, 'a> {
     /// "Identity as data"; REDUCE-generic-identity).
     // Complexity tradeoff: naive version, a list of every check, O(c) memory for c calls of
     // the function, and a scan of it per check, O(c^2). Used: one entry per distinct carrier,
-    // a scan of at most seven entries (the six members of `Carrier` and no carrier) per
+    // a scan of at most seven entries (the six members of `Carrier`, zedc-types `Carrier`:
+    // Bool, Int, Rat, F32, F64, Str, and no carrier; one entry per distinct carrier) per
     // check, and the same per distinct call in a tree, O(log f + log c) a check for f folds
     // and c calls; O(c) memory for the calls, which `Info::fold_calls` keeps where the fold
-    // splits.
+    // splits. Tests: `l08_02_remaps::empty` (`a_fold_run_at_two_carriers_takes_the_identity_of_each`,
+    // `sum_in_a_generic_function_at_two_carriers_takes_the_identity_of_each` and the tests
+    // after them); they cannot catch the folds still refused (REDUCE-generic-identity-rest).
     folds: BTreeMap<Span, FoldChecks>,
     /// The atoms an application inside a check of a need passed by at parameter `i` of the
     /// function value `what` it applied, for the check to give to the call of the function
@@ -4662,9 +4697,19 @@ impl<'t, 'a> Ck<'t, 'a> {
     /// two values and leaves out none, O(R) for R merges of the class. Used: the forest,
     /// whose turning costs at most the size of the smaller class, so each class is turned
     /// O(log N) times and the merges of N classes O(N log N) in all; a path costs its
-    /// length ([`Ck::merges_between`]). Tradeoff: one edge per class, logged while a repair
-    /// is tried. COMPLEXITY.md row F195; test
-    /// `l01_29_repairs_and_printing::scaling::the_merges_between_a_value_and_its_use_scale`.
+    /// length ([`Ck::merges_between`]). Proof: an edge is added only here, at a merge of two
+    /// roots, so each tree of the forest holds exactly the classes of one root. The path
+    /// turned runs from `a` to the root of its tree, inside `a`'s tree, so it costs at most
+    /// that tree's size. `Ck::merge` (walk.rs) compares the two roots' `size` and passes as
+    /// `a` the class named on the side of the smaller, so every class on the path is in the
+    /// smaller tree, and after the merge it is in a tree at least twice as large. A tree
+    /// holds at most N classes, so a class is on a turned path at most log2 N times, and the
+    /// turns of all merges cost at most N log2 N (Nieuwenhuis and Oliveras 2007,
+    /// doi:10.1016/j.ic.2006.08.009; the full citation is at [`Class::proof`]). Tradeoff: one
+    /// edge per class, logged while a repair is tried. COMPLEXITY.md row F195; test
+    /// `l01_29_repairs_and_printing::bench::scaling::the_merges_between_a_value_and_its_use_scale`,
+    /// which compares instructions at n and 8n and so cannot tell this cost from one a little
+    /// above it.
     fn link_proof(&mut self, a: usize, b: usize, why: Reason) {
         let mut at = a;
         let mut back = None;
@@ -4690,6 +4735,16 @@ impl<'t, 'a> Ck<'t, 'a> {
     /// from `y` in turn, each marking what it passed, until one reaches a class the other
     /// passed, which is their nearest common ancestor; so the cost is at most twice the
     /// length of the path, however deep the tree, and nothing when they are one class.
+    /// Proof: each walk passes the ancestors of its start in order, up to its root. Let c be
+    /// the nearest common ancestor and dx, dy the depths of `x` and `y` below it. A meeting is
+    /// at a class both walks pass, so at c or above it, and each walk passes c before any
+    /// class above it; so whichever walk reaches c second finds it in the other's `passed`
+    /// (which holds its start, for c = `x` or c = `y`), and a meeting above c would need both
+    /// walks past c, after that one. The walks take turns while both climb, and one that
+    /// reaches its root stops, so the second reaches c within 2·max(dx, dy) + 2 turns of the
+    /// loop, at most 2(dx + dy) + 2 for a path of dx + dy edges. Classes of two trees give no
+    /// meeting, and the loop returns nothing when both walks stop. Tested with
+    /// [`Self::link_proof`].
     fn merges_between(&self, x: usize, y: usize) -> Vec<Reason> {
         if x == y {
             return Vec::new();
@@ -9601,6 +9656,17 @@ fn signed_number_at(src: &str, span: Span) -> Option<Cow<'_, str>> {
 /// A cast written around the code, `String(…)`, groups it by its own parentheses, and a call
 /// binds tighter than any operator, so a repair writes `String(2 + 13) < "a"` for
 /// `(2 + 13) < "a"`, as the program would be written (row MSG-cast-repair-parens).
+///
+/// Proof that the repair means what the program means with the cast in place: the
+/// parentheses taken off group the whole code, so all they did was make it one operand.
+/// Inside the cast's parentheses the code is a whole argument, which the grammar reads as one
+/// expression whatever operators it holds. The cast is a call, which binds tighter than any
+/// operator, so the operator around it reads it as one operand, in the place the group held.
+/// Parentheses that are the code's own syntax (a tuple, `()`, a lambda's parameters) are
+/// kept, so the code inside is the same expression. Tests:
+/// `ungrouped_takes_off_only_the_parentheses_around_the_whole_code` (this file) and
+/// `l01_29_repairs_and_printing::casts::a_cast_takes_the_place_of_the_parentheses_around_its_operand`.
+/// They check the texts they list; a form of the grammar they do not write is not checked.
 // Complexity tradeoff: code that does not start with `(` costs O(1); code that does is lexed
 // once, and each `(` is matched to its `)` and marked where a `,` stands directly inside it in
 // the same pass, with a stack of the brackets open, then the groups are taken off from the
@@ -15092,7 +15158,10 @@ type FlatMemo = HashMap<ByAddress<Sig>, Arc<Sig>>;
 
 /// The name an internal result tagged by [`Ck::r10_decode_fwd_needs`] is printed by: the
 /// part before the NUL; any other variable's name is itself. O(length of the name). No name of
-/// a program holds a NUL, so no other variable is cut.
+/// a program holds a NUL (a name is `[A-Za-z_][A-Za-z0-9_]*` with an optional trailing `'`,
+/// DESIGN.md step L1.2 and its identifier rule), so no other variable is cut. Not traced: that
+/// no name the checker makes itself holds a NUL other than the tags of
+/// [`Ck::r10_decode_fwd_needs`].
 fn r10_internal_name(v: &Arc<str>) -> Arc<str> {
     match v.split_once('\u{0}') {
         Some((name, _)) => name.into(),
@@ -15753,8 +15822,14 @@ enum Step<'a> {
 impl<'a> Denote<'a> {
     /// The type `t` denotes. The parts of each type are denoted in written order and each type
     /// is made after its parts, as a recursive walk would, on a stack of steps and a stack of
-    /// values: the time is linear in the size of `t`, and the thread's stack does not grow with
-    /// its depth.
+    /// values: the number of steps is linear in the size of `t`, since each type pushes at most
+    /// its own `Make` or `And`, `Open`, `Close` and `Unbind` and one `Ty` step per part, and the
+    /// thread's stack does not grow with its depth. Each `Make` and `And` costs the operation it
+    /// makes on its parts' values (a union, a difference, a meet or a signature), which is not
+    /// O(1), so the time is O(size of `t`) plus those operations. The stack is tested by
+    /// `l01_26_type_resolution::deep_scaling::function_types_written_a_few_deep_check` and
+    /// `l01_26_type_resolution::bench::deep_scaling::function_types_written_4000_deep_check_on_a_512_kib_stack`;
+    /// neither bounds the time.
     fn ty(&mut self, t: &'a Type) -> Ty {
         // Complexity tradeoff: the same order, at a constant factor in instructions. With
         // `Sig::facts`, `Sig::digest` and the drop of a signature, which keep stacks of their own

@@ -733,6 +733,24 @@ impl<'t, 'a> Ck<'t, 'a> {
     // each subset of components for a unit vector would be exponential in c; the elimination
     // finds every atom the components determine at once. The pattern is program text, so c
     // and a are bounded by its length.
+    // Why each unit row pushed is sound, case by case (DESIGN.md sec:remap_law). The spans
+    // are those of `key_span`: the declared range of the key, or its listed ints.
+    // (1) `k mod p` with span w = max - min < p: two keys of the range differ by less than
+    // p, so their residues differ, and k is the one key of its range with its residue.
+    // (2) `k div s` with `k mod s`: the kernel's `div` and `mod` are Euclidean (zed-kernel
+    // eval.rs, `checked_div_euclid`/`checked_rem_euclid` and `div_euclid`/`rem_euclid` at
+    // `Prim::IntDiv` and `Prim::Mod`), so k = s·(k div s) + (k mod s), which gives k.
+    // (3) Packing (`packs`): with the terms sorted by |v|, each |v_t| exceeds the sum of
+    // |v_s|·w_s over the terms below it. For two tuples d ≠ d' within their spans, take the
+    // last t with d_t ≠ d'_t: |v_t·(d_t - d'_t)| >= |v_t| > Σ_{s<t} |v_s|·w_s >=
+    // |Σ_{s<t} v_s·(d_s - d'_s)|, so the sums differ. Two equal |v| pass only when the
+    // earlier term's span is 0, since its |v|·w counts in the later one's sum.
+    // (4) Affine: an atom whose unit row lies in the rows' span over Q is a rational
+    // combination of the components less known constants ([`recovered`]).
+    // Tests: `l08_02_remaps::rules::modulo_on_keys_within_the_modulus`,
+    // `modulo_one_wider_is_rejected`, `affine_packing_and_one_stride_short`,
+    // `div_and_mod_together_recover_the_key`, `a_float_key_is_read_only_whole`. Each tries one
+    // pattern, so none covers every order of equal strides in (3).
     fn injective(
         &mut self,
         s: &RemapF<'a>,

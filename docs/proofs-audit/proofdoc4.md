@@ -631,7 +631,7 @@ Claims in other crates are listed and not counted; they belong to the helper of 
 
 | Crate | Entries read | Found | Already there | Added or completed | Marked unproved | Corrected |
 |---|---|---|---|---|---|---|
-| zedc-check | 75 | 137 | 98 | 27 | 3 | 9 |
+| zedc-check | 153 | 243 | 179 | 42 | 9 | 13 |
 
 | Source | Claim | Code site | Status |
 |---|---|---|---|
@@ -772,6 +772,112 @@ Claims in other crates are listed and not counted; they belong to the helper of 
 | ba11fed9c | the spans of a class's operations do not overlap | mod.rs `copied_values` | already there |
 | ba11fed9c | `text_rat` computes no power but of 0, 1 and -1 | mod.rs `rat_step`, `text_rat` | already there |
 | ba11fed9c | `word_unoffered` is O(size of the operand), once per application | walk.rs | already there |
+| bad0d2e86 | `chunkBy` runs are ranked from 0 with every rank present, so the keys are `0 ..< n` | walk/fp_ops.rs `chunk_by` | already there (rests on zedc-elab `chunk_by_term`, whose run counter starts at 0 and adds 1 per change) |
+| bd3c630e0 | a default's value at every call lies in the recorded ints | walk.rs `note_default_ints` | argument completed: tests in l01_24 default_ints named, and the `match` default they cannot reach (`a_default_from_a_match_is_not_compiled_yet`, row TEST-default-ints-match) |
+| bd3c630e0 | a default literal sum takes its carrier | walk.rs `infer_defaults` | already there (FAIL-default-literal-sum-carrier, test default_carrier.rs) |
+| bea44d4a5 | an operand below `2^w`, or a `k` below `w`, at the smallest width stays so at every width | walk.rs `bit_domains` | already there |
+| bea44d4a5 | `whole_bytes`: every value is a multiple of 8 | mod.rs `whole_bytes` | already there |
+| c289ffeca | chosen names clash with no name the program binds or the message writes | mod.rs `lay_out`; walk.rs `check_with`, `check_given` (`ProgramNames::hold`) | already there |
+| d11373afd | `StmtKind::Initial` never reaches the walk | walk.rs `unreachable!` | already there (the resolver's refusal was not traced again) |
+| d59b4756e | a repair never narrows a type | walk.rs `wrapped`, `cast_side`, the `r.atoms() == held.atoms()` filters | already there |
+| d83518eb5 | `carriers_only` refuses a destructured random family | walk.rs | already there (FAIL-random-f64-destructured-family and its test) |
+| d9d8729bb | `merged_data` cost | walk.rs `merged_data` | already there |
+| da0895a4f | `f64_operands` is O(\|e\|); `open_lits` is one walk | mod.rs | already there |
+| df8cea00b | an operation in `lit_open` has all the operations inside it there too, so the walk stops at the first; each operation is walked once | walk.rs `lit_open_within` | argument completed: the insert sites (a `+ - * / ^` that is a `/`, has an open operand or a bare decimal; unary `-` of an open operand), the removal in `lit_takes` and why it keeps the invariant, the two scaling tests |
+| e2e0e0612 | `seconds` rounds up to a whole nanosecond | limits.rs `seconds` | argument added: the three cases, with the ceiling identity |
+| e2e0e0612 | `seconds` gives `None` only where `r` is not above 0 or passes `u64::MAX` ns | limits.rs `seconds` | corrected (false): `r` was built first, so a tiny or huge kept power, `1r / 2 ^ (2^40)`, was rejected as "not a time the run can have ... above 0" although above 0. Now placed against both ends by `Rat::try_cmp` before anything is built. Test `main_limits::a_time_of_a_power_too_large_to_build_is_judged_by_its_size` (l01_29_diagnostics), red before, green after |
+| e2e0e0612 | an in-range time is built | limits.rs `seconds` | marked unproved: a value between the ends whose two sides are powers too large to build (`3 ^ a / 2 ^ b`), and a value agreeing with an end in more bits than the memory allows, can still give `TooLarge`; both depend on the machine |
+| ebd6faee5 | the cost of the root search (Cucker, Koiran and Smale, doi:10.1006/jsco.1998.0242) | walk.rs | already there (the rest is zed-kernel's) |
+| ef56f8c84 | `data_checked`: a class keeps the data need it had | mod.rs `Class::data_checked` | marked unproved: the union `c.data \|= data`, `Undo::DataChecked` and the one clearing in generalize `take` are named, with the test `a_trial_undone_after_the_memo_entered_a_row_leaves_no_memo`; open: a row that outlives its level |
+| ef56f8c84 | `clean`: a class's level only goes down | mod.rs `Class::clean` | argument added: a class takes a level once (`Ck::class`, the `need` class, a forced forward's class), `Ck::lower` only lowers, the union keeps the minimum, `Undo::Class` and `Undo::Clean` roll back together; benches and `ZEDC_CHECK_CLEAN` named; a row holding a forward's class before it is forced is named as not traced |
+| ef56f8c84 | `lasting` | mod.rs | already there |
+| f240a5462 | `folds` has at most seven entries per check | mod.rs `folds` | argument completed: the six numeric and other carriers and none, the tests in l08_02_remaps::empty, and that they cannot catch REDUCE-generic-identity-rest |
+| f240a5462 | `finish` gives one identity or one per call | mod.rs `Ck::finish` | already there |
+| f38d90beb | a repair word has at most five arrows; the cost of `split` | walk.rs `wrapped` | already there |
+| f6c6b1f99 | an arm with no export | ports.rs | already there (with its test and the open case of a block that leaves early) |
+| f79ee52bf | an ordering arrow takes two values of one carrier | walk.rs `both_cast` | already there |
+| f8f4ddabb | the uses of a need are only added to, so a cache keyed by length is current | walk.rs `need_arg_via` | argument completed: the only writes are the push in `Ck::need` and the prepend `combined` in mod.rs, neither removes a use, no `Undo` touches them; bench `many_calls_of_a_body_with_many_named_calls_scale` |
+| f923d44b9 | `String(b)` of a `bool` never reads as a number | walk.rs | already there |
+| fffe13699 | the `fit_lambda` name map is O(p) | walk.rs `fit_lambda` | already there |
+| 019b3519b | nested `if`s cost O(n), O(a + l) | walk.rs | already there |
+| 06d1dc49c | `Names` by induction on depth, BLAKE3 at 128 bits, keyed by address, the `deep_flat` memo | r10_tests/expected.rs | already there (test code) |
+| 0b05cc8cf | `ints_as_int` reads parameters soundly, O(q·s) | walk.rs | already there |
+| 0cbb40ab4 | the search cost of `arrow_lambda_twice` | mod.rs | already there |
+| 19514ef8c | `translate_called` translates each definition once in post order on an explicit stack | walk.rs `translate_called` | already there |
+| 205591658 | a key needs a decidable equality; a key holding a function is a type error | walk.rs, the comment above `keys_at` | already there |
+| 205591658 | `s.es[i + 1]` is in range for a map display | walk.rs `display_step` | argument added: a map's parts are built in key, value pairs, so their count is even and `i + 1` is a value's index |
+| 205591658 | the `in` key is checked as data | walk.rs | already there |
+| 2059d260b | two functions that differ in names share their names by place | walk.rs `name_by_place` | already there |
+| 2059d260b | content-equal scopes get the same scope class | walk.rs `Ck::compute` | already there (the memo assumption is marked at zedc-presburger `project_each`) |
+| 2059d260b | implicit calls with equal printed arguments mean one value | walk.rs | already there (marked "Assumption, not proved (ASSUME-documented)") |
+| 2059d260b | `read_here` reads only its scope | walk.rs `read_here` | already there |
+| 256d0fc5d | `ungrouped` costs O(t) | mod.rs `ungrouped` | already there |
+| 256d0fc5d | taking off the parentheses inside a cast keeps the meaning | mod.rs `ungrouped` | argument added: an argument is a whole expression and the cast takes the place the group held; tests `ungrouped_takes_off_only_the_parentheses_around_the_whole_code` and `casts::a_cast_takes_the_place_of_the_parentheses_around_its_operand` named |
+| 29bf6b297 | `dense_read` | walk.rs `dense_read` | already there |
+| 29bf6b297 | `out_of_bounds`: the `#notFound` a key brings is passed by, a stored one stays | walk.rs `out_of_bounds` | already there |
+| 30b46ffdb | `holds_power` costs the size of `e` | mod.rs `holds_power` | already there |
+| 30b46ffdb | `written_alone` costs the length of `at` and the edits | mod.rs `written_alone` | already there |
+| 30b46ffdb | a fix with a `^` names the operation, not the value | mod.rs `folded`, `binder_holds` | already there (LIT-power-expression named) |
+| 30b46ffdb | a compared tuple's pairs with a `^` are named as written | mod.rs `compared_holds` | already there |
+| 35f48821c | an asked class prints as its carriers, O(1) per class | mod.rs `as_literals` | already there |
+| 3b7276f38 | each read of `main::files` outside `main` is one O(1) lookup | blocking.rs | already there |
+| 3b7276f38 | the outside reads join `main`'s port after the walk | blocking.rs `Walk::outside`, `facts` | already there |
+| 3e597380e | the chain of remap needs below a key level ends | walk.rs `remap_of` | already there (PROOF-remap-chain-termination) |
+| 3e597380e | `remap_level` visits each class once | walk/remap.rs `remap_level` | already there |
+| 3e597380e | `remap_pending` is one walk of the key levels | walk/remap.rs `remap_pending` | already there |
+| 47681f229 | default ints cost O(1) expected per default | walk.rs `note_default_ints` | already there |
+| 47f742016 | the wrapper's citations and cost | coprime.rs `base_of` | already there (both DOIs) |
+| 480291d0e | output ports cost O(P + A + U) by one backward search | ports.rs | already there |
+| 4abfd2ae1 | a key accepted at a call lies in the parameter's ranges, which the remap's witness assumes | walk.rs `keys_at` | marked unproved: the listed ints and a declared parameter passed on (the subset check `written_ints(m).is_subset(&written_ints(r))`, `family` taken on) are argued; open: from the floor of a parameter of no declared type to each outer call, covered for one level by `a_parameter_of_no_declared_type_takes_the_need_on_to_its_calls` |
+| 4abfd2ae1 | `keys_at` costs O(arrows · listed keys · ranges) | walk.rs `keys_at` | already there |
+| 4abfd2ae1 | the key's range bounds every key the remap meets | walk/remap.rs `key_span` | already there (rests on `keys_at`) |
+| 4abfd2ae1 | `family` is final when the signature's need is built | walk.rs `Frame::InferEnd` | already there |
+| 4ce8104bb | `silent_tail` visits each node on the paths once | ports.rs `silent_tail` | already there |
+| 4e55a11ba | copies are removed by the full order, since two texts at one span can alternate | mod.rs, walk.rs | already there |
+| 51ae6534c | `main_tails` visits each expression once | mod.rs `main_tails` | already there |
+| 51ae6534c | each `int` `main` gives is checked in `0..=255` | walk.rs `status_in_range` | already there |
+| 5ccb21f3f | each tuple component is read once | walk.rs | already there |
+| 5ccb21f3f | O(A v log v), A at most five for an operator | walk.rs | already there (the five is zed-kernel's table and sets only the constant) |
+| 61590f5c5 | a rejection with k fixes costs k + 1 checks, at most 3 per argument | walk.rs `fixes_checked` | marked unproved: the counts of `menu` (one fix for an int literal or bare decimal, two for a suffixed decimal) and `unfixed` (one per carrier) are written; open: one argument taking fixes from both, and the other menus of a recorded construct |
+| 61590f5c5 | groups of fixes join smaller into larger, a fix moves O(log fixes) times | mod.rs, walk.rs | already there |
+| 61590f5c5 | `lit_fit` reads each operation once per carrier, at three carriers at most | walk.rs `lit_fit` | corrected: four numeric carriers (`int`, `rat`, `f32`, `f64`); still O(1) |
+| 61590f5c5 | a comparison offers at most six casts and one component per index | walk.rs | already there |
+| 61590f5c5 | `Found::id` finds an error by binary search | walk.rs | already there |
+| 620307b4c | a capitalized name written twice is a variable of the outermost signature, O(n) | read.rs | already there |
+| 620307b4c | free names are the scheme's variables | mod.rs `denoted_free` | already there |
+| 650ec1e0a | `a ..` is one interval with no upper end | walk.rs | already there |
+| 65fe79c41 | O(A p) tests | walk.rs | already there |
+| 65fe79c41 | a refusal claims nothing about the types | walk.rs, `Ty::refused` | already there |
+| 695a25e74 | each int a call gives lies in the callee's hull | mod.rs `call_hull` | already there |
+| 695a25e74 | a default's value at every call lies in its recorded ints | walk.rs `note_default_ints` | already there |
+| 6a1038700 | a function not in the set cannot block | mod.rs, blocking.rs | already there |
+| 788205304 | the left operand of `mod 2^k`, k at most 64, is computed wrapping, so nothing in it is reported | widen.rs module doc | marked unproved: the ring-map argument that the wrapped value gives the exact residue is added; open: that the build computes the operand wrapping (not traced) |
+| 7b5ff433f | a term is translated once per (span, reading); d nested tests cost O(d) | walk.rs `Ck::term_for`; arms.rs `Reading` | already there |
+| 7efc39992 | proof forest: merges of N classes cost O(N log N) | mod.rs `Ck::link_proof` | argument added: the doubling step, that `Ck::merge` passes the smaller side, the DOI; test path corrected to `bench::scaling` |
+| 7efc39992 | `merges_between`: the walks meet at the nearest common ancestor, at most twice the path | mod.rs `Ck::merges_between` | argument added: why the first meeting is the nearest common ancestor, the bound 2·max(dx, dy) + 2 |
+| 7efc39992 | the citation of Nieuwenhuis and Oliveras | mod.rs `Class::proof` | already there |
+| 807ba2009 | a step past `FOLD_ASK_BITS` fails whatever the machine | walk.rs `fixed_value`; mod.rs `FOLD_ASK_BITS` | already there |
+| 81f3d8487 | `Denote::ty` takes time linear in the size of `t`, with no stack growth | mod.rs `Denote::ty` | corrected: the steps are linear; each `Make` and `And` costs its union, difference, meet or signature, which is not O(1); stack tests named |
+| 8824fb555 | `text_literal`: the cost of reading a literal as text | walk.rs `Ck::text_literal`; mod.rs `Lit::as_text` | already there (O(d) for a decimal int, the kernel's conversion otherwise, COMPLEXITY K81; tests named) |
+| 893f60ac7 | `Drop for Part`: every drop returns after one level | mod.rs `impl Drop for Part` | argument completed: the fact it rests on (no `Rc` held twice inside one tree) and where it holds; the test and what it cannot catch |
+| a16eb1e6e | `left` holds no compact forward after a call | walk.rs, the `debug_assert!` after `replay` | argument completed: where each step is shown (`r10_try_admit`, `replay`, `FwdNeed::decode_from`) |
+| a16eb1e6e | F5-1: proof (b) needs no premise on what the checker gives | walk/r10_forward.rs | already there |
+| a7dba5382 | `recovered` finds exactly the atoms the rows determine | walk/remap.rs `recovered` | already there |
+| a7dba5382 | `family` sound but not tight; `flat_map_end`, `group_end` costs | walk/remap.rs | already there |
+| af7540d08 | each catalog entry of `injective` recovers the key | walk/remap.rs `injective` | argument added: the residue, Euclidean (zed-kernel eval.rs `Prim::IntDiv`, `Prim::Mod`), packing (equal strides pass only after a span of 0) and affine cases; tests named |
+| b3c21a87e | `fixed_value` reads each expression once, finite with cycles | walk.rs `Ck::fixed_value` | argument completed: tests named |
+| b5444f558 | `sum` leaves `_` as a chain of `+` does | walk.rs `sum` | already there |
+| b6b810dec | the fold reads of `Ck::finish` cost O(u + e + s + r) | mod.rs `Ck::finish` | already there |
+| b6b810dec | `same_use`: every check of the first use is one of the second | mod.rs `same_use` | already there |
+| b6b810dec | `saw_uses` costs O(d) | walk.rs `Ck::saw_uses` | already there |
+| b6b810dec | a function passed to an escaping call takes none of its identities | mod.rs `Info::escaping_calls` | already there |
+| e2ef08f39 | proof (b) part (B) holds for held names | walk/r10_forward.rs | already there |
+| e2ef08f39 | `finished_with` is linear | mod.rs `Ck::finished_with` | already there |
+| e2ef08f39 | no name of a program holds a NUL, so no other variable is cut | mod.rs `r10_internal_name` | argument completed: the identifier rule (DESIGN.md L1.2) cited; the checker's own names named as not traced |
+| e36d97342 | two passes over the links join every class to a carrier class it leads to or comes from | walk.rs `Ck::join_narrowed` | marked unproved: the links are sorted by the tested class's root, which may be older than the class; the chain k0 → k1 → k2 → k3 that two passes miss is written at the site (row FAIL-join-narrowed-root-order proposed) |
+| e8755d8a1 | `value_parts` linear; `unfixed_args` O(a + n + l)·α | mod.rs, walk.rs | already there |
+| fbb2b68aa | `fold_level` and `sum_method` end | walk.rs; mod.rs `Class::resolved` | already there |
+| fbb2b68aa | `group_of` ends because a class is resolved to a type built before it | walk.rs `Ck::group_of` | corrected in 16ab7836d: it ends after one step because a root's type holds no variable (the invariant at `Class::resolved`) |
 
 Other crates, not counted: 5767fe37a and 9aff48777 the arrows of `Prim::arrows` (zed-kernel),
 635687ff7 treap set bounds (zed-kernel) and `Product::meet_type` (zedc-preimage), 809f95c53
@@ -786,26 +892,31 @@ table (zedc-types), 578bbc92d the keyword lookup (zedc-syntax), 5ff79522f `refus
 `Hash` (zedc-types), 7a7417966 `UnionFind` (zed-graph), 7d0d766ad no kernel name is `$k@j`
 (zed-kernel), 7dc27aa9e `split` on an empty separator (zed-kernel), 97beabefa
 `Sig::standing_twice`, moved to zedc-types, 9e8f139f1 `Type::surfaces_by_name` (zedc-types),
-b991293a4 `zed_graph::UnionFind` (zed-graph).
+b991293a4 `zed_graph::UnionFind` (zed-graph), c289ffeca `fresh_name` (zed-kernel), 1a19cae20
+the projection memo (zedc-presburger, marked there), 205591658 the walk of `Entries`
+(zedc-types), 2059d260b `project_each` (zedc-presburger), 47f742016 the coprime base
+(zed-kernel `num::coprime`), 480291d0e `Frame::Push` (zedc-elab), 4ce8104bb the parser rule
+(zedc-syntax), 5a5ef9670 `forward_pow` (zedc-lattice), 81f3d8487 `Drop for Sig`,
+`Sig::facts`, `Sig::digest` (zedc-types), 929e7e04a `FreeWeights` (zedc-types) and `m61::inv`
+(zed-numtheory), d18e52a0a `cmp_values` as a total order (zed-kernel), e2ef08f39
+`Sig::first_seen`, `FwdNeed::held_names_of` and others (zedc-types), eaef33ced `Scope::holds`
+(zedc-preimage), fbb2b68aa `Elab::generic_sum` (zedc-elab), ebd6faee5 poly/roots.rs
+(zed-kernel).
 
 Claims gone from main, not counted: af8174807 `call_records` (replaced by `record_call`
 marking the call placed), 275d434e7 `env_config` and `ZED_DISABLE_D` (E was removed in
 f83194447). ee79685e4 `fold_dir_end`'s round bound was not read again: it is known false
-(FAIL-fold-rotating-tuple-rounds).
+(FAIL-fold-rotating-tuple-rounds). b6b810dec `type_holds_needs` is no longer in zedc-check.
 
 No code claim: b2ba71b22 (test helpers), c50a8965b (message texts), fe770de11 (in zedc-check
 only a test helper calls `zed_numtheory::is_prime`), 275d434e7 (its one claim is gone),
-97beabefa (its one claim moved to zedc-types), 718e9ecda (message text).
+97beabefa (its one claim moved to zedc-types), 718e9ecda (message text), e6dfb6877,
+009e52933, 00a508032 (behavior only), 131d7f7fd (the brackets doc states a definition),
+3fd923c4a (a loop rewritten as `update_each`), 929e7e04a (in zedc-check only tests),
+aea083d67, c8fa18353 (message wording), dd8b42f68 (repair wording), eb156f28d (`Info::ints`
+is a definition).
 
-Not read: bad0d2e86 bd3c630e0 bea44d4a5 c289ffeca d11373afd d59b4756e d83518eb5
-d9d8729bb da0895a4f df8cea00b e2e0e0612 e6dfb6877 ebd6faee5 ef56f8c84 f240a5462 f38d90beb
-f6c6b1f99 f79ee52bf f8f4ddabb f923d44b9 fffe13699 009e52933 00a508032 019b3519b 06d1dc49c
-0b05cc8cf 0cbb40ab4 131d7f7fd 19514ef8c 1a19cae20 205591658 2059d260b 256d0fc5d 29bf6b297
-30b46ffdb 35f48821c 3b7276f38 3e597380e 3fd923c4a 47681f229 47f742016 480291d0e 4abfd2ae1
-4ce8104bb 4e55a11ba 51ae6534c 5a5ef9670 5ccb21f3f 61590f5c5 620307b4c 650ec1e0a 65fe79c41
-695a25e74 6a1038700 788205304 7b5ff433f 7efc39992 807ba2009 81f3d8487 8824fb555 893f60ac7
-929e7e04a a16eb1e6e a7dba5382 aea083d67 af7540d08 b3c21a87e b5444f558 b6b810dec c8fa18353
-d18e52a0a dd8b42f68 e2ef08f39 e36d97342 e8755d8a1 eaef33ced eb156f28d fbb2b68aa
+Not read:
 
 ## proofdoc4e: zedc-presburger, last 90 entries
 

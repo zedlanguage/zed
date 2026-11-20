@@ -3575,7 +3575,11 @@ impl<'t, 'a> Ck<'t, 'a> {
     /// callee's result hull ([`Ck::call_hull`]), which holds every int the callee gives for
     /// arguments the checker accepts; an `if` as the join of both branches; anything else as
     /// top. So each read covers the value the default takes at any call, whichever names it
-    /// reads, and a set that is not shown inside the range leaves the call refused.
+    /// reads, and a set that is not shown inside the range leaves the call refused. Tests:
+    /// `l01_24_refinement_lattices::default_ints` (`a_default_from_a_call_with_a_known_result_range`,
+    /// `a_default_from_an_if`, `a_default_that_reads_names`). They cannot catch a wrong read
+    /// of a `match` default, which is not compiled yet
+    /// (`a_default_from_a_match_is_not_compiled_yet`, plan row TEST-default-ints-match).
     ///
     /// Complexity tradeoff: O(1) expected per default, one hash insert, and at each call that
     /// leaves the parameter out one lookup and one containment test, linear in the intervals
@@ -4071,6 +4075,10 @@ impl<'t, 'a> Ck<'t, 'a> {
             Display::Map => 0..s.es.len(),
         };
         let step = if s.kind == Display::Map { 2 } else { 1 };
+        // A map display's parts are each key then its value (`ExprKind::Map` builds `es` by
+        // `entries.iter().flat_map(|(k, v)| [k, v])`), so `es.len()` is even, each `i` the loop
+        // steps to by 2 from 0 is a key's index, and `i + 1 < es.len()` is its value's: the
+        // read `s.es[i + 1]` below is in range.
         // The headline names the entry the key lies in, `key -> value` of a map, and of a set,
         // whose entry is the key, nothing more; never the whole display.
         // Complexity tradeoff: each of the `n` keys' headlines quotes its own entry, `O(1)` text
@@ -6158,6 +6166,21 @@ impl<'t, 'a> Ck<'t, 'a> {
     /// operations in it recorded too, since each is recorded with its operands, so the walk
     /// stops at one: each operation is walked once until it takes a carrier
     /// ([`Ck::lit_takes`]), which removes all of it at once.
+    ///
+    /// The invariant holds at each insert into `lit_open`: here, where an operation is
+    /// inserted and its operands are walked in the same step; in the check of a `+`, `-`,
+    /// `*`, `/` or `^` on literals that is a `/` or has an open operand or a bare decimal,
+    /// which inserts the operation and then calls this on its operands; and at a
+    /// unary `-`, which is inserted only when its operand is already in the set. The one
+    /// removal, in [`Ck::lit_takes`], walks the same `-` and binary operations over the whole
+    /// subtree and removes all of it or, on its early return before any removal, none; a
+    /// trial removes nothing. So no operation left in the set loses a part. An operation
+    /// around the removed one may stay, and a later walk then stops at it before the removed
+    /// part, which has its carrier and needs no record. Test: the bench
+    /// `l01_26a_generic_literals::bench::scaling::divisions_of_literals_nested_deep_record_their_operands_in_linear_time`,
+    /// which fails on a walk quadratic in the depth, and
+    /// `l01_26a_generic_literals::scaling::divisions_of_literals_nested_deep_take_their_carrier`,
+    /// which fails on a record missed at depth.
     fn lit_open_within(&mut self, e: &Expr) {
         let mut todo = vec![e];
         while let Some(e) = todo.pop() {
@@ -6743,8 +6766,12 @@ impl<'t, 'a> Ck<'t, 'a> {
     /// walked with a fix whose trial gives the operation below it a carrier, as in
     /// `((1 + 1) / 1 + 1) / 1`, that is O(n²) (test
     /// `l01_26a_generic_literals::bench::scaling::an_argument_of_divisions_of_literals_nested_deep_takes_its_carrier_in_linear_time`).
-    /// Kept by operation and carrier, each operation is read once per carrier, at three
-    /// carriers at most: one kernel operation on its operands' values, besides copying them.
+    /// Kept by operation and carrier, each operation is read once per carrier, at four
+    /// carriers at most, the numeric ones, `int`, `rat`, `f32` and `f64` (`Carrier::numeric`,
+    /// zedc-types; an operation in a tuple argument is read at each of them): one kernel
+    /// operation on its operands' values, besides copying them. (It said three before `f32`
+    /// became a carrier; the count sets the constant, not the order of the cost, and no test
+    /// can tell three from four.)
     fn lit_fit(&mut self, e: &Expr, c: Carrier) -> (bool, Option<Lit>) {
         enum Step<'e> {
             Visit(&'e Expr),
@@ -13033,6 +13060,16 @@ impl<'t, 'a> Ck<'t, 'a> {
     /// the classes tested, run from older to newer: one pass from the last link joins each
     /// class to a carrier class it leads to, and one from the first joins it to a carrier
     /// class it comes from. Two passes over the links: `O(n log n)` with the merges.
+    ///
+    /// Not proved: the passes need the links in order from older to newer classes, but the
+    /// links are sorted by each tested class's root (`merge` moves `narrowed_to` to the root),
+    /// and union by size may make that root older than the class it stands for. Two passes
+    /// then miss a chain k0 → k1 → k2 → k3 with only k3 a carrier and the root of k1 after
+    /// those of k0 and k2: the pass from the last link skips (k1, k2) and (k0, k1) and joins
+    /// (k2, k3), and the pass from the first skips (k0, k1) and joins (k1, k2), so (k0, k1) is
+    /// never joined. No program that makes such roots is known (row
+    /// FAIL-join-narrowed-root-order). A search from each carrier class over the links, one
+    /// visit per link in both directions, would need no order.
     // Complexity tradeoff (COMPLEXITY.md row F119): the naive version passes over the links
     // until no join changes a class, O(n²) for a chain of n links where each pass moves a
     // carrier one link (inferred). Used: the roots sorted and deduplicated once, then one pass
@@ -15742,7 +15779,12 @@ impl<'t, 'a> Ck<'t, 'a> {
     /// `b` of 103 bits took 145 ms at 400 names and 980 ms at 3200 (2026-11-13, load 41), and
     /// the same chain of `*` at `int`, which [`Self::known`] folds alike, 77 ms and 700 ms.
     /// A step past [`FOLD_ASK_BITS`] fails ([`prim_folded`]), whatever the machine, and the
-    /// value is then none.
+    /// value is then none. Tests in `l01_29_repairs_and_printing::too_large`:
+    /// `a_rat_base_fixed_through_a_name_and_a_division_is_rejected`,
+    /// `a_rat_base_is_read_through_names_and_operations` and
+    /// `a_rat_base_the_text_does_not_fix_proves_nothing`; the cost by
+    /// `bench::too_large::reading_a_chain_of_names_and_divisions_scales`. None makes a cycle of
+    /// reads, which the statements' dependency order rules out.
     pub(super) fn fixed_value(&mut self, a: &'a Expr) -> Option<Value> {
         if !self.fixed.contains_key(&a.span) {
             // Each node is entered once: the graph through binders is acyclic, as statements
@@ -17811,8 +17853,21 @@ impl<'t, 'a> Ck<'t, 'a> {
     /// the argument's value has its type, so each key of the family is a key of one of its
     /// arrows, whose key type lists it, and each listed int was checked to lie in the range;
     /// a parameter passed on has keys inside its own ranges by the same check at its own
-    /// calls, and those ranges lie inside these. A type that lists no ints, `int`, a variable
-    /// or the unknown, is refused, not assumed.
+    /// calls, and those ranges lie inside these: each range here is matched by a range of the
+    /// parameter on the same part whose written ints are a subset (`written_ints(m)
+    /// .is_subset(&written_ints(r))`), else the call is refused. Such a parameter also takes
+    /// on this need's `family` when it has none, which its function's signature carries to
+    /// its own calls: the signature's need is built at `Frame::InferEnd`, after every reader
+    /// of the parameter has run (proof there). A type that lists no ints, `int`, a variable or
+    /// the unknown, is refused, not assumed. A parameter of no declared type takes this whole
+    /// need on its floor ([`Self::floor_on`], kept in `ranged_floors`), with this call as a
+    /// link. Not proved here: that each call of that parameter's function then checks its
+    /// argument against these ranges; the step from the floor to the outer calls was not
+    /// traced. Tests: `l08_02_remaps::collisions`, `a_key_outside_the_range_is_rejected_at_the_call`,
+    /// `a_tuple_key_component_outside_its_range_is_rejected` and
+    /// `a_parameter_of_no_declared_type_takes_the_need_on_to_its_calls`, the last of which
+    /// covers the untraced step for one level of passing. They call each function by its
+    /// name; a call through a function value is not among them.
     // Complexity tradeoff: one pass over the argument's arrows and the ints their key types
     // list, O(arrows · listed keys · ranges) per call, the size of the types already built; a
     // passed-on parameter costs O(ranges²) for the containment of written ranges (a handful).
@@ -21277,7 +21332,16 @@ impl<'t, 'a> Ck<'t, 'a> {
             return None;
         }
         // One list per need and argument, made again only when uses were recorded since
-        // ([`Ck::call_written_via`]): the uses of a need are only ever added to.
+        // ([`Ck::call_written_via`]): the uses of a need are only ever added to, so a list
+        // made at length `len` is current while the length is `len`. The writes of
+        // `call_written` are the push of a call use in `Self::need` (`self.call_written`
+        // `.entry(..)`) and the prepend of the exact uses when a forward is forced
+        // (`combined`, in mod.rs, only when that list is not empty); neither removes a use,
+        // and no `Undo` takes one back. Each adds at least one use, so the length changes and
+        // the list is made again. Test: the bench
+        // `l01_26_type_resolution::bench::function_variance::many_calls_of_a_body_with_many_named_calls_scale`,
+        // which fails on a list made at every meeting; no test catches a stale list, which only
+        // a removal added later could make.
         let uses = self.call_written.get(&n.span)?;
         if let Some((len, via)) = self.call_written_via.get(&(n.span, p))
             && *len == uses.len()
@@ -23692,7 +23756,13 @@ impl<'t, 'a> Ck<'t, 'a> {
     ///
     /// Complexity tradeoff: one check of the construct per fix, each the cost of checking it
     /// once, so a rejection with k fixes costs k + 1 checks of its construct, k at most the
-    /// carriers a literal can take (DESIGN.md sec:diagnostics), at most 3 per argument. The
+    /// carriers a literal can take (DESIGN.md sec:diagnostics), at most 3 per argument: the
+    /// literal's fix menu (`menu` at the literal fixes in mod.rs) offers an integer literal one
+    /// fix (the nearest `f64`), a decimal with no suffix one (its whole part at `int`), and a
+    /// suffixed decimal two where `rat` is held (its digits and its `r` form) and else one;
+    /// `unfixed` offers at most two, at `rat` and at `f64`. Not proved: that one argument
+    /// never takes fixes from both, and that every other menu a rejection in a recorded
+    /// construct carries is as short; whatever its length k, the cost is k + 1 checks. The
     /// naive way, checking the whole program again with each fix in place, costs the size of
     /// the program per fix; a fix rewrites one construct's arguments, and the rest of the
     /// program reads only that construct's type, which the trial gives. A rejection outside
@@ -25240,7 +25310,11 @@ impl<'t, 'a> Ck<'t, 'a> {
                     // `left` holds no compact forward, which a need-by-need replacement would
                     // not decode: an admitted call leaves no need, and `replay` decodes the
                     // forwards it is given before it leaves any. Checked in debug builds
-                    // (landing round 5, Claude F5-3), O(#left).
+                    // (landing round 5, Claude F5-3), O(#left). Where each step is shown:
+                    // `r10_try_admit` (r10_forward.rs) gives `Some` only as `Some(Vec::new())`;
+                    // `replay` decodes every forward when it is given any, and leaves only
+                    // needs taken from the decoded list; `FwdNeed::decode_from` (zedc-types)
+                    // makes each nested forward a task of its own and emits no forward.
                     debug_assert!(
                         !left.iter().any(|n| matches!(n.kind, NeedKind::Fwd(_))),
                         "a need left after a call is a compact forward"

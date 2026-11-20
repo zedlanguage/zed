@@ -43,14 +43,50 @@ pub(super) const ADDRESS_BYTES_LOG2: u32 = 64;
 
 /// `r` seconds as a [`Duration`], rounded up to a whole nanosecond, so that a limit is never
 /// shorter than written; `None` where `r` is not above 0 or is longer than `u64::MAX`
-/// nanoseconds (585 years). O(size of `r`).
+/// nanoseconds (585 years).
+///
+/// `r` may be a power kept factored, too large to build, as `1r / 2 ^ (2^40)`, whose
+/// denominator has 2^40 + 1 bits. So `r` is placed against the two ends by [`Rat::try_cmp`],
+/// which orders by bounds without building either side, before anything is built. Proof that
+/// each branch gives `ceil(r * 10^9)` nanoseconds, or `None` exactly when that passes
+/// `u64::MAX`, for `r > 0`: (1) `r <= 10^-9` gives `0 < r * 10^9 <= 1`, whose ceiling is 1.
+/// (2) `ceil(x) <= u64::MAX` holds iff `x <= u64::MAX`, as `u64::MAX` is an integer; so with
+/// `x = r * 10^9`, `None` iff `r > u64::MAX / 10^9`. (3) Otherwise `1 < r * 10^9 <= u64::MAX`,
+/// and [`Rat::round_whole`] with [`Rounding::Ceil`] gives its ceiling, an integer of at most 64
+/// bits, which `built_parts` builds at once. Before (FAIL found by proofdoc4d), `r` was built
+/// first, and a tiny or huge power the system refused the memory for was rejected as "not a
+/// time the run can have" although it is above 0, which the message itself says a time must
+/// be. Test: `main_limits::a_time_of_a_power_too_large_to_build_is_judged_by_its_size` in
+/// tests/steps/l01_29_diagnostics, red before (the tiny case was rejected).
+///
+/// Not proved: case (3) for a value between the ends whose sides are both powers too large to
+/// build, as `3 ^ a / 2 ^ b` with `b` the whole part of `a * log2(3)`. [`Rat::round_whole`]
+/// may then return [`TooLarge`], and the time is rejected with the same message. A
+/// comparison with an end may also return [`TooLarge`] for a value that agrees with that end
+/// in more bits than the system gives memory for. Both depend on the machine; no test makes
+/// either happen.
+///
+/// Complexity tradeoff: the naive way builds `N` and `D` and divides, O(M(n)) in their bits,
+/// unbounded for a kept power; here two comparisons by bounds, which settle in O(1) refinements
+/// unless `r` lies close to an end, and one Euclidean division only for a value in range.
 fn seconds(r: &Rat) -> Option<Duration> {
+    use std::cmp::Ordering::Greater;
     if r.is_negative() || r.is_zero() {
         return None;
     }
-    let (n, d) = r.built_parts().ok()?;
-    let nanos = (&*n * 1_000_000_000u32 + &*d - 1u32) / &*d;
-    u64::try_from(&nanos).ok().map(Duration::from_nanos)
+    let giga = num_bigint::BigInt::from(1_000_000_000u32);
+    let one_ns = Rat::new(1u32.into(), giga.clone())?;
+    if r.try_cmp(&one_ns).ok()? != Greater {
+        return Some(Duration::from_nanos(1));
+    }
+    let most = Rat::new(u64::MAX.into(), giga.clone())?;
+    if r.try_cmp(&most).ok()? == Greater {
+        return None;
+    }
+    let nanos = r.mul(&Rat::int(giga)).ok()?;
+    let nanos = nanos.round_whole(zed_kernel::num::Rounding::Ceil).ok()?;
+    let (n, _) = nanos.built_parts().ok()?;
+    u64::try_from(&*n).ok().map(Duration::from_nanos)
 }
 
 impl<'a> Ck<'_, 'a> {

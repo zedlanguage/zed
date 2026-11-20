@@ -252,3 +252,24 @@ fn a_repair_that_raises_the_memory_limit_past_2_to_the_63_compiles() {
         None
     );
 }
+
+#[test]
+fn a_time_of_a_power_too_large_to_build_is_judged_by_its_size() {
+    // A positive time below 1 ns is rounded up to 1 ns, however small: `1r / 2 ^ (2^40)` has a
+    // denominator of 2^40 + 1 bits, 128 GiB, which the checker holds factored and must not build
+    // to round it (limits.rs `seconds`). One past 2^64 nanoseconds is rejected, however large.
+    let main = "main(m: MainArgs) {\n    m.stdout <- \"hi\";\n}\n";
+    for tiny in ["1r / 2 ^ (2^40)", "1r / (3 ^ (2^40))"] {
+        assert_eq!(built(&format!("@timeout({tiny})\n{main}")), None, "{tiny}");
+    }
+    for huge in ["2 ^ (2^40)", "3 ^ (2^40) / 7"] {
+        let out = rejected(&format!("@timeout({huge})\n{main}"));
+        assert!(
+            out.contains(
+                "is not a time the run can have: a limit of `main` is a number of seconds \
+                          above 0 and below 2^64 nanoseconds"
+            ),
+            "{huge}: {out}"
+        );
+    }
+}
