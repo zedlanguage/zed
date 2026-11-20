@@ -15,15 +15,15 @@ fn every_enabled_fence_agrees() {
             r.add(&f.at, unit(&f.text, engines));
         }
     });
-    // The lambda fence's two bindings run together, once under each engine.
-    assert_eq!(runs, 2, "native runs, each leaving no cell live");
+    // The lambda fence's two bindings run together, once under each of the four engines.
+    assert_eq!(runs, 4, "native runs, each leaving no cell live");
     assert_eq!(r.mismatches, Vec::<String>::new());
     assert_eq!(r.not_compared, Vec::<String>::new());
     // The lambda fence's `five` and `seven` under each engine, and the table checks, under
     // each engine, of the fences whose front passes: the lambda fence, and the two `main`s of
     // sec:ports with `MainArgs` (DESIGN sec:ports 1, EXAMPLES section 18 fence 8); a fence the
     // front rejects compares nothing.
-    assert_eq!(r.compared, 10);
+    assert_eq!(r.compared, 20);
 }
 
 #[test]
@@ -38,10 +38,10 @@ fn every_step_unit_agrees() {
     // A row of `main` gives its inputs by field of `MainArgs`, and each item of its key is
     // evaluated whether the body reads that field or not: config.zed's three rows evaluate 2
     // items more each than the fields its body reads, 6 runs under each engine.
-    assert_eq!(runs, 232, "native runs, each leaving no cell live");
+    assert_eq!(runs, 464, "native runs, each leaving no cell live");
     assert_eq!(r.mismatches, Vec::<String>::new());
     assert_eq!(r.not_compared, Vec::<String>::new());
-    assert_eq!(r.compared, 22);
+    assert_eq!(r.compared, 44);
 }
 
 #[test]
@@ -107,9 +107,9 @@ fn every_step_program_agrees_on_every_corpus_input() {
         programs += p;
         runs += n;
     }
-    assert_eq!(runs, 248, "native runs, each leaving no cell live");
+    assert_eq!(runs, 496, "native runs, each leaving no cell live");
     assert_eq!(r.mismatches, Vec::<String>::new());
     assert_eq!(r.not_compared, Vec::<String>::new());
-    // Four programs on 31 inputs, each under two engines.
-    assert_eq!((programs, r.compared), (124, 248));
+    // Four programs on 31 inputs, each under four engines: two builds of two plans.
+    assert_eq!((programs, r.compared), (124, 496));
 }

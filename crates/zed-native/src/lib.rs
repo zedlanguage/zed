@@ -225,9 +225,19 @@ fn object_module() -> Result<ObjectModule, String> {
     Ok(ObjectModule::new(b))
 }
 
-/// Lowers, legalizes, plans with `fuse` and runs a closed term natively: a `through` for
-/// `zedc::testing::test_through` and `Program::run_through`.
-pub fn through(fuse: bool) -> impl Fn(&Term, &mut Evaluator) -> Result<Value, String> {
+/// Lowers, legalizes, plans with `fuse` and runs a closed term natively, as a build in `mode`
+/// runs it: a `through` for `zedc::testing::test_through` and `Program::run_through`.
+///
+/// Both modes run the same code today: the optimizer whose rewrites a debug build skips
+/// (DESIGN.md "Build modes", layer L23) does not exist yet, so there is nothing for the mode to
+/// select. It is taken so that the oracle runs both builds now (`zedc::build::Mode`).
+pub fn through(
+    mode: zedc::build::Mode,
+    fuse: bool,
+) -> impl Fn(&Term, &mut Evaluator) -> Result<Value, String> {
+    // Both modes select one pipeline until the optimizer lands; the pattern names each mode,
+    // so a new mode is a compile error here, where its code is chosen.
+    let (zedc::build::Mode::Debug | zedc::build::Mode::Optimized) = mode;
     move |t, ev| {
         let g = legalize(lower(t)?);
         run(&g, &plan(g.graph(), fuse), ev).map(|o| o.value)

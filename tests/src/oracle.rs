@@ -8,7 +8,10 @@
 //! be a function; both engines then refuse it with the same error, so its outcome is still
 //! compared. And every check of the unit's `test` tables, `main`'s waves included, is run by
 //! each engine and compared with the interpreter's. A program is compared by the bytes of each
-//! port it writes, or by its error.
+//! port it writes and its exit status, or by its error.
+//!
+//! Each native engine runs in a debug build and in an optimized build (DESIGN.md "Build
+//! modes"; [`native`]), and each build's outputs are compared with the interpreter's.
 //!
 //! A float whose type carries the reorder facet of `unordered` is to be compared by its type
 //! and keys only; the facet arrives at layer L9, and with it that rule.
@@ -18,6 +21,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use zed_kernel::{Evaluator, Lookup, Prim, Shared, Term, Value, World};
+use zedc::build::Mode;
 use zedc::elab::{Cones, Unit};
 use zedc::interp;
 use zedc::query::Db;
@@ -62,15 +66,41 @@ impl Report {
     }
 }
 
-/// The two native engines: the plan with fused match release, and without it. Returns what
-/// `f` gives and how many native runs it made; every one of those runs, whichever way it
-/// ended, must leave no cell live, and the runtime's report names any it left by type and
-/// allocating node.
+/// The four native engines: a debug build and an optimized build (DESIGN.md "Build modes",
+/// zed 806bc8c: "the oracle runs each program in both modes and checks both outputs against
+/// the definitional interpreter"), each with the plan with fused match release and without it.
+/// Returns what `f` gives and how many native runs it made; every one of those runs, whichever
+/// way it ended, must leave no cell live, and the runtime's report names any it left by type
+/// and allocating node.
+///
+/// Until the optimizer exists both modes run the same code (`zedc::build::Mode`), so the two
+/// modes' runs check this harness: that each mode's output reaches the comparison
+/// (`l01_37_oracle::modes`). Cost: twice the native runs of one mode, a constant factor.
 pub fn native<R>(f: impl FnOnce(&[Engine<'_>]) -> R) -> (R, u64) {
-    let fused = zed_native::through(true);
-    let unfused = zed_native::through(false);
+    native_by(|mode, fuse| Box::new(zed_native::through(mode, fuse)), f)
+}
+
+/// [`native`], with the engine of each mode and plan made by `make`, which is given the mode
+/// and whether the plan fuses match release: the negative control gives one mode's engines
+/// another output and shows the oracle reports it.
+pub fn native_by<R>(
+    make: impl Fn(Mode, bool) -> Box<Through<'static>>,
+    f: impl FnOnce(&[Engine<'_>]) -> R,
+) -> (R, u64) {
+    let made: Vec<(String, Box<Through<'static>>)> = Mode::ALL
+        .iter()
+        .flat_map(|&mode| {
+            [(true, "fused"), (false, "unfused")].map(|(fuse, plan)| {
+                (
+                    format!("native ({}, {plan})", mode.name()),
+                    make(mode, fuse),
+                )
+            })
+        })
+        .collect();
+    let engines: Vec<Engine<'_>> = made.iter().map(|(n, e)| (n.as_str(), &**e)).collect();
     zed_native::counted();
-    let r = f(&[("native (fused)", &fused), ("native (unfused)", &unfused)]);
+    let r = f(&engines);
     let c = zed_native::counted();
     assert_eq!(
         c.left,
@@ -513,13 +543,19 @@ pub fn unit(text: &str, engines: &[Engine<'_>]) -> Report {
     r
 }
 
-/// The bytes each port writes, or the error, as the oracle compares them.
+/// The bytes each port writes and the exit status, or the error, as the oracle compares them.
+/// A status of 0 is not named, so the common case reads as the writes alone; any other status
+/// is named after them, since `main`'s `int` result is an output of the program (DESIGN.md
+/// sec:ports; step L1.36a compares it for executables), and a run that wrote the same bytes
+/// with another status would otherwise pass.
 fn writes(r: Result<run::Wave, String>) -> String {
-    match r {
-        Err(e) => format!("the error `{e}`"),
-        Ok(w) if w.writes.is_empty() => "no writes".into(),
-        Ok(w) => w
-            .writes
+    let w = match r {
+        Err(e) => return format!("the error `{e}`"),
+        Ok(w) => w,
+    };
+    let mut out = match &w.writes[..] {
+        [] => "no writes".to_string(),
+        all => all
             .iter()
             .map(|(port, bytes)| {
                 let text = Value::str(&String::from_utf8_lossy(bytes));
@@ -527,7 +563,11 @@ fn writes(r: Result<run::Wave, String>) -> String {
             })
             .collect::<Vec<_>>()
             .join(", "),
+    };
+    if w.status != 0 {
+        out.push_str(&format!(", and the exit status {}", w.status));
     }
+    out
 }
 
 /// A `Files` port whose every path holds the same text.

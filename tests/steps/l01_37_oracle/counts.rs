@@ -44,7 +44,7 @@ fn live_cells_are_listed_by_type_and_allocating_node() {
 #[test]
 fn reading_the_runs_counted_starts_the_count_again() {
     zed_native::counted();
-    let run = zed_native::through(true);
+    let run = zed_native::through(zedc::build::Mode::Debug, true);
     let mut ev = zed_kernel::Evaluator::new(zed_kernel::World::new());
     let term = zed_kernel::Term::Lit(Value::tuple(vec![Value::str("a"), Value::Int(1)]));
     assert_eq!(run(&term, &mut ev).unwrap().to_string(), "(\"a\", 1)");
