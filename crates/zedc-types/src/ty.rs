@@ -73,14 +73,44 @@ pub struct VarSet {
 }
 
 /// The hash of the name `v`, a term of [`VarSet`]'s digest.
-// Fixed, not seeded, though a name is the program's text (DRY-sorted-structures-2, job 3): the
-// digests of names, rows, shapes and bindings are what a type hashes to, so a seed would change
-// from run to run the order of every map keyed by types and the rows a check rebuilds
-// (`VarBits`), and checking is deterministic. Equal digests are always confirmed by comparing
-// the values, so a collision costs time, never a wrong result; plan row
-// HASH-type-digests-seeded weighs a seed against that order.
+//
+// Seeded, by the process's text hasher, as are the other digests a type hashes to
+// ([`member_digest`], [`bind_digest`], `Row::new`, `Shape::new`, `VarBits::of_var`, the
+// `RunRenames` digest and the field names of `PayloadNames`) (HASH-type-digests-seeded).
+// Before, they were `fixed_hash` (SipHash-1-3 with the key 0), kept fixed so that no map
+// order would change from run to run.
+//
+// Why a seed is safe: no value of these digests reaches a result. Checked by reading every
+// reader in zedc-types, zedc-check, zedc-elab and zedc (2026-11-20):
+// - no sort, `cmp`, `Ord` or B-tree is keyed by a digest or by `Ty`, `Row`, `Shape`;
+// - maps keyed by types are std `HashMap`s, `RandomState`, so their order was already
+//   random per run; the filings' `FMap` (fixed `Digest`) is keyed by `Kind`, `ShapeKey`
+//   and `Value`, none of which hashes a `Ty`, and each filing sorts what it finds
+//   (test `filings_find_the_same_tuples_whatever_the_hash_and_the_order`);
+// - the r10 signature digest (`r10_hash`, fixed base `R_BASE`) hashes names, values and
+//   kernel types, not these digests, and stays fixed;
+// - every equality that reads a digest also compares the values; `Place::Payload` compared
+//   only the hash of the field names, and now compares the names too (`PayloadNames`);
+// - `VarBits` is a filter: a bit set by a collision makes a check rebuild a row it could
+//   have kept, the same row; so a seed changes the work a run does, by at most the
+//   collisions among 64 bits, never its output.
+// The output does not depend on the seed: the tests `text_maps_reach_no_result_at_any_seed_*`
+// (tests/steps/m0_12_refusal_census/seeds.rs) compare every program's output under three seeds,
+// alone and in a batch, byte for byte.
+//
+// Why a seed is better: with the fixed key anyone can compute these hashes offline. A program
+// could then be written with names whose digests collide (a birthday search, about 2^32
+// hashes, for a pair; Wagner's k-tree algorithm, CRYPTO 2002, DOI 10.1007/3-540-45708-9_19,
+// for k names whose wrapping sum, the [`VarSet`] and [`Binds`] digests, equals another's),
+// and each collision costs a full comparison of the values where an O(1) digest test was
+// meant: a type checked in the square of its size. With a seed per process the outputs are
+// unknown to the writer of the program, so no collision can be planned.
+//
+// Cost: foldhash's `fast` hash in place of SipHash-1-3, cheaper per byte. Measured on the
+// zedc_types and l01_26 benches (seed1/bench-before vs bench-after): see the plan row's
+// report; every ratio stayed under 10.5.
 fn name_digest(v: &str) -> u64 {
-    zed_kernel::digest::fixed_hash(v)
+    zed_kernel::digest::text_hash(v)
 }
 
 impl VarSet {
@@ -234,9 +264,9 @@ struct MembersData<T: Clone + std::hash::Hash + Eq> {
 }
 
 /// The hash of a member of a [`Members`], a term of its digest: a row and a signature hash the
-/// digest they keep, so O(1).
+/// digest they keep, so O(1). Seeded, as [`name_digest`] says why.
 fn member_digest<T: std::hash::Hash>(x: &T) -> u64 {
-    zed_kernel::digest::fixed_hash(x)
+    zed_kernel::digest::text_hash(x)
 }
 
 impl<T: Clone + std::hash::Hash + Eq> Members<T> {
@@ -571,7 +601,8 @@ impl Row {
     /// FIX-functions-in-tuples (26f8d7d35) took it out of the tuple step no input made one;
     /// it and the facts it set were removed by TEST-types-unreached-paths-3.)
     pub fn new(cs: Vec<Ty>) -> Row {
-        let digest = zed_kernel::digest::fixed_hash(&cs);
+        // Seeded, as `name_digest` says why.
+        let digest = zed_kernel::digest::text_hash(&cs);
         // Each component's rows and payload shapes keep what they hold at any depth, so this
         // reads the components' outer levels.
         let open = cs.iter().any(|c| !c.closed());
@@ -1912,7 +1943,8 @@ impl Shape {
     /// What it keeps of its components and fields is read from their outer levels, and from
     /// what their rows and shapes keep, so it costs the size of their outer levels.
     pub fn new(items: Vec<Ty>, fields: BTreeMap<Arc<str>, Ty>) -> Shape {
-        let digest = zed_kernel::digest::fixed_hash(&(&items, &fields));
+        // Seeded, as `name_digest` says why.
+        let digest = zed_kernel::digest::text_hash(&(&items, &fields));
         let cs = || items.iter().chain(fields.values());
         let open = cs().any(|c| !c.closed());
         let dynamic = cs().any(Ty::holds_unknown);
@@ -2756,10 +2788,11 @@ impl RunRenames {
     /// The map from `(signature address, need place)` to the forward's new runs.
     pub fn new(map: HashMap<(usize, usize), Vec<NameRun>>) -> Self {
         use std::hash::{Hash, Hasher};
-        // Order-free: the sum of the entries' hashes.
+        // Order-free: the sum of the entries' hashes. Seeded, as `name_digest` says why; it
+        // hashes addresses (`skip`) too, so it was never the same from run to run.
         let digest = (map.iter())
             .map(|(k, runs)| {
-                let mut h = zed_kernel::digest::fixed_hasher();
+                let mut h = zed_kernel::digest::text_hasher();
                 k.hash(&mut h);
                 for r in runs {
                     (r.start_n, r.count, Arc::as_ptr(&r.skip) as usize).hash(&mut h);
@@ -4325,7 +4358,9 @@ impl VarBits {
                 ..VarBits::default()
             },
             None => VarBits {
-                names: 1 << (zed_kernel::digest::fixed_hash(v) % 64),
+                // Seeded, as `name_digest` says why: a filter, so a seed changes which rows
+                // are rebuilt, the same rows, never a result.
+                names: 1 << (name_digest(v) % 64),
                 ..VarBits::default()
             },
         }
@@ -6895,9 +6930,10 @@ pub struct Binds {
 
 /// The hash of the binding of `v` to `t`, a term of [`Binds`]'s digest. A sum of the terms,
 /// not a hash of the whole map, so a change to one binding changes the digest by its own
-/// terms only: `O(t)` for the type bound, which the change already cost.
+/// terms only: `O(t)` for the type bound, which the change already cost. Seeded, as
+/// [`name_digest`] says why.
 fn bind_digest(v: &str, t: &Ty) -> u64 {
-    zed_kernel::digest::fixed_hash(&(v, t))
+    zed_kernel::digest::text_hash(&(v, t))
 }
 
 /// The map of a [`Binds`]: each variable bound, by name, with its type.
@@ -12379,8 +12415,42 @@ enum Place {
     /// Component `.1` of a row of `.0` components.
     Row(usize, usize),
     /// Component `.3`, items then fields, of a payload of the atom `.0` with `.1` items and
-    /// fields whose names hash to `.2`.
-    Payload(Arc<str>, usize, u64, usize),
+    /// the fields `.2`.
+    Payload(Arc<str>, usize, PayloadNames, usize),
+}
+
+/// The names of the fields of a payload, in order, for [`Place::Payload`]: hashed by their
+/// digest, in O(1), and compared by the digest and then the names, so two payloads whose names
+/// hash alike are not one place. Before (HASH-type-digests-seeded), a place held the digest
+/// only, and a collision put two payloads' functions at one place.
+#[derive(Clone)]
+struct PayloadNames {
+    digest: u64,
+    names: Arc<[Arc<str>]>,
+}
+
+impl PayloadNames {
+    fn of(s: &Shape) -> PayloadNames {
+        let names: Arc<[Arc<str>]> = s.fields.keys().cloned().collect();
+        // Seeded, as `name_digest` says why.
+        let digest = zed_kernel::digest::text_hash(&names);
+        PayloadNames { digest, names }
+    }
+}
+
+impl PartialEq for PayloadNames {
+    fn eq(&self, other: &PayloadNames) -> bool {
+        self.digest == other.digest
+            && (Arc::ptr_eq(&self.names, &other.names) || self.names == other.names)
+    }
+}
+
+impl Eq for PayloadNames {}
+
+impl std::hash::Hash for PayloadNames {
+    fn hash<H: std::hash::Hasher>(&self, h: &mut H) {
+        h.write_u64(self.digest);
+    }
 }
 
 /// Where the functions of the two sides are paired ([`PlaceFns::spots`]): a place at one depth
@@ -12981,10 +13051,10 @@ impl<'a> Node<'a> {
                 .map(|(i, c)| (Place::Row(r.len(), i), c))
                 .collect(),
             Node::Shape(n, s) => {
-                let names = zed_kernel::digest::fixed_hash(&s.fields.keys().collect::<Vec<_>>());
+                let names = PayloadNames::of(s);
                 let len = s.items.len();
                 (s.items.iter().chain(s.fields.values()).enumerate())
-                    .map(|(i, c)| (Place::Payload(n.clone(), len, names, i), c))
+                    .map(|(i, c)| (Place::Payload(n.clone(), len, names.clone(), i), c))
                     .collect()
             }
         }
@@ -24123,6 +24193,39 @@ mod tests {
         );
         assert!(before.values().all(|t| *t == int));
         check(&before);
+    }
+
+    /// Two payloads whose field names hash alike are one place only when the names are the same
+    /// (HASH-type-digests-seeded): a collision, here forged by giving both the same digest,
+    /// costs a comparison of the names, never two payloads' functions at one place.
+    #[test]
+    fn payload_places_compare_the_names_not_only_their_hash() {
+        let names = |ns: &[&str]| -> Arc<[Arc<str>]> { ns.iter().map(|&n| Arc::from(n)).collect() };
+        let place = |ns: &[&str], digest: u64| {
+            super::Place::Payload(
+                Arc::from("p"),
+                1,
+                PayloadNames {
+                    digest,
+                    names: names(ns),
+                },
+                0,
+            )
+        };
+        assert!(place(&["a", "b"], 7) != place(&["a", "c"], 7));
+        assert!(place(&["a", "b"], 7) == place(&["a", "b"], 7));
+        let s = |ns: &[&str]| {
+            let fields = ns
+                .iter()
+                .map(|&n| (Arc::from(n), Ty::carrier(Carrier::Int)));
+            Shape::new(Vec::new(), fields.collect())
+        };
+        let (x, y) = (
+            PayloadNames::of(&s(&["a", "b"])),
+            PayloadNames::of(&s(&["a", "b"])),
+        );
+        assert!(x == y && zed_kernel::digest::text_hash(&x) == zed_kernel::digest::text_hash(&y));
+        assert!(PayloadNames::of(&s(&["a", "c"])) != x);
     }
 
     /// A set of variables keeps the sum of its names' hashes as it changes: sets of the same
