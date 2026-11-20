@@ -4071,11 +4071,24 @@ fn met(
                     None => return Ok(None),
                 }
             }
-            (_, [], [_, _, ..]) if cut => match cut_at_shared(group, ors, &alts, s, work)? {
-                Some(true) => Classed::plain(IntervalSet::range(End::NegInf, End::PosInf)),
-                Some(false) => Classed::plain(IntervalSet::empty()),
-                None => return Ok(None),
-            },
+            (_, [], [_, _, ..]) => {
+                let have = if cut {
+                    cut_at_shared(group, ors, &alts, s, work)?
+                } else {
+                    None
+                };
+                match (have, ors.as_slice()) {
+                    (Some(true), _) => Classed::plain(IntervalSet::range(End::NegInf, End::PosInf)),
+                    (Some(false), _) => Classed::plain(IntervalSet::empty()),
+                    (None, [i, j]) => {
+                        match two_distributed(group, &alts[*i].0, &alts[*j].0, s, within, work)? {
+                            Some(p) => p,
+                            None => return Ok(None),
+                        }
+                    }
+                    (None, _) => return Ok(None),
+                }
+            }
             _ => return Ok(None),
         };
         set = set.meet(&p);
@@ -4093,6 +4106,71 @@ fn met(
         dirs_meet(&mut dirs, d);
     }
     Ok(Some(Part::Set(set, atoms, dirs, None)))
+}
+
+/// The projection onto `s` of a group of [`met`] with rows `group` and exactly two disjunctions
+/// of blocks `a` and `b` (no projected part), where [`cut_at_shared`] does not answer it (the
+/// group reads `s`, or no atom is shared by both): each block `Ai` of the disjunction with fewer
+/// blocks is met with the rows, and `(R ∧ Ai) ∧ (B1 ∨ … ∨ Bm)` is a group of rows and one
+/// disjunction, which [`met`] projects exactly as the union of the projections of
+/// `R ∧ Ai ∧ Bj`; the answer is the union over `i`. `None` where one of those is not shown exact.
+///
+/// Exact: `R ∧ (A1 ∨ … ∨ Ap) ∧ B` is `(R ∧ A1 ∧ B) ∨ … ∨ (R ∧ Ap ∧ B)` (conjunction distributes
+/// over disjunction), and a value of `s` has a point of a disjunction exactly when it has a
+/// point of one of its disjuncts, so the projection of the union is the union of the
+/// projections, each exact by [`met`]'s rule for one disjunction.
+///
+/// PRES-cover-moduli-two-disjunctions (pres8, 2026-11-20): in every group the 16 refused cases
+/// of l01_25 `s22::the_cover_answers_where_the_solver_alone_answered_on_three_shapes_at_moduli_5_and_7`
+/// declined, one disjunction is the outer `if` of the shape (`if x >= 0 {c} else {y}`, or
+/// `if c >= 1 {y} else {-y}`), 2 blocks, and the other the remainder chain, 8 to 27 blocks; the
+/// two share the chain's result atom (and `s`), so the group is one and the cover asked 11 to
+/// 36 questions of the whole formula, past `EXACT_LIMIT`. Distributed, 2 copies of the chain.
+///
+/// Complexity tradeoff: naive version, declining (`None`), so the cover asks its questions of
+/// the whole formula, each O(size) work, one for each few values of the answer. Used: p = min(|A|,
+/// |B|) calls of [`met`] with one disjunction, each O((|R| + |Ai|) · q + rows(B)) rows copied and
+/// charged, q = max(|A|, |B|), plus the q projections: O(p · q · (|R| + row)) in all, linear in
+/// the larger disjunction for a fixed smaller one (the outer `if` above: 2), and quadratic,
+/// O(|A| · |B|), where both grow. Every row copied is charged to `work`, so a large product is
+/// refused at the allowance of [`tried`] and goes to the cover as before; nothing answered
+/// before is refused for it (the cover's loop then runs with its own whole limit).
+///
+/// Why no method is linear in |A| + |B| in general (counting rows and pieces, as `work` does):
+/// the answer alone can have |A| · |B| pieces. Let `A` be the blocks `t == M·2^i` (i < n) and
+/// `B` the blocks `t == s + 2^j` (j < n), with `M > 2^(n+2)`: the projection onto `s` is the
+/// n² values `M·2^i - 2^j`, all distinct, and no three of them are in arithmetic progression
+/// (from `v1 + v3 == 2·v2`, `M·(2^i1 + 2^i3 - 2^(i2+1)) == 2^j1 + 2^j3 - 2^(j2+1)`, whose
+/// right side is below `M` in size, so both sides are 0, and a sum of two powers of 2 is
+/// `2^(k+1)` only as `2^k + 2^k`: `i1 == i2 == i3` and `j1 == j2 == j3`). So a piece, a range
+/// met with one class, holds at most two of them, and the answer has at least n²/2 pieces. The
+/// constants have O(n) bits, so in bits the input is O(n²) as well; the bound is in the units
+/// `work` counts.
+fn two_distributed(
+    group: &[Con],
+    a: &[Vec<Con>],
+    b: &[Vec<Con>],
+    s: &Atom,
+    within: &IntervalSet,
+    work: &mut Work,
+) -> Result<Option<Classed>, Refusal> {
+    let (small, large) = if a.len() <= b.len() { (a, b) } else { (b, a) };
+    let mut set = Classed::plain(IntervalSet::empty());
+    let large_rows: u64 = large.iter().map(|b| b.len() as u64).sum();
+    for block in small {
+        work.read((group.len() + block.len()) as u64 + large_rows)?;
+        let mut rows = group.to_vec();
+        rows.extend(block.iter().cloned());
+        let parts = vec![Part::Rows(rows), Part::Alts(large.to_vec(), Dirs::new())];
+        let Some(p) = met(parts, s, within, false, work)? else {
+            return Ok(None);
+        };
+        let Some((p, _)) = as_set(p, s, within, work)? else {
+            return Ok(None);
+        };
+        set = set.join(&p);
+    }
+    Ok(Some(set))
 }
 
 /// Whether a group of [`met`] with rows `group` and two or more disjunctions `ors` of `alts`
