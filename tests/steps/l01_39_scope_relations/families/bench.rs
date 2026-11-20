@@ -216,8 +216,8 @@ fn hopon_scales() {
     scales("hopon", 3, 1);
 }
 
-/// 9.85 times the work at 2 (8.21 the bytes), 10.94 at 3, and 8.31 at 2 on 2026-11-20 (PERF-l139-under9;
-/// not measured at 3 since); back from the deferred tests of PERF-l139-family
+/// 9.85 times the work at 2 (8.21 the bytes), 10.94 at 3, and 8.27 at 2 on 2026-11-20 (8.18 the
+/// bytes; PERF-l139-under9; not measured at 3 since); back from the deferred tests of PERF-l139-family
 /// (XR-l139-family, 2026-11-14: `with` kept as the group's shared rows and the bounds entries of
 /// a part on two names kept while which of their ends are finite holds).
 #[test]
@@ -225,7 +225,7 @@ fn hopb_scales() {
     scales("hopb", 2, 1);
 }
 
-/// 9.87 times the work at 2 (8.22 the bytes), 10.96 at 3, and 8.32 at 2 on 2026-11-20; see
+/// 9.87 times the work at 2 (8.22 the bytes), 10.96 at 3, and 8.28 at 2 on 2026-11-20 (8.19 the bytes); see
 /// `hopb_scales`.
 #[test]
 fn hoponb_scales() {
@@ -236,7 +236,7 @@ fn hoponb_scales() {
 /// and 187.7M instructions) on 2026-11-19, 9.16 (21.0M and 192.8M) on 2026-11-20, and 8.87
 /// (21.1M and 186.9M) since a chain's other parts are certified by the half-line certificate
 /// of their least before the elimination of the part projected (COMPLEXITY.md
-/// PERF-l139-chain-rest).
+/// PERF-l139-chain-rest); 8.99 (22.0M and 197.7M, 8.89 the bytes) on main of ef56701a9.
 #[test]
 fn persist_scales() {
     scales("persist", 2, 1);
