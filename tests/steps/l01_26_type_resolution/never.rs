@@ -474,7 +474,10 @@ fn calls_with_never_and_with_int_do_not_meet() {
 /// An argument of type `Never` binds its parameter's variable alike before and after an
 /// argument that is a function whose body has needs, `h` here, whose `(x, 1)` needs `x` to
 /// hold no function: the need is checked as the parameter's type gives it in either order
-/// (the proof at the binding of `Never` in zedc-check walk.rs `apply_one`).
+/// (the proof at the binding of `Never` in zedc-check walk.rs `apply_one`). With `g` untyped,
+/// `g` is a class and `apply_one` takes its class branch, so `Ck::fit_needs` is not reached
+/// here (seen by counting its calls, 2026-11-20); the next test reaches it through a written
+/// type `(T) -> ...`.
 #[test]
 fn an_argument_of_type_never_binds_alike_before_or_after_a_function_with_needs() {
     let h = "h(positional x) = (x, 1);\n";
@@ -484,6 +487,97 @@ fn an_argument_of_type_never_binds_alike_before_or_after_a_function_with_needs()
     ] {
         assert_eq!(type_errors(&text), Vec::<String>::new(), "{text}");
         assert_eq!(sig(&text, "f"), "Never -> Never", "{text}");
+    }
+}
+
+/// An argument of type `Never` binds its parameter's variable before an argument that is a
+/// function whose body has needs is checked on it, in either order: `x(1)`, `x[0]` and `x == 1`
+/// hold on `Never`, and `g`'s written type `(T) -> ...` makes the checker test `h` on the binding
+/// of `T` (zedc-check walk.rs `Ck::fit_needs`). Before PROOF-never-bind-order-fit-needs the
+/// order `ap(h, n)` checked `h` with `T` not yet bound, read as `_`, and rejected the call ("a call
+/// of `x` does not take every value, and this value is `_`"), while `pa(n, h)` took it.
+#[test]
+fn an_argument_of_type_never_binds_before_a_function_with_needs_in_either_order() {
+    for (body, ty, result) in [
+        ("x(1)", "(T) -> T", "Never"),
+        ("x(1)", "(T) -> int", "int"),
+        ("x[0]", "(T) -> T", "Never"),
+        ("x[0]", "(T) -> bool", "bool"),
+        ("x == 1", "(T) -> bool", "bool"),
+    ] {
+        let h = format!("h(positional x) = {body};\n");
+        for text in [
+            format!(
+                "ap(positional g: {ty}, positional y: T) = g(y);\n{h}f(positional n: Never) = ap(h, n);\n"
+            ),
+            format!(
+                "pa(positional y: T, positional g: {ty}) = g(y);\n{h}f(positional n: Never) = pa(n, h);\n"
+            ),
+        ] {
+            assert_eq!(type_errors(&text), Vec::<String>::new(), "{text}");
+            assert_eq!(sig(&text, "f"), format!("Never -> {result}"), "{text}");
+        }
+    }
+}
+
+/// Negative control of the test above: with an `int` in place of the argument of no value, the
+/// needs are checked on `int`, and a need `int` does not meet rejects the call in both orders with
+/// one message; a need it meets takes it in both.
+#[test]
+fn an_int_in_place_of_never_is_checked_alike_in_either_order() {
+    for (body, ty, ok) in [
+        ("x[0]", "(T) -> int", false),
+        ("x(1)", "(T) -> int", false),
+        ("x + 1", "(T) -> T", true),
+        ("x == 1", "(T) -> bool", true),
+    ] {
+        let h = format!("h(positional x) = {body};\n");
+        let [first, second] = [
+            format!("ap(positional g: {ty}, positional y: T) = g(y);\n{h}f(positional n: int) = ap(h, n);\n"),
+            format!("pa(positional y: T, positional g: {ty}) = g(y);\n{h}f(positional n: int) = pa(n, h);\n"),
+        ]
+        .map(|t| (type_errors(&t), t));
+        assert_eq!(first.0.is_empty(), ok, "{}: {:?}", first.1, first.0);
+        assert_eq!(first.0, second.0, "{}{}", first.1, second.1);
+    }
+}
+
+/// With a third argument, an `int`, binding the same variable as the argument of no value, the
+/// function's needs are checked on `int` in each of the six orders of the three arguments, with
+/// one verdict and one message: binding `Never` before the arguments are checked
+/// (PROOF-never-bind-order-fit-needs) does not make `h` be checked on `Never` where another
+/// argument binds its variable. `x(1)` and `x[0]` are rejected at `int`, `x + 1` is taken.
+#[test]
+fn a_function_with_needs_is_checked_alike_beside_never_and_an_int_in_every_order() {
+    let ps = [("g", "(T) -> T"), ("y", "T"), ("z", "T")];
+    let orders = [
+        [0, 1, 2],
+        [0, 2, 1],
+        [1, 0, 2],
+        [1, 2, 0],
+        [2, 0, 1],
+        [2, 1, 0],
+    ];
+    for (body, ok) in [("x(1)", false), ("x[0]", false), ("x + 1", true)] {
+        let checked = orders.map(|o| {
+            let params: Vec<String> = (o.iter())
+                .map(|&k| format!("positional {}: {}", ps[k].0, ps[k].1))
+                .collect();
+            let args: Vec<&str> = o.iter().map(|&k| ["h", "n", "m"][k]).collect();
+            let text = format!(
+                "tri({}) = g(z);\nh(positional x) = {body};\n\
+                 f(positional n: Never, positional m: int) = tri({});\n",
+                params.join(", "),
+                args.join(", ")
+            );
+            (type_errors(&text), sig(&text, "f"), text)
+        });
+        let (errors, sig_f, text) = &checked[0];
+        assert_eq!(errors.is_empty(), ok, "{text}: {errors:?}");
+        assert_eq!(sig_f, "(Never, int) -> int", "{text}");
+        for (e, s, t) in &checked[1..] {
+            assert_eq!((e, s), (errors, sig_f), "{text}{t}");
+        }
     }
 }
 

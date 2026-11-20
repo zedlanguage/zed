@@ -6569,6 +6569,7 @@ impl<'t, 'a> Ck<'t, 'a> {
     /// (row LIT-call-int-param-fix-unchecked: both were, with an `f64` fix `f` refused). Not
     /// in a trial, which fails as before. It costs one walk of `a`'s text ([`open_lits`]),
     /// O(size of `a`), and only where the parameter takes `int` alone among the carriers.
+    /// The tests that read no state but `trying` are [`Self::int_division_at`].
     fn int_param_division(
         &mut self,
         sig: &Sig,
@@ -6578,17 +6579,9 @@ impl<'t, 'a> Ck<'t, 'a> {
         what: &str,
         span: Span,
     ) -> bool {
-        let divides = Carrier::F64.bit() | Carrier::F32.bit() | Carrier::Rat.bit();
-        let mask = mask_of(p);
-        if self.trying || mask & Carrier::Int.bit() == 0 || mask & divides != 0 {
-            return false;
-        }
-        let Some(e) = a.expr.filter(|_| a.lit.is_none() && a.branches.is_none()) else {
+        let Some(e) = self.int_division_at(a, p) else {
             return false;
         };
-        if !open_lits(e).is_some_and(|o| o.div && !o.decimal) {
-            return false;
-        }
         let taken = match self.level {
             // `1 / 0` has no `rat` value, and takes `f64`, where it is an infinity.
             0 => {
@@ -6618,6 +6611,25 @@ impl<'t, 'a> Ck<'t, 'a> {
             ),
         );
         true
+    }
+
+    /// The expression of the argument `a` at the parameter of type `p` that
+    /// [`Self::int_param_division`] goes on to read: a `/` of integer literals alone at a
+    /// parameter that takes `int` and no carrier of `/`, outside a trial. It reads no state
+    /// but `trying`, so [`Self::apply_one`] asks it before its loop over the arguments too, to
+    /// leave out the arguments that call may take. It costs O(1), and one walk of `a`'s text
+    /// ([`open_lits`]), O(size of `a`), where the parameter takes `int` alone among the
+    /// carriers.
+    fn int_division_at(&self, a: &Arg<'a>, p: &Ty) -> Option<&'a Expr> {
+        let divides = Carrier::F64.bit() | Carrier::F32.bit() | Carrier::Rat.bit();
+        let mask = mask_of(p);
+        if self.trying || mask & Carrier::Int.bit() == 0 || mask & divides != 0 {
+            return None;
+        }
+        let e = a.expr.filter(|_| a.lit.is_none() && a.branches.is_none())?;
+        open_lits(e)
+            .is_some_and(|o| o.div && !o.decimal)
+            .then_some(e)
     }
 
     /// Drops the errors that `e`, an operation on bare literals alone, and the operations in
@@ -24283,18 +24295,54 @@ impl<'t, 'a> Ck<'t, 'a> {
     ///    and associative: the final binding of each `v` is the union of what the arguments
     ///    join into it, in any order.
     ///
-    /// Reads of the binding made so far, inside the loop: the piece binder's `admits` reads
-    /// `binds.get(v)` with empty bindings filtered out (`filter(|b| !b.is_empty())`), so a `v`
-    /// bound to `Never` reads there as one not bound, in either order. [`Self::fit_needs`]
-    /// reads `q.replace(binds)`: where the argument of no value comes first, `q` has `Never`
-    /// at `v`; where it comes after, `q` has `v` itself. Not proved (row
-    /// PROOF-never-bind-order-fit-needs): that [`Self::needs_hold`] gives the same verdict on
-    /// both, the open sub-case being a function argument whose body has needs on a variable
-    /// that an argument of no value binds. Test:
-    /// `l01_26_type_resolution::never::an_argument_of_type_never_binds_alike_before_or_after_a_function_with_needs`,
-    /// both orders of one need (`(x, 1)`, `x` holds no function); it cannot catch a need that
-    /// fails on a variable and holds on `Never`, or the reverse. The final binding is
-    /// checked by `an_argument_of_type_never_binds_its_variable_to_never` (13 programs) and
+    /// Reads of the binding made so far, inside the loop (row PROOF-never-bind-order-fit-needs):
+    /// 4. The piece binder's `admits` reads `binds.get(v)` with empty bindings filtered out
+    ///    (`filter(|b| !b.is_empty())`), so a `v` bound to `Never` reads there as one not
+    ///    bound, whether the argument of no value came before or not.
+    /// 5. [`Self::fit_needs`] reads `q.replace(binds)`, and [`Self::needs_hold`] does not give
+    ///    the same verdict on `Never` at `v` as on `v` not yet bound, read as `_`.
+    ///    Counterexample, with `h(positional x) = x(1)` and `f(positional n: Never)`:
+    ///    `ap(h, n)` with `ap(positional g: (T) -> T, positional y: T) = g(y)` checked `h` with
+    ///    `T` not bound and rejected the call ("a call of `x` does not take every value, and
+    ///    this value is `_`"), while `pa(n, h)` with the parameters the other way round
+    ///    checked `h` on `Never` and took it. Of 100 programs probed on 2026-11-20 with a
+    ///    written `(T) -> ...` slot, 11 split so, with the bodies `x(1)`, `x[0]` and `x == 1`.
+    ///    With an untyped slot, `g`, the slot is a class, and [`Self::apply_one`] takes its
+    ///    class branch and never reaches `fit_needs` (240 programs, all alike).
+    /// 6. The fix: [`Self::apply_one`] runs this function, before its loop, on each argument
+    ///    the loop would run it on, chosen by the loop's own tests in its order, which for an
+    ///    argument of the empty type read no binding and no state the loop changes. These
+    ///    tests are: not grouped, no literal, `class_of_ty(p)` none,
+    ///    [`Self::int_division_at`] none, and [`adopted`] `Ok(None)`. `generic_parts` gives
+    ///    `None` there, since `only_tuple` of the empty type is none, and so does `read_arg`,
+    ///    since the empty type lists no number. Then every read in the loop sees `Never`, or
+    ///    `Never` joined with what earlier arguments bound, at each such `v`, in any order. By
+    ///    step 2 that is the binding the other arguments give, joined with `Never`, so the
+    ///    reads of step 4 and the final binding of step 3 are as before. The call in the loop
+    ///    is then `or_insert_with` on a bound `v`, which changes nothing.
+    /// 7. A refused call drops `binds`: [`Self::apply_one`] returns `Err` with a message built
+    ///    from the arguments alone, so a binding made before the loop leaves no trace there.
+    ///
+    /// Not proved: an argument of the empty type that [`Self::int_division_at`] gives, a `/`
+    /// of integer literals alone at a parameter that takes `int` alone among the carriers,
+    /// where [`Self::int_param_division`] then does not take it. The loop still binds it, at
+    /// its place, as before. No such argument of type `Never` is known. Not proved either: that
+    /// [`Self::needs_hold`] gives one verdict whatever order the arguments that bind a
+    /// variable to a value have, beside one of no value (48 programs probed, all alike; test
+    /// below).
+    ///
+    /// Tests:
+    /// - `l01_26_type_resolution::never::an_argument_of_type_never_binds_before_a_function_with_needs_in_either_order`:
+    ///   the counterexample and four more, both orders. It was red before step 6.
+    /// - `an_int_in_place_of_never_is_checked_alike_in_either_order`: the negative control.
+    /// - `a_function_with_needs_is_checked_alike_beside_never_and_an_int_in_every_order`: six
+    ///   orders of three arguments, three bodies.
+    /// - `an_argument_of_type_never_binds_alike_before_or_after_a_function_with_needs`: an
+    ///   untyped slot, so it does not reach `fit_needs`.
+    ///
+    /// None of these catches a need whose verdict differs on `Never` and on `_` beyond the
+    /// bodies listed. The final binding is checked by
+    /// `an_argument_of_type_never_binds_its_variable_to_never` (13 programs) and
     /// `calls_with_never_and_with_int_do_not_meet` (two orders of two calls).
     fn bind_never(&self, p: &Ty, binds: &mut Binds) {
         let mut vars = Vars::default();
@@ -24576,6 +24624,41 @@ impl<'t, 'a> Ck<'t, 'a> {
         // error lists every refused literal of the call, `h(1.0f64, true, 2.5f64)` both the
         // `1.0f64` and the `2.5f64` (row MSG-one-error-later-literals).
         let mut refused: Option<(usize, String)> = None;
+        // Each argument with no value, `Never`, binds the variables of its parameter to `Never`
+        // before any argument is checked, so that a function argument whose body has needs is
+        // checked on `Never` there whether it comes before or after ([`Self::fit_needs`]; proof
+        // at [`Self::bind_never`], row PROOF-never-bind-order-fit-needs). The tests are the
+        // loop's own, in its order, for an argument of the empty type: not grouped, no literal,
+        // a parameter that is no class, none that [`Self::int_param_division`] may take, and
+        // no adoption ([`adopted`]); the loop's other steps change nothing for that type
+        // ([`Self::generic_parts`] and [`Self::read_arg`] give `None`). Before this pass,
+        // `ap(h, n)` with `ap(positional g: (T) -> T, positional y: T)`, `h(positional x) =
+        // x(1)` and `n: Never` checked `h` with `T` not yet bound, read as `_`, and rejected
+        // the call, while `pa(n, h)` took it.
+        // Complexity tradeoff: one more pass over the `a` arguments, O(a), beside the loop's
+        // O(a); an argument of the empty type costs O(1) more, or one walk of its text,
+        // O(its size), at a parameter that takes `int` alone among the carriers, the walk
+        // [`Self::int_param_division`] makes again in the loop. The alternatives: checking
+        // the function arguments again after the loop costs a second check of their needs;
+        // walking the arguments of no value first in the loop changes the argument a refused
+        // call names first.
+        // Tests: `l01_26_type_resolution::never::an_argument_of_type_never_binds_before_a_function_with_needs_in_either_order`
+        // (red before this pass), its negative control
+        // `an_int_in_place_of_never_is_checked_alike_in_either_order`, and
+        // `a_function_with_needs_is_checked_alike_beside_never_and_an_int_in_every_order`.
+        for (i, a) in args.iter().enumerate() {
+            let Some(a) = a.as_ref().filter(|a| !grouped[i] && a.ty.is_empty()) else {
+                continue;
+            };
+            let p = &arrow.params[i];
+            if a.lit.is_none()
+                && self.class_of_ty(p).is_none()
+                && self.int_division_at(a, p).is_none()
+                && matches!(adopted(a, p, self.rough), Ok(None))
+            {
+                self.bind_never(p, &mut binds);
+            }
+        }
         'args: for (i, a) in args.iter().enumerate() {
             let Some(a) = a else {
                 continue;
@@ -24664,9 +24747,9 @@ impl<'t, 'a> Ck<'t, 'a> {
             // An argument with no value, `Never`, is in every parameter type and gives each
             // variable of its parameter no value: the variable is bound to `Never` unless
             // another argument binds it, and a need on it is checked on `Never`, not on the
-            // unknown. The binding the loop ends with is the same in any order of the
-            // arguments; one read of a binding made so far is not proved alike (proof and the
-            // open sub-case at [`Self::bind_never`]).
+            // unknown. The pass before this loop bound these variables already, and this binds
+            // nothing more but in the one case it leaves out (proof, and that case, at
+            // [`Self::bind_never`]).
             if ty.is_empty() {
                 self.bind_never(p, &mut binds);
                 continue;
