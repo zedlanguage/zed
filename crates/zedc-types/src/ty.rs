@@ -851,7 +851,11 @@ impl Ty {
 ///
 /// Two nodes, one from each side, are assumed equal once their pair is met, and the pairs of
 /// nodes found equal so are kept as classes in a union-find (Hopcroft and Karp's test of
-/// equivalence): a pair whose nodes are already in one class is not compared again. Each pair
+/// equivalence: J. E. Hopcroft and R. M. Karp, "A linear algorithm for testing equivalence of
+/// finite automata", Technical Report 71-114, Cornell University, 1971; no DOI, not found on
+/// Crossref, from memory, not checked: merge the start states, then merge the successors of
+/// each merged pair on each symbol, refusing when a class holds an accepting and a rejecting
+/// state): a pair whose nodes are already in one class is not compared again. Each pair
 /// of recorded nodes compared joins two classes, so at most one is compared for each node, and
 /// the comparison costs the size of the two types as graphs, not as trees: two types each
 /// holding `n` nodes and `2^n` paths, built apart, cost `O(n)`. The assumption holds: if every
@@ -4230,7 +4234,9 @@ impl VarFacts {
     // variable, by its bound, as held): `n` bounded variables in a payload and its result made
     // 5n lookups, 92M of the 146M instructions of the facts of 16000 (callgrind), the first
     // fit of a signature paying them. Used: a hash set of the names this walk added, one O(1)
-    // hash per occurrence and one ordered lookup per distinct name (115M with SipHash, whose
+    // hash per occurrence and one ordered lookup per distinct name (115M with SipHash, the
+    // standard library's default hash: Aumasson and Bernstein, INDOCRYPT 2012, LNCS 7668,
+    // pp. 489-508, doi:10.1007/978-3-642-34931-7_28, Crossref 2026-11-20; of the 115M,
     // 43M is the hashing; the seeded [`zed_kernel::digest::TextState`] takes a few instructions
     // per 8 bytes). Given up: the hash set's memory, one entry per distinct name, for the walk
     // only; the result is the same. A name added by a held function's facts
@@ -9454,7 +9460,9 @@ fn left_out_by_vars(x: &Ty, d: &Ty, ws: &BTreeSet<Arc<str>>, cx: &Cx) -> bool {
 /// shape and lead to none the member allows, so a member with many such places can still
 /// visit up to the nodes; no member of the tests has one (it needs a component of only
 /// functions, rigid variables of no carrier, or a first variable bound alone). Prior work: partial-match retrieval (Rivest, "Partial-Match
-/// Retrieval Algorithms", SIAM J. Comput. 5(1), 1976), whose stored records here hold
+/// Retrieval Algorithms", SIAM J. Comput. 5(1), 1976, pp. 19-50, doi:10.1137/0205003,
+/// Crossref 2026-11-20, not read: queries that fix some fields and leave the rest free), whose
+/// stored records here hold
 /// wildcards (the places not pinned) as well as the queries; with both, no general method is
 /// known that beats one lookup per pattern of wildcards. Benchmarks
 /// `l01_26_type_resolution::bench::fits::shapes_of_variables_differing_on_m_components_are_found_by_their_pins_scales`
@@ -11432,7 +11440,9 @@ impl<'m, 's> Comparing<'m, 's> {
     /// (`shapes_found_by_the_index_are_those_of_the_rule_of_one_shape`) and of signatures whose
     /// unions of variable shapes meet ceilings
     /// (`pinned_shapes_are_those_of_the_rule_of_one_shape`). Prior work: clause indexing on the
-    /// first argument in Prolog (Warren, "An Abstract Prolog Instruction Set", SRI 1983), which
+    /// first argument in Prolog (D. H. D. Warren, "An Abstract Prolog Instruction Set",
+    /// Technical Note 309, SRI International, 1983; no DOI, not found on Crossref, from
+    /// memory, not checked), which
     /// tries only the clauses whose head may match the call; here the key of a shape pinned by a
     /// ceiling is each variable the ceiling holds. Tests:
     /// `tests/steps/l01_22_type_representation/kinds.rs`,
@@ -11841,7 +11851,8 @@ impl<'m, 's> Comparing<'m, 's> {
     /// cost [`Self::shape_rest`] states, at most w^k shapes for k near shapes of w items, which
     /// some inputs need. Prior work: the decomposition of a product type into a union of
     /// products in semantic subtyping (Frisch, Castagna and Benzaken, "Semantic subtyping",
-    /// JACM 2008), here item by item with the parts held by the same shapes joined.
+    /// J. ACM 55(4), 2008, pp. 1-64, doi:10.1145/1391289.1391293, Crossref 2026-11-20, not read),
+    /// here item by item with the parts held by the same shapes joined.
     async fn held_together(
         &'m self,
         l: &Shape,
@@ -11921,7 +11932,8 @@ impl<'m, 's> Comparing<'m, 's> {
     /// `k_joined_components_fit_shapes_that_differ_on_some_of_them` and the tests after
     /// `a_joined_one_element_tuple_fits_split_shapes_for_every_bound`. Prior work: the
     /// distribution of a union over a product in semantic subtyping (Frisch, Castagna and
-    /// Benzaken, "Semantic subtyping", JACM 2008), which decomposes a product type into the
+    /// Benzaken, "Semantic subtyping", J. ACM 55(4), 2008, doi:10.1145/1391289.1391293), which
+    /// decomposes a product type into the
     /// union of products and checks each; here only where one shape does not hold the row.
     async fn row_in(
         &'m self,
@@ -17262,7 +17274,9 @@ async fn cover<'m>(
     // a containment join between two families of sets, quantified for all and then exists;
     // with parameter and result types unions of many distinct members it is the complement of
     // Hitting Set, for which no n^(2-e) algorithm is expected (Abboud, Vassilevska Williams and
-    // Wang, SODA 2016, the Hitting Set conjecture; a conjecture, not a theorem).
+    // Wang, "Approximation and fixed parameter subquadratic algorithms for radius and diameter
+    // in sparse graphs", SODA 2016, doi:10.1137/1.9781611974331.ch28, Crossref 2026-11-20,
+    // not read; the Hitting Set conjecture; a conjecture, not a theorem).
     let mut index: Option<ArrowIndex> = None;
     'qas: for qa in qas {
         let mut refused = None;
@@ -17626,11 +17640,15 @@ fn arrow_text(s: &Sig, a: &Arrow, names: &[(Arc<str>, Arc<str>)]) -> String {
 /// #c)` covers `(x: int | bool) -> String`, the intersection `String` at `int` from the first
 /// two and at `bool` from the first and third, and is refused. Deciding that is the
 /// all-subsets condition of semantic subtyping on arrows (Frisch, Castagna and Benzaken, J.
-/// ACM 2008); it is as hard as Orthogonal Vectors even with one parameter of atoms (each
+/// ACM 55(4), 2008, doi:10.1145/1391289.1391293); it is as hard as Orthogonal Vectors even
+/// with one parameter of atoms (each
 /// arrow a coordinate, each atom of the parameter a vector of the arrows that take it, each
 /// atom outside the result a vector of the arrows whose results leave it out), so no
-/// n^(2-e) algorithm is expected under the Strong Exponential Time Hypothesis (Williams,
-/// TCS 2005; a conjecture). Tests: l01_26_type_resolution::fits (each case, its message and a
+/// n^(2-e) algorithm is expected under the Strong Exponential Time Hypothesis (R. Williams,
+/// "A new algorithm for optimal 2-constraint satisfaction and its implications", Theoretical
+/// Computer Science 348(2-3), 2005, pp. 357-365, doi:10.1016/j.tcs.2005.09.023, Crossref
+/// 2026-11-20, not read: SETH implies no n^(2-e) algorithm for Orthogonal Vectors; a
+/// conjecture). Tests: l01_26_type_resolution::fits (each case, its message and a
 /// near miss), and the differential tests below, against every subset of arrows and against
 /// the values of small types; COMPLEXITY.md F82. A complete solution would split `qa`'s
 /// parameters into the regions the arrows' parameter types cut, and intersect the results per
@@ -20030,7 +20048,8 @@ fn piece_within(p: &Piece, m: u8, cx: &Cx) -> bool {
 /// still bound first-fit; [`Comparing::search`] refuses where two members of one union each
 /// fail a shape no pin leaves out. Prior work: the upper bounds that local type inference
 /// propagates from the expected type into the arguments (Pierce and Turner, "Local Type
-/// Inference", TOPLAS 2000), here only one level deep.
+/// Inference", ACM TOPLAS 22(1), 2000, pp. 1-44, doi:10.1145/345099.345100, Crossref
+/// 2026-11-20, not read), here only one level deep.
 fn ceilings(sr: &Ty, qr: &Ty, free: &impl Fn(&str) -> bool) -> Option<Ceilings> {
     if qr.dynamic {
         return None;
@@ -27951,7 +27970,18 @@ mod tests {
     }
 }
 
-/// M47-M57 / M65 prefix-free preorder Rabin-Karp signature encoder over `Z_P` (`P = 2^61 - 1`),
+/// M47-M57 / M65 prefix-free preorder Rabin-Karp signature encoder over `Z_P` (`P = 2^61 - 1`;
+/// R. M. Karp and M. O. Rabin, "Efficient randomized pattern-matching algorithms", IBM J.
+/// Research and Development 31(2), 1987, pp. 249-260, doi:10.1147/rd.312.0249, Crossref
+/// 2026-11-20, not read; from memory: a string's fingerprint is its value as a number modulo a
+/// prime drawn at random, which bounds the chance that two different strings collide).
+/// Departure: here the prime `P` and the base [`r10_hash::R_BASE`] are both fixed, so that
+/// bound does not apply; with a base drawn at random, two different strings of length `n`
+/// would collide with probability at most `(n - 1)/P` (two different polynomials of degree
+/// below `n` agree at most at `n - 1` points), but for a fixed base an input can be built to
+/// collide. `Hash for Sig` hashes [`Sig::digest`], where a collision costs only time if
+/// equality compares the signatures themselves; whether anything takes equal digests for
+/// equal signatures was not traced for this note. The encoder is
 /// inline in `ty.rs` so `zedc-types` has no cross-file import cycle (`s_01f_import_graph`).
 #[allow(missing_docs)]
 pub mod r10_hash {
