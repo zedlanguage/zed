@@ -511,6 +511,136 @@ fn pncx_independent_components_keep_their_witnesses() {
     }
 }
 
+/// [`connected_color_system`]'s triangles joined in a path are three-colorable, and
+/// `solve_coprime_system` finds a point that every residue clause holds (from the probe
+/// `pncx_color_components` of PERF-negated-chain-unsolved, which ran it on these clauses).
+#[test]
+fn pncx_connected_components_keep_their_witnesses() {
+    for n in 1..20 {
+        let (info, allowed, clauses) = connected_color_system(n);
+        let RegimeOut::Found(point) =
+            solve_coprime_system(&None, &None, &info, allowed.clone(), clauses.clone(), true)
+        else {
+            panic!("coloring of {n} connected triangles missed");
+        };
+        assert!(holds_coprime_point(&point, &info, &allowed, &clauses));
+    }
+}
+
+/// `x = q_i (2 p_i) + 2 i` for the first `n` odd primes `p_i`: every modulus shares the
+/// factor 2 and every remainder is even, so the system has a point.
+fn shared_formula(n: usize) -> Formula {
+    let x = Lin::atom(Atom::Sym("x".into()));
+    let parts = (shared_moduli(n).into_iter().enumerate())
+        .map(|(i, m)| {
+            let q = Lin::atom(Atom::Aux(i as u32));
+            Formula::Con(Con::eq(&x.minus(&q.times(m)), &Lin::constant(2 * i as i64)))
+        })
+        .collect();
+    Formula::and(parts)
+}
+
+/// `solve_modular` gives [`shared_formula`] a model that it holds, at 1 to 40 moduli.
+#[test]
+fn pncx_shared_formula_models() {
+    for n in 1..=40 {
+        let f = shared_formula(n);
+        let Some(Some(model)) = solve_modular(&f, true) else {
+            panic!("no model at {n} moduli");
+        };
+        assert!(f.holds(&model), "{n} moduli");
+    }
+}
+
+/// The edges of a graph on `3 n` vertices: `n` disjoint triangles, the triangles joined in a
+/// path (`connected`), or the square of a cycle (`square`, each vertex joined to the next two).
+fn color_edges(n: usize, connected: bool, square: bool) -> Vec<(usize, usize)> {
+    if square {
+        let mut unique = BTreeSet::new();
+        for a in 0..3 * n {
+            for step in [1, 2] {
+                let b = (a + step) % (3 * n);
+                unique.insert((a.min(b), a.max(b)));
+            }
+        }
+        return unique.into_iter().collect();
+    }
+    let mut edges = Vec::new();
+    for start in (0..3 * n).step_by(3) {
+        edges.extend([
+            (start, start + 1),
+            (start + 1, start + 2),
+            (start, start + 2),
+        ]);
+        if connected && start > 0 {
+            edges.push((start - 1, start));
+        }
+    }
+    edges
+}
+
+/// A three-coloring of [`color_edges`] as a formula: `x = q_i p_i + r_i`, `0 <= r_i <= 2`,
+/// over one prime `p_i` per vertex ([`color_system`]'s), and for each edge `(a, b)` and color
+/// `c`, `r_a != c or r_b != c`. With a model: `x` the CRT point of the colors `i mod 3`, which
+/// colors every one of the three graphs properly: an edge joins `i` to `i + 1` or `i + 2`
+/// (each triangle `3 k, 3 k + 1, 3 k + 2`; a joining edge `(3 k - 1, 3 k)`; the square's edges,
+/// taken mod `3 n`, a multiple of 3), so its ends' colors differ by 1 or 2 mod 3.
+fn color_formula(n: usize, connected: bool, square: bool) -> (Formula, Model) {
+    let (info, _, _) = color_system(n);
+    let xa = Atom::Sym("x".into());
+    let x = Lin::atom(xa.clone());
+    let choices = (info.iter().enumerate())
+        .map(|(i, b)| (Int::from(i as i64 % 3), b.max_q.clone()))
+        .collect();
+    let (witness, _) = combine_crt_tree(choices).expect("coprime primes");
+    let mut model = Model::from([(xa, witness.clone())]);
+    let (mut parts, mut remainders) = (Vec::new(), Vec::new());
+    for (i, base) in info.iter().enumerate() {
+        let qa = Atom::Aux(2 * i as u32);
+        let ra = Atom::Aux(2 * i as u32 + 1);
+        let q = Lin::atom(qa.clone());
+        let r = Lin::atom(ra.clone());
+        parts.push(Formula::Con(Con::eq(
+            &x,
+            &q.times(base.max_q.clone()).plus(&r),
+        )));
+        parts.push(Formula::Con(Con::ge(&r, &Lin::constant(0))));
+        parts.push(Formula::Con(Con::ge(&Lin::constant(2), &r)));
+        model.insert(qa, witness.div_floor(&base.max_q));
+        model.insert(ra, witness.mod_floor(&base.max_q));
+        remainders.push(r);
+    }
+    for (a, b) in color_edges(n, connected, square) {
+        for color in 0..3 {
+            parts.push(Formula::or(vec![
+                Formula::negate(Formula::Con(Con::eq(&remainders[a], &Lin::constant(color)))),
+                Formula::negate(Formula::Con(Con::eq(&remainders[b], &Lin::constant(color)))),
+            ]));
+        }
+    }
+    (Formula::and(parts), model)
+}
+
+/// `solve_modular` on [`color_formula`] never says there is no point (each graph is
+/// three-colorable, and the model built by `i mod 3` holds, checked first), and a model it
+/// gives holds. From the probe `pncx_color_formula_axis` of PERF-negated-chain-unsolved,
+/// which allowed a refusal (`None`) and printed the work.
+#[test]
+fn pncx_color_formulas_are_never_refuted() {
+    for n in 1..=6 {
+        for (connected, square) in [(false, false), (true, false), (false, true)] {
+            let what = format!("{n} triangles, connected {connected}, square {square}");
+            let (f, model) = color_formula(n, connected, square);
+            assert!(f.holds(&model), "{what}: the built model");
+            match solve_modular(&f, true) {
+                Some(None) => panic!("{what}: refuted"),
+                Some(Some(m)) => assert!(f.holds(&m), "{what}: the model given"),
+                None => {}
+            }
+        }
+    }
+}
+
 fn shared_moduli(n: usize) -> BTreeSet<Int> {
     let mut ms = BTreeSet::new();
     let mut p = 3i64;

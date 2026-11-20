@@ -3786,9 +3786,10 @@ type ModBase = BTreeMap<Int, Vec<(Int, Int)>>;
 /// other and to `g` in O(N) or O(M(N) log k), where the kernel's halves would merge all `k`
 /// moduli, as every one shares `g`. No modulus or answer is given up. Tests:
 /// pncx_common_factors_reconstruct_inputs, pncx_coprime_factorization_has_its_answers;
-/// benches pncx_common_factor_scale and pncx_coprime_dense_scale (table side). The tree side
-/// (pncx_shared_formula_axis, pncx_common_factor_tree_side_scale and the kernel's
-/// the_coprime_base_of_distinct_primes_scales) is deferred to plan row
+/// benches pncx_common_factor_scale and pncx_coprime_dense_scale (table side), and
+/// pncx_shared_formula_scale through `solve_modular` (9.536 on 2026-11-20: under the limit,
+/// above the goal 9, no n log n proof). The tree side (pncx_common_factor_tree_side_scale and
+/// the kernel's the_coprime_base_of_distinct_primes_scales) is deferred to plan row
 /// PERF-negated-chain-unsolved in wt/scratch/deferred-tests/PERF-negated-chain-unsolved.rs.
 fn coprime_factorization(moduli: &BTreeSet<Int>) -> ModBase {
     let ms: Vec<Int> = moduli.iter().filter(|m| **m > Int::ONE).cloned().collect();

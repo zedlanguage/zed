@@ -417,6 +417,50 @@ fn pncx_prism_models() {
     }
 }
 
+/// [`prism_core`] as a formula: `x = q_i p_i + r_i`, `0 <= r_i <= 2`, and each residue clause
+/// `r_i not in s` written as `r_i != c` for the one color `c` of `0..3` its set leaves out;
+/// `decide` finds it satisfiable, and the point of `graph_coloring_witness` is a model of it
+/// (from the probe `pncx_prism_formula_axis` of PERF-negated-chain-unsolved).
+#[test]
+fn pncx_prism_formulas_are_true() {
+    for n in 1..=8 {
+        let (info, allowed, clauses) = prism_core(n);
+        let point = graph_coloring_witness(&info, &allowed, &clauses).expect("prism");
+        let xa = Atom::Sym("x".into());
+        let x = Lin::atom(xa.clone());
+        let mut model = Model::from([(xa, point.clone())]);
+        let (mut parts, mut rs) = (Vec::new(), Vec::new());
+        for (i, base) in info.iter().enumerate() {
+            let qa = Atom::Aux((2 * i) as u32);
+            let ra = Atom::Aux((2 * i + 1) as u32);
+            let q = Lin::atom(qa.clone());
+            let r = Lin::atom(ra.clone());
+            parts.push(Formula::Con(Con::eq(
+                &x,
+                &q.times(base.max_q.clone()).plus(&r),
+            )));
+            parts.push(Formula::Con(Con::ge(&r, &Lin::constant(0))));
+            parts.push(Formula::Con(Con::ge(&Lin::constant(2), &r)));
+            model.insert(qa, point.div_floor(&base.max_q));
+            model.insert(ra, point.mod_floor(&base.max_q));
+            rs.push(r);
+        }
+        for clause in clauses {
+            let literals = (clause.into_iter())
+                .map(|(i, s)| {
+                    let c = (0..3).map(Int::from).find(|c| !res_contains(&s, c));
+                    let c = c.expect("a clause's set leaves out a color");
+                    Formula::negate(Formula::Con(Con::eq(&rs[i], &Lin::constant(c))))
+                })
+                .collect();
+            parts.push(Formula::or(literals));
+        }
+        let f = Formula::and(parts);
+        assert!(f.holds(&model), "{n}: the coloring's point");
+        assert_eq!(crate::presburger::decide(&f), Ok(true), "{n}");
+    }
+}
+
 fn wheel_core(
     n: usize,
 ) -> (

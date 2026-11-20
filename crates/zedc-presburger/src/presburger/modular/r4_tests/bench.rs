@@ -135,6 +135,25 @@ fn pncx_common_factor_scale() {
     });
 }
 
+/// `x = q_i (2 p_i) + 2 i` for the first `n` odd primes `p_i` ([`shared_moduli`]), through
+/// `solve_modular`: every modulus shares the factor 2 and the remainders are all even, so a
+/// point exists, and the moduli's coprime base is 2 and the `p_i` (from the probe
+/// `pncx_shared_formula_axis` of PERF-negated-chain-unsolved).
+///
+/// Measured (pres11, 2026-11-20, load 41.0): ratio 9.536 in instructions at n = 1024 and
+/// 8192, under the limit 10.5 and above the goal 9. An O(n log n) method would predict
+/// 8 log(8192) / log(1024) = 8 * 13 / 10 = 10.4 here, but that bound is not proved for this
+/// path: the moduli's CRT step (`pncx_crt_tree_scale`, removed as it measured 23.673) and the
+/// big-number multiplications it rests on are not shown to be n log n, so the goal is not
+/// met (rule P300). Recorded in PERF-negated-chain-unsolved.
+#[test]
+fn pncx_shared_formula_scale() {
+    let inputs = scaling::inputs(1024, shared_formula);
+    scaling::check_order("residues over moduli sharing 2", 1024, 1, |n| {
+        assert!(matches!(solve_modular(&inputs[&n], false), Some(Some(_))));
+    });
+}
+
 /// The first n odd primes: no shared factor, and every modulus is its own base. On the table
 /// side of the kernel's `shares_a_factor` at both sizes (asserted on the inputs). (The bench
 /// of both its methods on both sides of their condition is zed-kernel's
