@@ -1183,7 +1183,8 @@ impl Sweep {
                 // Such a link is a tail type with no part `shape` reads: an empty recursive type,
                 // `E = #cons(Never, E)`, whose node `Type::tuple` keeps in `#cons(int, E)` (its
                 // O(1) test sees only types that list nothing in their own parts), and whose
-                // unfolding lists nothing. Test: `a_tail_that_unfolds_to_nothing_holds_no_list`.
+                // unfolding lists nothing. Test: `a_tail_that_unfolds_to_nothing_holds_no_list`
+                // (empty/tests.rs, kept out of this file so that it imports no `rec` file).
                 return Some(None);
             }
             path.push(y);
@@ -2216,55 +2217,6 @@ fn list_sweep_value(t: &Type, actual: &mut Option<Value>) -> Option<Verdict> {
 #[cfg(test)]
 mod r4_checker_tests {
     use super::*;
-    /// Item TEST-kernel-unreached-paths-15 (`Sweep::walk`, the link with neither a bare atom
-    /// nor a head): `#cons(int, E)` with `E = #cons(Never, E)`, a recursive type with no value.
-    /// `Type::tuple` keeps the row, since `E` is a node and not a type that lists nothing, and
-    /// `E` unfolds to a type that lists nothing, which `link` reads as a link with no bare atom
-    /// and no head. The one taken thread has no negative thread beside it, so the sweep walks
-    /// from its link to that tail and answers Empty. Against it, the same row with the tail
-    /// `F = #nil | #cons(int, F)` holds `#cons(0, #nil)` and is Inhabited by the same walk.
-    /// Control: `return Some(None)` at that line changed to `return None` gives `None` for
-    /// the first type, and this test fails.
-    #[test]
-    fn a_tail_that_unfolds_to_nothing_holds_no_list() {
-        use crate::types::rec::{Def, Expr, Group};
-        let cons = |h: Expr, t: Expr| Expr::Atom("cons".into(), vec![h, t]);
-        let e = Group::new(vec![Def {
-            name: "E".into(),
-            params: vec![],
-            body: cons(Expr::Type(Type::empty()), Expr::Ref(0, vec![])),
-        }])
-        .unwrap()
-        .instance(vec![])
-        .remove(0);
-        assert!(!e.lists_nothing());
-        let empty = Type::atom_with("cons", &Type::tuple(vec![Type::int(), e]));
-        assert!(!empty.lists_nothing());
-        assert_eq!(list_sweep(&empty), Some(Verdict::Empty));
-        let f = Group::new(vec![Def {
-            name: "F".into(),
-            params: vec![],
-            body: Expr::Union(vec![
-                Expr::Type(Type::atom("nil")),
-                cons(Expr::Type(Type::int()), Expr::Ref(0, vec![])),
-            ]),
-        }])
-        .unwrap()
-        .instance(vec![])
-        .remove(0);
-        let held = Type::atom_with("cons", &Type::tuple(vec![Type::int(), f]));
-        let mut actual = None;
-        assert_eq!(
-            list_sweep_value(&held, &mut actual),
-            Some(Verdict::Inhabited)
-        );
-        let v = actual.expect("a value with Inhabited");
-        assert!(held.contains(&v));
-        assert_eq!(
-            v,
-            Value::atom_with("cons", vec![Value::Int(0), Value::atom("nil")])
-        );
-    }
     #[test]
     fn shared_value_checks_keep_the_type_in_the_key() {
         let ints = Type::atom_with("cons", &Type::tuple(vec![Type::int(), Type::atom("nil")]));

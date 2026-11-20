@@ -3660,3 +3660,51 @@ fn a_morphism_with_refused_bounds_is_left_unknown_by_the_group_system() {
     Type::forget_emptiness();
     assert_eq!(x.verdict(), Verdict::Inhabited);
 }
+
+/// Item TEST-kernel-unreached-paths-15 (`Sweep::walk` in empty/sweep.rs, the link with neither
+/// a bare atom nor a head): `#cons(int, E)` with `E = #cons(Never, E)`, a recursive type with no
+/// value. `Type::tuple` keeps the row, since `E` is a node and not a type that lists nothing,
+/// and `E` unfolds to a type that lists nothing, which `link` reads as a link with no bare atom
+/// and no head. The one taken thread has no negative thread beside it, so the sweep walks from
+/// its link to that tail and answers Empty (`Some(None)` of `list_sweep_checked`). Against it,
+/// the same row with the tail `F = #nil | #cons(int, F)` holds `#cons(0, #nil)` by the same
+/// walk. The test is here and not in sweep.rs, whose own imports would then reach the `rec`
+/// files and close an import cycle (s_01f_import_graph). Control: `return Some(None)` at that
+/// line changed to `return None` gives `None` for the first type, and this test fails.
+#[test]
+fn a_tail_that_unfolds_to_nothing_holds_no_list() {
+    use super::super::rec::{Def, Expr, Group};
+    let cons = |h: Expr, t: Expr| Expr::Atom("cons".into(), vec![h, t]);
+    let e = Group::new(vec![Def {
+        name: "E".into(),
+        params: vec![],
+        body: cons(Expr::Type(Type::empty()), Expr::Ref(0, vec![])),
+    }])
+    .unwrap()
+    .instance(vec![])
+    .remove(0);
+    assert!(!e.lists_nothing());
+    let empty = Type::atom_with("cons", &Type::tuple(vec![Type::int(), e]));
+    assert!(!empty.lists_nothing());
+    assert_eq!(sweep::list_sweep_checked(&empty), Some(None));
+    let f = Group::new(vec![Def {
+        name: "F".into(),
+        params: vec![],
+        body: Expr::Union(vec![
+            Expr::Type(Type::atom("nil")),
+            cons(Expr::Type(Type::int()), Expr::Ref(0, vec![])),
+        ]),
+    }])
+    .unwrap()
+    .instance(vec![])
+    .remove(0);
+    let held = Type::atom_with("cons", &Type::tuple(vec![Type::int(), f]));
+    let v = sweep::list_sweep_checked(&held)
+        .expect("the sweep decides the list type")
+        .expect("a value of an inhabited type");
+    assert!(held.contains(&v));
+    assert_eq!(
+        v,
+        Value::atom_with("cons", vec![Value::Int(0), Value::atom("nil")])
+    );
+}
