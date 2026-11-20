@@ -2,7 +2,8 @@ use zed_tests::scaling;
 use zed_tests::step_helpers::l01_26_type_resolution::type_errors;
 
 use super::super::top_body_agree::{
-    comparisons, generic_ops, nested_int_exponents, nested_powers_by_an_inexact_divisor, powers,
+    comparisons, display_ops, generic_ops, nested_int_exponents,
+    nested_powers_by_an_inexact_divisor, powers,
 };
 
 /// `n` top-level calls, each giving an operation on literals alone to a generic parameter or
@@ -92,6 +93,29 @@ fn nested_powers_by_an_inexact_divisor_are_rejected_in_linear_time() {
         ];
         scaling::check(
             "checking n nested powers by a divisor no f64 holds",
+            n,
+            |m| {
+                type_errors(&srcs[usize::from(m != n)]);
+            },
+        );
+    });
+}
+
+/// One top-level array of `n` parts that take `f64` inside tuples, atoms, sets and maps, and
+/// one array nested `n` deep around such a part: the parts are found in one walk of the value
+/// (`top_f64_leaves`), each takes `f64` once (`Ck::lit_takes`), and the value's type is made
+/// again in one walk (`retyped`, one lookup per part), O(size of the value).
+///
+/// Besides its ratio: no error. Small instance:
+/// `top_body_agree::a_display_of_many_parts_that_take_f64_is_accepted`.
+#[test]
+fn displays_with_parts_that_take_f64_scale() {
+    scaling::on_a_thread(1 << 29, || {
+        let n = 400;
+        let srcs = [display_ops(n), display_ops(scaling::FACTOR * n)];
+        assert_eq!(type_errors(&srcs[0]), Vec::<String>::new());
+        scaling::check(
+            "checking a top-level display of n parts that take f64",
             n,
             |m| {
                 type_errors(&srcs[usize::from(m != n)]);

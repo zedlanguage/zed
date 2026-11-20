@@ -4012,14 +4012,8 @@ impl<'t, 'a> Ck<'t, 'a> {
         m.ty(Ty::of_row(ty::Row::new(cs)));
     }
 
-    /// A display's parts, each in turn, then its type: the family of its entries (step
-    /// L3.2), whose keys are exactly the keys written, so its guarantee and its permission
-    /// are one type and it is the one arrow `(K) -> V`. An array's keys are `0..<n`, one
-    /// interval with every key present, so a read of it misses with `#outOfBounds`.
-    // Complexity tradeoff: the key and value types are each one union of the parts' types,
-    // `Ty::union_all`, O(n) unions for n parts, each costing the size of the union so far,
-    // which for literal keys is a few intervals; the naive alternative, a type per entry kept
-    // as its own arrow, would make every lookup and every `map` O(n) in the arrows.
+    /// A display's parts, each in turn, then its type, the family of its entries
+    /// ([`display_ty`]).
     fn display_step(&mut self, m: &mut M<'a>, mut s: Box<DisplayF<'a>>) {
         if s.started > s.out.len() {
             let t = m.take_ty();
@@ -4059,29 +4053,7 @@ impl<'t, 'a> Ck<'t, 'a> {
             let t = s.out[i].clone();
             self.data(&t, "a key of a family", DataUse::Key, at, at, entry);
         }
-        let (keys, values) = match s.kind {
-            Display::Array => {
-                let n = s.out.len() as i64;
-                let keys = (0..n).map(|i| Ty::lit(&Value::Int(i))).collect::<Vec<_>>();
-                (Ty::union_all(&keys), Ty::union_all(&s.out))
-            }
-            Display::Set => {
-                let all = Ty::union_all(&s.out);
-                (all.clone(), all)
-            }
-            Display::Map => (
-                Ty::union_all(s.out.iter().step_by(2)),
-                Ty::union_all(s.out.iter().skip(1).step_by(2)),
-            ),
-        };
-        let mut sig = Sig::one(super::positional(1), vec![keys], values);
-        sig.data = true;
-        sig.dense = match s.kind {
-            Display::Array => Dense::Ranks,
-            Display::Set | Display::Map => Dense::No,
-        };
-        sig.note_held();
-        m.ty(Ty::func(Arc::new(sig)));
+        m.ty(display_ty(s.kind, &s.out));
     }
 
     /// The receiver `of` of `map`, `where` or `flatMap` where it is a call of `flatMap`, as
@@ -6660,7 +6632,7 @@ impl<'t, 'a> Ck<'t, 'a> {
     fn top_takes_f64(&mut self, value: &'a Expr, v: &Ty) -> (HashSet<Span>, Ty) {
         let mut taken = HashSet::new();
         let mut new = HashMap::new();
-        for (x, _) in value_parts(value).leaves {
+        for x in top_f64_leaves(value) {
             for o in f64_operands(x) {
                 if self.lit_takes(o, Carrier::F64) {
                     taken.insert(o.span);
@@ -26695,52 +26667,106 @@ fn out_of_bounds(r: Ty, key: &Ty, sig: &Sig) -> Ty {
     }
 }
 
-/// The type `t` of the value `e`, written as tuple displays and atoms with a payload
-/// ([`value_parts`]), with the part of each span of `new` of the type `new` gives it, made
-/// bottom up: a display's type is the row of its components' types ([`Ck::tuple_step`]), an
-/// atom's is the atom of its payload's types ([`Ck::atom_step`]). The walk keeps its own
-/// stack, since displays nest as deep as the text; it costs the size of `e`.
+/// The parts of the value `e` bound outside every function that [`Ck::top_takes_f64`] reads
+/// the operations of: the leaves of [`value_parts`], through tuple displays and atoms with a
+/// payload, and through array, set and map displays too, whose parts a body's line types as
+/// it types any other part (DESIGN.md step L1.26a), so `r = [0.5 + 2*2]` is `[4.5]`, as
+/// `g() = [0.5 + 2*2]` is. Before, the walk stopped at those displays, and the operation's
+/// own rejection stood: `A decimal literal is never an `int``. The leaves of a display's
+/// parts are not named as parts of the value ([`ValueParts::place`]), which rejections read,
+/// so [`value_parts`] itself is unchanged.
 ///
-/// Where `t` is empty, the display or atom was typed while one of its parts was still the
-/// empty type its rejection gives, and so is empty itself, with no row or payload left to
-/// read the other parts' types from. Each part's type is then the one the walk gave it, kept
-/// in `seen`: `(1, 0.5 + 2*2)` at the top level was `Never` and is `(1, f64)` (the random
-/// program of seed 4877959526508188689, whose value the run found outside `Never`). A part
-/// `seen` holds nothing for stays empty, as before. It costs one lookup per part, so the walk
-/// stays O(size of `e`).
+/// Complexity tradeoff: each node of `e` is read once, by one call of [`value_parts`] on the
+/// value or on one display's part, O(size of `e`); the stack is the walk's own, since
+/// displays nest as deep as the text.
+fn top_f64_leaves(e: &Expr) -> Vec<&Expr> {
+    let mut out = Vec::new();
+    let mut todo = vec![e];
+    while let Some(e) = todo.pop() {
+        for (x, _) in value_parts(e).leaves {
+            match &x.kind {
+                ExprKind::Array(es) | ExprKind::Set(es) => todo.extend(es.iter().rev()),
+                ExprKind::Map(entries) => {
+                    todo.extend(entries.iter().flat_map(|(k, v)| [k, v]).rev())
+                }
+                _ => out.push(x),
+            }
+        }
+    }
+    out
+}
+
+/// The type `t` of the value `e`, written as tuple displays, atoms with a payload and array,
+/// set and map displays ([`top_f64_leaves`]), with the part of each span of `new` of the type
+/// `new` gives it, made bottom up: a tuple display's type is the row of its components' types
+/// ([`Ck::tuple_step`]), an atom's is the atom of its payload's types ([`Ck::atom_step`]), an
+/// array, set or map display's is the family of its parts' types ([`display_ty`]). A form no
+/// part of which `new` names keeps its type `t` as it is. The walk keeps its own stack, since
+/// displays nest as deep as the text; it costs the size of `e`.
+///
+/// Where a tuple display or an atom is empty, it was typed while one of its parts was still
+/// the empty type its rejection gives, and so is empty itself, with no row or payload left to
+/// read the other parts' types from; an array, set or map display is a function, whose
+/// parts' types are not kept apart in it. Each part's type is then the one the walk gave it,
+/// kept in `seen`: `(1, 0.5 + 2*2)` at the top level was `Never` and is `(1, f64)` (the
+/// random program of seed 4877959526508188689, whose value the run found outside `Never`),
+/// and `[0.5 + 2*2]` was `0 -> Never` and is `0 -> f64`. A part `seen` holds nothing for is
+/// empty, as before. It costs one lookup per part, so the walk stays O(size of `e`).
 fn retyped(t: &Ty, e: &Expr, new: &HashMap<Span, Ty>, seen: &HashMap<Span, Seen<'_>>) -> Ty {
     enum Step<'e> {
         Visit(Ty, &'e Expr),
-        Make(usize),
+        // Each of these makes its type of the last so many types made, or keeps the form's
+        // type, the `Ty`, where none of those changed.
+        Make(Ty, usize),
         // The atom `#name` of so many items, then the named fields.
-        Atom(&'e str, usize, &'e [(String, Expr)]),
+        Atom(Ty, &'e str, usize, &'e [(String, Expr)]),
+        Display(Ty, Display, usize),
     }
     let was = |e: &Expr| {
         let c = seen.get(&e.span).and_then(|(c, _)| c.clone());
         c.unwrap_or_else(Ty::empty)
     };
     let mut todo = vec![Step::Visit(t.clone(), e)];
-    let mut out: Vec<Ty> = Vec::new();
+    // Each type made, with whether `new` changed it or a part of it.
+    let mut out: Vec<(Ty, bool)> = Vec::new();
+    // The last `n` types made, and whether any changed.
+    let take = |out: &mut Vec<(Ty, bool)>, n: usize| {
+        let parts = out.split_off(out.len() - n);
+        let changed = parts.iter().any(|(_, c)| *c);
+        (
+            parts.into_iter().map(|(t, _)| t).collect::<Vec<_>>(),
+            changed,
+        )
+    };
     while let Some(step) = todo.pop() {
         match step {
             Step::Visit(t, e) => {
                 if let Some(n) = new.get(&e.span) {
-                    out.push(n.clone());
+                    out.push((n.clone(), true));
                     continue;
                 }
                 match (&e.kind, t.tuples.only()) {
-                    (ExprKind::Tuple(es), Some(row)) => {
+                    (ExprKind::Tuple(es), Some(row)) if row.len() == es.len() => {
                         let cs = row.to_vec();
-                        if cs.len() != es.len() {
-                            out.push(t);
-                            continue;
-                        }
-                        todo.push(Step::Make(cs.len()));
+                        todo.push(Step::Make(t, cs.len()));
                         todo.extend(cs.into_iter().zip(es).rev().map(|(c, e)| Step::Visit(c, e)));
                     }
                     (ExprKind::Tuple(es), None) if t.is_empty() => {
-                        todo.push(Step::Make(es.len()));
+                        todo.push(Step::Make(t, es.len()));
                         todo.extend(es.iter().rev().map(|e| Step::Visit(was(e), e)));
+                    }
+                    (ExprKind::Array(es) | ExprKind::Set(es), _) => {
+                        let kind = match &e.kind {
+                            ExprKind::Array(_) => Display::Array,
+                            _ => Display::Set,
+                        };
+                        todo.push(Step::Display(t, kind, es.len()));
+                        todo.extend(es.iter().rev().map(|e| Step::Visit(was(e), e)));
+                    }
+                    (ExprKind::Map(entries), _) => {
+                        todo.push(Step::Display(t, Display::Map, 2 * entries.len()));
+                        let parts = entries.iter().flat_map(|(k, v)| [k, v]);
+                        todo.extend(parts.rev().map(|e| Step::Visit(was(e), e)));
                     }
                     (
                         ExprKind::Call {
@@ -26754,28 +26780,78 @@ fn retyped(t: &Ty, e: &Expr, new: &HashMap<Span, Ty>, seen: &HashMap<Span, Seen<
                     ) if t.is_empty()
                         && let ExprKind::Atom(name) = &callee.kind =>
                     {
-                        todo.push(Step::Atom(name, positional.len(), named));
+                        todo.push(Step::Atom(t, name, positional.len(), named));
                         let parts = positional.iter().chain(named.iter().map(|(_, e)| e));
                         todo.extend(parts.rev().map(|e| Step::Visit(was(e), e)));
                     }
-                    _ => out.push(t),
+                    _ => out.push((t, false)),
                 }
             }
-            Step::Make(n) => {
-                let cs = out.split_off(out.len() - n);
-                out.push(Ty::of_row(ty::Row::new(cs)));
+            Step::Make(t, n) => {
+                let (cs, changed) = take(&mut out, n);
+                match changed {
+                    true => out.push((Ty::of_row(ty::Row::new(cs)), true)),
+                    false => out.push((t, false)),
+                }
             }
-            Step::Atom(name, n, named) => {
-                let mut fields = out.split_off(out.len() - named.len()).into_iter();
-                let items = out.split_off(out.len() - n);
-                let fields = (named.iter())
-                    .map(|(k, _)| (Arc::from(k.as_str()), fields.next().expect("a field")))
+            Step::Atom(t, name, n, named) => {
+                let (mut items, changed) = take(&mut out, n + named.len());
+                if !changed {
+                    out.push((t, false));
+                    continue;
+                }
+                let fields = items.split_off(n).into_iter();
+                let fields = (named.iter().zip(fields))
+                    .map(|((k, _), f)| (Arc::from(k.as_str()), f))
                     .collect();
-                out.push(Ty::atom_of(name, items, fields));
+                out.push((Ty::atom_of(name, items, fields), true));
+            }
+            Step::Display(t, kind, n) => {
+                let (parts, changed) = take(&mut out, n);
+                match changed {
+                    true => out.push((display_ty(kind, &parts), true)),
+                    false => out.push((t, false)),
+                }
             }
         }
     }
-    out.pop().expect("one type")
+    out.pop().expect("one type").0
+}
+
+/// The type of an array, set or map display whose parts, in the order of the text (a map's
+/// each key then its value), have the types `parts`: the family of its entries (step L3.2),
+/// whose keys are exactly the keys written, so its guarantee and its permission are one type
+/// and it is the one arrow `(K) -> V`. An array's keys are `0..<n`, one interval with every
+/// key present, so a read of it misses with `#outOfBounds`. Made by [`Ck::display_step`] as a
+/// display is walked, and by [`retyped`] where a part's type changes after.
+// Complexity tradeoff: the key and value types are each one union of the parts' types,
+// `Ty::union_all`, O(n) unions for n parts, each costing the size of the union so far, which
+// for literal keys is a few intervals; the naive alternative, a type per entry kept as its own
+// arrow, would make every lookup and every `map` O(n) in the arrows.
+fn display_ty(kind: Display, parts: &[Ty]) -> Ty {
+    let (keys, values) = match kind {
+        Display::Array => {
+            let n = parts.len() as i64;
+            let keys = (0..n).map(|i| Ty::lit(&Value::Int(i))).collect::<Vec<_>>();
+            (Ty::union_all(&keys), Ty::union_all(parts))
+        }
+        Display::Set => {
+            let all = Ty::union_all(parts);
+            (all.clone(), all)
+        }
+        Display::Map => (
+            Ty::union_all(parts.iter().step_by(2)),
+            Ty::union_all(parts.iter().skip(1).step_by(2)),
+        ),
+    };
+    let mut sig = Sig::one(super::positional(1), vec![keys], values);
+    sig.data = true;
+    sig.dense = match kind {
+        Display::Array => Dense::Ranks,
+        Display::Set | Display::Map => Dense::No,
+    };
+    sig.note_held();
+    Ty::func(Arc::new(sig))
 }
 
 // Operands::adoptions, Ck::generic_parts, Ck::fewest and parts are here, not in mod.rs, since they call

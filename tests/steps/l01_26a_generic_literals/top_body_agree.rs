@@ -728,6 +728,69 @@ pub(super) fn generic_ops(n: usize) -> String {
     src + &format!("z = add(x: {sum}, y: 1.5);\nw = min({sum}, 1.5);\n")
 }
 
+/// One top-level binding `r` of an array of `n` parts, each an operation on literals that
+/// takes `f64` inside a tuple display, an atom, a set or a map by turns, and of one array
+/// nested `n` deep around such an operation: each takes `f64`, with no error.
+pub(super) fn display_ops(n: usize) -> String {
+    let parts: Vec<String> = (0..n)
+        .map(|i| match i % 4 {
+            0 => format!("({i}, 0.5 + 2*2)"),
+            1 => format!("({i}, #a(0.5 + 2^2))"),
+            2 => format!("({i}, {{0.5 + 2*2}})"),
+            _ => format!("({i}, {{{i} -> 0.5 + 2*2}})"),
+        })
+        .collect();
+    let deep = format!("{}0.5 + 2*2{}", "[".repeat(n), "]".repeat(n));
+    format!("r = [{}];\ns = {deep};\n", parts.join(", "))
+}
+
+#[test]
+fn a_display_of_many_parts_that_take_f64_is_accepted() {
+    // A small instance of `bench::top_body_agree::displays_with_parts_that_take_f64_scale`.
+    assert_eq!(type_errors(&display_ops(8)), Vec::<String>::new());
+}
+
+/// An operation on literals that takes `f64` inside an array, set or map display, or inside a
+/// tuple display or an atom, gets the same verdict and value in every place. At the top
+/// level the displays were rejected, "A decimal literal is never an `int`: `0.5` meets `+`,
+/// which expects `int`", while a body took `f64`; and a tuple display or an atom was typed
+/// `Never`, so a run found its value outside its type (the random program of seed
+/// 4877959526508188689). The controls, `[2^2]` and `(1, 2^2)`, keep `int`.
+#[test]
+fn an_operation_that_takes_f64_inside_a_display_agrees_in_every_place() {
+    let cases = [
+        // An array prints as the map from its ranks it is.
+        ("[0.5 + 2*2]", "{0 -> 4.5}"),
+        ("[1.5, 0.5 + 2^2]", "{0 -> 1.5, 1 -> 4.5}"),
+        ("{0.5 + 2*2}", "{4.5}"),
+        ("{1 -> 0.5 + 2*2}", "{1 -> 4.5}"),
+        ("{0.5 + 2*2 -> 1}", "{4.5 -> 1}"),
+        ("[(1, 0.5 + 2^2)]", "{0 -> (1, 4.5)}"),
+        ("(1, [0.5 + 2*2])", "(1, {0 -> 4.5})"),
+        ("[[0.5 + 2*2]]", "{0 -> {0 -> 4.5}}"),
+        ("(1, 0.5 + 2*2)", "(1, 4.5)"),
+        ("(1, (2, 0.5 + 2*2))", "(1, (2, 4.5))"),
+        // In a tuple: a loose atom interpolated would leave the string.
+        ("(#a(0.5 + 2*2),)", "(#a(4.5),)"),
+        ("(1, #a(x: 0.5 + 2*2))", "(1, #a(x: 4.5))"),
+        ("[2^2]", "{0 -> 4}"),
+        ("(1, 2^2)", "(1, 4)"),
+    ];
+    let lines: Vec<&str> = cases.iter().map(|(e, _)| *e).collect();
+    let want: Vec<&str> = cases.iter().map(|(_, v)| *v).collect();
+    let want = format!("{}\n", want.join(" "));
+    for (src, place) in places(&lines).iter().zip(["top", "body", "block"]) {
+        assert_eq!(type_errors(src), Vec::<String>::new(), "{place}:\n{src}");
+        let out = run(&format!("l01_26a_display_agree_{place}"), src, "", &[]);
+        assert_eq!(
+            (out.status, out.stderr.as_str()),
+            (0, ""),
+            "{place}:\n{src}"
+        );
+        assert_eq!(out.stdout, want, "{place}:\n{src}");
+    }
+}
+
 #[test]
 fn many_operations_at_generic_arguments_take_f64() {
     // A small instance of `bench::top_body_agree::operations_at_generic_arguments_scale`.
