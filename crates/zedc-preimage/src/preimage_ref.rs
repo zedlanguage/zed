@@ -3418,10 +3418,12 @@ impl<'t> Tx<'t> {
     //   (C) B_j has at most 15 nodes, and S_j and M_j too (TEST-min-gap-b-node-bound). Write
     //       K(T) for the values that some key of tree T holds. `tree_node` drops a node whose
     //       label is empty; the other constructor, `tree_raw`, is called by `tree_balance` on
-    //       labels of nodes that exist and by `val_from_iter`, which on this family only
-    //       `State1d::init` reaches, at the root, label [-M, M] (the other callers serve `Mul`,
-    //       `Div`, `Pow` and `Mod`). So every key has a nonempty label; keys are disjoint nonempty
-    //       integer ranges, so nodes <= |K(T)|. The operations act on K as on sets: `tree_union`
+    //       labels of nodes that exist and by `val_from_iter`. Every caller of `val_from_iter`
+    //       gives it nonempty labels: `State1d::init` the range [lo, hi] of the root;
+    //       `inverse` (the reflection) the label `xs` of a node that exists; `replace_slices`
+    //       the range of a slice; `modulo_*` serve `Mod` only. Its values are the pieces of an
+    //       `IntervalSet`, each nonempty, and an empty set gives no node. So every key has a
+    //       nonempty label; keys are disjoint nonempty integer ranges, so nodes <= |K(T)|. The operations act on K as on sets: `tree_union`
     //       gives K(a) | K(b) (`ad.join(&data)` and `ad` are nonempty), `tree_restrict` K & [lo,
     //       hi], `tree_restrict_input` a subset of K, the reflection c - K, and `minmax` (Min, 20)
     //       gives (K & (-inf, 19]) | ([20, inf) if 20 in K). Let K_j = K(B_j) after its clip and
