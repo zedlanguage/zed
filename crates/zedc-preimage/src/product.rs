@@ -16398,8 +16398,9 @@ impl Scope {
         }
         // Proof that the bound below is the one `core_leaf_bound` would find from all the
         // class's conjuncts now. (1) `core_leaf_bound` is the meet, over the parts of the core,
-        // of `part_leaf_bound(g and base)`, `base` the constraints together (its doc comment;
-        // that site's own argument is row PROOF-preimage-core-leaf-bound, owned elsewhere).
+        // of `part_leaf_bound(g and base)`, `base` the constraints together (its doc comment,
+        // which proves that meet the core's projection with at most one conjunct that is not
+        // a constraint, and a bound containing it with more: its cases 1 to 3).
         // (2) `added_among` returns `Some` only when the kept record was made with the free
         // conjuncts at each hub as `old` has them, no name the kept conjuncts mention has
         // changed its product since (`kept.names` against `self.names`), and every change of

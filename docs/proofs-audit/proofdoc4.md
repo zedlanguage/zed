@@ -166,8 +166,9 @@ Corrected counts the false claims too (comments fixed, and the five code faults 
 that was both corrected and marked unproved is counted once, in the first state its row names.
 Of the 471, fifteen are counted in no column: seven are in other crates (zedc-check, zedc-presburger, zed-kernel)
 and were left to those crates' sections; two describe code that is gone (`lone_hole`,
-`Split::joined`); five are at sites preimg1 is editing now (`Tx::forget`,
-`Scope::core_leaf_bound`, the preimage_ref.rs chain cost) and were not edited; one,
+`Split::joined`); five are at sites preimg1 was editing (`Tx::forget` and
+`Scope::core_leaf_bound`, since proved by its 8988ec584 and 7f66f344d, and the preimage_ref.rs
+chain cost) and were not edited here; one,
 `initial_star_base`, states no exactness claim.
 
 | Source | Claim | Code site | Status |
@@ -277,7 +278,7 @@ and were left to those crates' sections; two describe code that is gone (`lone_h
 | 36279a9f9 | `Scoped::interface` | preimage.rs `Scoped::interface` | Already there |
 | 36279a9f9 | A stale `interfaces` entry after an undo is harmless | preimage.rs `interfaces` field | Completed |
 | 36279a9f9 | `Faces::met`, `congruences_once` | zedc-presburger | Other crate, not checked (two claims) |
-| 364dd4a15 | Failures kept under `CallKey` | preimage.rs `Tx::forget` | Owned by preimg1 (PROOF-preimage-forget-callkey); not edited |
+| 364dd4a15 | Failures kept under `CallKey` | preimage.rs `Tx::forget` | Owned by preimg1 (PROOF-preimage-forget-callkey), proved by its 8988ec584; not edited here |
 | 37a8466a1 | The fixed-hub solutions are closed under min and max | threshold.rs module header | Added |
 | 37a8466a1 | The forward and backward loops give the least and greatest members, or `None` exactly when there is none | threshold.rs `members` | Added: steps (a) to (d) |
 | 37a8466a1 | `members` O(N log N) | threshold.rs `members`, `floor` | False: `floor` cost O(P) a call; fixed (F1), test `threshold::tests::bench::many_upper_bounds_on_a_name_of_many_pieces_cost_near_linear_time`, red before, green after |
@@ -331,7 +332,7 @@ and were left to those crates' sections; two describe code that is gone (`lone_h
 | 46322ca2c | The shared-bounds pass gives the same intervals as `range` | product.rs `Scope::idle` | Completed |
 | 46322ca2c | Rockafellar, Schrijver | product.rs `wake_case_groups` | Already there (books) |
 | 47dbe05b9 | The four `bitAnd` rows hold at every sign | preimage.rs `bit_and_bounds` | Completed |
-| 4c163dca4 | The `Tx::forget` undo log costs O(1) an entry | preimage.rs `Tx::forget` | Owned by preimg1 (PROOF-preimage-forget-callkey); not edited |
+| 4c163dca4 | The `Tx::forget` undo log costs O(1) an entry | preimage.rs `Tx::forget` | Owned by preimg1 (PROOF-preimage-forget-callkey), proved by its 8988ec584; not edited here |
 | 526f13c51 | The exact search holds only inputs the term reads | preimage.rs `split_read` | Already there, see proofdoc3 |
 | 53622f271 | References | lib.rs | Already there |
 | 53622f271 | Pugh DOI at each use | product.rs (7 sites) | Completed |
@@ -516,7 +517,7 @@ and were left to those crates' sections; two describe code that is gone (`lone_h
 | ce1450451 | Each part comes out of the merge once, in order | product.rs `Users::due` | Completed |
 | ce1450451 | Earlier rows: `project_block` keep, `project_part`, PROOF-ints-listed-writers | product.rs | Already there, see proofdoc1, proofdoc3 |
 | ce1450451 | `kept_meet` and `join_settled` do not depend on the order | product.rs `kept_meet` | Completed |
-| ce1450451 | `core_leaf_bound` | product.rs `Scope::core_leaf_bound` | Owned by preimg1 (PROOF-preimage-core-leaf-bound); not edited |
+| ce1450451 | `core_leaf_bound` | product.rs `Scope::core_leaf_bound` | Owned by preimg1 (PROOF-preimage-core-leaf-bound), proved by its 7f66f344d; not edited here |
 | ce1450451 | `Scoped` tradeoff: `Frame` coordinates; tests in `l01_38_omega_test::one_scope` | preimage.rs `Scoped` | Corrected: `Frame` was removed in b273d0f62; test path `bench::one_scope` |
 | ce1450451 | `lams`: addressing a key while borrowed | preimage.rs `Scoped::lams` | Completed |
 | ce1450451 | `Tr::truncate` undoes the definitions from the mark on | preimage.rs `Tr::truncate` | Completed |
@@ -545,7 +546,7 @@ and were left to those crates' sections; two describe code that is gone (`lone_h
 | ce1450451 | `in_class`: the first to the last member | preimage.rs `in_class` | Completed |
 | ce1450451 | `enumerate` costs at most the listed members | preimage.rs `enumerate` | Completed (the box-within-domain step inferred) |
 | ce1450451 | `preimage_listed` cost | preimage.rs `preimage_listed` | Completed |
-| ce1450451 | `Tx::forget` | preimage.rs `Tx::forget` | Owned by preimg1 (PROOF-preimage-forget-callkey); not edited |
+| ce1450451 | `Tx::forget` | preimage.rs `Tx::forget` | Owned by preimg1 (PROOF-preimage-forget-callkey), proved by its 8988ec584; not edited here |
 | ce1450451 | After a bind nothing mentions x | product.rs `Scope::bind` | False (F2, fixed); `spent` and `refused_by` are not cleared on a shadowing bind, noted at the site |
 | ce1450451 | `forward_prim` holds every value of the operation; each argument once | product.rs `forward_prim` | Added |
 | ce1450451 | `@exact` is sound and keeps the point and the ends | product.rs `enumerate_exactly` | Added |
