@@ -28865,7 +28865,10 @@ pub mod r10_hash {
             if self.map.is_empty() || a == 1 {
                 return self;
             }
-            debug_assert!(!a.is_multiple_of(P), "a power of a base other than 0 modulo P");
+            debug_assert!(
+                !a.is_multiple_of(P),
+                "a power of a base other than 0 modulo P"
+            );
             self.scale = mul_p(self.scale, a);
             self.inv = mul_p(self.inv, zed_numtheory::m61::inv(a));
             self
