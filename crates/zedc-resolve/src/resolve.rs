@@ -2396,6 +2396,22 @@ impl Resolver<'_> {
     /// `money.Money` through the qualifier `money`), comes from, with the span of the import
     /// that brings it in: `None` when `name` binds no struct another unit defines, so a
     /// struct this unit declares, even of the same name, is its own.
+    ///
+    /// Which spellings reach here, and why each is decided right (TEST-local-fields-assumptions,
+    /// 2026-11-20). A construction gives `Name` or `q.Name` (the callee `ExprKind::Name`, or a
+    /// `Member` of a `Name`, in [`Self::expr`]); a pattern gives its `CtorPat` path, its words
+    /// joined by `.` (`CtorPat = Path '(' …`, zedc-syntax `Builder::path`), so `Name` or
+    /// `q.Name`, and `a.b.Name` only in a program already rejected: a qualified type has one
+    /// qualifier ([`Self::qualified_type`], "has more than one qualifier"). A qualifier is one
+    /// name, the last word of the import's path or its `as` alias (`import geometry.shapes;`
+    /// binds `shapes`, `import money as cash;` binds `cash`), so splitting at the last `.` gives
+    /// the qualifier and the struct's own name, and the unit is the one the qualifier's import
+    /// binds, whatever the qualifier is called. Tests: l02_03 local_fields
+    /// `a_qualified_pattern_outside_the_unit_that_binds_a_local_field_is_rejected`,
+    /// `a_qualified_construction_outside_the_unit_is_rejected_too` and
+    /// `a_construction_through_an_aliased_qualifier_is_rejected_and_names_the_unit`, each red
+    /// when the split is removed (checked by hand, 2026-11-20); they cannot catch a spelling the
+    /// grammar does not yet give, such as a qualified callee of a struct of a nested unit.
     fn imported_struct(&self, written: &str) -> Option<(Arc<str>, Span)> {
         let (qualifier, name) = match written.rsplit_once('.') {
             Some((q, n)) => (Some(q), n),
@@ -2421,6 +2437,20 @@ impl Resolver<'_> {
     /// outside its unit"). The message quotes the construction or pattern from the unit's text
     /// when it is known. O(k log f) for k named fields and f local fields of the struct: one
     /// lookup in the struct's ordered set each.
+    ///
+    /// The text is known on every path that reaches a rejection (TEST-local-fields-assumptions,
+    /// 2026-11-20). A rejection needs `self.units` to give the other unit's exports. The
+    /// resolutions with real units are zedc's `front::resolve_recovered` (from
+    /// `unit::load`, the package mode, which `zedc run` reaches by `unit::package_report`), which calls
+    /// `resolve_in_text` and `resolve_kept` with `Some(text)`; every other caller resolves
+    /// with [`Alone`], whose `exports` gives no unit, so the `let … else` below returns before
+    /// the quote. [`resolve_in`] passes no text and real units, and no caller in zedc uses it
+    /// with any but `Alone` (`front::parse_unit`). So the fallback "of `Money`" is reached only
+    /// by a new caller of `resolve_in`. Tests: l02_03 local_fields
+    /// `zedc_run_quotes_the_construction_from_the_importers_text` (by `zedc run`) and
+    /// `a_construction_outside_the_unit_that_names_a_local_field_is_rejected` (by
+    /// `unit::load`), each red when `resolve_recovered` passes `None` (checked by hand,
+    /// 2026-11-20); neither catches a new caller of `resolve_in` with real units.
     fn local_fields<'f>(
         &mut self,
         written: &str,
@@ -4040,12 +4070,21 @@ impl Resolver<'_> {
                 todo.push(Task::FirstAltEnd(first));
                 todo.push(Task::Pattern(first, report));
             }
-            Pattern::Struct { name, fields, span } => {
-                // A pattern of a struct of another unit binds none of its `local` fields.
+            Pattern::Struct {
+                name,
+                name_span,
+                fields,
+                span,
+            } => {
+                // A pattern of a struct of another unit binds none of its `local` fields. `name`
+                // is `Money` or, through a qualifier, `money.Money` (`CtorPat = Path '(' …`),
+                // and [`Self::imported_struct`] takes either.
                 let named = fields.iter().map(|(n, _)| n.as_str());
                 self.local_fields(name, named, "pattern", *span);
                 todo.extend(fields.iter().rev().map(|f| bind(f, *span)));
-                todo.push(Task::TypeName(name, name_at(*span, name)));
+                // The name's own text: `name_at` would give `name.len()` characters, too few
+                // for a path written with spaces, `money . Money`.
+                todo.push(Task::TypeName(name, *name_span));
             }
             Pattern::Name(n, span) => {
                 let names_type = TYPES.contains(&n.as_str())

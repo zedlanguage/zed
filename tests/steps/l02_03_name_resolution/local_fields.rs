@@ -93,6 +93,106 @@ fn a_pattern_outside_the_unit_that_binds_a_local_field_is_rejected() {
     );
 }
 
+/// A pattern of the struct written through its unit's qualifier, `money.Money(cents: c)`, is
+/// rejected as the bare `Money(cents: c)` is (TEST-local-fields-assumptions, assumption 1 of
+/// LOCAL-fields: `Resolver::imported_struct` splits a qualified name at its last `.`).
+#[test]
+fn a_qualified_pattern_outside_the_unit_that_binds_a_local_field_is_rejected() {
+    let p = package(&[
+        ("money.zed", MONEY),
+        (
+            "main.zed",
+            "import money;\n\
+             f(m: money.Money) = match m { money.Money(cents: c, n:) -> c + n };\n\
+             g(m: money.Money) = match m { money.Money(n:) -> n };\n",
+        ),
+    ]);
+    let m = mistakes(&p);
+    assert_eq!(m.len(), 1, "{m:?}");
+    assert!(
+        m[0].starts_with(
+            "main.zed:2:31: Invalid pattern `money.Money(cents: c, n:)`: the field `cents` of \
+             `Money` is declared `local` in the unit `money`, so no other unit names it."
+        ),
+        "{m:?}"
+    );
+}
+
+/// A qualified pattern's struct resolves as a qualified type does, to the struct of the
+/// qualifier's unit, and the use is recorded at the whole name as written, spaces included
+/// (`money . Money`), not at as many characters as `money.Money` has.
+#[test]
+fn a_qualified_pattern_names_the_struct_of_the_unit_at_its_whole_name() {
+    let main = "import money;\nf(m: money.Money) = match m { money . Money(n:) -> n };\n";
+    let p = package(&[("money.zed", MONEY), ("main.zed", main)]);
+    assert_eq!(mistakes(&p), Vec::<String>::new());
+    let r = p.unit("main").unwrap().resolved.as_ref().unwrap();
+    let start = main.find("money . Money").unwrap();
+    let used: Vec<(&str, String)> = (r.res.uses.iter())
+        .filter(|(s, _)| s.start == start)
+        .map(|(s, u)| (&main[s.start..s.end], format!("{u:?}")))
+        .collect();
+    assert_eq!(
+        used,
+        [(
+            "money . Money",
+            "Unit { unit: \"money\", name: \"Money\" }".to_string()
+        )]
+    );
+}
+
+/// Through an alias of the unit, `import money as cash;`, the qualifier is `cash` and the unit
+/// the message names is still `money`.
+#[test]
+fn a_construction_through_an_aliased_qualifier_is_rejected_and_names_the_unit() {
+    let p = package(&[
+        ("money.zed", MONEY),
+        (
+            "main.zed",
+            "import money as cash;\nbad = cash.Money(cents: 5, n: 1);\nfine = cash.Money(n: 1);\n",
+        ),
+    ]);
+    let m = mistakes(&p);
+    assert_eq!(m.len(), 1, "{m:?}");
+    assert!(
+        m[0].starts_with(
+            "main.zed:2:7: Invalid construction `cash.Money(cents: 5, n: 1)`: the field `cents` \
+             of `Money` is declared `local` in the unit `money`, so no other unit names it."
+        ),
+        "{m:?}"
+    );
+}
+
+/// The message quotes the construction from the importer's text by the entry a user runs,
+/// `zedc run` on a file of a package (TEST-local-fields-assumptions, assumption 2 of
+/// LOCAL-fields: the unit's text reaches the resolver in package mode). Without the text the
+/// message would read "Invalid construction of `Money`".
+#[test]
+fn zedc_run_quotes_the_construction_from_the_importers_text() {
+    let d = super::command::package_dir(
+        "local_fields",
+        &[
+            ("zed.manifest", "// the bank\n"),
+            ("money.zed", MONEY),
+            (
+                "app/main.zed",
+                "import money.{Money};\nmain(m: MainArgs) {\n  bad = Money(cents: 5, n: 1);\n}\n",
+            ),
+        ],
+    );
+    let (status, err) = super::command::run(d.join("app/main.zed").to_str().unwrap());
+    assert_eq!(status, 1, "{err}");
+    assert!(
+        err.contains(&format!(
+            "{}/app/main.zed:3:9: Invalid construction `Money(cents: 5, n: 1)`: the field \
+             `cents` of `Money` is declared `local` in the unit `money`, so no other unit names \
+             it.",
+            d.display()
+        )),
+        "{err}"
+    );
+}
+
 #[test]
 fn a_struct_of_the_importer_with_the_same_name_is_its_own() {
     let p = package(&[

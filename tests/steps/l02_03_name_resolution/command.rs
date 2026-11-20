@@ -6,7 +6,7 @@ use std::path::PathBuf;
 
 /// A package directory of its own for test `name`, holding `files`, under this process's
 /// scratch directory; files in it are overwritten by each run, never deleted.
-fn package_dir(name: &str, files: &[(&str, &str)]) -> PathBuf {
+pub(super) fn package_dir(name: &str, files: &[(&str, &str)]) -> PathBuf {
     let d = zed_tests::step_helpers::scratch(format!("l02_03/{name}"));
     for (file, text) in files {
         let path = d.join(file);
@@ -17,7 +17,7 @@ fn package_dir(name: &str, files: &[(&str, &str)]) -> PathBuf {
 }
 
 /// Runs `zedc run <file>` and gives its status and standard error.
-fn run(file: &str) -> (u8, String) {
+pub(super) fn run(file: &str) -> (u8, String) {
     let (mut out, mut err) = (Vec::new(), Vec::new());
     let status = zedc::run::command(&["run", file], &mut "".as_bytes(), &mut out, &mut err);
     (status, String::from_utf8(err).unwrap())

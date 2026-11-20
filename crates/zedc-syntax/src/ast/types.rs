@@ -105,13 +105,7 @@ impl Builder<'_, '_> {
             }
             "TypeOr" => TypeKind::Union(self.operands(n)?),
             "TypeAnd" => TypeKind::And(self.operands(n)?),
-            "TypeName" => TypeKind::Name(
-                (node.start..node.end)
-                    .step_by(2)
-                    .map(|i| self.word(i))
-                    .collect::<Vec<_>>()
-                    .join("."),
-            ),
+            "TypeName" => TypeKind::Name(self.path(n)),
             "AtomType" if self.word(node.start) == "#_" => TypeKind::Every(Every::Atom),
             "AtomType" => {
                 let Tok::Atom(a) = &self.tokens[node.start].tok else {
@@ -122,12 +116,7 @@ impl Builder<'_, '_> {
             "TupleType" if self.dots(node.start + 1) => TypeKind::Every(Every::Tuple),
             "TupleType" => TypeKind::Tuple(self.types(kids)?),
             "TypeApply" => {
-                let path = &self.tree.nodes[kids[0]];
-                let name = (path.start..path.end)
-                    .step_by(2)
-                    .map(|i| self.word(i))
-                    .collect::<Vec<_>>()
-                    .join(".");
+                let name = self.path(kids[0]);
                 let args = kids[1..]
                     .iter()
                     .map(|&k| self.type_param(k))
@@ -426,12 +415,16 @@ impl Builder<'_, '_> {
                 let to = self.range_end(op, bound, |b, k| b.pattern(k).map(Box::new))?;
                 return Ok(Pattern::Range { from, to, span });
             }
+            // The struct is named as a type is, bare (`Money(n:)`) or through its unit's
+            // qualifier (`money.Money(n:)`, TEST-local-fields-assumptions), so `name` holds the
+            // path's words joined by `.`, as `TypeKind::Name` does.
             "CtorPat" => {
-                let (&name, fields) = node.kids.split_first().expect("CtorPat = Name '(' …");
+                let (&name, fields) = node.kids.split_first().expect("CtorPat = Path '(' …");
                 let out = fields.iter().map(|&k| self.field_pattern(k));
                 let out = out.collect::<Result<_, _>>()?;
                 return Ok(Pattern::Struct {
-                    name: self.word(self.tree.nodes[name].start).into(),
+                    name: self.path(name),
+                    name_span: self.span(name),
                     fields: out,
                     span,
                 });

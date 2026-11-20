@@ -716,6 +716,18 @@ impl<'a, 's> Builder<'a, 's> {
         &self.text[s.start..s.end]
     }
 
+    /// The words of the node `n`, a `Path` or a node that holds only one (`TypeName`), joined
+    /// by `.`: `a.b.C`, however it is spaced (`a . b .C`). A path's tokens alternate a name and
+    /// `.` (`Path = Path '.' Name | Name`), so its names are every second token. O(length).
+    pub(super) fn path(&self, n: usize) -> String {
+        let node = &self.tree.nodes[n];
+        (node.start..node.end)
+            .step_by(2)
+            .map(|i| self.word(i))
+            .collect::<Vec<_>>()
+            .join(".")
+    }
+
     pub(super) fn kids(&self, n: usize) -> &'a [usize] {
         &self.tree.nodes[n].kids
     }

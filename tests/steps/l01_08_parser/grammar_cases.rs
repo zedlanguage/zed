@@ -1009,6 +1009,13 @@ pub const CASES: &[(&str, &str, u32, &str, &str)] = &[
         "P(x: 1, y:,)",
         "P ( x : 1 , y : , )",
     ),
+    (
+        "CtorPat#0",
+        "CtorPat",
+        0,
+        "geometry.P(x: 1)",
+        "geometry . P ( x : 1 )",
+    ),
     ("TuplePat#0", "TuplePat", 0, "(a, b,)", "( a , b , )"),
     ("TuplePat#0", "TuplePat", 0, "(a,)", "( a , )"),
     ("NamePat#0", "NamePat", 0, "x", "x"),

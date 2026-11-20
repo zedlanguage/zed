@@ -1160,8 +1160,11 @@ pub enum Pattern {
     /// `Point(x:, y: b)`: a struct's fields matched by name; `x:` (no pattern) binds the field
     /// to the name `x`.
     Struct {
-        /// The struct's name.
+        /// The struct's name: `Point`, or `geometry.Point` through a unit's qualifier, its words
+        /// joined by `.` however they are spaced.
         name: String,
+        /// The text of its name, which `money . Money` spaced holds whole.
+        name_span: Span,
         /// The fields matched, in written order.
         fields: Vec<(String, Option<Pattern>)>,
         /// Its text.

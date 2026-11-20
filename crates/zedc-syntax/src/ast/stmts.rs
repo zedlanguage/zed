@@ -168,8 +168,7 @@ impl Builder<'_, '_> {
             _ => (None, kids),
         };
         let p = &self.tree.nodes[kids[0]];
-        let path = (p.start..p.end).step_by(2).map(|i| self.word(i));
-        let path = path.collect::<Vec<_>>().join(".");
+        let path = self.path(kids[0]);
         let kind = match &kids[1..] {
             // `import u.{a, b}`: the path is followed by `.`.
             names if self.word(p.end) == "." => {
