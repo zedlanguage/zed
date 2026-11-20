@@ -41,13 +41,6 @@ fn points(a: &str, vs: &[i128]) -> Vec<Rc<Parts>> {
         .collect()
 }
 
-fn parts(cons: Vec<Con>, ors: Vec<Vec<Rc<Parts>>>) -> Parts {
-    let mut p = Parts::default();
-    p.cons.extend(cons);
-    p.ors.extend(ors);
-    p
-}
-
 /// Whether `p` holds at `m`, with each disjunction met by one of its disjuncts.
 fn holds(p: &Parts, m: &Model) -> bool {
     p.cons.iter().all(|c| c.holds_linear(m))
@@ -99,7 +92,7 @@ fn a_disjunction_of_one_point_on_a_row_of_unbounded_names() {
     // The walk reads the disjunctions last to first. `c` is the greatest name and holds the
     // rest of the row, so `a` is 0 and meets `a == 0` at once; `c == 4` is a disjunction of one
     // point that `c`'s value misses, so `c` is set to 4; `b`, the one name left, takes the rest.
-    let p = parts(
+    let p = Parts::by_hand(
         vec![sum_is(&["a", "b", "c"], 7)],
         vec![
             points("b", &[0, 3]),
@@ -110,7 +103,7 @@ fn a_disjunction_of_one_point_on_a_row_of_unbounded_names() {
     assert_eq!(walk(&p), Some(true));
     // With 6, the rest left to `b` is 2, which neither of `b`'s disjuncts takes, so the walk
     // refuses, though `a = 2, b = 0, c = 4` is a point: it kept `a = 0`, as `pick_by` does.
-    let p = parts(
+    let p = Parts::by_hand(
         vec![sum_is(&["a", "b", "c"], 6)],
         vec![
             points("b", &[0, 3]),
@@ -153,7 +146,7 @@ fn a_disjunction_of_one_point_on_a_row_of_bounded_names() {
         cons.extend(within("a", 3));
         cons.extend(within("b", 4));
         cons.extend(within("c", 5));
-        let p = parts(
+        let p = Parts::by_hand(
             cons,
             vec![
                 points("a", &[0, 3]),
@@ -168,7 +161,7 @@ fn a_disjunction_of_one_point_on_a_row_of_bounded_names() {
 #[test]
 fn a_disjunction_of_one_point_on_a_fixed_name() {
     let fixed = |v: i128| {
-        parts(
+        Parts::by_hand(
             vec![sum_is(&["a", "b"], 4), is("f", 2)],
             vec![
                 points("a", &[0, 4]),
@@ -184,7 +177,7 @@ fn a_disjunction_of_one_point_on_a_fixed_name() {
 
 #[test]
 fn a_row_with_no_disjunction() {
-    let p = parts(
+    let p = Parts::by_hand(
         vec![
             sum_is(&["a", "b"], 4),
             is("a", 1),
@@ -205,10 +198,10 @@ fn a_row_its_bounds_cannot_meet_is_not_walked() {
         let mut cons = vec![sum_is(&["a", "b"], total)];
         cons.extend(within("a", 3));
         cons.extend(within("b", 4));
-        let p = parts(cons, vec![points("a", &[0, 3]), points("b", &[0, 4])]);
+        let p = Parts::by_hand(cons, vec![points("a", &[0, 3]), points("b", &[0, 4])]);
         assert_eq!(walk(&p), None, "total {total}");
     }
-    let p = parts(
+    let p = Parts::by_hand(
         vec![
             sum_is(&["a", "b"], 5),
             is("a", 1),

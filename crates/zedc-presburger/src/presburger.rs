@@ -13439,6 +13439,24 @@ impl Clone for Parts {
     }
 }
 
+#[cfg(test)]
+impl Parts {
+    /// Parts built by hand in a test: the constraints `cons` and the disjunctions `ors`, with
+    /// nothing found yet.
+    fn by_hand(cons: Vec<Con>, ors: Vec<Vec<Rc<Parts>>>) -> Parts {
+        let mut p = Parts::default();
+        p.cons = cons;
+        p.ors = ors;
+        p
+    }
+}
+
+/// [`Parts::by_hand`], shared as a disjunct is.
+#[cfg(test)]
+fn part(cons: Vec<Con>, ors: Vec<Vec<Rc<Parts>>>) -> Rc<Parts> {
+    Rc::new(Parts::by_hand(cons, ors))
+}
+
 /// Drops the disjuncts nested below on an explicit stack, not by recursion on their depth
 /// (COMPLEXITY.md S27). A disjunct still shared elsewhere is left to its other holders.
 impl Drop for Parts {
@@ -33099,12 +33117,6 @@ mod cells_scaling {
     fn holders_parts(n: usize, end: Option<i128>, odd: bool) -> Parts {
         let (i, k) = (var("i"), |v: i128| Lin::constant(v));
         let q = |j: usize| var(&format!("q{j}"));
-        let part = |cons: Vec<Con>, ors: Vec<Vec<Rc<Parts>>>| {
-            let mut p = Parts::default();
-            p.cons.extend(cons);
-            p.ors.extend(ors);
-            Rc::new(p)
-        };
         let set = (0..n).map(|j| part(vec![Con::eq(&i, &k(2 * j as i128))], Vec::new()));
         let h = part(Vec::new(), vec![set.collect()]);
         let mut p = Parts::default();
@@ -33123,14 +33135,6 @@ mod cells_scaling {
             ]
         }));
         p
-    }
-
-    /// A part of `cons` and `ors`.
-    fn part(cons: Vec<Con>, ors: Vec<Vec<Rc<Parts>>>) -> Rc<Parts> {
-        let mut p = Parts::default();
-        p.cons.extend(cons);
-        p.ors.extend(ors);
-        Rc::new(p)
     }
 
     /// `i == 2t + off` for `t` from 0 to `n - 1`, one part of `n` disjuncts.
@@ -33717,13 +33721,6 @@ mod r4_cells_tests {
         Lin::atom(Atom::Sym(s.into()))
     }
 
-    fn part(cons: Vec<Con>, ors: Vec<Vec<Rc<Parts>>>) -> Rc<Parts> {
-        let mut p = Parts::default();
-        p.cons.extend(cons);
-        p.ors.extend(ors);
-        Rc::new(p)
-    }
-
     fn holders(n: usize, end: i128) -> Parts {
         let x = var("i");
         let q = |j: usize| var(&format!("q{j:06}"));
@@ -34278,12 +34275,6 @@ mod r5_cells_tests {
 
     fn var(s: &str) -> Lin {
         Lin::atom(Atom::Sym(s.into()))
-    }
-    fn part(cons: Vec<Con>, ors: Vec<Vec<Rc<Parts>>>) -> Rc<Parts> {
-        let mut p = Parts::default();
-        p.cons = cons;
-        p.ors = ors;
-        Rc::new(p)
     }
     fn skew(n: usize, contradiction: bool) -> Parts {
         let x = var("i");
@@ -35115,29 +35106,23 @@ mod r6_shared_window_tests {
         let xl = Lin::atom(x.clone());
         let c = |k: usize| Lin::constant(k as i128);
         let at = |k: usize| Con::eq(&xl, &c(k));
-        let make = |cons: Vec<Con>, ors: Vec<Vec<Rc<Parts>>>| {
-            let mut p = Parts::default();
-            p.cons = cons;
-            p.ors = ors;
-            Rc::new(p)
-        };
-        let h = make(
+        let h = part(
             Vec::new(),
-            vec![(0..n).map(|j| make(vec![at(2 * j)], Vec::new())).collect()],
+            vec![(0..n).map(|j| part(vec![at(2 * j)], Vec::new())).collect()],
         );
-        let below = |k: usize| make(vec![Con::ge(&c(k), &xl)], vec![vec![h.clone()]]);
+        let below = |k: usize| part(vec![Con::ge(&c(k), &xl)], vec![vec![h.clone()]]);
         let mut p = Parts::default();
         p.cons = vec![Con::ge(&xl, &c(0)), Con::ge(&c(8 * n), &xl)];
         p.ors.push(
             (0..n)
                 .map(|j| {
-                    let own = |k: usize| make(vec![at(k)], Vec::new());
-                    let a = make(Vec::new(), vec![vec![below(2 * n - j), own(4 * n + 2 * j)]]);
-                    let b = make(
+                    let own = |k: usize| part(vec![at(k)], Vec::new());
+                    let a = part(Vec::new(), vec![vec![below(2 * n - j), own(4 * n + 2 * j)]]);
+                    let b = part(
                         Vec::new(),
                         vec![vec![below(2 * n - 2 * j), own(4 * n + 2 * j + 1)]],
                     );
-                    make(Vec::new(), vec![vec![a], vec![b]])
+                    part(Vec::new(), vec![vec![a], vec![b]])
                 })
                 .collect(),
         );
@@ -35184,38 +35169,32 @@ mod r6_shared_window_tests {
         let xl = Lin::atom(Atom::Sym("i".into()));
         let c = |k: usize| Lin::constant(k as i128);
         let at = |k: usize| Con::eq(&xl, &c(k));
-        let make = |cons: Vec<Con>, ors: Vec<Vec<Rc<Parts>>>| {
-            let mut p = Parts::default();
-            p.cons = cons;
-            p.ors = ors;
-            Rc::new(p)
-        };
-        let h = make(
+        let h = part(
             Vec::new(),
-            vec![(0..n).map(|j| make(vec![at(2 * j)], Vec::new())).collect()],
+            vec![(0..n).map(|j| part(vec![at(2 * j)], Vec::new())).collect()],
         );
-        let below = |k: usize| make(vec![Con::ge(&c(k), &xl)], vec![vec![h.clone()]]);
-        let above = |k: usize| make(vec![Con::ge(&xl, &c(k))], vec![vec![h.clone()]]);
+        let below = |k: usize| part(vec![Con::ge(&c(k), &xl)], vec![vec![h.clone()]]);
+        let above = |k: usize| part(vec![Con::ge(&xl, &c(k))], vec![vec![h.clone()]]);
         let mut p = Parts::default();
         p.cons = vec![Con::ge(&xl, &c(0)), Con::ge(&c(4 * n), &xl)];
         p.ors.push(
             (0..n)
                 .map(|j| {
-                    let a = make(
+                    let a = part(
                         Vec::new(),
                         vec![vec![
                             below(2 * j),
-                            make(vec![Con::ge(&xl, &c(2 * j + 1))], Vec::new()),
+                            part(vec![Con::ge(&xl, &c(2 * j + 1))], Vec::new()),
                         ]],
                     );
-                    let b = make(
+                    let b = part(
                         Vec::new(),
                         vec![vec![
                             above(2 * j + 1),
-                            make(vec![Con::ge(&c(2 * j), &xl)], Vec::new()),
+                            part(vec![Con::ge(&c(2 * j), &xl)], Vec::new()),
                         ]],
                     );
-                    make(Vec::new(), vec![vec![a], vec![b]])
+                    part(Vec::new(), vec![vec![a], vec![b]])
                 })
                 .collect(),
         );
@@ -35228,18 +35207,12 @@ mod r6_shared_window_tests {
         let xl = Lin::atom(Atom::Sym("i".into()));
         let c = |k: usize| Lin::constant(k as i128);
         let at = |k: usize| Con::eq(&xl, &c(k));
-        let make = |cons: Vec<Con>, ors: Vec<Vec<Rc<Parts>>>| {
-            let mut p = Parts::default();
-            p.cons = cons;
-            p.ors = ors;
-            Rc::new(p)
-        };
-        let h = make(
+        let h = part(
             Vec::new(),
-            vec![(0..n).map(|j| make(vec![at(2 * j)], Vec::new())).collect()],
+            vec![(0..n).map(|j| part(vec![at(2 * j)], Vec::new())).collect()],
         );
-        let below = |k: usize| make(vec![Con::ge(&c(k), &xl)], vec![vec![h.clone()]]);
-        let above = |k: usize| make(vec![Con::ge(&xl, &c(k))], vec![vec![h.clone()]]);
+        let below = |k: usize| part(vec![Con::ge(&c(k), &xl)], vec![vec![h.clone()]]);
+        let above = |k: usize| part(vec![Con::ge(&xl, &c(k))], vec![vec![h.clone()]]);
         let mut p = Parts::default();
         p.cons = vec![Con::ge(&xl, &c(0)), Con::ge(&c(4 * n), &xl)];
         p.ors.push(
@@ -35247,8 +35220,8 @@ mod r6_shared_window_tests {
                 .map(|j| {
                     let w1 = below(2 * j);
                     let w2 = above(2 * j + 2);
-                    let own = make(vec![at(2 * n + 2 * j)], Vec::new());
-                    make(Vec::new(), vec![vec![w1, w2, own]])
+                    let own = part(vec![at(2 * n + 2 * j)], Vec::new());
+                    part(Vec::new(), vec![vec![w1, w2, own]])
                 })
                 .collect(),
         );
@@ -35261,46 +35234,40 @@ mod r6_shared_window_tests {
         let xl = Lin::atom(Atom::Sym("i".into()));
         let c = |k: usize| Lin::constant(k as i128);
         let at = |k: usize| Con::eq(&xl, &c(k));
-        let make = |cons: Vec<Con>, ors: Vec<Vec<Rc<Parts>>>| {
-            let mut p = Parts::default();
-            p.cons = cons;
-            p.ors = ors;
-            Rc::new(p)
-        };
-        let h1 = make(
+        let h1 = part(
             Vec::new(),
-            vec![(0..n).map(|j| make(vec![at(4 * j)], Vec::new())).collect()],
+            vec![(0..n).map(|j| part(vec![at(4 * j)], Vec::new())).collect()],
         );
-        let h2 = make(
+        let h2 = part(
             Vec::new(),
             vec![
                 (0..n)
-                    .map(|j| make(vec![at(4 * j + 2)], Vec::new()))
+                    .map(|j| part(vec![at(4 * j + 2)], Vec::new()))
                     .collect(),
             ],
         );
-        let below1 = |k: usize| make(vec![Con::ge(&c(k), &xl)], vec![vec![h1.clone()]]);
-        let below2 = |k: usize| make(vec![Con::ge(&c(k), &xl)], vec![vec![h2.clone()]]);
+        let below1 = |k: usize| part(vec![Con::ge(&c(k), &xl)], vec![vec![h1.clone()]]);
+        let below2 = |k: usize| part(vec![Con::ge(&c(k), &xl)], vec![vec![h2.clone()]]);
         let mut p = Parts::default();
         p.cons = vec![Con::ge(&xl, &c(0)), Con::ge(&c(12 * n), &xl)];
         p.ors.push(
             (0..n)
                 .map(|j| {
-                    let a = make(
+                    let a = part(
                         Vec::new(),
                         vec![vec![
                             below1(4 * n - 2 * j),
-                            make(vec![at(8 * n + 2 * j)], Vec::new()),
+                            part(vec![at(8 * n + 2 * j)], Vec::new()),
                         ]],
                     );
-                    let b = make(
+                    let b = part(
                         Vec::new(),
                         vec![vec![
                             below2(4 * n - 4 * j),
-                            make(vec![at(8 * n + 2 * j + 1)], Vec::new()),
+                            part(vec![at(8 * n + 2 * j + 1)], Vec::new()),
                         ]],
                     );
-                    make(Vec::new(), vec![vec![a], vec![b]])
+                    part(Vec::new(), vec![vec![a], vec![b]])
                 })
                 .collect(),
         );
@@ -35379,13 +35346,6 @@ mod cell_sweep_empty_tests {
 
     fn var(s: &str) -> Lin {
         Lin::atom(Atom::Sym(s.into()))
-    }
-
-    fn part(cons: Vec<Con>, ors: Vec<Vec<Rc<Parts>>>) -> Rc<Parts> {
-        let mut p = Parts::default();
-        p.cons.extend(cons);
-        p.ors.extend(ors);
-        Rc::new(p)
     }
 
     /// `-6 <= i <= 6 && (lo1 <= i <= hi1 && (A || B) || lo2 <= i <= hi2 && (C || D))`, where

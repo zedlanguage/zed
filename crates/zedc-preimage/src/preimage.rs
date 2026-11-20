@@ -15100,20 +15100,27 @@ mod tests {
             or(c(Eq, "x", 2), c(Eq, "x", 1)),
         );
         for t in [repeated, twice, mixed, constant, ends_in_or] {
-            let (old, new) = (translate(&t, true), translate(&t, false));
-            assert_eq!(new.formula, old.formula, "{t:?}");
-            assert!(new.formula.is_some(), "{t:?}");
-            assert_eq!(new.defs, old.defs, "{t:?}");
-            assert_eq!(new.log, old.log, "{t:?}");
-            for (k, v) in &new.memo {
-                assert_eq!(old.memo.get(k), Some(v), "entry {k:?}: {t:?}");
-            }
-            for w in [true, false] {
-                TWO_AT_A_TIME.set(true);
-                let po = preimage(&t, &domains(), &Demand::Bool(w));
-                TWO_AT_A_TIME.set(false);
-                assert_eq!(preimage(&t, &domains(), &Demand::Bool(w)), po, "{w}: {t:?}");
-            }
+            translations_agree(&t);
+        }
+    }
+
+    /// The translation of `t` joining its chains at once gives a formula, and the same
+    /// formula, definitions and log as joining them two at a time, every entry that one keeps,
+    /// and the same preimages of `true` and of `false`.
+    fn translations_agree(t: &Term) {
+        let (old, new) = (translate(t, true), translate(t, false));
+        assert_eq!(new.formula, old.formula, "{t:?}");
+        assert!(new.formula.is_some(), "{t:?}");
+        assert_eq!(new.defs, old.defs, "{t:?}");
+        assert_eq!(new.log, old.log, "{t:?}");
+        for (k, v) in &new.memo {
+            assert_eq!(old.memo.get(k), Some(v), "entry {k:?}: {t:?}");
+        }
+        for w in [true, false] {
+            TWO_AT_A_TIME.set(true);
+            let po = preimage(t, &domains(), &Demand::Bool(w));
+            TWO_AT_A_TIME.set(false);
+            assert_eq!(preimage(t, &domains(), &Demand::Bool(w)), po, "{w}: {t:?}");
         }
     }
 
@@ -15413,20 +15420,7 @@ mod tests {
             boolish,
             shared_head,
         ] {
-            let (old, new) = (translate(&t, true), translate(&t, false));
-            assert_eq!(new.formula, old.formula, "{t:?}");
-            assert!(new.formula.is_some(), "{t:?}");
-            assert_eq!(new.defs, old.defs, "{t:?}");
-            assert_eq!(new.log, old.log, "{t:?}");
-            for (k, v) in &new.memo {
-                assert_eq!(old.memo.get(k), Some(v), "entry {k:?}: {t:?}");
-            }
-            for w in [true, false] {
-                TWO_AT_A_TIME.set(true);
-                let po = preimage(&t, &domains(), &Demand::Bool(w));
-                TWO_AT_A_TIME.set(false);
-                assert_eq!(preimage(&t, &domains(), &Demand::Bool(w)), po, "{w}: {t:?}");
-            }
+            translations_agree(&t);
             let (_, decided, differ) = holds_where_it_held_as_ifs(&t, true);
             assert!(decided.iter().all(|&d| d), "{t:?}");
             assert_eq!(differ, Vec::<&str>::new(), "{t:?}");
