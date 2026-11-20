@@ -4878,7 +4878,8 @@ pub fn is_fault(why: &str) -> bool {
 /// The repairs, each a `repair:` note's text, of `why`, a run's headline after
 /// [`under_memory_limit`] (DESIGN.md sec:diagnostics). Past the memory limit of `main`: the
 /// limit doubled, and a smaller input. Out of the machine's memory: a memory limit of `main`,
-/// so the run stops at the same size on every machine; a smaller input; a bound on the input
+/// so the run stops with a message before it holds more than the limit, on any machine with
+/// that much memory free; a smaller input; a bound on the input
 /// that sets the size; and the `preallocated` mode. None for any other error. O(length of
 /// `why`).
 ///
@@ -4903,28 +4904,36 @@ pub fn memory_repairs(why: &str) -> Vec<String> {
     if !MEMORY_TITLES.iter().any(|t| why.starts_with(t)) {
         return Vec::new();
     }
-    // A limit is reached before the machine runs out wherever the machine has that much memory
-    // free for the run, so the run stops with the limit's message at the same size on every
-    // such machine; not proved for a machine whose other processes hold the rest. Classified
-    // (PROOF-sweep-zed-kernel): not a claim about values, and not one the program can prove,
-    // since it is about the other processes of the machine. If it fails, the system refuses
-    // the run memory before the limit is reached, and the run stops with the message of that
-    // refusal (`limits::refused`, `num::room::memory_clause`), at a smaller size; no value
-    // and no verdict changes. What differs is only where, and with which message, a run that
-    // stops anyway stops. The largest
-    // power of two of bytes not above this machine's memory is a round amount that can be
-    // reached here; any smaller one is as good a repair.
+    // What the repair claims, and why it holds. The limit is enforced by the operating system
+    // on the process's data (`RLIMIT_DATA`, set in `zed_rt::limits`; `VmData`, read by
+    // `limits::data_bytes`), and the values the run holds are part of that data, so the run
+    // never holds more than the limit: it is refused memory first, and the refusal stops it
+    // with a message (`limits::refused`, `num::room::memory_clause`). On a machine with that
+    // much memory free the system does not refuse the run before the limit, so the stop is the
+    // limit's, with its message, not the machine's.
+    //
+    // Not claimed, since it does not hold (P377, found by kernel25): that the run stops "at the
+    // same size on every machine". First, `VmData` also counts memory the allocator freed and
+    // kept for reuse (`limits::data_held`: 25 MiB of data for two numbers of 2.8 MiB), and how
+    // much it keeps depends on the C library's allocator, its version and the run's threads, so
+    // the size of the values at the stop can differ between machines, and between runs. Second,
+    // a machine whose other processes hold the rest of its memory refuses the run before the
+    // limit, at a smaller size. In both cases no value and no verdict changes: only where a run
+    // that stops anyway stops. The largest power of two of bytes not above this machine's
+    // memory is a round amount that can be reached here; any smaller one is as good a repair.
     let limit = match crate::num::machine_memory() {
         Some(m) if m > 0 => {
             let b = 1u64 << m.ilog2();
             format!(
-                "repair: `@limits(memory: {b})` before `main`, {}, so the run stops at the same \
-                 size on every machine, with a message",
+                "repair: `@limits(memory: {b})` before `main`, {}, so the run stops with a \
+                 message before it holds more than that, on any machine with that much memory \
+                 free",
                 bytes_text(&BigUint::from(b))
             )
         }
         _ => "repair: `@limits(memory: b)` before `main`, with `b` the bytes the run may hold, so \
-              the run stops at the same size on every machine, with a message"
+              the run stops with a message before it holds more than that, on any machine with \
+              that much memory free"
             .to_string(),
     };
     vec![

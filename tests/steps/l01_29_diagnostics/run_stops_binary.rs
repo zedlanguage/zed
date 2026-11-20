@@ -146,8 +146,8 @@ fn a_text_too_large_for_memory_stops_the_run() {
              [1] 73:17: the run stopped here\n      \
              73 |     m.stdout <- String(a70);\n         \
              |                 ^^^^^^^^^^^\n  \
-             [2] 73:17: repair: `@limits(memory: _, so the run stops at the same size on every \
-             machine, with a message\n  \
+             [2] 73:17: repair: `@limits(memory: _, so the run stops with a message before it \
+             holds more than that, on any machine with that much memory free\n  \
              [3] 73:17: repair: give the run a smaller input\n  \
              [4] 73:17: repair: bound the input that sets the size where it is read, as `k: \
              int[0..=30]`, so a larger input is refused where it is read\n  \

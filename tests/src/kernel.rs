@@ -396,8 +396,8 @@ pub fn out_of_memory_repairs(at: &str) -> String {
         _ => "`@limits(memory: b)` before `main`, with `b` the bytes the run may hold,".into(),
     };
     format!(
-        "  [2] {at}: repair: {limit} so the run stops at the same size on every machine, with a \
-         message\n  \
+        "  [2] {at}: repair: {limit} so the run stops with a message before it holds more than \
+         that, on any machine with that much memory free\n  \
          [3] {at}: repair: give the run a smaller input\n  \
          [4] {at}: repair: bound the input that sets the size where it is read, as `k: \
          int[0..=30]`, so a larger input is refused where it is read\n  \
