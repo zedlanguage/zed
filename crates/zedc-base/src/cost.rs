@@ -357,7 +357,8 @@ enum Part {
 /// an upper bound: the exact footprint there is the heaviest set of regions no two of which are
 /// ordered, a maximum-weight antichain, found through a minimum flow in O(r·e) or more for e
 /// dependences, above O(N log N). A plan judged so may be refused where its exact footprint
-/// fits. Test: m0_06_cost_scalarization::overlap::a_dag_that_is_not_series_parallel_is_judged_at_the_upper_bound;
+/// fits. Test:
+/// m0_06_cost_scalarization::overlap::a_dag_that_is_not_series_parallel_is_judged_at_the_upper_bound;
 /// COMPLEXITY.md C53.
 // Complexity tradeoff: the naive evaluation keeps an array of every device's load at each stack
 // entry, O(r · devices) for r regions; here each entry holds only the devices its regions use,
@@ -566,8 +567,8 @@ pub fn frontier(plans: &[Plan], target: &Target) -> Vec<Plan> {
 }
 
 /// The order plans are kept and tied in: by content address, and of equal addresses by their
-/// regions, cut edges and schedule, so that two distinct plans whose addresses collide still have one
-/// order and the pick does not depend on the order the plans were given in (step L1.37a).
+/// regions, cut edges and schedule, so that two distinct plans whose addresses collide still have
+/// one order and the pick does not depend on the order the plans were given in (step L1.37a).
 fn order(p: &Plan) -> (ContentAddress, &[Region], &[u64], &Schedule) {
     (p.address, &p.regions, &p.cut_edges, &p.schedule)
 }
