@@ -28309,34 +28309,32 @@ pub mod r10_hash {
         add_p(s, add_p(cnt_term, sum_term))
     }
 
+    /// A hash of a token stream, `val = Σ tok_i · r^i` and `pow = r^len`, both mod `P`. It
+    /// keeps no count of its tokens: with the memo of [`Encoder`] a row shared at each of `d`
+    /// levels stands for 2^d tokens, and a count in a `usize` overflowed at `d = 64` (test
+    /// `a_row_shared_at_64_levels_hashes_without_counting_its_tokens`); nothing read it, and
+    /// `pow` gives the position.
     #[derive(Clone, Copy, Debug, PartialEq, Eq)]
     pub struct PartHash {
         pub val: u64,
         pub pow: u64,
-        pub len: usize,
     }
 
     impl PartHash {
         #[inline]
         pub fn empty() -> Self {
-            PartHash {
-                val: 0,
-                pow: 1,
-                len: 0,
-            }
+            PartHash { val: 0, pow: 1 }
         }
         #[inline]
         pub fn push(&mut self, tok: u64, r: u64) {
             self.val = add_p(self.val, mul_p(self.pow, tok % P));
             self.pow = mul_p(self.pow, r % P);
-            self.len += 1;
         }
         #[inline]
         pub fn concat(self, rhs: PartHash) -> PartHash {
             PartHash {
                 val: add_p(self.val, mul_p(self.pow, rhs.val)),
                 pow: mul_p(self.pow, rhs.pow),
-                len: self.len + rhs.len,
             }
         }
         #[inline]
@@ -28555,12 +28553,17 @@ pub mod r10_hash {
         pub is_root: bool,
     }
 
+    /// `r`, `stream`, `scopes` and `tracked_params` are private: the tokens of a memoized
+    /// walk read them, so each change goes through a method that renews the context or clears
+    /// the memo ([`Encoder::push_scope`], [`Encoder::track_params`]); a write from outside
+    /// would replay a walk made under other values (landing review round 8,
+    /// L8.Codex-memo-scope).
     pub struct Encoder {
-        pub r: u64,
+        r: u64,
         pub part: PartHash,
-        pub stream: Option<Vec<u64>>,
-        pub scopes: Vec<SigScope>,
-        pub tracked_params: Option<HashSet<Arc<str>>>,
+        stream: Option<Vec<u64>>,
+        scopes: Vec<SigScope>,
+        tracked_params: Option<HashSet<Arc<str>>>,
         pub s_rank: u64,
         pub s_params: HashMap<Arc<str>, u64>,
         pub span_contrib: u64,
@@ -28631,6 +28634,14 @@ pub mod r10_hash {
             let outer = self.ctx;
             self.new_ctx();
             outer
+        }
+
+        /// Sets the parameters whose places the side sums track. The memo was filled under
+        /// the old set, and a context popped back to would read it, so the memo is cleared.
+        pub fn track_params(&mut self, params: HashSet<Arc<str>>) {
+            self.tracked_params = Some(params);
+            self.memo.clear();
+            self.new_ctx();
         }
 
         fn pop_scope(&mut self, outer: u64) {
@@ -29666,7 +29677,7 @@ pub mod r10_hash {
                         phase: ScopePhase::Needs,
                         is_root: true,
                     });
-                    enc.tracked_params = Some(arrow_param_vars.clone());
+                    enc.track_params(arrow_param_vars.clone());
                     enc.emit_flat_need(n, true);
                     NeedBlockSummary {
                         body: enc.part,

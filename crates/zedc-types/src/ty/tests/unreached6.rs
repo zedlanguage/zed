@@ -280,6 +280,22 @@ fn a_row_shared_in_the_arrows_and_the_needs_hashes_as_rows_built_apart() {
     }
 }
 
+/// A row shared at each of 64 levels stands 2^64 times in the signature. With the memo, the
+/// hash reads it in 64 steps, so nothing may count the tokens it stands for: a count in a
+/// `usize` overflowed and panicked here (landing review round 8, L8.Codex-memo-length). Two
+/// copies built alike hash alike.
+#[test]
+fn a_row_shared_at_64_levels_hashes_without_counting_its_tokens() {
+    let signature = || {
+        let row = doubled(Ty::tuple(vec![var("B"), int()]), 64);
+        let mut s = bsig(vec![ex(vec![row], int())], 1, &[]);
+        s.own.insert("B".into());
+        s.note_held();
+        s
+    };
+    assert_eq!(signature().digest(), signature().digest());
+}
+
 /// A walk of a shared row that adds to a side sum of the hash (here `s_params`, the position
 /// of each tracked parameter, as a need's summary takes it) is not replayed from the memo, and
 /// adds at the absolute position although the walk restarts the hash from empty: the hash and
@@ -303,7 +319,7 @@ fn a_shared_row_of_a_tracked_parameter_adds_each_place_to_the_side_sums() {
             phase: ScopePhase::Needs,
             is_root: true,
         });
-        enc.tracked_params = Some([Arc::from("P")].into_iter().collect());
+        enc.track_params([Arc::from("P")].into_iter().collect());
         // A token before the type, so that its walk starts at a power of `r` other than 1.
         enc.emit_ty(&int());
         enc.emit_ty(t);
