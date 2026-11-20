@@ -1091,3 +1091,74 @@ fn a_square_counts_each_unordered_pair_once() {
         "{square} {sum}"
     );
 }
+
+/// `2 ^ 64 + 1`, the least exponent past `u64::MAX`.
+const WIDE: &str = "18446744073709551617";
+
+/// The budgets made and the work spent from them while `f` runs, on this thread.
+fn tally<R>(f: impl FnOnce() -> R) -> (R, usize, f64) {
+    TALLY.with(|t| t.set((0, 0.0)));
+    let r = f();
+    let (budgets, spent) = TALLY.with(std::cell::Cell::get);
+    (r, budgets, spent)
+}
+
+#[test]
+fn one_decide_spends_at_most_four_budgets() {
+    // The path that makes all four budgets of `LIMIT`'s doc: a wide power under a factor, so
+    // `Identity::factored`'s `too_wide` folds its base (1), the factors are expanded and
+    // differ (2), `Identity::decide`'s own `too_wide` folds it again (3), and the sides are
+    // expanded (4). The identity is true: `(1 + x) * (1 + y)` on both sides.
+    let l = format!("((2 - 1) ^ {WIDE} + x) * (1 + y)");
+    let r = "(x * (1 + y) + (1 + y)) * 1";
+    let (v, budgets, spent) = tally(|| verdict(&l, r, &["x", "y"], Carrier::Int));
+    assert_eq!(v, Verdict::Proved);
+    assert_eq!(budgets, 4);
+    assert!(spent <= 4.0 * LIMIT, "{spent}");
+    // A refused identity on the same path spends more than one limit in all: the factors
+    // `p + 1` and `p * q + q` are expanded within the limit, and then the sides, whose two
+    // products `p * q` pass it. The old doc's "a refusal costs at most the limit" fails here.
+    let n = 460;
+    let p = format!("(1 + x) ^ {n}");
+    let q = format!("(1 + y) ^ {n}");
+    let l = format!("({p} + (2 - 1) ^ {WIDE}) * {q}");
+    let r = format!("({p} * {q} + {q}) * 1");
+    let (d, budgets, spent) = tally(|| decide(&t(&l), &t(&r), &["x", "y"], Carrier::Int));
+    assert!(matches!(d.verdict, Verdict::Refused(_)), "{:?}", d.verdict);
+    assert_eq!(budgets, 4);
+    assert!(spent > LIMIT && spent <= 4.0 * LIMIT, "{spent}");
+    // `normal_form` makes two: `too_wide`'s fold and the expansion.
+    let (f, budgets, _) =
+        tally(|| normal_form(&t(&format!("(2 - 1) ^ {WIDE} + x")), &["x"], Carrier::Int));
+    assert_eq!(f.as_deref(), Ok("x + 1"));
+    assert_eq!(budgets, 2);
+}
+
+#[test]
+fn a_wide_power_of_a_wide_power_of_2_is_refused_at_the_inner_power() {
+    // `folded_bases` expands the outer power's base `2 ^ E`, so `Poly::pow`'s wide branch
+    // runs with base 2 and answers 1, a wrong value; `too_wide` refuses at the inner power,
+    // built first, before that value is read (the induction at `Identity::folded_bases`).
+    let inner = format!("2 ^ {WIDE}");
+    let e =
+        normal_form(&t(&format!("({inner}) ^ {WIDE}")), &[], Carrier::Int).expect_err("refused");
+    assert_eq!(e.why, Refused::Exponent);
+    assert_eq!(e.product, t(&inner).to_string());
+}
+
+#[test]
+fn a_wide_power_of_a_base_of_degree_0_with_a_name_is_folded() {
+    // `x ^ 0` is of degree 0 and reaches the name `x`: the base is expanded with the identity's
+    // keys, not with no packing (which held no stride for `x`, an index past the end).
+    let one = normal_form(&t(&format!("(x ^ 0) ^ {WIDE} + x")), &["x"], Carrier::Int);
+    assert_eq!(one.as_deref(), Ok("x + 1"));
+    let two = format!("(x ^ 0 + 1) ^ {WIDE}");
+    let e = normal_form(&t(&two), &["x"], Carrier::Int).expect_err("refused");
+    assert_eq!(e.why, Refused::Exponent);
+    assert_eq!(e.product, t(&two).to_string());
+    let l = format!("(x ^ 0) ^ {WIDE} * y");
+    assert_eq!(
+        verdict(&l, "y * 1", &["x", "y"], Carrier::Int),
+        Verdict::Proved
+    );
+}

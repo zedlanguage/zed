@@ -85,8 +85,28 @@ pub enum Carrier {
 /// a sparse product whose pairs merge into few terms (`((x + y) ^ 64 + x) ^ 2`, 52 ns a unit,
 /// measured before a square formed each unordered pair once). Not counted: the reading of the
 /// identity, its points and its factors, linear in its size
-/// (about 0.2 ms for a size of 6000), so no identity is refused for its length alone. A refusal
-/// costs at most the limit, since each operation is charged before it runs. A complete
+/// (about 0.2 ms for a size of 6000), so no identity is refused for its length alone.
+///
+/// What one call counts, at most (proof). (1) One `Budget` spends at most its `most`:
+/// `Budget::spend` adds a charge only when `spent + w <= most`, before the operation runs, and
+/// otherwise spends nothing and the operation does not run; by induction on the charges,
+/// `spent <= most` after each. (2) Every `Budget::new(LIMIT)` in this module is one of four:
+/// [`Identity::folded_bases`] (one, and only when some reached wide power has a base of degree
+/// 0), [`Identity::factored`] (one, after its `too_wide`), [`decide`]'s expansion and
+/// [`normal_form`]'s expansion. The only other budget, `Identity::compare`'s, is unbounded and
+/// merges two forms already formed and paid for. (3) [`decide`] runs `factored` at most once,
+/// which calls `too_wide` (one fold) and then makes its own budget; then `too_wide` (a second
+/// fold) and the expansion: at most four budgets, so at most `4 * LIMIT` counted work, about 1 s
+/// at the measured rate. [`normal_form`] runs `too_wide` (one fold) and the expansion: at most
+/// `2 * LIMIT`. So a refusal costs at most four limits, not one: an identity whose factors are
+/// expanded within the limit but differ, and whose sides then pass it, spends more than one
+/// (tested by `poly::tests::one_decide_spends_at_most_four_budgets`, which counts the budgets
+/// and their charges over one call). Complexity tradeoff: one budget for the whole call would
+/// keep the work under one limit, but would refuse identities proved now (a factored reading
+/// that spent most of it leaves too little to expand sides of the same size); one fold shared
+/// by `factored`'s and `decide`'s `too_wide` would save a budget, but the sides' wide bases
+/// together may pass the limit where the factors' alone do not, so the shared fold would refuse
+/// a factored identity proved now. A complete
 /// solution would decide identity of arithmetic formulas deterministically in polynomial time,
 /// which no known algorithm does (polynomial identity testing), so some identities must be
 /// refused.
@@ -176,8 +196,21 @@ struct Budget {
     wanted: f64,
 }
 
+// Test hook: the finite budgets made on this thread and the work spent from them, so a unit
+// test can check the bound `LIMIT`'s doc states for one `decide` or `normal_form`
+// (`poly::tests::one_decide_spends_at_most_four_budgets`). An unbounded budget (`compare`'s
+// difference of two forms already expanded) is not counted: no limit governs it.
+#[cfg(test)]
+thread_local! {
+    static TALLY: std::cell::Cell<(usize, f64)> = const { std::cell::Cell::new((0, 0.0)) };
+}
+
 impl Budget {
     fn new(most: f64) -> Budget {
+        #[cfg(test)]
+        if most.is_finite() {
+            TALLY.with(|t| t.set((t.get().0 + 1, t.get().1)));
+        }
         Budget {
             spent: 0.0,
             most,
@@ -198,6 +231,10 @@ impl Budget {
             return None;
         }
         self.spent += w;
+        #[cfg(test)]
+        if self.most.is_finite() {
+            TALLY.with(|t| t.set((t.get().0, t.get().1 + w)));
+        }
         Some(())
     }
 }
@@ -706,16 +743,35 @@ impl<'t> Identity<'t> {
     ///
     /// Complexity tradeoff: [`Identity::trivial_base`] alone reads only a constant under
     /// negations, one step a node, and refused `(0 - 1) ^ 2 ^ 64` though `(-1) ^ 2 ^ 64` was
-    /// accepted. Here the bases of degree 0 (no name, so no monomial but 1) are expanded once,
-    /// together, as the expansion of the sides would expand them, charged to a budget of
-    /// [`LIMIT`] of their own; a base past it stays refused. So an identity with such a base
-    /// costs at most twice the expansion of its bases, and one without pays one pass over the
-    /// nodes. A base whose powers are wide in turn is sound to expand here: the nodes are in
-    /// topological order, so the first refused wide power (the one [`Identity::too_wide`]
-    /// names) has only accepted wide powers below it. Given up: a base with names whose normal
-    /// form is a constant (`x - x`) is still refused, since its written degree is 1 and the
-    /// degree bound passes `u64::MAX` before any expansion. Tested by
-    /// `l03_09_egraph::forms::a_base_whose_value_is_0_1_or_minus_1_takes_a_wide_exponent`.
+    /// accepted. Here the bases of degree 0 (a constant, though a name may be reached under a
+    /// power `^ 0`, as in `x ^ 0 + 1`) are expanded once, together, with the keys the expansion
+    /// of the sides would choose for them, charged to a budget of [`LIMIT`] of their own; past
+    /// it no base is marked, so each stays refused. So an identity with such a base costs one
+    /// more limit at most (the count at [`LIMIT`]), and one without pays one pass over the nodes.
+    ///
+    /// Soundness when a base holds wide powers in turn (proof). The expansion here runs
+    /// `Poly::pow`'s wide branch for every wide power a base reaches, and that branch is exact
+    /// only for a base whose value is 0, 1 or -1 (call such a power good): for 2 it answers 1.
+    /// So a mark here may be wrong; the claim is that `too_wide` never reads a wrong one.
+    /// Number the nodes in build order; a node's children come before it. Let `p` be the first
+    /// reached wide power that is not good. (a) Every wide power below `p` is good, so the
+    /// expansion of `p`'s base is exact (each node's form is computed from its children's by an
+    /// exact operation; the wide branch is exact on a good power). (b) So `p`'s base, whose value
+    /// is not 0, 1 or -1, is not marked (or, if the fold passed the limit, nothing is), and
+    /// `trivial_base` is false on it (it reads only a written 0, 1 or -1 under negations, whose
+    /// value is 0, 1 or -1). (c) So `too_wide`, scanning in build order, returns at `p` or at an
+    /// earlier node. A wrong mark is on a base whose expansion reached a power that is not good,
+    /// so a base built after `p`, read only by a power after `p`, which `too_wide` never reaches.
+    /// If `too_wide` returns `None`, no such `p` exists, so every wide power is good and every
+    /// form computed is exact. Tested by
+    /// `poly::tests::a_wide_power_of_a_wide_power_of_2_is_refused_at_the_inner_power` (the
+    /// outer base `2 ^ E` is marked wrongly, and the inner power is the one refused).
+    ///
+    /// Given up: a base with names whose normal form is a constant (`x - x`) is still refused,
+    /// since its written degree is 1 and the degree bound passes `u64::MAX` before any
+    /// expansion. Tested by
+    /// `l03_09_egraph::forms::a_base_whose_value_is_0_1_or_minus_1_takes_a_wide_exponent` and
+    /// `poly::tests::a_wide_power_of_a_base_of_degree_0_with_a_name_is_folded`.
     fn folded_bases(&self, shapes: &[Shape], reach: &[bool]) -> Vec<bool> {
         let mut folded = vec![false; self.nodes.len()];
         let bases: Vec<usize> = (self.nodes.iter().enumerate())
@@ -734,22 +790,24 @@ impl<'t> Identity<'t> {
         if bases.is_empty() {
             return folded;
         }
-        // No base reaches a name, so every key is the monomial 1 and needs no packing.
+        // A base of degree 0 may still reach a name, under a power `^ 0` (`x ^ 0 + 1`), so it
+        // is expanded with the keys the expansion would choose for the nodes it reaches, never
+        // with no packing: `u128`'s `Key::leaf` reads the name's stride, and `Packing::none`
+        // has none (`(x ^ 0 + 1) ^ (2 ^ 64 + 1)` indexed past the end; test
+        // `poly::tests::a_wide_power_of_a_base_of_degree_0_with_a_name_is_folded`).
+        let reach_bases = self.reachable(&bases);
         let mut budget = Budget::new(LIMIT);
-        let Ok(forms) = self.expand::<u128>(
-            &Packing::none(),
-            &self.reachable(&bases),
-            &bases,
-            &mut budget,
-        ) else {
-            return folded;
+        let b = &mut budget;
+        let trivial: Result<Vec<bool>, usize> = match self.keys(shapes, &reach_bases) {
+            Keys::Packed(ctx) => (self.expand::<u128>(&ctx, &reach_bases, &bases, b))
+                .map(|forms| forms.iter().map(Poly::is_zero_or_unit).collect()),
+            Keys::Sparse => (self.expand::<Sparse>(&Packing::none(), &reach_bases, &bases, b))
+                .map(|forms| forms.iter().map(Poly::is_zero_or_unit).collect()),
         };
-        for (a, f) in bases.iter().zip(&forms) {
-            folded[*a] = match &f.terms[..] {
-                [] => true,
-                [(k, c)] => *k == u128::unit() && c.magnitude() == f.den.magnitude(),
-                _ => false,
-            };
+        if let Ok(trivial) = trivial {
+            for (a, t) in bases.iter().zip(trivial) {
+                folded[*a] = t;
+            }
         }
         folded
     }
@@ -951,8 +1009,9 @@ impl<'t> Identity<'t> {
     /// The work is counted against [`LIMIT`] as the expansion's is, the constants' powers
     /// charged the words of their results, and past it the identity is left to the expansion,
     /// which counts afresh: the factors' keys may differ from the sides', so their forms are not
-    /// reused, and a refused identity costs at most twice the limit. `Some` of the work when the
-    /// sides are found equal.
+    /// reused. This pass makes up to two budgets of [`LIMIT`] (its `too_wide`'s fold of wide
+    /// bases and its own) and [`decide`] two more, so a refused identity counts at most four
+    /// limits (the proof at [`LIMIT`]). `Some` of the work when the sides are found equal.
     fn factored(&self, shapes: &[Shape]) -> Option<f64> {
         let is_factor = |i: usize| {
             matches!(
@@ -1757,6 +1816,16 @@ impl<K: Key> Poly<K> {
         }
     }
 
+    /// Whether `self` is the constant 0, 1 or -1: no term, or the one term of the monomial 1
+    /// whose coefficient's magnitude is the denominator's (a form keeps `den > 0`).
+    fn is_zero_or_unit(&self) -> bool {
+        match &self.terms[..] {
+            [] => true,
+            [(k, c)] => *k == K::unit() && c.magnitude() == self.den.magnitude(),
+            _ => false,
+        }
+    }
+
     /// `-self`, charged [`sum_charge`] to `budget`; `None` when that would pass it.
     fn neg(&self, budget: &mut Budget) -> Option<Poly<K>> {
         budget.spend(sum_charge(self))?;
@@ -2403,7 +2472,15 @@ impl<K: Key> Poly<K> {
             return Some(self.clone());
         }
         let Some(n) = e.to_u64() else {
-            // The shape check refuses a wide exponent of anything but 0, 1 and -1.
+            // Exact only when `self` is 1 or -1 (0 has no terms and returned above): then it is
+            // one term, the monomial 1 with `|c| = den`, and `self ^ e` is -1 when `c < 0` and
+            // `e` is odd, 1 otherwise. On any other base the answer is wrong (`2 ^ E` gives 1).
+            // This branch runs on such a base only inside `Identity::folded_bases`: every other
+            // expansion (`Identity::factored`'s, `decide`'s, `normal_form`'s) runs only after
+            // `Identity::too_wide` found no refused power among the nodes it reaches, and then
+            // every wide power there has a base of value 0, 1 or -1. In the fold the wrong value
+            // is never read (the proof at `Identity::folded_bases`; test
+            // `poly::tests::a_wide_power_of_a_wide_power_of_2_is_refused_at_the_inner_power`).
             let (k, c) = &self.terms[0];
             let odd = e.bit(0);
             let c = if c.is_negative() && odd {
