@@ -228,7 +228,16 @@ impl Int {
     /// pass `2^63` for any integer held in memory, so the fallback is not expected to run, and
     /// its cost, O(n^2), is paid only if it does.
     pub fn bezout(&self, b: &Int) -> (Int, Int, Int) {
-        self.extended_gcd(b).unwrap_or_else(|| {
+        self.bezout_or_euclid(b, self.extended_gcd(b))
+    }
+
+    /// [`Int::bezout`] given `found`, the answer of [`Int::extended_gcd`]: `found` itself, or
+    /// for `None` the Euclid fallback, [`Int::euclid_bezout`] on `|self|` with the factor of
+    /// `self` negated for a negative `self` (`s |self| = (-s) self`). Apart from `bezout` so the
+    /// tests can reach the fallback, which no input held in memory is expected to reach
+    /// (`the_euclid_fallback_of_bezout_gives_the_gcd_for_every_sign`).
+    fn bezout_or_euclid(&self, b: &Int, found: Option<(Int, Int, Int)>) -> (Int, Int, Int) {
+        found.unwrap_or_else(|| {
             let (g, s, t) = self.abs().euclid_bezout(b);
             (g, if self.is_negative() { -&s } else { s }, t)
         })

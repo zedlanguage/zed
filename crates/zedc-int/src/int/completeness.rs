@@ -281,6 +281,36 @@ fn the_extended_gcd_gives_bezout_coefficients_for_every_sign() {
     }
 }
 
+/// The Euclid fallback of [`Int::bezout`], taken where [`Int::extended_gcd`] is `None`: reached
+/// here by passing `None`, since no input held in memory is expected to make the half gcd's
+/// count of halvings pass `u64::MAX` (TEST-int-bezout-euclid-fallback). Every pair of ends,
+/// zero and both signs on each side: `g` is the nonnegative gcd, the gcd `extended_gcd` gives,
+/// and `s a + t b = g`. Negative control (dryC1, 2026-11-20, run once, not kept): with the
+/// negation of `s` for a negative `self` removed, this test fails at `-1` and `2`
+/// ("1·-1 + 0·2": -1 against the gcd 1).
+#[test]
+fn the_euclid_fallback_of_bezout_gives_the_gcd_for_every_sign() {
+    let ends = ends();
+    for a in &ends {
+        for b in &ends {
+            let (x, y) = (Int::from(a.clone()), Int::from(b.clone()));
+            let (g, s, t) = x.bezout_or_euclid(&y, None);
+            assert_eq!(g, Int::from(Integer::gcd(a, b)), "gcd of {a} and {b}");
+            assert!(!g.is_negative(), "gcd of {a} and {b} is {g}");
+            let half_gcd = x.extended_gcd(&y).expect("an extended gcd exists").0;
+            assert_eq!(g, half_gcd, "the two gcds of {a} and {b}");
+            assert_eq!(&(&s * &x) + &(&t * &y), g, "{s}·{a} + {t}·{b}");
+            // The answer of `extended_gcd`, when there is one, is passed through unchanged.
+            let found = (Int::from(7), Int::from(-5), Int::from(3));
+            assert_eq!(
+                x.bezout_or_euclid(&y, Some(found.clone())),
+                found,
+                "{a}, {b}"
+            );
+        }
+    }
+}
+
 #[test]
 fn floor_and_ceiling_division_agree_with_num_integer_for_every_sign() {
     // Machine and wide divisors, every sign, exact and inexact quotients, a dividend below the
