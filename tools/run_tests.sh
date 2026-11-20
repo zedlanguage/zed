@@ -844,6 +844,10 @@ fi
 # scaling test of 6 s at load 22 to 24, about 70 s together; each test is a piece
 # (2026-11-11, TESTS-lhx-families). lazy, linked and families moved to l01_39_scope_relations,
 # split the same way (2026-11-14, TESTS-split).
+# l01_39_scope_relations case_wake took 28.4 s whole at load 72 and ran past its limit of 31 s
+# at load 49 once FAIL-case-wake-puncture-17583574254131380130 added its seed test; its 16 tests
+# take 96 s one after another, the slowest 17.5 s (that seed test) and 13.1 s; each test is a
+# piece (2026-11-19, PERF-l139-under9).
 # l01_23 r6_reduction, one test of 384 formulas, took 38 to 77 s alone at load 27 to 41 and ran
 # past its limit of 90 s in a full run at load 48; it is four tests of 96 formulas, each a piece
 # (2026-11-11, REFUSAL-front-xr after batch merge 128). r6_reduction, refusals and the decider's
@@ -890,6 +894,7 @@ split="
   l01_38_omega_test::stages l01_38_omega_test::one_scope
   l01_39_reduced_product l01_39_scope_relations l01_39_reduced_product::random
   l01_39_reduced_product::pendants l01_39_scope_relations::lazy
+  l01_39_scope_relations::case_wake
   l01_39_scope_relations::lazy::a_lazy_scope_settles_each_name_to_the_eager_product
   l01_39_scope_relations::lazy::a_lazy_scope_with_stars_of_two_hubs_settles_each_name_to_the_eager_product
   l01_39_scope_relations::lazy::a_lazy_scope_with_satellites_of_two_hubs_settles_each_name_to_the_eager_product
