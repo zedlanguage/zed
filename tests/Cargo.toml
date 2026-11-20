@@ -361,6 +361,8 @@ object = { workspace = true, features = ["build"] }
 # target-lexicon, under zed-native's cranelift-codegen, with `std`, which cranelift-reader
 # (through zed-clif) gives it in the workspace build (see crates/zed-native/Cargo.toml).
 target-lexicon = { version = "0.13.5", features = ["std"] }
+# And rustc-hash with its default features, likewise (see crates/zed-native/Cargo.toml).
+rustc-hash = { version = "2.1.3", features = ["std"] }
 # What Cranelift emits for the forms `@cryptosafe` lowers to, read from CLIF text
 # (steps/l01_36_cranelift/ct_lowering.rs); the versions zed-native and zed-clif use.
 cranelift-codegen = "=0.137.1"
