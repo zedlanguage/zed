@@ -1247,3 +1247,47 @@ above 0 and 1 is removed by proof. Open 212, carried to TEST-kernel-unreached-pa
 16, the list fallback in `decided` 11, `find_rep` 9, `chain_rep` 8, `morphisms` 6,
 `Side::mentions` 5, the rest spread over many functions), `empty/sweep.rs` 20, `print.rs` 6,
 `bdd.rs` 6.
+
+Sixteenth round (kernel19, 2026-11-20), row TEST-kernel-unreached-paths-9. Coverage measured at
+origin/main 06a56d09d the way the fifteenth round did (the eight groups, then `--each-test` for
+`group_oracle`, `refusals` and `sweep_agreement`; 1304 pieces, 2 past their limit, and 268
+per-test pieces, 0 failed). The fifteenth round's 212 lines, carried from 830393ab0: 208 still
+count 0 (`empty.rs` 176, `empty/sweep.rs` 20, `bdd.rs` 6, `print.rs` 6; list in
+`wt/coverage/TEST-kernel-unreached-paths-9-base-06a56d09d.txt`).
+
+Closed this round, numbered at 06a56d09d:
+
+| Line | Closed by | Test or site | Control |
+|---|---|---|---|
+| `empty.rs` 10082-10083, `check_chain_witness`: the pass walk stops at the emit row (`pass_memo` set to 0) | test | `the_check_of_a_list_witness_is_membership_on_chains_with_exits`: six list systems (chains whose tails leave for a self-looping tail, with alternating or equal heads; heads of `int` above an exit head of 9; a cycle of two heads with exits; tails with no stop; a link of one field); for every list of up to five items from 1, 2 and 9 the check equals `Type::contains` | `if be && false` fails it (`alternating heads, an exit of 9 into a loop of int: [1, 1, 1, 9, 9], check false, member true`) |
+| `empty.rs` 10145, 10147, an item leaving the chain for the loop | test | the same test | `Some(false)` in place of `Some(true)` fails it (`alternating heads, an exit of 9 into a loop of 2: [1, 9], check false, member true`) |
+| `empty.rs` 9524, a link payload with no pair rows | test | the same test, system "a link of one field" | `return true` fails it (`a link of one field: [1], check true, member false`) |
+| `empty.rs` 9940-9941, `last_miss_from_1`: the last run that misses a head | test | the same test | `ans = 0` fails it (`alternating heads, an exit of 9 into a loop of 2: [1, 9, 1], check true, member false`): a wrong answer here passes a list outside the type |
+| `empty.rs` 9431, `chain_rep`: a plan not `Inhabited` | line removed | `chain_rep` takes the plan's fields; each of its three callers matched `ChainPlan::Inhabited` first | none |
+| `empty.rs` 8297, `find_prefix_chains`: no carrier row | proof, `debug_assert!` | `rows` has two rows or more, each row adds its head to `car_heads` or is the one `chain_row`, and a second non-carrier row returns above; the same proof as `verify_step`'s `loop_heads`. The proof is at the site | none |
+
+The test's systems end each acyclic chain in `nil` alone and show each value once, so that equal
+items share one id and form runs. With a tail that loops on itself (`Wn = nil | cons(h, Wn)`),
+`verify_step` reads the row before it as a second self-looping row with another item and returns
+`None`: the check then verifies no list of that type. This is a missed check, not a wrong answer
+(no list outside a type is verified), and the type is still decided by the fallback; noted, not
+changed.
+
+Counts, from the coverage run at 0c9f78e7e (1304 pieces, `group_oracle`, `refusals` and
+`sweep_agreement` past their limit of 20 to 21 s at load 28; `refusals` run again alone, 150
+passed; 268 per-test pieces, 0 failed): of the 208 lines, 7 count above 0 and 2 are removed by
+proof. Open 199, carried to TEST-kernel-unreached-paths-10, listed at 0c9f78e7e in
+`wt/coverage/TEST-kernel-unreached-paths-9-kernel19-0c9f78e7e.txt`: `empty.rs` 167
+(`find_prefix_chains` 30, `tuples_on` 16, the list fallback in `decided` 11,
+`check_chain_witness` 10, `find_rep` 7, `chain_rep` 7, `morphisms` 6, `Side::mentions` 5, the rest
+spread over many functions), `empty/sweep.rs` 20, `bdd.rs` 6, `print.rs` 6.
+
+Twelve lines counted above 0 in the run at 06a56d09d and 0 in the run at 0c9f78e7e, all in code
+this round does not change (`empty/escape.rs` 1503; `empty.rs` 4724, the `shared_none` arm of
+`find_rep` 10942 and 10946, `component_keys` 13695-13705, 16243, 16253, 16575; list in
+`wt/coverage/TEST-kernel-unreached-paths-9-kernel19-0c9f78e7e-head-run-only.txt`). Whether a run
+reaches them depends on the run: in nine runs of the piece `l01_23_groups_and_refusals::judgments`
+at 0c9f78e7e, `component_keys` 13703 counted 4 and 8 in two and 0 in seven (the maps keyed by
+text draw a seed at random per process, `digest.rs`). The fifteenth round saw the `shared_none`
+arm at 0. These lines need a test that reaches them in every run; they are added to
+TEST-kernel-unreached-paths-10.
