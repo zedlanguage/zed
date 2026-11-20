@@ -3,10 +3,29 @@
 //! such a polynomial equal to 0, its integer roots in the name's interval are a listed set, and
 //! each written constraint is evaluated at each root as at a listed member.
 //!
-//! The method is that of Cucker, Koiran and Smale, "A polynomial time algorithm for
-//! Diophantine equations in one variable" (J. Symbolic Computation 27, 1999): its time is
-//! polynomial in the sparse size of the polynomial, the number of its terms and the bits of
-//! its coefficients and exponents, and not in its degree.
+//! The method is that of F. Cucker, P. Koiran and S. Smale, "A polynomial time algorithm for
+//! Diophantine equations in one variable", J. Symbolic Comput. 27(1):21-29, 1999,
+//! doi:10.1006/jsco.1998.0242 (checked 2026-11-20 against Crossref and the paper's text). Its
+//! Theorem 1: "There is a polynomial time algorithm which given input f ∈ Z[t] decides whether
+//! f has an integer root and, moreover, the algorithm outputs the set of integer roots of f",
+//! in the sparse encoding: polynomial in the number of terms and the bits of the coefficients
+//! and exponents, and not in the degree. What is taken from it and what is not:
+//!
+//! - Step 2 below is its Proposition 2 (section 4, "a simple known fact"): with
+//!   `f = r_k + x^(α_(k+1)) q_k`, an integer root `|x| >= 2` is a root of both `q_k` and `r_k`
+//!   "provided that α_(k+1) − α_k > 1 + log M_k", `M_k` the largest coefficient of `r_k`. The
+//!   test here is its own, with the 1-norm (`2^(m - d) > ||g||_1`), proved in step 2; it
+//!   splits at different gaps from the paper's (`log ||g||_1 <= log M_k + log(k + 1)`, so
+//!   neither test implies the other). Mutating it to allow a gap one bit smaller fails
+//!   `a_gap_splits_a_polynomial_of_high_degree`, `a_binomial_has_the_root_of_its_quotient`
+//!   and `agrees_with_evaluation_at_every_member` (checked 2026-11-20).
+//! - Step 3 replaces the paper's proof of Theorem 1 (section 3), which isolates the roots of
+//!   the chain `p_1, ..., p_k` (each `p_(i+1)` the derivative of `p_i` with its power of `t`
+//!   divided out) one level at a time by its Proposition 1, with a branch and bound whose
+//!   number of intervals is not proved (see [`positive_roots`]).
+//! - The paper's remark that a nonzero integer root divides `a_k`, the coefficient of the
+//!   least exponent, is not used to list candidates; the search is bounded by 1 plus the
+//!   largest coefficient instead (`positive_roots`).
 //!
 //! 1. Root 0 is read off the least exponent, and roots 1 and -1 off the sums of the
 //!    coefficients.

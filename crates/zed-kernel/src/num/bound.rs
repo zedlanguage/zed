@@ -268,8 +268,15 @@ fn log2_sum(x: &Product<'_>) -> Option<(f64, usize)> {
 /// `u`; with `log2 coef >= 63` once `s > 0`, that is within a relative `(2.04c + 5)u`
 /// (`c 2^-46 / 63 < 2.04cu`), and below 64 bits it is the prime's case. So every term is
 /// within a relative `r = (3c + 6)u`. Recursive summation of `N` terms at least 0 adds a
-/// relative `gamma(N - 1) = (N - 1)u / (1 - (N - 1)u)` (Higham, "Accuracy and Stability of
-/// Numerical Algorithms", SIAM, 2nd ed. 2002, sec. 4.2). So `|S' - S| <= B S` with
+/// relative `gamma(N - 1) = (N - 1)u / (1 - (N - 1)u)`: N. J. Higham, "Accuracy and Stability
+/// of Numerical Algorithms", 2nd ed., SIAM, 2002, doi:10.1137/1.9780898718027, section 4.2
+/// (recursive summation, `|E_n| <= gamma(n - 1) sum |x_i|`; `gamma(n) = nu / (1 - nu)` is
+/// defined in section 3.1). The DOI, title and year were checked on Crossref 2026-11-20; the
+/// section numbers and the bound are from memory, not checked, as the book was not obtained.
+/// The bound is also the plain one: each of the `N - 1` additions rounds by at most `u` on a
+/// partial sum at most `S`. `the_f64_check_needs_its_margin` shows a margin is needed (with
+/// none, some verdicts are wrong); no test shows this margin is enough, which rests on the
+/// argument here. So `|S' - S| <= B S` with
 /// `B = (3c + 6 + N)u (1 + 2^-20)` for `N` and `c` far below `2^30`, the second-order terms
 /// inside the factor. Then `Sn > Sd` holds when `Sn' (1 - B) > Sd' (1 + B)`, that is
 /// `Sn' - Sd' > B (Sn' + Sd')`; the test below computes both sides in `f64` and asks for twice

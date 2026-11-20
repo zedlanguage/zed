@@ -57,7 +57,12 @@ use chain::Chain;
 /// `minimum(a, b)` (`min` true) or `maximum(a, b)` of IEEE 754-2019 (DESIGN.md sec:reduction,
 /// item 5): a NaN in either position gives a NaN, and `-0.0` is below `0.0`, so
 /// `min(-0.0, 0.0)` is `-0.0` and `max(-0.0, 0.0)` is `0.0` in both orders. Rust's
-/// `f64::minimum` is not stable, and `f64::min` returns the other operand of a NaN.
+/// `f64::minimum` is not stable, and `f64::min` returns the other operand of a NaN. Source:
+/// IEEE Std 754-2019, doi:10.1109/IEEESTD.2019.8766229 (the full citation is at the `sqrt`
+/// and `fma` rule in `eval.rs`), the operations `minimum` and `maximum`; their section number
+/// (9.6) and wording are from memory, not checked, as the standard is paywalled and was not
+/// read. Test: `min_and_max_put_the_negative_zero_below_and_nan_absorbs` (the step tests of
+/// value representation), which checks both zeros in both orders and NaN in either place.
 pub(crate) fn ieee_min_max(min: bool, a: f64, b: f64) -> f64 {
     if a.is_nan() || b.is_nan() {
         return f64::NAN;
@@ -94,11 +99,14 @@ impl F64 {
     ///
     /// Proof that the test is exactly "is a NaN": a binary64 value is a NaN if and only if its
     /// 11 exponent bits are all ones and its 52 significand bits are not all zero (IEEE Std
-    /// 754-2019, section 3.4). With the sign bit cleared, the bits read as an unsigned integer
-    /// are `e * 2^52 + m` with `e < 2^11` and `m < 2^52`; they exceed `0x7FF0_0000_0000_0000 =
-    /// (2^11 - 1) * 2^52` exactly when `e = 2^11 - 1` and `m > 0`, since `e < 2^11 - 1` gives at
-    /// most `(2^11 - 2) * 2^52 + 2^52 - 1`, below it. O(1), as before: one and, one compare and
-    /// one conditional move.
+    /// 754-2019, doi:10.1109/IEEESTD.2019.8766229, section 3.4; the section number is from
+    /// memory, not checked, as the standard was not read). With the sign bit cleared, the bits
+    /// read as an unsigned integer are `e * 2^52 + m` with `e < 2^11` and `m < 2^52`; they
+    /// exceed `0x7FF0_0000_0000_0000 = (2^11 - 1) * 2^52` exactly when `e = 2^11 - 1` and
+    /// `m > 0`, since `e < 2^11 - 1` gives at most `(2^11 - 2) * 2^52 + 2^52 - 1`, below it.
+    /// O(1), as before: one and, one compare and one conditional move. Test:
+    /// `a_nan_from_sqrt_is_the_canonical_nan` gives `sqrt` operands that make NaNs, and NaNs of
+    /// both signs, quiet and signaling, and checks each result is the canonical NaN.
     ///
     /// `#[inline]`: the dev profile, built with LTO off, otherwise calls this out of line from
     /// every other codegen unit, which hid the fault there (only `--release` failed); inlined,
@@ -2352,8 +2360,11 @@ mod chain {
     // end cannot carry. Given up: a program that keeps one tree whose ends are full at every level
     // and pushes onto that same tree again and again pays O(log n) new nodes for each of those
     // pushes; the list is the same. Why: an O(1) bound under any reuse of an old version needs
-    // Hinze and Paterson's lazy middle or Kaplan and Tarjan's catenable deques, a cell written after
-    // the node is shared or several times the code here. Test:
+    // Hinze and Paterson's lazy middle (cited in full in `crate::text`) or Kaplan and Tarjan's
+    // catenable deques (H. Kaplan and R. E. Tarjan, "Purely functional, real-time deques with
+    // catenation", J. ACM 46(5):577-603, 1999, doi:10.1145/324133.324139; Crossref checked
+    // 2026-11-20, the text not read, so the O(1) worst case is from memory, not checked), a cell
+    // written after the node is shared or several times the code here. Test:
     // `value::tests::lists_joined_in_any_shape_are_equal_and_read_alike`.
     /// `t` then the part `p`, of the height of `t`'s parts.
     fn chain_push_back(t: &Part, p: Part) -> Part {
