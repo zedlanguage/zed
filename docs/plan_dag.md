@@ -3901,6 +3901,7 @@ Each pair below is at one level, shares a file and is not yet done. No path of n
 | 0 | TEST-zedc-types-lib-split, TYPES-bucket-members-share-shape | `crates/zedc-types/src/ty.rs` |
 | 0 | TEST-zedc-types-lib-split, PERF-tuples-fn-per-binding | `crates/zedc-types/src/ty.rs` |
 | 0 | TEST-zedc-types-lib-split, LIST-in-bound-check | `crates/zedc-types/src/kernel_type.rs` |
+| 0 | FAIL-kernel-tuple-order-kinds, DRY-number-theory | `crates/zed-kernel/src/value.rs` |
 | 0 | FAIL-kernel-tuple-order-kinds, MSG-bug-sentence-one | `crates/zed-kernel/src/value.rs` |
 | 0 | FAIL-kernel-tuple-order-kinds, PROV-scaling-10_5 | `crates/zed-kernel/src/eval.rs`, `crates/zed-kernel/src/value.rs` |
 | 0 | FAIL-kernel-tuple-order-kinds, PROOF-sweep-zed-kernel | `crates/zed-kernel/src/eval.rs`, `crates/zed-kernel/src/value.rs` |
@@ -3913,6 +3914,7 @@ Each pair below is at one level, shares a file and is not yet done. No path of n
 | 0 | FAIL-kernel-tuple-order-kinds, FP-ops-order | `crates/zed-kernel/src/eval.rs`, `crates/zed-kernel/src/value.rs` |
 | 0 | TEST-dagview-layout-time-cap, DAGVIEW-held-digitless | `tools/dagview/layout-time.test.ts` |
 | 0 | TEST-dagview-layout-time-cap, TOOLS-time-tests-fixes | `tools/dagview/layout-time.test.ts` |
+| 0 | BUILD-fresh-tree-size, DRY-number-theory | `Cargo.toml` |
 | 0 | BUILD-fresh-tree-size, IMBL-upstream-release | `Cargo.toml` |
 | 0 | NO-LOCKS-optimistic, BUILD-slots-random-start | `tools/run_tests.sh` |
 | 0 | NO-LOCKS-optimistic, TOOLS-time-tests-fixes | `tools/run_tests.sh`, `tools/test_run_tests.sh`, `tools/check_changed_docs.sh`, `tools/time_tests.sh` |
@@ -3975,18 +3977,26 @@ Each pair below is at one level, shares a file and is not yet done. No path of n
 | 0 | SPEC-build-read-layers, L1.39-head-rule | `../zed/DESIGN.md` |
 | 0 | SPEC-build-read-layers, S4-interval-boxes | `../zed/DESIGN.md` |
 | 0 | SPEC-build-read-layers, SPEC-token-result-layer | `../zed/DESIGN.md` |
+| 0 | DRY-number-theory, DRY-number-theory-wide | `crates/zed-numtheory/`, `crates/zed-kernel/src/num.rs`, `crates/zed-kernel/src/num/fast.rs`, `crates/zedc-int/src/int.rs`, `crates/zedc-presburger/src/presburger/modular.rs`, `crates/zedc-check/src/check/coprime.rs` |
 | 0 | DRY-number-theory, TESTS-float-text-corpus | `crates/zed-kernel/src/num/float_text/tests.rs` |
+| 0 | DRY-number-theory, MSG-bug-sentence-one | `crates/zed-kernel/src/value.rs` |
+| 0 | DRY-number-theory, PERF-load-comment-only | `crates/zedc/src/suppress/addresses.rs` |
 | 0 | DRY-number-theory, TOP-statements-reject | `crates/zedc-check/src/check/coprime.rs` |
 | 0 | DRY-number-theory, GROUP-layered-nowitness | `crates/zed-kernel/src/types/empty.rs` |
+| 0 | DRY-number-theory, PRES-c12-small-cost | `crates/zedc-presburger/src/presburger/row_sums.rs` |
+| 0 | DRY-number-theory, PRES-pair-scan-cost | `crates/zedc-presburger/src/presburger/row_sums.rs` |
+| 0 | DRY-number-theory, PRES-fused-bound | `crates/zedc-presburger/src/presburger/row_sums.rs` |
+| 0 | DRY-number-theory, PRES-floor-grow | `crates/zedc-presburger/src/presburger/row_sums.rs` |
+| 0 | DRY-number-theory, PRES-c12-proof | `crates/zedc-presburger/src/presburger/row_sums.rs` |
 | 0 | DRY-number-theory, MSG-default-unknown-type | `crates/zedc-check/src/check/coprime.rs` |
 | 0 | DRY-number-theory, PRINT-below-whole-13 | `crates/zed-kernel/src/num.rs` |
 | 0 | DRY-number-theory, REF-nested-moduli-state | `crates/zedc-preimage/src/preimage_ref.rs` |
-| 0 | DRY-number-theory, PRES-sum-chain-cost | `crates/zedc-presburger/src/presburger/modular.rs`, `crates/zedc-presburger/src/presburger/row_sums/rows.rs` |
-| 0 | DRY-number-theory, PRES-holes-steps-cost | `crates/zedc-presburger/src/presburger/modular.rs`, `crates/zedc-presburger/src/presburger/row_sums/rows.rs` |
+| 0 | DRY-number-theory, PRES-sum-chain-cost | `crates/zedc-presburger/src/presburger/modular.rs`, `crates/zedc-presburger/src/presburger/row_sums/rows.rs`, `crates/zedc-presburger/src/presburger/row_sums.rs`, `crates/zedc-presburger/src/presburger/row_sums/plane.rs` |
+| 0 | DRY-number-theory, PRES-holes-steps-cost | `crates/zedc-presburger/src/presburger/modular.rs`, `crates/zedc-presburger/src/presburger/row_sums/rows.rs`, `crates/zedc-presburger/src/presburger/row_sums.rs`, `crates/zedc-presburger/src/presburger/row_sums/plane.rs` |
 | 0 | DRY-number-theory, MSG-types-as-literals | `crates/zedc-check/src/check/coprime.rs` |
 | 0 | DRY-number-theory, RADIX-nlog2-10_5 | `crates/zed-kernel/src/num/` |
 | 0 | DRY-number-theory, S22-scaling-10_5 | `crates/zedc-preimage/src/preimage_ref.rs` |
-| 0 | DRY-number-theory, PROV-scaling-10_5 | `crates/zed-kernel/src/num.rs`, `crates/zed-kernel/src/num/`, `crates/zed-kernel/src/poly.rs`, `crates/zed-kernel/src/types/empty.rs`, `crates/zed-kernel/src/types/empty/escape.rs` |
+| 0 | DRY-number-theory, PROV-scaling-10_5 | `crates/zed-kernel/src/num.rs`, `crates/zed-kernel/src/num/`, `crates/zed-kernel/src/poly.rs`, `crates/zed-kernel/src/value.rs`, `crates/zed-kernel/src/text.rs`, `crates/zed-kernel/src/btree.rs`, `crates/zed-kernel/src/types/empty.rs`, `crates/zed-kernel/src/types/empty/escape.rs` |
 | 0 | DRY-number-theory, POLY-mul-cost-gaps | `crates/zed-kernel/src/num/fast.rs` |
 | 0 | DRY-number-theory, POLY-support-bench | `crates/zed-kernel/src/poly.rs` |
 | 0 | DRY-number-theory, LIT-f64-pub-expect | `crates/zed-kernel/src/num.rs` |
@@ -4001,34 +4011,86 @@ Each pair below is at one level, shares a file and is not yet done. No path of n
 | 0 | DRY-number-theory, NARROW-hub-interleaved-scale | `crates/zedc-preimage/src/preimage_ref.rs` |
 | 0 | DRY-number-theory, STAR-satellite-scale | `crates/zedc-preimage/src/preimage_ref.rs` |
 | 0 | DRY-number-theory, PERF-parity-cold-verdict | `crates/zed-kernel/src/types/empty.rs` |
-| 0 | DRY-number-theory, PROOF-sweep-zed-kernel | `crates/zed-kernel/src/num.rs`, `crates/zed-kernel/src/num/`, `crates/zed-kernel/src/poly.rs`, `crates/zed-kernel/src/types/empty.rs`, `crates/zed-kernel/src/types/empty/escape.rs` |
-| 0 | DRY-number-theory, PROOF-sweep-zedc-presburger | `crates/zedc-presburger/src/presburger/modular.rs`, `crates/zedc-presburger/src/presburger/row_sums/rows.rs` |
+| 0 | DRY-number-theory, PROOF-sweep-zed-kernel | `crates/zed-kernel/src/num.rs`, `crates/zed-kernel/src/num/`, `crates/zed-kernel/src/poly.rs`, `crates/zed-kernel/src/value.rs`, `crates/zed-kernel/src/text.rs`, `crates/zed-kernel/src/btree.rs`, `crates/zed-kernel/src/types/empty.rs`, `crates/zed-kernel/src/types/empty/escape.rs` |
+| 0 | DRY-number-theory, PROOF-sweep-zedc-presburger | `crates/zedc-presburger/src/presburger/modular.rs`, `crates/zedc-presburger/src/presburger/row_sums/rows.rs`, `crates/zedc-presburger/src/presburger/row_sums.rs`, `crates/zedc-presburger/src/presburger/row_sums/plane.rs` |
 | 0 | DRY-number-theory, PROOF-sweep-zedc-check | `crates/zedc-check/src/check/coprime.rs` |
 | 0 | DRY-number-theory, BENCH-ref-memo-normal-min-gap-bytes | `crates/zedc-preimage/src/preimage_ref.rs` |
 | 0 | DRY-number-theory, MSG-too-large-cast-origin | `crates/zedc-check/src/check/coprime.rs` |
-| 0 | DRY-number-theory, TEST-kernel-unreached-paths-7 | `crates/zed-kernel/src/types/empty.rs`, `crates/zed-kernel/src/types/empty/escape.rs` |
+| 0 | DRY-number-theory, TEST-kernel-unreached-paths-8 | `crates/zed-kernel/src/types/empty.rs`, `crates/zed-kernel/src/types/empty/escape.rs` |
 | 0 | DRY-number-theory, PNCX-coloring-crt-scale | `crates/zedc-presburger/src/presburger/modular.rs` |
 | 0 | DRY-number-theory, CHECK-fold-merge-errs | `crates/zedc-check/src/check/coprime.rs` |
+| 0 | DRY-number-theory, ZEDC-cli-consistency | `crates/zedc/src/suppress/addresses.rs` |
+| 0 | DRY-number-theory, ZEDC-build-out-dir | `crates/zedc/src/suppress/addresses.rs` |
 | 0 | DRY-number-theory, DIAG-len-args-repair | `crates/zedc-check/src/check/coprime.rs` |
 | 0 | DRY-number-theory, DIAG-too-large-with-type-error | `crates/zedc-check/src/check/coprime.rs` |
-| 0 | DRY-number-theory, TEST-presburger-unreached-paths | `crates/zedc-presburger/src/presburger/modular.rs`, `crates/zedc-presburger/src/presburger/row_sums/rows.rs` |
+| 0 | DRY-number-theory, TEST-presburger-unreached-paths | `crates/zedc-presburger/src/presburger/modular.rs`, `crates/zedc-presburger/src/presburger/row_sums/rows.rs`, `crates/zedc-presburger/src/presburger/row_sums.rs`, `crates/zedc-presburger/src/presburger/row_sums/plane.rs` |
 | 0 | DRY-number-theory, CHECK-big-literal-key-paths | `crates/zedc-check/src/check/coprime.rs` |
 | 0 | DRY-number-theory, POLY-square-cost-sizes | `crates/zed-kernel/src/poly.rs` |
-| 0 | DRY-number-theory, LIMITS-remove-all | `crates/zed-kernel/src/num.rs`, `crates/zed-kernel/src/num/`, `crates/zed-kernel/src/poly.rs`, `crates/zed-kernel/src/types/empty.rs`, `crates/zed-kernel/src/types/empty/escape.rs`, `crates/zedc-check/src/check/coprime.rs` |
+| 0 | DRY-number-theory, ZIR-checker-facts | `crates/zedc/src/suppress/addresses.rs` |
+| 0 | DRY-number-theory, LIMITS-remove-all | `crates/zed-kernel/src/num.rs`, `crates/zed-kernel/src/num/`, `crates/zed-kernel/src/poly.rs`, `crates/zed-kernel/src/value.rs`, `crates/zed-kernel/src/text.rs`, `crates/zed-kernel/src/btree.rs`, `crates/zed-kernel/src/types/empty.rs`, `crates/zed-kernel/src/types/empty/escape.rs`, `crates/zedc-check/src/check/coprime.rs` |
 | 0 | DRY-number-theory, TEST-term-for-uncovered | `crates/zedc-check/src/check/coprime.rs` |
 | 0 | DRY-number-theory, REFUSAL-front-u6-subset | `crates/zed-kernel/src/types/empty.rs` |
 | 0 | DRY-number-theory, REFUSAL-front-u6-keys | `crates/zed-kernel/src/types/empty.rs` |
 | 0 | DRY-number-theory, PERF-kernel-box-union-search | `crates/zed-kernel/src/types/empty.rs` |
-| 0 | DRY-number-theory, PERF-cross-dead-size8-constant | `crates/zedc-presburger/src/presburger/modular.rs`, `crates/zedc-presburger/src/presburger/row_sums/rows.rs` |
-| 0 | DRY-number-theory, PERF-row-hash-tied-digest | `crates/zed-kernel/src/types/empty.rs`, `crates/zed-kernel/src/types/empty/escape.rs` |
+| 0 | DRY-number-theory, PERF-row-hash-tied-digest | `crates/zed-kernel/src/value.rs`, `crates/zed-kernel/src/types/empty.rs`, `crates/zed-kernel/src/types/empty/escape.rs` |
 | 0 | DRY-number-theory, MSG-first-on-string-repair-own-words | `crates/zedc-check/src/check/coprime.rs` |
 | 0 | DRY-number-theory, PERF-hull-join-row-after | `crates/zedc-preimage/src/preimage_ref.rs` |
-| 0 | DRY-number-theory, PROOF-tied-projection-refusal-names | `crates/zedc-presburger/src/presburger/modular.rs`, `crates/zedc-presburger/src/presburger/row_sums/rows.rs` |
-| 0 | DRY-number-theory, PERF-guarded-function-walk | `crates/zed-kernel/src/num.rs`, `crates/zed-kernel/src/num/`, `crates/zed-kernel/src/poly.rs`, `crates/zed-kernel/src/types/empty.rs`, `crates/zed-kernel/src/types/empty/escape.rs`, `crates/zedc-check/src/check/coprime.rs` |
-| 0 | DRY-number-theory, FP-ops-order | `crates/zed-kernel/src/num.rs`, `crates/zed-kernel/src/num/`, `crates/zed-kernel/src/poly.rs`, `crates/zed-kernel/src/types/empty.rs`, `crates/zed-kernel/src/types/empty/escape.rs` |
+| 0 | DRY-number-theory, PROOF-tied-projection-refusal-names | `crates/zedc-presburger/src/presburger/modular.rs`, `crates/zedc-presburger/src/presburger/row_sums/rows.rs`, `crates/zedc-presburger/src/presburger/row_sums.rs`, `crates/zedc-presburger/src/presburger/row_sums/plane.rs` |
+| 0 | DRY-number-theory, PERF-guarded-function-walk | `crates/zed-kernel/src/num.rs`, `crates/zed-kernel/src/num/`, `crates/zed-kernel/src/poly.rs`, `crates/zed-kernel/src/value.rs`, `crates/zed-kernel/src/text.rs`, `crates/zed-kernel/src/btree.rs`, `crates/zed-kernel/src/types/empty.rs`, `crates/zed-kernel/src/types/empty/escape.rs`, `crates/zedc-check/src/check/coprime.rs` |
+| 0 | DRY-number-theory, FP-ops-order | `crates/zed-kernel/src/num.rs`, `crates/zed-kernel/src/num/`, `crates/zed-kernel/src/poly.rs`, `crates/zed-kernel/src/value.rs`, `crates/zed-kernel/src/text.rs`, `crates/zed-kernel/src/btree.rs`, `crates/zed-kernel/src/types/empty.rs`, `crates/zed-kernel/src/types/empty/escape.rs` |
 | 0 | DRY-number-theory, TEST-minmax-struct-menu-compiles | `crates/zedc-check/src/check/coprime.rs` |
+| 0 | DRY-number-theory, IMBL-upstream-release | `Cargo.toml` |
 | 0 | DRY-number-theory, MSG-list-value-printed-by-arrows | `crates/zedc-check/src/check/coprime.rs` |
 | 0 | DRY-number-theory, MSG-tuple-generic-headline | `crates/zedc-check/src/check/coprime.rs` |
+| 0 | DRY-number-theory-wide, TOP-statements-reject | `crates/zedc-check/src/check/coprime.rs` |
+| 0 | DRY-number-theory-wide, PRES-sign-free-order-growth | `crates/zedc-presburger/src/presburger.rs` |
+| 0 | DRY-number-theory-wide, Q1-LOCAL-method | `crates/zedc-presburger/src/presburger.rs` |
+| 0 | DRY-number-theory-wide, MSG-default-unknown-type | `crates/zedc-check/src/check/coprime.rs` |
+| 0 | DRY-number-theory-wide, PRINT-below-whole-13 | `crates/zed-kernel/src/num.rs` |
+| 0 | DRY-number-theory-wide, PRES-sum-chain-cost | `crates/zedc-presburger/src/presburger.rs`, `crates/zedc-presburger/src/presburger/modular.rs` |
+| 0 | DRY-number-theory-wide, PRES-holes-steps-cost | `crates/zedc-presburger/src/presburger.rs`, `crates/zedc-presburger/src/presburger/modular.rs` |
+| 0 | DRY-number-theory-wide, PERF-l139-persist-due | `crates/zedc-presburger/src/presburger.rs` |
+| 0 | DRY-number-theory-wide, MSG-types-as-literals | `crates/zedc-check/src/check/coprime.rs` |
+| 0 | DRY-number-theory-wide, RADIX-nlog2-10_5 | `crates/zed-kernel/src/num/fast.rs` |
+| 0 | DRY-number-theory-wide, PRES-ladder-10_5 | `crates/zedc-presburger/src/presburger.rs` |
+| 0 | DRY-number-theory-wide, PRES-scaling-10_5 | `crates/zedc-presburger/src/presburger.rs` |
+| 0 | DRY-number-theory-wide, PROV-scaling-10_5 | `crates/zed-kernel/src/num/fast.rs`, `crates/zed-kernel/src/num.rs` |
+| 0 | DRY-number-theory-wide, POLY-mul-cost-gaps | `crates/zed-kernel/src/num/fast.rs` |
+| 0 | DRY-number-theory-wide, LIT-f64-pub-expect | `crates/zed-kernel/src/num.rs` |
+| 0 | DRY-number-theory-wide, MSG-cast-no-carrier-first | `crates/zedc-check/src/check/coprime.rs` |
+| 0 | DRY-number-theory-wide, LIT-forced-carrier | `crates/zedc-check/src/check/coprime.rs` |
+| 0 | DRY-number-theory-wide, DIAG-order-carrier-row | `crates/zedc-check/src/check/coprime.rs` |
+| 0 | DRY-number-theory-wide, DIAG-slash-mixed-carrier | `crates/zedc-check/src/check/coprime.rs` |
+| 0 | DRY-number-theory-wide, DIAG-union-carrier-row | `crates/zedc-check/src/check/coprime.rs` |
+| 0 | DRY-number-theory-wide, CAST-atom-arg | `crates/zedc-check/src/check/coprime.rs` |
+| 0 | DRY-number-theory-wide, LIT-op-carrier-headline | `crates/zedc-check/src/check/coprime.rs` |
+| 0 | DRY-number-theory-wide, PROOF-sweep-zed-kernel | `crates/zed-kernel/src/num/fast.rs`, `crates/zed-kernel/src/num.rs` |
+| 0 | DRY-number-theory-wide, PROOF-sweep-zedc-presburger | `crates/zedc-presburger/src/presburger.rs`, `crates/zedc-presburger/src/presburger/modular.rs` |
+| 0 | DRY-number-theory-wide, PROOF-sweep-zedc-check | `crates/zedc-check/src/check/coprime.rs` |
+| 0 | DRY-number-theory-wide, SOLVE-growth-implied-row | `crates/zedc-presburger/src/presburger.rs` |
+| 0 | DRY-number-theory-wide, MSG-too-large-cast-origin | `crates/zedc-check/src/check/coprime.rs` |
+| 0 | DRY-number-theory-wide, PNCX-coloring-crt-scale | `crates/zedc-presburger/src/presburger/modular.rs` |
+| 0 | DRY-number-theory-wide, FAIL-batch-linked-copies-growth | `crates/zedc-presburger/src/presburger.rs` |
+| 0 | DRY-number-theory-wide, CHECK-fold-merge-errs | `crates/zedc-check/src/check/coprime.rs` |
+| 0 | DRY-number-theory-wide, DIAG-len-args-repair | `crates/zedc-check/src/check/coprime.rs` |
+| 0 | DRY-number-theory-wide, DIAG-too-large-with-type-error | `crates/zedc-check/src/check/coprime.rs` |
+| 0 | DRY-number-theory-wide, TEST-presburger-unreached-paths | `crates/zedc-presburger/src/presburger.rs`, `crates/zedc-presburger/src/presburger/modular.rs` |
+| 0 | DRY-number-theory-wide, CHECK-big-literal-key-paths | `crates/zedc-check/src/check/coprime.rs` |
+| 0 | DRY-number-theory-wide, LIMITS-remove-all | `crates/zed-kernel/src/num/fast.rs`, `crates/zed-kernel/src/num.rs`, `crates/zedc-check/src/check/coprime.rs` |
+| 0 | DRY-number-theory-wide, TEST-term-for-uncovered | `crates/zedc-check/src/check/coprime.rs` |
+| 0 | DRY-number-theory-wide, PERF-cross-dead-cover-question-search | `crates/zedc-presburger/src/presburger.rs` |
+| 0 | DRY-number-theory-wide, MSG-first-on-string-repair-own-words | `crates/zedc-check/src/check/coprime.rs` |
+| 0 | DRY-number-theory-wide, FAIL-one-scope-bodies-seed-shadows | `crates/zedc-presburger/src/presburger.rs` |
+| 0 | DRY-number-theory-wide, PROOF-tied-projection-refusal-names | `crates/zedc-presburger/src/presburger.rs`, `crates/zedc-presburger/src/presburger/modular.rs` |
+| 0 | DRY-number-theory-wide, PROOF-solve-omega-path-renaming | `crates/zedc-presburger/src/presburger.rs` |
+| 0 | DRY-number-theory-wide, FAIL-dark-cycle-both-ways-growth | `crates/zedc-presburger/src/presburger.rs` |
+| 0 | DRY-number-theory-wide, FAIL-tie-doubled-cycle-deeper-search | `crates/zedc-presburger/src/presburger.rs` |
+| 0 | DRY-number-theory-wide, PERF-tie-rekey-count | `crates/zedc-presburger/src/presburger.rs` |
+| 0 | DRY-number-theory-wide, PERF-guarded-function-walk | `crates/zed-kernel/src/num/fast.rs`, `crates/zed-kernel/src/num.rs`, `crates/zedc-check/src/check/coprime.rs` |
+| 0 | DRY-number-theory-wide, FP-ops-order | `crates/zed-kernel/src/num/fast.rs`, `crates/zed-kernel/src/num.rs` |
+| 0 | DRY-number-theory-wide, TEST-minmax-struct-menu-compiles | `crates/zedc-check/src/check/coprime.rs` |
+| 0 | DRY-number-theory-wide, MSG-list-value-printed-by-arrows | `crates/zedc-check/src/check/coprime.rs` |
+| 0 | DRY-number-theory-wide, MSG-tuple-generic-headline | `crates/zedc-check/src/check/coprime.rs` |
 | 0 | TESTS-float-text-corpus, RADIX-nlog2-10_5 | `crates/zed-kernel/src/num/float_text/tests.rs` |
 | 0 | TESTS-float-text-corpus, PROV-scaling-10_5 | `crates/zed-kernel/src/num/float_text/tests.rs` |
 | 0 | TESTS-float-text-corpus, PROOF-sweep-zed-kernel | `crates/zed-kernel/src/num/float_text/tests.rs` |
@@ -9042,7 +9104,7 @@ Each line below names a path and the open items that touch it, by level, when th
 - `../zed/DESIGN.md`: level 0: AUDIT-design-says-so, L1.39-head-rule, S4-interval-boxes, SPEC-build-read-layers, SPEC-token-result-layer; level 2: SPEC-a103-mutate-set
 - `.cargo/config.toml`: level 0: BUILD-parallel-frontend; level 1: BUILD-new-layout
 - `Cargo.lock`: level 36: L3.14; level 82: L26.1; level 90: RUST-remove; level 92: RUST-remove-clif
-- `Cargo.toml`: level 0: BUILD-fresh-tree-size, IMBL-upstream-release; level 5: T14-lints; level 36: L3.14; level 52: L7.4; level 53: L28.1; level 82: L26.1; level 86: L27.1; level 90: RUST-remove; level 92: RUST-remove-clif
+- `Cargo.toml`: level 0: BUILD-fresh-tree-size, DRY-number-theory, IMBL-upstream-release; level 5: T14-lints; level 36: L3.14; level 52: L7.4; level 53: L28.1; level 82: L26.1; level 86: L27.1; level 90: RUST-remove; level 92: RUST-remove-clif
 - `DESIGN.md`: level 0: DOC-l116-value-cycle, GEN-index-vs-element, LAYER-audit-open, S4-hub-mixed, SPEC-L3.21-ac, SPEC-L3.9-tests, SPEC-child-oom-status, SPEC-ct-enforce-neon-findings, SPEC-diff-key, SPEC-ffi-int-handles, SPEC-ffi-isolate-limits, SPEC-ffi-library-table, SPEC-headline-piece-in-collection, SPEC-if-value-arm-bindings, SPEC-implies-guard, SPEC-json-absent-field, SPEC-json-value, SPEC-lambda-notfound-partial-map, SPEC-mono-fibers, SPEC-packed-align, SPEC-pat-list, SPEC-pat-map-key, SPEC-pat-record, SPEC-pat-string-prefix, SPEC-port-close-failure, SPEC-pure-region-port-read, SPEC-strict-thread-count, SPEC-string-slice-text, SPEC-terminated-arg, SYM-factor-name, TEST-minmax-struct-menu-compiles, WAVE-theory, XR-ffi-stateful-r6; level 1: DIAG-noalloc-row, LOOP-history-one-key, POW-domains, QUESTIONS-answered, SPEC-break-barrier-footprint, SPEC-writer-union-check, STUDY-linking; level 2: MOD-pre-width, PITFALL-date-library, PITFALL-else-absorbs-new-atom, PITFALL-leading-zero, PITFALL-overload-order, SPEC-concat-int-map, SPEC-crossover-time, SPEC-rank-patch-bounds, SPEC-seq-edits; level 6: SETTLE-rounds; level 7: L2.5; level 8: L2.4, L2.8c; level 9: STRUCT-key; level 10: L2.8b; level 15: CONG-transfer, L2.7; level 16: STATIC-assert; level 17: L1.40e, L2.6, RAT-domain, T10; level 19: L1.41, L2.10, SCOPE-warn; level 20: L2.11, L3.2; level 21: L2.14, L4.1; level 22: COLLATE-data; level 26: L3.7, LOWER-stack; level 27: L3.13, RT-exhaust-report; level 28: BIT-repr, HASH-repr, LEAN-shrink, WIDE-product; level 31: L3.11; level 32: PROP-per-arrow, TRACE-gen-laws; level 33: KEYABLE-reject; level 34: L3.23; level 35: LAYOUT-soa; level 36: UNION-spare; level 39: L3.24, L6.11a, WITNESS-widened; level 40: EQ-tabulate, INDUCT-eq-round, L5.5a, LEAN-descent-infer, SORTED-dense; level 41: LEAN-ematch-round; level 42: ARM-split, INDUCT-accum, INDUCT-loop-closed, INDUCT-mutual, LAW14-gen; level 44: ROD-data; level 45: INTERN-threaded, MEMO-cross, SLAB-pack; level 47: L6.17; level 49: S.1d; level 52: L7.5, L8.2a, PORT-why, TARGET-native; level 53: EXPORT-unique, FFI-headertest, L28.1, L7.3e, L7.4b, L7.5b, OOM-wave, RT-exhaust-wave; level 54: FFI-cexport, L10.2a, ROUND-words; level 56: EDGE-class, FFI-token-block-warn, FFI-token-unused-param, READ-arms, SELFINT-design; level 57: L20.1, L7.13a, MEMO-edit; level 58: EDIT-run, L20-grammar-params, L20.1a; level 59: L15.5, L16.3, L17.1, L19.1, L20.2, STAGE-reads; level 60: L15.6, L17.1b; level 61: L15.2c; level 62: REPACK-tile; level 63: L15.7b, L23.5c; level 64: LIST-exact-overlap, NOINST-report; level 66: INDUCT-range-fold; level 67: L22.7a; level 72: L24.11; level 73: S.1; level 74: NATIVE-cache, S.1h; level 76: S.2-forms; level 77: L21.1, S.3-forms; level 79: L24.5; level 80: L20.4, L24.6, S.6a; level 82: FLOAT-elem, INTEROP-study, L26.1, L28.4, L31.1, PKG-fetch, PORT-pointer-keys; level 83: L27.3, L33.1b; level 84: L29.1, L31.2, LIB-linkage; level 85: L31.3, S.8; level 86: HOST-embed, L27.1, L27.2, MCU-period; level 87: L27.2a, L27.2b, L27.2c; level 91: L25.1; level 92: DIAG-json, L25.3, LSP-incr, LSP-version; level 93: L25.4, L25.5, WASM-compiler; level 94: L25.6; level 95: L25.7, PICTURE-type; level 96: L25.9, L30.3a, L30.3b, L30.4; level 97: LIVE-UI-study; level 99: L32.1; level 100: L32.2; level 105: L33.1; level 106: L33.2, L33.3; level 108: L33.1a; level 110: L42.1
 - `README.md`: level 0: DOC-readme-glossary-end; level 17: T10; level 88: BOOT-branch; level 90: RUST-remove; level 92: RUST-remove-clif; level 96: L41.8
 - `ZED_PORT_GAPS.md`: level 45: INTERN-threaded, MEMO-cross; level 47: L6.17; level 77: PORT-memo-arenas
@@ -9062,12 +9124,12 @@ Each line below names a path and the open items that touch it, by level, when th
 - `crates/zed-kernel/src/exact.rs`: level 24: L3.5; level 37: L3.15; level 57: L7.9a
 - `crates/zed-kernel/src/family.rs`: level 22: L3.3; level 23: L3.4; level 35: L4.2; level 37: L5.2; level 39: L5.6; level 50: L7.1a
 - `crates/zed-kernel/src/limits.rs`: level 2: MAIN-limits-count; level 3: MSG-run-stop-held-values
-- `crates/zed-kernel/src/num.rs`: level 0: DRY-number-theory, LIT-f64-pub-expect, PRINT-below-whole-13; level 1: LIT-power-equal-print, LIT-power-expression, LIT-power-wide-base; level 54: L10.3
-- `crates/zed-kernel/src/num/`: level 0: DRY-number-theory, POLY-mul-cost-gaps, RADIX-nlog2-10_5, TESTS-float-text-corpus; level 2: PERF-div-bytes-2p17; level 44: CONST-fold-budget-failure
+- `crates/zed-kernel/src/num.rs`: level 0: DRY-number-theory, DRY-number-theory-wide, LIT-f64-pub-expect, PRINT-below-whole-13; level 1: LIT-power-equal-print, LIT-power-expression, LIT-power-wide-base; level 54: L10.3
+- `crates/zed-kernel/src/num/`: level 0: DRY-number-theory, DRY-number-theory-wide, POLY-mul-cost-gaps, RADIX-nlog2-10_5, TESTS-float-text-corpus; level 2: PERF-div-bytes-2p17; level 44: CONST-fold-budget-failure
 - `crates/zed-kernel/src/print.rs`: level 8: L2.4; level 19: L2.10; level 23: L3.4; level 27: L3.8
 - `crates/zed-kernel/src/provenance.rs`: level 8: L2.4; level 20: L3.2; level 22: L3.3; level 23: L6.7; level 51: L7.3; level 54: L7.6; level 59: L15.4; level 86: L27.2
 - `crates/zed-kernel/src/term.rs`: level 4: L6.6; level 8: L2.4; level 19: L2.10; level 20: L3.2; level 21: L4.1; level 23: L3.4, L6.7; level 27: L3.8; level 29: L3.20; level 34: L3.21; level 36: L4.4, L5.1; level 37: L5.3; level 40: L6.5; level 42: FOLD-unique; level 49: L7.1; level 50: L7.2; level 52: PREIMAGE-reindex; level 58: L15.2
-- `crates/zed-kernel/src/text.rs`: level 39: L5.6; level 44: L6.16; level 45: STR-cursor
+- `crates/zed-kernel/src/text.rs`: level 0: DRY-number-theory; level 39: L5.6; level 44: L6.16; level 45: STR-cursor
 - `crates/zed-kernel/src/types.rs`: level 0: PERF-row-hash-tied-digest, PROOF-meet-rows-finite; level 1: LIT-power-expression; level 7: L2.5; level 8: REFUSAL-reverse-words; level 15: L2.7; level 17: L1.40e; level 26: L3.7; level 37: L5.2; level 49: L7.1; level 50: L7.1b, L7.2; level 52: L7.4, L9.1; level 53: L10.2; level 54: L10.3
 - `crates/zed-kernel/src/types/`: level 0: FAIL-print-meet-unnamed-bound, FAIL-ratio-kernel-bdd-print, GROUP-layered-nowitness, PERF-kernel-box-union-search, PERF-parity-cold-verdict, PERF-row-hash-tied-digest, REFUSAL-front-u6-keys, REFUSAL-front-u6-subset, TEST-kernel-unreached-paths-9; level 1: PERF-escape-big-heads-scaling, PERF-set-tied-digest-depth, TIME-kernel-benches-over-cap-high-load; level 3: A5-print; level 4: T2, TYPE-display-shared; level 6: SETTLE-rounds; level 7: L2.5; level 8: REFUSAL-reverse-words, SET-type-check; level 15: L2.7; level 25: L6.4; level 26: L3.7; level 63: L12.2e; level 64: UNITS-info-prelude
 - `crates/zed-kernel/src/types/bdd.rs`: level 0: PERF-row-hash-tied-digest; level 1: PERF-set-tied-digest-depth; level 4: T2; level 6: SETTLE-rounds; level 7: L2.5
@@ -9077,7 +9139,7 @@ Each line below names a path and the open items that touch it, by level, when th
 - `crates/zed-kernel/src/types/print.rs`: level 0: FAIL-print-meet-unnamed-bound, PERF-row-hash-tied-digest; level 3: A5-print; level 4: TYPE-display-shared; level 63: L12.2e; level 64: UNITS-info-prelude
 - `crates/zed-kernel/src/types/print/`: level 3: A5-print; level 4: TYPE-display-shared; level 8: SET-type-check
 - `crates/zed-kernel/src/types/rec.rs`: level 7: L2.5; level 25: L6.4
-- `crates/zed-kernel/src/value.rs`: level 0: FAIL-kernel-tuple-order-kinds, MSG-bug-sentence-one, PERF-row-hash-tied-digest; level 3: MSG-run-stop-held-values; level 8: L2.4; level 23: L3.4; level 37: L5.2; level 40: L5.8b; level 50: L7.1a; level 52: L7.3j, L7.4; level 55: L11.1; level 59: L20.2; level 65: MSG-limit-repair-units
+- `crates/zed-kernel/src/value.rs`: level 0: DRY-number-theory, FAIL-kernel-tuple-order-kinds, MSG-bug-sentence-one, PERF-row-hash-tied-digest; level 3: MSG-run-stop-held-values; level 8: L2.4; level 23: L3.4; level 37: L5.2; level 40: L5.8b; level 50: L7.1a; level 52: L7.3j, L7.4; level 55: L11.1; level 59: L20.2; level 65: MSG-limit-repair-units
 - `crates/zed-kernel/src/words.rs`: level 19: L2.10; level 20: L3.2; level 53: L21.2; level 66: L22.7; level 68: L24.4; level 77: L21.1; level 85: L24.8
 - `crates/zed-native/`: level 0: EXE-plan-carried, MSG-bug-sentence-one, TEST-rt-weakmem, ZEDC-build-out-dir, ZIR-checker-facts; level 2: CRANELIFT-nested-if-domtree, KERNEL-family-call; level 3: MAIN-limits-site; level 4: STR-types; level 5: T14-lints; level 6: IF-union; level 7: L1.39g, RT-internal-fault; level 8: PLAN-shared-regions; level 16: SCALE-cover; level 18: L2.9; level 20: L3.2; level 21: STR-views; level 27: L3.13, RT-guard-fault; level 28: BIT-repr, L3.15a, L6.14, RT-alloc-refusal, WIDE-product; level 32: FOLD-zero; level 34: L3.17, L3.23; level 35: L3.16, L3.23a, L4.2, L5.8, LAYOUT-soa; level 36: L3.14, L5.1, UNION-spare; level 37: L3.15, L4.6, L5.2; level 39: L5.6, L5.8a; level 40: L5.13, L5.9; level 41: FOLD-layers, L5.1d; level 42: L6.14a; level 43: L6.13, L6.15; level 44: L6.13a, L6.13c, L6.16, ROD-data, SPECULATE; level 45: L6.13g, RT-layout, SLAB-pack, STR-cursor; level 50: L7.2, S.1a; level 51: L7.3; level 52: FILE-bytes, L7.4, L7.5, L9.1, PORT-concurrency; level 53: FFI-fpenv, FLOAT-sum-policy, INT-128, L21.2; level 54: FFI-cexport, L10.3; level 57: CODEC-lines; level 59: L19.1; level 61: L14.1, L18.2b, L18.2d, L19.2a; level 62: L18.2e; level 63: L33.1f; level 64: L33.1g; level 66: L18.2c, UNITS-compare; level 67: L24.1; level 68: MEMO-single-thread; level 77: L21.1; level 78: S.4; level 79: L19.2, L24.2, L24.3; level 80: L24.2a; level 85: L24.8; level 87: L27.1b
 - `crates/zed-native/src/`: level 0: EXE-plan-carried, MSG-bug-sentence-one, TEST-rt-weakmem, ZEDC-build-out-dir, ZIR-checker-facts; level 2: CRANELIFT-nested-if-domtree, KERNEL-family-call; level 4: STR-types; level 5: T14-lints; level 6: IF-union; level 7: RT-internal-fault; level 8: PLAN-shared-regions; level 16: SCALE-cover; level 18: L2.9; level 20: L3.2; level 21: STR-views; level 27: L3.13, RT-guard-fault; level 28: L3.15a, L6.14, RT-alloc-refusal; level 32: FOLD-zero; level 34: L3.17, L3.23; level 35: L3.16, L3.23a, L4.2, L5.8; level 36: L3.14, L5.1; level 37: L3.15, L4.6, L5.2; level 39: L5.6, L5.8a; level 40: L5.13, L5.9; level 41: FOLD-layers, L5.1d; level 42: L6.14a; level 43: L6.13, L6.15; level 44: L6.13a, L6.13c, L6.16, SPECULATE; level 45: L6.13g, RT-layout, SLAB-pack, STR-cursor; level 50: L7.2, S.1a; level 51: L7.3; level 52: FILE-bytes, L7.4, L7.5, L9.1, PORT-concurrency; level 53: FFI-fpenv, FLOAT-sum-policy, INT-128, L21.2; level 54: FFI-cexport, L10.3; level 57: CODEC-lines; level 59: L19.1; level 61: L14.1, L18.2b, L18.2d, L19.2a; level 62: L18.2e; level 66: L18.2c, UNITS-compare; level 67: L24.1; level 68: MEMO-single-thread; level 77: L21.1; level 78: S.4; level 79: L19.2, L24.2, L24.3; level 80: L24.2a; level 85: L24.8; level 87: L27.1b
@@ -9125,7 +9187,7 @@ Each line below names a path and the open items that touch it, by level, when th
 - `crates/zedc-elab/src/elab.rs`: level 8: L2.4, L6.3; level 10: LOOP-frames-final; level 11: LOOP-break-checkpoints, LOOP-stop-counts; level 12: LOOP-for-stops; level 17: L2.6; level 18: L2.6b; level 19: GLAM-diamond, L2.10; level 20: L3.2; level 21: L3.2b, L4.1, L6.3-rest; level 22: L3.3; level 23: L3.4; level 24: L3.5; level 25: L6.4; level 27: L3.8; level 28: L3.15a; level 31: L3.10; level 32: ASSOC-demand; level 34: L6.10; level 36: L5.1; level 37: L4.5, L5.2, L5.3; level 38: L5.4; level 39: L5.4a, L5.4c, L5.5, L5.8a, L6.2; level 40: L6.5; level 41: HKT-1, L6.8a; level 43: L6.5d; level 49: L7.1; level 50: L7.1a, L7.1b, L7.2; level 51: L15.1, L7.2a, L7.3, L8.2; level 52: EMPTY-level-swap, L7.4, L7.5, L8.2b, L8.2c, L9.1, PORT-ack-name, TIMEOUT-annot; level 53: L10.2, L7.3l; level 54: L10.3, L7.3m; level 55: CHECKED-float, L11.1; level 56: MAP-pure-zed; level 57: L20.1, THEORY-partial; level 58: FACT-unify, L15.2, L20.1a, L22.1, TOKEN-types; level 59: L16.1, L17.1, L20.2; level 60: L16.2, L21.0, L22.2, LOOP-fuel-loop-value, TERM-1; level 61: GLAM-diamond-iface, L21.0c; level 64: L22.3; level 65: L22.3a, L22.4; level 68: L24.4; level 77: L21.1; level 82: L26.1; level 86: L27.2
 - `crates/zedc-elab/src/elab/`: level 0: DOC-l116-value-cycle, DOC-lit-follows-exponent-f32, FAIL-arrow-lambda-partial-slot, FP-ops-order, MSG-value-call-code; level 1: GROUP-prelude, META-read-run; level 3: TEST-mutate-set; level 4: FOR-one-generator, RANGE-open-names, STR-types; level 5: REDUCE-identity-closure-bodies; level 6: IF-union; level 9: GROUP-e2e, L1.26b; level 21: AUTHOR-oneparam, STR-views; level 24: SCHED-scc-unit; level 54: L10.2a; level 57: FPWARN, STR-layer-views
 - `crates/zedc-elab/src/elab/walk.rs`: level 0: FAIL-arrow-lambda-partial-slot; level 1: GROUP-prelude, META-read-run; level 4: FOR-one-generator, RANGE-open-names, STR-types; level 6: IF-union; level 9: L1.26b; level 21: STR-views; level 24: SCHED-scc-unit; level 57: FPWARN, STR-layer-views
-- `crates/zedc-int/src/int.rs`: level 0: DRY-number-theory; level 8: ENGINE-kept-ends
+- `crates/zedc-int/src/int.rs`: level 0: DRY-number-theory, DRY-number-theory-wide; level 8: ENGINE-kept-ends
 - `crates/zedc-lattice/src/`: level 0: DRY-number-theory, MSG-bug-sentence-one; level 1: POW-domains; level 5: PRES-interval-strided-piece; level 8: FLOAT-interval; level 10: PRE-abs-output; level 13: L1.40; level 14: L1.40a; level 15: CONG-transfer; level 17: RAT-domain; level 25: L3.6; level 26: L3.7; level 33: L3.18a; level 38: L6.11; level 39: L6.11a; level 40: L6.11b
 - `crates/zedc-lattice/src/cell.rs`: level 14: L1.40a; level 25: L3.6; level 26: L3.7
 - `crates/zedc-lattice/src/float.rs`: level 1: POW-domains; level 8: FLOAT-interval; level 33: L3.18a
