@@ -228,10 +228,12 @@ fn split(n: u64) -> u64 {
     // Any batch size is exact; a larger one saves gcds and costs more steps when a batch
     // overshoots.
     //
-    // The walk is in Montgomery form: it holds `x R` for each `x` of the walk above, since
-    // `(x R)^2 R^-1 + c R = (x^2 + c) R`. A difference of held values is the difference of the
-    // values times `R`, and each product into `q` adds a factor `R^-1`; `R` is a unit modulo the
-    // odd `n`, so every gcd with `n` below, and so the proof at the end, is as for the plain walk.
+    // The walk is in Montgomery form (P. L. Montgomery 1985,
+    // doi:10.1090/S0025-5718-1985-0777282-X; the full comment is at struct `Montgomery`): it
+    // holds `x R` for each `x` of the walk above, since `(x R)^2 R^-1 + c R = (x^2 + c) R`. A
+    // difference of held values is the difference of the values times `R`, and each product
+    // into `q` adds a factor `R^-1`; `R` is a unit modulo the odd `n`, so every gcd with `n`
+    // below, and so the proof at the end, is as for the plain walk.
     let mont = Montgomery::new(n);
     let start = mont.to(2);
     for c in 1u64.. {
@@ -319,10 +321,11 @@ mod tests {
         }
     }
 
-    /// Montgomery products, sums, powers and conversions agree with division, for the odd
-    /// moduli 3, 5, small primes and composites, ones next to `2^63` and `2^64` (where the
-    /// high words of `reduce` are largest and its subtraction borrows most), and residues at
-    /// both ends.
+    /// Montgomery products (Montgomery 1985, doi:10.1090/S0025-5718-1985-0777282-X; the full
+    /// comment is at struct `Montgomery`), sums, powers and conversions agree with division,
+    /// for the odd moduli 3, 5, small primes and composites, ones next to `2^63` and `2^64`
+    /// (where the high words of `reduce` are largest and its subtraction borrows most), and
+    /// residues at both ends.
     #[test]
     fn montgomery_arithmetic_agrees_with_division() {
         use crate::{mul_mod, pow_mod};

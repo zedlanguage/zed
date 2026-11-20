@@ -155,9 +155,11 @@ impl Class {
 /// or the third class whose generation keys meet its own; a site with later brackets meets one
 /// of the first class, or of its own class of the second, likewise.
 // Complexity tradeoff: the naive check compares each site with every site before it, O(k^2)
-// for k sites; each class here is a Fenwick tree over the first keys of its sites, so each
-// site is one query and one insertion in O(log k), O(k log k) in all, with the keys compared
-// by value (num-bigint, so a key of any width). Given up: two sites whose later brackets
+// for k sites; each class here is a Fenwick tree over the first keys of its sites (P. M.
+// Fenwick, Software: Practice and Experience 24(3), 1994, doi:10.1002/spe.4380240306; the full
+// comment is at the head of zed-collections `fenwick.rs`), so each site is one query and one
+// insertion in O(log k), O(k log k) in all, with the keys compared by value (num-bigint, so a
+// key of any width). Given up: two sites whose later brackets
 // differ by value but meet, `g[-1][j in 0..<2]` beside `g[-1][1]`, are not caught here (a
 // check over boxes in more dimensions needs a range tree, O(k log^(d-1) k)); nor are keys the
 // text does not fix as integers, `x[i in -k..<0]` beside `x[-1]`, which only the same key

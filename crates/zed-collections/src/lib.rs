@@ -12,7 +12,8 @@
 //! and the overflow-free midpoint it halves with.
 //!
 //! [`fenwick`]: a Fenwick tree, for prefix sums under changes to single items, or prefix maxima
-//! under raises of single items.
+//! under raises of single items (P. M. Fenwick, Software: Practice and Experience 24(3), 1994,
+//! doi:10.1002/spe.4380240306; the full comment is at the head of `fenwick.rs`).
 //!
 //! [`held`]: values put in through a shared reference and kept at their places, so that a walk
 //! may borrow from them while it puts in more.

@@ -438,7 +438,9 @@ fn join(a: Part, b: Part, op: impl Fn(usize, Load, Load) -> Load) -> Part {
 /// The scalar cost of a feasible plan on a target: for each device, the Brent bound of the
 /// work and depth placed on it, times the device's time per operation, plus one transfer per
 /// cut edge. Devices are summed as if they ran one after another, an upper bound on the
-/// plan's running time that is monotone in every component of [`vector`].
+/// plan's running time that is monotone in every component of [`vector`]. The Brent bound: R. P.
+/// Brent, "The parallel evaluation of general arithmetic expressions", J. ACM 21(2), 1974,
+/// doi:10.1145/321812.321815, Lemma 2; the full comment is at [`brent`].
 pub fn scalarize(plan: &Plan, target: &Target) -> u64 {
     let compute = work_and_depth(plan, target.devices.len())
         .iter()
@@ -568,7 +570,8 @@ mod tests {
 
     /// Brent's Lemma 2 by its proof: for every split of `work` operations into `depth` levels
     /// of at least one each, running level `i` in `ceil(s_i / p)` steps takes no more than
-    /// `brent(work, depth, p)`, nor more than the lemma's `t + (q - t)/p`.
+    /// `brent(work, depth, p)`, nor more than the lemma's `t + (q - t)/p`. The lemma: Brent
+    /// 1974, doi:10.1145/321812.321815; the full comment is at fn `brent`.
     #[test]
     fn brent_bounds_every_level_by_level_schedule() {
         /// Every split of `left` operations into `levels` parts of at least one, each passed

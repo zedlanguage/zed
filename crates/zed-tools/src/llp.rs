@@ -946,7 +946,9 @@ fn cycle(
 // for P productions and T terminals, against O(P × T) for sets of terminal numbers. The item
 // cores are at most (positions × (T + 1)) and are found once each, with a visited map. A cycle
 // of steps that pushes a symbol gives stacks without bound; Tarjan's components find those
-// cycles in time linear in the steps, and every core they reach takes one stack, UNBOUNDED,
+// cycles in time linear in the steps (Tarjan 1972, doi:10.1137/0201010, by
+// `zed_graph::components`; the full comment is in zed-graph `lib.rs`, at its head and fn
+// `tarjan`), and every core they reach takes one stack, UNBOUNDED,
 // so the work list ends. The other stacks are bounded by the paths between cycles, which may be
 // many in a grammar built for it; each item is visited once.
 //

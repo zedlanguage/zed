@@ -35,7 +35,10 @@
 //! every import within it, each cited by file and line. The scan is one pass over the text, the
 //! resolution one hash lookup per segment of a path, the typing of the calls one pass over each
 //! file with a hash lookup per token, and the components are found by Tarjan's algorithm with
-//! an explicit stack in O(n + e), n the bytes of the files and e the imports between them.
+//! an explicit stack in O(n + e), n the bytes of the files and e the imports between them (R.
+//! E. Tarjan, "Depth-first search and linear graph algorithms", SIAM J. Comput. 1(2), 1972,
+//! doi:10.1137/0201010; the full comment is in zed-graph `lib.rs`, at its head and fn
+//! `tarjan`).
 //! Sorting each file's imports, for the report and the citations, makes the whole
 //! O(n + e log e) (COMPLEXITY F103), but for the calls whose receiver is not typed: each pair of
 //! a file and a method name they call is joined with the type files of the methods of that name

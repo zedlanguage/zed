@@ -2,9 +2,10 @@
 //! (DRY-sorted-structures-2): [`first_true`] where the predicate is false and then true,
 //! [`last_true`] where it is true and then false, and [`try_first_true`] and [`try_last_true`]
 //! for a predicate that can fail, and [`gallop`], the exponential search of a slice from a
-//! place. Each of the four binary searches asks the predicate O(log w) times for a range `w` wide,
-//! never at the end of the range it already knows, and never forms a value outside the range,
-//! so a search over the whole of a primitive type does not overflow.
+//! place (Bentley and Yao 1976, doi:10.1016/0020-0190(76)90071-5; the full comment is at fn
+//! `gallop`). Each of the four binary searches asks the predicate O(log w) times for a range
+//! `w` wide, never at the end of the range it already knows, and never forms a value outside
+//! the range, so a search over the whole of a primitive type does not overflow.
 //!
 //! For a sorted slice, `<[T]>::partition_point` is the same search over its indices.
 
@@ -290,7 +291,8 @@ mod tests {
     }
 
     /// The gallop from every start to every border of every list up to 40 long, against a
-    /// scan, with its questions counted.
+    /// scan, with its questions counted. The bound on questions is Bentley and Yao's (1976,
+    /// doi:10.1016/0020-0190(76)90071-5); the full comment is at fn `gallop`.
     #[test]
     fn gallop_matches_a_scan() {
         for n in 0..=40usize {
