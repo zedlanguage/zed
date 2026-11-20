@@ -508,8 +508,7 @@ fn functions_nested_each_holding_every_outer_variable_hash_as_walked_in_place() 
         }
         // The leaves are told apart, so the equalities above test something.
         let mut distinct = hashes.clone();
-        distinct.sort_unstable();
-        distinct.dedup();
+        zed_collections::sorted::sort_dedup(&mut distinct);
         assert_eq!(distinct.len(), hashes.len(), "k {k}");
     }
 }
