@@ -6657,6 +6657,48 @@ mod tests {
         (1..=n as u64).map(|k| (k, k + (1 << 40))).collect()
     }
 
+    /// The 17 fields `a` to `q` of a record: `inner` at `i`, the ninth, and `d` and its
+    /// multiples elsewhere. Built at once (`btree::Map::from_sorted`), the map has an inner root
+    /// of two leaves of 8 with `i` between them (`btree::tests::seventeen_entries_split_at_the_ninth`).
+    pub(super) fn nested_record(d: i64, inner: Value) -> Vec<(&'static str, Value)> {
+        const FIELDS: [&str; 17] = [
+            "a", "b", "c", "d", "e", "f", "g", "h", "i", "j", "k", "l", "m", "n", "o", "p", "q",
+        ];
+        let mut inner = Some(inner);
+        FIELDS
+            .iter()
+            .zip(0_i64..)
+            .map(|(&f, j)| match f {
+                "i" => (f, inner.take().expect("one field i")),
+                _ => (f, Value::Int(d.wrapping_mul(j + 1))),
+            })
+            .collect()
+    }
+
+    /// Records nested at an inner root's separator, built from the innermost out and hashed at
+    /// each level, hash as the same records built afresh, and a record differing only in the
+    /// innermost hashes apart (BTREE-inner-root-sum).
+    #[test]
+    fn records_nested_at_an_inner_roots_separator_hash_as_built_afresh() {
+        let chain = |inner: i64, depth: i64, hash_each: bool| {
+            let mut rec = Value::Int(inner);
+            for d in 0..depth {
+                rec = Value::Family(Family::of(nested_record(d, rec)));
+                if hash_each {
+                    std::hint::black_box(digest(&rec));
+                }
+            }
+            rec
+        };
+        for depth in [1, 2, 5, 40] {
+            let hashed = chain(0, depth, true);
+            assert_eq!(digest(&hashed), digest(&chain(0, depth, false)), "{depth}");
+            assert_eq!(digest(&hashed), digest(&hashed), "{depth}");
+            // The negative control: one innermost value changed changes the hash.
+            assert_ne!(digest(&hashed), digest(&chain(1, depth, true)), "{depth}");
+        }
+    }
+
     /// A tuple of `n` levels in which each level holds the one below twice: 2^n paths and
     /// `n` distinct sequences.
     pub(super) fn shared(n: usize) -> Value {

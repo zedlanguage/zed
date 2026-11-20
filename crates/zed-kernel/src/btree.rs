@@ -101,8 +101,10 @@ pub(crate) struct Map<K, V> {
     // time at depth 16,000; FAIL-bench-main-f215d9c90). Used: the word that holds the count of
     // an inner root holds the sum of a leaf root, since a leaf's count is its length, so a map
     // is 32 bytes as before and a value 56 (`value::tests::a_value_is_56_bytes`, COMPLEXITY.md
-    // K25). Tradeoff: an inner root's sum is joined from its branches' kept sums and its own
-    // entries, up to MAX read again at each sum; a field for it would make a value 64 bytes.
+    // K25). An inner root's sum needs no word: it is joined from its at most MAX + 1 branches'
+    // kept sums, each covering its separator entry too, so no entry is read again
+    // (BTREE-inner-root-sum; `Map::sum`). Tradeoff: those MAX + 1 words are joined at each sum;
+    // a field for the joined sum would save that constant and make a value 64 bytes.
     word: AtomicU64,
 }
 
@@ -115,14 +117,16 @@ enum Node<K, V> {
 }
 
 /// A child of an inner node and the entry after it, `None` for the last child, and the sum of
-/// the entries beneath the child ([`Map::sum`]) once a sum has read them.
+/// the entries beneath the child and the entry after it ([`Map::sum`]) once a sum has read them.
 struct Branch<K, V> {
     child: Node<K, V>,
     next: Option<(K, V)>,
-    /// The sum of the child's entries, below [`SUM_MODULUS`], or [`UNSUMMED`] while none is
-    /// kept. Every change beneath the child goes through [`Branch::child_mut`] or builds a new
-    /// branch, which clears it; a copy of the branch keeps it, since the copy holds the same
-    /// child.
+    /// The sum of the child's entries and `next`, below [`SUM_MODULUS`] with or without
+    /// [`NEG_ZERO`], or [`UNSUMMED`] while none is kept. Every change beneath the child goes
+    /// through [`Branch::child_mut`], every change of `next` through [`Branch::next_mut`],
+    /// [`Branch::with_next`] or a mend that has cleared the branch by `child_mut`, or builds a
+    /// new branch, which clears it; a copy of the branch, or the branch moved whole (`Take`),
+    /// keeps it, since it holds the same child and entry.
     sum: AtomicU64,
 }
 
@@ -157,15 +161,23 @@ impl<K, V> Branch<K, V> {
         }
     }
 
-    /// The branch of this child, moved unchanged with its kept sum, and the entry `next`.
+    /// The branch of this child, moved unchanged, and the entry `next`. The kept sum covered
+    /// the old entry after the child, so it is cleared: the next sum reads the child's kept
+    /// branch sums or, for a leaf, its at most MAX entries.
     fn with_next(self, next: Option<(K, V)>) -> Self {
-        Branch { next, ..self }
+        Branch::new(self.child, next)
     }
 
     /// The child, to be changed: the kept sum is cleared first.
     fn child_mut(&mut self) -> &mut Node<K, V> {
         *self.sum.get_mut() = UNSUMMED;
         &mut self.child
+    }
+
+    /// The entry after the child, to be changed: the kept sum is cleared first.
+    fn next_mut(&mut self) -> &mut Option<(K, V)> {
+        *self.sum.get_mut() = UNSUMMED;
+        &mut self.next
     }
 }
 
@@ -377,32 +389,48 @@ impl<K, V> Map<K, V> {
     /// with or without the flag [`NEG_ZERO`], which the sum carries if any term does.
     /// `entry` is called on the entries the kept sums do not cover, in key order, and must be
     /// the one function every sum of a map of this `K` and `V` is taken with, since a branch
-    /// keeps its child's sum for the next sum of any map that shares it; the families'
-    /// (`value::family_sum`) is the only one.
+    /// keeps the sum of its child and the entry after it for the next sum of any map that
+    /// shares it; the families' (`value::family_sum`) is the only one.
     // Complexity tradeoff: the naive sum reads every entry, O(n) a sum. Used: each branch keeps
-    // its child's sum once read, cleared on the path of a change (`Branch::child_mut`) and moved
-    // with a child moved whole by a mend, so a sum after d changes reads the O(d log n) entries
-    // of the nodes on their paths and the root: O(log n) amortized a change, O(n) only the
-    // first time; a leaf root's sum is kept too (`Map::word`), so a map of at most MAX entries
-    // is summed in O(1) after its first sum. Tradeoff: 8 bytes an inner branch, one in about 9
-    // of the tree's slots.
+    // the sum of its child and the entry after it once read, cleared on the path of a change
+    // (`Branch::child_mut`), when the entry after it changes (`Branch::next_mut`,
+    // `Branch::with_next`) and moved with a branch moved whole by a mend, so a sum after d
+    // changes reads the O(d log n) entries of the nodes on their paths: O(log n) amortized a
+    // change, O(n) only the first time. A leaf root's sum is kept too (`Map::word`). An inner
+    // root has no word of its own for its sum, but each of its at most MAX + 1 branches covers
+    // its separator, so a sum with nothing changed reads no entry and joins at most MAX + 1 kept
+    // words, O(1) (proof below). Tradeoff: 8 bytes an inner branch, one in about 9 of the tree's
+    // slots; a cleared branch re-reads its child's kept words or, for a leaf, at most MAX
+    // entries, as when the sum covered the child alone.
+    //
+    // Proof that a sum of an unchanged map reads no entry after its first sum: the first sum
+    // stores a word in every branch it reaches with none kept (the fold below), and the root
+    // word for a leaf root. A second sum reaches only branches whose word is UNSUMMED, of which
+    // none is left, so at an inner root it loads the k + 1 <= MAX + 1 branch words and joins
+    // them, calling `entry` on nothing. A branch word stays right while kept: it is the sum of
+    // `child` and `next`; `child` changes only through `child_mut`, `next` only through
+    // `next_mut`, `with_next` (which builds a new branch), or in `mend` after `child_mut` has
+    // cleared both siblings; a copy or a `Take` of the branch carries both with the word.
+    // Checked by `btree::tests::an_inner_root_keeps_its_sum` and by `change_once` (a second sum
+    // after each change of `kept_sums_survive_every_arm_of_a_change` reads no entry, and the
+    // first equals the sum read afresh), and measured by
+    // `value::bench::hashing_records_nested_at_an_inner_roots_separator_scales`.
     pub(crate) fn sum(&self, entry: &mut impl FnMut(&K, &V) -> u64) -> u64 {
         fn node<K, V>(n: &Node<K, V>, entry: &mut impl FnMut(&K, &V) -> u64) -> u64 {
             match n {
                 Node::Leaf(s) => s.iter().fold(0, |acc, (k, v)| join(acc, entry(k, v))),
                 Node::Inner(bs) => bs.iter().fold(0, |acc, b| {
-                    let kept = b.sum.load(Relaxed);
-                    let below = match kept {
+                    let here = match b.sum.load(Relaxed) {
                         UNSUMMED => {
                             // The depth is the tree's height, O(log n).
-                            let s = node(&b.child, entry);
+                            let below = node(&b.child, entry);
+                            let s = join(below, b.next.as_ref().map_or(0, |(k, v)| entry(k, v)));
                             b.sum.store(s, Relaxed);
                             s
                         }
                         s => s,
                     };
-                    let here = b.next.as_ref().map_or(0, |(k, v)| entry(k, v));
-                    join(join(acc, below), here)
+                    join(acc, here)
                 }),
             }
         }
@@ -420,17 +448,15 @@ impl<K, V> Map<K, V> {
         }
     }
 
-    /// Calls `f` on each entry that [`Map::sum`] would read now, in key order: those beneath no
-    /// branch whose sum is kept.
+    /// Calls `f` on each entry that [`Map::sum`] would read now, in key order: those covered by
+    /// no branch whose sum is kept.
     pub(crate) fn for_each_unsummed<'a>(&'a self, f: &mut impl FnMut(&'a K, &'a V)) {
         fn node<'a, K, V>(n: &'a Node<K, V>, f: &mut impl FnMut(&'a K, &'a V)) {
             match n {
                 Node::Leaf(s) => s.iter().for_each(|(k, v)| f(k, v)),
                 Node::Inner(bs) => {
-                    for b in bs.iter() {
-                        if b.sum.load(Relaxed) == UNSUMMED {
-                            node(&b.child, f);
-                        }
+                    for b in bs.iter().filter(|b| b.sum.load(Relaxed) == UNSUMMED) {
+                        node(&b.child, f);
                         if let Some((k, v)) = &b.next {
                             f(k, v);
                         }
@@ -702,7 +728,7 @@ fn insert_in<K: Ord + Clone + Hole, V: Clone + Hole>(
         Node::Inner(bs) => {
             let i = match find(bs, &k) {
                 Ok(i) => {
-                    Arc::make_mut(bs)[i].next = Some((k, v));
+                    *Arc::make_mut(bs)[i].next_mut() = Some((k, v));
                     return Grown::Replaced;
                 }
                 Err(i) => i,
@@ -745,7 +771,7 @@ fn insert_in<K: Ord + Clone + Hole, V: Clone + Hole>(
                         .enumerate()
                         .map(|(j, mut br)| {
                             if j == MIN {
-                                middle = br.next.take();
+                                middle = br.next_mut().take();
                             }
                             br
                         })
@@ -816,7 +842,7 @@ fn remove_in<K: Ord + Clone + Hole, V: Clone + Hole>(
                     let out = remove_in(unique[i].child_mut(), below);
                     let out = match here {
                         true => {
-                            unique[i].next = out;
+                            *unique[i].next_mut() = out;
                             None
                         }
                         false => out,
@@ -910,7 +936,8 @@ fn sibling<K, V>(bs: &[Branch<K, V>], i: usize) -> usize {
 fn mend<K: Clone + Hole, V: Clone + Hole>(l: &mut Branch<K, V>, r: &mut Branch<K, V>) -> bool {
     let between = l.next.take().expect("siblings have an entry between them");
     let (ln, rn) = (l.child.len(), r.child.len());
-    // Both children change, so neither kept sum holds; `l.next` changes beside them below.
+    // Both children change, so neither kept sum holds; `l.next` changes beside them below, which
+    // these clears cover too, since a kept sum covers the entry after the child.
     l.child_mut();
     r.child_mut();
     match (&mut l.child, &mut r.child) {
@@ -948,7 +975,7 @@ fn mend<K: Clone + Hole, V: Clone + Hole>(l: &mut Branch<K, V>, r: &mut Branch<K
                 let (rest, first) = parts!(y, 0, 1, |_a, m, b| (b.collect(), m.next()));
                 *y = rest;
                 let mut first = first.expect("an inner node has a first branch");
-                l.next = first.next.take();
+                l.next = first.next_mut().take();
                 *x = parts!(x, ln, ln + 1, |a, m, _b| {
                     let last = m.next().expect("an inner node has a last branch");
                     a.chain([last.with_next(Some(between)), first.with_next(None)])
@@ -963,7 +990,7 @@ fn mend<K: Clone + Hole, V: Clone + Hole>(l: &mut Branch<K, V>, r: &mut Branch<K
                         .next()
                         .expect("an inner node has a branch before its last");
                     let last = m.next().expect("an inner node has a last branch");
-                    let up = before.next.take();
+                    let up = before.next_mut().take();
                     let rest = a.chain(iter::once(before)).collect();
                     (rest, up, last)
                 });

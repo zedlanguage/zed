@@ -390,6 +390,16 @@ fn fresh_sum(m: &M) -> u64 {
     m.iter().fold(0, |acc, (k, v)| add(acc, term(k, v)))
 }
 
+/// The sum of `m` and the number of entries it read.
+fn counted_sum(m: &M) -> (u64, usize) {
+    let mut reads = 0;
+    let s = m.sum(&mut |k, v| {
+        reads += 1;
+        term(k, v)
+    });
+    (s, reads)
+}
+
 /// Random inserts and removals on a map whose sums were all filled before each change, in
 /// place (`shared` false) or on a copy that another holder keeps (`shared` true): after each
 /// change the kept sums give the sum of the entries, and so does the copy kept from before.
@@ -427,7 +437,15 @@ fn change_once(m: &mut M, shared: bool, insert: bool, k: u64, step: u64, seed: u
         true => m.insert(k, step),
         false => m.remove(&k),
     };
-    assert_eq!(m.sum(&mut term), fresh_sum(m), "seed {seed} step {step}");
+    // The entries `for_each_unsummed` lists are those the sum reads, and after it none.
+    let mut listed = 0;
+    m.for_each_unsummed(&mut |_, _| listed += 1);
+    assert_eq!(
+        counted_sum(m),
+        (fresh_sum(m), listed),
+        "seed {seed} step {step}"
+    );
+    assert_eq!(counted_sum(m), (fresh_sum(m), 0), "seed {seed} step {step}");
     if let Some(kept) = kept {
         assert_eq!(
             kept.sum(&mut term),
@@ -475,12 +493,71 @@ fn a_leaf_root_keeps_its_sum() {
     assert_eq!(copy.sum(&mut term), fresh_sum(&copy));
 }
 
+/// A map of MAX + 1 entries built at once has an inner root of two leaves of MIN, with the
+/// ninth entry between them: the shape `value::tests::nested_record` and the bench
+/// `hashing_records_nested_at_an_inner_roots_separator_scales` rely on.
+#[test]
+fn seventeen_entries_split_at_the_ninth() {
+    let m: M = (0..=MAX as u64).map(|k| (k, k)).collect();
+    let Some(Node::Inner(bs)) = &m.root else {
+        panic!("17 entries need an inner root");
+    };
+    assert_eq!(bs.len(), 2);
+    assert_eq!(bs[0].next, Some((MIN as u64, MIN as u64)));
+    assert!(bs.iter().all(|b| b.child.len() == MIN));
+}
+
+/// A map whose root is an inner node keeps the sum of its separators too: after a sum, a second
+/// sum and a copy's read no entry, and no entry is left unsummed, at heights 1 and 2. Then each
+/// way a separator changes, its value replaced, or taken out so that a mend moves an entry up,
+/// clears what covered it, and the next sum is right and reads only the changed paths. Before
+/// (BTREE-inner-root-sum) each sum read the root's separators again.
+#[test]
+fn an_inner_root_keeps_its_sum() {
+    for len in [MAX as u64 + 1, 40, 2000] {
+        let mut m: M = (0..len).map(|k| (k, k + 1)).collect();
+        assert!(matches!(m.root, Some(Node::Inner(_))), "{len}");
+        assert_eq!(counted_sum(&m), (fresh_sum(&m), len as usize), "{len}");
+        let copy = m.clone();
+        for map in [&m, &copy] {
+            assert_eq!(
+                counted_sum(map),
+                (fresh_sum(&m), 0),
+                "{len}: a kept sum reads none"
+            );
+            let mut unsummed = 0;
+            map.for_each_unsummed(&mut |_, _| unsummed += 1);
+            assert_eq!(unsummed, 0, "{len}");
+        }
+        let separators: Vec<u64> = match &m.root {
+            Some(Node::Inner(bs)) => bs.iter().filter_map(|b| b.next.map(|(k, _)| k)).collect(),
+            _ => unreachable!("checked above"),
+        };
+        for &k in &separators {
+            // A separator's value replaced in place (`insert_in`, `Ok(i)` of an inner node).
+            m.insert(k, 7 * k);
+            let (s, reads) = counted_sum(&m);
+            assert_eq!(s, fresh_sum(&m), "{len}: {k} replaced");
+            assert!(reads <= MAX + 1, "{len}: {k} replaced read {reads}");
+            assert_eq!(counted_sum(&m), (s, 0), "{len}");
+            // The separator taken out: the entry before it moves up from a leaf.
+            m.remove(&k);
+            assert_eq!(counted_sum(&m).0, fresh_sum(&m), "{len}: {k} removed");
+            assert_eq!(counted_sum(&m), (fresh_sum(&m), 0), "{len}");
+        }
+        // The copy kept from before the changes keeps its own sum.
+        assert_eq!(counted_sum(&copy), (fresh_sum(&copy), 0), "{len}");
+    }
+}
+
 /// Every arm that moves entries or subtrees between nodes runs with the sums filled, in place
 /// and on a copy, and the kept sums stay right through each (plan row
 /// PERF-family-hash-count-only). Controls (not committed), each failing this test and
 /// `value::tests::kept_sums_follow_changes`: `mend` without `r.child_mut()`, so a sibling that
-/// gains or loses a subtree keeps its old sum; and `Branch::with_next` adding 1 to a filled
-/// sum it carries over, so a subtree moved whole arrives with a wrong kept sum.
+/// gains or loses a subtree keeps its old sum; and `Branch::with_next` keeping the sum it
+/// carries, so a subtree moved with a new entry after it arrives with a sum of the old one.
+/// Each change also checks that the sum reads the entries `for_each_unsummed` lists, and that
+/// a second sum reads none (`change_once`, BTREE-inner-root-sum).
 #[test]
 fn kept_sums_survive_every_arm_of_a_change() {
     let names = [

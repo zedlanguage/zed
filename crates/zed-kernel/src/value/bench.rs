@@ -5,7 +5,7 @@
 //! in the tests of `value.rs`; the deep value is digested at 12 and 64 levels by
 //! `a_deep_shared_value_is_digested_once_per_sequence`.
 
-use super::tests::{drawn_ints, drawn_pairs, neighbors, shared, under_tuples};
+use super::tests::{drawn_ints, drawn_pairs, neighbors, nested_record, shared, under_tuples};
 use super::*;
 
 /// n neighbor pairs of 64-bit integers compared by `cmp` and by `==`, at the top level and
@@ -99,6 +99,27 @@ fn hashing_a_map_after_each_change_scales() {
             std::hint::black_box(digest(&Value::Family(Family::from_map(m.clone()))));
         }
     });
+}
+
+/// n records nested one in the next, each of 17 fields, so its map's root is an inner node of
+/// two leaves of 8 and the field `i` between them, which holds the record before; each record
+/// is hashed once made. A hash reads the new record's entries and the kept sums beneath
+/// (`btree::Map::sum`): O(1) each, O(n) in all. When an inner root kept no sum of its own
+/// separators, each hash read `i` again in every record beneath, O(n^2) (BTREE-inner-root-sum).
+#[test]
+fn hashing_records_nested_at_an_inner_roots_separator_scales() {
+    crate::scaling::check_order(
+        "n records of 17 fields nested at field i, hashed after each",
+        2_000,
+        1,
+        |n| {
+            let mut rec = Family::of([("x", 0_i64)]);
+            for d in 0..n as i64 {
+                rec = Family::of(nested_record(d, Value::Family(rec)));
+                std::hint::black_box(digest(&Value::Family(rec.clone())));
+            }
+        },
+    );
 }
 
 /// A list made by n `++` of short lists, hashed after each: each hash reads the O(log n) parts
