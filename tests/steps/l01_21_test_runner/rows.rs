@@ -357,7 +357,15 @@ fn no_message_names_a_kernel_rule() {
         .chain(files_under(&zed_tests::fences::dir()))
         .filter(|p| *p != this && *p != sync && *p != prose)
     {
-        let text = std::fs::read_to_string(&p).expect("a readable test file");
+        // A file listed and then gone was removed by a piece running at the same time (insta
+        // writes and removes `.snap.new` files beside the snapshots); it holds no test text.
+        // Any other error is a fault of the tree. Found by str1, 2026-11-20: a whole-suite run
+        // failed here with NotFound, and the piece alone passed.
+        let text = match std::fs::read_to_string(&p) {
+            Ok(text) => text,
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => continue,
+            Err(e) => panic!("a readable test file {}: {e}", p.display()),
+        };
         for (k, line) in expected_lines(&text) {
             lines += 1;
             let w = said(line, &words);
