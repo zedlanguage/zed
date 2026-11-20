@@ -1847,6 +1847,92 @@ fn every_writing_at_seed_11367085356800913199() {
     writings_agree_at(11367085356800913199);
 }
 
+/// [`every_writing_of_a_formula_gets_one_answer`] at the other seeds the row
+/// FAIL-exact-writings-17553006884555075817 lists: from dryt1 (8124016268280057850,
+/// 3465706508361208641), pres8 (13310776365412627736, 6248376677308887027), the gemini and claude
+/// seats of PRES-cover-moduli-two-disjunctions (6356906811914704334, 5480617911147767323,
+/// 1018193249963013246, 11124692055269125873, 4748931191768879917, 15275908352311422565,
+/// 9041673993373821060) and proofdoc1 (17109464074316566127, 7570078408948364398). Each fails
+/// with the renaming of `project_each_with` reading `f` as written, and passes with it reading
+/// `cover_input(f)` (run one seed at a time, 2026-11-20): the cause of
+/// [`every_writing_at_seed_17553006884555075817`].
+#[test]
+fn every_writing_at_seed_8124016268280057850() {
+    writings_agree_at(8124016268280057850);
+}
+
+/// One of the seeds of [`every_writing_at_seed_8124016268280057850`].
+#[test]
+fn every_writing_at_seed_3465706508361208641() {
+    writings_agree_at(3465706508361208641);
+}
+
+/// One of the seeds of [`every_writing_at_seed_8124016268280057850`].
+#[test]
+fn every_writing_at_seed_13310776365412627736() {
+    writings_agree_at(13310776365412627736);
+}
+
+/// One of the seeds of [`every_writing_at_seed_8124016268280057850`].
+#[test]
+fn every_writing_at_seed_6248376677308887027() {
+    writings_agree_at(6248376677308887027);
+}
+
+/// One of the seeds of [`every_writing_at_seed_8124016268280057850`].
+#[test]
+fn every_writing_at_seed_6356906811914704334() {
+    writings_agree_at(6356906811914704334);
+}
+
+/// One of the seeds of [`every_writing_at_seed_8124016268280057850`].
+#[test]
+fn every_writing_at_seed_5480617911147767323() {
+    writings_agree_at(5480617911147767323);
+}
+
+/// One of the seeds of [`every_writing_at_seed_8124016268280057850`].
+#[test]
+fn every_writing_at_seed_1018193249963013246() {
+    writings_agree_at(1018193249963013246);
+}
+
+/// One of the seeds of [`every_writing_at_seed_8124016268280057850`].
+#[test]
+fn every_writing_at_seed_11124692055269125873() {
+    writings_agree_at(11124692055269125873);
+}
+
+/// One of the seeds of [`every_writing_at_seed_8124016268280057850`].
+#[test]
+fn every_writing_at_seed_4748931191768879917() {
+    writings_agree_at(4748931191768879917);
+}
+
+/// One of the seeds of [`every_writing_at_seed_8124016268280057850`].
+#[test]
+fn every_writing_at_seed_15275908352311422565() {
+    writings_agree_at(15275908352311422565);
+}
+
+/// One of the seeds of [`every_writing_at_seed_8124016268280057850`].
+#[test]
+fn every_writing_at_seed_9041673993373821060() {
+    writings_agree_at(9041673993373821060);
+}
+
+/// One of the seeds of [`every_writing_at_seed_8124016268280057850`].
+#[test]
+fn every_writing_at_seed_17109464074316566127() {
+    writings_agree_at(17109464074316566127);
+}
+
+/// One of the seeds of [`every_writing_at_seed_8124016268280057850`].
+#[test]
+fn every_writing_at_seed_7570078408948364398() {
+    writings_agree_at(7570078408948364398);
+}
+
 /// Round 4 of seed 17553006884555075817 of [`every_writing_of_a_formula_gets_one_answer`],
 /// written out, so it holds whatever the generator draws. As written and with every equation in
 /// the other sign, alone and with the rows times 3, it gets one answer and one refusal at the
