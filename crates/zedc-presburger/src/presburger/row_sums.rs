@@ -2964,7 +2964,11 @@ impl Plan {
                 lo[r] = lo[r].checked_add(a.min(b))?;
                 hi[r] = hi[r].checked_add(a.max(b))?;
             }
-            merge_into(&open, g.sig, |r| last[r] != i, &mut next);
+            // Complexity tradeoff: one merge of the two sorted lists, O(|open| + |sig|), into a
+            // vector kept from one group to the next; before, the two were joined, sorted and
+            // filtered into a new vector, O((|open| + |sig|) log). The shared merge
+            // (DRY-sorted-structures-2 job 10) replaces this file's own copy of it.
+            zed_collections::sorted::merge_into(&open, g.sig, |&r| last[r] != i, &mut next);
             std::mem::swap(&mut open, &mut next);
         }
         layouts.push(&[], |_| 0, &lo, &hi)?;
@@ -4006,28 +4010,6 @@ impl Plan {
         };
         let kept = work.and(before, &back)?;
         Some(Some((kept, pieces)))
-    }
-}
-
-/// The rows of `a` and of `b`, both sorted, that `keep` keeps, once each and sorted, written to
-/// `out`.
-// Complexity tradeoff: one merge, O(|a| + |b|), into a vector kept from one group to the next;
-// before, the two were joined, sorted and filtered into a new vector, O((|a| + |b|) log).
-fn merge_into(a: &[usize], b: &[usize], keep: impl Fn(usize) -> bool, out: &mut Vec<usize>) {
-    out.clear();
-    let (mut i, mut j) = (0, 0);
-    while i < a.len() || j < b.len() {
-        let r = match (a.get(i), b.get(j)) {
-            (Some(&p), Some(&q)) => p.min(q),
-            (Some(&p), None) => p,
-            (None, Some(&q)) => q,
-            (None, None) => break,
-        };
-        i += usize::from(a.get(i) == Some(&r));
-        j += usize::from(b.get(j) == Some(&r));
-        if keep(r) {
-            out.push(r);
-        }
     }
 }
 
