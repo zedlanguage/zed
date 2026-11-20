@@ -730,9 +730,16 @@ fn has_point(rows: &[(Vec<i64>, i64)]) -> bool {
 /// each of `eq`, by the Omega test (W. Pugh, "A practical algorithm for exact array dependence
 /// analysis", CACM 35(8):102-114, 1992, doi:10.1145/135226.135233; first as "The Omega test: a
 /// fast and practical integer programming algorithm for dependence analysis", Supercomputing
-/// '91, pp. 4-13, doi:10.1145/125826.125848), exact for any rows, with no bound on `x`. Checked
-/// 2026-11-20: the DOIs on Crossref; the text was not read, so the sketch below, the splinter
-/// bound included, is from memory. `the_omega_oracle_agrees_with_enumeration` checks it against
+/// '91, pp. 4-13, doi:10.1145/125826.125848), exact for any rows, with no bound on `x`. The
+/// CACM paper's dark shadow of `α ≥ az` and `bz ≥ β` is "bα − aβ ≥ (a − 1)(b − 1)", and its
+/// splinters: "determining the largest coefficient a of z in any upper bound on z, and, for each
+/// lower bound bz ≥ β on z, testing if there are integer solutions to the original problem
+/// combined with bz = β + i for each i such that (ab − a − b)/a ≥ i ≥ 0". Below, `l` is its
+/// `b`, `m` its `a`, and the constant less `(l - 1)(u - 1)` is its dark shadow. Checked
+/// 2026-11-20: the DOIs on Crossref; the CACM paper read (a scan, through OpenAlex's cached
+/// copy) for these two rules; the SC'91 paper not read. Departure: the paper picks the
+/// variable to eliminate by its heuristics, this oracle by its own rule (`best` in the code),
+/// which changes only the work, not the answer. `the_omega_oracle_agrees_with_enumeration` checks it against
 /// enumeration on small boxed systems.
 ///
 /// An equation is divided by the gcd of its coefficients (no integer point where that does not
