@@ -35,7 +35,10 @@ fn eq(terms: &[(&str, i128)], k: i128) -> Formula {
 #[test]
 fn a_ledger_equation_with_no_unit_coefficient_is_solved() {
     // Pugh's example: 7a + 12b + 31c == 17 and 3a + 5b + 14c == 7, with a in 1..=40 and b in
-    // -50..=50, has integer points, reached through his symmetric remainder.
+    // -50..=50, has integer points, reached through his symmetric remainder. The system is the
+    // worked example of W. Pugh, "A practical algorithm for exact array dependence analysis",
+    // CACM 35(8):102-114, 1992, doi:10.1145/135226.135233 ("7x + 12y + 31z = 17,
+    // 3x + 5y + 14z = 7, 1 ≤ x ≤ 40, −50 ≤ y ≤ 50"; the paper read 2026-11-20).
     let f = Formula::and(vec![
         eq(&[("a", 7), ("b", 12), ("c", 31)], -17),
         eq(&[("a", 3), ("b", 5), ("c", 14)], -7),
