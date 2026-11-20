@@ -674,6 +674,12 @@ mod bench;
 mod tests {
     use super::*;
 
+    /// The integers the tests try as members ([`members`]). Every finite end of the operands
+    /// lies in -4..=4, so an infinite end is tried at the eight values 5..=12 past every
+    /// finite one (or -12..=-5). A test passes only on what it tries here, so a wider window checks more; this one keeps
+    /// every product of two members (at most 144) and every power of a member by a member
+    /// (at most 12^12, below 2^44) inside `i64`, as [`apply`] and
+    /// `a_power_at_a_set_of_exponents_holds_each_power_and_no_more` need. Not tuned.
     const WINDOW: std::ops::RangeInclusive<i64> = -12..=12;
 
     /// Every interval with endpoints in -4..=4 or infinite, and some unions.

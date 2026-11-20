@@ -1037,6 +1037,16 @@ fn at(f: &Form, c: Pt) -> Option<i128> {
 /// 2^60, in the cyclic order of the angles of their normals, each marked where it is a side
 /// of the box ([`edges`]); `None` past `i128`.
 fn hull(halves: &[Form]) -> Option<Vec<(Form, bool)>> {
+    // The box's half-width. No answer rests on its value: a side of the box left among the
+    // edges sends the part to [`open`], which checks every half-plane and gives `None` where
+    // the region is not open, and `None` from any step makes [`shape_of`] keep the half-planes
+    // themselves (`Shape::Rows`), which are exact. `M` decides only which reader a part takes:
+    // a bounded region with every corner within `M` of the origin on both axes reads as
+    // bounded. It also sets where the checked products leave `i128`: the corner of the box
+    // side `(1, 0, M)` and a half-plane `(A, B, C)` is `(-M·B, M·A - C, B)` ([`point`]), and
+    // [`at`] there is at most `2·M·c² + 2·c²` for coefficients of magnitude at most `c`, below
+    // `2^127` for `c` below about `2^33` at `M = 2^60`; a larger part meets `None` and is read
+    // by rows. Not tuned or measured.
     const M: i128 = 1 << 60;
     let boxed = [(1, 0, M), (-1, 0, M), (0, 1, M), (0, -1, M)];
     let mut all: Vec<(Form, bool)> = halves.iter().map(|&f| (f, false)).collect();

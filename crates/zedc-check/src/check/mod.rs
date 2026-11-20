@@ -15340,6 +15340,12 @@ mod tests {
     #[test]
     fn a_cast_keeps_a_listed_value_exactly_where_its_carrier_rule_says() {
         use num_bigint::BigInt;
+        // Each format as (p, least, top), from the parameters of the IEEE 754-2019 basic formats
+        // binary64 and binary32: `p`
+        // significand bits, `2^least` the least subnormal (`emin - p + 1`, with `emin` -1022
+        // and -126) and `2^top` the least power of two past the largest finite value (`emax +
+        // 1`, with `emax` 1023 and 127). Standard values, not tuned; `held_exactly` reads the
+        // same three.
         const FMT64: (u64, i64, i64) = (53, -1074, 1024);
         const FMT32: (u64, i64, i64) = (24, -149, 128);
         let two = |k: i64| (BigInt::from(1), k);

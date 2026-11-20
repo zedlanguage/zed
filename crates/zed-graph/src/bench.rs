@@ -132,6 +132,12 @@ fn blocks(n: usize) -> Vec<Vec<usize>> {
         .collect()
 }
 
+/// The nodes a graph of [`blocks`] gains at a time. Any size well below the benchmark's `n`
+/// serves; it is not tuned. What relies on it: the search runs `n / BLOCK` times (200 at
+/// `n` = 200,000, 1600 at 8n), so a search that read the whole graph again at each run would
+/// cost O(n² / BLOCK) and its ratio at 8n would be near 64, far past the limit, where the
+/// search that reads only the new nodes stays near 8. The test's description string names the
+/// same 1000.
 const BLOCK: usize = 1000;
 
 /// The edges of a graph as lists, numbered `0..n`, counting the nodes found.

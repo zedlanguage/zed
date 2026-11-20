@@ -67,6 +67,15 @@ fn nests(rule: &str) -> bool {
     )
 }
 
+/// The depth of a rule with no derivation at a ring, the start value of every depth in
+/// [`Depths::new`]. Two things rely on its value. It must exceed every real depth, so that a
+/// rule with a derivation is always chosen over one without in [`Gen::shallow`] and
+/// [`Gen::rule`]: a real depth is at most the number of rules, since each rule's depth is at
+/// most one more than that of a rule made final before it (the syntactic grammar has a few
+/// hundred). And `NEVER + 1` must fit in `u32`: [`Depths::of`] adds one per rule it reads and
+/// takes the greatest or least of the rest, and a depth is stored only where it is below the
+/// stored one, so no stored depth passes `NEVER` and no value of `of` passes `NEVER + 1`. Any
+/// value between those bounds serves; this one is not tuned.
 const NEVER: u32 = 1_000_000_000;
 
 /// The least nesting depth of a derivation of each rule at a ring.

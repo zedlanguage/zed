@@ -1044,6 +1044,10 @@ impl Lookup for Recorded {
     }
 }
 
+/// The first line of every record ([`Record::to_bytes`]): it names the file as a record and its
+/// format as the first, so [`Record::from_bytes`] tells a record from any other file, and one cut
+/// inside this line from one that is not a record. The `1` is the format's number; the text is
+/// not otherwise chosen for any property.
 const MAGIC: &str = "zed record 1\n";
 
 impl Record {

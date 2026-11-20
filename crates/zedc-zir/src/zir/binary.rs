@@ -30,6 +30,10 @@ use zed_kernel::value::{Atom, Value};
 use super::text::{self, PRIMS, VERSION};
 use super::{Derived, Edge, Form, Node, Op, Region, RegionKind, Src};
 
+/// The first four bytes of a full module ([`encode`]): [`decode_form`] reads them to tell a
+/// full module from a stripped one ([`MAGIC_STRIPPED`]) and either from data that is no module.
+/// The version follows them ([`VERSION`]). The bytes spell the format's name; they are not
+/// chosen for any other property, and only the two must differ.
 const MAGIC: &[u8; 4] = b"ZIR\0";
 
 /// The first four bytes of a stripped module ([`encode_as_stripped`]).

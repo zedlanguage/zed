@@ -630,6 +630,9 @@ pub(crate) mod tests {
         let Some(out) = in_child(
             "limits::tests::which_mappings_the_limit_on_data_counts",
             || {
+                // Neither size is tuned. `SIZE > LIMIT`, so a counted mapping is refused
+                // whatever the binary already holds; the binary holding below `LIMIT / 2`
+                // (checked next) leaves the child room to run under the limit.
                 const LIMIT: u64 = 256 << 20;
                 const SIZE: usize = 512 << 20;
                 assert!(
