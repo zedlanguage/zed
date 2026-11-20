@@ -77,6 +77,18 @@ impl Depths {
     /// Knuth's generalization of Dijkstra's algorithm: a rule's depth is final when it is the
     /// least left, since an alternative's depth is never below that of a rule it needs. Each
     /// final rule reopens only the alternatives that refer to it.
+    ///
+    /// D. E. Knuth, "A generalization of Dijkstra's algorithm", Information Processing Letters
+    /// 6(1), 1-5, 1977, doi:10.1016/0020-0190(77)90002-3: for a grammar whose productions
+    /// combine their parts' values by "superior functions" (monotone, and no less than each
+    /// argument; here `max` over a sequence plus one per rule), the least value of each
+    /// nonterminal is found by taking the least open one as final, as Dijkstra's search does
+    /// (E. W. Dijkstra, Numer. Math. 1, 269-271, 1959, doi:10.1007/BF01386390). Departure: a
+    /// choice inside an alternative takes the least of its branches, which the paper writes as
+    /// separate productions. Checked 2026-11-20: both DOIs on Crossref; the papers not read,
+    /// from memory. `depths_match_the_naive_fixed_point_at_every_layer` checks the depths on the
+    /// syntactic grammar against repeated passes to a fixed point (red with the reopening loop
+    /// removed); it shares `Depths::of`, so it does not check that.
     fn new(g: &Grammar, ring: u32) -> Depths {
         let mut d = Depths(vec![NEVER; g.rules.len()]);
         let mut users = vec![Vec::new(); g.rules.len()];
@@ -546,4 +558,50 @@ pub fn run_on(spec: &Spec, n: usize, seed: i64, out: &mut String) -> Outcome {
     let ok = c.bad == 0 && c.derived == 0;
     say!(out, "RESULT: {}", if ok { "OK" } else { "FAIL" });
     Ok(ok)
+}
+
+#[cfg(test)]
+mod tests {
+    use zedc::parse::Grammar;
+
+    use super::{Depths, NEVER};
+
+    /// The least depths by the naive method: every alternative evaluated again until no depth
+    /// falls, O(passes · grammar size), where [`Depths::new`] takes one heap pass.
+    fn naive(g: &Grammar, ring: u32) -> Vec<u32> {
+        let mut d = Depths(vec![NEVER; g.rules.len()]);
+        loop {
+            let mut fell = false;
+            for (r, rule) in g.rules.iter().enumerate() {
+                for alt in rule.alts.iter().filter(|a| a.layer <= ring) {
+                    let x = d.of(&alt.expr);
+                    if x < d.0[r] {
+                        d.0[r] = x;
+                        fell = true;
+                    }
+                }
+            }
+            if !fell {
+                return d.0;
+            }
+        }
+    }
+
+    /// Knuth's search gives the least depth of each rule of the syntactic grammar at every
+    /// layer, as the naive fixed point does. It does not check `Depths::of` itself, which both
+    /// share.
+    #[test]
+    fn depths_match_the_naive_fixed_point_at_every_layer() {
+        let g = Grammar::read_open(&[include_str!("../../../zed/grammar/syntax.peg")]).unwrap();
+        let top = g
+            .rules
+            .iter()
+            .flat_map(|r| &r.alts)
+            .map(|a| a.layer)
+            .max()
+            .unwrap();
+        for ring in 0..=top {
+            assert_eq!(Depths::new(&g, ring).0, naive(&g, ring), "layer {ring}");
+        }
+    }
 }

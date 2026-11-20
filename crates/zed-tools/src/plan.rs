@@ -332,7 +332,13 @@ pub struct Fixed {
 ///
 /// Levels are set in topological order (Kahn's algorithm): a row is placed once every row it
 /// needs is, at one more than the highest level among them. Each row and each edge is visited
-/// once, and the text is rebuilt in one pass over its lines: O(rows + edges + length).
+/// once, and the text is rebuilt in one pass over its lines: O(rows + edges + length). Kahn:
+/// A. B. Kahn, "Topological sorting of large networks", CACM 5(11), 558-562, 1962,
+/// doi:10.1145/368996.369025, cited with the method at `zed_graph::kahn`; the longest path is
+/// the usual addition, not in the paper as far as known (from memory, not checked).
+/// `fix_sets_each_level_to_the_longest_path_from_a_root` checks the levels on a plan where the
+/// last need placed is not the highest (red with `max` dropped), and
+/// `fix_refuses_a_cycle_and_names_its_rows` the refusal.
 pub fn fix_plan(text: &str) -> Result<Fixed, String> {
     let rows = rows(text)?;
     let mut problems = String::new();
@@ -475,4 +481,65 @@ pub fn run_with(
         fixed.changed
     );
     check_plan(&fixed.text, out)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{check_plan, fix_plan};
+
+    /// A plan whose table holds `rows`, with a count sentence that is wrong.
+    fn plan(rows: &[&str]) -> String {
+        let mut t = String::from(
+            "# Plan\n\nIt has 0 items, 0 edges and 0 levels (0 to 0).\n\n## Items by level\n\n\
+             | Level | Id | Title | Size | Hard | Needs | Paths |\n|---|---|---|---|---|---|---|\n",
+        );
+        for r in rows {
+            t.push_str(r);
+            t.push('\n');
+        }
+        t
+    }
+
+    /// Each level is the longest path from a root: D needs C (level 2) and the root E, and E is
+    /// placed after C, so a level set by the last need placed would be 1, not 3.
+    #[test]
+    fn fix_sets_each_level_to_the_longest_path_from_a_root() {
+        let text = plan(&[
+            "| 9 | E | e | S | no | none | - |",
+            "| 9 | D | d | S | no | C, E | - |",
+            "| 9 | C | c | S | no | B | - |",
+            "| 9 | A | a | S | no | none | - |",
+            "| 9 | B | b | S | no | A | - |",
+        ]);
+        let fixed = fix_plan(&text).unwrap();
+        let levels: Vec<&str> = fixed
+            .text
+            .lines()
+            .skip_while(|l| !l.starts_with("|---"))
+            .skip(1)
+            .map(|l| l.split('|').nth(1).unwrap().trim())
+            .collect();
+        assert_eq!(levels, ["0", "3", "2", "0", "1"]);
+        assert_eq!(fixed.counts, [5, 4, 4, 3]);
+        assert_eq!(fixed.changed, 5);
+        assert!(
+            fixed
+                .text
+                .contains("It has 5 items, 4 edges and 4 levels (0 to 3).")
+        );
+        assert!(check_plan(&fixed.text, &mut String::new()).unwrap());
+    }
+
+    /// A cycle is refused, naming the rows on it and the rows after it.
+    #[test]
+    fn fix_refuses_a_cycle_and_names_its_rows() {
+        let text = plan(&[
+            "| 0 | A | a | S | no | none | - |",
+            "| 0 | B | b | S | no | A, C | - |",
+            "| 0 | C | c | S | no | B | - |",
+            "| 0 | D | d | S | no | C | - |",
+        ]);
+        let err = fix_plan(&text).unwrap_err();
+        assert!(err.ends_with("B, C, D"), "{err}");
+    }
 }
