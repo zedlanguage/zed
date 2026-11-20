@@ -296,7 +296,9 @@ fn churn_on_threads() {
 /// left out here; and the counter now and then counts an instruction twice, 1 more in some runs,
 /// as the hardware counters of x86 overcount on an interrupt or a page fault and never undercount
 /// (Weaver, Terpstra and Moore, "Non-determinism and overcount on modern hardware performance
-/// counter implementations", ISPASS 2013), so each round takes the least of three runs.
+/// counter implementations", ISPASS 2013, pp. 215-224, doi:10.1109/ispass.2013.6557172;
+/// Crossref 2026-11-20, text not read, the finding from memory), so each round takes the least
+/// of three runs.
 fn counts_of(run: fn(), metered: bool) -> Vec<u64> {
     let mut meter = Meter::new();
     let mut once = || {
