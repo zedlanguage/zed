@@ -1291,3 +1291,64 @@ at 0c9f78e7e, `component_keys` 13703 counted 4 and 8 in two and 0 in seven (the 
 text draw a seed at random per process, `digest.rs`). The fifteenth round saw the `shared_none`
 arm at 0. These lines need a test that reaches them in every run; they are added to
 TEST-kernel-unreached-paths-10.
+
+Seventeenth round (kernel20, 2026-11-20), rows TEST-kernel-unreached-paths-10 and
+KERNEL-verify-step-self-loop-tail. Coverage measured at origin/main e18246edd the way the
+sixteenth round did (the eight groups, 1304 pieces, `group_oracle` and `sweep_agreement` past
+their limit; then `--each-test` for `group_oracle`, `refusals` and `sweep_agreement`, 268
+pieces, 0 failed): 207 lines of the sixteenth round's list still count 0 (`empty.rs` 175,
+`empty/sweep.rs` 20, `bdd.rs` 6, `print.rs` 6; list in
+`wt/coverage/TEST-kernel-unreached-paths-10-base-e18246edd.txt`).
+
+The twelve lines that some runs reach and others do not. The maps keyed by text draw their seed
+per process (`digest.rs`, `ZED_TEXT_SEED`), and which of these lines a search reaches depends on
+the order those maps give. Each line below now has a test that calls the code directly, or
+builds the one input that reaches it. Each test was run under `ZED_TEXT_SEED=1`,
+`ZED_TEXT_SEED=11400714819323198485` and with the seed unset, and passes under all three. For
+the `shared_none` arm, a print at the line showed it reached once under each of the three.
+
+| Line (at 8e33d79fd) | Closed by | Test | Control |
+|---|---|---|---|
+| `empty.rs` 13724-13733, `component_keys`: the keys of a row that is a union, sorted and deduplicated | test | `a_class_of_tuples_is_keyed_by_the_component_that_leaves_the_fewest_pairs`: `(8, 8) \| (7, 7) \| (7, 9)` beside `(7, 8)` and `(8, 7)`; the union's keys at component 0 are `[7, 8]`, and the pairs that meet are exactly `(0, 1)` and `(0, 2)` | `component_keys` answering `None`, or the keys not deduplicated, fails it |
+| `empty.rs` 4748, `fields`: an atom of a shared payload finds no group left to push | test | `a_payload_shared_by_three_atoms_gives_each_component_once`: `#x`, `#y` and `#z` over one payload of `#x(int)`, `#y(int)` and `#z(int)` rows; every component is a field exactly once | a matched group not kept unpushed (`still.push(g)` dropped) leaves a component out |
+| `empty.rs` 10972, 10976, `find_rep`: the shared keys of a meet with a union, asked once (`shared_none`) | test | `a_closure_of_a_meet_with_a_union_is_built_when_the_shared_keys_are_proved_empty`: keys `(E, int)` with `E = cons(int, E)`, empty only once the search proves it; the type is `Inhabited` by a closure that is never called | the shared keys answered as not empty leave the type refused (`Refusal::NoWitness`) |
+| `empty/escape.rs` 1509 (1503 at 0c9f78e7e), `read_on`: a cut row read on to a kill | test | `a_cut_row_read_on_to_a_kill_drops_out`: the lists `[x1, x2, x3, 1]` less three unit rows that force `x1 = x2 = x3 = 2` and less the row `(2, 2, 2, 3)`, whose read stops at three atoms; U2 empties all three, and `read_on` reads place 4, where `1` and `3` are disjoint | `false` in place of the kill's `return true`: `decide` answers `Empty` for a type that holds `[2, 2, 2, 1]` (run, fails at the `decide` assertion) |
+
+Two of the twelve remain. One is the arm of `exact_flat_diff_decide` for a morphism with a
+recursive key (16310, 16311 and 16316 at 8e33d79fd; 16243 and 16253 at 0c9f78e7e). It was
+reached in the base run at e18246edd and counts 0 in the final run, and no test reaches it on
+purpose. The other is the `Rep::Tuple` arm of `horn_witness_group` (16647 at 8e33d79fd).
+`horn_witness_group` seeds only members that the decider judges `Some(false)`, and a member
+whose body has `&` or `\` is judged `None`, so the arm needs a group that reaches the Horn
+witness some other way. Neither was closed; both go to TEST-kernel-unreached-paths-11.
+
+KERNEL-verify-step-self-loop-tail (54f1e4e76): `verify_step` groups a step's rows by where
+they lead (the loop item for a self-looping tail, otherwise the tail) and joins each group's
+heads, so a chain that ends in a self-looping tail with exits is checked, where the sixteenth
+round saw it refused. Test
+`the_check_of_a_list_witness_reads_a_chain_ending_in_a_self_looping_tail`, with four controls
+(in the commit message).
+
+Counts, from the coverage run at 8e33d79fd (1304 pieces, `group_oracle` and `sweep_agreement`
+past their limits of 25 and 28 s at load 40 to 45, as in the base run; 268 per-test pieces, 0
+failed). Of the 207 lines, carried to 8e33d79fd by the unchanged lines of a diff (none
+changed), 8 count above 0 and 199 still count 0. The 7 lines of `component_keys`, `fields` and
+the `shared_none` arm are reached by the tests above. The eighth, `empty/sweep.rs` 2144, is
+reached by no new test (the sweep is unchanged), so a run reached it by chance; it stays on the
+list. Open 200, carried to TEST-kernel-unreached-paths-11, listed at 8e33d79fd in
+`wt/coverage/TEST-kernel-unreached-paths-10-kernel20-8e33d79fd.txt` with `sweep.rs` 2144 added:
+`empty.rs` 168 (`find_prefix_chains` 30, `tuples_on` 16, the list fallback in `decided` 11,
+`check_chain_witness` 10, `find_rep` 7, `chain_rep` 7, `morphisms` 6, `Side::mentions` 5, the
+rest spread over many functions), `empty/sweep.rs` 20, `bdd.rs` 6, `print.rs` 6.
+
+`chain_rep` returning `None` (the `decided` fallback, 5253-5263, and `find_rep` 10793-10794)
+is not reached: the lists of the refused NFA type (`fork_inputs::nfa`), with and without
+`#nil`, and lists of `nfa | 5`, all give a chain representative or are refused before it.
+
+Nine lines count above 0 in the base run and 0 in the final run, all in code this round does
+not change (list in `wt/coverage/TEST-kernel-unreached-paths-10-kernel20-8e33d79fd-run-dependent.txt`):
+`empty/sweep.rs` 1478-1479 (`Plain::new`) and 2193 (`list_sweep_value`), `empty/fork.rs` 507
+(`decide`), `empty.rs` 12230 (`read`), 13082 (`lists`), and the three lines of
+`exact_flat_diff_decide` above. That some runs reach these lines and others do not was seen
+once, and the cause was not found. The text seed is the likely cause, but it was not shown for
+these lines; they go to TEST-kernel-unreached-paths-11.
