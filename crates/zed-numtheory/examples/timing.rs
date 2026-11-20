@@ -59,6 +59,22 @@ fn m61_by_division(a: u64, b: u64) -> u64 {
     (u128::from(a) * u128::from(b) % u128::from(m61::P)) as u64
 }
 
+/// `a * b mod P` reduced as any `u128`, by two folds: the form zedc-types `ty.rs` kept as
+/// `mul_p` until DRY-types-m61-helpers (2026-11-20), now `m61::reduce` of the product.
+fn m61_by_two_folds(a: u64, b: u64) -> u64 {
+    let p = u128::from(m61::P);
+    let x = u128::from(a) * u128::from(b);
+    let s = (x & p) + (x >> 61);
+    let r = ((s & p) + (s >> 61)) as u64;
+    if r >= m61::P { r - m61::P } else { r }
+}
+
+/// `a - b mod P` by a branch on `a >= b`: the form `ty.rs` kept as `sub_p` until
+/// DRY-types-m61-helpers.
+fn m61_sub_by_branch(a: u64, b: u64) -> u64 {
+    if a >= b { a - b } else { a + m61::P - b }
+}
+
 /// Miller-Rabin with all twelve bases and products by division, the form `is_prime` had before
 /// Montgomery products and fewer bases for small `n` (the sources are cited in `factor.rs`).
 fn is_prime_by_division(n: u64) -> bool {
@@ -142,6 +158,42 @@ fn main() {
                 .fold(1, |acc, &a| m61_by_division(acc, a)),
         );
     });
+    // The forms of `ty.rs` against the shared ones, each run twice in turn (A, B, A, B), so a
+    // change in the load during the runs shows as a difference between a form's two lines.
+    for _ in 0..2 {
+        time("m61::mul, dependent chain", n, &|m| {
+            black_box(
+                r61.iter()
+                    .cycle()
+                    .take(m)
+                    .fold(1, |acc, &a| m61::mul(acc, a)),
+            );
+        });
+        time("two folds (ty.rs mul_p), dependent chain", n, &|m| {
+            black_box(
+                r61.iter()
+                    .cycle()
+                    .take(m)
+                    .fold(1, |acc, &a| m61_by_two_folds(acc, a)),
+            );
+        });
+        time("m61::sub, dependent chain", n, &|m| {
+            black_box(
+                r61.iter()
+                    .cycle()
+                    .take(m)
+                    .fold(1, |acc, &a| m61::sub(acc, a)),
+            );
+        });
+        time("branch (ty.rs sub_p), dependent chain", n, &|m| {
+            black_box(
+                r61.iter()
+                    .cycle()
+                    .take(m)
+                    .fold(1, |acc, &a| m61_sub_by_branch(acc, a)),
+            );
+        });
+    }
     let odd: Vec<u64> = p64.iter().map(|&(a, _)| a | 1).collect();
     time("is_prime, random odd words", n / 8, &|m| {
         odd[..m].iter().for_each(|&a| {

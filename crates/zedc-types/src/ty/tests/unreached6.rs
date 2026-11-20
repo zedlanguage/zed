@@ -518,6 +518,140 @@ fn functions_nested_each_holding_every_outer_variable_hash_as_walked_in_place() 
     }
 }
 
+/// The hashes of signatures are the numbers they were before the hash's own arithmetic modulo
+/// `2^61 - 1` (`mod_p`, `add_p`, `sub_p`, `mul_p`) was replaced by the shared
+/// `zed_numtheory::m61` (row DRY-types-m61-helpers, 2026-11-20). The expected numbers were
+/// printed by this test on main at 9074c4490, before the change. The signatures take the
+/// paths of the hash that do arithmetic on its tokens: plain variables, class variables `$k`,
+/// the letters `T` to `W` and the fresh variables `T5`, `T6` (affine tokens), a need result
+/// read by its rank, a tracked parameter (`s_params`), functions nested in functions holding
+/// the variables around them (scaled weights, `FreeWeights`), a row shared at 30 levels (the
+/// memo's powers of `r`) and a class number past `P` (`fallback_large_id`). The test catches
+/// any change in a token, in the reduction of a sum or a product, or in the order the parts
+/// are joined; it does not reach the sums of runs of class and fresh variables of forward
+/// needs (`sum_cls_range_o1`, `sum_fresh_vars_o1`), which the unit tests of
+/// `zed_numtheory::m61::reduce` cover for every residue class of their `u128` arguments.
+#[test]
+fn signature_hashes_are_the_numbers_they_were_before_the_shared_arithmetic() {
+    use r10_hash::{R_BASE, encode_sig_stream, flat_need_summary};
+    const LARGE: &str = "$18446744073709551615";
+    let owning = |t: Ty, own: &str| {
+        let mut s = one_of(t, int());
+        s.own.insert(own.into());
+        s.note_held();
+        fty(s)
+    };
+    let nest = |k: usize, leaf: &str| {
+        (0..k).rev().fold(var(leaf), |t, i| {
+            let mut items: Vec<Ty> = (0..=i).map(|j| var(&format!("M{j}"))).collect();
+            items.extend([var("P"), var("R"), var("Q"), t]);
+            owning(Ty::tuple(items), &format!("M{i}"))
+        })
+    };
+    let need = |on: Ty, kind: NeedKind, result: Option<Ty>| Need {
+        on,
+        kind,
+        result,
+        span: Span { start: 3, end: 17 },
+        alike: Arc::from([]),
+        via: CallPath::default(),
+    };
+    let mut got = Vec::new();
+    for leaf in ["P", "R", "Q", "$7", "T5", "W", LARGE] {
+        for t in [
+            nest(3, leaf),
+            doubled(Ty::tuple(vec![var(leaf), int()]), 30),
+        ] {
+            let own: BTreeSet<Arc<str>> = ["P", "R", "T"].into_iter().map(Arc::from).collect();
+            let ranks = [(Arc::from("R"), 3)].into_iter().collect();
+            let params = [Arc::from("P")].into_iter().collect();
+            let n = need(var("T"), index(t.clone()), Some(var("R")));
+            let summary = flat_need_summary(&n, &own, &ranks, &params, R_BASE, false);
+            let mut params: Vec<_> = summary.s_params.into_iter().collect();
+            params.sort();
+            got.extend([summary.body.val, summary.body.pow, summary.s_rank]);
+            got.extend(params.into_iter().map(|(_, w)| w));
+            let mut s = bsig(vec![ex(vec![t.clone()], var("R"))], 1, &[]);
+            s.own.extend(own.iter().cloned());
+            s.needs = vec![
+                need(var("T"), index(int()), Some(var("R"))),
+                need(var("T"), index(t), None),
+            ];
+            s.note_held();
+            got.push(encode_sig_stream(&s, R_BASE, false).0);
+        }
+    }
+    // For each leaf and each of the two types: the need's summary (its hash, its power of
+    // `r`, `s_rank`, then the weights of `s_params` by name) and the signature's hash.
+    let expected: [u64; 64] = [
+        2167896917970484714,
+        372772465237166190,
+        1506640472885109537,
+        1253231855573020471,
+        323469015626661332,
+        233787326021364033,
+        1916802044237633057,
+        396490681546329558,
+        735087603464591777,
+        983884292370639285,
+        2101579779831255766,
+        372772465237166190,
+        595186455637230143,
+        2164685872820899865,
+        2160293382132049668,
+        821717398565642192,
+        1916802044237633057,
+        1131578285010921335,
+        1391210599347757306,
+        34324831161644961,
+        372772465237166190,
+        1506640472885109537,
+        2164685872820899865,
+        2161466544111747016,
+        1912209306356504545,
+        1916802044237633057,
+        396490681546329558,
+        1862041912059484906,
+        510466988845592009,
+        372772465237166190,
+        1506640472885109537,
+        2164685872820899865,
+        947404955622620844,
+        528652274601177619,
+        1916802044237633057,
+        396490681546329558,
+        453239204546691116,
+        2150371459327423737,
+        372772465237166190,
+        1506640472885109537,
+        2164685872820899865,
+        1961252974571939293,
+        1053801508397639124,
+        1916802044237633057,
+        396490681546329558,
+        1454509796671920970,
+        1082799928928214530,
+        372772465237166190,
+        1506640472885109537,
+        2164685872820899865,
+        742188977315931964,
+        430179442322097325,
+        1916802044237633057,
+        396490681546329558,
+        881253340637273375,
+        627364193662941076,
+        1803402181238694075,
+        1625371962217328914,
+        2164685872820899865,
+        157203675933149751,
+        736088785808388687,
+        202891524623332401,
+        1514351330971421828,
+        506968033703741763,
+    ];
+    assert_eq!(got, expected);
+}
+
 /// The summary kept by the function `t` holds, after a signature holding it in an arrow is
 /// hashed.
 fn types_summary(t: &Ty) -> Option<r10_hash::NestedSummary> {

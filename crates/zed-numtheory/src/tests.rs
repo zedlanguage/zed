@@ -252,6 +252,53 @@ fn the_mersenne_arithmetic_agrees_with_division() {
     assert_eq!(m61::pow(u64::MAX, &BigUint::from(1u8)), u64::MAX % P);
 }
 
+/// `m61::reduce` is `x % P` on every `u128` near an edge of its two folds: each power of two
+/// and its neighbors (the folds split at bit 61), the multiples `kP` and their neighbors for
+/// `k` up to 130 (`2P - 1` is the largest sum a fold can leave, and `64P + 64` the largest the
+/// first fold leaves of a `u128`), `P^2`, `(P - 1)^2` and `2^122` with theirs (the largest
+/// product of two residues, which `m61::mul` folds once), words of all ones in each part,
+/// `u128::MAX`, and words drawn at random. Also that `m61::mul` agrees with it on products of
+/// residues near `P`. It catches a missing second fold (a wrong answer past `P^2`), a `>` for
+/// `>=` (an answer of `P` itself for `x = P` or `2P`), and a cast that drops bits.
+#[test]
+fn the_reduction_of_a_wide_word_agrees_with_division() {
+    use m61::P;
+    let p = u128::from(P);
+    let mut xs: Vec<u128> = Vec::new();
+    let mut near = |x: u128| {
+        for d in 0..3u128 {
+            xs.extend([x.wrapping_add(d), x.wrapping_sub(d)]);
+        }
+    };
+    for k in 0..128 {
+        near(1u128 << k);
+    }
+    for k in 0..131u128 {
+        near(k * p);
+    }
+    near(p * p);
+    near((p - 1) * (p - 1));
+    near(1u128 << 122);
+    near(u128::MAX);
+    near(u128::MAX - p);
+    near(p << 61 | p);
+    near((p << 61 | p) << 61 | p);
+    let mut next = words("the_reduction_of_a_wide_word_agrees_with_division");
+    xs.extend((0..2000).map(|_| u128::from(next()) << 64 | u128::from(next())));
+    xs.extend((0..2000).map(|_| u128::from(next())));
+    for &x in &xs {
+        assert_eq!(u128::from(m61::reduce(x)), x % p, "{x}");
+    }
+    let mut rs = vec![0, 1, 2, P - 3, P - 2, P - 1, (1 << 60) - 1, 1 << 60];
+    rs.extend((0..100).map(|_| next() % P));
+    for &a in &rs {
+        for &b in &rs {
+            let x = u128::from(a) * u128::from(b);
+            assert_eq!(m61::mul(a, b), m61::reduce(x), "{a} * {b}");
+        }
+    }
+}
+
 /// The polynomial hash of `bytes` by Horner's rule, one byte at a time, and `b` to their length:
 /// the definition `m61::PolyBytes::hash` is checked against.
 fn horner(b: u64, bytes: &[u8]) -> (u64, u64) {

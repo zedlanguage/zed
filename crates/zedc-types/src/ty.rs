@@ -28570,8 +28570,8 @@ pub mod r10_hash {
     use zed_kernel::types::Type as KType;
     use zedc_syntax::ast::BinaryOp;
 
-    /// Mersenne prime `P = 2^61 - 1`.
-    pub const P: u64 = (1u64 << 61) - 1;
+    /// Mersenne prime `P = 2^61 - 1`, the shared `zed_numtheory::m61::P`.
+    pub const P: u64 = zed_numtheory::m61::P;
     /// Fixed deterministic base `r` (`M59`).
     pub const R_BASE: u64 = 0x13B5_2A7D_94E1_6C3B % P;
 
@@ -28665,31 +28665,29 @@ pub mod r10_hash {
     const TAG_NK_INDOMAIN: u64 = 0x2018;
     const TAG_NK_PUSH: u64 = 0x2019;
 
-    #[inline]
-    pub fn mod_p(x: u128) -> u64 {
-        let p = P as u128;
-        let lo = x & p;
-        let hi = x >> 61;
-        let s = lo + hi;
-        let s2 = (s & p) + (s >> 61);
-        if s2 >= p { (s2 - p) as u64 } else { s2 as u64 }
-    }
-
-    #[inline]
-    pub fn add_p(a: u64, b: u64) -> u64 {
-        let s = a + b;
-        if s >= P { s - P } else { s }
-    }
-
-    #[inline]
-    pub fn sub_p(a: u64, b: u64) -> u64 {
-        if a >= b { a - b } else { a + P - b }
-    }
-
-    #[inline]
-    pub fn mul_p(a: u64, b: u64) -> u64 {
-        mod_p((a as u128) * (b as u128))
-    }
+    // The arithmetic modulo `P` is the shared `zed_numtheory::m61`, whose doc comments hold the
+    // proof of each reduction (DRY-types-m61-helpers, 2026-11-20). This module kept its own
+    // `mod_p`, `add_p`, `sub_p` and `mul_p` until then; the names stay, as aliases, so the
+    // hash below reads as before. Compared line by line: `add` was the same; `sub` is `a + (P -
+    // b)` reduced once where the copy here branched on `a >= b`, the same residue for `a, b <
+    // P`; `mul` folds a product of two residues once where the copy here reduced it as any
+    // `u128` (two folds), the same residue for `a, b < P`; `reduce` is the copy's `mod_p`, the
+    // one part m61 lacked, moved there with its proof. Timed in
+    // `crates/zed-numtheory/examples/timing.rs` (see COMPLEXITY.md row DRY-types-m61-helpers).
+    //
+    // What the shared routines need, and why it holds here: `add` takes `a < P` and `b <= P`,
+    // `sub` and `mul` take residues below `P` (checked in debug builds only; past them the
+    // answer is wrong, not a panic). Every operand in this module is one of: a constant reduced
+    // `% P` (`C0_*`, `C1_*`, `C_LET`, `C_ARROW_RANK`, `R_BASE`) or a tag below `0x2100`; `0`
+    // or `1`; a value reduced by `mod_p` or `% P` (`tok % P` in `PartHash::push` and
+    // `Encoder::emit`, `(rank as u64) % P`, `leaf_digest`); `m61::inv` of a residue; or a
+    // result of `add_p`, `sub_p` or `mul_p`, each below `P`. So by induction over the
+    // operations every operand is below `P`. Each field the hash keeps (`PartHash`, the side
+    // sums, `FreeWeights`'s `scale`, `inv` and weights, `base_pow`) starts at `0` or `1` and is
+    // only assigned such results. The debug-build tests of zedc-types run every hash path with
+    // the debug checks on; `signature_hashes_are_the_numbers_they_were_before_the_shared_arithmetic`
+    // (tests/unreached6.rs) holds the hashes of signatures to the numbers the old copy gave.
+    use zed_numtheory::m61::{add as add_p, mul as mul_p, reduce as mod_p, sub as sub_p};
 
     struct DetHasher(u64);
     impl Default for DetHasher {

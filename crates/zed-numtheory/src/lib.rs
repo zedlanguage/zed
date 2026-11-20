@@ -566,6 +566,35 @@ pub mod m61 {
         if r >= P { r - P } else { r }
     }
 
+    /// `x mod P`, for any `x < 2^128`: a 64-bit word, an index, a count or a sum of products
+    /// that may be past `P^2`, where [`mul`]'s one fold is not enough. zedc-types `ty.rs`
+    /// (`r10_hash`, the hash of signatures) reduces its words, spans, counts and the `u128`
+    /// sums of runs of class variables with it; it kept a copy of its own until
+    /// DRY-types-m61-helpers (2026-11-20).
+    ///
+    /// Proof. As `2^61 = 1 (mod P)`, `x = hi 2^61 + lo = hi + lo (mod P)` for `hi = x >> 61`
+    /// and `lo = x & P`. First fold: `hi <= 2^67 - 1` and `lo <= 2^61 - 1`, so `s = hi + lo <=
+    /// 2^67 + 2^61 - 2`, which a `u128` holds, and `s = x (mod P)`. Second fold, the same
+    /// identity on `s`: `s >> 61 <= (2^67 + 2^61 - 2) / 2^61 < 65`, so `s >> 61 <= 64`, and
+    /// `s & P <= P`; `r = (s & P) + (s >> 61) <= P + 64 < 2P`, with `r = x (mod P)`. One
+    /// subtraction of `P` when `r >= P` leaves `r - P <= 64`, so the result is `x mod P`, below
+    /// `P`. The cast to `u64` is exact, as `r < 2P < 2^62`. `r` can reach `P` itself
+    /// (`x = P`, or `s & P = P` with `s >> 61 = 0`), which is why the comparison is `>=`.
+    // Complexity tradeoff: two folds, each a shift, a mask and an addition, then a compare; the
+    // naive `x % P` on a `u128` calls the software 128-bit division (`__umodti3`), tens of
+    // instructions with a loop. One fold is not enough for a general `x`: past `P^2` the first
+    // fold's sum can be up to `2^67`. [`mul`] needs only one, as its product is below `P^2`.
+    // Tests: `tests::the_reduction_of_a_wide_word_agrees_with_division` (every power of two and
+    // its neighbors, multiples of `P` and their neighbors, `P^2` and `2^122` and theirs,
+    // `u128::MAX`, and words drawn at random, each against `%`).
+    #[inline]
+    pub const fn reduce(x: u128) -> u64 {
+        let p = P as u128;
+        let s = (x & p) + (x >> 61);
+        let r = ((s & p) + (s >> 61)) as u64;
+        if r >= P { r - P } else { r }
+    }
+
     /// `b^e mod P` for any `b`, with the exponent reduced modulo `P - 1` by Fermat when `b` is
     /// not a multiple of `P`: O(n) for an `e` of n words ([`rem_big_u64`]) and 61 squarings.
     /// `0^0 = 1`.
