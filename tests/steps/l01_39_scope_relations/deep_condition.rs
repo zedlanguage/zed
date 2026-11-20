@@ -417,9 +417,19 @@ fn a_small_limit_leaves_the_shared_reading_of_a_deep_test_whole() {
     NAMES_AS_WRITTEN.with(|c| c.set(false));
     assert_eq!(hulls, expected);
     for (limit, got) in limited {
-        assert_eq!(got, (hulls.clone(), work), "limit {limit}, names as written");
+        assert_eq!(
+            got,
+            (hulls.clone(), work),
+            "limit {limit}, names as written"
+        );
     }
-    for limit in [None, Some(30_000), Some(100_000), Some(200_000), Some(500_000)] {
+    for limit in [
+        None,
+        Some(30_000),
+        Some(100_000),
+        Some(200_000),
+        Some(500_000),
+    ] {
         assert_eq!(run(limit).0, expected, "limit {limit:?}, renamed");
     }
 }
