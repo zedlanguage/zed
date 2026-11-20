@@ -1548,6 +1548,9 @@ mismatched data, against 117 in the base run. Of the 146 lines, 15 are reached (
 run-dependent lines and six of the list), 6 are rewritten as guards with a proof, and 125 are
 open: `empty.rs` 100, `empty/sweep.rs` 17, `bdd.rs` 2 (1334, 3891), `print.rs` 6. Their list,
 at cd8ada160, is /home/luke/Work/wt/coverage/TEST-kernel-unreached-paths-13-kernel23-cd8ada160.txt.
+On main the code commit is c8f237a4e, the same change rebased onto 6a3e00388, whose commits
+changed `print.rs`: there the list's `print.rs` lines 1094, 1804, 2048, 2127 and 2142 are 1099,
+1809, 2053, 2132 and 2147 (`map-lines`, none rewritten), and every other line of the list is unchanged.
 
 Not proved, left open: `empty.rs` 5608 (5628), `s.current` `None`, and 5527 (5547). Carried to
 TEST-kernel-unreached-paths-14: the 125 lines (among them `tuples_on`, `morphisms`,
