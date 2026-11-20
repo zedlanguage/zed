@@ -231,12 +231,15 @@ fn sorted_facets(facets: &[Facet]) -> Vec<Facet> {
     // exactly when `==` says the values are the same (zed-kernel's `impl PartialEq for Value`
     // says so; the test `value_cmp_is_a_total_order_that_agrees_with_equality` checks it,
     // with totality, on every pair and triple of values of every kind, with two broken orders
-    // as negative controls; PROOF-value-cmp-total). Not proved: that `Value::cmp` is a total
-    // order and Equal exactly when `==` holds for every pair of values. The test reads only
-    // the values of `sample_values`, and zed-kernel value.rs `impl Ord for Value` and
-    // `impl PartialEq for Value` state the agreement without a proof; a pair of kinds or
-    // shapes outside the sample (a family against a family with shared nodes, say) is
-    // unchecked. Cost, not soundness: a number kept with
+    // as negative controls, and on families that share B-tree nodes; PROOF-value-cmp-total).
+    // The proof is at zed-kernel value.rs `impl Ord for Value`, kind by kind. Not proved, its
+    // sub-case (B): a pair of numbers whose order by value the system refuses the memory for
+    // is ordered by their normal forms, which can break transitivity, and a sort by an order
+    // that is not transitive need not put Equal facets side by side, so a repeat may be kept
+    // (a share missed), or the standard library's sort may panic on finding the order is not
+    // total (`slice::sort_by`, Rust 1.81 and later). Equal still means equal there, so no two different facets are merged.
+    // Its sub-case (A), `==` inside `Family::shallow_diff`, is not reached here. Cost, not
+    // soundness: a number kept with
     // prime powers is written in its kept form (sec:kernel, tags 13 and 14), so of two Equal
     // facet values, `2^64` kept as a power and `2^64` in digits, the one kept is the one
     // written first and the address depends on which; two equal definitions can then have two
@@ -507,6 +510,7 @@ mod tests {
             Value::from(Family::set([Value::float(0.0)])),
             Value::from(Family::set([Value::float(-0.0)])),
         ];
+        values.extend(shared_node_values());
         // Each value again inside a tuple, so the walk over parts is tested on every pair.
         let wrapped: Vec<Value> = values
             .iter()
@@ -514,6 +518,78 @@ mod tests {
             .collect();
         values.extend(wrapped);
         values
+    }
+
+    /// Families that share B-tree nodes, which the walk of `Value::cmp` and `==` skips
+    /// (PROOF-value-cmp-total): a family of 100 entries (seven nodes of at most 16 keys) and
+    /// unions of it with one more key, each keeping its nodes (`union` copies the larger map);
+    /// two such unions equal but of different ids; one equal to a union but built anew; one
+    /// sharing nodes with a family that differs in one value; a range against the same set
+    /// written out; a list joined by `++` (kept unbuilt) against the same list written out and
+    /// one differing in its last entry; and families and tuples of these.
+    fn shared_node_values() -> Vec<Value> {
+        use zed_kernel::Family;
+        let base = Family::set(0..100);
+        let with = |f: &Family, k: i64| f.union(&Family::set([k])).unwrap();
+        let a = with(&base, 1000);
+        let a2 = with(&base, 1000);
+        let b = with(&base, 1001);
+        let c = with(&base, -1);
+        let d = Family::set((0..100).chain([1000]));
+        let odd = Family::of((0..100).map(|k| (k, if k == 50 { -50 } else { k })));
+        let odd_a = with(&odd, 1000);
+        let list =
+            |n: i64, last: i64| Family::of((0..n).map(|i| (i, if i == n - 1 { last } else { i })));
+        let half = list(40, 39);
+        let joined = half.concat(&half).unwrap();
+        let joined_off = half.concat(&list(40, -1)).unwrap();
+        let written = Family::of((0..80).map(|i| (i, i % 40)));
+        let nest = |x: &Family, y: &Family| {
+            Value::from(Family::of([
+                (1, Value::from(x.clone())),
+                (2, Value::from(y.clone())),
+            ]))
+        };
+        let pair = |x: &Family, y: &Family| {
+            Value::tuple(vec![Value::from(x.clone()), Value::from(y.clone())])
+        };
+        // The pairs meant equal are, and those meant unequal are not.
+        let v = |f: &Family| Value::from(f.clone());
+        assert_eq!(v(&a), v(&a2));
+        assert_eq!(v(&a), v(&d));
+        assert_eq!(v(&base), v(&Family::range(0, 99)));
+        assert_eq!(
+            v(&joined),
+            Value::from(Family::of((0..80).map(|i| (i, i % 40))))
+        );
+        assert_ne!(v(&a), v(&b));
+        assert_ne!(v(&a), v(&odd_a));
+        assert_ne!(v(&joined), v(&joined_off));
+        vec![
+            Value::from(base.clone()),
+            Value::from(a.clone()),
+            Value::from(a2.clone()),
+            Value::from(b.clone()),
+            Value::from(c.clone()),
+            Value::from(d.clone()),
+            Value::from(odd.clone()),
+            Value::from(odd_a.clone()),
+            Value::from(Family::range(0, 99)),
+            Value::from(Family::range(0, 100)),
+            Value::from(with(&base, 100)),
+            Value::from(joined.clone()),
+            Value::from(joined_off),
+            Value::from(written),
+            Value::from(joined.concat(&half).unwrap()),
+            nest(&a, &b),
+            nest(&a2, &b),
+            nest(&d, &b),
+            nest(&a, &c),
+            nest(&odd_a, &b),
+            pair(&a, &b),
+            pair(&a2, &b),
+            pair(&d, &c),
+        ]
     }
 
     type Cmp<'a> = &'a dyn Fn(&Value, &Value) -> Ordering;

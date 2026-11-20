@@ -1067,6 +1067,69 @@ pub(crate) fn number_eq(a: &Value, b: &Value) -> bool {
     }
 }
 
+// Proof (PROOF-value-cmp-total) that `cmp` is a total order and gives Equal exactly when `==`
+// holds, outside the two sub-cases at the end. Write E(a, b) for "`cmp` gives Equal" and
+// I(a, b) for `==`. Each kind is ordered as the lexicographic order of a key, which is a
+// total order whenever each component's order is one, and gives Equal exactly when the keys
+// are equal; so it is enough to name the key and show that equal keys are exactly I.
+// 1. Kinds. `plain_step` sends a pair of different kinds to `scalar_cmp`, which orders them by
+//    `kind` (Atom 0, Bool 1, numbers 2, Str 3, Tuple 4, Path 5, Family 6), never Equal; `eq`
+//    sends it to the same `scalar_cmp`, so I is false. The first key component is `kind`.
+// 2. Bool and Str: `scalar_cmp` orders them by `bool`'s order and by `Text`'s (the bytes, a
+//    total order, `text.rs`), and `eq` is that order giving Equal, so E = I by construction.
+// 3. Numbers. `number_cmp` is the order of the key (exact value, numeric kind, for a float its
+//    `total_cmp` place). Same variant: Int and Big by value, Rat by value (`Ord for Rat`),
+//    F64 and F32 by `total_cmp`, which orders by value but for `-0.0 < 0.0` and puts the one
+//    NaN (made canonical in `F64::new`) last, the key's order with the first two components
+//    equal. Int against Big: a Big is never in the 64-bit range, so its sign decides, as the
+//    value does. Every other pair: `Exact` (derived order: -inf, finite by `Rat`'s order,
+//    +inf, NaN) then `number_kind`, which differ, so never Equal. Equal keys: same variant and
+//    same value, two floats the same bits; `number_eq` is exactly that (Rat's `==` is equality
+//    of value, by unique factorization once both are aligned to the primes either keeps).
+// 4. Atoms: key (name, fields, payload absent before present, payload as a sequence).
+//    `Fields`' order is Equal on one id, otherwise the names' order, and its `==` is one id or
+//    equal names; one id is one list of names, so the two agree. The payload by step 5.
+// 5. Tuples and paths (`items`): the lexicographic order of the parts, by induction on depth
+//    (a value is a finite tree, so the induction ends), the shorter first when one is a prefix.
+//    One shared sequence (`same`) is Equal without a walk, as its parts are E to themselves by
+//    induction. `==` (identity) is unequal at once on two lengths, which E also is, and
+//    otherwise the same walk of the parts.
+// 6. Families (`maps`): the lexicographic order of the entries `(key, value)` in key order,
+//    keys by this order, the shorter first. Two ranges are ordered by their ends (the proof at
+//    `maps`: it is this order); `==` compares the ends, Equal ends being the same entries.
+//    One shared map or `++` list is Equal at once. Otherwise `btree::Zip` pairs the i-th
+//    entries and passes over a subtree held by both at one place, whose entries are E to
+//    themselves; an unbuilt `++` list is read leaf by leaf (`Pairs::Sides`). `==` is unequal at
+//    once on two sizes, which E also is (the shorter side runs out), queues two built maps for
+//    `settle`, whose `diff` is the same equality of entries, and reads an unbuilt list the walk's
+//    way. So E = I on families, by induction on depth as in 5.
+// 7. The pair memo. The walk keeps each pair of shared sequences or families it enters, per
+//    relation, and meets a kept pair as Equal (`open`, `walk_in`). Claim: every kept pair is E
+//    (for Total) or I (for Identity). A pair is kept from its entry; while it is being read, it
+//    cannot be met again, which would be a cycle, and values are finite trees of immutable
+//    parts named by unique ids (`fresh_id`, `Items::pair`). If the walk reads it to its end with
+//    no difference, it is E. If the walk ends at a difference, the pairs it has not read to the
+//    end are taken out (`leave`) when another comparison is running (`scopes > 1`), and all are
+//    emptied when the outermost ends (`Scope`), so no later comparison meets them. So answering
+//    a kept pair Equal answers what reading it would. Identity pairs queued for `settle` are
+//    read by `diff` before the outermost `==` answers, and the answer is their conjunction.
+// 8. Totality and transitivity follow from 1-6: `cmp(a, b)` is the order of key(a) and key(b),
+//    and keys are compared component by component by total orders.
+// Not proved, sub-case (B), a refused number: `Ord for Rat` gives the order of the normal forms
+// (`form_cmp`) for a pair whose order by value the system refuses the memory for (`bound::cmp`
+// always asks, Watch or not; `aligned` asks only under a Watch). Such a pair is unequal by
+// value (`bound::cmp` runs only when the aligned exponents differ), and its forms differ, so E
+// and I still agree on it; but form order and value order can disagree, so transitivity can
+// fail on three numbers one pair of which is refused. Under a Watch the refusal is recorded and
+// the run stops at its next step; outside one nothing records it. Under a Watch, `Rat`'s `==`
+// can also fall back to the forms, and then E and I depend on free memory at each call.
+// Not proved, sub-case (A), `==` inside `Family::shallow_diff`: there two families that do
+// not share their map are unequal unread (`open`, `families_eq`), while `cmp` reads them, so I
+// is stricter than E for the comparisons `diff` makes inside it. Only `shallow_diff`'s caller
+// reads those answers; no order is sorted there.
+// Tested by `value_cmp_is_a_total_order_that_agrees_with_equality` (zedc-zir canon/mod.rs):
+// every pair and triple of its sample values, families sharing B-tree nodes among them
+// (`shared_node_values`), with two broken orders as negative controls.
 impl Ord for Value {
     /// Two 64-bit integers, the commonest pair, are ordered at once; every other pair is walked
     /// (`cmp`), which orders two such integers the same way (`number_cmp`).
