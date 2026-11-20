@@ -2954,7 +2954,11 @@ impl PartialEq for RunRenames {
 //    `Absorb::ty`, `Absorb::sig`, `Sig::replace_in`, `Need::replace_in`, `Ty::replace_in`.
 // 3. A root a walker makes itself, the decoded flat form of a signature
 //    (`Replacer::decoded`, `Settle::known_held`), is pushed on the walker's `kept` before it is
-//    walked, so it lives as long as the memos.
+//    walked, so it lives as long as the memos. The other walkers make no root they walk
+//    (checked for DOC-proofs-in-comments-audit-rest-2): `Subst::known_held` and
+//    `Widen::known_held` return `s`; `HeldFns::known_held` returns `each(s)`, which is not
+//    walked, and keys `families` by the input's `s`; `Absorb::known_held` returns `s` or enters
+//    the input's `s` itself.
 // 4. The one memo kept past a call, [`Renamings`], keeps each signature walked and each
 //    flat form (`Renaming::walked`) for as long as the memos.
 // So every key names a node alive while its map lives. Tests:
