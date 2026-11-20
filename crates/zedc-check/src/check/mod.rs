@@ -10202,8 +10202,11 @@ fn grouped(head: String, parts: Vec<(Span, Msg)>) -> (Msg, Vec<Note>) {
     }
     // The edits in the order of the text, as a corrected line writes them ([`Rewrite::line`]).
     for x in &mut fixes {
-        x.edits.sort_by_key(|(s, _)| (s.start, s.end));
-        x.edits.dedup();
+        // Two texts at one span can alternate, so copies are removed by the full order
+        // (sort_dedup_by); edits of one span keep their order, as a corrected line writes them.
+        zed_collections::sorted::sort_dedup_by(&mut x.edits, |(s, _), (t, _)| {
+            (s.start, s.end).cmp(&(t.start, t.end))
+        });
     }
     fixes.retain(|x| x.edits.windows(2).all(|w| w[0].0.end <= w[1].0.start));
     let dropped = ranks > 0 && fixes.is_empty();

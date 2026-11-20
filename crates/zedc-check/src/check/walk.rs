@@ -103,10 +103,11 @@ pub fn check_with<'a>(t: &Tables<'a>, unit: &'a [Stmt]) -> Info {
     clean_check::flush();
     // Every headline is a sentence, so two errors that differ only by its period are one.
     ck.info.errors.iter_mut().for_each(Error::sentence);
-    ck.info
-        .errors
-        .sort_by(|a, b| (a.span, &a.message, &a.menu).cmp(&(b.span, &b.message, &b.menu)));
-    ck.info.errors.dedup();
+    // Errors equal but for their notes can alternate within one span, message and menu, so
+    // copies are removed by the full order, not by `dedup` after the sort (sort_dedup_by).
+    zed_collections::sorted::sort_dedup_by(&mut ck.info.errors, |a, b| {
+        (a.span, &a.message, &a.menu).cmp(&(b.span, &b.message, &b.menu))
+    });
     ck.info.blocking = blocking;
     ck.info
 }

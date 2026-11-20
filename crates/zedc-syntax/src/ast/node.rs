@@ -452,8 +452,10 @@ pub enum StrPart {
     Hole(Expr),
 }
 
-/// Why an expression could not be built.
-#[derive(Clone, Debug, PartialEq, Eq)]
+/// Why an expression could not be built. The order, field by field, serves only to remove copies
+/// (`zed_collections::sorted::sort_dedup_by` in `check_text`); errors are shown in the order of
+/// their span, message and menu.
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub struct Error {
     /// Where.
     pub span: Span,

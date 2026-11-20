@@ -1,4 +1,5 @@
-//! Sorted lists: sorting with duplicates removed ([`sort_dedup`], [`sort_dedup_by_key`]), the walk
+//! Sorted lists: sorting with duplicates removed ([`sort_dedup`], [`sort_dedup_by_key`],
+//! [`sort_dedup_by`]), the walk
 //! of two sorted lists side by side ([`merge_join`]), and their union in one merge ([`merge_into`],
 //! [`merge`], [`union_all`]), and the lookup of a key in a sorted list of pairs ([`sorted_get`]).
 
@@ -24,6 +25,25 @@ pub fn sort_dedup<T: Ord>(v: &mut Vec<T>) {
 pub fn sort_dedup_by_key<T, K: Ord>(v: &mut Vec<T>, mut key: impl FnMut(&T) -> K) {
     v.sort_by_key(&mut key);
     v.dedup_by(|x, y| key(x) == key(y));
+}
+
+/// `v` sorted stably by `cmp`, an order coarser than equality, with every item equal to an
+/// earlier item of `v` removed. Of the items `cmp` calls equal, the ones kept stay in their order
+/// in `v`. O(n log n) comparisons; one list of n (position, item) pairs.
+///
+/// Complexity tradeoff: `v.sort_by(cmp); v.dedup()` is one sort, but `dedup` removes only
+/// adjacent copies, so where `cmp` calls unequal items equal a copy apart from its first by
+/// another item of its key stays: `(1, 'a'), (1, 'b'), (1, 'a')` by the first field
+/// (DEDUP-keyed-sort-interleaved). Removing each copy within its run of `cmp` by a scan of the
+/// items kept is O(r²) for a run of r. Here two sorts, both O(n log n): by the full order with
+/// the position as tie-break, so the copies of an item are adjacent and the first stands first
+/// and is kept; then by `cmp` with the position as tie-break, which is the stable order.
+pub fn sort_dedup_by<T: Ord>(v: &mut Vec<T>, mut cmp: impl FnMut(&T, &T) -> Ordering) {
+    let mut tagged: Vec<(usize, T)> = std::mem::take(v).into_iter().enumerate().collect();
+    tagged.sort_unstable_by(|(i, x), (j, y)| x.cmp(y).then(i.cmp(j)));
+    tagged.dedup_by(|(_, later), (_, first)| later == first);
+    tagged.sort_unstable_by(|(i, x), (j, y)| cmp(x, y).then(i.cmp(j)));
+    v.extend(tagged.into_iter().map(|(_, x)| x));
 }
 
 /// The value paired with `key` in `pairs`, a list of pairs sorted strictly increasing by their
@@ -213,6 +233,39 @@ mod tests {
         let mut v = vec![(2, 'a'), (1, 'b'), (2, 'c'), (1, 'd'), (0, 'e')];
         sort_dedup_by_key(&mut v, |&(k, _)| k);
         assert_eq!(v, [(0, 'e'), (1, 'b'), (2, 'a')]);
+    }
+
+    /// A copy apart from its first by another item of its key is removed, which a sort by the
+    /// key and a `dedup` leave; every list of up to 5 pairs of `0..2 × 0..2` against a scan that
+    /// keeps the first of each item, in the stable order of the key.
+    #[test]
+    fn by_order_removes_copies_apart() {
+        let by_key = |a: &(u32, u32), b: &(u32, u32)| a.0.cmp(&b.0);
+        let mut v = vec![(1, 0), (1, 1), (1, 0), (0, 1)];
+        let mut old = v.clone();
+        old.sort_by(by_key);
+        old.dedup();
+        assert_eq!(old, [(0, 1), (1, 0), (1, 1), (1, 0)]);
+        sort_dedup_by(&mut v, by_key);
+        assert_eq!(v, [(0, 1), (1, 0), (1, 1)]);
+        for len in 0..=5u32 {
+            for code in 0..4u32.pow(len) {
+                let items: Vec<(u32, u32)> = (0..len)
+                    .map(|i| code / 4u32.pow(i) % 4)
+                    .map(|d| (d / 2, d % 2))
+                    .collect();
+                let mut want: Vec<(u32, u32)> = Vec::new();
+                for x in &items {
+                    if !want.contains(x) {
+                        want.push(*x);
+                    }
+                }
+                want.sort_by(by_key);
+                let mut got = items.clone();
+                sort_dedup_by(&mut got, by_key);
+                assert_eq!(got, want, "{items:?}");
+            }
+        }
     }
 
     /// Every key below, between, at and above the keys of a list, against a scan; and a list
