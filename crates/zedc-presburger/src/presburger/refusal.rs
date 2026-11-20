@@ -548,10 +548,32 @@ impl Classed {
     // one range each cost O(k^2) (the union of a disjunction of k blocks, `exact::blocks_set`,
     // before PRES-cover-moduli-two-disjunctions). Used: the ranges of each class listed, then
     // sorted and merged once (`IntervalSet::from_pieces`, O(P log P) for P ranges in all, O(P)
-    // bytes) and `Classed::new` once per class, O(P log P) in all; the sets of different classes
-    // are then joined as before, listed, O(c·v) for c classes and v values, the cost
-    // `Classed::join` already has for two classes. The groups are kept in the order their
-    // class first came, so the answer does not hang on a hash order.
+    // bytes) and `Classed::new` once per class, O(P log P) in all. The c sets of different
+    // classes are then made one set at once, not joined in turn: a fold of `Classed::join`
+    // lists the union so far at each join of two classes, O(c·V) for V values in all (46.9
+    // times the instructions per eightfold c, 64 to 512, round-1 cross-review, codex seat;
+    // test `joining_many_distinct_classes_scales_and_preserves_the_union`). Used: the class
+    // of the union computed once (below), each set already in it kept as its ranges, each
+    // set of another class listed once (O(v) for its v values, the cost `Classed::join` has
+    // for two classes), then one `from_pieces` and one `Classed::new`: O(P log P + L) for L
+    // values listed. The groups are kept in the order their class first came, so the answer
+    // does not hang on a hash order.
+    //
+    // Proof that the union class is right. Let the sets be S_1..S_c, nonempty, each in the
+    // one form of `Classed::new`, and b the least end of S_1. The differences of the members
+    // of the union are generated (as a group under +) by the differences within each S_i and
+    // the differences b_i - b of one member b_i of each (x - y = (x - b_i) + (b_i - b_j) +
+    // (b_j - y) for x in S_i, y in S_j). Within S_i, the gcd of the differences is its
+    // modulus where S_i is strided (the form keeps the gcd of the members' differences as
+    // the modulus), 1 where it is plain with two or more values (a plain set with two
+    // values of gcd g > 1 would have been given class g by `Classed::new`), 0 for one value.
+    // An infinite end gives two consecutive members, gcd 1. So `step`, the gcd of these, is
+    // the gcd of all the differences of the union, and every member is b mod step. Each
+    // piece then listed is within the union and holds members only where it is a set's
+    // ranges in the union class (kept) or a single listed value or a plain set's range
+    // (where step is 1, or the plain set has one value, itself b mod step). So the pieces'
+    // union met with the class b mod step is the union of the sets: a kept set's ranges met
+    // with its own class give itself, and every other piece holds members only.
     pub fn join_all(sets: impl IntoIterator<Item = Classed>) -> Classed {
         let mut at: HashMap<Congruence, usize> = HashMap::new();
         let mut groups: Vec<(Congruence, Vec<(End, End)>)> = Vec::new();
@@ -565,10 +587,51 @@ impl Classed {
             });
             groups[i].1.extend(c.ranges.into_pieces());
         }
-        groups
-            .into_iter()
+        let merged: Vec<Classed> = (groups.into_iter())
             .map(|(class, pieces)| Classed::new(IntervalSet::from_pieces(pieces), class))
-            .fold(Classed::plain(IntervalSet::empty()), |set, c| set.join(&c))
+            .filter(|set| !set.is_empty())
+            .collect();
+        if merged.len() <= 1 {
+            return (merged.into_iter().next())
+                .unwrap_or_else(|| Classed::plain(IntervalSet::empty()));
+        }
+        // The class of the union, by the proof above: the gcd `step` of each set's own
+        // modulus (1 for a plain set of two or more values) and of its least end less `b`.
+        let mut class = Congruence::top();
+        if let Some((End::Fin(b), _)) = merged[0].ranges.bounds() {
+            let mut step = Num::ZERO;
+            for set in &merged {
+                // The sets are in the order their class first came, not sorted, so a later
+                // one may have no least end: two consecutive members, gcd 1.
+                let Some((End::Fin(lo), hi)) = set.ranges.bounds() else {
+                    step = Num::ONE;
+                    break;
+                };
+                step = step.gcd(&(lo - b));
+                if End::Fin(lo.clone()) != *hi {
+                    match set.strided() {
+                        Some((m, _)) => step = step.gcd(m),
+                        None => step = Num::ONE,
+                    }
+                }
+                if step == Num::ONE {
+                    break;
+                }
+            }
+            if step > Num::ONE {
+                class = Congruence::new(step, b.clone());
+            }
+        }
+        let pieces = (merged.into_iter())
+            .flat_map(|set| {
+                if set.class == class || set.strided().is_none() {
+                    set.ranges.into_pieces()
+                } else {
+                    set.met().into_pieces()
+                }
+            })
+            .collect();
+        Classed::new(IntervalSet::from_pieces(pieces), class)
     }
 
     /// The intersection: the ranges met, in the meet of the classes (by the Chinese remainder

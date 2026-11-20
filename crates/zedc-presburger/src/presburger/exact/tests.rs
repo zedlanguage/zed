@@ -5236,3 +5236,255 @@ fn an_if_chain_of_equal_guards_is_read_with_no_question() {
         1,
     );
 }
+
+/// The disjunction of the ranges `lo <= y <= hi` of `intervals`.
+fn interval_disjunction(intervals: impl IntoIterator<Item = (i64, i64)>) -> Formula {
+    Formula::or(
+        intervals
+            .into_iter()
+            .map(|(lo, hi)| Formula::and(vec![ge(&[("y", 1)], -lo), ge(&[("y", -1)], hi)]))
+            .collect(),
+    )
+}
+
+/// `x == y` with two disjunctions of ranges of `y` (the fast path of [`two_distributed`] for
+/// ranges of one value) and a group of its own over `x` and `z`: the answer is the listed set,
+/// on 200 random cases. From the round-1 cross-review of PRES-cover-moduli-two-disjunctions
+/// (codex seat).
+#[test]
+fn two_disjunctions_of_shared_intervals_match_enumeration() {
+    let mut random = Rng::new(13_357);
+    for _ in 0..200 {
+        let mut intervals = || {
+            (0..4)
+                .map(|_| {
+                    let lo = random.int(-5, 5);
+                    (lo, lo + random.int(0, 3))
+                })
+                .collect::<Vec<_>>()
+        };
+        let f = boxed(Formula::and(vec![
+            eq(&[("x", 1), ("y", -1)], 0),
+            interval_disjunction(intervals()),
+            interval_disjunction(intervals()),
+            // A separate group shares only x and can remove values.
+            ge(&[("x", 1), ("z", -1)], -3),
+        ]));
+        let mut allowance = u64::MAX;
+        let got = tried(&mut allowance, SOLVER, |w| {
+            direct(&f, &a("x"), &IntervalSet::top(), w)
+        })
+        .expect("answered");
+        assert_eq!(got.met(), brute(&f, "x"), "{f}");
+    }
+}
+
+/// Two disjunctions of n disjoint ranges each (`6j..=6j+1` and `6j+3..=6j+4`) of `y == x`:
+/// the answer is empty, and the work grows near-linearly in n, where distributing them formed
+/// all n² pairs (59.5 times the instructions per eightfold n, 16 to 128, codex seat, round 1).
+#[test]
+fn disjoint_shared_intervals_scale_without_forming_pairs() {
+    let run = |n: usize| {
+        let n = n as i64;
+        let f = Formula::and(vec![
+            eq(&[("x", 1), ("y", -1)], 0),
+            interval_disjunction((0..n).map(|j| (6 * j, 6 * j + 1))),
+            interval_disjunction((0..n).map(|j| (6 * j + 3, 6 * j + 4))),
+        ]);
+        let mut w = Work {
+            used: 0,
+            limit: u64::MAX,
+            solver: SOLVER,
+        };
+        let got = direct(&f, &a("x"), &IntervalSet::top(), &mut w).expect("no refusal");
+        assert!(got.expect("answered").is_empty());
+        w.used
+    };
+    println!("disjoint intervals: work {} / {}", run(16), run(128));
+    crate::scaling::check("disjoint shared intervals", 16, |n| {
+        std::hint::black_box(run(n));
+    });
+}
+
+/// [`Classed::join_all`] of n sets, each of its own class, gives the set the pairwise fold of
+/// [`Classed::join`] gives, in either order, and grows near-linearly in n (the fold listed
+/// the union so far at each join: 47 times the instructions per eightfold n, 64 to 512).
+#[test]
+fn joining_many_distinct_classes_scales_and_preserves_the_union() {
+    let inputs = |n: usize| {
+        (0..n as i64).map(move |i| {
+            let lo = 4 * n as i64 * i;
+            let step = i + 2;
+            Classed::new(
+                IntervalSet::of(lo, lo + step),
+                Congruence::new(Num::from(step), Num::from(lo)),
+            )
+        })
+    };
+    let sets: Vec<_> = inputs(20).collect();
+    let old = sets
+        .iter()
+        .fold(Classed::plain(IntervalSet::empty()), |acc, p| acc.join(p));
+    let actual = Classed::join_all(sets.iter().cloned());
+    assert_eq!(actual.count(), 40);
+    assert_eq!(actual, old);
+    assert_eq!(Classed::join_all(sets.into_iter().rev()), old);
+    crate::scaling::check("joining distinct classes", 64, |n| {
+        std::hint::black_box(Classed::join_all(inputs(n)));
+    });
+}
+
+/// `x == 2y` with two disjunctions of bounds on `y`, within `-4..=4`: the strided answer
+/// `{-4, 2, 4}` of the distributed path matches the listed set.
+#[test]
+fn two_disjunctions_keep_strides_within_the_common_hull() {
+    let f = boxed(Formula::and(vec![
+        eq(&[("x", 1), ("y", -2)], 0),
+        Formula::or(vec![ge(&[("y", -1)], -1), ge(&[("y", 1)], -1)]),
+        Formula::or(vec![ge(&[("y", -1)], -2), ge(&[("y", 1)], -1)]),
+    ]));
+    let want = brute(&f, "x");
+    assert_eq!(
+        want,
+        IntervalSet::from_pieces(vec![
+            (End::of(-4), End::of(-4)),
+            (End::of(2), End::of(2)),
+            (End::of(4), End::of(4)),
+        ])
+    );
+    let mut allowance = u64::MAX;
+    let got = tried(&mut allowance, SOLVER, |w| {
+        direct(&f, &a("x"), &IntervalSet::of(-4, 4), w)
+    })
+    .expect("answered");
+    assert_eq!(got.met(), want, "{f}");
+}
+
+/// A union whose class is that of a long run (step 2 to 32 000) keeps the run as one range
+/// when a set of another class (step 4) and a single value come with it: the cost is a fixed
+/// multiple of the union of the run alone, not one listing of its 16 000 values.
+#[test]
+fn joining_classes_keeps_the_run_at_the_union_stride() {
+    let progression = |step, lo, hi| {
+        Classed::new(
+            IntervalSet::of(lo, hi),
+            Congruence::new(Num::from(step), Num::from(lo)),
+        )
+    };
+    let end = 32_000;
+    let want = progression(2_i64, 0, end);
+    let direct_union = || Classed::join_all([progression(2_i64, 0, 4), progression(2_i64, 4, end)]);
+    let mixed_union = || {
+        Classed::join_all([
+            progression(4_i64, 0, 4),
+            Classed::plain(IntervalSet::single(2)),
+            progression(2_i64, 4, end),
+        ])
+    };
+    assert_eq!(mixed_union(), want);
+    crate::scaling::compare_costs(
+        "the union stride keeps its long run",
+        "a constant number of ranges should be combined without listing the long run",
+        10.5,
+        || {
+            std::hint::black_box(direct_union());
+        },
+        || {
+            std::hint::black_box(mixed_union());
+        },
+    );
+}
+
+/// [`Classed::join_all`] equals the pairwise fold of [`Classed::join`] (one form, so `==`) on
+/// 2 000 random lists of up to five sets of mixed classes, single values, plain ranges and
+/// rays with no end on one side, in every place of the list (a ray after a set with a finite
+/// least end is the case the union class takes as gcd 1).
+#[test]
+fn joining_mixed_classes_and_rays_agrees_with_the_fold() {
+    let mut random = Rng::new(271_828);
+    for _ in 0..2_000 {
+        let sets: Vec<Classed> = (0..random.int(0, 5))
+            .map(|_| {
+                let lo = random.int(-12, 12);
+                let hi = lo + random.int(0, 10);
+                match random.int(0, 4) {
+                    0 => Classed::plain(IntervalSet::range(End::NegInf, End::of(hi))),
+                    1 => Classed::plain(IntervalSet::range(End::of(lo), End::PosInf)),
+                    2 => Classed::plain(IntervalSet::of(lo, hi)),
+                    _ => Classed::new(
+                        IntervalSet::of(lo, hi),
+                        Congruence::new(Num::from(random.int(2, 6)), Num::from(random.int(0, 5))),
+                    ),
+                }
+            })
+            .collect();
+        let old = (sets.iter()).fold(Classed::plain(IntervalSet::empty()), |acc, p| acc.join(p));
+        assert_eq!(Classed::join_all(sets.iter().cloned()), old, "{sets:?}");
+    }
+}
+
+/// [`two_ranges_of_one_value`], called itself (so the fast path, not the distribution after
+/// it, answers), equals the listed set on 2 000 random groups: the row `x == y` (either sign),
+/// the box rows, and rows of one atom (x or y, coefficients -3 to 3, inequalities and
+/// equalities, some with no integer root) in the group and in up to four blocks of each
+/// disjunction, a block possibly with no rows (every value).
+#[test]
+fn two_ranges_of_one_value_match_enumeration() {
+    let con = |f: Formula| match &f {
+        Formula::Con(c) => c.clone(),
+        f => panic!("a single row: {f}"),
+    };
+    let mut random = Rng::new(161_803);
+    let unary = |random: &mut Rng| {
+        let name = ["x", "y"][random.int(0, 1) as usize];
+        let c = [-3, -2, -1, 1, 2, 3][random.int(0, 5) as usize];
+        let k = random.int(-9, 9);
+        if random.int(0, 3) == 0 {
+            eq(&[(name, c)], k)
+        } else {
+            ge(&[(name, c)], k)
+        }
+    };
+    for _ in 0..2_000 {
+        let wire = if random.int(0, 1) == 0 {
+            eq(&[("x", 1), ("y", -1)], 0)
+        } else {
+            eq(&[("x", -1), ("y", 1)], 0)
+        };
+        let mut group = vec![
+            wire,
+            ge(&[("x", 1)], B),
+            ge(&[("x", -1)], B),
+            ge(&[("y", 1)], B),
+            ge(&[("y", -1)], B),
+        ];
+        for _ in 0..random.int(0, 2) {
+            group.push(unary(&mut random));
+        }
+        let disjunction = |random: &mut Rng| -> Vec<Vec<Formula>> {
+            (0..random.int(1, 4))
+                .map(|_| (0..random.int(0, 3)).map(|_| unary(random)).collect())
+                .collect()
+        };
+        let (da, db) = (disjunction(&mut random), disjunction(&mut random));
+        let or = |d: &Vec<Vec<Formula>>| {
+            Formula::or(d.iter().map(|b| Formula::and(b.clone())).collect())
+        };
+        let f = Formula::and(group.iter().cloned().chain([or(&da), or(&db)]).collect());
+        let rows = |d: Vec<Vec<Formula>>| -> Vec<Vec<Con>> {
+            d.into_iter()
+                .map(|b| b.into_iter().map(con).collect())
+                .collect()
+        };
+        let group: Vec<Con> = group.into_iter().map(con).collect();
+        let mut w = Work {
+            used: 0,
+            limit: u64::MAX,
+            solver: SOLVER,
+        };
+        let got = two_ranges_of_one_value(&group, &rows(da), &rows(db), &a("x"), &mut w)
+            .expect("no refusal")
+            .expect("of the form");
+        assert_eq!(got.met(), brute(&f, "x"), "{f}");
+    }
+}

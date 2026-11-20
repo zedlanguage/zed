@@ -66,7 +66,7 @@ use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::rc::Rc;
 
 use zed_graph::UnionFind;
-use zedc_int::int::{Int, range_is_empty, range_meet, row_range};
+use zedc_int::int::{Int, IntRange, meet_range, range_is_empty, range_meet, row_range};
 use zedc_lattice::interval::{End, IntervalSet, Num};
 use zedc_lattice::lattice::Congruence;
 
@@ -2076,7 +2076,8 @@ fn certificates<'s>(
 // product over its disjunctions; here only a group with one disjunction is distributed, k
 // copies of `R` for k blocks, which is the size of that group's normal form, every row of
 // them charged, so the cost is O(k |R|) row reads plus the projections, under the allowance of
-// `tried`; a group with two disjunctions is not distributed (`None`, the cover is asked).
+// `tried`. A group with exactly two disjunctions goes to [`two_distributed`] (its cost there);
+// one with three or more is not distributed (`None`, the cover is asked).
 fn direct_noting(
     f: &Formula,
     s: &Atom,
@@ -4124,21 +4125,29 @@ fn met(
 /// point of one of its disjuncts, so the projection of the union is the union of the
 /// projections, each exact by [`met`]'s rule for one disjunction.
 ///
-/// PRES-cover-moduli-two-disjunctions (pres8, 2026-11-20): in every group the 16 refused cases
-/// of l01_25 `s22::the_cover_answers_where_the_solver_alone_answered_on_three_shapes_at_moduli_5_and_7`
-/// declined, one disjunction is the outer `if` of the shape (`if x >= 0 {c} else {y}`, or
-/// `if c >= 1 {y} else {-y}`), 2 blocks, and the other the remainder chain, 8 to 27 blocks; the
-/// two share the chain's result atom (and `s`), so the group is one and the cover asked 11 to
-/// 36 questions of the whole formula, past `EXACT_LIMIT`. Distributed, 2 copies of the chain.
+/// PRES-cover-moduli-two-disjunctions (pres8, 2026-11-20): in every group of the 16 cases of
+/// l01_25 `s22::the_cover_answers_where_the_solver_alone_answered_on_three_shapes_at_moduli_5_and_7`
+/// declined here before this change (14 still refused when it was made, after
+/// PRES-project-each-naming), one disjunction is the outer `if` of the shape (`if x >= 0 {c}
+/// else {y}`, or `if c >= 1 {y} else {-y}`), 2 blocks, and the other the remainder chain, 8 to
+/// 27 blocks; the two share the chain's result atom (and `s`), so the group is one and the
+/// cover asked 11 to 36 questions of the whole formula, past `EXACT_LIMIT`. Distributed, 2
+/// copies of the chain.
 ///
 /// Complexity tradeoff: naive version, declining (`None`), so the cover asks its questions of
-/// the whole formula, each O(size) work, one for each few values of the answer. Used: p = min(|A|,
-/// |B|) calls of [`met`] with one disjunction, each O((|R| + |Ai|) · q + rows(B)) rows copied and
-/// charged, q = max(|A|, |B|), plus the q projections: O(p · q · (|R| + row)) in all, linear in
-/// the larger disjunction for a fixed smaller one (the outer `if` above: 2), and quadratic,
-/// O(|A| · |B|), where both grow. Every row copied is charged to `work`, so a large product is
-/// refused at the allowance of [`tried`] and goes to the cover as before; nothing answered
-/// before is refused for it (the cover's loop then runs with its own whole limit).
+/// the whole formula, each O(size) work, one for each few values of the answer. Used: first
+/// [`two_ranges_of_one_value`], O(N log N) for N rows, where every row reads one value; else
+/// p = min(|A|, |B|) calls of [`met`] with one disjunction, the i-th copying |R| + |Ai| +
+/// rows(B) rows here and (|R| + |Ai|) · q more in [`met`], q = max(|A|, |B|): O(p·q·|R| +
+/// q·rows(small) + p·rows(large)) rows copied, each charged to `work`, plus the p·q block
+/// projections and the union ([`Classed::join_all`]). Linear in the larger disjunction for a
+/// fixed smaller one (the outer `if` above: 2), and quadratic, O(|A| · |B|), where both grow,
+/// even where the answer is empty (two disjunctions of n disjoint ranges each of a value `t`
+/// other than `s`, met through a row other than `s == t`: 59.5 times the work per eightfold n
+/// before [`two_ranges_of_one_value`] took the case `s == t`). A large product is refused at
+/// the allowance of [`tried`] and goes to the cover as before; nothing answered before is
+/// refused for it (the cover's loop then runs with its own whole limit). The quadratic case
+/// is QUESTIONS.md A171 for the author.
 ///
 /// Why no method is linear in |A| + |B| in general (counting rows and pieces, as `work` does):
 /// the answer alone can have |A| · |B| pieces. Let `A` be the blocks `t == M·2^i` (i < n) and
@@ -4147,9 +4156,22 @@ fn met(
 /// (from `v1 + v3 == 2·v2`, `M·(2^i1 + 2^i3 - 2^(i2+1)) == 2^j1 + 2^j3 - 2^(j2+1)`, whose
 /// right side is below `M` in size, so both sides are 0, and a sum of two powers of 2 is
 /// `2^(k+1)` only as `2^k + 2^k`: `i1 == i2 == i3` and `j1 == j2 == j3`). So a piece, a range
-/// met with one class, holds at most two of them, and the answer has at least n²/2 pieces. The
-/// constants have O(n) bits, so in bits the input is O(n²) as well; the bound is in the units
-/// `work` counts.
+/// met with one class (an arithmetic progression of members only), holds at most two of
+/// them, and the answer has at least n²/2 pieces. Here M has O(n) bits, so the input has
+/// O(n²) bits. The bound holds in bits too, with input of O(n log n) bits (round-1
+/// cross-review, codex seat, checked by its probe `projection-bounds.rs` and by the derivation
+/// here): take for the a_i and b_j the n = 2^d numbers below 3^d whose ternary digits are 0
+/// and 1, and M = 3^d, each constant O(d) = O(log n) bits; from `v1 + v3 == 2·v2`,
+/// `M·(a1 + a3 - 2·a2) == b1 + b3 - 2·b2`, whose right side is at most 3^d - 1 in size, so
+/// both are 0, and `a1 + a3 == 2·a2` with digits 0 and 1 adds with no carry, so digit by digit
+/// `a1 == a2 == a3` (a set with no three terms in arithmetic progression, Salem and Spencer
+/// 1942, doi:10.1073/pnas.28.12.561), and so for the b. Deciding emptiness alone is no easier
+/// (codex seat, round 1; checked here): for lists a_i, b_j, c_k of 3SUM, let `A` be the blocks
+/// `x == a_i`, `B` the blocks `y == b_j`, and `R` the rows `0 <= z_k <= 1`, `Σ z_k == 1` and
+/// `x + y + Σ c_k·z_k == 0`. Integer `z_k` with sum 1 pick one k, so the group has a point
+/// exactly when some a_i + b_j + c_k is 0, from input of linear size; a method near-linear on
+/// every group would decide 3SUM in near-linear time, against the 3SUM conjecture
+/// (Gajentaan and Overmars 1995, doi:10.1016/0925-7721(95)00022-2).
 fn two_distributed(
     group: &[Con],
     a: &[Vec<Con>],
@@ -4160,6 +4182,9 @@ fn two_distributed(
 ) -> Result<Option<Classed>, Refusal> {
     if TWO_DISTRIBUTED_OFF.get() {
         return Ok(None);
+    }
+    if let Some(set) = two_ranges_of_one_value(group, a, b, s, work)? {
+        return Ok(Some(set));
     }
     let (small, large) = if a.len() <= b.len() { (a, b) } else { (b, a) };
     let mut each = Vec::with_capacity(small.len());
@@ -4180,6 +4205,100 @@ fn two_distributed(
     Ok(Some(Classed::join_all(each)))
 }
 
+/// The projection onto `s` of the group of [`two_distributed`] where one row of `group` is
+/// `s == t` (`s - t == 0` or `t - s == 0`) for an atom `t`, and every other row of `group` and
+/// of the blocks of `a` and `b` reads `s` or `t` alone: then the answer is the range of the
+/// other rows of `group`, met with the union of the ranges of the blocks of `a`, met with that
+/// of `b`. `None` where the group is not of this form.
+///
+/// Exact: the group reads no atom but `s` and `t` (every row is checked), and at its points
+/// `s == t`, so a point is one value v for both, and each row of one atom is a range of v
+/// ([`row_range`]: `a·x + k >= 0` is `x >= ⌈-k/a⌉` for a > 0, `x <= ⌊k/-a⌋` for a < 0, an
+/// equality its one root, or no value where `a` does not divide `k`). A block, a conjunction,
+/// is the meet of its rows' ranges, one range; a disjunction the union of its blocks' ranges;
+/// the group the meet of its rows' range and the two unions. A block with no rows is every
+/// value (the empty meet).
+///
+/// From the round-1 cross-review of PRES-cover-moduli-two-disjunctions (codex seat's
+/// prototype, rewritten here on the shared [`row_range`], which also takes coefficients other
+/// than ±1): two disjunctions of n disjoint ranges cost 59.5 times the work per eightfold n
+/// when distributed, every pair formed though the answer is empty.
+// Complexity tradeoff: naive version, the distribution of [`two_distributed`], O(|A|·|B|)
+// pairs, each charged. Used: one pass over the N rows, each read by `row_range` (one or two
+// floor divisions), one range per block, then two `IntervalSet::from_pieces` (sort and merge,
+// O(N log N) time, O(N) bytes) and two meets, O(N) pieces: near-linear, with no pair formed.
+// Measured by `disjoint_shared_intervals_scale_without_forming_pairs`.
+fn two_ranges_of_one_value(
+    group: &[Con],
+    a: &[Vec<Con>],
+    b: &[Vec<Con>],
+    s: &Atom,
+    work: &mut Work,
+) -> Result<Option<Classed>, Refusal> {
+    work.read(group.len() as u64)?;
+    let wire = group.iter().position(|c| {
+        let mut terms = c.lin.terms.iter();
+        let (Some((x, kx)), Some((y, ky)), None) = (terms.next(), terms.next(), terms.next())
+        else {
+            return false;
+        };
+        c.rel == Rel::Eq
+            && c.lin.constant.is_zero()
+            && (x == s || y == s)
+            && (kx == &Int::from(1) || kx == &Int::from(-1))
+            && *ky == -kx
+    });
+    let Some(wire) = wire else {
+        return Ok(None);
+    };
+    let t = (group[wire].lin.terms.keys())
+        .find(|x| *x != s)
+        .expect("the row `s == t` has an atom other than `s`")
+        .clone();
+    // The range of v that `rows` allow, or `None` where a row reads an atom other than `s` and
+    // `t`, or more than one atom.
+    let range = |rows: &mut dyn Iterator<Item = &Con>| -> Option<IntRange> {
+        let mut r: IntRange = (None, None);
+        for c in rows {
+            let mut terms = c.lin.terms.iter();
+            let (Some((x, k)), None) = (terms.next(), terms.next()) else {
+                return None;
+            };
+            if x != s && *x != t {
+                return None;
+            }
+            let (add, none) = row_range(k, &c.lin.constant, c.rel == Rel::Eq);
+            if none {
+                return Some((Some(Int::from(1)), Some(Int::from(0))));
+            }
+            meet_range(&mut r, add);
+        }
+        Some(r)
+    };
+    let piece = |r: IntRange| -> Option<(End, End)> {
+        (!range_is_empty(&r)).then(|| {
+            let end = |v: Option<Int>, inf: End| v.map_or(inf, |v| End::Fin(Num::from(&v)));
+            (end(r.0, End::NegInf), end(r.1, End::PosInf))
+        })
+    };
+    let Some(rows) = range(&mut (group[..wire].iter()).chain(&group[wire + 1..])) else {
+        return Ok(None);
+    };
+    let mut answer = IntervalSet::from_pieces(piece(rows).into_iter().collect());
+    for blocks in [a, b] {
+        let mut pieces = Vec::with_capacity(blocks.len());
+        for block in blocks {
+            work.read(block.len() as u64 + 1)?;
+            let Some(r) = range(&mut block.iter()) else {
+                return Ok(None);
+            };
+            pieces.extend(piece(r));
+        }
+        answer = answer.meet(&IntervalSet::from_pieces(pieces));
+    }
+    Ok(Some(Classed::plain(answer)))
+}
+
 /// Whether a group of [`met`] with rows `group` and two or more disjunctions `ors` of `alts`
 /// has a point, where none of it reads `s` (as in the emptiness check of [`has_points`], whose
 /// `s` occurs nowhere): such a group bounds no value of `s`, so its projection onto `s` is every
@@ -4187,8 +4306,9 @@ fn two_distributed(
 /// read by every one of them (the least such, so the same on every run), the group is projected
 /// onto `t` by [`met`] itself, which joins its items through atoms other than `t` only, and has
 /// a point exactly when that projection is not empty. `None` where no atom is shared by all, or
-/// where the projection onto `t` is not exact (again two disjunctions in one of its groups;
-/// that inner call cuts no further).
+/// where the projection onto `t` declines (three or more disjunctions in one of its groups;
+/// that inner call cuts no further, but distributes a group of exactly two disjunctions by
+/// [`two_distributed`], at its cost).
 ///
 /// PRES-cover-refusals-moduli: in the 48 cases at moduli 5 and 7 of the l01_25 test
 /// `the_cover_answers_where_the_solver_alone_answered_on_two_shapes_at_moduli_5_and_7`, 10
@@ -4198,7 +4318,8 @@ fn two_distributed(
 /// remainder atom, does not answer them: the disjunction over `x` alone reads no remainder,
 /// so at every value of `q1` two disjunctions remain. Cost: one pass over the atoms of the
 /// disjunctions to find `t`, then [`met`] on the group, linear in its rows and blocks plus
-/// their projections, the same as the group would cost were it answered directly; one
+/// their projections, the same as the group would cost were it answered directly (with the
+/// cost of [`two_distributed`] where a group of it has exactly two disjunctions); one
 /// cut per group, never nested, so a chain of tied groups cannot multiply it. Measured
 /// (release, instructions less the startup run, 2026-11-18): 8.35 and 8.38 times the work per
 /// eightfold n at m = 5 (n 64 to 4096), 8.18 and 8.24 at m = 40; eight times m costs no more
