@@ -2046,6 +2046,25 @@ fn r10_map_by_a_chain_function_agrees_with_e() {
             ),
             None,
         ),
+        // Neon round 2, gap 1: an open lambda keeps a forward with held names beside a
+        // function `id` the caller holds itself; E gives both `id`s one name.
+        (
+            "open_lambda_with_held_names_beside_the_function",
+            format!(
+                "{id}h0(positional m) = m.map(id);\n\
+                 outer(positional a) = (m -> (h0(m), x -> (x, m)), id, a);\n"
+            ),
+            None,
+        ),
+        // Neon round 2, gap 2: two open lambdas each keep a forward with an internal result.
+        (
+            "two_open_lambdas_each_with_an_internal_result",
+            "h0(positional f, positional m) = m.map(f).map(f);\n\
+             outer(positional a) = ((f, m) -> (h0(f, m), x -> (x, m)), \
+             (g, n) -> (h0(g, n), y -> (y, n)), z -> (z, z), a);\n"
+                .to_string(),
+            None,
+        ),
         (
             "constant_lambda_passed_down",
             "h0(positional f, positional m) = m.map(f);\nh1(positional m) = h0(x -> 0, m);\n\
