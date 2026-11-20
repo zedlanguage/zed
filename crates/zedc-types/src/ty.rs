@@ -22473,17 +22473,73 @@ impl Scope {
             let slot = self.kept_slot(v, hoisted);
             self.names.entry(v.clone()).or_default().push(slot);
         }
+        // What a failed test leaves of an unbounded own variable kept by its written name is
+        // printed by that name too, as the leftover of a free one is joined to it below: with
+        // `r: T` written, `g(positional r: T) = r else 0` is `T -> 0 | T`, not `T -> _`, which
+        // would say the result takes every value. 9ff4e6673 made such a variable a
+        // [`VarSlot::Name`], and the join, which reads only [`VarSlot::Free`] slots, left its
+        // leftover alone, printed `_` where it stands once (found by proofdoc4c).
+        let mut kept_left: Vec<(usize, Arc<str>)> = Vec::new();
         for need in &sig.needs {
             let (NeedKind::Narrow(_), Some(left)) = (&need.kind, &need.result) else {
                 continue;
             };
-            let free = |t: &Ty| match t.as_var().and_then(|v| self.slot(v)) {
-                Some(&VarSlot::Free(k)) => Some(k),
-                _ => None,
-            };
-            if let (Some(a), Some(b)) = (free(&need.on), free(left)) {
-                let (a, b) = (self.root(a), self.root(b));
-                self.same[a.max(b)] = a.min(b);
+            let slot = |t: &Ty| t.as_var().and_then(|v| self.slot(v));
+            match (slot(&need.on), slot(left)) {
+                (Some(&VarSlot::Free(a)), Some(&VarSlot::Free(b))) => {
+                    let (a, b) = (self.root(a), self.root(b));
+                    self.same[a.max(b)] = a.min(b);
+                }
+                (Some(VarSlot::Name(name)), Some(&VarSlot::Free(b)))
+                    if need
+                        .on
+                        .as_var()
+                        .is_some_and(|v| sig.own.contains(v) && !sig.bounds.contains_key(v)) =>
+                {
+                    kept_left.push((b, name.clone()));
+                }
+                _ => {}
+            }
+        }
+        // Why each leftover so named is printed as the kept variable, step by step. (1) Every
+        // free-to-free join is made first, so a leftover of a leftover (`(r else 0) else 1`)
+        // is in one tree with the first, whatever the order of the needs; the name goes to
+        // the root of that tree. (2) A root given two different names is left free, as
+        // before: the text then prints it by its own count, never one name for two variables.
+        // (3) Each own unbounded variable whose free slot is in a named tree takes the name
+        // as a [`VarSlot::Name`] slot, the slot of the variable it is left of, so it prints
+        // where it stands exactly as that variable does; [`Scope::close`] pops it as it pops
+        // the kept one, and removing the name from [`Scope::printed`] twice is harmless.
+        // (4) [`Sig::standing_twice`] opens on an empty scope, where the two are free and
+        // joined, so it counts them together, as the printed text, which names both, agrees.
+        // Tests: `what_a_failed_test_leaves_of_a_kept_variable_prints_by_its_written_name`
+        // (red before: `T -> _`), and l01_29 `fresh_names::
+        // what_else_leaves_of_a_written_variable_prints_by_its_written_name` (red before:
+        // `0 -> (T, T) -> (_, T)`). Not tested: a chain of leftovers, which rests on (1).
+        // Cost: one pass over the needs and one over the own variables, with a hash map by
+        // root, O(needs + own), the order of the opening.
+        if !kept_left.is_empty() {
+            let mut named: HashMap<usize, Option<Arc<str>>> = HashMap::new();
+            for (b, name) in kept_left {
+                let root = self.root(b);
+                named
+                    .entry(root)
+                    .and_modify(|n| {
+                        if n.as_ref() != Some(&name) {
+                            *n = None;
+                        }
+                    })
+                    .or_insert(Some(name));
+            }
+            for v in sig.own.iter().filter(|v| !sig.bounds.contains_key(*v)) {
+                let Some(&VarSlot::Free(k)) = self.slot(v) else {
+                    continue;
+                };
+                if let Some(Some(name)) = named.get(&self.root(k)) {
+                    let name = name.clone();
+                    let slots = self.names.get_mut(v).expect("opened above");
+                    *slots.last_mut().expect("opened above") = VarSlot::Name(name);
+                }
             }
         }
         out
@@ -23823,12 +23879,20 @@ impl Sig {
     // which changes it. (1) Its [`Shared`] passes over the closed parts, where the print's
     // [`Shared::of`] passes over only the shared ones: a closed part holds no place of a
     // variable, the argument at [`Shared`]'s `closed`. (2) Its scope starts empty, where
-    // zedc-check's `sig_text` prints by [`Sig::text_named`], whose [`Scope::named`] starts
-    // with outer names: those are [`VarSlot::Name`] entries and add no entry to `same`, and
-    // [`Scope::open`] gives each unbounded own variable a new [`VarSlot::Free`] pushed over
-    // any entry of its name, so the numbers of the free slots, the places each is met at,
-    // and so the counts, are the same; only the names printed for bounded variables may
-    // differ, and those are counted here by the variable, not by the name. Tests
+    // zedc-check's `sig_text` prints by [`Sig::text_around`], whose [`Scope::around`] starts
+    // with outer names and the kept written names ([`Around::kept`], 9ff4e6673): an outer
+    // name is a [`VarSlot::Name`] entry and adds no entry to `same`; [`Scope::open`] gives
+    // each unbounded own variable that is not kept a new [`VarSlot::Free`] pushed over any
+    // entry of its name, so its places and its count are the same here and there, though
+    // the numbers of the free slots may differ (they are read here by the variable, not by
+    // the number); a kept variable is a [`VarSlot::Name`] there, printed by its name
+    // wherever it stands, and `sig_text` drops the kept ones before it asks, so their
+    // counts are never read; what a failed test leaves of a kept variable is printed by its
+    // name too ([`Scope::open`], found by proofdoc4c: it printed `_`), and here, where both
+    // are free, the two are joined and counted together, so a leftover so placed is in this
+    // set and printed by name there, which agree. Only the names printed for bounded
+    // variables may differ, and those are counted here by the variable, not by the name.
+    // Tests
     // (l01_26_type_resolution `standing_twice`): the three programs of the three differences
     // of the old walk, `the_variables_standing_twice_are_the_ones_printed_by_name` over
     // generated signatures, which compares this set with the names the print writes, and
@@ -24323,6 +24387,38 @@ mod tests {
             range: None,
         };
         Sig::one(vec![x], vec![t], result)
+    }
+
+    #[test]
+    fn what_a_failed_test_leaves_of_a_kept_variable_prints_by_its_written_name() {
+        // `g(positional r: T) = r else 0` as a signature: `A` is the parameter's variable,
+        // `L` what `else` leaves of it ([`Narrow`]), the result `0 | L`. `Scope::open` prints
+        // the two as one variable, which stands twice. With `A` kept by its written name `T`
+        // ([`Around::kept`]), `L` must still be printed as `A` is, `T`, not `_`, which would
+        // say the result takes every value; and [`Sig::standing_twice`] must name `L` either
+        // way, since `zedc-check`'s `sig_text` reads it for a variable it prints with the
+        // kept names (found by proofdoc4c, checking `standing_twice` against 9ff4e6673).
+        let zero = Ty::lit(&Value::Int(0));
+        let mut s = one_of(Ty::var("A".into()), zero.union(&Ty::var("L".into())));
+        s.own = ["A".into(), "L".into()].into_iter().collect();
+        s.needs.push(Need {
+            on: Ty::var("A".into()),
+            kind: NeedKind::Narrow(Narrow::Loose),
+            result: Some(Ty::var("L".into())),
+            span: Span { start: 0, end: 1 },
+            alike: Arc::from([]),
+            via: CallPath::default(),
+        });
+        s.note_held();
+        assert_eq!(s.to_string(), "T -> 0 | T");
+        let kept: [(Arc<str>, Arc<str>); 1] = [("A".into(), "T".into())];
+        let around = Around {
+            kept: &kept,
+            ..Around::default()
+        };
+        assert_eq!(s.text_around(around), "T -> 0 | T");
+        let twice = s.standing_twice();
+        assert!(twice.contains("L"), "{twice:?}");
     }
 
     /// A compact forward of `need_count` results, with exits at the offsets `exits` (each an

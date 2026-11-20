@@ -304,6 +304,30 @@ fn a_written_name_a_function_around_binds_is_printed_apart() {
     assert!(out.contains("this expression is 0 -> T"), "{out}");
 }
 
+#[test]
+fn what_else_leaves_of_a_written_variable_prints_by_its_written_name() {
+    // `r else 0` leaves `r` without its atoms, which is printed as `r`'s own variable
+    // (`Scope::open` joins the two by the `Narrow` need): `T -> 0 | T` with no variable
+    // written. With `T` written, the variable is kept, and its leftover must still print `T`,
+    // not `_`, which says the result takes every value (found by proofdoc4c, checking
+    // `Sig::standing_twice` against 9ff4e6673). A `T` written once is refused, so the
+    // written form writes it for two parameters.
+    for (src, shown) in [
+        ("g(positional r) = r else 0;\n", "0 -> T -> 0 | T"),
+        (
+            "g(positional r: T, positional s: T) = (r else 0, s);\n",
+            "0 -> (T, T) -> (0 | T, T)",
+        ),
+    ] {
+        let out = rejected(&format!("{src}main(m: MainArgs) {{ m.stdout <- [g]; }}\n"));
+        assert!(
+            out.contains(&format!("`m.stdout <- [g] : {shown}`")),
+            "{src}{:?}\n{out}",
+            lines_with(&out, "m.stdout <- [g]")
+        );
+    }
+}
+
 /// `ap` takes a pair of two `int | #x`, so a message about it defines that part; the program
 /// binds `defs` too.
 fn defining(defs: &str) -> String {

@@ -631,14 +631,17 @@ none is closed here.
 
 | Crate | Entries read | Found | Already there | Added or completed | Marked unproved | Corrected |
 |---|---|---|---|---|---|---|
-| zedc-types | 129 | 107 | 94 | 10 | 3 | 0 |
+| zedc-types | 129 | 107 | 94 | 9 | 3 | 1 |
 
 The three marked unproved: a034e80cd's claim is false for a written difference (red probe
 below; the fix is in zedc-check, row FAIL-ty-diff-function-rows); 27e8e2464's "equal
 signatures have equal digests" is open where one keeps a compact forward (row
 FAIL-map-chain-d6-digest owes the test); dd8b42f68's "the shape of its own is the first of its
 bucket" is open where an earlier shape has the same class places and keys (row
-PROOF-types-own-shape-first-of-bucket).
+PROOF-types-own-shape-first-of-bucket). The one corrected is 305ad0293's `standing_twice`
+claim, made false by 9ff4e6673, which landed while this section was being merged. A written
+variable that a failed test narrows lost its name in what the test leaves, so the print
+showed `_` there. It is fixed at `Scope::open`, with a red and then green test (row below).
 
 | Source | Claim | Code site | Status |
 |---|---|---|---|
@@ -689,7 +692,7 @@ PROOF-types-own-shape-first-of-bucket).
 | e5a605a6e | a joined row costs a bounded factor of the rows written out | `Comparing::row_in` | Already there (stated as measured, not proved; a cost, not a verdict) |
 | e82d77ca9 | `closed_form` gives what `fits_read` gives | `Comparing::closed_form` | Already there |
 | 1c2b6a270 | a need field added later fails to compile in `debug_sig` | `debug_sig` (destructured with no `..`) | Already there |
-| 305ad0293 | `Sig::standing_twice` counts as the printer counts, so the two never differ | `Sig::standing_twice` | Completed: the same three steps of the print, and why neither difference (closed parts passed over; the outer names of `Sig::text_named`) changes a count; tests and what they cannot catch |
+| 305ad0293 | `Sig::standing_twice` counts as the printer counts, so the two never differ | `Sig::standing_twice`, `Scope::open` | Corrected. The steps are at the site: the same three steps of the print, and why neither difference changes a count (closed parts are passed over; the outer and kept names of `Sig::text_around`). The claim was false after 9ff4e6673. That commit prints a written variable by its kept name, as a `VarSlot::Name`, and `Scope::open` joined a `Narrow` leftover only to a free variable. So `g(positional r: T) = r else 0` printed `T -> _` where Display prints `T -> 0 \| T`, and `standing_twice` named a leftover that the print wrote `_`. Red test: zedc-types `what_a_failed_test_leaves_of_a_kept_variable_prints_by_its_written_name`, which printed `T -> _`. Fix: `Scope::open` gives the leftover the kept name, after every free-to-free join. Green: the same test, plus l01_29 `fresh_names::what_else_leaves_of_a_written_variable_prints_by_its_written_name` |
 | 4ef43bf6c | nine guards no input reaches | `Replace::made_held`, `Need::site_mut`, `fits_alone`, `Bound::pin` | Already there but `Bound::pin`: completed (both callers pass one bucket's slice and its own `exact`; the slice rises) |
 | 400b14585 | `VarBits` cost | `VarBits` | Already there; the O(n²) case of every bit is named at the site (row CK-every-bit) |
 | 6e2e39396 | a remap's rank | `NeedKind::Remap`; proof at zedc-check `Ck::remap_of` | Already there |
