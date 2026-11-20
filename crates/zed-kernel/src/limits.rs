@@ -156,7 +156,9 @@ pub fn proc_bytes(path: &str, key: &str) -> Option<u64> {
 /// ` kB`, as Linux writes `VmData:   1234 kB`: the count times 1024 (the kernel's kB is
 /// 1024 bytes, `proc(5)`). `key` is written without its colon, and the colon must follow it,
 /// so `VmData` does not take a line `VmDataX:`. `None` where no line has the field, its value
-/// is not a count in kB, or the bytes pass `u64`. Linear in the length of `text`.
+/// is not a count in kB, or the bytes pass `u64`. Linear in the length of `text`. Test:
+/// `a_proc_field_is_read_in_kib_and_only_by_its_whole_key` (this module), on written text and
+/// the real `/proc/meminfo`; it cannot catch a kernel that writes another unit.
 pub fn proc_kib(text: &str, key: &str) -> Option<u64> {
     let value = text
         .lines()

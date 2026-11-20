@@ -1120,7 +1120,54 @@ Not started.
 
 ## proofdoc4f: zed-kernel, zedc-elab, zedc-base
 
-Not started.
+The first 10 of the 145 entries of list f (all zed-kernel), in list order, each message and its
+whole diff in the crate, with every claim checked at its site at base ae22906d0. The other 135
+were not read (below): this helper stopped for lack of room, as the coordinator allowed.
+
+| Crate | Entries read | Found | Already there | Added or completed | Marked unproved | Corrected |
+|---|---|---|---|---|---|---|
+| zed-kernel | 10 of 62 | 14 | 7 | 7 | 0 | 0 |
+| zedc-elab | 0 of 44 | 0 | 0 | 0 | 0 | 0 |
+| zedc-base | 0 of 39 | 0 | 0 | 0 | 0 | 0 |
+
+| Source | Claim | Code site | Status |
+|---|---|---|---|
+| 00171c62b | A candidate tuple of a region's row that `holds` in `f` shows `f` met with the region is inhabited, so the fork's answer `false` is exact | `types/empty.rs`, `tuples_on`, the K134 comment | completed: the steps (`reps` gives a value of each `g.r[j] & a[j]`, `holds` tests it is in `f`) |
+| 00a508032 | `ieee_min_max` follows IEEE 754-2019 `minimum`/`maximum`: NaN absorbs, -0 below +0 | `value.rs`, `ieee_min_max` | already there (quotes, doi:10.1109/IEEESTD.2019.8766229, C23 N3096, test named) |
+| 0b1008760 | The five `(false, true)` atom arms are unreachable: a finite atoms map lists no name whose part is `AtomPart::none()` | `types.rs`, `Atoms` (the invariant on `names`); arms in `types/empty.rs` and `empty/shared.rs` | completed: the invariant stated at `Atoms` with every writer of `names` (`set`, `default`, the universe, `zip`, `minus`, `join`, `not`) |
+| 0b1008760 | `(None, None)` in `shape` is unreachable: a diagram node has a leaf branch | `types/empty.rs`, `shape` | completed: why `b` is a list there (`Bdd` has the forms `Leaf` and `List`; `branch` of a list is `Bdd::view`), and the test with what it cannot show |
+| 0e8168cc1 | A constant node of a BES has no child, is no parent and is on no cycle (three `unreachable!` arms) | `types/bes.rs`, `gfp` and `delete_cascade` | already there (checked: `Bes::add` and `Bes::set` assert it, `simplify` sets `Bot` only on a node whose children in `h` stay empty, `seal` makes parents only of children) |
+| 10cc98a38 | A list cell's digest is a fold of its blocks in order and a set's a sum of its literals, the same for every shape | `types/bdd.rs`, `folded`; `types/bdd/set.rs`, `make` | already there |
+| 10cc98a38 | Drawn cell priorities give expected depth `O(log m)` (Seidel and Aragon 1996) | `types/bdd.rs`, list `priority` | already there (doi:10.1007/BF01940876 at the site) |
+| 10cc98a38 | The same bound cited for sets and treap joins | `types/bdd/set.rs` (priority doc, `union_if_agree`); `types/bdd/list/treap.rs`, `insert` | completed: doi:10.1007/BF01940876 and doi:10.1145/2935764.2935768 added where the cite had none |
+| 19311b3fe | Records beside the pairs do not change the check of a list witness | `types/empty.rs`, `verify_step` | already there (proof and red-first test at the site) |
+| 19311b3fe | `step_shape` gives one row or more, so `chain_row` and `joined_car` are not both none | `types/empty.rs`, `step_of` | already there |
+| 1a78001da | `proc_kib` reads a kB field by its whole key, checked for `u64` overflow | `limits.rs`, `proc_kib` | completed: the test named at the site, and what it cannot catch |
+| 1f50505a3 | Finding repeated addresses by hash finds the same repeats as the ordered set | `provenance.rs`, `Provenance::repeated` | added: `Hash for Position` writes `hash_value` and `eq` is false where they differ, so the `Hash`/`Eq` contract holds; the bench named |
+| 1fcf49287 | One backward pass is exact: every input `k` of fact `j` has `k < j` | `provenance.rs`, `origins` | completed: why `k < j` (the one writer of `Fact::inputs` in `eval.rs`, `fact`) |
+| 222adf91b | The parity bench's `T0` is 0, so its treap bound is the `n log n` one | `types/bdd/bench.rs`, `parity_built_a_literal_at_a_time_scales` | already there (asserted on every input) |
+
+No code claim: none among the 10 read.
+
+Not read (135 entries):
+
+- zed-kernel (52): 26f8d7d35 2ab9f29af 2de401ae4 3204ef377 34a583731 37148785d 3ffbadf75
+  40733faeb 465fc2167 570acb0a8 5970a932f 59a32b29b 5a5276a82 5dcfdad0a 6017477df 60f594a97
+  6ae1d9048 6bb9bb93f 6ebe63b42 6ff237028 7d0cc8d9f 8183b743b 81a60d522 86322e10b 877fc8603
+  8878228af 8c5ccccb9 929e7e04a 94b14f925 967100aca 9778881e0 9bc1e50d4 9e3cc1480 a74161bb4
+  b8b284a09 bc75c1615 c5168f1b3 c9205d30b cb68d7fec d18e52a0a d2bc324d2 d694e2a26 ddc1ec274
+  e3ee7d064 e60e73504 e62be00e0 e7b12dd2e f075a1c0b f48ec1bf4 f91eac49c fa271b3f2 fe770de11
+- zedc-elab (44): 7fb0c6594 7931d6ed6 8164a8ea9 9b7a17570 e5ff7920a f24b492bf 555863e23
+  f0bde0d35 0e329a46e 1286f4779 2b3e706f1 995200322 9d877b65c 068d62e2f 18ea94666 4c75d8f88
+  5767fe37a 7d0cc8d9f 86322e10b 875e58597 c50a8965b cf099fcf2 03a4f95f2 0e8df04e7 64d244789
+  ac7cafdd0 ac9176a94 cb0137143 d11373afd f240a5462 131d7f7fd 14b96090a 29bf6b297 47d87108b
+  480291d0e 4ce8104bb 51ae6534c 650ec1e0a a7dba5382 af7540d08 b6b810dec ea2effe91 eb156f28d
+  fbb2b68aa
+- zedc-base (39): 30ad62cc4 7fb0c6594 13237878e ba41f402c d6fa0ddbd 25ef78dd1 7d9e078c0
+  a02d270c5 eb9d470b5 007a9ebb0 24a43c819 4e6c5bfaa 50b8eea24 5767fe37a c5ed79580 331f39ab5
+  726008ee7 8a14a296f 981ec6c8a 995a598b2 bea44d4a5 bfc106d61 d11373afd e6dfb6877 ebd6faee5
+  168d440d9 259a46243 3ef2d671a 4ce8104bb 50a4b3789 6a1038700 7634e8afc 835596645 a1740c637
+  b6fab1610 c80981f4b cac8265b5 f64572af8 fde51511a
 
 ## proofdoc4g: the moved commits, zedc-solvers, zedc-int, the small crates, `type_var_form`
 

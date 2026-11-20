@@ -133,12 +133,12 @@ static PRIORITIES: [Priorities; 2] = [Priorities::eight_wise(11), Priorities::ei
 /// The priority of `key`: the run's random polynomial of degree 7 at its atom's digest, one for
 /// each value of `taken`. Distinct points take 8-wise independent uniform priorities, which
 /// bounds every node's expected depth by `O(log n)` plus the literals that share a point
-/// (module comment; Seidel and Aragon 1996, Theorem 3.3 and section 6; the proof is in module
-/// [`crate::priority`]), and the work of a join of sets of `m <= n` literals by
-/// `O(m log(1 + n/m))` in expectation (the finger bound, proved for 8-wise independence in
-/// module [`crate::priority`]; for degree 4 only `O(m log(n + m))` is proved). Atoms whose
-/// digests are equal modulo `2^64 - 59` share a point: they tie whatever the draw, and each such
-/// atom adds at most one to a depth.
+/// (module comment; Seidel and Aragon 1996, doi:10.1007/BF01940876, Theorem 3.3 and section 6;
+/// the proof is in module [`crate::priority`]), and the work of a join of sets of `m <= n`
+/// literals by `O(m log(1 + n/m))` in expectation (the finger bound, proved for 8-wise
+/// independence in module [`crate::priority`]; for degree 4 only `O(m log(n + m))` is proved).
+/// Atoms whose digests are equal modulo `2^64 - 59` share a point: they tie whatever the draw,
+/// and each such atom adds at most one to a depth.
 // Complexity tradeoff (PERF-xor-shape-free, COMPLEXITY.md K123): the fixed hash this replaces,
 // `mix(mix(13, digest), taken)`, cost two mixes and gave one shape whatever the run, but no
 // bound: a program can name literals whose hashes rise in their order, and their set is a path
@@ -662,9 +662,10 @@ pub(super) fn union_if_agree<A: Atom>(x: &Arc<Set<A>>, y: &Arc<Set<A>>) -> Optio
 /// 10 to 30 splits for `|x| = 1`); the part of `x` met at a node of `y` is `x` in that node's
 /// key range (the removals above it were at keys outside the range), so a split or a removal
 /// walks one search path of the treap of a range of the fixed set `x`, whose ancestors are among
-/// those in `x`'s treap (Seidel and Aragon, Lemma 4.3), `1 + D` in expectation; and a join walks
-/// the facing spines of two ranges of the fixed result `x \ y`, at most `|x| - 1` of them with
-/// both sides non-empty, two paths of its treap (cross-review round 3, Gemini R3-F1).
+/// those in `x`'s treap (Seidel and Aragon 1996, doi:10.1007/BF01940876, Lemma 4.3), `1 + D`
+/// in expectation; and a join walks the facing spines of two ranges of the fixed result
+/// `x \ y`, at most `|x| - 1` of them with both sides non-empty, two paths of its treap
+/// (cross-review round 3, Gemini R3-F1).
 /// Blelloch, Ferizovic and Sun ("Just join for parallel ordered sets", SPAA 2016, Theorem 4 of
 /// the full version; cited in full in module `bdd::list::treap`) prove
 /// `O(m log(n/m + 1))` for priorities drawn independently and identically; for the 8-wise

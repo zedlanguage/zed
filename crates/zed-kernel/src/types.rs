@@ -1802,6 +1802,15 @@ mod atoms {
     }
 
     /// Per atom name, its part; a name not listed has every payload when `cofinite`, else none.
+    /// Invariant: no listed name has the part an unlisted one has (`AtomPart::none()` when
+    /// finite, `AtomPart::all()` when cofinite), which the `(false, true) => unreachable!` arms
+    /// of `types::empty` rely on. Proof, by the writers of `names`, all in this module (its
+    /// fields are private): [`Atoms::set`] unlists a name given that part; `Atoms::default` and
+    /// the universe list no name; [`Atoms::zip`] either builds through `set` or clones `large`
+    /// and keeps `large.cofinite` (the comment there); `Atoms::minus` either builds through
+    /// `set` or clones `self` with its own `cofinite`; `Atoms::join` and `Atoms::not` write
+    /// only through `set`. Tests: the `unreachable!` arms are
+    /// reached by no test (COMPLETENESS.md, cover7 round), which a test cannot prove.
     /// The map is persistent, and `sum` is the wrapping sum of its entries' hashes. `payloads`
     /// is the persistent AVL tree of listed names whose payload lists something, kept by
     /// [`Atoms::set`] in O(log n). When every payload mutation so far was a pure addition (no

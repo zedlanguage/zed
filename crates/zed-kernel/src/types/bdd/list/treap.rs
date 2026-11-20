@@ -293,11 +293,12 @@ fn join<K: Keyed, V: Clone>(a: Tree<K, V>, b: Tree<K, V>) -> Tree<K, V> {
 /// the subtree there split at the key (or the key's own node given the new value), the path
 /// made again, `O(log n)` expected.
 ///
-/// Complexity tradeoff: an insertion by `split` and two `join`s (Blelloch, Ferizovic and Sun)
-/// makes every node on the search path again and then the spines it joins, about three times
-/// the nodes; this walk (Seidel and Aragon's insertion, without rotations) makes the path above
-/// the new node and splits only the subtree below it, whose two spines have `O(1)` nodes in
-/// expectation. The shape is the same, since a treap's shape is fixed by its keys.
+/// Complexity tradeoff: an insertion by `split` and two `join`s (Blelloch, Ferizovic and Sun,
+/// doi:10.1145/2935764.2935768) makes every node on the search path again and then the spines
+/// it joins, about three times the nodes; this walk (Seidel and Aragon's insertion,
+/// doi:10.1007/BF01940876, without rotations) makes the path above the new node and splits
+/// only the subtree below it, whose two spines have `O(1)` nodes in expectation. The shape is
+/// the same, since a treap's shape is fixed by its keys.
 pub(super) fn insert<K: Keyed, V: Clone>(t: &Tree<K, V>, key: K, value: V) -> Tree<K, V> {
     let prio = key.priority();
     let mut path = Vec::new();

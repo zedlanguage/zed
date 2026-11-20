@@ -6597,7 +6597,12 @@ impl<'m> Searching<'m> {
                 // taken out), one candidate value per tuple type of it before the refusal: the
                 // row met with that tuple type, a value of it kept when it is in the part
                 // (`row_rep`, an exact membership test). A value found proves the part
-                // inhabited, so the fork needs no following and the answer is exact. Naive
+                // inhabited, so the fork needs no following and the answer is exact. Proof:
+                // `reps` gives for each component `j` a value of `g.r[j] & a[j]` (each `rep` is
+                // a value of its type, or none), so the tuple lies in the region's row `g.r`;
+                // `holds(&vs, f)` then tests that the tuple is a value of `f` itself, so `f` met
+                // with the region holds a value and `false` (not empty) is the answer. No
+                // candidate found is no claim: the refusal below follows as before. Naive
                 // version: the refusal alone, which refused 4 of the 22 U6 cases that kernel
                 // 19bc4e25 answered. Cost: one value search per tuple type of the union at each
                 // fork, the work the seeding does once per tuple part (`Searching::find_rep`).
@@ -13437,7 +13442,12 @@ fn shape<'p>(
                     // Never met: `branch` of a list is `Bdd::view`, which gives the leaf of the
                     // first block's value on the side where its literal holds, so one branch is
                     // always a leaf. (A node with two inner branches was read as the union of
-                    // its two arms, `atom & hi | !atom & lo`; that reading is removed.)
+                    // its two arms, `atom & hi | !atom & lo`; that reading is removed.) A leaf
+                    // `b` returned above, and `Bdd` has only the forms `Leaf` and `List`, so `b`
+                    // is a list here and `Bdd::branch` gives `Bdd::view` (`bdd.rs`). Test:
+                    // `read_two_sat_agrees_with_enumeration_on_built_and_random_parts` (3,000
+                    // random parts against enumeration); it shows this arm is not met on those
+                    // parts, not on all.
                     (None, None) => unreachable!("a diagram node has a leaf branch"),
                 });
             }

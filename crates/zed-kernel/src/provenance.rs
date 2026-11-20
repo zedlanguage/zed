@@ -290,7 +290,12 @@ impl Provenance {
     /// The addresses held by more than one fact, in fact order; a correct run has none
     /// (sec:keypaths, one writer per fact address). Node addresses are found by their cached
     /// hashes, not by [`Position`]'s order, whose comparison walks up to the common ancestor;
-    /// the keypaths of one node are ordered, since a [`Value`] has no hash.
+    /// the keypaths of one node are ordered, since a [`Value`] has no hash. The map finds the
+    /// same repeats as the ordered set did: `Hash for Position` writes `hash_value` alone, and
+    /// `Position::eq` is false where the `hash_value`s differ, so equal addresses hash alike
+    /// (the `Hash` and `Eq` contract; `NodeAddress` derives both from its positions). Test:
+    /// `the_check_for_repeated_addresses_on_a_chain_of_products_scales` (bench of step
+    /// m0_09), which checks the time, not which addresses are found.
     pub fn repeated(&self) -> Vec<&FactAddress> {
         let mut seen: HashMap<&NodeAddress, BTreeSet<&Vector<Value>>> = HashMap::new();
         let mut out = Vec::new();
@@ -374,13 +379,19 @@ impl Provenance {
             }
         }
         // One backward pass over the facts, newest first: a fact's inputs completed before it,
-        // so every fact that reaches `j` is taken before `j`. `traced[j]` holds the members
-        // whose search reaches fact `j`; the search of member `m` goes on to each input that
-        // holds `m`, and `j` is an origin of `m` when no input holds it. The sets are
-        // persistent ([`IdSet`]), and a set found from another shares its nodes, so the common
-        // members of two sets are read from the leaves they hold in different copies: along a
-        // chain of products, each holding one member more than the last, a step costs `O(1)`
-        // for up to 4096 members.
+        // so every fact that reaches `j` is taken before `j`. Why `k < j` for an input `k` of
+        // `j`: the one writer of `Fact::inputs` (`eval.rs`, `fact`) takes the reads `t.reads`
+        // of the subterms, each the index of a fact pushed before (a fact's own index, pushed
+        // to `t.reads` just after the fact, or a variable's, `lookup_fact`, which passes on
+        // such an index), and gives the new fact the index `len - 1` after its push, above all
+        // of them. The `debug_assert!` below checks it in every debug test run.
+        //
+        // `traced[j]` holds the members whose search reaches fact `j`; the search of member `m`
+        // goes on to each input that holds `m`, and `j` is an origin of `m` when no input holds
+        // it. The sets are persistent ([`IdSet`]), and a set found from another shares its
+        // nodes, so the common members of two sets are read from the leaves they hold in
+        // different copies: along a chain of products, each holding one member more than the
+        // last, a step costs `O(1)` for up to 4096 members.
         let mut traced: BTreeMap<usize, Found> = BTreeMap::from([(i, held.of(v).found)]);
         let mut out = BTreeSet::new();
         while let Some((j, at_j)) = traced.pop_last() {
