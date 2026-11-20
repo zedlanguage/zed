@@ -99,8 +99,9 @@ mkdir -p tests/full/w tests/full/z
 printf '//! w.\nuse t::helper as _;\n' >tests/full/w/mod.rs
 echo '//! z.' >tests/full/z/mod.rs
 # The toy's own tools/test_merge_check.sh, which merge_check.sh runs when a file it tests changes:
-# it prints its part and fails the part named by $STUB_SELF_FAIL.
-printf '#!/bin/bash\necho "self $1"\n[ "$1" != "$STUB_SELF_FAIL" ]\n' >tools/test_merge_check.sh
+# it prints its part and fails the part named by $STUB_SELF_FAIL, and, when $STUB_BUILD_MARK is
+# set, fails if that file does not exist yet (the build of step 0b has not ended).
+printf '#!/bin/bash\necho "self $1"\n[ -z "$STUB_BUILD_MARK" ] || [ -e "$STUB_BUILD_MARK" ] || { echo "self $1 ran before the build ended"; exit 1; }\n[ "$1" != "$STUB_SELF_FAIL" ]\n' >tools/test_merge_check.sh
 chmod +x tools/test_merge_check.sh
 # The toy's own tools/test_run_tests.sh (step 0b, TOOL-merge-check-run-tests-self): it prints its
 # part and, as the real one does, "checks failed: <n>" last, 1 for the part named by $STUB_RT_FAIL.
@@ -121,11 +122,16 @@ if [ "$1" = --short-groups ]; then
   exit 0
 fi
 echo "run_tests $*"
-t= o=
+t= o= l=
 while [ $# -gt 0 ]; do
-  case $1 in --trace) t=$2; shift ;; --only) o=$2; shift ;; esac
+  case $1 in --trace) t=$2; shift ;; --only) o=$2; shift ;; --list) l=1 ;; esac
   shift
 done
+# A build (--list) that takes a second and then makes the file $STUB_BUILD_MARK, when it is set.
+if [ -n "$l" ] && [ -n "$STUB_BUILD_MARK" ]; then
+  sleep 1
+  : >"$STUB_BUILD_MARK"
+fi
 if [ -n "$t" ]; then
   mkdir -p "$t"
   : >"$t/groups"
@@ -381,6 +387,15 @@ merge check: tools/test_run_tests.sh list, select, table, fresh, concurrent and 
 merge check: passed
 0" "$(change_on_base tools/test_run_tests.sh '# changed'
     "$check_script" --base base 2>&1 | command grep -a -E '^merge check: (a file|tools|passed|FAILED)'
+    echo "${PIPESTATUS[0]}")"
+# Step 0's parts are timed, so they start only once step 0b's build (which has no limit) has ended.
+check "the build for tools/test_run_tests.sh ends before the timed parts of tools/test_merge_check.sh start" \
+  "merge check: tools/test_merge_check.sh select and record passed
+merge check: tools/test_run_tests.sh list, select, table, fresh, concurrent and trace passed
+merge check: passed
+0" "$(change_on_base tools/test_lib.sh '# changed'
+    STUB_BUILD_MARK=$ws/target/built-$$-$SECONDS "$check_script" --base base 2>&1 |
+      command grep -a -E '^merge check: (tools|passed|FAILED)'
     echo "${PIPESTATUS[0]}")"
 check "a change to tools/test_lib.sh runs both test scripts" \
   "merge check: a file tools/test_merge_check.sh tests changed: both its parts run

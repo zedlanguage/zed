@@ -18,7 +18,9 @@
 #     table list publishes, in one log directory), and fresh, concurrent and trace beside that
 #     chain (each in a log directory of its own), each part under max(60, the piece limit) s:
 #     the header of test_run_tests.sh gives each part 60 s, and list alone took 30 to 57 s at load
-#     36 to 76. Fails if any part fails (TOOL-merge-check-run-tests-self: until 2026-11-20 a change
+#     36 to 76. The parts start after the build of the tests they list, which runs first with no
+#     limit, before step 0's timed parts too. Fails if the build or any part fails
+#     (TOOL-merge-check-run-tests-self: until 2026-11-20 a change
 #     to the test runner landed without its own tests, cc7961f67 tested by hand). Not recorded
 #     either;
 #  0a. when a Cargo.toml or Cargo.lock changed: fails if some workspace package, built alone
@@ -879,7 +881,9 @@ write_reads() {
 # into its limit while building (2026-11-20: all six killed at 60 s with empty logs). So the
 # build comes first, `run_tests.sh --list` with no --only (the build of the full listing, with
 # the short-addresses clone), with no time limit, since it is a build and not a test, and the
-# parts start when it has passed.
+# parts start when it has passed. The build runs in the foreground, before step 0 starts its
+# timed parts too: run beside them, a workspace build (at load 50 on 2026-11-20) pushed
+# tools/test_merge_check.sh select, 15 to 21 s alone, past its 25 s limit.
 rtparts=(list select table fresh concurrent trace)
 rtpids=()
 if [ -n "$rtself" ] && [ -z "$list" ]; then
@@ -889,25 +893,25 @@ if [ -n "$rtself" ] && [ -z "$list" ]; then
   rt_part() { timeout -k 5 "$rtlimit" tools/test_run_tests.sh "$1" >"$rlog-$1.log" 2>&1; }
   # Emptied first, so a part its chain did not reach shows no line of an earlier check.
   for p in "${rtparts[@]}"; do : >"$rlog-$p.log"; done
-  # Exits 1 only when the build failed; the parts' verdicts are read from their logs.
+  if ! tools/run_tests.sh --logs "$rlog-build" --list >"$rlog-build.log" 2>&1; then
+    tail -n 40 "$rlog-build.log"
+    echo "merge check: FAILED: the build for tools/test_run_tests.sh (log $rlog-build.log)" >&2
+    exit 1
+  fi
+  # The parts' verdicts are read from their logs.
   (
-    tools/run_tests.sh --logs "$rlog-build" --list >"$rlog-build.log" 2>&1 || exit 1
     (rt_part list && rt_part select && rt_part table) &
     for p in fresh concurrent trace; do rt_part "$p" & done
     wait
   ) &
   rtpids+=($!)
 fi
-# Waits for step 0b and fails when its build or a part failed: each part's last line is
-# "checks failed: 0" exactly when it passed (a part killed by its limit has no such line).
+# Waits for step 0b and fails when a part failed: each part's last line is "checks failed: 0"
+# exactly when it passed (a part killed by its limit has no such line).
 rt_wait() {
   [ ${#rtpids[@]} -gt 0 ] || return 0
   local p bad=
-  if ! wait "${rtpids[0]}"; then
-    tail -n 40 "$rlog-build.log"
-    echo "merge check: FAILED: the build for tools/test_run_tests.sh (log $rlog-build.log)" >&2
-    exit 1
-  fi
+  wait "${rtpids[0]}"
   for p in "${rtparts[@]}"; do
     if [ "$(tail -n 1 "$rlog-$p.log" 2>/dev/null)" != "checks failed: 0" ]; then
       [ ! -f "$rlog-$p.log" ] || cat "$rlog-$p.log"
