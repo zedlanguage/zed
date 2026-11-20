@@ -157,7 +157,9 @@ pub(super) fn absorb(b: &Bes, same: &[u32], union: &[bool]) -> Option<Bes> {
     Some(a)
 }
 
-/// The union graph's nodes, each after its parents (Kahn's algorithm, first ready first); the
+/// The union graph's nodes, each after its parents (Kahn's algorithm, first ready first, by
+/// `zed_graph::kahn`: A. B. Kahn, Comm. ACM 5(11):558-562, 1962, doi:10.1145/368996.369025,
+/// Crossref checked 2026-11-20, text not obtained, the method from memory); the
 /// graph is acyclic, since a member's body is contractive.
 fn topological(down: &[Vec<u32>], up: &[Vec<u32>]) -> Vec<usize> {
     let mut waits: Vec<usize> = up.iter().map(Vec::len).collect();

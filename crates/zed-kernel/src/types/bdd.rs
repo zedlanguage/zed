@@ -274,7 +274,8 @@ impl<A: Literal> Bdd<A> {
         // block, then `x`'s without the atoms of `j`, then `!v` ([`set::difference_if_agree`]).
         // Complexity tradeoff: the difference splits the larger block at each node of the
         // smaller, `O(m log(n/m + 1))` nodes for blocks of `m <= n` literals (Blelloch,
-        // Ferizovic and Sun, "Just join for parallel ordered sets", SPAA 2016; for the 8-wise
+        // Ferizovic and Sun, "Just join for parallel ordered sets", SPAA 2016, pp. 253-264,
+        // doi:10.1145/2935764.2935768, cited in full in module `bdd::list::treap`; for the 8-wise
         // independent priorities of the sets, module `priority`, plus the literals that share a
         // point); the literals of
         // `j` joined one at a time to `x` made `O(log n)` nodes each, `O(m log n)`, the 10.8
@@ -1854,7 +1855,12 @@ impl<A: Literal> Part<A> {
             }
         };
         let mut known: Vec<Option<bool>> = vec![None; exprs.len()];
-        // Each expression after its parts (Kahn's order, last ready first).
+        // Each expression after its parts (Kahn's order, last ready first: A. B. Kahn,
+        // "Topological sorting of large networks", Comm. ACM 5(11):558-562, 1962,
+        // doi:10.1145/368996.369025, Crossref checked 2026-11-20, text not obtained; the
+        // method, take a node with no unplaced predecessor until none is left, is from memory.
+        // `zed_graph::kahn` is the one copy; its test is
+        // `order::tests::each_ready_set_gives_its_own_topological_order`).
         let mut ready: Vec<usize> = zed_graph::sources(&waiting).collect();
         zed_graph::kahn(
             &mut waiting,
@@ -2889,14 +2895,13 @@ mod xor {
     //! could choose literals whose set is a path, `O(n)` per literal. Used: one expression per set,
     //! `O(1)` plus the set's depth per literal added, its digest the set's sum, so the priorities
     //! are drawn per run and no longer a fixed hash: every node's expected depth is at most
-    //! `T0 + n(n - 1)/p + 2c H_n` (Seidel and Aragon, "Randomized search trees", Algorithmica 16,
-    //! 1996, which holds for 5-wise independent priorities and so for the 8-wise ones of
-    //! module `set`; cited in full and quoted in module `crate::priority`), with no condition on
-    //! the hash
-    //! beyond `T0`, the literals sharing a digest, which a program can still make large (plan row
-    //! PERF-set-tied-digest-depth). Given up: reading the whole
-    //! form of an exclusive or of `n` atoms makes its `n - 1` nested ones, a removal from a set
-    //! each, `O(n log n)` expected, where the tree's form was `O(n)`.
+    //! `T0 + n(n - 1)/p + 2c H_n` (Seidel and Aragon, "Randomized search trees", Algorithmica
+    //! 16(4-5):464-497, 1996, doi:10.1007/BF01940876, which holds for 5-wise independent
+    //! priorities and so for the 8-wise ones of module `set`; cited in full and quoted in module
+    //! `crate::priority`), with no condition on the hash beyond `T0`, the literals sharing a
+    //! digest, which a program can still make large (plan row PERF-set-tied-digest-depth). Given
+    //! up: reading the whole form of an exclusive or of `n` atoms makes its `n - 1` nested ones,
+    //! a removal from a set each, `O(n log n)` expected, where the tree's form was `O(n)`.
 
     use std::collections::HashMap;
     use std::sync::{Arc, Weak};
@@ -3335,12 +3340,14 @@ mod list {
     /// The bound. Each block's root is a function of the block and the sets' draw, which is
     /// independent of this one (other sites, module [`crate::priority`]), so given the sets'
     /// draw the cells' priorities are the polynomials of this draw at points fixed before it.
-    /// No atom is in two
-    /// blocks of a list (module comment), so the roots of two cells of one sequence are distinct
-    /// literals, and distinct points unless their atoms' digests are equal: cells at distinct points take 5-wise independent uniform priorities, which bounds
+    /// No atom is in two blocks of a list (module comment), so the roots of two cells of one
+    /// sequence are distinct literals, and distinct points unless their atoms' digests are
+    /// equal: cells at distinct points take 5-wise independent uniform priorities, which bounds
     /// every cell's expected depth by `O(log m)` for `m` blocks, whatever the blocks (Seidel and
-    /// Aragon 1996, Theorem 3.3 and section 6; the proof, with the cells whose points are equal
-    /// counted as ties, is in module [`crate::priority`]).
+    /// Aragon 1996, doi:10.1007/BF01940876, Theorem 3.3, "In order to achieve logarithmic
+    /// expected access, insertion, and deletion time, 5-wise independence suffices", and
+    /// section 6, checked against the text 2026-11-20; the proof, with the cells whose points
+    /// are equal counted as ties, is in module [`crate::priority`]).
     ///
     /// A literal added to a block changes this priority only when it becomes the block's root, so
     /// a block edited in place mostly keeps its cell's place, and its atoms are carried over

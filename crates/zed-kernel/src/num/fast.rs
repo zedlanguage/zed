@@ -155,6 +155,59 @@
 //!   middle product". This file does not use the scaled tree; it divides by Newton reciprocals.
 //! - D. E. Knuth, The Art of Computer Programming, vol. 2, 3rd ed., Addison-Wesley, 1997,
 //!   §4.3.1, Algorithm D (long division). From memory, not checked: the book was not read.
+//! - J. W. Cooley, J. W. Tukey, "An algorithm for the machine calculation of complex Fourier
+//!   series", Math. Comp. 19(90):297-301, 1965, doi:10.1090/S0025-5718-1965-0178586-1
+//!   (Crossref checked; the text was not read, so the sketch is from memory, not checked):
+//!   a transform of `2^k` points splits into two of half the points joined by butterflies
+//!   `(x + r y, x - r y)`, O(n log n) in all. [`Field::forward`] does this over the integers
+//!   modulo a prime in place of the complex numbers.
+//! - P. L. Montgomery, "Modular multiplication without trial division", Math. Comp.
+//!   44(170):519-521, 1985, doi:10.1090/S0025-5718-1985-0777282-X (Crossref checked; the text
+//!   was not obtained, so the sketch is from memory, not checked): with `R = 2^64` and
+//!   `N' = -N^-1 mod R`, `REDC(T) = (T + (T N' mod R) N) / R` is `T R^-1 mod N` up to one
+//!   subtraction of `N`. [`Field::mul`] is REDC of `a b` with `neg_inv` as `N'`, ending with
+//!   that subtraction; it departs by taking `a, b < 2p`, which `4p < 2^64` allows.
+//! - D. Harvey, "Faster arithmetic for number-theoretic transforms", J. Symbolic Comput.
+//!   60:113-119, 2014, doi:10.1016/j.jsc.2013.09.002 (Crossref and the text checked). Its
+//!   Algorithm 3, the modified Shoup butterfly, takes `X, Y` in `[0, 2p)` and returns
+//!   `X + Y` and `W (X - Y)` mod `p` in `[0, 2p)`, so "each element has two possible
+//!   representations", saving reductions; its twiddle products use a precomputed quotient
+//!   `W' = ⌊W β / p⌋` ([`Field::shoup`]), a method the paper says "is attributed to Shoup in
+//!   Färnqvist (2005), but does not seem to have been published". Its Algorithm 4, the
+//!   inverse butterfly, holds values in `[0, 4p)`. [`Field::forward`] takes values below `4p`
+//!   and returns them below `2p`.
+//! - H. L. Garner, "The residue number system", IRE Trans. Electronic Computers
+//!   EC-8(2):140-147, 1959, doi:10.1109/TEC.1959.5219515 (Crossref checked; the text was not
+//!   obtained, so the attribution of the mixed-radix form to this paper is from memory, not
+//!   checked): a number known by its residues modulo `p0, p1, p2` is `v0 + v1 p0 + v2 p0 p1`,
+//!   each `v_i < p_i` found from the ones before by one product with a fixed inverse; this is
+//!   [`garner`], with its constants in [`Garner`].
+//! - J. Stein, "Computational problems associated with Racah algebra", J. Comput. Phys.
+//!   1(3):397-405, 1967, doi:10.1016/0021-9991(67)90047-2 (Crossref and the text checked). Its
+//!   gcd rests on "if a and b are odd integers and a > b, then GCD (a, b) = GCD(b, (a - b)/2)",
+//!   with the difference shifted right until odd. [`stein_odd`] departs by taking up to 30 such
+//!   halvings at a time from the low 128 bits as a 2 by 2 matrix, the 2-adic analog of
+//!   Lehmer's method below, and applying it to the full words in one pass.
+//! - D. H. Lehmer, "Euclid's algorithm for large numbers", Amer. Math. Monthly 45(4):227-233,
+//!   1938, doi:10.1080/00029890.1938.11990797 (Crossref checked; the text was not read).
+//!   Möller (above), §1.1, describes it: "Lehmer's algorithm computes the initial part of the
+//!   quotient sequence using single or double precision arithmetic on the most significant
+//!   words of the input, and applies several quotients at once to the multi-precision
+//!   numbers." [`stein_odd`] uses that idea at the low end.
+//! - A. L. Toom, "The complexity of a scheme of functional elements realizing the
+//!   multiplication of integers", Soviet Math. Dokl. 3:714-716, 1963, and S. A. Cook, "On the
+//!   minimum computation time of functions", PhD thesis, Harvard University, 1966. Neither has
+//!   a DOI and neither was read, so the details are from memory, not checked: Toom-3 splits
+//!   each factor in three parts, evaluates at five points, multiplies pointwise and
+//!   interpolates, `n^log3(5)`. Not used here; it is num-bigint's product, modeled by
+//!   [`TOOM_COST`] and [`TOOM_POWER`].
+//!
+//! Tests: `tests::products_agree_with_num_bigint` and
+//! `tests::factor_products_agree_with_num_bigint` check the transform, REDC, the lazy reduction
+//! and Garner's step together by comparing whole products with num-bigint's;
+//! `tests::gcds_agree_with_num_bigint` checks [`gcd`], whose leaf is [`stein_odd`]. None checks
+//! a bound on a residue between stages directly: a value that overflowed would show only as a
+//! wrong product.
 //!
 //! **At the port to Zed.** The results must stay those of num-bigint's operations, which the
 //! unit tests compare at every leaf setting. What depends on measurement and is to be measured

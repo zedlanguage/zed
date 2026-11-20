@@ -884,7 +884,8 @@ impl Rat {
         // Complexity tradeoff: the memory asked for is sixteen times the sum of the four
         // coefficients' widths, a measured bound, not a proved one, on the two products, their
         // reduction by the gcd (a Burnikel-Ziegler remainder of the wider by the narrower,
-        // Stein's gcd and two divisions by it) and the primes moved out into exponents
+        // Stein's gcd, cited in `num::fast`'s "Sources", and two divisions by it) and the
+        // primes moved out into exponents
         // (`valuation`): the peak heap was at most 7.5 times that width for products and
         // quotients of rationals of 2^6 to 2^14 words, plain and with kept powers, at most 10.3
         // times when a kept prime divides a coefficient of 2^8 to 2^16 words, and the
@@ -1011,7 +1012,14 @@ impl Rat {
                 // times `e`; one that does not fit in memory is `TooLarge`, asked above. Tested
                 // by `a_power_of_a_wide_base_is_built` (COMPLEXITY.md K30).
                 // A complete solution would keep an opaque base `b^e` beside the primes, with
-                // the bases made pairwise coprime by Bernstein's coprime-base algorithm.
+                // the bases made pairwise coprime by Bernstein's coprime-base algorithm (D. J.
+                // Bernstein, "Factoring into coprimes in essentially linear time", J.
+                // Algorithms 54(1):1-30, 2005, doi:10.1016/j.jalgor.2004.04.009; Crossref and
+                // the text checked 2026-11-20). Its abstract: a coprime base for a set S is a
+                // set P of pairwise coprime integers with each element of S a product of
+                // powers of elements of P, and the paper computes the natural one "in
+                // essentially linear time" using only products, exact divisions, gcds and
+                // equality tests. Not implemented; no test.
                 None => {
                     // An exponent of `2^64` or more is refused with the ask above. With a
                     // 64-bit `usize`, `room` has already refused it (this part is wider than
@@ -1125,7 +1133,8 @@ impl Rat {
         if !self.pows.is_empty() {
             // Complexity tradeoff: the memory asked for the modular-power steps is 32 times
             // `m`'s width, a measured bound, not a proved one, on a step's peak: it holds `r`,
-            // `p^e mod m` (num-bigint's Montgomery power for an odd `m`, square and multiply
+            // `p^e mod m` (num-bigint's Montgomery power, Montgomery 1985 as cited in
+            // `num::fast`'s "Sources", for an odd `m`, square and multiply
             // for an even one), their product and its division by `m`, and the peak heap was
             // at most 25.2 times `m`'s width over divisors of 2^8 to 2^13 words, odd and even.
             // So a kept-power dividend modulo a wide divisor whose steps need less is
@@ -1439,7 +1448,7 @@ pub fn rem_uint(a: &BigUint, b: &BigUint) -> BigUint {
 /// `floor(a / m)` for `m` not zero, either sign, for integers held outside a [`Rat`]: the
 /// division of the magnitudes by [`div_rem_uint`], O(M(n)) past its measured crossover with
 /// num-bigint's division (`num::fast::div_rem`), where num-bigint's `div_floor` alone is
-/// O(n^1.52) (Burnikel and Ziegler over Toom-3).
+/// O(n^1.52) (Burnikel and Ziegler over Toom-3, both cited in `num::fast`'s "Sources").
 pub fn div_floor_int(a: &BigInt, m: &BigInt) -> BigInt {
     fast::div_floor(a, m)
 }

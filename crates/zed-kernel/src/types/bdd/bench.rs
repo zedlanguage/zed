@@ -362,7 +362,9 @@ fn parity_built_a_literal_at_a_time_scales() {
 fn exclusive_ors_scale() {
     // The exclusive ors of the first half and of the last three quarters of `n` atoms, which
     // share a quarter, are joined by their sets' join-based symmetric difference
-    // (`set::symmetric`): Blelloch, Ferizovic and Sun's `O(m log(n/m + 1))`, `O(n)` here where
+    // (`set::symmetric`): Blelloch, Ferizovic and Sun's `O(m log(n/m + 1))` ("Just join for
+    // parallel ordered sets", SPAA 2016, doi:10.1145/2935764.2935768, cited in full in module
+    // `bdd::list::treap`), `O(n)` here where
     // `m` is about `n`, proved for the 8-wise independent priorities of the sets in module
     // `priority` (plan row PROOF-join-work-limited-independence); the ratio measured is near 8
     // (COMPLEXITY.md K123). Each

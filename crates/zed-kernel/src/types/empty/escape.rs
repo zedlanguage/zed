@@ -60,10 +60,10 @@
 //! increasing order, and a row stops being read once it is killed, once it has three atoms, or
 //! once the nodes left are past its length `l0`: each row takes at most four cells there. A
 //! row with three atoms is read further only when the unit narrowing leaves it fewer than
-//! three (`read_on`), since an atom it has further on can save a list. At each
-//! node the cells are read from whichever side lists fewer: the rows still read below `v`
-//! (skipping pointers and a Fenwick count), or the places that can separate at `v`, from an
-//! index of the places by value (a cofinite head `int \ X` separates exactly the places whose
+//! three (`read_on`), since an atom it has further on can save a list. At each node the cells
+//! are read from whichever side lists fewer: the rows still read below `v` (pointers that skip
+//! the rows no longer read, `Live`), or the places that can separate at `v`, from an index of
+//! the places by value (a cofinite head `int \ X` separates exactly the places whose
 //! `p_j` meets `X`; a finite head the places with a value outside it, read between its
 //! values), each place then giving its rows at one height by binary search. The work is
 //! O((nodes + rows + cells + W) log) plus the 2-SAT, linear in the cells, where W is the sum
@@ -1954,7 +1954,8 @@ fn cells_windows(
             l.sort_unstable_by_key(|&v| key(v));
         }
     };
-    // The shared Stein gcd on 64-bit words; `usize` is 64 bits on the one supported target
+    // The shared Stein gcd on 64-bit words (J. Stein 1967, cited in full in `crate::num::fast`'s
+    // "Sources"); `usize` is 64 bits on the one supported target
     // (Linux x86_64), so both conversions are exact.
     fn gcd(a: usize, b: usize) -> usize {
         zed_numtheory::gcd_u64(a as u64, b as u64) as usize

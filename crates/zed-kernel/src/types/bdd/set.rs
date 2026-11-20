@@ -705,7 +705,8 @@ pub(super) fn difference_if_agree<A: Atom>(x: &Arc<Set<A>>, y: &Arc<Set<A>>) -> 
 // Complexity tradeoff (PERF-xor-shape-free, COMPLEXITY.md K123): the naive method adds or
 // removes each of the smaller set's `m` literals in the larger's `n`, `O(m log n)` expected, and
 // makes `O(log n)` nodes for each literal, most of them dropped at the next. Used: the join-based
-// set operation of Blelloch, Ferizovic and Sun ("Just join for parallel ordered sets", SPAA 2016),
+// set operation of Blelloch, Ferizovic and Sun ("Just join for parallel ordered sets", SPAA 2016,
+// doi:10.1145/2935764.2935768, cited in full in module `bdd::list::treap`),
 // difference with the literals of `y` kept, and the nodes made are those of the result's changed
 // paths. Proved for the draw of module `priority`: `O(m (1 + D))` expected work in all, its splits
 // and joins included, `D` the bound on a node's expected depth there for `N = n + m` keys, so

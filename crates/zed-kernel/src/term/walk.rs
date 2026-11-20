@@ -694,7 +694,14 @@ fn show_pattern<'a>(p: &'a Pattern, todo: &mut Vec<Show<'a>>) {
 /// Writes the queued text: the one line a derived `Debug` writes for `{:?}`, under `{:#?}` too,
 /// except that a part two places hold (`twice`, [`held_twice`]) is written once, labeled
 /// `#n=` where it is first written and written `#n#` at each later place, the labels counted
-/// from 1 in the order written, so the text is linear in the number of distinct parts.
+/// from 1 in the order written, so the text is linear in the number of distinct parts. The
+/// labels are the datum labels of Common Lisp (Common Lisp HyperSpec, sections 2.4.8.15 and
+/// 2.4.8.16, "Sharpsign Equal-Sign" and "Sharpsign Sharpsign") and of R. Dillinger, SRFI 38,
+/// "External Representation for Data With Shared Structure", 2003,
+/// <https://srfi.schemers.org/srfi-38/>, where shared parts are "preceded by "#N=" the first
+/// time they are written" (both pages read 2026-11-20). Departure: SRFI 38's sample writer
+/// "Takes O(n^2) time"; here the parts held twice are found first ([`held_twice`]) and the
+/// labels looked up in a hash map, linear in the parts.
 fn run(mut todo: Vec<Show<'_>>, twice: &HashSet<u64>, f: &mut fmt::Formatter<'_>) -> fmt::Result {
     let mut labels: HashMap<u64, usize> = HashMap::new();
     while let Some(s) = todo.pop() {
@@ -1087,4 +1094,34 @@ fn held_twice(root: &Term) -> HashSet<u64> {
         });
     }
     twice
+}
+
+#[cfg(test)]
+mod tests {
+    use super::super::build::{app, lit, var};
+    use super::*;
+
+    /// The datum labels of [`run`]: a part two places hold is written once, after `#1=`, and
+    /// `#1#` at the later place; a part held once, and a small part held twice, get no label.
+    /// It catches a writer that writes a shared part at each place (the text then holds the
+    /// part twice and no label) or that labels parts held once.
+    #[test]
+    fn a_part_held_twice_is_written_once_with_a_label() {
+        let part = Shared::new(app(var("f"), vec![var("x")]));
+        let small = Shared::new(var("y"));
+        let once = Shared::new(app(var("g"), vec![lit(1)]));
+        let t = Term::If(
+            Shared::new(Term::If(part.clone(), small.clone(), small)),
+            part,
+            once,
+        );
+        let text = format!("{t:?}");
+        assert_eq!(text.matches("#1=").count(), 1, "{text}");
+        assert_eq!(text.matches("#1#").count(), 1, "{text}");
+        assert!(!text.contains("#2"), "{text}");
+        assert_eq!(text.matches("\"f\"").count(), 1, "{text}");
+        assert_eq!(text.matches("\"y\"").count(), 2, "{text}");
+        assert_eq!(text.matches("\"g\"").count(), 1, "{text}");
+        assert!(text.find("#1=") < text.find("#1#"), "{text}");
+    }
 }

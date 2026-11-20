@@ -95,9 +95,12 @@ fn every_shape_of_a_sequence_has_its_digests() {
 /// Blocks laid out so that the fixed hash that was the priority before the draw
 /// (`mix(mix(19, digest), taken)` of the block's root literal, which a program can compute)
 /// rises with the position: under that hash the sequence was a path of `n` cells. Under the
-/// run's draw its height is checked against Seidel and Aragon's Lemma 4.8 at probability `1/n`,
-/// as in `set/tests.rs`: with `c = (h - T - 1) / (2 ln n)`, `T` the cells in classes of equal
-/// priority, the test fails when `c > e` and `ln 2 + ln n - c ln(c/e)(ln n - 1) < -ln n`.
+/// run's draw its height is checked against Seidel and Aragon's Lemma 4.8 ("Randomized search
+/// trees", Algorithmica 16(4-5):464-497, 1996, doi:10.1007/BF01940876, checked against the
+/// text 2026-11-20: for `c > 1` a node's depth `D` has
+/// `Pr[D >= 1 + 2c ln n] < 2 (n/e)^(-c ln(c/e))`) at probability `1/n`, as in `set/tests.rs`:
+/// with `c = (h - T - 1) / (2 ln n)`, `T` the cells in classes of equal priority, the test
+/// fails when `c > e` and `ln 2 + ln n - c ln(c/e)(ln n - 1) < -ln n`.
 #[test]
 fn blocks_chosen_against_a_fixed_hash_give_a_logarithmic_height() {
     let n = 1 << 14;

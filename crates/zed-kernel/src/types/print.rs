@@ -711,8 +711,10 @@ impl Printer<'_> {
     // Complexity tradeoff: naive, a search from each unfolded type for a path back to itself,
     // O(k (n + e)) for k such types in a graph of n nodes and e references. Used: the strongly
     // connected components of the whole graph at once, by Tarjan's algorithm (R. E. Tarjan,
-    // "Depth-first search and linear graph algorithms", SIAM Journal on Computing 1(2), 1972),
-    // O(n + e) time and O(n + e) memory for the edge lists, none when no type was unfolded.
+    // "Depth-first search and linear graph algorithms", SIAM Journal on Computing 1(2):146-160,
+    // 1972, doi:10.1137/0201010, Crossref checked 2026-11-20, text not obtained; the method
+    // from memory), O(n + e) time and O(n + e) memory for the edge lists, none when no type
+    // was unfolded.
     // Every unfolded type on a cycle is named, not a least set of them that cuts every cycle
     // (a least feedback vertex set, NP-hard), so a cycle through two of them names both, as
     // the printer without names would.
@@ -752,10 +754,17 @@ impl Printer<'_> {
     /// Orders the elements of every group by their contents, so that the text does not depend
     /// on the order the parts' operands and literals were found in, which follows the atoms'
     /// digests (step BDD-atom-order). Each node gets a rank by its contents, as in the tree
-    /// isomorphism test of Aho, Hopcroft and Ullman: the nodes are taken by height, those of
-    /// one height ordered by their tokens, a child by its rank, each group's elements sorted
-    /// first; a recursive type is a leaf ranked by its name, since every cycle passes through
-    /// one. The walk's order is then found again, and with it the names' numbers.
+    /// isomorphism test of Aho, Hopcroft and Ullman (A. V. Aho, J. E. Hopcroft and J. D. Ullman,
+    /// "The Design and Analysis of Computer Algorithms", Addison-Wesley, 1974, section 3.2,
+    /// Example 3.2; from memory, not checked: the book was not available here; the section
+    /// number is the likeliest error): the nodes are taken by height, those of one height
+    /// ordered by their tokens, a child by its rank, each group's elements sorted first; a
+    /// recursive type is a leaf ranked by its name, since every cycle passes through one. The
+    /// walk's order is then found again, and with it the names' numbers. Departure: the book
+    /// ranks trees; here the texts form a graph cut at recursive types. Tests:
+    /// `random_types_print_alike_in_every_order_of_their_atoms` and
+    /// `a_union_of_tuple_types_less_another_prints_alike_in_every_order` catch a text that
+    /// depends on the atoms' order; neither checks the `O(t log t)` bound.
     // Complexity tradeoff: the tokens of one height are sorted together, so the time is
     // `O(t log t)` in the tokens of all texts, against `O(t)` for the walk alone.
     fn canon(&mut self, roots: &[(usize, At)]) {

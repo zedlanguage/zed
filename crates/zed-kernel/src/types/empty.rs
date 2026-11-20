@@ -1827,7 +1827,8 @@ struct ChainGroup {
 /// The prime powers of `n`: `(p, p^k)` for each prime `p` dividing `n` exactly `k` times, in
 /// increasing order of `p`; empty for 0 and 1.
 // Complexity tradeoff: trial division up to `sqrt n` was O(sqrt n), 2^32 divisions for a 64-bit
-// prime period; [`factor`] (Pollard's rho with Miller-Rabin) is O(n^(1/4)) expected products.
+// prime period; [`factor`] (Pollard's rho with Miller-Rabin, whose sources are cited at
+// `zed_numtheory::factor`) is O(n^(1/4)) expected products.
 fn prime_powers(n: u64) -> Vec<(u64, u64)> {
     // `p.pow(k)` cannot overflow: `p^k` divides `n`.
     factor(n)

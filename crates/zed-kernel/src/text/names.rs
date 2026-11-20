@@ -4,8 +4,17 @@
 //! equal joined strings are found equal without reading the strings.
 //!
 //! The method is the signature encoding of Mehlhorn, Sundar and Uhrig ("Maintaining dynamic
-//! sequences under equality tests in polylogarithmic time", Algorithmica 17, 1997), with the
-//! block rule of Alstrup, Brodal and Rauhe ("Pattern matching in dynamic texts", SODA 2000).
+//! sequences under equality tests in polylogarithmic time", Algorithmica 17(2):183-198, 1997,
+//! doi:10.1007/BF02522825), with the block rule of Alstrup, Brodal and Rauhe ("Pattern
+//! matching in dynamic texts", SODA 2000, pp. 819-828; not in Crossref). The blocks use the
+//! deterministic coin tossing of R. Cole and U. Vishkin ("Deterministic coin tossing with
+//! applications to optimal parallel list ranking", Information and Control 70(1):32-53, 1986,
+//! doi:10.1016/S0019-9958(86)80023-7): a position whose label differs from its left
+//! neighbor's in lowest bit `p` takes the new label `2p + (its bit p)`, so neighbors stay
+//! different and a label of `b` bits becomes one of about `log b` bits. Crossref checked
+//! 2026-11-20 for the two DOIs; none of the three texts was obtained, so the methods are from
+//! memory, as are the SODA pages. Departure: the papers keep the encoding under updates of a
+//! dynamic sequence; here texts are only named and joined, and the constants are this file's.
 //! Level 0 of a text is its bytes. Each level is turned into the next in two steps:
 //!
 //! 1. Runs: each maximal run of one symbol `a`, `k ≥ 2` times, becomes one symbol, the name of
