@@ -1933,6 +1933,41 @@ fn every_writing_at_seed_7570078408948364398() {
     writings_agree_at(7570078408948364398);
 }
 
+/// [`every_writing_of_a_formula_gets_one_answer`] at the seeds the ledger notes on
+/// FAIL-exact-writings-17553006884555075817 add: from loc1 (13472915549060986335,
+/// 8136853401859909784) and chainE1 (10746534589920032955, 17656181055615743818,
+/// 11354000743705775971). As with [`every_writing_at_seed_8124016268280057850`], each fails
+/// with the renaming of `project_each_with` reading `f` as written and passes with it reading
+/// `cover_input(f)` (run on 997eb3aa0, 2026-11-20).
+#[test]
+fn every_writing_at_seed_13472915549060986335() {
+    writings_agree_at(13472915549060986335);
+}
+
+/// One of the seeds of [`every_writing_at_seed_13472915549060986335`].
+#[test]
+fn every_writing_at_seed_8136853401859909784() {
+    writings_agree_at(8136853401859909784);
+}
+
+/// One of the seeds of [`every_writing_at_seed_13472915549060986335`].
+#[test]
+fn every_writing_at_seed_10746534589920032955() {
+    writings_agree_at(10746534589920032955);
+}
+
+/// One of the seeds of [`every_writing_at_seed_13472915549060986335`].
+#[test]
+fn every_writing_at_seed_17656181055615743818() {
+    writings_agree_at(17656181055615743818);
+}
+
+/// One of the seeds of [`every_writing_at_seed_13472915549060986335`].
+#[test]
+fn every_writing_at_seed_11354000743705775971() {
+    writings_agree_at(11354000743705775971);
+}
+
 /// Round 4 of seed 17553006884555075817 of [`every_writing_of_a_formula_gets_one_answer`],
 /// written out, so it holds whatever the generator draws. As written and with every equation in
 /// the other sign, alone and with the rows times 3, it gets one answer and one refusal at the
