@@ -3386,6 +3386,82 @@ impl<'t> Tx<'t> {
     // (`counts::inverse_most`) at every n to 128 and at 1024, 2048, 4096 and 8192: 3 and 1.
     // Before this proof the bound rested on a probe at n = 16, 128, 1024 and 8192 (p = n, heights 5, 8, 11 and 14, nodes built per step at most 12, 32, 53 and 74,
     // about 5.3 times the height).
+    //
+    // Proof of O(log n) per link on `normal_min_gap` (COMPLEXITY.md K138,
+    // PROOF-min-gap-log-per-link: `t_j = if i <= j { t } else { c_j - min(t, 20) }`,
+    // c_j = j mod 5 + 4 in [4, 8], `i` in [-M, M] with M = 10^6, demand `<= -3 or >= 3`). The
+    // root's tree is one node, key [-2, 2] (top minus the demand), label [-M, M].
+    //   DAG. `Terms::add` numbers a `Shared` child once (`id`) and each argument of a `Prim`
+    //   anew (`ids`), so `chain`'s then arm `t` and its copy inside the `Min` are two nodes with
+    //   the same children, and link j has four: A_j (then arms), B_j (the copy, under link
+    //   j + 1's `Min`), S_j (`c_j - _`, a `Reflect`, the else arm of A_j and B_j) and M_j
+    //   (`min(_, 20)`, child B_{j-1}). A_j's parents are A_{j+1} and B_{j+1}; S_j's are A_j and
+    //   B_j; M_j's is S_j; B_{j-1}'s is M_j.
+    //   Links j >= M. The guard i <= j cannot fail: `difference_guard` gives the else arm an
+    //   empty live set, `step_1d_at` drops it, and X_j = X_{j-1}; such a link visits A_j alone,
+    //   label [-M, M], O(1). Let m = min(n, M - 1); the links j <= m are those below.
+    //   Forward images are one interval each (k = 1): X_j = [-M, H_j] at A_j and B_j with
+    //   H_j = max(H_{j-1}, c_j + M), so c_j + M <= H_j <= M + 8 for j >= 1; [-M, 20] at M_j;
+    //   [c_j - 20, c_j + M] at S_j.
+    // By induction from A_m down, at the step of each node of link j <= m, after its clip
+    // (live = cover and inexact empty at every node: `init` sets them so, the masks meet live
+    // and cover alike, `union` joins them alike, and there is no `Mod` or `Pow`):
+    //   (A) A_j's tree is one node [-2, 2], label [-M, j + 1] ([-M, M] at j = m), and its live
+    //       set is [-M, j + 1] ([-M, M] at m). The `If` meets both with i <= j (one-piece sets,
+    //       O(1)), giving [-M, j] for A_{j-1}, and with i > j, giving {j + 1} ([m + 1, M] at
+    //       j = m) for S_j.
+    //   (B) B_j's live set is [j + 2, M] and every label of B_j lies in it (B_j is reached
+    //       only through link j + 1's else arm), so the mask i <= j misses the root's `span`
+    //       and i > j covers it: O(1). B_j's then part has an empty live set and `push` drops
+    //       it, so A_{j-1} gets A_j's then part alone; B_j's else part is B_j itself. S_j's
+    //       `union` joins the live sets {j + 1} and [j + 2, M] into one piece [j + 1, M], which
+    //       M_j and B_{j-1} keep: (B) holds at j - 1.
+    //   (C) B_j has at most 37 nodes. Write the cuts of a nonempty tree for its key ends lo and
+    //       hi + 1; each node has its own lo and the largest cut is no node's lo, so nodes < cuts.
+    //       `tree_union` cuts only at its operands' cuts, `tree_restrict` adds its two ends,
+    //       `tree_restrict_input` keeps or drops keys, and the reflection v -> c - v maps cut b
+    //       to c + 1 - b. Let G_j be the cuts of B_j other than -M and H_j + 1, and assume
+    //       G_j in [-15, 20] (true at j = m - 1, see below). S_j adds -2 and 3 (A_j's key); its
+    //       clip to [c - 20, c + M] keeps the cuts b with c - 19 <= b <= c + M, which drops
+    //       H_j + 1 >= c + M + 1 and adds the ends c - 20 and c + M + 1; the reflection maps
+    //       these to 21 and -M and each kept b to c + 1 - b, in [c - 19, 20] as b <= 20;
+    //       M_j's clip ends at -M and 21; `minmax` keeps the keys below 20 and puts one node
+    //       [20, inf) (label `val_at(20)`, none when that is empty) above, so the cuts above 20
+    //       go and 20 comes in; B_{j-1}'s own clip, first in its step, ends that node at
+    //       H_{j-1} + 1. So G_{j-1} lies in
+    //       {20}, {c + 3, c - 2} and {c + 1 - b : b in G_j, b >= c - 19}, all in [c - 19, 20]
+    //       within [-15, 20], as c >= 4. The base B_{m-1} starts from S_m, which holds A_m's else
+    //       part alone, cuts {-2, 3}. So at most 36 + 2 cuts and 37 nodes at B_j, 39 at S_j and
+    //       M_j, one at A_j: trees of O(1) nodes and height.
+    //   (D) labels are made only by A's else parts ({k + 1} at link k < m, [m + 1, M] at m),
+    //       joined only at S_k, met (shrinking) by the masks and copied by `val_at`. So a label
+    //       at B_j is a union of some of {j + 2}, ..., {m} and [m + 1, M], and at S_j or M_j of
+    //       some of {j + 1}, ..., {m} and [m + 1, M]: at most m - j + 1 pieces (n / 2 measured).
+    // Step costs. `back_doubt` calls `step_1d` on the root first, which fills the memo for
+    // every node the walk reaches, so each call in the walk is a lookup and a clone of
+    // `Arc`/`Rc` fields, O(1). Each `clip_values` is one `tree_restrict` on a tree of O(1)
+    // nodes, labels copied by their `Arc` roots. `Reflect` is a tag, O(1); every node a tag
+    // reaches has passed a clip, so its key and the key it was made with lie in [-M, M + 8],
+    // and its `lazy` maps one to the other, an offset within 2 (M + 8) (the node [20, inf) that
+    // `minmax` makes has `lazy` the identity and is clipped at B_{j-1} before any tag). `minmax`
+    // is a `tree_restrict`, a `val_at` and a join of trees on disjoint ranges, O(1), no label
+    // work. The one step that grows is the union at S_j of A_j's else part (one node [-2, 2],
+    // label {j + 1}) with B_j: whichever path `tree_union` takes (disjoint ranges, no label
+    // join; equal keys; the single node as the tree of greater or equal height; or the split
+    // around B_j's root), it follows only the subtrees whose range meets [-2, 2], O(1) tree
+    // work, and joins label
+    // {j + 1} with each label of the at most 5 keys of B_j that meet [-2, 2]. Each such label
+    // lies in [j + 2, M], so `IntervalSet::join`'s two `is_subset` tests stop at once (the
+    // one-piece fast path, or the first step of the walk) and `union` of one piece with p
+    // pieces costs O(log p) time and new nodes (Blelloch, Ferizovic and Sun 2016, interval.rs
+    // `union`). So a link costs O(log n) time and bytes, O(n log n) in all. The leaves (`Input`
+    // at A_0 and B_0) run once in `solve_1d`: `eval_diagonal` costs O(n log n) (a seek per
+    // node, O(1) nodes by (C), then the sort in `from_pieces` of at most 37 (m + 1) pieces by
+    // (D)). The proof covers
+    // `inverse_states` only, as K124 does, not the rest of `preimage_in`.
+    // Measured (BENCH-ref-memo-normal-min-gap-bytes): first-run bytes per link rise by 4,065
+    // to 4,947 at each doubling from 128 to 8192 and the rise does not grow, as O(log n) path
+    // copies of labels predict; the largest label has n / 2 pieces.
     fn inverse_states(
         &mut self,
         root: At,
