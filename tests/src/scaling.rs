@@ -919,10 +919,12 @@ pub(crate) enum Bound<'a> {
     Given(f64, &'a str),
 }
 
-/// The variable that makes a process of a test binary the one a check started for its run at 8n
-/// (see [`compare_by`]): `<k>\t<test>\t<what>`, the check's place among the checks of the test
-/// `test`, counted from 0, and its `what`. Variables [`FRESH_FAILED`]`<j>` give the panic
-/// message of each earlier check `j` of the test that panicked in the process that started it.
+/// The variable that makes a process of a test binary the one a check started for one of its
+/// runs (see [`compare_by`]): `<k>\t<size>\t<test>\t<what>`, the check's place among the checks
+/// of the test `test`, counted from 0, the run it measures (`8n`, or `n` when the process that
+/// started it may run other tests, see [`runs_alone`]), and its `what`. Variables
+/// [`FRESH_FAILED`]`<j>` give the panic message of each earlier check `j` of the test that
+/// panicked in the process that started it.
 const FRESH_VAR: &str = "ZED_SCALING_FRESH";
 
 /// The prefix of the variables that give the message of each earlier check that panicked; see
@@ -933,19 +935,51 @@ const FRESH_FAILED: &str = "ZED_SCALING_FRESH_FAILED_";
 /// its counts: `zed-scaling-fresh\t<units>\t<bytes>\t<ns>`.
 const FRESH_LINE: &str = "zed-scaling-fresh";
 
-/// The check this process was started to run at 8n, as [`FRESH_VAR`] names it: its place, its
-/// test and its `what`; `None` in a process no check started.
-fn fresh_target() -> Option<&'static (usize, String, String)> {
-    static TARGET: std::sync::OnceLock<Option<(usize, String, String)>> =
+/// The check this process was started to run, as [`FRESH_VAR`] names it: its place, whether it
+/// measures the run at 8n (else the run at n), its test and its `what`; `None` in a process no
+/// check started.
+fn fresh_target() -> Option<&'static (usize, bool, String, String)> {
+    static TARGET: std::sync::OnceLock<Option<(usize, bool, String, String)>> =
         std::sync::OnceLock::new();
     TARGET
         .get_or_init(|| {
             let value = std::env::var(FRESH_VAR).ok()?;
-            let mut parts = value.splitn(3, '\t');
+            let mut parts = value.splitn(4, '\t');
             let k = parts.next()?.parse().ok()?;
-            Some((k, parts.next()?.to_owned(), parts.next()?.to_owned()))
+            let large = match parts.next()? {
+                "8n" => true,
+                "n" => false,
+                _ => return None,
+            };
+            Some((k, large, parts.next()?.to_owned(), parts.next()?.to_owned()))
         })
         .as_ref()
+}
+
+/// Whether this process runs the test `test` and no other, as tools/run_tests.sh runs each
+/// benchmark (`<binary> --exact <test> --nocapture`) and as [`run_in_a_new_process`] starts
+/// one: its arguments are `--exact`, `test` as the only filter, and only flags that change the
+/// output or the number of test threads. Any other argument, known or not, gives false
+/// (FAIL-lr4-bench-annotation-update).
+///
+/// Proof that true means no other test runs here: libtest with `--exact` runs the tests whose
+/// whole name equals a filter, the one filter is `test`, and a test binary's names are unique;
+/// `--nocapture`, `--show-output`, `--quiet`/`-q` change what is printed and `--test-threads=`
+/// how many threads run the tests selected, and none of them selects a test. A false answer
+/// where the process does run the test alone costs one more process start (see
+/// [`compare_measured`]), never a wrong count.
+fn runs_alone(test: &str) -> bool {
+    let (mut exact, mut named) = (false, false);
+    for arg in std::env::args().skip(1) {
+        match arg.as_str() {
+            "--exact" => exact = true,
+            "--nocapture" | "--show-output" | "--quiet" | "-q" => {}
+            a if a == test => named = true,
+            a if a.starts_with("--test-threads=") => {}
+            _ => return false,
+        }
+    }
+    exact && named
 }
 
 /// For each test, the checks it has entered in this process, in order: the message of each
@@ -1003,13 +1037,14 @@ pub(crate) fn fresh_command(exe: &std::path::Path) -> std::process::Command {
     command
 }
 
-/// Runs the run at 8n of the check at place `k` of `test` in a new process of this test binary,
-/// which runs the test alone up to that check (see [`compare_by`]), and gives the work, the
-/// bytes and the elapsed time it measured there. Earlier checks of the test that panicked here
-/// panic with the same message there. `None` when the new process ran no test: the thread's
-/// name is not that of a test (a thread the test named itself), so the run stays in this
-/// process.
-fn run_in_a_new_process(test: &str, k: usize, what: &str) -> Option<(Work, u64, u64)> {
+/// Runs the run at 8n (`large`) or at n of the check at place `k` of `test` in a new process of
+/// this test binary, which runs the test alone up to that check (see [`compare_by`]), and gives
+/// the work, the bytes and the elapsed time it measured there. Earlier checks of the test that
+/// panicked here panic with the same message there. `None` when the new process ran no test:
+/// the thread's name is not that of a test (a thread the test named itself), so the run stays
+/// in this process.
+fn run_in_a_new_process(test: &str, k: usize, large: bool, what: &str) -> Option<(Work, u64, u64)> {
+    let size = if large { "8n" } else { "n" };
     let exe = std::env::current_exe().expect("this test binary");
     let mut command = fresh_command(&exe);
     command.args([test, "--exact", "--test-threads=1", "--quiet"]);
@@ -1021,7 +1056,7 @@ fn run_in_a_new_process(test: &str, k: usize, what: &str) -> Option<(Work, u64, 
         }
     }
     command.env_remove(RATIOS_FILE).env_remove(BENCH_LIMIT_FILE);
-    command.env(FRESH_VAR, format!("{k}\t{test}\t{what}"));
+    command.env(FRESH_VAR, format!("{k}\t{size}\t{test}\t{what}"));
     let outcomes = OUTCOMES.lock().unwrap_or_else(|e| e.into_inner());
     for (j, message) in outcomes[test][..k].iter().enumerate() {
         if let Some(message) = message {
@@ -1029,9 +1064,12 @@ fn run_in_a_new_process(test: &str, k: usize, what: &str) -> Option<(Work, u64, 
         }
     }
     drop(outcomes);
-    let out = command
-        .output()
-        .unwrap_or_else(|e| panic!("{what}: starting {} for the run at 8n: {e}", exe.display()));
+    let out = command.output().unwrap_or_else(|e| {
+        panic!(
+            "{what}: starting {} for the run at {size}: {e}",
+            exe.display()
+        )
+    });
     let stdout = String::from_utf8_lossy(&out.stdout);
     let counts = stdout.lines().find_map(|line| {
         let mut fields = line.strip_prefix(FRESH_LINE)?.split('\t').skip(1);
@@ -1043,8 +1081,8 @@ fn run_in_a_new_process(test: &str, k: usize, what: &str) -> Option<(Work, u64, 
             return None;
         }
         panic!(
-            "{what}: the run at 8n, in a new process of this test binary running {test} alone \
-             up to this check, gave no count ({}); its output:\n{stdout}\n{}",
+            "{what}: the run at {size}, in a new process of this test binary running {test} \
+             alone up to this check, gave no count ({}); its output:\n{stdout}\n{}",
             out.status,
             String::from_utf8_lossy(&out.stderr)
         );
@@ -1052,15 +1090,15 @@ fn run_in_a_new_process(test: &str, k: usize, what: &str) -> Option<(Work, u64, 
     Some((Work { units, bytes }, bytes, ns))
 }
 
-/// In a process started for the run at 8n of the check at place `k` of this test: the check at
-/// place `j` does what it did in the process that started this one, so that the check at `k`
-/// starts from that process's state. Before `k` it runs its run at n, and its run at 8n too when
-/// that ran in that process (`fresh` false), unmeasured, and panics with the message it panicked
-/// with there, if it did; at `k` it measures its run at 8n, writes the counts and ends the
-/// process.
+/// In a process started for the run at 8n (`measure_large`), or at n, of the check at place `k`
+/// of this test: the check at place `j` does what it did in the process that started this one,
+/// so that the check at `k` starts from that process's state. Before `k` it runs its run at n,
+/// and its run at 8n too when that ran in that process (`fresh` false), unmeasured, and panics
+/// with the message it panicked with there, if it did; at `k` it measures the run it was
+/// started for, writes the counts and ends the process.
 fn replay_or_measure(
     meter: &mut Meter,
-    (k, test, target): &(usize, String, String),
+    (k, measure_large, test, target): &(usize, bool, String, String),
     j: usize,
     what: &str,
     fresh: bool,
@@ -1080,13 +1118,14 @@ fn replay_or_measure(
     }
     assert!(
         j == *k && what == target,
-        "{what}: this process was started for the run at 8n of the check `{target}`, place {k} \
-         of {test}, and came to the check at place {j} as that place; a test whose checks run in \
-         an order that changes from run to run cannot run its runs at 8n in a new process"
+        "{what}: this process was started for a run of the check `{target}`, place {k} of \
+         {test}, and came to the check at place {j} as that place; a test whose checks run in \
+         an order that changes from run to run cannot run its runs in a new process"
     );
+    let run = if *measure_large { large } else { small };
     let (bytes, ns) = (Cell::new(0), Cell::new(0));
     let work = meter.least(|| {
-        let (b, n) = alone(&large);
+        let (b, n) = alone(&run);
         bytes.set(b);
         ns.set(n);
     });
@@ -1096,7 +1135,7 @@ fn replay_or_measure(
     let (units, bytes, ns) = (work.units, bytes.get(), ns.get());
     writeln!(stdout, "\n{FRESH_LINE}\t{units}\t{bytes}\t{ns}")
         .and_then(|()| stdout.flush())
-        .expect("writing the counts of the run at 8n");
+        .expect("writing the counts of the run");
     std::process::exit(0);
 }
 
@@ -1129,7 +1168,20 @@ fn replay_or_measure(
 /// ([`FRESH_FAILED`]); so the test reaches check `k` with the memos this process held at the
 /// start of check `k`, given that the test does the same thing from run to run (a check that
 /// finds the wrong check at its place says so). What the process held from other tests running
-/// beside this one is not there, as it is not in a run of the test alone. The other way, a count
+/// beside this one is not there, as it is not in a run of the test alone; so when this process
+/// may run other tests ([`runs_alone`] false: a run of the whole binary, or a filter matching
+/// several tests), the run at n moves to a new process of its own too, started the same way. Both
+/// runs measured then start from one state, that of a process running this test alone up to
+/// check `k`. Kept here, the run at n found what earlier tests built and the run at 8n paid for
+/// it: the l01_08_parser benches `a_long_annotation_list_is_linear` and
+/// `a_long_update_path_is_linear` ran in one process gave 1,949,230 and 21,178,567 instructions,
+/// 10.9 times, against 8,285,358 and 21,178,615, 2.6 times, each run alone
+/// (FAIL-lr4-bench-annotation-update, 2026-11-20): about 6.3 million instructions a process
+/// spends once, on first use, which a cold run pays and a warm one does not (not traced to a
+/// single memo; the parser's grammar and the table of forms are `OnceLock`s). The cost: a second
+/// process start, set-up
+/// and replay per check, only where the process may run other tests; tools/run_tests.sh runs
+/// each benchmark alone and pays nothing more. The other way, a count
 /// of each memo emptied before the run at 8n, needs every memo of every crate to be found and
 /// reset, and one missed is the hole again; a new process empties all of them. The cost: a
 /// process start, the test's set-up up to the check and the runs at n of its earlier checks,
@@ -1168,7 +1220,7 @@ fn compare_by_dyn(
     if let Some(target) = fresh_target() {
         // A process started for one check: the checks of its test replay, and nothing else
         // starts a process.
-        if target.1 == test {
+        if target.2 == test {
             return replay_or_measure(meter, target, j, what, fresh, small, large);
         }
         return compare_measured(meter, measures, n, what, bound, small, large, None);
@@ -1245,12 +1297,32 @@ fn compare_measured(
         // to a new process that starts as this check did (see [`compare_by`]); no run outside
         // the two measured ones is added (A160).
         let phase = Instant::now();
-        let small = meter.least(|| {
-            let (bytes, ns) = alone(&small);
+        let set_small = |bytes: u64, ns: u64| {
             small_bytes.set(small_bytes.get().min(bytes));
             small_ns.set(small_ns.get().min(ns));
             first_bytes.0.set(first_bytes.0.get().or(Some(bytes)));
-        });
+        };
+        // The run at n in a new process too when this process may run other tests, which can
+        // have filled what the process keeps for all threads before this check began; see
+        // [`compare_by`] (FAIL-lr4-bench-annotation-update).
+        // Complexity tradeoff: COMPLEXITY.md row FAIL-lr4-bench-annotation-update. Naive: the
+        // run at n in this process, no extra cost, but warm against a cold run at 8n after
+        // other tests (10.9 times for a linear parse). New: one more process start, set-up and
+        // replay per check, only where `runs_alone` is false; the counts are those of a run of
+        // the test alone.
+        let small_elsewhere = at
+            .filter(|(test, _)| !runs_alone(test))
+            .and_then(|(test, k)| run_in_a_new_process(test, k, false, what));
+        let small = match small_elsewhere {
+            Some((work, bytes, ns)) => {
+                set_small(bytes, ns);
+                work
+            }
+            None => meter.least(|| {
+                let (bytes, ns) = alone(&small);
+                set_small(bytes, ns);
+            }),
+        };
         // Written after the phase at n, so its work is not counted in either run's.
         start_bench_phase(Some(phase.elapsed()));
         // In a new process when `at` is given (see [`compare_by`]), which runs the test's
@@ -1261,7 +1333,7 @@ fn compare_measured(
             large_ns.set(large_ns.get().min(ns));
             first_bytes.1.set(first_bytes.1.get().or(Some(bytes)));
         };
-        let elsewhere = at.and_then(|(test, k)| run_in_a_new_process(test, k, what));
+        let elsewhere = at.and_then(|(test, k)| run_in_a_new_process(test, k, true, what));
         let large = match elsewhere {
             Some((work, bytes, ns)) => {
                 set(bytes, ns);

@@ -858,6 +858,59 @@ fn a_fixed_set_up_kept_by_the_process_passes_in_each_check_of_a_test() {
     check("a fixed set-up, second check", 300, run);
 }
 
+/// The table of fixed size that [`a_set_up_another_test_built_a_fills_the_table`] builds and
+/// [`a_set_up_another_test_built_b_is_paid_at_both_sizes`] reads.
+static BUILT_BY_ANOTHER_TEST: std::sync::OnceLock<()> = std::sync::OnceLock::new();
+
+/// Builds [`BUILT_BY_ANOTHER_TEST`]: `2000²` passes, against `20 × 300` for the run at n of the
+/// check that reads it.
+fn build_the_table_of_another_test() {
+    BUILT_BY_ANOTHER_TEST.get_or_init(|| work(2000, 2, 1));
+}
+
+/// Fills the table, as an earlier test in the same process fills the grammar.
+#[test]
+fn a_set_up_another_test_built_a_fills_the_table() {
+    build_the_table_of_another_test();
+}
+
+/// A linear run that builds the table on first use. Run alone, both runs pay the table. Run
+/// after [`a_set_up_another_test_built_a_fills_the_table`] in one process, the run at n found it
+/// built and the run at 8n, in a new process, paid it: `2000² + 20 × 2400` passes against
+/// `20 × 300`, and the check failed (FAIL-lr4-bench-annotation-update).
+#[test]
+fn a_set_up_another_test_built_b_is_paid_at_both_sizes() {
+    let run = |n: usize| {
+        build_the_table_of_another_test();
+        work(n, 1, 20);
+        linear_bytes(n);
+    };
+    check("a set-up another test built", 300, run);
+}
+
+/// Both tests above in one process, on one thread, in order of their names, as a run of the
+/// whole binary or of a filter matching several tests runs them: the check passes, since its
+/// run at n moves to a new process too (see `compare_by`). Only a count of instructions runs
+/// the run at 8n in a new process.
+#[test]
+fn a_check_after_another_test_built_its_set_up_passes() {
+    if !Meter::new().fresh {
+        return;
+    }
+    let run = fresh_command(&std::env::current_exe().expect("this test binary"))
+        .args([
+            "scaling_tests::a_set_up_another_test_built_",
+            "--test-threads=1",
+        ])
+        .output()
+        .expect("running this test binary");
+    let out = String::from_utf8_lossy(&run.stdout);
+    assert!(
+        run.status.success() && out.contains("test result: ok. 2 passed"),
+        "{out}"
+    );
+}
+
 /// The passes of the loops of [`counted_spin`] on every thread of the process; only
 /// `a_meter_measures_by_any_counter_it_is_given` runs them.
 static SPUN: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
