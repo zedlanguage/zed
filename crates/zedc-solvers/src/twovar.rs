@@ -837,7 +837,8 @@ mod tests {
             TwoVarProj::Ranges(vec![(lo.map(Int::from), hi.map(Int::from))])
         };
         // Opposite-slope persist wedge: `x + 16y >= -1000` and `x - 18y >= 0`.
-        // Real intersection at x = -18000/34 = -529.41; first integer x with integer y is -522 (y=-29).
+        // Real intersection at x = -18000/34 = -529.41; first integer x with integer y is -522
+        // (y=-29).
         assert_eq!(
             proj_of(&[([1, 16], 1000), ([1, -18], 0)], true),
             r(Some(-522), None)

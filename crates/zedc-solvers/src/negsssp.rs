@@ -524,9 +524,9 @@ impl<'g, H, F: FnMut() -> Result<(), H>> Solver<'g, H, F> {
             self.neg_to.clear();
             self.neg_w.clear();
             self.neg_start.push(0);
-            // Complexity tradeoff: one unit per vertex and per negative edge, not per edge; an edge of
-            // `c` at least 0 costs one addition here, and the step passes over every edge with one
-            // unit each below, so the step stays O(m) units. A unit per edge took the both-ways
+            // Complexity tradeoff: one unit per vertex and per negative edge, not per edge; an edge
+            // of `c` at least 0 costs one addition here, and the step passes over every edge with
+            // one unit each below, so the step stays O(m) units. A unit per edge took the both-ways
             // family from 21.2 to 24.9 times from k = 128 to 1,024; no unit for the edges at all
             // made each unit of Duong's search cost more and slowed the race by up to 5% on the
             // families the quick searches win (UTVPI-both-ways).
@@ -1237,9 +1237,9 @@ impl Aux {
 /// weight `label[x]` to each node `x`, the first round started from `seeds`, by Dijkstra's
 /// search on the edges of `graph` of weight at least 0 with a round of the edges of `negative`
 /// after each (\[D\] Lemma l.129). `negative` holds every negative edge of `graph`, and only
-/// negative edges, so a round of them passes no others. After round `k` each label is at most the weight of every walk with `k`
-/// negative edges besides the source's, so a label
-/// that falls in round `eta` shows a walk shorter than all with `eta` negative edges, and the
+/// negative edges, so a round of them passes no others. After round `k` each label is at most
+/// the weight of every walk with `k` negative edges besides the source's, so a label that falls
+/// in round `eta` shows a walk shorter than all with `eta` negative edges, and the
 /// caller's negative cycle (\[D\] Theorem 3.1). A cycle of parent pointers is a negative cycle
 /// (the walk to the root of Cherkassky and Goldberg); it is looked for after each round, from
 /// the nodes whose label changed, each node visited once.
