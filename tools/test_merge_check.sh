@@ -396,7 +396,7 @@ check "a change to tools/run_tests.sh runs both parts of tools/test_merge_check.
   "merge check: a file tools/test_merge_check.sh tests changed: both its parts run
 merge check: a file tools/test_run_tests.sh tests changed: all its parts run
 merge check: tools/test_merge_check.sh select and record passed
-merge check: tools/test_run_tests.sh list, select, table, fresh, concurrent and trace passed
+merge check: tools/test_run_tests.sh list, select, table, fresh, short, concurrent and trace passed
 merge check: passed
 0" "$(change_on_base tools/run_tests.sh '# changed'
     "$check_script" --base base 2>&1 | command grep -a -E '^merge check: (a file|tools|passed|FAILED)'
@@ -427,7 +427,7 @@ check "a failing build before the parts of tools/test_run_tests.sh refuses the b
     echo "${PIPESTATUS[0]}")"
 check "a change to tools/test_run_tests.sh alone runs its parts, not tools/test_merge_check.sh" \
   "merge check: a file tools/test_run_tests.sh tests changed: all its parts run
-merge check: tools/test_run_tests.sh list, select, table, fresh, concurrent and trace passed
+merge check: tools/test_run_tests.sh list, select, table, fresh, short, concurrent and trace passed
 merge check: passed
 0" "$(change_on_base tools/test_run_tests.sh '# changed'
     "$check_script" --base base 2>&1 | command grep -a -E '^merge check: (a file|tools|passed|FAILED)'
@@ -435,7 +435,7 @@ merge check: passed
 # Step 0's parts are timed, so they start only once step 0b's build (which has no limit) has ended.
 check "the build for tools/test_run_tests.sh ends before the timed parts of tools/test_merge_check.sh start" \
   "merge check: tools/test_merge_check.sh select and record passed
-merge check: tools/test_run_tests.sh list, select, table, fresh, concurrent and trace passed
+merge check: tools/test_run_tests.sh list, select, table, fresh, short, concurrent and trace passed
 merge check: passed
 0" "$(change_on_base tools/test_lib.sh '# changed'
     STUB_BUILD_MARK=$ws/target/built-$$-$SECONDS "$check_script" --base base 2>&1 |

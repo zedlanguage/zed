@@ -179,6 +179,19 @@ if [ -n "$only" ]; then
     echo "--only: not a valid extended regular expression: $only"
     exit 2
   fi
+  # A run prints the pieces of a library's unit tests with the binary's hash,
+  # zedc_presburger-78e0977b8abc3f4c::<path>, and the binaries are chosen by group before the
+  # build (wants, below), where the hash is not known; such a name copied into --only selected
+  # nothing (TOOL-short-piece-test-filter: a seed test of zedc_presburger seen failing in a
+  # --full run was run by hand). So a hash of cargo's form, - and 16 hexadecimal digits, after a
+  # name and before anything but more of a name, is taken out: the pattern then selects what
+  # <group>::<path> does, the hash of today's binary or of an older one. No group, step or test
+  # name holds a - followed by 16 hexadecimal digits (groups are cargo's target names with each
+  # - made _; the other names are Rust identifiers and step folders, short-<group> and
+  # full-<folder>), so nothing else is changed.
+  while [[ $only =~ ^(.*[A-Za-z0-9_])-[0-9a-f]{16}([^A-Za-z0-9_-].*)?$ ]]; do
+    only=${BASH_REMATCH[1]}${BASH_REMATCH[2]}
+  done
 fi
 # Whether the piece $2 of group $1 is selected: always without --only. A piece of a library's
 # unit tests or a benchmark is named after its binary, hash and all (zed_kernel-744b8b7231e6eb90
@@ -273,6 +286,18 @@ fi
 # delete. A run killed with SIGKILL leaves its mount behind, which the next run unmounts once no
 # process has the pid named in that mount's directory. Checkouts do not share a clone, as each
 # zrun namespace mounts its own checkout at the fixed path.
+# A run unmounts its clone lazily (umount -l), and so does a run unmounting the mount of an ended
+# run: a process may still use the clone when its run ends (TOOL-short-clone-umount-busy). A run
+# whose process group is sent TERM during the short-addresses build (a tool's time limit) sees
+# cargo end and runs its EXIT trap while the rustc cargo started is still exiting; a plain umount
+# then printed "umount: .../short-clone: target is busy." and left the mount (reproduced
+# 2026-11-20 by sending TERM to the group 8 and 15 s into the clone's build, both times; the
+# group had no process left 0.5 s later). A lazy unmount takes the mount out of the mount table
+# at once, and the kernel ends it when its last user ends; until then the kernel still refuses
+# another mount of the upper layer, with EBUSY (measured 2026-11-20, Linux 7.3.3, in a user
+# namespace: a mount with index=on refused while a process held a file of a lazily unmounted one
+# open, and accepted once it ended). So the clone still has one writer at a time, and a run
+# whose mount is refused while no mount of the clone is in sight waits for that last user.
 # The build the clone is made from: build/STACK and build/upper, or build/cargo in a checkout
 # without a STACK.
 short_clone_stamp() {
@@ -289,16 +314,17 @@ short_clone_mounts() {
     awk '$2 ~ /(^|,)upperdir=\/home\/luke\/Work\/wt\/\.build-root\/build\/short-clone\/upper(,|$)/ { print $1 }'
 }
 # Unmounts each mount of the clone whose run has ended: one at <dir>/<time>-<pid>/short-clone
-# with no process <pid>, or one at build/short-clone/cargo, where a run before NO-LOCKS-optimistic
-# mounted it, that no process is using (umount refuses one in use). Prints the directory of each
-# mount left, the runs still using the clone. A pid used again by another process since the run
-# ended keeps its mount until that process ends; the clone waits that long.
+# with no process <pid>, lazily, as a process of the ended run may still use it (see above, at
+# TOOL-short-clone-umount-busy), or one at build/short-clone/cargo, where a run before
+# NO-LOCKS-optimistic mounted it, that no process is using (umount refuses one in use). Prints
+# the directory of each mount left, the runs still using the clone. A pid used again by another
+# process since the run ended keeps its mount until that process ends; the clone waits that long.
 unmount_dead_short_clones() {
   local m pid
   for m in $(short_clone_mounts); do
     if [[ $m =~ -([0-9]+)/short-clone$ ]]; then
       pid=${BASH_REMATCH[1]}
-      if [ "$pid" != $$ ] && [ ! -d "/proc/$pid" ] && umount "$m"; then
+      if [ "$pid" != $$ ] && [ ! -d "/proc/$pid" ] && umount -l "$m"; then
         continue
       fi
     elif [ "$m" = /home/luke/Work/wt/.build-root/build/short-clone/cargo ] && umount "$m" 2>/dev/null; then
@@ -364,7 +390,7 @@ drop_short_clone() {
 # Mounts the clone at <this run's log directory>/short-clone, made again first when it was made
 # from another build of this checkout, and waits while another run has it mounted.
 mount_short_clone() {
-  local m said= free=
+  local m said= said_detached= free=
   mkdir -p "$out/short-clone" || return 1
   while :; do
     m=$(unmount_dead_short_clones)
@@ -401,12 +427,25 @@ mount_short_clone() {
     m=$(unmount_dead_short_clones)
     if [ -z "$m" ]; then
       # The run that had it mounted may have ended since the mount was refused: one more try.
-      if [ -n "$free" ]; then
+      if [ -z "$free" ]; then
+        free=1
+        continue
+      fi
+      # Refused twice with no mount of the clone in sight. With EBUSY a mount unmounted lazily
+      # by an ended run is still in use by a process of that run, and the kernel ends it when
+      # that process ends; any other refusal stops the run. For EBUSY util-linux's mount prints
+      # "overlay already mounted on <lowerdir>." here, and "overlay already mounted or mount
+      # point busy." for an overlay in a scratch directory (both measured 2026-11-20), so the
+      # refusal is read by "already mounted".
+      if ! grep -q 'already mounted' "$out/short-clone.err"; then
         cat "$out/short-clone.err"
         echo "The short-addresses clone of build/cargo could not be mounted."
         return 1
       fi
-      free=1
+      [ -n "$said_detached" ] ||
+        echo "Waiting for the processes of an ended run that still use the short-addresses clone to end."
+      said_detached=1
+      sleep 2
       continue
     fi
     free=
@@ -591,8 +630,15 @@ select_pieces() {
       # --each-test, so that --only '^zed_kernel::btree::' runs those unit tests of the library
       # (TOOLS-only-lib-pieces). Only a pattern with :: can match such a name, so only then is
       # the binary's list read (once per binary, as above). A benchmark is a piece per test
-      # already, so this is for correctness pieces alone.
-      [[ $k == test && $only == *::* && $name =~ ^$group-[0-9a-f]+(::|$) ]] || continue
+      # already, so this is for correctness pieces alone. A short-addresses piece, named
+      # short-<group> after its whole binary (group, step and name the same), is split the same
+      # way, so that --only '^short-zed_kernel::treap_set::' runs those tests of the
+      # short-addresses build alone (TOOL-short-piece-test-filter: until then such a pattern
+      # built the clone and selected nothing). Its binary lies in this run's clone, mounted
+      # until the run ends, so a --reuse-table run, whose table names the clone of an earlier
+      # run, cannot list its tests and selects none of them.
+      [[ $k == test && $only == *::* &&
+        ($name =~ ^$group-[0-9a-f]+(::|$) || ($name == short-* && $name == "$group")) ]] || continue
       list_binary "$bin"
       for t in $(piece_tests "$bin" $args); do
         [[ $group::$t =~ $only ]] || continue
@@ -764,7 +810,8 @@ wants() {
 # run that selects one stops here, before any build, when it does not run through zrun. A
 # piece is selected by `wants`, as the other binaries are below, so that an alternative naming a
 # test in one, ^short-zed_kernel::types::bdd::bench::<test>, builds it; `selected` matches the
-# whole name short-zed_kernel only, and such a run built nothing and listed no piece.
+# whole name short-zed_kernel only, and such a run built nothing and listed no piece. The
+# piece's tests are then selected one by one in select_pieces (TOOL-short-piece-test-filter).
 short_build=
 for s in $short_steps ${short_libs//-/_}; do
   if [ -z "$only" ]; then
@@ -893,7 +940,8 @@ full=$(echo "$bins" | grep '/full-')
 short=
 if [ -n "$short_build" ]; then
   stamp=$(short_clone_stamp)
-  trap '! mountpoint -q "$out/short-clone" || umount "$out/short-clone"; open_short_clone_work' EXIT
+  # Lazily: a process the run started may still use the clone (TOOL-short-clone-umount-busy).
+  trap '! mountpoint -q "$out/short-clone" || umount -l "$out/short-clone"; open_short_clone_work' EXIT
   trap 'exit 129' HUP
   trap 'exit 130' INT
   trap 'exit 143' TERM

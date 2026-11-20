@@ -14,9 +14,10 @@
 # the selections of steps, modules and tests on the table list published (about 20 of 0.9 to 1.5 s
 # each at load 64 to 94: with the full listing in the same part it ran past 60 s at load 47 to 94,
 # 2026-11-19); `table`, the selections of --bench and --each-test on that table; `fresh`, the
-# listings with --only afresh; `concurrent`, two runs at once on one log directory; and `trace`.
+# listings with --only afresh; `short`, the short-addresses pieces and their clone; `concurrent`,
+# two runs at once on one log directory; and `trace`.
 # select and table are run after list, with no build of the tests between them. With no part named
-# it runs list, select, table, fresh and concurrent one after another.
+# it runs list, select, table, fresh, short and concurrent one after another.
 # Each part has a log directory of its own, under which every run of run_tests.sh writes a
 # directory of its own and points <dir>/latest at it; the parts are run one run at a time, so
 # right after a run, latest is that run's.
@@ -24,9 +25,9 @@ fails=0
 . tools/test_lib.sh || exit 2
 part=${1:-all}
 case $part in
-  all | list | select | table | fresh | concurrent | trace) ;;
+  all | list | select | table | fresh | short | concurrent | trace) ;;
   *)
-    echo "usage: tools/test_run_tests.sh [list | select | table | fresh | concurrent | trace]"
+    echo "usage: tools/test_run_tests.sh [list | select | table | fresh | short | concurrent | trace]"
     exit 2
     ;;
 esac
@@ -175,6 +176,15 @@ check "a benchmark of a library matches by its name without the hash, alone" \
   "zed_kernel::btree::bench::insertion_lookup_and_difference_scale_as_n_log_n" \
   "$(run --list --reuse-table --bench --only '^zed_kernel::btree::bench::insertion_lookup_and_difference_scale_as_n_log_n$' |
     sed 's/^zed_kernel-[0-9a-f]*::/zed_kernel::/')"
+# A run prints such a piece with the binary's hash; that name, copied into --only, selects the
+# one test, and so does the name with another binary's hash, as after a rebuild
+# (TOOL-short-piece-test-filter: such a name selected nothing, so a failing seed test of
+# zedc_presburger was run by hand).
+hashed=$(listed_by_libtest '^zed_kernel-' | grep '::btree::' | head -1)
+check "a library's unit test is selected by the name a run prints, hash and all" "$hashed" \
+  "$(selected "^$hashed\$")"
+check "and by that name with another hash" "$hashed" \
+  "$(selected "^$(echo "$hashed" | sed 's/^zed_kernel-[0-9a-f]*::/zed_kernel-0123456789abcdef::/')\$")"
 # The short-addresses build keeps 8 bits of each digest, where the zed-kernel benchmarks measure
 # ties of digests, not the method (bdd's parity bench asserts 1,024 distinct priority points and
 # gets 256), so short-zed_kernel runs the unit tests alone and a --bench run makes no short- piece
@@ -304,6 +314,59 @@ A test or a module is selected only with its binary's group, as <group>::<path>.
 out=$(run --list --only '(l01_38::x|y)')
 rc=$?
 check "a part whose binary cannot be read off stops the run" "2" "$rc"
+fi
+# `short`: the short-addresses pieces, in fresh listings, since a --reuse-table run cannot list
+# the binaries of an earlier run's clone. A part of its own, as each listing mounts the clone and
+# waits while another run of the checkout has it mounted. A warm clone lists in 1.5 s at load 74.
+if want short; then
+logs=build/test-run-tests-short
+# A test inside a short-addresses piece is selected as short-<group>::<path>, one piece each,
+# run with --exact in the piece's folder (TOOL-short-piece-test-filter: such a pattern built the
+# clone and selected nothing). The piece's binary lies in the listing's clone, unmounted when the
+# run ends, so the tests are compared with those of the same module or step in the build without
+# short-addresses, which has the same tests there.
+plain=$(run --list --only '^zed_kernel::treap_set::' | sed 's/^zed_kernel-[0-9a-f]*::/short-zed_kernel::/' | sort)
+check "zed_kernel's treap_set module has more than one test" "yes" \
+  "$([ "$(echo "$plain" | wc -l)" -gt 1 ] && echo yes)"
+check "a module of short-zed_kernel selects its tests, one piece each" "$plain" \
+  "$(run --list --only '^short-zed_kernel::treap_set::' | sort)"
+check "each runs its one test --exact in crates/zed-kernel" "" "$(awk '{ t = $1; sub(/^short-zed_kernel::/, "", t)
+  if (NF != 5 || $2 != "crates/zed-kernel" || $4 != "--exact" || $5 != t) print }' "$(last_run)/pieces")"
+bin37=$(run --list --only '^l01_37_oracle$' >/dev/null && awk 'NR == 1 { print $3 }' "$(last_run)/pieces")
+t37=$("$bin37" --list --format terse | sed -n 's/: test$//p' | head -1)
+check "a test of a short-addresses step is selected as short-<step>::<test>" "short-l01_37_oracle::$t37" \
+  "$(run --list --only "^short-l01_37_oracle::$t37\$")"
+# A process that still uses the clone when its run ends (TOOL-short-clone-umount-busy: a rustc
+# still exiting when a run killed during the clone's build ran its EXIT trap) is played by a
+# sleep holding a file of the clone open, started while run a lists. Run a then unmounted its
+# clone with "umount: .../short-clone: target is busy." and left the mount; now it ends with no
+# message and no mount in the table, and run b, started while the sleep holds the clone, waits
+# for it and then lists. Runs are started as commands, so that $! is the pid each run names its
+# directory by.
+tools/run_tests.sh --logs "$logs" --list --only '^short-zed_kernel::treap_set::' >"$logs.a" 2>&1 &
+a=$!
+mnt=
+while [ -z "$mnt" ] && [ -d "/proc/$a" ]; do
+  mnt=$(findmnt -rn -t overlay -o TARGET | grep -- "-$a/short-clone\$")
+  [ -n "$mnt" ] || sleep 0.05
+done
+# The sleep holds the clone's root directory open, as its standard input.
+sleep 600 <"$mnt" &
+holder=$!
+wait "$a"
+rc_a=$?
+check "the sleep held run a's clone while run a ended" "yes" "$([ -d "/proc/$holder" ] && echo yes)"
+check "a run whose clone is still in use ends with no message" "0 $plain" "$rc_a $(sort "$logs.a")"
+check "and leaves no mount" "" "$(findmnt -rn -t overlay -o TARGET | grep -- "-$a/short-clone\$")"
+tools/run_tests.sh --logs "$logs" --list --only '^short-zed_kernel::treap_set::' >"$logs.b" 2>&1 &
+b=$!
+while [ -d "/proc/$b" ] && ! grep -q Waiting "$logs.b"; do sleep 0.1; done
+kill "$holder"
+wait "$b"
+rc_b=$?
+check "a run started meanwhile waits for that process, then lists" "0 Waiting for the processes of an ended run that still use the short-addresses clone to end.
+$plain" "$rc_b $(grep -v '^short-' "$logs.b")
+$(grep '^short-' "$logs.b" | sort)"
 fi
 # Two runs at once on one log directory both run to the end, each in a directory of its own
 # (NO-LOCKS-optimistic); until then the second stopped at once, as the run lock was held. Both
