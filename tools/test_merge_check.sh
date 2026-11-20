@@ -18,7 +18,9 @@
 # selection of tests/full, the self-tests and step 2a (MERGE-runtime-inputs,
 # MERGE-tools-self-tests). t depends on more crates for the narrowing of step 2
 # (MERGE-dep-by-target): tool, named only by step_x; rootuse, named by t's lib root; lnk, which
-# exports a symbol; and feat, with a default feature x, for step 0a. t's lib file
+# exports a symbol; and feat, with a default feature x, for step 0a, and a [[test]] target feat_f
+# whose main file its manifest names through `..`, tests/steps/f/feat.rs, as zed-native names
+# its test targets under tests/steps/ (MERGE-target-path-dots). t's lib file
 # tests/src/helper.rs names b and is used by step_x, the piece w and the lib file
 # tests/src/wrap.rs, which step_y uses. The last cases rebase a branch on a main that moves and check what
 # --record runs again (MERGE-push-race). Step 1a runs the real cargo clippy on the toy, so its code
@@ -34,7 +36,7 @@ case $part in
 esac
 ws=$(pwd)/build/test-merge-check${part:+-$part}
 mkdir -p "$ws/crates/a/src" "$ws/crates/b/src/m" "$ws/crates/c/src/m" "$ws/crates/c/data" \
-  "$ws/crates/tool/src" "$ws/crates/rootuse/src" "$ws/crates/lnk/src" "$ws/crates/feat/src" "$ws/tests/src" "$ws/tests/steps/x" "$ws/tests/steps/y" "$ws/tests/full" "$ws/tools" "$ws/docs"
+  "$ws/crates/tool/src" "$ws/crates/rootuse/src" "$ws/crates/lnk/src" "$ws/crates/feat/src" "$ws/tests/src" "$ws/tests/steps/x" "$ws/tests/steps/y" "$ws/tests/steps/f" "$ws/tests/full" "$ws/tools" "$ws/docs"
 export CARGO_TARGET_DIR=$ws/target
 # The toy's spec checkout, a repository of its own (MERGE-spec-push-check); without it the walk of
 # tools/spec_groups.sh --dir would find the real one above the checkout.
@@ -62,7 +64,8 @@ pkg c '' >crates/c/Cargo.toml
 pkg tool '' >crates/tool/Cargo.toml
 pkg rootuse '' >crates/rootuse/Cargo.toml
 pkg lnk '' >crates/lnk/Cargo.toml
-pkg feat $'\n[features]\ndefault = ["x"]\nx = []\n' >crates/feat/Cargo.toml
+pkg feat $'\n[features]\ndefault = ["x"]\nx = []\n\n[[test]]\nname = "feat_f"\npath = "../../tests/steps/f/feat.rs"\n' \
+  >crates/feat/Cargo.toml
 for c in tool rootuse feat; do echo "//! $c." >"crates/$c/src/lib.rs"; done
 printf '//! lnk.\n#[unsafe(no_mangle)]\npub extern "C" fn lnk_f() {}\n' >crates/lnk/src/lib.rs
 pkg t $'\n[dependencies]\nb = { path = "../crates/b" }\ntool = { path = "../crates/tool" }
@@ -96,6 +99,7 @@ printf '//! x.\n#![allow(unused_imports)]\nuse t::helper as _;\nuse tool as _;\n
 cat "$spec_groups" >tools/spec_groups.sh
 chmod +x tools/spec_groups.sh
 printf '//! y.\n#![allow(unused_imports)]\nuse t::wrap as _;\n' >tests/steps/y/mod.rs
+echo '//! feat_f.' >tests/steps/f/feat.rs
 echo '//! full.' >tests/full/main.rs
 mkdir -p tests/full/w tests/full/z
 printf '//! w.\nuse t::helper as _;\n' >tests/full/w/mod.rs
@@ -120,7 +124,7 @@ cat >tools/run_tests.sh <<'EOF'
 #!/bin/bash
 # The groups with a short-addresses piece: $STUB_SHORT, or by default every group of the toy.
 if [ "$1" = --short-groups ]; then
-  printf '%s\n' ${STUB_SHORT-a b c feat lnk rootuse s_01f_import_graph step_x step_y t tool}
+  printf '%s\n' ${STUB_SHORT-a b c feat feat_f lnk rootuse s_01f_import_graph step_x step_y t tool}
   exit 0
 fi
 echo "run_tests $*"
@@ -177,7 +181,7 @@ toy_files=(
   crates/lnk/Cargo.toml crates/lnk/src/lib.rs crates/feat/Cargo.toml crates/feat/src/lib.rs
   tests/Cargo.toml tests/src/lib.rs tests/src/seed.rs tests/src/helper.rs tests/src/wrap.rs
   tests/src/viamod.rs tests/src/inl.rs tests/src/nest.rs
-  tests/steps/x/mod.rs tests/steps/y/mod.rs tests/full/main.rs tests/full/w/mod.rs tests/full/z/mod.rs
+  tests/steps/x/mod.rs tests/steps/y/mod.rs tests/steps/f/feat.rs tests/full/main.rs tests/full/w/mod.rs tests/full/z/mod.rs
   tools/spec_groups.sh tools/test_merge_check.sh tools/test_run_tests.sh tools/test_lib.sh tools/run_tests.sh
   docs/notes.md docs/plan.md data/notes.txt
 )
@@ -242,14 +246,25 @@ check "a docs file selects nothing" \
   "merge check: no package changed; no tests to run" \
   "$(groups_after docs/notes.md)"
 check "the workspace manifest selects every package" \
-  "merge check: groups: $(sorted "$(short a b c feat lnk rootuse step_x step_y t tool)")" \
+  "merge check: groups: $(sorted "$(short a b c feat feat_f lnk rootuse step_x step_y t tool)")" \
   "$(groups_after Cargo.toml '# changed')"
+# MERGE-target-path-dots: cargo metadata names feat_f's main file crates/feat/../../tests/steps/f/feat.rs.
+check "a file of a test target whose manifest names it through .. selects that target" \
+  "merge check: groups: $(sorted "$(short feat_f)")" \
+  "$(groups_after tests/steps/f/feat.rs)"
+# MERGE-runner-selects-all: every piece runs under the runner, which no crate compiles.
+check "a change to tools/run_tests.sh selects every local group" \
+  "merge check: groups: $(sorted "$(short a b c feat feat_f lnk rootuse step_x step_y t tool)")" \
+  "$(groups_after tools/run_tests.sh '# changed')"
+check "a change to tools/lib.sh, which tools/run_tests.sh sources, selects every local group" \
+  "merge check: groups: $(sorted "$(short a b c feat feat_f lnk rootuse step_x step_y t tool)")" \
+  "$(groups_after tools/lib.sh '# changed')"
 # The narrowing of step 2 (MERGE-dep-by-target).
 check "a crate the package of tests/full depends on, named by one step alone, selects that step alone" \
   "merge check: groups: $(sorted "$(short s_01f_import_graph step_x tool)")" \
   "$(groups_after crates/tool/src/lib.rs)"
 check "a crate named only in comments of the package of tests/full selects none of its targets" \
-  "merge check: groups: $(sorted "$(short feat s_01f_import_graph)")" \
+  "merge check: groups: $(sorted "$(short feat feat_f s_01f_import_graph)")" \
   "$(groups_after crates/feat/src/lib.rs)"
 check "a crate the root of that package's lib names selects the package whole" \
   "merge check: groups: $(sorted "$(short rootuse s_01f_import_graph step_x step_y t)")" \
@@ -393,7 +408,8 @@ check "a failing run of tests/full stops the check with exit 1" "merge check: FA
 # The self-tests (MERGE-tools-self-tests): a change to tools/run_tests.sh runs both parts of
 # tools/test_merge_check.sh; a part that fails refuses the branch.
 check "a change to tools/run_tests.sh runs both parts of tools/test_merge_check.sh and every part of tools/test_run_tests.sh" \
-  "merge check: a file tools/test_merge_check.sh tests changed: both its parts run
+  "merge check: a file of the test runner changed (tools/run_tests.sh, tools/lib.sh or tools/merge_check.sh): every local group
+merge check: a file tools/test_merge_check.sh tests changed: both its parts run
 merge check: a file tools/test_run_tests.sh tests changed: all its parts run
 merge check: tools/test_merge_check.sh select and record passed
 merge check: tools/test_run_tests.sh list, select, table, fresh, short, copy, concurrent and trace passed
@@ -469,7 +485,7 @@ map_after() {
   "$check_script" --base base --reads "$map" --groups 2>&1 |
     command grep -a -E '^merge check: (groups|the map|no package|tests/full)' | sed "s|$map|MAP|"
 }
-uncovered="merge check: the map has no reads of 7 groups, which only compilation selects: a b feat lnk rootuse step_x tool
+uncovered="merge check: the map has no reads of 8 groups, which only compilation selects: a b feat feat_f lnk rootuse step_x tool
 merge check: the map has no reads of 1 tests/full pieces, which only compilation selects: w"
 check "a file that a group and a piece of tests/full read at run time selects both, by the map" \
   "merge check: groups that read at run time a path the change can affect (map MAP): c; tests/full pieces: z

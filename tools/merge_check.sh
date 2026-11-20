@@ -68,7 +68,16 @@
 #     listed by hand. A file belongs to the package whose directory holds it most deeply, except
 #     a file in the directory of a [[test]] target's main file other than the package's root or
 #     src (tests/steps/<step>/), which selects that test target alone: no package depends on a
-#     [[test]] target, so a change there reaches nothing else. A file
+#     [[test]] target, so a change there reaches nothing else. A target's main file is taken with
+#     its `.` and `<dir>/..` parts removed: cargo metadata gives the path as the manifest wrote
+#     it, crates/zed-native/../../tests/steps/l01_36a_executables/binary.rs for build_binary, a
+#     path no changed file has, so until MERGE-target-path-dots a change to such a file selected
+#     none of the 14 test targets of zed-native and zed-clif under tests/steps/. A file
+#     of the test runner, tools/run_tests.sh, tools/lib.sh (which it and this script source) or
+#     this script, selects every local group: every piece runs under tools/run_tests.sh, so a
+#     change to it can break any piece, and compilation selects nothing for it
+#     (MERGE-runner-selects-all; 324a94ebe, a change to tools/run_tests.sh, broke build_binary,
+#     which its check did not select). Not the pieces of tests/full, which need --full. A file
 #     that a Rust source names in `#[path = "…"]`, `include!("…")`, `include_str!("…")` or
 #     `include_bytes!("…")` counts as a change to that source too (tests/src/seed.rs is compiled
 #     into the unit tests of seven crates, zed/grammar/*.peg into zedc-syntax), to a fixed point.
@@ -241,6 +250,14 @@ for f in "${changed[@]}"; do
 done
 
 meta=$(cargo metadata --no-deps --format-version 1 -q) || { echo "merge check: cargo metadata failed" >&2; exit 1; }
+# Each target's main file with its `.` and `<dir>/..` parts removed (MERGE-target-path-dots):
+# cargo gives the path as the manifest wrote it, crates/zed-native/../../tests/steps/... A
+# lexical step, which differs from the file system's only when a directory on the path is a
+# symbolic link, and the record runs every group when HEAD tracks one.
+meta=$(jq 'def norm: reduce (split("/")[]) as $s ([];
+    if $s == "." then . elif $s == ".." and length > 1 and .[-1] != ".." then .[:-1] else . + [$s] end)
+  | join("/");
+  .packages[].targets[].src_path |= norm' <<<"$meta") || { echo "merge check: jq failed on cargo metadata" >&2; exit 1; }
 wsroot=$(jq -r .workspace_root <<<"$meta")
 # Step 0a (header): a changed manifest or lock file.
 manifest=
@@ -401,8 +418,8 @@ touched_keys() {
 
 # Takes the files of the array queue in turn, with the files that name each by an include form,
 # and records in the arrays of select_groups, its caller, what each changes: pkgs[<package>],
-# direct[<test target>], full[<piece>] or full_all for tests/full, all for a workspace file, and
-# crate_srcs.
+# direct[<test target>], full[<piece>] or full_all for tests/full, all for a workspace file,
+# runner for a file of the test runner, and crate_srcs.
 walk() {
   local f hit td pd d s p
   while [ ${#queue[@]} -gt 0 ]; do
@@ -414,6 +431,8 @@ walk() {
       Cargo.toml | Cargo.lock | .cargo/* | rust-toolchain*) all=1 ;;
       # The root's clippy configuration applies to every package's lints, and to no test.
       clippy.toml | .clippy.toml) clippy_all=1 ;;
+      # The test runner: every piece runs under it (MERGE-runner-selects-all, header step 2).
+      tools/run_tests.sh | tools/lib.sh | tools/merge_check.sh) runner=1 ;;
     esac
     if [[ $f =~ ^crates/([^/]+)/src/ ]] && [[ " ${crate_srcs[*]} " != *" crates/${BASH_REMATCH[1]}/src "* ]]; then
       [ -d "crates/${BASH_REMATCH[1]}/src" ] && crate_srcs+=("crates/${BASH_REMATCH[1]}/src")
@@ -611,7 +630,7 @@ uses() {
 # narrowing at $from too.
 select_groups() {
   local -A seen=() pkgs=() direct=() full=()
-  local crate_srcs=() all= full_all= clippy_all= queue=("$@") selected groups skip= why= n0= np linked p
+  local crate_srcs=() all= full_all= clippy_all= runner= queue=("$@") selected groups skip= why= n0= np linked p
   local libuse= users=() extra=()
   walk
 
@@ -668,7 +687,14 @@ select_groups() {
     echo "merge check$label: $fullpkg, the package tests/full is built in, is selected: every piece of tests/full"
   fi
 
-  groups=$(jq -r --arg sel " $selected " '.packages[] | select(.name as $n | $sel | contains(" \($n) "))
+  # A file of the test runner selects the groups of every package, and no more packages for
+  # step 1a's clippy, which reads no shell script.
+  local gsel=$selected
+  if [ -n "$runner" ]; then
+    gsel=$(jq -r '[.packages[].name] | join(" ")' <<<"$meta")
+    echo "merge check$label: a file of the test runner changed (tools/run_tests.sh, tools/lib.sh or tools/merge_check.sh): every local group"
+  fi
+  groups=$(jq -r --arg sel " $gsel " '.packages[] | select(.name as $n | $sel | contains(" \($n) "))
     | .targets[] | select(.test and ((.["required-features"] // []) == [])
                           and (.kind | index("custom-build") or index("example") or index("bench") | not))
     | .name | gsub("-"; "_")' <<<"$meta")
