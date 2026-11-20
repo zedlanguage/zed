@@ -2101,7 +2101,7 @@ impl<K: Key> Poly<K> {
     /// (f^(i/2))^2", which "requires asymptotically fast dense multiplication to improve on
     /// RMUL", and its own methods, Sparse SUMS (Euler's recurrence run with a heap) and FPS,
     /// are heap merges; a search of the text for "square" and "half" finds no halving of the
-    /// pairs of a square. Their heap merge, which they credit to Johnson [7], is after
+    /// pairs of a square. Their heap merge, which they credit to Johnson \[7\], is after
     /// S. C. Johnson, "Sparse polynomial arithmetic", ACM SIGSAM Bull. 8(3):63-71,
     /// 1974, doi:10.1145/1086837.1086847 (Crossref and the text checked 2026-11-20): the
     /// candidate products are kept in "a heap", "the per term cost of the process of running the

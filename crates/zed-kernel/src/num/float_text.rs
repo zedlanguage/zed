@@ -34,7 +34,7 @@
 //! D-aries, let dv be the one with the even significand"; section 3.3, p. 4, Java asks for
 //! `M = 2`, "Closer, albeit longer decimals of length up to 2 are preferred over shorter but
 //! farther ones". The Java source breaks the tie the same way, `cmp < 0 || cmp == 0 &&
-//! (s & 0x1) == 0 ? s : t`, "See section 9.3 of [1]"), with
+//! (s & 0x1) == 0 ? s : t`, "See section 9.3 of \[1\]"), with
 //! its powers of ten taken from the same table, changed for the rule of sec:reduction: the
 //! shortest digits, and of two equally near the larger magnitude, where Schubfach takes the
 //! even one; and one significant digit where Java asks for two. Tests: `shown_as_before_on_*`
