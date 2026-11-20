@@ -249,6 +249,17 @@ impl TwoSat {
     /// reaches, so a literal is set true when its component is completed before its
     /// complement's: then nothing true implies anything false. Time linear in the variables
     /// and clauses.
+    ///
+    /// Source: B. Aspvall, M. F. Plass and R. E. Tarjan, "A linear-time algorithm for testing
+    /// the truth of certain quantified boolean formulas", Inform. Process. Lett. 8(3):121-123,
+    /// 1979, doi:10.1016/0020-0190(79)90002-4 (Crossref and the text checked 2026-11-20). It
+    /// takes the strong components "in reverse topological order" from Tarjan's algorithm, and
+    /// for each: "If S is marked, do nothing. Otherwise if S = S̄ then stop: C is
+    /// unsatisfiable. Otherwise mark S true and S̄ false." The components come from R. Tarjan,
+    /// "Depth-first search and linear graph algorithms", SIAM J. Comput. 1(2):146-160, 1972,
+    /// doi:10.1137/0201010 (Crossref checked 2026-11-20). Departure: the recursion is on an
+    /// explicit stack. Test: `two_sat_solve_agrees_with_enumeration_and_its_solutions_hold`
+    /// compares with enumeration on random sets of up to 12 variables and checks each solution.
     pub(super) fn solve(&self) -> Option<Vec<bool>> {
         let n = 2 * self.vars;
         // The edges out of each literal, as one list cut at `start`.

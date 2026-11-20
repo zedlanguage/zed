@@ -476,9 +476,14 @@ impl Nodes {
                     s.as_ref()?;
                     // Complexity tradeoff: merging self-loop carriers across distinct recursive
                     // groups by comparing unprojected `h.p().ints` in O(|vals|) avoids unfolding
-                    // or intersecting DFA states across groups (O(|Q_1| * |Q_2|)), following
-                    // Hopcroft & Karp (1971) bisimulation / language equivalence on single-state
-                    // Kleene-star list tails `L_H = #nil | #cons(H, L_H)`.
+                    // or intersecting DFA states across groups (O(|Q_1| * |Q_2|)). Two
+                    // single-state list tails `L_H = #nil | #cons(H, L_H)` hold the same lists
+                    // exactly when their `H` are equal, so equality of the element sets decides
+                    // their equivalence directly. Hopcroft and Karp's union-find test of
+                    // automaton equivalence (J. E. Hopcroft and R. M. Karp, "A linear algorithm
+                    // for testing equivalence of finite automata", Tech. Rep. 71-114, Cornell
+                    // University, 1971; from memory, not checked) decides the general case and
+                    // is not used here.
                     if let Some((_, existing_i, ref existing_h)) = self.carrier {
                         if existing_h.p().ints.cmp(&h.p().ints).is_eq() {
                             self.of.insert(cur, existing_i);
@@ -775,7 +780,8 @@ fn decide_counted(t: &Type, counts: &mut (usize, usize)) -> Option<ChainPlan> {
     // Complexity tradeoff: bounded 2-pass distributive partner merge `(U1)` and unit-clause
     // domain narrowing `(U2)` before laminar 2-SAT (Aspvall, Plass and Tarjan, "A linear-time
     // algorithm for testing the truth of certain quantified boolean formulas", Inform. Process.
-    // Lett. 8(3), 1979, pp. 121-123), evaluated at `l0` and at the carrier-truncation lengths
+    // Lett. 8(3):121-123, 1979, doi:10.1016/0020-0190(79)90002-4; quoted and tested at
+    // `TwoSat::solve` in `shared.rs`), evaluated at `l0` and at the carrier-truncation lengths
     // `l_next` and `l_trunc`. Place-1 subtractions `pl[1].minus(h0)` are memoized by `h0` (`O(1)`
     // hash and `Rc::ptr_eq` equality), and bucket intersections use `Ints::intersect_many`, giving
     // `O(S log S)` work where `S` is the written size of distinct integer sets plus clauses;
@@ -889,7 +895,8 @@ fn decide_counted(t: &Type, counts: &mut (usize, usize)) -> Option<ChainPlan> {
 
         // Complexity tradeoff (GROUP-order-cpoly-merge): the distributive partner merge (U1) and
         // unit-clause domain narrowing (U2) run to a fixed point, then the clauses left go to
-        // laminar 2-SAT (Aspvall, Plass and Tarjan 1979). U1 is Boolean distributivity,
+        // laminar 2-SAT (Aspvall, Plass and Tarjan 1979, cited above). U1 is Boolean
+        // distributivity,
         // `\bigwedge_q ((j_1, A) \lor (j_2, B_q)) \iff (j_1, A) \lor (j_2, \bigcap_q B_q)`, and U2
         // is unit propagation: a clause of one atom `(j, U)` narrows `pl[j]` to `pl[j] \cap U`.
         // Both rewrite the clauses into an equivalent set, so every clause of fewer than three

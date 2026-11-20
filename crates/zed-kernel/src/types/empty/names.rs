@@ -41,10 +41,12 @@ use std::collections::VecDeque;
 /// Complexity tradeoff: an arm is dropped only when the union dominates, in the graph of unions
 /// through their union arms, another union with an arm of its type, or is post-dominated by one.
 /// Why: dropping every arm that a union reaches through another path is the transitive
-/// reduction of that graph, which costs as much as its transitive closure (Aho, Garey and
-/// Ullman 1972), O(n·m) or a matrix product; even the one-level case, an arm of a union that is
-/// also an arm of one of its union arms, is triangle detection. Trigger: a name used in two
-/// places, reached by a union through it and directly, as in
+/// reduction of that graph, which costs as much as its transitive closure (A. V. Aho, M. R.
+/// Garey and J. D. Ullman, "The transitive reduction of a directed graph", SIAM J. Comput.
+/// 1(2):131-137, 1972, doi:10.1137/0201008; Crossref checked 2026-11-20, the text not read, so
+/// the equivalence is from memory, not checked), O(n·m) or a matrix product; even the
+/// one-level case, an arm of a union that is also an arm of one of its union arms, is triangle
+/// detection. Trigger: a name used in two places, reached by a union through it and directly, as in
 /// `A = B | (A, B) | (int, (int) -> (int) -> B) | (B, A) | ((int) -> B, A | B)` with
 /// `B = (B, A) | ((int) -> B, A | B)`: each `A | B` reaches `B` through `A`, which both name, so
 /// neither dominates `A`. That group is decided all the same, since the edge from `A | B` to `B`
@@ -195,8 +197,15 @@ fn topological(down: &[Vec<u32>], up: &[Vec<u32>]) -> Vec<usize> {
 /// them by their first node in `b`.
 ///
 /// Complexity tradeoff: the naive way to the coarsest partition splits every class by its
-/// members' sets of child classes until no class splits, a round per split, O(n·m) (Kanellakis
-/// and Smolka 1990). Used: the refinement of Paige and Tarjan (1987), O(m log n): a class is
+/// members' sets of child classes until no class splits, a round per split, O(n·m): P. C.
+/// Kanellakis and S. A. Smolka, "CCS expressions, finite state processes, and three problems
+/// of equivalence", Inform. and Comput. 86(1):43-68, 1990, doi:10.1016/0890-5401(90)90025-D,
+/// Lemma 3.2: "The naive method correctly solves an instance of the generalized partitioning
+/// problem of size (n, m), and can be implemented in O(nm) time" (Crossref and the text
+/// checked 2026-11-20). Used: the refinement of R. Paige and R. E. Tarjan, "Three partition
+/// refinement algorithms", SIAM J. Comput. 16(6):973-989, 1987, doi:10.1137/0216062 (cited
+/// in full in `crate::refine`; `Partition` below is a second copy of that kind of
+/// refinement, not the shared one), O(m log n): a class is
 /// split by a smaller part of an earlier class, and each node's count of children in each such
 /// part tells the nodes with children in both parts from those with children in one, so a node
 /// is in a part handled at most log n times. Tradeoff: one count per node and part it has
