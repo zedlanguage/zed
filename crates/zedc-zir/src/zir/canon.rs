@@ -140,21 +140,12 @@ fn canonical_at(name: &str, index: usize) -> bool {
 
 /// Each written binder of `p` renamed to its level, the number of binders before it.
 fn rename_all(p: &mut Pattern, index: &mut usize) {
-    // A stack of the subpatterns left, the next on top, visits them in preorder.
-    let mut todo = vec![p];
-    while let Some(p) = todo.pop() {
-        match p {
-            Pattern::Bind(name) => {
-                if !canonical_at(name, *index) {
-                    *name = level_name(*index);
-                }
-                *index += 1;
-            }
-            Pattern::Atom(_, ps) | Pattern::Tuple(ps) => todo.extend(ps.iter_mut().rev()),
-            Pattern::Fields(_, fs) => todo.extend(fs.iter_mut().rev().map(|(_, q)| q)),
-            Pattern::Wild | Pattern::Lit(_) | Pattern::AnyAtom | Pattern::Is(_) => {}
+    p.rename_binders(|name| {
+        if !canonical_at(name, *index) {
+            *name = level_name(*index);
         }
-    }
+        *index += 1;
+    });
 }
 
 /// The bytes [`node_key`] hashes for `n` besides its regions' keys: the binary form of the
@@ -630,7 +621,7 @@ fn written(g: &Region) -> u64 {
             if let Op::Match(ps) = &node.op {
                 for p in ps {
                     let mut index = 0;
-                    binds(p, &mut |name| {
+                    p.binders(|name| {
                         n += u64::from(!canonical_at(name, index));
                         index += 1;
                     });
@@ -679,7 +670,7 @@ fn first_written(g: &Region) -> Option<(Vec<(usize, usize)>, usize)> {
     let has_written = |p: &Pattern| {
         let mut found = false;
         let mut index = 0;
-        binds(p, &mut |name| {
+        p.binders(|name| {
             found |= !canonical_at(name, index);
             index += 1;
         });
@@ -735,36 +726,20 @@ fn first_written(g: &Region) -> Option<(Vec<(usize, usize)>, usize)> {
 
 /// Renames the first written binder of `p`, counting in `index` the binders before it, and
 /// returns its written name.
+// The binders after the first written one are still visited, each doing nothing; stopping at
+// it would save at most the rest of one pattern, which the search for it (`first_written`)
+// has already read.
 fn rename_in(p: &mut Pattern, index: &mut usize) -> Option<std::sync::Arc<str>> {
-    // A stack of the subpatterns left, the next on top, visits them in preorder.
-    let mut todo = vec![p];
-    while let Some(p) = todo.pop() {
-        match p {
-            Pattern::Bind(name) if !canonical_at(name, *index) => {
-                let written = name.clone();
-                *name = level_name(*index);
-                return Some(written);
-            }
-            Pattern::Bind(_) => *index += 1,
-            Pattern::Atom(_, ps) | Pattern::Tuple(ps) => todo.extend(ps.iter_mut().rev()),
-            Pattern::Fields(_, fs) => todo.extend(fs.iter_mut().rev().map(|(_, q)| q)),
-            Pattern::Wild | Pattern::Lit(_) | Pattern::AnyAtom | Pattern::Is(_) => {}
+    let mut written = None;
+    p.rename_binders(|name| match written {
+        Some(_) => {}
+        None if canonical_at(name, *index) => *index += 1,
+        None => {
+            written = Some(name.clone());
+            *name = level_name(*index);
         }
-    }
-    None
-}
-
-/// Calls `f` on each binder name of `p`, in preorder.
-fn binds(p: &Pattern, f: &mut dyn FnMut(&str)) {
-    let mut todo = vec![p];
-    while let Some(p) = todo.pop() {
-        match p {
-            Pattern::Bind(name) => f(name),
-            Pattern::Atom(_, ps) | Pattern::Tuple(ps) => todo.extend(ps.iter().rev()),
-            Pattern::Fields(_, fs) => todo.extend(fs.iter().rev().map(|(_, q)| q)),
-            Pattern::Wild | Pattern::Lit(_) | Pattern::AnyAtom | Pattern::Is(_) => {}
-        }
-    }
+    });
+    written
 }
 
 /// What is left of a walk over the edges in preorder: a region, whose arguments come first,

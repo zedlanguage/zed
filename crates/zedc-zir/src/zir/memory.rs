@@ -1673,15 +1673,14 @@ impl<'g> Machine<'g, '_> {
             let mut p = p.clone();
             let mut xs = vec![Term::Lit(Value::Int(i as i64))];
             let mut n = 0;
-            rename(&mut p, &mut || {
+            p.rename_binders(|x| {
                 n += 1;
-                let x: Arc<str> = format!("\0bind{n}").into();
+                *x = format!("\0bind{n}").into();
                 xs.push(if data {
                     Term::Var(x.clone())
                 } else {
                     Term::Lit(Value::tuple(Vec::new()))
                 });
-                x
             });
             arms.push((p, Term::Prim(Prim::Tuple, xs)));
         }
@@ -2911,20 +2910,6 @@ fn held_binders<'g>(
         }
         // The first part on top, for preorder.
         stack[start..].reverse();
-    }
-}
-
-/// Renames each binder of `p`, in preorder, to what `f` gives, on a stack of the parts still
-/// to visit: patterns nest as deep as the program.
-fn rename(p: &mut Pattern, f: &mut dyn FnMut() -> Arc<str>) {
-    let mut stack = vec![p];
-    while let Some(p) = stack.pop() {
-        match p {
-            Pattern::Bind(x) => *x = f(),
-            Pattern::Atom(_, ps) | Pattern::Tuple(ps) => stack.extend(ps.iter_mut().rev()),
-            Pattern::Fields(_, fs) => stack.extend(fs.iter_mut().rev().map(|(_, q)| q)),
-            Pattern::Wild | Pattern::Lit(_) | Pattern::AnyAtom | Pattern::Is(_) => {}
-        }
     }
 }
 

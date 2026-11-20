@@ -336,15 +336,7 @@ impl PartialEq for Region {
 /// The number of names pattern `p` binds.
 pub fn binds(p: &Pattern) -> usize {
     let mut count = 0;
-    let mut todo = vec![p];
-    while let Some(p) = todo.pop() {
-        match p {
-            Pattern::Bind(_) => count += 1,
-            Pattern::Atom(_, ps) | Pattern::Tuple(ps) => todo.extend(ps),
-            Pattern::Fields(_, fs) => todo.extend(fs.iter().map(|(_, p)| p)),
-            Pattern::Wild | Pattern::Lit(_) | Pattern::AnyAtom | Pattern::Is(_) => {}
-        }
-    }
+    p.binders(|_| count += 1);
     count
 }
 

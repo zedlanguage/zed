@@ -97,11 +97,9 @@ fn each_binder_at(t: &Term, depth: usize, f: &mut impl FnMut(&str, usize)) {
             }
             Job::Pattern(p, depth) => {
                 let mut level = depth;
-                each_pattern(p, &mut |p| {
-                    if let Pattern::Bind(x) = p {
-                        f(x, level);
-                        level += 1;
-                    }
+                p.binders(|x| {
+                    f(x, level);
+                    level += 1;
                 });
                 continue;
             }
@@ -124,7 +122,7 @@ fn each_binder_at(t: &Term, depth: usize, f: &mut impl FnMut(&str, usize)) {
             ]),
             Term::Match(e, arms) => {
                 for (p, arm) in arms.iter().rev() {
-                    let inner = depth + pattern_binds(p).len();
+                    let inner = depth + crate::zir::binds(p);
                     todo.extend([Job::Term(arm, inner), Job::Pattern(p, depth)]);
                 }
                 todo.push(Job::Term(e, depth));
@@ -149,35 +147,6 @@ fn each_binder_at(t: &Term, depth: usize, f: &mut impl FnMut(&str, usize)) {
             }
         }
     }
-}
-
-/// Calls `f` on `p` and each pattern inside it, in preorder, keeping the patterns still to
-/// visit on a heap stack.
-fn each_pattern<'p>(p: &'p Pattern, f: &mut impl FnMut(&'p Pattern)) {
-    let mut todo = vec![p];
-    while let Some(p) = todo.pop() {
-        f(p);
-        match p {
-            Pattern::Atom(_, ps) | Pattern::Tuple(ps) => todo.extend(ps.iter().rev()),
-            Pattern::Fields(_, fs) => todo.extend(fs.iter().rev().map(|(_, p)| p)),
-            Pattern::Wild
-            | Pattern::Bind(_)
-            | Pattern::Lit(_)
-            | Pattern::AnyAtom
-            | Pattern::Is(_) => {}
-        }
-    }
-}
-
-/// The names a pattern binds, left to right.
-pub fn pattern_binds(p: &Pattern) -> Vec<Arc<str>> {
-    let mut out = Vec::new();
-    each_pattern(p, &mut |p| {
-        if let Pattern::Bind(x) = p {
-            out.push(x.clone())
-        }
-    });
-    out
 }
 
 /// The subterms of a term that binds nothing, in order.
@@ -359,7 +328,7 @@ fn rename_first(t: &Term, depth: usize) -> Option<(Term, Arc<str>)> {
                 return Some((Term::Match(arc(e), arms.clone()), old));
             }
             for (k, (p, arm)) in arms.iter().enumerate() {
-                let binds = pattern_binds(p);
+                let binds = p.bound_names();
                 let new_arm = if let Some(at) = misplaced(&binds, depth) {
                     let (names, arm) = renamed_scope(&binds, at, depth, arm);
                     Some(((set_binds(p, &mut names.iter()), arm), binds[at].clone()))
@@ -654,7 +623,7 @@ impl Levels<'_> {
                     todo.push(Walk::Term(body, depth + n));
                 }
                 Walk::Arm(p, arm, depth) => {
-                    let names = pattern_binds(p);
+                    let names = p.bound_names();
                     self.bind(&names, depth);
                     let inner = depth + names.len();
                     todo.push(Walk::CloseArm(p, names));
@@ -749,50 +718,10 @@ impl Levels<'_> {
     }
 }
 
-/// `p` with its binders, left to right, named by `names` in turn. The patterns still to visit
-/// and to build wait on heap stacks.
+/// `p` with its binders, left to right, named by `names` in turn: a copy (`Clone` keeps its
+/// own heap stack) renamed in place.
 fn set_binds<'a>(p: &Pattern, names: &mut impl Iterator<Item = &'a Arc<str>>) -> Pattern {
-    enum Job<'p> {
-        Visit(&'p Pattern),
-        Build(&'p Pattern, usize),
-    }
-    let mut todo = vec![Job::Visit(p)];
-    let mut done: Vec<Pattern> = Vec::new();
-    while let Some(job) = todo.pop() {
-        match job {
-            Job::Visit(p) => match p {
-                Pattern::Bind(_) => done.push(Pattern::Bind(
-                    names.next().expect("one name per binder").clone(),
-                )),
-                Pattern::Atom(_, ps) | Pattern::Tuple(ps) => {
-                    todo.push(Job::Build(p, ps.len()));
-                    todo.extend(ps.iter().rev().map(Job::Visit));
-                }
-                Pattern::Fields(_, fs) => {
-                    todo.push(Job::Build(p, fs.len()));
-                    todo.extend(fs.iter().rev().map(|(_, p)| Job::Visit(p)));
-                }
-                Pattern::Wild | Pattern::Lit(_) | Pattern::AnyAtom | Pattern::Is(_) => {
-                    done.push(p.clone())
-                }
-            },
-            Job::Build(p, k) => {
-                let mut kids = done.drain(done.len() - k..);
-                let built = match p {
-                    Pattern::Atom(name, _) => Pattern::Atom(name.clone(), kids.by_ref().collect()),
-                    Pattern::Tuple(_) => Pattern::Tuple(kids.by_ref().collect()),
-                    Pattern::Fields(name, fs) => Pattern::Fields(
-                        name.clone(),
-                        fs.iter()
-                            .map(|(f, _)| (f.clone(), kids.next().expect("each field")))
-                            .collect(),
-                    ),
-                    _ => unreachable!("only a pattern with parts is built"),
-                };
-                drop(kids);
-                done.push(built);
-            }
-        }
-    }
-    done.pop().expect("the renamed pattern")
+    let mut q = p.clone();
+    q.rename_binders(|x| *x = names.next().expect("one name per binder").clone());
+    q
 }

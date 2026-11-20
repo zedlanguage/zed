@@ -254,21 +254,6 @@ impl<'u> Cones<'u> {
     }
 }
 
-/// The names `p` binds, left to right, borrowed from it.
-fn pattern_names(p: &Pattern) -> Vec<&Arc<str>> {
-    let mut out = Vec::new();
-    let mut todo = vec![p];
-    while let Some(p) = todo.pop() {
-        match p {
-            Pattern::Bind(x) => out.push(x),
-            Pattern::Atom(_, ps) | Pattern::Tuple(ps) => todo.extend(ps.iter().rev()),
-            Pattern::Fields(_, fs) => todo.extend(fs.iter().rev().map(|(_, p)| p)),
-            _ => {}
-        }
-    }
-    out
-}
-
 /// Whether `t` is shown to end by its form (docs/thresholds.md, replacement 6): it has no
 /// `fix` or `gen`, and every function it calls, or hands to a family operation, is a
 /// primitive, a lambda whose body ends, or a name a `let` binds to one. A `let` binds a name
@@ -521,7 +506,7 @@ impl Reader {
             Term::Match(_, arms) => {
                 let mut out = part();
                 for (p, _) in arms {
-                    let arm = self.under(&binds(p), part());
+                    let arm = self.under(&p.bound_names(), part());
                     out = self.and(out, arm);
                 }
                 out
@@ -896,11 +881,6 @@ fn each_part<'t>(t: &'t Term, todo: &mut Vec<Part<'t>>) {
     }
 }
 
-/// The names `p` binds.
-fn binds(p: &Pattern) -> Vec<Arc<str>> {
-    pattern_names(p).into_iter().cloned().collect()
-}
-
 /// What a part of a term reads: the names it reads and does not bind, and whether it reads
 /// or writes a port outside the join of a lattice recursion (a port the join reads is not an
 /// effect of the recursion).
@@ -1060,7 +1040,7 @@ fn subs(t: &Term) -> Vec<(Part<'_>, Names<'_>, bool)> {
         Term::Match(s, arms) => std::iter::once(held(s))
             .chain(
                 arms.iter()
-                    .map(|(p, a)| (Part::inline(a), Cow::Owned(binds(p)), false)),
+                    .map(|(p, a)| (Part::inline(a), Cow::Owned(p.bound_names()), false)),
             )
             .collect(),
         Term::Fam { domain, var, body } => vec![

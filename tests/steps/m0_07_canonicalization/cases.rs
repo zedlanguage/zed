@@ -12,7 +12,7 @@ use zed_kernel::{
     Evidence, Family, FixKind, Grade, GuardPos, Pattern, Prim, Shared, Term, Value, Witness,
 };
 use zedc::address::ContentAddress;
-use zedc::canon::{Def, Domain, binders};
+use zedc::canon::{Def, Domain};
 use zedc::store::interval::{End, IntervalSet};
 use zedc::store::lattice::{Congruence, FiniteSet, Lattice};
 
@@ -237,7 +237,7 @@ pub(super) fn catalog(n: &str) -> Vec<Term> {
     ));
     terms.extend(values().into_iter().map(Term::Lit));
     terms.extend(patterns(&b).into_iter().map(|p| {
-        let arm = match binders::pattern_binds(&p).is_empty() {
+        let arm = match p.bound_names().is_empty() {
             true => x(),
             false => var(&b),
         };

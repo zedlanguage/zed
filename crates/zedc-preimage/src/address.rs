@@ -218,10 +218,11 @@ fn kids(t: &Term) -> Vec<Kid<'_>> {
         Term::Let(x, e, b) => vec![Kid::held(e), Kid::held(b).under(vec![x])],
         Term::If(c, a, b) => vec![Kid::held(c), Kid::held(a), Kid::held(b)],
         Term::Match(s, arms) => std::iter::once(Kid::held(s))
-            .chain(
-                arms.iter()
-                    .map(|(p, a)| Kid::inline(a).under(pattern_names(p))),
-            )
+            .chain(arms.iter().map(|(p, a)| {
+                let mut names = Vec::new();
+                p.binders(|x| names.push(x));
+                Kid::inline(a).under(names)
+            }))
             .collect(),
         Term::Fam { domain, var, body } => {
             vec![Kid::held(domain), Kid::held(body).under(vec![var])]
@@ -256,21 +257,6 @@ fn kids(t: &Term) -> Vec<Kid<'_>> {
         } => vec![Kid::held(init), Kid::held(step), Kid::held(guard)],
         Term::Push(_, v) => vec![Kid::held(v)],
     }
-}
-
-/// The names `p` binds, left to right.
-fn pattern_names(p: &Pattern) -> Vec<&Arc<str>> {
-    let mut out = Vec::new();
-    let mut todo = vec![p];
-    while let Some(p) = todo.pop() {
-        match p {
-            Pattern::Bind(x) => out.push(x),
-            Pattern::Atom(_, ps) | Pattern::Tuple(ps) => todo.extend(ps.iter().rev()),
-            Pattern::Fields(_, fs) => todo.extend(fs.iter().rev().map(|(_, p)| p)),
-            Pattern::Wild | Pattern::Lit(_) | Pattern::AnyAtom | Pattern::Is(_) => {}
-        }
-    }
-    out
 }
 
 /// The binder names in scope, each with the height it is renamed to.

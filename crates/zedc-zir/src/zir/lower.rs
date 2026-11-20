@@ -1005,7 +1005,7 @@ impl<'t> Lower<'t> {
                 for (j, (p, body)) in arms.iter().enumerate().rev() {
                     s.jobs.push(Job::Region {
                         kind: RegionKind::Match,
-                        params: Params::Names(Cow::Owned(names(p))),
+                        params: Params::Names(Cow::Owned(p.bound_names())),
                         ports: Vec::new(),
                         body: Body::Term(self.places.part(here, 1 + j, body)),
                     });
@@ -1617,22 +1617,6 @@ fn bug(detail: impl std::fmt::Display) -> String {
 /// The opening of a refusal for a program `zedc build` cannot compile yet but `zedc run` runs.
 const CANNOT_BUILD: &str = "`zedc build` cannot compile this program";
 
-/// The names pattern `p` binds, in preorder. A pattern nests as deep as its program, so the
-/// patterns still to read are kept on a heap stack.
-fn names(p: &Pattern) -> Vec<Arc<str>> {
-    let mut out = Vec::new();
-    let mut todo = vec![p];
-    while let Some(p) = todo.pop() {
-        match p {
-            Pattern::Bind(x) => out.push(x.clone()),
-            Pattern::Atom(_, ps) | Pattern::Tuple(ps) => todo.extend(ps.iter().rev()),
-            Pattern::Fields(_, fs) => todo.extend(fs.iter().rev().map(|(_, q)| q)),
-            Pattern::Wild | Pattern::Lit(_) | Pattern::AnyAtom | Pattern::Is(_) => {}
-        }
-    }
-    out
-}
-
 /// The [`Uses`] of the lambda body `b`, each body's found once: a lambda inside `b` adds the
 /// uses of its own body, less the names bound around it in `b`.
 // Complexity tradeoff: the naive search reads the whole body of each `let`-bound lambda, the
@@ -1769,7 +1753,7 @@ impl<'t> UseWalk<'t> {
             Term::Match(s, arms) => {
                 for (j, (q, a)) in arms.iter().enumerate().rev() {
                     self.todo
-                        .push(Visit::Under(Cow::Owned(names(q)), p(1 + j, a)));
+                        .push(Visit::Under(Cow::Owned(q.bound_names()), p(1 + j, a)));
                 }
                 self.todo.push(Visit::Term(p(0, s)));
             }
@@ -2169,10 +2153,9 @@ fn open(
         Op::Match(ps) => {
             let mut p = ps[i].clone();
             let mut xs = Vec::new();
-            rename(&mut p, &mut || {
-                let x = fresh_name(fresh);
+            p.rename_binders(|x| {
+                *x = fresh_name(fresh);
                 xs.push(Term::Var(x.clone()));
-                x
             });
             pats.push(p);
             (xs, 1)
@@ -2271,20 +2254,6 @@ fn close(
         Op::Push(p) => Term::Push(p.clone(), a(1)),
         op @ (Op::Derived(_) | Op::Rec | Op::Wave) => {
             unreachable!("`{}` is refused before its regions", op_name(op))
-        }
-    }
-}
-
-/// Renames each binder of `p`, in preorder, to what `f` gives. A pattern nests as deep as its
-/// program, so the patterns still to rename are kept on a heap stack.
-fn rename(p: &mut Pattern, f: &mut dyn FnMut() -> Arc<str>) {
-    let mut todo = vec![p];
-    while let Some(p) = todo.pop() {
-        match p {
-            Pattern::Bind(x) => *x = f(),
-            Pattern::Atom(_, ps) | Pattern::Tuple(ps) => todo.extend(ps.iter_mut().rev()),
-            Pattern::Fields(_, fs) => todo.extend(fs.iter_mut().rev().map(|(_, q)| q)),
-            Pattern::Wild | Pattern::Lit(_) | Pattern::AnyAtom | Pattern::Is(_) => {}
         }
     }
 }

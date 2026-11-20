@@ -766,6 +766,49 @@ pub(crate) enum Binds<'a> {
     Pattern(&'a Pattern),
 }
 
+/// The names a pattern binds, read and renamed in one place (row DRY-text-shared: nine copies
+/// in zedc-zir, zedc-stage, zedc-preimage and zed-native did this each on its own). A `match`
+/// binds every `Bind` of a pattern that matches, nested in atoms, fields and tuples, and no
+/// other pattern binds (eval.rs `matches_any`, `matches`). The order is the order written, a
+/// preorder, which is the order a `match` arm's region numbers its arguments in ZIR. A pattern
+/// nests as deep as its program, so the patterns still to read wait on a heap stack, the next
+/// on top; each costs O(size of the pattern). Tests: `eval::binder_tests`.
+impl Pattern {
+    /// Calls `each` on every name the pattern binds, in the order written.
+    pub fn binders<'a>(&'a self, mut each: impl FnMut(&'a Arc<str>)) {
+        let mut todo = vec![self];
+        while let Some(p) = todo.pop() {
+            match p {
+                Pattern::Bind(x) => each(x),
+                Pattern::Atom(_, ps) | Pattern::Tuple(ps) => todo.extend(ps.iter().rev()),
+                Pattern::Fields(_, fs) => todo.extend(fs.iter().rev().map(|(_, p)| p)),
+                Pattern::Wild | Pattern::Lit(_) | Pattern::AnyAtom | Pattern::Is(_) => {}
+            }
+        }
+    }
+
+    /// The names the pattern binds, in the order written.
+    pub fn bound_names(&self) -> Vec<Arc<str>> {
+        let mut out = Vec::new();
+        self.binders(|x| out.push(x.clone()));
+        out
+    }
+
+    /// Calls `each` on every name the pattern binds, in the order written, to change it in
+    /// place; the pattern's shape is left as it is.
+    pub fn rename_binders(&mut self, mut each: impl FnMut(&mut Arc<str>)) {
+        let mut todo = vec![self];
+        while let Some(p) = todo.pop() {
+            match p {
+                Pattern::Bind(x) => each(x),
+                Pattern::Atom(_, ps) | Pattern::Tuple(ps) => todo.extend(ps.iter_mut().rev()),
+                Pattern::Fields(_, fs) => todo.extend(fs.iter_mut().rev().map(|(_, p)| p)),
+                Pattern::Wild | Pattern::Lit(_) | Pattern::AnyAtom | Pattern::Is(_) => {}
+            }
+        }
+    }
+}
+
 impl<'a> Binds<'a> {
     /// Calls `each` on every name bound, in the order written.
     pub(crate) fn each(self, mut each: impl FnMut(&'a Arc<str>)) {
@@ -776,17 +819,7 @@ impl<'a> Binds<'a> {
                 each(a);
                 each(b);
             }
-            Binds::Pattern(p) => {
-                let mut todo = vec![p];
-                while let Some(p) = todo.pop() {
-                    match p {
-                        Pattern::Bind(x) => each(x),
-                        Pattern::Atom(_, ps) | Pattern::Tuple(ps) => todo.extend(ps.iter().rev()),
-                        Pattern::Fields(_, fs) => todo.extend(fs.iter().rev().map(|(_, p)| p)),
-                        Pattern::Wild | Pattern::Lit(_) | Pattern::AnyAtom | Pattern::Is(_) => {}
-                    }
-                }
-            }
+            Binds::Pattern(p) => p.binders(each),
         }
     }
 }

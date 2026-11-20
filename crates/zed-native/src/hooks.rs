@@ -1806,9 +1806,9 @@ fn kernel_match(t: &Tables, s: &mut Run, ps: &[Pattern], scrut: Word) -> Result<
     for (i, p) in ps.iter().enumerate() {
         let mut p = p.clone();
         let mut n = 0;
-        rename(&mut p, &mut || {
+        p.rename_binders(|x| {
             n += 1;
-            format!("\0bind{n}").into()
+            *x = format!("\0bind{n}").into()
         });
         counts.push(n);
         arms.push((
@@ -1826,19 +1826,6 @@ fn kernel_match(t: &Tables, s: &mut Run, ps: &[Pattern], scrut: Word) -> Result<
         },
         v => Err(v),
     })
-}
-
-/// Renames each binder of `p`, in preorder, to what `f` gives.
-fn rename(p: &mut Pattern, f: &mut dyn FnMut() -> Arc<str>) {
-    let mut todo = vec![p];
-    while let Some(p) = todo.pop() {
-        match p {
-            Pattern::Bind(x) => *x = f(),
-            Pattern::Atom(_, ps) | Pattern::Tuple(ps) => todo.extend(ps.iter_mut().rev()),
-            Pattern::Fields(_, fs) => todo.extend(fs.iter_mut().rev().map(|(_, q)| q)),
-            Pattern::Wild | Pattern::Lit(_) | Pattern::AnyAtom | Pattern::Is(_) => {}
-        }
-    }
 }
 
 /// The program's result: its value, after the result is dropped and no cell is left live.
@@ -2205,8 +2192,8 @@ mod tests {
 
     /// Renames the binders of `pair { a: a, b: ((…(c)…)) }`, with `c` under `depth` tuples, and
     /// checks that they are renamed in preorder, `a` to `v1` and `c` to `v2`. `bench` runs it at
-    /// a depth that overflowed the default test stack when `rename` recursed; the test here at a
-    /// small one.
+    /// a depth that overflowed the default test stack when this file's `rename` recursed (now
+    /// `Pattern::rename_binders`); the test here at a small one.
     pub(super) fn binders_of_a_pattern_of_depth_are_renamed_in_preorder(depth: usize) {
         let bind = |x: &str| Pattern::Bind(x.into());
         let inner = (0..depth).fold(bind("c"), |p, _| Pattern::Tuple(vec![p]));
@@ -2215,9 +2202,9 @@ mod tests {
             vec![("a".into(), bind("a")), ("b".into(), inner)],
         ));
         let mut n = 0;
-        rename(&mut p, &mut || {
+        p.rename_binders(|x| {
             n += 1;
-            format!("v{n}").into()
+            *x = format!("v{n}").into()
         });
         assert_eq!(n, 2);
         let Pattern::Fields(_, fs) = &*p else {
@@ -2252,9 +2239,9 @@ mod tests {
             bind("c"),
         ]);
         let mut n = 0;
-        rename(&mut p, &mut || {
+        p.rename_binders(|x| {
             n += 1;
-            format!("v{n}").into()
+            *x = format!("v{n}").into()
         });
         assert_eq!(n, 3);
         let Pattern::Tuple(ps) = &p else {

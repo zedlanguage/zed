@@ -821,3 +821,73 @@ fn reads_lies_between_the_tree_walk_and_the_shared_bound_on_deeply_shared_terms(
         );
     }
 }
+
+/// [`Pattern::binders`], [`Pattern::bound_names`] and [`Pattern::rename_binders`] reach the
+/// names [`pattern_names`] finds by recursion, in its order (the order written, which numbers
+/// a ZIR `match` arm's arguments), on a pattern of every kind with two fields and on 5,000
+/// random patterns; renaming keeps the shape. On a tuple nested 100,000 deep, which the
+/// recursion would not survive, the names come in the order built. Seen to fail with the
+/// children pushed without `rev()`, as the binder count in `zedc::zir::binds` pushes them.
+#[test]
+fn a_pattern_gives_and_renames_its_binders_in_the_order_written() {
+    let check = |p: &Pattern, what: &str| {
+        let mut want = Vec::new();
+        pattern_names(p, &mut want);
+        let mut got = Vec::new();
+        p.binders(|x| got.push(x.clone()));
+        assert_eq!(got, want, "{what}: {p:?}");
+        assert_eq!(p.bound_names(), want, "{what}: {p:?}");
+        let mut q = p.clone();
+        let mut k = 0;
+        q.rename_binders(|x| {
+            *x = format!("n{k}").into();
+            k += 1;
+        });
+        let mut renamed = Vec::new();
+        pattern_names(&q, &mut renamed);
+        let numbered: Vec<Arc<str>> = (0..k).map(|i| format!("n{i}").into()).collect();
+        assert_eq!(renamed, numbered, "{what}: {p:?}");
+        let mut back = want.iter();
+        q.rename_binders(|x| *x = back.next().expect("one name per binder").clone());
+        assert!(q == *p, "{what}: {q:?} is not {p:?}");
+    };
+    check(
+        &Pattern::Tuple(vec![
+            bind("x"),
+            Pattern::Fields(
+                "s".into(),
+                vec![("f".into(), bind("y")), ("g".into(), bind("k"))],
+            ),
+            Pattern::Atom("a".into(), vec![Pattern::Wild, bind("a"), Pattern::AnyAtom]),
+            Pattern::Lit(Value::Int(0)),
+            Pattern::Is(crate::types::Type::int()),
+            bind("b"),
+        ]),
+        "every kind",
+    );
+    for seed in 1..=5_000u64 {
+        let mut g = Gen {
+            rng: Xorshift64::new(seed.wrapping_mul(0x9E37_79B9_7F4A_7C15) | 1),
+            pool: Vec::new(),
+            share: false,
+            names: 6,
+            nest: false,
+        };
+        check(&g.pattern(6), &format!("seed {seed}"));
+    }
+    let depth = 100_000;
+    let mut deep = Pattern::Wild;
+    for i in 0..depth {
+        deep = Pattern::Tuple(vec![bind(&format!("x{i}")), deep]);
+    }
+    let mut got = Vec::new();
+    deep.binders(|x| got.push(x.clone()));
+    let want: Vec<Arc<str>> = (0..depth).rev().map(|i| format!("x{i}").into()).collect();
+    assert_eq!(got, want);
+    let mut k = 0;
+    deep.rename_binders(|x| {
+        *x = format!("n{k}").into();
+        k += 1;
+    });
+    assert_eq!(k, depth);
+}
