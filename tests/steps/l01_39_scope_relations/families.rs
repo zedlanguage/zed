@@ -2710,13 +2710,26 @@ fn audit_seed_48_keeps_the_hole_in_z() {
 /// traced (four), the least part was entailed by the box when it was dismissed, and entailment
 /// survives every later narrowing, so its wake adds nothing. A red needs the least part dismissed
 /// while only half-line idle (every value of each name supported, the box not inside it), which
-/// the certificate allows, and a later narrowing in the same lineage that makes it bite. No input
-/// found reaches that state. The likely reason (inferred, not proved): where a case has later
-/// narrowings, a moved name reaches the chain through `Block::update`'s lazy wake of the least
-/// part alone, which skips the whole chain while that part passes the certificate, so W is not
-/// dequeued and does not dismiss L; the traced dismissals by W were all in cases whose atoms are
-/// narrowed at once, with no narrowing after. So this test pins the path and the facts, and
-/// the wake is not shown to be needed.
+/// the certificate allows, and a later narrowing in the same lineage that makes it bite.
+///
+/// A second probe (perf24, 2026-11-20, not kept) shows that state is reached, so the reason
+/// guessed above (that W is never dequeued in a case with later narrowings) is wrong. It counted,
+/// at each skipped wake, whether projecting the skipped part would narrow the box. Over 15,300
+/// random families (`split(j1, c1)` before a later `split(j2, c2)` with `j2 > j1`, a box with
+/// `x` unbounded above, an optional base row and star, a random two-row disjunction D, and a
+/// case split on `y` or on a separate name `a`), about one family in 75 had such a cut: for
+/// example, with box `x >= 2, -30 <= y <= 30`, base `x >= 8`, L = `split(2, 38)`, W =
+/// `split(3, 33)`, D = `x <= -12 || x >= 2 * y` and cases `y >= -10` / `y <= -11`, W is
+/// projected first in a case at `x >= 8`, its rest certificate holds and L is dismissed, then
+/// `y >= -10` narrows the box and L's wake would give `x >= 18` there. So the wake does change a
+/// fact inside a case, and the claim "the wake never changes a fact" is false; the wake cannot
+/// be removed under A170. In every one of those families the scope's final facts were the same
+/// with and without the wake, and equal to the oracle's on `x`'s lower bound: the join with the
+/// other case, where the lost cut does not hold, gives the same bound. A focused sweep of 288
+/// variants of the example (narrower `y` ranges so that the other case also bounds `x`) found no
+/// difference either, because where the other case is that tight the certificate does not hold
+/// and nothing is dismissed. No input found changes the final facts; whether one exists is open
+/// (not proved either way). The wake stays.
 #[test]
 fn a_chain_part_dismissed_in_a_case_by_the_rest_is_woken_again() {
     let split = |j: i64, c: i64| {

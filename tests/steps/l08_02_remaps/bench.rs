@@ -1182,3 +1182,72 @@ fn n_calls_mapping_by_one_parameter_check_in_linear_time() {
         run,
     );
 }
+
+/// The source of [`n_forwards_with_internal_results_settle_in_linear_time`] at size `n`: `g`
+/// calls `h1` once for each of its n maps, and each call is kept as a compact forward with an
+/// internal result (`h1`'s call of `h0`); `k` passes `g` a tuple of its n parameters `q1` to
+/// `qn`, so that a class of the call is solved to a type that holds n variables.
+fn forwards_and_solved_tuple(n: usize) -> String {
+    let mut src = String::from(
+        "h0(positional f, positional m) = m.map(f);\n\
+         h1(positional f, positional m) = h0(f, m).map(f);\n",
+    );
+    let ms: Vec<String> = (1..=n).map(|i| format!("m{i}")).collect();
+    let qs: Vec<String> = (1..=n).map(|i| format!("q{i}")).collect();
+    let pos = |xs: &[String]| {
+        (xs.iter().map(|x| format!("positional {x}")))
+            .collect::<Vec<_>>()
+            .join(", ")
+    };
+    src.push_str(&format!(
+        "g(positional f, {}, positional p) = {{\n",
+        pos(&ms)
+    ));
+    for m in &ms {
+        src.push_str(&format!("  _ = h1(f, {m});\n"));
+    }
+    src.push_str("  p\n};\n");
+    src.push_str(&format!(
+        "k(positional f, {}, {}) = g(f, {}, ({}));\n",
+        pos(&ms),
+        pos(&qs),
+        ms.join(", "),
+        qs.join(", ")
+    ));
+    let maps: Vec<&str> = (1..=n).map(|_| "{\"k\" -> 0}").collect();
+    let ones: Vec<&str> = (1..=n).map(|_| "1").collect();
+    src.push_str(&format!(
+        "a = k(x -> x + 1, {}, {});\n",
+        maps.join(", "),
+        ones.join(", ")
+    ));
+    src
+}
+
+#[test]
+fn n_forwards_with_internal_results_settle_in_linear_time() {
+    // Plan row PERF-settle-must-decode-index: `Settle::must_decode` (crates/zedc-types/src/ty.rs)
+    // asks each variable of each solved class of a signature of each forward with internal
+    // results, O(m · Σ cost of `FwdNeed::holds_internal`) for m such variables. This program
+    // makes the second factor n (g's signature keeps n forwards with internal results) and puts
+    // a class solved to n variables beside it (the tuple `k` passes). A temporary probe
+    // (perf24, 2026-11-20) printed, for each signature `must_decode` read: g's has 3 forwards
+    // with internal results at n = 3 and no class `stale` solves (m = 0), and k's, whose class is
+    // solved, has no forward, since a call of `g` decodes g's forwards into its needs. Eleven
+    // other shapes (a local function or a lambda with the calls, reading an outer class solved
+    // to a tuple or to functions; `g` held as a value, `v = g` and `id(g)`; `g` returning a
+    // tuple, a list or a function of its parameters) gave the same: no signature had both
+    // factors above 0. So this bench measures the factor reached, n forwards, and shows the
+    // whole path linear in n.
+    let n = 200;
+    let srcs = scaling::inputs(n, forwards_and_solved_tuple);
+    let run = |n: usize| {
+        let ones = vec!["1"; n].join(", ");
+        assert_eq!(value(&srcs[&n], "a"), format!("({ones})"));
+    };
+    scaling::check(
+        "n forwards with internal results beside a class solved to n variables",
+        n,
+        run,
+    );
+}

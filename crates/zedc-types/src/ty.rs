@@ -3862,8 +3862,17 @@ impl Settle<'_> {
     /// variables and the forwards with internal results, not their sum (landing round 7,
     /// Codex Q6: the bound first stated left out the product). A common index (the forwards'
     /// class ranges and name runs, sorted, asked once per variable) would make it O((m + runs)
-    /// · log). It is not built yet: no program is known that makes both factors large (the
-    /// chain benches stay at 8.1 at 8n), and it is an open item of this landing.
+    /// · log). It is not built (PERF-settle-must-decode-index, perf24, 2026-11-20): no program
+    /// is known in which one signature has both factors above 0. A temporary probe here
+    /// printed both for every signature this reads, over twelve shapes (the bench
+    /// `l08_02_remaps::bench::n_forwards_with_internal_results_settle_in_linear_time` and the
+    /// shapes listed in its comment): a top-level function's signature keeps its forwards
+    /// with internal results but has no class `stale` solves, and a signature with a solved
+    /// class (a caller's, a local function's, a lambda's, `g` held as a value) has no compact
+    /// forward, since a call or an instantiation decodes it. That bench, n forwards with
+    /// internal results beside a class solved to n variables, is 8.10 times the instructions
+    /// at 8n (787.7M and 6,377M at n = 200 and 1600, load 54). Inferred, not proved: that the
+    /// checker never makes a signature with both; the index would be needed if it did.
     fn must_decode(&self, s: &Sig) -> bool {
         let solve = self.solve;
         let fwds = || {
