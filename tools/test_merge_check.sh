@@ -352,6 +352,11 @@ merge check: FAILED: tools/test_run_tests.sh table"
     command grep -a -o -E '^merge check: FAILED: tools/test_run_tests.sh [a-z]+'
     echo "${PIPESTATUS[0]}")"
 done
+check "a failing build before the parts of tools/test_run_tests.sh refuses the branch, and no part runs" \
+  "merge check: FAILED: the build for tools/test_run_tests.sh
+1" "$(STUB_RC=1 "$check_script" --base base 2>&1 |
+    command grep -a -o -E '^merge check: FAILED: [a-z ]*tools/test_run_tests.sh( [a-z]+)?'
+    echo "${PIPESTATUS[0]}")"
 check "a change to tools/test_run_tests.sh alone runs its parts, not tools/test_merge_check.sh" \
   "merge check: a file tools/test_run_tests.sh tests changed: all its parts run
 merge check: tools/test_run_tests.sh list, select, table, fresh, concurrent and trace passed

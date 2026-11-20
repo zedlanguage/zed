@@ -874,6 +874,12 @@ write_reads() {
 
 # Step 0b: the parts of tools/test_run_tests.sh, started here and waited for after step 0, so the
 # two steps run at once. A part that is not run (its chain stopped first) is reported as failed.
+# The parts list the tests of the built binaries, and each builds first as run_tests.sh does,
+# which does nothing on a built tree; on a worktree whose tests are not built yet every part ran
+# into its limit while building (2026-11-20: all six killed at 60 s with empty logs). So the
+# build comes first, `run_tests.sh --list` with no --only (the build of the full listing, with
+# the short-addresses clone), with no time limit, since it is a build and not a test, and the
+# parts start when it has passed.
 rtparts=(list select table fresh concurrent trace)
 rtpids=()
 if [ -n "$rtself" ] && [ -z "$list" ]; then
@@ -883,19 +889,25 @@ if [ -n "$rtself" ] && [ -z "$list" ]; then
   rt_part() { timeout -k 5 "$rtlimit" tools/test_run_tests.sh "$1" >"$rlog-$1.log" 2>&1; }
   # Emptied first, so a part its chain did not reach shows no line of an earlier check.
   for p in "${rtparts[@]}"; do : >"$rlog-$p.log"; done
-  (rt_part list && rt_part select && rt_part table) &
+  # Exits 1 only when the build failed; the parts' verdicts are read from their logs.
+  (
+    tools/run_tests.sh --logs "$rlog-build" --list >"$rlog-build.log" 2>&1 || exit 1
+    (rt_part list && rt_part select && rt_part table) &
+    for p in fresh concurrent trace; do rt_part "$p" & done
+    wait
+  ) &
   rtpids+=($!)
-  for p in fresh concurrent trace; do
-    rt_part "$p" &
-    rtpids+=($!)
-  done
 fi
-# Waits for step 0b and fails when a part failed: each part's last line is "checks failed: 0"
-# exactly when it passed (a part killed by its limit has no such line).
+# Waits for step 0b and fails when its build or a part failed: each part's last line is
+# "checks failed: 0" exactly when it passed (a part killed by its limit has no such line).
 rt_wait() {
   [ ${#rtpids[@]} -gt 0 ] || return 0
   local p bad=
-  for p in "${rtpids[@]}"; do wait "$p"; done
+  if ! wait "${rtpids[0]}"; then
+    tail -n 40 "$rlog-build.log"
+    echo "merge check: FAILED: the build for tools/test_run_tests.sh (log $rlog-build.log)" >&2
+    exit 1
+  fi
   for p in "${rtparts[@]}"; do
     if [ "$(tail -n 1 "$rlog-$p.log" 2>/dev/null)" != "checks failed: 0" ]; then
       [ ! -f "$rlog-$p.log" ] || cat "$rlog-$p.log"
