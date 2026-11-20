@@ -15,6 +15,11 @@
 //! 2026-11-20 for the two DOIs; none of the three texts was obtained, so the methods are from
 //! memory, as are the SODA pages. Departure: the papers keep the encoding under updates of a
 //! dynamic sequence; here texts are only named and joined, and the constants are this file's.
+//! Related, and named beside these in COMPLEXITY.md: T. Nishimoto, T. I, S. Inenaga, H. Bannai
+//! and M. Takeda, "Fully dynamic data structure for LCE queries in compressed space", MFCS
+//! 2016, LIPIcs 58, doi:10.4230/LIPIcs.MFCS.2016.72 (DataCite checked 2026-11-20, text not
+//! read), which builds the signature encoding from a straight-line program; nothing here is
+//! taken from it.
 //! Level 0 of a text is its bytes. Each level is turned into the next in two steps:
 //!
 //! 1. Runs: each maximal run of one symbol `a`, `k ≥ 2` times, becomes one symbol, the name of

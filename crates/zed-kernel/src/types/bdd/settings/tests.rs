@@ -134,8 +134,9 @@ fn height(t: &Tree<Row>) -> usize {
 /// cited Erdős and Szekeres before, whose theorem gives only a monotone run of `sqrt(n)`),
 /// and under
 /// that hash their set was a path of 506 nodes. Under the drawn priorities it is a treap of
-/// independent priorities, and its height is checked against Seidel and Aragon's Lemma 4.8 at
-/// probability `1/n`, as `set/tests.rs` does. The unit tests of this crate fix the draw
+/// independent priorities, and its height is checked against Seidel and Aragon's Lemma 4.8
+/// (doi:10.1007/BF01940876; its bound is stated in `bdd/list/tests.rs`) at probability `1/n`,
+/// as `set/tests.rs` does. The unit tests of this crate fix the draw
 /// (`priority::fixed_seed`), so the height checked is that of one draw, the same on every run.
 #[test]
 fn settings_chosen_against_a_fixed_hash_give_a_logarithmic_height() {

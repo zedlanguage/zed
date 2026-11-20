@@ -69,7 +69,8 @@ static PRIORITIES: [Priorities; 2] = [Priorities::eight_wise(1), Priorities::eig
 /// The priority of `key`: the run's random polynomial of degree 7 at its atom's digest, one for
 /// each value. Distinct digests take 8-wise independent uniform priorities, which bounds every
 /// node's expected depth by `O(log n)` for every set of settings (Seidel and Aragon 1996,
-/// Theorem 3.3 and section 6) and the work of [`combine`] by the finger bound (module
+/// doi:10.1007/BF01940876, Theorem 3.3 and section 6, cited in full and quoted in module
+/// [`crate::priority`]) and the work of [`combine`] by the finger bound (module
 /// [`crate::priority`] has both proofs), where the fixed hash this replaces had no bound for
 /// chosen settings (COMPLEXITY.md K123). Atoms of one digest share a point: they tie whatever
 /// the draw, and each such atom adds at most one to a depth.

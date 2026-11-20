@@ -122,7 +122,8 @@ fn exponent_of_a_power_of_ten() {
     }
 }
 
-/// Mushtak and Lemire's check, on this table: a significand `w < 2^64` whose product with
+/// Mushtak and Lemire's check (doi:10.1002/spe.3198, cited in full in module `float_text`), on
+/// this table: a significand `w < 2^64` whose product with
 /// `POW5[q]` has the 137 low bits at least `2^137 - 2^64`, the only case where the truncation
 /// can change bit 73 of the high 128 bits, exists only if a convergent of `POW5[q] / 2^137`
 /// with denominator below `2^64` is such a significand. There is none for `q` outside

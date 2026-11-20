@@ -2027,7 +2027,8 @@ impl<K: Key> Poly<K> {
             |p: &Poly<K>| usize::try_from(bits(p).div_ceil(64).max(1)).unwrap_or(usize::MAX);
         // Complexity tradeoff: the choice was `dense <= sparse` on the charges above, both with
         // unit constants; the dense product's fixed cost and its packed product's method
-        // (schoolbook, Toom or transform, as `num::mul` takes it) were not counted, so it took
+        // (schoolbook, Toom or transform, as `num::mul` takes it; their sources are cited in
+        // `num::fast`'s "Sources") were not counted, so it took
         // the slower method by up to 9.6 times. This estimate costs two `num::mul_cost` calls,
         // `O(log L)` each, beside the `O(t1 + t2)` pass above; measured by `crossover poly-*`.
         //
