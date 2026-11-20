@@ -99,6 +99,8 @@ runlog=$home/running-log.md
 ledger=$home/ledger.jsonl
 stuck_file=$home/main-watch-stuck.md
 flakes=$home/main-watch-flakes.log
+# Failures a plan row owns, one a line: <kind>:<piece> <row>. Written by hand; see check.
+known_file=$home/main-watch-known.txt
 self=$(realpath -e "$0")
 export MAIN_WATCH_HOME=$home MAIN_WATCH_REPO=$repo MAIN_WATCH_FULL=$full MAIN_WATCH_JOBS=$jobs
 
@@ -120,7 +122,11 @@ run_pieces() {
   local a=(--logs "$logs")
   if [ "$kind" = bench ]; then a+=(--bench); elif [ -n "$full" ]; then a+=("$full"); fi
   if [ ${#names[@]} -gt 0 ]; then
-    a+=(--only "^($(printf '%s\n' "${names[@]}" | sed 's/[][\.*^$+?(){}|/]/\\&/g' | paste -sd'|'))\$")
+    # Each name its own alternative, ^<name>$|^<name>$: run_tests.sh reads the text before the
+    # first :: of each top-level alternative as the group, which must be an extended regular
+    # expression by itself, so ^(a::x|b::y)$ is refused (exit 2, no piece run) and each failure
+    # read as a flake (TOOL-main-watch-start-green, 2026-11-20; test_main_watch.sh case zrun).
+    a+=(--only "$(printf '%s\n' "${names[@]}" | sed 's/[][\.*^$+?(){}|/]/\\&/g; s/.*/^&$/' | paste -sd'|')")
   elif [ $# -gt 0 ]; then
     a+=(--list)
   fi
@@ -405,7 +411,7 @@ fix() {
 # check <C0> <head>: runs everything at the head, bisects and fixes each failure, and repeats at
 # the new head until everything passes; then records that head as checked.
 check() {
-  local c0=$1 f fails items g c f1 all
+  local c0=$1 f fails items g c f1 all known r
   head=$2
   declare -gA good=()
   while :; do
@@ -420,6 +426,25 @@ check() {
       all+="$f "
     done
     fails=$(sed '/^$/d' <<<"$fails")
+    # A failure that $known_file gives a plan row ran like every piece and is reported with its
+    # row, but is not run again, bisected or fixed here, and does not keep the head from being
+    # checked and its build published: its row's owner fixes it (TOOL-main-watch-start-green,
+    # 2026-11-20: rows owned bench failures at every commit, so no head could be checked). A
+    # listed piece that passes is reported, so its line can be taken out.
+    known=
+    for p in $fails; do
+      r=$([ -s "$known_file" ] && awk -v p="$p" '$1 == p { print $2; exit }' "$known_file")
+      [ -n "$r" ] || continue
+      known+="$p ($r) "
+      fails=$(minus "$fails" "$p")
+    done
+    [ -z "$known" ] || {
+      say "known failures at $(short "$head"): $known"
+      runlog "known failures at $(short "$head"), each owned by its row ($known_file): $known"
+    }
+    for p in $([ -s "$known_file" ] && awk '{ print $1 }' "$known_file"); do
+      [ "${good[$p]:-}" != "$head" ] || say "$p, listed in $known_file, passes at $(short "$head"); take its line out"
+    done
     # Each failure run again alone; one that passes is a flake.
     items=
     for p in $fails; do
@@ -435,8 +460,8 @@ check() {
     items=$(sed '/^$/d' <<<"$items")
     if [ -z "$items" ]; then
       echo "$head $(ts)" >"$checked_file.$$" && mv -T "$checked_file.$$" "$checked_file"
-      runlog "checked $(short "$head"): every test and benchmark passes ($(landings_in "$c0" "$head" | wc -l) landings since $(short "$c0"))"
-      say "checked $(short "$head"): everything passes"
+      runlog "checked $(short "$head"): every test and benchmark passes${known:+ but the known failures $known}($(landings_in "$c0" "$head" | wc -l) landings since $(short "$c0"))"
+      say "checked $(short "$head"): everything passes${known:+ but the known failures $known}"
       # The worktree's build, of a head where everything passes, becomes the central build that
       # seed-build.sh gives each new worktree (TOOLS-clippy-cold-per-worktree). Since the
       # merge batches stopped on 2026-11-19 nothing else publishes it, and a central build 1062

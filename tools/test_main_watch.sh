@@ -67,7 +67,7 @@ brief=$1 dir=$2
 echo "fixer in $(pwd -P) for $dir" >>"$MW_STATE/fixer.log"
 [ "${MW_FIX:-}" != fail ] || exit 1
 for p in $(sed -n 's/^Failing pieces: //p' "$brief"); do
-  [ "${MW_FIX:-}" = none ] || git rm -q --ignore-unmatch "broken/${p#*:}"
+  [ "${MW_FIX:-}" = none ] || git rm -q --ignore-unmatch "broken/${p##*:}"
 done
 if [ -n "${MW_FIX_BREAK:-}" ] && [ ! -e "$MW_STATE/broke" ]; then
   : >"$MW_STATE/broke"
@@ -80,6 +80,44 @@ git commit -q -m "fix: $(sed -n 's/^Failing pieces: //p' "$brief")"
 git push -q origin HEAD:main || exit 1
 echo "$(git rev-parse HEAD) $(date -u +%FT%TZ) $dir $(git branch --show-current)" >>"$MAIN_WATCH_HOME/landings.log"
 EOF
+  # zrun for the case zrun: takes tools/run_tests.sh's arguments as main_watch.sh's run_pieces
+  # writes them, refuses an --only as run_tests.sh does (exit 2: the text before the first :: of
+  # each top-level alternative, split by run_tests.sh's own alternatives(), must be an extended
+  # regular expression by itself), and runs the stub runner with each piece named toy::<piece>,
+  # as a real piece is named <group>::<path>.
+  cat >"$t/bin/zrun" <<'EOF'
+#!/bin/bash
+shift
+logs= kind=test only= list=
+while [ $# -gt 1 ]; do
+  case $1 in
+    --logs) logs=$2 && shift ;;
+    --bench) kind=bench ;;
+    --only) only=$2 && shift ;;
+    --list) list=1 ;;
+  esac
+  shift
+done
+eval "$(awk '/^alternatives\(\) \{/,/^}/' "$MW_ROOT/tools/run_tests.sh")"
+names=()
+if [ -n "$only" ]; then
+  while read -r a; do
+    { [[ x =~ ${a%%::*} ]]; } 2>/dev/null
+    if [ $? = 2 ]; then
+      echo "--only: cannot tell which test binaries '$a' names"
+      echo "$only" >>"$MW_STATE/refused"
+      exit 2
+    fi
+    a=${a#^} a=${a%\$} a=${a//\\/}
+    names+=("${a#toy::}")
+  done < <(alternatives "$only")
+elif [ -n "$list" ]; then
+  names=(BUILD)
+fi
+"$MW_RUN" "$logs" "$kind" "${names[@]}" | sed -E 's/^(t_|b_)/toy::\1/'
+exit "${PIPESTATUS[0]}"
+EOF
+  chmod +x "$t/bin/zrun"
   printf '#!/bin/bash\ntrue\n' >"$t/bin/prepare"
   printf '#!/bin/bash\ngit -C "$1" worktree remove --force "$(realpath -e "$1")"\n' >"$t/bin/remove"
   # The publisher of a checked worktree's build (build-publish.sh): records the worktree's commit.
@@ -95,7 +133,7 @@ EOF
     MAIN_WATCH_PUBLISH=$t/bin/publish \
     MAIN_WATCH_FIXER=$t/bin/fix MAIN_WATCH_TEMPLATE=$t/template MAIN_WATCH_POLL=0 MAIN_WATCH_POLLS=2 \
     MW_STATE=$t/state
-  unset MW_FIX MW_FIX_BREAK
+  unset MW_FIX MW_FIX_BREAK MAIN_WATCH_ZRUN
 }
 
 # land <n> [<commits>] [<i>:<piece>]: landing n, pushed from the dev clone, of <commits> commits
@@ -186,6 +224,26 @@ FAIL-main-${b:0:9}" "$(command grep -a '"state":"done"' "$t/home/ledger.jsonl" |
     check "two: the watcher's and the fixers' worktrees are removed" 1 "$(git -C "$t/repo" worktree list | wc -l)"
     check "two: no bisect is left open" "" "$(git -C "$t/repo" for-each-ref refs/bisect)"
     ;;
+  zrun)
+    # The real run_pieces (MAIN_WATCH_ZRUN, not MAIN_WATCH_RUN), with pieces named
+    # <group>::<path>: every --only it writes must be one run_tests.sh accepts, or each failure
+    # reads as a flake (TOOL-main-watch-start-green, 2026-11-20: run_pieces wrote
+    # `^(a::x|b::y)$`, which run_tests.sh refuses, so every failure was logged as a flake).
+    setup
+    unset MAIN_WATCH_RUN
+    export MAIN_WATCH_ZRUN=$t/bin/zrun MW_RUN=$t/bin/run MW_ROOT=$root
+    twenty
+    local a b
+    a=$(breaker t_alpha)
+    b=$(breaker b_beta)
+    watch
+    check "zrun: exit 0" 0 "$rc"
+    check "zrun: run_tests.sh refused no --only" "" "$(cat "$t/state/refused" 2>/dev/null)"
+    check "zrun: the culprits, in order: t_alpha's commit, then b_beta's" "$a
+$b" "$(opened)"
+    check "zrun: the flake alone is recorded as a flake" "test:toy::t_flaky" \
+      "$(cut -d' ' -f3 "$t/home/main-watch-flakes.log" 2>/dev/null | sort -u)"
+    ;;
   fixbreak)
     # The first fix breaks t_gamma; the next round finds the fix commit as the culprit and fixes it.
     setup
@@ -266,6 +324,24 @@ $(breaker b_beta)" "$(opened | sed -n 1,2p)"
     check "old: the stuck entry names the old failure" 1 "$(command grep -a -c "main-watch stuck: test:t_delta fail at the last checked commit" "$t/home/main-watch-stuck.md")"
     check "old: the checked commit is unchanged" "$c0" "$(checked)"
     ;;
+  known)
+    # As old, but main-watch-known.txt gives the failure's owning row: it still runs and is
+    # reported with its row, but is not bisected, fixed or confirmed at C0, and the head is
+    # checked and published.
+    setup t_delta
+    echo "test:t_delta TEST-row-known" >"$t/home/main-watch-known.txt"
+    for n in $(seq 1 15); do land "$n"; done
+    watch
+    check "known: exit 0" 0 "$rc"
+    check "known: no culprit" "" "$(opened)"
+    check "known: no fixer ran" 0 "$(cat "$t/state/fixer.log" 2>/dev/null | wc -l)"
+    check "known: the head is checked" "$(head_of)" "$(checked)"
+    check "known: the checked head's build is published" "$(head_of)" "$(cat "$t/state/published" 2>/dev/null)"
+    check "known: the failure still ran at the head" 1 \
+      "$(command grep -a -c "^$(git -C "$t/repo" rev-parse --short=9 "$(head_of)") test all" "$t/state/runs.log")"
+    check "known: the running log names the failure and its row" 1 \
+      "$(command grep -a -c 'known failures at .*test:t_delta (TEST-row-known)' "$t/home/running-log.md")"
+    ;;
   build)
     # A build failure is a piece of its own: bisected and fixed like the others.
     setup
@@ -303,7 +379,7 @@ $(breaker b_beta)" "$(opened | sed -n 1,2p)"
   esac
 }
 
-all_cases="two fixbreak failfix nofix clean few old build controls"
+all_cases="two zrun fixbreak failfix nofix clean few old known build controls"
 for c in ${@:-$all_cases}; do run_case "$c"; done
 echo "checks failed: $fails"
 [ "$fails" = 0 ]
