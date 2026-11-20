@@ -401,58 +401,106 @@ fn ordering_types_whose_digests_tie_at_every_depth_scales() {
     );
 }
 
+// The walks over parts, one test each (small instances:
+// `the_walks_over_parts_hold_at_small_depths`). They were one test, whose eight checks with
+// their inputs took over the 60 s limit of a test at load 40 to 59 (2026-11-20); one walk a
+// test, each builds only the inputs it reads, at `WALK_N` and `FACTOR * WALK_N`, and measures
+// each size once.
+const WALK_N: usize = 1 << 14;
+
+/// An expression of `m` unions of literals, on atoms of its own.
+fn walk_ors(m: usize) -> Part<Row> {
+    ors(10 * m as u64, m, Part::literal)
+}
+
+/// A diagram of a meet of `m` literals, on atoms of its own.
+fn walk_meet(m: usize) -> Part<Row> {
+    Part::Bdd(meet(30 * m as u64, m))
+}
+
 #[test]
-fn the_walks_over_parts_scale() {
-    // Small instances: `the_walks_over_parts_hold_at_small_depths`.
-    let n = 1 << 14;
-    let sizes = [n, scaling::FACTOR * n];
-    let ors: BTreeMap<usize, Part<Row>> = sizes
-        .map(|m| (m, ors(10 * m as u64, m, Part::literal)))
-        .into();
-    let pins: BTreeMap<usize, Part<Row>> = sizes
-        .map(|m| (m, settled_by_one_pin(20 * m as u64, m)))
-        .into();
-    let meets: BTreeMap<usize, Part<Row>> =
-        sizes.map(|m| (m, Part::Bdd(meet(30 * m as u64, m)))).into();
-    let ladders: BTreeMap<usize, Part<Row>> = sizes.map(|m| (m, ladder(40 * m as u64, m))).into();
-    scaling::check("eval of an expression, by depth", n, |m| {
+fn eval_of_an_expression_scales() {
+    let ors = scaling::inputs(WALK_N, walk_ors);
+    scaling::check("eval of an expression, by depth", WALK_N, |m| {
         assert!(!ors[&m].eval(&|_| false));
     });
+}
+
+#[test]
+fn eval_of_an_expression_whose_operands_are_shared_scales() {
+    let ladders = scaling::inputs(WALK_N, |m| ladder(40 * m as u64, m));
     // Every expression but the top one is read twice, the second time from the memo.
     scaling::check(
         "eval of an expression whose operands are shared, by depth",
-        n,
+        WALK_N,
         |m| {
             assert!(!ladders[&m].eval(&|_| false));
         },
     );
-    scaling::check("eval3 of an expression and a diagram, by depth", n, |m| {
-        assert_eq!(ors[&m].eval3(&|_| None), None);
-        assert_eq!(meets[&m].eval3(&|_| None), None);
-    });
+}
+
+#[test]
+fn eval3_of_an_expression_and_a_diagram_scales() {
+    let parts = scaling::inputs(WALK_N, |m| (walk_ors(m), walk_meet(m)));
+    scaling::check(
+        "eval3 of an expression and a diagram, by depth",
+        WALK_N,
+        |m| {
+            let (ors, meets) = &parts[&m];
+            assert_eq!(ors.eval3(&|_| None), None);
+            assert_eq!(meets.eval3(&|_| None), None);
+        },
+    );
+}
+
+#[test]
+fn the_atoms_of_an_expression_and_a_diagram_scale() {
+    let parts = scaling::inputs(WALK_N, |m| (walk_ors(m), walk_meet(m)));
     scaling::check(
         "the atoms of an expression and a diagram, by depth",
-        n,
+        WALK_N,
         |m| {
-            assert_eq!(ors[&m].distinct_atoms().len(), m);
-            assert_eq!(meets[&m].distinct_atoms().len(), m);
+            let (ors, meets) = &parts[&m];
+            assert_eq!(ors.distinct_atoms().len(), m);
+            assert_eq!(meets.distinct_atoms().len(), m);
         },
     );
-    scaling::check("the union's rows, by depth", n, |m| {
+}
+
+#[test]
+fn the_rows_of_a_union_scale() {
+    let ors = scaling::inputs(WALK_N, walk_ors);
+    scaling::check("the union's rows, by depth", WALK_N, |m| {
         assert_eq!(ors[&m].union_rows().map(|r| r.len()), Some(m));
     });
-    scaling::check("the forced atoms of an expression, by depth", n, |m| {
+}
+
+#[test]
+fn the_forced_atoms_of_an_expression_scale() {
+    let ors = scaling::inputs(WALK_N, walk_ors);
+    scaling::check("the forced atoms of an expression, by depth", WALK_N, |m| {
         assert_eq!(ors[&m].forced(), (Vec::new(), Vec::new()));
     });
+}
+
+#[test]
+fn restricting_an_expression_and_a_diagram_scales() {
+    let parts = scaling::inputs(WALK_N, |m| (walk_ors(m), walk_meet(m)));
     scaling::check(
         "restricting an expression and a diagram, by depth",
-        n,
+        WALK_N,
         |m| {
-            assert_eq!(ors[&m].restrict(&|_| Some(false)), Part::leaf(false));
-            assert_eq!(meets[&m].restrict(&|_| None), meets[&m]);
+            let (ors, meets) = &parts[&m];
+            assert_eq!(ors.restrict(&|_| Some(false)), Part::leaf(false));
+            assert_eq!(meets.restrict(&|_| None), *meets);
         },
     );
-    scaling::check("settling on one pin, by depth", n, |m| {
+}
+
+#[test]
+fn settling_on_one_pin_scales() {
+    let pins = scaling::inputs(WALK_N, |m| settled_by_one_pin(20 * m as u64, m));
+    scaling::check("settling on one pin, by depth", WALK_N, |m| {
         assert_eq!(pins[&m].settle().distinct_atoms().len(), 2 * (m - 1));
     });
 }
