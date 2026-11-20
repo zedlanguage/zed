@@ -1509,6 +1509,7 @@ impl<'t, 'a> Ck<'t, 'a> {
         sig: &mut Sig,
         own: &[usize],
         outside: &Binds,
+        written: &HashMap<usize, Arc<str>>,
     ) {
         let facts = VarFacts::of(sig);
         let mine: HashSet<Arc<str>> = own
@@ -1516,6 +1517,15 @@ impl<'t, 'a> Ck<'t, 'a> {
             .map(|r| Arc::from(format!("${r}")))
             .filter(|v| facts.classes.contains(v) && !outside.contains_key(v))
             .collect();
+        // The written names, kept as in the naming of `generalize` (walk.rs, whose comment
+        // gives the proof that the names stay apart and the cost). The runs of internal
+        // results below skip them as program names (`held_now`): a written name is one the
+        // program binds, which `ProgramNames` holds while the file is checked.
+        let kept: HashSet<Arc<str>> = written.values().cloned().collect();
+        let inside = match written.is_empty() {
+            true => HashSet::new(),
+            false => self.names_inside(&facts, &mine),
+        };
         // The skip set, indexed once for every run of the signature (`SkipIndex`, whose
         // comment gives the tradeoff): O(s log s) here, O(log s) per run below.
         let held_now = current_held_var_snapshot();
@@ -1537,12 +1547,19 @@ impl<'t, 'a> Ck<'t, 'a> {
                 return;
             }
             let r = class_id(v).expect("a class variable");
-            let name = fresh_name(Names::Variables, n_ref, |nm| facts.names.contains(nm));
+            let wrote = written.get(&ck.find(r)).cloned();
+            let name = match wrote.clone().filter(|w| !inside.contains(w)) {
+                Some(w) => w,
+                None => fresh_name(Names::Variables, n_ref, |nm| {
+                    facts.names.contains(nm) || kept.contains(nm)
+                }),
+            };
             ck.r10.stats.names_drawn += 1;
             if ck.classes[r].mask != EVERY {
                 bounds.insert(v.clone(), ck.classes[r].mask);
             }
             ck.classes[r].name = Some(name);
+            ck.classes[r].written = wrote;
             mine_seen.insert(v.clone());
         };
 

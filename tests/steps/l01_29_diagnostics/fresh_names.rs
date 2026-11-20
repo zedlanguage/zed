@@ -216,6 +216,94 @@ fn naming_variables_beside_many_program_names() {
     }
 }
 
+/// The lines of `out` that hold `part`, for a failure message.
+fn lines_with<'a>(out: &'a str, part: &str) -> Vec<&'a str> {
+    out.lines().filter(|l| l.contains(part)).collect()
+}
+
+#[test]
+fn a_type_variable_the_declaration_writes_prints_by_its_written_name() {
+    // Plan row MSG-type-vars-printed-renamed: a variable the declaration writes is printed by
+    // the name it wrote, which the names drawn for the other variables skip. Unbounded, it
+    // stands twice in the type of `g`, which printed `(U, U) -> (U, U)`.
+    let out = rejected(
+        "g(positional y: T, positional z: T) = (y, z);\nmain(m: MainArgs) { m.stdout <- [g]; }\n",
+    );
+    assert!(
+        out.contains("`m.stdout <- [g] : 0 -> (T, T) -> (T, T)`"),
+        "{out}"
+    );
+    // Bounded by carriers, it printed `(U, U) -> U for U in int | f32 | f64 | rat`.
+    let out = rejected(
+        "f(positional a: T, positional b: T) = a + b;\n\
+         main(m: MainArgs) { x = f(1, \"s\"); m.stdout <- [\"a\"]; }\n",
+    );
+    assert!(
+        out.contains("`f` takes (T, T) -> T for T in int | f32 | f64 | rat"),
+        "{out}"
+    );
+    // Control: the same functions with no variable written, in a program that writes `T`
+    // elsewhere, still name theirs apart from it.
+    let defs = holding(&["T"]);
+    let out = rejected(&format!(
+        "{defs}g(positional y, positional z) = (y, z);\nmain(m: MainArgs) {{ m.stdout <- [g]; }}\n"
+    ));
+    assert!(
+        out.contains("`m.stdout <- [g] : 0 -> (U, V) -> (U, V)`"),
+        "{out}"
+    );
+    let out = rejected(&format!(
+        "{defs}f(positional a, positional b) = a + b;\n\
+         main(m: MainArgs) {{ x = f(1, \"s\"); m.stdout <- [\"a\"]; }}\n"
+    ));
+    assert!(
+        out.contains("`f` takes (U, U) -> U for U in int | f32 | f64 | rat"),
+        "{out}"
+    );
+}
+
+/// `k` writes `T` for two parameters and pushes both to `out`, which takes only text, and
+/// `main` calls it with two numbers.
+const PUSHES_T: &str = "k(positional z: T, positional w: T, out: Lines) { out <- [z, w]; }\n\
+                        main(m: MainArgs) { k(5, 6, out: m.stdout); }\n";
+
+#[test]
+fn the_declared_step_and_the_note_print_the_written_name() {
+    // The step on the declaration printed `(U, U, out: …)` (row
+    // MSG-type-vars-printed-renamed), and the note on the pushed value, read after `k` ended,
+    // printed its `T` as `_` (row MSG-headline-note-disagree).
+    let out = rejected(PUSHES_T);
+    let declared = "the type the checker found for `k` is `(T, T, out: [String | #ioError(op: \
+                    String, path: String, why: String)]) -> ()`";
+    assert!(out.contains(declared), "{out}");
+    assert!(
+        out.contains("this expression is (0 | 1) -> T"),
+        "{:?}\n{out}",
+        lines_with(&out, "this expression is")
+    );
+}
+
+#[test]
+fn a_written_name_a_function_around_binds_is_printed_apart() {
+    // In the body of `h`, which writes `T`, a `T` means `h`'s: the type of `g`, which writes
+    // `T` too, is printed with another name there, and `h`'s own steps print its `T`.
+    let out = rejected(
+        "g(positional y: T, positional z: T) = (y, z);\n\
+         h(positional a: T, positional b: T, out: Lines) { out <- [a]; out <- [g]; }\n\
+         main(m: MainArgs) { h(1, 2, out: m.stdout); }\n",
+    );
+    assert!(
+        out.contains("`out <- [g] : 0 -> (U, U) -> (U, U)`"),
+        "{:?}\n{out}",
+        lines_with(&out, "out <- [g]")
+    );
+    assert!(
+        out.contains("the type the checker found for `h` is `(T, T, out:"),
+        "{out}"
+    );
+    assert!(out.contains("this expression is 0 -> T"), "{out}");
+}
+
 /// `ap` takes a pair of two `int | #x`, so a message about it defines that part; the program
 /// binds `defs` too.
 fn defining(defs: &str) -> String {

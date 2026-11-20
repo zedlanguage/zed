@@ -92,11 +92,11 @@ use zedc_syntax::lex::{Span, Tok, lex, unread_literal};
 
 use kernel_type::kernel_type;
 use ty::{
-    Arrow, Binds, CallPath, Carrier, DataUse, Dense, EVERY, FoldForm, IntDomain, KeyUse, LevelWord,
-    MapWord, NameItem, NameRun, Names, Narrow, Need, NeedKind, NodeId, OTHER, ParamRange, PathStep,
-    Piece, PowerUse, Reducer, Renamings, RunMark, RunRenames, SParam, Shape, Sig, Slot, Ty,
-    VarFacts, VarSet, Vars, Via, Width, WrittenRange, atoms, carriers_text, class_id, errs,
-    fresh_name, mask_text, rename_apart,
+    Around, Arrow, Binds, CallPath, Carrier, DataUse, Dense, EVERY, FoldForm, IntDomain, KeyUse,
+    LevelWord, MapWord, NameItem, NameRun, Names, Narrow, Need, NeedKind, NodeId, OTHER,
+    ParamRange, PathStep, Piece, PowerUse, Reducer, Renamings, RunMark, RunRenames, SParam, Shape,
+    Sig, Slot, Ty, VarFacts, VarSet, Vars, Via, Width, WrittenRange, atoms, carriers_text,
+    class_id, errs, fresh_name, mask_text, rename_apart,
 };
 
 /// How a function argument fits the function type its slot expects.
@@ -1345,11 +1345,28 @@ enum Why<'a> {
 /// as it was then.
 type Masks = Vec<(Arc<str>, u8)>;
 
+/// The lists of an [`Around`] that [`Ck::around`] makes, owned.
+struct WrittenAround {
+    named: Vec<(Arc<str>, Arc<str>)>,
+    kept: Vec<(Arc<str>, Arc<str>)>,
+    taken: Vec<Arc<str>>,
+}
+
+impl WrittenAround {
+    fn get(&self) -> Around<'_> {
+        Around {
+            named: &self.named,
+            kept: &self.kept,
+            taken: &self.taken,
+        }
+    }
+}
+
 /// `t` shown with each class of `masks`, a variable of `t` with its carriers, shown as the
 /// union of those carriers.
-fn show_with(t: &Ty, masks: &Masks, spell: Spell<'_>, names: &[(Arc<str>, Arc<str>)]) -> String {
+fn show_with(t: &Ty, masks: &Masks, spell: Spell<'_>, around: Around<'_>) -> String {
     if masks.is_empty() {
-        return t.text_named(false, spell, names);
+        return t.text_around(false, spell, around);
     }
     // One union, printed in the order of a union (`order::cmp`, DESIGN.md sec:diagnostics), so
     // that the carriers stand among the other members as in a type written with them.
@@ -1360,7 +1377,7 @@ fn show_with(t: &Ty, masks: &Masks, spell: Spell<'_>, names: &[(Arc<str>, Arc<st
         rest.vars.remove(v);
     }
     rest.union(&Ty::of_mask(narrowed))
-        .text_named(false, spell, names)
+        .text_around(false, spell, around)
 }
 
 /// Where a repair note that writes types in code says to declare the definitions those
@@ -1528,6 +1545,11 @@ struct Class {
     /// The name it is shown by, if it is a type variable of the function of its level, which
     /// ended: `resolved` is then its own variable `$k`, and it is a class no more.
     name: Option<Arc<str>>,
+    /// The name the function's declaration wrote for it, if it wrote one, as `T` in
+    /// `g(positional y: T, positional z: T) = (y, z)`: a message prints the variable by it
+    /// where no other variable is printed by it ([`Ck::around`]). `name` is this one too,
+    /// unless a function inside the signature took it ([`Ck::names_inside`]).
+    written: Option<Arc<str>>,
     /// What uses of its values need of them, each numbered in the order of all needs.
     uses: Vec<(usize, Need)>,
     /// The result of each use in `uses` by its kind and whether it gives a value, the first
@@ -3896,7 +3918,7 @@ impl<'t, 'a> Ck<'t, 'a> {
                         .collect();
                     format!(
                         "`{b}` is declared `{}`",
-                        show_with(&t, &masks, &|v| self.spelling(v), &[])
+                        show_with(&t, &masks, &|v| self.spelling(v), Around::default())
                     )
                 }
             },
@@ -4477,6 +4499,57 @@ impl<'t, 'a> Ck<'t, 'a> {
         self.type_vars.push((level, Binds::new()));
     }
 
+    /// The name the signature or body of the function checked at `level` wrote for each class
+    /// root, while its type variables are open: [`Self::generalize`] names each of its own
+    /// classes so, where it can (DESIGN.md sec:diagnostics, "Types in a message", plan row
+    /// MSG-type-vars-printed-renamed). Two names whose classes merged give their root the one
+    /// first in the order of names, so the choice does not depend on the order of the map.
+    /// Cost: one root lookup per written name, O(w log N) for w names, which [`Self::written`]
+    /// paid once each already.
+    fn written_names_at(&self, level: usize) -> HashMap<usize, Arc<str>> {
+        let mut out: HashMap<usize, Arc<str>> = HashMap::new();
+        let Some((_, b)) = self.type_vars.last().filter(|(l, _)| *l == level) else {
+            return out;
+        };
+        for (n, c) in b.iter() {
+            let Some(j) = c.as_var().and_then(|v| class_id(v)) else {
+                continue;
+            };
+            (out.entry(self.find(j)))
+                .and_modify(|m| {
+                    if **n < **m {
+                        *m = n.clone();
+                    }
+                })
+                .or_insert_with(|| n.clone());
+        }
+        out
+    }
+
+    /// The names a signature being generalized may not keep for its own classes, with `facts`
+    /// its facts and `mine` its own class variables: every name it holds already
+    /// (`facts.names`) and the name of each class of a function inside it that ended, which
+    /// [`Self::shown`] gives that function's variable. A function around another that keeps a
+    /// name the inner one holds would bind it again inside its own bounds, which no written
+    /// type does and which a reader takes for one variable; the fresh names avoid it by their
+    /// numbering ([`Sig::named`]), and a written name has no number, so it is checked here.
+    /// Cost: one walk of `facts.classes`, O(c) for c class variables, as [`VarFacts::of`] paid
+    /// in making them; it is made only for a function that writes a type variable.
+    fn names_inside(&self, facts: &VarFacts, mine: &HashSet<Arc<str>>) -> HashSet<Arc<str>> {
+        let mut out: HashSet<Arc<str>> = facts.names.iter().cloned().collect();
+        for v in facts.classes.iter().filter(|v| !mine.contains(*v)) {
+            let Some(k) = class_id(v).filter(|&k| k < self.classes.len()) else {
+                continue;
+            };
+            if self.r10_is_closed_internal(k) || !self.classes.is_materialized(k) {
+                continue;
+            }
+            let c = &self.classes[self.find(k)];
+            out.extend(c.name.iter().chain(c.written.iter()).cloned());
+        }
+        out
+    }
+
     /// Closes the type variables of the function checked at `level`, if they are open.
     fn close_type_vars(&mut self, level: usize) {
         if self.type_vars.last().is_some_and(|(l, _)| *l == level) {
@@ -4532,6 +4605,7 @@ impl<'t, 'a> Ck<'t, 'a> {
             reasons: Vec::new(),
             resolved: None,
             name: None,
+            written: None,
             uses: Vec::new(),
             known: HashMap::new(),
             orders: HashMap::new(),
@@ -5369,8 +5443,72 @@ impl<'t, 'a> Ck<'t, 'a> {
     /// `t` shown with each class narrowed to some carriers shown as their union.
     fn show(&self, t: &Ty) -> String {
         let t = &self.as_literals(&self.settled(t));
-        let names = self.written_names(&t.var_facts().classes);
-        show_with(t, &self.masks(t), &|v| self.spelling(v), &names)
+        let around = self.around(&t.var_facts());
+        show_with(t, &self.masks(t), &|v| self.spelling(v), around.get())
+    }
+
+    /// The names a message prints the variables of a type of facts `facts` by, from what the
+    /// program wrote ([`Around`]; DESIGN.md sec:diagnostics, "Types in a message", plan rows
+    /// MSG-type-vars-printed-renamed and MSG-headline-note-disagree):
+    /// - each class still open that a function being checked wrote a name for, by that name
+    ///   ([`Self::written_names`]);
+    /// - each variable of a function that ended whose declaration wrote its name
+    ///   ([`Class::written`]): where a signature of the text binds it as its own, as `g` in
+    ///   `m.stdout <- [g]` for `g(positional y: T, positional z: T) = (y, z)`, the printer
+    ///   keeps the name where it is free ([`Around::kept`]); where it stands outside every
+    ///   signature that binds it, as the result of `out <- [z, w]` in the body of
+    ///   `k(positional z: T, positional w: T, out: Lines)` checked at a call after `k` ended,
+    ///   it is printed by that name as a class still open would be, unless a function being
+    ///   checked binds the name or another such variable of the text claims it;
+    /// - the names every function being checked binds, which no other variable of the text
+    ///   takes ([`Around::taken`]): a written `T` in the body of `h(a: T, …)` is `h`'s `T`, so
+    ///   a function of the text whose declaration wrote `T` too prints it by another name.
+    ///
+    /// Why each name means one variable: an open class's name is the innermost one the open
+    /// functions give its root, as [`Self::written_names`] argues; an ended variable outside
+    /// its signatures takes a name no open function binds and no other variable of the list
+    /// takes, so no two variables of `named` share a name; and the printer gives a kept name
+    /// only where it is printed nowhere around ([`Around`], `Scope::open` in zedc-types).
+    // Complexity tradeoff: one root lookup per class variable of the text, O(c log N), and one
+    // copy of the names the open functions bind, O(w), beside [`Self::written_names`]'s
+    // O(c·w); the naive way, a name kept on every merge of classes, costs a write at every
+    // merge of every check for the few messages that print a type.
+    fn around(&self, facts: &VarFacts) -> WrittenAround {
+        let mut named = self.written_names(&facts.classes);
+        let taken: Vec<Arc<str>> = (self.type_vars.iter())
+            .flat_map(|(_, b)| b.keys().cloned())
+            .collect::<BTreeSet<_>>()
+            .into_iter()
+            .collect();
+        let mut kept = Vec::new();
+        let mut ended: Vec<(Arc<str>, Arc<str>)> = Vec::new();
+        for v in &facts.classes {
+            let Some(k) = class_id(v).filter(|&k| k < self.classes.len()) else {
+                continue;
+            };
+            if self.r10_is_closed_internal(k) || !self.classes.is_materialized(k) {
+                continue;
+            }
+            let c = &self.classes[self.find(k)];
+            let (Some(_), Some(w)) = (&c.name, &c.written) else {
+                continue;
+            };
+            match facts.outer_classes.contains(v) {
+                true => ended.push((v.clone(), w.clone())),
+                false => kept.push((v.clone(), w.clone())),
+            }
+        }
+        // A name two ended variables claim, or one an open function binds or an open class
+        // takes, names neither: each is printed as a variable with no written name.
+        let mut claims: HashMap<Arc<str>, usize> = HashMap::new();
+        for (_, w) in &ended {
+            *claims.entry(w.clone()).or_default() += 1;
+        }
+        let open: HashSet<Arc<str>> = (named.iter().map(|(_, n)| n.clone()))
+            .chain(taken.iter().cloned())
+            .collect();
+        named.extend((ended.into_iter()).filter(|(_, w)| claims[w] == 1 && !open.contains(w)));
+        WrittenAround { named, kept, taken }
     }
 
     /// Each class of `vars` not yet solved that a type variable written in the signature of a
@@ -5589,16 +5727,16 @@ impl<'t, 'a> Ck<'t, 'a> {
     /// The text of `t` in a message.
     fn text(&self, t: &Ty) -> String {
         let t = self.as_literals(&self.settled(t));
-        let names = self.written_names(&t.var_facts().classes);
-        t.text_named(false, &|v| self.spelling(v), &names)
+        let around = self.around(&t.var_facts());
+        t.text_around(false, &|v| self.spelling(v), around.get())
     }
 
     /// The text of `t` in a message as one operand of a union, `T | U`: a function in it is
     /// parenthesized.
     fn text_in_union(&self, t: &Ty) -> String {
         let t = self.as_literals(&self.settled(t));
-        let names = self.written_names(&t.var_facts().classes);
-        t.text_named(true, &|v| self.spelling(v), &names)
+        let around = self.around(&t.var_facts());
+        t.text_around(true, &|v| self.spelling(v), around.get())
     }
 
     /// The text of `s` in a message. A variable of `s` that stands in one place of it and whose
@@ -5668,6 +5806,11 @@ impl<'t, 'a> Ck<'t, 'a> {
         // T)` says the result holds the argument, which the bound in both places would not
         // (DESIGN sec:diagnostics, "Types in a message", the worked example on `k`).
         passed.retain(|_, b| b.is_some());
+        // A variable the declaration wrote keeps its written name ([`Self::around`]): the
+        // declaration says what it takes by that name, as `k(positional z: T, …)` does.
+        let around = self.around(s.facts());
+        let kept: HashSet<&Arc<str>> = around.kept.iter().map(|(v, _)| v).collect();
+        passed.retain(|v, _| !kept.contains(v));
         let twice = match passed.is_empty() {
             true => HashSet::new(),
             false => s.standing_twice(),
@@ -5684,10 +5827,9 @@ impl<'t, 'a> Ck<'t, 'a> {
                 })
             })
             .collect();
-        let names = self.written_names(&s.facts().classes);
         match binds.is_empty() {
-            true => s.text_named(&names),
-            false => s.replace(&binds).text_named(&names),
+            true => s.text_around(around.get()),
+            false => s.replace(&binds).text_around(around.get()),
         }
     }
 
@@ -7152,6 +7294,7 @@ impl<'t, 'a> Ck<'t, 'a> {
             reasons: Vec::new(),
             resolved: None,
             name: None,
+            written: None,
             uses: Vec::new(),
             known: HashMap::new(),
             orders: HashMap::new(),

@@ -12614,8 +12614,10 @@ impl<'t, 'a> Ck<'t, 'a> {
             sig.needs = self.r10_expand_kept_fwds(needs, level, &mut own, &mut no_done);
             sig.facts = Default::default();
         }
+        // The names the declaration wrote for its classes, which both namings below keep.
+        let written = self.written_names_at(level);
         if sig.has_fwd_needs() {
-            self.r10_name_compact_sig_in_generalize(&mut sig, &own, &outside);
+            self.r10_name_compact_sig_in_generalize(&mut sig, &own, &outside, &written);
         } else {
             // The classes of this level that are type variables, named in order of appearance.
             // The names it holds, inside the functions it holds too, are taken; the facts of
@@ -12630,14 +12632,38 @@ impl<'t, 'a> Ck<'t, 'a> {
             // The names before `free` are all taken.
             let mut n = facts.free;
             let mut mine_seen = BTreeSet::new();
+            // Each class the declaration wrote a name for takes that name, as written, unless a
+            // function inside the signature holds it ([`Ck::names_inside`]); the others take
+            // fresh names, which skip every written one, so no two own variables share a name
+            // (plan row MSG-type-vars-printed-renamed). Why the names stay apart: a fresh name
+            // is neither in `facts.names` nor a written name of this function (`kept` below,
+            // and the program's names besides, `fresh_name`); a kept name is not in
+            // `facts.names` (`inside`); two classes keep two names, since `written_names_at` gives
+            // each root one name and the map of written names gives each name one class.
+            // Complexity tradeoff: naive, every class named fresh, O(1) a name; used, one root
+            // lookup per class and, only for a function that writes a type variable, one walk
+            // of the signature's class variables ([`Ck::names_inside`]), O(c log N), the order
+            // of making `facts`.
+            let kept: HashSet<Arc<str>> = written.values().cloned().collect();
+            let inside = match written.is_empty() {
+                true => HashSet::new(),
+                false => self.names_inside(&facts, &mine),
+            };
             for v in sig.first_seen(&mine) {
                 let r = class_id(&v).expect("a class variable");
-                let name = fresh_name(Names::Variables, &mut n, |name| facts.names.contains(name));
+                let wrote = written.get(&self.find(r)).cloned();
+                let name = match wrote.clone().filter(|w| !inside.contains(w)) {
+                    Some(w) => w,
+                    None => fresh_name(Names::Variables, &mut n, |name| {
+                        facts.names.contains(name) || kept.contains(name)
+                    }),
+                };
                 self.r10.stats.names_drawn += 1;
                 if self.classes[r].mask != EVERY {
                     sig.bounds.insert(v.clone(), self.classes[r].mask);
                 }
                 self.classes[r].name = Some(name);
+                self.classes[r].written = wrote;
                 mine_seen.insert(v);
             }
             // A type variable that does not reach the signature means nothing outside it.

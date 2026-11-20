@@ -22155,6 +22155,27 @@ struct Scope {
     // signatures; used, one hash insert per variable written and one lookup per bound, O(size
     // of the text) in all. A `RefCell`, as [`Ty::write_vars`] reads the scope shared.
     written: RefCell<HashSet<Arc<str>>>,
+    /// The name the program wrote for each variable a signature of the text binds as its own,
+    /// where the program wrote one ([`Around::kept`]): [`Scope::open`] prints the variable by
+    /// that name unless the name is printed around it.
+    kept: HashMap<Arc<str>, Arc<str>>,
+}
+
+/// What a message knows of the type variables around a text it prints (DESIGN.md
+/// sec:diagnostics, "Types in a message"): the variables bound outside the text, each with the
+/// name the program wrote for it; the variables a signature of the text binds as its own that
+/// a declaration wrote, each with its written name; and the names the functions around the
+/// place of the message bind, which a written `T` there would mean, so that no other variable
+/// of the text is printed by one of them.
+#[derive(Clone, Copy, Default)]
+pub struct Around<'a> {
+    /// Each variable bound outside the text, with the name it is printed by.
+    pub named: &'a [(Arc<str>, Arc<str>)],
+    /// Each own variable of a signature in the text that a declaration wrote, with the name it
+    /// wrote.
+    pub kept: &'a [(Arc<str>, Arc<str>)],
+    /// The names the functions around the place of the message bind.
+    pub taken: &'a [Arc<str>],
 }
 
 /// How a variable a signature binds is printed ([`Scope`]).
@@ -22173,20 +22194,25 @@ impl Scope {
         self.names.get(v)?.last()
     }
 
-    /// A scope in which each variable of `names` is printed by the name given with it, as a
-    /// type variable that a function around the text binds and the program wrote: a class
+    /// A scope in which each variable of `around.named` is printed by the name given with it,
+    /// as a type variable that a function around the text binds and the program wrote: a class
     /// the checker made of `T` in `q(g: (h: (x: T) -> int, y: T) -> int) = p(f: g)` is `T` in
     /// a message about the body of `q`, not `_`, which would say the type takes every value
     /// (FAIL-check-class-in-fn-arg-not-narrowed). A signature inside the text that binds one
     /// of these names takes a fresh one ([`Scope::printed`]), and so does a variable named
-    /// where it stands twice ([`Scope::bound`]). Cost: one entry per name.
-    fn named(names: &[(Arc<str>, Arc<str>)]) -> Scope {
+    /// where it stands twice ([`Scope::bound`]). The own variables of `around.kept` are
+    /// printed by their written names where [`Scope::open`] can, and the names of
+    /// `around.taken` count as printed around the text, so that no signature in it gives one
+    /// of them to a variable of its own. Cost: one entry per name.
+    fn around(around: Around<'_>) -> Scope {
         let mut scope = Scope::default();
-        for (v, name) in names {
+        for (v, name) in around.named {
             scope.printed.insert(name.clone());
             scope.bound.insert(name.clone());
             (scope.names.entry(v.clone()).or_default()).push(VarSlot::Name(name.clone()));
         }
+        scope.printed.extend(around.taken.iter().cloned());
+        scope.kept = around.kept.iter().cloned().collect();
         scope
     }
 
@@ -22195,6 +22221,25 @@ impl Scope {
         let k = self.same.len();
         self.same.push(k);
         VarSlot::Free(k)
+    }
+
+    /// The slot of the unbounded own variable `v` of a signature being opened: its written
+    /// name ([`Scope::kept`]) where that name is free there, by the rule of [`Scope::open`],
+    /// and otherwise a new [`Scope::free`] variable.
+    fn kept_slot(&mut self, v: &Arc<str>, hoisted: bool) -> VarSlot {
+        let union = self.unions.last().filter(|_| hoisted);
+        let name = (self.kept.get(v))
+            .filter(|n| !self.printed.contains(*n) && !union.is_some_and(|u| u.contains(*n)))
+            .cloned();
+        let Some(name) = name else {
+            return self.free();
+        };
+        if let Some(u) = self.unions.last_mut() {
+            u.insert(name.clone());
+        }
+        self.printed.insert(name.clone());
+        self.bound.insert(name.clone());
+        VarSlot::Name(name)
     }
 
     /// The root of the tree of the unbounded variable `k`, halving the path to it.
@@ -22213,11 +22258,28 @@ impl Scope {
     /// What a failed test leaves of an unbounded variable (`r else 0`, [`Narrow`]) is printed
     /// as that variable: it holds no value the variable does not, so `g(r) = r else 0` is
     /// `(r: T) -> 0 | T`.
+    ///
+    /// A variable of [`Scope::kept`] is printed by the name the program wrote for it, bounded
+    /// or not, when that name is neither printed around the signature nor bound by the union
+    /// its clause is left to: `g(positional y: T, positional z: T) = (y, z)` is `(T, T) -> (T,
+    /// T)`, as written, where a variable of no written name is `(U, U) -> (U, U)` beside a
+    /// program that writes `T` (DESIGN.md sec:diagnostics, "Types in a message", plan row
+    /// MSG-type-vars-printed-renamed). Why the text means what the signature does: (1) the
+    /// name is put in [`Scope::printed`] while the signature is open, so no signature inside it
+    /// takes it (a bounded one takes a fresh name, an unbounded one a [`VarSlot::Free`] slot,
+    /// which `defs` names apart from every word of the message); (2) a name printed around it
+    /// (one bound outside the text, [`Around::taken`], or by a signature around) is refused,
+    /// and the variable is printed as one with no written name, so the name never means two
+    /// variables at one place of the text; (3) two own variables of one signature with one
+    /// written name cannot both be kept: a function's written names are the keys of one map,
+    /// each the class of one variable (`Ck::written`), so the checker keeps one variable per
+    /// name, and (1) refuses a second one besides. A kept unbounded variable has no bounds
+    /// clause, as written. Cost: one lookup per own variable, as the rest of the opening.
     fn open(&mut self, sig: &Sig, hoisted: bool) -> Vec<(Arc<str>, u8)> {
         let mut out = Vec::new();
         for (v, &m) in &sig.bounds {
             if m & OTHER != 0 {
-                let slot = self.free();
+                let slot = self.kept_slot(v, hoisted);
                 self.names.entry(v.clone()).or_default().push(slot);
                 continue;
             }
@@ -22227,12 +22289,13 @@ impl Scope {
             let union = self.unions.last().filter(|_| hoisted);
             let taken =
                 |name: &str| printed.contains(name) || union.is_some_and(|u| u.contains(name));
-            let name = if taken(v) {
+            let want = self.kept.get(v).unwrap_or(v);
+            let name = if taken(want) {
                 fresh_name(Names::Variables, &mut self.fresh, |name| {
                     taken(name) || sig.bounds.contains_key(name)
                 })
             } else {
-                v.clone()
+                want.clone()
             };
             if let Some(u) = self.unions.last_mut() {
                 u.insert(name.clone());
@@ -22247,7 +22310,7 @@ impl Scope {
             out.push((name, m));
         }
         for v in sig.own.iter().filter(|v| !sig.bounds.contains_key(*v)) {
-            let slot = self.free();
+            let slot = self.kept_slot(v, hoisted);
             self.names.entry(v.clone()).or_default().push(slot);
         }
         for need in &sig.needs {
@@ -22397,25 +22460,39 @@ impl Ty {
     }
 
     /// [`Self::text_spelled`], each variable of `names` printed by the name given with it, a
-    /// type variable of a function around the text (`Scope::named`).
+    /// type variable of a function around the text (`Scope::around`).
     pub fn text_named(
         &self,
         union: bool,
         spell: Spell<'_>,
         names: &[(Arc<str>, Arc<str>)],
     ) -> String {
+        self.text_around(
+            union,
+            spell,
+            Around {
+                named: names,
+                ..Around::default()
+            },
+        )
+    }
+
+    /// [`Self::text_named`] with `around.named`, each own variable of `around.kept` printed by
+    /// the name the program wrote for it, and no other variable given a name of
+    /// `around.taken` (`Scope::around`).
+    pub fn text_around(&self, union: bool, spell: Spell<'_>, around: Around<'_>) -> String {
         let at = if union { PrintAt::Union } else { PrintAt::Any };
         let mut out = String::new();
         write_parts(
             Print::Ty(self, at),
             &mut out,
-            &mut Scope::named(names),
+            &mut Scope::around(around),
             Some(spell),
         );
         // A text that names a variable bound outside it is not a type alone, so it is not
-        // recorded as one.
+        // recorded as one; nor is one that keeps a written name.
         #[cfg(feature = "printed-types")]
-        if !union && names.is_empty() {
+        if !union && around.named.is_empty() && around.kept.is_empty() {
             printed::record(self, &out);
         }
         out
@@ -23655,14 +23732,24 @@ impl Sig {
     }
 
     /// Its text as its Display writes it, each variable of `names` printed by the name given
-    /// with it, a type variable of a function around the text (`Scope::named`).
+    /// with it, a type variable of a function around the text (`Scope::around`).
     pub fn text_named(&self, names: &[(Arc<str>, Arc<str>)]) -> String {
+        self.text_around(Around {
+            named: names,
+            ..Around::default()
+        })
+    }
+
+    /// [`Self::text_named`] with `around.named`, each own variable of `around.kept` printed by
+    /// the name the program wrote for it, and no other variable given a name of
+    /// `around.taken` (`Scope::around`).
+    pub fn text_around(&self, around: Around<'_>) -> String {
         let mut text = String::new();
-        self.write(&mut text, &mut Scope::named(names));
+        self.write(&mut text, &mut Scope::around(around));
         // A text that names a variable bound outside it is not a type alone, so it is not
-        // recorded as one.
+        // recorded as one; nor is one that keeps a written name.
         #[cfg(feature = "printed-types")]
-        if names.is_empty() {
+        if around.named.is_empty() && around.kept.is_empty() {
             printed::record(&Ty::func(Arc::new(self.clone())), &text);
         }
         text
