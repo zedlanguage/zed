@@ -611,3 +611,451 @@ fn the_shared_factor_table_agrees_with_the_pairs() {
     }
     assert_eq!(shares_a_factor_by_table(&[], 1), Vec::<bool>::new());
 }
+
+/// The factors of 0 and 1 are empty (0 has no factorization; `0 >> 0.trailing_zeros()` would
+/// shift by 64), and the factors of the largest values are their primes.
+#[test]
+fn the_factors_at_the_ends_of_u64() {
+    assert_eq!(factor(0), []);
+    assert_eq!(factor(1), []);
+    assert_eq!(factor(2), [(2, 1)]);
+    assert_eq!(factor(1 << 63), [(2, 63)]);
+    // 2 (2^63 - 1), and 2^63 - 1 = 7^2 * 73 * 127 * 337 * 92737 * 649657.
+    assert_eq!(
+        factor(u64::MAX - 1),
+        [
+            (2, 1),
+            (7, 2),
+            (73, 1),
+            (127, 1),
+            (337, 1),
+            (92_737, 1),
+            (649_657, 1)
+        ]
+    );
+    assert!(!is_prime(0) && !is_prime(1) && is_prime(2) && !is_prime(u64::MAX));
+    assert!(is_prime(u64::MAX - 58));
+}
+
+/// Each documented precondition broken is refused, with its message. A zero modulus is a
+/// division by zero, refused in every build with std's message or the crate's; the other
+/// checks are `debug_assert!`s, compiled into the dev profile the tests run in, so their tests
+/// are compiled there only.
+mod refused {
+    use super::*;
+
+    #[test]
+    #[should_panic(expected = "attempt to calculate the remainder with a divisor of zero")]
+    fn a_product_modulo_zero() {
+        mul_mod(3, 4, 0);
+    }
+
+    #[test]
+    #[should_panic(expected = "attempt to calculate the remainder with a divisor of zero")]
+    fn a_power_modulo_zero() {
+        pow_mod(3, 4, 0);
+    }
+
+    #[test]
+    #[should_panic(expected = "attempt to calculate the remainder with a divisor of zero")]
+    fn a_wide_power_modulo_zero() {
+        pow_mod_big(3, &BigUint::from(4u8), 0);
+    }
+
+    #[test]
+    #[should_panic(expected = "the base of a hash modulo P is below P")]
+    fn a_hash_base_of_p() {
+        m61::PolyBytes::new(m61::P);
+    }
+
+    /// Before TEST-dry-shared-units, `rem_big_u64(0, 0)` gave 0: the fold over no words
+    /// divides nothing.
+    #[test]
+    #[should_panic(expected = "a modulus above 0")]
+    fn a_remainder_of_zero_by_zero() {
+        rem_big_u64(&BigUint::from(0u8), 0);
+    }
+
+    #[test]
+    #[should_panic(expected = "a modulus above 0")]
+    fn a_remainder_by_zero() {
+        rem_big_u64(&BigUint::from(5u8), 0);
+    }
+
+    #[cfg(debug_assertions)]
+    #[test]
+    #[should_panic(expected = "a divisor above 0")]
+    fn a_big_gcd_with_zero() {
+        gcd_big_u64(&BigUint::from(6u8), 0);
+    }
+
+    #[cfg(debug_assertions)]
+    #[test]
+    #[should_panic(expected = "an odd number")]
+    fn an_inverse_of_an_even_number() {
+        inverse_mod_2_64(4);
+    }
+
+    #[cfg(debug_assertions)]
+    #[test]
+    #[should_panic(expected = "an odd residue and an odd index")]
+    fn a_root_of_an_even_residue() {
+        odd_root_mod_2_64(4, 3);
+    }
+
+    #[cfg(debug_assertions)]
+    #[test]
+    #[should_panic(expected = "an odd residue and an odd index")]
+    fn a_root_of_an_even_index() {
+        odd_root_mod_2_64(3, 4);
+    }
+
+    #[cfg(debug_assertions)]
+    #[test]
+    #[should_panic(expected = "a residue below P and one at most P")]
+    fn a_sum_with_p_first() {
+        m61::add(m61::P, 0);
+    }
+
+    #[cfg(debug_assertions)]
+    #[test]
+    #[should_panic(expected = "a residue below P and one at most P")]
+    fn a_sum_past_p() {
+        m61::add(0, m61::P + 1);
+    }
+
+    #[cfg(debug_assertions)]
+    #[test]
+    #[should_panic(expected = "residues below P")]
+    fn a_difference_with_p() {
+        m61::sub(1, m61::P);
+    }
+
+    #[cfg(debug_assertions)]
+    #[test]
+    #[should_panic(expected = "residues below P")]
+    fn a_product_with_the_largest_word() {
+        m61::mul(u64::MAX, 2);
+    }
+
+    #[cfg(debug_assertions)]
+    #[test]
+    #[should_panic(expected = "a base below P")]
+    fn a_power_of_p() {
+        m61::pow_word(m61::P, 2);
+    }
+
+    #[cfg(debug_assertions)]
+    #[test]
+    #[should_panic(expected = "a residue in 1..P")]
+    fn an_inverse_of_zero() {
+        m61::inv(0);
+    }
+
+    #[cfg(debug_assertions)]
+    #[test]
+    #[should_panic(expected = "a residue in 1..P")]
+    fn an_inverse_of_p() {
+        m61::inv(m61::P);
+    }
+
+    /// Before TEST-dry-shared-units a 0 gave `false` (it shares every prime) and a value past
+    /// `top` an index out of bounds.
+    #[test]
+    #[should_panic(expected = "the value 0 is not in 1..=3")]
+    fn a_zero_in_the_shared_factor_table() {
+        shares_a_factor_by_table(&[2, 0], 3);
+    }
+
+    #[test]
+    #[should_panic(expected = "the value 4 is not in 1..=3")]
+    fn a_value_past_the_top_of_the_shared_factor_table() {
+        shares_a_factor_by_table(&[4], 3);
+    }
+}
+
+/// Negative controls: for each property test above, a wrong version of its routine (one step
+/// dropped or changed) run on that test's inputs, which the test's reference must tell apart
+/// from the right one. A control that passed would mean the test's inputs cannot see that
+/// mistake.
+mod controls {
+    use super::*;
+
+    /// Stein's gcd without the common power of two put back: `the_word_gcds_agree_with_euclid`.
+    #[test]
+    fn a_gcd_that_drops_the_common_twos_is_caught() {
+        let wrong = |mut a: u64, mut b: u64| {
+            if a == 0 || b == 0 {
+                return a | b;
+            }
+            a >>= a.trailing_zeros();
+            loop {
+                b >>= b.trailing_zeros();
+                if a > b {
+                    (a, b) = (b, a);
+                }
+                b -= a;
+                if b == 0 {
+                    return a;
+                }
+            }
+        };
+        let caught = (0..200u64)
+            .flat_map(|a| (0..200u64).map(move |b| (a, b)))
+            .filter(|&(a, b)| u128::from(wrong(a, b)) != euclid(a.into(), b.into()))
+            .count();
+        assert!(caught > 0);
+        assert_eq!(wrong(4, 6), 1);
+    }
+
+    /// The words of a big integer folded from the least significant, not the most:
+    /// `the_big_remainder_and_gcd_by_a_word_agree_with_num_bigint`.
+    #[test]
+    fn a_remainder_folded_the_wrong_way_is_caught() {
+        let wrong = |x: &BigUint, m: u64| {
+            let m = u128::from(m);
+            x.iter_u64_digits()
+                .fold(0u128, |r, d| ((r << 64) | u128::from(d)) % m) as u64
+        };
+        let mut next = words("a_remainder_folded_the_wrong_way_is_caught");
+        let x = (BigUint::from(next()) << 64u32) + next();
+        let d = 1_000_003;
+        assert_eq!(rem_big_u64(&x, d), u64::try_from(&x % d).unwrap());
+        assert_ne!(wrong(&x, d), u64::try_from(&x % d).unwrap(), "{x}");
+    }
+
+    /// Squaring over the bits of the exponent from the low bit with the loop of the high bit:
+    /// the power by the reversed bits. `products_and_powers_modulo_a_word_agree_with_num_bigint`.
+    #[test]
+    fn a_power_by_the_reversed_bits_is_caught() {
+        let wrong = |a: u64, e: &BigUint, m: u64| {
+            let b = a % m;
+            let mut r = 1 % m;
+            for i in 0..e.bits() {
+                r = mul_mod(r, r, m);
+                if e.bit(i) {
+                    r = mul_mod(r, b, m);
+                }
+            }
+            r
+        };
+        let (a, e, m) = (3, BigUint::from(6u8), 1_000_003);
+        assert_eq!(pow_mod_big(a, &e, m), 729);
+        // 6 is 110 in binary; reversed, 011 is 3.
+        assert_eq!(wrong(a, &e, m), 27);
+    }
+
+    /// Bezout cofactors swapped: `bezout_cofactors_give_the_gcd_and_are_the_least`, whose check
+    /// `s a + t b = g` fails for them unless `a = b` up to sign.
+    #[test]
+    fn swapped_bezout_cofactors_are_caught() {
+        let (g, s, t) = bezout_i128(12, 5).unwrap();
+        assert_eq!(s * 12 + t * 5, g);
+        assert_ne!(t * 12 + s * 5, g);
+    }
+
+    /// The Mersenne product without its last subtraction:
+    /// `the_mersenne_arithmetic_agrees_with_division`, on random residues.
+    #[test]
+    fn a_mersenne_product_left_unreduced_is_caught() {
+        use m61::P;
+        let wrong = |a: u64, b: u64| {
+            let x = u128::from(a) * u128::from(b);
+            (x as u64 & P) + (x >> 61) as u64
+        };
+        let mut next = words("a_mersenne_product_left_unreduced_is_caught");
+        let xs: Vec<u64> = (0..200).map(|_| next() % P).collect();
+        let caught = xs
+            .iter()
+            .flat_map(|&a| xs.iter().map(move |&b| (a, b)))
+            .filter(|&(a, b)| {
+                u128::from(wrong(a, b)) != u128::from(a) * u128::from(b) % u128::from(P)
+            })
+            .count();
+        assert!(caught > 0);
+    }
+
+    /// The byte hash with the digit `b`, not `b + 1`: `the_eight_byte_hash_is_horners_rule`,
+    /// whose all-zero texts then hash to 0 at every length.
+    #[test]
+    fn a_hash_without_the_offset_digit_is_caught() {
+        let b = 0x0f3d_5b79_a2c4_e681;
+        let wrong = |bytes: &[u8]| {
+            bytes
+                .iter()
+                .fold(0, |h, &x| m61::add(m61::mul(h, b), u64::from(x)))
+        };
+        let poly = m61::PolyBytes::new(b);
+        for n in 1..=72 {
+            assert_ne!(
+                poly.hash(&vec![0; n]).0,
+                wrong(&vec![0; n]),
+                "{n} zero bytes"
+            );
+        }
+    }
+
+    /// The inverse modulo 2^64 with three Newton steps, right in 40 bits only:
+    /// `inverses_modulo_2_64_are_inverses`.
+    #[test]
+    fn an_inverse_one_step_short_is_caught() {
+        let wrong = |x: u64| {
+            let mut y = x.wrapping_mul(3) ^ 2;
+            for _ in 0..3 {
+                y = y.wrapping_mul(2u64.wrapping_sub(x.wrapping_mul(y)));
+            }
+            y
+        };
+        let mut next = words("an_inverse_one_step_short_is_caught");
+        assert!((0..1000).any(|_| {
+            let x = next() | 1;
+            x.wrapping_mul(wrong(x)) != 1
+        }));
+    }
+
+    /// The odd root with five Newton steps, right in 32 bits only:
+    /// `odd_roots_modulo_2_64_are_the_one_odd_root`.
+    #[test]
+    fn a_root_one_step_short_is_caught() {
+        let wrong = |o: u64, p: u64| {
+            let mut x = 1u64;
+            for _ in 0..5 {
+                let y = pow_mod_2_64(x, p - 1);
+                let f = y.wrapping_mul(x).wrapping_sub(o);
+                x = x.wrapping_sub(f.wrapping_mul(inverse_mod_2_64(y.wrapping_mul(p))));
+            }
+            x
+        };
+        let mut next = words("a_root_one_step_short_is_caught");
+        assert!((0..300).any(|_| {
+            let o = next() | 1;
+            pow_mod_2_64(wrong(o, 3), 3) != o
+        }));
+    }
+
+    /// The segmented sieve with the given order of primes and first multiple: the right one is
+    /// `least_prime_factors_in_blocks`, from the greatest prime down and from `p^2`.
+    fn sieve(top: u32, block: usize, rising: bool, from_square: bool) -> Vec<u16> {
+        let len = top as usize + 1;
+        let mut table = vec![0u16; len];
+        let r = top.isqrt() as usize;
+        let mut primes: Vec<usize> = (2..=r).filter(|&p| prime_by_trial(p as u64)).collect();
+        if !rising {
+            primes.reverse();
+        }
+        for lo in (0..len).step_by(block) {
+            let hi = (lo + block).min(len);
+            for &p in &primes {
+                let mut first = lo.div_ceil(p) * p;
+                if from_square {
+                    first = first.max(p * p);
+                }
+                for j in (first..hi).step_by(p) {
+                    table[j] = p as u16;
+                }
+            }
+            for (j, e) in table[lo..hi].iter_mut().enumerate() {
+                if *e == 0 && lo + j >= 2 {
+                    *e = PRIME;
+                }
+            }
+        }
+        table
+    }
+
+    /// `the_least_prime_table_agrees_with_trial_division` and
+    /// `the_least_prime_table_does_not_depend_on_the_block_length`: the replica above, with
+    /// the right choices, is the crate's table; with the primes rising, 12 ends with 3; with the
+    /// first multiple not raised to `p^2`, 2 ends as composite.
+    #[test]
+    fn a_sieve_in_the_wrong_order_or_from_the_wrong_start_is_caught() {
+        for (top, block) in [(1000, 7), (4097, 65), (300_007, 1000)] {
+            assert_eq!(
+                sieve(top, block, false, true),
+                least_prime_factors_in_blocks(top, block)
+            );
+        }
+        let rising = sieve(1000, 7, true, true);
+        assert_eq!(rising[12], 3);
+        assert_ne!(rising, least_prime_factors(1000));
+        let early = sieve(1000, 7, false, false);
+        assert_eq!(early[2], 2);
+        assert_ne!(early, least_prime_factors(1000));
+    }
+
+    /// The odd sieve striking from `q`, not `q^2`, so that each odd prime strikes itself:
+    /// `the_odd_sieve_agrees_with_trial_division`.
+    #[test]
+    fn an_odd_sieve_that_strikes_its_primes_is_caught() {
+        let wrong = |n: u64| {
+            let len = n.div_ceil(2) as usize;
+            let mut prime = vec![true; len];
+            if let Some(one) = prime.first_mut() {
+                *one = false;
+            }
+            let mut i = 1;
+            while (2 * i + 1) * (2 * i + 1) < 2 * len {
+                if prime[i] {
+                    let q = 2 * i + 1;
+                    for j in (q / 2..len).step_by(q) {
+                        prime[j] = false;
+                    }
+                }
+                i += 1;
+            }
+            prime
+        };
+        assert!(odd_primes_below(300)[1], "3 is prime");
+        assert!(!wrong(300)[1], "the wrong sieve strikes 3");
+    }
+
+    /// One Miller-Rabin base used up to 2048 instead of below `psi_1 = 2047`:
+    /// `primality_agrees_with_the_sieve_below_psi_3` rejects 2047 = 23 * 89, which the base 2
+    /// alone calls a probable prime.
+    #[test]
+    fn one_base_past_its_bound_is_caught() {
+        let n: u64 = 2047;
+        let (s, d) = (
+            (n - 1).trailing_zeros(),
+            (n - 1) >> (n - 1).trailing_zeros(),
+        );
+        let mut x = pow_mod(2, d, n);
+        let strong = x == 1
+            || x == n - 1
+            || (1..s).any(|_| {
+                x = mul_mod(x, x, n);
+                x == n - 1
+            });
+        assert!(strong, "2047 is a strong probable prime to the base 2");
+        assert!(!is_prime(n));
+    }
+
+    /// The first primes without 2: `the_first_primes_are_the_primes_in_order`.
+    #[test]
+    fn first_primes_without_two_are_caught() {
+        let odd = odd_primes_below(64);
+        let wrong: Vec<u64> = (1..odd.len())
+            .filter(|&i| odd[i])
+            .map(|i| 2 * i as u64 + 1)
+            .take(3)
+            .collect();
+        assert_eq!(first_primes(3), [2, 3, 5]);
+        assert_ne!(wrong, first_primes(3));
+    }
+
+    /// The pairs reference that skips equal values, against the table:
+    /// `the_shared_factor_table_agrees_with_the_pairs`, whose stride 0 repeats a value.
+    #[test]
+    fn shared_factors_that_ignore_repeats_are_caught() {
+        let vals = [4, 4, 9];
+        let wrong: Vec<bool> = (0..vals.len())
+            .map(|i| {
+                (0..vals.len())
+                    .any(|j| vals[j] != vals[i] && gcd_u64(vals[i].into(), vals[j].into()) != 1)
+            })
+            .collect();
+        assert_eq!(shares_a_factor_by_table(&vals, 9), [true, true, false]);
+        assert_eq!(shares_a_factor_by_pairs(&vals), [true, true, false]);
+        assert_ne!(wrong, shares_a_factor_by_pairs(&vals));
+    }
+}

@@ -55,6 +55,9 @@ pub fn bezout_i128(a: i128, b: i128) -> Option<(i128, i128, i128)> {
 // a remainder of an n-word `x` takes n words that are never used; here each word is one `u128`
 // remainder: O(n) time, as before, and O(1) space (item ENGINE-one).
 pub fn rem_big_u64(x: &BigUint, m: u64) -> u64 {
+    // Without it `x = 0` by `m = 0` gave 0, as the fold over no words divides nothing; one
+    // compare a call, against the O(n) fold (TEST-dry-shared-units).
+    assert!(m > 0, "a modulus above 0");
     let m = u128::from(m);
     let r = x
         .iter_u64_digits()
@@ -248,7 +251,8 @@ const _: () = assert!(LARGEST_PRIME_BELOW_2_16 < PRIME_HELD_BY_TWO);
 /// them (equal values above 1 share one; a value 1 shares none), by a table of least prime
 /// factors up to `top`. O(top + B) word operations for values of `B` bits in all, and
 /// 2 top bytes. The one copy, used by zed-kernel `num::coprime::shares_a_factor` (moved here
-/// from zedc-presburger `modular.rs` by DRY-coprime-bases-one, 2026-11-20).
+/// from zedc-presburger `modular.rs` by DRY-coprime-bases-one, 2026-11-20). Panics when a
+/// value is outside `1..=top`.
 ///
 /// One `u16` entry per number up to `top`: 0 for a number the sieve has not reached; for a
 /// composite, its least prime factor; for a prime, a marker `PRIME_HELD_BY_NONE - c` that also
@@ -272,6 +276,11 @@ const _: () = assert!(LARGEST_PRIME_BELOW_2_16 < PRIME_HELD_BY_TWO);
 // `num::bench::the_coprime_base_of_the_first_primes_scales` and zedc-presburger
 // `pncx_coprime_dense_scale` and `pncx_common_factor_scale`; COMPLEXITY.md C31c.
 pub fn shares_a_factor_by_table(vals: &[u32], top: u32) -> Vec<bool> {
+    // Without it a 0 read as sharing no prime (it shares every one) and a value past `top`
+    // read past the table; one compare a value, against the O(top) sieve.
+    for &v in vals {
+        assert!(0 < v && v <= top, "the value {v} is not in 1..={top}");
+    }
     let mut table = least_prime_factors(top);
     // The counts: each value adds one to the marker count of each of its distinct primes. The
     // reads of the table between the writes see markers whose counts have changed, which still
@@ -410,6 +419,11 @@ pub mod m61 {
     /// special case): `a + b < 2P < 2^62`, and one subtraction brings it below `P`.
     #[inline]
     pub const fn add(a: u64, b: u64) -> u64 {
+        // The word routines here check their preconditions in debug builds only: they run in
+        // the inner loop of the text hash, where a release build must not pay a compare. Past
+        // them the answer is wrong (`mul(u64::MAX, 2)` is not reduced), not a panic
+        // (TEST-dry-shared-units; tests in `tests::refused`).
+        debug_assert!(a < P && b <= P, "a residue below P and one at most P");
         let s = a + b;
         if s >= P { s - P } else { s }
     }
@@ -417,6 +431,7 @@ pub mod m61 {
     /// `a - b mod P`, for `a, b < P`: `a + (P - b)`, with `P - b` in `1..=P` ([`add`]).
     #[inline]
     pub const fn sub(a: u64, b: u64) -> u64 {
+        debug_assert!(a < P && b < P, "residues below P");
         add(a, P - b)
     }
 
@@ -428,6 +443,7 @@ pub mod m61 {
     // modulus known only at run time (`mul_mod`) is the slow case.
     #[inline]
     pub const fn mul(a: u64, b: u64) -> u64 {
+        debug_assert!(a < P && b < P, "residues below P");
         let x = (a as u128) * (b as u128);
         // `2^61 = 1 (mod P)`, so the high part adds to the low part, and one subtraction ends
         // it. Proof that one is enough: `a, b <= P - 1` give `x <= (P - 1)^2 < P^2`, and
@@ -453,6 +469,7 @@ pub mod m61 {
     /// products. `0^0 = 1`.
     #[inline]
     pub const fn pow_word(mut b: u64, mut e: u64) -> u64 {
+        debug_assert!(b < P, "a base below P");
         let mut r = 1;
         while e > 0 {
             if e & 1 == 1 {
@@ -554,6 +571,8 @@ pub mod m61 {
     /// `1 / a mod P`, for `0 < a < P`: `a^(P - 2)`, since `a^(P - 1) = 1` (Fermat's little
     /// theorem, `P` prime). 61 squarings and 60 products ([`pow_word`]).
     pub const fn inv(a: u64) -> u64 {
+        // `0^(P - 2) = 0` is no inverse.
+        debug_assert!(0 < a && a < P, "a residue in 1..P");
         pow_word(a, P - 2)
     }
 }
@@ -570,3 +589,20 @@ mod seed;
 
 #[cfg(test)]
 mod tests;
+
+/// The scaling test of the rule of low complexity, shared with the step tests.
+#[cfg(test)]
+#[path = "../../../tests/src/scaling.rs"]
+#[expect(
+    dead_code,
+    reason = "the benchmarks use only some of the shared checks"
+)]
+mod scaling;
+
+// The meter's `malloc` in this crate's test binary, which `scaling` measures each run with
+// (`zed_alloc_count::metered`, TEST-meter-allocator-bias).
+#[cfg(test)]
+zed_alloc_count::meter_entry_points!();
+
+#[cfg(test)]
+mod bench;

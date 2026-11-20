@@ -400,4 +400,89 @@ mod tests {
             assert_eq!(factor(n), want, "{n}");
         }
     }
+
+    /// The Montgomery form needs an odd modulus above 1: an even one has no inverse modulo
+    /// `R = 2^64`, and 1 leaves no residue but 0.
+    #[cfg(debug_assertions)]
+    #[test]
+    #[should_panic(expected = "an odd modulus above 1")]
+    fn a_montgomery_form_of_an_even_modulus() {
+        Montgomery::new(4);
+    }
+
+    #[cfg(debug_assertions)]
+    #[test]
+    #[should_panic(expected = "an odd modulus above 1")]
+    fn a_montgomery_form_of_one() {
+        Montgomery::new(1);
+    }
+
+    /// Negative control for `montgomery_arithmetic_agrees_with_division`: `reduce` without
+    /// adding `n` back on a borrow. For the moduli of that test, small and near `2^64`, it
+    /// differs from `reduce` on some products (those that borrow) and agrees on others, so the
+    /// test's products see the correction. (For a small `n` every product is below `2^64`,
+    /// its high word is 0, and every reduction borrows; near `2^64` some do not.)
+    #[test]
+    fn a_reduction_without_its_borrow_correction_is_caught() {
+        for n in [1_000_003, u64::MAX - 58] {
+            let m = Montgomery::new(n);
+            let wrong = |t: u128| {
+                let q = (t as u64).wrapping_mul(m.n_inv);
+                let qn = u128::from(q) * u128::from(m.n);
+                ((t >> 64) as u64).wrapping_sub((qn >> 64) as u64)
+            };
+            let (mut caught, mut agree) = (0, 0);
+            // Residues spread over `[0, n)` (Fibonacci hashing), not `1..1000`: near `2^64`,
+            // `R mod n` is small (59 for `2^64 - 59`), and so are the held forms of small `a`.
+            for i in 1..1000u64 {
+                let a = i.wrapping_mul(0x9E37_79B9_7F4A_7C15) % n;
+                let t = u128::from(m.to(a)) * u128::from(m.to(a ^ 1));
+                if wrong(t) == m.reduce(t) {
+                    agree += 1;
+                } else {
+                    caught += 1;
+                }
+            }
+            assert!(caught > 0, "{n}");
+            if n > 1 << 63 {
+                assert!(agree > 0, "{n}");
+            }
+        }
+    }
+
+    /// Negative control for `factors_agree_with_trial_division`: the factors grouped in the
+    /// order the stack of `factor` leaves them, without the sort, are out of order for some
+    /// `n` (the larger cofactor of a split is popped first).
+    #[test]
+    fn unsorted_factors_are_caught() {
+        let unsorted = |n: u64| {
+            let mut primes = Vec::new();
+            let mut left = vec![n];
+            while let Some(m) = left.pop() {
+                if m == 1 {
+                    continue;
+                }
+                if m.is_multiple_of(2) {
+                    let z = m.trailing_zeros();
+                    primes.extend(std::iter::repeat_n(2, z as usize));
+                    left.push(m >> z);
+                } else if is_prime(m) {
+                    primes.push(m);
+                } else {
+                    let d = split(m);
+                    left.push(d);
+                    left.push(m / d);
+                }
+            }
+            let mut out: Vec<(u64, u64)> = Vec::new();
+            for p in primes {
+                match out.last_mut() {
+                    Some((q, k)) if *q == p => *k += 1,
+                    _ => out.push((p, 1)),
+                }
+            }
+            out
+        };
+        assert!((2..1u64 << 12).any(|n| unsorted(n) != by_trial(n)));
+    }
 }
