@@ -238,9 +238,10 @@ fn two_variants_are_rejected_for_a_reason_other_than_their_documented_error() {
         "6:5: `Point` is not defined."
     );
     let e = rejected("taint-reaches-clean-sink");
-    // The syntax error at line 50 is reported with the refusals of the declarations around it.
+    // The syntax error at line 51 (the line after `exec`'s signature, which lacks its `;`) is
+    // reported with the refusals of the declarations around it.
     assert!(
-        e.contains("\n50:1: Syntax error at `exec`. Try `exec : "),
+        e.contains("\n51:1: Syntax error at `exec`. Try `exec : "),
         "{e}"
     );
     assert!(

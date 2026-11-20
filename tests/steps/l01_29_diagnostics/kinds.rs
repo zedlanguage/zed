@@ -90,10 +90,16 @@ fn a_kind_test_narrows_to_its_kind() {
 }
 
 #[test]
-fn an_empty_tuple_is_not_written_as_parentheses() {
-    // DESIGN's grammar has no `()` expression: before `is` it can only open a lambda.
-    let out = rejected("f(positional x: int) = () is (..);\n");
-    assert!(out.contains("Syntax error at `is`"), "{out}");
+fn an_empty_tuple_is_written_as_parentheses() {
+    // `()` is the empty tuple value (DESIGN, SPEC-empty-tuple-value; syntax.peg `TupleExpr`),
+    // so before `is` it is a value, not the start of a lambda, and the test is an empty tuple's.
+    assert_eq!(
+        sig("f(positional x: int) = () is (..);\n", "f"),
+        "int -> bool"
+    );
+    // `(,)` is no tuple: a syntax error.
+    let out = rejected("f(positional x: int) = (,) is (..);\n");
+    assert!(out.contains("Syntax error"), "{out}");
 }
 
 /// A program whose `f(1)` is `#e()` and `f(0)` is the bare `#e`, printing which branch of
