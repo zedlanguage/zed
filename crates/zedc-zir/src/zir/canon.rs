@@ -272,8 +272,24 @@ struct Contents {
 /// are different and get numbers apart. Equal texts have one length and hash, so they meet in
 /// one bucket; there they get one number by (1) or (2), or by (3) since equal texts get one
 /// canonical name (Mehlhorn, Sundar and Uhrig, "Maintaining dynamic sequences under equality
-/// tests in polylogarithmic time", Algorithmica 17, 1997). Were that to fail, two equal
-/// constants would be two nodes, a missed merge, never a wrong one.
+/// tests in polylogarithmic time", Algorithmica 17(2), 183-198, 1997,
+/// doi:10.1007/BF02522825). Were that to fail, two equal constants would be two nodes, a
+/// missed merge, never a wrong one.
+// The paper gives each sequence a signature by repeated rounds of two steps: runs of one
+// symbol become one symbol, then the sequence is cut into short blocks by deterministic coin
+// tossing, each cut decided by a few neighbors only, and each distinct run or block gets the
+// next number from one shared table. Because every choice is local and the table maps equal
+// contents to one number, equal sequences get one signature however they were built, and
+// different ones different signatures. `Names` (in zed-kernel `text::names`) implements it;
+// this module uses only that property. Checked 2026-11-20: the DOI, volume, issue and pages
+// on Crossref; the paper not read (no free copy found), the method from memory. In the step
+// tests `l01_32_canonical_zir::string_trees`,
+// `equal_strings_in_different_trees_share_the_zir_address` checks that one 900-byte text held
+// in three trees gets one address, which catches a name that depends on the tree, and
+// `different_strings_get_different_zir_addresses` and
+// `different_constants_in_one_shape_stay_two_nodes` check that four texts of one length and
+// shape stay apart. They cover a few shapes, not every way a parse could go wrong.
+
 // Complexity tradeoff: the naive key writes each string's bytes, O(N) for N bytes, and a
 // string doubled k times is 2^k bytes in O(k) nodes, so a build holding a doubled string as a
 // constant writes 2^62 bytes (BUILD-doubling-60s); the form that replaced it wrote the tree,
