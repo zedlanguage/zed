@@ -695,15 +695,16 @@ fn syntax_with_old_break() -> String {
 }
 
 /// The fuzz finds a sentence the old `break` derives with every lookahead satisfied but the
-/// parser rejects. Seed 85 at five sentences per ring was found by running seeds 1 to 500 (the
-/// first of them that finds it at this size; 199, 202, 215, 316, 340 and 424 do too) after the type-level
-/// `else` came in (STUDY-type-functions; seed 13, found after the `if` statement came in, seed 294
-/// before it and seed 45 before that no longer do); if a grammar change moves it, run the seeds again. The same seed on the real grammar finds
+/// parser rejects. Seed 11 at five sentences per ring was found by running seeds 1 to 500 (the
+/// first of them that finds it at this size; 141, 156, 265, 325, 338, 463 and 482 do too) after
+/// `()` became a tuple value (SPEC-empty-tuple-value; seed 85, found after the type-level `else`
+/// came in, seed 13 after the `if` statement, seed 294 before it and seed 45 before that no longer
+/// do); if a grammar change moves it, run the seeds again. The same seed on the real grammar finds
 /// nothing, so the failure comes from the change.
 #[test]
 fn fuzz_reports_a_sentence_the_old_break_derives_but_the_parser_rejects() {
     const N: usize = 5;
-    const SEED: i64 = 85;
+    const SEED: i64 = 11;
     let real = spec_dir("fuzz_real", &design(""), "");
     let real = Spec::open(&real.root()).expect("the spec reads");
     let (outcome, out) = fuzz_of(&real, N, SEED);

@@ -411,6 +411,26 @@ pub struct Output {
     pub log: Vec<Value>,
     /// How many values the port accepts before a push returns `#full`; `None` is unbounded.
     pub capacity: Option<usize>,
+    /// Which pushes to the port commute, which decides where a pure region may push to it
+    /// (`Evaluator::check_push`).
+    pub commutes: Commutes,
+}
+
+/// The `commutes` value of an output port (DESIGN.md sec:ports, "Operations on one port"), as
+/// far as the kernel needs it: which pushes a pure region may make (sec:kernel, reference
+/// semantics, (h); QUESTIONS A108). The port value `#distinctKeys` does not arise here: the
+/// kernel's pushes are whole-value pushes with no key.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum Commutes {
+    /// `#none`: two pushes never commute, so no pure region pushes to the port.
+    #[default]
+    None,
+    /// `#keypath`: two pushes commute when their keypaths differ, and the port's log is in
+    /// the order of those keypaths. A pure region whose entries each have a keypath, `fam`,
+    /// `reindex` and `discard`, may push to it; `fold` and `fix` may not.
+    Keypath,
+    /// `#all`: every two pushes commute, so any pure region may push to the port.
+    All,
 }
 
 /// An input port read by lookup (step L1.19): a `Files` port is `Path ->? String | #ioError`,
@@ -455,7 +475,11 @@ pub trait Lookup: std::fmt::Debug + Send + Sync {
 
 /// The ports a program runs against: one wave of inputs, and the outputs it writes
 /// (sec:ports). Each input port holds its whole value for the wave; a lookup port answers
-/// each key once, and the answers are kept, so the wave sees one value at each key.
+/// each key once, and the answers are kept, so the wave sees one value at each key. In the
+/// terms of DESIGN sec:ports, "Push ports and pull ports", `inputs` holds the push ports, read
+/// whole as one wave until each arrival starts its own (plan row PORT-push-pull-kernel), and
+/// the pull ports whose value is fixed for the run, the arguments; `sources` holds the pull
+/// ports asked when a read reaches them.
 #[derive(Clone, Debug, Default)]
 pub struct World {
     /// The input ports by name.
@@ -500,6 +524,19 @@ impl World {
             Output {
                 log: Vec::new(),
                 capacity: Some(capacity),
+                commutes: Commutes::None,
+            },
+        );
+        self
+    }
+
+    /// Adds an unbounded output port whose pushes commute as `commutes` says.
+    pub fn commuting_output(mut self, name: &str, commutes: Commutes) -> Self {
+        self.outputs.insert(
+            name.into(),
+            Output {
+                commutes,
+                ..Output::default()
             },
         );
         self
@@ -549,9 +586,13 @@ pub struct Evaluator {
     /// arise.
     fuel: Option<u64>,
     /// Above zero while evaluating the closure of a pure region (`fam`, `reindex`,
-    /// `discard`, `fold`, `fix`), where a push and a call of a called lookup port are type
-    /// errors and a read of a port is not ([`Evaluator::check_impure`]).
+    /// `discard`, `fold`, `fix`), where a call of a called lookup port is a type error, a push
+    /// is one unless its port's `commutes` allows it, and a read of a port is not one
+    /// ([`Evaluator::check_impure`]).
     pure: usize,
+    /// How many of the open pure regions are a `fold` or a `fix`, whose applications have no
+    /// keypath, so that a push inside one, at any depth, has no keypath to take its order from.
+    unkeyed: usize,
     schedule: Schedule,
     /// The number of definedness `fix` evaluations begun, which names each one's family.
     fixes: u64,
@@ -578,6 +619,7 @@ impl Evaluator {
             world,
             fuel: None,
             pure: 0,
+            unkeyed: 0,
             schedule: Schedule::default(),
             fixes: 0,
             trace: None,
@@ -843,8 +885,52 @@ impl Evaluator {
         }
     }
 
-    /// Stops with a type error when a push to `port`, or a call of the called lookup port
-    /// `port`, is made inside a pure region.
+    /// Stops with a type error when a push to `port`, whose pushes commute as `commutes` says,
+    /// is made where a pure region may not make it (DESIGN.md sec:kernel, reference semantics,
+    /// (h); QUESTIONS A108, which replaced the rule that refused every push in a pure region).
+    ///
+    /// Allowed: any push outside a pure region; a push to a `#all` port anywhere; a push to a
+    /// `#keypath` port inside `fam`, `reindex` and `discard` with no `fold` or `fix` open
+    /// around it. Proof that these keep the region's meaning, that is, that the port's log does
+    /// not depend on the order of the region's steps: for `#all`, every two pushes commute, so
+    /// any order of them is the same log as a value (the port's declaration says so, and the
+    /// checker trusts it, as sec:ports says). For `#keypath`, the port's log is the pushes in
+    /// the order of their keypaths; this evaluator runs the entries of `fam` in key order
+    /// (`begin_fam`), the leaves of `reindex` in keypath order (`begin_reindex`) and the
+    /// entries of `discard` top down in key order (`discard`), a prefix before its extensions,
+    /// so, nested at any depth, it makes the pushes in the lexicographic order of their
+    /// keypaths, which is that log; a schedule that runs the entries in another order or at
+    /// once must sort the pushes by keypath to give it. Inside a `fold` or a `fix` the steps
+    /// have no keypath: a `fold` regroups its applications on the canonical tree, and a
+    /// definedness `fix` runs its entries in rounds whose order the cone decides, so a
+    /// `#keypath` push there is refused, as is any `#none` push. The log port, which the
+    /// spec allows inside `fold` and `fix`, has no kernel form yet (sec:ports, "Logging").
+    /// Each refusal keeps the suffix "used inside a pure region", which zedc-stage's
+    /// `error_as_written` reads.
+    /// Tests: `m0_09_kernel_evaluator::a_commuting_push_inside_a_pure_region_is_accepted` and
+    /// `a_port_inside_a_pure_region_is_rejected`.
+    // Alternatives weighed: (1) refuse every push in a pure region, the rule (h) had before
+    // QUESTIONS A108; the author's answer allows the order-independent ones. (2) Track the
+    // innermost region only; wrong for a `fam` inside a `fold`, whose entries have keypaths
+    // but whose `fold` applications may be regrouped, so the count of open `fold` and `fix`
+    // regions is kept instead. Cost: two comparisons of counters per push, as before one.
+    fn check_push(&self, port: &str, commutes: Commutes) -> R<()> {
+        if self.pure == 0 {
+            return Ok(());
+        }
+        match commutes {
+            Commutes::All => Ok(()),
+            Commutes::Keypath if self.unkeyed == 0 => Ok(()),
+            Commutes::Keypath => type_err(format!(
+                "port `{port}`, whose pushes take their order from a keypath, pushed in a `fold` \
+                 or `fix` step, which has none: port `{port}` used inside a pure region"
+            )),
+            Commutes::None => type_err(format!("port `{port}` used inside a pure region")),
+        }
+    }
+
+    /// Stops with a type error when a call of the called lookup port `port` is made inside a
+    /// pure region.
     ///
     /// A read of a port is allowed there (FAIL-port-read-in-mapped-function: DESIGN.md
     /// sec:ports reads `main::files` "from any function at any depth of calls", and `map`
@@ -854,9 +940,10 @@ impl Evaluator {
     /// value is fixed for the whole wave before the run starts (`World::inputs`), and a lookup
     /// port is asked at most once per key, its answer kept for the rest of the run, in
     /// `World::reads` or, for a port that `keeps_answers`, by the port itself (`ask_port`). So
-    /// a read gives the same value at a key wherever and however often it is evaluated. Two
-    /// sub-cases stay refused, since the proof does not cover them: a push, which appends to a
-    /// log whose order is observable; and a call of a called lookup port, which only the stager
+    /// a read gives the same value at a key wherever and however often it is evaluated. A
+    /// push, which appends to a log whose order is observable, is decided by its port's
+    /// `commutes` ([`Evaluator::check_push`]). Refused here, since the proof does not cover
+    /// it: a call of a called lookup port, which only the stager
     /// makes (its stubs, zedc-stage `Port`), whose answer runs a further evaluation, and which
     /// the stager counts on stopping inside a pure region so that such a call is run as
     /// written (zedc-stage `error_as_written`, `Mixer::eval`). A
@@ -870,8 +957,8 @@ impl Evaluator {
     // loses the region's freedom of order for no gain in meaning, since the read is order-free
     // as shown above. (2) Read every port value before the region; impossible for a lookup
     // port, whose keys are computed inside it. Used: the check moved to the two operations
-    // that are order-dependent. Cost: unchanged, one comparison of a counter per push or
-    // called-port call, none per read.
+    // that are order-dependent. Cost: unchanged, one comparison of a counter per
+    // called-port call, none per read. Pushes: [`Evaluator::check_push`].
     fn check_impure(&self, port: &str) -> R<()> {
         if self.pure > 0 {
             return type_err(format!("port `{port}` used inside a pure region"));
@@ -930,8 +1017,8 @@ enum Frame<'t> {
         outer: Vec<Option<usize>>,
         union: bool,
     },
-    /// Ends a pure region.
-    Pure,
+    /// Ends a pure region; `unkeyed` when it is a `fold` or a `fix` (`Evaluator::unkeyed`).
+    Pure { unkeyed: bool },
     /// Leaves a call that recorded its call site.
     Return,
     /// Ends an attempt at an entry of a definedness `fix`.
@@ -1342,8 +1429,9 @@ impl<'t> Machine<'_, 't> {
     fn resume(&mut self, frame: Frame<'t>, out: R<V<'t>>) -> R<Step<'t>> {
         match frame {
             Frame::Fact { at, outer, union } => self.fact(at, outer, union, out),
-            Frame::Pure => {
+            Frame::Pure { unkeyed } => {
                 self.ev.pure -= 1;
+                self.ev.unkeyed -= usize::from(unkeyed);
                 out.map(Step::Give)
             }
             Frame::Return => {
@@ -1484,7 +1572,7 @@ impl<'t> Machine<'_, 't> {
                 Ok(Step::Eval(scrutinee, self.ev.child(at, 0), env))
             }
             Term::Fix { .. } => {
-                self.begin_pure();
+                self.begin_pure(true);
                 self.operand(term, at, Vec::new(), None, env)
             }
             Term::Fam { .. }
@@ -1507,9 +1595,11 @@ impl<'t> Machine<'_, 't> {
         }
     }
 
-    fn begin_pure(&mut self) {
+    /// Begins a pure region; `unkeyed` for a `fold` or a `fix`, whose steps have no keypath.
+    fn begin_pure(&mut self, unkeyed: bool) {
         self.ev.pure += 1;
-        self.frames.push(Frame::Pure);
+        self.ev.unkeyed += usize::from(unkeyed);
+        self.frames.push(Frame::Pure { unkeyed });
     }
 
     /// Evaluates the next of `rest`, or does what `head` does with `done`. The evaluation of
@@ -1699,7 +1789,7 @@ impl<'t> Machine<'_, 't> {
                     Some(_) => Some(data(next())?),
                     None => None,
                 };
-                self.begin_pure();
+                self.begin_pure(true);
                 self.begin_fold(family(first)?, op, from, identity, *depth)
             }
             Term::Fix {
@@ -1803,10 +1893,16 @@ impl<'t> Machine<'_, 't> {
             }
             Wait::Push(port) => {
                 let value = data(v)?;
-                self.ev.check_impure(port)?;
-                let Some(out) = self.ev.world.outputs.get_mut(&**port) else {
+                let Some(commutes) = self.ev.world.outputs.get(&**port).map(|o| o.commutes) else {
                     return Err(KernelError::UnknownPort(port.to_string()).into());
                 };
+                self.ev.check_push(port, commutes)?;
+                let out = self
+                    .ev
+                    .world
+                    .outputs
+                    .get_mut(&**port)
+                    .expect("the port was found above");
                 if out.capacity.is_some_and(|c| out.log.len() >= c) {
                     return give(Value::atom("full"));
                 }
@@ -2677,7 +2773,7 @@ impl<'t> Machine<'_, 't> {
         env: Env<'t>,
         keys: Vec<Value>,
     ) -> R<Step<'t>> {
-        self.begin_pure();
+        self.begin_pure(false);
         let out = Vec::with_capacity(keys.len());
         let at = self.ev.child(at, 1);
         self.fam(Box::new(Fam {
@@ -2704,7 +2800,7 @@ impl<'t> Machine<'_, 't> {
     ) -> R<Step<'t>> {
         let kf = (kf, Some(self.ev.child(at, 1)));
         let vf = (vf, Some(self.ev.child(at, 2)));
-        self.begin_pure();
+        self.begin_pure(false);
         self.reindex(Box::new(Reindex {
             leaves: leaves.into_iter(),
             kf,
@@ -2729,7 +2825,7 @@ impl<'t> Machine<'_, 't> {
         from: Option<usize>,
     ) -> R<Step<'t>> {
         let sel = (sel, Some(self.ev.child(at, 1)));
-        self.begin_pure();
+        self.begin_pure(false);
         self.discard(Box::new(Discard {
             levels: vec![level],
             prefix: Vec::new(),

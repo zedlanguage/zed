@@ -208,6 +208,14 @@ Type ::: (a: int, b: int) -> int ::: ((( (a : int) , (b : int) )) -> int)
 Type ::: () ::: ( )
 Type ::: () -> () ::: (( ) -> ( ))
 Type ::: (s: Lines) -> () ::: ((( s : Lines )) -> ( ))
+# the empty tuple as a value (SPEC-empty-tuple-value): `()` is the value of type `()`, as a
+# handler's result; `(,)` holds no element and is no tuple, and `() -> x` stays a lambda
+Expr ::: () ::: ( )
+Expr ::: w(o: m.stderr) else #ioError -> () ::: ((w (( (o : (m (. stderr))) ))) (else #ioError -> ( )))
+Item ::: a = w(o: m.stderr) else #ioError -> (); ::: (a = ((w (( (o : (m (. stderr))) ))) (else #ioError -> ( ))) ;)
+Expr ::: () -> x ::: (( ) -> x)
+Expr ::: (,) ::: ERROR
+Expr ::: ( , ) ::: ERROR
 # a brace after a fallback's else or an arrow is a block, never a display; `Block`'s `Display`
 # alternative reads a display there only so that the tree builder rejects it (row "Display in
 # body position"), as it rejects a block whose one content is a lambda, `{ k -> v }`

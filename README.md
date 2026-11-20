@@ -2268,16 +2268,16 @@ Generic code uses these reads: that's how `Json.decode` knows what `User` looks 
 
 A grammar describes a text or binary format.
 
-**Syntax:** `struct Name grammar { ... }`, `type T = Utf8String matching grammar { ... }`, `T.parse(s)`, `x.serialize`
+**Syntax:** `struct Name grammar { ... }`, `type T = Utf8String matching grammar { ... }`, `T.parseText(s)`, `x.serializeText`, `T.parseBytes(b)`, `x.serializeBytes`
 
 > [!NOTE]
-> **`grammar { ... }`** after a struct's name makes its fields a *parser*, which turns text or bytes into a value, and a *serializer*, which turns the value back into text or bytes. In a grammar, **`"("`** is literal text and **`x: T`** a field. **`T.parse(s)`** reads `s` into a value of `T`, and **`x.serialize`** writes `x` back out.
+> **`grammar { ... }`** after a struct's name makes its fields a *parser*, which turns text or bytes into a value, and a *serializer*, which turns the value back into text or bytes. In a grammar, **`"("`** is literal text and **`x: T`** a field. **`T.parseText(s)`** reads the text `s` into a value of `T`, and **`x.serializeText`** writes `x` back out as text; a binary grammar has **`T.parseBytes(b)`** and **`x.serializeBytes`** instead. A grammar reads text or bytes, never both.
 
 ```zed
 struct Vec3 grammar { "(" x: f64 "," y: f64 "," z: f64 ")" }
 
-v = Vec3.parse("(1.0, 2.0, 3.0)") else Vec3(x: 0, y: 0, z: 0);
-s = v.serialize;       // "(1.0,2.0,3.0)"
+v = Vec3.parseText("(1.0, 2.0, 3.0)") else Vec3(x: 0, y: 0, z: 0);
+s = v.serializeText;   // "(1.0,2.0,3.0)"
 ```
 
 ```text
@@ -2301,11 +2301,11 @@ Prod.eval = factors.map(f -> f.eval) >< (*);
 Paren.eval = inner.eval;
 Number.eval = int(this) else 0;
 
-value = Sum.parse("2*(3+4)")?.eval;     // 14, or #syntaxError
+value = Sum.parseText("2*(3+4)")?.eval; // 14, or #syntaxError
 ```
 
 ```text
-Sum.parse("2*(3+4)") = a Sum holding one Prod, of 2 and a Paren of 3 + 4
+Sum.parseText("2*(3+4)") = a Sum holding one Prod, of 2 and a Paren of 3 + 4
 value = 14
 
 input: "2*(" in place of the literal
@@ -2325,7 +2325,7 @@ struct Chunk grammar {
 
 ```text
 input: the bytes 00 00 00 01  49 44 41 54  2A  00 00 00 07
-Chunk.parse(input) = Chunk(n: 1, kind: the 4 bytes of "IDAT", data: the 1 byte 2A, crc: 7)
+Chunk.parseBytes(input) = Chunk(n: 1, kind: the 4 bytes of "IDAT", data: the 1 byte 2A, crc: 7)
 ```
 
 ### Symbolic math

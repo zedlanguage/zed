@@ -930,9 +930,12 @@ expression: "tokens_by_key(&fences::design())"
   8 | }
  10 | main ( m : MainArgs ) {
  11 | plugin = startPlugin ( ) ;
- 12 | ys = m . stdin . map ( l -> pluginStep ( plugin : , x : f64 ( l ) «else» 0.0f ) «with» timeout ( 2r ) «else» 0.0f ) ;
- 13 | m . stdout <- ys . map ( y -> str[${y}] ) ;
- 14 | }
+ 13 | ys = «for» l «in» m . stdin {
+ 14 | x = f64 ( l ) «else» 0.0f ;
+ 15 | pluginStep ( plugin : , x : ) «with» timeout ( 2r ) «else» 0.0f
+ 16 | } ;
+ 17 | m . stdout <- ys . map ( y -> str[${y}] ) ;
+ 18 | }
 == DESIGN.md [sec:ffi] 16 L12
   1 | «struct» Fetcher { }
   2 | @foreign ( str["fetch"] , str["fetch_url"] , isolate : «true» ) fetchUrl : ( f : Fetcher «with» notPassed ( ) , url : [ u8 ] «with» terminated ( 0₍10₎ ) ) -> i32 | #signal ( Signal ) | #exit ( code : int [ 0₍10₎ ..= 255₍10₎ ] ) | #lost ;
@@ -1103,8 +1106,8 @@ expression: "tokens_by_key(&fences::design())"
   2 | «struct» KeyVal «grammar» { key : JsonStr str[":"] value : Json }
   3 | «struct» JsonObj «grammar» { str["{"] entries : KeyVal sep str[","] str["}"] }
   4 | «type» Json = JsonObj | JsonArr | JsonStr | JsonNum | #true | #false | #null ;
-  6 | cfg = Json . parse ( bytes ) ;
-  7 | out = cfg ?. serialize ;
+  6 | cfg = Json . parseText ( text ) ;
+  7 | out = cfg ?. serializeText ;
   9 | «type» Ident = Utf8String «matching» «grammar» { alpha ( alpha | digit ) * } ;
  15 | «struct» Chunk «grammar» {
  16 | n : int «with» bits ( 32₍10₎ ) «with» endian ( #big )
@@ -1112,21 +1115,22 @@ expression: "tokens_by_key(&fences::design())"
  18 | data : u8 * «with» length ( n )
  19 | crc : int «with» bits ( 32₍10₎ ) «with» endian ( #big )
  20 | }
- 22 | «struct» Message «grammar» { tag : u8 body : ( Ping | Data ) «with» tagged ( tag , 1₍10₎ , 2₍10₎ ) }
- 25 | double ( «positional» x ) = x * 2₍10₎
- 26 | «test» { 0₍10₎ -> 0₍10₎ , 2₍10₎ -> 4₍10₎ , - 3₍10₎ -> - 6₍10₎ }
- 27 | «law» doubleIsSum ( x : int ) = double ( x ) == x + x ;
- 30 | main ( m : MainArgs ) {
- 31 | m . stdout <- m . stdin . map ( l -> l . upper «else» str[] ) ;
- 32 | }
- 35 | orders : OrderId ->? { total : rat , note : Utf8String | #none }
- 36 | «with» store ( postgres ( dbUrl , table : str["orders"] , schema : sql ( str["db/orders.sql"] ) ) ) ;
- 38 | n = orders [ id ] ?. note ;
- 43 | v = 3.0f64 «with» units ( str["m/s"] ) ;
- 44 | t = 2.0f64 «with» units ( str["s"] ) ;
- 45 | d = v * t ;
- 48 | exec : ( Db , Utf8String «with» taint ( #clean ) ) -> Rows | #sqlError
- 50 | rows = exec ( db , sanitize ( userInput ) ) ;
+ 21 | chunk = Chunk . parseBytes ( input ) ;
+ 23 | «struct» Message «grammar» { tag : u8 body : ( Ping | Data ) «with» tagged ( tag , 1₍10₎ , 2₍10₎ ) }
+ 26 | double ( «positional» x ) = x * 2₍10₎
+ 27 | «test» { 0₍10₎ -> 0₍10₎ , 2₍10₎ -> 4₍10₎ , - 3₍10₎ -> - 6₍10₎ }
+ 28 | «law» doubleIsSum ( x : int ) = double ( x ) == x + x ;
+ 31 | main ( m : MainArgs ) {
+ 32 | m . stdout <- m . stdin . map ( l -> l . upper «else» str[] ) ;
+ 33 | }
+ 36 | orders : OrderId ->? { total : rat , note : Utf8String | #none }
+ 37 | «with» store ( postgres ( dbUrl , table : str["orders"] , schema : sql ( str["db/orders.sql"] ) ) ) ;
+ 39 | n = orders [ id ] ?. note ;
+ 44 | v = 3.0f64 «with» units ( str["m/s"] ) ;
+ 45 | t = 2.0f64 «with» units ( str["s"] ) ;
+ 46 | d = v * t ;
+ 49 | exec : ( Db , Utf8String «with» taint ( #clean ) ) -> Rows | #sqlError
+ 51 | rows = exec ( db , sanitize ( userInput ) ) ;
 == DESIGN.md [sec:type_notation] 1 L3
   2 | priceOf ( «positional» items , «positional» id ) = items [ id ] ?. price * ( 1₍10₎ + taxRate ) ;
 == DESIGN.md [sec:type_notation] 2 L2
@@ -1146,8 +1150,8 @@ expression: "tokens_by_key(&fences::design())"
  44 | rows = exec ( db , str["SELECT * WHERE name = "] ++ sanitize ( userName ) ) ;
  47 | energy = m * v * v / 2₍10₎ ;
  51 | «struct» Vec3 «grammar» { str["("] x : f64 str[","] y : f64 str[","] z : f64 str[")"] }
- 52 | v = Vec3 . parse ( str["(1.0, 2.0, 3.0)"] ) «else» Vec3 ( x : 0₍10₎ , y : 0₍10₎ , z : 0₍10₎ ) ;
- 53 | s = v . serialize ;
+ 52 | v = Vec3 . parseText ( str["(1.0, 2.0, 3.0)"] ) «else» Vec3 ( x : 0₍10₎ , y : 0₍10₎ , z : 0₍10₎ ) ;
+ 53 | s = v . serializeText ;
  56 | stats ( «positional» data : [ f64 ] ) {
  57 | n = f64 ( data :: len ) ;
  58 | mean = data . sum / n ;

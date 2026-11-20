@@ -145,15 +145,17 @@ rows! {
         "Order read on a level with no natural order — origin keys outside their `Seq`",
     TwoOrders => "Two declared orders meet in one key type",
     EmissionDisjointness => "Emission-disjointness",
-    // No diagnostic uses these thirty rows yet. The plan rows that emit them: L7.4 the first, third,
-    // fifth and thirtieth; TERM-1 the second; FFI-token-check the fourth, eighth and eleventh to
-    // fourteenth; IMPL-consume-unless the sixth and seventh; FFI-release-failure the ninth;
-    // FFI-release-zed the tenth; FFI-held the fifteenth to seventeenth; FFI-thread the eighteenth
-    // and nineteenth; FFI-isolate the twentieth to twenty-second and the twenty-eighth;
-    // FFI-sandbox-linux the twenty-third to twenty-sixth; STRICT-build the twenty-seventh;
-    // EXPORT-unique the twenty-ninth.
+    // No diagnostic uses these thirty-two rows yet. The plan rows that emit them: L7.4 the first,
+    // fifth, seventh and thirty-second; TERM-1 the second to fourth; FFI-token-check the sixth,
+    // tenth and thirteenth to sixteenth; IMPL-consume-unless the eighth and ninth;
+    // FFI-release-failure the eleventh; FFI-release-zed the twelfth; FFI-held the seventeenth to
+    // nineteenth; FFI-thread the twentieth and twenty-first; FFI-isolate the twenty-second to
+    // twenty-fourth and the thirtieth; FFI-sandbox-linux the twenty-fifth to twenty-eighth;
+    // STRICT-build the twenty-ninth; EXPORT-unique the thirty-first.
     BitFieldWithNoUnit => "Bit-field of a foreign struct with no C unit",
     ItemWithNoBitOrder => "Grammar item narrower than a byte with no bit order",
+    MixedTextBinaryGrammar => "Struct grammar that mixes text and binary items",
+    ParseOfOtherMode => "Parse function of the other mode",
     ReleaseWhileKept => "Release of a foreign value while a result that keeps it is still read",
     UseAfterRelease => "Use of a value after the program releases it",
     ReleaseParametersUnfilled => "Release function whose parameters the `release` does not fill",
@@ -298,6 +300,11 @@ rows! {
     UngrantedReach => "Dependency reaching what its importer did not grant",
     // No diagnostic uses this row yet: plan row L7.2 emits it.
     UncommutedPortOps => "Two operations on one port that may not commute, with nothing ordering them",
+    // No diagnostic uses this row yet: plan row L7.2b emits it.
+    OrderDependentPortOpInMap =>
+        "Port operation in a `map` or a `where` that depends on the order of its entries",
+    // No diagnostic uses this row yet: plan row L7.5c emits it.
+    EventClassOnNonWavePort => "Event class on a port that starts no wave",
     NonblockingCanBlock => "Function marked `@nonblocking` that can block",
     BlockingWritten => "`@blocking` written",
     NoArrowAtCarrier => "Operator with no arrow at its operands' carrier",

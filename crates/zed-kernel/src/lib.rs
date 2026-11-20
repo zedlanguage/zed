@@ -64,7 +64,7 @@ mod completeness;
 )]
 mod seed;
 
-pub use eval::{Evaluator, Global, Globals, Lookup, Schedule, World, eval};
+pub use eval::{Commutes, Evaluator, Global, Globals, Lookup, Schedule, World, eval};
 pub use num::Rat;
 pub use provenance::{Fact, FactAddress, NodeAddress, Provenance};
 pub use term::{Evidence, FixKind, Grade, GuardPos, Pattern, Prim, Shared, Term, Witness};

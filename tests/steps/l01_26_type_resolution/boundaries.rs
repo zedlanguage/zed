@@ -164,6 +164,17 @@ fn a_call_statement_that_only_writes_is_legal_and_one_with_a_value_is_not() {
         (0, "done\n", "x\n"),
         "{fixed}"
     );
+    // A handler may give the empty tuple, written `()` as a value (SPEC-empty-tuple-value,
+    // DESIGN: "The empty tuple's type is written `()`, and so is the empty tuple itself"),
+    // which `_` drops; before, `-> ()` was a syntax error (found by STUDY-atom-bubble-levels).
+    let unit = "w(positional xs, o: Lines) {\n  o <- \"x\";\n  xs[0]\n}\nmain(m: MainArgs) {\n  \
+        _ = w(m.args, o: m.stderr) else #outOfBounds -> ();\n  m.stdout <- \"done\";\n}\n";
+    let (status, stdout, stderr) = run0("stmt_unit", unit);
+    assert_eq!(
+        (status, stdout.as_str(), stderr.as_str()),
+        (0, "done\n", "x\n"),
+        "{unit}"
+    );
 }
 
 // The cases of CHK-atom-boundary-cases (zed ATOM-BUBBLE-STUDY.md, Appendix 2): crossings

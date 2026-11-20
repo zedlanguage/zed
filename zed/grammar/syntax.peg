@@ -207,7 +207,8 @@ AtomExpr      = ATOM                                                            
 This          = 'this'                                                             L2
 OpFunction    = '(' BinOp ')'                                                      L3
 Group         = '(' nest(Expr) ')'                                                 L1
-TupleExpr     = '(' nest(Expr ((',' Expr)+ ','? | ',')) ')'                        L1
+TupleExpr     = '(' ')'                                                            L1
+              | '(' nest(Expr ((',' Expr)+ ','? | ',')) ')'                        L1
 ArrayExpr     = '[' nest((Expr12 % ',' ','?)?) ']'                                 L3
 HoleExpr      = '?'                                                                L15
 Literal       = INT | FLOAT | RAT | STRING | 'true' | 'false'                      L1

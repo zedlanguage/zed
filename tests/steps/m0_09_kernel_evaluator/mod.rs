@@ -8,8 +8,8 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 
 use zed_kernel::term::build::{app, if_, lam, let_, lit, prim, var};
 use zed_kernel::{
-    Evaluator, Evidence, Family, FixKind, GuardPos, KernelError, Lookup, Pattern, Prim, Schedule,
-    Term, Value, World, eval,
+    Commutes, Evaluator, Evidence, Family, FixKind, GuardPos, KernelError, Lookup, Pattern, Prim,
+    Schedule, Term, Value, World, eval,
 };
 use zed_tests::kernel::*;
 
@@ -1032,6 +1032,112 @@ fn a_read_inside_a_pure_region_gives_the_waves_value() {
         KernelError::Type("port `stdout` used inside a pure region".into())
     );
     assert!(ev.world.log("stdout").is_empty());
+}
+
+/// A push inside a pure region whose port's `commutes` makes it order-independent there is
+/// accepted (DESIGN.md sec:kernel, reference semantics, (h); QUESTIONS A108; step L7.2b): a
+/// `#keypath` port inside `fam`, nested `fam`, `discard` and `reindex`, its log in the
+/// keypaths' order whatever order the domain was written in; a `#all` port inside `fold` and a
+/// definedness `fix`. Negative controls: a `#keypath` push inside `fold`, inside a `fam` that
+/// a `fold`'s operator runs, and inside a definedness `fix` is a type error that writes
+/// nothing; the `#none` port is `a_port_inside_a_pure_region_is_rejected` and the end of
+/// `a_read_inside_a_pure_region_gives_the_waves_value`.
+#[test]
+fn a_commuting_push_inside_a_pure_region_is_accepted() {
+    let keyed = || World::new().commuting_output("out", Commutes::Keypath);
+    let ints = |xs: &[i64]| xs.iter().map(|&x| Value::Int(x)).collect::<Vec<_>>();
+    // `fam` over a set written out of order: the pushes come in key order.
+    let keys = lit(Family::set([2, 0, 1].map(Value::Int)));
+    let mut ev = Evaluator::new(keyed());
+    let out = ev
+        .run(&fam(keys.clone(), "k", push("out", var("k"))))
+        .unwrap();
+    assert_eq!(out.to_string(), "{0 -> #ok, 1 -> #ok, 2 -> #ok}");
+    assert_eq!(ev.world.log("out"), ints(&[0, 1, 2]));
+    // Nested `fam`: the log is in the lexicographic order of the keypaths `(i, j)`.
+    let two = lit(Family::set([1, 0].map(Value::Int)));
+    let pair = prim(Prim::Tuple, vec![var("i"), var("j")]);
+    let nested = fam(two.clone(), "i", fam(two.clone(), "j", push("out", pair)));
+    let mut ev = Evaluator::new(keyed());
+    ev.run(&nested).unwrap();
+    let pairs: Vec<String> = ev.world.log("out").iter().map(|v| v.to_string()).collect();
+    assert_eq!(pairs, ["(0, 0)", "(0, 1)", "(1, 0)", "(1, 1)"]);
+    // `discard`: the selector pushes each keypath it tests, a level before the levels below.
+    let tree = Value::Family(
+        Family::from_leaves(vec![
+            (vec![Value::Int(1), Value::Int(0)], s("b")),
+            (vec![Value::Int(0), Value::Int(0)], s("a")),
+        ])
+        .unwrap(),
+    );
+    let sel = lam(&["p", "v"], let_("_", push("out", var("p")), lit(true)));
+    let mut ev = Evaluator::new(keyed());
+    assert_eq!(ev.run(&discard(lit(tree.clone()), sel)).unwrap(), tree);
+    let at = |ks: &[i64]| Value::path(ints(ks));
+    assert_eq!(
+        ev.world.log("out"),
+        [at(&[0]), at(&[0, 0]), at(&[1]), at(&[1, 0])]
+    );
+    // `reindex`: the value map pushes each leaf, in the input's keypath order.
+    let vf = lam(&["p", "v"], let_("_", push("out", var("v")), var("v")));
+    let mut ev = Evaluator::new(keyed());
+    ev.run(&reindex(lit(tree), lam(&["p", "v"], var("p")), vf))
+        .unwrap();
+    assert_eq!(ev.world.log("out"), [s("a"), s("b")]);
+    // A `#all` port inside `fold` and inside a definedness `fix`.
+    let all = || World::new().commuting_output("out", Commutes::All);
+    let summed = fold(
+        lit(ledger()),
+        lam(
+            &["a", "b"],
+            let_("_", push("out", var("b")), add(var("a"), var("b"))),
+        ),
+        None,
+    );
+    let mut ev = Evaluator::new(all());
+    assert_eq!(ev.run(&summed).unwrap(), Value::Int(-50));
+    assert_eq!(ev.world.log("out").len(), 3);
+    let mut ev = Evaluator::new(all());
+    let out = ev
+        .run(&definedness(keys.clone(), push("out", var("i"))))
+        .unwrap();
+    assert_eq!(out.to_string(), "{0 -> #ok, 1 -> #ok, 2 -> #ok}");
+    let mut seen = ev.world.log("out").to_vec();
+    seen.sort();
+    assert_eq!(seen, ints(&[0, 1, 2]));
+    // Negative controls: a `#keypath` push where no keypath orders it.
+    let refused = |port: &str| {
+        KernelError::Type(format!(
+            "port `{port}`, whose pushes take their order from a keypath, pushed in a `fold` \
+             or `fix` step, which has none: port `{port}` used inside a pure region"
+        ))
+    };
+    let leak = fold(
+        lit(ledger()),
+        lam(
+            &["a", "b"],
+            let_("_", push("out", var("b")), add(var("a"), var("b"))),
+        ),
+        None,
+    );
+    let in_fam_in_fold = fold(
+        lit(ledger()),
+        lam(
+            &["a", "b"],
+            let_(
+                "_",
+                fam(keys.clone(), "k", push("out", var("k"))),
+                add(var("a"), var("b")),
+            ),
+        ),
+        None,
+    );
+    let in_fix = definedness(keys, push("out", var("i")));
+    for term in [leak, in_fam_in_fold, in_fix] {
+        let mut ev = Evaluator::new(keyed());
+        assert_eq!(ev.run(&term).unwrap_err(), refused("out"));
+        assert!(ev.world.log("out").is_empty());
+    }
 }
 
 /// A called port: answers with the text of its key, counts the times it is asked, and takes

@@ -12,8 +12,8 @@ import api.{Request};
 import server.{answer};
 
 main(m: MainArgs) {
-  m.stdout <- m.stdin.map(l -> match Request.parse(l) {
+  m.stdout <- m.stdin.map(l -> match Request.parseText(l) {
     #syntaxError(pos:) -> "bad request at ${pos}",
-    req -> answer(req).serialize,
+    req -> answer(req).serializeText,
   });
 }

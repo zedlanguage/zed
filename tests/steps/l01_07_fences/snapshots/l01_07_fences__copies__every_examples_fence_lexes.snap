@@ -619,8 +619,8 @@ expression: "tokens_by_key(&fences::examples())"
   2 | «struct» KeyVal «grammar» { key : JsonStr str[":"] value : Json }
   3 | «struct» JsonObj «grammar» { str["{"] entries : KeyVal sep str[","] str["}"] }
   4 | «type» Json = JsonObj | JsonArr | JsonStr | JsonNum | #true | #false | #null ;
-  5 | cfg = Json . parse ( bytes ) ;
-  6 | out = cfg ?. serialize ;
+  5 | cfg = Json . parseText ( text ) ;
+  6 | out = cfg ?. serializeText ;
 == EXAMPLES.md [23. Grammars] 2 L20
   2 | «struct» Sum «grammar» { terms : Prod sep str["+"] }
   3 | «struct» Prod «grammar» { factors : Atom sep str["*"] }
@@ -631,7 +631,7 @@ expression: "tokens_by_key(&fences::examples())"
   8 | Prod . eval = factors . map ( f -> f . eval ) >< ( * ) ;
   9 | Paren . eval = inner . eval ;
  10 | Number . eval = int ( «this» ) «else» 0₍10₎ ;
- 11 | value = Sum . parse ( str["2*(3+4)"] ) ?. eval ;
+ 11 | value = Sum . parseText ( str["2*(3+4)"] ) ?. eval ;
 == EXAMPLES.md [24. Small programs] 1 L7
   2 | «struct» Account { bal : rat }
   3 | «type» Tx = #deposit ( id : AccountId , amt : rat ) | #withdraw ( id : AccountId , amt : rat ) ;

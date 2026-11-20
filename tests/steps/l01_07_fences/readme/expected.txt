@@ -773,7 +773,7 @@ text
 > names = id, an int, and name, a Utf8String
 
 == README.md [Grammars] 1
-comment s = v.serialize; // "(1.0,2.0,3.0)"
+comment s = v.serializeText; // "(1.0,2.0,3.0)"
 text
 > v = Vec3(x: 1.0, y: 2.0, z: 3.0), s = "(1.0,2.0,3.0)"
 >
@@ -781,9 +781,9 @@ text
 > v = Vec3(x: 0.0, y: 0.0, z: 0.0), s = "(0.0,0.0,0.0)"
 
 == README.md [Grammars] 2
-comment value = Sum.parse("2*(3+4)")?.eval; // 14, or #syntaxError
+comment value = Sum.parseText("2*(3+4)")?.eval; // 14, or #syntaxError
 text
-> Sum.parse("2*(3+4)") = a Sum holding one Prod, of 2 and a Paren of 3 + 4
+> Sum.parseText("2*(3+4)") = a Sum holding one Prod, of 2 and a Paren of 3 + 4
 > value = 14
 >
 > input: "2*(" in place of the literal
@@ -792,7 +792,7 @@ text
 == README.md [Grammars] 3
 text
 > input: the bytes 00 00 00 01  49 44 41 54  2A  00 00 00 07
-> Chunk.parse(input) = Chunk(n: 1, kind: the 4 bytes of "IDAT", data: the 1 byte 2A, crc: 7)
+> Chunk.parseBytes(input) = Chunk(n: 1, kind: the 4 bytes of "IDAT", data: the 1 byte 2A, crc: 7)
 
 == README.md [Symbolic math] 1
 comment e = expand(p); // x^2 + 2r * x + 1r

@@ -50,8 +50,8 @@ e = energy + force;            // ✗ Units that differ where an operation requi
 
 // 11 — One declaration = type + parser + printer, with round-trip guaranteed.
 struct Vec3 grammar { "(" x: f64 "," y: f64 "," z: f64 ")" }
-v = Vec3.parse("(1.0, 2.0, 3.0)") else Vec3(x: 0, y: 0, z: 0);
-s = v.serialize;                   // "(1.0,2.0,3.0)" — phrase grammars skip input whitespace, serialize emits the canonical none; parse ∘ serialize == id
+v = Vec3.parseText("(1.0, 2.0, 3.0)") else Vec3(x: 0, y: 0, z: 0);
+s = v.serializeText;               // "(1.0,2.0,3.0)" — phrase grammars skip input whitespace, serialize emits the canonical none; parse ∘ serialize == id
 
 // 12 — Compute only what's asked: one stats module, demand-pruned.
 stats(positional data: [f64]) {
