@@ -73,6 +73,7 @@ fn meter_of_passes(passes: &'static AtomicU64) -> Meter {
         read: Box::new(|| passes.load(Relaxed)),
         unit: "passes",
         instructions: true,
+        fresh: false,
     }
 }
 
@@ -197,7 +198,10 @@ fn a_comparison_runs_each_size_as_often_as_the_meter_says() {
     use std::sync::atomic::{AtomicUsize, Ordering::Relaxed};
     let (small, large) = (AtomicUsize::new(0), AtomicUsize::new(0));
     let mut meter = Meter::new();
-    // Once each on a count of instructions (author A160, 2026-11-20).
+    // Once each on a count of instructions (author A160, 2026-11-20), counted here: the run at
+    // 8n in this process (see `a_set_up_hidden_in_a_memo_the_process_keeps_is_counted_at_8n`
+    // for the run in a new process).
+    meter.fresh = false;
     let runs = meter.runs();
     assert_eq!(runs, (1, 1));
     compare_by(
@@ -728,6 +732,8 @@ fn each_run_starts_with_empty_thread_memos() {
         }
     };
     let mut meter = Meter::new();
+    // Both runs in this process, where they can be counted.
+    meter.fresh = false;
     let (small, large) = meter.runs();
     let only = Measures::WorkOnly;
     compare_by(
@@ -775,7 +781,11 @@ fn a_memo_that_outlives_a_thread_does_not_hide_the_work_of_the_first_runs() {
         message.contains(held) && message.contains(" bytes, 64.0 times the bytes"),
         "{message}"
     );
-    // Once both sizes are in the memo, every run is linear and passes.
+    // Once both sizes are in the memo, every run is linear and passes. Filled here, before the
+    // check, so that the new process of a run at 8n fills it too: there the check before ran
+    // its run at n only (see `compare_by`).
+    memoized(300);
+    memoized(2400);
     check("a memoized quadratic, memo full", 300, memoized);
     // The work of the first runs, without their bytes, on a count of instructions; processor
     // time holds only their bytes (see `compare_by`).
@@ -788,6 +798,53 @@ fn a_memo_that_outlives_a_thread_does_not_hide_the_work_of_the_first_runs() {
             "{message}"
         );
     }
+}
+
+/// A made-up set-up of order `n²` hidden in a memo the process keeps for all threads: a table
+/// built once, by the first run, for that run's size, and read by every later run, as the
+/// grammar or an interner is (TEST-scaling-cold-shared-memo). In one process the run at n built
+/// it and the run at 8n found it built: `2 × 300²` and `20 × 300` passes against `20 × 2400`,
+/// 0.26 times the work, which passed. With the run at 8n in a new process it builds the table
+/// at its own size, `2 × 2400²` passes more, about 62 times the work.
+#[test]
+fn a_set_up_hidden_in_a_memo_the_process_keeps_is_counted_at_8n() {
+    static TABLE: std::sync::OnceLock<usize> = std::sync::OnceLock::new();
+    let run = |n: usize| {
+        black_box(*TABLE.get_or_init(|| {
+            work(n, 2, 2);
+            n
+        }));
+        work(n, 1, 20);
+        linear_bytes(n);
+    };
+    // A meter of processor time runs both sizes in this process and keeps the hole (see
+    // `compare_by`).
+    if !Meter::new().fresh {
+        return;
+    }
+    let message = message_of(|| check("a hidden quadratic set-up", 300, run));
+    assert!(
+        message.starts_with("a hidden quadratic set-up: sizes 300 and 2400: took ")
+            && message.contains(" times the work in "),
+        "{message}"
+    );
+}
+
+/// A set-up of fixed size that the process builds once and keeps passes: both runs pay it, the
+/// run at n in this process and the run at 8n in the new one. A second check of the same test
+/// finds it built in both, since the new process runs the first check's run at n before it (see
+/// `compare_by`): without that its run at 8n would pay the set-up alone, `2000²` passes against
+/// `20 × 300`, and fail.
+#[test]
+fn a_fixed_set_up_kept_by_the_process_passes_in_each_check_of_a_test() {
+    static TABLE: std::sync::OnceLock<()> = std::sync::OnceLock::new();
+    let run = |n: usize| {
+        TABLE.get_or_init(|| work(2000, 2, 1));
+        work(n, 1, 20);
+        linear_bytes(n);
+    };
+    check("a fixed set-up, first check", 300, run);
+    check("a fixed set-up, second check", 300, run);
 }
 
 /// The passes of the loops of [`counted_spin`] on every thread of the process; only
@@ -841,6 +898,7 @@ fn a_meter_measures_by_any_counter_it_is_given() {
         read: spun_counter(),
         unit: "passes",
         instructions: true,
+        fresh: false,
     };
     assert_eq!(meter.work(|| counted_spin(1234)).units, 1234);
     let linear = |n: usize| counted_spin(10 * n as u64);
@@ -913,6 +971,7 @@ fn a_meter_of_a_count_that_changes_with_load_measures_up_to_three_times() {
         read: Box::new(|| PASSES.load(std::sync::atomic::Ordering::Relaxed)),
         unit: "ns",
         instructions: false,
+        fresh: false,
     };
     assert_eq!(meter.runs(), (TIME_RUNS * TRIES, TIME_RUNS * TRIES));
     let (message, smalls, larges) = compare_counted(&mut meter, &PASSES, |_| 1000, |_| 8000);
@@ -954,6 +1013,7 @@ fn a_count_of_instructions_runs_each_size_once() {
         read: Box::new(|| PASSES.load(std::sync::atomic::Ordering::Relaxed)),
         unit: "passes",
         instructions: true,
+        fresh: false,
     };
     assert_eq!(meter.runs(), (1, 1));
     let (message, smalls, larges) = compare_counted(&mut meter, &PASSES, |_| 1000, |_| 8000);
@@ -980,6 +1040,7 @@ fn a_meter_of_a_count_that_changes_with_load_holds_the_bytes_of_the_first_runs()
         read: Box::new(|| PASSES.load(Relaxed)),
         unit: "ns",
         instructions: false,
+        fresh: false,
     };
     let mut first_large = |first: usize| {
         let larges = AtomicUsize::new(0);
@@ -1031,6 +1092,7 @@ fn a_memo_filled_by_the_first_run_of_each_size_scales_as_its_first_runs_do() {
         read: Box::new(|| PASSES.load(Relaxed)),
         unit: "passes",
         instructions: true,
+        fresh: false,
     };
     let (small_filled, large_filled) = (AtomicBool::new(false), AtomicBool::new(false));
     compare_by(
@@ -1069,6 +1131,7 @@ fn the_first_run_of_each_size_is_measured_against_the_other() {
         read: Box::new(|| PASSES.load(std::sync::atomic::Ordering::Relaxed)),
         unit: "passes",
         instructions: true,
+        fresh: false,
     };
     let cold_small = |i: usize| if i == 0 { 1250 } else { 1000 };
     let cold_large = |i: usize| if i == 0 { 12_000 } else { 8000 };
@@ -1094,6 +1157,7 @@ fn a_comparison_to_a_given_limit_passes_at_the_limit_and_fails_over_it() {
         read: Box::new(|| PASSES.load(Relaxed)),
         unit: "passes",
         instructions: true,
+        fresh: false,
     };
     let given = |meter: &mut Meter, second: u64| {
         std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
