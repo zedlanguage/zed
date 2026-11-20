@@ -3415,23 +3415,39 @@ impl<'t> Tx<'t> {
     //       it, so A_{j-1} gets A_j's then part alone; B_j's else part is B_j itself. S_j's
     //       `union` joins the live sets {j + 1} and [j + 2, M] into one piece [j + 1, M], which
     //       M_j and B_{j-1} keep: (B) holds at j - 1.
-    //   (C) B_j has at most 37 nodes. Write the cuts of a nonempty tree for its key ends lo and
-    //       hi + 1; each node has its own lo and the largest cut is no node's lo, so nodes < cuts.
-    //       `tree_union` cuts only at its operands' cuts, `tree_restrict` adds its two ends,
-    //       `tree_restrict_input` keeps or drops keys, and the reflection v -> c - v maps cut b
-    //       to c + 1 - b. Let G_j be the cuts of B_j other than -M and H_j + 1, and assume
-    //       G_j in [-15, 20] (true at j = m - 1, see below). S_j adds -2 and 3 (A_j's key); its
-    //       clip to [c - 20, c + M] keeps the cuts b with c - 19 <= b <= c + M, which drops
-    //       H_j + 1 >= c + M + 1 and adds the ends c - 20 and c + M + 1; the reflection maps
-    //       these to 21 and -M and each kept b to c + 1 - b, in [c - 19, 20] as b <= 20;
-    //       M_j's clip ends at -M and 21; `minmax` keeps the keys below 20 and puts one node
-    //       [20, inf) (label `val_at(20)`, none when that is empty) above, so the cuts above 20
-    //       go and 20 comes in; B_{j-1}'s own clip, first in its step, ends that node at
-    //       H_{j-1} + 1. So G_{j-1} lies in
-    //       {20}, {c + 3, c - 2} and {c + 1 - b : b in G_j, b >= c - 19}, all in [c - 19, 20]
-    //       within [-15, 20], as c >= 4. The base B_{m-1} starts from S_m, which holds A_m's else
-    //       part alone, cuts {-2, 3}. So at most 36 + 2 cuts and 37 nodes at B_j, 39 at S_j and
-    //       M_j, one at A_j: trees of O(1) nodes and height.
+    //   (C) B_j has at most 15 nodes, and S_j and M_j too (TEST-min-gap-b-node-bound). Write
+    //       K(T) for the values that some key of tree T holds. `tree_node` drops a node whose
+    //       label is empty; the other constructor, `tree_raw`, is called by `tree_balance` on
+    //       labels of nodes that exist and by `val_from_iter`, which on this family only
+    //       `State1d::init` reaches, at the root, label [-M, M] (the other callers serve `Mul`,
+    //       `Div`, `Pow` and `Mod`). So every key has a nonempty label; keys are disjoint nonempty
+    //       integer ranges, so nodes <= |K(T)|. The operations act on K as on sets: `tree_union`
+    //       gives K(a) | K(b) (`ad.join(&data)` and `ad` are nonempty), `tree_restrict` K & [lo,
+    //       hi], `tree_restrict_input` a subset of K, the reflection c - K, and `minmax` (Min, 20)
+    //       gives (K & (-inf, 19]) | ([20, inf) if 20 in K). Let K_j = K(B_j) after its clip and
+    //       W = [-2, 2], A_j's key. S_j unions A_j's else part (K = W) with B_j's, clips to
+    //       [c - 20, c + M] and reflects; M_j clips to [-M, 20] and takes `minmax`; B_{j-1} clips
+    //       to [-M, H_{j-1}]. With c = c_j: if K_j | W lies in [c - 19, c + M], then 20 is not in
+    //       c - (K_j | W), no node [20, inf) is made, and
+    //         K_{j-1} = c - (K_j | W).                                                    (*)
+    //       Let r = j mod 5, so c_j = r + 4, and let I_r = [d_r - 7, d_r + 7], 15 integers, with
+    //       d = (d_0, ..., d_4) = (1, 4, 2, 5, 3): I_0 = [-6, 8], I_1 = [-3, 11], I_2 = [-5, 9],
+    //       I_3 = [-2, 12], I_4 = [-4, 10]. Each I_r contains W and lies in [-6, 12], inside
+    //       [c - 19, c + M] for every c in [4, 8]. And c_r - d_r = d_{(r-1) mod 5}: 4 - 1 = 3,
+    //       5 - 4 = 1, 6 - 2 = 4, 7 - 5 = 2, 8 - 3 = 5; so c_r - I_r = I_{(r-1) mod 5}, as the
+    //       reflection keeps the width. Claim K_j in I_{j mod 5}. Base: B_{m-1} starts from S_m,
+    //       which holds A_m's else part alone, so K_{m-1} = c_m - W, which lies in c_m - I_{m mod 5}
+    //       = I_{(m-1) mod 5}. Step: if K_j lies in I_r, then K_j | W lies in I_r, (*) applies,
+    //       and K_{j-1} lies in c_r - I_r = I_{(r-1) mod 5}. So B_j has at most |I_r| = 15 nodes;
+    //       at S_j the tree before the reflection has K_j | W in I_r and after it c - (K_j | W),
+    //       and M_j keeps that, so at most 15 there too; A_j has one node. Trees of O(1) nodes and
+    //       height. 15 is the least width that works for all five: the centers d_r are forced by
+    //       c_r - d_r = d_{r-1} around the cycle of five (d_0 = 2 - d_0), and I_3 must reach
+    //       -2 from d_3 = 5. It is also reached: `counts::if_tree_nodes` reads 15 at every n from
+    //       11 to 128 and at 1024 (ref_memo::the_min_gap_chain_keeps_b_to_fifteen_nodes,
+    //       bench::ref_memo::normal_min_gap_keeps_its_b_nodes_at_1024; both fail at 14). The
+    //       earlier bound, 37 nodes from cuts in [-15, 20], also held, but with no node count
+    //       behind it.
     //   (D) labels are made only by A's else parts ({k + 1} at link k < m, [m + 1, M] at m),
     //       joined only at S_k, met (shrinking) by the masks and copied by `val_at`. So a label
     //       at B_j is a union of some of {j + 2}, ..., {m} and [m + 1, M], and at S_j or M_j of
@@ -3455,7 +3471,7 @@ impl<'t> Tx<'t> {
     // pieces costs O(log p) time and new nodes (Blelloch, Ferizovic and Sun 2016, interval.rs
     // `union`). So a link costs O(log n) time and bytes, O(n log n) in all. The leaves (`Input`
     // at A_0 and B_0) run once in `solve_1d`: `eval_diagonal` costs O(n log n) (a seek per
-    // node, O(1) nodes by (C), then the sort in `from_pieces` of at most 37 (m + 1) pieces by
+    // node, O(1) nodes by (C), then the sort in `from_pieces` of at most 15 (m + 1) + 1 pieces by
     // (D)). The proof covers
     // `inverse_states` only, as K124 does, not the rest of `preimage_in`.
     // Measured (BENCH-ref-memo-normal-min-gap-bytes): first-run bytes per link rise by 4,065
@@ -3540,6 +3556,10 @@ impl<'t> Tx<'t> {
             #[cfg(feature = "counts")]
             crate::preimage::counts::note_inverse(0, step.fwd.len());
             let st = st.clip_values(&step.fwd);
+            #[cfg(feature = "counts")]
+            if matches!(step.kind, StepKind::If(..)) {
+                crate::preimage::counts::note_if_tree_nodes(|| tree_nodes(&st.excl));
+            }
             let top = unbranched.contains(&u);
             let mut child = |c, next| {
                 if top {
@@ -3754,6 +3774,12 @@ impl State1d {
 
 fn tree_height(t: &Tree) -> usize {
     t.as_ref().map_or(0, |n| n.height)
+}
+/// The nodes of `t`, O(p) for p nodes; the recursion is as deep as the AVL height, O(log p).
+#[cfg(feature = "counts")]
+fn tree_nodes(t: &Tree) -> usize {
+    t.as_ref()
+        .map_or(0, |n| 1 + tree_nodes(&n.left) + tree_nodes(&n.right))
 }
 // A positive Euclidean quotient has ordered, disjoint inverse intervals. Map the
 // existing balanced tree in place structurally instead of collecting it and

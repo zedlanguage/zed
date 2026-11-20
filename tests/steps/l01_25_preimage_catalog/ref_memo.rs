@@ -898,6 +898,37 @@ fn the_round_down_chain_keeps_three_pieces_and_one_piece_labels() {
     }
 }
 
+/// COMPLEXITY.md K138 (C): the tree of B_j, the largest `If` tree of `normal_min_gap`, has at
+/// most 15 nodes at every n, as the proof at `Tx::inverse_states` derives (its excluded values
+/// lie in one of five runs of 15 integers). 15 is reached, from n = 11 on.
+pub(super) const MIN_GAP_B_NODES: u64 = 15;
+
+/// K138 (C) at every n to 128; `bench::ref_memo::normal_min_gap_keeps_its_b_nodes_at_1024`
+/// reads the benchmark's size. The bound is reached, so one fewer fails this test.
+#[test]
+fn the_min_gap_chain_keeps_b_to_fifteen_nodes() {
+    let mut most = 0;
+    for n in 1..=128 {
+        let m = min_gap_if_tree_nodes(n);
+        assert!(m <= MIN_GAP_B_NODES, "normal_min_gap at {n}: {m} nodes");
+        most = most.max(m);
+    }
+    assert_eq!(most, MIN_GAP_B_NODES, "the bound is reached");
+}
+
+/// The most nodes of the tree of an `If` node at its step in the preimage of `normal_min_gap`
+/// at `n` links ([`zedc::store::preimage::counts::if_tree_nodes`]), read on the calling thread.
+pub(super) fn min_gap_if_tree_nodes(n: usize) -> u64 {
+    use zedc::store::preimage::counts::{count_if_tree_nodes, if_tree_nodes};
+    let mut most = 0;
+    for (t, ds, d) in family("normal_min_gap", n) {
+        count_if_tree_nodes();
+        preimage(&t, &ds, &d);
+        most = most.max(if_tree_nodes().expect("recording on this thread"));
+    }
+    most
+}
+
 /// The most pieces of a forward image and of a label in the preimage of `normal_round_down` at
 /// `n` links ([`zedc::store::preimage::counts::inverse_most`]), read on the calling thread.
 pub(super) fn round_down_most(n: usize) -> [u64; 2] {

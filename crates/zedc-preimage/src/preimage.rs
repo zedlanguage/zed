@@ -11590,6 +11590,30 @@ pub mod counts {
         pub(crate) static ZERO_CYCLES_TIED: Cell<u64> = const { Cell::new(0) };
         pub(crate) static NEGATIVE_CYCLES: Cell<[u64; 2]> = const { Cell::new([0, 0]) };
         pub(crate) static INVERSE_MOST: Cell<[u64; 2]> = const { Cell::new([0, 0]) };
+        pub(crate) static IF_TREE_NODES: Cell<Option<u64>> = const { Cell::new(None) };
+    }
+
+    /// Starts recording, on this thread, the most nodes in the tree of excluded values of an
+    /// `If` node at its step of `Tx::inverse_states`, after its clip (COMPLEXITY.md K138 (C):
+    /// on `normal_min_gap` the `If` nodes are A_j, one node, and B_j). Off until this is
+    /// called, since each count walks the whole tree, O(p) for p nodes, which would make an
+    /// O(log p) step linear.
+    pub fn count_if_tree_nodes() {
+        IF_TREE_NODES.set(Some(0));
+    }
+
+    /// The most nodes recorded since [`count_if_tree_nodes`] (`None` when it was not called),
+    /// and stops recording.
+    pub fn if_tree_nodes() -> Option<u64> {
+        IF_TREE_NODES.replace(None)
+    }
+
+    /// Raises the most of [`if_tree_nodes`] to `count()` while recording; does not call
+    /// `count` otherwise.
+    pub(crate) fn note_if_tree_nodes(count: impl FnOnce() -> usize) {
+        if let Some(most) = IF_TREE_NODES.get() {
+            IF_TREE_NODES.set(Some(most.max(count() as u64)));
+        }
     }
 
     /// The most pieces seen on this thread since the last call, and resets both to 0: of a

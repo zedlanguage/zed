@@ -9,7 +9,9 @@ use zed_tests::scaling;
 use zedc::store::preimage_ref::{Demand, Domains, preimage};
 
 use crate::bench::s22::on_big_stack;
-use crate::ref_memo::{answer_pieces, family, output_grid, round_down_most};
+use crate::ref_memo::{
+    MIN_GAP_B_NODES, answer_pieces, family, min_gap_if_tree_nodes, output_grid, round_down_most,
+};
 
 /// [`scaling::compare`] on the reference preimage of the family `name` at `n` and `8n` links: a
 /// pass of order n, held to [`scaling::LIMIT`] with the note from [`scaling::PREFERRED`]. Every
@@ -122,6 +124,19 @@ fn normal_round_down_keeps_its_pieces_at_large_sizes() {
         for n in [1024, 2048, 4096, 8192] {
             assert_eq!(round_down_most(n), [3, 1], "normal_round_down at {n}");
         }
+    });
+}
+
+/// COMPLEXITY.md K138 (C) at the 1024 links `normal_min_gap_scales` times, which need a large
+/// stack: B_j's tree reaches its bound of [`MIN_GAP_B_NODES`] nodes and no more.
+#[test]
+fn normal_min_gap_keeps_its_b_nodes_at_1024() {
+    on_big_stack(|| {
+        assert_eq!(
+            min_gap_if_tree_nodes(1024),
+            MIN_GAP_B_NODES,
+            "normal_min_gap at 1024"
+        );
     });
 }
 
