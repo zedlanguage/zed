@@ -6077,6 +6077,10 @@ impl WrittenRange {
 
 impl std::hash::Hash for WrittenRange {
     /// Equal ranges have one text.
+    // Why hashing the text alone agrees with the derived `Eq` (proofdoc4c): `Eq` compares
+    // `low`, `high` and `text`, so two equal ranges have equal texts and so equal hashes, which
+    // is all `Hash` must keep; two ranges with one text and other bounds would only share a
+    // hash. Each text is made by [`WrittenRange::new`] from the two bounds alone.
     fn hash<H: std::hash::Hasher>(&self, h: &mut H) {
         self.text.hash(h);
     }
@@ -12701,7 +12705,15 @@ impl<'m, 's> Comparing<'m, 's> {
             // that `u`'s tuples held in part was kept whole: `((..), (..)) \ ((..), (int, int))`
             // was read as `((..), (..))`, and a parameter of that type took `((1, 2), (3, 4))`.
             // A row with no kernel type, or beside a tuple of `u` with none, is still kept whole
-            // when `u` holds it in part, so the type may hold more than the difference.
+            // when `u` holds it in part, so the type may hold more than the difference. That is
+            // sound for `is not`, whose narrowed type need only hold the values that pass. Not
+            // proved, and false, for a written type (FAIL-ty-diff-function-rows, found by
+            // proofdoc4c): zedc-check reads a written `a \ b` by this function (`TypeKind::Diff`
+            // in its reading of a written type, crates/zedc-check/src/check/mod.rs), so
+            // `f(p: ((int) -> int, #a | #b) \ ((int) -> int, #a)) = p` is read as
+            // `(int -> int, #a | #b)` and `f(p: (inc, #a))` is accepted, though DESIGN.md
+            // sec:type_language makes `t1 \ t2` sugar for `t1 & !t2`. The same holds for
+            // `((int) -> int, (..)) \ ((int) -> int, (int, int))` and `(inc, (1, 2))`.
             let k = a.0.exact.clone().or_else(|| a.kernel());
             // What of `u` may share a value with the row: its kind-wide part and the kernel
             // types, payloads read, of its tuples near the row. None when one of those tuples
@@ -12763,7 +12775,8 @@ impl<'m, 's> Comparing<'m, 's> {
         // two unions of n tuples is empty grows as n^2.3 (10 s at n = 1,024), where the shapes
         // are met through `near_pairs`. A shape with no kernel type, or near a shape of `u`
         // with none, or a `u` that holds a variable or the unknown, is still kept whole, so
-        // the type may hold more than the difference, as for tuples.
+        // the type may hold more than the difference, as for tuples: sound for `is not`, and
+        // not proved, as for tuples, for a written type (FAIL-ty-diff-function-rows).
         let exact_u = !u.dynamic && u.vars.is_empty();
         let mut gone = Vec::new();
         for (n, us) in &listed {
