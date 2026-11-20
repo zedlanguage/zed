@@ -1,15 +1,54 @@
-//! Canonical color refinement (Berkholz, Bonsma and Grohe, "Tight lower and upper bounds for
-//! the complexity of canonical colour refinement", Theory Comput. Syst. 60, 2017; arXiv:1509.08251,
-//! section 3, Algorithms 2 and 3): the coarsest stable coloring of a graph, its colors numbered
-//! by the structure alone. A coloring is stable when any two vertices of one color have, for
-//! every color, as many neighbors of that color. A popped color class R refines every class by
-//! the number of neighbors in R each of its vertices has. After a split, the largest new class is
+//! Canonical color refinement: the coarsest stable coloring of a graph, its colors numbered by
+//! the structure alone. A coloring is stable when any two vertices of one color have, for every
+//! color, as many neighbors of that color. A popped color class R refines every class by the
+//! number of neighbors in R each of its vertices has. After a split, the largest new class is
 //! not pushed unless the old one was waiting (Hopcroft's rule, "process the smaller half"), so a
-//! vertex is in O(log N) refining classes in all: O((N + M) log N) for N vertices and M arcs
-//! (Paige and Tarjan, "Three partition refinement algorithms", SIAM J. Comput. 16(6), 1987,
-//! end of section 3). New colors are numbered in the increasing order of (old color, number of
-//! neighbors), never by a hash, so two isomorphic graphs whose starting colors correspond get
-//! the same color at corresponding vertices.
+//! vertex is in O(log N) refining classes in all: O((N + M) log N) for N vertices and M arcs.
+//! New colors are numbered in the increasing order of (old color, number of neighbors), never
+//! by a hash, so two isomorphic graphs whose starting colors correspond get the same color at
+//! corresponding vertices.
+//!
+//! Source. C. Berkholz, P. Bonsma and M. Grohe, "Tight lower and upper bounds for the complexity
+//! of canonical colour refinement", Theory of Computing Systems 60(4), 581-614, 2017 (online
+//! 2016), doi:10.1007/s00224-016-9686-0; arXiv:1509.08251. Section 3.2, Algorithm 1 ("A
+//! canonical colour refinement algorithm"), is the algorithm here; Algorithms 2 and 3 are its
+//! fast implementation and the subroutine SplitUpColour. Algorithm 1 in the paper's steps and
+//! this module's code:
+//! - lines 5-7: a stack Q holds the starting colors in increasing order; pop a refining color
+//!   r (`Worklist::first(.., Order::Lifo)` and `waiting.pop` in [`Refine::run`]);
+//! - line 9: cdeg(v) = |N+(v) ∩ C_r| for every vertex (`count`, filled from the arcs of `adj`);
+//! - lines 10-11: the colors whose vertices differ in cdeg, "in increasing order" (`splits`,
+//!   sorted);
+//! - lines 16-17: the new colors are {s} ∪ {maxcol + 1, ...}, given to the values of cdeg in
+//!   increasing order, so the least value keeps s (`Refine::split`, `i == least[c]`);
+//! - lines 22-28: if s is on Q every new color is pushed; otherwise all but the color of
+//!   "b := min{i | for all j: NumDeg(i) >= NumDeg(j)}", the least value among the largest
+//!   classes (`big`, chosen with a strict `>` so that ties go to the least value).
+//!
+//! The bound is the arXiv version's Lemmas 3 and 4 and Theorem 5 (section 3.3): one iteration
+//! costs O(|R| + D-(R) + k log k), and "every v in V(G) appears at most log2 n times in a
+//! refining colour class", since a pushed class has at most half the vertices of the class it
+//! split from, which gives O((n + m) log n) in all. The paper credits the halving to Hopcroft's DFA
+//! minimization and the bound first to Cardon and Crochemore, then to Paige and Tarjan, "Three
+//! partition refinement algorithms", SIAM J. Comput. 16(6), 973-989, 1987,
+//! doi:10.1137/0216062, p. 982.
+//!
+//! Departures. Colors count from 0, not 1. The paper refines by out-neighbors N+(v); here the
+//! caller gives the arcs to count (`adj`), so a directed graph refines by whichever side it
+//! lists. Algorithm 2's sort of the new colors' cdeg values, O(k log k), is a count over
+//! `0..=most[c]` here, O(max cdeg), which the arcs read in the same iteration already pay for.
+//!
+//! Checked 2026-11-19 against the arXiv LaTeX of 1509.08251 (creffull9_clean.tex lines 291-345
+//! for Algorithm 1, 456-498 for the lemma and its proof, 165-171 for the credits); Crossref
+//! metadata for both papers. Paige and Tarjan's text was not read: the bound and the page are
+//! taken from Berkholz, Bonsma and Grohe's citation of it (line 165).
+//!
+//! Tested by `refine::tests`: the result is compared with the naive refinement by rounds on
+//! random digraphs, which catches a refinement that stops early or splits too much, such as
+//! one that drops the rule that pushes every part of a class that was waiting; and relabeled
+//! copies of each graph must get the same color at corresponding vertices, which catches
+//! colors numbered in an order that follows the vertices' numbers, such as splits handled in
+//! the order they were met. Neither test measures the O((N + M) log N) time.
 //!
 //! The neighbors are given as arcs: popping class R counts, for each vertex `w` listed in
 //! `adj` of a vertex of R, the arcs into R from `w`. An undirected graph lists each edge both
@@ -202,3 +241,6 @@ impl Refine {
         self.hit[c] = hit;
     }
 }
+
+#[cfg(test)]
+mod tests;
