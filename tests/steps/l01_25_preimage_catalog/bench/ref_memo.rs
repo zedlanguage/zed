@@ -75,7 +75,16 @@ scaling_tests! {
     normal_holey_guards_scales: "normal_holey_guards" at 16;
     normal_incompatible_moduli_16_scales: "normal_incompatible_moduli" at 16;
     normal_incompatible_moduli_scales: "normal_incompatible_moduli" at 4;
-    normal_min_gap_scales: "normal_min_gap" at 16;
+    // At 1024 (BENCH-ref-memo-normal-min-gap-bytes), as `normal_round_down` below: the first run
+    // allocates a + b log2 n bytes per link, b near 4,500 (a rise of 4,065 to 4,947 at each
+    // doubling from 128 to 8192: 58.6k, 62.8k, 67.3k, 72.3k, 76.8k, 80.9k, 85.3k per link, with
+    // no growth in the rise, which a term c n per link would double), the path copies of the
+    // persistent labels, whose largest has n / 2 pieces (`counts::inverse_most`). At 16 the
+    // ratio of such work is 8 (a + 7b) / (a + 4b), over 10.5 when a < 5.6 b: it read 10.40 to
+    // 10.73 as a fell; at 1024 the ratio is at most 8 log(8n) / log n = 10.4 for any a (P300),
+    // and reads 9.45 by the per-link bytes above. Byte counts do not depend on load. Proof of
+    // the log factor: row PROOF-min-gap-log-per-link.
+    normal_min_gap_scales: "normal_min_gap" at 1024;
     normal_mixed_moduli_scales: "normal_mixed_moduli" at 16;
     normal_mod_chain_scales: "normal_mod_chain" at 16;
     normal_mul_base_scales: "normal_mul_base" at 16;
