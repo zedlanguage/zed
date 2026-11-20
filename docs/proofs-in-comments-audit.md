@@ -18,8 +18,29 @@ status, with counts per crate at its top:
   zedc-solvers 1, 1; zedc-int 1, 1. Every memo dryC1 named is safe; `RunMark` holds by a
   convention of its callers, row TYPES-run-marks-move-safe.
 
-Not swept: the agent reports under /home/luke/Work/wt (all three), the running log and ledger
-(proofdoc1a and proofdoc1b), the commits each agent ranked below its cut, and the crates
-zedc-resolve, zedc-stage, zedc, zedc-syntax, zedc-lattice (one row only), zed-cert and
-zed-meter-settings. The audit is a first pass, not a complete one; the rest is row
-DOC-proofs-in-comments-audit-rest.
+The second pass, row DOC-proofs-in-comments-audit-rest, swept what the first left:
+
+- [proofdoc2](proofs-audit/proofdoc2.md): the rest of proofdoc1a's crates, the ledger and
+  running log for them, the agent reports under /home/luke/Work/wt (no code claim in them), and
+  the two rows the first pass filed (FAIL-rt-fault-mprotect-signal-safety, cf4648fff;
+  TYPES-run-marks-move-safe, ea2e24555). zed-kernel 25 found, 20 already there, 1 added, 2 Not
+  proved (rows named at the sites); zedc-zir 3, 1, 2, 0, 1 corrected; zed-rt 1, corrected;
+  zedc-types 1, added, corrected; zed-alloc-count 1, 1; zed-clif 1, 1. One fault fixed with a
+  test: zedc-zir `Domain::normal` kept a class built from its fields as written, so `4 mod 9`
+  and `1 mod 4` had two normal forms.
+- [proofdoc2a](proofs-audit/proofdoc2a.md): zedc-resolve, zedc-stage, zedc, zedc-syntax,
+  zedc-lattice, zed-cert, zed-meter-settings, and two leftovers of proofdoc1b. 98 claims found,
+  9 already there, 87 added, 1 Not proved (row PROOF-meter-no-thread-before-main), 2
+  corrected. One fault fixed with a test: a `main` in a block inside a string's hole made the
+  syntax-tree builder panic.
+- [proofdoc2b](proofs-audit/proofdoc2b.md): zedc-check, zedc-types, zedc-presburger,
+  zedc-preimage, zedc-base, zedc-elab, zedc-solvers, zedc-int, from the commits ranked highest.
+  32 found, 15 already there, 14 added, 1 Not proved (row PROOF-never-bind-order-fit-needs), 4
+  corrected. One fault fixed with a test: a map or set display with a key of many values was
+  typed as a guaranteed read (`{ n -> 10 }[n + 1]` gave `#notFound` at run time), row
+  FAIL-display-computed-key-sure; and the pair count of PROOF-star-pairs was false.
+
+Not swept: the commits each table of the second pass lists as not read (proofdoc2: 156;
+proofdoc2b: 28 at score 4 or more and all 382 entries below), proofdoc2a's high-ranked commits
+whose code moved to zedc-check, zedc-elab and zedc-types, and the sites proofdoc2a names as not
+traced. They are row DOC-proofs-in-comments-audit-rest-2.

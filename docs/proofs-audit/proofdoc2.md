@@ -92,3 +92,4 @@ bea44d4a5 37148785d 2de401ae4 86b17eae2 6ff237028 bc75c1615 877fc8603 1f50505a3 
 | grep | every cycle of the texts passes through a definition | zed-kernel types/print.rs line 725 | Not proved at the site (ASSUME-documented); row PROOF-sweep-zed-kernel |
 | grep | the 64 TiB reservation is enough | zed-alloc-count meter.rs `RESERVED` | already there: the site says why no answer rests on it |
 | grep | Cranelift's cost per function | zed-clif lib.rs `generate` | already there: time only, and the site says why |
+| agent reports under /home/luke/Work/wt | any claim a code site relies on | `proofs/REPORT.md` (design study of 2026-11-03: Osprey, Mathlib, the language's proof support), `REPORT-dry-interim-2026-11-19.md` (duplication), `research/weierstrass-p358.jsonl` (search results) | no code claim: the design study names one file, a test path of plan row L33.4; the duplication report has no proof, bound or invariant; the jsonl is data |
