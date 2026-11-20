@@ -1027,6 +1027,22 @@ fn no_question_of_a_random_chain_with_negations_is_refused_where_its_relation_is
     random_negated_chains_decided(&mut rng, 2);
 }
 
+/// [`no_question_of_a_random_chain_with_negations_is_refused_where_its_relation_is_decided`] at
+/// seed 13254895221319191796, which ran past 60 s where the test takes about 1.3 s
+/// (FAIL-omega-negations-slow-13254895221319191796). Its chain 1 asks of `p9` a question whose
+/// bound form is one atom in `[12, 23]` under 11 clauses over the moduli 2 to 8: the coprime
+/// path of `modular` left it undecided (12 points against a period of 840), so the general path
+/// took 4 to 15 s on each form and refused. `sweep_bounded` decides it.
+#[test]
+fn no_question_of_a_random_chain_with_negations_is_refused_at_seed_13254895221319191796() {
+    let mut rng = zed_tests::instances::Rng::new(13254895221319191796);
+    let decided = random_negated_chains_decided(&mut rng, 2);
+    assert_eq!(
+        decided, 92,
+        "answers of the whole of chains 0 and 1 of seed 13254895221319191796"
+    );
+}
+
 /// The answers of the whole decided over `count` chains of [`random_negated_chain`], each
 /// checked as [`answers_with_faces_are_those_without`] checks it.
 pub(super) fn random_negated_chains_decided(
@@ -4086,13 +4102,16 @@ fn one_variable_modular_formulas_match_enumeration() {
     // with their counts of refusals and of empty answers, are in `bench::one_scope` (1.5 s at
     // load 25). No count of answers is reached at every seed, so none is asserted on the fresh
     // formulas; the first 800 of seed 0x70de_c1de have their counts exact, so that answers with
-    // a point, with none, and empty answers the general path agreed with each occur.
+    // a point, with none, and empty answers the general path agreed with each occur. Empty
+    // answers agreed were 126 until FAIL-omega-negations-slow-13254895221319191796: two
+    // formulas the one-variable path left to the general path, which found them empty, are
+    // now found empty by `modular::sweep_bounded` and the general path agrees.
     let (mut rng, _) = zed_tests::instances::Rng::fresh("one-variable modular formulas");
     modular_formulas_match(&mut rng, 0, 800);
     let c = modular_formulas_match(&mut zed_tests::instances::Rng::new(0x70de_c1de), 0, 800);
     assert_eq!(
         (c.sat, c.unsat, c.refused, c.empty_agreed, c.empty_refused),
-        (679, 120, 1, 126, 4),
+        (679, 120, 1, 128, 4),
         "the first 800 formulas of seed 0x70de_c1de: {c:?}"
     );
 }
@@ -4568,10 +4587,11 @@ fn easy_clause_systems_over_several_moduli_keep_their_answers() {
     let least = (1..)
         .find(|&x| pair_clauses_hold(&[p57, p1113], Some((x - 1, x + 1))))
         .unwrap();
-    // The third field: whether the solver answers `holds`. The two cases with `false`, which
-    // hold nowhere in a range shorter than the period of their moduli, are in
-    // `easy_clause_systems_held_nowhere_short_of_their_period_are_refused` and
-    // `bench::one_scope` (0.8 s and 2.7 s at load 50).
+    // The third field: whether the solver answers `holds`. The two cases that hold nowhere in
+    // a range shorter than the period of their moduli, refused until
+    // FAIL-omega-negations-slow-13254895221319191796, are in
+    // `easy_clause_systems_held_nowhere_short_of_their_period_are_answered` and
+    // `bench::one_scope` (0.8 s and 2.7 s at load 50 when refused).
     let cases: Vec<ResidueCase<'_>> = vec![
         (vec![p57, p1113], None, true),
         (vec![p57, p1113], Some((0, 100_000)), true),
@@ -4591,18 +4611,20 @@ fn easy_clause_systems_over_several_moduli_keep_their_answers() {
 }
 
 #[test]
-fn easy_clause_systems_held_nowhere_short_of_their_period_are_refused() {
+fn easy_clause_systems_held_nowhere_short_of_their_period_are_answered() {
     // PNCX-modular, R2: `(x mod 5 == 0 || x mod 7 == 0) && (x mod 5 == 1 || x mod 7 == 1)` and
     // the same over 11 and 13 hold nowhere in `[0, least]`, a range shorter than the period of
-    // their moduli; the general path refuses `holds` there, as it did before the one-variable
-    // path (measured on d5714627), and `fails` is answered.
+    // their moduli. The general path refused `holds` there, as it did before the one-variable
+    // path (measured on d5714627); since FAIL-omega-negations-slow-13254895221319191796
+    // `modular::sweep_bounded` answers it, false, over the range's pieces of each clause, and
+    // `fails` is answered.
     let easy: &[i64] = &[0, 1];
     let (p57, p1113) = (((5, 7), easy), ((11, 13), easy));
     let least = (1..)
         .find(|&x| pair_clauses_hold(&[p57, p1113], Some((x - 1, x + 1))))
         .unwrap();
     let seen =
-        easy_clause_systems_keep_their_answers(vec![(vec![p57, p1113], Some((0, least)), false)]);
+        easy_clause_systems_keep_their_answers(vec![(vec![p57, p1113], Some((0, least)), true)]);
     assert_eq!(seen, [1, 0]);
 }
 
@@ -4663,6 +4685,74 @@ fn a_residue_set_over_two_moduli_that_share_a_factor_keeps_its_residues() {
         let b = plain.defined(&r, &|n| scoped.def(n));
         assert_eq!(a.holds, Ok(want), "holds (faced)\n{src}");
         assert_eq!(b.holds, Ok(want), "holds (plain)\n{src}");
+    }
+}
+
+/// Chain 1 of seed 13254895221319191796 of [`random_negated_chain`]
+/// (FAIL-omega-negations-slow-13254895221319191796) at `n = 10` links, as drawn; longer chains
+/// repeat its last three links, which move the argument by 4, -6 and 2. The links move the
+/// argument by many different amounts, so the callee's residue conditions come in at many
+/// offsets, and `p6` keeps `x < 18`, so the questions of `p6` on reach one atom over about a
+/// dozen points under clauses over the moduli 2 to 9. The three repeated moves sum to 0, so
+/// the offsets stay bounded and the chain stays non-empty at any length.
+pub(super) fn short_window_chain(n: usize) -> String {
+    let mut src = String::from(
+        "q(x: int) = !(x mod 4 == 3 && x > 37) && (x mod 6 == 4 || x mod 7 != 1) && x > 0 \
+         && x < 190;\n\
+         p0(x: int) = x > 7;\n\
+         p1(x: int) = q(x: x) && p0(x: x + 1) && x < 399 && (x mod 7 == 5 || x mod 5 != 1);\n\
+         p2(x: int) = q(x: x) && p1(x: x + 6) && x < 253 && x mod 2 != 1;\n\
+         p3(x: int) = q(x: x) && p2(x: x + 5) && x < 140;\n\
+         p4(x: int) = q(x: x) && p3(x: x + (0 - 4)) && x < 127 && (x mod 3 == 2 || x mod 4 != 1);\n\
+         p5(x: int) = q(x: x) && p4(x: x + (0 - 3)) && x < 181;\n\
+         p6(x: int) = q(x: x) && p5(x: x + 2) && x < 18 && (x > (0 - 5) || x < 0);\n",
+    );
+    for i in 7..n {
+        let (shift, below, extra) = match i % 3 {
+            1 => ("4", 236, "x mod 8 != 7"),
+            2 => ("(0 - 6)", 153, "x mod 9 != 4"),
+            _ => ("2", 101, "(x < 30 || x mod 3 != 2)"),
+        };
+        src.push_str(&format!(
+            "p{i}(x: int) = q(x: x) && p{}(x: x + {shift}) && x < {below} && {extra};\n",
+            i - 1
+        ));
+    }
+    src
+}
+
+/// The answers of `unit`'s functions read under one scope in the unit's order, each decided
+/// from the answers of the conjunctions it extends with faces (`Extending::defined_with`), as
+/// [`answers_with_faces_are_those_without`] reads them but without the whole relations it
+/// decides to check them: how many were refused.
+pub(super) fn extending_refusals(unit: &Unit) -> usize {
+    use zedc::store::presburger::extend::Extending;
+    let lets = lets(unit);
+    let fs = functions(unit);
+    let mut scoped = Scoped::new(&lets);
+    let mut faced = Extending::new();
+    let mut refused = 0;
+    for &(_, ps, body) in &fs {
+        let Some(r) = scoped.relation(body, ps, ps, true) else {
+            continue;
+        };
+        let a = faced.defined_with(&r, &|n| scoped.def(n), &|g| scoped.interface(g));
+        refused += usize::from(a.holds.is_err()) + usize::from(a.fails.is_err());
+    }
+    refused
+}
+
+/// [`short_window_chain`] at 10 links is chain 1 of seed 13254895221319191796 as drawn, and no
+/// question of it is refused; at 13 links, too. Without `modular::sweep_bounded` the questions
+/// of `p9` went to the general path, which took seconds on each and refused them.
+#[test]
+fn a_chain_over_a_short_window_of_many_moduli_has_no_question_refused() {
+    let mut rng = zed_tests::instances::Rng::new(13254895221319191796);
+    random_negated_chain(&mut rng);
+    assert_eq!(short_window_chain(10), random_negated_chain(&mut rng));
+    for n in [10, 13] {
+        let unit = elab(&short_window_chain(n)).unwrap();
+        assert_eq!(extending_refusals(&unit), 0, "at {n} links");
     }
 }
 

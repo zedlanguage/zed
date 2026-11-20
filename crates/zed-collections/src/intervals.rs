@@ -435,6 +435,61 @@ pub fn complement_spans<T: Discrete>(
     out
 }
 
+/// The least integer that every one of the normal lists `lists` holds, `None` when they have
+/// none in common (and `None` for no list: the caller reads an empty meet as it means it).
+///
+/// Proof: a normal list's intervals are disjoint, so the number `c(p)` of lists holding `p` is
+/// the number of intervals, over all lists, holding `p`. Each interval `[a, b]` adds one to `c`
+/// from `a` and takes it off from `b + 1` (never, when `b` is the type's greatest value). `c` is
+/// constant between two consecutive event positions, so after the events at a position `p` are
+/// applied, `c` is its value on all of `[p, next event)`. The least common integer is therefore
+/// the first event position after whose events `c` equals the number of lists, and there is
+/// none when no position reaches it.
+///
+/// Complexity tradeoff: the naive way meets the lists one after another with [`intersect`], in
+/// O(k N) for `k` lists of `N` intervals in all, since the running meet can keep up to `N`
+/// intervals while each list is met. Used: one sort of the `2N` events, O(N log N), then one
+/// pass. Test: `tests::first_in_all_matches_the_meet`.
+pub fn first_in_all<T: Discrete>(lists: &[Vec<(T, T)>]) -> Option<T> {
+    if lists.is_empty() {
+        return None;
+    }
+    // `true` adds one; at one position the order of the events does not matter, as `c` is read
+    // only after all of them.
+    let mut events: Vec<(T, bool)> = Vec::new();
+    for list in lists {
+        for (a, b) in list {
+            if a > b {
+                continue;
+            }
+            events.push((a.clone(), true));
+            if let Some(after) = b.succ() {
+                events.push((after, false));
+            }
+        }
+    }
+    events.sort_unstable_by(|x, y| x.0.cmp(&y.0));
+    let mut count = 0usize;
+    let mut i = 0;
+    while i < events.len() {
+        let at = &events[i].0;
+        let mut j = i;
+        while j < events.len() && events[j].0 == *at {
+            if events[j].1 {
+                count += 1;
+            } else {
+                count -= 1;
+            }
+            j += 1;
+        }
+        if count == lists.len() {
+            return Some(at.clone());
+        }
+        i = j;
+    }
+    None
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -477,6 +532,28 @@ mod tests {
                 assert_eq!(minus(&a, &b), runs(x & !y));
             }
         }
+    }
+
+    /// Every triple of subsets of `0..8` (and the lists of one and two of them): the first
+    /// common member is the least member of the bit meet; also at `u8::MAX`, where an interval
+    /// has no end event.
+    #[test]
+    fn first_in_all_matches_the_meet() {
+        let least = |bits: u32| (bits != 0).then(|| bits.trailing_zeros() as u8);
+        assert_eq!(first_in_all::<u8>(&[]), None);
+        for x in 0..256u32 {
+            assert_eq!(first_in_all(&[runs(x)]), least(x));
+            for y in 0..256u32 {
+                assert_eq!(first_in_all(&[runs(x), runs(y)]), least(x & y));
+                for z in (0..256u32).step_by(7) {
+                    assert_eq!(first_in_all(&[runs(x), runs(y), runs(z)]), least(x & y & z));
+                }
+            }
+        }
+        assert_eq!(
+            first_in_all(&[vec![(250u8, 255)], vec![(0, 3), (255, 255)]]),
+            Some(255)
+        );
     }
 
     /// Intervals that overlap, nest and touch, in any order.

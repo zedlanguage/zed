@@ -284,10 +284,27 @@ pub(super) const LISTED: u64 = 7;
 /// by a step of the solver (each site says what it charges), and the units charged are a
 /// count, the same on every run.
 pub(super) fn charge(units: u64) -> Result<(), Refusal> {
+    charge_units(units.saturating_mul(SOLVER_STEP))
+}
+
+/// Charges `pieces` pieces of a residue set the solver makes and reads, [`PIECE`] units each,
+/// to the meter of the question running, as [`charge`] does: `modular::sweep_bounded`, whose
+/// pieces are counted by the width of its interval and not by the rows of the formula, so the
+/// per-row charge of [`QUESTION_ROW`] does not cover them
+/// (FAIL-omega-negations-slow-13254895221319191796). Not measured at that site: [`PIECE`] was
+/// measured on the pieces `exact::residues` reads (their ends converted, residues taken, a set
+/// met), and a piece of the sweep is made, sorted and met in the same way, so it is charged
+/// the same; unproved that it bounds the sweep's CPU time a piece.
+pub(super) fn charge_pieces(pieces: u64) -> Result<(), Refusal> {
+    charge_units(pieces.saturating_mul(PIECE))
+}
+
+/// Charges `units` units of [`EXACT_LIMIT`] to the meter of the question running, if any.
+fn charge_units(units: u64) -> Result<(), Refusal> {
     match METER.get() {
         None => Ok(()),
         Some(Meter { used, limit }) => {
-            let used = used.saturating_add(units.saturating_mul(SOLVER_STEP));
+            let used = used.saturating_add(units);
             METER.set(Some(Meter { used, limit }));
             if used > limit {
                 Err(Refusal::Questions)

@@ -935,6 +935,30 @@ fn the_questions_of_a_negated_modular_chain_scale() {
 }
 
 #[test]
+fn the_questions_of_a_chain_over_a_short_window_of_many_moduli_scale() {
+    // FAIL-omega-negations-slow-13254895221319191796: `short_window_chain`, chain 1 of seed
+    // 13254895221319191796 with its last three links repeated, read link by link with faces.
+    // Its questions from `p6` on are one atom over about a dozen points under clauses over the
+    // moduli 2 to 9; the coprime path of `modular` left them undecided, and the general path
+    // took 4 to 15 s on each and refused. `modular::sweep_bounded` decides each over one
+    // period's pieces, sorted once.
+    const N: usize = 40;
+    let units: std::collections::BTreeMap<usize, _> = [N, N * zed_tests::scaling::FACTOR]
+        .into_iter()
+        .map(|n| {
+            let src = short_window_chain(n);
+            (
+                n,
+                zed_tests::step_helpers::l01_16_elaboration::elab(&src).unwrap(),
+            )
+        })
+        .collect();
+    zed_tests::scaling::check("a chain over a short window of many moduli", N, |n| {
+        assert_eq!(extending_refusals(&units[&n]), 0);
+    });
+}
+
+#[test]
 fn the_coprime_base_of_distinct_primes_scales() {
     // PNCX-modular, R3 (R3-CLAUDE-3): the coprime base of `n` distinct primes is found by one
     // product tree, in which each prime is coprime to the product of the others, and the point
@@ -1143,8 +1167,10 @@ fn the_5000_one_variable_modular_formulas_of_seed_0x70dec1de_match_enumeration()
     // it on main since 9bbeb1ff, where `satisfiable` answers it (I4.3).
     assert!(c.refused <= 64, "refused={}", c.refused);
     // Measured on main 9bbeb1ff: 788 empty answers agreed, 10 refused by the general path, 0 of
-    // them with `x` unbounded above (on 4777a33e: 616, 182 and 2). An empty answer refused by the
-    // general path with `x` unbounded above is checked by nothing here.
+    // them with `x` unbounded above (on 4777a33e: 616, 182 and 2). Since
+    // FAIL-omega-negations-slow-13254895221319191796 (`modular::sweep_bounded`): 798, 6 and 0,
+    // and 6 cases refused (2026-11-20). An empty answer refused by the general path with `x`
+    // unbounded above is checked by nothing here.
     println!(
         "empty answers: {} agreed, {} refused by the general path, {} of them with x unbounded",
         c.empty_agreed, c.empty_refused, c.empty_unchecked
@@ -1177,9 +1203,13 @@ fn monotone_clamp_equalities_of_8_links_match_inverse_cuts_in_any_query_order() 
 
 /// The case of `one_scope::easy_clause_systems_over_several_moduli_keep_their_answers` as first
 /// written that took 2.7 s at load 50 (2026-11-14): the four pairs of moduli 3 and 4, 5 and 7,
-/// 11 and 13, 17 and 19 in `[0, 100000]`, which hold nowhere there; `holds` is refused.
+/// 11 and 13, 17 and 19 in `[0, 100000]`, which hold nowhere there. `holds` was refused; since
+/// FAIL-omega-negations-slow-13254895221319191796 `modular::sweep_bounded` answers it, false,
+/// over the box's pieces of each clause, about 2 · 100,001 / m of them for each literal of
+/// modulus m (0.21 s at load 53, 2026-11-20). The box is shorter than the period, 19,399,380,
+/// so the sweep's cost follows the box's width, not the period.
 #[test]
-fn easy_clause_systems_of_four_moduli_pairs_held_nowhere_in_a_box_are_refused() {
+fn easy_clause_systems_of_four_moduli_pairs_held_nowhere_in_a_box_are_answered() {
     let easy: &[i64] = &[0, 1];
     let pairs = vec![
         ((3, 4), easy),
@@ -1187,7 +1217,7 @@ fn easy_clause_systems_of_four_moduli_pairs_held_nowhere_in_a_box_are_refused() 
         ((11, 13), easy),
         ((17, 19), easy),
     ];
-    let seen = easy_clause_systems_keep_their_answers(vec![(pairs, Some((0, 100_000)), false)]);
+    let seen = easy_clause_systems_keep_their_answers(vec![(pairs, Some((0, 100_000)), true)]);
     assert_eq!(seen, [1, 0]);
 }
 

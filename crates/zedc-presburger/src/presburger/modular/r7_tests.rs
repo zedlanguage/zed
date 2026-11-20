@@ -428,3 +428,137 @@ fn found(out: &RegimeOut) -> Option<Int> {
         _ => None,
     }
 }
+
+/// `sweep_bounded` (FAIL-omega-negations-slow-13254895221319191796) gives the least point of
+/// `[l, h]` that every unit and every clause holds, or none, as testing each point does: over
+/// 500 drawn regimes of 1 to 4 units and 0 to 12 clauses of 1 to 3 literals over the moduli
+/// 2 to 9, with intervals from 1 point to past the period, and at the regime of chain 1 of
+/// seed 13254895221319191796, `[12, 23]` under clauses over the moduli 2 to 8.
+#[test]
+fn a_short_interval_over_many_moduli_is_decided_by_the_sweep() {
+    let holds = |x: i64, m: i64, s: &[(i64, i64)]| {
+        let r = x.rem_euclid(m);
+        s.iter().any(|&(a, b)| a <= r && r <= b)
+    };
+    type Lits = Vec<(i64, Vec<(i64, i64)>)>;
+    let check = |l: i64, h: i64, units: &Lits, clauses: &[Lits]| {
+        let set = |s: &[(i64, i64)]| -> ResidueSet {
+            s.iter()
+                .map(|&(a, b)| (Int::from(a), Int::from(b)))
+                .collect()
+        };
+        let unit_mods: BTreeMap<Int, ResidueSet> =
+            units.iter().map(|(m, s)| (Int::from(*m), set(s))).collect();
+        let cls: Vec<BTreeMap<Int, ResidueSet>> = clauses
+            .iter()
+            .map(|cl| cl.iter().map(|(m, s)| (Int::from(*m), set(s))).collect())
+            .collect();
+        let want = (l..=h).find(|&x| {
+            units.iter().all(|(m, s)| holds(x, *m, s))
+                && clauses
+                    .iter()
+                    .all(|cl| cl.iter().any(|(m, s)| holds(x, *m, s)))
+        });
+        let got = sweep_bounded(&Int::from(l), &Int::from(h), &unit_mods, &cls);
+        assert_eq!(
+            found(&got),
+            want.map(Int::from),
+            "[{l}, {h}] units {units:?} clauses {clauses:?}"
+        );
+        if want.is_none() {
+            assert!(matches!(got, RegimeOut::Empty));
+        }
+        want.is_some()
+    };
+    // A regime of the shape of `p9`'s question in chain 1 of seed 13254895221319191796: its
+    // bounds `[12, 23]` and units as the walk gave them to `solve_regime_step`; the clauses
+    // written by hand from the chain's residue conditions, not taken from the walk.
+    let not = |m: i64, r: i64| -> Vec<(i64, i64)> {
+        [(0, r - 1), (r + 1, m - 1)]
+            .into_iter()
+            .filter(|(a, b)| a <= b)
+            .collect()
+    };
+    check(
+        12,
+        23,
+        &vec![(2, vec![(0, 0)]), (8, vec![(0, 0), (2, 7)])],
+        &[
+            vec![(7, vec![(5, 5)]), (5, not(5, 1))],
+            vec![(3, vec![(2, 2)]), (4, not(4, 1))],
+            vec![(6, vec![(4, 4)]), (7, not(7, 1))],
+            vec![(9, not(9, 4))],
+        ],
+    );
+    // A small linear congruential generator (Knuth's MMIX constants), so the draws are fixed.
+    let mut state = 0x5eed_u64;
+    let mut below = |n: i64| {
+        state = state
+            .wrapping_mul(6364136223846793005)
+            .wrapping_add(1442695040888963407);
+        ((state >> 33) % n as u64) as i64
+    };
+    let lit = |below: &mut dyn FnMut(i64) -> i64| {
+        let m = 2 + below(8);
+        let a = below(m);
+        let b = a + below(m - a);
+        (m, vec![(a, b)])
+    };
+    // One literal per modulus in a unit list and in a clause, as the maps hold them.
+    let lits = |k: i64, below: &mut dyn FnMut(i64) -> i64| -> Lits {
+        let by_modulus: BTreeMap<i64, Vec<(i64, i64)>> = (0..k).map(|_| lit(below)).collect();
+        by_modulus.into_iter().collect()
+    };
+    let mut with_point = 0;
+    for _ in 0..500 {
+        let k = 1 + below(4);
+        let units = lits(k, &mut below);
+        let clauses: Vec<Lits> = (0..below(13))
+            .map(|_| {
+                let k = 1 + below(3);
+                lits(k, &mut below)
+            })
+            .collect();
+        let l = below(200) - 100;
+        let h = l + below(3000) - 2;
+        with_point += usize::from(check(l, h, &units, &clauses));
+    }
+    // Both answers are drawn often, so neither is checked only by chance.
+    assert!(
+        (60..=440).contains(&with_point),
+        "{with_point} of 500 with a point"
+    );
+}
+
+/// Under a cover's meter, `sweep_bounded` is charged its pieces before it makes them
+/// (`meter::charge_pieces`): `x mod 2 == 0 && x mod 991 == 5 && x mod 997 == 1` on
+/// `[0, 1000000]`, a span shorter than the period 1,976,054, has about 500,000 pieces of
+/// modulus 2, 8,000,000 units past [`meter::EXACT_LIMIT`]'s 3,100,000, so the question is
+/// refused there; with no limit the sweep answers as testing each point does.
+#[test]
+fn a_sweep_past_the_limit_is_refused_under_the_meter() {
+    use super::super::meter::{EXACT_LIMIT, Work};
+    use super::super::{Refusal, SOLVER};
+    let unit_mods: BTreeMap<Int, ResidueSet> = [(2, 0), (991, 5), (997, 1)]
+        .into_iter()
+        .map(|(m, r)| (Int::from(m), vec![(Int::from(r), Int::from(r))]))
+        .collect();
+    let (l, h) = (Int::ZERO, Int::from(1_000_000));
+    let work = |limit: u64| Work {
+        used: 0,
+        limit,
+        solver: SOLVER,
+    };
+    let refused = work(EXACT_LIMIT).metered(|| sweep_bounded(&l, &h, &unit_mods, &[]));
+    assert!(
+        matches!(refused, Err(Refusal::Questions)),
+        "{:?}",
+        refused.map(|o| found(&o))
+    );
+    let want = (0..=1_000_000_i64).find(|x| x % 2 == 0 && x % 991 == 5 && x % 997 == 1);
+    let answered = work(u64::MAX).metered(|| sweep_bounded(&l, &h, &unit_mods, &[]));
+    let Ok(out) = answered else {
+        panic!("refused with no limit");
+    };
+    assert_eq!(found(&out), want.map(Int::from));
+}

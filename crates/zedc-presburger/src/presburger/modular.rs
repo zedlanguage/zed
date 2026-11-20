@@ -2763,7 +2763,11 @@ fn solve_regime_step(
         }
     }
 
-    solve_coprime_system(lo, hi, &bases_info, allowed, norm_clauses, true)
+    let out = solve_coprime_system(lo, hi, &bases_info, allowed, norm_clauses, true);
+    match (out, lo, hi) {
+        (RegimeOut::Undecided, Some(l), Some(h)) => sweep_bounded(l, h, &unit_mods, &clauses),
+        (out, _, _) => out,
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -3111,6 +3115,108 @@ fn solve_short_x_interval(
     }
     stack.extend(tasks.into_iter().rev());
     RegimeOut::Empty
+}
+
+/// The bounded regime `[l, h]` that the coprime path left undecided, decided by a sweep over
+/// the points of one period: the first point of `[l, h]` that satisfies every unit and every
+/// clause, or `Empty` (FAIL-omega-negations-slow-13254895221319191796).
+///
+/// Why the coprime path leaves it: its witnesses (`score_witness`, `graph_coloring_witness`,
+/// conditional expectations) choose residues on the bases and then place a point of their CRT
+/// class in `[l, h]`, which exists only when `[l, h]` holds a whole period or the class happens
+/// to meet it; and Stage C stops after one split. A chain of negated conditions at seed
+/// 13254895221319191796 gave the regime `[12, 23]` with 11 clauses over the moduli 2 to 8: 12
+/// points against a period of 840, left undecided, so each question went to the general path,
+/// which spent 4 to 15 s on it and refused (`Shadows`).
+///
+/// Proof: each unit and each literal is `x mod m in s` with `m` dividing the lcm `p` of the
+/// moduli, so `x` and `x + p` satisfy the same units and clauses. A point `x` of `[l, h]` above
+/// `e = min(h, l + p - 1)` has `e = l + p - 1`, and `x - k p` with `k = (x - l) div p` lies in
+/// `[l, e]` and satisfies the same; so `[l, h]` has a point exactly when `[l, e]` has one, and
+/// the least point of `[l, e]` is the least of `[l, h]` (any smaller point of `[l, h]` lies in
+/// `[l, e]`). On `[l, e]` each unit's set and each clause's union of its literals' sets is a
+/// normal list of intervals (`concrete_intervals_in_span`, then `coalesce`), and the least point
+/// in all of them is `intervals::first_in_all`'s. The point is placed by `l`, so it moves with
+/// the coordinate as the other witnesses do (I4.15); `solve_regime` gives the walk both ends.
+///
+/// Complexity tradeoff: the naive way tests each of the `e - l + 1` points against every clause,
+/// O((e - l + 1) L) for `L` literals. Used: the pieces of each literal on `[l, e]`, `N = sum
+/// |s| (ceil((e - l + 1) / m) + 1)` in all, sorted once, O(N log N). `N` is at most `L` times
+/// the number of periods of a literal's modulus in `[l, e]`, which is linear in `L` when the
+/// moduli and the interval are fixed, as along a chain whose length grows; a wide interval over
+/// many small moduli makes `N` large (pseudo-polynomial in the written bits, unproved to be
+/// avoidable here: the coprime path declined it). Under a cover's meter the pieces are charged
+/// before they are made (`meter::charge_pieces`, `meter::PIECE` units each), so a cover's
+/// question stays within its limit as it did when the general path refused the regime
+/// (`r7_tests::a_sweep_past_the_limit_is_refused_under_the_meter`); outside a cover nothing
+/// limits `N`, as nothing limits the rest of the solver there, and the pieces are held at once,
+/// O(N) space. Tests:
+/// `r7_tests::a_short_interval_over_many_moduli_is_decided_by_the_sweep` (against testing each
+/// point), `l01_38_omega_test::one_scope::no_question_of_a_random_chain_with_negations_is_refused_at_seed_13254895221319191796`
+/// and `one_scope::a_chain_over_a_short_window_of_many_moduli_has_no_question_refused` (each
+/// past 60 s without this sweep); scaling:
+/// `bench::one_scope::the_questions_of_a_chain_over_a_short_window_of_many_moduli_scale`
+/// (chain length 40 and 320: 6.7 times the instructions and the bytes, 2026-11-20, load 43).
+fn sweep_bounded(
+    l: &Int,
+    h: &Int,
+    unit_mods: &BTreeMap<Int, ResidueSet>,
+    clauses: &[BTreeMap<Int, ResidueSet>],
+) -> RegimeOut {
+    if l > h {
+        return RegimeOut::Empty;
+    }
+    let mut period = Int::ONE;
+    for m in unit_mods
+        .keys()
+        .chain(clauses.iter().flat_map(|cl| cl.keys()))
+    {
+        let g = period.gcd(m);
+        period = &period.div_floor(&g) * m;
+    }
+    let full = &(l + &period) - &Int::ONE;
+    let e = if *h < full { h.clone() } else { full };
+    // The meter of a cover's question (`meter::charge_pieces`) is charged the pieces before
+    // any is made: an interval `[ra, rb]` of residues modulo `m` meets `[l, e]` in at most
+    // `(e - l) div m + 2` pieces (one for each period of `m` that `[l, e]` meets). Past the
+    // limit the regime stays `Undecided` and the general path, asked next under the spent
+    // meter, refuses at its first charged step, as it did before this sweep.
+    let span = &e - l;
+    let mut count: u64 = 0;
+    for (m, s) in unit_mods
+        .iter()
+        .chain(clauses.iter().flat_map(|cl| cl.iter()))
+    {
+        let per = (span.div_floor(m).to_i128())
+            .and_then(|v| u64::try_from(v).ok())
+            .map_or(u64::MAX, |v| v.saturating_add(2));
+        count = count.saturating_add(per.saturating_mul(s.len() as u64));
+    }
+    if super::meter::charge_pieces(count).is_err() {
+        return RegimeOut::Undecided;
+    }
+    let pieces = |m: &Int, s: &ResidueSet, out: &mut Vec<(Int, Int)>| {
+        for (ra, rb) in s {
+            out.extend(concrete_intervals_in_span(l, &e, m, ra, rb));
+        }
+    };
+    let mut lists: Vec<Vec<(Int, Int)>> = Vec::with_capacity(unit_mods.len() + clauses.len());
+    for (m, s) in unit_mods {
+        let mut v = Vec::new();
+        pieces(m, s, &mut v);
+        lists.push(intervals::coalesce(v));
+    }
+    for cl in clauses {
+        let mut v = Vec::new();
+        for (m, s) in cl {
+            pieces(m, s, &mut v);
+        }
+        lists.push(intervals::coalesce(v));
+    }
+    if lists.is_empty() {
+        return RegimeOut::Found(l.clone());
+    }
+    intervals::first_in_all(&lists).map_or(RegimeOut::Empty, RegimeOut::Found)
 }
 
 /// Concrete sub-intervals `[il, ih] subseteq [l, h]` where `x mod m in [ra, rb]`.
