@@ -28493,7 +28493,7 @@ pub mod r10_hash {
             mul_p(self.base_pow, self.part.pow)
         }
 
-        /// Pushes `sc` and returns the context to give back to [`Encoder::pop_scope`].
+        /// Pushes `sc` and returns the context to give back to `Encoder::pop_scope`.
         pub fn push_scope(&mut self, sc: SigScope) -> u64 {
             self.scopes.push(sc);
             let outer = self.ctx;
