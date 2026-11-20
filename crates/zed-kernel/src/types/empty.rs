@@ -10786,10 +10786,13 @@ impl<'m> Searching<'m> {
     }
 
     async fn find_rep(&'m self, t: &Type) -> Option<usize> {
+        // Read once, so the loop over names below sees the atoms this check saw (a recursive
+        // node's unfolding can be dropped and made again between two reads).
+        let p = t.p();
         // A bare atom is a value: the empty list of a list type.
         // The least bare name, as a scan of `names` in order found it: O(log n) from the index
         // of bare names (`Atoms::bare`), where the scan read every name before it.
-        if let Some(name) = t.p().atoms.bare().get_min() {
+        if let Some(name) = p.atoms.bare().get_min() {
             return Some(self.s().show(Rep::Value(Value::atom(name))));
         }
         // A list of pure cycles with no stop in it: a list of it, kept as its length. A union of
@@ -10824,7 +10827,6 @@ impl<'m> Searching<'m> {
                 }
             }
         }
-        let p = t.p();
         if p.bools != 0 {
             return Some(self.s().show(Rep::Value(Value::Bool(p.bools & 1 == 0))));
         }
@@ -10857,9 +10859,27 @@ impl<'m> Searching<'m> {
         let list_fallback =
             matches!(self.s().chains.get(t), Some(None)) && !self.s().wraps.contains_key(t);
         for (name, a) in p.atoms.names() {
-            if a.bare {
-                return Some(self.s().show(Rep::Value(Value::atom(name))));
-            }
+            // No listed name holds its bare atom here (TEST-kernel-unreached-paths-11, which
+            // found this arm, a return of the bare atom, never run, and removed it). Proof:
+            // 1. Invariant I of `Atoms`: `bare` holds exactly the names listed in `names` whose
+            //    part has `bare` set. `Atoms::default()` and `Atoms::all()` list nothing in
+            //    either. The fields are private to module `atoms` of types.rs, where every
+            //    change to `names` or `bare` is made by `Atoms::set`, apart from `take_names`,
+            //    called only from `Drop for Node` on a node being freed, which nothing reads
+            //    after. `zip`, `not` and `minus` start from a default (with `cofinite` set) or
+            //    a clone, both of which hold I, then call `set`; `zip`'s `out.cofinite = ...`
+            //    changes neither map.
+            // 2. `set` keeps I. Before its change, I gives `was_bare` (the removed part's bare)
+            //    equal to "`name` is in `bare`". After it, `name` is listed with a bare part
+            //    exactly when `p != default && p.bare`, which is `is_bare`; `bare` gains `name`
+            //    when `is_bare && !was_bare`, loses it when `was_bare && !is_bare`, and
+            //    otherwise already agrees. No other name changes in either map. The early
+            //    returns change nothing.
+            // 3. `p` is read once at the top of this function and alive here, so its atoms
+            //    are the ones the first check read, not a node being freed. That check returned
+            //    unless `p.atoms.bare()` was empty, so by I no listed part has `bare` set.
+            // Test: the debug and test builds check it on every name this loop reads.
+            debug_assert!(!a.bare, "a bare atom of `{name}` not in `Atoms::bare`");
             if list_fallback {
                 self.s().in_list_fallback += 1;
             }

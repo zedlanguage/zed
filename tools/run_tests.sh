@@ -1055,9 +1055,15 @@ split="
 # the piece is starved of cores, so its time follows the CPU of all its tests). Its ten tests of
 # 2.4 to 5.5 s of CPU each (37 s of the 88) are pieces of their own, each 4.2 to 7.1 s alone at
 # load 72 to 91 (LIMIT-two-pin-ratio-11, 2026-11-19).
+# The binary's other piece skips each of these with `--skip <test>`, which libtest matches
+# anywhere in a name (`--exact` cannot be used there: it would apply to `--skip bench::` too). So
+# a test whose name holds one of these is skipped as well and needs a line here of its own: the
+# second half of the random test of the boolean equation solver was run by no piece from its
+# split (b9fc80f63) until it was added (kernel21, 2026-11-20).
 alone="
   zedc_preimage::preimage::tests::summaries_read_again_give_what_reading_the_term_again_gives_seed_7776978274844439420
   zed_kernel::types::bes::tests::decide_agrees_with_the_game_on_systems_drawn_at_random
+  zed_kernel::types::bes::tests::decide_agrees_with_the_game_on_systems_drawn_at_random_second_half
   zedc_presburger::presburger::row_sums::tests::the_polygons_of_the_route_are_never_more_than_the_join_spends
   zedc_presburger::presburger::sweep_against_pick_tests::the_unbounded_row_sweep_marks_the_arms_pick_by_finds
   zedc_presburger::presburger::exact::tests::random_formulas_at_seed_10413658062665981385

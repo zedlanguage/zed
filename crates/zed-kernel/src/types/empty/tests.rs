@@ -1741,6 +1741,87 @@ fn height_bounds_are_exact_on_lists_cycles_and_open_parts() {
     }
 }
 
+/// A witness plan of the prefix-chain sweep that does not check out is dropped, and the list is
+/// decided, or given a value, by the general search (TEST-kernel-unreached-paths-11).
+/// `chain_rep` answers `None` when a head of the plan has no value (its first `return None`)
+/// or when the list the plan gives is not in the type (`check_chain_witness` false, its
+/// second). `decided` then forgets the plan and reads the type's parts (the fallback after
+/// `chain_rep` in `decided`), and `find_rep` forgets it and builds a value its own way, from
+/// the payload of `#cons` under `list_fallback`. No run reached these lines,
+/// since the sweep never gave such a plan; whether it can is the sweep's soundness, which no
+/// proof here covers, so the fallbacks stay and are tested by placing a wrong plan in the
+/// search's table of plans (`Search::chains`) before the search runs. The front sweep is told
+/// to leave the types alone (`Search::swept`), and the rule on pure cycles leaves them, as
+/// their rows have different items (`int` and `1`). Each plan claims a value: one has a head of
+/// no value, and one gives a list in neither type. `E`, which has no value, must come out empty
+/// with nothing refused, and the value built for `I` must be in `I`. `E` as a root reads the plan
+/// in `find_rep` only: `solve` first seeds a root with atoms by `rep`, which forgets the plan, so
+/// `decided` never sees it. `(E,)` has no atoms of its own and is not seeded, so `decided` meets
+/// the plan on `E` first and takes its fallback. Negative controls (run 2026-11-20, each failed
+/// this test): in `decided`, a failed `chain_rep` taken as a value found (the plan kept and `E`
+/// counted inhabited) answers `(E,)` inhabited; the second `return None` of `chain_rep` replaced
+/// by going on (the list shown though not checked) answers `E` inhabited. Answering `false` once
+/// from the fallback after the plan is forgotten is not caught, and need not be: the next round
+/// of `decided` on `E` finds no plan and reads its parts.
+#[test]
+fn a_witness_plan_that_does_not_check_out_is_dropped_for_the_search() {
+    let l = list_group(false);
+    let lit = |i: i64| Type::lit(&Value::Int(i)).expect("an integer literal");
+    let cons = |h: Type, t: Type| Type::atom_with("cons", &Type::tuple(vec![h, t]));
+    // `E = L \ #nil \ #cons((int, #nil)) \ #cons((int, #cons((int, L))))`: no value.
+    let e = &(&(&l - &Type::atom("nil")) - &cons(Type::int(), Type::atom("nil")))
+        - &cons(Type::int(), cons(Type::int(), l.clone()));
+    // `I = L \ #nil \ #cons((1, L))`: the lists that do not start with 1, `#nil` not among them,
+    // so `find_rep` does not answer it with a bare atom before it reads the plan.
+    let i = &(&l - &Type::atom("nil")) - &cons(lit(1), l.clone());
+    // The heads `[1, 1]` give `#cons((1, #cons((1, #nil))))`, in neither type.
+    let plans = [
+        ("a head of no value", vec![Type::empty()]),
+        ("a list in neither type", vec![lit(1), lit(1)]),
+    ];
+    let search = |t: &Type, heads: Vec<Type>| {
+        let mut s = Search {
+            strict: true,
+            refuse_forks: true,
+            ..Search::default()
+        };
+        s.roots.insert(t.clone(), ());
+        s.swept.insert(t.clone(), None);
+        let plan = ChainPlan::Inhabited {
+            stop: "nil".into(),
+            link: "cons".into(),
+            heads,
+            hints: Vec::new(),
+        };
+        s.chains.insert(t.clone(), Some(plan));
+        s
+    };
+    for (what, heads) in plans {
+        let mut s = search(&e, heads.clone());
+        let empty = s.solve(&e);
+        assert_eq!(s.refused, None, "E, {what}: nothing refused");
+        assert!(empty, "E, {what}: E is empty");
+        assert!(
+            s.chains.get(&e).is_some_and(Option::is_none),
+            "E, {what}: the plan is forgotten"
+        );
+        let pair = Type::tuple(vec![e.clone()]);
+        let mut s = search(&e, heads.clone());
+        s.roots.insert(pair.clone(), ());
+        let empty = s.solve(&pair);
+        assert_eq!(s.refused, None, "(E,), {what}: nothing refused");
+        assert!(empty, "(E,), {what}: (E,) is empty");
+        let mut s = search(&i, heads);
+        let r = s.rep(&i).expect("I has a value");
+        let v = s.value(r).expect("the value shown is built");
+        assert!(i.contains(&v), "I, {what}: {v:?} is in I");
+        assert!(
+            s.chains.get(&i).is_some_and(Option::is_none),
+            "I, {what}: the plan is forgotten"
+        );
+    }
+}
+
 /// A tuple part kept as an expression, not a decision list, that holds tuples outside all its
 /// tuple types is not bounded (TEST-kernel-unreached-paths-7, the `Err` arm of
 /// `Heights::part_heights`): `(!(1, int) | (int, 2)) & (!(3, int) | (int, 4))` holds
