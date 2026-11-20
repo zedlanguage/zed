@@ -286,6 +286,19 @@ expression: "tokens_by_key(&fences::design())"
  13 | written : [ Ast ] ,
  14 | }
 == DESIGN.md [sec:units] 1 L2
+  2 | «struct» Money { «local» cents : int [ 0₍10₎ .. ] }
+  3 | dollars ( «positional» d : int [ 0₍10₎ .. ] ) -> Money = Money ( cents : d * 100₍10₎ ) ;
+  4 | add ( a : Money , b : Money ) -> Money = Money ( cents : a . cents + b . cents ) ;
+  5 | show ( «positional» m : Money ) -> Utf8String = str[${m . cents «div» 100₍10₎} "." ${m . cents «mod» 100₍10₎}] ;
+== DESIGN.md [sec:units] 2 L2
+  2 | «import» money . { dollars , add , show , Money } ;
+  3 | main ( m : MainArgs ) {
+  4 | total = add ( a : dollars ( 3₍10₎ ) , b : dollars ( 4₍10₎ ) ) ;
+  5 | m . stdout <- show ( total ) ;
+  6 | m . stdout <- str[${total . cents}] ;
+  7 | bad = Money ( cents : 5₍10₎ ) ;
+  8 | }
+== DESIGN.md [sec:units] 3 L2
   1 | «import» geometry . shapes ;
   2 | «import» geometry . shapes «as» g ;
   3 | «import» geometry . shapes . { area , Rect } ;

@@ -672,12 +672,18 @@ impl Builder<'_, '_> {
                 return Err(self.later_as(k, "the struct law member"));
             }
             // Any other `StructField` is a field with a default, an import with type arguments,
-            // or holds a `Field`.
+            // or holds a `Field`; or it is a `local` field, `local x: T` or `local x: T = e`,
+            // whose kids are its name, its type and its default, as a field with a default's
+            // are. `local` is a keyword, so no other field begins with it.
+            let local = self.word(self.tree.nodes[k].start) == "local";
             let (f, default) = match self.kids(k) {
                 [f] if self.tree.name(*f) == "TypeApply" => return Err(self.later(k)),
                 [f] => (*f, None),
+                [_, _] if local => (k, None),
                 [_, _, d] => (k, Some(*d)),
-                _ => unreachable!("StructField = Name ':' Type '=' Expr | Field"),
+                _ => unreachable!(
+                    "StructField = Name ':' Type '=' Expr | Field | 'local' Name ':' Type ('=' Expr)?"
+                ),
             };
             let fk = self.kids(f);
             let span = self.span(k);
@@ -705,6 +711,7 @@ impl Builder<'_, '_> {
                     name: field.into(),
                     ty: self.ty(fk[1])?,
                     default: default.map(|d| self.node(d)).transpose()?,
+                    local,
                     span,
                 });
             }

@@ -128,6 +128,17 @@ rows! {
     // No diagnostic uses this row yet: plan row SCHED-schema-types emits it.
     SchemaNotInBuild => "Type computed from a schema file the build does not carry",
     ImportCycle => "Import cycle",
+    // No diagnostic uses this row yet: plan row LOCAL-fields-typed emits it, from the type of the
+    // value read.
+    LocalFieldRead => "Local field read outside its unit",
+    // `Resolver::local_fields` (zedc-resolve) gives this rejection with no row, as an import of a
+    // `local` name is: the near misses of l01_21 are one unit each, and this needs two.
+    LocalFieldConstructed => "Local field named in a construction outside its unit",
+    // `Resolver::local_fields` (zedc-resolve) gives this rejection with no row, as an import of a
+    // `local` name is: the near misses of l01_21 are one unit each, and this needs two.
+    LocalFieldPattern => "Local field bound by a pattern outside its unit",
+    // No diagnostic uses this row yet: plan row LOCAL-fields-typed emits it.
+    LocalFieldMatched => "Structural match on a local field outside its unit",
     // No diagnostic uses this row yet: plan row L2.12 emits it.
     ImportPathNamesNoUnit => "Import of a path that names no unit",
     OrderWithNone =>

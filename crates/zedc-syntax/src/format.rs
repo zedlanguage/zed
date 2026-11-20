@@ -703,9 +703,13 @@ impl<'a> Formatter<'a> {
                     }
                     match f {
                         Field::Typed {
-                            name, ty, default, ..
+                            name,
+                            ty,
+                            default,
+                            local,
+                            ..
                         } => {
-                            self.put(format!("{name}: "));
+                            self.put(format!("{}{name}: ", if *local { "local " } else { "" }));
                             if let Some(e) = default {
                                 then![stack;
                                     Job::Ty { t: ty, min: 0 },

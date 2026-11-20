@@ -56,6 +56,7 @@ StructField   = 'law' Name '(' Params? ')' '=' Expr                             
               | Name ':' Type '=' Expr                                             L2
               | 'import' TypeApply                                                 L2
               | Field                                                              L2
+              | 'local' Name ':' Type ('=' Expr)?                                  L2
 Field         = 'import' Path                                                      L2
               | Name ':' Type                                                      L2
 TypeDecl      = 'type' Name TypeParams? '=' Type ';'                               L2

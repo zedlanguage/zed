@@ -274,9 +274,45 @@ pub struct Exports {
     /// left unchecked since it uses one, and that nothing of the unit defines: an importer's
     /// use of one gets no error, and its statement is not checked ([`Resolution::broken`]).
     broken: BTreeSet<String>,
+    /// The `local` fields of each top-level struct that has one, by the struct's name
+    /// (DESIGN.md sec:units, "A field of a struct may be `local`"): an importer may name the
+    /// struct and not these fields.
+    local_fields: BTreeMap<String, BTreeSet<String>>,
 }
 
 impl Exports {
+    /// The `local` fields of the struct `name`, in order; none when the unit declares no struct
+    /// `name` or it has no `local` field.
+    pub fn local_fields(&self, name: &str) -> Vec<&str> {
+        self.local_fields
+            .get(name)
+            .map_or_else(Vec::new, |f| f.iter().map(String::as_str).collect())
+    }
+
+    /// Whether the field `field` of the struct `name` is `local`.
+    fn is_local_field(&self, name: &str, field: &str) -> bool {
+        self.local_fields
+            .get(name)
+            .is_some_and(|f| f.contains(field))
+    }
+
+    /// Records the `local` fields of the top-level struct `name`, if it has any.
+    fn add_local_fields(&mut self, name: &str, fields: &[Field]) {
+        let local = fields.iter().filter_map(|f| match f {
+            Field::Typed {
+                name, local: true, ..
+            } => Some(name.clone()),
+            _ => None,
+        });
+        let local: BTreeSet<String> = local.collect();
+        if !local.is_empty() {
+            self.local_fields
+                .entry(name.into())
+                .or_default()
+                .extend(local);
+        }
+    }
+
     /// What the unit defines as `name`, if anything.
     pub fn get(&self, name: &str) -> Option<Export> {
         self.names.get(name).copied()
@@ -322,9 +358,11 @@ impl Exports {
     }
 
     /// The names in order, each as its length, its bytes, its kind and `local`, then the
-    /// broken names in order, each after the byte 255, which no kind is: what an importer's
-    /// resolution reads of the unit, encoded so that two exports have equal bytes only when
-    /// they are equal.
+    /// broken names in order, each after the byte 255, which no kind is, then each `local`
+    /// field as its struct's name, the byte 254, which no kind is either, and its own name, the
+    /// names each as its length and its bytes: what an importer's resolution reads of the unit,
+    /// encoded so that two exports have equal bytes only when they are equal. After a name, the
+    /// next byte tells the three kinds of entry apart: a kind (below 254), 255 or 254.
     pub fn bytes(&self) -> Vec<u8> {
         let mut out = Vec::new();
         for (name, e) in &self.names {
@@ -336,6 +374,15 @@ impl Exports {
             out.extend_from_slice(&(name.len() as u64).to_le_bytes());
             out.extend_from_slice(name.as_bytes());
             out.push(u8::MAX);
+        }
+        for (name, fields) in &self.local_fields {
+            for field in fields {
+                out.extend_from_slice(&(name.len() as u64).to_le_bytes());
+                out.extend_from_slice(name.as_bytes());
+                out.push(u8::MAX - 1);
+                out.extend_from_slice(&(field.len() as u64).to_le_bytes());
+                out.extend_from_slice(field.as_bytes());
+            }
         }
         out
     }
@@ -2235,6 +2282,11 @@ impl Resolver<'_> {
             }
             StmtKind::Struct(st) => {
                 self.bind(&st.name, s.span, s.span, Kind::Struct, None);
+                // A top-level struct's `local` fields are part of what an importer reads. In a
+                // block `local` hides nothing, and the walk rejects it ([`Self::block_local_fields`]).
+                if self.scopes.len() == TOP {
+                    self.out.exports.add_local_fields(&st.name, &st.fields);
+                }
                 // `None` at the first imported field: its names are another type's.
                 let names: Option<Vec<String>> = (st.fields.iter())
                     .map(|f| match f {
@@ -2308,6 +2360,107 @@ impl Resolver<'_> {
             | StmtKind::Expr(_)
             | StmtKind::Initial(_)
             | StmtKind::UnitAnnot(_) => {}
+        }
+    }
+
+    /// The `local` fields of `st`, a struct declared in a block, each rejected: no other unit
+    /// sees the struct, so `local` on its field hides nothing, as `local` on a declaration in a
+    /// block hides nothing ([`Self::local_here`]).
+    fn block_local_fields(&mut self, st: &Struct) {
+        for f in &st.fields {
+            if let Field::Typed {
+                local: true, span, ..
+            } = f
+            {
+                self.errors.push(Error {
+                    row: None,
+                    menu: String::new(),
+                    span: *span,
+                    message: "`local` keeps a field from other units, and a struct declared in a \
+                              block is seen by no other unit already, so `local` marks a field \
+                              only of a struct at a unit's top level. Remove the `local`."
+                        .into(),
+                    notes: Vec::new(),
+                });
+            }
+        }
+    }
+
+    /// The unit that the struct `name`, written in this unit as `written` (`Money`, or
+    /// `money.Money` through the qualifier `money`), comes from, with the span of the import
+    /// that brings it in: `None` when `name` binds no struct another unit defines, so a
+    /// struct this unit declares, even of the same name, is its own.
+    fn imported_struct(&self, written: &str) -> Option<(Arc<str>, Span)> {
+        let (qualifier, name) = match written.rsplit_once('.') {
+            Some((q, n)) => (Some(q), n),
+            None => (None, written),
+        };
+        let Some(Found::Bound(ids)) = self.find(qualifier.unwrap_or(name)) else {
+            return None;
+        };
+        let id = ids[0];
+        let unit = self.out.imports.get(&id)?;
+        let binder = &self.out.binders[id];
+        let ok = match qualifier {
+            None => binder.kind == Kind::Struct,
+            Some(_) => binder.kind == Kind::Unit,
+        };
+        (ok && !self.dead.contains(&id)).then(|| (unit.clone(), binder.span))
+    }
+
+    /// The `local` fields among `fields`, named by the construction or the pattern `what` at
+    /// `span` of the struct written `written`, each rejected when the struct comes from another
+    /// unit (DESIGN.md sec:units, "A field of a struct may be `local`"; sec:diagnostics, "Local
+    /// field named in a construction outside its unit" and "Local field bound by a pattern
+    /// outside its unit"). The message quotes the construction or pattern from the unit's text
+    /// when it is known. O(k log f) for k named fields and f local fields of the struct: one
+    /// lookup in the struct's ordered set each.
+    fn local_fields<'f>(
+        &mut self,
+        written: &str,
+        fields: impl Iterator<Item = &'f str>,
+        what: &str,
+        span: Span,
+    ) {
+        let Some((unit, import)) = self.imported_struct(written) else {
+            return;
+        };
+        let name = written.rsplit('.').next().unwrap_or(written);
+        let Some(exports) = self.units.and_then(|u| u.exports(&unit).ok()) else {
+            return;
+        };
+        let local: Vec<&str> = fields.filter(|f| exports.is_local_field(name, f)).collect();
+        let quote = self.text.map_or_else(
+            || format!("of `{written}`"),
+            |t| format!("`{}`", &t[span.start..span.end]),
+        );
+        for field in local {
+            let repair = match what {
+                "construction" => format!(
+                    "repair: make the `{name}` by a call of a function of the unit `{unit}`, or \
+                     declare `{field}` without `local` there"
+                ),
+                _ => format!(
+                    "repair: leave `{field}` out of the pattern, or write `(is {written})`; or \
+                     read it by a call of a function of the unit `{unit}`"
+                ),
+            };
+            self.errors.push(Error {
+                row: None,
+                menu: String::new(),
+                span,
+                message: format!(
+                    "Invalid {what} {quote}: the field `{field}` of `{name}` is declared `local` \
+                     in the unit `{unit}`, so no other unit names it"
+                ),
+                notes: vec![
+                    Note {
+                        span: import,
+                        text: format!("the import of the unit `{unit}`"),
+                    },
+                    Note { span, text: repair },
+                ],
+            });
         }
     }
 
@@ -2403,6 +2556,9 @@ impl Resolver<'_> {
             }
             StmtKind::Struct(st) => {
                 self.later(s.span, "a struct declaration");
+                if !top {
+                    self.block_local_fields(st);
+                }
                 self.fields(st, s.span, todo);
             }
             // A primed name is of layer L6 wherever it stands (DESIGN.md sec:grammar).
@@ -2494,6 +2650,7 @@ impl Resolver<'_> {
                     ty,
                     default,
                     span: at,
+                    ..
                 } => {
                     self.form_declared(name, *at, *at, Kind::Field);
                     // The builder rejects a field declared twice, so each name is new here.
@@ -3482,6 +3639,24 @@ impl Resolver<'_> {
                     self.errors.push(files_moved(callee.span));
                     return;
                 }
+                // A construction of a struct of another unit names none of its `local` fields.
+                let written = match &callee.kind {
+                    _ if named.is_empty() => None,
+                    ExprKind::Name(n) => Some(n.clone()),
+                    ExprKind::Member {
+                        of,
+                        name,
+                        safe: false,
+                    } => match &of.kind {
+                        ExprKind::Name(q) => Some(format!("{q}.{name}")),
+                        _ => None,
+                    },
+                    _ => None,
+                };
+                if let Some(w) = written {
+                    let fields = named.iter().map(|(n, _)| n.as_str());
+                    self.local_fields(&w, fields, "construction", e.span);
+                }
                 if let ExprKind::Name(_) = callee.kind {
                     self.out.calls.push(NamedCall {
                         span: e.span,
@@ -3860,6 +4035,9 @@ impl Resolver<'_> {
                 todo.push(Task::Pattern(first, report));
             }
             Pattern::Struct { name, fields, span } => {
+                // A pattern of a struct of another unit binds none of its `local` fields.
+                let named = fields.iter().map(|(n, _)| n.as_str());
+                self.local_fields(name, named, "pattern", *span);
                 todo.extend(fields.iter().rev().map(|f| bind(f, *span)));
                 todo.push(Task::TypeName(name, name_at(*span, name)));
             }

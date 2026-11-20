@@ -15,6 +15,7 @@ mod cycles;
 mod imports;
 mod later_forms;
 mod later_words;
+mod local_fields;
 mod manifest;
 mod queries;
 pub(crate) mod scaling;

@@ -637,7 +637,8 @@ pub struct Struct {
 /// A field of a struct.
 #[derive(Debug)]
 pub enum Field {
-    /// `x: T`, or `x: T = e` with a default.
+    /// `x: T`, or `x: T = e` with a default; `local x: T` when only the declaring unit names
+    /// the field (DESIGN.md sec:units, author A80 answer B).
     Typed {
         /// Its name.
         name: String,
@@ -645,6 +646,8 @@ pub enum Field {
         ty: Type,
         /// Its default, if written.
         default: Option<Expr>,
+        /// Whether it is written `local`, so that no unit but the declaring one names it.
+        local: bool,
         /// Its text.
         span: Span,
     },

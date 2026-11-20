@@ -452,9 +452,14 @@ fn stmt<'a>(s: &'a Stmt, out: &mut Vec<Show<'a>>) {
             for f in &st.fields {
                 match f {
                     Field::Typed {
-                        name, ty, default, ..
+                        name,
+                        ty,
+                        default,
+                        local,
+                        ..
                     } => {
-                        out.extend([Text(" ("), Text(name), Text(": "), Show::Type(ty)]);
+                        out.push(Text(if *local { " (local " } else { " (" }));
+                        out.extend([Text(name), Text(": "), Show::Type(ty)]);
                         if let Some(d) = default {
                             out.extend([Text(" = "), Show::Expr(d)]);
                         }

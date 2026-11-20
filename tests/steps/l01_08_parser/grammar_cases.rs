@@ -277,6 +277,20 @@ pub const CASES: &[(&str, &str, u32, &str, &str)] = &[
         "import a.P",
         "import a . P",
     ),
+    (
+        "StructField#4",
+        "StructField",
+        0,
+        "local cents: int",
+        "local cents : int",
+    ),
+    (
+        "StructField#4",
+        "StructField",
+        0,
+        "local cents: int = 0",
+        "local cents : int = 0",
+    ),
     ("Field#0", "Field", 0, "import a.P", "import a . P"),
     ("Field#1", "Field", 0, "x: int", "x : int"),
     (
