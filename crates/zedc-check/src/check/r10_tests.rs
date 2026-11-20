@@ -4371,7 +4371,9 @@ fn promoting_functions_nested_deep_or_shared_at_each_level_runs_on_a_small_stack
             .spawn_scoped(scope, || {
                 for s in [nested(DEEP, false), nested(40, true)] {
                     assert!(!s.holds_only_own_variables());
-                    let promoted = super::Ck::r10_promote_open_fwds(&s);
+                    let mut keep = Vec::new();
+                    let promoted = super::Ck::r10_promote_open_fwds(&s, &mut keep);
+                    assert!(keep.is_empty());
                     assert!(std::sync::Arc::ptr_eq(&promoted, &s));
                 }
             })
@@ -4379,6 +4381,26 @@ fn promoting_functions_nested_deep_or_shared_at_each_level_runs_on_a_small_stack
             .join()
             .unwrap();
     });
+}
+
+/// chainE1, Neon round 3 gap 1: a top-level value bound to a function that keeps a forward
+/// with held names (`info.tops`, shown by `Ck::shown`) is named as E names it. Neon's two
+/// programs, and one where the held function's variable is taken by a later item.
+#[test]
+fn chain_e1_a_top_value_holding_a_kept_forward_is_shown_as_e_shows_it() {
+    let head = "id(positional x) = x;\nh0(positional m) = m.map(id);\n";
+    for tail in [
+        "h1(positional m) = h0(m);\na = h1;\n",
+        "a = m -> h0(m);\n",
+        "h1(positional m) = h0(m);\na = (h1, y -> (y, y));\n",
+    ] {
+        let src = format!("{head}{tail}");
+        let (e, _) = run_with_cfg(&src, R10Config::eager());
+        assert!(e.errors.is_empty(), "{src}: {:?}", e.errors);
+        let (d, _) = run_with_cfg(&src, R10Config::default());
+        assert!(e.tops.contains_key("a"), "{src}: no top value `a`");
+        assert_info_eq(&src, &e, &d);
+    }
 }
 
 mod landing6_battery;

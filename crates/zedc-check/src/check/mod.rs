@@ -5485,7 +5485,25 @@ impl<'t, 'a> Ck<'t, 'a> {
     }
 
     /// `t` with each type variable of a function that ended given its name.
+    /// A compact forward that holds a function with variables of its own
+    /// ([`VarFacts::fwd_names`]) is decoded first, untagged ([`Self::r10_flat_ty`]): the
+    /// renaming does not enter a forward's callee, so that function's class `$k` would stay
+    /// where the eager checker's flat needs hold it as a class this renaming names (Neon's
+    /// round 3, gap 1 on FAIL-map-chain-own-vars-carry: `a = h1` with `h0(m) = m.map(id)` kept
+    /// `$0` in `info.tops`, whose digest elab reads). Untagged, as no renaming apart follows:
+    /// each internal result keeps the name `generalize` gave it, which is the eager checker's.
+    /// Complexity tradeoff: a type with no such forward costs O(1) more (its facts); one with
+    /// one costs its flat form, once, which the eager checker builds for it as well. Only the
+    /// types shown pay it: top values and the types in messages, not the signatures.
     fn shown(&self, t: &Ty) -> Ty {
+        let flat;
+        let t = match t.var_facts().fwd_names.is_empty() {
+            true => t,
+            false => {
+                flat = Self::r10_flat_ty(t, false, &mut FlatMemo::default());
+                &flat
+            }
+        };
         t.renamed(&self.names(t.var_facts().classes))
     }
 
@@ -5603,7 +5621,7 @@ impl<'t, 'a> Ck<'t, 'a> {
         };
         if cur.has_fwd_needs() && sig_vars(&cur).iter().any(|v| !cur.own.contains(v)) {
             // Tagged: [`Self::finished_with`] renames each tagged result to its name.
-            let decoded = Self::r10_decode_fwd_needs(&cur);
+            let decoded = Self::r10_decode_fwd_needs(&cur, true);
             if child_changed {
                 keep.push(cur);
             }
@@ -5628,13 +5646,21 @@ impl<'t, 'a> Ck<'t, 'a> {
     /// finishing or renaming, and a held function's forward there holds only variables of
     /// that function's own (`#14`, `#16`, `generalize`), which `Settle` leaves as they are,
     /// so `Need::map_tys_in` gives back the same `Arc` (`NeedKind::Fwd(fwd.clone())`), not
-    /// a copy; the one copy made on the way is by `Need::with_held_fns` in
-    /// [`Self::r10_promote_open_fwds`], which replaces the need it copies, so the two never
-    /// stand side by side. (ii) Two calls never share an address: each copy made is kept
+    /// a copy. [`Self::r10_promote_open_fwds`] copies signatures with `Need::with_held_fns`,
+    /// which may walk one shared function at two places, but copies no forward: a
+    /// checker-made forward's `sigma` and `exits` hold bare variables only (`#5`, `#6`,
+    /// `#14`; `Settle::must_decode` decodes one that a settle would give another type), and
+    /// [`Self::build_fwd_need_from_open`] takes `on_vars` and `var_ties` from the same
+    /// parameter types and exits, so `with_held_fns` meets no function in them and
+    /// `Need::map_tys_in` gives back the same `Arc` (Neon's round 3, gap 2,
+    /// which found that the earlier text, "it replaces the need it copies", did not cover a
+    /// function walked twice). (ii) Two calls never share an address: each copy made is kept
     /// alive to the end of `finished_with` (`keep`, and the memo of [`Self::r10_flat_held`],
     /// which keeps each signature it decodes), as `s` is, so no address is freed and given
     /// again to another forward while the tags are read.
-    fn r10_decode_fwd_needs(s: &Arc<Sig>) -> Arc<Sig> {
+    /// With `tag` false the results keep their names untagged ([`Self::shown`], which names
+    /// nothing apart).
+    fn r10_decode_fwd_needs(s: &Arc<Sig>, tag: bool) -> Arc<Sig> {
         let mut decoded_sig = (**s).clone();
         let mut promoted_needs = Vec::new();
         let mut promoted_own = decoded_sig.own.clone();
@@ -5652,9 +5678,13 @@ impl<'t, 'a> Ck<'t, 'a> {
                             continue;
                         }
                         if let Some(rv) = t.as_var() {
-                            let tag: Arc<str> = format!("{rv}\u{0}{at:x}").into();
-                            promoted_own.insert(tag.clone());
-                            *t = Ty::var(tag);
+                            if !tag {
+                                promoted_own.insert(rv.clone());
+                                continue;
+                            }
+                            let tagged: Arc<str> = format!("{rv}\u{0}{at:x}").into();
+                            promoted_own.insert(tagged.clone());
+                            *t = Ty::var(tagged);
                         }
                     }
                     promoted_needs.extend(f_copy.decode_with_results(n.span, results));
@@ -5675,7 +5705,8 @@ impl<'t, 'a> Ck<'t, 'a> {
     /// (FAIL-map-chain-own-vars-carry). Each signature is entered once (`memo`, by address), so
     /// the cost is that of the flat needs of the nest, which the eager checker pays at each
     /// signature; a nest with no such forward (`fwd_names` empty) is returned as it is, O(1).
-    fn r10_flat_held(s: &Arc<Sig>, memo: &mut FlatMemo) -> Arc<Sig> {
+    /// `tag` is [`Self::r10_decode_fwd_needs`]'s; one memo is used with one `tag` only.
+    fn r10_flat_held(s: &Arc<Sig>, tag: bool, memo: &mut FlatMemo) -> Arc<Sig> {
         if s.facts().fwd_names.is_empty() {
             return s.clone();
         }
@@ -5683,18 +5714,18 @@ impl<'t, 'a> Ck<'t, 'a> {
             return done.clone();
         }
         let cur = match s.has_fwd_needs() {
-            true => Self::r10_decode_fwd_needs(s),
+            true => Self::r10_decode_fwd_needs(s, tag),
             false => s.clone(),
         };
         let mut copy = (*cur).clone();
         for a in &mut copy.arrows {
             for p in &mut a.params {
-                *p = Self::r10_flat_ty(p, memo);
+                *p = Self::r10_flat_ty(p, tag, memo);
             }
-            a.result = Self::r10_flat_ty(&a.result, memo);
+            a.result = Self::r10_flat_ty(&a.result, tag, memo);
         }
         copy.needs = (cur.needs.iter())
-            .map(|n| n.with_held_fns(|f| Self::r10_flat_held(f, memo)))
+            .map(|n| n.with_held_fns(|f| Self::r10_flat_held(f, tag, memo)))
             .collect();
         copy.facts = Default::default();
         let out = Arc::new(copy);
@@ -5778,11 +5809,11 @@ impl<'t, 'a> Ck<'t, 'a> {
     }
 
     /// [`Self::r10_flat_held`] on each function `t` holds.
-    fn r10_flat_ty(t: &Ty, memo: &mut FlatMemo) -> Ty {
+    fn r10_flat_ty(t: &Ty, tag: bool, memo: &mut FlatMemo) -> Ty {
         if t.fns.is_empty() && t.tuples.is_empty() && t.payloads.is_empty() {
             return t.clone();
         }
-        t.with_held_fns(|f| Self::r10_flat_held(f, memo))
+        t.with_held_fns(|f| Self::r10_flat_held(f, tag, memo))
     }
 
     /// Finishes any closed `$k`-owning nested `Sig` held inside `callee`'s needs, memoized by
@@ -5998,11 +6029,19 @@ impl<'t, 'a> Ck<'t, 'a> {
         // `X` is kept or renamed by whether an item before it kept `X`'s name, which `H` is
         // not, and its fresh name comes from the same `used` and the same sequence of fresh
         // names, since `H` takes none. So every item gets the same name in both orders.
-        // (iii) A held name the walk of `s` met already (`seen_held` below) is one item where
-        // the walk met it, at or after its place in the eager order. Kept there, no item
-        // before it took its name, so none between the two places did, and by (i) and (ii)
-        // with that place for "last", every item is named as in the eager order; renamed
-        // there, it counts as named apart, and the flat form is taken (Neon's round 2, gap 4).
+        // (iii) A held name the walk of `s` met already (`seen_held` below) is one item `H`,
+        // named `N`, where the walk met it: place `jd` in D's order, at or after its place
+        // `je` in the eager order. Renamed there, it counts as named apart, and the flat form
+        // is taken (Neon's round 2, gap 4). Kept there, compare the orders in three parts
+        // (Neon's round 3, gap 3, which found that (i) and (ii) do not carry over: an item
+        // after `jd` may have the name `N`). Before `je` the two orders hold the same items
+        // in the same order, so the same names. Between `je` and `jd` no item has the name
+        // `N`: one that kept `N`, or was renamed because an item before it kept `N`, would
+        // put `N` taken before `jd`, and `H` would be renamed; so `H`, kept at `je` in the
+        // eager order, renames none of them, and they get the same names, from the same
+        // `used` and the same sequence of fresh names, as `H` takes none. After `jd` both
+        // orders have kept the same names and drawn the same fresh ones, `N` among the kept,
+        // so each later item, one named `N` too, gets the same name in both.
         // A held name whose class has a type (`solving`) is not a variable in the flat needs,
         // which hold the type: such a one is decoded as well. The proof also needs each held
         // name to be written in the callee as the name it is printed by, since the callee
@@ -6024,7 +6063,7 @@ impl<'t, 'a> Ck<'t, 'a> {
             let vars = sig_vars(s);
             let mut b = self.solving(&vars);
             if let Some(memo) = &mut flat_memo {
-                b.update_each(|t| *t = Self::r10_flat_ty(t, memo));
+                b.update_each(|t| *t = Self::r10_flat_ty(t, true, memo));
             }
             let mut order = NameOrder {
                 top: Arc::as_ptr(s) as usize,
@@ -6111,7 +6150,7 @@ impl<'t, 'a> Ck<'t, 'a> {
             // The decode is the eager form, so no finishing is needed on it: the renaming
             // reaches every variable of the flat needs, which is all the finishing was for.
             let mut memo = FlatMemo::new();
-            s_ref = Self::r10_flat_held(given_sig, &mut memo);
+            s_ref = Self::r10_flat_held(given_sig, true, &mut memo);
             flat_memo = Some(memo);
         };
         let s = &s_ref;

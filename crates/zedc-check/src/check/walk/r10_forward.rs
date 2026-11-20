@@ -337,7 +337,7 @@ impl<'t, 'a> Ck<'t, 'a> {
                         // It is not a class of the level being checked (`Ck::is_class`
                         // is false of the named classes of a function that ended and of the
                         // closed internal ones; a signature's nest binds only those and
-                        // names). E meets it in the flat needs in four places, and D gives
+                        // names). E meets it in the flat needs in five places, and D gives
                         // each the same: (1) the steps and `sig_walk`: a bound variable is
                         // never `visible` (no caller variable is bound inside the callee's
                         // held function), so E's walk adds it to `vars_order` where D's
@@ -380,6 +380,12 @@ impl<'t, 'a> Ck<'t, 'a> {
                         // (the proof is at `NameOrder::mark`). Its digest: `digest_summary`
                         // hashes the leaf needs as the decode gives them, with `f` as the
                         // callee holds it, the form E hashes whenever (3) does not decode.
+                        // (5) `Ck::shown` (the types of top values, `info.tops`, which elab
+                        // hashes, and the types in messages) renames only the classes the
+                        // type's facts list, and the renaming does not enter the callee, so
+                        // `id`'s `$0` would stay (Neon's round 3, gap 1: `a = h1`); `shown`
+                        // decodes such a type first, untagged, to the flat needs E shows
+                        // (test `chain_e1_a_top_value_holding_a_kept_forward_is_shown_as_e_shows_it`).
                         // One kind stays refused, under the old label: a function whose nest
                         // keeps a compact forward with internal results (`VarFacts::internal`).
                         // Its internal results are not names the facts list but runs the
