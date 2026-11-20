@@ -8157,7 +8157,7 @@ impl<'m> Searching<'m> {
             if carrier_cycle.is_none() {
                 for a in &taken {
                     let mut cur = a[1].clone();
-                    let mut vis: TypeSet = TypeSet::with_hasher(Digests::new());
+                    let mut vis: TypeSet = TypeSet::default();
                     while vis.insert(cur.clone()) {
                         if let Some(c) = s.cycle(&cur) {
                             if c.period == 1 && c.at == 0 && c.link == link_name {
@@ -8194,7 +8194,7 @@ impl<'m> Searching<'m> {
         let stop_name = c.stop.clone();
         let carrier_head = c.item.clone();
 
-        let mut carrier_set: TypeSet = TypeSet::with_hasher(Digests::new());
+        let mut carrier_set: TypeSet = TypeSet::default();
         for car in &carriers {
             carrier_set.insert(car.clone());
         }
@@ -8348,14 +8348,14 @@ impl<'m> Searching<'m> {
             node_of.insert(car.clone(), Some(0));
         }
         let mut canon_node: HashMap<(bool, Type, Option<Type>, usize), usize, Digests> =
-            HashMap::with_hasher(Digests::new());
+            HashMap::default();
 
         let mut walk = |start: &Type, nodes: &mut Vec<ChainNode>| -> Option<usize> {
             if let Some(&res) = node_of.get(start) {
                 return res;
             }
             let mut path: Vec<(Type, bool, Type, Option<Type>)> = Vec::new();
-            let mut visiting: TypeSet = TypeSet::with_hasher(Digests::new());
+            let mut visiting: TypeSet = TypeSet::default();
             let mut cur = start.clone();
             let base = loop {
                 if let Some(&res) = node_of.get(&cur) {
@@ -8475,7 +8475,7 @@ impl<'m> Searching<'m> {
         // is lost and `Empty` would be wrong (R5: `the_sweep_agrees_on_random_positive_chains`
         // case 936). Each type reachable from a positive tail is checked once.
         if !has_top_carrier {
-            let mut seen: TypeSet = TypeSet::with_hasher(Digests::new());
+            let mut seen: TypeSet = TypeSet::default();
             let mut todo: Vec<Type> = taken.iter().map(|a| a[1].clone()).collect();
             while let Some(cur) = todo.pop() {
                 if carrier_set.contains(&cur) || !seen.insert(cur.clone()) {
@@ -8525,7 +8525,7 @@ impl<'m> Searching<'m> {
         // Step 1: intersect positive row heads with the carrier head and subtract depth-0 negative
         // row heads in canonical `BTreeSet` order so `r0` is independent of input row order.
         let mut r0 = carrier_head.clone();
-        let mut pos1_seen: TypeSet = TypeSet::with_hasher(Digests::new());
+        let mut pos1_seen: TypeSet = TypeSet::default();
         pos1_seen.insert(r0.clone());
         let mut pos1_sorted: BTreeSet<Type> = BTreeSet::new();
         for (a0, _) in &pos_rows {
@@ -8568,7 +8568,7 @@ impl<'m> Searching<'m> {
         let mut neg_groups: Vec<ChainGroup> = Vec::new();
         let mut active_neg: Vec<usize> = Vec::new();
         let mut neg_group_of: HashMap<(bool, Type, Option<Type>), usize, Digests> =
-            HashMap::with_hasher(Digests::new());
+            HashMap::default();
 
         let activate_pos = |u: usize,
                             target_step: usize,
@@ -8993,7 +8993,7 @@ impl<'m> Searching<'m> {
             }
 
             let mut r0 = carrier_head.clone();
-            let mut pos_seen: TypeSet = TypeSet::with_hasher(Digests::new());
+            let mut pos_seen: TypeSet = TypeSet::default();
             pos_seen.insert(r0.clone());
             let mut pos_step_sorted: BTreeSet<Type> = BTreeSet::new();
             for &u in &pos_depth1[step] {
@@ -9010,7 +9010,7 @@ impl<'m> Searching<'m> {
             for h in &pos_step_sorted {
                 r0 = self.cut(&r0, h, Cut::Meet);
             }
-            let mut neg_seen: TypeSet = TypeSet::with_hasher(Digests::new());
+            let mut neg_seen: TypeSet = TypeSet::default();
             let mut neg_step_sorted: BTreeSet<Type> = BTreeSet::new();
             for &u in &neg_depth1[step] {
                 if neg_seen.insert(nodes[u].head.clone()) {
@@ -9566,7 +9566,7 @@ impl<'m> Searching<'m> {
                 && let Some(row) = taken.first()
             {
                 let mut cur = row[1].clone();
-                let mut vis: TypeSet = TypeSet::with_hasher(Digests::new());
+                let mut vis: TypeSet = TypeSet::default();
                 while vis.insert(cur.clone()) {
                     let Some((s, l, h, next)) = list_step(&cur) else {
                         break;
