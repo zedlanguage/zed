@@ -5943,8 +5943,7 @@ impl<'t, 'a> Ck<'t, 'a> {
             later_folds.entry(at).or_default().push(later);
         }
         for later in later_folds.values_mut() {
-            later.sort_unstable();
-            later.dedup();
+            zed_collections::sorted::sort_dedup(later);
             for l in later.iter() {
                 self.folds.remove(l);
             }
@@ -5961,8 +5960,7 @@ impl<'t, 'a> Ck<'t, 'a> {
             // alone folds; one with another check takes that check's carrier (`saw_empty`).
             // Complexity tradeoff: a sort of the e records and one map lookup each,
             // O(e log e), against a scan of `by_call` per record, O(e × calls).
-            empty.sort_unstable();
-            empty.dedup();
+            zed_collections::sorted::sort_dedup(&mut empty);
             for call in empty {
                 if let std::collections::btree_map::Entry::Vacant(e) = by_call.entry(Some(call)) {
                     e.insert(vec![(None, None)]);
@@ -6005,8 +6003,7 @@ impl<'t, 'a> Ck<'t, 'a> {
                 // A call that met the fold's need on a tuple runs `.sum`'s tuple branch and
                 // never the fold (`sum_method`), so the fold takes any identity there; it
                 // takes none, so the call has a body like the others' (`unfolded`).
-                unfolded.sort_unstable();
-                unfolded.dedup();
+                zed_collections::sorted::sort_dedup(&mut unfolded);
                 for &call in &unfolded {
                     if !by_call.contains_key(&Some(call)) {
                         let at = self.info.fold_calls.entry(call).or_default();
@@ -6121,8 +6118,7 @@ impl<'t, 'a> Ck<'t, 'a> {
                     if sites.is_empty() {
                         continue;
                     }
-                    sites.sort_unstable();
-                    sites.dedup();
+                    zed_collections::sorted::sort_dedup(&mut sites);
                     self.info.split_needs.insert(id, sites);
                 }
             } else {
@@ -6202,8 +6198,7 @@ impl<'t, 'a> Ck<'t, 'a> {
                                     all_sites.extend_from_slice(cs);
                                 }
                             }
-                            all_sites.sort_unstable();
-                            all_sites.dedup();
+                            zed_collections::sorted::sort_dedup(&mut all_sites);
                             memo.insert(s_ptr, all_sites.into());
                             stack.pop();
                         }
@@ -6265,8 +6260,7 @@ impl<'t, 'a> Ck<'t, 'a> {
             .filter(|f| matches!(f.row, Some(Row::UnfixedDecimal | Row::LiteralCarrier)))
             .flat_map(|f| f.lits.iter().chain(&f.also).copied())
             .collect();
-        reported.sort_unstable();
-        reported.dedup();
+        zed_collections::sorted::sort_dedup(&mut reported);
         self.info.reported_literals = reported;
         let text = self.t.text;
         self.errors_cut(0);
@@ -6641,8 +6635,7 @@ impl<'t, 'a> Ck<'t, 'a> {
         };
         self.r10.forcing = true;
         let mut sorted = fids;
-        sorted.sort_unstable();
-        sorted.dedup();
+        zed_collections::sorted::sort_dedup(&mut sorted);
         for fid in sorted {
             self.r10_force_forward(fid, barrier);
         }
@@ -8146,8 +8139,7 @@ fn hold(t: &Ty, needs: Vec<Need>, is_class: impl Fn(&str) -> bool) -> (Ty, Vec<N
             shared.for_each(|(_, is)| hits.extend(is));
         }
         // The needs in their own order, each once, whichever side was read.
-        hits.sort_unstable();
-        hits.dedup();
+        zed_collections::sorted::sort_dedup(&mut hits);
         let mut joined: Option<Sig> = None;
         for i in hits {
             let (n, v) = (&needs[i], &vars[i]);

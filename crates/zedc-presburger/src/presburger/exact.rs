@@ -2414,8 +2414,7 @@ fn read_once(f: &Formula, work: &mut Work) -> Result<Option<ReadOnce>, Refusal> 
         for (&x, edges) in &vkids {
             if matches!(nodes[x], Node::And { .. }) {
                 let mut cs: Vec<usize> = edges.iter().map(|&(_, c)| c).collect();
-                cs.sort_unstable();
-                cs.dedup();
+                zed_collections::sorted::sort_dedup(&mut cs);
                 if cs.len() > 1 {
                     return Ok(None);
                 }
@@ -2455,8 +2454,7 @@ fn read_once(f: &Formula, work: &mut Work) -> Result<Option<ReadOnce>, Refusal> 
                         .get(&v)
                         .map(|es| es.iter().map(|&(_, c)| c).collect())
                         .unwrap_or_default();
-                    cs.sort_unstable();
-                    cs.dedup();
+                    zed_collections::sorted::sort_dedup(&mut cs);
                     let reading = cs.iter().filter(|&&c| sat[c]).count();
                     if live[v] > reading {
                         pieces.extend(ends_set(&vin).pieces().cloned());

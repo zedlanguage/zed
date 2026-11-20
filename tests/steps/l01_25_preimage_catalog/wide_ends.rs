@@ -128,8 +128,7 @@ fn points(ds: &Domains, d: &Demand, near: &[Num]) -> Vec<Num> {
         .flat_map(|n| (-3..=3).map(move |k| n + &Num::from(k)))
         .filter(|n| ds["i"].contains_end(&End::Fin(n.clone())))
         .collect();
-    out.sort();
-    out.dedup();
+    zed_collections::sorted::sort_dedup(&mut out);
     out
 }
 

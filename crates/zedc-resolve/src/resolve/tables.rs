@@ -434,8 +434,7 @@ impl<'a> Tables<'a> {
                             let mut named: Vec<usize> = (group.binders.iter())
                                 .filter_map(|b| item_of.get(b).copied())
                                 .collect();
-                            named.sort_unstable();
-                            named.dedup();
+                            zed_collections::sorted::sort_dedup(&mut named);
                             match named[..] {
                                 [one] => one,
                                 _ => {
@@ -450,8 +449,7 @@ impl<'a> Tables<'a> {
             }
         }
         for d in &mut deps {
-            d.sort_unstable();
-            d.dedup();
+            zed_collections::sorted::sort_dedup(d);
         }
         deps
     }
@@ -597,8 +595,7 @@ impl<'a> Tables<'a> {
                     lists[l].push(i);
                 }
                 for &l in named.values() {
-                    lists[l].sort_unstable();
-                    lists[l].dedup();
+                    zed_collections::sorted::sort_dedup(&mut lists[l]);
                 }
                 let name = self.res.binders[group.binders[0]].name.as_str();
                 // Each statement's edge for each list, by statement and list.

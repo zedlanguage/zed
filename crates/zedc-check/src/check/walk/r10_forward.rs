@@ -476,8 +476,7 @@ impl<'t, 'a> Ck<'t, 'a> {
                     exit_var_set.insert(v.clone());
                 }
             }
-            exit_offsets.sort_unstable();
-            exit_offsets.dedup();
+            zed_collections::sorted::sort_dedup(&mut exit_offsets);
         } else {
             for (j, rv) in explicit_results.iter().enumerate() {
                 if arrow_var_set.contains(rv) {
@@ -1130,8 +1129,7 @@ impl<'t, 'a> Ck<'t, 'a> {
             .collect();
         if !hit_fids.is_empty() {
             self.r10.forcing = true;
-            hit_fids.sort_unstable();
-            hit_fids.dedup();
+            zed_collections::sorted::sort_dedup(&mut hit_fids);
             for fid in hit_fids {
                 self.r10_force_forward(fid, "f1");
             }

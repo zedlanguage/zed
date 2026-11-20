@@ -20,8 +20,7 @@ fn seed_zero_gives_varied_draws() {
     let mut rng = Rng::new(0);
     let words: Vec<u64> = (0..64).map(|_| rng.next_u64()).collect();
     let mut distinct = words.clone();
-    distinct.sort_unstable();
-    distinct.dedup();
+    zed_collections::sorted::sort_dedup(&mut distinct);
     assert_eq!(distinct.len(), 64, "{words:x?}");
     let mut rng = Rng::new(0);
     let mut seen = [false; 10];

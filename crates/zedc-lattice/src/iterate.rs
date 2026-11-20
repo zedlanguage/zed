@@ -53,8 +53,7 @@ pub fn dependency_graph(reads: &[Vec<usize>]) -> Vec<Vec<usize>> {
         }
     }
     for s in &mut succ {
-        s.sort_unstable();
-        s.dedup();
+        zed_collections::sorted::sort_dedup(s);
     }
     succ
 }

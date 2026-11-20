@@ -18,6 +18,7 @@ crate-type = ["rlib", "dylib"]
 blake3.workspace = true
 # Finds the package root of a file one directory at a time (zedc::unit::Place::of).
 rustix = { workspace = true, features = ["fs"] }
+zed-collections.workspace = true
 zed-graph.workspace = true
 zed-kernel.workspace = true
 zed-numtheory.workspace = true

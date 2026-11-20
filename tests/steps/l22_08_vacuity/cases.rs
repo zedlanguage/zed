@@ -204,8 +204,7 @@ fn each_choice_of_a_field_is_written_as_a_function() {
     let four = all(4);
     assert_eq!(four.len(), 6);
     let mut distinct = four.clone();
-    distinct.sort();
-    distinct.dedup();
+    zed_collections::sorted::sort_dedup(&mut distinct);
     assert_eq!(distinct.len(), 6, "{four:?}");
 }
 

@@ -1308,8 +1308,7 @@ fn seeds_of(
 ) -> Vec<u64> {
     let mut seeds: Vec<u64> = fixed.collect();
     seeds.extend(pick_seeds(rng, what, all, count));
-    seeds.sort();
-    seeds.dedup();
+    zed_collections::sorted::sort_dedup(&mut seeds);
     seeds
 }
 
@@ -1337,8 +1336,7 @@ fn sweep_seeds_of(
     let mut seeds = pick_seeds(&mut rng, name, 0..1500, 24);
     seeds.extend(picks.iter().map(|&i| named[i as usize]));
     seeds.push(both);
-    seeds.sort();
-    seeds.dedup();
+    zed_collections::sorted::sort_dedup(&mut seeds);
     (seeds, seed)
 }
 

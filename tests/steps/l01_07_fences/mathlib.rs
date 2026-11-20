@@ -225,8 +225,7 @@ fn every_law_the_proofs_of_euclid_and_minfac_cite_is_written_on_the_page() {
     // The chain cites exactly the laws that `euclid`'s `using` list names.
     let chain = law_text(&page, "euclidChain").expect("`euclidChain` is written");
     let mut chain_cites = cited(&chain);
-    chain_cites.sort_unstable();
-    chain_cites.dedup();
+    zed_collections::sorted::sort_dedup(&mut chain_cites);
     let mut using = euclid_cites(&page);
     using.sort_unstable();
     assert_eq!(chain_cites, using);

@@ -169,8 +169,7 @@ fn every_printed_type_parses_back_to_itself() {
             }
         }
     }
-    failures.sort();
-    failures.dedup();
+    zed_collections::sorted::sort_dedup(&mut failures);
     println!("{count} printed types");
     assert!(
         failures.is_empty(),
@@ -230,8 +229,7 @@ fn every_type_a_step_writes_parses_back_with_the_message_declarations() {
             }
         }
     }
-    failures.sort();
-    failures.dedup();
+    zed_collections::sorted::sort_dedup(&mut failures);
     println!("{count} types written in steps");
     assert!(
         count > 0,

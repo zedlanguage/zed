@@ -12713,8 +12713,7 @@ impl Choices<'_> {
         let mut on: Vec<usize> = (l.blocks.iter())
             .flat_map(|(_, lits)| lits.iter().map(|(a, _)| (self.at)(a).0))
             .collect();
-        on.sort_unstable();
-        on.dedup();
+        zed_collections::sorted::sort_dedup(&mut on);
         let mut picks = Picks::default();
         let mut reached = [false; 2];
         for (v, lits) in &l.blocks {
@@ -13683,8 +13682,7 @@ fn component_keys(p: &Parts, c: usize, held: &Held) -> Option<Vec<Key>> {
             return None;
         }
     }
-    keys.sort();
-    keys.dedup();
+    zed_collections::sorted::sort_dedup(&mut keys);
     Some(keys)
 }
 
@@ -13716,8 +13714,7 @@ fn meeting_pairs(ts: &[&Type]) -> BTreeSet<(usize, usize)> {
             let keys: Vec<Option<Vec<Key>>> = (parts.iter())
                 .map(|p| match mode {
                     None => literal_keys(p).map(|mut ks| {
-                        ks.sort();
-                        ks.dedup();
+                        zed_collections::sorted::sort_dedup(&mut ks);
                         ks
                     }),
                     Some(c) => component_keys(p, c, &held),
@@ -14778,8 +14775,7 @@ fn affine_lists_empty(t: &Type) -> Option<bool> {
     let mut operands: Vec<(Vec<usize>, usize)> = Vec::new();
     for c in &conjuncts {
         let mut first_rows = c.clone();
-        first_rows.sort();
-        first_rows.dedup();
+        zed_collections::sorted::sort_dedup(&mut first_rows);
         let mut own: Vec<usize> = Vec::new();
         let mut todo: Vec<Type> = first_rows.iter().map(|r| r[1].clone()).collect();
         while let Some(x) = todo.pop() {
@@ -14788,8 +14784,7 @@ fn affine_lists_empty(t: &Type) -> Option<bool> {
                 None => {
                     let (stop, g) = list_rows(&x, &mut names)?;
                     let mut rows = g.union_rows()?;
-                    rows.sort();
-                    rows.dedup();
+                    zed_collections::sorted::sort_dedup(&mut rows);
                     let (named, rest) = read_rows(&rows)?;
                     let i = states.len();
                     states.push(ListState { stop, named, rest });
@@ -16316,10 +16311,8 @@ fn exact_flat_diff_decide(
                         rec::Shape::Union(_) => {
                             let mut inhs: Vec<u32> = parts.iter().map(|p| p.0).collect();
                             let mut nfs: Vec<u32> = parts.iter().map(|p| p.1).collect();
-                            inhs.sort_unstable();
-                            inhs.dedup();
-                            nfs.sort_unstable();
-                            nfs.dedup();
+                            zed_collections::sorted::sort_dedup(&mut inhs);
+                            zed_collections::sorted::sort_dedup(&mut nfs);
                             (b.add(Kind::Or, inhs), b.add(Kind::Or, nfs))
                         }
                         rec::Shape::Tuple(xs) => {
@@ -16590,8 +16583,7 @@ fn horn_witness_group(members: &[Type], s: &mut Search) {
                     watchers: &mut [Vec<usize>]| {
         let rid = rules.len();
         let mut unique_p = premises.clone();
-        unique_p.sort_unstable();
-        unique_p.dedup();
+        zed_collections::sorted::sort_dedup(&mut unique_p);
         let rem = unique_p.len();
         for &p in &unique_p {
             watchers[p].push(rid);
@@ -17176,8 +17168,7 @@ impl Others {
             None => (None, Vec::new(), Vec::new(), Vec::new(), Vec::new()),
             Some((_, to, kept)) => {
                 let mut ls: Vec<u32> = leaves.iter().map(|&v| to[v as usize]).collect();
-                ls.sort_unstable();
-                ls.dedup();
+                zed_collections::sorted::sort_dedup(&mut ls);
                 let pick = |v: &u32| (same[*v as usize], union[*v as usize], leaf[*v as usize]);
                 let (s, (u, l)): (Vec<u32>, (Vec<bool>, Vec<bool>)) =
                     kept.iter().map(pick).map(|(s, u, l)| (s, (u, l))).unzip();
@@ -17203,8 +17194,7 @@ impl Others {
                     None => node,
                 };
                 let mut leaves: Vec<u32> = leaves.iter().map(|&v| node[v as usize]).collect();
-                leaves.sort_unstable();
-                leaves.dedup();
+                zed_collections::sorted::sort_dedup(&mut leaves);
                 let types: Vec<u32> = (0..m.len() as u32).collect();
                 if let Some(a) = names::absorb(&m, &types, &union) {
                     systems.push((a, leaves.clone(), Some(maps.len())));
@@ -17347,16 +17337,14 @@ impl<'a> Made<'a> {
         match self {
             Made::Or(xs) => {
                 let mut ys = map(xs);
-                ys.sort_unstable();
-                ys.dedup();
+                zed_collections::sorted::sort_dedup(&mut ys);
                 Made::Or(ys)
             }
             Made::Tuple(xs) => Made::Tuple(map(xs)),
             Made::Atom(name, xs) => Made::Atom(name, map(xs)),
             Made::Meet(xs) => {
                 let mut ys = map(xs);
-                ys.sort_unstable();
-                ys.dedup();
+                zed_collections::sorted::sort_dedup(&mut ys);
                 Made::Meet(ys)
             }
             Made::Diff(r, a) => Made::Diff(*r, same[*a as usize]),
@@ -17567,8 +17555,7 @@ fn system(env: &Arc<Env>) -> System {
             let (key, wide) = match &e.e {
                 rec::Shape::Union(_) => {
                     let mut parts = parts;
-                    parts.sort_unstable();
-                    parts.dedup();
+                    zed_collections::sorted::sort_dedup(&mut parts);
                     if let [only] = parts[..]
                         && !root
                     {
@@ -17585,8 +17572,7 @@ fn system(env: &Arc<Env>) -> System {
                     // visited, and their nodes put on `done`, in the reverse order.
                     written = Some(parts.iter().rev().copied().collect());
                     let mut parts = parts;
-                    parts.sort_unstable();
-                    parts.dedup();
+                    zed_collections::sorted::sort_dedup(&mut parts);
                     (Made::Meet(parts), true)
                 }
                 rec::Shape::Diff(_, r) => (Made::Diff(r.class, parts[0]), true),

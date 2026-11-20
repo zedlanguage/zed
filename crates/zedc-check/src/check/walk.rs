@@ -10815,8 +10815,7 @@ impl<'a> Ck<'_, 'a> {
             out.extend(v.vars.iter().map(|(x, _)| (x.clone(), at)));
             stack.extend_from_slice(&v.binders);
         }
-        out.sort_unstable();
-        out.dedup();
+        zed_collections::sorted::sort_dedup(&mut out);
         out
     }
 
@@ -12834,8 +12833,7 @@ impl<'t, 'a> Ck<'t, 'a> {
                 from.push(r);
             }
         }
-        from.sort_unstable();
-        from.dedup();
+        zed_collections::sorted::sort_dedup(&mut from);
         let mut links: Vec<(usize, usize, Span)> = Vec::new();
         for &r in &from {
             self.touch(r);
@@ -16376,8 +16374,7 @@ impl<'t, 'a> Ck<'t, 'a> {
             .filter(|id| self.open_params.contains(id))
             .chain(open)
             .collect();
-        ids.sort_unstable();
-        ids.dedup();
+        zed_collections::sorted::sort_dedup(&mut ids);
         if here == 0 || ids.is_empty() {
             return IntervalSet::top();
         }

@@ -75,8 +75,7 @@ pub(super) fn color(adj: &[Vec<usize>]) -> Option<Vec<usize>> {
 
 fn vertices(edges: &[Edge]) -> Vec<usize> {
     let mut out: Vec<_> = edges.iter().flat_map(|&(a, b)| [a, b]).collect();
-    out.sort_unstable();
-    out.dedup();
+    zed_collections::sorted::sort_dedup(&mut out);
     out
 }
 

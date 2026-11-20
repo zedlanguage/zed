@@ -917,8 +917,7 @@ impl<A: Literal> Part<A> {
             let Part::Bdd(b) = p else { return None };
             keys.extend(b.chain_keys(Op::Or)?);
         }
-        keys.sort_unstable();
-        keys.dedup();
+        zed_collections::sorted::sort_dedup(&mut keys);
         if keys.windows(2).any(|w| w[0].0 == w[1].0) {
             return None;
         }

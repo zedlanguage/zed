@@ -317,8 +317,7 @@ fn defined(bullet: &str) -> Vec<String> {
             Some(bullet[start..at].to_ascii_lowercase())
         })
         .collect();
-    names.sort();
-    names.dedup();
+    zed_collections::sorted::sort_dedup(&mut names);
     names
 }
 

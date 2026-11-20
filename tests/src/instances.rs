@@ -168,8 +168,7 @@ mod tests {
     #[test]
     fn the_float_instance_has_nine_distinct_values() {
         let mut bits: Vec<u64> = BMC_FLOATS.iter().map(|x| x.to_bits()).collect();
-        bits.sort();
-        bits.dedup();
+        zed_collections::sorted::sort_dedup(&mut bits);
         assert_eq!(bits.len(), 9);
         assert!(BMC_FLOATS.iter().any(|x| x.is_nan()));
     }

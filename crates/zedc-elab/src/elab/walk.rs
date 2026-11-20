@@ -1844,8 +1844,7 @@ impl<'a> Elab<'a> {
                     let mut deps: Vec<usize> = (self.t.uses_in(d.span, &[]).into_iter())
                         .filter_map(|b| at.get(&b).copied())
                         .collect();
-                    deps.sort_unstable();
-                    deps.dedup();
+                    zed_collections::sorted::sort_dedup(&mut deps);
                     deps
                 })
                 .collect();
@@ -2146,8 +2145,7 @@ impl<'a> Elab<'a> {
                 let mut deps: Vec<usize> = (self.t.uses_in(d.span, &[]).into_iter())
                     .filter_map(|b| at.get(&b).copied())
                     .collect();
-                deps.sort_unstable();
-                deps.dedup();
+                zed_collections::sorted::sort_dedup(&mut deps);
                 deps
             })
             .collect();

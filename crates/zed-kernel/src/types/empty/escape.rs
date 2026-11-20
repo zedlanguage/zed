@@ -1342,8 +1342,7 @@ fn decide_counted(t: &Type, counts: &mut (usize, usize)) -> Option<ChainPlan> {
                 cands.push(len);
             }
         }
-        cands.sort_unstable();
-        cands.dedup();
+        zed_collections::sorted::sort_dedup(&mut cands);
         let all_rows_held_from_l0 = neg.iter().all(|&(_, s)| {
             let hs = nodes[s].ht;
             let steps = l0 - 1;
@@ -2025,8 +2024,7 @@ fn cells_windows(
                 .map_or(top + 1, |x| x.min(top + 1));
             if mods.iter().all(|q| q.0 != md) {
                 let mut rs: Vec<usize> = live.iter().map(|&r| nodes[roots[r].s].ht % md).collect();
-                rs.sort_unstable();
-                rs.dedup();
+                zed_collections::sorted::sort_dedup(&mut rs);
                 mods.push((md, rs));
             }
         }

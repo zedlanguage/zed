@@ -1016,10 +1016,8 @@ fn joint_stage_hulls_are_exact() {
             }
         }
     }
-    xs.sort_unstable();
-    xs.dedup();
-    ys.sort_unstable();
-    ys.dedup();
+    zed_collections::sorted::sort_dedup(&mut xs);
+    zed_collections::sorted::sort_dedup(&mut ys);
     assert_eq!((xs, ys), (vec![1], vec![0, 2]), "one stage's points");
     for n in [1, 2, 3, 16] {
         let (each, skipped) = project_each(&joint_stages(n), &joint_syms(n)).expect("projected");
@@ -1354,8 +1352,7 @@ fn forest_answers_match_enumeration() {
         let (each, skipped) = project_each(&f, &syms).expect("projected");
         assert!(skipped.is_empty(), "case {case}: {skipped:?}");
         for (v, (h, s)) in each.into_iter().zip(&mut seen).enumerate() {
-            s.sort_unstable();
-            s.dedup();
+            zed_collections::sorted::sort_dedup(s);
             assert_eq!(
                 h.expect("a set").to_string(),
                 runs(s),

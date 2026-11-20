@@ -6221,8 +6221,7 @@ fn enumerate_on(term: &Term, axes: &[(Arc<str>, Vec<Num>)], demand: &Demand) -> 
                     .iter()
                     .map(|vs| {
                         let mut vs = vs.clone();
-                        vs.sort();
-                        vs.dedup();
+                        zed_collections::sorted::sort_dedup(&mut vs);
                         vs.len() as u64
                     })
                     .product();

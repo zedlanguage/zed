@@ -340,10 +340,8 @@ fn listed(section: &str) -> (Vec<IdPair<'_>>, Vec<&str>) {
             cross.push(line);
         }
     }
-    same.sort_unstable();
-    same.dedup();
-    cross.sort_unstable();
-    cross.dedup();
+    zed_collections::sorted::sort_dedup(&mut same);
+    zed_collections::sorted::sort_dedup(&mut cross);
     (same, cross)
 }
 

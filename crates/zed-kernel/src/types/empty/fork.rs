@@ -216,13 +216,11 @@ fn cells(pos: &[(Ints, usize)], neg: &[(Ints, usize)]) -> Vec<Cell> {
     let neg_cof: Vec<&(Ints, usize)> = neg.iter().filter(|(h, _)| h.cof).collect();
     let mut out: BTreeMap<(Vec<usize>, Vec<usize>), Value> = BTreeMap::new();
     let mut put = |v: &Value, mut ps: Vec<usize>, mut ns: Vec<usize>| {
-        ps.sort_unstable();
-        ps.dedup();
+        zed_collections::sorted::sort_dedup(&mut ps);
         if ps.is_empty() {
             return;
         }
-        ns.sort_unstable();
-        ns.dedup();
+        zed_collections::sorted::sort_dedup(&mut ns);
         out.entry((ps, ns)).or_insert_with(|| v.clone());
     };
     for (v, (ps, ns)) in &by_value {

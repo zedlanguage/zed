@@ -62,8 +62,7 @@ fn a_default_of_another_type_names_each_member_once_in_its_repair() {
         for union in unions {
             let members: Vec<&str> = union.split(" | ").collect();
             let mut once = members.clone();
-            once.sort_unstable();
-            once.dedup();
+            zed_collections::sorted::sort_dedup(&mut once);
             assert_eq!(once.len(), members.len(), "{text}\n{e:#?}");
         }
     }

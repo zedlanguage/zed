@@ -463,8 +463,7 @@ fn the_answers_do_not_depend_on_the_order_of_the_symbols_part(part: usize) {
                             Err(e) => vec![format!("{e:?}"); o.len()],
                         })
                         .collect();
-                    by.sort();
-                    by.dedup();
+                    zed_collections::sorted::sort_dedup(&mut by);
                     (by, got.map(|g| g.1).unwrap_or_default())
                 })
                 .collect();

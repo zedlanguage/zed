@@ -31,8 +31,7 @@ fn edge(rng: &mut Rng) -> String {
         _ => {
             let n = 1 + rng.below(4);
             let mut xs: Vec<i64> = (0..n).map(|_| rng.below(25) as i64 - 5).collect();
-            xs.sort();
-            xs.dedup();
+            zed_collections::sorted::sort_dedup(&mut xs);
             let xs: Vec<String> = xs.iter().map(i64::to_string).collect();
             e += &format!(" in [-5..=40] set {{{}}}", xs.join(", "));
         }

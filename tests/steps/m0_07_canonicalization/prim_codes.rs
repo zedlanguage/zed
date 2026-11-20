@@ -110,8 +110,7 @@ fn each_primitive_keeps_its_number() {
 fn the_numbers_cover_every_primitive_once() {
     assert_eq!(CODES.len(), PRIMS.len());
     let mut numbers: Vec<u64> = PRIMS.iter().map(|p| p.code()).collect();
-    numbers.sort_unstable();
-    numbers.dedup();
+    zed_collections::sorted::sort_dedup(&mut numbers);
     assert_eq!(numbers.len(), PRIMS.len());
     for p in PRIMS {
         assert!(

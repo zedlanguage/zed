@@ -140,8 +140,7 @@ pub(super) fn drop_outside_values<D>(
         for &(_, (lo, hi)) in &on[f] {
             cut(lo.as_ref(), hi.as_ref());
         }
-        cuts.sort_unstable();
-        cuts.dedup();
+        zed_collections::sorted::sort_dedup(&mut cuts);
         let at = |v: &Int| cuts.binary_search(v).expect("an end of a range is a cut");
         // The first and last segment of a range; the first past the last when it is empty.
         let span = |lo: Option<&Int>, hi: Option<&Int>| -> (usize, usize) {
@@ -215,8 +214,7 @@ pub(super) fn drop_outside_values<D>(
             let mut ends: Vec<usize> = (ks.iter())
                 .flat_map(|&k| [v.spans[k].0, v.spans[k].1 + 1])
                 .collect();
-            ends.sort_unstable();
-            ends.dedup();
+            zed_collections::sorted::sort_dedup(&mut ends);
             let mut diff = vec![0i64; ends.len()];
             let id = covers.len();
             for &k in &ks {

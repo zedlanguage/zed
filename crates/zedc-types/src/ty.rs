@@ -16132,8 +16132,7 @@ impl Cx<'_> {
         if NO_KEY_MASKS.get() {
             masks.iter_mut().for_each(|m| m.1 = None);
         }
-        masks.sort_unstable();
-        masks.dedup();
+        zed_collections::sorted::sort_dedup(&mut masks);
         (
             Arc::as_ptr(s) as usize,
             se.clone(),
@@ -18481,8 +18480,7 @@ impl FnList {
         if !keyed {
             js.extend(&self.unkeyed);
         }
-        js.sort_unstable();
-        js.dedup();
+        zed_collections::sorted::sort_dedup(&mut js);
         js
     }
 }
@@ -19711,8 +19709,7 @@ impl<'t> ArrowIndex<'t> {
             Some(lists) => lists.into_iter().flatten().copied().collect(),
             None => (0..self.n).collect(),
         };
-        out.sort_unstable();
-        out.dedup();
+        zed_collections::sorted::sort_dedup(&mut out);
         self.keep_missing(&mut out, need, result, 0);
         out
     }
@@ -19738,8 +19735,7 @@ impl<'t> ArrowIndex<'t> {
         // `l01_26_type_resolution::bench::scaling::many_arrows_whose_results_meet_only_on_different_sets_are_refused_in_linear_time`:
         // 12.3 times the instructions from 400 to 3200 arrows before, 8.3 times now.
         let mut params: Vec<usize> = need.iter().map(|e| e.0).collect();
-        params.sort_unstable();
-        params.dedup();
+        zed_collections::sorted::sort_dedup(&mut params);
         let c = out.len();
         let mut wanted = vec![0usize; params.len()];
         let mut offered = vec![0usize; params.len() * c];
@@ -19856,8 +19852,7 @@ impl<'t> ArrowIndex<'t> {
             Some(lists) => lists.into_iter().flatten().copied().collect(),
             None => (0..self.n).collect(),
         };
-        out.sort_unstable();
-        out.dedup();
+        zed_collections::sorted::sort_dedup(&mut out);
         self.keep_missing(&mut out, &need, result.as_ref(), 1);
         out
     }
@@ -21768,8 +21763,7 @@ impl Ty {
             }
             false => {
                 walk.sep(out);
-                marks.sort_unstable();
-                marks.dedup();
+                zed_collections::sorted::sort_dedup(&mut marks);
                 let marks_len = marks.len();
                 out.push(defs::UNION);
                 for name in after {

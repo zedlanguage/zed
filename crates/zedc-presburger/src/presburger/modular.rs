@@ -2242,8 +2242,7 @@ fn fold_or(nodes: Vec<FoldNode>) -> Result<FoldNode, ()> {
                 next.push(comb);
             }
         }
-        next.sort();
-        next.dedup();
+        zed_collections::sorted::sort_dedup(&mut next);
         current = next;
     } else if any_single {
         let bounds = Domain::from_pieces(pieces);
@@ -2287,8 +2286,7 @@ fn partition_into_regimes(global_bounds: &Domain, clauses: &[FlatClause]) -> Vec
             }
         }
     }
-    cuts.sort();
-    cuts.dedup();
+    zed_collections::sorted::sort_dedup(&mut cuts);
 
     let mut out = Vec::new();
     // Complexity tradeoff: scanning every cut for every disjoint global span
@@ -3749,8 +3747,7 @@ type FactorJob<'a> = (&'a [Int], Vec<(usize, Int)>);
 // None only where a product tree is not as built (see `split_sparse`).
 fn coprime_base_and_factors(mut moduli: Vec<Int>) -> Option<CoprimeBase> {
     moduli.retain(|m| *m > Int::ONE);
-    moduli.sort();
-    moduli.dedup();
+    zed_collections::sorted::sort_dedup(&mut moduli);
     if moduli.is_empty() {
         return Some((Vec::new(), BTreeMap::new(), Vec::new()));
     }
@@ -3771,8 +3768,7 @@ fn coprime_base_and_factors(mut moduli: Vec<Int>) -> Option<CoprimeBase> {
     }
     let mut bases = level.pop().unwrap_or_default();
     bases.retain(|b| *b > Int::ONE);
-    bases.sort();
-    bases.dedup();
+    zed_collections::sorted::sort_dedup(&mut bases);
 
     let num_bases = bases.len();
     let mut mod_factors: BTreeMap<Int, Vec<(usize, Int)>> = BTreeMap::new();
@@ -4550,8 +4546,7 @@ fn solve_coprime_connected(
         // Active unfixed bases: those with `fixed_base[i].is_none()`.
         // Compute forbidden box `F_j` for each clause `cl` in `clauses`:
         // `F_{j, i} = allowed[i] \ cl[i]`.
-        clauses.sort();
-        clauses.dedup();
+        zed_collections::sorted::sort_dedup(&mut clauses);
 
         // Merge clauses of size 2 that share `(i1, F_{j, i1})` on `i2`:
         if clauses.len() > 1 {
@@ -4879,8 +4874,7 @@ fn elementary_intervals(
             }
         }
     }
-    cuts.sort();
-    cuts.dedup();
+    zed_collections::sorted::sort_dedup(&mut cuts);
 
     let mut out = Vec::new();
     for (a_lo, a_hi) in allowed_i {

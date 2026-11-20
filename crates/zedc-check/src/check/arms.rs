@@ -144,12 +144,9 @@ impl Parts {
         let opaque = self.opaque > m[3];
         self.opaque = m[3];
         self.ifs = m[4];
-        binders.sort_unstable();
-        binders.dedup();
-        vars.sort_unstable();
-        vars.dedup();
-        calls.sort_unstable();
-        calls.dedup();
+        zed_collections::sorted::sort_dedup(&mut binders);
+        zed_collections::sorted::sort_dedup(&mut vars);
+        zed_collections::sorted::sort_dedup(&mut calls);
         Translated {
             term,
             binders,

@@ -78,8 +78,7 @@ impl System {
             .iter()
             .map(|ts| {
                 let mut r: Vec<usize> = ts.iter().map(|t| t.from).collect();
-                r.sort_unstable();
-                r.dedup();
+                zed_collections::sorted::sort_dedup(&mut r);
                 r
             })
             .collect();

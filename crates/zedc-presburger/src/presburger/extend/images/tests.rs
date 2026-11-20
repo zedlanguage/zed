@@ -876,8 +876,7 @@ fn residue_map_images_at_a_large_modulus_agree_with_a_backward_search() {
             let mut level = vec![y];
             for step in chain[..=i].iter().rev() {
                 let mut prev: Vec<i64> = level.iter().flat_map(|&v| back(step, v)).collect();
-                prev.sort();
-                prev.dedup();
+                zed_collections::sorted::sort_dedup(&mut prev);
                 level = prev;
             }
             let expected = !level.is_empty();

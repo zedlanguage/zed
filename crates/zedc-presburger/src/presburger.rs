@@ -1267,8 +1267,7 @@ fn by_structure<'a>(rows: &'a [Con], ors: &'a [Vec<Rc<Parts>>]) -> Vec<usize> {
     for &j in &asked {
         let cons = ors[j].iter().flat_map(|d| d.cons.iter());
         let mut xs: Vec<&Atom> = cons.flat_map(|c| c.lin.terms.keys()).collect();
-        xs.sort_unstable();
-        xs.dedup();
+        zed_collections::sorted::sort_dedup(&mut xs);
         atoms.push(xs);
     }
     let mut by_atom: HashMap<&Atom, Vec<usize>> = HashMap::new();
@@ -2516,8 +2515,7 @@ impl Numbered {
             .flatten()
             .copied()
             .collect();
-        starts.sort_unstable();
-        starts.dedup();
+        zed_collections::sorted::sort_dedup(&mut starts);
         // The new number of each part changed, the parts changed of each part above one, and
         // the parts left to read, lowest first.
         let mut now: HashMap<usize, usize> = HashMap::new();
@@ -3021,8 +3019,7 @@ fn stage_kernels(base: &Linked, stage: &[Vec<Rc<Parts>>]) -> Vec<Option<Linked>>
         let back = back.get(&r);
         rows.sort_unstable();
         let mut sets: Vec<&BTreeSet<Atom>> = ors.iter().map(|(_, s)| s).collect();
-        sets.sort_unstable();
-        sets.dedup();
+        zed_collections::sorted::sort_dedup(&mut sets);
         let sets: Vec<BTreeSet<Atom>> = sets.into_iter().cloned().collect();
         let mut made: Vec<Option<Vec<Con>>> = vec![None; sets.len()];
         let filled: Result<(), ()> = by_halves(rows, &sets, |i, k| {
@@ -3972,8 +3969,7 @@ impl GuardedChain {
         let mut incident = vec![Vec::new(); self.vars];
         for (j, ds) in self.defs.iter().enumerate() {
             let mut read: Vec<usize> = ds.iter().flat_map(|d| d.ends).collect();
-            read.sort_unstable();
-            read.dedup();
+            zed_collections::sorted::sort_dedup(&mut read);
             for a in read {
                 incident[a].push(j);
             }
@@ -4015,8 +4011,7 @@ impl GuardedChain {
                             parent,
                         ));
                     }
-                    key.sort_unstable();
-                    key.dedup();
+                    zed_collections::sorted::sort_dedup(&mut key);
                     let rep = if let Some(&r) = canonical.get(&key) {
                         r
                     } else {
@@ -5001,8 +4996,7 @@ mod cell_sweep {
             }
         }
 
-        cuts.sort_unstable();
-        cuts.dedup();
+        zed_collections::sorted::sort_dedup(&mut cuts);
         let local_cells = build_cells(whole, &cuts);
         let num_local = local_cells.len();
 
@@ -6735,8 +6729,7 @@ mod cell_sweep {
             }
         }
 
-        cuts.sort_unstable();
-        cuts.dedup();
+        zed_collections::sorted::sort_dedup(&mut cuts);
         let cells = build_cells(whole, &cuts);
         let num_cells = cells.len();
 
@@ -7213,8 +7206,7 @@ mod cell_sweep {
         for (sp, _) in &target_pieces {
             collect_cuts_from_span(sp, whole, &mut cuts);
         }
-        cuts.sort_unstable();
-        cuts.dedup();
+        zed_collections::sorted::sort_dedup(&mut cuts);
         let cells = build_cells(whole, &cuts);
         let num_cells = cells.len();
 
@@ -8865,8 +8857,7 @@ fn cells_of<'p>(p: &'p Parts, x: &Atom, solving: bool) -> Option<Result<bool, Re
     walk.unary_payload = unary_atoms
         .into_iter()
         .any(|a| uses.get(a).copied() == Some(1));
-    ends.sort_unstable();
-    ends.dedup();
+    zed_collections::sorted::sort_dedup(&mut ends);
     // The cells: from no bound or an end to just below the next end, met with `whole`.
     let starts = std::iter::once(None).chain(ends.iter().cloned().map(Some));
     let stops = (ends.iter().map(|e| Some(e - &Int::ONE))).chain(std::iter::once(None));
@@ -9897,8 +9888,7 @@ fn cells_point(l: usize, r: usize, items: Vec<CellItem>, live: &[bool]) -> bool 
             (classes.rewrite(&it.link, &mut touched)).map(|link| CellItem { link, ..it })
         })
         .collect();
-    touched.sort_unstable();
-    touched.dedup();
+    zed_collections::sorted::sort_dedup(&mut touched);
     let m = l.midpoint(r);
     for (lo, hi) in [(l, m), (m + 1, r)] {
         let mut next: Vec<CellItem> = (part.iter())
@@ -11561,8 +11551,7 @@ fn shadow_logged<'a>(
         }
         d.gone = true;
         let mut ids = mem::take(&mut d.rows);
-        ids.sort_unstable();
-        ids.dedup();
+        zed_collections::sorted::sort_dedup(&mut ids);
         if by_eq {
             let mut taken: Vec<Con> = (ids.iter())
                 .filter_map(|&i| live[i].take().map(|c| (i, c)))
@@ -12496,8 +12485,7 @@ fn learn(p: &Parts, rest: Vec<Rc<Parts>>, d: &Parts, implied: &mut Near) {
                 .filter(weaker)
                 .chain([v.clone()])
                 .collect();
-            ws.sort_unstable();
-            ws.dedup();
+            zed_collections::sorted::sort_dedup(&mut ws);
             if !upper {
                 ws.reverse();
             }
@@ -12613,8 +12601,7 @@ fn private_links(p: &Parts) -> (Vec<usize>, Vec<Vec<Vec<usize>>>) {
                             _ => None,
                         })
                         .collect();
-                    l.sort_unstable();
-                    l.dedup();
+                    zed_collections::sorted::sort_dedup(&mut l);
                     l
                 })
                 .collect();
@@ -12677,8 +12664,7 @@ impl<'a> Unit<'a> {
             .flat_map(|c| c.lin.terms.keys())
             .filter(|a| Some(*a) != x)
             .collect();
-        atoms.sort_unstable();
-        atoms.dedup();
+        zed_collections::sorted::sort_dedup(&mut atoms);
         atoms
     }
 }
@@ -15218,8 +15204,7 @@ fn reduce_subset_row_eqs(mut base: Vec<(Row, Rel)>, vars: usize) -> Vec<(Row, Re
                 .keys()
                 .filter_map(|v| owner.get(v).copied())
                 .collect();
-            cands.sort_unstable();
-            cands.dedup();
+            zed_collections::sorted::sort_dedup(&mut cands);
             for p in cands {
                 let sub = &base[p].0;
                 if sub.a.is_empty() || sub.a.len() >= cur_map.len() {
@@ -15775,8 +15760,7 @@ fn broken_swap<'a>(top: &'a Omega, base: &[(Row, Rel)]) -> Option<&'a Tied> {
             .copied()
             .filter(|n| read[*n].0.is_none_or(|i| i < at))
             .collect();
-        ns.sort_unstable();
-        ns.dedup();
+        zed_collections::sorted::sort_dedup(&mut ns);
         let mut rows: Vec<(Option<usize>, Vec<Term>, &Int, Rel)> = Vec::with_capacity(ns.len());
         let mut images = Vec::with_capacity(ns.len());
         for n in ns {
@@ -16107,8 +16091,7 @@ fn stable_colors(
     }
     next += usize::from(!terms.is_empty());
     let mut kinds: Vec<u8> = groups.iter().map(|g| g.kind).collect();
-    kinds.sort_unstable();
-    kinds.dedup();
+    zed_collections::sorted::sort_dedup(&mut kinds);
     for (h, g) in groups.iter().enumerate() {
         color[first_group + h] = next + kinds.binary_search(&g.kind).expect("a kind listed");
     }
@@ -21732,8 +21715,7 @@ impl BaseGroups {
                 .map(|(_, i)| linked.root(*i))
                 .collect()
         };
-        roots.sort_unstable();
-        roots.dedup();
+        zed_collections::sorted::sort_dedup(&mut roots);
         roots
     }
 
@@ -21750,8 +21732,7 @@ impl BaseGroups {
         let mut ks: Vec<usize> = groups
             .flat_map(|r| self.syms_of.get(&r).into_iter().flatten().copied())
             .collect();
-        ks.sort_unstable();
-        ks.dedup();
+        zed_collections::sorted::sort_dedup(&mut ks);
         ks
     }
 
@@ -22688,8 +22669,7 @@ impl Level {
             };
             tighten_each(f, syms, &ks, &open, &mut out, &implied, ask);
         }
-        skipped.sort_unstable();
-        skipped.dedup();
+        zed_collections::sorted::sort_dedup(&mut skipped);
         Ok((out, skipped))
     }
 }
@@ -23745,8 +23725,7 @@ fn projected_hulls(
     syms: &[&Atom],
     m: &Model,
 ) -> HashMap<Atom, Result<IntervalSet, Refusal>> {
-    rows.sort_unstable();
-    rows.dedup();
+    zed_collections::sorted::sort_dedup(&mut rows);
     let ordered = symbols_by_structure(&rows, syms);
     let syms = ordered.as_slice();
     let mut out = HashMap::new();
@@ -23792,8 +23771,7 @@ fn projected_hulls(
 // COMPLEXITY.md row FAIL-refused-boxes-order-seed.
 fn symbols_by_structure<'a>(rows: &'a [Con], syms: &[&'a Atom]) -> Vec<&'a Atom> {
     let mut least: Vec<&Atom> = syms.to_vec();
-    least.sort_unstable();
-    least.dedup();
+    zed_collections::sorted::sort_dedup(&mut least);
     let asked: HashSet<&Atom> = least.iter().copied().collect();
     let mut by_atom: HashMap<&Atom, Vec<usize>> = HashMap::new();
     for (j, c) in rows.iter().enumerate() {
@@ -24008,8 +23986,7 @@ fn projected_each(rows: &[Con], syms: &[&Atom]) -> Vec<Option<Vec<Con>>> {
         }
     }
     for o in &mut occurs {
-        o.sort_unstable();
-        o.dedup();
+        zed_collections::sorted::sort_dedup(o);
     }
     // Whether atom `a` occurs at a node of the subtree of `p`, and whether outside it.
     let inside = |a: usize, p: usize| {
@@ -25419,8 +25396,7 @@ fn touches_simple(
             .filter_map(place)
             .filter(|&u| of_simple[u])
             .collect();
-        out.sort_unstable();
-        out.dedup();
+        zed_collections::sorted::sort_dedup(&mut out);
         return out;
     }
     let held = |x: &Atom| ds.iter().any(|d| d.atoms().contains(x));
@@ -25679,8 +25655,7 @@ fn forest_component_domains(
                 cls.push(class[*node.get(a)?]);
             }
         }
-        cls.sort_unstable();
-        cls.dedup();
+        zed_collections::sorted::sort_dedup(&mut cls);
         let (ca, cb) = match cls[..] {
             [c] => (c, None),
             [x, y] => (x, Some(y)),
@@ -27102,8 +27077,7 @@ fn products(
         on.insert(s, set);
     }
     for set in on.values_mut() {
-        set.sort_unstable();
-        set.dedup();
+        zed_collections::sorted::sort_dedup(set);
     }
     // The factors each factor is multiplied by in a product the formulas mention.
     let mut partners: HashMap<Factor, Vec<Factor>> = HashMap::new();
@@ -27121,8 +27095,7 @@ fn products(
         }
     }
     for ps in partners.values_mut() {
-        ps.sort();
-        ps.dedup();
+        zed_collections::sorted::sort_dedup(ps);
     }
     // The pairs of rows on the two factors of each product, each once, and of them those the
     // exact rule keeps ([`pairs::kept`]).
@@ -28759,8 +28732,7 @@ pub(super) mod tests {
                     }
                 }
             }
-            rest.sort();
-            rest.dedup();
+            zed_collections::sorted::sort_dedup(&mut rest);
             cur = rest;
         }
         cur.iter().any(|(_, k)| k.is_negative())
@@ -28827,8 +28799,7 @@ pub(super) mod tests {
                     for d in 0..4 {
                         let p = vec![a, b, c, d];
                         let mut s = p.clone();
-                        s.sort();
-                        s.dedup();
+                        zed_collections::sorted::sort_dedup(&mut s);
                         if s.len() == 4 {
                             out.push(p);
                         }
@@ -30705,8 +30676,7 @@ mod by_halves_against_old {
                 .filter(|(a, b)| a != b)
                 .collect(),
         };
-        edges.sort_unstable();
-        edges.dedup();
+        zed_collections::sorted::sort_dedup(&mut edges);
         let form = |rng: &mut Rng, (a, b): (usize, usize)| {
             let l = v(b).minus(&v(a));
             if general {
@@ -35583,8 +35553,7 @@ mod upper_envelope_tests {
             let mut lines: Vec<(i128, i128)> = (0..1 + rng(9))
                 .map(|_| (rng(13) as i128 - 6, rng(13) as i128 - 6))
                 .collect();
-            lines.sort_unstable();
-            lines.dedup();
+            zed_collections::sorted::sort_dedup(&mut lines);
             let big: Vec<(Int, Int)> = (lines.iter())
                 .map(|&(p, q)| (Int::from(p), Int::from(q)))
                 .collect();

@@ -487,8 +487,7 @@ impl Sweep {
                 .iter()
                 .map(|&(h, y)| (h, lab(&self.links[y])))
                 .collect();
-            key.sort();
-            key.dedup();
+            zed_collections::sorted::sort_dedup(&mut key);
             let id = match self.side_ids.get(&key) {
                 Some(&id) => id,
                 None => {

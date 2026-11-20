@@ -270,8 +270,7 @@ pub fn updated_with<'a, L: Sum>(
         }
         keys.push(v);
     }
-    keys.sort_unstable();
-    keys.dedup();
+    zed_collections::sorted::sort_dedup(&mut keys);
     #[cfg(feature = "counts")]
     crate::preimage::counts::IMAGE_SETS
         .set(crate::preimage::counts::IMAGE_SETS.get() + keys.len() as u64);

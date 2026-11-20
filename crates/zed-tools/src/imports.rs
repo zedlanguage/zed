@@ -1545,8 +1545,7 @@ impl<'a> Builder<'a> {
         }
         let mut homes: HashMap<&'a str, Vec<usize>> = HashMap::new();
         for files in apart.values_mut() {
-            files.sort_unstable();
-            files.dedup();
+            zed_collections::sorted::sort_dedup(files);
         }
         for &(name, home) in apart.keys() {
             homes.entry(name).or_default().push(home);
@@ -1555,13 +1554,11 @@ impl<'a> Builder<'a> {
             split.entry(name).or_default().extend(files);
         }
         for files in loose.values_mut() {
-            files.sort_unstable();
-            files.dedup();
+            zed_collections::sorted::sort_dedup(files);
         }
         let span = self.spans();
         for files in split.values_mut() {
-            files.sort_unstable();
-            files.dedup();
+            zed_collections::sorted::sort_dedup(files);
         }
         let mut untyped = Vec::new();
         for file in 0..self.files.len() {

@@ -1178,8 +1178,7 @@ fn sum_of_t_and_t_sum_alike_each_keep_their_own_error_and_value() {
                 }
                 // An error placed and noted at no use, which both give alike, is one error of
                 // `body`, as it is of a body of two uses alike written the same.
-                want.sort();
-                want.dedup();
+                zed_collections::sorted::sort_dedup(&mut want);
                 // Each use's place, by its own text, since the two texts differ.
                 let src = format!("{body}{rest}");
                 let (info, _) = super::info(&src);

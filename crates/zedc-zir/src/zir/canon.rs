@@ -124,8 +124,7 @@ fn normal_shell(n: &mut Node) {
 fn normal_edge(e: &mut Edge) {
     if let Edge::Value(v) = e {
         v.facets.retain(|f| !f.hint);
-        v.facets.sort_unstable();
-        v.facets.dedup();
+        zed_collections::sorted::sort_dedup(&mut v.facets);
         v.domain = v.domain.normal();
     }
 }

@@ -370,8 +370,7 @@ fn union_find_agrees_with_a_table_of_labels_on_small_graphs() {
             want += &format!("{a} {b} {}\n", if same { "yes" } else { "no" });
         }
         let mut roots = label.clone();
-        roots.sort_unstable();
-        roots.dedup();
+        zed_collections::sorted::sort_dedup(&mut roots);
         want += &format!("components {}\n", roots.len());
         let (out, result) = on_text("13", "uf_table", &input);
         assert_eq!(result, Ok(()), "round {round}: {input}");

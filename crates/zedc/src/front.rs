@@ -447,8 +447,7 @@ fn layout(source: &str, steps: &[Step], numbers: &[usize]) -> Layout {
             ticks
                 .into_iter()
                 .map(|(col, mut ns)| {
-                    ns.sort_unstable();
-                    ns.dedup();
+                    zed_collections::sorted::sort_dedup(&mut ns);
                     let label = if ns.is_empty() {
                         String::new()
                     } else {

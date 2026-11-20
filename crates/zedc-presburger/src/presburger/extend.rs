@@ -1288,8 +1288,7 @@ fn clause_key(f: &Formula, lone: &dyn Fn(&Atom) -> bool) -> Formula {
                         h => kids.push(h),
                     }
                 }
-                kids.sort();
-                kids.dedup();
+                zed_collections::sorted::sort_dedup(&mut kids);
                 match and {
                     true => Formula::And(Shared::new(kids)),
                     false => Formula::Or(Shared::new(kids)),
@@ -2701,11 +2700,9 @@ impl Rays {
                 // Canonical local proof obligations keep a permutation of rows/cases
                 // from changing the totality solver's elimination order.
                 for rows in &mut branches {
-                    rows.sort();
-                    rows.dedup();
+                    zed_collections::sorted::sort_dedup(rows);
                 }
-                branches.sort();
-                branches.dedup();
+                zed_collections::sorted::sort_dedup(&mut branches);
                 let mut result = [BTreeMap::new(), BTreeMap::new()];
                 for (direction, out) in result.iter_mut().enumerate() {
                     let mut first = true;
@@ -2780,11 +2777,9 @@ impl Rays {
                 let own: BTreeSet<Atom> = d.own.iter().map(|&n| Atom::Aux(n)).collect();
                 let mut branches = cases(&d.f)?;
                 for rows in &mut branches {
-                    rows.sort();
-                    rows.dedup();
+                    zed_collections::sorted::sort_dedup(rows);
                 }
-                branches.sort();
-                branches.dedup();
+                zed_collections::sorted::sort_dedup(&mut branches);
                 // Prove totality for arbitrary values of all inputs, not merely the
                 // chosen ray. Each projection is exact; any own atom left rejects it.
                 let mut guards = Vec::new();
@@ -2793,8 +2788,7 @@ impl Rays {
                     let rows = remainders_as_pairs(rows, &keep);
                     let rows = without_free_pairs_for(rows, &|a| own.contains(a));
                     let mut projected = shadow_whole(&rows, &keep)?;
-                    projected.sort();
-                    projected.dedup();
+                    zed_collections::sorted::sort_dedup(&mut projected);
                     if projected
                         .iter()
                         .any(|c| c.lin.terms.keys().any(|a| own.contains(a)))
@@ -2805,8 +2799,7 @@ impl Rays {
                         projected.into_iter().map(Formula::Con).collect(),
                     ));
                 }
-                guards.sort();
-                guards.dedup();
+                zed_collections::sorted::sort_dedup(&mut guards);
                 if decide(&Formula::negate(Formula::or(guards))) != Ok(false) {
                     return None;
                 }
@@ -3088,8 +3081,7 @@ impl Summaries {
         for c in &all {
             for p in below_pieces {
                 let mut rows0: Vec<Con> = c.iter().chain(p).cloned().collect();
-                rows0.sort();
-                rows0.dedup();
+                zed_collections::sorted::sort_dedup(&mut rows0);
                 let mut work: Vec<(Vec<Con>, bool)> = vec![(rows0, false)];
                 'piece: while let Some((rows, mut wide)) = work.pop() {
                     if decide_cons(rows.clone()) == Ok(false) {
@@ -3177,8 +3169,7 @@ impl Summaries {
                             if let Some(split) = quotient_offsets(&rows, &keep, &leaf, def) {
                                 all_wide = false;
                                 for mut branch in split.into_iter().rev() {
-                                    branch.sort();
-                                    branch.dedup();
+                                    zed_collections::sorted::sort_dedup(&mut branch);
                                     work.push((branch, true));
                                 }
                                 continue 'piece;
@@ -3201,8 +3192,7 @@ impl Summaries {
                         continue 'piece;
                     };
                     let mut out = lean(out);
-                    out.sort();
-                    out.dedup();
+                    zed_collections::sorted::sort_dedup(&mut out);
                     pieces.insert(out);
                 }
             }
@@ -4183,8 +4173,7 @@ fn product_factors(rows: &[Con]) -> HashSet<Atom> {
 // plus O(r log r) row comparisons for the sort and deduplication. Tradeoffs:
 // a hash map of atom counts and an ordered map of pairs.
 fn without_free_pairs_for(mut rows: Vec<Con>, elim: &dyn Fn(&Atom) -> bool) -> Vec<Con> {
-    rows.sort();
-    rows.dedup();
+    zed_collections::sorted::sort_dedup(&mut rows);
     let factors = product_factors(&rows);
     let mut count: HashMap<Atom, usize> = HashMap::new();
     for r in &rows {
@@ -4289,8 +4278,7 @@ fn fold_free_unit_pairs(mut rows: Vec<Con>, factors: &HashSet<Atom>) -> Vec<Con>
                 continue;
             }
             let mut holders = at.remove(&v).unwrap_or_default();
-            holders.sort_unstable();
-            holders.dedup();
+            zed_collections::sorted::sort_dedup(&mut holders);
             holders.retain(|&n| {
                 n != i && n != j && !dropped.contains(&n) && rows[n].lin.terms.contains_key(&v)
             });
@@ -4493,8 +4481,7 @@ fn lean(rows: Vec<Con>) -> Vec<Con> {
         }
     }
     if changed {
-        rows.sort();
-        rows.dedup();
+        zed_collections::sorted::sort_dedup(&mut rows);
         rows = envelope(rows);
     }
     let mut free_rows: HashSet<Con> = HashSet::new();
@@ -4622,8 +4609,7 @@ fn by_pairs(mut rows: Vec<Con>, elim: &dyn Fn(&Atom) -> bool) -> Vec<Con> {
             continue;
         }
         let mut holders = at.remove(&v).unwrap_or_default();
-        holders.sort_unstable();
-        holders.dedup();
+        zed_collections::sorted::sort_dedup(&mut holders);
         for n in holders {
             let r = &mut rows[n];
             if n == i || n == j || r.rel != Rel::Ge {
@@ -4701,8 +4687,7 @@ fn kept_quotients(rows: &[Con], keep: &dyn Fn(&Atom) -> bool) -> HashSet<Atom> {
 /// replaced by the two. The rows hold where they held with some `r`. Time of the rows' terms.
 fn remainders_as_pairs(rows: &[Con], keep: &dyn Fn(&Atom) -> bool) -> Vec<Con> {
     let mut rows: Vec<Con> = rows.to_vec();
-    rows.sort();
-    rows.dedup();
+    zed_collections::sorted::sort_dedup(&mut rows);
     let factors = product_factors(&rows);
     let mut at: HashMap<&Atom, Vec<usize>> = HashMap::new();
     for (i, r) in rows.iter().enumerate() {
@@ -4769,8 +4754,7 @@ fn normalize_own_leaf(
     own: &[u32],
     leaf: &dyn Fn(&Atom) -> bool,
 ) -> Option<Vec<Con>> {
-    rows.sort();
-    rows.dedup();
+    zed_collections::sorted::sort_dedup(&mut rows);
     let is_own = |a: &Atom| matches!(a, Atom::Aux(n) if own.binary_search(n).is_ok());
     let eqs: Vec<Con> = (rows.iter())
         .filter(|c| c.rel == Rel::Eq && !c.lin.terms.keys().any(&is_own))
@@ -5400,8 +5384,7 @@ fn integer_ray_runs(pieces: &BTreeSet<Vec<Con>>) -> Option<Vec<Vec<Con>>> {
             rows.push(Con::ge(&Lin::atom(x.clone()), &Lin::constant(lo.clone())));
             rows.push(Con::ge(&Lin::constant(hi.clone()), &Lin::atom(x.clone())));
         }
-        rows.sort();
-        rows.dedup();
+        zed_collections::sorted::sort_dedup(&mut rows);
         rows
     };
     let mut out = Vec::new();
@@ -5592,8 +5575,7 @@ fn merge_pieces(pieces: BTreeSet<Vec<Con>>) -> Vec<Vec<Con>> {
                 }
             }
         }
-        merged.sort();
-        merged.dedup();
+        zed_collections::sorted::sort_dedup(&mut merged);
         merged
     };
     let unindex = |id: usize,
@@ -5709,8 +5691,7 @@ fn merge_pieces(pieces: BTreeSet<Vec<Con>>) -> Vec<Vec<Con>> {
                         _ => None,
                     },
                 ));
-                m.sort();
-                m.dedup();
+                zed_collections::sorted::sort_dedup(&mut m);
                 work.push(m);
                 continue;
             }

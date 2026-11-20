@@ -315,8 +315,7 @@ impl<'a> Instancing<'a> {
         }
         self.writing.pop();
         let mut sites = self.undecided.split_off(self.locals[i].from);
-        sites.sort_unstable();
-        sites.dedup();
+        zed_collections::sorted::sort_dedup(&mut sites);
         if sites.is_empty() {
             // The block's own functions declared inside the lambda were placed when their
             // blocks ended, so it is the last.

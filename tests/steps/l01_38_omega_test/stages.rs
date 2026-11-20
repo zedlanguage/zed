@@ -738,8 +738,7 @@ pub(super) fn rationally_empty(rows: &[Row], n: usize) -> bool {
                 rest.push((c, k));
             }
         }
-        rest.sort();
-        rest.dedup();
+        zed_collections::sorted::sort_dedup(&mut rest);
         cur = rest;
     }
     cur.iter().any(|(_, k)| *k < 0)

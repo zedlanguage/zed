@@ -556,8 +556,7 @@ impl Tables {
             return Vec::new();
         }
         let mut a: Vec<usize> = self.lambdas.iter().map(|l| l.params).collect();
-        a.sort_unstable();
-        a.dedup();
+        zed_collections::sorted::sort_dedup(&mut a);
         a
     }
 

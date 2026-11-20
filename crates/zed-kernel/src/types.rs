@@ -5984,8 +5984,7 @@ impl Keyed {
     fn at(&self, v: &[Value], leaves: &[&Value]) -> Vec<usize> {
         let mut at = Vec::new();
         self.extend_at(v, leaves, false, &mut at);
-        at.sort_unstable();
-        at.dedup();
+        zed_collections::sorted::sort_dedup(&mut at);
         at
     }
 
@@ -6742,8 +6741,7 @@ impl Graph {
                 Vertex::List(_) => {}
                 Vertex::Not(a) => self.parents[*a].push(n),
                 Vertex::Or(xs) | Vertex::And(xs) => {
-                    xs.sort_unstable();
-                    xs.dedup();
+                    zed_collections::sorted::sort_dedup(xs);
                     xs.iter().for_each(|&x| self.parents[x].push(n));
                 }
                 Vertex::Xor(xs, _) => {
@@ -7153,8 +7151,7 @@ impl RowIndex {
         let leaves: Vec<&Value> = descents.iter().map(|(_, leaf)| leaf).collect();
         let mut at = self.keyed.at(v, &leaves);
         self.absorbed.extend_at(v, &leaves, true, &mut at);
-        at.sort_unstable();
-        at.dedup();
+        zed_collections::sorted::sort_dedup(&mut at);
         let kinds: Vec<Option<Chain>> = descents
             .iter()
             .zip(&self.read)

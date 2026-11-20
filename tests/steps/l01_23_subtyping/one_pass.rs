@@ -273,8 +273,7 @@ fn random_in_class(g: &mut Rng, on: &[usize], depth: usize) -> F {
             let pick = |g: &mut Rng| -> Vec<usize> {
                 let mut s: Vec<usize> = on.iter().copied().filter(|_| g.below(2) == 0).collect();
                 s.push(common);
-                s.sort_unstable();
-                s.dedup();
+                zed_collections::sorted::sort_dedup(&mut s);
                 s
             };
             let (a, b) = (pick(g), pick(g));

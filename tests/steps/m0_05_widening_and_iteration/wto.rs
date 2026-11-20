@@ -105,8 +105,7 @@ fn random_graph(rng: &mut Rng) -> Vec<Vec<usize>> {
     (0..n)
         .map(|_| {
             let mut s: Vec<usize> = (0..rng.below(4)).map(|_| rng.below(n)).collect();
-            s.sort_unstable();
-            s.dedup();
+            zed_collections::sorted::sort_dedup(&mut s);
             s
         })
         .collect()

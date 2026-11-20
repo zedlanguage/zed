@@ -4075,8 +4075,7 @@ mod tests {
                 }
             }
             for w in &mut want {
-                w.sort_unstable();
-                w.dedup();
+                zed_collections::sorted::sort_dedup(w);
             }
             for one in 0..4 {
                 let mut ask = [false; 4];

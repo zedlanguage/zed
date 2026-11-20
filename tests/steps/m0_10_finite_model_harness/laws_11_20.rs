@@ -510,8 +510,7 @@ fn compose_gives_the_composition_of_two_relations() {
             .iter()
             .flat_map(|&(u, v)| s.iter().filter(move |p| p.0 == v).map(move |p| (u, p.1)))
             .collect();
-        rs.sort();
-        rs.dedup();
+        zed_collections::sorted::sort_dedup(&mut rs);
         (compose(relation(r), relation(s)), relation(&rs))
     });
     assert_eq!(n, 512 + 256);

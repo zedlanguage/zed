@@ -9525,8 +9525,7 @@ impl Scope {
             .filter_map(|n| self.refused_by.get(n))
             .flatten()
             .collect();
-        found.sort_unstable();
-        found.dedup();
+        zed_collections::sorted::sort_dedup(&mut found);
         (found.into_iter())
             .filter_map(|r| self.refusals.get_key_value(r))
             .collect()
@@ -23564,15 +23563,13 @@ mod tests {
                 let q = TurnEnd::At(Turn([Int::from(rx), Int::from(ry)]));
                 let mut got = Vec::new();
                 pair_idx.plain.linear.report(&q, &q, &mut got);
-                got.sort();
-                got.dedup();
+                zed_collections::sorted::sort_dedup(&mut got);
                 let mut want: Vec<PartAt> = parts_arms
                     .iter()
                     .filter(|(_, arms)| arms.iter().all(|a| a[0] * rx + a[1] * ry <= 0))
                     .map(|(at, _)| at.clone())
                     .collect();
-                want.sort();
-                want.dedup();
+                zed_collections::sorted::sort_dedup(&mut want);
                 assert_eq!(got, want, "ray=({rx}, {ry})");
             }
         }

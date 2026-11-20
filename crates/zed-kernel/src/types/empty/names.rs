@@ -94,8 +94,7 @@ pub(super) fn absorb(b: &Bes, same: &[u32], union: &[bool]) -> Option<Bes> {
                 .map(move |&c| (same[c as usize], i as u32))
         })
         .collect();
-    pairs.sort_unstable();
-    pairs.dedup();
+    zed_collections::sorted::sort_dedup(&mut pairs);
     let mut drops: Vec<(u32, u32)> = Vec::new();
     let (mut by_dom, mut by_post, mut open) = (Vec::new(), Vec::new(), Vec::new());
     for run in pairs.chunk_by(|x, y| x.0 == y.0) {
@@ -132,8 +131,7 @@ pub(super) fn absorb(b: &Bes, same: &[u32], union: &[bool]) -> Option<Bes> {
         }
     }
     // By union, then type; a union dropped by both tests is listed twice.
-    drops.sort_unstable();
-    drops.dedup();
+    zed_collections::sorted::sort_dedup(&mut drops);
     if drops.is_empty() {
         return None;
     }
@@ -298,8 +296,7 @@ pub(super) fn contracted(b: &Bes) -> Option<(Bes, Vec<u32>, Vec<u32>)> {
             .map(|&w| id[rep[w as usize] as usize])
             .collect();
         if b.kind(v) != Kind::Mor {
-            children.sort_unstable();
-            children.dedup();
+            zed_collections::sorted::sort_dedup(&mut children);
         }
         c.add(b.kind(v), children);
     }
@@ -436,8 +433,7 @@ fn bisimilar(b: &Bes, leaf: &[bool], union: &[bool]) -> Option<(Bes, Vec<u32>, V
             .iter()
             .map(|&w| node[w as usize])
             .collect();
-        children.sort_unstable();
-        children.dedup();
+        zed_collections::sorted::sort_dedup(&mut children);
         m.add(b.kind(v as u32), children);
     }
     m.seal();

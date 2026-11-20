@@ -152,8 +152,7 @@ pub(super) fn keys<A: Atom>(t: &Tree<A>) -> Vec<Key<A>> {
 /// structures", CACM 23(4), 1980), and each node made once over its children, `O(k log k)` for
 /// the sort and `O(k)` after it.
 pub(super) fn from_keys<A: Atom>(mut keys: Vec<Key<A>>) -> Tree<A> {
-    keys.sort_unstable();
-    keys.dedup();
+    zed_collections::sorted::sort_dedup(&mut keys);
     const NONE: usize = usize::MAX;
     let n = keys.len();
     let prios: Vec<u64> = keys.iter().map(priority).collect();

@@ -115,8 +115,7 @@ fn joins_order_as_their_items_written_out() {
             .collect();
         deps.extend((0..joins).map(|_| (0..1 + next(3)).map(|_| next(items)).collect()));
         for d in &mut deps {
-            d.sort_unstable();
-            d.dedup();
+            zed_collections::sorted::sort_dedup(d);
         }
         let written: Vec<Vec<usize>> = deps[..items]
             .iter()
@@ -127,8 +126,7 @@ fn joins_order_as_their_items_written_out() {
                         false => deps[e].clone(),
                     })
                     .collect();
-                w.sort_unstable();
-                w.dedup();
+                zed_collections::sorted::sort_dedup(&mut w);
                 w
             })
             .collect();

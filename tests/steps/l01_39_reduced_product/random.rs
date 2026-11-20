@@ -574,8 +574,7 @@ fn grid(inputs: &[Arc<str>], arms: &[Arm]) -> Vec<Vec<i64>> {
                     }
                 }
             }
-            vs.sort_unstable();
-            vs.dedup();
+            zed_collections::sorted::sort_dedup(&mut vs);
             vs
         })
         .collect()

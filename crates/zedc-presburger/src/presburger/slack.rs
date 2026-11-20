@@ -122,8 +122,7 @@ pub(super) fn try_reduce_subset_wide_eqs_refs(cons: &[&Con]) -> Option<Vec<Con>>
                 .keys()
                 .filter_map(|a| owner.get(a).copied())
                 .collect();
-            cands.sort_unstable();
-            cands.dedup();
+            zed_collections::sorted::sort_dedup(&mut cands);
             for p in cands {
                 let sub = &out[p];
                 if sub.lin.terms.is_empty() || sub.lin.terms.len() >= cur.lin.terms.len() {
@@ -693,8 +692,7 @@ impl DisjointWide {
                 }
             }
         }
-        out.sort_unstable();
-        out.dedup();
+        zed_collections::sorted::sort_dedup(&mut out);
         Some(out)
     }
 

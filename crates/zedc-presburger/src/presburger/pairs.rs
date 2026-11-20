@@ -304,8 +304,7 @@ mod tests {
             partners.entry(v).or_default().push(u);
         }
         for ps in partners.values_mut() {
-            ps.sort();
-            ps.dedup();
+            zed_collections::sorted::sort_dedup(ps);
         }
         partners
     }

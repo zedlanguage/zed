@@ -88,8 +88,7 @@ fn part_a_has_grammar_at_l1_l2_l3_l6_and_words_up_to_l5() {
         assert!(i.parse::<u32>().is_ok(), "{a}");
     }
     let n = all.len();
-    all.sort();
-    all.dedup();
+    zed_collections::sorted::sort_dedup(&mut all);
     assert_eq!(all.len(), n, "a grammar alternative listed twice");
 }
 

@@ -224,8 +224,7 @@ impl SkipIndex {
                 _ => {}
             }
         }
-        numbered.sort_unstable();
-        numbered.dedup();
+        zed_collections::sorted::sort_dedup(&mut numbered);
         let mut prefix = Vec::with_capacity(numbered.len() + 1);
         prefix.push(0u128);
         for &m in &numbered {

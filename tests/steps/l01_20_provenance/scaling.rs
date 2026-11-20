@@ -49,8 +49,7 @@ fn the_facts_of_a_recursion_are_at_their_call_sites() {
         .iter()
         .map(|f| f.address.node.0.len())
         .collect();
-    depths.sort();
-    depths.dedup();
+    zed_collections::sorted::sort_dedup(&mut depths);
     assert_eq!(depths.len(), 31, "{depths:?}");
     assert_eq!(depths[30] - depths[0], 30, "{depths:?}");
 }

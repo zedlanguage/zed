@@ -1024,8 +1024,7 @@ mod tests {
         }
         let negated: Vec<Num> = out.iter().map(|n| -n).collect();
         out.extend(negated);
-        out.sort();
-        out.dedup();
+        zed_collections::sorted::sort_dedup(&mut out);
         out
     }
 

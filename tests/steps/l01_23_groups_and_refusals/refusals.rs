@@ -2549,8 +2549,7 @@ fn r3_spec(
 
 fn r3_oracle(ns: &[R3Node], roots: &[usize], all: u64) -> bool {
     let mut root = roots.to_vec();
-    root.sort_unstable();
-    root.dedup();
+    zed_collections::sorted::sort_dedup(&mut root);
     let mut seen = BTreeSet::new();
     let mut todo = vec![root];
     while let Some(state) = todo.pop() {
@@ -2569,8 +2568,7 @@ fn r3_oracle(ns: &[R3Node], roots: &[usize], all: u64) -> bool {
                 .filter(|&&i| ns[i].mask & (1u64 << bit) != 0)
                 .map(|&i| ns[i].next)
                 .collect();
-            next.sort_unstable();
-            next.dedup();
+            zed_collections::sorted::sort_dedup(&mut next);
             todo.push(next);
         }
     }

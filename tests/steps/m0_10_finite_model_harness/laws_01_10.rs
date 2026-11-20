@@ -703,8 +703,7 @@ fn ranked_as_a_preorder(
         return Err(format!("{} entries ranked, {} given", ranks.len(), m.len()));
     }
     let mut used: Vec<i64> = ranks.iter().map(|r| r.1).collect();
-    used.sort();
-    used.dedup();
+    zed_collections::sorted::sort_dedup(&mut used);
     if used != (0..used.len() as i64).collect::<Vec<_>>() {
         return Err(format!("ranks {used:?} are not dense"));
     }

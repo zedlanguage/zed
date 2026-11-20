@@ -474,8 +474,7 @@ fn chosen_literals(n: usize, least: usize) {
     // chosen among 2^16 numbers), so no long run exists to choose and only the bound is checked
     // (plan row TEST-kernel-units-short-addresses).
     let mut distinct = p.clone();
-    distinct.sort_unstable();
-    distinct.dedup();
+    zed_collections::sorted::sort_dedup(&mut distinct);
     assert!(pick.len() <= distinct.len());
     assert!(
         crate::address::SHORT || pick.len() > least,
@@ -535,8 +534,7 @@ fn rows_of_one_digest_are_contiguous_and_morphisms_need_not_be() {
     let target = tied[0].digest();
     let apart = (1..=64).map(|a| Row::new(vec![int(a), int(a)]));
     let mut mixed: Vec<Row> = tied.iter().cloned().chain(apart).collect();
-    mixed.sort();
-    mixed.dedup();
+    zed_collections::sorted::sort_dedup(&mut mixed);
     let at: Vec<usize> = (0..mixed.len())
         .filter(|&i| mixed[i].digest() == target)
         .collect();

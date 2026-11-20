@@ -122,8 +122,7 @@ fn guards_are_projected_onto_each_input() {
             .filter(|&k| k >= 1)
             .map(|k| k as usize)
             .collect();
-        ks.sort();
-        ks.dedup();
+        zed_collections::sorted::sort_dedup(&mut ks);
         for k_ in ks {
             for meet in [true, false] {
                 projects_guards(k_, w, meet);

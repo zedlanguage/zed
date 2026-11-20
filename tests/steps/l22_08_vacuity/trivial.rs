@@ -415,8 +415,7 @@ impl Theory {
             self.term_fields(a.lhs, &mut out);
             self.term_fields(a.rhs, &mut out);
         }
-        out.sort_unstable();
-        out.dedup();
+        zed_collections::sorted::sort_dedup(&mut out);
         out
     }
 
@@ -601,10 +600,8 @@ impl Theory {
         let (mut lf, mut rf) = (Vec::new(), Vec::new());
         self.term_fields(a.lhs, &mut lf);
         self.term_fields(a.rhs, &mut rf);
-        lf.sort_unstable();
-        lf.dedup();
-        rf.sort_unstable();
-        rf.dedup();
+        zed_collections::sorted::sort_dedup(&mut lf);
+        zed_collections::sorted::sort_dedup(&mut rf);
         let shared = {
             let (mut i, mut j, mut any) = (0, 0, false);
             while i < lf.len() && j < rf.len() && !any {
@@ -828,8 +825,7 @@ impl Theory {
         let mut scope = Vec::with_capacity(lf.len() + rf.len());
         scope.extend_from_slice(lf);
         scope.extend_from_slice(rf);
-        scope.sort_unstable();
-        scope.dedup();
+        zed_collections::sorted::sort_dedup(&mut scope);
         let key = |flip: bool| {
             move |s: Sym| match (a.rel, s) {
                 (Rel::Eq, _) => Some(s),
@@ -1565,8 +1561,7 @@ impl Tree {
     /// The keys of the leaves, sorted, each once: O(N log N) for the N nodes.
     fn keys(&self) -> Vec<Sym> {
         let mut keys: Vec<Sym> = self.key.iter().flatten().copied().collect();
-        keys.sort_unstable();
-        keys.dedup();
+        zed_collections::sorted::sort_dedup(&mut keys);
         keys
     }
 

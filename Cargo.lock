@@ -1123,6 +1123,7 @@ dependencies = [
  "rustix",
  "target-lexicon",
  "zed-alloc-count",
+ "zed-collections",
  "zed-graph",
  "zed-kernel",
  "zed-native",
@@ -1205,6 +1206,7 @@ dependencies = [
  "rustix",
  "unicode-width",
  "zed-alloc-count",
+ "zed-collections",
  "zed-graph",
  "zed-kernel",
  "zed-numtheory",
@@ -1356,6 +1358,7 @@ name = "zedc-resolve"
 version = "0.0.0"
 dependencies = [
  "imbl",
+ "zed-collections",
  "zed-graph",
  "zed-kernel",
  "zedc-base",
@@ -1418,6 +1421,7 @@ dependencies = [
  "blake3",
  "imbl",
  "num-bigint",
+ "zed-collections",
  "zed-graph",
  "zed-kernel",
  "zedc-base",

@@ -155,8 +155,7 @@ pub fn term_roots(
             Some(match (l, r) {
                 (Roots::Listed(mut l), Roots::Listed(r)) => {
                     l.extend(r);
-                    l.sort();
-                    l.dedup();
+                    zed_collections::sorted::sort_dedup(&mut l);
                     Roots::Listed(l)
                 }
                 _ => Roots::Every,
@@ -236,8 +235,7 @@ pub fn integer_roots(f: &Sparse, lo: Option<&BigInt>, hi: Option<&BigInt>) -> Ro
             out.push(x);
         }
     }
-    out.sort();
-    out.dedup();
+    zed_collections::sorted::sort_dedup(&mut out);
     Roots::Listed(out)
 }
 
@@ -741,8 +739,7 @@ mod tests {
                 .chain(rs)
                 .filter(|x| lo <= *x && *x <= hi)
                 .collect();
-            want.sort();
-            want.dedup();
+            zed_collections::sorted::sort_dedup(&mut want);
             assert_eq!(roots(&f, lo, hi), want, "{f:?} in {lo}..={hi}");
         }
     }
