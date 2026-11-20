@@ -99,7 +99,7 @@ fn lambda_holding_a_class_keeps_no_forward_and_prints_apart() {
             i.errors.iter().map(|e| &e.message).collect::<Vec<_>>()
         );
         let top = (i.tops.iter())
-            .find(|(k, _)| k.to_string() == "a")
+            .find(|(k, _)| *k == "a")
             .map(|(_, t)| t.to_string());
         assert_eq!(top.as_deref(), Some(want_top), "{g}");
     }
