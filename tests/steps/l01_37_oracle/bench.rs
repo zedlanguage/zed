@@ -71,7 +71,15 @@ fn a_chain_of_bindings_scales_natively() {
     });
 }
 
-/// Small instance: `alone::a_chain_whose_last_binding_stops_is_compared`.
+/// Small instances: `alone::a_chain_whose_last_binding_stops_is_compared` and, for the cost,
+/// `alone::the_search_for_the_stop_binds_each_definition_a_bounded_number_of_times`.
+///
+/// The work is O(n log n): O(n) lets in all (proof at `oracle::Runs::first_stop`), each
+/// O(log n) (COMPLEXITY.md K8), so the n log n prediction 8·ln(8n)/ln(n) at n = 20,000 is
+/// 9.68. Measured 2026-11-20 (BENCH-over-nlogn-prediction): 10.24 times the instructions on
+/// 929ccd72d, when the search for the stop ran each prefix whole (O(n log² n), prediction
+/// 8·(ln 8n/ln n)² = 11.71), and 8.58 times the instructions, 7.93 times the bytes, with the
+/// fix (load5 43).
 #[test]
 fn a_chain_that_stops_scales() {
     let units = inputs(20_000, alone::stopped_chain);

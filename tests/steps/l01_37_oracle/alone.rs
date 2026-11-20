@@ -248,6 +248,39 @@ fn a_chain_whose_last_binding_stops_is_compared() {
     the_last_stops(&stopped_chain(3), 3);
 }
 
+/// The search for the first stop binds O(n) lets in all, not O(n log n): each run is counted
+/// by the lets of the term an engine is given. Before BENCH-over-nlogn-prediction each halving
+/// ran the whole prefix again, about `log2` of the stretch after the last prefix that ran
+/// times the prefix: 60,509 lets at 4,096 definitions (14.8 a definition), where the walk now
+/// binds 20,042 (4.9) and 75,600 at 16,384 (4.6), measured 2026-11-20. A let is O(log n) in the
+/// environment (COMPLEXITY.md K8), so the walk was O(n log^2 n), 10.24 times the instructions
+/// at 8 times 20,000 definitions (bench `a_chain_that_stops_scales`).
+#[test]
+fn the_search_for_the_stop_binds_each_definition_a_bounded_number_of_times() {
+    fn lets(mut t: &Term) -> usize {
+        let mut count = 0;
+        while let Term::Let(_, _, body) = t {
+            count += 1;
+            t = body;
+        }
+        count
+    }
+    for n in [4096, 16_384] {
+        let bound = std::cell::Cell::new(0);
+        let counting = |t: &Term, ev: &mut Evaluator| {
+            bound.set(bound.get() + lets(t));
+            run::direct(t, ev)
+        };
+        let r = bindings(&stopped_chain(n), &[("counting", &counting)]);
+        assert!(r.mismatches.is_empty(), "{:?}", &r.mismatches[..1]);
+        assert!(
+            bound.get() <= 6 * n,
+            "{} lets for {n} definitions",
+            bound.get()
+        );
+    }
+}
+
 /// `n` functions, each `(x) -> if false { f(x) } else { x }` with `f` the one before, `n`
 /// bindings each calling the last, and a binding that stops: each binding reaches every
 /// function, though its run calls one.

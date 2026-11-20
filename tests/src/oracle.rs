@@ -297,8 +297,10 @@ enum End {
 // a run before the first stop bound, as `n` bindings that each call a function of the unit and
 // each stop. With the walk ended there, it costs O(n log n): each run before the end binds the
 // definitions between one stop and the next, which run there for the first time, and literals
-// for the bindings before them, and these runs are O(log n) prefixes and halvings of that
-// stretch. Tests: `l01_37_oracle::alone::stops_that_reach_functions_scale` and
+// for the bindings before them, and these runs are O(log n) doubling prefixes of that stretch,
+// O(stretch) lets in all, and halvings of it that each run only the half window left, with
+// the definitions before it as literals (see `first_stop`, which was O(n log² n) before
+// BENCH-over-nlogn-prediction, rerunning each prefix whole). Tests: `l01_37_oracle::alone::stops_that_reach_functions_scale` and
 // `a_second_stop_through_functions_is_not_compared`; COMPLEXITY.md F107. A complete solution
 // builds the unit's function definitions once, in an environment each run starts from: both
 // engines would have to take one, the interpreter keeping closures beyond a run and the native
@@ -372,12 +374,10 @@ impl<'a> Runs<'a> {
                 End::Stops(q, _) => *q,
                 End::Again => ran,
             };
-            let bindings: Vec<usize> = ready[..ran]
-                .iter()
-                .copied()
-                .filter(|&i| self.unit.defs[i].first_order)
-                .collect();
-            self.values(&bindings);
+            // `first_stop` gave the bindings before a stop their outcomes already.
+            if !matches!(end, End::Stops(..)) {
+                self.values_of(&ready[..ran]);
+            }
             match end {
                 End::Stops(q, e) => {
                     let q = ready[q];
@@ -456,19 +456,54 @@ impl<'a> Runs<'a> {
 
     /// The position in `ready` of the first definition whose let stops, and its error, given
     /// that the prefix of `ready` of length `ran` runs and all of `ready`, stopping with
-    /// `error`, does not.
+    /// `error`, does not. The bindings of the prefix before that position get their outcomes.
+    //
+    // Complexity tradeoff: the naive search halves `ready[ran..]` by running each prefix
+    // `ready[..mid]` from the start: O(log m) runs of up to `ready.len()` lets for a stretch of
+    // `m = ready.len() - ran`, O(len · log m · log n) with a let O(log n) (COMPLEXITY.md K8),
+    // which is O(n log² n) for a unit of `n` definitions whose stretch is the whole unit, as a
+    // chain whose last let stops (10.24 times the instructions at 8 times 20,000 definitions,
+    // bench `a_chain_that_stops_scales`). Here the prefix known to run, `ready[..lo]`, gets
+    // its values first, so a probe runs `ready[lo..mid]` alone and reaches the definitions
+    // before it as one literal let each, where it does not reach them through a function
+    // definition. Proof of the bound: the window `hi - lo` halves at each probe, so the probes
+    // and the `values` of each piece that runs bind Σ_k 2·m/2^k ≤ 4m lets of the window, and
+    // the prefix's `values` binds `ran` once; each probe also binds the literals and the
+    // function definitions its window reaches (the `F` of `Runs`), at most the reads of the
+    // window's definitions plus `F`. Total O((len + reads + F log m) log n): O(n log n) for a
+    // chain. Measured 2026-11-20: 4.9 and 4.6 lets a definition at 4,096 and 16,384
+    // definitions, against 14.8 at 4,096 for the naive search (test `the_search_for_the_stop_binds_each_definition_a_bounded_
+    // number_of_times`). The outcomes are the same: a probe's run stops at its first let that
+    // stops, every definition before `lo` running, and that let's error is its own.
     fn first_stop(&mut self, ready: &[usize], ran: usize, mut error: String) -> (usize, String) {
-        // The answer is the last `mid` that stopped, so `error` ends as its error.
-        let stops = zed_collections::search::first_true(ran + 1, ready.len(), |&mid| {
-            match self.run(&ready[..mid], Self::nothing()) {
+        let (mut lo, mut hi) = (ran, ready.len());
+        self.values_of(&ready[..lo]);
+        // `ready[..lo]` runs and `ready[..hi]` stops with `error`, its own let at `hi - 1`
+        // when `hi == lo + 1`.
+        while hi - lo > 1 {
+            let mid = lo + (hi - lo) / 2;
+            match self.run(&ready[lo..mid], Self::nothing()) {
                 Err(e) => {
                     error = e;
-                    true
+                    hi = mid;
                 }
-                Ok(_) => false,
+                Ok(_) => {
+                    self.values_of(&ready[lo..mid]);
+                    lo = mid;
+                }
             }
-        });
-        (stops - 1, error)
+        }
+        (lo, error)
+    }
+
+    /// The outcomes, by [`Runs::values`], of the bindings among `defs`, whose lets all run.
+    fn values_of(&mut self, defs: &[usize]) {
+        let bindings: Vec<usize> = defs
+            .iter()
+            .copied()
+            .filter(|&i| self.unit.defs[i].first_order)
+            .collect();
+        self.values(&bindings);
     }
 
     /// The outcome of each of `bindings`, whose lets all run: their tuple, run in halves where
