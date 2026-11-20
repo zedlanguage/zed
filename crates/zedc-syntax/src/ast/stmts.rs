@@ -4,8 +4,9 @@
 //! L2.2, imports with their `@hash` pins, and the annotations `@name` written before a
 //! declaration; and from step L6.1, the guards `while c;` and `until c;`,
 //! indexed definitions `x[i in s] = e;` with their boundary entries
-//! `with x[k] = e0`, the start values `initial x = e;` with their `with carryForward`, and expression statements `e;`; and from step L7.3, the unit items
-//! `@name;` and `@name(args);`, as `@log(#off);`.
+//! `with x[k] = e0`, the start values `initial x = e;` with their `with carryForward`, and
+//! expression statements `e;`; and from step L7.3, the unit items `@name;` and `@name(args);`, as
+//! `@log(#off);`.
 
 use std::collections::{HashMap, HashSet};
 
@@ -267,8 +268,8 @@ impl Builder<'_, '_> {
                 }
             }
             "Initial" => {
-                // `Carry`, when written, is the third kid; the word is read from the grammar's rule,
-                // not from the text.
+                // `Carry`, when written, is the third kid; the word is read from the grammar's
+                // rule, not from the text.
                 let (target, value, carry) = match *kids {
                     [target, value] => (target, value, false),
                     [target, value, _] => (target, value, true),
@@ -838,8 +839,8 @@ impl Builder<'_, '_> {
     /// function reads `main::files` (QUESTIONS A68), so any table may give it; the outputs, and
     /// the other inputs on another function's table, are not supported, since this zedc
     /// compares the outputs by a row's value and a function other than `main` reads the other
-    /// inputs by `main::args`, of layer L3. A name is left to the resolver, which knows what the unit
-    /// defines. A port given twice in one clause is rejected.
+    /// inputs by `main::args`, of layer L3. A name is left to the resolver, which knows what the
+    /// unit defines. A port given twice in one clause is rejected.
     fn test_ports(&mut self, p: usize, is_main: bool) -> Result<Vec<PortValue>, Error> {
         let mut out: Vec<PortValue> = Vec::new();
         // Complexity tradeoff: a search of the ports before each one costs O(ports²) per
@@ -1118,11 +1119,11 @@ impl Builder<'_, '_> {
     /// The parameters and ports the rest of the compiler runs `main` with, from its written
     /// header `main(m: MainArgs) -> int` (DESIGN.md sec:ports, step L1.19), whose body is the
     /// text `body`: an input parameter for each field of `m` the body reads and for
-    /// `main::files` when any function of the text reads it, named as written (`m.stdin`), and an output port for each field it pushes
-    /// to (`m.stdout`), in the order of `MainArgs`; and the header as written. Or why the
-    /// header is not one `main` may have: a second parameter, a parameter of another type,
-    /// or a default value; then a result other than `int`, written at the span `result` holds
-    /// ([`main_result_error`]).
+    /// `main::files` when any function of the text reads it, named as written (`m.stdin`), and an
+    /// output port for each field it pushes to (`m.stdout`), in the order of `MainArgs`; and the
+    /// header as written. Or why the header is not one `main` may have: a second parameter, a
+    /// parameter of another type, or a default value; then a result other than `int`, written at
+    /// the span `result` holds ([`main_result_error`]).
     fn main_header(
         &self,
         params: Vec<Param>,

@@ -39,8 +39,8 @@ pub struct Tree {
     /// The tree of each `${…}` hole, in the order of the tokens, each parsed as an `Expr`; the
     /// holes in a skipped declaration have none.
     pub holes: Vec<Tree>,
-    /// The token ranges of the declarations a unit parsed by [`super::parse_unit`] left out, each with
-    /// its syntax error, in the order of the text (step L1.29d).
+    /// The token ranges of the declarations a unit parsed by [`super::parse_unit`] left out, each
+    /// with its syntax error, in the order of the text (step L1.29d).
     pub skipped: Vec<Range<usize>>,
 }
 

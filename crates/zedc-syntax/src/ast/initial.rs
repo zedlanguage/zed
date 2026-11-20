@@ -557,17 +557,17 @@ struct Branch {
 }
 
 /// An update of a variable: the variable; the span of the update, the statement for `x' = …`,
-/// `x' <- e` and `x'[k] = …`, and `x*.m` or `x[i]*.m` for a `*.` call; and the innermost construct whose part
-/// holds it (none when it runs on every path of the step).
+/// `x' <- e` and `x'[k] = …`, and `x*.m` or `x[i]*.m` for a `*.` call; and the innermost construct
+/// whose part holds it (none when it runs on every path of the step).
 struct Update<'e> {
     name: &'e str,
     span: Span,
     branch: Option<Branch>,
 }
 
-/// A `.` call on a variable or a path into it, `c.bump(3)`, `grid[i].relax()` or `p.pos.m()`, or a `.` read
-/// of a member, `c.tick` (a method declared without parentheses is called so): an update when
-/// written with `*.`, when its method writes the next receiver. The variable; the span of the
+/// A `.` call on a variable or a path into it, `c.bump(3)`, `grid[i].relax()` or `p.pos.m()`, or a
+/// `.` read of a member, `c.tick` (a method declared without parentheses is called so): an update
+/// when written with `*.`, when its method writes the next receiver. The variable; the span of the
 /// call; where the receiver ends, before the `.`; whether the receiver is the variable itself; the
 /// innermost construct whose part holds it;
 /// the statement whose whole value it is, if any; and whether its value is dropped, as the value
@@ -1525,8 +1525,8 @@ fn every_path<'e>(
                     }
                     StmtKind::Return(es) => es.iter().for_each(&mut always),
                     // `d'[v in nodes] = …` updates `d` key by key, and so does `old[i in cells] =
-                    // grid[i]*.relax()`, which writes `grid'[i]` for each key, and so does a call on
-                    // any path with an index on it, `grid[i].pos*.relax()`. The domains and the
+                    // grid[i]*.relax()`, which writes `grid'[i]` for each key, and so does a call
+                    // on any path with an index on it, `grid[i].pos*.relax()`. The domains and the
                     // boundary entries are computed once on a step; the value once for each key.
                     StmtKind::IndexedDef(d) => {
                         let call = match &d.value.kind {
@@ -2691,9 +2691,10 @@ impl Builder<'_, '_> {
 
     /// The repair of the write `w` that gives each key of the scopes around it that its target
     /// does not name its own entry: `c[i]*.a()`, `c'[i] = …`, `c'[i][v in …] = …`, with
-    /// `extra` edits besides, in the text of the statement of the outermost such scope. A scope between the
-    /// write and the one whose key it names that binds a name of that key hides it; the repair
-    /// gives that scope's binder a new name, which avoids `used` and `taken`, and a note says so.
+    /// `extra` edits besides, in the text of the statement of the outermost such scope. A scope
+    /// between the write and the one whose key it names that binds a name of that key hides it; the
+    /// repair gives that scope's binder a new name, which avoids `used` and `taken`, and a note
+    /// says so.
     // Complexity tradeoff: matching each binder of each scope on the way out against each key
     // still to come costs O(s k) for s scopes and k keys; here the keys still to come are kept
     // by name, each a queue in order out, so each binder is one lookup and the climb costs

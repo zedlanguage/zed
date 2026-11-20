@@ -107,7 +107,8 @@ pub fn word_end(text: &str, pos: usize) -> Option<usize> {
 
 /// The end of the name `w` read from `start` of `text`, or the error for a word that is a name
 /// but for a character beyond ASCII, which offers an ASCII name for it. Here, not in `mod.rs`,
-/// since both `mod.rs` and `infix.rs` call it and `mod.rs` imports `infix.rs` (S1F-lex-infix-cycle).
+/// since both `mod.rs` and `infix.rs` call it and `mod.rs` imports `infix.rs`
+/// (S1F-lex-infix-cycle).
 pub(super) fn name_or_error(text: &str, start: usize, w: Word) -> Result<usize, Error> {
     match w {
         Word::Name(end) => Ok(end),

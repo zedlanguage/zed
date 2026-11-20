@@ -5,8 +5,8 @@
 //! precedence ladder is the grammar's, rung for rung, and its trees are the trees
 //! the `check` tool of `crates/zed-tools` builds, with this same parser. A parse is at a ring:
 //! only the alternatives of that layer and below are tried. Each node records its alternative,
-//! so a node of a later layer than the program's is found later, by the elaborator, not here. An alternative marked `~` builds no
-//! node, and the rule's match is the node of the marked rule.
+//! so a node of a later layer than the program's is found later, by the elaborator, not here. An
+//! alternative marked `~` builds no node, and the rule's match is the node of the marked rule.
 //!
 //! A literal in the grammar matches a keyword, an operator or a name with its text, so the
 //! positional words `where` and `sep` are names the grammar matches by their text.

@@ -449,8 +449,8 @@ fn push_target(t: &Toks<'_, '_>, far: usize) -> Option<Clause> {
     })
 }
 
-/// The condition around token `at`: its keyword, `if`, `while`, `until` or the word `where`, and the
-/// token that ends it, `{`, `;` or `->`, both outside brackets. The keyword is found by going
+/// The condition around token `at`: its keyword, `if`, `while`, `until` or the word `where`, and
+/// the token that ends it, `{`, `;` or `->`, both outside brackets. The keyword is found by going
 /// back from `at`, out of any `(` or `[` but never past a `{` or `}`, a `;`, a `,`, an `=` or a
 /// `->` outside brackets, which a condition does not hold; None when no keyword comes first.
 /// O(c) for a condition of c tokens, and O(s) in the statement around it.

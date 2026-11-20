@@ -146,10 +146,10 @@ impl Mains {
             to - from == 1 && word(from) == "main"
         };
         // The reads `main::files` outside every body: a `Postfix` whose operand is the word
-        // `main`, in parentheses or not, and whose suffix is `::files`. `fill` builds deeper nodes first, so a
-        // function written after `main` can be built after `main`'s header, which must already
-        // know of the read. A string hole is a tree of its own, built before the text's, and
-        // [`Builder::main_files`] records the reads in it as it builds them.
+        // `main`, in parentheses or not, and whose suffix is `::files`. `fill` builds deeper nodes
+        // first, so a function written after `main` can be built after `main`'s header, which must
+        // already know of the read. A string hole is a tree of its own, built before the text's,
+        // and [`Builder::main_files`] records the reads in it as it builds them.
         // Complexity: one walk of the nodes reached from the root, O(n) for n nodes, plus
         // O(log k) to place each read among k bodies ([`Mains::at`]). The naive method, a
         // walk of the whole text from `main`'s header when it is built, costs O(n) per `main`,
@@ -535,10 +535,10 @@ impl<'a, 's> Builder<'a, 's> {
     /// cannot be pushed to (DESIGN.md sec:ports, "What a push may name"): an input of `main`,
     /// with or without a view; a field `MainArgs` does not have; a view other than `::bytes`,
     /// the one view that takes a push (a generation push `x' <- e` that no `loop` or method
-    /// holds is refused by the caller). `v` is the pushed value, whose text the repairs show. A target ending in
-    /// `::bytes` (`m.stdout::bytes`, DESIGN step L7.3h) and one with a field of another value
-    /// are not supported by this zedc. The tokens alternate a name and a separator, `.` or `::`, and the
-    /// grammar allows `::` only before the last name.
+    /// holds is refused by the caller). `v` is the pushed value, whose text the repairs show. A
+    /// target ending in `::bytes` (`m.stdout::bytes`, DESIGN step L7.3h) and one with a field of
+    /// another value are not supported by this zedc. The tokens alternate a name and a separator,
+    /// `.` or `::`, and the grammar allows `::` only before the last name.
     pub(super) fn push_target(&self, t: usize, v: usize) -> Result<String, Error> {
         let node = &self.tree.nodes[t];
         let names: Vec<&str> = (node.start..node.end)
@@ -615,8 +615,8 @@ impl<'a, 's> Builder<'a, 's> {
             None => {}
         }
         match names[..] {
-            // A generation push `x' <- e` is placed by the caller (`Builder::generation_push_placed`
-            // in `breaks.rs`, which imports this file).
+            // A generation push `x' <- e` is placed by the caller
+            // (`Builder::generation_push_placed` in `breaks.rs`, which imports this file).
             [name] => Ok(name.into()),
             [p, field] if Some(p) == m => {
                 // Cannot fail: `m` is `main.and_then(..)`, and `Some(p) == m` holds here.

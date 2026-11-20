@@ -18,8 +18,9 @@
 //! A name written twice in one struct, display, `with` clause or type parameter list is an
 //! error. From step L6.1 the generation forms are built: `loop`, `break`, the call `c*.m`,
 //! and in `stmts` the guards `while` and `until`, `initial` statements with `with carryForward`,
-//! indexed definitions, boundary `with` clauses and expression statements. A primed name `x'` is one token, so it is a name
-//! like any other here. A form of a later layer is an error naming that layer.
+//! indexed definitions, boundary `with` clauses and expression statements. A primed name `x'` is
+//! one token, so it is a name like any other here. A form of a later layer is an error naming that
+//! layer.
 
 mod body;
 mod breaks;

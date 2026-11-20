@@ -823,8 +823,8 @@ pub struct Initial {
     pub keys: Vec<IndexKey>,
     /// The value.
     pub value: Expr,
-    /// Whether `with carryForward` ends the statement (DESIGN.md sec:generations): on a path of a step
-    /// that does not update a name it lists, the step defines `x' = x;`.
+    /// Whether `with carryForward` ends the statement (DESIGN.md sec:generations): on a path of a
+    /// step that does not update a name it lists, the step defines `x' = x;`.
     pub carry: bool,
 }
 
@@ -1077,8 +1077,8 @@ impl Type {
         matches!(t.kind, TypeKind::And(_))
     }
 
-    /// The carrier names of a bound, a union of them, in the order of a union and each once, so two bounds
-    /// written in different orders compare equal.
+    /// The carrier names of a bound, a union of them, in the order of a union and each once, so two
+    /// bounds written in different orders compare equal.
     fn carrier_names(&self) -> Vec<&str> {
         let mut out = Vec::new();
         let mut stack = vec![self];

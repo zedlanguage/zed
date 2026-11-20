@@ -73,7 +73,8 @@ fn level(e: &Expr) -> u8 {
         return INFIX;
     }
     match &e.kind {
-        // A sort key stands only as an argument, whose level is `LAMBDA`, and its key is any `Expr`.
+        // A sort key stands only as an argument, whose level is `LAMBDA`, and its key is any
+        // `Expr`.
         ExprKind::Lambda { .. } | ExprKind::SortKey { .. } => LAMBDA,
         ExprKind::Else { .. } => ELSE,
         ExprKind::Binary(op, ..) => binary_level(*op),
@@ -140,10 +141,10 @@ fn infix_left(a: &Expr) -> u8 {
     }
 }
 
-/// The level the right operand `b` of an infix call is written at. A prefix `-` or `!` there has one
-/// reading, `p ~scale~ -1`, unless its operand is written bare with `^`, `p ~f~ -k^2`, which also
-/// reads `(p ~f~ -k)^2`; a prefix on a prefix is written `-(-x)`, grouped. Any other operand looser
-/// than a postfix chain is grouped (DESIGN.md tier 6).
+/// The level the right operand `b` of an infix call is written at. A prefix `-` or `!` there has
+/// one reading, `p ~scale~ -1`, unless its operand is written bare with `^`, `p ~f~ -k^2`, which
+/// also reads `(p ~f~ -k)^2`; a prefix on a prefix is written `-(-x)`, grouped. Any other operand
+/// looser than a postfix chain is grouped (DESIGN.md tier 6).
 fn infix_right(b: &Expr) -> u8 {
     match &b.kind {
         ExprKind::Unary(_, x) if !matches!(x.kind, ExprKind::Binary(BinaryOp::Pow, ..)) => PREFIX,
