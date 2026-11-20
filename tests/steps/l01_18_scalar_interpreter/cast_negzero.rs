@@ -34,6 +34,10 @@ fn a_float_cast_of_a_negative_zero_keeps_its_sign() {
 /// The neighbors of the case, through the same narrowing: a positive zero, the zeros equal
 /// under IEEE `==`, a tiny float that rounds to the zero of its sign (IEEE 754 round to
 /// nearest, step L1.18), the least `f32` subnormal, and `f64` of the infinities and the NaN.
+/// IEEE Std 754-2019, doi:10.1109/IEEESTD.2019.8766229: comparisons, section 5.11 (full
+/// comment in zed-kernel `value.rs`, `Value::surface_cmp`), and rounding, section 4.3 (full
+/// comment in zed-kernel `num.rs`, enum `Rounding`); the narrowing is in zed-kernel
+/// `words.rs`, at `Prim::CastF32` on a `Value::Float`.
 #[test]
 fn a_float_narrowed_to_f32_near_zero_and_f64_of_an_f64() {
     let cases = [

@@ -628,7 +628,9 @@ fn the_compositions_an_order_chain_needs_are_axioms() {
 }
 
 /// The float instances the order axioms are checked on hold a NaN, both zeros and both
-/// infinities, so the f64 entries are checked where IEEE comparison departs from an order.
+/// infinities, so the f64 entries are checked where IEEE comparison departs from an order
+/// (IEEE Std 754-2019, doi:10.1109/IEEESTD.2019.8766229, section 5.11; the full comment is in
+/// zed-kernel `value.rs`, `Value::surface_cmp`).
 #[test]
 fn the_float_instances_hold_the_ieee_corner_values() {
     let vs = values(Carrier::F64);
@@ -794,7 +796,9 @@ fn false_shift_axioms_are_refuted_where_they_fail() {
     assert!(first(claim("shl", "div")).starts_with("-256, 1: "));
 }
 
-/// `min` and `max` at `f64` are IEEE 754-2019 `minimum` and `maximum` (DESIGN.md sec:reduction,
+/// `min` and `max` at `f64` are IEEE 754-2019 `minimum` and `maximum` (section 9.6,
+/// doi:10.1109/IEEESTD.2019.8766229; full comment in zed-kernel `value.rs`, fn `ieee_min_max`;
+/// DESIGN.md sec:reduction,
 /// item 5, and M0.11): the table gives each its laws, and the minimum x86's MINSD computes,
 /// `if a < b { a } else { b }`, is refuted for commutativity on a NaN against a number, where it
 /// gives the second operand, as well as on the two zeros. The two-value instances make the NaN

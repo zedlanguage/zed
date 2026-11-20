@@ -51,7 +51,9 @@ pub enum Arith {
     Checked,
     /// `rat`, exact.
     Rat,
-    /// `f64` or `f32`, IEEE 754, in IEEE order: a pair with a NaN is in no order.
+    /// `f64` or `f32`, IEEE 754, in IEEE order: a pair with a NaN is in no order (IEEE Std
+    /// 754-2019, doi:10.1109/IEEESTD.2019.8766229, section 5.11; the full comment is in
+    /// zed-kernel `value.rs`, `Value::surface_cmp`).
     Float,
 }
 
@@ -474,7 +476,13 @@ impl<'t> Grader<'_, 't> {
     /// value is monotone in the operand, and IEEE rounding is monotone, so `t <= t'` gives
     /// `t op c <= t' op c` in IEEE order; two zeros compare equal, so a pair `-0.0`, `0.0`
     /// is never `t < t'`. A constant that is not a literal may be NaN (`inf - inf`), so only
-    /// a literal is `const`.
+    /// a literal is `const`. The proof rests on two rules of IEEE Std 754-2019,
+    /// doi:10.1109/IEEESTD.2019.8766229: an operation is the exact result rounded (section
+    /// 5.4.1; the full comment is in zed-kernel `eval.rs`, fn `prim_on`, at `Prim::Sqrt`), and
+    /// every rounding direction is monotone (section 4.3; full comment in zed-kernel `num.rs`,
+    /// enum `Rounding`), with the comparisons of section 5.11 (zed-kernel `value.rs`,
+    /// `Value::surface_cmp`). The monotonicity of rounding is from memory, not read in the
+    /// standard, which is paywalled.
     fn float(&self, p: Prim, ns: &[Node]) -> Node {
         let lit = |n: &Node| match n.range {
             Range::Float(Some(v)) if n.grade == Some(Tonicity::Const) => Some(v),

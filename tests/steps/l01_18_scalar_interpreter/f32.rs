@@ -1,6 +1,11 @@
 //! `f32`, IEEE 754 binary32, beside `f64` (DESIGN.md L1.17, L1.18; row FLOAT-f32): its
 //! literals and printing, arithmetic rounded once to `f32`, NaN, signed zero, subnormals,
-//! overflow, the casts and their exact range of integers, order, and `f32 ^ int`.
+//! overflow, the casts and their exact range of integers, order, and `f32 ^ int`. IEEE Std
+//! 754-2019, doi:10.1109/IEEESTD.2019.8766229, is cited in zed-kernel: the format (section 3.6)
+//! at `num/float_text.rs`, enum `FloatFormat`; rounding (section 4.3) at `num.rs`, enum
+//! `Rounding`; arithmetic (section 5.4.1) at `eval.rs`, fn `prim_on`, `Prim::Sqrt`; `pow`
+//! (section 9.2) there at `Prim::Pow`; comparisons (section 5.11) at `value.rs`,
+//! `Value::surface_cmp`.
 
 use zed_tests::step_helpers::l01_16_elaboration::{errors, value};
 

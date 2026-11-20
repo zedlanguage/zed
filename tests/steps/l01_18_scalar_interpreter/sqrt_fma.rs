@@ -1,7 +1,9 @@
 //! `sqrt` and `fma` at `f64` and `f32` (row FLOAT-sqrt; DESIGN.md sec:linalg, the table of
 //! machine operations; sec:reduction items 5 and 6; step L1.18a): `sqrt(x)` is the square root
 //! correctly rounded, `fma(a, b, c)` the exact `a * b + c` rounded once, each the IEEE 754
-//! result of its own format bit for bit. `sqrt(-0.0)` is `-0.0`, a negative operand gives the
+//! result of its own format bit for bit (IEEE Std 754-2019, doi:10.1109/IEEESTD.2019.8766229,
+//! section 5.4.1; the full comment is in zed-kernel `eval.rs`, fn `prim_on`, at `Prim::Sqrt`).
+//! `sqrt(-0.0)` is `-0.0`, a negative operand gives the
 //! NaN (sec:failure: "`#NaN` covers 0/0, inf - inf, sqrt of a negative"), and a NaN operand
 //! gives the canonical NaN. The kernel, the counting machine and native code at both of
 //! Cranelift's levels give the same bits; native code runs both at `f64` with no kernel call.

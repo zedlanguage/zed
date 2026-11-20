@@ -168,7 +168,9 @@ fn rationals_stay_reduced_and_exact() {
 #[test]
 fn floats_follow_ieee_754_at_f64_and_round_once_at_f32() {
     // DESIGN.md L1.18: `f32` `+ - * /` round once to `f32`; comparisons are IEEE 754, so a NaN
-    // is unordered and unequal to itself, and `0.0 == -0.0`.
+    // is unordered and unequal to itself, and `0.0 == -0.0` (IEEE Std 754-2019,
+    // doi:10.1109/IEEESTD.2019.8766229, section 5.11; the full comment is in zed-kernel
+    // `value.rs`, `Value::surface_cmp`).
     table(vec![
         ("f64 add", prim(Add, vec![f(0.5), f(0.25)]), "0.75"),
         ("f64 negate zero", prim(Neg, vec![f(0.0)]), "-0.0"),
@@ -605,6 +607,8 @@ fn an_ill_typed_application_is_reported_as_a_compiler_bug_naming_it() {
 
 #[test]
 fn the_remaining_operand_kinds_of_arithmetic_order_and_reads() {
+    // IEEE Std 754-2019, doi:10.1109/IEEESTD.2019.8766229, sections 5.4.1 and 9.2; the full
+    // comments are in zed-kernel `eval.rs`, fn `prim_on`, at `Prim::Sqrt` and `Prim::Pow`.
     // DESIGN.md L1.17-L1.18 and sec:linalg: `sqrt` is IEEE 754 `squareRoot` at each float
     // width; NaN in gives NaN out, `pow` included; `f32 ^ int` is the one arrow between two
     // carriers. sec:reduction: of two tuples the first component in which they differ decides

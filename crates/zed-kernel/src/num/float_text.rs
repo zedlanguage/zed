@@ -43,7 +43,14 @@ use std::cmp::Ordering;
 mod pow5;
 use pow5::POW5;
 
-/// A binary floating-point format of IEEE 754 that a literal is read to.
+/// A binary floating-point format that a literal is read to. The precisions and exponent ranges
+/// of binary64, binary32 and binary16 are those of IEEE Std 754-2019,
+/// doi:10.1109/IEEESTD.2019.8766229, section 3.6, "Interchange format parameters"; bfloat16 is
+/// not in the standard. Section number and title checked 2026-11-20 against the contents in the
+/// publisher's preview of ISO/IEC 60559:2020; the table's values are from memory, those of
+/// binary64 and binary32 checked against Rust's `f64` and `f32` constants. A reading that
+/// rounds to infinity or zero follows section 5.12, "Details of conversion between
+/// floating-point data and external character sequences" (rule from memory).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum FloatFormat {
     /// binary64: 53 bits of precision, exponents `-1022..=1023`.

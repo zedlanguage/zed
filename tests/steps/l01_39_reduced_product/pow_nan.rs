@@ -1,7 +1,9 @@
 //! The forward transfer of float `^` (item FLOAT-pow-nan; DESIGN.md sec:domains, NaN rule 5
 //! and the float-class transfer): a NaN-possible operand gives a NaN-possible result for every
 //! exponent and every base, `0` and `1` included, since NaN in, NaN out holds for `^` though
-//! IEEE 754 `pow(NaN, 0)` and `pow(1, NaN)` are 1.
+//! IEEE 754 `pow(NaN, 0)` and `pow(1, NaN)` are 1 (IEEE Std 754-2019,
+//! doi:10.1109/IEEESTD.2019.8766229, section 9.2; the full comment is in zed-kernel `eval.rs`,
+//! fn `prim_on`, at `Prim::Pow`).
 
 use zed_kernel::term::build::{prim, var};
 use zed_kernel::types::Type;

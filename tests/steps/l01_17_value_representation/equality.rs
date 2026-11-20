@@ -1,5 +1,7 @@
 //! The language's `==`: IEEE 754 at floats, at any depth, and structural elsewhere; and on
-//! functions, an error until types give the domain to compare them on.
+//! functions, an error until types give the domain to compare them on. IEEE 754 equality: IEEE
+//! Std 754-2019, doi:10.1109/IEEESTD.2019.8766229, section 5.11; the full comment is in
+//! zed-kernel `value.rs`, `Value::surface_cmp`.
 
 use zed_kernel::term::build::{lam, prim, var};
 use zed_kernel::{Evaluator, F64, Prim, Value, World};

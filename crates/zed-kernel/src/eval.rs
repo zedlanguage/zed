@@ -4150,7 +4150,17 @@ fn prim_on(p: Prim, vals: &[Value]) -> Result<Value, KernelError> {
         (Prim::Concat, [Str(a), Str(b)]) => Str(crate::text::Text::join(a, b)?),
         // NaN in, NaN out, as for every float operation (DESIGN.md sec:domains, NaN rule 5):
         // IEEE 754 `pow` gives `pow(NaN, 0) = 1` and `pow(1, NaN) = 1`, so a NaN operand is
-        // tested first.
+        // tested first. Source: IEEE Std 754-2019, doi:10.1109/IEEESTD.2019.8766229 (full
+        // citation at the `sqrt` and `fma` rule above), section 9.2, "Additional mathematical
+        // operations", which recommends `pow` and lists its special values: `pow(x, ±0)` is 1
+        // for every `x`, a NaN included, and `pow(+1, y)` is 1 for every `y`, a NaN included.
+        // How checked, 2026-11-20: the section number and title against the contents in the
+        // publisher's preview of ISO/IEC 60559:2020; the two special values are from memory
+        // (the standard is paywalled and was not read), and Rust's `powf` gives both (C99
+        // Annex F.9.4.4 states them too, also from memory). Departure: Zed gives NaN for both,
+        // on purpose. Tests: `l01_36_cranelift::pow_nan` and `l01_39_reduced_product::pow_nan`,
+        // which check that both cases give NaN here; a wrong memory of the standard would not
+        // change what they check.
         (Prim::Pow, [Float(a), Float(b)]) => {
             let (a, b) = (a.get(), b.get());
             Value::float(if a.is_nan() || b.is_nan() {
@@ -4193,7 +4203,9 @@ fn prim_on(p: Prim, vals: &[Value]) -> Result<Value, KernelError> {
         }
         (Prim::Eq, [a, b]) => Bool(a.surface_eq(b)),
         (Prim::Ne, [a, b]) => Bool(!a.surface_eq(b)),
-        // Two floats compare as IEEE 754 does, so every comparison with a NaN is false.
+        // Two floats compare as IEEE 754 does, so every comparison with a NaN is false (IEEE
+        // Std 754-2019, doi:10.1109/IEEESTD.2019.8766229, section 5.11; the full comment is at
+        // `value.rs`, `Value::surface_cmp`).
         (Prim::Lt | Prim::Le | Prim::Gt | Prim::Ge, [Float32(a), Float32(b)]) => {
             let (a, b) = (a.get(), b.get());
             Bool(match p {

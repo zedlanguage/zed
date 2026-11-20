@@ -902,7 +902,9 @@ impl<M: Module> Gen<'_, M> {
                 _ => unreachable!("checked by `inline`"),
             }
         } else if p == Prim::Fma {
-            // IEEE 754 `fusedMultiplyAdd` (IEEE Std 754-2019, section 5.4.1), rounded once:
+            // IEEE 754 `fusedMultiplyAdd` (IEEE Std 754-2019, doi:10.1109/IEEESTD.2019.8766229,
+            // section 5.4.1; the full comment is in zed-kernel `eval.rs`, fn `prim_on`, at
+            // `Prim::Sqrt` and `Prim::Fma`), rounded once:
             // one `vfmadd` where the host has FMA, else the C library's `fma`, which Cranelift
             // calls in its place; O(1) either way. As for `sqrt`, an `f32` takes the kernel
             // call. Cranelift never fuses a separate `fmul` and `fadd`, so a written
@@ -994,7 +996,9 @@ impl<M: Module> Gen<'_, M> {
     /// result jumping to `merge`; any other operands continue in a new block. NaN in, NaN out
     /// (DESIGN.md sec:domains, NaN rule 5), where IEEE 754 `pow` gives `pow(NaN, 0) = 1` and
     /// `pow(1, NaN) = 1`: an operand the graph does not rule the NaN out of is tested, one
-    /// `fcmp uno` for one such operand or for two, and an operand it does is not.
+    /// `fcmp uno` for one such operand or for two, and an operand it does is not. Citation:
+    /// IEEE Std 754-2019, doi:10.1109/IEEESTD.2019.8766229, section 9.2; the full comment is in
+    /// zed-kernel `eval.rs`, fn `prim_on`, at `Prim::Pow`.
     fn pow(&mut self, fx: &mut Fx<'_>, id: usize, a: W, b: W, merge: Block) {
         let t = self.t;
         let ni = &t.nodes[id];
@@ -1190,6 +1194,9 @@ fn int_cmp(p: Prim) -> Option<IntCC> {
 /// whose WebAssembly rules are IEEE 754-2019 `minimum` and `maximum` up to the NaN's bits, which
 /// [`Gen::float_word`] makes canonical: a NaN in either position gives the NaN, and `-0.0` is
 /// below `0.0` (DESIGN.md sec:reduction, item 5). `min` and `max` on ints run in the kernel.
+/// Citation: IEEE Std 754-2019, doi:10.1109/IEEESTD.2019.8766229, section 9.6, "Minimum and
+/// maximum operations"; the full comment is in zed-kernel `value.rs`, fn `ieee_min_max`. The
+/// WebAssembly rule is from memory, not checked against the WebAssembly specification.
 fn float_op(p: Prim) -> bool {
     matches!(
         p,

@@ -1,5 +1,7 @@
 //! Float `^` gives NaN when either operand is NaN, the exponent 0 and the base 1 included,
-//! unlike IEEE 754 `pow`, which gives `pow(NaN, 0) = 1` and `pow(1, NaN) = 1` (DESIGN.md
+//! unlike IEEE 754 `pow` (IEEE Std 754-2019, doi:10.1109/IEEESTD.2019.8766229, section 9.2;
+//! the full comment is in zed-kernel `eval.rs`, fn `prim_on`, at `Prim::Pow`), which gives
+//! `pow(NaN, 0) = 1` and `pow(1, NaN) = 1` (DESIGN.md
 //! sec:domains, NaN rule 5; item FLOAT-pow-nan). The kernel, the counting machine and native
 //! code at both of Cranelift's levels agree bit for bit, and native code runs float `^` with
 //! no kernel call. Native code tests an operand for NaN before it calls `pow` only when the

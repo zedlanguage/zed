@@ -57,6 +57,20 @@ use zed_numtheory::{factor, gcd_big_u64, is_prime, mul_mod, pow_mod_big, rem_big
 /// How [`Rat::round_whole`] rounds a number to a whole one: the rules of `round` (ties to
 /// even), `round(x, ties: #away)`, `floor`, `ceil`, `trunc` and `awayFromZero` (DESIGN.md
 /// sec:facets, "Rounding to a whole number").
+// Source of the two names to the nearest: IEEE Std 754-2019, "IEEE Standard for Floating-Point
+// Arithmetic", IEEE, 2019, doi:10.1109/IEEESTD.2019.8766229, section 4.3, "Rounding-direction
+// attributes". Sketch: roundTiesToEven delivers the representable value nearest the exact
+// result and, of two equally near, the one with an even least significant digit;
+// roundTiesToAway delivers, of two equally near, the one larger in magnitude. Here the
+// "representable values" are the whole numbers, so even means an even whole number. How
+// checked, 2026-11-20: the section number and title against the contents in the publisher's
+// preview of ISO/IEC 60559:2020 (the same text); the standard is paywalled and was not read,
+// so the definitions, and their place in subsection 4.3.1, are from memory. Departure: the
+// standard rounds to a float format; `Rat::round_whole` rounds an exact rational to an integer,
+// so no precision or overflow enters. Tests: `l01_18_scalar_interpreter::rounding`, which
+// checks ties at both signs under both rules (it catches a tie sent the wrong way, not a
+// misreading of the standard shared by the test and the code). Other sites that name these
+// rules point here.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Rounding {
     /// To the nearest, a tie to the even neighbor (IEEE 754 roundTiesToEven).

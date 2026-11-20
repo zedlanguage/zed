@@ -62,7 +62,10 @@ pub(crate) fn word(p: Prim, x: &Value) -> Result<Value, KernelError> {
             }
         }
         // A finite text beyond the float range reads as the infinity of its sign, as IEEE 754
-        // rounds it (step L1.18); the `overflow()` fact it carries is step L10.3b's.
+        // rounds it (step L1.18); the `overflow()` fact it carries is step L10.3b's. Citation:
+        // IEEE Std 754-2019, doi:10.1109/IEEESTD.2019.8766229, section 5.12, "Details of
+        // conversion between floating-point data and external character sequences"; the
+        // reading method and its full comment are in `num/float_text.rs`, at its head.
         (Prim::CastF64, Value::Str(s)) => {
             let s = s.try_flat().map_err(|e| unread("f64", s.len(), e))?;
             match read_float(&s, read_f64_ieee) {
@@ -83,6 +86,11 @@ pub(crate) fn word(p: Prim, x: &Value) -> Result<Value, KernelError> {
         // An `f64` is narrowed as a float, not through its exact rational, which has no sign
         // of zero: `f32(-0.0f64)` is `-0.0f32`. `as f32` is the IEEE 754 narrowing: nearest,
         // ties to even, the infinity of its sign past `f32::MAX + ulp/2`, and the NaN kept.
+        // Citation: IEEE Std 754-2019, doi:10.1109/IEEESTD.2019.8766229, section 5.4.2,
+        // "Conversion operations for floating-point formats", rounded by roundTiesToEven
+        // (section 4.3; the full comment on the rounding rules is in `num.rs`, enum
+        // `Rounding`). Subsection 5.4.2's number and title are from memory; the contents page
+        // of the preview lists sections only to the second level.
         (Prim::CastF32, Value::Float(f)) => Value::float32(f.get() as f32),
         (Prim::CastInt | Prim::CastRat | Prim::CastF64 | Prim::CastF32, _) => {
             if x.number_kind().is_none() {

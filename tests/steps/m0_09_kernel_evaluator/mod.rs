@@ -534,7 +534,9 @@ fn integer_division_is_euclidean() {
 
 #[test]
 fn floats_compare_as_ieee() {
-    // The language's `==` follows IEEE 754 (step L1.17); the values stay distinct keys.
+    // The language's `==` follows IEEE 754 (step L1.17); the values stay distinct keys. IEEE
+    // Std 754-2019, doi:10.1109/IEEESTD.2019.8766229, section 5.11; the full comment is in
+    // zed-kernel `value.rs`, `Value::surface_cmp`.
     let eq = prim(
         Prim::Eq,
         vec![lit(Value::float(0.0)), lit(Value::float(-0.0))],

@@ -59,10 +59,12 @@ use chain::Chain;
 /// `min(-0.0, 0.0)` is `-0.0` and `max(-0.0, 0.0)` is `0.0` in both orders. Rust's
 /// `f64::minimum` is not stable, and `f64::min` returns the other operand of a NaN. Source:
 /// IEEE Std 754-2019, doi:10.1109/IEEESTD.2019.8766229 (the full citation is at the `sqrt`
-/// and `fma` rule in `eval.rs`), the operations `minimum` and `maximum`; their section number
-/// (9.6) and wording are from memory, not checked, as the standard is paywalled and was not
-/// read. Test: `min_and_max_put_the_negative_zero_below_and_nan_absorbs` (the step tests of
-/// value representation), which checks both zeros in both orders and NaN in either place.
+/// and `fma` rule in `eval.rs`), section 9.6, "Minimum and maximum operations", the operations
+/// `minimum` and `maximum`. The section number and title were checked 2026-11-20 against the
+/// contents in the publisher's preview of ISO/IEC 60559:2020 (the same text); the wording of
+/// the rule is from memory, as the standard is paywalled and was not read. Test:
+/// `min_and_max_put_the_negative_zero_below_and_nan_absorbs` (the step tests of value
+/// representation), which checks both zeros in both orders and NaN in either place.
 pub(crate) fn ieee_min_max(min: bool, a: f64, b: f64) -> f64 {
     if a.is_nan() || b.is_nan() {
         return f64::NAN;
@@ -784,6 +786,20 @@ impl Value {
     /// The language's order on two values of one kind: structural, except that two floats
     /// compare as IEEE 754 does, so `-0.0` and `0.0` are equal and a NaN is unordered, and
     /// tuples compare component by component in that order. `None` when they are unordered.
+    // Source of the float rule: IEEE Std 754-2019, "IEEE Standard for Floating-Point
+    // Arithmetic", IEEE, 2019, doi:10.1109/IEEESTD.2019.8766229, section 5.11, "Details of
+    // comparison predicates". Sketch of the rule used: every pair of floats is in exactly one of
+    // the relations less, equal, greater and unordered; a NaN is unordered with every value,
+    // itself included, so `==`, `<`, `<=`, `>` and `>=` are false on it and `!=` is true; and
+    // comparisons ignore the sign of zero, so `-0.0 == 0.0`. Rust's `f64::partial_cmp`, `==`
+    // and `<` follow the same rule, and the code relies on them. How checked, 2026-11-20: the
+    // section number and title against the contents in the publisher's preview of ISO/IEC
+    // 60559:2020 (the same text as IEEE 754-2019); the standard itself is paywalled and was not
+    // read, so the rule is from memory. Tests in `l01_17_value_representation::edges`:
+    // `the_two_zeros_compare_equal_under_ieee` and
+    // `nan_is_unordered_and_its_negation_is_the_canonical_nan`, which catch a NaN read as
+    // ordered or the zeros told apart; they cannot catch a departure of Rust's own float
+    // comparisons from the standard. Every other site that relies on this rule points here.
     pub fn surface_cmp(&self, other: &Value) -> Option<Ordering> {
         surface_cmp(self, other)
     }
@@ -792,10 +808,11 @@ impl Value {
     /// one kind (DESIGN.md sec:reduction, item 5): two tuples are ordered lexicographically, and
     /// the first component in which they differ decides, by `min` or `max` of the two components
     /// there, so that two floats that differ are decided by IEEE 754-2019 `minimum` or
-    /// `maximum` (a NaN is taken by both, and `-0.0` is below `0.0`), and two equal values give
-    /// `self`. `None` when a pair of components is of two kinds or two tuples differ in length.
-    /// The walk reads each distinct pair of shared tuples once, so it costs
-    /// O(distinct pairs of components read).
+    /// `maximum` (section 9.6, doi:10.1109/IEEESTD.2019.8766229; full comment at fn
+    /// `ieee_min_max`: a NaN is taken by both, and `-0.0` is below `0.0`), and two equal values
+    /// give `self`. `None` when a pair of components is of two kinds or two tuples differ in
+    /// length. The walk reads each distinct pair of shared tuples once, so it costs O(distinct
+    /// pairs of components read).
     // Complexity tradeoff: naive version, both tuples read as trees to the first difference,
     // O(paths), which is `2^d` for `t(k + 1) = (t(k), t(k))` nested `d` deep. Used: the walk
     // of `items_eq` with its pair table keyed by the parts' ids (see the tradeoff there, K15,
@@ -813,7 +830,8 @@ impl Value {
     }
 
     /// The language's `==` (sec:failure, M0.11): structural, except that two floats compare
-    /// as IEEE 754 does, so `NaN != NaN` and `0.0 == -0.0`, at any depth.
+    /// as IEEE 754 does, so `NaN != NaN` and `0.0 == -0.0`, at any depth (section 5.11; the
+    /// citation and full comment are at [`Value::surface_cmp`]).
     pub fn surface_eq(&self, other: &Value) -> bool {
         surface_eq(self, other)
     }
@@ -3621,7 +3639,10 @@ enum Relation {
     /// reads two families with `diff`, which skips the nodes they share, or, when one is a list
     /// made by `++` whose map is not built, by its leaves in order ([`Pairs::Sides`]).
     Identity,
-    /// The language's `==`: [`Relation::Identity`] with IEEE 754 floats.
+    /// The language's `==`: [`Relation::Identity`] with IEEE 754 floats. Here and in the three
+    /// relations below: IEEE Std 754-2019, doi:10.1109/IEEESTD.2019.8766229, section 5.11 for
+    /// the comparisons (full comment at [`Value::surface_cmp`]) and section 9.6 for `minimum`
+    /// and `maximum` (full comment at fn `ieee_min_max`).
     SurfaceEq,
     /// The language's order: IEEE 754 floats, and tuples by component.
     SurfaceOrder,
@@ -3875,7 +3896,8 @@ fn step<'a>(a: &'a Value, b: &'a Value, r: Relation) -> Step<'a> {
     }
 }
 
-/// [`step`] under [`Relation::SurfaceOrder`]: floats by IEEE 754 and tuples by component; beneath
+/// [`step`] under [`Relation::SurfaceOrder`]: floats by IEEE 754 (section 5.11, cited at
+/// [`Value::surface_cmp`]) and tuples by component; beneath
 /// its tuples the language's order is the total order, read in this walk so that the pairs it
 /// reads are kept with the others.
 fn surface_order_step<'a>(a: &'a Value, b: &'a Value) -> Step<'a> {
@@ -4143,7 +4165,8 @@ fn settle(c: &Comparisons, same: bool) -> bool {
 // pairs (`clear`); one hash insert per pair entered, 18 to 24% more instructions on families
 // with no sharing (K73); every pair of families entered is kept, since which are held twice is not
 // known; the IEEE 754 relations still read a shared sequence, since a NaN is not equal to
-// itself.
+// itself (IEEE Std 754-2019, doi:10.1109/IEEESTD.2019.8766229, section 5.11; the full comment
+// is at `Value::surface_cmp`).
 /// Whether two sequences of values are the same.
 pub(crate) fn items_eq(a: &Items, b: &Items) -> bool {
     // One shared sequence, or two empty ones: equal without a walk. The entries `diff` compares

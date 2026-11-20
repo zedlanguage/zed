@@ -109,7 +109,8 @@ fn the_smallest_word_divided_by_zero_is_div_by_zero() {
 // DESIGN.md sec:type_resolution: "The orders follow IEEE as well: `-0.0 < 0.0` is false and
 // `-0.0 <= 0.0` is true, and a tuple compares component by component in that order, so
 // `(-0.0, 1) < (0.0, 0)` is false." DESIGN.md L1.17: "`<`, `<=`, `>`, `>=` are IEEE 754 on
-// two floats".
+// two floats". IEEE Std 754-2019, doi:10.1109/IEEESTD.2019.8766229, section 5.11; the full
+// comment is in zed-kernel `value.rs`, `Value::surface_cmp`.
 #[test]
 fn the_two_zeros_compare_equal_under_ieee() {
     let src = "z = 0.0f64;\nm = -0.0f64;\nlt = m < z;\nle = m <= z;\ngt = z > m;\nge = z >= m;\n\
@@ -178,6 +179,8 @@ fn subnormals_order_between_zero_and_the_normals() {
     assert_eq!(value(src, "negTiny"), "-5.0e-324");
 }
 
+// IEEE Std 754-2019, doi:10.1109/IEEESTD.2019.8766229, section 9.6; the full comment is in
+// zed-kernel `value.rs`, fn `ieee_min_max`.
 // DESIGN.md sec:reduction item 5: "`min` and `max` ... are the IEEE 754-2019 `minimum` and
 // `maximum`: NaN where either operand is NaN, in either order, and `-0.0` below `0.0`, so
 // `min(-0.0, 0.0)` is `-0.0`"; and "`min((2.0, 1), (f64(#NaN), 0))` and

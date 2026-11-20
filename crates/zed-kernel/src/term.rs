@@ -40,7 +40,9 @@ pub enum Prim {
     Eq,
     /// `a != b`.
     Ne,
-    /// `a < b` in the total order of values, two floats compared as IEEE 754 does.
+    /// `a < b` in the total order of values, two floats compared as IEEE 754 does (IEEE Std
+    /// 754-2019, doi:10.1109/IEEESTD.2019.8766229, section 5.11; the full comment is in
+    /// `value.rs`, `Value::surface_cmp`).
     Lt,
     /// `a <= b`.
     Le,
@@ -129,7 +131,9 @@ pub enum Prim {
     Rotl,
     /// `rotr(x, k, width: w)`: rotated toward the low digits.
     Rotr,
-    /// `f64Bits(x)`: the IEEE 754 binary64 encoding of a float, an int in `0 ..< 2^64`.
+    /// `f64Bits(x)`: the IEEE 754 binary64 encoding of a float, an int in `0 ..< 2^64` (IEEE
+    /// Std 754-2019, doi:10.1109/IEEESTD.2019.8766229, section 3.4; the full comment is in
+    /// `value.rs`, at the canonical NaN's bits).
     F64Bits,
     /// `codePoint(s)`: the Unicode scalar value of a string of one scalar, an int in
     /// `0 ..= 1114111`; `#notScalar` for any other string (step L1.39c).
@@ -166,7 +170,9 @@ pub enum Prim {
     At,
     /// `sqrt(x)` of an `f64` or an `f32`: the square root correctly rounded to the operand's
     /// format, as IEEE 754 `squareRoot` gives it: `sqrt(-0.0)` is `-0.0`, and a negative or NaN
-    /// operand gives NaN (DESIGN.md sec:linalg, machine operations).
+    /// operand gives NaN (DESIGN.md sec:linalg, machine operations). Citation for this and
+    /// `Fma`: IEEE Std 754-2019, doi:10.1109/IEEESTD.2019.8766229, section 5.4.1; the full
+    /// comment is in `eval.rs`, fn `prim_on`, at `Prim::Sqrt`.
     Sqrt,
     /// `fma(a, b, c)` of three `f64` or three `f32`: the exact `a * b + c` rounded once to the
     /// operands' format, IEEE 754 `fusedMultiplyAdd` (DESIGN.md step L1.18a).

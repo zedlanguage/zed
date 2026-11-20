@@ -15354,7 +15354,16 @@ mod tests {
         // significand bits, `2^least` the least subnormal (`emin - p + 1`, with `emin` -1022
         // and -126) and `2^top` the least power of two past the largest finite value (`emax +
         // 1`, with `emax` 1023 and 127). Standard values, not tuned; `held_exactly` reads the
-        // same three.
+        // same three. Source: IEEE Std 754-2019, "IEEE Standard for Floating-Point
+        // Arithmetic", IEEE, 2019, doi:10.1109/IEEESTD.2019.8766229, section 3.6, "Interchange
+        // format parameters": binary32 has `p = 24` and `emax = 127`, binary64 `p = 53` and
+        // `emax = 1023`, and every binary format has `emin = 1 - emax`. How checked,
+        // 2026-11-20: the section number and title against the contents in the publisher's
+        // preview of ISO/IEC 60559:2020; the table's values are from memory (the standard is
+        // paywalled and was not read); they agree with Rust's `f64` and `f32` constants
+        // (`MANTISSA_DIGITS` is `p`, `MAX_EXP` is `emax + 1`, `MIN_EXP` is `emin + 1`),
+        // checked the same day by a scratch program. The full IEEE 754 comments are in
+        // zed-kernel `value.rs`, `Value::surface_cmp` and `ieee_min_max`.
         const FMT64: (u64, i64, i64) = (53, -1074, 1024);
         const FMT32: (u64, i64, i64) = (24, -149, 128);
         let two = |k: i64| (BigInt::from(1), k);

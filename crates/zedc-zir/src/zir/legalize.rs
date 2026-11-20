@@ -11,7 +11,9 @@
 //!   results standing for the node's outputs.
 //! - [`Expansion::Gt`] rewrites an applied `a > b` as `b < a`, and [`Expansion::Ge`] rewrites
 //!   `a >= b` as `b <= a`; the kernel's order is antisymmetric on every pair it orders and its
-//!   IEEE 754 comparisons are too, so the value and every failure value are the same. A
+//!   IEEE 754 comparisons are too (IEEE Std 754-2019, doi:10.1109/IEEESTD.2019.8766229,
+//!   section 5.11; the full comment is in zed-kernel `value.rs`, `Value::surface_cmp`), so the
+//!   value and every failure value are the same. A
 //!   primitive with no inputs, a function value, is not rewritten.
 //!
 //! A refusal names the operator and its operands as the program wrote them (DESIGN.md sec:ir,

@@ -4,7 +4,9 @@
 //! canonical NaN"; and sec:reduction, which defines it: "NaN canonicalized to the quiet NaN
 //! with cleared sign and zero payload". For binary64 that is sign 0, exponent all ones, the
 //! quiet bit (the highest fraction bit) 1 and the other 51 fraction bits 0: `0x7FF8000000000000`.
-//! The expected values below are that constant, not what the code gives.
+//! The expected values below are that constant, not what the code gives. The binary64 layout:
+//! IEEE Std 754-2019, doi:10.1109/IEEESTD.2019.8766229, section 3.4; the full comment is in
+//! zed-kernel `value.rs`, at the canonical NaN's bits.
 //!
 //! On x86-64 the hardware does not give that NaN: `0.0 / 0.0`, `inf - inf`, `0.0 * inf` and
 //! `inf / inf` give the default NaN `0xFFF8000000000000`, whose sign bit is set, and an

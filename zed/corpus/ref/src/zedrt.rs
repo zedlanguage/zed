@@ -6,7 +6,11 @@
 //!   exponent ('-' only when negative); special values print inf, -inf, nan.
 //! - `fsum(xs)` and `TreeSum`: a float `+` fold or scan entry is plain IEEE addition on the
 //!   canonical tree (DESIGN sec:reduction items 1 and 2); an empty fold is -0.0, the identity
-//!   of IEEE addition (sec:reduction, "Identity as data").
+//!   of IEEE addition (sec:reduction, "Identity as data"). IEEE Std 754-2019,
+//!   doi:10.1109/IEEESTD.2019.8766229: addition rounded once, section 5.4.1, and the sign of a
+//!   zero sum, section 6.3; the full comments are in zed-kernel `eval.rs`, fn `prim_on`, at
+//!   `Prim::Sqrt`, and zedc-check `check/walk.rs`, at the identity of a float `+` fold. The
+//!   reference programs p04, p06 and p21 use these rules through this module.
 //! - `read_lines(path)`: stdin as Lines, the lines of the input with the final newline not
 //!   starting an extra empty line. "\r\n" and "\r" end a line too, and a leading byte order mark
 //!   is kept as U+FEFF.

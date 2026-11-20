@@ -582,7 +582,9 @@ fn call_placed(
 /// finite base below `-0.0` to a finite non-integer power) replaced by the canonical NaN, as
 /// the kernel does. Generated code sends a NaN operand to the NaN before this call wherever
 /// the graph does not rule the NaN out (DESIGN.md sec:domains, NaN rule 5), since `pow` gives
-/// `pow(NaN, 0) = 1` and `pow(1, NaN) = 1`. It reads and writes no run state.
+/// `pow(NaN, 0) = 1` and `pow(1, NaN) = 1`. It reads and writes no run state. Citation: IEEE
+/// Std 754-2019, doi:10.1109/IEEESTD.2019.8766229, section 9.2, "Additional mathematical
+/// operations"; the full comment is in zed-kernel `eval.rs`, fn `prim_on`, at `Prim::Pow`.
 #[unsafe(no_mangle)]
 #[expect(
     unsafe_code,

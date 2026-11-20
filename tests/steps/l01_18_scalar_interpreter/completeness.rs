@@ -283,7 +283,9 @@ fn f32_abs_negation_min_and_max_are_exact() {
 }
 
 /// Division by `0.0` or `-0.0`, and `0.0 ^ n` with `n < 0`, give the IEEE infinity at `f32` as
-/// at `f64`.
+/// at `f64` (IEEE Std 754-2019, doi:10.1109/IEEESTD.2019.8766229, section 7.3, "Division by
+/// zero", and section 9.2 for `pow`; the full comments are in zed-kernel `eval.rs`, fn
+/// `prim_on`, at `Prim::Sqrt` and `Prim::Pow`).
 #[test]
 fn division_by_a_float_zero_and_zero_to_a_negative_power_are_infinite() {
     assert_eq!(x("real(1.0f64) / real(-0.0f64)"), "-inf");
@@ -299,7 +301,9 @@ fn division_by_a_float_zero_and_zero_to_a_negative_power_are_infinite() {
     assert_eq!(x("f32(text(\"-0\")) ^ whole(-2)"), "inff32");
 }
 
-/// `x ^ y` of two `f32` values is the IEEE power rounded to `f32`.
+/// `x ^ y` of two `f32` values is the IEEE power rounded to `f32` (IEEE Std 754-2019,
+/// doi:10.1109/IEEESTD.2019.8766229, section 9.2; the full comment is in zed-kernel `eval.rs`,
+/// fn `prim_on`, at `Prim::Pow`).
 #[test]
 fn an_f32_to_an_f32_power_is_the_ieee_power() {
     assert_eq!(x("f32(text(\"2\")) ^ f32(text(\"0.5\"))"), "1.4142135f32");

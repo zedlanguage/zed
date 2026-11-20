@@ -794,7 +794,9 @@ fn law_17_on_an_empty_level_the_map_must_carry_identity_to_identity() {
 fn law_17_a_float_sum_premise_is_the_n_ary_equation_bitwise() {
     // Negation is a homomorphism of binary `+` up to the sign of zero, and the n-ary
     // equation fails bitwise there: with two values the canonical tree is one IEEE addition,
-    // and `0.0 + -0.0` is `+0.0`, and so is `-0.0 + 0.0`, the sum of their negations.
+    // and `0.0 + -0.0` is `+0.0`, and so is `-0.0 + 0.0`, the sum of their negations (IEEE Std
+    // 754-2019, doi:10.1109/IEEESTD.2019.8766229, section 6.3; the full comment is in
+    // zedc-check `check/walk.rs`, at the identity of a float `+` fold).
     let neg = |v: Term| prim(Prim::Neg, vec![v]);
     let floats: Vec<Vec<Value>> = shortlex(&bmc_floats(), 2);
     let (xs, a, b) = refuted(floats, |xs| {

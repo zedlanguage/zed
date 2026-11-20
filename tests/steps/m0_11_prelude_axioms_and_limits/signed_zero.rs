@@ -1,5 +1,7 @@
 //! The two zeros (sec:type_resolution, "Equality and order corner rules"): `==` and the
-//! orders read `0.0 == -0.0`, as IEEE 754 does, and key formation makes them one key. Where
+//! orders read `0.0 == -0.0`, as IEEE 754 does (IEEE Std 754-2019,
+//! doi:10.1109/IEEESTD.2019.8766229, section 5.11; the full comment is in zed-kernel
+//! `value.rs`, `Value::surface_cmp`), and key formation makes them one key. Where
 //! a value's identity matters (a law's equation, a content address) they stay two values,
 //! since `1.0 / x` separates them.
 

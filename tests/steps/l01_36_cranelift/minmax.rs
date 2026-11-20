@@ -1,9 +1,10 @@
 //! `min` and `max` on floats are IEEE 754-2019 `minimum` and `maximum` (DESIGN.md
-//! sec:reduction, item 5) in the kernel and inline in native code: a NaN in either position
-//! gives the NaN, `min(-0.0, 0.0)` is `-0.0` in both orders and `max` of the two zeros `0.0`,
-//! and `clamp(x, lo, hi)`, written `max(lo, min(x, hi))`, follows. Every pair and triple of the
-//! corner values, in every order, gives the kernel's value bit for bit, at both of Cranelift's
-//! optimization levels, with no kernel call.
+//! sec:reduction, item 5; doi:10.1109/IEEESTD.2019.8766229, section 9.6; the full comment is in
+//! zed-kernel `value.rs`, fn `ieee_min_max`) in the kernel and inline in native code: a NaN in
+//! either position gives the NaN, `min(-0.0, 0.0)` is `-0.0` in both orders and `max` of the
+//! two zeros `0.0`, and `clamp(x, lo, hi)`, written `max(lo, min(x, hi))`, follows. Every pair
+//! and triple of the corner values, in every order, gives the kernel's value bit for bit, at
+//! both of Cranelift's optimization levels, with no kernel call.
 
 use zed_kernel::term::build::{app, lam, let_, prim, var};
 use zed_kernel::{Evaluator, Prim, Term, Value, World};

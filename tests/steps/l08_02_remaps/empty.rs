@@ -178,7 +178,8 @@ const F: &str = "m = { \"a\" -> [1.0], \"b\" -> [5.0] }.map(r -> r.where(v -> v 
 #[test]
 fn max_of_an_empty_f64_level_is_minus_infinity() {
     // "`max` at `f64` gets `-inf` from its own" identity; `min` gets `inf` the same way, the
-    // identities of IEEE 754-2019 `maximum` and `minimum`.
+    // identities of IEEE 754-2019 `maximum` and `minimum` (doi:10.1109/IEEESTD.2019.8766229,
+    // section 9.6; the full comment is in zed-kernel `value.rs`, fn `ieee_min_max`).
     let src = format!("{F}hi = m.map(r -> r >< max);\nlo = m.map(r -> r >< min);\n");
     prints(&src, "hi", "{\"a\" -> -inf, \"b\" -> 5.0}");
     prints(&src, "lo", "{\"a\" -> inf, \"b\" -> 5.0}");
@@ -203,7 +204,9 @@ fn an_f64_max_fold_has_no_empty_in_its_type() {
 #[test]
 fn a_sum_of_an_empty_f64_level_is_minus_zero_and_a_product_one() {
     // `-0.0` is the identity of float `+`: `-0.0 + x` is `x` for every `x`, while
-    // `0.0 + -0.0` is `0.0` (IEEE 754-2019 sec. 6.3); `1.0` is the identity of `*`.
+    // `0.0 + -0.0` is `0.0` (IEEE 754-2019 sec. 6.3); `1.0` is the identity of `*`. Citation:
+    // IEEE Std 754-2019, doi:10.1109/IEEESTD.2019.8766229, section 6.3, "The sign bit"; the
+    // full comment is in zedc-check `check/walk.rs`, at the identity of a float `+` fold.
     let src = format!("{F}s = m.map(r -> r >< (+));\np = m.map(r -> r >< (*));\n");
     prints(&src, "s", "{\"a\" -> -0.0, \"b\" -> 5.0}");
     prints(&src, "p", "{\"a\" -> 1.0, \"b\" -> 5.0}");

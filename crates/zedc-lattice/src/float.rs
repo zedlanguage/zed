@@ -14,7 +14,9 @@ use std::fmt;
 use super::landmarks::Landmarks;
 use super::lattice::Lattice;
 
-/// An IEEE binary format, narrowest first.
+/// An IEEE binary format, narrowest first (IEEE Std 754-2019, doi:10.1109/IEEESTD.2019.8766229,
+/// section 3.6, "Interchange format parameters"; the full comment is in zed-kernel
+/// `num/float_text.rs`, enum `FloatFormat`).
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Debug)]
 pub enum Width {
     /// binary16.

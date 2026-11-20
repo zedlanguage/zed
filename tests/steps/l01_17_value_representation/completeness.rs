@@ -176,7 +176,9 @@ fn equal_numbers_order_by_kind_and_floats_by_their_exact_value() {
     );
 }
 
-/// `==` and `!=` compare atoms as data, IEEE 754 at an `f32` inside them as at an `f64`.
+/// `==` and `!=` compare atoms as data, IEEE 754 at an `f32` inside them as at an `f64` (IEEE
+/// Std 754-2019, doi:10.1109/IEEESTD.2019.8766229, section 5.11; the full comment is in
+/// zed-kernel `value.rs`, `Value::surface_cmp`).
 #[test]
 fn equality_of_atoms_and_f32_inside_values() {
     let cases = [

@@ -26,6 +26,10 @@ fn a_float_sum_is_ieee_addition_on_the_canonical_tree_at_every_kind_of_value() {
     let bits = |xs: &[f64]| fsum(xs.iter().copied()).to_bits();
     // No value is the identity of IEEE addition, -0.0 (sec:reduction, "Identity as data"); one
     // value is itself, so a lone -0.0 keeps its sign, as IEEE's -0.0 + -0.0 does; x + -x is +0.0.
+    // IEEE Std 754-2019, doi:10.1109/IEEESTD.2019.8766229, section 6.3; the full comment is in
+    // zedc-check `check/walk.rs`, at the identity of a float `+` fold. The other IEEE mentions
+    // in this file and in `mod.rs` rest on the same citation and on section 5.4.1 (zed-kernel
+    // `eval.rs`, fn `prim_on`, at `Prim::Sqrt`).
     assert_eq!(bits(&[]), (-0.0f64).to_bits());
     assert_eq!(bits(&[-0.0]), (-0.0f64).to_bits());
     assert_eq!(bits(&[-0.0, -0.0]), (-0.0f64).to_bits());

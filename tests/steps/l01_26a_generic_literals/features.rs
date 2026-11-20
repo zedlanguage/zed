@@ -171,7 +171,8 @@ fn signs_zero_and_the_bounds_of_i64_keep_their_exact_values() {
     );
     assert_eq!(top("a = -0;\n", "a"), "0");
     // The literal `0` takes `f64` with the sign rules of IEEE 754: `-2.5 * 0` is `-0.0`, and
-    // `-0.0 + 0.0` is `0.0`.
+    // `-0.0 + 0.0` is `0.0` (IEEE Std 754-2019, doi:10.1109/IEEESTD.2019.8766229, section 6.3;
+    // the full comment is in zedc-check `check/walk.rs`, at the identity of a float `+` fold).
     values(
         "f(x) = x * 0;\ng(x) = x + 0.0;\na = f(x: -2.5f64);\nb = g(x: -0.0f64);\n",
         &[("a", "-0.0"), ("b", "0.0")],

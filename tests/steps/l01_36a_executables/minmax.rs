@@ -1,6 +1,8 @@
 //! A program of `min`, `max` and `clamp` on floats read from its command line, built into an
 //! executable, prints the interpreter's lines on every triple of the corner values: IEEE
-//! 754-2019 `minimum` and `maximum` (DESIGN.md sec:reduction, item 5) in both argument orders,
+//! 754-2019 `minimum` and `maximum` (DESIGN.md sec:reduction, item 5;
+//! doi:10.1109/IEEESTD.2019.8766229, section 9.6; the full comment is in zed-kernel
+//! `value.rs`, fn `ieee_min_max`) in both argument orders,
 //! and `clamp(x, lo, hi) = max(lo, min(x, hi))`, the values known only when the program runs.
 
 use std::ffi::OsString;

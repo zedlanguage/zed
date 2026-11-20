@@ -9,7 +9,10 @@
 //! exact one, the kernel's, and inline exactly when the operands and the product are words.
 //!
 //! Floats: "Every float operation with a NaN operand gives NaN" (sec:reduction, item 5), signed
-//! zeros and the rounding are IEEE's, round to nearest even with no FMA contraction, and "NaN
+//! zeros and the rounding are IEEE's (IEEE Std 754-2019, doi:10.1109/IEEESTD.2019.8766229,
+//! sections 4.3, 5.4.1 and 6.3; the full comments are in zed-kernel `num.rs`, enum `Rounding`,
+//! and `eval.rs`, fn `prim_on`, at `Prim::Sqrt`), round to nearest even with no FMA
+//! contraction, and "NaN
 //! [is] canonicalized to the quiet NaN with cleared sign and zero payload" (item 1, item 4). A
 //! NaN result is therefore compared by its bits with that one NaN, as every other result is
 //! compared by its bits; float `*` makes no kernel call.

@@ -182,7 +182,9 @@ fn a_float_reads_correctly_rounded_and_past_the_range_is_infinite() {
     assert_eq!(x("f64(text(\"1e\"))"), "#invalid");
 }
 
-/// Step L1.18: a cast to a float format rounds to nearest, ties to even, as IEEE 754 does. The
+/// Step L1.18: a cast to a float format rounds to nearest, ties to even, as IEEE 754 does (IEEE
+/// Std 754-2019, doi:10.1109/IEEESTD.2019.8766229, section 4.3; the full comment is in
+/// zed-kernel `num.rs`, enum `Rounding`). The
 /// largest `f64` is `(2^53 - 1) * 2^971`; a number below it plus half its last unit rounds to
 /// it, and one at or past that midpoint (a tie, whose even side is the infinity) is the
 /// infinity of its sign.

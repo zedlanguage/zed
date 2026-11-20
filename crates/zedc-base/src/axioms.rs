@@ -12,7 +12,9 @@
 pub enum Carrier {
     /// Integers.
     Int,
-    /// 64-bit floats; `==` and the comparisons are IEEE 754 on them.
+    /// 64-bit floats; `==` and the comparisons are IEEE 754 on them (IEEE Std 754-2019,
+    /// doi:10.1109/IEEESTD.2019.8766229, section 5.11; the full comment is in zed-kernel
+    /// `value.rs`, `Value::surface_cmp`).
     F64,
     /// Booleans.
     Bool,
@@ -245,7 +247,9 @@ pub const AXIOMS: &[Axiom] = &[
     // IEEE 754-2019 `minimum` and `maximum` (sec:reduction, item 5), where a NaN in either
     // position gives the NaN and `-0.0` is below `0.0`. The NaN is the canonical one, so the
     // result is an operand bit for bit and selectivity holds with a NaN too; the infinities are
-    // identities and the NaN a zero. No `Monotone` at `f64`: a NaN is in no order.
+    // identities and the NaN a zero. No `Monotone` at `f64`: a NaN is in no order. Citation:
+    // IEEE Std 754-2019, doi:10.1109/IEEESTD.2019.8766229, section 9.6, "Minimum and maximum
+    // operations"; the full comment is in zed-kernel `value.rs`, fn `ieee_min_max`.
     ax("min", Int, Associative),
     ax("min", Int, Commutative),
     ax("min", Int, Idempotent),
@@ -284,7 +288,9 @@ pub const AXIOMS: &[Axiom] = &[
     ax("!", Bool, Injective),
     ax("!", Bool, Monotone(&[Down])),
     // `==` is an equivalence at every carrier but `f64`, where it is IEEE 754 equality, which a
-    // NaN makes irreflexive (step L1.17).
+    // NaN makes irreflexive (step L1.17). Citation: IEEE Std 754-2019,
+    // doi:10.1109/IEEESTD.2019.8766229, section 5.11, "Details of comparison predicates"; the
+    // full comment is in zed-kernel `value.rs`, `Value::surface_cmp`.
     ax("==", Int, Reflexive),
     ax("==", Int, Symmetric),
     ax("==", Int, Transitive),
@@ -305,7 +311,9 @@ pub const AXIOMS: &[Axiom] = &[
     ax("!=", String, Irreflexive),
     ax("!=", String, Symmetric),
     // The comparisons are the total order of values at every carrier but `f64`, where they are
-    // IEEE 754 comparisons: a strict order, and `<=` only transitive, since a NaN compares false.
+    // IEEE 754 comparisons: a strict order, and `<=` only transitive, since a NaN compares false
+    // (IEEE Std 754-2019, doi:10.1109/IEEESTD.2019.8766229, section 5.11; the full comment is in
+    // zed-kernel `value.rs`, `Value::surface_cmp`).
     // Strings compare by code point, which is the byte order of their UTF-8 (sec:order).
     ax("<", Int, Irreflexive),
     ax("<", Int, Transitive),

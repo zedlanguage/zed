@@ -1,7 +1,9 @@
 //! The rounding words `round`, `round(x, ties: #away)`, `floor`, `ceil`, `trunc` and
 //! `awayFromZero` (step L1.18, plan row CAST-round-whole; DESIGN.md sec:facets, "Rounding to a
 //! whole number", whose table the first test holds at every value). `round` breaks a tie to
-//! the even neighbor, the IEEE 754 rule, and `ties: #away` away from zero; `ties:` takes only
+//! the even neighbor, the IEEE 754 rule (IEEE Std 754-2019, doi:10.1109/IEEESTD.2019.8766229,
+//! section 4.3; the full comment is in zed-kernel `num.rs`, enum `Rounding`), and
+//! `ties: #away` away from zero; `ties:` takes only
 //! the two atoms written in place. Each word gives an `int`; at a float the NaN gives `#NaN`
 //! and an infinity `#overflow`. Every value here is written out, not computed by the code
 //! under test.

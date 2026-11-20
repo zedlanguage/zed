@@ -13,7 +13,9 @@ pub const BMC_INT: RangeInclusive<i64> = -8..=8;
 
 /// The floats each float binder ranges over: both zeros, which compare equal under IEEE `==`
 /// but are different values, the three decimals whose sum shows double rounding, both
-/// infinities, and a NaN.
+/// infinities, and a NaN. The IEEE rules these pick out are cited (IEEE Std 754-2019,
+/// doi:10.1109/IEEESTD.2019.8766229, section 5.11) with the full comment in zed-kernel
+/// `value.rs`, `Value::surface_cmp`.
 pub const BMC_FLOATS: [f64; 9] = [
     0.0,
     -0.0,

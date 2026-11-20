@@ -1,5 +1,6 @@
 //! The primitives native code runs inline when their inputs allow, and gives to the kernel
-//! otherwise: `sqrt` and `fma` of `f64` operands (IEEE 754-2019 section 5.4.1, one rounding),
+//! otherwise: `sqrt` and `fma` of `f64` operands (IEEE 754-2019 section 5.4.1, one rounding;
+//! doi:10.1109/IEEESTD.2019.8766229, full comment in zed-kernel `eval.rs`, fn `prim_on`),
 //! and the code point of a string of one scalar, read in place. Each case gives the kernel's
 //! value bit for bit, and the inline cases call no kernel.
 
