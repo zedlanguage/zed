@@ -1365,7 +1365,7 @@ The nine lines that some runs reach and others do not (`empty/sweep.rs` 1478, 14
 the test seed, `ZED_TEST_SEED`, which draws the inputs of the random tests, and not the text
 seed: with the test seed fixed, `ZED_TEXT_SEED` (1, 11400714819323198485, unset) and the
 thread count change no count. Each line is now reached by a fixed case, found by the seed and
-draw named in its doc comment and checked against the oracle of its file (59a35f37b):
+draw named in its doc comment and checked against the oracle of its file (c9a3c313b):
 
 | Line (at 4348088e0) | Test |
 |---|---|
@@ -1377,22 +1377,22 @@ draw named in its doc comment and checked against the oracle of its file (59a35f
 
 All nine count above 0 in the final run.
 
-The open lines, by enclosing function. Line numbers are at 4348088e0, then at 4c9d0fc58. The
+The open lines, by enclosing function. Line numbers are at 4348088e0, then at 0d68a2523. The
 commits of this round were rebased onto bdcae5564, which adds comment lines only to the files
 of this list; the coverage run below was made before the rebase, at 9ac21c178, whose code is
-that of e794d6163.
+that of f91eac49c.
 
 | Line | Closed by | Test or site | Control |
 |---|---|---|---|
-| `decided` 5253-5263 (8 lines), the list fallback when `chain_rep` fails; `chain_rep` 9484-9488 and 9504, its two `return None`; `find_rep` 10793-10794, the plan forgotten | test (60052f617) | `a_witness_plan_that_does_not_check_out_is_dropped_for_the_search`: a wrong prefix-chain plan (a head of no value, a list in neither type) placed in `Search::chains`; the fallback is reached through the root `(E,)`, which `solve` does not seed | a failed `chain_rep` in `decided` taken as a value found (`(E,)` answered inhabited); `chain_rep`'s check ignored (`E` answered inhabited) |
-| `find_rep` 10832, the `if a.bare` return in the loop over names | proof, `debug_assert!` (60052f617) | from the invariant of `Atoms::bare`, at the site | none (removed) |
-| `find_prefix_chains` 8400-8404 and 8433-8437, the decrements of `active` | proof, `debug_assert!` (e794d6163) | each group's `active` counts its waiting entries: added to by 1 with each push, taken from by 1 only while above 0, and otherwise only set to 0, which holds for negative groups too | none (removed) |
-| `find_prefix_chains` 8960, the step into the carrier at depth 0 | proof, `debug_assert!` (e794d6163) | the depth-0 step into the carrier has no chain row | none (removed) |
-| `find_prefix_chains` 9028, 9119, 9173, the `step > max_step` exit and the trailing `None` | proof, `debug_assert!` and `unreachable!` (e794d6163) | the sweep returns at the last step (`pos_stop_now`) | none (removed) |
-| `find_prefix_chains` 9407, 9449, the two-way start of the scan | proof, one read (e794d6163) | without every hole the scan starts at step 2, which `next_uncommitted_s` already holds | none (removed) |
-| `find_prefix_chains` 9123-9142 (7 lines), a spine node whose head meets no hole | test (e794d6163) | `refusals::a_spine_node_whose_head_meets_no_hole_is_passed_over`, an `Empty` and an `Inhabited` case against the list oracle | no mutation run; the two arms of the start gave the same step there, as the proof says |
-| `find_prefix_chains` 8293, 8370 | test (e794d6163) | `refusals::a_tail_with_another_atom_and_a_carrier_with_an_empty_head_in_the_prefix_chains`: `chain_verdict`, `chain_verdict_expanded` and `verdict` against the oracle | a mutation of the carrier-head line fails it |
-| `find_rep` 10897, 10904 (10978, 10985), the fold over the morphism types taken keeps a recursive type as written | test (4c9d0fc58) | `a_meet_of_morphism_types_with_one_recursive_key_type_keeps_it_as_written`: the closure of `(L -> int) & (L -> int \| bool)` with `L` a list type promises and permits `L` as written | `Type::empty()` for the kept guarantee, `Type::top()` for the kept permission, or the shortcut off: each fails it; no verdict changes under any of them, since a closure is built only for a type already found inhabited |
+| `decided` 5253-5263 (8 lines), the list fallback when `chain_rep` fails; `chain_rep` 9484-9488 and 9504, its two `return None`; `find_rep` 10793-10794, the plan forgotten | test (8596f59ce) | `a_witness_plan_that_does_not_check_out_is_dropped_for_the_search`: a wrong prefix-chain plan (a head of no value, a list in neither type) placed in `Search::chains`; the fallback is reached through the root `(E,)`, which `solve` does not seed | a failed `chain_rep` in `decided` taken as a value found (`(E,)` answered inhabited); `chain_rep`'s check ignored (`E` answered inhabited) |
+| `find_rep` 10832, the `if a.bare` return in the loop over names | proof, `debug_assert!` (8596f59ce) | from the invariant of `Atoms::bare`, at the site | none (removed) |
+| `find_prefix_chains` 8400-8404 and 8433-8437, the decrements of `active` | proof, `debug_assert!` (f91eac49c) | each group's `active` counts its waiting entries: added to by 1 with each push, taken from by 1 only while above 0, and otherwise only set to 0, which holds for negative groups too | none (removed) |
+| `find_prefix_chains` 8960, the step into the carrier at depth 0 | proof, `debug_assert!` (f91eac49c) | the depth-0 step into the carrier has no chain row | none (removed) |
+| `find_prefix_chains` 9028, 9119, 9173, the `step > max_step` exit and the trailing `None` | proof, `debug_assert!` and `unreachable!` (f91eac49c) | the sweep returns at the last step (`pos_stop_now`) | none (removed) |
+| `find_prefix_chains` 9407, 9449, the two-way start of the scan | proof, one read (f91eac49c) | without every hole the scan starts at step 2, which `next_uncommitted_s` already holds | none (removed) |
+| `find_prefix_chains` 9123-9142 (7 lines), a spine node whose head meets no hole | test (f91eac49c) | `refusals::a_spine_node_whose_head_meets_no_hole_is_passed_over`, an `Empty` and an `Inhabited` case against the list oracle | no mutation run; the two arms of the start gave the same step there, as the proof says |
+| `find_prefix_chains` 8293, 8370 | test (f91eac49c) | `refusals::a_tail_with_another_atom_and_a_carrier_with_an_empty_head_in_the_prefix_chains`: `chain_verdict`, `chain_verdict_expanded` and `verdict` against the oracle | a mutation of the carrier-head line fails it |
+| `find_rep` 10897, 10904 (10978, 10985), the fold over the morphism types taken keeps a recursive type as written | test (0d68a2523) | `a_meet_of_morphism_types_with_one_recursive_key_type_keeps_it_as_written`: the closure of `(L -> int) & (L -> int \| bool)` with `L` a list type promises and permits `L` as written | `Type::empty()` for the kept guarantee, `Type::top()` for the kept permission, or the shortcut off: each fails it; no verdict changes under any of them, since a closure is built only for a type already found inhabited |
 | `empty.rs` 13117, `empty/sweep.rs` 1126 | reached, no test aimed at them | | |
 
 Counts, from the coverage run at 9ac21c178 (full: 1324 pieces, 2 failed, both past their time
@@ -1400,7 +1400,7 @@ limit, `group_oracle` at 27 s and `sweep_agreement` at 33 s, at load 43 to 217; 
 pieces, 0 failed; `--each-test`: 274 pieces, 0 failed; the `bes` random test in two pieces, 0
 failed). Of the 197 lines, carried by the unchanged lines of a diff: 15 are removed or replaced
 by a proof, 27 count above 0, 155 still count 0. Of the 3 lines reached at the base,
-10897 and 10904 count 0 in this run and are closed by the test of 4c9d0fc58 (shown by its
+10897 and 10904 count 0 in this run and are closed by the test of 0d68a2523 (shown by its
 controls, not by a new coverage run); `empty/sweep.rs` 2144 counts 0 again and stays open.
 
 The coverage report must read only the test binaries of the run. `build/cov/debug/deps` held
@@ -1410,13 +1410,13 @@ base and not now. With only the binaries built for the run (newer than the build
 counts 1258 lines 0 and 117 functions with mismatched data, and those lines do not appear.
 
 Nine lines count above 0 in the base run and 0 in the final run, in code this round does not
-change (at 4c9d0fc58: `empty.rs` 11388 in `find_rep`, 12606-12610 in `rest_choice`, 16396 in
+change (at 0d68a2523: `empty.rs` 11388 in `find_rep`, 12606-12610 in `rest_choice`, 16396 in
 `exact_flat_diff_decide`, 16941 in `horn_witness_group`; `empty/sweep.rs` 2143). Their cause was
 not measured; the test seed is the likely cause, as for the nine above. List in
-`wt/coverage/TEST-kernel-unreached-paths-11-kernel21-4c9d0fc58-run-dependent.txt`.
+`wt/coverage/TEST-kernel-unreached-paths-11-kernel21-0d68a2523-run-dependent.txt`.
 
-Open 156, carried to TEST-kernel-unreached-paths-12, listed at 4c9d0fc58 in
-`wt/coverage/TEST-kernel-unreached-paths-11-kernel21-4c9d0fc58.txt` with `sweep.rs` 2144
+Open 156, carried to TEST-kernel-unreached-paths-12, listed at 0d68a2523 in
+`wt/coverage/TEST-kernel-unreached-paths-11-kernel21-0d68a2523.txt` with `sweep.rs` 2144
 added: `empty.rs` 125 (`tuples_on` 16, `check_chain_witness` 10, `find_prefix_chains` 7,
 `morphisms` 6, `Side::mentions` 5, `step` 4, `decided` 3, `rep` 3, `leaf` 3, `empty_by_classes`
 3, `cycle_meet` 3, `any_empty` 3, the rest spread over many functions), `empty/sweep.rs` 19,
