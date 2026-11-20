@@ -276,8 +276,11 @@ TypeBounds    = 'for' (Name 'in' TypeUnion) % ','                               
 Arrow         = ArrowParams ('->' | '->?') Arrow                                   L1
               | TypeNot '..' TypeNot '->' Arrow                                    L1
               | TypeNot ('->' | '->?') Arrow                                       L1
-              | ~TypeUnion !('->' | '->?' | '..')                                  L1
-ArrowParams   = '(' ')'                                                            L1
+              | ~TypeUnion !('->' | '->?' | '..' | 'else')                         L1
+              | ~TypeElse !('->' | '->?' | '..')                                   L1
+TypeElse      = TypeElse 'else' TypeUnion                                          L1
+              | TypeUnion 'else' TypeUnion                                         L1
+ArrowParams  = '(' ')'                                                            L1
               | '(' nest(TypeParam ',' TypeParam % ',' ','?) ')'                   L1
               | '(' nest('positional'? Name ':' Type ','?) ')'                     L1
 TypeParam     = 'positional'? Name ':' Type | Type                                 L1

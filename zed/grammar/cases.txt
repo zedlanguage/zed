@@ -236,6 +236,18 @@ Type ::: A | (B \ C) ::: (A | (( (B \ C) )))
 Type ::: (A | B) \ C ::: ((( (A | B) )) \ C)
 Type ::: A \ B \ C ::: ((A \ B) \ C)
 Type ::: A | B & C ::: (A | (B & C))
+# a type-level else binds looser than union, intersection and difference, tighter than the arrows
+Type ::: T else 0 ::: (T else 0)
+Type ::: T | U else 0 ::: ((T | U) else 0)
+Type ::: T else 0 | -1 ::: (T else (0 | - 1))
+Type ::: T \ #x else 0 ::: ((T \ #x) else 0)
+Type ::: T else U else 0 ::: ((T else U) else 0)
+Type ::: (r: T) -> T else 0 ::: ((( r : T )) -> (T else 0))
+Type ::: A -> T else 0 ::: (A -> (T else 0))
+Type ::: T else 0 -> int ::: ERROR
+Type ::: (T else 0) -> int ::: ((( (T else 0) )) -> int)
+Type ::: T else 0 ->? int ::: ERROR
+Type ::: T else 0 .. 9 -> int ::: ERROR
 # a value-less key supplies the variable of the same name; without the colon it is a set
 Expr ::: { x:, y:, z: someZ } ::: ({ x : , y : , z : someZ })
 Expr ::: Point(x:, y:) ::: (Point (( ((x :) , (y :)) )))
