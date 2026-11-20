@@ -13,6 +13,10 @@
 //!
 //! [`fenwick`]: a Fenwick tree, for prefix sums or prefix maxima under changes to single items.
 
+// Loaded for its num-bigint only (see Cargo.toml): nothing here names it, and a crate never named
+// is never loaded, so this dylib would carry its own copy of num-bigint beside zed-numtheory's.
+extern crate zed_numtheory as _;
+
 pub mod fenwick;
 pub mod intervals;
 pub mod search;

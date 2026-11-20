@@ -13,9 +13,14 @@ publish.workspace = true
 [lib]
 crate-type = ["rlib", "dylib"]
 
-# BigInt, for the binary search of search.rs over integers of any size.
+# BigInt, for the binary search of search.rs over integers of any size. zed-numtheory is a dylib
+# that holds num-bigint; depending on it makes this dylib link num-bigint from there, where a
+# second copy inside this dylib would make every crate that links both fail ("cannot satisfy
+# dependencies so `num_bigint` only shows up once"). zed-numtheory depends on no crate of the
+# workspace, so this adds no cycle.
 [dependencies]
 num-bigint.workspace = true
+zed-numtheory.workspace = true
 
 # Only the tests: the exactness test of the midpoints in search.rs checks them against BigInt.
 [dev-dependencies]
