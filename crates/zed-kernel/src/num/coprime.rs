@@ -432,7 +432,12 @@ pub(super) fn by_halves<L: Borrow<BigUint>>(xs: &[L]) -> CoprimeBase {
 /// replaced by `x / P_i`, adding `2^i` to `k`, when `P_i` divides it, and by `x mod P_i` when
 /// not, which has the same multiplicity, below `2^i`, since `c` to that multiplicity plus one
 /// divides `P_i`; either way `x` is below `P_i` after, so the widths halve. Last, `rest` is
-/// divided once by `c ^ k`, the product of the `P_i` of the binary digits of `k`. With the
+/// divided once by `c ^ k`, the product of the `P_i` of the binary digits of `k`; but when `x`
+/// started as `rest` and no step left a remainder with a quotient above 0, `x` is already
+/// `rest / c ^ k` (each step either divided it or left it as it was), and is taken as it is
+/// (item PERF-wide-odd-base-ratio-9: 23% fewer instructions on
+/// `equality_over_a_wide_odd_base_scales_with_its_bits` at 2^20 digits, whose time is almost
+/// all `strip(3 ^ (n - 1), 3)`). With the
 /// kernel's arithmetic a test of `P_i` costs about `n log d` for `n` bits of `rest` and `d` of
 /// `P_i`, and the tested `log d` at least double and stay below `log n / 2`, so the tests cost
 /// O(n log n); the squares and the steps down cost O(M(w)) for `w` the bits of `P_J`, at most
@@ -443,6 +448,34 @@ pub(super) fn by_halves<L: Borrow<BigUint>>(xs: &[L]) -> CoprimeBase {
 /// powers up to the width of `rest` before any test cost O(M(n)) for every `k`, and grew 85
 /// times in bytes on `equality_over_a_wide_base_scales_with_its_bits`. (Moved from zedc-int
 /// `int.rs` by PERF-coprime-base-wide-few, 2026-11-20, with its tests.)
+///
+/// The ratio this predicts from `n` to `8n` (item PERF-wide-odd-base-ratio-9). Every product
+/// and division above num-bigint's leaf goes through the transforms of `fast.rs`, whose cost
+/// is `TRANSFORM_COST N log2 N` for `N` points, the power of two at or above the
+/// coefficients, one 64-bit word each (`transform_cost`; a division is a fixed number of such
+/// products, Newton's iteration costing about 5/3 of one). So the variable of the `log` is
+/// `N`, not the bits or digits of the input. Step by step, for `T(N) = a N log2 N + b N`, the
+/// transforms plus the linear passes (carries, CRT, copies), with `a, b >= 0`:
+/// 1. the squares, the steps down and the first division each run on widths that halve from
+///    the top, so each sums to at most twice its top term: `T` of the top width, times a
+///    constant;
+/// 2. from `n` to `8n` every width of the top terms is 8 times as large, and since 8 is a power
+///    of two the padding to `N` is the same at both sizes, so the top terms go from `N` to
+///    `8N` points, and the terms below the top are the same set at both sizes plus 3 wider;
+/// 3. `T(8N) / T(N) = 8 (a (log2 N + 3) + b) / (a log2 N + b)`, which is at most
+///    `8 (log2 N + 3) / log2 N`, reached when `b = 0`, and at least 8, reached when `a = 0`.
+///
+/// For `strip(3 ^ (n - 1), 3)` at `n = 2^20` digits `rest` has 1,661,951 bits, 25,968 words;
+/// the top step down divides it by `3 ^ (2^19)`, 12,985 words, with products of about
+/// 12,985 by 12,985 words, 25,969 coefficients, on `N = 2^15` points; at `8n`, `2^18`. So
+/// the predicted ratio is at most `8 * 18 / 15 = 9.6`. Measured on instructions at load 61
+/// (2026-11-20): the square of `3 ^ (n/2)` 8.70, the division of `3 ^ (n-2)` by
+/// `3 ^ (n/2)` 8.99, the squarings 8.81, the steps down 9.34, the whole strip 9.26, and the
+/// bench `equality_over_a_wide_odd_base_scales_with_its_bits` 9.25: each between 8 and 9.6.
+/// The bound in digits, `8 ln(8n) / ln n = 9.20` for `n = 2^20`, takes the `log` of a
+/// variable 32 times as large as `N` (`2^20` against `2^15`), and so predicts a ratio closer
+/// to 8 than this code's cost has. Below the leaves num-bigint's Toom-3 (about `n^1.465`)
+/// runs only on the small widths, which are the same at both sizes (step 2).
 pub fn strip(rest: &mut BigUint, c: &BigUint) -> u64 {
     if c.count_ones() == 1 {
         let t = c.bits() - 1;
@@ -488,6 +521,11 @@ pub fn strip(rest: &mut BigUint, c: &BigUint) -> u64 {
         pows.push(Cow::Owned(square));
     };
     let mut more = 0u64;
+    // Whether `x` is `rest / c ^ more`: so when it starts as `rest`, and while every step
+    // either divides or leaves `x` as it was (a quotient of 0, so `x mod P_i = x`). Then `x`
+    // is the quotient the last division below would compute, and that division and the
+    // product of its divisor are skipped.
+    let mut quotient = matches!(x, Cow::Borrowed(_));
     for (i, pw) in pows.iter().enumerate().rev() {
         let (q, r) = div_rem_uint(&x, pw);
         x = Cow::Owned(match r.is_zero() {
@@ -495,8 +533,18 @@ pub fn strip(rest: &mut BigUint, c: &BigUint) -> u64 {
                 more += 1 << i;
                 q
             }
-            false => r,
+            false => {
+                quotient &= q.is_zero();
+                r
+            }
         });
+    }
+    if quotient {
+        if more > 0 {
+            let q = x.into_owned();
+            *rest = q;
+        }
+        return 1 + more;
     }
     drop(x);
     // The smaller powers first, so that each product is of a number by a wider one.
@@ -512,6 +560,8 @@ pub fn strip(rest: &mut BigUint, c: &BigUint) -> u64 {
             })
         });
     if let Some(d) = divisor {
+        #[cfg(test)]
+        tests::STRIP_LAST_DIVISIONS.with(|n| n.set(n.get() + 1));
         let (q, r) = div_rem_uint(rest, &d);
         debug_assert!(r.is_zero(), "c ^ {more} divides what is left");
         *rest = q;
@@ -846,7 +896,13 @@ fn pair_base(out: &mut Vec<BigUint>, a: BigUint, b: BigUint) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::cell::Cell;
     use std::collections::BTreeMap;
+
+    thread_local! {
+        /// How many times `strip` has divided `rest` by the product of its powers at its end.
+        pub(super) static STRIP_LAST_DIVISIONS: Cell<u64> = const { Cell::new(0) };
+    }
 
     fn big(v: u64) -> BigUint {
         BigUint::from(v)
@@ -1555,6 +1611,28 @@ mod tests {
             assert_eq!(dense_values(&xs), None);
             assert_eq!(shares_a_factor(&xs), shares_a_factor_by_pairs(&xs), "k {k}");
         }
+    }
+
+    /// Item PERF-wide-odd-base-ratio-9: when the steps down start from `rest` itself and each
+    /// either divides or leaves `x` as it was, `x` ends as `rest / c ^ k`, and `strip` takes it
+    /// without its last division. On `3 ^ 499 * u` for `u` below 3, `3 ^ 256` is the last power
+    /// built (its square is above `rest`), so the steps start from `rest`; before the shortcut
+    /// each strip made the last division once. On `3 ^ 5 * 1000`, a step leaves a remainder
+    /// with a quotient above 0, so the last division stays.
+    #[test]
+    fn stripping_from_rest_itself_skips_the_last_division() {
+        for u in [1u32, 2] {
+            let mut rest = BigUint::from(3u32).pow(500) * u;
+            STRIP_LAST_DIVISIONS.with(|n| n.set(0));
+            assert_eq!(strip(&mut rest, &big(3)), 500, "u = {u}");
+            assert_eq!(rest, BigUint::from(u), "u = {u}");
+            assert_eq!(STRIP_LAST_DIVISIONS.with(Cell::get), 0, "u = {u}");
+        }
+        let mut rest = BigUint::from(3u32).pow(5) * 1000u32;
+        STRIP_LAST_DIVISIONS.with(|n| n.set(0));
+        assert_eq!(strip(&mut rest, &big(3)), 5);
+        assert_eq!(rest, big(1000));
+        assert_eq!(STRIP_LAST_DIVISIONS.with(Cell::get), 1);
     }
 
     /// (Moved from zedc-int `int.rs` with `strip` by PERF-coprime-base-wide-few.)

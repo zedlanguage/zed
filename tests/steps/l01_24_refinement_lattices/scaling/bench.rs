@@ -353,13 +353,21 @@ fn equality_over_a_wide_base_scales_with_its_bits() {
 /// 10.7 at 2^20, and with `fast::mul`'s cost model 10.9 at 2^19 against 10.2 (2026-11-09).
 /// Division by a Newton reciprocal that keeps the divisor's transforms (KERNEL-div-newton)
 /// costs about 4.1 squarings at every `w` from 16384 to 131072 words, and this test took 9.3
-/// times the work at 2^19 (2026-11-09, load 17), in 7 s.
+/// times the work at 2^19 (2026-11-09, load 17), in 7 s. At 2^20 it took 9.22 (load 29),
+/// above the goal 9; `strip` skipping its last division when the steps down already leave
+/// the quotient made it 9.25 on 23% fewer instructions (2026-11-20, load 61), and its cost is
+/// O(N log N) in the transform points `N`, `2^15` here, whose predicted ratio is at most 9.6
+/// (proof at `zed_kernel::num::coprime::strip`, item PERF-wide-odd-base-ratio-9).
 #[test]
 fn equality_over_a_wide_odd_base_scales_with_its_bits() {
     use zedc::store::interval::Num;
     // The set-up writes `3^n` out by the kernel's `pow_uint`, which squares by transforms:
     // num-bigint's `pow`, by Karatsuba and Toom-3, took 15 s of the test's 20 s at 8n = 2^23
     // (TEST-bench-timeout-recheck, load 36), against the 30 s limit. Same value, untimed.
+    // `wide.pow(1000)` finds the least root of `3^n * 2` (`least_root`), whose square root by
+    // num-bigint took 19.2 s at 8n against 0.56 s at n, most of the test's 22 s against its
+    // 22 s limit; by the kernel's `sqrt_rem_uint`, 0.33 s at 8n and the whole set-up 0.52 s
+    // (item PERF-wide-odd-base-ratio-9, 2026-11-20, load 80).
     let pair = |n: usize| {
         let three_n = zed_kernel::num::pow_uint(&num_bigint::BigUint::from(3u32), n as u64);
         let wide = Num::from(num_bigint::BigInt::from(three_n) * num_bigint::BigInt::from(2));

@@ -52,6 +52,7 @@ use num_bigint::BigInt;
 use num_integer::Integer;
 use num_traits::{One, Pow, Signed, Zero};
 
+use crate::num::nth_root_rem_uint;
 use crate::term::{Prim, Term};
 use crate::value::Value;
 
@@ -451,11 +452,21 @@ fn positive_roots(p: &[(u64, BigInt)], a: BigInt, b: Option<BigInt>) -> Vec<BigI
         // A binomial `c0 + c1 x^g` (the piece a gap leaves, as in `(x^n + 1)(x - 4)`) has at
         // most one root above 1: the `g`-th root of `-c0 / c1` where that is an integer, and
         // as `2^g <= x^g` only where `g` is under the bits of the quotient. O(log g)
-        // products of numbers of the bits of `c0`, against the O(t) of an interval.
+        // products of numbers of the bits of `c0`, against the O(t) of an interval. The root
+        // and its remainder by the kernel's `nth_root_rem_uint`, O(M(n)) for a fixed `g`,
+        // where num-bigint's `nth_root` is above it (item PERF-wide-odd-base-ratio-9); a zero
+        // remainder is an integer root.
         let q = -c0 / c1;
         let x = ((c0 % c1).is_zero() && q > BigInt::one() && *g < q.bits())
-            .then(|| q.nth_root(u32::try_from(*g).expect("under the bits of q")))
-            .filter(|x| Pow::pow(x, *g) == q && &a <= x && x <= &hi);
+            .then(|| {
+                nth_root_rem_uint(
+                    q.magnitude(),
+                    u32::try_from(*g).expect("under the bits of q"),
+                )
+            })
+            .filter(|(_, rem)| rem.is_zero())
+            .map(|(x, _)| BigInt::from(x))
+            .filter(|x| &a <= x && x <= &hi);
         return x.into_iter().collect();
     }
     // `x p'(x)`, of the sign of `p'` for `x > 0`, on the exponents of `p` above 0.

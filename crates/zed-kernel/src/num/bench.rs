@@ -271,6 +271,41 @@ fn a_sum_sharing_a_kept_power_scales_with_its_coefficients() {
     );
 }
 
+/// Item PERF-wide-odd-base-ratio-9: [`nth_root_rem_uint`] of a number of n words for `k = 3`
+/// and `k = 64`, O(M(n)) for a fixed `k` (proof at `nth_root_near`), against num-bigint's
+/// `nth_root`, 19.3 and 36.3 times from 4,096 to 32,768 words. The levels of the recursion
+/// halve, so the work is a sum over sizes `n / 2^i`, and the levels below the kernel product's
+/// transforms (num-bigint's Toom-3, about 2.76 times a doubling) grow faster than the top:
+/// `T(8n) / T(n)` measured 10.09 and 10.23 at 2,048 words, 9.64 and 10.02 at 4,096, 9.30 and
+/// 9.70 at 8,192, 9.26 and 9.40 at 16,384, and 9.10 and 9.17 at 32,768, where the squaring of
+/// the same numbers measured 9.18 (2026-11-20, load 23 to 85). 32,768 words is the first size
+/// where both meet the product's own ratio, as `O(M(n))` predicts.
+#[test]
+fn kth_roots_scale() {
+    let n = 1 << 15;
+    let numbers = crate::scaling::inputs(n, |m| bench_number(m, 13));
+    for k in [3u32, 64] {
+        let what = format!("the root of index {k} of a number of n words");
+        crate::scaling::check_order(&what, n, 1, |m| {
+            let (r, rem) = nth_root_rem_uint(&numbers[&m], k);
+            assert!(!r.is_zero() && rem < numbers[&m]);
+        });
+    }
+}
+
+/// Item PERF-wide-odd-base-ratio-9: [`sqrt_rem_uint`] of a number of n words, O(M(n)) (proof
+/// at the function), against num-bigint's `sqrt`, 34.5 times from 1.66M to 13.3M bits.
+/// 8192 words puts every level from the top down to about 512 words on the transforms.
+#[test]
+fn square_roots_scale() {
+    let n = 1 << 13;
+    let numbers = crate::scaling::inputs(n, |m| bench_number(m, 11));
+    crate::scaling::check_order("the square root of a number of n words", n, 1, |m| {
+        let (s, r) = sqrt_rem_uint(&numbers[&m]);
+        assert!(!s.is_zero() && r <= &s << 1u32);
+    });
+}
+
 /// TEST-dry-shared-units: [`rem_uint`] and [`div_rem_uint`] of a number of n words by one odd
 /// word, at or below `DIV_LEAF`, so num-bigint's long division, O(n); and [`gcd_uint`] of the
 /// same pair, whose odd part of 64 bits sends it to `gcd_big_u64`, one pass over the words

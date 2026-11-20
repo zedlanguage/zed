@@ -15,8 +15,8 @@ use num_traits::{One, Zero};
 use zed_kernel::bits::BitLen;
 use zed_kernel::num::coprime::coprime_base_exponents;
 use zed_kernel::num::{
-    TooLarge, div_floor_int, gcd_uint, mod_floor_int, mul_int, mul_uint, pow_uint, read_digits,
-    room, to_decimal, trees,
+    TooLarge, div_floor_int, gcd_uint, mod_floor_int, mul_int, mul_uint, nth_root_rem_uint,
+    pow_uint, read_digits, room, sqrt_rem_uint, to_decimal, trees,
 };
 use zed_numtheory::{
     bezout_i128, gcd_big_u64, gcd_u64, gcd_u128, inverse_mod_2_64, is_prime, next_prime,
@@ -915,7 +915,10 @@ fn expand_pow(base: &BigUint, exp: &BigUint) -> BigUint {
 }
 
 /// `(r, m)` with `b == r ^ m` and `r` not a perfect power, for `b >= 2`. Square roots are taken
-/// while `b` is a square; then each odd prime `p` below the bits of `b` is tried as the index of
+/// while `b` is a square, each by the kernel's [`sqrt_rem_uint`], O(M(n)), which also says
+/// whether it is one (num-bigint's `sqrt`, taken here until PERF-wide-odd-base-ratio-9, is
+/// above O(M(n)), so this bound did not hold: 34.5 times the time for 8 times the bits at
+/// 13.3M bits); then each odd prime `p` below the bits of `b` is tried as the index of
 /// a root ([`OddPart::root`]), and tried again after it succeeds. A root found for a larger
 /// prime is no power of a smaller one, since `b` would then have been. An index whose root
 /// fits in a word costs `O(log p)` word operations; a wider one is first tested by residues
@@ -939,8 +942,10 @@ fn least_root(mut b: BigUint) -> (BigUint, BigUint) {
     let mut m = BigUint::from(1u32);
     // r >= 2, so r ^ p has at least p + 1 bits.
     while b.bits() > 2 {
-        let r = b.sqrt();
-        if mul_uint(&r, &r) != b {
+        // O(M(n)) by the kernel's square root, where num-bigint's `sqrt` took 19.2 s at 13.3M
+        // bits, 34.5 times its time at 1.66M (item PERF-wide-odd-base-ratio-9).
+        let (r, rem) = sqrt_rem_uint(&b);
+        if !rem.is_zero() {
             break;
         }
         b = r;
@@ -1260,9 +1265,16 @@ impl Atom {
     fn expand(&self) -> BigUint {
         match self {
             Atom::Int(b) => b.clone(),
-            Atom::Root { rad, k, .. } => rad.expand().into_parts().1.nth_root(
-                u32::try_from(k).expect("a root of at least 2^127 of a radicand held in memory"),
-            ),
+            // By the kernel's `nth_root_rem_uint`, O(M(n)) for a fixed `k`, where num-bigint's
+            // `nth_root` is above it (item PERF-wide-odd-base-ratio-9).
+            Atom::Root { rad, k, .. } => {
+                nth_root_rem_uint(
+                    &rad.expand().into_parts().1,
+                    u32::try_from(k)
+                        .expect("a root of at least 2^127 of a radicand held in memory"),
+                )
+                .0
+            }
         }
     }
 
@@ -1320,7 +1332,7 @@ impl Core {
     // Complexity tradeoff: two cores whose roots differ in form are taken to differ here,
     // though two roots of different radicands may have one value (the floor cube roots of
     // `2 ^ (3 * e + 1)` and of `2 ^ (3 * e + 1) + 1`), so such cores are found equal only by
-    // `value_cmp` once the approximations are exact, at the bits of the value; the answer
+    // `value_cmp_at` once the approximations are exact, at the bits of the value; the answer
     // stays exact. Why: whether two floor roots are equal is whether a `k`-th power lies
     // between their radicands, which needs the roots' digits. Trigger: a sum, difference or
     // comparison of kept values holding roots of different radicands with one floor. Test:
@@ -1328,8 +1340,8 @@ impl Core {
     // (the two cube roots above); COMPLEXITY.md S33. A complete solution would keep a root in
     // a form that a floor determines, as the least radicand with that floor, found as a kept
     // value: the open case of a root of a sum at `Kept::root`. Naive version: every pair of
-    // cores compared by `value_cmp`, at the bits of the value; used: a form comparison at the
-    // cost of the coprime base, with `value_cmp` only for roots of differing radicands.
+    // cores compared by `value_cmp_at`, at the bits of the value; used: a form comparison at
+    // the cost of the coprime base, with `value_cmp_at` only for roots of differing radicands.
     fn same(&self, o: &Core) -> bool {
         if self == o {
             return true;
@@ -1404,18 +1416,18 @@ impl Core {
         over(&l, kl) == over(&r, kr)
     }
 
-    /// The order of the values: equal in form, else at 64 bits, else by [`Core::same`], else
-    /// at twice as many bits and more until they are apart. Equal values agree at 64 bits, so
-    /// `same` runs only for cores that do.
-    fn value_cmp(&self, o: &Core) -> Ordering {
+    /// The order of the values, given `a = self.approx(64)` and `b = o.approx(64)`: equal in
+    /// form, else at 64 bits, else by [`Core::same`], else at twice as many bits and more until
+    /// they are apart. Equal values agree at 64 bits, so `same` runs only for cores that do.
+    /// The caller (`collect`) computes each core's `approx(64)` once for all its comparisons.
+    fn value_cmp_at(&self, a: &Approx, o: &Core, b: &Approx) -> Ordering {
         if self == o {
             return Ordering::Equal;
         }
-        let (a, b) = (self.approx(64), o.approx(64));
-        if a.below(&b) {
+        if a.below(b) {
             return Ordering::Less;
         }
-        if b.below(&a) {
+        if b.below(a) {
             return Ordering::Greater;
         }
         if self.same(o) {
@@ -1482,6 +1494,8 @@ impl Core {
 
     /// The value to `bits` bits.
     fn approx(&self, bits: u64) -> Approx {
+        #[cfg(test)]
+        tests::CORE_APPROXES.with(|n| n.set(n.get() + 1));
         self.0
             .iter()
             .map(|(a, e)| a.approx(bits).pow(e, bits))
@@ -1603,18 +1617,42 @@ fn fold(terms: &mut Vec<(BigInt, Core)>) {
 }
 
 /// The terms in decreasing order of the values of their cores, with the coefficients of equal
-/// cores added and zero ones dropped: `O(n log n)` comparisons of cores for `n` terms.
-fn collect(mut terms: Vec<(BigInt, Core)>) -> Vec<(BigInt, Core)> {
-    terms.sort_by(|a, b| b.1.value_cmp(&a.1));
-    let mut out: Vec<(BigInt, Core)> = Vec::with_capacity(terms.len());
-    for (c, core) in terms {
+/// cores added and zero ones dropped: `O(n log n)` comparisons of cores for `n` terms, and
+/// one approximation of each core to 64 bits.
+// Complexity tradeoff: each core is approximated to 64 bits once, before the sort, and the
+// comparisons read those approximations (`Core::value_cmp_at`). Comparing by the former
+// `Core::value_cmp` computed both approximations again at each comparison, about 5 per term
+// for a sum of two collected sums (the merge of their two runs, the test of neighbors for
+// equal cores); for a power `b ^ e` each is a power by `e` at 64 bits, `O(log e)` products.
+// Both are `O(n log n)` comparisons; this lowers the constant. Measured on `kept_sum(0,
+// 48000)`, a sum of sums built by halves (item FAIL-l0124-kept-sum-benches-rising-load,
+// 2026-11-20): the setup of
+// `l01_24_refinement_lattices::boundary::bench::negating_a_kept_sum_scales_with_its_terms`
+// took about 14.9 s of its 15.0 s at load 29 before, and the whole bench 4.4 s at load 58
+// after (COMPLEXITY.md row FAIL-l0124-kept-sum-benches-rising-load). Test:
+// `tests::a_sum_of_kept_sums_approximates_each_core_once_in_collect`.
+fn collect(terms: Vec<(BigInt, Core)>) -> Vec<(BigInt, Core)> {
+    let mut terms: Vec<(BigInt, Core, Approx)> = terms
+        .into_iter()
+        .map(|(c, core)| {
+            let a = core.approx(64);
+            (c, core, a)
+        })
+        .collect();
+    terms.sort_by(|x, y| y.1.value_cmp_at(&y.2, &x.1, &x.2));
+    let mut out: Vec<(BigInt, Core, Approx)> = Vec::with_capacity(terms.len());
+    for (c, core, a) in terms {
         match out.last_mut() {
-            Some((c0, core0)) if core0.value_cmp(&core) == Ordering::Equal => *c0 += c,
-            _ => out.push((c, core)),
+            Some((c0, core0, a0)) if core0.value_cmp_at(a0, &core, &a) == Ordering::Equal => {
+                *c0 += c
+            }
+            _ => out.push((c, core, a)),
         }
     }
-    out.retain(|(c, _)| !c.is_zero());
-    out
+    out.into_iter()
+        .filter(|(c, _, _)| !c.is_zero())
+        .map(|(c, core, _)| (c, core))
+        .collect()
 }
 
 /// `floor(rad ^ (1 / k))` to `bits` bits, for `rad` above zero, with whether `rad` is a
@@ -2639,12 +2677,11 @@ impl Num {
         let Some(k) = u32::try_from(k).ok().filter(|k| u64::from(*k) < v.bits()) else {
             return Num::from(if up { 2 } else { 1 });
         };
-        let r = v.nth_root(k);
-        if up && pow_uint(r.magnitude(), u64::from(k)) != *v.magnitude() {
-            (r + 1u32).into()
-        } else {
-            r.into()
-        }
+        // O(M(n)) for a fixed `k` by the kernel's root, whose remainder also says whether the
+        // root is exact, where num-bigint's `nth_root` is above it (item
+        // PERF-wide-odd-base-ratio-9, at `nth_root_rem_uint`).
+        let (r, rem) = nth_root_rem_uint(v.magnitude(), k);
+        Num::from(BigInt::from(r + u32::from(up && !rem.is_zero())))
     }
 
     /// `floor(self ^ (1 / k))` for `self` above zero with integer atoms only or not kept, and
@@ -2813,7 +2850,7 @@ impl Num {
         // kept values, or of a kept value holding a root. Test:
         // `l01_24_refinement_lattices::ends::kept_forms_compute_as_their_values_written_out`;
         // COMPLEXITY.md S33. A complete solution would factor out the common part of the cores
-        // over a coprime base (as at `Core::value_cmp`) and take the gcd of the remaining
+        // over a coprime base (as at `Core::value_cmp_at`) and take the gcd of the remaining
         // coefficients by residues.
         BigInt::from(gcd_uint(self.big().magnitude(), other.big().magnitude())).into()
     }
@@ -3148,6 +3185,90 @@ mod completeness;
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::cell::Cell;
+
+    thread_local! {
+        /// The calls of `Core::approx` on this thread.
+        pub(super) static CORE_APPROXES: Cell<u64> = const { Cell::new(0) };
+    }
+
+    /// `floor_root(k)` and `ceil_root(k)` of values not kept, for `k` 2, 3 and 7, by the
+    /// kernel's `nth_root_rem_uint` (item PERF-wide-odd-base-ratio-9), against num-bigint's
+    /// `nth_root`: 0 to 3, `k`-th powers, one below and one above them, and random values of 1
+    /// to 300 and 20,000 bits.
+    #[test]
+    fn roots_of_values_not_kept_agree_with_num_bigint() {
+        let (mut rng, _) =
+            crate::seed::Rng::fresh("roots_of_values_not_kept_agree_with_num_bigint");
+        for k in [2u32, 3, 7] {
+            let check = |v: BigUint| {
+                let s = v.nth_root(k);
+                let exact = s.pow(k) == v;
+                let n = Num::from(BigInt::from(v.clone()));
+                assert_eq!(
+                    n.floor_root(k),
+                    Num::from(BigInt::from(s.clone())),
+                    "{k} {v}"
+                );
+                let up = s + u32::from(!exact);
+                assert_eq!(n.ceil_root(k), Num::from(BigInt::from(up)), "{k} {v}");
+            };
+            for v in 0u32..4 {
+                check(BigUint::from(v));
+            }
+            for bits in (1..=300u64).chain([20_000]) {
+                let words: Vec<u64> = (0..bits.div_ceil(64)).map(|_| rng.next_u64()).collect();
+                let mut v = BigUint::from_slice(
+                    &words
+                        .iter()
+                        .flat_map(|w| [*w as u32, (w >> 32) as u32])
+                        .collect::<Vec<_>>(),
+                ) >> (64 * bits.div_ceil(64) - bits);
+                v.set_bit(bits - 1, true);
+                let pk = v.nth_root(k).pow(k);
+                if !pk.is_zero() {
+                    check(&pk - 1u32);
+                }
+                check(pk.clone());
+                check(pk + 1u32);
+                check(v);
+            }
+        }
+    }
+
+    /// `kept_sum(lo, hi)`: the sum of `(3 + 2 i) ^ 200` for `i` in `lo..hi`, built by halves.
+    fn kept_sum(lo: usize, hi: usize) -> Num {
+        if hi - lo == 1 {
+            return Num::from(3 + 2 * lo as i64).pow(200);
+        }
+        let mid = (lo + hi) / 2;
+        &kept_sum(lo, mid) + &kept_sum(mid, hi)
+    }
+
+    /// A sum of two kept sums of `n` terms each approximates each of the `2 n` cores to 64 bits
+    /// once in `collect`, and once more in `Kept::approx` when `Num::kept` places the value,
+    /// so `4 n` approximations in all; computing both approximations again at each comparison
+    /// in `collect`, as before, made 764 for n = 64, about 12 n (item
+    /// FAIL-l0124-kept-sum-benches-rising-load).
+    #[test]
+    fn a_sum_of_kept_sums_approximates_each_core_once_in_collect() {
+        let n = 64;
+        let (x, y) = (kept_sum(0, n), kept_sum(n, 2 * n));
+        CORE_APPROXES.with(|c| c.set(0));
+        let s = &x + &y;
+        let calls = CORE_APPROXES.with(|c| c.get());
+        assert!(s.signum() > 0);
+        assert_eq!(
+            s,
+            kept_sum(0, 2 * n),
+            "the sum does not depend on how it is built"
+        );
+        assert!(
+            calls <= 4 * n as u64,
+            "{calls} approximations of cores for 2 n = {} terms",
+            2 * n
+        );
+    }
 
     #[test]
     fn bit_and_reads_each_sign_as_twos_complement_at_every_size() {
