@@ -131,20 +131,29 @@ pub fn is_prime(n: u64) -> bool {
     // The bases: the twelve primes 2 to 37. Miller-Rabin with the first `k` primes as bases
     // decides every `n` below the least strong pseudoprime to all of them, `psi_k`, and
     // `psi_12 = 318665857834031151167461 > 2^64` (Sorenson and Webster, "Strong pseudoprimes to
-    // twelve prime bases", Math. Comp. 86, 2017). So no composite below 2^64 passes all twelve.
-    // The tests check it against trial division below 2^16 and on strong pseudoprimes to small
-    // bases (`factors_of_wide_numbers_are_their_primes`: 3215031751 passes bases 2, 3, 5 and
-    // 7). The bases also serve as trial divisors: a multiple of one is prime only when equal to
-    // it, which rejects every even candidate and about 70% of odd ones (the product of
-    // `1 - 1/p` over the primes 3 to 37 is about 0.30) before any product.
+    // twelve prime bases", Math. Comp. 86, 2017, 985-1003, doi:10.1090/mcom/3134). So no
+    // composite below 2^64 passes all twelve. Citation checked 2026-11-20: Crossref gives that
+    // title, authors, volume and pages for the DOI, and the paper's own LaTeX (arXiv 1509.00864v1,
+    // manybases-arxiv.tex line 120) states `\psi_{12} = 3186 65857 83403 11511 67461`, this
+    // value. No test here can check `psi_12`, since it is above 2^64. The tests check it
+    // against trial division below 2^16 and on strong pseudoprimes to small bases
+    // (`factors_of_wide_numbers_are_their_primes`: 3215031751 passes bases 2, 3, 5 and 7). The
+    // bases also serve as trial divisors: a multiple of one is prime only when equal to it,
+    // which rejects every even candidate and about 70% of odd ones (the product of `1 - 1/p`
+    // over the primes 3 to 37 is about 0.30) before any product.
     const BASES: [u64; 12] = [2, 3, 5, 7, 11, 13, 17, 19, 23, 29, 31, 37];
     // Fewer bases below the least strong pseudoprimes to the first one, two and three primes:
     // `psi_1 = 2047`, `psi_2 = 1373653` and `psi_3 = 25326001` (Pomerance, Selfridge and
-    // Wagstaff, "The pseudoprimes to 25 * 10^9", Math. Comp. 35, 1980). The test
-    // `primality_agrees_with_the_sieve_below_psi_3` checks every `n` below `psi_3` and these
-    // three composites, so the counts rest on that test as well as on the paper. Larger `psi_k`
-    // are not used: no test here can check them, and above `psi_3` the saving is at most 9 of
-    // 12 rounds, for primes only (a composite almost always fails the first base).
+    // Wagstaff, "The pseudoprimes to 25 * 10^9", Math. Comp. 35, 1980, 1003-1026,
+    // doi:10.1090/s0025-5718-1980-0572872-7). Citation checked 2026-11-20: Crossref gives that
+    // title, authors, volume and pages for the DOI. The paper's text was not read: it is
+    // paywalled, and the values were first written from memory. They do not rest on the paper:
+    // the test `primality_agrees_with_the_sieve_below_psi_3` checks every `n` below `psi_3`
+    // against the sieve and checks that these three composites are rejected. A value too large
+    // fails it (a composite below it would be tested with too few bases); a value too small
+    // passes it but costs only extra rounds, never a wrong answer. Larger `psi_k` are not used:
+    // no test here can check them, and above `psi_3` the saving is at most 9 of 12 rounds, for
+    // primes only (a composite almost always fails the first base).
     const PSI: [u64; 3] = [2047, 1_373_653, 25_326_001];
     if n < 2 {
         return false;
