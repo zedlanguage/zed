@@ -453,7 +453,7 @@ fn satisfiable_inner(f: &Formula) -> Result<Option<Model>, Refusal> {
         // O(n log n) pass of [`drop_by_bounds`] before it, which costs at most the same order as
         // the propagations `settle` makes and removes the disjuncts it would have to test. Tests:
         // `l01_39_reduced_product::pendants::rewritten_parts_of_seed_8087861239740142386_are_decided_alike`,
-        // `l01_38_omega_test::probe::twin_chains_of_absolute_values_scale`. COMPLEXITY.md row C47.
+        // `l01_38_omega_test::bench::probe::twin_chains_of_absolute_values_scale`. COMPLEXITY.md row C47.
         if drop_by_bounds(&mut p, &|_| false).is_none() {
             return Ok(None);
         }
@@ -631,14 +631,21 @@ fn decide_named(f: &Formula) -> Result<bool, Refusal> {
 /// from 0 were refused where one copy was decided). Only where a group is refused and none is
 /// empty is the whole asked as before ([`settle_tied`], then [`twins_merged`]). The groups
 /// are made from the conjuncts' atoms and are the same under every naming.
-// Assumption, not proved (ASSUME-documented): that the groups found here share no atom
-// anywhere, inside products and nested constraints too, so that each group can be decided
-// alone and the answers combined exactly ([`decide_named`]: empty when one group is; a point
-// of the whole is the points of the groups joined, [`satisfiable_named`]). The combination is
-// exact when the atom sets are disjoint; what is not proved is that every atom a group's
-// answer depends on is collected below (by `cons()`, which walks nested constraints), and
-// that a group's model names only atoms of that group, so `Model::extend` never overwrites
-// one group's value with another's. Evidence: the tests of FAIL-or-if-tie-refusal and a
+// Proved for the groups' atoms, and so for [`decide_named`]; not proved for the models of
+// [`satisfiable_named`] (ASSUME-documented).
+// 1. The groups share no atom. `g.cons()` lists every constraint of `g` ([`Formula::walk`]
+//    descends into every part that is not a constraint and skips only a part met before in the
+//    same walk, whose constraints it listed then). Each atom of each constraint joins its
+//    conjunct to the first conjunct that holds it, a product through its two factors as
+//    `Factor::atom` gives them. So two conjuncts that hold one symbol or auxiliary variable are
+//    in one group, and so are two that hold one product atom, or a product and one of its
+//    factors.
+// 2. So the conjunction has an integer point exactly when each group has one: a point of the
+//    whole, read on a group's atoms, is a point of it, and points of groups over disjoint atoms
+//    join into one. [`decide_named`] answers exactly.
+// Not proved: that the model [`satisfiable_named`] gets for a group names only atoms of that
+// group, so `Model::extend` never overwrites another group's value (an auxiliary variable a
+// solver adds for one group could share its number with one of another). Evidence: the tests of FAIL-or-if-tie-refusal and a
 // census of 1,000 random four-variable systems (716 decided against 682 before, no answer
 // depending on names). If false, a formula could be called non-empty, or given a model
 // that is no point of it, where the whole-formula path refused: unsound.
@@ -1815,7 +1822,7 @@ fn decide_kept_status(
             // Given up: a run whose removals the bounds do not show still moves one disjunction
             // per round. A complete solution re-tests, when a disjunct joins the base, only the
             // disjunctions that share an atom with it. Tests:
-            // `l01_38_omega_test::probe::twin_chains_of_absolute_values_scale`, COMPLEXITY.md row
+            // `l01_38_omega_test::bench::probe::twin_chains_of_absolute_values_scale`, COMPLEXITY.md row
             // C47 (PROJECT-abs-chain-quadratic).
             if drop_by_bounds(&mut p, &|_| false).is_none() {
                 return Ok(false);
@@ -12159,10 +12166,18 @@ fn probe(p: Parts, kept: &HashSet<u64>) -> Result<Option<Parts>, Refusal> {
 /// keeps, so it is kept untested. Nor is a set of values of one atom ([`one_atom_set`]), as a
 /// domain with holes is written. With every disjunction kept so, the probe is not run.
 ///
-/// Which disjunctions are kept depends only on their own form, never on their place, so the
-/// parts the probe leaves, and the hulls read from them, are the same in every order of the
-/// parts (the s22 reverse-order tests: 0 boxes of 4000 change; with the probe run only where
-/// the greedy search failed, 17 changed).
+/// Which disjunctions are kept untested depends only on their own form, never on their place.
+/// The probe keeps every disjunct with a point in any order (a point found once is a point of
+/// every later state, and a removal needs a proof that the disjunct has none), and removes a
+/// disjunct that its tests refute. So where its tests refute every disjunct without a point,
+/// in every order, the parts it leaves, and the hulls read from them, are the same in every
+/// order. Not proved: that a disjunct without a point that some order's tests refute is
+/// refuted in every order. `learn`'s implied bounds and the points found, and so which
+/// disjuncts reach `settle`, depend on the order of the disjunctions, and `settle` does not
+/// refute every disjunct without a point (a disjunct `point_with` finds no point for and
+/// `settle` leaves is kept, `live_held` false). Measured: the s22 reverse-order tests, 0 boxes
+/// of 4000 change (17 with the probe run only where the greedy search failed); they cannot
+/// catch an order the tests do not draw.
 ///
 /// Complexity tradeoff: testing each piece of a set of values of one atom costs one search of
 /// the whole formula per piece that the rounds by halves cannot refute together, O(h·n) for a
@@ -13045,6 +13060,29 @@ fn read_order(units: &[Unit<'_>], x: Option<&Atom>) -> Vec<usize> {
 /// a disjunct removed has no point of `p`, and removing it leaves the points of `p` as they
 /// were: [`probe_kept`] would remove it too, by a propagation of the whole formula
 /// ([`settle`]) for each.
+///
+/// Proof (proofdoc4a, 2026-11-20). Invariant, held at each step of the four readings: every
+/// integer point `P` of `p` lies within the bounds `b`, and no disjunct marked `dead` holds a
+/// point of `p`. At the start `b` is empty (every value) and nothing is marked. (1) [`narrow`]
+/// on a constraint `lin >= 0` of `p`: at `P`, `coef·x + s >= 0`, where `s`, the sum of the other
+/// terms and the constant at `P`, is at most `rest`, their greatest value over `b`, which holds
+/// `P`; so `coef·x + rest >= 0`, whose integer solutions [`row_range`] gives exactly, and
+/// `P`'s `x` stays within the moved bounds (an equality is read as both of its inequalities).
+/// So where an atom is left with no value, `p` has no point. (2) [`narrow_or`] on a disjunction
+/// of `p`: `P` meets some disjunct `d`, which is not marked (the invariant). `d`'s `own` bounds
+/// start from `b`, which holds `P`, and (1) applied to `d`'s own constraints keeps `P` in
+/// them; the disjunctions inside `d` are not read, which only leaves more points. So a disjunct
+/// left with an atom of no value holds no point of `p`, and marking it keeps the invariant;
+/// and `P`'s value of each atom kept in the join lies within `d`'s bounds of it, so within
+/// the join, and moving `b` in to the join keeps `P`. Where every disjunct is marked or left
+/// with no value, no point of `p` meets the disjunction: `p` has no point (`None`). So a
+/// disjunct removed (marked and not `spared`) holds no point of `p`, and the points of `p` are
+/// unchanged; a disjunction left with one disjunct is that disjunct, so moving its
+/// constraints and disjunctions into the parts' own leaves the conjunction the same. The
+/// tests below check the chains of absolute values (the projection test against the listed
+/// answer); they are not random, so a wrong bound on another shape would be caught only by
+/// the suites that compare whole answers with enumeration, and they do not show that each
+/// refutation the proof allows is found.
 // Complexity tradeoff: the naive way, which [`probe_kept`] still takes for every disjunct this
 // pass leaves, tests each disjunct by its own propagation of the whole formula: `r` disjuncts
 // with no point cost `r` propagations, O(r n) for parts of `n` terms, quadratic on a chain of
@@ -13062,8 +13100,8 @@ fn read_order(units: &[Unit<'_>], x: Option<&Atom>) -> Vec<usize> {
 // before, so it costs what it cost on main and no answer changes for it. Why: propagating
 // bounds until none moves can take rounds that grow with the constants, not the parts
 // ([`bounds_refute`]). Tests:
-// `l01_38_omega_test::probe::a_nested_chain_of_absolute_values_scales`,
-// `l01_38_omega_test::probe::twin_chains_of_absolute_values_scale` and
+// `l01_38_omega_test::bench::probe::a_nested_chain_of_absolute_values_scales`,
+// `l01_38_omega_test::bench::probe::twin_chains_of_absolute_values_scale` and
 // `l01_38_omega_test::probe::a_nested_chain_of_absolute_values_is_projected_exactly`.
 // COMPLEXITY.md row C47 (PROJECT-abs-chain-quadratic).
 fn drop_by_bounds(p: &mut Parts, spared: &dyn Fn(&Parts) -> bool) -> Option<bool> {
@@ -24782,7 +24820,19 @@ fn two_atom_side(c: &Formula, sym: &Atom, dir: i64) -> Option<Option<Int>> {
 /// rows, or no row left bounds that side. Eliminating an atom so gives the real projection
 /// (Fourier, 1827; Motzkin, "Beiträge zur Theorie der linearen Ungleichungen", 1936); the
 /// rows are divided by the gcd of their coefficients with the constant rounded down, which
-/// holds every integer point (Pugh, "The Omega test", Supercomputing '91, 1991).
+/// holds every integer point (Pugh, "The Omega test", Supercomputing '91, 1991,
+/// doi:10.1145/125826.125848; Fourier's and Motzkin's texts have no DOI).
+///
+/// Proof that no point lies past the answer: each row left is a consequence of `c`, by
+/// induction on the eliminations: a row Fourier-Motzkin makes from a lower row `l` and an upper
+/// row `u` of an atom is a sum of positive multiples of `l` and `u`, which holds wherever both
+/// do, and an atom bounded on one side only takes out rows, which removes no consequence. A row
+/// `Σ a_i·x_i + k >= 0` whose coefficients have gcd `g` gives, at an integer point,
+/// `Σ (a_i/g)·x_i >= -k/g`, an integer at least `-k/g`, so at least `⌈-k/g⌉ = -⌊k/g⌋`: the row
+/// with constant `⌊k/g⌋` holds there too. A row of `sym` alone left is then a bound of `sym` at
+/// every integer point of `c`, and so is its integer rounded toward the rows. Test:
+/// `real_end_tests`, against brute force on random systems of three names; it cannot catch a
+/// system with more names or wider constants than it draws.
 fn real_end(c: &Formula, sym: &Atom, dir: i64) -> Option<Int> {
     type Row = (BTreeMap<Atom, Int>, Int);
     let cons: Vec<&Con> = match c {
@@ -25617,9 +25667,44 @@ fn is_difference(c: &Con) -> bool {
 /// The exact domain of each atom of a component whose base rows are difference rows and
 /// bounds and whose disjunctions name atoms of one or two tie classes each (atoms whose
 /// differences the base fixes), with difference rows and bounds in every disjunct, when the
-/// component, with its tie classes contracted, is a forest. Two passes of arc revision over a forest
-/// give each atom the values it takes at some point (Freuder 1982). Also, for each
-/// disjunction, whether its component was handled so.
+/// component, with its tie classes contracted, is a forest. Two passes of arc revision over a
+/// forest give each atom the values it takes at some point (Freuder 1982,
+/// doi:10.1145/322290.322292; the proof below is written out here and does not rest on the
+/// paper, which was not read). Also, for each disjunction, whether its component was handled so.
+///
+/// Proof that the domains are exact, where an answer is given:
+/// 1. Tie classes. `p` is a point of the base rows, so each edge `u → v` of weight `w`
+///    (`v <= u + w`) has reduced weight `w + p(u) - p(v) >= 0`. In a strongly connected set of
+///    edges of reduced weight 0, each edge lies on a cycle of them; around a cycle the `p` terms
+///    cancel, so the weights sum to 0, and at any point the differences `x(v) - x(u)`, each at
+///    most its `w`, sum to 0 too: each row of the cycle is tight at every point of the base, and
+///    each atom of a class is its representative plus `off`, `p(v) - p(rep)`. A row between two
+///    atoms of one class reads a fixed difference: a base row holds at `p`, so everywhere, and is
+///    dropped; a disjunct's row holds or fails for the whole disjunct (`continue 'd`).
+/// 2. The problem on classes. Every other row is a bound on one class (`dom`) or on the
+///    difference of two representatives (an edge's `lo`, `hi`). A disjunction over one class is
+///    the union of its disjuncts' sets, met into `dom`; over two, the relation
+///    `⋃_i {(x, y) : x ∈ ia_i, y ∈ ib_i, lo_i <= y - x <= hi_i}` on its edge, with the edge's
+///    base bounds. So the points of the component are the assignments of integers to the classes
+///    in each `dom` and each edge's relation, and each atom's values are its class's shifted by
+///    its offset. A cycle of classes or two disjunctions on one edge decline (`None`).
+/// 3. `revise(e, x, dx)` is exactly the values of the other end paired in `e`'s relation with
+///    some value of `dx`.
+/// 4. Two passes on a tree, by induction. Soundness: each meet removes only values with no
+///    support across one edge, which no point has. Pass 1 takes (child v, parent u) in reverse BFS
+///    order, so `dom[v]` is final for the pass when it narrows `dom[u]`; by induction on height,
+///    after pass 1 each value of `dom[v]` extends to a point of v's subtree. Pass 2 takes them in
+///    BFS order, parent first. Each value b of a final `dom[v]` extends to a point of the whole
+///    tree: the root's final domain is its pass-1 domain; for a child, b has a support a in the
+///    parent's final domain, a extends to a point P of the tree by induction, b to a point Q of
+///    v's subtree (pass 1), and P outside the subtree with Q inside is a point, since the edge
+///    (u, v) is the only constraint between them and (a, b) meets it.
+/// 5. The hull passes are sound (step 4), so meeting `dom` with them removes no value with a
+///    point, and the exact passes then give the same domains. An empty domain: no point.
+///
+/// Tests: `l01_38_omega_test::omega::forest_answers_match_enumeration`, `steps_of_ten_are_exact`,
+/// `exact::tests::certified_forests_match_enumerated_points_without_questions`. They cannot catch
+/// a shape the random draws do not reach, such as deep trees with disjunctions of many parts.
 fn forest_domains(
     linked: &Linked,
     ors: &[Vec<Rc<Parts>>],
@@ -28312,7 +28397,11 @@ impl BoundedPickRow {
     }
 
     /// The longest prefix of the positions whose weights sum below `target`, and what `target`
-    /// leaves past that sum.
+    /// leaves past that sum. `Fenwick::descend` needs a property that holds on every shorter
+    /// prefix of one it holds on; "sums below `target`" is one because every weight is above 0:
+    /// a `BoundedPickRow` is made only where `all_bounded` holds, so each atom's base range is
+    /// `[0, weight]`, and each `DisjInfo` with a finite range gets a weight that was checked
+    /// above 0 (`bh.is_positive()`, `high_val.is_positive()`).
     fn fenwick_split(&self, target: &Int) -> (usize, Int) {
         if self.bit.is_empty() || target.is_zero() {
             return (0, Int::ZERO);

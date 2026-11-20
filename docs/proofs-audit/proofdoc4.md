@@ -34,16 +34,19 @@ section below, its own worktree and its own merges. Lists: /home/luke/Work/wt/pr
 
 ## proofdoc4a: zedc-presburger, first 108 entries
 
-Part 1 of the list, entries 1 to 25 in score order, base commit 1915d2375. For each entry the
-whole message and the whole diff under `crates/zedc-presburger` were read, and each claim was
-checked at the code that relies on it on main today.
+Part 1 of the list, entries 1 to 25 in score order, base commit 1915d2375; part 2, entries 26
+to 65, base commit 57ba7215b. For each entry the whole message and the whole diff under
+`crates/zedc-presburger` were read, and each claim was checked at the code that relies on it
+on main today.
 
 | Crate | Entries read | Found | Already there | Added or completed | Marked unproved | Corrected |
 |---|---|---|---|---|---|---|
-| zedc-presburger | 25 | 29 | 19 | 6 | 2 | 0 |
+| zedc-presburger | 65 | 68 | 46 | 15 | 3 | 0 |
 
-Of the 29, two are counted in no column: one claim (the race's bound, 24981fcda) and one research-branch behavior (4033def30) are no
-longer relied on: the code they described is gone.
+Of the 68, four are counted in no column: they are no longer relied on, since the code they
+described is gone: the race's bound (24981fcda), a research-branch behavior (4033def30), the
+foreign-factor rule of `products` (e8fea7860) and the batch and single hulls agreeing
+(3e3db6907).
 
 | Source | Claim | Code site | Status |
 |---|---|---|---|
@@ -76,14 +79,49 @@ longer relied on: the code they described is gone.
 | 300df7ed3 | `liaproj` keeps one disjunct holding the point; splinter index `0 <= i < a` | exact/projection.rs `liaproj`, `dark` | Already there (splinter bound checked by hand) |
 | 383cb5b66 | Batch and single projection each sound | presburger.rs `Level::open`, `batch_and_single_sound` | Already there |
 | 9abde2cea | A snapped midpoint loses nothing; the question memo is sound | presburger.rs `Hull::tighten`, `Hull::asked_with` | Already there |
+| ad40b4107 | The cover ends with the exact projection; its count of questions; `joined` rows suffice; `negated` is the integer negation | exact.rs module note, `joined`, `negated` | Already there (the count of questions checked) |
+| b467e298d | Every writing answered gets one set and one cause, functions of the formula | presburger.rs `project_each_with` | Already there |
+| b77467075 | The shrink counts are those of the rows held after each `refresh` | presburger.rs `System::shrink`, `System::touch` | Already there |
+| d6fa0ddbd | `names_in` keeps a prime; O(length) | refusal.rs `names_in` | Already there |
+| d80e81d08 | A meet only narrows, so the first crossed range ends the scan | presburger.rs `one_term_bounds` | Already there |
+| e22a4f8fa | Two stars of one class share one core but for the leaf's name | conjuncts.rs `class_core` | Already there (the reuse argument is in zedc-preimage) |
+| 0fe50a2fc | The certificate on the part's allowance keeps the bound `4·k·L` | exact.rs `exact_each` | Already there (as 015f88415) |
+| 1ad3da05c | A part with more atoms than definitions plus 2 declines from every atom | exact/guarded.rs `prepare` | Already there |
+| 1ffeb360d | `two_var_domains` is exact | presburger.rs `two_var_domains` | Already there (the last step rests on zedc-solvers `project_convex`, proofdoc4g's crate) |
+| 355e67f4e | `part_bounds`, `propagate`, `eliminate`, `hull_side` O(log d); each tier implies the one before | presburger.rs `part_bounds`, `propagate`, `eliminate`, `hull_side`, `Tier` | Already there |
+| 4a8d78984 | `System::pendants` eliminates as the rows one at a time do; `Omega::deferred` changes only the order | presburger.rs `System::pendants`, `Omega::deferred` | Already there |
+| 4e9bb0d27 | The cover's work does not depend on the order of the parts | presburger.rs `project_each_asked` | Already there |
+| 5c102b331 | Two passes of arc revision over a forest of tie classes give each atom exactly its values | presburger.rs `forest_domains` | Completed: the five steps written; Freuder's DOI added |
+| 78fdd83c1 | `by_intervals` exact; the doubling reaches each value of a range; `Group::window` exact | row_sums.rs `Plan::by_intervals`, `Plan::add`, `Group::window` | Completed: the doubling invariant at `Plan::add`; `window` is an open step of PROOF-row-sums-join-exact |
+| 8ee7ea8dd | `Blocks::forest` holds exactly the entries whose block is in the forest, in order | conjuncts.rs `Blocks::put`, `detach`, `undetach` | Already there |
+| 90b8f2b61 | `sink_rows`: each row is `s * e + c >= 0` with `s = ±1`; the two substitutions | presburger.rs `cell_sweep::sink_rows` | Already there (substitutions checked by hand) |
+| a6562e094 | The probe's result does not depend on the order of the parts | presburger.rs `probe_unhandled` | Marked unproved: which disjuncts without a point reach `settle` depends on the order; the open sub-case written at the site |
+| a6562e094 | A search without the one-atom sets that finds no point means none with them | presburger.rs `search_by_halves`, `OneAtomSet::holds` | Already there |
+| e8fea7860 | The foreign-factor rule of `products` loses no proof | presburger.rs `products` | No longer relied on: replaced by `pairs::kept` |
+| ea431f549 | `exact_side`: rows left by an exact elimination give the side | presburger.rs `exact_side` | Already there (rests on PROOF-shadow-exact) |
+| f0bde0d35 | Eleven assumptions stated at their sites | presburger.rs, 11 sites | Already there as Not proved; completed at `atom_disjoint_parts`: two of its three steps proved, the third (a group's model names only its atoms) left open |
+| ff395d583 | The trial at the bounds: a true answer is exact; free of names and order | forced.rs `Trial::holds` | Already there (proved in part 1) |
+| 181ac91dd | A product alone holding a free atom can go; the fixpoint does not depend on order | pairs.rs module note | Completed: the induction from "monotone" to "the rows left do not depend on the order" |
+| 3e3db6907 | Batch and single hulls agree where neither reports a cause | presburger.rs `by_halves_against_old` | No longer relied on: replaced by `batch_and_single_sound` |
+| 1dc603590 | A leaf's disjunction may hold parts of the leaf alone | conjuncts.rs `Conjuncts::star` | Already there |
+| 1ff9a3b61 | The polygons' projection is exact where each pair has a side of coefficient 1 | row_sums/plane.rs module note | Completed: Pugh was cited by name only; both DOIs added |
+| 252abbb51 | No formula reaches the walk's tested branches | pick_wide_tests.rs module note | Already there (stated "not shown") |
+| 25ef78dd1 | The envelope test; the monotone chain; `mod_hat` serves Pugh's step | presburger.rs `upper_envelope`; exact/projection.rs `project_read` | Already there (the cross-multiplied test checked by hand) |
+| 2b3e706f1 | `full_dark`'s length is concave, so a binary search finds its peak | exact/guarded/two_pins.rs `poly_values` | Completed: the concavity steps written |
+| 2b3e706f1 | `fenwick_split` finds the longest prefix below the target by one descent | presburger.rs `BoundedPickRow::fenwick_split` | Completed: why every weight is above 0, which `descend` needs |
+| 2d1365800 | Two disjunctions projected exactly by distribution; an answer can need n²/2 pieces | exact.rs `two_distributed` | Already there (checked by hand) |
+| 34989b330 | A stride is its range met with its class | exact.rs `block_set` | Already there |
+| 36279a9f9 | A face is exact; one congruence kept of several | extend.rs `Faces::face`, `congruences_once` | Already there (rests on PROOF-shadow-exact) |
+| 40bb19caa | No integer point lies past the real bound of the rows, rounded | presburger.rs `real_end` | Completed: the steps written; the 1991 DOI added |
+| 4b1ccff17 | A clause whose literal holds the unit's set is dropped; `res_within` is the subset test | modular.rs `solve_regime_step`, `res_within` | Already there |
+| 564bef57c | `row_box`: each set holds every value at a point; free of order and names | presburger.rs `row_box` | Already there |
+| 5bde6551f | `force`: a term with `\|c_i\| > W − w_i` takes one value; `scaled` keeps the points | row_sums/classes.rs `force`, `scaled` | Already there (each step checked) |
+| 66e347e86 | Every bound `drop_by_bounds` propagates is implied, so a removed disjunct has no point | presburger.rs `drop_by_bounds` | Completed: the invariant proof over `narrow` and `narrow_or`; stale test paths fixed at three sites |
+| 7bdf8c1f1 | `two_ranges_of_one_value` exact; n²/2 pieces in bits; emptiness as hard as 3SUM; the class of `Classed::join_all` | exact.rs `two_ranges_of_one_value`, `two_distributed`; refusal.rs `Classed::join_all` | Already there (the ternary bound checked); the tests and what they cannot catch named at both sites |
 
-No code claim: zedc-presburger 7bfd6bba8.
+No code claim: zedc-presburger 7bfd6bba8 1faf391fd 53b114449 65446a377.
 
-Not read: ad40b4107 b467e298d b77467075 d6fa0ddbd d80e81d08 e22a4f8fa 0fe50a2fc 1ad3da05c
-1faf391fd 1ffeb360d 355e67f4e 3e3db6907 4a8d78984 4e9bb0d27 5c102b331 78fdd83c1 8ee7ea8dd
-90b8f2b61 a6562e094 e8fea7860 ea431f549 f0bde0d35 ff395d583 181ac91dd 1dc603590 1ff9a3b61
-252abbb51 25ef78dd1 2b3e706f1 2d1365800 34989b330 36279a9f9 40bb19caa 4b1ccff17 53b114449
-564bef57c 5bde6551f 65446a377 66e347e86 7bdf8c1f1 8e3867d18 94f38f6d3 96a4e186b 9758548e8
+Not read: 8e3867d18 94f38f6d3 96a4e186b 9758548e8
 9e786fe17 a1a2a3c63 aa8366a07 ec537c0b1 ed1f1be11 f0186c022 f0ce6ac5e f4c033ccd f548497ad
 fb9b82a6a 030a2d36d 136017dd7 28a3d9acb 32acdc5eb 384b173ac 4e48ee579 54ddb1f80 5dfd87a78
 6e72af6bd 711b27b81 72d5f383f 7d23ca0c7 7dda7ea0d 7f771ec77 83ebfff6e 8575c70cc 8590c4d2b

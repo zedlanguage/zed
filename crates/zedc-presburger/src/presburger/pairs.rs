@@ -9,7 +9,12 @@
 //! justified in the reverse of the order they go, each by the atom it alone held when it went,
 //! so the verdict of the linear reading is the one all the products give, over the integers.
 //! The rule is monotone (a row that can go can still go once others have gone), so the rows
-//! left do not depend on the order of the tests or on names.
+//! left do not depend on the order of the tests or on names. (Proof: let rows r1, r2, ..
+//! go in one order and let S be the rows another order leaves, from which no row can go. By
+//! induction no r_k is in S: r_k could go from the rows left before it, all but
+//! r1..r_{k-1}, a set that holds S, since none of those is in S; by monotonicity it could
+//! then go from S, were it in S. So the first order removes no row the second keeps, and by
+//! symmetry the two leave the same rows.)
 //!
 //! The coefficient of `w * z` in `p ⊗ q` is `p_w q_z + p_z q_w`, and `p_w q_w` for `w * w`. A
 //! pair is tested from its factor rows without expanding the product: for each `w` of the

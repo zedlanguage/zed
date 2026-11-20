@@ -1628,7 +1628,13 @@ fn full_dark(
 // Pugh's dark shadow, [`u_values`]); here the real shadow is the values at the two corners
 // where `u` is least and greatest, and in place of Pugh's dark shadow the values where the
 // line `u == c` meets the polygon in a stretch of `w` at least 1 long (each holds an integer
-// `w`). That length is concave in `c` (the polygon is convex), so its greatest value is found
+// `w`). That length is concave in `c`: the polygon is convex, so the greatest `w` on the line
+// `u == c` is a concave function of `c` (the segment between two points of the upper boundary
+// lies in the polygon, so at a mix of two `c` the greatest `w` is at least the mix of theirs),
+// the least `w` a convex one by the same step, and their difference concave on the `c` where
+// the line meets the polygon. The steps of a concave function do not rise, so "the step is not
+// above 0" is false and then true, as the binary search needs, and the values at least 1 form
+// one stretch about the peak. So its greatest value is found
 // by binary search on the sign of its step, and the two ends where it reaches 1 by binary
 // search on either side: O(log(R)·log V) for the range R of `u`. The values outside are tried
 // one by one as before, or each `w` of the polygon where that is fewer, O(log V) each. So a

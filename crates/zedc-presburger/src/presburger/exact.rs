@@ -4412,7 +4412,9 @@ fn sweep_atom<'a>(
 /// equality its one root, or no value where `a` does not divide `k`). A block, a conjunction,
 /// is the meet of its rows' ranges, one range; a disjunction the union of its blocks' ranges;
 /// the group the meet of its rows' range and the two unions. A block with no rows is every
-/// value (the empty meet).
+/// value (the empty meet). Test: `exact::tests::two_ranges_of_one_value_match_enumeration`
+/// (2 000 random groups, values listed within a box, coefficients -3 to 3); it cannot catch
+/// an error that shows only outside the box or at larger coefficients.
 ///
 /// From the round-1 cross-review of PRES-cover-moduli-two-disjunctions (codex seat's
 /// prototype, rewritten here on the shared [`row_range`], which also takes coefficients other

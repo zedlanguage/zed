@@ -573,7 +573,12 @@ impl Classed {
     // ranges in the union class (kept) or a single listed value or a plain set's range
     // (where step is 1, or the plain set has one value, itself b mod step). So the pieces'
     // union met with the class b mod step is the union of the sets: a kept set's ranges met
-    // with its own class give itself, and every other piece holds members only.
+    // with its own class give itself, and every other piece holds members only. A set with an
+    // infinite end is plain in the form of `Classed::new` (a strided class comes only with
+    // finite ranges), so it is kept as its ranges and makes `step` 1, and no infinite set is
+    // listed. Test: `exact::tests::joining_mixed_classes_and_rays_agrees_with_the_fold`
+    // (2 000 random lists against the fold of `Classed::join`, rays included); it checks
+    // agreement with the fold, so an error the fold shares is not caught.
     pub fn join_all(sets: impl IntoIterator<Item = Classed>) -> Classed {
         let mut at: HashMap<Congruence, usize> = HashMap::new();
         let mut groups: Vec<(Congruence, Vec<(End, End)>)> = Vec::new();

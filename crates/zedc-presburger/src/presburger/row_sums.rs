@@ -3570,8 +3570,17 @@ impl Plan {
 
     /// `t` with the atom of step `st` added: the union over its values v of `t` shifted by v's
     /// key. A range of n values is added by doubling: the shifts by 1, 2, 4, .. steps, merged,
-    /// in `bits(n - 1)` rounds (each value is reached by the binary digits of its distance
-    /// from the range's first).
+    /// in `bits(n - 1)` rounds.
+    ///
+    /// Proof that a range of n values gives `⋃_{j<n} (t + off + j·delta)`: after
+    /// `u = shift(t, off)` and `done = 1`, each round takes `s = min(done, n - done)` and sets
+    /// `u = u ∪ (u + s·delta)` (`union_shifted` is `a ∪ (a + d)`; `Set::settled` changes only
+    /// the form). Invariant: `u = ⋃_{j<done} (t + off + j·delta)`. It holds at `done = 1`; a
+    /// round adds the shifts `j + s` for `j < done`, that is `s..done + s - 1`, so with
+    /// `s <= done` the shifts `0..done + s - 1` are all there with no gap, and with
+    /// `s <= n - done` none passes `n - 1`; then `done += s`. The loop ends at `done = n`.
+    /// `done` doubles in every round but the last, so there are `⌈log2 n⌉ = bits(n - 1)`
+    /// rounds. Tests: the row_sums tests that check the join against enumerated points.
     // Complexity tradeoff: value by value costs n shifts and unions of the table for a range
     // of n values; doubling costs log n. The ranges' sets are merged as a binary counter
     // merges (each set enters at level 0; two sets of one level are merged into one of the
