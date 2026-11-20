@@ -39,8 +39,8 @@ use zedc_syntax::ast::{
 };
 use zedc_syntax::lex::Span;
 
-use super::matched_by;
-use super::ty::atoms;
+use super::atom_pattern::matched_by;
+use zedc_types::ty::atoms;
 
 /// Where the atoms that an expression's value holds go in its body: those of `drop` are
 /// handled, those of `stop` reach a place an atom may not reach, and every other atom reaches

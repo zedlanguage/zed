@@ -37,6 +37,9 @@
 //! checker's types and the steps the walk calls that call nothing of the walk.
 
 pub(crate) use zedc_types::kernel_type;
+mod atom_pattern;
+use atom_pattern::matched_by;
+pub use atom_pattern::{any_payload, empty_payload};
 pub mod blocking;
 mod coprime;
 mod fate;
@@ -14586,16 +14589,6 @@ fn handled(res: &Resolution) -> Handled {
     Handled { atoms: value }
 }
 
-/// The atom `#name` with any payload or none: what a bare pattern `#name` matches.
-pub fn any_payload(name: &str) -> KType {
-    KType::union_all([KType::atom(name), KType::atom_with(name, &KType::top())])
-}
-
-/// The atom `#name()`, whose payload is the empty tuple: what the pattern `#name()` matches.
-pub fn empty_payload(name: &str) -> KType {
-    KType::atom_with(name, &KType::tuple(Vec::new()))
-}
-
 /// [`empty_payload`] as a checker type. A [`Ty`] keeps an atom's payloads as shapes in its
 /// `payloads` map beside an any-payload part in its set, and [`Ty::diff`] takes shapes away
 /// only by the shapes the other side lists: so this one lists the shape `()`, and narrowing by
@@ -14611,22 +14604,6 @@ pub fn empty_payload_ty(name: &str) -> Ty {
         )]),
     );
     t
-}
-
-/// What the atom pattern `#name` (`items` `None`) or `#name()` (`Some` of none) matches:
-/// [`any_payload`] or [`empty_payload`]. `None` for a pattern with parts, which the caller
-/// does not take here.
-fn matched_by(
-    name: &str,
-    fields: &[(String, Option<Pattern>)],
-    items: Option<&[Pattern]>,
-) -> Option<KType> {
-    match items {
-        _ if !fields.is_empty() => None,
-        None => Some(any_payload(name)),
-        Some([]) => Some(empty_payload(name)),
-        Some(_) => None,
-    }
 }
 
 /// `#ioError(op: String, path: String, why: String)`: a failed read or write, its operation,
