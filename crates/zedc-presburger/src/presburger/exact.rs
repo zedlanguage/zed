@@ -2899,9 +2899,9 @@ fn read_once(f: &Formula, work: &mut Work) -> Result<Option<ReadOnce>, Refusal> 
 ///
 /// Then each symbol not yet shown, in the order of `Atom`, asks one question, of `f` with the
 /// symbol on the first piece of its gap: a point found is read for every symbol, and a piece
-/// with none is cut from that symbol's `h`. A symbol whose gap that leaves asks again, the
-/// first piece of its gap each time, until the gap closes (the second pass, below); a symbol
-/// left where the allowance is spent is covered alone, as before.
+/// with none is cut from that symbol's `h`. A symbol whose gap that leaves gets one more
+/// search, with no question, on the first piece of its gap (the second pass, below); a symbol
+/// still left is covered alone, as before.
 // Complexity tradeoff: naive version, each symbol's cover reads each point's cell over the
 // whole part (`along`, then the implicant's projection), O(k·r) for k symbols over r rows,
 // 15,200 M instructions at k = 1,536 of `unary_arms` against a limit of 24 s
@@ -2918,15 +2918,16 @@ fn read_once(f: &Formula, work: &mut Work) -> Result<Option<ReadOnce>, Refusal> 
 //   [`Work::exempt`]: `point_cells` runs no solver step, only [`implicant`] (each shared part
 //   walked once, by its `seen`), [`row_groups`] (union-find, O(t·α(t)) for t terms),
 //   [`forest`] and [`star`] (linear, by their notes) and a loop over the implicant's columns,
-//   so O(T·α(T)) for T the terms of the part; it runs once a point, and the points read so are
-//   at most 2k + 1 (one found first, then one a symbol in the first pass and one a symbol in
-//   the first turn of the second pass; the points of later turns meet the limit);
+//   so O(T·α(T)) for T the terms of the part; it runs once a point, and the points are at most
+//   k + 1 (one found first, then one a symbol, each symbol asking once);
 // - the declared room of each [`quick_search`] and [`quick_point`] (`2·(size + 2)` rows,
-//   [`SOLVER_UNIT`] each), with [`Work::credit`], at most 2k + 1 of them, by the same count.
-//   Only the declared room is credited; what a search reads past it (the last step's count, a
-//   decision's disjuncts or a leaf's rows) meets the limit, as all of it did before, and the
-//   solver runs at its leaves (`point_of`) meet the limit too, so room credited and not read is
-//   at most `2k + 1` rooms more for them.
+//   [`SOLVER_UNIT`] each), with [`Work::credit`], at most k + 1 of them. Only the declared room
+//   is credited; what a search reads past it (the last step's count, a decision's disjuncts or
+//   a leaf's rows) meets the limit, as all of it did before, and the solver runs at its leaves
+//   (`point_of`) meet the limit too, so room credited and not read is at most `k + 1` rooms
+//   more for them.
+// The second pass (at the end) runs outside `work`, on meters of its own: at most k more
+// searches and points, each within its own room (PERF-project-each-renaming-cost).
 // Measured on `deep_condition`'s `heavy` (5 names): the step reads 5.3M units at depth 720 and
 // 42.6M at 5,760 (`point_cells` 16.1M, the rooms of two `quick_search`s 12.7M), all reading, no
 // question; the allowance is 15.3M (`deep_condition::bench::arms_of_a_test_whose_small_choice_
@@ -3068,9 +3069,10 @@ fn shared_cells(
             rest.insert(s, h);
         }
     }
-    // Each symbol still left asks again, in the order of `Atom`, until its gap is closed (the
-    // second pass); a refusal keeps every set shown so far and leaves this symbol and those
-    // after it to their own covers, as before.
+    // Each symbol still left, in the order of `Atom`, gets one more turn (the second pass): a
+    // search ([`quick_search`] only, no question) on the first piece of its gap. A symbol whose
+    // gap that turn, or a turn before it, closes is answered here; every other symbol goes to
+    // its own cover, which starts exactly as it did with no second pass.
     // Complexity tradeoff: naive version (before), one question for each symbol, then the
     // symbols left go to covers of their own ([`cover`]), each reading the whole part again
     // within its own limit L. Which symbols are left depends on the order of the atoms, so on
@@ -3079,81 +3081,86 @@ fn shared_cells(
     // 1,440) finds a point at 0, its gap (-inf, -1] stays, and its own cover passes L at depth
     // 1,440 and is refused, which `project_each`'s caller then retries: 32.3M units against
     // 14.5M with the names as written, whose order asks (-inf, -1] first (bench ratio 9.86
-    // against 7.90; row PERF-project-each-renaming-cost). Used: the second pass, which keeps
-    // the points found and asks for the gap's first piece again, as the cover's loop does, but
-    // over the points this step already holds and with no second reading of the part for each
-    // symbol: O(q·(r + k)) for its q questions and the points they find. 20.0M units at depth
-    // 1,440 renamed, at every limit; 2.52M at 180.
-    // Charges: the first turn of each symbol is charged as a turn of the first pass is (its
-    // reads exempt, its search's declared room credited, the cells of the point it finds
-    // exempt), so a symbol that one more question closes is closed at every limit, and the
-    // work of `heavy` does not depend on the limit (`deep_condition::a_small_limit_leaves_the_
-    // shared_reading_of_a_deep_test_whole`). The exempt and credited work of the step is then
-    // that of at most 2k + 1 questions and points (one first, then at most two a symbol) in
-    // place of k + 1, the same O(T·α(T)) each (the note above [`shared_cells`]). Every later
-    // turn meets the allowance whole.
+    // against 7.90; row PERF-project-each-renaming-cost). Used: one more search for each
+    // symbol left, over the points this step already holds, with no second reading of the part:
+    // O(k·(size + 2)) rows of search and k reads of `size + 1`, plus `point_cells` of each
+    // point found, O(T·α(T)) each (the note above [`shared_cells`]).
+    // A first version asked again until each gap closed, with the solver where the search gave
+    // up, charged against this step's allowance. A gap with infinitely many pieces (a set with
+    // a stride, `families::two_eq_case_against_the_oracle`'s `a` in 9 mod 12) never closed, so
+    // that version spent the whole allowance `k·L`; it was taken from the symbols' fast paths
+    // (`charge` in [`exact_each`]), and their covers were then refused or answered wider (14 of
+    // the 1,012 test pieces of l01_25, l01_38 and l01_39 failed, 7 of them by timeout).
+    // Charges: each turn runs on a meter of its own, its limit only the turn's declared room:
+    // `size + 1` rows read and the search's `2·(size + 2)` rows ([`Work::credit`]), with the
+    // cells of the point it finds exempt ([`Work::exempt`], as in the first pass). It runs no
+    // solver question, and a solver run at a search's leaf (`point_of`) meets that limit, so a
+    // turn is bounded by its structure and its work does not depend on [`EXACT_LIMIT`]
+    // (`deep_condition::a_small_limit_leaves_the_shared_reading_of_a_deep_test_whole`). Its
+    // work is counted in [`EXACT_WORK`] but not in `work`, so the allowance and every fast
+    // path's share of it are what they were with no second pass; a turn that gives up
+    // (`Unknown`, or its room spent) only leaves its symbol to its cover. A point it finds is
+    // not added to `points`, which the covers read, so each cover sees the points it saw before.
     // Why the answers do not change: a point found is a point of `f`, whose cells
     // (`point_cells`) hold only values of points of `f` (the proof above this function), and a
-    // piece with no point is cut from `h` only where `f` has none with `s` in it, so a set
-    // given here is the exact projection, as the cover's is.
-    // Why the pass ends: the first turns are at most k. Each later turn charges `size + 1` rows
-    // ([`Work::read`], at least one [`SOLVER_UNIT`]) against the allowance with nothing exempt
-    // or credited, and the allowance is finite, so there are at most `allowance / SOLVER_UNIT`
-    // of them before a refusal. Each turn that finds no point cuts a nonempty piece from `h`,
-    // and each that finds one adds at least its own value to `found` (the point's line holds
-    // it), so the gap only shrinks.
-    let mut again = || -> Result<(), Refusal> {
-        let names: Vec<&Atom> = rest.keys().copied().collect();
-        for s in names {
-            for turn in 0.. {
-                let first = turn == 0;
-                let h = &rest[s];
-                if first {
-                    work.exempt(|w| w.read(size + 1))?;
-                } else {
-                    work.read(size + 1)?;
-                }
-                let gap = h.minus(found.get(s).unwrap_or(&none));
-                let Some((lo, hi)) = gap.pieces().next() else {
-                    out.insert(s.clone(), h.clone());
-                    break;
-                };
-                let piece = IntervalSet::range(lo.clone(), hi.clone());
-                let within = super::member(s, &piece);
-                let room = 2 * (size + 2);
-                if first {
-                    work.credit(SOLVER_UNIT.saturating_mul(room));
-                }
-                let answer = match quick_search(f, Some(&within), room, work)? {
-                    Quick::Point(m) => Some(m),
-                    Quick::Empty => None,
-                    Quick::Unknown => {
-                        work.question(size + 2)?;
-                        EXACT_QUESTIONS.set(EXACT_QUESTIONS.get() + 1);
-                        work.ask(&Formula::and(vec![f.clone(), within]))?
-                    }
-                };
-                match answer {
-                    Some(m) => {
-                        if first {
-                            work.exempt(|w| point_cells(f, &m, &rest, size, &mut found, w))?;
-                        } else {
-                            point_cells(f, &m, &rest, size, &mut found, work)?;
-                        }
-                        points.push(m);
-                    }
-                    None => {
-                        if let Some(h) = rest.get_mut(s) {
-                            *h = h.minus(&piece);
-                        }
-                    }
+    // piece is cut from `h` only where the search proved `f` has no point with `s` in it
+    // ([`quick_search`]'s proof, (d)); so a set given here is the exact projection, as the
+    // cover's is, and a symbol not given one is covered as before.
+    let names: Vec<&Atom> = rest.keys().copied().collect();
+    for &s in &names {
+        let mut turn = Work {
+            used: 0,
+            limit: 0,
+            solver: work.solver,
+        };
+        let room = 2 * (size + 2);
+        turn.credit(SOLVER_UNIT.saturating_mul(size + 1 + room));
+        let gap_of = |rest: &BTreeMap<&Atom, IntervalSet>, found: &HashMap<Atom, IntervalSet>| {
+            rest[s].minus(found.get(s).unwrap_or(&none))
+        };
+        if turn.read(size + 1).is_err() {
+            continue;
+        }
+        let gap = gap_of(&rest, &found);
+        let Some((lo, hi)) = gap.pieces().next() else {
+            out.insert(s.clone(), rest[s].clone());
+            continue;
+        };
+        let piece = IntervalSet::range(lo.clone(), hi.clone());
+        let within = super::member(s, &piece);
+        match quick_search(f, Some(&within), room, &mut turn) {
+            Ok(Quick::Point(m)) => {
+                if turn
+                    .exempt(|w| point_cells(f, &m, &rest, size, &mut found, w))
+                    .is_err()
+                {
+                    continue;
                 }
             }
+            Ok(Quick::Empty) => {
+                if let Some(h) = rest.get_mut(s) {
+                    *h = h.minus(&piece);
+                }
+            }
+            Ok(Quick::Unknown) | Err(_) => continue,
         }
-        Ok(())
+        if gap_of(&rest, &found).is_empty() {
+            out.insert(s.clone(), rest[s].clone());
+        }
+    }
+    // A symbol before another in the order may be closed by the point of the other's turn: one
+    // check each, O(k) set differences, on a meter of its own as the turns are.
+    let mut last = Work {
+        used: 0,
+        limit: u64::MAX,
+        solver: work.solver,
     };
-    // A refusal here leaves the symbols not yet shown to their own covers (above).
-    let _ = again();
+    last.read(names.len() as u64)?;
+    for s in names {
+        if !out.contains_key(s) && rest[s].minus(found.get(s).unwrap_or(&none)).is_empty() {
+            out.insert(s.clone(), rest[s].clone());
+        }
+    }
     Ok(())
 }
 
