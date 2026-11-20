@@ -1155,7 +1155,7 @@ fn conjuncts(text: &str, e: &ast::Expr) -> Vec<String> {
                         | ast::ExprKind::Lambda { .. }
                         | ast::ExprKind::For { .. }
                 );
-                out.push(if loose && !grouped(written) {
+                out.push(if loose && !lex::in_parens(written) {
                     format!("({written})")
                 } else {
                     written.to_string()
@@ -1206,26 +1206,6 @@ fn one_line(written: &str) -> String {
     }
     out.push_str(if run.contains('\n') { " " } else { &run });
     out
-}
-
-/// Whether `written` is one parenthesized group: it opens with `(` whose match is its last
-/// character.
-fn grouped(written: &str) -> bool {
-    let mut depth = 0usize;
-    for (i, c) in written.char_indices() {
-        match c {
-            '(' => depth += 1,
-            ')' => {
-                depth = depth.saturating_sub(1);
-                if depth == 0 {
-                    return i + 1 == written.len();
-                }
-            }
-            _ if depth == 0 => return false,
-            _ => {}
-        }
-    }
-    false
 }
 
 /// The linear questions of the unit (step L1.38): for each function other than `main` whose

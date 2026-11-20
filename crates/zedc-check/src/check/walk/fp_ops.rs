@@ -15,44 +15,41 @@ pub(in crate::check) type FoldLevel<'t, 'a> =
 
 /// The source text `c` of an operand, put in parentheses unless `.count` or `[i]` can follow
 /// it as written: every character outside brackets is part of a name or a `.`, as in `xs`,
-/// `m.lines`, `xs.where(f)`, `[1, 2]` or `(0 ..< 3)`.
+/// `m.lines`, `xs.where(f)`, `[1, 2]` or `(0 ..< 3)`, with no space or comment there. Brackets
+/// are counted on the tokens, as [`zedc_syntax::lex::in_parens`] counts them, so one in a
+/// string or a comment is not counted: the count on the characters kept before row
+/// DRY-text-shared took `f("(") + 1` for plain and wrote `f("(") + 1.count`. Text that does
+/// not lex is put in parentheses, which is at worst a pair more. O(length of `c`).
 fn postfix_operand(c: &str) -> String {
-    let mut depth = 0i32;
-    let mut plain = true;
-    for ch in c.chars() {
-        match ch {
-            '(' | '[' | '{' => depth += 1,
-            ')' | ']' | '}' => depth -= 1,
-            _ if depth == 0 => plain &= ch.is_alphanumeric() || matches!(ch, '_' | '\'' | '.'),
-            _ => {}
+    let plain = lex(c).is_ok_and(|tokens| {
+        // `at`: where the text outside brackets goes on, the end of the last token there.
+        let (mut depth, mut at) = (0usize, 0);
+        for t in &tokens {
+            if depth == 0 && t.span.start != at {
+                return false;
+            }
+            match t.tok {
+                Tok::Op("(" | "[" | "{") => depth += 1,
+                Tok::Op(")" | "]" | "}") if depth == 0 => return false,
+                Tok::Op(")" | "]" | "}") => depth -= 1,
+                _ if depth == 0 => {
+                    let ok = |ch: char| ch.is_alphanumeric() || matches!(ch, '_' | '\'' | '.');
+                    if !c[t.span.start..t.span.end].chars().all(ok) {
+                        return false;
+                    }
+                }
+                _ => {}
+            }
+            if depth == 0 {
+                at = t.span.end;
+            }
         }
-    }
+        at == c.len()
+    });
     match plain {
         true => c.to_string(),
         false => format!("({c})"),
     }
-}
-
-/// Whether the operand text `c` is one group in parentheses, as `([2] ++ [3])`, and not
-/// `([2]) ++ ([3])`: its first token is a `(` that closes at its last. A group has no node of
-/// its own, only its operand's span widened over the parentheses, so the text tells it.
-/// Counted on the tokens of `c`, so a parenthesis inside a string is not counted, where a
-/// count on the characters, as [`postfix_operand`] does, would be. O(length of `c`).
-fn in_parens(c: &str) -> bool {
-    let Ok(tokens) = lex(c) else {
-        return false;
-    };
-    let mut depth = 0usize;
-    for (i, t) in tokens.iter().enumerate() {
-        match t.tok {
-            Tok::Op("(") => depth += 1,
-            Tok::Op(")") if depth == 1 => return i + 1 == tokens.len(),
-            Tok::Op(")") => depth = depth.saturating_sub(1),
-            _ if depth == 0 => return false,
-            _ => {}
-        }
-    }
-    false
 }
 
 /// The operand `e`, written `c`, before a `.` or `::`: a string literal as written, whose
@@ -1318,7 +1315,7 @@ impl<'t, 'a> Ck<'t, 'a> {
                                     e,
                                     BinaryOp::Concat,
                                     side == 0,
-                                ) && !in_parens(&c) =>
+                                ) && !zedc_syntax::lex::in_parens(&c) =>
                             {
                                 format!("({c})")
                             }
@@ -2370,32 +2367,35 @@ enum Recorded {
 
 #[cfg(test)]
 mod tests {
-    use super::in_parens;
+    use super::postfix_operand;
 
-    /// `in_parens` on fragments (plan row TEST-msg-repair-parens-and-entries). A fragment that
-    /// does not lex is not one group, so the `++` repair puts it in parentheses: `(c)` means
-    /// what `c` means wherever `c` is an operand, so the answer `false` is never wrong, only at
-    /// worst a pair of parentheses more. A parenthesis inside a string or a comment is not
-    /// counted.
+    /// `postfix_operand` puts an operand in parentheses unless a postfix can follow it as
+    /// written; a bracket in a string or a comment is not counted (row DRY-text-shared; the
+    /// cases with one were wrong on the count on characters, `f("(") + 1` the way that changed
+    /// what the repair means).
     #[test]
-    fn a_fragment_is_one_group_only_when_its_tokens_say_so() {
+    fn an_operand_takes_parentheses_unless_its_tokens_outside_brackets_are_a_path() {
         for (c, want) in [
-            ("([2] ++ [3])", true),
-            ("(([2]) ++ [[3], [(4)]][0])", true),
-            ("([2] ++ /* ) */ [3])", true),
-            ("([\"\\\")\"] ++ [\"(\"])", true),
-            ("([\"${(2)}\"] ++ [\")\"])", true),
-            ("([2]) ++ ([3])", false),
-            ("([2]) // )", true),
-            ("[2]", false),
-            ("", false),
+            ("xs", "xs"),
+            ("m.lines", "m.lines"),
+            ("xs.where(f)", "xs.where(f)"),
+            ("[1, 2]", "[1, 2]"),
+            ("(0 ..< 3)", "(0 ..< 3)"),
+            ("x'", "x'"),
+            ("f(\")\")", "f(\")\")"),
+            ("f(/* ) */ x)", "f(/* ) */ x)"),
+            ("", ""),
+            ("a + b", "(a + b)"),
+            ("f(\"(\") + 1", "(f(\"(\") + 1)"),
+            ("xs // c", "(xs // c)"),
+            ("xs /* c */", "(xs /* c */)"),
+            ("\"ab\"", "(\"ab\")"),
+            ("#a", "(#a)"),
+            ("x)", "(x))"),
             // Fragments that do not lex.
-            ("([\"a] ++ [3])", false),
-            ("([2] ++ \")", false),
-            ("([2] /* ++ [3])", false),
-            ("(\"${(\")", false),
+            ("f(\"a)", "(f(\"a))"),
         ] {
-            assert_eq!(in_parens(c), want, "{c}");
+            assert_eq!(postfix_operand(c), want, "{c}");
         }
     }
 }

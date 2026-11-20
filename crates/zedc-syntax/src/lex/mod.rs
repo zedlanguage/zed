@@ -45,6 +45,33 @@ pub fn lex_with_docs(text: &str) -> Result<(Vec<Token>, Vec<Doc>), Error> {
     Ok((tokens, docs))
 }
 
+/// Whether the program text `text` is one group in parentheses, as `([2] ++ [3])` or
+/// `(a || b)`, and not `([2]) ++ ([3])` or `(a) || (b)`: its first token is a `(` that closes
+/// at its last. A group has no node of its own in the syntax tree, only its operand's span
+/// widened over the parentheses, so the text tells it. Counted on the tokens, so a parenthesis
+/// in a string or a comment is not counted. A count on the characters, as the copies in
+/// `zedc` front.rs and `zedc-check` fp_ops.rs made before row DRY-text-shared, is wrong both
+/// ways: it takes `(s == "(") || (s == ")")` for one group, so a repair joining it by `&&`
+/// changed its meaning. Text that does not lex is not one group: `(text)` means what `text`
+/// means as an operand, so the answer `false` is at worst a pair of parentheses more.
+/// O(length of `text`).
+pub fn in_parens(text: &str) -> bool {
+    let Ok(tokens) = lex(text) else {
+        return false;
+    };
+    let mut depth = 0usize;
+    for (i, t) in tokens.iter().enumerate() {
+        match t.tok {
+            Tok::Op("(") => depth += 1,
+            Tok::Op(")") if depth == 1 => return i + 1 == tokens.len(),
+            Tok::Op(")") => depth = depth.saturating_sub(1),
+            _ if depth == 0 => return false,
+            _ => {}
+        }
+    }
+    false
+}
+
 /// The comments of `text`, lexed as `tokens`, in order: those between tokens, since a comment
 /// in a string's hole is part of the string's token.
 pub fn comments(text: &str, tokens: &[Token]) -> Vec<Span> {
@@ -195,6 +222,43 @@ fn lex_from<'t>(
                 tok,
                 span: Span { start, end: pos },
             });
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::in_parens;
+
+    /// `in_parens` on fragments (plan rows TEST-msg-repair-parens-and-entries and
+    /// DRY-text-shared). A fragment that does not lex is not one group, so a repair puts it in
+    /// parentheses: `(c)` means what `c` means wherever `c` is an operand, so the answer
+    /// `false` is never wrong, only at worst a pair of parentheses more. A parenthesis inside a
+    /// string or a comment is not counted; the cases with one, the `||` among them, were wrong
+    /// on the count on characters that zedc front.rs kept.
+    #[test]
+    fn a_fragment_is_one_group_only_when_its_tokens_say_so() {
+        for (c, want) in [
+            ("([2] ++ [3])", true),
+            ("(([2]) ++ [[3], [(4)]][0])", true),
+            ("([2] ++ /* ) */ [3])", true),
+            ("([\"\\\")\"] ++ [\"(\"])", true),
+            ("([\"${(2)}\"] ++ [\")\"])", true),
+            ("(a || b)", true),
+            ("(s == \"(\" || s == \")\")", true),
+            ("([2]) ++ ([3])", false),
+            ("(a) || (b)", false),
+            ("(s == \"(\") || (s == \")\")", false),
+            ("([2]) // )", true),
+            ("[2]", false),
+            ("", false),
+            // Fragments that do not lex.
+            ("([\"a] ++ [3])", false),
+            ("([2] ++ \")", false),
+            ("([2] /* ++ [3])", false),
+            ("(\"${(\")", false),
+        ] {
+            assert_eq!(in_parens(c), want, "{c}");
         }
     }
 }

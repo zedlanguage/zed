@@ -25333,21 +25333,15 @@ fn int_literal(s: &str) -> bool {
 }
 
 /// The code `s` without the parentheses around the whole of it, if it has them, as `n - 5`
-/// for `(n - 5)`; `(a) + (b)` is kept. One pass over `s`.
+/// for `(n - 5)`; `(a) + (b)` is kept. Whether they are around the whole is
+/// [`zedc_syntax::lex::in_parens`], counted on the tokens: the count on the bytes kept here
+/// before row DRY-text-shared counted a parenthesis in a string, and took `(f("(")) + (g)` to
+/// `f("(")) + (g`. O(length of `s`).
 fn unparen(s: &str) -> &str {
-    let Some(inner) = s.strip_prefix('(').and_then(|s| s.strip_suffix(')')) else {
-        return s;
-    };
-    let mut depth = 0usize;
-    for b in inner.bytes() {
-        match b {
-            b'(' => depth += 1,
-            b')' if depth == 0 => return s,
-            b')' => depth -= 1,
-            _ => {}
-        }
+    match s.strip_prefix('(').and_then(|s| s.strip_suffix(')')) {
+        Some(inner) if zedc_syntax::lex::in_parens(s) => inner,
+        _ => s,
     }
-    inner
 }
 
 /// Places a call's arguments at the parameters of `sig`, as elaboration does: each positional
@@ -28252,6 +28246,27 @@ fn params_own_apart(sig: &Sig) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// `unparen` takes off only parentheses around the whole of the code, counted on its tokens
+    /// (row DRY-text-shared; the cases with a parenthesis in a string were wrong on the count
+    /// on bytes, `(f("(")) + (g)` the way that broke the code).
+    #[test]
+    fn unparen_takes_off_only_parentheses_around_the_whole() {
+        for (s, want) in [
+            ("(n - 5)", "n - 5"),
+            ("((n))", "(n)"),
+            ("(a) + (b)", "(a) + (b)"),
+            ("n - 5", "n - 5"),
+            ("(f(\"(\")) + (g)", "(f(\"(\")) + (g)"),
+            ("(s == \")\")", "s == \")\""),
+            ("()", ""),
+            ("(", "("),
+            // Code that does not lex is kept.
+            ("(\"a)", "(\"a)"),
+        ] {
+            assert_eq!(unparen(s), want, "{s}");
+        }
+    }
 
     /// The remap `s as (a -> k -> v) into (k -> a -> v)`, two key levels, as an expression.
     fn two_level_remap() -> Expr {
