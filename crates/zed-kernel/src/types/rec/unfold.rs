@@ -234,7 +234,12 @@ impl Env {
     // times the instructions and 46.4 times the bytes at 800 parts against 100). Used: the
     // names are shared as a DAG of ropes, the way hash-consing shares equal subterms (E. Goto,
     // "Monocopy and associative algorithms in extended Lisp", Technical Report TR 74-03,
-    // University of Tokyo, May 1974; not read: the report is not online. The attribution and
+    // University of Tokyo, May 1974; not read: the report is not online. Retried 2026-11-20,
+    // 16:41-16:56 UTC: allpapers-locate found no record of it (its best guess, Namba's
+    // "Some improvements on Utah standard lisp", doi:10.1145/12917.12922, is another paper);
+    // archive.org and LibGen had no copy over five rounds; Google Scholar served its
+    // "Verifying" page every round; a grounded web search (agy) timed out twice.
+    // The attribution and
     // the report number are as J.-C. Filliâtre and S. Conchon give them, "Type-safe modular
     // hash-consing", ACM Workshop on ML 2006, 12-19, doi:10.1145/1159876.1159880, reference
     // [9], whose section 1 says "Hash-consing is a technique to share purely functional data

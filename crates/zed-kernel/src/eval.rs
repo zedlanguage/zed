@@ -4230,8 +4230,13 @@ fn prim_on(p: Prim, vals: &[Value]) -> Result<Value, KernelError> {
         // The 2019 text was not read: the copies on LibGen and Sci-Hub (10 and 15 pages) carry
         // the title and abstract and then filler text, and the contents of the publisher's
         // preview of ISO/IEC 60559:2020, the same text, stop at "5.4 formatOf
-        // general-computational operations". What was read, 2026-11-20, PDF (Sci-Hub,
-        // verification only), is the 2008 edition, IEEE Std 754-2008,
+        // general-computational operations". Retried 2026-11-20, 16:41-16:56 UTC:
+        // allpapers-locate found no free text; LibGen's standards search had no file over five
+        // rounds; Sci-Hub (scihub-cli, 16:49, 16:50 and 16:54) met a blocked mirror page and
+        // 403s; Google Scholar served its "Verifying" page; Anna's Archive answered 403 or a
+        // parked page; a grounded web search (agy, 16:50-16:53) found no free legal copy and
+        // named only the IEEE Xplore, ISO and IEC store pages. What was read, 2026-11-20,
+        // PDF (Sci-Hub, verification only), is the 2008 edition, IEEE Std 754-2008,
         // doi:10.1109/IEEESTD.2008.4610935, whose clauses 5 and 7 the 2019 revision keeps
         // under the same numbers. Section 5.1, p. 16: "every operation shall be performed as if
         // it first produced an intermediate result correct to infinite precision and with

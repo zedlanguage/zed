@@ -238,7 +238,13 @@
 //!   a size below `n c^sqrt(log n)`. Toom-3 is his scheme for two numbers at a fixed `r = 2`:
 //!   three parts, five points, `n^log3(5)`; that form is from memory, not checked against a
 //!   source. Cook's thesis was not read (no copy found; a guessed author-page URL returned a
-//!   web page). Not used here; it is num-bigint's product, modeled by
+//!   web page). Retried 2026-11-20, 16:41-16:56 UTC, by the allpapers ladder: OpenAlex,
+//!   Unpaywall, CORE and dblp know only Cook and Aanderaa's 1969 paper (doi:10.2307/1995359,
+//!   whose AMS PDF answered 403); Harvard's catalog (record 990038153110203941) holds the
+//!   thesis on paper (HU 90.8929.5) and microfilm (Film Mas T3302) only; archive.org and
+//!   LibGen had no copy, five rounds; Google Scholar served its "Verifying" page every round;
+//!   Anna's Archive answered 403 or a parked page; a grounded web search (agy) timed out twice.
+//!   Not used here; it is num-bigint's product, modeled by
 //!   [`TOOM_COST`] and [`TOOM_POWER`].
 //!
 //! Tests: `tests::products_agree_with_num_bigint` and
