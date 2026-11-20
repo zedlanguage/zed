@@ -126,7 +126,14 @@ pub fn text_hasher() -> <TextState as std::hash::BuildHasher>::Hasher {
 /// The hasher of a content hash that must be the same in every run, such as a digest whose
 /// value reaches an order, a number shown to the user, or a test's expected output: the standard
 /// library's SipHash-1-3 with both keys zero (`DefaultHasher::new`), so the hash of a value is
-/// fixed for one build of the standard library. It reads a value's bytes as one stream, so a
+/// fixed for one build of the standard library. SipHash-c-d (J.-P. Aumasson and D. J.
+/// Bernstein, "SipHash: a fast short-input PRF", INDOCRYPT 2012, section 2): the state is four
+/// words `v0..v3` set from the 128-bit key `k0, k1` xored with four constants; each 8-byte word
+/// `m` of the input (the last padded with the length) is xored into `v3`, then `c` SipRounds of
+/// add-rotate-xor, then xored into `v0`; at the end `0xff` is xored into `v2`, `d` SipRounds
+/// run, and the hash is `v0 ^ v1 ^ v2 ^ v3`. The standard library takes `c = 1, d = 3` (the
+/// paper recommends `c = 2, d = 4`); here the key is `k0 = k1 = 0`, so the hash is a fixed
+/// function, not a PRF: it keeps the mixing, not the secret. It reads a value's bytes as one stream, so a
 /// text hashes as its `str` does. A program could choose values that collide, so a map whose keys
 /// are a program's text takes [`TextState`]; and SipHash costs several times foldhash's
 /// instructions per word, so a hash that need not be fixed takes [`Digest`] or [`text_hash`].
