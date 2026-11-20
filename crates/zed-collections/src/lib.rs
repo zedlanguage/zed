@@ -20,11 +20,15 @@
 //! [`index`]: a count or index converted to `u32`, refused past `u32::MAX`.
 //!
 //! [`intern`]: dense ids for distinct values, and the values back by id.
+//!
+//! [`by_address`]: a map key that is the address of an `Arc` and holds it, so no address in a
+//! memo is freed and given to another value while the memo lives.
 
 // Loaded for its num-bigint only (see Cargo.toml): nothing here names it, and a crate never named
 // is never loaded, so this dylib would carry its own copy of num-bigint beside zed-numtheory's.
 extern crate zed_numtheory as _;
 
+pub mod by_address;
 pub mod fenwick;
 pub mod held;
 pub mod index;

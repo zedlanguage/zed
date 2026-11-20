@@ -18397,10 +18397,23 @@ fn piece_keys<'t>(t: &'t Ty, out: &mut Vec<Key<'t>>) -> bool {
 // from above.
 #[derive(Default)]
 struct Approx {
-    /// The kernel type made for each type entered, by its address and whether read from above:
-    /// the types read are borrowed by the caller for as long as this is used, so no address is
-    /// freed and given to another type in that time.
+    /// The kernel type made for each type entered below a root, by its address and whether
+    /// read from above. Proof that no key is freed and its address given to another type while
+    /// this lives: each key is an item of a row or shape entered, and `rows` and `shapes` hold
+    /// that row's or shape's `Arc`, so the item lives as long as this does. A root is not kept
+    /// here: it is the caller's, and may be a temporary ([`Domains::fns_apart`] reads
+    /// `&b.value()`, a `Ty` made for the call), so a second root at its address would have read
+    /// the first one's kernel type (DRY-pointer-memos-keep-alive, 2026-11-20). Finding a root
+    /// here is sound: a key is alive, so a root at its address is that item. Test:
+    /// `tests::approx_reads_a_new_root_at_the_address_of_one_dropped`.
     done: HashMap<(*const Ty, bool), KType>,
+    /// The rows entered, held for the items of `done`. Complexity tradeoff: one `Arc` clone a
+    /// row or shape entered, O(1), and a root read again is made again from what it holds,
+    /// O(its own rows and shapes), which the walk of [`Domains::no_fn_type`] before each read
+    /// of [`Domains::kernel_of`] costs already; the walk stays O(n) for n types reached.
+    rows: Vec<Row>,
+    /// The shapes entered, held for the items of `done`.
+    shapes: Vec<Shape>,
     /// Whether a function type read from below is read as no value, not as every function
     /// where [`Domains::holds_fn`] proves it holds one: the read is then within the usual read
     /// from below (each read is monotone in what it is given), and read by
@@ -18422,6 +18435,10 @@ impl Approx {
             }
             if entered {
                 let k = self.made(t, up);
+                // The root is entered last, below everything it holds.
+                if stack.is_empty() {
+                    return k;
+                }
                 self.done.insert(key, k);
                 continue;
             }
@@ -18431,14 +18448,17 @@ impl Approx {
             }
             stack.push((t, up, true));
             for r in t.tuples.iter().filter(|r| r.0.exact.is_none()) {
+                self.rows.push(r.clone());
                 stack.extend(r.iter().map(|c| (c, up, false)));
             }
             for s in t.payload_shapes() {
                 if s.exact.is_none() && s.fields.is_empty() {
+                    self.shapes.push(s.clone());
                     stack.extend(s.items.iter().map(|c| (c, up, false)));
                 }
             }
         }
+        // The root was found in `done`: an item of a row or shape held.
         self.done[&(std::ptr::from_ref(t), up)].clone()
     }
 
@@ -23278,6 +23298,30 @@ mod tests {
             range: None,
         };
         Sig::one(vec![x], vec![t], result)
+    }
+
+    /// A root read through one [`Approx`], dropped, and a second root made at its address
+    /// (the same variable, so the same address for certain) is read as itself, not as the
+    /// first: `Domains::fns_apart` reads temporaries `&b.value()` through one `Approx`
+    /// (DRY-pointer-memos-keep-alive). Each root holds a row with `_`, which has no exact
+    /// kernel type, so it is entered, not read as a leaf; the nested row is entered too, so a
+    /// row of the first root freed and given to the second would be read stale as well.
+    #[test]
+    fn approx_reads_a_new_root_at_the_address_of_one_dropped() {
+        let carrier = |c| Ty::tuple(vec![Ty::tuple(vec![Ty::dynamic(), Ty::carrier(c)])]);
+        for up in [true, false] {
+            let mut approx = Approx::default();
+            let mut slot = carrier(Carrier::Int);
+            assert!(slot.exact_kernel().is_none());
+            let address = std::ptr::from_ref(&slot);
+            let first = approx.of(&slot, up);
+            assert_eq!(first, Approx::default().of(&slot, up));
+            slot = carrier(Carrier::Bool);
+            assert_eq!(std::ptr::from_ref(&slot), address);
+            let second = approx.of(&slot, up);
+            assert_ne!(second, first, "up {up}: the second root read as the first");
+            assert_eq!(second, Approx::default().of(&slot, up), "up {up}");
+        }
     }
 
     /// A signature whose parameter holds `_` beside `int` is printed with `_` alone, as the

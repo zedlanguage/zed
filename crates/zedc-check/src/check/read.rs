@@ -9,9 +9,9 @@
 //! name of L1; its L10 form `!_` is read as well.
 
 use std::borrow::Cow;
-use std::collections::hash_map::Entry;
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
+use zed_collections::by_address::ByAddress;
 
 use zed_kernel::num::{TooLarge, literal_f64};
 use zed_kernel::{Rat, Value};
@@ -277,7 +277,7 @@ struct Seen {
     shapes: HashSet<NodeId>,
     /// The signatures met, by address, each held here: a signature has no number, and held,
     /// no other signature takes its address while the reading lasts. Never iterated.
-    sigs: HashMap<*const Sig, Arc<Sig>>,
+    sigs: HashSet<ByAddress<Sig>>,
     /// For each variable `reaches` was asked about, the nodes it found to reach a signature
     /// that bounds the variable, and those it found not to. Each is in `rows`, `shapes` or
     /// `sigs`, since `fresh` walked the type before `reaches` was asked about it.
@@ -342,14 +342,13 @@ impl Seen {
             let new = match p {
                 Piece::Row(r) => self.rows.insert(r.node()),
                 Piece::Shape(s) => self.shapes.insert(s.node()),
-                Piece::Sig(s) => match self.sigs.entry(Arc::as_ptr(s)) {
-                    Entry::Occupied(_) => false,
-                    Entry::Vacant(e) => {
+                Piece::Sig(s) => {
+                    let new = self.sigs.insert(ByAddress::new(s));
+                    if new {
                         own.extend(s.bounds.keys().cloned());
-                        e.insert(s.clone());
-                        true
                     }
-                },
+                    new
+                }
             };
             if new {
                 stack.extend(p.inner());

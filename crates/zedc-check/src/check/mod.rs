@@ -57,6 +57,7 @@ use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet, VecDeque};
 use std::fmt;
 use std::rc::Rc;
 use std::sync::Arc;
+use zed_collections::by_address::ByAddress;
 
 use num_bigint::BigUint;
 use zed_kernel::num::{
@@ -5634,7 +5635,7 @@ impl<'t, 'a> Ck<'t, 'a> {
         &self,
         callee: &Arc<Sig>,
         made: &mut Renamings,
-        fwd_memo: &mut HashMap<*const Sig, Arc<Sig>>,
+        fwd_memo: &mut HashMap<ByAddress<Sig>, Arc<Sig>>,
     ) -> Arc<Sig> {
         if let Some(done) = fwd_memo.get(&Arc::as_ptr(callee)) {
             return done.clone();
@@ -5656,7 +5657,7 @@ impl<'t, 'a> Ck<'t, 'a> {
             },
             |(made, fwd_memo), sig| {
                 let out = self.r10_finish_one_fwd_callee(&sig, made, fwd_memo);
-                fwd_memo.insert(Arc::as_ptr(&sig), out);
+                fwd_memo.insert(ByAddress::new(&sig), out);
             },
         );
         fwd_memo[&Arc::as_ptr(callee)].clone()
@@ -5668,7 +5669,7 @@ impl<'t, 'a> Ck<'t, 'a> {
         &self,
         callee: &Arc<Sig>,
         made: &mut Renamings,
-        fwd_memo: &mut HashMap<*const Sig, Arc<Sig>>,
+        fwd_memo: &mut HashMap<ByAddress<Sig>, Arc<Sig>>,
     ) -> Arc<Sig> {
         // A non-forward need's held function can reach this pass again through
         // `finished_arc_with` and may finish the callee first; its result then stands.
@@ -5743,7 +5744,7 @@ impl<'t, 'a> Ck<'t, 'a> {
         &self,
         s: &Arc<Sig>,
         made: &mut Renamings,
-        fwd_memo: &mut HashMap<*const Sig, Arc<Sig>>,
+        fwd_memo: &mut HashMap<ByAddress<Sig>, Arc<Sig>>,
     ) -> Arc<Sig> {
         // One that holds no class variable, as most do once settled, is as it is.
         if s.facts().classes.is_empty() && !s.has_fwd_needs() {
@@ -5869,6 +5870,12 @@ impl<'t, 'a> Ck<'t, 'a> {
             let name = names.get(&p)?;
             (name != v).then(|| (v.clone(), Ty::var(name.clone())))
         };
+        // `runs` is keyed by the addresses of signatures the marks above name, some held by
+        // the types bound in `b`. `update_each` drops each of those as it is replaced, and a
+        // signature made later (by a renaming below) could take a freed address and read a
+        // stale entry. The copy holds them until `runs` is dropped: `Binds` is a persistent
+        // map, so the copy is O(1) (DRY-pointer-memos-keep-alive, 2026-11-20).
+        let _held_for_runs = b.clone();
         let mut b = b;
         b.update_each(|t| {
             let mut held = Vars::default();
@@ -6257,7 +6264,11 @@ impl<'t, 'a> Ck<'t, 'a> {
         // The signatures share the functions they hold, so they are named through one
         // [`Renamings`] and one shared `fwd_memo` across all `info.sigs` and `info.calls`.
         let mut made = Renamings::default();
-        let mut fwd_memo: HashMap<*const Sig, Arc<Sig>> = HashMap::new();
+        // Keyed by the callees' addresses with each callee held: the signatures are settled one
+        // at a time (`finished_arc_with`), each made for its call and dropped after it, so a
+        // bare address could be freed and taken by a later callee, which would read this
+        // one's entry (DRY-pointer-memos-keep-alive, 2026-11-20).
+        let mut fwd_memo: HashMap<ByAddress<Sig>, Arc<Sig>> = HashMap::new();
         let sigs = std::mem::take(&mut self.info.sigs);
         self.info.sigs = sigs
             .into_iter()
@@ -6410,7 +6421,7 @@ impl<'t, 'a> Ck<'t, 'a> {
         &self,
         s: &Arc<Sig>,
         made: &mut Renamings,
-        fwd_memo: &mut HashMap<*const Sig, Arc<Sig>>,
+        fwd_memo: &mut HashMap<ByAddress<Sig>, Arc<Sig>>,
     ) -> Arc<Sig> {
         self.finished_with(&s.settle(&|v| self.stale(v)), made, fwd_memo)
     }
