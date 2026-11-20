@@ -5881,6 +5881,10 @@ impl<'t, 'a> Ck<'t, 'a> {
     /// Complexity tradeoff: a type with no such forward costs O(1) more (its facts); one with
     /// one costs its flat form, once, which the eager checker builds for it as well. Only the
     /// types shown pay it: top values and the types in messages, not the signatures.
+    ///
+    /// The renaming is not capture-avoiding, and need not be: no function holding a compact
+    /// forward holds a class, so no decoded internal result is in scope where a class it names
+    /// stands (proof at `Sig::vars_marks`, zedc-types, sub-case (b)).
     fn shown(&self, t: &Ty) -> Ty {
         let flat;
         let t = match t.var_facts().fwd_names.is_empty() {

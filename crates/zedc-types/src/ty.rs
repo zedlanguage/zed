@@ -21237,18 +21237,85 @@ impl Sig {
     /// (3), and E with an untagged decode; so its `cmp_sig` allows the difference by name
     /// (`Ctx::under`), with this proof cited.
     ///
-    /// Not proved, and not a reading of this order (open sub-cases, found under the same row,
-    /// row PROOF-flat-vars-instantiated-clash):
-    /// (a) where a walk decodes for `targets_internal` (step 3), the flat form then holds one
-    /// name for a caller's variable and the callee's internal result, as E does: whether a
-    /// caller's type can hold the spelling of a callee's internal result at
-    /// `Ck::instantiated` (zedc-check `walk.rs`) is not settled. The probes of the row
-    /// (written `T`, `U` beside held `map` chains and lambdas holding a forward, 2026-11-20)
-    /// gave the right verdicts and outputs. (b) A note printed after a function `G` ended,
-    /// about a lambda inside `G` that holds a compact forward and a class of `G`, and that
-    /// `G`'s signature does not hold, could print `G`'s name for that class with the spelling
-    /// of one of the lambda's internal results, since `G` names its variables from its own
-    /// facts.
+    /// Two more places could put one spelling on an outer variable and an internal result.
+    /// Neither is a reading of this order. Both are proved here (row
+    /// PROOF-flat-vars-instantiated-clash, 2026-11-20), the first under one condition that
+    /// step L2.4 must keep.
+    ///
+    /// (a) `Ck::instantiated` (zedc-check `walk.rs`) binds a callee's own variables to caller
+    /// types (`b`) and builds `sig.flat_for(&b)`. Where a bound type holds a variable spelled
+    /// as one of the callee's internal results, the walk decodes (`targets_internal`, step 3),
+    /// and the flat form then holds that spelling once for both, as E does. Claim: no free
+    /// variable of a value of `b` is spelled as an internal result of the callee.
+    /// 1. The values of `b` are, by the code of `instantiated`: a carrier (`Ty::carrier`); the
+    ///    binding `bound_through_fn` reads from the callee's written parameter types against
+    ///    an argument function with no own variables; and the binding `Ty::sub` reads from an
+    ///    argument's type (`a.ty.without_loose().sub(p, ..)`). Each is a part of a caller type
+    ///    or of a type the comparison made (`Cx`), and none holds a callee variable: a callee's
+    ///    own variables are keys of `b`, not parts of its values.
+    /// 2. A free variable of a caller type, while the caller is checked, is one of these: a
+    ///    class `$k`, which holds `$`; a type variable the program writes, as in a parameter's
+    ///    type or an `is` test, which `ProgramNames` holds for the whole unit (zedc-check
+    ///    `walk.rs`, `check_text` and `check_given`, over `res.type_vars`); or a variable of a
+    ///    call's result, where `Ck::close` makes each callee variable no argument bound into
+    ///    the unknown or its bound, so a call leaves no callee name in the caller. A variable
+    ///    a function held in the type binds is not free: replacement hides it (`Replacer`
+    ///    `hidden`). The comparison's own names are `{v}'{n}` (`Cx::fresh`), a quote and then
+    ///    digits, which no program name has (DESIGN sec:lexical allows only a final `'`).
+    /// 3. An internal result is named by `generalize` (`r10_name_compact_sig_in_generalize`)
+    ///    from `Names::Variables`, `T`, `U`, `V`, `W`, `T5`, …, through `fresh_name` or the
+    ///    span counts of `fresh_variable_span_stats_indexed`. Both skip every name
+    ///    `ProgramNames` holds (the span counts read the snapshot the forward keeps, taken
+    ///    while the unit's names were held). Tagged, it holds a NUL (step 4).
+    /// 4. So, by 2 and 3, a free variable of a value of `b` holds `$` or a quote, or is a
+    ///    program name, which no internal result is spelled as. `targets_internal` then never
+    ///    finds a spelling it shares with a free variable. A variable bound inside a held
+    ///    function of the value may share it. That is shadowing, as two held functions that
+    ///    each bind `T` have: `walk_vars` lists the spelling once, and the readers count by
+    ///    scope (step 4 above, and `hidden` in `Replacer`).
+    ///
+    /// Condition: step 3 holds because a caller and each callee are checked in one `Ck`
+    /// under one `ProgramNames`. Today every callee is in the caller's unit (zedc
+    /// `unit.rs`: a unit that imports is checked only after step L2.4 links its imports).
+    /// Step L2.4 must keep this: a callee from another unit names its internal results
+    /// without the caller's program names, so it must be checked under them too, or its
+    /// internal results renamed apart when it is linked.
+    ///
+    /// Measured: 21 caller templates over the names `T`, `U`, `V`, `W` and `T5` to `T8` gave
+    /// the same signature and errors as under `T20`, with `W` and `T5` the spellings of
+    /// `h1`'s and `h2`'s internal results (test
+    /// `caller_names_spelled_as_internal_results_change_nothing`, l01_26
+    /// `internal_result_names.rs`).
+    ///
+    /// (b) `Ck::shown` decodes untagged and then renames each class to the name `generalize`
+    /// gave it (`Ty::renamed`). That renaming is not capture-avoiding: a class renamed to `W`
+    /// inside a held function whose decoded own variables include `W` would print as that
+    /// function's `W`. Claim: no held function holds both a class and a compact forward,
+    /// so no decoded internal result is in scope where a class stands.
+    /// 1. A compact forward is made only in `generalize` (zedc-check `walk.rs`, through
+    ///    `r10_merge_direct_and_kept_needs`, the one place that builds a `NeedKind::Fwd`), into
+    ///    the signature of the function that ends. A replacement keeps a forward or decodes
+    ///    it, and never makes one (`Need::map_tys_in`).
+    /// 2. In that same `generalize`, before any name is given, a signature that has forward
+    ///    needs and holds a class of an outer level (`sig_vars`, which is `vars_order` and so
+    ///    walks the functions it holds, `VarWalk::Held`) has every kept forward expanded into
+    ///    its needs (`r10_expand_kept_fwds`). So a function that holds an outer class when it
+    ///    ends keeps no compact forward (as test `r10_promoted_forward_results_are_own_variables`
+    ///    notes).
+    /// 3. A function H that holds no outer class when it ends has no free variable: its classes
+    ///    of its own level become its own variables or are made the unknown (`generalize`). A
+    ///    later replacement does not enter its own variables (`Replacer` `hidden`), so no class
+    ///    is ever put inside H. A class inside H after its end was there when it ended, and
+    ///    then by 2 H keeps no compact forward.
+    /// 4. So the function holding a compact forward holds no class, and the class names
+    ///    `shown` gives land nowhere that a decoded internal result is in scope.
+    ///
+    /// The routes into `shown` are top values (`info.tops`), the types of a message, and
+    /// `named`'s `$$k` notes. Measured: 38 programs over those routes (lambdas holding `G`'s
+    /// classes beside `h1` and `h2` chains, returned or kept local, untyped parameters misused
+    /// at a caller) printed no type with a captured name (test
+    /// `lambda_holding_a_class_keeps_no_forward_and_prints_apart`, l01_26
+    /// `internal_result_names.rs`).
     ///
     /// A mark names the signature that holds its forward through [`RunMark::holder`], given
     /// the `Arc` that holds this one, so the marks stay right after this signature moves.

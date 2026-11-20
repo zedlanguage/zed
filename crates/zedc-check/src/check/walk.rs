@@ -9155,6 +9155,11 @@ impl<'t, 'a> Ck<'t, 'a> {
     /// signature), once per call of such a function. The naive way, binding through function
     /// types inside the comparison, would need the binding carried into every comparison of
     /// function types; not built.
+    ///
+    /// No value of the binding holds a free variable spelled as one of the callee's internal
+    /// results, so the decode `flat_for` may make for a bound type (`targets_internal`) never
+    /// merges a caller variable with one; this rests on one `ProgramNames` for caller and
+    /// callee, which step L2.4 must keep (proof at `Sig::vars_marks`, zedc-types, sub-case (a)).
     fn instantiated(
         &self,
         sig: &Arc<Sig>,
