@@ -662,8 +662,9 @@ impl Row {
         // walking every tuple below a call's result at each call (`type_holds_needs`), is
         // Θ(n^2) for n nested calls that each put the last result in a tuple (37.1 times the
         // bytes at 8n). Used: each row keeps the answer, made from its components' outer
-        // levels and their rows' and shapes' answers, O(width) per row, with each function's answer kept
-        // on it ([`Sig::may_hold_needs`]). Tradeoff: every row pays for it when made, read or not.
+        // levels and their rows' and shapes' answers, O(width) per row, with each function's answer
+        // kept on it ([`Sig::may_hold_needs`]). Tradeoff: every row pays for it when made, read or
+        // not.
         let needs = cs.iter().any(Ty::may_hold_needs);
         let absorbs = cs.iter().any(Ty::may_absorb);
         Row(Arc::new(RowData {
@@ -1093,7 +1094,8 @@ impl<'a> Same<'a> {
     // is linear in the size of the two types as graphs either way; each pair pushed is compared
     // by `rest`, from the top of the stack again. Recursion is the faster: it keeps a shallow
     // type, the common case, as cheap to compare as the derived `==` was
-    // (l01_26_type_resolution bench::deep_types::shallow_types_compare_as_cheaply_as_a_plain_recursion).
+    // (l01_26_type_resolution
+    // bench::deep_types::shallow_types_compare_as_cheaply_as_a_plain_recursion).
     // The switch is on the stack the recursion has taken, which bounds it whatever the types'
     // depth: types 100,000 deep compare on a 2 MiB stack
     // (types_built_apart_100000_deep_compare_on_a_2_mib_stack). The stack the thread has left
@@ -2784,7 +2786,8 @@ fn walk_vars<'a>(mut stack: Vec<VarWalk<'a>>, out: &mut Vars) {
         // level asked (`r10_get_or_build_summary` asks each lambda's result), O(n) each and
         // O(n^2) in all (13.43 times the work from 100 to 800 levels, release build). Used:
         // the row's bits, as for payload shapes, and `Sig::holds_no_var`, O(1) each once
-        // made: 7.80. Test: l08_02 `bench::a_deeper_nest_of_n_maps_each_reading_a_fold_runs_in_linear_time`.
+        // made: 7.80. Test: l08_02
+        // `bench::a_deeper_nest_of_n_maps_each_reading_a_fold_runs_in_linear_time`.
         stack.extend(
             t.tuples
                 .iter()
@@ -2941,8 +2944,8 @@ impl PartialEq for RunRenames {
 /// of each: both are shared, so a walk without it would rebuild one once per path to it,
 /// `2^n` times for `n` rows or shapes that each hold the one below twice. The addresses are
 /// those of rows and shapes the input holds: each walk ([`Replacer`], [`Subst`], [`Widen`],
-/// [`HeldFns`], [`Settle`]) is made and dropped within one call that borrows the input, so no key names a
-/// freed node, and the maps are only read by key, never iterated.
+/// [`HeldFns`], [`Settle`]) is made and dropped within one call that borrows the input, so no key
+/// names a freed node, and the maps are only read by key, never iterated.
 // Proof, step by step (checked again for DOC-proofs-in-comments-audit, as dryC1 asked in
 // c4937d86c):
 // 1. A key is put in only by `made_row`, `made_shape`, `known_row` or `known_shape` (and
@@ -4209,8 +4212,8 @@ pub struct Sig {
 /// type that holds the family reads them at the cost of its outer level.
 ///
 /// And whether it holds no variable at any depth ([`Sig::holds_no_variable`]) and whether it or
-/// a function it returns has needs ([`Sig::holds_needs`], [`Sig::may_hold_needs`]), so a nest of functions asked from
-/// the outermost in is walked once, not once from each level.
+/// a function it returns has needs ([`Sig::holds_needs`], [`Sig::may_hold_needs`]), so a nest of
+/// functions asked from the outermost in is walked once, not once from each level.
 ///
 /// And whether it holds only its own variables and those of the functions inside it
 /// ([`Sig::holds_only_own_variables`]).
@@ -4559,8 +4562,8 @@ impl VarFacts {
 
 /// The variables a walk of [`VarFacts`] has added, each with whether it went to the classes.
 // Hashed by the seeded text hasher (DRY-sorted-structures, D5): the names are the program's
-// text, which the unseeded address hasher it had before let a program choose to collide. Only looked up, so
-// the seed's change of order from run to run reaches no result.
+// text, which the unseeded address hasher it had before let a program choose to collide. Only
+// looked up, so the seed's change of order from run to run reaches no result.
 type Added<'a> = zed_kernel::digest::TextSet<(bool, &'a str)>;
 
 /// What a row or payload shape keeps of the variables it holds at any depth, inside functions
@@ -5454,7 +5457,8 @@ thread_local! {
     static FWD_DECODE_COUNT: Cell<u64> = const { Cell::new(0) };
 }
 
-/// The number of counted `FwdNeed` decodes on this thread since the last [`reset_fwd_decode_count`].
+/// The number of counted `FwdNeed` decodes on this thread since the last
+/// [`reset_fwd_decode_count`].
 pub fn fwd_decode_count() -> u64 {
     FWD_DECODE_COUNT.with(Cell::get)
 }
@@ -5496,15 +5500,18 @@ pub struct FwdNeed {
     pub exits: Vec<(usize, Ty)>,
     /// Caller variables appearing as `.on` of at least one leaf need in this block (`domain_test`).
     pub on_vars: Vec<Ty>,
-    /// Connected groups of visible (`sigma` + `exits`) variables tied by needs in this block (`unfixed_args`).
+    /// Connected groups of visible (`sigma` + `exits`) variables tied by needs in this block
+    /// (`unfixed_args`).
     pub var_ties: Vec<Vec<Ty>>,
-    /// Pre-`finished` starting class ID `lo` for this forward's `need_count` results (`lo .. lo + need_count`).
+    /// Pre-`finished` starting class ID `lo` for this forward's `need_count` results
+    /// (`lo .. lo + need_count`).
     pub base_class: Option<usize>,
     /// Explicit caller result variables when `#26` is dropped in a negative-control test.
     pub explicit_result_vars: Option<Vec<Arc<str>>>,
     /// Compressed first-appearance steps for `generalize` (`O(1)` length on chains).
     pub var_steps: Vec<FwdVarStep>,
-    /// `generalize`-time naming spans for internal variables, promoted to `finish_naming` on `Mode::Rename`.
+    /// `generalize`-time naming spans for internal variables, promoted to `finish_naming` on
+    /// `Mode::Rename`.
     pub gen_naming: Option<FwdFinishNaming>,
     /// Post-`finished` naming spans once `Sig::renamed` replaces `$k` with `T, U, ...`.
     pub finish_naming: Option<FwdFinishNaming>,
@@ -5734,15 +5741,17 @@ impl FwdNeed {
             .collect()
     }
 
-    /// Decodes this `FwdNeed` iteratively into its `need_count` flat `Need`s in `O(need_count)` time
-    /// and `O(1)` call-stack depth (counted once in [`fwd_decode_count`]).
+    /// Decodes this `FwdNeed` iteratively into its `need_count` flat `Need`s in `O(need_count)`
+    /// time and `O(1)` call-stack depth (counted once in [`fwd_decode_count`]).
     /// Clears `Map.lambda` to `false` (matching `meet` -> `map_end` on `Arg::of`) and reconstructs
-    /// `Need::via` via shared inner-to-outer `Via` prefixes in `O(1)` per forward level + `O(1)` per leaf.
+    /// `Need::via` via shared inner-to-outer `Via` prefixes in `O(1)` per forward level + `O(1)`
+    /// per leaf.
     pub fn decode(&self, outer_call_span: Span) -> Vec<Need> {
         self.decode_with_opts(outer_call_span, true)
     }
 
-    /// Like [`FwdNeed::decode`], with `clear_map_lambda` exposed for the `Map.lambda` negative control.
+    /// Like [`FwdNeed::decode`], with `clear_map_lambda` exposed for the `Map.lambda` negative
+    /// control.
     pub fn decode_with_opts(&self, outer_call_span: Span, clear_map_lambda: bool) -> Vec<Need> {
         FWD_DECODE_COUNT.with(|c| c.set(c.get() + 1));
         self.decode_uncounted(outer_call_span, clear_map_lambda)
@@ -6283,11 +6292,11 @@ impl Need {
     /// A compact forward panics: decode it first with [`Sig::decoded_needs_cow`], map its
     /// held functions with [`Need::with_held_fns`], or replace in it with [`Need::replace`].
     /// [`Sig::flat_for`] decodes only for a binding that needs it, and leaves the forward
-    /// compact (so still refused here) for one that keeps it (landing round 7, Codex Q6). `f` is never shown the forward's internal
-    /// results, which no type holds, nor the variables of the other needs of the signature,
-    /// so a mapping of an internal result (`W -> int`) or of another variable onto one
-    /// (`V -> W`) changes the flat needs and could not change the compact one, and no test of
-    /// `f`'s results finds it; one call of `f` on each internal result would cost
+    /// compact (so still refused here) for one that keeps it (landing round 7, Codex Q6). `f` is
+    /// never shown the forward's internal results, which no type holds, nor the variables of the
+    /// other needs of the signature, so a mapping of an internal result (`W -> int`) or of another
+    /// variable onto one (`V -> W`) changes the flat needs and could not change the compact one,
+    /// and no test of `f`'s results finds it; one call of `f` on each internal result would cost
     /// O(#needs the forward stands for) and break the linear chain (landing round 6, Claude
     /// Q2.2).
     pub fn map_tys(&self, f: impl FnMut(&Ty) -> Ty) -> Need {
@@ -9091,13 +9100,13 @@ impl Rest {
     /// each part ([`KType::verdict`]): `No` at the first part shown to hold a value, `Yes` when
     /// each part is empty, else refused with the first part's cause.
     ///
-    /// Proof: the parts hold every value of the difference and no other ([`Comparing::shape_rest`]).
-    /// A value the kernel builds for a part and checks against it ([`Verdict::Inhabited`]) is
-    /// then a value of the shape outside the shapes taken, so the answer is no. When each part
-    /// is empty, so is the difference, and the answer is yes. A part that is neither decides
-    /// nothing. This does not rest on [`KType::is_empty`] or [`Ty::is_empty`] being exact: a
-    /// part that `is_empty` did not prove empty is kept, and its verdict tells. Why
-    /// (PROOF-diff-exact-skip): for the 4 pigeons and 3 holes rows of
+    /// Proof: the parts hold every value of the difference and no other
+    /// ([`Comparing::shape_rest`]). A value the kernel builds for a part and checks against it
+    /// ([`Verdict::Inhabited`]) is then a value of the shape outside the shapes taken, so the
+    /// answer is no. When each part is empty, so is the difference, and the answer is yes. A part
+    /// that is neither decides nothing. This does not rest on [`KType::is_empty`] or
+    /// [`Ty::is_empty`] being exact: a part that `is_empty` did not prove empty is kept, and its
+    /// verdict tells. Why (PROOF-diff-exact-skip): for the 4 pigeons and 3 holes rows of
     /// `kinds::a_payload_whose_tuple_item_needs_a_split_of_many_components_is_refused`,
     /// `is_empty` does not prove the empty rest empty, and the comparison read that rest as a
     /// value outside, a definite no where the answer is yes.
@@ -9179,16 +9188,16 @@ type Filing<'g> = Vec<FMap<Vec<(&'g ShapeKey, Option<&'g Value>)>, Vec<usize>>>;
 ///
 /// Complexity tradeoff: each group of one side is filed or looked up once for each group of
 /// the other of its length. What is given up: the cost is expected O((l·G + r·H)·w + l·G·log G)
-/// (hash maps; the log G sorts the buckets found into one order) for `l` and `r` tuples of width `w` in `H` and `G` groups, and a reader pays for each pair it
-/// reads, up to `l·r`, so `n` tuples in about `n` groups on each side cost about `n^2`. Why: a
-/// tuple of points and wildcards encodes a vector of bits (1 as the point `1` on one side and
-/// `0` on the other, 0 as `int`), so that two such tuples share a value exactly when the vectors
-/// are orthogonal; finding whether any of `n` vectors of about `c·log n` bits is orthogonal to
-/// another, which is what `meets` decides on them, takes `n^(2-o(1))` time unless the strong
-/// exponential time hypothesis fails, even when no pair is found, and the groups of such tuples
-/// are then as many as the tuples. In a written union the groups are few. Structure: `n` tuples
-/// of width `2·log2 n`, each a different arrangement of points and `int`. Tests:
-/// `tests/steps/l01_22_type_representation/kinds.rs`,
+/// (hash maps; the log G sorts the buckets found into one order) for `l` and `r` tuples of width
+/// `w` in `H` and `G` groups, and a reader pays for each pair it reads, up to `l·r`, so `n` tuples
+/// in about `n` groups on each side cost about `n^2`. Why: a tuple of points and wildcards encodes
+/// a vector of bits (1 as the point `1` on one side and `0` on the other, 0 as `int`), so that two
+/// such tuples share a value exactly when the vectors are orthogonal; finding whether any of `n`
+/// vectors of about `c·log n` bits is orthogonal to another, which is what `meets` decides on them,
+/// takes `n^(2-o(1))` time unless the strong exponential time hypothesis fails, even when no pair
+/// is found, and the groups of such tuples are then as many as the tuples. In a written union the
+/// groups are few. Structure: `n` tuples of width `2·log2 n`, each a different arrangement of
+/// points and `int`. Tests: `tests/steps/l01_22_type_representation/kinds.rs`,
 /// `meeting_and_subtracting_tuples_of_many_patterns_costs_the_patterns` and
 /// `meets_of_tuples_of_many_patterns_costs_the_patterns`; COMPLEXITY.md F127 and F132. A
 /// complete solution does not exist under that hypothesis; one could only refuse such unions,
@@ -9854,16 +9863,16 @@ fn left_out_by_vars(x: &Ty, d: &Ty, ws: &BTreeSet<Arc<str>>, cx: &Cx) -> bool {
 /// alone to `w` ([`bound_alone`]), is pinned there under `w`, and a member whose component
 /// there holds a piece [`left_out_by`] names skips it. A shape is pinned at every place at
 /// which a binding pins it, and the shapes are filed in a trie by the places at which they
-/// are pinned, in the order they were pinned, each with its variable `w`; a member reads the nodes whose
-/// path it allows ([`Bound::lists`]), so a shape that leaves it out at any of its pinned
+/// are pinned, in the order they were pinned, each with its variable `w`; a member reads the nodes
+/// whose path it allows ([`Bound::lists`]), so a shape that leaves it out at any of its pinned
 /// places is not tried. A shape pinned by no one variable, tried with a component that is a
 /// union of variables each bound alone ([`bound_alone_union`]), is filed at its first such
 /// place under each variable they are bound to, and a member whose first variable [`keyed`]
 /// there is not bound alone reads it only under that variable: any other leaves it out, by
 /// [`left_out_by_vars`], as that variable is not one of the union's (those are bound alone)
-/// nor any `w` of it (FAIL-types-joined-shape-first). The shapes pinned nowhere are read from the bucket past
-/// the runs of pinned places. The tables are persistent maps, so a copy for the split rows of
-/// [`Comparing::row_in`], kept only when the rows are held, is O(1).
+/// nor any `w` of it (FAIL-types-joined-shape-first). The shapes pinned nowhere are read from the
+/// bucket past the runs of pinned places. The tables are persistent maps, so a copy for the split
+/// rows of [`Comparing::row_in`], kept only when the rows are held, is O(1).
 ///
 /// Complexity tradeoff (PERF-types-variable-shapes-one-bucket): before, a shape was pinned at
 /// the first place a binding pinned it, and only there, so a member tried every shape that
@@ -9890,10 +9899,10 @@ fn left_out_by_vars(x: &Ty, d: &Ty, ws: &BTreeSet<Arc<str>>, cx: &Cx) -> bool {
 /// member has no such variable it follows every edge, and a node so reached may hold no
 /// shape and lead to none the member allows, so a member with many such places can still
 /// visit up to the nodes; no member of the tests has one (it needs a component of only
-/// functions, rigid variables of no carrier, or a first variable bound alone). Prior work: partial-match retrieval (Rivest, "Partial-Match
-/// Retrieval Algorithms", SIAM J. Comput. 5(1), 1976, pp. 19-50, doi:10.1137/0205003,
-/// Crossref 2026-11-20, not read: queries that fix some fields and leave the rest free), whose
-/// stored records here hold
+/// functions, rigid variables of no carrier, or a first variable bound alone). Prior work:
+/// partial-match retrieval (Rivest, "Partial-Match Retrieval Algorithms", SIAM J. Comput. 5(1),
+/// 1976, pp. 19-50, doi:10.1137/0205003, Crossref 2026-11-20, not read: queries that fix some
+/// fields and leave the rest free), whose stored records here hold
 /// wildcards (the places not pinned) as well as the queries; with both, no general method is
 /// known that beats one lookup per pattern of wildcards. Benchmarks
 /// `l01_26_type_resolution::bench::fits::shapes_of_variables_differing_on_m_components_are_found_by_their_pins_scales`
@@ -9905,15 +9914,16 @@ fn left_out_by_vars(x: &Ty, d: &Ty, ws: &BTreeSet<Arc<str>>, cx: &Cx) -> bool {
 /// [`Ty::pieces`] gives each non-empty part of it), a tuple, a function, or `Var(y)` with `y`
 /// neither a function nor `v` nor `w`, nor rigid of an empty mask ([`keyed`]).
 /// [`Comparing::rows`] and [`Comparing::shape_in`] hold the member only if
-/// [`Comparing::sub_by_shape`] holds `x` in `t` at a site inside the shape ([`Site::In`]), which holds only if [`accepts`] holds `p`.
-/// There `t` is not the unknown, and `ok` is false: `Dyn` is never; a non-empty `Set(s)` is
-/// not within the empty `t.set`, and `v`, the one variable of `t`, is not rigid; a tuple is
-/// not within the empty `t.set`, and [`Comparing::row_in`] finds no tuple shape of `t`, as `t`
-/// has none, nor holds any row a split makes; a function, as `t.fns` is empty; `Var(y)`, as
-/// `t.vars` is `{v}`, `y` is not `v`, and if `y` is rigid its mask has a carrier, which the
-/// empty `t.set` does not hold. Then `v`, bindable, is bound only if `admits` holds `p`: `v`
-/// is bounded and bound to `w` alone, so `admits` holds `p` only if `p` is `Var(w)`, or of
-/// the one carrier of `w`'s mask, which has not one carrier; `p` is neither. At a site inside a shape nothing else is bound, so `p` is not held.
+/// [`Comparing::sub_by_shape`] holds `x` in `t` at a site inside the shape ([`Site::In`]), which
+/// holds only if [`accepts`] holds `p`. There `t` is not the unknown, and `ok` is false: `Dyn` is
+/// never; a non-empty `Set(s)` is not within the empty `t.set`, and `v`, the one variable of `t`,
+/// is not rigid; a tuple is not within the empty `t.set`, and [`Comparing::row_in`] finds no tuple
+/// shape of `t`, as `t` has none, nor holds any row a split makes; a function, as `t.fns` is empty;
+/// `Var(y)`, as `t.vars` is `{v}`, `y` is not `v`, and if `y` is rigid its mask has a carrier,
+/// which the empty `t.set` does not hold. Then `v`, bindable, is bound only if `admits` holds `p`:
+/// `v` is bounded and bound to `w` alone, so `admits` holds `p` only if `p` is `Var(w)`, or of
+/// the one carrier of `w`'s mask, which has not one carrier; `p` is neither. At a site inside a
+/// shape nothing else is bound, so `p` is not held.
 ///
 /// The pins hold while the bindings only grow, as they do through the members of one union:
 /// a member keeps what its shape binds, a failed attempt binds nothing ([`Comparing::search`]),
@@ -10239,9 +10249,10 @@ impl Bound {
     /// trie whose path the member allows at every place ([`Allow`]): none where its component
     /// holds the unknown, a scalar value, a tuple or a function; the variable `w` that is its
     /// first variable [`keyed`], where that one is not bound alone; any `w` where it has no such
-    /// variable or its first is bound alone ([`Bound`] has the proof). The lists are apart, as each shape is at one node.
-    /// O(m + d c log n) for m components, d nodes visited and c places at which a node visited
-    /// has nodes below it; the nodes visited are those whose path the member allows.
+    /// variable or its first is bound alone ([`Bound`] has the proof). The lists are apart, as each
+    /// shape is at one node. O(m + d c log n) for m components, d nodes visited and c places at
+    /// which a node visited has nodes below it; the nodes visited are those whose path the member
+    /// allows.
     fn lists<'c>(
         &self,
         bucket: &'c [usize],
@@ -10699,10 +10710,11 @@ impl<'m, 's> Comparing<'m, 's> {
     /// them alike, so two such signatures are compared as written, where a scope around that
     /// read one of those names apart on the two sides refused a signature against itself.
     /// (3) `solve` answers for class variables, and neither signature holds one at any depth,
-    /// so it gives nothing in either state. (4) The verdict is kept with the refusal made inside the attempt, read as
-    /// [`Self::begin_alone`] reads it, so a kept verdict is given with the same refusal, and
-    /// the two signatures are kept with it, so their addresses name them while it lives. So the
-    /// verdict kept is that of [`fits_in`] on `s` and `q` compared alone, the same each time.
+    /// so it gives nothing in either state. (4) The verdict is kept with the refusal made inside
+    /// the attempt, read as [`Self::begin_alone`] reads it, so a kept verdict is given with the
+    /// same refusal, and the two signatures are kept with it, so their addresses name them while it
+    /// lives. So the verdict kept is that of [`fits_in`] on `s` and `q` compared alone, the same
+    /// each time.
     ///
     /// Complexity tradeoff: naive version, as before, each comparison read under the names of
     /// the scope around and kept by those names ([`Cx::fitted`]): a parameter of function type
@@ -10714,7 +10726,8 @@ impl<'m, 's> Comparing<'m, 's> {
     /// costing its own level. Tradeoff: one entry per pair met, held until the outermost
     /// comparison ends. A function that holds a variable of a scope around it (a curried
     /// `(x: T) -> (y: T) -> T`) is kept instead by its signature, its reading and the bounds of
-    /// the variables it reads as themselves ([`Cx::fitted_read`], FAIL-types-fn-outer-variable-nest).
+    /// the variables it reads as themselves ([`Cx::fitted_read`],
+    /// FAIL-types-fn-outer-variable-nest).
     async fn fits_alone(&'m self, s: &Arc<Sig>, q: Arc<Sig>) -> bool {
         let key = (Arc::as_ptr(s), Arc::as_ptr(&q));
         let kept = (self.cx.borrow().fitted_alone.get(&key)).map(|(_, _, f)| f.clone());
@@ -10849,11 +10862,11 @@ impl<'m, 's> Comparing<'m, 's> {
     /// copied by its root).
     fn keep(&self, key: Compared, ok: bool, b: &Binds) {
         // Assumption, not proved (ASSUME-documented): the comparison `key` met again under `b`, the
-        // binding its true answer gave, gives `(true, b)` again, so the second entry may be read with
-        // no comparison. The argument in the doc above covers pieces bound through `accepts` at
-        // `Site::In`. It is not shown for the `Site::Other` fallback, which binds the first bindable
-        // variable without calling `admits`, so under `b` that variable may hold a piece its bound
-        // or ceiling would refuse. Evidence:
+        // binding its true answer gave, gives `(true, b)` again, so the second entry may be read
+        // with no comparison. The argument in the doc above covers pieces bound through `accepts`
+        // at `Site::In`. It is not shown for the `Site::Other` fallback, which binds the first
+        // bindable variable without calling `admits`, so under `b` that variable may hold a piece
+        // its bound or ceiling would refuse. Evidence:
         // `deep_ops::shared_payloads_with_a_variable_a_level_bind_each_once` (n from 1 to 6),
         // `an_answer_found_after_a_refusal_is_not_read_by_a_later_attempt`, benchmark 8.00x. If
         // false, a recalled `true` stands where the comparison would give false: unsound.
@@ -11357,11 +11370,12 @@ impl<'m, 's> Comparing<'m, 's> {
                 continue;
             }
             let Some(gs) = fns.get(&spot) else { continue };
-            // An `Arc<Sig>` key. Clippy flags its `OnceLock`s; these are its only interior-mutable parts:
-            // the `Facts` memo, the member-set and key caches of its unions, rows and shapes, and the
-            // chain hash of a `Via`. Each is filled at most once, with a value made from fixed fields.
-            // Hash is `digest()` and equality reads the fields, and a `Sig` behind a shared `Arc` is never
-            // changed in place, so neither the hash nor the equality of a key can change while it is held.
+            // An `Arc<Sig>` key. Clippy flags its `OnceLock`s; these are its only interior-mutable
+            // parts: the `Facts` memo, the member-set and key caches of its unions, rows and
+            // shapes, and the chain hash of a `Via`. Each is filled at most once, with a value made
+            // from fixed fields. Hash is `digest()` and equality reads the fields, and a `Sig`
+            // behind a shared `Arc` is never changed in place, so neither the hash nor the equality
+            // of a key can change while it is held.
             #[allow(clippy::mutable_key_type)]
             let all = whole.fns.get(&spot).unwrap_or(gs);
             let every = fs.len() == 1 || gs.len() == 1;
@@ -11427,18 +11441,19 @@ impl<'m, 's> Comparing<'m, 's> {
         //    or a mark of a function of `t`, which is never a skipped mark; so `x'` is in `A`.
         //    The induction of 2 goes both ways (a value is in the node made exactly when its
         //    `σ`-preimage is in the node), so a value of `A` with no skipped mark is `σ` of a
-        //    value of `t`, the replacing function being `σ` of itself; so by 3 `x'` is in `B`. On the other side the only nodes of neither kind are the marks of `g`, a
-        //    function of `other`, which hold no function; and a node holding a function holds
-        //    the skipped mark. The form of a row or shape is a product of its components, and
-        //    `payload_set` meets or takes away atoms by name only, so a node of neither kind
-        //    is never taken away. So the skipped mark is held at each place where `x'` holds
-        //    its function, and `x` is in `B`.
+        //    value of `t`, the replacing function being `σ` of itself; so by 3 `x'` is in `B`. On
+        //    the other side the only nodes of neither kind are the marks of `g`, a function of
+        //    `other`, which hold no function; and a node holding a function holds the skipped mark.
+        //    The form of a row or shape is a product of its components, and `payload_set` meets or
+        //    takes away atoms by name only, so a node of neither kind is never taken away. So the
+        //    skipped mark is held at each place where `x'` holds its function, and `x` is in `B`.
         // So `A <: B` holds whenever `t <: other` holds, and a false verdict on these forms is
         // a definite no. The first forms meet the same steps with [`MERGED`] in place of a
         // skipped mark: no function of `t` is [`MERGED`] there, and it is put only in the
         // unknown and in `fn_marks`.
         //
-        // Tests: the random test `random_unions_of_tuples_with_functions_agree_with_pairing_every_function`
+        // Tests: the random test
+        // `random_unions_of_tuples_with_functions_agree_with_pairing_every_function`
         // in tests/steps/l01_23_groups_and_refusals/judgments.rs, whose components include `_`
         // on either side, `#box(F)` and `(F, 1)` (seeds 1 to 6, 3000 cases each, no wrong yes
         // and no wrong definite no). Negative controls, each failing that test with a wrong
@@ -11503,7 +11518,8 @@ impl<'m, 's> Comparing<'m, 's> {
     /// Tests (tests/steps/l01_22_type_representation/kinds.rs):
     /// `a_payload_shape_is_within_a_union_exactly_when_its_rest_is_empty` draws 1000 payloads
     /// of two or three small items against unions of one to six, and checks `subtype` against
-    /// the emptiness of the difference; `a_payload_whose_tuple_item_needs_a_split_of_many_components_is_refused`
+    /// the emptiness of the difference;
+    /// `a_payload_whose_tuple_item_needs_a_split_of_many_components_is_refused`
     /// checks the pigeonhole rows (2 in 1, 3 in 2), with and without a field arm. What they
     /// cannot catch: the random test compares two verdicts of the checker, not a count of
     /// values, so a fault both share passes; and its items are small, so a part that `is_empty`
@@ -12265,10 +12281,10 @@ impl<'m, 's> Comparing<'m, 's> {
 
     /// Whether the payload shape `l`, number `i` of `ls`, held by no one shape of `rs` (the
     /// shapes `t` lists for its atom), is held by the shapes of `rs` near it together, where
-    /// `l`, those shapes and `t` are exact (no variable, unknown or function; [`ShapeData::exact`]):
-    /// the answer of [`Rest::held`] on the rest of `l` less them ([`Self::shape_rest`]), and
-    /// none where they are not exact. `nears` keeps the shapes of `rs` near each of `ls`
-    /// ([`near_pairs`]), made on the first call.
+    /// `l`, those shapes and `t` are exact (no variable, unknown or function;
+    /// [`ShapeData::exact`]): the answer of [`Rest::held`] on the rest of `l` less them
+    /// ([`Self::shape_rest`]), and none where they are not exact. `nears` keeps the shapes of `rs`
+    /// near each of `ls` ([`near_pairs`]), made on the first call.
     ///
     /// Why (FAIL-types-shape-union-sub-incomplete): `#a(int, int, int)` was not found within
     /// the union of the cuts `#a(B_j, B_j, B_j)` (B_j the numbers below 8 with bit j set) and
@@ -12961,7 +12977,8 @@ fn met_at<'a, P: Addressed>(
 /// The early return on `budget` is a refusal, never a wrong verdict, after which the spot is
 /// paired as before. Where the pairs of functions form stars (in each pair one function is in no
 /// other pair) it fires only when a function stands in two nodes near one node of the other
-/// side; where only the nodes form stars it can fire (the body, "The pair count"). Tests: `star_pairs_decide_as_every_pair_in_each_kind_of_spot`,
+/// side; where only the nodes form stars it can fire (the body, "The pair count"). Tests:
+/// `star_pairs_decide_as_every_pair_in_each_kind_of_spot`,
 /// `random_unions_of_tuples_with_functions_agree_with_pairing_every_function`,
 /// `functions_at_one_place_whose_tuples_meet_two_each_are_decided`.
 ///
@@ -13127,7 +13144,8 @@ fn star_pairs<P: Placed>(
     // tests/steps/l01_23_groups_and_refusals), and what they cannot catch:
     // `star_pairs_decide_as_every_pair_in_each_kind_of_spot` builds one case per kind of spot
     // (negative control: `star_pairs` changed to keep only the first edge of each left node
-    // made it fail, run once, not committed); `a_payload_with_fields_never_meets_one_more_item_of_any_value`
+    // made it fail, run once, not committed);
+    // `a_payload_with_fields_never_meets_one_more_item_of_any_value`
     // checks the place lemma (red before FAIL-forms-nested-marks);
     // `random_unions_of_tuples_with_functions_agree_with_pairing_every_function`
     // compares against pairing every function on random unions of small tuples;
@@ -13415,7 +13433,8 @@ fn held(verdict: Verdict) -> Option<bool> {
 /// up: nothing; the answer is the naive one. Where `cx` holds such a function, a type whose
 /// first other variable lies at the end of the walk still costs its size at each comparison,
 /// as its [`Cx::read`] did: the order of the comparison is unchanged (8.2 times at 8n for n
-/// such levels, `results_with_a_variable_late_beside_closed_functions_are_compared_in_linear_time`).
+/// such levels,
+/// `results_with_a_variable_late_beside_closed_functions_are_compared_in_linear_time`).
 /// A memo per node within one comparison was not added here: a row read with names made in
 /// a scope is a new node at each comparison of function types, so a memo by node would not
 /// hit. A row that holds no variable is instead read once with names made outside every
@@ -13675,11 +13694,11 @@ const UNPAIRED: &str = "two or more functions at one place of a tuple or an atom
 /// of the values `σ` gives in the plain ones (a component's form outside its marks holds no
 /// mark, as [`Forms::cut`] takes them from sets of all atoms); they also keep the skipped marks
 /// where every function is, which no value is mapped to, and which the other side's form then
-/// holds too (the proof at [`Comparing::form_verdict`], step 4). If the true forms, with every pair compared, give
-/// `A <: B`, then `φ(A) <: φ(B)`, as `φ` is a function on values. A function `g` of the other
-/// side holds, in `B`, the marks of the functions that fit it; those compared are in the plain
-/// form, and `φ` maps them as the `Merged` form does; those not compared were skipped at a spot
-/// where `g` is, whose marks `φ` maps to [`MERGED`], which `g` holds. So `φ(B)` is within the
+/// holds too (the proof at [`Comparing::form_verdict`], step 4). If the true forms, with every pair
+/// compared, give `A <: B`, then `φ(A) <: φ(B)`, as `φ` is a function on values. A function `g` of
+/// the other side holds, in `B`, the marks of the functions that fit it; those compared are in the
+/// plain form, and `φ` maps them as the `Merged` form does; those not compared were skipped at a
+/// spot where `g` is, whose marks `φ` maps to [`MERGED`], which `g` holds. So `φ(B)` is within the
 /// `Merged` form of the other side, and `A <: B` gives the `Merged` verdict true. One mark for
 /// every spot, not one each, so that a function skipped at two spots is mapped one way; what is
 /// given up is only that a function holding the mark takes skipped functions of other spots
@@ -13730,10 +13749,10 @@ impl Forms {
     ///
     /// Complexity tradeoff (COMPLEXITY.md F201): a row or payload is met at its depth once, and
     /// once more if it is met at a second depth, after which it and every node below it are met
-    /// at every depth and not again: O(size) node visits, as with one visit a node. The naive refinement, each
-    /// node met once for each depth it is at, costs a shared node its subtree at each depth,
-    /// O(size · depth) for `(e, (e, (e, …)))`; what is given up is the depth of a place where a
-    /// shared node is, whose functions are then paired at every depth, as all were before.
+    /// at every depth and not again: O(size) node visits, as with one visit a node. The naive
+    /// refinement, each node met once for each depth it is at, costs a shared node its subtree at
+    /// each depth, O(size · depth) for `(e, (e, (e, …)))`; what is given up is the depth of a place
+    /// where a shared node is, whose functions are then paired at every depth, as all were before.
     fn fns(t: &Ty, left: bool, fields: &mut HashSet<String>) -> Option<PlaceFns> {
         let mut out = PlaceFns::default();
         // Each node met, with its depth, or none once met at two.
@@ -13814,11 +13833,12 @@ impl Forms {
         // The spots of the side compared are looked up, since the other side may be a whole
         // union whose places are many ([`Comparing::near_form`]).
         left.spots(right).find_map(|(spot, fs)| {
-            // An `Arc<Sig>` key. Clippy flags its `OnceLock`s; these are its only interior-mutable parts:
-            // the `Facts` memo, the member-set and key caches of its unions, rows and shapes, and the
-            // chain hash of a `Via`. Each is filled at most once, with a value made from fixed fields.
-            // Hash is `digest()` and equality reads the fields, and a `Sig` behind a shared `Arc` is never
-            // changed in place, so neither the hash nor the equality of a key can change while it is held.
+            // An `Arc<Sig>` key. Clippy flags its `OnceLock`s; these are its only interior-mutable
+            // parts: the `Facts` memo, the member-set and key caches of its unions, rows and
+            // shapes, and the chain hash of a `Via`. Each is filled at most once, with a value made
+            // from fixed fields. Hash is `digest()` and equality reads the fields, and a `Sig`
+            // behind a shared `Arc` is never changed in place, so neither the hash nor the equality
+            // of a key can change while it is held.
             #[allow(clippy::mutable_key_type)]
             let gs = right.get(&spot)?;
             let unlike = fs.iter().filter(|f| !gs.contains(*f)).count();
@@ -15718,11 +15738,11 @@ impl<'m> Pairs<'m, (MeetAt, MeetAt), Ty> {
     // [`Domains::meet`] with one union of m functions file it once, not `a` times (filing it
     // anew at each call was O(a·m)); each function of `a` finds the functions of `t` not apart
     // from it by one lookup for each group of kinds, expected O(n + m) plus the pairs tried,
-    // and those sorted into written order, O(k log k) for k pairs. Given up: pairs apart only by a value outside a class (`int - 0` against `0`),
-    // or whose permissions hold a variable, a function or the unknown at every parameter, or
-    // where neither side has a keyed exact arrow, are tried as before; n·m such pairs cost
-    // O(n·m). What each function's arrows say of its domain ([`Domains`]) is worked out once
-    // for each function, not once for each pair.
+    // and those sorted into written order, O(k log k) for k pairs. Given up: pairs apart only by a
+    // value outside a class (`int - 0` against `0`), or whose permissions hold a variable, a
+    // function or the unknown at every parameter, or where neither side has a keyed exact arrow,
+    // are tried as before; n·m such pairs cost O(n·m). What each function's arrows say of its
+    // domain ([`Domains`]) is worked out once for each function, not once for each pair.
     async fn fns_met(&'m self, a: &Ty, t: &Ty) -> Vec<Arc<Sig>> {
         // A guard no input reaches (row TEST-types-unreached-paths-5): the one caller,
         // `Pairs::meet`, calls this only where `a.both_fns(t)`, so `t.fns` is not empty, and
@@ -15739,11 +15759,12 @@ impl<'m> Pairs<'m, (MeetAt, MeetAt), Ty> {
             x
         });
         let mut approx = Approx::default();
-        // An `Arc<Sig>` key. Clippy flags its `OnceLock`s; these are its only interior-mutable parts:
-        // the `Facts` memo, the member-set and key caches of its unions, rows and shapes, and the
-        // chain hash of a `Via`. Each is filled at most once, with a value made from fixed fields.
-        // Hash is `digest()` and equality reads the fields, and a `Sig` behind a shared `Arc` is never
-        // changed in place, so neither the hash nor the equality of a key can change while it is held.
+        // An `Arc<Sig>` key. Clippy flags its `OnceLock`s; these are its only interior-mutable
+        // parts: the `Facts` memo, the member-set and key caches of its unions, rows and shapes,
+        // and the chain hash of a `Via`. Each is filled at most once, with a value made from fixed
+        // fields. Hash is `digest()` and equality reads the fields, and a `Sig` behind a shared
+        // `Arc` is never changed in place, so neither the hash nor the equality of a key can change
+        // while it is held.
         #[allow(clippy::mutable_key_type)]
         let mut have = HashSet::new();
         let mut out = Vec::new();
@@ -18486,8 +18507,8 @@ enum Part {
 
 /// How the arrow `sa` of `s` takes the parameters of `qa`: all of them, or all but one `j`,
 /// at which its type binds nothing ([`binds_nothing`]), each bounded variable of `s` it binds
-/// bound as [`bounds_hold`] requires, with what it binds. [`arrow_fits`] with `j` left out: a type that binds
-/// nothing, so the pass over every parameter binds what the pass without `j` binds.
+/// bound as [`bounds_hold`] requires, with what it binds. [`arrow_fits`] with `j` left out: a type
+/// that binds nothing, so the pass over every parameter binds what the pass without `j` binds.
 async fn part_of<'m>(
     s: &Sig,
     sa: &Arrow,
@@ -19756,8 +19777,9 @@ impl Domains {
     /// where `A` holds a value outside that union `U_h`, or the union `G_h` of the exact
     /// arrows' parameter types holds a value outside `A`, each a value the kernel builds and
     /// checks ([`KType::subtype_verdict`] answering `Inhabited`), with `U_h` and `G_h` given
-    /// kernel types of their values exactly too ([`Domains::kernel_of`]). Where every such `h` of every arrow of `q` is so, no function is of
-    /// both signatures, since its domain would hold the tuple and lie within `q`'s permission.
+    /// kernel types of their values exactly too ([`Domains::kernel_of`]). Where every such `h` of
+    /// every arrow of `q` is so, no function is of both signatures, since its domain would hold the
+    /// tuple and lie within `q`'s permission.
     ///
     /// The `w` of each `a` and `g` are compared at once. A value of the union of their `A`s
     /// outside the union of every `U_h` is in some `A` and outside each `U_h`, so that `A`'s
@@ -21094,7 +21116,8 @@ impl Sig {
         Cow::Owned(out)
     }
 
-    /// Returns `(decoded_needs, decoded_own)` with all implicit internal `FwdNeed` variables included.
+    /// Returns `(decoded_needs, decoded_own)` with all implicit internal `FwdNeed` variables
+    /// included.
     pub fn decoded_needs_and_own(&self) -> (Cow<'_, [Need]>, Cow<'_, BTreeSet<Arc<str>>>) {
         if !self.has_fwd_needs() {
             return (Cow::Borrowed(&self.needs), Cow::Borrowed(&self.own));
@@ -21117,7 +21140,8 @@ impl Sig {
         (Cow::Owned(needs_out), Cow::Owned(own_out))
     }
 
-    /// Compares `(needs, own)` of `x` and `y` in `Same::sig` (`M66`), decoding `FwdNeed` only if reached.
+    /// Compares `(needs, own)` of `x` and `y` in `Same::sig` (`M66`), decoding `FwdNeed` only if
+    /// reached.
     fn same_needs_and_own(x: &Sig, y: &Sig) -> bool {
         if !x.has_fwd_needs() && !y.has_fwd_needs() {
             return ((x.needs.is_empty() && y.needs.is_empty()) || x.needs == y.needs)
@@ -21618,13 +21642,13 @@ impl Sig {
     /// names are in `facts.names` and not in `facts.classes`). The same steps cover the pass
     /// over a held function whose facts list no class of `left` and no internal result (the
     /// first `continue` below): its forwards are then passed over by (1)-(5) as well, and the
-    /// rest of it holds no class of `left` by its facts. Take a held function `s` whose facts list no class of `left`, and a
-    /// forward `fwd` of it with `range.meets_internal(fwd, left)` false and no type of its need
-    /// holding a function with internal results. (1) Every variable of the leaf needs `fwd`
-    /// decodes to is a variable of a type of `sigma` or `exits`, an internal result of `fwd`,
-    /// or one bound by a function those leaf needs hold. In a forward the checker keeps, every
-    /// variable of the callee's leaf needs, at any depth, is a parameter or a result of the
-    /// callee or bound by a held function (`r10_forward`: `#4`, `#4-outer`, `#6`), and the
+    /// rest of it holds no class of `left` by its facts. Take a held function `s` whose facts list
+    /// no class of `left`, and a forward `fwd` of it with `range.meets_internal(fwd, left)` false
+    /// and no type of its need holding a function with internal results. (1) Every variable of the
+    /// leaf needs `fwd` decodes to is a variable of a type of `sigma` or `exits`, an internal
+    /// result of `fwd`, or one bound by a function those leaf needs hold. In a forward the checker
+    /// keeps, every variable of the callee's leaf needs, at any depth, is a parameter or a result
+    /// of the callee or bound by a held function (`r10_forward`: `#4`, `#4-outer`, `#6`), and the
     /// decode puts a type of `sigma` for each parameter and a result type for each result; a
     /// child forward is entered with its `sigma` replaced the same way, so this holds at every
     /// depth. (2) No variable of the last kind is in `left` (FAIL-map-chain-own-vars-carry,
@@ -21641,13 +21665,13 @@ impl Sig {
     /// ended before the level `want` is taken from, so it is not in `want`. An internal result
     /// of a forward such a function keeps is not of this kind: `#4-own-vars` now refuses a
     /// forward whose leaf needs hold a function with one ([`VarFacts::internal`], which
-    /// `VarFacts::held` ORs up from every depth). (3) No variable of the first kind is in `left`: `sigma` and `exits`
-    /// are types of the need ([`Need::tys`]), whose classes, at every depth, are in the facts
-    /// of `s` (`VarFacts::tys`). (4) No internal result is in `left`: `meets_internal` tests
-    /// each against `left` past O(1) tests that rule out only names (a named block's results,
-    /// never a class) and classes outside `base_class .. base_class + need_count`. (5) A
-    /// function in the decoded needs either comes from a type of `sigma` or `exits`, so has no
-    /// internal results and its classes are in the facts of `s`, or is one of (2), which keeps
+    /// `VarFacts::held` ORs up from every depth). (3) No variable of the first kind is in `left`:
+    /// `sigma` and `exits` are types of the need ([`Need::tys`]), whose classes, at every depth,
+    /// are in the facts of `s` (`VarFacts::tys`). (4) No internal result is in `left`:
+    /// `meets_internal` tests each against `left` past O(1) tests that rule out only names (a named
+    /// block's results, never a class) and classes outside `base_class .. base_class + need_count`.
+    /// (5) A function in the decoded needs either comes from a type of `sigma` or `exits`, so has
+    /// no internal results and its classes are in the facts of `s`, or is one of (2), which keeps
     /// no forward with internal results and whose free variables are of the first kind and
     /// bound ones out of `left`; the walk passes it over or enters it and finds nothing of
     /// `left`. So the decoded block moves nothing to `out` and leaves `left` as it
@@ -21984,8 +22008,8 @@ impl Sig {
 // signature, row or shape once for each path to it: O(2^n) for n definitions each holding the
 // one before twice (`doubled_types` in the l02_08 benchmarks), and O(depth²) for function
 // types nested depth deep (`nested_fn_types`); both measured with that walk (the first ran
-// past the benchmark's 20 s limit, the second gave T(8n)/T(n) = 31.6). Used: a post-order walk on an
-// explicit stack (a function type nests as deep as the program) with each node's digest kept
+// past the benchmark's 20 s limit, the second gave T(8n)/T(n) = 31.6). Used: a post-order walk on
+// an explicit stack (a function type nests as deep as the program) with each node's digest kept
 // by address, as `Sig::first_seen` and `Sig::held_without` keep the nodes they entered: every
 // node is borrowed for `'a`, so no key names a freed node, and the map is only read by key,
 // never iterated, so its order changes nothing. Given up: a map entry of 40 bytes per distinct
@@ -22177,8 +22201,9 @@ impl fmt::Display for Ty {
 /// "Types in a message"). A variable no signature around it binds is printed `_`.
 // Complexity tradeoff (COMPLEXITY.md F68): naive, each fresh name tried from `T` again at
 // each rename, O(renames²) tries; used, a map from each variable to its stack of printed
-// names, a set of the names in use and one counter that only grows, O(size of the type) plus O(renames) fresh names.
-// Memory: one entry per open variable; a fresh name skipped once is never reused in the type.
+// names, a set of the names in use and one counter that only grows, O(size of the type) plus
+// O(renames) fresh names. Memory: one entry per open variable; a fresh name skipped once is never
+// reused in the type.
 #[derive(Default)]
 struct Scope {
     /// Each variable's printed names, innermost signature last.
@@ -24979,10 +25004,10 @@ mod tests {
     }
 
     /// Whether, at some parameter, a set of arrows of `sas` covers `qa`: each arrow of the set
-    /// has a parameter type there that binds nothing ([`binds_nothing`]), takes `qa`'s other parameters and returns within its
-    /// result, and the union of their parameter types there holds `qa`'s. Every nonempty set is
-    /// tried when there are at most [`SUBSETS`] arrows; with more, the set of every arrow that
-    /// qualifies, which holds what any of its subsets holds.
+    /// has a parameter type there that binds nothing ([`binds_nothing`]), takes `qa`'s other
+    /// parameters and returns within its result, and the union of their parameter types there holds
+    /// `qa`'s. Every nonempty set is tried when there are at most [`SUBSETS`] arrows; with more,
+    /// the set of every arrow that qualifies, which holds what any of its subsets holds.
     async fn together<'m>(s: &Sig, sas: &[Arrow], qa: &Arrow, c: &'m Comparing<'m, '_>) -> bool {
         for j in 0..qa.params.len().min(s.params.len()) {
             let mut ok = Vec::with_capacity(sas.len());
@@ -25713,7 +25738,8 @@ mod tests {
 
     /// The sizes of `s` in
     /// [`the_index_of_arrows_gives_the_verdict_of_every_set_of_arrows_on_wider_shapes`]. The
-    /// overloads of 90 arrows are `bench::the_index_of_arrows_gives_the_verdict_on_large_overloads`.
+    /// overloads of 90 arrows are
+    /// `bench::the_index_of_arrows_gives_the_verdict_on_large_overloads`.
     const WIDER_SIZES: [usize; 5] = [1, 3, 6, 10, 30];
 
     #[test]
@@ -26083,8 +26109,8 @@ mod tests {
     /// once trying every binding of `B` to a union of carriers of its bound
     /// ([`EVERY_BINDING`]); the answers agree. `Never` is no instance of these bounds (rule 6),
     /// and tried, `(x0: bool | B) -> int` would fit `(x0: bool) -> int`, though each instance
-    /// takes `int` or `f64` keys that `q` does not. `q` is every arrow and every pair of arrows over
-    /// a list of parameter types, so that a cover of `q`'s arrow often binds nothing in `B`
+    /// takes `int` or `f64` keys that `q` does not. `q` is every arrow and every pair of arrows
+    /// over a list of parameter types, so that a cover of `q`'s arrow often binds nothing in `B`
     /// and the list is used. The overload of the instances is not the oracle: domains are
     /// exact, so `((x0: bool | int) -> int) & ((x0: bool | f64) -> int)` takes `f64`, which
     /// `(x0: int | bool) -> int` does not, while `(x0: bool | B) -> int for B in int | f64`
@@ -26321,7 +26347,8 @@ mod tests {
         s
     }
 
-    /// Neighbors of [`an_overload_with_a_bounded_variable_fits_where_one_of_its_arrows_is_expected`]:
+    /// Neighbors of
+    /// [`an_overload_with_a_bounded_variable_fits_where_one_of_its_arrows_is_expected`]:
     /// a bounded variable is bound only to what its bound holds, so a piece its shape could
     /// hold only by such a binding is found in a later shape, under any name of the expected
     /// variables; and a binding the bound does hold is still made, and still checked against
@@ -28904,9 +28931,9 @@ mod tests {
     /// comparing the value with every tuple of its length decides (COMPLEXITY.md F133), on
     /// random unions of tuples of points, classes, unions, functions, variables and the unknown,
     /// and random tuple values of points of every kind, alone, nested as the second component
-    /// of `(0, _)`, and as `k` values `(x)` in a tuple of `k` copies of `(t)`: a copy of a type copies
-    /// its outer level, so through the one row of `(t)` the union is one node, read for each of
-    /// the `k` values in one walk, and filed in its own course.
+    /// of `(0, _)`, and as `k` values `(x)` in a tuple of `k` copies of `(t)`: a copy of a type
+    /// copies its outer level, so through the one row of `(t)` the union is one node, read for each
+    /// of the `k` values in one walk, and filed in its own course.
     #[test]
     fn tuples_that_hold_a_value_through_the_index_are_those_of_every_tuple() {
         let int = Ty::carrier(Carrier::Int);
@@ -29406,7 +29433,8 @@ pub mod r10_hash {
     // operations every operand is below `P`. Each field the hash keeps (`PartHash`, the side
     // sums, `FreeWeights`'s `scale`, `inv` and weights, `base_pow`) starts at `0` or `1` and is
     // only assigned such results. The debug-build tests of zedc-types run every hash path with
-    // the debug checks on; `signature_hashes_are_the_numbers_they_were_before_the_shared_arithmetic`
+    // the debug checks on;
+    // `signature_hashes_are_the_numbers_they_were_before_the_shared_arithmetic`
     // (tests/unreached6.rs) holds the hashes of signatures to the numbers the old copy gave.
     use zed_numtheory::m61::{add as add_p, mul as mul_p, reduce as mod_p, sub as sub_p};
 
@@ -29560,7 +29588,8 @@ pub mod r10_hash {
         }
     }
 
-    /// `M54`: Whole-chain hash of `Via`, memoized per link in `Via::chain_hash` (`O(1)` per new link).
+    /// `M54`: Whole-chain hash of `Via`, memoized per link in `Via::chain_hash` (`O(1)` per new
+    /// link).
     pub fn hash_via_chain(via: &Via) -> u64 {
         if let Some(&cached) = via.chain_hash.get() {
             return cached;
@@ -29643,7 +29672,8 @@ pub mod r10_hash {
             );
             let mut out = self.clone();
             let v1 = add_p(sub_p(self.body.val, self.span_contrib), new_contrib);
-            // Clear `Map.lambda`: every `true` (`2`) becomes `false` (`1`), subtracting `1 * s_map_lambda_true`.
+            // Clear `Map.lambda`: every `true` (`2`) becomes `false` (`1`), subtracting
+            // `1 * s_map_lambda_true`.
             out.body.val = sub_p(v1, self.s_map_lambda_true);
             out.span_contrib = new_contrib;
             out.s_map_lambda_true = 0;
@@ -30988,7 +31018,8 @@ pub mod r10_hash {
                 }
                 self.emit_span(*site);
             }
-            // `Need::via` (`CallPath`) is ignored by `PartialEq` and `Hash` for `Need`, so not emitted.
+            // `Need::via` (`CallPath`) is ignored by `PartialEq` and `Hash` for `Need`, so not
+            // emitted.
         }
 
         pub fn emit_sig(&mut self, s: &Sig) {

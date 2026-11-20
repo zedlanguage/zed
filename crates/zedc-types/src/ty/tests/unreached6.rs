@@ -700,7 +700,8 @@ fn a_signature_of_rows_and_payloads_nested_deep_hashes_on_a_small_stack() {
 /// D's hash of a function nested [`DEEP`] levels deep, each level holding the outermost
 /// function's own `T`, takes no stack frame a level: each level hashed the one below in
 /// place, under the scopes of every level around it, and overflowed the stack (the l01_22
-/// bench `function_types_nested_deep_whose_inner_levels_hold_the_outer_variable_fit_in_linear_time`,
+/// bench
+/// `function_types_nested_deep_whose_inner_levels_hold_the_outer_variable_fit_in_linear_time`,
 /// row FAIL-l0126-stack-overflow-after-d). Tuples between the levels put the inner functions
 /// in rows.
 #[test]
@@ -720,7 +721,8 @@ fn functions_nested_deep_holding_the_outer_variable_hash_on_a_small_stack() {
     });
 }
 
-/// One level of the nest of [`functions_holding_an_outer_variable_in_an_arrow_and_a_need_hash_once_each`]:
+/// One level of the nest of
+/// [`functions_holding_an_outer_variable_in_an_arrow_and_a_need_hash_once_each`]:
 /// a function whose arrow and whose need hold the same row, which holds the level below and,
 /// when `open`, the outer variable `T`; else `int`.
 fn level_in_arrow_and_need(inner: Ty, open: bool) -> Ty {
