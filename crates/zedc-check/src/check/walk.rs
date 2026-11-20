@@ -7281,8 +7281,14 @@ impl<'t, 'a> Ck<'t, 'a> {
                 // for a divisor the text gives a value, the range is the answer. Complexity
                 // tradeoff: evaluating the constraints at each member of the range costs one
                 // evaluation per member (10^9 for `0..=1000000000`); at the roots, after Cucker,
-                // Koiran and Smale 1999, it costs one per root, and the roots of `t` terms of
-                // `B` bits cost O(t^3) evaluations of the divisor, whatever its degree.
+                // Koiran and Smale ("A polynomial time algorithm for Diophantine equations in
+                // one variable", J. Symbolic Comput. 27(1), 1999, pp. 21-29,
+                // doi:10.1006/jsco.1998.0242, Crossref 2026-11-20, not read), it costs one per
+                // root, and the roots of `t` terms of `B` bits cost a number of evaluations of
+                // the divisor polynomial in `t` and `B`, whatever its degree. (This comment
+                // said O(t^3), the cost of the paper's chain of `t` derivatives;
+                // `zed_kernel::poly::roots::integer_roots` gave that chain up for an interval
+                // search, measured near linear in `t`, and its doc gives the cost.)
                 if divides
                     && !nonzero
                     && int_divisor
@@ -11839,7 +11845,10 @@ impl<'a> Ck<'_, 'a> {
     /// costs O(d log d) (`follow::bench::nested_sums_of_one_input_scale`, "a sum of d
     /// ramps"). Prior work: a per-function summary in abstract interpretation reads a callee
     /// once for all its call sites (Sharir and Pnueli, "Two approaches to interprocedural
-    /// data flow analysis", 1981); equal calls are found by hashing the callee and the
+    /// data flow analysis", in S. S. Muchnick and N. D. Jones (eds.), *Program Flow Analysis:
+    /// Theory and Applications*, Prentice-Hall, 1981, the functional approach; a book chapter
+    /// with no DOI, not found on Crossref, from memory, not checked); equal calls are found by
+    /// hashing the callee and the
     /// printed arguments, as hash-consing finds equal terms. Cost: a call is read through
     /// its callee only where the body has a summary; with a body that calls another, or one
     /// that is not affine on pieces (`n * n`), or arguments whose terms differ, each call is
@@ -15071,7 +15080,10 @@ impl<'t, 'a> Ck<'t, 'a> {
     /// CONST-too-large-coprime-base): no root of one part shares a prime with a root of the
     /// other. A check between roots made by products is decided once the walk is over, with
     /// every root met ([`Self::judge_proved`]), and the operation is judged then. GMP's `mpq_mul` and
-    /// `mpq_div` (after Knuth, TAOCP vol. 2, §4.5.1) cancel the cross gcds before multiplying,
+    /// `mpq_div` (after Knuth, *The Art of Computer Programming*, vol. 2, *Seminumerical
+    /// Algorithms*, sec. 4.5.1, a book, from memory, not checked: for `(u/u')·(v/v')` in lowest
+    /// terms, divide by `gcd(u, v')` and `gcd(u', v)` first) cancel the cross gcds before
+    /// multiplying,
     /// so `x / x` builds nothing there, and a bound on the factors alone would reject it. The
     /// kernel's `Rat::mul` and `Rat::div` build the unreduced products first, so a quotient of
     /// two wide `rat`s whose parts may share a factor can still need more memory than the
@@ -15408,7 +15420,10 @@ impl<'t, 'a> Ck<'t, 'a> {
     /// in all, however many powers read it, and no stack depth. Each read costs one kernel
     /// operation on the values of its operands, the operation the run makes too: a `/`
     /// multiplies and reduces the product by the gcd (`Rat::div`: Burnikel-Ziegler
-    /// remainder, then Stein's binary gcd), so a chain whose values stay of one size costs
+    /// remainder, then Stein's binary gcd: J. Stein, "Computational problems associated with
+    /// Racah algebra", J. Computational Physics 1(3), 1967, pp. 397-405,
+    /// doi:10.1016/0021-9991(67)90047-2, Crossref 2026-11-20, not read; both are in
+    /// `zed_kernel`, which documents them), so a chain whose values stay of one size costs
     /// O(n) operations of that size, and one whose values grow at each step costs the
     /// operations on all of their sizes, as the run's would: `y_i = y_{i-1} / rat(b + i)` with
     /// `b` of 103 bits took 145 ms at 400 names and 980 ms at 3200 (2026-11-13, load 41), and
@@ -25170,7 +25185,9 @@ fn either_root(roots: &mut coprime::Roots, a: &Coef, b: &Coef) -> Option<coprime
 /// in O(1) ([`coprime::Roots::union`]); a check between two single roots is one gcd, decided
 /// at once as before, and one between sets made by products waits for the coprime base of
 /// every root the walk met (Bernstein, "Factoring into coprimes in essentially linear time",
-/// J. Algorithms 54, 2005), where it costs set lookups ([`coprime::Roots::settle`]): a chain
+/// J. Algorithms 54(1), 2005, doi:10.1016/j.jalgor.2004.04.009, sec. 18; the module doc of
+/// `coprime` gives the parts used), where it costs set lookups ([`coprime::Roots::settle`]): a
+/// chain
 /// of `n` products costs O(n) here and O(n log^2 n) lookups at the end.
 fn product_built(roots: &mut coprime::Roots, op: BinaryOp, x: &Built, y: &Built) -> Option<Built> {
     let [p, q] = &x.parts;

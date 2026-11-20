@@ -415,7 +415,9 @@ impl<'a> Arms<'a> {
     /// `Assume` under `p` is one deeper than `p` and jumps to where `p`'s jump jumps, when the
     /// two jumps below it are of one length, else to `p`. So a jump goes up `2^j - 1` nodes
     /// for some `j`, and a search up a chain of `d` tests takes O(log d) jumps and steps
-    /// (Myers 1983, the skew-binary jump pointers).
+    /// (E. W. Myers, "An applicative random-access stack", Information Processing Letters
+    /// 17(5), 1983, pp. 241-248, doi:10.1016/0020-0190(83)90106-0, Crossref 2026-11-20, not
+    /// read: the skew-binary jump pointers, the rule the sentences above state, from memory).
     fn add(&mut self, n: Node<'a>) -> usize {
         let k = self.nodes.len();
         let (depth, jump) = match &n {

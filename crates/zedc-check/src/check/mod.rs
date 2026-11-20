@@ -990,7 +990,9 @@ impl Fixes {
 
     /// `other` added to these. The fixes of the smaller one move, and only their marks, so
     /// that a fix moves O(log fixes) times however the groups join (union by size; Hopcroft
-    /// and Ullman, "Set merging algorithms", SIAM J. Comput. 2(4), 1973). What was read of
+    /// and Ullman, "Set merging algorithms", SIAM J. Comput. 2(4), 1973, pp. 294-303,
+    /// doi:10.1137/0202024, Crossref 2026-11-20, not read: moving the smaller set's members
+    /// into the larger moves each member O(log n) times). What was read of
     /// each is kept: the moved fixes' places shift, and the bound on the ids read is the
     /// earlier removal and the larger id of the two.
     fn join(&mut self, mut other: Fixes) {
@@ -1547,7 +1549,11 @@ struct Class {
     /// The number of classes in its tree, of a root.
     size: usize,
     /// Its edge in the proof forest of the merges [Nieuwenhuis and Oliveras, "Fast
-    /// congruence closure and extensions", 2007]: the class it was merged with and the merge,
+    /// congruence closure and extensions", Information and Computation 205(4), 2007,
+    /// pp. 557-580, doi:10.1016/j.ic.2006.08.009, Crossref 2026-11-20, not read; from memory:
+    /// each merge adds an edge between the two nodes merged, after reversing the path from one
+    /// of them to its root, so the path between two nodes lists the merges that explain their
+    /// equality]: the class it was merged with and the merge,
     /// or none at the root of its proof tree. Each merge adds one edge between the two
     /// classes it names, so the path between two classes of one tree lists the merges that
     /// made them one ([`Ck::merges_between`]). Each class has one, not only a root.

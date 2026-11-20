@@ -12,7 +12,8 @@
 //! Where both sides are one number, that is one gcd, decided at once. Where a side is a set
 //! made by products, the check waits for the end of the walk ([`Roots::settle`]), which builds
 //! one coprime base of every root (Bernstein, "Factoring into coprimes in essentially linear
-//! time", J. Algorithms 54, 2005): pairwise coprime numbers such that each root is, up to
+//! time", J. Algorithms 54(1), 2005, pp. 1-30, doi:10.1016/j.jalgor.2004.04.009; see
+//! [`coprime_base`] for the sections used): pairwise coprime numbers such that each root is, up to
 //! exponents, a product of some of them. Two sets then share a prime exactly when the base
 //! elements of their roots meet, a set lookup per element.
 //!
@@ -430,10 +431,16 @@ fn disjoint(
 ///
 /// Complexity tradeoff: the naive method refines the base one root at a time, splitting each
 /// against every element that shares a factor with it (factor refinement, Bach, Driscoll and
-/// Shallit, "Factor refinement", J. Algorithms 15, 1993), O(n) gcds a root and O(n^2) in all,
+/// Shallit, "Factor refinement", J. Algorithms 15(2), 1993, pp. 199-222,
+/// doi:10.1006/jagm.1993.1038, Crossref 2026-11-20, not read), O(n) gcds a root and O(n^2) in all,
 /// as for `n` wide even numbers, all of which share 2. Used: first, which roots share a prime
 /// with any other, by Bernstein's product and remainder trees (D. J. Bernstein, "How to find
-/// smooth parts of integers", 2004, the batch gcd): with `P` the product of all roots, a root
+/// smooth parts of integers", draft of 2004-05-10, cr.yp.to/factorization/smoothparts-20040510
+/// .pdf, Algorithm 2.1: "Compute z ← p1 · · · pm using a product tree", then "z mod x1, ...,
+/// z mod xn using a remainder tree", then `(z mod x_k)^(2^e) mod x_k` by repeated squaring and
+/// its gcd with `x_k`; read 2026-11-20). Departure, the batch gcd: the product is of the roots
+/// themselves, not of primes, and the remainder is taken modulo `r^2`, since
+/// `(P mod r^2) / r = (P / r) mod r`, the product of the other roots modulo `r`; so a root
 /// `r` shares none exactly when `gcd(r, (P mod r^2) / r)` is 1. The tree costs O(M(N) log n)
 /// for `n` roots of `N` bits in all (`mul_uint`, by transforms past 512 words; `rem_uint`,
 /// O(M) by Newton's reciprocal), plus one gcd a root. Each root that shares none is its own
@@ -546,7 +553,10 @@ fn without_primes_of(c: &BigUint, a: &BigUint) -> BigUint {
 
 /// A coprime base of `roots`, numbers above 1, and the indices of the elements of each root,
 /// by halves: the base of each half, then the two merged ([`merged`]), as Bernstein's `cb`
-/// ("Factoring into coprimes in essentially linear time", J. Algorithms 54, 2005, section 18).
+/// ("Factoring into coprimes in essentially linear time", J. Algorithms 54(1), 2005, pp. 1-30,
+/// doi:10.1016/j.jalgor.2004.04.009, section 18: Algorithm 18.1 computes `cb S` by halves, the
+/// base of each half, then 17.3's `cb(P ∪ Q)` of the two; the numbering checked in the
+/// author's preprint, cr.yp.to dcba-20040404, on 2026-11-20).
 /// The primes of each element divide exactly the roots whose lists hold it, and each prime of
 /// a root is in one element of its list. Only that is used, not the exponents, so an element
 /// may hold primes Bernstein's base keeps apart: `6` for the roots 6 and 12, where his is 2
