@@ -410,7 +410,7 @@ fn prelinked_in(d: &Path, library: &str) -> Vec<String> {
 /// A build stopped by SIGKILL while the driver makes the prelinked runtime, which comes before
 /// the build has a working directory, leaves none, and leaves only the prelink's unfinished
 /// file; the next build to the same output prelinks again, removes that file, and succeeds
-/// (FAIL-build-killed-link-no-working-dir). The runtime library is linked (`link(2)`) into a
+/// (FAIL-build-killed-link-no-working-dir). The runtime library is linked (`symlink(2)`) into a
 /// directory of this test's own, which `zed_native::link::prelinked` looks in first, so the
 /// build prelinks there whatever other tests have made beside the library itself; the
 /// prelinked runtimes a run before left there are removed first, and the one this run makes
@@ -422,21 +422,18 @@ fn a_build_killed_while_prelinking_blocks_no_later_build() {
     let library = runtime();
     let name = library.file_name().unwrap().to_str().unwrap().to_string();
     let linked = d.join(&name);
-    // The library of a build of zed-native before is another file; this one is linked again.
-    use std::os::unix::fs::MetadataExt;
-    let same =
-        |a: &std::fs::Metadata, b: &std::fs::Metadata| (a.dev(), a.ino()) == (b.dev(), b.ino());
-    match std::fs::metadata(&linked) {
-        Ok(m) if same(&m, &std::fs::metadata(&library).unwrap()) => {}
-        Ok(_) => {
-            std::fs::remove_file(&linked).unwrap();
-            std::fs::hard_link(&library, &linked).unwrap();
+    // A symbolic link, not a hard link: tools/run_tests.sh mounts the run's copy of the build
+    // over the profile folder, so the library and this directory are on two mounts, and
+    // link(2) between mounts fails (EXDEV) even on one file system. `ZED_RUNTIME` is used as
+    // given, not resolved (link.rs, `Toolchain`), so the build looks for the prelinked object
+    // in this directory. The link a run before left may name another path; it is made again.
+    match std::fs::remove_file(&linked) {
+        Err(e) if e.kind() != std::io::ErrorKind::NotFound => {
+            panic!("{}: {e}", linked.display())
         }
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
-            std::fs::hard_link(&library, &linked).unwrap();
-        }
-        Err(e) => panic!("{}: {e}", linked.display()),
+        _ => {}
     }
+    std::os::unix::fs::symlink(&library, &linked).unwrap();
     for f in prelinked_in(&d, &name) {
         std::fs::remove_file(d.join(f)).unwrap();
     }
