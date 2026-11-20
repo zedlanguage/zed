@@ -3408,10 +3408,10 @@ impl Blocks {
             }
         };
         let [first, second] = walks;
-        let found = if side == 0 { first } else { second };
+        let TreeWalk { nodes, .. } = if side == 0 { first } else { second };
         let t = self.fresh();
         let (mut others, mut gaps) = (0isize, 0isize);
-        for (x, name) in &found.nodes {
+        for (x, name) in &nodes {
             match name {
                 Some(n) => gaps += isize::from(self.gapped.contains(n)),
                 None => {
@@ -3423,7 +3423,7 @@ impl Blocks {
                 s.remove(x);
             }
         }
-        let nodes: OrdSet<BlockId> = found.nodes.iter().map(|(x, _)| *x).collect();
+        let nodes: OrdSet<BlockId> = nodes.iter().map(|(x, _)| *x).collect();
         self.trees.insert(t, nodes);
         for (counts, by) in [(&mut self.others, others), (&mut self.gaps, gaps)] {
             tally(counts, r, -by);
@@ -3477,16 +3477,16 @@ impl Blocks {
             };
             let Some((i, cut)) = ran_out else { break };
             let [first, second] = flows;
-            let found = if i == 0 { first } else { second };
+            let Flow { conjs, .. } = if i == 0 { first } else { second };
             let nb = self.fresh();
             let ms = self.members.get_mut(&b).expect("the block split");
-            for h in &found.conjs {
+            for h in &conjs {
                 ms.remove(h);
             }
-            for h in &found.conjs {
+            for h in &conjs {
                 self.put(h, &h.atoms(), Some(nb));
             }
-            self.members.insert(nb, found.conjs.into_iter().collect());
+            self.members.insert(nb, conjs.into_iter().collect());
             self.new_node(nb, Some(r));
             ends[i].push((nb, cut));
             if i == 0 {
@@ -3962,34 +3962,35 @@ impl Node {
     }
 }
 
-/// The neighbors of a node not yet given: the conjuncts of a name or an atom after the last
-/// one given, so that a search can stop after any entry and go on in O(log n), or the atoms of
-/// a conjunct.
-enum Cursor {
-    Name(Arc<str>, Option<Arc<Formula>>),
-    Atom(Atom, Option<Arc<Formula>>),
+/// An iterator over a set of conjuncts held across the steps of a search, which reads the
+/// blocks without changing them.
+type Conjs<'a> = imbl::ordset::Iter<'a, Arc<Formula>, DefaultSharedPtr>;
+
+/// The neighbors of a node not yet given: the conjuncts of a name in the block, or of an atom
+/// other than a name (`true`: each is checked to lie in the block), not yet given, so that a
+/// search can stop after any entry and go on; or the atoms of a conjunct.
+// Complexity tradeoff: naive version, the cursor kept the last conjunct given and found the
+// next by a range seek in the set, O(log n) comparisons of formulas per entry: on star_mixed,
+// whose removals peel a block of all k disjunctions, the searches of `Blocks::peel` read
+// near the whole block each time, and the seeks took 998M of 9,195M instructions at k = 512
+// (10.7M of 967M at 64), the family's ratio at 8n 9.48 (PERF-l139-under9). Used: the set's
+// iterator, held from one step to the next, O(log n) once and O(1) amortized per entry with no
+// comparison; the searches read the blocks only through `&self`, so no set changes under it.
+// The entries read are as many as before.
+enum Cursor<'a> {
+    Conjs(Option<Conjs<'a>>, bool),
     Atoms(Vec<Node>),
 }
 
-/// The first element of `set` after `last`, or its first when `last` is `None`, in O(log n).
-fn after<'a>(
-    set: &'a OrdSet<Arc<Formula>>,
-    last: Option<&Arc<Formula>>,
-) -> Option<&'a Arc<Formula>> {
-    match last {
-        None => set.iter().next(),
-        Some(l) => set
-            .range::<_, Arc<Formula>>((Bound::Excluded(l), Bound::Unbounded))
-            .next(),
-    }
-}
-
 impl Blocks {
-    /// A cursor over the neighbors of `n`.
-    fn cursor(&self, n: &Node) -> Cursor {
+    /// A cursor over the neighbors of `n` in block `b`.
+    fn cursor(&self, n: &Node, b: BlockId) -> Cursor<'_> {
         match n {
-            Node::Name(x, _) => Cursor::Name(x.clone(), None),
-            Node::Atom(a) => Cursor::Atom(a.clone(), None),
+            Node::Name(x, _) => Cursor::Conjs(
+                self.at.get(&b).and_then(|m| m.get(x)).map(OrdSet::iter),
+                false,
+            ),
+            Node::Atom(a) => Cursor::Conjs(self.shared.get(a).map(OrdSet::iter), true),
             Node::Conj(h) => Cursor::Atoms(
                 h.atoms()
                     .into_iter()
@@ -4009,28 +4010,26 @@ impl Blocks {
     /// conjunct of another block, `None` when no entry is left. A name's entries are its
     /// conjuncts in `b` alone (`at`); an atom other than a name has all its conjuncts in one
     /// block.
-    fn advance(&self, c: &mut Cursor, b: BlockId) -> Option<Option<Node>> {
-        let (set, last, check) = match c {
+    fn advance(&self, c: &mut Cursor<'_>, b: BlockId) -> Option<Option<Node>> {
+        let (it, check) = match c {
             Cursor::Atoms(ns) => return ns.pop().map(Some),
-            Cursor::Name(x, last) => (self.at.get(&b)?.get(x)?, last, false),
-            Cursor::Atom(a, last) => (self.shared.get(a)?, last, true),
+            Cursor::Conjs(it, check) => (it.as_mut()?, *check),
         };
-        let h = after(set, last.as_ref())?.clone();
-        *last = Some(h.clone());
+        let h = it.next()?.clone();
         Some((!check || self.of(&h) == Some(b)).then_some(Node::Conj(h)))
     }
 }
 
 /// One side of the search of [`Blocks::route`]: each node reached with the node it was
 /// reached from.
-struct Search {
+struct Search<'a> {
     seen: HashMap<Key, (Node, Option<Key>)>,
     queue: VecDeque<Key>,
-    cur: Option<(Key, Cursor)>,
+    cur: Option<(Key, Cursor<'a>)>,
 }
 
-impl Search {
-    fn new(n: Node) -> Search {
+impl<'a> Search<'a> {
+    fn new(n: Node) -> Search<'a> {
         let k = n.key();
         Search {
             seen: HashMap::from([(k.clone(), (n, None))]),
@@ -4040,12 +4039,12 @@ impl Search {
     }
 
     /// Reads one entry: a neighbor in block `b` of the node being read, with that node's key.
-    fn step(&mut self, blocks: &Blocks, b: BlockId) -> Option<(Key, Key, Node)> {
+    fn step(&mut self, blocks: &'a Blocks, b: BlockId) -> Option<(Key, Key, Node)> {
         let (k, c) = match &mut self.cur {
             Some(cur) => cur,
             None => {
                 let k = self.queue.pop_front()?;
-                let c = blocks.cursor(&self.seen[&k].0);
+                let c = blocks.cursor(&self.seen[&k].0, b);
                 self.cur.insert((k, c))
             }
         };
@@ -4088,20 +4087,20 @@ enum Step {
 /// `end`, in the residual graph of a flow of one along that part: a name of it between the
 /// two may be left only on the side it was entered, `In`, after reaching it from its successor
 /// on `P`, `Out`; a node of it may be reached back from its successor.
-struct Flow {
+struct Flow<'a> {
     start: usize,
     end: usize,
     seen: HashSet<Key>,
     queue: VecDeque<(Key, Node)>,
-    cur: Option<Cursor>,
+    cur: Option<Cursor<'a>>,
     /// The conjuncts reached.
     conjs: Vec<Arc<Formula>>,
     /// The positions of the names between `start` and `end` entered.
     entered: Vec<usize>,
 }
 
-impl Flow {
-    fn new(path: &[Node], start: usize, end: usize) -> Flow {
+impl<'a> Flow<'a> {
+    fn new(path: &[Node], start: usize, end: usize) -> Flow<'a> {
         let n = path[start].clone();
         Flow {
             start,
@@ -4121,7 +4120,7 @@ impl Flow {
 
     /// The node before position `i` on the way from `start`, when `i` lies after `start` and
     /// not after `end`.
-    fn before<'a>(&self, path: &'a [Node], i: usize) -> Option<&'a Node> {
+    fn before<'p>(&self, path: &'p [Node], i: usize) -> Option<&'p Node> {
         let (lo, hi) = (self.start.min(self.end), self.start.max(self.end));
         if i == self.start || i < lo || i > hi {
             return None;
@@ -4153,7 +4152,7 @@ impl Flow {
     /// Reads one entry within block `b`.
     fn step(
         &mut self,
-        blocks: &Blocks,
+        blocks: &'a Blocks,
         b: BlockId,
         path: &[Node],
         at: &HashMap<Key, usize>,
@@ -4203,7 +4202,7 @@ impl Flow {
                 if matches!(k, Key::In(_)) {
                     return Step::On;
                 }
-                self.cur.insert(blocks.cursor(&n))
+                self.cur.insert(blocks.cursor(&n, b))
             }
         };
         match blocks.advance(c, b) {
@@ -4224,16 +4223,16 @@ impl Flow {
 }
 
 /// One side of the walk of [`Blocks::bridge`] over a tree of the forest: the nodes reached,
-/// a name with its text, and the one being read with the last conjunct read at it.
-struct TreeWalk {
+/// a name with its text, and the one being read with its conjuncts not yet read ([`Cursor`]).
+struct TreeWalk<'a> {
     seen: HashSet<BlockId>,
     nodes: Vec<(BlockId, Option<Arc<str>>)>,
     next: usize,
-    cur: Option<(usize, Option<Arc<Formula>>)>,
+    cur: Option<(usize, Option<Conjs<'a>>)>,
 }
 
-impl TreeWalk {
-    fn new((x, id): (&Arc<str>, BlockId)) -> TreeWalk {
+impl<'a> TreeWalk<'a> {
+    fn new((x, id): (&Arc<str>, BlockId)) -> TreeWalk<'a> {
         TreeWalk {
             seen: HashSet::from([id]),
             nodes: vec![(id, Some(x.clone()))],
@@ -4244,28 +4243,27 @@ impl TreeWalk {
 
     /// Reads one entry: a conjunct of a name, which gives its block, or a conjunct of a block,
     /// which gives its names. Whether anything was left to read.
-    fn step(&mut self, blocks: &Blocks) -> bool {
-        let (i, last) = match &mut self.cur {
+    fn step(&mut self, blocks: &'a Blocks) -> bool {
+        let (i, it) = match &mut self.cur {
             Some(cur) => cur,
             None => {
                 if self.next == self.nodes.len() {
                     return false;
                 }
+                let (x, name) = &self.nodes[self.next];
+                let set = match name {
+                    Some(n) => blocks.syms.0.get(&**n),
+                    None => blocks.members.get(x),
+                };
                 self.next += 1;
-                self.cur.insert((self.next - 1, None))
+                self.cur.insert((self.next - 1, set.map(OrdSet::iter)))
             }
         };
-        let (x, name) = &self.nodes[*i];
-        let set = match name {
-            Some(n) => blocks.syms.0.get(&**n),
-            None => blocks.members.get(x),
-        };
-        let Some(h) = set.and_then(|s| after(s, last.as_ref())).cloned() else {
+        let Some(h) = it.as_mut().and_then(Iterator::next).cloned() else {
             self.cur = None;
             return true;
         };
-        *last = Some(h.clone());
-        if name.is_some() {
+        if self.nodes[*i].1.is_some() {
             let b = blocks
                 .of(&h)
                 .expect("a conjunct of the forest is in a block");

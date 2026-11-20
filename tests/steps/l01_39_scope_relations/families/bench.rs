@@ -12,7 +12,9 @@ fn star_scales() {
     scales("star", 192, 1);
 }
 
-/// 7.97 times the work at 8, 10.2 at 64, 11.7 at 112.
+/// 7.97 times the work at 8, 10.2 at 64, 11.7 at 112. 9.48 at 64 on 2026-11-19, 8.57 (958M
+/// and 8,211M instructions) since the walks of a block hold their place in each ordered set
+/// (COMPLEXITY.md PERF-l139-held-cursor).
 #[test]
 fn star_mixed_scales() {
     scales("star_mixed", 64, 1);
@@ -28,6 +30,9 @@ fn hubs_scale() {
     scales("hubs", 224, 1);
 }
 
+/// 9.14 times the work at 8n on 2026-11-19, 8.90 (1,332M and 11,857M instructions) since each
+/// row reads the least bound of the rays from their upper hull (COMPLEXITY.md
+/// PERF-l139-ray-hull); coordmix_shift 9.19 to 8.93 (1,415M and 12,640M).
 #[test]
 fn coordmix_scales() {
     scales("coordmix", 120, 1);
@@ -225,7 +230,8 @@ fn hoponb_scales() {
     scales("hoponb", 2, 1);
 }
 
-/// Deferred (PERF-l139-persist-due): 10.81 times the instructions, 10.19 the bytes at 8n.
+/// 10.81 times the instructions, 10.19 the bytes at 8n after PERF-l139-persist-due; 9.26 (20.3M
+/// and 187.7M instructions) on 2026-11-19.
 #[test]
 fn persist_scales() {
     scales("persist", 2, 1);

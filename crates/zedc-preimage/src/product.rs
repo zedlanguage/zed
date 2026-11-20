@@ -5865,9 +5865,9 @@ impl Block {
         if matches!(&**g, Formula::Con(_)) {
             self.cons.insert(g.clone());
             if let Some(least) = self.ray_least.get_mut()
-                && let Some(((x, y), group)) = self.rays.iter().next()
+                && let Some(((x, y), _)) = self.rays.iter().next()
             {
-                least.take_con(g, x, y, group);
+                least.take_con(g, x, y);
             }
             return None;
         }
@@ -21476,10 +21476,10 @@ impl Block {
     /// at integer floors; the least such bound over the distinct (j, d) holds.
     /// Complexity tradeoff: reading the r rows against the R distinct (j, d) at each run
     /// costs O(r R) per run, O(k^2) over k tests that each add a ray; the block keeps the
-    /// least bound ([`RayLeast`]) and takes in each ray as it enters, O(r), and each row,
-    /// O(R), so a run costs O(r) for the rows and the lower end of x. A ray or row that
-    /// leaves makes the next run read them all again, O(r R). Construction and removals
-    /// cost O(log k) per member.
+    /// least bound ([`RayLeast`]) and takes in each ray as it enters, O(r + log^2 R), and
+    /// each row, O(log^2 R) off the upper hull of the rays ([`RayHull`]), so a run costs O(r)
+    /// for the rows and the lower end of x. A ray or row that leaves makes the next run read
+    /// them all again, O(R + r log^2 R). Construction and removals cost O(log k) per member.
     fn ray_high(&self, names: &imbl::OrdMap<Arc<str>, Product>) -> Option<(Arc<str>, Int)> {
         if !self.aggregable() || self.rays.len() != 1 {
             return None;
@@ -21512,7 +21512,7 @@ impl Block {
         let least = self
             .ray_least
             .get_or_init(|| RayLeast::of(&self.cons, x, y, group));
-        let RayLeast::Least(least) = least else {
+        let RayLeast::Least(least, _) = least else {
             return None;
         };
         if let Some(v) = least {
@@ -21563,46 +21563,174 @@ fn least_of(x: Option<Int>, y: Option<Int>) -> Option<Int> {
     }
 }
 
+/// The first `i` in `lo..hi` for which `holds(i)`, or `hi`, when `holds` is false and then
+/// true over the range: O(log(hi - lo)) calls.
+fn first_holding(mut lo: usize, mut hi: usize, holds: impl Fn(usize) -> bool) -> usize {
+    while lo < hi {
+        let mid = lo + (hi - lo) / 2;
+        if holds(mid) {
+            hi = mid;
+        } else {
+            lo = mid + 1;
+        }
+    }
+    lo
+}
+
+/// Whether `b` lies on or below the line from `a` to `c`, for points `(j, d)` with
+/// `a.0 < b.0 < c.0`: the cross product of `b - a` and `c - a` is at least 0.
+fn ray_not_above(a: &(Int, Int), b: &(Int, Int), c: &(Int, Int)) -> bool {
+    let (bj, bd) = (&b.0 - &a.0, &b.1 - &a.1);
+    let (cj, cd) = (&c.0 - &a.0, &c.1 - &a.1);
+    &bj * &cd >= &bd * &cj
+}
+
+/// The upper convex hull of the rays `(j, d)` of a ray group, all with `j > 0`, as its
+/// vertices from least `j` to greatest, no three on a line: the least [`ray_bound`] a row
+/// gives over the rays is at one of them ([`RayHull::least`]).
+///
+/// Why a vertex: for a row `(p, q, c)` with `p > 0`, the bound over the ray `(j, d)` is the
+/// floor of `(c - p*d) / (p*j + q)`, which is minus the slope from the point
+/// `Q = (-q/p, c/p)` to `(j, d)`. `Q` lies left of every ray (`-q/p < 0 < j`), and the
+/// floor does not decrease, so the least bound is at the ray of greatest slope from `Q`, the
+/// point where a line through `Q` touches the set from above: a vertex of the upper hull,
+/// since a point below the hull at its `j` has a slope from `Q` at most that of the hull
+/// there, itself at most that of one end of its edge. For `p = 0` every ray gives `c / q`.
+///
+/// Persistent (`imbl::Vector`), so that a block's copies share it.
+#[derive(Clone, Default)]
+struct RayHull(imbl::Vector<(Int, Int)>);
+
+impl RayHull {
+    /// The hull of `rays`, given in increasing order of `(j, d)`, in O(R) for R rays
+    /// (Andrew's monotone chain, one pass).
+    fn of<'a>(rays: impl Iterator<Item = &'a (Int, Int)>) -> RayHull {
+        let mut v: Vec<(Int, Int)> = Vec::new();
+        for r in rays {
+            // Of two rays at one `j`, the later has the greater `d` and stands above.
+            if v.last().is_some_and(|l| l.0 == r.0) {
+                v.pop();
+            }
+            while v.len() >= 2 && ray_not_above(&v[v.len() - 2], &v[v.len() - 1], r) {
+                v.pop();
+            }
+            v.push(r.clone());
+        }
+        RayHull(v.into_iter().collect())
+    }
+
+    /// Takes in the ray `(j, d)` in O(log^2 R): the vertices it hides are a run on each side
+    /// of it, each run found by a binary search, and cut out by splitting the vector.
+    ///
+    /// Why runs: on the left, the vertex `h_t` stays if the slope of the edge into it is
+    /// greater than the slope from it to the new point `P`. The slope from `h_t` to `P` is a
+    /// mean of the slope of the edge out of `h_t` and the slope from `h_(t+1)` to `P`, and the
+    /// edge slopes fall from left to right; so a vertex that goes has every later one on the
+    /// left go too, and those that stay are a prefix. The right side is the mirror image.
+    fn insert(&mut self, j: &Int, d: &Int) {
+        let p = (j.clone(), d.clone());
+        let v = &self.0;
+        let m = v.len();
+        let (left_end, right_start) = match v.binary_search_by(|h| h.0.cmp(j)) {
+            Ok(i) if &v[i].1 >= d => return,
+            Ok(i) => (i, i + 1),
+            Err(i) => {
+                if i > 0 && i < m && ray_not_above(&v[i - 1], &p, &v[i]) {
+                    return;
+                }
+                (i, i)
+            }
+        };
+        // The first vertex on the left that goes: `h_t` with the turn `h_(t-1), h_t, P` not
+        // to the right.
+        let lo = first_holding(1, left_end, |t| ray_not_above(&v[t - 1], &v[t], &p)).min(left_end);
+        // The first vertex on the right that stays.
+        let hi = first_holding(right_start, m, |s| {
+            s + 1 == m || !ray_not_above(&p, &v[s], &v[s + 1])
+        });
+        let mut left = self.0.clone();
+        let right = left.split_off(hi);
+        left.truncate(lo);
+        left.push_back(p);
+        left.append(right);
+        self.0 = left;
+    }
+
+    /// The least [`ray_bound`] of the row `(p, q, c)`, `p >= 0` and `q > 0`, over the rays,
+    /// none when there is none, in O(log^2 R): the slope from `Q` to the vertices
+    /// ([`RayHull`]) rises and then does not, so the vertex of greatest slope is the first
+    /// whose edge out is no steeper than the slope from `Q` to it.
+    ///
+    /// Why: the slope from `Q` to `h_(i+1)` is a mean of the slope from `Q` to `h_i` and the
+    /// slope of the edge between them, with positive weights since both run to greater `j`.
+    /// So it rises while the edge is the steeper; once the edge is not, the next slope lies
+    /// between them, at least the edge's, and the next edge is less steep than this one, so
+    /// it is not the steeper either.
+    fn least(&self, (p, q, c): &(Int, Int, Int)) -> Option<Int> {
+        let v = &self.0;
+        if v.is_empty() {
+            return None;
+        }
+        if p.is_zero() {
+            return Some(c.div_floor(q));
+        }
+        // The edge from `h_i` to `h_(i+1)` is no steeper than the slope from `Q` to `h_i`:
+        // `(d' - d) / (j' - j) <= (p*d - c) / (p*j + q)`, both denominators positive.
+        let i = first_holding(0, v.len() - 1, |i| {
+            let ((j0, d0), (j1, d1)) = (&v[i], &v[i + 1]);
+            &(d1 - d0) * &(&(p * j0) + q) <= &(&(p * d0) - c) * &(j1 - j0)
+        });
+        let (j, d) = &v[i];
+        Some(ray_bound(&(p.clone(), q.clone(), c.clone()), j, d))
+    }
+}
+
 /// The least bound the rows of a block give over the rays of its one ray group
 /// ([`Block::ray_high`]).
 #[derive(Clone)]
 enum RayLeast {
     /// A row is not `p*x + q*y <= c` with `p >= 0` and `q > 0` on the group's two names.
     Unsupported,
-    /// The least [`ray_bound`] over the rows and rays, none when there is no row.
-    Least(Option<Int>),
+    /// The least [`ray_bound`] over the rows and rays, none when there is no row, with the
+    /// upper hull of the rays.
+    Least(Option<Int>, RayHull),
 }
 
+// Complexity tradeoff: naive version, each row that entered was read against every distinct
+// ray of the group, O(R) per row and O(r R) for r rows: on coordmix, whose k splits give 2k
+// rays and whose cases each enter a row, 1.84M bounds at k = 960 (28,560 at 120), the
+// family's ratio at 8n 9.14 (PERF-l139-under9). Used: the upper hull of the rays
+// ([`RayHull`]), built in O(R) with the bound and kept as rays enter in O(log^2 R) each; a row
+// reads the one ray of least bound off it by a binary search, O(log^2 R). A ray or row that
+// leaves still makes the next run read them all again, now O(R + r log^2 R). The ray that
+// enters is still read against every row, O(r).
 impl RayLeast {
-    /// Reads the rows `cons` against every ray of `group` on `x` and `y`, O(r R).
+    /// Reads the rows `cons` against the rays of `group` on `x` and `y`, O(R + r log^2 R).
     fn of(cons: &imbl::OrdSet<Arc<Formula>>, x: &Arc<str>, y: &Arc<str>, group: &RayGroup) -> Self {
+        let hull = RayHull::of(group.rays.keys());
         let mut least = None;
         for g in cons {
             let Some(row) = ray_con(g, x, y) else {
                 return RayLeast::Unsupported;
             };
-            for (j, d) in group.rays.keys() {
-                least = least_of(least, Some(ray_bound(&row, j, d)));
-            }
+            least = least_of(least, hull.least(&row));
         }
-        RayLeast::Least(least)
+        RayLeast::Least(least, hull)
     }
 
-    /// Takes in the row `g` against every ray of `group` on `x` and `y`, O(R).
-    fn take_con(&mut self, g: &Formula, x: &Arc<str>, y: &Arc<str>, group: &RayGroup) {
-        let RayLeast::Least(least) = self else {
+    /// Takes in the row `g` against the rays on `x` and `y`, O(log^2 R).
+    fn take_con(&mut self, g: &Formula, x: &Arc<str>, y: &Arc<str>) {
+        let RayLeast::Least(least, hull) = self else {
             return;
         };
         let Some(row) = ray_con(g, x, y) else {
             *self = RayLeast::Unsupported;
             return;
         };
-        for (j, d) in group.rays.keys() {
-            *least = least_of(least.take(), Some(ray_bound(&row, j, d)));
-        }
+        *least = least_of(least.take(), hull.least(&row));
     }
 
-    /// Takes in the ray `(j, d)` on `x` and `y` against every row of `cons`, O(r).
+    /// Takes in the ray `(j, d)` on `x` and `y` against every row of `cons`, O(r + log^2 R).
     fn take_ray(
         &mut self,
         cons: &imbl::OrdSet<Arc<Formula>>,
@@ -21611,9 +21739,10 @@ impl RayLeast {
         j: &Int,
         d: &Int,
     ) {
-        let RayLeast::Least(least) = self else {
+        let RayLeast::Least(least, hull) = self else {
             return;
         };
+        hull.insert(j, d);
         for g in cons {
             // Every row was read when the bound was first found; a row of another form
             // made it `Unsupported` then.
@@ -22684,6 +22813,69 @@ mod tests {
     use super::*;
 
     mod bench;
+
+    /// [`RayHull::least`] gives the least [`ray_bound`] over every ray, for hulls built at
+    /// once ([`RayHull::of`]) and ray by ray in a shuffled order ([`RayHull::insert`]), with
+    /// rays at one `j`, on one line and under the hull, and rows with `p = 0`.
+    #[test]
+    fn the_ray_hull_gives_the_least_bound_of_every_ray() {
+        let mut seed: u64 = 0x2545_f491_4f6c_dd1d;
+        let mut next = |m: u64| {
+            seed ^= seed << 13;
+            seed ^= seed >> 7;
+            seed ^= seed << 17;
+            seed % m
+        };
+        for round in 0..300 {
+            let n = 1 + next(if round < 100 { 6 } else { 40 }) as usize;
+            let mut rays: Vec<(Int, Int)> = (0..n)
+                .map(|_| {
+                    let j = 1 + next(if round % 3 == 0 { 4 } else { 30 }) as i64;
+                    let d = if round % 5 == 0 {
+                        2 * j - 7
+                    } else {
+                        next(81) as i64 - 40
+                    };
+                    (Int::from(j), Int::from(d))
+                })
+                .collect();
+            let mut sorted = rays.clone();
+            sorted.sort();
+            sorted.dedup();
+            let built = RayHull::of(sorted.iter());
+            let mut grown = RayHull::default();
+            for i in (1..rays.len()).rev() {
+                rays.swap(i, next(i as u64 + 1) as usize);
+            }
+            for (j, d) in &rays {
+                grown.insert(j, d);
+            }
+            for hull in [&built, &grown] {
+                let v: Vec<_> = hull.0.iter().cloned().collect();
+                for w in v.windows(3) {
+                    assert!(
+                        !ray_not_above(&w[0], &w[1], &w[2]),
+                        "a vertex under the hull"
+                    );
+                }
+                assert!(v.windows(2).all(|w| w[0].0 < w[1].0));
+            }
+            for _ in 0..40 {
+                let row = (
+                    Int::from(next(6) as i64),
+                    Int::from(1 + next(5) as i64),
+                    Int::from(next(401) as i64 - 200),
+                );
+                let want = sorted.iter().map(|(j, d)| ray_bound(&row, j, d)).min();
+                assert_eq!(built.least(&row), want);
+                assert_eq!(grown.least(&row), want);
+            }
+        }
+        assert_eq!(
+            RayHull::default().least(&(Int::ONE, Int::ONE, Int::ZERO)),
+            None
+        );
+    }
 
     /// [`kept_in`] keeps exactly the members the plain filter keeps, every member but a 64-bit
     /// integer outside the interval, and gives the set itself back when it keeps them all;
