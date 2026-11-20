@@ -20683,9 +20683,37 @@ impl Sig {
     /// them can be wanted. Landing round 7, Gemini B1: decoded whenever it had internal
     /// results, `g_i = (h_i, m.map(f))` over a chain `h_0 .. h_{n-1}` decoded each `h_i`, all
     /// i links, for a class only `m.map(f)` holds: O(n²) (33.9 times the instructions at 8n).
-    /// Passing a forward over relies on the functions its leaf needs hold having no internal
-    /// results, which `#4-own-vars` ensures for every forward the checker keeps (internal
-    /// results set `VarFacts::binds`), and on `want` holding classes, as documented above.
+    ///
+    /// Proof that passing a forward over gives the answer of the flat form (row
+    /// PROOF-map-chain-d-skip-and-admit, point a). Premise: `want` holds only classes `$k`, as
+    /// `generalize` asks. Take a held function `s` whose facts list no class of `left`, and a
+    /// forward `fwd` of it with `range.meets_internal(fwd, left)` false and no type of its need
+    /// holding a function with internal results. (1) Every variable of the leaf needs `fwd`
+    /// decodes to is a variable of a type of `sigma` or `exits`, an internal result of `fwd`,
+    /// or one bound by a function those leaf needs hold. In a forward the checker keeps, every
+    /// variable of the callee's leaf needs, at any depth, is a parameter or a result of the
+    /// callee or bound by a held function (`r10_forward`: `#4`, `#4-outer`, `#6`), and the
+    /// decode puts a type of `sigma` for each parameter and a result type for each result; a
+    /// child forward is entered with its `sigma` replaced the same way, so this holds at every
+    /// depth. (2) No variable of the last kind exists: `#4-own-vars` refuses a forward whose
+    /// leaf needs hold a function whose facts set `binds`, which every own variable, bound,
+    /// held name or internal result of it, at any depth, sets ([`VarFacts::of`],
+    /// `VarFacts::held`). (3) No variable of the first kind is in `left`: `sigma` and `exits`
+    /// are types of the need ([`Need::tys`]), whose classes, at every depth, are in the facts
+    /// of `s` (`VarFacts::tys`). (4) No internal result is in `left`: `meets_internal` tests
+    /// each against `left` past O(1) tests that rule out only names (a named block's results,
+    /// never a class) and classes outside `base_class .. base_class + need_count`. (5) A
+    /// function in the decoded needs either comes from a type of `sigma` or `exits`, so has no
+    /// internal results and its classes are in the facts of `s`, or is one of (2), which binds
+    /// nothing and so has no internal results; the walk passes it over or enters it and finds
+    /// nothing of `left`. So the decoded block moves nothing to `out` and leaves `left` as it
+    /// was. The walk is depth-first and finishes each item before it pops one pushed earlier,
+    /// so every row, shape and function the flat walk enters inside the block holds no
+    /// variable of `left`; a later item that meets one is skipped there and walked to no
+    /// effect here. The arrows and the other needs come in the same order around the block in
+    /// both, so `out` is the same. Were `#4-own-vars` narrowed to internal results alone, (2)
+    /// would still hold the variables a held function binds out of `left` only while each is
+    /// a name, never a class `$k`.
     pub fn first_seen(&self, want: &HashSet<Arc<str>>) -> Vec<Arc<str>> {
         let mut out = Vec::new();
         let mut left = want.clone();

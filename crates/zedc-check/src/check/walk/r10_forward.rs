@@ -296,9 +296,36 @@ impl<'t, 'a> Ck<'t, 'a> {
                         // the sizes of `names` and `outer`, as round 4 did, misses a pair
                         // holding `A -> A` with `A` its own and `A -> A` with `A` free, whose
                         // sets are both `{A}` (landing round 4, Codex L4.Codex-own-facts).
-                        // No checker input is known to reach that pair: a free variable here is
-                        // a class `$k`, which `outer` does not list (landing round 5, Claude
-                        // F5-1, not proved), so the tests check the bit on public types.
+                        //
+                        // Proof that a forward this test admits is named as E names it (row
+                        // PROOF-map-chain-d-skip-and-admit, point b). E's flat signature and
+                        // the kept forward differ only in the leaf needs, and the functions
+                        // they hold, which `sig_walk` does not enter, placing their variables
+                        // by the steps instead. A function `f` held in a leaf need (a `Map`'s
+                        // operand: `#4` refuses a function in any other need) whose facts do
+                        // not set `binds` has no own variable, bound, held name or internal
+                        // result at any depth (`VarFacts::of` sets the bit for each and
+                        // `VarFacts::held` ORs it up), so every variable it holds is free in
+                        // it. A free class of `f` is in `all_mentioned_vars` (`need_deep_vars`
+                        // enters held functions), so it is own to the callee (`#4`) and a
+                        // parameter or result (`#6`); a free name that is not a class is in
+                        // `f`'s `outer`, so own to the callee (`#4-outer`) and again a
+                        // parameter or result (`#6`). In the flat form, then, `f` holds only
+                        // the caller types the decode puts for parameters and results, where
+                        // E's walk meets them; `need_deep_vars` walks `f` with the same walk
+                        // (`walk_vars`, through `Ty::vars_in`), so the steps record them in
+                        // that order, and `sig_walk` gives the order E's walk gives (its
+                        // proof). E's `rename_apart` gets a held item only for a variable a
+                        // held function binds, of which `f` has none, and
+                        // `r10_finish_fwd_callee` leaves `f` as it is (it finishes only a
+                        // function that holds nothing but its own variables, and every
+                        // variable of `f` is free). So E and D give the same names, and every
+                        // link whose kept forward could differ from E through the functions
+                        // its leaf needs hold is refused here; a refused link keeps E's flat
+                        // needs. A name that is neither own, a class nor held by a function,
+                        // which `#6` does not see, is refused below (`#4-outer`), so the proof
+                        // needs no premise on what the checker gives (landing round 5, Claude
+                        // F5-1, argued then from the checker's inputs alone).
                         // Complexity tradeoff: the naive test walks `names` against `outer`,
                         // O(v log v) for v variables held, and has the same flaw; used: one
                         // kept bit, O(1).
@@ -374,6 +401,21 @@ impl<'t, 'a> Ck<'t, 'a> {
         // and the program of `landing6_outer_variable_read_in_a_map_is_refused` is refused by
         // `#4` and `#6` first (landing round 7, Claude F2). O(1).
         if !held_outer.is_empty() {
+            intrinsic_fails.insert("#4-outer");
+        }
+        // A name a leaf need holds outside every function that is neither own to the callee,
+        // nor a class, nor held by a function (whose free names `#4-outer` covers just above
+        // and whose bound ones `#4-own-vars`): neither `#4` nor `#6` sees it and no step
+        // records it, so the flat needs would show it where the kept forward does not. No
+        // checker input is known to reach it (a name read from around the callee is a class
+        // while it is checked); refused so that the proof at `#4-own-vars` holds for any
+        // input (PROOF-map-chain-d-skip-and-admit). Per variable, one lookup in `own` and
+        // O(log h) in the h held names, beside the walk that gathered them.
+        if all_mentioned_vars
+            .order
+            .iter()
+            .any(|v| !sig.own.contains(v) && !self.is_class(v) && !held_names.contains(v))
+        {
             intrinsic_fails.insert("#4-outer");
         }
 
