@@ -5707,10 +5707,16 @@ pub struct WrittenRange {
 }
 
 impl WrittenRange {
-    /// The range from `low` through `high`, either open where it is none.
+    /// The range from `low` through `high`, either open where it is none. A range that is
+    /// exactly a fixed-width alias's prints as the alias, `i64` for `int[-2^63..<2^63]`
+    /// (DESIGN.md sec:diagnostics, "Types in a message"; QUESTIONS A72), which the resolver
+    /// reads back as that range.
     pub fn new(low: Option<Value>, high: Option<Value>) -> Self {
         let text = match (&low, &high) {
-            (Some(l), Some(h)) => format!("int[{l}..={h}]"),
+            (Some(l), Some(h)) => match zedc_syntax::fixed_width::name_of(l, h) {
+                Some(name) => name.to_string(),
+                None => format!("int[{l}..={h}]"),
+            },
             (Some(l), None) => format!("int[{l}..]"),
             (None, Some(h)) => format!("int[_..={h}]"),
             (None, None) => "int[_..]".to_string(),

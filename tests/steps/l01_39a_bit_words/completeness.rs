@@ -95,8 +95,11 @@ fn an_operand_not_bounded_by_its_tests_is_rejected_at_each_word() {
         ),
     ] {
         let out = rejected(src);
+        // A domain `int[0..<2^8]` prints as its alias `u8` (sec:diagnostics, "Types in a
+        // message"); every other domain prints as a range.
         assert!(
-            out.contains(&format!("`{word}` takes `{param}` in int[0..")),
+            out.contains(&format!("`{word}` takes `{param}` in int[0.."))
+                || out.contains(&format!("`{word}` takes `{param}` in u8")),
             "{src}: {out}"
         );
     }

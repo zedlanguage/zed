@@ -78,32 +78,32 @@ fn each_operand_read_as_width_digits_is_checked() {
     for (src, msg) in [
         (
             "x = mulHi(2^64, 1, width: 64);\n",
-            "`mulHi` takes `a` in int[0..<2^64]: `mulHi(2^64 : 18446744073709551616, 1, width: 64)`. \
+            "`mulHi` takes `a` in u64: `mulHi(2^64 : 18446744073709551616, 1, width: 64)`. \
              Try `mulHi(2^64, 1, width: 65)` instead.",
         ),
         (
             "x = mulHi(1, 256, width: 8);\n",
-            "`mulHi` takes `b` in int[0..<2^8]: `mulHi(1, 256 : int, width: 8)`. \
+            "`mulHi` takes `b` in u8: `mulHi(1, 256 : int, width: 8)`. \
              Try `mulHi(1, 256, width: 9)` instead.",
         ),
         (
             "x = bitReverse(256, width: 8);\n",
-            "`bitReverse` takes `x` in int[0..<2^8]: `bitReverse(256 : int, width: 8)`. \
+            "`bitReverse` takes `x` in u8: `bitReverse(256 : int, width: 8)`. \
              Try `bitReverse(256, width: 9)` instead.",
         ),
         (
             "x = byteSwap(65536, width: 16);\n",
-            "`byteSwap` takes `x` in int[0..<2^16]: `byteSwap(65536 : int, width: 16)`. \
+            "`byteSwap` takes `x` in u16: `byteSwap(65536 : int, width: 16)`. \
              Try `byteSwap(65536, width: 32)` instead.",
         ),
         (
             "x = funnelShl(256, 0, 1, width: 8);\n",
-            "`funnelShl` takes `hi` in int[0..<2^8]: `funnelShl(256 : int, 0, 1, width: 8)`. \
+            "`funnelShl` takes `hi` in u8: `funnelShl(256 : int, 0, 1, width: 8)`. \
              Try `funnelShl(256, 0, 1, width: 9)` instead.",
         ),
         (
             "x = funnelShr(0, 256, 1, width: 8);\n",
-            "`funnelShr` takes `lo` in int[0..<2^8]: `funnelShr(0, 256 : int, 1, width: 8)`. \
+            "`funnelShr` takes `lo` in u8: `funnelShr(0, 256 : int, 1, width: 8)`. \
              Try `funnelShr(0, 256, 1, width: 9)` instead.",
         ),
     ] {
@@ -120,11 +120,11 @@ fn a_negative_operand_is_rejected() {
     for (src, msg) in [
         (
             "x = mulHi(-1, 1, width: 8);\n",
-            "`mulHi` takes `a` in int[0..<2^8]: `mulHi(-1 : int, 1, width: 8)`.\n",
+            "`mulHi` takes `a` in u8: `mulHi(-1 : int, 1, width: 8)`.\n",
         ),
         (
             "x = bitReverse(-1, width: 8);\n",
-            "`bitReverse` takes `x` in int[0..<2^8]: `bitReverse(-1 : int, width: 8)`.\n",
+            "`bitReverse` takes `x` in u8: `bitReverse(-1 : int, width: 8)`.\n",
         ),
         (
             "x = byteSwap(1, width: -8);\n",

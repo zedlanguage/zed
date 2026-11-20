@@ -1526,6 +1526,25 @@ impl fmt::Display for IntervalSet {
     }
 }
 
+impl IntervalSet {
+    /// The set as a type a program could write: `int[0..=4]`, or the fixed-width alias whose
+    /// range it is, `u8` for `int[0..=255]` (DESIGN.md sec:diagnostics, "Types in a message";
+    /// QUESTIONS A72). O(1) past the first two pieces: an end of more than 128 digits is no
+    /// alias's and is not written out to find so (`Num::bits` reads a kept power's width).
+    pub fn type_text(&self) -> String {
+        let mut pieces = self.pieces();
+        if let (Some((Fin(l), Fin(h))), None) = (pieces.next(), pieces.next())
+            && l.bits() <= Num::from(128i64)
+            && h.bits() <= Num::from(128i64)
+            && let (Ok(l), Ok(h)) = (l.built(), h.built())
+            && let Some(name) = zedc_syntax::fixed_width::name(&l, &h)
+        {
+            return name.to_string();
+        }
+        format!("int{self}")
+    }
+}
+
 /// The greatest landmark at or below `v`.
 fn landmark_below(marks: &Landmarks, v: &Num) -> Option<Num> {
     marks.ints().range(..=v).next_back().cloned()

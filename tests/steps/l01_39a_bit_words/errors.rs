@@ -71,7 +71,7 @@ fn an_x_wider_than_its_width_is_rejected() {
     let out = rejected("x = rotr(2^64, 1, width: 64);\n");
     assert!(
         out.contains(
-            "`rotr` takes `x` in int[0..<2^64]: `rotr(2^64 : 18446744073709551616, 1, width: 64)`. \
+            "`rotr` takes `x` in u64: `rotr(2^64 : 18446744073709551616, 1, width: 64)`. \
              Try `rotr(2^64, 1, width: 65)` instead."
         ),
         "{out}"

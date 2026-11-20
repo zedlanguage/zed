@@ -9,10 +9,7 @@ use super::{accepted, rejected};
 fn a_word_curried_with_dots_checks_its_domain_at_compile_time() {
     for (src, needs) in [
         // `x` at least `2^width`.
-        (
-            "r = bitReverse(256, ...);\nx = r(width: 8);\n",
-            "`x` in int[0..<2^8]",
-        ),
+        ("r = bitReverse(256, ...);\nx = r(width: 8);\n", "`x` in u8"),
         // `width` not a multiple of 8.
         (
             "r = byteSwap(1, ...);\nx = r(width: 12);\n",
@@ -21,14 +18,8 @@ fn a_word_curried_with_dots_checks_its_domain_at_compile_time() {
         // A negative `width`.
         ("r = bitReverse(1, ...);\nx = r(width: -1);\n", "`width`"),
         // The words of L1.39a that take a width.
-        (
-            "r = bitNot(256, ...);\nx = r(width: 8);\n",
-            "`x` in int[0..<2^8]",
-        ),
-        (
-            "r = rotl(256, 1, ...);\nx = r(width: 8);\n",
-            "`x` in int[0..<2^8]",
-        ),
+        ("r = bitNot(256, ...);\nx = r(width: 8);\n", "`x` in u8"),
+        ("r = rotl(256, 1, ...);\nx = r(width: 8);\n", "`x` in u8"),
     ] {
         let out = rejected(src);
         assert!(out.contains(needs), "{src}: {out}");
@@ -50,20 +41,20 @@ fn the_width_boundary_and_the_funnel_shift_k_are_checked_through_the_curried_fun
     assert!(accepted("r = funnelShl(1, 2, 7, ...);\nx = r(width: 8);\n"));
     // A negative `x` fits no width.
     let out = rejected("r = bitReverse(-1, ...);\nx = r(width: 8);\n");
-    assert!(out.contains("`x` in int[0..<2^8]: `-1 : int`"), "{out}");
+    assert!(out.contains("`x` in u8: `-1 : int`"), "{out}");
 }
 
 #[test]
 fn the_curried_function_is_checked_when_it_is_renamed_returned_or_passed() {
     // Bound to another name.
     let out = rejected("r = bitReverse(256, ...);\ny = r;\nx = y(width: 8);\n");
-    assert!(out.contains("`x` in int[0..<2^8]"), "{out}");
+    assert!(out.contains("`x` in u8"), "{out}");
     assert!(accepted(
         "r = bitReverse(255, ...);\ny = r;\nx = y(width: 8);\n"
     ));
     // Returned by a function whose operand is any int.
     let src = "f(positional n: int) = bitReverse(n, ...);\nx = f(256)(width: 8);\n";
-    assert!(rejected(src).contains("`x` in int[0..<2^8]: `n : int`"));
+    assert!(rejected(src).contains("`x` in u8: `n : int`"));
     // Passed to a function whose parameter takes every int width: the width it may be called
     // with is not shown to hold `x`.
     let src = "r = bitReverse(255, ...);\n\

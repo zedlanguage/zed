@@ -10473,7 +10473,7 @@ impl<'a> Ck<'_, 'a> {
             return;
         }
         let shown = match narrowed {
-            true => format!("int{got}"),
+            true => got.type_text(),
             false => self.show(&Ty::set(ints)),
         };
         let message = format!(
@@ -10676,7 +10676,7 @@ impl<'a> Ck<'_, 'a> {
                 ExprKind::Name(_) => {
                     let (ints, narrowed) = self.ints_here(x);
                     if narrowed {
-                        out.insert(x.span, format!("int{ints}"));
+                        out.insert(x.span, ints.type_text());
                     }
                 }
                 ExprKind::Unary(_, a) => stack.push(a),
@@ -15817,7 +15817,7 @@ impl<'t, 'a> Ck<'t, 'a> {
             return;
         }
         let shown = match narrowed {
-            true => format!("int{ints}"),
+            true => ints.type_text(),
             false => self.show(&Ty::set(ns.clone())),
         };
         // Every value of the exponent below 0: a test of it leaves nothing to raise.
@@ -19034,7 +19034,7 @@ impl<'t, 'a> Ck<'t, 'a> {
         let shown = match &values {
             _ if shown_as_type || ints == IntervalSet::top() => self.show(&Ty::set(ns)),
             Some(vs) => vs[0].to_string(),
-            None => format!("int{ints}"),
+            None => ints.type_text(),
         };
         Some(IntRange {
             ints,
@@ -25648,12 +25648,16 @@ impl Within {
         }
     }
 
-    /// The ints as a message writes them after "takes `x`", as "in int[0..<2^8]" or "a
+    /// The ints as a message writes them after "takes `x`", as "in u8", "in int[0..<2^7]" or "a
     /// multiple of 8 in int[0..]": the bound 0 written, so that a negative multiple of 8 does not
     /// seem to be in it.
     fn takes(&self) -> String {
         match self {
             Within::Range { low, below: None } => format!("in int[{low}..]"),
+            Within::Range {
+                low: 0,
+                below: Some(Bound::TwoPow(Some(w))),
+            } => format!("in {}", super::two_pow_text(w)),
             Within::Range {
                 low,
                 below: Some(b),

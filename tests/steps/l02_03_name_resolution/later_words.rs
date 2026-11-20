@@ -125,42 +125,34 @@ fn a_later_type_is_reported_as_not_compiled_yet() {
     );
 }
 
-/// `u8 = int[0..=255]` and `i8` to `i64` are the fixed-width aliases of L7 (DESIGN.md
-/// sec:domains, step L7.4), and `byte` is no type at any layer (author decision 2026-11-04: the
-/// type `byte` is renamed `u8`).
+/// `u8 = int[0..=255]`, `i8` to `i128` and `u16` to `u128` are the fixed-width aliases, names
+/// of their ranges from step L1.12 (DESIGN.md sec:domains; QUESTIONS A72), which stand where a
+/// range does; and `byte` is no type at any layer (author decision 2026-11-04: the type `byte`
+/// is renamed `u8`).
 #[test]
-fn the_fixed_width_aliases_are_types_of_l7_and_byte_is_none() {
+fn the_fixed_width_aliases_are_ranges_of_l1_and_byte_is_none() {
+    assert_eq!(errors("checksum(b: u8) = b;\n"), Vec::<String>::new());
     assert_eq!(
-        errors("checksum(b: u8) = b;\n"),
-        [concat!(
-            zed_tests::not_yet!("the prelude type `u8`"),
-            " [u8]"
-        )]
-    );
-    assert_eq!(
-        errors("status(rc: i32, flags: i8) = rc;\n"),
-        [
-            concat!(zed_tests::not_yet!("the prelude type `i32`"), " [i32]"),
-            concat!(zed_tests::not_yet!("the prelude type `i8`"), " [i8]")
-        ]
+        errors("status(rc: i32, flags: i8, big: u128, wide: i128) = rc;\n"),
+        Vec::<String>::new()
     );
     assert_eq!(
         errors("checksum(b: byte) = b;\n"),
         ["The type `byte` is not defined. [byte]"]
     );
+    // A range stands only as the whole type of a parameter or a key, and so does an alias; the
+    // `u8` of a union is refused as a range there is, a form of a later step, which `errors`
+    // leaves out (`carrier_names.rs` of l01_29 tests that message).
     assert_eq!(
         errors("checksum(b: u8 | byte) = b;\n"),
-        [
-            concat!(zed_tests::not_yet!("the prelude type `u8`"), " [u8]"),
-            "The type `byte` is not defined. [byte]"
-        ]
+        ["The type `byte` is not defined. [byte]"]
     );
-    // The aliases are no value words: `u8(300)` builds nothing, so it is told the layer of the
-    // type and not offered as a cast.
+    // As a value an alias is the cast `u8(300)` (sec:corner_cases, "Casts are domain
+    // proofs"), which waits for plan row INT-128.
     assert_eq!(
         errors("f() = u8(300);\n"),
         [concat!(
-            zed_tests::not_yet!("the prelude type `u8`"),
+            zed_tests::not_yet!("the prelude type `u8` as a value, the cast `u8(x)`"),
             " [u8]"
         )]
     );
@@ -197,10 +189,10 @@ const UNLISTED: &[(&str, u32)] = &[("count", 3)];
 #[cfg(feature = "spec")]
 const LOWER_TYPES: &[&str] = &["complex", "quat", "oct", "bf16", "f16"];
 
-/// The lower-case names of the table that are types and not words: the fixed-width aliases of L7
-/// (DESIGN.md sec:domains), which no program applies to a value.
+/// The lower-case names of the table that are types and not words: the fixed-width aliases of L1
+/// (DESIGN.md sec:domains, step L1.12), which no program applies to a value.
 #[cfg(feature = "spec")]
-const ALIASES: &[&str] = &["i8", "i16", "i32", "i64", "u8"];
+const ALIASES: &[&str] = &zedc::fixed_width::NAMES;
 
 /// The facets of the table's third column that a program defines, as examples of the rule
 /// "every facet a program defines": names of the program, not of the prelude.
@@ -233,11 +225,8 @@ const PENDING: &[(&str, &str)] = &[
     ("f32Bits", "L1.18a"),
     ("f16Bits", "L1.18a"),
     ("bf16Bits", "L1.18a"),
-    ("i128", "INT-128"),
-    ("u16", "INT-128"),
-    ("u32", "INT-128"),
-    ("u64", "INT-128"),
-    ("u128", "INT-128"),
+    // `i128`, `u16`, `u32`, `u64` and `u128` are names of their ranges from step L1.12
+    // (PRINT-int-carrier-names); a cast to one, `x as u32`, waits for INT-128 still.
     ("csqrt", "MATH-names"),
     ("cexp", "MATH-names"),
     ("clog", "MATH-names"),

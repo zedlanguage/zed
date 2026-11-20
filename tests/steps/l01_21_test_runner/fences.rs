@@ -41,12 +41,19 @@ fn every_l1_fence_passes_but_for_its_free_names() {
         // The layer audit (DESIGN 23a88fd, author P254) puts `x: T = e` at L1, and with it the
         // range suffix (`port: int[1..=65535] = 8080;`); zedc refuses it as a form it does not
         // support until plan rows LAYER-L1-forms and RANGE-L1 build it.
+        // A fence so refused is not elaborated, so its ✗ marks are not checked either: the
+        // numbers fence, whose `b: u8 = 255;` is of L1 since the fixed-width aliases are names
+        // of their ranges (step L1.12).
         let binding = |w: &&String| w.starts_with("the binding with a declared type ");
-        if failures.iter().all(|w| binding(w) || free(w)) && failures.iter().any(binding) {
+        let unchecked = |w: &&String| w.as_str() == "the line is marked ✗ and has no diagnostic";
+        if failures
+            .iter()
+            .all(|w| binding(w) || free(w) || unchecked(w))
+            && failures.iter().any(binding)
+        {
             ascribed.push(f.key.clone());
             continue;
         }
-        let unchecked = |w: &&String| w.as_str() == "the line is marked ✗ and has no diagnostic";
         assert!(
             failures.iter().any(free) && failures.iter().all(|w| free(w) || unchecked(w)),
             "{}: {failures:?}",
@@ -70,7 +77,13 @@ fn every_l1_fence_passes_but_for_its_free_names() {
             "EXAMPLES.md [5. Conditionals] 1"
         ]
     );
-    assert_eq!(ascribed, ["EXAMPLES.md [2. Bindings and values] 1"]);
+    assert_eq!(
+        ascribed,
+        [
+            "EXAMPLES.md [2. Bindings and values] 1",
+            "EXAMPLES.md [3. Numbers] 1"
+        ]
+    );
     assert_eq!(rejection, 1);
     // The rebinding fence checks its one mark; the lambda fence binds every name it uses, and
     // the environment fence reads only `m.env`, a field of `main`'s argument.

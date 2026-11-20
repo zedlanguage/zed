@@ -752,12 +752,15 @@ fn op_text(e: &Expr) -> &'static str {
     }
 }
 
-/// `int[lo..=hi]`, or the one value.
+/// `int[lo..=hi]`, the fixed-width alias whose range it is (`i64`, DESIGN.md "Types in a
+/// message"), or the one value.
 fn interval(lo: i128, hi: i128) -> String {
     if lo == hi {
-        lo.to_string()
-    } else {
-        format!("int[{lo}..={hi}]")
+        return lo.to_string();
+    }
+    match zedc_syntax::fixed_width::name(&lo.into(), &hi.into()) {
+        Some(name) => name.to_string(),
+        None => format!("int[{lo}..={hi}]"),
     }
 }
 

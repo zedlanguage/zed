@@ -11100,7 +11100,7 @@ impl Scope {
                     let x = self.get(n).ints().clone();
                     let end = |e: &End| e.to_i64().map(i128::from);
                     let (lo, hi) = x.bounds().map_or((None, None), |(l, h)| (end(l), end(h)));
-                    (lo, hi, format!("int{x}"))
+                    (lo, hi, x.type_text())
                 });
             }
         }

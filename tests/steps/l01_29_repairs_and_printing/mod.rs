@@ -5,6 +5,7 @@
 //! half rebuilds only that half (rule in docs/layout.md, Tests).
 
 mod bench;
+mod carrier_names;
 mod casts;
 mod domain_repairs;
 mod kernel_names;

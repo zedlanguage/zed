@@ -144,9 +144,18 @@ fn read_part(
             TypeKind::Array(of) => stack.push(of),
             // A signature prints a parameter's range, `(x: int[1..]) -> int`, but a printed
             // type read back holds none: the kernel has no ranged type to read it as.
+            // So does a fixed-width alias, the name of a range (`u8`, step L1.12).
             TypeKind::Range { .. } => {
                 return Err(format!(
                     "`{text}` holds a range type, which the checker never prints as a type"
+                ));
+            }
+            TypeKind::Name(n)
+                if zedc_syntax::fixed_width::is_alias(n) && !binds.contains_key(n.as_str()) =>
+            {
+                return Err(format!(
+                    "`{text}` holds the range type `{n}`, which the checker never prints as a \
+                     type"
                 ));
             }
             TypeKind::Name(_) | TypeKind::Atom(_) | TypeKind::Every(_) | TypeKind::AtomAny(_) => {}

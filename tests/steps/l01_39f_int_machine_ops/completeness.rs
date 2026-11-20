@@ -53,15 +53,15 @@ fn an_operand_not_bounded_by_its_tests_is_rejected_at_each_word() {
     for (src, msg) in [
         (
             "f(positional a: int) = mulHi(a, 1, width: 8);\n",
-            "`mulHi` takes `a` in int[0..<2^8]: `mulHi(a : int, 1, width: 8)`",
+            "`mulHi` takes `a` in u8: `mulHi(a : int, 1, width: 8)`",
         ),
         (
             "f(positional x: int) = bitReverse(x, width: 8);\n",
-            "`bitReverse` takes `x` in int[0..<2^8]: `bitReverse(x : int, width: 8)`",
+            "`bitReverse` takes `x` in u8: `bitReverse(x : int, width: 8)`",
         ),
         (
             "f(positional x: int) = byteSwap(x, width: 16);\n",
-            "`byteSwap` takes `x` in int[0..<2^16]: `byteSwap(x : int, width: 16)`",
+            "`byteSwap` takes `x` in u16: `byteSwap(x : int, width: 16)`",
         ),
         (
             "f(positional m: int) = pdep(1, m);\n",
@@ -78,11 +78,11 @@ fn an_operand_not_bounded_by_its_tests_is_rejected_at_each_word() {
         // A test that bounds one end only, or the bound one past the width.
         (
             "f(positional x: int) = if x >= 0 { bitReverse(x, width: 8) } else { 0 };\n",
-            "`bitReverse` takes `x` in int[0..<2^8]",
+            "`bitReverse` takes `x` in u8",
         ),
         (
             "f(positional x: int) = if x >= 0 && x <= 256 { bitReverse(x, width: 8) } else { 0 };\n",
-            "`bitReverse` takes `x` in int[0..<2^8]",
+            "`bitReverse` takes `x` in u8",
         ),
         (
             "f(positional k: int) = if k >= 0 && k <= 8 { funnelShl(1, 1, k, width: 8) } else { 0 };\n",
@@ -121,7 +121,7 @@ fn each_word_in_other_positions() {
         "128"
     );
     let out = rejected(&format!("{lambda}x = rev(256);\n"));
-    assert!(out.contains("`rev` takes `v` in int[0..<2^8]"), "{out}");
+    assert!(out.contains("`rev` takes `v` in u8"), "{out}");
 }
 
 #[test]

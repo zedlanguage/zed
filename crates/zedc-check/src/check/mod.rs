@@ -13167,7 +13167,17 @@ fn domain_text(d: &IntDomain) -> String {
     }
     match &d.below_two_pow {
         None => "int[0..]".into(),
-        Some(w) => format!("int[0..<2^{}]", w.0),
+        Some(w) => two_pow_text(&w.0),
+    }
+}
+
+/// `int[0..<2^w]`, or `u{w}` where that is a fixed-width alias (DESIGN.md "Types in a message").
+pub(crate) fn two_pow_text(w: impl std::fmt::Display) -> String {
+    let name = format!("u{w}");
+    if zedc_syntax::fixed_width::is_alias(&name) {
+        name
+    } else {
+        format!("int[0..<2^{w}]")
     }
 }
 
@@ -13380,7 +13390,11 @@ impl<'a> Ck<'_, 'a> {
     pub(super) fn param_range(&mut self, p: &'a Param, id: usize) -> Option<WrittenRange> {
         let t = p.ty.as_ref()?;
         let TypeKind::Range { low, high, .. } = &t.kind else {
-            return None;
+            // A fixed-width alias is its range, never empty.
+            let (r, lo, hi) = self.alias_range(t)?;
+            self.param_ints
+                .insert(id, (IntervalSet::range(lo, hi), t.span));
+            return Some(r);
         };
         let (r, lo, hi) = self.written_range(&p.name, low, high)?;
         let ints = IntervalSet::range(lo.clone(), hi.clone());
@@ -13400,12 +13414,11 @@ impl<'a> Ck<'_, 'a> {
                     } else {
                         (l.clone(), written)
                     };
+                    let range = WrittenRange::new(Some(Value::from(&a)), Some(Value::from(&b)));
                     vec![format!(
-                        "repair: write `{}: int[{}..={}]`, the range from the lesser bound \
-                         through the greater",
-                        p.name,
-                        Value::from(&a),
-                        Value::from(&b)
+                        "repair: write `{}: {}`, the range from the lesser bound through the \
+                         greater",
+                        p.name, range.text
                     )]
                 }
                 _ => Vec::new(),
@@ -13449,9 +13462,11 @@ impl<'a> Ck<'_, 'a> {
         };
         let mut ranges = Vec::new();
         for (part, t) in parts {
-            if let TypeKind::Range { low, high, .. } = &t.kind
-                && let Some((r, _, _)) = self.written_range(&p.name, low, high)
-            {
+            let r = match &t.kind {
+                TypeKind::Range { low, high, .. } => self.written_range(&p.name, low, high),
+                _ => self.alias_range(t),
+            };
+            if let Some((r, _, _)) = r {
                 ranges.push((part, r));
             }
         }
@@ -13462,6 +13477,22 @@ impl<'a> Ck<'_, 'a> {
                 family: None,
             },
         );
+    }
+
+    /// The range a fixed-width alias names, `t` being the type name `u8` that name resolution
+    /// found in the prelude (step L1.12; QUESTIONS A72), with its least and greatest int; none
+    /// for any other type. O(1).
+    fn alias_range(&self, t: &Type) -> Option<(WrittenRange, End, End)> {
+        let TypeKind::Name(n) = &t.kind else {
+            return None;
+        };
+        if !matches!(self.t.res.uses.get(&t.span), Some(Ref::Prelude(_))) {
+            return None;
+        }
+        let (lo, hi) = zedc_syntax::fixed_width::range(n)?;
+        let (lo, hi) = (Num::from(lo), Num::from(hi));
+        let r = WrittenRange::new(Some(Value::from(&lo)), Some(Value::from(&hi)));
+        Some((r, Fin(lo), Fin(hi)))
     }
 
     /// The range `int[low..high]` written on the parameter `name`, with its least and greatest
@@ -14891,6 +14922,15 @@ impl<'a> Denote<'a> {
                 "Lines" => port(Carrier::Int, true),
                 "Files" => port(Carrier::Str, true),
                 "CommandLine" => port(Carrier::Int, false),
+                // A fixed-width alias names a range, which name resolution lets through only
+                // where the checker reads the range apart, as for `int[0..=255]` above: the type
+                // is `int` (step L1.12).
+                v if zedc_syntax::fixed_width::is_alias(v)
+                    && !self.free.contains(v)
+                    && !self.bound.contains_key(v) =>
+                {
+                    Ty::carrier(Carrier::Int)
+                }
                 v => {
                     // A use outside every function type of its clause, as in `int \ T`, bounds
                     // nothing; resolve rejects it.

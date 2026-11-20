@@ -684,6 +684,7 @@ fn unending_member(name: &str) -> Option<&'static str> {
 pub fn is_prelude_name(name: &str) -> bool {
     prelude_layer(name).is_some()
         || TYPES.contains(&name)
+        || zedc_syntax::fixed_width::is_alias(name)
         || later_type_layer(name).is_some()
         || name == MAIN_ARGS
 }
@@ -698,6 +699,11 @@ const MAIN_ARGS: &str = "MainArgs";
 /// checker and the elaborator build each call (plan row FP-ops-strings). A use that is not a
 /// call is refused as any word of a later layer is.
 pub const STRING_CALLS: [&str; 3] = ["concat", "split", "lines"];
+
+/// What a range type, or a fixed-width alias naming one, waits for anywhere but where the
+/// checker reads it apart ([`Task::ParamTy`], [`Task::KeyTy`]).
+const RANGE_ELSEWHERE: &str = "a range type in any place but the whole type of a parameter or \
+                               the key of a parameter's partial map `K ->? V`";
 
 /// The layer of the prelude type `name` of a later layer, if it is one.
 fn later_type_layer(name: &str) -> Option<u32> {
@@ -787,9 +793,10 @@ pub const TYPES: &[&str] = &[
 
 /// The type names of the prelude's later layers, each with its layer (DESIGN.md, "Defined words
 /// by layer"). A use below its layer is an error naming the layer, as for a value word. The
-/// number algebras of L14 are words too, applied to build a value; the fixed-width aliases of
-/// L7, `i8` to `i64` and `u8 = int[0..=255]`, are types only. The float formats `f16` and
-/// `bf16` are of L1 and not yet built (step L1.18a), so neither list holds them.
+/// number algebras of L14 are words too, applied to build a value. The fixed-width aliases,
+/// `i8` to `u128`, are of L1 as names of their ranges (step L1.12, [`zedc_syntax::fixed_width`]). The
+/// float formats `f16` and `bf16` are of L1 and not yet built (step L1.18a), so neither list
+/// holds them.
 pub const LATER_TYPES: &[(&str, u32)] = &[
     ("Seq", 5),
     ("Edit", 5),
@@ -808,11 +815,6 @@ pub const LATER_TYPES: &[(&str, u32)] = &[
     ("Ptr", 7),
     ("Signal", 7),
     ("IoReason", 7),
-    ("i8", 7),
-    ("i16", 7),
-    ("i32", 7),
-    ("i64", 7),
-    ("u8", 7),
     ("FloatClass", 11),
     ("Constraints", 11),
     ("UnitText", 12),
@@ -1742,6 +1744,12 @@ impl Resolver<'_> {
                     self.out.uses.insert(span, Ref::Main(name.into()));
                     return;
                 }
+                // A fixed-width alias is the name of its range from step L1.12, a type; as a
+                // value it is the cast `u8(x)` (sec:corner_cases, "Casts are domain proofs"),
+                // which waits for plan row INT-128, as the fixture `casts.txt` records.
+                None if zedc_syntax::fixed_width::is_alias(name) => not_yet(&format!(
+                    "the prelude type `{name}` as a value, the cast `{name}(x)`"
+                )),
                 None => match later_type_layer(name) {
                     Some(_) => not_yet(&format!("the prelude type `{name}`")),
                     None => match self.main_params.iter().any(|(body, m)| {
@@ -1977,6 +1985,11 @@ impl Resolver<'_> {
                         }
                         self.range(of, low, high, &mut todo)
                     }
+                    TypeKind::Name(n) if self.fixed_width_alias(n) => {
+                        self.out
+                            .uses
+                            .insert(t.span, Ref::Prelude(n.as_str().into()));
+                    }
                     // The key of a partial map `K ->? V` of one key, `m: int[5..<10] ->? int`,
                     // may be ranged too, and so may each component of a tuple key: the
                     // checker reads the range into the parameter's key domain (RANGE-keys).
@@ -1998,6 +2011,11 @@ impl Resolver<'_> {
                             self.later(t.span, "a range over a type other than `int`");
                         }
                         self.range(of, low, high, &mut todo)
+                    }
+                    TypeKind::Name(n) if self.fixed_width_alias(n) => {
+                        self.out
+                            .uses
+                            .insert(t.span, Ref::Prelude(n.as_str().into()));
                     }
                     // One level of tuple: a range in a nested tuple, `((int[0..<2],), int)`,
                     // is refused as anywhere else.
@@ -3999,14 +4017,21 @@ impl Resolver<'_> {
             // it would need a kernel type with a range, which this version lacks; reading it
             // as its base type would make `x is int[0..=9]` hold for 100.
             TypeKind::Range { of, low, high } => {
-                self.later(
-                    t.span,
-                    "a range type in any place but the whole type of a parameter or the key \
-                     of a parameter's partial map `K ->? V`",
-                );
+                self.later(t.span, RANGE_ELSEWHERE);
                 self.range(of, low, high, todo);
             }
         }
+    }
+
+    /// Whether the type name `n` is a fixed-width alias of the prelude, `i8` to `u128`, the name
+    /// of its range (step L1.12; QUESTIONS A72): a declaration in scope of that name, a type
+    /// variable or a leaf of a printed type hides it, as it hides any prelude word. O(depth of
+    /// the scopes) for the lookup, as for any name.
+    fn fixed_width_alias(&self, n: &str) -> bool {
+        zedc_syntax::fixed_width::is_alias(n)
+            && !self.tvars.contains_key(n)
+            && !self.printed.as_ref().is_some_and(|l| l.contains(n))
+            && matches!(self.find(n), Some(Found::Word(_)) | None)
     }
 
     /// Resolves the range type `of[low..high]`: the bounds' names, each bound then checked
@@ -4102,6 +4127,10 @@ impl Resolver<'_> {
                 )
             }
             None if n == MAIN_ARGS => return self.errors.push(main_args_elsewhere(span)),
+            // A fixed-width alias names a range, which stands only where a range does.
+            Some(Found::Word(_)) | None if zedc_syntax::fixed_width::is_alias(n) => {
+                not_yet(RANGE_ELSEWHERE)
+            }
             Some(Found::Word(_)) | None => match later_type_layer(n) {
                 Some(_) => not_yet(&format!("the prelude type `{n}`")),
                 None if self.prelude_broken(n, span) => return,

@@ -137,7 +137,7 @@ fn a_width_test_of_the_lower_bound_alone_is_not_enough() {
     // rejected again, since 256 is not below `2^8`.
     let fixed = "f(positional n: int) = if n >= 0 { bitNot(n, width: 8) } else { 0 };\n";
     let out = rejected(fixed);
-    assert!(out.contains("`bitNot` takes `x` in int[0..<2^8]"), "{out}");
+    assert!(out.contains("`bitNot` takes `x` in u8"), "{out}");
 }
 
 #[test]
@@ -149,8 +149,8 @@ fn no_test_is_offered_where_no_value_fits() {
     assert_eq!(tried(&out), None, "{out}");
 }
 
-/// The domain the headline of `out` names, as `` `x` in int[0..<2^8]`` in "`bitNot` takes `x` in
-/// int[0..<2^8]: …", and the pass note naming the same domain.
+/// The domain the headline of `out` names, as `` `x` in u8`` in "`bitNot` takes `x` in u8: …",
+/// and the pass note naming the same domain.
 fn same_domain(out: &str) {
     let first = out.lines().next().expect("a message");
     let (_, rest) = first.split_once(" takes `").expect("a domain headline");

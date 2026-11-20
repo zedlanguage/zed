@@ -50,11 +50,11 @@ const WORDS: [(&str, &str, &str, &str); 15] = [
     ("shl(1, n)", "int[0..]", "3", "8"),
     ("shr(16, n)", "int[0..]", "3", "2"),
     ("popCount(n)", "int[0..]", "7", "3"),
-    ("bitNot(n, width: 8)", "int[0..<2^8]", "200", "55"),
-    ("leadingZeros(n, width: 8)", "int[0..<2^8]", "1", "7"),
-    ("trailingZeros(n, width: 8)", "int[0..<2^8]", "8", "3"),
-    ("rotl(n, 1, width: 8)", "int[0..<2^8]", "129", "3"),
-    ("rotr(n, 1, width: 8)", "int[0..<2^8]", "3", "129"),
+    ("bitNot(n, width: 8)", "u8", "200", "55"),
+    ("leadingZeros(n, width: 8)", "u8", "1", "7"),
+    ("trailingZeros(n, width: 8)", "u8", "8", "3"),
+    ("rotl(n, 1, width: 8)", "u8", "129", "3"),
+    ("rotr(n, 1, width: 8)", "u8", "3", "129"),
     ("rotl(1, n, width: 8)", "int[0..]", "3", "8"),
     ("rotr(5, n, width: 8)", "int[0..]", "1", "130"),
 ];
@@ -240,7 +240,7 @@ fn the_smallest_width_decides() {
         "g(positional x) = bitNot(x, width: 16);\nf(positional x) = g(x) + bitNot(x, width: 8);\n";
     let out = rejected(&format!("{defs}y = f(300);\n"));
     assert!(
-        out.starts_with("3:5: `f` takes `x` in int[0..<2^8]: `f(300 : int)`.\n"),
+        out.starts_with("3:5: `f` takes `x` in u8: `f(300 : int)`.\n"),
         "{out}"
     );
     assert!(accepted(&format!("{defs}y = f(255);\n")));
@@ -308,15 +308,11 @@ fn each_kernel_type_error_has_a_rejected_generic_use() {
             "f(-1)",
             "`f` takes `n` in int[0..]",
         ),
-        (
-            "f(positional n) = bitNot(n, width: 8);",
-            "f(256)",
-            "in int[0..<2^8]",
-        ),
+        ("f(positional n) = bitNot(n, width: 8);", "f(256)", "in u8"),
         (
             "f(positional h) = funnelShl(h, 1, 3, width: 8);",
             "f(300)",
-            "in int[0..<2^8]",
+            "in u8",
         ),
         (
             "f(positional x) = pdep(x, 5);",
