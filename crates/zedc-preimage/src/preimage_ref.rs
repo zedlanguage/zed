@@ -115,7 +115,12 @@
 //!
 //! Cost in theory: O(n log n + output) time and O(n + output) space over a chain of n links,
 //! with output the pieces of the answer; a nested remainder adds a factor `m/old` per excluded
-//! piece, linear in a modulus literal (so exponential in its bits). Nested remainders do not
+//! piece, linear in a modulus literal (so exponential in its bits). Not proved in general: the
+//! O(log n) cost per link is proved for `normal_round_down` and `normal_min_gap` only (the
+//! proofs at `Tx::inverse_states`); for the other families the bound is measured, and
+//! `Tx::back_doubt` names the shapes that keep main's memo and may still be quadratic, and the
+//! unaligned scalar inverses that can visit every partition (row
+//! PROOF-preimage-ref-chain-cost). Nested remainders do not
 //! meet that bound: each link costs the pieces of its state, which the listing keeps large
 //! whatever the answer, so the chain costs O(n s) for s state pieces. Measured on
 //! `nested_moduli_eq_4096` with the constants of n = 6 mod 10 next to the root (an answer of
@@ -3563,6 +3568,18 @@ impl<'t> Tx<'t> {
             let step = self.step_1d(u.0, u.1).expect("inverse step");
             #[cfg(feature = "counts")]
             crate::preimage::counts::note_inverse(0, step.fwd.len());
+            // Why the clip drops no input (31b60eac9, the bound of product and quotient demands
+            // by their forward image): `step.fwd` is the node's forward image from `Tx::fwd`
+            // (`step_1d`), which holds every value the node takes at every input of the domain;
+            // that `Tx::fwd` is sound (the forward transfer below "Forward transfer") is a
+            // premise here, not shown at this site. An excluded pair (value v, input x) with v
+            // outside it names a value no run reaches the node with, so no input's answer
+            // reads that pair; dropping it changes no label of a value the node takes. Without the clip, a product with no
+            // exact inverse passed on every value but the excluded ones (calls 22, 45 and 86 of
+            // main's dump came out coarser). Test:
+            // `l01_25_preimage_catalog::ref_memo::calls_22_45_and_86_keep_main_s_answer_or_a_finer_one`
+            // and the dump tests `the_changed_answers_of_main_s_dump_are_kept_or_made_finer_*`;
+            // they check those calls only, and cannot catch an unsound forward image.
             let st = st.clip_values(&step.fwd);
             #[cfg(feature = "counts")]
             if matches!(step.kind, StepKind::If(..)) {

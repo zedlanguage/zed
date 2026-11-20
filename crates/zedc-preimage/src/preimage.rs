@@ -2419,7 +2419,15 @@ fn linear(
         // `a` to about C/2 singletons and C grows with the step, so the run did O(n^2) work
         // (10.3 times the work at 8 times the steps). This way is O(m) once to read the
         // shape, then three rows. Both formulas hold at exactly the same points, over the
-        // integers, so the answer is the same where both are answered. As in `framed`, under
+        // integers, so the answer is the same where both are answered. Why: `hi = lo + (m-1)d`
+        // ([`singleton_progression`]), so `x == d*k + lo` with `lo <= x <= hi` holds for some
+        // integer `k` exactly when `x` is `lo + j*d` with `j` in `0..m`; and `k` is free only in
+        // `outside` below, which is asked for a point (`decide`, not under a negation), so `k`
+        // is read as "for some `k`". Tests:
+        // `l01_39_reduced_product::scaling::bench::changes_of_one_block_hold_bounded_memory`
+        // (cost) and the l01_25 `s22` cases checked against the solver alone (commit
+        // 34989b330); none builds a progression whose step does not divide `hi - lo`, which
+        // `singleton_progression` never returns. As in `framed`, under
         // `EXACT_OFF` (the solver alone) the disjunction is kept, so that the hull solver
         // splits it as before.
         let within_out = if presburger::exact::EXACT_OFF.get() {
@@ -5148,6 +5156,20 @@ impl<'t> Tx<'t> {
     /// no translation wherever they are reached (`None`, with no stop below them): a failure
     /// names no auxiliary variable, so undoing the attempt does not touch it.
     ///
+    /// Why a kept failure stays right. The undo is `Tr::truncate(mark)` with this call:
+    /// `Tr::aux` numbers an auxiliary variable by `defs.len()`, so after the truncate a new
+    /// variable takes a number an undone one had. A success may name such a number in its
+    /// value, so it is removed. A failure's value is `None` and names nothing; a `cut` of
+    /// `usize::MAX` means it holds on every stack ([`Entry`], PREIMAGE-entry-higher-stack).
+    /// Keys of the `At` tables are a term number and a scope number, which name no auxiliary
+    /// variable. Not proved: a `CallKey` holds the arguments' `Lin`s, which may name an
+    /// auxiliary atom of the undone attempt; after the truncate the same key can stand for
+    /// arguments whose atom has another definition, and that the call fails for those too is
+    /// not shown. If it does not, the reuse gives `None`, which a caller reads as a term with
+    /// no translation (`Walk::formula_at` then takes `compare_untranslated`): coarser, not
+    /// unsound (inferred from `call_key` and `formula_at`, the callers read; no test). Row
+    /// PROOF-preimage-forget-callkey.
+    ///
     /// Complexity tradeoff: the naive version removed every entry the undone attempt made, the
     /// failures too. A chain of n functions each multiplying the one before by a parameter
     /// (`h(x) * x + 1`) fails at each body's comparison, and each body then read the chain
@@ -6381,6 +6403,30 @@ impl<'m, 't> Walk<'m, 't> {
     // with it, unremembered. Cost: a memo entry for each triple. Tests:
     // `l01_25_preimage_catalog::scaling::long_closing_shared_arms_in_a_called_lambda`,
     // `long_closing_a_chain_of_doubled_calls`; COMPLEXITY.md row S21.
+    //
+    // Why the memo keyed by `((t, env), local)` returns what closing again would (T11,
+    // 526f13c51). `close_at` reads only (1) `node(t)`, fixed per term; (2) `lookup(env, x)`,
+    // fixed per scope number, since a scope and a binding give one scope ([`Tx::bind`]);
+    // (3) `locals.get(local, x)`, fixed per set number; (4) `bind_local(local, n, t)`, which
+    // returns the one set and name recorded for `(local, n, t)` (`Locals::ids`), so the same
+    // inputs give the same names; (5) `constant(bt, be)` and the closings of parts, which are
+    // functions of their own triples by the same five points (induction on the depth of the
+    // closing). So the result is a function of the triple, and the key must hold `local`:
+    // without it a part closed under a binder of `w` and one closed outside it share an entry
+    // (the negative control of 526f13c51 gave a wrong value).
+    // Why no name is captured: a name bound within is closed to `x\0binder`
+    // ([`Tx::bind_local`]). A kernel term's names hold no NUL: a program's names are
+    // `[A-Za-z_][A-Za-z0-9_]*` with an optional `'`, and the elaborator's fresh names add only
+    // `@`, `$` and digits (zedc-elab elab/state.rs, identities.rs, walk.rs, read 2026-11-20).
+    // So a renamed name never equals a free name of a closed term put under the binder, and
+    // two binders give two names. One case rests on the shape of terms,
+    // not on a check here: the same binder `t` met twice on one path of the closing would give
+    // two binders one name; that needs `t` inside the closing of its own body, which a `let`
+    // (its bound term is closed outside its name, `close_shared(e, env, local)`) and a term DAG
+    // do not allow without recursion, and a recursive closing does not end anyway.
+    // Tests: capture by
+    // `l01_25_preimage_catalog::scaling::a_name_closed_into_a_call_is_not_taken_by_its_parameters`
+    // (two terms only; it cannot catch a capture through a deeper nest or a `match` arm).
     fn close(&'m self, t: Tid, env: Eid, local: Lid) -> Deep<'m, Option<Term>> {
         self.stack.call(move || self.close_at(t, env, local))
     }
@@ -8875,8 +8921,21 @@ impl<'m, 't> Walk<'m, 't> {
                             // add rows, and on a chain of `abs` with one long row through all of
                             // them every elimination did, so the goal was refused for growth
                             // from nine links (FAIL-abs-chain-growth-bench). Eliminating an atom
-                            // from rows of two terms or fewer gives rows of two terms or fewer.
-                            // Two rows a definition, O(1); the formula has the same points.
+                            // from rows of two terms or fewer gives rows of two terms or fewer:
+                            // a pair of rows that both hold the atom is combined so that it
+                            // cancels, leaving at most the one other term of each row (Fourier
+                            // and Motzkin), and an equation of two terms put into a row of two
+                            // terms leaves two. (This counts atoms, not the constant.) The
+                            // formula has the same points wherever a row goes: each hull row is
+                            // implied by both cases (`x == a` and `a <= b` give `x <= b`, and so
+                            // on), so it holds in the base, in one case or in both alike. Two
+                            // rows a definition, O(1). Tests:
+                            // `tests::or_ifs_stay_exact_on_extrema_and_bodies_over_no_input`
+                            // (narrow rows stay exact), and
+                            // `l01_38_presburger::ladder::a_chain_with_abs_on_each_link_is_proved_past_eight_links`
+                            // with `l01_38_presburger::bench::ladder::products_along_a_chain_with_a_disjunction_on_each_link_scale`
+                            // (growth). None checks that the elimination keeps rows of two terms
+                            // on its own; that is inferred from the steps above.
                             let hull = if p == Min {
                                 [Con::ge(&a, &x), Con::ge(&b, &x)]
                             } else {
@@ -11034,8 +11093,17 @@ impl Sep {
     }
 }
 
-/// The least and the greatest value of `pa` over `dom`, the domain of its input, or `None`
-/// when it has no value there.
+/// Bounds on the values of `pa` over `dom`, the domain of its input, or `None` when it has no
+/// value there. Exact (the least and the greatest value) for a constant, and for a line, which
+/// is monotone, so it takes its extremes at the least and the greatest member of `dom`. For a
+/// [`Pa::Piecewise`] they hold every value and may be wider: the pieces sliced to the ends of
+/// `dom` may lie in its holes, the root is not sliced when `dom` has an end outside
+/// [`in_range`], and a node's `vals` may be wider than its values after a line is added
+/// ([`Tag::vals`]). So `None` means no value, but `Some` does not mean some value. Every caller
+/// (`Tx::invert_sep`, `Tx::invert_read`, `Sep::bounds`, `Tb::of`, `LetPa::term_bounds`) uses
+/// them as bounds
+/// that hold the values, never as values taken. Test of the line at an end past `i128`:
+/// `l01_39_reduced_product::follow::a_line_over_a_domain_with_an_end_past_i128_has_exact_bounds`.
 fn pa_bounds(pa: &Pa, dom: &IntervalSet) -> Option<(Val, Val)> {
     #[cfg(feature = "counts")]
     counts::TERM_BOUNDS.set(counts::TERM_BOUNDS.get() + 1);
@@ -11200,6 +11268,19 @@ impl Sums {
     /// width `h - l` is at most `min(hi - zl, zh - lo)` for some piece `zl..=zh` of `z`,
     /// the slack. A term with an infinite bound keeps it when the piece's end on that side
     /// is infinite too.
+    ///
+    /// Derivation of the slack: with the term's values in `l..=h`, the others' sum lies in
+    /// `(lo - l)..=(hi - h)`, so [`Tx::invert_term`] lets the term take `zl - (hi - h) ..= zh -
+    /// (lo - l)` for the piece `zl..=zh`. `l..=h` lies in it when `l >= zl - hi + h` and `h <=
+    /// zh - lo + l`, that is `h - l <= hi - zl` and `h - l <= zh - lo`. Bounds wider than the
+    /// values ([`pa_bounds`]) only make the width larger, so a term skipped still has its
+    /// values in the piece. A term whose inversion may drop inputs even then is counted in
+    /// [`TermBounds::odd`] and always inverted. Tests: the box of [`Tx::invert_read`] against
+    /// that of reading every input, `l01_39_reduced_product::follow::
+    /// random_tests_through_term_bounds_narrow_as_reading_every_input_does` (random sums and
+    /// domains; it cannot catch a case its random terms never build, such as a summary with a
+    /// gap); the cost, `l01_39_reduced_product::scaling::bench::
+    /// tests_of_a_name_over_many_inputs_take_the_bounds_of_the_inputs_they_narrow`.
     fn wants(&self, z: &IntervalSet) -> Wants {
         let (lo, hi) = (Num::from(&self.lo), Num::from(&self.hi));
         let mut slack = NegInf;
@@ -12964,6 +13045,19 @@ fn slice_treap(root: Tree, lo: &End, hi: &End) -> Tree {
 /// a cut at a node splits only the part of the larger between its ancestors' cuts. So a
 /// chain of `d` sums, each with an operand of `O(1)` pieces, costs `O(d log d)` steps on
 /// numbers.
+///
+/// Why the sum is exact ([`add_into`]): the walked treap is in input order, so every piece of
+/// its left subtree lies below the node's piece and every piece of its right subtree above it.
+/// The larger treap is cut at the piece's two ends; the part below is summed with the left
+/// subtree, the part above with the right, and the part within gets the piece's line `a * x +
+/// b` added by the tag `{ mul: 1, slope: a, add: b }`, which maps each value `v` at `x` to
+/// `v + a * x + b`. A part with nothing to pair (an empty subtree of the walked treap) gives
+/// `None`, so inputs where only one summary is defined are dropped. Tests: exactness, the unit
+/// test `tests::a_sum_of_summaries_is_the_sum_at_every_point` (400 random pairs, every point)
+/// and `l01_39_reduced_product::follow::random_sums_of_piecewise_terms_are_read_exactly`; the
+/// cost, `follow::bench::nested_sums_of_one_input_scale` ("a test of a sum of d ramps"). The
+/// benchmark checks one ratio of sizes; it cannot show the expected bound, which rests on the
+/// priorities ([`prio_of`]).
 fn add_treaps(p: &Tree, q: &Tree, sign: &Int) -> Tree {
     let len = |t: &Tree| t.as_ref().map_or(0, |n| n.len);
     if len(p) >= len(q) {
@@ -13590,6 +13684,14 @@ pub fn witness(
 // Tests: `l01_25_preimage_catalog::scaling::an_exact_search_reads_only_the_inputs_it_touches`,
 // `l01_25_preimage_catalog::exact::inputs_the_term_does_not_read_keep_their_sets`;
 // COMPLEXITY.md row S21.
+// Why the split loses nothing: a run of `term` reads only its free names, which `stage::free`
+// lists, so two points that agree on the read inputs have the same value (or both fail). So
+// the points meeting the demand are exactly (the read inputs' points meeting it) times (the
+// unread inputs' whole sets): `exact_search` puts the unread sets back unchanged and its
+// `several <= 1` count need look at the read inputs only, and `witness` may give each
+// unread input any member, here its lowest. The tests above use unread inputs that appear
+// nowhere in the term; they cannot catch a name read only inside a lambda that `stage::free`
+// missed (that is `stage::free`'s own contract).
 fn split_read(term: &Term, dom: Domains) -> (Domains, Domains) {
     let read = stage::free(term);
     dom.into_iter().partition(|(k, _)| read.contains(k))
