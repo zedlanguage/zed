@@ -106,9 +106,14 @@ pub struct VarSet {
 // meant: a type checked in the square of its size. With a seed per process the outputs are
 // unknown to the writer of the program, so no collision can be planned.
 //
-// Cost: foldhash's `fast` hash in place of SipHash-1-3, cheaper per byte. Measured on the
-// zedc_types and l01_26 benches (seed1/bench-before vs bench-after): see the plan row's
-// report; every ratio stayed under 10.5.
+// Cost: foldhash's `fast` hash in place of SipHash-1-3, cheaper per byte. Measured
+// 2026-11-20 on the zedc_types and l01_26_type_resolution benches (`run_tests.sh --bench`,
+// 63 pieces, load 30 to 36 before and 47 to 62 after, 32 cores): no ratio T(8n)/T(n) moved by
+// more than its noise (for example `Ty::replace in n shared rows` 8.199 -> 8.192, `n rows of
+// overlapping variable sets` 8.237 -> 8.261); the instructions at size n fell by 0 to 10%
+// (0.902 of before on the variable-set rows, 0.93 on the joined-component rows, 1.000 on the
+// deep-type rows, which hash little). The ten pieces that fail did so before as well, with
+// the same stack overflows and panics (FAIL-l0126-stack-overflow-after-d).
 fn name_digest(v: &str) -> u64 {
     zed_kernel::digest::text_hash(v)
 }
@@ -12422,7 +12427,8 @@ enum Place {
 /// The names of the fields of a payload, in order, for [`Place::Payload`]: hashed by their
 /// digest, in O(1), and compared by the digest and then the names, so two payloads whose names
 /// hash alike are not one place. Before (HASH-type-digests-seeded), a place held the digest
-/// only, and a collision put two payloads' functions at one place.
+/// only, and a collision put two payloads' functions at one place. Test:
+/// `payload_places_compare_the_names_not_only_their_hash`.
 #[derive(Clone)]
 struct PayloadNames {
     digest: u64,
