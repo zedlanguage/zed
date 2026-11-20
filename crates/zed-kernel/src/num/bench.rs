@@ -178,6 +178,176 @@ fn the_shared_factor_crossover_axis() {
     }
 }
 
+/// The first `n` primes at or above `from`, by `zed_numtheory::next_prime`.
+fn primes_from(from: u64, n: usize) -> Vec<u64> {
+    let mut out = Vec::with_capacity(n);
+    let mut p = from;
+    while out.len() < n {
+        p = zed_numtheory::next_prime(p).expect("a prime below 2^64");
+        out.push(p);
+        p += 1;
+    }
+    out
+}
+
+/// PERF-negated-chain-unsolved: the word path by factoring
+/// (`zed_numtheory::coprime_base_by_factoring` and `shares_a_factor_by_factoring`) against the
+/// general methods (`coprime::by_halves`, `coprime::shares_a_factor_by_tree`) on `k` word
+/// inputs whose largest has `b` bits, on both sides of the measured switchovers
+/// `coprime::FACTOR_BITS` and `coprime::FACTOR_INPUTS` (author decision A96). Three families
+/// of each width: distinct primes of `b` bits (a primality test each); disjoint products
+/// `p_(2i) p_(2i+1)` of primes of `b / 2` bits (Pollard's rho's worst case at a width, about
+/// `2^(b/4)` products each); and chains `p_i p_(i+1)` of such primes (every prime shared).
+/// Where `k` primes of `b / 2` bits do not exist the primes run past that width, and the
+/// printed `bits` is the largest input's. Prints the instructions and bytes of each method and
+/// holds their answers equal. Factoring costs a fixed amount an input at a width and the trees
+/// more an input at more inputs, so the switch is in both: the path is taken from
+/// `FACTOR_INPUTS` inputs on, up to the largest width at which it is the cheaper on every
+/// family there; the measurements are in the comment of `coprime::FACTOR_BITS`, and the
+/// widths and counts on both sides of each (`FACTOR_BITS + 1`; `FACTOR_INPUTS / 2`) are on
+/// the axis. Widths past 56 bits only repeat the trees' side at a
+/// higher cost (1.8 M instructions an input by factoring at 63 bits) and are left out to keep
+/// the run short. Run again for each target platform and after a change to code generation.
+#[test]
+fn the_factor_bits_crossover_axis() {
+    let mut meter = crate::scaling::Meter::new();
+    let mut widths: Vec<u32> = vec![16, 24, 32, 40, 44, 48, 52, 56];
+    widths.extend([coprime::FACTOR_BITS, coprime::FACTOR_BITS + 1]);
+    widths.sort_unstable();
+    widths.dedup();
+    let mut ks = vec![2usize, 4, 8, 13, 64, 512];
+    let fi = coprime::FACTOR_INPUTS;
+    ks.extend([fi / 2, fi]);
+    ks.sort_unstable();
+    ks.dedup();
+    for k in ks {
+        for &b in &widths {
+            let half = 1u64 << (b / 2 - 1);
+            let pairs = primes_from(half, 2 * k);
+            let chain = primes_from(half, k + 1);
+            let families = [
+                ("distinct", primes_from(1 << (b - 1), k)),
+                (
+                    "pairs",
+                    (0..k).map(|i| pairs[2 * i] * pairs[2 * i + 1]).collect(),
+                ),
+                (
+                    "chain",
+                    (0..k)
+                        .map(|i| chain[i] * chain[i + 1])
+                        .collect::<Vec<u64>>(),
+                ),
+            ];
+            for (family, ws) in families {
+                let xs: Vec<BigUint> = ws.iter().map(|&w| BigUint::from(w)).collect();
+                let bits = ws.iter().map(|w| 64 - w.leading_zeros()).max().unwrap_or(0);
+                let (mut factored, mut halves) = (None, None);
+                let fb = meter.work(|| {
+                    factored = Some(zed_numtheory::coprime_base_by_factoring(&ws));
+                });
+                let hb = meter.work(|| halves = Some(coprime::by_halves(&xs)));
+                let (mut factored, _) = factored.expect("run by the meter");
+                let mut halves = halves.expect("run by the meter").elements;
+                factored.sort_unstable();
+                halves.sort();
+                let factored: Vec<BigUint> = factored.into_iter().map(BigUint::from).collect();
+                assert_eq!(factored, halves, "{family} k {k} b {b}");
+                let (mut s_factored, mut s_tree) = (Vec::new(), Vec::new());
+                let fs =
+                    meter.work(|| s_factored = zed_numtheory::shares_a_factor_by_factoring(&ws));
+                let ts = meter.work(|| s_tree = coprime::shares_a_factor_by_tree(&xs));
+                assert_eq!(s_factored, s_tree, "{family} k {k} b {b}");
+                println!(
+                    "bench FACTOR_BITS family={family} k={k} bits={bits} factor_side={} base: factored={}/{} halves={}/{} shares: factored={}/{} tree={}/{}",
+                    bits <= coprime::FACTOR_BITS && k >= fi,
+                    fb.units,
+                    fb.bytes,
+                    hb.units,
+                    hb.bytes,
+                    fs.units,
+                    fs.bytes,
+                    ts.units,
+                    ts.bytes
+                );
+            }
+        }
+    }
+}
+
+/// The first `n` primes above 2^shift, by a sieve of the segment
+/// `[2^shift, 2^shift + 40 n + 4096)`, which holds more than `n` of them (the density is about
+/// 1 / 13.9 near 2^20 and 1 / 16.6 near 2^24). Each input has `shift + 1` or more bits, so
+/// products and gcds are of many words.
+fn primes_above(shift: u32, n: usize) -> Vec<BigUint> {
+    let (lo, len) = (1usize << shift, 40 * n + 4096);
+    let mut composite = vec![false; len];
+    let mut p = 2;
+    while p * p < lo + len {
+        let first = lo.div_ceil(p) * p;
+        for m in (first..lo + len).step_by(p) {
+            composite[m - lo] = true;
+        }
+        p += 1;
+    }
+    let out: Vec<BigUint> = (0..len)
+        .filter(|&i| !composite[i])
+        .map(|i| BigUint::from(lo + i))
+        .take(n)
+        .collect();
+    assert_eq!(out.len(), n);
+    out
+}
+
+/// DRY-coprime-bases-one: `n` distinct primes past 2^24, each its own element. Until
+/// PERF-negated-chain-unsolved (negchain1, 2026-11-20) Bernstein's trees (`by_halves`) answered
+/// these, 12.815 (load 41 to 43). The inputs have 25 bits, at most `coprime::FACTOR_BITS`,
+/// and both sizes have at least `coprime::FACTOR_INPUTS`, so `coprime_base` now factors each
+/// into primes (`zed_numtheory::coprime_base_by_factoring`): a primality test each, linear in
+/// `n` at a fixed width (proof in that function's comment). Measured 2026-11-20 (load 42):
+/// 184,147,662 / 1,484,543,186 instructions, 8.062, bytes 8.0.
+#[test]
+fn the_coprime_base_of_distinct_primes_scales() {
+    let inputs = crate::scaling::inputs(32768, |n| {
+        let ps = primes_above(24, n);
+        assert!(coprime::dense_values(&ps).is_none());
+        ps
+    });
+    crate::scaling::check("the coprime base of n distinct primes", 32768, |n| {
+        let cb = coprime::coprime_base(&inputs[&n]);
+        assert_eq!(cb.elements.len(), n);
+    });
+}
+
+/// DRY-coprime-bases-one: `q_i q_(i+1)` for `n + 1` primes `q_i` past 2^20, each shared by two
+/// inputs. Until PERF-negated-chain-unsolved (negchain1, 2026-11-20) Bernstein's trees
+/// answered these, 16.277 (primes in a row, load 41 to 43). The primes are below 2^21, so the
+/// products have 41 or 42 bits, on the factoring side of `coprime::FACTOR_BITS` at both sizes
+/// (with at least `coprime::FACTOR_INPUTS` inputs), linear in `n` at a fixed width (proof at
+/// `zed_numtheory::coprime_base_by_factoring`); each input costs a primality test and one rho
+/// split; rho takes about
+/// `p^(1/4)` steps for the least prime `p`, and Brent's doubling of its batches makes that a step
+/// function of `p`. Primes in a row would widen with `n` (65,537 of them past 2^20 reach about
+/// 2^21), and the cost of each input with them: at 8192 and 65536 inputs that gave 9.071, with
+/// the bytes at 8.0 and the instructions an input 1.134 times as many (2026-11-20, load 42), the
+/// input's doing, not the method's. So both sizes take their primes from the same 65,537 primes
+/// past 2^20, size `n` every `65536 / n`-th of them: the widths are spread alike at both sizes,
+/// and only the count changes. Measured 2026-11-20 (load 56): 500,655,760 / 3,996,718,440
+/// instructions, 7.983, bytes 8.0.
+#[test]
+fn the_coprime_base_of_a_chain_of_shared_primes_scales() {
+    let inputs = crate::scaling::inputs(8192, |n| {
+        let ps = primes_above(20, 65537);
+        let step = 65536 / n;
+        (0..n)
+            .map(|i| &ps[i * step] * &ps[(i + 1) * step])
+            .collect::<Vec<BigUint>>()
+    });
+    crate::scaling::check("the coprime base of n products p_i p_(i+1)", 8192, |n| {
+        let cb = coprime::coprime_base(&inputs[&n]);
+        assert_eq!(cb.elements.len(), n + 1);
+    });
+}
+
 /// A number of `words` words from a fixed linear congruential sequence (Knuth's MMIX
 /// constants), its top word not zero: the benches need the same inputs on every run.
 fn bench_number(words: usize, seed: u64) -> BigUint {

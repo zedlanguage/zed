@@ -110,9 +110,11 @@ pub struct CoprimeExponents {
 /// `with_one_wide`, O(M(n)) for `n` bits at a fixed width of the others; all other inputs take
 /// `by_halves`, Bernstein's algorithms.
 pub fn coprime_base<L: Borrow<BigUint>>(xs: &[L]) -> CoprimeBase {
-    // At most `WORD_INPUTS` word inputs, the measured switchover documented there.
-    if let Some(ws) = words(xs) {
-        let (elements, exponents) = zed_numtheory::coprime_base_u64(&ws);
+    // At most `WORD_INPUTS` word inputs, the measured switchover documented there; then word
+    // inputs of at most `FACTOR_BITS` bits, the measured switchover documented there.
+    let word_base = (words(xs).map(|ws| zed_numtheory::coprime_base_u64(&ws)))
+        .or_else(|| factor_words(xs).map(|ws| zed_numtheory::coprime_base_by_factoring(&ws)));
+    if let Some((elements, exponents)) = word_base {
         // `c ^ k` divides a word input, so it is a word and `k < 64`.
         let factors = (exponents.into_iter())
             .map(|ks| {
@@ -145,9 +147,11 @@ pub fn coprime_base<L: Borrow<BigUint>>(xs: &[L]) -> CoprimeBase {
 /// they are counted by word divisions; on every other input each factor `q` of element `e` is
 /// divided by `e` ([`strip`]), O(M(bits q)).
 pub fn coprime_base_exponents<L: Borrow<BigUint>>(xs: &[L]) -> CoprimeExponents {
-    // At most `WORD_INPUTS` word inputs, the measured switchover documented there.
-    if let Some(ws) = words(xs) {
-        let (elements, exponents) = zed_numtheory::coprime_base_u64(&ws);
+    // At most `WORD_INPUTS` word inputs, then word inputs of at most `FACTOR_BITS` bits, the
+    // measured switchovers documented there.
+    let word_base = (words(xs).map(|ws| zed_numtheory::coprime_base_u64(&ws)))
+        .or_else(|| factor_words(xs).map(|ws| zed_numtheory::coprime_base_by_factoring(&ws)));
+    if let Some((elements, exponents)) = word_base {
         let elements = elements.into_iter().map(BigUint::from).collect();
         return CoprimeExponents {
             elements,
@@ -218,6 +222,53 @@ fn words<L: Borrow<BigUint>>(xs: &[L]) -> Option<Vec<u64>> {
         return None;
     }
     xs.iter().map(|x| x.borrow().to_u64()).collect()
+}
+
+/// The most bits of the largest of the word inputs that are factored into primes
+/// (`zed_numtheory::coprime_base_by_factoring` and `shares_a_factor_by_factoring`, linear in
+/// the count beside one `factor` an input) rather than taken through the trees (`by_halves`,
+/// `shares_a_factor_by_tree`, O(M(N) log^2 N) and O(M(N) log k)). Pollard's rho costs about
+/// `2^(b/4)` products on a product of two primes of `b / 2` bits, so past some width the trees
+/// are the cheaper.
+///
+/// The factoring path is taken only from [`FACTOR_INPUTS`] inputs on: factoring costs a fixed
+/// amount for each input at a width, and the trees' share for each input grows with the count
+/// (3 to 4 times the instructions an input at 8 times the inputs), so the crossover is in both.
+///
+/// Measured switchovers, not proved bounds (author decision A96), from
+/// `num::bench::the_factor_bits_crossover_axis` (2026-11-20, load 51, instructions of
+/// factoring over those of the trees, base / shared inputs; under 1 means factoring is the
+/// cheaper). The worst family at a width is the disjoint products of two primes of half the
+/// width, where rho takes about `2^(b/4)` products: at 4096 inputs 0.39 at 33 bits, 0.51 at
+/// 39, 0.80 at 43 and 1.36 at 47; at 512 inputs 1.1 at 27 bits, 1.48 at 31, 2.59 at 43.
+/// Distinct primes (a primality test each) are the cheaper by factoring at 512 inputs and more
+/// at every width (0.31 to 0.82; 0.13 to 0.22 at 4096) and the dearer at 64 and fewer (1.1 to
+/// 2.2); chains `p_i p_(i+1)` lie between (0.09 to 0.35 at 4096 up to 47 bits). So the path is
+/// taken where it is the cheaper on every family measured: 44 bits and 4096 inputs. The width
+/// one past it (45 bits) and the count below it (2048 inputs) are on the axis.
+///
+/// What relies on them: only the cost. Both methods give `cb S` and the same shared inputs
+/// (proved at each), so any values give the same answers; `tests::the_factored_paths_agree`
+/// holds the methods equal on both sides. Used by `factor_words`, the one test of the path,
+/// so by `coprime_base`, `coprime_base_exponents` and `shares_a_factor`. Run the axis again for
+/// each target platform and after a change to code generation or to `zed_numtheory::factor`.
+pub(super) const FACTOR_BITS: u32 = 44;
+
+/// The fewest inputs that take the factoring path: see [`FACTOR_BITS`], where both are measured.
+pub(super) const FACTOR_INPUTS: usize = 4096;
+
+/// The inputs as words when there are at least [`FACTOR_INPUTS`] of them, each is below `2^64`
+/// and the largest has at most [`FACTOR_BITS`] bits; otherwise `None`.
+fn factor_words<L: Borrow<BigUint>>(xs: &[L]) -> Option<Vec<u64>> {
+    if xs.len() < FACTOR_INPUTS {
+        return None;
+    }
+    let ws: Vec<u64> = xs
+        .iter()
+        .map(|x| x.borrow().to_u64())
+        .collect::<Option<_>>()?;
+    let top = ws.iter().copied().max().unwrap_or(0);
+    (top.checked_ilog2().map_or(0, |l| l + 1) <= FACTOR_BITS).then_some(ws)
 }
 
 /// The `k` of `q = e ^ k`, for `e >= 2` and `q` a power of it.
@@ -378,7 +429,10 @@ pub(super) fn with_one_wide<L: Borrow<BigUint>>(
 
 /// The natural coprime base of `xs` by Bernstein's algorithms, for any inputs above 0.
 ///
-/// First, which inputs share a prime with any other, by [`shares_a_factor`]: an input that
+/// First, which inputs share a prime with any other, by `shares_by_table_or_tree` (never by
+/// factoring: `coprime_base` sends the word lists of at most `FACTOR_BITS` bits to the
+/// factoring path before this, and the crossover benches measure this as the general method,
+/// so it must not take that path itself): an input that
 /// shares none is its own element, its one factor itself. Only the others go through the
 /// halves (Algorithm 18.1, `base_by_halves`) and are then split over their base (Algorithm
 /// 15.3, `split`) to get their factors.
@@ -397,7 +451,11 @@ pub(super) fn by_halves<L: Borrow<BigUint>>(xs: &[L]) -> CoprimeBase {
         .collect();
     let leaves: Vec<&BigUint> = above.iter().map(|&i| xs[i].borrow()).collect();
     let mut shared: Vec<usize> = Vec::new();
-    for (k, (x, s)) in leaves.iter().zip(shares_a_factor(&leaves)).enumerate() {
+    for (k, (x, s)) in leaves
+        .iter()
+        .zip(shares_by_table_or_tree(&leaves))
+        .enumerate()
+    {
         if s {
             shared.push(k);
         } else {
@@ -589,12 +647,32 @@ pub fn strip(rest: &mut BigUint, c: &BigUint) -> u64 {
 // 128 to 4096 values, and the dearer after that (4096 values up to 4,193,281, `B` = 86,008:
 // 176.8 M against 80.1 M). So `V <= c B` with a larger fixed `c` would also be linear and
 // cheaper; `c` = 1 needs no timing to justify it. Both methods give the same answer
-// (`the_shared_factor_methods_agree`). What is left on the tree: wide values, and values
-// sparser than one in `log2 V` (`V > B`); no method of lower order than O(M(B) log k) is
-// known for those (Bernstein 2005 gives B^(1 + o(1))), and the tree side is 13 to 18 times the
-// work at 8 times the values (plan row PERF-negated-chain-unsolved, whose deferred benches
-// are in wt/scratch/deferred-tests/PERF-negated-chain-unsolved.rs); COMPLEXITY.md C31c.
+// (`the_shared_factor_methods_agree`). Sparse word values (`V > B`) of at most `FACTOR_BITS`
+// bits, at least `FACTOR_INPUTS` of them, are factored into primes instead
+// ([`zed_numtheory::shares_a_factor_by_factoring`]): one `factor` each, about `V^(1/4)`
+// products at worst by Pollard's rho (expected, not proved), then a count of each prime in
+// O(k) expected hash operations, so linear in `k` at a fixed width; a measured switchover, at
+// `FACTOR_BITS`. Measured 2026-11-20 (load 42, `pncx_common_factor_tree_side_scale`, 512 and
+// 4096 values): 16.105 on the trees before, 6.683 after. What is left on the tree: wide
+// values, fewer than `FACTOR_INPUTS` sparse values, and values past `FACTOR_BITS`; no method of
+// lower order than O(M(B) log k) is known for those (Bernstein 2005 gives B^(1 + o(1))), and
+// the tree side is 13 to 18 times the work at 8 times the values (plan row
+// PERF-negated-chain-unsolved); COMPLEXITY.md C31c.
 pub fn shares_a_factor<L: Borrow<BigUint>>(xs: &[L]) -> Vec<bool> {
+    // The table where its proved condition holds; then word values of at most `FACTOR_BITS`
+    // bits, the measured switchover documented there; then the trees.
+    if let Some((small, top)) = dense_values(xs) {
+        return zed_numtheory::shares_a_factor_by_table(&small, top);
+    }
+    match factor_words(xs) {
+        Some(ws) => zed_numtheory::shares_a_factor_by_factoring(&ws),
+        None => shares_a_factor_by_tree(xs),
+    }
+}
+
+/// [`shares_a_factor`] without the factoring path: the table where its proved condition holds,
+/// otherwise the trees. The general method that `by_halves` uses.
+fn shares_by_table_or_tree<L: Borrow<BigUint>>(xs: &[L]) -> Vec<bool> {
     match dense_values(xs) {
         Some((small, top)) => zed_numtheory::shares_a_factor_by_table(&small, top),
         None => shares_a_factor_by_tree(xs),
@@ -1343,18 +1421,7 @@ mod tests {
                 let bx: Vec<BigUint> = ws.iter().map(|&w| big(w)).collect();
                 assert_eq!(words(&bx).is_some(), k <= WORD_INPUTS, "k {k}");
                 let (elements, exponents) = zed_numtheory::coprime_base_u64(&ws);
-                let word = CoprimeBase {
-                    factors: (exponents.into_iter())
-                        .map(|ks| {
-                            (ks.into_iter())
-                                .map(|(e, n)| {
-                                    (e, crate::num::pow_uint(&big(elements[e as usize]), n))
-                                })
-                                .collect()
-                        })
-                        .collect(),
-                    elements: elements.into_iter().map(big).collect(),
-                };
+                let word = from_words(elements, exponents);
                 let general = by_value(&by_halves(&bx));
                 assert_eq!(by_value(&word), general, "k {k}, {ws:?}, seed {seed}");
                 assert_eq!(
@@ -1362,6 +1429,110 @@ mod tests {
                     general,
                     "k {k}, {ws:?}, seed {seed}"
                 );
+            }
+        }
+    }
+
+    /// `coprime_base`'s result from a word method's elements and exponents.
+    fn from_words(elements: Vec<u64>, exponents: Vec<Vec<(u32, u64)>>) -> CoprimeBase {
+        CoprimeBase {
+            factors: (exponents.into_iter())
+                .map(|ks| {
+                    (ks.into_iter())
+                        .map(|(e, n)| (e, crate::num::pow_uint(&big(elements[e as usize]), n)))
+                        .collect()
+                })
+                .collect(),
+            elements: elements.into_iter().map(big).collect(),
+        }
+    }
+
+    /// `k` primes from a random start at or above `2^(b - 1)`, in a row; `b` bits each while
+    /// there are that many of `b` bits.
+    fn primes_in_a_row(rng: &mut crate::seed::Rng, b: u32, k: usize) -> Vec<u64> {
+        let next = |p: u64| zed_numtheory::next_prime(p).expect("a prime below 2^64");
+        let mut ps = vec![next((1 << (b - 1)) + rng.below_u64(1 << (b / 4)))];
+        while ps.len() < k {
+            ps.push(next(ps[ps.len() - 1] + 1));
+        }
+        ps
+    }
+
+    /// PERF-negated-chain-unsolved: the factoring methods (`zed_numtheory::
+    /// coprime_base_by_factoring`, `shares_a_factor_by_factoring`) and the switch to them. On
+    /// short lists of `WORD_INPUTS + 1` and 40 inputs, widths `FACTOR_BITS` and one more, the
+    /// methods are run directly: the base is `cb S` by the definition (`by_primes`) and has
+    /// `by_halves`'s elements and factors, and the shared inputs are
+    /// `shares_a_factor_by_tree`'s. Families as on `num::bench::the_factor_bits_crossover_axis`:
+    /// distinct primes of the width, products and chains of primes of half the width, and
+    /// random products of those primes with repeats and small primes; a 1 among the inputs in
+    /// some lists. Then the switch: `FACTOR_INPUTS - 1` inputs never take the path, and
+    /// `FACTOR_INPUTS` take it exactly when the largest has at most `FACTOR_BITS` bits; on
+    /// `FACTOR_INPUTS` distinct primes and disjoint products at both widths `coprime_base` and
+    /// `shares_a_factor` agree with `by_halves` and the tree, and on the factoring side the
+    /// exponents are the factors.
+    #[test]
+    fn the_factored_paths_agree() {
+        let (mut rng, seed) = crate::seed::Rng::fresh("the_factored_paths_agree");
+        for b in [FACTOR_BITS, FACTOR_BITS + 1] {
+            // Primes of `ceil(b / 2)` bits, whose products of two have `b` bits or one more or
+            // less: at `FACTOR_BITS + 1` the products are past `FACTOR_BITS`.
+            let h = b.div_ceil(2);
+            for k in [WORD_INPUTS + 1, 40] {
+                let halves = primes_in_a_row(&mut rng, h, k + 1);
+                let mut lists = vec![
+                    primes_in_a_row(&mut rng, b, k),
+                    (0..k).map(|i| halves[i] * halves[i + 1]).collect(),
+                    (0..k)
+                        .map(|i| halves[i] * halves[(i + k / 2) % (k + 1)])
+                        .collect(),
+                ];
+                for _ in 0..20 {
+                    let mut ws: Vec<u64> = (0..k)
+                        .map(|_| match rng.below(3) {
+                            0 => rng.pick(&halves) * rng.pick(&halves),
+                            1 => rng.pick(&halves) * rng.pick(&[1u64, 2, 3, 4, 9, 12]),
+                            _ => rng.pick(&[2u64, 3, 5, 6, 8, 25]),
+                        })
+                        .collect();
+                    if rng.below(4) == 0 {
+                        ws[rng.below(k)] = 1;
+                    }
+                    lists.push(ws);
+                }
+                for ws in lists {
+                    let bx: Vec<BigUint> = ws.iter().map(|&w| big(w)).collect();
+                    let at = format!("b {b}, k {k}, {ws:?}, seed {seed}");
+                    let (elements, exponents) = zed_numtheory::coprime_base_by_factoring(&ws);
+                    let factored = by_value(&from_words(elements, exponents));
+                    assert_eq!(factored.0, by_primes(&ws), "{at}");
+                    assert_eq!(factored, by_value(&by_halves(&bx)), "{at}");
+                    assert_eq!(
+                        zed_numtheory::shares_a_factor_by_factoring(&ws),
+                        shares_a_factor_by_tree(&bx),
+                        "{at}"
+                    );
+                }
+            }
+            let k = FACTOR_INPUTS;
+            let halves = primes_in_a_row(&mut rng, h, 2 * k);
+            let distinct = primes_in_a_row(&mut rng, b, k);
+            let pairs: Vec<u64> = (0..k).map(|i| halves[2 * i] * halves[2 * i + 1]).collect();
+            for ws in [distinct, pairs] {
+                let bx: Vec<BigUint> = ws.iter().map(|&w| big(w)).collect();
+                let at = format!("b {b}, {} .. {}, seed {seed}", ws[0], ws[k - 1]);
+                let top = ws.iter().map(|w| 64 - w.leading_zeros()).max().unwrap_or(0);
+                assert_eq!(factor_words(&bx).is_some(), top <= FACTOR_BITS, "{at}");
+                assert_eq!(factor_words(&bx[1..]), None, "{at}");
+                assert_eq!(
+                    by_value(&coprime_base(&bx)),
+                    by_value(&by_halves(&bx)),
+                    "{at}"
+                );
+                assert_eq!(shares_a_factor(&bx), shares_a_factor_by_tree(&bx), "{at}");
+                if top <= FACTOR_BITS {
+                    exponents_are_the_factors(&bx);
+                }
             }
         }
     }

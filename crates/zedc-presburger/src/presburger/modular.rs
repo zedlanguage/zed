@@ -15,7 +15,7 @@ use num_bigint::{BigInt, BigUint};
 use num_traits::Zero;
 use zed_collections::intervals;
 use zed_graph::MinHeap;
-use zed_kernel::num::{coprime, trees};
+use zed_kernel::num::{coprime, mul_uint, rem_uint, trees};
 use zedc_int::int::Int;
 
 use super::formula::{Atom, Con, Formula, Id, Lin, Model, Rel};
@@ -4977,7 +4977,8 @@ fn combine_crt_pair(r1: &Int, m1: &Int, r2: &Int, m2: &Int) -> Option<(Int, Int)
 /// When one modulus is not coprime to the product of the others, the pairs are combined two
 /// at a time up a tree, each by a gcd, exact quotients and an inverse on the merged moduli
 /// ([`combine_crt_pair`]), O(M(N) log N) at each level of the tree. Tests:
-/// `one_scope::the_coprime_base_of_distinct_primes_scales`, `pncx_fibonacci_crt_scale`.
+/// `r4_tests::the_crt_tree_solves_its_congruences`; bench `pncx_fibonacci_crt_scale`
+/// (tests/steps/l01_38_presburger/bench/pncx_probe.rs).
 fn combine_crt_tree(mut pairs: Vec<(Int, Int)>) -> Option<(Int, Int)> {
     if pairs.is_empty() {
         return Some((Int::ZERO, Int::ONE));
@@ -5004,17 +5005,31 @@ fn combine_crt_tree(mut pairs: Vec<(Int, Int)>) -> Option<(Int, Int)> {
     if let Some(mut vals) = vals {
         // Up the tree, the leaves first and every level below the root: each node's value is
         // `v_left P_right + v_right P_left`; an odd node carried up keeps its value.
+        // Complexity tradeoff: the products and the last remainder go through the kernel's
+        // `mul_uint` and `rem_uint` (transforms and Newton's reciprocal past 512 words), so a
+        // level costs O(M(N)) and the whole O(M(N) log k). num-bigint's own `*` and `%`, used
+        // here before (PERF-negated-chain-unsolved, negchain1), are Karatsuba and schoolbook
+        // division, O(N^1.58) and O(N^2) at the root. Measured 2026-11-20 (load 42, the first
+        // 2048 and 16384 odd primes): 23.673 before, 23.279 after, still over the limit 10.5
+        // and open on that row. By phase at those sizes (instructions): the product tree 23x,
+        // the cofactor descent of `trees::cofactors_mod_leaves` 31x (72% of the work at
+        // 16384), the leaf inverses 9.1x, this step up the tree 9.0x. The excess is the
+        // multiplication's own growth between about 100 and 2000 words (a squaring costs 83 k
+        // instructions at 111 words, 2.8 M at 1100 and 4.3 M at 2173), where the top levels at
+        // 16384 lie and none at 2048 do. The method's order does not meet the limit either:
+        // `N` grows about 9.6 times at 8 times the primes, and O(M(N) log k) with `M(N) = N log
+        // N` predicts about 9.6 (ln 9.6 N / ln N)^2 = 14 here; no method of lower order is known.
         let below_root = &levels[..levels.len().saturating_sub(1)];
         for prods in std::iter::once(&leaves).chain(below_root) {
             vals = (vals.chunks(2).zip(prods.chunks(2)))
                 .map(|(v, p)| match (v, p) {
-                    ([v0, v1], [p0, p1]) => v0 * p1 + v1 * p0,
+                    ([v0, v1], [p0, p1]) => mul_uint(v0, p1) + mul_uint(v1, p0),
                     _ => v[0].clone(),
                 })
                 .collect();
         }
         let big_m = trees::tree_product(&leaves, &levels).into_owned();
-        let x = vals.first()? % &big_m;
+        let x = rem_uint(vals.first()?, &big_m);
         return Some((from_uint(x), from_uint(big_m)));
     }
     while pairs.len() > 1 {

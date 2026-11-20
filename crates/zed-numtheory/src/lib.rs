@@ -11,11 +11,13 @@
 //! fast multiplication (`num/fast.rs`); for a word operand they call [`gcd_big_u64`] here.
 
 mod factor;
+mod factored;
 mod word;
 
 use num_bigint::BigUint;
 
 pub use factor::{factor, is_prime};
+pub use factored::{coprime_base_by_factoring, shares_a_factor_by_factoring};
 pub use word::{gcd_u64, gcd_u128, inverse_mod_2_64, mul_mod, pow_mod};
 
 /// `(g, s, t)` with `g = gcd(a, b) >= 0` and `s a + t b = g`, by the extended Euclidean

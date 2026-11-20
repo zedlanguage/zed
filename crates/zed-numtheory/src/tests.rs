@@ -1203,3 +1203,128 @@ fn the_word_coprime_base_is_natural() {
 fn the_word_coprime_base_refuses_0() {
     coprime_base_u64(&[6, 0]);
 }
+
+/// Each input's `(element, multiplicity)` list as `(element value, multiplicity)`, sorted, and
+/// the elements sorted: the two paths may number the elements differently.
+fn by_value(base: &[u64], ks: &[Vec<(u32, u64)>]) -> (Vec<u64>, Vec<Vec<(u64, u64)>>) {
+    let mut elements = base.to_vec();
+    elements.sort_unstable();
+    let ks = (ks.iter())
+        .map(|k| {
+            let mut k: Vec<(u64, u64)> = k.iter().map(|&(e, m)| (base[e as usize], m)).collect();
+            k.sort_unstable();
+            k
+        })
+        .collect();
+    (elements, ks)
+}
+
+/// Random word lists of `1..=most` inputs: random odd words, words with a small prime, products
+/// of small prime powers, products of two primes near 2^20 and 2^32 and their powers, and
+/// primes past 2^24, so that many inputs share a prime.
+fn word_lists(test: &str, rounds: usize, most: u64) -> Vec<Vec<u64>> {
+    let mut next = words(test);
+    let smalls = [2u64, 3, 5, 7, 11, 13];
+    let mids = [1_048_573u64, 1_048_583, 1_048_589, 16_777_259, 16_777_289];
+    let wides = [4_294_967_291u64, 4_294_967_279];
+    (0..rounds)
+        .map(|_| {
+            let k = 1 + next() % most;
+            (0..k)
+                .map(|_| match next() % 6 {
+                    0 => next() | 1,
+                    1 => (next() >> 4) * smalls[(next() % 6) as usize],
+                    2 => mids[(next() % 5) as usize] * mids[(next() % 5) as usize],
+                    3 => wides[(next() % 2) as usize] * wides[(next() % 2) as usize],
+                    // A cube of a prime near 2^24 would pass 2^64; the prime is taken then.
+                    4 => {
+                        let m = mids[(next() % 5) as usize];
+                        m.checked_pow(1 + (next() % 3) as u32).unwrap_or(m)
+                    }
+                    _ => (0..next() % 6).fold(1u64, |w, _| {
+                        let q = smalls[(next() % 6) as usize].pow(1 + (next() % 5) as u32);
+                        w.checked_mul(q).unwrap_or(w)
+                    }),
+                })
+                .collect()
+        })
+        .collect()
+}
+
+/// `coprime_base_by_factoring` gives the elements and multiplicities of `coprime_base_u64`,
+/// which `the_word_coprime_base_is_natural` holds to the definition, so the same `cb S`: on
+/// every pair and triple of 1 to 40 with small third inputs, the edge words, wide powers and
+/// products of two primes near 2^32, and random lists of up to 40 inputs.
+#[test]
+fn the_factored_coprime_base_is_natural() {
+    fn same(xs: &[u64]) {
+        let (fb, fk) = coprime_base_by_factoring(xs);
+        let (rb, rk) = coprime_base_u64(xs);
+        assert_eq!(by_value(&fb, &fk), by_value(&rb, &rk), "{xs:?}");
+        for k in &fk {
+            assert!(k.windows(2).all(|w| w[0].0 < w[1].0), "{xs:?}: {fk:?}");
+        }
+    }
+    same(&[]);
+    same(&[1]);
+    for a in 1..=40u64 {
+        for b in 1..=40u64 {
+            same(&[a, b]);
+            for c in [1u64, 2, 6, 9, 12, 27, 30, 36] {
+                same(&[a, b, c]);
+            }
+        }
+    }
+    let edges: Vec<u64> = EDGES.iter().copied().filter(|&e| e > 0).collect();
+    same(&edges);
+    same(&[
+        4_294_967_291u64 * 4_294_967_291,
+        4_294_967_291,
+        2 * 4_294_967_291,
+    ]);
+    same(&[1 << 63, 1 << 62, 4, 8, 3 << 61]);
+    same(&[3u64.pow(40), 9, 3u64.pow(40), 1]);
+    // 36 = 2^2 3^2 and 1296 = 2^4 3^4: both primes have the vector (2, 4), `l` 2 and
+    // `w` (1, 2), so one element 2^2 3^2 = 36, with 1296 = 36^2. 12 = 2^2 3 and 144 = 2^4 3^2:
+    // vectors (2, 4) and (1, 2), the same `w` (1, 2) with `l` 2 and 1, so one element
+    // 2^2 3 = 12, with 144 = 12^2.
+    same(&[36, 1296]);
+    same(&[12, 144]);
+    for xs in word_lists("the_factored_coprime_base_is_natural", 2000, 40) {
+        same(&xs);
+    }
+}
+
+#[test]
+#[should_panic(expected = "a coprime base of positive integers, given 0")]
+fn the_factored_coprime_base_refuses_0() {
+    coprime_base_by_factoring(&[6, 0]);
+}
+
+/// `shares_a_factor_by_factoring` is the definition, a gcd above 1 with another input, on the
+/// lists of `the_factored_coprime_base_is_natural`, equal inputs and ones.
+#[test]
+fn the_factored_shares_agree_with_pairwise_gcds() {
+    fn same(xs: &[u64]) {
+        let want: Vec<bool> = (0..xs.len())
+            .map(|i| (0..xs.len()).any(|j| j != i && gcd_u64(xs[i], xs[j]) > 1))
+            .collect();
+        assert_eq!(shares_a_factor_by_factoring(xs), want, "{xs:?}");
+    }
+    same(&[]);
+    same(&[1]);
+    same(&[1, 1]);
+    same(&[7, 7]);
+    same(&[7, 1, 7]);
+    same(&[6, 35, 11]);
+    for a in 1..=40u64 {
+        for b in 1..=40u64 {
+            for c in [1u64, 2, 6, 9, 35, 37] {
+                same(&[a, b, c]);
+            }
+        }
+    }
+    for xs in word_lists("the_factored_shares_agree_with_pairwise_gcds", 2000, 40) {
+        same(&xs);
+    }
+}

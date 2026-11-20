@@ -135,17 +135,67 @@ fn pncx_common_factor_scale() {
     });
 }
 
+/// U1, the sparse side of `shares_a_factor`: moduli `2 p` for the first n primes `p = 1 mod 4`.
+/// The cofactors are about half as dense as the odd primes, so their largest is above their
+/// bits at both sizes (asserted on the inputs) and the table does not answer. Until
+/// PERF-negated-chain-unsolved (negchain1, 2026-11-20) the product tree and remainder tree did,
+/// O(M(B) log k): 16.105 at 512 and 4096 (load 41 to 43). Now at least `FACTOR_INPUTS` (4096)
+/// word values of at most `FACTOR_BITS` (44) bits are each factored into primes
+/// (`zed_numtheory::shares_a_factor_by_factoring`, proof and cost at zed-kernel
+/// `num/coprime.rs` `FACTOR_BITS`), so both sizes here, 4096 and 32768 cofactors of 15 to 19
+/// bits, take that path; fewer values take the trees, at most 4096 of 44 bits, a bounded size.
+/// The switch itself is benched on both sides by zed-kernel's `the_factor_bits_crossover_axis`.
+/// Measured 2026-11-20 at 4096 and 32768: 23,886,782 / 204,386,090 instructions, 8.556, bytes
+/// 8.0 (load 76); at 512 and 4096 (the old sizes, across the switch, so not a test of either
+/// side): 6.683 (load 42). Above 8 as the primes widen from about 2^16 to 2^19 with `n`, and a
+/// primality test costs O(log p) word products: 8 * 19 / 17 = 8.9 at most (inferred, not
+/// profiled).
+#[test]
+fn pncx_common_factor_tree_side_scale() {
+    let inputs = scaling::inputs(4096, |n| {
+        let mut ms = BTreeSet::new();
+        let mut p = 5i64;
+        while ms.len() < n {
+            if (3..)
+                .step_by(2)
+                .take_while(|d| d * d <= p)
+                .all(|d| p % d != 0)
+            {
+                ms.insert(Int::from(2 * p));
+            }
+            p += 4;
+        }
+        let cofactors: Vec<Int> = ms.iter().map(|m| m.div_floor(&Int::from(2))).collect();
+        assert!(zed_kernel::num::coprime::dense_values(&uint_leaves(&cofactors)).is_none());
+        ms
+    });
+    scaling::check_order(
+        "common factor with coprime cofactors, sparse side",
+        4096,
+        1,
+        |n| {
+            std::hint::black_box(coprime_factorization(&inputs[&n]));
+        },
+    );
+}
+
 /// `x = q_i (2 p_i) + 2 i` for the first `n` odd primes `p_i` ([`shared_moduli`]), through
 /// `solve_modular`: every modulus shares the factor 2 and the remainders are all even, so a
 /// point exists, and the moduli's coprime base is 2 and the `p_i` (from the probe
 /// `pncx_shared_formula_axis` of PERF-negated-chain-unsolved).
 ///
 /// Measured (pres11, 2026-11-20, load 41.0): ratio 9.536 in instructions at n = 1024 and
-/// 8192, under the limit 10.5 and above the goal 9. An O(n log n) method would predict
-/// 8 log(8192) / log(1024) = 8 * 13 / 10 = 10.4 here, but that bound is not proved for this
-/// path: the moduli's CRT step (`pncx_crt_tree_scale`, removed as it measured 23.673) and the
-/// big-number multiplications it rests on are not shown to be n log n, so the goal is not
-/// met (rule P300). Recorded in PERF-negated-chain-unsolved.
+/// 8192, under the limit 10.5 and above the goal 9; again 9.535 (negchain1, load 42). An
+/// O(n log n) method would predict 8 log(8192) / log(1024) = 8 * 13 / 10 = 10.4 here, but the
+/// path is not n log n, so that is not a proof (rule P300): its CRT step (`combine_crt_tree`)
+/// is O(M(B) log k) for `k` moduli of `B` bits, and `B` itself grows as `k log k`, so even
+/// with `M(B) = B log B` it predicts about 9.6 (ln 9.6 B / ln B)^2 = 14 at 8 times the
+/// moduli; measured, its phases grow 23 to 31 times (deferred bench `pncx_crt_tree_scale`,
+/// plan row PERF-negated-chain-unsolved). It is a small part here (perf, negchain1,
+/// 2026-11-20: num-bigint's multiplication and division about 8% of the cycles at both sizes
+/// together; the rest is formula work, `rewrite_lin_full`, `Atom` hashing and comparison and
+/// ordered maps), so the ratio is under 10.5 at these sizes, but at larger `n` that step would
+/// dominate. Open in PERF-negated-chain-unsolved.
 #[test]
 fn pncx_shared_formula_scale() {
     let inputs = scaling::inputs(1024, shared_formula);
