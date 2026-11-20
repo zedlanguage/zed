@@ -24,8 +24,8 @@ use imbl::Vector;
 use zedc_resolve::resolve::tables::{ListKey, Tables};
 use zedc_resolve::resolve::{Kind, Ref, Resolution, prelude_layer};
 use zedc_syntax::ast::{
-    Annot, Expr, ExprKind, Field, Function, IndexKey, Note, Param, RangeEnd, Stmt, StmtKind,
-    StrPart, Struct, Target, TypeKind,
+    Annot, Expr, ExprKind, Field, Function, IndexKey, Note, Param, Stmt, StmtKind, Struct, Target,
+    TypeKind, expr_kids,
 };
 use zedc_syntax::lex::Span;
 
@@ -481,7 +481,7 @@ impl<'t, 'a> Walk<'t, 'a> {
             | ExprKind::SortKey { .. } => {}
         }
         let at = todo.len();
-        kids(&e.kind, &mut |k| todo.push((Part::Expr(k), owner)));
+        expr_kids(&e.kind, &mut |k| todo.push((Part::Expr(k), owner)));
         todo[at..].reverse();
     }
 
@@ -858,109 +858,6 @@ fn keys(keys: &[IndexKey]) -> impl DoubleEndedIterator<Item = &Expr> {
 /// The expressions of the annotation `a`.
 fn annot(a: &Annot) -> impl Iterator<Item = &Expr> {
     (a.positional.iter()).chain(a.named.iter().map(|(_, e)| e))
-}
-
-/// Gives `push` each expression directly in `kind`, except a block's, whose statements the
-/// walk takes.
-pub(super) fn kids<'a>(kind: &'a ExprKind, push: &mut impl FnMut(&'a Expr)) {
-    match kind {
-        ExprKind::Int { .. }
-        | ExprKind::Float { .. }
-        | ExprKind::Rat(_)
-        | ExprKind::Bool(_)
-        | ExprKind::Atom(_)
-        | ExprKind::Name(_)
-        | ExprKind::This
-        | ExprKind::Section(..)
-        | ExprKind::Block(_) => {}
-        ExprKind::Str(parts) => (parts.iter()).for_each(|p| match p {
-            StrPart::Hole(e) => push(e),
-            StrPart::Text(_) => {}
-        }),
-        ExprKind::Unary(_, a)
-        | ExprKind::Is { of: a, .. }
-        | ExprKind::Member { of: a, .. }
-        | ExprKind::Read { of: a, .. }
-        | ExprKind::Loop { body: a, .. }
-        | ExprKind::Spread { of: a, .. } => push(a),
-        ExprKind::SortKey { key, .. } => key.as_deref().into_iter().for_each(push),
-        ExprKind::Binary(_, a, b)
-        | ExprKind::Index(a, b)
-        | ExprKind::In { of: a, set: b, .. }
-        | ExprKind::Reduce { of: a, op: b }
-        | ExprKind::Else {
-            of: a, default: b, ..
-        } => {
-            push(a);
-            push(b);
-        }
-        ExprKind::Call {
-            callee,
-            positional,
-            named,
-            ..
-        } => {
-            push(callee);
-            positional.iter().for_each(&mut *push);
-            named.iter().for_each(|(_, e)| push(e));
-        }
-        ExprKind::Tuple(es) | ExprKind::Array(es) | ExprKind::Set(es) => es.iter().for_each(push),
-        ExprKind::Map(entries) => entries.iter().for_each(|(k, v)| {
-            push(k);
-            push(v);
-        }),
-        ExprKind::Range(from, to) => {
-            push(from);
-            match to {
-                RangeEnd::Below(b) | RangeEnd::Through(b) => push(b),
-                RangeEnd::Open => {}
-            }
-        }
-        ExprKind::Remap { of, levels, .. } => {
-            push(of);
-            for l in levels.iter().flatten() {
-                l.key.iter().chain(&l.reduce).for_each(&mut *push);
-            }
-        }
-        ExprKind::For {
-            source,
-            guard,
-            body,
-            ..
-        } => {
-            push(source);
-            guard.as_deref().into_iter().for_each(&mut *push);
-            push(body);
-        }
-        ExprKind::Lambda { params, body } => {
-            params
-                .iter()
-                .filter_map(|p| p.default.as_ref())
-                .for_each(&mut *push);
-            push(body);
-        }
-        ExprKind::Match { of, arms } => {
-            push(of);
-            for a in arms {
-                a.guard.iter().for_each(&mut *push);
-                push(&a.body);
-            }
-        }
-        ExprKind::Record(fields) => fields.iter().for_each(|(_, e)| push(e)),
-        ExprKind::With { of, updates } => {
-            push(of);
-            updates.iter().for_each(|u| push(&u.value));
-        }
-        ExprKind::If {
-            cond,
-            then,
-            otherwise,
-        } => {
-            push(cond);
-            push(then);
-            push(otherwise);
-        }
-    }
 }
 
 /// The error of each function marked `@nonblocking` (`marked`, as [`facts_and_marks`] gives

@@ -101,6 +101,113 @@ pub fn expr_kids_mut<'a>(kind: &'a mut ExprKind, out: &mut Vec<&'a mut Expr>) {
     }
 }
 
+/// Gives `push` the expressions directly in `kind`, in the order [`expr_kids_mut`] lists
+/// them, except a block's: a reader that does not change the tree walks a block's statements
+/// itself, since what a statement means differs from one reader to the next (the checker's
+/// `blocking` walk, say, records each `<-` with the function that runs it). The read-only twin of
+/// [`expr_kids_mut`]: Rust gives no one body for `&` and `&mut`, so the two sit side by side
+/// and a test (`ast/walk/tests.rs`) checks that they list the same expressions.
+pub fn expr_kids<'a>(kind: &'a ExprKind, push: &mut impl FnMut(&'a Expr)) {
+    match kind {
+        ExprKind::Int { .. }
+        | ExprKind::Float { .. }
+        | ExprKind::Rat(_)
+        | ExprKind::Bool(_)
+        | ExprKind::Atom(_)
+        | ExprKind::Name(_)
+        | ExprKind::This
+        | ExprKind::Section(..)
+        | ExprKind::Block(_) => {}
+        ExprKind::Str(parts) => (parts.iter()).for_each(|p| match p {
+            StrPart::Hole(e) => push(e),
+            StrPart::Text(_) => {}
+        }),
+        ExprKind::Unary(_, a)
+        | ExprKind::Is { of: a, .. }
+        | ExprKind::Member { of: a, .. }
+        | ExprKind::Read { of: a, .. }
+        | ExprKind::Loop { body: a, .. }
+        | ExprKind::Spread { of: a, .. } => push(a),
+        ExprKind::SortKey { key, .. } => key.as_deref().into_iter().for_each(push),
+        ExprKind::Binary(_, a, b)
+        | ExprKind::Index(a, b)
+        | ExprKind::In { of: a, set: b, .. }
+        | ExprKind::Reduce { of: a, op: b }
+        | ExprKind::Else {
+            of: a, default: b, ..
+        } => {
+            push(a);
+            push(b);
+        }
+        ExprKind::Call {
+            callee,
+            positional,
+            named,
+            ..
+        } => {
+            push(callee);
+            positional.iter().for_each(&mut *push);
+            named.iter().for_each(|(_, e)| push(e));
+        }
+        ExprKind::Tuple(es) | ExprKind::Array(es) | ExprKind::Set(es) => es.iter().for_each(push),
+        ExprKind::Map(entries) => entries.iter().for_each(|(k, v)| {
+            push(k);
+            push(v);
+        }),
+        ExprKind::Range(from, to) => {
+            push(from);
+            match to {
+                RangeEnd::Below(b) | RangeEnd::Through(b) => push(b),
+                RangeEnd::Open => {}
+            }
+        }
+        ExprKind::Remap { of, levels, .. } => {
+            push(of);
+            for l in levels.iter().flatten() {
+                l.key.iter().chain(&l.reduce).for_each(&mut *push);
+            }
+        }
+        ExprKind::For {
+            source,
+            guard,
+            body,
+            ..
+        } => {
+            push(source);
+            guard.as_deref().into_iter().for_each(&mut *push);
+            push(body);
+        }
+        ExprKind::Lambda { params, body } => {
+            params
+                .iter()
+                .filter_map(|p| p.default.as_ref())
+                .for_each(&mut *push);
+            push(body);
+        }
+        ExprKind::Match { of, arms } => {
+            push(of);
+            for a in arms {
+                a.guard.iter().for_each(&mut *push);
+                push(&a.body);
+            }
+        }
+        ExprKind::Record(fields) => fields.iter().for_each(|(_, e)| push(e)),
+        ExprKind::With { of, updates } => {
+            push(of);
+            updates.iter().for_each(|u| push(&u.value));
+        }
+        ExprKind::If {
+            cond,
+            then,
+            otherwise,
+        } => {
+            push(cond);
+            push(then);
+            push(otherwise);
+        }
+    }
+}
+
 /// Pushes the expressions directly in the statements `stmts` to `out`.
 pub fn stmts_exprs_mut<'a>(stmts: &'a mut [Stmt], out: &mut Vec<&'a mut Expr>) {
     for s in stmts {

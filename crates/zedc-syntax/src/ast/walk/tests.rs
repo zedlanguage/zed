@@ -18,7 +18,7 @@
 //! negative literal in a pattern (a pattern, not walked: the walk lists the expressions that
 //! are run, the ones an operator or a call reads).
 
-use super::{expr_kids_mut, stmts_exprs_mut};
+use super::{expr_kids, expr_kids_mut, stmts_exprs_mut};
 use crate::ast::{Expr, ExprKind, Stmt, unit};
 use crate::lex::{Span, lex};
 use crate::parse::{TOP, parse_unit};
@@ -180,6 +180,49 @@ fn random_programs_give_each_expression_its_own_span() {
             Ok(Some(why)) => panic!("seed {seed}: {why}, in\n{text}"),
             Err(e) => panic!("seed {seed}: {e}, in\n{text}"),
         }
+    }
+}
+
+/// The first expression of `text` whose children [`expr_kids`] and [`expr_kids_mut`] list
+/// differently, or `None`; a block, whose statements `expr_kids` leaves to its caller, is
+/// skipped. `text` must build.
+fn kids_differ(text: &str) -> Option<String> {
+    let tokens = lex(text).expect("lexes");
+    let (tree, errors) = parse_unit(text, &tokens, TOP);
+    assert!(errors.is_empty(), "parses: {errors:?}");
+    let mut stmts = unit(text, &tokens, &tree).expect("builds");
+    let mut work: Vec<&mut Expr> = Vec::new();
+    stmts_exprs_mut(&mut stmts, &mut work);
+    while let Some(e) = work.pop() {
+        let mut read = Vec::new();
+        expr_kids(&e.kind, &mut |k| read.push(k.span));
+        let at = work.len();
+        let block = matches!(e.kind, ExprKind::Block(_));
+        let span = e.span;
+        let Expr { kind, .. } = e;
+        expr_kids_mut(kind, &mut work);
+        let written: Vec<Span> = work[at..].iter().map(|k| k.span).collect();
+        if !block && read != written {
+            return Some(format!(
+                "at {span:?}: expr_kids gives {read:?}, expr_kids_mut {written:?}"
+            ));
+        }
+    }
+    None
+}
+
+/// DRY-text-shared job 10: the read-only and the changing walk list the same children, in
+/// the same order, over every desugaring and the random programs of the tests above.
+#[test]
+fn the_read_only_walk_lists_the_children_the_changing_one_does() {
+    for text in DESUGARINGS {
+        assert_eq!(kids_differ(text), None, "in\n{text}");
+    }
+    let block = "f(n: int) = { m = n + 1; if m > 2 { [m, 3] } else { [0] } };";
+    assert_eq!(kids_differ(block), None, "in\n{block}");
+    for seed in 0..400u64 {
+        let text = Gen(Rng::new(seed)).program();
+        assert_eq!(kids_differ(&text), None, "seed {seed}, in\n{text}");
     }
 }
 

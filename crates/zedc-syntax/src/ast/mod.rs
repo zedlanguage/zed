@@ -52,7 +52,7 @@ pub use node::{
 use crate::lex::{Part, Span, Tok, Token};
 use crate::parse::{Tree, grammar};
 use builder::{Bare, Builder, Built, Level, Mains, Methods};
-pub use walk::{expr_kids_mut, stmts_exprs_mut};
+pub use walk::{expr_kids, expr_kids_mut, stmts_exprs_mut};
 
 /// The expression of `tree`, parsed as `Expr` from `tokens` of `text`.
 pub fn build(text: &str, tokens: &[Token], tree: &Tree) -> Result<Expr, Error> {

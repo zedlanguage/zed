@@ -952,7 +952,7 @@ impl<'t, 'a> Ck<'t, 'a> {
             if self.key_binder(s, e) == Some(i) {
                 return true;
             }
-            super::super::blocking::kids(&e.kind, &mut |k| todo.push(k));
+            zedc_syntax::ast::expr_kids(&e.kind, &mut |k| todo.push(k));
         }
         false
     }
