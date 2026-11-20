@@ -9,8 +9,26 @@
 //! drawn uniformly from `0..p` from the operating system's random bytes when the priorities are
 //! first asked for. The values of a `q` of degree `d` at any `d + 1` distinct points are
 //! independent and uniform over `0..p`, since the matrix that maps the coefficients to the
-//! values is a Vandermonde matrix, invertible on distinct points (Seidel and Aragon,
-//! "Randomized search trees", Algorithmica 16, 1996, start of section 6).
+//! values is a Vandermonde matrix, invertible on distinct points.
+//!
+//! Source. R. Seidel and C. R. Aragon, "Randomized search trees", Algorithmica 16(4/5),
+//! 464-497, 1996, doi:10.1007/BF01940876. Section 3, before Theorem 3.3, and the start of
+//! section 6 give this generator: "Xi = q(i) mod U for 1 <= i <= n, where U >= n^3 is a prime
+//! number and q is a degree 7 polynomial whose coefficients are drawn uniformly and
+//! independently from {0, ..., U - 1}". Departures: the prime is the fixed `2^64 - 59`, so the
+//! paper's `U >= n^3` holds for `n <= 2^21` and the bounds below carry the `n(n - 1)/p` of a
+//! tie instead; the points are the keys (or their hash, below), not `1..n`; and degree 4 is
+//! used where the paper's 5-wise case suffices. Seidel and Aragon state the independence
+//! without proof; the Vandermonde step is from M. N. Wegman and J. L. Carter, "New hash
+//! functions and their use in authentication and set equality", J. Comput. Syst. Sci. 22(3),
+//! 265-279, 1981, doi:10.1016/0022-0000(81)90033-7, section 1: over a finite field, "the class
+//! of polynomials of degree less than n" is strongly universal_n, since through any n distinct
+//! points "there is exactly one polynomial of degree less than n" ("the standard linear algebra
+//! proof which uses the invertibility of the Vandermonde matrix also works with finite
+//! fields"). Checked 2026-11-19 against both papers' text (Seidel and Aragon sections 3, 4 and
+//! 6; Wegman and Carter section 1) and Crossref. Tested by
+//! `priority::tests::p_is_the_largest_prime_below_2_to_the_64` (the field) and
+//! `a_priority_is_the_polynomial_at_the_key` (the evaluation); no test measures independence.
 //!
 //! Degree 7, for the treaps whose set operations are joins of two treaps (`set::union_if_agree`,
 //! `set::difference_if_agree`, `set::symmetric`, `settings::combine`; plan row
@@ -33,21 +51,27 @@
 //! forced atoms, which make many settings, 1.019 under each seed, and the benchmarks whose work
 //! follows the drawn shape from 0.975 to 1.056, a new draw giving a new shape.
 //!
-//! The bound. Seidel and Aragon's Lemma 6.1 (essentially Mulmuley's, "Computational geometry",
-//! 1994, section 10.1): random variables uniform over a common integer range of size at least
-//! `n` that are `(3d + 2)`-wise independent have the `d`-max property, so for `d = 1` and
-//! 5-wise independence there is a constant `c` with `Pr[X_1 > X_2, ..., X_m] <= c/m` for any
-//! `m` of them. Their section 6 shows that the 1-max property alone gives Corollaries 4.5 and
-//! 4.6 and Theorem 4.7 (i) and (ii): the expected depth of a node and the expected size of its
-//! subtree are `O(log n)`, so "5-wise independence of the random priorities provably
-//! suffices" for logarithmic expected search and update times (also their Theorem 3.3).
+//! The bound. Seidel and Aragon's Lemma 6.1: "Let X be a set of n random variables, each
+//! uniformly distributed over a common integer range of size at least n. X has the d-max
+//! property if its random variables are (3d + 2)-wise independent", where the `d`-max property
+//! is `Pr[X_1 > X_2 > ... > X_d > {X_(d+1), ..., X_m}] <= c/m^d` for every `m` of them. So for
+//! `d = 1` and 5-wise independence there is a constant `c` with `Pr[X_1 > X_2, ..., X_m] <=
+//! c/m`. Their section 6 shows that the 1-max property alone gives Corollaries 4.5 and 4.6 and
+//! Theorem 4.7 (i) and (ii): the expected depth of a node and the expected size of its subtree
+//! are `O(log n)`, so "5-wise independence of the random priorities provably suffices" for
+//! logarithmic expected search and update times (also their Theorem 3.3). They credit the lemma
+//! as "essentially due to Mulmuley", with a proof in K. Mulmuley, "Computational Geometry: An
+//! Introduction through Randomized Algorithms", Prentice-Hall, 1994, section 10.1; the book was
+//! not read, and the lemma is used as Seidel and Aragon state it.
 //!
 //! Equal priorities. Let a node be tied when another node of the treap has its priority, and let
 //! `T` be the number of tied nodes. A node `y` that is not tied is an ancestor of `x` exactly when
-//! its priority is above every other of the keys from `x` to `y` (Seidel and Aragon's Lemma 4.3,
-//! whose proof holds in any tree heap-ordered by priority, however ties are broken: the least
-//! common ancestor of `x` and `y` lies between them and is above both), so the depth of `x` is
-//! at most `T` plus the number of untied `y` that hold the strict maximum of their range. Only a
+//! its priority is above every other of the keys from `x` to `y` (Seidel and Aragon's Lemma 4.3:
+//! "assuming that all priorities are distinct, xi is an ancestor of xj in T iff among all xh,
+//! with h between and including i and j, the item xi has the largest priority"; its proof
+//! holds in any tree heap-ordered by priority, however ties are broken: the least common
+//! ancestor of `x` and `y` lies between them and is above both), so the depth of `x` is at most
+//! `T` plus the number of untied `y` that hold the strict maximum of their range. Only a
 //! key whose point of `q` is new to the range from `x` can be such a `y` (a key whose point is
 //! met before it in the range ties with that key). Which keys these are is fixed by the keys,
 //! not by the draw: on one side of `x`, let `y_k` be the `k`-th of them in the order of distance
