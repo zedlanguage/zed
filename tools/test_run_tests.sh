@@ -348,7 +348,11 @@ check "a test of a short-addresses step is selected as short-<step>::<test>" "sh
 # clone with "umount: .../short-clone: target is busy." and left the mount; now it ends with no
 # message and no mount in the table, and run b, started while the sleep holds the clone, waits
 # for it and then lists. Runs are started as commands, so that $! is the pid each run names its
-# directory by.
+# directory by. Run a's script is stopped from when its clone is seen mounted until the sleep
+# has the clone open, so that it cannot reach its EXIT trap, which unmounts the clone, before
+# then (its cargo goes on meanwhile): without the stop, a run a on a built tree could end in the
+# 0.05 s between two looks at the mount table, and the sleep then held the folder under the
+# mount point, so run b had nothing to wait for (seen once at load 93 on 2026-11-20).
 tools/run_tests.sh --logs "$logs" --list --only '^short-zed_kernel::treap_set::' >"$logs.a" 2>&1 &
 a=$!
 mnt=
@@ -356,12 +360,17 @@ while [ -z "$mnt" ] && [ -d "/proc/$a" ]; do
   mnt=$(findmnt -rn -t overlay -o TARGET | grep -- "-$a/short-clone\$")
   [ -n "$mnt" ] || sleep 0.05
 done
-# The sleep holds the clone's root directory open, as its standard input.
+kill -STOP "$a"
+# The sleep holds the clone's root directory open, as its standard input; run a goes on once
+# the sleep has opened it.
 sleep 600 <"$mnt" &
 holder=$!
+while [ -d "/proc/$holder" ] && [ "$(readlink "/proc/$holder/fd/0")" != "$mnt" ]; do sleep 0.01; done
+kill -CONT "$a"
 wait "$a"
 rc_a=$?
-check "the sleep held run a's clone while run a ended" "yes" "$([ -d "/proc/$holder" ] && echo yes)"
+check "the sleep held run a's clone while run a ended" "overlayfs" \
+  "$(stat -L -f -c %T "/proc/$holder/fd/0" 2>&1)"
 check "a run whose clone is still in use ends with no message" "0 $plain" "$rc_a $(others <"$logs.a" | sort)"
 check "and leaves no mount" "" "$(findmnt -rn -t overlay -o TARGET | grep -- "-$a/short-clone\$")"
 tools/run_tests.sh --logs "$logs" --list --only '^short-zed_kernel::treap_set::' >"$logs.b" 2>&1 &
