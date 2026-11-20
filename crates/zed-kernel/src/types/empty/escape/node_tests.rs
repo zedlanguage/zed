@@ -154,6 +154,49 @@ fn clauses_with_no_model_give_empty() {
     assert!(t.is_empty(), "{t:?}");
 }
 
+/// Item TEST-kernel-unreached-paths-10 (kernel20, the kill in `read_on`): the lists
+/// `[x1, x2, x3, 1]` of integers, less three rows that force `x1 = x2 = x3 = 2` (each refuses
+/// `int \ 2` at one place and covers the others, so its clause is one atom), less the row
+/// `(2, 2, 2, 3)`. That row's read stops at its third atom (places 1 to 3, each `int \ 2`)
+/// with place 4 left, so its clause is cut. The unit narrowing (U2) sets places 1 to 3 to `2`,
+/// which empties all three atoms, and `read_on` reads place 4: its set `1` is disjoint from
+/// the row's head `3` there, a kill, so the row holds no list of the places and drops out. The
+/// type holds `[2, 2, 2, 1]`. Control (kernel20): `false` in place of the kill's `return true`
+/// leaves the cut row an empty clause, and `decide` answers `Empty` (a wrong answer: `is_empty`
+/// then answers `true` too); the kill is needed.
+#[test]
+fn a_cut_row_read_on_to_a_kill_drops_out() {
+    let int = Type::int;
+    let not2 = || &Type::int() - &ints(&[2]);
+    let row = |h: [Type; 4]| {
+        let [h0, h1, h2, h3] = h;
+        Type::tuple(vec![h0, chain(&[h1, h2, h3])])
+    };
+    let mut payload = row([int(), int(), int(), ints(&[1])]);
+    for r in [
+        [not2(), int(), int(), ints(&[1])],
+        [int(), not2(), int(), ints(&[1])],
+        [int(), int(), not2(), ints(&[1])],
+        [ints(&[2]), ints(&[2]), ints(&[2]), ints(&[3])],
+    ] {
+        payload = &payload - &row(r);
+    }
+    let t = Type::atom_with("cons", &payload);
+    let f = t.p().atoms.names()[&std::sync::Arc::<str>::from("cons")]
+        .payload
+        .p()
+        .tuples
+        .lens
+        .get(&2)
+        .expect("pairs")
+        .clone();
+    let (taken, refused) = f.forced();
+    assert_eq!((taken.len(), refused.len()), (1, 4), "{t:?}");
+    assert!(t.contains(&cons_value(&[2, 2, 2, 1])), "{t:?}");
+    assert!(!matches!(decide(&t), Some(ChainPlan::Empty)), "{t:?}");
+    assert!(!t.is_empty(), "{t:?}");
+}
+
 /// Item TEST-kernel-unreached-paths-4 (kernel14, the carrier with an empty head): the group
 /// `L = #nil | #cons((H, L))`, `H = int & #z(L)` makes a carrier whose head `H` holds no
 /// value, though `Type::tuple` keeps it: `H` names the group, so it stays a recursive node,

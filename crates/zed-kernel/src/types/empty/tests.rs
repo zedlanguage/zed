@@ -70,6 +70,47 @@ fn classes_are_exact_on_cofinite_sets_names_lengths_and_components() {
     assert_eq!(overlaps(ts.iter()), vec![vec![0, 1, 2]]);
 }
 
+/// `meeting_pairs` keys a class by one component of its tuples when that leaves the fewest
+/// pairs (`component_keys`): `(7, 7) | (7, 9) | (8, 8)`, `(7, 8)` and `(8, 7)` share a key on
+/// every component, so `overlaps` puts them in one class, but their first components `{7, 8}`,
+/// `{7}` and `{8}` pair the union with each pair and leave `(7, 8)` and `(8, 7)` apart, which
+/// they are. The literals give no keys here (each type is a tuple), which would pair all three.
+/// Before TEST-kernel-unreached-paths-10 only the searches of some runs reached the keying by a
+/// component (`l01_23_groups_and_refusals::judgments`, as the seed of the maps keyed by text
+/// fell); this test reaches it in every run. Negative controls: `component_keys` answering
+/// `None`, or its keys not deduplicated (the union has two rows whose first component is 7),
+/// fail it.
+#[test]
+fn a_class_of_tuples_is_keyed_by_the_component_that_leaves_the_fewest_pairs() {
+    let lit = |i: i64| Type::lit(&Value::Int(i)).expect("an integer literal");
+    let pair = |a: i64, b: i64| Type::tuple(vec![lit(a), lit(b)]);
+    let ts = [
+        &(&pair(8, 8) | &pair(7, 7)) | &pair(7, 9),
+        pair(7, 8),
+        pair(8, 7),
+    ];
+    assert_eq!(overlaps(ts.iter()), vec![vec![0, 1, 2]], "one class");
+    let held = Held::default();
+    let int = |i: i64| Key::Lit(0, Value::Int(i));
+    let keys: Vec<Option<Vec<Key>>> = (ts.iter())
+        .map(|t| component_keys(t.p_held(&held), 0, &held))
+        .collect();
+    assert!(
+        keys == vec![
+            Some(vec![int(7), int(8)]),
+            Some(vec![int(7)]),
+            Some(vec![int(8)])
+        ],
+        "the first components, in order and once each, are the keys"
+    );
+    let refs: Vec<&Type> = ts.iter().collect();
+    assert_eq!(
+        meeting_pairs(&refs),
+        BTreeSet::from([(0, 1), (0, 2)]),
+        "the two pairs are apart"
+    );
+}
+
 /// The other two cases of the tradeoff at `overlaps`. A negated pair type, `(int, int) \ (1, 1)`,
 /// is keyed by the components of `(int, int)`, so it is joined with `(1, 1)` although the two
 /// are disjoint; a negated one-tuple type, `(int,) \ (1,)`, is placed at the first components
@@ -3065,4 +3106,65 @@ fn a_list_witness_jumps_a_chain_of_tails_to_the_right_tail() {
             );
         }
     }
+}
+
+/// A meet of a morphism type every value takes with a union of morphism types gives a closure
+/// for each arm, met with the type taken (`Searching::find_rep`). When an arm's keys are not
+/// permitted as written, the closure is built only if it is never called: its own keys and
+/// the keys of the type taken, asked once for all arms (`shared_none`), are both proved empty.
+/// Here every key is a pair whose first component is an empty recursive type (`E = cons(int,
+/// E)`), so the shared keys `(E1, int)` are not known empty until the search proves them so,
+/// and the type has a closure, which is never called. Before TEST-kernel-unreached-paths-10
+/// only the searches of some runs asked the shared keys there; this test asks them in every
+/// run. Negative control: the shared keys answered as not empty leave the closure unbuilt and
+/// the type refused (`Refusal::NoWitness`).
+#[test]
+fn a_closure_of_a_meet_with_a_union_is_built_when_the_shared_keys_are_proved_empty() {
+    use super::super::rec::{Expr, Group};
+    use fork_inputs::{cons, def, r};
+    let int = || Expr::Type(Type::int());
+    let g = Group::new(vec![
+        def("E1", cons(int(), r(0))),
+        def("E2", cons(int(), r(1))),
+        def("E3", cons(int(), r(2))),
+    ])
+    .expect("a group")
+    .instance(vec![]);
+    let m = |k: &Type, v: Type| {
+        Type::morphism(Type::tuple(vec![k.clone(), Type::int()]), Type::int(), v)
+    };
+    let t = &m(&g[0], Type::int()) & &(&m(&g[1], Type::int()) | &m(&g[2], Type::string()));
+    assert_eq!(t.verdict(), Verdict::Inhabited, "{t}");
+}
+
+/// `fields` reads a payload diagram shared by several atoms once (`Rows`): each atom pushes the
+/// groups of components whose names it does not have, and keeps the rest unpushed for the next
+/// atom. With `#x`, `#y` and `#z` over one payload whose rows hold `#x(int)`, `#y(int)` and
+/// `#z(int)`, the first two atoms read leave no group unpushed, so the third finds the list
+/// empty and pushes nothing; every component is still a field, once. Before
+/// TEST-kernel-unreached-paths-10 only the searches of some runs met an empty list there; this
+/// test meets it in every run, whichever order the atoms are read in. Negative control: a group
+/// matched by the atom read first and not kept unpushed is never pushed, and one component is
+/// missing.
+#[test]
+fn a_payload_shared_by_three_atoms_gives_each_component_once() {
+    let tag = |n: &str, t: Type| Type::atom_with(n, &Type::tuple(vec![t]));
+    let b = &(&Type::tuple(vec![tag("x", Type::int())])
+        | &Type::tuple(vec![tag("y", Type::int())]))
+        | &Type::tuple(vec![tag("z", Type::int())]);
+    let t = &(&Type::atom_with("x", &b) | &Type::atom_with("y", &b)) | &Type::atom_with("z", &b);
+    let (out, wraps, items) = fields(std::slice::from_ref(&t));
+    let got: BTreeSet<String> = out.iter().map(|t| t.to_string()).collect();
+    let want: BTreeSet<String> = [t.to_string(), Type::int().to_string()]
+        .into_iter()
+        .chain(["x", "y", "z"].map(|n| tag(n, Type::int()).to_string()))
+        .collect();
+    assert_eq!(got, want);
+    assert_eq!(out.len(), want.len(), "each type once");
+    let wraps: BTreeSet<String> = wraps.iter().map(|t| t.to_string()).collect();
+    let want: BTreeSet<String> = ["x", "y", "z"]
+        .map(|n| tag(n, Type::int()).to_string())
+        .into();
+    assert_eq!(wraps, want);
+    assert!(items.is_empty());
 }
