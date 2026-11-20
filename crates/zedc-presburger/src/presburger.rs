@@ -34892,11 +34892,6 @@ mod r5_hull_tests {
         let z = Atom::Sym("z".into());
         let (il, yl, zl) = (Lin::atom(i.clone()), Lin::atom(y), Lin::atom(z));
         let c = Lin::constant;
-        let part = |cons: Vec<Con>| {
-            let mut p = Parts::default();
-            p.cons = cons;
-            Rc::new(p)
-        };
         let base_parts = |extra: Vec<Con>, target_y: i128| {
             let mut p = Parts::default();
             p.cons = vec![
@@ -34908,8 +34903,14 @@ mod r5_hull_tests {
             ];
             p.cons.extend(extra);
             p.ors = vec![vec![
-                part(vec![Con::ge(&c(1), &il), Con::eq(&yl, &zl.plus(&c(1)))]),
-                part(vec![Con::ge(&il, &c(2)), Con::eq(&yl, &zl.plus(&c(2)))]),
+                part(
+                    vec![Con::ge(&c(1), &il), Con::eq(&yl, &zl.plus(&c(1)))],
+                    Vec::new(),
+                ),
+                part(
+                    vec![Con::ge(&il, &c(2)), Con::eq(&yl, &zl.plus(&c(2)))],
+                    Vec::new(),
+                ),
             ]];
             p
         };
@@ -34940,11 +34941,6 @@ mod r5_guard_input_tests {
         let var = |s: &str| Lin::atom(Atom::Sym(s.into()));
         let (i, k, s) = (var("i"), var("k"), var("s"));
         let c = Lin::constant;
-        let part = |cons| {
-            let mut p = Parts::default();
-            p.cons = cons;
-            Rc::new(p)
-        };
         let mut p = Parts::default();
         p.cons = vec![
             Con::eq(&s, &i),
@@ -34955,18 +34951,24 @@ mod r5_guard_input_tests {
         ];
         p.ors = vec![
             vec![
-                part(vec![
-                    Con::ge(&c(1), &i.plus(&k)),
-                    Con::eq(&k, &s.plus(&c(1))),
-                ]),
-                part(vec![
-                    Con::ge(&i.plus(&k), &c(2)),
-                    Con::eq(&k, &s.plus(&c(-1))),
-                ]),
+                part(
+                    vec![Con::ge(&c(1), &i.plus(&k)), Con::eq(&k, &s.plus(&c(1)))],
+                    Vec::new(),
+                ),
+                part(
+                    vec![Con::ge(&i.plus(&k), &c(2)), Con::eq(&k, &s.plus(&c(-1)))],
+                    Vec::new(),
+                ),
             ],
             vec![
-                part(vec![Con::ge(&i.plus(&k), &c(0)), Con::eq(&k, &c(0))]),
-                part(vec![Con::ge(&i.plus(&k), &c(0)), Con::eq(&k, &c(0))]),
+                part(
+                    vec![Con::ge(&i.plus(&k), &c(0)), Con::eq(&k, &c(0))],
+                    Vec::new(),
+                ),
+                part(
+                    vec![Con::ge(&i.plus(&k), &c(0)), Con::eq(&k, &c(0))],
+                    Vec::new(),
+                ),
             ],
         ];
         let expected = (0..=2).any(|i| {
