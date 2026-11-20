@@ -77,6 +77,7 @@ pub mod ident;
 // S1F-kernel-text-names-cycle), a cycle Zed forbids between units (sec:units).
 pub mod names;
 pub mod prose;
+mod split;
 mod tree;
 
 pub use tree::Text;
