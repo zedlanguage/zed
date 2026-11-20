@@ -31,6 +31,24 @@
 #     loads (measured 2026-11-16: 15 workspace crates Dirty; in a worktree with build/LIBHASH it
 #     writes a second set of dylibs instead, see zrun, at the same cost), and a release build is
 #     cold in a new worktree, since the central build has no release profile;
+#  1a. runs `cargo clippy -p <package>... --all-targets -- -D warnings` on the packages step 2
+#     selects: the changed packages and their dependents, as narrowed there, and each package a
+#     test target of which is selected alone (a file under tests/steps/<step>/, or the narrowing's
+#     targets of zed-tests), and fails on any warning (TOOLS-merge-check-clippy: two clippy errors
+#     of `clippy --workspace --all-targets -D warnings` reached main this way, b67782af2 and
+#     24cd9473d). A package's lints depend only on its own sources and the packages it depends
+#     on (a deprecated or changed item), so the dependents cover what a change can newly warn
+#     about; the narrowing of step 2 leaves out of zed-tests only targets that name none of the
+#     changed packages, by that step's assumption. Not covered, as by the workspace command: the
+#     pieces of tests/full, whose target needs the feature full. Cost (2026-11-20, load 50): 74 s
+#     for the first run in a new worktree over 21 packages, since the central build holds no
+#     clippy output, then 2 s with nothing changed; a check runs on metadata alone, so it does not
+#     touch the dylibs and test binaries that step 2 builds. Run before the tests. A change to
+#     the root's clippy.toml or .clippy.toml selects every package for clippy, and no test. With
+#     --record, the packages whose clippy passed are recorded and skipped later by the rule of
+#     "The record" (in the toy of tools/test_merge_check.sh, clippy on every run of its record
+#     part took it from 12.2 to 20.6 s, over the 20 s limit at low load). Skipped with --groups
+#     and --list;
 #  2. runs, with tools/run_tests.sh --only, every test group of every workspace package that
 #     depends on a changed package, directly or through others, and of the changed packages
 #     themselves. The packages and their dependencies come from `cargo metadata`; nothing is
@@ -380,6 +398,8 @@ walk() {
     seen[$f]=1
     case $f in
       Cargo.toml | Cargo.lock | .cargo/* | rust-toolchain*) all=1 ;;
+      # The root's clippy configuration applies to every package's lints, and to no test.
+      clippy.toml | .clippy.toml) clippy_all=1 ;;
     esac
     if [[ $f =~ ^crates/([^/]+)/src/ ]] && [[ " ${crate_srcs[*]} " != *" crates/${BASH_REMATCH[1]}/src "* ]]; then
       [ -d "crates/${BASH_REMATCH[1]}/src" ] && crate_srcs+=("crates/${BASH_REMATCH[1]}/src")
@@ -577,7 +597,7 @@ uses() {
 # narrowing at $from too.
 select_groups() {
   local -A seen=() pkgs=() direct=() full=()
-  local crate_srcs=() all= full_all= queue=("$@") selected groups skip= why= n0= np linked p
+  local crate_srcs=() all= full_all= clippy_all= queue=("$@") selected groups skip= why= n0= np linked p
   local libuse= users=() extra=()
   walk
 
@@ -639,6 +659,13 @@ select_groups() {
                           and (.kind | index("custom-build") or index("example") or index("bench") | not))
     | .name | gsub("-"; "_")' <<<"$meta")
   [ ${#direct[@]} -gt 0 ] && echo "merge check$label: test targets changed alone: ${!direct[*]}"
+  # Step 1a's packages: those selected, and each package that holds a test target of direct;
+  # every package for a change to the root's clippy configuration.
+  sel_pkgs=$(jq -r --arg sel " $selected " --arg d " ${!direct[*]} " --arg all "$clippy_all" '.packages[]
+    | select($all == "1" or (.name as $n | $sel | contains(" \($n) "))
+             or any(.targets[]; (.name | gsub("-"; "_")) as $t | $d | contains(" \($t) ")))
+    | .name' <<<"$meta" | paste -sd' ')
+  [ -z "$clippy_all" ] || echo "merge check$label: the root's clippy configuration changed: clippy runs on every package"
   # The pieces of tests/full selected, those whose folder exists at HEAD.
   local fullsel=$fullpieces
   [ -n "$full_all" ] || fullsel=$(for p in "${!full[@]}"; do [ -d "tests/full/$p" ] && echo "full-$p"; done | sort)
@@ -669,8 +696,9 @@ full_note() {
   [ -z "$p" ] || echo "; tests/full pieces: $(paste -sd' ' <<<"$p")"
 }
 
-label= from=$mb
+label= from=$mb sel_pkgs=
 select_groups "${changed[@]}"
+clippy_pkgs=$sel_pkgs
 # Step 2a: the groups of the map that read a path the branch's change can affect, among the
 # groups the workspace has now (g, or short-g for a group g, or full-<piece>), and the groups it
 # has no file for.
@@ -696,7 +724,7 @@ if [ -n "$reads" ]; then
   [ -z "$u" ] || echo "merge check: the map has no reads of $(wc -l <<<"$u") tests/full pieces, which only compilation selects: $(paste -sd' ' <<<"$u")"
   sel=$(command grep -a . <<<"$sel"$'\n'"$rsel" | sort -u)
 fi
-if [ -z "$sel" ] && [ -z "$selftest" ]; then
+if [ -z "$sel" ] && [ -z "$selftest" ] && [ -z "$clippy_pkgs" ]; then
   echo "merge check: no package changed; no tests to run"
   exit 0
 fi
@@ -709,10 +737,20 @@ s=$(part_of full "$snew")
 
 # The record (see the header): `<commit>`, then `spec <commit>` when the spec checkout's commit
 # is known (tools/spec_groups.sh --commit), then `group <g>` for each group that passed there, then
+# `clippy <p>` for each package whose clippy passed there (step 1a), then
 # `read <g> <path>` for each path g's pieces named, relative to the root ("." for the root itself,
 # "*" for a read of anything, see tools/run_tests.sh --trace), then `end`. torun is
-# S_new ∩ (S_D ∪ not S_old); keep is S_old \ S_D.
-torun=$snew keep=
+# S_new ∩ (S_D ∪ not S_old); keep is S_old \ S_D. For clippy the same with packages:
+# clippy_run is P_new \ clippy_keep and clippy_keep is P_old \ P_D, where P_new is clippy_pkgs,
+# P_old the record's packages and P_D the packages step 1a selects for the files of D. Proof that
+# skipping a package p of P_old \ P_D is sound: clippy's verdict on p depends only on the files
+# compiled into p and into the packages it depends on, each of which selects p (step 2, with the
+# dependents), the workspace files (Cargo.toml, Cargo.lock, .cargo/, rust-toolchain*, which select
+# every package) and the root's clippy.toml (which selects every package for clippy); no such
+# file differs between T_old and H, so clippy gives p the same verdict, under the narrowing's
+# assumption for zed-tests. The features clippy builds p with do not depend on which other
+# packages the call names, by step 0a. Not covered, as for the tests: the toolchain installed.
+torun=$snew keep= clippy_run=$clippy_pkgs clippy_keep=
 if [ -n "$record" ] && [ -n "$snew" ]; then
   told=
   [ -f "$record" ] && [ "$(tail -n 1 "$record")" = end ] && told=$(head -n 1 "$record")
@@ -732,12 +770,12 @@ if [ -n "$record" ] && [ -n "$snew" ]; then
       echo "merge check: tools/ changed since the record's commit $(git rev-parse --short "$told"): every selected group runs"
     else
       sold=$(awk '$1 == "group" { print $2 }' "$record" | sort -u)
-      sd=
+      sd= pd=
       if [ ${#dfiles[@]} -gt 0 ]; then
         label=" (since the record's commit $(git rev-parse --short "$told"))"
         from=$told
         select_groups "${dfiles[@]}"
-        sd=$sel
+        sd=$sel pd=$sel_pkgs
         # The groups of the record that may read differently now: those that named a path
         # touched_keys prints for D (a file of D, whatever its change; a directory that gained or
         # lost an entry; `*`). Each such path is a key, and one pass over the record looks each
@@ -759,12 +797,17 @@ if [ -n "$record" ] && [ -n "$snew" ]; then
       torun=$(comm -12 <(echo "$snew") <(sort -u <(echo "$sd") <(comm -23 <(echo "$snew") <(echo "$sold")) | command grep -a .))
       keep=$(comm -23 <(echo "$sold") <(echo "$sd") | command grep -a .)
       echo "merge check: ${#dfiles[@]} files changed since the record's commit $(git rev-parse --short "$told"); passed there and not touched since: $(paste -sd' ' <<<"$keep")"
+      clippy_keep=$(comm -23 <(awk '$1 == "clippy" { print $2 }' "$record" | sort -u) \
+        <(tr ' ' '\n' <<<"$pd" | sort -u) | command grep -a .)
+      clippy_run=$(comm -23 <(tr ' ' '\n' <<<"$clippy_pkgs" | sort -u) <(echo "$clippy_keep") |
+        command grep -a . | paste -sd' ')
     fi
   fi
   s=$(part_of local "$torun")
   echo "merge check: to run:${s:+ $(paste -sd' ' <<<"$s")}"
   s=$(part_of full "$torun")
   [ -z "$s" ] || echo "merge check: tests/full pieces to run: $(paste -sd' ' <<<"$s")"
+  echo "merge check: clippy to run:${clippy_run:+ $clippy_run}"
 fi
 [ -n "$groups_only" ] && exit 0
 [ -z "$list" ] || record=
@@ -789,6 +832,7 @@ write_record() {
     echo "$head"
     [ -z "$spec_at" ] || echo "spec $spec_at"
     command grep -a . <<<"$keep"$'\n'"$torun" | sort -u | sed 's/^/group /'
+    command grep -a . <<<"$clippy_keep"$'\n'"$(tr ' ' '\n' <<<"$clippy_pkgs")" | sort -u | sed 's/^/clippy /'
     {
       [ -z "$keep" ] || awk 'NR == FNR { k[$0] = 1; next } $1 == "read" && ($2 in k)' <(echo "$keep") "$record"
       [ -z "$torun" ] || awk 'NR == FNR { r[$0] = 1; next }
@@ -838,6 +882,14 @@ if [ -n "$selftest" ] && [ -z "$list" ]; then
   done
   [ "$r1" -eq 0 ] && [ "$r2" -eq 0 ] || exit 1
   echo "merge check: tools/test_merge_check.sh select and record passed"
+fi
+
+# Step 1a: clippy on the selected packages, before the tests (see the header), less those whose
+# clippy passed at the record's commit with the same inputs.
+if [ -n "$clippy_run" ] && [ -z "$list" ]; then
+  echo "merge check: clippy -D warnings on: $clippy_run"
+  cargo clippy -q $(printf -- '-p %s ' $clippy_run) --all-targets -- -D warnings ||
+    { echo "merge check: FAILED: clippy (above)" >&2; exit 1; }
 fi
 
 if [ -n "$snew" ] && [ -z "$torun" ]; then

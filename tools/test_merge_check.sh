@@ -19,7 +19,9 @@
 # exports a symbol; and feat, with a default feature x, for step 0a. t's lib file
 # tests/src/helper.rs names b and is used by step_x, the piece w and the lib file
 # tests/src/wrap.rs, which step_y uses. The last cases rebase a branch on a main that moves and check what
-# --record runs again (MERGE-push-race).
+# --record runs again (MERGE-push-race). Step 1a runs the real cargo clippy on the toy, so its code
+# passes clippy -D warnings; b calls a::f, for a case where a change to a makes b warn
+# (TOOLS-merge-check-clippy).
 # MERGE_CHECK names another script to test, such as an older version, to see these cases fail.
 check_script=${MERGE_CHECK:-$(pwd)/tools/merge_check.sh}
 spec_groups=$(pwd)/tools/spec_groups.sh
@@ -63,16 +65,18 @@ for c in tool rootuse feat; do echo "//! $c." >"crates/$c/src/lib.rs"; done
 printf '//! lnk.\n#[unsafe(no_mangle)]\npub extern "C" fn lnk_f() {}\n' >crates/lnk/src/lib.rs
 pkg t $'\n[dependencies]\nb = { path = "../crates/b" }\ntool = { path = "../crates/tool" }
 rootuse = { path = "../crates/rootuse" }\nlnk = { path = "../crates/lnk" }
-feat = { path = "../crates/feat" }\n\n[features]\nfull = []\n
+feat = { path = "../crates/feat" }\n\n[features]\nfull = []\nspec = []\n
 [[test]]\nname = "step_x"\npath = "steps/x/mod.rs"\n\n[[test]]\nname = "step_y"\npath = "steps/y/mod.rs"\n
 [[test]]\nname = "full"\npath = "full/main.rs"\nrequired-features = ["full"]\n' >tests/Cargo.toml
-printf '#[cfg(test)]\n#[path = "../../../tests/src/seed.rs"]\nmod seed;\n' >crates/a/src/lib.rs
-echo '//! b.' >crates/b/src/lib.rs
+# b calls a::f, so a change to a can make b warn (step 1a, TOOLS-merge-check-clippy).
+printf '#[cfg(test)]\n#[path = "../../../tests/src/seed.rs"]\nmod seed;\npub fn f() {}\n' >crates/a/src/lib.rs
+printf '//! b.\npub fn g() {\n    a::f()\n}\n' >crates/b/src/lib.rs
 echo '//! c.' >crates/c/src/lib.rs
 printf '//! t.\npub mod seed;\npub mod helper;\npub mod wrap;\nuse rootuse as _;\n' >tests/src/lib.rs
 echo '//! The seed.' >tests/src/seed.rs
 printf '//! A step helper.\n// Not code: tool lnk feat.\nuse b as _;\n' >tests/src/helper.rs
-printf '//! A helper over the helper.\nuse crate::helper as _;\n' >tests/src/wrap.rs
+# A module imported as `_` is an unused import, which step 1a's clippy refuses.
+printf '//! A helper over the helper.\n#![allow(unused_imports)]\nuse crate::helper as _;\n' >tests/src/wrap.rs
 # The Rust reference, "The path attribute": in a mod.rs, lib.rs or main.rs file, a #[path] is
 # relative to the file's directory, and inside inline modules to that directory followed by the
 # inline modules' names; in any other file, inside inline modules, to the directory followed by the
@@ -86,10 +90,10 @@ for f in viamod inl nest; do echo "//! $f." >"tests/src/$f.rs"; done
 echo '// table' >crates/c/data/table.rs
 # step_x reads the spec (MERGE-spec-reads-map): its folder holds the feature spec, so the real
 # tools/spec_groups.sh, copied into the toy, names it.
-printf '//! x.\nuse t::helper as _;\nuse tool as _;\n#[cfg(feature = "spec")]\nmod spec {}\n' >tests/steps/x/mod.rs
+printf '//! x.\n#![allow(unused_imports)]\nuse t::helper as _;\nuse tool as _;\n#[cfg(feature = "spec")]\nmod spec {}\n' >tests/steps/x/mod.rs
 cat "$spec_groups" >tools/spec_groups.sh
 chmod +x tools/spec_groups.sh
-printf '//! y.\nuse t::wrap as _;\n' >tests/steps/y/mod.rs
+printf '//! y.\n#![allow(unused_imports)]\nuse t::wrap as _;\n' >tests/steps/y/mod.rs
 echo '//! full.' >tests/full/main.rs
 mkdir -p tests/full/w tests/full/z
 printf '//! w.\nuse t::helper as _;\n' >tests/full/w/mod.rs
@@ -234,6 +238,46 @@ merge check: passed
   "$("$check_script" --base base 3 2>&1 | command grep -a -E '^(run_tests|merge check: (passed|FAILED))'; echo "${PIPESTATUS[0]}")"
 check "a failing test run stops the check with exit 1" "merge check: FAILED: tests (above)
 1" "$(STUB_RC=1 "$check_script" --base base 2>&1 | command grep -a 'FAILED'; echo "${PIPESTATUS[0]}")"
+# Step 1a (TOOLS-merge-check-clippy): clippy -D warnings on the selected packages, before the tests.
+clippy_run() {
+  # The lint's name, from clippy's line "to override `-D warnings` add `#[allow(<lint>)]`".
+  "$check_script" --base base 2>&1 |
+    command grep -a -o -E '^(run_tests.*|merge check: (clippy|passed|FAILED).*)|#\[allow\([a-z_:]+\)\]'
+  echo "${PIPESTATUS[0]}"
+}
+# The commit "change c", which the case after these returns to.
+change_c=$(git rev-parse HEAD)
+check "a clean branch passes clippy on its selected packages, then runs its tests" \
+  "merge check: clippy -D warnings on: c
+run_tests --skip-other-kind --only ^($(sorted "$(short c s_01f_import_graph)" | tr ' ' '|'))\$ 6
+merge check: passed
+0" "$(clippy_run)"
+change_on_base crates/c/src/lib.rs 'pub fn n(v: &Vec<u8>) -> usize { v.len() }'
+check "a branch with a clippy warning is refused with exit 1, and its tests do not run" \
+  "merge check: clippy -D warnings on: c
+#[allow(clippy::ptr_arg)]
+merge check: FAILED: clippy (above)
+1" "$(clippy_run)"
+git checkout -q --detach base
+printf '#[cfg(test)]\n#[path = "../../../tests/src/seed.rs"]\nmod seed;\n#[deprecated]\npub fn f() {}\n' >crates/a/src/lib.rs
+git commit -q -a -m "a: deprecate f"
+check "a change that makes a dependent warn (b calls the now deprecated a::f) is refused" \
+  "merge check: clippy -D warnings on: a b t
+#[allow(deprecated)]
+merge check: FAILED: clippy (above)
+1" "$(clippy_run)"
+change_on_base tests/steps/x/mod.rs
+check "a test target changed alone has clippy run on its package" \
+  "merge check: clippy -D warnings on: t" "$(clippy_run | command grep -a 'clippy')"
+change_on_base clippy.toml '# changed'
+check "the root's clippy.toml selects every package for clippy and no test" \
+  "merge check: the root's clippy configuration changed: clippy runs on every package
+merge check: groups:
+merge check: clippy -D warnings on: a b c feat lnk rootuse tool t
+merge check: passed
+0" "$("$check_script" --base base 2>&1 | command grep -a -E '^merge check: (groups|the root|clippy|passed|FAILED|no package)'
+    echo "${PIPESTATUS[0]}")"
+git checkout -q --detach "$change_c"
 echo "// uncommitted" >>crates/c/src/lib.rs
 check "uncommitted changes to tracked files stop the check" "1" \
   "$("$check_script" --base base --groups >/dev/null 2>&1; echo $?)"
@@ -347,10 +391,10 @@ git commit -q -a -m "branch: change c"
 git tag -f branch >/dev/null
 all_c="$(sorted "$(short c s_01f_import_graph)")"
 # Runs the check with the record against the base $1, plus any further arguments, and prints
-# what ran, the outcome and the exit code.
+# what ran, the outcome and the exit code; with show_clippy set, step 1a's lines too.
 record_run() {
   "$check_script" --base "$1" --record "$rec" "${@:2}" 2>&1 |
-    command grep -a -E '^(run_tests|merge check: (to run|tests/full pieces to run|passed|FAILED))' |
+    command grep -a -E "^(run_tests|merge check: (to run|tests/full pieces to run|${show_clippy:+clippy|}passed|FAILED))" |
     sed 's/ --trace [^ ]*//'
   echo "${PIPESTATUS[0]}"
 }
@@ -365,11 +409,13 @@ main_moves() {
   git tag -f upstream >/dev/null
   git cherry-pick branch >/dev/null
 }
-check "with no record, every selected group runs, and the record is written" \
+check "with no record, every selected group runs, and clippy on every selected package, and the record is written" \
   "merge check: to run: $all_c
+merge check: clippy to run: c
+merge check: clippy -D warnings on: c
 run_tests --skip-other-kind --only ^($(tr ' ' '|' <<<"$all_c"))\$ 6
 merge check: passed
-0" "$(record_run base --reads "$ws/target/map-record")"
+0" "$(show_clippy=1 record_run base --reads "$ws/target/map-record")"
 check "a passing run writes the map file of each group that ran, from the trace" "commit $(git rev-parse HEAD)
 docs/plan.md
 commit $(git rev-parse HEAD)
@@ -380,13 +426,15 @@ group c
 group s_01f_import_graph
 group short-c
 group short-s_01f_import_graph
+clippy c
 read c docs/plan.md
 read s_01f_import_graph crates
 read short-c data
 end" "$(cat "$rec")"
-check "the same commit again runs nothing" "merge check: to run:
+check "the same commit again runs nothing, clippy neither" "merge check: to run:
+merge check: clippy to run:
 merge check: passed (every selected group passed at the record's commit, with the same inputs)
-0" "$(record_run base)"
+0" "$(show_clippy=1 record_run base)"
 main_moves docs/notes.md
 check "main moved by a file no group read: nothing runs" "merge check: to run:
 merge check: passed (every selected group passed at the record's commit, with the same inputs)
@@ -401,17 +449,20 @@ check "the group that ran keeps its reads in the new record" "read c docs/plan.m
 read s_01f_import_graph crates
 read short-c data" "$(command grep -a '^read' "$rec")"
 main_moves crates/a/src/lib.rs
-check "main moved by a crate the branch's crate does not use: only s_01f, which any crate selects" \
-  "merge check: to run: $(sorted "$(short s_01f_import_graph)")" \
-  "$(record_run upstream | command grep -a 'to run')"
+check "main moved by a crate the branch's crate does not use: only s_01f, which any crate selects, and no clippy" \
+  "merge check: to run: $(sorted "$(short s_01f_import_graph)")
+merge check: clippy to run:" \
+  "$(show_clippy=1 record_run upstream | command grep -a 'to run')"
 passed_at=$(head -n 1 "$rec")
 main_moves crates/c/src/inl.rs
-check "main changed the branch's crate: a failing run exits 1 and keeps the old record" \
+check "main changed the branch's crate: clippy runs on it, a failing run exits 1 and keeps the old record" \
   "merge check: to run: $all_c
+merge check: clippy to run: c
+merge check: clippy -D warnings on: c
 merge check: FAILED: tests (above)
 1
 $passed_at" \
-  "$(STUB_RC=1 record_run upstream | command grep -a -v '^run_tests'; head -n 1 "$rec")"
+  "$(STUB_RC=1 show_clippy=1 record_run upstream | command grep -a -v '^run_tests'; head -n 1 "$rec")"
 echo 'short-s_01f_import_graph *' >>"$STUB_READS"
 check "then a passing run runs the same groups and writes the record" "merge check: to run: $all_c
 $(git rev-parse HEAD)" \
@@ -423,8 +474,9 @@ main_moves data/new.txt
 check "a file added under a directory a group listed: that group runs" \
   "merge check: to run: short-c short-s_01f_import_graph" "$(record_run upstream | command grep -a 'to run')"
 main_moves tools/run_tests.sh '# changed'
-check "a change under tools/ since the record runs every selected group" "merge check: to run: $all_c" \
-  "$(record_run upstream | command grep -a 'to run')"
+check "a change under tools/ since the record runs every selected group, and clippy on every selected package" \
+  "merge check: to run: $all_c
+merge check: clippy to run: c" "$(show_clippy=1 record_run upstream | command grep -a 'to run')"
 printf '%s\n' "$(head -n 2 "$rec")" >"$rec"
 check "a record cut short is ignored" "merge check: to run: $all_c" \
   "$(record_run upstream --groups | command grep -a 'to run')"
