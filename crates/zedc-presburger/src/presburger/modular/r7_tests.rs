@@ -530,35 +530,354 @@ fn a_short_interval_over_many_moduli_is_decided_by_the_sweep() {
     );
 }
 
-/// Under a cover's meter, `sweep_bounded` is charged its pieces before it makes them
-/// (`meter::charge_pieces`): `x mod 2 == 0 && x mod 991 == 5 && x mod 997 == 1` on
-/// `[0, 1000000]`, a span shorter than the period 1,976,054, has about 500,000 pieces of
-/// modulus 2, 8,000,000 units past [`meter::EXACT_LIMIT`]'s 3,100,000, so the question is
-/// refused there; with no limit the sweep answers as testing each point does.
-#[test]
-fn a_sweep_past_the_limit_is_refused_under_the_meter() {
-    use super::super::meter::{EXACT_LIMIT, Work};
-    use super::super::{Refusal, SOLVER};
-    let unit_mods: BTreeMap<Int, ResidueSet> = [(2, 0), (991, 5), (997, 1)]
-        .into_iter()
-        .map(|(m, r)| (Int::from(m), vec![(Int::from(r), Int::from(r))]))
-        .collect();
-    let (l, h) = (Int::ZERO, Int::from(1_000_000));
-    let work = |limit: u64| Work {
+/// A cover's work at the limit of its meter, or with no limit.
+fn work(limit: u64) -> super::super::meter::Work {
+    super::super::meter::Work {
         used: 0,
         limit,
-        solver: SOLVER,
-    };
+        solver: super::super::SOLVER,
+    }
+}
+
+/// Units `x mod m in {r}`, one for each pair.
+fn point_units(pairs: &[(i64, i64)]) -> BTreeMap<Int, ResidueSet> {
+    pairs
+        .iter()
+        .map(|&(m, r)| (Int::from(m), vec![(Int::from(r), Int::from(r))]))
+        .collect()
+}
+
+/// The split of `k` smallest moduli, with their lcm, where it fits the tree's test size.
+fn split_of(weights: &BTreeMap<Int, u128>, k: usize) -> Option<(BTreeSet<&Int>, usize)> {
+    let small: BTreeSet<&Int> = weights.keys().take(k).collect();
+    let mut q = Int::ONE;
+    for m in &small {
+        q = &q.div_floor(&q.gcd(m)) * *m;
+    }
+    let q = q.to_i128().and_then(|v| usize::try_from(v).ok())?;
+    (q <= 100_000).then_some((small, q))
+}
+
+/// Under a cover's meter, `sweep_bounded` is charged its work before it does it
+/// (`meter::charge_pieces`). The units `x mod p in [0, p) - {r_p}` for the 12 primes from 101
+/// to 157 on `[0, 2000000]` are simultaneous incongruences (problem AN2), the class that
+/// [`cheapest_split`] leaves costly at every split: cutting every modulus makes about 2 * 12 *
+/// 2000000 / 125 = 380,000 pieces, 6,100,000 units past [`meter::EXACT_LIMIT`]'s 3,100,000, and
+/// reading the smallest primes modulo their product costs more (the bound of each split is
+/// checked by `the_split_is_the_one_of_least_bound`). So the question is refused there, with
+/// the message of `Refusal::Questions`; with no limit the sweep answers as testing each point
+/// does.
+#[test]
+fn a_sweep_past_the_limit_is_refused_under_the_meter() {
+    use super::super::Refusal;
+    use super::super::meter::EXACT_LIMIT;
+    let primes = [101, 103, 107, 109, 113, 127, 131, 137, 139, 149, 151, 157];
+    let units: Vec<(i64, i64)> = (0..)
+        .zip(primes)
+        .map(|(i, p)| (p, (7 * i + 3) % p))
+        .collect();
+    let unit_mods: BTreeMap<Int, ResidueSet> = units
+        .iter()
+        .map(|&(m, r)| {
+            let s = [(0, r - 1), (r + 1, m - 1)]
+                .into_iter()
+                .filter(|(a, b)| a <= b)
+                .map(|(a, b)| (Int::from(a), Int::from(b)))
+                .collect();
+            (Int::from(m), s)
+        })
+        .collect();
+    let (l, h) = (Int::ZERO, Int::from(2_000_000));
     let refused = work(EXACT_LIMIT).metered(|| sweep_bounded(&l, &h, &unit_mods, &[]));
+    let Err(why) = refused else {
+        panic!("answered under the limit: {:?}", refused.map(|o| found(&o)));
+    };
+    assert_eq!(why, Refusal::Questions);
     assert!(
-        matches!(refused, Err(Refusal::Questions)),
-        "{:?}",
-        refused.map(|o| found(&o))
+        why.to_string()
+            .contains("Here those questions would take more work than the checker allows."),
+        "{why}"
     );
-    let want = (0..=1_000_000_i64).find(|x| x % 2 == 0 && x % 991 == 5 && x % 997 == 1);
+    let want = (0..=2_000_000_i64).find(|x| units.iter().all(|&(m, r)| x % m != r));
     let answered = work(u64::MAX).metered(|| sweep_bounded(&l, &h, &unit_mods, &[]));
     let Ok(out) = answered else {
         panic!("refused with no limit");
     };
     assert_eq!(found(&out), want.map(Int::from));
+}
+
+/// `x mod 2 == 0 && x mod 991 == 5 && x mod 997 == 1` on `[0, 1000000]`, a span shorter than
+/// the period 1,976,054, which the meter refused when every modulus was cut into pieces (about
+/// 500,000 of modulus 2, 8,000,000 units past [`meter::EXACT_LIMIT`]'s 3,100,000; that sweep is
+/// the split with no small modulus, refused here as the negative control). Read modulo 2, the
+/// smallest modulus leaves about 2,000 pieces of the others, and the question is answered under
+/// the limit, as testing each point answers it (PERF-sweep-bounded-wide-interval).
+#[test]
+fn a_wide_window_cut_by_large_moduli_is_answered_under_the_meter() {
+    use super::super::Refusal;
+    use super::super::meter::EXACT_LIMIT;
+    let unit_mods = point_units(&[(2, 0), (991, 5), (997, 1)]);
+    let (l, h) = (Int::ZERO, Int::from(1_000_000));
+    let want = (0..=1_000_000_i64).find(|x| x % 2 == 0 && x % 991 == 5 && x % 997 == 1);
+    let answered = work(EXACT_LIMIT).metered(|| sweep_bounded(&l, &h, &unit_mods, &[]));
+    let Ok(out) = answered else {
+        panic!("refused under the limit");
+    };
+    assert_eq!(found(&out), want.map(Int::from));
+    let (e, _) = sweep_window(&l, &h, &unit_mods, &[]);
+    let cut_all =
+        work(EXACT_LIMIT).metered(|| sweep_split(&l, &e, &unit_mods, &[], &BTreeSet::new(), 1));
+    assert!(
+        matches!(cut_all, Err(Refusal::Questions)),
+        "{:?}",
+        cut_all.map(|o| found(&o))
+    );
+}
+
+/// A window `[l, h]` and a regime on it: its units and its clauses.
+pub(super) type Window = (
+    Int,
+    Int,
+    BTreeMap<Int, ResidueSet>,
+    Vec<BTreeMap<Int, ResidueSet>>,
+);
+
+/// A regime on a window of about 2^107 points from 2^200 on: the unit `x mod P == 0` with `P =
+/// 2^100 + 3`, and `n` clauses `x mod Q_j in [0, Q_j div 2] || x mod m_j == r_j`, with `Q_j =
+/// 2^101 + 2 j + 1` and `m_j` from 4, 6, 9 and 10. Cutting every modulus into pieces makes
+/// about 2^105 of modulus 4; read modulo 180, the small moduli leave about `100 + 50 n` pieces
+/// of the large ones. With `empty`, also the unit `x mod 2 == 1` and the clause `x mod 4 in {0,
+/// 2}`, which no point meets, so the walk passes every event of the window before it answers
+/// `Empty`, at every `n` alike. The window and its regime, for the tests and the benchmark.
+pub(super) fn wide_clauses(n: usize, periods: i64, empty: bool) -> Window {
+    let p = &Int::pow2(100) + &Int::from(3);
+    let l = &Int::pow2(200) + &Int::from(12_345);
+    let h = &l + &(&p * &Int::from(periods));
+    let mut unit_mods: BTreeMap<Int, ResidueSet> = [(p, vec![(Int::ZERO, Int::ZERO)])].into();
+    let small = [4i64, 6, 9, 10];
+    let mut clauses: Vec<BTreeMap<Int, ResidueSet>> = (0..n)
+        .map(|j| {
+            let q = &Int::pow2(101) + &Int::from(2 * j as i64 + 1);
+            let half = q.div_floor(&Int::from(2));
+            let m = small[j % small.len()];
+            let r = Int::from((3 * j as i64 + 1) % m);
+            [
+                (q, vec![(Int::ZERO, half)]),
+                (Int::from(m), vec![(r.clone(), r)]),
+            ]
+            .into()
+        })
+        .collect();
+    if empty {
+        unit_mods.insert(Int::from(2), vec![(Int::ONE, Int::ONE)]);
+        let even = vec![(Int::ZERO, Int::ZERO), (Int::from(2), Int::from(2))];
+        clauses.push([(Int::from(4), even)].into());
+    }
+    (l, h, unit_mods, clauses)
+}
+
+/// The least point of [`wide_clauses`]' regime by testing each candidate: every point is a
+/// multiple of `P`, so the candidates are the multiples of `P` in the window, `periods + 1` of
+/// them at most.
+fn wide_clauses_by_candidates(
+    l: &Int,
+    h: &Int,
+    unit_mods: &BTreeMap<Int, ResidueSet>,
+    clauses: &[BTreeMap<Int, ResidueSet>],
+) -> Option<Int> {
+    let p = unit_mods.keys().next_back().expect("the unit over P");
+    let mut x = &l.div_ceil(p) * p;
+    while &x <= h {
+        if holds_modular_point(&x, unit_mods, clauses) {
+            return Some(x);
+        }
+        x = &x + p;
+    }
+    None
+}
+
+/// [`wide_clauses`] with 1 to 6 clauses over 100 periods of `P`, with and without the
+/// conditions that empty it, answered under a cover's meter as testing each multiple of `P`
+/// answers it. Cutting every modulus into pieces, the split with no small modulus, is refused
+/// there (the negative control), as `sweep_bounded` was before PERF-sweep-bounded-wide-interval.
+#[test]
+fn a_window_of_200_bits_is_answered_under_the_meter() {
+    use super::super::Refusal;
+    use super::super::meter::EXACT_LIMIT;
+    for empty in [false, true] {
+        for n in 1..=6 {
+            let what = format!("{n} clauses, empty {empty}");
+            let (l, h, unit_mods, clauses) = wide_clauses(n, 100, empty);
+            let want = wide_clauses_by_candidates(&l, &h, &unit_mods, &clauses);
+            if empty {
+                assert_eq!(want, None, "{what}");
+            }
+            let answered =
+                work(EXACT_LIMIT).metered(|| sweep_bounded(&l, &h, &unit_mods, &clauses));
+            let Ok(out) = answered else {
+                panic!("{what}: refused under the limit");
+            };
+            assert_eq!(found(&out), want, "{what}");
+            if want.is_none() {
+                assert!(matches!(out, RegimeOut::Empty), "{what}");
+            }
+            let (e, _) = sweep_window(&l, &h, &unit_mods, &clauses);
+            let cut_all = work(EXACT_LIMIT)
+                .metered(|| sweep_split(&l, &e, &unit_mods, &clauses, &BTreeSet::new(), 1));
+            assert!(matches!(cut_all, Err(Refusal::Questions)), "{what}");
+        }
+    }
+}
+
+/// [`sweep_split`] at every split of the moduli (the `k` smallest read modulo their lcm, for
+/// each `k` whose lcm is at most 100,000) and `sweep_bounded` give the least point of `[l, h]`
+/// that every unit and clause holds, or none, as testing each point does: over 400 drawn
+/// regimes of 1 to 4 units and 0 to 10 clauses of 1 to 3 literals, each modulus small (2 to 9)
+/// or large (30 to 300) by a coin, on intervals from 1 point to about 3,000.
+#[test]
+fn every_split_of_the_moduli_decides_a_regime_as_testing_each_point_does() {
+    let holds = |x: i64, m: i64, s: &[(i64, i64)]| {
+        let r = x.rem_euclid(m);
+        s.iter().any(|&(a, b)| a <= r && r <= b)
+    };
+    type Lits = Vec<(i64, Vec<(i64, i64)>)>;
+    // Knuth's MMIX constants, so the draws are fixed.
+    let mut state = 0x5eed_5917_u64;
+    let mut below = |n: i64| {
+        state = state
+            .wrapping_mul(6364136223846793005)
+            .wrapping_add(1442695040888963407);
+        ((state >> 33) % n as u64) as i64
+    };
+    let lit = |below: &mut dyn FnMut(i64) -> i64| {
+        let m = if below(2) == 0 {
+            2 + below(8)
+        } else {
+            30 + below(271)
+        };
+        let a = below(m);
+        let b = a + below(m - a);
+        let mut s = vec![(a, b)];
+        // Now and then a second interval, so a literal's set is not always one run.
+        if b + 2 < m && below(3) == 0 {
+            let c = b + 2 + below(m - b - 2);
+            s.push((c, c + below(m - c)));
+        }
+        (m, s)
+    };
+    let lits = |k: i64, below: &mut dyn FnMut(i64) -> i64| -> Lits {
+        let by_modulus: BTreeMap<i64, Vec<(i64, i64)>> = (0..k).map(|_| lit(below)).collect();
+        by_modulus.into_iter().collect()
+    };
+    let set = |s: &[(i64, i64)]| -> ResidueSet {
+        s.iter()
+            .map(|&(a, b)| (Int::from(a), Int::from(b)))
+            .collect()
+    };
+    let (mut with_point, mut splits) = (0, 0);
+    for _ in 0..400 {
+        let units = lits(1 + below(4), &mut below);
+        let clauses: Vec<Lits> = (0..below(11))
+            .map(|_| {
+                let k = 1 + below(3);
+                lits(k, &mut below)
+            })
+            .collect();
+        let l = below(400) - 200;
+        let h = l + below(3000) - 2;
+        let want = (l..=h).find(|&x| {
+            units.iter().all(|(m, s)| holds(x, *m, s))
+                && clauses
+                    .iter()
+                    .all(|cl| cl.iter().any(|(m, s)| holds(x, *m, s)))
+        });
+        let unit_mods: BTreeMap<Int, ResidueSet> =
+            units.iter().map(|(m, s)| (Int::from(*m), set(s))).collect();
+        let cls: Vec<BTreeMap<Int, ResidueSet>> = clauses
+            .iter()
+            .map(|cl| cl.iter().map(|(m, s)| (Int::from(*m), set(s))).collect())
+            .collect();
+        let (li, hi) = (Int::from(l), Int::from(h));
+        let what = format!("[{l}, {h}] units {units:?} clauses {clauses:?}");
+        let got = sweep_bounded(&li, &hi, &unit_mods, &cls);
+        assert_eq!(found(&got), want.map(Int::from), "{what}");
+        if li <= hi {
+            let (e, weights) = sweep_window(&li, &hi, &unit_mods, &cls);
+            for k in 0..=weights.len() {
+                let Some((small, q)) = split_of(&weights, k) else {
+                    break;
+                };
+                let got = sweep_split(&li, &e, &unit_mods, &cls, &small, q);
+                assert_eq!(found(&got), want.map(Int::from), "split {k}: {what}");
+                if want.is_none() {
+                    assert!(matches!(got, RegimeOut::Empty), "split {k}: {what}");
+                }
+                splits += 1;
+            }
+        }
+        with_point += usize::from(want.is_some());
+    }
+    assert!(
+        (60..=340).contains(&with_point),
+        "{with_point} of 400 with a point"
+    );
+    assert!(splits >= 800, "only {splits} splits tried");
+}
+
+/// [`cheapest_split`]'s choice is the `k` of least bound `U_k`, the least `k` at a tie, with
+/// each bound computed here from its definition (each sum formed again at each `k`), over 300
+/// drawn sets of 1 to 8 moduli from 2 to 400 with weights 1 to 4, spans 0 to 100,000, and
+/// up to 12 lists.
+#[test]
+fn the_split_is_the_one_of_least_bound() {
+    let mut state = 0x5917_u64;
+    let mut below = |n: u64| {
+        state = state
+            .wrapping_mul(6364136223846793005)
+            .wrapping_add(1442695040888963407);
+        (state >> 33) % n
+    };
+    let mut chose_some = 0;
+    for _ in 0..300 {
+        let weights: BTreeMap<Int, u128> = (0..1 + below(8))
+            .map(|_| (Int::from(2 + below(399) as i64), 1 + below(4) as u128))
+            .collect();
+        let span = below(100_001) as u128;
+        let lists = below(13) as u128;
+        let ms: Vec<(u128, u128)> = weights
+            .iter()
+            .map(|(m, w)| (m.to_i128().expect("small") as u128, *w))
+            .collect();
+        let gcd = |mut a: u128, mut b: u128| {
+            while b != 0 {
+                (a, b) = (b, a % b);
+            }
+            a
+        };
+        let mut best: Option<(u128, usize, usize)> = None;
+        for k in 0..=ms.len() {
+            let mut q = 1u128;
+            for &(m, _) in &ms[..k] {
+                q = q / gcd(q, m) * m;
+            }
+            let p: u128 = ms[k..].iter().map(|&(m, w)| w * (span / m + 2)).sum();
+            let d: u128 = 1 + ms[..k].iter().map(|&(m, w)| w * (q / m + 2)).sum::<u128>();
+            let u = p + q + (2 * p + lists + 1) * d;
+            if best.is_none_or(|(b, _, _)| u < b) {
+                best = Some((u, k, q as usize));
+            }
+        }
+        let (_, k, q) = best.expect("k = 0 is always a choice");
+        assert_eq!(
+            cheapest_split(&Int::from(span as i128), &weights, lists),
+            (k, q),
+            "weights {weights:?} span {span} lists {lists}"
+        );
+        chose_some += usize::from(k > 0);
+    }
+    // A split other than cutting every modulus is chosen often, so both kinds are checked.
+    assert!(
+        (30..=270).contains(&chose_some),
+        "{chose_some} of 300 split"
+    );
 }

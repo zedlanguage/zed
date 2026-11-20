@@ -53,6 +53,48 @@ fn absorbed_clauses_scale() {
 /// The size of [`absorbed_clauses_scale`].
 const N_ABSORBED: usize = 20_000;
 
+/// `sweep_bounded` on [`wide_clauses`] emptied, a window of 100 periods of `P` from 2^200 on,
+/// with `n` clauses (PERF-sweep-bounded-wide-interval): the small moduli read modulo 180, about
+/// 50 pieces of each clause's large modulus, so `O(n log n)` events and `O(n)` additions to the
+/// tree of 180 residues. Cutting every modulus into pieces made about 2^105 here.
+#[test]
+fn clauses_over_a_window_of_200_bits_scale() {
+    let inputs = scaling::inputs(N_WIDE_CLAUSES, |n| wide_clauses(n, 100, true));
+    scaling::check_order(
+        "clauses over a window of 200 bits",
+        N_WIDE_CLAUSES,
+        1,
+        |n| {
+            let (l, h, units, clauses) = &inputs[&n];
+            assert!(matches!(
+                sweep_bounded(l, h, units, clauses),
+                RegimeOut::Empty
+            ));
+        },
+    );
+}
+
+/// The size of [`clauses_over_a_window_of_200_bits_scale`].
+const N_WIDE_CLAUSES: usize = 2_000;
+
+/// `sweep_bounded` on [`wide_clauses`] emptied, with 20 clauses, over `n` periods of `P`
+/// (PERF-sweep-bounded-wide-interval): the pieces of the large moduli, and so the events, grow
+/// with the width of the window while its bits grow by 3, the wide interval of the row.
+#[test]
+fn a_window_of_n_periods_scale() {
+    let inputs = scaling::inputs(N_PERIODS, |n| wide_clauses(20, n as i64, true));
+    scaling::check_order("a window of n periods", N_PERIODS, 1, |n| {
+        let (l, h, units, clauses) = &inputs[&n];
+        assert!(matches!(
+            sweep_bounded(l, h, units, clauses),
+            RegimeOut::Empty
+        ));
+    });
+}
+
+/// The size of [`a_window_of_n_periods_scale`].
+const N_PERIODS: usize = 5_000;
+
 #[test]
 fn pncx_fixed_chain_scale() {
     let inputs = scaling::inputs(60_000, fixed_chain);

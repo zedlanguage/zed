@@ -15,6 +15,9 @@
 //! under raises of single items (P. M. Fenwick, Software: Practice and Experience 24(3), 1994,
 //! doi:10.1002/spe.4380240306; the full comment is at the head of `fenwick.rs`).
 //!
+//! [`min_add`]: a segment tree over integers, with an addition to a range of items and the
+//! search for the first item at or after a place whose value is at most a bound, each O(log n).
+//!
 //! [`held`]: values put in through a shared reference and kept at their places, so that a walk
 //! may borrow from them while it puts in more.
 //!
@@ -35,6 +38,7 @@ pub mod held;
 pub mod index;
 pub mod intern;
 pub mod intervals;
+pub mod min_add;
 pub mod search;
 pub mod sorted;
 

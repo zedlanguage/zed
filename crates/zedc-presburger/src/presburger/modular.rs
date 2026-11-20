@@ -3129,34 +3129,67 @@ fn solve_short_x_interval(
 /// points against a period of 840, left undecided, so each question went to the general path,
 /// which spent 4 to 15 s on it and refused (`Shadows`).
 ///
-/// Proof: each unit and each literal is `x mod m in s` with `m` dividing the lcm `p` of the
-/// moduli, so `x` and `x + p` satisfy the same units and clauses. A point `x` of `[l, h]` above
-/// `e = min(h, l + p - 1)` has `e = l + p - 1`, and `x - k p` with `k = (x - l) div p` lies in
-/// `[l, e]` and satisfies the same; so `[l, h]` has a point exactly when `[l, e]` has one, and
-/// the least point of `[l, e]` is the least of `[l, h]` (any smaller point of `[l, h]` lies in
-/// `[l, e]`). On `[l, e]` each unit's set and each clause's union of its literals' sets is a
-/// normal list of intervals (`concrete_intervals_in_span`, then `coalesce`), and the least point
-/// in all of them is `intervals::first_in_all`'s. The point is placed by `l`, so it moves with
-/// the coordinate as the other witnesses do (I4.15); `solve_regime` gives the walk both ends.
+/// Why one period is enough: each unit and each literal is `x mod m in s` with `m` dividing
+/// the lcm `p` of the moduli, so `x` and `x + p` satisfy the same units and clauses. A point
+/// `x` of `[l, h]` above `e = min(h, l + p - 1)` has `e = l + p - 1`, and `x - k p` with `k =
+/// (x - l) div p` lies in `[l, e]` and satisfies the same; so `[l, h]` has a point exactly when
+/// `[l, e]` has one, and the least point of `[l, e]` is the least of `[l, h]` (any smaller point
+/// of `[l, h]` lies in `[l, e]`). The point is placed by `l`, so it moves with the coordinate as
+/// the other witnesses do (I4.15); `solve_regime` gives the walk both ends.
 ///
-/// Complexity tradeoff: the naive way tests each of the `e - l + 1` points against every clause,
-/// O((e - l + 1) L) for `L` literals. Used: the pieces of each literal on `[l, e]`, `N = sum
-/// |s| (ceil((e - l + 1) / m) + 1)` in all, sorted once, O(N log N). `N` is at most `L` times
-/// the number of periods of a literal's modulus in `[l, e]`, which is linear in `L` when the
-/// moduli and the interval are fixed, as along a chain whose length grows; a wide interval over
-/// many small moduli makes `N` large (pseudo-polynomial in the written bits, unproved to be
-/// avoidable here: the coprime path declined it). Under a cover's meter the pieces are charged
-/// before they are made (`meter::charge_pieces`, `meter::PIECE` units each), so a cover's
-/// question stays within its limit as it did when the general path refused the regime
-/// (`r7_tests::a_sweep_past_the_limit_is_refused_under_the_meter`); outside a cover nothing
-/// limits `N`, as nothing limits the rest of the solver there, and the pieces are held at once,
-/// O(N) space. Tests:
-/// `r7_tests::a_short_interval_over_many_moduli_is_decided_by_the_sweep` (against testing each
-/// point), `l01_38_omega_test::one_scope::no_question_of_a_random_chain_with_negations_is_refused_at_seed_13254895221319191796`
+/// How `[l, e]` is searched (PERF-sweep-bounded-wide-interval): the moduli are split in two,
+/// the `k` smallest (the set `A`, lcm `q`) and the rest (`B`), with `k` from
+/// [`cheapest_split`]; [`sweep_split`] decides the regime for any split, by its own proof. The
+/// moduli of `B` are cut into pieces on `[l, e]` and those of `A` are read modulo `q`, so a
+/// wide window over large moduli and a few small ones (`x mod 2 == 0 && x mod 991 == 5 && x
+/// mod 997 == 1` on `[0, 10^6]`: about 2,000 pieces of the large moduli and `q = 2`, where
+/// cutting every modulus made 500,000 pieces of modulus 2) is decided by the pieces of the
+/// large moduli alone.
+///
+/// The class decided in time polynomial in the written bits: the regimes with a split whose
+/// `B` moduli cut `[l, e]` into polynomially many pieces (each `B` modulus at least the width
+/// of `[l, e]` over a polynomial in the bits) and whose `A` moduli have an lcm `q` of
+/// polynomial size; then the bound of [`cheapest_split`] is polynomial, and so is the work. The
+/// rest, where every split has many pieces or a large `q`, holds the simultaneous
+/// incongruences (units `x mod b_i in [0, b_i) - {a_i}`, an empty set of points exactly when
+/// no `x` misses every `a_i mod b_i`): problem AN2 of Garey and Johnson, "Computers and
+/// Intractability" (1979), NP-complete (not read here: the catalog entry recalled from
+/// memory, checked 2026-11-20 only against the papers below, which do not state it). Read
+/// 2026-11-20 (allpapers, full text): Deppert, Jansen and Klein, "Fuzzy Simultaneous
+/// Congruences", arXiv:2002.07746, which states that k-Simultaneous Congruences, a point
+/// meeting `k` of `n` congruences, "is NP-complete in the weak sense" (Leung and Whitehead)
+/// and "also is NP-complete in the strong sense" (Baruah et al.); Campercholi, Castaño and
+/// Zigarán, "The complexity of the Chinese Remainder Theorem", arXiv:2307.02617 (deciding
+/// whether a system of congruences is solvable in general algebras is coNP-complete);
+/// Bliznets, Nederlof and Szilágyi, arXiv:2312.06393 (covering a set by `k` arithmetic
+/// progressions in 2^{O(k^2)} poly(n), parameterized by `k`, not by the bits); Ziller and
+/// Morack, arXiv:1611.03310 (Jacobsthal's function, the longest run that a residue class of
+/// each prime misses: computed by search). None gives a method polynomial in the bits for
+/// this problem, so the rest is decided by the same method at the bound of [`cheapest_split`],
+/// which is at most that of cutting every modulus into pieces, and under a cover's meter it is
+/// refused past the meter's limit (`Refusal::Questions`: "Here those questions would take more
+/// work than the checker allows"), as before. Outside a cover nothing limits it, as nothing
+/// limits the rest of the solver there: a refusal by size there would be a threshold.
+///
+/// Complexity tradeoff: the naive way tests each of the `e - l + 1` points against every
+/// clause, O((e - l + 1) L) for `L` literals. Before this change every literal was cut into
+/// its pieces on `[l, e]`, `N_0 = sum |s| ((e - l) div m + 2)`, sorted once: O(N_0 log N_0),
+/// which a wide window over a small modulus makes pseudo-polynomial in the bits. Used: the
+/// split of [`cheapest_split`], whose bound is at most a constant times `N_0` (its `k = 0`), so
+/// no input costs more than a constant factor more than before, and the work is that of
+/// [`sweep_split`] below. Under a cover's meter each part of the work is charged before it is
+/// done (`meter::charge_pieces`, `meter::PIECE` units each), so a cover's question stays within
+/// its limit (`r7_tests::a_sweep_past_the_limit_is_refused_under_the_meter`). Tests:
+/// `r7_tests::a_short_interval_over_many_moduli_is_decided_by_the_sweep` and
+/// `r7_tests::every_split_of_the_moduli_decides_a_regime_as_testing_each_point_does` (against
+/// testing each point), `r7_tests::a_wide_window_cut_by_large_moduli_is_answered_under_the_meter`
+/// and `r7_tests::a_window_of_200_bits_is_answered_under_the_meter` (refused by the meter
+/// before this change), `l01_38_omega_test::one_scope::no_question_of_a_random_chain_with_negations_is_refused_at_seed_13254895221319191796`
 /// and `one_scope::a_chain_over_a_short_window_of_many_moduli_has_no_question_refused` (each
-/// past 60 s without this sweep); scaling:
-/// `bench::one_scope::the_questions_of_a_chain_over_a_short_window_of_many_moduli_scale`
-/// (chain length 40 and 320: 6.7 times the instructions and the bytes, 2026-11-20, load 43).
+/// past 60 s without this sweep); the choice of split: `r7_tests::the_split_is_the_one_of_least_bound`;
+/// scaling: `bench::one_scope::the_questions_of_a_chain_over_a_short_window_of_many_moduli_scale`,
+/// `r7_tests::bench::clauses_over_a_window_of_200_bits_scale` and
+/// `r7_tests::bench::a_window_of_n_periods_scale`.
 fn sweep_bounded(
     l: &Int,
     h: &Int,
@@ -3166,57 +3199,338 @@ fn sweep_bounded(
     if l > h {
         return RegimeOut::Empty;
     }
-    let mut period = Int::ONE;
-    for m in unit_mods
-        .keys()
-        .chain(clauses.iter().flat_map(|cl| cl.keys()))
-    {
-        let g = period.gcd(m);
-        period = &period.div_floor(&g) * m;
-    }
-    let full = &(l + &period) - &Int::ONE;
-    let e = if *h < full { h.clone() } else { full };
-    // The meter of a cover's question (`meter::charge_pieces`) is charged the pieces before
-    // any is made: an interval `[ra, rb]` of residues modulo `m` meets `[l, e]` in at most
-    // `(e - l) div m + 2` pieces (one for each period of `m` that `[l, e]` meets). Past the
-    // limit the regime stays `Undecided` and the general path, asked next under the spent
-    // meter, refuses at its first charged step, as it did before this sweep.
-    let span = &e - l;
-    let mut count: u64 = 0;
+    let (e, weights) = sweep_window(l, h, unit_mods, clauses);
+    let lists = (unit_mods.len() + clauses.len()) as u128;
+    let (k, q) = cheapest_split(&(&e - l), &weights, lists);
+    let small: BTreeSet<&Int> = weights.keys().take(k).collect();
+    sweep_split(l, &e, unit_mods, clauses, &small, q)
+}
+
+/// The end `e = min(h, l + p - 1)` of the one period [`sweep_bounded`] searches, `p` the lcm of
+/// the moduli, and the weight of each modulus: the number of intervals of residues its literals
+/// hold, which [`cheapest_split`] reads.
+fn sweep_window(
+    l: &Int,
+    h: &Int,
+    unit_mods: &BTreeMap<Int, ResidueSet>,
+    clauses: &[BTreeMap<Int, ResidueSet>],
+) -> (Int, BTreeMap<Int, u128>) {
+    let mut weights: BTreeMap<Int, u128> = BTreeMap::new();
     for (m, s) in unit_mods
         .iter()
         .chain(clauses.iter().flat_map(|cl| cl.iter()))
     {
-        let per = (span.div_floor(m).to_i128())
-            .and_then(|v| u64::try_from(v).ok())
-            .map_or(u64::MAX, |v| v.saturating_add(2));
-        count = count.saturating_add(per.saturating_mul(s.len() as u64));
+        let w = weights.entry(m.clone()).or_insert(0);
+        *w = w.saturating_add(s.len() as u128);
     }
-    if super::meter::charge_pieces(count).is_err() {
+    // The lcm of a prefix of the moduli divides the lcm `p` of all of them, so it is at most
+    // `p`. Once it reaches `h - l + 1`, then `p >= h - l + 1`, so `l + p - 1 >= h` and `e = h`,
+    // and the lcm of the rest is not needed. Before that stop each prefix's lcm is below
+    // `(h - l + 1) * max m`, so its bits stay O(bits(h - l) + bits(max m)) and each step costs
+    // the same at every number of moduli.
+    //
+    // Complexity tradeoff: forming the whole lcm, as this did before
+    // PERF-sweep-bounded-wide-interval, costs Theta(M^2 b^2) bit operations and Theta(M^2 b)
+    // bytes for `M` moduli of `b` bits each that share no factor (the lcm grows by `b` bits a
+    // modulus), which `r7_tests::bench::clauses_over_a_window_of_200_bits_scale` measured at
+    // 34.7 times the bytes at 8n. Used: stop at the window's length, O(M (b + bits(h - l))^2).
+    let len = &(h - l) + &Int::ONE;
+    let mut period = Int::ONE;
+    for m in weights.keys() {
+        if period >= len {
+            break;
+        }
+        let g = period.gcd(m);
+        period = &period.div_floor(&g) * m;
+    }
+    let e = if period >= len {
+        h.clone()
+    } else {
+        &(l + &period) - &Int::ONE
+    };
+    (e, weights)
+}
+
+/// A count as a `u128`, saturated at `u128::MAX` (a count is never negative here).
+fn count_u128(v: &Int) -> u128 {
+    v.to_i128()
+        .and_then(|v| u128::try_from(v).ok())
+        .unwrap_or(u128::MAX)
+}
+
+/// The number `k` of the smallest moduli that [`sweep_split`] reads modulo their lcm `q`, and
+/// `q`, for a regime on a window `[l, l + span]` whose moduli have the weights `weights` (the
+/// number of intervals of residues their literals hold) and which has `lists` units and clauses.
+///
+/// For each `k` from 0 to the number `M` of moduli, with `A` the `k` smallest, `B` the rest,
+/// `w_m` the weight of `m`, the bound
+///
+/// `U_k = P + q + (2 P + lists + 1) D`, `P = sum over B of w_m (span div m + 2)`,
+/// `D = 1 + sum over A of w_m (q div m + 2)`,
+///
+/// is an upper bound on the work of [`sweep_split`] in units of one piece or one tree step
+/// (each times a factor `log` of the sizes, the same for every `k`): `P` bounds its pieces of
+/// the moduli of `B`, so at most `2 P` events and `2 P + 1` segments; `q` its tree; `D` the
+/// intervals of residues that any one unit or clause forbids modulo `q` (each `A` literal
+/// lifted modulo `q` has at most `w (q div m + 2)` intervals, and the complement of `c`
+/// intervals at most `c + 1`), so each unit or clause put in the tree at the start (`lists`)
+/// and each event costs at most `D` tree steps, and each segment one search. The `k` with the
+/// least bound is taken, the least `k` at a tie, so the choice is fixed by the input. `U_0 =
+/// 3 P + lists + 2` with `P = N_0`, the pieces of cutting every modulus: no choice is more
+/// than a constant factor above that. The same holds for space: the chosen `q` is at most its
+/// bound, at most `U_0`, so the tree's `4 q` items are never more than a constant times the
+/// pieces that cutting every modulus held. This compares exact counts of work and changes no
+/// answer: every `k` is decided exactly (no threshold; P196/P197).
+///
+/// `q` must have an item for each residue, so a `k` whose `q` is past `usize` cannot be run;
+/// `q` only grows with `k`, so the scan stops there. Cost: O(M) steps of arithmetic on the
+/// moduli, after their sort (the keys of `weights`).
+///
+/// Complexity tradeoff: the naive way runs [`sweep_split`] at each `k` and keeps the fastest,
+/// O(M) times its work. Used: the bound, kept up to date as `k` grows (`q` by the lcm with the
+/// next modulus, the sum `sum over A of w_m (q div m)` scaled by the factor `q` grew by, the
+/// sum over `B` from a suffix sum), O(M) in all. Test:
+/// `r7_tests::the_split_is_the_one_of_least_bound`.
+fn cheapest_split(span: &Int, weights: &BTreeMap<Int, u128>, lists: u128) -> (usize, usize) {
+    let ms: Vec<(&Int, u128)> = weights.iter().map(|(m, w)| (m, *w)).collect();
+    // `after[i]`: the pieces of the moduli from the `i`-th on, `P` at `k = i`.
+    let mut after = vec![0u128; ms.len() + 1];
+    for (i, (m, w)) in ms.iter().enumerate().rev() {
+        let per = count_u128(&span.div_floor(m)).saturating_add(2);
+        after[i] = after[i + 1].saturating_add(w.saturating_mul(per));
+    }
+    let bound = |p: u128, q: u128, d: u128| {
+        p.saturating_add(q).saturating_add(
+            p.saturating_mul(2)
+                .saturating_add(lists)
+                .saturating_add(1)
+                .saturating_mul(d),
+        )
+    };
+    let mut best = (bound(after[0], 1, 1), 0, 1usize);
+    let mut q = Int::ONE;
+    // `sum over A of w_m (q div m)` and `sum over A of w_m`.
+    let (mut lifted, mut weight) = (0u128, 0u128);
+    for (k, (m, w)) in ms.iter().enumerate().map(|(i, x)| (i + 1, x)) {
+        let grow = m.div_floor(&q.gcd(m));
+        q = &q * &grow;
+        let Some(q_items) = q.to_i128().and_then(|v| usize::try_from(v).ok()) else {
+            break;
+        };
+        lifted = lifted
+            .saturating_mul(count_u128(&grow))
+            .saturating_add(w.saturating_mul(count_u128(&q.div_floor(m))));
+        weight = weight.saturating_add(*w);
+        let d = lifted
+            .saturating_add(weight.saturating_mul(2))
+            .saturating_add(1);
+        let u = bound(after[k], q_items as u128, d);
+        if u < best.0 {
+            best = (u, k, q_items);
+        }
+    }
+    (best.1, best.2)
+}
+
+/// What a step of [`sweep_split`]'s walk along `[l, e]` changes.
+enum Edge {
+    /// `x` enters, or leaves, a piece of a unit over a large modulus.
+    Unit(bool),
+    /// `x` enters, or leaves, the pieces of clause `j`'s literals over large moduli.
+    Clause(usize, bool),
+}
+
+/// The least point of `[l, e]` that every unit and every clause holds, or `Empty`, where `e -
+/// l` is below the lcm of the moduli ([`sweep_bounded`]), and `small` (lcm `q`, which fits
+/// `usize`) holds the moduli read modulo `q`; every other modulus is large. `Undecided` where a
+/// cover's meter refuses the work.
+///
+/// Proof. (1) A literal `x mod m in s` with `m` small holds at `x` exactly when `x mod q`
+/// lies in the residues `r` of `[0, q)` with `r mod m in s`, since `m` divides `q`, so `x mod
+/// m = (x mod q) mod m`; those residues are `concrete_intervals_in_span(0, q - 1, m, ...)`.
+/// (2) The pieces on `[l, e]` of each unit over a large modulus, coalesced, and of the
+/// literals over large moduli of each clause, coalesced, are normal lists: disjoint and not
+/// adjacent, so `x` enters a list's set at the low end `a` of a piece and leaves it at `b +
+/// 1`, and at no other place. Between two consecutive places where some list is entered or
+/// left (the events), every unit over a large modulus holds everywhere or nowhere, and so does
+/// every clause's part over large moduli: the events cut `[l, e]` into segments, each with one
+/// state. (3) On a segment where a large unit fails, or a clause with no small literal has its
+/// large part false, no point lies. Elsewhere `x` of the segment is a point exactly when each
+/// small unit holds and each clause whose large part is false there (an active clause) has a
+/// small literal that holds, all of which depend on `x mod q` alone, by (1). The tree holds, for
+/// each residue `r`, the number of small units and active clauses that forbid it (whose
+/// residues, by (1), miss `r`); it is kept exact by adding 1 over a clause's forbidden
+/// residues when the clause becomes active and taking it off when it stops (in its own list
+/// the two alternate, by (2), and the clause is active before `l`, where no piece lies). So `x`
+/// is a point exactly when the count at `x mod q` is 0. (4) The least point at or after the
+/// segment's start `t` with `r_0 = t mod q`: a residue `r >= r_0` with count 0 gives `t + (r -
+/// r_0) < t + q - r_0`, below every point `t + (q - r_0) + r'` from a residue below `r_0`, so
+/// the least is from the first `r >= r_0` with count 0, else from the first `r` with count 0
+/// overall, by `MinAdd::first_at_most` (the counts are never below 0); it is a point of the
+/// segment when it is at most the segment's end. (5) The segments are taken in order along
+/// `[l, e]`, which they cover, so the first point found is the least, and none found is `Empty`.
+///
+/// Complexity tradeoff: the naive way, testing each point, is O((e - l + 1) L) for `L`
+/// literals; cutting every modulus into pieces is O(N_0 log N_0) ([`sweep_bounded`]). Used: `P`
+/// pieces of the large moduli, sorted, O(P log P); the small literals read modulo `q`, O(q +
+/// sum over them of |s| (q div m + 2)); and for each of the at most `2 P` events and each
+/// clause and unit at the start, one addition to the tree for each interval of residues that
+/// clause or unit forbids, `I_j` of them, plus one search for each segment, O(log q) each. In
+/// all O(P log P + q + (sum over clauses j of (2 P_j + 1) I_j + sum over small units of I_u +
+/// P) log q), with `P_j` the pieces of clause `j`'s large part: linear in the number of
+/// clauses when each has few pieces and few forbidden intervals, where meeting each active
+/// clause on each segment is O(P L). Space O(P + q + sum I_j). Under a cover's meter each part
+/// is charged before it is done.
+fn sweep_split(
+    l: &Int,
+    e: &Int,
+    unit_mods: &BTreeMap<Int, ResidueSet>,
+    clauses: &[BTreeMap<Int, ResidueSet>],
+    small: &BTreeSet<&Int>,
+    q: usize,
+) -> RegimeOut {
+    let span = e - l;
+    let q_int = Int::from(q);
+    let charge =
+        |count: u128| super::meter::charge_pieces(u64::try_from(count).unwrap_or(u64::MAX));
+    // The pieces of the large moduli and the residues of the small ones, charged first.
+    let mut cut: u128 = 0;
+    let mut lift: u128 = q as u128;
+    for (m, s) in unit_mods
+        .iter()
+        .chain(clauses.iter().flat_map(|cl| cl.iter()))
+    {
+        let wide = if small.contains(m) { &q_int } else { &span };
+        let per = count_u128(&wide.div_floor(m)).saturating_add(2);
+        let n = per.saturating_mul(s.len() as u128);
+        if small.contains(m) {
+            lift = lift.saturating_add(n);
+        } else {
+            cut = cut.saturating_add(n);
+        }
+    }
+    if charge(cut.saturating_add(lift)).is_err() {
         return RegimeOut::Undecided;
     }
-    let pieces = |m: &Int, s: &ResidueSet, out: &mut Vec<(Int, Int)>| {
-        for (ra, rb) in s {
-            out.extend(concrete_intervals_in_span(l, &e, m, ra, rb));
+    let pieces = |lo: &Int, hi: &Int, lits: &mut dyn Iterator<Item = (&Int, &ResidueSet)>| {
+        let mut v = Vec::new();
+        for (m, s) in lits {
+            for (ra, rb) in s {
+                v.extend(concrete_intervals_in_span(lo, hi, m, ra, rb));
+            }
         }
+        intervals::coalesce(v)
     };
-    let mut lists: Vec<Vec<(Int, Int)>> = Vec::with_capacity(unit_mods.len() + clauses.len());
+    let top = Int::from(q - 1);
+    // The residues of `[0, q)` a set of small literals does not allow, as items of the tree.
+    let forbidden = |lits: &mut dyn Iterator<Item = (&Int, &ResidueSet)>| -> Vec<(usize, usize)> {
+        let allowed = pieces(&Int::ZERO, &top, lits);
+        intervals::complement(&allowed, Int::ZERO, top.clone())
+            .into_iter()
+            .map(|(a, b)| (residue_item(&a), residue_item(&b)))
+            .collect()
+    };
+    let mut tree = zed_collections::min_add::MinAdd::new(q);
+    let mut events: Vec<(Int, Edge)> = Vec::new();
+    let mut large_units = 0usize;
     for (m, s) in unit_mods {
-        let mut v = Vec::new();
-        pieces(m, s, &mut v);
-        lists.push(intervals::coalesce(v));
-    }
-    for cl in clauses {
-        let mut v = Vec::new();
-        for (m, s) in cl {
-            pieces(m, s, &mut v);
+        if small.contains(m) {
+            for (a, b) in forbidden(&mut std::iter::once((m, s))) {
+                tree.add(a, b, 1);
+            }
+        } else {
+            large_units += 1;
+            for (a, b) in pieces(l, e, &mut std::iter::once((m, s))) {
+                events.push((a, Edge::Unit(true)));
+                if b < *e {
+                    events.push((&b + &Int::ONE, Edge::Unit(false)));
+                }
+            }
         }
-        lists.push(intervals::coalesce(v));
     }
-    if lists.is_empty() {
-        return RegimeOut::Found(l.clone());
+    // Each clause's forbidden residues, `None` for a clause with no small literal; every clause
+    // is active before `l`.
+    let mut clause_forbids: Vec<Option<Vec<(usize, usize)>>> = Vec::with_capacity(clauses.len());
+    let mut dead = 0usize;
+    let mut toggles: u128 = 0;
+    for (j, cl) in clauses.iter().enumerate() {
+        let has_small = cl.keys().any(|m| small.contains(m));
+        let forbids =
+            has_small.then(|| forbidden(&mut cl.iter().filter(|(m, _)| small.contains(m))));
+        let large = pieces(l, e, &mut cl.iter().filter(|(m, _)| !small.contains(m)));
+        let width = forbids.as_ref().map_or(1, |f| f.len() as u128);
+        toggles = toggles.saturating_add((2 * large.len() as u128 + 1).saturating_mul(width));
+        for (a, b) in large {
+            events.push((a, Edge::Clause(j, true)));
+            if b < *e {
+                events.push((&b + &Int::ONE, Edge::Clause(j, false)));
+            }
+        }
+        match &forbids {
+            Some(f) => {
+                for &(a, b) in f {
+                    tree.add(a, b, 1);
+                }
+            }
+            None => dead += 1,
+        }
+        clause_forbids.push(forbids);
     }
-    intervals::first_in_all(&lists).map_or(RegimeOut::Empty, RegimeOut::Found)
+    // The tree's work for the events and searches, charged before the walk.
+    if charge(toggles.saturating_add(events.len() as u128 + 1)).is_err() {
+        return RegimeOut::Undecided;
+    }
+    events.sort_unstable_by(|x, y| x.0.cmp(&y.0));
+    let (mut i, mut start, mut inside) = (0usize, l.clone(), 0usize);
+    loop {
+        while i < events.len() && events[i].0 == start {
+            match events[i].1 {
+                Edge::Unit(true) => inside += 1,
+                Edge::Unit(false) => inside -= 1,
+                Edge::Clause(j, sat) => {
+                    let d = if sat { -1 } else { 1 };
+                    match &clause_forbids[j] {
+                        Some(f) => {
+                            for &(a, b) in f {
+                                tree.add(a, b, d);
+                            }
+                        }
+                        None if sat => dead -= 1,
+                        None => dead += 1,
+                    }
+                }
+            }
+            i += 1;
+        }
+        let end = match events.get(i) {
+            Some((at, _)) => at - &Int::ONE,
+            None => e.clone(),
+        };
+        if inside == large_units && dead == 0 {
+            let r0 = residue_item(&start.mod_floor(&q_int));
+            let step = match tree.first_at_most(r0, 0) {
+                Some(r) => Some(r - r0),
+                None => tree.first_at_most(0, 0).map(|r| q - r0 + r),
+            };
+            if let Some(step) = step {
+                let x = &start + &Int::from(step);
+                if x <= end {
+                    return RegimeOut::Found(x);
+                }
+            }
+        }
+        match events.get(i) {
+            Some((at, _)) => start = at.clone(),
+            None => return RegimeOut::Empty,
+        }
+    }
+}
+
+/// A residue of `[0, q)` with `q` an item count, as the index of its item.
+fn residue_item(r: &Int) -> usize {
+    r.to_i128()
+        .and_then(|v| usize::try_from(v).ok())
+        .expect("a residue below an item count fits usize")
 }
 
 /// Concrete sub-intervals `[il, ih] subseteq [l, h]` where `x mod m in [ra, rb]`.
