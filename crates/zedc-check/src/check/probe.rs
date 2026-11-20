@@ -74,6 +74,11 @@ pub struct R10Config {
     pub skip_barrier: Option<&'static str>,
     /// Admission conditions dropped for negative controls (`"#7'"`, `"#14"`, `"#19"`, `"#27"`, etc.).
     pub drop_conds: HashSet<String>,
+    /// FAIL-map-chain-own-vars-carry control: `finish` leaves out the held names of compact
+    /// forwards (`VarFacts::fwd_names`) and the finishing of the functions that hold such a
+    /// forward, as D did before that row while `#4-own-vars` refused every function that binds
+    /// variables of its own.
+    pub skip_held_names: bool,
 }
 
 impl Default for R10Config {
@@ -92,6 +97,7 @@ impl Default for R10Config {
             force_skip_second_on_merge: false,
             skip_barrier: None,
             drop_conds: HashSet::new(),
+            skip_held_names: false,
         }
     }
 }

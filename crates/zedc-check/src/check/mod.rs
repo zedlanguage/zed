@@ -57,7 +57,6 @@ use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet, VecDeque};
 use std::fmt;
 use std::rc::Rc;
 use std::sync::Arc;
-use zed_collections::by_address::ByAddress;
 
 use num_bigint::BigUint;
 use zed_kernel::num::{
@@ -5597,31 +5596,183 @@ impl<'t, 'a> Ck<'t, 'a> {
             s.clone()
         };
         if cur.has_fwd_needs() && sig_vars(&cur).iter().any(|v| !cur.own.contains(v)) {
-            let mut decoded_sig = (*cur).clone();
-            let mut promoted_needs = Vec::new();
-            let mut promoted_own = decoded_sig.own.clone();
-            for n in &decoded_sig.needs {
-                match &n.kind {
-                    NeedKind::Fwd(fwd) => {
-                        let mut f_copy = (**fwd).clone();
-                        f_copy.finish_naming = f_copy.gen_naming.clone();
-                        f_copy.base_class = None;
-                        for rt in f_copy.internal_result_tys() {
-                            if let Some(rv) = rt.as_var() {
-                                promoted_own.insert(rv.clone());
-                            }
-                        }
-                        promoted_needs.extend(f_copy.decode(n.span));
-                    }
-                    _ => promoted_needs.push(n.clone()),
-                }
-            }
-            decoded_sig.needs = promoted_needs;
-            decoded_sig.own = promoted_own;
-            decoded_sig.facts = Default::default();
-            cur = Arc::new(decoded_sig);
+            cur = Self::r10_decode_fwd_needs(&cur);
         }
         Some(cur)
+    }
+
+    /// `s` with each of its own `NeedKind::Fwd` decoded into its leaf needs, the internal
+    /// results joining its own variables, as the eager checker keeps them. O(leaf needs).
+    fn r10_decode_fwd_needs(s: &Arc<Sig>) -> Arc<Sig> {
+        Self::r10_decode_fwd_needs_with(s, false)
+    }
+
+    /// [`Self::r10_decode_fwd_needs`]; with `tagged`, each internal result is written as its
+    /// name, a NUL, and the forward's address ([`r10_internal_name`] reads the name back), so
+    /// that [`Self::finished_with`] names the results of two forwards apart, as the eager
+    /// checker does, whose results are classes of their own: two lambdas `m -> (m, h0(m))`
+    /// and `n -> (n, h0(n))` each hold an internal result named `W`, which the eager checker
+    /// names `W` and `T9` (Neon's gap 4 on FAIL-map-chain-own-vars-carry; keyed by the name
+    /// alone, both stayed `W` and only the digests differed). One forward is one call, so one
+    /// address is one set of classes there; the tags cost O(1) a result.
+    fn r10_decode_fwd_needs_with(s: &Arc<Sig>, tagged: bool) -> Arc<Sig> {
+        let mut decoded_sig = (**s).clone();
+        let mut promoted_needs = Vec::new();
+        let mut promoted_own = decoded_sig.own.clone();
+        for n in &decoded_sig.needs {
+            match &n.kind {
+                NeedKind::Fwd(fwd) => {
+                    let mut f_copy = (**fwd).clone();
+                    f_copy.finish_naming = f_copy.gen_naming.clone();
+                    f_copy.base_class = None;
+                    if tagged {
+                        let at = Arc::as_ptr(fwd) as usize;
+                        let exits: HashSet<usize> = f_copy.exits.iter().map(|(o, _)| *o).collect();
+                        let mut results = f_copy.materialize_result_tys();
+                        for (j, t) in results.iter_mut().enumerate() {
+                            if exits.contains(&j) {
+                                continue;
+                            }
+                            if let Some(rv) = t.as_var() {
+                                let tag: Arc<str> = format!("{rv}\u{0}{at:x}").into();
+                                promoted_own.insert(tag.clone());
+                                *t = Ty::var(tag);
+                            }
+                        }
+                        promoted_needs.extend(f_copy.decode_with_results(n.span, results));
+                        continue;
+                    }
+                    for rt in f_copy.internal_result_tys() {
+                        if let Some(rv) = rt.as_var() {
+                            promoted_own.insert(rv.clone());
+                        }
+                    }
+                    promoted_needs.extend(f_copy.decode(n.span));
+                }
+                _ => promoted_needs.push(n.clone()),
+            }
+        }
+        decoded_sig.needs = promoted_needs;
+        decoded_sig.own = promoted_own;
+        decoded_sig.facts = Default::default();
+        Arc::new(decoded_sig)
+    }
+
+    /// `s` with every compact forward that holds a function with variables of its own
+    /// ([`VarFacts::fwd_names`]) decoded, in `s` and in the functions it holds at any depth,
+    /// those the decoded leaf needs hold among them: the flat form the eager checker names.
+    /// [`Self::finished_with`] takes it when a held name would be named apart
+    /// (FAIL-map-chain-own-vars-carry). Each signature is entered once (`memo`, by address), so
+    /// the cost is that of the flat needs of the nest, which the eager checker pays at each
+    /// signature; a nest with no such forward (`fwd_names` empty) is returned as it is, O(1).
+    fn r10_flat_held(s: &Arc<Sig>, memo: &mut FlatMemo) -> Arc<Sig> {
+        if s.facts().fwd_names.is_empty() {
+            return s.clone();
+        }
+        if let Some((_, done)) = memo.get(&Arc::as_ptr(s)) {
+            return done.clone();
+        }
+        let cur = match s.has_fwd_needs() {
+            true => Self::r10_decode_fwd_needs_with(s, true),
+            false => s.clone(),
+        };
+        let mut copy = (*cur).clone();
+        for a in &mut copy.arrows {
+            for p in &mut a.params {
+                *p = Self::r10_flat_ty(p, memo);
+            }
+            a.result = Self::r10_flat_ty(&a.result, memo);
+        }
+        copy.needs = (cur.needs.iter())
+            .map(|n| n.with_held_fns(|f| Self::r10_flat_held(f, memo)))
+            .collect();
+        copy.facts = Default::default();
+        let out = Arc::new(copy);
+        memo.insert(Arc::as_ptr(s), (s.clone(), out.clone()));
+        out
+    }
+
+    /// `s` with each function its types hold (in its arrows and in its needs other than
+    /// compact forwards, whose callees [`Self::finished_with`] finishes itself) given its
+    /// forwards' callees finished, where it holds a compact forward that holds a function
+    /// with variables of its own ([`VarFacts::fwd_names`]); every other one as it is. Such a
+    /// function is a lambda that kept a forward when its level ended (p16 in the tests:
+    /// `m -> (m, h0(m))` with `h0(m) = m.map(id)`): the callee of its forward holds `id` with
+    /// its class `$0` unnamed, and the renaming of `s` enters the lambda but not the callee,
+    /// which others share, so `$0` would stay, where the eager checker's flat needs hold `id`
+    /// as a variable the renaming names `T` (the digests differed). Only the callees are
+    /// finished ([`Self::r10_finish_own_fwd_callees`], digests set again): the lambda's own
+    /// variables keep their names, as the eager checker keeps those of a held function, which
+    /// its renaming hides (a first version finished the lambda whole, as at the top, and
+    /// renamed the second of p16's two lambdas from `T5`, `T6` to `U`, `V`). Each such
+    /// function is done once in the pass (`fwd_memo.held`, by address).
+    /// Complexity tradeoff: one walk of the types of `s`'s own level, O(size of the level)
+    /// with the functions held in O(1) each by their facts; each function finished once, so
+    /// over the pass the sum of the levels finished. The naive way, finishing every held
+    /// function at each signature that holds it, costs the depth of the nest at each one,
+    /// O(n^2) on a chain of n functions each returning one that holds the one before. The
+    /// recursion goes as deep as the nest of such functions, as the renaming walk of `s`
+    /// ([`Renamings`]) already does.
+    fn r10_finish_held_fwds(
+        &self,
+        s: &Arc<Sig>,
+        made: &mut Renamings,
+        fwd_memo: &mut FinishMemo,
+    ) -> Arc<Sig> {
+        if s.facts().fwd_names.is_empty() || self.r10.cfg.skip_held_names {
+            return s.clone();
+        }
+        let mut changed = false;
+        let mut fin = |t: &Ty, changed: &mut bool| -> Ty {
+            if t.fns.is_empty() && t.tuples.is_empty() && t.payloads.is_empty() {
+                return t.clone();
+            }
+            t.with_held_fns(|f| {
+                if f.facts().fwd_names.is_empty() {
+                    return f.clone();
+                }
+                if let Some((_, done)) = fwd_memo.held.get(&Arc::as_ptr(f)) {
+                    *changed |= !Arc::ptr_eq(done, f);
+                    return done.clone();
+                }
+                let inner = self.r10_finish_held_fwds(f, made, fwd_memo);
+                let (nf, callee_changed) = self.r10_finish_own_fwd_callees(&inner, made, fwd_memo);
+                let nf = match callee_changed {
+                    true => Self::r10_refresh_fwd_digests(&nf),
+                    false => nf,
+                };
+                *changed |= !Arc::ptr_eq(&nf, f);
+                fwd_memo
+                    .held
+                    .insert(Arc::as_ptr(f), (f.clone(), nf.clone()));
+                nf
+            })
+        };
+        let mut copy = (**s).clone();
+        for a in &mut copy.arrows {
+            for p in &mut a.params {
+                *p = fin(p, &mut changed);
+            }
+            a.result = fin(&a.result, &mut changed);
+        }
+        for n in &mut copy.needs {
+            if !matches!(n.kind, NeedKind::Fwd(_)) {
+                *n = n.map_tys(|t| fin(t, &mut changed));
+            }
+        }
+        if !changed {
+            return s.clone();
+        }
+        copy.facts = Default::default();
+        Arc::new(copy)
+    }
+
+    /// [`Self::r10_flat_held`] on each function `t` holds.
+    fn r10_flat_ty(t: &Ty, memo: &mut FlatMemo) -> Ty {
+        if t.fns.is_empty() && t.tuples.is_empty() && t.payloads.is_empty() {
+            return t.clone();
+        }
+        t.with_held_fns(|f| Self::r10_flat_held(f, memo))
     }
 
     /// Finishes any closed `$k`-owning nested `Sig` held inside `callee`'s needs, memoized by
@@ -5638,20 +5789,20 @@ impl<'t, 'a> Ck<'t, 'a> {
         &self,
         callee: &Arc<Sig>,
         made: &mut Renamings,
-        fwd_memo: &mut HashMap<ByAddress<Sig>, Arc<Sig>>,
+        fwd_memo: &mut FinishMemo,
     ) -> Arc<Sig> {
-        if let Some(done) = fwd_memo.get(&Arc::as_ptr(callee)) {
+        if let Some((_, done)) = fwd_memo.callees.get(&Arc::as_ptr(callee)) {
             return done.clone();
         }
         zed_graph::post_order(
             &mut (made, &mut *fwd_memo),
             [callee.clone()],
             |(_, fwd_memo), sig, below| {
-                if fwd_memo.contains_key(&Arc::as_ptr(sig)) {
+                if fwd_memo.callees.contains_key(&Arc::as_ptr(sig)) {
                     return false;
                 }
                 below.extend(sig.needs.iter().filter_map(|n| match &n.kind {
-                    NeedKind::Fwd(c) if !fwd_memo.contains_key(&Arc::as_ptr(&c.callee)) => {
+                    NeedKind::Fwd(c) if !fwd_memo.callees.contains_key(&Arc::as_ptr(&c.callee)) => {
                         Some(c.callee.clone())
                     }
                     _ => None,
@@ -5660,10 +5811,10 @@ impl<'t, 'a> Ck<'t, 'a> {
             },
             |(made, fwd_memo), sig| {
                 let out = self.r10_finish_one_fwd_callee(&sig, made, fwd_memo);
-                fwd_memo.insert(ByAddress::new(&sig), out);
+                fwd_memo.callees.insert(Arc::as_ptr(&sig), (sig.clone(), out));
             },
         );
-        fwd_memo[&Arc::as_ptr(callee)].clone()
+        fwd_memo.callees[&Arc::as_ptr(callee)].1.clone()
     }
 
     /// One step of [`Self::r10_finish_fwd_callee`]: `callee` with its forward children already
@@ -5672,11 +5823,11 @@ impl<'t, 'a> Ck<'t, 'a> {
         &self,
         callee: &Arc<Sig>,
         made: &mut Renamings,
-        fwd_memo: &mut HashMap<ByAddress<Sig>, Arc<Sig>>,
+        fwd_memo: &mut FinishMemo,
     ) -> Arc<Sig> {
         // A non-forward need's held function can reach this pass again through
         // `finished_arc_with` and may finish the callee first; its result then stands.
-        if let Some(done) = fwd_memo.get(&Arc::as_ptr(callee)) {
+        if let Some((_, done)) = fwd_memo.callees.get(&Arc::as_ptr(callee)) {
             return done.clone();
         }
         let mut changed = false;
@@ -5747,49 +5898,21 @@ impl<'t, 'a> Ck<'t, 'a> {
         &self,
         s: &Arc<Sig>,
         made: &mut Renamings,
-        fwd_memo: &mut HashMap<ByAddress<Sig>, Arc<Sig>>,
+        fwd_memo: &mut FinishMemo,
     ) -> Arc<Sig> {
         // One that holds no class variable, as most do once settled, is as it is.
-        if s.facts().classes.is_empty() && !s.has_fwd_needs() {
+        if s.facts().classes.is_empty() && !s.has_fwd_needs() && s.facts().fwd_names.is_empty() {
             return s.clone();
         }
+        let given_sig = s;
+        let s = &self.r10_finish_held_fwds(s, made, fwd_memo);
         let promoted = Self::r10_promote_open_fwds(s);
-        let mut callee_changed = false;
-        let s_ref: Arc<Sig> = if promoted.has_fwd_needs() {
-            let mut new_needs = Vec::with_capacity(promoted.needs.len());
-            for n in &promoted.needs {
-                if let NeedKind::Fwd(fwd) = &n.kind {
-                    let nc = self.r10_finish_fwd_callee(&fwd.callee, made, fwd_memo);
-                    if !Arc::ptr_eq(&nc, &fwd.callee) {
-                        callee_changed = true;
-                        let mut uf = (**fwd).clone();
-                        uf.callee = nc;
-                        uf.digest_summary = None;
-                        let mut nn = n.clone();
-                        nn.kind = NeedKind::Fwd(Arc::new(uf));
-                        new_needs.push(nn);
-                        continue;
-                    }
-                }
-                new_needs.push(n.clone());
-            }
-            if callee_changed {
-                let mut copy = (*promoted).clone();
-                copy.needs = new_needs;
-                copy.facts = Default::default();
-                Arc::new(copy)
-            } else {
-                promoted
-            }
-        } else {
-            promoted
-        };
-        if s_ref.facts().classes.is_empty() && !callee_changed {
+        let (s_ref, callee_changed) = self.r10_finish_own_fwd_callees(&promoted, made, fwd_memo);
+        if s_ref.facts().classes.is_empty() && !callee_changed && s_ref.facts().fwd_names.is_empty()
+        {
             return s_ref;
         }
-        let s = &s_ref;
-        let vars = sig_vars(s);
-        let b = self.solving(&vars);
+        let mut s_ref = s_ref;
         // What each variable printed stands for, with the name it is printed by; a class that
         // no function named prints as `_`, with no name to clash, and is left out.
         let printed = |v: &Arc<str>, held: bool| -> Option<(Printed, Arc<str>)> {
@@ -5801,8 +5924,8 @@ impl<'t, 'a> Ck<'t, 'a> {
                     let r = self.find(k);
                     Some((Printed::Class(r), self.classes[r].name.clone()?))
                 }
-                None if held => Some((Printed::Held(v.clone()), v.clone())),
-                None => Some((Printed::Own(v.clone()), v.clone())),
+                None if held => Some((Printed::Held(v.clone()), r10_internal_name(v))),
+                None => Some((Printed::Own(v.clone()), r10_internal_name(v))),
             }
         };
         // The names to give: a name taken by a variable before keeps the later one from it.
@@ -5827,17 +5950,142 @@ impl<'t, 'a> Ck<'t, 'a> {
         // the next fresh name is the next name past n outside `used`, which the interval walk
         // finds. The full proof, run by run, is at [`rename_apart`]; a run's names cut apart
         // stay runs, each against the skip set it was made with, decoded as before.
-        let mut order = NameOrder::default();
-        order.add(&vars, s.vars_marks(), |v| {
-            b.get(v).is_none().then(|| printed(v, false)).flatten()
-        });
-        for v in &vars {
-            let Some(t) = b.get(v) else { continue };
-            let mut held = Vars::default();
-            t.vars_in(&mut held);
-            order.add(&held.order, &held.marks, |w| printed(w, true));
-        }
-        let given = rename_apart(&order.items);
+        //
+        // The held names (FAIL-map-chain-own-vars-carry). A compact forward hides the
+        // variables of the functions its leaf needs hold ([`FwdNeed::held_names`], gathered
+        // over the nest as [`VarFacts::fwd_names`]): `id`'s `T` in `m.map(id)`. The eager
+        // checker meets each in the flat needs and names it apart with the rest, so a `T` of
+        // the signature's own before it takes `T` and `id`'s becomes `W` there. The block
+        // cannot rename inside its callee, which other signatures share. So each held name is
+        // put last, as what it prints, and named with the rest: where none is named apart,
+        // the names are the eager ones and the callee stands as it is; where one is, the
+        // forwards that hold one are decoded ([`Self::r10_flat_held`]) and the flat form is
+        // named again, as the eager checker names it.
+        // Proof that a held name not named apart when last leaves every name as the eager
+        // order gives it. `rename_apart` keeps an item's name unless an item before it kept
+        // that name, and gives a fresh name outside `used`, the names of all the items, which
+        // does not depend on their order. (i) A held item `H` named `N` last and kept: no
+        // other item keeps or holds `N` with another key (an equal key is the one item,
+        // `NameOrder::seen`, as in the eager order), since any such item comes before `H`
+        // and is either kept, taking `N`, or renamed, and then it was renamed because an
+        // item before it kept `N`; either way `N` is taken before `H`. So in the eager order,
+        // where `H` stands among the others, no item before it took `N` and `H` keeps `N`;
+        // and no item after it has the name `N`, so `H` renames none. (ii) Each other item
+        // `X` is kept or renamed by whether an item before it kept `X`'s name, which `H` is
+        // not, and its fresh name comes from the same `used` and the same sequence of fresh
+        // names, since `H` takes none. So every item gets the same name in both orders.
+        // A held name whose class has a type (`solving`) is not a variable in the flat needs,
+        // which hold the type: such a one is decoded as well. The proof also needs each held
+        // name to be written in the callee as the name it is printed by, since the callee
+        // stands as it is: a class with a name that the callee still writes as the class
+        // (`unnamed` below; the callee's function was not finished, as it holds a variable
+        // not its own) is decoded as well, as the renaming then reaches it in the flat needs
+        // (c_ret_capture in the tests: `$0` in the callee where the eager checker has `U`;
+        // only the digests differed). Cost: one item for each held
+        // name, O(H log H) for H held names over the walk of the facts, which the eager
+        // checker pays as variables of the flat needs; O(1) on a chain of `.map(id)`, whose
+        // held names are `id`'s alone. The decode costs the flat needs of the forwards decoded,
+        // once (the eager cost); a program where each link of a chain holds a function whose
+        // variable a name of the link's own takes pays it at each link, O(n^2) over n links
+        // as under the eager checker; no bench measures that yet (row
+        // FAIL-map-chain-clashing-held-name-quadratic).
+        let mut flat_memo: Option<FlatMemo> = None;
+        let (vars, b, order, given) = loop {
+            let s = &s_ref;
+            let vars = sig_vars(s);
+            let mut b = self.solving(&vars);
+            if let Some(memo) = &mut flat_memo {
+                b.update_each(|t| *t = Self::r10_flat_ty(t, memo));
+            }
+            let mut order = NameOrder {
+                top: Arc::as_ptr(s) as usize,
+                ..NameOrder::default()
+            };
+            order.add(&vars, s.vars_marks(), |v| {
+                b.get(v).is_none().then(|| printed(v, false)).flatten()
+            });
+            let mut fwd_names: Vec<(Arc<str>, bool)> = (s.facts().fwd_names.iter())
+                .map(|v| (v.clone(), false))
+                .collect();
+            // A held class still written `$k` in a callee, where the eager checker writes its
+            // name: the callee was not finished there, since a function its forward holds
+            // holds a variable not its own (`k(x) = y -> (x, y)`, whose lambda reads `x`;
+            // `r10_finish_one_fwd_callee`, `VarFacts::fwd_unfinished`), and the renaming
+            // below, which cannot enter the callee, would leave `$0` where the eager checker
+            // writes `U` (c_ret_capture in the tests; only the digests differed). Decoded as
+            // well. Cost: O(1) per signature, the bit read; the decode it asks for is the
+            // eager cost at each signature that holds such a forward, so a chain of links each
+            // mapping by such a function is O(n^2), as on main, where `#4-own-vars` refused it
+            // (row FAIL-map-chain-clashing-held-name-quadratic). Not taken: the test "the held
+            // name is a class", which holds of `id`'s `$0` too, whose callee is finished
+            // (`T`), and so decoded every link of a chain of `.map(id)` (27.1 times the
+            // instructions at 8n); and finishing the function in the shared callee, which
+            // would need a proof that the names it gets there are those every caller gives.
+            let mut unnamed = s.facts().fwd_unfinished;
+            for v in &vars {
+                let Some(t) = b.get(v) else { continue };
+                let mut held = Vars::default();
+                t.vars_in(&mut held);
+                order.add(&held.order, &held.marks, |w| printed(w, true));
+                let facts = t.var_facts();
+                unnamed |= facts.fwd_unfinished;
+                fwd_names.extend(facts.fwd_names.iter().map(|v| (v.clone(), true)));
+            }
+            if self.r10.cfg.skip_held_names {
+                fwd_names.clear();
+            }
+            let from = order.items.len();
+            let mut solved = false;
+            // Held names the walk of `s` met already, as variables of the signature's own
+            // level (a function held in a need other than the forward reads `id`'s `T` too):
+            // each is one item where it stands, and is checked there below.
+            let mut seen_held: Vec<Printed> = Vec::new();
+            for (v, held) in &fwd_names {
+                solved |= !self.solving(std::iter::once(v)).is_empty();
+                if let Some((p, name)) = printed(v, *held) {
+                    if order.seen.insert(p.clone()) {
+                        order.keys.push(Some(p));
+                        order.items.push(NameItem::Name(name));
+                    } else {
+                        seen_held.push(p);
+                    }
+                }
+            }
+            let mut given = rename_apart(&order.items);
+            let renamed = |i: usize| !matches!((&order.items[i], &given[i]), (NameItem::Name(x), NameItem::Name(y)) if x == y);
+            let mut apart = (from..order.items.len()).any(renamed);
+            if !apart && !seen_held.is_empty() {
+                // One pass over the keys before `from`, O(items), only where a held name
+                // was met already; a scan for each held name would cost O(H · items).
+                let wanted: HashSet<&Printed> = seen_held.iter().collect();
+                apart = (order.keys[..from].iter().enumerate())
+                    .any(|(i, k)| k.as_ref().is_some_and(|p| wanted.contains(p)) && renamed(i));
+            }
+            if !(solved || apart || unnamed) {
+                // The held items are named as they are and rename nothing; drop them.
+                order.keys.truncate(from);
+                order.items.truncate(from);
+                given.truncate(from);
+                break (vars, b, order, given);
+            }
+            assert!(
+                flat_memo.is_none(),
+                "the flat form holds no compact forward that holds a function"
+            );
+            // The flat form is made from `s` as it was given, before its forwards' callees and
+            // those of the functions it holds were finished: finishing a callee writes the
+            // name a class has now into it (`id`'s `$0` as `T`), the eager checker's flat
+            // needs keep the class, and the renaming below, which now reaches those needs,
+            // renames it with every other place the class stands. A callee written `T` would
+            // be one more variable `T` beside the class, named apart from it (chainfn3 in the
+            // tests: `T10` and `T11` where the eager checker has `T10` in all four needs).
+            // The decode is the eager form, so no finishing is needed on it: the renaming
+            // reaches every variable of the flat needs, which is all the finishing was for.
+            let mut memo = FlatMemo::new();
+            s_ref = Self::r10_flat_held(given_sig, &mut memo);
+            flat_memo = Some(memo);
+        };
+        let s = &s_ref;
         let mut names: HashMap<Printed, Arc<str>> = HashMap::new();
         // The new runs of each forward, by signature and need, step by step.
         let mut fwd_runs: HashMap<(usize, usize), BTreeMap<usize, Vec<NameRun>>> = HashMap::new();
@@ -5896,7 +6144,53 @@ impl<'t, 'a> Ck<'t, 'a> {
         if !callee_changed {
             return out;
         }
-        // Refresh `digest_summary` on any `NeedKind::Fwd` whose callee changed.
+        Self::r10_refresh_fwd_digests(&out)
+    }
+
+    /// `s` with the callee of each of its own compact forwards finished
+    /// ([`Self::r10_finish_fwd_callee`]), and whether any changed; a changed forward's
+    /// `digest_summary` is cleared, for [`Self::r10_refresh_fwd_digests`] to set again.
+    /// O(#needs of `s`) here, with each callee finished once in the pass.
+    fn r10_finish_own_fwd_callees(
+        &self,
+        s: &Arc<Sig>,
+        made: &mut Renamings,
+        fwd_memo: &mut FinishMemo,
+    ) -> (Arc<Sig>, bool) {
+        if !s.has_fwd_needs() {
+            return (s.clone(), false);
+        }
+        let mut changed = false;
+        let mut new_needs = Vec::with_capacity(s.needs.len());
+        for n in &s.needs {
+            if let NeedKind::Fwd(fwd) = &n.kind {
+                let nc = self.r10_finish_fwd_callee(&fwd.callee, made, fwd_memo);
+                if !Arc::ptr_eq(&nc, &fwd.callee) {
+                    changed = true;
+                    let mut uf = (**fwd).clone();
+                    uf.callee = nc;
+                    uf.digest_summary = None;
+                    let mut nn = n.clone();
+                    nn.kind = NeedKind::Fwd(Arc::new(uf));
+                    new_needs.push(nn);
+                    continue;
+                }
+            }
+            new_needs.push(n.clone());
+        }
+        if !changed {
+            return (s.clone(), false);
+        }
+        let mut copy = (**s).clone();
+        copy.needs = new_needs;
+        copy.facts = Default::default();
+        (Arc::new(copy), true)
+    }
+
+    /// `out` with `digest_summary` set again on each of its compact forwards, after their
+    /// callees changed ([`Self::r10_finish_own_fwd_callees`]): one pass over the arrows and
+    /// needs of `out`, O(size of its own level).
+    fn r10_refresh_fwd_digests(out: &Arc<Sig>) -> Arc<Sig> {
         let mut arrow_param_vars: HashSet<Arc<str>> = HashSet::new();
         for a in &out.arrows {
             for p in &a.params {
@@ -5933,7 +6227,7 @@ impl<'t, 'a> Ck<'t, 'a> {
                 }
             }
         }
-        let mut copy = (*out).clone();
+        let mut copy = (**out).clone();
         let mut br = 0usize;
         for nd in &mut copy.needs {
             if let NeedKind::Fwd(fwd_arc) = &mut nd.kind {
@@ -6270,8 +6564,8 @@ impl<'t, 'a> Ck<'t, 'a> {
         // Keyed by the callees' addresses with each callee held: the signatures are settled one
         // at a time (`finished_arc_with`), each made for its call and dropped after it, so a
         // bare address could be freed and taken by a later callee, which would read this
-        // one's entry (DRY-pointer-memos-keep-alive, 2026-11-20).
-        let mut fwd_memo: HashMap<ByAddress<Sig>, Arc<Sig>> = HashMap::new();
+        // one's entry (DRY-pointer-memos-keep-alive, 2026-11-20; [`FinishMemo`]).
+        let mut fwd_memo = FinishMemo::default();
         let sigs = std::mem::take(&mut self.info.sigs);
         self.info.sigs = sigs
             .into_iter()
@@ -6430,7 +6724,7 @@ impl<'t, 'a> Ck<'t, 'a> {
         &self,
         s: &Arc<Sig>,
         made: &mut Renamings,
-        fwd_memo: &mut HashMap<ByAddress<Sig>, Arc<Sig>>,
+        fwd_memo: &mut FinishMemo,
     ) -> Arc<Sig> {
         self.finished_with(&s.settle(&|v| self.stale(v)), made, fwd_memo)
     }
@@ -14184,6 +14478,12 @@ struct NameOrder {
     keys: Vec<Option<Printed>>,
     items: Vec<NameItem>,
     marks: Vec<RunMark>,
+    /// The address of the signature being named: a mark of another one is of a function it
+    /// holds, whose forward's internal results that function binds.
+    top: usize,
+    /// The runs of each held function's mark met, by starts, counts and skip set: a copy at
+    /// another address that holds the same runs is one item ([`NameOrder::mark`]).
+    held_runs: HashSet<Vec<(usize, usize, usize)>>,
 }
 
 impl NameOrder {
@@ -14211,12 +14511,66 @@ impl NameOrder {
     }
 
     fn mark(&mut self, m: &RunMark) {
-        if self.marked.insert((m.sig, m.need, m.step)) {
-            self.keys.push(None);
-            self.items.push(NameItem::Runs(m.runs.clone()));
-            self.marks.push(m.clone());
+        if !self.marked.insert((m.sig, m.need, m.step)) {
+            return;
         }
+        if m.sig != self.top {
+            // A copy of a held function at another address (one `r10_finish_held_fwds` or a
+            // renaming made, its needs cloned) holds the very runs of a copy met before: the
+            // eager checker meets one set of variables there, the same names in both copies,
+            // so one item. Runs made apart (two sibling lambdas each calling `h0`) are other
+            // variables, which the eager checker names apart, and stay items of their own.
+            // Proof that the key tells the two apart: every run is made by
+            // `r10_name_compact_sig_in_generalize` (walk/r10_forward.rs), which allocates one
+            // skip set per signature it names and gives that signature's runs strictly rising
+            // starts (each run has count > 0 and moves the counter past it). So runs of
+            // different namings hold different skip sets, and runs of one naming different
+            // starts; equal keys are the runs of one naming, copied. The addresses are of
+            // skip sets alive while the order lives (each key's runs are kept in `items`, and
+            // every mark is of a signature `s` holds), so no address is reused for another.
+            // A first version merged held runs by the names they print, which merged the
+            // sibling lambdas' runs (8 items where the eager checker names 9).
+            // Complexity tradeoff: O(r) per held mark with r runs, to build and hash the key;
+            // the merge by name wrote each run out, O(L) for L internal names.
+            let key: Vec<(usize, usize, usize)> = (m.runs.iter())
+                .map(|r| (r.start_n, r.count, Arc::as_ptr(&r.skip) as usize))
+                .collect();
+            if !self.held_runs.insert(key) {
+                return;
+            }
+        }
+        self.keys.push(None);
+        self.items.push(NameItem::Runs(m.runs.clone()));
+        self.marks.push(m.clone());
     }
+}
+
+/// The flat form of each signature [`Ck::r10_flat_held`] has made, by address, with the
+/// signature itself kept alive so that no other one can take its address while the map lives.
+type FlatMemo = HashMap<*const Sig, (Arc<Sig>, Arc<Sig>)>;
+
+/// The name an internal result tagged by [`Ck::r10_decode_fwd_needs_with`] is printed by: the
+/// part before the NUL; any other variable's name is itself. O(length of the name). No name of
+/// a program holds a NUL, so no other variable is cut.
+fn r10_internal_name(v: &Arc<str>) -> Arc<str> {
+    match v.split_once('\u{0}') {
+        Some((name, _)) => name.into(),
+        None => v.clone(),
+    }
+}
+
+/// What [`Ck::finish`] has made of the signatures it met, by address, across the pass, each
+/// signature kept alive with what was made of it, so that no other one takes its address while
+/// the map lives (before, `callees` kept only what was made, and a callee that a finished copy
+/// replaced could be freed and its address taken by another signature, which would then be
+/// given the first one's result).
+#[derive(Default)]
+struct FinishMemo {
+    /// Each forward's callee finished ([`Ck::r10_finish_fwd_callee`]).
+    callees: FlatMemo,
+    /// Each function held in a type that holds a forward that holds a function with variables
+    /// of its own, finished whole ([`Ck::r10_finish_held_fwds`]).
+    held: FlatMemo,
 }
 
 /// Whether two lists of runs name the same names the same way: O(runs).

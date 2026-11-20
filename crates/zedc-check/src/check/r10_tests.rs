@@ -664,31 +664,21 @@ fn r10_m31_finish_split_walk_constant_and_neg_controls() {
 
     // Negative control B: skip_compact_split_needs drops split_needs when a fold is nested
     // inside a lambda held by a kept FwdNeed.
-    // A lambda whose types hold `max` binds variables of its own, and D refuses to keep a
-    // forward that holds one (`#4-own-vars`, landing round 3, Gemini L3-G1): such a forward
-    // gave D and E different digests once a lambda sat beside the call. No program was found
-    // where a kept forward's callee holds a split fold that the forward's own types do not
-    // (tried while landing round 4: a fold in the callee, `m.map(top)`, a lambda calling
-    // `top`, chains of these), so the control drops that refusal to keep the forward. This
-    // program has no lambda beside the call, and D gives E's results on it with or without
-    // the refusal.
+    // A lambda whose types hold `max` binds variables of its own. Until
+    // FAIL-map-chain-own-vars-carry, D refused to keep a forward that holds one (`#4-own-vars`,
+    // landing round 3, Gemini L3-G1), and this control dropped that refusal to keep the
+    // forward; D now keeps it, with the held names carried ([`VarFacts::fwd_names`]). No
+    // program was found where a kept forward's callee holds a split fold that the forward's
+    // own types do not (tried while landing round 4: a fold in the callee, `m.map(top)`, a
+    // lambda calling `top`, chains of these), so the control uses this one.
     let nested_split = "\
 h0(positional f, positional m) = m.map(f);\n\
 h1(positional m) = h0(xs -> xs >< max, m);\n\
 h2(positional m) = h1(m);\n\
 a = h2({\"k\" -> {\"a\" -> 1}});\n\
 b = h2({\"k\" -> {\"a\" -> 1.0f64}});\n";
-    let unrefused = R10Config {
-        drop_conds: ["#4-own-vars".to_string()].into_iter().collect(),
-        ..R10Config::default()
-    };
-    let (_, refused_stats) = run_with_cfg(nested_split, R10Config::default());
-    assert_eq!(
-        refused_stats.admitted, 0,
-        "nested_split holds `max` in a lambda: D keeps no forward"
-    );
     let (e_ns, _) = run_with_cfg(nested_split, R10Config::eager());
-    let (d_ns, d_ns_stats) = run_with_cfg(nested_split, unrefused.clone());
+    let (d_ns, d_ns_stats) = run_with_cfg(nested_split, R10Config::default());
     assert!(d_ns_stats.admitted > 0, "nested_split must keep a forward");
     assert_info_eq("m31_nested_split", &e_ns, &d_ns);
     assert!(
@@ -699,7 +689,7 @@ b = h2({\"k\" -> {\"a\" -> 1.0f64}});\n";
         nested_split,
         R10Config {
             skip_compact_split_needs: true,
-            ..unrefused
+            ..R10Config::default()
         },
     );
     assert_ne!(
@@ -1683,8 +1673,12 @@ fn r10_result_bound_to_an_arrow_parameter_keeps_the_flat_digest() {
 /// variables of its own (`id`, `k`). A forward shares the callee, so the variables of that
 /// function are neither renamed with the caller's nor counted among the names in use when the
 /// caller is named; E renames and counts them. Each program must give E's results and
-/// signatures. The controls hold a function with no variables (`inc`), or a parameter or a
-/// lambda whose variables are the callee's own, and stay admitted.
+/// signatures. Since FAIL-map-chain-own-vars-carry D keeps a forward in every case, carrying
+/// the names those functions bind (`FwdNeed::held_names`), and `Ck::finished_with` names them
+/// with the caller's, decoding where one is named apart (most cases here: a lambda's `T` comes
+/// first and `id`'s becomes `W`); the negative control leaves the held names out
+/// (`skip_held_names`) and must disagree with E. The controls hold a function with no
+/// variables (`inc`), or a parameter or a lambda whose variables are the callee's own.
 #[test]
 fn r10_function_with_own_variables_held_in_a_map_agrees_with_e() {
     let id = "id(positional x) = x;\n";
@@ -1765,7 +1759,36 @@ fn r10_function_with_own_variables_held_in_a_map_agrees_with_e() {
              a = h2({\"k\" -> {\"a\" -> 1}});\nb = h2({\"k\" -> {\"a\" -> 1.0f64}});\n"
                 .to_string(),
         ),
-        // D and E agree on this one with the refusal dropped too.
+        // Chains whose links each hold the function (FAIL-map-chain-own-vars-carry): a held
+        // name named apart at the caller (`pr`'s and `c`'s `T` after the lambda's), a lambda
+        // passed in (`x -> x`), and a function that holds a chain function itself.
+        (
+            "chain_of_a_pair_function",
+            "pr(positional x) = (x, x);\nh0(positional m) = m.map(pr);\n\
+             h1(positional m) = h0(m).map(pr);\ng(positional m) = (y -> (y, y), h1(m));\n"
+                .to_string(),
+        ),
+        (
+            "chain_of_a_constant_function",
+            "c(positional x) = 0;\nh0(positional m) = m.map(c);\n\
+             h1(positional m) = h0(m).map(c);\ng(positional m) = (y -> (y, y), h1(m));\n"
+                .to_string(),
+        ),
+        (
+            "identity_lambda_passed_down",
+            "h0(positional f, positional m) = m.map(f);\nh1(positional m) = h0(x -> x, m);\n\
+             h2(positional m) = h1(m);\ng(positional m) = (y -> (y, y), h2(m));\n"
+                .to_string(),
+        ),
+        (
+            "map_by_a_chain_function",
+            format!(
+                "{id}h0(positional m) = m.map(id);\nh1(positional m) = h0(m).map(id);\n\
+                 k(positional mm) = mm.map(h1);\ng(positional mm) = (y -> (y, y), k(mm));\n"
+            ),
+        ),
+        // It holds no function with names of its own in a forward: the control leaves it as
+        // it is.
         (
             "p33_returns_a_lambda",
             "k(positional x) = y -> (x, y);\nh0(positional m) = m.map(k);\n\
@@ -1801,9 +1824,10 @@ fn r10_function_with_own_variables_held_in_a_map_agrees_with_e() {
         }
         Ok(())
     };
-    // Negative control: D with the refusal dropped.
-    let unrefused = R10Config {
-        drop_conds: ["#4-own-vars".to_string()].into_iter().collect(),
+    // Negative control: D without the held names (`skip_held_names`), as D was with the
+    // refusal dropped before FAIL-map-chain-own-vars-carry.
+    let unnamed = R10Config {
+        skip_held_names: true,
         ..R10Config::default()
     };
     let mut failed = Vec::new();
@@ -1813,16 +1837,283 @@ fn r10_function_with_own_variables_held_in_a_map_agrees_with_e() {
         let (e, _) = run_with_cfg(src, R10Config::eager());
         let (d, st) = run_with_cfg(src, R10Config::default());
         assert!(e.errors.is_empty(), "{name}: E errors {:?}", e.errors);
-        if control && st.admitted == 0 {
-            failed.push(format!("{name}: the control admits no forward"));
+        // Every case and control now keeps a forward: the refusal is gone for them.
+        if st.admitted == 0 || st.refused.contains_key("#4-own-vars") {
+            failed.push(format!("{name}: D keeps no forward ({:?})", st.refused));
         }
         if let Err(why) = agrees(name, &e, &d) {
             failed.push(why);
         }
         if !control && name != "p33_returns_a_lambda" {
-            let (u, _) = run_with_cfg(src, unrefused.clone());
+            let (u, _) = run_with_cfg(src, unnamed.clone());
             if agrees(name, &e, &u).is_ok() {
-                failed.push(format!("{name}: D agrees with E with the refusal dropped"));
+                failed.push(format!("{name}: D agrees with E without the held names"));
+            }
+        }
+    }
+    assert!(failed.is_empty(), "{}", failed.join("\n"));
+}
+
+/// FAIL-map-chain-own-vars-carry: a chain of `.map(id)` keeps one forward per link and
+/// decodes none of them in `finish` (one decode, at the call that binds the chain, with a
+/// top-level call). Red before `VarFacts::fwd_unfinished`: `finished_with` took `id`'s held
+/// class `$0`, named `T`, for one its callee still writes as `$0`, and decoded every link
+/// (n - 1 decodes, n(n + 1)/2 needs in all; the bench
+/// `n_maps_by_a_function_with_own_variables_chained_check_in_linear_time` 27.1 times the
+/// instructions at 8n).
+#[test]
+fn r10_chain_of_maps_by_id_decodes_no_link() {
+    for with_call in [false, true] {
+        for n in [10usize, 40] {
+            let mut src = String::from("id(positional x) = x;\nh0(positional m) = m.map(id);\n");
+            for i in 1..n {
+                src.push_str(&format!("h{i}(positional m) = h{}(m).map(id);\n", i - 1));
+            }
+            if with_call {
+                src.push_str(&format!("a = h{}({{\"k\" -> 0}})[\"k\"];\n", n - 1));
+            }
+            reset_fwd_decode_count();
+            let (info, stats) = run_with_cfg(&src, R10Config::default());
+            let decodes = fwd_decode_count();
+            assert!(info.errors.is_empty(), "n={n}: {:?}", info.errors);
+            assert_eq!(
+                stats.kept_at_generalize,
+                n - 1,
+                "n={n} call={with_call}: kept"
+            );
+            assert_eq!(
+                decodes,
+                u64::from(with_call),
+                "n={n} call={with_call}: decodes"
+            );
+            let needs: usize = info.sigs.values().map(|s| s.needs.len()).sum();
+            assert_eq!(needs, 2 * n - 1, "n={n} call={with_call}: needs in all");
+        }
+    }
+}
+
+/// FAIL-map-chain-own-vars-carry: programs beside those of L3-G1 above, where D may refuse a
+/// forward, and must still give E's results and signatures. A chain function passed to a map
+/// inside another chain's link (`k(mm) = mm.map(h3)`) holds a compact forward with internal
+/// results, refused as `#4-own-vars` (row FAIL-map-chain-of-chain-fns-refused). A function
+/// that returns a lambda reading its parameter (`k(x) = y -> (x, y)`) is not finished inside
+/// the callee, as it holds a variable not its own, so the callee keeps its class `$0` where E
+/// writes the name `U`: `Ck::finished_with` decodes there (`unnamed`; before, only the digest
+/// of `h1` differed). The others hold lambdas that capture a parameter, curried and nested
+/// lambdas, and a parameter function held in a tuple.
+///
+/// It is also the test of the premise of `#4-outer` (PROOF-map-chain-d-skip-and-admit, point
+/// b, the claim chainproof1 named most likely wrong): a callee of a kept forward never holds
+/// in `own` a `$k` name that is not a class. Each program here holds functions with own,
+/// bound or captured variables in its callees; none is refused as `#4-outer`, and every name
+/// in the `own` of every callee of a kept forward is a class name (`class_id` is some).
+#[test]
+fn r10_map_by_a_chain_function_agrees_with_e() {
+    let id = "id(positional x) = x;\n";
+    let chain3 = format!(
+        "{id}h0(positional m) = m.map(id);\nh1(positional m) = h0(m).map(id);\n\
+         h2(positional m) = h1(m).map(id);\nh3(positional m) = h2(m).map(id);\n"
+    );
+    let cases: &[(&str, String, Option<&str>)] = &[
+        (
+            "chain_of_chain_functions",
+            format!(
+                "{chain3}k(positional mm) = mm.map(h3);\nk1(positional mm) = k(mm).map(h3);\n\
+                 g(positional mm) = (y -> (y, y), k1(mm));\n"
+            ),
+            Some("#4-own-vars"),
+        ),
+        (
+            "chain_of_chain_functions_with_no_variables",
+            "inc(positional x: int) = x + 1;\nh0(positional m) = m.map(inc);\n\
+             h1(positional m) = h0(m).map(inc);\nh2(positional m) = h1(m).map(inc);\n\
+             k(positional mm) = mm.map(h2);\nk1(positional mm) = k(mm).map(h2);\n\
+             g(positional mm) = (y -> (y, y), k1(mm));\n"
+                .to_string(),
+            Some("#4-own-vars"),
+        ),
+        (
+            "chain_of_lambdas_calling_a_chain",
+            format!(
+                "{id}h0(positional m) = m.map(id);\nh1(positional m) = h0(m).map(id);\n\
+                 k(positional mm) = mm.map(m -> h1(m));\n\
+                 k1(positional mm) = k(mm).map(m -> h1(m));\n\
+                 g(positional mm) = (y -> (y, y), k1(mm));\n"
+            ),
+            None,
+        ),
+        (
+            "returned_lambda_reading_a_parameter",
+            "k(positional x) = y -> (x, y);\nh0(positional m) = m.map(k);\n\
+             h1(positional m) = h0(m).map(f -> f(0));\ng(positional m) = (z -> (z, z), h1(m));\n"
+                .to_string(),
+            None,
+        ),
+        (
+            "returned_lambda_reading_a_parameter_alone",
+            "k(positional x) = y -> (x, y);\nh0(positional m) = m.map(k);\n\
+             h1(positional m) = h0(m).map(f -> f(0));\n"
+                .to_string(),
+            None,
+        ),
+        (
+            "returned_identity_lambda",
+            "k2(positional x) = y -> y;\nh0(positional m) = m.map(k2);\n\
+             g(positional m) = (z -> (z, z), h0(m));\n"
+                .to_string(),
+            None,
+        ),
+        (
+            "lambda_capturing_a_parameter",
+            "h0(positional a, positional m) = m.map(x -> (x, a));\n\
+             h1(positional a, positional m) = h0(a, m).map(x -> (x, a));\n\
+             g(positional a, positional m) = (y -> (y, y), h1(a, m));\n"
+                .to_string(),
+            None,
+        ),
+        (
+            "curried_lambda",
+            "h0(positional m) = m.map(x -> y -> (x, y));\nh1(positional m) = h0(m);\n\
+             g(positional m) = (z -> (z, z), h1(m));\n"
+                .to_string(),
+            None,
+        ),
+        (
+            "curried_lambda_applied",
+            "h0(positional m) = m.map(x -> y -> (x, y));\n\
+             h1(positional m) = h0(m).map(f -> f(1));\ng(positional m) = (z -> (z, z), h1(m));\n"
+                .to_string(),
+            None,
+        ),
+        (
+            "nested_map",
+            "h0(positional m) = m.map(x -> m.map(y -> (x, y)));\nh1(positional m) = h0(m);\n\
+             g(positional m) = (z -> (z, z), h1(m));\n"
+                .to_string(),
+            None,
+        ),
+        (
+            "parameter_function_in_a_tuple",
+            "h0(positional f, positional m) = m.map(x -> (f, x));\n\
+             h1(positional f, positional m) = h0(f, m);\n\
+             g(positional f, positional m) = (z -> (z, z), h1(f, m));\n"
+                .to_string(),
+            None,
+        ),
+        // Neon's gap 4: two lambdas each call a chain, each holding an internal result `W`;
+        // E names the second `T9`, and D did not (the decoded results were keyed by name).
+        (
+            "two_lambdas_each_calling_a_chain",
+            format!(
+                "{id}h0(positional m) = m.map(id).map(id);\n\
+                 outer(positional a) = (y -> (y, y), m -> (m, h0(m)), n -> (n, h0(n)), a);\n"
+            ),
+            None,
+        ),
+        // Neon's gaps 5 and 6, written without the recursion that made E and D refuse both:
+        // two lambdas of the same text, and lambdas held in the solved type of a variable.
+        (
+            "two_lambdas_of_the_same_text",
+            format!(
+                "{id}h0(positional m) = m.map(id).map(id);\n\
+                 p(positional c) = {{\n  f1 = m -> h0(m);\n  f2 = m -> h0(m);\n  \
+                 (y -> (y, y), f1, f2, c)\n}};\n"
+            ),
+            None,
+        ),
+        (
+            "lambda_in_a_solved_variable",
+            format!(
+                "{id}h0(positional m) = m.map(id);\n\
+                 p(positional c, positional w) = {{\n  v = if c {{ (m -> h0(m)) }} else {{ w }};\n  \
+                 (y -> (y, y), v)\n}};\n"
+            ),
+            None,
+        ),
+        (
+            "unfinished_lambdas_in_solved_variables",
+            "k(positional x) = y -> (x, y);\nh0(positional m) = m.map(k);\n\
+             p(positional c, positional w) = {\n  v1 = if c { (m -> h0(m)) } else { w };\n  \
+             v2 = if c { w } else { (m -> h0(m)) };\n  (z -> (z, z), v1, v2)\n};\n"
+                .to_string(),
+            None,
+        ),
+        (
+            "lambdas_calling_a_chain_passed_to_a_function",
+            format!(
+                "{id}h0(positional m) = m.map(id).map(id);\nq(positional f) = (f, f);\n\
+                 p(positional c) = (y -> (y, y), q(m -> h0(m)), q(n -> (n, h0(n))));\n"
+            ),
+            None,
+        ),
+        (
+            "constant_lambda_passed_down",
+            "h0(positional f, positional m) = m.map(f);\nh1(positional m) = h0(x -> 0, m);\n\
+             h2(positional m) = h1(m);\ng(positional m) = (y -> (y, y), h2(m));\n"
+                .to_string(),
+            None,
+        ),
+    ];
+    // Every callee of a kept forward, at any depth, by address.
+    fn callees(s: &Sig, seen: &mut HashSet<*const Sig>, out: &mut Vec<std::sync::Arc<Sig>>) {
+        if !seen.insert(s as *const Sig) {
+            return;
+        }
+        let mut tys: Vec<zedc_types::ty::Ty> = Vec::new();
+        for a in s.arrows.iter() {
+            tys.extend(a.params.iter().cloned());
+            tys.push(a.result.clone());
+        }
+        for n in s.needs.iter() {
+            match &n.kind {
+                NeedKind::Fwd(f) => {
+                    out.push(f.callee.clone());
+                    callees(&f.callee, seen, out);
+                }
+                _ => tys.extend(n.tys().cloned()),
+            }
+        }
+        for t in &tys {
+            let _ = t.with_held_fns(|f| {
+                callees(f, seen, out);
+                f.clone()
+            });
+        }
+    }
+    let mut failed = Vec::new();
+    for (name, src, refusal) in cases {
+        let (e, _) = run_with_cfg(src, R10Config::eager());
+        let (d, st) = run_with_cfg(src, R10Config::default());
+        assert!(e.errors.is_empty(), "{name}: E errors {:?}", e.errors);
+        if st.admitted == 0 {
+            failed.push(format!("{name}: D keeps no forward"));
+        }
+        if let Some(r) = refusal
+            && !st.refused.contains_key(*r)
+        {
+            failed.push(format!("{name}: no {r} refusal ({:?})", st.refused));
+        }
+        if st.refused.contains_key("#4-outer") {
+            failed.push(format!("{name}: refused as #4-outer"));
+        }
+        if let Err(why) = info_eq_full(name, &e, &d) {
+            failed.push(why);
+        }
+        for (sid, es) in &e.sigs {
+            let ds = &d.sigs[sid];
+            if es.digest() != ds.digest() || es != ds || !fits_sig(es, ds) || !fits_sig(ds, es) {
+                failed.push(format!("{name}: signature {sid} differs from E's"));
+            }
+        }
+        let (mut seen, mut found) = (HashSet::new(), Vec::new());
+        for s in d.sigs.values() {
+            callees(s, &mut seen, &mut found);
+        }
+        for c in &found {
+            for v in &c.own {
+                if zedc_types::ty::class_id(v).is_none() {
+                    failed.push(format!("{name}: a callee holds {v} in own, not a class"));
+                }
             }
         }
     }

@@ -1123,6 +1123,36 @@ fn n_maps_by_a_parameter_chained_check_in_linear_time() {
 }
 
 #[test]
+fn n_maps_by_a_function_with_own_variables_chained_check_in_linear_time() {
+    // Plan row FAIL-map-chain-own-vars-fn-quadratic: link h{i} maps h{i-1}'s result by a
+    // named function with its own variables (`id`, `top`). `#4-own-vars` kept such a function
+    // out of the compact forward, so each link's signature held every link below it (53.98
+    // times the instructions at 8n); since FAIL-map-chain-own-vars-carry the forward is kept
+    // and carries the function's names (`FwdNeed::held_names`), O(1) per link.
+    let n_links = 25;
+    let id_srcs = scaling::inputs(n_links, |n| {
+        let mut src = String::from("id(positional x) = x;\nh0(positional m) = m.map(id);\n");
+        for i in 1..n {
+            src.push_str(&format!("h{i}(positional m) = h{}(m).map(id);\n", i - 1));
+        }
+        src.push_str(&format!("a = h{}({{\"k\" -> 0}})[\"k\"];\n", n - 1));
+        src
+    });
+    let run = |n: usize| assert_eq!(value(&id_srcs[&n], "a"), "0");
+    scaling::check("n functions chained, each mapping by `id`", n_links, run);
+    let top_srcs = scaling::inputs(n_links, |n| {
+        let mut src =
+            String::from("top(positional xs) = xs >< max;\nh0(positional m) = m.map(top);\n");
+        for i in 1..n {
+            src.push_str(&format!("h{i}(positional m) = h{}(m).map(top);\n", i - 1));
+        }
+        src
+    });
+    let run = |n: usize| assert!(elab(&top_srcs[&n]).is_ok(), "{}", &top_srcs[&n]);
+    scaling::check("n functions chained, each mapping by `top`", n_links, run);
+}
+
+#[test]
 fn n_calls_mapping_by_one_parameter_check_in_linear_time() {
     // Landing review of FAIL-map-chain-needs-quadratic (LAND-map-chain-neon, Sol's L1 finding):
     // n calls `h0(f, m_i)` in one body, each kept as a forward that watches the one operand `f`.

@@ -4184,6 +4184,21 @@ pub struct VarFacts {
     /// renaming must enter a row or payload shape that holds one, whose bits do not show those
     /// names (`VarBits::internal`). ORed as `binds` is, O(1) per function held.
     pub internal: bool,
+    /// The held names ([`FwdNeed::held_names`]) of each compact forward a signature of the
+    /// nest keeps: the variables of the functions its leaf needs hold, which the flat needs
+    /// show and the steps do not, so a walk of the variables ([`Sig::vars_order`]) never meets
+    /// them. `Ck::finished_with` names them apart with the rest, as the eager checker meets
+    /// them in the flat needs (FAIL-map-chain-own-vars-carry). Merged as `names` is: O(1) per
+    /// function held where no forward holds a function, as nearly all.
+    pub fwd_names: imbl::OrdSet<Arc<str>>,
+    /// Whether a signature of the nest keeps a compact forward that has a class among its
+    /// held names and holds a function holding a variable not its own
+    /// ([`FwdNeed::held_foreign_fn`]): `Ck::r10_finish_one_fwd_callee` finishes only the held
+    /// functions that hold only their own variables, so such a forward's callee may still
+    /// write a held class as `$k` where the eager checker writes its name, and
+    /// `Ck::finished_with` decodes it (`k(positional x) = y -> (x, y)` in `m.map(k)`, whose
+    /// lambda reads `x`). ORed as `binds` is, O(h) for the h held names of each forward.
+    pub fwd_unfinished: bool,
 }
 
 impl VarFacts {
@@ -4215,7 +4230,10 @@ impl VarFacts {
                 let internal = fwd.need_count > fwd.exits.len();
                 g.binds |= internal;
                 g.internal |= internal;
+                g.fwd_unfinished |=
+                    fwd.held_foreign_fn && fwd.held_names.iter().any(|v| class_id(v).is_some());
                 for nm in &fwd.held_names {
+                    add(&mut g.fwd_names, nm);
                     g.add_to(false, nm, &mut added);
                     // A held name the forward does not list as outer is bound in its nest.
                     // O(log v) per name, beside the insert above.
@@ -4292,9 +4310,11 @@ impl VarFacts {
         merge(&mut self.names, &f.names);
         merge(&mut self.outer, &f.outer);
         merge(&mut self.outer_classes, &f.outer_classes);
+        merge(&mut self.fwd_names, &f.fwd_names);
         self.free = self.free.max(f.free);
         self.binds |= f.binds;
         self.internal |= f.internal;
+        self.fwd_unfinished |= f.fwd_unfinished;
     }
 
     /// Adds the variable `v` to its classes (`class`) or to its names, unless this walk has
@@ -5457,7 +5477,27 @@ impl FwdNeed {
     /// Like [`FwdNeed::decode_with_opts`], not counted in [`fwd_decode_count`]: for the checker's
     /// own expansions at a forward's release and at a merge, which `M66` does not count.
     pub fn decode_uncounted(&self, outer_call_span: Span, clear_map_lambda: bool) -> Vec<Need> {
-        let results = self.materialize_result_tys();
+        self.decode_from(
+            outer_call_span,
+            clear_map_lambda,
+            self.materialize_result_tys(),
+        )
+    }
+
+    /// [`FwdNeed::decode`] with the results given (`results`, one for each of the
+    /// `need_count` leaves, as [`FwdNeed::materialize_result_tys`] makes them): for a caller
+    /// that writes the internal results by other names. Counted in [`fwd_decode_count`].
+    pub fn decode_with_results(&self, outer_call_span: Span, results: Vec<Ty>) -> Vec<Need> {
+        FWD_DECODE_COUNT.with(|c| c.set(c.get() + 1));
+        self.decode_from(outer_call_span, true, results)
+    }
+
+    fn decode_from(
+        &self,
+        outer_call_span: Span,
+        clear_map_lambda: bool,
+        results: Vec<Ty>,
+    ) -> Vec<Need> {
         let mut out = Vec::with_capacity(self.need_count);
         enum Task<'s> {
             EnterSig {
@@ -5996,12 +6036,12 @@ impl Need {
     /// the flat needs only where `each` keeps every function the callee's needs hold; a
     /// caller that may change one decodes first ([`Sig::decoded_needs_cow`]; [`Sig::flat_for`]
     /// decodes only for a binding that needs it, landing review round 8, Gemini NB-3). The
-    /// checker's one
-    /// caller, `r10_promote_open_fwds`, changes only a function that keeps a compact forward
-    /// and holds a variable from around it; a function held in the leaf needs of a kept
-    /// forward binds no variable (admission `#4-own-vars`) and holds no class from around
-    /// (`#4`), and promoting a forward without internal results changes how it is stored,
-    /// not what it is (landing round 7, Gemini B4).
+    /// checker's callers: `r10_flat_held` calls it only on needs that are not compact
+    /// forwards; and `r10_promote_open_fwds` changes only a function that keeps a compact
+    /// forward and holds a variable from around it, while a function held in the leaf needs
+    /// of a kept forward keeps no forward with internal results (admission `#4-own-vars`) and
+    /// holds no class from around (`#4`), and promoting a forward without internal results
+    /// changes how it is stored, not what it is (landing round 7, Gemini B4).
     pub fn with_held_fns(&self, mut each: impl FnMut(&Arc<Sig>) -> Arc<Sig>) -> Need {
         self.map_tys_in(|t| {
             if t.fns.is_empty() && t.tuples.is_empty() && t.payloads.is_empty() {
@@ -20605,9 +20645,16 @@ impl Sig {
                 (s.facts.4.get()).and_then(|o| (!o.0.is_empty() || !o.1.is_empty()).then_some(true))
             })
         }
+        // A forward's held names ([`FwdNeed::held_names`]) are variables of the flat needs too,
+        // bound by the functions they hold, which no type of the signature shows either: a
+        // forward that holds one holds a variable (Neon's gap 2 on
+        // FAIL-map-chain-own-vars-carry; every checker forward also has one in `sigma`, so this
+        // changes no answer the checker is known to ask). O(1) per need.
         let internal = |s: &Sig| {
-            (s.needs.iter())
-                .any(|n| matches!(&n.kind, NeedKind::Fwd(f) if f.need_count > f.exits.len()))
+            (s.needs.iter()).any(|n| {
+                matches!(&n.kind, NeedKind::Fwd(f)
+                    if f.need_count > f.exits.len() || !f.held_names.is_empty())
+            })
         };
         !found_in_nest(
             self,
@@ -20829,8 +20876,14 @@ impl Sig {
     /// i links, for a class only `m.map(f)` holds: O(n²) (33.9 times the instructions at 8n).
     ///
     /// Proof that passing a forward over gives the answer of the flat form (row
-    /// PROOF-map-chain-d-skip-and-admit, point a). Premise: `want` holds only classes `$k`, as
-    /// `generalize` asks. Take a held function `s` whose facts list no class of `left`, and a
+    /// PROOF-map-chain-d-skip-and-admit, point a). Premise: `want` holds only classes `$k` of
+    /// the level `generalize` is ending, as `generalize` asks; none is bound by a function
+    /// that ended (Neon's gap 3 on FAIL-map-chain-own-vars-carry: a caller asking for such a
+    /// class, `id`'s `$0`, would get none where the flat form gives it, since a forward's held
+    /// names are in `facts.names` and not in `facts.classes`). The same steps cover the pass
+    /// over a held function whose facts list no class of `left` and no internal result (the
+    /// first `continue` below): its forwards are then passed over by (1)-(5) as well, and the
+    /// rest of it holds no class of `left` by its facts. Take a held function `s` whose facts list no class of `left`, and a
     /// forward `fwd` of it with `range.meets_internal(fwd, left)` false and no type of its need
     /// holding a function with internal results. (1) Every variable of the leaf needs `fwd`
     /// decodes to is a variable of a type of `sigma` or `exits`, an internal result of `fwd`,
@@ -20839,25 +20892,35 @@ impl Sig {
     /// callee or bound by a held function (`r10_forward`: `#4`, `#4-outer`, `#6`), and the
     /// decode puts a type of `sigma` for each parameter and a result type for each result; a
     /// child forward is entered with its `sigma` replaced the same way, so this holds at every
-    /// depth. (2) No variable of the last kind exists: `#4-own-vars` refuses a forward whose
-    /// leaf needs hold a function whose facts set `binds`, which every own variable, bound,
-    /// held name or internal result of it, at any depth, sets ([`VarFacts::of`],
-    /// `VarFacts::held`). (3) No variable of the first kind is in `left`: `sigma` and `exits`
+    /// depth. (2) No variable of the last kind is in `left` (FAIL-map-chain-own-vars-carry,
+    /// which admitted them; before, `#4-own-vars` refused every such function). A function
+    /// held in the leaf needs binds only names and the classes of functions that ended:
+    /// `generalize` makes a function's own set from the classes of its level, gives each a
+    /// name (`Class::name`), and moves no class to a later level. `want` holds only classes of
+    /// the level `generalize` is ending (`mine`, taken from that level's `own`), which had
+    /// not ended when the held function's classes were named, and a class belongs to one
+    /// level, so no bound class is in `want`, and a name is no class `$k`. A bound class may
+    /// still be written `$k` in a shared callee (`k(x) = y -> (x, y)`: the callee holds `k`
+    /// unfinished, as its lambda reads `x`, and keeps `$0`; r10_tests
+    /// `r10_map_by_a_chain_function_agrees_with_e`), but it is a class of `k`'s level, which
+    /// ended before the level `want` is taken from, so it is not in `want`. An internal result
+    /// of a forward such a function keeps is not of this kind: `#4-own-vars` now refuses a
+    /// forward whose leaf needs hold a function with one ([`VarFacts::internal`], which
+    /// `VarFacts::held` ORs up from every depth). (3) No variable of the first kind is in `left`: `sigma` and `exits`
     /// are types of the need ([`Need::tys`]), whose classes, at every depth, are in the facts
     /// of `s` (`VarFacts::tys`). (4) No internal result is in `left`: `meets_internal` tests
     /// each against `left` past O(1) tests that rule out only names (a named block's results,
     /// never a class) and classes outside `base_class .. base_class + need_count`. (5) A
     /// function in the decoded needs either comes from a type of `sigma` or `exits`, so has no
-    /// internal results and its classes are in the facts of `s`, or is one of (2), which binds
-    /// nothing and so has no internal results; the walk passes it over or enters it and finds
-    /// nothing of `left`. So the decoded block moves nothing to `out` and leaves `left` as it
+    /// internal results and its classes are in the facts of `s`, or is one of (2), which keeps
+    /// no forward with internal results and whose free variables are of the first kind and
+    /// bound ones out of `left`; the walk passes it over or enters it and finds nothing of
+    /// `left`. So the decoded block moves nothing to `out` and leaves `left` as it
     /// was. The walk is depth-first and finishes each item before it pops one pushed earlier,
     /// so every row, shape and function the flat walk enters inside the block holds no
     /// variable of `left`; a later item that meets one is skipped there and walked to no
     /// effect here. The arrows and the other needs come in the same order around the block in
-    /// both, so `out` is the same. Were `#4-own-vars` narrowed to internal results alone, (2)
-    /// would still hold the variables a held function binds out of `left` only while each is
-    /// a name, never a class `$k`.
+    /// both, so `out` is the same.
     pub fn first_seen(&self, want: &HashSet<Arc<str>>) -> Vec<Arc<str>> {
         let mut out = Vec::new();
         let mut left = want.clone();
