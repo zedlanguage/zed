@@ -1,32 +1,27 @@
 //! The `conflicts` tool on small plans written the way `docs/plan_dag.md` is: which pairs of
 //! items it lists at one level with which shared paths, which paths it lists across levels with
-//! which items, what `--check` says of a stale list, and the cost of both on a plan of many
+//! which items, what the tool prints and refuses, and the cost of both on a plan of many
 //! strands.
 
 use zed_tests::scaling::{check as check_scaling, inputs};
-use zed_tools::conflicts::{check, compute, render, rewrite, run};
+use zed_tools::conflicts::{compute, render, run};
 
-/// A plan whose first paragraph states `head`, whose table holds `rows`, each `(level, id,
-/// title, needs, paths)`, and whose two conflict sections hold `same` and `cross`.
-fn plan(head: &str, rows: &[(usize, &str, &str, &str, &str)], same: &str, cross: &str) -> String {
-    let mut text = format!(
-        "# Plan DAG\n\nThis file lists the remaining work. {head} It covers the TODO items.\n\n\
+/// A plan whose table holds `rows`, each `(level, id, title, needs, paths)`, followed by one
+/// more section.
+fn plan(rows: &[(usize, &str, &str, &str, &str)]) -> String {
+    let mut text = String::from(
+        "# Plan DAG\n\nThis file lists the remaining work. It covers the TODO items.\n\n\
          ## Items by level\n\n| Level | Id | Title | Size | Hard | Needs | Paths |\n\
-         |---|---|---|---|---|---|---|\n"
+         |---|---|---|---|---|---|---|\n",
     );
     for (level, id, title, needs, paths) in rows {
         text.push_str(&format!(
             "| {level} | {id} | {title} | S | no | {needs} | {paths} |\n"
         ));
     }
-    text.push_str(&format!(
-        "\n## File conflicts at the same level\n\n{same}\n\n## File conflicts across levels\n\n\
-         {cross}\n\n## Why each item waits\n\nThe reasons.\n"
-    ));
+    text.push_str("\n## Why each item waits\n\nThe reasons.\n");
     text
 }
-
-const HEAD: &str = "It has 8 items, 3 edges and 3 levels (0 to 2).";
 
 /// A checker directory, files in and under it, a file every step touches, a test folder, a done
 /// item, a path with no `/` at its end, a glob, and needs that order some sharing pairs.
@@ -98,8 +93,8 @@ fn the_pairs_and_paths_follow_the_rule_of_the_plan() {
     // B's STATUS.md and test folder, D's `crates/zedc` (no `/`, so not a directory) and the glob
     // under tests/ match nothing, and docs/x.md has one item. F's directory holds A's directory
     // and both copies of mod.rs, so its line names every item but D and G.
-    let text = plan(HEAD, ROWS, "old", "- old");
-    let c = compute(&text).expect("a plan with both sections");
+    let text = plan(ROWS);
+    let c = compute(&text).expect("a plan");
     let written = render(&c);
     assert!(written.contains("There are 4 pairs."), "{written}");
     assert!(written.contains("There are 4 lines."), "{written}");
@@ -137,8 +132,7 @@ fn a_row_whose_title_starts_with_done_in_any_form_is_done() {
         (1, "D", "Done in 0123abcde: a spec edit", "B", "`DESIGN.md`"),
         (0, "E", "Documented later", "none", "`DESIGN.md`"),
     ];
-    let head = "It has 5 items, 1 edges and 2 levels (0 to 1).";
-    let written = render(&compute(&plan(head, rows, "old", "- old")).expect("a plan"));
+    let written = render(&compute(&plan(rows)).expect("a plan"));
     assert!(written.contains("| 0 | A, E | `DESIGN.md` |"), "{written}");
     assert!(written.contains("There are 1 pairs."), "{written}");
     assert!(!written.contains("`DESIGN.md`: level"), "{written}");
@@ -147,62 +141,32 @@ fn a_row_whose_title_starts_with_done_in_any_form_is_done() {
 #[test]
 fn shared_paths_follow_the_earlier_row_s_order() {
     // H lists mod.rs before DESIGN.md, A the other way; A's row comes first, so its order holds.
-    let text = plan(HEAD, ROWS, "old", "- old");
+    let text = plan(ROWS);
     let written = render(&compute(&text).expect("a plan"));
     assert!(written.contains("| 0 | A, H | `DESIGN.md`, `crates/zedc-check/src/check/mod.rs` |"));
 }
 
 #[test]
-fn check_reports_a_stale_list_and_passes_after_the_rewrite() {
-    // A list written before D's path changed and before G was added: A and D no longer share a
-    // file, and DESIGN.md has G at level 2. The line of mod.rs is still current.
-    let stale = plan(
-        HEAD,
-        ROWS,
-        "| Level | Items | Shared paths |\n|---|---|---|\n| 0 | A, D | `crates/zedc` |",
-        "- `DESIGN.md`: level 0: A, H; level 1: E\n\
-         - `crates/zedc-check/src/check/mod.rs`: level 0: B, H; level 1: E",
-    );
-    let c = compute(&stale).expect("a plan");
+fn the_tool_prints_the_lists_and_writes_nothing() {
+    // TOOL-plan-counts-after-rebase: the lists were sections of the file, which went stale at
+    // every rebase; now they are printed from the table, and the file is left as it is.
+    let text = plan(ROWS);
+    let dir = zed_tests::step_helpers::scratch("conflicts-print");
+    std::fs::create_dir_all(&dir).expect("a temporary directory");
+    let path = dir.join("plan_dag.md");
+    std::fs::write(&path, &text).expect("writing the plan");
     let mut out = String::new();
-    assert_eq!(check(&stale, &c, &mut out), Ok(false));
-    assert_eq!(
-        out,
-        "pairs at one level: the items table gives 4; the list has 1, of which 1 are no longer \
-         such a pair, and 4 are missing\n\
-         lines across levels: the items table gives 4; the list has 2, of which 1 are not as the \
-         table gives them, and 3 are missing\n\
-         the conflict lists are out of date; run `cargo run -q -p zed-tools --bin conflicts` to \
-         rewrite them\n"
-    );
-    let fresh = rewrite(&stale, &c).expect("both sections");
-    assert!(fresh.ends_with("## Why each item waits\n\nThe reasons.\n"));
-    let c = compute(&fresh).expect("a plan");
-    let mut out = String::new();
-    assert_eq!(check(&fresh, &c, &mut out), Ok(true));
-    assert_eq!(
-        out,
-        "the conflict lists are current: 4 pairs at one level, 4 lines across levels\n"
-    );
-    assert_eq!(rewrite(&fresh, &c).expect("both sections"), fresh);
-}
-
-#[test]
-fn check_names_a_change_of_text_with_the_same_pairs() {
-    let text = plan(HEAD, ROWS, "old", "- old");
-    let fresh = rewrite(&text, &compute(&text).expect("a plan")).expect("both sections");
-    // The same pairs, with the shared paths of one row in another order.
-    let edited = fresh.replace(
-        "`DESIGN.md`, `crates/zedc-check/src/check/mod.rs` |",
-        "`crates/zedc-check/src/check/mod.rs`, `DESIGN.md` |",
-    );
-    let mut out = String::new();
-    let c = compute(&edited).expect("a plan");
-    assert_eq!(check(&edited, &c, &mut out), Ok(false));
+    assert_eq!(run(&[path.display().to_string()], &mut out), Ok(true));
+    assert_eq!(out, render(&compute(&text).expect("a plan")));
     assert!(
-        out.contains("the pairs and lines agree, but the text of the sections differs"),
+        out.starts_with("## File conflicts at the same level\n"),
         "{out}"
     );
+    assert!(out.contains(SAME_ROWS), "{out}");
+    assert!(out.ends_with(&format!("\n\n{CROSS_LINES}\n")), "{out}");
+    assert_eq!(std::fs::read_to_string(&path).expect("the plan"), text);
+    std::fs::remove_file(&path).expect("removing the plan");
+    std::fs::remove_dir(&dir).expect("removing the directory");
 }
 
 #[test]
@@ -210,75 +174,47 @@ fn a_plan_whose_table_fails_the_plan_check_stops_the_tool() {
     // E written at level 0, the level of A, which it needs.
     let mut rows = ROWS.to_vec();
     rows[4].0 = 0;
-    let text = plan(HEAD, &rows, "old", "- old");
     let dir = zed_tests::step_helpers::scratch("conflicts");
     std::fs::create_dir_all(&dir).expect("a temporary directory");
     let path = dir.join("plan_dag.md");
-    std::fs::write(&path, &text).expect("writing the plan");
-    let args = ["--check".to_string(), path.display().to_string()];
+    std::fs::write(&path, plan(&rows)).expect("writing the plan");
+    let args = [path.display().to_string()];
     let why = run(&args, &mut String::new()).expect_err("a wrong level");
     assert!(why.contains("does not pass the plan check"), "{why}");
     assert!(why.contains("E is at level 0"), "{why}");
-    // The rewrite on a correct table writes the file, and then the check passes.
-    std::fs::write(&path, plan(HEAD, ROWS, "old", "- old")).expect("writing the plan");
-    let mut out = String::new();
-    assert_eq!(run(&args[1..], &mut out), Ok(true));
-    assert_eq!(out, "4 pairs at one level, 4 lines across levels\n");
-    assert_eq!(run(&args, &mut String::new()), Ok(true));
+    // So does a file that still holds the count sentence, which `plan --fix` takes out.
+    let old = plan(ROWS).replace(
+        "remaining work. It covers",
+        "remaining work. It has 8 items, 3 edges and 3 levels (0 to 2). It covers",
+    );
+    std::fs::write(&path, &old).expect("writing the plan");
+    let why = run(&args, &mut String::new()).expect_err("the count sentence");
+    assert!(
+        why.contains("the first paragraph states the counts"),
+        "{why}"
+    );
+    assert_eq!(std::fs::read_to_string(&path).expect("the plan"), old);
     std::fs::remove_file(&path).expect("removing the plan");
     std::fs::remove_dir(&dir).expect("removing the directory");
 }
 
 #[test]
-fn a_plan_with_no_conflict_sections_stops_the_tool() {
-    let text = plan(HEAD, ROWS, "old", "- old").replace("## File conflicts across levels", "## X");
-    let c = compute(&text).expect("a plan");
-    assert!(rewrite(&text, &c).is_err());
-    assert!(check(&text, &c, &mut String::new()).is_err());
-}
-
-#[test]
-fn plan_fix_rewrites_stale_conflict_lists() {
-    // `plan --fix` sets levels, which the same-level pairs depend on, so it rewrites both
-    // sections too (PLAN-conflict-lists-stale); before that change a stale list stayed stale
-    // until someone ran `conflicts`. E written at level 0 moves to level 1 and the lists follow.
-    let mut rows = ROWS.to_vec();
-    rows[4].0 = 0;
-    let dir = zed_tests::step_helpers::scratch("conflicts-plan-fix");
-    std::fs::create_dir_all(&dir).expect("a temporary directory");
-    let path = dir.join("plan_dag.md");
-    std::fs::write(&path, plan(HEAD, &rows, "old", "- old")).expect("writing the plan");
-    let file = path.display().to_string();
+fn this_repository_s_conflict_lists_are_printed() {
     let mut out = String::new();
-    assert_eq!(
-        zed_tools::conflicts::plan_run(&["--fix".to_string(), file.clone()], &mut out),
-        Ok(true),
+    assert_eq!(run(&[], &mut out), Ok(true), "{out}");
+    assert!(
+        out.starts_with("## File conflicts at the same level\n"),
         "{out}"
     );
-    let fixed = std::fs::read_to_string(&path).expect("reading the plan");
-    assert_eq!(
-        fixed,
-        rewrite(&fixed, &compute(&fixed).expect("a plan")).expect("both sections")
-    );
-    assert!(fixed.contains(SAME_ROWS), "{fixed}");
-    assert_eq!(
-        run(&["--check".to_string(), file], &mut String::new()),
-        Ok(true)
-    );
-    std::fs::remove_file(&path).expect("removing the plan");
-    std::fs::remove_dir(&dir).expect("removing the directory");
-}
-
-#[test]
-fn this_repository_s_conflict_lists_are_current() {
-    let mut out = String::new();
-    assert_eq!(run(&["--check".to_string()], &mut out), Ok(true), "{out}");
 }
 
 #[test]
 fn an_unknown_option_is_refused() {
-    let why = run(&["--write".to_string()], &mut String::new()).expect_err("an option");
-    assert!(why.starts_with("usage: conflicts"), "{why}");
+    // `--check` among them: there is nothing in the file to check.
+    for option in ["--write", "--check"] {
+        let why = run(&[option.to_string()], &mut String::new()).expect_err("an option");
+        assert!(why.starts_with("usage: conflicts [PLAN_DAG.md]"), "{why}");
+    }
 }
 
 /// A plan of `n` strands of four items at levels 0 to 3, each needing the one before it. Every
@@ -306,12 +242,7 @@ fn strands(n: usize) -> String {
         .iter()
         .map(|(d, id, needs, paths)| (*d, id.as_str(), "Work", needs.as_str(), paths.as_str()))
         .collect();
-    let head = format!(
-        "It has {} items, {} edges and 4 levels (0 to 3).",
-        4 * n,
-        3 * n
-    );
-    plan(&head, &refs, "old", "- old")
+    plan(&refs)
 }
 
 #[test]
@@ -330,7 +261,7 @@ fn a_path_span_holding_a_remark_is_refused() {
     // A remark inside the backticks would be read as part of the path and match nothing.
     let mut rows = ROWS.to_vec();
     rows[7].4 = "`crates/zedc/src/opt/ (the L3.11 pass)`";
-    let text = plan(HEAD, &rows, "old", "- old");
+    let text = plan(&rows);
     let why = compute(&text).err().expect("a remark in a path");
     assert!(
         why.contains("the path `crates/zedc/src/opt/ (the L3.11 pass)` of H holds a space"),

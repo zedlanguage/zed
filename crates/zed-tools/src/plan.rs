@@ -1,15 +1,23 @@
 //! `plan [--fix] [PLAN_DAG.md]` checks the table "Items by level" of `docs/plan_dag.md` (this
 //! repository's, when no file is named): no id has two rows, every id in a `needs` column has a
-//! row, each row's level is one more than the highest level among its needs (0 with no needs),
-//! and the first paragraph's counts of items, edges and levels match the table. It prints one
-//! line per problem and fails if there is any.
+//! row, and each row's level is one more than the highest level among its needs (0 with no
+//! needs). It prints one line per problem, then the table's counts of items, edges and levels,
+//! and fails if there is any problem.
+//!
+//! The counts and the file-conflict lists of the `conflicts` tool are not kept in the file
+//! (TOOL-plan-counts-after-rebase, 2026-11-19). They were: the sentence "It has N items, E edges
+//! and L levels (0 to M)." in the first paragraph, and the sections "File conflicts at the same
+//! level" and "File conflicts across levels" (5442 of the file's 10607 lines). Both follow from
+//! the whole table, so when two branches each changed the table, the rebase of one onto the other
+//! left them stale even where git merged every row cleanly, and each landing needed a commit of
+//! `plan --fix` output (139 commits that changed nothing else from 2026-11-18 to 2026-11-19).
+//! Now `plan` prints the counts and `conflicts` prints the lists, both from the table as it is,
+//! and the check reports the sentence or the sections if a file still holds them.
 //!
 //! With `--fix` it first rewrites the file: each row's level cell becomes the level its needs
-//! give, and the count sentence of the first paragraph becomes the table's counts. The `plan`
-//! binary (`conflicts::plan_run`) then also rewrites the file-conflict sections of the
-//! `conflicts` tool, when the file has them and the table passes the check. Nothing else
-//! changes, not even the order of the rows. It refuses, writing nothing, when the levels cannot
-//! be computed: an id with two rows, a need with no row, or a cycle.
+//! give, and the count sentence and the conflict sections are taken out. Nothing else changes,
+//! not even the order of the rows. It refuses, writing nothing, when the levels cannot be
+//! computed: an id with two rows, a need with no row, or a cycle.
 //!
 //! The table is read the way GitHub renders it (GitHub-flavored Markdown): a row is split into
 //! cells at every `|`, also one inside backticks, except a `|` written `\|`, which is part of the
@@ -35,6 +43,14 @@ const TABLE: &str = "## Items by level";
 
 /// The names of the table's columns, in order.
 const COLUMNS: [&str; 7] = ["Level", "Id", "Title", "Size", "Hard", "Needs", "Paths"];
+
+/// The heading of the list of pairs at one level that `conflicts` prints, and of the first of
+/// the two sections that once held the lists in the file.
+pub(crate) const SAME: &str = "## File conflicts at the same level";
+
+/// The heading of the list of paths across levels; in the file, its section ended at the next
+/// `## ` heading.
+pub(crate) const CROSS: &str = "## File conflicts across levels";
 
 /// The table's header line and delimiter row, as they must be written.
 const HEADER: &str = "| Level | Id | Title | Size | Hard | Needs | Paths |";
@@ -198,10 +214,49 @@ fn stated(text: &str) -> Option<([usize; 4], Range<usize>)> {
     Some((n, start..top_at + top.len()))
 }
 
-/// The sentence of the first paragraph that states `counts`, as [`stated`] reads it, up to the
-/// end of the highest level.
-fn sentence([items, edges, levels, top]: [usize; 4]) -> String {
-    format!("It has {items} items, {edges} edges and {levels} levels (0 to {top}")
+/// The byte range of the count sentence in `text` that [`fix_plan`] takes out: from "It has" to
+/// its closing `).`, and one space after it. tools/plan_merge.sh takes out the same text.
+fn sentence(text: &str) -> Option<Range<usize>> {
+    let (_, span) = stated(text)?;
+    let mut end = span.end;
+    if text[end..].starts_with(").") {
+        end += 2;
+        if text[end..].starts_with(' ') {
+            end += 1;
+        }
+    }
+    Some(span.start..end)
+}
+
+/// The byte range of the two conflict sections in `text`: from the start of the `SAME` heading
+/// to the start of the next `## ` heading after `CROSS`, or the end of the text; `None` when
+/// the file does not have both headings, each a line of its own. tools/plan_merge.sh takes out
+/// the same lines.
+fn sections(text: &str) -> Option<Range<usize>> {
+    let at = |heading: &str, from: usize| {
+        text[from..]
+            .match_indices(heading)
+            .map(|(i, _)| from + i)
+            .find(|&i| {
+                (i == 0 || text.as_bytes()[i - 1] == b'\n')
+                    && text[i + heading.len()..].starts_with('\n')
+            })
+    };
+    let same = at(SAME, 0)?;
+    let cross = at(CROSS, same)?;
+    let end = text[cross + CROSS.len()..]
+        .find("\n## ")
+        .map_or(text.len(), |i| cross + CROSS.len() + i + 1);
+    Some(same..end)
+}
+
+/// Writes to `out` the counts of a table (items, edges, levels and the highest level), the line
+/// `plan` prints last.
+fn say_counts(out: &mut String, [items, edges, levels, top]: [usize; 4]) {
+    say!(
+        out,
+        "the table has {items} items, {edges} edges and {levels} levels (0 to {top})"
+    );
 }
 
 /// A map from each id to the index of its first row in `rows`, writing a line to `out` for each
@@ -242,6 +297,11 @@ pub fn row_ids(text: &str) -> Result<Vec<&str>, String> {
 /// level is the length of the longest path from a root. One pass over the rows and their needs
 /// with a hash map from id to row: O(rows + edges).
 pub fn check_plan(text: &str, out: &mut String) -> Result<bool, String> {
+    Ok(check_counts(text, out)?.0)
+}
+
+/// [`check_plan`], with the table's counts: items, edges, levels and the highest written level.
+fn check_counts(text: &str, out: &mut String) -> Result<(bool, [usize; 4]), String> {
     let rows = rows(text)?;
     let (by_id, mut bad) = index_rows(&rows, out);
     let level = |row: &Row<'_>| row.level.parse::<usize>().ok();
@@ -285,50 +345,45 @@ pub fn check_plan(text: &str, out: &mut String) -> Result<bool, String> {
             bad += 1;
         }
     }
-    let counted = [rows.len(), edges, top + 1, top];
-    match stated(text).map(|(said, _)| said) {
-        None => {
-            say!(
-                out,
-                "no sentence \"It has N items, E edges and L levels (0 to M).\""
-            );
-            bad += 1;
-        }
-        Some(said) if said != counted => {
-            say!(
-                out,
-                "the first paragraph says {} items, {} edges and {} levels (0 to {}); the table has {} items, {} edges and {} levels (0 to {})",
-                said[0],
-                said[1],
-                said[2],
-                said[3],
-                counted[0],
-                counted[1],
-                counted[2],
-                counted[3]
-            );
-            bad += 1;
-        }
-        Some(_) => {}
+    if stated(text).is_some() {
+        say!(
+            out,
+            "the first paragraph states the counts (\"It has N items, E edges and L levels (0 to \
+             M).\"), which a rebase leaves stale; `plan` prints them, and `plan --fix` takes the \
+             sentence out"
+        );
+        bad += 1;
     }
-    Ok(bad == 0)
+    if let Some(r) = sections(text) {
+        say!(
+            out,
+            "line {}: the file holds the sections \"File conflicts at the same level\" and \"File \
+             conflicts across levels\", which a rebase leaves stale; `conflicts` prints them, and \
+             `plan --fix` takes them out",
+            text[..r.start].matches('\n').count() + 1
+        );
+        bad += 1;
+    }
+    Ok((bad == 0, [rows.len(), edges, top + 1, top]))
 }
 
 /// What [`fix_plan`] made of a plan.
 #[derive(Debug, PartialEq, Eq)]
 pub struct Fixed {
-    /// The plan with its levels and counts set.
+    /// The plan with its levels set and the count sentence and conflict sections taken out.
     pub text: String,
     /// The number of rows whose level cell changed.
     pub changed: usize,
-    /// The counts the first paragraph now states: items, edges, levels and the highest level.
+    /// The table's counts: items, edges, levels and the highest level.
     pub counts: [usize; 4],
+    /// What was taken out of the file: "the count sentence", "the conflict sections", or both.
+    pub took_out: Vec<&'static str>,
 }
 
 /// The plan `text` with each row's level cell set to the length of the longest path to the row
-/// from a root, and the first paragraph's count sentence set to the table's counts; every other
-/// byte as written. Refused, with one line per problem, when an id has two rows, a need has no
-/// row, the needs form a cycle or there is no count sentence.
+/// from a root, and the count sentence and the conflict sections taken out; every other byte as
+/// written. Refused, with one line per problem, when an id has two rows, a need has no row or
+/// the needs form a cycle.
 ///
 /// Levels are set in topological order (Kahn's algorithm): a row is placed once every row it
 /// needs is, at one more than the highest level among them. Each row and each edge is visited
@@ -363,13 +418,6 @@ pub fn fix_plan(text: &str) -> Result<Fixed, String> {
             }
         }
     }
-    let Some((_, span)) = stated(text) else {
-        say!(
-            &mut problems,
-            "no sentence \"It has N items, E edges and L levels (0 to M).\""
-        );
-        return Err(problems.trim_end().into());
-    };
     if bad > 0 {
         return Err(problems.trim_end().into());
     }
@@ -403,6 +451,15 @@ pub fn fix_plan(text: &str) -> Result<Fixed, String> {
     let top = level.iter().copied().max().unwrap_or(0);
     let edges = rows.iter().map(|r| r.needs.len()).sum();
     let counts = [rows.len(), edges, top + 1, top];
+    let cut = sentence(text);
+    let lists = sections(text);
+    let mut took_out = Vec::new();
+    if cut.is_some() {
+        took_out.push("the count sentence");
+    }
+    if lists.is_some() {
+        took_out.push("the conflict sections");
+    }
     let mut out = String::with_capacity(text.len() + 16);
     let mut changed = 0;
     let mut next = rows.iter().zip(&level).peekable();
@@ -416,10 +473,11 @@ pub fn fix_plan(text: &str) -> Result<Fixed, String> {
             write!(out, "{l}").expect("writing to a String");
             out.push_str(&line[lead + row.level.len()..]);
             changed += usize::from(row.level.parse() != Ok(l));
-        } else if span.start >= start && span.end <= end {
-            out.push_str(&line[..span.start - start]);
-            out.push_str(&sentence(counts));
-            out.push_str(&line[span.end - start..]);
+        } else if lists.as_ref().is_some_and(|r| r.contains(&start)) {
+            // A line of the conflict sections, which begin and end at the start of a line.
+        } else if let Some(c) = cut.as_ref().filter(|c| c.start >= start && c.end <= end) {
+            out.push_str(&line[..c.start - start]);
+            out.push_str(&line[c.end - start..]);
         } else {
             out.push_str(line);
         }
@@ -429,23 +487,12 @@ pub fn fix_plan(text: &str) -> Result<Fixed, String> {
         text: out,
         changed,
         counts,
+        took_out,
     })
 }
 
-/// Runs the tool with nothing after `--fix`'s levels; the `plan` binary runs
-/// `conflicts::plan_run`, which also rewrites the conflict sections.
+/// Runs the tool.
 pub fn run(args: &[String], out: &mut String) -> Outcome {
-    run_with(args, out, |_| Ok(None))
-}
-
-/// Runs the tool; with `--fix`, `after_fix` may rewrite the fixed text further (`Some`) before
-/// it is written. It is a parameter, not a call into `conflicts`, because `conflicts` reads this
-/// module and a call back would make an import cycle (s_01f_import_graph).
-pub fn run_with(
-    args: &[String],
-    out: &mut String,
-    after_fix: fn(&str) -> Result<Option<String>, String>,
-) -> Outcome {
     let usage = "usage: plan [--fix] [PLAN_DAG.md]";
     let fixing = args.first().is_some_and(|a| a == "--fix");
     let rest = &args[usize::from(fixing)..];
@@ -462,25 +509,27 @@ pub fn run_with(
     };
     let text = read_text(path)?;
     if !fixing {
-        return check_plan(&text, out);
+        let (ok, counts) = check_counts(&text, out)?;
+        say_counts(out, counts);
+        return Ok(ok);
     }
-    let mut fixed = fix_plan(&text).map_err(|e| {
+    let fixed = fix_plan(&text).map_err(|e| {
         format!("{path}: the levels cannot be computed, so nothing was written:\n{e}")
     })?;
-    if let Some(new) = after_fix(&fixed.text).map_err(|e| format!("{path}: {e}"))? {
-        fixed.text = new;
-    }
     if fixed.text != text {
         std::fs::write(path, &fixed.text).map_err(|e| format!("{path}: {e}"))?;
     }
-    let [items, edges, levels, top] = fixed.counts;
-    say!(
-        out,
-        "levels changed: {}; the first paragraph says {items} items, {edges} edges and {levels} \
-         levels (0 to {top})",
-        fixed.changed
-    );
-    check_plan(&fixed.text, out)
+    say!(out, "levels changed: {}", fixed.changed);
+    if !fixed.took_out.is_empty() {
+        say!(
+            out,
+            "taken out of the file: {}",
+            fixed.took_out.join(" and ")
+        );
+    }
+    let ok = check_plan(&fixed.text, out)?;
+    say_counts(out, fixed.counts);
+    Ok(ok)
 }
 
 #[cfg(test)]

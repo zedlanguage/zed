@@ -6,12 +6,23 @@
 # the worktree, and reads the result from %A: exit 0 merged cleanly, exit 1 conflicts remain.
 #
 # Why: the needs cell of L1.41 is one line of about 22,000 characters to which every agent that
-# files a row adds an id, and the count sentence of the first paragraph ("It has N items, ...")
-# changes with every row added (44 of the 80 plan commits before 27df7e6f8 changed it, 24 changed
-# L1.41); so two branches that each file a row conflict on both lines, and the rebase in
-# /home/luke/Work/wt/merge-push.sh fails (need-site2 took 6 tries, zip-count 4).
+# files a row adds an id, and the count sentence the first paragraph held ("It has N items, ...")
+# changed with every row added (44 of the 80 plan commits before 27df7e6f8 changed it, 24 changed
+# L1.41); so two branches that each filed a row conflicted on both lines, and the rebase in
+# /home/luke/Work/wt/merge-push.sh failed (need-site2 took 6 tries, zip-count 4).
 #
-# What it does. First git's own three-way merge, `git merge-file --diff3`. Then each conflict that
+# What it does. First the count sentence ("It has N items, E edges and L levels (0 to M).", and one
+# space after it) and the two sections "## File conflicts at the same level" and "## File
+# conflicts across levels" (up to the next `## ` heading) are taken out of all three versions,
+# the same text `plan --fix` takes out (TOOL-plan-counts-after-rebase, 2026-11-19; `sentence` and
+# `sections` in crates/zed-tools/src/plan.rs). Both followed from the whole table, so a rebase
+# left them stale even where every row merged cleanly, and each landing needed a commit of
+# `plan --fix` output; `plan` and `conflicts` now print them instead. Taking them out of the base
+# and of both sides also lets a branch made before that change rebase onto a main without them.
+# The three versions are written as blobs (`git hash-object -w`) and merged by object id, since
+# git merge-file reads a pipe as an empty file; the blobs are loose objects no ref holds, which
+# `git gc` prunes.
+# Then git's own three-way merge, `git merge-file --diff3`. Then each conflict that
 # merge leaves (a hunk: ours, base and theirs, each some lines) is resolved
 #  - when every line of all three sides is a row of the plan table and no side holds an id twice
 #    (as when both sides append rows at the end of the table, or one appends a row right after
@@ -31,32 +42,18 @@
 #     of the two sides' sets of ids, that is, the ids both sides keep, plus the ids either side
 #     added, less the ids either side removed (the union when neither side removed one), in ours'
 #     order and then the ids only theirs added, in theirs' order; `none` when empty. The level is
-#     the side that changed it, or the higher of the two when both did;
-#  3. all three are the line of the count sentence and differ only inside "It has N items, E
-#     edges and L levels (0 to M": ours.
-# Before both, a hunk that lies inside the two sections the conflicts tool writes ("## File
-# conflicts at the same level" up to the `## ` heading after "## File conflicts across levels",
-# the range conflicts.rs's `sections` replaces whole) and whose sides hold no `## ` line is
-# resolved as ours (MERGE-generated-sections-auto, 2026-11-18). Those lines are output of
-# `plan --fix` (conflicts::plan_run rewrites the range from the items table), so no side's
-# version of them is kept: they are written again from the merged table, by merge-push.sh's
-# plan --fix after every rebase of a branch that changed the plan, or by hand after a rebase by
-# hand. Before this rule, two branches that each changed the table moved neighboring lines of
-# those lists, and the rebase stopped there (dag2, twice on 2026-11-18). Where the region lies
-# is read from the merged text outside the hunks; after a hunk that holds a `## ` line on any
-# side, the headings seen may no longer match the file, so the rule is not used again in that
-# file.
+#     the side that changed it, or the higher of the two when both did.
 # Any other conflict is left as git's merge-file leaves it, markers and all (in the diff3 style
-# this machine's git is set to), and the script exits 1. Rules 2 and 3 can leave levels and counts
-# that do not match the merged table: /home/luke/Work/wt/merge-push.sh runs `plan --fix` after
-# every rebase that changes the plan, and an agent who rebases by hand runs it as after any plan
-# edit (until then the plan check of m0_03 fails, naming the stale counts or levels).
+# this machine's git is set to), and the script exits 1. Rule 2 and a row added on each side can
+# leave levels that do not match the merged table: the plan check of m0_03 then fails, naming
+# them, and `plan --fix` sets them.
 # The task named the union of the two sides' ids. A plain union would bring back an id that one
 # side removed on purpose; the three-way set merge keeps both sides' intent and equals the union
 # whenever neither side removed an id.
 #
-# Cost: git merge-file, then one pass of awk over its output, each conflicting row's ids put in
-# an associative array per side: O(length of the three files), expected.
+# Cost: one pass of awk over each version, git merge-file, then one pass of awk over its output,
+# each conflicting row's ids put in an associative array per side: O(length of the three files),
+# expected.
 #
 # Left as a conflict, besides any other change to the same line on both sides: a hunk that mixes
 # rows with other lines and whose sides differ in line count (say a row appended on both sides
@@ -70,12 +67,43 @@
 # Undo: git -C /home/luke/Work/zed-impl config --remove-section merge.plan-needs
 # Test: tools/test_plan_merge.sh.
 base=$1 ours=$2 theirs=$3 size=${4:-7}
+# The file $1 without the count sentence and the two conflict sections, as `plan --fix` takes them
+# out: the sentence only at the first "It has " of the file and only when it is whole; the
+# sections only when both headings are there, each a line of its own, the cross-level one after
+# the same-level one.
+strip() {
+  awk '
+    { L[++n] = $0 }
+    END {
+      for (i = 1; i <= n; i++) if (L[i] == "## File conflicts at the same level") { s = i; break }
+      for (i = s + 1; s && i <= n; i++) if (L[i] == "## File conflicts across levels") { c = i; break }
+      e = n + 1
+      for (i = c + 1; c && i <= n; i++) if (index(L[i], "## ") == 1) { e = i; break }
+      if (!c) s = 0
+      for (i = 1; i <= n; i++) {
+        if (!found && (k = index(L[i], "It has "))) {
+          found = 1
+          r = substr(L[i], k)
+          if (match(r, /^It has [0-9]+ items, [0-9]+ edges and [0-9]+ levels \(0 to [0-9]+\)\. ?/))
+            L[i] = substr(L[i], 1, k - 1) substr(r, RLENGTH + 1)
+        }
+        if (!s || i < s || i >= e) print L[i]
+      }
+    }' "$1"
+}
+set -o pipefail
+blob_o=$(strip "$base" | git hash-object -w --stdin) &&
+  blob_a=$(strip "$ours" | git hash-object -w --stdin) &&
+  blob_b=$(strip "$theirs" | git hash-object -w --stdin) || {
+  echo "plan_merge.sh: could not store the three versions of $ours as blobs" >&2
+  exit 2
+}
 # The merged text, then a last line with the exit codes of git merge-file (the number of
 # conflicts, 255 on error) and of awk (the number of conflicts left, at most 1), held in a
 # variable so that no temporary file is made.
 res=$(
   git merge-file -p --diff3 --marker-size="$size" -L "${6:-ours}" -L "${5:-base}" -L "${7:-theirs}" \
-    "$ours" "$base" "$theirs" |
+    --object-id "$blob_a" "$blob_o" "$blob_b" |
     awk -v size="$size" '
     function marker(c,   s, i) { s = ""; for (i = 0; i < size; i++) s = s c; return s }
     BEGIN { m_open = marker("<"); m_base = marker("|"); m_sep = marker("="); m_close = marker(">"); left = 0 }
@@ -124,21 +152,7 @@ res=$(
       for (i = 2; i <= na; i++) s = s "|" ca[i]
       return s
     }
-    # The line with its count sentence numbers taken out, or "" when it has no count sentence.
-    function counts(l,   r) {
-      r = l
-      if (!sub(/It has [0-9]+ items, [0-9]+ edges and [0-9]+ levels \(0 to [0-9]+/, "It has #", r)) return ""
-      return r
-    }
-    # Line i of a hunk from its three sides, or "\001" when no rule resolves it.
-    function line(o, a, b,   r) {
-      r = one(o, a, b)
-      if (r != "\001") return r
-      r = counts(a)
-      if (r != "" && r == counts(o) && r == counts(b)) return a
-      return "\001"
-    }
-    # One row from its base o, ours a and theirs b by rules 1 and 2, or "\001".
+    # One line from its base o, ours a and theirs b by rules 1 and 2, or "\001".
     function one(o, a, b,   r) {
       if (a == b || b == o) return a
       if (a == o) return b
@@ -156,7 +170,7 @@ res=$(
       }
       return 1
     }
-    # Rule 4: a hunk whose lines are all rows, each id at most once per side, merged by id: ours
+    # By id: a hunk whose lines are all rows, each id at most once per side, merged by id: ours
     # rows in their order, each merged with its base and theirs rows by rules 1 and 2 (a row one
     # side deleted is dropped when the other left it as in the base); then the rows only theirs
     # added. Prints it and returns 1, or prints nothing and returns 0.
@@ -183,19 +197,10 @@ res=$(
       for (i = 1; i <= n; i++) print out[i]
       return 1
     }
-    # 1 when some side of the hunk holds a `## ` heading line.
-    function headed(   i) {
-      for (i = 1; i <= na; i++) if (index(A[i], "## ") == 1) return 1
-      for (i = 1; i <= no; i++) if (index(O[i], "## ") == 1) return 1
-      for (i = 1; i <= nb; i++) if (index(B[i], "## ") == 1) return 1
-      return 0
-    }
     function flush(   i, res, ok) {
-      if (headed()) lost = 1
-      else if (gen && !lost) { for (i = 1; i <= na; i++) print A[i]; return }
       if (keyed()) return
       ok = na == no && nb == no
-      for (i = 1; ok && i <= no; i++) { res[i] = line(O[i], A[i], B[i]); if (res[i] == "\001") ok = 0 }
+      for (i = 1; ok && i <= no; i++) { res[i] = one(O[i], A[i], B[i]); if (res[i] == "\001") ok = 0 }
       if (ok) { for (i = 1; i <= no; i++) print res[i]; return }
       left = 1
       print head; for (i = 1; i <= na; i++) print A[i]
@@ -210,13 +215,6 @@ res=$(
     state == 1 { A[++na] = $0; next }
     state == 2 { O[++no] = $0; next }
     state == 3 { B[++nb] = $0; next }
-    # gen: 1 from the heading of the same-level section, 2 from that of the cross-level one, 0
-    # again at the next `## ` heading, as conflicts.rs `sections` finds the range. Any other
-    # heading while gen is 1 (one side renamed the cross-level one) also ends the range, so a
-    # renamed heading never extends the rule over the rest of the file.
-    $0 == "## File conflicts across levels" && gen == 1 { print; gen = 2; next }
-    gen && index($0, "## ") == 1 { gen = 0 }
-    $0 == "## File conflicts at the same level" && gen == 0 { gen = 1 }
     { print }
     END { exit left }
   '

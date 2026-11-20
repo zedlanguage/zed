@@ -1,8 +1,9 @@
-//! `conflicts [--check] [PLAN_DAG.md]` writes the two file-conflict sections of
-//! `docs/plan_dag.md` (this repository's, when no file is named), "File conflicts at the same
-//! level" and "File conflicts across levels", from its table "Items by level". With `--check` it
-//! writes nothing: it compares the sections with what it would write, prints how the listed
-//! pairs and lines differ from the computed ones, and fails if the text differs.
+//! `conflicts [PLAN_DAG.md]` prints two file-conflict lists, "File conflicts at the same level"
+//! and "File conflicts across levels", from the table "Items by level" of `docs/plan_dag.md`
+//! (this repository's, when no file is named). It writes nothing. The lists were once sections
+//! of that file, which this tool rewrote and checked; every rebase of a branch that changed the
+//! table left them stale, so they are printed instead (TOOL-plan-counts-after-rebase, see
+//! `crate::plan`).
 //!
 //! An item touches a path when it is open (the title does not start with `Done:`) and lists the
 //! path or, when the path is a directory (it ends in `/`), a path inside it. Two items share a
@@ -20,15 +21,9 @@
 //! The tool first runs the `plan` check on the table and stops if it fails, since a wrong level
 //! would put an item in the wrong place.
 
-use crate::plan::{check_plan, rows};
+use crate::plan::{CROSS, SAME, check_plan, rows};
 use crate::text::read_text;
 use crate::{Outcome, impl_root, say};
-
-/// The heading of the section of pairs at one level.
-const SAME: &str = "## File conflicts at the same level";
-
-/// The heading of the section of paths across levels; it ends at the next `## ` heading.
-const CROSS: &str = "## File conflicts across levels";
 
 /// The files every step touches (the paragraph "Files every step touches" of the plan), left
 /// out of the comparison since every pair would match.
@@ -48,9 +43,6 @@ struct Item<'a> {
     /// The paths that take part in the comparison, in the order written.
     paths: Vec<&'a str>,
 }
-
-/// Two ids, the smaller first.
-type IdPair<'a> = (&'a str, &'a str);
 
 /// Two items that conflict, as row numbers in the table, the earlier row first.
 type Pair = (u32, u32);
@@ -241,7 +233,7 @@ pub fn compute(text: &str) -> Result<Conflicts<'_>, String> {
     Ok(Conflicts { items, same, cross })
 }
 
-/// The text of both sections, from the `SAME` heading to the blank line before the next one.
+/// The text of both lists, each under its heading, as the tool prints it.
 pub fn render(c: &Conflicts<'_>) -> String {
     let mut out = String::new();
     let w = &mut out;
@@ -251,10 +243,9 @@ pub fn render(c: &Conflicts<'_>) -> String {
         "Each pair below is at one level, shares a file and is not yet done. No path of needs \
          joins two items at one level, since each level is one more than the highest level among \
          the item's needs. Under the rule of 2026-11-02 the two may run in parallel and the merge \
-         resolves the overlap; run them apart where possible. There are {} pairs. This section \
-         and the next are written by `cargo run -q -p zed-tools --bin conflicts` from the items \
-         table above (with `--check` it only compares them with it); edit the table and rerun \
-         it, not the lists. Two items share a file when a path of one equals a path of the other \
+         resolves the overlap; run them apart where possible. There are {} pairs. This list and \
+         the next are printed by `cargo run -q -p zed-tools --bin conflicts` from the items table \
+         of docs/plan_dag.md. Two items share a file when a path of one equals a path of the other \
          or lies inside a directory path of the other, one that ends in `/`. Paths are compared \
          as written, less a trailing ` (new)`; files under `tests/` and the files every step \
          touches are not compared. The two items of a row are in the order of their rows in the \
@@ -285,155 +276,18 @@ pub fn render(c: &Conflicts<'_>) -> String {
     out
 }
 
-/// The `plan` tool, whose `--fix` also rewrites both sections (PLAN-conflict-lists-stale): the
-/// same-level pairs depend on the levels `--fix` sets, so new levels or rows make them stale.
-pub fn plan_run(args: &[String], out: &mut String) -> Outcome {
-    crate::plan::run_with(args, out, refresh)
-}
-
-/// `text` with both sections rewritten, or `None` when it has no such sections or its table
-/// fails the check `compute` needs. O(m log m + D log m + output), as `compute` says.
-fn refresh(text: &str) -> Result<Option<String>, String> {
-    if sections(text).is_err() || !check_plan(text, &mut String::new())? {
-        return Ok(None);
-    }
-    let c = compute(text)?;
-    rewrite(text, &c).map(Some)
-}
-
-/// The byte range of both sections in `text`: from the start of the `SAME` heading to the start
-/// of the next `## ` heading after `CROSS`, or the end of the text.
-fn sections(text: &str) -> Result<std::ops::Range<usize>, String> {
-    let at = |heading: &str, from: usize| {
-        text[from..]
-            .match_indices(heading)
-            .map(|(i, _)| from + i)
-            .find(|&i| {
-                (i == 0 || text.as_bytes()[i - 1] == b'\n')
-                    && text[i + heading.len()..].starts_with('\n')
-            })
-            .ok_or_else(|| format!("no heading `{heading}`"))
-    };
-    let same = at(SAME, 0)?;
-    let cross = at(CROSS, same)?;
-    let end = text[cross + CROSS.len()..]
-        .find("\n## ")
-        .map_or(text.len(), |i| cross + CROSS.len() + i + 1);
-    Ok(same..end)
-}
-
-/// What a written section lists: the pairs of rows `| level | A, B | ... |`, as sorted pairs of
-/// ids, and the lines that start with `- `, sorted.
-fn listed(section: &str) -> (Vec<IdPair<'_>>, Vec<&str>) {
-    let (mut same, mut cross) = (Vec::new(), Vec::new());
-    for line in section.lines() {
-        if let Some(rest) = line.strip_prefix("| ") {
-            let cells: Vec<&str> = rest.split(" | ").collect();
-            if cells.len() >= 2
-                && !cells[0].is_empty()
-                && cells[0].bytes().all(|b| b.is_ascii_digit())
-                && let Some((a, b)) = cells[1].split_once(", ")
-            {
-                same.push(ordered((a, b)));
-            }
-        } else if line.starts_with("- ") {
-            cross.push(line);
-        }
-    }
-    zed_collections::sorted::sort_dedup(&mut same);
-    zed_collections::sorted::sort_dedup(&mut cross);
-    (same, cross)
-}
-
-/// How the `listed` items differ from the `computed` ones, both sorted: how many are listed but
-/// not computed, and how many computed but not listed. One merge of two sorted lists.
-fn differ<T: Ord>(listed: &[T], computed: &[T]) -> (usize, usize) {
-    let (mut i, mut j, mut extra, mut missing) = (0, 0, 0, 0);
-    while i < listed.len() || j < computed.len() {
-        match (listed.get(i), computed.get(j)) {
-            (Some(l), Some(c)) if l == c => (i, j) = (i + 1, j + 1),
-            (Some(l), Some(c)) if l < c => (i, extra) = (i + 1, extra + 1),
-            (Some(_), None) => (i, extra) = (i + 1, extra + 1),
-            _ => (j, missing) = (j + 1, missing + 1),
-        }
-    }
-    (extra, missing)
-}
-
-/// Compares the sections of `text` with what the tool writes, saying in `out` how they differ;
-/// true when they are the same text.
-pub fn check(text: &str, c: &Conflicts<'_>, out: &mut String) -> Result<bool, String> {
-    let range = sections(text)?;
-    let section = &text[range];
-    let written = render(c);
-    if section == written {
-        say!(
-            out,
-            "the conflict lists are current: {} pairs at one level, {} lines across levels",
-            c.same.len(),
-            c.cross.len()
-        );
-        return Ok(true);
-    }
-    let mut same: Vec<(&str, &str)> = c.same.iter().map(|(p, _)| ordered(c.ids(*p))).collect();
-    same.sort_unstable();
-    let mut lines = c.cross_lines();
-    lines.sort_unstable();
-    let cross: Vec<&str> = lines.iter().map(String::as_str).collect();
-    let (listed_same, listed_cross) = listed(section);
-    let (extra, missing) = differ(&listed_same, &same);
-    let mut agree = extra == 0 && missing == 0;
-    say!(
-        out,
-        "pairs at one level: the items table gives {}; the list has {}, of which {extra} are no \
-         longer such a pair, and {missing} are missing",
-        same.len(),
-        listed_same.len()
-    );
-    let (extra, missing) = differ(&listed_cross, &cross);
-    agree &= extra == 0 && missing == 0;
-    say!(
-        out,
-        "lines across levels: the items table gives {}; the list has {}, of which {extra} are \
-         not as the table gives them, and {missing} are missing",
-        cross.len(),
-        listed_cross.len()
-    );
-    if agree {
-        say!(
-            out,
-            "the pairs and lines agree, but the text of the sections differs from what the tool \
-             writes (a count, the order of the rows or lines, or the shared paths)"
-        );
-    }
-    say!(
-        out,
-        "the conflict lists are out of date; run `cargo run -q -p zed-tools --bin conflicts` to \
-         rewrite them"
-    );
-    Ok(false)
-}
-
-/// The plan `text` with both sections rewritten.
-pub fn rewrite(text: &str, c: &Conflicts<'_>) -> Result<String, String> {
-    let range = sections(text)?;
-    let mut out = String::with_capacity(text.len());
-    out.push_str(&text[..range.start]);
-    out.push_str(&render(c));
-    out.push_str(&text[range.end..]);
-    Ok(out)
-}
-
 /// Runs the tool.
 pub fn run(args: &[String], out: &mut String) -> Outcome {
-    let usage = "usage: conflicts [--check] [PLAN_DAG.md]";
-    let checking = args.first().is_some_and(|a| a == "--check");
-    let rest = &args[usize::from(checking)..];
-    if rest.len() > 1 || rest.first().is_some_and(|a| a.starts_with("--")) {
-        return Err(usage.into());
+    if args.len() > 1 || args.first().is_some_and(|a| a.starts_with("--")) {
+        return Err(
+            "usage: conflicts [PLAN_DAG.md]\n(the lists are no longer kept in \
+                    docs/plan_dag.md, so there is nothing to check or rewrite: the tool prints \
+                    them)"
+                .into(),
+        );
     }
     let default;
-    let path = match rest.first() {
+    let path = match args.first() {
         Some(p) => p.as_str(),
         None => {
             default = format!("{}/docs/plan_dag.md", impl_root());
@@ -444,24 +298,13 @@ pub fn run(args: &[String], out: &mut String) -> Outcome {
     let mut problems = String::new();
     if !check_plan(&text, &mut problems)? {
         return Err(format!(
-            "{path}: the items table does not pass the plan check, so its levels cannot place \
-             the items; fix these first:\n{problems}"
+            "{path}: the file does not pass the plan check, whose levels place the items; fix \
+             these first (`plan --fix` sets the levels and takes out the count sentence and the old \
+             sections):\n{problems}"
         ));
     }
     let c = compute(&text).map_err(|e| format!("{path}: {e}"))?;
-    if checking {
-        return check(&text, &c, out);
-    }
-    let new = rewrite(&text, &c)?;
-    if new != text {
-        std::fs::write(path, &new).map_err(|e| format!("{path}: {e}"))?;
-    }
-    say!(
-        out,
-        "{} pairs at one level, {} lines across levels",
-        c.same.len(),
-        c.cross.len()
-    );
+    out.push_str(&render(&c));
     Ok(true)
 }
 
@@ -478,9 +321,4 @@ fn add<'a>(
     }
     let (a, b) = if x.1 < y.1 { (x, y) } else { (y, x) };
     matches.push(((a.1, b.1), a.2, b.2, shared));
-}
-
-/// A pair of ids, the smaller first.
-fn ordered<'a>((a, b): (&'a str, &'a str)) -> (&'a str, &'a str) {
-    if a <= b { (a, b) } else { (b, a) }
 }
