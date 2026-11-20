@@ -5,8 +5,8 @@
 use zed_tests::scaling;
 
 use super::super::bubble::{
-    body_of_bindings, body_pushing_a_family, body_pushing_parameters, chain_of_helpers,
-    helpers_giving_their_atom, helpers_pushing_their_parameter,
+    body_of_bindings, body_pushing_a_family, body_pushing_a_nested_family, body_pushing_parameters,
+    chain_of_helpers, helpers_giving_their_atom, helpers_pushing_their_parameter,
 };
 use super::super::scaling::resolved;
 
@@ -63,6 +63,18 @@ fn a_body_pushing_a_family_of_many_untyped_parameters_scales() {
             assert!(info.errors.is_empty(), "{:?}", info.errors);
         },
     );
+}
+
+/// Row PROOF-push-vars-other-var: the push of a family nested n deep reads its entries at
+/// every depth (`push_entries` in zedc-check), each level's signature once by its visited
+/// set, so the push costs O(n) beside the n bindings: linear in n.
+#[test]
+fn a_push_of_a_family_nested_n_deep_scales() {
+    let units = resolved(200, body_pushing_a_nested_family);
+    scaling::check("a push of a family nested n deep", 200, |n| {
+        let info = units[&n].check();
+        assert!(info.errors.is_empty(), "{:?}", info.errors);
+    });
 }
 
 #[test]

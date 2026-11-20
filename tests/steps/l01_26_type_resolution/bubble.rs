@@ -653,6 +653,52 @@ fn a_pushed_family_whose_entry_is_an_untyped_parameter_is_checked_at_each_call()
 }
 
 #[test]
+fn a_pushed_family_is_checked_at_every_depth_of_nesting() {
+    // A `Lines` port writes a family one line per entry at any depth of nesting (DESIGN.md
+    // sec:ports), so each entry at each depth must be a string or a family (row
+    // PROOF-push-vars-other-var, `push_entries` in zedc-check). Before, only the first level
+    // was read: a function in a family was taken, and the run stopped with zedc's message for
+    // a bug of its own ("expected data, found a function"); `[[x]]` was not checked at the
+    // call.
+    let f = "f(positional x: int) = x + 1;\n";
+    let push = |value: &str| format!("{f}main(m: MainArgs) {{\n  m.stdout <- {value};\n}}\n");
+    for (value, ty) in [
+        ("[f]", "0 -> int -> int"),
+        ("[[f]]", "0 -> 0 -> int -> int"),
+        ("{\"k\" -> f}", "\"k\" -> int -> int"),
+    ] {
+        assert_eq!(
+            type_errors(&push(value)),
+            [format!(
+                "A `Lines` port takes a `String` or a family of strings: \
+                 `m.stdout <- {value} : {ty}`. [{value}]"
+            )],
+            "{value}"
+        );
+    }
+    prints(
+        "bubble_push_nested",
+        &push("[[\"a\"], [\"b\", \"c\"]]"),
+        "a\nb\nc\n",
+    );
+    // An untyped parameter two levels down waits for its class as one level down does.
+    let src = |arg: &str| {
+        format!(
+            "h(x, out: Lines) {{ out <- [[x]]; }}\n\
+             main(m: MainArgs) {{\n  h(x: {arg}, out: m.stdout);\n}}\n"
+        )
+    };
+    assert_eq!(
+        type_errors(&src("5")),
+        [
+            "A `Lines` port takes a `String` or a family of strings: `out <- [[x]] : 0 -> 0 -> \
+          5`. [[[x]]]"
+        ],
+    );
+    prints("bubble_push_nested_entry_string", &src("\"a\""), "a\n");
+}
+
+#[test]
 fn a_push_that_waits_on_a_class_typed_at_the_end_waits_on_the_rest() {
     // The push waits on the first class of its value, `x`'s. At the end of `h`, `x.upper`
     // has made `x` a `String`, so the push is checked then with `x` a `String`, and waits
@@ -812,6 +858,22 @@ pub(super) fn body_pushing_a_family(n: usize) -> String {
     format!(
         "p({params}out: Lines) {{\n  out <- [{entries}x0.upper];\n}}\n\
          main(m: MainArgs) {{\n  p({args}out: m.stdout);\n}}\n"
+    )
+}
+
+/// One helper pushing a family nested `n` deep around its untyped parameter, each level
+/// holding the one below twice (`a{i} = [a{i-1}, a{i-1}]`), called once: the push waits on
+/// `x`'s class through every level (`push_entries` in zedc-check, row
+/// PROOF-push-vars-other-var; the benchmark
+/// `bench::bubble::a_push_of_a_family_nested_n_deep_scales`).
+pub(super) fn body_pushing_a_nested_family(n: usize) -> String {
+    let levels: String = (1..n)
+        .map(|i| format!("  a{i} = [a{}, a{}];\n", i - 1, i - 1))
+        .collect();
+    format!(
+        "h(x, out: Lines) {{\n  a0 = [x];\n{levels}  out <- a{};\n}}\n\
+         main(m: MainArgs) {{\n  h(x: \"a\", out: m.stdout);\n}}\n",
+        n - 1
     )
 }
 

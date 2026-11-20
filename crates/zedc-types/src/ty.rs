@@ -21064,8 +21064,61 @@ impl Sig {
     /// A name a run gives is not taken out of [`Sig::vars_order`]: an outer variable spelled
     /// as an internal result of a function it holds is listed once there and once in the
     /// mark, where the flat signature's order lists the spelling once (landing round 6,
-    /// Claude Q2.3). The one reader is `finished_with` in zedc-check; 15 programs built to make
-    /// that clash gave D = E on every field of the check (measured, not proved).
+    /// Claude Q2.3). No reader sees that difference (PROOF of row
+    /// FAIL-flat-vars-order-merge-by-name, 2026-11-20; before it, 15 programs built to make
+    /// the clash gave D = E on every field of the check, measured, not proved):
+    ///
+    /// 1. This signature's order lists no internal result: a forward's internal results are
+    ///    its marks' runs (`sig_walk` gives a run as a `VarWalk::Mark`, which `walk_vars`
+    ///    puts among the marks, never in the order), so here each name is one variable.
+    /// 2. So D and its flat form E differ in this order only where D holds a clash: a
+    ///    variable outside the runs spelled as an internal result of a forward D holds. Each
+    ///    decode (tagged or not: `Ck::r10_decode_fwd_needs`, [`Sig::decoded_needs_and_own`],
+    ///    [`Sig::flat_for`], [`Sig::add_arrows_of`]) of a signature with no clash merges
+    ///    nothing, and leaves no forward, so no marks, in what it decodes.
+    /// 3. No signature of the check holds a clash (the invariant). It is made true where names
+    ///    are given, and kept by every walk that changes names:
+    ///    - Where `finished_with` gives names, an outer name and a run are separate items
+    ///      (`NameOrder::add`: a name is keyed by its printed form, a run by its mark), and
+    ///      `rename_apart` gives each item a name no earlier item has. Its run renames
+    ///      (`RunRenames`) are made nowhere else (zedc-check `mod.rs`, `finished_with`).
+    ///      `r10_name_compact_sig_in_generalize` (zedc-check) draws the names of a
+    ///      signature's classes and the spans of its runs from one counter (`n_idx`), which
+    ///      skips the names the signature already holds (`facts.names`) and moves past
+    ///      each run.
+    ///    - A walk of `Replacer` that would make a clash decodes the forward first
+    ///      (`Replacer::must_decode_fwd`): a binding of an internal result (`binds_internal`)
+    ///      and a bound type, or a new name, that holds an internal result's spelling
+    ///      (`targets_internal`, in every mode). [`Sig::add_arrows_of`] decodes both sides.
+    ///    The decoded form has no runs, so it holds no clash.
+    /// 4. Where the check does tag (`r10_flat_ty`, `r10_flat_held`, each caller but
+    ///    `Ck::shown`), each internal result is written as its name, a NUL and the forward's
+    ///    address, and no other variable holds a NUL: a class is `$k`, a made-up name is
+    ///    `var_name(n)`, and a name the program writes is `[A-Za-z_][A-Za-z0-9_]*` with an
+    ///    optional `'` (DESIGN sec:lexical). So those flat forms merge nothing even where 3
+    ///    did not hold. The readers of this order and these marks are `sig_vars` (called by
+    ///    `r10_promote_one`, `finished_with` and `generalize`), `finished_with`, and `vars_of`
+    ///    through the kept order of a held signature; the printer counts a variable by its
+    ///    scope (`VarSlot`), and [`Sig::digest`] (`r10_hash`) reads neither this order, these
+    ///    marks nor the kept order (`facts.4`).
+    ///
+    /// The test that D and E agree under every binding (zedc-check `landing6_battery_held`)
+    /// builds D with a clash by hand (`Outside -> W`), which no signature of the check holds
+    /// (3), and E with an untagged decode; so its `cmp_sig` allows the difference by name
+    /// (`Ctx::under`), with this proof cited.
+    ///
+    /// Not proved, and not a reading of this order (open sub-cases, found under the same row,
+    /// row PROOF-flat-vars-instantiated-clash):
+    /// (a) where a walk decodes for `targets_internal` (step 3), the flat form then holds one
+    /// name for a caller's variable and the callee's internal result, as E does: whether a
+    /// caller's type can hold the spelling of a callee's internal result at
+    /// `Ck::instantiated` (zedc-check `walk.rs`) is not settled. The probes of the row
+    /// (written `T`, `U` beside held `map` chains and lambdas holding a forward, 2026-11-20)
+    /// gave the right verdicts and outputs. (b) A note printed after a function `G` ended,
+    /// about a lambda inside `G` that holds a compact forward and a class of `G`, and that
+    /// `G`'s signature does not hold, could print `G`'s name for that class with the spelling
+    /// of one of the lambda's internal results, since `G` names its variables from its own
+    /// facts.
     ///
     /// A mark names the signature that holds its forward through [`RunMark::holder`], given
     /// the `Arc` that holds this one, so the marks stay right after this signature moves.

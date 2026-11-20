@@ -9,7 +9,10 @@
 //! - A function that holds a compact signature beside an outer variable named as one of its
 //!   internal results (`Outside -> W`) lists the name twice in D (in a mark and in
 //!   `vars_order`) and once in E, whose `vars_order` merges the two variables by name
-//!   (Claude Q2.3; `Sig::vars_marks` says so). A variable bound to the compact signature
+//!   (Claude Q2.3). The allowance is kept, with its reason proved: D here is built by hand
+//!   with that clash, which no signature of the check holds, and E is an untagged decode, so
+//!   no reader of the check sees the merge (the proof at `Sig::vars_marks` in zedc-types,
+//!   row FAIL-flat-vars-order-merge-by-name). A variable bound to the compact signature
 //!   itself lists its internal names twice in both. Under such a binding (`Ctx::under`) the
 //!   order is compared with each internal name once, on both sides. Under every other, a
 //!   signature that holds two different compact signatures with the same internal results
@@ -143,7 +146,8 @@ fn cmp_sig(label: &str, c: &Sig, f: &Sig, cx: &Ctx, out: &mut Found) {
             // the original, or the copies `fresh` makes of one function held twice, as `h{i}`
             // of "held shared" holds `h{i-1}`) lists each such name once per held signature in
             // D, each from its own mark, and once in E, whose `vars_order` merges the variables
-            // by name: the difference of Q2.3 again. So each internal name D lists more than
+            // by name: the difference of Q2.3 again, which no reader sees (proof at
+            // `Sig::vars_marks`). So each internal name D lists more than
             // once must come from that many marks of different signatures, and E must list it
             // at most once; the orders are then compared with each internal name once.
             // In an `Arc`, which a mark's holder is read against (`RunMark::holder`).

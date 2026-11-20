@@ -16931,7 +16931,11 @@ impl<'t, 'a> Ck<'t, 'a> {
                 self.need(r, kind, false, span);
                 return;
             }
-            PushVars::RunTime => return,
+            PushVars::Unfollowed => {
+                let what = "a push of a value whose type the checker cannot follow here";
+                self.error(span, zedc_base::rejection::not_yet(what));
+                return;
+            }
         };
         let t = &checked;
         let ok = push_takes(t, &KType::empty());
@@ -17043,11 +17047,22 @@ impl<'t, 'a> Ck<'t, 'a> {
     /// (`is_class`: named, closed and out-of-range ones included) and that the call does not
     /// bind by the unknown, and the call binds the rest to the caller's types. At a push in
     /// a body none was found (the 1,348 test pieces of the zedc_check, l01_19, l01_29, cases
-    /// and catalog groups, with a panic in this arm, 2026-11-20, and the probes of the row),
-    /// but that is not proved; so the verdict relies on no claim about one: it is read as
-    /// no value, the push is refused if the rest of the value fails whatever it becomes
+    /// and catalog groups, with a panic in this arm, 2026-11-20, and the probes of the rows
+    /// PORT-untyped-arg-gaps and PROOF-push-vars-other-var: written type variables
+    /// `h(x: T, y: T, out: Lines)`, families of them, `map` chains, lambdas and generic
+    /// helpers, each a class by the push). Partly argued, not proved for every expression: a
+    /// root is named only when its own level ends (`generalize`), after which the body
+    /// around sees only its signature, which a call instantiates with new classes; and a
+    /// range is closed only for a forward kept in the signature of the function that ends,
+    /// whose watched roots are all of that level (`r10_after_resolve_and_detach`, the `f8`
+    /// test forces the rest). The open sub-case is an expression of the body whose type
+    /// holds such a variable by another route (row PROOF-push-vars-other-route). So the verdict relies on no claim about one
+    /// (standing rule: refuse what is not proved): it is read as no value; the push is
+    /// refused with its usual message if the rest of the value fails whatever it becomes
     /// (adding values to a type never makes [`push_takes`] hold where it failed), and else
-    /// is left to its run-time check, which stops a value that is not text.
+    /// refused as a form this version does not check ([`PushVars::Unfollowed`]). Before
+    /// (row PROOF-push-vars-other-var), the else case was left to the run, whose stop for a
+    /// value that is not text is zedc's message for a bug of its own.
     ///
     /// Complexity tradeoff: one find per variable of `t`, O(log N) in a union of N classes,
     /// and two rebuilds of `t`, O(|t|); the push waits on one open class at a time, so a
@@ -17055,10 +17070,10 @@ impl<'t, 'a> Ck<'t, 'a> {
     /// on each open class, records v needs, each checking the whole value at every call,
     /// O(v·|t|) a call (COMPLEXITY.md C72).
     fn push_vars(&self, t: &Ty, io: &KType) -> PushVars {
-        let entries = (t.fns.iter())
-            .filter(|s| s.data)
-            .flat_map(|s| s.arrows.iter())
-            .flat_map(|a| a.result.vars.iter());
+        // The entries at every depth, as `push_takes` reads them: `[[x]]` waits on `x` as
+        // `[x]` does.
+        let entries = push_entries(t);
+        let entries = entries.iter().flat_map(|e| e.vars.iter());
         let vars: BTreeSet<&Arc<str>> = t.vars.iter().chain(entries).collect();
         if vars.is_empty() {
             return PushVars::Known(t.clone());
@@ -17109,7 +17124,7 @@ impl<'t, 'a> Ck<'t, 'a> {
         match open {
             _ if !push_takes(&checked, io) => PushVars::Fails { shown, checked },
             Some(r) => PushVars::Later(r, shown),
-            None => PushVars::RunTime,
+            None => PushVars::Unfollowed,
         }
     }
 
@@ -29545,8 +29560,8 @@ enum PushVars {
     /// already replaced.
     Later(usize, Ty),
     /// The value holds a variable of no class (case (a2) at [`Ck::push_vars`]) and no open
-    /// class, and may be pushed: left to the run-time check of the push.
-    RunTime,
+    /// class, and the rest may be pushed: refused, since nothing says what the variable is.
+    Unfollowed,
 }
 
 /// Whether the values of `k` are strings.
@@ -29559,19 +29574,49 @@ fn push_plain(t: &Ty) -> bool {
     t.tuples.is_empty() && t.vars.is_empty()
 }
 
-/// Whether a value of `t` is strings, or a family of strings (each entry a string, or the
-/// `#notFound` of a key the family lacks, which is not pushed), once each part's set has lost
-/// `lose` ([`Ck::pushed`]).
+/// The types of the entries of the families a value of `t` may be, at every depth of nesting:
+/// a `Lines` port writes a family one line per entry "at any depth of nesting" (DESIGN.md
+/// sec:ports), so `[["a"]]` writes `a`, and each entry, at each depth, must be a string or a
+/// family. Before (found under row PROOF-push-vars-other-var), only the first level was read,
+/// and an entry's own functions were not looked at: `m.stdout <- [f]` for a function `f` was
+/// taken, and its run stopped with zedc's message for a bug of its own ("expected data, found
+/// a function"); a variable two levels down, `[[x]]`, was never checked.
+// Complexity tradeoff: the naive walk enters an entry's type at each place it stands, which
+// for a type whose families share their entries' signatures (a DAG) is exponential in the
+// depth. Used: each family's signature entered once, kept by address in a visited set
+// (standing rule P207; the shared key `ByAddress` of zed-collections), O(size of the DAG) in
+// all (COMPLEXITY.md, row PROOF-push-vars-other-var; benchmark
+// `bench::bubble::a_push_of_a_family_nested_n_deep_scales` in tests/steps/l01_26_type_resolution).
+fn push_entries(t: &Ty) -> Vec<&Ty> {
+    let mut out = Vec::new();
+    let mut seen: HashSet<ByAddress<Sig>> = HashSet::new();
+    let mut stack = vec![t];
+    while let Some(u) = stack.pop() {
+        for s in u.fns.iter().filter(|s| s.data) {
+            if seen.insert(ByAddress::new(s)) {
+                for a in &s.arrows {
+                    out.push(&a.result);
+                    stack.push(&a.result);
+                }
+            }
+        }
+    }
+    out
+}
+
+/// Whether a value of `t` is strings, or a family of strings at any depth of nesting
+/// ([`push_entries`]: each entry a string, a family of the same kind, or the `#notFound` of a
+/// key the family lacks, which is not pushed), once each part's set has lost `lose`
+/// ([`Ck::pushed`]). Each function at each depth must be a family (`data`).
 fn push_takes(t: &Ty, lose: &KType) -> bool {
     let not_found = KType::atom("notFound");
+    let families = |u: &Ty| u.fns.iter().all(|s| s.data);
     push_strings(&(&t.set - lose))
         && push_plain(t)
-        && t.fns.iter().all(|s| {
-            s.data
-                && s.arrows.iter().all(|a| {
-                    push_plain(&a.result) && push_strings(&(&(&a.result.set - &not_found) - lose))
-                })
-        })
+        && families(t)
+        && push_entries(t)
+            .into_iter()
+            .all(|e| push_plain(e) && families(e) && push_strings(&(&(&e.set - &not_found) - lose)))
 }
 
 #[cfg(test)]
