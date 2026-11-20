@@ -92,22 +92,17 @@ fn a_long_else_chain_builds_and_formats_in_linear_time() {
 /// and `lr4_assoc::an_else_chain_is_built_and_written_back_at_small_lengths`.
 #[test]
 fn twenty_five_thousand_else_tails_and_joins_on_a_2_mib_stack() {
-    std::thread::Builder::new()
-        .stack_size(2 << 20)
-        .spawn(|| {
-            const DEEP: usize = 25_000;
-            let text = (ELSE_CHAIN.input)(DEEP);
-            let tokens = lex(&text).unwrap();
-            let tree = parse(&text, &tokens, "Expr", TOP).unwrap();
-            let e = build(&text, &tokens, &tree).unwrap();
-            assert!(e.to_string().starts_with(&"(else ".repeat(DEEP)));
-            let unit = format!("f(c) = {text};\n");
-            assert_eq!(format_source(unit.as_bytes()).unwrap(), unit);
-            let joins = (AND_JOIN_CHAIN.input)(DEEP);
-            let tokens = lex(&joins).unwrap();
-            parse(&joins, &tokens, "Expr", TOP).unwrap();
-        })
-        .unwrap()
-        .join()
-        .unwrap();
+    zed_tests::scaling::on_a_stack(2 << 20, || {
+        const DEEP: usize = 25_000;
+        let text = (ELSE_CHAIN.input)(DEEP);
+        let tokens = lex(&text).unwrap();
+        let tree = parse(&text, &tokens, "Expr", TOP).unwrap();
+        let e = build(&text, &tokens, &tree).unwrap();
+        assert!(e.to_string().starts_with(&"(else ".repeat(DEEP)));
+        let unit = format!("f(c) = {text};\n");
+        assert_eq!(format_source(unit.as_bytes()).unwrap(), unit);
+        let joins = (AND_JOIN_CHAIN.input)(DEEP);
+        let tokens = lex(&joins).unwrap();
+        parse(&joins, &tokens, "Expr", TOP).unwrap();
+    });
 }

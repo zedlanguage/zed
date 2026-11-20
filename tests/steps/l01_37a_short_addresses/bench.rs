@@ -86,9 +86,5 @@ fn rows_and_morphism_types_that_tie_in_digest_are_found_and_dropped_in_log_time(
 fn types_that_tie_in_digest_level_after_level_are_ordered_on_a_small_stack() {
     const DEPTH: usize = 500;
     const STACK: usize = 256 << 10;
-    std::thread::scope(|scope| {
-        let thread = std::thread::Builder::new().stack_size(STACK);
-        let run = thread.spawn_scoped(scope, || collide::chains_over_two_bases_are_ordered(DEPTH));
-        run.unwrap().join().unwrap();
-    });
+    zed_tests::scaling::on_a_stack(STACK, || collide::chains_over_two_bases_are_ordered(DEPTH));
 }

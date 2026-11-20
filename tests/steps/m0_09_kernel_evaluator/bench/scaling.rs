@@ -12,8 +12,7 @@ use crate::scaling::{accumulate, caterpillar, keeps_all, lets, reads, run, wide}
 
 /// `f` on a thread with a stack of `bytes`.
 fn on_stack(bytes: usize, f: impl FnOnce() + Send + 'static) {
-    let t = std::thread::Builder::new().stack_size(bytes).spawn(f);
-    t.unwrap().join().unwrap();
+    scaling::on_a_stack(bytes, f);
 }
 
 #[test]

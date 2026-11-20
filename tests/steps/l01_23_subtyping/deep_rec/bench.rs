@@ -35,7 +35,7 @@ fn scales(shape: &str, n: usize, measure: Measure) {
             };
             (body, copy)
         };
-        let (small, large) = (one(n), one(8 * n));
+        let (small, large) = (one(n), one(scaling::FACTOR * n));
         let at = |k: usize| if k == n { &small } else { &large };
         match measure {
             Measure::Copying => scaling::check(&format!("copying {shape}"), n, |k| {

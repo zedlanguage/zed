@@ -47,28 +47,18 @@ fn multiples(cs: &[i64], n: i64, pad: usize) -> Formula {
 /// (`project_each_exact`) and of five by the solver alone (`project_each_solver`), with the
 /// cover's units and questions.
 fn timed(f: &Formula) -> (u128, u128, u64, u64) {
-    use zed_tests::scaling::cpu_time;
+    use zed_tests::scaling::least_cpu_ns;
     use zedc::store::presburger::exact::{EXACT_QUESTIONS, EXACT_WORK};
     use zedc::store::presburger::project_each_solver;
-    let least = |run: &dyn Fn()| {
-        (0..5)
-            .map(|_| {
-                let t = cpu_time();
-                run();
-                (cpu_time() - t).as_nanos()
-            })
-            .min()
-            .expect("five runs")
-    };
     // The counters of the last run, the same in each: the cover's work is a count.
-    let with = least(&|| {
+    let (with, ()) = least_cpu_ns(5, || {
         EXACT_WORK.set(0);
         EXACT_QUESTIONS.set(0);
         let r = std::hint::black_box(project_each_exact(f, &[a("x")]));
         assert!(matches!(&r, Ok((e, _)) if e[0].is_ok()), "{r:?}");
     });
     let (units, questions) = (EXACT_WORK.get(), EXACT_QUESTIONS.get());
-    let alone = least(&|| {
+    let (alone, ()) = least_cpu_ns(5, || {
         std::hint::black_box(project_each_solver(f, &[a("x")])).ok();
     });
     (with, alone, units, questions)
@@ -76,8 +66,8 @@ fn timed(f: &Formula) -> (u128, u128, u64, u64) {
 
 /// The cover's time per unit, each case at some 10^5 units or more so that the fixed costs
 /// do not count. The worst, times `EXACT_LIMIT`, is the most time a cover stopped at the limit
-/// takes; it is checked against twice A99's 250 ms, the factor for the load of the test
-/// machine. Measured: see `EXACT_LIMIT`.
+/// takes; it is checked against `scaling::AT_THE_LIMIT_MS`, twice A99's 250 ms for the load of
+/// the test machine (`scaling::per_unit_bound`). Measured: see `EXACT_LIMIT`.
 ///
 /// The time of a cover is the thread CPU time a projection takes with the cover less the time
 /// the solver alone takes on the same formula, since the limit bounds what the cover adds: the
@@ -110,9 +100,8 @@ fn the_cover_takes_a_bounded_time_per_unit_of_work() {
     use zedc::store::presburger::exact::DIRECT_OFF;
     // The cells and questions are what is timed, so `direct` is not tried first.
     DIRECT_OFF.set(true);
-    let most = most_at_the_limit("exact cover", &per_unit_cases(1), true);
+    most_at_the_limit("exact cover", &per_unit_cases(1), true);
     DIRECT_OFF.set(false);
-    assert!(most <= 500.0, "{most:.0} ms at the limit");
 }
 
 /// The cover's time per unit on the path the checker takes, `direct` tried first
@@ -131,8 +120,7 @@ fn the_cover_takes_a_bounded_time_per_unit_of_work() {
 fn the_default_path_takes_a_bounded_time_per_unit_of_work() {
     use zedc::store::presburger::exact::DIRECT_OFF;
     assert!(!DIRECT_OFF.get(), "the default path has `direct` on");
-    let most = most_at_the_limit("default path", &per_unit_cases(2), false);
-    assert!(most <= 500.0, "{most:.0} ms at the limit");
+    most_at_the_limit("default path", &per_unit_cases(2), false);
 }
 
 /// The cases of the per-unit benchmarks, with `n` times `scale`: the multiples of a few
@@ -162,31 +150,23 @@ fn per_unit_cases(scale: i64) -> Vec<(String, Formula)> {
     .collect()
 }
 
-/// Times each case (`timed`) and returns the most milliseconds a cover stopped at
-/// `EXACT_LIMIT` takes at the worst time per unit measured. Each case must count 10^5 units or
-/// more, and with `questions` ask the solver once or more.
-fn most_at_the_limit(what: &str, cases: &[(String, Formula)], questions: bool) -> f64 {
+/// Times each case (`timed`) and holds the cover's time per unit at `EXACT_LIMIT`
+/// (`scaling::per_unit_bound`): each case must count 10^5 units or more, and with `questions`
+/// ask the solver once or more.
+fn most_at_the_limit(what: &str, cases: &[(String, Formula)], questions: bool) {
     use zedc::store::presburger::exact::EXACT_LIMIT;
-    let mut worst = 0f64;
+    let mut measured = Vec::new();
     for (name, f) in cases {
         let (with, alone, units, asked) = timed(f);
         assert!(
-            units >= 100_000 && (asked >= 1 || !questions),
-            "{what}: {name}: {units} units, {asked} questions; the case must reach the cover{} \
-             and count 10^5 units or more, or its time is the fixed costs",
-            if questions { " and ask a question" } else { "" }
+            asked >= 1 || !questions,
+            "{what}: {name}: {asked} questions; the case must reach the cover and ask a question"
         );
         let ns = with.saturating_sub(alone);
-        let per = ns as f64 / units as f64;
-        worst = worst.max(per);
-        eprintln!(
-            "{what}: {name}: {units} units, {asked} questions in {ns} ns of CPU time ({with} ns \
-             with the cover, {alone} ns alone), {per:.1} ns per unit"
-        );
+        eprintln!("{what}: {name}: {asked} questions, {with} ns with the cover, {alone} ns alone");
+        measured.push((name.clone(), ns, units));
     }
-    let most = worst * EXACT_LIMIT as f64 / 1e6;
-    eprintln!("{what}: worst {worst:.1} ns per unit; the limit takes at most {most:.0} ms");
-    most
+    zed_tests::scaling::per_unit_bound(what, &measured, 100_000, EXACT_LIMIT);
 }
 
 /// The cover's work at sizes n and 8n (PRES-pugh-exact-projection-research): the multiples of

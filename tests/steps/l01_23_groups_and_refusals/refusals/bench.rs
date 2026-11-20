@@ -23,7 +23,10 @@ fn case_scales(what: &str, tag: &str, case: &str, n: usize, want: Verdict) {
                 .map(|i| rfx_case(case, k, &format!("_{tag}_{k}_{i}")))
                 .collect()
         };
-        let (small, large) = (copies(n, s_runs), copies(8 * n, l_runs));
+        let (small, large) = (
+            copies(n, s_runs),
+            copies(zed_tests::scaling::FACTOR * n, l_runs),
+        );
         let (si, li) = (AtomicUsize::new(0), AtomicUsize::new(0));
         scaling::check(&format!("{what} {case}"), n, |k| {
             Type::forget_emptiness();
@@ -940,7 +943,10 @@ fn escape_cells_scale(case: &str, n: usize) {
                 .map(|i| rfx_case(case, k, &format!("_esc_{case}_{k}_{i}")))
                 .collect()
         };
-        let (small, large) = (copies(n, s_runs), copies(8 * n, l_runs));
+        let (small, large) = (
+            copies(n, s_runs),
+            copies(zed_tests::scaling::FACTOR * n, l_runs),
+        );
         let (si, li) = (AtomicUsize::new(0), AtomicUsize::new(0));
         scaling::check(&format!("escape cells of {case}"), n, |k| {
             let t = if k == n {
@@ -1468,24 +1474,19 @@ fn a_chain_of_forks_nested_before_an_empty_component_is_empty_in_its_size() {
 /// type in them until thread exit. No recursive group or escape solver is needed.
 #[test]
 fn r8_deep_type_cached_before_queue_initialization_drops_on_small_stack() {
-    std::thread::Builder::new()
-        .stack_size(2 << 20)
-        .spawn(|| {
-            Type::forget_emptiness();
-            let mut t = Type::int();
-            for _ in 0..12000 {
-                t = Type::tuple(vec![t]);
-            }
-            assert_eq!(t.verdict(), Verdict::Inhabited);
-            let body = (0..12000).fold(int(), |tail, _| Expr::Tuple(vec![tail]));
-            let group = Group::new(vec![def("R8DeepCachedGroup", body)]).unwrap();
-            let member = group.instance(vec![]).remove(0);
-            assert_eq!(member.verdict(), Verdict::Inhabited);
-            eprintln!("r8 deep cached verdict complete");
-        })
-        .unwrap()
-        .join()
-        .unwrap();
+    zed_tests::scaling::on_a_stack(2 << 20, || {
+        Type::forget_emptiness();
+        let mut t = Type::int();
+        for _ in 0..12000 {
+            t = Type::tuple(vec![t]);
+        }
+        assert_eq!(t.verdict(), Verdict::Inhabited);
+        let body = (0..12000).fold(int(), |tail, _| Expr::Tuple(vec![tail]));
+        let group = Group::new(vec![def("R8DeepCachedGroup", body)]).unwrap();
+        let member = group.instance(vec![]).remove(0);
+        assert_eq!(member.verdict(), Verdict::Inhabited);
+        eprintln!("r8 deep cached verdict complete");
+    });
 }
 
 #[test]
@@ -1565,7 +1566,10 @@ fn two_clauses_scale(kind: u8, n: usize, want: Verdict) {
                 })
                 .collect()
         };
-        let (small, large) = (copies(n, s_runs), copies(8 * n, l_runs));
+        let (small, large) = (
+            copies(n, s_runs),
+            copies(zed_tests::scaling::FACTOR * n, l_runs),
+        );
         let (si, li) = (AtomicUsize::new(0), AtomicUsize::new(0));
         scaling::check(&format!("r6two kind {kind}, {k} variables"), n, |c| {
             Type::forget_emptiness();
@@ -1795,7 +1799,10 @@ fn forked_tuples_scale(
                 .map(|i| make(k, &format!("_{tag}_{k}_{i}")))
                 .collect()
         };
-        let (small, large) = (copies(n, s_runs), copies(8 * n, l_runs));
+        let (small, large) = (
+            copies(n, s_runs),
+            copies(zed_tests::scaling::FACTOR * n, l_runs),
+        );
         let (si, li) = (AtomicUsize::new(0), AtomicUsize::new(0));
         scaling::check(what, n, |k| {
             Type::forget_emptiness();

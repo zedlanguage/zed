@@ -27,4 +27,4 @@ pub mod l01_39_reduced_product;
 pub mod l02_01_parser_structs;
 pub mod m0_03_grammar_tools;
 
-pub use crate::scratch::{process_tmpdir, scratch, target_tmpdir};
+pub use crate::scratch::{process_tmpdir, scratch, scratch_dir, target_tmpdir};

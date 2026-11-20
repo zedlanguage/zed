@@ -16,10 +16,7 @@ const CALLS: usize = 300_000;
 
 /// Runs `f` on a thread with a 2 MiB stack, the default of a spawned Rust thread.
 fn on_2_mib_stack<T: Send>(f: impl FnOnce() -> T + Send) -> T {
-    std::thread::scope(|scope| {
-        let thread = std::thread::Builder::new().stack_size(2 << 20);
-        thread.spawn_scoped(scope, f).unwrap().join().unwrap()
-    })
+    scaling::on_a_stack(2 << 20, f)
 }
 
 #[test]

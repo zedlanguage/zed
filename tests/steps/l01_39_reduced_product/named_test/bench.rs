@@ -8,24 +8,17 @@ fn arms_of_a_named_rule_at_each_tier_take_time_near_linear_in_the_depth() {
     // Depths 120 and 960. At 30 and 240, before TEST-bench-move, with the rule's formula copied
     // at each tier the work grew 43 times (1.25 to 54.0 billion instructions); shared, it grows
     // 7.7 times.
-    std::thread::Builder::new()
-        .stack_size(1 << 29)
-        .spawn(|| {
-            let tests: BTreeMap<usize, Term> = [120, 960]
-                .map(|d| (d, if_(named(d), lit(1), lit(2))))
-                .into();
-            let scope = ints(&names());
-            scaling::check(
-                "arms of a rule named once, used at each of d tiers",
-                120,
-                |d| {
-                    std::hint::black_box(arms(&tests[&d], &scope));
-                },
-            );
-        })
-        .expect("a thread")
-        .join()
-        .expect("the test passes");
+    zed_tests::scaling::on_a_stack(1 << 29, || {
+        let tests = zed_tests::scaling::inputs(120, |d| if_(named(d), lit(1), lit(2)));
+        let scope = ints(&names());
+        scaling::check(
+            "arms of a rule named once, used at each of d tiers",
+            120,
+            |d| {
+                std::hint::black_box(arms(&tests[&d], &scope));
+            },
+        );
+    });
 }
 
 #[test]

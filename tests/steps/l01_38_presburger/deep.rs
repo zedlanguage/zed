@@ -6,7 +6,6 @@
 
 use std::collections::HashSet;
 use std::sync::Arc;
-use std::thread;
 
 use zedc::store::int::Int;
 use zedc::store::presburger::{Atom, Con, Formula, Lin, Model, Shared, satisfiable};
@@ -20,12 +19,7 @@ pub(super) const DEEP: usize = 100_000;
 
 /// Runs `f` on a thread with a 2 MiB stack, whatever `RUST_MIN_STACK` says.
 pub(super) fn on_small_stack(f: impl FnOnce() + Send + 'static) {
-    thread::Builder::new()
-        .stack_size(STACK)
-        .spawn(f)
-        .expect("a test thread")
-        .join()
-        .expect("the test passes on a 2 MiB stack");
+    zed_tests::scaling::on_a_stack(STACK, f);
 }
 
 fn x(i: usize) -> Lin {

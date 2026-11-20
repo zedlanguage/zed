@@ -19,7 +19,7 @@ enum Measure {
 fn scales(what: &str, shape: fn(usize, Type) -> Type, n: usize, measure: Measure) {
     zed_tests::deep::on_small_stack(|| {
         let built = |k: usize| (shape(k, lit(0)), shape(k, lit(1)), shape(k, Type::int()));
-        let (small, large) = (built(n), built(8 * n));
+        let (small, large) = (built(n), built(scaling::FACTOR * n));
         let at = |k: usize| if k == n { &small } else { &large };
         // Each run is on a thread of its own, so it finds no answer kept by another.
         match measure {

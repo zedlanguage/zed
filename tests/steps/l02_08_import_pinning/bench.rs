@@ -3,10 +3,8 @@
 //! left out of its default run (TEST-bench-move-rest). Each check they make besides the ratio is
 //! made at small sizes by a test of `scaling.rs`.
 
-use std::collections::HashMap;
-
 use zed_tests::scaling;
-use zedc::pin::{Edit, Pins, apply};
+use zedc::pin::{Pins, apply};
 use zedc::query::Db;
 use zedc::unit::{Memory, load};
 
@@ -18,7 +16,7 @@ use crate::scaling::{
 /// Checks that loading each package of `pkgs` from `main` is linear in its size, up to a
 /// logarithm.
 fn linear(what: &str, n: usize, make: fn(usize) -> Memory) {
-    let pkgs: HashMap<usize, Memory> = [n, 8 * n].into_iter().map(|k| (k, make(k))).collect();
+    let pkgs = scaling::inputs(n, make);
     scaling::check_order(what, n, 1, |k| {
         std::hint::black_box(load(&mut Db::new(), &pkgs[&k], &["main"]));
     });
@@ -80,7 +78,7 @@ fn a_type_shared_by_many_definitions_is_pinned_in_linear_time() {
 #[test]
 fn a_pin_file_of_many_pins_is_read_and_written_in_n_log_n_time() {
     let n = 2000;
-    let texts: HashMap<usize, String> = [n, 8 * n].into_iter().map(|k| (k, pin_file(k))).collect();
+    let texts = scaling::inputs(n, pin_file);
     scaling::check_order("reading and writing a pin file", n, 1, |k| {
         let pins = Pins::parse(&texts[&k]).unwrap();
         std::hint::black_box(pins.text());
@@ -90,8 +88,7 @@ fn a_pin_file_of_many_pins_is_read_and_written_in_n_log_n_time() {
 #[test]
 fn many_pins_are_written_into_one_file_in_n_log_n_time() {
     let n = 2000;
-    let cases: HashMap<usize, (String, Vec<Edit>)> =
-        [n, 8 * n].into_iter().map(|k| (k, pin_edits(k))).collect();
+    let cases = scaling::inputs(n, pin_edits);
     scaling::check_order("writing many pins into one file", n, 1, |k| {
         let (text, edits) = &cases[&k];
         std::hint::black_box(apply(text, edits));

@@ -6,10 +6,7 @@ use super::*;
 
 /// Runs `f` on a thread with a stack deep enough for the nests of `scaling.rs` (item T2-mid).
 fn on_big_stack<R: Send>(f: impl FnOnce() -> R + Send) -> R {
-    std::thread::scope(|s| {
-        let thread = std::thread::Builder::new().stack_size(1 << 28);
-        thread.spawn_scoped(s, f).unwrap().join().unwrap()
-    })
+    zed_tests::scaling::on_a_stack(1 << 28, f)
 }
 
 #[test]
@@ -109,14 +106,13 @@ fn a_chain_of_shadowing_lets_scales() {
     // `arms` recurses on the depth of the term (T2-mid), so the chain runs on a thread whose
     // stack holds it: 1,600 `let`s at the larger size. Kept at 100: in TEST-bench-move the work
     // grew 9.6 times from 100 and 10.1 from 800.
-    let t = std::thread::Builder::new().stack_size(1 << 28).spawn(|| {
+    on_big_stack(|| {
         let x0 = ints(&["x0".into()]);
         let terms = scaling::inputs(100, shadows);
         scaling::check("a chain of shadowing `let`s", 100, |k| {
             super::super::arms(&terms[&k], &x0);
         });
     });
-    t.expect("a thread").join().expect("the chain scales");
 }
 
 #[test]

@@ -104,3 +104,12 @@ pub fn scratch(path: impl AsRef<Path>) -> PathBuf {
     }
     process_tmpdir().join(path)
 }
+
+/// The directory [`scratch`]`(path)`, made if it is missing. Files a run leaves in it stay
+/// for the next run, which overwrites them; nothing is deleted.
+pub fn scratch_dir(path: impl AsRef<Path>) -> PathBuf {
+    let dir = scratch(path);
+    std::fs::create_dir_all(&dir)
+        .unwrap_or_else(|e| panic!("making the scratch directory {}: {e}", dir.display()));
+    dir
+}

@@ -148,12 +148,7 @@ fn a_long_chain_needs_no_deep_stack() {
     // a 64 KiB thread stack.
     let n = 200_000;
     let edges: Vec<Vec<usize>> = (0..n).map(|v| vec![(v + 1) % n]).collect();
-    let cyclic = std::thread::Builder::new()
-        .stack_size(64 * 1024)
-        .spawn(move || on_cycle(&edges))
-        .unwrap()
-        .join()
-        .unwrap();
+    let cyclic = crate::scaling::on_a_stack(64 * 1024, || on_cycle(&edges));
     assert!(cyclic.iter().all(|&c| c));
 }
 

@@ -102,10 +102,7 @@ pub fn list_type() -> Type {
 /// Runs `f` on a thread with a 2 MiB stack, the default of a test thread, whatever
 /// `RUST_MIN_STACK` says.
 pub fn on_small_stack<T: Send>(f: impl FnOnce() -> T + Send) -> T {
-    std::thread::scope(|scope| {
-        let thread = std::thread::Builder::new().stack_size(2 << 20);
-        thread.spawn_scoped(scope, f).unwrap().join().unwrap()
-    })
+    crate::scaling::on_a_stack(2 << 20, f)
 }
 
 /// A program whose text nests `n` deep, as a generator writes one, and what it prints.

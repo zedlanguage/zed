@@ -12,12 +12,7 @@ use super::*;
 /// load 30; a chain this deep on a stack this small is an unusual size (author P178).
 #[test]
 fn a_deep_chain_of_bindings_is_walked_and_dropped() {
-    std::thread::Builder::new()
-        .stack_size(CHAIN_STACK)
-        .spawn(|| walk_chain(CHAIN))
-        .expect("a test thread")
-        .join()
-        .expect("the chain is walked and dropped on a 256 KiB stack");
+    zed_tests::scaling::on_a_stack(CHAIN_STACK, || walk_chain(CHAIN));
 }
 
 /// The links of the chain of [`a_deep_chain_of_bindings_is_walked_and_dropped`], and the stack

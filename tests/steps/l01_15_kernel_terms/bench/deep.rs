@@ -15,7 +15,7 @@ fn copying_comparing_and_printing_scale_with_size() {
     let n = 20_000;
     zed_tests::deep::on_small_stack(|| {
         let built = |k: usize| (nested(k), nested(k));
-        let (small, large) = (built(n), built(8 * n));
+        let (small, large) = (built(n), built(scaling::FACTOR * n));
         let at = |k: usize| if k == n { &small } else { &large };
         for i in 0..small.0.len() {
             let what = small.0[i].0;
@@ -30,7 +30,10 @@ fn copying_comparing_and_printing_scale_with_size() {
                 std::hint::black_box(format!("{:?}", at(k).0[i].1));
             });
         }
-        let (small, large) = ((dag(n), dag(n)), (dag(8 * n), dag(8 * n)));
+        let (small, large) = (
+            (dag(n), dag(n)),
+            (dag(scaling::FACTOR * n), dag(scaling::FACTOR * n)),
+        );
         scaling::check("comparing a DAG of shared subterms", n, |k| {
             let (a, b) = if k == n { &small } else { &large };
             assert!(std::hint::black_box(a == b));
@@ -43,7 +46,7 @@ fn displaying_and_breaking_scale_with_depth() {
     let n = 20_000;
     zed_tests::deep::on_small_stack(|| {
         let built = |k: usize| nested(k).into_iter().chain(printed(k)).collect::<Vec<_>>();
-        let (small, large) = (built(n), built(8 * n));
+        let (small, large) = (built(n), built(scaling::FACTOR * n));
         let at = |k: usize| if k == n { &small } else { &large };
         for (i, (what, _)) in small.iter().enumerate() {
             scaling::check(&format!("displaying {what}"), n, |k| {

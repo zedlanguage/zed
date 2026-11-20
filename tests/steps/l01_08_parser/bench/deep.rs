@@ -16,15 +16,12 @@ use crate::deep::*;
 
 /// `form` at depths `n` and `8n`, lexed and parsed.
 fn parsed(n: usize, form: fn(usize) -> String) -> HashMap<usize, (String, Vec<Token>, Tree)> {
-    [n, 8 * n]
-        .into_iter()
-        .map(|m| {
-            let text = form(m);
-            let tokens = lex(&text).unwrap();
-            let tree = parse(&text, &tokens, "Expr", TOP).unwrap();
-            (m, (text, tokens, tree))
-        })
-        .collect()
+    zed_tests::scaling::inputs(n, |m| {
+        let text = form(m);
+        let tokens = lex(&text).unwrap();
+        let tree = parse(&text, &tokens, "Expr", TOP).unwrap();
+        (text, tokens, tree)
+    })
 }
 
 /// One form is measured at a time: forms measured together compete for memory, which slows

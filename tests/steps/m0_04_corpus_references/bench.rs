@@ -22,14 +22,14 @@ fn scales(input: &Input) {
         power,
         input,
     } = *input;
-    for m in [n, 8 * n] {
+    for m in [n, zed_tests::scaling::FACTOR * n] {
         fs::write(input_path(what, m), input(m)).expect("writing an input");
     }
     check_order(what, n, power, |m| {
         let (_, result) = zed_corpus_ref::run(number, &input_path(what, m));
         assert_eq!(result, Ok(()), "{what}");
     });
-    for m in [n, 8 * n] {
+    for m in [n, zed_tests::scaling::FACTOR * n] {
         fs::remove_file(input_path(what, m)).expect("removing an input");
     }
 }

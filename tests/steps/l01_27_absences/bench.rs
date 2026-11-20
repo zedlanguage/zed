@@ -12,14 +12,7 @@ use super::scaling::*;
 /// Runs `f` on a thread with a large stack: the parser and checker recurse once per operator
 /// or `else if`.
 fn on_large_stack(f: impl FnOnce() + Send) {
-    std::thread::scope(|s| {
-        std::thread::Builder::new()
-            .stack_size(1 << 29)
-            .spawn_scoped(s, f)
-            .unwrap()
-            .join()
-            .unwrap()
-    })
+    scaling::on_a_stack(1 << 29, f)
 }
 
 /// Coverage: `scaling::a_chain_of_failure_atoms_is_accepted_on_each_check`.

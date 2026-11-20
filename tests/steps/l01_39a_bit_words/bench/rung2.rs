@@ -28,6 +28,5 @@ fn a_chain_of_bit_ands_is_proved_in_linear_time() {
             assert!(matches!(e, Entailment::Proved(_)), "{e}");
         });
     };
-    let thread = std::thread::Builder::new().stack_size(8 << 20);
-    thread.spawn(measure).unwrap().join().unwrap();
+    scaling::on_a_stack(8 << 20, measure);
 }

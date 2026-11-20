@@ -14,13 +14,8 @@ use crate::{doms, shown};
 const STACK: usize = 2 << 20;
 
 /// Runs `f` on a thread with a 2 MiB stack, whatever `RUST_MIN_STACK` says.
-fn on_small_stack(f: impl FnOnce() + Send + 'static) {
-    std::thread::Builder::new()
-        .stack_size(STACK)
-        .spawn(f)
-        .expect("a test thread")
-        .join()
-        .expect("the test passes on a 2 MiB stack");
+fn on_small_stack(f: impl FnOnce() + Send) {
+    scaling::on_a_stack(STACK, f)
 }
 
 /// The preimage of `make` at depths `n` and `8n`.

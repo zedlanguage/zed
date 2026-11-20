@@ -14,7 +14,7 @@ use crate::scaling::{
 /// Parsing the input of `case` is of order n^`power` (n log n for 1), timed at `n` and `8n`.
 fn scales(what: &str, case: &Case, n: usize, power: u32) {
     let g = Grammar::read(&[case.grammar]).unwrap();
-    let inputs = lexed(case, &[n, 8 * n]);
+    let inputs = lexed(case, &[n, zed_tests::scaling::FACTOR * n]);
     check_order(what, n, power, |m| parses(&g, case, &inputs[&m]));
 }
 

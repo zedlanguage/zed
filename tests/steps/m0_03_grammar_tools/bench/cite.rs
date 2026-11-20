@@ -8,7 +8,10 @@ use crate::cite::{CITATIONS, cites_pass, design, tree};
 #[test]
 fn cite_scales_with_the_number_of_citations() {
     let n = 2000;
-    let texts = [CITATIONS.repeat(n), CITATIONS.repeat(8 * n)];
+    let texts = [
+        CITATIONS.repeat(n),
+        CITATIONS.repeat(zed_tests::scaling::FACTOR * n),
+    ];
     let design = design("");
     let trees = texts.each_ref().map(|t| tree(&[("src/a.rs", t)]));
     check("cite, by citations", n, |m| {

@@ -13,9 +13,7 @@ use zedc::run::{Program, Record, load};
 /// A directory of its own for test `name`, under this process's scratch directory; files
 /// in it are overwritten by each run, never deleted.
 fn dir(name: &str) -> PathBuf {
-    let d = zed_tests::step_helpers::scratch(format!("l01_19b/{name}"));
-    std::fs::create_dir_all(&d).unwrap();
-    d
+    zed_tests::step_helpers::scratch_dir(format!("l01_19b/{name}"))
 }
 
 /// The status, standard output and standard error of `zedc <args>` with `stdin` as standard

@@ -125,7 +125,7 @@ fn one_held_at_each_key(n: usize) -> Term {
 /// each checked to give `want(n)`.
 fn check_both(what: &str, n: usize, make: fn(usize) -> Term, want: fn(usize) -> Value) {
     scaling::on_a_thread(1 << 29, || {
-        let (small, large) = (planned(&make(n)), planned(&make(8 * n)));
+        let (small, large) = (planned(&make(n)), planned(&make(scaling::FACTOR * n)));
         let at = |m: usize| if m == n { &small } else { &large };
         scaling::check(&format!("{what}, the counting machine"), n, |m| {
             let (g, p) = at(m);

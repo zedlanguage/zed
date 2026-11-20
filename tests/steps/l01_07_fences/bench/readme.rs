@@ -2,7 +2,7 @@
 //! linear in the number of fences: the benchmark of `readme/scaling.rs`, whose test compares a
 //! generated page of a few sections.
 
-use zed_tests::scaling::check;
+use zed_tests::scaling::{FACTOR, check};
 
 use crate::readme::problems;
 use crate::readme::scaling::inputs;
@@ -11,7 +11,7 @@ use crate::readme::scaling::inputs;
 fn reading_and_comparing_stated_results_is_linear() {
     let n = 4_000;
     let small = inputs(n);
-    let large = inputs(8 * n);
+    let large = inputs(FACTOR * n);
     check("README stated results, by fences", n, |size| {
         let (page, fences, table) = if size == n { &small } else { &large };
         assert!(problems(page, fences, table).is_empty());

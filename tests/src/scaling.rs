@@ -252,6 +252,72 @@ pub fn cpu_time() -> Duration {
     os::thread_cpu_time()
 }
 
+/// The least [`cpu_time`] of `runs` runs of `f`, in nanoseconds, and what the last run returned.
+/// The least, since the load only adds to a run's time. What a run returns is dropped after its
+/// time is read, so the drop is not timed. For a run that starts no thread: the time of other
+/// threads is not counted. `runs` is 1 or more.
+pub fn least_cpu_ns<T>(runs: usize, mut f: impl FnMut() -> T) -> (u128, T) {
+    let mut least = u128::MAX;
+    let mut last = None;
+    for _ in 0..runs {
+        let start = cpu_time();
+        let out = black_box(f());
+        least = least.min((cpu_time() - start).as_nanos());
+        last = Some(out);
+    }
+    (least, last.expect("one run or more"))
+}
+
+/// The most milliseconds a step stopped at its limit of counted work may take in a benchmark of
+/// [`per_unit_bound`]: 250 ms times 2.
+///
+/// The 250 ms is the time QUESTIONS A99 allows a predicted computation (zed-kernel `poly.rs`
+/// `LIMIT`); the work limits of zedc-presburger, `meter::EXACT_LIMIT` (the exact cover and the
+/// two-pin reading) and `row_sums::JOIN_LIMIT` (the join of row sums), were each set from a
+/// measured time per unit so that a run stopped at the limit takes 250 ms or less (their
+/// comments give the measurements). The factor 2 is for the load of the test machine, the same
+/// factor as [`TIME_ALLOWANCE`] and for the same reason: a thread's CPU time for the same work
+/// changes with the load (shared caches, memory bus and, on a core running two threads, the
+/// core): the least CPU time of a linear loop at 8 times the work was 5.6 to 8.8 times that at
+/// the base size, at load 20 to 25 (2026-11-07). It is a margin, measured and not proved. What relies on it: only the benchmarks that call
+/// [`per_unit_bound`] (`exact::tests::bench`, `l01_38_omega_test::bench::exact_cover` and
+/// `disj_groups`); no checker result depends on it. A benchmark failing it means a cost per unit
+/// the limit's fit did not predict: the limit is fitted again (A96), never this margin widened.
+/// Before DRY-test-helpers each of the three wrote `500.0` itself.
+pub const AT_THE_LIMIT_MS: f64 = 500.0;
+
+/// Holds a step's time per unit of its counted work to [`AT_THE_LIMIT_MS`] at `limit` units:
+/// each case is `(name, ns, units)`, its CPU time and the units it counted, and must count
+/// `min_units` or more, so that its time is not the fixed costs of the step. The worst
+/// nanoseconds per unit, times `limit`, is the most time a run stopped at the limit takes;
+/// it panics when that is over [`AT_THE_LIMIT_MS`], and otherwise returns it, in milliseconds.
+/// `what` names the step in the messages.
+pub fn per_unit_bound(
+    what: &str,
+    cases: &[(String, u128, u64)],
+    min_units: u64,
+    limit: u64,
+) -> f64 {
+    let mut worst = 0f64;
+    for (name, ns, units) in cases {
+        assert!(
+            *units >= min_units,
+            "{what}: {name}: {units} units; the case must count {min_units} units or more, or \
+             its time is the fixed costs"
+        );
+        let per = *ns as f64 / *units as f64;
+        eprintln!("{what}: {name}: {units} units in {ns} ns of CPU time, {per:.2} ns per unit");
+        worst = worst.max(per);
+    }
+    let most = worst * limit as f64 / 1e6;
+    eprintln!("{what}: worst {worst:.2} ns per unit; the limit takes at most {most:.0} ms");
+    assert!(
+        most <= AT_THE_LIMIT_MS,
+        "{what}: {most:.0} ms at the limit of {limit} units; at most {AT_THE_LIMIT_MS} ms"
+    );
+    most
+}
+
 /// Reads a counter of work.
 pub(crate) type Read = Box<dyn FnMut() -> u64>;
 
@@ -678,21 +744,30 @@ fn counted_on_a_thread<T: Send>(stack: usize, f: impl FnOnce() -> T + Send) -> (
 
 /// [`counted_on_a_thread`] inside its metered heap.
 fn counted_in_scope<T: Send>(stack: usize, f: impl FnOnce() -> T + Send) -> (T, u64, u64) {
+    on_a_stack(stack, || {
+        let start = zed_alloc_count::allocated();
+        let clock = Instant::now();
+        let out = f();
+        let ns = u64::try_from(clock.elapsed().as_nanos()).unwrap_or(u64::MAX);
+        (out, zed_alloc_count::allocated() - start, ns)
+    })
+}
+
+/// Runs `f` on a thread of its own with a stack of `stack` bytes and waits for it: for a test
+/// whose run needs a stack of a given size (a deep input, or the 2 MiB of a test thread whatever
+/// `RUST_MIN_STACK` says). The thread takes the test's name, which libtest gives its thread, so
+/// a note of [`hold`] names the test. A panic in `f` goes on in the caller with its own message
+/// and payload, which a `join().unwrap()` would replace with "called `Result::unwrap()` on an
+/// `Err` value: Any { .. }". Nothing is metered: [`on_a_thread`] runs in the metered heap, for
+/// the runs a check measures.
+pub fn on_a_stack<T: Send>(stack: usize, f: impl FnOnce() -> T + Send) -> T {
     std::thread::scope(|scope| {
-        // The test's name, which libtest gives its thread, so a note of [`hold`] names the test.
         let mut thread = std::thread::Builder::new().stack_size(stack);
         if let Some(name) = std::thread::current().name() {
             thread = thread.name(name.to_owned());
         }
-        let counted = || {
-            let start = zed_alloc_count::allocated();
-            let clock = Instant::now();
-            let out = f();
-            let ns = u64::try_from(clock.elapsed().as_nanos()).unwrap_or(u64::MAX);
-            (out, zed_alloc_count::allocated() - start, ns)
-        };
         let run = thread
-            .spawn_scoped(scope, counted)
+            .spawn_scoped(scope, f)
             .expect("starting the thread of a run");
         run.join()
             .unwrap_or_else(|panic| std::panic::resume_unwind(panic))

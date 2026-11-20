@@ -72,10 +72,5 @@ fn a_nest_is_projected_in_a_stack_its_depth_does_not_grow() {
         let one = |n: i64| zedc::store::interval::IntervalSet::of(n, n);
         assert_eq!(each, vec![Ok(one(1)), Ok(one(1))]);
     };
-    std::thread::Builder::new()
-        .stack_size(256 << 10)
-        .spawn(run)
-        .expect("a thread")
-        .join()
-        .expect("answered in a 256 KiB stack");
+    scaling::on_a_stack(256 << 10, run);
 }

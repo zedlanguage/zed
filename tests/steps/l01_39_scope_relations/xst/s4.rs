@@ -630,7 +630,7 @@ fn family(
     make: impl Fn(usize) -> Sys + Sync,
     want: impl Fn(usize) -> Vec<(String, i64, i64, Vec<i64>)>,
 ) {
-    family_answers(what, &[n, 8 * n], &make, want);
+    family_answers(what, &[n, scaling::FACTOR * n], &make, want);
     let inputs = scaling::inputs(n, make);
     scaling::check_order(&format!("{what}, one at a time"), n, 1, |m| {
         drop(inputs[&m].narrowed(How::Forward));
@@ -782,7 +782,7 @@ fn far(ns: &[&str]) -> Vec<(String, i64, i64, Vec<i64>)> {
 /// Asserts that `sys` keeps the far values of [`far`] in each of [`HOWS`] at `n` and `8n`
 /// ([`unbounded_answers`]), then near linear time.
 fn unbounded_family(what: &str, n: usize, make: impl Fn(usize) -> Sys + Sync) {
-    unbounded_answers(what, &[n, 8 * n], &make);
+    unbounded_answers(what, &[n, scaling::FACTOR * n], &make);
     let inputs = scaling::inputs(n, make);
     scaling::check_order(&format!("{what}, one at a time"), n, 1, |m| {
         drop(inputs[&m].narrowed(How::Forward));

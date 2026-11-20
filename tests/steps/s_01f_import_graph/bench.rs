@@ -5,7 +5,7 @@
 //! hidden; and untyped calls with no triangle at `n^1.5 log n` in the input (COMPLEXITY.md
 //! F103). What each asserts besides its ratio is checked at small sizes by a test of `mod.rs`.
 
-use zed_tests::scaling::{check, check_order};
+use zed_tests::scaling::{FACTOR, check, check_order};
 
 use crate::{
     half_new_half_stale, hidden_methods_import_nothing, known_list, many_calls,
@@ -18,7 +18,7 @@ fn comparing_with_the_known_list_scales_with_its_length() {
     // Inputs are built before timing: n files in cycles and a list of n entries, half of them
     // the files, half stale, so both directions are searched in full.
     let n = 20_000;
-    let sizes = [n, 8 * n];
+    let sizes = [n, FACTOR * n];
     let inputs: Vec<(Vec<String>, Vec<String>)> = sizes.iter().map(|&m| known_list(m)).collect();
     let lists: Vec<Vec<&str>> = inputs
         .iter()
@@ -38,7 +38,7 @@ fn the_tool_scales_with_the_number_of_files() {
     // Inputs are built before timing. The ring is one long component, so Tarjan's explicit
     // stack is as deep as the crate is large, and the report names all n files twice.
     let n = 400;
-    let inputs = [ring(n), ring(8 * n)];
+    let inputs = [ring(n), ring(FACTOR * n)];
     check("imports, by files in one cycle", n, |m| {
         let files = inputs
             .iter()
@@ -53,7 +53,7 @@ fn untyped_calls_scale_with_the_number_of_files() {
     // Every type has a method `go`, so each untyped call meets n type files; joined from the
     // calling file's two imports of type files, it costs two lookups, and the imports are 2n.
     let n = 200;
-    let inputs = [untyped_ring(n), untyped_ring(8 * n)];
+    let inputs = [untyped_ring(n), untyped_ring(FACTOR * n)];
     check(
         "imports, by untyped calls of methods written apart",
         n,
@@ -72,7 +72,7 @@ fn typing_the_calls_scales_with_the_number_of_files() {
     // Every type has a method of the same name, so a call whose receiver went untyped would
     // import all n files with it, n^2 imports in all; typed, each call is one hash lookup.
     let n = 200;
-    let inputs = [method_ring(n), method_ring(8 * n)];
+    let inputs = [method_ring(n), method_ring(FACTOR * n)];
     check("imports, by methods written apart in one cycle", n, |m| {
         let files = inputs
             .iter()
@@ -88,7 +88,7 @@ fn many_calls_of_a_name_cost_no_more_than_their_methods() {
     // of file and name, they cost O(k log k), not one walk over the k methods per call (k^2),
     // whether the methods are open to the calls or not.
     let n = 200;
-    let inputs = [many_calls(n, true), many_calls(8 * n, true)];
+    let inputs = [many_calls(n, true), many_calls(FACTOR * n, true)];
     check("imports, by many untyped calls of one name", n, |m| {
         let files = inputs
             .iter()
@@ -99,7 +99,7 @@ fn many_calls_of_a_name_cost_no_more_than_their_methods() {
     // Each hidden method costs the k^2 walk one check of a range, cheap beside reading its
     // lines, so the walk shows in the ratio only from k = 600 on (14.1 times at 600 and 4800).
     let n = 600;
-    let inputs = [many_hidden(n), many_hidden(8 * n)];
+    let inputs = [many_hidden(n), many_hidden(FACTOR * n)];
     check("imports, by many untyped calls of hidden methods", n, |m| {
         hidden_methods_import_nothing(&inputs[usize::from(m != n)]);
     });

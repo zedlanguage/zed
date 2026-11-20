@@ -5,12 +5,7 @@ use super::*;
 
 /// Runs `f` on a thread whose stack holds the recursion over a term nested 2000 deep.
 fn on_a_deep_stack(f: impl FnOnce() + Send + 'static) {
-    std::thread::Builder::new()
-        .stack_size(1 << 29)
-        .spawn(f)
-        .expect("a thread")
-        .join()
-        .expect("the test passes");
+    zed_tests::scaling::on_a_stack(1 << 29, f);
 }
 
 #[test]

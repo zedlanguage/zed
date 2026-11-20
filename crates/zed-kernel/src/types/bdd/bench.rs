@@ -770,12 +770,7 @@ const TIED_DEPTH: usize = 9_000;
 fn types_whose_digests_tie_at_every_depth_are_ordered_on_a_small_stack() {
     // Small instances: `types_whose_digests_tie_at_every_depth_are_ordered`. A depth that
     // overflowed a small stack (author P178).
-    std::thread::Builder::new()
-        .stack_size(2 << 20)
-        .spawn(|| tied_chains_are_ordered(TIED_DEPTH))
-        .unwrap()
-        .join()
-        .unwrap();
+    scaling::on_a_stack(2 << 20, || tied_chains_are_ordered(TIED_DEPTH));
 }
 
 #[test]
@@ -825,12 +820,7 @@ fn the_walks_over_parts_nested_deep_run_on_a_small_stack() {
     // Small instances: `the_walks_over_parts_hold_at_small_depths`. Each walk was a recursion,
     // which overflowed this stack (see the negative control in STATUS.md, T2-types-rest part
     // 3); each is now a loop with a stack of its own.
-    std::thread::Builder::new()
-        .stack_size(2 << 20)
-        .spawn(|| the_walks_over_parts_hold(DEEP))
-        .unwrap()
-        .join()
-        .unwrap();
+    scaling::on_a_stack(2 << 20, || the_walks_over_parts_hold(DEEP));
 }
 
 /// How deep the lists of the depth test go: the diagrams' `apply` and `flip`, as

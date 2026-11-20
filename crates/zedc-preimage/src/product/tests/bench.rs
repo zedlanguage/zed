@@ -48,17 +48,12 @@ fn ranks_given_in_one_place_scale() {
 #[test]
 fn a_long_pending_list_is_dropped_without_overflow() {
     let k: i64 = 78_000;
-    std::thread::Builder::new()
-        .stack_size(2 << 20)
-        .spawn(move || {
-            let x = Lin::atom(Atom::Sym("x".into()));
-            let mut r = Relation::default();
-            for i in 0..k {
-                r.defer(Formula::Con(Con::ge(&x, &Lin::constant(i))));
-            }
-            drop(r);
-        })
-        .expect("a thread")
-        .join()
-        .expect("no overflow");
+    crate::scaling::on_a_stack(2 << 20, || {
+        let x = Lin::atom(Atom::Sym("x".into()));
+        let mut r = Relation::default();
+        for i in 0..k {
+            r.defer(Formula::Con(Con::ge(&x, &Lin::constant(i))));
+        }
+        drop(r);
+    });
 }

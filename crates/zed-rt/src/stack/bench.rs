@@ -15,12 +15,7 @@ use crate::limits::tests::{in_child, status};
 #[test]
 fn a_run_goes_deeper_than_its_thread_stack() {
     // 100,000 frames of at least a kilobyte: more than 100 MB, on a thread of 2 MiB.
-    let got = std::thread::Builder::new()
-        .stack_size(2 << 20)
-        .spawn(|| Stack::new().unwrap().run(|| depth(100_000)))
-        .unwrap()
-        .join()
-        .unwrap();
+    let got = crate::scaling::on_a_stack(2 << 20, || Stack::new().unwrap().run(|| depth(100_000)));
     assert_eq!(got, 100_000);
 }
 

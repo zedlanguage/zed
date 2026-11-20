@@ -11,12 +11,7 @@ use super::*;
 /// forming overflows from 32 616 bindings, dropping from 18 750.
 #[test]
 fn a_deep_chain_of_summaries_is_formed_and_dropped() {
-    let got = std::thread::Builder::new()
-        .stack_size(2 << 20)
-        .spawn(|| deep_chain(40_000)["n"].to_string())
-        .expect("a thread")
-        .join()
-        .expect("no panic");
+    let got = zed_tests::scaling::on_a_stack(2 << 20, || deep_chain(40_000)["n"].to_string());
     assert_eq!(got, "[5..=5]");
 }
 

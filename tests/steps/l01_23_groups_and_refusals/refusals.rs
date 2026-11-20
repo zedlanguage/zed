@@ -688,14 +688,7 @@ fn verdict_scales(
 }
 
 fn big(f: impl FnOnce() + Send) {
-    std::thread::scope(|s| {
-        std::thread::Builder::new()
-            .stack_size(1 << 28)
-            .spawn_scoped(s, f)
-            .unwrap()
-            .join()
-            .unwrap()
-    })
+    scaling::on_a_stack(1 << 28, f)
 }
 
 /// [`fork_empty`] over 1 to `n`: pairs of lists of integers, without, for each `i`, those whose
@@ -9162,7 +9155,7 @@ fn xr_r2_bench_escape_single_bucket_scales_n_log_n() {
         .map(|i| xr_r2_build_single_bucket_escape(n, &format!("_xrb_s_{i}")))
         .collect();
     let large: Vec<Type> = (0..l_runs)
-        .map(|i| xr_r2_build_single_bucket_escape(8 * n, &format!("_xrb_l_{i}")))
+        .map(|i| xr_r2_build_single_bucket_escape(scaling::FACTOR * n, &format!("_xrb_l_{i}")))
         .collect();
     let (si, li) = (AtomicUsize::new(0), AtomicUsize::new(0));
     scaling::check_order(

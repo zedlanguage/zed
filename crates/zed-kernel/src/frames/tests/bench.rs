@@ -6,10 +6,7 @@
 use super::*;
 
 fn on_small_stack(f: impl FnOnce() + Send + 'static) {
-    (std::thread::Builder::new().stack_size(64 << 10).spawn(f))
-        .expect("a test thread")
-        .join()
-        .expect("the test passes on a 64 KiB stack");
+    crate::scaling::on_a_stack(64 << 10, f);
 }
 
 #[test]

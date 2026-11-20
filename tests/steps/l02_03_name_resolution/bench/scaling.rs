@@ -18,10 +18,7 @@ use crate::scaling::{
 
 /// Checks that loading the package `make(k)` from `main` is linear in `k`, from `k` = `n`.
 fn linear(what: &str, n: usize, make: impl Fn(usize) -> Vec<(String, String)>) {
-    let pkgs: HashMap<usize, Memory> = [n, 8 * n]
-        .into_iter()
-        .map(|k| (k, memory(make(k))))
-        .collect();
+    let pkgs = scaling::inputs(n, |k| memory(make(k)));
     scaling::check_order(what, n, 1, |k| {
         std::hint::black_box(load(&mut Db::new(), &pkgs[&k], &["main"]));
     });
@@ -115,10 +112,7 @@ fn reorder(g: &Mutex<Graph>) {
 /// Checks that ordering the import graph `make(k)` and reporting its cycles is linear in its
 /// units and imports, from `k` = `n`, with no file read.
 fn ordered(what: &str, n: usize, make: impl Fn(usize) -> Vec<Vec<usize>>) {
-    let graphs: HashMap<usize, Mutex<Graph>> = [n, 8 * n]
-        .into_iter()
-        .map(|k| (k, Mutex::new(graph(&make(k)))))
-        .collect();
+    let graphs = scaling::inputs(n, |k| Mutex::new(graph(&make(k))));
     scaling::check_order(what, n, 1, |k| reorder(&graphs[&k]));
 }
 

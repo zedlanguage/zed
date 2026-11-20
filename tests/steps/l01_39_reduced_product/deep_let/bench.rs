@@ -11,13 +11,8 @@ const STACK: usize = 2 << 20;
 const DEEP: usize = 1_500;
 
 /// Runs `f` on a thread with a 2 MiB stack, whatever `RUST_MIN_STACK` says.
-fn on_small_stack(f: impl FnOnce() + Send + 'static) {
-    std::thread::Builder::new()
-        .stack_size(STACK)
-        .spawn(f)
-        .expect("a test thread")
-        .join()
-        .expect("the test passes on a 2 MiB stack");
+fn on_small_stack(f: impl FnOnce() + Send) {
+    zed_tests::scaling::on_a_stack(STACK, f)
 }
 
 /// The arms of [`fees`] with `DEEP` days and a fee every 100th, on a 2 MiB stack: two for

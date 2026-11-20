@@ -36,8 +36,7 @@ fn packages() -> [Vec<(&'static str, &'static str)>; 2] {
 
 /// The package directory `name` of this test, holding a manifest and `files`, each overwritten.
 fn package_dir(name: &str, files: &[(&str, &str)]) -> PathBuf {
-    let d = scratch::scratch(format!("pins_binary/{name}"));
-    std::fs::create_dir_all(&d).unwrap();
+    let d = scratch::scratch_dir(format!("pins_binary/{name}"));
     std::fs::write(d.join("zed.manifest"), "// the digest test\n").unwrap();
     for (file, text) in files {
         std::fs::write(d.join(file), text).unwrap();

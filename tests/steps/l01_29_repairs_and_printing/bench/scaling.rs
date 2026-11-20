@@ -28,17 +28,12 @@ fn deriving_through_values_read_twice_scales() {
 #[test]
 fn the_reasons_of_a_class_narrowed_many_times_scale() {
     let n = 1000;
-    std::thread::Builder::new()
-        .stack_size(1 << 29)
-        .spawn(move || {
-            let srcs = scaling::inputs(n, summed_condition);
-            scaling::check("the reasons of a class merged n times", n, |k| {
-                the_reasons_of_a_class_merged(&srcs[&k], k);
-            });
-        })
-        .unwrap()
-        .join()
-        .unwrap();
+    scaling::on_a_stack(1 << 29, || {
+        let srcs = scaling::inputs(n, summed_condition);
+        scaling::check("the reasons of a class merged n times", n, |k| {
+            the_reasons_of_a_class_merged(&srcs[&k], k);
+        });
+    });
 }
 
 #[test]

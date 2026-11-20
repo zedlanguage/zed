@@ -38,13 +38,9 @@ fn a_graph_nested_20000_deep_is_written_and_read_in_binary_on_a_2_mib_stack() {
 
 #[test]
 fn a_graph_nested_1000_deep_is_written_and_read_as_text_on_a_64_kib_stack() {
-    std::thread::scope(|scope| {
-        let thread = std::thread::Builder::new().stack_size(1 << 16);
-        let run = || {
-            let g = nested_ifs(1_000);
-            assert_eq!(text::parse(&text::print(&g)), Ok(g));
-        };
-        thread.spawn_scoped(scope, run).unwrap().join().unwrap();
+    zed_tests::scaling::on_a_stack(1 << 16, || {
+        let g = nested_ifs(1_000);
+        assert_eq!(text::parse(&text::print(&g)), Ok(g));
     });
 }
 

@@ -13,7 +13,7 @@ fn the_peak_takes_time_linear_in_the_regions() {
     // repeat, so the peak moves through the whole schedule. Both plans are built before the
     // measurement.
     let n = 20_000;
-    let (small, large) = (alternating(n), alternating(8 * n));
+    let (small, large) = (alternating(n), alternating(zed_tests::scaling::FACTOR * n));
     let t = workstation();
     check_order("the peak footprint of a plan's regions", n, 1, |r| {
         let p = if r == n { &small } else { &large };

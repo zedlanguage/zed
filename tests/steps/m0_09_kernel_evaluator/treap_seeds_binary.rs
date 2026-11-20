@@ -147,8 +147,7 @@ fn cases() -> Vec<Case> {
 
 #[test]
 fn the_output_is_the_same_under_two_draws_of_the_treap_priorities() {
-    let dir = scratch::scratch("treap_seeds_dir");
-    std::fs::create_dir_all(&dir).expect("a directory");
+    let dir = scratch::scratch_dir("treap_seeds_dir");
     let cases = cases();
     std::thread::scope(|s| {
         for c in &cases {

@@ -3290,8 +3290,7 @@ fn a_declined_part_is_covered_for_all_its_symbols_at_once() {
             assert_eq!(g.as_ref().unwrap(), &want, "{s:?} at k = {k}");
         }
     }
-    let ratio = used[1] as f64 / used[0].max(1) as f64;
-    assert!(ratio < 10.5, "work {used:?}, {ratio:.2} times at 8 times k");
+    crate::scaling::hold("exact work at k 64 and 512", "units", used[0], used[1], 1);
 }
 
 /// Two atoms with equal coefficients in every sum are twins only where no other row reads
@@ -3489,8 +3488,13 @@ fn a_block_of_a_boxed_sum_is_read_once_in_linear_work() {
         assert_eq!(sets[&a("z0")], z0);
         assert_eq!(sets[&a("z1")], IntervalSet::of(-5, 5));
     }
-    let ratio = used[1] as f64 / used[0] as f64;
-    assert!(ratio < 10.5, "work {used:?}, {ratio:.2} times");
+    crate::scaling::hold(
+        "block reading at k 64 and 512",
+        "units",
+        used[0],
+        used[1],
+        1,
+    );
 }
 
 /// One part of the counter of [`guards_f`] at k = 16, asked for `i`, `m` and every `t(j)`,
@@ -3747,8 +3751,13 @@ fn names_tied_through_three_atoms_are_read_once_for_the_part() {
         sets.push(IntervalSet::of(0, 1));
         (Formula::And(Shared::new(rows)), syms, sets)
     });
-    let ratio = used[1] as f64 / used[0].max(1) as f64;
-    assert!(ratio < 10.5, "work {used:?}, {ratio:.2} times at 8 times k");
+    crate::scaling::hold(
+        "certificate work at k 64 and 512",
+        "units",
+        used[0],
+        used[1],
+        1,
+    );
 }
 
 /// A class whose certificate declines: `z(j) == x + j`, `0 <= x <= 9`, `x >= 5 || x <= 3`,
@@ -3768,8 +3777,13 @@ fn a_class_whose_certificate_declines_is_tried_once() {
         let sets = (0..k as i64).map(|j| IntervalSet::of(j, j + 9)).collect();
         (Formula::And(Shared::new(rows)), syms, sets)
     });
-    let ratio = used[1] as f64 / used[0].max(1) as f64;
-    assert!(ratio < 10.5, "work {used:?}, {ratio:.2} times at 8 times k");
+    crate::scaling::hold(
+        "certificate work at k 64 and 512",
+        "units",
+        used[0],
+        used[1],
+        1,
+    );
 }
 
 /// The whole work of `exact_each` (certificates, the reading of the part and the cover) on
@@ -3838,8 +3852,7 @@ fn two_free_atoms(a_: i64, b: i64) -> impl Fn(usize) -> (Formula, Vec<Atom>, Vec
 #[test]
 fn names_with_coefficients_past_one_are_read_once_for_the_part() {
     let used = exact_work_of(two_free_atoms(2, 3));
-    let ratio = used[1] as f64 / used[0].max(1) as f64;
-    assert!(ratio < 10.5, "work {used:?}, {ratio:.2} times at 8 times k");
+    crate::scaling::hold("exact work at k 64 and 512", "units", used[0], used[1], 1);
 }
 
 /// As above with a common factor, `y(j) == 2·p + 4·q + j`: whatever answers these names, the
@@ -3847,8 +3860,7 @@ fn names_with_coefficients_past_one_are_read_once_for_the_part() {
 #[test]
 fn names_with_a_common_factor_are_read_once_for_the_part() {
     let used = exact_work_of(two_free_atoms(2, 4));
-    let ratio = used[1] as f64 / used[0].max(1) as f64;
-    assert!(ratio < 10.5, "work {used:?}, {ratio:.2} times at 8 times k");
+    crate::scaling::hold("exact work at k 64 and 512", "units", used[0], used[1], 1);
 }
 
 /// As `names_with_coefficients_past_one_are_read_once_for_the_part` with one more half-plane
@@ -3865,8 +3877,7 @@ fn names_over_a_polygon_of_many_sides_read_its_edges_once() {
         rows.extend((0..k as i64).map(|j| ge(&[("p", -1), ("q", -j)], 9 + 9 * j)));
         (Formula::And(Shared::new(rows)), syms, sets)
     });
-    let ratio = used[1] as f64 / used[0].max(1) as f64;
-    assert!(ratio < 10.5, "work {used:?}, {ratio:.2} times at 8 times k");
+    crate::scaling::hold("exact work at k 64 and 512", "units", used[0], used[1], 1);
 }
 
 /// As above with every row a true edge, the tangents `q >= 2·j·p - j²` to `q = p²` under
@@ -3892,8 +3903,13 @@ fn names_over_a_polygon_of_many_true_edges_cost_log_of_them() {
         TANGENT_SIZES,
     );
     // The part is O(k log k) and each name O(log k): predicted 10.0 times at `TANGENT_SIZES`.
-    let ratio = used[1] as f64 / used[0].max(1) as f64;
-    assert!(ratio < 10.5, "work {used:?}, {ratio:.2} times at 8 times k");
+    crate::scaling::hold(
+        "exact work at k 1024 and 8192",
+        "units",
+        used[0],
+        used[1],
+        1,
+    );
 }
 
 /// The same polygon with names in many directions, `y(j) == g·(j + 1)·p + g·(2·j + 1)·q`,
@@ -3960,8 +3976,7 @@ fn names_over_an_unbounded_polygon_are_read_once_for_the_part() {
             .collect();
         (Formula::And(Shared::new(rows)), syms, sets)
     });
-    let ratio = used[1] as f64 / used[0].max(1) as f64;
-    assert!(ratio < 10.5, "work {used:?}, {ratio:.2} times at 8 times k");
+    crate::scaling::hold("exact work at k 64 and 512", "units", used[0], used[1], 1);
 }
 
 /// The tangents `q >= 2·j·p - j²` to `q = p²` for `j` from 0 to k and `p >= -k`, with no
@@ -3989,8 +4004,13 @@ fn names_over_an_open_polygon_of_many_true_edges_cost_log_of_them() {
     let used = exact_work_at(open_tangents, TANGENT_SIZES);
     // As `names_over_a_polygon_of_many_true_edges_cost_log_of_them`: O(k log k) a part and
     // O(log k) a name, predicted 10.0 times at `TANGENT_SIZES`.
-    let ratio = used[1] as f64 / used[0].max(1) as f64;
-    assert!(ratio < 10.5, "work {used:?}, {ratio:.2} times at 8 times k");
+    crate::scaling::hold(
+        "exact work at k 1024 and 8192",
+        "units",
+        used[0],
+        used[1],
+        1,
+    );
 }
 
 /// Every set over an open region is exactly the values at its integer points, counted one by
@@ -4106,8 +4126,7 @@ fn names_beside_a_choice_are_read_once_for_the_part() {
         let sets = (0..k as i64).map(|j| IntervalSet::of(j, j + 35)).collect();
         (Formula::And(Shared::new(rows)), syms, sets)
     });
-    let ratio = used[1] as f64 / used[0].max(1) as f64;
-    assert!(ratio < 10.5, "work {used:?}, {ratio:.2} times at 8 times k");
+    crate::scaling::hold("exact work at k 64 and 512", "units", used[0], used[1], 1);
 }
 
 /// `0 <= p, q <= 9` and a choice for each name, `y(j) == p + 2·q + j` where `p - q - m >= 0`,
@@ -4140,8 +4159,7 @@ fn names_each_with_a_choice_of_its_own_are_read_once_for_the_part() {
         let sets = (0..k as i64).map(|j| IntervalSet::of(j, j + 27)).collect();
         (Formula::And(Shared::new(rows)), syms, sets)
     });
-    let ratio = used[1] as f64 / used[0].max(1) as f64;
-    assert!(ratio < 10.5, "work {used:?}, {ratio:.2} times at 8 times k");
+    crate::scaling::hold("exact work at k 64 and 512", "units", used[0], used[1], 1);
 }
 
 /// `0 <= p, q <= 9`, a shared choice `z == max(p, q)` under `2 <= z <= 7`, and names over it:
@@ -4402,11 +4420,8 @@ fn leaf_choices_over_a_polygon_of_many_true_edges_cost_log_of_them() {
     for open in [false, true] {
         let used = exact_work_at(|k| leaf_choices_over_tangents(k, open), TANGENT_SIZES);
         // O(k log k) a part and O(log k) a name: predicted 10.0 times at `TANGENT_SIZES`.
-        let ratio = used[1] as f64 / used[0].max(1) as f64;
-        assert!(
-            ratio < 10.5,
-            "open {open}: work {used:?}, {ratio:.2} times at 8 times k"
-        );
+        let what = format!("exact work, open {open}, at k 1024 and 8192");
+        crate::scaling::hold(&what, "units", used[0], used[1], 1);
     }
 }
 
@@ -4451,8 +4466,13 @@ fn leaf_choices_splitting_rays(k: usize) -> (Formula, Vec<Atom>, Vec<IntervalSet
 fn leaf_choices_whose_guards_split_the_rays_cost_log_of_them() {
     let used = exact_work_at(leaf_choices_splitting_rays, TANGENT_SIZES);
     // O(k log k) a part and O(log k) a name: predicted 10.0 times at `TANGENT_SIZES`.
-    let ratio = used[1] as f64 / used[0].max(1) as f64;
-    assert!(ratio < 10.5, "work {used:?}, {ratio:.2} times at 8 times k");
+    crate::scaling::hold(
+        "exact work at k 1024 and 8192",
+        "units",
+        used[0],
+        used[1],
+        1,
+    );
 }
 
 /// Leaf choices over the open tangents at k = 6, whose rays run up and along `(1, 12)`, with
@@ -4696,8 +4716,13 @@ fn the_names_of_a_chain_of_unit_equations_are_certified_together() {
             assert_eq!(&g.as_ref().unwrap().ranges, w, "at k = {k}");
         }
     }
-    let ratio = used[1] as f64 / used[0].max(1) as f64;
-    assert!(ratio < 10.5, "work {used:?}, {ratio:.2} times at 8 times k");
+    crate::scaling::hold(
+        "certificate work at k 64 and 512",
+        "units",
+        used[0],
+        used[1],
+        1,
+    );
 }
 
 /// The shape of an `if` chain whose guards are equations, as the preimage writes it
@@ -4782,6 +4807,11 @@ fn an_if_chain_of_equal_guards_is_read_with_no_question() {
         );
         used.push(work.used);
     }
-    let ratio = used[1] as f64 / used[0].max(1) as f64;
-    assert!(ratio < 10.5, "work {used:?}, {ratio:.2} times at 8 times k");
+    crate::scaling::hold(
+        "direct reading at k 32 and 256",
+        "units",
+        used[0],
+        used[1],
+        1,
+    );
 }

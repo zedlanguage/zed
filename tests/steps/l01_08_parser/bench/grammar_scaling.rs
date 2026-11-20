@@ -13,14 +13,11 @@ use crate::grammar_scaling::*;
 
 /// `form` lexed at `n` and `8n`, so that timing covers the parse alone.
 fn lexed(n: usize, form: &Form) -> HashMap<usize, (String, Vec<Token>)> {
-    [n, 8 * n]
-        .into_iter()
-        .map(|m| {
-            let text = (form.input)(m);
-            let tokens = lex(&text).unwrap();
-            (m, (text, tokens))
-        })
-        .collect()
+    zed_tests::scaling::inputs(n, |m| {
+        let text = (form.input)(m);
+        let tokens = lex(&text).unwrap();
+        (text, tokens)
+    })
 }
 
 fn scales(n: usize, form: &Form) {

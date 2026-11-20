@@ -4608,7 +4608,11 @@ fn xr_r2_bench_cgroup_long_tuples_and_many_diffs_scales() {
             .collect();
         let large: Vec<Vec<Type>> = (0..l_runs)
             .map(|r| {
-                xr_r2_build_long_tuple_cgroup(8 * n, inhabited, &format!("_l_{inhabited}_{r}"))
+                xr_r2_build_long_tuple_cgroup(
+                    scaling::FACTOR * n,
+                    inhabited,
+                    &format!("_l_{inhabited}_{r}"),
+                )
             })
             .collect();
         let (si, li) = (AtomicUsize::new(0), AtomicUsize::new(0));

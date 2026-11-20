@@ -19,14 +19,7 @@ use crate::string_scaling::{appends, cats, lens, long};
 /// `f`, run on a thread whose stack holds the recursive passes over a term thousands of `let`s
 /// deep: lowering, planning and the drop of a graph.
 fn on_big_stack(f: impl FnOnce() + Send) {
-    std::thread::scope(|s| {
-        std::thread::Builder::new()
-            .stack_size(1 << 30)
-            .spawn_scoped(s, f)
-            .unwrap()
-            .join()
-            .unwrap()
-    })
+    scaling::on_a_stack(1 << 30, f)
 }
 
 /// The program and world of each size, made before the timing.

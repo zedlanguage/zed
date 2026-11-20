@@ -75,7 +75,7 @@ fn one_value_used_many_times_scales() {
 fn check_depth(what: &str, n: usize, make: fn(usize) -> Term) {
     on_big_stack(|| {
         let at = |m: usize| planned(&make(m));
-        let (small, large) = (at(n), at(8 * n));
+        let (small, large) = (at(n), at(scaling::FACTOR * n));
         scaling::check(what, n, |m| {
             let (g, p) = if m == n { &small } else { &large };
             std::hint::black_box(zed_native::object(g, p).unwrap());
@@ -228,7 +228,7 @@ pub(super) fn check_run(what: &str, n: usize, make: fn(usize) -> Term, world: fn
     on_big_stack(|| {
         assert!(!counted_in(&make(n), world(n)).is_empty());
         let at = |m: usize| (planned(&make(m)), world(m));
-        let (small, large) = (at(n), at(8 * n));
+        let (small, large) = (at(n), at(scaling::FACTOR * n));
         scaling::check(what, n, |m| {
             let ((g, p), w) = if m == n { &small } else { &large };
             let o = zed_native::run(g, p, &mut Evaluator::new(w.clone())).unwrap();
@@ -266,14 +266,7 @@ fn on_big_stack(f: impl FnOnce() + Send) {
 
 /// Runs `f` on a thread with a stack of `bytes`.
 fn on_stack(bytes: usize, f: impl FnOnce() + Send) {
-    std::thread::scope(|s| {
-        std::thread::Builder::new()
-            .stack_size(bytes)
-            .spawn_scoped(s, f)
-            .unwrap()
-            .join()
-            .unwrap()
-    })
+    scaling::on_a_stack(bytes, f)
 }
 
 /// The depth of the terms below: above the depths at which the recursive code generator

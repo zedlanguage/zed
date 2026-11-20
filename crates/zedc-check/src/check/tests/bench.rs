@@ -16,15 +16,10 @@ fn one_shape_per_length_joins_a_tuple_nested_deep_on_a_main_sized_stack() {
     let both = nested(int.clone(), DEPTH).union(&nested(f64.clone(), DEPTH));
     assert_eq!(both.tuples.len(), 2);
     let want = digest(&nested(int.union(&f64), DEPTH));
-    let joined = std::thread::Builder::new()
-        .stack_size(8 << 20)
-        .spawn(move || {
-            let joined = one_shape_per_length(&both);
-            (joined.tuples.len(), digest(&joined))
-        })
-        .expect("starting the thread")
-        .join()
-        .expect("joining on an 8 MiB stack");
+    let joined = crate::scaling::on_a_stack(8 << 20, || {
+        let joined = one_shape_per_length(&both);
+        (joined.tuples.len(), digest(&joined))
+    });
     assert_eq!(joined, (1, want));
 }
 

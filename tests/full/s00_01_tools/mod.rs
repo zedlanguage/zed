@@ -20,9 +20,7 @@ fn deps() -> PathBuf {
 }
 
 fn scratch(name: &str) -> PathBuf {
-    let dir = zed_tests::step_helpers::scratch(format!("zed-full-{name}"));
-    std::fs::create_dir_all(&dir).unwrap();
-    dir
+    zed_tests::step_helpers::scratch_dir(format!("zed-full-{name}"))
 }
 
 fn run(program: &str, args: &[&str]) -> Output {

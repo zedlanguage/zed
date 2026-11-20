@@ -13,22 +13,17 @@ use crate::strict::{chain, doubling};
 
 /// Grades `make(n)` and `make(8n)` in `x` over `lo..`, on a 2 MiB stack.
 fn scales(what: &'static str, n: usize, lo: Option<i64>, make: fn(usize) -> Term) {
-    std::thread::Builder::new()
-        .stack_size(2 << 20)
-        .spawn(move || {
-            let made = scaling::inputs(n, make);
-            let d = doms(&[("x", lo, None)]);
-            assert_eq!(
-                grade(&made[&n], "x", &d, Arith::Int),
-                Some(Tonicity::StrictUp)
-            );
-            scaling::check(what, n, |k| {
-                std::hint::black_box(grade(&made[&k], "x", &d, Arith::Int));
-            });
-        })
-        .expect("a test thread")
-        .join()
-        .expect("the test passes on a 2 MiB stack");
+    scaling::on_a_stack(2 << 20, || {
+        let made = scaling::inputs(n, make);
+        let d = doms(&[("x", lo, None)]);
+        assert_eq!(
+            grade(&made[&n], "x", &d, Arith::Int),
+            Some(Tonicity::StrictUp)
+        );
+        scaling::check(what, n, |k| {
+            std::hint::black_box(grade(&made[&k], "x", &d, Arith::Int));
+        });
+    });
 }
 
 #[test]

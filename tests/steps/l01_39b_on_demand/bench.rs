@@ -4,8 +4,6 @@
 //! `the_program_of_n_functions_is_accepted_and_the_one_with_a_bad_condition_is_not`, and
 //! `many_parameters(3, 40)` in `functions_of_many_parameters_are_accepted_with_no_derivation`.
 
-use std::collections::HashMap;
-
 use zed_tests::scaling;
 use zedc::check::derivation_steps;
 
@@ -31,14 +29,11 @@ fn checking_functions_that_ask_for_no_derivation_scales() {
     // Each source is loaded, then parsed and resolved, before the runs are measured; only the
     // check is measured (COMPLEXITY.md F85).
     let n = N_CLEAN;
-    let units: HashMap<usize, _> = [n, 8 * n]
-        .into_iter()
-        .map(|k| {
-            let src = clean(k);
-            assert_eq!(counted(&src), (Ok(()), 0));
-            (k, zed_tests::deep::resolved(&src))
-        })
-        .collect();
+    let units = scaling::inputs(n, |k| {
+        let src = clean(k);
+        assert_eq!(counted(&src), (Ok(()), 0));
+        zed_tests::deep::resolved(&src)
+    });
     scaling::check_order("checking n functions with no rejection", n, 1, |k| {
         let (stmts, res) = &units[&k];
         let info = zedc::check::walk::check(stmts, res);
@@ -55,14 +50,11 @@ fn checking_functions_of_many_parameters_scales() {
     // million instructions per function, it does not. Only the check is measured: the
     // statements are parsed and resolved before the runs.
     let n = N_PARAMS;
-    let units: HashMap<usize, _> = [n, 8 * n]
-        .into_iter()
-        .map(|k| {
-            let stmts = zed_tests::deep::statements(&many_parameters(k, 40));
-            let res = zedc::resolve::resolve(&stmts).expect("resolves");
-            (k, (stmts, res))
-        })
-        .collect();
+    let units = scaling::inputs(n, |k| {
+        let stmts = zed_tests::deep::statements(&many_parameters(k, 40));
+        let res = zedc::resolve::resolve(&stmts).expect("resolves");
+        (stmts, res)
+    });
     scaling::check_order("checking n functions of 40 parameters", n, 1, |k| {
         let (stmts, res) = &units[&k];
         let info = zedc::check::walk::check(stmts, res);

@@ -17,6 +17,5 @@ fn translating_symbolic_divisors_scales() {
             assert_splits_translated(&built[&k], k);
         });
     };
-    let thread = std::thread::Builder::new().stack_size(8 << 20);
-    thread.spawn(measure).unwrap().join().unwrap();
+    scaling::on_a_stack(8 << 20, measure);
 }

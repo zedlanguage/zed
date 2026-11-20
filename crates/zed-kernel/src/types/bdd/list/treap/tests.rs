@@ -116,17 +116,12 @@ fn one_set_of_keys_has_one_shape() {
 #[test]
 fn a_large_treap_is_dropped_on_a_small_stack() {
     // A tree of 100,000 keys, dropped on a thread of 64 KiB of stack.
-    std::thread::Builder::new()
-        .stack_size(1 << 16)
-        .spawn(|| {
-            let mut t: Tree<K, u64> = None;
-            for k in 0..100_000 {
-                t = insert(&t, K(k), k);
-            }
-            assert_eq!(len(&t), 100_000);
-            drop(t);
-        })
-        .expect("a thread")
-        .join()
-        .expect("the treap dropped");
+    crate::scaling::on_a_stack(1 << 16, || {
+        let mut t: Tree<K, u64> = None;
+        for k in 0..100_000 {
+            t = insert(&t, K(k), k);
+        }
+        assert_eq!(len(&t), 100_000);
+        drop(t);
+    });
 }

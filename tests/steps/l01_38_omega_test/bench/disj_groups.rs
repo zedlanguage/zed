@@ -348,8 +348,7 @@ mod classes {
 /// its work, which sets `JOIN_LIMIT`, and both sides of the switch on a family where the
 /// solver is the faster of the two and one where the join is.
 mod switchover {
-    use std::time::Instant;
-
+    use zed_tests::scaling::{least_cpu_ns, per_unit_bound};
     use zedc::store::presburger::{
         Formula, JOIN_LIMIT, JOINED, ROW_SUMS_JOIN, ROW_SUMS_OFF, decide, project_each, satisfiable,
     };
@@ -375,21 +374,22 @@ mod switchover {
         }
     }
 
-    /// The least time of three runs of `f`, the last answer, and the join's units, with the
-    /// join (`join`) or the solver alone; the formula is built before the timer starts.
+    /// The least thread CPU time of three runs of `f` (`scaling::least_cpu_ns`), the last
+    /// answer, and the join's units, with the join (`join`) or the solver alone; the formula is
+    /// built before the timer starts. Before DRY-test-helpers this was the elapsed time, which
+    /// counts the time the thread waits for a processor, so the load raised it. The thread's
+    /// CPU time is the whole time of a run: `decide`, `satisfiable` and `project_each` start no
+    /// thread (zedc-presburger, zedc-solvers and zed-kernel start threads only in tests and
+    /// benchmark fixtures), and the switches `ROW_SUMS_OFF` and `ROW_SUMS_JOIN` that steer the
+    /// run are thread-locals, which a run on another thread would not see.
     fn timed<T>(join: bool, f: impl Fn() -> T) -> (u128, T, Option<(u64, bool)>) {
         ROW_SUMS_OFF.with(|o| o.set(!join));
         ROW_SUMS_JOIN.with(|o| o.set(join));
-        let (mut best, mut out) = (u128::MAX, None);
-        for _ in 0..3 {
-            let t = Instant::now();
-            out = Some(std::hint::black_box(f()));
-            best = best.min(t.elapsed().as_nanos());
-        }
+        let (best, out) = least_cpu_ns(3, f);
         let joined = JOINED.with(|j| j.take());
         ROW_SUMS_OFF.with(|o| o.set(false));
         ROW_SUMS_JOIN.with(|o| o.set(false));
-        (best, out.expect("an answer"), joined)
+        (best, out, joined)
     }
 
     /// The join's time per unit on the families of `disj_groups.rs` and the sparse family,
@@ -397,8 +397,9 @@ mod switchover {
     /// the formula and the other fixed costs do not count (at 10^4 units they are most of the
     /// time: `wide` at k = 32 took 40 ns per unit, a chain of 128 sums 126), each asked for a
     /// point. The worst, times `JOIN_LIMIT`, is the most time a join stopped at the limit
-    /// takes; it is checked against twice A99's 250 ms, the factor for the load of the test
-    /// machine. Measured 2026-11-14 (Ryzen 9 5950X, load 52): see `JOIN_LIMIT`.
+    /// takes; it is checked against `scaling::AT_THE_LIMIT_MS`, twice A99's 250 ms for the load
+    /// of the test machine (`scaling::per_unit_bound`). Measured 2026-11-14 (Ryzen 9 5950X,
+    /// load 52, then by the elapsed time): see `JOIN_LIMIT`.
     #[test]
     fn the_join_takes_a_few_nanoseconds_per_unit_of_work() {
         let cases: [(&str, Formula); 4] = [
@@ -410,21 +411,14 @@ mod switchover {
             ("sparse k=2 m=1e6", sparse(2, 1_000_000).formula()),
             ("sparse k=3 m=300", sparse(3, 300).formula()),
         ];
-        let mut worst = 0f64;
+        let mut measured = Vec::new();
         for (name, f) in &cases {
             let (ns, p, joined) = timed(true, || satisfiable(f).map(|m| m.is_some()));
             let (units, answered) = joined.expect("a plan");
-            assert!(
-                answered && p.is_ok() && units >= 1_000_000,
-                "{name}: {units}"
-            );
-            let per = ns as f64 / units as f64;
-            worst = worst.max(per);
-            eprintln!("switchover: {name}: {units} units in {ns} ns, {per:.2} ns per unit");
+            assert!(answered && p.is_ok(), "{name}: the join did not answer");
+            measured.push((name.to_string(), ns, units));
         }
-        let most = worst * JOIN_LIMIT as f64 / 1e6;
-        eprintln!("switchover: worst {worst:.2} ns per unit; the limit takes at most {most:.0} ms");
-        assert!(most <= 500.0, "{most:.0} ms at the limit");
+        per_unit_bound("switchover", &measured, 1_000_000, JOIN_LIMIT);
     }
 
     /// Each question on `f` by the join alone, by the solver alone and by the default path,
@@ -433,9 +427,7 @@ mod switchover {
     fn three_ways<T: PartialEq + std::fmt::Debug>(name: &str, ask: &str, f: impl Fn() -> T) -> T {
         let (join_ns, by_join, _) = timed(true, &f);
         let (solver_ns, by_solver, _) = timed(false, &f);
-        let t = Instant::now();
-        let by_default = f();
-        let default_ns = t.elapsed().as_nanos();
+        let (default_ns, by_default) = least_cpu_ns(1, &f);
         let (units, joined) = JOINED.with(|j| j.take()).expect("a plan");
         eprintln!(
             "switchover: {name} {ask}: join {join_ns} ns, solver {solver_ns} ns, default \
@@ -483,9 +475,7 @@ mod switchover {
             ROW_SUMS_JOIN.with(|o| o.set(true));
             let exact = ask();
             ROW_SUMS_JOIN.with(|o| o.set(false));
-            let t = Instant::now();
-            let by_default = ask();
-            let default_ns = t.elapsed().as_nanos();
+            let (default_ns, by_default) = least_cpu_ns(1, ask);
             let (units, joined) = JOINED.with(|j| j.take()).expect("a plan");
             assert_eq!(by_default, exact, "{name} project, joined {joined}");
             let (solver_ns, by_solver, _) = timed(false, ask);

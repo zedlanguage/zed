@@ -65,47 +65,37 @@ fn checking_and_ordering_nested_functions_scales() {
     // in them too, so a use was read once for each scope around it. Each run of a signature
     // search checked the functions declared inside it again, so the runs multiplied with the
     // depth; and once found, a nested function's writes were made again at each finding.
-    std::thread::Builder::new()
-        .stack_size(1 << 29)
-        .spawn(|| {
-            // The checker and elaboration are timed apart, each from what comes before it,
-            // made before timing.
-            let units: BTreeMap<usize, Checked> = [100, FACTOR * 100]
-                .into_iter()
-                .map(|n| (n, checked(&nested(n))))
-                .collect();
-            scaling::check("checking functions nested n deep", 100, |n| {
-                checks_clean(&units[&n]);
-            });
-            scaling::check("elaborating functions nested n deep", 100, |n| {
-                elaborates_main(&units[&n]);
-            });
-            let want = (
-                Some("int".to_string()),
-                Some("T -> T for T in int | f32 | f64 | rat".to_string()),
-            );
-            assert_eq!(found(&nested(100), 99), want);
-        })
-        .unwrap()
-        .join()
-        .unwrap();
+    scaling::on_a_stack(1 << 29, || {
+        // The checker and elaboration are timed apart, each from what comes before it,
+        // made before timing.
+        let units: BTreeMap<usize, Checked> = [100, FACTOR * 100]
+            .into_iter()
+            .map(|n| (n, checked(&nested(n))))
+            .collect();
+        scaling::check("checking functions nested n deep", 100, |n| {
+            checks_clean(&units[&n]);
+        });
+        scaling::check("elaborating functions nested n deep", 100, |n| {
+            elaborates_main(&units[&n]);
+        });
+        let want = (
+            Some("int".to_string()),
+            Some("T -> T for T in int | f32 | f64 | rat".to_string()),
+        );
+        assert_eq!(found(&nested(100), 99), want);
+    });
 }
 
 #[test]
 fn checking_nested_functions_beside_many_others_scales() {
     // A nested function's writes were made again each time its signature was found again,
     // the writes of the functions inside it too.
-    std::thread::Builder::new()
-        .stack_size(1 << 29)
-        .spawn(|| {
-            let texts = inputs(50, |n| wide(n, 20));
-            scaling::check("functions nested n deep beside 20 others", 50, |n| {
-                wide_finds_main(&texts[&n], n);
-            });
-        })
-        .unwrap()
-        .join()
-        .unwrap();
+    scaling::on_a_stack(1 << 29, || {
+        let texts = inputs(50, |n| wide(n, 20));
+        scaling::check("functions nested n deep beside 20 others", 50, |n| {
+            wide_finds_main(&texts[&n], n);
+        });
+    });
 }
 
 /// Checks that elaborating the unit `text(m)` is of order m, parsing and checking each size
@@ -165,18 +155,13 @@ fn searches_through_nested_functions_scale() {
     // cap of 64 contexts gave `_` past it. Each body is now checked once: the parameters
     // added together share one class, of the outermost function, so the innermost one's
     // signature is in terms of `h0`'s variable at every depth.
-    std::thread::Builder::new()
-        .stack_size(1 << 29)
-        .spawn(|| {
-            let texts = inputs(128, open);
-            scaling::check("searches through n nested functions", 128, |n| {
-                elab(&texts[&n]).unwrap();
-            });
-            crate::scaling::open_signature_is_h0s(64);
-        })
-        .unwrap()
-        .join()
-        .unwrap();
+    scaling::on_a_stack(1 << 29, || {
+        let texts = inputs(128, open);
+        scaling::check("searches through n nested functions", 128, |n| {
+            elab(&texts[&n]).unwrap();
+        });
+        crate::scaling::open_signature_is_h0s(64);
+    });
 }
 
 #[test]
@@ -185,14 +170,13 @@ fn rows_reaching_a_large_definition_scale() {
     // each, so `n` rows reaching a function of `n` terms took `O(n²)`; a definition's digest is
     // now made once and its term shared. The front end's result for each size is made before
     // timing, so that the rows alone are timed.
-    let t = std::thread::Builder::new().stack_size(1 << 29).spawn(|| {
+    scaling::on_a_stack(1 << 29, || {
         let warm = inputs(100, |n| front(&big_callee(n)));
         scaling::check_order("n rows reaching a function of n terms", 100, 1, |n| {
             let (text, db) = &warm[&n];
             rows_pass(text, db, n);
         })
     });
-    t.unwrap().join().unwrap();
 }
 
 #[test]

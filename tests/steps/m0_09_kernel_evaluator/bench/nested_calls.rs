@@ -18,10 +18,7 @@ const DEEP: i64 = 40_000;
 
 /// Runs `f` on a thread with a 64 KiB stack.
 fn on_small_stack<T: Send>(f: impl FnOnce() -> T + Send) -> T {
-    std::thread::scope(|scope| {
-        let thread = std::thread::Builder::new().stack_size(1 << 16);
-        thread.spawn_scoped(scope, f).unwrap().join().unwrap()
-    })
+    zed_tests::scaling::on_a_stack(1 << 16, f)
 }
 
 #[test]

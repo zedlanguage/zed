@@ -205,10 +205,5 @@ fn a_large_set_is_dropped_on_a_small_stack() {
         drop(s);
         drop(half);
     };
-    std::thread::Builder::new()
-        .stack_size(64 * 1024)
-        .spawn(run)
-        .expect("a thread")
-        .join()
-        .expect("no overflow");
+    crate::scaling::on_a_stack(64 * 1024, run);
 }

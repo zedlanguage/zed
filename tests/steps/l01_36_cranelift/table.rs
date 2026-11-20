@@ -61,12 +61,11 @@ fn sizes(make: fn(usize) -> Term, world: fn(usize) -> World, m: usize) -> (usize
 
 /// The table and the cells are the same size at `n` and `8n`.
 fn fixed(what: &str, n: usize, make: fn(usize) -> Term, world: fn(usize) -> World) {
-    let (small, large) = (sizes(make, world, n), sizes(make, world, 8 * n));
+    let large_n = zed_tests::scaling::FACTOR * n;
+    let (small, large) = (sizes(make, world, n), sizes(make, world, large_n));
     assert_eq!(
-        small,
-        large,
-        "{what}: (table entries, cells) at sizes {n} and {}",
-        8 * n
+        small, large,
+        "{what}: (table entries, cells) at sizes {n} and {large_n}"
     );
 }
 

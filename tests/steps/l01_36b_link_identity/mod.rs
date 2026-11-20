@@ -29,9 +29,7 @@ pub(crate) use zed_tests::step_helpers::l01_36a_executables::{executable, toolch
 /// in it are overwritten by each run, never deleted, so a test's first build may find its
 /// output from the run before.
 pub(crate) fn dir(name: &str) -> PathBuf {
-    let d = zed_tests::step_helpers::scratch(format!("l01_36b/{name}"));
-    std::fs::create_dir_all(&d).unwrap();
-    d
+    zed_tests::step_helpers::scratch_dir(format!("l01_36b/{name}"))
 }
 
 /// What a build did at its link.

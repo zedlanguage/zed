@@ -107,27 +107,21 @@ fn a_shift_by_a_huge_count_keeps_the_power() {
 /// deep bodies allow for. Each unit is loaded, then parsed and resolved, before the timing,
 /// which takes the checker alone (COMPLEXITY.md F85, its CHECK-scaling-share part).
 fn check_alone(what: &'static str, n: usize, power: u32, src: impl Fn(usize) -> String) {
-    let srcs: HashMap<usize, String> = [n, scaling::FACTOR * n]
-        .into_iter()
-        .map(|m| (m, src(m)))
-        .collect();
-    let t = std::thread::Builder::new()
-        .stack_size(1 << 29)
-        .spawn(move || {
-            let units: HashMap<usize, _> = srcs
-                .iter()
-                .map(|(&m, text)| {
-                    zedc::run::load(text.as_bytes()).unwrap_or_else(|e| panic!("{e}"));
-                    (m, zed_tests::deep::resolved(text))
-                })
-                .collect();
-            scaling::check_order(what, n, power, |m| {
-                let (stmts, res) = &units[&m];
-                let info = zedc::check::walk::check(stmts, res);
-                assert!(info.errors.is_empty(), "{:?}", info.errors);
-            });
+    let srcs = scaling::inputs(n, src);
+    scaling::on_a_stack(1 << 29, || {
+        let units: HashMap<usize, _> = srcs
+            .iter()
+            .map(|(&m, text)| {
+                zedc::run::load(text.as_bytes()).unwrap_or_else(|e| panic!("{e}"));
+                (m, zed_tests::deep::resolved(text))
+            })
+            .collect();
+        scaling::check_order(what, n, power, |m| {
+            let (stmts, res) = &units[&m];
+            let info = zedc::check::walk::check(stmts, res);
+            assert!(info.errors.is_empty(), "{:?}", info.errors);
         });
-    t.unwrap().join().unwrap();
+    });
 }
 
 #[test]
@@ -235,14 +229,11 @@ fn a_nest_of_failing_and_tests_on_distinct_names_joins_each_in_what_it_changed()
 /// the work, the rendering of every note included, is linear.
 fn check_notes(what: &'static str, n: usize, per: usize, src: impl Fn(usize) -> String) {
     let srcs = check_note_counts(what, n, per, src);
-    let t = std::thread::Builder::new()
-        .stack_size(1 << 29)
-        .spawn(move || {
-            scaling::check_order(what, n, 1, |m| {
-                assert!(zedc::run::load(srcs[&m].as_bytes()).is_err())
-            });
+    scaling::on_a_stack(1 << 29, || {
+        scaling::check_order(what, n, 1, |m| {
+            assert!(zedc::run::load(srcs[&m].as_bytes()).is_err())
         });
-    t.unwrap().join().unwrap();
+    });
 }
 
 /// The first part of [`check_notes`], the count of the notes and the size of their text, with
@@ -470,15 +461,12 @@ fn check_rejected_as_in_linear_work(
     expect: impl Fn(usize, &str) + Send + Sync + 'static,
 ) {
     let srcs = scaling::inputs(n, src);
-    let t = std::thread::Builder::new()
-        .stack_size(1 << 29)
-        .spawn(move || {
-            scaling::check_order(what, n, 1, |m| match zedc::run::load(srcs[&m].as_bytes()) {
-                Ok(_) => panic!("size {m}: accepted"),
-                Err(e) => expect(m, &e.to_string()),
-            });
+    scaling::on_a_stack(1 << 29, || {
+        scaling::check_order(what, n, 1, |m| match zedc::run::load(srcs[&m].as_bytes()) {
+            Ok(_) => panic!("size {m}: accepted"),
+            Err(e) => expect(m, &e.to_string()),
         });
-    t.unwrap().join().unwrap();
+    });
 }
 
 #[test]

@@ -20,14 +20,9 @@ fn the_nest_scales() {
 #[test]
 fn the_order_of_nested_loops_takes_time_linear_in_the_depth() {
     // A deep nest is dropped one level per stack frame.
-    std::thread::Builder::new()
-        .stack_size(1 << 28)
-        .spawn(|| {
-            scaling::check("the weak topological order of nested loops", 1000, |d| {
-                order(&Nest::new(d)).unwrap();
-            });
-        })
-        .expect("a thread")
-        .join()
-        .expect("the check passes");
+    scaling::on_a_stack(1 << 28, || {
+        scaling::check("the weak topological order of nested loops", 1000, |d| {
+            order(&Nest::new(d)).unwrap();
+        });
+    });
 }

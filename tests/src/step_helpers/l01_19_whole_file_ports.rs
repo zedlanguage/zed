@@ -5,9 +5,7 @@ use std::path::PathBuf;
 /// A directory of its own for test `name`, under this process's scratch directory
 /// ([`super::scratch`]), which no other process and no other test uses.
 pub fn dir(name: &str) -> PathBuf {
-    let d = super::scratch(format!("l01_19/{name}"));
-    std::fs::create_dir_all(&d).unwrap();
-    d
+    super::scratch_dir(format!("l01_19/{name}"))
 }
 
 /// The outcome of a `zedc` command line: its status, standard output and standard error.

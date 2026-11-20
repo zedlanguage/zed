@@ -100,8 +100,7 @@ fn long_at(what: &'static str, n: usize, make: fn(usize) -> Term, ds: fn(usize) 
             preimage(t, d, &Demand::Bool(true));
         });
     };
-    let thread = std::thread::Builder::new().stack_size(2 << 20);
-    thread.spawn(measure).unwrap().join().unwrap();
+    scaling::on_a_stack(2 << 20, measure);
 }
 
 #[test]
@@ -170,8 +169,7 @@ fn long_relations(what: &'static str, n: usize, make: fn(usize) -> Term) {
             relations(&[t], &inputs, false).expect("in the domain");
         });
     };
-    let thread = std::thread::Builder::new().stack_size(2 << 20);
-    thread.spawn(measure).unwrap().join().unwrap();
+    scaling::on_a_stack(2 << 20, measure);
 }
 
 #[test]
@@ -210,8 +208,7 @@ fn a_chain_of_and_written_as_ifs_is_joined_in_one_pass() {
             relations(&[t], names, false).expect("in the domain");
         });
     };
-    let thread = std::thread::Builder::new().stack_size(2 << 20);
-    thread.spawn(measure).unwrap().join().unwrap();
+    scaling::on_a_stack(2 << 20, measure);
 }
 
 #[test]
@@ -230,8 +227,7 @@ fn a_chain_of_or_written_as_ifs_is_joined_in_one_pass() {
             relations(&[t], names, false).expect("in the domain");
         });
     };
-    let thread = std::thread::Builder::new().stack_size(2 << 20);
-    thread.spawn(measure).unwrap().join().unwrap();
+    scaling::on_a_stack(2 << 20, measure);
 }
 
 /// [`rereads`] with `r` places and `k` limits, each at `n` and `8n` and both at once: the
@@ -268,8 +264,7 @@ fn long_chains_read_at_many_places_under_recursion() {
             });
         }
     };
-    let thread = std::thread::Builder::new().stack_size(2 << 20);
-    thread.spawn(measure).unwrap().join().unwrap();
+    scaling::on_a_stack(2 << 20, measure);
 }
 
 #[test]

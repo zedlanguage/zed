@@ -214,7 +214,10 @@ fn comparing_exclusive_ors(what: &str, n: usize, k: usize, other: Other, equal: 
     let make = |c, b| (odd_tuples(c, b), other(c, b));
     let pools = [
         (n, pool(n, small_runs, k, make)),
-        (8 * n, pool(8 * n, large_runs, k, make)),
+        (
+            scaling::FACTOR * n,
+            pool(scaling::FACTOR * n, large_runs, k, make),
+        ),
     ];
     scaling::check(what, n, |c| {
         let (_, pool) = pools.iter().find(|(size, _)| *size == c).expect("a size");

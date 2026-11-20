@@ -21,8 +21,7 @@ fn a_chain_of_n_failures_merging_scales() {
 fn checking_and_running_a_chain_of_f32_arithmetic_scales() {
     // About 0.29 ms and 0.27 MB a binding: 1x about 0.29 s, 2.2 GB at 8n.
     let n = 1000;
-    let srcs: std::collections::HashMap<usize, String> =
-        [n, 8 * n].into_iter().map(|n| (n, f32_chain(n))).collect();
+    let srcs = zed_tests::scaling::inputs(n, f32_chain);
     check_order("a chain of n f32 bindings", n, 1, |n| {
         value(&srcs[&n], "x");
     });

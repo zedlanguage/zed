@@ -15,7 +15,7 @@ fn checks_deep(shapes: &[&str], n: usize) {
     on_small_stack(|| {
         for &shape in shapes {
             let small = statements(&program(shape, n).text);
-            let large = statements(&program(shape, 8 * n).text);
+            let large = statements(&program(shape, scaling::FACTOR * n).text);
             let small_res = zedc::resolve::resolve(&small).unwrap();
             let large_res = zedc::resolve::resolve(&large).unwrap();
             scaling::check_order(&format!("checking {shape}"), n, 1, |k| {
@@ -77,7 +77,7 @@ fn checks_linear(shape: &str, n: usize) {
     use zed_tests::deep::{on_small_stack, program, statements};
     on_small_stack(|| {
         let small = statements(&program(shape, n).text);
-        let large = statements(&program(shape, 8 * n).text);
+        let large = statements(&program(shape, scaling::FACTOR * n).text);
         let small_res = zedc::resolve::resolve(&small).unwrap();
         let large_res = zedc::resolve::resolve(&large).unwrap();
         scaling::check_order(&format!("checking {shape}"), n, 1, |k| {
@@ -164,7 +164,7 @@ fn bit_words_8000_deep_check_on_a_2_mib_stack() {
     use zed_tests::deep::{on_small_stack, statements};
     let n = 1_000;
     let small = statements(&bit_words(n));
-    let large = statements(&bit_words(8 * n));
+    let large = statements(&bit_words(scaling::FACTOR * n));
     let small_res = zedc::resolve::resolve(&small).unwrap();
     let large_res = zedc::resolve::resolve(&large).unwrap();
     on_small_stack(|| {

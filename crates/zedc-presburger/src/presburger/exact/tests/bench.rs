@@ -4,23 +4,17 @@
 use super::*;
 
 /// The thread CPU time, in ns, of the whole two-pin reading of `f` (`guarded::prepare`,
-/// `Prep::two_pins` and `TwoPins::values` for each of `names`), the least of five runs, with
+/// `Prep::two_pins` and `TwoPins::values` for each of `names`, and the drop of what they made,
+/// which the checker pays too), the least of five runs ([`crate::scaling::least_cpu_ns`]), with
 /// the units it charged, the same in each run.
 fn timed(f: &Formula, names: &[&str]) -> (u128, u64) {
-    let cpu = || {
-        let t = rustix::time::clock_gettime(rustix::time::ClockId::ThreadCPUTime);
-        t.tv_sec as u128 * 1_000_000_000 + t.tv_nsec as u128
-    };
     let syms: Vec<Atom> = names.iter().map(|s| a(s)).collect();
-    let mut least = u128::MAX;
-    let mut units = 0;
-    for _ in 0..5 {
+    crate::scaling::least_cpu_ns(5, || {
         let mut work = Work {
             used: 0,
             limit: u64::MAX,
             solver: SOLVER,
         };
-        let t = cpu();
         let prep = guarded::prepare(f, &mut work)
             .expect("no refusal")
             .expect("prepared");
@@ -33,10 +27,8 @@ fn timed(f: &Formula, names: &[&str]) -> (u128, u64) {
             assert!(set.is_some(), "{s:?} declined");
             std::hint::black_box(set);
         }
-        least = least.min(cpu() - t);
-        units = work.used;
-    }
-    (least, units)
+        work.used
+    })
 }
 
 /// `p` in `0..=n` on the line `7·q == 5·p`, read with two pins `p` and `q` and the name
@@ -81,8 +73,9 @@ fn strip(n: i64) -> Formula {
 
 /// The reading's time per unit, each case at 10^5 units or more so that the fixed costs do not
 /// count. The worst, times `EXACT_LIMIT` (the reading's own allowance, `exact::tried`), is the
-/// most time a reading stopped there takes; it is checked against twice A99's 250 ms, the
-/// factor for the load of the test machine, as the cover's own test is
+/// most time a reading stopped there takes; it is checked against
+/// [`crate::scaling::AT_THE_LIMIT_MS`], twice A99's 250 ms for the load of the test machine
+/// ([`crate::scaling::per_unit_bound`]), as the cover's own test is
 /// (`l01_38_omega_test::bench::exact_cover`). The reading asks no question of the solver, so
 /// its time is measured whole, with nothing subtracted.
 ///
@@ -99,19 +92,11 @@ fn the_two_pin_reading_takes_a_bounded_time_per_unit_of_work() {
         ("sides h=60".into(), sides(60)),
         ("strip n=4000".into(), strip(4000)),
     ];
-    let mut worst = 0f64;
-    for (name, f) in &cases {
-        let (ns, units) = timed(f, &names);
-        let per = ns as f64 / units as f64;
-        eprintln!("two pins: {name}: {units} units in {ns} ns of CPU time, {per:.1} ns per unit");
-        assert!(
-            units >= 100_000,
-            "two pins: {name}: {units} units; the case must count 10^5 units or more, or its \
-             time is the fixed costs"
-        );
-        worst = worst.max(per);
-    }
-    let most = worst * EXACT_LIMIT as f64 / 1e6;
-    eprintln!("two pins: worst {worst:.1} ns per unit; the limit takes at most {most:.0} ms");
-    assert!(most <= 500.0, "{most:.0} ms at the limit");
+    let measured: Vec<(String, u128, u64)> = (cases.into_iter())
+        .map(|(name, f)| {
+            let (ns, units) = timed(&f, &names);
+            (name, ns, units)
+        })
+        .collect();
+    crate::scaling::per_unit_bound("two pins", &measured, 100_000, EXACT_LIMIT);
 }

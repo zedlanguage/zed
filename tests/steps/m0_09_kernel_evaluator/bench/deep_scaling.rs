@@ -37,7 +37,7 @@ fn timed_by(what: &str, allocates: bool, op: impl Fn(&Value, &Value) + Sync) {
             nested(in_each_in_turn, d, Value::Int(2)),
         )
     };
-    let (small, large) = (build(n), build(8 * n));
+    let (small, large) = (build(n), build(scaling::FACTOR * n));
     let run = |d| {
         let (a, b) = if d == n { &small } else { &large };
         op(a, b);
@@ -98,7 +98,7 @@ fn membership_scales_with_length() {
         let list = list_type();
         let n = SCALING_DEPTH;
         let build = |d| nested(in_atom, d, Value::atom("nil"));
-        let (small, large) = (build(n), build(8 * n));
+        let (small, large) = (build(n), build(scaling::FACTOR * n));
         scaling::check("membership in a recursive type, by length", n, |d| {
             assert!(list.contains(if d == n { &small } else { &large }));
         });
@@ -115,7 +115,7 @@ fn keypaths_scale_with_length() {
             Family::from_leaves([(path, Value::Int(1))]).unwrap()
         };
         let build = |d| (path(d, 1), path(d, 2));
-        let (small, large) = (build(n), build(8 * n));
+        let (small, large) = (build(n), build(scaling::FACTOR * n));
         scaling::check("a union of long keypaths, by length", n, |d| {
             let (a, b) = if d == n { &small } else { &large };
             assert_eq!(a.union(b).unwrap().leaves().len(), 2);

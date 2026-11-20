@@ -8,14 +8,7 @@ use crate::strings::{FIELDS, appended_lens, both_with};
 #[test]
 fn len_after_500_appends_agrees_natively_and_in_the_kernel() {
     let (t, want) = appended_lens(500, &FIELDS);
-    let (native, kernel) = std::thread::scope(|s| {
-        std::thread::Builder::new()
-            .stack_size(1 << 28)
-            .spawn_scoped(s, || both_with(&t, "log:"))
-            .unwrap()
-            .join()
-            .unwrap()
-    });
+    let (native, kernel) = zed_tests::scaling::on_a_stack(1 << 28, || both_with(&t, "log:"));
     assert_eq!(native, want);
     assert_eq!(kernel, want);
 }

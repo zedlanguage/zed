@@ -65,7 +65,7 @@ fn dropping_deep_and_wide_terms_scales() {
             }
             built
         };
-        let (small, large) = (pools(n, small_runs), pools(8 * n, large_runs));
+        let (small, large) = (pools(n, small_runs), pools(scaling::FACTOR * n, large_runs));
         for ((what, s), (_, l)) in small.iter().zip(&large) {
             scaling::check(&format!("dropping {what}"), n, |k| {
                 let pool = if k == n { s } else { l };
@@ -85,7 +85,7 @@ fn negations_and_indices_print_in_linear_time() {
     zed_tests::deep::on_small_stack(|| {
         let n = 2_000;
         for (k, what) in ["negations", "indices"].into_iter().enumerate() {
-            let (small, large) = (prefix_shape(k, n), prefix_shape(k, 8 * n));
+            let (small, large) = (prefix_shape(k, n), prefix_shape(k, scaling::FACTOR * n));
             scaling::check(&format!("one line, nested {what}, by depth"), n, |d| {
                 let t = if d == n { &small } else { &large };
                 std::hint::black_box(t.to_string());

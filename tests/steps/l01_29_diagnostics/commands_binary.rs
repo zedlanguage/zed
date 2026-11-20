@@ -249,8 +249,7 @@ fn a_rejection_by_the_checker_prints_alike_and_zedc_fmt_lays_the_unit_out() {
 /// A manifest is read with the syntax of a unit, and its parse error prints its steps too.
 #[test]
 fn a_parse_error_in_a_manifest_prints_its_steps_and_repairs() {
-    let d = scratch::scratch("l01_29_commands_binary_package");
-    std::fs::create_dir_all(&d).unwrap();
+    let d = scratch::scratch_dir("l01_29_commands_binary_package");
     let manifest = d.join("zed.manifest");
     std::fs::write(&manifest, "prelude = \"std.prelude\" with y = 0;\n").unwrap();
     let f = d.join("a.zed");

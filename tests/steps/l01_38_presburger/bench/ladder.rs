@@ -25,8 +25,7 @@ fn the_condition_that_no_operation_fails_scales() {
             guarded_divisors(k);
         });
     };
-    let thread = std::thread::Builder::new().stack_size(8 << 20);
-    thread.spawn(measure).unwrap().join().unwrap();
+    scaling::on_a_stack(8 << 20, measure);
 }
 
 #[test]
@@ -48,8 +47,7 @@ fn a_chain_of_guarded_remainders_scales() {
             assert_eq!(kind(&entails(p, g)), "proved");
         });
     };
-    let thread = std::thread::Builder::new().stack_size(8 << 20);
-    thread.spawn(measure).unwrap().join().unwrap();
+    scaling::on_a_stack(8 << 20, measure);
 }
 
 #[test]
@@ -85,8 +83,7 @@ fn a_chain_of_remainders_by_terms_scales() {
             assert_eq!(kind(&entails(p, g)), "proved");
         });
     };
-    let thread = std::thread::Builder::new().stack_size(8 << 20);
-    thread.spawn(measure).unwrap().join().unwrap();
+    scaling::on_a_stack(8 << 20, measure);
 }
 
 #[test]
@@ -105,8 +102,7 @@ fn products_of_premises_in_pairs_scale() {
             assert!(matches!(e, Entailment::Proved(_)), "{k}: {e}");
         });
     };
-    let thread = std::thread::Builder::new().stack_size(8 << 20);
-    thread.spawn(measure).unwrap().join().unwrap();
+    scaling::on_a_stack(8 << 20, measure);
 }
 
 #[test]
@@ -163,8 +159,7 @@ fn the_conditions_of_shared_divisors_scale() {
             },
         );
     };
-    let thread = std::thread::Builder::new().stack_size(8 << 20);
-    thread.spawn(measure).unwrap().join().unwrap();
+    scaling::on_a_stack(8 << 20, measure);
 }
 
 #[test]

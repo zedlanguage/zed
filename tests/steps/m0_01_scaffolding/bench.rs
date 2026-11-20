@@ -9,10 +9,9 @@ use super::scaling::{names, round_trips, toml};
 #[test]
 fn step_targets_scales_with_the_number_of_folders() {
     let n = 2000;
-    let inputs = [n, 8 * n].map(|m| (m, names(m)));
+    let inputs = zed_tests::scaling::inputs(n, names);
     let toml = toml();
     check("step_targets, by folders", n, |m| {
-        let (_, folders) = inputs.iter().find(|i| i.0 == m).expect("a built size");
-        round_trips(folders, &toml);
+        round_trips(&inputs[&m], &toml);
     });
 }

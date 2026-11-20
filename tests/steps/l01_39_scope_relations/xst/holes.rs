@@ -728,7 +728,7 @@ fn the_families_have_exact_ends_at_small_sizes() {
 /// Asserts the ends of [`assert_exact_ends`] for `make(n)` and `make(8n)`, and that the work
 /// of the scope, its tests in order, grows near linearly ([`scaling::check_order`]).
 fn family(what: &str, n: usize, make: impl Fn(usize) -> Inst + Sync) {
-    for m in [n, 8 * n] {
+    for m in [n, scaling::FACTOR * n] {
         assert_exact_ends(&format!("{what}, n = {m}"), &make(m));
     }
     let inputs = scaling::inputs(n, |m| {

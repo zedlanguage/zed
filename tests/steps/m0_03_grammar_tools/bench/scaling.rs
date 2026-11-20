@@ -3,7 +3,7 @@
 //! work at these sizes. What each benchmark asserts besides its ratio is checked at small sizes
 //! by `scaling::each_tool_benchmark_passes_at_small_sizes`.
 
-use zed_tests::scaling::{check, inputs};
+use zed_tests::scaling::{FACTOR, check, inputs};
 use zed_tools::layer;
 use zed_tools::spec::Spec;
 
@@ -17,7 +17,7 @@ use crate::{Dir, design, fence, spec_dir};
 
 /// A spec for each of the sizes `n` and `8n`, with `body` of the size as its `DESIGN.md` fences.
 fn specs(name: &str, n: usize, body: impl Fn(usize) -> String) -> [(usize, Dir); 2] {
-    [n, 8 * n].map(|m| (m, spec_dir(&format!("{name}_{m}"), &design(&body(m)), "")))
+    [n, FACTOR * n].map(|m| (m, spec_dir(&format!("{name}_{m}"), &design(&body(m)), "")))
 }
 
 /// Runs `run` at n and 8n on the directory built for the size.
@@ -77,7 +77,7 @@ fn cases_scales_with_the_number_of_cases() {
 
 /// A directory holding a program of `m` functions, for `m` in `n` and `8n`.
 fn programs(name: &str, n: usize) -> [(usize, Dir); 2] {
-    [n, 8 * n].map(|m| (m, program_dir(name, m)))
+    [n, FACTOR * n].map(|m| (m, program_dir(name, m)))
 }
 
 #[test]
@@ -187,7 +187,8 @@ fn sync_scales_with_the_number_of_fences() {
 #[test]
 fn the_table_of_words_scales_with_the_words_of_a_cell() {
     let n = 2000;
-    let dirs = [n, 8 * n].map(|m| (m, spec_dir(&format!("scale_words_{m}"), &wide_words(m), "")));
+    let dirs =
+        [n, FACTOR * n].map(|m| (m, spec_dir(&format!("scale_words_{m}"), &wide_words(m), "")));
     check("table of words, by words of a cell", n, |m| {
         let (_, dir) = dirs
             .iter()

@@ -11,16 +11,11 @@ use crate::scaling::{
 #[test]
 fn names_read_inside_deeply_nested_blocks_scale() {
     // A name was looked for in each open scope in turn, innermost first.
-    std::thread::Builder::new()
-        .stack_size(1 << 32)
-        .spawn(|| {
-            scaling::check("names read in blocks nested n deep", 800, |n| {
-                assert!(run(&nested(n)).is_ok());
-            });
-        })
-        .unwrap()
-        .join()
-        .unwrap();
+    scaling::on_a_stack(1 << 32, || {
+        scaling::check("names read in blocks nested n deep", 800, |n| {
+            assert!(run(&nested(n)).is_ok());
+        });
+    });
 }
 
 #[test]
@@ -47,7 +42,7 @@ fn using_many_overloads_scales() {
 fn resolves_deep(shapes: &[&str]) {
     use zed_tests::deep::{on_small_stack, program, statements};
     let n = 12_500;
-    let deep = 8 * n;
+    let deep = scaling::FACTOR * n;
     on_small_stack(|| {
         for &shape in shapes {
             let small = statements(&program(shape, n).text);
