@@ -1444,9 +1444,9 @@ and `verify_step` does not check `xq.structs`; both go to TEST-kernel-unreached-
 
 Nineteenth round (kernel22, 2026-11-20), row TEST-kernel-unreached-paths-12. Base origin/main
 5810f0957, whose `types/` code is that of 0d68a2523, so the list of the eighteenth round holds
-there as written. Line numbers below are at 0d68a2523, then in parentheses at 19311b3fe
-(the first commit of this round after its rebase onto 7fb0c6594, whose comments in `empty.rs`
-moved the lines past 2490 by 17 and those past 6687 by 20).
+there as written. Line numbers below are at 0d68a2523, then in parentheses at this round's last commit, the
+`cargo fmt` of its code (after the rebase onto 7fb0c6594, whose comments in `empty.rs` moved
+the lines past 2490 by 17 and those past 6687 by 20; the fmt moved those past 9762 back by 1).
 
 The two findings:
 
@@ -1472,14 +1472,15 @@ The two findings:
 | Line | Closed by | Test or site | Control |
 |---|---|---|---|
 | `Ids::insert` 118 (121), `Ids::remove` 126 (129) | test | `a_type_numbered_again_keeps_one_entry_and_a_type_not_held_is_not_removed` | `insert` pushing where the key is held fails it |
-| `refused_by_group` 682 (685); `carrier_root_order` 17835 (17759) | test | `types_that_are_not_recursive_are_not_refused_by_a_group_and_come_first_among_roots` | `Node::Parts` ordered last fails it |
+| `refused_by_group` 682 (685); `carrier_root_order` 17835 (17758) | test | `types_that_are_not_recursive_are_not_refused_by_a_group_and_come_first_among_roots` | `Node::Parts` ordered last fails it |
 | `leaf` 4875, 4877, 4879 (4901, 4903, 4905) | test | `the_leaf_of_a_value_follows_first_components_and_stops_at_records_and_paths` | the empty payload answered `None` fails it |
 | `pop_open_forks` 3249 | removed | `Vec::truncate` leaves a shorter vector as it is, so the length test went | none |
 | `step_of` 8338, the refusal of one row | removed | one row is read as the chain through `step_shape`; with records refused first, one row without records is a `list_step` | none |
-| `check_chain_witness` 10039-10040, 10143, 10167, 10182, 10193, 10223, 10229, 10245, 10264 (9953-9954, 10057, 10081, 10096, 10107, 10137, 10143, 10159, 10178): the answers on a member not known | test, with the test-only fault flag `Search::unknown_in` | `assert_check_is_membership` (the two membership tests) runs the check again with its k-th `member_known` answering "not known", for each k it reaches, and asserts that no list outside passes and some list inside is refused | the four `break 'walk None` of `let ... else` answered `Some(true)` fail both tests; 10061 and 10076 have no control of their own |
+| `check_chain_witness` 10039-10040, 10143, 10167, 10182, 10193, 10223, 10229, 10245, 10264 (9952-9953, 10056, 10080, 10095, 10106, 10136, 10142, 10158, 10177): the answers on a member not known | test, with the test-only fault flag `Search::unknown_in` | `assert_check_is_membership` (the two membership tests) runs the check again with its k-th `member_known` answering "not known", for each k it reaches, and asserts that no list outside passes and some list inside is refused | the four `break 'walk None` of `let ... else` answered `Some(true)` fail both tests; 10061 and 10076 have no control of their own |
 
 Counts: of the 19 lines, a coverage run of the zed-kernel `types::empty::` tests at 60bca98b1
-(19311b3fe before its rebases, with the same `types/` code but for those comments; 75 pieces, 0 failed) and one of the four list-witness tests with equal items sharing an id (4
+(the first commit before its rebases, with the same `types/` code but for those comments and
+the layout; 75 pieces, 0 failed) and one of the four list-witness tests with equal items sharing an id (4
 pieces, 0 failed) count all 17 kept lines above 0; 3249 and 8338 are gone. 137 of the 156
 lines are open.
 

@@ -9762,89 +9762,88 @@ impl<'m> Searching<'m> {
         let mut canon_verify: HashMap<(bool, usize, Option<(usize, usize)>, usize), usize> =
             HashMap::new();
 
-        let mut unfold = |start: &Type,
-                          intern_head: &mut dyn FnMut(&Type) -> usize|
-         -> Option<usize> {
-            // The path from `start` to a type read before (a node, or a failure), to a cycle,
-            // which becomes nodes on a cycle, or to a type that is no step.
-            let (mut path, end) = follow(
-                start,
-                |cur| node_of.get(cur).copied(),
-                |cur| {
-                    verify_step(cur, intern_head)
-                        .map(|(has_stop, head, emit, next)| ((has_stop, head, emit), next))
-                },
-            );
-            let mut child = match end {
-                PathEnd::Known(Some(idx)) => idx,
-                PathEnd::Known(None) | PathEnd::Stuck(_) => {
-                    if let PathEnd::Stuck(cur) = end {
-                        node_of.insert(cur, None);
+        let mut unfold =
+            |start: &Type, intern_head: &mut dyn FnMut(&Type) -> usize| -> Option<usize> {
+                // The path from `start` to a type read before (a node, or a failure), to a cycle,
+                // which becomes nodes on a cycle, or to a type that is no step.
+                let (mut path, end) = follow(
+                    start,
+                    |cur| node_of.get(cur).copied(),
+                    |cur| {
+                        verify_step(cur, intern_head)
+                            .map(|(has_stop, head, emit, next)| ((has_stop, head, emit), next))
+                    },
+                );
+                let mut child = match end {
+                    PathEnd::Known(Some(idx)) => idx,
+                    PathEnd::Known(None) | PathEnd::Stuck(_) => {
+                        if let PathEnd::Stuck(cur) = end {
+                            node_of.insert(cur, None);
+                        }
+                        for (ty, _) in path {
+                            node_of.insert(ty, None);
+                        }
+                        return None;
                     }
-                    for (ty, _) in path {
-                        node_of.insert(ty, None);
+                    PathEnd::Cycle(cyc_start) => {
+                        let cyc_len = path.len() - cyc_start;
+                        let base_id = nodes.len();
+                        for (offset, (ty, (has_stop, head, emit))) in
+                            path.drain(cyc_start..).enumerate()
+                        {
+                            let next_id = base_id + (offset + 1) % cyc_len;
+                            let id = nodes.len();
+                            nodes.push(VerifyNode {
+                                has_stop,
+                                head,
+                                emit,
+                                next: next_id,
+                                on_cycle: true,
+                                run: 1,
+                                jump: next_id,
+                                acyc: 0,
+                                emits: usize::from(emit.is_some()),
+                            });
+                            node_of.insert(ty, Some(id));
+                        }
+                        base_id
                     }
-                    return None;
-                }
-                PathEnd::Cycle(cyc_start) => {
-                    let cyc_len = path.len() - cyc_start;
-                    let base_id = nodes.len();
-                    for (offset, (ty, (has_stop, head, emit))) in
-                        path.drain(cyc_start..).enumerate()
-                    {
-                        let next_id = base_id + (offset + 1) % cyc_len;
-                        let id = nodes.len();
-                        nodes.push(VerifyNode {
-                            has_stop,
-                            head,
-                            emit,
-                            next: next_id,
-                            on_cycle: true,
-                            run: 1,
-                            jump: next_id,
-                            acyc: 0,
-                            emits: usize::from(emit.is_some()),
-                        });
-                        node_of.insert(ty, Some(id));
-                    }
-                    base_id
-                }
-            };
-
-            while let Some((ty, (has_stop, head, emit))) = path.pop() {
-                let (run, jump) = if !nodes[child].on_cycle
-                    && nodes[child].has_stop == has_stop
-                    && nodes[child].head == head
-                    && nodes[child].emit == emit
-                {
-                    (1 + nodes[child].run, nodes[child].jump)
-                } else {
-                    (1, child)
                 };
-                let id = *canon_verify
-                    .entry((has_stop, head, emit, child))
-                    .or_insert_with(|| {
-                        let new_id = nodes.len();
-                        let acyc = nodes[child].acyc + 1;
-                        let emits = nodes[child].emits + usize::from(emit.is_some());
-                        nodes.push(VerifyNode {
-                            has_stop,
-                            head,
-                            emit,
-                            next: child,
-                            on_cycle: false,
-                            run,
-                            jump,
-                            acyc,
-                            emits,
+
+                while let Some((ty, (has_stop, head, emit))) = path.pop() {
+                    let (run, jump) = if !nodes[child].on_cycle
+                        && nodes[child].has_stop == has_stop
+                        && nodes[child].head == head
+                        && nodes[child].emit == emit
+                    {
+                        (1 + nodes[child].run, nodes[child].jump)
+                    } else {
+                        (1, child)
+                    };
+                    let id = *canon_verify
+                        .entry((has_stop, head, emit, child))
+                        .or_insert_with(|| {
+                            let new_id = nodes.len();
+                            let acyc = nodes[child].acyc + 1;
+                            let emits = nodes[child].emits + usize::from(emit.is_some());
+                            nodes.push(VerifyNode {
+                                has_stop,
+                                head,
+                                emit,
+                                next: child,
+                                on_cycle: false,
+                                run,
+                                jump,
+                                acyc,
+                                emits,
+                            });
+                            new_id
                         });
-                        new_id
-                    });
-                node_of.insert(ty, Some(id));
-                child = id;
-            }
-            Some(child)
-        };
+                    node_of.insert(ty, Some(id));
+                    child = id;
+                }
+                Some(child)
+            };
 
         let m = items.len();
         let mut run_end = vec![m; m];

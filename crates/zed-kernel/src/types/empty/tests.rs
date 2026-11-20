@@ -2946,7 +2946,12 @@ fn the_check_of_a_list_witness_is_membership_beside_records() {
             "a chain of one row beside records, an exit of 9 into a loop of 2",
             vec![
                 Expr::Union(vec![nil(), cons(ty(lit(1)), r(1)), records()]),
-                Expr::Union(vec![nil(), cons(int(), r(2)), cons(ty(lit(9)), r(3)), records()]),
+                Expr::Union(vec![
+                    nil(),
+                    cons(int(), r(2)),
+                    cons(ty(lit(9)), r(3)),
+                    records(),
+                ]),
                 Expr::Union(vec![nil(), cons(ty(lit(1)), r(0)), records()]),
                 Expr::Union(vec![nil(), cons(ty(lit(2)), r(3))]),
             ],
@@ -3037,7 +3042,10 @@ fn assert_check_is_membership(systems: Vec<(&str, Vec<super::super::rec::Expr>)>
                         (ok, d.s().unknown_in.is_none())
                     })
                 });
-                assert!(!ok || member, "{name}: {l:?} with test {k} unknown, check passes");
+                assert!(
+                    !ok || member,
+                    "{name}: {l:?} with test {k} unknown, check passes"
+                );
                 unknown_refused += usize::from(member && !ok);
                 if !fired {
                     break;
@@ -3046,7 +3054,10 @@ fn assert_check_is_membership(systems: Vec<(&str, Vec<super::super::rec::Expr>)>
         }
         assert!(inside > 0 && outside > 0, "{name}: lists on both sides");
     }
-    assert!(unknown_refused > 0, "some list refused on an unknown member");
+    assert!(
+        unknown_refused > 0,
+        "some list refused on an unknown member"
+    );
 }
 
 /// Item KERNEL-verify-step-self-loop-tail: a chain of tails ending in a tail that loops on
@@ -3459,7 +3470,11 @@ fn a_type_numbered_again_keeps_one_entry_and_a_type_not_held_is_not_removed() {
     assert_eq!(ids.get(&t), Some(&2));
     assert_eq!(ids.0[&t.digest()].len(), 1, "one entry for the type");
     ids.remove(&u);
-    assert_eq!(ids.get(&t), Some(&2), "removing a type not held keeps the others");
+    assert_eq!(
+        ids.get(&t),
+        Some(&2),
+        "removing a type not held keeps the others"
+    );
     ids.remove(&t);
     assert_eq!(ids.get(&t), None);
     assert!(ids.0.is_empty(), "no list left for the digest");
@@ -3472,7 +3487,11 @@ fn a_type_numbered_again_keeps_one_entry_and_a_type_not_held_is_not_removed() {
 #[test]
 fn types_that_are_not_recursive_are_not_refused_by_a_group_and_come_first_among_roots() {
     let list = fork_inputs::list(Type::int());
-    for t in [Type::int(), Type::atom("nil"), &Type::atom("nil") | &Type::int()] {
+    for t in [
+        Type::int(),
+        Type::atom("nil"),
+        &Type::atom("nil") | &Type::int(),
+    ] {
         assert!(!t.refused_by_group(), "{t}");
     }
     assert!(matches!(&*list.0, Node::Rec(_)));
@@ -3486,17 +3505,28 @@ fn types_that_are_not_recursive_are_not_refused_by_a_group_and_come_first_among_
 #[test]
 fn the_leaf_of_a_value_follows_first_components_and_stops_at_records_and_paths() {
     let one = Value::Int(1);
-    let nested = Value::tuple(vec![Value::atom_with("a", vec![one.clone(), Value::Int(2)])]);
+    let nested = Value::tuple(vec![Value::atom_with(
+        "a",
+        vec![one.clone(), Value::Int(2)],
+    )]);
     assert_eq!(leaf(&nested), Some(one.clone()));
     assert_eq!(leaf(&Value::atom("b")), Some(Value::atom("b")));
-    assert_eq!(leaf(&Value::atom_with("c", vec![])), Some(Value::tuple(Vec::new())));
-    assert_eq!(leaf(&Value::tuple(Vec::new())), Some(Value::tuple(Vec::new())));
+    assert_eq!(
+        leaf(&Value::atom_with("c", vec![])),
+        Some(Value::tuple(Vec::new()))
+    );
+    assert_eq!(
+        leaf(&Value::tuple(Vec::new())),
+        Some(Value::tuple(Vec::new()))
+    );
     let record = Value::atom_named("d", vec![("x".into(), one.clone())]).expect("a record");
     assert_eq!(leaf(&record), None);
     assert_eq!(leaf(&Value::tuple(vec![record])), None);
     assert_eq!(leaf(&Value::path(vec![one.clone()])), None);
     let family = Value::merge_failures([Value::atom("e"), Value::atom("f")]);
-    let Value::Atom(a) = &family else { panic!("an atom") };
+    let Value::Atom(a) = &family else {
+        panic!("an atom")
+    };
     let inner = a.payload.as_ref().expect("a payload").as_slice()[0].clone();
     assert!(matches!(inner, Value::Family(_)));
     assert_eq!(leaf(&inner), None);

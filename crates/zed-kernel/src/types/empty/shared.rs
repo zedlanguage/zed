@@ -484,8 +484,9 @@ mod tests {
     #[test]
     fn follow_ends_at_a_known_type_a_cycle_or_a_type_with_no_step() {
         let k = |i: usize| Type::atom(&format!("k{i}"));
-        let next: BTreeMap<Type, Type> =
-            (0..6).map(|i| (k(i), k(if i == 5 { 2 } else { i + 1 }))).collect();
+        let next: BTreeMap<Type, Type> = (0..6)
+            .map(|i| (k(i), k(if i == 5 { 2 } else { i + 1 })))
+            .collect();
         let names = |path: &[(Type, usize)]| path.iter().map(|(_, s)| *s).collect::<Vec<_>>();
         let mut steps = 0;
         let (path, end) = follow(
@@ -524,22 +525,30 @@ mod tests {
     fn step_shape_reads_the_steps_of_a_list() {
         let lit = |i: i64| Type::lit(&Value::Int(i)).expect("an integer");
         let (nil, end) = (Type::atom("nil"), Type::atom("end"));
-        let pair = |h: i64, tail: &Type| Type::atom_with("cons", &Type::tuple(vec![lit(h), tail.clone()]));
+        let pair =
+            |h: i64, tail: &Type| Type::atom_with("cons", &Type::tuple(vec![lit(h), tail.clone()]));
         let records = Type::atom_with("cons", &Type::universe(Universe::Struct));
         let shape = |x: &Type| step_shape(x, "cons", "nil");
         let one = &nil | &pair(1, &end);
-        assert!(matches!(shape(&one), Some((StepShape::List(true, h, t), false)) if h == lit(1) && t == end));
+        assert!(
+            matches!(shape(&one), Some((StepShape::List(true, h, t), false)) if h == lit(1) && t == end)
+        );
         assert!(matches!(shape(&nil), Some((StepShape::Stop, false))));
         // A payload with no pair has no part of length two, and is refused.
         assert!(shape(&(&nil | &records)).is_none());
         let two = &pair(1, &end) | &pair(2, &nil);
         let rows_of = |x: &Type| match shape(x) {
-            Some((StepShape::Rows { has_stop, rows }, structs)) => Some((has_stop, rows.len(), structs)),
+            Some((StepShape::Rows { has_stop, rows }, structs)) => {
+                Some((has_stop, rows.len(), structs))
+            }
             _ => None,
         };
         assert_eq!(rows_of(&two), Some((false, 2, false)));
         assert_eq!(rows_of(&(&(&two | &nil) | &records)), Some((true, 2, true)));
-        assert_eq!(rows_of(&(&pair(1, &end) | &records)), Some((false, 1, true)));
+        assert_eq!(
+            rows_of(&(&pair(1, &end) | &records)),
+            Some((false, 1, true))
+        );
         // Refused: another link, another stop, an integer, a payload of three items.
         assert!(step_shape(&one, "node", "nil").is_none());
         assert!(step_shape(&one, "cons", "end").is_none());
