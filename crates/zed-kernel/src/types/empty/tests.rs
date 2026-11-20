@@ -2461,8 +2461,9 @@ fn the_refusals_a_search_gives_up_on_are_ranked_in_a_fixed_order() {
 /// gives up on: a link of another name, another stop, an integer beside the atoms, two stops,
 /// link payloads of two lengths, two self-looping rows with different items, two rows that do
 /// not loop, a link of any pair, a link whose payload may be a struct (one row of pairs), and
-/// two rows whose tails share a tail it cannot read. Every list of up to four items from `1`
-/// and `2` is tried. Changing the `return None` for another link or stop, or for two
+/// two rows whose tails share a tail it cannot read; and a row whose tail never stops. Every
+/// list of up to four items from `1` and `2` is tried, with no hint and with each hint
+/// ([`ChainHint`]) on each row of the link payload, which must not change the answer. Changing the `return None` for another link or stop, or for two
 /// self-looping rows with different items, into a pass makes this test fail (negative controls,
 /// TEST-kernel-unreached-paths-8).
 #[test]
@@ -2559,6 +2560,14 @@ fn the_check_of_a_list_witness_passes_no_list_outside_the_type() {
                 Expr::Union(vec![nil(), atom("node", int(), r(3))]),
             ],
         ),
+        (
+            "a tail that never stops",
+            vec![
+                Expr::Union(vec![nil(), cons(int(), r(1)), cons(ty(lit(2)), r(2))]),
+                cons(int(), r(1)),
+                Expr::Union(vec![nil(), cons(ty(lit(1)), r(2))]),
+            ],
+        ),
     ];
     let mut lists: Vec<Vec<i64>> = vec![vec![]];
     for k in 0..4 {
@@ -2576,27 +2585,45 @@ fn the_check_of_a_list_witness_passes_no_list_outside_the_type() {
             .expect("a group")
             .instance(vec![])
             .remove(0);
+        let rows = (t.p().atoms.names().get("cons"))
+            .and_then(|a| a.payload.p().tuples.lens.get(&2)?.union_rows())
+            .unwrap_or_default();
         let mut passed = 0;
         for l in &lists {
             Type::forget_emptiness();
             let value = (l.iter().rev()).fold(Value::atom("nil"), |rest, &x| {
                 Value::atom_with("cons", vec![Value::Int(x.into()), rest])
             });
-            let (t2, items) = (t.clone(), l.clone());
-            let ok = Search::default().run(move |d| {
-                Box::pin(async move {
-                    let ids: Vec<usize> = (items.iter())
-                        .map(|&x| d.s().show(Rep::Value(Value::Int(x.into()))))
-                        .collect();
-                    let (link, stop) = ("cons".into(), "nil".into());
-                    d.check_chain_witness(&t2, &link, &ids, &stop, &[]).await
+            let check = |hints: Vec<(crate::types::Row, ChainHint)>| {
+                let (t2, items) = (t.clone(), l.clone());
+                Search::default().run(move |d| {
+                    Box::pin(async move {
+                        let ids: Vec<usize> = (items.iter())
+                            .map(|&x| d.s().show(Rep::Value(Value::Int(x.into()))))
+                            .collect();
+                        let (link, stop) = ("cons".into(), "nil".into());
+                        d.check_chain_witness(&t2, &link, &ids, &stop, &hints).await
+                    })
                 })
-            });
+            };
+            let ok = check(vec![]);
             assert!(
                 !ok || t.contains(&value),
                 "{name}: {l:?} passed, not in the type"
             );
             passed += usize::from(ok);
+            // A hint, on any row and whether it holds or not, changes no answer.
+            for row in &rows {
+                let hints = (0..=l.len() + 1).map(ChainHint::Miss);
+                for hint in hints.chain([ChainHint::Len]) {
+                    Type::forget_emptiness();
+                    assert_eq!(
+                        check(vec![(row.clone(), hint)]),
+                        ok,
+                        "{name}: {l:?} with {hint:?} on a row"
+                    );
+                }
+            }
         }
         if name == "plain" {
             assert_eq!(
