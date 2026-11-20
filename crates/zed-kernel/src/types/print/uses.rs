@@ -7,10 +7,40 @@
 //! into the map of a part that holds both, so the map of a part is built once and shared by
 //! every step that writes the part.
 //!
-//! A map is a persistent Patricia trie over the parts' numbers, big-endian, as in Okasaki and
-//! Gill, "Fast Mergeable Integer Maps", ACM SIGPLAN Workshop on ML, 1998. A map that a merge
-//! leaves unchanged is returned as it was, so maps built from one another share their subtrees,
-//! and [`Uses::each_new_many`] skips a subtree it has already seen.
+//! A map is a persistent Patricia trie over the parts' numbers, big-endian, as in C. Okasaki and
+//! A. Gill, "Fast Mergeable Integer Maps", ACM SIGPLAN Workshop on ML, Baltimore, September 1998,
+//! pp. 77-86 (no DOI; <https://ku-fpg.github.io/papers/Okasaki-98-IntMap>). The trie is due to
+//! D. R. Morrison, "PATRICIA—Practical Algorithm To Retrieve Information Coded in
+//! Alphanumeric", J. ACM 15(4):514-534, 1968, doi:10.1145/321479.321481. From §3:
+//! "storing at each remaining Br node the longest common prefix of all keys in that subtree"
+//! with its branching bit, so a map of n keys has n leaves and n-1 branches. From §4, `join`:
+//! when the prefixes `p0`, `p1` of two trees disagree, "no matter how large t0 and t1 are, we can
+//! merge them simply by creating a new Br node that has t0 and t1 as children", branching at the
+//! first bit where they differ; `insert` runs in O(min(n, W)) and `merge` in O(n0 + n1) for a
+//! word of W bits. Here: `mask`, `branching_bit`, `join`, `insert` and `union` (their `merge`)
+//! follow §3-4, case for case.
+//!
+//! Departures. (1) Big-endian: the branching bit is the highest bit in which two keys differ,
+//! not the lowest, so the keys are in order left to right (the paper's §5; the copy read here
+//! has only pp. 77-82, sections 1-4, so §5 is not quoted). (2) A merge that changes nothing
+//! returns the old node (`rebuild`, the `ptr_eq` test in `union`), so maps share subtrees, and a
+//! branch records whether some key below is used twice (`many`), which the paper does not have.
+//! (3) The keys and bits are `u32`, compared unsigned. J. Midtgaard, "QuickChecking Patricia
+//! Trees", Trends in Functional Programming (TFP 2017), LNCS, Springer 2018, pp. 59-78,
+//! doi:10.1007/978-3-319-89719-6_4, found that the paper's `merge` (its Figure 5) is wrong: "As
+//! Okasaki and Gill's merge function contains comparisons `m<n` and `m>n` written using the signed
+//! integer comparison of SML", a branching bit on the sign bit compares as the least, and the
+//! union of {min_int, 0} and {min_int, 1} holds min_int twice. With unsigned bits that cannot
+//! happen. `a_branch_on_the_top_bit_is_above_one_on_a_low_bit` is the same case for this
+//! big-endian trie: it fails when the two comparisons of bits in `union` are made signed.
+//!
+//! Checked 2026-11-19: pp. 77-82 read in full from the authors' PDF (Wayback copy of
+//! ittc.ku.edu/~andygill/papers/IntMap98.pdf, six pages); §5 and §6 not read. Midtgaard's §4
+//! ("The Bug and Some Potential Fixes") read from a preprint PDF. Morrison not read. All three
+//! citations confirmed in Crossref except Okasaki and Gill's, which has no DOI: its first page,
+//! 77, is printed on the PDF; the last page, 86, comes from the authors' page and is not checked.
+//! Tests: the tests below compare `get` with the keys put in, over 2000 keys spread across all
+//! 32 bits, in two halves merged; they catch a lost or misplaced key, not a slow merge.
 
 use std::collections::HashSet;
 use std::rc::Rc;
@@ -334,6 +364,26 @@ mod tests {
             }
             assert_eq!(u.get(0x800), None);
             assert_eq!(u.get(0x200), None);
+        }
+    }
+
+    /// Midtgaard's case against Okasaki and Gill's merge (see the module comment), for this
+    /// big-endian trie: a branch on the top bit, `2^31`, met by a branch on a low bit. Compared
+    /// as signed, as in the paper, the top bit is the least, the union puts the higher branch
+    /// under the lower, and the key `2^31` is lost. Compared unsigned, as here, every key is
+    /// found, in both orders.
+    #[test]
+    fn a_branch_on_the_top_bit_is_above_one_on_a_low_bit() {
+        let of = |keys: &[u32], from: u32| {
+            (keys.iter()).fold(Uses::default(), |m, &k| m.with(k, one(from)))
+        };
+        let (top, low) = (of(&[0, 1 << 31], 1), of(&[4, 5], 2));
+        for u in [top.union(&low), low.union(&top)] {
+            assert_eq!(u.get(0), Some(one(1)));
+            assert_eq!(u.get(1 << 31), Some(one(1)));
+            assert_eq!(u.get(4), Some(one(2)));
+            assert_eq!(u.get(5), Some(one(2)));
+            assert_eq!(u.get(6), None);
         }
     }
 

@@ -553,8 +553,9 @@ fn body_uses<'m>(t: &Table, root: usize, memo: &'m mut HashMap<usize, Uses>) -> 
 /// walked anew for each text, O(n) per step and O(n²) for a derivation of n steps that each
 /// print the next of a chain. Used: one map of [`Uses`] per body, made once from those of the
 /// bodies it refers to, and one per text from those of its references; a persistent trie
-/// (Okasaki and Gill, 1998) shares the map of a part with every map made from it, so each map
-/// costs O(32) per reference made in its own body or text, plus a merge of O(32 k) for maps
+/// (Okasaki and Gill, 1998, cited in full in [`super::uses`]) shares the map of a part with
+/// every map made from it, so each map costs O(32) per reference made in its own body or text,
+/// plus a merge of O(32 k) for maps
 /// sharing no subtree and k keys, and the definitions used twice or more are found walking each
 /// trie node once over all the texts ([`Uses::each_new_many`]). This is option (1) of
 /// COMPLEXITY.md row K110, which the author chose (2026-11-13).

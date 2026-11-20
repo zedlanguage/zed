@@ -232,10 +232,22 @@ impl Env {
     // around them. Before, each part's name was made by its own walk of its subexpression: `k`
     // nested parts took O(k^2) time and memory (printing `print::tests::part_cycle` took 42.4
     // times the instructions and 46.4 times the bytes at 800 parts against 100). Used: the
-    // names are shared as a DAG of ropes, the way hash-consing shares equal subterms (Goto,
-    // "Monocopy and associative algorithms in extended Lisp", University of Tokyo, 1974) and a
-    // rope holds its substrings by reference (Boehm, Atkinson and Plass, "Ropes: an alternative
-    // to strings", Software: Practice and Experience, 1995). The walk for one part's name keeps
+    // names are shared as a DAG of ropes, the way hash-consing shares equal subterms (E. Goto,
+    // "Monocopy and associative algorithms in extended Lisp", Technical Report TR 74-03,
+    // University of Tokyo, May 1974; not read: the report is not online. The attribution and
+    // the report number are as J.-C. Filliâtre and S. Conchon give them, "Type-safe modular
+    // hash-consing", ACM Workshop on ML 2006, 12-19, doi:10.1145/1159876.1159880, reference
+    // [9], whose section 1 says "Hash-consing is a technique to share purely functional data
+    // that are structurally equal"), and a rope holds its substrings by reference (H.-J. Boehm,
+    // R. Atkinson and M. Plass, "Ropes: an alternative to strings", Software: Practice and
+    // Experience 25(12), 1315-1330, 1995, doi:10.1002/spe.4380251203, section 1: "an ordered
+    // tree, with each internal node representing the concatenation of its children", which
+    // "may contain shared subtrees"). Departures: nothing here is hash-consed by a table, a
+    // name is shared because the walk keeps it; and a `Rope` (`types.rs`) is a flat array of
+    // pieces, each a string or a shared rope, with no balancing, lengths or indexing, since a
+    // name is only written out in full or compared. Checked 2026-11-19: both papers read, both
+    // DOIs and page ranges confirmed with Crossref. The cost is checked by `print::bench`, the
+    // text by the printer's tests. The walk for one part's name keeps
     // the name of each part met inside it, and takes the name of a part already kept as one
     // leaf, so the names of an instance's parts cost O(body) in all, each made once (building
     // and printing `part_cycle` now takes 9.98 times the instructions at 16,000 parts against
