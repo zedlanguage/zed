@@ -37,8 +37,9 @@
 //!
 //! Prior work: the definitions are Gaussian elimination of unit-coefficient equations (Pugh's
 //! exact elimination, "A practical algorithm for exact array dependence analysis", CACM 35(8),
-//! 1992, p. 106) extended to guarded definitions; the interval reading of the values given a
-//! pin is interval constraint propagation over the definition order.
+//! 1992, sec. 2.2 of the expanded text: an equality with a unit coefficient is solved for that
+//! variable and substituted; the crate root's References) extended to guarded definitions; the
+//! interval reading of the values given a pin is interval constraint propagation over the definition order.
 
 use std::cell::RefCell;
 use std::collections::{HashMap, HashSet};

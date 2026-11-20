@@ -19,8 +19,9 @@
 //! and an integer is at most the floor of a number if and only if it is at most that number;
 //! the same holds where `B_u == -1`. So where every pair has a side of coefficient 1, the
 //! integer `p` that have a `q` are exactly those that meet the pairs' real conditions, each
-//! linear in `p`: an interval (W. Pugh, "The Omega test: a fast and practical integer
-//! programming algorithm for dependence analysis", CACM 35(8), 1992, the exact shadow). Since
+//! linear in `p`: an interval (W. Pugh, "The Omega test", 1991, and its CACM 1992 version,
+//! sec. 2.3.2: the dark and real shadows agree when `a = 1` or `b = 1`, the exact projection;
+//! full citations in the crate root's References). Since
 //! the change of coordinates is unimodular, the integer `(p, q)` are the integer `(x, y)`. A
 //! pair with no side of coefficient 1, a form whose coefficients have a common factor above 1
 //! (its values are a progression, as many pieces as values), or a number past `i128` is not

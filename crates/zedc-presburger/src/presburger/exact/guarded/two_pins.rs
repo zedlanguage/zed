@@ -26,8 +26,10 @@
 //! (`D > 0`) and the upper ones (`D < 0`). Fourier-Motzkin over `w` gives the real shadow, a
 //! range holding every such `u`; Pugh's dark shadow, each pair's condition raised by
 //! `(D_l - 1)·(-D_u - 1)`, a range of `u` each of which has an integer `w` (W. Pugh, "The Omega
-//! test", CACM 35(8), 1992, sec. 3: where the greatest lower and least upper bound are at least
-//! that far apart, an integer lies between them). The values of the real shadow outside the dark
+//! test", 1991, and its CACM 1992 version, sec. 2.3.2, `b·α - a·β >= (a - 1)·(b - 1)`: where
+//! the greatest lower and least upper bound are at least that far apart, an integer lies between
+//! them; full citations in the crate root's References. The comment had "CACM, sec. 3", which
+//! is the section on nonlinear subscripts). The values of the real shadow outside the dark
 //! one are tried one by one, each with the integer bounds of `w` (the splinters, decided here
 //! value by value rather than by Pugh's equalities). So the set is exact; where it is unbounded
 //! and its values may be periodic (the stretch of `w` stays below 1 long toward an open end, as

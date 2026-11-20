@@ -9144,8 +9144,9 @@ fn cells_of<'p>(p: &'p Parts, x: &Atom, solving: bool) -> Option<Result<bool, Re
 // ([`cell_sweep::decide_by_cells`]), which reads the shared set once per step: n² updates on
 // `holders_chain`, 25.0 G instructions at n = 1,000. Used: O(k + T) to mark the set of each
 // cell for k cells and T runs, one [`shadow`] of the rows held everywhere and one of each
-// set's rows with its result (each O(m log m) for m terms; Pugh, "The Omega test", 1992, the
-// exact shadow), then one solve per cell of rows over `x` alone: O(k + T + M log M + s·c +
+// set's rows with its result (each O(m log m) for m terms; Pugh 1991/1992, sec. 2.3.2, the
+// exact projection, in the crate root's References), then one solve per cell of rows over `x`
+// alone: O(k + T + M log M + s·c +
 // k·d) for M terms, s sets, a core of c rows and set results of d rows, linear where the core
 // shrinks to `x` (0.23 G instructions at n = 1,000 on `holders_chain`); where it cannot
 // shrink, each set reads only the classes of the core it reads ([`CoreClasses`]). Given up:
@@ -9239,7 +9240,8 @@ fn cells_by_sets(placed: &[(Rc<Vec<Con>>, CellSet)], x: &Atom, cells: &[Span]) -
 /// atom but `x`. A class has one exactly where `x` lies in an interval when its rows read one
 /// atom besides `x`, always with coefficient 1 or -1 ([`unit_interval`]); the other classes
 /// are reduced by [`shadow`] (exact: W. Pugh, "A practical algorithm for exact array
-/// dependence analysis", Communications of the ACM 35(8), 1992, p. 106), and
+/// dependence analysis", Communications of the ACM 35(8), 1992, sec. 2.3.2 of the expanded
+/// text; the crate root's References), and
 /// what it keeps of them is read with every question that does not read the class. So a
 /// question, rows `own` with the core, reads the rows of the classes that `own` reads, the
 /// intervals of the others as one, and the rows kept of the others not over one interval; an
@@ -11118,7 +11120,9 @@ impl Side1 {
     }
 
     /// Whether the real shadow of the pair has the integer points of its dark shadow, `b·r +
-    /// a·s >= (a - 1)·(b - 1)` (Pugh, "The Omega test", 1992), so that the pair has an integer
+    /// a·s >= (a - 1)·(b - 1)` (Pugh 1991/1992, sec. 2.3.2, `b·α - a·β >= (a - 1)·(b - 1)`
+    /// for the lower bound `a·x >= -r` and the upper `b·x <= s`, so Pugh's `b, β, a, α` are
+    /// this `a, -r, b, s`; the crate root's References), so that the pair has an integer
     /// `x` between its bounds wherever its real shadow holds. With `g` the greatest common
     /// divisor of the terms of `b·r + a·s` and `c` its constant, the form takes the values `g·t
     /// + c`, so the two rows hold for the same `t` when `c` and `c - (a - 1)·(b - 1)` round down
@@ -11140,8 +11144,9 @@ impl Side1 {
 /// result with any rows over kept atoms has a point exactly when `rows` with them has one.
 /// An atom `x` is eliminated by Fourier-Motzkin, each lower bound `a·x + r >= 0` combined with
 /// each upper bound `-b·x + s >= 0` into `b·r + a·s >= 0`, an equality giving both; this is exact
-/// over the integers when every lower bound or every upper bound has coefficient 1 (Pugh, "The
-/// Omega test", 1992, the exact shadow). It is done only when the `L·U` rows made have no more
+/// over the integers when every lower bound or every upper bound has coefficient 1 (Pugh
+/// 1991/1992, sec. 2.3.2, the exact projection; the crate root's References). It is done only
+/// when the `L·U` rows made have no more
 /// terms in all than the `L + U` rows taken out, judged in O(1) from counts kept for each atom,
 /// so the system never grows and the whole elimination costs O(m log m) for m terms, an atom
 /// being looked at again only when a row of it changes. Where the counts do not show it but
@@ -11179,7 +11184,7 @@ impl Side1 {
 // and an equation whose `g` does not divide `c`, or a false row with no atoms, has no point;
 // (3) substituting an equation in which `x` has coefficient 1 or -1 removes `x` and keeps the
 // points of the other atoms exactly; (4) Fourier–Motzkin where every lower or every upper bound
-// of `x` has coefficient 1 is the exact shadow (Pugh, "The Omega test", CACM 1992), and a
+// of `x` has coefficient 1 is the exact projection (Pugh 1991/1992, sec. 2.3.2), and a
 // false combination, a nonnegative sum of rows, shows no real point; (5) with `dark`, a pair
 // with coefficients `a` and `b` is combined only where its real row `b·r + a·s >= 0` and its
 // dark row `b·r + a·s >= (a-1)(b-1)` have the same integer points (`Side1::dark_is_real`:

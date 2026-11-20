@@ -4,7 +4,12 @@
 //! eight values of a ray, so the cover never ended):
 //! - [`pugh`]: the exact projection of the implicant onto the symbol, by the Omega test's
 //!   projection (Pugh, "A practical algorithm for exact array dependence analysis", CACM 35(8),
-//!   1992, sections "Eliminating equality constraints", "Dark shadow" and "Projection"):
+//!   1992, the sections "Equality Constraints", "Detecting integer solutions using
+//!   Fourier-Motzkin variable elimination" and "Projection of Integer Programming Problems",
+//!   secs. 2.2, 2.3.2 and 4 of the expanded text; the crate root's References. Sec. 4.1: a
+//!   protected variable is never eliminated by Fourier-Motzkin, and in an equality with `g`
+//!   the gcd of the coefficients of the unprotected variables, `g > 1` adds a protected `σ` and
+//!   the row `g·σ = sum over the protected i of (a_i mod g)·x_i`, after which that gcd is 1):
 //!   equalities removed with Pugh's `mod^` step, the symbol kept as a protected variable
 //!   whose residue is fixed when every other coefficient shares a factor, then each other
 //!   variable removed by an exact Fourier-Motzkin step where every lower or every upper

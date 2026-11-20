@@ -42,7 +42,9 @@
 // Complexity tradeoff: naive version, one decision of `f` with the symbol at each value of
 // `h` (as the per-value check of the step 1 measurement did): exact, |h| questions for each
 // symbol, and nothing for an unbounded `h`. Pugh's exact projection (the Omega test's
-// splinters and strides, "The Omega test", 1991, section 3) gives a union of stride sets for
+// splinters and strides, "The Omega test", 1991, sec. 4 of the expanded text, "Projection of
+// Integer Programming Problems"; the comment had "section 3", which is on nonlinear
+// subscripts; the crate root's References) gives a union of stride sets for
 // one conjunction, but a disjunctive formula first needs its disjunctive normal form, which
 // is exponential in the number of disjunctions, and the solver already avoids it. Used: the
 // model-guided cover, one question for each cell and one more, each question one run of the
@@ -1536,7 +1538,9 @@ fn implied(c: &Con, d: &Dirs) -> bool {
 // enumeration of Monniaux, "Quantifier Elimination by Lazy Model Enumeration", CAV 2010,
 // sec. 2.2 and 3, with model-based cells after Bjørner and Janota, "Playing with Quantified
 // Satisfaction", LPAR-20, 2015, sec. 2.2; `direct` is Pugh's structural exact shadow, "A
-// practical algorithm for exact array dependence analysis", CACM 35(8), 1992, p. 106.
+// practical algorithm for exact array dependence analysis", CACM 35(8), 1992, the section on
+// integer solutions by Fourier-Motzkin elimination (sec. 2.3.2 of the expanded text). Full
+// citations, and how each was checked, are in the crate root's References.
 fn tried<T>(
     fast: &mut u64,
     solver: Solver,
@@ -1637,7 +1641,8 @@ fn certificates<'s>(
 ///   of `A or B` exactly when it has one of `A` or one of `B`;
 /// - a conjunction splits its parts into groups that share no atom but `s` (union-find). A
 ///   group of rows alone projects by [`super::eliminated`], whose rows over `s` hold exactly
-///   where the group has a point (Pugh's exact shadow, "The Omega test", 1992); a group of one
+///   where the group has a point (Pugh's exact projection, Pugh 1991/1992, sec. 2.3.2, in the
+///   crate root's References); a group of one
 ///   projected part keeps its set; a group with a projected part and anything more is not
 ///   shown exact (`None`). The conjunction is the meet of its groups: given a point of each
 ///   group with `s` at `v`, the groups read disjoint atoms but `s`, so the points join into one
@@ -2993,7 +2998,8 @@ fn forest(rows: &[Con], work: &mut Work) -> Result<Option<HashMap<Atom, Interval
 // on_tied_disjunctions_scales`, refused with Questions). The solver itself removes those
 // disjunctions first (`absorb`, COMPLEXITY.md row DECIDE-disj-chain) and projects each
 // disjunct with the base eliminated onto its atoms (`project_parts`, its kernels, Pugh's exact
-// shadow, "The Omega test", 1992); the cover did neither. Used: the same two steps, once for
+// projection, Pugh 1991/1992, sec. 2.3.2, in the crate root's References); the cover did
+// neither. Used: the same two steps, once for
 // each part of a call, keeping every symbol of the call: the rule reads each row and each
 // disjunct once, O(t log t) for t terms, a conjunct that is not a disjunction of rows read once
 // for its atoms (a part shared by k such conjuncts is read k times). That reading is not
