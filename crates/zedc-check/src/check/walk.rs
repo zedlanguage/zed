@@ -15015,6 +15015,14 @@ impl<'t, 'a> Ck<'t, 'a> {
     /// `with units("MiB")` (DESIGN.md sec:diagnostics, row "Number too large for any memory of
     /// the target").
     fn main_limit_fix(&self, bits: &Num, at: Span, arg: Span) -> Option<Rewrite> {
+        // The `expect` holds: the three callers pass a size the walk kept within the address
+        // space, at most 2^67 bits (a power, product or build past it is rejected where it is
+        // found and never enters `wide_powers`, `wide_products` or `wide_builds`), so it
+        // fits an i128 and `need` is at most 2^64 bytes. It is above the limit of at least 1
+        // byte, so `need >= 2`; `ceil_log2` is total at 0 and 1 in any case
+        // ([`BitLen::ceil_log2`]). Test: main_limits.rs
+        // a_repair_that_raises_the_memory_limit_past_2_to_the_63_compiles (`need` just above
+        // 2^63, so `2^64`).
         let need = (bits.to_i128())
             .and_then(|b| u128::try_from(b).ok())
             .map(|b| b.div_ceil(8))

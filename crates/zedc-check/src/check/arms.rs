@@ -759,6 +759,16 @@ impl<'a> Arms<'a> {
         // The prefix of `hi` steps gives `x` its product, that of `lo` does not: none does
         // alone, as the lookup that searched for paths found.
         // The answer is the last `mid` found true, so `found` ends as the paths of its prefix.
+        // Why the answer explains `x` with no premise on `explains`: `first_true` documents a
+        // predicate false on a prefix and true on the rest, and `explains` on the prefixes is
+        // not shown to be so (the narrowing of more tests is not shown monotone). But the loop
+        // of `try_first_true` moves `hi` only to a `mid` found true, so the `hi` it returns is
+        // either such a `mid`, the last one, whose paths `found` then holds, or `steps.len()`,
+        // whose paths `found` held and `explains` passed just above. Where the predicate is
+        // not monotone, `hi` may only fail to be the shortest prefix that explains `x`, which
+        // makes the notes longer, not wrong. Test: l01_39a shapes::
+        // a_longer_path_names_the_tests_that_bound_a_name (the exact tests named); no test
+        // has a predicate that is not monotone, so none shows the longer notes.
         let hi = first_true(1, steps.len(), |&mid| {
             let prefix = paths(&steps[..mid]);
             let explains = self.explains(k, &prefix, x, false);
