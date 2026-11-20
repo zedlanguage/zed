@@ -634,10 +634,19 @@ short_steps="l01_37a_short_addresses l01_37_oracle"
 # test reaches (TEST-kernel-units-short-addresses, 2026-11-18).
 short_libs="zed-kernel"
 # The short-addresses pieces build in a clone mounted in the zrun namespace (see below), so a
-# run that selects one stops here, before any build, when it does not run through zrun.
+# run that selects one stops here, before any build, when it does not run through zrun. A
+# piece is selected by `wants`, as the other binaries are below, so that an alternative naming a
+# test in one, ^short-zed_kernel::types::bdd::bench::<test>, builds it; `selected` matches the
+# whole name short-zed_kernel only, and such a run built nothing and listed no piece.
 short_build=
 for s in $short_steps ${short_libs//-/_}; do
-  selected "short-$s" "short-$s" && short_build=1
+  if [ -z "$only" ]; then
+    short_build=1
+  else
+    while read -r a; do
+      wants "$a" "short-$s" "short-$s" && short_build=1
+    done < <(alternatives "$only")
+  fi
 done
 if [ -n "$short_build" ] && [ -n "$cov" ]; then
   echo "--cov: the short-addresses pieces are not built for coverage; leave them out of --only"
@@ -1010,7 +1019,15 @@ step_pieces() {
   for p in $short; do
     n=short-$(basename "${p%-*}")
     case $n in
-      short-zed_kernel) echo "$n $n $n crates/zed-kernel $p" ;;
+      # The unit tests only: the benchmarks of a library run in the workspace build. Their
+      # bounds are proved for digests that do not tie (bdd's parity bench asserts that no two
+      # atoms share a priority point, which 1,024 atoms of 8-bit digests cannot meet), and with
+      # 256 digests a bucket of ties holds about n/256 entries, so each operation's work grows
+      # with n and a ratio of 8n to n measures the 8-bit build, not the method. 22 of them failed
+      # here at f215d9c90 and 25 at e4e3ad871, each passing in the workspace build
+      # (FAIL-bench-main-f215d9c90).
+      # The steps of short_steps have benchmarks written for both builds and keep them.
+      short-zed_kernel) echo "$n $n $n crates/zed-kernel $p --skip bench::" ;;
       *) echo "$n $n $n tests $p" ;;
     esac
   done
