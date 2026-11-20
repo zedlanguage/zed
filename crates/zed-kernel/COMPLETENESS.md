@@ -1493,3 +1493,63 @@ Not done, carried to TEST-kernel-unreached-paths-13: the other 137 lines of the 
 them `tuples_on`, `morphisms`, `Side::mentions`, `find_prefix_chains` 9166-9168 and 9283,
 `empty/sweep.rs` 19, `bdd.rs` 6, `print.rs` 6), and the nine run-dependent lines, whose cause
 was not measured this round.
+
+Twentieth round (kernel23, 2026-11-20), row TEST-kernel-unreached-paths-13. Base origin/main
+529128339. The 137 lines of the nineteenth round's list and the nine run-dependent lines of the
+eighteenth were carried to the base (`map-lines`; 146 lines, none changed). Line numbers below are
+at 0d68a2523 (the lists), then in parentheses at cd8ada160, this round's code commit. The base
+coverage run (2026-11-20T15:11:54Z; 1329 + 640 + 274 + 2 pieces, 2 failed, both the whole modules
+`group_oracle` and `sweep_agreement` timing out under coverage, run again piece by piece in the
+third run with 0 failed) left 135 of the 146 lines at 0: the 11 others were the nine
+run-dependent lines and two of the list (16730 and `sweep.rs` 2144), all reached only by drawn
+cases.
+
+The cause of the run-dependent lines, measured: every one depends on `ZED_TEST_SEED`. Running the
+test that drew each case with the seeds one by one, under coverage, found the drawn case that
+reaches it:
+
+| Lines | Reached only by |
+|---|---|
+| `empty.rs` 12606-12610 (12556-12560), `rest_choice` | `random_parts_of_one_choice_per_component_are_decided_as_enumeration_decides_them`, seed 5, draw 63 |
+| `empty.rs` 11388 (11328), `return Some(v)` of the safe row | `r6_oracle_run_with`, oracle 4, seed 3, input 376 |
+| `sweep.rs` 2143, 2144 (2150, 2151), the `side_units` loop of `list_sweep_value` | `r6_oracle_run_with`, oracle 4, seed 3, input 322 |
+| `empty.rs` 16396, 16941 (16360, 16905), a morphism of an inhabited value off the root | `other_families_agree_across_orders`, the mixed system of seed 146 (drawn at `ZED_TEST_SEED` 1, 10, 12 and 14) |
+| `empty.rs` 16730 (16694), `Rep::Tuple` in `horn_witness_group` | `joined_in_random_groups_holding_lower_types`, seed 5 |
+
+Each drawn case is now a test of its own, which names its seed and draw. `r6_check` (the body of
+the r6 oracle loop, now a function the loop calls) checks one input as the loop did.
+
+| Line | Closed by | Test or site | Control |
+|---|---|---|---|
+| `rest_choice` 12606-12610 (12556-12560) | test | `a_part_whose_rest_is_chosen_both_by_cell_and_by_a_value_of_no_cell` (one_pass.rs) | the cell found among the mentioned ones fails it (the choice read back is not in the part) |
+| 11388 (11328) | test | `r6_a_safe_row_holds_a_value` | none of the answer: `return Some(v)` changed to `return None` passes, since the search finds a value on the next path; a panic there fails it (reach only) |
+| `sweep.rs` 2143, 2144 (2150, 2151) | test | `r6_a_side_row_counted_by_head` | none of the answer: skipping the loop passes, since `witness` checks each list it builds (`sw.check`) and this input gives `None` both ways; a panic there fails it (reach only) |
+| 16396 (16360) | test | `the_mixed_system_of_seed_146_agrees_across_orders_and_with_its_pool` (group_oracle.rs), its tally asserted exactly | the arm answered `None` (no decision) fails it: `searched` 2, not 0 |
+| 16941 (16905) | test | the same | a panic there fails it (reach only) |
+| 16730 (16694) | test | `types_that_meet_are_joined_at_a_seed_that_places_a_tuple_witness` | none of the answer: the arm negated passes, since a member with no witness seeded is decided by its own search (`verdict_alone`); a panic there fails it (reach only) |
+| `bdd.rs` 716, 1320 (716, 1321) | test | `the_complement_of_the_complement_of_a_literal_kept_as_an_expression_is_the_literal` | a complement that is no expression not kept fails it (716); the literal operand answered with the expression fails it (1321) |
+| `bdd.rs` 793 (793) | test | the same (`Part::of_form(Form::Not(..))`) | the `Not` arm panicking fails it |
+| `bdd.rs` 833 (834) | test | `a_form_not_holds_its_operand_alone` | `!is_e(p)` fails it |
+| `take_blame_since` 3187 (`let ... else` gone) | proof | `Search::take_blame_since`: `blame` is fixed for a search's life, and a snapshot is made only in a search with blame; now an `expect` | none |
+| `settle_canonical_blame` 5142 (`if let` gone) | proof | its one caller, `group_verdicts`, builds the search with blame; now an `expect` | none |
+| `restore_fork` 5585 (`if let` gone) | proof | a `ForkSave` comes only from the three take functions, each after a snapshot; now an `expect` | none |
+| `affine_lists_empty` 14980, 14988 (`assert_eq!`, `unreachable!`) | proof | the comment above `act`: an operand's one or two states are closed under its steps | none |
+| `sweep.rs` 1848 (`unreachable!`) | proof | `list_sweep_checked`: every return of `list_sweep_value` is `None`, `Some(Inhabited)` or `Some(Empty)` | none |
+
+The `bdd.rs` lines are reached only by tests: product code makes a `Form::Not` only of an
+expression (`Connect::negate`), and asks `Form::holds` only of an `Or` or an `And`; the comment at
+`Form::holds` says so.
+
+Counts: a coverage run at 4714db1ef (the same code as cd8ada160 before its rebase onto
+9748aa0ba, which changed nothing under `types/`), started 2026-11-20T16:36:47Z with no edit while it
+ran (1329 + 643 + 277 + 2 pieces, 2 failed: the same two whole modules timing out at load 61 to
+168, 0 failed piece by piece), reads only the binaries it built; it counts 16 functions of
+mismatched data, against 117 in the base run. Of the 146 lines, 15 are reached (the nine
+run-dependent lines and six of the list), 6 are rewritten as guards with a proof, and 125 are
+open: `empty.rs` 100, `empty/sweep.rs` 17, `bdd.rs` 2 (1334, 3891), `print.rs` 6. Their list,
+at cd8ada160, is /home/luke/Work/wt/coverage/TEST-kernel-unreached-paths-13-kernel23-cd8ada160.txt.
+
+Not proved, left open: `empty.rs` 5608 (5628), `s.current` `None`, and 5527 (5547). Carried to
+TEST-kernel-unreached-paths-14: the 125 lines (among them `tuples_on`, `morphisms`,
+`Side::mentions` 13047-13052 (12997-13002), `find_prefix_chains` 9166-9168 and 9283, the
+morphism with bounds not recursive of the group builder 17640-17641 (17604-17605)).
