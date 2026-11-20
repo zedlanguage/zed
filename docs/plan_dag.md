@@ -3162,8 +3162,8 @@ The levels and conflict list that the planning script produced were wrong, and w
 | 0 | FAIL-bench-independent-stages | Done (presbench1, 2026-11-19): cause 0ac1dccff (from `git log -L` and a flat profile; not bisected to the end): `exact_each` built each part's `want` by scanning every symbol of `sorted` once per part, O(parts · n) = O(n²) hash lookups for `joint_stages` (`Atom::eq` 0.8% to 7.5%, memcmp 3.8% to 7.6%, the filter iterator 1.3% to 6.3% from 225 to 1800). Fix: `want` from `members[i]`, O(n) in all; ratio 10.574 on main 7e0586b9a (load5 16.9) to 8.185 (two runs, load5 35.5 to 35.7); COMPLEXITY row FAIL-bench-independent-stages. Owner: presbench1 (coordinator, 2026-11-19; was orchestrator; filed by neon-sweep, 2026-11-18). Measures 10.514 on main 4dbd52f13 with the same instruction counts with and without U4: bisect by instruction counts to the commit that raised it, and fix. `bench::omega::independent_stages_scale` (l01_38) fails on main 0cc9f89a4 and on 5b77b0daa with the U4 change alike: sizes 225 and 1800, first-run instructions 1,193,5xx,xxx and 12,549,xxx,xxx, ratio 10.514 to 10.515 (limit 10.5), the same count to four digits on both trees, two runs each, load5 about 47. Find which part of `every symbol of stages that share no atom` grows faster than n log n (perf with DWARF on the larger size), fix it, and measure the ratio with a negative control. | S | no | none | `crates/zedc-presburger/` |
 | 0 | LAND-refused-shape-neon | Done (neon-sweep, 2026-11-18): the bounded-box face certificate (`box_face_uncertified`, `BoxFaceIndex`) is ported onto main's one wake path, tried after the recession-cone certificate, with conjuncts.rs `reach_eqs` and `remove_covered`; `BlockArc`, the post-join restore and the per-partition wake are not ported, since the benches pass without them. The face is skipped while a bucket holds a chain of two or more parts (`shared_chains`), because it then wakes every chain member where the bucket wakes one: coordmix_floor 11.12 with the face, 10.07 without (main 10.08). Instructions at 8n, main against patch: box_cases 27.83 / 8.70, box_cases_y 26.57 / 8.53, split4 11.73 / 8.32, four-name 7.57 / 7.55; case_wake test, zedc-preimage lib (with the seat's oracle test), l01_39 non-bench 295 and l01_38 non-bench 229 pass. Bench failures the same on main and patch, not caused by this: rp arms_of_named_limits 12.34, om independent_stages_scale 10.51, rp tests_on_names_apart 11.68, rp an_eager_join 13.6, sr deep_condition arms_of_a_chain 12.9, long_chain 20.6, small_choice 11.04, sr star_extra 21.3, sr disjoint refused_groups_reduced_scales over 60 s. Owner: neon-sweep (coordinator, 2026-11-18; filed by neon-sweep, 2026-11-18, item 3 of /home/luke/Work/wt/cd-xr/NEON-SWEEP.md). The Neon patch for PERF-refused-shape-disjunctions-quadratic (/home/luke/Work/wt/cd-xr/PERF-refused-shape-disjunctions-quadratic/neon1/R_NEON.diff, base c031e5934; product.rs about 2,000 lines: bounded-box face certificate, split-by-index wake inside a case, `HalfLineMode`; conjuncts.rs 176 lines) does not apply to main 4dbd52f13: product.rs has 8 conflicts with 1ffeb360d (XR-l139 Neon round 4, filtered wakes with `leaf_only_tightened`), one of them 407 lines on main's side. Measured on main with only the seat's tests added (load5 31 to 40): box_cases 27.826, box_cases_y 26.566, split4 11.729 (all fail), four-name 7.566 (passes); the seat's correctness test `case_wake::bounded_box_face_certificate_matches_from_scratch` passes on main. Port the certificate onto main's wake design (one wake path, not two), then show the three benches fail without it and pass with it, four-name not above 7.6, and the l01_39 groups pass. Tests ready in /home/luke/Work/wt/failing-tests/PERF-refused-shape-disjunctions-quadratic.rs. | M | no | none | `crates/zedc-preimage/src/product.rs` |
 | 0 | LAND-cover-hybrid-neon | Done (neon-sweep, 2026-11-19): landed with this row's commits "wip: Neon cover-hybrid clean parts" (product.rs `Scope::framed` progression encoding, projection.rs `Held::push`, refusal.rs `Classed::minus` equal ranges) and "exact: port the Neon cover-hybrid parts for B3". The second ports onto main's `guarded::Prep`: a per-part cache in `exact_each_checked` (`PartCache`: the quick-point and whole-question outcomes, the atoms `direct` found lacking, a refused count), so the later symbols of a part do not run again what the first ran; a part every answer of which is the same refusal is refused as a whole; and `direct` projects the blocks without the symbol first, so a lacking block ends the call before the blocks that read it run (after the seat's `disjoint_uneliminable`, which is not ported as such). The seat's guarded.rs change is dropped. B3 `disjoint::bench::the_join_of_arms_on_many_disjoint_refused_groups_reduced_scales` (l01_39_scope_relations): past 60 s on main 9164e5f96, 7.69 with the change (instructions 2.33G / 17.9G at 128 and 1,024; bytes 7.0). B4 `scaling::bench::changes_of_one_block_hold_bounded_memory` (l01_39_reduced_product): past 60 s on main 9164e5f96, 10.43 with both commits (instructions 1,561,969,567 / 16,292,193,456 at k = 160 and 1,280, twice; bytes 10.34), under the limit, over the goal of 9; the first commit alone gave 10.592. Found and fixed on the way, a flaw already on main: `read_once` charged its atoms in a HashMap's order before an early `None`, so the work charged, and the allowance left to the fast paths after it, changed from run to run (100 to 300 units of FAST_WORK on one formula; red on seed 3051282257759046660, 14 rounds differ); it now charges them in sorted order. New test `exact::tests::the_covers_answer_alike_with_and_without_what_the_symbols_before_learned` (cache on and off: same answers, no more questions or fast work with it, and some call refused as a whole). On 8886f0190 rebased: zedc-presburger lib 365 non-bench and 106 bench tests pass; l01_38_omega_test, l01_38_presburger, l01_39_reduced_product and l01_39_scope_relations, 173 pieces, every non-bench test passes, and the failing benches are the ones that fail on main too (BENCH-named-limits-side-by-side-tiers, BENCH-deep-small-choice, BENCH-reduced-product-scaling-work, PRES-cover-bench-deep-accounts-again, PRES-cover-bench-star-extra, BENCH-cover-per-unit-few-units). | M | no | none | `crates/zedc-presburger/src/presburger/exact.rs` |
-| 0 | BENCH-named-limits-side-by-side-tiers | Found by neon-sweep (2026-11-18), owner neon-sweep: `named_test::bench::arms_of_named_limits_in_side_by_side_tiers_take_time_near_linear_in_the_depth` (tests/steps/l01_39_reduced_product) fails its work-ratio limit at 12.34 times the instructions at 8n (limit 10.5, goal 9), the same on main 4dbd52f13 (12.337) and with LAND-refused-shape-neon (12.336), so neither caused it. No open row named it: ST-formula-sibling and ST-formula-k2, Done, were the earlier d·k and k² costs of the same shape. Profile the work counts at n and 8n, fix the step that grows faster than n log n, and bring the ratio under 10.5 (goal 9). | M | no | none | `crates/zedc-preimage/src/product.rs`, `tests/steps/l01_39_reduced_product/named_test/bench.rs` |
-| 0 | BENCH-deep-small-choice | Found by neon-sweep (2026-11-18), owner neon-sweep: `deep_condition::bench::arms_of_a_test_whose_small_choice_misses_the_bound_take_time_near_linear_in_its_depth` (tests/steps/l01_39_scope_relations) fails its work-ratio limit at 11.04 times the instructions at 8n (limit 10.5, goal 9), the same on main 4dbd52f13 (11.043) and with LAND-refused-shape-neon (11.043). Its siblings arms_of_a_chain_of_accounts and arms_of_a_long_chain_of_accounts are PRES-cover-bench-deep-accounts-again; re-measure this one after that row lands, since it may share the cause (re-measured by pughxr4 2026-11-19 with that row's fix: 11.039, so not the same cause), then profile the work counts at n and 8n, fix the step that grows faster than n log n, and bring the ratio under 10.5 (goal 9). | M | no | none | `crates/zedc-presburger/src/presburger/exact.rs`, `tests/steps/l01_39_scope_relations/deep_condition/bench.rs` |
+| 0 | BENCH-named-limits-side-by-side-tiers | Done (benchsc1, 2026-11-20): passes on main 48efce6c9 with no change, 7.468 times the instructions at 8n (1,703,716,723 and 12,723,327,705; bytes 362,668,774 and 2,317,832,856; load5 38.95), and 7.415 with BENCH-deep-small-choice's e285b49dc (load5 40.95); some commit between 4dbd52f13 and 48efce6c9 fixed it (not bisected). Found by neon-sweep (2026-11-18), owner neon-sweep: `named_test::bench::arms_of_named_limits_in_side_by_side_tiers_take_time_near_linear_in_the_depth` (tests/steps/l01_39_reduced_product) fails its work-ratio limit at 12.34 times the instructions at 8n (limit 10.5, goal 9), the same on main 4dbd52f13 (12.337) and with LAND-refused-shape-neon (12.336), so neither caused it. No open row named it: ST-formula-sibling and ST-formula-k2, Done, were the earlier d·k and k² costs of the same shape. Profile the work counts at n and 8n, fix the step that grows faster than n log n, and bring the ratio under 10.5 (goal 9). | M | no | none | `crates/zedc-preimage/src/product.rs`, `tests/steps/l01_39_reduced_product/named_test/bench.rs` |
+| 0 | BENCH-deep-small-choice | Done (benchsc1, 2026-11-20, e285b49dc "BENCH-deep-small-choice: gap points by cuts and conflict-directed backjumping"): 11.006 on main 48efce6c9 (instructions 1,356,384,806 and 14,928,547,490; bytes 10.7 times; load5 38.95) to 7.903 (1,194,897,670 and 9,443,052,845; bytes 352,434,419 and 2,794,243,726, 7.9 times; load5 42.36). Cause: `shared_cells` sent `heavy`'s gap question `w <= -1` to the solver (2.49M units at d = 180, past the step's allowance at d = 1,440) because `quick_point`'s chronological search tried again each level's `z <= 0 \|\| y >= 0`, 2^d branches. `quick_search` now cuts by rows of one atom and backjumps (Prosser 1993 §3.3), O(d log a) on `heavy`; `shared_cells` asks only where it answers Unknown. Tests: `quick_search_answers_as_the_points_of_the_box`, `a_gap_with_a_point_is_filled_with_no_question`, `a_cell_with_a_gap_still_asks_its_question`; COMPLEXITY.md row BENCH-deep-small-choice. Found by neon-sweep (2026-11-18), owner neon-sweep: `deep_condition::bench::arms_of_a_test_whose_small_choice_misses_the_bound_take_time_near_linear_in_its_depth` (tests/steps/l01_39_scope_relations) fails its work-ratio limit at 11.04 times the instructions at 8n (limit 10.5, goal 9), the same on main 4dbd52f13 (11.043) and with LAND-refused-shape-neon (11.043). Its siblings arms_of_a_chain_of_accounts and arms_of_a_long_chain_of_accounts are PRES-cover-bench-deep-accounts-again; re-measure this one after that row lands, since it may share the cause (re-measured by pughxr4 2026-11-19 with that row's fix: 11.039, so not the same cause), then profile the work counts at n and 8n, fix the step that grows faster than n log n, and bring the ratio under 10.5 (goal 9). | M | no | none | `crates/zedc-presburger/src/presburger/exact.rs`, `tests/steps/l01_39_scope_relations/deep_condition/bench.rs` |
 | 0 | FAIL-pendants-refused-boxes-2537877658227229631 | Done (benchgreen1, 2026-11-19, the commit "presburger: the reduced product's questions are renamed by the colors of their atoms"): the step that read the names is `project_each`, which projects a formula with no disjunction as written (`Renamed::of` keeps the names when `!f.chooses()`); the solver then sorts rows by name (`projected_hulls`) and starts from the least symbol (`symbols_by_structure`), and the Omega test refuses some orders of elimination with Growth where it decides others. `project_each_boxed`, the entry of the reduced product (product.rs) and the preimage stage (preimage.rs), now renames every question by `Renamed::ranked` (stable colors, O(L log L)) and maps answers and refusals back. Renaming inside `project_each` for every caller was tried first and changed four tests that pin answers of the written order (row PRES-project-each-naming). In `l01_25_preimage_catalog::s22::REFUSED_WITH_TWO_DISJUNCTIONS`, `(5, 1, "arms over x", 13)` is now answered and `(7, 2, "a test of the chain", 2)` refused (Questions, box -60..=60 both ways). All three cases now give one answer for both namings: case 0 of the first seed `z0` ..=4 and `b` -3.. exact; case 21 of 12527472341280287461 `a` 5..=13 exact both ways (`b`, `z0` refused both ways); case 5 of 18417449267567745209 `c` refused with box -7..=14 both ways, so as written it lost the exact set -2..=-2 it had: the ranked order is the one the Omega test refuses there (one answer, the weaker; a sound box). Tests `pendants::a_conjunction_gets_one_answer_for_every_naming` and `a_joined_conjunction_gets_one_answer_for_every_naming` fail without the change (the naming check reports a difference) and pass with it. Earlier text: Found by neon-sweep (2026-11-19), owner neon-sweep: `l01_39_reduced_product::pendants::refused_projections_of_random_parts_keep_sound_boxes` fails with ZED_TEST_SEED=2537877658227229631 on main 93992ff8b, and the same with LAND-refused-shape-neon, so it is not caused by that change. Case 0, `b + c + z1 >= 0 && z1 >= z2 - 3 && 2 * a + b + 2 * c >= z0 - 1 && 2 * a + 2 * b >= c + z1 + 7 && a <= b + z2 + 7 && a == 2 * b + 2 * c + z0 + 8`: as written, b gets `[-3, +inf)` and is not refused; with the names renamed, b gets `[-5, +inf)` and is refused. So the box and the refusal depend on the names. Find which step reads the names, make the answer the same for every naming, and add the case as a test. Second case (satred1, 2026-11-19, in the re-check after f99bf7ae4 landed; replayed at 16490c8d2, which has none of satred1's changes, with the same message): `refused_projections_of_joined_random_parts_keep_sound_boxes`, ZED_TEST_SEED=12527472341280287461, case 21: as written `a` is refused with box -6..=13, renamed it gets the exact set 5..=13; test source /home/luke/Work/wt/failing-tests/FAIL-pendants-refused-boxes-12527472341280287461.rs. Third case (imbl1, 2026-11-19, with the exact oracle of FAIL-pendants-oracle-undecided): `refused_projections_of_joined_random_parts_keep_sound_boxes`, ZED_TEST_SEED=18417449267567745209, case 5, `2 * a + b + z2 == 0 && z1 >= z3 - 9 && 2 * a + 2 * c >= z1 - 5 && a + b + c + z0 >= 5 && a + b + c >= -6 && 2 * a + b >= -7 && 2 * a + 2 * b >= c + z2 + 2 && a + b == c + z3 + 7 && a + z1 <= b - 1 && 2 * a + c + z1 >= -1 && 2 * a + b + c + z1 >= -1 && 2 * b >= c + z3 + 1`: as written `c` gets the exact set -2..=-2, renamed it is refused with box -7..=14; test source /home/luke/Work/wt/failing-tests/FAIL-pendants-refused-boxes-18417449267567745209.rs | S | no | none | `crates/zedc-preimage/src/product.rs`, `tests/steps/l01_39_reduced_product/pendants.rs` |
 | 0 | FAIL-pendants-oracle-undecided | Done: 6fa828039 (imbl1, 2026-11-19, the commit "pendants: the oracle decides every end and hole exactly, with no size bound" that marks this row Done): `decided_ends` now decides, where the enumerated window is not proved exact, each hole and each finite past-end range by an exact integer feasibility test (`has_point`, the Omega test of Pugh 1992 over Num, with real and dark shadows and splinters) and each unbounded end by the least step t0 of the recession cone and the least value taken in each residue class mod t0 (`taken_beyond`); `brute` asks `has_point` of a disjunct where the window found no point. WIDE and NARROW now set only how much the enumeration finds at once, never the answer. The one set it cannot hold exactly is one beyond an unbounded end with a residue class never taken (infinitely many gaps), where `upper` stays every value and a check reads it as not decided, as before. Tests `the_oracle_decides_every_end_and_hole_of_seed_12883791572206885593` and `..._9829204742287041310` pass (red before: the panics below); `the_brute_force_check_does_not_call_an_opened_periodic_or_gapped_set_exact` now expects `b` of `100 * b <= a <= 100 * b + 1` exact `[0,inf]` (it takes every value from 0 on, which the old step rule could not prove). 144 fresh seeds of the joined random test and 48 of the single-part one: every draw decided; one joined draw (seed 18417449267567745209) failed on a naming case of the checker, added to FAIL-pendants-refused-boxes-2537877658227229631. Found by satred1 (2026-11-19) in 64 runs with new seeds at f99bf7ae4 (3 failed: these two and the second case of FAIL-pendants-refused-boxes-2537877658227229631), both replayed at 16490c8d2 with the same messages, so not caused by satred1's changes; cover8 saw the same message (running-log 2026-11-19T03:20Z, seed not recorded). `l01_39_reduced_product::pendants::refused_projections_of_joined_random_parts_keep_sound_boxes` panics in its oracle, not in the code under test: `brute` enumerates the hubs within -WIDE..=WIDE (WIDE = 75) and `decided_ends` panics when an end or hole is not decided in that range. Seed 12883791572206885593: "cannot decide the hole -117..=-117 of z2 ... -1 * a reaches Unbounded, beyond 75" (pendants.rs:831); seed 9829204742287041310: "cannot decide the end 30 of a ... 1 * c reaches Max(Num(Small(83))), beyond 75" (pendants.rs:878). So the test fails on about 2 draws in 64, and whether it passes depends on WIDE, a threshold. Fix: make the oracle decide every end and hole without a size bound (an exact decision of each end and hole by the simplex `decided_ends` already uses, with no range cut), or draw only parts the oracle is proved to decide; then add both seeds as tests. Test source /home/luke/Work/wt/failing-tests/FAIL-pendants-oracle-undecided.rs | S | no | none | `tests/steps/l01_39_reduced_product/pendants.rs` |
 | 0 | BENCH-cover-per-unit-few-units | Done (neon-sweep, 2026-11-19): the cover did not slow down; the case stopped reaching it. Bisect on the printed unit count (good: 10^5 units or more; time not used, so load cannot flip a verdict) over `crates/zedc-presburger` from 96a4e186b to 9164e5f96 names cd403f3b0 ("guarded/two_pins.rs reads the part once", the two-pin reading): its parent 7e9326d16 counts 151,932 units and 1 question for `evens n=4000`, cd403f3b0 counts 1,056 units and 0 questions, the same on two runs each (load5 22 to 27). A part with no choice is now read off its polygon with no question, so the projection's fixed cost of some 0.3 ms over 1,056 to 1,312 units gave 290 to 515 ns a unit; `evens n=1000 pad=50` and `n=400 pad=400` also ask no question there (15,956 and 120,956 units), and `pad=50` counted only 63,332 units even before. The test now asserts its precondition for each case, a question or more and 10^5 units or more, and writes the evens through a choice (`multiples(&[2, 4], ..)`, the same set, which the two-pin reading declines): `2, 4 n=4000` 191,559 units, `2, 4 n=2000 pad=50` 137,459, `2, 4 n=400 pad=400` 187,259. Fails on main b9375e0ac (907 ms at the limit); passes with the change 3 runs of 3 (worst 26.5 to 27.8 ns a unit, 82 to 86 ms at the limit, load5 21); the old case put back fails the new assertion ("1312 units, 0 questions"). Left open: the two-pin reading charges the same meter and its time per unit is not measured, BENCH-two-pin-per-unit | S | no | none | `tests/steps/l01_38_omega_test/bench/exact_cover.rs` |
@@ -4086,7 +4086,6 @@ Each pair below is at one level, shares a file and is not yet done. No path of n
 | 0 | L1.39-head-rule, BENCH-named-wide-conjunction-tiers | `crates/zedc-preimage/src/product.rs` |
 | 0 | L1.39-head-rule, CHECK-sum-of-summarized-names | `crates/zedc-preimage/src/product.rs` |
 | 0 | L1.39-head-rule, FAIL-audit-seed-17180819687505084927 | `crates/zedc-preimage/src/product.rs` |
-| 0 | L1.39-head-rule, BENCH-named-limits-side-by-side-tiers | `crates/zedc-preimage/src/product.rs` |
 | 0 | L1.39-head-rule, PERF-hull-join-row-after | `crates/zedc-preimage/src/product.rs` |
 | 0 | L1.39-head-rule, MALLOC-deep-block-free-lists | `crates/zedc-preimage/src/product.rs` |
 | 0 | MSG-value-call-code, CHK-generalize-undo | `crates/zedc-check/src/check/walk.rs`, `crates/zedc-check/src/check/mod.rs` |
@@ -4379,7 +4378,6 @@ Each pair below is at one level, shares a file and is not yet done. No path of n
 | 0 | DRY-numeric-shared-rest, FAIL-audit-seed-17180819687505084927 | `crates/zedc-preimage/src/product.rs` |
 | 0 | DRY-numeric-shared-rest, LIMITS-remove-all | `crates/zedc-solvers/src/twovar.rs`, `crates/zedc-check/src/check/`, `crates/zed-kernel/src/poly.rs` |
 | 0 | DRY-numeric-shared-rest, TEST-term-for-uncovered | `crates/zedc-check/src/check/` |
-| 0 | DRY-numeric-shared-rest, BENCH-named-limits-side-by-side-tiers | `crates/zedc-preimage/src/product.rs` |
 | 0 | DRY-numeric-shared-rest, PERF-twovar-elim-per-arm | `crates/zedc-solvers/src/twovar.rs` |
 | 0 | DRY-numeric-shared-rest, FAIL-s22-relational-equal-guards-relation | `crates/zedc-preimage/src/preimage.rs` |
 | 0 | DRY-numeric-shared-rest, PERF-cross-dead-cover-question-search | `crates/zedc-presburger/src/presburger.rs` |
@@ -4574,7 +4572,6 @@ Each pair below is at one level, shares a file and is not yet done. No path of n
 | 0 | HOLES-exact-between, BENCH-named-wide-conjunction-tiers | `crates/zedc-preimage/src/product.rs` |
 | 0 | HOLES-exact-between, CHECK-sum-of-summarized-names | `crates/zedc-preimage/src/product.rs` |
 | 0 | HOLES-exact-between, FAIL-audit-seed-17180819687505084927 | `crates/zedc-preimage/src/product.rs` |
-| 0 | HOLES-exact-between, BENCH-named-limits-side-by-side-tiers | `crates/zedc-preimage/src/product.rs` |
 | 0 | HOLES-exact-between, PERF-hull-join-row-after | `crates/zedc-preimage/src/holes.rs`, `crates/zedc-preimage/src/product.rs` |
 | 0 | HOLES-exact-between, MALLOC-deep-block-free-lists | `crates/zedc-preimage/src/product.rs` |
 | 0 | TIGHTEN-k-parts, PERF-l139-block-incr | `crates/zedc-preimage/src/product.rs` |
@@ -4595,7 +4592,6 @@ Each pair below is at one level, shares a file and is not yet done. No path of n
 | 0 | TIGHTEN-k-parts, BENCH-named-wide-conjunction-tiers | `crates/zedc-preimage/src/product.rs` |
 | 0 | TIGHTEN-k-parts, CHECK-sum-of-summarized-names | `crates/zedc-preimage/src/product.rs` |
 | 0 | TIGHTEN-k-parts, FAIL-audit-seed-17180819687505084927 | `crates/zedc-preimage/src/product.rs` |
-| 0 | TIGHTEN-k-parts, BENCH-named-limits-side-by-side-tiers | `crates/zedc-preimage/src/product.rs` |
 | 0 | TIGHTEN-k-parts, PERF-hull-join-row-after | `crates/zedc-preimage/src/product.rs` |
 | 0 | TIGHTEN-k-parts, MALLOC-deep-block-free-lists | `crates/zedc-preimage/src/product.rs` |
 | 0 | Q1-LOCAL-method, PRES-sum-chain-cost | `crates/zedc-presburger/src/presburger.rs` |
@@ -4758,7 +4754,6 @@ Each pair below is at one level, shares a file and is not yet done. No path of n
 | 0 | PRES-sum-chain-cost, DRY-len-as-u32-checked | `crates/zedc-presburger/src/presburger/slack.rs` |
 | 0 | PRES-sum-chain-cost, TEST-presburger-unreached-paths | `crates/zedc-presburger/src/` |
 | 0 | PRES-sum-chain-cost, FAIL-omega-pairs-4972743790605253739 | `crates/zedc-presburger/src/presburger/extend.rs` |
-| 0 | PRES-sum-chain-cost, BENCH-deep-small-choice | `crates/zedc-presburger/src/presburger/exact.rs` |
 | 0 | PRES-sum-chain-cost, PERF-cross-dead-cover-question-search | `crates/zedc-presburger/src/presburger.rs` |
 | 0 | PRES-sum-chain-cost, PERF-satellite-formula-cmp | `crates/zedc-presburger/src/conjuncts.rs` |
 | 0 | PRES-sum-chain-cost, FAIL-one-scope-bodies-seed-shadows | `crates/zedc-presburger/src/presburger.rs`, `crates/zedc-presburger/src/presburger/extend.rs` |
@@ -4781,7 +4776,6 @@ Each pair below is at one level, shares a file and is not yet done. No path of n
 | 0 | PRES-holes-steps-cost, DRY-len-as-u32-checked | `crates/zedc-presburger/src/presburger/slack.rs` |
 | 0 | PRES-holes-steps-cost, TEST-presburger-unreached-paths | `crates/zedc-presburger/src/` |
 | 0 | PRES-holes-steps-cost, FAIL-omega-pairs-4972743790605253739 | `crates/zedc-presburger/src/presburger/extend.rs` |
-| 0 | PRES-holes-steps-cost, BENCH-deep-small-choice | `crates/zedc-presburger/src/presburger/exact.rs` |
 | 0 | PRES-holes-steps-cost, PERF-cross-dead-cover-question-search | `crates/zedc-presburger/src/presburger.rs` |
 | 0 | PRES-holes-steps-cost, PERF-satellite-formula-cmp | `crates/zedc-presburger/src/conjuncts.rs` |
 | 0 | PRES-holes-steps-cost, FAIL-one-scope-bodies-seed-shadows | `crates/zedc-presburger/src/presburger.rs`, `crates/zedc-presburger/src/presburger/extend.rs` |
@@ -4859,7 +4853,6 @@ Each pair below is at one level, shares a file and is not yet done. No path of n
 | 0 | PERF-l139-block-incr, TEST-presburger-unreached-paths | `crates/zedc-presburger/src/conjuncts.rs` |
 | 0 | PERF-l139-block-incr, CHECK-sum-of-summarized-names | `crates/zedc-preimage/src/product.rs` |
 | 0 | PERF-l139-block-incr, FAIL-audit-seed-17180819687505084927 | `crates/zedc-preimage/src/product.rs` |
-| 0 | PERF-l139-block-incr, BENCH-named-limits-side-by-side-tiers | `crates/zedc-preimage/src/product.rs` |
 | 0 | PERF-l139-block-incr, PERF-satellite-formula-cmp | `crates/zedc-presburger/src/conjuncts.rs` |
 | 0 | PERF-l139-block-incr, PERF-hull-join-row-after | `crates/zedc-preimage/src/product.rs` |
 | 0 | PERF-l139-block-incr, PROOF-tied-projection-refusal-names | `crates/zedc-presburger/src/conjuncts.rs` |
@@ -4887,7 +4880,6 @@ Each pair below is at one level, shares a file and is not yet done. No path of n
 | 0 | PERF-l139-persist-due, TEST-presburger-unreached-paths | `crates/zedc-presburger/src/presburger.rs` |
 | 0 | PERF-l139-persist-due, CHECK-sum-of-summarized-names | `crates/zedc-preimage/src/product.rs` |
 | 0 | PERF-l139-persist-due, FAIL-audit-seed-17180819687505084927 | `crates/zedc-preimage/src/product.rs` |
-| 0 | PERF-l139-persist-due, BENCH-named-limits-side-by-side-tiers | `crates/zedc-preimage/src/product.rs` |
 | 0 | PERF-l139-persist-due, PERF-cross-dead-cover-question-search | `crates/zedc-presburger/src/presburger.rs` |
 | 0 | PERF-l139-persist-due, FAIL-one-scope-bodies-seed-shadows | `crates/zedc-presburger/src/presburger.rs` |
 | 0 | PERF-l139-persist-due, PERF-hull-join-row-after | `crates/zedc-preimage/src/product.rs` |
@@ -4912,7 +4904,6 @@ Each pair below is at one level, shares a file and is not yet done. No path of n
 | 0 | PERF-l139-hopb-wakes, BENCH-named-wide-conjunction-tiers | `crates/zedc-preimage/src/product.rs` |
 | 0 | PERF-l139-hopb-wakes, CHECK-sum-of-summarized-names | `crates/zedc-preimage/src/product.rs` |
 | 0 | PERF-l139-hopb-wakes, FAIL-audit-seed-17180819687505084927 | `crates/zedc-preimage/src/product.rs` |
-| 0 | PERF-l139-hopb-wakes, BENCH-named-limits-side-by-side-tiers | `crates/zedc-preimage/src/product.rs` |
 | 0 | PERF-l139-hopb-wakes, PERF-hull-join-row-after | `crates/zedc-preimage/src/product.rs` |
 | 0 | PERF-l139-hopb-wakes, MALLOC-deep-block-free-lists | `crates/zedc-preimage/src/product.rs` |
 | 0 | HULL-elim-text, BOARD-redundant-needs | `docs/plan_dag.md` |
@@ -5091,7 +5082,6 @@ Each pair below is at one level, shares a file and is not yet done. No path of n
 | 0 | S22-scaling-10_5, DRY-len-as-u32-checked | `crates/zedc-preimage/src/preimage.rs` |
 | 0 | S22-scaling-10_5, CHECK-sum-of-summarized-names | `crates/zedc-preimage/src/product.rs` |
 | 0 | S22-scaling-10_5, FAIL-audit-seed-17180819687505084927 | `crates/zedc-preimage/src/product.rs` |
-| 0 | S22-scaling-10_5, BENCH-named-limits-side-by-side-tiers | `crates/zedc-preimage/src/product.rs` |
 | 0 | S22-scaling-10_5, FAIL-s22-relational-equal-guards-relation | `crates/zedc-preimage/src/preimage.rs` |
 | 0 | S22-scaling-10_5, PERF-hull-join-row-after | `crates/zedc-preimage/src/` |
 | 0 | S22-scaling-10_5, PERF-preimage-chain-draw-spread | `crates/zedc-preimage/src/preimage.rs` |
@@ -5713,7 +5703,6 @@ Each pair below is at one level, shares a file and is not yet done. No path of n
 | 0 | PATH-reads-scale, DRY-len-as-u32-checked | `crates/zedc-preimage/src/preimage.rs` |
 | 0 | PATH-reads-scale, CHECK-sum-of-summarized-names | `crates/zedc-preimage/src/product.rs` |
 | 0 | PATH-reads-scale, FAIL-audit-seed-17180819687505084927 | `crates/zedc-preimage/src/product.rs` |
-| 0 | PATH-reads-scale, BENCH-named-limits-side-by-side-tiers | `crates/zedc-preimage/src/product.rs` |
 | 0 | PATH-reads-scale, FAIL-s22-relational-equal-guards-relation | `crates/zedc-preimage/src/preimage.rs` |
 | 0 | PATH-reads-scale, PERF-hull-join-row-after | `crates/zedc-preimage/src/` |
 | 0 | PATH-reads-scale, PERF-preimage-chain-draw-spread | `crates/zedc-preimage/src/preimage.rs` |
@@ -5736,7 +5725,6 @@ Each pair below is at one level, shares a file and is not yet done. No path of n
 | 0 | NARROW-hub-interleaved-scale, DRY-len-as-u32-checked | `crates/zedc-preimage/src/preimage.rs` |
 | 0 | NARROW-hub-interleaved-scale, CHECK-sum-of-summarized-names | `crates/zedc-preimage/src/product.rs` |
 | 0 | NARROW-hub-interleaved-scale, FAIL-audit-seed-17180819687505084927 | `crates/zedc-preimage/src/product.rs` |
-| 0 | NARROW-hub-interleaved-scale, BENCH-named-limits-side-by-side-tiers | `crates/zedc-preimage/src/product.rs` |
 | 0 | NARROW-hub-interleaved-scale, FAIL-s22-relational-equal-guards-relation | `crates/zedc-preimage/src/preimage.rs` |
 | 0 | NARROW-hub-interleaved-scale, PERF-hull-join-row-after | `crates/zedc-preimage/src/` |
 | 0 | NARROW-hub-interleaved-scale, PERF-preimage-chain-draw-spread | `crates/zedc-preimage/src/preimage.rs` |
@@ -5754,7 +5742,6 @@ Each pair below is at one level, shares a file and is not yet done. No path of n
 | 0 | STAR-satellite-scale, DRY-len-as-u32-checked | `crates/zedc-preimage/src/preimage.rs` |
 | 0 | STAR-satellite-scale, CHECK-sum-of-summarized-names | `crates/zedc-preimage/src/product.rs` |
 | 0 | STAR-satellite-scale, FAIL-audit-seed-17180819687505084927 | `crates/zedc-preimage/src/product.rs` |
-| 0 | STAR-satellite-scale, BENCH-named-limits-side-by-side-tiers | `crates/zedc-preimage/src/product.rs` |
 | 0 | STAR-satellite-scale, FAIL-s22-relational-equal-guards-relation | `crates/zedc-preimage/src/preimage.rs` |
 | 0 | STAR-satellite-scale, PERF-hull-join-row-after | `crates/zedc-preimage/src/` |
 | 0 | STAR-satellite-scale, PERF-preimage-chain-draw-spread | `crates/zedc-preimage/src/preimage.rs` |
@@ -5770,7 +5757,6 @@ Each pair below is at one level, shares a file and is not yet done. No path of n
 | 0 | LINKED-incremental-scratch-agree, BENCH-named-wide-conjunction-tiers | `crates/zedc-preimage/src/product.rs` |
 | 0 | LINKED-incremental-scratch-agree, CHECK-sum-of-summarized-names | `crates/zedc-preimage/src/product.rs` |
 | 0 | LINKED-incremental-scratch-agree, FAIL-audit-seed-17180819687505084927 | `crates/zedc-preimage/src/product.rs` |
-| 0 | LINKED-incremental-scratch-agree, BENCH-named-limits-side-by-side-tiers | `crates/zedc-preimage/src/product.rs` |
 | 0 | LINKED-incremental-scratch-agree, PERF-hull-join-row-after | `crates/zedc-preimage/src/product.rs` |
 | 0 | LINKED-incremental-scratch-agree, MALLOC-deep-block-free-lists | `crates/zedc-preimage/src/product.rs` |
 | 0 | FAMILY-scale-larger, SCOPE-assume-disjunctions-setup | `crates/zedc-preimage/src/product.rs` |
@@ -5782,7 +5768,6 @@ Each pair below is at one level, shares a file and is not yet done. No path of n
 | 0 | FAMILY-scale-larger, BENCH-named-wide-conjunction-tiers | `crates/zedc-preimage/src/product.rs` |
 | 0 | FAMILY-scale-larger, CHECK-sum-of-summarized-names | `crates/zedc-preimage/src/product.rs` |
 | 0 | FAMILY-scale-larger, FAIL-audit-seed-17180819687505084927 | `crates/zedc-preimage/src/product.rs` |
-| 0 | FAMILY-scale-larger, BENCH-named-limits-side-by-side-tiers | `crates/zedc-preimage/src/product.rs` |
 | 0 | FAMILY-scale-larger, PERF-hull-join-row-after | `crates/zedc-preimage/src/product.rs` |
 | 0 | FAMILY-scale-larger, MALLOC-deep-block-free-lists | `crates/zedc-preimage/src/product.rs` |
 | 0 | SCOPE-assume-disjunctions-setup, SCALE-near-limit-l0139 | `crates/zedc-preimage/src/product.rs` |
@@ -5793,7 +5778,6 @@ Each pair below is at one level, shares a file and is not yet done. No path of n
 | 0 | SCOPE-assume-disjunctions-setup, BENCH-named-wide-conjunction-tiers | `crates/zedc-preimage/src/product.rs` |
 | 0 | SCOPE-assume-disjunctions-setup, CHECK-sum-of-summarized-names | `crates/zedc-preimage/src/product.rs` |
 | 0 | SCOPE-assume-disjunctions-setup, FAIL-audit-seed-17180819687505084927 | `crates/zedc-preimage/src/product.rs` |
-| 0 | SCOPE-assume-disjunctions-setup, BENCH-named-limits-side-by-side-tiers | `crates/zedc-preimage/src/product.rs` |
 | 0 | SCOPE-assume-disjunctions-setup, PERF-hull-join-row-after | `crates/zedc-preimage/src/product.rs` |
 | 0 | SCOPE-assume-disjunctions-setup, MALLOC-deep-block-free-lists | `crates/zedc-preimage/src/product.rs` |
 | 0 | SCALE-near-limit-l0139, SOLVER-refused-parts-slow | `crates/zedc-preimage/src/product.rs` |
@@ -5803,7 +5787,6 @@ Each pair below is at one level, shares a file and is not yet done. No path of n
 | 0 | SCALE-near-limit-l0139, BENCH-named-wide-conjunction-tiers | `crates/zedc-preimage/src/product.rs` |
 | 0 | SCALE-near-limit-l0139, CHECK-sum-of-summarized-names | `crates/zedc-preimage/src/product.rs` |
 | 0 | SCALE-near-limit-l0139, FAIL-audit-seed-17180819687505084927 | `crates/zedc-preimage/src/product.rs` |
-| 0 | SCALE-near-limit-l0139, BENCH-named-limits-side-by-side-tiers | `crates/zedc-preimage/src/product.rs` |
 | 0 | SCALE-near-limit-l0139, PERF-hull-join-row-after | `crates/zedc-preimage/src/product.rs` |
 | 0 | SCALE-near-limit-l0139, MALLOC-deep-block-free-lists | `crates/zedc-preimage/src/product.rs` |
 | 0 | SOLVER-refused-parts-slow, PROOF-sweep-zedc-preimage | `crates/zedc-preimage/src/product.rs` |
@@ -5812,7 +5795,6 @@ Each pair below is at one level, shares a file and is not yet done. No path of n
 | 0 | SOLVER-refused-parts-slow, BENCH-named-wide-conjunction-tiers | `crates/zedc-preimage/src/product.rs` |
 | 0 | SOLVER-refused-parts-slow, CHECK-sum-of-summarized-names | `crates/zedc-preimage/src/product.rs` |
 | 0 | SOLVER-refused-parts-slow, FAIL-audit-seed-17180819687505084927 | `crates/zedc-preimage/src/product.rs` |
-| 0 | SOLVER-refused-parts-slow, BENCH-named-limits-side-by-side-tiers | `crates/zedc-preimage/src/product.rs` |
 | 0 | SOLVER-refused-parts-slow, PERF-hull-join-row-after | `crates/zedc-preimage/src/product.rs` |
 | 0 | SOLVER-refused-parts-slow, MALLOC-deep-block-free-lists | `crates/zedc-preimage/src/product.rs` |
 | 0 | FAIL-ratio-kernel-bdd-print, PROOF-sweep-zed-kernel | `crates/zed-kernel/src/types/bdd/bench.rs` |
@@ -5891,7 +5873,6 @@ Each pair below is at one level, shares a file and is not yet done. No path of n
 | 0 | PROOF-sweep-zedc-presburger, DRY-len-as-u32-checked | `crates/zedc-presburger/src/presburger/slack.rs` |
 | 0 | PROOF-sweep-zedc-presburger, TEST-presburger-unreached-paths | `crates/zedc-presburger/src/` |
 | 0 | PROOF-sweep-zedc-presburger, FAIL-omega-pairs-4972743790605253739 | `crates/zedc-presburger/src/presburger/extend.rs` |
-| 0 | PROOF-sweep-zedc-presburger, BENCH-deep-small-choice | `crates/zedc-presburger/src/presburger/exact.rs` |
 | 0 | PROOF-sweep-zedc-presburger, PERF-cross-dead-cover-question-search | `crates/zedc-presburger/src/presburger.rs` |
 | 0 | PROOF-sweep-zedc-presburger, PERF-satellite-formula-cmp | `crates/zedc-presburger/src/conjuncts.rs` |
 | 0 | PROOF-sweep-zedc-presburger, FAIL-one-scope-bodies-seed-shadows | `crates/zedc-presburger/src/presburger.rs`, `crates/zedc-presburger/src/presburger/extend.rs` |
@@ -5944,7 +5925,6 @@ Each pair below is at one level, shares a file and is not yet done. No path of n
 | 0 | PROOF-sweep-zedc-preimage, BENCH-named-wide-conjunction-tiers | `crates/zedc-preimage/src/product.rs` |
 | 0 | PROOF-sweep-zedc-preimage, CHECK-sum-of-summarized-names | `crates/zedc-preimage/src/product.rs` |
 | 0 | PROOF-sweep-zedc-preimage, FAIL-audit-seed-17180819687505084927 | `crates/zedc-preimage/src/product.rs` |
-| 0 | PROOF-sweep-zedc-preimage, BENCH-named-limits-side-by-side-tiers | `crates/zedc-preimage/src/product.rs` |
 | 0 | PROOF-sweep-zedc-preimage, PERF-hull-join-row-after | `crates/zedc-preimage/src/product.rs` |
 | 0 | PROOF-sweep-zedc-preimage, MALLOC-deep-block-free-lists | `crates/zedc-preimage/src/product.rs` |
 | 0 | PROOF-meet-rows-finite, LIMITS-remove-all | `crates/zed-kernel/src/types.rs` |
@@ -6019,7 +5999,6 @@ Each pair below is at one level, shares a file and is not yet done. No path of n
 | 0 | BENCH-scope-project-due-blocks, BENCH-named-wide-conjunction-tiers | `crates/zedc-preimage/src/product.rs` |
 | 0 | BENCH-scope-project-due-blocks, CHECK-sum-of-summarized-names | `crates/zedc-preimage/src/product.rs` |
 | 0 | BENCH-scope-project-due-blocks, FAIL-audit-seed-17180819687505084927 | `crates/zedc-preimage/src/product.rs` |
-| 0 | BENCH-scope-project-due-blocks, BENCH-named-limits-side-by-side-tiers | `crates/zedc-preimage/src/product.rs` |
 | 0 | BENCH-scope-project-due-blocks, PERF-hull-join-row-after | `crates/zedc-preimage/src/product.rs` |
 | 0 | BENCH-scope-project-due-blocks, MALLOC-deep-block-free-lists | `crates/zedc-preimage/src/product.rs` |
 | 0 | TEST-read-type-flaws, MSG-too-large-cast-origin | `crates/zedc-check/src/check/read.rs` |
@@ -6064,17 +6043,14 @@ Each pair below is at one level, shares a file and is not yet done. No path of n
 | 0 | BENCH-done-marks-wall-remeasure, SCHED-loop-early | `docs/plan_dag.md` |
 | 0 | BENCH-done-marks-wall-remeasure, LAYER-audit-open | `docs/plan_dag.md` |
 | 0 | PRES-cover-moduli-two-disjunctions, TEST-presburger-unreached-paths | `crates/zedc-presburger/src/presburger/exact.rs` |
-| 0 | PRES-cover-moduli-two-disjunctions, BENCH-deep-small-choice | `crates/zedc-presburger/src/presburger/exact.rs` |
 | 0 | PRES-cover-moduli-two-disjunctions, PROOF-tied-projection-refusal-names | `crates/zedc-presburger/src/presburger/exact.rs` |
 | 0 | BENCH-project-block-whole-release, BENCH-named-wide-conjunction-tiers | `crates/zedc-preimage/src/product.rs` |
 | 0 | BENCH-project-block-whole-release, CHECK-sum-of-summarized-names | `crates/zedc-preimage/src/product.rs` |
 | 0 | BENCH-project-block-whole-release, FAIL-audit-seed-17180819687505084927 | `crates/zedc-preimage/src/product.rs` |
-| 0 | BENCH-project-block-whole-release, BENCH-named-limits-side-by-side-tiers | `crates/zedc-preimage/src/product.rs` |
 | 0 | BENCH-project-block-whole-release, PERF-hull-join-row-after | `crates/zedc-preimage/src/product.rs` |
 | 0 | BENCH-project-block-whole-release, MALLOC-deep-block-free-lists | `crates/zedc-preimage/src/product.rs` |
 | 0 | BENCH-named-wide-conjunction-tiers, CHECK-sum-of-summarized-names | `crates/zedc-preimage/src/product.rs` |
 | 0 | BENCH-named-wide-conjunction-tiers, FAIL-audit-seed-17180819687505084927 | `crates/zedc-preimage/src/product.rs` |
-| 0 | BENCH-named-wide-conjunction-tiers, BENCH-named-limits-side-by-side-tiers | `crates/zedc-preimage/src/product.rs` |
 | 0 | BENCH-named-wide-conjunction-tiers, PERF-hull-join-row-after | `crates/zedc-preimage/src/product.rs` |
 | 0 | BENCH-named-wide-conjunction-tiers, MALLOC-deep-block-free-lists | `crates/zedc-preimage/src/product.rs` |
 | 0 | PRES-project-each-naming, SOLVE-growth-implied-row | `crates/zedc-presburger/src/presburger.rs` |
@@ -6328,7 +6304,6 @@ Each pair below is at one level, shares a file and is not yet done. No path of n
 | 0 | DIAG-too-large-with-type-error, MSG-tuple-generic-headline | `crates/zedc-check/src/check/` |
 | 0 | DIAG-too-large-with-type-error, TEST-generic-operand-messages-reached | `crates/zedc-check/src/check/walk/fp_ops.rs`, `crates/zedc-check/src/check/walk.rs` |
 | 0 | TEST-presburger-unreached-paths, FAIL-omega-pairs-4972743790605253739 | `crates/zedc-presburger/src/presburger/extend.rs` |
-| 0 | TEST-presburger-unreached-paths, BENCH-deep-small-choice | `crates/zedc-presburger/src/presburger/exact.rs` |
 | 0 | TEST-presburger-unreached-paths, PERF-cross-dead-cover-question-search | `crates/zedc-presburger/src/presburger.rs` |
 | 0 | TEST-presburger-unreached-paths, PERF-satellite-formula-cmp | `crates/zedc-presburger/src/conjuncts.rs` |
 | 0 | TEST-presburger-unreached-paths, FAIL-one-scope-bodies-seed-shadows | `crates/zedc-presburger/src/presburger.rs`, `crates/zedc-presburger/src/presburger/extend.rs` |
@@ -6397,7 +6372,6 @@ Each pair below is at one level, shares a file and is not yet done. No path of n
 | 0 | CHECK-sum-of-summarized-names, FAIL-audit-seed-17180819687505084927 | `crates/zedc-preimage/src/product.rs` |
 | 0 | CHECK-sum-of-summarized-names, LIMITS-remove-all | `crates/zedc-check/src/check/walk.rs` |
 | 0 | CHECK-sum-of-summarized-names, TEST-term-for-uncovered | `crates/zedc-check/src/check/walk.rs` |
-| 0 | CHECK-sum-of-summarized-names, BENCH-named-limits-side-by-side-tiers | `crates/zedc-preimage/src/product.rs` |
 | 0 | CHECK-sum-of-summarized-names, SPEC-headline-piece-in-collection | `crates/zedc-check/src/check/walk.rs` |
 | 0 | CHECK-sum-of-summarized-names, FAIL-nested-display-headline-code-quadratic | `crates/zedc-check/src/check/walk.rs` |
 | 0 | CHECK-sum-of-summarized-names, LAND-map-chain-neon | `crates/zedc-check/src/check/walk.rs` |
@@ -6465,7 +6439,6 @@ Each pair below is at one level, shares a file and is not yet done. No path of n
 | 0 | CHECK-binder-call-summary, MSG-list-value-printed-by-arrows | `crates/zedc-check/src/check/walk.rs` |
 | 0 | CHECK-binder-call-summary, MSG-tuple-generic-headline | `crates/zedc-check/src/check/walk.rs` |
 | 0 | CHECK-binder-call-summary, TEST-generic-operand-messages-reached | `crates/zedc-check/src/check/walk.rs` |
-| 0 | FAIL-audit-seed-17180819687505084927, BENCH-named-limits-side-by-side-tiers | `crates/zedc-preimage/src/product.rs` |
 | 0 | FAIL-audit-seed-17180819687505084927, PERF-hull-join-row-after | `crates/zedc-preimage/src/product.rs` |
 | 0 | FAIL-audit-seed-17180819687505084927, MALLOC-deep-block-free-lists | `crates/zedc-preimage/src/product.rs` |
 | 0 | FAIL-omega-pairs-4972743790605253739, FAIL-one-scope-bodies-seed-shadows | `crates/zedc-presburger/src/presburger/extend.rs` |
@@ -6541,9 +6514,6 @@ Each pair below is at one level, shares a file and is not yet done. No path of n
 | 0 | REFUSAL-front-u6-keys, PERF-row-hash-tied-digest | `crates/zed-kernel/src/types/empty.rs` |
 | 0 | REFUSAL-front-u6-keys, PERF-guarded-function-walk | `crates/zed-kernel/src/types/empty.rs` |
 | 0 | REFUSAL-front-u6-keys, FP-ops-order | `crates/zed-kernel/src/types/empty.rs` |
-| 0 | BENCH-named-limits-side-by-side-tiers, PERF-hull-join-row-after | `crates/zedc-preimage/src/product.rs` |
-| 0 | BENCH-named-limits-side-by-side-tiers, MALLOC-deep-block-free-lists | `crates/zedc-preimage/src/product.rs` |
-| 0 | BENCH-deep-small-choice, PROOF-tied-projection-refusal-names | `crates/zedc-presburger/src/presburger/exact.rs` |
 | 0 | XR-ffi-stateful-r6, SPEC-ct-enforce-neon-findings | `DESIGN.md` |
 | 0 | XR-ffi-stateful-r6, SPEC-lambda-notfound-partial-map | `DESIGN.md` |
 | 0 | XR-ffi-stateful-r6, SPEC-headline-piece-in-collection | `DESIGN.md` |
