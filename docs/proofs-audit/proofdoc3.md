@@ -161,16 +161,43 @@ zedc-presburger, 18 in zedc-solvers and 17 in zedc-int, ordered by score. This p
 of them, 11 in zedc-types and 1 in zedc-int, in order of score, each message and each site it
 names. It also completed one zedc-solvers site that no entry read here names. The sites were
 read on 46b9d5d88 and checked again after a rebase onto origin/main of 2026-11-20 (bd4504e9b).
-The pass then stopped, for lack of room: it started no new entry, and the rest are listed
-under "Not read:". A first triage of more entries, done by helpers that were stopped on
-order, is not used here, as its verdicts were not checked against the code.
+A first triage of more entries, done by helpers that were stopped on order, is not used here,
+as its verdicts were not checked against the code.
+
+The other 361 entries were then read through four filters, run over every one of them on
+fcbc08bd0 (restacked on 0d20e461e), and each site a filter flagged was read in depth:
+
+1. Open cases: every comment line of an entry's diff that states an open case (`Not proved`,
+   unproved, assumed, not shown, unchecked) and is no longer at its place today. Of 6,154
+   comment lines in the 361 entries, 1,242 are no longer where the commit put them; 31 of
+   those stated an open case. 23 are still in the tree, as written or reworded (one, from
+   08e6206a4, with its link renamed from `Ty::fns_met` to `Pairs::fns_met`, ty.rs); 8 were
+   removed by later commits that proved or rewrote the case: ea2e24555 (RunMark step 3 made
+   to hold by construction), 355e67f4e, aabf487cc, 6e70ebff3, 383cb5b66
+   (PROOF-batch-single-hull-agree), 236431136 (PROOF-held-own-outer-or-class, two lines) and
+   09287a709. No open case was dropped without its claim being settled.
+2. Proof pointers: each name an entry's message says holds a proof ("proof at `X`"), looked
+   up today. 8 names: 4 found with their proof, 4 flagged and read (rows below, all already
+   there).
+3. Bare claims: every comment line in the four crates today with a claim word (always,
+   never, cannot, exactly, at most, holds, sound, complete and their like) and no reason word
+   (since, because, so, by, proof, why, test, cited, Not proved, assumption and their like) on
+   it or in the three lines after it, scored by the claim words. 96 flags at score 4 or more
+   and 275 at scores 1 to 3, of which 94 state correctness rather than cost (no `O(`); the 96
+   and the 94 were read in context (the 94 in 936 lines). Most are descriptions, cited, or have their reason a
+   few lines away; those that were not are in the table.
+4. Depth reads: the claims of the highest-scored entries found by the filters (2143bead4,
+   564bef57c, fb9b82a6a, 25ef78dd1) read at their sites.
+
+What these filters cannot find: a claim that is stated with a reason that is wrong. The 361
+entries were not each read in depth, and are listed below as read through the filters only.
 
 | Crate | Found | Already there | Added or completed | Marked unproved | Corrected |
 |---|---|---|---|---|---|
-| zedc-types | 11 | 1 | 10 | 0 (2 sub-steps of 1 entry, under PROOF-sweep-zedc-types) | 0 |
-| zedc-presburger | 0 | 0 | 0 | 0 | 0 |
+| zedc-types | 16 | 5 | 11 | 0 (2 sub-steps of 1 entry, under PROOF-sweep-zedc-types) | 0 |
+| zedc-presburger | 12 | 3 | 9 | 1 sub-case of 1 (`find_tied_point`) | 0 |
 | zedc-solvers | 0 (1 site outside the list) | 0 | 1 | 0 | 0 |
-| zedc-int | 1 | 0 | 1 | 0 | 0 |
+| zedc-int | 3 | 0 | 3 | 1 sub-case of 1 (`root_approx`) | 0 |
 
 | Source | Claim | Code site | Status |
 |---|---|---|---|
@@ -186,10 +213,25 @@ order, is not used here, as its verdicts were not checked against the code.
 | 84e65bf61 | Two chains of calls compare link by link; only the first call is hashed | ty.rs test `two_chains_of_calls_are_equal_link_by_link`, `impl Hash for Via` | Already there: the doc, the `Hash` impl and the test's assertions agree |
 | 843ceb28f | No prime below `FILTER_BOUND` is 1 modulo an index above `FILTER_BOUND / 2`, so such an index needs its own prime | zedc-int int.rs `FILTER_BOUND` | Added: the proof (the indices are odd primes, so `q = k * p + 1` odd needs `k` even, `q >= 2p + 1 > 1025`) and the test named |
 | (none; site met in reading negsssp) | One edge relaxed per call is Dijkstra's relaxation, exact as `ell` is at least 0 | zedc-solvers negsssp.rs `Search::relax_one` | Added: the argument, the citation (Dijkstra 1959, doi:10.1007/BF01386390), and where `ell >= 0` is made |
+| 2143bead4 | Every memo key names a node alive while its map lives; step 3, the roots a walker makes itself | ty.rs, the proof beside `RunRenames` | Completed: the walkers that make no root they walk named (`Subst`, `Widen`, `HeldFns`, `Absorb`), and why each makes none |
+| 2143bead4, 1233ccd22, 37dad5731 | `RunMark`; `Bound`; `Comparing::fits_read` | ty.rs | Already there: the proof the message points to is at the site |
+| 3189a1922 | Two functions of which one fits the other have equal keys, so parts by domain keep the verdict | ty.rs `domain_key` | Already there: the argument ("Why one fitting the other gives equal keys") |
+| (bare-claim filter) | Renaming the variables keeps the tied point found; the old claim was a symmetry of the system | zedc-presburger presburger.rs `find_tied_point` | Added: the proof in three steps (a renaming keeps the sorted keys, so `w_of`; `solve_ord` is the identity and `sweep_row` reads only weights and arms; names choose only the model, which `p.holds` checks). The symmetry claim is not needed (a color class need not be an automorphism class). Not proved at the site: that the final check never fails, which needs `try_reduce_subset_wide_eqs` to give a system equivalent to `all_cons` |
+| 564bef57c | The hull of a disjunction holds every point of it | presburger.rs, the disjunction bound | Added: `one_term_bounds` is `None` only for a disjunct with no point; `min`/`max`; a missing end stays missing; all disjuncts empty make the disjunction empty |
+| fb9b82a6a | `repivot` gives the same pivot as a choice made anew | presburger.rs `repivot` | Added: what `pivots` reads (`others(i)` only as `> 0`), how `put` and `clear` change counts, and that `rekey` runs first |
+| 25ef78dd1 | The hull is an increasing subsequence, and the walk meets each entry | presburger/extend.rs `hull_of` | Added: `upper_envelope` pushes each index at most once and pops only from the end |
+| (bare-claim filter) | With no bound, every residue choice gives a point | presburger/modular.rs `separate_pair_witness` | Added: `pick_in_span` with no ends returns a member of the class, and every point is checked by `holds_modular_point` |
+| (bare-claim filter) | A forbidden residue cuts at most one integer from `[ly, hy]` | modular.rs, the short-period hole cut | Added: one class of `y` modulo `z_q` when `m0_z` is invertible, and `width_y + 1 <= z_q`; the cut does not rely on it |
+| (bare-claim filter) | The shape of the treap of holes is never shown | presburger/extend/holes.rs `prio_of` | Added: each read of `Holes` (`len`, `holds`, `intervals`, `merged`, `clauses`, `cut`) answers alike for every tree over the same intervals |
+| (bare-claim filter) | `live3` decides three variables completely, so the order of tied ones cannot change the answer | presburger.rs, the loop of `Leaf` search | Added: whether a point exists does not depend on order; the order chooses only the model; an exhausted meter becomes Questions, never Empty |
+| (bare-claim filter) | No choice is made by the order among variables refinement cannot tell apart | presburger.rs `solve_omega` | Added: pointers to the proof at `Ties::representatives` and to `Refusal::Tie` |
+| 9abde2cea, 030972c93, 2dfb9e87f | The solver's projection of overlapping sums is NP-hard (SUBSET-SUM); the polygons cost no more than the join; deferring the splinters keeps the answer | presburger.rs `solver_found_counted`, row_sums.rs `Plan::project` (where `plane::allowance` went), presburger.rs `solve` | Already there: each proof at its site |
+| (bare-claim filter) | A power's interval holds the true power | zedc-int int.rs `Approx::pow` | Added: the induction over `Approx::mul` and `truncate`; the relative-error sentence marked as precision only |
+| (bare-claim filter) | `q - t` is at least 0 and fits a `u64` in `root_approx` | int.rs `root_approx` | Added: `q - t >= 0` in both cases, and the fit when `t > 0`. Not proved at the site: the case `t == 0` with `a.lo <= 0`, where `q_max` is bounded only by the bits of the upper end of `rad`, which a kept power could take past `2^64` |
 
-No code claim: none found among the 12 entries read.
+No code claim: none found among the entries read.
 
-Not read:
+Read through the four filters only (the sites in the table apart):
 
 - zedc-types (129): 2143bead4, 1233ccd22, f3970ac46, f2297a652, 13e376cb7, 5d9bad32b, bbae90d38, 09f77b6f3, 37dad5731, ced805157, 08e6206a4, 18cc11692, 475e582ff, 62c5ace4b, 64eede4ce, 76705768a, 7da6fc4a6, e7180d4db, 69844cb07, 7fc4ac500, 922be74e7, afbdffe42, d4ce3868b, e70d43315, f26b8a8e5, 2981d4645, 83920e1d6, 83a509ae3, a98079c36, b59ca2ae8, bcb0fcb93, c38724eb5, d20413aae, f0bde0d35, fed6e73e4, feeafc10c, 0d87a73ca, 0e50ec37c, 25ef78dd1, 2b3e706f1, 2ec6b9418, 3189a1922, 405650a5b, 444cdb15b, 4ef43bf6c, 7028f23a2, 7d9e078c0, 995200322, 9d877b65c, a3cee3606, b623e6fe0, c1e5a82e3, d493d34a3, e5a605a6e, e82d77ca9, 1c2b6a270, 305ad0293, 400b14585, 65f995fee, 6945f496b, 6e2e39396, 6ebe63b42, 701def5c6, 875e58597, 9778881e0, a034e80cd, a619cb307, a670bd1cb, a9443c314, af8174807, d20f8009e, ee79685e4, 01063a0ca, 03e64b6da, 148a42eb4, 1d9291f72, 22dd31a36, 27e8e2464, 2e3a7b0a4, 2f99f5283, 47be53825, 493ff031b, 6704ae0ff, 67dd99e3a, 69526a75a, 718e9ecda, 7a54c17f9, 807260a3b, 811505cca, 8412a61b4, 92a76ed89, 9b35c8ab0, 9e8f139f1, b5317f47c, b991293a4, c289ffeca, cbc003938, d2a97b1f9, e6dfb6877, eb6e0ad7f, 06d1dc49c, 08d2feda8, 0de5b565c, 205591658, 29bf6b297, 2d09ac322, 3248fbce2, 3e597380e, 3fd923c4a, 453066558, 47681f229, 47b73bd8f, 4abfd2ae1, 620307b4c, 65a9230a8, 78f2ca158, 81f3d8487, 929e7e04a, 9b5729b46, a16eb1e6e, bd7d5aa55, c1dfb00f7, d18e52a0a, d6a84bc7c, dd8b42f68, df3fa8308, e2ef08f39, ea2effe91, fb5f2416f
 - zedc-presburger (198): 6ff7e1be7, 2143bead4, 42273225f, 3527c0a74, 030972c93, 80870e234, d59fb9c44, e5b5ea82e, 151c323ff, 24981fcda, 7dd6559a9, 5213e08d6, a803272fb, 09287a709, 36e8b20a6, 4033def30, 48dde176a, 6130a038d, 842e295c5, 9992e3560, 015f88415, 300df7ed3, 383cb5b66, 7bfd6bba8, 9abde2cea, ad40b4107, b467e298d, b77467075, d6fa0ddbd, d80e81d08, e22a4f8fa, 0fe50a2fc, 1ad3da05c, 1faf391fd, 1ffeb360d, 355e67f4e, 3e3db6907, 4a8d78984, 4e9bb0d27, 5c102b331, 78fdd83c1, 8ee7ea8dd, 90b8f2b61, a6562e094, e8fea7860, ea431f549, f0bde0d35, ff395d583, 181ac91dd, 1dc603590, 1ff9a3b61, 252abbb51, 25ef78dd1, 2b3e706f1, 2d1365800, 34989b330, 36279a9f9, 40bb19caa, 4b1ccff17, 53b114449, 564bef57c, 5bde6551f, 65446a377, 66e347e86, 7bdf8c1f1, 8e3867d18, 94f38f6d3, 96a4e186b, 9758548e8, 9e786fe17, a1a2a3c63, aa8366a07, ec537c0b1, ed1f1be11, f0186c022, f0ce6ac5e, f4c033ccd, f548497ad, fb9b82a6a, 030a2d36d, 136017dd7, 28a3d9acb, 32acdc5eb, 384b173ac, 4e48ee579, 54ddb1f80, 5dfd87a78, 6e72af6bd, 711b27b81, 72d5f383f, 7d23ca0c7, 7dda7ea0d, 7f771ec77, 83ebfff6e, 8575c70cc, 8590c4d2b, 889492a23, 9f8961b3b, a3273dbda, a54f1b103, aabf487cc, ac67403b3, ace60e16b, b2ba71b22, c4964f39a, d73f3c8e1, f060dbed1, f835ff861, fe770de11, 04ebcda96, 0f5f38d66, 134e107ca, 16490c8d2, 26e45260d, 295d02151, 2df2801ba, 30732fe05, 364dd4a15, 374a5823a, 3bd1b249d, 3fb4bb8e4, 47dbe05b9, 4e52a49fc, 5a5c167cf, 5eba9712b, 68416f089, 6b87a1c3a, 6d5a815dd, 7a7417966, 8780d212c, 8ecea2e9f, 9312fea5a, 9e25afa99, b991293a4, bf0be61bc, c8cac82fa, cc9e97345, cd403f3b0, d3f5e50c3, d77a6be8e, dc637c0d3, e8981310f, f17dead5b, f9936c4fe, fafbc69a5, fdb5fda2a, 0d4b0170a, 104c0e177, 11e2c2786, 12c58bd41, 141a411e3, 1a19cae20, 23ae5cdd3, 23c5a37c0, 23ce8727a, 2dfb9e87f, 2f837d6da, 34e5a4454, 3aa6326c3, 3f2a92b63, 4a9b79d02, 4c17c8e8f, 5168f5a37, 5202d9698, 5a5084526, 5ccb21f3f, 62e774ae6, 6da69df6f, 729325cd6, 81878e7cb, 8980815f3, 8bf067d56, 96dae93e0, 9b756f7ea, 9c56b1189, 9eaff655d, a7032e3f4, b3ff809f1, b87677be2, bbe8ee73e, c2f253250, c74ad4124, c80855b33, cb6445059, cc5576aea, cdc669612, cf2546144, cf65370dd, d5ae3f504, d8026ecb5, da7810c72, ecfbd2bd0, ed3971714, eea76fee4, efe9dcf29, f02739989, f3778742d, f66d9b0b1
