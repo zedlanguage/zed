@@ -59,6 +59,7 @@ use std::rc::Rc;
 use std::sync::Arc;
 
 use num_bigint::BigUint;
+use zed_collections::by_address::ByAddress;
 use zed_kernel::num::{
     FloatFormat, LiteralRounding, TooLarge, fixed_room, literal_f32, literal_f64, show_f32,
     show_f64,
@@ -5531,13 +5532,13 @@ impl<'t, 'a> Ck<'t, 'a> {
         if s.holds_only_own_variables() {
             return s.clone();
         }
-        let mut memo: HashMap<*const Sig, (Arc<Sig>, Arc<Sig>)> = HashMap::new();
+        let mut memo = FlatMemo::new();
         zed_graph::make_after_needs([s.clone()], |top, missing| {
             if memo.contains_key(&Arc::as_ptr(top)) {
                 return true;
             }
             let done = Self::r10_promote_one(top, keep, &mut |f| {
-                if let Some((_, out)) = memo.get(&Arc::as_ptr(f)) {
+                if let Some(out) = memo.get(&Arc::as_ptr(f)) {
                     Some(out.clone())
                 } else if f.holds_only_own_variables() {
                     Some(f.clone())
@@ -5549,10 +5550,10 @@ impl<'t, 'a> Ck<'t, 'a> {
             let Some(out) = done else {
                 return false;
             };
-            memo.insert(Arc::as_ptr(top), (top.clone(), out));
+            memo.insert(ByAddress::new(top), out);
             true
         });
-        memo[&Arc::as_ptr(s)].1.clone()
+        memo[&Arc::as_ptr(s)].clone()
     }
 
     /// [`Self::r10_promote_open_fwds`] of `s`, given by `held` that of each function `s`
@@ -5713,7 +5714,7 @@ impl<'t, 'a> Ck<'t, 'a> {
         if s.facts().fwd_names.is_empty() {
             return s.clone();
         }
-        if let Some((_, done)) = memo.get(&Arc::as_ptr(s)) {
+        if let Some(done) = memo.get(&Arc::as_ptr(s)) {
             return done.clone();
         }
         let cur = match s.has_fwd_needs() {
@@ -5732,7 +5733,7 @@ impl<'t, 'a> Ck<'t, 'a> {
             .collect();
         copy.facts = Default::default();
         let out = Arc::new(copy);
-        memo.insert(Arc::as_ptr(s), (s.clone(), out.clone()));
+        memo.insert(ByAddress::new(s), out.clone());
         out
     }
 
@@ -5775,7 +5776,7 @@ impl<'t, 'a> Ck<'t, 'a> {
                 if f.facts().fwd_names.is_empty() {
                     return f.clone();
                 }
-                if let Some((_, done)) = fwd_memo.held.get(&Arc::as_ptr(f)) {
+                if let Some(done) = fwd_memo.held.get(&Arc::as_ptr(f)) {
                     *changed |= !Arc::ptr_eq(done, f);
                     return done.clone();
                 }
@@ -5786,9 +5787,7 @@ impl<'t, 'a> Ck<'t, 'a> {
                     false => nf,
                 };
                 *changed |= !Arc::ptr_eq(&nf, f);
-                fwd_memo
-                    .held
-                    .insert(Arc::as_ptr(f), (f.clone(), nf.clone()));
+                fwd_memo.held.insert(ByAddress::new(f), nf.clone());
                 nf
             })
         };
@@ -5835,7 +5834,7 @@ impl<'t, 'a> Ck<'t, 'a> {
         made: &mut Renamings,
         fwd_memo: &mut FinishMemo,
     ) -> Arc<Sig> {
-        if let Some((_, done)) = fwd_memo.callees.get(&Arc::as_ptr(callee)) {
+        if let Some(done) = fwd_memo.callees.get(&Arc::as_ptr(callee)) {
             return done.clone();
         }
         zed_graph::post_order(
@@ -5855,10 +5854,10 @@ impl<'t, 'a> Ck<'t, 'a> {
             },
             |(made, fwd_memo), sig| {
                 let out = self.r10_finish_one_fwd_callee(&sig, made, fwd_memo);
-                fwd_memo.callees.insert(Arc::as_ptr(&sig), (sig.clone(), out));
+                fwd_memo.callees.insert(ByAddress::new(&sig), out);
             },
         );
-        fwd_memo.callees[&Arc::as_ptr(callee)].1.clone()
+        fwd_memo.callees[&Arc::as_ptr(callee)].clone()
     }
 
     /// One step of [`Self::r10_finish_fwd_callee`]: `callee` with its forward children already
@@ -5871,7 +5870,7 @@ impl<'t, 'a> Ck<'t, 'a> {
     ) -> Arc<Sig> {
         // A non-forward need's held function can reach this pass again through
         // `finished_arc_with` and may finish the callee first; its result then stands.
-        if let Some((_, done)) = fwd_memo.callees.get(&Arc::as_ptr(callee)) {
+        if let Some(done) = fwd_memo.callees.get(&Arc::as_ptr(callee)) {
             return done.clone();
         }
         let mut changed = false;
@@ -6262,7 +6261,7 @@ impl<'t, 'a> Ck<'t, 'a> {
         if s.facts().fwd_names.is_empty() {
             return s.clone();
         }
-        if let Some((_, done)) = memo.get(&Arc::as_ptr(s)) {
+        if let Some(done) = memo.get(&Arc::as_ptr(s)) {
             return done.clone();
         }
         let mut fns_changed = false;
@@ -6302,7 +6301,7 @@ impl<'t, 'a> Ck<'t, 'a> {
             }
             false => s.clone(),
         };
-        memo.insert(Arc::as_ptr(s), (s.clone(), out.clone()));
+        memo.insert(ByAddress::new(s), out.clone());
         out
     }
 
@@ -14715,9 +14714,11 @@ impl NameOrder {
     }
 }
 
-/// The flat form of each signature [`Ck::r10_flat_held`] has made, by address, with the
-/// signature itself kept alive so that no other one can take its address while the map lives.
-type FlatMemo = HashMap<*const Sig, (Arc<Sig>, Arc<Sig>)>;
+/// What a pass has made of each signature it met, by address, the key holding the signature
+/// alive so that no other one can take its address while the map lives ([`ByAddress`], the
+/// shared key for this, DRY-pointer-memos-keep-alive). Lookups take the bare address, O(1);
+/// an insert clones one `Arc`, O(1).
+type FlatMemo = HashMap<ByAddress<Sig>, Arc<Sig>>;
 
 /// The name an internal result tagged by [`Ck::r10_decode_fwd_needs`] is printed by: the
 /// part before the NUL; any other variable's name is itself. O(length of the name). No name of
