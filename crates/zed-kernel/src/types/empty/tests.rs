@@ -2637,7 +2637,10 @@ fn the_refusals_a_search_gives_up_on_are_ranked_in_a_fixed_order() {
 /// rows that do not loop, into a pass makes this test fail (negative controls,
 /// TEST-kernel-unreached-paths-8). Since KERNEL-verify-step-self-loop-tail the check reads two
 /// self-looping rows with different items (one as the chain, one as the exit); that system stays
-/// here as a test that the reading passes no list outside the type.
+/// here as a test that the reading passes no list outside the type. Since
+/// TEST-kernel-unreached-paths-12 the check also reads one row beside records (the system of a
+/// payload that may be a struct), which stays here for the same reason; its membership is tested
+/// by `the_check_of_a_list_witness_is_membership_beside_records`.
 #[test]
 fn the_check_of_a_list_witness_passes_no_list_outside_the_type() {
     use super::super::rec::{Expr, Group};
@@ -3021,8 +3024,13 @@ fn assert_check_is_membership(systems: Vec<(&str, Vec<super::super::rec::Expr>)>
                 let (ok, fired) = Search::default().run(move |d| {
                     Box::pin(async move {
                         d.s().unknown_in = Some(k);
+                        // Equal items share one id, as above, so that they form runs.
+                        let mut shown: BTreeMap<i64, usize> = BTreeMap::new();
                         let ids: Vec<usize> = (items.iter())
-                            .map(|&x| d.s().show(Rep::Value(Value::Int(x))))
+                            .map(|&x| {
+                                *(shown.entry(x))
+                                    .or_insert_with(|| d.s().show(Rep::Value(Value::Int(x))))
+                            })
                             .collect();
                         let (link, stop) = ("cons".into(), "nil".into());
                         let ok = d.check_chain_witness(&t2, &link, &ids, &stop, &[]).await;

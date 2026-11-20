@@ -1441,3 +1441,50 @@ would reach them with a control each.
 
 `check_chain_witness` holds copies of `step_of` and `walk` in `verify_step` and its own `walk`,
 and `verify_step` does not check `xq.structs`; both go to TEST-kernel-unreached-paths-12.
+
+Nineteenth round (kernel22, 2026-11-20), row TEST-kernel-unreached-paths-12. Base origin/main
+5810f0957, whose `types/` code is that of 0d68a2523, so the list of the eighteenth round holds
+there as written. Line numbers below are at 0d68a2523, then at 60bca98b1.
+
+The two findings:
+
+- One routine for the steps of a list. `empty/shared.rs` now has `finite_atoms_only` (the test
+  of a type of finitely many atoms and nothing else, written out four times before),
+  `step_shape` (one step of a list: a list step, the stop alone, or the rows of the link's pairs,
+  with whether records stand beside them) and `follow` (a functional path followed once, to a
+  known type, a cycle or a type with no step). `step_of` and `walk` of `find_prefix_chains` and
+  `verify_step` and `unfold` of `check_chain_witness` call them; each has a unit test in
+  `shared.rs` (`step_shape_reads_the_steps_of_a_list`,
+  `follow_ends_at_a_known_type_a_cycle_or_a_type_with_no_step`).
+- `verify_step` and `xq.structs`: not a wrong answer. The witness values are the stop and
+  links of pairs only (`chain_rep`), and whether a link of a pair is in the payload type depends
+  only on the length-2 tuple part, which the records part does not hold; the proof is at the
+  site. `find_prefix_chains` still refuses records (R7-C2: its plan is a claim of emptiness,
+  where records would be a value it does not see). Test
+  `the_check_of_a_list_witness_is_membership_beside_records`: the check equals `Type::contains`
+  on three systems with records beside the links. Controls: refusing records in `verify_step`
+  fails it (3 passed, 1 failed), and so does keeping the old refusal of one row.
+
+| Line | Closed by | Test or site | Control |
+|---|---|---|---|
+| `Ids::insert` 118 (121), `Ids::remove` 126 (129) | test | `a_type_numbered_again_keeps_one_entry_and_a_type_not_held_is_not_removed` | `insert` pushing where the key is held fails it |
+| `refused_by_group` 682 (685); `carrier_root_order` 17835 (17739) | test | `types_that_are_not_recursive_are_not_refused_by_a_group_and_come_first_among_roots` | `Node::Parts` ordered last fails it |
+| `leaf` 4875, 4877, 4879 (4884, 4886, 4888) | test | `the_leaf_of_a_value_follows_first_components_and_stops_at_records_and_paths` | the empty payload answered `None` fails it |
+| `pop_open_forks` 3249 | removed | `Vec::truncate` leaves a shorter vector as it is, so the length test went | none |
+| `step_of` 8338, the refusal of one row | removed | one row is read as the chain through `step_shape`; with records refused first, one row without records is a `list_step` | none |
+| `check_chain_witness` 10039-10040, 10143, 10167, 10182, 10193, 10223, 10229, 10245, 10264 (9933-9934, 10037, 10061, 10076, 10087, 10117, 10123, 10139, 10158): the answers on a member not known | test, with the test-only fault flag `Search::unknown_in` | `assert_check_is_membership` (the two membership tests) runs the check again with its k-th `member_known` answering "not known", for each k it reaches, and asserts that no list outside passes and some list inside is refused | the four `break 'walk None` of `let ... else` answered `Some(true)` fail both tests; 10061 and 10076 have no control of their own |
+
+Counts: of the 19 lines, a coverage run of the zed-kernel `types::empty::` tests at 60bca98b1
+(75 pieces, 0 failed) and one of the four list-witness tests with equal items sharing an id (4
+pieces, 0 failed) count all 17 kept lines above 0; 3249 and 8338 are gone. 137 of the 156
+lines are open.
+
+The base coverage run of this round was spoiled: the tree's sources were edited while it ran,
+the four runs built the binaries at different times, and the report counted 2485 lines 0 with
+117 functions of mismatched data. The counts above come from the two runs made with no edit
+while they ran. A coverage run must not overlap an edit of the tree.
+
+Not done, carried to TEST-kernel-unreached-paths-13: the other 137 lines of the list (among
+them `tuples_on`, `morphisms`, `Side::mentions`, `find_prefix_chains` 9166-9168 and 9283,
+`empty/sweep.rs` 19, `bdd.rs` 6, `print.rs` 6), and the nine run-dependent lines, whose cause
+was not measured this round.
