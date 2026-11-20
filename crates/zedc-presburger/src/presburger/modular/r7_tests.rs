@@ -547,7 +547,10 @@ fn point_units(pairs: &[(i64, i64)]) -> BTreeMap<Int, ResidueSet> {
         .collect()
 }
 
-/// The split of `k` smallest moduli, with their lcm, where it fits the tree's test size.
+/// The split of `k` smallest moduli, with their lcm, where it is at most 10,000: past the
+/// windows of about 3,000 points the test draws, so splits read modulo more residues than the
+/// window has are tried too, while a tree of 100,000 residues made the test take 15 s alone in a
+/// debug build at load 33, against the limit of the unit-test piece (merge check of pres10).
 fn split_of(weights: &BTreeMap<Int, u128>, k: usize) -> Option<(BTreeSet<&Int>, usize)> {
     let small: BTreeSet<&Int> = weights.keys().take(k).collect();
     let mut q = Int::ONE;
@@ -555,7 +558,7 @@ fn split_of(weights: &BTreeMap<Int, u128>, k: usize) -> Option<(BTreeSet<&Int>, 
         q = &q.div_floor(&q.gcd(m)) * *m;
     }
     let q = q.to_i128().and_then(|v| usize::try_from(v).ok())?;
-    (q <= 100_000).then_some((small, q))
+    (q <= 10_000).then_some((small, q))
 }
 
 /// Under a cover's meter, `sweep_bounded` is charged its work before it does it
@@ -730,7 +733,7 @@ fn a_window_of_200_bits_is_answered_under_the_meter() {
 }
 
 /// [`sweep_split`] at every split of the moduli (the `k` smallest read modulo their lcm, for
-/// each `k` whose lcm is at most 100,000) and `sweep_bounded` give the least point of `[l, h]`
+/// each `k` whose lcm is at most 10,000) and `sweep_bounded` give the least point of `[l, h]`
 /// that every unit and clause holds, or none, as testing each point does: over 400 drawn
 /// regimes of 1 to 4 units and 0 to 10 clauses of 1 to 3 literals, each modulus small (2 to 9)
 /// or large (30 to 300) by a coin, on intervals from 1 point to about 3,000.
@@ -774,7 +777,8 @@ fn every_split_of_the_moduli_decides_a_regime_as_testing_each_point_does() {
             .map(|&(a, b)| (Int::from(a), Int::from(b)))
             .collect()
     };
-    let (mut with_point, mut splits) = (0, 0);
+    // Splits tried, and those whose lcm exceeds the window, where the walk wraps in the tree.
+    let (mut with_point, mut splits, mut past_window) = (0, 0, 0);
     for _ in 0..400 {
         let units = lits(1 + below(4), &mut below);
         let clauses: Vec<Lits> = (0..below(11))
@@ -813,6 +817,7 @@ fn every_split_of_the_moduli_decides_a_regime_as_testing_each_point_does() {
                     assert!(matches!(got, RegimeOut::Empty), "split {k}: {what}");
                 }
                 splits += 1;
+                past_window += usize::from(q as i64 > h - l + 1);
             }
         }
         with_point += usize::from(want.is_some());
@@ -822,6 +827,10 @@ fn every_split_of_the_moduli_decides_a_regime_as_testing_each_point_does() {
         "{with_point} of 400 with a point"
     );
     assert!(splits >= 800, "only {splits} splits tried");
+    assert!(
+        past_window >= 100,
+        "only {past_window} of {splits} splits read modulo more residues than the window has"
+    );
 }
 
 /// [`cheapest_split`]'s choice is the `k` of least bound `U_k`, the least `k` at a tie, with
