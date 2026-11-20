@@ -8,11 +8,11 @@ mod binders;
 mod facet_order;
 mod fail_misplaced_level;
 mod fuzz;
+mod normal_form_pins;
 mod scaling;
 mod stability;
 mod string_nodes;
 mod string_trees;
-mod version_pins;
 mod wide_constants;
 
 use zedc::zir::{Region, text};

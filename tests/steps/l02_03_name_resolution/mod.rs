@@ -50,7 +50,8 @@ fn package(fs: &[(&str, &str)]) -> Package {
 
 /// The errors zedc gives for the corpus's string and character types, pending plan item
 /// STR-types. DESIGN.md (sec:order, "Defined words by layer") names the string types
-/// `U8String`, `Utf8String`, `Utf16String` and `Utf32String` and has no `String`, and gives a
+/// `U8String`, `Utf8String`, `Utf16String` and `Utf32String`, with `String` the prelude alias of
+/// `Utf8String` (author answer A106, 2026-11-20), and gives a
 /// string's code points as `char32` values (`text::codepoints[i]`), a character written
 /// `char32("é")` or `char32(0xE9)`; the corpus writes `Utf8String` and `char32`, as a type and as
 /// the checked cast, which zedc does not define until STR-types lands. Then each test that

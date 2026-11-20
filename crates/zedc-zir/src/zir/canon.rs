@@ -12,8 +12,8 @@
 //! until none applies; the ranks are the sums of the per-edge ranks, and the tuple of them
 //! decreases lexicographically at every step, as it does on kernel terms.
 //!
-//! The address is the BLAKE3-256 hash of `zed-zir\0`, [`crate::canon::VERSION`], and the
-//! binary form ([`super::binary`]) of the normal form, each string held as one block. Two graphs
+//! The address is the BLAKE3-256 hash of `zed-zir\0` and the binary form ([`super::binary`])
+//! of the normal form, each string held as one block. Two graphs
 //! that differ only in binder names, hints, facet order or repeats, the spelling of one set of
 //! integers, or the trees that hold equal strings, share it.
 //!
@@ -37,7 +37,7 @@ use zed_kernel::value::{Atom, Family, Value};
 use super::binary::Held;
 use super::{Edge, Node, Op, Region, RegionKind, Src, binary};
 use crate::canon::binders::{level_name, level_of};
-use crate::canon::{self, Def, Facet, RULES};
+use crate::canon::{Def, Facet, RULES};
 use zedc_base::address::ContentAddress;
 
 /// The ranks of the four rules on `g`, in rule order.
@@ -194,7 +194,6 @@ pub fn node_key(n: &Node, regions: &[ContentAddress]) -> Result<ContentAddress, 
 fn key_of(shell: &[u8], regions: &[ContentAddress]) -> ContentAddress {
     let mut h = blake3::Hasher::new();
     h.update(b"zed-zir-node\0");
-    h.update(&canon::VERSION.to_le_bytes());
     h.update(shell);
     h.update(&(regions.len() as u64).to_le_bytes());
     for r in regions {
@@ -218,7 +217,6 @@ pub fn region_key(r: &Region, inner: &[Vec<ContentAddress>]) -> Result<ContentAd
 fn region_hasher(bytes: &[u8], nodes: usize) -> blake3::Hasher {
     let mut h = blake3::Hasher::new();
     h.update(b"zed-zir-region\0");
-    h.update(&canon::VERSION.to_le_bytes());
     h.update(bytes);
     h.update(&(nodes as u64).to_le_bytes());
     h
@@ -462,7 +460,6 @@ pub fn address(g: &Region) -> Result<ContentAddress, TooLarge> {
     flat_strings(&mut normal)?;
     let mut h = blake3::Hasher::new();
     h.update(b"zed-zir\0");
-    h.update(&canon::VERSION.to_le_bytes());
     h.update(&binary::encode(&normal)?);
     Ok(ContentAddress::hashed(&h))
 }
@@ -473,11 +470,11 @@ pub fn address(g: &Region) -> Result<ContentAddress, TooLarge> {
 /// both parts (`Text::join`), so `("a"*300 ++ "b"*300) ++ "c"*300`, its mirror and the literal
 /// of the same 900 bytes are one string in three trees (item ZIR-string-tree-address, test
 /// `l01_32_canonical_zir::string_trees`). Edges need nothing: the binary form writes an edge
-/// as its text form, which prints a string's text. `canon::VERSION` is unchanged: a graph whose
-/// strings are each one block keeps its address, and any other graph now gets the address the
+/// as its text form, which prints a string's text. The address scheme's version number, since
+/// removed, was left unchanged: a graph whose strings are each one block keeps its address, and any other graph now gets the address the
 /// equal graph with its strings held as blocks always had, so no address stands for two normal
-/// forms across this change (`version_pins` hashes graphs read from text, whose strings are
-/// blocks, and keeps its hash).
+/// forms across this change (`normal_form_pins` hashes graphs read from text, whose strings
+/// are blocks).
 // Complexity tradeoff: the binary form writes each distinct node of a string's tree once, so a
 // string doubled k times, 2^k bytes in k nodes, costs O(k) to write (BUILD-doubling-60s). Here
 // the address writes a string held in parts as one block, O(N) time and memory for N bytes,

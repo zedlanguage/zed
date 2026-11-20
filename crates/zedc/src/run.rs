@@ -155,9 +155,15 @@ impl Ports {
     /// BLAKE3-256 hash of `zed-program\0`, the address the canonicalizer gives `term` as the
     /// definition `main` (sec:ir, "Identity"), and the ports as [`Ports::to_text`] writes
     /// them, since the term reads each input by its name and not by its kind. Two programs
-    /// that differ only in local names, layout or comments have one address. O(t log t) for a
-    /// term of size t, the canonicalizer's cost. An error when the system refuses the memory
-    /// to write one of the term's exact numbers.
+    /// that differ only in local names, layout or comments have one address. O(t log t + B)
+    /// for a term of size t whose string literals hold B bytes at all their nodes: a string
+    /// is written as its bytes (author answer A106, 2026-11-20), and every string the term
+    /// holds is a literal of the source, a name or a target name, never one computed by `++`,
+    /// since elaboration evaluates nothing (row PROOF-address-reads-literals-only; the proof,
+    /// step by step, is in crates/zedc-zir/src/canon/serial.rs, "Every string an address
+    /// writes is a literal"; tests `l01_32_canonical_zir::string_nodes::
+    /// a_program_holding_a_doubled_string_is_addressed_by_its_text` and its bench). An error
+    /// when the system refuses the memory to write one of the term's exact numbers.
     pub fn address(&self, term: Term) -> Result<ContentAddress, String> {
         let main = canon::Def {
             name: "main".into(),
@@ -554,7 +560,13 @@ impl Program {
 
     /// The program's content address (step L1.19b), [`Ports::address`] of [`Program::term`],
     /// or of the term before staging when this program is staged ([`Program::stage`]). Taken
-    /// once, at the first wave or replay.
+    /// once, at the first wave or replay. Taking the term before staging also bounds the
+    /// cost: staging evaluates build-stage terms, so the staged term can hold a string `++` built
+    /// (the program of l01_36a_executables/doubling.rs holds one of 2^63 bytes in shared
+    /// nodes), and a string is written as its bytes (author answer A106, 2026-11-20). Before staging
+    /// every string the term holds is a literal of the source, so the cost is that of
+    /// [`Ports::address`] on the program's text (row PROOF-address-reads-literals-only, proof
+    /// in crates/zedc-zir/src/canon/serial.rs).
     pub fn address(&self) -> Result<ContentAddress, String> {
         self.address
             .get_or_init(|| {

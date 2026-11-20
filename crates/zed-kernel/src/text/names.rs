@@ -42,32 +42,12 @@
 //! labels differ in their low bit, else in the bits above it. At a true start the parse puts a
 //! start at position 0 and none at 1; at a true end, none at the last position.
 //!
-//! The parse reads the numbers the dictionary gave, so in a dictionary made by [`Names::new`]
-//! the blocks of a text, though not its being equal to another, depend on what the dictionary
-//! met before. A dictionary made by [`Names::canonical`] (item CANON-term-string-nodes) gives
-//! the coin tossing a label in place of each number: a byte's label is the byte; a rule's is
-//! its exact code when that fits in 125 bits (`Labels::exact`: bit 126 set, the top bit
-//! clear, and a prefix-free code of its kind, count or length and its parts' codes, which
-//! reads back to the rule), and otherwise the given hash of its kind, its count or length and
-//! its parts' labels, with the top bit set. About two thirds of the rules of a text of random
-//! letters have an exact label (232,098 of 348,644 for 1 MiB), and so cost no hash (row
-//! PERF-canon-flat-strings, canonicalization VERSION 13; test
-//! `an_exact_label_reads_back_to_its_rule`). Two exact labels differ for different rules, as
-//! their codes do; an exact label is no byte's or number's (bit 126) and no hashed label's
-//! (the top bit). A label is then a function of the bytes the symbol stands for, so the
-//! blocks, and the rules that hold a text's parse ([`Names::part`]), are a function of the
-//! text alone, whatever texts, trees and order the dictionary met. The proofs above read of
-//! the numbers only that they are fixed for each symbol and that two different symbols have
-//! different ones. A label is fixed for each symbol when its rule is made; a rule whose hashed
-//! label another rule already holds (two rules whose hashes agree in 128 bits) gets its number
-//! as its label instead, which no other symbol holds (a number is at least 256, so no byte's,
-//! and below 2^64, so no exact or hashed label's), and [`Names::collided`] says so. A rule
-//! with a numbered part is not given an exact label, since a number is not a code. The labels are therefore different for
-//! different symbols in every case, the proofs hold as written, and the names stay exact; only
-//! the claim that the parse is the text's alone is lost on a collision. (A label chosen per
-//! window, by whether two neighbors in it collide, would not do: a block start would then
-//! read the whole window, not `i − 8 ..= i + 4`, and a join could name one text twice. The
-//! test `a_weak_label_hash_is_flagged_and_names_stay_exact` found exactly that.)
+//! The parse reads the numbers the dictionary gave, so the blocks of a text, though not its
+//! being equal to another, depend on what the dictionary met before. (A dictionary whose
+//! parse read content labels in place of the numbers, so that the blocks were the text's
+//! alone, wrote strings into content addresses from item CANON-term-string-nodes until the
+//! author chose to write a string's bytes there, answer A106, 2026-11-20; it was removed
+//! with that use.)
 //!
 //! A text is held as a summary (`Sum`): at each level, the part of the sequence that does not
 //! depend on what is joined to either side (the middle), as run-length entries, kept whole when
@@ -81,8 +61,7 @@ use std::hash::BuildHasher;
 use std::sync::Arc;
 
 use super::tree::{Text, Tree};
-use crate::digest::{DigestMap, DigestSet, TextState};
-use crate::machine_int::BitLen;
+use crate::digest::{DigestMap, TextState};
 
 /// How many symbols to the left a block start reads.
 const CL: usize = 8;
@@ -107,18 +86,6 @@ const FIRST_RULE: u64 = 256;
 /// the texts, so it orders a map but says nothing about the bytes.
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Debug)]
 pub struct Name(u64);
-
-impl Name {
-    /// The place of the rule this name stands for among the rules its dictionary made, `0` for
-    /// the first and so on, none for a byte or the empty text: a table over a dictionary's
-    /// rules can be a list indexed by it.
-    pub fn rule_index(self) -> Option<usize> {
-        match self.0.checked_sub(FIRST_RULE) {
-            Some(i) if self.0 != EMPTY => Some(i as usize),
-            _ => None,
-        }
-    }
-}
 
 /// A rule of the dictionary: a run of one symbol, or a block of 1 to [`MAX_BLOCK`] symbols, the
 /// unused places 0.
@@ -205,12 +172,12 @@ struct Long<'a> {
 // The tables do not hash with the standard SipHash, which was a fifth of the work of a flat
 // string (row PERF-canon-flat-strings; SipHash: Aumasson and Bernstein 2012,
 // doi:10.1007/978-3-642-34931-7_28, full comment in `digest.rs`, type `FixedState`). The memo
-// of nodes is keyed by addresses and the held labels by the given content hash, so both take
-// the unseeded `Digest`. A rule of level 0 is a
+// of nodes is keyed by addresses, so it takes the unseeded `Digest`. A rule of level 0 is a
 // block of the text's own bytes, which a program chooses, so the table of rules takes the
 // seeded `TextState`, one seed per dictionary (it was FxHash, with no seed, which let a text
-// choose blocks that share a slot; DRY-sorted-structures-2 job 3). The canonical parse reads
-// labels, never these hashes, so no seed reaches a name. Each rule is kept once, in `rules`,
+// choose blocks that share a slot; DRY-sorted-structures-2 job 3). A rule's number is the
+// count of rules met before it, read from no hash, so no seed reaches a name. Each rule is
+// kept once, in `rules`,
 // and the table that finds it holds its place there, a word, where a map from rules to numbers
 // held the rule again in each 64-byte slot.
 #[derive(Default)]
@@ -224,147 +191,6 @@ pub struct Names {
     // The address of a node's tree, kept alive by the `Text` beside it, names the node for
     // identity only, never for order.
     memo: DigestMap<usize, (Text, Option<Arc<Sum>>)>,
-    /// The labels the parse reads, in a dictionary made by [`Names::canonical`].
-    labels: Option<Labels>,
-}
-
-/// The content labels of a canonical dictionary ([`Names::canonical`]).
-struct Labels {
-    hash: fn(&[u8]) -> u128,
-    /// The label of each number from [`FIRST_RULE`] on, in order.
-    of: Vec<u128>,
-    /// The hashed labels given so far.
-    held: DigestSet<u128>,
-    /// Whether a rule got its number as its label, its hash being held by another.
-    collided: bool,
-}
-
-impl Labels {
-    /// The label of the symbol `sym`: a byte is its own, a rule the one it was given.
-    fn label(&self, sym: u64) -> u128 {
-        match sym.checked_sub(FIRST_RULE) {
-            None => u128::from(sym),
-            Some(i) => self.of[i as usize],
-        }
-    }
-
-    /// The code of a symbol inside an exact label, MSB first, and its length in bits: a byte
-    /// is a 0 bit and its 8 bits, a rule with an exact label a 1 bit and its rule's code. None
-    /// for a rule with a hashed or numbered label.
-    fn code(&self, sym: u64) -> Option<(u128, u32)> {
-        let Some(i) = sym.checked_sub(FIRST_RULE) else {
-            return Some((u128::from(sym), 9));
-        };
-        let label = self.of[i as usize];
-        if label >> 126 != 1 {
-            return None;
-        }
-        // The label below bit 126 is a 1 bit and the rule's code: the symbol's code, one longer.
-        let rest = label & !(3 << 126);
-        Some((rest, rest.bit_len()))
-    }
-
-    /// The exact label of a rule whose code fits: bit 126 set, the top bit clear, and below
-    /// them a 1 bit at place `len` and the rule's code of `len ≤ 125` bits. The code is a
-    /// kind bit (0 a run, 1 a block), then for a run its symbol's code and its count in Elias
-    /// gamma code (⌊log₂ c⌋ zeros, then c in binary), for a block its length less one in 3
-    /// bits and its symbols' codes. Each code reads back to one tree, the length marker fixes
-    /// where the code starts, so two different rules never share an exact label; bit 126
-    /// keeps them from bytes (below 2^8) and numbers (below 2^64), the clear top bit from
-    /// hashed labels.
-    ///
-    /// Complexity tradeoff: every rule hashed (canonicalization VERSION 11 and 12) costs one
-    /// BLAKE3 call of up to 98 bytes per rule, about 600 instructions; this code costs O(1)
-    /// shifts per part, and needs no entry in `held`, since it cannot collide. Whether a rule
-    /// gets one reads only its own parts' labels, so it is fixed by the bytes; no length
-    /// switch is involved. Measured on 1 MiB of random letters in release: 232,098 of 348,644
-    /// rules exact, the address from 869M to 706M instructions (row PERF-canon-flat-strings).
-    fn exact(&self, r: &Rule) -> Option<u128> {
-        let mut code: u128 = 0;
-        let mut len: u32 = 0;
-        let mut push = |c: u128, l: u32| -> Option<()> {
-            if len + l > 125 {
-                return None;
-            }
-            code = code << l | c;
-            len += l;
-            Some(())
-        };
-        match r {
-            Rule::Run(sym, count) => {
-                push(0, 1)?;
-                let (c, l) = self.code(*sym)?;
-                push(c, l)?;
-                let n = count.ilog2();
-                push(u128::from(*count), 2 * n + 1)?;
-            }
-            Rule::Block(k, syms) => {
-                push(1, 1)?;
-                push(u128::from(k - 1), 3)?;
-                for &s in &syms[..usize::from(*k)] {
-                    let (c, l) = self.code(s)?;
-                    push(c, l)?;
-                }
-            }
-        }
-        Some(1 << 126 | 1 << len | code)
-    }
-
-    /// The label of a new rule: the hash of its kind (0 a run, 1 a block), its count or length,
-    /// and its parts' labels, little-endian, with the top bit set, so that it is never a
-    /// byte's. Its parts were numbered before it, so their labels are known.
-    fn of_rule(&self, r: &Rule) -> u128 {
-        if let Some(label) = self.exact(r) {
-            return label;
-        }
-        let mut buf = [0u8; 2 + 8 + 16 * MAX_BLOCK];
-        let n = match r {
-            Rule::Run(sym, count) => {
-                buf[1..9].copy_from_slice(&count.to_le_bytes());
-                buf[9..25].copy_from_slice(&self.label(*sym).to_le_bytes());
-                25
-            }
-            Rule::Block(len, syms) => {
-                buf[0] = 1;
-                buf[1] = *len;
-                for (i, &s) in syms[..usize::from(*len)].iter().enumerate() {
-                    buf[2 + 16 * i..18 + 16 * i].copy_from_slice(&self.label(s).to_le_bytes());
-                }
-                2 + 16 * usize::from(*len)
-            }
-        };
-        (self.hash)(&buf[..n]) | 1 << 127
-    }
-}
-
-/// What a name stands for in a canonical dictionary ([`Names::part`]).
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub enum Part {
-    /// The empty text.
-    Empty,
-    /// One byte.
-    Byte(u8),
-    /// `count` copies of a name's text, `count ≥ 2`.
-    Run(Name, u64),
-    /// The texts of 1 to 6 names, in order.
-    Block(Parts),
-}
-
-/// The 1 to 6 names of a block, in order, held in place: [`Names::part`] is asked once or twice
-/// for each rule a string writes, and a list on the heap cost an allocation each time (row
-/// PERF-canon-flat-strings).
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub struct Parts {
-    len: u8,
-    names: [Name; MAX_BLOCK],
-}
-
-impl std::ops::Deref for Parts {
-    type Target = [Name];
-
-    fn deref(&self) -> &[Name] {
-        &self.names[..usize::from(self.len)]
-    }
 }
 
 impl std::fmt::Debug for Names {
@@ -372,7 +198,6 @@ impl std::fmt::Debug for Names {
         f.debug_struct("Names")
             .field("rules", &self.rules.len())
             .field("nodes", &self.memo.len())
-            .field("canonical", &self.labels.is_some())
             .finish()
     }
 }
@@ -381,50 +206,6 @@ impl Names {
     /// An empty dictionary.
     pub fn new() -> Self {
         Self::default()
-    }
-
-    /// An empty dictionary whose parse reads content labels made with `hash` (the module's
-    /// comment): the rules [`Names::part`] gives for a text are then the same in every such
-    /// dictionary with the same `hash`, unless [`Names::collided`].
-    pub fn canonical(hash: fn(&[u8]) -> u128) -> Self {
-        Self {
-            labels: Some(Labels {
-                hash,
-                of: Vec::new(),
-                held: DigestSet::default(),
-                collided: false,
-            }),
-            ..Self::default()
-        }
-    }
-
-    /// Whether a rule got its number as its label because another rule held its hash, so that
-    /// the parse may depend on what the dictionary met before; always false in a dictionary
-    /// made by [`Names::new`].
-    pub fn collided(&self) -> bool {
-        self.labels.as_ref().is_some_and(|l| l.collided)
-    }
-
-    /// What `n`, a name this dictionary gave, stands for. Only a dictionary made by
-    /// [`Names::canonical`] gives them.
-    pub fn part(&self, n: Name) -> Part {
-        if n.0 == EMPTY {
-            return Part::Empty;
-        }
-        let Some(i) = n.0.checked_sub(FIRST_RULE) else {
-            return Part::Byte(n.0 as u8);
-        };
-        assert!(
-            self.labels.is_some(),
-            "only a canonical dictionary gives the parts of a name"
-        );
-        match self.rules[i as usize] {
-            Rule::Run(sym, count) => Part::Run(Name(sym), count),
-            Rule::Block(len, syms) => Part::Block(Parts {
-                len,
-                names: syms.map(Name),
-            }),
-        }
     }
 
     /// The canonical name of `t`: `O(n log N)` dictionary steps for a text of `n` nodes not named
@@ -471,9 +252,7 @@ impl Names {
         acc
     }
 
-    /// The number of `rule`, a new one when the dictionary has not met it. A new rule of a
-    /// canonical dictionary gets its label here, once: its hash, or its number when another
-    /// rule holds that hash (the module's comment).
+    /// The number of `rule`, a new one when the dictionary has not met it.
     fn rule(&mut self, rule: Rule) -> u64 {
         let (rules, text) = (&self.rules, &self.text);
         let place = match self.find.entry(
@@ -489,19 +268,7 @@ impl Names {
             }
         };
         self.rules.push(rule);
-        let n = FIRST_RULE + place as u64;
-        if let Some(l) = &mut self.labels {
-            let hashed = l.of_rule(&rule);
-            // An exact label is no other symbol's (`Labels::exact`); a hashed one is checked.
-            let label = if hashed >> 127 == 0 || l.held.insert(hashed) {
-                hashed
-            } else {
-                l.collided = true;
-                u128::from(n)
-            };
-            l.of.push(label);
-        }
-        n
+        FIRST_RULE + place as u64
     }
 
     /// Room for `more` new rules in each table that holds one entry per rule.
@@ -509,20 +276,13 @@ impl Names {
         let (rules, text) = (&self.rules, &self.text);
         self.find.reserve(more, |&i| text.hash_one(rules[i]));
         self.rules.reserve(more);
-        if let Some(l) = &mut self.labels {
-            l.of.reserve(more);
-        }
     }
 
-    /// [`decide`] for the symbols `ids`, reading as labels the numbers themselves in a
-    /// dictionary made by [`Names::new`], the labels in a canonical one. Different symbols
-    /// have different labels either way (the module's comment), and neighbors are different
-    /// symbols, since a level is run-length coded.
+    /// [`decide`] for the symbols `ids`, reading as labels the numbers themselves. Different
+    /// symbols have different numbers, and neighbors are different symbols, since a level is
+    /// run-length coded.
     fn decide(&self, ids: &[u64], ts: bool, te: bool) -> Vec<bool> {
-        match &self.labels {
-            None => decide(ids.len(), |i| u128::from(ids[i]), ts, te),
-            Some(l) => decide(ids.len(), |i| l.label(ids[i]), ts, te),
-        }
+        decide(ids.len(), |i| u128::from(ids[i]), ts, te)
     }
 
     /// The symbol a run-length entry stands for at its level.

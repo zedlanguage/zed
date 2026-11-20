@@ -1,5 +1,5 @@
 //! The rules: facet ordering and hints, the termination ranks, the independence of the
-//! normal form from the order the rules are applied in, and the version tag.
+//! normal form from the order the rules are applied in, and a pinned address.
 
 use std::sync::Arc;
 
@@ -7,7 +7,7 @@ use zed_kernel::term::Prim;
 use zed_kernel::term::build::{lam, let_, lit, prim, var};
 use zed_kernel::value::Value;
 use zed_tests::instances::{RANDOM_INSTANCES, Rng};
-use zedc::canon::{Def, Domain, Facet, RULES, VERSION, address_at, canonicalize, ranks, serialize};
+use zedc::canon::{Def, Domain, Facet, RULES, canonicalize, ranks, serialize};
 use zedc::store::interval::IntervalSet;
 use zedc::store::lattice::{Congruence, FiniteSet};
 
@@ -225,18 +225,13 @@ fn the_normal_form_does_not_depend_on_the_order_of_the_rules() {
 }
 
 #[test]
-fn the_version_tag_separates_rule_sets() {
+fn the_address_is_pinned() {
+    // The address of this definition (A106, 2026-11-20: no version number is hashed). A change
+    // to a rule or to the serialization that reaches it changes it: pin the new address here.
     let d = balance("deposits", "withdrawals");
-    assert_eq!(VERSION, 13);
-    assert_ne!(
-        address_at(VERSION, &d, &none).expect("memory for the bytes"),
-        address_at(VERSION + 1, &d, &none).expect("memory for the bytes")
-    );
-    // The address of this definition under version 13 (PERF-canon-flat-strings). A change to a
-    // rule or to the serialization changes it: increment VERSION, and pin the new address here.
     assert_eq!(
         addr(&d).to_string(),
-        "1c0f84d47904047a69fe01394d15cbdf02f72500b2f5eded9f118efceffa7cba"
+        "b42441440765f50183ade7d35a3b304090242b90c975073af55d3d94e688c269"
     );
 }
 

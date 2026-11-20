@@ -3,11 +3,11 @@
 //! tables say, against the implementation's address and bytes.
 //!
 //! M0.7: "The serialization gives every node a tag byte and its fields in order, lengths and
-//! integers as 64-bit little-endian words and strings as their length then UTF-8, [...] any
-//! other free variable by its name. A kernel term's address is BLAKE3-256 over `zed-canon` and
-//! a NUL byte, the 32-bit little-endian rule-set version, then the serialization." The tables
-//! after that step give every node's tag, its fields in order and the kind each is written as,
-//! and every primitive's code; [`m07`] reads them from DESIGN.md in place
+//! integers as 64-bit little-endian words and strings as their length then their bytes in
+//! their type's encoding, [...] any other free variable by its name. A kernel term's address is
+//! BLAKE3-256 over `zed-canon` and a NUL byte, then the serialization." The tables after that
+//! step give every node's tag, its fields in order and the kind each is written as, and every
+//! primitive's code; [`m07`] reads them from DESIGN.md in place
 //! (`zed_tools::spec_checks::serial_tables`, feature `spec`). The tag, the order of the fields, how each is written and the code of a
 //! primitive all come from the tables, so a change to
 //! crates/zedc-zir/src/canon/serial.rs that the tables do not make, or the reverse, fails
@@ -16,11 +16,10 @@
 //! lambda is the row Lambda, `Prim::Add` the row `a + b`) and the parts of each node are
 //! written here.
 //!
-//! The terms compared hold no nonempty string, so the two must agree. Terms holding nonempty
-//! strings (short, long, repeated, all distinct, joined) are compared in the parked test
-//! /home/luke/Work/wt/failing-tests/SPEC-m07-string-serial.rs: since canonicalization
-//! VERSION 11 (CANON-term-string-nodes) the implementation writes a nonempty string as the
-//! rules of its canonical parse, not as its UTF-8, and the two differ (QUESTIONS A106).
+//! Terms holding nonempty strings (short, long, repeated, all distinct, joined, doubled) are
+//! compared in [`a_definition_with_text_has_the_address_m07_states`] (row
+//! SPEC-m07-string-serial; red from CANON-term-string-nodes, which wrote a string as the rules
+//! of a canonical parse, until author answer A106, 2026-11-20, chose the bytes).
 
 use std::collections::BTreeSet;
 
@@ -364,13 +363,11 @@ pub(super) mod m07 {
         }
     }
 
-    /// The address of `d`, already in normal form, under rule-set version `version`:
-    /// BLAKE3-256 over `zed-canon`, a NUL byte, the version as a 32-bit little-endian word,
+    /// The address of `d`, already in normal form: BLAKE3-256 over `zed-canon`, a NUL byte,
     /// then the serialization.
-    pub fn address(version: u32, d: &Def) -> ContentAddress {
+    pub fn address(d: &Def) -> ContentAddress {
         let mut h = blake3::Hasher::new();
         h.update(b"zed-canon\0");
-        h.update(&version.to_le_bytes());
         h.update(&serialize(d));
         // `hashed` changes nothing outside the `short-addresses` test build, which keeps one
         // byte of every address.
@@ -768,7 +765,7 @@ fn index(ints: IntervalSet, class: Congruence) -> Def {
     }
 }
 
-/// One definition of every node of M0.7's tables, but a nonempty string: the definitions
+/// One definition of every node of M0.7's tables, nonempty strings included: the definitions
 /// without text; one per term, value and pattern of the completeness cases (cases.rs), each
 /// under a lambda; domains with ends and classes in and past `i64`, and one admitting
 /// nothing; and a variable naming another definition (`other`), with what resolves it.
@@ -778,7 +775,6 @@ fn every_node() -> Vec<Def> {
     defs.extend(
         super::cases::catalog("x")
             .into_iter()
-            .filter(|t| !matches!(t, zed_kernel::Term::Lit(Value::Str(s)) if !s.is_empty()))
             .map(|t| def("k", lam(&["x"], t))),
     );
     defs.extend([
@@ -815,46 +811,44 @@ fn by_tables(d: &Def, tables: &m07::Tables) -> (Vec<u8>, BTreeSet<(String, Strin
 }
 
 /// Where M0.7 states the serialization, the implementation's address is M0.7's: the header,
-/// the rule-set version, words, names and the empty string.
+/// words, names and the empty string.
 #[test]
 fn a_definition_without_text_has_the_address_m07_states() {
     for d in without_text() {
-        assert_eq!(
-            implementation(&d),
-            m07::address(zedc::canon::VERSION, &d),
-            "{}",
-            d.name
-        );
+        assert_eq!(implementation(&d), m07::address(&d), "{}", d.name);
     }
 }
 
-/// The comparison can fail: the address under another rule-set version, or with one byte of
-/// the serialization changed, is not the implementation's.
+/// The comparison can fail: the address with a rule-set version after the header, as before
+/// A106 (2026-11-20; version 13), or with one byte of the serialization changed, is not the
+/// implementation's.
 #[test]
-fn another_version_or_byte_gives_another_address() {
+fn a_version_word_or_another_byte_gives_another_address() {
     for d in without_text() {
         let ours = implementation(&d);
-        assert_ne!(
-            ours,
-            m07::address(zedc::canon::VERSION - 1, &d),
-            "{}",
-            d.name
-        );
+        let with = |version: Option<u32>, bytes: &[u8]| {
+            let mut h = blake3::Hasher::new();
+            h.update(b"zed-canon\0");
+            if let Some(v) = version {
+                h.update(&v.to_le_bytes());
+            }
+            h.update(bytes);
+            ContentAddress::hashed(&h)
+        };
         let mut bytes = m07::serialize(&d);
+        assert_eq!(ours, with(None, &bytes), "{}", d.name);
+        let versioned = with(Some(13), &bytes);
         let last = bytes.len() - 1;
         bytes[last] ^= 1;
-        let mut h = blake3::Hasher::new();
-        h.update(b"zed-canon\0");
-        h.update(&zedc::canon::VERSION.to_le_bytes());
-        h.update(&bytes);
         if !zed_kernel::address::SHORT {
-            assert_ne!(ours, ContentAddress::hashed(&h), "{}", d.name);
+            assert_ne!(ours, versioned, "{}", d.name);
+            assert_ne!(ours, with(None, &bytes), "{}", d.name);
         }
     }
 }
 
 /// The implementation's serialization is the one M0.7's tables give, byte for byte, on a
-/// definition of every node they list but a nonempty string; and every row of every table is
+/// definition of every node they list; and every row of every table is
 /// written by some definition, so a row the implementation no longer writes fails too.
 #[test]
 fn the_serialization_is_m07s_byte_for_byte() {
@@ -927,5 +921,59 @@ fn a_changed_table_gives_other_bytes() {
         assert!(m07::text().contains(from), "{from}");
         let changed = m07::parse(&m07::text().replace(from, to));
         assert_ne!(&by_tables(d, &changed).0, want, "{to}");
+    }
+}
+
+/// A definition holding the strings `strings`, as a tuple.
+fn holding(name: &str, strings: Vec<zed_kernel::text::Text>) -> zedc::canon::Def {
+    use zed_kernel::term::build::lit;
+    def(
+        name,
+        lit(Value::tuple(strings.into_iter().map(Value::Str).collect())),
+    )
+}
+
+/// 2^20 random lowercase letters, 94 bytes all different, a two-byte period, a short word,
+/// pieces joined two ways and a string doubled in 16 nodes (2^17 bytes): alone and two in one
+/// definition (row SPEC-m07-string-serial; red on 842d3b000, 56 of 56 differing, before A106).
+#[test]
+fn a_definition_with_text_has_the_address_m07_states() {
+    use zed_kernel::text::Text;
+    let mut x: u64 = 0x9e37_79b9_7f4a_7c15;
+    let random: String = (0..1 << 20)
+        .map(|_| {
+            x ^= x << 13;
+            x ^= x >> 7;
+            x ^= x << 17;
+            char::from(b'a' + (x % 26) as u8)
+        })
+        .collect();
+    let distinct: String = (b'!'..=b'~').map(char::from).collect();
+    let join = |a: &Text, b: &Text| Text::join(a, b).expect("short");
+    let pieces = ["total ", "due: ", "4", "99", " USD"];
+    let left = pieces
+        .iter()
+        .fold(Text::from(""), |t, p| join(&t, &Text::from(*p)));
+    let right = pieces
+        .iter()
+        .rev()
+        .fold(Text::from(""), |t, p| join(&Text::from(*p), &t));
+    let doubled = (0..16).fold(Text::from("ab"), |t, _| join(&t, &t));
+    let strings = [
+        Text::from("invoice"),
+        Text::from(random),
+        Text::from(distinct),
+        Text::from("ab".repeat(4096)),
+        left,
+        right,
+        doubled,
+    ];
+    for (i, s) in strings.iter().enumerate() {
+        let d = holding("note", vec![s.clone()]);
+        assert_eq!(implementation(&d), m07::address(&d), "string {i} alone");
+        for (j, t) in strings.iter().enumerate() {
+            let d = holding("notes", vec![s.clone(), t.clone()]);
+            assert_eq!(implementation(&d), m07::address(&d), "strings {i} and {j}");
+        }
     }
 }

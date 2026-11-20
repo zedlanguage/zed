@@ -1,82 +1,33 @@
-//! The canonicalization VERSION moves with the normal form (FAIL-zir-canon-version-not-bumped).
-//! crates/zedc-zir/src/canon/mod.rs: "Any change to a rule or to the serialization increments
-//! VERSION, so every address changes with it and no address is shared across rule sets." Commit
-//! 0a516f19c changed what the ZIR binder rule gives a pattern binder spelled as another level
-//! (`($$5, y)`), and left VERSION at 6; no test noticed, since every pinned address hashes
-//! VERSION and none of the pinned inputs met the changed case.
+//! The normal forms of a fixed set of graphs and definitions are pinned, so that a change to
+//! what a rule gives or to a serialization is seen (FAIL-zir-canon-version-not-bumped: commit
+//! 0a516f19c changed what the ZIR binder rule gives a pattern binder spelled as another level,
+//! `($$5, y)`, and no test noticed, since none of the pinned inputs met the changed case).
 //!
-//! This test hashes the bytes each address is taken over, without VERSION: the binary form of
-//! the ZIR normal form, and the serialization of the kernel normal form, for a fixed set of
-//! graphs and definitions chosen to reach every rule (binders written, spelled as their own
-//! level, spelled as another level, nested; hints; facets out of order and repeated; integer
-//! facts spelled several ways). `HISTORY` records that hash for each VERSION, oldest first. A
-//! change to a rule's result or to a serialization changes the hash, and the test then fails
-//! until VERSION is incremented and the new hash appended under it. The test parses its graphs
-//! from the ZIR text form, so a change to that parser that reads one of them differently fails
-//! it too; such a change does not need a new VERSION, and the hash is then re-recorded under the
-//! current one.
+//! This test hashes the bytes each address is taken over: the binary form of the ZIR normal
+//! form, and the serialization of the kernel normal form, for a fixed set of graphs and
+//! definitions chosen to reach every rule (binders written, spelled as their own level,
+//! spelled as another level, nested; hints; facets out of order and repeated; integer facts
+//! spelled several ways; strings). The address had a version number until 2026-11-20, which
+//! this test made sure moved with the normal forms; there is none before Zed 1.0 (author
+//! order, 2026-11-20: "just keep building and fixing, you don't need to rubber stamp anything
+//! as a specific ABI version"), so a change to a normal form is now pinned here again, with
+//! the addresses pinned elsewhere. The test parses its graphs from the ZIR text form, so a
+//! change to that parser that reads one of them differently fails it too.
 
 use zed_kernel::term::Prim;
 use zed_kernel::term::build::{lam, let_, lit, prim, var};
 use zed_kernel::value::Value;
 use zedc::address::ContentAddress;
-use zedc::canon::{Def, Domain, Facet, VERSION};
+use zedc::canon::{Def, Domain, Facet};
 use zedc::store::interval::IntervalSet;
 use zedc::zir::{binary, canon};
 
 use super::graph;
 
-/// The hash `normal_forms` gives under each VERSION, oldest first: append, never edit.
-/// Version 6 is the hash before 0a516f19c: this file run with that commit's change to
-/// crates/zedc-zir/src/zir/canon.rs reverted, the only change to a normal form since version 6.
-/// Version 8 renames a kernel binder spelled as another level (`other_level` and `swapped`
-/// below), FAIL-kernel-canon-misplaced-level.
-/// Version 9 writes a string value by the nodes of its text (BUILD-doubling-60s), and adds a
-/// graph with two string constants to the set.
-/// Version 10 adds the names of an export's parameters that a call may write to its address
-/// (ADDR-param-names, `canon::export_address`) and changes no normal form, so its hash is
-/// version 9's.
-/// Version 11 writes a kernel string value by the rules of its canonical parse
-/// (CANON-term-string-nodes), and adds the definition `strings` to the set.
-/// Version 12 adds the names a call may write inside an export's type, as those of a function
-/// it returns or of a parameter's function type (ADDR-nested-param-names), and changes no
-/// normal form, so its hash is version 11's.
-/// Version 13 labels each rule of a string's canonical parse whose code fits in 125 bits by
-/// that code, not by a hash (PERF-canon-flat-strings), which changes the parse of `strings`.
-const HISTORY: &[(u32, &str)] = &[
-    (
-        6,
-        "af396b88ed1e0dcc1bcd9cd07347197d117cd58c5f5f98533aa80356e9301b69",
-    ),
-    (
-        7,
-        "41155e123640f443421c6f52ca6546ac8ae655429301fdfbf9dd600141f0ccfe",
-    ),
-    (
-        8,
-        "c85680ebe00c9fec4892ad04282208321ad49b3692b6fa1c4e49abdfcd6f8d18",
-    ),
-    (
-        9,
-        "188a450908788f16778a4a114a6ce47e4226048131afe23336fd176abf472408",
-    ),
-    (
-        10,
-        "188a450908788f16778a4a114a6ce47e4226048131afe23336fd176abf472408",
-    ),
-    (
-        11,
-        "4363dd06fe402ce1532288c6e232775a85de5e5756988aad0b379eb2cd98ec17",
-    ),
-    (
-        12,
-        "4363dd06fe402ce1532288c6e232775a85de5e5756988aad0b379eb2cd98ec17",
-    ),
-    (
-        13,
-        "d37088327563158038f703dca59de37e19edc7c884be80345e7a343ccbc11d16",
-    ),
-];
+/// The hash `normal_forms` gives. Changed by A106 (2026-11-20), which writes a kernel string
+/// value as its length and its bytes (`strings` below), where it wrote the rules of a canonical
+/// parse.
+const PINNED: &str = "2ddb603d15a90342b2d89c6b4179c9122029fa84762e0b7b2bc92c27a7419f86";
 
 /// The match of `p` over a pair of integers whose arm adds its two binders.
 fn pair(p: &str) -> String {
@@ -177,8 +128,8 @@ fn defs() -> Vec<Def> {
                 lam(&["n"], prim(Prim::Mul, vec![var("t"), var("n")])),
             ),
         ),
-        // Strings, the second held as a join of two nodes, the third sharing the rules of the
-        // first two (version 11, item CANON-term-string-nodes).
+        // Strings, the second held as a join of two nodes, the third sharing the nodes of the
+        // first two (item CANON-term-string-nodes): one string in several trees.
         def(
             "strings",
             lit(Value::Tuple(
@@ -211,7 +162,7 @@ fn none(_: &str) -> Option<ContentAddress> {
     None
 }
 
-/// The hash of the bytes the addresses of the fixed set are taken over, VERSION left out:
+/// The hash of the bytes the addresses of the fixed set are taken over:
 /// each item's length and then its bytes, the graphs first.
 fn normal_forms() -> String {
     let mut h = blake3::Hasher::new();
@@ -232,26 +183,12 @@ fn normal_forms() -> String {
 }
 
 #[test]
-fn a_changed_normal_form_comes_with_a_new_version() {
-    assert!(
-        HISTORY.windows(2).all(|w| w[0].0 < w[1].0),
-        "HISTORY lists each version once, oldest first"
-    );
+fn the_normal_forms_of_the_fixed_set_are_pinned() {
     let now = normal_forms();
-    let last = HISTORY.last().expect("a recorded version");
-    match HISTORY.iter().find(|(v, _)| *v == VERSION) {
-        Some((_, d)) if *d == now => {}
-        Some((_, d)) => panic!(
-            "the normal forms of the fixed set changed under canonicalization VERSION {VERSION} \
-             (recorded {d}, now {now}). A change to a rule's result or to the serialization \
-             increments VERSION in crates/zedc-zir/src/canon/mod.rs; then append ({}, \"{now}\") \
-             to HISTORY and pin again the addresses that hash VERSION.",
-            VERSION + 1
-        ),
-        None => panic!(
-            "canonicalization VERSION {VERSION} has no hash in HISTORY: append ({VERSION}, \
-             \"{now}\")"
-        ),
-    }
-    assert_eq!(last.0, VERSION, "VERSION is the newest version in HISTORY");
+    assert_eq!(
+        now, PINNED,
+        "the normal forms of the fixed set changed. A change to a rule's result or to a \
+         serialization changes the address of everything it reaches: pin it again here, with \
+         the addresses pinned in m0_07, m0_11, l01_32 and l02_08, and say why in PINNED's comment."
+    );
 }

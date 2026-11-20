@@ -4,21 +4,59 @@
 //! is its sign as a tag, then the limbs of its numerator, and of a rational its denominator, in
 //! lowest terms; one kept with prime powers, such as `2^2^100`, is the form it is kept in, its
 //! numerator, denominator and powers, with no digits built ([`Rat::kept`]).
-//! A string value is its length in bytes, then the rules of its text's canonical parse
-//! ([`Names::canonical`]) not yet written in the definition, each once, then its root
-//! ([`Out::text`]); in a definition where the parse met a collision of labels, every string
-//! value is its length then its bytes, under a tag of its own.
+//! A string value is its length in bytes, then its bytes in its type's encoding, UTF-8 for
+//! `Utf8String` (DESIGN.md M0.7; author answer A106, 2026-11-20), whatever tree of blocks
+//! holds it ([`Out::string`]).
 //! Each tag fixes the fields that follow, so the encoding is self-delimiting and two different
 //! normal forms never share an encoding.
 //!
 //! Binders are canonical by then, so a binder is written by its count alone (a lambda's
 //! parameters, a pattern's `Bind`), and a bound variable by its level.
+//!
+//! # Every string an address writes is a literal (row PROOF-address-reads-literals-only)
+//!
+//! Writing a string costs its bytes, so a string built by `++` from a short literal, `s ++ s`
+//! doubled k times, would cost 2^k. No address writes one. The claim: every string this
+//! serializer writes for the program address (step L1.19b, `zedc::run::Program::address`)
+//! or for an import pin (step L2.8, `zedc::query::Db::address`, `zedc::pin::address`) is a
+//! piece of text the source writes (a literal or a name, the prelude's included) or one of
+//! the target names of `zedc::build::TARGETS`, never a string computed from others. Proof,
+//! by the path a term takes to [`def`]:
+//!
+//! 1. Both addresses take the term elaboration made, and nothing evaluated. The program
+//!    address takes `Program::term` of the unit `zedc::front` elaborated, or, for a staged
+//!    program, the term of the unit before staging (`Program::address` reads
+//!    `self.unstaged`); a pin takes `front::compile` of the unit's text, which lexes, parses,
+//!    resolves, replaces each read of `build` by its literal (`zedc::build::read`),
+//!    elaborates and checks linearity, and runs no term (`front.rs` `staged`). Neither calls
+//!    staging (step L1.28), the evaluator or the native code.
+//! 2. Elaboration (`zedc-elab`) builds a string value at these sites only, each read from
+//!    the syntax tree: a string literal's text parts (`elab::walk::string`, one `Term::Lit`
+//!    per part, the holes and the joins left as terms: `Prim::Concat` and `String(hole)`
+//!    applications); the empty string (`string` with no part, `fp_ops::strings_term`'s
+//!    `concat` separator); a port's, parameter's, field's or atom's name (`state.rs`
+//!    `name` and `push`, `walk.rs` named arguments and atom fields); a string literal pattern
+//!    (`Pattern::Lit`). `zedc::build::read` puts `build.target` in as a string literal, one of
+//!    `TARGETS`, before elaboration. Elaboration calls no evaluator and folds no primitive
+//!    (no `zed_kernel::eval` or `words` call in `zedc-elab`), so `a ++ b` stays
+//!    `Prim::Concat` over its operands' terms, whatever they are.
+//! 3. `zedc_base::interp::prelude` wraps the term in `let`s of primitives, no strings.
+//! 4. The canonicalizer's rules (`canon/mod.rs`) rename binders, drop hint facets, sort
+//!    facets and normalize integer facts; none makes a string (a binder's written name goes
+//!    into a hint facet, which rule 2 drops before this writer runs).
+//!
+//! So each string value written is a copy of a token's text, a name, or a target name, and
+//! writing it costs at most that text's length; addressing costs the canonicalizer's
+//! O(t log t) for a term of t nodes plus, at each `Term::Lit` or pattern, the length of the
+//! source text it was read from. A literal the elaborated term holds at several nodes
+//! (named once, used at each) is written at each, as every other term node is. Tests
+//! `l01_32_canonical_zir::string_nodes::a_program_holding_a_doubled_string_is_addressed_by_its_text`
+//! and `l01_32_canonical_zir::bench::string_nodes::a_doubling_program_is_addressed_in_time_linear_in_its_text`.
 
 use num_bigint::{BigUint, Sign};
 use zed_kernel::num::{Rat, TooLarge};
 use zed_kernel::term::{Evidence, FixKind, Grade, GuardPos, Pattern, Term, Witness};
 use zed_kernel::text::Text;
-use zed_kernel::text::names::{Name, Names, Part};
 use zed_kernel::value::Value;
 
 use super::binders::level_of;
@@ -37,43 +75,6 @@ struct Out<'a> {
     /// The first refusal of the memory for a number or for the bytes, after which the bytes
     /// are not used.
     refused: Option<TooLarge>,
-    /// The canonical parse of the definition's strings, and the place in the definition's
-    /// order of each rule written so far, indexed by [`Name::rule_index`], [`NOT_WRITTEN`]
-    /// for a rule not written: the dictionary numbers its rules from 0 on, so a list over
-    /// them does what a map did with no hashing (row PERF-canon-flat-strings), and holds a
-    /// word for each rule the dictionary made, which the parse made in as many steps.
-    names: Names,
-    written: Vec<u64>,
-    /// How many rules have been written.
-    count_written: u64,
-    /// Whether strings are written as their bytes: after the parse met a collision of labels.
-    bytes_only: bool,
-}
-
-/// The mark in [`Out`]'s `written` of a rule not written yet: no definition writes 2^64 − 1
-/// rules, each costing a byte or more of the output.
-const NOT_WRITTEN: u64 = u64::MAX;
-
-/// `n` in unsigned LEB128 at the start of `buf`, and how many bytes that is: 7 bits a byte, low
-/// first, the top bit set on all bytes but the last. A 64-bit number takes at most 10.
-fn leb128(mut n: u64, buf: &mut [u8]) -> usize {
-    let mut len = 0;
-    while n >= 0x80 {
-        buf[len] = n as u8 | 0x80;
-        n >>= 7;
-        len += 1;
-    }
-    buf[len] = n as u8;
-    len + 1
-}
-
-/// A rule's label in the canonical parse: the first 128 bits of the BLAKE3 hash of its kind,
-/// count or length and its parts' labels ([`Names::canonical`]).
-fn label(data: &[u8]) -> u128 {
-    let h = blake3::hash(data);
-    let mut first = [0u8; 16];
-    first.copy_from_slice(&h.as_bytes()[..16]);
-    u128::from_le_bytes(first)
 }
 
 impl Out<'_> {
@@ -106,122 +107,44 @@ impl Out<'_> {
         self.put(s.as_bytes());
     }
 
-    /// A number in unsigned LEB128: 7 bits a byte, low first, the top bit set on all bytes
-    /// but the last.
-    fn var(&mut self, n: u64) {
-        let mut buf = [0u8; 10];
-        let len = leb128(n, &mut buf);
-        self.put(&buf[..len]);
-    }
-
-    /// The reference to `n`, a byte or a rule already written: a byte is its value, the rule
-    /// written `i`-th in the definition is 256 + i, as a [`Out::var`].
-    fn sym(&mut self, n: Name) -> u64 {
-        match self.written_as(n) {
-            Some(i) => 256 + i,
-            None => match self.names.part(n) {
-                Part::Byte(b) => u64::from(b),
-                _ => unreachable!("a rule is written before a rule or a root that names it"),
-            },
-        }
-    }
-
-    /// The order in which the rule `n` was written in the definition, none when it was not,
-    /// or `n` is a byte or the empty text.
-    fn written_as(&self, n: Name) -> Option<u64> {
-        let i = n.rule_index()?;
-        self.written.get(i).copied().filter(|&w| w != NOT_WRITTEN)
-    }
-
-    /// Records that the rule `n` is written next.
-    fn mark_written(&mut self, n: Name) {
-        let i = n.rule_index().expect("only a rule is written as a rule");
-        if self.written.len() <= i {
-            self.written.resize(i + 1, NOT_WRITTEN);
-        }
-        self.written[i] = self.count_written;
-        self.count_written += 1;
-    }
-
-    /// The nonempty text `t`: the rules of its canonical parse not yet written in the
-    /// definition, children before parents (a run as tag 0, its symbol and count; a block as
-    /// tag 1, its length and symbols), then tag 2 and the root's symbol. The length in bytes
-    /// is written before it.
+    /// The string `t`: tag 3, its length in bytes as a word, then its bytes in its type's
+    /// encoding (UTF-8; DESIGN.md M0.7, author answer A106, 2026-11-20), read block by block
+    /// from left to right ([`Text::chunks`]). Equal strings give equal bytes whatever their
+    /// trees, since the bytes written are the string's bytes in order; different strings give
+    /// different bytes, since the length fixes where the bytes end and the bytes read back to
+    /// the string. No hash is read and nothing is assumed.
     ///
-    /// Equal strings give equal bytes, whatever their trees: the parse [`Names::canonical`]
-    /// makes reads labels that are functions of the bytes a symbol stands for, never the
-    /// numbers the dictionary gave, so the rules under a text's name, and therefore what is
-    /// written, are a function of the text and of the rules written before it in the
-    /// definition; the definition's earlier strings are themselves written in its fixed
-    /// order. That holds while no two different rules the dictionary makes have one 128-bit
-    /// hash. When it fails the dictionary says so ([`Names::collided`]) and [`def`] writes the
-    /// definition again with every string as its bytes. The rules a dictionary makes include
-    /// those of the parts of a string's tree, so two trees of one string can differ in whether
-    /// they meet a collision, and their serializations then differ: equal strings giving equal
-    /// bytes rests on the collision resistance of BLAKE3 truncated to 128 bits, named as an
-    /// assumption of the trusted base (DESIGN.md sec:theories). The hash is never an
-    /// identity: on a collision a rule's number stands in for its label, the names stay exact,
-    /// and no two different strings are written alike (below).
-    ///
-    /// Different strings give different bytes, with no assumption: every rule is written by
-    /// its parts, and a byte by its value, so the bytes read back to the text.
-    // Complexity tradeoff: the bytes of the text, Θ(L) for L bytes, as `zir::binary`'s
-    // `text` replaced (COMPLEXITY.md Z31), were written until item CANON-term-string-nodes,
-    // so a string of 2^30 bytes held in 30 nodes was 2^30 bytes to address. Writing the
-    // decoder's tree, as `zir::binary` does, costs its nodes, but two trees of one string
-    // would then have two addresses. Here the canonical parse: O(m log L) to name a text of
-    // m nodes ([`Names`], COMPLEXITY.md row STAGE-joined-eq-build), plus O(r) for the r rules
-    // under its name, each labeled once (by its code when that fits in 125 bits, else one
-    // BLAKE3 call of at most 98 bytes) and written once in the definition. For a doubled
-    // string r is O(log L); for a string with no repeats r is about L/3 (350,233 rules for
-    // 1 MiB of random letters, 115,510 of them hashed), so a flat literal costs a parse and
-    // a label a rule where it cost a copy: in the test profile 368 times the instructions of
-    // a copy and a BLAKE3 hash of its bytes (262 in release), down from 586 (402) before row
-    // PERF-canon-flat-strings, which asks for 50; the hashed labels alone are about 25 times
-    // (COMPLEXITY.md Z32). `canon::VERSION` 10 to 11, and 12 to 13 for the exact labels.
-    // Tests
-    // `l01_32_canonical_zir::string_nodes` and
-    // `l01_32_canonical_zir::bench::string_nodes`.
-    fn text(&mut self, t: &Text) {
-        let root = self.names.name(t);
-        let mut todo = vec![(root, false)];
-        while let Some((n, ready)) = todo.pop() {
-            if self.written_as(n).is_some() {
-                continue;
-            }
-            match (self.names.part(n), ready) {
-                (Part::Empty | Part::Byte(_), _) => {}
-                // Each rule is put in one piece: a tag, at most 6 symbols and a count or a
-                // length, each at most 10 bytes.
-                (Part::Run(x, count), true) => {
-                    let mut buf = [0u8; 1 + 2 * 10];
-                    let x = self.sym(x);
-                    let mut len = 1 + leb128(x, &mut buf[1..]);
-                    len += leb128(count, &mut buf[len..]);
-                    self.put(&buf[..len]);
-                    self.mark_written(n);
-                }
-                (Part::Block(xs), true) => {
-                    let mut buf = [0u8; 2 + 6 * 10];
-                    buf[..2].copy_from_slice(&[1, xs.len() as u8]);
-                    let mut len = 2;
-                    for &x in xs.iter() {
-                        let x = self.sym(x);
-                        len += leb128(x, &mut buf[len..]);
-                    }
-                    self.put(&buf[..len]);
-                    self.mark_written(n);
-                }
-                (Part::Run(x, _), false) => todo.extend([(n, true), (x, false)]),
-                (Part::Block(xs), false) => {
-                    todo.push((n, true));
-                    todo.extend(xs.iter().rev().map(|&x| (x, false)));
-                }
-            }
-        }
-        self.tag(2);
-        let root = self.sym(root);
-        self.var(root);
+    /// Cost, O(L) for a string of L bytes, so O(n + m) for `a ++ b` with `a` of n bytes and
+    /// `b` of m, whatever the shape of the tree. Proof: the walk of [`Text::chunks`] opens
+    /// each tree node it meets once and returns each block once, so its steps are the nodes
+    /// and blocks of the tree counted with their repeats, a node shared k times counted k
+    /// times. Every block is nonempty (`zed_kernel::text::tree::Tree::Block`), so at most L
+    /// blocks are met. Every `Node` has two or three nonempty parts and every `Deep` at least
+    /// one part in front and one in back, so the tree, unshared, has fewer branching nodes
+    /// than blocks, plus at most one empty middle for each `Deep`, itself a branching node:
+    /// fewer than 2L nodes met in all. Copying the blocks puts L bytes. So the walk and the
+    /// copy are O(L), and BLAKE3 over the serialization is O(L) more.
+    // Complexity tradeoff: the rules of a canonical parse of the text (`Names::canonical`,
+    // rows CANON-term-string-nodes and PERF-canon-flat-strings, removed), O(m log L) for m
+    // nodes plus O(r) for its r rules, cost a doubled string of 2^k bytes O(k^2) where this
+    // costs 2^k; but a flat literal cost 262 to 368 times a copy and a hash of its bytes, and
+    // its BLAKE3-128 rule labels made equal strings serialize alike only under collision
+    // resistance. The author chose the bytes (A106, 2026-11-20): every string the program
+    // address and an import pin write is a literal of the source (module comment, row
+    // PROOF-address-reads-literals-only), so its bytes are paid by the source text already. A
+    // cached hash per tree node would not lower the cost: BLAKE3 hashes each 1 KiB chunk
+    // with its position in the input (BLAKE3 specification, O'Connor, Aumasson, Neves and
+    // Wilcox-O'Hearn 2020, sec. 2.1, the chunk counter `t`), and a block's position in the
+    // serialization depends on everything before it, so a node's hash at one place is not its
+    // hash at another; a Merkle hash over the tree would depend on the tree's shape unless
+    // the tree is canonical, which is what the parse above did. Tests
+    // `l01_32_canonical_zir::string_nodes`, `m0_07_canonicalization::serial_text` (the bytes
+    // M0.7 states) and `l01_32_canonical_zir::bench::string_nodes` (linear in L for a flat,
+    // a joined and a doubled string; at most 50 times a copy and hash of 1 MiB).
+    fn string(&mut self, t: &Text) {
+        self.tag(3);
+        self.word(t.len() as u64);
+        t.chunks().for_each(|c| self.put(c.as_bytes()));
     }
 
     /// A number's magnitude: its count of 64-bit limbs, then the limbs, least significant
@@ -273,7 +196,7 @@ impl Out<'_> {
     // for the w words of the kept parts. Tradeoff: `1e3r` and `1000r`, equal numbers written
     // differently, already had different normal forms as written; now their serializations
     // differ too, which changed the address of every program holding a kept power
-    // (`canon::VERSION` 5 to 6). Test
+    // (canonicalization version 5 to 6, when the address had a version). Test
     // `l01_32_canonical_zir::wide_constants::a_kept_power_is_written_as_its_powers`.
     fn kept(&mut self, r: &Rat, rational: bool) {
         let (num, den, pows) = r.kept();
@@ -402,19 +325,7 @@ impl Out<'_> {
                 self.tag(12);
                 self.word(u64::from(x.get().to_bits()));
             }
-            Value::Str(s) if self.bytes_only => {
-                self.tag(15);
-                // The text is written block by block, as `str` writes one block.
-                self.word(s.len() as u64);
-                s.chunks().for_each(|c| self.put(c.as_bytes()));
-            }
-            Value::Str(s) => {
-                self.tag(3);
-                self.word(s.len() as u64);
-                if !s.is_empty() {
-                    self.text(s);
-                }
-            }
+            Value::Str(s) => self.string(s),
             // `#e()`, apart from the bare `#e` (tag 4, no parts): a tag of its own keeps every
             // address of a program without it.
             Value::Atom(a) if !a.is_bare() && a.args().is_empty() => {
@@ -674,36 +585,10 @@ enum Job<'t> {
 /// the memory to build or write one of its exact numbers ([`Rat::built_parts`], [`Num::built`])
 /// or to grow the bytes.
 pub fn def(d: &Def, refs: Refs<'_>) -> Result<Vec<u8>, TooLarge> {
-    def_with(d, refs, label)
-}
-
-/// [`def`] with the labels of the canonical parse made by `hash`: the definition written with
-/// its strings as rules, or, when the parse met a collision of labels, written again with them
-/// as bytes ([`Out::text`]).
-fn def_with(d: &Def, refs: Refs<'_>, hash: fn(&[u8]) -> u128) -> Result<Vec<u8>, TooLarge> {
-    let (bytes, collided) = write_def(d, refs, hash, false)?;
-    if !collided {
-        return Ok(bytes);
-    }
-    write_def(d, refs, hash, true).map(|(bytes, _)| bytes)
-}
-
-/// The serialization of `d`, its strings as bytes when `bytes_only`, and whether the
-/// canonical parse met a collision of labels.
-fn write_def(
-    d: &Def,
-    refs: Refs<'_>,
-    hash: fn(&[u8]) -> u128,
-    bytes_only: bool,
-) -> Result<(Vec<u8>, bool), TooLarge> {
     let mut out = Out {
         bytes: Vec::new(),
         refs,
         refused: None,
-        names: Names::canonical(hash),
-        written: Vec::new(),
-        count_written: 0,
-        bytes_only,
     };
     out.str(&d.name);
     match &d.domain {
@@ -721,7 +606,7 @@ fn write_def(
     }
     out.term(&d.body);
     match out.refused {
-        None => Ok((out.bytes, out.names.collided())),
+        None => Ok(out.bytes),
         Some(e) => Err(e),
     }
 }
@@ -743,63 +628,42 @@ mod tests {
         }
     }
 
-    /// The bytes of `s` written as a string of bytes: tag 15, its length, its bytes.
+    /// The bytes M0.7 states for the string `s`: tag 3, its length in bytes as a 64-bit
+    /// little-endian word, its UTF-8 bytes.
     fn as_bytes(s: &[u8]) -> Vec<u8> {
-        let mut one = vec![15u8];
+        let mut one = vec![3u8];
         one.extend_from_slice(&(s.len() as u64).to_le_bytes());
         one.extend_from_slice(s);
         one
     }
 
-    /// When every hashed label is one value, the parse meets a collision at the second rule
-    /// whose label is hashed, and the definition is written with its strings as bytes, under
-    /// tag 15.
-    ///
-    /// The text must have rules too long for an exact label (`Labels::exact` in zed-kernel's
-    /// text/names.rs), since only those read the hash. Its 94 bytes, `!` to `~`, are all
-    /// different, so two neighbors at any level of its parse stand for pieces of the text with
-    /// no byte in common, are different texts and so different symbols, and no level holds a
-    /// run: every rule is a block, and a rule standing for m bytes has every one of them in its
-    /// code, 9 bits each, so for m ≥ 14 its code passes 125 bits and its label is hashed. The
-    /// text's name is a block of 2 to 6 symbols (a level of one symbol ends the parse), so it
-    /// stands for 94 bytes and its largest part for at least 16: two different rules, both
-    /// hashed, whatever labels the parse read. (Row FAIL-canon-collision-test-exact-labels: the
-    /// test held `abcabcabd`, whose rules all have exact labels since canonicalization
-    /// VERSION 13, so its constant hash was never called.)
+    /// A string is written as tag 3, its length and its bytes, the same for every tree that
+    /// holds it: one block, two joined blocks, and a doubled string sharing its halves.
     #[test]
-    fn a_collision_of_labels_writes_the_strings_as_bytes() {
-        let s: Vec<u8> = (b'!'..=b'~').collect();
-        let text = std::str::from_utf8(&s).unwrap();
-        let t = Text::from(text);
-        let joined = Text::join(&Text::from(&text[..41]), &Text::from(&text[41..])).unwrap();
+    fn a_string_is_its_length_then_its_bytes_whatever_its_tree() {
         let none = |_: &str| None;
-        let a = def_with(&holding(&[t.clone(), joined.clone()]), &none, |_| 0).unwrap();
-        let b = def_with(&holding(&[joined, t]), &none, |_| 0).unwrap();
+        let s = "héllo, wörld";
+        let flat = Text::from(s);
+        let joined = Text::join(&Text::from(&s[..3]), &Text::from(&s[3..])).unwrap();
+        let half = Text::from("ab");
+        let doubled = Text::join(&half, &half).unwrap();
+        let a = def(&holding(&[flat.clone(), doubled.clone()]), &none).unwrap();
+        let b = def(&holding(&[joined, Text::from("abab")]), &none).unwrap();
         assert_eq!(a, b);
-        let one = as_bytes(&s);
-        let found = a.windows(one.len()).filter(|w| *w == &one[..]).count();
-        assert_eq!(found, 2, "both strings written as their bytes");
-        // With BLAKE3 labels the same definition writes the strings as rules.
-        let c = def(&holding(&[Text::from(text)]), &none).unwrap();
-        assert!(!c.windows(one.len()).any(|w| w == &one[..]));
-    }
-
-    /// A string whose rules all have exact labels never reads the label hash: under a hash that
-    /// panics when called it is written as rules, byte for byte as with BLAKE3 labels, whatever
-    /// its tree.
-    #[test]
-    fn a_string_of_exact_labels_reads_no_hash() {
-        fn never(_: &[u8]) -> u128 {
-            panic!("a rule with an exact label read the hash")
-        }
-        let t = Text::from("abcabcabd");
-        let joined = Text::join(&Text::from("abcab"), &Text::from("cabd")).unwrap();
-        let none = |_: &str| None;
-        let a = def_with(&holding(&[t.clone(), joined.clone()]), &none, never).unwrap();
-        let b = def_with(&holding(&[joined, t.clone()]), &none, never).unwrap();
-        assert_eq!(a, b);
-        assert_eq!(a, def(&holding(&[t.clone(), t]), &none).unwrap());
-        let one = as_bytes(b"abcabcabd");
-        assert!(!a.windows(one.len()).any(|w| w == &one[..]));
+        let mut want = as_bytes(s.as_bytes());
+        want.extend(as_bytes(b"abab"));
+        assert!(a.windows(want.len()).any(|w| w == &want[..]));
+        // One byte changed, one length changed: different bytes.
+        let c = def(
+            &holding(&[Text::from("héllo, wörle"), doubled.clone()]),
+            &none,
+        )
+        .unwrap();
+        let d = def(&holding(&[flat, Text::from("aba")]), &none).unwrap();
+        assert_ne!(a, c);
+        assert_ne!(a, d);
+        // The empty string is its tag and a zero length.
+        let e = def(&holding(&[Text::from("")]), &none).unwrap();
+        assert!(e.windows(9).any(|w| w == &as_bytes(b"")[..]));
     }
 }

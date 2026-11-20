@@ -26,11 +26,11 @@ pick(positional t: int) {
 }
 ";
 
-/// The address of [`UNIT`] under canonicalization version 13 (PERF-canon-flat-strings). The
+/// The address of [`UNIT`], strings written as their bytes (author answer A106, 2026-11-20). The
 /// address is a BLAKE3 hash of byte strings whose layout is fixed (little-endian counts, names
 /// by their UTF-8 bytes), so it is the same in every process and on every machine; it changes
-/// with each new canonicalization VERSION, and is pinned again then.
-pub const ADDRESS: &str = "c0faaa94f2025f80780cffb8bb4e5b62a8d6112a28c17752b6047c58e7965da6";
+/// with each change to the serialization, and is pinned again then.
+pub const ADDRESS: &str = "a6164229eefd1f7e10e6c4ae6c9a233fea8245b424ec1894209e2d01a3b35cca";
 
 /// The units beside `u` in the package of the batch run: `a` checks function types of the same
 /// shapes before `u` is reached, and `b` imports `u` too, so `u` is checked in a process that has

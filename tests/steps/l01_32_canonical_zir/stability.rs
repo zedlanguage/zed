@@ -187,11 +187,11 @@ fn the_normal_form() {
 fn the_address_is_pinned() {
     // The binary form fixes its own layout (little-endian 64-bit words, floats by their
     // IEEE-754 bits, big numbers by their 64-bit limbs or their prime powers), so this hash is
-    // the same on every machine. It hashes the canonicalization VERSION, and is pinned again
-    // with each new one (version 13, item PERF-canon-flat-strings).
+    // the same on every machine. It is pinned again with each change to the serialization
+    // (last: strings as their bytes, author answer A106, 2026-11-20).
     assert_eq!(
         address(&graph(DISCOUNT)).to_string(),
-        "289d8ebd5dc6a8284b850f65f5781d965594ee5078c73c3bbffd1cb57a00b395"
+        "ad259ce40ca81b710b3553b66653aa9968f87449e9efb98646ace98f5d8c1128"
     );
 }
 

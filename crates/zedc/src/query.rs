@@ -243,7 +243,12 @@ impl Db {
     /// `None` when the unit does not compile alone. Keyed by the text and the build it is
     /// compiled for, since `exports` is a function of the text. The unit is compiled for this
     /// database's build with every option off ([`Build::pinned`]), so the options a build
-    /// turns on leave its pins as they are.
+    /// turns on leave its pins as they are. `front_at` elaborates and evaluates nothing, so
+    /// every string the unit's terms hold is a literal of `text`, a name or a target name, and
+    /// [`crate::pin::address`] writes each as its bytes (author answer A106, 2026-11-20): the
+    /// cost is O(t log t + B) for terms of size t whose literals hold B bytes at all their
+    /// nodes (row PROOF-address-reads-literals-only, proof in
+    /// crates/zedc-zir/src/canon/serial.rs).
     pub fn address(&mut self, text: &str, exports: &Exports) -> Arc<Address> {
         let pinned = self.build.pinned();
         let k = key("address", &[text.as_bytes(), &pinned.bytes()]);

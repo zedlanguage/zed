@@ -70,11 +70,11 @@ const EXPORTS: [&str; 2] = ["total", "tax"];
 
 #[test]
 fn the_address_is_pinned() {
-    // Any change to this value is a change to every unit's address, so it goes with a new
-    // canonicalization VERSION.
+    // Any change to this value is a change to every unit's address; there is no version
+    // number before Zed 1.0 (author, 2026-11-20), so it is pinned again with the change.
     assert_eq!(
         unit(&invoicing(8, "line"), &EXPORTS).to_string(),
-        "8b920f4425146aa69c7e53662498b68dc630e35b9baccdac0bdb57f25d72dda3"
+        "b91bb5d886f36c18244f5e332cd4b007109722fd8db81a9b2638e1d977630299"
     );
 }
 

@@ -255,7 +255,7 @@ impl W {
     // conversion (COMPLEXITY.md Z26: 15.6 s at 2^25 bits, about 80 minutes at 2^30). Here the
     // sign and the 64-bit limbs of the numerator and denominator in lowest terms are written,
     // O(n). Tradeoffs: the bytes are not readable as a number, and the change of form changed
-    // every content address (`canon::VERSION` 3 to 4). Nothing is refused here beyond the
+    // every content address (canonicalization version 3 to 4). Nothing is refused beyond the
     // memory refusal of `number`. Tests
     // `l01_32_canonical_zir::bench::wide_constants::addressing_a_wide_constant_is_linear_in_its_bits`
     // and `..._stays_linear_over_64_times_the_bits`; the same form in `canon/serial.rs`.

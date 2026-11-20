@@ -18,9 +18,11 @@
 //! step, which proves termination. The rules touch disjoint parts of a definition, apart from
 //! the binder rule adding hint facets, which only the rules after it remove.
 //!
-//! The address is the BLAKE3-256 hash of [`VERSION`] and the normal form's serialization.
-//! Any change to a rule or to the serialization increments [`VERSION`], so every address
-//! changes with it and no address is shared across rule sets.
+//! The address is the BLAKE3-256 hash of `zed-canon\0` and the normal form's serialization.
+//! No version number is hashed: until Zed 1.0 a change to a rule or to the serialization
+//! changes the addresses it changes, and the tests that pin addresses are pinned again (author
+//! order, 2026-11-20: "just keep building and fixing, you don't need to rubber stamp anything
+//! as a specific ABI version").
 //!
 //! A unit, the prelude's units included, is addressed by its exported declarations
 //! ([`unit_address`], step M0.11). It has no version number of its own: a changed unit has a new
@@ -43,32 +45,6 @@ use zed_kernel::value::Value;
 pub use def::{Def, Facet};
 pub use domain::Domain;
 use zedc_base::address::ContentAddress;
-
-/// The version of the rule set and the serialization, hashed into every address. Version 3
-/// writes a primitive by its fixed number ([`zed_kernel::Prim::code`]), not its Rust name;
-/// version 4 writes an exact number past `i64` by its limbs, not its decimal digits; version 5
-/// writes an interval end or a class past `i64` by its sign and limbs too; version 6 writes a
-/// number kept with prime powers by the form it is kept in, with no digits built (item
-/// ENGINE-one); version 7 renames a ZIR pattern binder spelled as a level other than its own
-/// position's, such as `$$5` first in `($$5, y)`, where version 6 kept it (commit 0a516f19c,
-/// FAIL-zir-canon-misplaced-level-binder, which left the number at 6; raised by
-/// FAIL-zir-canon-version-not-bumped); version 8 does the same for a kernel binder spelled as a
-/// level other than its own, such as `\05` in `\05. \05`, which version 7 kept, and renames a
-/// step's scope without capture (FAIL-kernel-canon-misplaced-level); version 9 writes a string
-/// value in the ZIR binary form as the nodes of its text's tree, each once in the graph, not
-/// its bytes (BUILD-doubling-60s); version 10 addresses an exported definition by its own
-/// address and the names of the parameters a call may write ([`export_address`],
-/// ADDR-param-names), with every normal form as version 9 left it; version 11 writes a string
-/// value in a definition's serialization as the rules of its text's canonical parse, each once
-/// in the definition, not its bytes (CANON-term-string-nodes); version 12 adds to an export's
-/// address the names a call may write inside its type, as those of a function it returns or of
-/// a parameter's function type (ADDR-nested-param-names), with every normal form as version 11
-/// left it; version 13 labels each rule of a string's canonical parse whose code fits in 125
-/// bits by that code, not by its hash (`Names::canonical`, PERF-canon-flat-strings), which
-/// changes the parse, and so the rules written, of a string of more than a few bytes. The test
-/// `l01_32_canonical_zir::version_pins` records the normal forms of a fixed set of graphs and
-/// definitions under each version, and fails when they change and this number does not.
-pub const VERSION: u32 = 13;
 
 /// A rewrite rule of the canonicalizer.
 pub struct Rule {
@@ -243,27 +219,17 @@ pub fn address(
     d: &Def,
     refs: &dyn Fn(&str) -> Option<ContentAddress>,
 ) -> Result<ContentAddress, TooLarge> {
-    address_at(VERSION, d, refs)
+    hashed(&canonicalize(d), refs)
 }
 
-/// The content address of `d` under rule-set version `version`.
-pub fn address_at(
-    version: u32,
-    d: &Def,
-    refs: &dyn Fn(&str) -> Option<ContentAddress>,
-) -> Result<ContentAddress, TooLarge> {
-    hashed(version, &canonicalize(d), refs)
-}
-
-/// The address under rule-set version `version` of `normal`, a definition in normal form.
+/// The address of `normal`, a definition in normal form: the BLAKE3-256 hash of `zed-canon\0`
+/// and its serialization.
 fn hashed(
-    version: u32,
     normal: &Def,
     refs: &dyn Fn(&str) -> Option<ContentAddress>,
 ) -> Result<ContentAddress, TooLarge> {
     let mut h = blake3::Hasher::new();
     h.update(b"zed-canon\0");
-    h.update(&version.to_le_bytes());
     h.update(&serialize(normal, refs)?);
     Ok(ContentAddress::hashed(&h))
 }
@@ -283,7 +249,7 @@ pub fn address_of_body(
         facets: Vec::new(),
         body: binders::canonical(body),
     };
-    hashed(VERSION, &normal, refs)
+    hashed(&normal, refs)
 }
 
 /// The serialization of a definition already in normal form: a self-delimiting byte string,
@@ -299,7 +265,7 @@ pub fn serialize(
 /// The content address of an exported definition whose own address ([`address_of_body`]) is
 /// `body` and whose parameters a call may pass as `name:` are `params`, each by its index and
 /// name in index order (DESIGN.md sec:units, "Imports pin hashes"): the BLAKE3-256 hash of
-/// `zed-export\0`, [`VERSION`], `body`, and the count of `params` and each one's index and
+/// `zed-export\0`, `body`, and the count of `params` and each one's index and
 /// name. The canonicalizer renames every binder of the body, parameters included, so the
 /// body's address keeps no parameter's name; a call in another unit may write one, so the
 /// export's address does. The names are hashed here rather than as facets of the body's
@@ -318,7 +284,6 @@ pub fn export_address(
 ) -> ContentAddress {
     let mut h = blake3::Hasher::new();
     h.update(b"zed-export\0");
-    h.update(&VERSION.to_le_bytes());
     h.update(&body.0);
     h.update(&(params.len() as u64).to_le_bytes());
     for (index, name) in params {
@@ -334,7 +299,7 @@ pub fn export_address(
 }
 
 /// The content address of a unit (step M0.11): the BLAKE3-256 hash of `zed-unit\0`,
-/// [`VERSION`], and the unit's exported declarations sorted by name and then by address (the
+/// and the unit's exported declarations sorted by name and then by address (the
 /// arrows of an overloaded name), each written as its name and its address. The unit's path and
 /// its local declarations are not hashed: a local declaration reaches the address through the
 /// address of every export that uses it, and one that no export uses cannot change a value an
@@ -344,7 +309,6 @@ pub fn unit_address(exports: &[(&str, ContentAddress)]) -> ContentAddress {
     exports.sort();
     let mut h = blake3::Hasher::new();
     h.update(b"zed-unit\0");
-    h.update(&VERSION.to_le_bytes());
     h.update(&(exports.len() as u64).to_le_bytes());
     for (name, address) in exports {
         h.update(&(name.len() as u64).to_le_bytes());

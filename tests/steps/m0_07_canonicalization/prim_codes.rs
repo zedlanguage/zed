@@ -1,7 +1,7 @@
 //! The canonical serialization writes a primitive by its fixed number, [`Prim::code`], so that
 //! renaming a variant or adding one cannot change any address (repair PRIM-hidden-names). The
 //! numbers are written out here: a change to any of them fails this test, and a change to the
-//! numbers needs a new canonicalization VERSION and new pinned addresses.
+//! numbers needs new pinned addresses.
 
 use zed_kernel::Prim;
 use zedc::zir::text::PRIMS;
