@@ -53,9 +53,9 @@ fi
 #                          with its visibility (`pub`, `pub(crate)`, ..., `private` for a bare item
 #                          at column 0, `variant`, or empty);
 #   A <file> <vis> <name>  the same on an added line;
-#   N <name>               an item under an added `#[cfg]` or `#[cfg_attr]` line, or the module of
-#                          an added `#![cfg]` line (a removed cfg line only widens where its item
-#                          exists, and a changed one shows as removed and added).
+#   N <name> <file>        an item under an added `#[cfg]` or `#[cfg_attr]` line, or the module of
+#                          an added `#![cfg]` line, in <file> (a removed cfg line only widens where
+#                          its item exists, and a changed one shows as removed and added).
 # A deleted file is named by its old path, so its package is still found.
 facts=$(git diff -U3 --no-color --no-ext-diff --src-prefix=a/ --dst-prefix=b/ "$base" -- '*.rs' |
   awk '
@@ -102,7 +102,7 @@ facts=$(git diff -U3 --no-color --no-ext-diff --src-prefix=a/ --dst-prefix=b/ "$
           # The module the file is: its name, or its directory'"'"'s for mod.rs.
           k = split(file, w, "/"); name = w[k]; sub(/\.rs$/, "", name)
           if (name == "mod" && k > 1) name = w[k - 1]
-          print "N\t" name; next
+          print "N\t" name "\t" file; next
         }
         if (s ~ /^[ \t]*#\[cfg(_attr)?[ \t]*\(/) { if (sign == "+") pending = 1; next }
         k = declared(s)
@@ -111,29 +111,31 @@ facts=$(git diff -U3 --no-color --no-ext-diff --src-prefix=a/ --dst-prefix=b/ "$
       # The first item after an added cfg line, on an added or unchanged line.
       if (pending && sign != "-" && s !~ /^[ \t]*(#|\/\/)/) {
         k = declared(s)
-        for (i = 1; i <= k; i++) print "N\t" N[i]
+        for (i = 1; i <= k; i++) print "N\t" N[i] "\t" file
         pending = ""
       }
     }
   ')
 changed=$(awk -F '\t' '$1 == "D" { print $2 }' <<<"$facts" | sort -u)
-# The names a link may have lost, each with the file a private one was declared in (and empty for
-# the rest): each declared on a removed line and not declared again in the same file with the same
-# visibility (a changed signature or body keeps its links), and each under an added cfg line.
+# The names a link may have lost, as lines `<name> <scope file> <file>`: each declared on a removed
+# line and not declared again in the same file with the same visibility (a changed signature or
+# body keeps its links), and each under an added cfg line; <file> is the file that declared it, and
+# <scope file> is that file again for a private name and empty for the rest.
 names=$(awk -F '\t' '
   $1 == "R" { removed[$2 FS $3 FS $4] = 1 }
   $1 == "A" { added[$2 FS $3 FS $4] = 1 }
-  $1 == "N" { lost[$2 FS] = 1 }
+  $1 == "N" { lost[$2 FS FS $3] = 1 }
   END {
     for (k in removed) if (!(k in added)) {
-      split(k, f, FS); lost[f[3] FS (f[2] == "private" ? f[1] : "")] = 1
+      split(k, f, FS); lost[f[3] FS (f[2] == "private" ? f[1] : "") FS f[1]] = 1
     }
     for (n in lost) print n
   }' <<<"$facts" | sort)
 # The files, tracked or new and not ignored, with a doc line whose link names one of those names:
 # a word of a `[...]` span whose text is a path, of the `(...)` target after a span, or of a
-# reference definition `[...]: target`. Their packages are documented as if their doc lines had
-# changed.
+# reference definition `[...]: target`, each as a line `<file> <declaring files>`. Their packages
+# are documented as if their doc lines had changed, when they can see a declaring file's package
+# (below, at `can_link`).
 #
 # Complexity tradeoff: a renamed, deleted or privatized item, or one put behind a cfg, breaks only
 # the docs that link it, so only their packages are documented. The naive rule, documenting the
@@ -156,8 +158,9 @@ names=$(awk -F '\t' '
 # indented and so kept visible everywhere. It misses: a link whose text is split over two lines; a
 # name removed from a `pub use` list written over several lines, other than a capitalized one; an
 # item made by a macro; a doc written in another file and pulled in with `include_str!`; a private
-# item linked from a module brought in with `#[path]`; and a new item that makes an existing link
-# ambiguous. `tools/run_tests.sh --doc`, which documents the whole workspace, finds those.
+# item linked from a module brought in with `#[path]`, and any item of a file outside a documented
+# target's source directory that such a target brings in with `#[path]`; and a new item that makes
+# an existing link ambiguous. `tools/run_tests.sh --doc`, which documents the whole workspace, finds those.
 linking=
 if [ -n "$names" ]; then
   linking=$(git grep -I -n -E --untracked '^[[:space:]]*(//[/!]|#!?\[doc).*\[' -- '*.rs' |
@@ -166,23 +169,26 @@ if [ -n "$names" ]; then
       # file it was declared in and the directory of the modules under it (the files that alone
       # can name it): src/a.rs gives src/a.rs and src/a/, src/a/mod.rs and src/lib.rs their
       # directories.
+      # lost[name] also lists the files that declared it, each after a space.
       BEGIN {
         k = split(names, w, "\n")
         for (i = 1; i <= k; i++) {
           split(w[i], f, "\t")
-          if (f[2] == "") { lost[f[1]] = 1; continue }
+          if (f[2] == "") { lost[f[1]] = lost[f[1]] " " f[3]; continue }
           d = f[2]
           if (d ~ /(^|\/)(mod|lib|main)\.rs$/) sub(/[^\/]*$/, "", d); else sub(/\.rs$/, "/", d)
           scope[f[1]] = scope[f[1]] " " f[2] " " d
         }
       }
-      # Whether file p may link name n.
-      function links_lost(n, p, k, i, s) {
-        if (n in lost) return 1
-        if (!(n in scope)) return 0
+      # The files that declared the lost names n that file p may link, each after a space, or ""
+      # for none. A private name is declared in its scope file, the first of each pair of scope.
+      function links_lost(n, p, k, i, s, out) {
+        out = (n in lost) ? lost[n] : ""
+        if (!(n in scope)) return out
         k = split(scope[n], s, " ")
-        for (i = 1; i <= k; i++) if (p == s[i] || (s[i] ~ /\/$/ && index(p, s[i]) == 1)) return 1
-        return 0
+        for (i = 1; i < k; i += 2)
+          if (p == s[i] || (s[i + 1] ~ /\/$/ && index(p, s[i + 1]) == 1)) out = out " " s[i]
+        return out
       }
       {
         p = index($0, ":"); path = substr($0, 1, p - 1)
@@ -203,14 +209,16 @@ if [ -n "$names" ]; then
         if (match(text, /^[ \t]*\/\/[\/!][ \t]*\[[^]]*\]:[ \t]*[^ \t]+[ \t]*$/))
           links = links " " text
         k = split(links, w, /[^A-Za-z0-9_]+/)
-        for (i = 1; i <= k; i++) if (links_lost(w[i], path)) { print path; next }
+        found = ""
+        for (i = 1; i <= k; i++) found = found links_lost(w[i], path)
+        if (found != "") print path "\t" found
       }' | sort -u)
 fi
 # New files git does not track yet, not ignored, with a doc line.
 untracked=$(git ls-files --others --exclude-standard -z -- '*.rs' |
   xargs -0 -r grep -lE '^[ \t]*//[/!]')
-changed=$(printf '%s\n%s\n%s\n' "$changed" "$untracked" "$linking" | sed '/^$/d' | sort -u)
-[ -n "$changed" ] || exit 0
+changed=$(printf '%s\n%s\n' "$changed" "$untracked" | sed '/^$/d' | sort -u)
+[ -n "$changed$linking" ] || exit 0
 # The source directory of each target cargo doc documents, a library or a command, and its
 # package. A test, bench, example or build script is not documented; a file under its directory
 # alone belongs to no documented target (tests/steps/... in zed-tests).
@@ -228,14 +236,56 @@ done < <(cargo metadata --no-deps --format-version 1 |
     /"version"/ { package = $4; next }
     { path = $(NF - 1); sub("/[^/]*$", "", path); print package, $4, path }
   ')
-# Each changed file's package: the nearest directory above it that is a target's source directory.
-packages=$(while read -r f; do
-  d=$(dirname "$f")
+# Prints the package of file $1, the nearest directory above it that is a target's source directory,
+# or nothing when it is in no documented target.
+file_package() {
+  local d
+  d=$(dirname "$1")
   while [ "$d" != . ] && [ "$d" != / ] && [ -z "${package_of[$d]}" ]; do
     d=$(dirname "$d")
   done
   [ -z "${package_of[$d]}" ] || echo "${package_of[$d]}"
-done <<<"$changed" | sort -u)
+}
+# The packages that can see the items of each package: the package itself and every package that
+# depends on it, directly or not, by normal dependencies, as `cargo tree -i` prints them (a doc
+# link resolves to an item of its own crate or of a crate it depends on, perhaps through a
+# re-export; the documented targets, libraries and commands, see no dev- or build-dependency).
+declare -A seen_by
+# Whether a doc of package $1 can link an item that a file of package $2 declares.
+can_link() {
+  [ -n "${seen_by[$2]+x}" ] ||
+    seen_by[$2]=" $(cargo tree -q --workspace -i "$2" -e normal --prefix none -f '{p}' |
+      awk '{ print $1 }' | sort -u | tr '\n' ' ')"
+  [[ ${seen_by[$2]} == *" $1 "* ]]
+}
+# The files that link a lost name and whose package can see a package that declared one; a name
+# declared in a file of no documented target (a test, a bench) cannot be linked from any.
+#
+# Complexity tradeoff: matching by word alone documented, for a name lost in a package no other
+# depends on, every package whose docs link a word of that name: on wt/tools4-r3 (2026-11-20),
+# names such as `check`, `run_with` and `HEAD` removed from zed-tools and from tests of zed-tests
+# documented zedc, zedc-check, zedc-elab, zedc-preimage, zedc-syntax and zed-kernel, 179 s from a
+# cold doc cache and 54 s warm, though no doc of theirs can link an item of zed-tools; with this
+# rule the check takes 4.7 s there and documents zed-tests and zed-tools, whose doc lines the
+# branch changes. Used: one `cargo tree -i` per declaring package (0.57 to 0.65 s each at load 68
+# to 77; at most one per package of the workspace, done only when a link matches a lost name) and,
+# per matching file and declaring file, one walk up the file's directories and one string test.
+if [ -n "$linking" ]; then
+  linked=$(while IFS=$'\t' read -r f declarers; do
+    q=$(file_package "$f")
+    [ -n "$q" ] || continue
+    for d in $declarers; do
+      p=$(file_package "$d")
+      if [ -n "$p" ] && can_link "$q" "$p"; then
+        echo "$f"
+        break
+      fi
+    done
+  done <<<"$linking")
+  changed=$(printf '%s\n%s\n' "$changed" "$linked" | sed '/^$/d' | sort -u)
+fi
+[ -n "$changed" ] || exit 0
+packages=$(while read -r f; do file_package "$f"; done <<<"$changed" | sort -u)
 [ -n "$packages" ] || exit 0
 # The features the workspace build gives each package, as cargo tree prints them:
 # "<package> v<version> (<path>) [<features>]".

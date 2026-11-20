@@ -5,10 +5,12 @@
 # worktree through zrun (`/home/luke/Work/wt/zrun tools/test_check_changed_docs.sh`); about 20 s.
 # Package a has a feature `extra` and a public function `gated` that exists only with it; package
 # b depends on a with `extra`, so the workspace build gives a that feature and a build of a alone
-# does not, as zed-tests gives zedc-preimage `preimage-ref` (DOC-private-links-3).
+# does not, as zed-tests gives zedc-preimage `preimage-ref` (DOC-private-links-3). Package c
+# depends on neither and has items of its own named as an item and a test of a, which its doc
+# links, so a change to a never documents it (a leaf crate's lost names in zedc's docs, 2026-11-20).
 check=$(pwd)/tools/check_changed_docs.sh
 ws=$(pwd)/build/test-check-changed-docs
-mkdir -p "$ws/a/src" "$ws/a/tests" "$ws/b/src" "$ws/.git"
+mkdir -p "$ws/a/src" "$ws/a/tests" "$ws/b/src" "$ws/c/src" "$ws/.git"
 # The checkout's .cargo/config.toml puts the target directory in build/cargo; this workspace keeps
 # its own.
 export CARGO_TARGET_DIR=$ws/target
@@ -69,12 +71,14 @@ base() {
   echo /target >.gitignore
   echo /doc.log >>.gitignore
   echo /a/src/extra.rs >.git/info/exclude
-  printf '[workspace]\nresolver = "3"\nmembers = ["a", "b"]\n' >Cargo.toml
+  printf '[workspace]\nresolver = "3"\nmembers = ["a", "b", "c"]\n' >Cargo.toml
   printf '[package]\nname = "a"\nversion = "0.0.0"\nedition = "2024"\n\n[features]\nextra = []\n' >a/Cargo.toml
   printf '[package]\nname = "b"\nversion = "0.0.0"\nedition = "2024"\n\n[dependencies]\na = { path = "../a", features = ["extra"] }\n' >b/Cargo.toml
   echo "$lib_a" >a/src/lib.rs
   printf '//! Package b.\n\n/// Calls a.\npub fn call() {\n    a::gated();\n}\n\n/// Links [`a::linked`], [`a::gated`] and [`helper`].\npub fn link() {}\n\n/// A helper of b.\npub fn helper() {}\n' >b/src/lib.rs
-  printf '//! A test of a.\n\n/// A test.\n#[test]\nfn works() {\n    a::public_item();\n}\n' >a/tests/t.rs
+  printf '[package]\nname = "c"\nversion = "0.0.0"\nedition = "2024"\n' >c/Cargo.toml
+  printf '//! Package c.\n\n/// Links [`linked`] and [`works`], its own.\npub fn link() {}\n\n/// A function of the name of one of a.\npub fn linked() {}\n\n/// A function of the name of a test of a.\npub fn works() {}\n' >c/src/lib.rs
+  printf '//! A test of a.\n\n/// A test.\n#[test]\npub fn works() {\n    a::public_item();\n}\n' >a/tests/t.rs
   printf '/// Another public function.\npub fn other() {}\n' >a/src/extra.rs
   git add -A
   git commit -q --allow-empty -m base
@@ -214,6 +218,11 @@ check "a changed signature keeps its links and builds no documentation" "0" "$(r
 base
 edit a/src/lib.rs 's/^fn private_item() {}$/fn hidden_item() {}/; s/^    private_item();$/    hidden_item();/'
 check "renaming an item no doc links builds no documentation" "0" "$(run)"
+
+base
+edit a/tests/t.rs 's/^pub fn works() {$/pub fn passes() {/'
+check "renaming an item of a test builds no documentation for a link of another package to an item\
+ of the same name" "0" "$(run)"
 
 base
 edit a/src/lib.rs 's/^fn helper() {}$/fn aid() {}/; s/^    helper();$/    aid();/'
