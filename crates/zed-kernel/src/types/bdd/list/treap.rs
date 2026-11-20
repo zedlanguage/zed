@@ -1,9 +1,34 @@
-//! Persistent ordered maps as treaps with sizes, built from two operations, `split` and `join`
-//! (Blelloch, Ferizovic and Sun, "Just join for parallel ordered sets", SPAA 2016, section 4 for
-//! treaps; Sun, Ferizovic and Blelloch, "PAM: parallel augmented maps", PPoPP 2018, for the size
-//! kept at each node): get, split, join, insertion, removal, the place of a key and the key at a
-//! place, each `O(log n)` expected. Plan row KERNEL-bdd-rejoin-bytes: the index of a decision
-//! list's blocks ([`super::Index`]).
+//! Persistent ordered maps as treaps with sizes, built from two operations, `split` and `join`:
+//! get, split, join, insertion, removal, the place of a key and the key at a place, each
+//! `O(log n)` expected. Plan row KERNEL-bdd-rejoin-bytes: the index of a decision list's blocks
+//! ([`super::Index`]).
+//!
+//! Source, for this module and the join-based set operations of `bdd::set` and `bdd::settings`.
+//! G. E. Blelloch, D. Ferizovic and Y. Sun, "Just join for parallel ordered sets", SPAA 2016,
+//! 253-264, doi:10.1145/2935764.2935768; full version arXiv:1602.02120 (November 2016, titled
+//! "Parallel ordered sets using join"), whose numbering is used here. Section 3, Figure 5, the
+//! treap JOIN(TL, k, TR): it "first picks the key with the highest priority among k, k(TL) and
+//! k(TR) as the root" and recurses on the side whose root was not taken; Lemma 4 and Theorem
+//! 1: O(log t) expected work "if k has the t-th highest priority among all keys". Section 4:
+//! SPLIT(T, k), Theorem 2: O(log |T|) w.h.p. for treaps; JOIN2(TL, TR), two trees with no key
+//! between, Theorem 3: O(r(TL) + r(TR)); UNION, INTERSECT and DIFFERENCE split one tree at the
+//! other's root, recurse on the two sides and join the results; Theorem 4 (the main theorem):
+//! their work on trees of sizes `m <= n` is `O(m log(n/m + 1))` in expectation for treaps.
+//! In this module: `join` is JOIN2, merging the facing spines of the two trees, higher priority
+//! first, which is JOIN's recursion with no middle key; `split` is one walk down the search
+//! path that hands each node to the left or right result, the standard treap split (Seidel and
+//! Aragon, module [`crate::priority`]) rather than the paper's split by JOIN, with the same
+//! result, since a treap's shape is fixed by its keys and priorities. Departures: the paper's
+//! priorities are independent and uniform; here they are the 8-wise or 5-wise independent draw
+//! of module [`crate::priority`], under which the bounds used are proved there. The size kept
+//! at each node, for the place of a key and the key at a place, is
+//! the augmentation of Y. Sun, D. Ferizovic and G. E. Blelloch, "PAM: parallel augmented maps",
+//! PPoPP 2018, 290-304, doi:10.1145/3178487.3178509, with the size as the augmented value.
+//! Checked 2026-11-19 against the full version's text (sections 2-5) and Crossref for both;
+//! the SPAA text and PAM's text were not read (PAM: Crossref metadata only, the size field is
+//! an ordinary order-statistic tree, nothing here depends on PAM's text). Tested by
+//! `list::treap::tests`: the treap against a `BTreeMap` under random operations (wrong keys,
+//! values, sizes or heap order), one shape for one set of keys; no test measures the work.
 //!
 //! A map is shared, never changed: an operation makes new nodes along the paths it changes and
 //! shares every subtree it leaves alone. A node's priority is a function of its key drawn at

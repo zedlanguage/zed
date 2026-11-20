@@ -129,7 +129,10 @@ fn height(t: &Tree<Row>) -> usize {
 /// The settings whose priorities rose with their order under the fixed hash that the drawn
 /// priorities replace (PERF-treap-seeded-priorities, COMPLEXITY.md K123), `mix(mix(17, d), v)`
 /// of the atom's digest `d`: the longest rising run among the settings of `0` to `2^16 - 1`, by
-/// patience sorting, has 506 settings (Erdős and Szekeres give about `2 sqrt(n)`), and under
+/// patience sorting, has 506 settings (about `2 sqrt(n)` for a random order: Theorem 2 of
+/// Aldous and Diaconis, cited in full in `bdd::set::tests::chosen_literals`; this comment
+/// cited Erdős and Szekeres before, whose theorem gives only a monotone run of `sqrt(n)`),
+/// and under
 /// that hash their set was a path of 506 nodes. Under the drawn priorities it is a treap of
 /// independent priorities, and its height is checked against Seidel and Aragon's Lemma 4.8 at
 /// probability `1/n`, as `set/tests.rs` does. The unit tests of this crate fix the draw

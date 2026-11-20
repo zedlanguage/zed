@@ -1,7 +1,8 @@
 //! Persistent ordered sets of settings, each an atom and a value, for [`Part::forced`]: treaps
 //! whose union and intersection split one set at the other's root and join the halves, so `k`
 //! settings meet `n` in `O(k log(n/k + 1))` expected time (Blelloch, Ferizovic and Sun, "Just
-//! join for parallel ordered sets", SPAA 2016, for independent priorities; for the 8-wise
+//! join for parallel ordered sets", SPAA 2016, Theorem 4 of the full version, for independent
+//! priorities, cited in full and quoted in module `bdd::list::treap`; for the 8-wise
 //! independent priorities here, module [`crate::priority`]), where adding the smaller set's
 //! settings to the larger one at a time takes `O(k log n)`.
 //!
@@ -148,9 +149,11 @@ pub(super) fn keys<A: Atom>(t: &Tree<A>) -> Vec<Key<A>> {
 }
 
 /// The set of `keys`, in any order, each once: sorted, then its shape found over their indices
-/// as a Cartesian tree by priority made with one stack (Vuillemin, "A unifying look at data
-/// structures", CACM 23(4), 1980), and each node made once over its children, `O(k log k)` for
-/// the sort and `O(k)` after it.
+/// as a Cartesian tree by priority made with one stack, and each node made once over its
+/// children, `O(k log k)` for the sort and `O(k)` after it. The construction is that of
+/// `bdd::set::from_sorted`, whose comment cites and quotes its sources (Vuillemin, CACM 1980,
+/// for the tree; Gabow, Bentley and Tarjan, STOC 1984, section 3, for the stack); this comment
+/// cited Vuillemin for the stack before. Tested by `settings::tests`, against ordered sets.
 pub(super) fn from_keys<A: Atom>(mut keys: Vec<Key<A>>) -> Tree<A> {
     zed_collections::sorted::sort_dedup(&mut keys);
     const NONE: usize = usize::MAX;
@@ -270,9 +273,10 @@ enum Op {
 /// other set split at its setting, the two sides combined past it, and for an intersection the
 /// root kept only when the other set had it. Two subtrees that are one node are their own
 /// union and intersection. For `k` settings into `n`, `O(k log(n/k + 1))` expected time
-/// (Blelloch, Ferizovic and Sun, SPAA 2016, theorem 4.1, splits and joins included, for
-/// independent priorities; for the 8-wise independent ones of [`priority`], the finger bound of
-/// module [`crate::priority`], plus the settings that share a point).
+/// (Blelloch, Ferizovic and Sun, Theorem 4 of the full version, splits and joins included, for
+/// independent priorities, cited in full in module `bdd::list::treap`; for the 8-wise
+/// independent ones of [`priority`], the finger bound of module [`crate::priority`], plus the
+/// settings that share a point).
 fn combine<A: Atom>(x: &Tree<A>, y: &Tree<A>, op: Op) -> Tree<A> {
     /// A pair of subtrees to combine, or a node to make over the two combined last: with its
     /// setting kept, or (for an intersection whose other set lacked it) the two joined.

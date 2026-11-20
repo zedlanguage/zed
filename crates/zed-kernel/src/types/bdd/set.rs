@@ -18,8 +18,9 @@
 //! whatever the draw. Literals at distinct points take 8-wise independent uniform priorities, two
 //! of them equal with probability `1/p`, so every node's expected depth is at most
 //! `T0 + n(n - 1)/p + 2c H_n`, `c` the constant of Seidel and Aragon's Lemma 6.1 ("Randomized
-//! search trees", Algorithmica 16, 1996, Lemma 4.3, Theorem 4.7 and section 6; the proof, ties
-//! included, is in module [`crate::priority`]). Not proved for every program: `T0` is a function
+//! search trees", Algorithmica 16(4/5), 1996, doi:10.1007/BF01940876, Lemma 4.3, Theorem 4.7
+//! and section 6; quoted, and the proof with ties, in module [`crate::priority`]). Not proved
+//! for every program: `T0` is a function
 //! of the fixed digests, and a program can name many atoms of one digest (each step of a digest,
 //! `digest::step`, can be inverted in each argument), whose set is then a path whatever the draw
 //! (PERF-xor-shape-free, COMPLEXITY.md K123; plan row PERF-set-tied-digest-depth).
@@ -314,10 +315,27 @@ fn split<A: Atom>(t: Option<&Arc<Set<A>>>, key: &Key<A>) -> (Tree<A>, Tree<A>) {
 }
 
 /// The set of `keys`, sorted with no atom twice, built bottom up: the shape is found first
-/// over their indices, a Cartesian tree by priority made with one stack in `O(k)` (Vuillemin,
-/// "A unifying look at data structures", CACM 23(4), 1980), and each node is then made once,
-/// over children already made, in post-order. Priorities decide the shape, so it is the set
-/// that adding the literals one at a time makes.
+/// over their indices, a Cartesian tree by priority made with one stack in `O(k)`, and each
+/// node is then made once, over children already made, in post-order. Priorities decide the
+/// shape, so it is the set that adding the literals one at a time makes.
+///
+/// Sources. The Cartesian tree: J. Vuillemin, "A unifying look at data structures", CACM
+/// 23(4), 229-239, 1980, doi:10.1145/358841.358852, section 3.1: the root is the point of
+/// least `y`, its left and right subtrees the Cartesian trees of the points left and right of
+/// it in `x` (here `x` is the key and the root is the highest priority). The construction in
+/// `O(k)`: H. N. Gabow, J. L. Bentley and R. E. Tarjan, "Scaling and related techniques for
+/// geometry problems", STOC 1984, 135-143, doi:10.1145/800057.808675, section 3: "Ti is
+/// derived from Ti-1 by ascending along the rightmost path of Ti-1 until xl, the first node
+/// larger than xi, is found; the right subtree of xl is made into the left subtree of xi, and
+/// xi is made the right child of xl. The total time to construct Tn = T is O(n), since a node
+/// leaves the rightmost path immediately after it is traversed." Here `spine` is that
+/// rightmost path, `passed` the right subtree of the node stopped at, and priorities are
+/// compared with the key as tie-break, as `above` compares them for [`insert`]. This
+/// comment cited Vuillemin for
+/// the one-stack construction before; his paper defines the tree and gives insertion, cut and
+/// concatenation, not this construction. Checked 2026-11-19: both texts read (Vuillemin from
+/// an OCR text layer), both DOIs and page ranges confirmed with Crossref. Tested by
+/// `set::tests::the_set_built_bottom_up_is_the_one_made_a_literal_at_a_time`.
 // Complexity tradeoff (PERF-equal-functions-forms-ratio): `k` nodes made, each looked up once in
 // the table, `O(k)` after the sort; adding the literals one at a time makes `O(k log k)`, and
 // joining sets of them in pairs ([`union_if_agree`]) remakes each merged set's nodes at each of
@@ -630,7 +648,8 @@ pub(super) fn union_if_agree<A: Atom>(x: &Arc<Set<A>>, y: &Arc<Set<A>>) -> Optio
 /// those in `x`'s treap (Seidel and Aragon, Lemma 4.3), `1 + D` in expectation; and a join walks
 /// the facing spines of two ranges of the fixed result `x \ y`, at most `|x| - 1` of them with
 /// both sides non-empty, two paths of its treap (cross-review round 3, Gemini R3-F1).
-/// Blelloch, Ferizovic and Sun ("Just join for parallel ordered sets", SPAA 2016) prove
+/// Blelloch, Ferizovic and Sun ("Just join for parallel ordered sets", SPAA 2016, Theorem 4 of
+/// the full version; cited in full in module `bdd::list::treap`) prove
 /// `O(m log(n/m + 1))` for priorities drawn independently and identically; for the 8-wise
 /// independent draw here it is proved in module `priority` (the finger bound, cross-review of
 /// PROOF-join-work-limited-independence, round 7), plus the literals that share a point.

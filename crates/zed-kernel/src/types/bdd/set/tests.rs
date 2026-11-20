@@ -16,7 +16,13 @@
 //! ("with high probability"), so a height `h` fails when `c = (h - 1) / (2 ln n)` has
 //! `c > e` and `ln 2 + ln n - c ln(c/e) (ln n - 1) < -ln n`. At `n = 65,536` the largest height
 //! that passes has `c = 4.50`, 100 nodes, or `6.25 log2 n`; Devroye's limit for the height of
-//! such a tree is `4.311 ln n = 2.99 log2 n` (quoted by Seidel and Aragon), 48 nodes.
+//! such a tree is `4.311 ln n = 2.99 log2 n`, 48 nodes. (L. Devroye, "A note on the height of
+//! binary search trees", J. ACM 33(3), 489-498, 1986, doi:10.1145/5925.5930, as Seidel and
+//! Aragon quote it in their section 4: "h_n / ln n -> γ almost surely, as n -> ∞, where
+//! γ = 4.31107... is the unique solution of γ ln(2e/γ) = 1 with γ >= 2". Checked 2026-11-19
+//! against Seidel and Aragon's text and Crossref; Devroye's own text was not read. The full
+//! citation of Seidel and Aragon, and the quotes of Lemmas 4.3 and 6.1, are in module
+//! `crate::priority`; Lemma 4.8 is quoted above, checked against their text the same day.)
 //!
 //! Equal priorities. Literals whose priorities are equal (atoms whose digests collide) are ordered
 //! by their literals ([`above`]), so they are not independent. Let the classes be the groups of
@@ -202,6 +208,49 @@ fn colliding_digests_add_at_most_their_number_to_the_height() {
     );
 }
 
+/// [`from_sorted`], the linear construction along the rightmost path (its comment cites Gabow,
+/// Bentley and Tarjan), makes the tree that adding the literals one at a time makes, in any
+/// order: every key at the same depth, in key order, so the same shape. Red when the stack
+/// pops on the opposite comparison, or when `passed` is not kept as the left subtree; it cannot
+/// catch a wrong tie-break, since the literals here have distinct points (checked 2026-11-19).
+#[test]
+fn the_set_built_bottom_up_is_the_one_made_a_literal_at_a_time() {
+    fn depths(t: &Tree<Row>) -> Vec<(Row, usize)> {
+        let mut out = Vec::new();
+        let mut stack: Vec<(&Arc<Set<Row>>, usize, bool)> =
+            t.iter().map(|r| (r, 0, false)).collect();
+        while let Some((n, d, left_done)) = stack.pop() {
+            if left_done {
+                out.push((n.key.0.clone(), d));
+                stack.extend(n.right.iter().map(|r| (r, d + 1, false)));
+            } else {
+                stack.push((n, d, true));
+                stack.extend(n.left.iter().map(|l| (l, d + 1, false)));
+            }
+        }
+        out
+    }
+    for n in [0usize, 1, 2, 3, 10, 200, 1009] {
+        let keys: Vec<Key<Row>> = (0..n).map(|i| (Row::new(vec![int(i)]), true)).collect();
+        let mut sorted = keys.clone();
+        sorted.sort();
+        let bottom_up = depths(&from_sorted(sorted));
+        assert_eq!(bottom_up.len(), n);
+        let orders: [Box<dyn Fn(usize) -> usize>; 3] = [
+            Box::new(|i| i),
+            Box::new(move |i| n - 1 - i),
+            Box::new(move |i| i * 37 % n),
+        ];
+        // 37 is prime to every `n` here, so `i * 37 % n` is a permutation.
+        for (o, order) in orders.iter().enumerate() {
+            let one_at_a_time = (0..n)
+                .map(|i| keys[order(i)].clone())
+                .fold(None, |t, k| Some(insert(t.as_ref(), k)));
+            assert_eq!(depths(&one_at_a_time), bottom_up, "{n} literals, order {o}");
+        }
+    }
+}
+
 /// [`symmetric`] gives the set, and on one thread the node, that adding or removing the smaller
 /// set's literals one at a time gives: sets of 0 to 300 literals over atoms that overlap by a
 /// part that goes from none to all, in both orders of the arguments.
@@ -329,12 +378,6 @@ fn sets_of_one_sum_and_root_with_children_on_different_sides_are_not_the_same() 
     assert!(found, "no root of 256 stood above the others");
 }
 
-/// Literals chosen by the fixed hash of a literal's digest that was the priority before the draw
-/// (`mix(mix(13, digest), taken)`, which a program can compute): of the first 2^20 numbers,
-/// those whose hashes rise in the order of the literals, by patience sorting in `O(N log N)`,
-/// about `2 sqrt(N)` of them (Erdős and Szekeres; 2,030 here). Under that hash their set was a
-/// path of 2,030 nodes; under the draw ([`priority`]) its height is logarithmic
-/// (PERF-xor-shape-free).
 /// `step(h, x)` of [`crate::digest::step`] solved for `x`: the finalizer's three xor-shifts and
 /// two odd multiplications undone (each multiplication by its inverse modulo 2^64).
 fn step_x(h: u64, out: u64) -> u64 {
@@ -446,6 +489,21 @@ mod bench {
 /// The literals among the numbers below `n` chosen against the old fixed hash (the longest
 /// run whose old priorities rise, found by patience sorting in O(n log n)), at least `least` of
 /// them, checked against the bound.
+///
+/// Source: D. Aldous and P. Diaconis, "Longest increasing subsequences: from patience sorting
+/// to the Baik-Deift-Johansson theorem", Bull. AMS 36(4), 413-432, 1999,
+/// doi:10.1090/S0273-0979-99-00796-X. Section 1.1 and Lemma 1: each card goes on the leftmost
+/// pile whose top card is higher, and "patience sorting played with the greedy strategy ends
+/// with exactly l(π) piles", `l(π)` the length of the longest increasing subsequence. Here
+/// `tails[j]` is the top card of pile `j` (the piles' tops rise, so `partition_point` finds
+/// the pile) and `prev` keeps the top of the pile to the left when each card was placed, from
+/// which one longest run is read back. Theorem 2 (Vershik and Kerov; Logan and Shepp, 1977):
+/// "E[Ln] ~ 2n^(1/2)" for a uniform random permutation, so about 512 literals for `2^16`
+/// numbers and 2,000 for `2^20`, if the old hashes of distinct literals behave like one.
+/// This comment cited Erdős and Szekeres for `2 sqrt(n)` before: their theorem gives only
+/// that some monotone run has length at least `sqrt(n)`, not the mean. Checked 2026-11-19
+/// against the paper's text. The run's length is checked only from below (`least`), and not
+/// that it is the longest.
 fn chosen_literals(n: usize, least: usize) {
     let mut keys: Vec<Key<Row>> = (0..n).map(|i| (Row::new(vec![int(i)]), true)).collect();
     keys.sort();

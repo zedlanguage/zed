@@ -2891,7 +2891,8 @@ mod xor {
     //! are drawn per run and no longer a fixed hash: every node's expected depth is at most
     //! `T0 + n(n - 1)/p + 2c H_n` (Seidel and Aragon, "Randomized search trees", Algorithmica 16,
     //! 1996, which holds for 5-wise independent priorities and so for the 8-wise ones of
-    //! module `set`), with no condition on the hash
+    //! module `set`; cited in full and quoted in module `crate::priority`), with no condition on
+    //! the hash
     //! beyond `T0`, the literals sharing a digest, which a program can still make large (plan row
     //! PERF-set-tied-digest-depth). Given up: reading the whole
     //! form of an exclusive or of `n` atoms makes its `n - 1` nested ones, a removal from a set
