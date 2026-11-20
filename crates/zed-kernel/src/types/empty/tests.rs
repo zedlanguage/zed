@@ -2453,3 +2453,157 @@ fn the_refusals_a_search_gives_up_on_are_ranked_in_a_fixed_order() {
         );
     }
 }
+
+/// Item TEST-kernel-unreached-paths-8: the check of a list witness
+/// (`Searching::check_chain_witness`), called on lists whose tails it cannot read as a chain,
+/// passes no list that is not in the type (`Type::contains`), and passes every list of a plain
+/// list type. Each system below is `L` and the tails its links lead to, of a shape the check
+/// gives up on: a link of another name, another stop, an integer beside the atoms, two stops,
+/// link payloads of two lengths, two self-looping rows with different items, two rows that do
+/// not loop, a link of any pair, a link whose payload may be a struct (one row of pairs), and
+/// two rows whose tails share a tail it cannot read. Every list of up to four items from `1`
+/// and `2` is tried. Changing the `return None` for another link or stop, or for two
+/// self-looping rows with different items, into a pass makes this test fail (negative controls,
+/// TEST-kernel-unreached-paths-8).
+#[test]
+fn the_check_of_a_list_witness_passes_no_list_outside_the_type() {
+    use super::super::rec::{Expr, Group};
+    use fork_inputs::{cons, def, lit, nil, r};
+    let ty = |t: Type| Expr::Type(t);
+    let atom = |name: &str, head: Expr, tail: Expr| Expr::Atom(name.into(), vec![head, tail]);
+    let int = || ty(Type::int());
+    let end = || ty(Type::atom("end"));
+    // Each system, as its definitions: `L` first, read through `r(0)`.
+    let systems: Vec<(&str, Vec<Expr>)> = vec![
+        ("plain", vec![Expr::Union(vec![nil(), cons(int(), r(0))])]),
+        (
+            "a link of another name",
+            vec![
+                Expr::Union(vec![nil(), cons(int(), r(1))]),
+                Expr::Union(vec![nil(), atom("node", int(), r(1))]),
+            ],
+        ),
+        (
+            "another stop",
+            vec![
+                Expr::Union(vec![nil(), cons(int(), r(1))]),
+                Expr::Union(vec![end(), cons(int(), r(1))]),
+            ],
+        ),
+        (
+            "an integer beside the atoms",
+            vec![
+                Expr::Union(vec![nil(), cons(int(), r(1))]),
+                Expr::Union(vec![nil(), ty(lit(5)), cons(int(), r(1))]),
+            ],
+        ),
+        (
+            "two stops",
+            vec![
+                Expr::Union(vec![nil(), cons(int(), r(1))]),
+                Expr::Union(vec![nil(), end(), cons(int(), r(1))]),
+            ],
+        ),
+        (
+            "link payloads of two lengths",
+            vec![
+                Expr::Union(vec![nil(), cons(int(), r(1))]),
+                Expr::Union(vec![
+                    nil(),
+                    cons(int(), r(1)),
+                    Expr::Atom("cons".into(), vec![int(), int(), int()]),
+                ]),
+            ],
+        ),
+        (
+            "two self-looping rows with different items",
+            vec![
+                Expr::Union(vec![nil(), cons(int(), r(1))]),
+                Expr::Union(vec![nil(), cons(ty(lit(1)), r(2)), cons(ty(lit(2)), r(3))]),
+                Expr::Union(vec![nil(), cons(int(), r(2))]),
+                Expr::Union(vec![nil(), cons(ty(lit(1)), r(3))]),
+            ],
+        ),
+        (
+            "two rows that do not loop",
+            vec![
+                Expr::Union(vec![nil(), cons(int(), r(1))]),
+                Expr::Union(vec![nil(), cons(ty(lit(1)), r(2)), cons(ty(lit(2)), nil())]),
+                cons(int(), nil()),
+            ],
+        ),
+        (
+            "a link of any pair",
+            vec![
+                Expr::Union(vec![nil(), cons(int(), r(1))]),
+                Expr::Union(vec![nil(), cons(ty(Type::top()), ty(Type::top()))]),
+            ],
+        ),
+        (
+            "a link whose payload may be a struct",
+            vec![Expr::Union(vec![
+                nil(),
+                cons(int(), r(0)),
+                ty(Type::atom_with(
+                    "cons",
+                    &Type::universe(crate::types::Universe::Struct),
+                )),
+            ])],
+        ),
+        (
+            "two rows into one tail it cannot read",
+            vec![
+                Expr::Union(vec![nil(), cons(int(), r(1)), cons(ty(lit(1)), r(2))]),
+                Expr::Union(vec![nil(), cons(ty(lit(1)), r(3))]),
+                cons(ty(lit(2)), r(3)),
+                Expr::Union(vec![nil(), atom("node", int(), r(3))]),
+            ],
+        ),
+    ];
+    let mut lists: Vec<Vec<i64>> = vec![vec![]];
+    for k in 0..4 {
+        let longer: Vec<Vec<i64>> = (lists.iter())
+            .filter(|l| l.len() == k)
+            .flat_map(|l| [1, 2].map(|x| [l.clone(), vec![x]].concat()))
+            .collect();
+        lists.extend(longer);
+    }
+    for (name, bodies) in systems {
+        let defs = (bodies.into_iter().enumerate())
+            .map(|(k, b)| def(&format!("W{k}"), b))
+            .collect();
+        let t = Group::new(defs)
+            .expect("a group")
+            .instance(vec![])
+            .remove(0);
+        let mut passed = 0;
+        for l in &lists {
+            Type::forget_emptiness();
+            let value = (l.iter().rev()).fold(Value::atom("nil"), |rest, &x| {
+                Value::atom_with("cons", vec![Value::Int(x.into()), rest])
+            });
+            let (t2, items) = (t.clone(), l.clone());
+            let ok = Search::default().run(move |d| {
+                Box::pin(async move {
+                    let ids: Vec<usize> = (items.iter())
+                        .map(|&x| d.s().show(Rep::Value(Value::Int(x.into()))))
+                        .collect();
+                    let (link, stop) = ("cons".into(), "nil".into());
+                    d.check_chain_witness(&t2, &link, &ids, &stop, &[]).await
+                })
+            });
+            assert!(
+                !ok || t.contains(&value),
+                "{name}: {l:?} passed, not in the type"
+            );
+            passed += usize::from(ok);
+        }
+        if name == "plain" {
+            assert_eq!(
+                passed,
+                lists.len(),
+                "every list of the plain list type passes"
+            );
+        }
+    }
+}

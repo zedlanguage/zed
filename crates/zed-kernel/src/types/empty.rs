@@ -324,6 +324,8 @@ fn group_verdicts(members: &[Type]) {
         horn_witness_group(members, &mut s);
     }
     let mut undecided = Vec::new();
+    // The members of `undecided` the decider refused (`Type::refused_by_group`).
+    let mut by_group = Vec::new();
     for &i in &order {
         let m = &members[i];
         let v = match m.judged() {
@@ -359,7 +361,7 @@ fn group_verdicts(members: &[Type]) {
                         .is_some_and(|o| o.rep(m).is_some())
                 {
                     Verdict::Inhabited
-                } else if m.refused_by_group() {
+                } else if m.refused_by_group() && !(b && cause == Some(Refusal::Fork)) {
                     // Complexity tradeoff at `Type::verdict_alone`: neither proved empty nor
                     // shown inhabited, so refused. A member the group's decider refused is
                     // refused for that, whatever stopped the search, so that its message names
@@ -376,6 +378,17 @@ fn group_verdicts(members: &[Type]) {
                     // the component.
                     Verdict::Refused(Refusal::Group)
                 } else {
+                    // A member the decider refused whose emptiness the search proved only past a
+                    // fork goes on with the members left undecided, to the fork stages
+                    // (`refine_tuple_forks`), which a member refused at a fork alone gets: which
+                    // member a fork is put on depends on the order the search meets the types,
+                    // so without them the meets of seed 39491 were Empty in four orders of their
+                    // definitions and refused in one (TEST-kernel-unreached-paths-8,
+                    // `group_oracle::meets_of_seed_39491_agree_across_orders`). Still refused
+                    // after them, it is refused as the decider refused it, as above.
+                    if m.refused_by_group() {
+                        by_group.push(m.clone());
+                    }
                     undecided.push(m.clone());
                     Verdict::Refused(cause.or(d.gave_up).unwrap_or(Refusal::NoWitness))
                 }
@@ -475,6 +488,14 @@ fn group_verdicts(members: &[Type]) {
             }
         });
         refine_tuple_forks(&undecided);
+        VERDICTS.with(|k| {
+            let mut k = k.borrow_mut();
+            for m in by_group {
+                if let Some(v @ Verdict::Refused(_)) = k.get_mut(&m) {
+                    *v = Verdict::Refused(Refusal::Group);
+                }
+            }
+        });
         DECIDING.with(|dec| {
             let mut dec = dec.borrow_mut();
             for m in &undecided {
@@ -9698,9 +9719,14 @@ impl<'m> Searching<'m> {
                     return None;
                 }
             }
-            if loop_heads.is_empty() {
-                return None;
-            }
+            // Never empty: `rows` has two rows or more (tested above), each row either adds
+            // its head to `loop_heads` or is taken as `chain_row`, and a second row of the
+            // second kind returns above; so at most one row is `chain_row` and at least one
+            // is in `loop_heads` (TEST-kernel-unreached-paths-8).
+            debug_assert!(
+                !loop_heads.is_empty(),
+                "two rows or more, at most one not a loop"
+            );
             let mut loop_iter = loop_heads.into_iter();
             let first_loop = loop_iter.next().expect("non-empty");
             let joined_loop = loop_iter.fold(first_loop, |acc, h| self.cut(&acc, &h, Cut::Join));

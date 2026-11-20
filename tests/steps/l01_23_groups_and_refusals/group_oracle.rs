@@ -3157,6 +3157,16 @@ fn meets_with_a_member_shown_only_with_closures_taken_to_have_values() {
     verdicts_agree_across_orders("meets", gen_meets, &[24669], (true, true));
 }
 
+/// The meets of seed 39491, outside the range above: in the order [2, 4, 0, 3, 1] of the
+/// definitions the first search proves the fourth member empty only past a fork, and the member,
+/// which the decider refused, was refused for that (`Refusal::Group`); in the other orders it is
+/// empty. Such a member now goes to the fork stages, which prove it empty
+/// (TEST-kernel-unreached-paths-8, `group_verdicts`).
+#[test]
+fn meets_of_seed_39491_agree_across_orders() {
+    verdicts_agree_across_orders("meets", gen_meets, &[39491], (true, true));
+}
+
 /// The pool's rounds keep the first 36 tuples of the product of the values found for each
 /// component (`first_tuples`), built one by one. Against the whole product, built as the oracle
 /// first did, on random choices of up to 6 values for each of up to 5 components, some with none:
