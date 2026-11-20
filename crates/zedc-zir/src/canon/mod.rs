@@ -159,6 +159,36 @@ pub fn canonicalize(d: &Def) -> Def {
     // and deduplicated once, O(F log F) (`sorted_facets`). The rules stay as the definition;
     // the test `alpha::the_normal_form_is_the_rules_applied_one_step_at_a_time` checks that
     // both agree.
+    //
+    // Proof that the one-walk form is the rules' normal form, whatever order they apply in
+    // (DOC-proofs-in-comments-audit-rest). The rules end (the ranks above fall
+    // lexicographically at every step), and each touches its own parts only: `binders` the
+    // body, adding one hint facet; `hints` and `facets` the facets; `domain` the domain. So
+    // each part's final value is fixed by its initial value, and it is enough to show each.
+    // 1. Domain. The rule replaces it by `normal()` once; `Domain::normal` is idempotent (its
+    //    proof), so the rank is then 0 and the final domain is `normal()` of the first.
+    // 2. Facets. `hints` removes a hint, `facets` swaps two neighbors or drops one of two
+    //    equal neighbors, and `binders` adds only hints, so the set of the non-hint facets
+    //    never changes. At the end no hint is left (the hints rank is 0) and no neighbors
+    //    have `w[0] >= w[1]`, so the facets are strictly increasing in `Facet`'s order: the
+    //    one strictly increasing list of that set, which `sorted_facets` builds (its comment
+    //    proves its order is `Facet`'s on non-hint facets and that it drops exactly repeats).
+    // 3. Body. Let the nameless form of a term be the term with each variable replaced by
+    //    the level of the binder it means, or its own name when free. (a) `binders::canonical`
+    //    names each binder at level `l` `\0l` (`Levels::new_name` in `Mode::Canonical`) and
+    //    each variable the new name of its binder, and it refuses a free name spelled as a
+    //    level (`refuse_free_level`); only one binder at level `l` encloses any point, so
+    //    each variable still means its binder, and the nameless form is kept. (b) A step of
+    //    the rule keeps the nameless form and adds no free name (the module comment of
+    //    `binders`: the renamed binder at level `l` takes `\0l`; a binder inside its scope
+    //    has a higher level, so one spelled `\0l` is given its own level, and a written name
+    //    is never a level name, so nothing inside captures `\0l`), and the rank falls; at
+    //    rank 0 every binder is spelled as its level. (c) A term in which every binder is
+    //    spelled as its level and no free name is a level name is fixed by its nameless form:
+    //    a binder at level `l` and each variable meaning it read `\0l`, and a free variable
+    //    its own name. By (a) and (b) both forms meet (c) with one nameless form, so they are
+    //    equal. The rules' form on a term with a free level name is not compared: the walk
+    //    refuses that term, and `canonicalize` gives no address for it.
     Def {
         name: d.name.clone(),
         domain: d.domain.as_ref().map(Domain::normal),

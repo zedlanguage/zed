@@ -81,6 +81,28 @@ fn one_set_of_integers_has_one_normal_form() {
     assert_ne!(addr(&index(even(0))), addr(&index(even(2))));
 }
 
+/// A class built with its fields directly, not by `Congruence::new`, can hold a residue
+/// outside `0..modulus` or a negative modulus (the fields are public). Its normal form is
+/// that of the same class built by `new`, so one set of integers keeps one address, and the
+/// normal form is its own normal form (the domain rule applies once: `Domain::normal`'s
+/// proof, step 2). Before the class was normalized, `9 mod 4` and `1 mod 4` over `0..=10`
+/// gave two normal forms.
+#[test]
+fn a_class_built_with_its_fields_has_the_normal_form_of_the_same_class() {
+    let made = Congruence::new(4, 1);
+    let at = |class: Congruence| dom(IntervalSet::of(0, 10), class, FiniteSet::Top);
+    for raw in [(4, 9), (4, -3), (-4, 1), (-4, 9)] {
+        let written = Congruence::Class {
+            modulus: raw.0.into(),
+            residue: raw.1.into(),
+        };
+        let n = at(written.clone()).normal();
+        assert_eq!(n, at(made.clone()).normal(), "{raw:?}");
+        assert_eq!(n.normal(), n, "{raw:?}");
+        assert_eq!(addr(&index(at(written))), addr(&index(at(made.clone()))), "{raw:?}");
+    }
+}
+
 /// A random domain: up to three pieces with endpoints in -20..=20 or infinite, a class of
 /// modulus 0, 1, 2, 3, 4 or 6, and half the time a finite set in -25..=25.
 fn random(rng: &mut Rng) -> Domain {

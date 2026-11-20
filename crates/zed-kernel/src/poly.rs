@@ -1821,7 +1821,21 @@ impl<K: Key> Poly<K> {
     /// so no dummy runs are needed. Read 2026-11-20 in a scanned copy from LibGen, kept out of
     /// the repository and used only to check this comment. It reads each term once
     /// per level of the merge tree it sits at, O(T log k) at most and O(T + k log k) for one
-    /// large part and k small ones, plus O(k log k) for the heap. Test:
+    /// large part and k small ones, plus O(k log k) for the heap.
+    ///
+    /// Proof of the O(T log k) bound, with cancellation (DOC-proofs-in-comments-audit-rest):
+    /// a merge of parts of `a` and `b` terms reads `a + b` terms and gives at most `a + b`
+    /// (fewer when terms cancel), so Huffman's theorem on fixed weights does not apply as it
+    /// stands. Let `OPT(w)` be the least `Σ w_i · depth_i` over binary merge trees on the
+    /// sizes `w`, the reads of merging by that tree with no cancellation. Claim: the reads
+    /// here are at most `OPT(w)` of the starting sizes. Induction on the number of parts;
+    /// one part reads nothing. The loop merges the two smallest, `a <= b`, reading `a + b`,
+    /// into a part of `c <= a + b` terms. By induction the rest reads at most
+    /// `OPT(rest + [c])`, which is at most `OPT(rest + [a + b])` since every tree's cost
+    /// grows with its weights, so their least does. Huffman's theorem (the paper above, its
+    /// step that combines "the two least probable messages"): some optimal tree joins the two
+    /// least weights first, and the rest of it is optimal for the joined weights, so `OPT(w) = a + b + OPT(rest + [a + b])`. So the reads are at most `OPT(w)`,
+    /// which is at most the cost of a balanced tree, `T · ceil(log2 k)`. Test:
     /// `a_chain_of_sums_is_one_sum` checks the result; the order of merging is not tested.
     /// Sizes are counted in terms, not words, so a part of few wide coefficients may be merged
     /// later than its words would place it. The plan row's

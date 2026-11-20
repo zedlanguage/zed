@@ -22,7 +22,7 @@
 //! - Step 3 replaces the paper's proof of Theorem 1 (section 3), which isolates the roots of
 //!   the chain `p_1, ..., p_k` (each `p_(i+1)` the derivative of `p_i` with its power of `t`
 //!   divided out) one level at a time by its Proposition 1, with a branch and bound whose
-//!   number of intervals is not proved (see `positive_roots`).
+//!   number of intervals is not proved (see `positive_roots`; plan row ROOTS-interval-bound).
 //! - The paper's remark that a nonzero integer root divides `a_k`, the coefficient of the
 //!   least exponent, is not used to list candidates; the search is bounded by 1 plus the
 //!   largest coefficient instead (`positive_roots`).
@@ -437,11 +437,11 @@ fn scaled(q: &[(u64, BigInt)], x: &BigInt, s: u64) -> BigInt {
 /// not shown monotone on it, so the intervals kept at each depth lie about the integer roots
 /// of `p` and the real roots of `p'`, under `t` each by Descartes' rule of signs. Measured (the
 /// tests below): a polynomial of `t` terms with a root at 4 is linear in `t`, and a cubic
-/// whose roots have `B` bits close to linear in `B`. Not proven: the number of intervals kept
-/// at a depth, in the worst case; the bound for the method replaced (the chain of `t`
-/// derivatives of [Cucker, Koiran and Smale 1999], step 3) was O(t^3) evaluations of numbers
-/// of up to `t (B + 1)(B + 2)` bits, reached by `t` terms with a root at 4 (80.5 times the
-/// work at 8 times the terms).
+/// whose roots have `B` bits close to linear in `B`. Not proved (plan row ROOTS-interval-bound):
+/// the number of intervals kept at a depth, in the worst case; the bound for the method
+/// replaced (the chain of `t` derivatives of [Cucker, Koiran and Smale 1999], step 3) was
+/// O(t^3) evaluations of numbers of up to `t (B + 1)(B + 2)` bits, reached by `t` terms with a
+/// root at 4 (80.5 times the work at 8 times the terms).
 fn positive_roots(p: &[(u64, BigInt)], a: BigInt, b: Option<BigInt>) -> Vec<BigInt> {
     if p.len() < 2 {
         return Vec::new();

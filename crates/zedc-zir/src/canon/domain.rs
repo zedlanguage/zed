@@ -44,6 +44,36 @@ impl Domain {
 
     /// The normal form of the facts. It admits the same integers, and two facts admitting
     /// the same integers have the same normal form.
+    ///
+    /// Proof (DOC-proofs-in-comments-audit-rest). Let `S` be the set the facts admit: the
+    /// integers of `ints` that are in `class` and in `finite`.
+    /// 1. Same integers. `reduce_finite` meets `ints` with the points of the finite set (or
+    ///    keeps it for `Top`), and `reduce_congruence` moves each endpoint inward to the
+    ///    nearest member of the class (or meets with the one point for modulus 0), so the
+    ///    interval they return holds exactly `S`, and each finite endpoint is a member of
+    ///    `class`. If it is empty, `S` is empty and the empty form below admits nothing. Else
+    ///    every point of `ints` is in `S`, and the class put out holds `S` (step 2), so the
+    ///    form admits `S`; `runs` only joins two pieces across a gap with no member of the
+    ///    class (step 3), so the integers it adds to the interval are all outside the class
+    ///    and the form still admits exactly `S`.
+    /// 2. The class is the least class holding `S`, a function of `S` alone. When every piece
+    ///    is one point, `least_class` gives `v mod g`, with `g` the gcd of the differences,
+    ///    the least class holding those points. Otherwise some piece `[a, b]` has `a < b`
+    ///    (or an infinite end), both finite ends members of `m`'s class, so `a` and `a + m`
+    ///    are both in `S`; a class holding them has a modulus dividing `m`, and every
+    ///    difference in `S` is a multiple of `m`, so `m` is the gcd and the class is least.
+    ///    The class is built by `Congruence::new`, which takes the modulus by its magnitude
+    ///    and the residue modulo it, so one class has one representation even when the
+    ///    facet was built with its fields directly (they are public).
+    /// 3. The interval is the maximal runs of class members in `S`, a function of `S` and the
+    ///    class. Two neighboring pieces `[_, b]` and `[c, _]`, `b < c`, both ends members, have
+    ///    no member strictly between them exactly when `c - b` is the modulus, the test of
+    ///    `joins`; an infinite end joins nothing, and modulus 0 means one point.
+    ///
+    /// So the result is a function of `S`, and since it admits `S` (step 1),
+    /// `normal(normal(d)) == normal(d)`: the domain rule applies at most once
+    /// ([`super::canonicalize`] relies on it). Test (m0_07_canonicalization):
+    /// `alpha::the_normal_form_is_the_rules_applied_one_step_at_a_time`.
     pub fn normal(&self) -> Self {
         // The finite set met into the interval, then the endpoints moved onto the class.
         let ints = reduce_finite(&self.ints, &self.finite).0;
@@ -65,9 +95,11 @@ impl Domain {
                 _ => None,
             })
             .collect();
-        let class = match points {
-            Some(vs) => least_class(&vs),
-            None => class,
+        let class = match (points, class) {
+            (Some(vs), _) => least_class(&vs),
+            // Normalized, so that one class has one representation (step 2 above).
+            (None, Congruence::Class { modulus, residue }) => Congruence::new(modulus, residue),
+            (None, Congruence::Bottom) => unreachable!("an empty domain returned above"),
         };
         Domain {
             ints: runs(&ints, &class),
