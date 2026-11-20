@@ -21,6 +21,7 @@ mod digit_text;
 mod fast;
 mod float_text;
 mod room;
+pub mod trees;
 
 use std::borrow::Cow;
 use std::cell::Cell;
@@ -1458,16 +1459,16 @@ pub fn inverse_mod_uint(a: &BigUint, m: &BigUint) -> Option<BigUint> {
 }
 
 /// The greatest common divisor of `a` and `b`, for integers held outside a [`Rat`].
+///
+/// One gcd (DRY-number-theory-wide item 3, dryN2, 2026-11-19): `gcd_uint_recursive`, the same
+/// half gcd with no handoff to Stein's gcd at `GCD_LEAF` once what is left is narrow, was
+/// removed. Measured in release (`gcd` against it, best of 5, load 52 to 88, random pairs and
+/// pairs with a common factor): 0.97 to 1.21 times `gcd`'s time from 4 to 310 words, where the
+/// two run the same steps (within the noise at that load), and 1.04 to 1.53 times from 512 to
+/// 16384 words, where `gcd` hands the last 310 words to Stein's gcd; so no width favored it.
+/// Its one client, `Int::gcd_recursive` in zedc-int, now calls `Int::gcd`. Tests:
+/// `completeness::fast` (the gcd cases) and `crossover::gcd` against num-bigint.
 pub fn gcd_uint(a: &BigUint, b: &BigUint) -> BigUint {
-    gcd_uint_using(a, b, fast::gcd)
-}
-
-/// Half-GCD at every width, for clients with their own machine-integer path.
-pub fn gcd_uint_recursive(a: &BigUint, b: &BigUint) -> BigUint {
-    gcd_uint_using(a, b, fast::gcd_recursive)
-}
-
-fn gcd_uint_using(a: &BigUint, b: &BigUint, core: fn(&BigUint, &BigUint) -> BigUint) -> BigUint {
     let (Some(za), Some(zb)) = (a.trailing_zeros(), b.trailing_zeros()) else {
         return a | b;
     };
@@ -1510,9 +1511,9 @@ fn gcd_uint_using(a: &BigUint, b: &BigUint, core: fn(&BigUint, &BigUint) -> BigU
         return a.into_owned() << z;
     }
     let g = match a.bits().cmp(&b.bits()) {
-        Ordering::Greater => core(&b, &fast::rem(&a, &b)),
-        Ordering::Less => core(&a, &fast::rem(&b, &a)),
-        Ordering::Equal => core(&a, &b),
+        Ordering::Greater => fast::gcd(&b, &fast::rem(&a, &b)),
+        Ordering::Less => fast::gcd(&a, &fast::rem(&b, &a)),
+        Ordering::Equal => fast::gcd(&a, &b),
     };
     g << z
 }

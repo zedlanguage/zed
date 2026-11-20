@@ -393,6 +393,64 @@ fn the_least_prime_table_agrees_with_trial_division() {
     assert_eq!(table[65_537], PRIME);
     // 1000001 = 101 * 9901.
     assert_eq!(table[1_000_001], 101);
+    // Every entry, by trial division, for tops one block long, one past it, and several blocks
+    // long and ending inside a block (blocks of 2^15 entries below top = 2^30): the edges
+    // between blocks are where a prime's first multiple is computed again.
+    let block = 1u32 << 15;
+    for top in [block - 1, block, block + 1, 3 * block + 17, 200_003] {
+        let table = least_prime_factors(top);
+        assert_eq!(table.len(), top as usize + 1);
+        for j in 2..=top {
+            let want = match (2..).take_while(|d| d * d <= j).find(|d| j % d == 0) {
+                Some(d) => d as u16,
+                None => PRIME,
+            };
+            assert_eq!(table[j as usize], want, "top {top} j {j}");
+        }
+        assert_eq!((table[0], table[1]), (0, 0));
+    }
+}
+
+/// The constant of the write bound at [`least_prime_factors`]: the primes below 2^16 number
+/// 6542 and the sum of their reciprocals is below 3, so the sieve makes fewer than
+/// `3 top + 6542` writes for any `top < 2^32`.
+#[test]
+fn the_sieve_writes_fewer_than_three_times_top() {
+    let odd = odd_primes_below(1 << 16);
+    let primes: Vec<u64> = std::iter::once(2)
+        .chain((1..odd.len()).filter(|&i| odd[i]).map(|i| 2 * i as u64 + 1))
+        .collect();
+    assert_eq!(primes.len(), 6542);
+    let sum: f64 = primes.iter().map(|&p| 1.0 / p as f64).sum();
+    // Each term is rounded by at most half an ulp of a value below 1, and the 6542 additions
+    // add at most 6542 ulps of a sum below 4: under 1e-11 in all, far from the margin.
+    println!("sum of 1/p over the primes below 2^16: {sum:.6}");
+    assert!(sum < 3.0 - 1e-9, "{sum}");
+}
+
+/// The sieve with blocks shorter than [`SIEVE_BLOCK`] gives the same table: blocks of
+/// `isqrt(top) + 1` entries (the least the sieve uses, reached for `top` past about 2^30,
+/// a 2 GiB table too large for a unit test), and of 1, 2 and 7 entries, where nearly every
+/// multiple sits at a block edge.
+#[test]
+fn the_least_prime_table_does_not_depend_on_the_block_length() {
+    for top in [0u32, 1, 2, 3, 48, 49, 50, 1000, 4097] {
+        let want = least_prime_factors_in_blocks(top, usize::MAX);
+        for block in [1, 2, 7, top.isqrt() as usize + 1] {
+            assert_eq!(
+                least_prime_factors_in_blocks(top, block),
+                want,
+                "top {top} block {block}"
+            );
+        }
+    }
+    let top = 300_007;
+    let want = least_prime_factors(top);
+    assert_eq!(
+        least_prime_factors_in_blocks(top, top.isqrt() as usize + 1),
+        want
+    );
+    assert_eq!(least_prime_factors_in_blocks(top, 1000), want);
 }
 
 #[test]

@@ -4087,7 +4087,7 @@ fn progression_meets(target: &Int, coef: &Int, offset: &OffsetHull, lo: &Int, hi
     }
     let m = offset.step.div_floor(&g);
     let reduced = coef.div_floor(&g);
-    let (_, inverse, _) = bezout(&reduced.abs(), &m);
+    let (_, inverse, _) = reduced.abs().bezout(&m);
     let inverse = if reduced.is_negative() {
         -&inverse
     } else {
@@ -4387,7 +4387,7 @@ mod cell_sweep {
     use zed_kernel::digest::{DigestMap, DigestSet};
     use zedc_int::int::Int;
 
-    use super::{Atom, AtomBounds, Con, Lin, Parts, Refusal, Rel, Span, bezout, narrow, solve};
+    use super::{Atom, AtomBounds, Con, Lin, Parts, Refusal, Rel, Span, narrow, solve};
 
     const NONE: usize = usize::MAX;
 
@@ -6397,7 +6397,7 @@ mod cell_sweep {
         !(lo, hi).is_empty()
     }
 
-    /// Decides `a * x + b * k + d == 0` for `(x, k) ∈ x_span × k_span` in closed form via [`bezout`].
+    /// Decides `a * x + b * k + d == 0` for `(x, k) ∈ x_span × k_span` in closed form via [`Int::bezout`].
     fn holds_2var_eq(a: &Int, b: &Int, d: &Int, x_span: &Span, k_span: &Span) -> bool {
         if a.is_zero() {
             return holds_1var_eq(b, d, k_span);
@@ -6405,7 +6405,7 @@ mod cell_sweep {
         if b.is_zero() {
             return holds_1var_eq(a, d, x_span);
         }
-        let (g, mut s, t) = bezout(&a.abs(), b);
+        let (g, mut s, t) = a.abs().bezout(b);
         if a.is_negative() {
             s = -&s;
         }
@@ -14944,27 +14944,6 @@ struct Merged {
     links: Vec<(usize, Int, Int)>,
 }
 
-/// `(g, s, t)` with `g` the greatest common divisor of `a` and `b` and `s·a + t·b == g`, for
-/// `a` not below zero, by the extended Euclidean algorithm.
-fn bezout(a: &Int, b: &Int) -> (Int, Int, Int) {
-    let (mut r, mut next) = (a.clone(), b.abs());
-    let (mut s, mut ns) = (Int::ONE, Int::ZERO);
-    let (mut t, mut nt) = (Int::ZERO, Int::ONE);
-    while !next.is_zero() {
-        let q = r.div_floor(&next);
-        let rem = &r - &(&q * &next);
-        r = std::mem::replace(&mut next, rem);
-        let ns2 = &s - &(&q * &ns);
-        s = std::mem::replace(&mut ns, ns2);
-        let nt2 = &t - &(&q * &nt);
-        t = std::mem::replace(&mut nt, nt2);
-    }
-    if b.is_negative() {
-        t = -&t;
-    }
-    (r, s, t)
-}
-
 /// [`parts`] on `base` with the variables whose columns are multiples of one primitive column
 /// merged. Where `x[j]` and `x[l]` enter every row as `c·p` and `d·p`, the rows see only
 /// `c·x[j] + d·x[l]`, whose values over the integers are the multiples of `gcd(c, d)`; so
@@ -15031,7 +15010,7 @@ fn quotient(
             groups.len() - 1
         });
         let m = &mut groups[id].1;
-        let (g, s, t) = bezout(&m.gcd, content);
+        let (g, s, t) = m.gcd.bezout(content);
         m.gcd = g;
         m.links.push((j, s, t));
     }
@@ -28680,7 +28659,7 @@ pub(super) mod tests {
             (1, -7),
             (6, 35),
         ] {
-            let (g, s, t) = bezout(&Int::from(a), &Int::from(b));
+            let (g, s, t) = Int::from(a).bezout(&Int::from(b));
             let want = Int::from(a).gcd(&Int::from(b));
             assert_eq!(g, want, "{a} {b}");
             assert_eq!(
@@ -28689,6 +28668,96 @@ pub(super) mod tests {
                 "{a} {b}"
             );
         }
+    }
+
+    /// [`Int::bezout`], which the solver now calls, against the extended Euclid over `Int` it
+    /// replaced ([`Int::euclid_bezout`]), for `a >= 0` as every caller passes: the same factors on
+    /// machine integers (the progression and two-variable verdicts and the merged columns'
+    /// links see no change there), and on wide integers the same gcd and factors that satisfy
+    /// `s a + t b = g` within Euclid's bounds `|s| <= max(1, |b| / g)` and
+    /// `|t| <= max(1, a / g)`, which may be another pair (DRY-number-theory-wide).
+    #[test]
+    fn bezout_agrees_with_euclid_on_words_and_is_valid_when_wide() {
+        let mut seed: u64 = 0x9e37_79b9_7f4a_7c15;
+        let mut next = || {
+            seed ^= seed << 13;
+            seed ^= seed >> 7;
+            seed ^= seed << 17;
+            seed
+        };
+        let word = |x: u64, y: u64| (i128::from(x) << 63) ^ i128::from(y);
+        let mut small: Vec<(Int, Int)> = vec![
+            (Int::ZERO, Int::ZERO),
+            (Int::ZERO, Int::from(-9)),
+            (Int::from(9), Int::ZERO),
+            (Int::from(i128::MAX), Int::from(i128::MAX - 1)),
+            (Int::from(i128::MAX), Int::from(-i128::MAX)),
+        ];
+        for k in 0..2000 {
+            let (x, y) = (next(), next());
+            let a = match k % 3 {
+                0 => i128::from(x % 1000),
+                1 => i128::from(x),
+                _ => word(x, y) & i128::MAX,
+            };
+            let b = match k % 4 {
+                0 => i128::from(y % 1000) - 500,
+                1 => i128::from(y >> 1) - i128::from(x >> 1),
+                _ => word(y, x),
+            };
+            // A shared factor, so that g is above 1 in a quarter of the pairs.
+            let f = 1 + i128::from(next() % 64);
+            small.push(match k % 4 {
+                3 => (Int::from(a / f * f), Int::from(b / f * f)),
+                _ => (Int::from(a), Int::from(b)),
+            });
+        }
+        for (a, b) in &small {
+            assert_eq!(a.bezout(b), a.euclid_bezout(b), "a={a} b={b}");
+        }
+        let (mut p, mut q) = (Int::ONE, Int::ONE);
+        let mut wide: Vec<(Int, Int)> = vec![(Int::ZERO, Int::from(i128::MIN))];
+        for i in 0..1500 {
+            (p, q) = (q.clone(), &p + &q);
+            if i > 180 && i % 97 == 0 {
+                wide.push((q.clone(), -&p));
+                wide.push((&q * &Int::from(36), &p * &Int::from(60)));
+            }
+        }
+        for k in 0..300 {
+            let words = 2 + k % 40;
+            let mut n = |sign: bool| {
+                let mut v = Int::ZERO;
+                for _ in 0..words {
+                    v = &(&v * &Int::from(1i128 << 64)) + &Int::from(i128::from(next()));
+                }
+                if sign { -&v } else { v }
+            };
+            let f = n(false);
+            let (a, b) = (n(false), n(k % 2 == 0));
+            wide.push(match k % 3 {
+                0 => (&a * &f, &b * &f),
+                _ => (a, b),
+            });
+        }
+        let mut other = 0;
+        for (a, b) in &wide {
+            let (g, s, t) = a.bezout(b);
+            let (g0, s0, t0) = a.euclid_bezout(b);
+            assert_eq!(g, g0, "a={a} b={b}");
+            assert_eq!(&(&s * a) + &(&t * b), g, "a={a} b={b}");
+            if !g.is_zero() {
+                let bound = |x: &Int| x.div_floor(&g).abs().max(Int::ONE);
+                assert!(s.abs() <= bound(b), "s={s} a={a} b={b}");
+                assert!(t.abs() <= bound(a), "t={t} a={a} b={b}");
+            }
+            other += usize::from((s, t) != (s0, t0));
+        }
+        println!(
+            "wide pairs: {} with other factors than Euclid's, of {}",
+            other,
+            wide.len()
+        );
     }
 
     /// Whether the rows `Σ a[i]·x[i] + k >= 0` over `n` variables, with the box `lo`, `hi` as

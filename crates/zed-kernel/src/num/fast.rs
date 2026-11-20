@@ -2635,19 +2635,10 @@ fn v128_from(v: &[u64]) -> u128 {
 /// parts then go through the binary gcd, half of what is left at a time by [`half`], whose
 /// steps keep the odd part of the gcd. O(M(n) log n).
 pub(crate) fn gcd(a: &BigUint, b: &BigUint) -> BigUint {
-    gcd_using(a, b, true, GCD_LEAF, LIFT_BITS)
+    gcd_using(a, b, GCD_LEAF, LIFT_BITS)
 }
 
-/// The same half-GCD without the historical wide Stein handoff. The solver
-/// already performs machine-sized gcds directly, so its big values take this
-/// path at every width. Test: pncx_fibonacci_scale, deferred to plan row
-/// PERF-negated-chain-unsolved in wt/scratch/deferred-tests/PERF-negated-chain-unsolved.rs,
-/// and the gcd axis.
-pub(crate) fn gcd_recursive(a: &BigUint, b: &BigUint) -> BigUint {
-    gcd_using(a, b, false, GCD_LEAF, LIFT_BITS)
-}
-
-fn gcd_using(a: &BigUint, b: &BigUint, handoff: bool, leaf: u64, lift: u64) -> BigUint {
+fn gcd_using(a: &BigUint, b: &BigUint, leaf: u64, lift: u64) -> BigUint {
     let (Some(za), Some(zb)) = (a.trailing_zeros(), b.trailing_zeros()) else {
         return a | b;
     };
@@ -2673,7 +2664,7 @@ fn gcd_using(a: &BigUint, b: &BigUint, handoff: bool, leaf: u64, lift: u64) -> B
     // RADIX-nlog2-10_5 in wt/scratch/deferred-tests/RADIX-nlog2-10_5.rs.
     while !y.is_zero() {
         let n = x.bits().max(y.bits());
-        if handoff && n <= leaf {
+        if n <= leaf {
             let (xm, ym) = (x.magnitude(), y.magnitude());
             // Unreachable: `y` is not zero by the loop's test, and `x` stays odd (the binary
             // gcd's invariant: it starts as `a >> za` and each step makes it `b / 2^j`), so
@@ -4086,7 +4077,7 @@ pub mod crossover {
     /// The gcd of `a` and `b` by `super::gcd` with the leaf of `leaf` bits and the lift of
     /// `lift` bits.
     pub fn gcd(a: &BigUint, b: &BigUint, leaf: u64, lift: u64) -> BigUint {
-        super::gcd_using(a, b, true, leaf, lift)
+        super::gcd_using(a, b, leaf, lift)
     }
 
     /// The value of a nonempty text of ASCII decimal digits, as [`crate::num::read_digits`]

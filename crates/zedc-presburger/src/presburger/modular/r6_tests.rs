@@ -31,7 +31,7 @@ fn pncx_fast_bezout_matches_euclid() {
     for (a, b) in pairs {
         let (g, s, t) = a.extended_gcd(&b).expect("arithmetic check");
         assert_eq!(&(&s * &a) + &(&t * &b), g);
-        let expected = crate::presburger::bezout(&a.abs(), &b).0;
+        let expected = a.abs().euclid_bezout(&b).0;
         assert_eq!(g, expected);
     }
 }
@@ -318,9 +318,9 @@ fn pncx_wide_arithmetic_random_oracle() {
         let (ia, ib) = (Int::from(a.clone()), Int::from(b.clone()));
         let (g, s, t) = ia.extended_gcd(&ib).expect("nonzero pair");
         assert_eq!(&(&s * &ia) + &(&t * &ib), g, "case={i}");
-        assert_eq!(g, crate::presburger::bezout(&ia.abs(), &ib).0, "case={i}");
+        assert_eq!(g, ia.abs().euclid_bezout(&ib).0, "case={i}");
         assert_eq!(ia.gcd(&ib), g, "case={i}");
-        assert_eq!(ia.gcd_recursive(&ib), g, "case={i}");
+        assert_eq!(ia.gcd(&ib), g, "case={i}");
         let mut q = &a / &b;
         let mut r = &a % &b;
         if r != BigInt::from(0) && a.sign() != b.sign() {

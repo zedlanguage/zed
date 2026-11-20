@@ -24,7 +24,7 @@ use std::rc::Rc;
 
 use imbl::OrdSet;
 use num_bigint::BigUint;
-use zed_kernel::num::{div_rem_uint, gcd_uint, mul_uint, rem_uint};
+use zed_kernel::num::{div_rem_uint, gcd_uint, mul_uint, trees};
 
 /// A set of roots: an index into [`Roots::sets`].
 pub(super) type SetId = u32;
@@ -451,28 +451,14 @@ fn base_of(roots: &[Rc<BigUint>]) -> Vec<Vec<u32>> {
         return Vec::new();
     }
     let leaves: Vec<&BigUint> = roots.iter().map(|r| &**r).collect();
-    let mut levels = product_tree(&leaves);
-    // The remainder tree: each node's `P mod node^2`, from its parent's, as `node^2` divides
-    // the parent's square; `P` itself at the top.
-    let mut rems: Vec<BigUint> = levels.pop().unwrap_or_default();
-    for level in levels.iter().rev() {
-        rems = (level.iter().enumerate())
-            .map(|(i, p)| rem_uint(&rems[i / 2], &mul_uint(p, p)))
-            .collect();
-    }
+    // `(P / r) mod r` for each root `r` by the kernel's remainder tree on `P mod node^2`
+    // ([`trees::cofactors_mod_leaves`]); for a lone root it is `1 mod r`, so it shares none.
+    let cofactors = trees::cofactors_mod_leaves(&leaves, &trees::product_tree(&leaves));
     let mut base: Vec<Vec<u32>> = vec![Vec::new(); roots.len()];
     let mut next = 0u32;
     let mut shared: Vec<usize> = Vec::new();
-    for (i, r) in leaves.iter().enumerate() {
-        // `P mod r^2` is `r * ((P / r) mod r)`; a lone root is all of `P`, which shares none.
-        let alone = match rems.is_empty() {
-            true => true,
-            false => {
-                let rest = rem_uint(&rems[i / 2], &mul_uint(r, r)) / *r;
-                gcd_uint(r, &rest).bits() == 1
-            }
-        };
-        if alone {
+    for (i, (r, c)) in leaves.iter().zip(&cofactors).enumerate() {
+        if gcd_uint(r, c).bits() == 1 {
             base[i].push(next);
             next += 1;
         } else {
@@ -486,54 +472,11 @@ fn base_of(roots: &[Rc<BigUint>]) -> Vec<Vec<u32>> {
     base
 }
 
-/// The product tree of `leaves`, above 0, the leaves not included: the products of pairs of
-/// leaves first, then of pairs of those, up to the one product of all; an odd node out is
-/// carried up. Empty for one leaf. O(M(B) log k) for `k` leaves of `B` bits in all.
-fn product_tree(leaves: &[&BigUint]) -> Vec<Vec<BigUint>> {
-    let mut levels: Vec<Vec<BigUint>> = Vec::new();
-    if leaves.len() > 1 {
-        levels.push(
-            leaves
-                .chunks(2)
-                .map(|c| pair_product(c[0], c.get(1).copied()))
-                .collect(),
-        );
-    }
-    while let Some(top) = levels.last().filter(|l| l.len() > 1) {
-        let up = (top.chunks(2))
-            .map(|c| pair_product(&c[0], c.get(1)))
-            .collect();
-        levels.push(up);
-    }
-    levels
-}
-
-/// `a * b`, or `a` where `b` is missing, a node carried up.
-fn pair_product(a: &BigUint, b: Option<&BigUint>) -> BigUint {
-    match b {
-        Some(b) => mul_uint(a, b),
-        None => a.clone(),
-    }
-}
-
-/// `x mod m` for each `m` of `ms`, above 0, by a remainder tree over their product tree:
-/// O(M(X + B) log k) for `x` of `X` bits and `k` moduli of `B` bits in all, where one division
-/// a modulus is O(k M(X)).
+/// `x mod m` for each `m` of `ms`, above 0, by the kernel's remainder tree over their product
+/// tree ([`trees::remainders`]): O(M(X + B) log k) for `x` of `X` bits and `k` moduli of `B`
+/// bits in all, where one division a modulus is O(k M(X)).
 fn rems_of(x: &BigUint, ms: &[&BigUint]) -> Vec<BigUint> {
-    let levels = product_tree(ms);
-    let mut rems = vec![rem_uint(x, levels.last().map_or(ms[0], |top| &top[0]))];
-    if levels.is_empty() {
-        return rems;
-    }
-    let below = (levels.iter().rev().skip(1))
-        .map(|l| l.iter().collect::<Vec<_>>())
-        .chain([ms.to_vec()]);
-    for level in below {
-        rems = (level.iter().enumerate())
-            .map(|(i, m)| rem_uint(&rems[i / 2], m))
-            .collect();
-    }
-    rems
+    trees::remainders(x, ms, &trees::product_tree(ms))
 }
 
 /// `c` with every prime of `a` taken out, Bernstein's `ppo(c, a)` ("Factoring into coprimes in
@@ -614,12 +557,12 @@ fn merged(p: &[BigUint], q: &[BigUint]) -> (Vec<BigUint>, Vec<Vec<u32>>, Vec<Vec
     let q: Vec<&BigUint> = q.iter().collect();
     // The gcd of each element with the product of the other base: the primes it shares.
     let shared_with = |a: &[&BigUint], b: &[&BigUint], b_tree: &[Vec<BigUint>]| {
-        let all = b_tree.last().map_or(b[0], |top| &top[0]);
-        (rems_of(all, a).iter().zip(a))
+        let all = trees::tree_product(b, b_tree);
+        (rems_of(&all, a).iter().zip(a))
             .map(|(r, x)| gcd_uint(x, r))
             .collect::<Vec<_>>()
     };
-    let (p_tree, q_tree) = (product_tree(&p), product_tree(&q));
+    let (p_tree, q_tree) = (trees::product_tree(&p), trees::product_tree(&q));
     let p_meets = shared_with(&p, &q, &q_tree);
     let q_meets = shared_with(&q, &p, &p_tree);
     // The descent: at each level, the node, the element of `p` and the divisor of it that

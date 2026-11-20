@@ -761,7 +761,7 @@ fn project_read(
             let r = if m == Int::from(1) {
                 Int::from(0)
             } else {
-                let (_, inv, _) = a1.mod_floor(&m).extended_gcd(&m).expect("gcd");
+                let (_, inv, _) = a1.mod_floor(&m).bezout(&m);
                 (&(-&c1) * &inv).mod_floor(&m)
             };
             // `t := m·t + r`.

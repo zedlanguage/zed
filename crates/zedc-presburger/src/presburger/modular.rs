@@ -11,8 +11,11 @@ mod brooks;
 
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet, VecDeque};
 
+use num_bigint::{BigInt, BigUint};
+use num_traits::Zero;
 use zed_collections::intervals;
 use zed_graph::MinHeap;
+use zed_kernel::num::{gcd_uint, trees};
 use zedc_int::int::Int;
 
 use super::formula::{Atom, Con, Formula, Id, Lin, Model, Rel};
@@ -3149,45 +3152,22 @@ fn holds_modular_point(
     true
 }
 
-/// The product tree of `leaves` (nonempty), leaves first: each level holds the products of
-/// adjacent pairs of the level below. O(M(N) log k) for `k` leaves of `N` bits in all.
-fn product_tree(leaves: Vec<Int>) -> Vec<Vec<Int>> {
-    let mut tree: Vec<Vec<Int>> = vec![leaves];
-    while let Some(last) = tree.last().filter(|last| last.len() > 1) {
-        let next: Vec<Int> = last
-            .chunks(2)
-            .map(|c| {
-                if c.len() == 2 {
-                    &c[0] * &c[1]
-                } else {
-                    c[0].clone()
-                }
-            })
-            .collect();
-        tree.push(next);
-    }
-    tree
+// The product and remainder trees here are the kernel's (`zed_kernel::num::trees`, shared with
+// `zedc-int` and `zedc-check`), over `BigUint`. This file had its own copy over `Int`; the two
+// took the same time (DRY-number-theory-wide, 2026-11-19, opt-level 2, load 40 to 50: ratio
+// kernel/own 0.94 and 1.07 for `shares_a_factor_by_tree` on 512 and 4096 word values, 1.00
+// and 1.03 on 32 and 256 values of 40 words; 0.68 to 1.08 for `batch_remainders`), so the
+// copy was removed. The values reaching the trees are at least 1, so their magnitudes are the
+// values.
+
+/// `vals` (each at least 1) as `BigUint`, the kernel's trees' leaves.
+fn uint_leaves(vals: &[Int]) -> Vec<BigUint> {
+    vals.iter().map(Int::magnitude).collect()
 }
 
-/// `(P / m) mod m` for each leaf `m` of `tree`, where `P` is the root: the remainder tree takes
-/// `P mod v^2` from each node `v` to its children (`v^2` divides the parent's square), and
-/// `(P mod m^2) / m` is `(P / m) mod m`. O(M(N) log k).
-fn cofactors_mod_leaves(tree: &[Vec<Int>]) -> Vec<Int> {
-    let Some((root, levels)) = tree.split_last() else {
-        return Vec::new();
-    };
-    let mut rems = root.clone();
-    for level in levels.iter().rev() {
-        rems = level
-            .iter()
-            .enumerate()
-            .map(|(j, v)| rems[j / 2].mod_floor(&(v * v)))
-            .collect();
-    }
-    rems.iter()
-        .zip(&tree[0])
-        .map(|(r, m)| r.div_floor(m))
-        .collect()
+/// A `BigUint` from the kernel back as an `Int`.
+fn from_uint(v: BigUint) -> Int {
+    Int::from(BigInt::from(v))
 }
 
 /// For each of `vals` (each at least 1), whether it shares a prime factor with another of
@@ -3242,10 +3222,10 @@ fn dense_values(vals: &[Int]) -> Option<(Vec<u32>, u32)> {
 /// `shares_a_factor` by one product tree and one remainder tree: `gcd(v, (P / v) mod v)` for
 /// the product `P` of all values. O(M(B) log k).
 fn shares_a_factor_by_tree(vals: &[Int]) -> Vec<bool> {
-    let cof = cofactors_mod_leaves(&product_tree(vals.to_vec()));
-    vals.iter()
-        .zip(&cof)
-        .map(|(v, c)| v.gcd_recursive(c) != Int::ONE)
+    let leaves = uint_leaves(vals);
+    let cof = trees::cofactors_mod_leaves(&leaves, &trees::product_tree(&leaves));
+    (leaves.iter().zip(&cof))
+        .map(|(v, c)| gcd_uint(v, c).bits() != 1)
         .collect()
 }
 
@@ -3263,7 +3243,7 @@ const PRIME_HELD_BY_TWO: u16 = PRIME_HELD_BY_NONE - 2;
 const _: () = assert!(LARGEST_PRIME_BELOW_2_16 < PRIME_HELD_BY_TWO);
 
 /// `shares_a_factor` for values in `1..=top`, by a table of least prime factors up to `top`.
-/// O(top + B) word operations for values of `B` bits in all, and 2 top + 4 pi(top) bytes.
+/// O(top + B) word operations for values of `B` bits in all, and 2 top bytes.
 ///
 /// One `u16` entry per number up to `top`: 0 for a number the sieve has not reached; for a
 /// composite, its least prime factor; for a prime, a marker `PRIME_HELD_BY_NONE - c` that also
@@ -3275,15 +3255,17 @@ const _: () = assert!(LARGEST_PRIME_BELOW_2_16 < PRIME_HELD_BY_TWO);
 /// factor nor a factor as a marker, and `c` stops at 2, so a marker never goes below 65533.
 /// Primes cannot be stored as themselves (a prime up to `u32::MAX` takes 32 bits), which is why
 /// a prime gets a marker: its least prime factor is the number itself, the index of the entry.
-/// Nothing overflows: `i * q` is formed in `u64`, and a value written as a factor is a listed
-/// prime `q <= least(i) <= i` with `i * q <= top`, so `q^2 < 2^32` and `q < 2^16`.
 ///
-/// The table is built by the linear sieve of [`zed_numtheory::least_prime_factors`], in at most
-/// `2 top` steps (the proof is there). Factoring a value `v` through the table takes one
-/// division per prime factor counted with multiplicity, at most `log2 v` of them.
+/// The table is built by the segmented sieve of Eratosthenes of
+/// [`zed_numtheory::least_prime_factors`], in fewer than `3 top + 6542` writes for any
+/// `top < 2^32` (O(top log log top) in general; the proof and the constant are there; it
+/// replaced a linear sieve of O(top) steps whose scattered writes missed the cache, 11 to 14
+/// times the time at 8 times `top`, FAIL-bench-least-prime-factors-scaling). Factoring a value
+/// `v` through the table takes one division per prime factor counted with multiplicity, at
+/// most `log2 v` of them.
 // Complexity tradeoff: the first form kept `least: Vec<u32>` (4 top bytes) and a separate
 // count `held: Vec<u8>` (top bytes), 5 top + 4 pi(top) bytes; this one keeps both in one
-// `Vec<u16>`, 2 top + 4 pi(top) bytes, with the same O(top + B) steps. The cost is a compare
+// `Vec<u16>`, 2 top bytes, with the same steps. The cost is a compare
 // per read to tell a marker from a factor. Bench `pncx_coprime_dense_scale` and
 // `pncx_common_factor_scale`; COMPLEXITY.md C31c.
 fn shares_a_factor_by_table(vals: &[u32], top: u32) -> Vec<bool> {
@@ -3395,13 +3377,13 @@ fn coprime_factorization(moduli: &BTreeSet<Int>) -> Option<ModBase> {
 fn common_factorization(ms: &[Int]) -> Option<ModBase> {
     let mut g = ms.first()?.clone();
     for m in &ms[1..] {
-        g = g.gcd_recursive(m);
+        g = g.gcd(m);
         if g == Int::ONE {
             return None;
         }
     }
     let qs: Vec<_> = ms.iter().map(|m| m.div_floor(&g)).collect();
-    if qs.iter().any(|q| q.gcd_recursive(&g) != Int::ONE) {
+    if qs.iter().any(|q| q.gcd(&g) != Int::ONE) {
         return None;
     }
     if shares_a_factor(&qs).contains(&true) {
@@ -3424,11 +3406,11 @@ fn common_factorization(ms: &[Int]) -> Option<ModBase> {
 }
 
 fn gcd_ppi_ppo(a: &Int, c: &Int) -> (Int, Int, Int) {
-    let mut x = a.gcd_recursive(c);
+    let mut x = a.gcd(c);
     let gout = x.clone();
     let mut y = a.div_floor(&x);
     loop {
-        let g = x.gcd_recursive(&y);
+        let g = x.gcd(&y);
         if g == Int::ONE {
             return (gout, x, y);
         }
@@ -3443,11 +3425,11 @@ fn ppi(a: &Int, c: &Int) -> Int {
 
 /// Algorithm 11.4 of Bernstein (2005): returns `(gcd(a, b), ppg(a, b), pple(a, b))`.
 fn gcd_ppg_pple(a: &Int, b: &Int) -> (Int, Int, Int) {
-    let mut y = a.gcd_recursive(b);
+    let mut y = a.gcd(b);
     let gout = y.clone();
     let mut x = a.div_floor(&y);
     loop {
-        let g = x.gcd_recursive(&y);
+        let g = x.gcd(&y);
         if g == Int::ONE {
             return (gout, x, y);
         }
@@ -3505,7 +3487,7 @@ fn append_cb_pair(out: &mut Vec<Int>, a0: Int, b0: Int) {
             g = ng;
             h = nh;
             c = nc;
-            let d = c.gcd_recursive(&b);
+            let d = c.gcd(&b);
             x = &x * &d;
             let y = two_power(d.clone(), n - 1);
             sub_calls.push((c.div_floor(&y), d));
@@ -3670,7 +3652,7 @@ fn cb_merge(p: Vec<Int>, q: Vec<Int>) -> Option<Vec<Int>> {
     // Both empty-input branches returned; each indexed list has its input's length.
     let p_tree = build_prod_tree(&p_idx)?;
     let q_tree = build_prod_tree(&q_idx)?;
-    let g = p_tree.prod.gcd_recursive(&q_tree.prod);
+    let g = p_tree.prod.gcd(&q_tree.prod);
     if g == Int::ONE {
         let mut out = Vec::with_capacity(p.len() + q.len());
         out.extend(p);
@@ -4577,7 +4559,7 @@ fn solve_coprime_connected(
                 num = &num * &res_count(f_i);
                 den = &den * &a_counts[i];
             }
-            let g = num.gcd_recursive(&den);
+            let g = num.gcd(&den);
             let sh = (num.div_floor(&g), den.div_floor(&g));
             total_share = rat_add(&total_share, &sh);
             shares.push(sh);
@@ -4666,7 +4648,7 @@ fn merge_pair_clauses(
 fn rat_add(a: &(Int, Int), b: &(Int, Int)) -> (Int, Int) {
     let num = &(&a.0 * &b.1) + &(&b.0 * &a.1);
     let den = &a.1 * &b.1;
-    let g = num.gcd_recursive(&den);
+    let g = num.gcd(&den);
     (num.div_floor(&g), den.div_floor(&g))
 }
 
@@ -4712,7 +4694,7 @@ fn find_point_by_conditional_expectations(
                             let f_cnt = res_count(f_i);
                             let num = &weights[b_idx].0 * &a_counts[i];
                             let den = &weights[b_idx].1 * &f_cnt;
-                            let g = num.gcd_recursive(&den);
+                            let g = num.gcd(&den);
                             w_sum = rat_add(&w_sum, &(num.div_floor(&g), den.div_floor(&g)));
                         }
                     } else {
@@ -4738,7 +4720,7 @@ fn find_point_by_conditional_expectations(
                         let f_cnt = res_count(f_i);
                         let num = &weights[b_idx].0 * &a_counts[i];
                         let den = &weights[b_idx].1 * &f_cnt;
-                        let g = num.gcd_recursive(&den);
+                        let g = num.gcd(&den);
                         weights[b_idx] = (num.div_floor(&g), den.div_floor(&g));
                         next_active.push(b_idx);
                     }
@@ -4925,34 +4907,36 @@ fn combine_crt_tree(mut pairs: Vec<(Int, Int)>) -> Option<(Int, Int)> {
     if pairs.is_empty() {
         return Some((Int::ZERO, Int::ONE));
     }
-    let tree = product_tree(pairs.iter().map(|(_, m)| m.clone()).collect());
-    let cof = cofactors_mod_leaves(&tree);
-    let mut vals: Option<Vec<Int>> = Some(Vec::with_capacity(pairs.len()));
-    for ((r, m), e) in pairs.iter().zip(&cof) {
-        let Some(inv) = inverse_mod(e, m) else {
+    // The moduli are above 1 here, so their magnitudes are the moduli.
+    let leaves: Vec<BigUint> = pairs.iter().map(|(_, m)| m.magnitude()).collect();
+    let levels = trees::product_tree(&leaves);
+    let cof = trees::cofactors_mod_leaves(&leaves, &levels);
+    let mut vals: Option<Vec<BigUint>> = Some(Vec::with_capacity(pairs.len()));
+    for ((r, m), e) in pairs.iter().zip(cof) {
+        let Some(inv) = inverse_mod(&from_uint(e), m) else {
             vals = None;
             break;
         };
         if let Some(v) = vals.as_mut() {
-            v.push((&r.mod_floor(m) * &inv).mod_floor(m));
+            // `mod_floor` by `m > 0` is in `[0, m)`, so its magnitude is the value.
+            v.push((&r.mod_floor(m) * &inv).mod_floor(m).magnitude());
         }
     }
     if let Some(mut vals) = vals {
-        for prods in &tree[..tree.len() - 1] {
-            vals = vals
-                .chunks(2)
-                .zip(prods.chunks(2))
-                .map(|(v, p)| {
-                    if v.len() == 2 {
-                        &(&v[0] * &p[1]) + &(&v[1] * &p[0])
-                    } else {
-                        v[0].clone()
-                    }
+        // Up the tree, the leaves first and every level below the root: each node's value is
+        // `v_left P_right + v_right P_left`; an odd node carried up keeps its value.
+        let below_root = &levels[..levels.len().saturating_sub(1)];
+        for prods in std::iter::once(&leaves).chain(below_root) {
+            vals = (vals.chunks(2).zip(prods.chunks(2)))
+                .map(|(v, p)| match (v, p) {
+                    ([v0, v1], [p0, p1]) => v0 * p1 + v1 * p0,
+                    _ => v[0].clone(),
                 })
                 .collect();
         }
-        let big_m = tree.last()?.first()?.clone();
-        return Some((vals.first()?.mod_floor(&big_m), big_m));
+        let big_m = trees::tree_product(&leaves, &levels).into_owned();
+        let x = vals.first()? % &big_m;
+        return Some((from_uint(x), from_uint(big_m)));
     }
     while pairs.len() > 1 {
         let mut next = Vec::with_capacity(pairs.len().div_ceil(2));
@@ -5529,20 +5513,16 @@ fn batch_remainders(x: &Int, moduli: &[Int]) -> Vec<Int> {
             .map(|m| if x.is_negative() { m + x } else { x.clone() })
             .collect();
     }
-    let tree = product_tree(moduli.to_vec());
-    let Some(root) = tree.last().and_then(|level| level.first()) else {
-        return Vec::new();
-    };
-    // Each remainder is `Int::mod_floor`, the kernel's O(M(n)) remainder past `i128`.
-    let mut rems = vec![x.mod_floor(root)];
-    for level in tree[..tree.len() - 1].iter().rev() {
-        rems = level
-            .iter()
-            .enumerate()
-            .map(|(i, m)| rems[i / 2].mod_floor(m))
-            .collect();
-    }
-    rems
+    // The kernel's remainder tree on `|x|` (moduli at least 1, so `uint_leaves` gives them
+    // unchanged), then `-|x| mod m` is `m - (|x| mod m)` when that is not 0. O(M(N) log k).
+    let leaves = uint_leaves(moduli);
+    let rems = trees::remainders(&x.magnitude(), &leaves, &trees::product_tree(&leaves));
+    (rems.into_iter().zip(&leaves))
+        .map(|(r, m)| match x.is_negative() && !r.is_zero() {
+            true => from_uint(m - r),
+            false => from_uint(r),
+        })
+        .collect()
 }
 
 /// `a^-1 mod m` for `m` above zero, in `[0, m)`, or `None` when `gcd(a, m) != 1`.

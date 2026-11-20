@@ -15,7 +15,7 @@ use num_traits::{One, Zero};
 use zed_kernel::bits::BitLen;
 use zed_kernel::num::{
     TooLarge, div_floor_int, div_rem_uint, gcd_uint, mod_floor_int, mul_int, mul_uint, pow_uint,
-    read_digits, rem_uint, room, to_decimal,
+    read_digits, rem_uint, room, to_decimal, trees,
 };
 use zed_numtheory::{
     bezout_i128, gcd_big_u64, gcd_u64, gcd_u128, inverse_mod_2_64, is_prime, next_prime,
@@ -83,6 +83,15 @@ impl Int {
         match &self.0 {
             Repr::Small(v) => Cow::Owned(BigInt::from(*v)),
             Repr::Big(v) => Cow::Borrowed(v),
+        }
+    }
+
+    /// `|self|` as a `BigUint`, for the kernel's routines over `BigUint` (its product and
+    /// remainder trees, `zed_kernel::num::trees`). O(n) for `n` words, a copy.
+    pub fn magnitude(&self) -> BigUint {
+        match &self.0 {
+            Repr::Small(v) => BigUint::from(v.unsigned_abs()),
+            Repr::Big(v) => v.magnitude().clone(),
         }
     }
 
@@ -188,27 +197,6 @@ impl Int {
         }
     }
 
-    // Complexity tradeoff: Stein's gcd is quadratic in the written bits.
-    // The one-variable solver explicitly uses the kernel's binary half-GCD,
-    // O(M(B) log B), while other solver paths keep their measured arithmetic.
-    // No input or answer is given up. Tests: pncx_wide_arithmetic_random_oracle;
-    // pncx_common_factor_scale and pncx_fibonacci_scale (still failing the strict
-    // allocation ratio) are deferred to plan row PERF-negated-chain-unsolved in
-    // wt/scratch/deferred-tests/PERF-negated-chain-unsolved.rs. Native
-    // representations keep direct gcd.
-    /// The nonnegative gcd using recursive half-GCD on wide operands.
-    pub fn gcd_recursive(&self, other: &Int) -> Int {
-        if matches!((&self.0, &other.0), (Repr::Small(_), Repr::Small(_))) {
-            self.gcd(other)
-        } else {
-            BigInt::from(zed_kernel::num::gcd_uint_recursive(
-                self.big().magnitude(),
-                other.big().magnitude(),
-            ))
-            .into()
-        }
-    }
-
     /// The extended gcd. Machine integers use the word extended Euclid of zed-numtheory
     /// ([`bezout_i128`]), the same steps and cofactors as the loop over `Int` it replaced,
     /// with no allocation; wider integers, and an operand `i128::MIN`, use the kernel's binary
@@ -221,6 +209,51 @@ impl Int {
         }
         zed_kernel::num::bezout_int(&self.big(), &b.big())
             .map(|(g, s, t)| (g.into(), s.into(), t.into()))
+    }
+
+    /// [`Int::extended_gcd`] for callers that need the factors: `(g, s, t)` with
+    /// `s self + t b = g = gcd(self, b) >= 0`. On machine integers the factors are extended
+    /// Euclid's, `|s| <= max(1, |b| / g)` and `|t| <= max(1, |self| / g)`; wider, the half
+    /// gcd's, reduced to the same bounds but not always the same pair (test
+    /// `bezout_agrees_with_euclid_on_words_and_is_valid_when_wide` in zedc-presburger).
+    ///
+    /// Total: where [`Int::extended_gcd`] is `None`, the factors come from [`Int::euclid_bezout`].
+    /// `extended_gcd` is `None` only when the kernel's half gcd (`num/fast.rs` `bezout_with`)
+    /// finds its count of halvings, or twice it, past `u64::MAX` (an `i128::MIN` operand makes
+    /// [`bezout_i128`] `None`, but that case falls through to the kernel). No bound on that
+    /// count is proved here, so the answer does not rest on one; the count is not expected to
+    /// pass `2^63` for any integer held in memory, so the fallback is not expected to run, and
+    /// its cost, O(n^2), is paid only if it does.
+    pub fn bezout(&self, b: &Int) -> (Int, Int, Int) {
+        self.extended_gcd(b).unwrap_or_else(|| {
+            let (g, s, t) = self.abs().euclid_bezout(b);
+            (g, if self.is_negative() { -&s } else { s }, t)
+        })
+    }
+
+    /// `(g, s, t)` with `s self + t b = g = gcd(self, b)`, for `self >= 0`, by the extended
+    /// Euclidean algorithm over `Int`: O(n^2) on n-word values. It is the fallback of
+    /// [`Int::bezout`] and the reference its tests compare against (zedc-presburger
+    /// `bezout_agrees_with_euclid_on_words_and_is_valid_when_wide`). The remainder sequence is
+    /// `r_{k+1} = r_{k-1} - q_k r_k`, `q_k = floor(r_{k-1} / r_k)`, from `(self, |b|)`, with the
+    /// factors updated by the same `q_k`; the last nonzero remainder is the gcd.
+    pub fn euclid_bezout(&self, b: &Int) -> (Int, Int, Int) {
+        let (mut r, mut next) = (self.clone(), b.abs());
+        let (mut s, mut ns) = (Int::ONE, Int::ZERO);
+        let (mut t, mut nt) = (Int::ZERO, Int::ONE);
+        while !next.is_zero() {
+            let q = r.div_floor(&next);
+            let rem = &r - &(&q * &next);
+            r = std::mem::replace(&mut next, rem);
+            let ns2 = &s - &(&q * &ns);
+            s = std::mem::replace(&mut ns, ns2);
+            let nt2 = &t - &(&q * &nt);
+            t = std::mem::replace(&mut nt, nt2);
+        }
+        if b.is_negative() {
+            t = -&t;
+        }
+        (r, s, t)
     }
 
     /// `self / m` rounded down, for `m` of either sign and not zero. Past `i128` the division
@@ -1085,48 +1118,15 @@ impl OddPart {
     }
 }
 
-/// `x mod m` for each `m` of `ms`, by a remainder tree (Bernstein, "Fast multiplication and
-/// its applications", 2008): the `ms` are multiplied in pairs up to one product
-/// `P`, `x` is reduced modulo `P` once, and each remainder is reduced modulo the two products
-/// below it. For `B` the bits of `P` the cost is that of the one division and
-/// `O(M(B) log B)`, where one division of `x` per `m` costs `O(bits of x)` each.
+/// `x mod m` for each `m` of `ms`, every `m` above 0, by the kernel's product and remainder
+/// trees ([`zed_kernel::num::trees`]): the `ms` are multiplied in pairs up to one product `P`,
+/// `x` is reduced modulo `P` once, and each remainder modulo the two products below it. For
+/// `B` the bits of `P` the cost is that of the one division and O(M(B) log k) for `k` moduli,
+/// where one division of `x` a modulus costs O(bits of `x`) each.
 fn remainders(x: &BigUint, ms: &[u64]) -> Vec<u64> {
-    // levels[0] holds the ms; each level above holds the products of pairs of the one below.
-    // A level of odd length moves its last product up unchanged, so a product with no
-    // partner is stored once, on the highest level it reaches.
-    let mut levels: Vec<Vec<BigUint>> = vec![ms.iter().map(|&m| BigUint::from(m)).collect()];
-    while let Some(below) = levels.last_mut()
-        && below.len() > 1
-    {
-        let alone = (below.len() % 2 == 1).then(|| below.pop().expect("odd length"));
-        let mut up: Vec<BigUint> = below
-            .as_chunks::<2>()
-            .0
-            .iter()
-            .map(|[a, b]| mul_uint(a, b))
-            .collect();
-        up.extend(alone);
-        levels.push(up);
-    }
-    let Some(top) = levels.pop() else {
-        return Vec::new();
-    };
-    let mut rems: Vec<BigUint> = top.iter().map(|t| rem_uint(x, t)).collect();
-    while let Some(nodes) = levels.pop() {
-        let mut down = Vec::with_capacity(2 * rems.len());
-        for (i, r) in rems.into_iter().enumerate() {
-            match nodes.get(2 * i..2 * i + 2) {
-                Some([a, b]) => {
-                    down.push(rem_uint(&r, a));
-                    down.push(rem_uint(&r, b));
-                }
-                // A product moved up from this level: `r` is already reduced modulo it.
-                _ => down.push(r),
-            }
-        }
-        rems = down;
-    }
-    rems.iter()
+    let leaves: Vec<BigUint> = ms.iter().map(|&m| BigUint::from(m)).collect();
+    let levels = trees::product_tree(&leaves);
+    (trees::remainders(x, &leaves, &levels).iter())
         .map(|r| u64::try_from(r).expect("below a word"))
         .collect()
 }

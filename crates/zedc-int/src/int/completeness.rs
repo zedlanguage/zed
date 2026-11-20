@@ -264,16 +264,6 @@ fn the_gcd_on_every_path_is_the_nonnegative_gcd() {
             let (x, y) = (Int::from(&a * sa), Int::from(&b * sb));
             assert_eq!(x.gcd(&y), want, "{case}, signs {sa} {sb}: gcd");
             assert_eq!(y.gcd(&x), want, "{case}, signs {sa} {sb}: gcd swapped");
-            assert_eq!(
-                x.gcd_recursive(&y),
-                want,
-                "{case}, signs {sa} {sb}: half-gcd"
-            );
-            assert_eq!(
-                y.gcd_recursive(&x),
-                want,
-                "{case}, signs {sa} {sb}: half-gcd swapped"
-            );
         }
     }
 }

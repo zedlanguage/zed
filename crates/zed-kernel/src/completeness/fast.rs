@@ -10,7 +10,7 @@ use num_integer::Integer;
 use num_traits::{One, Zero};
 
 use crate::num::crossover::{self, Kept};
-use crate::num::{bezout_int, div_rem_uint, gcd_uint, gcd_uint_recursive, read_digits, rem_uint};
+use crate::num::{bezout_int, div_rem_uint, gcd_uint, read_digits, rem_uint};
 
 /// Random words from `seed`, `words` of them, the top one not zero.
 fn random(seed: u64, words: usize) -> BigUint {
@@ -350,7 +350,6 @@ fn gcds() {
     for (i, (a, b)) in cases.iter().enumerate() {
         let want = a.gcd(b);
         assert_eq!(gcd_uint(a, b), want, "case {i}");
-        assert_eq!(gcd_uint_recursive(a, b), want, "case {i}, recursive");
         if a.is_zero() || b.is_zero() {
             continue;
         }

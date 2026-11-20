@@ -535,7 +535,7 @@ fn pncx_common_factors_reconstruct_inputs() {
         let bases: BTreeSet<_> = facs.values().flatten().map(|(b, _)| b).collect();
         for a in &bases {
             for b in bases.iter().filter(|b| *b < a) {
-                assert_eq!(a.gcd_recursive(b), Int::ONE);
+                assert_eq!(a.gcd(b), Int::ONE);
             }
         }
         for m in &ms {
@@ -547,7 +547,7 @@ fn pncx_common_factors_reconstruct_inputs() {
 /// `shares_a_factor` by its definition, a gcd of every pair.
 fn shares_a_factor_by_pairs(vals: &[Int]) -> Vec<bool> {
     (0..vals.len())
-        .map(|i| (0..vals.len()).any(|j| j != i && vals[i].gcd_recursive(&vals[j]) != Int::ONE))
+        .map(|i| (0..vals.len()).any(|j| j != i && vals[i].gcd(&vals[j]) != Int::ONE))
         .collect()
 }
 
@@ -891,4 +891,88 @@ fn pncx_shared_factor_table_reads_every_least_prime_factor() {
         shares_a_factor_by_table(&near, top),
         shares_a_factor_by_pairs(&vals)
     );
+}
+
+/// `combine_crt_tree` on pairwise coprime moduli (the tree path: odd counts carry a node up)
+/// and on moduli sharing a factor (the pairwise path), against the congruences themselves;
+/// a conflicting pair gives `None`.
+#[test]
+fn the_crt_tree_solves_its_congruences() {
+    // The odd primes from 3, the first of them times a wide value, so one modulus is past 128
+    // bits; the moduli are checked pairwise coprime below.
+    let big = &(&Int::from(i128::MAX) * &Int::from(i128::from(u64::MAX) + 14));
+    let primes: Vec<Int> = (3i64..200)
+        .filter(|p| (2..*p).all(|d| p % d != 0))
+        .map(Int::from)
+        .collect();
+    for k in [1usize, 2, 3, 5, 16, 17] {
+        for wide in [false, true] {
+            let ms: Vec<Int> = (primes[..k].iter())
+                .enumerate()
+                .map(|(i, p)| if wide && i == 0 { p * big } else { p.clone() })
+                .collect();
+            for (i, a) in ms.iter().enumerate() {
+                for b in &ms[i + 1..] {
+                    assert_eq!(a.gcd(b), Int::ONE, "moduli {a} and {b}");
+                }
+            }
+            let pairs: Vec<(Int, Int)> = (ms.iter().enumerate())
+                .map(|(i, m)| (Int::from(i as i64 * 7 + 1).mod_floor(m), m.clone()))
+                .collect();
+            let (x, m) = combine_crt_tree(pairs.clone()).expect("coprime");
+            assert_eq!(m, ms.iter().fold(Int::ONE, |a, v| &a * v), "k {k}");
+            assert!(!x.is_negative() && x < m, "k {k}");
+            for (r, mi) in &pairs {
+                assert_eq!(x.mod_floor(mi), *r, "k {k}");
+            }
+        }
+    }
+    let shared = vec![(Int::from(1), Int::from(6)), (Int::from(3), Int::from(10))];
+    assert_eq!(
+        combine_crt_tree(shared),
+        Some((Int::from(13), Int::from(30)))
+    );
+    let conflict = vec![(Int::from(1), Int::from(6)), (Int::from(2), Int::from(10))];
+    assert_eq!(combine_crt_tree(conflict), None);
+}
+
+/// The kernel's trees as this file uses them, on wide values (40 words each, and 1 among
+/// them): remainders of `x` and `-x` against `mod_floor`, `x` a multiple of one value so a
+/// remainder 0 occurs on the negative side; shared factors against the pairwise answer, with
+/// a repeated value and a product of two others among them.
+#[test]
+fn the_kernel_trees_agree_on_wide_values() {
+    let mut seed: u64 = 0x9e37_79b9_7f4a_7c15;
+    let mut next = move || {
+        seed ^= seed << 13;
+        seed ^= seed >> 7;
+        seed ^= seed << 17;
+        seed
+    };
+    let word = Int::from(i128::from(u64::MAX) + 1);
+    let mut wide = || {
+        let mut v = Int::from(i128::from(next() >> 20) | 1);
+        for _ in 0..40 {
+            v = &(&v * &word) + &Int::from(i128::from(next()));
+        }
+        v
+    };
+    for k in [1usize, 2, 3, 16, 17] {
+        let mut vals: Vec<Int> = (0..k).map(|_| wide()).collect();
+        let x = &vals.iter().fold(Int::ONE, |a, v| &(&a * v) + &Int::from(3)) * &vals[0];
+        for point in [x.clone(), -&x, Int::ZERO] {
+            let want: Vec<_> = vals.iter().map(|m| point.mod_floor(m)).collect();
+            assert_eq!(batch_remainders(&point, &vals), want, "k {k}");
+        }
+        vals.push(Int::ONE);
+        if k >= 3 {
+            vals.push(vals[1].clone());
+            vals.push(&vals[0] * &vals[2]);
+        }
+        assert_eq!(
+            shares_a_factor_by_tree(&vals),
+            shares_a_factor_by_pairs(&vals),
+            "k {k}"
+        );
+    }
 }

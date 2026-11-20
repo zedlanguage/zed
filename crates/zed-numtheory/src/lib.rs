@@ -147,49 +147,87 @@ pub const PRIME: u16 = u16::MAX;
 /// `sqrt(j) < 2^16`, and the largest prime below `2^16` is 65521, below the marker, so every
 /// entry fits a `u16`.
 ///
-/// The linear sieve: for `i` from 2 up, an `i` with no entry is prime, gets the marker and
-/// enters the list; then `least(i * q) = q` for the listed primes `q` in rising order, stopping
-/// at the first `q` above `least(i)` (which is `i` for a prime `i`) or with `i * q` above `top`.
-/// Proof that every composite `j <= top` gets its least prime factor `p`, and gets it once:
-/// `i = j / p` is at least `p` and below `j`, every prime factor of `i` is one of `j`, so
-/// `least(i) >= p`, and each prime `q <= p` is listed by then (`q <= i`) with
-/// `i * q <= j <= top`; so the loop at `i` reaches `q = p` and writes `least(j) = p`. A write
-/// `least(i * q) = q` is made only with `q <= least(i)`, so `q` is the least prime factor of
-/// `i * q`, and `j` fixes both `q` and `i`: one write per composite, and never over a prime's
-/// marker. With at most one stopping step per `i`, the sieve takes at most `2 top` steps. (The
-/// textbook linear sieve; the proof here is complete, and no paper is relied on.)
-// Complexity tradeoff: the sieve of Eratosthenes takes O(top log log top) steps and answers
-// only primality; this one takes O(top) steps and also gives the least prime factor, so a
-// value `v <= top` factors in one division per prime factor, at most `log2 v` of them. It holds
-// 2 bytes per number. For primality alone, [`odd_primes_below`] is the second sieve, kept for
-// a measured reason: it holds half a byte per number and ran 4 to 5 times faster up to
-// `top = 2^24` (DRY-number-theory, 2026-11-19, dev profile: 1.37 ms against 6.2 ms at 2^20,
-// 24 ms against 100 ms at 2^24, 1.40 s against 1.54 s at 2^27); COMPLEXITY.md, row
-// DRY-number-theory.
+/// The segmented sieve of Eratosthenes. The primes `p <= r = isqrt(top)` come from
+/// [`odd_primes_below`] (and 2). The table is filled one block of at least [`SIEVE_BLOCK`]
+/// entries at a time, and in each block every prime `p <= r`, from the greatest down to 2,
+/// writes `p` at each of its multiples in the block from `p^2` on. Proof that a composite
+/// `j <= top` ends with its least prime factor `p`: `p^2 <= j`, so `p <= r` and `p` writes at
+/// `j`; every other prime that writes at `j` divides `j`, so it is above `p` and, in the
+/// descending order within `j`'s block, writes before `p`. A prime `j` is written by no prime:
+/// a writer `p` divides `j`, so `p = j`, but `p` writes only from `p^2 > j`. So `j` stays 0
+/// and gets the marker at the end of its block, as 0 and 1, never written, keep 0. (The
+/// textbook segmented sieve; the proof here is complete, and no paper is relied on.)
+// Complexity tradeoff: the linear sieve this replaced (one write per composite, at most
+// `2 top` steps, O(top)) wrote `least(i q)` for each listed prime `q <= least(i)`, spread over
+// the whole table, so once the table (2 top bytes) left the caches nearly every write missed.
+// Measured (FAIL-bench-least-prime-factors-scaling, 2026-11-19, release, perf stat at load
+// 70 on 32 cores): from top = 2^20 to 2^23, instructions rose 7.95 times (145M to 1157M,
+// linear) but cycles 11.1 times (82M to 914M), with cache misses 12.2 times (0.65M to 7.89M,
+// 0.62 to 0.94 a table entry); the timing example's T(8n)/T(n) was 11.2 to 14.0 (dry1). This
+// sieve does O(top log log top) writes, each inside one block that stays in the cache; on
+// its whole domain, `top < 2^32`, that is still linear with a small constant: a prime `p`
+// writes at most `top / p + 1` times, so there are at most `top S + pi(2^16)` writes, with
+// `S` the sum of `1 / p` over the primes below 2^16, which the test
+// `the_sieve_writes_fewer_than_three_times_top` computes as 2.6678 (below 3). A
+// block holds at least `isqrt(top) + 1` entries, so the cost of finding a prime's first
+// multiple in a block, one division, is below that prime's writes there: O(top log log top)
+// in all. A fixed block length B would add `(top / B) pi(sqrt top)` divisions,
+// O(top^1.5 / (B log top)). Measured after: see COMPLEXITY.md, row
+// FAIL-bench-least-prime-factors-scaling.
+// For primality alone, [`odd_primes_below`] is the second sieve, kept for a measured reason:
+// it holds half a byte per number, against 2 bytes here (DRY-number-theory).
 pub fn least_prime_factors(top: u32) -> Vec<u16> {
+    least_prime_factors_in_blocks(top, SIEVE_BLOCK.max(top.isqrt() as usize + 1))
+}
+
+/// [`least_prime_factors`] with blocks of `block` entries, so that the tests can run block
+/// edges on small tables. Any `block >= 1` gives the same table, by the proof at
+/// [`least_prime_factors`]; only the cost depends on it.
+fn least_prime_factors_in_blocks(top: u32, block: usize) -> Vec<u16> {
     // `top as usize` is exact: `usize` is 64 bits on the one supported target (Linux x86_64).
-    let mut table = vec![0u16; top as usize + 1];
-    let mut primes: Vec<u32> = Vec::new();
-    for i in 2..=top {
-        let least_i = match table[i as usize] {
-            0 => {
-                table[i as usize] = PRIME;
-                primes.push(i);
-                i
+    let len = top as usize + 1;
+    let mut table = vec![0u16; len];
+    let r = top.isqrt();
+    let odd = odd_primes_below(u64::from(r) + 1);
+    // The primes up to `r` (and perhaps `r + 1`, which writes nothing: its square is past
+    // `top`), from the greatest down. `r + 1 <= 2^16`, and 2^16 is even, so each is at most
+    // 65535 and fits a `u16`; 65535 = 3 * 5 * 17 * 257 is not prime, so none is the marker.
+    let primes: Vec<u16> = (1..odd.len())
+        .rev()
+        .filter(|&i| odd[i])
+        .map(|i| (2 * i + 1) as u16)
+        .chain((r >= 2).then_some(2))
+        .collect();
+    for lo in (0..len).step_by(block) {
+        let hi = lo.saturating_add(block).min(len);
+        let part = &mut table[lo..hi];
+        for &p in &primes {
+            let p = usize::from(p);
+            let first = (p * p).max(lo.div_ceil(p) * p);
+            if first >= hi {
+                continue;
             }
-            e => u32::from(e),
-        };
-        for &q in &primes {
-            let j = u64::from(i) * u64::from(q);
-            if q > least_i || j > u64::from(top) {
-                break;
+            for j in (first - lo..hi - lo).step_by(p) {
+                // `p` came from a `u16` above and is not the marker.
+                part[j] = p as u16;
             }
-            // `q <= least(j) <= sqrt(j) < 2^16`, by the doc comment's proof.
-            table[j as usize] = q as u16;
+        }
+        for (j, e) in part.iter_mut().enumerate() {
+            if *e == 0 && lo + j >= 2 {
+                *e = PRIME;
+            }
         }
     }
     table
 }
+
+/// The entries of one block of [`least_prime_factors`], at least: 2^15 `u16`s, 64 KiB, which
+/// fits in the second-level cache (1 to 2 MiB a core on the x86_64 machines of the first
+/// release), so the writes of a block hit the cache. Nothing relies on the value for
+/// correctness: any length above 0 gives the same table (test
+/// `the_least_prime_table_agrees_with_trial_division`, which also runs tops across several
+/// blocks). Measured: COMPLEXITY.md, row FAIL-bench-least-prime-factors-scaling.
+const SIEVE_BLOCK: usize = 1 << 15;
 
 /// `prime[i]` holds when `2 i + 1` is prime, for `i < ceil(n / 2)`: every odd number below `n`,
 /// and `n` itself when it is odd. The sieve of Eratosthenes over the odd numbers, in
