@@ -437,6 +437,44 @@ fn change_once(m: &mut M, shared: bool, insert: bool, k: u64, step: u64, seed: u
     }
 }
 
+/// A map held in one leaf keeps its sum: a second sum, and a copy's, read no entry, and no entry
+/// is left unsummed; a change clears it, and the next sum is right. Before the leaf root kept
+/// its sum each sum read every entry again, which made building nested families quadratic
+/// (`Map::word`, FAIL-bench-main-f215d9c90).
+#[test]
+fn a_leaf_root_keeps_its_sum() {
+    let mut m: M = (0..MAX as u64).map(|k| (k, k + 1)).collect();
+    let mut reads = 0;
+    let mut counted = |k: &u64, v: &u64| {
+        reads += 1;
+        term(k, v)
+    };
+    assert_eq!(m.sum(&mut counted), fresh_sum(&m));
+    assert_eq!(reads, MAX);
+    let copy = m.clone();
+    for map in [&m, &copy] {
+        reads = 0;
+        let mut counted = |k: &u64, v: &u64| {
+            reads += 1;
+            term(k, v)
+        };
+        assert_eq!(map.sum(&mut counted), fresh_sum(&m));
+        assert_eq!(reads, 0, "a kept sum reads no entry");
+        let mut unsummed = 0;
+        map.for_each_unsummed(&mut |_, _| unsummed += 1);
+        assert_eq!(unsummed, 0);
+    }
+    // A value replaced, an entry added, one taken out: each clears the kept sum.
+    m.insert(3, 100);
+    assert_eq!(m.sum(&mut term), fresh_sum(&m));
+    m.insert(MAX as u64, 7);
+    assert_eq!(m.sum(&mut term), fresh_sum(&m));
+    m.remove(&0);
+    assert_eq!(m.sum(&mut term), fresh_sum(&m));
+    // The copy kept from before the changes keeps its own sum.
+    assert_eq!(copy.sum(&mut term), fresh_sum(&copy));
+}
+
 /// Every arm that moves entries or subtrees between nodes runs with the sums filled, in place
 /// and on a copy, and the kept sums stay right through each (plan row
 /// PERF-family-hash-count-only). Controls (not committed), each failing this test and

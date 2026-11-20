@@ -90,7 +90,20 @@ macro_rules! parts {
 /// A map from `K` to `V`, ordered by `K`. A copy costs O(1) and shares every node.
 pub(crate) struct Map<K, V> {
     root: Option<Node<K, V>>,
-    len: usize,
+    /// While the root is an inner node, the number of entries. While it is a leaf, whose length
+    /// is the number of entries, the sum of its entries once a sum has read them ([`Map::sum`]),
+    /// or [`UNSUMMED`]; with no root, [`UNSUMMED`].
+    // Complexity tradeoff: a leaf root's sum kept nowhere is read again at every sum, O(MAX)
+    // entries, each at the cost of its digest, which for an entry holding a family is that
+    // family's sum: a walk with a memo of its own (`value::family_sum`) read every family
+    // nested beneath, so building n sets each holding the last in a tuple took O(n^2) work
+    // (`m0_09 bench::shared::showing_sets_nested_inside_tuples_scales`, 130 s of processor
+    // time at depth 16,000; FAIL-bench-main-f215d9c90). Used: the word that holds the count of
+    // an inner root holds the sum of a leaf root, since a leaf's count is its length, so a map
+    // is 32 bytes as before and a value 56 (`value::tests::a_value_is_56_bytes`, COMPLEXITY.md
+    // K25). Tradeoff: an inner root's sum is joined from its branches' kept sums and its own
+    // entries, up to MAX read again at each sum; a field for it would make a value 64 bytes.
+    word: AtomicU64,
 }
 
 /// A node: its entries in key order, or its branches.
@@ -262,15 +275,19 @@ enum Target<'k, K> {
 
 impl<K, V> Default for Map<K, V> {
     fn default() -> Self {
-        Map { root: None, len: 0 }
+        Map {
+            root: None,
+            word: AtomicU64::new(UNSUMMED),
+        }
     }
 }
 
 impl<K, V> Clone for Map<K, V> {
+    /// The copy holds the same root, so it keeps the sum kept for it.
     fn clone(&self) -> Self {
         Map {
             root: self.root.clone(),
-            len: self.len,
+            word: AtomicU64::new(self.word.load(Relaxed)),
         }
     }
 }
@@ -278,12 +295,25 @@ impl<K, V> Clone for Map<K, V> {
 impl<K, V> Map<K, V> {
     /// The number of entries.
     pub(crate) fn len(&self) -> usize {
-        self.len
+        match &self.root {
+            None => 0,
+            Some(Node::Leaf(s)) => s.len(),
+            Some(Node::Inner(_)) => self.word.load(Relaxed) as usize,
+        }
     }
 
     /// Whether the map has no entries.
     pub(crate) fn is_empty(&self) -> bool {
-        self.len == 0
+        self.root.is_none()
+    }
+
+    /// Sets the word after a change that left `len` entries: the count for an inner root, no
+    /// sum kept for a leaf root or none.
+    fn changed(&mut self, len: usize) {
+        *self.word.get_mut() = match &self.root {
+            Some(Node::Inner(_)) => len as u64,
+            Some(Node::Leaf(_)) | None => UNSUMMED,
+        };
     }
 
     /// Whether the two maps are one tree, shared, or both empty.
@@ -329,7 +359,7 @@ impl<K, V> Map<K, V> {
         Iter {
             front: Cursor::new(root, height),
             back: Cursor::new(root, height),
-            left: self.len,
+            left: self.len(),
         }
     }
 
@@ -353,7 +383,9 @@ impl<K, V> Map<K, V> {
     // its child's sum once read, cleared on the path of a change (`Branch::child_mut`) and moved
     // with a child moved whole by a mend, so a sum after d changes reads the O(d log n) entries
     // of the nodes on their paths and the root: O(log n) amortized a change, O(n) only the
-    // first time. Tradeoff: 8 bytes an inner branch, one in about 9 of the tree's slots.
+    // first time; a leaf root's sum is kept too (`Map::word`), so a map of at most MAX entries
+    // is summed in O(1) after its first sum. Tradeoff: 8 bytes an inner branch, one in about 9
+    // of the tree's slots.
     pub(crate) fn sum(&self, entry: &mut impl FnMut(&K, &V) -> u64) -> u64 {
         fn node<K, V>(n: &Node<K, V>, entry: &mut impl FnMut(&K, &V) -> u64) -> u64 {
             match n {
@@ -374,7 +406,18 @@ impl<K, V> Map<K, V> {
                 }),
             }
         }
-        self.root.as_ref().map_or(0, |n| node(n, entry))
+        match &self.root {
+            None => 0,
+            Some(n @ Node::Leaf(_)) => match self.word.load(Relaxed) {
+                UNSUMMED => {
+                    let s = node(n, entry);
+                    self.word.store(s, Relaxed);
+                    s
+                }
+                s => s,
+            },
+            Some(n) => node(n, entry),
+        }
     }
 
     /// Calls `f` on each entry that [`Map::sum`] would read now, in key order: those beneath no
@@ -395,8 +438,10 @@ impl<K, V> Map<K, V> {
                 }
             }
         }
-        if let Some(n) = &self.root {
-            node(n, f);
+        match &self.root {
+            Some(Node::Leaf(_)) if self.word.load(Relaxed) != UNSUMMED => {}
+            Some(n) => node(n, f),
+            None => {}
         }
     }
 
@@ -450,11 +495,12 @@ impl<K, V> Map<K, V> {
             unit *= MAX + 1;
         }
         let mut it = v.into_iter();
-        let root = build(&mut it, len, unit);
-        Map {
-            root: Some(root),
-            len,
-        }
+        let mut m = Map {
+            root: Some(build(&mut it, len, unit)),
+            word: AtomicU64::new(UNSUMMED),
+        };
+        m.changed(len);
+        m
     }
 }
 
@@ -559,13 +605,18 @@ impl<K: Ord + Clone + Hole, V: Clone + Hole> Map<K, V> {
     // Tradeoff: a node of k entries is reallocated at each insertion into it, O(MAX) moves, to
     // keep it at exactly its length (no spare room as in imbl's fixed chunks of 16).
     pub(crate) fn insert(&mut self, k: K, v: V) -> bool {
+        let len = self.len();
         let Some(root) = &mut self.root else {
             self.root = Some(Node::Leaf(Arc::from([(k, v)])));
-            self.len = 1;
+            self.changed(1);
             return true;
         };
         match insert_in(root, k, v) {
-            Grown::Replaced => return false,
+            Grown::Replaced => {
+                // The value or key held may differ, so a leaf root's kept sum goes.
+                self.changed(len);
+                return false;
+            }
             Grown::Added => {}
             Grown::Split(middle, right) => {
                 let left = self.root.take().expect("a split node is the root");
@@ -576,7 +627,7 @@ impl<K: Ord + Clone + Hole, V: Clone + Hole> Map<K, V> {
                 reached(Arm::RootSplit);
             }
         }
-        self.len += 1;
+        self.changed(len + 1);
         true
     }
 
@@ -596,9 +647,10 @@ impl<K: Ord + Clone + Hole, V: Clone + Hole> Map<K, V> {
         if self.get(k).is_none() {
             return false;
         }
-        self.len -= 1;
-        if self.len == 0 {
+        let len = self.len() - 1;
+        if len == 0 {
             self.root = None;
+            self.changed(0);
             return true;
         }
         let root = self.root.as_mut().expect("a map holding a key has a root");
@@ -610,6 +662,7 @@ impl<K: Ord + Clone + Hole, V: Clone + Hole> Map<K, V> {
             self.root = Some(bs[0].child.clone());
             reached(Arm::RootCollapse);
         }
+        self.changed(len);
         true
     }
 }
