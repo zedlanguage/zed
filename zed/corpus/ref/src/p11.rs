@@ -2,8 +2,9 @@
 //! transition tables). A comma separates when the state before it is not 1 (inside quotes);
 //! fields are the text between separators. A line is a `Utf8String`, keyed by code point rank
 //! (DESIGN sec:order), so `chars()` walks the program's keys, and the field the program takes as
-//! `l.slice(cuts[k] + 1..<cuts[k + 1])` (11-csv-split.zed line 22, the ranks of that range, keys
-//! kept) is exactly the code points pushed here between two separators.
+//! `l.sliceCodePoints(cuts[k] + 1..<cuts[k + 1])` (11-csv-split.zed line 22, the code points of
+//! that range made a string again, ranked from 0; DESIGN sec:order, author answer A107) is
+//! exactly the code points pushed here between two separators.
 
 const QUOTE_NEXT: [usize; 3] = [1, 2, 1]; // after '"', by state
 const OTHER_NEXT: [usize; 3] = [0, 1, 0]; // after any other character

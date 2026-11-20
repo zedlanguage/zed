@@ -79,7 +79,7 @@ expression: "tokens_by_key(&fences::examples())"
   4 | reversed = s «as» ( i -> ch ) «into» ( s :: len - 1₍10₎ - i -> ch ) ;
   5 | noSpaces = s . where ( ch -> ch != char32 ( str[" "] ) ) . orderedValues ;
 == EXAMPLES.md [4. Strings] 4 L5
-  2 | sub = s . slice ( 0₍10₎ ..< 5₍10₎ ) ;
+  2 | sub = s . sliceCodePoints ( 0₍10₎ ..< 5₍10₎ ) ;
   3 | has = s . contains ( str["world"] ) ;
   4 | trim = str["  x "] . trim ;
   5 | ls = text . lines ;
