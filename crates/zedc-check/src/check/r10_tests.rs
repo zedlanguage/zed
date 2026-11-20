@@ -3565,6 +3565,12 @@ fn landing6_variables_read_by_held_functions_agree_with_e() {
     assert!(fits_sig(&e1, &e1) && fits_sig(&d1, &d1), "control");
     assert_eq!(fits_sig(&d1, &d2), fits_sig(&e1, &e2));
     let (c, f) = landing6_held_read_pair(true);
+    // Landing review round 8, Gemini BLOCKING-2: the class the held function reads from around
+    // is one a signature around may own ([`VarFacts::outer_classes`], read by `fits_sig`); D
+    // left it out (`{}` against `{"$99"}`).
+    let (oc, of) = (&c.facts().outer_classes, &f.facts().outer_classes);
+    assert!(of.contains("$99"), "{of:?}");
+    assert_eq!(oc, of);
     let sub: Binds = [("$99".into(), int())].into_iter().collect();
     assert_eq!(c.replace(&sub), f.replace(&sub));
     let solve = |v: &str| (v == "$99").then(int);
@@ -3825,6 +3831,52 @@ fn landing6_permuted_sig_owns_the_internal_results() {
         }
     }
     assert!(grew > 0, "no forward with internal results was met");
+}
+
+/// `t{i} = (t{i-1}, t{i-1})` (or `#box(…)`) 40 times over `t0`: one row or shape shared at
+/// each of 40 levels.
+fn doubled_src(t0: &str, wrap: (&str, &str), tail: &str) -> String {
+    let mut s = String::from("{\n  t0 = ");
+    s.push_str(t0);
+    s.push_str(";\n");
+    for i in 1..=40 {
+        s.push_str(&format!(
+            "  t{i} = {}t{}, t{}{};\n",
+            wrap.0,
+            i - 1,
+            i - 1,
+            wrap.1
+        ));
+    }
+    s.push_str(&format!("  {tail}\n}}"));
+    s
+}
+
+/// Landing review round 8, Gemini BLOCKING-1: the signature hash walks a row shared at each
+/// of 40 levels once per context, also when the walk adds to a side sum of the hash (the
+/// place of a tracked parameter in a forward's summary, or the rank of an own need result),
+/// and D gives E's result. Before the fix such a walk was not stored in the memo, so it went
+/// down every path: 2^40 (Gemini measured 5.3G and 6.2G check instructions at 20 levels).
+#[test]
+fn r10_rows_shared_at_40_levels_holding_side_sum_variables_agree_with_e() {
+    let fwd = |wrap| {
+        format!(
+            "h0(positional f, positional x) = {};\nh1(positional f, positional x) = h0(f, x);\n",
+            doubled_src("x", wrap, "f(t40)")
+        )
+    };
+    for src in [
+        fwd(("(", ")")),
+        fwd(("#box(", ")")),
+        format!(
+            "f(positional m) = {};\n",
+            doubled_src("m[0]", ("(", ")"), "m[t40]")
+        ),
+    ] {
+        let (e, _) = run_with_cfg(&src, R10Config::eager());
+        let (d, _) = run_with_cfg(&src, R10Config::default());
+        assert_info_eq(&src, &e, &d);
+    }
 }
 
 mod landing6_battery;

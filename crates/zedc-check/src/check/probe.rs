@@ -763,6 +763,9 @@ mod on {
 
     impl<C> Drop for Classes<C> {
         fn drop(&mut self) {
+            // The counts are of the eager path (E) only; D is the default, so a run that
+            // writes them to `ZED_FORWARD_PROBE` sets `ZED_DISABLE_D=1` (landing review
+            // round 8, Gemini).
             if self.sparse_enabled {
                 return;
             }

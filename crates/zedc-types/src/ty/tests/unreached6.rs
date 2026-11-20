@@ -296,26 +296,30 @@ fn a_row_shared_at_64_levels_hashes_without_counting_its_tokens() {
     assert_eq!(signature().digest(), signature().digest());
 }
 
-/// A walk of a shared row that adds to a side sum of the hash (here `s_params`, the position
-/// of each tracked parameter, as a need's summary takes it) is not replayed from the memo, and
-/// adds at the absolute position although the walk restarts the hash from empty: the hash and
-/// the sums, for the rows shared and built apart, are those of a walk of every path that
-/// memoizes nothing.
+/// A walk of a shared row that adds to a side sum of the hash is replayed from the memo with
+/// its sums, scaled to the place it is met at, although the walk restarts the hash from
+/// empty: the hash and the sums, for the rows shared and built apart, are those of a walk of
+/// every path that memoizes nothing. The three leaves add to the three kinds of side sum:
+/// `P`, a tracked parameter, to `s_params` (as a need's summary takes it); `R`, an own need
+/// result read in the needs, to `s_rank`; a class number of `P` or more sets
+/// `fallback_large_id`. At 40 levels the walk of every path would take 2^40 steps (landing
+/// review round 8, Gemini BLOCKING-1), so the shared row must be read from the memo.
 #[test]
 fn a_shared_row_of_a_tracked_parameter_adds_each_place_to_the_side_sums() {
     use r10_hash::{Encoder, ScopePhase, SigScope};
-    fn apart(depth: usize) -> Ty {
+    const LARGE: &str = "$18446744073709551615";
+    fn apart(leaf: &str, depth: usize) -> Ty {
         if depth == 0 {
-            return Ty::tuple(vec![var("P"), int()]);
+            return Ty::tuple(vec![var(leaf), int()]);
         }
-        Ty::tuple(vec![apart(depth - 1), apart(depth - 1)])
+        Ty::tuple(vec![apart(leaf, depth - 1), apart(leaf, depth - 1)])
     }
     // With `keep_stream`, the encoder walks every path and memoizes nothing.
     let encode = |t: &Ty, keep_stream: bool| {
         let mut enc = Encoder::new(17, keep_stream);
         enc.push_scope(SigScope {
-            own: [Arc::from("P")].into_iter().collect(),
-            mat_result_ranks: HashMap::new(),
+            own: [Arc::from("P"), Arc::from("R")].into_iter().collect(),
+            mat_result_ranks: [(Arc::from("R"), 3)].into_iter().collect(),
             phase: ScopePhase::Needs,
             is_root: true,
         });
@@ -323,15 +327,27 @@ fn a_shared_row_of_a_tracked_parameter_adds_each_place_to_the_side_sums() {
         // A token before the type, so that its walk starts at a power of `r` other than 1.
         enc.emit_ty(&int());
         enc.emit_ty(t);
-        (enc.part.finalize(), enc.s_params)
+        let mut params: Vec<_> = enc.s_params.into_iter().collect();
+        params.sort();
+        (
+            enc.part.finalize(),
+            params,
+            enc.s_rank,
+            enc.fallback_large_id,
+        )
     };
-    for depth in 0..8 {
-        let (shared, built_apart) = (doubled(apart(0), depth), apart(depth));
-        assert_eq!(shared, built_apart);
-        let walked = encode(&built_apart, true);
-        assert!(!walked.1.is_empty(), "the parameter is tracked");
-        assert_eq!(encode(&shared, false), walked, "depth {depth}");
-        assert_eq!(encode(&built_apart, false), walked, "depth {depth}");
+    for leaf in ["P", "R", LARGE] {
+        for depth in 0..8 {
+            let (shared, built_apart) = (doubled(apart(leaf, 0), depth), apart(leaf, depth));
+            assert_eq!(shared, built_apart);
+            let walked = encode(&built_apart, true);
+            let summed = !walked.1.is_empty() || walked.2 != 0 || walked.3;
+            assert!(summed, "{leaf}: a side sum is taken");
+            assert_eq!(encode(&shared, false), walked, "{leaf}, depth {depth}");
+            assert_eq!(encode(&built_apart, false), walked, "{leaf}, depth {depth}");
+        }
+        let deep = |k| encode(&doubled(apart(leaf, 0), k), false);
+        assert_ne!(deep(40).0, deep(39).0, "{leaf}");
     }
 }
 

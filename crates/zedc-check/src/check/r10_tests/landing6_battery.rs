@@ -150,6 +150,11 @@ fn cmp_sig(label: &str, c: &Sig, f: &Sig, cx: &Ctx, out: &mut Found) {
         format!("{:?}", fc.outer),
         format!("{:?}", ff.outer),
     );
+    bad(
+        "facts.outer_classes",
+        format!("{:?}", fc.outer_classes),
+        format!("{:?}", ff.outer_classes),
+    );
     bad("facts.binds", fc.binds.to_string(), ff.binds.to_string());
     let tc = Ty::func(Arc::new(c.clone()));
     let tf = Ty::func(Arc::new(f.clone()));

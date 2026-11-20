@@ -4205,8 +4205,13 @@ impl VarFacts {
                         add(&mut g.outer, ov);
                     }
                 }
+                // As `held_outer` (landing review round 8, Gemini BLOCKING-2: left out, a
+                // compact signature lacked the class a flat one gives `fits_sig`).
                 for cv in &fwd.held_classes {
                     g.add_to(true, cv, &mut added);
+                    if !s.own.contains(cv) {
+                        add(&mut g.outer_classes, cv);
+                    }
                 }
             }
         }
@@ -28571,25 +28576,39 @@ pub mod r10_hash {
         pub s_span_end: u64,
         pub s_map_lambda_true: u64,
         pub fallback_large_id: bool,
-        /// The hash of each row and shape walked by [`Encoder::memoized`], by its address and
-        /// the context it was walked in (0 for one that holds no variable, whose hash is the
-        /// same in every context; else `ctx`). Each entry keeps its row or shape alive, so a
-        /// temporary freed during the walk (a decoded need) cannot hand its address to another
-        /// row and that row read the first one's hash.
-        memo: HashMap<(*const (), u64), (PartHash, Walked)>,
+        /// The hash of each row and shape walked by [`Encoder::memoized`], with its side sums
+        /// taken from the start of its walk ([`Sums`]), by its address and the context it was
+        /// walked in (0 for one that holds no variable, whose hash is the same in every
+        /// context; else `ctx`). Each entry keeps its row or shape alive, so a temporary freed
+        /// during the walk (a decoded need) cannot hand its address to another row and that
+        /// row read the first one's hash.
+        memo: HashMap<(*const (), u64), (PartHash, Sums, Walked)>,
         /// The scope stack's state: a new number each time a scope is pushed or changed, the
         /// number from before the push when it is popped. Two walks of one row under one
         /// number read the same scopes, so give the same tokens.
         ctx: u64,
         next_ctx: u64,
-        /// The power of `r` at the start of `part` within the whole stream: `part` restarts
-        /// from empty inside [`Encoder::memoized`], and the side sums (`s_rank`, `s_params`,
-        /// the tracked spans, `s_map_lambda_true`) are taken at the absolute position,
-        /// `base_pow * part.pow`.
+        /// The power of `r` at the start of `part` within the stream the side sums (`s_rank`,
+        /// `s_params`, the tracked spans, `s_map_lambda_true`) are taken in, `base_pow *
+        /// part.pow` at a token: the whole stream outside [`Encoder::memoized`], the walk of
+        /// the innermost memoized row inside it (where `base_pow` restarts at 1).
         base_pow: u64,
-        /// How many side sums or `fallback_large_id` were changed: a walk that changed none
-        /// is replayed from `memo` exactly; one that changed some is not stored.
-        effects: u64,
+    }
+
+    /// The side sums of one memoized walk, each taken with the power of `r` at the walk's
+    /// start as 1. Each sum adds `c * r^i` for a token at place `i` of the stream, with `c`
+    /// fixed by the token, so the walk met at a place of power `a` adds `a` times these
+    /// (and `fallback_large_id` is an or): replaying them gives the sums of a walk of every
+    /// path.
+    #[derive(Default)]
+    struct Sums {
+        s_rank: u64,
+        s_params: Vec<(Arc<str>, u64)>,
+        span_contrib: u64,
+        s_span_start: u64,
+        s_span_end: u64,
+        s_map_lambda_true: u64,
+        fallback_large_id: bool,
     }
 
     /// A row or shape kept alive by [`Encoder::memo`].
@@ -28618,7 +28637,6 @@ pub mod r10_hash {
                 ctx: 1,
                 next_ctx: 1,
                 base_pow: 1,
-                effects: 0,
             }
         }
 
@@ -28662,11 +28680,16 @@ pub mod r10_hash {
         /// in, `O(nodes * contexts)`, at the cost of one lookup and one multiply a row. A row
         /// that holds no variable gives the same tokens in every context; one that holds
         /// variables gives tokens that read only `scopes` (fixed by `ctx`), `tracked_params`
-        /// (fixed for the encoder) and `r`. The walk starts from an empty `part` and is
-        /// joined after, which [`PartHash::concat`] makes exact; the side sums inside read
-        /// [`Encoder::abs_pow`], so they stay at their absolute positions, and a walk that
-        /// changed one is not stored, as a replay would leave it out. With `stream` kept the
-        /// walk is not memoized, so the stream holds every token.
+        /// (fixed for the encoder) and `r`. The walk starts from an empty `part`, with the
+        /// side sums at zero and `base_pow` at 1, and is joined after: [`PartHash::concat`]
+        /// makes the hash exact, and the walk's sums ([`Sums`]) are added times the power of
+        /// `r` where the row is met, which gives the sums of a walk of every path, as each sum
+        /// is linear in that power. Joining costs `O(1 + tracked parameters met)` a row. The
+        /// first version stored no walk that changed a side sum, so a shared row holding a
+        /// tracked parameter or an own need result went down every path (landing review
+        /// round 8, Gemini BLOCKING-1; test
+        /// `a_shared_row_of_a_tracked_parameter_adds_each_place_to_the_side_sums`). With
+        /// `stream` kept the walk is not memoized, so the stream holds every token.
         fn memoized(
             &mut self,
             addr: *const (),
@@ -28679,22 +28702,58 @@ pub mod r10_hash {
                 return;
             }
             let key = (addr, if closed { 0 } else { self.ctx });
-            if let Some(&(cached, _)) = self.memo.get(&key) {
-                self.part = self.part.concat(cached);
-                return;
+            let at = self.abs_pow();
+            if !self.memo.contains_key(&key) {
+                let saved = self.part;
+                let outer_base = self.base_pow;
+                let outer = self.take_sums();
+                self.base_pow = 1;
+                self.part = PartHash::empty();
+                walk(self);
+                let sub = self.part;
+                let rel = self.take_sums();
+                self.put_sums(outer);
+                self.part = saved;
+                self.base_pow = outer_base;
+                self.memo.insert(key, (sub, rel, keep()));
             }
-            let saved = self.part;
-            let outer_base = self.base_pow;
-            let effects = self.effects;
-            self.base_pow = mul_p(outer_base, saved.pow);
-            self.part = PartHash::empty();
-            walk(self);
-            let sub = self.part;
-            self.part = saved.concat(sub);
-            self.base_pow = outer_base;
-            if self.effects == effects {
-                self.memo.insert(key, (sub, keep()));
+            let (sub, rel, _) = &self.memo[&key];
+            self.part = self.part.concat(*sub);
+            self.s_rank = add_p(self.s_rank, mul_p(rel.s_rank, at));
+            for (v, s) in &rel.s_params {
+                let e = self.s_params.entry(v.clone()).or_insert(0);
+                *e = add_p(*e, mul_p(*s, at));
             }
+            self.span_contrib = add_p(self.span_contrib, mul_p(rel.span_contrib, at));
+            self.s_span_start = add_p(self.s_span_start, mul_p(rel.s_span_start, at));
+            self.s_span_end = add_p(self.s_span_end, mul_p(rel.s_span_end, at));
+            self.s_map_lambda_true =
+                add_p(self.s_map_lambda_true, mul_p(rel.s_map_lambda_true, at));
+            self.fallback_large_id |= rel.fallback_large_id;
+        }
+
+        /// Takes the side sums out, leaving them at zero.
+        fn take_sums(&mut self) -> Sums {
+            Sums {
+                s_rank: std::mem::take(&mut self.s_rank),
+                s_params: std::mem::take(&mut self.s_params).into_iter().collect(),
+                span_contrib: std::mem::take(&mut self.span_contrib),
+                s_span_start: std::mem::take(&mut self.s_span_start),
+                s_span_end: std::mem::take(&mut self.s_span_end),
+                s_map_lambda_true: std::mem::take(&mut self.s_map_lambda_true),
+                fallback_large_id: std::mem::take(&mut self.fallback_large_id),
+            }
+        }
+
+        /// Puts back side sums taken by [`Encoder::take_sums`].
+        fn put_sums(&mut self, s: Sums) {
+            self.s_rank = s.s_rank;
+            self.s_params = s.s_params.into_iter().collect();
+            self.span_contrib = s.span_contrib;
+            self.s_span_start = s.s_span_start;
+            self.s_span_end = s.s_span_end;
+            self.s_map_lambda_true = s.s_map_lambda_true;
+            self.fallback_large_id = s.fallback_large_id;
         }
 
         #[inline]
@@ -28729,7 +28788,6 @@ pub mod r10_hash {
 
         #[inline]
         fn emit_tracked_span(&mut self, s: Span) {
-            self.effects += 1;
             let p_start = self.abs_pow();
             self.emit_usize(s.start);
             let p_end = self.abs_pow();
@@ -28824,9 +28882,6 @@ pub mod r10_hash {
                 self.emit(tag);
                 self.emit_usize(len);
                 let pos_pow = self.abs_pow();
-                if rank_mult > 0 || !param_hits.is_empty() {
-                    self.effects += 1;
-                }
                 if rank_mult > 0 {
                     self.s_rank = add_p(self.s_rank, mul_p(mod_p(rank_mult as u128), pos_pow));
                 }
@@ -28837,7 +28892,6 @@ pub mod r10_hash {
                 self.emit(sum);
             } else {
                 self.fallback_large_id = true;
-                self.effects += 1;
                 self.emit(TAG_VAR_SET_FALLBACK);
                 self.emit(tag);
                 self.emit_usize(len);
@@ -28876,7 +28930,6 @@ pub mod r10_hash {
                 }
             } else {
                 self.fallback_large_id = true;
-                self.effects += 1;
                 self.emit(TAG_VAR_SET_FALLBACK);
                 self.emit(TAG_BOUNDS_SET);
                 self.emit_usize(bounds.len());
@@ -29241,7 +29294,6 @@ pub mod r10_hash {
                     self.emit_ty(f);
                     self.emit_map_word(*word);
                     if track_top_spans && *lambda {
-                        self.effects += 1;
                         let p_lam = self.abs_pow();
                         self.s_map_lambda_true = add_p(self.s_map_lambda_true, p_lam);
                     }

@@ -53,7 +53,8 @@ zedc-preimage = { workspace = true, features = ["counts", "preimage-ref"] }
 # (OSP-diag). Off in a release build.
 printed-types = ["zedc-check/printed-types"]
 # The checker's counters for design D of row FAIL-map-chain-needs-quadratic (zedc-check's
-# `forward-probe`). Off in a release build.
+# `forward-probe`). Off in a release build. They are counted on the eager path only: run with
+# `ZED_DISABLE_D=1`.
 forward-probe = ["zedc-check/forward-probe"]
 # The test-only modes of the obligation check (zedc-check's `obligation-test-modes`,
 # TEST-random-sweep-off). Off in a release build.

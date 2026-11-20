@@ -57,7 +57,8 @@ perf-event2.workspace = true
 printed-types = ["zedc-types/printed-types"]
 # Counts, on the eager path of the checker, the calls design D of row FAIL-map-chain-needs-quadratic
 # would admit and where each would be forced (row FAIL-map-chain-step0, `check/probe.rs`). Off in
-# a release build; on in this crate's own tests.
+# a release build; on in this crate's own tests. D is the default, so a run that writes the
+# report (`ZED_FORWARD_PROBE=<path>`) also sets `ZED_DISABLE_D=1`.
 forward-probe = []
 # The test-only modes of the obligation check (`check::obligation_test_modes`,
 # TEST-random-sweep-off): the specific fixes off, the end-of-walk check off. Off in a release
