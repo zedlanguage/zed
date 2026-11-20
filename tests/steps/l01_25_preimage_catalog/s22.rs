@@ -3408,8 +3408,9 @@ fn the_cover_on_three_shapes_at_moduli_5_and_7_matches_the_interpreter() {
 }
 
 /// The negative control of [`the_cover_on_three_shapes_at_moduli_5_and_7_matches_the_interpreter`]:
-/// on each of the cases whose answer changed with d85e3b436 and with the residue questions
-/// asked one piece at a time (modulus, seed, shape, k; [`REFUSED_WITH_TWO_DISJUNCTIONS`]), the
+/// on each of the cases whose answer changed with d85e3b436, with the residue questions asked
+/// one piece at a time, and with every question named by its structure (the last two;
+/// modulus, seed, shape, k; [`REFUSED_WITH_TWO_DISJUNCTIONS`]), the
 /// cover's answer with one value of `x` that has a point meeting the demand taken out of its
 /// box fails [`check`], so that test would catch a cover that drops such a value.
 #[test]
@@ -3431,6 +3432,8 @@ fn a_cover_with_one_value_of_x_dropped_fails_the_interpreter_check() {
         (7, 3, "a test of the chain", 5),
         (7, 3, "a test of the chain", 13),
         (7, 3, "arms over x", 5),
+        (5, 2, "a test of the chain", 13),
+        (7, 2, "arms over x", 2),
     ] {
         let t = remainder_shape(shape, moved_remainder_chain(seed, k, "x", m));
         let p = preimage(&t, &ds, &d);
@@ -3474,13 +3477,15 @@ fn a_cover_with_one_value_of_x_dropped_fails_the_interpreter_check() {
 /// and `(5, 2, "arms over x", 5)`, `(7, 1, "arms of x and y", 5)`,
 /// `(7, 2, "a test of the chain", 2)`, `(7, 3, "a test of the chain", 13)` and
 /// `(7, 3, "arms over x", 5)` are answered, each matching the interpreter, and no case answered
-/// before is refused. No search gave `Quick::Empty` on these cases: of the 130 gaps of all five
-/// shapes, 89 got a point, 41 went to the solver, and the solver found a point in each, so no
-/// backjump passed over a point.
-const REFUSED_WITH_TWO_DISJUNCTIONS: [(i64, u64, &str, usize); 16] = [
+/// before is refused. Since `project_each` names every question by its structure, and the
+/// coloring reads a constraint the formula writes twice once (PRES-project-each-naming),
+/// `(5, 2, "a test of the chain", 13)` and `(7, 2, "arms over x", 2)` are answered too, each
+/// matching the interpreter, and no case answered before is refused. No search gave
+/// `Quick::Empty` on these cases: of the 130 gaps of all five shapes, 89 got a point, 41 went
+/// to the solver, and the solver found a point in each, so no backjump passed over a point.
+const REFUSED_WITH_TWO_DISJUNCTIONS: [(i64, u64, &str, usize); 14] = [
     (5, 2, "arms of x and y", 13),
     (5, 2, "arms over x", 13),
-    (5, 2, "a test of the chain", 13),
     (5, 3, "arms over x", 13),
     (7, 1, "arms of x and y", 13),
     (7, 1, "arms over x", 5),
@@ -3488,7 +3493,6 @@ const REFUSED_WITH_TWO_DISJUNCTIONS: [(i64, u64, &str, usize); 16] = [
     (7, 1, "a test of the chain", 5),
     (7, 1, "a test of the chain", 13),
     (7, 2, "arms of x and y", 5),
-    (7, 2, "arms over x", 2),
     (7, 2, "arms over x", 5),
     (7, 2, "arms over x", 13),
     (7, 2, "a test of the chain", 13),

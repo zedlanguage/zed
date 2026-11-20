@@ -1010,16 +1010,17 @@ fn taking_a_shared_part_out_keeps_the_holes_of_a_projection() {
 /// give the exact sets, so the same.
 ///
 /// Formula 9 of the same seed, `2 c >= -4 && !(...)`, was this test's case until
-/// `project_each` renamed every question by its structure (PRES-project-each-naming): under its
-/// written names the solver alone narrows `b` from (-inf, inf) to (-inf, 0] once `2 b >= 2` is
-/// taken out, but under the names its structure gives it (every naming now gets those) the
-/// solver alone gives `b` in (-inf, inf) both ways, coarser than the exact (-inf, 0] (inside the
-/// negation `3 c <= 4 || 3 c >= 4` always holds, so `b <= 0`). The solver alone is a test
-/// control; with the cover, the default, both namings give the exact sets. The control below
-/// (`NAMES_AS_WRITTEN`) asks formula 9 under its written names, where the narrowing shows.
+/// `project_each` renamed every question by its structure (PRES-project-each-naming), and is
+/// now its control, the same both ways: the solver alone narrowed `b` from (-inf, inf) to
+/// (-inf, 0] once `2 b >= 2` was taken out only because the factored formula, which holds the
+/// part once, and the formula as written, which writes it twice, were named apart by the
+/// coloring of their atoms. Named alike, the solver alone gives `b` in (-inf, inf) both ways,
+/// coarser than the exact (-inf, 0] (inside the negation `3 c <= 4 || 3 c >= 4` always holds,
+/// so `b <= 0`), even with `NAMES_AS_WRITTEN`, as the reduced product names its own questions
+/// by the same coloring. The solver alone is a test control; with the cover, the default, both
+/// writings give the exact sets.
 #[test]
 fn a_shared_part_taken_out_narrows_a_projection() {
-    use zedc::store::presburger::NAMES_AS_WRITTEN;
     let f = tiers_formula(0x5F5B, 2161);
     let c = solver_alone(|| factoring_loses_no_precision([(2161, f.clone())]));
     assert_eq!((c.same, c.narrower, c.answered), (0, 1, 0), "{c:?}");
@@ -1028,16 +1029,8 @@ fn a_shared_part_taken_out_narrows_a_projection() {
     let f = tiers_formula(0x5F5B, 9);
     let c = solver_alone(|| factoring_loses_no_precision([(9, f.clone())]));
     assert_eq!((c.same, c.narrower, c.answered), (1, 0, 0), "{c:?}");
-    let c = factoring_loses_no_precision([(9, f.clone())]);
+    let c = factoring_loses_no_precision([(9, f)]);
     assert_eq!((c.same, c.narrower, c.answered), (1, 0, 0), "{c:?}");
-    NAMES_AS_WRITTEN.with(|n| n.set(true));
-    let c = solver_alone(|| factoring_loses_no_precision([(9, f)]));
-    NAMES_AS_WRITTEN.with(|n| n.set(false));
-    assert_eq!(
-        (c.same, c.narrower, c.answered),
-        (0, 1, 0),
-        "control: {c:?}"
-    );
 }
 
 /// The counts of [`factoring_loses_no_precision`]: projections the same as the formula's as

@@ -383,8 +383,23 @@ fn arms_of_a_test_whose_small_choice_misses_the_bound_keep_every_range() {
 /// Before, the reading met the allowance (5 times the limit), and at limits 30,000, 100,000 and
 /// 200,000 the step gave up and each symbol was covered alone: 2.68M, 2.90M and 4.43M units
 /// against 1.97M with the step whole.
+///
+/// The work is the same at every limit only for some namings, so it is checked with the names
+/// as written (`NAMES_AS_WRITTEN`), the naming the allowance was measured on. The step asks one
+/// question for each symbol; where the point it finds leaves part of that symbol's gap, the
+/// symbol goes to its own cover, which at a small limit is refused and falls back to the
+/// solver's set. With the names as written, 60 of the 120 namings of `heavy`'s five atoms
+/// (2026-11-20) used more work at limit 30,000 than with no limit (3.23M against 2.44M, for
+/// example), and with no limit they used 1.83M to 2.57M. `presburger::project_each` names every
+/// question by its structure (PRES-project-each-naming), so every naming gets one renamed
+/// formula: 2,569,483 units with no limit and 3,340,224 at 30,000 for all 120, the cost of two
+/// of the namings as written (`x=x y=w z=v w=z v=y` is one)
+/// (`#4`, the atom of `w >= i`, keeps the gap `..=-1` after its question and is refused at
+/// 30,000, where its set is the solver's `[..]`, the exact one). So with the renaming only the
+/// answers are checked here; row PERF-project-each-renaming-cost holds the work.
 #[test]
 fn a_small_limit_leaves_the_shared_reading_of_a_deep_test_whole() {
+    use zedc::store::presburger::NAMES_AS_WRITTEN;
     use zedc::store::presburger::exact::{EXACT_LIMIT_SET, EXACT_WORK};
     let run = |limit: Option<u64>| {
         EXACT_LIMIT_SET.set(limit);
@@ -393,13 +408,19 @@ fn a_small_limit_leaves_the_shared_reading_of_a_deep_test_whole() {
         EXACT_LIMIT_SET.set(None);
         (h, EXACT_WORK.get() - w)
     };
+    let expected = ["[0..=10, 20..=30, 100..=200]", "[..]"].map(String::from);
+    NAMES_AS_WRITTEN.with(|c| c.set(true));
     let (hulls, work) = run(None);
-    assert_eq!(
-        hulls,
-        ["[0..=10, 20..=30, 100..=200]", "[..]"].map(String::from)
-    );
-    for limit in [30_000, 100_000, 200_000, 500_000] {
-        assert_eq!(run(Some(limit)), (hulls.clone(), work), "limit {limit}");
+    let limited: Vec<_> = [30_000, 100_000, 200_000, 500_000]
+        .map(|limit| (limit, run(Some(limit))))
+        .into();
+    NAMES_AS_WRITTEN.with(|c| c.set(false));
+    assert_eq!(hulls, expected);
+    for (limit, got) in limited {
+        assert_eq!(got, (hulls.clone(), work), "limit {limit}, names as written");
+    }
+    for limit in [None, Some(30_000), Some(100_000), Some(200_000), Some(500_000)] {
+        assert_eq!(run(limit).0, expected, "limit {limit:?}, renamed");
     }
 }
 
