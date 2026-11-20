@@ -23787,6 +23787,28 @@ impl Sig {
     /// none; and what an `else` or a failed test leaves of a variable ([`Narrow`]) is that
     /// variable. A variable bounded by carriers, which the printer names wherever it stands,
     /// is counted the same way, over the types outside the unions printed `_`.
+    // Why the count is the printer's, step by step (305ad0293, checked by proofdoc4c). The
+    // print, [`write_parts`] into [`write_text`], takes [`Absorb::sig`] of the signature,
+    // runs [`walk_parts`] once, then [`Walk::plan`], whose `count` of each root of the
+    // unbounded variables decides which is printed by name. This runs the same three steps on
+    // the same [`Absorb::sig`], so it reads the same `count`, with two differences, neither of
+    // which changes it. (1) Its [`Shared`] passes over the closed parts, where the print's
+    // [`Shared::of`] passes over only the shared ones: a closed part holds no place of a
+    // variable, the argument at [`Shared`]'s `closed`. (2) Its scope starts empty, where
+    // zedc-check's `sig_text` prints by [`Sig::text_named`], whose [`Scope::named`] starts
+    // with outer names: those are [`VarSlot::Name`] entries and add no entry to `same`, and
+    // [`Scope::open`] gives each unbounded own variable a new [`VarSlot::Free`] pushed over
+    // any entry of its name, so the numbers of the free slots, the places each is met at,
+    // and so the counts, are the same; only the names printed for bounded variables may
+    // differ, and those are counted here by the variable, not by the name. Tests
+    // (l01_26_type_resolution `standing_twice`): the three programs of the three differences
+    // of the old walk, `the_variables_standing_twice_are_the_ones_printed_by_name` over
+    // generated signatures, which compares this set with the names the print writes, and
+    // `a_variable_bounded_by_carriers_stands_twice_where_the_text_writes_it_twice`. What they
+    // cannot catch: a signature shape the generator does not make, and difference (2), since
+    // the generated test compares with the Display text, printed on an empty scope; there
+    // the argument above carries the claim.
+    //
     // Complexity tradeoff: the naive way is a walk of its own over the arrows, which must
     // agree with the printer's count and did not (a variable inside a held function counted
     // twice, unions printed `_` and the joins of `else` not seen: plan row

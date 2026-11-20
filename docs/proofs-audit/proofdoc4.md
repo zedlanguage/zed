@@ -631,7 +631,7 @@ none is closed here.
 
 | Crate | Entries read | Found | Already there | Added or completed | Marked unproved | Corrected |
 |---|---|---|---|---|---|---|
-| zedc-types | 45 | 40 | 35 | 5 | 0 | 0 |
+| zedc-types | 57 | 49 | 43 | 6 | 0 | 0 |
 
 | Source | Claim | Code site | Status |
 |---|---|---|---|
@@ -674,13 +674,22 @@ none is closed here.
 | 2ec6b9418 | `fits_alone` (1)-(4); `answers_within` sound | `fits_alone`, `answers_within` | Already there |
 | 3189a1922 | domains that fit have equal keys; a collision only merges parts | `domain_key` | Completed: tests l01_23 `judgments::functions_at_one_place_whose_tuples_all_meet_are_decided`, l01_22 `kinds::functions_unlike_on_both_sides_at_one_place_are_refused`, with what they cannot catch |
 | 405650a5b | `VarFacts::add_to` cost; SipHash | `VarFacts::add_to` (DOI 10.1007/978-3-642-34931-7_28) | Already there |
+| 7028f23a2 | a forward's stored summary is valid only at the ranks and span it was built at; the exit-rank guard | `FwdNeed`, `r10_hash::cached_fwd_summary`, `build_sig_needs_summary` | Already there |
+| 7d9e078c0 | a refused check is not stated as a proved failure | `kernel_form` (kernel_type.rs) | Already there |
+| a3cee3606 | the rest of a payload shape is the exact difference; cost; some inputs need w^k shapes | `Comparing::shape_rest`, `parts`, `widest` | Already there (proof since put on kernel types, PROOF-diff-exact-skip) |
+| b623e6fe0 | a place whose near pairs are no more than its functions is decided in O(n) | `star_pairs` (PROOF-star-pairs, every step), `met_at`, `Forms` | Already there |
+| c1e5a82e3 | unbounded own variables bound through a function are checked as bounded ones; `Mark` equality; two guards | `Binds`, `Cx::held_own`, `Mark` | Already there |
+| e5a605a6e | a joined row costs a bounded factor of the rows written out | `Comparing::row_in` | Already there (stated as measured, not proved; a cost, not a verdict) |
+| e82d77ca9 | `closed_form` gives what `fits_read` gives | `Comparing::closed_form` | Already there |
+| 1c2b6a270 | a need field added later fails to compile in `debug_sig` | `debug_sig` (destructured with no `..`) | Already there |
+| 305ad0293 | `Sig::standing_twice` counts as the printer counts, so the two never differ | `Sig::standing_twice` | Completed: the same three steps of the print, and why neither difference (closed parts passed over; the outer names of `Sig::text_named`) changes a count; tests and what they cannot catch |
 | 4ef43bf6c | nine guards no input reaches | `Replace::made_held`, `Need::site_mut`, `fits_alone`, `Bound::pin` | Already there but `Bound::pin`: completed (both callers pass one bucket's slice and its own `exact`; the slice rises) |
 
 No code claim: bbae90d38 (the claim is zedc-check's), 0d87a73ca, 25ef78dd1, 2b3e706f1,
-444cdb15b (the claim is tested in zed-kernel).
+444cdb15b (the claim is tested in zed-kernel), 995200322, 9d877b65c, d493d34a3 (the check is
+zedc-check's).
 
-Not read: 7028f23a2 7d9e078c0 995200322 9d877b65c a3cee3606 b623e6fe0 c1e5a82e3 d493d34a3
-e5a605a6e e82d77ca9 1c2b6a270 305ad0293 400b14585 65f995fee 6945f496b 6e2e39396 6ebe63b42
+Not read: 400b14585 65f995fee 6945f496b 6e2e39396 6ebe63b42
 701def5c6 875e58597 9778881e0 a034e80cd a619cb307 a670bd1cb a9443c314 af8174807 d20f8009e
 ee79685e4 01063a0ca 03e64b6da 148a42eb4 1d9291f72 22dd31a36 27e8e2464 2e3a7b0a4 2f99f5283
 47be53825 493ff031b 6704ae0ff 67dd99e3a 69526a75a 718e9ecda 7a54c17f9 807260a3b 811505cca
@@ -688,7 +697,7 @@ ee79685e4 01063a0ca 03e64b6da 148a42eb4 1d9291f72 22dd31a36 27e8e2464 2e3a7b0a4 
 e6dfb6877 eb6e0ad7f 06d1dc49c 08d2feda8 0de5b565c 205591658 29bf6b297 2d09ac322 3248fbce2
 3e597380e 3fd923c4a 453066558 47681f229 47b73bd8f 4abfd2ae1 620307b4c 65a9230a8 78f2ca158
 81f3d8487 929e7e04a 9b5729b46 a16eb1e6e bd7d5aa55 c1dfb00f7 d18e52a0a d6a84bc7c dd8b42f68
-df3fa8308 e2ef08f39 ea2effe91 fb5f2416f, and the `Sig::standing_twice` claim of 305ad0293.
+df3fa8308 e2ef08f39 ea2effe91 fb5f2416f.
 
 ## proofdoc4d: zedc-check
 
