@@ -4876,7 +4876,8 @@ impl<'t, 'a> Ck<'t, 'a> {
     /// is a class, on a receiver of known type, takes it as a need on the function's class.
     // Complexity tradeoff: each round applies `f` once to the accumulator type, and the rounds
     // stop when the type settles; a naive check would apply `f` once per entry. At most
-    // `Carrier::ALL.len() + 1` rounds run (below).
+    // `Carrier::ALL.len() + 1` rounds run, which refuses some folds whose type settles later
+    // (below, row FAIL-fold-rotating-tuple-rounds).
     fn fold_dir_end(&mut self, x: &Ty, init: &Ty, f: Arg<'a>, span: Span, right: bool) -> Ty {
         let (word, shape) = match right {
             false => ("`foldl`", "`(a, x) -> a + x`"),
@@ -4994,11 +4995,18 @@ impl<'t, 'a> Ck<'t, 'a> {
         };
         // The accumulator's type: `init`'s carriers, joined with the carriers of what `f`
         // gives, until `f` gives nothing outside it. A scalar's carriers settle within one
-        // round per carrier; a round past that adds only deeper tuples or payloads, which
-        // never settle, so the walk stops there with a refusal.
-        // Not proved: that no accumulator whose type settles needs more than
-        // `Carrier::ALL.len() + 1` rounds; the cases tried (scalars, tuples of scalars, atoms
-        // from `f`) settle within two.
+        // round per carrier, and a type that grows deeper each round never settles; the walk
+        // stops after `Carrier::ALL.len() + 1` rounds with a refusal.
+        // Not proved, and false: that no accumulator whose type settles needs more rounds.
+        // A tuple of n parts that `f` rotates, `(a, x) -> (a[1], ..., a[n - 1], a[0])` from
+        // `(1.5, 0, ..., 0)`, gains `f64` at one more part each round and settles at
+        // `(int | f64, ...)` only after n rounds: n = 6 is accepted, and n = 7 is refused
+        // though its type settles (both run by `zedc run`, 2026-11-20). A round that does not
+        // settle and keeps the accumulator's tuples and payloads as they were adds a carrier
+        // or an atom at one of its leaves; a bound on such rounds would follow from a bound
+        // on what a leaf can take, and counting only the rounds that change that structure
+        // needs a comparison of types by structure, which zedc-types does not have. Open in
+        // row FAIL-fold-rotating-tuple-rounds; no test covers the refusal past six parts.
         let mut acc = init.carriers();
         let mut grew = Vec::new();
         for _ in 0..=Carrier::ALL.len() {
@@ -28966,7 +28974,16 @@ pub(super) fn permuted_sig(s: &Sig, e: &Sig, from: &[usize], inv: &[usize]) -> (
 /// so a need left at the function's place is checked on another parameter's argument
 /// (FAIL-fit-declared-permuted-needs: `sub(a: bool, b: int[0..=9])` was accepted as
 /// `(b: int, a: bool) -> int`, its need on `b` read on the `bool` passed as `a`). No other
-/// kind of need holds a parameter place. The partial call's rest remaps the same way.
+/// kind of need holds a parameter place: of the `usize` fields of the kinds of
+/// `zedc_types::NeedKind`, `Component::i` and `Destructure::{i, n}` are a component and a
+/// tuple's length, `Remap::rank` is a key level of the remap's source and a count of
+/// variables, and a compact forward
+/// ([`NeedKind::Fwd`]) names the function's parameters by their variables in its `sigma`,
+/// not by place; a need of its callee that holds a place names the callee's own. The partial
+/// call's rest remaps the same way. Test: l01_26 function_variance.rs
+/// `a_reordered_function_keeps_its_ranges_on_its_own_parameters` (the permuted `sub`); a new
+/// kind of need with a parameter place would pass it unremapped, which no test would show
+/// until a call permuted it.
 ///
 /// Cost: one pass over the needs, O(needs).
 fn needs_in_order(needs: &[Need], from: &[usize]) -> Vec<Need> {

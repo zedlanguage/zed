@@ -35,9 +35,9 @@ Not yet written.
 
 ## proofdoc3b: zedc-check, zedc-elab, zedc-base, and the moved commits
 
-Read on main at 46b9d5d88: 66 of the 243 zedc-check entries, highest score first (every entry
-at score 5 or more, and the first 15 at score 4), each message in full, then the code that relies on each claim as it is on
-that base. The zedc-elab, zedc-base and moved entries come after the rest of zedc-check and
+Read on main at 46b9d5d88: 90 of the 243 zedc-check entries, highest score first (every entry
+at score 5 or more, and the first 39 at score 4), each message in full, then the code that
+relies on each claim as it is on that base; the last 24 were read again on f4233c260. The zedc-elab, zedc-base and moved entries come after the rest of zedc-check and
 are listed under "Not read" until they are read. A claim whose code lies in a crate another
 helper or agent owns (zed-kernel, read only; zedc-zir; zedc-types; zedc-preimage) is recorded
 as "other crate" and left to that owner. The read-only sites (`push_vars`, `vars_order`,
@@ -45,7 +45,7 @@ as "other crate" and left to that owner. The read-only sites (`push_vars`, `vars
 
 | Crate | Found | Already there | Added or completed | Marked unproved | Corrected |
 |---|---|---|---|---|---|
-| zedc-check | 66 claims in 54 entries (7 in other crates) | 50 | 9 | 0 | 0 |
+| zedc-check | 89 claims in 75 entries (11 in other crates) | 67 | 10 | 1 (found false) | 0 |
 
 | Source | Claim | Code site | Status |
 |---|---|---|---|
@@ -115,17 +115,41 @@ as "other crate" and left to that owner. The read-only sites (`push_vars`, `vars
 | 5400e8605 | The rebuildings of a lambda called in a generic body sit at the arguments there; a second, different fit at one span is refused | zedc-check check/walk.rs `coerce_at`; check/mod.rs `Ck::put` | already there (the route step by step, the counterexample, the tests) |
 | 7028f23a2 | `#4-own-vars` is an O(1) test on the facts | zedc-check check/walk/r10_forward.rs, the admission walk | already there |
 | 7028f23a2 | `cached_fwd_summary` reuses a body only at unchanged ranks; the `rename_apart` bound | zedc-types ty.rs; zed-kernel types/print/names.rs | other crates (zedc-types, another helper's; zed-kernel, read only) |
+| 84ed8e51d | A tuple callee read only as `p[k]` is read once for all callers | zedc-preimage preimage.rs `Walk::get_key` | other crate (zedc-preimage) |
+| 84ed8e51d | A left-out use remade at the met need's span keeps its own span | zedc-check check/walk.rs `Ck::need`, the `meet_alike` block | already there |
+| 995200322 | `fit` places a call's arguments in O(parameters + arguments) | zedc-check check/walk.rs `fit` | already there |
+| 9d877b65c | The accumulator of `foldl`/`foldr` settles within `Carrier::ALL.len() + 1` rounds where it settles at all | zedc-check check/walk.rs `fold_dir_end` | Marked unproved before, and found false: a 7-part rotation `(a, x) -> (a[1], ..., a[6], a[0])` from `(1.5, 0, ..., 0)` settles at `(int \| f64, ...)` after 7 rounds and is refused (6 parts are accepted; both run by `zedc run`). The comment now gives the counterexample and the open case; the fix needs a comparison of types by structure that zedc-types lacks (row FAIL-fold-rotating-tuple-rounds, to file) |
+| a02d270c5 | `int(x)` only of a value proved whole; a class not resolved loses its float carriers | zedc-check check/walk.rs `int_not_whole` | already there |
+| a444b1e1d | The expected type binds a result variable before a literal; an argument that disagrees does not bind | zedc-check check/walk.rs `instantiated`, `call_sig` (`want_at`) | already there |
+| acc07210e | Four more routes to a partial slot rebuilt at the argument it comes from | zedc-check check/walk.rs `coerce_forwarded` | already there (the unreachability claim of `coerce_at` was later found false and its assertion removed, 5400e8605) |
+| b9fcd73c3 | A cast of an operation on integer literals in place takes it at `int`; O(1) by the class's `decimal` flag | zedc-check check/walk.rs `cast_takes_int` | already there |
+| d493d34a3 | A push of a value whose type holds a variable is checked at each call | zedc-check check/walk.rs `push_vars` (read only) | already there (case (a2) partial, under PROOF-push-vars-other-route) |
+| e0d680d9f | The bodies a call reaches are read once per function, place and type: O(b + m) | zedc-check check/walk.rs `unfixed_tails` | already there |
+| e50f2e026 | An argument of type `1 \| f64` is read at an `f64` parameter value by value | zedc-check check/walk.rs `read_ty`, `read_arg` | already there |
+| eb9d470b5 | A decimal that nothing fixes takes `f64` only where a decimal is among the literals | zedc-check check/mod.rs `unfixed_takes_f64` | already there |
+| 068d62e2f | A permuted function's needs follow its parameters; no other kind of need holds a parameter place | zedc-check check/walk.rs `needs_in_order` | Completed: each `usize` field of `NeedKind` named, why `Fwd` holds no place, the test, what it cannot catch |
+| 068d62e2f | A value holding an exact function is rebuilt where a partial function type is expected | zedc-check check/walk.rs `coercion` | already there |
+| 0e1e5468d | Two loaded files are never checked in one `Ck`, so a span keys a `Read` fit | zedc-check check/mod.rs `put_read`, point 4 | already there |
+| 26f8d7d35 | The derivation of a held function prints O(n) bytes for n nested tuples | zedc-check check/mod.rs `derive_held` | already there |
+| 2ab9f29af | `bytes_text_of` rounds down, as it writes lower bounds | zedc-check check/walk.rs `bytes_text_of` | already there |
+| 305ad0293 | A variable's places are counted by the printer's own walk | zedc-types `Sig::standing_twice` | other crate (zedc-types) |
+| 3798539bc | `readable` is asked before `lists_a_number` | zedc-check check/walk.rs `read_arg` | already there |
+| 3cdd34f55 | A test narrows the names its tested name reads, by a Minkowski difference per input | zedc-preimage `Tx::invert_sep` | other crate (zedc-preimage) |
+| 400b14585 | The memo of clean rows expires by level; the level that ends is the innermost | zedc-check check/mod.rs `Ck::clean`; walk.rs `generalize` | already there |
+| 4c75d8f88 | The fold of a generic function ends, one recursion step per variable | zedc-check check/mod.rs `Class::resolved`; walk.rs `fold_level` | already there |
+| 4e6c5bfaa | A type variable is a name `[A-Z][0-9]*`; printed parts are named `Part1`, ... | zedc-resolve `type_var_form`; zed-kernel print/names.rs | other crates (zed-kernel, read only) |
 
 No code claim:
 
 - zedc-check: 6254ad0c2 (its claims are in zedc-preimage), 922be74e7, afbdffe42, b7fda077c,
   d6fa0ddbd, 3958b1767, daf5a87f2, b59ca2ae8, 555863e23, c38724eb5 (the claims are zedc-types
   `must_decode`, proof5's, read only; zedc-check holds only its tests), 7433e3145 (a crate
-  move), 7d9e078c0 (message texts).
+  move), 7d9e078c0 (message texts), c4ad09e8a (keys from 0, data and messages), 18ea94666
+  and 4fc432347 (message texts).
 
 Not read:
 
-- zedc-check (177): 84ed8e51d, 995200322, 9d877b65c, a02d270c5, a444b1e1d, acc07210e, b9fcd73c3, c4ad09e8a, d493d34a3, e0d680d9f, e50f2e026, eb9d470b5, 068d62e2f, 0e1e5468d, 18ea94666, 26f8d7d35, 2ab9f29af, 305ad0293, 3798539bc, 3cdd34f55, 400b14585, 4c75d8f88, 4e6c5bfaa, 4fc432347, 516e1324a, 549d0d033, 5767fe37a, 59fe136e7, 5decb7fcc, 61be98168, 628d33f6d, 635687ff7, 65f995fee, 6e2e39396, 701def5c6, 7d0cc8d9f, 809f95c53, 84f080d6b, 86322e10b, 924583b1b, 9aff48777, 9e3cc1480, 9e4acde1f, a034e80cd, a55b75fd8, a670bd1cb, a9443c314, af6a5a696, af8174807, b18332dd5, b2ba71b22, b3469579a, b7edc27fd, bfe7e7956, c50a8965b, d20f8009e, e7b12dd2e, ee79685e4, fe770de11, 01063a0ca, 03a4f95f2, 0f6b67903, 148a42eb4, 1cdb4bf0e, 275d434e7, 2cccffee8, 47be53825, 4d3221711, 55045d490, 57434d47b, 578bbc92d, 5af4b2f2a, 5db8eb317, 5ff79522f, 60ce2dad4, 61299315a, 64d244789, 6704ae0ff, 67dd99e3a, 6817d8ebc, 69526a75a, 718e9ecda, 727dae146, 74d26e990, 7a7417966, 7d0d766ad, 7dc27aa9e, 81e1bb50f, 84e65bf61, 8d9f4f9d2, 97beabefa, 981ec6c8a, 9ad186cfe, 9b35c8ab0, 9e8f139f1, b3de801c3, b48d21bcd, b991293a4, ba11fed9c, bad0d2e86, bd3c630e0, bea44d4a5, c289ffeca, d11373afd, d59b4756e, d83518eb5, d9d8729bb, da0895a4f, df8cea00b, e2e0e0612, e6dfb6877, ebd6faee5, ef56f8c84, f240a5462, f38d90beb, f6c6b1f99, f79ee52bf, f8f4ddabb, f923d44b9, fffe13699, 009e52933, 00a508032, 019b3519b, 06d1dc49c, 0b05cc8cf, 0cbb40ab4, 131d7f7fd, 19514ef8c, 1a19cae20, 205591658, 2059d260b, 256d0fc5d, 29bf6b297, 30b46ffdb, 35f48821c, 3b7276f38, 3e597380e, 3fd923c4a, 47681f229, 47f742016, 480291d0e, 4abfd2ae1, 4ce8104bb, 4e55a11ba, 51ae6534c, 5a5ef9670, 5ccb21f3f, 61590f5c5, 620307b4c, 650ec1e0a, 65fe79c41, 695a25e74, 6a1038700, 788205304, 7b5ff433f, 7efc39992, 807ba2009, 81f3d8487, 8824fb555, 893f60ac7, 929e7e04a, a16eb1e6e, a7dba5382, aea083d67, af7540d08, b3c21a87e, b5444f558, b6b810dec, c8fa18353, d18e52a0a, dd8b42f68, e2ef08f39, e36d97342, e8755d8a1, eaef33ced, eb156f28d, fbb2b68aa
+- zedc-check (153): 516e1324a, 549d0d033, 5767fe37a, 59fe136e7, 5decb7fcc, 61be98168, 628d33f6d, 635687ff7, 65f995fee, 6e2e39396, 701def5c6, 7d0cc8d9f, 809f95c53, 84f080d6b, 86322e10b, 924583b1b, 9aff48777, 9e3cc1480, 9e4acde1f, a034e80cd, a55b75fd8, a670bd1cb, a9443c314, af6a5a696, af8174807, b18332dd5, b2ba71b22, b3469579a, b7edc27fd, bfe7e7956, c50a8965b, d20f8009e, e7b12dd2e, ee79685e4, fe770de11, 01063a0ca, 03a4f95f2, 0f6b67903, 148a42eb4, 1cdb4bf0e, 275d434e7, 2cccffee8, 47be53825, 4d3221711, 55045d490, 57434d47b, 578bbc92d, 5af4b2f2a, 5db8eb317, 5ff79522f, 60ce2dad4, 61299315a, 64d244789, 6704ae0ff, 67dd99e3a, 6817d8ebc, 69526a75a, 718e9ecda, 727dae146, 74d26e990, 7a7417966, 7d0d766ad, 7dc27aa9e, 81e1bb50f, 84e65bf61, 8d9f4f9d2, 97beabefa, 981ec6c8a, 9ad186cfe, 9b35c8ab0, 9e8f139f1, b3de801c3, b48d21bcd, b991293a4, ba11fed9c, bad0d2e86, bd3c630e0, bea44d4a5, c289ffeca, d11373afd, d59b4756e, d83518eb5, d9d8729bb, da0895a4f, df8cea00b, e2e0e0612, e6dfb6877, ebd6faee5, ef56f8c84, f240a5462, f38d90beb, f6c6b1f99, f79ee52bf, f8f4ddabb, f923d44b9, fffe13699, 009e52933, 00a508032, 019b3519b, 06d1dc49c, 0b05cc8cf, 0cbb40ab4, 131d7f7fd, 19514ef8c, 1a19cae20, 205591658, 2059d260b, 256d0fc5d, 29bf6b297, 30b46ffdb, 35f48821c, 3b7276f38, 3e597380e, 3fd923c4a, 47681f229, 47f742016, 480291d0e, 4abfd2ae1, 4ce8104bb, 4e55a11ba, 51ae6534c, 5a5ef9670, 5ccb21f3f, 61590f5c5, 620307b4c, 650ec1e0a, 65fe79c41, 695a25e74, 6a1038700, 788205304, 7b5ff433f, 7efc39992, 807ba2009, 81f3d8487, 8824fb555, 893f60ac7, 929e7e04a, a16eb1e6e, a7dba5382, aea083d67, af7540d08, b3c21a87e, b5444f558, b6b810dec, c8fa18353, d18e52a0a, dd8b42f68, e2ef08f39, e36d97342, e8755d8a1, eaef33ced, eb156f28d, fbb2b68aa
 - zedc-elab (44): 7fb0c6594, 7931d6ed6, 8164a8ea9, 9b7a17570, e5ff7920a, f24b492bf, 555863e23, f0bde0d35, 0e329a46e, 1286f4779, 2b3e706f1, 995200322, 9d877b65c, 068d62e2f, 18ea94666, 4c75d8f88, 5767fe37a, 7d0cc8d9f, 86322e10b, 875e58597, c50a8965b, cf099fcf2, 03a4f95f2, 0e8df04e7, 64d244789, ac7cafdd0, ac9176a94, cb0137143, d11373afd, f240a5462, 131d7f7fd, 14b96090a, 29bf6b297, 47d87108b, 480291d0e, 4ce8104bb, 51ae6534c, 650ec1e0a, a7dba5382, af7540d08, b6b810dec, ea2effe91, eb156f28d, fbb2b68aa
 - zedc-base (39): 30ad62cc4, 7fb0c6594, 13237878e, ba41f402c, d6fa0ddbd, 25ef78dd1, 7d9e078c0, a02d270c5, eb9d470b5, 007a9ebb0, 24a43c819, 4e6c5bfaa, 50b8eea24, 5767fe37a, c5ed79580, 331f39ab5, 726008ee7, 8a14a296f, 981ec6c8a, 995a598b2, bea44d4a5, bfc106d61, d11373afd, e6dfb6877, ebd6faee5, 168d440d9, 259a46243, 3ef2d671a, 4ce8104bb, 50a4b3789, 6a1038700, 7634e8afc, 835596645, a1740c637, b6fab1610, c80981f4b, cac8265b5, f64572af8, fde51511a
 - moved from zedc and zedc-syntax (39): 6c2c05101, 1dd869737, fd98fb235, 15657d994, 174c0f20b, 585e7f18b, 63a6f9c4d, 78e5f708f, acc4f3aed, 0513b158e, 26b4df164, 2bf39d29e, 64781908f, 745bf800f, 7498c2e7e, b6d0a2eef, 16d8ce615, 1b531cd56, 52e4b51fc, 5354b56d7, 7433e3145, 79885f50d, 889d3e94d, 9111fb39d, 961b304c9, a934e9cf8, e3b9b5c6b, 01d71b2ea, 53d0c3177, 63fa169e7, 8f23b02b7, 9147744bd, 9b7406051, c22a191c9, c3044ee83, ce1450451, cf099fcf2, d9495abf6, fec575742
