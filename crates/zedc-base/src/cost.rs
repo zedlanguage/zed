@@ -151,6 +151,20 @@ pub enum Nest {
 
 /// The time bound for `work` and `depth` on `cores` processors, by Brent's theorem: the
 /// critical path, plus the rest of the work shared among the cores, rounded up.
+// R. P. Brent, "The parallel evaluation of general arithmetic expressions", J. ACM 21(2),
+// 201-206, 1974, doi:10.1145/321812.321815, Lemma 2: "If a computation C can be performed in
+// time t with q operations and sufficiently many processors which perform arithmetic
+// operations in unit time, then C can be performed in time t + (q - t)/p with p such
+// processors." The proof runs step i's s_i operations in ceil(s_i/p) time and sums. Here
+// t is `depth` and q is `work`. Departures: the sum of the ceilings is an integer at most
+// t + (q - t)/p, so the floor of that would do; rounding (q - t)/p up gives a bound at most 1
+// above it, kept as it never lies below the true time. A depth above the work is read as the
+// work, and zero cores as one. Checked 2026-11-20: the DOI, volume and pages on Crossref; the
+// lemma and its proof read in the author's scan of the paper. Tests:
+// `brent_bounds_lie_between_depth_and_work` and
+// `brent_bounds_every_level_by_level_schedule`, which runs each split of up to 9 operations
+// into levels, as the proof does, and checks that none takes longer than this bound. They do
+// not check that the bound is tight.
 pub fn brent(work: u64, depth: u64, cores: u64) -> u64 {
     let depth = depth.min(work);
     (work - depth).div_ceil(cores.max(1)).saturating_add(depth)
@@ -550,6 +564,44 @@ mod tests {
         // Zero cores are read as one, and a depth above the work as the work.
         assert_eq!(brent(10, 3, 0), 10);
         assert_eq!(brent(10, 30, 4), 10);
+    }
+
+    /// Brent's Lemma 2 by its proof: for every split of `work` operations into `depth` levels
+    /// of at least one each, running level `i` in `ceil(s_i / p)` steps takes no more than
+    /// `brent(work, depth, p)`, nor more than the lemma's `t + (q - t)/p`.
+    #[test]
+    fn brent_bounds_every_level_by_level_schedule() {
+        /// Every split of `left` operations into `levels` parts of at least one, each passed
+        /// to `f` with the parts so far in `parts`.
+        fn splits(left: u64, levels: u64, parts: &mut Vec<u64>, f: &mut impl FnMut(&[u64])) {
+            if levels == 0 {
+                if left == 0 {
+                    f(parts);
+                }
+                return;
+            }
+            for s in 1..=left.saturating_sub(levels - 1) {
+                parts.push(s);
+                splits(left - s, levels - 1, parts, f);
+                parts.pop();
+            }
+        }
+        let mut runs = 0;
+        for work in 1..=9u64 {
+            for depth in 1..=work {
+                for p in 1..=4u64 {
+                    splits(work, depth, &mut Vec::new(), &mut |levels| {
+                        let time: u64 = levels.iter().map(|s| s.div_ceil(p)).sum();
+                        assert!(time <= brent(work, depth, p), "{levels:?} on {p}");
+                        // t + (q - t)/p, multiplied through by p.
+                        assert!(time * p <= depth * p + (work - depth), "{levels:?} on {p}");
+                        runs += 1;
+                    });
+                }
+            }
+        }
+        // 2^(work - 1) splits of each work, for 4 core counts.
+        assert_eq!(runs, 4 * (1..=9).map(|w| 1 << (w - 1)).sum::<u64>());
     }
 
     #[test]
