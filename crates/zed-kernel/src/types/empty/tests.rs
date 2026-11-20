@@ -2635,6 +2635,149 @@ fn the_check_of_a_list_witness_passes_no_list_outside_the_type() {
     }
 }
 
+/// Item TEST-kernel-unreached-paths-9: on list types the check of a list witness
+/// (`Searching::check_chain_witness`) reads as a chain, its answer is membership
+/// (`Type::contains`), both ways, for every list of up to five items from `1`, `2` and `9`. Each
+/// system is `W0` and its tails; most have tails whose link payload is a chain row and a row
+/// into a self-looping tail `L` (a node with an `emit`: a list may leave the chain there and end
+/// in the loop), with alternating heads (one link a node, so the walk jumps by binary lifting)
+/// or equal heads (runs of links), acyclic or on a cycle, and tails with no stop; one system's
+/// link has one field, so no pair is under it and only the empty list is in it. The acyclic
+/// chains end in `nil` alone: a last tail `nil | cons(h, itself)` would make the row before it
+/// a second loop row of another item, which `verify_step` does not read (the check then answers
+/// `false`, not verified, and the fallback decides the type). Equal items share one shown id, so
+/// they form runs: an item in both a chain head and its exit's head stops a jump at that node
+/// (the `emit` stop of the pass walk, `pass_memo` set to 0), and an item leaving the chain for
+/// the loop answers at once (`break 'walk Some(true)`).
+#[test]
+fn the_check_of_a_list_witness_is_membership_on_chains_with_exits() {
+    use super::super::rec::{Expr, Group};
+    use fork_inputs::{cons, def, lit, nil, r};
+    let ty = |t: Type| Expr::Type(t);
+    let one = || ty(lit(1));
+    let nine = || ty(lit(9));
+    let int = || ty(Type::int());
+    // `W0` first; the last definition is the loop `L` where a system has one.
+    let systems: Vec<(&str, Vec<Expr>)> = vec![
+        (
+            "alternating heads, an exit of 9 into a loop of 2",
+            vec![
+                Expr::Union(vec![nil(), cons(int(), r(1)), cons(nine(), r(5))]),
+                Expr::Union(vec![nil(), cons(one(), r(2)), cons(nine(), r(5))]),
+                Expr::Union(vec![nil(), cons(int(), r(3)), cons(nine(), r(5))]),
+                Expr::Union(vec![nil(), cons(one(), r(4)), cons(nine(), r(5))]),
+                Expr::Union(vec![nil()]),
+                Expr::Union(vec![nil(), cons(ty(lit(2)), r(5))]),
+            ],
+        ),
+        (
+            "alternating heads, an exit of 9 into a loop of int",
+            vec![
+                Expr::Union(vec![nil(), cons(one(), r(1)), cons(nine(), r(5))]),
+                Expr::Union(vec![nil(), cons(int(), r(2)), cons(nine(), r(5))]),
+                Expr::Union(vec![nil(), cons(one(), r(3)), cons(nine(), r(5))]),
+                Expr::Union(vec![nil(), cons(int(), r(4)), cons(nine(), r(5))]),
+                Expr::Union(vec![nil()]),
+                Expr::Union(vec![nil(), cons(int(), r(5))]),
+            ],
+        ),
+        (
+            "equal heads, an exit of int into a loop of 2",
+            vec![
+                Expr::Union(vec![nil(), cons(one(), r(1)), cons(int(), r(4))]),
+                Expr::Union(vec![nil(), cons(one(), r(2)), cons(int(), r(4))]),
+                Expr::Union(vec![nil(), cons(one(), r(3)), cons(int(), r(4))]),
+                Expr::Union(vec![nil()]),
+                Expr::Union(vec![nil(), cons(ty(lit(2)), r(4))]),
+            ],
+        ),
+        (
+            "heads of int, an exit of 9 into a loop of 9",
+            vec![
+                Expr::Union(vec![nil(), cons(int(), r(1))]),
+                Expr::Union(vec![nil(), cons(int(), r(2)), cons(nine(), r(5))]),
+                Expr::Union(vec![nil(), cons(one(), r(3))]),
+                Expr::Union(vec![nil(), cons(int(), r(4)), cons(nine(), r(5))]),
+                Expr::Union(vec![nil()]),
+                Expr::Union(vec![nil(), cons(nine(), r(5))]),
+            ],
+        ),
+        (
+            "a cycle of two heads, each with an exit of 9",
+            vec![
+                Expr::Union(vec![nil(), cons(one(), r(1)), cons(nine(), r(2))]),
+                Expr::Union(vec![nil(), cons(int(), r(0)), cons(nine(), r(2))]),
+                Expr::Union(vec![nil(), cons(ty(lit(2)), r(2))]),
+            ],
+        ),
+        (
+            "tails with no stop, an exit of 9",
+            vec![
+                Expr::Union(vec![cons(int(), r(1)), cons(nine(), r(4))]),
+                Expr::Union(vec![nil(), cons(one(), r(2)), cons(nine(), r(4))]),
+                Expr::Union(vec![cons(int(), r(3)), cons(nine(), r(4))]),
+                Expr::Union(vec![nil()]),
+                Expr::Union(vec![nil(), cons(int(), r(4))]),
+            ],
+        ),
+        // No pairs under the link: only the empty list is in it.
+        (
+            "a link of one field",
+            vec![Expr::Union(vec![
+                nil(),
+                Expr::Atom("cons".into(), vec![int()]),
+            ])],
+        ),
+    ];
+    let mut lists: Vec<Vec<i64>> = vec![vec![]];
+    for k in 0..5 {
+        let longer: Vec<Vec<i64>> = (lists.iter())
+            .filter(|l| l.len() == k)
+            .flat_map(|l| [1, 2, 9].map(|x| [l.clone(), vec![x]].concat()))
+            .collect();
+        lists.extend(longer);
+    }
+    for (name, bodies) in systems {
+        let defs = (bodies.into_iter().enumerate())
+            .map(|(k, b)| def(&format!("W{k}"), b))
+            .collect();
+        let t = Group::new(defs)
+            .expect("a group")
+            .instance(vec![])
+            .remove(0);
+        let (mut inside, mut outside) = (0, 0);
+        for l in &lists {
+            Type::forget_emptiness();
+            let value = (l.iter().rev()).fold(Value::atom("nil"), |rest, &x| {
+                Value::atom_with("cons", vec![Value::Int(x), rest])
+            });
+            let (t2, items) = (t.clone(), l.clone());
+            let ok = Search::default().run(move |d| {
+                Box::pin(async move {
+                    // Each value is shown once, so equal items share one id and form runs.
+                    let mut shown: BTreeMap<i64, usize> = BTreeMap::new();
+                    let ids: Vec<usize> = (items.iter())
+                        .map(|&x| {
+                            *(shown.entry(x))
+                                .or_insert_with(|| d.s().show(Rep::Value(Value::Int(x))))
+                        })
+                        .collect();
+                    let (link, stop) = ("cons".into(), "nil".into());
+                    d.check_chain_witness(&t2, &link, &ids, &stop, &[]).await
+                })
+            });
+            let member = t.contains(&value);
+            assert_eq!(ok, member, "{name}: {l:?}, check {ok}, member {member}");
+            if member {
+                inside += 1;
+            } else {
+                outside += 1;
+            }
+        }
+        assert!(inside > 0 && outside > 0, "{name}: lists on both sides");
+    }
+}
+
 /// The list type `W0` of `n + 1` definitions `Wk = nil | cons(Hk, W(k+1))` for `k < n` and
 /// `Wn = nil | cons(int, Wn)`, where `Hk` is `2` at `k = special`, `1` at other odd `k` and
 /// `int` at even `k`: its rest after the first item passes `n - 1` tails before the cycle `Wn`,

@@ -5240,8 +5240,13 @@ impl<'m> Searching<'m> {
                 } else {
                     match self.prefix_chains(&ty).await {
                         Some(ChainPlan::Empty) => true,
-                        Some(plan @ ChainPlan::Inhabited { .. }) => {
-                            if self.chain_rep(&ty, plan).await.is_some() {
+                        Some(ChainPlan::Inhabited {
+                            stop,
+                            link,
+                            heads,
+                            hints,
+                        }) => {
+                            if (self.chain_rep(&ty, stop, link, heads, hints).await).is_some() {
                                 self.s().witnessed.insert(t);
                                 false
                             } else {
@@ -8001,9 +8006,12 @@ impl<'m> Searching<'m> {
         }
         match self.prefix_chains(t).await? {
             ChainPlan::Empty => Some(Verdict::Empty),
-            plan @ ChainPlan::Inhabited { .. } => {
-                self.chain_rep(t, plan).await.map(|_| Verdict::Inhabited)
-            }
+            ChainPlan::Inhabited {
+                stop,
+                link,
+                heads,
+                hints,
+            } => (self.chain_rep(t, stop, link, heads, hints).await).map(|_| Verdict::Inhabited),
         }
     }
 
@@ -8315,11 +8323,15 @@ impl<'m> Searching<'m> {
                     return None;
                 }
             }
-            // Not met: there are at least two rows and the loop above gives up at a second row
-            // that is no carrier, so at least one row is a carrier.
-            if car_heads.is_empty() {
-                return None;
-            }
+            // Never empty: `rows` has two rows or more (tested above), each row either adds its
+            // head to `car_heads` or is taken as `chain_row`, and a second row of the second
+            // kind returns above; so at most one row is `chain_row` and at least one is in
+            // `car_heads` (TEST-kernel-unreached-paths-9; the same proof as `verify_step`'s
+            // `loop_heads` in `check_chain_witness`).
+            debug_assert!(
+                !car_heads.is_empty(),
+                "two rows or more, at most one not a carrier"
+            );
             let mut car_iter = car_heads.into_iter();
             let first_car = car_iter.next().expect("non-empty");
             let joined_car = car_iter.fold(first_car, |acc, h| self.cut(&acc, &h, Cut::Join));
@@ -9437,23 +9449,23 @@ impl<'m> Searching<'m> {
         None
     }
 
-    /// Builds and independently verifies the witness list of a [`ChainPlan::Inhabited`] plan.
+    /// Builds and independently verifies the witness list of a [`ChainPlan::Inhabited`] plan,
+    /// given as its fields: each caller matches `Inhabited` first, so no other plan reaches
+    /// here (TEST-kernel-unreached-paths-9 removed the `else { return None }` this took).
     /// The witness is checked against `t` from scratch by [`Searching::check_chain_witness`]
     /// before it is shown or recorded in `Search::members` and `Search::reps`; if verification
     /// fails, returns `None`.
-    async fn chain_rep(&'m self, t: &Type, plan: ChainPlan) -> Option<usize> {
+    async fn chain_rep(
+        &'m self,
+        t: &Type,
+        stop: std::sync::Arc<str>,
+        link: std::sync::Arc<str>,
+        heads: Vec<Type>,
+        hints: Vec<(Row, ChainHint)>,
+    ) -> Option<usize> {
         if let Some(Some(r)) = self.s().reps.get(t).copied() {
             return Some(r);
         }
-        let ChainPlan::Inhabited {
-            stop,
-            link,
-            heads,
-            hints,
-        } = plan
-        else {
-            return None;
-        };
         let (seeding, walking, current) = {
             let mut s = self.s();
             (
@@ -10764,8 +10776,13 @@ impl<'m> Searching<'m> {
         {
             match plan {
                 ChainPlan::Empty => return None,
-                plan @ ChainPlan::Inhabited { .. } => {
-                    if let Some(r) = self.chain_rep(t, plan).await {
+                ChainPlan::Inhabited {
+                    stop,
+                    link,
+                    heads,
+                    hints,
+                } => {
+                    if let Some(r) = self.chain_rep(t, stop, link, heads, hints).await {
                         return Some(r);
                     }
                     self.s().chains.insert(t.clone(), None);
