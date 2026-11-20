@@ -13,14 +13,14 @@
 //! doi:10.1137/0201010; the full comment is in zed-graph `lib.rs`, at its head and fn
 //! `tarjan`), the workspace's one copy of it
 //! ([`zed_graph::Search`]), run again for each demand on the graph as it has grown: one
-//! depth-first search with an explicit stack, each node visited once and each read walked once, the components emitted as they
-//! close, every component a node reads closed before it. A once node is polled with each answer
-//! as it comes: a read of a final node is answered at once, a read of an unvisited node descends
-//! into it, and a read of a node still on the search stack leaves the once node waiting on it,
-//! that read being its one edge in the component. So when a component closes, every read leaving
-//! it is final, and it is one of three things: a once node that finished, alone; a component of
-//! iterable nodes, which [`Facts::solve`] solves; or a component with a waiting once node, which
-//! [`Facts::refuse`] gives its values.
+//! depth-first search with an explicit stack, each node visited once and each read walked once, the
+//! components emitted as they close, every component a node reads closed before it. A once node is
+//! polled with each answer as it comes: a read of a final node is answered at once, a read of an
+//! unvisited node descends into it, and a read of a node still on the search stack leaves the once
+//! node waiting on it, that read being its one edge in the component. So when a component closes,
+//! every read leaving it is final, and it is one of three things: a once node that finished, alone;
+//! a component of iterable nodes, which [`Facts::solve`] solves; or a component with a waiting once
+//! node, which [`Facts::refuse`] gives its values.
 //!
 //! The result is a function of the program, not of the order of the roots or of the numbering of
 //! the nodes (DESIGN.md, "The meaning, independent of order"). Proof, by induction over the order

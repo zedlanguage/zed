@@ -262,8 +262,8 @@ pub fn show(order: &[Element]) -> String {
 /// the methods from memory, and the result checked against the recursive algorithm by the
 /// step tests named in the module doc): an edge that is not a back edge is filed at the common
 /// ancestor of its ends, the first vertex whose component can hold both. Each level lists its
-/// elements in decreasing order of the time the traversal finished them. The step tests check the result against the
-/// declarative definition (`m0_05_widening_and_iteration::wto`).
+/// elements in decreasing order of the time the traversal finished them. The step tests check the
+/// result against the declarative definition (`m0_05_widening_and_iteration::wto`).
 ///
 /// Complexity tradeoff: the standard algorithm, Bourdoncle's recursive one, traverses each
 /// component again at every level of nesting, `O(d·(V + E))` for nesting depth `d`, so

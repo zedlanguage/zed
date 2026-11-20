@@ -279,8 +279,8 @@ pub fn forward(op: &Op, x: &IntervalSet, y: &IntervalSet) -> IntervalSet {
 // lower bound, by Bernoulli's inequality `b ^ k >= 1 + k (b - 1)` (O(1) words, below `b ^ k`
 // from k = 2 on, so `2^(5^(2^k + 1) - 10)` was rejected); the exact corner costs the same
 // order. Given up: precision on a base that may be negative (`(-2)^(2*k)` is any int), which
-// needs the parity of each exponent. Test: `l01_29_repairs_and_printing::power_repairs`; COMPLEXITY.md
-// C60.
+// needs the parity of each exponent. Test: `l01_29_repairs_and_printing::power_repairs`;
+// COMPLEXITY.md C60.
 pub fn forward_pow(x: &IntervalSet, n: &IntervalSet) -> IntervalSet {
     let n = n.meet(&IntervalSet::range(End::of(0), PosInf));
     // The least member of a set of ints at least 0 is finite.
@@ -711,9 +711,9 @@ mod tests {
 
     /// The integers the tests try as members ([`members`]). Every finite end of the operands
     /// lies in -4..=4, so an infinite end is tried at the eight values 5..=12 past every
-    /// finite one (or -12..=-5). A test passes only on what it tries here, so a wider window checks more; this one keeps
-    /// every product of two members (at most 144) and every power of a member by a member
-    /// (at most 12^12, below 2^44) inside `i64`, as [`apply`] and
+    /// finite one (or -12..=-5). A test passes only on what it tries here, so a wider window checks
+    /// more; this one keeps every product of two members (at most 144) and every power of a member
+    /// by a member (at most 12^12, below 2^44) inside `i64`, as [`apply`] and
     /// `a_power_at_a_set_of_exponents_holds_each_power_and_no_more` need. Not tuned.
     const WINDOW: std::ops::RangeInclusive<i64> = -12..=12;
 
