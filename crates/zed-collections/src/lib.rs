@@ -13,12 +13,16 @@
 //!
 //! [`fenwick`]: a Fenwick tree, for prefix sums under changes to single items, or prefix maxima
 //! under raises of single items.
+//!
+//! [`held`]: values put in through a shared reference and kept at their places, so that a walk
+//! may borrow from them while it puts in more.
 
 // Loaded for its num-bigint only (see Cargo.toml): nothing here names it, and a crate never named
 // is never loaded, so this dylib would carry its own copy of num-bigint beside zed-numtheory's.
 extern crate zed_numtheory as _;
 
 pub mod fenwick;
+pub mod held;
 pub mod intervals;
 pub mod search;
 pub mod sorted;

@@ -324,4 +324,4 @@ mod lift;
 pub use lift::{Intervals, Lift, dag_idom};
 
 mod order;
-pub use order::{Ready, kahn, reach, sources};
+pub use order::{Ready, kahn, make_after_needs, post_order, reach, sources};

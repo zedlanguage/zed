@@ -4004,6 +4004,7 @@ pub struct Facts(
     std::sync::OnceLock<bool>,
     std::sync::OnceLock<bool>,
     pub(crate) std::sync::OnceLock<r10_hash::NeedBlockSummary>,
+    pub(crate) std::sync::OnceLock<r10_hash::NestedSummary>,
 );
 
 /// A signature's variables in order, with where its forwards' internal runs fall among them
@@ -5950,7 +5951,9 @@ impl Need {
     /// it ties), not the functions held in the needs of the callee: those are not given to
     /// `each`, while the flat needs show them. So the result agrees with the same mapping of
     /// the flat needs only where `each` keeps every function the callee's needs hold; a
-    /// caller that may change one decodes first ([`Sig::flat_for`]). The checker's one
+    /// caller that may change one decodes first ([`Sig::decoded_needs_cow`]; [`Sig::flat_for`]
+    /// decodes only for a binding that needs it, landing review round 8, Gemini NB-3). The
+    /// checker's one
     /// caller, `r10_promote_open_fwds`, changes only a function that keeps a compact forward
     /// and holds a variable from around it; a function held in the leaf needs of a kept
     /// forward binds no variable (admission `#4-own-vars`) and holds no class from around
@@ -14603,10 +14606,12 @@ impl Ty {
     // n results of a chain of n curried calls, O(n^2) in all (23.0 times the work at 8n in
     // `a_chain_of_calls_on_one_value_checks_in_linear_time`, once the checker's `close` asked
     // this of each call's type). Used: `Sig::holds_no_var`, the emptiness of the two sets the
-    // facts keep, O(1) once the facts are made. The same answer: `VarBits::of_facts` sets one
-    // bit of `classes` or `names` for each variable of those two sets, and
-    // `VarBits::is_empty` reads only those two words, so the bits are empty exactly where both
-    // sets are.
+    // facts keep and the facts' `internal` mark (a compact forward's internal results), O(1)
+    // once the facts are made. The same answer: `VarBits::of_facts` sets one bit of `classes`
+    // or `names` for each variable of those two sets and the bit `internal` from the mark,
+    // and `VarBits::is_empty` reads those two words and that bit, so the bits are empty
+    // exactly where both sets are and the mark is not set (landing review round 8, Gemini
+    // NB-2).
     pub fn holds_vars(&self) -> bool {
         !self.vars.is_empty()
             || self.tuples.iter().any(Row::holds_vars)
@@ -20435,14 +20440,17 @@ impl Sig {
         // The hashes of the functions it holds that lack one are made first, deepest first, as
         // for its facts ([`Sig::facts`]).
         //
-        // No input reaches the body of this loop (row TEST-types-unreached-paths-5); it is
-        // kept as a guard. Proof: `held_without` gives only signatures in the `fns` of a type
-        // of an arrow or a need of `self`. A signature gets into a `Members` only by
-        // `Members::push` (`extend`, `FromIterator`, `From<Vec>` and `retain` push too), which
-        // takes `member_digest`, and `Hash for Sig` hashes `digest()`, which sets `facts.2`.
-        // That signature is behind an `Arc` the type holds, so it is not changed after; only
-        // `Sig::unwrap_to_change` drops the facts, and of a signature it gives out, not one
-        // held. So every signature the walk could give has its hash already.
+        // Under E no input reaches the body of this loop (row TEST-types-unreached-paths-5).
+        // Under D it is reached: `held_without(true, ..)` also gives the callee of each
+        // forward need, which sits behind the forward's `Arc` and in no `Members`, so it may
+        // lack its hash (landing review round 8, Gemini NB-1: 4 calls on
+        // `chain_src(5, "f", false)`, 0 under E). For the others, proof: they are only
+        // signatures in the `fns` of a type of an arrow or a need of `self`. A signature gets
+        // into a `Members` only by `Members::push` (`extend`, `FromIterator`, `From<Vec>` and
+        // `retain` push too), which takes `member_digest`, and `Hash for Sig` hashes
+        // `digest()`, which sets `facts.2`. That signature is behind an `Arc` the type holds,
+        // so it is not changed after; only `Sig::unwrap_to_change` drops the facts, and of a
+        // signature it gives out, not one held. So each of them has its hash already.
         for s in self.held_without(true, |s| s.facts.2.get().is_none()) {
             hash(s);
         }
@@ -20786,42 +20794,46 @@ impl Sig {
     pub fn first_seen(&self, want: &HashSet<Arc<str>>) -> Vec<Arc<str>> {
         let mut out = Vec::new();
         let mut left = want.clone();
-        let mut entered = HashSet::new();
-        let mut flats = Vec::new();
-        let range = WantRange::of(want);
-        self.first_seen_in(&mut left, &range, &mut out, &mut entered, &mut flats);
+        let flats = zed_collections::held::Held::default();
+        self.first_seen_in(&mut left, &WantRange::of(want), &mut out, &flats);
         out
     }
 
     /// The walk of [`Sig::first_seen`] over `self`, moving each variable of `left` it meets
-    /// to `out`. `range` bounds the classes of `left`. `entered` holds the addresses of the
-    /// rows, shapes and held functions already walked; `flats` keeps the flat form of each
-    /// signature with forwards walked, so that no address in `entered` names a freed node
-    /// until the whole walk ends.
-    fn first_seen_in(
-        &self,
+    /// to `out`. `range` bounds the classes of `left`. `flats` holds the flat form of each
+    /// signature with forwards walked, so that the walk borrows from it, and no address in
+    /// the set of nodes entered names a freed node, until the whole walk ends.
+    /// A flat form is walked on the one stack: its items are pushed above those left, so it
+    /// is walked whole before them, as a call would walk it. Landing round 8, Gemini NB-6:
+    /// the walk called itself once per flat form, and functions with forwards nested d deep
+    /// took d nested calls, which overflowed the stack (test
+    /// `landing8_first_seen_decodes_functions_nested_deep_on_a_small_stack` in zedc-check).
+    fn first_seen_in<'a>(
+        &'a self,
         left: &mut HashSet<Arc<str>>,
         range: &WantRange,
         out: &mut Vec<Arc<str>>,
-        entered: &mut HashSet<*const ()>,
-        flats: &mut Vec<Sig>,
+        flats: &'a zed_collections::held::Held<Sig>,
     ) {
         enum Item<'a> {
             Ty(&'a Ty),
             Row(&'a Row),
             Shape(&'a Shape),
-            Sig(&'a Sig),
+            /// A signature, and whether it is walked whole: `self` or a flat form.
+            Sig(&'a Sig, bool),
         }
-        let mut stack = vec![Item::Sig(self)];
+        let mut entered: HashSet<*const ()> = HashSet::new();
+        let mut stack = vec![Item::Sig(self, true)];
         while let Some(item) = stack.pop()
             && !left.is_empty()
         {
             let at = stack.len();
             match item {
-                Item::Sig(s) => {
-                    // `self` may still change, so its facts are not kept; it is entered.
+                Item::Sig(s, whole) => {
+                    // `self` may still change, so its facts are not kept; it is not entered,
+                    // and neither is a flat form, which only this walk holds.
                     let mut decode = s.has_fwd_needs();
-                    if !std::ptr::eq(s, self) {
+                    if !whole {
                         let facts = s.facts();
                         let classes = &facts.classes;
                         let any = match classes.len() < left.len() {
@@ -20856,9 +20868,7 @@ impl Sig {
                         let mut flat = s.clone();
                         flat.needs = s.decoded_needs_cow().into_owned();
                         flat.facts = Facts::default();
-                        flat.first_seen_in(left, range, out, entered, flats);
-                        // Moving `flat` moves no row, shape or function it holds.
-                        flats.push(flat);
+                        stack.push(Item::Sig(flats.put(flat), true));
                         continue;
                     }
                     let tys = s
@@ -20885,7 +20895,7 @@ impl Sig {
                     out.extend(t.vars.iter().filter(|v| left.remove(*v)).cloned());
                     stack.extend(t.tuples.iter().map(Item::Row));
                     stack.extend(t.payloads.values().flatten().flatten().map(Item::Shape));
-                    stack.extend(t.fns.iter().map(|s| Item::Sig(s)));
+                    stack.extend(t.fns.iter().map(|s| Item::Sig(s, false)));
                 }
             }
             stack[at..].reverse();
@@ -23146,7 +23156,9 @@ impl WantRange {
         }
         if fwd.finish_naming.is_none()
             && let Some(lo) = fwd.base_class
-            && (self.hi < lo || self.lo >= lo + fwd.need_count)
+            // Saturating: a `base_class` near `usize::MAX`, possible only through the public
+            // API, would overflow the add (landing review round 8, Gemini NB-5).
+            && (self.hi < lo || self.lo >= lo.saturating_add(fwd.need_count))
             && !self.names
         {
             return false;
@@ -28593,13 +28605,35 @@ pub mod r10_hash {
         /// part.pow` at a token: the whole stream outside [`Encoder::memoized`], the walk of
         /// the innermost memoized row inside it (where `base_pow` restarts at 1).
         base_pow: u64,
+        /// Set in the encoder that makes a signature's [`NestedSummary`]: a variable of a
+        /// type that no scope of the walk owns belongs to a function around the signature, so
+        /// its token is left out of the hash and the power of `r` at its place is added to
+        /// `free_w` for the variable, to be read in the scopes the summary is met in.
+        deferring: bool,
+        /// For each variable left out (`deferring`), the sum of the powers of `r` at its
+        /// places, from the start of the stream.
+        free_w: HashMap<Arc<str>, u64>,
+        /// Whether a variable left out has no plain token (a class number `>= P`), whose token
+        /// would depend on the scopes it is met in otherwise than linearly.
+        free_large: bool,
+        /// Functions met by a summarizing walk (`deferring`) that hold variables of a function
+        /// around them and have no [`NestedSummary`] yet: nothing was hashed for them, so the
+        /// walk is thrown away and made again once [`ensure_nested_summaries`] has made
+        /// theirs, on a stack of its own. Any other walk makes a missing summary where it
+        /// meets the function, by that driver, and goes on.
+        missing: Vec<Arc<Sig>>,
+        /// How many walks of decoded needs are open. Decoding a compact forward builds its
+        /// needs anew at each call, functions inside them too, so a walk made again would
+        /// meet new functions lacking summaries and never end: inside decoded needs a missing
+        /// summary is made where the function is met.
+        decoded: usize,
     }
 
     /// The side sums of one memoized walk, each taken with the power of `r` at the walk's
     /// start as 1. Each sum adds `c * r^i` for a token at place `i` of the stream, with `c`
     /// fixed by the token, so the walk met at a place of power `a` adds `a` times these
-    /// (and `fallback_large_id` is an or): replaying them gives the sums of a walk of every
-    /// path.
+    /// (and `fallback_large_id` and `free_large` are ors): replaying them gives the sums of a
+    /// walk of every path.
     #[derive(Default)]
     struct Sums {
         s_rank: u64,
@@ -28609,6 +28643,77 @@ pub mod r10_hash {
         s_span_end: u64,
         s_map_lambda_true: u64,
         fallback_large_id: bool,
+        free_w: Vec<(Arc<str>, u64)>,
+        free_large: bool,
+    }
+
+    /// The hash of a function held in a type, as walked inside a function around it, made
+    /// once with its outer variables left out (`Encoder::deferring`). Each token of a set of
+    /// variables is the sum of the tokens of its variables, so the walk's hash is `part.val`
+    /// plus, for each outer variable `v`, `w_v` times the token `v` gets in the scopes it is
+    /// met in, `w_v` the sum of the powers of `r` at its places (`free`); and its side sums
+    /// gain `w_v` times the power where it is met. Naive: walk the function again at each
+    /// place, inside the scopes of every function around it, which recursed once a level and
+    /// overflowed the stack for functions nested deep, each holding the outermost one's
+    /// variable (row FAIL-l0126-stack-overflow-after-d), and read the scopes at a cost of
+    /// their depth for each variable, `O(n^2)` for `n` levels. Used: the summary, made once a
+    /// function and kept in its facts, `O(1 + outer variables)` where it is met. `Direct`:
+    /// an outer variable has no plain token, so the function is walked in place.
+    #[derive(Clone, Debug)]
+    pub enum NestedSummary {
+        Summary {
+            part: PartHash,
+            free: Vec<(Arc<str>, u64)>,
+            fallback_large_id: bool,
+        },
+        Direct,
+    }
+
+    /// A row or a payload shape that [`Encoder::memoized`] walks.
+    #[derive(Clone, Copy)]
+    enum Node<'a> {
+        Row(&'a Row),
+        Shape(&'a Shape),
+    }
+
+    impl<'a> Node<'a> {
+        fn addr(self) -> *const () {
+            match self {
+                Node::Row(row) => row.addr(),
+                Node::Shape(sh) => sh.as_ptr().cast(),
+            }
+        }
+
+        fn closed(self) -> bool {
+            match self {
+                Node::Row(row) => !row.holds_vars(),
+                Node::Shape(sh) => !sh.holds_vars(),
+            }
+        }
+
+        fn kept(self) -> Walked {
+            match self {
+                Node::Row(row) => Walked::Row(row.clone()),
+                Node::Shape(sh) => Walked::Shape(sh.clone()),
+            }
+        }
+
+        /// The rows and shapes its components hold, not inside a function, added to `out`.
+        fn below(self, out: &mut Vec<Node<'a>>) {
+            let mut add = |t: &'a Ty| {
+                out.extend(t.tuples.iter().map(Node::Row));
+                for ss in t.payloads.values().flatten() {
+                    out.extend(ss.iter().map(Node::Shape));
+                }
+            };
+            match self {
+                Node::Row(row) => row.iter().for_each(add),
+                Node::Shape(sh) => {
+                    sh.items.iter().for_each(&mut add);
+                    sh.fields.iter().for_each(|(_, t)| add(t));
+                }
+            }
+        }
     }
 
     /// A row or shape kept alive by [`Encoder::memo`].
@@ -28637,6 +28742,11 @@ pub mod r10_hash {
                 ctx: 1,
                 next_ctx: 1,
                 base_pow: 1,
+                deferring: false,
+                free_w: HashMap::new(),
+                free_large: false,
+                missing: Vec::new(),
+                decoded: 0,
             }
         }
 
@@ -28690,33 +28800,22 @@ pub mod r10_hash {
         /// round 8, Gemini BLOCKING-1; test
         /// `a_shared_row_of_a_tracked_parameter_adds_each_place_to_the_side_sums`). With
         /// `stream` kept the walk is not memoized, so the stream holds every token.
-        fn memoized(
-            &mut self,
-            addr: *const (),
-            closed: bool,
-            keep: impl FnOnce() -> Walked,
-            walk: impl FnOnce(&mut Self),
-        ) {
+        ///
+        /// A row met with no entry has the entries of the rows and shapes below it made
+        /// first, deepest first, on a stack of its own ([`Encoder::fill_below`]), so the walk
+        /// of each finds those below it in the memo: walked in place, rows nested `n` deep
+        /// recursed `n` deep and overflowed the stack (row FAIL-l0126-stack-overflow-after-d,
+        /// test `a_signature_of_rows_and_payloads_nested_deep_hashes_on_a_small_stack`).
+        fn memoized(&mut self, node: Node<'_>) {
             if self.stream.is_some() {
-                walk(self);
+                self.walk(node);
                 return;
             }
-            let key = (addr, if closed { 0 } else { self.ctx });
-            let at = self.abs_pow();
+            let key = self.key(node);
             if !self.memo.contains_key(&key) {
-                let saved = self.part;
-                let outer_base = self.base_pow;
-                let outer = self.take_sums();
-                self.base_pow = 1;
-                self.part = PartHash::empty();
-                walk(self);
-                let sub = self.part;
-                let rel = self.take_sums();
-                self.put_sums(outer);
-                self.part = saved;
-                self.base_pow = outer_base;
-                self.memo.insert(key, (sub, rel, keep()));
+                self.fill_below(node);
             }
+            let at = self.abs_pow();
             let (sub, rel, _) = &self.memo[&key];
             self.part = self.part.concat(*sub);
             self.s_rank = add_p(self.s_rank, mul_p(rel.s_rank, at));
@@ -28730,6 +28829,84 @@ pub mod r10_hash {
             self.s_map_lambda_true =
                 add_p(self.s_map_lambda_true, mul_p(rel.s_map_lambda_true, at));
             self.fallback_large_id |= rel.fallback_large_id;
+            for (v, s) in &rel.free_w {
+                let e = self.free_w.entry(v.clone()).or_insert(0);
+                *e = add_p(*e, mul_p(*s, at));
+            }
+            self.free_large |= rel.free_large;
+        }
+
+        /// The memo's key of `node` in the present context.
+        fn key(&self, node: Node<'_>) -> (*const (), u64) {
+            (node.addr(), if node.closed() { 0 } else { self.ctx })
+        }
+
+        /// Makes the memo's entries of `root` and of each row and shape below it that lacks
+        /// one, each after those below it, so each walk finds those below it in the memo and
+        /// takes no stack frame a level. The context does not change in between: a walk gives
+        /// it back as it found it. A node is filled after every node pushed above it, that
+        /// is, after those below it; a node met again before it is filled would be below
+        /// itself, which a type, built from the bottom up, never is. So the memo check alone
+        /// skips each node met again. `O(nodes)` beyond the walks ([`zed_graph::post_order`]).
+        fn fill_below(&mut self, root: Node<'_>) {
+            zed_graph::post_order(
+                self,
+                [root],
+                |enc, &node, below| {
+                    let new = !enc.memo.contains_key(&enc.key(node));
+                    if new {
+                        node.below(below);
+                    }
+                    new
+                },
+                |enc, node| {
+                    let key = enc.key(node);
+                    enc.fill(node, key);
+                },
+            );
+        }
+
+        /// Walks `node` from an empty `part`, with the side sums at zero and `base_pow` at 1,
+        /// and stores the walk under `key`.
+        fn fill(&mut self, node: Node<'_>, key: (*const (), u64)) {
+            let saved = self.part;
+            let outer_base = self.base_pow;
+            let outer = self.take_sums();
+            self.base_pow = 1;
+            self.part = PartHash::empty();
+            self.walk(node);
+            let sub = self.part;
+            let rel = self.take_sums();
+            self.put_sums(outer);
+            self.part = saved;
+            self.base_pow = outer_base;
+            self.memo.insert(key, (sub, rel, node.kept()));
+        }
+
+        /// The tokens of a row or shape.
+        fn walk(&mut self, node: Node<'_>) {
+            match node {
+                Node::Row(row) => {
+                    self.emit(TAG_ROW);
+                    self.emit_usize(row.len());
+                    for c in row.iter() {
+                        self.emit_ty(c);
+                    }
+                }
+                Node::Shape(sh) => {
+                    self.emit(TAG_SHAPE);
+                    self.emit_usize(sh.items.len());
+                    for t in &sh.items {
+                        self.emit_ty(t);
+                    }
+                    self.emit_usize(sh.fields.len());
+                    for (fname, fty) in &sh.fields {
+                        self.emit_str(fname);
+                        self.emit_ty(fty);
+                    }
+                    self.emit_bool(sh.open);
+                }
+            }
         }
 
         /// Takes the side sums out, leaving them at zero.
@@ -28742,6 +28919,8 @@ pub mod r10_hash {
                 s_span_end: std::mem::take(&mut self.s_span_end),
                 s_map_lambda_true: std::mem::take(&mut self.s_map_lambda_true),
                 fallback_large_id: std::mem::take(&mut self.fallback_large_id),
+                free_w: std::mem::take(&mut self.free_w).into_iter().collect(),
+                free_large: std::mem::take(&mut self.free_large),
             }
         }
 
@@ -28754,6 +28933,8 @@ pub mod r10_hash {
             self.s_span_end = s.s_span_end;
             self.s_map_lambda_true = s.s_map_lambda_true;
             self.fallback_large_id = s.fallback_large_id;
+            self.free_w = s.free_w.into_iter().collect();
+            self.free_large = s.free_large;
         }
 
         #[inline]
@@ -28822,6 +29003,7 @@ pub mod r10_hash {
             let mut any_large = false;
             let mut rank_mult = 0u64;
             let mut param_hits: Vec<&'s Arc<str>> = Vec::new();
+            let mut free_hits: Vec<&'s Arc<str>> = Vec::new();
 
             for v in iter.clone() {
                 if in_ty && let Some(sc) = self.scopes.iter().rev().find(|sc| sc.own.contains(v)) {
@@ -28859,6 +29041,14 @@ pub mod r10_hash {
                     continue;
                 }
                 match tok_var_plain(v) {
+                    // A variable of a function around the one being summarized: its token is
+                    // read where the summary is met ([`NestedSummary`]).
+                    Some(_) if in_ty && self.deferring => free_hits.push(v),
+                    None if in_ty && self.deferring => {
+                        self.free_large = true;
+                        any_large = true;
+                        break;
+                    }
                     Some(tv) => {
                         sum = add_p(sum, tv);
                         if in_ty
@@ -28887,6 +29077,10 @@ pub mod r10_hash {
                 }
                 for v in param_hits {
                     let e = self.s_params.entry(v.clone()).or_insert(0);
+                    *e = add_p(*e, pos_pow);
+                }
+                for v in free_hits {
+                    let e = self.free_w.entry(v.clone()).or_insert(0);
                     *e = add_p(*e, pos_pow);
                 }
                 self.emit(sum);
@@ -29001,31 +29195,11 @@ pub mod r10_hash {
         }
 
         fn emit_row(&mut self, row: &Row) {
-            let keep = || Walked::Row(row.clone());
-            self.memoized(row.addr(), !row.holds_vars(), keep, |e| {
-                e.emit(TAG_ROW);
-                e.emit_usize(row.len());
-                for c in row.iter() {
-                    e.emit_ty(c);
-                }
-            });
+            self.memoized(Node::Row(row));
         }
 
         fn emit_shape(&mut self, sh: &Shape) {
-            let keep = || Walked::Shape(sh.clone());
-            self.memoized(sh.as_ptr().cast(), !sh.holds_vars(), keep, |e| {
-                e.emit(TAG_SHAPE);
-                e.emit_usize(sh.items.len());
-                for t in &sh.items {
-                    e.emit_ty(t);
-                }
-                e.emit_usize(sh.fields.len());
-                for (fname, fty) in &sh.fields {
-                    e.emit_str(fname);
-                    e.emit_ty(fty);
-                }
-                e.emit_bool(sh.open);
-            });
+            self.memoized(Node::Shape(sh));
         }
 
         pub fn emit_ty(&mut self, t: &Ty) {
@@ -29064,7 +29238,79 @@ pub mod r10_hash {
                 self.emit(d);
                 return;
             }
+            // Inside a function, by its summary ([`NestedSummary`]); kept only at `R_BASE`,
+            // the base of every hash outside tests.
+            if self.stream.is_none() && self.r == R_BASE && !self.scopes.is_empty() {
+                if s.facts.12.get().is_none() {
+                    if self.deferring && self.decoded == 0 {
+                        self.missing.push(s.clone());
+                        return;
+                    }
+                    ensure_nested_summaries(vec![s.clone()]);
+                }
+                if let Some(NestedSummary::Summary {
+                    part,
+                    free,
+                    fallback_large_id,
+                }) = s.facts.12.get()
+                {
+                    self.apply_nested(*part, free, *fallback_large_id);
+                    return;
+                }
+            }
             self.emit_sig(s);
+        }
+
+        /// Adds a function's summary at the present place: its hash with each outer
+        /// variable's token as `emit_var_set` gives it in the present scopes, times the
+        /// variable's weight, and the side sums those tokens add there. An outer variable no
+        /// present scope owns is plain and tracks no parameter, as inside a function the walk
+        /// holds two scopes or more; in an encoder that is itself summarizing, it is left out
+        /// again.
+        fn apply_nested(&mut self, part: PartHash, free: &[(Arc<str>, u64)], fallback: bool) {
+            let at = self.abs_pow();
+            let mut val = part.val;
+            let plain = |v: &str| {
+                tok_var_plain(v).expect("a summary leaves out no variable without a plain token")
+            };
+            for (v, w) in free {
+                let wat = mul_p(*w, at);
+                let tok = match self.scopes.iter().rev().find(|sc| sc.own.contains(v)) {
+                    Some(sc) => {
+                        if sc.phase == ScopePhase::Needs
+                            && let Some(&rank) = sc.mat_result_ranks.get(v)
+                        {
+                            if sc.is_root {
+                                self.s_rank = add_p(self.s_rank, wat);
+                            }
+                            tok_need_rank(rank)
+                        } else {
+                            let mut tv = plain(v);
+                            if sc.phase == ScopePhase::Arrows
+                                && let Some(&rank) = sc.mat_result_ranks.get(v)
+                            {
+                                tv = mul_p(tv, add_p(C_ARROW_RANK, (rank as u64 + 1) % P));
+                            }
+                            if sc.is_root
+                                && (self.tracked_params.as_ref()).is_some_and(|tp| tp.contains(v))
+                            {
+                                let e = self.s_params.entry(v.clone()).or_insert(0);
+                                *e = add_p(*e, wat);
+                            }
+                            tv
+                        }
+                    }
+                    None if self.deferring => {
+                        let e = self.free_w.entry(v.clone()).or_insert(0);
+                        *e = add_p(*e, wat);
+                        continue;
+                    }
+                    None => plain(v),
+                };
+                val = add_p(val, mul_p(*w, tok));
+            }
+            self.part = self.part.concat(PartHash { val, pow: part.pow });
+            self.fallback_large_id |= fallback;
         }
 
         fn emit_binop(&mut self, op: BinaryOp) {
@@ -29450,7 +29696,8 @@ pub mod r10_hash {
                 }
             }
 
-            let is_root = self.scopes.is_empty();
+            // A summarized function is met inside another, so its scope is not the root.
+            let is_root = self.scopes.is_empty() && !self.deferring;
             let outer_ctx = self.push_scope(SigScope {
                 own: s.own.clone(),
                 mat_result_ranks: mat_result_ranks.clone(),
@@ -29496,9 +29743,12 @@ pub mod r10_hash {
                     sc.phase = ScopePhase::Needs;
                 }
                 self.new_ctx();
+                let fresh = usize::from(matches!(decoded_needs, Cow::Owned(_)));
+                self.decoded += fresh;
                 for dn in decoded_needs.iter() {
                     self.emit_flat_need(dn, false);
                 }
+                self.decoded -= fresh;
             } else {
                 if let Some(sc) = self.scopes.last_mut() {
                     sc.phase = ScopePhase::Needs;
@@ -29545,9 +29795,11 @@ pub mod r10_hash {
                                     }
                                 }
                                 self.new_ctx();
+                                self.decoded += 1;
                                 for dn in &decoded {
                                     self.emit_flat_need(dn, false);
                                 }
+                                self.decoded -= 1;
                                 cur_rank += decoded.len();
                             }
                         }
@@ -29721,28 +29973,7 @@ pub mod r10_hash {
                         }
                     }
                 }
-                _ => {
-                    let mut enc = Encoder::new(r, false);
-                    enc.push_scope(SigScope {
-                        own: s.own.clone(),
-                        mat_result_ranks: mat_result_ranks.clone(),
-                        phase: ScopePhase::Needs,
-                        is_root: true,
-                    });
-                    enc.track_params(arrow_param_vars.clone());
-                    enc.emit_flat_need(n, true);
-                    NeedBlockSummary {
-                        body: enc.part,
-                        need_count: 1,
-                        s_rank: enc.s_rank,
-                        s_params: enc.s_params,
-                        span_contrib: enc.span_contrib,
-                        s_span_start: enc.s_span_start,
-                        s_span_end: enc.s_span_end,
-                        s_map_lambda_true: enc.s_map_lambda_true,
-                        fallback_large_id: enc.fallback_large_id,
-                    }
-                }
+                _ => flat_need_summary(n, &s.own, &mat_result_ranks, &arrow_param_vars, r, false),
             };
             cur_rank += piece.need_count;
             summary = summary.concat(&piece);
@@ -29827,15 +30058,46 @@ pub mod r10_hash {
         sig_digest_with_base(s, R_BASE)
     }
 
+    /// The summary of the need `n` of a signature owning `own`, its results first met at
+    /// `ranks`, whose arrows take `params`. With `keep_stream` it is walked with every
+    /// function in place, the hash the summaries of [`NestedSummary`] must give (tests).
+    pub fn flat_need_summary(
+        n: &Need,
+        own: &BTreeSet<Arc<str>>,
+        ranks: &HashMap<Arc<str>, usize>,
+        params: &HashSet<Arc<str>>,
+        r: u64,
+        keep_stream: bool,
+    ) -> NeedBlockSummary {
+        let mut enc = Encoder::new(r, keep_stream);
+        enc.push_scope(SigScope {
+            own: own.clone(),
+            mat_result_ranks: ranks.clone(),
+            phase: ScopePhase::Needs,
+            is_root: true,
+        });
+        enc.track_params(params.clone());
+        enc.emit_flat_need(n, true);
+        NeedBlockSummary {
+            body: enc.part,
+            need_count: 1,
+            s_rank: enc.s_rank,
+            s_params: enc.s_params,
+            span_contrib: enc.span_contrib,
+            s_span_start: enc.s_span_start,
+            s_span_end: enc.s_span_end,
+            s_map_lambda_true: enc.s_map_lambda_true,
+            fallback_large_id: enc.fallback_large_id,
+        }
+    }
+
     pub fn sig_digest_with_base(s: &Sig, r: u64) -> u64 {
         if r == R_BASE
             && let Some(&d) = s.facts.2.get()
         {
             return d;
         }
-        let mut enc = Encoder::new(r, false);
-        enc.emit_sig(s);
-        enc.part.finalize()
+        encode_sig_stream(s, r, false).0
     }
 
     pub fn encode_sig_stream(
@@ -29847,5 +30109,41 @@ pub mod r10_hash {
         enc.emit_sig(s);
         let fin = enc.part.finalize();
         (fin, enc.part, enc.stream)
+    }
+
+    /// Makes the [`NestedSummary`] of each function of `stack` and of those they hold, on a
+    /// stack of its own, each after those it holds: a summary is made by a walk of the
+    /// function in which the functions it holds are read by theirs, so made in place they
+    /// recursed once a level. A walk that misses some is made again after theirs. A walk
+    /// misses only functions it meets outside decoded needs ([`Encoder::decoded`]), which are
+    /// held in the function walked and so keep the summaries made for them. A summary is set
+    /// only by a walk that missed none, so every function that walk met, in place
+    /// (`Direct`) or not, has one: the second walk of a function meets only functions with
+    /// summaries, and each function is walked at most twice. The functions pushed are inside
+    /// the one walked, so the loop ends ([`zed_graph::make_after_needs`]).
+    fn ensure_nested_summaries(stack: Vec<Arc<Sig>>) {
+        zed_graph::make_after_needs(stack, |s, missing| {
+            if s.facts.12.get().is_some() {
+                return true;
+            }
+            let mut enc = Encoder::new(R_BASE, false);
+            enc.deferring = true;
+            enc.emit_sig(s);
+            if !enc.missing.is_empty() {
+                missing.append(&mut enc.missing);
+                return false;
+            }
+            let summary = if enc.free_large {
+                NestedSummary::Direct
+            } else {
+                NestedSummary::Summary {
+                    part: enc.part,
+                    free: enc.free_w.into_iter().collect(),
+                    fallback_large_id: enc.fallback_large_id,
+                }
+            };
+            let _ = s.facts.12.set(summary);
+            true
+        });
     }
 }

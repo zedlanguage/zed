@@ -351,6 +351,212 @@ fn a_shared_row_of_a_tracked_parameter_adds_each_place_to_the_side_sums() {
     }
 }
 
+/// D's hash of a function held inside another reads the inner one's kept summary
+/// ([`r10_hash::NestedSummary`]), which leaves out the variables of the functions around it
+/// and reads each where the summary is met: the hash and the side sums are those of the walk
+/// with every function in place (`keep_stream`). The leaf is a tracked parameter `P`, an own
+/// need result `R` (a rank in the needs, a variable times its rank in the arrows), `Q`, which
+/// no function owns, and a class number of `P` or more, whose function is walked in place
+/// (`Direct`). The types put the leaf under one, two and three functions, beside a variable
+/// `M` of a function between (plain and of a large class number), in rows shared at each
+/// level, and in a need of a function inside. No function holds only its own variables, as
+/// those are read by their hash, which a kept stream does not do.
+#[test]
+fn a_function_held_inside_another_hashes_by_its_summary_as_walked_in_place() {
+    use r10_hash::{NestedSummary, R_BASE, encode_sig_stream, flat_need_summary};
+    const LARGE: &str = "$18446744073709551615";
+    const LARGE_M: &str = "$18446744073709551614";
+    let owning = |t: Ty, own: &str| {
+        let mut s = one_of(t, int());
+        s.own.insert(own.into());
+        s.note_held();
+        fty(s)
+    };
+    let need = |on: Ty, kind: NeedKind, result: Option<Ty>| Need {
+        on,
+        kind,
+        result,
+        span: Span { start: 0, end: 1 },
+        alike: Arc::from([]),
+        via: CallPath::default(),
+    };
+    let with_need = |leaf: &str| {
+        let mut s = one_of(int(), int());
+        s.needs = vec![need(var("T"), NeedKind::Index(var(leaf)), None)];
+        s.note_held();
+        fty(s)
+    };
+    for leaf in ["P", "R", "Q", LARGE] {
+        let inner = f(var(leaf), int());
+        let summary = inner.fns.iter().next().unwrap().facts.12.get().cloned();
+        let types = [
+            inner,
+            owning(f(Ty::tuple(vec![var(leaf), var("M")]), var("M")), "M"),
+            owning(f(Ty::tuple(vec![var(leaf), var(LARGE_M)]), int()), LARGE_M),
+            doubled(
+                Ty::tuple(vec![
+                    owning(f(Ty::tuple(vec![var(leaf), var("M")]), var("M")), "M"),
+                    int(),
+                ]),
+                5,
+            ),
+            f(f(f(var(leaf), var("R")), int()), var("P")),
+            f(with_need(leaf), var(leaf)),
+        ];
+        for (k, t) in types.iter().enumerate() {
+            let at = format!("{leaf}, type {k}");
+            // In a need, with the side sums a need's summary takes.
+            let n = need(var("T"), NeedKind::Index(t.clone()), Some(var("R")));
+            let own = ["P", "R", "T"].into_iter().map(Arc::from).collect();
+            let ranks = [(Arc::from("R"), 3)].into_iter().collect();
+            let params = [Arc::from("P")].into_iter().collect();
+            let summed = flat_need_summary(&n, &own, &ranks, &params, R_BASE, false);
+            let walked = flat_need_summary(&n, &own, &ranks, &params, R_BASE, true);
+            assert_eq!(summed.body, walked.body, "{at}");
+            assert_eq!(summed.s_rank, walked.s_rank, "{at}");
+            assert_eq!(summed.s_params, walked.s_params, "{at}");
+            assert_eq!(summed.fallback_large_id, walked.fallback_large_id, "{at}");
+            // In an arrow and a need of a signature whose need gives `R`.
+            let mut s = bsig(vec![ex(vec![t.clone()], var("R"))], 1, &[]);
+            s.own.extend(["P", "R"].map(Arc::from));
+            s.needs = vec![
+                need(var("T"), NeedKind::Index(int()), Some(var("R"))),
+                need(var("T"), NeedKind::Index(t.clone()), None),
+            ];
+            s.note_held();
+            let summed = encode_sig_stream(&s, R_BASE, false);
+            assert_eq!(summed.0, encode_sig_stream(&s, R_BASE, true).0, "{at}");
+        }
+        // The summary of the innermost function is made and kept, and walked in place only
+        // where its outer variable has no plain token.
+        let made = types_summary(&f(var(leaf), int()));
+        assert!(
+            summary.is_none(),
+            "{leaf}: no summary before a hash needs one"
+        );
+        match made {
+            Some(NestedSummary::Direct) => assert_eq!(leaf, LARGE),
+            Some(NestedSummary::Summary { free, .. }) => {
+                assert_ne!(leaf, LARGE);
+                assert_eq!(free.len(), 1, "{leaf}");
+            }
+            None => panic!("{leaf}: no summary made"),
+        }
+    }
+}
+
+/// The summary kept by the function `t` holds, after a signature holding it in an arrow is
+/// hashed.
+fn types_summary(t: &Ty) -> Option<r10_hash::NestedSummary> {
+    let s = bsig(vec![ex(vec![t.clone()], int())], 1, &[]);
+    r10_hash::encode_sig_stream(&s, r10_hash::R_BASE, false);
+    t.fns.iter().next().unwrap().facts.12.get().cloned()
+}
+
+/// The depth of the types of the two tests below, and the stack they run on: 2 MiB for each
+/// 100,000 levels, the stack the step tests' deep types run on (row
+/// FAIL-l0126-stack-overflow-after-d), so a walk that takes stack at each level overflows it.
+const DEEP: usize = 20_000;
+const DEEP_STACK: usize = (2 << 20) * DEEP / 100_000;
+
+/// Runs `f` on a thread with a stack of [`DEEP_STACK`] bytes.
+fn on_deep_stack(f: impl FnOnce() + Send) {
+    std::thread::scope(|s| {
+        let thread = std::thread::Builder::new().stack_size(DEEP_STACK);
+        thread.spawn_scoped(s, f).unwrap().join().unwrap();
+    });
+}
+
+/// D's hash of a signature walks rows and payload shapes nested [`DEEP`] levels without a
+/// stack frame a level: it overflowed the stack, recursing through `Encoder::memoized` at each
+/// level, where the hash before D read each row's kept hash (row
+/// FAIL-l0126-stack-overflow-after-d). Rows with and without a variable are walked in turn,
+/// as they are memoized under different keys.
+#[test]
+fn a_signature_of_rows_and_payloads_nested_deep_hashes_on_a_small_stack() {
+    on_deep_stack(|| {
+        let nest = |leaf: &str| {
+            (0..DEEP).fold(var(leaf), |t, k| match k % 4 {
+                0 => Ty::tuple(vec![t, int()]),
+                1 => Ty::atom_of("a", vec![t], BTreeMap::new()),
+                2 => Ty::tuple(vec![int(), t, var("T")]),
+                _ => with_field(t),
+            })
+        };
+        let signature = |leaf: &str| bsig(vec![ex(vec![nest(leaf)], int())], 1, &[]);
+        let (s, same, other) = (signature("T"), signature("T"), signature("U"));
+        assert_eq!(s.digest(), same.digest());
+        assert_ne!(s.digest(), other.digest());
+    });
+}
+
+/// D's hash of a function nested [`DEEP`] levels deep, each level holding the outermost
+/// function's own `T`, takes no stack frame a level: each level hashed the one below in
+/// place, under the scopes of every level around it, and overflowed the stack (the l01_22
+/// bench `function_types_nested_deep_whose_inner_levels_hold_the_outer_variable_fit_in_linear_time`,
+/// row FAIL-l0126-stack-overflow-after-d). Tuples between the levels put the inner functions
+/// in rows.
+#[test]
+fn functions_nested_deep_holding_the_outer_variable_hash_on_a_small_stack() {
+    on_deep_stack(|| {
+        let nest = |leaf: &str| {
+            (0..DEEP).fold(var(leaf), |t, k| match k % 3 {
+                0 => f(t, var("T")),
+                1 => f(var("T"), t),
+                _ => Ty::tuple(vec![t, var("T")]),
+            })
+        };
+        let signature = |leaf: &str| bsig(vec![ex(vec![nest(leaf)], int())], 1, &[]);
+        let (s, same, other) = (signature("T"), signature("T"), signature("U"));
+        assert_eq!(s.digest(), same.digest());
+        assert_ne!(s.digest(), other.digest());
+    });
+}
+
+/// One level of the nest of [`functions_holding_an_outer_variable_in_an_arrow_and_a_need_hash_once_each`]:
+/// a function whose arrow and whose need hold the same row, which holds the level below and,
+/// when `open`, the outer variable `T`; else `int`.
+fn level_in_arrow_and_need(inner: Ty, open: bool) -> Ty {
+    let outer = if open { var("T") } else { int() };
+    let row = Ty::tuple(vec![inner, outer]);
+    let mut s = bsig(vec![ex(vec![row.clone()], int())], 1, &[]);
+    s.own.remove("T");
+    s.own.insert("R".into());
+    s.needs = vec![Need {
+        on: var("R"),
+        kind: NeedKind::Index(row),
+        result: Some(var("R")),
+        span: Span { start: 0, end: 1 },
+        alike: Arc::from([]),
+        via: CallPath::default(),
+    }];
+    s.note_held();
+    fty(s)
+}
+
+/// D's hash walks each held function once, also one that holds a variable of the function
+/// around it in a row shared by its arrow and its need. Before the fix such a function was
+/// walked in place under a new scope for its arrows and another for its needs, so the row
+/// and the function below it were walked twice at each level: 2^depth, here 2^40 (review
+/// round 8, Claude seat F4; main before the landing read each function's kept hash). The
+/// nests open and closed differ, and building the open one twice gives one hash. Claude's
+/// probe `l8_nested_open_functions_are_hashed_once_per_path`, ported (P328).
+#[test]
+fn functions_holding_an_outer_variable_in_an_arrow_and_a_need_hash_once_each() {
+    const LEVELS: usize = 40;
+    let nest = |open: bool| {
+        let t = (0..LEVELS).fold(int(), |t, _| level_in_arrow_and_need(t, open));
+        let mut s = bsig(vec![ex(vec![t], int())], 1, &[]);
+        s.note_held();
+        s
+    };
+    let (open, again, closed) = (nest(true), nest(true), nest(false));
+    let held = &open.arrows[0].params[0].fns;
+    assert!(held.iter().any(|f| !f.holds_only_own_variables()));
+    assert_eq!(open.digest(), again.digest());
+    assert_ne!(open.digest(), closed.digest());
+}
+
 /// A bounded variable that the arrow takes only inside a function type is given by no
 /// argument, so no argument fixes its carrier ([`refused_cover`], [`Places`]), and the message
 /// names the arrow and the variable as the program wrote them: `B`, not the name the

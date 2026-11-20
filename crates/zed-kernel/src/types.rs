@@ -409,54 +409,9 @@ impl std::ops::Deref for PartsRef<'_> {
 
 /// Unfoldings held while their parts are borrowed ([`Type::p_held`]): each is put in through a
 /// shared reference and stays at its place until the holder is dropped, so a walk may keep
-/// borrows into the parts of every recursive type it meets. Block `k` has room for `2^k`.
-// Complexity tradeoff: a put walks to the block with room, O(log n) for the `n`th; a block
-// that knew the last block would refer into its own holder. The standard form, one growing
-// `Vec`, puts in O(1) amortized but moves its items when it grows, which would end the
-// borrows into them; a pointer to the last block would put in O(1) but make the holder
-// refer into itself.
-#[derive(Default)]
-struct Held {
-    used: std::cell::Cell<usize>,
-    first: HeldBlock,
-}
-
-struct HeldBlock {
-    slots: Box<[std::cell::OnceCell<Type>]>,
-    next: std::cell::OnceCell<Box<HeldBlock>>,
-}
-
-impl HeldBlock {
-    fn new(room: usize) -> HeldBlock {
-        HeldBlock {
-            slots: (0..room).map(|_| std::cell::OnceCell::new()).collect(),
-            next: std::cell::OnceCell::new(),
-        }
-    }
-}
-
-impl Default for HeldBlock {
-    fn default() -> HeldBlock {
-        HeldBlock::new(1)
-    }
-}
-
-impl Held {
-    /// Holds `t` until the holder is dropped.
-    fn put(&self, t: Type) -> &Type {
-        let n = self.used.get() + 1;
-        self.used.set(n);
-        // The `n`th type goes to block `log2 n`, at `n - 2^k`.
-        let k = n.ilog2();
-        let mut block = &self.first;
-        for i in 1..=k {
-            block = block.next.get_or_init(|| Box::new(HeldBlock::new(1 << i)));
-        }
-        let slot = &block.slots[n - (1 << k)];
-        let _ = slot.set(t);
-        slot.get().expect("the slot was empty and is set")
-    }
-}
+/// borrows into the parts of every recursive type it meets (the holder, its costs and their
+/// tradeoff: [`zed_collections::held`]).
+type Held = zed_collections::held::Held<Type>;
 
 /// The universes of values, within each of which a complement is taken.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]

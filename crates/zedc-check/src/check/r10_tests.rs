@@ -3106,6 +3106,110 @@ fn landing7_first_seen_decodes_a_shared_function_once() {
     }
 }
 
+/// Landing review round 8, Gemini BLOCKING-2: the test above decodes nothing, since no `h_i`
+/// there holds a function its forward could hand a wanted variable to, so it passed with
+/// Codex's sharing fix removed. Here each of the 17 distinct signatures keeps a forward whose
+/// variable ties hold a function, so `first_seen` must decode it, and `top` holds two
+/// functions at each of 8 levels, each holding both functions of the level below. The walk
+/// decodes each signature at most once; without the set of entered functions shared across
+/// decoded forms it decoded 510 times. Gemini's probe `TRUE_DECODING_DAG_SHARING`, ported
+/// (P328).
+#[test]
+fn landing8_first_seen_decodes_each_function_of_a_decoding_diamond_once() {
+    use std::sync::Arc;
+    use zedc_types::ty::{Carrier, Ty};
+    const LEVELS: usize = 8;
+    let (d, _) = run_with_cfg(
+        "h0(positional f, positional m) = m.map(f).map(f);\n\
+         h1(positional f, positional m) = h0(f, m);\n",
+        R10Config::default(),
+    );
+    let fwd_need = d.sigs.values().find(|s| s.has_fwd_needs()).unwrap().needs[0].clone();
+    let mut leaf = Sig::one(vec![], vec![], Ty::carrier(Carrier::Int));
+    leaf.needs.push(fwd_need.clone());
+    let leaf = Arc::new(leaf);
+    let level = |left: &Arc<Sig>, right: &Arc<Sig>| {
+        let pair = Ty::tuple(vec![Ty::func(left.clone()), Ty::func(right.clone())]);
+        let mut s = Sig::one(vec![], vec![], pair);
+        let mut n = fwd_need.clone();
+        let NeedKind::Fwd(fwd) = &mut n.kind else {
+            panic!("h1 keeps a forward");
+        };
+        let fwd = Arc::make_mut(fwd);
+        fwd.var_ties.push(vec![Ty::func(leaf.clone())]);
+        fwd.digest_summary = None;
+        s.needs.push(n);
+        Arc::new(s)
+    };
+    let (mut a, mut b) = (leaf.clone(), leaf.clone());
+    for _ in 0..LEVELS {
+        (a, b) = (level(&a, &b), level(&a, &b));
+    }
+    let top = Sig::one(
+        vec![],
+        vec![],
+        Ty::tuple(vec![Ty::func(a), Ty::func(b), Ty::var("$999".into())]),
+    );
+    let want: HashSet<Arc<str>> = [Arc::from("$999")].into_iter().collect();
+    reset_fwd_decode_count();
+    assert_eq!(top.first_seen(&want), vec![Arc::<str>::from("$999")]);
+    let decodes = fwd_decode_count();
+    let distinct = 2 * LEVELS as u64 + 1;
+    assert!(
+        (1..=distinct).contains(&decodes),
+        "{decodes} decodes for {distinct} distinct signatures"
+    );
+}
+
+/// Landing review round 8, Gemini NB-6: `first_seen` walks the flat form of each function it
+/// must decode on its own stack, not by a Rust call a level. Here 20000 functions each hold
+/// the one below in their result and keep a forward whose variable ties hold a function, as
+/// in the diamond above, so each level is decoded inside the walk of the level above. Before
+/// the fix the walk of each flat form was a recursive call and overflowed a small stack.
+#[test]
+fn landing8_first_seen_decodes_functions_nested_deep_on_a_small_stack() {
+    use std::sync::Arc;
+    use zedc_types::ty::{Carrier, Ty};
+    const DEEP: usize = 20_000;
+    let (d, _) = run_with_cfg(
+        "h0(positional f, positional m) = m.map(f).map(f);\n\
+         h1(positional f, positional m) = h0(f, m);\n",
+        R10Config::default(),
+    );
+    let fwd_need = d.sigs.values().find(|s| s.has_fwd_needs()).unwrap().needs[0].clone();
+    let mut leaf = Sig::one(vec![], vec![], Ty::carrier(Carrier::Int));
+    leaf.needs.push(fwd_need.clone());
+    let leaf = Arc::new(leaf);
+    std::thread::scope(|scope| {
+        std::thread::Builder::new()
+            .stack_size((2 << 20) * DEEP / 100_000)
+            .spawn_scoped(scope, || {
+                let below = (0..DEEP).fold(leaf.clone(), |below, _| {
+                    let mut s = Sig::one(vec![], vec![], Ty::func(below));
+                    let mut n = fwd_need.clone();
+                    let NeedKind::Fwd(fwd) = &mut n.kind else {
+                        panic!("h1 keeps a forward");
+                    };
+                    let fwd = Arc::make_mut(fwd);
+                    fwd.var_ties.push(vec![Ty::func(leaf.clone())]);
+                    fwd.digest_summary = None;
+                    s.needs.push(n);
+                    Arc::new(s)
+                });
+                let top = Sig::one(
+                    vec![],
+                    vec![],
+                    Ty::tuple(vec![Ty::func(below), Ty::var("$999".into())]),
+                );
+                let want: HashSet<Arc<str>> = [Arc::from("$999")].into_iter().collect();
+                assert_eq!(top.first_seen(&want), vec![Arc::<str>::from("$999")]);
+            })
+            .unwrap()
+            .join()
+            .unwrap();
+    });
+}
+
 /// Landing round 7, Codex L7.Codex-held-read-order: a variable the callee's held function
 /// reads from around it was put after all the forward's steps, so `vars_order` gave
 /// `[U, V, OuterQ]` where the flat signature gives `[U, OuterQ, V]`: the map's receiver, then
@@ -3877,6 +3981,53 @@ fn r10_rows_shared_at_40_levels_holding_side_sum_variables_agree_with_e() {
         let (d, _) = run_with_cfg(&src, R10Config::default());
         assert_info_eq(&src, &e, &d);
     }
+}
+
+/// `Ck::r10_promote_open_fwds` walks the functions a signature holds on a stack of its own,
+/// each distinct function once (row FAIL-l0126-stack-overflow-after-d). Each level is a
+/// function holding the one below and the outermost function's variable `T`, so none holds
+/// only its own variables and every level is entered. Before the fix the walk recursed a
+/// level at a time and overflowed the stack: the l01_26 bench
+/// `curried_lambdas_using_every_parameter_check_in_linear_time` aborted at 3200 curried
+/// lambdas. A function held twice at each of 40 levels was promoted once per path, 2^40
+/// times. Nothing here holds a forward, so the walk gives each signature back as it is.
+#[test]
+fn promoting_functions_nested_deep_or_shared_at_each_level_runs_on_a_small_stack() {
+    use std::sync::Arc;
+    use zedc_types::ty::{SParam, Ty};
+    const DEEP: usize = 20_000;
+    let param = |name: &str| SParam {
+        name: name.into(),
+        positional: true,
+        default: None,
+        range: None,
+    };
+    let outer = || Ty::var("T".into());
+    let nested = |levels: usize, shared: bool| {
+        let inner = (0..levels).fold(outer(), |t, _| {
+            let s = if shared {
+                Sig::one(vec![param("x"), param("y")], vec![t.clone(), t], outer())
+            } else {
+                Sig::one(vec![param("x")], vec![t], outer())
+            };
+            Ty::func(Arc::new(s))
+        });
+        Arc::new(Sig::one(vec![param("x")], vec![inner], outer()))
+    };
+    std::thread::scope(|scope| {
+        std::thread::Builder::new()
+            .stack_size((2 << 20) * DEEP / 100_000)
+            .spawn_scoped(scope, || {
+                for s in [nested(DEEP, false), nested(40, true)] {
+                    assert!(!s.holds_only_own_variables());
+                    let promoted = super::Ck::r10_promote_open_fwds(&s);
+                    assert!(std::sync::Arc::ptr_eq(&promoted, &s));
+                }
+            })
+            .unwrap()
+            .join()
+            .unwrap();
+    });
 }
 
 mod landing6_battery;

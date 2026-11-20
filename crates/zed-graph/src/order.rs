@@ -106,9 +106,72 @@ pub fn reach<K, I: IntoIterator<Item = K>>(
     }
 }
 
+/// Visits in post-order what `roots` reach along the edges `enter` gives, on an explicit stack
+/// in place of recursion, so a long chain of nodes cannot overflow the thread's stack. When a
+/// node comes to the top, `enter(ctx, v, kids)` says whether to visit it, false when the caller
+/// has visited it already (its memo), and if so pushes the nodes below it to `kids`; they are
+/// visited in that order, and then `leave(ctx, v)`. So `leave` meets each node after every
+/// node below it, and a node that two parents push is entered once if `leave` marks it
+/// visited. The graph must be acyclic: a node met again below itself is entered again. `ctx`
+/// is the state both read and change, such as the memo.
+// Complexity tradeoff: each node visited is entered and left once, and each edge out of it
+// is pushed once, O(n + e) and heap space for the edges waiting; a node pushed by several
+// parents costs one `enter` per push. The naive form, a recursive call per edge, is the same
+// order of time but takes a stack frame per level of the graph, and so overflowed on chains
+// some thousands deep (FAIL-l0126-stack-overflow-after-d).
+pub fn post_order<C, K>(
+    ctx: &mut C,
+    roots: impl IntoIterator<Item = K>,
+    mut enter: impl FnMut(&mut C, &K, &mut Vec<K>) -> bool,
+    mut leave: impl FnMut(&mut C, K),
+) {
+    let mut stack: Vec<(K, bool)> = roots.into_iter().map(|k| (k, false)).collect();
+    stack.reverse();
+    let mut kids = Vec::new();
+    while let Some((k, below_left)) = stack.pop() {
+        if below_left {
+            leave(ctx, k);
+        } else if enter(ctx, &k, &mut kids) {
+            stack.push((k, true));
+            stack.extend(kids.drain(..).rev().map(|c| (c, false)));
+        } else {
+            // A node not visited has no edges to follow, whatever `enter` pushed.
+            kids.clear();
+        }
+    }
+}
+
+/// Makes each node of `roots` and each node it needs, each after those it needs, on an
+/// explicit stack in place of recursion. `make(v, needs)` either makes `v` and returns true,
+/// or pushes to `needs` nodes not yet made that it needs and returns false; it is called for
+/// `v` again once those are made, the last pushed first. A node made already should return
+/// true at once. For when the nodes a node needs are found only by trying to make it, as by
+/// a walk that reads the results of those below it. The nodes needed must form an acyclic
+/// graph, or the loop does not end.
+// Complexity tradeoff: a `make` that pushes every node it lacks in one call is called at most
+// twice a node, once to find what it lacks and once to make it, so the cost is at most twice
+// that of making each node once; the alternative, finding the nodes below first in a
+// separate walk, duplicates the walk that finds them in each caller.
+pub fn make_after_needs<K>(
+    roots: impl IntoIterator<Item = K>,
+    mut make: impl FnMut(&K, &mut Vec<K>) -> bool,
+) {
+    let mut stack: Vec<K> = roots.into_iter().collect();
+    let mut needs = Vec::new();
+    while let Some(top) = stack.last() {
+        if make(top, &mut needs) {
+            stack.pop();
+            // A node made needs nothing more, whatever `make` pushed.
+            needs.clear();
+        } else {
+            stack.append(&mut needs);
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
-    use super::{Ready, kahn, reach, sources};
+    use super::{Ready, kahn, make_after_needs, post_order, reach, sources};
     use std::cmp::Reverse;
     use std::collections::{BinaryHeap, VecDeque};
 
@@ -168,5 +231,87 @@ mod tests {
         assert_eq!(seen, [true, true, true, true, true, false]);
         // Met once per root or edge into it from a node reached; searched once.
         assert_eq!(met, [2, 1, 1, 3, 1, 0]);
+    }
+
+    #[test]
+    fn post_order_leaves_each_node_once_after_those_below_it_in_the_order_given() {
+        // A diamond 0 -> {1, 2} -> 3, and 2 -> 4; node 5 is not reached.
+        let kids = [vec![1, 2], vec![3], vec![3, 4], vec![], vec![], vec![]];
+        let mut left: Vec<usize> = Vec::new();
+        post_order(
+            &mut left,
+            [0, 0],
+            |left, &v, out| {
+                let new = !left.contains(&v);
+                if new {
+                    out.extend(&kids[v]);
+                }
+                new
+            },
+            |left, v| left.push(v),
+        );
+        assert_eq!(left, [3, 1, 4, 2, 0]);
+    }
+
+    #[test]
+    fn make_after_needs_makes_each_node_after_those_it_needs_and_once() {
+        // The same diamond: a node is made once every node below it is.
+        let kids = [vec![1, 2], vec![3], vec![3, 4], vec![], vec![], vec![]];
+        let mut made: Vec<usize> = Vec::new();
+        let mut calls = 0;
+        make_after_needs([0], |&v, needs| {
+            calls += 1;
+            if made.contains(&v) {
+                return true;
+            }
+            needs.extend(kids[v].iter().filter(|c| !made.contains(c)));
+            if needs.is_empty() {
+                made.push(v);
+            }
+            needs.is_empty()
+        });
+        assert_eq!(made, [4, 3, 2, 1, 0]);
+        // Twice for 0 and 2, which lacked nodes when first tried; once for 1, whose 3 was made
+        // by then, and for the leaves 3 and 4.
+        assert_eq!(calls, 7);
+    }
+
+    #[test]
+    fn both_walks_go_down_a_chain_a_million_long_on_a_small_stack() {
+        const N: usize = 1_000_000;
+        std::thread::Builder::new()
+            .stack_size(64 << 10)
+            .spawn(|| {
+                let mut left = vec![false; N];
+                let mut count = 0;
+                post_order(
+                    &mut left,
+                    [0],
+                    |left, &v, out| {
+                        if v + 1 < N {
+                            out.push(v + 1);
+                        }
+                        !left[v]
+                    },
+                    |left, v| {
+                        left[v] = true;
+                        count += 1;
+                    },
+                );
+                assert_eq!(count, N);
+                let mut made = vec![false; N];
+                make_after_needs([0], |&v, needs| {
+                    if v + 1 < N && !made[v + 1] {
+                        needs.push(v + 1);
+                        return false;
+                    }
+                    made[v] = true;
+                    true
+                });
+                assert!(made.iter().all(|&m| m));
+            })
+            .expect("the thread starts")
+            .join()
+            .expect("the walks end");
     }
 }

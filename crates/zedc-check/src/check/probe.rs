@@ -177,7 +177,8 @@ fn set_config() -> Option<R10Config> {
 }
 
 /// The configuration of a check that no test configured, in every build: E (`R10Config::eager`)
-/// when `disable_d` (the environment sets `ZED_DISABLE_D`), D (`R10Config::default`) otherwise
+/// when `disable_d` (the environment sets `ZED_DISABLE_D` to any value, also `0` or the empty
+/// string), D (`R10Config::default`) otherwise
 /// (author, QUESTIONS A170, 2026-11-19: D is the default; E is removed once row
 /// PROOF-map-chain-d-skip-and-admit proves D gives no wrong answer). A test built with
 /// `cfg(test)` takes the same default as a production build; a test that compares D with E

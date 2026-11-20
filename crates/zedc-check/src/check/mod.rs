@@ -5486,25 +5486,80 @@ impl<'t, 'a> Ck<'t, 'a> {
         t.renamed(&self.names(t.var_facts().classes))
     }
 
-    /// Decodes `NeedKind::Fwd` in `s` (and recursively in nested functions `s` holds) ONLY when
+    /// Decodes `NeedKind::Fwd` in `s` (and in the nested functions `s` holds) ONLY when
     /// `s` holds an outer variable (`!s.holds_only_own_variables()`) alongside `NeedKind::Fwd`.
     /// Never decodes on top-level chain functions `h_i` (`O(1)` per link).
+    ///
+    /// Complexity tradeoff: the functions `s` holds nest as deep as the program nests its
+    /// lambdas, and each holds the variables of those around it. Naive: recurse into each
+    /// held function, one set of frames a level, which overflowed the stack for 3200 curried
+    /// lambdas (row FAIL-l0126-stack-overflow-after-d), and promote a function shared by two
+    /// places once for each place, so exponential in the depth of the sharing. Used: an
+    /// explicit stack ([`zed_graph::make_after_needs`]), each function promoted after those it
+    /// holds ([`Self::r10_promote_one`]),
+    /// and a memo by address within the call, so each distinct function is promoted once
+    /// and at most one attempt of it is thrown away, `O(V + E)` like the recursion on a tree,
+    /// with heap memory in place of stack frames. The memo keeps each function it names, so
+    /// no address in it is reused within the call.
     fn r10_promote_open_fwds(s: &Arc<Sig>) -> Arc<Sig> {
         if s.holds_only_own_variables() {
             return s.clone();
         }
+        let mut memo: HashMap<*const Sig, (Arc<Sig>, Arc<Sig>)> = HashMap::new();
+        zed_graph::make_after_needs([s.clone()], |top, missing| {
+            if memo.contains_key(&Arc::as_ptr(top)) {
+                return true;
+            }
+            let done = Self::r10_promote_one(top, &mut |f| {
+                if let Some((_, out)) = memo.get(&Arc::as_ptr(f)) {
+                    Some(out.clone())
+                } else if f.holds_only_own_variables() {
+                    Some(f.clone())
+                } else {
+                    missing.push(f.clone());
+                    None
+                }
+            });
+            let Some(out) = done else {
+                return false;
+            };
+            memo.insert(Arc::as_ptr(top), (top.clone(), out));
+            true
+        });
+        memo[&Arc::as_ptr(s)].1.clone()
+    }
+
+    /// [`Self::r10_promote_open_fwds`] of `s`, given by `held` that of each function `s`
+    /// holds, or `None` when `held` lacks one of them: then the functions it lacks have been
+    /// given to `held` and nothing is built.
+    fn r10_promote_one(
+        s: &Arc<Sig>,
+        held: &mut impl FnMut(&Arc<Sig>) -> Option<Arc<Sig>>,
+    ) -> Option<Arc<Sig>> {
+        if s.holds_only_own_variables() {
+            return Some(s.clone());
+        }
         let mut child_changed = false;
-        let map_ty = |t: &Ty, changed: &mut bool| -> Ty {
+        let mut lacking = false;
+        let mut each = |f: &Arc<Sig>, changed: &mut bool| -> Arc<Sig> {
+            match held(f) {
+                Some(nf) => {
+                    if !Arc::ptr_eq(&nf, f) {
+                        *changed = true;
+                    }
+                    nf
+                }
+                None => {
+                    lacking = true;
+                    f.clone()
+                }
+            }
+        };
+        let mut map_ty = |t: &Ty, changed: &mut bool| -> Ty {
             if t.fns.is_empty() && t.tuples.is_empty() && t.payloads.is_empty() {
                 return t.clone();
             }
-            t.with_held_fns(|f| {
-                let nf = Self::r10_promote_open_fwds(f);
-                if !Arc::ptr_eq(&nf, f) {
-                    *changed = true;
-                }
-                nf
-            })
+            t.with_held_fns(|f| each(f, changed))
         };
         let new_arrows: Vec<Arrow> = s
             .arrows
@@ -5523,16 +5578,11 @@ impl<'t, 'a> Ck<'t, 'a> {
         let new_needs: Vec<Need> = s
             .needs
             .iter()
-            .map(|n| {
-                n.with_held_fns(|f| {
-                    let nf = Self::r10_promote_open_fwds(f);
-                    if !Arc::ptr_eq(&nf, f) {
-                        child_changed = true;
-                    }
-                    nf
-                })
-            })
+            .map(|n| n.with_held_fns(|f| each(f, &mut child_changed)))
             .collect();
+        if lacking {
+            return None;
+        }
         let mut cur = if child_changed {
             let mut copy = (**s).clone();
             copy.arrows = new_arrows;
@@ -5567,7 +5617,7 @@ impl<'t, 'a> Ck<'t, 'a> {
             decoded_sig.facts = Default::default();
             cur = Arc::new(decoded_sig);
         }
-        cur
+        Some(cur)
     }
 
     /// Finishes any closed `$k`-owning nested `Sig` held inside `callee`'s needs, memoized by
@@ -5577,9 +5627,9 @@ impl<'t, 'a> Ck<'t, 'a> {
     /// of a chain of forwards, which the program sets: thousands of calls deep in a program
     /// that calls its functions in reverse order. Recursion over it overflowed the stack
     /// (landing review of LAND-map-chain-neon, B6: 8000 deep aborted with an 8 MiB stack), so a
-    /// first pass lists the callees not yet memoized in post-order with an explicit stack, and
-    /// the second finishes them in that order, each child then a memo lookup. Same O(V + E) as
-    /// the recursion, with heap memory in place of stack frames.
+    /// walk in post-order on an explicit stack ([`zed_graph::post_order`]) finishes each callee
+    /// not yet memoized after its forward children, each child then a memo lookup. Same
+    /// O(V + E) as the recursion, with heap memory in place of stack frames.
     fn r10_finish_fwd_callee(
         &self,
         callee: &Arc<Sig>,
@@ -5589,39 +5639,26 @@ impl<'t, 'a> Ck<'t, 'a> {
         if let Some(done) = fwd_memo.get(&Arc::as_ptr(callee)) {
             return done.clone();
         }
-        let mut order: Vec<Arc<Sig>> = Vec::new();
-        let mut listed: HashSet<*const Sig> = HashSet::new();
-        listed.insert(Arc::as_ptr(callee));
-        let mut stack: Vec<(Arc<Sig>, usize)> = vec![(callee.clone(), 0)];
-        while let Some((sig, i)) = stack.last_mut() {
-            let next = sig.needs[*i..].iter().position(|n| match &n.kind {
-                NeedKind::Fwd(c) => {
-                    let p = Arc::as_ptr(&c.callee);
-                    !fwd_memo.contains_key(&p) && !listed.contains(&p)
+        zed_graph::post_order(
+            &mut (made, &mut *fwd_memo),
+            [callee.clone()],
+            |(_, fwd_memo), sig, below| {
+                if fwd_memo.contains_key(&Arc::as_ptr(sig)) {
+                    return false;
                 }
-                _ => false,
-            });
-            match next {
-                Some(k) => {
-                    let at = *i + k;
-                    *i = at + 1;
-                    let NeedKind::Fwd(c) = &sig.needs[at].kind else {
-                        unreachable!("position matched a forward need")
-                    };
-                    let child = c.callee.clone();
-                    listed.insert(Arc::as_ptr(&child));
-                    stack.push((child, 0));
-                }
-                None => {
-                    let (done, _) = stack.pop().expect("the loop saw a last frame");
-                    order.push(done);
-                }
-            }
-        }
-        for sig in &order {
-            let out = self.r10_finish_one_fwd_callee(sig, made, fwd_memo);
-            fwd_memo.insert(Arc::as_ptr(sig), out);
-        }
+                below.extend(sig.needs.iter().filter_map(|n| match &n.kind {
+                    NeedKind::Fwd(c) if !fwd_memo.contains_key(&Arc::as_ptr(&c.callee)) => {
+                        Some(c.callee.clone())
+                    }
+                    _ => None,
+                }));
+                true
+            },
+            |(made, fwd_memo), sig| {
+                let out = self.r10_finish_one_fwd_callee(&sig, made, fwd_memo);
+                fwd_memo.insert(Arc::as_ptr(&sig), out);
+            },
+        );
         fwd_memo[&Arc::as_ptr(callee)].clone()
     }
 
