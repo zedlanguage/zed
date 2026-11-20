@@ -35,8 +35,20 @@ use std::sync::{Arc, OnceLock};
 use zed_collections::by_address::ByAddress;
 use zedc_types::ty::{DebugPart, NodeId, Sig, Ty, debug_cut};
 
-use super::flat_of;
 use crate::check::{Info, RemapPlan};
+
+/// `s` with its compact forwards decoded and their internal results among its own variables:
+/// the flat form of the same signature. It is here, not in `r10_tests.rs` where most of its
+/// callers are, so that this file imports nothing from `r10_tests.rs` and the two are no import
+/// cycle (step S.1f); `r10_tests.rs` and its other children take it from here.
+pub(super) fn flat_of(s: &Sig) -> Sig {
+    let mut flat = s.clone();
+    let (needs, own) = s.decoded_needs_and_own();
+    flat.needs = needs.into_owned();
+    flat.own = own.into_owned();
+    flat.facts = Default::default();
+    flat
+}
 
 /// The signatures [`deep_flat`] has done, by address: a function a nest holds at several places
 /// is done once. The map holds each key's `Arc`, so no other signature takes its address while

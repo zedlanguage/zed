@@ -8,6 +8,7 @@ use crate::check::probe::{
     PendingMode, R10Config, R10Stats, StoreMode, last_r10_stats, set_next_config,
 };
 use crate::check::walk::check_text;
+use expected::flat_of;
 use zedc_types::ty::{NeedKind, Sig, fits_sig, fwd_decode_count, reset_fwd_decode_count};
 
 /// E's output on `text`, for the tests that compared D with the eager checker E before E was
@@ -2747,17 +2748,6 @@ fn landing4_replace_closing_a_held_function_keeps_the_flat_digest() {
         outer_d.digest(),
         "held function closed by replace"
     );
-}
-
-/// `s` with its compact forwards decoded and their internal results among its own variables:
-/// the flat form of the same signature.
-fn flat_of(s: &Sig) -> Sig {
-    let mut flat = s.clone();
-    let (needs, own) = s.decoded_needs_and_own();
-    flat.needs = needs.into_owned();
-    flat.own = own.into_owned();
-    flat.facts = Default::default();
-    flat
 }
 
 /// The first signature of `d` that keeps a forward with an internal result, with its id and
