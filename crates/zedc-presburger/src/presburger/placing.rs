@@ -33,7 +33,7 @@
 
 use std::collections::HashMap;
 
-use super::formula::{Atom, Factor, Formula, Id};
+use super::formula::{Formula, Id};
 
 /// A definition for [`placed`]: the auxiliary variables it fixes, its formula, and whether it is
 /// total, so that for every value of every other atom some value of its variables satisfies it.
@@ -97,11 +97,11 @@ pub fn placed(body: &Formula, defs: &[Placing]) -> (Formula, Formula) {
         for k in parts.nodes[v].kids() {
             if let Formula::Con(c) = k {
                 for a in c.lin.terms.keys() {
-                    auxes(a, |x| {
+                    for x in a.auxes() {
                         if let Some(&i) = owner.get(&x) {
                             meet(&mut place, i, at);
                         }
-                    });
+                    }
                 }
             }
         }
@@ -119,12 +119,14 @@ pub fn placed(body: &Formula, defs: &[Placing]) -> (Formula, Formula) {
         // The variables it reads occur at its part; beside the body is above the root.
         let mut later = false;
         for a in d.def.atoms() {
-            auxes(&a, |x| match owner.get(&x) {
-                Some(&j) if j == i => {}
-                Some(&j) if j > i => later = true,
-                Some(&j) => meet(&mut place, j, target.unwrap_or(0)),
-                None => {}
-            });
+            for x in a.auxes() {
+                match owner.get(&x) {
+                    Some(&j) if j == i => {}
+                    Some(&j) if j > i => later = true,
+                    Some(&j) => meet(&mut place, j, target.unwrap_or(0)),
+                    None => {}
+                }
+            }
         }
         if later {
             return beside();
@@ -133,21 +135,6 @@ pub fn placed(body: &Formula, defs: &[Placing]) -> (Formula, Formula) {
     top.reverse();
     let top = Formula::and(top.iter().map(|&i| defs[i].def.clone()).collect());
     (top, parts.rebuilt(&at, defs))
-}
-
-/// Calls `f` with each auxiliary variable of the atom `a`: itself, or a factor of a product.
-fn auxes(a: &Atom, mut f: impl FnMut(u32)) {
-    match a {
-        Atom::Aux(x) => f(*x),
-        Atom::Product(x, y) => {
-            for g in [x, y] {
-                if let Factor::Aux(x) = g {
-                    f(*x)
-                }
-            }
-        }
-        Atom::Sym(_) => {}
-    }
 }
 
 /// The distinct compound parts of a formula, the root first, with the tree of the

@@ -563,7 +563,7 @@ impl Extending {
             out.extend(s.iter().cloned());
         }
         let mut seen: HashSet<u32> = HashSet::new();
-        let mut todo: Vec<u32> = own.iter().flat_map(auxes).collect();
+        let mut todo: Vec<u32> = own.iter().flat_map(Atom::auxes).collect();
         out.extend(own);
         while let Some(n) = todo.pop() {
             if !seen.insert(n) || parts_hold(&parts, n) {
@@ -571,7 +571,7 @@ impl Extending {
             }
             let d = def(n);
             let atoms = d.atoms();
-            todo.extend(atoms.iter().flat_map(auxes));
+            todo.extend(atoms.iter().flat_map(Atom::auxes));
             out.extend(atoms);
         }
         out
@@ -672,10 +672,10 @@ impl Faces {
         // their faces.
         let mut seen: HashSet<u32> = HashSet::new();
         let mut todo: Vec<u32> = (rows.iter())
-            .flat_map(|c| c.lin.terms.keys().flat_map(auxes).collect::<Vec<_>>())
+            .flat_map(|c| c.lin.terms.keys().flat_map(Atom::auxes).collect::<Vec<_>>())
             .chain(
                 ors.iter()
-                    .flat_map(|h| h.atoms().iter().flat_map(auxes).collect::<Vec<_>>()),
+                    .flat_map(|h| h.atoms().iter().flat_map(Atom::auxes).collect::<Vec<_>>()),
             )
             .collect();
         while let Some(n) = todo.pop() {
@@ -687,12 +687,12 @@ impl Faces {
             match constraints(&d) {
                 Some(cs) => {
                     for c in cs {
-                        todo.extend(c.lin.terms.keys().flat_map(auxes));
+                        todo.extend(c.lin.terms.keys().flat_map(Atom::auxes));
                         rows.push(c.clone());
                     }
                 }
                 None => {
-                    todo.extend(d.atoms().iter().flat_map(auxes));
+                    todo.extend(d.atoms().iter().flat_map(Atom::auxes));
                     ors.push(d);
                 }
             }
@@ -1721,7 +1721,7 @@ fn apart(atoms: &Atoms, k: &Known, face: &Face) -> bool {
 /// one would be met at a value the part may not hold at. Time of `f`, O(log n) an atom.
 fn given(closure: &Atoms, m: &Point, f: &Formula) -> bool {
     f.atoms().iter().all(|a| {
-        let factors = auxes(a).map(Atom::Aux).chain(match a {
+        let factors = a.auxes().map(Atom::Aux).chain(match a {
             Atom::Product(f, g) => vec![f.atom(), g.atom()],
             Atom::Sym(_) | Atom::Aux(_) => Vec::new(),
         });
@@ -1729,22 +1729,6 @@ fn given(closure: &Atoms, m: &Point, f: &Formula) -> bool {
             .chain(factors)
             .all(|b| !closure.contains(&b) || m.contains_key(&b))
     })
-}
-
-/// The auxiliary variables of an atom.
-fn auxes(a: &Atom) -> impl Iterator<Item = u32> {
-    let (f, g) = match a {
-        Atom::Aux(n) => (Some(*n), None),
-        Atom::Product(f, g) => {
-            let aux = |f: &Factor| match f {
-                Factor::Aux(n) => Some(*n),
-                Factor::Sym(_) => None,
-            };
-            (aux(f), aux(g))
-        }
-        Atom::Sym(_) => (None, None),
-    };
-    f.into_iter().chain(g)
 }
 
 /// The definitions `f` reaches: those of its auxiliary variables, and of theirs. Time of `f`
@@ -1778,7 +1762,7 @@ fn reached_by(
     past: &dyn Fn(&Atom) -> bool,
 ) -> Vec<Formula> {
     let mut seen: HashSet<u32> = HashSet::new();
-    let mut todo: Vec<u32> = f.atoms().iter().flat_map(auxes).collect();
+    let mut todo: Vec<u32> = f.atoms().iter().flat_map(Atom::auxes).collect();
     let mut out = Vec::new();
     while let Some(n) = todo.pop() {
         if !seen.insert(n) || past(&Atom::Aux(n)) {
@@ -1788,7 +1772,7 @@ fn reached_by(
         if matches!(&d, Formula::And(gs) if gs.is_empty()) {
             continue;
         }
-        todo.extend(d.atoms().iter().flat_map(auxes));
+        todo.extend(d.atoms().iter().flat_map(Atom::auxes));
         out.push(d);
     }
     out
@@ -1844,7 +1828,7 @@ fn met(m: &Point, f: &Formula) -> Result<Option<Point>, Refusal> {
 fn read_at(m: &Point, atoms: &std::collections::BTreeSet<Atom>) -> Model {
     let mut at = Model::new();
     for a in atoms {
-        let factors = auxes(a).map(Atom::Aux).chain(match a {
+        let factors = a.auxes().map(Atom::Aux).chain(match a {
             Atom::Product(f, g) => vec![f.atom(), g.atom()],
             Atom::Sym(_) | Atom::Aux(_) => Vec::new(),
         });
@@ -3268,7 +3252,7 @@ impl Summaries {
         let mut frontier: Vec<Def> = Vec::new();
         let mut seen_init: HashSet<Id> = HashSet::new();
         for a in reads {
-            for n in auxes(a) {
+            for n in a.auxes() {
                 let f = def(n);
                 if free(&f) || own.contains(&Atom::Aux(n)) {
                     continue;
@@ -3705,7 +3689,7 @@ impl Summaries {
             // division chains (LOAD-max-div-xr I24). Used: deduplicate `inputs` per frame by
             // `seen_in`, O(d) per definition. Tradeoffs: one small `HashSet<Id>` per frame.
             let mut seen_in = HashSet::from([id]);
-            let inputs: Vec<Formula> = (atoms.iter().flat_map(auxes))
+            let inputs: Vec<Formula> = (atoms.iter().flat_map(Atom::auxes))
                 .map(def)
                 .filter(|d| !free(d) && seen_in.insert(Id::any(d)))
                 .collect();

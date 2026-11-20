@@ -39,12 +39,17 @@ struct Node {
     size: u32,
     left: Set,
     right: Set,
+    /// [`Lin::aux_end`] of the divisors of the set: the largest of its divisor's and its two
+    /// subtrees', made with the node, so O(1) (`Sets::aux_end`).
+    aux_end: u32,
 }
 
 /// The divisors met and the nodes made, each once, and the unions made.
 pub(crate) struct Sets {
     /// Each divisor and its priority, by its number.
     keys: Vec<(Lin, u64)>,
+    /// [`Lin::aux_end`] of each divisor, by its number, found once when it is numbered.
+    aux_ends: Vec<u32>,
     numbers: HashMap<Lin, u32>,
     /// The nodes; the first stands for [`EMPTY`] and is never read.
     nodes: Vec<Node>,
@@ -57,12 +62,14 @@ impl Default for Sets {
     fn default() -> Self {
         Sets {
             keys: Vec::new(),
+            aux_ends: Vec::new(),
             numbers: HashMap::new(),
             nodes: vec![Node {
                 key: 0,
                 size: 0,
                 left: EMPTY,
                 right: EMPTY,
+                aux_end: 0,
             }],
             made: HashMap::new(),
             unions: HashMap::new(),
@@ -80,6 +87,7 @@ impl Sets {
         // The run's random priority of `d` (`PRIORITIES`): one set has one shape in a run.
         let priority = PRIORITIES.hash(d);
         self.keys.push((d.clone(), priority));
+        self.aux_ends.push(d.aux_end());
         self.numbers.insert(d.clone(), k);
         k
     }
@@ -98,12 +106,16 @@ impl Sets {
             return s;
         }
         let size = 1 + self.len(left) + self.len(right);
+        let aux_end = (self.aux_ends[key as usize])
+            .max(self.aux_end(left))
+            .max(self.aux_end(right));
         let s = self.nodes.len() as Set;
         self.nodes.push(Node {
             key,
             size,
             left,
             right,
+            aux_end,
         });
         self.made.insert((key, left, right), s);
         s
@@ -119,6 +131,14 @@ impl Sets {
     /// The number of divisors of `s`. O(1).
     pub(crate) fn len(&self, s: Set) -> u32 {
         self.node(s).size
+    }
+
+    /// One more than the largest auxiliary variable a divisor of `s` names, 0 for none
+    /// ([`Lin::aux_end`]). Sets are never undone, so a set made before an attempt was undone
+    /// may name atoms the undo took away; `Tx::forget` reads this to drop what such a set
+    /// keys. O(1).
+    pub(crate) fn aux_end(&self, s: Set) -> u32 {
+        self.node(s).aux_end
     }
 
     /// `{d}`.
@@ -300,6 +320,34 @@ mod tests {
         // A divisor added twice is one.
         let one = sets.single(&d(7));
         assert_eq!(sets.union(a, one), a);
+    }
+
+    /// `Sets::aux_end` of every set made, from singles, unions and the splits they make,
+    /// against the largest auxiliary variable its divisors name, listed (PROOF-preimage-forget-callkey).
+    #[test]
+    fn a_set_knows_the_newest_auxiliary_variable_its_divisors_name() {
+        use zedc_presburger::presburger::Factor;
+        let mut sets = Sets::default();
+        assert_eq!(sets.aux_end(EMPTY), 0);
+        // n + i, q_i + 1, and n * q_(2i): no variable, the atom itself, the factor of a product.
+        let divisor = |i: u32| match i % 3 {
+            0 => d(i64::from(i)),
+            1 => Lin::atom(Atom::Aux(i)).plus(&Lin::constant(1)),
+            _ => Lin::atom(Atom::product_of(
+                Factor::Sym("n".into()),
+                Factor::Aux(2 * i),
+            )),
+        };
+        let mut s = EMPTY;
+        for i in (0..30).rev() {
+            let one = sets.single(&divisor(i));
+            s = sets.union(s, one);
+            let mut end = 0;
+            sets.each(s, &mut |l| end = end.max(l.aux_end()));
+            assert_eq!(sets.aux_end(s), end, "after {i}");
+        }
+        // 29 % 3 == 2: the divisor n * q58.
+        assert_eq!(sets.aux_end(s), 59);
     }
 
     #[test]

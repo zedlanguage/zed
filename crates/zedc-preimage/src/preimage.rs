@@ -1730,6 +1730,11 @@ impl Shown {
 struct FormulaNumbers {
     by_id: HashMap<presburger::Id, u32>,
     by_shape: HashMap<Shape, u32>,
+    /// [`Lin::aux_end`] of each numbered formula, by its number: a constraint's own, or the
+    /// largest of its parts', found once when the shape is first numbered, O(its parts).
+    /// Numbers are never undone, so a number made before an attempt was undone may name atoms
+    /// the undo took away; `Tx::forget` reads this to drop what such a number keys.
+    aux_ends: Vec<u32>,
 }
 
 /// A node of a formula over its parts' numbers ([`FormulaNumbers`]).
@@ -1772,13 +1777,33 @@ impl FormulaNumbers {
                 Formula::Or(_) => Shape::Or(ns),
             };
             let next = to_u32(self.by_shape.len(), "shapes");
-            let n = *self.by_shape.entry(shape).or_insert(next);
+            let n = match self.by_shape.entry(shape) {
+                std::collections::hash_map::Entry::Occupied(o) => *o.get(),
+                std::collections::hash_map::Entry::Vacant(v) => {
+                    let ends = &self.aux_ends;
+                    let end = match v.key() {
+                        Shape::Con(c) => c.lin.aux_end(),
+                        Shape::Not(m) => ends[*m as usize],
+                        Shape::And(ms) | Shape::Or(ms) => {
+                            ms.iter().map(|m| ends[*m as usize]).max().unwrap_or(0)
+                        }
+                    };
+                    self.aux_ends.push(end);
+                    *v.insert(next)
+                }
+            };
             if let Some(id) = id {
                 self.by_id.insert(id, n);
             }
             out.push(n);
         }
         out.pop().expect("the number of the formula")
+    }
+
+    /// One more than the largest auxiliary variable the formula numbered `n` names, 0 for
+    /// none ([`FormulaNumbers::aux_ends`]). O(1).
+    fn aux_end(&self, n: u32) -> u32 {
+        self.aux_ends[n as usize]
     }
 }
 
@@ -3865,6 +3890,17 @@ type Unheld = Box<dyn FnOnce(&mut Memo)>;
 /// empty when none may.
 type CallKey = (At, Vec<Lin>, Vec<(Set, u32)>);
 
+/// One more than the largest auxiliary variable the call key `k` names, 0 for none: in its
+/// arguments' linear terms ([`Lin::aux_end`]) and in their conditions, by the numbers of
+/// their divisor sets ([`DivisorSets::aux_end`]) and other parts ([`FormulaNumbers::aux_end`]).
+/// [`Tx::forget`] drops a failure whose key names a variable an undo took away. O(the key's
+/// terms): each condition's end was found once, when its number was made.
+fn call_key_end((_, lins, conds): &CallKey, sets: &DivisorSets, numbers: &FormulaNumbers) -> u32 {
+    let lins = lins.iter().map(Lin::aux_end);
+    let conds = (conds.iter()).map(|&(s, f)| sets.aux_end(s).max(numbers.aux_end(f)));
+    lins.chain(conds).max().unwrap_or(0)
+}
+
 /// A callee's relation with every variable but its canonical atoms and the inputs it reads
 /// eliminated ([`Walk::projection`]): constraints over symbols, and over the quotients and
 /// remainders by constants of `pairs` where an elimination over symbols alone would leave a
@@ -5152,23 +5188,51 @@ impl<'t> Tx<'t> {
         self.run.entered += u64::from(high != usize::MAX);
     }
 
-    /// Removes the translation's entries made after the first `mark`, but for those that found
-    /// no translation wherever they are reached (`None`, with no stop below them): a failure
-    /// names no auxiliary variable, so undoing the attempt does not touch it.
+    /// Removes the translation's entries logged after the first `mark`, but for those that
+    /// found no translation wherever they are reached (`None`, with no stop below them) and
+    /// whose key names no auxiliary variable numbered `defs` or above. `defs` is the length
+    /// `Tr::defs` is truncated to; [`Walk::undo`] takes both marks together and does both.
     ///
-    /// Why a kept failure stays right. The undo is `Tr::truncate(mark)` with this call:
-    /// `Tr::aux` numbers an auxiliary variable by `defs.len()`, so after the truncate a new
-    /// variable takes a number an undone one had. A success may name such a number in its
-    /// value, so it is removed. A failure's value is `None` and names nothing; a `cut` of
-    /// `usize::MAX` means it holds on every stack ([`Entry`], PREIMAGE-entry-higher-stack).
-    /// Keys of the `At` tables are a term number and a scope number, which name no auxiliary
-    /// variable. Not proved: a `CallKey` holds the arguments' `Lin`s, which may name an
-    /// auxiliary atom of the undone attempt; after the truncate the same key can stand for
-    /// arguments whose atom has another definition, and that the call fails for those too is
-    /// not shown. If it does not, the reuse gives `None`, which a caller reads as a term with
-    /// no translation (`Walk::formula_at` then takes `compare_untranslated`): coarser, not
-    /// unsound (inferred from `call_key` and `formula_at`, the callers read; no test). Row
-    /// PROOF-preimage-forget-callkey.
+    /// Why every entry left names only variables the undo keeps, with their definitions.
+    /// 1. `Tr::aux` numbers a variable by `defs.len()`, and `Tr::truncate(defs)` removes those
+    ///    numbered `defs` and above, so a new variable made after it takes an undone number with
+    ///    another definition. The variables below `defs` keep their definitions.
+    /// 2. The entries logged before `mark` were made before the attempt, when `defs.len()` was
+    ///    at most `defs` (both marks are read at its start, and the definitions only grow until
+    ///    an undo, which drains the log back past them), so key and value name only variables
+    ///    below `defs`: 1 keeps them as they were.
+    /// 3. Of the entries logged since `mark`: a success may name an undone variable in its
+    ///    value, so it is removed; so is an entry with a stop below it (`cut` not `usize::MAX`,
+    ///    [`Entry`], PREIMAGE-entry-higher-stack). A failure's value is `None` and names nothing.
+    ///    The key of an `At` table is a term number and a scope number, which name no variable.
+    ///    A [`CallKey`] holds the arguments' `Lin`s and the numbers of their conditions, which
+    ///    may name a variable of the undone attempt: in `g(x div 2) > 0` with `g = (p) -> p *
+    ///    p` and no products, the call is keyed `[q0]` on the pair `x div 2` made in the
+    ///    attempt, fails, and the comparison is undone; the next variable numbered 0 has
+    ///    another definition, and `[q0]` would then stand for a call at other arguments. So a
+    ///    failure whose key names a variable numbered `defs` or above ([`call_key_end`]) is
+    ///    removed too, and every failure kept has a key over the variables 1 keeps. (Whether
+    ///    such a call's failure could differ at the other arguments was not settled: the body
+    ///    is read at the arguments' terms ([`Tx::call_env`]), and `Tr::instance` reads an
+    ///    argument's definition. Removing it makes the question moot.) The canonical keys of
+    ///    [`Walk::canonical_formula`], [`Walk::projection`] and their kin hold only constants
+    ///    and canonical symbols ([`Walk::canonical_env`]), so they are never removed for this.
+    /// 4. Not proved, inferred: that a failure kept by 3 is still a failure once the undo has
+    ///    also taken away the attempt's pairs, extrema, choices, cases and claims
+    ///    (`Tr::truncate`). Each path that reads them falls back to the plain read when it gives
+    ///    nothing (`Walk::claimable`, `Walk::formula_called`, `Walk::lin_called`,
+    ///    `Walk::defined_called`), so a failure needs the plain read to fail too; that a claimed
+    ///    read never succeeds where the plain read of the same body fails is not shown. A wrong
+    ///    kept failure gives `None`, which a caller reads as a term with no translation
+    ///    (`Walk::formula_at` then takes `compare_untranslated`): coarser, not unsound.
+    ///
+    /// Test: `a_call_that_fails_at_an_atom_an_undo_takes_away_is_not_kept` (red before 3's
+    /// `CallKey` removal: a key named `q0` with no definitions left), which also compares a
+    /// call made afterward under the same key with a fresh translation (`tests::RECHECK`). It cannot
+    /// catch a wrong failure of the kind 4 leaves open. Cost of 3's check: O(the key's terms)
+    /// per entry removed or kept, which the entry's key already cost to make; the ends of the
+    /// conditions are found once per interned number ([`DivisorSets::aux_end`],
+    /// [`FormulaNumbers::aux_end`]). Row PROOF-preimage-forget-callkey.
     ///
     /// Complexity tradeoff: the naive version removed every entry the undone attempt made, the
     /// failures too. A chain of n functions each multiplying the one before by a parameter
@@ -5192,24 +5256,27 @@ impl<'t> Tx<'t> {
     /// to 2.2x the bytes on the two tests named. So the log stays. Test of the undo itself:
     /// `a_test_after_a_failed_test_reading_the_same_call_keeps_its_answer` (with a `forget`
     /// that removes nothing it panics on the stale auxiliary pair).
-    fn forget(&mut self, mark: usize) {
-        fn undo<K: Hash + Eq, V>(t: &mut HashMap<K, Entry<Option<V>>>, k: &K) {
+    fn forget(&mut self, mark: usize, defs: usize, tr: &Tr) {
+        /// Removes the entry under `k` unless it is a failure that holds on every stack and
+        /// `stale` (its key names an undone variable) is false.
+        fn undo<K: Hash + Eq, V>(t: &mut HashMap<K, Entry<Option<V>>>, k: &K, stale: bool) {
             if t.get(k)
-                .is_some_and(|(v, cut, _)| v.is_some() || *cut != usize::MAX)
+                .is_some_and(|(v, cut, _)| stale || v.is_some() || *cut != usize::MAX)
             {
                 t.remove(k);
             }
         }
+        let stale = |k: &CallKey| call_key_end(k, &tr.sets, &tr.numbers) as usize > defs;
         let m = &mut self.run.memo;
         for e in m.log.drain(mark..) {
             match e {
-                Logged::Lin(k) => undo(&mut m.lin, &k),
-                Logged::Formula(k) => undo(&mut m.formula, &k),
-                Logged::LinCall(k) => undo(&mut m.lin_calls, &k),
-                Logged::FormulaCall(k) => undo(&mut m.formula_calls, &k),
-                Logged::Projection(k) => undo(&mut m.projections, &k),
-                Logged::Defined(k) => undo(&mut m.defined, &k),
-                Logged::DefinedCall(k) => undo(&mut m.defined_calls, &k),
+                Logged::Lin(k) => undo(&mut m.lin, &k, false),
+                Logged::Formula(k) => undo(&mut m.formula, &k, false),
+                Logged::LinCall(k) => undo(&mut m.lin_calls, &k, stale(&k)),
+                Logged::FormulaCall(k) => undo(&mut m.formula_calls, &k, stale(&k)),
+                Logged::Projection(k) => undo(&mut m.projections, &k, stale(&k)),
+                Logged::Defined(k) => undo(&mut m.defined, &k, false),
+                Logged::DefinedCall(k) => undo(&mut m.defined_calls, &k, stale(&k)),
             }
         }
     }
@@ -8487,6 +8554,16 @@ impl<'m, 't> Walk<'m, 't> {
         f(&mut tr.borrow_mut())
     }
 
+    /// Undoes an attempt begun when the translation had `defs` definitions and the memo's log
+    /// `logged` entries: the definitions made since ([`Tr::truncate`]) and the entries that
+    /// name them or no longer hold ([`Tx::forget`], where the proof is).
+    fn undo(&self, defs: usize, logged: usize) {
+        self.tr(|tr| {
+            tr.truncate(defs);
+            self.with(|tx| tx.forget(logged, defs, tr));
+        });
+    }
+
     /// [`Walk::cached`] for the translation into the linear-relation domain, whose entries a
     /// translation that is undone removes; `logged` names an entry for the log.
     fn translated<K, V, F>(
@@ -8525,8 +8602,7 @@ impl<'m, 't> Walk<'m, 't> {
             match self.lin(self.arg(args, i), env).await {
                 Some(l) => lins.push(l),
                 None => {
-                    self.tr(|tr| tr.truncate(mark));
-                    self.with(|tx| tx.forget(logged));
+                    self.undo(mark, logged);
                     return None;
                 }
             }
@@ -9377,8 +9453,7 @@ impl<'m, 't> Walk<'m, 't> {
         for i in 0..args.len() {
             let d = self.defined(self.arg(args, i), env).await;
             if !d.is_some_and(|d| d.is_top()) {
-                self.tr(|tr| tr.truncate(mark));
-                self.with(|tx| tx.forget(logged));
+                self.undo(mark, logged);
                 return None;
             }
         }
@@ -10104,8 +10179,7 @@ impl<'m, 't> Walk<'m, 't> {
                             };
                             return Some(if p == Ne { Formula::negate(f) } else { f });
                         }
-                        self.tr(|tr| tr.truncate(mark));
-                        self.with(|tx| tx.forget(logged));
+                        self.undo(mark, logged);
                         if matches!(p, Eq | Ne) {
                             // Two tests are equal where both hold or neither does.
                             if let (Some(fa), Some(fb)) =
@@ -10118,8 +10192,7 @@ impl<'m, 't> Walk<'m, 't> {
                                 let same = self.exactly_equal(same, a, b, env).await?;
                                 return Some(if p == Ne { Formula::negate(same) } else { same });
                             }
-                            self.tr(|tr| tr.truncate(mark));
-                            self.with(|tx| tx.forget(logged));
+                            self.undo(mark, logged);
                         }
                         self.compare_untranslated(t, p, (a, b), translated, env)
                             .await
@@ -15037,6 +15110,84 @@ mod tests {
             chain_log,
             lin: tx.run.memo.lin.len(),
             stops: tx.run.stops.len(),
+        }
+    }
+
+    /// PROOF-preimage-forget-callkey. `g(x div 2) > 0`, `g = (p) -> p * p`: the comparison
+    /// reads `x div 2`, a pair made in the attempt (`Aux(0)`), and the call is keyed `[q0]`;
+    /// with no products (`Tr::new(false)`) the body has no linear term, so the call fails, the
+    /// comparison fails, and the attempt is undone (`Tr::truncate`, [`Tx::forget`]). The undo
+    /// takes `q0` away, so a failure kept under `[q0]` would stand, for the next atom numbered
+    /// 0, for a call at other arguments. Red before: `forget` kept it, and one key named an
+    /// atom at or above `defs.len()`. Then, `g(x div 2) > 0 || g(x div 5) > 0`: the second call
+    /// makes another `q0` with another definition, and its translation is compared with a
+    /// fresh one ([`check`]: the memo before ST-formula-k2-rec, every hit read again
+    /// ([`RECHECK`]), and the preimages against the interpreter at every point of the box).
+    /// What this cannot catch: a body whose failure depends on what an argument's atom is
+    /// defined as; none was found, and the drop makes the reuse impossible either way.
+    #[test]
+    fn a_call_that_fails_at_an_atom_an_undo_takes_away_is_not_kept() {
+        let v = |s: &str| Term::Var(s.into());
+        let int = |n: i64| Term::Lit(Value::Int(n));
+        let sh = Shared::new;
+        let prim = |p: Prim, a: Term, b: Term| Term::Prim(p, vec![a, b]);
+        let g = Term::Lam(vec!["p".into()], sh(prim(Prim::Mul, v("p"), v("p"))));
+        let call = |d: i64| {
+            let arg = prim(Prim::IntDiv, v("x"), int(d));
+            prim(Prim::Gt, Term::App(sh(v("g")), vec![arg]), int(0))
+        };
+        let with_g = |b: Term| Term::Let("g".into(), sh(g.clone()), sh(b));
+        let t = with_g(call(2));
+        let mut tx = Tx::new();
+        let root = tx.terms.add(&t);
+        tx.start(&domains(), Marks::default());
+        let mut tr = Tr::new(false);
+        // The formula is `None` (`p * p` has no linear term); what is checked is the memo.
+        tx.formula(&mut tr, root, ROOT);
+        let m = &tx.run.memo;
+        let keys = (m.lin_calls.keys())
+            .chain(m.formula_calls.keys())
+            .chain(m.projections.keys())
+            .chain(m.defined_calls.keys());
+        let stale: Vec<&CallKey> = keys
+            .filter(|k| call_key_end(k, &tr.sets, &tr.numbers) as usize > tr.defs.len())
+            .collect();
+        assert!(stale.is_empty(), "{} definitions; {stale:?}", tr.defs.len());
+        CHECKED.set([0; 5]);
+        check(&with_g(prim(Prim::Or, call(2), call(5))), 0);
+        // The entries that hold everywhere, read again and compared ([`CHECKED`]).
+        assert!(CHECKED.get()[4] > 0, "{:?}", CHECKED.get());
+    }
+
+    /// [`FormulaNumbers::aux_end`] of a constraint, a negation, a conjunction and a
+    /// disjunction, and of a shape numbered a second time, against the variables each names
+    /// (PROOF-preimage-forget-callkey): what [`call_key_end`] reads of a condition.
+    #[test]
+    fn a_formula_number_knows_the_newest_auxiliary_variable_it_names() {
+        use presburger::{Atom, Factor};
+        let mut numbers = FormulaNumbers::default();
+        let q = |n: u32| Lin::atom(Atom::Aux(n));
+        let x = Lin::atom(Atom::Sym("x".into()));
+        let xq = Lin::atom(Atom::product_of(Factor::Sym("x".into()), Factor::Aux(8)));
+        let over_q5 = Formula::Con(Con::ge(&q(5), &x));
+        let over_x = Formula::Con(Con::eq(&x, &Lin::constant(3)));
+        let over_q2 = Formula::Con(Con::ge(&x, &q(2)));
+        let cases = [
+            (over_x.clone(), 0),
+            (over_q5.clone(), 6),
+            (Formula::Con(Con::ge(&xq, &q(1))), 9),
+            (Formula::negate(over_q5.clone()), 6),
+            (
+                Formula::and(vec![over_x.clone(), Formula::negate(over_q5)]),
+                6,
+            ),
+            (Formula::or(vec![over_x.clone(), over_q2.clone()]), 3),
+            // Made apart but alike: the same number, found by its shape.
+            (Formula::or(vec![over_x, over_q2]), 3),
+        ];
+        for (f, end) in cases {
+            let n = numbers.number(&f);
+            assert_eq!(numbers.aux_end(n), end, "{f}");
         }
     }
 

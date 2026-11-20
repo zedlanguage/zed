@@ -447,6 +447,22 @@ impl Atom {
             Atom::Product(b, a)
         }
     }
+
+    /// The auxiliary variables of the atom: itself, or each factor of a product that is one.
+    /// The one routine for this (DRY): `extend.rs` and `placing.rs` each had a copy, and
+    /// zedc-preimage reads it for the newest atom a key names (`Tx::forget`). O(1).
+    pub fn auxes(&self) -> impl Iterator<Item = u32> {
+        let aux = |f: &Factor| match f {
+            Factor::Aux(n) => Some(*n),
+            Factor::Sym(_) => None,
+        };
+        let (f, g) = match self {
+            Atom::Aux(n) => (Some(*n), None),
+            Atom::Product(f, g) => (aux(f), aux(g)),
+            Atom::Sym(_) => (None, None),
+        };
+        f.into_iter().chain(g)
+    }
 }
 
 impl Atom {
@@ -484,6 +500,17 @@ impl Lin {
             terms: BTreeMap::from([(a, Int::ONE)]),
             constant: Int::ZERO,
         }
+    }
+
+    /// One more than the largest auxiliary variable the term names, itself or as a factor of
+    /// a product ([`Atom::auxes`]); 0 when it names none. A caller that numbers auxiliary
+    /// variables in order of making reads from it whether the term names one made at or after
+    /// a mark (zedc-preimage `Tx::forget`). O(the terms).
+    pub fn aux_end(&self) -> u32 {
+        (self.terms.keys().flat_map(Atom::auxes))
+            .map(|n| n.saturating_add(1))
+            .max()
+            .unwrap_or(0)
     }
 
     /// `self + other`.

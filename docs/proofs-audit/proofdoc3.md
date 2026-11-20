@@ -160,7 +160,7 @@ ROOTS-interval-bound).
 | 5764ed800 | One-sided Pearce-Kelly reordering; order-maintenance ranks | product.rs `impl Potential`, `reorder` | completed: the DOI doi:10.1145/1187436.1210590 at both (copied from the module doc) |
 | 7bfd6bba8 | The bounds a refusal keeps do not depend on the order it was met in | product.rs `kept_meet`, `Scope::join_settled` | completed: the order proof (meet and join are set intersection and union, a left-out variable means the whole line) |
 | 1ffeb360d | `closed_cone_ray` certificates; `eliminate` drops one-sided names, the dark shadow gives a witness | product.rs `Block::recession_uncertified`, `eliminate` | already there; the Pugh DOI added at `eliminate` (the entry's other sites not read) |
-| 364dd4a15 | `Tx::forget` keeps failed translations because "a failure names no auxiliary variable" | preimage.rs `Tx::forget` | Not proved, marked: argued for the `At` tables, open for `CallKey` tables |
+| 364dd4a15 | `Tx::forget` keeps failed translations because "a failure names no auxiliary variable" | preimage.rs `Tx::forget` | Fixed for `CallKey` tables (PROOF-preimage-forget-callkey): a failure whose key names an atom the undo takes away is dropped, checked by `call_key_end`; a red-then-green test. Still marked not proved at the site: that a kept failure stays a failure once the undo has also removed pairs and claims (a wrong one is coarser, not unsound) |
 | 564bef57c | A refused projection keeps the box stage's bounds | preimage.rs `boxed_projections`, product.rs `project_part` | already there (pointing to zedc-presburger `row_box`) |
 
 No code claim:
