@@ -531,6 +531,22 @@ fn a_class_of_stars(k: usize) -> (Scope, Vec<Term>) {
     (ints(&names), tests)
 }
 
+/// The tests of [`a_class_of_stars`] at size `k` with a second disjunction among the hubs,
+/// `n + 2*m >= 1 || n - m >= 40`, first, which no other implies: the class's conjuncts then
+/// hold two that are not constraints (case 3 of the proof at `Scope::core_leaf_bound`).
+fn a_class_of_stars_under_two_disjunctions(k: usize) -> (Scope, Vec<Term>) {
+    let (start, mut tests) = a_class_of_stars(k);
+    let twice = prim(Prim::Add, var("n"), prim(Prim::Mul, int(2), var("m")));
+    let diff = prim(Prim::Sub, var("n"), var("m"));
+    let second = prim(
+        Prim::Or,
+        prim(Prim::Ge, twice, int(1)),
+        prim(Prim::Ge, diff, int(40)),
+    );
+    tests.insert(0, second);
+    (start, tests)
+}
+
 /// The tests of [`a_lazy_scope_with_many_disjunctions_among_the_hubs_of_a_star_scales`] at
 /// size `k`: the star `a >= x + y`, then `k` tests `x + y >= j || x - y >= j` among its hubs.
 fn disjunctions_among_the_hubs_of_a_star(k: usize) -> (Scope, Vec<Term>) {
@@ -1281,6 +1297,83 @@ fn a_lazy_scope_settles_the_stars_of_a_class_as_the_eager_one() {
             "[..]",
             "a{i}"
         );
+    }
+}
+
+/// The stars `x0 >= h1 + h2` and `x1 >= h1 + h2`, one class, over hubs in `0..=10`, with two
+/// tests among the hubs, before or after the stars: `h1 + 2*h2 <= 9` and `2*h1 + h2 <= 9`
+/// both false, which the relation keeps as the constraints `h1 + 2*h2 >= 10` and
+/// `2*h1 + h2 >= 10`, or the disjunctions `h1 + 2*h2 >= 10 || h1 - h2 >= 8` and
+/// `2*h1 + h2 >= 10 || h2 - h1 >= 8`, which it keeps as they are. Each test alone leaves
+/// `h1 + h2` at least 5 (`h1 = 0, h2 = 5`); the two together at least 7 (`h1 = 3, h2 = 4`).
+/// Neither moves a hub's interval. Then a test that moves a hub (`h1 <= 9`), which sends the
+/// eager scope through `Scope::moved_blocks` and `Scope::leaf_bound_stays`, whose bound with
+/// the two disjunctions is case 3 of the proof at `Scope::core_leaf_bound`
+/// (PROOF-preimage-core-leaf-bound). The eager scope gives every name the lazy scope's
+/// settled product. It cannot catch a looseness both scopes share: with the disjunctions
+/// assumed before the stars, both give the leaves `[5..]`, the meet of the two disjunctions'
+/// parts that `Scope::project_block` projects, where the projection is `[7..]`.
+#[test]
+fn tests_among_the_hubs_of_two_stars_bound_their_leaves_as_in_a_lazy_scope() {
+    let p = Premises::new();
+    let hubs = ["h1", "h2"];
+    let names: Vec<Arc<str>> = ["x0", "x1", "h1", "h2"]
+        .into_iter()
+        .map(Arc::from)
+        .collect();
+    let mut start = ints(&names);
+    for h in hubs {
+        let within = prim(
+            Prim::And,
+            prim(Prim::Ge, var(h), int(0)),
+            prim(Prim::Le, var(h), int(10)),
+        );
+        start = start.assume(&within, true, &p);
+    }
+    let star = |x: &str| {
+        let s = prim(Prim::Ge, var(x), prim(Prim::Add, var("h1"), var("h2")));
+        (s, true)
+    };
+    // `a + 2*b <= 9` false, or `a + 2*b >= 10 || a - b >= 8` true.
+    let weighted = |a: &str, b: &str, disjunction: bool| {
+        let sum = prim(Prim::Add, var(a), prim(Prim::Mul, int(2), var(b)));
+        if disjunction {
+            let far = prim(Prim::Ge, prim(Prim::Sub, var(a), var(b)), int(8));
+            (prim(Prim::Or, prim(Prim::Ge, sum, int(10)), far), true)
+        } else {
+            (prim(Prim::Le, sum, int(9)), false)
+        }
+    };
+    let moved = (prim(Prim::Le, var("h1"), int(9)), true);
+    for (disjunction, star_first) in [(false, true), (false, false), (true, true), (true, false)] {
+        let mut all = Vec::new();
+        if star_first {
+            all.extend([star("x0"), star("x1")]);
+        }
+        all.extend([
+            weighted("h1", "h2", disjunction),
+            weighted("h2", "h1", disjunction),
+        ]);
+        if !star_first {
+            all.extend([star("x0"), star("x1")]);
+        }
+        let run = |s: Scope, all: &[(Term, bool)]| {
+            all.iter().fold(s, |s, (t, holds)| s.assume(t, *holds, &p))
+        };
+        let eager = run(start.clone(), &all);
+        let lazy = run(start.clone().lazy(), &all);
+        let eager_moved = run(eager.clone(), std::slice::from_ref(&moved));
+        let lazy_moved = run(lazy.clone(), std::slice::from_ref(&moved));
+        for (e, l, when) in [
+            (&eager, &lazy, "before"),
+            (&eager_moved, &lazy_moved, "after"),
+        ] {
+            for x in &names {
+                let (got, want) = (e.get(x), l.settled(x));
+                let case = format!("{x}, disjunctions {disjunction}, stars first {star_first}");
+                assert_eq!(got, want, "{case}, {when} the move");
+            }
+        }
     }
 }
 

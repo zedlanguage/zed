@@ -2882,7 +2882,8 @@ impl Seen {
 /// found from: the free conjuncts at each hub, the names' products, the names the conjuncts
 /// mention and their constraints together. While those free conjuncts and the products of
 /// those names stay, the bound stays, and a conjunct added among the hubs that is not a
-/// constraint adds one part, whose bound met with this one is the class's new bound.
+/// constraint adds one part, whose bound met with this one is the class's new bound
+/// ([`Scope::core_leaf_bound`], cases 2 and 3 of its proof).
 #[derive(Clone)]
 struct LeafBound {
     free: imbl::OrdMap<Arc<str>, imbl::OrdSet<Arc<Formula>>>,
@@ -15143,20 +15144,53 @@ impl Scope {
     /// leaf's own product of many intervals is then the one disjunction, which the solver
     /// projects exactly ([`presburger::project`]).
     ///
-    /// Not proved: that the meet of the parts' bounds is the bound the star's own projection
-    /// ([`Scope::project_block`]) gives. Each conjunct that is not a constraint is its own part
-    /// ([`Split::part`]), and a meet of projections can be wider than the projection of the
-    /// meet: over hubs `h1, h2` in `0..=10` with the constraint `x == h1 + h2`, the parts
-    /// `!(h2 - h1 >= 0)` (so `h1 > h2`) and `!(h1 - h2 >= 0)` (so `h2 > h1`) each give `x` in
-    /// `1..=19`, and together they have no point, so the projection is empty (worked out from
-    /// the parts as [`Split::part`] documents them, each with the constraint; not run). The
-    /// open sub-case: two or more conjuncts that are not constraints, sharing a hub or not
-    /// (with `!(h1 >= 1)` and `!(h2 >= 1)` as the parts, each gives `x` in `0..=10` and
-    /// together only `x == 0`). `project_block` also projects part by part and passes bounds
-    /// between the parts that mention a name, so the two may agree, and the cut in
-    /// [`Scope::moved_blocks`] would then be exact relative to it; that was not checked. A
-    /// wider bound keeps a leaf's product where the projection would narrow it: less precise,
-    /// not unsound. Row PROOF-preimage-core-leaf-bound.
+    /// The bound is the projection of the whole core when at most one conjunct is not a
+    /// constraint, and contains it otherwise (PROOF-preimage-core-leaf-bound). Proof, writing
+    /// `C` for the constraints together (`context.base`), `proj` for the projection onto the
+    /// leaf that [`Scope::part_leaf_bound`] gives, and assuming it exact under its own
+    /// conditions (one interval for every name but the leaf, no part skipped):
+    /// 1. No such conjunct: the only part is `C` ([`Split::constraints`]), and the meet of
+    ///    one bound is `proj(C)`, the projection of the core.
+    /// 2. One, `g`: the parts are `g && C` ([`Split::part`]) and `C`. Every point of
+    ///    `g && C` is a point of `C`, so `proj(g && C)` lies in `proj(C)`, and their meet is
+    ///    `proj(g && C)`, the projection of the core.
+    /// 3. Two or more, `g1 .. gm`: every point of the core is a point of each part
+    ///    `gi && C`, so the core's projection lies in each part's and in their meet, which
+    ///    contains it. It can be wider: over hubs `h1, h2` in `0..=10` with `x == h1 + h2`,
+    ///    the disjunctions `h1 + 2*h2 >= 10 || h1 - h2 >= 8` and
+    ///    `2*h1 + h2 >= 10 || h2 - h1 >= 8` each give `x` in `5..=20` and together `7..=20`;
+    ///    `!(h2 - h1 >= 0)` and `!(h1 - h2 >= 0)` each `1..=19` and together nothing.
+    ///
+    /// Which callers reach case 3, and what it costs them. [`Scope::family_bound`], whose
+    /// bound lets [`Scope::cut_leaves`] skip a leaf and so needs it exact, admits only
+    /// constraints and negations of bounds; the relation keeps no negation of a bound, which
+    /// [`Conjuncts::and`] writes as the constraint `-t - 1 >= 0`, so its cores are of case 1.
+    /// [`Scope::leaf_bound_stays`] also admits conjuncts among the hubs that do not name the
+    /// leaf, such as disjunctions, and reaches case 3 with two of them. It compares the bound
+    /// before and after a change, and when they are equal leaves the class's stars as they
+    /// are: a wider bound can stay where the projection would narrow, which loses precision,
+    /// not soundness. A leaf left keeps its product, sound for a relation that only grew
+    /// since its star's last projection; across a join the leaf holds the hull of the two
+    /// sides' products ([`Scope::join_refreshed`]), each sound for its side (read from the
+    /// join's code; tested by `l01_39_reduced_product::scaling::an_eager_join_settles_the_stars_as_the_lazy_one`).
+    /// [`Scope::project_block`] projects a star's block part by part too, so its own bound can
+    /// be the same meet: `l01_39_reduced_product::scaling::tests_among_the_hubs_of_two_stars_bound_their_leaves_as_in_a_lazy_scope`
+    /// gives the leaves `[5..]` in both scopes when the two disjunctions come before the stars,
+    /// and `[7..]` after (row PREC-product-disjunction-parts-order).
+    ///
+    /// Complexity tradeoff: the exact bound in case 3 was tried, and two ways to it rejected.
+    /// No bound in case 3, so that the class's stars are projected again: `k` projections at
+    /// each test for `k` stars, past its time limit (46 s at the first size) on
+    /// `l01_39_reduced_product::scaling::bench::an_eager_scope_settles_a_class_of_stars_under_two_disjunctions`,
+    /// where the meet runs under the scaling goal. The whole core projected as one part:
+    /// it reads every conjunct, so `d` disjunctions among the hubs added one a test cost
+    /// O(d) a test and O(d²) in all, where the meet adds one part a test
+    /// ([`Scope::leaf_bound_stays`]); not run. COMPLEXITY.md row C26.
+    ///
+    /// Test: `tests::the_leaf_bound_of_a_core_is_its_projection`, which checks each case
+    /// against the projection of the whole core and the values worked out by hand, case 3
+    /// with the wider meet; it cannot catch a core whose names hold more than one interval,
+    /// as `part_leaf_bound` then gives none.
     fn core_leaf_bound(&self, core: &[Arc<Formula>]) -> Option<(IntervalSet, Arc<Formula>)> {
         let (cons, others): (Vec<&Arc<Formula>>, Vec<&Arc<Formula>>) =
             core.iter().partition(|g| matches!(&***g, Formula::Con(_)));
@@ -15324,7 +15358,9 @@ impl Scope {
     /// were as kept in `old` and the products of the names they mention are as kept, found by
     /// diffs of persistent sets and maps that skip what they share; the conjuncts added among
     /// the hubs since, when none is a constraint, each add a part whose bound met with the kept
-    /// one is the new bound: O(a) projections for `a` added parts, and O((c + h) log n) to check
+    /// one is the new bound, the projection or, with two such parts or more, a bound that
+    /// contains it ([`Scope::core_leaf_bound`], cases 2 and 3 of its proof): O(a) projections
+    /// for `a` added parts, and O((c + h) log n) to check
     /// `c` changes at `h` hubs. Tradeoffs: memory for one record per class checked, shared
     /// with the relation and the names; a conjunct gone, a constraint added or a name moved
     /// finds the bound from all the conjuncts again, as before. COMPLEXITY.md row C26.
@@ -23454,6 +23490,89 @@ mod tests {
         let none = s.assume(&prim(Prim::Lt, vec![var("b"), lit(-1)]), true, &p);
         assert!(none.bottom);
         assert_eq!(none.form_hull(&lin(&[("c", 1)], 0)), IntervalSet::empty());
+    }
+
+    /// [`Scope::core_leaf_bound`] over hubs `h1, h2` in `0..=10` and the constraint
+    /// `x == h1 + h2` (PROOF-preimage-core-leaf-bound): with at most one conjunct that is not
+    /// a constraint it gives the projection of the whole core, found here in one part and
+    /// written out by hand (cases 1 and 2 of the proof at `core_leaf_bound`); with two it
+    /// gives the meet of the parts' bounds, which contains the projection and here is wider
+    /// (case 3). The pairs of two are the disjunctions
+    /// `h1 + 2*h2 >= 10 || h1 - h2 >= 8` and `2*h1 + h2 >= 10 || h2 - h1 >= 8` (each alone
+    /// gives `x` at least 5, `h1 = 0, h2 = 5`; together at least 7, `h1 = 3, h2 = 4`, as no
+    /// point of sum 6 or less in the box meets both), `!(h2 - h1 >= 0)` with `!(h1 - h2 >= 0)`
+    /// (each gives `1..=19`, together nothing), and `!(h1 - 1 >= 0)` with `!(h2 - 1 >= 0)`
+    /// (each gives `0..=10`, together `0`).
+    #[test]
+    fn the_leaf_bound_of_a_core_is_its_projection() {
+        use zed_kernel::term::build::{lit, prim, var};
+        let lin = |terms: &[(&str, i64)], k: i64| {
+            terms.iter().fold(Lin::constant(k), |l, (n, c)| {
+                l.plus(&Lin::atom(Atom::Sym((*n).into())).times(*c))
+            })
+        };
+        let ge = |terms: &[(&str, i64)], k: i64| {
+            Formula::Con(Con {
+                lin: lin(terms, k),
+                rel: Rel::Ge,
+            })
+        };
+        let fin = |v: i64| End::Fin(Num::from(&BigInt::from(v)));
+        let range = |lo: i64, hi: i64| IntervalSet::range(fin(lo), fin(hi));
+        let p = Premises::new();
+        let mut s =
+            Scope::new(["h1", "h2"].map(|n| (Arc::<str>::from(n), Product::of_type(Type::int()))));
+        for h in ["h1", "h2"] {
+            s = s
+                .assume(&prim(Prim::Ge, vec![var(h), lit(0)]), true, &p)
+                .assume(&prim(Prim::Le, vec![var(h), lit(10)]), true, &p);
+        }
+        let leaf = conjuncts::LEAF;
+        let sum = Formula::Con(Con {
+            lin: lin(&[(leaf, 1), ("h1", -1), ("h2", -1)], 0),
+            rel: Rel::Eq,
+        });
+        let d1 = Formula::or(vec![
+            ge(&[("h1", 1), ("h2", 2)], -10),
+            ge(&[("h1", 1), ("h2", -1)], -8),
+        ]);
+        let d2 = Formula::or(vec![
+            ge(&[("h1", 2), ("h2", 1)], -10),
+            ge(&[("h2", 1), ("h1", -1)], -8),
+        ]);
+        let not = |terms: &[(&str, i64)], k: i64| Formula::negate(ge(terms, k));
+        let above = not(&[("h2", 1), ("h1", -1)], 0);
+        let below = not(&[("h1", 1), ("h2", -1)], 0);
+        let h1_zero = not(&[("h1", 1)], -1);
+        let h2_zero = not(&[("h2", 1)], -1);
+        // The conjuncts that are not constraints, the projection, and the meet `core_leaf_bound`
+        // gives, the same in cases 1 and 2.
+        let cases: Vec<(Vec<Formula>, IntervalSet, IntervalSet)> = vec![
+            (vec![], range(0, 20), range(0, 20)),
+            (vec![d1.clone()], range(5, 20), range(5, 20)),
+            (vec![above.clone()], range(1, 19), range(1, 19)),
+            (vec![h1_zero.clone()], range(0, 10), range(0, 10)),
+            (vec![d1, d2], range(7, 20), range(5, 20)),
+            (vec![above, below], IntervalSet::empty(), range(1, 19)),
+            (vec![h1_zero, h2_zero], range(0, 0), range(0, 10)),
+        ];
+        for (others, want, meet) in cases {
+            let mut core: Vec<Arc<Formula>> = vec![Arc::new(sum.clone())];
+            core.extend(others.iter().cloned().map(Arc::new));
+            let whole = Formula::and(core.iter().map(|g| (**g).clone()).collect());
+            let projected = s.part_leaf_bound(&whole);
+            assert_eq!(projected.as_ref(), Some(&want), "the projection of {whole}");
+            let found = s.core_leaf_bound(&core).map(|(b, _)| b);
+            assert_eq!(found.as_ref(), Some(&meet), "{whole}");
+            assert_eq!(
+                meet.meet(&want),
+                want,
+                "the meet contains the projection: {whole}"
+            );
+            if others.len() <= 1 {
+                assert_eq!(meet, want, "{whole}");
+            }
+        }
     }
 
     /// The groups `Split::update` keeps as constraints come and go, linking the factors of

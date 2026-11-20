@@ -260,6 +260,25 @@ fn an_eager_scope_settles_the_hubs_of_a_class_of_stars_in_linear_time() {
 }
 
 #[test]
+fn an_eager_scope_settles_a_class_of_stars_under_two_disjunctions() {
+    // The tests of the case above with a second disjunction among the hubs: the class's
+    // bound on its leaf is then not the meet of its parts' bounds (case 3 of the proof at
+    // `Scope::core_leaf_bound`, PROOF-preimage-core-leaf-bound).
+    let inputs = scaling::inputs(96, a_class_of_stars_under_two_disjunctions);
+    let p = Premises::new();
+    scaling::check(
+        "k tests among the hubs of a class of k stars under two disjunctions, eager",
+        96,
+        |k| {
+            let (start, tests) = &inputs[&k];
+            tests
+                .iter()
+                .fold(start.clone(), |s, t| s.assume(t, true, &p));
+        },
+    );
+}
+
+#[test]
 fn an_eager_scope_with_many_distinct_disjunctions_among_the_hubs_of_a_star_scales() {
     // Every disjunction stays in the relation, so the star's block and the hubs' block each
     // hold `k` of them. Each test made both blocks again from all their conjuncts, and
