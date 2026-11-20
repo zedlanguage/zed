@@ -14,6 +14,7 @@ use std::sync::Arc;
 use crate::ast::{self, BinaryOp, Expr, ExprKind, Note, Stmt, StrPart};
 use crate::lex::Span;
 use crate::resolve::{Ref, Resolution};
+use zed_kernel::text::prose::and_list;
 
 /// The targets a build may be for, each `<architecture>-<system>` (DESIGN.md L28.4 and S.12).
 pub const TARGETS: &[&str] = &[
@@ -98,8 +99,7 @@ impl Build {
             .collect();
         match &on[..] {
             [] => format!("`{}`", self.target),
-            [one] => format!("`{}` with {one}", self.target),
-            [init @ .., last] => format!("`{}` with {} and {last}", self.target, init.join(", ")),
+            _ => format!("`{}` with {}", self.target, and_list(&on)),
         }
     }
 
@@ -194,7 +194,7 @@ fn declares(declared: &[String]) -> String {
     match &names[..] {
         [] => "declares no option".into(),
         [one] => format!("declares the one option {one}"),
-        [init @ .., last] => format!("declares the options {} and {last}", init.join(", ")),
+        _ => format!("declares the options {}", and_list(&names)),
     }
 }
 
@@ -205,13 +205,10 @@ fn with(declared: &[String], o: &str) -> String {
     names.join(", ")
 }
 
-/// The targets, for a message: "`x86_64-linux`, …, and `aarch64-windows`".
+/// The targets, for a message: "`x86_64-linux`, … and `aarch64-windows`".
 fn targets() -> String {
     let names: Vec<String> = TARGETS.iter().map(|t| format!("`{t}`")).collect();
-    match &names[..] {
-        [init @ .., last] => format!("{} and {last}", init.join(", ")),
-        [] => String::new(),
-    }
+    and_list(&names)
 }
 
 /// What a use of `build` reads.

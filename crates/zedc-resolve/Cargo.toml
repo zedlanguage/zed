@@ -17,6 +17,7 @@ imbl.workspace = true
 zedc-base.workspace = true
 zedc-syntax.workspace = true
 zed-graph.workspace = true
+zed-kernel.workspace = true
 
 [lints]
 workspace = true

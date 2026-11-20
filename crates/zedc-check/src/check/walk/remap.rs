@@ -237,7 +237,7 @@ impl<'t, 'a> Ck<'t, 'a> {
                          {shown}, holds {} after {depth} key level{}, which is not a family",
                         self.src_text(of.span),
                         self.text(&cur),
-                        if depth == 1 { "" } else { "s" },
+                        plural(&depth),
                     ),
                 };
                 self.error(of.span, msg);

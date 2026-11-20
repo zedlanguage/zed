@@ -12,6 +12,7 @@ use std::fmt;
 use std::sync::Arc;
 
 use zed_kernel::text::ident;
+use zed_kernel::text::prose::{and_list, plural};
 use zedc_lattice::interval::{End, IntervalSet, Num};
 use zedc_lattice::lattice::{Congruence, Lattice};
 
@@ -96,7 +97,7 @@ fn quoted(xs: &[String]) -> String {
 
 /// "the condition `a`" or "the conditions `a`, `b`".
 fn conditions(rows: &[String]) -> String {
-    let s = if rows.len() == 1 { "" } else { "s" };
+    let s = plural(&rows.len());
     format!("the condition{s} {}", quoted(rows))
 }
 
@@ -252,13 +253,9 @@ impl Refusal {
     /// remainder and quotient, and the reason names the moduli they come from (I4.11); every
     /// other reason is [`Refusal`]'s own. O(the moduli's text).
     pub fn said(&self, names: &[&str], moduli: &[&str]) -> String {
-        match (self, names, moduli.split_last()) {
-            (Refusal::Shadows, [x], Some((last, rest))) => {
-                let by = if rest.is_empty() {
-                    last.to_string()
-                } else {
-                    format!("{} and {last}", rest.join(", "))
-                };
+        match (self, names, moduli) {
+            (Refusal::Shadows, [x], [_, ..]) => {
+                let by = and_list(moduli);
                 format!(
                     "{REMOVING}. The program has one variable, `{x}`, and the conditions read it \
                      through its remainders and quotients by {by}; the checker gives each \

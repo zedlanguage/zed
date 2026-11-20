@@ -38,6 +38,7 @@ use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::sync::Arc;
 
 use zed_graph::{OffsetUnionFind, UnionFind};
+use zed_kernel::text::prose::and_list;
 use zedc_int::int::{Int, i128_div_ceil, i128_div_floor};
 use zedc_presburger::presburger::{Atom, Con, Formula, Lin, Rel};
 use zedc_stage::defs::written_name;
@@ -754,15 +755,6 @@ fn grouped(n: i128) -> String {
         s.push(ch);
     }
     if n < 0 { format!("-{s}") } else { s }
-}
-
-/// `items` joined by commas and a last "and".
-fn and_list(items: &[String]) -> String {
-    match items.split_last() {
-        None => String::new(),
-        Some((last, [])) => last.clone(),
-        Some((last, rest)) => format!("{} and {last}", rest.join(", ")),
-    }
 }
 
 impl Say<'_> {

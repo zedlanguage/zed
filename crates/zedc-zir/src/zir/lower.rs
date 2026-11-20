@@ -57,6 +57,7 @@ use std::sync::Arc;
 use zed_kernel::num::TooLarge;
 use zed_kernel::sites::{Sites, Span};
 use zed_kernel::term::{FixKind, Pattern, Prim, Shared, Term};
+use zed_kernel::text::prose::counted;
 use zed_kernel::types::Type;
 
 use super::legalize::{Swapped, written};
@@ -423,7 +424,7 @@ impl<'t> Lower<'t> {
                      by its name. Repairs: call `{name}` by its name where it is used; move \
                      the reads and pushes out of `{name}` and pass the values in or out; or \
                      run the program with `zedc run`, which has no such limit",
-                    plural(c.params.len(), "parameter"),
+                    counted(c.params.len(), "parameter"),
                     if c.ports.len() == 1 {
                         "the port"
                     } else {
@@ -975,7 +976,7 @@ impl<'t> Lower<'t> {
                     return Err(bug(format_args!(
                         "{} takes {} and is given {}",
                         p.named(None),
-                        plural(k, "argument"),
+                        counted(k, "argument"),
                         args.len()
                     )));
                 }
@@ -1207,8 +1208,8 @@ impl<'t> Lower<'t> {
                     return Err(bug(format_args!(
                         "the function `{}`, of {}, that reads or pushes a port is called with {}",
                         c.name,
-                        plural(c.params.len(), "parameter"),
-                        plural(n, "argument")
+                        counted(c.params.len(), "parameter"),
+                        counted(n, "argument")
                     )));
                 }
                 let fun = match &c.call {
@@ -1616,14 +1617,6 @@ fn bug(detail: impl std::fmt::Display) -> String {
 /// The opening of a refusal for a program `zedc build` cannot compile yet but `zedc run` runs.
 const CANNOT_BUILD: &str = "`zedc build` cannot compile this program";
 
-fn plural(n: usize, thing: &str) -> String {
-    if n == 1 {
-        format!("1 {thing}")
-    } else {
-        format!("{n} {thing}s")
-    }
-}
-
 /// The names pattern `p` binds, in preorder. A pattern nests as deep as its program, so the
 /// patterns still to read are kept on a heap stack.
 fn names(p: &Pattern) -> Vec<Arc<str>> {
@@ -1883,8 +1876,8 @@ pub fn raise(g: &Region) -> Result<Term, String> {
         return Err(format!(
             "the root region has {} and {}, and a term's root has one value and a state \
              result for each state argument",
-            plural(g.args.len(), "argument"),
-            plural(g.results.len(), "result")
+            counted(g.args.len(), "argument"),
+            counted(g.results.len(), "result")
         ));
     }
     let units = vec![unit(); g.args.len()];

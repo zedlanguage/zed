@@ -16,6 +16,7 @@ use super::super::bes::{Answer, Bes, Kind, decide};
 use super::super::rec::{self, Env, Group, Recheck, Rechecked, Why};
 use super::super::{GroupSite, Node, Refusal, Type, Verdict, defs};
 use super::settled;
+use crate::text::prose::and_list;
 
 // `Why` and `Recheck` are defined in module `rec`, with the group's instance that keeps them, and
 // `Why` is made by `judge`; how a refused member's message reads it is written here.
@@ -330,20 +331,6 @@ fn meet_operands(
         .collect()
 }
 
-/// `a`, `b` and `c`.
-fn listed(names: &[String]) -> String {
-    match names {
-        // Every list given is non-empty: the definitions taking part hold the member; a
-        // definition's references are listed only when there are some; a tuple's or a meet's
-        // open parts number at least two (`refused_site`); and the repair's definitions are
-        // listed only when there are two or more, each repair holding the member or the
-        // tuple's definition.
-        [] => unreachable!("an empty list is never written out"),
-        [a] => a.clone(),
-        [init @ .., last] => format!("{} and {last}", init.join(", ")),
-    }
-}
-
 /// The site of member `i` of `env`, which its group's decider refuses. Time linear in the texts
 /// written and in the nodes member `i` reaches that reach a refused node, with their edges.
 // The re-check of a repair is shared by the members of the group: it walks only the nodes that
@@ -406,7 +393,7 @@ fn refused_site(env: &Arc<Env>, i: usize) -> GroupSite {
             if refs.contains(&(a, a)) {
                 to.push("itself".into());
             }
-            (!to.is_empty()).then(|| format!("{} refers to {}", name(a), listed(&to)))
+            (!to.is_empty()).then(|| format!("{} refers to {}", name(a), and_list(&to)))
         })
         .collect();
     let cycles = refs.len() + connected(&taking, &refs) - taking.len();
@@ -427,7 +414,7 @@ fn refused_site(env: &Arc<Env>, i: usize) -> GroupSite {
          a value is finite, and some through the result of a function type, which a value can, \
          since a function can return without calling itself",
         name(i),
-        listed(&part.iter().map(|&j| name(j)).collect::<Vec<_>>()),
+        and_list(&part.iter().map(|&j| name(j)).collect::<Vec<_>>()),
         referring.join("; "),
         if cycles == 1 {
             "one cycle".to_owned()
@@ -463,7 +450,7 @@ fn refused_site(env: &Arc<Env>, i: usize) -> GroupSite {
         text += &format!(
             "; the {what} `{t}` in `{owner}` needs {needs} {}, and whether they have one is still \
              open",
-            listed(&open)
+            and_list(&open)
         );
         fixes.insert(0, BTreeSet::from([def]));
     } else {
@@ -539,7 +526,7 @@ fn refused_site(env: &Arc<Env>, i: usize) -> GroupSite {
         w.sort_by(|&a, &b| defs[a].name.cmp(&defs[b].name));
         format!(
             "; adding the case `| #end` to each of {} {effect}",
-            listed(&w.into_iter().map(name).collect::<Vec<_>>())
+            and_list(&w.into_iter().map(name).collect::<Vec<_>>())
         )
     };
     GroupSite {

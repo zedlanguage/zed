@@ -11,6 +11,7 @@ use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
 use zed_kernel::eval::{Made, MadeNode, MadeShape, leaf_at_end, placed_fun_term};
+use zed_kernel::text::prose;
 use zed_kernel::value::{HeldEntry, HeldFamily};
 use zed_kernel::{Evaluator, Fields, KernelError, Pattern, Prim, Shared, Term, Text, Value};
 use zedc::zir::Op;
@@ -1947,8 +1948,8 @@ fn result(t: &Tables, s: &mut Run, w: Word) -> Result<Value, String> {
         return Err(zed_rt::bug(
             "kept values in memory that nothing uses after the program's result was made",
             &format!(
-                "{n} cell{} live after the result is dropped{which}",
-                if n == 1 { "" } else { "s" }
+                "{} live after the result is dropped{which}",
+                prose::counted(n, "cell")
             ),
         ));
     }

@@ -16,6 +16,7 @@ use super::{
     StmtKind, Struct, TestPorts, Type, TypeDecl, TypeKind, TypeParam,
 };
 use crate::lex::{Part, Span, Tok};
+use zed_kernel::text::prose::and_list;
 use zedc_base::address::ContentAddress;
 use zedc_base::rejection::Row;
 
@@ -1062,11 +1063,8 @@ impl Builder<'_, '_> {
         if main.signals.get().is_none() {
             let header = self.text[main.header.start..self.span(first).start].trim_end();
             let names: Vec<String> = (seen.iter()).map(|(a, _)| a[1..].to_uppercase()).collect();
-            let names = match &names[..] {
-                [one] => one.clone(),
-                [rest @ .., last] => format!("{} and {last}", rest.join(", ")),
-                [] => unreachable!("an `Args` has an argument"),
-            };
+            // `seen` is not empty: an `Args` has an argument.
+            let names = and_list(&names);
             let m = main.param.as_deref().unwrap_or("m");
             return row(
                 self.span(first),

@@ -47,6 +47,7 @@ pub mod ident;
 // re-export would make this file and `names.rs` import each other (row
 // S1F-kernel-text-names-cycle), a cycle Zed forbids between units (sec:units).
 pub mod names;
+pub mod prose;
 mod tree;
 
 pub use tree::Text;

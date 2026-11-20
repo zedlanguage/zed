@@ -31,6 +31,7 @@ use std::ops::Range;
 use std::sync::Arc;
 
 use imbl::Vector;
+use zed_kernel::text::prose::{and_list, plural};
 
 use zedc_base::address::ContentAddress;
 use zedc_base::rejection::{Row, not_yet};
@@ -3091,12 +3092,12 @@ impl Resolver<'_> {
                         [one] => format!(
                             "`{x}` is not a field of `{receiver}`, whose one field is `{one}`"
                         ),
-                        [rest @ .., last] => {
-                            let rest: Vec<String> = rest.iter().map(|f| format!("`{f}`")).collect();
+                        _ => {
+                            let fields: Vec<String> =
+                                written.iter().map(|f| format!("`{f}`")).collect();
                             format!(
-                                "`{x}` is not a field of `{receiver}`, whose fields are {} and \
-                                 `{last}`",
-                                rest.join(", ")
+                                "`{x}` is not a field of `{receiver}`, whose fields are {}",
+                                and_list(&fields)
                             )
                         }
                     }
@@ -3183,9 +3184,9 @@ impl Resolver<'_> {
                 (false, missing)
             };
             let alts = ordinals(&which);
-            let plural = if which.len() == 1 { "" } else { "s" };
+            let s = plural(&which.len());
             parts.push(match (only, parts.is_empty()) {
-                (true, true) => format!("`{name}` is bound only in the {alts} alternative{plural}"),
+                (true, true) => format!("`{name}` is bound only in the {alts} alternative{s}"),
                 (true, false) => format!("`{name}` only in the {alts}"),
                 (false, true) => {
                     format!("`{name}` is bound in every alternative but the {alts}")
@@ -4612,15 +4613,6 @@ fn ordinals(at: &[usize]) -> String {
         }
     });
     and_list(&words.collect::<Vec<_>>())
-}
-
-/// `items` joined as a sentence lists them: `a`, `a and b`, `a, b and c`.
-fn and_list(items: &[String]) -> String {
-    match items {
-        [] => String::new(),
-        [one] => one.clone(),
-        [rest @ .., last] => format!("{} and {last}", rest.join(", ")),
-    }
 }
 
 /// The names written in `text`, as the lexer reads them ([`ident::names`]).

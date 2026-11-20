@@ -57,6 +57,7 @@ use std::sync::Arc;
 use zed_kernel::eval::{Made, MadeNode, MadeShape, leaf_at_end, placed_fun_term};
 use zed_kernel::paths::{Kept, Paths};
 use zed_kernel::term::{Pattern, Prim, Shared, Term};
+use zed_kernel::text::prose::counted;
 use zed_kernel::value::{Fields, HeldEntry, HeldFamily, SharedParts, Value};
 use zed_kernel::{Evaluator, KernelError};
 
@@ -1146,7 +1147,7 @@ pub fn run(g: &Region, plan: &Plan, ev: &mut Evaluator) -> Result<(Value, Stats)
     if m.live != 0 {
         return Err(format!(
             "memory: {} live after the result is dropped",
-            plural(m.live, "cell")
+            counted(m.live, "cell")
         ));
     }
     match v {
@@ -2457,7 +2458,7 @@ impl<'g> Machine<'g, '_> {
                 format!(
                     "cell {c} has count {} and {}",
                     self.heap[c].count,
-                    plural(u64::from(refs[c]), "reference")
+                    counted(u64::from(refs[c]), "reference")
                 )
             })
             .collect();
@@ -2933,12 +2934,4 @@ fn show_src(s: &Src) -> String {
 
 fn held(owned: bool) -> &'static str {
     if owned { "owned" } else { "borrowed" }
-}
-
-fn plural(n: u64, what: &str) -> String {
-    if n == 1 {
-        format!("1 {what}")
-    } else {
-        format!("{n} {what}s")
-    }
 }

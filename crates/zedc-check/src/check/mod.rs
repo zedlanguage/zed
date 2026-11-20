@@ -64,6 +64,7 @@ use zed_kernel::num::{
     show_f64,
 };
 use zed_kernel::term::ScalarType;
+use zed_kernel::text::prose::{and_list, or_list, plural};
 use zed_kernel::types::{Spell, Spelled, Type as KType, Universes, Verdict, defs};
 use zed_kernel::{KernelError, Prim, Rat, Term, Universe, Value, eval};
 
@@ -242,7 +243,7 @@ impl Misfit<'_> {
             Misfit::TooMany(n) => format!(
                 "this argument is one more than `{who}` takes: `{who}` takes {n} argument{} by \
                  position, and the arguments before this one already fill {}",
-                plural(n),
+                plural(&n),
                 match n {
                     1 => "it",
                     _ => "them all",
@@ -402,14 +403,6 @@ impl Misfit<'_> {
                 menu
             }
         }
-    }
-}
-
-/// `s` for a count other than one.
-fn plural(n: usize) -> &'static str {
-    match n {
-        1 => "",
-        _ => "s",
     }
 }
 
@@ -5993,17 +5986,14 @@ impl<'t, 'a> Ck<'t, 'a> {
                 Some(c) => format!("`{}`", c.name()),
                 None => "no known type, as of `[]`".to_string(),
             };
-            let types = (carriers.iter())
-                .map(|(c, _)| at(c))
-                .collect::<Vec<_>>()
-                .join(" and ");
+            let types = and_list(&(carriers.iter()).map(|(c, _)| at(c)).collect::<Vec<_>>());
             let ends = (carriers.iter())
                 .map(|(c, v)| match v {
                     Some(v) => format!("`{v}` at {}", at(c)),
                     None => format!("`#empty` at {}", at(c)),
                 })
-                .collect::<Vec<_>>()
-                .join(" and ");
+                .collect::<Vec<_>>();
+            let ends = and_list(&ends);
             let what = format!(
                 "a fold `><` that the calls of one function run on entries of type {types}, \
                  where an empty level folds to {ends}"
@@ -8569,11 +8559,7 @@ impl Ck<'_, '_> {
                 format!("`{}`", self.sig_text(&one))
             })
             .collect();
-        let each = match each.split_last() {
-            Some((last, [])) => last.clone(),
-            Some((last, rest)) => format!("{} and {last}", rest.join(", ")),
-            None => String::new(),
-        };
+        let each = and_list(&each);
         self.error_offering(
             at,
             format!(
@@ -14742,24 +14728,6 @@ fn explain_empty(t: &Type, found: impl Fn(&Type) -> bool, out: &mut Vec<Note>) {
                 .filter(|c| !matches!(c.kind, TypeKind::Name(_)))
                 .map(Work::Explain),
         );
-    }
-}
-
-/// `items` joined as a list of choices in a sentence: `a`, `a or b`, `a, b or c`.
-fn or_list(items: &[String]) -> String {
-    match items {
-        [] => String::new(),
-        [one] => one.clone(),
-        [rest @ .., last] => format!("{} or {last}", rest.join(", ")),
-    }
-}
-
-/// `items` joined as a list in a sentence: `a`, `a and b`, `a, b and c`.
-fn and_list(items: &[String]) -> String {
-    match items {
-        [] => String::new(),
-        [one] => one.clone(),
-        [rest @ .., last] => format!("{} and {last}", rest.join(", ")),
     }
 }
 

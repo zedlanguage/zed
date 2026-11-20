@@ -7,6 +7,7 @@ use std::hash::{Hash, Hasher};
 use imbl::Vector;
 
 use crate::resolve::{Ref, Resolution};
+use zed_kernel::text::prose::and_list;
 use zedc_base::rejection::Row;
 use zedc_syntax::ast::{
     Expr, ExprKind, Function, Note, Param, Stmt, StmtKind, StrPart, Target, TestPorts, Type,
@@ -926,7 +927,7 @@ fn what(s: &Stmt) -> String {
                     Target::Wild => None,
                 })
                 .collect();
-            names.join(" and ")
+            and_list(&names)
         }
         StmtKind::Function(f) => format!("`{}`", f.name),
         StmtKind::Push { .. } | StmtKind::Expr(_) | StmtKind::Return(_) => {

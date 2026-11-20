@@ -49,6 +49,7 @@ use zed_kernel::frames::{Deep, Stack};
 use zed_kernel::poly::roots::{Roots, term_roots};
 use zed_kernel::print;
 use zed_kernel::provenance::{FactAddress, NodeAddress, Position, Vector};
+use zed_kernel::text::prose::and_list;
 use zed_kernel::treap_set::TreapSet;
 use zed_kernel::types::Type;
 use zed_kernel::{Evaluator, Prim, Shared, Term, Value, World};
@@ -8295,15 +8296,6 @@ enum Shown {
     NoValue(String),
 }
 
-/// `items` joined by commas and a last "and": `a`, `a and b`, `a, b and c`.
-fn listed_and(items: &[String]) -> String {
-    match items.split_last() {
-        None => String::new(),
-        Some((last, [])) => last.clone(),
-        Some((last, rest)) => format!("{} and {last}", rest.join(", ")),
-    }
-}
-
 /// The sets `kept` as a warning names them ([`Shown`]). O(the length of the text).
 fn shown(kept: &Kept) -> Shown {
     if kept.is_empty() {
@@ -8315,7 +8307,7 @@ fn shown(kept: &Kept) -> Shown {
         .map(|(n, _)| quoted(n))
         .collect();
     if !empty.is_empty() {
-        return Shown::NoValue(listed_and(&empty));
+        return Shown::NoValue(and_list(&empty));
     }
     let (open, bounded): (Vec<_>, Vec<_>) =
         kept.iter().partition(|(_, x)| **x == IntervalSet::top());
@@ -8324,8 +8316,8 @@ fn shown(kept: &Kept) -> Shown {
         .collect();
     let open: Vec<String> = open.into_iter().map(|(n, _)| quoted(n)).collect();
     Shown::Bounds {
-        bounded: listed_and(&bounded),
-        open: listed_and(&open),
+        bounded: and_list(&bounded),
+        open: and_list(&open),
     }
 }
 

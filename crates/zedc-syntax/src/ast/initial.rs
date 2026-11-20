@@ -21,6 +21,7 @@ use super::{
     RangeEnd, Stmt, StmtKind, StrPart, Target, TypeKind, UnaryOp,
 };
 use crate::lex::{Span, Tok, Token, ident};
+use zed_kernel::text::prose::and_list;
 use zedc_base::rejection::Row;
 
 /// The `initial` statement `s` is, through the annotations written before it.
@@ -653,20 +654,11 @@ fn fresh(base: &str, bare: bool, used: &HashSet<&str>, taken: &mut Taken) -> Str
     name
 }
 
-/// `items` joined as a sentence lists them: `a`, `a and b`, `a, b and c`.
-fn and_list(items: impl IntoIterator<Item = String>) -> String {
-    let mut items: Vec<String> = items.into_iter().collect();
-    match items.pop() {
-        None => String::new(),
-        Some(last) if items.is_empty() => last,
-        Some(last) => format!("{} and {last}", items.join(", ")),
-    }
-}
-
 /// That the `.` calls of `fixes` do not update `name`: "`c.bump(3)` does not update `c`".
 fn not_updating(name: &str, fixes: &[Fix]) -> String {
     let verb = if fixes.len() == 1 { "does" } else { "do" };
-    let calls = and_list(fixes.iter().map(|f| format!("`{}`", f.call)));
+    let calls: Vec<String> = fixes.iter().map(|f| format!("`{}`", f.call)).collect();
+    let calls = and_list(&calls);
     format!("{calls} {verb} not update `{name}`")
 }
 
@@ -681,7 +673,7 @@ fn dot_repair(fixes: &[Fix], carry: Option<(&str, &str)>) -> Note {
     parts.extend(carry.map(|(code, written)| format!("`{code}` in place of `{written}`")));
     Note {
         span: fixes[0].span,
-        text: format!("repair: {}", and_list(parts)),
+        text: format!("repair: {}", and_list(&parts)),
     }
 }
 
@@ -2861,7 +2853,8 @@ impl Builder<'_, '_> {
             });
         }
         if let Some(k) = &keyed {
-            let keys = and_list(k.keys.iter().map(|k| format!("`{k}`")));
+            let keys: Vec<String> = k.keys.iter().map(|k| format!("`{k}`")).collect();
+            let keys = and_list(&keys);
             notes.push(Note {
                 span: w.span,
                 text: format!(
@@ -2904,18 +2897,14 @@ impl Builder<'_, '_> {
                 self.text_of(one.span),
                 branch(one).what.part()
             ),
-            [rest @ .., last] => {
-                let calls: Vec<String> = rest
+            [] => unreachable!("a variable updated on no path is not a candidate"),
+            _ => {
+                let calls: Vec<String> = updates
                     .iter()
                     .map(|u| format!("`{}`", self.text_of(u.span)))
                     .collect();
-                format!(
-                    "{} and `{}` update `{name}` only on some paths",
-                    calls.join(", "),
-                    self.text_of(last.span)
-                )
+                format!("{} update `{name}` only on some paths", and_list(&calls))
             }
-            [] => unreachable!("a variable updated on no path is not a candidate"),
         };
         // The `.` calls that, written with `*.`, would update `name`: when they complete every
         // path, they are the repair.
@@ -2960,7 +2949,12 @@ impl Builder<'_, '_> {
                 span: updates[0].span,
                 message: format!(
                     "Not updated on every path of a step: {where_}. Try {} instead.",
-                    and_list(fixes.iter().map(|f| format!("`{}`", f.code)))
+                    and_list(
+                        &fixes
+                            .iter()
+                            .map(|f| format!("`{}`", f.code))
+                            .collect::<Vec<_>>()
+                    )
                 ),
                 notes,
             };
@@ -3103,7 +3097,7 @@ impl Builder<'_, '_> {
                 message: format!(
                     "No statement of this loop updates `{name}`: {}. Try {} instead.",
                     not_updating(name, &fixes),
-                    and_list(codes)
+                    and_list(&codes)
                 ),
                 notes,
             };

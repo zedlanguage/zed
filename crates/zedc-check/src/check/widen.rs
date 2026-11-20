@@ -27,6 +27,7 @@
 use std::collections::HashMap;
 
 use zed_kernel::Value;
+use zed_kernel::text::prose::and_list;
 
 use crate::check::Info;
 use crate::check::ty::Carrier;
@@ -615,7 +616,7 @@ impl<'t, 'a> Walk<'t, 'a> {
         let label = self.labels[&n.root].text();
         let message = format!(
             "{label} widens past a machine word: this `{op}` of {} gives a big integer",
-            widths.join(" and ")
+            and_list(&widths)
         );
         let gives = match c.gives {
             Some((lo, hi)) => format!("this `{op}` gives {}, past i64", interval(lo, hi)),

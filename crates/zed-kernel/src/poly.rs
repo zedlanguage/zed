@@ -319,7 +319,7 @@ impl Refusal {
             let points: Vec<String> = self.agreed.iter().map(|p| format!("`{p}`")).collect();
             out.push_str(&format!(
                 "\n  note: the two sides agree at every point tried: {}.",
-                points.join(" and ")
+                crate::text::prose::and_list(&points)
             ));
         }
         out.push_str(&format!("\n  Try `{law} proof {{ … }}` instead."));

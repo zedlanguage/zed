@@ -43,6 +43,7 @@ use std::fmt::{self, Write as _};
 
 use super::names::{Names, fresh_name};
 use super::uses::{Seen, Use, Uses};
+use crate::text::prose::and_list;
 
 /// Opens a reference.
 const REF: char = '\u{FDD5}';
@@ -946,19 +947,18 @@ pub fn plain(text: &str) -> String {
 /// for, then each definition on a line of its own, as a user declares it. Nothing when `defs`
 /// is empty.
 pub fn under(message: &mut String, defs: &[(String, String)]) {
-    let Some(((last, _), rest)) = defs.split_last() else {
-        return;
-    };
-    let names: Vec<&str> = rest.iter().map(|(n, _)| n.as_str()).collect();
-    match names.is_empty() {
-        true => write!(
+    let names: Vec<&str> = defs.iter().map(|(n, _)| n.as_str()).collect();
+    match names.len() {
+        0 => return,
+        1 => write!(
             message,
-            "\n  {last} stands for a part written more than once:"
+            "\n  {} stands for a part written more than once:",
+            names[0]
         ),
-        false => write!(
+        _ => write!(
             message,
-            "\n  {} and {last} stand for parts written more than once:",
-            names.join(", ")
+            "\n  {} stand for parts written more than once:",
+            and_list(&names)
         ),
     }
     .expect("a String takes any text");

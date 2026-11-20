@@ -37,6 +37,7 @@ use zedc_base::rejection::Row;
 use super::engine::Parser;
 use super::grammar::{Grammar, Kind};
 use crate::lex::{Span, Tok, Token, ident};
+use zed_kernel::text::prose::and_list;
 
 /// A parse error that a row of sec:diagnostics explains: the row, the message, the span the
 /// error is reported at, and the notes, each a span with its text.
@@ -822,11 +823,7 @@ fn with_item(t: &Toks<'_, '_>, far: usize) -> Option<Clause> {
         if !beside.is_empty() {
             why.push(format!(
                 "{} written beside the statement, the sentinel value given once, before step 0",
-                beside
-                    .iter()
-                    .map(|s| format!("`{s}`"))
-                    .collect::<Vec<_>>()
-                    .join(" and ")
+                and_list(&beside.iter().map(|s| format!("`{s}`")).collect::<Vec<_>>())
             ));
         }
         if own {
@@ -1343,19 +1340,15 @@ fn carry_word(t: &Toks<'_, '_>, far: usize) -> Option<Clause> {
         end: t.span(close - 1).end,
     };
     // The names the statement gives a value, for the note: `c`, or `a` and `b`.
-    let mut names: Vec<String> = (k + 1..w)
+    let names: Vec<String> = (k + 1..w)
         .take_while(|&i| !matches!(t.t(i), "=" | ":" | "["))
         .filter(|&i| t.toks[i].0 == Kind::Ident)
         .map(|i| format!("`{}`", t.t(i)))
         .collect();
-    let last = names.pop()?;
-    let (named, them) = if names.is_empty() {
-        (format!("the value of {last}"), "it")
-    } else {
-        (
-            format!("the values of {} and {last}", names.join(", ")),
-            "them",
-        )
+    let (named, them) = match names.len() {
+        0 => return None,
+        1 => (format!("the value of {}", names[0]), "it"),
+        _ => (format!("the values of {}", and_list(&names)), "them"),
     };
     let mut notes = vec![(
         at_words,

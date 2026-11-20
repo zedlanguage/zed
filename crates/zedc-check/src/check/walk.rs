@@ -7902,14 +7902,9 @@ impl<'t, 'a> Ck<'t, 'a> {
                 let missing = &params[n..];
                 let all: Vec<&str> = written.into_iter().chain(missing.iter().copied()).collect();
                 let call = format!("{w}({})", all.join(", "));
-                let named = match missing {
-                    [p] => format!("`{p}`"),
-                    [rest @ .., last] => {
-                        let rest: Vec<String> = rest.iter().map(|p| format!("`{p}`")).collect();
-                        format!("{} and `{last}`", rest.join(", "))
-                    }
-                    [] => unreachable!("a call with fewer arguments than parameters"),
-                };
+                // `missing` is not empty: the call has fewer arguments than parameters.
+                let named: Vec<String> = missing.iter().map(|p| format!("`{p}`")).collect();
+                let named = and_list(&named);
                 menu.push(format!("repair: give {named} a value, as `{call}`"));
             }
             None => menu.push(format!("repair: pass {takes}, as `{w}({whole})`")),
@@ -9855,7 +9850,7 @@ impl<'t, 'a> Ck<'t, 'a> {
                      lambda is called as a function of type `{shown}` is, so it needs a \
                      parameter for each argument passed by position",
                     params.len(),
-                    if params.len() == 1 { "" } else { "s" },
+                    plural(&params.len()),
                     pos.len()
                 ),
                 menu,
@@ -14960,8 +14955,8 @@ impl<'t, 'a> Ck<'t, 'a> {
                     None => bits,
                 })
             })
-            .collect::<Vec<_>>()
-            .join(" and ");
+            .collect::<Vec<_>>();
+        let each = and_list(&each);
         notes.push(Note {
             span,
             text: format!(
@@ -17188,7 +17183,7 @@ impl<'t, 'a> Ck<'t, 'a> {
                     Some(i) => format!("key component {i} in {}", r.text),
                 })
                 .collect();
-            shown.join(" and ")
+            and_list(&shown)
         };
         // A need has a range or a reader ([`ParamKeys::need`]), so no range means a reader.
         let takes = match (k.ranges.is_empty(), &k.family) {
@@ -25709,15 +25704,6 @@ fn least_width(p: Prim, slots: &[(Arg<'_>, &Expr)], ranges: &[Option<IntRange>])
         }
     }
     Some(least)
-}
-
-/// The texts `vs` joined as "8, 16, 32 or 64".
-fn or_list(vs: &[String]) -> String {
-    match vs {
-        [] => String::new(),
-        [one] => one.clone(),
-        [rest @ .., last] => format!("{} or {last}", rest.join(", ")),
-    }
 }
 
 /// The repairs of an argument `p` that may lie outside the ints `within` its use needs, each in

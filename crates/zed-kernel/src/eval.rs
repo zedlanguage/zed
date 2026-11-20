@@ -28,6 +28,7 @@ use std::rc::Rc;
 use crate::exact::{CanonicalTree, TreeStep};
 use crate::num::{Test, TooLarge, refused};
 use crate::sites::{Sites, Span};
+use crate::text::prose::plural;
 use crate::value::KernelError;
 use crate::value::{
     Atom, Family, Fields, HeldEntry, HeldFamily, Keypath, all_leaves, ieee_min_max,
@@ -2494,7 +2495,7 @@ impl<'t> Machine<'_, 't> {
         if let Some(n) = p.arity()
             && args.len() != n
         {
-            let s = if n == 1 { "" } else { "s" };
+            let s = plural(&n);
             return type_err(self.at_step(
                 p,
                 format!(
