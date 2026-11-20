@@ -16276,8 +16276,11 @@ fn colors_inner(cons: &[Con], counted: bool) -> Result<(Vec<Atom>, BTreeMap<Atom
 ///
 /// The method is the canonical color refinement of Berkholz, Bonsma and Grohe, "Tight lower and
 /// upper bounds for the complexity of canonical colour refinement" (Theory Comput. Syst. 60,
-/// 2017; arXiv:1509.08251), section 3, with edge colors by the subdivision of their
-/// edge-colored theorem, which is the term vertex here. A popped color class R refines every
+/// 2017; arXiv:1509.08251), section 3, with the coefficients as edge colors handled as in the
+/// proof of their theorem on edge-colored digraphs (§3.4.3, "Alternative Stability Criteria";
+/// arXiv LaTeX read 2026-11-20): "for every edge e in E with e = (u, v), add a vertex v_e (the
+/// new vertices) and two edges (u, v_e) and (v_e, v). Assign colour alpha(v_e) = c(e) to the
+/// new vertices"; the term vertex here is that `v_e`. A popped color class R refines every
 /// class by the number of neighbors in R each of its vertices has. After a split, the largest
 /// new class is not pushed unless the old one was waiting (Hopcroft's rule, "process the smaller
 /// half"), so a vertex is in O(log N) refining classes in all. The coarsest stable coloring is

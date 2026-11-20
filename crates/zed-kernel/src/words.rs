@@ -350,12 +350,24 @@ fn rank(pieces: impl Iterator<Item = Value>) -> Family {
 /// `#emptySeparator`, for every `s` (author decision P314).
 // Complexity tradeoff: the naive search tests `sep` at each offset of `s`, O(n·m) for n bytes
 // of `s` and m of `sep`. Used: the standard library's `str::split`, whose `StrSearcher` is the
-// Two-Way search of M. Crochemore and D. Perrin, "Two-way string-matching", J. ACM 38(3):650-674,
-// 1991, doi:10.1145/116825.116845 (Crossref; the library's comment gives pp. 651-675): the
-// pattern is cut at a critical factorization, `sep = u v`, its right part `v` matched left to
-// right and then `u` right to left, shifting by the period of `sep` or by `max(|u|, |v|) + 1`,
-// O(n + m) time in all and O(1) space. Checked 2026-11-19 by reading `core::str::pattern`
-// (`TwoWaySearcher`, which cites the paper), not the paper. Test: `split_keeps_every_piece`
+// Two-Way search of M. Crochemore and D. Perrin, "Two-way string-matching", J. ACM 38(3):651-675,
+// 1991, doi:10.1145/116825.116845 (pages as the paper's own first page prints them, "Vol. 38,
+// No. 3, July 1991, pp. 651-675"; Crossref gives 650-674): the pattern is cut at a critical
+// factorization, `sep = u v`, its right part `v` matched left to right and then `u` right to
+// left, shifting by the period of `sep` or by `max(|u|, |v|) + 1`, O(n + m) time in all and
+// O(1) space. Checked 2026-11-19 by reading `core::str::pattern` (`TwoWaySearcher`, which
+// cites the paper), and on 2026-11-20 (FIX-history-uses-attributions) in the paper itself (the
+// ACM PDF, found by the allpapers skill). Proposition 5.3, p. 671: "the function "MATCH"
+// computes the set P(x, t) of positions of the pattern x inside the text t in time O(|t| +
+// |x|). More precisely, the computation uses less than 2|t| + 5|x| letter comparisons and 13
+// extra memory locations." For a pattern of large period, the shift `max(|u|, |v|) + 1` is
+// the paper's: Figure 19 (SMALL-PERIOD, p. 670) returns "max(l, n - l) + 1", `l = |u|` the
+// critical position and `n = |x|`; Proposition 5.2 (p. 670) finds every match for any shift
+// `q` with `0 < q <= p(x)`, "Furthermore, if q > max(l, |x| - l) the number of letter
+// comparisons used by the algorithm is bounded by 2|t|", and Proposition 5.1 just before it
+// gives `p(x) > max(|u|, |v|)` when the period is not small, so `q <= p(x)` holds. This site
+// was named in the citation sweep for Cardon and Crochemore (TCS 19, 1982), a paper on graph partitioning
+// cited in zedc-presburger, not here. Test: `split_keeps_every_piece`
 // (tests/steps/l03_15a_fp_ops_run/kernel.rs) compares pieces with expected lists, overlapping
 // separators included; it catches a wrong piece, not a slow search. Then
 // one copy of each piece, O(n) bytes in all, and the rank built from the sorted keys, O(k) for k

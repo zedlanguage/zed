@@ -4,11 +4,26 @@
 //!
 //! Sources. Jump pointers: each node keeps its ancestors 2^j levels up, so an ancestor at any
 //! depth is reached in O(log n) jumps; M. A. Bender and M. Farach-Colton, "The Level Ancestor
-//! Problem simplified", LATIN 2002, LNCS 2286, pp. 508-515, doi:10.1007/3-540-45995-2_44
-//! (Crossref checked 2026-11-20; the text was not obtained, so that it describes jump pointers
-//! is from memory, not checked). This module cited before the same authors' "The LCA Problem
-//! Revisited", LATIN 2000, LNCS 1776, pp. 88-94, doi:10.1007/10719839_9, section 2; that text
-//! was read on 2026-11-20 and holds no binary lifting: its section 2 gives definitions and its
+//! Problem simplified", Theoretical Computer Science 321(1):5-12, 2004,
+//! doi:10.1016/j.tcs.2003.05.002 (the journal version of their LATIN 2002 paper, LNCS 2286,
+//! pp. 508-515, doi:10.1007/3-540-45995-2_44, whose text was not obtained). Read on
+//! 2026-11-20 (FIX-history-uses-attributions) in the publisher's PDF, found by the allpapers
+//! skill: section 3.2, "The Jump-Pointers Algorithm: an O(n log n), O(log n) solution", p. 7:
+//! "there is a pointer from u to u's l-th ancestor, for l = 1, 2, 4, 8, ..., depth(u). Thus,
+//! the ith jump pointer, denoted `JUMP_u[i]`, points to the 2^i th ancestor of u"; Observation 3,
+//! "In a single pointer dereference we can travel at least halfway from u to LA(u, d)"; Lemma
+//! 4, "The Jump-Pointers Algorithm solves the Level Ancestor Problem in time O(n log n),
+//! O(log n)", the table filled by "a trivial dynamic program" (p. 8). `up_to` is that query,
+//! taken by the binary digits of the rise (one jump for each bit set, lowest first) rather
+//! than by the largest jump that fits, as Observation 3's proof does; both take at most one
+//! jump a bit of the rise. Departures: the paper builds the table once over a whole tree, and
+//! this one is grown leaf by leaf, a node's row filled from its parent's when it is attached
+//! (the same dynamic program, in the order of attachment); and the paper answers level
+//! ancestors only, while `lca` lifts the deeper node to the other's depth by `up_to` and then
+//! both nodes together by the largest jumps that keep them apart, the textbook use of the same
+//! table, not taken from this paper (from memory, not checked against a source). This module
+//! cited before the same authors' "The LCA Problem Revisited", LATIN 2000, LNCS 1776,
+//! pp. 88-94, doi:10.1007/10719839_9, section 2; that text was read on 2026-11-20 and holds no binary lifting: its section 2 gives definitions and its
 //! section 3 a sparse table over intervals of power-of-two length, answering a range-minimum
 //! query in O(1), the Euler-tour method the tradeoff below compares with. Tests:
 //! `the_lowest_common_ancestor_agrees_with_the_walk_up_the_parents` compares `lca` and
