@@ -2058,28 +2058,6 @@ fn merge_runs(mut runs: Vec<(i128, i128)>) -> Vec<(i128, i128)> {
     merged
 }
 
-#[cfg(test)]
-mod merge_runs_tests {
-    use super::merge_runs;
-
-    /// Overlapping, nested, touching and apart runs, and the ends of `i128`, where the copies'
-    /// `l - 1` overflowed.
-    #[test]
-    fn runs_are_joined_where_they_overlap_or_touch() {
-        assert_eq!(
-            merge_runs(vec![(7, 9), (0, 5), (2, 3), (6, 6), (11, 12)]),
-            [(0, 9), (11, 12)]
-        );
-        assert_eq!(merge_runs(vec![]), []);
-        let (min, max) = (i128::MIN, i128::MAX);
-        assert_eq!(
-            merge_runs(vec![(min, min), (min, 0), (2, max), (max, max)]),
-            [(min, 0), (2, max)]
-        );
-        assert_eq!(merge_runs(vec![(min + 1, 0), (min, min)]), [(min, 0)]);
-    }
-}
-
 /// A row `x·X + y·Y + c >= 0` over two integer unknowns.
 type Row = (i128, i128, i128);
 
@@ -2137,4 +2115,26 @@ fn fiber(rows: &[Row], x: i128) -> Option<Option<(Option<i128>, Option<i128>)>> 
     }
     let empty = !holds || matches!((lo, hi), (Some(l), Some(h)) if l > h);
     Some((!empty).then_some((lo, hi)))
+}
+
+#[cfg(test)]
+mod merge_runs_tests {
+    use super::merge_runs;
+
+    /// Overlapping, nested, touching and apart runs, and the ends of `i128`, where the copies'
+    /// `l - 1` overflowed.
+    #[test]
+    fn runs_are_joined_where_they_overlap_or_touch() {
+        assert_eq!(
+            merge_runs(vec![(7, 9), (0, 5), (2, 3), (6, 6), (11, 12)]),
+            [(0, 9), (11, 12)]
+        );
+        assert_eq!(merge_runs(vec![]), []);
+        let (min, max) = (i128::MIN, i128::MAX);
+        assert_eq!(
+            merge_runs(vec![(min, min), (min, 0), (2, max), (max, max)]),
+            [(min, 0), (2, max)]
+        );
+        assert_eq!(merge_runs(vec![(min + 1, 0), (min, min)]), [(min, 0)]);
+    }
 }

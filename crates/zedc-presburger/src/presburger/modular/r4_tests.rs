@@ -850,11 +850,16 @@ fn pncx_table_count_of_a_prime_held_by_many_values_does_not_wrap() {
 /// the values, about 2^27 values, and the table takes 8 GB.)
 #[test]
 fn largest_prime_below_2_16_is_65521() {
-    let is_prime = |n: u32| n >= 2 && (2..).take_while(|d| d * d <= n).all(|d| n % d != 0);
+    let is_prime = |n: u32| {
+        n >= 2
+            && (2..)
+                .take_while(|d| d * d <= n)
+                .all(|d| !n.is_multiple_of(d))
+    };
     assert!(is_prime(u32::from(LARGEST_PRIME_BELOW_2_16)));
     assert!((u32::from(LARGEST_PRIME_BELOW_2_16) + 1..1 << 16).all(|n| !is_prime(n)));
     assert!(u64::from(LARGEST_PRIME_BELOW_2_16).pow(2) <= u64::from(u32::MAX));
-    assert!(LARGEST_PRIME_BELOW_2_16 < PRIME_HELD_BY_TWO);
+    const { assert!(LARGEST_PRIME_BELOW_2_16 < PRIME_HELD_BY_TWO) };
 }
 
 /// Every entry of the `u16` table reads back as its number's least prime factor, by trial
@@ -867,7 +872,7 @@ fn pncx_shared_factor_table_reads_every_least_prime_factor() {
     let top = 251 * 257;
     let lpf = |n: u32| {
         (2..)
-            .find(|d| d * d > n || n % d == 0)
+            .find(|d| d * d > n || n.is_multiple_of(*d))
             .filter(|d| d * d <= n)
             .unwrap_or(n)
     };

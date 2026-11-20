@@ -15882,7 +15882,7 @@ mod tests {
                 _ => rng.below(51) as i64 - 25,
             };
             let (v, l) = (Term::Var(x.clone()), Term::Lit(Value::Int(k)));
-            let op = ops[rng.below(4) as usize];
+            let op = ops[rng.below(4)];
             let term = if rng.below(2) == 0 {
                 Term::Prim(op, vec![v, l])
             } else {
@@ -15971,7 +15971,7 @@ mod tests {
                 _ => rng.below(51) as i64 - 25,
             };
             let (v, l) = (Term::Var(x.clone()), Term::Lit(Value::Int(k)));
-            let op = ops[rng.below(4) as usize];
+            let op = ops[rng.below(4)];
             let guard = if rng.below(2) == 0 {
                 Term::Prim(op, vec![v, l])
             } else {

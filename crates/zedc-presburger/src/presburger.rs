@@ -22937,7 +22937,10 @@ fn summarize(cons: &[Con], seen: &[Option<Vec<Projected>>], syms: &[Atom]) -> Fo
 
 /// A question of [`tighten_each`]: whether a formula has a point, [`decide_kept`] adding to
 /// the list a point of the formula it finds, or [`decide`], which adds none.
-type Ask = fn(&Formula, &mut Vec<Model>, bool) -> (Result<bool, Refusal>, bool);
+type Ask = fn(&Formula, &mut Vec<Model>, bool) -> Reply;
+
+/// What an [`Ask`] gives: the answer, and whether the answer carries its immunity.
+type Reply = (Result<bool, Refusal>, bool);
 
 /// The tied residual's immunity certificate, returned to the hull caller.
 // Complexity tradeoff: naive bisection asks O(log W) whole decision questions after an
@@ -23264,7 +23267,7 @@ struct Hull {
     ask: Ask,
     /// The answers of `ask` already given, by symbol, side and value, each with whether its
     /// immunity was asked ([`Hull::asked_with`]).
-    answers: HashMap<(usize, bool, Int), ((Result<bool, Refusal>, bool), bool)>,
+    answers: HashMap<(usize, bool, Int), (Reply, bool)>,
 }
 
 impl Hull {
