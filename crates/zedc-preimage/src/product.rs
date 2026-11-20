@@ -24228,9 +24228,39 @@ mod tests {
 
     /// The same check on random histories of rows on `a`, `x` and `y`, disjunctions of two rows
     /// asked holding and conjunctions of two asked not holding (each split into cases and
-    /// joined), and holes.
+    /// joined), and holes: histories 0 to 29 of [`random_join_histories`].
     #[test]
-    fn projected_entries_after_joins_of_random_cases_hold_at_the_joins_snapshot() {
+    fn projected_entries_after_joins_of_random_cases_hold_at_the_joins_snapshot_part_1() {
+        random_join_histories(0..30);
+    }
+
+    /// Histories 30 to 59 of [`random_join_histories`].
+    #[test]
+    fn projected_entries_after_joins_of_random_cases_hold_at_the_joins_snapshot_part_2() {
+        random_join_histories(30..60);
+    }
+
+    /// Histories 60 to 89 of [`random_join_histories`].
+    #[test]
+    fn projected_entries_after_joins_of_random_cases_hold_at_the_joins_snapshot_part_3() {
+        random_join_histories(60..90);
+    }
+
+    /// Histories 90 to 119 of [`random_join_histories`].
+    #[test]
+    fn projected_entries_after_joins_of_random_cases_hold_at_the_joins_snapshot_part_4() {
+        random_join_histories(90..120);
+    }
+
+    /// Draws the 120 random histories of the tests above from one fixed seed, and asks and
+    /// checks ([`ask_checked`]) those whose number is in `asked_of`. Every history is drawn, so
+    /// history h is the same steps whichever part asks it: the four parts together ask exactly
+    /// the 120 histories the one test asked before TEST-preimage-unit-piece-load (2026-11-20).
+    /// That test took 12.3 s alone at load 41, half the CPU time of the crate's 98 other tests
+    /// together, and so it was the longest path of their piece; perf (DWARF) showed no single
+    /// hot function (malloc first, 2.5% of the cycles), so it is split, not sped up. Drawing a
+    /// history without asking it costs a few draws, against the solver's work of asking it.
+    fn random_join_histories(asked_of: std::ops::Range<usize>) {
         use zed_kernel::term::build::{lit, prim, var};
         let mut rng = crate::seed::Rng::new(0x2545_f491_4f6c_dd1d);
         let mut next = |m: u64| rng.below_u64(m);
@@ -24276,11 +24306,16 @@ mod tests {
                 };
                 steps.push(step);
             }
+            if !asked_of.contains(&history) {
+                continue;
+            }
             let (k, j) = ask_checked(&steps, &format!("history {history}"));
             asked += k;
             joins += j;
         }
-        assert!(asked >= 400 && joins >= 100, "asked {asked}, joins {joins}");
+        // A quarter each of the one test's bound of 400 steps kept and 100 joins, so the four
+        // parts together still meet it. Measured: 285 and 97, 283 and 88, 285 and 89, 260 and 90.
+        assert!(asked >= 100 && joins >= 25, "asked {asked}, joins {joins}");
     }
 
     /// A join of cases keeps the outer base map's nodes wherever its entries are the outer

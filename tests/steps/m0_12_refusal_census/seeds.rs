@@ -44,7 +44,22 @@ const END: &str = "\n=== seeds: output ends\n";
 /// The number of pieces. Measured 2026-11-19, all eight run at once at load average 45 on 32
 /// cores: 0.6 s to 10.5 s a piece (the last four hold the `programs.txt` units, which reach the
 /// checker; most `.zed` files of `zed/` stop at a feature this zedc does not support yet).
-const PIECES: usize = 8;
+///
+/// FLAKE-m0_12-seeds-load (2026-11-20): `tools/run_tests.sh` ran the eight as one piece, one
+/// process, and the eight took 30 s together (169 s of CPU) at load 28, over the 20 s limit at
+/// that load, and past the limit in merge checks under load. Nothing had grown since b6208a2ad,
+/// which added them: at b6208a2ad and at 07c79f734 the eight took 30.2 s at load 28 and 30.0 s
+/// at load 53, and piece 5 alone, the two commits run in turn at load 21 to 22, took 10.5 and
+/// 10.2 s against 9.2 and 9.7 s. The cause is the size of the pieces. The batch thread of a
+/// child checks its whole piece one unit after another, and the pieces were runs of consecutive
+/// units, so piece 5 held the three slow `l01_29_diagnostics` units, 8.7 s of CPU on that one
+/// thread at load 50, piece 7 the `l01_38` ones, 4.7 s, and piece 4 the `l01_26` and `l01_22`
+/// ones, 2.9 s. Now the units are
+/// dealt into 20 pieces, so that no two of the nine units of 0.4 s or more share one, and
+/// `run_tests.sh` runs each test as a piece of its own (`split`). In one run of all the pieces of
+/// the binary and of `zedc_preimage` at once, at load 132 to 144 (limits 83 to 91 s), the 20
+/// pieces took 0.4 to 9.3 s each.
+const PIECES: usize = 20;
 
 /// Every unit checked, its name and its text: each `.zed` file under the repository's `zed/`
 /// and under the steps, in path order, then each unit of `programs.txt` in its order.
@@ -70,11 +85,9 @@ fn units() -> &'static [(String, String)] {
     })
 }
 
-/// The units of piece `k`: the k-th of [`PIECES`] runs of consecutive units of nearly equal
-/// number.
-fn piece(k: usize) -> &'static [(String, String)] {
-    let units = units();
-    &units[units.len() * k / PIECES..units.len() * (k + 1) / PIECES]
+/// The units of piece `k` of [`PIECES`], dealt ([`programs::every_nth`], whose comment says why).
+fn piece(k: usize) -> Vec<&'static (String, String)> {
+    programs::every_nth(units(), k, PIECES)
 }
 
 /// Everything the checker says of the unit `text` (module doc).
@@ -134,7 +147,7 @@ fn child(k: usize) -> String {
     let (alone, batch) = std::thread::scope(|s| {
         let batch = s.spawn(|| units.iter().map(|(_, t)| output(t)).collect::<Vec<_>>());
         let alone: Vec<_> = (units.iter())
-            .map(|(_, t)| s.spawn(move || output(t)))
+            .map(|&(_, t)| s.spawn(move || output(t)))
             .collect();
         let alone: Vec<String> = alone.into_iter().map(|h| h.join().unwrap()).collect();
         (alone, batch.join().unwrap())
@@ -290,4 +303,64 @@ fn text_maps_reach_no_result_at_any_seed_6() {
 #[test]
 fn text_maps_reach_no_result_at_any_seed_7() {
     piece_test(7, "text_maps_reach_no_result_at_any_seed_7");
+}
+
+#[test]
+fn text_maps_reach_no_result_at_any_seed_8() {
+    piece_test(8, "text_maps_reach_no_result_at_any_seed_8");
+}
+
+#[test]
+fn text_maps_reach_no_result_at_any_seed_9() {
+    piece_test(9, "text_maps_reach_no_result_at_any_seed_9");
+}
+
+#[test]
+fn text_maps_reach_no_result_at_any_seed_10() {
+    piece_test(10, "text_maps_reach_no_result_at_any_seed_10");
+}
+
+#[test]
+fn text_maps_reach_no_result_at_any_seed_11() {
+    piece_test(11, "text_maps_reach_no_result_at_any_seed_11");
+}
+
+#[test]
+fn text_maps_reach_no_result_at_any_seed_12() {
+    piece_test(12, "text_maps_reach_no_result_at_any_seed_12");
+}
+
+#[test]
+fn text_maps_reach_no_result_at_any_seed_13() {
+    piece_test(13, "text_maps_reach_no_result_at_any_seed_13");
+}
+
+#[test]
+fn text_maps_reach_no_result_at_any_seed_14() {
+    piece_test(14, "text_maps_reach_no_result_at_any_seed_14");
+}
+
+#[test]
+fn text_maps_reach_no_result_at_any_seed_15() {
+    piece_test(15, "text_maps_reach_no_result_at_any_seed_15");
+}
+
+#[test]
+fn text_maps_reach_no_result_at_any_seed_16() {
+    piece_test(16, "text_maps_reach_no_result_at_any_seed_16");
+}
+
+#[test]
+fn text_maps_reach_no_result_at_any_seed_17() {
+    piece_test(17, "text_maps_reach_no_result_at_any_seed_17");
+}
+
+#[test]
+fn text_maps_reach_no_result_at_any_seed_18() {
+    piece_test(18, "text_maps_reach_no_result_at_any_seed_18");
+}
+
+#[test]
+fn text_maps_reach_no_result_at_any_seed_19() {
+    piece_test(19, "text_maps_reach_no_result_at_any_seed_19");
 }

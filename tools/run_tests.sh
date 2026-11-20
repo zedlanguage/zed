@@ -984,7 +984,9 @@ fi
 # are now four tests and two. Each module is a piece, and each test of scaling and dag
 # (2026-11-12, TESTS-split-l01_28-staging).
 # m0_12_refusal_census reads 120 units of programs.txt, 45 s together at load 41 and 18 s of it
-# one unit; each of its tests is a piece (2026-11-12, REFUSAL-census-now).
+# one unit; each of its tests is a piece (2026-11-12, REFUSAL-census-now). Its module seeds was
+# one piece of eight tests, 30 s together at load 28 (170 s of CPU), past its limit under load;
+# its units are dealt into 20 tests now, each a piece (2026-11-20, FLAKE-m0_12-seeds-load).
 # l01_29_diagnostics took 38 to 57 s whole at load 46 and more; its modules casts and
 # offered_repairs 37 and 32 s each, beside the rest at load 43 to 46. Each module is a piece,
 # and each test of casts and offered_repairs; the tests of repairs inside a sum and inside a call
@@ -1039,7 +1041,7 @@ split="
   l01_39_scope_relations::families
   l01_39a_bit_words l01_39a_bit_words::scaling
   l25_08_mutate l25_08_mutate::scaling
-  m0_12_refusal_census
+  m0_12_refusal_census m0_12_refusal_census::seeds
 "
 # Tests of a crate's unit-test binary named here, as <binary name without its hash>::<test>,
 # run as a piece of their own (`--exact`), and the binary's other tests as one piece that skips
@@ -1060,8 +1062,17 @@ split="
 # a test whose name holds one of these is skipped as well and needs a line here of its own: the
 # second half of the random test of the boolean equation solver was run by no piece from its
 # split (b9fc80f63) until it was added (kernel21, 2026-11-20).
+# zedc_preimage's piece took 41.9 s at load 65 against its limit of 38 s: its test of joins of
+# random cases (c7fd27fe8, 2026-11-19) took 12.3 s alone at load 41, half the CPU time of the
+# binary's 98 other tests together (24 s, each of the others 1.2 s or less). It is four tests of
+# 30 histories, 3.0 to 3.9 s each alone at load 52, each a piece (TEST-preimage-unit-piece-load,
+# 2026-11-20).
 alone="
   zedc_preimage::preimage::tests::summaries_read_again_give_what_reading_the_term_again_gives_seed_7776978274844439420
+  zedc_preimage::product::tests::projected_entries_after_joins_of_random_cases_hold_at_the_joins_snapshot_part_1
+  zedc_preimage::product::tests::projected_entries_after_joins_of_random_cases_hold_at_the_joins_snapshot_part_2
+  zedc_preimage::product::tests::projected_entries_after_joins_of_random_cases_hold_at_the_joins_snapshot_part_3
+  zedc_preimage::product::tests::projected_entries_after_joins_of_random_cases_hold_at_the_joins_snapshot_part_4
   zed_kernel::types::bes::tests::decide_agrees_with_the_game_on_systems_drawn_at_random
   zed_kernel::types::bes::tests::decide_agrees_with_the_game_on_systems_drawn_at_random_second_half
   zedc_presburger::presburger::row_sums::tests::the_polygons_of_the_route_are_never_more_than_the_join_spends

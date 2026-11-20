@@ -154,9 +154,25 @@ fn the_programs_file_reads_back_to_its_bytes() {
 #[test]
 fn the_pieces_of_the_programs_cover_every_unit_once_in_order() {
     let all = programs::all();
-    for n in [1, 7, 12, 120] {
-        let joined: Vec<_> = (0..n).flat_map(|k| programs::piece(k, n)).collect();
-        assert_eq!(joined, all.iter().collect::<Vec<_>>(), "{n} pieces");
+    // Dealt: piece k of n holds the units at k, k + n, ..., so piece 1 of 3 of 0..8 is 1, 4, 7.
+    let eight: Vec<usize> = (0..8).collect();
+    assert_eq!(programs::every_nth(&eight, 1, 3), [&1, &4, &7]);
+    assert_eq!(programs::every_nth(&eight, 2, 3), [&2, &5]);
+    // A piece numbered past the last item is empty.
+    assert_eq!(programs::every_nth(&eight, 9, 10), Vec::<&usize>::new());
+    for n in [1, 7, 12, 20, 120] {
+        // Each unit, by its position, is in exactly one piece, and each piece keeps file order.
+        let mut seen = vec![0; all.len()];
+        for k in 0..n {
+            let at: Vec<usize> = (programs::piece(k, n).iter())
+                .map(|u| (all.iter()).position(|a| std::ptr::eq(a, *u)).unwrap())
+                .collect();
+            assert!(at.windows(2).all(|w| w[0] < w[1]), "{n} pieces: {at:?}");
+            for i in at {
+                seen[i] += 1;
+            }
+        }
+        assert!(seen.iter().all(|&c| c == 1), "{n} pieces: {seen:?}");
         let sizes: Vec<usize> = (0..n).map(|k| programs::piece(k, n).len()).collect();
         let (lo, hi) = (sizes.iter().min().unwrap(), sizes.iter().max().unwrap());
         assert!(hi - lo <= 1, "{n} pieces: {sizes:?}");

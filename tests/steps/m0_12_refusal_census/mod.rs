@@ -197,11 +197,11 @@ fn kinds_are_found_by_their_phrases() {
 
 /// The census of piece `k` of the [`PIECES`] pieces of `programs.txt`.
 fn programs_piece(k: usize) -> String {
-    census(programs::piece(k, PIECES))
+    census(&programs::piece(k, PIECES))
 }
 
 /// The census of `units`.
-fn census(units: &[(String, String)]) -> String {
+fn census(units: &[&(String, String)]) -> String {
     assert!(!units.is_empty(), "the piece of the programs holds units");
     let mut out = String::new();
     for (origin, text) in units {
@@ -217,7 +217,12 @@ fn census(units: &[(String, String)]) -> String {
 /// Piece 4 was split once more while its units 47, 48 and 49, from `l01_29_diagnostics` (15,
 /// 42 and 78 KB), took 8.4, 3.8 and 8.9 s at load 55; since PERF-refused-site-constant the
 /// whole piece takes about 5 s at load 25, and it is one piece again.
-const PIECES: usize = 12;
+/// Since FLAKE-m0_12-seeds-load (2026-11-20) the pieces are dealt ([`programs::every_nth`],
+/// whose comment gives the units' times and why), 20 of them: `programs_4`, the units 40 to 49
+/// in a run, took 10 to 11 s of CPU and 11 to 18 s alone at load 80, and once ran past its
+/// limit of 38 s in a merge check at load 60. In one run of all the pieces of the binary at once,
+/// at load 144 to 152 (limits 91 and 95 s), the 20 pieces took 0.2 to 8.3 s each.
+const PIECES: usize = 20;
 
 #[test]
 fn programs_0() {
@@ -277,4 +282,44 @@ fn programs_10() {
 #[test]
 fn programs_11() {
     insta::assert_snapshot!(programs_piece(11));
+}
+
+#[test]
+fn programs_12() {
+    insta::assert_snapshot!(programs_piece(12));
+}
+
+#[test]
+fn programs_13() {
+    insta::assert_snapshot!(programs_piece(13));
+}
+
+#[test]
+fn programs_14() {
+    insta::assert_snapshot!(programs_piece(14));
+}
+
+#[test]
+fn programs_15() {
+    insta::assert_snapshot!(programs_piece(15));
+}
+
+#[test]
+fn programs_16() {
+    insta::assert_snapshot!(programs_piece(16));
+}
+
+#[test]
+fn programs_17() {
+    insta::assert_snapshot!(programs_piece(17));
+}
+
+#[test]
+fn programs_18() {
+    insta::assert_snapshot!(programs_piece(18));
+}
+
+#[test]
+fn programs_19() {
+    insta::assert_snapshot!(programs_piece(19));
 }
