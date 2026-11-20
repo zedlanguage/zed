@@ -99,7 +99,11 @@ fn a_class_built_with_its_fields_has_the_normal_form_of_the_same_class() {
         let n = at(written.clone()).normal();
         assert_eq!(n, at(made.clone()).normal(), "{raw:?}");
         assert_eq!(n.normal(), n, "{raw:?}");
-        assert_eq!(addr(&index(at(written))), addr(&index(at(made.clone()))), "{raw:?}");
+        assert_eq!(
+            addr(&index(at(written))),
+            addr(&index(at(made.clone()))),
+            "{raw:?}"
+        );
     }
 }
 
