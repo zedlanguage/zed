@@ -242,8 +242,9 @@ mod imp {
     /// preloaded with `LD_PRELOAD` or `LD_AUDIT` that does is not handled.
     ///
     /// Why the count is 1 on the runs of this workspace, by reading the code that runs before
-    /// `start`. Sources read 2026-11-20: glibc 2.43 (<https://ftp.gnu.org/gnu/glibc/glibc-2.43.tar.xz>;
-    /// Fedora runs 2.43-9, whose patches were not read), Rust std at the commit of the toolchain
+    /// `start`. Sources read 2026-11-20: glibc 2.43
+    /// (<https://ftp.gnu.org/gnu/glibc/glibc-2.43.tar.xz>; Fedora runs 2.43-9, whose patches were
+    /// not read), Rust std at the commit of the toolchain
     /// (59cbdee2e7b3ee50e44b460561c43c9e3023d9f0, rust-src of
     /// <https://static.rust-lang.org/dist/2026-11-18/>), and gcc's libgcc at the head of
     /// releases/gcc-16 (04a71db17257f5e61efacc1e9a01f5f2cc2face6; Fedora's libgcc 16.2.1-3 is a
@@ -367,8 +368,9 @@ mod imp {
                 unsafe { libc::prctl(libc::PR_SET_NAME, name.as_ptr()) };
             }
             // SAFETY: the calling thread is the only one (checked at the top; argument at
-            // `START`), so no other thread reads the environment while this changes it. `envp`'s strings were copied into `env` above, so nothing here reads
-            // the vector `remove_var` may change.
+            // `START`), so no other thread reads the environment while this changes it. `envp`'s
+            // strings were copied into `env` above, so nothing here reads the vector `remove_var`
+            // may change.
             unsafe { std::env::remove_var(ZED_METER_STARTED_AGAIN) };
             return;
         }
