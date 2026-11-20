@@ -7,8 +7,8 @@
 //!   binds a name to an edge and makes no node, and its name becomes a hint facet `name` on
 //!   that edge. A prelude word applied to its arguments is a `prim` node; passed as a value it
 //!   is a `prim` node with no inputs, not a lambda that calls it, since the kernel tells the two
-//!   apart: a fold of `+` itself sums exactly, and of `(a, b) -> a + b` rounds at each step. A call of a literal lambda,
-//!   `((x) -> e)(a)`, binds `x` to `a`'s edge and lowers `e` in place.
+//!   apart: a fold of `+` itself sums exactly, and of `(a, b) -> a + b` rounds at each step. A call
+//!   of a literal lambda, `((x) -> e)(a)`, binds `x` to `a`'s edge and lowers `e` in place.
 //! - **Captures on demand.** A name bound outside the region being built enters it as a
 //!   capture, through every region between, in the order the body first reads it, and once
 //!   however often it is read. The regions of one node share one capture list, the union of
@@ -653,8 +653,9 @@ impl<'t> Lower<'t> {
     /// is there. The nodes of one key are kept by their [`canon::Shape`], so a key never decides
     /// equality alone and two distinct nodes whose keys collide stay two (step L1.37a). An add
     /// costs one hash lookup and `O(log k)` shape comparisons for `k` nodes of its key, each at
-    /// most the bytes of the smaller node's operation, inputs and outputs: `k` is one but for a collision of 256-bit keys, and
-    /// about n/256 for n nodes in the `short-addresses` build (8-bit keys).
+    /// most the bytes of the smaller node's operation, inputs and outputs: `k` is one but for a
+    /// collision of 256-bit keys, and about n/256 for n nodes in the `short-addresses` build (8-bit
+    /// keys).
     // Complexity tradeoff: the naive add canonicalizes and encodes the whole subtree of each
     // new node to compare it, O(n) per node and O(n²) to O(n³) in all (COMPLEXITY.md Z2), and
     // a chain of the nodes of one key confirms each candidate in turn, O(k) per add (Z19,

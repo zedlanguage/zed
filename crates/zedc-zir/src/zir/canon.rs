@@ -471,10 +471,10 @@ pub fn address(g: &Region) -> Result<ContentAddress, TooLarge> {
 /// of the same 900 bytes are one string in three trees (item ZIR-string-tree-address, test
 /// `l01_32_canonical_zir::string_trees`). Edges need nothing: the binary form writes an edge
 /// as its text form, which prints a string's text. The address scheme's version number, since
-/// removed, was left unchanged: a graph whose strings are each one block keeps its address, and any other graph now gets the address the
-/// equal graph with its strings held as blocks always had, so no address stands for two normal
-/// forms across this change (`normal_form_pins` hashes graphs read from text, whose strings
-/// are blocks).
+/// removed, was left unchanged: a graph whose strings are each one block keeps its address, and any
+/// other graph now gets the address the equal graph with its strings held as blocks always had, so
+/// no address stands for two normal forms across this change (`normal_form_pins` hashes graphs read
+/// from text, whose strings are blocks).
 // Complexity tradeoff: the binary form writes each distinct node of a string's tree once, so a
 // string doubled k times, 2^k bytes in k nodes, costs O(k) to write (BUILD-doubling-60s). Here
 // the address writes a string held in parts as one block, O(N) time and memory for N bytes,

@@ -1,13 +1,13 @@
 //! The binary form of ZIR: what a build caches and the backends read.
 //!
 //! It begins with the four bytes `ZIR\0` (`ZIRs` for a stripped module, [`super::strip`]) and
-//! the version as a 32-bit little-endian word; the root region follows. Every count, index and integer is a 64-bit little-endian word, every
-//! string a count of bytes and then its UTF-8 bytes (a string value as the nodes of the tree its
-//! text is held in, each node once in the graph, `W::text`), and every choice a one-byte tag.
-//! A name (of an atom, a field, a port or an evidence key) is read by the rule the text form
-//! reads one by, and a pattern binder may also be one the compiler makes
-//! (`text::not_a_binder`); a catalog entry and a string value are not names. A value is
-//! written by its structure, a number outside the 64-bit range and a rational by their sign
+//! the version as a 32-bit little-endian word; the root region follows. Every count, index and
+//! integer is a 64-bit little-endian word, every string a count of bytes and then its UTF-8 bytes
+//! (a string value as the nodes of the tree its text is held in, each node once in the graph,
+//! `W::text`), and every choice a one-byte tag. A name (of an atom, a field, a port or an evidence
+//! key) is read by the rule the text form reads one by, and a pattern binder may also be one the
+//! compiler makes (`text::not_a_binder`); a catalog entry and a string value are not names. A value
+//! is written by its structure, a number outside the 64-bit range and a rational by their sign
 //! and the 64-bit limbs of their numerator and denominator in lowest terms (not their decimal
 //! digits, whose conversion costs more than linear time), a number kept with prime powers,
 //! such as `2^2^100`, by the form it is kept in, its numerator, denominator and powers, with

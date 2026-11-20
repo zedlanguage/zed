@@ -51,7 +51,8 @@
 //! source text it was read from. A literal the elaborated term holds at several nodes
 //! (named once, used at each) is written at each, as every other term node is. Tests
 //! `l01_32_canonical_zir::string_nodes::a_program_holding_a_doubled_string_is_addressed_by_its_text`
-//! and `l01_32_canonical_zir::bench::string_nodes::a_doubling_program_is_addressed_in_time_linear_in_its_text`.
+//! and
+//! `l01_32_canonical_zir::bench::string_nodes::a_doubling_program_is_addressed_in_time_linear_in_its_text`.
 
 use num_bigint::{BigUint, Sign};
 use zed_kernel::num::{Rat, TooLarge};

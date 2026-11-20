@@ -720,8 +720,8 @@ pub(super) fn not_a_name(w: &str) -> Option<String> {
 
 /// Why `w` is not a port's name, or `None` when it is one: names joined by `.`, the grammar's
 /// `PushTarget` (`m.stdout`, a field of `main`'s argument), or `main::` and a name, an input
-/// of `main` that every function reads (`main::files`). The binary form ([`super::binary`]) checks its port
-/// names with this function too.
+/// of `main` that every function reads (`main::files`). The binary form ([`super::binary`]) checks
+/// its port names with this function too.
 pub(super) fn not_a_port(w: &str) -> Option<String> {
     let path = w.strip_prefix("main::").unwrap_or(w);
     if path != w && path.contains('.') {
@@ -837,7 +837,8 @@ impl<'a> P<'a> {
     }
 
     /// A port's name ([`not_a_port`]): names joined by `.`, as `m.stdout`, or `main::` and a
-    /// name, as `main::files`. An error points at the name it is about. The cost is linear in the name.
+    /// name, as `main::files`. An error points at the name it is about. The cost is linear in the
+    /// name.
     fn port_name(&mut self) -> Result<&'a str, String> {
         self.ws();
         let start = self.i;
