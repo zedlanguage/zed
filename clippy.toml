@@ -29,6 +29,9 @@
 # type that holds a subterm is refused until its order is shown not to read the memo (tests
 # `address::tests::a_run_of_the_canonical_term_does_not_change_the_address` and
 # `eval::tests::the_names_a_body_reads_take_no_part_in_equality`).
+# A pointer memo's key hashes and compares the address of the `Arc` it holds and nothing else
+# (zed-collections src/by_address.rs, `ByAddress`): no change inside the value can move its
+# hash or equality, whatever the value holds.
 ignore-interior-mutability = [
   "zed_kernel::types::Type",
   "zed_kernel::text::Text",
@@ -42,4 +45,5 @@ ignore-interior-mutability = [
   "zedc_types::ty::Shape",
   "zedc_presburger::presburger::formula::Shared",
   "zedc_preimage::address::Address",
+  "zed_collections::by_address::ByAddress",
 ]

@@ -159,7 +159,10 @@ impl<T: Ord + Clone> Uses<T> {
 // `l01_39_scope_relations::families::bench::stair_holes_mix_scales`; COMPLEXITY.md row
 // PERF-l139-shared-uses.
 #[derive(Clone, Debug)]
-pub struct Last<T: Ord + Clone>(Option<(T, bool, Option<OrdSet<T>>, Option<OrdSet<T>>)>);
+pub struct Last<T: Ord + Clone>(Option<Change<T>>);
+
+/// One change [`Last`] keeps: the value, whether it was added, and the set before and after.
+type Change<T> = (T, bool, Option<OrdSet<T>>, Option<OrdSet<T>>);
 
 impl<T: Ord + Clone> Default for Last<T> {
     fn default() -> Self {
