@@ -1605,7 +1605,9 @@ impl<'g> Machine<'g, '_> {
                             Shared::new(Term::Lit(Value::Int(0))),
                             Shared::new(Term::Lit(Value::Int(1))),
                         );
-                        match self.ev.run(&wrap(lets, t)).map_err(|e| e.to_string())? {
+                        match (self.ev.run(&wrap(lets.order, lets.held, t)))
+                            .map_err(|e| e.to_string())?
+                        {
                             Value::Int(i) => Ok(i as usize),
                             v => Err(v),
                         }
@@ -1683,7 +1685,7 @@ impl<'g> Machine<'g, '_> {
             });
             arms.push((p, Term::Prim(Prim::Tuple, xs)));
         }
-        let t = wrap(lets, Term::Match(Shared::new(s), arms));
+        let t = wrap(lets.order, lets.held, Term::Match(Shared::new(s), arms));
         let (i, vals) = match self.ev.run(&t).map_err(|e| e.to_string())? {
             Value::Tuple(xs) if matches!(xs.first(), Some(Value::Int(i)) if (*i as usize) < ps.len()) =>
             {
@@ -2121,7 +2123,7 @@ impl<'g> Machine<'g, '_> {
             terms.push(self.term(v, &mut lets)?);
         }
         let t = raise_with(self.alone(node, id), &terms)?;
-        Ok(wrap(lets, t))
+        Ok(wrap(lets.order, lets.held, t))
     }
 
     /// A one-node region running `node`, occurrence `id`, on its arguments, made the first time
@@ -2596,13 +2598,15 @@ pub fn cell_var(key: u64) -> Arc<str> {
     format!("\0cell {key}").into()
 }
 
-/// `t` with each held value in `lets` made first, each before the ones that hold it, and each
-/// lookup port read before them all.
-fn wrap(lets: Lets, t: Term) -> Term {
-    let t = (lets.held.into_iter().rev()).fold(t, |b, (x, made)| {
+/// `t` with each held value of `held` (its variable and the term that makes it, parts before
+/// holders) made first, each before the ones that hold it, and each lookup port of `order`
+/// read before them all, bound to [`port_var`]. The memory machine and native code's hooks
+/// (zed-native hooks.rs) both wrap a node's term so, each from its own `Lets`.
+pub fn wrap(order: Vec<Arc<str>>, held: Vec<(Arc<str>, Term)>, t: Term) -> Term {
+    let t = (held.into_iter().rev()).fold(t, |b, (x, made)| {
         Term::Let(x, Shared::new(made), Shared::new(b))
     });
-    lets.order.into_iter().rev().fold(t, |b, p| {
+    order.into_iter().rev().fold(t, |b, p| {
         Term::Let(port_var(&p), Shared::new(Term::Read(p)), Shared::new(b))
     })
 }

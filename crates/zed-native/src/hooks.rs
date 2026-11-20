@@ -16,7 +16,7 @@ use zed_kernel::value::{HeldEntry, HeldFamily};
 use zed_kernel::{Evaluator, Fields, KernelError, Pattern, Prim, Shared, Term, Text, Value};
 use zedc::zir::Op;
 use zedc::zir::lower::raise_node;
-use zedc::zir::memory::{HeldPart, Mode, held_family_term, held_term, port_var};
+use zedc::zir::memory::{HeldPart, Mode, held_family_term, held_term};
 
 use zed_rt::{FunObj, Heap, HeldObj, HeldShape, Obj, Paths, Word};
 
@@ -1583,14 +1583,10 @@ fn term_of(
 }
 
 /// `t` with each held value in `lets` made first, each before the ones that hold it, and each
-/// lookup port read before them all.
+/// lookup port read before them all, as the memory machine wraps its terms
+/// ([`zedc::zir::memory::wrap`]).
 fn wrap(lets: Lets, t: Term) -> Term {
-    let t = (lets.held.into_iter().rev()).fold(t, |b, (x, made)| {
-        Term::Let(x, Shared::new(made), Shared::new(b))
-    });
-    lets.order.into_iter().rev().fold(t, |b, p| {
-        Term::Let(port_var(&p), Shared::new(Term::Read(p)), Shared::new(b))
-    })
+    zedc::zir::memory::wrap(lets.order, lets.held, t)
 }
 
 /// The lookup ports a kernel term reads, each once, in the order first met, and the term of
@@ -1972,7 +1968,7 @@ mod tests {
     use zed_kernel::World;
     use zed_kernel::term::build::{app, if_, lam, lit, var};
     use zedc::zir::lower::lower;
-    use zedc::zir::memory::{cell_var, plan};
+    use zedc::zir::memory::{cell_var, plan, port_var};
 
     use super::*;
 
