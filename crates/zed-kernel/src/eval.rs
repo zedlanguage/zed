@@ -630,11 +630,11 @@ impl Evaluator {
         }
     }
 
-    /// Makes every later [`Evaluator::run`] and [`Evaluator::run_made`] panic, as a broken check of zedc's own code does:
-    /// a debug build's way for the tests to reach the report of a bug in zedc, which no
-    /// program reaches on purpose, on both engines (plan row EXE-panic-status). `zedc run`
-    /// panics at the run of `main`; an executable at the first node its code passes to the
-    /// kernel, inside a runtime hook that the machine code called.
+    /// Makes every later [`Evaluator::run`] and [`Evaluator::run_made`] panic, as a broken check of
+    /// zedc's own code does: a debug build's way for the tests to reach the report of a bug in
+    /// zedc, which no program reaches on purpose, on both engines (plan row EXE-panic-status).
+    /// `zedc run` panics at the run of `main`; an executable at the first node its code passes to
+    /// the kernel, inside a runtime hook that the machine code called.
     #[cfg(debug_assertions)]
     pub fn panic_on_run(&mut self) {
         self.panic_on_run = true;

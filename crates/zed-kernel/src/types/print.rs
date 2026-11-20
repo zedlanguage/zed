@@ -96,9 +96,10 @@ impl Type {
     /// sec:diagnostics: a message prints a literal as written), and any other in canonical
     /// form, with one lookup in `spell` per literal written; a spelling must read back to the
     /// value it spells. Each type `k` for which `apart[k]` holds is written out where it
-    /// stands, never by a name of its own, and not counted as a use of it: a part of a set that a compiler type prints apart from the rest of the set, in the
-    /// order of a union (`order`), such as the atoms of `int | #a | #b` after a tuple. The
-    /// parts inside it are named as usual. Time as [`Type::surfaces_by_name`].
+    /// stands, never by a name of its own, and not counted as a use of it: a part of a set that a
+    /// compiler type prints apart from the rest of the set, in the order of a union (`order`), such
+    /// as the atoms of `int | #a | #b` after a tuple. The parts inside it are named as usual. Time
+    /// as [`Type::surfaces_by_name`].
     pub fn surfaces_apart(
         types: &[(Type, At)],
         apart: &[bool],
@@ -513,7 +514,8 @@ struct Printer<'s> {
     /// however often it is made, at no cost but the items' memory, which the walk held already.
     held: Vec<Item>,
     exact: bool,
-    /// Whether a recursive member is written by its group's name for it ([`Type::surface_by_name`]).
+    /// Whether a recursive member is written by its group's name for it
+    /// ([`Type::surface_by_name`]).
     by_name: bool,
     /// The value of each part met outside every atom, by its node's id ([`Printer::outside`]).
     outsides: HashMap<u64, bool>,
@@ -869,14 +871,15 @@ impl Printer<'_> {
 
     /// Each node's height in the graph of the texts with the edges out of the recursive types
     /// with a definition cut, a recursive type at height 0. Every cycle passes through a
-    /// recursive type with a definition ([`Printer::force_cycles`]), so that graph has no cycle. The walk's order is not an order of it in which a node comes after
-    /// those it names: the walk may enter a cycle at a node that is not a recursive type, such
-    /// as a tuple diagram that a recursive type's unfolding shares with a part of its body kept
-    /// unevaluated (`R0 = ((#a | #b), (#a | #b | R0)) \ (#b, #a)` enters at the diagram of
-    /// `R0`'s unfolding, which names the part `#a | #b | R0`, whose unfolding names the
-    /// diagram), and then the node that closes the cycle leaves before the one it names. So
-    /// the heights come from a search of their own, depth first with a stack, each node
-    /// entered once: time linear in the tokens of all texts.
+    /// recursive type with a definition ([`Printer::force_cycles`]), so that graph has no cycle.
+    /// The walk's order is not an order of it in which a node comes after those it names: the walk
+    /// may enter a cycle at a node that is not a recursive type, such as a tuple diagram that a
+    /// recursive type's unfolding shares with a part of its body kept unevaluated
+    /// (`R0 = ((#a | #b), (#a | #b | R0)) \ (#b, #a)` enters at the diagram of `R0`'s unfolding,
+    /// which names the part `#a | #b | R0`, whose unfolding names the diagram), and then the node
+    /// that closes the cycle leaves before the one it names. So the heights come from a search of
+    /// their own, depth first with a stack, each node entered once: time linear in the tokens of
+    /// all texts.
     fn heights(&self) -> Vec<Option<usize>> {
         let mut height: Vec<Option<usize>> =
             self.forced.iter().map(|f| f.as_ref().map(|_| 0)).collect();
@@ -1003,8 +1006,9 @@ impl Printer<'_> {
             // operands each such a list; and since an `&` it holds of has two operands it holds
             // of, the lowest such `&` would have two lists, which (2) excludes. cover4 asked
             // whether (1) holds (COMPLETENESS.md); the test
-            // `l01_23_subtyping` `printed_meets::a_meet_joined_to_an_exclusive_or_keeps_its_connective`
-            // reaches the `&` arm of `meet_of_literals` with one operand no meet.
+            // `l01_23_subtyping`
+            // `printed_meets::a_meet_joined_to_an_exclusive_or_keeps_its_connective` reaches the
+            // `&` arm of `meet_of_literals` with one operand no meet.
             Err(_) => unreachable!("a meet of morphism literals is one list"),
         }
     }
@@ -1839,9 +1843,9 @@ impl Printer<'_> {
     /// The node whose name each node's text is, or `None`: a node whose text is one reference
     /// to another is that one's, and a `marked` node whose text is not, or whose reference
     /// leads to no name, is its own. A marked node whose text is so another node's name takes
-    /// that name, rather than a definition `type Part2 = Part1;` of its own; each of its cycles passes
-    /// through the node it names, which keeps a name. Each node is followed once, with a list
-    /// of those whose answer waits on the next: time linear in the nodes.
+    /// that name, rather than a definition `type Part2 = Part1;` of its own; each of its cycles
+    /// passes through the node it names, which keeps a name. Each node is followed once, with a
+    /// list of those whose answer waits on the next: time linear in the nodes.
     fn same_names(&self, marked: &dyn Fn(usize) -> bool) -> Vec<Option<usize>> {
         let n = self.texts.len();
         let mut found: Vec<Option<Option<usize>>> = vec![None; n];
@@ -2184,8 +2188,8 @@ impl Printer<'_> {
     }
 
     /// Writes node `i` at `at` by its own text, not by a name, following a text that is one
-    /// reference to another node to that node's text: a root printed apart ([`Type::surfaces_apart`]).
-    /// The nodes inside are written by [`Printer::write`].
+    /// reference to another node to that node's text: a root printed apart
+    /// ([`Type::surfaces_apart`]). The nodes inside are written by [`Printer::write`].
     fn write_out(&self, mut i: usize, at: At, named: &[Option<String>], out: &mut String) {
         let mut text = self.texts[i].as_ref().expect("visited");
         while let [Seg::Node(j, _)] = text.segs[..] {

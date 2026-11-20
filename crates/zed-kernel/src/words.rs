@@ -368,8 +368,8 @@ fn rank(pieces: impl Iterator<Item = Value>) -> Family {
 // `q` with `0 < q <= p(x)`, "Furthermore, if q > max(l, |x| - l) the number of letter
 // comparisons used by the algorithm is bounded by 2|t|", and Proposition 5.1 just before it
 // gives `p(x) > max(|u|, |v|)` when the period is not small, so `q <= p(x)` holds. This site
-// was named in the citation sweep for Cardon and Crochemore (TCS 19, 1982), a paper on graph partitioning
-// cited in zedc-presburger, not here. Test: `split_keeps_every_piece`
+// was named in the citation sweep for Cardon and Crochemore (TCS 19, 1982), a paper on graph
+// partitioning cited in zedc-presburger, not here. Test: `split_keeps_every_piece`
 // (tests/steps/l03_15a_fp_ops_run/kernel.rs) compares pieces with expected lists, overlapping
 // separators included; it catches a wrong piece, not a slow search. Then
 // one copy of each piece, O(n) bytes in all, and the rank built from the sorted keys, O(k) for k
@@ -453,9 +453,9 @@ pub(crate) fn join(pieces: &Family, sep: &Text) -> Result<Option<Value>, KernelE
 
 /// The string the values of `f`, read in key order, encode as UTF-8, or `#badUtf8` when they
 /// are not well-formed: an overlong form, a surrogate, a scalar past `0x10FFFF`, or a truncated
-/// or stray continuation byte (the Unicode Standard, table 3-7, as [`std::str::from_utf8`] checks it). An
-/// int outside `0 ..= 255` is not a byte, so it gives `#badUtf8` too; `None` when a value is not
-/// an int at all.
+/// or stray continuation byte (the Unicode Standard, table 3-7, as [`std::str::from_utf8`] checks
+/// it). An int outside `0 ..= 255` is not a byte, so it gives `#badUtf8` too; `None` when a value
+/// is not an int at all.
 fn from_utf8(f: &Family) -> Option<Value> {
     let mut bytes = Vec::with_capacity(f.len());
     let mut byte = true;

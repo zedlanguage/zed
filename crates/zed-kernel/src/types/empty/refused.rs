@@ -160,9 +160,10 @@ impl Type {
     /// For `Refusal::Group`, the member that `self` is or reads first whose group's decider
     /// refuses it and whose search for a value leaves it undecided, with the reason
     /// ([`GroupSite::detail`]); for another cause, the first member on a cycle of its group that
-    /// `self` is or reads, with its group's definitions. `None` when `self` reads no such member. The members are met in a walk of the parts of `self` from
-    /// the top, a function of `self` alone. Time linear in the parts walked, and for
-    /// `Refusal::Group` in the group, which is built again at most twice to confirm a repair.
+    /// `self` is or reads, with its group's definitions. `None` when `self` reads no such member.
+    /// The members are met in a walk of the parts of `self` from the top, a function of `self`
+    /// alone. Time linear in the parts walked, and for `Refusal::Group` in the group, which is
+    /// built again at most twice to confirm a repair.
     ///
     /// Each definition is written as a user declares it, `type name = body;`. Outside a
     /// checker's message, a part written more than once among them is declared once more

@@ -177,12 +177,13 @@ impl Drop for ProgramNames {
     }
 }
 
-/// A skip set of variable names prepared once for many spans ([`fresh_variable_span_stats_indexed`]):
-/// whether each of `T`, `U`, `V`, `W` is in it, and the sorted places `m >= 4` of its names
-/// `T{m + 1}` with their prefix sums. Names no [`Names::Variables`] pick can give (`x`, `T0`,
-/// `T1` to `T4`) are left out, as are places the program-name snapshot it was made against
-/// already skips, so no place is subtracted twice. Names the sequence cannot give are never
-/// asked of it, so [`SkipIndex::contains`] answers exactly for every name a pick can give.
+/// A skip set of variable names prepared once for many spans
+/// ([`fresh_variable_span_stats_indexed`]): whether each of `T`, `U`, `V`, `W` is in it, and the
+/// sorted places `m >= 4` of its names `T{m + 1}` with their prefix sums. Names no
+/// [`Names::Variables`] pick can give (`x`, `T0`, `T1` to `T4`) are left out, as are places the
+/// program-name snapshot it was made against already skips, so no place is subtracted twice. Names
+/// the sequence cannot give are never asked of it, so [`SkipIndex::contains`] answers exactly for
+/// every name a pick can give.
 // Complexity tradeoff (closed-sibling repair, step 1): the naive version, as before, read and
 // sorted the whole skip set at every span, O(s log s) per span, so `generalize` naming r runs of
 // a signature whose skip set holds s names cost O(r·s log s): 11.3 times the work at 8n for n
@@ -314,7 +315,8 @@ pub fn fresh_variable_span_stats_indexed(
     }
 }
 
-/// Like [`fresh_name`], but skipping the captured [`HeldVarSnapshot`] instead of thread-local `HELD`.
+/// Like [`fresh_name`], but skipping the captured [`HeldVarSnapshot`] instead of thread-local
+/// `HELD`.
 pub fn fresh_name_with_held<S>(
     names: Names,
     n: &mut usize,
@@ -573,9 +575,9 @@ pub enum NameItem {
 // Since `given` is merged where intervals touch, two passes in a row at intervals of `given`
 // have between them only places the run skips or the program binds. So a run with t kept
 // stretches and s skipped or bound places in its range makes at most 2t + 1 + s passes, each
-// O(log k + c) (c below), and the fresh loop's jumps over intervals of `used` cost O(log k) each, at most
-// one per interval of `used` in all, since `n` only grows. The work is then O(log k + c) times
-// the passes, bounded below (V names, and 1 + s per run), plus the runs given (landing round
+// O(log k + c) (c below), and the fresh loop's jumps over intervals of `used` cost O(log k) each,
+// at most one per interval of `used` in all, since `n` only grows. The work is then O(log k + c)
+// times the passes, bounded below (V names, and 1 + s per run), plus the runs given (landing round
 // 5, Codex: an earlier version of this sentence left out c). Before `given` was merged, a run
 // over names given one at a time met each of them: v names under m such runs gave m·2v runs
 // (test `many_runs_over_names_given_one_at_a_time_give_few_runs`). The number of passes h is

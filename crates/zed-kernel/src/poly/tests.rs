@@ -643,7 +643,8 @@ fn a_square_is_charged_two_of_its_three_transforms() {
         plan.dense - CHOICE_UNIT * (DENSE_COST + SLOT_COST * span)
     };
     // 1000 terms at every index: 500 words packed, past the test build's leaf of 48 and with
-    // more word products by rows than by transforms, so the square goes to the transforms. `-3` has the bits of `3`, so the two products pack alike.
+    // more word products by rows than by transforms, so the square goes to the transforms. `-3` has
+    // the bits of `3`, so the two products pack alike.
     let every: Vec<u128> = (0..1000).collect();
     let (a, b) = (packed(&every, 3), packed(&every, -3));
     let ratio = transforms(&a, &a) / transforms(&a, &b);

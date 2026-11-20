@@ -33,14 +33,15 @@ type ThreadInstances = HashMap<(u64, Vec<Type>), Weak<Env>, BuildHasherDefault<D
 /// bytes a run allocated depended on what tests ran beside it (`deep_types`
 /// `instantiating_a_group_scales`: in 2 of 12 runs of the whole binary the run at 8,000 also
 /// allocated 3,211,280 bytes, a table of 65,536 entries of 49 bytes and its 16 control bytes,
-/// 14.0 times the bytes of the run at 1,000 where 7.9 is usual). One group at equal arguments gives one set of types on a thread while they
-/// live, so that equal definitions meet as equal types, and a later unit finds an instance an
-/// earlier one made while something holds it, with the group's decided verdicts. Types of two
-/// threads are equal types too, by their keys (`Key::order`), but no thread finds another's
-/// instance, so the end of one thread's unit never changes the types another is reading. The arguments hash by their digests and compare
-/// exactly, so a call costs time in its arguments only. An instance leaves the table when it is
-/// dropped (step TABLE-life). No type is dropped while this table or [`GROUPS`] is locked, since
-/// a type dropped may drop an instance or a group, which takes the lock.
+/// 14.0 times the bytes of the run at 1,000 where 7.9 is usual). One group at equal arguments gives
+/// one set of types on a thread while they live, so that equal definitions meet as equal types, and
+/// a later unit finds an instance an earlier one made while something holds it, with the group's
+/// decided verdicts. Types of two threads are equal types too, by their keys (`Key::order`), but no
+/// thread finds another's instance, so the end of one thread's unit never changes the types another
+/// is reading. The arguments hash by their digests and compare exactly, so a call costs time in its
+/// arguments only. An instance leaves the table when it is dropped (step TABLE-life). No type is
+/// dropped while this table or [`GROUPS`] is locked, since a type dropped may drop an instance or a
+/// group, which takes the lock.
 static INSTANCES: LazyLock<Mutex<Instances>> = LazyLock::new(Mutex::default);
 
 /// The numbering of a group's nodes while its trees are built ([`Node::of`]).
@@ -717,8 +718,8 @@ fn first_on_cycle(edges: &[Vec<usize>]) -> Option<usize> {
 }
 
 /// Whether each of `defs` is plain: on no cycle and naming only plain definitions; the plain
-/// definitions, each after those it names; and whether each is on a cycle. A depth-first search with an explicit stack
-/// settles each definition after those it names, reading each edge once.
+/// definitions, each after those it names; and whether each is on a cycle. A depth-first search
+/// with an explicit stack settles each definition after those it names, reading each edge once.
 fn plain(defs: &[Def]) -> (Vec<bool>, Vec<usize>, Vec<bool>) {
     let edges: Vec<Vec<usize>> = defs
         .iter()
@@ -910,10 +911,11 @@ mod tests {
     fn an_instance_whose_parts_were_unfolded_is_freed_at_the_end_of_its_unit() {
         // Item PERF-print-by-name-after-plain: with `a0`, `a1` the atoms `#RecPartCycle0` and
         // `#RecPartCycle1`, `RecPartCycle0 = (a0, a0 | RecPartCycle1)` and
-        // `RecPartCycle1 = (a1, a1 | RecPartCycle0)` keep each `ai | …` as a part, whose unfolding holds the row of the next part: the
-        // parts' unfoldings make a cycle of their own, which does not pass through the members.
-        // The end of the unit forgot only the members' unfoldings, so a type printed plain,
-        // which unfolds its parts, kept its instance and group for the rest of the process.
+        // `RecPartCycle1 = (a1, a1 | RecPartCycle0)` keep each `ai | …` as a part, whose unfolding
+        // holds the row of the next part: the parts' unfoldings make a cycle of their own, which
+        // does not pass through the members. The end of the unit forgot only the members'
+        // unfoldings, so a type printed plain, which unfolds its parts, kept its instance and group
+        // for the rest of the process.
         let k = 2;
         let defs = (0..k)
             .map(|i| {

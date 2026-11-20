@@ -5,9 +5,9 @@
 //! The class, read from the type alone. `t` has atoms only, one atom name `link` with a payload
 //! and no bare atom; the payload is pairs only, a clause of rows (taken rows `P_i`, refused rows
 //! `N_k`, at least one of each, the payload exactly their meet less their union). Every row
-//! head is a set of integers (finite, or cofinite within the integers; arbitrary-width integer values). From
-//! each row tail, the types reached by [`super::list_step`] are *nodes*: a *cons* node
-//! `stop? | link(h, next)` with `h` a set of integers and `next` a node other than itself, an
+//! head is a set of integers (finite, or cofinite within the integers; arbitrary-width integer
+//! values). From each row tail, the types reached by [`super::list_step`] are *nodes*: a *cons*
+//! node `stop? | link(h, next)` with `h` a set of integers and `next` a node other than itself, an
 //! *end* node (the bare `stop` atom alone), or the *carrier* `L = stop | link(H, L)`, at most
 //! one, with `H` a set of integers. One stop name throughout; no cycle but the carrier's. At
 //! most one taken row has a tail other than the carrier. Recognizing the class reads each
@@ -255,7 +255,8 @@ impl Ints {
             .expect("an intersection of two cofinite sets has a natural number")
     }
 
-    /// Intersects a non-empty slice of `Ints` in `O(S log S)` time where `S = \sum_r (1 + |s_r.vals|)`.
+    /// Intersects a non-empty slice of `Ints` in `O(S log S)` time where
+    /// `S = \sum_r (1 + |s_r.vals|)`.
     // Complexity tradeoff: folding `Ints::meet` left-to-right across `k` cofinite partners in one
     // `U1` bucket (`\bigcap_{q=1}^k (\mathbb{Z} \setminus \{q\})`) clones an excluded set of size
     // `q` at step `q`, costing `Theta(k^2)` (`xr_r2_bench_escape_single_bucket_scales_n_log_n`).
@@ -907,9 +908,9 @@ fn decide_counted(t: &Type, counts: &mut (usize, usize)) -> Option<ChainPlan> {
         // `\bigwedge_q ((j_1, A) \lor (j_2, B_q)) \iff (j_1, A) \lor (j_2, \bigcap_q B_q)`, and U2
         // is unit propagation: a clause of one atom `(j, U)` narrows `pl[j]` to `pl[j] \cap U`.
         // Both rewrite the clauses into an equivalent set, so every clause of fewer than three
-        // atoms stays exact (a cut row is read further by `read_on`, invariant (I) at U1): no clause
-        // is cut to its first two atoms (round 3 of XR-group-order-5 cut them, which made a unit
-        // or an emptied clause prove nothing), and a clause of three or more atoms is narrowed
+        // atoms stays exact (a cut row is read further by `read_on`, invariant (I) at U1): no
+        // clause is cut to its first two atoms (round 3 of XR-group-order-5 cut them, which made a
+        // unit or an emptied clause prove nothing), and a clause of three or more atoms is narrowed
         // like the others; only the 2-SAT below reads the first two atoms of a clause still wide
         // and then answers no Empty (`wide`). Each pass costs `O(S log S)` (`S` the clauses'
         // atoms plus the written size of their sets; the groups are found by hashing, the

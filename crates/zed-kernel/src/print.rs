@@ -241,11 +241,12 @@ impl Prim {
     /// `-` for both `Sub` and `Neg`, `!` for `Not`), the prelude word (`popCount`,
     /// `String`), or the form DESIGN.md gives one with no word of its own: a tuple `(..)`, a
     /// component `[i]` (`p[0]`), an entry `[k]` (`f[k]`), and the methods `.count` and
-    /// `.union`, `.first` and `.last`. An atom is `#_(..)`, an atom of any name with any payload, since a fixed text
-    /// cannot carry its name; a message that has the name writes `#err(..)` instead
-    /// ([`Prim::written_with`]). The three steps on key paths and the four entry steps, which only the
-    /// compiler generates and for which DESIGN.md gives no written form, are words ([`Prim::in_words`]), not
-    /// code; a sentence names a primitive through [`Prim::named`], which quotes only code.
+    /// `.union`, `.first` and `.last`. An atom is `#_(..)`, an atom of any name with any payload,
+    /// since a fixed text cannot carry its name; a message that has the name writes `#err(..)`
+    /// instead ([`Prim::written_with`]). The three steps on key paths and the four entry steps,
+    /// which only the compiler generates and for which DESIGN.md gives no written form, are words
+    /// ([`Prim::in_words`]), not code; a sentence names a primitive through [`Prim::named`], which
+    /// quotes only code.
     pub fn written(self) -> &'static str {
         if let Some(words) = self.in_words() {
             return words;
@@ -587,8 +588,8 @@ impl<'a> Pieces<'a> {
                     .end();
             }
             // `t[0]` and `f[k]`: the key in brackets after its receiver (sec:grammar, IndexSuffix).
-            // A chain `t[0][1]` is one `Cat` of its receiver and its indices, gathered by a loop, so
-            // that `fits` meets the receiver's text first rather than after walking down the
+            // A chain `t[0][1]` is one `Cat` of its receiver and its indices, gathered by a loop,
+            // so that `fits` meets the receiver's text first rather than after walking down the
             // chain, which made a broken layout quadratic in the chain's length.
             Term::Prim(Prim::TupleGet | Prim::Get | Prim::At, args) if args.len() == 2 => {
                 let mut keys = vec![&args[1]];

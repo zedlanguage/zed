@@ -221,7 +221,8 @@ fn rejoining_one_atom_of_each_block_scales() {
     // blocks in a treap by position rebuild `O(log m)` cells for each, and the index on the
     // root finds each block in `O(log m)` (plan row KERNEL-bdd-rejoin-bytes; before it, the
     // atoms of the left children took `O(log² m)` time and bytes a literal, 10.7 times the
-    // bytes from 512 to 4096). Small instance: `rejoined_blocks_give_the_function_and_the_one_form`.
+    // bytes from 512 to 4096). Small instance:
+    // `rejoined_blocks_give_the_function_and_the_one_form`.
     let n = 1 << 9;
     let lists = scaling::inputs(n, |m| (joined_blocks(70000, m), m));
     scaling::check(
@@ -308,8 +309,8 @@ fn parity_built_a_literal_at_a_time_scales() {
     // literals are 6.30, 7.99, 9.25, 10.48, 11.98, 13.18, 14.84, that is `2 H_n - 4.45`
     // within 0.15, the depth of a treap built by random insertion. So the work is `n log n`
     // with a negative constant term, and its ratio at `n` and `8n` approaches the limit of
-    // 2026-11-09, `ln(8n)/ln(n) × 1.1`, from above as `n` falls; at 2,048 and 16,384 that limit was 11.20.
-    // With the atoms in sorted order the nodes per literal are `H_n - 1.5`.
+    // 2026-11-09, `ln(8n)/ln(n) × 1.1`, from above as `n` falls; at 2,048 and 16,384 that limit was
+    // 11.20. With the atoms in sorted order the nodes per literal are `H_n - 1.5`.
     //
     // Each node cost about 147,000 instructions while `xor::half` met its operands by `zip`,
     // whose search for a simpler form (`choice_of`, `same_as_not`, `choice`, `negate`) never
@@ -321,10 +322,10 @@ fn parity_built_a_literal_at_a_time_scales() {
     // frames bring it to 4.99G and 50.09G (10.0 times), 489M and 4.97G bytes (10.2 times),
     // 28 s at load 31 where the code before took 54 s at load 30, and 51 s inside a run of
     // 508 tests (KERNEL-parity-cost). So the sizes are now 1,024 and 8,192 literals, where the
-    // limit of 2026-11-09 was 11.44: 2.26G and 23.36G instructions (10.3 times), 221M and 2.31G bytes (10.4
-    // times), 11 s at load 30. Rebuilding every tree node on each literal fails the check at
-    // 128 and 1,024 literals, by 58.6 times the bytes. Making each exclusive or's two meets
-    // only when its form is read (KERNEL-parity-lazy-halves) takes 1.96G and 20.45G
+    // limit of 2026-11-09 was 11.44: 2.26G and 23.36G instructions (10.3 times), 221M and 2.31G
+    // bytes (10.4 times), 11 s at load 30. Rebuilding every tree node on each literal fails the
+    // check at 128 and 1,024 literals, by 58.6 times the bytes. Making each exclusive or's two
+    // meets only when its form is read (KERNEL-parity-lazy-halves) takes 1.96G and 20.45G
     // instructions to 1.48G and 15.31G (10.3 times), 221M and 2.31G bytes to 138M and 1.39G
     // (10.1 times), and 10.4 s to 7.0 s at load 11 to 22.
     //

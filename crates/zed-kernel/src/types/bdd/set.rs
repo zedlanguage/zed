@@ -86,11 +86,11 @@ pub(in crate::types) type Tree<A> = Option<Arc<Set<A>>>;
 
 /// The live nodes of a thread's sets, by the hash of the atom, whether it is taken and the
 /// children's ids; nodes whose atoms differ but share a hash share a bucket, ordered by their
-/// atoms (module `bucket`), and a lookup tells them apart by the atoms' order. Hashed rather than ordered by literal, since the table is
-/// never read in order: a lookup in a table ordered by literal compared its key with some
-/// `log N` others, each by the atoms' contents (three types read through their nodes for a
-/// morphism type), which had made half the cost of a search through nested morphism types
-/// (EMPTY-morphism-diff-cost).
+/// atoms (module `bucket`), and a lookup tells them apart by the atoms' order. Hashed rather than
+/// ordered by literal, since the table is never read in order: a lookup in a table ordered by
+/// literal compared its key with some `log N` others, each by the atoms' contents (three types read
+/// through their nodes for a morphism type), which had made half the cost of a search through
+/// nested morphism types (EMPTY-morphism-diff-cost).
 pub(in crate::types) type SetTable<A> = std::collections::HashMap<
     Slot,
     Bucket<Set<A>>,
@@ -565,10 +565,10 @@ pub(super) fn union<A: Atom>(x: &Arc<Set<A>>, y: &Arc<Set<A>>) -> Arc<Set<A>> {
 
 /// The union of two sets, or `None` when one holds an atom with the other `taken` than the
 /// other set: from the roots down, the higher root kept and the other set split at its atom,
-/// past each pair of subtrees that is one node. A set has one shape in a run, so the union is the node
-/// that adding the literals one at a time makes. For `k` literals into `n`, `O(k log(n/k + 1))`
-/// nodes are visited in expectation, each splitting in `O(log n)`, and two sets that differ on
-/// `d` paths cost only those paths; the walk keeps a stack of its own.
+/// past each pair of subtrees that is one node. A set has one shape in a run, so the union is the
+/// node that adding the literals one at a time makes. For `k` literals into `n`,
+/// `O(k log(n/k + 1))` nodes are visited in expectation, each splitting in `O(log n)`, and two sets
+/// that differ on `d` paths cost only those paths; the walk keeps a stack of its own.
 pub(super) fn union_if_agree<A: Atom>(x: &Arc<Set<A>>, y: &Arc<Set<A>>) -> Option<Arc<Set<A>>> {
     /// A pair of subtrees to join, or a literal to make over the two joined last.
     enum Step<A: Atom> {
@@ -719,9 +719,9 @@ pub(super) fn difference_if_agree<A: Atom>(x: &Arc<Set<A>>, y: &Arc<Set<A>>) -> 
 // drawn independently and identically, and for the 8-wise independent draw of degree 7 used here
 // in module `priority` (the finger bound, plan row PROOF-join-work-limited-independence), plus
 // the literals that share a point; so the gain over the naive method is proved, a factor of
-// `log n` when `m` is near `n` (COMPLEXITY.md K123). For `m = 1` both make one path, and the one literal is
-// added or removed directly, which the step stack would make about 17% dearer (parity, 4.55G
-// against 3.89G instructions at 8,192 literals).
+// `log n` when `m` is near `n` (COMPLEXITY.md K123). For `m = 1` both make one path, and the one
+// literal is added or removed directly, which the step stack would make about 17% dearer (parity,
+// 4.55G against 3.89G instructions at 8,192 literals).
 pub(super) fn symmetric<A: Atom>(x: &Tree<A>, y: &Tree<A>) -> Tree<A> {
     /// A pair of subtrees to take the symmetric difference of, a literal to make over the two
     /// made last, or the join of the two made last.

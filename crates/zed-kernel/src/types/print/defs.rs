@@ -2,8 +2,8 @@
 //! [`collect`] is on, a printed type writes no definitions of its own. Each part it would
 //! define goes into one table for the thread, merged with an equal one already there, and each
 //! use writes a reference to it. A message's texts are finished by [`lift`], which names the
-//! definitions they reach `Part1`, `Part2`, … in one numbering, and gives them back to be written once,
-//! outside the sentence ([`under`]); [`plain`] finishes one text alone, each definition
+//! definitions they reach `Part1`, `Part2`, … in one numbering, and gives them back to be written
+//! once, outside the sentence ([`under`]); [`plain`] finishes one text alone, each definition
 //! declared on a line of its own before it ([`declare`]), as `type Part1 = …;` and then `Part1`.
 //!
 //! A reference is `\u{FDD5}k\u{FDD6}`, `k` the definition's place in the table: Unicode
@@ -435,8 +435,8 @@ struct Spelling<'a> {
 
 /// Writes `text`, held by step `step` of a message, to `out`: each reference to a definition
 /// named in that step by its name, and each other by its body, written so in turn, with a stack
-/// of its own; one by [`WRAP`] or [`SOFT_WRAP`] written in full is parenthesized. The definitions under a
-/// message are written as by a step after the last, `usize::MAX`. Whether it wrote a name.
+/// of its own; one by [`WRAP`] or [`SOFT_WRAP`] written in full is parenthesized. The definitions
+/// under a message are written as by a step after the last, `usize::MAX`. Whether it wrote a name.
 ///
 /// Complexity tradeoff: a part written in full is written straight into `out`, in time linear
 /// in what is written. Spelling each part to a string of its own first, and that string into
@@ -653,8 +653,8 @@ pub fn lift(texts: &mut [&mut String], taken: &dyn Fn(&str) -> bool) -> Vec<(Str
 
 /// As [`lift`], and also whether each text names a definition once lifted. With `headline`,
 /// the first text is a message's sentence, which writes each tuple it writes whole in full,
-/// its parts named as anywhere else: `(Part1, Part1)`, not a `Part2` the reader would have to look up
-/// below (DESIGN sec:diagnostics, "Types in a message"). That adds one body per tuple the
+/// its parts named as anywhere else: `(Part1, Part1)`, not a `Part2` the reader would have to look
+/// up below (DESIGN sec:diagnostics, "Types in a message"). That adds one body per tuple the
 /// sentence writes. The parts are counted as if the sentence wrote those tuples by reference,
 /// so a part written once inside a tuple that both the sentence and a step write is not
 /// thereby written twice.

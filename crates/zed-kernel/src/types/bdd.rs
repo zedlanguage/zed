@@ -1432,7 +1432,8 @@ impl<'m> Connect<'m> {
         // A shortcut: without it the meets below are made and `Part::union_as_kept` reaches the
         // same exclusive or (measured on the test below with this return skipped). Reached
         // from `zipped`'s two choices on one condition: `c&x | !c&!x` built directly is found
-        // before `choose`. Test: `bdd::tests::choices_whose_branches_join_to_opposite_exclusive_ors_are_one`.
+        // before `choose`. Test:
+        // `bdd::tests::choices_whose_branches_join_to_opposite_exclusive_ors_are_one`.
         if let Some(z) = xor::xor_choice(c, x, y) {
             return z;
         }
@@ -1488,7 +1489,8 @@ impl<'m> Connect<'m> {
         // unions are equal.
         // Each arm is reached by a test: `c == d` and the opposite condition by
         // `bdd::tests::a_choice_whose_meets_choose_on_one_condition_with_equal_unions_is_that_union`,
-        // two other conditions by `a_choice_whose_meets_choose_on_two_conditions_keeps_their_union`.
+        // two other conditions by
+        // `a_choice_whose_meets_choose_on_two_conditions_keeps_their_union`.
         if let (Some((c, u, v)), Some((d, s, t))) = (a.choice_as_kept(), b.choice_as_kept()) {
             let same = if c == d {
                 Some((s, t))
@@ -1990,11 +1992,11 @@ impl<A: Literal> Part<A> {
     /// expression once.
     ///
     /// Complexity tradeoff: the literals of a block are joined in pairs, `O(k log k)` nodes
-    /// joined for a block of `k`, against `O(k^2)` one at a time (as [`crate::types::Type::union_all`]
-    /// does); each block after that costs one union or meet with what follows it, so a list
-    /// costs what building it by its blocks costs. A list is not copied with its atoms renamed
-    /// in place, since two atoms may be renamed to one and the atoms' order follows their
-    /// digests, which renaming changes.
+    /// joined for a block of `k`, against `O(k^2)` one at a time (as
+    /// [`crate::types::Type::union_all`] does); each block after that costs one union or meet with
+    /// what follows it, so a list costs what building it by its blocks costs. A list is not copied
+    /// with its atoms renamed in place, since two atoms may be renamed to one and the atoms' order
+    /// follows their digests, which renaming changes.
     pub(super) fn map_atoms(&self, map: &impl Fn(&A) -> A) -> Part<A> {
         let mut lists: DigestMap<u64, Part<A>> = DigestMap::default();
         self.rebuild(|p| match p {
@@ -2094,7 +2096,8 @@ impl<A: Literal> Part<A> {
     // Boolean node, O(nodes * atoms). Walk only meet factors and first blocks here,
     // visiting every shared expression and literal-set node once, O(nodes + atoms log atoms).
     // Common atoms hidden under unions or negation are not inferred; the original
-    // narrowing still handles the rest. Test: cycle_dup::shared_morphism_constraints_are_checked_in_the_size_of_the_union.
+    // narrowing still handles the rest. Test:
+    // cycle_dup::shared_morphism_constraints_are_checked_in_the_size_of_the_union.
     pub(super) fn forced_factors(&self) -> Vec<A> {
         let mut exprs = DigestSet::default();
         let mut sets = DigestSet::default();
@@ -3174,15 +3177,15 @@ mod list {
     //! cell's digests are folds of its blocks in order ([`folded`]), the same for every shape, and
     //! the order of types compares two sequences of equal digests by their blocks in order. The
     //! cells are shared through a table of the thread by
-    //! their children and block: one list is one cell. Each cell keeps, made on first use, the atoms of its blocks, so the
-    //! block of an atom is found from the root in `O(log m)` for `m` blocks. A list grown a
-    //! literal at a time from one literal also keeps, on its root cell, an index of its blocks
-    //! ([`Index`]), which finds that block by two lookups instead. A chain of literals
-    //! joined to a list ([`Bdd::or_literal`]) adds each literal to the first block, or puts a block
-    //! of it first; a literal on an atom the list holds is first set false there, which removes it
-    //! from its block or cuts the list at its block. Each such change rebuilds the cells on the
-    //! paths to the blocks it changes, `O(log m)` cells in expectation, each looked up in the
-    //! table in `O(1)` expected.
+    //! their children and block: one list is one cell. Each cell keeps, made on first use, the
+    //! atoms of its blocks, so the block of an atom is found from the root in `O(log m)` for `m`
+    //! blocks. A list grown a literal at a time from one literal also keeps, on its root cell, an
+    //! index of its blocks ([`Index`]), which finds that block by two lookups instead. A chain of
+    //! literals joined to a list ([`Bdd::or_literal`]) adds each literal to the first block, or
+    //! puts a block of it first; a literal on an atom the list holds is first set false there,
+    //! which removes it from its block or cuts the list at its block. Each such change rebuilds the
+    //! cells on the paths to the blocks it changes, `O(log m)` cells in expectation, each looked up
+    //! in the table in `O(1)` expected.
 
     // Complexity tradeoff (COMPLEXITY.md K63): the naive join of a chain to a diagram is the
     // apply of `Bdd::zip`, which builds diagrams of up to `k` nodes at the `k`-th atom, so a
@@ -3320,12 +3323,12 @@ mod list {
     /// for every shape of the sequence.
     ///
     /// Complexity tradeoff: the digest this replaces mixed the block's digest with the children's,
-    /// also `O(1)` per cell, but a function of the shape, which the drawn priorities make a function
-    /// of the draw; digests order types, so the draw reached what zedc prints. The fold is `O(1)`
-    /// per cell, two multiplications and an addition, from the children's digests and powers, one
-    /// more word per cell. Given up: such a polynomial in a fixed base has collisions a program
-    /// could choose; a collision costs only a comparison of the two sequences by their blocks, as
-    /// any collision of digests does.
+    /// also `O(1)` per cell, but a function of the shape, which the drawn priorities make a
+    /// function of the draw; digests order types, so the draw reached what zedc prints. The fold is
+    /// `O(1)` per cell, two multiplications and an addition, from the children's digests and
+    /// powers, one more word per cell. Given up: such a polynomial in a fixed base has collisions a
+    /// program could choose; a collision costs only a comparison of the two sequences by their
+    /// blocks, as any collision of digests does.
     ///
     /// Under the short-addresses build the digest is kept to its low 8 bits, as `mix` keeps every
     /// digest (`address::short64`): reducing modulo `2^8` commutes with wrapping sums and products,
@@ -4058,9 +4061,9 @@ mod list {
             cells
         }
 
-        /// The list of `prefix`, each block a value and its literals, before `rest`, in its one form
-        /// (module comment): empty blocks dropped, neighbors of one value joined, and the end put
-        /// in its one form ([`finish`]).
+        /// The list of `prefix`, each block a value and its literals, before `rest`, in its one
+        /// form (module comment): empty blocks dropped, neighbors of one value joined, and the end
+        /// put in its one form ([`finish`]).
         pub(super) fn assemble(prefix: Vec<(bool, Tree<A>)>, rest: &Bdd<A>) -> Bdd<A> {
             let (mut run, default) = match rest {
                 Bdd::Leaf(x) => ((None, false), *x),
@@ -4074,8 +4077,8 @@ mod list {
             finish(run, default)
         }
 
-        /// `self | l`, `l` the literal `key`. When the list holds the atom, the literal is first set
-        /// false in it; the literal then joins the first block if its value is `true`, or comes
+        /// `self | l`, `l` the literal `key`. When the list holds the atom, the literal is first
+        /// set false in it; the literal then joins the first block if its value is `true`, or comes
         /// first in a block of its own.
         pub(super) fn or_literal(&self, key: Key<A>) -> Bdd<A> {
             let (c, v) = match self {

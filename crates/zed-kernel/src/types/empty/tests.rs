@@ -116,9 +116,10 @@ fn a_class_of_tuples_is_keyed_by_the_component_that_leaves_the_fewest_pairs() {
 /// are disjoint; a negated one-tuple type, `(int,) \ (1,)`, is placed at the first components
 /// it can hold, `int \ 1`, so it is apart from `(1,)` and joined with `(2,)`. A type met at
 /// two nodes inside one type, the `1` of `(1,) | #e((1,))`, merges the two nodes, so `(2,)`
-/// and `#e((2,))` are joined although they are disjoint; `(3,)` stays apart, and so do the classes of disjoint types under the merged node. The classes
-/// do not depend on whether the two `1`s are one shared type or two equal ones. A recursive
-/// type that holds itself as a first component merges a node with one below it.
+/// and `#e((2,))` are joined although they are disjoint; `(3,)` stays apart, and so do the classes
+/// of disjoint types under the merged node. The classes do not depend on whether the two `1`s are
+/// one shared type or two equal ones. A recursive type that holds itself as a first component
+/// merges a node with one below it.
 #[test]
 fn classes_join_under_a_tuple_part_outside_its_types_and_merge_the_nodes_of_a_type_met_twice() {
     use super::super::rec::{Def, Expr, Group};
@@ -2374,7 +2375,8 @@ fn random_types_agree_with_membership_on_a_finite_set_of_values() {
 }
 
 // Append to: `crates/zed-kernel/src/types/empty/tests.rs`
-// Round 3 cross-review kernel unit tests for Q3 (`overlaps` comparison, 1-tuple meet fix, and S_3 permutation check).
+// Round 3 cross-review kernel unit tests for Q3 (`overlaps` comparison, 1-tuple meet fix, and S_3
+// permutation check).
 
 #[test]
 fn xr_r2_q3_pi_sym_strictly_refines_mirrored_overlaps() {
@@ -2626,8 +2628,9 @@ fn fork_read_by_another_group_is_blamed_on_its_reader() {
 /// Item TEST-kernel-unreached-paths-6: the fixed priority by which a search picks the refusal
 /// it reports (`Search::refusal_rank`) puts the kinds in one strict order: a fork first, then a
 /// group, residues, shared cells by component, a tuple split, a morphism split, and no witness
-/// last, so the refusal kept does not depend on the order the give-ups are met in. No test meets a search that gives up on residues or on no witness
-/// beside another refusal, so the ranks of those two were not read.
+/// last, so the refusal kept does not depend on the order the give-ups are met in. No test meets a
+/// search that gives up on residues or on no witness beside another refusal, so the ranks of those
+/// two were not read.
 #[test]
 fn the_refusals_a_search_gives_up_on_are_ranked_in_a_fixed_order() {
     let order = [
@@ -2659,14 +2662,14 @@ fn the_refusals_a_search_gives_up_on_are_ranked_in_a_fixed_order() {
 /// not loop, a link of any pair, a link whose payload may be a struct (one row of pairs), and
 /// two rows whose tails share a tail it cannot read; and a row whose tail never stops. Every
 /// list of up to four items from `1` and `2` is tried, with no hint and with each hint
-/// ([`ChainHint`]) on each row of the link payload, which must not change the answer. Changing the `return None` for another link or stop, or for two
-/// rows that do not loop, into a pass makes this test fail (negative controls,
-/// TEST-kernel-unreached-paths-8). Since KERNEL-verify-step-self-loop-tail the check reads two
-/// self-looping rows with different items (one as the chain, one as the exit); that system stays
-/// here as a test that the reading passes no list outside the type. Since
-/// TEST-kernel-unreached-paths-12 the check also reads one row beside records (the system of a
-/// payload that may be a struct), which stays here for the same reason; its membership is tested
-/// by `the_check_of_a_list_witness_is_membership_beside_records`.
+/// ([`ChainHint`]) on each row of the link payload, which must not change the answer. Changing the
+/// `return None` for another link or stop, or for two rows that do not loop, into a pass makes this
+/// test fail (negative controls, TEST-kernel-unreached-paths-8). Since
+/// KERNEL-verify-step-self-loop-tail the check reads two self-looping rows with different items
+/// (one as the chain, one as the exit); that system stays here as a test that the reading passes no
+/// list outside the type. Since TEST-kernel-unreached-paths-12 the check also reads one row beside
+/// records (the system of a payload that may be a struct), which stays here for the same reason;
+/// its membership is tested by `the_check_of_a_list_witness_is_membership_beside_records`.
 #[test]
 fn the_check_of_a_list_witness_passes_no_list_outside_the_type() {
     use super::super::rec::{Expr, Group};
@@ -2845,10 +2848,10 @@ fn the_check_of_a_list_witness_passes_no_list_outside_the_type() {
 /// or equal heads (runs of links), acyclic or on a cycle, and tails with no stop; one system's
 /// link has one field, so no pair is under it and only the empty list is in it. The acyclic
 /// chains end in `nil` alone; chains ending in a last tail `nil | cons(h, itself)` are in
-/// `the_check_of_a_list_witness_reads_a_chain_ending_in_a_self_looping_tail`. Equal items share one shown id, so
-/// they form runs: an item in both a chain head and its exit's head stops a jump at that node
-/// (the `emit` stop of the pass walk, `pass_memo` set to 0), and an item leaving the chain for
-/// the loop answers at once (`break 'walk Some(true)`).
+/// `the_check_of_a_list_witness_reads_a_chain_ending_in_a_self_looping_tail`. Equal items share one
+/// shown id, so they form runs: an item in both a chain head and its exit's head stops a jump at
+/// that node (the `emit` stop of the pass walk, `pass_memo` set to 0), and an item leaving the
+/// chain for the loop answers at once (`break 'walk Some(true)`).
 #[test]
 fn the_check_of_a_list_witness_is_membership_on_chains_with_exits() {
     use super::super::rec::Expr;

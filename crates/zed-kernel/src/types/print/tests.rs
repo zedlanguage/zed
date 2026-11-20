@@ -301,7 +301,8 @@ fn a_type_prints_the_same_wherever_its_diagrams_were_made() {
 /// more parts.
 #[test]
 fn a_cycle_of_parts_written_by_name_is_defined() {
-    // `type Part1 = Part2 | #a0; type Part2 = (#a0, Part1);` and `Part2` for one part, of either family.
+    // `type Part1 = Part2 | #a0; type Part2 = (#a0, Part1);` and `Part2` for one part, of either
+    // family.
     for (k, t) in [1, 2, 3, 5]
         .into_iter()
         .flat_map(|k| [(k, part_cycle(k)), (k, part_ring(k))])

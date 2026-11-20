@@ -107,8 +107,8 @@ thread_local! {
 /// `h` with this thread's salt. Read by `try_with`, which std marks inline, so the read is one
 /// instruction in `mix`. `SALT.get()` and `SALT.with` are not marked inline, and were called out
 /// of line and through a pointer: each `mix` took 39 instructions with them and takes 19 now, and
-/// they were 6% of the instructions of `bdd`'s parity scaling test (KERNEL-alloc-count-cost). A `const`
-/// thread-local with no destructor is never gone, so the `0` is never used.
+/// they were 6% of the instructions of `bdd`'s parity scaling test (KERNEL-alloc-count-cost). A
+/// `const` thread-local with no destructor is never gone, so the `0` is never used.
 #[cfg(test)]
 fn salted(h: u64) -> u64 {
     h ^ SALT.try_with(std::cell::Cell::get).unwrap_or(0)

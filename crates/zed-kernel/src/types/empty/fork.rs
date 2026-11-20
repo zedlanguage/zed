@@ -49,11 +49,11 @@
 // `O(w log w)` for `w` the written size of the two states' heads (values listed in a cofinite
 // head times the cofinite heads at the pair), and the simulation's failures spread once along
 // each choice that needs them (a counter of the options left per choice, as in unit
-// propagation for Horn clauses), linear in the choices made. The pairs are quadratic in the states at worst, and that is needed: a list
-// of a positive cycle of `a` states less a negative cycle of `b` states (coprime) has its
-// shortest value of length `a * b`, which the answer builds. Given up: a value whose search
-// meets a fork on every path, and an `Empty` that needs two negative states at once; both stay
-// refused. COMPLEXITY.md K137.
+// propagation for Horn clauses), linear in the choices made. The pairs are quadratic in the states
+// at worst, and that is needed: a list of a positive cycle of `a` states less a negative cycle of
+// `b` states (coprime) has its shortest value of length `a * b`, which the answer builds. Given up:
+// a value whose search meets a fork on every path, and an `Empty` that needs two negative states at
+// once; both stay refused. COMPLEXITY.md K137.
 
 use std::collections::{BTreeMap, BTreeSet, HashMap, VecDeque};
 use std::rc::Rc;

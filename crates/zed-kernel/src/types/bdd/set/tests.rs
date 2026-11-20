@@ -2,11 +2,12 @@
 //! PERF-xor-shape-free, COMPLEXITY.md K123). A node's priority is the run's random polynomial at
 //! its literal's digest ([`priority`]), so the bound holds for every input whose literals are
 //! distinct points, and literals at one point add their number (module [`crate::priority`];
-//! a program can write many, PERF-set-tied-digest-depth); the unit tests run one fixed draw (seed 0 unless `ZED_TREAP_SEED` is
-//! set). These tests check keys built the way programs build them (consecutive numbers, names,
-//! rows that share a prefix or a suffix, digests that are consecutive numbers) and keys chosen
-//! against the fixed hash the priority was before: each fails when Seidel and Aragon's bound puts
-//! the probability of the measured height, for independent uniform priorities, below `1/n`.
+//! a program can write many, PERF-set-tied-digest-depth); the unit tests run one fixed draw (seed 0
+//! unless `ZED_TREAP_SEED` is set). These tests check keys built the way programs build them
+//! (consecutive numbers, names, rows that share a prefix or a suffix, digests that are consecutive
+//! numbers) and keys chosen against the fixed hash the priority was before: each fails when Seidel
+//! and Aragon's bound puts the probability of the measured height, for independent uniform
+//! priorities, below `1/n`.
 //!
 //! The bound. Seidel and Aragon ("Randomized search trees", Algorithmica 16, 1996,
 //! doi:10.1007/BF01940876, Lemma 4.8): for independent identically distributed priorities in a

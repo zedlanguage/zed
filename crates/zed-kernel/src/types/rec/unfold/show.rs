@@ -10,7 +10,8 @@ use crate::types::{Piece, Rope, Type};
 
 /// In the surface syntax, the types the expression holds are written together by name
 /// ([`Type::surfaces_by_name`]): a part used more than once among them gets a definition, declared
-/// on a line of its own before the whole expression, so the text is linear in the expression and the types' graph.
+/// on a line of its own before the whole expression, so the text is linear in the expression and
+/// the types' graph.
 impl fmt::Display for Show<'_> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         if !self.surface {

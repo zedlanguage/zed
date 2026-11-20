@@ -108,9 +108,9 @@
 //! plus `O(log n)` per event. With the bound: O((L + R) log n) steps, each of a size set by
 //! the heads read (the classes of a pair cost O((Σ literals) log) for integers and atoms,
 //! O(cells · K) for booleans and tuples), and the check as above. So O(n log n) for the front
-//! and far families and the variants in `l01_23_groups_and_refusals::refusals` whose heads have a size
-//! fixed as `n` grows. Given up: a head whose size grows with `n` and is read at many depths pays
-//! its size at each; inputs outside the class pay their recognition (at most the cost above)
+//! and far families and the variants in `l01_23_groups_and_refusals::refusals` whose heads have a
+//! size fixed as `n` grows. Given up: a head whose size grows with `n` and is read at many depths
+//! pays its size at each; inputs outside the class pay their recognition (at most the cost above)
 //! and then the search with today's verdict. Memory: O(L + R + cached classes).
 //! Preconditions: the class above. Nothing is refused here: a state the sweep does not close
 //! goes back to the search, whole.
@@ -2121,7 +2121,8 @@ fn list_sweep_value(t: &Type, actual: &mut Option<Value>) -> Option<Verdict> {
                     // Complexity tradeoff: the naive version reads every thread for each open
                     // class, O(open · threads). Used: per negative head, the count of its threads
                     // having each atom of the taken threads' next bare atoms, so a class costs the
-                    // atoms its `delta` touches; O(threads · |e| + Σ |delta|) log. Given up: nothing.
+                    // atoms its `delta` touches; O(threads · |e| + Σ |delta|) log. Given up:
+                    // nothing.
                     let mut e: Option<BTreeSet<Arc<str>>> = None;
                     for (_, set) in th.kinds.range((true, (0, 0, 0, 0))..) {
                         for &i in set {

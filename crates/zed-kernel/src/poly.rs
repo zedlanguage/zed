@@ -60,8 +60,9 @@ pub enum Carrier {
 /// machine refuses the same identities. Measured on 2026-11-13 on an AMD Ryzen 9 5950X (16
 /// cores, 32 threads, up to 5.1 GHz) at a load average of 36 to 41 from other builds and tests,
 /// with the test profile (`opt-level = 2`): the largest identity of each of nine families of
-/// products, powers and sums (a probe of plan row POLY-work-250ms, not kept; `l03_09_egraph::calibration` times three laws again) took 10 to 22 ns a unit, 14.3 ns as
-/// the geometric mean, 70 000 units a millisecond.
+/// products, powers and sums (a probe of plan row POLY-work-250ms, not kept;
+/// `l03_09_egraph::calibration` times three laws again) took 10 to 22 ns a unit, 14.3 ns as the
+/// geometric mean, 70 000 units a millisecond.
 ///
 /// The work is counted by `Budget`, each operation charged before it runs, by the operands'
 /// sizes: its number of terms `t`, and the words `w` of its widest coefficient, 64 bits each.
@@ -1843,12 +1844,12 @@ impl<K: Key> Poly<K> {
     /// `OPT(rest + [c])`, which is at most `OPT(rest + [a + b])` since every tree's cost
     /// grows with its weights, so their least does. Huffman's theorem (the paper above, its
     /// step that combines "the two least probable messages"): some optimal tree joins the two
-    /// least weights first, and the rest of it is optimal for the joined weights, so `OPT(w) = a + b + OPT(rest + [a + b])`. So the reads are at most `OPT(w)`,
-    /// which is at most the cost of a balanced tree, `T · ceil(log2 k)`. Test:
-    /// `a_chain_of_sums_is_one_sum` checks the result; the order of merging is not tested.
-    /// Sizes are counted in terms, not words, so a part of few wide coefficients may be merged
-    /// later than its words would place it. The plan row's
-    /// first option, one map of all the terms, would still sort its T terms at the end,
+    /// least weights first, and the rest of it is optimal for the joined weights, so
+    /// `OPT(w) = a + b + OPT(rest + [a + b])`. So the reads are at most `OPT(w)`, which is at most
+    /// the cost of a balanced tree, `T · ceil(log2 k)`. Test: `a_chain_of_sums_is_one_sum` checks
+    /// the result; the order of merging is not tested. Sizes are counted in terms, not words, so a
+    /// part of few wide coefficients may be merged later than its words would place it. The plan
+    /// row's first option, one map of all the terms, would still sort its T terms at the end,
     /// O(T log T), and would need its own handling of the parts' denominators, which
     /// [`Poly::add`] already brings to their lcm. Measured on a chain of n names times
     /// `(y + z)`: 9.1 times the instructions and 8.6 times the bytes from n = 500 to 4000
@@ -1899,8 +1900,8 @@ impl<K: Key> Poly<K> {
     /// coefficients ([`Choice`]); the three constants are fitted by `crossover poly-*` (QUESTIONS
     /// A96). The naive choice, `L log2 L` against `t1 t2 w1 w2` with unit constants, took the
     /// slower method by up to 9.6 times its instructions (univariate sums of one-word
-    /// coefficients went sparse up to 45 terms each; the crossover is at 5); the fitted one by at most
-    /// 1.09, and 1.30 on 8 terms of 8 to 1024 words. So a product whose monomials
+    /// coefficients went sparse up to 45 terms each; the crossover is at 5); the fitted one by at
+    /// most 1.09, and 1.30 on 8 terms of 8 to 1024 words. So a product whose monomials
     /// merge densely, as of two univariate sums, costs `O(n log n)` in its output, and one of
     /// sums in different names, whose `t1 * t2` products are all distinct, costs
     /// `O(t1 t2 log(t1 t2))`, near-linear in its output too. Between them, a product whose

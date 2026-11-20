@@ -1375,11 +1375,12 @@ fn range_sum(lo: (u64, u64), n: (u64, u64)) -> u64 {
 /// walk met beneath this one (`fill`), so the depth of nesting takes no stack.
 // Complexity tradeoff: the naive hash reads every entry, O(n) a hash, and the hash before this
 // one read only the number of entries, O(1), so every family of one size collided: a hash set
-// of n families of one size took O(n^2) comparisons (`value::tests::families_of_one_size_hash_apart`,
-// COMPLEXITY.md F223e). Used: an additive hash over the entries, so the sum of a part of the
-// tree is kept with it; a change clears the sums on its path, O(log n) entries read again a
-// change, each at the cost of its value's digest. Tradeoff: 8 bytes an inner branch of a map
-// and a word a node of a list's tree; a family met again in another walk reads its root anew.
+// of n families of one size took O(n^2) comparisons
+// (`value::tests::families_of_one_size_hash_apart`, COMPLEXITY.md F223e). Used: an additive hash
+// over the entries, so the sum of a part of the tree is kept with it; a change clears the sums on
+// its path, O(log n) entries read again a change, each at the cost of its value's digest. Tradeoff:
+// 8 bytes an inner branch of a map and a word a node of a list's tree; a family met again in
+// another walk reads its root anew.
 fn family_sum(f: &Family, read: &mut Read) -> u64 {
     let key = f.0.key();
     if let Some(&s) = read.families.get(&key) {
@@ -1454,10 +1455,10 @@ fn fill(top: &Family, read: &mut Read) {
 
 /// The digest of a value that holds no sequence: a boolean, number, string or family. Two such
 /// values equal under `==` are of one variant (an `int` of 64 bits never equals a wide one) and
-/// equal there: booleans and integers by value, a rational by its residues, the same whatever primes
-/// it keeps as powers ([`Rat::residues`]), a float by its bits, a string by its text however joined,
-/// a family by its number of entries and the sum of its entries (`family_sum`), the same for
-/// every form of equal entries, and a family with no upper end by its low end.
+/// equal there: booleans and integers by value, a rational by its residues, the same whatever
+/// primes it keeps as powers ([`Rat::residues`]), a float by its bits, a string by its text however
+/// joined, a family by its number of entries and the sum of its entries (`family_sum`), the same
+/// for every form of equal entries, and a family with no upper end by its low end.
 fn leaf_digest(v: &Value, read: &mut Read) -> u64 {
     let mut h = Digest::default();
     match v {
@@ -1628,8 +1629,9 @@ pub fn fresh_id() -> Id {
 
 /// A finite family. A level may be empty: in `{"a" -> {}}` the key `"a"` is a keypath that ends
 /// early, with an empty level beneath it, and the family differs from `{}` (DESIGN.md sec:kernel,
-/// reference semantics (d)). Its entries sit in a persistent map: a copy of a family costs O(1) whatever its size, and
-/// a family one entry larger than another shares all but O(log n) of its nodes with it.
+/// reference semantics (d)). Its entries sit in a persistent map: a copy of a family costs O(1)
+/// whatever its size, and a family one entry larger than another shares all but O(log n) of its
+/// nodes with it.
 ///
 /// The second field is the family's [`Id`]: a copy keeps it, and a change takes a new one, so
 /// the map is never changed in place except through `Family::extend`. The third is the id of
@@ -2023,9 +2025,10 @@ mod chain {
     // entries, `a`'s nodes shared and `b`'s read one by one, so a chain of `[x] ++ acc`, each on
     // the list the one before made, is O(n²) in all (measured: 63.6 times for 8 times the length,
     // `l03_15a_fp_ops_run::bench::a_right_nested_chain_of_concatenations_runs_in_n_log_n`). Used:
-    // the finger tree of Hinze and Paterson (2006), the one strings use (`crate::text`, COMPLEXITY.md
-    // C29), with lists as its leaves: `++` shares both operands and builds O(log min(p, q)) nodes
-    // for operands of `p` and `q` leaves, O(1) amortized for a leaf added at either end; the count,
+    // the finger tree of Hinze and Paterson (2006), the one strings use (`crate::text`,
+    // COMPLEXITY.md C29), with lists as its leaves: `++` shares both operands and builds
+    // O(log min(p, q)) nodes for operands of `p` and `q` leaves, O(1) amortized for a leaf added at
+    // either end; the count,
     // a read by key, `in`, the entry steps and the first and last entry are answered from the
     // counts in O(1) or O(log n), and the hash from the count, building no map; `==` and the
     // order read the leaves in order to the first difference (`Chain::values`), building none
@@ -2064,8 +2067,8 @@ mod chain {
             /// The sum of its entries (`Chain::sum`), once read.
             sum: OnceLock<u64>,
         },
-        /// `front`, then the parts of the nodes that `middle` holds, then `back`, and their count of
-        /// entries. A tree of one part is that part itself.
+        /// `front`, then the parts of the nodes that `middle` holds, then `back`, and their count
+        /// of entries. A tree of one part is that part itself.
         Deep {
             len: usize,
             front: ChainDigit,
@@ -3339,8 +3342,9 @@ impl<'a> Merging<'a> {
 // persistent ordered map; the smaller family's entries are inserted into a shared copy of the
 // larger's, recursing only where both hold a family under one key, O(m log n) for the smaller
 // size `m`. Tradeoffs: the B-tree's nodes (`btree`) cost a constant factor in time over a flat
-// vector, each reallocated at its exact length at an insertion into it; a collision is reported where building `a`'s leaves then `b`'s would report it, so the
-// walk keeps the keypath prefix, O(depth) memory.
+// vector, each reallocated at its exact length at an insertion into it; a collision is reported
+// where building `a`'s leaves then `b`'s would report it, so the walk keeps the keypath prefix,
+// O(depth) memory.
 fn union(a: &Family, b: &Family) -> Result<Family, KernelError> {
     if let Some(f) = list_union(a, b).or_else(|| list_union(b, a)) {
         return Ok(f);
@@ -3411,7 +3415,8 @@ fn union(a: &Family, b: &Family) -> Result<Family, KernelError> {
 // Complexity tradeoff (COMPLEXITY.md F223c): the naive method, the general union, inserts `t`'s
 // entries into a copy of `s`'s map, and a list made by `++` builds that map first, O(n), so a
 // loop that alternates `++` with a one-entry change is O(n²) in all (measured: 55.64 times for 8
-// times the length, `l03_15a_fp_ops_run::bench::concatenations_alternating_with_one_entry_changes_run_in_n_log_n`).
+// times the length,
+// `l03_15a_fp_ops_run::bench::concatenations_alternating_with_one_entry_changes_run_in_n_log_n`).
 // Used: an append, read and joined in the finger tree, O(m log n) for `t`'s `m` entries: a key
 // below `n` is read in its leaf, O(log n), and the new entries are one leaf joined at the end,
 // O(1) amortized. Tradeoffs: a change at a key below `n` to a family (a union of two nested
@@ -3679,10 +3684,10 @@ impl ReadSet {
 /// Every pair of families a walk enters is kept, however the two are held. Keeping only the
 /// pairs that can be met again would need to know which families are held in more than one
 /// place, and the counts kept do not show it: the `Arc` of each node of a map (`btree`) counts
-/// the holders of that node, not of the families in it; a copy of a family is one more holder of the root; and a
-/// family made by adding entries to a copy of another's map shares every node the addition did
-/// not copy, with the values in them. So a family held in one entry of one map is still met
-/// once per family that shares that map's node, and a pair met n times and read each time
+/// the holders of that node, not of the families in it; a copy of a family is one more holder of
+/// the root; and a family made by adding entries to a copy of another's map shares every node the
+/// addition did not copy, with the values in them. So a family held in one entry of one map is
+/// still met once per family that shares that map's node, and a pair met n times and read each time
 /// costs n times its size (`comparing_families_made_from_one_family_scales`). A sequence is
 /// different: it is one `Arc` with no inner nodes, so one held once is kept by no pair.
 struct Scope<'c>(&'c Comparisons);
@@ -4130,10 +4135,10 @@ fn advance<'a>(level: &mut Level<'a>, maps: &mut [MapLevel<'a>]) -> Step<'a> {
 /// the levels above the one in hand. Shared tuples make a value a DAG, so a pair of shared
 /// sequences or of families is kept when the walk enters it, and met again it is the same
 /// without a second reading: the walk is O(distinct pairs), not O(paths). The pairs are kept in
-/// `read` ([`Comparisons`]) until the outermost comparison ends, so the comparisons that `diff` starts share
-/// them. A pair met again while it is being read would be a cycle, which no value has; a walk
-/// that ends at a difference inside another comparison takes out the pairs it has not read to
-/// their end, so that the comparison around it finds only pairs read with no difference.
+/// `read` ([`Comparisons`]) until the outermost comparison ends, so the comparisons that `diff`
+/// starts share them. A pair met again while it is being read would be a cycle, which no value has;
+/// a walk that ends at a difference inside another comparison takes out the pairs it has not read
+/// to their end, so that the comparison around it finds only pairs read with no difference.
 fn walk(first: Step<'_>) -> Option<Ordering> {
     match first {
         Step::Same | Step::Done => Some(Ordering::Equal),
@@ -4214,8 +4219,8 @@ fn walk_in(c: &Comparisons, first: Enter<'_>) -> Option<Ordering> {
 
 /// Finishes an identity walk that found `same` so far by reading the queued families. A walk
 /// started while the queue is being read leaves its families in the queue: `diff` calls `==`
-/// on the entries it finds, inside `btree::Diff`, where no stack of ours can reach, and this keeps that
-/// call from nesting.
+/// on the entries it finds, inside `btree::Diff`, where no stack of ours can reach, and this keeps
+/// that call from nesting.
 fn settle(c: &Comparisons, same: bool) -> bool {
     if c.comparing.get() {
         return same;
@@ -6838,7 +6843,8 @@ mod tests {
 
     /// The 17 fields `a` to `q` of a record: `inner` at `i`, the ninth, and `d` and its
     /// multiples elsewhere. Built at once (`btree::Map::from_sorted`), the map has an inner root
-    /// of two leaves of 8 with `i` between them (`btree::tests::seventeen_entries_split_at_the_ninth`).
+    /// of two leaves of 8 with `i` between them
+    /// (`btree::tests::seventeen_entries_split_at_the_ninth`).
     pub(super) fn nested_record(d: i64, inner: Value) -> Vec<(&'static str, Value)> {
         const FIELDS: [&str; 17] = [
             "a", "b", "c", "d", "e", "f", "g", "h", "i", "j", "k", "l", "m", "n", "o", "p", "q",

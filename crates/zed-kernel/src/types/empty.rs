@@ -37,10 +37,10 @@
 //! representative search of `no_morphism` likewise answers "none found", never "empty"). The
 //! site comment at `give_up(Refusal::TupleSplit)` names the steps tried first. Tests:
 //! `l01_23_subtyping::scaling::a_type_not_proved_empty_promises_no_key` (four pigeons in three
-//! holes, empty and not proved so) and `l01_23_groups_and_refusals::refusals::each_refusal_names_its_cause`
-//! (`box_cover`). COMPLEXITY.md rows K1 and K2, and the Kept row
-//! "emptiness and subtyping of tuple and morphism parts".
-//! A complete solution would split the box in every component (a DPLL search over the tuple
+//! holes, empty and not proved so) and
+//! `l01_23_groups_and_refusals::refusals::each_refusal_names_its_cause` (`box_cover`).
+//! COMPLEXITY.md rows K1 and K2, and the Kept row "emptiness and subtyping of tuple and morphism
+//! parts". A complete solution would split the box in every component (a DPLL search over the tuple
 //! types, exponential in them), or hand the part to a SAT solver.
 //!
 //! A query goes in this order, each step a function of the query alone: the simulation proves
@@ -738,8 +738,8 @@ impl Type {
         // lists with a 1 at each place from the end up to `n`: 8 ms, 277 ms and 32.5 s at `n`
         // 1, 4 and 6 when the search followed it). Trigger: a fork met in the search. Tests:
         // `l01_23_groups_and_refusals::refusals::bench::emptiness_counts_a_fork_as_inhabited_in_its_size`.
-        // COMPLEXITY.md K35, K126. A complete solution needs the subset construction over the forked
-        // tuple types; deciding whether such a union holds every list is NFA universality,
+        // COMPLEXITY.md K35, K126. A complete solution needs the subset construction over the
+        // forked tuple types; deciding whether such a union holds every list is NFA universality,
         // PSPACE-complete. The answers of a search a fork ended may rest on it, so none is kept.
         // Used: the search stopped at the fork, polynomial in the types written (module
         // comment).
@@ -1122,7 +1122,8 @@ impl Type {
             // sought is proved empty only when a phase of `solve` ends, so a search that only
             // builds values (the second one here) gives it no closure. Trigger: no refusal was
             // named, and neither search built a value. Tests:
-            // `l01_23_groups_and_refusals::refusals::each_refusal_names_its_cause` (`morphism_between`),
+            // `l01_23_groups_and_refusals::refusals::each_refusal_names_its_cause`
+            // (`morphism_between`),
             // `l01_23_subtyping::witnesses::a_meet_of_cycles_is_shown_by_its_length` and
             // `l01_23_groups_and_refusals::judgments::a_morphism_cycle_through_an_empty_part_is_empty`.
             // COMPLEXITY.md Kept row "emptiness and subtyping of tuple and morphism parts". A
@@ -1187,7 +1188,8 @@ impl Type {
     // `forget_emptiness` (`PAST_FORKS`). Naive version: the first search alone, which
     // ends at the first fork in operand order, so `(F, E)` is refused and `(E, F)` is empty.
     // What is given up: an Empty that only a search following both sides of the fork proves
-    // stays refused. Test: `l01_23_groups_and_refusals::refusals::a_tuple_with_an_empty_component_is_empty_in_either_order`.
+    // stays refused. Test:
+    // `l01_23_groups_and_refusals::refusals::a_tuple_with_an_empty_component_is_empty_in_either_order`.
     fn empty_past_forks(&self) -> bool {
         if let Some(e) = PAST_FORKS.with(|m| m.borrow().get(self).copied()) {
             return e;
@@ -2836,8 +2838,8 @@ impl Region {
             .collect()
     }
 
-    /// Where the tuple type `a` stands on the box, as last tested: `Some(false)` if it misses it, `Some(true)`
-    /// if it holds it, `None` if it is open on it.
+    /// Where the tuple type `a` stands on the box, as last tested: `Some(false)` if it misses it,
+    /// `Some(true)` if it holds it, `None` if it is open on it.
     fn stand(&self, a: &Row) -> Option<bool> {
         let k = self.index[a];
         if self.missed[k] > 0 {
@@ -3906,9 +3908,9 @@ impl Search {
     /// shown here: a scalar, a bare atom, a struct or a closure is of height 0, a tuple one more
     /// than its highest component (1 when it has none), an atom with a payload one more than its
     /// payload tuple. `None` for a value with a level not read in ([`Rep::Of`]), a list kept as
-    /// its length ([`Rep::List`]) or a compound [`Value`]: [`Heights::least_height_node`] is compared
-    /// only with a height known exactly. Each value is measured once, on a list rather than the
-    /// thread's stack, so a list of `n` items costs `O(n)` once for all its suffixes.
+    /// its length ([`Rep::List`]) or a compound [`Value`]: [`Heights::least_height_node`] is
+    /// compared only with a height known exactly. Each value is measured once, on a list rather
+    /// than the thread's stack, so a list of `n` items costs `O(n)` once for all its suffixes.
     fn value_height(&mut self, v: usize) -> Option<u64> {
         let mut todo = vec![v];
         while let Some(&w) = todo.last() {
@@ -3947,8 +3949,8 @@ impl Search {
     }
 }
 
-/// A node in the height-bounds DAG: either a [`Type`] or a shared persistent [`super::atoms::PayloadNode`]
-/// representing the union of its subtree's payload-bearing atoms.
+/// A node in the height-bounds DAG: either a [`Type`] or a shared persistent
+/// [`super::atoms::PayloadNode`] representing the union of its subtree's payload-bearing atoms.
 #[derive(Clone)]
 enum HeightNode {
     Type(Type),
@@ -4656,9 +4658,9 @@ fn fields(roots: &[Type]) -> (Vec<Type>, Vec<Type>, Vec<Type>) {
         cur_stamp: usize,
     }
     // Payload diagrams read, by (length, diagram id), `None` when not a union of rows;
-    // persistent `PayloadNode` wrap results + side effects memoized by `(PayloadNode::id, in_item)`;
-    // tuple and morphism diagrams of the types themselves walked, by (id, context); list tails
-    // followed by the X44 walk, by (node id, link name).
+    // persistent `PayloadNode` wrap results + side effects memoized by
+    // `(PayloadNode::id, in_item)`; tuple and morphism diagrams of the types themselves walked, by
+    // (id, context); list tails followed by the X44 walk, by (node id, link name).
     let mut payloads: DigestMap<(usize, u64), Option<Rows>> = DigestMap::default();
     let mut payload_wrap: DigestMap<(u64, bool), bool> = DigestMap::default();
     let mut entry_wrap: DigestMap<(u64, bool), bool> = DigestMap::default();
@@ -5359,11 +5361,11 @@ impl<'m> Searching<'m> {
                 // work stays polynomial in the residue classes. Why: whether residue classes
                 // cover the lengths is the covering problem for residues, NP-hard. Trigger:
                 // `residues_meet` answers `Refused`. Tests:
-                // `l01_23_groups_and_refusals::refusals::each_refusal_names_its_cause` (`erdos_cover`) and
-                // `covering_residues_are_decided_by_a_split_on_one_prime`. COMPLEXITY.md K34 and
-                // the Kept row "emptiness and subtyping of tuple and morphism parts". A complete
-                // solution needs a backtracking split over several primes at once, exponential in
-                // the primes, or a SAT encoding of the cover.
+                // `l01_23_groups_and_refusals::refusals::each_refusal_names_its_cause`
+                // (`erdos_cover`) and `covering_residues_are_decided_by_a_split_on_one_prime`.
+                // COMPLEXITY.md K34 and the Kept row "emptiness and subtyping of tuple and morphism
+                // parts". A complete solution needs a backtracking split over several primes at
+                // once, exponential in the primes, or a SAT encoding of the cover.
                 self.s().give_up(Refusal::Residues);
                 false
             }
@@ -5430,7 +5432,8 @@ impl<'m> Searching<'m> {
                         .blame
                         .as_deref()
                         .is_some_and(|bl| bl.iter().any(|&(x, _, _)| x == t));
-                    // The empty reads are tested for a fork in one walk ([`Search::rests_on_fork`]).
+                    // The empty reads are tested for a fork in one walk
+                    // ([`Search::rests_on_fork`]).
                     let child =
                         s.reads[t].iter().any(|&(packed, _)| {
                             let (u, empty_dep) = unpack_read(packed);
@@ -5520,13 +5523,14 @@ impl<'m> Searching<'m> {
         // Complexity tradeoff: asked of every type, it cost each new type of a search the
         // bounds of the type from its children's, about 73,000 instructions a level of a
         // verdict on tuples of bare atoms n deep and 94,000 of a difference (bounds 286,000 and
-        // 245,000 in `deep_ops::subtype_fits_why_and_diff_cost_a_bounded_number_of_instructions_a_level`,
-        // over by 15% and 30%), where a tuple's heights are those its components give and no
-        // range comes out empty that the search would not refute a level down. The meets it is
-        // for, of lists of different lengths (`R_a & R_b`, SUB-fork-place-512), are atom types
-        // with a payload, and a tuple or a part that holds one reaches it a level down, where it
-        // is asked. Given up: a tuple type whose components' heights clash is refuted by the
-        // search at its components, not here.
+        // 245,000 in
+        // `deep_ops::subtype_fits_why_and_diff_cost_a_bounded_number_of_instructions_a_level`, over
+        // by 15% and 30%), where a tuple's heights are those its components give and no range comes
+        // out empty that the search would not refute a level down. The meets it is for, of lists of
+        // different lengths (`R_a & R_b`, SUB-fork-place-512), are atom types with a payload, and a
+        // tuple or a part that holds one reaches it a level down, where it is asked. Given up: a
+        // tuple type whose components' heights clash is refuted by the search at its components,
+        // not here.
         if !t.p().atoms.payloads().is_empty() && height_bounds(t).is_none() {
             return Stack::ready(true);
         }
@@ -5967,11 +5971,11 @@ impl<'m> Searching<'m> {
             // Complexity tradeoff: testing a varying column first unfolds n common
             // constraints in n contexts, O(n^2) on the morphism result family. Cache
             // each node's outer carriers and choose one shared column in O(incidences).
-            // One Boolean evaluation per kind ([`KINDS`]) with row lookups cost O((part nodes + incidences) log n);
-            // its mandatory fields are met pairwise through the cut memo, O(n log n).
-            // Mandatory rows are a sufficient syntactic subset (forced_factors), not
-            // a full analysis of common atoms hidden under union arms. Only a false
-            // formula proves emptiness; otherwise
+            // One Boolean evaluation per kind ([`KINDS`]) with row lookups cost
+            // O((part nodes + incidences) log n); its mandatory fields are met pairwise through the
+            // cut memo, O(n log n). Mandatory rows are a sufficient syntactic subset
+            // (forced_factors), not a full analysis of common atoms hidden under union arms. Only a
+            // false formula proves emptiness; otherwise
             // the original tests run, with the most restrictive shared column first.
             // Test: cycle_dup::shared_morphism_constraints_are_checked_in_the_size_of_the_union.
             let taken = f.forced_factors();
@@ -6576,15 +6580,15 @@ impl<'m> Searching<'m> {
                 // this refusal: `cycle_meet` reads it and `union_classes` decides it in
                 // `O(n log n)`. A split into the open tuple types below, run before this
                 // refusal, is order `n` pieces by a part of `n` nodes on
-                // `refusals::bench::a_difference_of_forked_unions_is_empty_in_its_size` (62 times the
-                // bytes at 8 times `n`; REFUSAL-nfa-refuse, not kept). Trigger: a
+                // `refusals::bench::a_difference_of_forked_unions_is_empty_in_its_size` (62 times
+                // the bytes at 8 times `n`; REFUSAL-nfa-refuse, not kept). Trigger: a
                 // component on which the open tuple types fork, outside seeding. Tests:
-                // `l01_23_groups_and_refusals::refusals::each_refusal_names_its_cause` (`fork_empty`) and
-                // `a_value_is_sought_before_a_refusal` (`fork`). COMPLEXITY.md K26 and the Kept
-                // row "emptiness and subtyping of tuple and morphism parts". A complete solution
-                // needs the subset construction over the forked rows (a tree automaton
-                // determinized on demand), exponential in the rows of the fork. A search with
-                // several roots refuses only those that read the type being decided
+                // `l01_23_groups_and_refusals::refusals::each_refusal_names_its_cause`
+                // (`fork_empty`) and `a_value_is_sought_before_a_refusal` (`fork`). COMPLEXITY.md
+                // K26 and the Kept row "emptiness and subtyping of tuple and morphism parts". A
+                // complete solution needs the subset construction over the forked rows (a tree
+                // automaton determinized on demand), exponential in the rows of the fork. A search
+                // with several roots refuses only those that read the type being decided
                 // (`Search::causes`). Used: the refusal, so the search stays polynomial in the
                 // types written (module comment).
                 //
@@ -6602,9 +6606,9 @@ impl<'m> Searching<'m> {
                 // candidates by n, and the forked-differences benches
                 // (`refusals::bench::a_pair_type_met_with_forked_differences`,
                 // `a_union_of_forked_differences`, `a_difference_of_forked_unions`) timed out
-                // at their limits (63 to 108 s). Given up: a part whose values lie in no single tuple type
-                // of it, or that takes tuple types out, still needs the subset construction and
-                // is refused (REFUSAL-front-u6-subset). Tests:
+                // at their limits (63 to 108 s). Given up: a part whose values lie in no single
+                // tuple type of it, or that takes tuple types out, still needs the subset
+                // construction and is refused (REFUSAL-front-u6-subset). Tests:
                 // `sweep_agreement::the_u6_fork_cases_are_answered_or_refused_soundly`.
                 for a in f.union_rows().unwrap_or_default() {
                     let row: Vec<Type> = g.r.iter().zip(a.iter()).map(|(x, y)| x & y).collect();
@@ -6621,15 +6625,16 @@ impl<'m> Searching<'m> {
                 // two parts is never met. (2) A part each of whose tuple types left lies inside
                 // one it excludes is empty (`all_inside_excluded`, the proof of K80's
                 // `all_inside` in `find_rep`). Naive version: the refusal alone, which refused
-                // the three forked-differences benches (`refusals::bench::a_difference_of_forked_unions_is_empty_in_its_size`,
+                // the three forked-differences benches
+                // (`refusals::bench::a_difference_of_forked_unions_is_empty_in_its_size`,
                 // `a_union_of_forked_differences_is_empty_in_its_size`,
-                // `a_pair_type_met_with_forked_differences_is_empty_in_its_size`), all Empty.
-                // Cost: (1) one region per part, each of its own tuple types only, linear in the
-                // part; (2) for each tuple type left, the excluded ones sharing its cell in the
-                // component where fewest do, each tested component by component until one
-                // holds it, so order `n` tests on those benches and at most the tuple types
-                // left times the excluded ones in general, the cost of K80's skip in
-                // `find_rep`. Given up: a part neither step settles is still refused.
+                // `a_pair_type_met_with_forked_differences_is_empty_in_its_size`), all Empty. Cost:
+                // (1) one region per part, each of its own tuple types only, linear in the part;
+                // (2) for each tuple type left, the excluded ones sharing its cell in the component
+                // where fewest do, each tested component by component until one holds it, so order
+                // `n` tests on those benches and at most the tuple types left times the excluded
+                // ones in general, the cost of K80's skip in `find_rep`. Given up: a part neither
+                // step settles is still refused.
                 if let Some(parts) = f.disjoint_disjuncts() {
                     return self.disjuncts_empty(&g.r, parts).await;
                 }
@@ -6760,8 +6765,8 @@ impl<'m> Searching<'m> {
             if may_cover && f.eval3(&|_| Some(false)) == Some(false) {
                 // A union of parts that share no tuple type is empty when each part is, each
                 // decided on the box with only its own tuple types: `n` parts of `c` tuple types
-                // each cost order `n c`, not the `n c` pieces by the whole part of the split
-                // below (`l01_23_groups_and_refusals::refusals::a_union_of_pairs_less_pairs_holding_them_is_empty_in_its_size`,
+                // each cost order `n c`, not the `n c` pieces by the whole part of the split below
+                // (`l01_23_groups_and_refusals::refusals::a_union_of_pairs_less_pairs_holding_them_is_empty_in_its_size`,
                 // COMPLEXITY.md K80).
                 if let Some(parts) = f.disjoint_disjuncts() {
                     return self.disjuncts_empty(&g.r, parts).await;
@@ -7698,8 +7703,8 @@ impl<'m> Searching<'m> {
         // below is a cell less the cells inside it, and `nested_cover` takes them out innermost
         // first, so each is a cell's meet with the box as it stands when it is taken out (the
         // proof is at `nested_cover`). Crossing cells, or a test not decided, leave the box to
-        // the steps below. Whether a cell crosses one before it is read off the pieces, each within or
-        // outside each earlier cell, so it takes no emptiness test beyond those of the cut
+        // the steps below. Whether a cell crosses one before it is read off the pieces, each within
+        // or outside each earlier cell, so it takes no emptiness test beyond those of the cut
         // and costs set operations on the cells the pieces hold.
         let mut pieces: Vec<(Type, BTreeSet<usize>)> = Vec::new();
         let mut union = Type::empty();
@@ -10409,9 +10414,10 @@ impl<'m> Searching<'m> {
                 // Complexity tradeoff (COMPLEXITY.md K35): a failure kept past a fork tried no
                 // candidate at the parts that met a fork, so it says nothing of the search of
                 // `t` not past a fork. Read there, it made the answer depend on whether `t` was
-                // first met past a fork or not, which follows the order of the atoms (2431 of the meets sweep). Such a failure is kept apart and `t` is built again
-                // when sought not past a fork: each type is built at most once in each of the two
-                // states, so the builds are at most twice those without. Given up: nothing.
+                // first met past a fork or not, which follows the order of the atoms (2431 of the
+                // meets sweep). Such a failure is kept apart and `t` is built again when sought not
+                // past a fork: each type is built at most once in each of the two states, so the
+                // builds are at most twice those without. Given up: nothing.
                 let unforked = r.is_none() && !s.past_fork && s.past_failures.contains_key(t);
                 if !nested && !unforked {
                     if r.is_none() {
@@ -10947,7 +10953,8 @@ impl<'m> Searching<'m> {
             // memo and retry worklist, O(1) expected lookup per occurrence,
             // plus the union's own search. Node numbers are never addresses.
             // This tries the same carrier first; other carriers still follow
-            // when no closure is found. Test: shared_morphism_constraints_scale_beside_a_refused_member.
+            // when no closure is found. Test:
+            // shared_morphism_constraints_scale_beside_a_refused_member.
             let carrier = self
                 .s()
                 .morphism_types
@@ -11277,12 +11284,12 @@ impl<'m> Searching<'m> {
                 // given up, the answer is the same.
                 // One candidate for each tuple type left, narrowed by what the part says of it. A
                 // candidate inside a tuple type the part excludes holds no value of it, and the
-                // narrowing or the check of its row would say so, so it is skipped: narrowing it tests
-                // every open cell of its components, n candidates by n cells, order n^2 types on the
-                // pairs of `l01_23_groups_and_refusals::refusals::fork_by` (COMPLEXITY.md K35). So is a candidate
-                // that lies inside an excluded tuple type in every component, as each pair of
-                // `a_difference_of_forked_unions_is_empty_in_its_size` does (K80). `all_inside`
-                // says whether every candidate was skipped so.
+                // narrowing or the check of its row would say so, so it is skipped: narrowing it
+                // tests every open cell of its components, n candidates by n cells, order n^2 types
+                // on the pairs of `l01_23_groups_and_refusals::refusals::fork_by` (COMPLEXITY.md
+                // K35). So is a candidate that lies inside an excluded tuple type in every
+                // component, as each pair of `a_difference_of_forked_unions_is_empty_in_its_size`
+                // does (K80). `all_inside` says whether every candidate was skipped so.
                 let mut all_inside = true;
                 // Complexity tradeoff (COMPLEXITY.md K135, BENCH-row-rep-many-tuples): when the
                 // narrowed part is a plain union of its tuple types (`Part::union_rows`), each
@@ -11336,10 +11343,11 @@ impl<'m> Searching<'m> {
                 // candidates below nor refining would find one, so nothing is given up, and
                 // refining such a part on a fork costs order `n^2`, a search of the whole part for
                 // each tuple type (`a_difference_of_forked_unions_is_empty_in_its_size`,
-                // COMPLEXITY.md K80). A forked part whose components separate in `overlaps` (`Π_sym`)
-                // is already split by `class_rep` above (`a_value_found_by_refining_a_forked_part_is_kept`);
-                // skipping `refine` on a still-forked unsplit box prevents order-dependent refusal vs
-                // witness selection across forked arms.
+                // COMPLEXITY.md K80). A forked part whose components separate in `overlaps`
+                // (`Π_sym`) is already split by `class_rep` above
+                // (`a_value_found_by_refining_a_forked_part_is_kept`); skipping `refine` on a
+                // still-forked unsplit box prevents order-dependent refusal vs witness selection
+                // across forked arms.
                 if all_inside
                     && g.restrict(&|a| (!refused[b.index[a]]).then_some(false))
                         .is_leaf()
@@ -12041,7 +12049,8 @@ impl<'m> Searching<'m> {
                 // `verdict`. Why: emptiness of Boolean combinations of morphism types is
                 // coNP-hard, like that of tuple types, and one split per branch keeps the search
                 // polynomial. Trigger: no atom is forced and the split was spent or does not
-                // apply. Tests: `l01_23_groups_and_refusals::refusals::each_refusal_names_its_cause`
+                // apply. Tests:
+                // `l01_23_groups_and_refusals::refusals::each_refusal_names_its_cause`
                 // (`morphism_split`) and `a_morphism_type_whose_bound_check_was_refused_says_why`.
                 // COMPLEXITY.md Kept row "emptiness and subtyping of tuple and morphism parts". A
                 // complete solution needs a split of the guarantee, permission and value type in
@@ -12152,8 +12161,8 @@ struct ListComponent {
 
 /// An exclusive or read for [`Choices::meet`]: its constant; for each component, whether each
 /// cell it mentions is on an odd number of its tuple types, the even and the odd cells
-/// ascending, and the parities a choice on the component gives (bit 0 even, bit 1 odd); the number of
-/// components that give both, and the sum of the parity of those that give one.
+/// ascending, and the parities a choice on the component gives (bit 0 even, bit 1 odd); the number
+/// of components that give both, and the sum of the parity of those that give one.
 struct ParityIndex {
     constant: bool,
     components: HashMap<usize, ParityComponent>,
@@ -12709,7 +12718,8 @@ impl Choices<'_> {
                         Some((_, d)) if d != c && e.second.is_none() => e.second = Some(i),
                         // A third refusal, or the first cell refused again: the blocks kept
                         // are the first two that refuse two cells, so it changes neither.
-                        // Test: `nested_cover::a_component_refused_in_three_blocks_agrees_with_enumeration`.
+                        // Test:
+                        // `nested_cover::a_component_refused_in_three_blocks_agrees_with_enumeration`.
                         Some(_) => {}
                     }
                 }
@@ -14054,7 +14064,8 @@ fn local<'a>(p: &'a Parts, none: &Type) -> Local<'a> {
     local_dir(p, none, 0)
 }
 
-/// Directional `local`: `dir` chooses which spine component nested tuples follow (`0` first, `1` last).
+/// Directional `local`: `dir` chooses which spine component nested tuples follow (`0` first, `1`
+/// last).
 fn local_dir<'a>(p: &'a Parts, none: &Type, dir: usize) -> Local<'a> {
     let mut points: Vec<Key> = (0..2u8)
         .filter(|b| p.bools >> b & 1 == 1)
@@ -15556,9 +15567,9 @@ fn joined(tops: Vec<Top>, dir: usize) -> zed_graph::UnionFind {
     // `G_i = #cons(int, G_i) | #cons(1, R_{i-1})` with `R_k = #cons(int, R_{k-1})` under `dir = 1`
     // in `by_place_from_the_end`, COMPLEXITY.md K35), placing `(i, g.id)` per cell and chain step
     // costs `Theta(n^2)` placements (`18.0x` at `64 -> 512`). Recording `(y_root, g.id) -> (j, y)`
-    // once a deep `single_chain` root is read lets any later cell `i` with zero other active/pending
-    // branches and `min_gid[i] > g.id` (Tarjan topological order: Tarjan's search completes a
-    // component after every component it reaches, SIAM J. Comput. 1(2):146-160, 1972,
+    // once a deep `single_chain` root is read lets any later cell `i` with zero other
+    // active/pending branches and `min_gid[i] > g.id` (Tarjan topological order: Tarjan's search
+    // completes a component after every component it reaches, SIAM J. Comput. 1(2):146-160, 1972,
     // doi:10.1137/0201010, as `zed_graph::Search` documents) join `j` in `O(1)`
     // with zero lost merges and an identical partition (`O(S log S)` in all), when `j` has no
     // node waiting (`pending_cnt[j] == 0`). Why: placing `g` for `i` at `y_root` walks the same
@@ -15840,10 +15851,10 @@ fn known_empty(k: &Type) -> bool {
 /// merged, among them equal parts of two definitions ([`names::merged`], item
 /// GROUP-cycle-dup-across), and that with those arms dropped; the system with arms dropped is
 /// merged too, after each union left with one arm is read as that arm ([`names::contracted`],
-/// item GROUP-arm-drop-merge), so parts equal once arms are dropped are one node. A member any of them decides is
-/// decided, since each answer is the type's. The refusal message reads the system as written,
-/// whose nodes keep the definition that wrote them. Time linear in the bodies, besides the
-/// emptiness of their closed parts, the O(m log m) of [`names::absorb`] and the O(m log n) of
+/// item GROUP-arm-drop-merge), so parts equal once arms are dropped are one node. A member any of
+/// them decides is decided, since each answer is the type's. The refusal message reads the system
+/// as written, whose nodes keep the definition that wrote them. Time linear in the bodies, besides
+/// the emptiness of their closed parts, the O(m log m) of [`names::absorb`] and the O(m log n) of
 /// [`names::merged`].
 fn judge(env: &Arc<Env>) -> Judgment {
     let bodies = &env.group().0.bodies;
@@ -15881,16 +15892,16 @@ fn judge(env: &Arc<Env>) -> Judgment {
     // search, which builds a value of the meet: one state of the product of its operands per
     // node it reads. Why: the decider's answer is not exact there (`#a & #b`). Trigger: an
     // `Inhabited` answer on a node that reaches a meet or a difference. Cost: linear in the
-    // meet's operands when a short value exists (`l01_23_subtyping::setop::meets_of_k_members_scale`,
-    // 7.1 times at k 8 and 64); exponential when the search forks on the product, which the
-    // verdict refuses as `Refusal::Fork` after a search for a value. The parity
-    // product instead uses its checked singleton
-    // (`parity_verdicts_scale_with_the_number_of_constraints`). COMPLEXITY.md K84. Naive version: a recursive occurrence
-    // under `&` or `\` makes the decider give up the whole group, so every member goes to the
-    // search (3.15M and 73.2M instructions at k 8 and 64, 23 times). Used: the decider reads
-    // `a & b` as an `And` node of its operands and `a \ b` as `a`, linear in the group, its
-    // `Empty` answers exact, so only members shown inhabited through a meet or a difference
-    // are searched (603K and 4.34M at k 8 and 64). A complete solution needs the product
+    // meet's operands when a short value exists
+    // (`l01_23_subtyping::setop::meets_of_k_members_scale`, 7.1 times at k 8 and 64); exponential
+    // when the search forks on the product, which the verdict refuses as `Refusal::Fork` after a
+    // search for a value. The parity product instead uses its checked singleton
+    // (`parity_verdicts_scale_with_the_number_of_constraints`). COMPLEXITY.md K84. Naive version: a
+    // recursive occurrence under `&` or `\` makes the decider give up the whole group, so every
+    // member goes to the search (3.15M and 73.2M instructions at k 8 and 64, 23 times). Used: the
+    // decider reads `a & b` as an `And` node of its operands and `a \ b` as `a`, linear in the
+    // group, its `Empty` answers exact, so only members shown inhabited through a meet or a
+    // difference are searched (603K and 4.34M at k 8 and 64). A complete solution needs the product
     // construction of the meet's tree automata, exponential in the number of operands
     // (emptiness of an intersection of tree automata is EXPTIME-complete).
     let n = bodies.len();
@@ -16385,7 +16396,8 @@ fn exact_flat_diff_decide(
                     if !e.recursive {
                         let t = eval_cached(e);
                         // `a \ r` lies in `a`, and a meet in each operand: an operand already
-                        // proved empty makes the node empty without searching the whole (Seed 1558).
+                        // proved empty makes the node empty without searching the whole (Seed
+                        // 1558).
                         let operand_empty = match &e.e {
                             rec::Shape::Diff(a, _) => eval_cached(a).verdict() == Verdict::Empty,
                             rec::Shape::And(xs) => xs

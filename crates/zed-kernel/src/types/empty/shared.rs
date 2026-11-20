@@ -212,10 +212,10 @@ pub(super) enum ChainPlan {
     },
 }
 
-/// Where a witness list should leave one refused row, for [`super::Searching::check_chain_witness`]:
-/// `Miss(i)`, its item `i` (from 0) is not in the row's head at that place; `Len`, the row's
-/// tail holds no list of the witness's length. A hint that does not hold costs only the
-/// row's full walk.
+/// Where a witness list should leave one refused row, for
+/// [`super::Searching::check_chain_witness`]: `Miss(i)`, its item `i` (from 0) is not in the row's
+/// head at that place; `Len`, the row's tail holds no list of the witness's length. A hint that
+/// does not hold costs only the row's full walk.
 #[derive(Clone, Copy, Debug)]
 pub(super) enum ChainHint {
     Miss(usize),

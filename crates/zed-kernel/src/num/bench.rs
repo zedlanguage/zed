@@ -23,8 +23,8 @@ fn five_to_the_1300000_has_text_bounds_around_its_digits() {
 /// `coprime_base`) tried each against every element before it, `n^2 / 2` gcds. The tree side
 /// (primes past 2^24, 12.815 on 2026-11-20; past 2^20, 262144 primes are on the table side,
 /// so a bench there does not measure the tree at 8 n; and chains of shared primes, 16.277) is
-/// over the limit at every size that fits in 60 s; its benches are deferred to plan row PERF-negated-chain-unsolved in
-/// wt/scratch/deferred-tests/PERF-negated-chain-unsolved.rs.
+/// over the limit at every size that fits in 60 s; its benches are deferred to plan row
+/// PERF-negated-chain-unsolved in wt/scratch/deferred-tests/PERF-negated-chain-unsolved.rs.
 #[test]
 fn the_coprime_base_of_the_first_primes_scales() {
     let inputs = crate::scaling::inputs(32768, |n| {

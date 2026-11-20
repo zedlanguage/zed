@@ -50,8 +50,8 @@ fn three_valued_operations_keep_the_assignments() {
     // atoms of `known` to their membership in `fixed`. A three-valued value is the value
     // of every assignment that agrees with it; restricting keeps the value of every
     // assignment agreeing with what it fixes; settling keeps every assignment in the
-    // part, and makes it empty only when the part is; an atom forced taken is in every assignment in the part, and one
-    // forced refused in none.
+    // part, and makes it empty only when the part is; an atom forced taken is in every assignment
+    // in the part, and one forced refused in none.
     let (mut rng, _) = Rng::fresh("three_valued_operations_keep_the_assignments");
     let mut met = [0usize; 4];
     for _ in 0..600 {

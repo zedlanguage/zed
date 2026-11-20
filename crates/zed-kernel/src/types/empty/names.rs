@@ -235,8 +235,8 @@ pub(super) fn merged(b: &Bes, leaf: &[bool], union: &[bool]) -> Option<(Bes, Vec
 
 /// `b` with each union of one distinct arm replaced by that arm wherever it is a child, for
 /// each node of `b` its node in the copy, and the node of `b` each node of the copy is; `None`
-/// when no union has one arm (item GROUP-arm-drop-merge). Such a union's equation is `v = w`, so each
-/// node's answer in the copy is its answer in `b`. A union whose arms all stand for one node
+/// when no union has one arm (item GROUP-arm-drop-merge). Such a union's equation is `v = w`, so
+/// each node's answer in the copy is its answer in `b`. A union whose arms all stand for one node
 /// stands for it too: `A | B` with `B = A` written as a name is `A`. [`absorb`] leaves such
 /// unions when it drops all but one arm, as with `Node | Tree` in a definition where `Tree` is an
 /// arm of `Node`: the union is `Node`, and the parts written with it play alike with those

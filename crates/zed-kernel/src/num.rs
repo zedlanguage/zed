@@ -2629,7 +2629,8 @@ mod tests {
         // CONST-too-large-kept-powers: the checker says writing a number needs at least
         // `text_least` bytes, so it must not pass the digits written; `text_size`, which asks
         // for the memory, must not fall below them. `5^1300000` has 908660 digits, which
-        // `text_size` put above 1 MiB, is `bench::five_to_the_1300000_has_text_bounds_around_its_digits`.
+        // `text_size` put above 1 MiB, is
+        // `bench::five_to_the_1300000_has_text_bounds_around_its_digits`.
         let wide = Rat::int((BigInt::one() << 200u32) + 7);
         for r in [
             power(2, 1),
@@ -2854,11 +2855,11 @@ mod tests {
     }
 
     /// A text that is not ASCII decimal digits alone is no number for `read_decimal` and no
-    /// decimal for `Rat::decimal` (`Rat::is_decimal`), wherever the other character is: in the part checked eight
-    /// bytes at a time and in the rest, at every place of texts of 1 to 40 digits. The other
-    /// characters are `_` between digits, a sign, a space, the bytes either side of the digits
-    /// (`/` and `:`), a letter, and digits of other scripts (Arabic-Indic, full-width), which
-    /// are several bytes each.
+    /// decimal for `Rat::decimal` (`Rat::is_decimal`), wherever the other character is: in the part
+    /// checked eight bytes at a time and in the rest, at every place of texts of 1 to 40 digits.
+    /// The other characters are `_` between digits, a sign, a space, the bytes either side of the
+    /// digits (`/` and `:`), a letter, and digits of other scripts (Arabic-Indic, full-width),
+    /// which are several bytes each.
     #[test]
     fn a_text_with_anything_but_ascii_digits_is_not_read() {
         assert_eq!(read_decimal(""), Ok(None));

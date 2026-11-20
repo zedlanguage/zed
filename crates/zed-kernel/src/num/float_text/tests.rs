@@ -598,7 +598,8 @@ fn shown_as_before_on_edge_doubles() {
     for i in (1u64 << 53) - 1_000..(1 << 53) + 1_000 {
         shows_as_before((i as f64).to_bits());
     }
-    // The powers of ten and their neighbors, the ties of `every_sampled_tie_prints_the_larger_magnitude`.
+    // The powers of ten and their neighbors, the ties of
+    // `every_sampled_tie_prints_the_larger_magnitude`.
     for k in -325..=308 {
         let x: f64 = format!("1e{k}").parse().expect("std reads it");
         for b in [x.to_bits().wrapping_sub(1), x.to_bits(), x.to_bits() + 1] {

@@ -77,8 +77,8 @@
 //! by Newton's iteration to only the precision that division and the level below need; each
 //! power below is a [`Level`] whose reciprocal is derived from the one above by one product and
 //! one cyclic product ([`derive()`]), and whose reciprocal and power are transformed once for
-//! all its divisions. A division at a level takes one product for the quotient and one cyclic product
-//! of half its length for the remainder, which lies in `[0, 4d)` and so is found modulo
+//! all its divisions. A division at a level takes one product for the quotient and one cyclic
+//! product of half its length for the remainder, which lies in `[0, 4d)` and so is found modulo
 //! `2^(64 m) - 1`. Each level divides numbers of `n` bits in total, O(M(n)), over
 //! `log2(n / L)` levels: O(M(n) log n). Parts below powers of [`PRINT_HANDOFF`] words, and
 //! numbers of fewer than [`PRINT_WHOLE`] words, are printed by num-bigint.
@@ -3684,8 +3684,8 @@ fn sub_around(mut a: Vec<u64>, b: &[u64]) -> Vec<u64> {
 /// (floors compose), `r = ya / 2^(ea - w - 2n)` is `R` or `R + 1`, and `R d` lies in
 /// `(2^(w + 2n) / d - d, 2^(w + 2n) / d]`, so `t = r d / 2^n`, floored, is the quotient,
 /// one below or one above, since `d < 2^n`; which is told by the remainder
-/// `2^(w + n) - t d`, in `[-d, 2d)` and so found modulo `2^(64 m) - 1` by a cyclic product. One product of `n`
-/// bits and one cyclic one, against several of Newton's iteration. O(M(n)).
+/// `2^(w + n) - t d`, in `[-d, 2d)` and so found modulo `2^(64 m) - 1` by a cyclic product. One
+/// product of `n` bits and one cyclic one, against several of Newton's iteration. O(M(n)).
 fn derive(
     d: &BigUint,
     dw: &[u64],

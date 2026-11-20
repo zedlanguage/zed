@@ -493,8 +493,9 @@ fn kind_wide_part_met_last(mut rows: Vec<Row>, tuples: &Type, structs: &Type) ->
 /// names (`r1` before `r2` for some names, after for others, under every draw), so the test
 /// cannot write it out. This oracle uses the walk under test, so it checks that `function_part`
 /// keeps each type once, at its first meeting, not that the walk's order is free of the draw;
-/// that rests on the proof in `the_function_part_of_a_meet_of_unions_sharing_rows_is_fixed_by_the_type`
-/// (cross-review of PERF-xor-shape-free, round 3, Claude R3-C4, Sol Q1(a)).
+/// that rests on the proof in
+/// `the_function_part_of_a_meet_of_unions_sharing_rows_is_fixed_by_the_type` (cross-review of
+/// PERF-xor-shape-free, round 3, Claude R3-C4, Sol Q1(a)).
 fn kind_wide_part_walked(t: &Type, tuples: &Type, structs: &Type) -> Type {
     let mut met: Vec<Type> = Vec::new();
     let mut paths = crate::digest::DigestSet::default();

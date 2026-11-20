@@ -844,10 +844,10 @@ type Equal = HashSet<(u64, u64), std::hash::BuildHasherDefault<crate::digest::Di
 /// rows by digest, then component by component; two morphism types by guarantee, permission and
 /// value; two diagrams or expressions by digest, then by atom or connective, then by `hi` and
 /// `lo` or by operands, a diagram before an expression; sequences (rows, atom names, tuple
-/// lengths) lexicographically, a prefix first. Two nodes or expressions found equal are kept by node id
-/// and not compared again, so the cost is one step per pair of nodes compared, not one per path
-/// to them, and linear in the size when the two are equal. A loop with its own stack, as a type
-/// can be deeper than the call stack: a row's components are types, whose tuple parts are
+/// lengths) lexicographically, a prefix first. Two nodes or expressions found equal are kept by
+/// node id and not compared again, so the cost is one step per pair of nodes compared, not one per
+/// path to them, and linear in the size when the two are equal. A loop with its own stack, as a
+/// type can be deeper than the call stack: a row's components are types, whose tuple parts are
 /// diagrams over rows, so where the digests tie (short-addresses build, step L1.37a, or a 64-bit
 /// collision) two types n deep are compared n levels down (SHORT-stack-l01_22).
 fn order(first: Step<'_>) -> Ordering {
@@ -3362,8 +3362,8 @@ impl<'m> Finiteness<'m> {
     /// Assumption, not proved: every type this makes is a meet with a known finite side or a
     /// meet without tuple types, and a meet's boxes meet the other side's columns only with
     /// joins of the finite side's box columns, which come before it in its finite order, so
-    /// each chain of new types follows a chain down that order and ends. Evidence: the five seeds of
-    /// FAIL-group-oracle-order-stack-overflow-seed end, and the listing and group tests pass.
+    /// each chain of new types follows a chain down that order and ends. Evidence: the five seeds
+    /// of FAIL-group-oracle-order-stack-overflow-seed end, and the listing and group tests pass.
     ///
     /// Split into what is proved and what is not (PROOF-sweep-zed-kernel):
     /// (a) Proved: a question on one [`Finiteness`] ends exactly when the set `U` of types
@@ -6352,8 +6352,8 @@ struct Open {
 /// class of tuples, by the tuple's kinds where they decide it (LIST-parity-rest) and
 /// otherwise by the tuple with the last of each column's first components erased. A row with
 /// such a column and a column that lists its values under keys more rows share, such as each
-/// `(int - (2i + 1), 0)` of a meet, is open too, and absorbs the latter (LIST-parity-tail) where the classes of its
-/// regions cost no more than filing by it.
+/// `(int - (2i + 1), 0)` of a meet, is open too, and absorbs the latter (LIST-parity-tail) where
+/// the classes of its regions cost no more than filing by it.
 struct RowIndex {
     /// The rows of the part, sorted.
     rows: Vec<Row>,
@@ -7774,8 +7774,8 @@ pub mod rec {
     mod walk {
         //! `Clone`, `==` and `Debug` of [`Expr`], and `Debug` of a body's tree ([`Node`]), each
         //! keeping its own stack on the heap, so an expression of any depth is copied, compared and
-        //! written on a small stack (COMPLEXITY.md K39). Each costs O(size). `Debug` writes the one line
-        //! a derived `Debug` writes for `{:?}`, under `{:#?}` too.
+        //! written on a small stack (COMPLEXITY.md K39). Each costs O(size). `Debug` writes the one
+        //! line a derived `Debug` writes for `{:?}`, under `{:#?}` too.
 
         use std::fmt;
         use std::sync::Arc;
@@ -8044,7 +8044,8 @@ pub mod rec {
         }
 
         impl Clone for Expr {
-            /// Copies the parts in a loop: each expression with parts is rebuilt once they are copied.
+            /// Copies the parts in a loop: each expression with parts is rebuilt once they are
+            /// copied.
             fn clone(&self) -> Expr {
                 enum Step<'a> {
                     Copy(&'a Expr),
@@ -8891,9 +8892,9 @@ pub mod rec {
             // each instance and each comparison costs O((N + M) log N) each time; it is made once,
             // on first use, and kept with the group, so later instances read it in O(1), at the
             // cost of the form's memory, O(N + M), for the group's life. The first instance of a
-            // group pays for it: `l01_23_groups_and_refusals::judgments::deciding_a_group_scales` holds that
-            // first run, at 256 and 2,048 definitions, to the n log n limit (2,141,806 and
-            // 17,071,066 bytes, 8.0 times, 2026-11-12), and so decides neither ring before.
+            // group pays for it: `l01_23_groups_and_refusals::judgments::deciding_a_group_scales`
+            // holds that first run, at 256 and 2,048 definitions, to the n log n limit (2,141,806
+            // and 17,071,066 bytes, 8.0 times, 2026-11-12), and so decides neither ring before.
             self.0
                 .canon
                 .get_or_init(|| canon(&self.0.bodies, &self.0.name_hashes))
@@ -8965,9 +8966,10 @@ pub mod rec {
     }
 
     impl Canon {
-        /// The order of two groups' canonical forms, after their digests: the classes in order, each
-        /// by its head, its children's classes and the type it holds by digest; the pairs of types
-        /// that tie in digest are pushed to `types` ([`Key::order`]). Time linear in the classes.
+        /// The order of two groups' canonical forms, after their digests: the classes in order,
+        /// each by its head, its children's classes and the type it holds by digest; the pairs of
+        /// types that tie in digest are pushed to `types` ([`Key::order`]). Time linear in the
+        /// classes.
         fn order<'a>(
             &'a self,
             other: &'a Canon,
@@ -9111,7 +9113,8 @@ pub mod rec {
             color[v + e] = next + position(p);
         }
         next += widest;
-        // The vertices counted when the class of a vertex refines: a child's places, a place's node.
+        // The vertices counted when the class of a vertex refines: a child's places, a place's
+        // node.
         let mut start = vec![0; size + 1];
         for (e, &(_, _, c)) in places.iter().enumerate() {
             start[c + 1] += 1;

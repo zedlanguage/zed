@@ -2,8 +2,8 @@
 //! computes, and the facts each one read.
 //!
 //! A fact is one node instance: a node of the term together with the instances of the
-//! regions around it (sec:kernel, the objects of the dependency theorem). Its address is the pair of a
-//! static [`NodeAddress`], code identity, and a dynamic keypath, data identity, and no two
+//! regions around it (sec:kernel, the objects of the dependency theorem). Its address is the pair
+//! of a static [`NodeAddress`], code identity, and a dynamic keypath, data identity, and no two
 //! facts of a run share one. A run records its facts when
 //! [`Evaluator::with_provenance`](crate::Evaluator::with_provenance) asks for them; the
 //! record is the run graph, each fact naming the facts it read.
@@ -1224,8 +1224,9 @@ pub fn child<'a>(t: &'a Term, i: u32) -> Option<&'a Term> {
 }
 
 /// Child `i` of `t`, in the order of [`child`], to change in place. A child behind an `Arc`
-/// that other terms share is first copied (`Shared::make_mut`, which gives it a new id): that one node, with the children
-/// it holds inline; its `Arc` children stay shared. `None` when `t` has no child `i`.
+/// that other terms share is first copied (`Shared::make_mut`, which gives it a new id): that one
+/// node, with the children it holds inline; its `Arc` children stay shared. `None` when `t` has no
+/// child `i`.
 pub fn child_mut(t: &mut Term, i: u32) -> Option<&mut Term> {
     let i = i as usize;
     fn pick<const N: usize>(ts: [&mut Shared; N], i: usize) -> Option<&mut Term> {
