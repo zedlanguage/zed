@@ -9495,7 +9495,8 @@ impl<'m> Searching<'m> {
     // compress acyclic runs of identical `(has_stop, head, emit)` nodes into `(run, jump)`;
     // precompute maximal runs of identical witness item IDs (`run_end` and `run_start`) in `O(m)`;
     // and on non-uniform chains (`clstaggerholes`), memoize `pass_memo[(node, item)]` along the
-    // chain and jump `O(n)` links in `O(log n)` via binary-lifting pointers `up: [usize; 18]`.
+    // chain and jump `O(n)` links in `O(log n)` by binary lifting (`zed_graph::Lift`, built once
+    // every row is unfolded, with as many levels as the longest run of links to a cycle needs).
     // Total work across all rows is `O(n log n)`.
     #[allow(clippy::type_complexity)]
     async fn check_chain_witness(
@@ -9605,7 +9606,6 @@ impl<'m> Searching<'m> {
             on_cycle: bool,
             run: usize,
             jump: usize,
-            up: [usize; 18],
             /// Links to the first node on a cycle (0 on a cycle).
             acyc: usize,
             /// Nodes with an `emit` from this one to the first on a cycle, both counted.
@@ -9775,7 +9775,6 @@ impl<'m> Searching<'m> {
                             on_cycle: true,
                             run: 1,
                             jump: next_id,
-                            up: [id; 18],
                             acyc: 0,
                             emits: usize::from(emit.is_some()),
                         });
@@ -9809,10 +9808,6 @@ impl<'m> Searching<'m> {
                     .entry((has_stop, head, emit, child))
                     .or_insert_with(|| {
                         let new_id = nodes.len();
-                        let mut up = [child; 18];
-                        for b in 1..18 {
-                            up[b] = nodes[up[b - 1]].up[b - 1];
-                        }
                         let acyc = nodes[child].acyc + 1;
                         let emits = nodes[child].emits + usize::from(emit.is_some());
                         nodes.push(VerifyNode {
@@ -9823,7 +9818,6 @@ impl<'m> Searching<'m> {
                             on_cycle: false,
                             run,
                             jump,
-                            up,
                             acyc,
                             emits,
                         });
@@ -9952,18 +9946,28 @@ impl<'m> Searching<'m> {
             Some(ans)
         };
 
-        // The node `k` links after `u`, for `k` at most the links from `u` to a cycle: jumps of
-        // `2^17` while `k` is that large, then one jump per bit (`up` has 18 levels; a jump of
-        // `2^18` or more read by its low bits alone would land short).
-        let lift = |nodes: &[VerifyNode], mut u: usize, mut k: usize| -> usize {
-            while k >= 1 << 17 {
-                u = nodes[u].up[17];
-                k -= 1 << 17;
-            }
-            for b in (0..17).filter(|b| (k >> b) & 1 != 0) {
-                u = nodes[u].up[b];
-            }
-            u
+        // The nodes as a forest under one root: a node on a cycle hangs from the root, any other
+        // node from its `next`, so a node's depth is its `acyc` plus one. Every node is in place
+        // here: `unfold` ran for every row above and runs no more, and a node off a cycle is
+        // pushed after its `next` (`child` exists when it is pushed), so attaching in the order
+        // of the numbers attaches each parent first.
+        // Complexity tradeoff: the shared binary lifting (`zed_graph::Lift`) costs O(n log a)
+        // words and time to build and O(log a) per jump, `a` the most links from a node to a
+        // cycle, against O(k) for a walk of `k` links. The array of 18 levels this replaced
+        // (DRY-empty-lift-levels) cost O(k / 2^17 + 17) per jump past 2^18 links and a fixed
+        // 18 words a node; the levels are now sized from `a`, the longest jump asked for.
+        let deepest = nodes.iter().map(|v| v.acyc).max().unwrap_or(0) + 1;
+        let mut tree = zed_graph::Lift::with_depth(nodes.len(), deepest);
+        let root = tree.root();
+        for (v, node) in nodes.iter().enumerate() {
+            tree.attach(v, if node.on_cycle { root } else { node.next });
+        }
+        // The node `k` links after `u`, for `k` at most the links from `u` to a cycle
+        // (`nodes[u].acyc`, checked at each call): its ancestor `k` levels up, at depth
+        // `acyc + 1 - k`, which is 1 or more, so never the root.
+        let lift = |u: usize, k: usize| -> usize {
+            debug_assert!(k <= nodes[u].acyc, "a jump past the first node on a cycle");
+            tree.up_to(u, tree.depth(u) - k)
         };
         let hint_of: BTreeMap<&Row, ChainHint> = hints.iter().map(|(r, h)| (r, *h)).collect();
         let mut known: BTreeMap<Row, Option<bool>> = BTreeMap::new();
@@ -9985,7 +9989,7 @@ impl<'m> Searching<'m> {
                     if k > nodes[u].acyc {
                         return None;
                     }
-                    let w = lift(&nodes, u, k);
+                    let w = lift(u, k);
                     let emits =
                         nodes[u].emits - nodes[w].emits + usize::from(nodes[w].emit.is_some());
                     (emits == 0).then_some(w)
@@ -10092,7 +10096,10 @@ impl<'m> Searching<'m> {
                     let rem_run = (run_end[d] - d).min(m - d);
                     let step_cnt = acc.min(rem_run);
                     if step_cnt > 0 {
-                        u = lift(&nodes, u, step_cnt);
+                        // `step_cnt <= acc <= nodes[u].acyc`: `acc` counts nodes off a cycle
+                        // from `u` on (the walk above stops at the first node on a cycle, and a
+                        // memoized count was made the same way), and `u` is off a cycle.
+                        u = lift(u, step_cnt);
                         d += step_cnt;
                         continue 'walk;
                     }

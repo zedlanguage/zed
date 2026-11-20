@@ -2634,3 +2634,104 @@ fn the_check_of_a_list_witness_passes_no_list_outside_the_type() {
         }
     }
 }
+
+/// The list type `W0` of `n + 1` definitions `Wk = nil | cons(Hk, W(k+1))` for `k < n` and
+/// `Wn = nil | cons(int, Wn)`, where `Hk` is `2` at `k = special`, `1` at other odd `k` and
+/// `int` at even `k`: its rest after the first item passes `n - 1` tails before the cycle `Wn`,
+/// and its heads alternate, so the check of a list witness (`Searching::check_chain_witness`)
+/// crosses them by binary lifting and not by its runs of equal links (DRY-empty-lift-levels).
+pub(super) fn long_chain(n: usize, special: usize) -> Type {
+    use super::super::rec::{Expr, Group};
+    use fork_inputs::{cons, def, lit, nil, r};
+    let head = |k: usize| match k {
+        _ if k == special => lit(2),
+        _ if k % 2 == 1 => lit(1),
+        _ => Type::int(),
+    };
+    let defs = (0..=n)
+        .map(|k| {
+            let link = if k == n {
+                cons(Expr::Type(Type::int()), r(n))
+            } else {
+                cons(Expr::Type(head(k)), r(k + 1))
+            };
+            def(&format!("W{k}"), Expr::Union(vec![nil(), link]))
+        })
+        .collect();
+    Group::new(defs)
+        .expect("a group")
+        .instance(vec![])
+        .remove(0)
+}
+
+/// The answers of the check of a list witness on [`long_chain`] at `n` with `special` odd: the
+/// list of `n + 4` ones is outside the type (its item `special` is not 2), and the same list
+/// with a 2 at `special` is in it, with no hint, and with each hint `Miss(special)`,
+/// `Miss(special + 1)` and `Len` on the type's one row, which must not change the answer. A
+/// hint `Miss(special)` reaches item `special` by one jump of `special - 1` links. Returns the
+/// four answers of each list, `false` expected for the first and `true` for the second.
+pub(super) fn long_chain_answers(t: &Type, n: usize, special: usize) -> [[bool; 4]; 2] {
+    [false, true]
+        .map(|in_type| [0, 1, 2, 3].map(|hint| long_chain_check(t, n, special, in_type, hint)))
+}
+
+/// One answer of [`long_chain_answers`]: for the list of ones (`in_type` false) or the list
+/// with a 2 at `special` (`in_type` true), under hint `hint` of none, `Miss(special)`,
+/// `Miss(special + 1)` and `Len`, in that order. Each answer is decided afresh.
+pub(super) fn long_chain_check(
+    t: &Type,
+    n: usize,
+    special: usize,
+    in_type: bool,
+    hint: usize,
+) -> bool {
+    let rows = (t.p().atoms.names().get("cons"))
+        .and_then(|a| a.payload.p().tuples.lens.get(&2)?.union_rows())
+        .expect("one row of pairs");
+    let row = rows[0].clone();
+    let hints = match hint {
+        0 => vec![],
+        1 => vec![(row, ChainHint::Miss(special))],
+        2 => vec![(row, ChainHint::Miss(special + 1))],
+        _ => vec![(row, ChainHint::Len)],
+    };
+    Type::forget_emptiness();
+    let t = t.clone();
+    Search::default().run(move |d| {
+        Box::pin(async move {
+            let one = d.s().show(Rep::Value(Value::Int(1.into())));
+            let two = d.s().show(Rep::Value(Value::Int(2.into())));
+            let mut ids = vec![one; n + 4];
+            if in_type {
+                ids[special] = two;
+            }
+            let (link, stop) = ("cons".into(), "nil".into());
+            d.check_chain_witness(&t, &link, &ids, &stop, &hints).await
+        })
+    })
+}
+
+/// Item DRY-empty-lift-levels: the check of a list witness jumps along a chain of tails by the
+/// shared binary lifting (`zed_graph::Lift`), with levels sized from the longest jump. On
+/// [`long_chain`] at each `n` up to 40 and each odd `special` below it, the jump to item
+/// `special` lands on the tail whose head is 2, and the other jumps on the right tails too: the
+/// list of ones is outside, and the list with a 2 there is in, whatever the hint. A chain past
+/// `2^18` links, where the fixed 18 levels this replaced ran out, is in the benchmark module
+/// (`bench::a_list_witness_jumps_more_than_2_to_the_18_tails_at_once`), as is the scaling check
+/// `bench::a_list_witness_jumps_a_long_chain_of_tails_in_log_time`. Negative controls, run: a
+/// jump one link short (`tree.depth(u) - k + 1`) fails it at `n 2, special 1`, the list with a
+/// 2 refused under the hint `Miss(2)`; a jump that drops its highest bit fails it at `n 4,
+/// special 3`, both answers wrong with no hint.
+#[test]
+fn a_list_witness_jumps_a_chain_of_tails_to_the_right_tail() {
+    for n in 2..=40 {
+        for special in (1..n).step_by(2) {
+            let t = long_chain(n, special);
+            assert_eq!(
+                long_chain_answers(&t, n, special),
+                [[false; 4], [true; 4]],
+                "n {n}, special {special}"
+            );
+        }
+    }
+}

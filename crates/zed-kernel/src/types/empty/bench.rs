@@ -170,6 +170,64 @@ fn the_emptiness_of_a_meet_of_tuple_differences_with_payload_keys_scales() {
     );
 }
 
+/// Item DRY-empty-lift-levels: the check of a list witness on [`super::tests::long_chain`] at
+/// n = 8192 and 8n = 65536 tails, the list of ones under the hint `Miss(special)`, `special`
+/// n/2 + 1 (odd), which it reaches by one jump of n/2 links and refuses. Cost order n log n:
+/// unfolding the n tails and building the binary lifting, then O(log n) per jump; the unfolding
+/// is most of the time (profiled 2026-11-20: type unfolding and allocation, no lifting frame
+/// above 1%). One check per run, not the eight of `long_chain_answers`: eight at 65536 tails
+/// took 9.3 s, past the 20 s of the piece with the runs of both sizes. Each run has an input of
+/// its own, built on a thread of its own before any run is timed, as [`rings_each`] gives the
+/// ring benchmarks for the reason written there. Small instances, every answer:
+/// `a_list_witness_jumps_a_chain_of_tails_to_the_right_tail`; past `2^18` links:
+/// [`a_list_witness_jumps_more_than_2_to_the_18_tails_at_once`].
+#[test]
+fn a_list_witness_jumps_a_long_chain_of_tails_in_log_time() {
+    use super::tests::{long_chain, long_chain_check};
+    let n = 8192;
+    let (small, large) = crate::scaling::Meter::new().runs();
+    let special = |k: usize| k / 2 + 1;
+    let inputs: HashMap<usize, (Vec<Type>, AtomicUsize)> =
+        [(n, small), (crate::scaling::FACTOR * n, large)]
+            .into_iter()
+            .map(|(k, runs)| {
+                let each = (0..runs)
+                    .map(|_| {
+                        std::thread::spawn(move || long_chain(k, special(k)))
+                            .join()
+                            .unwrap_or_else(|panic| std::panic::resume_unwind(panic))
+                    })
+                    .collect();
+                (k, (each, AtomicUsize::new(0)))
+            })
+            .collect();
+    crate::scaling::check(
+        "the check of a list witness along a chain of n tails, hint Miss(n/2 + 1)",
+        n,
+        |k| {
+            let (each, next) = &inputs[&k];
+            let t = &each[next.fetch_add(1, Ordering::Relaxed)];
+            assert!(!long_chain_check(t, k, special(k), false, 1), "n {k}");
+        },
+    );
+}
+
+/// Item DRY-empty-lift-levels: a jump of more than `2^18` links, past the most the fixed 18
+/// levels of binary lifting this replaced reached in 18 steps. On [`super::tests::long_chain`]
+/// at `2^18 + 4` tails with `special` the last odd item, `2^18 + 3`, the list of ones under the
+/// hint `Miss(special)` is reached by one jump of `2^18 + 2` links and refused: a jump that lands
+/// on any other tail finds a head of 1 or `int` there, which holds a 1, so the list would pass.
+/// A size this large is a benchmark (author P178); it took 7.5 s at load 17 (2026-11-20), most
+/// of it unfolding the tails. Negative control, run: a jump one link short fails it.
+#[test]
+fn a_list_witness_jumps_more_than_2_to_the_18_tails_at_once() {
+    use super::tests::{long_chain, long_chain_check};
+    let n = (1 << 18) + 4;
+    let special = n - 1;
+    let t = long_chain(n, special);
+    assert!(!long_chain_check(&t, n, special, false, 1));
+}
+
 /// Plan row PERF-value-key-sites-bench: n families of one size and the same end entries given
 /// classes by [`ValueKey`] as `stored_class` gives them (`entry`, `or_insert` of the next
 /// number), then each found again by a copy built apart: one digest and O(1) expected compares a
