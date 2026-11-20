@@ -579,10 +579,14 @@ type Set = u32;
 const EMPTY: Set = 0;
 
 /// A node of a set of names as a big-endian Patricia trie (C. Okasaki and A. Gill, "Fast
-/// mergeable integer maps", Workshop on ML, 1998, pp. 77-86; no DOI, not found on Crossref,
-/// from memory, not checked: a binary trie on the bits of the keys whose branch nodes keep the
-/// common prefix and the first differing bit, so a union of two maps walks only where they
-/// differ).
+/// mergeable integer maps", Workshop on ML, 1998, pp. 77-86; no DOI, not found on Crossref;
+/// read 2026-11-20, the whole paper, from Okasaki's PostScript, Wayback copy of
+/// eecs.usma.edu/webs/people/okasaki/ml98maps.ps; the quotes, the departures and Midtgaard's
+/// bug in its `merge` are in the module comment of `zed_kernel`'s `types/print/uses.rs`). §3
+/// stores "at each remaining Br node the longest common prefix of all keys in that subtree"
+/// and its branching bit; §4's `join` merges two trees whose prefixes disagree "simply by
+/// creating a new Br node that has t0 and t1 as children", so a union of two maps walks only
+/// where they overlap.
 #[derive(Clone, Copy, PartialEq, Eq, Hash)]
 enum SetNode {
     Empty,

@@ -27,12 +27,20 @@
 //! \[D\]: K. Duong, "Size-sensitive padded decompositions for faster deterministic
 //! negative-weight shortest paths", arXiv 2609.05590 (2026). The abstract: a deterministic
 //! algorithm for single-source shortest paths with integer weights at least `-W` in
-//! `O((m + n log log n) log² n log(nW))` time; v2 improves v1 by a factor `log log n`. The title
-//! and author were checked on the arXiv listing (v1 and v2 carry the same title) on 2026-11-20;
-//! an earlier version of this comment gave the author as "T. Duong" and another title. The
-//! `l.` numbers above are lines of the v2 LaTeX source (`paper_v2.tex`), checked the same day:
-//! l.509 sets `τ` to "the largest power of two at most (log L)/2", so `τ >= 4` needs
-//! `L >= 256`, and l.809 and l.831 take the case `τ < 4` by "\cref{lem:local} directly on X".
+//! `O((m + n log log n) log² n log(nW))` time; v2 improves v1 by a factor `log log n`. Read
+//! 2026-11-20, LaTeX: the v2 source `paper_v2.tex` from arXiv (allpapers `arxiv-source`), whose
+//! abstract gives "\OO((m+n\log\log n)\log^2 n\log(nW))", and the v1 abstract on the arXiv
+//! page, which has the extra factor `\log\log n`. Author "Khoi Duong, University of
+//! Minnesota"; an earlier version of this comment gave the author as "T. Duong" and another
+//! title. The `l.` numbers above are lines of `paper_v2.tex`: l.147-148 set
+//! "M_0=M(V)=\Theta(m+n\log\log n)" and "L=\lceil\log M_0\rceil"; l.509 sets `τ` to "the
+//! largest power of two at most (log L)/2" and the residual cover assumes "L is large enough
+//! that \tau\ge4"; l.809 (decomposition) and l.831 (reconstruction) take the case `τ < 4` by
+//! "\cref{lem:local} directly on X" and "the cutoff choice bounds L by a constant". The paper
+//! does not state the base of `\log`; this module takes base 2 throughout (`λ` and `L` by
+//! `ceil_log2`), so `τ >= 4` needs `log₂ L >= 8`, `L >= 256`. Were it the natural logarithm,
+//! `τ >= 4` would need `L >= e^8`, about 2981, so the branch not built is out of reach either
+//! way. `λ = ⌈log log n⌉` (l.139) and `θ = 1/24` (l.404) are the paper's.
 //! The bound in COMPLEXITY.md C24 is for the local branch built here, inferred from the paper's
 //! lemmas. Tests: this module's `the_round_bound_agrees_with_bellman_ford` and the others
 //! below, the `utvpi` tests, and the benchmark `duong_scales_alone`

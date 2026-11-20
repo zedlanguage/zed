@@ -1814,7 +1814,9 @@ impl<K: Key> Poly<K> {
     /// doi:10.1109/JRPROC.1952.273898 (Crossref and the text checked 2026-11-20), whose step
     /// combines "the two least probable messages" into one; with a list's length as its weight
     /// this is the merge pattern, which D. E. Knuth, The Art of Computer Programming vol. 3,
-    /// section 5.4.9, applies to merging (from memory, not checked). It reads each term once
+    /// section 5.4.9, applies to merging (from memory, not checked: the book has no DOI or free
+    /// copy; on 2026-11-20 LibGen listed the 2nd edition of vol. 3, but its file server
+    /// answered "error code: 504" for every book tried that day). It reads each term once
     /// per level of the merge tree it sits at, O(T log k) at most and O(T + k log k) for one
     /// large part and k small ones, plus O(k log k) for the heap. Test:
     /// `a_chain_of_sums_is_one_sum` checks the result; the order of merging is not tested.
@@ -2091,11 +2093,16 @@ impl<K: Key> Poly<K> {
     /// and `c_i c_j = c_j c_i`, a square needs only the `t (t - 1) / 2` pairs `i < j`, each
     /// counted twice, and the `t` pairs `i = j`: `t (t + 1) / 2` products and a sort of
     /// `t (t - 1) / 2`, about half the work and half the memory. This is the halving of
-    /// schoolbook squaring of numbers carried to sparse polynomials, as in M. Monagan and R.
-    /// Pearce, "Sparse polynomial powering using heaps", CASC 2012, LNCS, pp. 236-247,
-    /// doi:10.1007/978-3-642-32973-9_20 (Crossref checked 2026-11-20; no free copy found, so
-    /// that the paper halves the pairs of a square is from memory, not checked). Their heap
-    /// merge is after S. C. Johnson, "Sparse polynomial arithmetic", ACM SIGSAM Bull. 8(3):63-71,
+    /// schoolbook squaring of numbers carried to sparse polynomials; the two equalities above
+    /// are the whole argument, and no paper is relied on. An earlier comment credited it to
+    /// M. Monagan and R. Pearce, "Sparse polynomial powering using heaps", CASC 2012, LNCS 7442,
+    /// doi:10.1007/978-3-642-32973-9_20, from memory; the authors' copy (SparsePow.pdf on
+    /// Monagan's SFU page, read 2026-11-20, PDF) does not: section 1 sets out RSQR, "f^i =
+    /// (f^(i/2))^2", which "requires asymptotically fast dense multiplication to improve on
+    /// RMUL", and its own methods, Sparse SUMS (Euler's recurrence run with a heap) and FPS,
+    /// are heap merges; a search of the text for "square" and "half" finds no halving of the
+    /// pairs of a square. Their heap merge, which they credit to Johnson [7], is after
+    /// S. C. Johnson, "Sparse polynomial arithmetic", ACM SIGSAM Bull. 8(3):63-71,
     /// 1974, doi:10.1145/1086837.1086847 (Crossref and the text checked 2026-11-20): the
     /// candidate products are kept in "a heap", "the per term cost of the process of running the
     /// heap is at most order of log n". Here it is a sort and a merge instead. Tests:

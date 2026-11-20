@@ -5,7 +5,15 @@
 //! not pushed unless the old one was waiting (Hopcroft's rule, "process the smaller half": J.
 //! Hopcroft, "An n log n algorithm for minimizing states in a finite automaton", Theory of
 //! Machines and Computations, Academic Press, 1971, pp. 189-196,
-//! doi:10.1016/b978-0-12-417750-5.50022-1; Crossref, not read), so a
+//! doi:10.1016/b978-0-12-417750-5.50022-1; read 2026-11-20, PDF, the book's scan. P. 190:
+//! "once we have partitioned on a block and an input symbol, we need never partition on that
+//! block and input symbol again until the block is split and then we need only partition on
+//! one of the two subblocks ... since we can always select the half with fewer transitions,
+//! the total number of steps in the algorithm is bounded by n log n". Step 7c, p. 190-191: a
+//! split block `j` and its new part `k` are both added to the waiting list `L(a)` when `j` was
+//! on it; otherwise only the one of the two with fewer states that have a predecessor on `a`
+//! (`B(B(j), a)`, ties to `j`). The rule here counts all the vertices of a class instead, as
+//! Berkholz, Bonsma and Grohe do, below), so a
 //! vertex is in O(log N) refining classes in all: O((N + M) log N) for N vertices and M arcs.
 //! New colors are numbered in the increasing order of (old color, number of neighbors), never
 //! by a hash, so two isomorphic graphs whose starting colors correspond get the same color at
@@ -43,8 +51,12 @@
 //!
 //! Checked 2026-11-19 against the arXiv LaTeX of 1509.08251 (creffull9_clean.tex lines 291-345
 //! for Algorithm 1, 456-498 for the lemma and its proof, 165-171 for the credits); Crossref
-//! metadata for both papers. Paige and Tarjan's text was not read: the bound and the page are
-//! taken from Berkholz, Bonsma and Grohe's citation of it (line 165).
+//! metadata for both papers. Paige and Tarjan read 2026-11-20 (PDF, the journal's scan): p.
+//! 982 defines a partition "size-stable (abbreviated s-stable)" when every two elements of a
+//! block have as many successors in each block, which is the stable coloring here, and states
+//! that "a partition refinement algorithm like the one we have described can be used to find
+//! the coarsest s-stable refinement in O(m log n) time", with "Hopcroft's approach" applying
+//! "directly", a block splitting "into an arbitrarily large number of new blocks".
 //!
 //! Tested by `refine::tests`: the result is compared with the naive refinement by rounds on
 //! random digraphs, which catches a refinement that stops early or splits too much, such as

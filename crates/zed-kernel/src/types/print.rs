@@ -712,9 +712,13 @@ impl Printer<'_> {
     // O(k (n + e)) for k such types in a graph of n nodes and e references. Used: the strongly
     // connected components of the whole graph at once, by Tarjan's algorithm (R. E. Tarjan,
     // "Depth-first search and linear graph algorithms", SIAM Journal on Computing 1(2):146-160,
-    // 1972, doi:10.1137/0201010, Crossref checked 2026-11-20, text not obtained; the method
-    // from memory), O(n + e) time and O(n + e) memory for the edge lists, none when no type
-    // was unfolded.
+    // 1972, doi:10.1137/0201010, read 2026-11-20, PDF, the journal's scan, verification only.
+    // Section 4, pp. 156-157: a depth-first search numbers the vertices; "LOWLINK (v) is the
+    // smallest vertex which is in the same component as v and is reachable by traversing zero
+    // or more tree arcs followed by at most one frond or cross-link"; Lemma 12, v is the root
+    // of a strongly connected component "if and only if LOWLINK (v) = v"; Theorem 13, p. 157,
+    // the algorithm "requires O(V, E) space and time"; the code is `zed_graph::on_cycle`),
+    // O(n + e) time and O(n + e) memory for the edge lists, none when no type was unfolded.
     // Every unfolded type on a cycle is named, not a least set of them that cuts every cycle
     // (a least feedback vertex set, NP-hard), so a cycle through two of them names both, as
     // the printer without names would.
@@ -756,7 +760,11 @@ impl Printer<'_> {
     /// digests (step BDD-atom-order). Each node gets a rank by its contents, as in the tree
     /// isomorphism test of Aho, Hopcroft and Ullman (A. V. Aho, J. E. Hopcroft and J. D. Ullman,
     /// "The Design and Analysis of Computer Algorithms", Addison-Wesley, 1974, section 3.2,
-    /// Example 3.2, pp. 84-86. The book itself was not read (no free copy); checked 2026-11-20
+    /// Example 3.2, pp. 84-86. The book itself was not read: it has no DOI and no free copy, and
+    /// on 2026-11-20 LibGen's PDF and DjVu copies came back four times as a 504 or 503 error
+    /// page. The example's number is as Ingels gives it ("[Example 3.2]"), the section as
+    /// Ingels places the radix sort it applies ("Section 3.2, p.77"), and the pages as
+    /// NetworkX's documentation gives them; checked 2026-11-20
     /// against F. Ingels, "Revisiting Tree Isomorphism: An Algorithmic Bric-a-Brac",
     /// arXiv:2309.14441, which reproduces the example's text with minor changes of notation,
     /// "First, assign to all leaves in T1 and T2 the integer 0", then ranks the nodes one level

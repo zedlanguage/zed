@@ -26,8 +26,12 @@
 //! the augmentation of Y. Sun, D. Ferizovic and G. E. Blelloch, "PAM: parallel augmented maps",
 //! PPoPP 2018, 290-304, doi:10.1145/3178487.3178509, with the size as the augmented value.
 //! Checked 2026-11-19 against the full version's text (sections 2-5) and Crossref for both;
-//! the SPAA text and PAM's text were not read (PAM: Crossref metadata only, the size field is
-//! an ordinary order-statistic tree, nothing here depends on PAM's text). Tested by
+//! the SPAA text was not read. PAM read 2026-11-20, PDF, Sci-Hub, verification only; section 4,
+//! "Augmentation": "storing with every tree node the augmented sum of the subtree rooted at
+//! that node ... when creating a node with a left child L, right child R, key k and value v
+//! the augmented value can be calculated as f(A(L), f(g(k, v), A(R)))", and "creation of new
+//! nodes is handled in JOIN"; here `g` is 1 and `f` is `+`. The paper lists treaps among the
+//! trees PAM implements. Tested by
 //! `list::treap::tests`: the treap against a `BTreeMap` under random operations (wrong keys,
 //! values, sizes or heap order), one shape for one set of keys; no test measures the work.
 //!

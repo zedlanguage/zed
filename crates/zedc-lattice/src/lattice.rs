@@ -65,15 +65,25 @@ impl Lattice for IntervalSet {
 /// [`Num`]s, so a class past the 64-bit range is held exactly.
 ///
 /// Source: P. Granger, "Static analysis of arithmetical congruences", International Journal of
-/// Computer Mathematics 30(3-4), 1989, pp. 165-190, doi:10.1080/00207168908803778 (Crossref
-/// checked 2026-11-20; the text was not read, so this sketch is from memory of the paper). The
-/// lattice of the classes `aZ + b` and the bottom, ordered by inclusion: the join of `aZ + b`
-/// and `a'Z + b'` is `gcd(a, a', b - b')Z + b`, the meet is empty or, by the Chinese remainder
-/// theorem, a class modulo `lcm(a, a')`; the arithmetic on classes is
+/// Computer Mathematics 30(3-4), 1989, pp. 165-190, doi:10.1080/00207168908803778 (read
+/// 2026-11-20, PDF, the publisher's scan; the formulas are images, read from the rendered
+/// pages). The lattice of the classes `aZ + b` and the bottom, ordered by inclusion. Corollary
+/// 3.3 (p. 171): "c1 + m1Z ∩ c2 + m2Z ≠ ∅ ⇔ g.c.d.(m1, m2) | c1 - c2", and then "c1 + m1Z ∩
+/// c2 + m2Z = x + (l.c.m.(m1, m2))Z" for any `x` in it; "(c1 + m1Z) ∨ (c2 + m2Z) = c1 +
+/// (g.c.d.(m1, m2, c1 - c2))Z". So the join of `aZ + b` and `a'Z + b'` is
+/// `gcd(a, a', b - b')Z + b`, and the meet is empty or a class modulo `lcm(a, a')`, its residue
+/// found here by the Chinese remainder theorem (the paper solves it as a linear congruence,
+/// section 4). Proposition 4.1 (p. 172): "(c1 + m1Z) ± (c2 + m2Z) = c1 ± c2 +
+/// (g.c.d.(m1, m2))Z" and "(c1 + m1Z) * (c2 + m2Z) = c1c2 + (g.c.d.(c1m2, m1c2, m1m2))Z", so
 /// `(aZ + b) ± (a'Z + b') = gcd(a, a')Z + (b ± b')` and
-/// `(aZ + b)(a'Z + b') = gcd(aa', ab', a'b)Z + bb'`. Departures: none in the lattice; the
-/// widening is the join, as the lattice has no infinite ascending chain (each strict step
-/// divides the modulus). The same arithmetic is used by zedc-preimage `preimage.rs` and
+/// `(aZ + b)(a'Z + b') = gcd(aa', ab', a'b)Z + bb'`; p. 174 notes these are the best only for
+/// expressions with no variable repeated (`X + X` gives `2c + mZ`, not `2c + 2mZ`). Section 3,
+/// p. 171-172: "there is no infinite strictly increasing chain in the lattice of congruences",
+/// and a chain from `c + mZ`, `m ≠ 0`, "contains at most 1 + log2(m) elements", since each
+/// strictly larger class has a proper divisor of `m` as modulus. Departures: none in the
+/// lattice; the widening is the join, which that bound makes terminate. The normal form, the
+/// residue in `0..modulus` and the modulus at least 0, is the paper's `Norm` (p. 170). The same
+/// arithmetic is used by zedc-preimage `preimage.rs` and
 /// `preimage_ref.rs`, fn `class_of`. Tests:
 /// `l01_24_refinement_lattices::complete::congruence_join_and_meet_on_every_kind_of_operand`
 /// checks join, widening and meet on every kind of operand against classes worked by hand; it

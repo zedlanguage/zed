@@ -4227,10 +4227,20 @@ fn prim_on(p: Prim, vals: &[Value]) -> Result<Value, KernelError> {
         // Std 754-2019, "IEEE Standard for Floating-Point Arithmetic", IEEE, 2019,
         // doi:10.1109/IEEESTD.2019.8766229 (Crossref), section 5.4.1, "Arithmetic operations",
         // which lists `squareRoot` and `fusedMultiplyAdd` among the operations rounded once.
-        // The standard is paywalled and was not read. Checked 2026-11-20 against the
-        // publisher's preview of ISO/IEC 60559:2020, which is the same text: its contents list
-        // section 5.4 as "formatOf general-computational operations"; the contents stop at
-        // that level, so the subclause 5.4.1, its title and its list are from memory. Cost:
+        // The 2019 text was not read: the copies on LibGen and Sci-Hub (10 and 15 pages) carry
+        // the title and abstract and then filler text, and the contents of the publisher's
+        // preview of ISO/IEC 60559:2020, the same text, stop at "5.4 formatOf
+        // general-computational operations". What was read, 2026-11-20, PDF (Sci-Hub,
+        // verification only), is the 2008 edition, IEEE Std 754-2008,
+        // doi:10.1109/IEEESTD.2008.4610935, whose clauses 5 and 7 the 2019 revision keeps
+        // under the same numbers. Section 5.1, p. 16: "every operation shall be performed as if
+        // it first produced an intermediate result correct to infinite precision and with
+        // unbounded range, and then rounded". Section 5.4.1, p. 21, lists squareRoot, which
+        // "has a positive sign for all operands ≥ 0, except that squareRoot(−0) shall be −0",
+        // and fusedMultiplyAdd, which "computes (x × y) + z as if with unbounded range and
+        // precision, rounding only once to the destination format". Section 7.2, p. 37,
+        // gives the default result NaN for "squareRoot if the operand is less than zero" and
+        // for "fusedMultiplyAdd(0, ∞, c) or fusedMultiplyAdd(∞, 0, c)". Cost:
         // O(1), one hardware instruction each (or the C library's `fma` on a host without
         // FMA). Measured: test `l01_18_scalar_interpreter::sqrt_fma` runs
         // n = 2048 and 8n calls of each word, 14225721 and 113703294 instructions, 8.0 times
@@ -4250,10 +4260,13 @@ fn prim_on(p: Prim, vals: &[Value]) -> Result<Value, KernelError> {
         // citation at the `sqrt` and `fma` rule above), section 9.2, "Additional mathematical
         // operations", which recommends `pow` and lists its special values: `pow(x, ±0)` is 1
         // for every `x`, a NaN included, and `pow(+1, y)` is 1 for every `y`, a NaN included.
-        // How checked, 2026-11-20: the section number and title against the contents in the
-        // publisher's preview of ISO/IEC 60559:2020; the two special values are from memory
-        // (the standard is paywalled and was not read), and Rust's `powf` gives both (C99
-        // Annex F.9.4.4 states them too, also from memory). Departure: Zed gives NaN for both,
+        // How checked, 2026-11-20: the 2019 section number and title against the contents in
+        // the publisher's preview of ISO/IEC 60559:2020 (the 2019 text itself was not readable,
+        // see the `sqrt` rule); the two special values in the 2008 edition (PDF, Sci-Hub,
+        // verification only), section 9.2.1, "Special values", p. 44: "pow (x, ±0) is 1 for any
+        // x (even a zero, quiet NaN, or infinity)" and "pow (+1, y) is 1 for any y (even a quiet
+        // NaN)"; Rust's `powf` gives both. C99 Annex F.9.4.4 states them too, from memory, not
+        // read. Departure: Zed gives NaN for both,
         // on purpose. Tests: `l01_36_cranelift::pow_nan` and `l01_39_reduced_product::pow_nan`,
         // which check that both cases give NaN here; a wrong memory of the standard would not
         // change what they check.

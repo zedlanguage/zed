@@ -172,8 +172,14 @@ static TEXT: std::sync::LazyLock<TextState> = std::sync::LazyLock::new(TextState
 /// a [`TextMap`]'s or [`TextSet`]'s own, takes [`step`] of the seed and the number of states its
 /// thread made before, so that two maps still differ in order: with one hash function for every
 /// table, one map's keys inserted into another in the first map's order fill the second's
-/// slots in order, a quadratic case (from memory, not rechecked: rust-lang/rust issue 36481,
-/// 2016, "HashMap is accidentally quadratic", fixed by a seed per map). Unset, as in every run
+/// slots in order, a quadratic case: rust-lang/rust issue 36481, 2016, "Exposure of HashMap
+/// iteration order allows for O(n²) blowup" (read 2026-11-20 through the GitHub API, the issue
+/// body): merging one map into another by `extend` took "0.4s" when the second map was
+/// shuffled and "40.s" when it was not. The issue is still open, but the standard library's
+/// `RandomState::new` (library/std/src/hash/random.rs at 4294891f4, read 2026-11-20) says "Later
+/// in #36481 it was discovered that exposing a deterministic iteration order allows a form of
+/// DOS attack. To counter that we increment one of the seeds on every RandomState creation";
+/// the per-thread count of states mixed by [`step`] here is the same remedy. Unset, as in every run
 /// that is not a test, each seed is drawn at random. A value that does not parse stops the run.
 /// The tests `text_maps_reach_no_result_at_any_seed_*` (tests/steps/m0_12_refusal_census/
 /// seeds.rs) check programs under several seeds and compare their output byte for byte.
@@ -207,8 +213,11 @@ pub fn text_hasher() -> <TextState as std::hash::BuildHasher>::Hasher {
 /// bytes and "ending with a byte encoding the positive integer b mod 256") is xored into `v3`,
 /// then `c` SipRounds of add-rotate-xor, then xored into `v0`; at the end "SipHash-c-d xors the
 /// constant ff to the state: v2 ⊕= ff", `d` SipRounds run, and the hash is `v0 ^ v1 ^ v2 ^ v3`.
-/// The paper's "fast proposal is thus SipHash-2-4"; the standard library takes `c = 1, d = 3`
-/// (its own documentation, from memory, not checked); here the key is `k0 = k1 = 0`, so the
+/// The paper's "fast proposal is thus SipHash-2-4"; the standard library takes `c = 1, d = 3`:
+/// library/std/src/hash/random.rs at 4294891f4 (read 2026-11-20) has `pub struct
+/// DefaultHasher(SipHasher13)` and `DefaultHasher::new` is `SipHasher13::new_with_keys(0, 0)`,
+/// though its documentation says "The internal algorithm is not specified, and so it and its
+/// hashes should not be relied upon over releases"; here the key is `k0 = k1 = 0`, so the
 /// hash is a fixed function, not a PRF: it keeps the mixing, not the secret. Test:
 /// `the_fixed_and_digest_hashes_are_the_ones_they_replaced` checks it is `DefaultHasher::new`,
 /// not that that is SipHash-1-3. It reads a value's bytes as one stream, so a text hashes as its

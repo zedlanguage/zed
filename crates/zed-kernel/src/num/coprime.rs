@@ -48,9 +48,15 @@
 //! coprime base of `S` inside its closure, so `cb S`, which is the step 18.1 rests on.
 //!
 //! Complexity tradeoff: factor refinement (Bach, Driscoll and Shallit, "Factor refinement", J.
-//! Algorithms 15(2), 1993, pp. 199-222, doi:10.1006/jagm.1993.1038, Crossref metadata only,
-//! not read) splits each new number against every element of the base it meets, O(k^2) gcds
-//! for `k` elements, as for `k` distinct primes, each tried against all before it. Bernstein's
+//! Algorithms 15(2), 1993, pp. 199-222, doi:10.1006/jagm.1993.1038; sections 1 and 2 read
+//! 2026-11-20, PDF page images, LibGen, verification only; the later sections not read). Its
+//! method, p. 201: "given m = m1 m2, we compute d = gcd(m1, m2) and write m = (m1/d)(d^2)(m2/d).
+//! This process is then continued until all factors are relatively prime. A similar method is
+//! used in the case where there are more than two inputs"; its bound, pp. 201-202,
+//! "O((log m)^2) bit operations" in "the naive arithmetic model" (abstract, p. 199), quadratic
+//! in the bits. Counted in gcds, each new number is split against every element of the base
+//! it meets, O(k^2) gcds for `k` elements, as for `k` distinct primes, each tried against all
+//! before it (this count is ours, not the paper's). Bernstein's
 //! 17.3 costs about `(lg z) mu(lg z)` times a polynomial of degree 4 in `lg lg z` a merge
 //! (Theorem 17.4). The merge here costs two splits, each O(M(N) log N log k) on the kernel's
 //! trees for `N` bits in all: a level of the descent holds each element of the base split

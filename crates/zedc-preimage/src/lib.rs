@@ -61,8 +61,10 @@
 //! - P. Dietz and D. Sleator, "Two algorithms for maintaining order in a list", STOC 1987,
 //!   pp. 365-372, doi:10.1145/28395.28434; M. A. Bender, R. Cole, E. D. Demaine,
 //!   M. Farach-Colton and J. Zito, "Two simplified algorithms for maintaining order in a list",
-//!   ESA 2002, LNCS, pp. 152-164, doi:10.1007/3-540-45749-6_17: order maintenance by relabeling
-//!   the smallest enclosing range whose density is under a threshold that grows geometrically.
+//!   ESA 2002, LNCS, pp. 152-164, doi:10.1007/3-540-45749-6_17 (read 2026-11-20, PDF, the
+//!   authors' copy): order maintenance by relabeling the smallest enclosing range of `2^i` tags
+//!   whose density is at most `τ_i = T^{-i}`, `1 < T < 2`, a threshold that falls geometrically
+//!   as the range doubles (section 3); quoted at `product.rs`, impl `Potential`, `rank_after`.
 //! - J. Holm, K. de Lichtenberg and M. Thorup, "Poly-logarithmic deterministic fully-dynamic
 //!   algorithms for connectivity, minimum spanning tree, 2-edge, and biconnectivity", J. ACM
 //!   48(4), 2001, pp. 723-760, doi:10.1145/502090.502095 (named as not used).

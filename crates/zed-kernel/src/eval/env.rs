@@ -22,8 +22,14 @@ use std::rc::Rc;
 // with dropping the leaves, 15% of a law test (callgrind, law_04). Used: an AVL tree of one
 // binding per node behind `Rc`. The tree: G. M. Adel'son-Vel'skii and E. M. Landis, "An
 // algorithm for the organization of information", Soviet Math. Doklady 3:1259-1263, 1962 (no
-// DOI; from memory, not checked: no copy found): the heights of a node's two subtrees differ by
-// at most one, restored after an insert by one or two rotations, so the height is O(log n).
+// DOI; the Russian original, Dokl. Akad. Nauk SSSR 146(2):263-266, 1962, read 2026-11-20, PDF,
+// Math-Net.Ru; the English translation not read): p. 263, an admissible tree is one where "for
+// each cell the length of the left branch differs from the length of the right by at most
+// one" (translated here); Lemma 1, p. 264, the longest branch of an admissible tree of N cells
+// is at most (3/2) log2(N + 1); pp. 265-266, after an insert the tree is rebuilt at the lowest
+// cell whose long branch grew to 2 longer than its short one, in one of three cases up to
+// symmetry (Fig. 3, 4), "a constant number of actions", which are the single and double
+// rotations here. So the height is O(log n).
 // Path copying: Driscoll, Sarnak, Sleator and Tarjan, "Making data structures persistent", J.
 // Comput. System Sci. 38(1):86-124, 1989, doi:10.1016/0022-0000(89)90034-2, §4 p. 116, which
 // credits it to Myers and others: "copying the entire access path and all other changed nodes

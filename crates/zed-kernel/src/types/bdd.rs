@@ -1859,8 +1859,12 @@ impl<A: Literal> Part<A> {
         let mut known: Vec<Option<bool>> = vec![None; exprs.len()];
         // Each expression after its parts (Kahn's order, last ready first: A. B. Kahn,
         // "Topological sorting of large networks", Comm. ACM 5(11):558-562, 1962,
-        // doi:10.1145/368996.369025, Crossref checked 2026-11-20, text not obtained; the
-        // method, take a node with no unplaced predecessor until none is left, is from memory.
+        // doi:10.1145/368996.369025, read 2026-11-20, PDF, Sci-Hub, verification only. P. 559:
+        // "a list of all unique events with a count of the number of immediate predecessors";
+        // events whose count is zero are numbered, and "their successors now have one less
+        // predecessor outstanding". Departure: Kahn finds the zeros by searching the whole
+        // count list again on each pass, one pass per reversal on a path; `zed_graph::kahn`
+        // keeps the ready nodes in a list instead, so each node and arc is handled once.
         // `zed_graph::kahn` is the one copy; its test is
         // `order::tests::each_ready_set_gives_its_own_topological_order`).
         let mut ready: Vec<usize> = zed_graph::sources(&waiting).collect();

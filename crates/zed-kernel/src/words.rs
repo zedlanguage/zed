@@ -89,8 +89,13 @@ pub(crate) fn word(p: Prim, x: &Value) -> Result<Value, KernelError> {
         // Citation: IEEE Std 754-2019, doi:10.1109/IEEESTD.2019.8766229, section 5.4.2,
         // "Conversion operations for floating-point formats", rounded by roundTiesToEven
         // (section 4.3; the full comment on the rounding rules is in `num.rs`, enum
-        // `Rounding`). Subsection 5.4.2's number and title are from memory; the contents page
-        // of the preview lists sections only to the second level.
+        // `Rounding`). The 2019 text was not readable (see the `sqrt` rule in `eval.rs`);
+        // read 2026-11-20, PDF, in the 2008 edition, doi:10.1109/IEEESTD.2008.4610935,
+        // subsection 5.4.2, p. 22, there titled "Conversion operations for floating-point
+        // formats and decimal character sequences": convertFormat "to a narrower precision in
+        // the same radix ... shall be rounded as specified in Clause 4", and 4.3.1, p. 16, an
+        // exact result of magnitude at least b^emax (b − ½ b^(1−p)) "shall round to ∞ with no
+        // change in sign".
         (Prim::CastF32, Value::Float(f)) => Value::float32(f.get() as f32),
         (Prim::CastInt | Prim::CastRat | Prim::CastF64 | Prim::CastF32, _) => {
             if x.number_kind().is_none() {

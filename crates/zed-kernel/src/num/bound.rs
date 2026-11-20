@@ -272,7 +272,9 @@ fn log2_sum(x: &Product<'_>) -> Option<(f64, usize)> {
 /// of Numerical Algorithms", 2nd ed., SIAM, 2002, doi:10.1137/1.9780898718027, section 4.2
 /// (recursive summation, `|E_n| <= gamma(n - 1) sum |x_i|`; `gamma(n) = nu / (1 - nu)` is
 /// defined in section 3.1). The DOI, title and year were checked on Crossref 2026-11-20; the
-/// section numbers and the bound are from memory, not checked, as the book was not obtained.
+/// section numbers and the bound are from memory, not checked, as the book was not obtained
+/// (2026-11-20: Sci-Hub has no copy; LibGen has no record under the DOI, and its copy found by
+/// title, a DjVu, came back as "503 Service Temporarily Unavailable").
 /// The bound is also the plain one: each of the `N - 1` additions rounds by at most `u` on a
 /// partial sum at most `S`. `the_f64_check_needs_its_margin` shows a margin is needed (with
 /// none, some verdicts are wrong); no test shows this margin is enough, which rests on the

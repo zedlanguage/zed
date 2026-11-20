@@ -2165,14 +2165,19 @@ type ResidueValue = ((u64, u64), BigInt);
 /// Sources: P. Raghavan, "Probabilistic construction of deterministic algorithms:
 /// approximating packing integer programs", J. Comput. System Sci. 37(2):130-143, 1988,
 /// doi:10.1016/0022-0000(88)90003-7; D. Hunter, "An upper bound for the probability of a
-/// union", J. Appl. Probab. 13(3):597-603, 1976, doi:10.2307/3212481. Both checked in Crossref
-/// 2026-11-20; neither text was obtained (the free copy of Raghavan's paper came back as a web
-/// page, and no free copy of Hunter's was found), so the following is from memory, not
-/// checked. Raghavan fixes the random choices one at a time, each to the value that keeps an
-/// upper bound on the conditional probability of failure (the pessimistic estimator) from
-/// rising. Hunter bounds the probability of a union by the sum of the events' probabilities
-/// less the probabilities of the pairwise meets along the edges of a spanning tree. Departure:
-/// only one edge is kept, and the proof below does not rest on either paper. Tests:
+/// union", J. Appl. Probab. 13(3):597-603, 1976, doi:10.2307/3212481. Both read 2026-11-20,
+/// PDF, verification only (Raghavan from LibGen, Hunter from Sci-Hub). Raghavan, section 2,
+/// p. 135: with `U` an efficiently computed upper bound on the conditional probability of
+/// failure that satisfies (2.3), `U(q_1..q_{j-1}) ≥ min{U(.., 1), U(.., 0)}`, "for j = 1 to r,
+/// assign to q_j that value which minimizes U_{j+1}(q_1, ..., q_{j-1}, q_j)"; "We call this
+/// the method of pessimistic estimators ... If we could find a pessimistic estimator such that
+/// U(root) < 1, we are guaranteed to succeed." Hunter, section 2, pp. 598-600: (2.1),
+/// `P(∪A_i) ≤ Σ P(A_i) − Σ_{i≥2} P(A_(i) A_i)` with each `(i) < i`, and Theorem 1, a set of
+/// `k − 1` meets may be used there "if and only if it forms a spanning tree of the nodes
+/// {A_i}". Departures: the choices here are residues, not bits, and each is the one of least
+/// expectation, which satisfies (2.3) since an average is at least its least term; only one
+/// edge is kept, a spanning forest of one edge, which (2.1) allows since dropping a subtracted
+/// term only raises the bound; the proof below does not rest on either paper. Tests:
 /// `the_residue_length_agrees_with_a_scan` and
 /// `greedy_length_handles_three_primes_disjoint_pairs_and_deep_trees` in `empty/tests.rs`.
 ///
@@ -16088,10 +16093,12 @@ fn component_carrier(f: &Part<Row>, j: usize, unfold: bool) -> Option<(u16, bool
 // zed-kernel suites pass with the masks). Exact emptiness of a meet of cyclic types is
 // tree-automata intersection, EXPTIME-complete in the number of conjuncts, left to the search
 // (H. Seidl, "Haskell overloading is DEXPTIME-complete", Inform. Process. Lett. 52(2):57-60,
-// 1994, doi:10.1016/0020-0190(94)00130-8; Crossref and text checked 2026-11-20: Theorem 4
-// shows that emptiness of the intersection of a sequence of deterministic top-down tree
-// automata is DEXPTIME-hard. Membership in EXPTIME, by building the product automaton, is not
-// stated there and is from memory, not checked against a source); directional single-spine
+// 1994, doi:10.1016/0020-0190(94)00130-8; read 2026-11-20, PDF, LibGen, verification only:
+// Theorem 4, p. 59, "The emptiness problem for the intersection of a sequence of DTTAs is
+// DEXPTIME-hard". Membership follows from Theorem 3, p. 59, though the paper does not state it
+// for intersections: part (2) turns a sequence of DTTAs into a signature in polynomial time,
+// part (3) turns a signature and class into one DTTA in exponential time, and "for languages
+// defined by DTTAs, emptiness is decidable in polynomial time"); directional single-spine
 // `overlaps` merged `M0` with `int` when reversed on seed 1865.
 fn disjoint_top_carriers(ts: &[Type]) -> bool {
     if ts.len() < 2 {

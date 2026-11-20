@@ -154,7 +154,9 @@
 //!   integer output as fast as input with "D. Bernstein's scaled remainder tree \[21\] and the
 //!   middle product". This file does not use the scaled tree; it divides by Newton reciprocals.
 //! - D. E. Knuth, The Art of Computer Programming, vol. 2, 3rd ed., Addison-Wesley, 1997,
-//!   §4.3.1, Algorithm D (long division). From memory, not checked: the book was not read.
+//!   §4.3.1, Algorithm D (long division). From memory, not checked: the book was not read
+//!   (2026-11-20: no DOI, no free copy; LibGen lists the 3rd edition, and its file server
+//!   answered "error code: 504" for each copy tried).
 //! - J. W. Cooley, J. W. Tukey, "An algorithm for the machine calculation of complex Fourier
 //!   series", Math. Comp. 19(90):297-301, 1965, doi:10.1090/S0025-5718-1965-0178586-1
 //!   (read: the radix-2 case, equations (14)-(20), and (22)): "The algorithm with r = 2 is
@@ -166,11 +168,13 @@
 //!   [`Field::forward`] does this over the integers modulo a prime in place of the complex
 //!   numbers.
 //! - P. L. Montgomery, "Modular multiplication without trial division", Math. Comp.
-//!   44(170):519-521, 1985, doi:10.1090/S0025-5718-1985-0777282-X (Crossref checked; the text
-//!   was not obtained, so the sketch is from memory, not checked): with `R = 2^64` and
-//!   `N' = -N^-1 mod R`, `REDC(T) = (T + (T N' mod R) N) / R` is `T R^-1 mod N` up to one
-//!   subtraction of `N`. [`Field::mul`] is REDC of `a b` with `neg_inv` as `N'`, ending with
-//!   that subtraction; it departs by taking `a, b < 2p`, which `4p < 2^64` allows.
+//!   44(170):519-521, 1985, doi:10.1090/S0025-5718-1985-0777282-X (read 2026-11-20, PDF,
+//!   Sci-Hub, verification only; the AMS copy is behind a browser check). Section 1, p. 519:
+//!   with `R R^-1 - N N' = 1`, "function REDC(T): m ← (T mod R) N' mod R; t ← (T + mN)/R; if
+//!   t ≥ N then return t - N else return t", for `0 ≤ T < RN`, since then "0 ≤ t < 2N". Here
+//!   `R = 2^64` and `N' = -N^-1 mod R`. [`Field::mul`] is REDC of `a b` with `neg_inv` as
+//!   `N'`, ending with that subtraction; it departs by taking `a, b < 2p`, so `T < 4p^2`, which
+//!   is below `RN = 2^64 p` because `4p < 2^64`, and the paper's bound still holds.
 //! - D. Harvey, "Faster arithmetic for number-theoretic transforms", J. Symbolic Comput.
 //!   60:113-119, 2014, doi:10.1016/j.jsc.2013.09.002 (Crossref and the text checked). Its
 //!   Algorithm 3, the modified Shoup butterfly, takes `X, Y` in `[0, 2p)` and returns
@@ -181,9 +185,13 @@
 //!   inverse butterfly, holds values in `[0, 4p)`. [`Field::forward`] takes values below `4p`
 //!   and returns them below `2p`.
 //! - H. L. Garner, "The residue number system", IRE Trans. Electronic Computers
-//!   EC-8(2):140-147, 1959, doi:10.1109/TEC.1959.5219515 (Crossref checked; the text was not
-//!   obtained, so the attribution of the mixed-radix form to this paper is from memory, not
-//!   checked): a number known by its residues modulo `p0, p1, p2` is `v0 + v1 p0 + v2 p0 p1`,
+//!   EC-8(2):140-147, 1959, doi:10.1109/TEC.1959.5219515 (read 2026-11-20, PDF, LibGen,
+//!   verification only). P. 145, eqs. (28)-(36): the residue code is converted "to a
+//!   nonconsistently based polynomial number representation by means of residue arithmetic",
+//!   `S = a_t + m_t {d_t + m_(t-1) [d_(t-1) + ...]}` (35), each digit found from the ones
+//!   before with "the multiplicative inverse of m_t with respect to base m_i" (29)-(30). In
+//!   this file's terms: a number known by its residues modulo `p0, p1, p2` is
+//!   `v0 + v1 p0 + v2 p0 p1`,
 //!   each `v_i < p_i` found from the ones before by one product with a fixed inverse; this is
 //!   [`garner`], with its constants in [`Garner`].
 //! - J. Stein, "Computational problems associated with Racah algebra", J. Comput. Phys.
@@ -193,7 +201,11 @@
 //!   halvings at a time from the low 128 bits as a 2 by 2 matrix, the 2-adic analog of
 //!   Lehmer's method below, and applying it to the full words in one pass.
 //! - D. H. Lehmer, "Euclid's algorithm for large numbers", Amer. Math. Monthly 45(4):227-233,
-//!   1938, doi:10.1080/00029890.1938.11990797 (Crossref checked; the text was not read).
+//!   1938, doi:10.1080/00029890.1938.11990797 (read 2026-11-20, PDF, LibGen, verification
+//!   only). Pp. 228-229: "if (x0, x1) are replaced by approximate values (y0, y1), then the
+//!   first few partial quotients of x0/x1 and y0/y1 will be the same"; from them a 2 by 2
+//!   matrix of small numbers A, B is built, and "Thus far the calculation has involved only
+//!   small numbers"; then (9)-(10) apply it to the large x0, x1 at once.
 //!   Möller (above), §1.1, describes it: "Lehmer's algorithm computes the initial part of the
 //!   quotient sequence using single or double precision arithmetic on the most significant
 //!   words of the input, and applies several quotients at once to the multi-precision
@@ -201,9 +213,17 @@
 //! - A. L. Toom, "The complexity of a scheme of functional elements realizing the
 //!   multiplication of integers", Soviet Math. Dokl. 3:714-716, 1963, and S. A. Cook, "On the
 //!   minimum computation time of functions", PhD thesis, Harvard University, 1966. Neither has
-//!   a DOI and neither was read, so the details are from memory, not checked: Toom-3 splits
-//!   each factor in three parts, evaluates at five points, multiplies pointwise and
-//!   interpolates, `n^log3(5)`. Not used here; it is num-bigint's product, modeled by
+//!   a DOI. Toom's Russian original, Dokl. Akad. Nauk SSSR 150(3):496-498, 1963, read
+//!   2026-11-20, PDF, Math-Net.Ru (paper 27978); section 2, pp. 496-497 (translated here): the
+//!   `n` bits of `N` are cut into `r + 1` parts `a_0..a_r` of `q` bits, `P(x) = Σ a_i x^i`, so
+//!   `N = P(2^q)`; part I computes `P(i)` for every integer `-r <= i <= r`, part II squares
+//!   these `2r + 1` values, part III, "knowing the values of the polynomial P^2(x) of degree
+//!   2r at 2r + 1 points, computes its coefficients by the known formulas", part IV evaluates
+//!   at `2^q`. Toom squares (a product follows from squares) and lets `r` grow with `n`, for
+//!   a size below `n c^sqrt(log n)`. Toom-3 is his scheme for two numbers at a fixed `r = 2`:
+//!   three parts, five points, `n^log3(5)`; that form is from memory, not checked against a
+//!   source. Cook's thesis was not read (no copy found; a guessed author-page URL returned a
+//!   web page). Not used here; it is num-bigint's product, modeled by
 //!   [`TOOM_COST`] and [`TOOM_POWER`].
 //!
 //! Tests: `tests::products_agree_with_num_bigint` and

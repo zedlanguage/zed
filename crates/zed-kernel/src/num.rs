@@ -64,8 +64,15 @@ use zed_numtheory::{factor, gcd_big_u64, is_prime, mul_mod, pow_mod_big, rem_big
 // roundTiesToAway delivers, of two equally near, the one larger in magnitude. Here the
 // "representable values" are the whole numbers, so even means an even whole number. How
 // checked, 2026-11-20: the section number and title against the contents in the publisher's
-// preview of ISO/IEC 60559:2020 (the same text); the standard is paywalled and was not read,
-// so the definitions, and their place in subsection 4.3.1, are from memory. Departure: the
+// preview of ISO/IEC 60559:2020 (the same text). The 2019 text was not readable (see the
+// `sqrt` rule in `eval.rs`); the definitions were read 2026-11-20, PDF, in the 2008 edition,
+// doi:10.1109/IEEESTD.2008.4610935, subsection 4.3.1, "Rounding-direction attributes to
+// nearest", p. 16: roundTiesToEven, "if the two nearest floating-point numbers bracketing an
+// unrepresentable infinitely precise result are equally near, the one with an even least
+// significant digit shall be delivered"; roundTiesToAway, "the one with larger magnitude".
+// The working group's list of 2019 changes says only that the roundTiesToEven definition
+// was "extended to cover the unusual case when both nearest neighbors are odd", which cannot
+// happen for whole numbers. Departure: the
 // standard rounds to a float format; `Rat::round_whole` rounds an exact rational to an integer,
 // so no precision or overflow enters. Tests: `l01_18_scalar_interpreter::rounding`, which
 // checks ties at both signs under both rules (it catches a tie sent the wrong way, not a

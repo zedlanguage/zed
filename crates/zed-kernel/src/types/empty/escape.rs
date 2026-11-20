@@ -485,8 +485,12 @@ impl Nodes {
                     // their equivalence directly. Hopcroft and Karp's union-find test of
                     // automaton equivalence (J. E. Hopcroft and R. M. Karp, "A linear algorithm
                     // for testing equivalence of finite automata", Tech. Rep. 71-114, Cornell
-                    // University, 1971; from memory, not checked) decides the general case and
-                    // is not used here.
+                    // University, 1971, hdl:1813/5958; read 2026-11-20, PDF page images, Cornell
+                    // eCommons: the abstract, "An algorithm is given for determining if two
+                    // finite automata with start states are equivalent", and section 1, which
+                    // builds it on "a linear list merging algorithm" of MERGE and FIND
+                    // instructions, that is union-find) decides the general case and is not
+                    // used here.
                     if let Some((_, existing_i, ref existing_h)) = self.carrier {
                         if existing_h.p().ints.cmp(&h.p().ints).is_eq() {
                             self.of.insert(cur, existing_i);

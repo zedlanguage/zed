@@ -44,8 +44,13 @@ use zed_collections::index::to_u32;
 /// Why: dropping every arm that a union reaches through another path is the transitive
 /// reduction of that graph, which costs as much as its transitive closure (A. V. Aho, M. R.
 /// Garey and J. D. Ullman, "The transitive reduction of a directed graph", SIAM J. Comput.
-/// 1(2):131-137, 1972, doi:10.1137/0201008; Crossref checked 2026-11-20, the text not read, so
-/// the equivalence is from memory, not checked), O(n·m) or a matrix product; even the
+/// 1(2):131-137, 1972, doi:10.1137/0201008; read 2026-11-20, PDF, LibGen, verification only.
+/// P. 136: "the number of steps ... needed to compute the transitive reduction of a graph with
+/// n vertices differs by at most a constant factor from the time needed to perform Boolean
+/// matrix multiplication or to compute the transitive closure", Theorems 3 and 4, pp.
+/// 136-137, for algorithms of at least O(n^2) steps on an adjacency matrix. The O(n·m) bound
+/// is the closure by one search from each node, not from the paper), O(n·m) or a matrix
+/// product; even the
 /// one-level case, an arm of a union that is also an arm of one of its union arms, is triangle
 /// detection. Trigger: a name used in two places, reached by a union through it and directly, as in
 /// `A = B | (A, B) | (int, (int) -> (int) -> B) | (B, A) | ((int) -> B, A | B)` with
@@ -162,7 +167,8 @@ pub(super) fn absorb(b: &Bes, same: &[u32], union: &[bool]) -> Option<Bes> {
 
 /// The union graph's nodes, each after its parents (Kahn's algorithm, first ready first, by
 /// `zed_graph::kahn`: A. B. Kahn, Comm. ACM 5(11):558-562, 1962, doi:10.1145/368996.369025,
-/// Crossref checked 2026-11-20, text not obtained, the method from memory); the
+/// read 2026-11-20, PDF; the method, p. 559, and how `zed_graph::kahn` departs from it, at the
+/// expression order in `bdd.rs`); the
 /// graph is acyclic, since a member's body is contractive.
 fn topological(down: &[Vec<u32>], up: &[Vec<u32>]) -> Vec<usize> {
     let mut waits: Vec<usize> = up.iter().map(Vec::len).collect();

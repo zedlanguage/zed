@@ -3312,7 +3312,20 @@ impl Potential {
     /// smallest range of `2^i` ranks aligned at a multiple of `2^i` around `after` that holds
     /// at most `1.6^i` components, `c` counted, take ranks spread evenly over it (Bender, Cole,
     /// Demaine, Farach-Colton and Zito, "Two simplified algorithms for maintaining order in a
-    /// list", ESA 2002). Returns the number of other components ranked again.
+    /// list", ESA 2002, LNCS 2461, pp. 152-164, doi:10.1007/3-540-45749-6_17; read 2026-11-20,
+    /// PDF, the authors' copy at erikdemaine.org/papers/DietzSleator_ESA2002/paper.pdf).
+    /// Section 3: "Let T be a constant between 1 and 2. For a range of size 2^0 ... the overflow
+    /// threshold τ_0 is 1. Otherwise, for ranges of size 2^i, τ_i = τ_{i-1}/T = T^{-i}. We say
+    /// that a range is in overflow if its density is above the overflow threshold", and
+    /// "relabel the smallest enclosing range that is not overflowing". A range of `2^i` ranks
+    /// at density at most `T^{-i}` holds at most `(2/T)^i` components, so `1.6^i` here is
+    /// `T = 1.25`. Lemma 3 gives `O(1)` amortized relabels per enclosing range, "at least
+    /// (2 - T/2)(2/T)^i insertions" between two relabels of one range, and `O(log n)` in all
+    /// over the `log u` enclosing ranges. Departures: the paper picks the tag universe `u`
+    /// from `n` and rebuilds when `n` leaves `n/2..2n` (Lemma 2), so that the root never
+    /// overflows; here `u = RANKS` is fixed and the root is taken whatever it holds (the
+    /// tradeoff note below); `c` is counted in the range before it is placed, which is at least
+    /// as sparse a stop as the paper's. Returns the number of other components ranked again.
     // Complexity tradeoff: naive version, the ranks of the components after `after` each
     // raised by one, O(n log n) a rank given, and ranks of `i64` given only before the first
     // or after the last (as before item PERF-pk-one-sided), O(1) but unable to put a component

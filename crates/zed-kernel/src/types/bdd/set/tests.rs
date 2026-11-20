@@ -21,7 +21,12 @@
 //! binary search trees", J. ACM 33(3), 489-498, 1986, doi:10.1145/5925.5930, as Seidel and
 //! Aragon quote it in their section 4: "h_n / ln n -> γ almost surely, as n -> ∞, where
 //! γ = 4.31107... is the unique solution of γ ln(2e/γ) = 1 with γ >= 2". Checked 2026-11-19
-//! against Seidel and Aragon's text and Crossref; Devroye's own text was not read. The full
+//! against Seidel and Aragon's text and Crossref. Devroye read 2026-11-20, PDF, LibGen,
+//! verification only: Theorem 5.1, p. 494, "Let c = 4.31107... be the unique solution of the
+//! equation c log(2e/c) = 1, c ≥ 2. Then: A. H_n/log n → c in probability"; the almost-sure
+//! limit is Pittel's, p. 495, "Pittel [11] has shown that H_n/log n → α almost surely for some
+//! constant α. In view of Theorem 5.1, this constant is α = c". The tests use only the
+//! constant, as a reference height, not the mode of convergence. The full
 //! citation of Seidel and Aragon, and the quotes of Lemmas 4.3 and 6.1, are in module
 //! `crate::priority`; Lemma 4.8 is quoted above, checked against their text the same day.)
 //!

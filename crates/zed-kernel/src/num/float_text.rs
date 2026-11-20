@@ -26,8 +26,15 @@
 //! are compared with the decimal digits of the halfway point between the two floats.
 //!
 //! Writing is Giulietti's Schubfach (R. Giulietti, "The Schubfach way to render doubles", 2020,
-//! a preprint with no DOI or arXiv id, the method of OpenJDK's `DoubleToDecimal`; from memory,
-//! not checked: neither the preprint nor the OpenJDK source was read for this comment), with
+//! a preprint with no DOI or arXiv id, the method of OpenJDK's `DoubleToDecimal`; the
+//! 2022-03-20 version read 2026-11-20, PDF, from the Google Drive link that `DoubleToDecimal`
+//! cites, and OpenJDK jdk-21+35's `DoubleToDecimal.java` read the same day. Section 3, Figure 2,
+//! p. 4: among the decimals that round to `v`, those of the least length `m`, or of length up
+//! to `M` when `m < M`; "Define dv to be the D-ary in T closest to v. Or if there are two such
+//! D-aries, let dv be the one with the even significand"; section 3.3, p. 4, Java asks for
+//! `M = 2`, "Closer, albeit longer decimals of length up to 2 are preferred over shorter but
+//! farther ones". The Java source breaks the tie the same way, `cmp < 0 || cmp == 0 &&
+//! (s & 0x1) == 0 ? s : t`, "See section 9.3 of [1]"), with
 //! its powers of ten taken from the same table, changed for the rule of sec:reduction: the
 //! shortest digits, and of two equally near the larger magnitude, where Schubfach takes the
 //! even one; and one significant digit where Java asks for two. Tests: `shown_as_before_on_*`
@@ -47,10 +54,15 @@ use pow5::POW5;
 /// of binary64, binary32 and binary16 are those of IEEE Std 754-2019,
 /// doi:10.1109/IEEESTD.2019.8766229, section 3.6, "Interchange format parameters"; bfloat16 is
 /// not in the standard. Section number and title checked 2026-11-20 against the contents in the
-/// publisher's preview of ISO/IEC 60559:2020; the table's values are from memory, those of
-/// binary64 and binary32 checked against Rust's `f64` and `f32` constants. A reading that
-/// rounds to infinity or zero follows section 5.12, "Details of conversion between
-/// floating-point data and external character sequences" (rule from memory).
+/// publisher's preview of ISO/IEC 60559:2020. The 2019 text was not readable (see the `sqrt`
+/// rule in `eval.rs`); the table was read 2026-11-20, PDF, in the 2008 edition,
+/// doi:10.1109/IEEESTD.2008.4610935, Table 3.5, p. 13: p = 11, 24, 53 and emax = 15, 127, 1023
+/// for binary16, 32 and 64, with emin = 1 − emax (3.3); binary64 and binary32 also match
+/// Rust's `f64` and `f32` constants. A reading that rounds to infinity or zero follows section
+/// 5.12, "Details of conversion between floating-point data and external character
+/// sequences": 5.12.2, p. 32, a sequence "larger in exponent range than the destination
+/// binary format ... shall be correctly rounded ... according to the applicable rounding
+/// direction", so past the largest finite value it rounds to infinity as in 4.3.1.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum FloatFormat {
     /// binary64: 53 bits of precision, exponents `-1022..=1023`.
