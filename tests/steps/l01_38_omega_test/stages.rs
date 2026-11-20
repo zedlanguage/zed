@@ -1,9 +1,12 @@
 //! The last stages of the Omega test after design R (STATUS.md, L1.38): the box of the bounds
 //! with its five points, the merging of proportional columns, and the potential of a
 //! UTVPI graph, in topological order when it has no cycle and by Goldberg and Radzik's search
-//! when it has. Their corner cases, and the scaling of each at n and 8n: rows of three terms,
-//! the coefficients' bit size, columns seen only through two aggregates, a UTVPI hub with and
-//! without cycles, and three variables in many rows.
+//! when it has (A. V. Goldberg and T. Radzik, "A heuristic improvement of the Bellman-Ford
+//! algorithm", Appl. Math. Lett. 6(3):3-6, 1993, doi:10.1016/0893-9659(93)90022-f; Crossref
+//! 2026-11-20; the search is the solver's, cited there). Their corner cases, and the scaling
+//! of each at n and 8n: rows of three terms, the coefficients' bit size, columns seen only
+//! through two aggregates, a UTVPI hub with and without cycles, and three variables in many
+//! rows.
 
 use std::sync::Arc;
 
@@ -377,12 +380,29 @@ fn two_way_path(n: usize) -> Rows {
 /// Rows of one or two unit terms and their constants, as the parity test takes them.
 type Rows = Vec<(Vec<(usize, Int)>, Int)>;
 
-/// BAD-GOR of Cherkassky and Goldberg as Cassis et al. 2025 (arXiv 2502.11999, appendix) give
-/// it, over `2k + 1` variables, its nodes 1 to 2k + 1 at 0 to 2k, an edge `u → v` of weight `w`
-/// the row `x[v] <= x[u] + w`. Augmented as there: 5m random rows of one weight above every
-/// path's, and the variables renamed by a random permutation, from `seed`. On it the
-/// topological order of the edges of negative reduced cost moves one step per pass of
-/// Goldberg and Radzik's search (COMPLEXITY.md C24).
+/// BAD-GOR of B. V. Cherkassky, L. Georgiadis, A. V. Goldberg, R. E. Tarjan and R. F. Werneck,
+/// "Shortest-path feasibility algorithms: an experimental evaluation", ACM J. Exp. Algorithmics
+/// 14, 2009, doi:10.1145/1498698.1537602, as A. Cassis, A. Karrenbauer, A. Nusser and
+/// P. L. Rinaldi, "Algorithm engineering of SSSP with negative edge weights", arXiv:2502.11999,
+/// 2025, appendix "BAD-GOR", give it: "a path P of k vertices 1, ..., k, a vertex k+1 with k
+/// incoming and k outgoing edges, and k vertices k+2, ..., 2k+1", with w(1, 2) = -3k,
+/// w(1, k+1) = -1, w(i, i+1) = 1 for 2 <= i <= k-1, w(k+1, k+1+i) = -1 for 1 <= i <= k and
+/// w(i, k+1) = 2(k-i) for 2 <= i <= k. Here over `2k + 1` variables, its nodes 1 to 2k + 1 at
+/// 0 to 2k, an edge `u → v` of weight `w` the row `x[v] <= x[u] + w`. Augmented as there (their
+/// section "Augmented BAD instances"): 5m random rows of one weight above every path's, and the
+/// variables renamed by a random permutation, from `seed`. Departure: their extra edges are
+/// distinct and drawn by rejection sampling, while [`augmented`] keeps repeated pairs and drops
+/// a pair `u == v`, so a few rows fewer than 5m; the heavy weight makes those rows idle
+/// either way, so the instance's paths are the same. On it the topological order of the edges
+/// of negative reduced cost moves one step per pass of Goldberg and Radzik's search
+/// (COMPLEXITY.md C24).
+///
+/// Checked 2026-11-20: Crossref for the journal paper (not read); the arXiv paper's LaTeX
+/// source read for the definition and the augmentation, and [`bad_gor_edges`] compared with it
+/// edge by edge. This comment once named the instance as Cherkassky and Goldberg's; the arXiv
+/// paper takes it from the five-author paper above. `bad_gor_edges_are_the_papers` checks the
+/// edges against the definition as quoted; it cannot check that the quote is the journal
+/// paper's, which was not read.
 pub(super) fn bad_gor(k: usize, seed: u64) -> (usize, Rows) {
     augmented(2 * k + 1, bad_gor_edges(k), seed)
 }
@@ -418,6 +438,26 @@ fn bad_gor_edges(k: usize) -> Vec<(usize, usize, i64)> {
     edges.extend((1..=k).map(|i| (k, k + i, -1)));
     edges.extend((1..k).map(|i| (i, k, 2 * (k - 1 - i) as i64)));
     edges
+}
+
+/// The edges of [`bad_gor_edges`] are BAD-GOR's as the arXiv paper defines it (see
+/// [`bad_gor`]), written from its 1-based formulas, for `k` from 3 to 9: a changed weight, a
+/// missing or extra edge, or a node off by one fails.
+#[test]
+fn bad_gor_edges_are_the_papers() {
+    for k in 3..=9i64 {
+        // The paper's nodes 1 to 2k + 1, as 0 to 2k here.
+        let e = |u: i64, v: i64, w: i64| ((u - 1) as usize, (v - 1) as usize, w);
+        let mut want = vec![e(1, 2, -3 * k), e(1, k + 1, -1)];
+        want.extend((2..=k - 1).map(|i| e(i, i + 1, 1)));
+        want.extend((1..=k).map(|i| e(k + 1, k + 1 + i, -1)));
+        want.extend((2..=k).map(|i| e(i, k + 1, 2 * (k - i))));
+        assert_eq!(want.len() as i64, 3 * k - 1, "the paper's m = 3k - 1");
+        let mut got = bad_gor_edges(k as usize);
+        got.sort_unstable();
+        want.sort_unstable();
+        assert_eq!(got, want, "k = {k}");
+    }
 }
 
 /// The edges of the fan of [`bad_gor_and_fan`] on the `2k + 2` nodes from `a`: a path of `k`
