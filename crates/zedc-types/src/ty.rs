@@ -10127,10 +10127,11 @@ impl Bound {
             // [`Comparing::search`], through [`Bound::grow`], pass `shapes = choices.bucket(g,
             // id)`, which is `groups[g].bucket(id)`, and `exact = groups[g].exact(id, ..)`, whose
             // lists [`Group::exact`] files from that same slice, shape by shape; that slice lists
-            // shapes in written order, rising (pushed by index `i` from an `enumerate`, [`Filed::new`] into [`Choices::new`]), so
-            // `binary_search` finds each `r` of it. Test: `unreached4::a_member_with_no_keyed_
-            // variable_reads_the_shapes_pinned_under_any_variable` reaches this loop; no test can
-            // reach the false branch, which is the claim.
+            // shapes in written order, rising (pushed by index `i` from an `enumerate`,
+            // [`Filed::new`] into [`Choices::new`]), so `binary_search` finds each `r` of it.
+            // Test: `unreached4::
+            // a_member_with_no_keyed_variable_reads_the_shapes_pinned_under_any_variable` reaches
+            // this loop; no test can reach the false branch, which is the claim.
             for &(r, j) in exact.get(v).into_iter().flatten() {
                 if bucket.binary_search(&r).is_ok() {
                     added.entry(r).or_default().push((j, w.clone()));
