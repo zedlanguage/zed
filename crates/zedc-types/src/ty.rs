@@ -10475,6 +10475,12 @@ fn unchosen_text(
     let own = match own {
         // A shape that files `first` under a key of its own is the first shape of its bucket,
         // so only `second` searches past a first shape, and the comparison is decided.
+        // Not proved (proofdoc4c): that it is the first of its bucket where a shape written
+        // before it has a class at the same places ([`Choices::new`] groups by them) and the
+        // same key at each; such a shape is then met first. Tests: l01_22 kinds
+        // `two_payloads_that_need_a_later_shape_of_one_key_are_refused_with_the_reason` and
+        // `a_repair_by_a_shape_of_its_own_is_offered_only_where_a_component_tells_the_two_apart`
+        // apply the repair to types with no such earlier shape, so they cannot catch that case.
         Some((Some(place), shape)) => format!(
             "give {first} a shape of its own, written just before the shape that should hold \
              it and the same as that shape except at {place}: `{shape}`, with that shape's \
@@ -22805,7 +22811,10 @@ impl Ty {
     /// the first pass of `walk` each unbounded variable is recorded and left to be printed `_`;
     /// on the second, one that stands in two places or more is written as a mark that
     /// [`defs::name_vars`] names, in one union with the names after `String`: a mark is named by
-    /// [`fresh_name`], from `T` on, which comes after `String`.
+    /// [`fresh_name`], from `T` on, which comes after `String`: every name it gives is `T`, `U`,
+    /// `V`, `W` or `T<k>` (`Names::nth`, zed-kernel `types/print/names.rs`), and each begins
+    /// with a letter after `S` in code-point order, so every mark is named after `String`
+    /// whatever names it skips.
     fn write_vars(
         &self,
         string: Option<(KType, TextPlace, bool)>,
@@ -30008,7 +30017,8 @@ pub mod r10_hash {
     /// `s` entries of the smaller of the two maps joined (`m` the larger), and one inverse
     /// modulo `P` (61 squarings) when the scale changes. Adding the smaller set to the larger
     /// is the weighted-union heuristic (Cormen, Leiserson, Rivest and Stein, *Introduction to
-    /// Algorithms*, 3rd ed., section 21.2, Theorem 21.1: with it, linked-list disjoint sets
+    /// Algorithms*, 3rd ed., MIT Press, 2009, ISBN 978-0-262-03384-8, a book with no DOI,
+    /// section 21.2, Theorem 21.1: with it, linked-list disjoint sets
     /// take `O(m + n lg n)` for `m` operations of which `n` make sets, since an element moved
     /// lands in a set at least twice the size of its old one). The sets here may share
     /// variables, which that argument does not cover: a join of two maps that share keys

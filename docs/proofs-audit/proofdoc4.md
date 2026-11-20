@@ -631,7 +631,14 @@ none is closed here.
 
 | Crate | Entries read | Found | Already there | Added or completed | Marked unproved | Corrected |
 |---|---|---|---|---|---|---|
-| zedc-types | 57 | 49 | 43 | 6 | 0 | 0 |
+| zedc-types | 129 | 107 | 94 | 10 | 3 | 0 |
+
+The three marked unproved: a034e80cd's claim is false for a written difference (red probe
+below; the fix is in zedc-check, row FAIL-ty-diff-function-rows); 27e8e2464's "equal
+signatures have equal digests" is open where one keeps a compact forward (row
+FAIL-map-chain-d6-digest owes the test); dd8b42f68's "the shape of its own is the first of its
+bucket" is open where an earlier shape has the same class places and keys (row
+PROOF-types-own-shape-first-of-bucket).
 
 | Source | Claim | Code site | Status |
 |---|---|---|---|
@@ -684,20 +691,73 @@ none is closed here.
 | 1c2b6a270 | a need field added later fails to compile in `debug_sig` | `debug_sig` (destructured with no `..`) | Already there |
 | 305ad0293 | `Sig::standing_twice` counts as the printer counts, so the two never differ | `Sig::standing_twice` | Completed: the same three steps of the print, and why neither difference (closed parts passed over; the outer names of `Sig::text_named`) changes a count; tests and what they cannot catch |
 | 4ef43bf6c | nine guards no input reaches | `Replace::made_held`, `Need::site_mut`, `fits_alone`, `Bound::pin` | Already there but `Bound::pin`: completed (both callers pass one bucket's slice and its own `exact`; the slice rises) |
+| 400b14585 | `VarBits` cost | `VarBits` | Already there; the O(n²) case of every bit is named at the site (row CK-every-bit) |
+| 6e2e39396 | a remap's rank | `NeedKind::Remap`; proof at zedc-check `Ck::remap_of` | Already there |
+| 701def5c6 | equal written ranges have one text | `impl Hash for WrittenRange` | Completed: the text is a field `Eq` compares, so equal values hash alike |
+| 875e58597 | `Sig::int_params` and its callers' filter | `Sig::int_params` | Already there |
+| 9778881e0 | `Forms::level` of nested marks | `Forms::level` | Already there |
+| a034e80cd | a row with no kernel type is kept whole: the rest may hold more, never less | `Comparing::diff`, the shape case | Marked Not proved: false for a written `a \ b`. Probe (not committed): `((int) -> int, #a \| #b) \ ((int) -> int, #a)` reads as `((int) -> int, #a \| #b)`, and `f(p: that type) = p; g() = f(p: (inc, #a))` is accepted. Sound for `is not`. Fix in zedc-check (`TypeKind::Diff`, check/mod.rs), proof7's crate: row FAIL-ty-diff-function-rows |
+| a619cb307 | `permitted` skips only where `instances` would | `permitted` | Already there |
+| a670bd1cb | `first_seen` decode condition; `held_read_places` | `Sig::first_seen`, `Settle::must_decode` | Already there |
+| a9443c314 | `found_in_nest` stop; `held_foreign_fn` | `found_in_nest`, `FwdNeed::held_foreign_fn` | Already there |
+| af8174807 | a call need's key holds no site | `NeedKind::Call` | Already there (the reach proof is zedc-check's) |
+| d20f8009e | a written range alias prints and reads back | `WrittenRange::new` | Already there |
+| 01063a0ca | `mutable_key_type` allowed: the key never changes | each `allow` site | Already there |
+| 03e64b6da | a guard's test, with control | `mod tests` | Already there |
+| 148a42eb4 | entries and folds in the order met | `NeedKind::Entries`, `NeedKind::Fold` | Already there |
+| 1d9291f72 | `accepts` skip; `fns_met` apart | `accepts`, `Domains::witness` | Already there (proofdoc3c) |
+| 22dd31a36 | `Absorb` reads as the reader reads | `Absorb`, `may_absorb` | Already there |
+| 27e8e2464 | `Domains` proofs; equal signatures have equal digests | `Domains::*`; `Pairs::fns_met`, `r10_hash` constants | `Domains` already there; the digest claim marked Not proved at both sites (row FAIL-map-chain-d6-digest): where it fails, time is lost, never a function |
+| 2e3a7b0a4 | nine cited results | each site | Already there, each with its DOI |
+| 2f99f5283 | `Same` by union-find and addresses | `Same` | Already there |
+| 47be53825 | `fixed_payload` table | `fixed_payload` | Already there; the flaw that `subtype` ignores `Sig::data` is reported as row FAIL-types-subtype-ignores-family |
+| 493ff031b | `Cx` on an explicit stack keeps order and short-circuits | `Cx` | Already there |
+| 6704ae0ff | `FwdNeed` hash reads a subset of what `==` reads | `impl Hash for FwdNeed`, `emit_bounds` | Already there |
+| 69526a75a | a call need's site | `NeedKind::Call::site` | Already there |
+| 7a54c17f9 | `recall` checks the one refusal state | `Comparing::recall` | Already there; rests on the assumption at `Cx::compared` (PROOF-sweep-zedc-types) |
+| 807260a3b | the binding's index behind an `Arc` | `impl Piece` tradeoff | Already there |
+| 811505cca | the encoder memo by address and context | `r10_hash::Encoder::memoized` | Already there |
+| 92a76ed89 | rows searched fewer than twice the rows held | `Comparing::row_in`, `split_at` | Already there; the measured part is named at the site (PERF-types-joined-split-several-differing) |
+| 9b35c8ab0 | a morphism type reads back to its arrows | `Sig::morphism` | Completed: test l01_22 `kinds::morphism_types_print_as_written_and_read_back`, and what it cannot catch |
+| 9e8f139f1 | a shared part gets one definition; linear text | `write_parts`, `Morphism` | Already there |
+| b991293a4 | Tarjan and van Leeuwen | `Same`, `Walk` | Already there, with the DOI |
+| c289ffeca | fresh names skip program names | `Scope` (proof at zed-kernel `fresh_name`) | Already there |
+| cbc003938 | `meets_here`, `near_shapes`, `Pairs::alone` | those functions | Already there |
+| d2a97b1f9 | kept memos read alike in every state | `fits_alone`, `fns_outside` | Already there |
+| e6dfb6877 | a union key or bound is parenthesized | `PrintAt::Key`, `PrintAt::Bound` | Already there |
+| eb6e0ad7f | the benchmark named | `Comparing::row_in` | Already there |
+| 06d1dc49c | `CallPath` Debug outermost first; `debug_cut` | `impl Debug for CallPath`, `debug_cut` | Already there |
+| 08d2feda8 | `closed_form` sound | `Comparing::closed_form`, `held_reading` | Already there |
+| 0de5b565c | `fits_read` names never made again | `fits_read` | Already there |
+| 205591658 | `Entries` cost | `NeedKind::Entries` | Already there |
+| 2d09ac322 | `Same` room argument | `Same`, `Lazy`, `Above` | Already there |
+| 3248fbce2 | merged forms keep the verdict | merged forms in `Forms` | Already there (proved since, every step) |
+| 3fd923c4a | `BindMap` costs | `BindMap` | Already there |
+| 453066558 | `fits_written` memo; `Forms::fns` | `fits_written`, `Forms::fns`, `held_reading` | Already there |
+| 47681f229 | `Dense` tradeoff | `Dense` | Already there |
+| 47b73bd8f | merged forms | `Forms` | Already there |
+| 620307b4c | a variable standing twice prints by name | `Walk`, `Plan`, `write_parts` | Already there |
+| 65a9230a8 | the read key holds the masks of outer names | test with control `NO_KEY_MASKS` | Already there |
+| 78f2ca158 | an answer true kept under the binding it gave | `Comparing::keep` | Already there |
+| 81f3d8487 | drop, facts and digest without recursion | `drop_types`, `Sig::held_without` | Already there |
+| 929e7e04a | free-variable weights joined smaller into larger | `r10_hash::FreeWeights`, `walk_vars`, `VarFacts::of` | Completed: the book's ISBN (no DOI) at the citation |
+| 9b5729b46 | `closed_binds` may stop at the first other variable | `closed_binds` | Already there |
+| a16eb1e6e | runs name each internal result once | `FwdNeed::materialize_result_tys` | Already there |
+| d18e52a0a | a mark is named after `String` | `Ty::write_vars` | Completed: every name `fresh_name` gives begins with `T` to `W` (`Names::nth`) |
+| dd8b42f68 | the shape of its own holds `first` and not `second`, and is the first of its bucket | `own_shape`, `unchosen_text` | The first by construction; the second marked Not proved where an earlier shape has the same class places and keys (row PROOF-types-own-shape-first-of-bucket) |
+| df3fa8308 | eight guards no input reaches | each guard | Already there |
+| e2ef08f39 | held names carried; `first_seen` premise | `VarFacts`, `Sig::first_seen`, `Need` | Already there |
+| ea2effe91 | the parameter names a call may write | `Sig::callable_names` | Already there |
+| fb5f2416f | five cost fixes | `Comparing::diff`, `Piece`, `ArrowIndex::keep_missing`, `atoms` | Already there |
 
 No code claim: bbae90d38 (the claim is zedc-check's), 0d87a73ca, 25ef78dd1, 2b3e706f1,
 444cdb15b (the claim is tested in zed-kernel), 995200322, 9d877b65c, d493d34a3 (the check is
-zedc-check's).
+zedc-check's), 65f995fee, 6945f496b, 6ebe63b42, ee79685e4, 67dd99e3a, 718e9ecda (message
+wording), 8412a61b4 and b5317f47c (tests only), 29bf6b297, 3e597380e, 4abfd2ae1 (docs; the
+checks are zedc-check's), bd7d5aa55 (the crate split: comments moved unchanged, read under the
+entries that wrote them), c1dfb00f7 (coverage tests), d6a84bc7c (the naming is zedc-check's).
 
-Not read: 400b14585 65f995fee 6945f496b 6e2e39396 6ebe63b42
-701def5c6 875e58597 9778881e0 a034e80cd a619cb307 a670bd1cb a9443c314 af8174807 d20f8009e
-ee79685e4 01063a0ca 03e64b6da 148a42eb4 1d9291f72 22dd31a36 27e8e2464 2e3a7b0a4 2f99f5283
-47be53825 493ff031b 6704ae0ff 67dd99e3a 69526a75a 718e9ecda 7a54c17f9 807260a3b 811505cca
-8412a61b4 92a76ed89 9b35c8ab0 9e8f139f1 b5317f47c b991293a4 c289ffeca cbc003938 d2a97b1f9
-e6dfb6877 eb6e0ad7f 06d1dc49c 08d2feda8 0de5b565c 205591658 29bf6b297 2d09ac322 3248fbce2
-3e597380e 3fd923c4a 453066558 47681f229 47b73bd8f 4abfd2ae1 620307b4c 65a9230a8 78f2ca158
-81f3d8487 929e7e04a 9b5729b46 a16eb1e6e bd7d5aa55 c1dfb00f7 d18e52a0a d6a84bc7c dd8b42f68
-df3fa8308 e2ef08f39 ea2effe91 fb5f2416f.
+Not read:
 
 ## proofdoc4d: zedc-check
 
