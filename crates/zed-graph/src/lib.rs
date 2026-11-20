@@ -3,12 +3,18 @@
 //!
 //! [`Search`] finds the strongly connected components of a directed graph (R. Tarjan,
 //! "Depth-First Search and Linear Graph Algorithms", SIAM Journal on Computing 1(2), 146-160,
-//! 1972), on an explicit stack in place of recursion, so a long chain of nodes cannot overflow
-//! the thread's stack. Its caller gives the edges one at a time ([`Walk`]), so the nodes may be
-//! found and numbered as the search meets them, and one search may be run again from new roots
-//! after its graph has grown. Each node and each edge is read once: O(n + e) time and O(n) space
-//! beside the graph. [`tarjan`] is the search over a graph whose nodes are `0..n` and whose edges
-//! are lists, and [`components`] and [`on_cycle`] are its two common uses.
+//! 1972, doi:10.1137/0201010), on an explicit stack in place of recursion, so a long chain of
+//! nodes cannot overflow the thread's stack. Its caller gives the edges one at a time
+//! ([`Walk`]), so the nodes may be found and numbered as the search meets them, and one search
+//! may be run again from new roots after its graph has grown. Each node and each edge is read
+//! once: O(n + e) time and O(n) space beside the graph. [`tarjan`] is the search over a graph
+//! whose nodes are `0..n` and whose edges are lists, and [`components`] and [`on_cycle`] are
+//! its two common uses. The paper keeps the nodes of the path on a stack with a low link each
+//! and completes a component when a node's low link is its own number. Checked 2026-11-20: the
+//! DOI on Crossref; the paper not read, from memory. In `tests.rs`,
+//! `components_are_the_classes_of_mutual_reach_numbered_in_reverse_topological_order` checks
+//! the components against mutual reach on random graphs, and `a_long_chain_needs_no_deep_stack`
+//! the explicit stack.
 //!
 //! It also holds the structures that searches share, each written once: [`MinHeap`], a heap
 //! that gives its least item first, and [`Dijkstra`], the search for least distances on it

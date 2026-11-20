@@ -1,6 +1,10 @@
-//! Kahn's topological order ("Topological sorting of large networks", CACM 5(11), 558-562,
-//! 1962) with the choice among ready nodes given by the caller, and the search for what a set
-//! of roots reaches, with a visited set.
+//! Kahn's topological order (A. B. Kahn, "Topological sorting of large networks", CACM 5(11),
+//! 558-562, 1962, doi:10.1145/368996.369025: place a node that waits on nothing, take its
+//! edges away, repeat) with the choice among ready nodes given by the caller, and the search
+//! for what a set of roots reaches, with a visited set. Checked 2026-11-20: the DOI on
+//! Crossref; the paper not read, the method from memory.
+//! `each_ready_set_gives_its_own_topological_order` checks each order is topological and
+//! `a_parallel_edge_is_waited_on_twice` the count of edges waited on.
 
 use std::cmp::Reverse;
 use std::collections::{BinaryHeap, VecDeque};

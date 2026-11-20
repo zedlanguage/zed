@@ -6,7 +6,13 @@
 //! choose which root stays (because the root is a class's printed or ordered name) links with
 //! [`UnionFind::union_into`] or [`UnionFind::union_least`]; with the root so chosen, path
 //! halving alone bounds m ≥ n operations by O(m log_{1 + m/n} n), the same paper's bound for
-//! halving with arbitrary linking.
+//! halving with arbitrary linking. The paper is doi:10.1145/62.2160; checked 2026-11-20: the
+//! DOI, title, volume and pages on Crossref; the paper not read, so both bounds are from
+//! memory. `union_find_classes_match_a_plain_labeling` and
+//! `offset_union_find_matches_plain_values` check the classes and offsets;
+//! `union_find_takes_near_linear_time` and
+//! `union_into_a_chain_takes_n_log_n_time` check the growth of the time, which catches a lost
+//! rank or halving but cannot tell α from a slowly growing log.
 //!
 //! [`OffsetUnionFind`] keeps, beside each class, the difference between each element's value
 //! and its root's in a group (integers under `+`): it records `x_a = x_b + d` and answers

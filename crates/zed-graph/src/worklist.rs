@@ -5,6 +5,14 @@
 //! whether it was queued, so that an item waiting already is not queued twice: the queue then
 //! never holds more than `n` items, and each push and pop is O(1). [`Worklist`] is that pair
 //! once, taking items first in first out or last in first out as each caller did.
+//!
+//! Bellman–Ford–Moore: R. Bellman, "On a routing problem", Quart. Appl. Math. 16(1):87-90,
+//! 1958, doi:10.1090/qam/102435; L. R. Ford, "Network flow theory", RAND paper P-923, 1956 (no
+//! DOI); E. F. Moore, "The shortest path through a maze", Proc. Int. Symp. on the Theory of
+//! Switching, 1959 (no DOI). With the queue first in first out, the items are taken in passes,
+//! and with no negative cycle `n - 1` passes settle every distance. Checked 2026-11-20:
+//! Bellman's DOI on Crossref; none of the three read, from memory.
+//! `fifo_takes_items_in_the_order_queued_each_once` checks the order the bound needs.
 
 use std::collections::VecDeque;
 

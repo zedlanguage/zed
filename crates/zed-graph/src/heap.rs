@@ -6,16 +6,21 @@
 //! `BinaryHeap<Reverse<(key, node)>>` did.
 //!
 //! [`Dijkstra`] is the lazy-deletion form of Dijkstra's search (E. W. Dijkstra, "A note on two
-//! problems in connexion with graphs", Numerische Mathematik 1, 269-271, 1959): a label per
-//! node, lowered only when a strictly smaller distance is found, each lowering pushing a new
-//! entry, and an entry skipped when it comes up if its node's label has fallen since. With
+//! problems in connexion with graphs", Numerische Mathematik 1, 269-271, 1959,
+//! doi:10.1007/BF01386390; the paper keeps no heap, the lazy-deletion heap is the usual later
+//! form): a label per node, lowered only when a strictly smaller distance is found, each
+//! lowering pushing a new entry, and an entry skipped when it comes up if its node's label has
+//! fallen since. With
 //! every weight 0 or more, the first entry of a node that comes up at its label is its least
 //! distance, and it comes up once, since a label never falls to the value it already has:
 //! O(m log m) for m lowerings, each one a heap push. A potential `p` makes the reduced weight
 //! of an edge `x → y` of weight `w` equal to `p(x) + w - p(y)`; [`reduced`] checks that it is
 //! 0 or more, which is what makes the search exact on graphs with negative weights
 //! (D. B. Johnson, "Efficient algorithms for shortest paths in sparse networks", JACM 24(1),
-//! 1-13, 1977).
+//! 1-13, 1977, doi:10.1145/321992.321993). Checked 2026-11-20: both DOIs on Crossref; the
+//! papers not read, from memory. `dijkstra_on_reduced_weights_gives_least_distances` checks the
+//! distances against Bellman–Ford on the raw weights, `a_negative_reduced_weight_is_refused`
+//! the check of [`reduced`], and `stale_entries_come_up_as_stale` the lazy deletion.
 
 use std::cmp::Reverse;
 use std::collections::{BTreeMap, BinaryHeap};

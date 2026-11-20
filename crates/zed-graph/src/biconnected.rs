@@ -1,7 +1,13 @@
 //! The biconnected components of an undirected graph (R. Tarjan, "Depth-First Search and Linear
-//! Graph Algorithms", SIAM Journal on Computing 1(2), 146-160, 1972; J. Hopcroft and R. Tarjan,
-//! "Efficient algorithms for graph manipulation", CACM 16(6), 372-378, 1973), as a partition of
-//! the edges.
+//! Graph Algorithms", SIAM Journal on Computing 1(2), 146-160, 1972, doi:10.1137/0201010;
+//! J. Hopcroft and R. Tarjan, "Algorithm 447: efficient algorithms for graph manipulation",
+//! CACM 16(6), 372-378, 1973, doi:10.1145/362248.362272), as a partition of the edges: one
+//! depth-first pass keeps a stack of edges and the low point of each node, and pops a block
+//! when a child's low point does not reach above its parent. Checked 2026-11-20: both DOIs and
+//! titles on Crossref (the second title was given without "Algorithm 447"); the papers not
+//! read, the method from memory.
+//! `blocks_are_the_classes_no_cut_node_separates_on_random_multigraphs` checks the blocks
+//! against their definition on random multigraphs.
 
 /// Calls `found` with the edges of each biconnected component (block) of the undirected graph
 /// `adj`, each block once: a set of edges in which any two lie on a common simple cycle, or a
