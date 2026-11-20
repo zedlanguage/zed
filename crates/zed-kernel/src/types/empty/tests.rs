@@ -3266,6 +3266,54 @@ fn a_closure_of_a_meet_with_a_union_is_built_when_the_shared_keys_are_proved_emp
     assert_eq!(t.verdict(), Verdict::Inhabited, "{t}");
 }
 
+/// A meet of morphism types, every one taken, gives one closure of their meet
+/// (`Searching::find_rep`): the promised keys joined, the permitted keys and the values met.
+/// Where both sides of a join or meet are one recursive type, that type is kept as written,
+/// since `cut` would give its unfolding, a type compared as different from it. Here
+/// `L = nil | cons(int, L)` and the type is `(L -> int) & (L -> int | bool)`, both exact, so the
+/// closure has the keys `L` promised and permitted. Before TEST-kernel-unreached-paths-11 only
+/// some runs built such a closure. The verdicts do not show these lines: with each of the
+/// controls below every verdict here is unchanged, since a closure is built only for a type
+/// already found inhabited. The closure built shows them. Negative controls, each failing this
+/// test: `Type::empty()` in place of the kept guarantee (`x.clone()` in `join`), a closure that
+/// promises no key, a value of `L ->? int` and not of the type; `Type::top()` in place of the
+/// kept permission (`x.clone()` in `both`), a closure that permits every key; and the shortcut
+/// off (`cut` taken for every pair), which gives the unfolding of `L` in place of `L`.
+#[test]
+fn a_meet_of_morphism_types_with_one_recursive_key_type_keeps_it_as_written() {
+    use fork_inputs::list;
+    let l = list(Type::int());
+    let ib = &Type::int() | &Type::bool();
+    let t = &Type::exact(l.clone(), Type::int()) & &Type::exact(l.clone(), ib.clone());
+    assert_eq!(t.verdict(), Verdict::Inhabited, "{t}");
+    let mut s = Search {
+        strict: true,
+        refuse_forks: true,
+        trials: Some(0),
+        ..Search::default()
+    };
+    s.swept.insert(t.clone(), None);
+    s.solve(&t);
+    assert_eq!(s.refused, None, "{t}: nothing refused");
+    let r = s.rep(&t).expect("the type has a closure");
+    let Rep::Closure(m) = &s.shown[r] else {
+        panic!("{t}: the value shown is not a closure");
+    };
+    assert_eq!(m.guarantee, l, "{t}: the keys promised are L as written");
+    assert_eq!(m.permission, l, "{t}: the keys permitted are L as written");
+    // Where the values differ the meet is `cut`; `int` here.
+    assert!(
+        m.value.subtype(&Type::int()) && Type::int().subtype(&m.value),
+        "{t}"
+    );
+    // One recursive type in the values alone (`v`) and a meet whose values are disjoint.
+    let v = &Type::morphism(Type::int(), Type::int(), l.clone())
+        & &Type::morphism(Type::int(), ib.clone(), l.clone());
+    assert_eq!(v.verdict(), Verdict::Inhabited, "{v}");
+    let none = &Type::exact(l.clone(), Type::int()) & &Type::exact(l.clone(), Type::bool());
+    assert_eq!(none.verdict(), Verdict::Empty, "{none}");
+}
+
 /// `fields` reads a payload diagram shared by several atoms once (`Rows`): each atom pushes the
 /// groups of components whose names it does not have, and keeps the rest unpushed for the next
 /// atom. With `#x`, `#y` and `#z` over one payload whose rows hold `#x(int)`, `#y(int)` and
