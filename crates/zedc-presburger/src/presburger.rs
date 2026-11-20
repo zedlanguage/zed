@@ -2016,6 +2016,17 @@ impl Renamed {
         Naming::Renamed(Self::by_ranks(f, from, tied))
     }
 
+    /// `f` renamed by its structure alone, with a disjunction or without one: by
+    /// [`Renamed::ranked`], or where that ties two atoms, by [`Renamed::untied`]; `None` where
+    /// both leave two atoms tied. Two namings of one formula give one renamed formula.
+    fn by_structure(f: &Formula) -> Option<Renamed> {
+        match Self::ranked(f) {
+            Naming::Renamed(r) => Some(r),
+            Naming::Tied(..) => Self::untied(f),
+            Naming::Kept => None,
+        }
+    }
+
     /// `f`, whose atoms [`Renamed::of`] ties, renamed by a second coloring whose graph also has
     /// a vertex for each conjunction, disjunction and negation joined to its parts
     /// ([`nesting()`]), or `None` when that coloring ties two atoms too. Each atom's color is
@@ -19702,6 +19713,7 @@ fn memo_off() -> bool {
         || REVERSED.with(Cell::get)
         || MODULAR_CHECK.with(|c| c.borrow().is_some())
         || UNFACTORED.with(Cell::get)
+        || NAMES_AS_WRITTEN.with(Cell::get)
         || UNIT_RESCAN.with(Cell::get)
         || HULL_BISECT.with(Cell::get)
         || ROW_ORDER_SCAN.with(Cell::get)
@@ -19741,6 +19753,39 @@ const SOLVER: meter::Solver = meter::Solver {
 
 /// [`project_each_asked`], with the cover of module `exact` where `cover` holds, and the
 /// solver's answer alone where it does not ([`project_each_solver`]).
+///
+/// The question is asked renamed by its structure ([`Renamed::by_structure`]), with or
+/// without a disjunction, and each refusal is written back over the names given, so that
+/// every naming of the atoms gets one answer (row PRES-project-each-naming). Before, a formula
+/// with no disjunction was asked under its own names ([`Renamed::of`] gives
+/// [`Naming::Kept`]), and the solver orders rows and symbols by name where nothing else
+/// orders them (`projected_hulls` sorts the rows, `symbols_by_structure` starts from the least
+/// symbol), while the Omega test refuses some orders of elimination (`Refusal::Growth`) where
+/// it decides others: case 0 of seed 2537877658227229631 of
+/// `l01_39_reduced_product::pendants` gave `z0` the set `..=4` as written and refused it with
+/// the names reversed (FAIL-pendants-refused-boxes-2537877658227229631). Proof that the answer
+/// is then one for every naming: two namings of `f` rename to one formula (the colors and
+/// the second coloring of [`Renamed::untied`] are functions of the structure, and atoms that
+/// share a color are ranked by name only where each permutation among them maps `f` onto
+/// itself, so that any other naming ranks them to the same formula; the parts not proved are
+/// those of [`Renamed::untied`] and [`Renamed::individualized`], named there), the symbols
+/// asked are renamed alike, and every step below is a deterministic function of the formula
+/// and the symbols. Where both colorings leave two atoms tied that no symmetry exchanges, the
+/// formula is asked as written, and that answer may still depend on the names; for a formula
+/// with a disjunction it goes, as before, to [`project_each_tied`], which asks only questions
+/// that no order of its parts changes.
+// Complexity tradeoff: naive version, the question asked as written, whose answer can depend
+// on the names (the four tests that pinned answers of the order as written are named in plan
+// row PRES-project-each-naming). Used: one color refinement and one renamed copy per question,
+// O(L log L) for L links of its graph ([`Renamed::colored`], [`stable_colors`]) and O(n) for
+// the copy, plus, where that ties atoms, the second coloring of [`Renamed::untied`], again
+// O(L log L); the projection reads every part at least once, and the memo of
+// [`project_each_classed`] keeps the answer, so a question asked again costs no renaming. A
+// formula with a disjunction is colored a second time in [`project_each_named`], which renames
+// the renamed formula to itself. Trying the solver on more than one order and keeping the best
+// is not done: answers are exact and no method is raced (author decisions P196/P197).
+// Tests: `l01_38_omega_test::names::every_naming_of_a_conjunction_gets_one_projection`,
+// `l01_39_reduced_product::pendants::a_conjunction_gets_one_answer_for_every_naming`.
 // Complexity tradeoff: a question refused in the first writing costs a second question of the
 // same size. Why: the solver chooses its order of elimination by the signs of the rows, so
 // which systems it refuses depends on them, and no check before the question tells which
@@ -19749,6 +19794,34 @@ const SOLVER: meter::Solver = meter::Solver {
 // `l01_39_reduced_product::pendants::refused_parts_projected_exactly_by_pendants_fourth_quarter_rest`.
 // COMPLEXITY.md row PROJECT-each-canon.
 fn project_each_with(f: &Formula, syms: &[Atom], cover: bool) -> Result<EachClassed, Refusal> {
+    let renamed = (!NAMES_AS_WRITTEN.with(Cell::get))
+        .then(|| Renamed::by_structure(f))
+        .flatten();
+    match renamed {
+        Some(r) => {
+            let there: Vec<Atom> = syms.iter().map(|a| r.there(a)).collect();
+            project_each_as_named(&r.f, &there, cover)
+                .map(|e| EachClassed {
+                    sets: (e.sets.into_iter())
+                        .map(|s| s.map_err(|e| r.back_refusal(e)))
+                        .collect(),
+                    causes: (e.causes.into_iter())
+                        .map(|e| r.back_refusal(e))
+                        .collect(),
+                })
+                .map_err(|e| r.back_refusal(e))
+        }
+        None => project_each_as_named(f, syms, cover),
+    }
+}
+
+/// [`project_each_with`] of `f` under its own names: the formula renamed by its structure
+/// ([`Renamed::by_structure`]), or as written where its structure ties two atoms.
+fn project_each_as_named(
+    f: &Formula,
+    syms: &[Atom],
+    cover: bool,
+) -> Result<EachClassed, Refusal> {
     // Complexity tradeoff: projecting a contradiction by repeatedly settling the whole
     // formula can cost O(k^2) on k paired disjunctions in a chain. The forced propagator
     // already used by decide visits each part/term through its incidence queues, O(n)
@@ -20556,6 +20629,10 @@ thread_local! {
     /// Whether [`factored`] takes no part out, so that [`project_each`] and [`decide`] ask
     /// every formula as it is written: for the tests that compare the two (ST-formula-sibling).
     pub static UNFACTORED: Cell<bool> = const { Cell::new(false) };
+    /// Test control: [`project_each`] asks each question under the names given, not renamed by
+    /// its structure (`project_each_with`), so that a test can show the answer that depended
+    /// on the names (row PRES-project-each-naming).
+    pub static NAMES_AS_WRITTEN: Cell<bool> = const { Cell::new(false) };
     /// Test control: retain the repeated survivor scans of the I23 unary drain.
     pub static UNIT_RESCAN: Cell<bool> = const { Cell::new(false) };
     /// Test control: retain hull bisection without the I22 endpoint shortcuts.
@@ -21285,45 +21362,15 @@ impl Boxed {
 /// PROJECT-growth-box. A complete solution would decide the integer program (see
 /// `Omega::run`).
 ///
-/// The question is projected renamed by the colors of its atoms (`Renamed::ranked`), with or
-/// without a disjunction, so that each set and each refusal is the same for every naming of
-/// the atoms, as the reduced product's tests require: the solver orders rows and symbols by
-/// name where nothing else orders them (`projected_hulls` sorts the rows, and
-/// `symbols_by_structure` starts from the least symbol), and the Omega test refuses some
-/// orders of elimination (`Refusal::Growth`) where it decides others
-/// (FAIL-pendants-refused-boxes-2537877658227229631: case 0 of that seed of
-/// `l01_39_reduced_product::pendants::refused_projections_of_random_parts_keep_sound_boxes`, a
-/// conjunction with no disjunction, gave `z0` the set `..=4` as written and refused it with
-/// the box `..=7` with the names reversed, since [`project_each`] keeps the names of a formula
-/// with no disjunction, `Renamed::of`). A question whose atoms the coloring ties, other than
-/// by a symmetry, is projected as written, as before. [`project_each`] itself still answers a
-/// formula with no disjunction under its own names (row PRES-project-each-naming).
-// Complexity tradeoff: naive version, the question projected as written, whose answer depends
-// on the names. Used: one color refinement and one renamed copy per question, O(L log L) for
-// L links of its graph ([`Renamed::colored`], [`stable_colors`]) and O(n) for the copy,
-// against the projection, which reads every part at least once. Tradeoff: that cost on every
-// question, where most answers did not depend on the names. Tests:
-// `l01_39_reduced_product::pendants::a_conjunction_gets_one_answer_for_every_naming`,
-// `l01_39_reduced_product::pendants::a_joined_conjunction_gets_one_answer_for_every_naming`.
+/// Each set and each refusal is the same for every naming of the atoms, as the reduced
+/// product's tests require, since [`project_each`] asks every question renamed by its
+/// structure (`project_each_with`, row PRES-project-each-naming; before it, this function
+/// renamed its own questions, FAIL-pendants-refused-boxes-2537877658227229631). Tests:
+/// `l01_39_reduced_product::pendants::a_conjunction_gets_one_answer_for_every_naming`,
+/// `l01_39_reduced_product::pendants::a_joined_conjunction_gets_one_answer_for_every_naming`.
 pub fn project_each_boxed(f: &Formula, syms: &[Atom]) -> Boxed {
     let lean = without_box_true_disjunctions(f);
-    let asked = lean.as_ref().unwrap_or(f);
-    let projected = match Renamed::ranked(asked) {
-        Naming::Renamed(r) => {
-            let there: Vec<Atom> = syms.iter().map(|a| r.there(a)).collect();
-            project_each(&r.f, &there)
-                .map(|(each, skipped)| {
-                    let each = (each.into_iter())
-                        .map(|s| s.map_err(|e| r.back_refusal(e)))
-                        .collect();
-                    let skipped = (skipped.into_iter()).map(|e| r.back_refusal(e)).collect();
-                    (each, skipped)
-                })
-                .map_err(|e| r.back_refusal(e))
-        }
-        _ => project_each(asked, syms),
-    };
-    let (each, skipped, whole) = match projected {
+    let (each, skipped, whole) = match project_each(lean.as_ref().unwrap_or(f), syms) {
         Ok((each, skipped)) => (each, skipped, None),
         Err(e) => (
             syms.iter().map(|_| Err(e.clone())).collect(),

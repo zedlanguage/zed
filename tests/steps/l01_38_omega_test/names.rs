@@ -2381,3 +2381,145 @@ fn two_copies_of_a_chain_with_no_point_are_never_decided_true() {
         }
     }
 }
+
+/// A refusal written without the names it gives, which a renaming changes.
+fn refusal_kind(e: &Refusal) -> String {
+    match e {
+        Refusal::Tie(_) => "Tie".into(),
+        Refusal::Unordered(_) => "Unordered".into(),
+        e => format!("{e:?}"),
+    }
+}
+
+/// The projections of `rows` onto each variable, by place, with variable `i` named
+/// `v{name[i]}`, and the causes of the disjunctions left out; refusals without their names.
+fn projections(rows: &[Row], name: &[usize]) -> String {
+    let f = formula(rows, name);
+    let syms: Vec<Atom> = (name.iter())
+        .map(|k| Atom::Sym(Arc::from(format!("v{k}"))))
+        .collect();
+    match project_each(&f, &syms) {
+        Ok((sets, causes)) => {
+            let sets: Vec<String> = (sets.iter())
+                .map(|s| match s {
+                    Ok(s) => format!("{s:?}"),
+                    Err(e) => refusal_kind(e),
+                })
+                .collect();
+            let causes: Vec<String> = causes.iter().map(refusal_kind).collect();
+            format!("{sets:?} {causes:?}")
+        }
+        Err(e) => refusal_kind(&e),
+    }
+}
+
+/// `n` variables in the box `-half..=half` and two to five rows, each over two to four of
+/// them with coefficients in `-9..=9` and a constant in `-30..=30`, an equation one time in
+/// four.
+fn random_conjunction(rng: &mut Rng, n: usize) -> Vec<Row> {
+    let m = 2 + rng.below(4);
+    let rows: Vec<Row> = (0..m)
+        .map(|_| {
+            let mut c = vec![0; n];
+            for _ in 0..2 + rng.below(3) {
+                c[rng.below(n)] = rng.int(-9, 9);
+            }
+            let k = rng.int(-30, 30);
+            if rng.below(4) == 0 { eq(&c, k) } else { ge(&c, k) }
+        })
+        .collect();
+    let half = rng.int(5, 40);
+    with_box(&rows, n, half)
+}
+
+/// The answers of `rows` (over `n` variables) under the naming as written and `count` random
+/// namings from `rng`.
+fn projected_namings(
+    rows: &[Row],
+    n: usize,
+    rng: &mut Rng,
+    count: usize,
+) -> std::collections::BTreeSet<String> {
+    let perms = std::iter::once((0..n).collect()).chain((0..count).map(|_| shuffled(rng, n)));
+    perms.map(|p: Vec<usize>| projections(rows, &p)).collect()
+}
+
+/// System 909 of seed 1 of [`random_conjunction`] (PRES-project-each-naming): five variables
+/// in `-7..=7`, no disjunction. Asked under its own names, as `project_each` asked every
+/// formula with no disjunction before, its namings got two answers: `v3` came out
+/// `-2..=0, 3..=5, 7` under the names as written and was refused (`Questions`) under others,
+/// since the solver orders rows and symbols by name where nothing else orders them and the
+/// Omega test refuses some orders of elimination where it decides others. Each question is
+/// now renamed by its structure first, so every naming gets one answer, and each set answered
+/// is the one brute force finds over the box. The control (`NAMES_AS_WRITTEN`) asks under the
+/// names given and still gets two answers, so the test can fail.
+#[test]
+fn every_naming_of_a_conjunction_gets_one_projection() {
+    use zedc::store::presburger::NAMES_AS_WRITTEN;
+    let rows = with_box(
+        &[
+            ge(&[0, 8, 0, 0, -7], 30),
+            ge(&[0, -4, -3, 0, 1], -13),
+            ge(&[-8, 0, 0, 0, 9], -16),
+            eq(&[-9, 0, 4, -8, 0], 30),
+        ],
+        5,
+        7,
+    );
+    let namings: [[usize; 5]; 5] = [
+        [0, 1, 2, 3, 4],
+        [1, 3, 4, 0, 2],
+        [2, 0, 4, 3, 1],
+        [4, 0, 3, 1, 2],
+        [4, 1, 0, 3, 2],
+    ];
+    let answers = |as_written: bool| {
+        NAMES_AS_WRITTEN.with(|c| c.set(as_written));
+        let seen: std::collections::BTreeSet<String> =
+            namings.iter().map(|p| projections(&rows, p)).collect();
+        NAMES_AS_WRITTEN.with(|c| c.set(false));
+        seen
+    };
+    assert_eq!(answers(true).len(), 2, "the control: {:?}", answers(true));
+    assert_eq!(answers(false).len(), 1, "{:?}", answers(false));
+    // Each set answered is the set of values over the points of the box.
+    let f = formula(&rows, &[0, 1, 2, 3, 4]);
+    let syms: Vec<Atom> = (0..5).map(|i| Atom::Sym(Arc::from(format!("v{i}")))).collect();
+    let (sets, _) = project_each(&f, &syms).expect("answered");
+    let mut want = vec![std::collections::BTreeSet::new(); 5];
+    let mut p = [-7i64; 5];
+    loop {
+        if holds(&rows, &p) {
+            for (w, x) in want.iter_mut().zip(p) {
+                w.insert(x);
+            }
+        }
+        let Some(i) = (0..5).find(|&i| p[i] < 7) else {
+            break;
+        };
+        p[i] += 1;
+        p[..i].fill(-7);
+    }
+    for (i, (s, w)) in sets.iter().zip(&want).enumerate() {
+        if let Ok(s) = s {
+            let got: std::collections::BTreeSet<i64> = (-8..=8)
+                .filter(|&x| s.contains_end(&End::Fin(Num::from(x))))
+                .collect();
+            assert_eq!(&got, w, "v{i}: {s:?}");
+        }
+    }
+}
+
+/// [`random_conjunction`]s at a fresh seed, each under the naming as written and four random
+/// ones: one answer each (PRES-project-each-naming). Asked under their own names, 6 of the
+/// first 1,151 systems of seed 1 got two answers; renamed, none of 4,000 did (2026-11-20).
+#[test]
+fn every_naming_of_a_random_conjunction_gets_one_projection() {
+    let (mut rng, seed) = Rng::fresh("every naming of a random conjunction");
+    for s in 0..100 {
+        let n = 3 + rng.below(3);
+        let rows = random_conjunction(&mut rng, n);
+        let seen = projected_namings(&rows, n, &mut rng, 4);
+        assert_eq!(seen.len(), 1, "seed {seed}, system {s}: {rows:?}\n{seen:?}");
+    }
+}
