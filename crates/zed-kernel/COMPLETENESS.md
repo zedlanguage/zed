@@ -1570,8 +1570,8 @@ draw.
 |---|---|---|---|
 | 9257 (9257), the `}` (no witness) of the `if` that returns `ChainPlan::Inhabited` with `w0_full` | test | the case `s6-277` (seed 6, draw 277) in `r7_random_carrier_plus_chains_both_orders_against_bruteforce` (sweep_agreement.rs), its brute-force witness `[2, 0, 1, 0]` asserted | a verdict that is given is checked against brute force in both orders (`check_case`); a panic there fails it (reach only) |
 | 12263 (12263), `Some(false)` of `valid` for an `Or` of two parts not apart, none valid, not satisfiable, in `read` | test | `seed_4_draw_37_of_the_small_set_tuples_is_decided` (witnesses.rs; `check_small_sets`, the body of the random test, now a function it calls) | a panic there fails it (reach only) |
-| 15003 (15008), `_ => return None` of `edge` in `affine_lists_empty`: three operands swap on one integer | test | `a_parity_meet_with_an_integer_that_keeps_both_states` (setop.rs): Empty, and `more(0, nil)`, `more(1, more(1, nil))` not members | the same operands with S2 and S3 swapped on 0 hold `more(0, nil)` and are Inhabited |
-| 15028 (15033), the `}` (an operand naming the integer that keeps its state) of `if a == 2` in the loop that sets `flips` | test | `a_parity_meet_whose_unnamed_integers_swap_three_operands_is_searched` (setop.rs): Inhabited, holds `more(7, more(1, nil))`, not `nil` | the member and non-member asserted alongside the verdict |
+| 15003 (15008), `_ => return None` of `edge` in `affine_lists_empty`: three operands swap on one integer | test | `a_parity_meet_whose_unnamed_integers_swap_three_operands_is_searched` (setop.rs): Inhabited, holds `more(7, more(1, nil))`, not `nil` | the member and non-member asserted alongside the verdict |
+| 15028 (15033), the `}` (an operand naming the integer that keeps its state) of `if a == 2` in the loop that sets `flips` | test | `a_parity_meet_with_an_integer_that_keeps_both_states` (setop.rs): Empty, and `more(0, nil)`, `more(1, more(1, nil))` not members | the same operands with S2 and S3 swapped on 0 hold `more(0, nil)` and are Inhabited |
 | 17605 (17610), `(Verdict::Inhabited, _)` of `l.subtype_verdict(&u)` (a key promised and not permitted) for a morphism with bounds not recursive, in `system` | test | `a_morphism_promising_more_than_it_permits_is_empty_in_a_group` (admission.rs): `m(top(), int(), r(0))` Empty | `m(empty(), int(), r(0))` Inhabited |
 | `print.rs` 2053 (2053), `return` of `remember` while collecting | test | `an_inexact_text_is_printed_while_collecting` (print/tests.rs): `#a(tuple)`, not exact | `#a(..)` of `atom_with("a", top())`, exact |
 | `print.rs` 2147 (2151), `Class::Of(j)` in `write_out` | proof | a text of class `Of` is one `Seg::Node` (made only at `put`, line 646); the loop above leaves a text that is not one node; now `unreachable!` | none |
@@ -1588,3 +1588,40 @@ and no proof was found that `list_sweep_value` never meets one. The 115 open lin
 (`empty.rs` 95, `empty/sweep.rs` 14, `bdd.rs` 2, `print.rs` 4) are carried to
 TEST-kernel-unreached-paths-15, listed at b2d657f5e, this round's code commit, in
 /home/luke/Work/wt/coverage/TEST-kernel-unreached-paths-14-kernel24-b2d657f5e.txt.
+
+Twenty-second round (kernel26, 2026-11-20), row TEST-kernel-unreached-paths-15. Base origin/main
+43db46e1c. Line numbers below are those of the twenty-first round's list (at b2d657f5e). In
+`bdd.rs` and `sweep.rs` the lines were found again by their text. Each control was run by
+changing the line as the Control column says, under a temporary environment switch that was
+removed afterward, and each made its test fail. The exceptions are guards, which have no
+control, and `empty.rs` 5435, whose control did not fail.
+
+| Line | Closed by | Test or site | Control |
+|---|---|---|---|
+| `bdd.rs` 1334, the `}` of a choice whose complement is no expression in `Connect::negate` | test | `a_choice_with_equal_branches_has_a_diagram_as_complement` (bdd/tests.rs): `c&x \| !c&x` kept as an expression, its complement `!x` a diagram; 40,000 drawn expressions met no such case | the choice `c&x \| !c&y` has an expression as its complement |
+| `bdd.rs` 3891, `continue` of a cell made by another thread meanwhile | dead code removed | the check only saved remaking a cell's atoms from the same children; `OnceLock` keeps the first set, so the result is the same; the argument is in the comment at the site | the `bdd` tests pass as before |
+| `empty.rs` 7302, `continue` of a cell closed in `take_out_piece` | proof | every cell of `cells` is open there: only `close` and `restore` write `open`, each `close` but the taken branch's is undone by `restore(mark)`, and `cells` is a set; now `assert!` | none |
+| `empty.rs` 7977, `return None` of a part with no atom in `cycle_meet` | proof | `taken` or `refused` is non-empty and both list atoms of `f` (`Bdd::forced_to`, `Part::forced`), so `f` has an atom; now `assert!` | none |
+| `empty.rs` 8010, `return None` of an item type found empty in `cycle_meet` | test | `a_list_link_whose_items_are_empty_holds_no_list` (empty/tests.rs): `#cons(E, L)`, `E = (#a \| #b, int) - (#a, int) - (#b, int)`, Empty | the `return None` removed gives Inhabited |
+| `empty.rs` 8075, `Some(Verdict::Inhabited) => {}` of `sweep_verdict` | test | `a_tuple_of_the_empty_tuple_is_inhabited_by_the_chain_search` (empty/tests.rs): `((),)` Inhabited by the chain search | the arm changed to `all_inhabited = false` gives `None` |
+| `empty.rs` 11929, the `}` of `if let Some(gu) = saved` in `morphisms` | proof | `atom_non_empty` is written at one place, with `(true, Some(gu))` or `(false, _)`, and starts `(false, None)`, so a blamed atom has its blame saved; now `expect` | none |
+| `empty.rs` 12433, `e.insert(self.index(p))` in `pair_picks` | dead code removed | both operands were indexed by `pair` in `read`, on the same leaves, in the map `witness` passes on; the map is now borrowed, not mutable | the witness tests pass as before |
+| `empty.rs` 13126, the `}` of a third component in `lists` | test | `lists_keeps_the_two_least_ys_of_three_components` (empty/tests.rs): the choice is points 3, 1 and 2 | the test `best[1].1 == k \|\| y < best[1].0` changed to `true` gives `None` |
+| `empty.rs` 17609, `(Verdict::Refused(_), _) \| (_, Verdict::Refused(_)) => Some(None)` in `system` | test | `a_morphism_with_refused_bounds_is_left_unknown_by_the_group_system` (empty/tests.rs): `X = nfa() -> top : int \| X` Inhabited, `nfa()` Refused | `Some(None)` changed to `Some(Some(Kind::Bot))` gives Empty |
+| `sweep.rs` 751, `return None` of a repeated link in `runs` | proof | tails off a cycle have strictly lower names (`merge` sets `tail(y) = rep[t]`, names come from one counter, a link is named after its tail), so no path repeats a link; now `assert!`, and `runs` returns `()` | none |
+| `sweep.rs` 862, 872, the `}` of a part that is not bare, for heads and for `p` | proof | every name a head lists is bare (`head_ok`, `join`, `meet`, the invariant of `Atoms::set`); the loops read `atoms.bare()` | none |
+| `sweep.rs` 1007, `None` of a head that is neither `{v}` nor `int - {v}` | proof | a set of integers that lists one integer is `{v}` when finite and `int - {v}` when cofinite; now `debug_assert!`, and the kind is read from `cofinite` | none |
+| `sweep.rs` 1170, `return Some(None)` of a link with no bare atom and no head in `walk` | test | `a_tail_that_unfolds_to_nothing_holds_no_list` (sweep.rs): `#cons(int, E)`, `E = #cons(Never, E)`, Empty | `return None` there gives `None`; and `#cons(int, F)`, `F = #nil \| #cons(int, F)`, holds `#cons(0, #nil)` |
+| `sweep.rs` 1563, 1570, the `}` of a key or kind not held in `Threads::leave` | proof | `leave` is called only on live threads, which hold their key and are in their kind; now `assert_eq!` and `expect` | none |
+| `sweep.rs` 2051, the `}` of a head of `cof` not in `per_head` | proof | `cof` is drawn from the heads `classes` was given, `per_head`'s keys, unchanged after; now `expect` | none |
+
+Not closed: `empty.rs` 5435 (`return Stack::ready(true)` in `empty`) is reached by
+`a_tuple_with_a_parity_meet_as_a_field_is_empty` (l01_23_subtyping, setop.rs), but its control
+(the return skipped) still passes, since the line only saves work, and no count measures the
+saving. A coverage run of this round's edits was not made. Every test above was checked by
+a run with its control, not by a profile.
+
+Counts: of the 115 lines, 18 are closed: 6 by tests, 2 by dead code removed, and 10 by guards
+with proofs. The other 97 (`empty.rs` 87, `empty/sweep.rs` 6, `print.rs` 4) are carried to
+TEST-kernel-unreached-paths-16, with what is known of each, in
+/home/luke/Work/wt/coverage/TEST-kernel-unreached-paths-15-kernel26.txt.
