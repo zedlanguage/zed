@@ -25262,7 +25262,9 @@ fn number_text(n: &Num) -> String {
 /// The bytes `n` as a message writes a lower bound, rounded down: in binary units, as
 /// `128 EiB` or `1.5 KiB`, one decimal below ten where it is not 0, up to 1023 YiB; beyond,
 /// the power of 2 at or below them, as `2^100 bytes`. Unlike `zed_kernel::num::bytes_text`,
-/// which rounds to the nearest, it never writes more than `n`.
+/// which rounds to the nearest, it never writes more than `n`: a lower bound written above
+/// itself would claim more than the checker proved. Kept apart on purpose (DRY-text-shared
+/// job 12); `zed_kernel::num::bytes_text` gives the three writers and their reasons.
 fn bytes_text_of(n: &Num) -> String {
     const UNITS: [&str; 8] = ["KiB", "MiB", "GiB", "TiB", "PiB", "EiB", "ZiB", "YiB"];
     let Some(unit) = (1..=UNITS.len())

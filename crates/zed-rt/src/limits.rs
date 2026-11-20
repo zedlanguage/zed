@@ -109,6 +109,12 @@ impl std::fmt::Write for Line {
 /// Writes `n` bytes to `out` as a message gives a size: `8388608 B (8 MiB)`, the binary unit
 /// the largest with a whole part of at least 1 and one decimal where it is not whole; `512 B`
 /// below 1 KiB. No allocation, for a handler.
+///
+/// Kept apart from `zed_kernel::num::bytes_text` and the checker's `bytes_text_of` on purpose
+/// (DRY-text-shared job 12): those take a `BigUint` or `Num` and return a `String`, and a
+/// signal handler may not allocate; and a limit message
+/// gives the exact count, which the other two leave out. It rounds down, like the checker's,
+/// so a size is never shown above what it is.
 pub(crate) fn write_bytes(out: &mut Line, n: u64) {
     const UNITS: [&str; 6] = ["KiB", "MiB", "GiB", "TiB", "PiB", "EiB"];
     let _ = write!(out, "{n} B");

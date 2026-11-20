@@ -254,6 +254,14 @@ pub fn about(n: &BigUint) -> String {
 /// `bytes` bytes in binary units, as the units of information are written (`B`, `KiB`, ...,
 /// `YiB`): `1 byte`, `512 bytes`, `1.5 KiB`, `128 EiB`, one decimal below ten and none above;
 /// beyond 1024 YiB, `1.6 × 10^29 bytes`, the count with two digits ([`about`]).
+///
+/// One of three byte-size writers, kept apart on purpose (DRY-text-shared job 12). This one
+/// rounds to the nearest, since its callers write estimates and measured amounts ("about
+/// 1.5 GiB of memory to compute it"), where neither direction of error misleads. The
+/// checker's `bytes_text_of` (zedc-check check/walk.rs) rounds down, since it writes lower
+/// bounds a proof rests on, and must never state more than was shown. The runtime's
+/// `write_bytes` (zed-rt limits.rs) also rounds down, takes a `u64`, writes the exact count
+/// first, and allocates nothing, since it runs in a signal handler.
 pub fn bytes_text(bytes: &BigUint) -> String {
     const UNITS: [&str; 8] = ["KiB", "MiB", "GiB", "TiB", "PiB", "EiB", "ZiB", "YiB"];
     if *bytes < BigUint::from(1024u32) {
