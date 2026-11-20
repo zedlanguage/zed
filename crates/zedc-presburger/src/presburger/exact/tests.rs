@@ -258,15 +258,33 @@ fn constraint(rng: &mut Rng) -> Formula {
 }
 
 fn formula(rng: &mut Rng, depth: u32) -> Formula {
+    formula_of(rng, depth, constraint)
+}
+
+/// A random formula of the shape of [`formula`] with its constraints drawn by `leaf`, in the
+/// same order of draws, so [`formula`] draws as it did before `leaf` was a parameter (the
+/// recorded seeds of these tests repeat).
+fn formula_of(rng: &mut Rng, depth: u32, leaf: fn(&mut Rng) -> Formula) -> Formula {
     if depth == 0 || rng.below(4) == 0 {
-        return constraint(rng);
+        return leaf(rng);
     }
     let n = 2 + rng.below(2) as usize;
-    let parts: Vec<Formula> = (0..n).map(|_| formula(rng, depth - 1)).collect();
+    let parts: Vec<Formula> = (0..n).map(|_| formula_of(rng, depth - 1, leaf)).collect();
     match rng.below(5) {
         0 => Formula::negate(Formula::and(parts)),
         1 | 2 => Formula::and(parts),
         _ => Formula::or(parts),
+    }
+}
+
+/// A random constraint on one of x, y and z: `±v + k >= 0`, or `v + k == 0`, `k` from -4 to 4.
+fn one_atom_constraint(rng: &mut Rng) -> Formula {
+    let n = NAMES[rng.below(3) as usize];
+    let k = rng.int(-4, 4);
+    match rng.below(3) {
+        0 => eq(&[(n, 1)], k),
+        1 => ge(&[(n, 1)], k),
+        _ => ge(&[(n, -1)], k),
     }
 }
 
@@ -3534,22 +3552,85 @@ fn a_part_certified_in_part_shares_only_what_direct_declined() {
     );
 }
 
-/// Where the cell at the newest point leaves a gap, [`shared_cells`] still asks its question:
-/// on `(0 <= x <= 2 ∧ y = 0) ∨ (3 <= x <= 7 ∧ y = 1)` the first point is in one disjunct, its
-/// cell of `x` holds one of the two ranges, and the other is found by a question. The sets
-/// asked are the hulls of the answers, since the step asks one question a symbol and leaves
-/// a symbol with more gaps to its own cover. The sets shown are those of the symbols run
-/// alone (`SHARED_OFF`).
+/// Where the cell at the newest point leaves a gap that [`quick_search`] can neither fill nor
+/// show empty, [`shared_cells`] still asks its question: on `(0 <= x <= 2 ∧ y = 0) ∨ (3 <= x
+/// <= 7 ∧ y = 1 ∧ x + y <= 0)` the first point is in the first disjunct, its cell of `x` holds
+/// `0..=2`, and the gap `3..=7` meets only the second disjunct, which has no point, but not
+/// by its rows of one atom (`x + y <= 0` has two): its branch reaches its leaf, where
+/// `point_of` finds no point, a failure that proves nothing, so the search gives up and the
+/// question is asked. The sets shown are those of the symbols run alone (`SHARED_OFF`).
 #[test]
 fn a_cell_with_a_gap_still_asks_its_question() {
-    let arm = |lo: i64, hi: i64, v: i64| {
-        Formula::and(vec![
-            ge(&[("x", 1)], -lo),
-            ge(&[("x", -1)], hi),
-            eq(&[("y", 1)], -v),
-        ])
-    };
-    let f = Formula::or(vec![arm(0, 2, 0), arm(3, 7, 1)]);
+    let f = Formula::or(vec![
+        gap_arm(0, 2, 0, None),
+        gap_arm(3, 7, 1, Some(ge(&[("x", -1), ("y", -1)], 0))),
+    ]);
+    let (asked, points, out, alone) = gap_case(&f);
+    assert!(asked >= 1, "{asked} questions: the gap was not asked about");
+    assert_eq!(points.len(), 1, "{points:?}");
+    for (k, (s, want)) in [("x", IntervalSet::of(0, 2)), ("y", IntervalSet::of(0, 0))]
+        .into_iter()
+        .enumerate()
+    {
+        assert_eq!(out.get(&a(s)), Some(&want), "{s}");
+        assert_eq!(
+            format!("{:?}", alone[k]),
+            format!("{:?}", Ok::<_, Refusal>(want))
+        );
+    }
+}
+
+/// Where the gap a cell leaves has a point the branches of [`quick_search`] reach,
+/// [`shared_cells`] takes it with no question (BENCH-deep-small-choice): on `(0 <= x <= 2 ∧
+/// y = 0) ∨ (3 <= x <= 7 ∧ y = 1)` the gap `3..=7` of `x` gets a point of the second disjunct,
+/// the rows `3 <= x <= 7` of the question's piece cutting the first at once. The sets are
+/// those of the symbols run alone (`SHARED_OFF`).
+#[test]
+fn a_gap_with_a_point_is_filled_with_no_question() {
+    let f = Formula::or(vec![gap_arm(0, 2, 0, None), gap_arm(3, 7, 1, None)]);
+    let (asked, points, out, alone) = gap_case(&f);
+    assert_eq!(asked, 0, "the gap went to the solver");
+    let x = |m: &Model| m.get(&a("x")).cloned().unwrap_or(Int::ZERO);
+    assert!(
+        points
+            .iter()
+            .any(|m| Int::from(3) <= x(m) && x(m) <= Int::from(7)),
+        "no point in the gap: {points:?}"
+    );
+    for (k, (s, want)) in [("x", IntervalSet::of(0, 7)), ("y", IntervalSet::of(0, 1))]
+        .into_iter()
+        .enumerate()
+    {
+        assert_eq!(out.get(&a(s)), Some(&want), "{s}");
+        assert_eq!(
+            format!("{:?}", alone[k]),
+            format!("{:?}", Ok::<_, Refusal>(want))
+        );
+    }
+}
+
+/// `lo <= x <= hi ∧ y = v`, and `extra` with them.
+fn gap_arm(lo: i64, hi: i64, v: i64, extra: Option<Formula>) -> Formula {
+    let mut rows = vec![
+        ge(&[("x", 1)], -lo),
+        ge(&[("x", -1)], hi),
+        eq(&[("y", 1)], -v),
+    ];
+    rows.extend(extra);
+    Formula::and(rows)
+}
+
+/// [`shared_cells`] on `f` asked for `x` in `0..=7` and `y` in `0..=1`: the questions it
+/// asked, its points, its sets, and the sets of `x` and `y` run alone (`SHARED_OFF`).
+#[allow(clippy::type_complexity)]
+fn gap_case(
+    f: &Formula,
+) -> (
+    u64,
+    Vec<Model>,
+    HashMap<Atom, IntervalSet>,
+    Vec<Result<IntervalSet, Refusal>>,
+) {
     let (ax, ay) = (a("x"), a("y"));
     let want: BTreeMap<&Atom, IntervalSet> =
         [(&ax, IntervalSet::of(0, 7)), (&ay, IntervalSet::of(0, 1))]
@@ -3562,19 +3643,66 @@ fn a_cell_with_a_gap_still_asks_its_question() {
     };
     let (mut points, mut out) = (Vec::new(), HashMap::new());
     EXACT_QUESTIONS.set(0);
-    shared_cells(&f, constraints(&f), want, &mut points, &mut out, &mut work).unwrap();
+    shared_cells(f, constraints(f), want, &mut points, &mut out, &mut work).unwrap();
     let asked = EXACT_QUESTIONS.replace(0);
-    assert!(asked >= 1, "{asked} questions: the gap was not asked about");
     SHARED_OFF.set(true);
-    let alone = project_each_exact(&f, &[ax.clone(), ay.clone()]).unwrap().0;
+    let alone = project_each_exact(f, &[ax.clone(), ay.clone()]).unwrap().0;
     SHARED_OFF.set(false);
-    let x_set = IntervalSet::of(0, 7);
-    assert_eq!(out.get(&ax), Some(&x_set));
-    assert_eq!(out.get(&ay), Some(&IntervalSet::of(0, 1)));
-    assert_eq!(
-        format!("{:?}", alone[0]),
-        format!("{:?}", Ok::<_, Refusal>(x_set))
-    );
+    (asked, points, out, alone)
+}
+
+/// [`quick_search`] on random formulas in the box, each with `x` restricted to a random range
+/// (as [`shared_cells`] restricts a question's symbol to its piece), against trying each of
+/// the 729 points: a point it gives holds both, and where it shows there is none (every branch
+/// cut, the backjumps passing over the decisions in no conflict), no point of the box holds
+/// both. Depth 3 is the shape of [`random_formulas_project_to_the_values_of_their_points`];
+/// depth 6 gives paths of many decisions to jump over, and depth 6 with rows of one atom
+/// ([`one_atom_constraint`]) gives most branches a cut and so a conflict to jump by, the case
+/// a wrong conflict set gets wrong. The room is the one its callers give,
+/// `2·(size + 2)` rows; with no bound, a formula whose leaves fail without a proof (each a
+/// step back to the decision before, as in naive backtracking) took 48 s at seed
+/// 10727774866132264392. The counts of each answer are printed (at seed 12775208190755911237,
+/// 600 rounds: 400 points, 24 shown empty, 176 given up).
+#[test]
+fn quick_search_answers_as_the_points_of_the_box() {
+    let seed = crate::seed::seed("quick_search_answers_as_the_points_of_the_box");
+    let mut rng = Rng::new(seed | 1);
+    let (mut wrong, mut counts) = (Vec::new(), [0u32; 3]);
+    for round in 0..2000 {
+        let f = boxed(match round % 3 {
+            0 => formula(&mut rng, 3),
+            1 => formula(&mut rng, 6),
+            _ => formula_of(&mut rng, 6, one_atom_constraint),
+        });
+        let lo = rng.int(-B - 1, B);
+        let piece = IntervalSet::of(lo, lo + rng.int(0, 3));
+        let within = member(&a("x"), &piece);
+        let both = Formula::and(vec![f.clone(), within.clone()]);
+        let any = !brute(&both, "x").is_empty();
+        let mut work = Work {
+            used: 0,
+            limit: u64::MAX,
+            solver: SOLVER,
+        };
+        match quick_search(&f, Some(&within), 2 * (constraints(&f) + 2), &mut work) {
+            Ok(Quick::Point(m)) => {
+                counts[0] += 1;
+                if !both.holds(&m) {
+                    wrong.push(format!("round {round}: {m:?} is not a point of {both}"));
+                }
+            }
+            Ok(Quick::Empty) => {
+                counts[1] += 1;
+                if any {
+                    wrong.push(format!("round {round}: shown empty, has points: {both}"));
+                }
+            }
+            Ok(Quick::Unknown) => counts[2] += 1,
+            Err(e) => wrong.push(format!("round {round}: {e:?}: {both}")),
+        }
+    }
+    println!("seed {seed}: points, empty, unknown {counts:?}");
+    assert!(wrong.is_empty(), "seed {seed}: {wrong:#?}");
 }
 
 /// The family `wide_pairs` of l01_39 at `k` names: one disjunction of two arms, each the

@@ -57,7 +57,7 @@
 // `or_if_projections_keep_the_gaps_the_if_reading_shows` and `or_ifs_hold_where_they_held_as_ifs`,
 // on the checker's path since PRES-cover-wire (PRES-project-exact-solver).
 
-use std::collections::{BTreeMap, HashMap, HashSet};
+use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::rc::Rc;
 
 use zed_graph::UnionFind;
@@ -600,7 +600,120 @@ fn atoms_of(f: &Formula) -> HashSet<Atom> {
 /// no point; at the end of a branch its rows go to [`super::point_of`] (exact elimination and
 /// one solve of the rows left), and a point is taken once `f` holds there ([`holds_as`]).
 /// `None` once the rows read pass `room`, or where no branch gave a point: the caller asks the
-/// solver then, so no answer rests on a branch left untried. `f` has no product atom.
+/// solver then, so no answer rests on a branch left untried. `f` has no product atom. The
+/// search is [`quick_search`]; a proof that `f` has no point counts as `None` here.
+fn quick_point(f: &Formula, room: u64, work: &mut Work) -> Result<Option<Model>, Refusal> {
+    Ok(match quick_search(f, None, room, work)? {
+        Quick::Point(m) => Some(m),
+        Quick::Empty | Quick::Unknown => None,
+    })
+}
+
+/// What [`quick_search`] found.
+enum Quick {
+    /// A point of the formula (and of the restriction).
+    Point(Model),
+    /// A proof that there is none: every branch was cut.
+    Empty,
+    /// Neither, within the room given.
+    Unknown,
+}
+
+/// The decisions of [`quick_search`]'s path that a failed branch, or every branch below a
+/// decision, failed on: the decisions at depths `..=upto`, and each decision of `tips` with
+/// the decisions that hold it (its `up`, their `up`, and so on). A decision that holds a
+/// failed row is in the set by its tip alone, so a set takes O(1) entries a row, not one for
+/// each decision above it.
+#[derive(Default)]
+struct Conflict {
+    upto: Option<usize>,
+    tips: BTreeSet<usize>,
+}
+
+impl Conflict {
+    /// The set of the decision `at` (and those that hold it); empty for `None`, a row that
+    /// no decision holds.
+    fn of(at: &[Option<usize>]) -> Conflict {
+        Conflict {
+            upto: None,
+            tips: at.iter().flatten().copied().collect(),
+        }
+    }
+
+    /// The deepest decision of the set: every decision that holds a tip is above it.
+    fn deepest(&self) -> Option<usize> {
+        self.upto.max(self.tips.last().copied())
+    }
+
+    /// The union with `other`, the smaller set moved into the larger.
+    fn join(&mut self, mut other: Conflict) {
+        if other.tips.len() > self.tips.len() {
+            std::mem::swap(&mut self.tips, &mut other.tips);
+        }
+        self.tips.extend(other.tips);
+        self.upto = self.upto.max(other.upto);
+    }
+
+    /// The set without the decision `d`, its deepest, held by `up`: the decisions that hold
+    /// `d` stay, as the disjunction of `d` is reached only through them.
+    fn without(&mut self, d: usize, up: Option<usize>) {
+        self.tips.remove(&d);
+        if self.upto == Some(d) {
+            self.upto = d.checked_sub(1);
+        }
+        self.tips.extend(up);
+    }
+}
+
+/// The search of [`quick_point`]. `within`, where given, is a formula taken with `f`, so a
+/// point is one of both: a question's restriction of one symbol to a piece
+/// ([`shared_cells`]), whose rows then cut every branch that leaves the piece as soon as
+/// they are taken (below).
+///
+/// A branch is cut, with no leaf, once its rows of one atom ([`super::slack::unary_bound`])
+/// meet in a range with no integer, or a row of no atom is false, or it meets an empty
+/// disjunction: no point holds those rows, each atom read as its own value as `point_of`
+/// reads it, so `point_of` would find none at the leaf. In a conjunction the rows that do not
+/// branch are taken before its other parts: the parts are a conjunction, so any order gives
+/// the same branches, and the rows, taken first, cut a branch before it goes down a nest
+/// below them.
+///
+/// A decision is a disjunction (or a row `t != 0`, two branches) taken by its first disjunct,
+/// the others waiting; each part taken carries the decision that holds it (`None` at the
+/// top). Where a branch fails, the search goes back by conflict-directed backjumping (CBJ;
+/// P. Prosser, "Hybrid algorithms for the constraint satisfaction problem", Computational
+/// Intelligence 9(3):268–299, 1993, doi:10.1111/j.1467-8640.1993.tb00310.x, §3.3,
+/// `cbj-label` and `cbj-unlabel`, read in full text from CORE work 59827248). The paper, for
+/// variables `v[1..n]` taken in order: "CBJ maintains a conflict set `conf-set[i]` for each
+/// variable ... When a consistency check fails between `v[i]` and `v[h]`, h is added to the
+/// set `conf-set[i]`. ... If there are no remaining values to be tried in
+/// `current-domain[i]`, CBJ jumps back to the deepest variable `v[h]`, where h ∈
+/// `conf-set[i]` ... The array element `conf-set[h]` becomes `conf-set[h] ∪ conf-set[i] − h`"
+/// (`cbj-unlabel` line 4:
+/// `conf-set[h] ← remove(h, union(conf-set[h], conf-set[i]))`); the values of the variables
+/// passed over are not tried. Departures: (1) the variables are the decisions of the path,
+/// made as the disjunctions are reached, and a value is a disjunct, so a branch's rows depend
+/// on the decisions that hold them, not on every decision above them; (2) a cut's conflict
+/// is the decisions that hold its rows (the two that gave the empty range's ends, or the false
+/// row, or the empty disjunction), each with the decisions that hold it (`Conflict::tips`),
+/// since a row is taken in every branch that makes the decisions holding it; (3) a decision
+/// whose disjuncts all failed passes up its set without itself but with the decision that
+/// holds its disjunction (`Conflict::without`), as the disjunction is reached only through
+/// it; (4) a leaf where `point_of` gives no point, a failure with no explanation, conflicts
+/// with every decision of the path (`Conflict::upto`), which makes the step back chronological
+/// there, as in naive backtracking. A disjunct passed over fails for the reason recorded, as
+/// the rows of the conflict are taken in it too, so it has no point: the branches tried are
+/// those of the plain depth-first search less those with no point, in the same order, so the
+/// first branch with a point, and the point, are the same, reached with no more rows read.
+/// Each branch is charged the rows it took since it was taken from its decision (`took`), at
+/// most the leaf it would have read, so the search never gives up where it did not before.
+///
+/// [`Quick::Empty`] is given where the conflict of a failure holds no decision (every branch
+/// fails for its reason) and no leaf failed without a proof: the branches are the
+/// disjunctive normal form of `f ∧ within`, every point of which holds some branch. A branch
+/// that reached its leaf with no point proves nothing, as `point_of` gives `None` also where
+/// the solver refuses its rows, so the search then gives [`Quick::Unknown`] and the caller
+/// asks the solver.
 // Complexity tradeoff: a question of the solver on a part of 7 constraints cost 40,800 units
 // and 0.65 ms (`bench::omega::independent_stages_scale`, load 60), so one for each of n parts
 // cost 1.2 s at n = 1,800. Naive alternative: every branch of the disjunctive normal form,
@@ -608,14 +721,99 @@ fn atoms_of(f: &Formula) -> HashSet<Atom> {
 // which the caller sets to the rows the question it replaces is charged to read, so this never
 // costs more than that charge, plus the elimination and solve of the branches read (charged by
 // the solver's meter).
-fn quick_point(f: &Formula, room: u64, work: &mut Work) -> Result<Option<Model>, Refusal> {
+// Complexity tradeoff (the cuts and the backjumping): `deep_condition`'s `heavy` d deep, asked
+// for a point with `w <= -1`, has one only in the last disjunct at the top. With neither, each
+// branch went down the nest d deep before its leaf, and chronological backtracking tried again
+// the waiting disjunct `y >= 0` of each level's `z <= 0 || y >= 0`, which no failure involves:
+// 2^d branches, so the room ran out (654 cuts at d = 180 with the cuts alone) and the question
+// went to the solver, 2.49M units at d = 180 and past the allowance of `shared_cells` at d =
+// 1,440 (BENCH-deep-small-choice: 11.0 times the instructions at 8 times the depth). Used: the
+// ends of each atom kept for each branch in a persistent map (`imbl::OrdMap`, copied in O(1)
+// where a decision is made), O(log a) a row for a atoms, and CBJ's conflict sets, held as
+// tips (a join moves the smaller set into the larger, O(s log p) for s tips moved, p decisions
+// on the path). On `heavy` (L_i the body/outer decision of level i, Y_i its `z <= 0 || y >= 0`,
+// S_i its small/deep): the small disjunct of S_i is cut at its first rows, `w >= i` against
+// `w <= -1` or `20 <= x` against `x <= 10` of S_(i-1), conflict {S_i} or {S_i, S_(i-1)}; the
+// outer disjunct of L_(i+1) is cut by `100 <= x` against `x <= 10` of S_i, conflict
+// {L_(i+1), S_i}; so a failed level i+1 hands up {S_i} (S_(i+1) left with its `up` L_(i+1),
+// then L_(i+1) left with its `up` S_i), the jump passing over Y_(i+1), deeper than L_(i+1) and
+// in no conflict. That is O(1) branches a level, each O(1) rows past the one descent, and
+// conflicts of at most 2 tips: O(d log a) in all, and the leaf of the point (outer_0 and
+// `100 <= x <= 200`) has O(1) rows (COMPLEXITY.md row BENCH-deep-small-choice).
+fn quick_search(
+    f: &Formula,
+    within: Option<&Formula>,
+    room: u64,
+    work: &mut Work,
+) -> Result<Quick, Refusal> {
     // A list shared by the branches that hold it, so a branch is copied in O(1).
     struct Node<T>(T, List<T>);
     type List<T> = Option<Rc<Node<T>>>;
-    // A branch: the rows taken, and the parts still to take, each with its sign.
-    type Branch<'a> = (List<Con>, List<(&'a Formula, bool)>);
+    // A part still to take: the formula, its sign, and the decision that holds it.
+    type Item<'a> = (&'a Formula, bool, Option<usize>);
+    // The ends of an atom that the rows of one atom of a branch give, met, with the decision
+    // that holds the row that gave each end.
+    type Held = (Ends, Option<usize>, Option<usize>);
+    type Bounds = imbl::OrdMap<Atom, Held>;
+    // A branch: the rows taken, the parts still to take, and the ends of its rows of one atom.
+    type Branch<'a> = (List<Con>, List<Item<'a>>, Bounds);
+    // A decision of the path: the disjuncts still to try (the next last), each as the branch
+    // was where the decision was made with the disjunct to take; the conflicts of those tried
+    // (`conf-set`); and the decision that holds the disjunction.
+    struct Frame<'a> {
+        alts: Vec<Branch<'a>>,
+        conflict: Conflict,
+        up: Option<usize>,
+    }
     fn push<T>(l: &List<T>, x: T) -> List<T> {
         Some(Rc::new(Node(x, l.clone())))
+    }
+    // Takes the row `c`, held by the decision `at`, into `bounds`: the conflict where the
+    // branch then has no point, as a row of no atom is false or the ends of one atom meet in
+    // a range with no integer.
+    fn bound(bounds: &mut Bounds, c: &Con, at: Option<usize>) -> Result<(), Conflict> {
+        match super::slack::unary_bound(c) {
+            Some((_, _, true)) => Err(Conflict::of(&[at])),
+            Some((Some(a), (lo, hi), false)) => {
+                let ((mut l, mut h), mut l_at, mut h_at) =
+                    bounds
+                        .get(&a)
+                        .cloned()
+                        .unwrap_or(((None, None), None, None));
+                // Each end is the tighter of the two; on a tie, held by the shallower decision
+                // (`None`, held by none, first), so a conflict is no deeper than it must be. A
+                // row taken earlier in a branch can be held by a deeper decision, as the parts
+                // of a conjunction held by an outer decision may wait below an inner one.
+                match (&lo, &l) {
+                    (Some(v), Some(o)) if v < o => {}
+                    (Some(v), Some(o)) if v == o => l_at = l_at.min(at),
+                    (Some(_), _) => (l, l_at) = (lo, at),
+                    (None, _) => {}
+                }
+                match (&hi, &h) {
+                    (Some(v), Some(o)) if v > o => {}
+                    (Some(v), Some(o)) if v == o => h_at = h_at.min(at),
+                    (Some(_), _) => (h, h_at) = (hi, at),
+                    (None, _) => {}
+                }
+                let ends = (l, h);
+                if range_is_empty(&ends) {
+                    return Err(Conflict::of(&[l_at, h_at]));
+                }
+                bounds.insert(a, (ends, l_at, h_at));
+                Ok(())
+            }
+            _ => Ok(()),
+        }
+    }
+    // Whether `h`, with sign `pos`, is one row that makes no branch: a constraint, under any
+    // number of negations, other than a negated equation (`t != 0`, two branches).
+    fn plain_row(mut h: &Formula, mut pos: bool) -> bool {
+        while let Formula::Not(g) = h {
+            h = g;
+            pos = !pos;
+        }
+        matches!(h, Formula::Con(c) if pos || c.rel != Rel::Eq)
     }
     // Drops a list node by node: dropped whole, a long list would recurse once a node.
     fn unwind<T>(mut l: List<T>) {
@@ -626,81 +824,170 @@ fn quick_point(f: &Formula, room: u64, work: &mut Work) -> Result<Option<Model>,
             }
         }
     }
-    let done = |branches: Vec<Branch>| {
-        for (r, t) in branches {
+    fn drop_frame(frame: Frame) {
+        for (r, t, _) in frame.alts {
             unwind(r);
             unwind(t);
         }
-    };
-    let mut branches: Vec<Branch> = vec![(None, push(&None, (f, true)))];
+    }
+    let mut start = push(&None, (f, true, None));
+    if let Some(g) = within {
+        start = push(&start, (g, true, None));
+    }
+    let mut path: Vec<Frame> = Vec::new();
+    let mut next: Option<Branch> = Some((None, start, Bounds::new()));
     let mut read = 0u64;
     let mut charged = 0u64;
-    'branch: while let Some((mut rows, mut todo)) = branches.pop() {
-        while let Some(top) = todo.clone() {
-            let (g, pos) = top.0;
-            todo = top.1.clone();
-            match g {
-                Formula::Con(c) => match (pos, c.rel) {
-                    (true, _) => rows = push(&rows, c.clone()),
-                    (false, Rel::Ge) => rows = push(&rows, negated(c, &Int::from(-1))),
-                    (false, Rel::Eq) => {
-                        // `t != 0`: `t >= 1`, else `t <= -1`.
-                        read += 1;
-                        branches.push((push(&rows, negated(c, &Int::from(-1))), todo.clone()));
-                        rows = push(&rows, negated(c, &Int::from(1)));
+    // Whether a branch reached its leaf and gave no point there: then no proof of no point.
+    let mut leaf_without_point = false;
+    while let Some((mut rows, mut todo, mut bounds)) = next.take() {
+        // The rows this branch took since it was taken from its decision, charged where it is
+        // cut.
+        let mut took = 0u64;
+        // The conflict of the branch's failure; `None` where the room ran out.
+        let failed: Option<Conflict> = 'run: {
+            while let Some(top) = todo.clone() {
+                let (g, pos, at) = top.0;
+                todo = top.1.clone();
+                match g {
+                    Formula::Con(c) => {
+                        let (row, at) = match (pos, c.rel) {
+                            (true, _) => (c.clone(), at),
+                            (false, Rel::Ge) => (negated(c, &Int::from(-1)), at),
+                            (false, Rel::Eq) => {
+                                // `t != 0`: a decision, `t >= 1`, else `t <= -1`.
+                                read += 1;
+                                let d = path.len();
+                                let other = negated(c, &Int::from(-1));
+                                let mut theirs = bounds.clone();
+                                let mut frame = Frame {
+                                    alts: Vec::new(),
+                                    conflict: Conflict::default(),
+                                    up: at,
+                                };
+                                match bound(&mut theirs, &other, Some(d)) {
+                                    Ok(()) => {
+                                        frame.alts.push((push(&rows, other), todo.clone(), theirs))
+                                    }
+                                    // Already failed: its conflict is the decision's first.
+                                    Err(k) => frame.conflict = k,
+                                }
+                                path.push(frame);
+                                (negated(c, &Int::from(1)), Some(d))
+                            }
+                        };
+                        took += 1;
+                        let held = bound(&mut bounds, &row, at);
+                        rows = push(&rows, row);
+                        if let Err(k) = held {
+                            read += took;
+                            break 'run (read <= room).then_some(k);
+                        }
                     }
-                },
-                Formula::Not(h) => todo = push(&todo, (&**h, !pos)),
-                Formula::And(gs) | Formula::Or(gs) => {
-                    if matches!(g, Formula::And(_)) == pos {
-                        for h in gs.iter().rev() {
-                            todo = push(&todo, (h, pos));
+                    Formula::Not(h) => todo = push(&todo, (&**h, !pos, at)),
+                    Formula::And(gs) | Formula::Or(gs) => {
+                        if matches!(g, Formula::And(_)) == pos {
+                            // The rows that do not branch go on top, so they are taken first;
+                            // the other parts keep their order below them.
+                            for h in gs.iter().rev().filter(|h| !plain_row(h, pos)) {
+                                todo = push(&todo, (h, pos, at));
+                            }
+                            for h in gs.iter().rev().filter(|h| plain_row(h, pos)) {
+                                todo = push(&todo, (h, pos, at));
+                            }
+                        } else if let [h] = &gs[..] {
+                            // One disjunct: taken, with no decision.
+                            todo = push(&todo, (h, pos, at));
+                        } else if let Some((head, rest)) = gs.split_first() {
+                            // A decision: the later disjuncts wait, the next one first.
+                            let d = path.len();
+                            let mut alts = Vec::with_capacity(rest.len());
+                            for h in rest.iter().rev() {
+                                read += 1;
+                                alts.push((
+                                    rows.clone(),
+                                    push(&todo, (h, pos, Some(d))),
+                                    bounds.clone(),
+                                ));
+                            }
+                            path.push(Frame {
+                                alts,
+                                conflict: Conflict::default(),
+                                up: at,
+                            });
+                            todo = push(&todo, (head, pos, Some(d)));
+                        } else {
+                            // An empty disjunction (or a negated empty conjunction) is false.
+                            break 'run Some(Conflict::of(&[at]));
                         }
-                    } else if let Some((first, rest)) = gs.split_first() {
-                        // The later disjuncts wait, the next one first.
-                        for h in rest.iter().rev() {
-                            read += 1;
-                            branches.push((rows.clone(), push(&todo, (h, pos))));
-                        }
-                        todo = push(&todo, (first, pos));
-                    } else {
-                        // An empty disjunction (or a negated empty conjunction) is false.
-                        continue 'branch;
                     }
                 }
+                if read > room {
+                    break 'run None;
+                }
             }
+            let mut leaf = Vec::new();
+            let mut at = &rows;
+            while let Some(node) = at {
+                leaf.push(node.0.clone());
+                at = &node.1;
+            }
+            read += leaf.len() as u64;
+            work.read(read - charged)?;
+            charged = read;
             if read > room {
-                work.read(read - charged)?;
+                break 'run None;
+            }
+            let point_of = work.solver.point_of;
+            if let Some(m) = work.metered(|| point_of(&leaf, false))?
+                && holds_as(f, &m, &mut HashMap::new())
+                && within.is_none_or(|g| holds_as(g, &m, &mut HashMap::new()))
+            {
                 unwind(rows);
                 unwind(todo);
-                done(branches);
-                return Ok(None);
+                path.into_iter().for_each(drop_frame);
+                return Ok(Quick::Point(m));
             }
-        }
-        let mut leaf = Vec::new();
-        let mut at = &rows;
-        while let Some(node) = at {
-            leaf.push(node.0.clone());
-            at = &node.1;
-        }
+            leaf_without_point = true;
+            // A failure with no explanation: every decision of the path.
+            Some(Conflict {
+                upto: path.len().checked_sub(1),
+                tips: BTreeSet::new(),
+            })
+        };
         unwind(rows);
-        read += leaf.len() as u64;
-        work.read(read - charged)?;
-        charged = read;
-        if read > room {
-            done(branches);
-            return Ok(None);
-        }
-        let point_of = work.solver.point_of;
-        if let Some(m) = work.metered(|| point_of(&leaf, false))?
-            && holds_as(f, &m, &mut HashMap::new())
-        {
-            done(branches);
-            return Ok(Some(m));
-        }
+        unwind(todo);
+        drop(bounds);
+        let Some(mut failed) = failed else {
+            work.read(read - charged)?;
+            path.into_iter().for_each(drop_frame);
+            return Ok(Quick::Unknown);
+        };
+        // Back to the deepest decision of the conflict (`cbj-unlabel`); the decisions below
+        // it are passed over with their disjuncts left untried.
+        next = loop {
+            let Some(d) = failed.deepest() else {
+                // No decision: every branch fails.
+                break None;
+            };
+            path.drain(d + 1..).for_each(drop_frame);
+            let frame = &mut path[d];
+            frame.conflict.join(failed);
+            if let Some(b) = frame.alts.pop() {
+                break Some(b);
+            }
+            let Frame { conflict, up, .. } = path.pop().expect("the decision `d` is on the path");
+            failed = conflict;
+            failed.without(d, up);
+        };
     }
     work.read(read - charged)?;
-    Ok(None)
+    path.into_iter().for_each(drop_frame);
+    Ok(if leaf_without_point {
+        Quick::Unknown
+    } else {
+        Quick::Empty
+    })
 }
 
 /// Whether every part of [`split`] has a point: a part where a cover found one has, and each
@@ -2593,10 +2880,33 @@ fn shared_cells(
             continue;
         };
         let piece = IntervalSet::range(lo.clone(), hi.clone());
-        work.question(size + 2)?;
-        EXACT_QUESTIONS.set(EXACT_QUESTIONS.get() + 1);
-        let q = Formula::and(vec![f.clone(), super::member(s, &piece)]);
-        match work.ask(&q)? {
+        let within = super::member(s, &piece);
+        // The question's answer found with no question where one comes soon ([`quick_search`],
+        // whose rows of one atom cut each branch that leaves the piece): a point of `f` with
+        // `s` in the piece, read as the loop reads every point, or a proof that there is none,
+        // every branch cut, taken as the question's `None` is. Where it finds neither, the
+        // question is asked as before, so the answer is the question's in every case and only
+        // the cost changes.
+        // Complexity tradeoff: naive version, a question for each gap, a run of the solver on
+        // the whole part, 2.49M units for the one with a point on `deep_condition`'s `heavy` at
+        // depth 180 (1,720 a constraint), so at depth 1,440 the questions passed the step's
+        // allowance `k·L`, which does not grow with the part, and every symbol went to its own
+        // cover (BENCH-deep-small-choice). Used: `quick_search` first, at most `2·(size + 2)`
+        // rows, as where `quick_point` stands for a question elsewhere in this module, then the
+        // question where it gives up: at most that much more than before for each question. On
+        // `heavy` both of its questions are answered so, with 1.44M and 1.73M units at depth
+        // 1,440 (the step 10.67M units in all at depth 1,440, 1.35M at 180: 7.9 times at 8
+        // times the depth, against the allowance 15.3M).
+        let answer = match quick_search(f, Some(&within), 2 * (size + 2), work)? {
+            Quick::Point(m) => Some(m),
+            Quick::Empty => None,
+            Quick::Unknown => {
+                work.question(size + 2)?;
+                EXACT_QUESTIONS.set(EXACT_QUESTIONS.get() + 1);
+                work.ask(&Formula::and(vec![f.clone(), within]))?
+            }
+        };
+        match answer {
             Some(m) => points.push(m),
             None => {
                 if let Some(h) = want.get_mut(s) {
