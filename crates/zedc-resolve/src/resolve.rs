@@ -4195,6 +4195,16 @@ impl Resolver<'_> {
                     ),
                 }
             }
+            // A type the compile-time stage computes, `type Order = types.Order;` after
+            // `types = protobuf("schema/orders.proto");` (DESIGN.md sec:staging, QUESTIONS A72),
+            // is built by plan row SCHED-schema-types; whether the binding's value has such a
+            // member is known only when the stage has computed it.
+            Some(Found::Bound(ids)) if self.out.binders[ids[0]].kind == Kind::Binding => {
+                let what = format!(
+                    "a type the compile-time stage computes from the binding `{q}`, `{q}.{name}`,"
+                );
+                return self.later(span, &what);
+            }
             Some(Found::Bound(ids)) => format!(
                 "`{q}` in the type `{q}.{name}` names {} `{q}`, not a unit imported as `import \
                  a.{q};`",

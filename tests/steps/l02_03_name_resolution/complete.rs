@@ -2,6 +2,8 @@
 //! text does not lex, imported or named as the prelude; each file of a package the system will
 //! not give zedc; and the manifest that does not lex or parse, or binds more than one name.
 
+use std::path::Path;
+
 use zedc::query::Db;
 use zedc::unit::{Dir, load, manifest};
 
@@ -146,6 +148,11 @@ fn a_qualified_type_names_a_type_of_an_imported_unit_or_is_refused() {
     let shapes = ("shapes.zed", "origin = 1;\n");
     let cases: [(&[(&str, &str)], &str); 6] = [
         (
+            &[("main.zed", "f(x) = x;\ng(positional p: f.Point) = p;\n")],
+            "main.zed:2:17: `f` in the type `f.Point` names the function `f`, not a unit \
+             imported as `import a.f;`.",
+        ),
+        (
             &[
                 shapes,
                 (
@@ -172,11 +179,6 @@ fn a_qualified_type_names_a_type_of_an_imported_unit_or_is_refused() {
              is a qualifier and a type, as `shapes.Point` after `import geometry.shapes;`.",
         ),
         (
-            &[("main.zed", "a = 1;\nf(positional p: a.Point) = p;\n")],
-            "main.zed:2:17: `a` in the type `a.Point` names the binding target `a`, not a unit \
-             imported as `import a.a;`.",
-        ),
-        (
             &[("main.zed", "f(positional p: a.Point) = p;\n")],
             "main.zed:1:17: `a` in the type `a.Point` names no unit: no import in scope binds \
              the qualifier `a`.",
@@ -190,6 +192,18 @@ fn a_qualified_type_names_a_type_of_an_imported_unit_or_is_refused() {
     for (fs, expected) in cases {
         assert_eq!(heads(fs), [expected], "{fs:?}");
     }
+    // A binding's member as a type is a type the compile-time stage computes (DESIGN.md
+    // sec:staging, QUESTIONS A72), of plan row SCHED-schema-types: no mistake here.
+    let fs = [("main.zed", "a = 1;\nf(positional p: a.Point) = p;\n")];
+    assert_eq!(heads(&fs), Vec::<String>::new());
+    let report = package(&fs).report(Path::new(""));
+    assert!(
+        report.iter().any(|m| m.starts_with(
+            "main.zed:2:17: a type the compile-time stage computes from the binding `a`, \
+             `a.Point`, is part of the Zed language but is not supported by this version of zedc."
+        )),
+        "{report:?}"
+    );
 }
 
 #[test]

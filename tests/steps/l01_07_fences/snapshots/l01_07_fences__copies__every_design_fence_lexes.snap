@@ -204,6 +204,13 @@ expression: "tokens_by_key(&fences::design())"
   3 | back = ( main :: files :: bytes [ str["samples.bin"] ] «else» [ ] ) . via ( records ( Sample ) ) ;
   4 | m . stdout <- str[${back :: len} " samples read"] ;
   5 | }
+== DESIGN.md [sec:type_language] 1 L7
+  2 | types = protobuf ( str["schema/orders.proto"] ) ;
+  3 | «type» Order = types . Order ;
+  4 | main ( m : MainArgs ) {
+  5 | orders = m . stdin :: bytes . via ( types . delimited ( Order ) ) ;
+  6 | m . stdout <- orders . map ( o -> str[${o . id} ": " ${o . note}] «else» str["(a message that did not decode)"] ) ;
+  7 | }
 == DESIGN.md [sec:level_names] 1 L3
   2 | «type» Sales0 = Utf8String ->? [ Utf8String ->? int ] ;
 == DESIGN.md [sec:level_names] 2 L7

@@ -41,7 +41,7 @@ expression: "tokens_by_key(&fences::examples())"
   5 | z = { y = 0₍10₎ ; y } ;
   6 | y + z
   7 | }
-== EXAMPLES.md [3. Numbers] 1 L7
+== EXAMPLES.md [3. Numbers] 1 L1
   2 | x = 3₍10₎ ;
   3 | q = 7₍10₎ «div» 2₍10₎ ;
   4 | r = - 7₍10₎ «mod» 2₍10₎ ;
