@@ -847,8 +847,8 @@ pub const TYPES: &[&str] = &[
 /// The type names of the prelude's later layers, each with its layer (DESIGN.md, "Defined words
 /// by layer"). A use below its layer is an error naming the layer, as for a value word. The
 /// number algebras of L14 are words too, applied to build a value. The fixed-width aliases,
-/// `i8` to `u128`, are of L1 as names of their ranges (step L1.12, [`zedc_syntax::fixed_width`]). The
-/// float formats `f16` and `bf16` are of L1 and not yet built (step L1.18a), so neither list
+/// `i8` to `u128`, are of L1 as names of their ranges (step L1.12, [`zedc_syntax::fixed_width`]).
+/// The float formats `f16` and `bf16` are of L1 and not yet built (step L1.18a), so neither list
 /// holds them.
 pub const LATER_TYPES: &[(&str, u32)] = &[
     ("Seq", 5),
@@ -969,7 +969,8 @@ pub fn resolve_kept(
 /// (OSP-diag, DESIGN.md "Printed types are syntax"): the walk a written type gets, the names in
 /// `leaves` standing for the leaves of layer L10 a printed type holds (`_`, `!_`, a literal),
 /// and the forms of step L2.5 the checker prints from L1 on: an atom's payload type, read through
-/// to its parts, an atom with any payload `#a(..)` and every struct `{..}`. A type variable no bounds clause around it binds is not defined.
+/// to its parts, an atom with any payload `#a(..)` and every struct `{..}`. A type variable no
+/// bounds clause around it binds is not defined.
 pub fn printed_type(t: &Type, leaves: HashSet<Arc<str>>) -> Result<(), Vec<Error>> {
     let mut r = Resolver {
         printed: Some(leaves),
@@ -2322,7 +2323,8 @@ impl Resolver<'_> {
             StmtKind::Struct(st) => {
                 self.bind(&st.name, s.span, s.span, Kind::Struct, None);
                 // A top-level struct's `local` fields are part of what an importer reads. In a
-                // block `local` hides nothing, and the walk rejects it ([`Self::block_local_fields`]).
+                // block `local` hides nothing, and the walk rejects it
+                // ([`Self::block_local_fields`]).
                 if self.scopes.len() == TOP {
                     self.out.exports.add_local_fields(&st.name, &st.fields);
                 }
@@ -2474,8 +2476,8 @@ impl Resolver<'_> {
     /// The text is known on every path that reaches a rejection (TEST-local-fields-assumptions,
     /// 2026-11-20). A rejection needs `self.units` to give the other unit's exports. The
     /// resolutions with real units are zedc's `front::resolve_recovered` (from
-    /// `unit::load`, the package mode, which `zedc run` reaches by `unit::package_report`), which calls
-    /// `resolve_in_text` and `resolve_kept` with `Some(text)`; every other caller resolves
+    /// `unit::load`, the package mode, which `zedc run` reaches by `unit::package_report`), which
+    /// calls `resolve_in_text` and `resolve_kept` with `Some(text)`; every other caller resolves
     /// with [`Alone`], whose `exports` gives no unit, so the `let … else` below returns before
     /// the quote. [`resolve_in`] passes no text and real units, and no caller in zedc uses it
     /// with any but `Alone` (`front::parse_unit`). So the fallback "of `Money`" is reached only
@@ -2842,12 +2844,12 @@ impl Resolver<'_> {
 
     /// The fact `a`, one of [`MAIN_FACTS`], written after the facts `seen` of the same
     /// declaration, which is the unit's `main` where `is_main` (DESIGN.md sec:ports, "`main`
-    /// may limit its own run"). It stands before the unit's `main`, once, in its own form: `@limits` with `memory:`, `cpu:` or both,
-    /// `@timeout(d)`, and `@kill(#term, grace: d)`, `@kill(#term)` or `@kill(#kill)`. Its
-    /// arguments are resolved as expressions; the checker then demands a constant of each
-    /// (`zedc_check`, `limits.rs`). Before any other declaration it is refused by the
-    /// attachment check, which names `main`: a limit is of the program's process, and a child's
-    /// limits are written at its start.
+    /// may limit its own run"). It stands before the unit's `main`, once, in its own form:
+    /// `@limits` with `memory:`, `cpu:` or both, `@timeout(d)`, and `@kill(#term, grace: d)`,
+    /// `@kill(#term)` or `@kill(#kill)`. Its arguments are resolved as expressions; the checker
+    /// then demands a constant of each (`zedc_check`, `limits.rs`). Before any other declaration it
+    /// is refused by the attachment check, which names `main`: a limit is of the program's process,
+    /// and a child's limits are written at its start.
     fn main_fact<'a>(
         &mut self,
         a: &'a Annot,

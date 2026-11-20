@@ -353,10 +353,10 @@ impl<'a> Tables<'a> {
     /// `errors` and `later` are both empty. (3) Every caller that builds `Tables` over a
     /// non-empty unit does so with the resolution `resolve_text` or `resolve` gave
     /// (zedc front.rs `staged`, mutate.rs `mutants`; the checker's own unit tests build
-    /// `Tables` over an empty unit; other test callers were not each traced). Not checked by the types: `Tables::new` takes any
-    /// `Resolution`, so a new caller passing `resolve_in(..).res` with `later` non-empty
-    /// would reach the panic. Test: none reaches these arms by construction; every
-    /// `not_yet` refusal test of the resolver shows (1) for its form.
+    /// `Tables` over an empty unit; other test callers were not each traced). Not checked by the
+    /// types: `Tables::new` takes any `Resolution`, so a new caller passing `resolve_in(..).res`
+    /// with `later` non-empty would reach the panic. Test: none reaches these arms by construction;
+    /// every `not_yet` refusal test of the resolver shows (1) for its form.
     fn binders_of(&self, s: &'a Stmt) -> Vec<usize> {
         match &s.kind {
             StmtKind::Bind { targets, .. } => targets

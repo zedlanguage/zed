@@ -282,8 +282,8 @@ impl<'a> Index<'a> {
     /// can run the call and the result is `Undecided`. A place past every overload's
     /// parameters has no `Two`s, so `admitting` gives none (3). Test:
     /// `l01_29_diagnostics::overload_cycles` (MSG-overload-false-cycle) checks that a call
-    /// waits on the overload its arguments select and reports no cycle through the others; no test can show a carrier that (1)'s
-    /// facts leave out, since the claim is that there is none.
+    /// waits on the overload its arguments select and reports no cycle through the others; no test
+    /// can show a carrier that (1)'s facts leave out, since the claim is that there is none.
     fn pick(&self, positional: &[Mask], named: &[(&str, Mask)]) -> Pick {
         let places = (positional.iter().enumerate())
             .map(|(i, &m)| Index::admitting(self.positional.get(i), m))
