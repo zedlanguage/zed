@@ -53,3 +53,29 @@ fn roots_are_linear_in_the_number_of_terms() {
         },
     );
 }
+
+/// The families on which the branch and bound alone took about `c^(1/2)` and `c^(2/3)`
+/// intervals for roots near `c = 2^bits` (plan row ROOTS-interval-bound): with the switch to
+/// the chain after `chain_ends(t)` units, at 256 and 2,048 bits each is close to linear in the
+/// bits, where the branch and bound alone would take past 2^128 intervals at the small size.
+#[test]
+fn roots_of_families_that_defeat_the_cuts_scale_in_the_bits() {
+    let cubics = scaling::inputs(256, |bits| of_flat_cubic(bits as u64));
+    scaling::check_order(
+        "the integer roots of an increasing cubic with its real root near 2^n",
+        256,
+        1,
+        |n| {
+            integer_roots(&cubics[&n], None, None);
+        },
+    );
+    let clusters = scaling::inputs(256, |bits| expanded(&cluster(bits as u64)));
+    scaling::check_order(
+        "the integer roots of four roots at 2^n..=2^n + 3",
+        256,
+        1,
+        |n| {
+            integer_roots(&clusters[&n], None, None);
+        },
+    );
+}

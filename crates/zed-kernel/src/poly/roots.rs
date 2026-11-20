@@ -21,8 +21,13 @@
 //!   and `agrees_with_evaluation_at_every_member` (checked 2026-11-20).
 //! - Step 3 replaces the paper's proof of Theorem 1 (section 3), which isolates the roots of
 //!   the chain `p_1, ..., p_k` (each `p_(i+1)` the derivative of `p_i` with its power of `t`
-//!   divided out) one level at a time by its Proposition 1, with a branch and bound whose
-//!   number of intervals is not proved (see `positive_roots`; plan row ROOTS-interval-bound).
+//!   divided out) one level at a time by its Proposition 1, with a branch and bound tried
+//!   first. Its number of intervals has no bound in `t` and the bits: on a cubic with no
+//!   integer root near `c` and on four roots clustered at `c` it grows as about `c^(1/2)` and
+//!   `c^(2/3)` (counts at `positive_roots`). So the branch and bound stops after
+//!   `chain_ends(t)` units of work, the chain's own proved count of evaluations at the ends of
+//!   stretches, and the chain answers (`chain_roots`, its bound proved there), with integer
+//!   cells in place of Proposition 1's isolating intervals.
 //! - The paper's remark that a nonzero integer root divides `a_k`, the coefficient of the
 //!   least exponent, is not used to list candidates; the search is bounded by 1 plus the
 //!   largest coefficient instead (`positive_roots`).
@@ -42,7 +47,8 @@
 //!    bounded by the carries of the terms below each term shows no root in it
 //!    (`may_hold_a_root`), and where `x p'(x)` has one sign on it the one sign change is found
 //!    by Newton's method on the integers, each step that does not halve the bracket followed
-//!    by a bisection (`search`).
+//!    by a bisection (`search`). Past `chain_ends(t)` intervals and search steps the partial
+//!    result is dropped and the chain of derivatives answers instead (`chain_roots`).
 //! 4. A candidate is kept when every other piece is 0 at it.
 
 use std::cmp::Ordering;
@@ -437,11 +443,39 @@ fn scaled(q: &[(u64, BigInt)], x: &BigInt, s: u64) -> BigInt {
 /// not shown monotone on it, so the intervals kept at each depth lie about the integer roots
 /// of `p` and the real roots of `p'`, under `t` each by Descartes' rule of signs. Measured (the
 /// tests below): a polynomial of `t` terms with a root at 4 is linear in `t`, and a cubic
-/// whose roots have `B` bits close to linear in `B`. Not proved (plan row ROOTS-interval-bound):
-/// the number of intervals kept at a depth, in the worst case; the bound for the method
-/// replaced (the chain of `t` derivatives of [Cucker, Koiran and Smale 1999], step 3) was
-/// O(t^3) evaluations of numbers of up to `t (B + 1)(B + 2)` bits, reached by `t` terms with a
-/// root at 4 (80.5 times the work at 8 times the terms).
+/// whose roots have `B` bits close to linear in `B`.
+///
+/// No bound on the intervals in `t` and `B` holds (plan row ROOTS-interval-bound, proof5,
+/// 2026-11-20): the interval evaluations of [`may_hold_a_root`] and [`positive_on`] are in the
+/// monomial form, so on `l..=h` of width `w` near `c` they widen by about `w` times the
+/// coefficients' size, and a root or a point where `p'` is small near a large `c` is cut down to
+/// intervals of width about `|p(x)| / c^2` before either test succeeds. Measured with the
+/// count of intervals popped (`the_search_is_bounded_on_families_that_defeat_the_cuts`, before
+/// the fallback below): the cubic `x^3 - 3c x^2 + 3(c^2 + 1) x - (c^3 + 3c + 1)`, `p' = 3((x -
+/// c)^2 + 1) > 0`, no integer root, took 2,444, 37,398 and 598,260 intervals at `c = 2^16, 2^24,
+/// 2^32`, about `c^(1/2)`; four integer roots at `c..=c + 3`, 13,396, 557,282 and 21,739,964
+/// (98.6 s), about `c^(2/3)`; `(x - c)^4 + 1` and `(x - c)^4 - 2` as the four roots. Each is
+/// exponential in the bits for `t = 4`, so no polynomial in `t` and `B` bounds the count.
+///
+/// So the branch and bound is stopped after [`chain_ends`]`(t)` units, an interval popped or a
+/// step of a [`search`], and [`chain_roots`], the chain of [Cucker, Koiran and Smale 1999]
+/// (doi:10.1006/jsco.1998.0242, checked 2026-11-20) with its proved bound, gives the roots
+/// instead, the partial list dropped. Proof of the
+/// bound of the whole: the branch and bound spends at most `chain_ends(t)` units and the steps
+/// of the one search that passes it, at most `2 bits(h - l)` plus O(log B) ([`search`]); each
+/// unit is O(t) products of numbers of O(B + s) bits, `s = 2 bits(h)`, which is no more than one
+/// of the chain's evaluations at a stretch's end ([`chain_ends`]); and the chain then costs
+/// what [`chain_roots`] proves, O(t^3) evaluations of numbers of at most `t (B + 1)(B + 2)`
+/// bits. So the whole is at most about twice that, polynomial in `t` and `B`. Both methods are
+/// exact, so the roots do not depend on which answers.
+///
+/// Complexity tradeoff of the switch: the chain alone is O(t^3) evaluations, 80.5 times the
+/// work at 8 times the terms for `t` terms with a root at 4, where the branch and bound is
+/// linear (`l01_39_reduced_product::roots::bench`); the branch and bound alone is exponential
+/// in `B` on the families above. The budget does not grow with `B`: a budget of the chain's
+/// search steps, O(t^2 B), would let the cubic spend O(B) units of O(M(B)) each before the
+/// switch, against the chain's O(log B) Newton steps there. It is the chain's own proved bound,
+/// not a measured size, so it is not a threshold tuned to a machine.
 fn positive_roots(p: &[(u64, BigInt)], a: BigInt, b: Option<BigInt>) -> Vec<BigInt> {
     if p.len() < 2 {
         return Vec::new();
@@ -473,9 +507,17 @@ fn positive_roots(p: &[(u64, BigInt)], a: BigInt, b: Option<BigInt>) -> Vec<BigI
     let slope: Vec<(u64, BigInt)> = (p[1..].iter())
         .map(|(e, c)| (*e, c * BigInt::from(*e)))
         .collect();
+    let budget = chain_ends(p.len());
+    let mut spent: u64 = 0;
     let mut out = Vec::new();
-    let mut open = vec![(a, hi)];
+    let mut open = vec![(a.clone(), hi.clone())];
     while let Some((l, h)) = open.pop() {
+        spent += 1;
+        if spent > budget {
+            #[cfg(test)]
+            tests::CHAINED.with(|c| c.set(c.get() + 1));
+            return chain_roots(p, a, Some(hi));
+        }
         if l > h || !may_hold_a_root(p, &l, &h) {
             continue;
         }
@@ -491,7 +533,7 @@ fn positive_roots(p: &[(u64, BigInt)], a: BigInt, b: Option<BigInt>) -> Vec<BigI
         }
         let b = bounds(&slope, &l);
         if positive_on(&slope, &b, &l, &h, false) || positive_on(&slope, &b, &l, &h, true) {
-            out.extend(search(p, &slope, l, h));
+            out.extend(search(p, &slope, l, h, &mut spent));
             continue;
         }
         let m = match &l * 4 < h {
@@ -521,7 +563,13 @@ fn positive_roots(p: &[(u64, BigInt)], a: BigInt, b: Option<BigInt>) -> Vec<BigI
 /// bits. The floors make the guess exact to within 1 where `|p'|` near the root is at least
 /// about `x^(D - 1)`, as at a simple root of a polynomial whose leading term rules there; where
 /// it is not, the guess is poor and the bisection bounds the steps. The signs are exact.
-fn search(p: &[(u64, BigInt)], slope: &[(u64, BigInt)], lo: BigInt, hi: BigInt) -> Option<BigInt> {
+fn search(
+    p: &[(u64, BigInt)],
+    slope: &[(u64, BigInt)],
+    lo: BigInt,
+    hi: BigInt,
+    steps: &mut u64,
+) -> Option<BigInt> {
     let (mut lo, mut hi) = (lo, hi);
     let below = sign_at(p, &lo);
     if below == Ordering::Equal {
@@ -535,6 +583,7 @@ fn search(p: &[(u64, BigInt)], slope: &[(u64, BigInt)], lo: BigInt, hi: BigInt) 
     let s = 2 * hi.bits();
     let mut bisect = false;
     while &hi - &lo > BigInt::one() {
+        *steps += 1;
         if &lo * 4 < hi {
             let x = BigInt::one() << ((lo.bits() + hi.bits()) / 2);
             if lo < x && x < hi {
@@ -560,16 +609,7 @@ fn search(p: &[(u64, BigInt)], slope: &[(u64, BigInt)], lo: BigInt, hi: BigInt) 
                 (!d.is_zero()).then(|| x - (x * fx).div_floor(&d))
             }
         };
-        let guess = newton.filter(|g| &lo < g && g < &hi);
-        let x = guess
-            .clone()
-            .unwrap_or_else(|| (&lo + &hi).div_floor(&BigInt::from(2)));
-        let mut probe = vec![x];
-        if guess.is_some() {
-            probe.push(probe[0].clone() + 1);
-            probe.push(probe[0].clone() - 1);
-        }
-        for x in probe {
+        for x in probes(newton, &lo, &hi) {
             if !(lo < x && x < hi) {
                 continue;
             }
@@ -584,21 +624,371 @@ fn search(p: &[(u64, BigInt)], slope: &[(u64, BigInt)], lo: BigInt, hi: BigInt) 
     None
 }
 
+/// The points a step of [`search`] or [`chain_search`] tests on the bracket `lo..=hi`, with
+/// `hi - lo > 1`: Newton's guess `g`, if any, taken into `lo..=hi`, and `g + 1` and `g - 1`,
+/// those strictly inside; else the middle. A guess within 1 of a root then has the integer on
+/// the root's far side among the points, so a root in `g..g + 1` closes the bracket in one
+/// step, also where `g` is `lo` (or `hi`) itself; before plan row ROOTS-interval-bound a guess
+/// equal to an end was dropped with its neighbors and the step bisected, so a root in
+/// `lo..lo + 1` took a bisection per bit of `hi - lo`: on `q = p''` of four roots at
+/// `c..=c + 3`, 275 steps at `c = 2^256` and 2,073 at `2^2048`. The middle is strictly inside
+/// as `hi - lo > 1`, so a step always tests some point and the bisection that follows a weak
+/// step still halves the bracket. Tests: `the_search_is_bounded_on_families_that_defeat_the_cuts`
+/// and the bench `roots_of_families_that_defeat_the_cuts_scale_in_the_bits`.
+fn probes(newton: Option<BigInt>, lo: &BigInt, hi: &BigInt) -> Vec<BigInt> {
+    let inside = |x: &BigInt| lo < x && x < hi;
+    let near: Vec<BigInt> = match newton {
+        Some(g) => {
+            let g = g.clamp(lo.clone(), hi.clone());
+            [g.clone(), &g + 1, &g - 1]
+                .into_iter()
+                .filter(|x| inside(x))
+                .collect()
+        }
+        None => Vec::new(),
+    };
+    match near.is_empty() {
+        true => vec![(lo + hi).div_floor(&BigInt::from(2))],
+        false => near,
+    }
+}
+
+/// `p` at `x`, by Horner's rule over the gaps between its exponents.
+fn eval(p: &[(u64, BigInt)], x: &BigInt) -> BigInt {
+    let Some((mut last, _)) = p.last().cloned() else {
+        return BigInt::zero();
+    };
+    let mut acc = BigInt::zero();
+    for (e, c) in p.iter().rev() {
+        acc = acc * Pow::pow(x, last - e) + c;
+        last = *e;
+    }
+    acc * Pow::pow(x, last)
+}
+
+/// The derivative of `q`, divided by the power of the name that leaves its least exponent 0:
+/// on `x > 0` it has the sign of the derivative of `q`, whose least exponent is 0, and one
+/// term less.
+fn derived(q: &[(u64, BigInt)]) -> Vec<(u64, BigInt)> {
+    let e1 = q[1].0;
+    (q[1..].iter())
+        .map(|(e, c)| (e - e1, c * BigInt::from(*e)))
+        .collect()
+}
+
+/// The integer roots of `p`, whose least exponent is 0 and constant term not zero, in
+/// `a..=b` with `a >= 1`, `b` none for no upper end, by the proof of Theorem 1 of [Cucker,
+/// Koiran and Smale 1999], doi:10.1006/jsco.1998.0242, checked 2026-11-20 (section 3; the
+/// module doc quotes its Theorem 1): Rolle's theorem over the chain of
+/// [`derived`] polynomials, the cells of each member found from those of its successor, the
+/// last member, of one term, having none ([`chain_cells`]). Cauchy's bound `1 + max |c|`
+/// closes the interval. [`positive_roots`] calls it once its branch and bound has spent
+/// [`chain_ends`]`(t)` units.
+///
+/// Proof of the bound (the departure from the paper is only that cells are integer intervals
+/// `c..=c + 1` and its Proposition 1 is replaced by [`chain_search`]). Let the member `q_m`
+/// have `m` terms, so its successor has `m - 1` and the last, of 1 term, has no real root on
+/// `x > 0` and no cell: `C(1) = 0`. [`chain_cells`] keeps the `C(m - 1)` cells of the
+/// successor and adds at most one cell per stretch between them, and only for a stretch on
+/// which `q_m` changes sign or is 0 at an end, that is, which holds a real root of `q_m`. The
+/// stretches are disjoint (each starts one past the cell before it), so the cells added are at
+/// most the positive real roots of `q_m`, under `m` by Descartes' rule of signs (`m` terms
+/// have at most `m - 1` sign changes): `C(m) <= C(m - 1) + m - 1`, so `C(m) <= m (m - 1) / 2`.
+/// Member `q_m` has at most `C(m - 1) + 1` stretches and is evaluated at both ends of each,
+/// which is [`chain_ends`]; it searches at most `m - 1` of them, each search at most
+/// `2 (B + 2)` steps and O(log B) cuts at powers of 2 ([`chain_search`]), `B` the bits of the
+/// bound. Each evaluation is O(t) products of numbers of at most `D (B + 2)` bits, `D < t (B +
+/// 1)` the degree of the piece (module doc, step 2). In all O(t^3) evaluations at stretch ends
+/// and O(t^2 B) in searches: polynomial in `t` and `B`, and not in the degree. Tests:
+/// `the_chain_agrees_with_the_branch_and_bound`, and the families of
+/// `the_search_is_bounded_on_families_that_defeat_the_cuts`.
+fn chain_roots(p: &[(u64, BigInt)], a: BigInt, b: Option<BigInt>) -> Vec<BigInt> {
+    if p.len() < 2 {
+        return Vec::new();
+    }
+    let bound = BigInt::one() + p.iter().map(|(_, c)| c.abs()).max().expect("terms");
+    let hi = b.map_or(bound.clone(), |b| b.min(bound));
+    if a > hi {
+        return Vec::new();
+    }
+    let mut chain = vec![p.to_vec()];
+    while chain.last().expect("one member").len() > 1 {
+        let next = derived(chain.last().expect("one member"));
+        chain.push(next);
+    }
+    let mut below = Vec::new();
+    for q in chain.iter().rev().skip(1) {
+        below = chain_cells(q, &below, &a, &hi);
+    }
+    let mut out = Vec::new();
+    for c in &below {
+        for x in [c.clone(), c + 1] {
+            if a <= x && x <= hi && eval(p, &x).is_zero() {
+                out.push(x);
+            }
+        }
+    }
+    out.sort();
+    out.dedup();
+    out
+}
+
+/// The cells of `q` in `a..=hi`: integers `c` such that each real root of `q` there lies in
+/// `c..=c + 1` for some `c`, given `below`, the cells of its [`derived`] successor, between
+/// which `q` is monotone. Each of `below` is kept, as `q` may have roots in a cell where its
+/// derivative is 0; each stretch between them adds the cell of its sign change, if any.
+fn chain_cells(q: &[(u64, BigInt)], below: &[BigInt], a: &BigInt, hi: &BigInt) -> Vec<BigInt> {
+    let mut out = below.to_vec();
+    let mut stretches = Vec::new();
+    let mut u = a.clone();
+    for c in below {
+        if &u <= c {
+            stretches.push((u.clone(), c.clone()));
+        }
+        u = u.max(c + 1);
+    }
+    if &u <= hi {
+        stretches.push((u, hi.clone()));
+    }
+    for (u, v) in stretches {
+        let (fu, fv) = (eval(q, &u), eval(q, &v));
+        if fu.is_zero() {
+            out.push(u.clone());
+        }
+        if fv.is_zero() {
+            out.push(v.clone());
+        }
+        if fu.signum() * fv.signum() < BigInt::zero() {
+            out.push(chain_search(q, u, v, fu, fv));
+        }
+    }
+    out.sort();
+    out.dedup();
+    out
+}
+
+/// A cell `c` in `lo..hi` at which `q`, monotone on `lo..=hi`, changes sign or is 0, given
+/// its values `flo` and `fhi`, of opposite signs, at the ends. Each step takes Newton's guess
+/// from the end of the smaller value and the integer beside it toward the root, so that a
+/// guess within 1 of a simple root closes the bracket; a step that does not halve the bracket
+/// is followed by a bisection, so a search takes at most twice the bits of `hi - lo` steps.
+/// Before those steps, while `hi > 4 max(lo, 1)`, the bracket is cut at the power of 2 whose
+/// exponent is the mean of its ends' bits, so a root far below the end Newton's method starts
+/// from is reached in O(log B) steps for ends of B bits.
+fn chain_search(
+    q: &[(u64, BigInt)],
+    mut lo: BigInt,
+    mut hi: BigInt,
+    mut flo: BigInt,
+    mut fhi: BigInt,
+) -> BigInt {
+    let slope: Vec<(u64, BigInt)> = (q.iter())
+        .filter(|(e, _)| *e > 0)
+        .map(|(e, c)| (e - 1, c * BigInt::from(*e)))
+        .collect();
+    let mut bisect = false;
+    while &hi - &lo > BigInt::one() {
+        // Complexity tradeoff: a bracket over many orders of magnitude is first narrowed by
+        // the magnitude of its ends, at `2^((bits(lo) + bits(hi)) / 2)`, until `hi <= 4 lo`:
+        // O(log B) steps for ends of B bits. Newton's method from an end far from the root
+        // moves by a constant factor per step, and bisection halves the bracket, so either
+        // alone takes O(B) steps of O(B)-bit arithmetic here.
+        let floor = lo.clone().max(BigInt::one());
+        if &floor * 4 < hi {
+            let x = BigInt::one() << ((floor.bits() + hi.bits()) / 2);
+            if lo < x && x < hi {
+                let fx = eval(q, &x);
+                if fx.is_zero() {
+                    return x;
+                }
+                match fx.signum() == flo.signum() {
+                    true => (lo, flo) = (x, fx),
+                    false => (hi, fhi) = (x, fx),
+                }
+                continue;
+            }
+        }
+        let width = &hi - &lo;
+        let newton = match bisect {
+            true => None,
+            false => {
+                let (x, fx) = if flo.abs() <= fhi.abs() {
+                    (&lo, &flo)
+                } else {
+                    (&hi, &fhi)
+                };
+                let d = eval(&slope, x);
+                (!d.is_zero()).then(|| (x * &d - fx).div_floor(&d))
+            }
+        };
+        for x in probes(newton, &lo, &hi) {
+            if !(lo < x && x < hi) {
+                continue;
+            }
+            let fx = eval(q, &x);
+            if fx.is_zero() {
+                return x;
+            }
+            if fx.signum() == flo.signum() {
+                (lo, flo) = (x, fx);
+            } else {
+                (hi, fhi) = (x, fx);
+            }
+        }
+        bisect = (&hi - &lo) * 2 > width;
+    }
+    lo
+}
+
+/// The bound proved at [`chain_roots`] on the evaluations it makes at the ends of stretches,
+/// for `t` terms: `2 * sum over m in 2..=t of (C(m - 1) + 1)`, `C(k) = k (k - 1) / 2`, which
+/// is `2 ((t - 2)(t - 1) t / 6 + t - 1)` (`sum over j in 1..=n of j (j - 1) / 2 = (n + 1) n
+/// (n - 1) / 6`, at `n = t - 1`; a product of three consecutive integers is divisible by 6, so
+/// the division is exact); 14 for a cubic. Computed in `u128`: `t^3 < 2^128` for `t < 2^42`,
+/// and `t` terms of at least 32 bytes each are under memory far below that. A sum past
+/// `u64::MAX` is cut to it, which no count of work reaches. Each of `positive_roots`'s units,
+/// an interval or a search
+/// step, is O(t) products of numbers of O(B) bits, no more than one such evaluation, whose
+/// numbers have at least `B` bits: so the branch and bound, stopped past this many units, costs
+/// no more than this part of the chain's bound. Tests: `chain_ends_is_the_sum_it_bounds`.
+fn chain_ends(t: usize) -> u64 {
+    let t = t as u128;
+    if t < 2 {
+        return 0;
+    }
+    let ends = 2 * ((t - 2) * (t - 1) * t / 6 + t - 1);
+    u64::try_from(ends).unwrap_or(u64::MAX)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    /// `p` at `x`, by Horner's rule over the gaps between its exponents.
-    fn eval(p: &[(u64, BigInt)], x: &BigInt) -> BigInt {
-        let Some((mut last, _)) = p.last().cloned() else {
-            return BigInt::zero();
-        };
-        let mut acc = BigInt::zero();
-        for (e, c) in p.iter().rev() {
-            acc = acc * Pow::pow(x, last - e) + c;
-            last = *e;
+    thread_local! {
+        /// How many times [`positive_roots`] has handed over to [`chain_roots`] on this thread.
+        pub(super) static CHAINED: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
+    }
+
+    fn big(terms: &[(u64, BigInt)]) -> Sparse {
+        Sparse::new(terms.iter().cloned())
+    }
+
+    /// The product of `x - r` for each `r` in `rs`.
+    fn from_big_roots(rs: &[BigInt]) -> Sparse {
+        let mut p = poly(&[(0, 1)]);
+        for r in rs {
+            p = p
+                .times(&big(&[(1, BigInt::one()), (0, -r.clone())]))
+                .expect("small");
         }
-        acc * Pow::pow(x, last)
+        p
+    }
+
+    /// The families that defeat the cuts of the branch and bound (`positive_roots`: its count
+    /// of intervals grows as `c^(1/2)` and `c^(2/3)` on them), at `c = 2^k`: each is answered
+    /// exactly, by the chain, at sizes where the branch and bound alone would take more than
+    /// 2^40 intervals.
+    #[test]
+    fn the_search_is_bounded_on_families_that_defeat_the_cuts() {
+        let chained = || CHAINED.with(|c| c.get());
+        for k in [16u64, 64, 128, 256] {
+            let c = BigInt::one() << k;
+            let c2 = &c * &c;
+            // `p' = 3((x - c)^2 + 1) > 0`; the one real root is not an integer.
+            let cubic = big(&[
+                (0, -(&c2 * &c + 3 * &c + 1)),
+                (1, 3 * (&c2 + 1)),
+                (2, -3 * &c),
+                (3, BigInt::one()),
+            ]);
+            let four = from_big_roots(&[c.clone(), c.clone(), c.clone(), c.clone()]);
+            let cluster: Vec<BigInt> = (0..4).map(|i| &c + i).collect();
+            let near: Vec<BigInt> = (0..4).map(|i| -(&c + 2 * i)).collect();
+            let cases: [(Sparse, Vec<BigInt>); 5] = [
+                (cubic, vec![]),
+                (from_big_roots(&cluster), cluster.clone()),
+                (four.plus(&poly(&[(0, 1)])), vec![]),
+                (four.plus(&poly(&[(0, -2)])), vec![]),
+                (from_big_roots(&near), near.iter().rev().cloned().collect()),
+            ];
+            for (f, want) in cases {
+                let before = chained();
+                assert_eq!(
+                    integer_roots(&f, None, None),
+                    Roots::Listed(want),
+                    "k = {k}: {f:?}"
+                );
+                assert!(
+                    chained() > before,
+                    "k = {k}: the chain did not answer {f:?}"
+                );
+            }
+        }
+        // Roots at the powers of 2 up to `2^m`, and one past each: alternating signs, and
+        // roots where the cuts of the branch and bound fall.
+        for m in [4u64, 16, 48] {
+            let at: Vec<BigInt> = (1..=m).map(|j| BigInt::one() << j).collect();
+            let past: Vec<BigInt> = at.iter().map(|x| x + 1).collect();
+            for rs in [at, past] {
+                let mut want = rs.clone();
+                want.sort();
+                assert_eq!(
+                    integer_roots(&from_big_roots(&rs), None, None),
+                    Roots::Listed(want)
+                );
+            }
+        }
+    }
+
+    /// The chain alone, the branch and bound with its switch, and evaluation at every member
+    /// of `2..=60` agree on random polynomials whose constant term is not 0.
+    #[test]
+    fn the_chain_agrees_with_the_branch_and_bound() {
+        let (mut rng, _) = crate::seed::Rng::fresh("the_chain_agrees_with_the_branch_and_bound");
+        let mut next = |m: u64| rng.below_u64(m);
+        let hi = BigInt::from(60);
+        for _ in 0..400 {
+            let f = match next(2) {
+                0 => {
+                    let n = 1 + next(6) as usize;
+                    let rs: Vec<i64> = (0..n).map(|_| 2 + next(20) as i64).collect();
+                    let c = [1, -1, 2, -3][next(4) as usize];
+                    from_roots(c, &rs).plus(&poly(&[(0, [0, 0, 1, -1][next(4) as usize])]))
+                }
+                _ => {
+                    let t = 1 + next(6);
+                    let c0 = BigInt::from([1, -1, 6, -24][next(4) as usize]);
+                    Sparse::new(
+                        (0..t)
+                            .map(|_| (1 + next(9), BigInt::from(next(41) as i64 - 20)))
+                            .chain([(0, c0)]),
+                    )
+                }
+            };
+            let p = f.terms();
+            if p.first().is_none_or(|(e, _)| *e != 0) {
+                continue;
+            }
+            let want: Vec<BigInt> = (2..=60)
+                .map(BigInt::from)
+                .filter(|x| eval(p, x).is_zero())
+                .collect();
+            let chain = chain_roots(p, BigInt::from(2), Some(hi.clone()));
+            assert_eq!(chain, want, "the chain on {f:?}");
+            let branch = positive_roots(p, BigInt::from(2), Some(hi.clone()));
+            assert_eq!(branch, want, "the branch and bound on {f:?}");
+        }
+    }
+
+    /// [`chain_ends`] is the sum it is written as, for every `t` up to 300.
+    #[test]
+    fn chain_ends_is_the_sum_it_bounds() {
+        let cells = |k: u64| k * k.saturating_sub(1) / 2;
+        for t in 0..300u64 {
+            let sum: u64 = (2..=t).map(|m| 2 * (cells(m - 1) + 1)).sum();
+            assert_eq!(chain_ends(t as usize), sum, "t = {t}");
+        }
+        assert_eq!(chain_ends(4), 14);
     }
 
     fn poly(terms: &[(u64, i64)]) -> Sparse {

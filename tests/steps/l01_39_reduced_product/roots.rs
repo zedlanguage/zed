@@ -178,4 +178,72 @@ fn a_polynomial_of_many_terms_has_its_one_root() {
     }
 }
 
+/// The product of `x - r` for each `r` in `rs`, expanded.
+fn expanded(rs: &[BigInt]) -> Sparse {
+    let mut c = vec![BigInt::from(1)];
+    for r in rs {
+        let mut next = vec![BigInt::from(0); c.len() + 1];
+        for (i, a) in c.iter().enumerate() {
+            next[i + 1] += a;
+            next[i] -= a * r;
+        }
+        c = next;
+    }
+    Sparse::new(c.into_iter().enumerate().map(|(e, a)| (e as u64, a)))
+}
+
+/// `x^3 - 3c x^2 + 3(c^2 + 1) x - (c^3 + 3c + 1)` at `c = 2^bits`, that is `(x - c)^3 +
+/// 3(x - c) - 1`: increasing (`p' = 3((x - c)^2 + 1)`), its one real root in `c..c + 1`, so no
+/// integer root. The branch and bound alone took about `c^(1/2)` intervals on it (plan row
+/// ROOTS-interval-bound).
+fn of_flat_cubic(bits: u64) -> Sparse {
+    let c = BigInt::from(1u8) << bits;
+    let c2 = &c * &c;
+    Sparse::new([
+        (0, -(&c2 * &c + 3 * &c + BigInt::from(1))),
+        (1, 3 * (c2 + BigInt::from(1))),
+        (2, -3 * &c),
+        (3, BigInt::from(1)),
+    ])
+}
+
+/// The four roots `2^bits..=2^bits + 3`: the branch and bound alone took about `c^(2/3)`
+/// intervals on them, for `c = 2^bits` (plan row ROOTS-interval-bound).
+fn cluster(bits: u64) -> Vec<BigInt> {
+    let c = BigInt::from(1u8) << bits;
+    (0..4).map(|i| &c + BigInt::from(i)).collect()
+}
+
+/// The families on which the branch and bound's count of intervals is exponential in the
+/// bits are answered exactly at 16 to 512 bits, where it alone would take from 2^8 to past
+/// 2^256 intervals: the cubic with no integer root, the cluster, and roots at the powers of 2
+/// and one past them, where its cuts fall.
+#[test]
+fn families_that_defeat_the_cuts_have_their_roots() {
+    for bits in [16, 64, 512] {
+        assert_eq!(
+            integer_roots(&of_flat_cubic(bits), None, None),
+            Roots::Listed(vec![]),
+            "the cubic at {bits} bits"
+        );
+        let rs = cluster(bits);
+        assert_eq!(
+            integer_roots(&expanded(&rs), None, None),
+            Roots::Listed(rs),
+            "the cluster at {bits} bits"
+        );
+    }
+    for m in [8u32, 40] {
+        let at: Vec<BigInt> = (1..=m).map(|j| BigInt::from(1u8) << j).collect();
+        let past: Vec<BigInt> = at.iter().map(|x| x + BigInt::from(1)).collect();
+        for rs in [at, past] {
+            assert_eq!(
+                integer_roots(&expanded(&rs), None, None),
+                Roots::Listed(rs.clone()),
+                "roots {rs:?}"
+            );
+        }
+    }
+}
+
 mod bench;
