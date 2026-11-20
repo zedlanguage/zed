@@ -14163,7 +14163,7 @@ impl Scope {
             // another part or contribute a movement to again. Pugh, "The Omega
             // test: a fast and practical integer programming algorithm for dependence
             // analysis", Proceedings of Supercomputing '91, ACM/IEEE, 1991, pp. 4-13,
-            // supplies the dark-shadow slack (a-1)(b-1). Parallel normalization and
+            // sec. 2.3.2, supplies the dark-shadow slack (a-1)(b-1). Parallel normalization and
             // non-growing elimination are described at eliminate: unlike the round-2 version of
             // this test, the number of rows is bounded by the input shape including box ends.
             // For V mixed names and R rows this is polynomial (repeated indexed row
@@ -21922,7 +21922,9 @@ fn atoms_of(c: &Con, value: bool) -> Option<Vec<Vec<Row>>> {
 /// `rows` with each name other than `keep` that they bound from both sides eliminated, or
 /// `None` when such a name's interval has a hole or a class. The ends of its interval join
 /// the rows as bounds of coefficient 1, and each pair of a lower and an upper bound gives its
-/// dark shadow (Pugh 1991): when all hold, the pair of the greatest lower and least upper
+/// dark shadow (Pugh 1991/1992, sec. 2.3.2: for a lower bound `β <= b·z` and an upper bound
+/// `a·z <= α`, the row `b·α - a·β >= (a - 1)·(b - 1)`): when all hold, the pair of the greatest
+/// lower and least upper
 /// bound has an integer between them, and it meets every other bound.
 fn eliminate(
     mut rows: Vec<Row>,
@@ -21935,7 +21937,7 @@ fn eliminate(
     // replaces at least as many rows as it makes; at most the initial number of
     // names disappear and the row count never exceeds its initial value.
     // This is a structural refusal of the certificate, with no size cutoff.
-    // Pugh, The Omega test, Supercomputing '91 (1991), supplies the dark shadow;
+    // Pugh, The Omega test, Supercomputing '91 (1991), sec. 2.3.2, supplies the dark shadow;
     // its sufficient integer-witness argument is unchanged by refusing a step.
     let ns = both(&rows);
     for n in ns.into_iter().filter(|n| Some(n) != keep) {
@@ -22075,7 +22077,10 @@ fn eliminate(
 // Complexity tradeoff: group equal primitive term maps in O(T log r), retaining
 // their tightest constant. For integer variables gcd division with floor preserves
 // each row exactly. This is parallel-row normalization from Pugh's Omega test
-// (Supercomputing '91, 1991); no pairwise redundancy search is needed.
+// (Supercomputing '91, 1991, sec. 2.1: divide a row by the gcd of its coefficients and floor
+// the constant; sec. 2.3: "we also eliminate constraints that are made redundant by a single
+// other constraint (e.g., x + 2y ≥ 0 is made redundant by x + 2y ≥ 5)"; sec. 2.4 finds such
+// pairs by a hash of the coefficients); no pairwise redundancy search is needed.
 fn parallel_rows(rows: Vec<Row>) -> Vec<Row> {
     let mut out: BTreeMap<BTreeMap<Arc<str>, Num>, Num> = BTreeMap::new();
     for (mut terms, mut c) in rows {
@@ -22236,7 +22241,9 @@ fn covers(mut spans: Vec<(End, End)>, lo: &End, hi: &End) -> bool {
 // of `ints`, rejecting `y = [..=-1, 1..]` after an inner join in `star_extra` (`O(k^2)` fallback
 // projections, 35.51x at k = 3 -> 24). Used: two-pointer sweep over sorted `spans` and `ints`
 // pieces in O(s log s + p) for s spans and p pieces (eliminated witness variables in `eliminate`
-// still require `only()`). Reference: W. Pugh, "The Omega test", Supercomputing '91, 1991.
+// still require `only()`). Reference: W. Pugh, "The Omega test", Supercomputing '91, 1991,
+// sec. 2.3.2, for the elimination in `eliminate` that this check serves; the two-pointer sweep
+// itself is not taken from that paper.
 fn covers_set(mut spans: Vec<(End, End)>, ints: &IntervalSet) -> bool {
     if let Some((lo, hi)) = ints.only() {
         return covers(spans, lo, hi);
@@ -22472,8 +22479,11 @@ impl Scope {
         // `self.idle` individually (`48.6M` instructions at k = 16, Gemini seat, round 3).
         // Used: record the least ends certified idle so far in `certified_chains`, subsuming all
         // higher members in O(e) comparisons (Gemini seat's prototype: `idle_calls` 269 -> 79 at k = 16).
-        // Reference: W. Pugh, "The Omega test: a fast and practical integer programming algorithm
-        // for dependence analysis", Communications of the ACM 35(8), 1992, pp. 102-114.
+        // Reference: W. Pugh, "A practical algorithm for exact array dependence analysis",
+        // Communications of the ACM 35(8), 1992, pp. 102-114, the journal version of "The Omega
+        // test: a fast and practical integer programming algorithm for dependence analysis",
+        // Supercomputing '91 (the comment paired the first title with the second venue); the
+        // crate root's References.
         if let Some((k, ends)) = &part.chain
             && let Some(q_ends) = certified_chains.get(k)
             && chain_below(q_ends, ends)
