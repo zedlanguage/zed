@@ -208,37 +208,51 @@ fn literals_and_atoms_removed_one_at_a_time_scale() {
 type Other = fn(usize, usize) -> Type;
 
 /// `odd_tuples(c)` against `other(c)` at `c = n` and `8n`, equal when `equal`; case `k` of the
-/// pool's bases.
-fn comparing_exclusive_ors(what: &str, n: usize, k: usize, other: Other, equal: bool) {
+/// pool's bases. Each timed run compares `pairs` pairs, each at a base of its own, so a run's
+/// count averages the constant that the integers in the types set (PERF-xor-tuple-compare).
+fn comparing_exclusive_ors(
+    what: &str,
+    n: usize,
+    pairs: usize,
+    k: usize,
+    other: Other,
+    equal: bool,
+) {
     let (small_runs, large_runs) = scaling::Meter::new().runs();
     let make = |c, b| (odd_tuples(c, b), other(c, b));
     let pools = [
-        (n, pool(n, small_runs, k, make)),
+        (n, pool(n, small_runs * pairs, k, make)),
         (
             scaling::FACTOR * n,
-            pool(scaling::FACTOR * n, large_runs, k, make),
+            pool(scaling::FACTOR * n, large_runs * pairs, k, make),
         ),
     ];
     scaling::check(what, n, |c| {
         let (_, pool) = pools.iter().find(|(size, _)| *size == c).expect("a size");
-        let (x, y) = pool
-            .lock()
-            .expect("the pool")
-            .pop()
-            .expect("one pair per run");
-        Type::forget_emptiness();
-        assert_eq!(x.equiv(&y), equal, "c = {c}");
+        for _ in 0..pairs {
+            let (x, y) = pool
+                .lock()
+                .expect("the pool")
+                .pop()
+                .expect("`pairs` pairs per run");
+            Type::forget_emptiness();
+            assert_eq!(x.equiv(&y), equal, "c = {c}");
+        }
     });
 }
 
-/// Size (TEST-bench-move-l0123, author P169): left at n 64, its old size, because the ratio
-/// fails at larger sizes; 1x 13 ms at load 18.64. Instructions from c to 8c (first
-/// runs): 8.43 times from 64 (measured at the old size), 9.67 from 256 and 10.67 from 1024 (1,987M
-/// to 21,207M instructions), over the limit 10.5. The ratio grows with c, so the false
-/// comparison is above linear in c, against the about-linear time the comment below states.
-/// Since author A160 (2026-11-20) each size runs once, and this check fails at 64: 127.9M and
-/// 1,354.0M instructions, 10.58 times, in three runs alone at load 36 to 42 (the old meter, a
-/// warm run at n against the first at 8n, read 10.14). Row PERF-xor-tuple-compare fixes it.
+/// Size (PERF-xor-tuple-compare, author P169): n 512 and 4 pairs per run, its 1 s size; 1x
+/// 920 ms at load 69.5, 5,078.5M to 40,462.8M instructions, 7.97 times. With one pair per run
+/// (A160: each size runs once) it failed at n 64 (131.9M to 1,397.6M, 10.60 times) and at 1024
+/// (2,084M to 25,830M, 12.39 times) but passed at 512 (7.73 times): the instructions per
+/// `c ln c` show no upward trend from c 64 to 2048, and callgrind finds no function whose own
+/// count grows more than 10.2 times from 512 to 4096 (`c log c` predicts 10.67), but they
+/// vary by about 25% with the integers in the types (1.43 times between two bases at c 512,
+/// the excess spread over the whole emptiness search, which the digests of those integers
+/// order). So one pair compared two inputs' constants; 4 pairs at 4 bases per run average
+/// them. Negative controls, run once and not committed: the old setting fails at 10.60 times,
+/// and repeating each comparison `c / 512` times fails its 8n phase on time (37.1 s, limit
+/// 37 s). Details in COMPLEXITY.md K57.
 #[test]
 fn comparing_exclusive_ors_of_tuple_types_scales() {
     // `odd_tuples(c)` and `odd_tuples(c + 1)` differ by the one value `(b + c, b + c)`, so they
@@ -247,13 +261,13 @@ fn comparing_exclusive_ors_of_tuple_types_scales() {
     // before any run is timed, at bases no other run uses. Cross-review xe round 3
     // (docs/reviews/xe-round3.md, Q7) proposed exclusive-or nodes for diagrams that are pure
     // parities, on a measurement of the false comparison at 12.9 s at `c = 512`; on main the
-    // split of a tuple part into classes of disjoint cells (COMPLEXITY.md K36) decides the false
-    // comparison in time about linear in `c` and the equal one in about `c log c` (about 8 and
-    // 12 times the instructions at 8 times `c`), so the diagrams have no such nodes
-    // (COMPLEXITY.md K57).
+    // split of a tuple part into classes of disjoint cells (COMPLEXITY.md K36) decides both
+    // comparisons in about `c log c` (the false one about 8 times the instructions at 8 times
+    // `c`, the equal one about 12 times), so the diagrams have no such nodes (COMPLEXITY.md K57).
     comparing_exclusive_ors(
         "an exclusive or of tuple types against one with one more, by count",
-        64,
+        512,
+        4,
         0,
         |c, b| odd_tuples(c + 1, b),
         false,
@@ -267,6 +281,7 @@ fn comparing_equal_exclusive_ors_of_tuple_types_scales() {
     comparing_exclusive_ors(
         "an exclusive or of tuple types against itself built in reverse, by count",
         2048,
+        1,
         1,
         odd_tuples_reversed,
         true,
