@@ -1023,15 +1023,27 @@ fi
 #    guess of an unknown time can bound a chunk of several, and alone it is bounded by the
 #    per-piece limit of tools/run_tests.sh. Cost of the seed: one pass over those files, 25
 #    summaries of 21,206 lines in 104 ms at load 68 (MERGE-full-run-split, 2026-11-20). Cost of
-#    a piece alone: one call's own work, 1.7 s (Cost, below). A test binary's pieces of its
+#    a piece alone: one call's own work (Cost, below). A test binary's pieces of its
 #    library tests are named with the build's hash (63 of 2,896, zedc_check-<hash>), which a
 #    rebuild changes: they are then timed by neither and each is alone, up to 63 calls, about
 #    110 s of work, 27 s of wall time at 4 at once; the next check has their times again.
 #  - The 60 s hold for every chunk, the first check's too: a chunk still running at
 #    chunk_limit (60 s) is stopped with its pieces and fails the check, with a line naming its
 #    pieces and their estimates. Each of its pieces that did not end is written to the times at
-#    chunk_ms, so the next check runs each alone: a stopped chunk is split, not waited out.
-#  - Exactly the same pieces: a chunk's call names in --only the terms of the merge check's own
+#    twice its estimate (run_chunk), so the next check cuts the chunk smaller: a stopped chunk is
+#    split, not waited out.
+#  - One listing: the list call builds the binaries and writes every selected piece's line
+#    (`<name> <directory> <binary> <arguments>`) to the file pieces of its log directory, and
+#    each chunk runs its own lines of it with tools/run_tests.sh --pieces, which runs no cargo
+#    metadata, build, listing, selection or check of the changed documentation; that check runs
+#    once here, after the list. Until then each chunk was a call with --only and --except that
+#    did all of these again for its whole groups, so a group cut into c chunks was built and
+#    listed c times: 9.6 s on average and up to 30 s a chunk before its first piece, and 17 of
+#    56 chunks stopped at 60 s (the second seeded check, 2026-11-20, load 75). A chunk with a
+#    short-addresses piece still runs that way, since the piece's binary lay in the list call's
+#    clone, unmounted when the list call ended (3 pieces of 2,896, in one or two chunks).
+#  - Exactly the same pieces: a --pieces chunk runs the list's lines of its pieces. Any other
+#    chunk's call names in --only the terms of the merge check's own
 #    selection (its groups) that select any of its pieces, and in --except, one per group, the
 #    other pieces those terms select. --except removes a piece by its exact name, and with it
 #    a whole group can be cut at any piece: a piece named after its group (a step folder's rest,
@@ -1043,11 +1055,13 @@ fi
 #    chunk's account of its failures once all chunks ended. A chunk without its line `pieces:
 #    <n>, failed: <f>` (stopped before its pieces ran, or killed) counts as failed. The result is
 #    the sum of the chunks.
-# Cost: each chunk repeats a call's own work before its first piece (cargo metadata, a build of
-# its binaries that finds nothing to do, the check of changed docs, the run's copy of the build),
-# 1.7 s at load 60 (MERGE-full-run-split, 2026-11-20: a call of one built group, 2.6 s in all for
-# a piece of 0.9 s). The 2,040 s of spec7's pieces make about 70 chunks of 30 s, so about 120 s
-# of such work, 20 s of wall time at 6 chunks at once, against the 15 to 29 minutes of the run.
+# Cost: a --pieces chunk's own work before its first piece is the run's copy of the build (about
+# 1,900 hard links, make_run_copy of tools/run_tests.sh) and the linking warm-up when the runtime
+# changed: 0.5 s to 21 s, 2.2 s on average, at load 70 to 100 (from the pieces file to the first
+# piece in the 35 chunks of the second seeded check that reached their pieces). The copy is made
+# once per chunk; a copy shared by all chunks would save most of it (MERGE-chunks-shared-copy).
+# The 2,040 s of spec7's pieces make about 70 chunks of 30 s, so about 150 s of such work, 40 s of
+# wall time at 4 chunks at once, against the 15 to 29 minutes of the run in one call.
 # A smaller chunk_ms costs more such work; a larger one leaves less of the 60 s for the load.
 # A chunk that ends early, by a failure or a kill, ends only that chunk.
 chunk_ms=30000 chunk_limit=${MERGE_CHECK_CHUNK_LIMIT:-60}
@@ -1063,8 +1077,21 @@ run_dir() { ls -d build/test-logs/*-"$1" 2>/dev/null | tail -n 1; }
 run_chunk() {
   local k=$1 args g names pid rc start
   : >"$cdir/$k.stopped"
-  args=(--skip-other-kind --only "^($(paste -sd'|' "$cdir/$k.terms"))\$")
-  while read -r g names; do args+=(--except "^($names)\$"); done <"$cdir/$k.except"
+  # The chunk's pieces as the list call wrote them, run with --pieces: no cargo metadata, build,
+  # listing, selection or check of the changed docs in the chunk's call (One listing, above). With
+  # --trace the file groups that select_pieces of tools/run_tests.sh writes is written here, from
+  # the list's chosen pieces. A chunk with a short-addresses piece, whose binary lay in the clone of
+  # the list call, gone when it ended, selects its pieces again with --only and --except.
+  if [ -s "$cdir/$k.lines" ] && [ ! -s "$cdir/$k.short" ]; then
+    args=(--pieces "$cdir/$k.lines")
+    if [ -n "$tbase" ]; then
+      mkdir -p "$tbase/$k" &&
+        awk 'NR == FNR { p[$1] = 1; next } $3 in p { print $3, $1, $2 }' "$cdir/$k.pieces" "$cdir/chosen" >"$tbase/$k/groups"
+    fi
+  else
+    args=(--skip-other-kind --only "^($(paste -sd'|' "$cdir/$k.terms"))\$")
+    while read -r g names; do args+=(--except "^($names)\$"); done <"$cdir/$k.except"
+  fi
   [ -z "$tbase" ] || args+=(--trace "$tbase/$k")
   : >"$cdir/$k.log"
   start=$(date +%s%N)
@@ -1085,11 +1112,20 @@ run_chunk() {
   # tools/run_tests.sh prints before its first piece.
   echo "$rc $((($(date +%s%N) - start) / 1000000)) $(sed -n 's/^logs: //p' "$cdir/$k.log" | tail -n 1)" >"$cdir/$k.result"
   # Stopped at chunk_limit (rc 124, or 137 after the KILL): a failure that names the chunk's
-  # pieces, printed at once. Its pieces that did not end are written to $cdir/<k>.stopped at
-  # chunk_ms, in the form of a summary line, for the times: the next check runs each alone.
+  # pieces, printed at once. Its pieces that did not end are written to $cdir/<k>.stopped at twice
+  # their estimate (at least 1 ms; a piece with none at chunk_ms, alone again), in the form of a
+  # summary line, for the times; those that ended have their own times. The chunk took over
+  # chunk_limit = 2 × chunk_ms against an estimate of chunk_ms or less, so its pieces took at least
+  # twice their estimates together: the doubled estimates of the next check pack fewer of them per
+  # chunk, and each further stop doubles them again, so a chunk that keeps passing the limit is cut
+  # down to single pieces in at most log2(chunk_ms) checks, each bounded alone by the per-piece
+  # limit of tools/run_tests.sh. Until 2026-11-20 each such piece was written at chunk_ms and ran
+  # alone at once: the 17 stopped chunks of the second seeded check (2026-11-20) would have made
+  # 851 calls of one piece.
   if [ "$rc" = 124 ] || [ "$rc" = 137 ]; then
     awk -v ms="$chunk_ms" 'NR == FNR { if ($2 ~ /^rc=/) done[$1] = 1; next }
-      !($1 in done) { print $1, "rc=124", ms "ms" }' "$cdir/$k.log" "$cdir/$k.pieces" >"$cdir/$k.stopped"
+      !($1 in done) { e = ($2 ~ /^[0-9]+$/) ? 2 * $2 : ms; if (e < 1) e = 1; print $1, "rc=124", e "ms" }' \
+      "$cdir/$k.log" "$cdir/$k.pieces" >"$cdir/$k.stopped"
     echo "merge check: chunk $k of $nchunks: FAILED: over ${chunk_limit} s, stopped; its pieces (estimate in ms; * did not end): $(awk 'NR == FNR { s[$1] = 1; next } { printf "%s%s%s %s", sep, $1, ($1 in s) ? "*" : "", $2; sep = ", " }' "$cdir/$k.stopped" "$cdir/$k.pieces")"
   fi
 }
@@ -1124,6 +1160,13 @@ run_chunks() {
     return 0
   fi
   cp "$ldir/chosen" "$cdir/chosen" || return 1
+  # The check of the changed documentation, which each call of tools/run_tests.sh ran before
+  # the chunks and which their --pieces calls leave to the caller (One listing, above).
+  if ! tools/check_changed_docs.sh "$cdir/doc-changed.log" >"$cdir/doc-changed.out" 2>&1; then
+    cat "$cdir/doc-changed.out"
+    echo "merge check: FAILED: the check of the changed documentation (log $cdir/doc-changed.log)"
+    return 1
+  fi
   # The seed: for each piece, the longest time a summary under $times_from records (see Size in
   # the comment above). find does not follow the symbolic links `latest` there, so each run's
   # summary is read once (cost: Size, above).
@@ -1154,6 +1197,7 @@ run_chunks() {
       alone = e == "unknown" || e + 0 >= chunk
       if (k == 0 || full[k] || alone || est[k] + e > chunk) k++
       chunk_of[p] = k; est[k] += (e == "unknown") ? chunk : e; full[k] = alone
+      if ($1 ~ /^short-/) short[k] = 1
       nt = split(ts, t, " ")
       for (i = 1; i <= nt; i++) {
         by[t[i]] = by[t[i]] " " p
@@ -1165,6 +1209,8 @@ run_chunks() {
       for (c = 1; c <= k; c++) {
         f = cdir "/" c ".terms"; printf "%s", terms[c] > f; close(f)
         f = cdir "/" c ".pieces"; printf "%s", pieces[c] > f; close(f)
+        f = cdir "/" c ".short"; printf "%s", (c in short) ? "1\n" : "" > f; close(f)
+        f = cdir "/" c ".lines"; printf "" > f; close(f)
         f = cdir "/" c ".except"; printf "" > f
         nt = split(terms[c], t, "\n"); delete out; delete ex; ng = 0
         for (i = 1; i < nt; i++) {
@@ -1182,9 +1228,17 @@ run_chunks() {
         print est[c], c > (cdir "/order.unsorted")
       }
       close(cdir "/order.unsorted")
+      for (p = 1; p <= np; p++) print name[p], chunk_of[p] > (cdir "/assign")
+      close(cdir "/assign")
       print k, nu + 0
     }' <(cat "$times_file" 2>/dev/null) "$cdir/seed" <(printf '%s\n' "$terms") "$cdir/chosen") || return 1
   read -r nchunks nunknown <<<"$n"
+  # Each chunk's lines of the list call's file pieces (`<name> <directory> <binary> <arguments>`),
+  # for its --pieces call: one pass over the pieces and one over the list, O(pieces). gawk keeps
+  # the chunks' files open at once and, past the limit of open files, closes and reopens them to
+  # append, so any number of chunks is written correctly.
+  awk -v cdir="$cdir" 'FILENAME == ARGV[1] { c[$1] = $2; next }
+    ($1 in c) { print > (cdir "/" c[$1] ".lines") }' "$cdir/assign" "$ldir/pieces" || return 1
   sort -k 1,1nr -k 2,2n "$cdir/order.unsorted" | cut -d ' ' -f 2 >"$cdir/order"
   echo "merge check: $(wc -l <"$cdir/chosen") pieces in $nchunks chunks of up to $((chunk_ms / 1000)) s by the times of earlier checks and of main_watch ($nunknown timed by neither, each alone), $jobs at once"
   for k in $(seq 1 "$nchunks"); do : >"$cdir/$k.result"; done

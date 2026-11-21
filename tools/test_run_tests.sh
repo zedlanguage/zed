@@ -347,6 +347,43 @@ check "--except matches a piece named with its binary's hash by the name without
 out=$(run --list --reuse-table --bench --only '^l01_15_' --except '(')
 rc=$?
 check "an invalid --except exits 2" "2 --except: not a valid extended regular expression: (" "$rc $out"
+# --pieces <file> runs the lines of a list run's file pieces and does none of the work before
+# them: no cargo metadata, build, listing, selection or check of the changed docs (One listing in
+# tools/merge_check.sh, whose chunks run this way). A cargo first on PATH that writes a mark and
+# fails shows no cargo is called. Two steps of 0.1 s each by the merge checks' times.
+two='^(l01_01_source_loading|l01_03_lexer_integers)$'
+run --list --reuse-table --only "$two" >/dev/null
+lines=$logs/pieces-two
+cp "$(last_run)/pieces" "$lines"
+check "--pieces: the file holds the two steps' lines" "l01_01_source_loading l01_03_lexer_integers" \
+  "$(cut -d' ' -f1 "$lines" | sort | paste -sd' ')"
+nocargo=$logs/no-cargo
+mkdir -p "$nocargo"
+printf '#!/bin/sh\necho "cargo $*" >>%s/called\nexit 1\n' "$PWD/$nocargo" >"$nocargo/cargo"
+chmod +x "$nocargo/cargo"
+: >"$nocargo/called"
+out=$(PATH=$PWD/$nocargo:$PATH run --pieces "$lines" 1)
+rc=$?
+d=$(last_run)
+check "--pieces runs the pieces of its file, and they pass" \
+  "0 pieces: 2, failed: 0" "$rc $(echo "$out" | grep -o '^pieces: [0-9]*, failed: [0-9]*')"
+check "--pieces runs exactly the pieces of its file" "l01_01_source_loading l01_03_lexer_integers" \
+  "$(cut -d' ' -f1 "$d/summary" | sort | paste -sd' ')"
+check "--pieces calls no cargo" "" "$(cat "$nocargo/called")"
+PATH=$PWD/$nocargo:$PATH run --list --only "$two" >/dev/null
+check "and the stub cargo is the one a run calls: a listing without --pieces calls it" yes \
+  "$([ -s "$nocargo/called" ] && echo yes || echo no)"
+check "--pieces builds, lists and checks no docs: no build.log, chosen or doc-changed.log" "" \
+  "$(ls "$d" | grep -x -e build.log -e build-short.log -e chosen -e doc-changed.log -e short-clone)"
+out=$(run --pieces "$lines" --only '^l01_01_' 1)
+rc=$?
+check "--pieces with --only exits 2" \
+  "2 --pieces runs the pieces of its file and selects none: it takes no --list, --reuse-table, --only, --except or --each-test" \
+  "$rc $out"
+sed 's|/deps/|/short-clone/|' "$lines" >"$lines.short"
+out=$(run --pieces "$lines.short" 1)
+rc=$?
+check "--pieces refuses a short-addresses piece, whose clone the list run unmounted" "2" "$rc"
 fi
 if want fresh; then
 logs=build/test-run-tests-fresh

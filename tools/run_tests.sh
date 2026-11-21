@@ -3,6 +3,7 @@
 # limit of 20 s (more under load, below), and prints a line per piece as it ends. Usage, from a
 # checkout's root:
 #   tools/run_tests.sh [--full] [--bench] [--each-test] [--only <ERE>] [--except <ERE>] [--doc] [--list] [--reuse-table] [--logs <dir>] [--cov <dir>] [--trace <dir>] [jobs]
+#   tools/run_tests.sh [--full] [--bench] --pieces <file> [--doc] [--logs <dir>] [--cov <dir>] [--trace <dir>] [jobs]
 #   tools/run_tests.sh --short-clone-remove
 # A run is of the correctness tests or, with --bench, of the benchmarks alone (TEST-bench-split,
 # author P169). A benchmark is a test whose path holds `bench::`: it lies in a module `bench`,
@@ -47,10 +48,20 @@
 # such a run must go through /home/luke/Work/wt/zrun, and --short-clone-remove deletes the clone
 # (through zrun too) and runs nothing. --doc adds the check that the documentation of the whole
 # workspace builds, which is off by default; --no-doc is accepted and changes nothing. Every run
-# but --list checks the documentation of each package whose `///` or `//!` lines the checkout
+# but --list and --pieces checks the documentation of each package whose `///` or `//!` lines the checkout
 # changes since origin/main, or whose doc links an item the checkout renames, deletes, makes
 # private or puts behind a cfg (tools/check_changed_docs.sh). --list builds what the selection
 # needs, prints the names of the selected pieces and runs nothing.
+# --pieces <file> runs the pieces of <file>, lines `<name> <directory> <binary> <arguments>` as an
+# earlier run wrote them to the file pieces of its log directory (a --list run among them), and
+# nothing else: no cargo metadata, no build, no listing of the binaries, no selection and no
+# check of the changed documentation. tools/merge_check.sh lists once and runs the listed pieces
+# in chunks this way; before, each chunk was a run with --only and --except that built, listed
+# and selected its whole groups again, so a group cut into c chunks was listed c times, and a
+# chunk spent 9.6 s on average and up to 30 s on that before its first piece (56 chunks at load
+# 75, MERGE-full-run-split, 2026-11-20). The caller has built the binaries and runs the check of
+# the changed documentation. A short-addresses piece is refused: its binary lies in the clone of
+# the run that listed it, unmounted when that run ended.
 # Each run writes its logs, table and piece list in a directory of its own,
 # build/test-logs/<UTC time>-<pid>, and build/test-logs/latest names the newest; --logs <dir>
 # puts these under <dir> instead of build/test-logs. Runs at the same time, with --logs or not,
@@ -106,7 +117,7 @@ args=$*
 # The tests that read the spec's DESIGN.md and EXAMPLES.md in place (feature `spec` of the tests
 # crate, author P371) are always built: a local run never leaves them out.
 features=--features=zed-tests/spec full_suite= only= except= list= reuse= logs= doc= jobs=6 clone_remove= run_kind=test each_test= cov= trace=
-short_groups= skip_other_kind=
+short_groups= skip_other_kind= pieces_from=
 while [ $# -gt 0 ]; do
   case $1 in
     --full) full_suite=1 ;;
@@ -135,6 +146,14 @@ while [ $# -gt 0 ]; do
     --no-doc) ;;
     --list) list=1 doc= ;;
     --reuse-table) reuse=1 ;;
+    --pieces)
+      if [ $# -lt 2 ] || [ -z "$2" ]; then
+        echo "--pieces needs a file of pieces"
+        exit 2
+      fi
+      pieces_from=$2
+      shift
+      ;;
     --short-clone-remove) clone_remove=1 ;;
     --short-groups) short_groups=1 ;;
     --skip-other-kind) skip_other_kind=1 ;;
@@ -164,7 +183,7 @@ while [ $# -gt 0 ]; do
       ;;
     [1-9]*) jobs=$1 ;;
     *)
-      echo "unknown argument: $1 (usage: tools/run_tests.sh [--full] [--bench] [--each-test] [--only <ERE>] [--except <ERE>] [--skip-other-kind] [--doc] [--list] [--reuse-table] [--logs <dir>] [--cov <dir>] [--trace <dir>] [--short-clone-remove] [--short-groups] [jobs])"
+      echo "unknown argument: $1 (usage: tools/run_tests.sh [--full] [--bench] [--each-test] [--only <ERE>] [--except <ERE>] [--skip-other-kind] [--doc] [--list] [--reuse-table] [--pieces <file>] [--logs <dir>] [--cov <dir>] [--trace <dir>] [--short-clone-remove] [--short-groups] [jobs])"
       exit 2
       ;;
   esac
@@ -173,6 +192,21 @@ done
 if [ -n "$reuse" ] && [ -z "$list" ]; then
   echo "--reuse-table needs --list"
   exit 2
+fi
+if [ -n "$pieces_from" ]; then
+  if [ -n "$list$reuse$only$except$each_test" ]; then
+    echo "--pieces runs the pieces of its file and selects none: it takes no --list, --reuse-table, --only, --except or --each-test"
+    exit 2
+  fi
+  [[ $pieces_from == /* ]] || pieces_from=$PWD/$pieces_from
+  if [ ! -s "$pieces_from" ]; then
+    echo "--pieces: $pieces_from names no piece"
+    exit 2
+  fi
+  if awk '$3 ~ /\/short-clone\// { found = 1 } END { exit !found }' "$pieces_from"; then
+    echo "--pieces: $pieces_from names a short-addresses piece, whose binary lies in the clone of the run that listed it; select it with --only"
+    exit 2
+  fi
 fi
 # short_steps names the steps of the short-addresses build.
 short_steps="l01_37a_short_addresses l01_37_oracle"
@@ -846,6 +880,12 @@ if [ -n "$reuse" ]; then
   cut -d ' ' -f 1 "$out/pieces"
   exit 0
 fi
+# --pieces: the pieces are those of its file, and the run goes straight to them; everything from
+# here to the end of this if, cargo metadata, the build, the listing and the selection, is for a
+# run that chooses its pieces (the block is not indented, to keep the lines it holds as they were).
+if [ -n "$pieces_from" ]; then
+  cp "$pieces_from" "$out/pieces" || exit 1
+else
 # A run without --only writes the table of every piece; a run with it, a table of its own.
 table=$out/table
 [ -z "$only" ] || table=$out/listing
@@ -1333,6 +1373,7 @@ if [ -n "$list" ]; then
   cut -d ' ' -f 1 "$out/pieces"
   exit 0
 fi
+fi
 # With --doc only: the documentation of every crate, private items included, builds with no
 # warning, so a link in a doc comment that names no item, or a citation written as a link, fails
 # the run. It is off by default so that a run neither spends the time on it nor leaves the
@@ -1348,8 +1389,8 @@ fi
 # or puts behind a cfg (DOC-renamed-links), alone and with the workspace's features. Agents run
 # this script before they merge, and seldom passed --doc, so links that broke the doc build reached
 # main three times (DOC-private-links, -2, -3); with no doc comment and no linked item changed it
-# builds nothing.
-tools/check_changed_docs.sh "$out/doc-changed.log" || exit 1
+# builds nothing. A --pieces run leaves it to its caller, which runs it once for all its runs.
+[ -n "$pieces_from" ] || tools/check_changed_docs.sh "$out/doc-changed.log" || exit 1
 # A run runs at most `jobs` pieces at once (xargs -P, below), and each piece's slot is the number
 # xargs gives it in $slot (--process-slot-var), 0 to jobs - 1, unique among the pieces of the run
 # running at that moment; it names the piece's scratch files in $out. Runs on the same machine do
