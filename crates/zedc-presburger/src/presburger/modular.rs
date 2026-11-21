@@ -2685,9 +2685,59 @@ fn solve_regime_step(
         }
     }
 
+    // A bounded regime that the coprime base leaves undecided is decided by `sweep_bounded`,
+    // whichever step of the base left it so. Before
+    // FAIL-omega-negations-slow-7837918895420161952 only the last step, `solve_coprime_system`,
+    // fell back to the sweep; the steps before it (`consolidate_prime_powers`, and
+    // `literal_to_base_cnf` on a residue set over a composite modulus that is no product of sets
+    // over its prime powers, as `x mod 6 != 1`, and a clause whose literals would multiply out)
+    // returned `Undecided` at once, which sent the whole formula to the general path. On the
+    // chains of that seed this was `[0, 20]` and `[0, 12]` under `x mod 6 in {0, 2..5}`, and the
+    // general path, eliminating `x` and asking its parts again, ran past 60 s.
+    //
+    // Proof that the answer is the regime's: the base steps and `sweep_bounded` take the same
+    // regime (`lo`, `hi`, `unit_mods`, `clauses`, after the filter at the start of this
+    // function, which keeps the points: its proof is there). `sweep_bounded` gives the least
+    // point of `[lo, hi]` that every unit and every clause holds, or `Empty` when there is none
+    // (the proof at `sweep_split`), so its answer is exact; it is `Undecided` only where a
+    // cover's meter refuses its work.
+    //
+    // Complexity tradeoff: naive version (before): a bounded regime the base cannot write goes to
+    // the general path, whose cost is not bounded in these terms (60 s on the seed's chains, from
+    // the general elimination asking the parts of a formula with a dozen moduli). Used: the sweep,
+    // whose work is at most that of cutting each modulus into its pieces on one period of the
+    // window, `O(N_0 log N_0)` with `N_0 = sum |s| ((e - l) div m + 2)` (the bound at
+    // `cheapest_split`), the bound the sweep already has where `solve_coprime_system` falls back to
+    // it. What is given up: nothing is answered differently (both answers are exact); a regime the
+    // general path answered quickly but whose window is wide against its moduli now pays the
+    // sweep's pseudo-polynomial bound instead. The window is cut to one period of the moduli
+    // (`sweep_window`), so that bound is at most `O(L p)` for `L` literals and the lcm `p`; the
+    // same holds at the fallback after `solve_coprime_system`, which no measurement has shown to
+    // be worse than the general path (unproved in general: marked here, ASSUME-sweep-not-worse).
+    // Tests: `r7_tests::a_bounded_regime_the_base_cannot_write_is_decided` (against testing each
+    // point; undecided before), `l01_38_omega_test::one_scope::
+    // no_question_of_a_random_chain_with_negations_is_refused_at_seed_7837918895420161952` (past
+    // 60 s before).
+    let out = solve_on_bases(lo, hi, &unit_mods, &clauses);
+    match (out, lo, hi) {
+        (RegimeOut::Undecided, Some(l), Some(h)) => sweep_bounded(l, h, &unit_mods, &clauses),
+        (out, _, _) => out,
+    }
+}
+
+/// The regime `[lo, hi]` under `unit_mods` and `clauses`, solved on the pairwise coprime base of
+/// its moduli: each residue set written on the base's prime powers, then
+/// `solve_coprime_system`. `Undecided` where a set cannot be written so, or the system is not
+/// decided; [`solve_regime_step`] then sweeps a bounded regime.
+fn solve_on_bases(
+    lo: &Option<Int>,
+    hi: &Option<Int>,
+    unit_mods: &BTreeMap<Int, ResidueSet>,
+    clauses: &[BTreeMap<Int, ResidueSet>],
+) -> RegimeOut {
     // Build the pairwise coprime base of all moduli appearing in `unit_mods` and `clauses`.
     let mut all_moduli: BTreeSet<Int> = unit_mods.keys().cloned().collect();
-    for cl in &clauses {
+    for cl in clauses {
         for m in cl.keys() {
             all_moduli.insert(m.clone());
         }
@@ -2738,7 +2788,7 @@ fn solve_regime_step(
     let mut norm_clauses: Vec<BTreeMap<usize, ResidueSet>> = Vec::new();
     let mut deferred_units: Vec<(&Int, &ResidueSet)> = Vec::new();
 
-    for (m, s) in &unit_mods {
+    for (m, s) in unit_mods {
         let facs = &mod_factors[m];
         if facs.len() == 1 {
             let (i, _) = facs[0];
@@ -2830,7 +2880,7 @@ fn solve_regime_step(
 
     // Convert `clauses` to `norm_clauses` over `bases_info[i].z_max_q`, distributing `||` over `&&`
     // when a composite modulus literal expands to a conjunction of prime-power clauses.
-    for cl in &clauses {
+    for cl in clauses {
         let mut dist: Vec<BTreeMap<usize, ResidueSet>> = vec![BTreeMap::new()];
         for (m, s) in cl {
             let Some(lit_cnf) = literal_to_base_cnf(m, s, &mod_factors[m], &bases_info, &allowed)
@@ -2900,11 +2950,7 @@ fn solve_regime_step(
         }
     }
 
-    let out = solve_coprime_system(lo, hi, &bases_info, allowed, norm_clauses, true);
-    match (out, lo, hi) {
-        (RegimeOut::Undecided, Some(l), Some(h)) => sweep_bounded(l, h, &unit_mods, &clauses),
-        (out, _, _) => out,
-    }
+    solve_coprime_system(lo, hi, &bases_info, allowed, norm_clauses, true)
 }
 
 #[derive(Clone, Debug)]

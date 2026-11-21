@@ -1044,6 +1044,25 @@ fn no_question_of_a_random_chain_with_negations_is_refused_at_seed_1325489522131
     );
 }
 
+/// [`no_question_of_a_random_chain_with_negations_is_refused_where_its_relation_is_decided`] at
+/// seed 7837918895420161952, which ran past 60 s where the test takes about 3 s
+/// (FAIL-omega-negations-slow-7837918895420161952). Its chain 1, in the order of the bodies as
+/// written, asks of `p6` a point whose bound form is one atom in `[5, 53]` under residues modulo
+/// 3, 5, 6, 7, 8 and 11; its regimes `[0, 20]` and `[0, 12]` hold `x mod 6 in {0, 2..5}` and `x
+/// mod 6 in {0..2, 4, 5}`, which the coprime base cannot write (no product of sets modulo 2 and
+/// 3), and that step left the regime undecided before `solve_coprime_system`'s fallback to
+/// `sweep_bounded` was reached, so the general path ran past 60 s. Every bounded regime the base
+/// leaves undecided is now swept (`modular::solve_regime_step`).
+#[test]
+fn no_question_of_a_random_chain_with_negations_is_refused_at_seed_7837918895420161952() {
+    let mut rng = zed_tests::instances::Rng::new(7837918895420161952);
+    let decided = random_negated_chains_decided(&mut rng, 2);
+    assert_eq!(
+        decided, 68,
+        "answers of the whole of chains 0 and 1 of seed 7837918895420161952"
+    );
+}
+
 /// The answers of the whole decided over `count` chains of [`random_negated_chain`], each
 /// checked as [`answers_with_faces_are_those_without`] checks it.
 pub(super) fn random_negated_chains_decided(
@@ -4107,13 +4126,16 @@ fn one_variable_modular_formulas_match_enumeration() {
     // a point, with none, and empty answers the general path agreed with each occur. Empty
     // answers agreed were 126 until FAIL-omega-negations-slow-13254895221319191796: two
     // formulas the one-variable path left to the general path, which found them empty, are
-    // now found empty by `modular::sweep_bounded` and the general path agrees.
+    // now found empty by `modular::sweep_bounded` and the general path agrees. One formula was
+    // refused until FAIL-omega-negations-slow-7837918895420161952: a bounded regime the coprime
+    // base cannot write is now swept (`modular::solve_regime_step`), which finds it a point that
+    // the checks below hold against the formula and against enumeration.
     let (mut rng, _) = zed_tests::instances::Rng::fresh("one-variable modular formulas");
     modular_formulas_match(&mut rng, 0, 800);
     let c = modular_formulas_match(&mut zed_tests::instances::Rng::new(0x70de_c1de), 0, 800);
     assert_eq!(
         (c.sat, c.unsat, c.refused, c.empty_agreed, c.empty_refused),
-        (679, 120, 1, 128, 4),
+        (680, 120, 0, 128, 4),
         "the first 800 formulas of seed 0x70de_c1de: {c:?}"
     );
 }

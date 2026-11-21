@@ -530,6 +530,110 @@ fn a_short_interval_over_many_moduli_is_decided_by_the_sweep() {
     );
 }
 
+/// A regime with both bounds is decided by `solve_regime_in`, never left undecided, and its
+/// answer is that of testing each point (FAIL-omega-negations-slow-7837918895420161952). The
+/// draws hold residue sets of up to two intervals over composite moduli, as `x mod 6 in {0,
+/// 2..5}` (that is, `x mod 6 != 1`), which is no product of a set modulo 2 and a set modulo 3, so
+/// `literal_to_base_cnf` cannot write it on the coprime base and the regime was left to the
+/// general path, which took past 60 s on the chains of that seed. The first case is written by
+/// hand in the shape of the regime the walk gave there (`[0, 20]` with such a literal beside
+/// residues modulo 11 and 8); the base decided it before the fix, so the draws are what fail
+/// without it (the first undecided draw: `[-73, 193]` under clauses over 6, 7, 9, 10, 12, 13).
+#[test]
+fn a_bounded_regime_the_base_cannot_write_is_decided() {
+    type Lits = Vec<(i64, Vec<(i64, i64)>)>;
+    let holds = |x: i64, m: i64, s: &[(i64, i64)]| {
+        let r = x.rem_euclid(m);
+        s.iter().any(|&(a, b)| a <= r && r <= b)
+    };
+    let set = |s: &[(i64, i64)]| -> ResidueSet {
+        s.iter()
+            .map(|&(a, b)| (Int::from(a), Int::from(b)))
+            .collect()
+    };
+    let check = |l: i64, h: i64, units: &Lits, clauses: &[Lits]| {
+        let unit_mods: BTreeMap<Int, ResidueSet> =
+            units.iter().map(|(m, s)| (Int::from(*m), set(s))).collect();
+        let cls: Vec<BTreeMap<Int, ResidueSet>> = clauses
+            .iter()
+            .map(|cl| cl.iter().map(|(m, s)| (Int::from(*m), set(s))).collect())
+            .collect();
+        let want = (l..=h).any(|x| {
+            units.iter().all(|(m, s)| holds(x, *m, s))
+                && clauses
+                    .iter()
+                    .all(|cl| cl.iter().any(|(m, s)| holds(x, *m, s)))
+        });
+        let got = solve_regime_in(&Some(Int::from(l)), &Some(Int::from(h)), unit_mods, cls);
+        let what = format!("[{l}, {h}] units {units:?} clauses {clauses:?}");
+        match got {
+            RegimeOut::Undecided => panic!("undecided: {what}"),
+            RegimeOut::Empty => assert!(!want, "empty, but a point lies: {what}"),
+            RegimeOut::Found(x) => {
+                let x = x.to_i128().expect("small") as i64;
+                assert!(want, "{x}, but none lies: {what}");
+                assert!((l..=h).contains(&x), "{x} out of the window: {what}");
+                assert!(
+                    units.iter().all(|(m, s)| holds(x, *m, s))
+                        && clauses
+                            .iter()
+                            .all(|cl| cl.iter().any(|(m, s)| holds(x, *m, s))),
+                    "{x} is no point: {what}"
+                );
+            }
+        }
+        want
+    };
+    check(
+        0,
+        20,
+        &vec![(11, vec![(0, 3), (5, 10)])],
+        &[
+            vec![(6, vec![(0, 0), (2, 5)]), (8, vec![(0, 5), (7, 7)])],
+            vec![(6, vec![(0, 2), (4, 5)]), (11, vec![(4, 4)])],
+        ],
+    );
+    // A small linear congruential generator (Knuth's MMIX constants), so the draws are fixed.
+    let mut state = 0x7837_u64;
+    let mut below = |n: i64| {
+        state = state
+            .wrapping_mul(6364136223846793005)
+            .wrapping_add(1442695040888963407);
+        ((state >> 33) % n as u64) as i64
+    };
+    // One or two intervals of residues modulo 2 to 13, as a normal list (sorted, disjoint, not
+    // adjacent).
+    let lit = |below: &mut dyn FnMut(i64) -> i64| {
+        let m = 2 + below(12);
+        let a = below(m);
+        let b = a + below(m - a);
+        let mut s = vec![(a, b)];
+        if b + 2 < m {
+            let c = b + 2 + below(m - b - 2);
+            s.push((c, c + below(m - c)));
+        }
+        (m, s)
+    };
+    let lits = |k: i64, below: &mut dyn FnMut(i64) -> i64| -> Lits {
+        let by_modulus: BTreeMap<i64, Vec<(i64, i64)>> = (0..k).map(|_| lit(below)).collect();
+        by_modulus.into_iter().collect()
+    };
+    let mut with_point = 0;
+    for _ in 0..500 {
+        let units = lits(1 + below(3), &mut below);
+        let clauses: Vec<Lits> = (0..below(8))
+            .map(|_| lits(1 + below(3), &mut below))
+            .collect();
+        let l = below(200) - 100;
+        let h = l + below(400);
+        with_point += usize::from(check(l, h, &units, &clauses));
+    }
+    assert!(
+        (60..=440).contains(&with_point),
+        "{with_point} of 500 with a point"
+    );
+}
+
 /// A cover's work at the limit of its meter, or with no limit.
 fn work(limit: u64) -> super::super::meter::Work {
     super::super::meter::Work {
