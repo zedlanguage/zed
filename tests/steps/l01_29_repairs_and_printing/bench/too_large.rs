@@ -74,6 +74,35 @@ fn judging_many_builds_scales() {
     );
 }
 
+/// `main` writing `b ^ (2 ^ n)`, past the address space, whose exponent has `n + 1` bits.
+fn power_of_huge_exponent(b: u32, n: usize) -> String {
+    format!("main(m: MainArgs) {{\n    m.stdout <- String({b} ^ (2 ^ {n}));\n}}\n")
+}
+
+#[test]
+fn folding_a_power_of_a_huge_exponent_scales() {
+    // Item PERF-fold-power-of-huge-exponent: the checker approximates `2 ^ (2 ^ n)` by squaring
+    // once per bit of the exponent (`Approx::pow` in zedc-int), O(n) products of 64-bit ends,
+    // and finds the shift once at the end in O(n); carried through every squaring, the shift
+    // of about n bits made it O(n^2), and `2 ^ (2^(2^20))` took 11 s in a dev build. `3 ^ (2 ^
+    // n)` is placed past `i128` by the least size of its core (`Num::kept`), where the loop of
+    // approximations doubled its precision until it neared n bits, O(n M(n)) a round. Each
+    // input reads and writes `2 ^ n` once, O(n).
+    for b in [2, 3] {
+        let srcs = scaling::inputs(N_EXPONENT_BITS, |n| power_of_huge_exponent(b, n));
+        scaling::check(
+            &format!("{b} ^ (2 ^ n), rejected past the address space"),
+            N_EXPONENT_BITS,
+            |k| rejected_times(&srcs[&k], 1),
+        );
+    }
+}
+
+/// The bits of the exponent at the smaller size, the item's `2 ^ (2^(2^20))`. At 8n the fold of
+/// `2 ^ (2^23)` stays within the checker's bound on a fold's memory (`FOLD_ASK_BITS` in
+/// zedc-check); at `2^24` that fold is unknown and a later stage refuses the program instead.
+const N_EXPONENT_BITS: usize = 1 << 20;
+
 /// Plan row CONST-too-large-coprime-base: `n` names from `y0 = rat(r0) ^ (2^60)`, each the one
 /// before times or divided by `rat(r_i)`, for `r_i` of [`coprime_fourth_powers`], and `y * y`
 /// for the last name `y`, past the address space.

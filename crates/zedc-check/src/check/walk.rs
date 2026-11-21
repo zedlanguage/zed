@@ -7868,10 +7868,25 @@ impl<'t, 'a> Ck<'t, 'a> {
                 && let Some(v) = self.int_exponent_at(b)
             {
                 y.ty = Ty::lit(&v);
+                // The literal's text is the type's text of its value, its powers where they
+                // are shorter than its digits (`Rat::integer_text`): O(the shorter text), so
+                // `2 ^ n` costs its digits only where they are short, and `3 ^ (2 ^ (2^20))`
+                // writes `2^1048576`, not 315,653 digits by an O(M(n) log n) conversion (item
+                // PERF-fold-power-of-huge-exponent, bench `l01_29
+                // bench::too_large::folding_a_power_of_a_huge_exponent_scales`). A repair may
+                // write the text in the exponent's place: `^` is right-associative and binds
+                // tighter than every other operator (DESIGN.md sec:grammar), so a lone power
+                // `b^e`, or `-b^e`, reads there as one operand; a form with a coefficient,
+                // `3*2^k`, would not, and is parenthesized.
+                let text = Ty::lit(&v).to_string();
+                let text = match text.contains('*') {
+                    true => format!("({text})"),
+                    false => text,
+                };
                 y.lit = Some(Lit {
                     span: b.span,
                     site: b.span,
-                    text: Rc::new(v.to_string()),
+                    text: Rc::new(text),
                     value: v,
                     spelled: None,
                     bare: true,

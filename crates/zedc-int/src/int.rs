@@ -915,14 +915,85 @@ impl Approx {
     /// greatest), and whose [`Approx::truncate`] rounds `lo` down and `hi` up. So by induction
     /// on the steps, `r.lo * 2^r.shift <= self^e <= r.hi * 2^r.shift` for the exponent `e`
     /// read so far.
+    ///
+    /// The shift is kept out of the loop (item PERF-fold-power-of-huge-exponent). Squaring an
+    /// `Approx` that carried its shift doubled a BigInt of about `b` bits, for the `b` bits of
+    /// `exp`, at each of the `b` steps: O(b^2) bit operations for shifts alone, where the ends
+    /// stay at `bits` bits. `2 ^ (2^(2^20))` took 11 s in a dev build to fold, all of it in
+    /// those additions. Now the ends are computed with shifts of zero, and the shift once at
+    /// the end. Proof that the result is the same `Approx`, end for end and shift for shift:
+    ///
+    /// 1. [`Approx::mul`] and [`Approx::truncate`] read only `lo` and `hi` to compute the new
+    ///    `lo`, `hi` and the bits `t` dropped; the shift of the product is the sum of the
+    ///    shifts plus `t`. So the ends at every step are those of the loop above whatever the
+    ///    shifts, and starting from shifts of zero, each step's product has the shift `t` of
+    ///    that step alone, a `u64` since it is at most the bits of the product's ends.
+    /// 2. In the loop above, write `s` for `self.shift`, `S_i` for `r.shift` after the step of
+    ///    bit `i`, and `c_i` for the bits dropped in that step's square and product together.
+    ///    Then `S_i = 2 S_{i+1} + c_i + s * bit_i(exp)`, with `S = 0` above the top bit.
+    /// 3. Unrolled from the top bit down to bit 0, each term entered at bit `i` is doubled by
+    ///    the `i` squarings below it: `S_0 = sum_i (c_i + s * bit_i(exp)) * 2^i
+    ///    = s * exp + sum_i c_i 2^i`.
+    /// 4. The sum `sum_i c_i 2^i`, with each `c_i` below `2^64`, is written in one pass from
+    ///    bit 0 up with a carry: after position `i` the carry is below `2^65` (by induction:
+    ///    `(carry + c_i) / 2 < (2^65 + 2^64) / 2 < 2^65`), so a `u128` holds it.
+    ///
+    /// Cost: the `b` steps of products of `bits`-bit ends, O(b) words to keep the `c_i`, one
+    /// O(b) pass for their sum, and one product `s * exp`: linear in `b` for a fixed `bits`.
+    /// Tested by `tests::a_power_keeps_its_shift_out_of_the_loop` (against the loop above,
+    /// shifts of zero and not, exact and not, exponents of 0 to 300 bits) and timed by
+    /// l01_29 `bench::too_large::folding_a_power_of_a_huge_exponent_scales`. What the test
+    /// cannot catch: a `bits` so large that the dropped bits of one step pass `2^64`, which
+    /// would need ends of `2^63` bits.
     fn pow(&self, exp: &BigUint, bits: u64) -> Approx {
+        let base = Approx {
+            lo: self.lo.clone(),
+            hi: self.hi.clone(),
+            shift: BigInt::ZERO,
+        };
         let mut r = Approx::exact(BigInt::from(1u32));
+        // Step 1: `dropped[i]` is `c_i`, the bits dropped at bit `i` of `exp`.
+        let mut dropped = vec![0u64; usize::try_from(exp.bits()).expect("an exponent in memory")];
+        let take = |r: Approx| -> (Approx, u64) {
+            let t = u64::try_from(&r.shift).expect("step 1: the bits one product drops");
+            (
+                Approx {
+                    shift: BigInt::ZERO,
+                    ..r
+                },
+                t,
+            )
+        };
         for i in (0..exp.bits()).rev() {
-            r = r.mul(&r, bits);
+            let (sq, t) = take(r.mul(&r, bits));
+            r = sq;
+            let mut c = t;
             if exp.bit(i) {
-                r = r.mul(self, bits);
+                let (p, t) = take(r.mul(&base, bits));
+                r = p;
+                c += t;
+            }
+            dropped[i as usize] = c;
+        }
+        // Step 4: `sum_i c_i 2^i`, in 32-bit digits for `BigUint::new`.
+        let mut digits = Vec::with_capacity(dropped.len() / 32 + 5);
+        let (mut carry, mut digit) = (0u128, 0u32);
+        for (i, c) in dropped.iter().enumerate() {
+            carry += u128::from(*c);
+            digit |= ((carry & 1) as u32) << (i % 32);
+            carry >>= 1;
+            if i % 32 == 31 {
+                digits.push(digit);
+                digit = 0;
             }
         }
+        if dropped.len() % 32 != 0 {
+            digits.push(digit);
+        }
+        let low = BigUint::new(digits);
+        let high = BigUint::from(carry) << dropped.len();
+        // Step 3: `s * exp + sum_i c_i 2^i`.
+        r.shift = &self.shift * BigInt::from(exp.clone()) + BigInt::from(low + high);
         r
     }
 
@@ -1567,6 +1638,20 @@ impl Core {
         (value, widest)
     }
 
+    /// A lower bound `L` on `floor(log2(value))`, so `value >= 2^L`: an integer atom `a` is at
+    /// least `2^(bits(a) - 1)`, and a root at least `2^127` by the invariant of [`Atom::Root`],
+    /// so `a ^ e` is at least `2^(e * (bits(a) - 1))` or `2^(e * 127)`, and the product of
+    /// the powers at least `2` to the sum. O(m) products of an exponent by a word.
+    fn least_log2(&self) -> BigUint {
+        self.0
+            .iter()
+            .map(|(a, e)| match a {
+                Atom::Int(b) => e * (b.bits() - 1),
+                Atom::Root { .. } => e * 127u32,
+            })
+            .sum()
+    }
+
     /// The value modulo `n >= 1`, by `modpow`, or `None` when a factor is a root, whose
     /// digits are not known.
     fn residue(&self, n: &BigUint) -> Option<BigUint> {
@@ -1674,7 +1759,14 @@ fn fold(terms: &mut Vec<(BigInt, Core)>) {
 // took about 14.9 s of its 15.0 s at load 29 before, and the whole bench 4.4 s at load 58
 // after (COMPLEXITY.md row FAIL-l0124-kept-sum-benches-rising-load). Test:
 // `tests::a_sum_of_kept_sums_approximates_each_core_once_in_collect`.
-fn collect(terms: Vec<(BigInt, Core)>) -> Vec<(BigInt, Core)> {
+fn collect(mut terms: Vec<(BigInt, Core)>) -> Vec<(BigInt, Core)> {
+    // One term has no order to find and no equal core to meet: no approximation, so one
+    // kept power times a number is placed with none (`Num::kept`; item
+    // PERF-fold-power-of-huge-exponent).
+    if terms.len() <= 1 {
+        terms.retain(|(c, _)| !c.is_zero());
+        return terms;
+    }
     let mut terms: Vec<(BigInt, Core, Approx)> = terms
         .into_iter()
         .map(|(c, core)| {
@@ -2326,6 +2418,25 @@ impl Num {
             den,
             negative: false,
         };
+        // One term placed by the least size of its core, before any approximation (item
+        // PERF-fold-power-of-huge-exponent): the approximation of `3 ^ e` loses its lower end
+        // to 0 after about `bits` squarings, since each rounds the ends apart, so the loop
+        // below doubled `bits` until it neared the `b` bits of `e`, O(b * M(b)) a round, and
+        // `3 ^ (2^(2^20)) > 0` did not finish in 30 s. Proof that the shortcut gives the value
+        // the loop gives: write the value `(c * core + d) / den` with `c != 0`, `den >= 1`,
+        // and `L = core.least_log2()`, so `|c * core| >= core >= 2^L`. When `L >= bits(d) +
+        // bits(den) + 128`, then `|d| < 2^bits(d) <= 2^(L - 1)`, so `|c * core + d| >= 2^L -
+        // 2^(L - 1) = 2^(L - 1)` and its sign is that of `c`; with `den < 2^bits(den)`, the
+        // value is past `2^(L - 1 - bits(den)) >= 2^127` in magnitude. So it lies outside
+        // `i128` with the sign of `c`, which is the kept form the loop returns. Tested by
+        // `tests::a_kept_power_of_a_huge_exponent_is_placed_by_its_least_size`; what the test
+        // cannot catch: a sum of several terms, which still goes to the loop.
+        if let [(c, core)] = &k.terms[..]
+            && core.least_log2() >= BigUint::from(k.d.bits() + k.den.bits() + 128)
+        {
+            k.negative = below_zero(c);
+            return Num(Word::Kept(Box::new(k)));
+        }
         let edge = BigInt::from(1u32) << 127u32;
         let zero = BigInt::ZERO;
         let mut bits = 64;
@@ -3331,6 +3442,98 @@ mod tests {
             "{calls} approximations of cores for 2 n = {} terms",
             2 * n
         );
+    }
+
+    /// `x ^ exp` by the loop `Approx::pow` ran before PERF-fold-power-of-huge-exponent, the
+    /// shift carried through every step.
+    fn pow_carrying_the_shift(x: &Approx, exp: &BigUint, bits: u64) -> Approx {
+        let mut r = Approx::exact(BigInt::from(1u32));
+        for i in (0..exp.bits()).rev() {
+            r = r.mul(&r, bits);
+            if exp.bit(i) {
+                r = r.mul(x, bits);
+            }
+        }
+        r
+    }
+
+    /// `Approx::pow` gives the ends and shift of the loop that carried the shift through every
+    /// step: bases exact and not, of shifts zero, positive and negative, to 8, 64 and 200 bits,
+    /// and exponents 0 to 40, `2^k`, `2^k - 1` and random ones of up to 300 bits, so that the
+    /// dropped bits carry across 32-bit digits and past the top bit of the exponent.
+    #[test]
+    fn a_power_keeps_its_shift_out_of_the_loop() {
+        let (mut rng, _) = crate::seed::Rng::fresh("a_power_keeps_its_shift_out_of_the_loop");
+        let mut exps: Vec<BigUint> = (0u32..=40).map(BigUint::from).collect();
+        for k in [31u32, 32, 33, 63, 64, 65, 200] {
+            exps.push(BigUint::one() << k);
+            exps.push((BigUint::one() << k) - 1u32);
+        }
+        for _ in 0..20 {
+            let words: Vec<u32> = (0..10).map(|_| rng.next_u64() as u32).collect();
+            exps.push(BigUint::new(words) >> (rng.next_u64() % 320));
+        }
+        let lo = BigInt::from(3u64 << 61) * 5u32 + 7u32;
+        let bases = [
+            Approx::exact(BigInt::from(2u32)),
+            Approx::exact(BigInt::from(3u32)),
+            Approx::exact(lo.clone()),
+            Approx {
+                lo: lo.clone(),
+                hi: &lo + 1u32,
+                shift: BigInt::from(17u32),
+            },
+            Approx {
+                lo: lo.clone(),
+                hi: &lo + 2u32,
+                shift: BigInt::from(-90),
+            },
+            Approx {
+                lo: BigInt::from(1u32),
+                hi: BigInt::from(1u32),
+                shift: BigInt::one() << 100u32,
+            },
+        ];
+        for x in &bases {
+            for bits in [8u64, 64, 200] {
+                for e in &exps {
+                    let (got, want) = (x.pow(e, bits), pow_carrying_the_shift(x, e, bits));
+                    assert_eq!(
+                        (&got.lo, &got.hi, &got.shift),
+                        (&want.lo, &want.hi, &want.shift),
+                        "{x:?} ^ {e} to {bits} bits"
+                    );
+                }
+            }
+        }
+    }
+
+    /// A product or sum of one kept power by small numbers is placed past `i128` by the least
+    /// size of its core, with no approximation: before, `-7 * 3^(2^4096)` approximated the
+    /// core at 64, 128, ... bits until the lower end stayed above 0, and `3 ^ (2^(2^20))` did
+    /// not finish in 30 s (item PERF-fold-power-of-huge-exponent). Values on both sides of the
+    /// shortcut's bound, `3^300` (least size 300) and `3^81` (least size 81, under the bound
+    /// of 128 plus the bits of `d` and `den`), equal their values written out.
+    #[test]
+    fn a_kept_power_of_a_huge_exponent_is_placed_by_its_least_size() {
+        let x = Num::power(false, BigUint::from(3u32), BigUint::one() << 4096u32);
+        CORE_APPROXES.with(|c| c.set(0));
+        let y = &x * &Num::from(-7);
+        let z = &x + &Num::from(11);
+        let calls = CORE_APPROXES.with(|c| c.get());
+        assert_eq!(calls, 0, "approximations of cores to place one kept term");
+        assert!(y.is_kept() && y.signum() < 0);
+        assert!(z.is_kept() && z.signum() > 0);
+        for e in [81u32, 300] {
+            let x = Num::power(false, BigUint::from(3u32), BigUint::from(e));
+            let v = BigInt::from(3u32).pow(e);
+            for (c, d) in [(-7i64, 11i64), (1, -1), (5, 0), (-1, 1 << 40)] {
+                let got = &(&x * &Num::from(c)) + &Num::from(d);
+                let want = Num::from(&v * c + d);
+                assert_eq!(got, want, "{c} * 3^{e} + {d}");
+                assert_eq!(got.signum(), want.signum(), "{c} * 3^{e} + {d}");
+            }
+        }
     }
 
     #[test]
