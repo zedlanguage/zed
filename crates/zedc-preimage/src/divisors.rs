@@ -72,14 +72,32 @@
 //! part in `I` of its search path in `T(B)` or `T(A)`: a key `y` is on the search path of
 //! `k` exactly when it is `≻` every key of the set between `y` and `k`, and for `y` and `k`
 //! in `I` those keys are the same in the set and in its part in `I`. So a split costs at
-//! most `1 +` the height of `T(A)` or `T(B)`. Not proved (PROOF-divisors-shared-subtree-
-//! cost): that the expected sum of the splits over the `R` calls is `O(k log n)` or
-//! `O(k log(n/k + 1))`; `R` and the split lengths are not independent, and the cited
-//! theorems bound one depth's expectation under 5-wise priorities, not a product's.
-//! Deterministically the work is at most `(1 + 2R)(1 + h)` for `h` the greater height.
+//! most `1 +` the height of `T(A)` or `T(B)`. (4) The splits sum to `O(k log n)` expected
+//! (proofdoc5f). Take a call that recurses, with root key `r`, the `≻`-greatest key of
+//! `(A ∪ B) ∩ I` by (1). If `r` is in both `A` and `B`, it is in the other set's part in
+//! `I` and `≻` every key of it, so it is that part's root (heap order), and
+//! [`Sets::split`] meets it at its first node and returns (`Ordering::Equal`): one step. If
+//! `r` is in `A Δ B`, the split walks the part in `I` of `r`'s search path in the other set,
+//! by (3); that path, in `T(B)` for `r` in `A \ B` and in `T(A)` for `r` in `B \ A`, ends
+//! at an empty child of its last node, and that node is `r`'s predecessor or successor in
+//! that set (an empty child of `y` is reached for `r` only when no key of the set lies
+//! between `y` and `r`); every node of a search path is an ancestor of the last, so the path
+//! has at most `depth(pred) + depth(succ) + 2` nodes, a depth of a key that does not exist
+//! read as 0. Each key is the root of at most one call, since by (1) the calls are at
+//! distinct subtrees of `T(A ∪ B)`, a call met again ends at `unions` before its split. So
+//! the split steps are at most `R + Σ_{r ∈ A Δ B} (depth(pred(r)) + depth(succ(r)) + 2)`,
+//! a bound that holds for every draw of the priorities. Its expectation is a sum of single
+//! depths, each `O(log n)` by Seidel and Aragon under the priorities of `PRIORITIES`, so by
+//! linearity of expectation, with no independence between `R` and the depths needed,
+//! `E[split steps] <= E[R] + 2k·O(log n) = O(k log n)`, and the union's work, `O(1)` per
+//! call plus a `make` per split step (one hash lookup each), is `O(k log n)` expected.
+//! `O(k log(n/k + 1))` was not proved and is not claimed. Deterministically the work is at
+//! most `(1 + 2R)(1 + h)` for `h` the greater height.
 //! Tests: `tests::a_union_of_sets_that_differ_in_two_divisors_recurses_only_above_them`
-//! checks the bound of (2) on the entries made, over 32 pairs at `n = 256` and `8n`, and
-//! their ratio, under 2 against the `log` ratio 1.375; it does not count split steps. The
+//! checks the bound of (2) on the entries made and the bound of (4) on the split steps
+//! (counted under `cfg(test)`), over 32 pairs at `n = 256` and `8n`, and both ratios, under
+//! 2 against the `log` ratio 1.375; it cannot show the expectation, which rests on the
+//! priorities, and its pairs share all but two keys. The
 //! test `ladder::the_conditions_of_shared_divisors_scale` (l01_38_presburger bench) measures
 //! the families of RUNG2-definedness at k and 8k.
 
@@ -132,6 +150,9 @@ pub(crate) struct Sets {
     made: HashMap<(u32, Set, Set), Set>,
     /// Each union by its two sets, the smaller number first.
     unions: HashMap<(Set, Set), Set>,
+    /// The nodes [`Sets::split`] has visited, for the test of the cost of a union.
+    #[cfg(test)]
+    split_steps: u64,
 }
 
 impl Default for Sets {
@@ -149,6 +170,8 @@ impl Default for Sets {
             }],
             made: HashMap::new(),
             unions: HashMap::new(),
+            #[cfg(test)]
+            split_steps: 0,
         }
     }
 }
@@ -240,6 +263,10 @@ impl Sets {
     fn split(&mut self, s: Set, k: u32) -> (Set, bool, Set) {
         if s == EMPTY {
             return (EMPTY, false, EMPTY);
+        }
+        #[cfg(test)]
+        {
+            self.split_steps += 1;
         }
         let Node {
             key, left, right, ..
@@ -469,11 +496,14 @@ mod tests {
     /// each: the calls of `union` that recurse (each adds one pair to `unions`, or hits it)
     /// are at most the nodes on the paths of the union's treap from its root to the two
     /// divisors not shared, the bound the proof at the module comment gives; and over 32 such
-    /// pairs at `n` and `8n` their number grows as those paths, `O(log n)`, not as `n`. It
-    /// counts calls, not the splits they make, whose bound is the open part of that proof.
+    /// pairs at `n` and `8n` their number grows as those paths, `O(log n)`, not as `n`. The
+    /// split steps of those calls (`Sets::split_steps`) are at most the calls plus the search
+    /// path of `x` in `b` and of `y` in `a`, the bound of step (4) of that proof, and grow as
+    /// those paths too.
     #[test]
     fn a_union_of_sets_that_differ_in_two_divisors_recurses_only_above_them() {
-        /// The nodes from the root of `s` down to the divisor `x`, both counted.
+        /// The nodes from the root of `s` down to the divisor `x`, both counted, or down to
+        /// an empty subtree when `s` does not hold `x` (its search path).
         fn path(sets: &Sets, mut s: Set, x: &Lin) -> u64 {
             let mut nodes = 0;
             while s != EMPTY {
@@ -485,35 +515,51 @@ mod tests {
                     Ordering::Equal => return nodes,
                 };
             }
-            panic!("{x} is not in the set")
+            nodes
         }
-        let mut calls = Vec::new();
+        let (mut calls, mut steps) = (Vec::new(), Vec::new());
         for n in [256i64, 2048] {
             let mut sets = Sets::default();
             let shared = of(&mut sets, (0..n).map(|i| 2 * i));
-            let mut total = 0;
+            let (mut total, mut split_total) = (0, 0);
             for j in 0..32 {
                 let (x, y) = (2 * ((j * 37) % n) + 1, 2 * ((j * 53 + 11) % n) + 1);
                 let one = sets.single(&d(x));
                 let a = sets.union(shared, one);
                 let one = sets.single(&d(y));
                 let b = sets.union(shared, one);
-                let before = sets.unions.len();
+                let (before, split_before) = (sets.unions.len(), sets.split_steps);
                 let u = sets.union(a, b);
                 let made = (sets.unions.len() - before) as u64;
+                let split = sets.split_steps - split_before;
                 let bound = path(&sets, u, &d(x)) + path(&sets, u, &d(y));
                 assert!(
                     made <= bound,
                     "n = {n}, {x} and {y}: {made} calls, paths {bound}"
                 );
+                let split_bound = made + path(&sets, b, &d(x)) + path(&sets, a, &d(y));
+                assert!(
+                    split <= split_bound,
+                    "n = {n}, {x} and {y}: {split} split steps, bound {split_bound}"
+                );
                 assert_eq!(sets.len(u), n as u32 + 1 + u32::from(x != y));
                 total += made;
+                split_total += split;
             }
             calls.push(total);
+            steps.push(split_total);
         }
         let ratio = calls[1] as f64 / calls[0] as f64;
-        eprintln!("unions made over 32 pairs at n and 8n: {calls:?}, ratio {ratio:.2}");
+        let split_ratio = steps[1] as f64 / steps[0] as f64;
+        eprintln!(
+            "over 32 pairs at n and 8n: unions made {calls:?}, ratio {ratio:.2}; split steps \
+             {steps:?}, ratio {split_ratio:.2}"
+        );
         assert!(ratio < 2.0, "calls {calls:?}: ratio {ratio:.2} at 8n");
+        assert!(
+            split_ratio < 2.0,
+            "split steps {steps:?}: ratio {split_ratio:.2} at 8n"
+        );
     }
 
     #[test]

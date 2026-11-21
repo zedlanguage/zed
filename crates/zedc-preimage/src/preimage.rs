@@ -4171,6 +4171,18 @@ fn literal_terms(k: &CallKey) -> &[Lin] {
     if k.2.is_empty() { &k.1 } else { &[] }
 }
 
+/// The literal [`Tx::call_env`] binds a parameter to for its entry `l` of a call key: `l`'s
+/// constant when `l` is a constant in `i64`, the values `Terms::int` makes a term of; `None`
+/// otherwise. [`Walk::call_key`] gives no key with a constant entry outside `i64`, so every
+/// constant entry of a key has its literal (PROOF-call-key-function-of-lins, sub-case (a)).
+/// O(1) beyond reading the constant.
+fn key_literal(l: &Lin) -> Option<i64> {
+    if !l.terms.is_empty() {
+        return None;
+    }
+    i64::try_from(l.constant.to_i128()?).ok()
+}
+
 /// One more than the largest auxiliary variable the call key `k` names, 0 for none: in its
 /// arguments' linear terms ([`Lin::aux_end`]) and in their conditions, by the numbers of
 /// their divisor sets ([`DivisorSets::aux_end`]) and other parts ([`FormulaNumbers::aux_end`]).
@@ -5737,24 +5749,52 @@ impl<'t> Tx<'t> {
     /// `l01_38_omega_test::completeness::a_call_keyed_by_a_constant_argument_is_translated_in_either_order`
     /// (red before: the second order was outside the domain), and
     /// `l01_38_presburger::ladder::a_call_with_an_argument_that_may_fail_is_read_at_its_place`
-    /// (`f((x mod n) * 0)`, refuted at `n = 0`). Not proved
-    /// (PROOF-call-key-function-of-lins), three sub-cases: (c) under [`Tr::definedness`] with
-    /// an argument that may fail, no parameter is bound to a literal, so a constant key read
-    /// through two argument terms is the case before the fix; (a) a constant outside `i64`,
-    /// whose argument is still bound, since `Terms` makes a literal only of an `i64`
-    /// (`Node::Lit` borrows a value of the source); (b) a parameter whose key is not a
+    /// (`f((x mod n) * 0)`, refuted at `n = 0`).
+    ///
+    /// Sub-case (a), closed (proofdoc5f): a constant outside `i64` has no literal, since
+    /// `Terms` makes one only of an `i64` (`Node::Lit` borrows a value of the source), so
+    /// its argument was bound and the case before the fix came back: `g(x, 2^70)` and
+    /// `g(x, y - y + 2^70)`, one key, kept whichever translation was read first, and with
+    /// `g = (x, a) -> x mod a == 1` the second order had none, since `x mod (y - y + 2^70)`
+    /// did not translate. Two changes. (i) [`Walk::call_key`] gives no key for such a call,
+    /// which is read at its place under no key, as a call whose argument has no linear term
+    /// is; so every constant entry of a key has its literal ([`key_literal`]), and the body
+    /// reads the same term whichever call came first, by any read (linear term, `constant`,
+    /// box). (ii) [`Walk::lin_at`] reads a divisor whose linear term is a constant as that
+    /// constant, so the call read at its place still translates. Test, red before both
+    /// ("no translation" for the order `y - y + 2^70` first), green after:
+    /// `tests::a_call_keyed_by_a_constant_outside_i64_is_translated_in_either_order`. What it
+    /// cannot catch: it turns green by (ii) alone (by reading: with (i) undone both calls share
+    /// one key and the remainder reads either bound term as `2^70`); no test was found whose
+    /// body reads a parameter keyed by a constant other than by its linear term, the case (i)
+    /// closes. Cost of (i): calls with an argument constant outside `i64` are no longer
+    /// shared, one translation for each place.
+    ///
+    /// Sub-case (c), reduced to (b) (proofdoc5f): under [`Tr::definedness`] with an argument
+    /// that may fail no parameter is bound to a literal, but the case before the fix needs a
+    /// body that reads the parameter by evaluating it ([`Walk::constant`]), and that reads
+    /// `None` for both arguments. Steps: an argument that may fail has a condition that is not
+    /// top, so it holds an operation that can fail; the only one [`Walk::lin_at`] translates is
+    /// a quotient or remainder by a term ([`Tr::div_mod_by_term`], proof (1) at
+    /// [`Walk::exactly_equal`]), which refuses a divisor whose linear term has no atoms; an
+    /// atom is an input or an auxiliary variable defined over inputs, so the argument reads
+    /// an input, [`Walk::mentions`] holds of it, and `constant` of the parameter, read through
+    /// its binding, is `None`, for either argument term. The step "a divisor with an atom
+    /// mentions an input" was not checked arm by arm. What is left is (b).
+    ///
+    /// Not proved (PROOF-call-key-function-of-lins), one sub-case: (b) a parameter whose key is not a
     /// constant, still read through the caller's argument term, where the body reads that
     /// term other than by its linear term: [`Walk::lin_by_class`] reads the classes of a
     /// remainder test of it, and the box walks ([`Walk::fwd`]) read its bounds, which may
-    /// differ between `x` and `x + y - y`. No test was found that reaches either.
+    /// differ between `x` and `x + y - y`. No test was found that reaches it. A fix in the
+    /// manner of (a), not made: give no key where an argument is not its own linear term
+    /// written out; it would end the sharing that `shared_call_key`'s test measures, so it
+    /// waits for a call that shows the difference.
     fn call_env(&mut self, ps: Span, args: Span, lam: Eid, caller: Eid, key: &[Lin]) -> Eid {
         let mut e = lam;
         for i in 0..ps.len() {
             let p = self.param(ps, i);
-            let literal = (key.get(i))
-                .filter(|l| l.terms.is_empty())
-                .and_then(|l| i64::try_from(l.constant.to_i128()?).ok());
-            let to = match literal {
+            let to = match key.get(i).and_then(key_literal) {
                 Some(n) => (self.terms.int(n), ROOT),
                 None => (self.arg(args, i), caller),
             };
@@ -7096,6 +7136,15 @@ impl<'m, 't> Walk<'m, 't> {
     /// or `based`, or [`cls_zip`] of two `Same` roots, which gives the one range `(0, n)`,
     /// built by [`cls_build`] as one `Same` leaf. (`pa_line` returns `None` in every split
     /// run, the same in each class.)
+    /// (4) Rechecked (proofdoc5f), the paths of [`Walk::by_class_at`] that (1) to (3) do not
+    /// name: a term with a constant value gives [`ByClass::constant`] before
+    /// `by_class_node` is asked, a `Same` root by (3); a `Node::Follow`, a `Node::PrimFn`
+    /// other than `Mod`, and a `Node::Prim`
+    /// whose argument count is not its arity, give `None` from `by_class_node`, and then, the
+    /// term not a `Var` and this `false`, `by_class_at` takes the `based` branch, or `None` for
+    /// an `if` that is a test, the same in every class; `Node::Lam` and `Node::Other` make
+    /// this `true`, outside the claim; [`Walk::by_class_on`] is reached only through
+    /// `residue_test` being `Some`, which (2) excludes. No step of the induction failed.
     /// Test:
     /// `l01_25_preimage_catalog::s22::remainder_chains_outside_the_shared_summary_keep_their_preimages`
     /// reads such terms below remainder guards in split runs; it cannot catch a new arm of
@@ -9310,15 +9359,17 @@ impl<'m, 't> Walk<'m, 't> {
     }
 
     /// The key a call of the lambda `body` in scope `lam` is translated under: `None`, with
-    /// what the attempt made undone, when an argument has no linear term.
+    /// what the attempt made undone, when an argument has no linear term, or its linear term
+    /// is a constant outside `i64`, which [`Tx::call_env`] could not bind to a literal (sub-case
+    /// (a) of PROOF-call-key-function-of-lins, proved at `call_env`).
     async fn call_key(&'m self, body: Tid, lam: Eid, args: Span, env: Eid) -> Option<CallKey> {
         let mark = self.tr(|tr| tr.defs.len());
         let logged = self.with(|tx| tx.run.memo.log.len());
         let mut lins = Vec::with_capacity(args.len());
         for i in 0..args.len() {
             match self.lin(self.arg(args, i), env).await {
-                Some(l) => lins.push(l),
-                None => {
+                Some(l) if !l.terms.is_empty() || key_literal(&l).is_some() => lins.push(l),
+                _ => {
                     self.undo(mark, logged);
                     return None;
                 }
@@ -9691,14 +9742,32 @@ impl<'m, 't> Walk<'m, 't> {
                         // (`mod 2^63 - 1`, `mod 2^63`) and
                         // `l01_38_presburger::pncx_probe::pncx_divisor_past_i128_is_read`
                         // (2^64 to 2^10000).
-                        let k = self.constant_coef(self.arg(args, 1), env).await;
-                        if k.is_none() && products {
-                            // A divisor that is not a constant: its product with the quotient
-                            // is an atom, which only rung 2's translation admits.
-                            let a = arg(0).await?;
-                            let n = arg(1).await?;
-                            return self.tr(|tr| tr.div_mod_by_term(p, &a, &n));
-                        }
+                        // A divisor whose value is not a constant but whose linear term is one
+                        // (`y - y + c`, which `constant` refuses since it mentions an input) is
+                        // read as that constant (proofdoc5f): it equals `c` wherever it is
+                        // defined, so the pair by `c` holds of the values the kernel computes,
+                        // and where it may fail [`Walk::defined_at`] holds that condition, as it
+                        // reads the divisor by the same linear term. Before, it had no
+                        // translation, and a call `g(x, y - y + 2^70)` refused where
+                        // `g(x, 2^70)` did not. Test:
+                        // `tests::a_call_keyed_by_a_constant_outside_i64_is_translated_in_either_order`.
+                        let k = match self.constant_coef(self.arg(args, 1), env).await {
+                            Some(k) => Some(k),
+                            None => {
+                                let n = arg(1).await?;
+                                if !n.terms.is_empty() {
+                                    if !products {
+                                        return None;
+                                    }
+                                    // A divisor that is not a constant: its product with the
+                                    // quotient is an atom, which only rung 2's translation
+                                    // admits.
+                                    let a = arg(0).await?;
+                                    return self.tr(|tr| tr.div_mod_by_term(p, &a, &n));
+                                }
+                                Some(n.constant)
+                            }
+                        };
                         let c = k.filter(|c| !c.is_zero())?;
                         let a = arg(0).await?;
                         self.tr(|tr| {
@@ -14313,7 +14382,11 @@ fn split_around(root: Tree, cut: i128) -> (Tree, Option<CutPiece>, Tree) {
 /// `O((m + s + 1) log^2 n)`. With widened bounds (a tag of slope not 0) a subtree may be
 /// visited whose values lie on one side, and the bound is not proved
 /// (PROOF-preimage-treap-cost-widened); see [`invert_treap`]'s
-/// tradeoff. Test: `tests::a_clamped_summary_is_the_summary_clamped_at_every_point` checks
+/// tradeoff. What holds then (proofdoc5f): each call recurses only into its own two
+/// children, so each of the `p` nodes is visited at most once, and the time is `O(p log p)`
+/// expected, four joins at most per node. Open sub-case: the `O((m + s + 1) log^2 n)` bound
+/// when a tag above has slope not 0; closing it needs each subtree's hulls, as at
+/// `invert_treap`. No benchmark measures it. Test: `tests::a_clamped_summary_is_the_summary_clamped_at_every_point` checks
 /// the values, not the count.
 ///
 /// `None` where a piece end it would make lies past what [`in_range`] admits, so the caller
@@ -16602,6 +16675,39 @@ mod tests {
         check(&with_g(prim(Prim::Or, call(2), call(5))), 0);
         // The entries that hold everywhere, read again and compared ([`CHECKED`]).
         assert!(CHECKED.get()[4] > 0, "{:?}", CHECKED.get());
+    }
+
+    /// PROOF-call-key-function-of-lins, sub-case (a) at [`Tx::call_env`]: `g(x, c) && g(x, y -
+    /// y + c)` with `g = (x, a) -> x mod a == 1` and `c = 2^70`, outside `i64`. The two calls
+    /// had one key, `[x, c]`, and kept the translation of the call read first; read first,
+    /// `g(x, y - y + c)` had none, so one order was translated and the other not. Red before:
+    /// "no translation" for the order with `y - y + c` first. Now neither call is keyed and
+    /// both translate at their places.
+    #[test]
+    fn a_call_keyed_by_a_constant_outside_i64_is_translated_in_either_order() {
+        let v = |s: &str| Term::Var(s.into());
+        let sh = Shared::new;
+        let prim = |p: Prim, a: Term, b: Term| Term::Prim(p, vec![a, b]);
+        let c = || Term::Lit(Value::int(num_bigint::BigInt::from(1u32) << 70u32));
+        let g = Term::Lam(
+            vec!["x".into(), "a".into()],
+            sh(prim(
+                Prim::Eq,
+                prim(Prim::Mod, v("x"), v("a")),
+                Term::Lit(Value::Int(1)),
+            )),
+        );
+        let call = |a: Term| Term::App(sh(v("g")), vec![v("x"), a]);
+        let indirect = || prim(Prim::Add, prim(Prim::Sub, v("y"), v("y")), c());
+        for (first, second) in [(c(), indirect()), (indirect(), c())] {
+            let t = Term::Let(
+                "g".into(),
+                sh(g.clone()),
+                sh(prim(Prim::And, call(first), call(second))),
+            );
+            let seen = translate(&t, false);
+            assert!(seen.formula.is_some(), "{t:?}: no translation");
+        }
     }
 
     /// [`FormulaNumbers::aux_end`] of a constraint, a negation, a conjunction and a
