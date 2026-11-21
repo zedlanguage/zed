@@ -217,3 +217,92 @@ fn pncx_coprime_dense_scale() {
         },
     );
 }
+
+/// Both sides of zed-kernel's `SCALED_TO_EXACT_WORDS` (in `num/trees.rs`), here so that
+/// zed-kernel is built with its own multiplication constants (its own tests build it with the
+/// test ones): `trees::scaled_descend_switch` at switch widths from 0 (the scaled remainder tree
+/// to the leaves) to past every node (the exact descent from the root), on the CRT cofactor sum
+/// `S mod P` over the first 2,048 / 16,384 / 131,072 odd primes and on `x = P - 1 - P / 8` over
+/// word leaves, 8-word, 64-word and 512-word leaves and 2, 4, .., 2^200; prints the instructions
+/// and bytes of each and holds the remainders equal at every width. The measurements and the
+/// switch they give are in the comment at `SCALED_TO_EXACT_WORDS`.
+#[test]
+fn the_scaled_to_exact_switch_axis() {
+    use num_bigint::BigUint;
+    use zed_kernel::num::{rem_uint, trees};
+    let mut meter = scaling::Meter::new();
+    let (mut rng, _seed) = crate::seed::Rng::fresh("scaled_to_exact_axis");
+    let mut odd = |words: usize| -> BigUint {
+        let digits: Vec<u32> = (0..2 * words).map(|_| rng.next_u64() as u32).collect();
+        BigUint::new(digits) | BigUint::from(1u32) | (BigUint::from(1u32) << (64 * words - 1))
+    };
+    let primes = |k: usize| -> Vec<BigUint> {
+        let mut out = Vec::with_capacity(k);
+        let mut c = 3u64;
+        while out.len() < k {
+            if zed_numtheory::is_prime(c) {
+                out.push(BigUint::from(c));
+            }
+            c += 2;
+        }
+        out
+    };
+    let mut families: Vec<(String, Vec<BigUint>, bool)> = [2048, 16384, 131072]
+        .map(|k| (format!("cofactors of {k} odd primes"), primes(k), true))
+        .into();
+    families.push((
+        "4096 word leaves".into(),
+        (0..4096).map(|_| odd(1)).collect(),
+        false,
+    ));
+    families.push((
+        "512 leaves of 8 words".into(),
+        (0..512).map(|_| odd(8)).collect(),
+        false,
+    ));
+    families.push((
+        "32 leaves of 64 words".into(),
+        (0..32).map(|_| odd(64)).collect(),
+        false,
+    ));
+    families.push((
+        "256 leaves of 64 words".into(),
+        (0..256).map(|_| odd(64)).collect(),
+        false,
+    ));
+    families.push((
+        "32 leaves of 512 words".into(),
+        (0..32).map(|_| odd(512)).collect(),
+        false,
+    ));
+    families.push((
+        "2, 4, .., 2^200".into(),
+        (1..=200u32).map(|i| BigUint::from(1u32) << i).collect(),
+        false,
+    ));
+    for (name, leaves, cofactors) in families {
+        let levels = trees::product_tree(&leaves);
+        let p = trees::tree_product(&leaves, &levels).into_owned();
+        let x = if cofactors {
+            let ones = vec![BigUint::from(1u32); leaves.len()];
+            rem_uint(&trees::linear_combination_up(ones, &leaves, &levels), &p)
+        } else {
+            &p - 1u32 - (&p >> 3u32)
+        };
+        let mut want = None;
+        for w in [0u64, 16, 32, 64, 128, 256, 512, 1024, 2048, 4096, 1 << 40] {
+            let mut got = Vec::new();
+            let m = meter.work(|| got = trees::scaled_descend_switch(&x, &p, &leaves, &levels, w));
+            eprintln!(
+                "scaled_to_exact {name}, P {} words, switch at {w} words: {} instructions, {} bytes",
+                p.bits().div_ceil(64),
+                m.units,
+                m.bytes
+            );
+            match &want {
+                None => want = Some(got),
+                Some(first) => assert_eq!(first, &got, "{name}, switch at {w} words"),
+            }
+        }
+    }
+}

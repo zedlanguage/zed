@@ -1898,4 +1898,41 @@ mod tests {
             }
         }
     }
+
+    /// `shares_a_factor_by_tree` (the cofactor tree) and `rems_of` (the remainder tree) past the
+    /// trees' switches: 301 values of 4 random words (a product of about 1,200 words, above the
+    /// scaled tree's switch to the exact descent at 128 words, an odd count so nodes are
+    /// carried), three of them given one shared factor; each against pairwise gcds and one
+    /// division a value, with `x` at 7/8 of the product's width less and more a bit and at its
+    /// full width.
+    #[test]
+    fn the_cofactor_and_remainder_trees_agree_past_the_scaled_switch() {
+        let (mut rng, seed) = crate::seed::Rng::fresh("cofactor_tree_past_the_scaled_switch");
+        let mut wide = |words: usize| -> BigUint {
+            let digits: Vec<u32> = (0..2 * words).map(|_| rng.next_u64() as u32).collect();
+            BigUint::new(digits) | BigUint::one() | (BigUint::one() << (64 * words - 1))
+        };
+        let shared = wide(2);
+        let mut xs: Vec<BigUint> = (0..301).map(|_| wide(4)).collect();
+        for i in [7, 150, 299] {
+            xs[i] = &xs[i] * &shared;
+        }
+        let want: Vec<bool> = (0..xs.len())
+            .map(|i| (0..xs.len()).any(|j| j != i && !gcd_uint(&xs[i], &xs[j]).is_one()))
+            .collect();
+        assert!(want[7] && want[150] && want[299], "seed {seed}");
+        assert_eq!(shares_a_factor_by_tree(&xs), want, "seed {seed}");
+        let refs: Vec<&BigUint> = xs.iter().collect();
+        let p = xs.iter().product::<BigUint>();
+        let n = p.bits();
+        for w in [7 * n / 8 - 1, 7 * n / 8 + 1, n] {
+            let x = (&p >> (n - w)) - big(12_345);
+            let want: Vec<BigUint> = xs.iter().map(|m| &x % m).collect();
+            assert_eq!(
+                rems_of(&x, &refs),
+                want,
+                "x of {w} of {n} bits, seed {seed}"
+            );
+        }
+    }
 }

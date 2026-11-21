@@ -1622,6 +1622,329 @@ pub fn mul_int(a: &BigInt, b: &BigInt) -> BigInt {
     BigInt::from_biguint(a.sign() * b.sign(), mul(a.magnitude(), b.magnitude()))
 }
 
+/// `v0 * p1 + v1 * p0` over nonnegative integers. When both products are past [`MUL_LEAF`] and
+/// transforming the four operands and taking one inverse transform costs less by [`TRANSFORM_COST`]
+/// than two separate products, the sum is formed in the transform domain (five transforms in place
+/// of six, one Garner pass, and no separate big-integer addition; D. J. Bernstein, "Fast
+/// multiplication and its applications", in *Algorithmic Number Theory*, MSRI Publications 44,
+/// Cambridge University Press, 2008, pp. 325-384, <https://cr.yp.to/lineartime/multapps-20080515.pdf>,
+/// §11.7 p. 347 "FFT addition", checked 2026-11-20 against the author's PDF; no DOI); otherwise
+/// [`mul`] is called twice. Both give the same sum. Test:
+/// `num::fast::tests::mul_add_pair_agrees_with_separate_products`.
+pub(super) fn mul_add_pair(v0: &BigUint, p1: &BigUint, v1: &BigUint, p0: &BigUint) -> BigUint {
+    if v0.is_zero() || p1.is_zero() {
+        return mul(v1, p0);
+    }
+    if v1.is_zero() || p0.is_zero() {
+        return mul(v0, p1);
+    }
+    let (w0, w1, w2, w3) = (words(v0), words(p1), words(v1), words(p0));
+    if w0.min(w1) <= MUL_LEAF || w2.min(w3) <= MUL_LEAF {
+        return mul(v0, p1) + mul(v1, p0);
+    }
+    let widest = (w0 + w1 - 1).max(w2 + w3 - 1);
+    let n = widest.next_power_of_two();
+    let separate = dense_cost(w0, w1) + dense_cost(w2, w3);
+    // Four forward transforms and one inverse: 5/3 of one three-transform product.
+    let shared = 5.0 * TRANSFORM_COST * points_cost(n) as f64 / 3.0;
+    if n > (1 << 50) || shared >= separate {
+        return mul(v0, p1) + mul(v1, p0);
+    }
+    let tw = roots(n);
+    let mut fa = Vec::with_capacity(n);
+    let mut fb = Vec::with_capacity(n);
+    let mut fc = Vec::with_capacity(n);
+    let mut fd = Vec::with_capacity(n);
+    let [mut r0, r1, r2] = [0, 1, 2].map(|k| {
+        let field = &FIELDS[k];
+        field.transform_into(v0, n, &tw[k], &mut fa);
+        field.transform_into(p1, n, &tw[k], &mut fb);
+        field.transform_into(v1, n, &tw[k], &mut fc);
+        field.transform_into(p0, n, &tw[k], &mut fd);
+        let n_inv = field.p - (field.p - 1) / n as u64;
+        let scale = field.to_mont(field.to_mont(n_inv));
+        let mut acc = Vec::with_capacity(n + 2);
+        for i in 0..n {
+            let t0 = field.mul(fa[i], fb[i]);
+            let t1 = field.mul(fc[i], fd[i]);
+            acc.push(field.mul(field.add(t0, t1), scale));
+        }
+        field.inverse(&mut acc, &tw[k]);
+        acc
+    });
+    drop((fa, fb, fc, fd));
+    // Each product's coefficients are at most min(w_a, w_b) * 2^128 <= (n / 2) * 2^128, so their
+    // sum is at most n * 2^128 <= 2^178 < p0 p1 p2 (> 2^185), exact under Garner's CRT.
+    let carry = garner(&mut r0, &r1, &r2);
+    drop((r1, r2));
+    r0.extend([carry as u64, (carry >> 64) as u64]);
+    trim(&mut r0);
+    from_words(r0)
+}
+
+/// Keeps the thread-local NTT root table alive for the lifetime of the returned guard so a tree
+/// traversal builds the table once.
+pub(super) fn hold_roots() -> HoldRoots {
+    HoldRoots::open()
+}
+
+/// An initial root value `S` in `[0, 2^f)` for a scaled remainder tree (D. J. Bernstein, "Scaled
+/// remainder trees", 2004, Section 2), satisfying `|S / 2^f - u / p| < 1.5 / 2^f` for `0 <= u < p`
+/// and `p >= 2`, `f >= bits(p) + 4`.
+///
+/// Below or at [`RECIP_LEAF`] bits, exact floor division `floor(u * 2^f / p)` has error `< 1 / 2^f`.
+/// Above [`RECIP_LEAF`], [`approx_reciprocal`] on `p' = p * 2^(k - n)` (`n = bits(p)`, `k = f + 2`)
+/// gives `X` with `p' X < 2^(2k) <= p' (X + 2)`, so `0 < 2^(f + n + 2) / p - X <= 2`; then
+/// `S = floor(u X / 2^(n + 2))` satisfies `0 <= S < 2^f` (as `u < p` implies `u X < 2^(f + n + 2)`)
+/// and `0 <= u * 2^f / p - S < 2 u / 2^(n + 2) + 1 < 2 p / 2^(n + 2) + 1 < 1.5`.
+pub(super) fn scaled_root(u: &BigUint, p: &BigUint, f: u64) -> BigUint {
+    if u.is_zero() {
+        return BigUint::zero();
+    }
+    debug_assert!(u < p && p.bits() >= 2 && f >= p.bits() + 4);
+    if f <= 64 && u.bits() + f <= 128 && p.bits() <= 64 {
+        let uv = u.iter_u64_digits().next().unwrap_or(0);
+        let pv = p.iter_u64_digits().next().unwrap_or(1);
+        return BigUint::from(((u128::from(uv) << f) / u128::from(pv)) as u64);
+    }
+    if f <= RECIP_LEAF {
+        return (u << f) / p;
+    }
+    let n = p.bits();
+    let k = f + 2;
+    let p_shifted = p << (k - n);
+    let m = cyclic_points(k);
+    let tw = roots(m);
+    let x = approx_reciprocal(&p_shifted, k, &tw, RECIP_LEAF);
+    drop(p_shifted);
+    mul(u, &x) >> (n + 2)
+}
+
+/// Precision `f` (in bits) and whether to step to children by Theorem 2.2 (cyclic NTT modulo
+/// `2^(64 m) - 1` with the parent's spectrum shared across both children) rather than Theorem 2.1
+/// (`mul` modulo `2^f`) for a scaled-remainder-tree node `v = a * b`, `a, b >= 2`, needing
+/// `2^f >= 2^(bits(v) + guard)` and `f <= cap`.
+///
+/// Both methods satisfy Bernstein (2004) Theorems 2.1/2.2; the choice compares the existing cost
+/// model's `(TRANSFORM_COST + CACHED_COST) * m log2(m)` (one shared forward transform plus two
+/// cached cyclic products on `m` points) against `mul_cost(fw, words(a)) + mul_cost(fw, words(b))`.
+pub(super) fn scaled_node_precision(
+    v: &BigUint,
+    a: &BigUint,
+    b: &BigUint,
+    guard: u64,
+    cap: u64,
+) -> (u64, bool) {
+    let tight = v.bits() + guard;
+    let fw = usize::try_from(tight.div_ceil(64)).expect("words fit in memory");
+    let m = fw.next_power_of_two();
+    let ntt_bits = 64u64.saturating_mul(m as u64);
+    let wa = words(a);
+    let wb = words(b);
+    let can_ntt = m <= (1 << 50) && ntt_bits <= cap && wa.min(wb) > 0;
+    if can_ntt {
+        let ntt_cost = (TRANSFORM_COST + CACHED_COST) * points_cost(m) as f64;
+        let mul_both = mul_cost(fw, wa) + mul_cost(fw, wb);
+        if ntt_cost < mul_both {
+            return (ntt_bits, true);
+        }
+    }
+    (tight, false)
+}
+
+/// Rounded bit-window extraction: given `y` (whose low `f` bits are `Y = y mod 2^f`), returns
+/// `R = round(Y / 2^(f - e)) mod 2^e` in `[0, 2^e)`, where `round` rounds half up (distance at
+/// most `1/2` from `Y / 2^(f - e)`), for `e <= f`.
+fn rounded_window_big(y: &BigUint, f: u64, e: u64) -> BigUint {
+    if e == 0 {
+        return BigUint::zero();
+    }
+    debug_assert!(e <= f);
+    let shift = f - e;
+    let round_up = shift > 0 && y.bit(shift - 1);
+    let skip = (shift / 32) as usize;
+    let bit_off = (shift % 32) as u32;
+    let n32 = usize::try_from(e.div_ceil(32)).expect("words fit in memory");
+    let mut digits = y.iter_u32_digits().skip(skip);
+    let mut out = Vec::with_capacity(n32);
+    if bit_off == 0 {
+        out.extend(digits.take(n32));
+    } else if let Some(mut lo) = digits.next() {
+        for _ in 0..n32 {
+            let hi = digits.next().unwrap_or(0);
+            out.push((lo >> bit_off) | (hi << (32 - bit_off)));
+            lo = hi;
+        }
+    }
+    let rem_bits = (e % 32) as u32;
+    if rem_bits != 0 && out.len() == n32 {
+        out[n32 - 1] &= (1u32 << rem_bits) - 1;
+    }
+    if round_up {
+        let mut carry = true;
+        for d in &mut out {
+            (*d, carry) = d.overflowing_add(1);
+            if !carry {
+                break;
+            }
+        }
+        if carry {
+            if out.len() < n32 {
+                out.push(1);
+            } else {
+                out.clear();
+            }
+        }
+        if rem_bits != 0 && out.len() == n32 && (out[n32 - 1] >> rem_bits) != 0 {
+            out.clear();
+        }
+    }
+    BigUint::new(out)
+}
+
+/// Same as [`rounded_window_big`] for `Y` held as 64-bit words `y` (in `[0, 2^f - 1]`).
+fn rounded_window_words(y: &[u64], f: u64, e: u64) -> BigUint {
+    if e == 0 {
+        return BigUint::zero();
+    }
+    debug_assert!(e <= f);
+    let shift = f - e;
+    let round_up = if shift > 0 {
+        let b = shift - 1;
+        let idx = (b / 64) as usize;
+        idx < y.len() && ((y[idx] >> (b % 64)) & 1) != 0
+    } else {
+        false
+    };
+    let mut out = shr_words(y, shift);
+    let nwords = usize::try_from(e.div_ceil(64)).expect("words fit in memory");
+    if out.len() > nwords {
+        out.truncate(nwords);
+    }
+    let rem_bits = (e % 64) as u32;
+    if rem_bits != 0 && out.len() == nwords {
+        out[nwords - 1] &= (1u64 << rem_bits) - 1;
+    }
+    if round_up {
+        increment(&mut out);
+        if rem_bits == 0 {
+            if out.len() > nwords {
+                out.clear();
+            }
+        } else if out.len() == nwords && (out[nwords - 1] >> rem_bits) != 0 {
+            out.clear();
+        }
+    }
+    trim(&mut out);
+    from_words(out)
+}
+
+/// One parent-to-two-children step of Bernstein's scaled remainder tree (D. J. Bernstein, "Scaled
+/// remainder trees", draft 2004-08-20, <https://cr.yp.to/arith/scaledmod-20040820.pdf>, Theorems
+/// 2.1 and 2.2, pp. 4-5; no DOI; checked 2026-11-20 against the extracted text of the author's
+/// PDF): given `sv` in `[0, 2^f)` representing `(u / (a b)) mod 1` to `f` bits (`2^f >= 8 l a b`
+/// for an `l`-level tree), returns `(sa, sb)` representing `(u / a) mod 1` to `ea <= f` bits
+/// (`2^ea >= 8 l a`) and `(u / b) mod 1` to `eb <= f` bits (`2^eb >= 8 l b`).
+///
+/// Error-bound proof (Bernstein 2004, Theorem 2.2, p. 4, for child `P = a`, sibling `Q = b >= 2`):
+/// let `Y` in `[0, 2^f - 1]` satisfy `Y == Q * sv (mod 2^f - 1)` (cyclic NTT via `cyclic_product`
+/// and `add_around` on `m = f / 64` words with `sv`'s spectrum shared across both children), `Z`
+/// be within `1/2` of `Y / 2^(f - e)`, and `R = Z mod 2^e`. Modulo `Z`:
+///
+/// - `|R / 2^e - Y / 2^f| <= 1 / 2^(e + 1) <= 1 / (16 l P)`;
+/// - `|Y / 2^f - Y / (2^f - 1)| = Y / (2^f (2^f - 1)) <= 1 / 2^f <= 1 / (8 l P Q) <= 1 / (16 l P)` (as `Q >= 2`);
+/// - `Y / (2^f - 1) == Q * sv / (2^f - 1) (mod Z)`;
+/// - `|Q * sv / (2^f - 1) - Q * sv / 2^f| = Q * sv / (2^f (2^f - 1)) <= Q / 2^f <= 1 / (8 l P)`.
+///
+/// Summing gives `dist(R / 2^e - Q * sv / 2^f, Z) <= (1/16 + 1/16 + 1/8) / (l P) = 1 / (4 l P)`.
+/// For Theorem 2.1 (`!use_ntt`, `Y = (Q * sv) mod 2^f`), only the rounding term `1 / 2^(e + 1)
+/// <= 1 / (16 l P) < 1 / (4 l P)` appears. Thus if parent error `< (l + i) / (4 l P Q)`, then
+/// multiplying by `Q` gives `< (l + i) / (4 l P)` and adding `1 / (4 l P)` gives `< (l + i + 1) / (4 l P)`.
+///
+/// Tests: `num::fast::tests::scaled_root_and_children_preserve_precision`,
+/// `num::trees::tests::the_remainders_agree_with_one_division_a_leaf`,
+/// `num::trees::tests::the_scaled_remainders_and_cofactors_agree_past_ntt_width`.
+pub(super) fn scaled_children(
+    sv: &BigUint,
+    f: u64,
+    use_ntt: bool,
+    a: &BigUint,
+    ea: u64,
+    b: &BigUint,
+    eb: u64,
+) -> (BigUint, BigUint) {
+    if sv.is_zero() {
+        return (BigUint::zero(), BigUint::zero());
+    }
+    if use_ntt {
+        debug_assert!(f.is_multiple_of(64));
+        let m = (f / 64) as usize;
+        debug_assert!(m.is_power_of_two());
+        let tw = roots(m);
+        let sv_w = sv.to_u64_digits();
+        let sv_s = spectra(&sv_w, m, &tw);
+        drop(sv_w);
+        let step = |q: &BigUint, e: u64| {
+            let qw = q.to_u64_digits();
+            let (mut y, carry) = cyclic_product(&folded(&qw, m), &sv_s, &tw);
+            add_around(&mut y, carry);
+            rounded_window_words(&y, f, e)
+        };
+        return (step(b, ea), step(a, eb));
+    }
+    if !use_ntt && f <= 64 && a.bits() <= 64 && b.bits() <= 64 {
+        let sv_u = sv.iter_u64_digits().next().unwrap_or(0);
+        let au = a.iter_u64_digits().next().unwrap_or(0);
+        let bu = b.iter_u64_digits().next().unwrap_or(0);
+        let mask_f = u128::MAX >> (128 - f);
+        let step_u64 = |q: u64, e: u64| -> BigUint {
+            if e == 0 {
+                return BigUint::zero();
+            }
+            let y = (u128::from(sv_u) * u128::from(q)) & mask_f;
+            let shift = f - e;
+            let round = u128::from(shift > 0 && ((y >> (shift - 1)) & 1) != 0);
+            let mask_e = u128::MAX >> (128 - e);
+            BigUint::from((((y >> shift) + round) & mask_e) as u64)
+        };
+        return (step_u64(bu, ea), step_u64(au, eb));
+    }
+    let sa = rounded_window_big(&mul(sv, b), f, ea);
+    let sb = rounded_window_big(&mul(sv, a), f, eb);
+    (sa, sb)
+}
+
+/// Leaf recovery for a scaled remainder tree: `round(m * s / 2^e)` (half up), wrapping `m` to
+/// `0`, for `m >= 2` and `e >= 1`. Evaluates in `u128` registers when `m` and `s` fit in 64 bits.
+pub(super) fn scaled_leaf_rem(m: &BigUint, s: &BigUint, e: u64) -> BigUint {
+    if m.bits() < 2 || s.is_zero() {
+        return BigUint::zero();
+    }
+    debug_assert!(e >= 1);
+    if e <= 64 && m.bits() <= 64 && s.bits() <= 64 {
+        let mv = m.iter_u64_digits().next().unwrap_or(0);
+        let sv = s.iter_u64_digits().next().unwrap_or(0);
+        let prod = u128::from(mv) * u128::from(sv);
+        let round = (prod >> (e - 1)) & 1;
+        let r = (prod >> e) + round;
+        let r = if r == u128::from(mv) { 0 } else { r as u64 };
+        return BigUint::from(r);
+    }
+    let r = rounded_div_pow2(&mul(m, s), e);
+    if r == *m { BigUint::zero() } else { r }
+}
+
+/// `round(x / 2^e)` (half up) for nonnegative `x` and `e >= 1`.
+fn rounded_div_pow2(x: &BigUint, e: u64) -> BigUint {
+    debug_assert!(e >= 1);
+    let round_up = x.bit(e - 1);
+    let mut q = x >> e;
+    if round_up {
+        q += 1u32;
+    }
+    q
+}
+
 /// `b^e`, by squaring with [`mul`].
 pub fn pow(b: &BigUint, mut e: u64) -> BigUint {
     let mut b = Cow::Borrowed(b);
@@ -3355,7 +3678,7 @@ thread_local! {
 /// else holds it. Measured, `reading_a_rat_of_two_wide_parts_scales` at 640,000 digits:
 /// 7,620 M instructions without it, 7,558 M with it (that test is deferred to plan row
 /// RADIX-nlog2-10_5 in wt/scratch/deferred-tests/RADIX-nlog2-10_5.rs).
-struct HoldRoots;
+pub(super) struct HoldRoots;
 
 impl HoldRoots {
     fn open() -> HoldRoots {
@@ -5249,6 +5572,81 @@ mod tests {
                         assert_eq!(g, want, "{at}");
                         assert_eq!(mul_int(&s, &ia) + mul_int(&t, &ib), want_int, "{at}");
                     }
+                }
+            }
+        }
+    }
+
+    /// [`mul_add_pair`] equals `v0 * p1 + v1 * p0` across zero, below-leaf, above-leaf NTT, and
+    /// unequal-width operands (including all-ones edge forms with maximum carries).
+    #[test]
+    fn mul_add_pair_agrees_with_separate_products() {
+        let base = crate::seed::seed("mul_add_pair_agrees_with_separate_products");
+        let zero = BigUint::zero();
+        let x = random(base, 60);
+        assert_eq!(mul_add_pair(&zero, &x, &x, &x), &x * &x);
+        assert_eq!(mul_add_pair(&x, &x, &zero, &x), &x * &x);
+        for &(w0, w1, w2, w3) in &[
+            (1usize, 1usize, 1usize, 1usize),
+            (48, 48, 48, 48),
+            (49, 49, 49, 49),
+            (64, 64, 64, 64),
+            (65, 65, 65, 65),
+            (100, 120, 90, 130),
+            (300, 300, 300, 300),
+        ] {
+            for (i, (((v0, p1), v1), p0)) in forms(w0, base ^ w0 as u64)
+                .into_iter()
+                .zip(forms(w1, base.wrapping_add(1) ^ w1 as u64))
+                .zip(forms(w2, base.wrapping_add(2) ^ w2 as u64))
+                .zip(forms(w3, base.wrapping_add(3) ^ w3 as u64))
+                .enumerate()
+            {
+                let got = mul_add_pair(&v0, &p1, &v1, &p0);
+                let want = &v0 * &p1 + &v1 * &p0;
+                assert_eq!(got, want, "widths ({w0},{w1},{w2},{w3}) form {i}");
+            }
+        }
+    }
+
+    /// [`scaled_root`] and [`scaled_children`] satisfy Bernstein (2004) Theorems 2.1 and 2.2 on
+    /// both the Theorem 2.1 (`mul`) and Theorem 2.2 (shared-spectrum cyclic NTT) paths.
+    #[test]
+    fn scaled_root_and_children_preserve_precision() {
+        let base = crate::seed::seed("scaled_root_and_children_preserve_precision");
+        for &(wa, wb) in &[(1usize, 1usize), (2, 3), (60, 60), (130, 130)] {
+            let a = random(base ^ wa as u64, wa) | BigUint::from(3u32);
+            let b = random(base.wrapping_add(17) ^ wb as u64, wb) | BigUint::from(5u32);
+            let v = &a * &b;
+            let u = random(base.wrapping_add(31), wa + wb) % &v;
+            let guard = 8u64;
+            let (f_auto, auto_ntt) = scaled_node_precision(&v, &a, &b, guard, u64::MAX);
+            let ea = a.bits() + guard;
+            let eb = b.bits() + guard;
+            let mut configs = vec![(v.bits() + guard, false)];
+            let m = usize::try_from((v.bits() + guard).div_ceil(64))
+                .expect("words")
+                .next_power_of_two();
+            configs.push((64 * m as u64, true));
+            if auto_ntt {
+                configs.push((f_auto, true));
+            }
+            for (f, use_ntt) in configs {
+                let sv = scaled_root(&u, &v, f);
+                assert!(sv.bits() <= f, "sv fits in {f} bits");
+                // `|sv / 2^f - u / v| < 1.5 / 2^f` <=> `|2 * (u * 2^f - v * sv)| < 3 * v`.
+                let lhs = (&u << f) * 2u32;
+                let rhs = (&v * &sv) * 2u32;
+                let diff = if lhs >= rhs { lhs - rhs } else { rhs - lhs };
+                assert!(diff < &v * 3u32, "root bound failed for ({wa},{wb}) f={f}");
+                let (sa, sb) = scaled_children(&sv, f, use_ntt, &a, ea, &b, eb);
+                for (child, s_child, e) in [(&a, &sa, ea), (&b, &sb, eb)] {
+                    let got = scaled_leaf_rem(child, s_child, e);
+                    assert_eq!(
+                        got,
+                        &u % child,
+                        "child remainder mismatch ({wa},{wb}) use_ntt={use_ntt}"
+                    );
                 }
             }
         }

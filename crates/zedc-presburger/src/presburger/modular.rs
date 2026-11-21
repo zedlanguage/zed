@@ -15,7 +15,7 @@ use num_bigint::{BigInt, BigUint};
 use num_traits::Zero;
 use zed_collections::intervals;
 use zed_graph::{Compression, Keep, Linking, MinHeap, Offset, Signed, UnionFind};
-use zed_kernel::num::{coprime, mul_uint, rem_uint, trees};
+use zed_kernel::num::{coprime, rem_uint, trees};
 use zedc_int::int::Int;
 
 use super::formula::{Atom, Con, Formula, Id, Lin, Model, Rel};
@@ -5573,6 +5573,43 @@ fn combine_crt_pair(r1: &Int, m1: &Int, r2: &Int, m2: &Int) -> Option<(Int, Int)
 /// ([`combine_crt_pair`]), O(M(N) log N) at each level of the tree. Tests:
 /// `r4_tests::the_crt_tree_solves_its_congruences`; bench `pncx_fibonacci_crt_scale`
 /// (tests/steps/l01_38_presburger/bench/pncx_probe.rs).
+///
+/// The coprime path (PERF-crt-tree-scaled-remainder, 2026-11-21): the cofactors
+/// `(M / m_i) mod m_i` come from the kernel's `trees::cofactors_mod_leaves` (the cofactor sum
+/// `S = sum_i M / m_i` up the tree, then Bernstein's scaled remainder tree down it, handing over
+/// to the exact descent at nodes of 128 words), the inverses are one word inverse each, and the
+/// sum goes up by `trees::linear_combination_up`. Every phase is O(M(N) log k).
+///
+/// Cost argument and its limit: each level of the product tree holds at most `N + k` bits, so
+/// any method that builds the tree costs at least one multiplication of the level's width a
+/// level, `sum_levels M(N) = M(N) log k`. Only the output size, Omega(N), is a proved lower bound
+/// for CRT; no O(M(N)) method for `k` moduli of similar size is known. Searched 2026-11-21 with
+/// allpapers (keyword and semantic, `-n 250`, saved and read): R. P. Brent and P. Zimmermann,
+/// *Modern Computer Arithmetic*, arXiv:1004.4710, §2.7 (CRT by subproduct tree, O(M(N) log k));
+/// D. Harvey and A. V. Sutherland, arXiv:1402.3246 and arXiv:1410.5222 (the remainder forest,
+/// which lowers the memory and not the order); D. J. Bernstein, "Scaled remainder trees" (2004)
+/// and "Fast multiplication and its applications" (2008), §§12, 18, 23 (not in the corpus,
+/// read from the author's PDFs); van der Hoeven's "Faster Chinese remaindering" (2016) saves a
+/// factor `log log` for fixed moduli and is not in the corpus. Conditional lower bounds
+/// Omega(n log n) for multiplication itself (Afshani, Freksen, Kamma and Larsen, "Lower bounds
+/// for multiplication via network coding", ICALP 2019, arXiv:1902.10935; Harvey and van der
+/// Hoeven, "Integer multiplication is at least as hard as matrix transposition") bound below
+/// even one product of the root's width.
+///
+/// Measured on the first 2,048 / 16,384 odd primes (`N` 25,546 / 259,803 bits, 10.17 times;
+/// remainders 0 and 1; release constants, instructions, load 56; the deferred bench
+/// `pncx_crt_tree_scale`): 20.45 M / 335.8 M, 16.42x, bytes 1.63 MB / 25.1 MB, 15.44x; on main
+/// before this change 23.28x and 31.10x. By phase (load 10 to 29): the product tree 1.24 M /
+/// 30.2 M (24.4x), the cofactors 10.2 M / 188.1 M (18.4x), the step up 2.93 M / 61.3 M (20.9x),
+/// the last remainder 0.10 M / 1.04 M (10.4x). The model with `M(N) = N log N` predicts
+/// `10.17 * (ln 259,803 / ln 25,546) * (14 / 11) = 15.9`; the larger phase ratios come from
+/// the multiplication, whose balanced products cost 3.1x a doubling from 64 to 256 words
+/// (num-bigint's Karatsuba and Toom-3, below `MUL_LEAF` = 459 words, where the transforms cost
+/// more) and 2.0x to 2.2x from 1,024 words on: the tree's top node is 400 words at 2,048
+/// primes and 4,059 at 16,384, so the two sizes sit on different parts of that curve. So the
+/// limit 10.5 at these sizes is out of reach of every known method; the bench stays in the
+/// deferred file (PROOF-crt-refusal-exact-class and the author decision
+/// BENCH-crt-tree-size-by-bits hold the rest).
 fn combine_crt_tree(mut pairs: Vec<(Int, Int)>) -> Option<(Int, Int)> {
     if pairs.is_empty() {
         return Some((Int::ZERO, Int::ONE));
@@ -5596,34 +5633,19 @@ fn combine_crt_tree(mut pairs: Vec<(Int, Int)>) -> Option<(Int, Int)> {
             v.push((&r.mod_floor(m) * &inv).mod_floor(m).magnitude());
         }
     }
-    if let Some(mut vals) = vals {
-        // Up the tree, the leaves first and every level below the root: each node's value is
-        // `v_left P_right + v_right P_left`; an odd node carried up keeps its value.
-        // Complexity tradeoff: the products and the last remainder go through the kernel's
-        // `mul_uint` and `rem_uint` (transforms and Newton's reciprocal past 512 words), so a
-        // level costs O(M(N)) and the whole O(M(N) log k). num-bigint's own `*` and `%`, used
-        // here before (PERF-negated-chain-unsolved, negchain1), are Karatsuba and schoolbook
-        // division, O(N^1.58) and O(N^2) at the root. Measured 2026-11-20 (load 42, the first
-        // 2048 and 16384 odd primes): 23.673 before, 23.279 after, still over the limit 10.5
-        // and open on that row. By phase at those sizes (instructions): the product tree 23x,
-        // the cofactor descent of `trees::cofactors_mod_leaves` 31x (72% of the work at
-        // 16384), the leaf inverses 9.1x, this step up the tree 9.0x. The excess is the
-        // multiplication's own growth between about 100 and 2000 words (a squaring costs 83 k
-        // instructions at 111 words, 2.8 M at 1100 and 4.3 M at 2173), where the top levels at
-        // 16384 lie and none at 2048 do. The method's order does not meet the limit either:
-        // `N` grows about 9.6 times at 8 times the primes, and O(M(N) log k) with `M(N) = N log
-        // N` predicts about 9.6 (ln 9.6 N / ln N)^2 = 14 here; no method of lower order is known.
-        let below_root = &levels[..levels.len().saturating_sub(1)];
-        for prods in std::iter::once(&leaves).chain(below_root) {
-            vals = (vals.chunks(2).zip(prods.chunks(2)))
-                .map(|(v, p)| match (v, p) {
-                    ([v0, v1], [p0, p1]) => mul_uint(v0, p1) + mul_uint(v1, p0),
-                    _ => v[0].clone(),
-                })
-                .collect();
-        }
+    if let Some(vals) = vals {
+        // Up the tree by `trees::linear_combination_up` (each node `v0 P_1 + v1 P_0`, the two
+        // products summed in the transform domain past `MUL_LEAF`), then one remainder modulo
+        // `M`. By the cofactor identity at `trees::cofactors_mod_leaves`, the sum `S = sum_i
+        // c_i M / m_i` is `c_j M / m_j = r_j (mod m_j)` for each `j`, as `m_j` divides every
+        // other term, so `S mod M` is the solution (the moduli are pairwise coprime here, which
+        // the inverses above proved: each exists only when `m_j` is coprime to `M / m_j`).
+        // Complexity tradeoff: O(M(N) log k) for `k` moduli of `N` bits in all, the order of
+        // the product tree itself; the cost argument, the bound below which no product tree
+        // can go, and the measurements are in this function's doc comment.
+        let total = trees::linear_combination_up(vals, &leaves, &levels);
         let big_m = trees::tree_product(&leaves, &levels).into_owned();
-        let x = rem_uint(vals.first()?, &big_m);
+        let x = rem_uint(&total, &big_m);
         return Some((from_uint(x), from_uint(big_m)));
     }
     while pairs.len() > 1 {

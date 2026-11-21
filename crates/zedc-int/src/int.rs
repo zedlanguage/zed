@@ -3462,6 +3462,26 @@ mod tests {
         assert_eq!(remainders(&BigUint::from(5u32), &[7, 11, 13]), [5, 5, 5]);
     }
 
+    /// The remainder tree past the kernel's switches: 2,001 word moduli (a product of about 2,000
+    /// words, an odd count so nodes are carried), `x` of 7/8 of its width less and more a bit
+    /// (the exact descent and the scaled tree) and at its full width, whose scaled tree hands
+    /// over to the exact descent at the kernel's `SCALED_TO_EXACT_WORDS` (128 words); each
+    /// against one division a modulus.
+    #[test]
+    fn a_remainder_tree_past_the_scaled_switch_gives_each_remainder() {
+        let ms: Vec<u64> = (0..2001u64).map(|i| u64::MAX - 2 * i).collect();
+        let p = ms.iter().fold(BigUint::from(1u32), |p, &m| p * m);
+        let n = p.bits();
+        for w in [7 * n / 8 - 1, 7 * n / 8 + 1, n] {
+            let x = (&p >> (n - w)) - 12_345u32;
+            let want: Vec<u64> = ms
+                .iter()
+                .map(|&m| u64::try_from(&x % m).expect("below m"))
+                .collect();
+            assert_eq!(remainders(&x, &ms), want, "x of {w} of {n} bits");
+        }
+    }
+
     #[test]
     fn each_index_wider_than_a_word_has_its_least_prime() {
         let o = BigUint::from(3u32).pow(3000u32);

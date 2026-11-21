@@ -909,6 +909,24 @@ fn the_crt_tree_solves_its_congruences() {
             }
         }
     }
+    // The first 3,001 odd primes (distinct primes, so coprime): a product of about 600 words,
+    // so the kernel's cofactor tree runs its scaled remainder tree above 128 words and the
+    // exact descent below (`SCALED_TO_EXACT_WORDS`), with carried nodes at odd levels.
+    let ms: Vec<Int> = (3u64..)
+        .step_by(2)
+        .filter(|&p| zed_numtheory::is_prime(p))
+        .take(3001)
+        .map(|p| Int::from(i128::from(p)))
+        .collect();
+    let pairs: Vec<(Int, Int)> = (ms.iter().enumerate())
+        .map(|(i, m)| (Int::from(i as i64 * 7 + 1).mod_floor(m), m.clone()))
+        .collect();
+    let (x, m) = combine_crt_tree(pairs.clone()).expect("distinct primes");
+    assert_eq!(m, ms.iter().fold(Int::ONE, |a, v| &a * v), "3,001 primes");
+    assert!(!x.is_negative() && x < m, "3,001 primes");
+    for (r, mi) in &pairs {
+        assert_eq!(x.mod_floor(mi), *r, "3,001 primes, modulus {mi}");
+    }
     let shared = vec![(Int::from(1), Int::from(6)), (Int::from(3), Int::from(10))];
     assert_eq!(
         combine_crt_tree(shared),

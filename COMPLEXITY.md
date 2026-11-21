@@ -1353,6 +1353,47 @@ at the limit equal to the join's units and one unit below, and 200 fresh-seed fo
 To be measured again on each other target (A96): run the benchmark there and set the limit to
 250 ms over its worst time per unit.
 
+### PERF-crt-tree-scaled-remainder, `zed-kernel/src/num/trees.rs` `SCALED_TO_EXACT_WORDS`, measured 2026-11-21
+
+Bernstein's scaled remainder tree (2004, Theorems 2.1 and 2.2) works at each node's full width
+plus a guard, while the exact descent `x mod v = (x mod u) mod v` costs a division whose quotient
+is as wide as the parent less the node. Near the leaves the divisions are short and the scaled
+products are not cheaper, so `scaled_descend` leaves the scaled tree at the first level (from the
+root down) whose nodes are all at most `SCALED_TO_EXACT_WORDS` = 128 words: each node's scaled
+value `round(v S / 2^f)` becomes its exact remainder (proved at the site: below the root a node's
+error is under `1 / (2v)`), and `descend_from` finishes. Both methods give the same remainders;
+`the_scaled_tree_switches_to_the_descent_at_any_level` (zed-kernel) compares them at switch widths
+0 to past every node, and the callers' tests (`int::tests::a_remainder_tree_past_the_scaled_switch_gives_each_remainder`,
+`coprime::tests::the_cofactor_and_remainder_trees_agree_past_the_scaled_switch`,
+`r4_tests::the_crt_tree_solves_its_congruences` over 3,001 primes) run each caller across it.
+
+Measured on a Ryzen 9 5950X, x86_64 Linux, load 15-19, instructions, by
+`presburger::modular::r4_tests::bench::the_scaled_to_exact_switch_axis` (`--bench`; in
+zedc-presburger so that zed-kernel has its real multiplication constants, not the test build's
+`MUL_LEAF` 48), `x` about the width of the product:
+
+| Family | Scaled tree alone | Switch at 128 words | Descent alone |
+|---|---|---|---|
+| CRT cofactor sum, 2,048 odd primes | 9.27 M | 7.60 M | 8.13 M |
+| CRT cofactor sum, 16,384 odd primes | 147.3 M | 131.2 M | 190.4 M |
+| CRT cofactor sum, 131,072 odd primes | 2,375 M | 2,267 M | 4,707 M |
+| 4,096 word leaves | 117.8 M | 100.9 M | 168.0 M |
+| 512 leaves of 8 words | 94.9 M | 92.3 M | 161.6 M |
+| 256 leaves of 64 words | 417.2 M | 416.3 M | 1,037.9 M |
+| 32 leaves of 512 words | 473.7 M | 473.7 M | 941.6 M |
+| 2, 4, .., 2^200 | 1.59 M | 1.69 M | 2.13 M |
+
+64 words was within 3% of 128 on every family and lost on seven of nine; 256 and above cost more
+on every family with nodes that narrow; on the powers of 2, 16 words gave 1.51 M. The CRT tree
+(`combine_crt_tree`, zedc-presburger) over the first 2,048 / 16,384 odd primes went from 23.28x
+(instructions) and 31.10x (bytes) on main to 16.42x and 15.44x (load 56); the limit 10.5 is out
+of reach of every known method at these sizes (the cost argument is at `combine_crt_tree`). The
+switch of `remainders` between the descent and the scaled tree at 7/8 of the product's width is
+not this one; with the real constants it is not right for every family, and a switch from both
+methods' costs node by node is PERF-remainders-switch-by-cost.
+
+To be measured again on each other target (A96) by the same benchmark.
+
 ## Kept
 
 | ID | Where | Why it is kept, or its cost | Cost, test or status | Test or status |
