@@ -9961,17 +9961,19 @@ impl<'t, 'a> Ck<'t, 'a> {
     /// type's"), and two functions that fix different ones are refused. Unproved: a function
     /// whose parameter fixes no one carrier there (a generic one, or `int | f64`) records
     /// nothing, so it is compared with none; the class's resolution then gives the operation
-    /// the carrier it gives a call of one such function. Unproved here: that a run again of a generic body's call ([`Ck::put`] drops a
-    /// replay's writes) reads the adoption of the walk at the top level; the test below covers
-    /// a call through a declared parameter only.
+    /// the carrier it gives a call of one such function. Unproved here: that a run again of a
+    /// generic body's call ([`Ck::put`] drops a replay's writes) reads the adoption of the walk
+    /// at the top level; the test below covers a call through a declared parameter only.
     ///
     /// Complexity tradeoff: one walk of the argument expressions, O(size of the arguments),
     /// after the first function, and one lookup per literal after each, O(f·l) for f functions
-    /// and l literals (the operations' carriers in a hash map by span, one lookup each); that is the order of applying the f functions, each of which walks the
-    /// arguments. The naive way, applying each function in a trial and comparing every record
-    /// it writes, costs a copy of the records per function.
+    /// and l literals (the operations' carriers in a hash map by span, one lookup each); that
+    /// is the order of applying the f functions, each of which walks the arguments. The naive
+    /// way, applying each function in a trial and comparing every record it writes, costs a
+    /// copy of the records per function.
     ///
-    /// Test: `l01_26_type_resolution::function_variance::a_literal_through_functions_of_different_carriers_is_refused`.
+    /// Test:
+    /// `l01_26_type_resolution::function_variance::a_literal_through_functions_of_different_carriers_is_refused`.
     fn lits_alike(
         &mut self,
         several: &mut Several,
@@ -29289,27 +29291,6 @@ fn test_repair(
             format!(", with `{q}` passed inside the branch"),
         ),
     }
-}
-
-/// `p`, or `p` followed by the least number from 2 that makes a name no name of `texts`
-/// spells ([`ident::fresh`]), as `n2` for `n = n - 1`, which would define `n` in terms of
-/// itself: a name bound to the argument then neither reads itself nor shadows a name the call
-/// reads.
-///
-/// Complexity tradeoff: testing each number against the texts afresh costs their length per
-/// number tried, O(L·k); one pass collecting their names, then one hash lookup per number,
-/// costs O(L + k), and k is at most one more than the number of names: the names
-/// [`ident::fresh`] tries, `p`, then `p2`, `p3`, ... ([`ident::numbered`] from 2), are
-/// distinct, and each one tried before the last is in `words`, so at most `|words|` of them
-/// fail; and `|words| <= L`, since each name is at least one byte of the texts. Tests:
-/// tests/steps/l01_29_repairs_and_printing/domain_repairs.rs, whose repairs bind such names;
-/// they would catch a name that reads itself or shadows one the call reads, not a cost above
-/// O(L + k).
-pub(super) fn fresh(p: &str, texts: &[&str]) -> String {
-    let words: HashSet<&str> = (texts.iter())
-        .flat_map(|t| ident::names(t).map(|(_, w)| w))
-        .collect();
-    ident::fresh(p, |n| !words.contains(n))
 }
 
 /// The headline of a use that takes the ints of a domain, `takes` as "`popCount` takes `x` in

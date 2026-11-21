@@ -835,7 +835,8 @@ fn reordered_functions_passed_into_unions_of_function_types_scale() {
 /// through a value of n function types, whose literals are compared with each member's once,
 /// O(n · literals), and n functions each making such a call through a value of two. Both are
 /// linear. Besides its ratio: the program elaborates at each size, with no error. Small
-/// instances: `function_variance::a_reordered_function_in_a_union_slot_is_fitted_alike_in_either_order`
+/// instances:
+/// `function_variance::a_reordered_function_in_a_union_slot_is_fitted_alike_in_either_order`
 /// and `function_variance::a_literal_through_functions_of_different_carriers_is_refused`.
 #[test]
 fn fits_to_every_member_and_literals_through_several_functions_scale() {

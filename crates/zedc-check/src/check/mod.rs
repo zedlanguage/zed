@@ -69,6 +69,7 @@ use zed_kernel::num::{
     show_f64,
 };
 use zed_kernel::term::ScalarType;
+use zed_kernel::text::ident;
 use zed_kernel::text::prose::{and_list, or_list, ordinal, plural};
 use zed_kernel::types::{Spell, Spelled, Type as KType, Universes, Verdict, defs};
 use zed_kernel::{KernelError, Prim, Rat, Term, Universe, Value, eval};
@@ -239,13 +240,36 @@ fn param_named(name: &str, at: usize) -> String {
 
 /// The name a repair's lambda binds for the parameter `name`: the name itself, or for a
 /// parameter with no name, `x`, or `x2`, `x3`, ..., whichever no name of `texts`, the code the
-/// repair writes around it, spells ([`walk::fresh`]), so the lambda neither reads itself nor
+/// repair writes around it, spells ([`fresh`]), so the lambda neither reads itself nor
 /// shadows a name the call reads.
 fn lambda_param(name: &str, texts: &[&str]) -> String {
     match name.is_empty() {
-        true => walk::fresh("x", texts),
+        true => fresh("x", texts),
         false => name.to_string(),
     }
+}
+
+/// `p`, or `p` followed by the least number from 2 that makes a name no name of `texts`
+/// spells ([`ident::fresh`]), as `n2` for `n = n - 1`, which would define `n` in terms of
+/// itself: a name bound to the argument then neither reads itself nor shadows a name the call
+/// reads. Here rather than in `walk.rs`, which reads it through `use super::*`, so that this
+/// module's messages call it without importing from `walk` (s_01f_import_graph refuses that
+/// cycle).
+///
+/// Complexity tradeoff: testing each number against the texts afresh costs their length per
+/// number tried, O(L·k); one pass collecting their names, then one hash lookup per number,
+/// costs O(L + k), and k is at most one more than the number of names: the names
+/// [`ident::fresh`] tries, `p`, then `p2`, `p3`, ... ([`ident::numbered`] from 2), are
+/// distinct, and each one tried before the last is in `words`, so at most `|words|` of them
+/// fail; and `|words| <= L`, since each name is at least one byte of the texts. Tests:
+/// tests/steps/l01_29_repairs_and_printing/domain_repairs.rs, whose repairs bind such names;
+/// they would catch a name that reads itself or shadows one the call reads, not a cost above
+/// O(L + k).
+fn fresh(p: &str, texts: &[&str]) -> String {
+    let words: HashSet<&str> = (texts.iter())
+        .flat_map(|t| ident::names(t).map(|(_, w)| w))
+        .collect();
+    ident::fresh(p, |n| !words.contains(n))
 }
 
 impl Misfit<'_> {
