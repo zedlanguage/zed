@@ -870,11 +870,35 @@ pub(super) fn point_by_structure(f: &Formula) -> Option<Model> {
 /// costs O(M(B) log k) for `k` rows of `B` modulus bits in all and measured 23.3 times work
 /// for 8 times the rows (bench `pncx_crt_tree_scale`, deferred, plan row
 /// PERF-negated-chain-unsolved). A Boolean answer needs only whether the integer exists. Used:
-/// one residue per coprime base, kept in a hash map, never multiplied out. Its cost is that of
-/// `coprime_factorization`, plus one reduction of each residue by each of its powers and one
-/// comparison per factor. On the table branch of the factorization (bounded word-size moduli,
-/// as in `pncx_shared_formula_scale`) that is O(B log B) expected; on the tree branch the
-/// factorization's own O(M(N) log k) bound applies, and this routine adds no more than that.
+/// one residue per coprime base, kept in a hash map, never multiplied out.
+///
+/// Cost, step by step. Let `B` be the bits of all names, moduli and constants of the rows,
+/// `len` a width in num-bigint's 64-bit words, and `W` the largest `len(m)`.
+/// 1. The root is read from the first row's two terms: O(1) atom reads.
+/// 2. Per row: the `BTreeMap` lookup of the root, of depth one for two terms, compares atoms
+///    in time linear in the name; the `HashSet` insert hashes the quotient's name, expected O(1)
+///    table operations; `abs` and the negated constant copy values linear in their widths;
+///    the `BTreeSet` insert of the modulus makes O(log k) comparisons, each linear in the
+///    width. Over the rows: O(B log k).
+/// 3. A modulus `m` has at most `log2 m` factors: its bases are pairwise coprime and at least
+///    2, so their product, which divides `m`, is at least `2^count`.
+/// 4. Reducing `r` by a power `p` is num-bigint's schoolbook division, O((len r + 1) len p)
+///    word operations. The comparison reduces the stored residue, which is below a power from
+///    an earlier row and so at most `W` words, by `p` or compares two residues below `p`:
+///    O((W + 1) len p). The powers of a row multiply to `m`, so their widths in words add to
+///    at most `len m` plus the number of factors, which by step 3 is at most `bits(m)`. A row
+///    costs O((len r + W) bits(m)), and the `factors` lookup O(log k) comparisons of width
+///    `len m`.
+/// 5. Each factor makes one hash-map entry operation: a hash of the base, linear in its width,
+///    and expected O(1) table operations.
+///
+/// So this routine's own work is O(B log k + Σ (len r_i + W) bits(m_i)). As `len r_i` is at
+/// most `bits(r_i)` and `bits(m_i)` at most `64 W`, the sum is at most `64 W Σ bits(r_i) + W B`,
+/// so the whole is O(B (log k + W)): O(B log B) expected when every modulus fits in a bounded number of words,
+/// as in `pncx_shared_formula_scale`, and not O(B log B) for wide moduli. To that add
+/// `coprime_factorization`, whose bound is stated and argued at that function, not here; on
+/// distinct primes of more than 44 bits it measured 14.4 times the work for 8 times `B` (R2
+/// Gemini seat, `ADV_WIDE48_UNIT`, 2026-11-21), open in PERF-negated-chain-unsolved.
 /// Measured on the bench (2026-11-20, R2 Sol seat, load 54.65): 8.826 times the instructions
 /// and 8.02 times the bytes for 8 times the rows. Before: 9.536 and 8.85.
 ///
