@@ -301,7 +301,7 @@ enum End {
 // O(stretch) lets in all, and halvings of it that each run only the half window left, with
 // the definitions before it as literals (see `first_stop`, which was O(n log² n) before
 // BENCH-over-nlogn-prediction, rerunning each prefix whole). Tests:
-// `l01_37_oracle::alone::stops_that_reach_functions_scale` and
+// `l01_37_oracle::bench::stops_that_reach_functions_scale` and
 // `a_second_stop_through_functions_is_not_compared`; COMPLEXITY.md F107. A complete solution
 // builds the unit's function definitions once, in an environment each run starts from: both
 // engines would have to take one, the interpreter keeping closures beyond a run and the native
