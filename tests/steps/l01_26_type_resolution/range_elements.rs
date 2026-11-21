@@ -1,11 +1,11 @@
 //! Row RANGE-element-interval: the parameter of a lambda mapped over a range written in the
-//! text, with `map`, `where`, `flatMap`, `foldl` or `foldr`, holds the ints between the range's ends, so
-//! `(1..=5).map(i -> x mod i)` is accepted (`mod` takes `m` in int[1..], QUESTIONS A174). The
-//! elements of `a ..= b` lie in `[lo a, hi b]` and those of `a ..< b` in `[lo a, hi b - 1]`,
-//! from the intervals the checker has for the ends under the tests the walk is in, unbounded
-//! where an end is. A range that reaches the word some other way, through a parameter or a
-//! function's result, is read as any int. `for` is not covered: name resolution rejects every
-//! `for` before the checker reads the program (walk.rs, the `for` frame).
+//! text, with `map`, `where`, `flatMap`, `foldl` or `foldr`, holds the ints between the range's
+//! ends, so `(1..=5).map(i -> x mod i)` is accepted (`mod` takes `m` in int[1..], QUESTIONS
+//! A174). The elements of `a ..= b` lie in `[lo a, hi b]` and those of `a ..< b` in
+//! `[lo a, hi b - 1]`, from the intervals the checker has for the ends under the tests the walk
+//! is in, unbounded where an end is. A range that reaches the word some other way, through a
+//! parameter or a function's result, is read as any int. `for` is not covered: name resolution
+//! rejects every `for` before the checker reads the program (walk.rs, the `for` frame).
 
 use super::type_errors;
 use zed_tests::step_helpers::l01_16_elaboration::value;

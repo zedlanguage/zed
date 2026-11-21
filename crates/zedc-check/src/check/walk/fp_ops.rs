@@ -2152,9 +2152,10 @@ impl<'t, 'a> Ck<'t, 'a> {
 
     /// Notes that the parameter `entry` of the lambda `f` of `arity` parameters, mapped over
     /// `of` with `map`, `where` or `flatMap` (`arity` 1, `entry` 0) or folded over it with
-    /// `foldl` (2, 1) or `foldr` (2, 0), takes `of`'s entries, for [`Self::within_count`] and for the ints a
-    /// range's entries hold (`Ck::entry_range`, plan row RANGE-element-interval). Called
-    /// before the lambda is checked, so each read of the parameter in its body sees it.
+    /// `foldl` (2, 1) or `foldr` (2, 0), takes `of`'s entries, for [`Self::within_count`] and
+    /// for the ints a range's entries hold (`Ck::entry_range`, plan row
+    /// RANGE-element-interval). Called before the lambda is checked, so each read of the
+    /// parameter in its body sees it.
     pub(super) fn range_param(&mut self, of: &'a Expr, f: &'a Expr, arity: usize, entry: usize) {
         if let ExprKind::Lambda { params, .. } = &f.kind
             && params.len() == arity
