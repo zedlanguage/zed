@@ -17345,9 +17345,38 @@ impl System {
         Some((fill, self.tie(js)))
     }
 
+    /// The least fill among the ranks of `sets`, or `None` when they hold none: the fill of
+    /// [`System::least`], found without its tie. O(s) for the s sets.
+    fn least_fill(&self, sets: &[&BTreeSet<Rank>]) -> Option<isize> {
+        sets.iter().filter_map(|s| s.first()).map(|r| r.0).min()
+    }
+
+    /// [`System::least`] when its fill is at most 0, and `None` when the fill is above 0 or
+    /// `sets` hold no rank. For the steps that take variables only at a fill of at most 0 (the
+    /// exact and the inexact stage of [`Omega::run`], [`Omega::deferred`] and [`relaxed_empty`]):
+    /// at a fill above 0 they read neither the variables nor the tie, so
+    /// forming the tie there, which reads every row of the whole least class, was work no step
+    /// used; on a long chain the class holds O(n) rows at each of O(n) steps, O(n²) in all
+    /// (FAIL-omega-negations-slow-7837918895420161952). Proof that no step changes: [`System::tie`]
+    /// only reads the system, so skipping it changes no state, and each such caller does at a
+    /// fill above 0 exactly what it does at `None` (shown at each call), so the run, and with it
+    /// the argument of [`Omega::untie`] that every step is the same under a renaming, is as
+    /// before. O(s) at a fill above 0, else that of [`System::least`].
+    fn least_unfilled(&self, sets: &[&BTreeSet<Rank>]) -> Option<Least> {
+        if self.least_fill(sets)? > 0 {
+            return None;
+        }
+        self.least(sets)
+    }
+
     /// `js` when no two of them share a row, and otherwise the tie, with the rows they share.
     /// O(d log m) for the d rows of the variables, among m rows.
     fn tie(&self, js: Vec<usize>) -> Result<Vec<usize>, Tied> {
+        #[cfg(test)]
+        {
+            let read: usize = js.iter().map(|j| self.vars[*j].rows.len()).sum();
+            TIE_ROWS.with(|c| c.set(c.get() + read));
+        }
         let mut seen: BTreeMap<usize, usize> = BTreeMap::new();
         for j in &js {
             for id in &self.vars[*j].rows {
@@ -17867,6 +17896,9 @@ impl System {
 thread_local! {
     /// The ties of [`System::least`] met, on this thread, where [`System::stale`] was checked.
     static TIES_CHECKED: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+    /// The rows [`System::tie`] has read, on this thread: the measure of
+    /// `r7_tests::ties_are_read_only_where_a_step_takes_them`.
+    static TIE_ROWS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
 }
 
 impl System {
@@ -18010,10 +18042,15 @@ fn relaxed_empty(gs: &System) -> bool {
         if meter::spent() {
             return false;
         }
-        let Some((fill, js)) = sys.least(&[&sys.exact, &sys.inexact]) else {
+        // No rank left gives `false`, a fill above 0 the box test, so the fill is read first
+        // and the tie only where it is at most 0 ([`System::least_unfilled`]).
+        let Some(fill) = sys.least_fill(&[&sys.exact, &sys.inexact]) else {
             return false;
         };
-        let (true, Ok(js)) = (fill <= 0, js) else {
+        let Some((_, Ok(js))) = (fill <= 0)
+            .then(|| sys.least(&[&sys.exact, &sys.inexact]))
+            .flatten()
+        else {
             return box_empty(&sys);
         };
         for j in js {
@@ -18892,9 +18929,9 @@ impl Omega {
                 continue;
             }
             let mut tie: Option<Tied> = None;
-            let least = self.sys.least(&[&self.sys.exact]);
+            // At a fill above 0 this stage did nothing, as at `None` (`System::least_unfilled`).
+            let least = self.sys.least_unfilled(&[&self.sys.exact]);
             match self.untie(least, |fill| fill <= 0) {
-                Some((fill, _)) if fill > 0 => {}
                 Some((_, Ok(js))) => {
                     // The variables of a row that each have one other row, of a unit
                     // coefficient, go together with `x[j]`, the row written once
@@ -18973,9 +19010,10 @@ impl Omega {
                 break;
             }
             if tie.is_none() {
-                let least = self.sys.least(&[&self.sys.inexact]);
+                // Its arms take a fill of at most 0 only (`System::least_unfilled`).
+                let least = self.sys.least_unfilled(&[&self.sys.inexact]);
                 match self.untie(least, |fill| fill <= 0) {
-                    Some((fill, Ok(js))) if fill <= 0 => {
+                    Some((_, Ok(js))) => {
                         // An empty real shadow, which keeps every integer point, shows the
                         // problem empty; from here on the dark shadow is solved, whose points
                         // are points of the problem, and the splinters of each dark elimination
@@ -19007,8 +19045,8 @@ impl Omega {
                         self.gray.push((live, batch));
                         continue;
                     }
-                    Some((fill, Err(t))) if fill <= 0 => tie = Some(t),
-                    _ => {}
+                    Some((_, Err(t))) => tie = Some(t),
+                    None => {}
                 }
             }
             // `Sides::fill` counts every term a pair of rows writes, so an exact elimination
@@ -19676,6 +19714,11 @@ impl Omega {
     /// so too. What else a run reads, the input rows and the steps before the tie, enters only
     /// the splinters; [`splinters`] checks that `τ` maps those onto themselves as well before
     /// it builds any, and gives the tie's refusal otherwise, which both runs then give alike.
+    /// The exact and the inexact stage pass the tie of [`System::least_unfilled`], which is
+    /// `None` at a fill above 0: there `taken` was false, so this function returned the tie
+    /// unread and the stage then did what it does at `None`; and that the fill is above 0 is
+    /// read from the ranks, the same under a renaming. So those steps, and the argument here,
+    /// are as they were when the tie was formed at every fill.
     ///
     /// Complexity tradeoff: the check is one swap per other tied variable, each looking up
     /// the image of every row of the two variables, O(t·d·w log m) for t tied variables of d
@@ -19882,7 +19925,8 @@ impl Omega {
                 return None;
             }
         }
-        let Some((fill, Ok(js))) = self.sys.least(&[&self.sys.exact]) else {
+        // A fill above 0 gave `None` below, as no rank does (`System::least_unfilled`).
+        let Some((fill, Ok(js))) = self.sys.least_unfilled(&[&self.sys.exact]) else {
             return None;
         };
         let clear = |j: &usize| {

@@ -1398,6 +1398,30 @@ fn regime_formula(
     Formula::and(parts)
 }
 
+/// The rows [`System::tie`] reads while [`decide_named`] decides the formula of
+/// [`coupled_empty_chain_over`] `n` and `8n` moduli `3 a` (no point, past [`SWEEP_SWITCHOVER`], so
+/// the general path decides it) grow less than 9 times. Before, [`System::least`] formed the tie
+/// of the whole least class at every step, for callers that read it only at a fill of at most 0:
+/// the class holds O(n) rows at each of the O(n) steps, so the count grew about 64 times
+/// (FAIL-omega-negations-slow-7837918895420161952, the coordinator's order of 2026-11-21).
+#[test]
+fn ties_are_read_only_where_a_step_takes_them() {
+    let rows = |n: usize| {
+        let a: Vec<i64> = (1i64 << 20..).filter(|a| a % 3 != 0).take(n).collect();
+        let (units, clauses) = coupled_empty_chain_over(&a);
+        let f = regime_formula(None, None, &units, &clauses);
+        let before = super::super::TIE_ROWS.with(std::cell::Cell::get);
+        assert_eq!(super::super::decide_named(&f), Ok(false));
+        super::super::TIE_ROWS.with(std::cell::Cell::get) - before
+    };
+    let (small, large) = (rows(32), rows(256));
+    eprintln!("rows read by tie: n=32 {small}, 8n=256 {large}");
+    assert!(
+        large < 9 * small.max(1),
+        "rows read by tie: {small} at 32 moduli and {large} at 256"
+    );
+}
+
 /// A regime the coprime base cannot write, over the 9 primes from 3 to 29 (period
 /// 3,234,846,615), is decided in well under 1 s (FAIL-omega-negations-slow-7837918895420161952,
 /// the coordinator's order of 2026-11-21). Before [`SWEEP_SWITCHOVER`] the sweep took the whole

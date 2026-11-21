@@ -138,11 +138,13 @@ const N_ONE_BOUND: usize = 2_000;
 /// 512 to 4,096 moduli (2026-11-21). The moduli keep one size so that the input grows 8 times
 /// in bits.
 ///
-/// The whole decision is not what is timed: the general path that then decides the formula,
-/// there before this change, took 11.3 times the time from 64 to 512 moduli and 26 times from
-/// 512 to 4,096 (2026-11-21, load 45 to 61), past the limit, and is open on its own row
-/// (PRES-general-path-coupled-chain-scaling). Its answer here, no point, is checked by
-/// `r7_tests::a_regime_over_nine_primes_the_base_cannot_write_is_decided` and by `check_regime`.
+/// The whole decision is not what is timed here: the general path that then decides the
+/// formula took 11.3 times the time from 64 to 512 moduli and 26 times from 512 to 4,096
+/// (2026-11-21, load 45 to 61), from the tie [`System::least`] formed at every step; since
+/// [`System::least_unfilled`] it is timed by
+/// [`a_coupled_chain_past_the_switchover_is_decided_in_scale`]. Its answer here, no point, is
+/// checked by `r7_tests::a_regime_over_nine_primes_the_base_cannot_write_is_decided` and by
+/// `check_regime`.
 #[test]
 fn a_regime_past_the_switchover_scales() {
     let inputs = scaling::inputs(N_COUPLED, |n| {
@@ -162,6 +164,35 @@ fn a_regime_past_the_switchover_scales() {
         },
     );
 }
+
+/// The whole decision of [`a_regime_past_the_switchover_scales`]'s formula ([`regime_formula`] of
+/// [`coupled_empty_chain_over`] n and 8n moduli `3 a`), which the general path decides: no
+/// point. [`System::least`] formed the tie of the whole least class at each step, also where
+/// the step reads it only at a fill of at most 0, O(n) rows at each of O(n) steps
+/// (FAIL-omega-negations-slow-7837918895420161952); [`System::least_unfilled`] forms it only
+/// there. The rows the tie reads are counted by
+/// `r7_tests::ties_are_read_only_where_a_step_takes_them`.
+#[test]
+fn a_coupled_chain_past_the_switchover_is_decided_in_scale() {
+    let inputs = scaling::inputs(N_COUPLED_DECIDED, |n| {
+        let a: Vec<i64> = (1i64 << 20..).filter(|a| a % 3 != 0).take(n).collect();
+        let (units, clauses) = coupled_empty_chain_over(&a);
+        regime_formula(None, None, &units, &clauses)
+    });
+    scaling::check_order(
+        "a coupled chain over n moduli decided past the switchover",
+        N_COUPLED_DECIDED,
+        1,
+        |n| assert_eq!(crate::presburger::decide_named(&inputs[&n]), Ok(false)),
+    );
+}
+
+/// The size of [`a_coupled_chain_past_the_switchover_is_decided_in_scale`]: at 512 and 4,096
+/// moduli 8.31 times the instructions (1,026M and 8,523M) and 8.60 the bytes, about 0.17 s and
+/// 1.5 s a run (2026-11-21, load 46); at 64 and 512, where a fixed cost of each run is a larger
+/// part, 9.78. Before [`System::least_unfilled`] the tie alone grew about 57 times per factor 8
+/// here, and the decision 26 times from 512 to 4,096 moduli.
+const N_COUPLED_DECIDED: usize = 512;
 
 /// The size of [`a_regime_past_the_switchover_scales`]: at 512 and 4,096 moduli the ratio was
 /// 1.7, a fixed cost of each run still the larger part; at 4,096 and 32,768 it was 8.68, about
