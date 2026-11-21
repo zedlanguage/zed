@@ -8,8 +8,8 @@
 // Input: the first line is the number of steps T, the second the initial row.
 // Output: the rows at t = 0, 1, 2, then the row at t = T.
 main(m: MainArgs) {
-  steps = int(m.stdin[0] else "") else 0;
-  init  = (m.stdin[1] else "").split(" ").map(s -> int(s) else 0);
+  steps = int(m.stdin[0] else (#badEncoding | #ioError | #outOfBounds) -> "") else #invalid -> 0;
+  init  = (m.stdin[1] else (#badEncoding | #ioError | #outOfBounds) -> "").split(" ").map(s -> int(s) else #invalid -> 0);
   n     = init::len;
   u[t in 0..=steps][i in 0..<n] =
     if t == 0 { init[i] }

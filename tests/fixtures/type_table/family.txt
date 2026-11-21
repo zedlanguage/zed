@@ -2,7 +2,7 @@
 top: type Opt = int | #none;
 
 template: $0 else 0
-Opt => int | #none warn !! L2.5: notyet -- sec:lexical "else default-narrowing: named-family atoms are data and survive"
+Opt => error An `else` that does not name its atoms !! L2.5: notyet -- sec:failure "A bare `e else d` ... is rejected in every position"; named-family atoms are data, so `Opt` has no loose atom to list and the repair is the QUESTIONS A67 menu
 
 template: $0 is int
 Opt => bool !! L2.5: notyet -- sec:lexical "is type test"

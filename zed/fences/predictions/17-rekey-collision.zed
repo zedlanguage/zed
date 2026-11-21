@@ -4,7 +4,7 @@
 // prediction about which remaps are rejected that fails when run is a defect of the surface rule.
 struct User { id: int, name: Utf8String }
 main(m: MainArgs) {
-  users = m.stdin.map(l -> User(id: int(trim(l)) else 0, name: l));
+  users = m.stdin.map(l -> User(id: int(trim(l)) else (#badEncoding | #invalid | #ioError) -> 0, name: l));
   byId = users.rekey(u -> u.id);  // ✗ Collision
   m.stdout <- "${byId::card}";
 }

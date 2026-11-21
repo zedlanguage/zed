@@ -9,12 +9,12 @@
 // reference cycle.
 edit(positional l) = {
   parts = l.split(" = ");
-  { (parts[0] else "") -> #set(parts[1] else "0") }
+  { (parts[0] else (#badEncoding | #ioError | #outOfBounds) -> "") -> #set(parts[1] else (#badEncoding | #ioError | #outOfBounds) -> "0") }
 };
 
 valueOf(positional sheet, positional name) = match sheet[name] {
   #notFound -> 0,
-  f -> f.split("+").map(t -> int(t) else valueOf(sheet, t)).sum,
+  f -> f.split("+").map(t -> int(t) else #invalid -> valueOf(sheet, t)).sum,
 };
 
 show(positional sheet) = (for c -> _ in sheet { "${c}=${valueOf(sheet, c)}" }).concat(" ");

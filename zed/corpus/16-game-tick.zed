@@ -8,7 +8,7 @@ struct Ev { tick: int, player: Utf8String, dx: int }
 
 parse(positional l) = {
   w = l.split(" ");
-  Ev(tick: int(w[0] else "") else 0, player: w[1] else "", dx: int(w[2] else "") else 0)
+  Ev(tick: int(w[0] else (#badEncoding | #ioError | #outOfBounds) -> "") else #invalid -> 0, player: w[1] else (#badEncoding | #ioError | #outOfBounds) -> "", dx: int(w[2] else (#badEncoding | #ioError | #outOfBounds) -> "") else #invalid -> 0)
 };
 
 main(m: MainArgs) {
@@ -16,10 +16,10 @@ main(m: MainArgs) {
   moves: int ->? Utf8String ->? int with reducer((+));
   for e in evs { moves[e.tick][e.player] <- e.dx; };
   players = evs.group(e -> e.player);
-  last = evs.map(e -> e.tick) >< max else -1;
+  last = evs.map(e -> e.tick) >< max else #empty -> -1;
   game = loop t {
     initial pos = for p -> _ in players { 5 };
-    pos' = for p -> x in pos { min(10, max(0, x + (moves[t][p] else 0))) };
+    pos' = for p -> x in pos { min(10, max(0, x + (moves[t][p] else #notFound -> 0))) };
     while t <= last;
   };
   m.stdout <- for t -> f in game::frames { "${t} ${(for p -> x in f.pos { "${p}=${x}" }).concat(" ")}" };

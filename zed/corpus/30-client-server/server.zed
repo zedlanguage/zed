@@ -11,5 +11,5 @@ quote(positional item, positional qty) = match prices[item] {
 
 answer(positional req) = match req {
   Get(item:) -> quote(item, 1),
-  Buy(item:, qty:) -> quote(item, int(qty) else 0),
+  Buy(item:, qty:) -> quote(item, int(qty) else #invalid -> 0),
 };

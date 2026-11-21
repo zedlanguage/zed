@@ -7,7 +7,7 @@
 main(m: MainArgs) {
   words  = m.stdin.concat(" ").split(" ").where(w -> w != "");
   histA  = words.group(w -> w.len).count;                         // scatter: int ->? int
-  maxLen = words.map(w -> w.len) >< max else 0;                   // #empty on no words
+  maxLen = words.map(w -> w.len) >< max else (#badEncoding | #empty | #ioError) -> 0;                   // #empty on no words
   histB  = for n in 1..=maxLen { words.where(w -> w.len == n).count };   // filter: int[1..=maxLen] -> int
-  m.stdout <- for n in 1..=maxLen { "${n} ${histA[n] else 0} ${histB[n]}" };
+  m.stdout <- for n in 1..=maxLen { "${n} ${histA[n] else (#badEncoding | #ioError | #notFound) -> 0} ${histB[n]}" };
 }

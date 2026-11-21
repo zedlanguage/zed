@@ -7,9 +7,9 @@
 struct Link { child: Utf8String, parent: Utf8String }
 
 main(m: MainArgs) {
-  links = m.stdin.map(l -> { w = l.split(" "); Link(child: w[0] else "", parent: w[1] else "-") });
+  links = m.stdin.map(l -> { w = l.split(" "); Link(child: w[0] else (#badEncoding | #ioError | #outOfBounds) -> "", parent: w[1] else (#badEncoding | #ioError | #outOfBounds) -> "-") });
   par   = links.group(e -> e.child).map(g -> g.first.parent);
-  up(positional v) = if (par[v] else "-") == "-" { v } else { par[v] else v };
+  up(positional v) = if (par[v] else #notFound -> "-") == "-" { v } else { par[v] else #notFound -> v };
   n = par::card;
 
   rootRec(positional v) = if up(v) == v { v } else { rootRec(up(v)) };

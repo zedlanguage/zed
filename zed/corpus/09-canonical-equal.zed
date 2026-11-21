@@ -9,8 +9,8 @@ canon(positional s) = s.lower.split("-").concat("").split(" ").concat("");
 main(m: MainArgs) {
   m.stdout <- m.stdin.map(l -> {
     parts = l.split(" | ");
-    a = parts[0] else "";
-    b = parts[1] else "";
+    a = parts[0] else (#badEncoding | #ioError | #outOfBounds) -> "";
+    b = parts[1] else (#badEncoding | #ioError | #outOfBounds) -> "";
     if canon(a) == canon(b) { "same: ${a} | ${b}" } else { "different: ${a} | ${b}" }
   });
 }

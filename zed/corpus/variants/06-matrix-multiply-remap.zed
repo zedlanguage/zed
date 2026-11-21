@@ -7,15 +7,15 @@
 // written over B's row keys, a missing cell 0.0, and B's rows over 0..<p; the
 // two levels named c then have one domain, the keys of bRows, and nothing is dropped.
 main(m: MainArgs) {
-  rows  = m.stdin.map(l -> l.split(" ").map(t -> f64(t) else 0.0));
-  hdr   = (m.stdin[0] else "").split(" ").map(t -> int(t) else 0);
-  n     = hdr[0] else 0;
-  inner = hdr[1] else 0;
-  p     = hdr[2] else 0;
+  rows  = m.stdin.map(l -> l.split(" ").map(t -> f64(t) else #invalid -> 0.0));
+  hdr   = (m.stdin[0] else (#badEncoding | #ioError | #outOfBounds) -> "").split(" ").map(t -> int(t) else #invalid -> 0);
+  n     = hdr[0] else #outOfBounds -> 0;
+  inner = hdr[1] else #outOfBounds -> 0;
+  p     = hdr[2] else #outOfBounds -> 0;
   aRows = rows.slice(1..<1 + n);
   bRows = rows.slice(1 + n..<1 + n + inner);
-  a     = aRows.map(row -> for c -> _ in bRows { row[c - 1 - n] else 0.0 });
-  b     = bRows.map(r -> for k in 0..<p { r[k] else 0.0 });
+  a     = aRows.map(row -> for c -> _ in bRows { row[c - 1 - n] else (#badEncoding | #ioError | #outOfBounds) -> 0.0 });
+  b     = bRows.map(r -> for k in 0..<p { r[k] else (#badEncoding | #ioError | #outOfBounds) -> 0.0 });
   prod  = (a, b) into (r -> k -> c >< (+) -> a[r][c] * b[c][k]);
   m.stdout <- prod.map(r -> r.map(v -> "${v}").concat(" "));
 }

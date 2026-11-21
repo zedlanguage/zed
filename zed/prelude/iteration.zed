@@ -84,7 +84,7 @@ successors(positional succ, positional v, positional i, positional s) =
 
 // Pops the stack down to v, resetting every vertex above it to unvisited.
 unwind(positional w, positional v) = {
-  top = w.stack.last else v;
+  top = w.stack.last else #none -> v;
   rest = Walk(dfn: w.dfn, num: w.num, stack: w.stack.take(w.stack::len - 1));
   if top == v { rest } else { unwind(Walk(dfn: put(rest.dfn, top, 0), num: rest.num, stack: rest.stack), v) }
 };

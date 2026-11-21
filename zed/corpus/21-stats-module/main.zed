@@ -11,7 +11,7 @@
 // Input lines: "x y", decimal numbers.
 import stats.{stats};
 
-col(positional ls, positional k) = ls.map(l -> f64(l.split(" ")[k] else "") else 0.0);
+col(positional ls, positional k) = ls.map(l -> f64(l.split(" ")[k] else (#badEncoding | #ioError | #outOfBounds) -> "") else #invalid -> 0.0);
 
 main(m: MainArgs) {
   s = stats(col(m.stdin, 0), col(m.stdin, 1));

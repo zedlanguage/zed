@@ -91,8 +91,8 @@ ceilIn(positional ts, positional v, positional none) =
 // Sorted pieces whose ends moved outward: neighbors that now meet or touch merge.
 touches(positional p, positional q) = p[1] == #pinf || q[0] == #ninf || q[0] <= p[1] + 1;
 mergeTouching(positional xs) = xs.fold([], (out, p) ->
-  if out::len > 0 && touches(out.last else p, p) {
-    out.take(out::len - 1) ++ [[(out.last else p)[0], endMax((out.last else p)[1], p[1])]]
+  if out::len > 0 && touches(out.last else #none -> p, p) {
+    out.take(out::len - 1) ++ [[(out.last else #none -> p)[0], endMax((out.last else #none -> p)[1], p[1])]]
   } else { out ++ [p] });
 
 // Moves each finite end of xs outward to the nearest target: a lower end down,
@@ -189,7 +189,7 @@ congruenceMeet(positional a, positional b) = match a {
       else if (s - r) mod gcd(m, n) != 0 { #bottom }
       else {
         g = gcd(m, n);
-        l = m div g * n else #overflow;
+        l = m div g * n;   // #overflow when lcm(m, n) leaves the integer range; g > 0, since m != 0
         k = (s - r) div g mod (n div g) * inverse(m div g, n div g) mod (n div g);
         if l == #overflow { if m >= n { a } else { b } } else { congruence(l, r + m * k) }
       },

@@ -5,7 +5,7 @@
 // triple; each float `+` scan entry is the canonical-tree sum of the values so
 // far (sec:reduction), so the printed digits do not depend on the plan.
 main(m: MainArgs) {
-  xs = m.stdin.map(l -> f64(l) else 0.0);
+  xs = m.stdin.map(l -> f64(l) else (#badEncoding | #invalid | #ioError) -> 0.0);
   n  = xs.map(x -> 1.0).scan((+));
   s1 = xs.scan((+));
   s2 = xs.map(x -> x * x).scan((+));

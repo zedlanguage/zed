@@ -5,8 +5,8 @@
 // ((s1, b1), (s2, b2)) -> (s1 + s2, max(b1, s1 + b2)) for it to run in
 // parallel, and a wrong combiner prints a different second number.
 main(m: MainArgs) {
-  xs     = m.stdin.map(l -> int(l) else 0);
-  direct = max(0, xs.scan((+)) >< max else 0);           // the empty prefix counts: never below 0
+  xs     = m.stdin.map(l -> int(l) else (#badEncoding | #invalid | #ioError) -> 0);
+  direct = max(0, xs.scan((+)) >< max else #empty -> 0);           // the empty prefix counts: never below 0
   total, best = xs.foldl((0, 0), ((s, b), x) -> (s + x, max(b, s + x)));
   m.stdout <- ["${direct} ${best} ${total}"];
 }

@@ -11,7 +11,7 @@ sock: Stream(Utf8String);
 main(m: MainArgs) {
   msgs = sock.map(l -> {
     w = l.split(" ");
-    (int(w[0] else "") else -1, w.drop(1))
+    (int(w[0] else #outOfBounds -> "") else #invalid -> -1, w.drop(1))
   }).where(msg -> msg[0] >= 0);
   wins = msgs.window(width: 5, time: msg -> msg[0]);
   m.stdout <- for w -> win in wins {

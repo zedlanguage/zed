@@ -20,14 +20,14 @@ table(positional s) = {
   n = s::len;
   cyk[w in 1..=n][i in 0..=n - w] =
     if w == 1 { leaf(s[i]) }
-    else { (for k in 1..<w { join2(cyk[k][i], cyk[w - k][i + k]) }) >< orCell else noCell };
+    else { (for k in 1..<w { join2(cyk[k][i], cyk[w - k][i + k]) }) >< orCell else #empty -> noCell };
   cyk
 };
 
 main(m: MainArgs) {
   m.stdout <- m.stdin.map(l -> {
     cyk = table(l);
-    whole = if l::len == 0 { false } else { (cyk[l::len][0] else noCell).s };
+    whole = if l::len == 0 { false } else { (cyk[l::len][0] else (#badEncoding | #ioError | #outOfBounds) -> noCell).s };
     count = (for w -> row in cyk { row.where(c -> c.s).count }).sum;
     "${if whole { "balanced" } else { "unbalanced" }} ${count} ${l}"
   });

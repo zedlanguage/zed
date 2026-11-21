@@ -13,7 +13,7 @@ struct Reading { t: int, sensor: Utf8String, v: int }
 
 parse(positional l) = {
   w = l.split(" ");
-  Reading(t: int(w[0] else "") else -1, sensor: w[1] else "", v: int(w[2] else "") else -1)
+  Reading(t: int(w[0] else (#badEncoding | #ioError | #outOfBounds) -> "") else #invalid -> -1, sensor: w[1] else (#badEncoding | #ioError | #outOfBounds) -> "", v: int(w[2] else (#badEncoding | #ioError | #outOfBounds) -> "") else #invalid -> -1)
 };
 
 main(m: MainArgs) {
@@ -22,7 +22,7 @@ main(m: MainArgs) {
   m.stdout <- for w -> win in wins {
     parts = for s -> g in win.group(r -> r.sensor) {
       vs = g.map(r -> r.v);
-      "${s} n=${vs.count} sum=${vs.sum} max=${vs >< max else 0}"
+      "${s} n=${vs.count} sum=${vs.sum} max=${vs >< max else #empty -> 0}"
     };
     "${w}: ${parts.concat("; ")}"
   };

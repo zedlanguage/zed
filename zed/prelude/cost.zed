@@ -159,4 +159,4 @@ frontier(positional plans, positional t) = {
 // The least scalar on the frontier, then the least content address; #none when
 // no plan is feasible (the placement solver then uses its list schedule).
 pick(positional plans, positional t) =
-  frontier(plans, t).minBy(p -> [scalarize(p, t), p.address]) else #none;
+  frontier(plans, t).minBy(p -> [scalarize(p, t), p.address]);   // minBy of nothing is #none

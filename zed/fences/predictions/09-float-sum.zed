@@ -6,6 +6,6 @@
 // but it parses only from ring 9). sec:kernel: `.sum` is `>< (+)`.
 // Each decimal literal that nothing else gives a carrier is written with `f64` (L1.26b).
 main(m: MainArgs) {
-  xs = m.stdin.map(l -> f64(trim(l)) else 0.0);
+  xs = m.stdin.map(l -> f64(trim(l)) else (#badEncoding | #invalid | #ioError) -> 0.0);
   m.stdout <- "${xs.sum} ${[1e16f64, 1.0f64, -1e16f64].sum} ${(0.1f64 + 0.2) + 0.3}";
 }

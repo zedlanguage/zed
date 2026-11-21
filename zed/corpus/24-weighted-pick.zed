@@ -10,11 +10,11 @@
 struct Range { lo: int, hi: int }
 
 main(m: MainArgs) {
-  w = (m.stdin[0] else "").split(" ").map(s -> int(s) else 0);
+  w = (m.stdin[0] else (#badEncoding | #ioError | #outOfBounds) -> "").split(" ").map(s -> int(s) else #invalid -> 0);
   n = w::len;
   cumul[i in 0..<n] = cumul[i - 1] + w[i] with cumul[-1] = 0;
-  total = cumul[n - 1] else 0;
-  below(positional q, positional i) = i < 0 || (i < n && (cumul[i] else 0) <= q);
+  total = cumul[n - 1] else #outOfBounds -> 0;
+  below(positional q, positional i) = i < 0 || (i < n && (cumul[i] else #outOfBounds -> 0) <= q);
   half(positional q, positional r) = {
     m = (r.lo + r.hi) div 2;
     if below(q, m) { Range(lo: m, hi: r.hi) } else { Range(lo: r.lo, hi: m) }
@@ -25,7 +25,7 @@ main(m: MainArgs) {
     while r.hi - r.lo > 1;
   }.r.hi;
   m.stdout <- m.stdin.drop(1).map(l -> {
-    q = int(l) else 0;
+    q = int(l) else (#badEncoding | #invalid | #ioError) -> 0;
     if q >= total { "${q} none" } else { "${q} ${search(q)}" }
   });
 }

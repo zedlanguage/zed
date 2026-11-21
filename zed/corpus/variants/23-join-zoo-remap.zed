@@ -9,7 +9,7 @@ struct Row { side: Utf8String, id: int, n: int }
 
 parse(positional l) = {
   w = l.split(" ");
-  Row(side: w[0] else "", id: int(w[1] else "") else -1, n: int(w[2] else "") else 0)
+  Row(side: w[0] else (#badEncoding | #ioError | #outOfBounds) -> "", id: int(w[1] else (#badEncoding | #ioError | #outOfBounds) -> "") else #invalid -> -1, n: int(w[2] else (#badEncoding | #ioError | #outOfBounds) -> "") else #invalid -> 0)
 };
 
 opt(positional x) = match x { #notFound -> "-", n -> "${n}" };

@@ -21,16 +21,16 @@ apply(positional o, positional a, positional b) = wrap(
   if o == "+" { a + b } else if o == "-" { a - b } else if o == "*" { a * b } else { pow(a, b) });
 
 reduce1(positional s) = {
-  b = s.vals.last else 0;
-  a = s.vals[s.vals::len - 2] else 0;
-  o = s.ops.last else "+";
+  b = s.vals.last else #none -> 0;
+  a = s.vals[s.vals::len - 2] else #outOfBounds -> 0;
+  o = s.ops.last else #none -> "+";
   Stacks(vals: s.vals.take(s.vals::len - 2) ++ [apply(o, a, b)], ops: s.ops.take(s.ops::len - 1))
 };
 
 pops(positional s, positional o) =
   if s.ops::len == 0 { false }
-  else if prec(s.ops.last else "+") > prec(o) { true }
-  else { prec(s.ops.last else "+") == prec(o) && o != "^" };
+  else if prec(s.ops.last else #none -> "+") > prec(o) { true }
+  else { prec(s.ops.last else #none -> "+") == prec(o) && o != "^" };
 
 reduceFor(positional s, positional o) = if pops(s, o) { reduceFor(reduce1(s), o) } else { s };
 
@@ -38,16 +38,16 @@ flush(positional s) = if s.ops::len == 0 { s } else { flush(reduce1(s)) };
 
 step(positional s, positional tok) =
   if isOp(tok) { r = reduceFor(s, tok); Stacks(vals: r.vals, ops: r.ops ++ [tok]) }
-  else { Stacks(vals: s.vals ++ [wrap(int(tok) else 0)], ops: s.ops) };
+  else { Stacks(vals: s.vals ++ [wrap(int(tok) else #invalid -> 0)], ops: s.ops) };
 
 evalLine(positional l) = {
   toks = l.split(" ");
   run = loop t {
     initial s = Stacks(vals: [], ops: []);
-    s' = if t == toks::len { flush(s) } else { step(s, toks[t] else "") };
+    s' = if t == toks::len { flush(s) } else { step(s, toks[t] else (#badEncoding | #ioError | #outOfBounds) -> "") };
     while t <= toks::len;
   };
-  run.s.vals.first else 0
+  run.s.vals.first else (#badEncoding | #ioError | #none) -> 0
 };
 
 main(m: MainArgs) {

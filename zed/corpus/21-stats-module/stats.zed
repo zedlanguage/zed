@@ -8,6 +8,6 @@ stats(positional xs, positional ys) {
   dx  = xs.map(x -> x - mx);
   dy  = ys.map(y -> y - my);
   sd  = (dx.map(d -> d * d).sum / n).sqrt;
-  cov = (for i -> d in dx { d * (dy[i] else 0.0) }).sum / n;
+  cov = (for i -> d in dx { d * (dy[i] else #outOfBounds -> 0.0) }).sum / n;
   return { mean: mx, sd:, cov: };
 }

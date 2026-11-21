@@ -9,15 +9,15 @@
 // (queries are answered against all edges).
 import uf.{components, Edge};
 
-num(positional t) = int(t else "") else 0;
+num(positional t) = int(t else (#badEncoding | #ioError | #outOfBounds) -> "") else #invalid -> 0;
 
 main(m: MainArgs) {
   ws    = m.stdin.map(l -> l.split(" "));
   edges = (for w in ws where w[0] != "?" { Edge(a: num(w[0]), b: num(w[1])) }).orderedValues;
   qs    = (for w in ws where w[0] == "?" { Edge(a: num(w[1]), b: num(w[2])) }).orderedValues;
-  n     = (edges.map(e -> max(e.a, e.b)) >< max else -1) + 1;
+  n     = (edges.map(e -> max(e.a, e.b)) >< max else #empty -> -1) + 1;
   label = components(n, edges);
-  same(positional x, positional y) = (label[x] else x) == (label[y] else y);   // a node on no edge is alone
+  same(positional x, positional y) = (label[x] else #outOfBounds -> x) == (label[y] else #outOfBounds -> y);   // a node on no edge is alone
   roots = (0..<n).where(v -> label[v] == v).count;
   m.stdout <- qs.map(q -> "${q.a} ${q.b} ${if same(q.a, q.b) { "yes" } else { "no" }}") ++ ["components ${roots}"];
 }
