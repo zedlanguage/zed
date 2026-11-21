@@ -5633,6 +5633,25 @@ impl<'t> Tx<'t> {
     ///    read would bind and succeed. No test reaches either. A wrong kept failure gives
     ///    `None`, which a caller reads as a term with no translation (`Walk::formula_at` then
     ///    takes `compare_untranslated`): coarser, not unsound.
+    ///    What else was checked (proofdoc5f). Of the other state `Tr::truncate` removes, a
+    ///    pair (`Tr::pair_by_constant`, `Tr::div_mod_by_term` past its first check), an
+    ///    extremum and a choice (`Walk::lin_at`) are each found or made, and making one never
+    ///    fails, so a read that found one made in the attempt and a read that makes it again
+    ///    take the same branch, with other variable numbers. A case (`Walk::lin_by_class`) is
+    ///    made only where the same read at the same `(form, scope)` key succeeded, and making
+    ///    it again repeats that read. So, of what the undo removes, only a claim changes a
+    ///    branch: `Walk::binding` refuses a call while another call holds the claim. Both
+    ///    open sub-cases also need the plain read of the call at its own place to fail where
+    ///    its canonical read succeeds. The plain read binds each parameter to the argument's
+    ///    own term and the canonical read binds it to an atom; that the first succeeds
+    ///    wherever the second does was not proved, and no call where it does not was found.
+    ///    A way to close both,
+    ///    not done since no input reaches them: `Walk::binding` records the number of each
+    ///    claim that refused a call in a set kept in `Tr`, and `Walk::undo`, before
+    ///    `Tr::truncate`, splits off the numbers at or above `defs`; when that part is not
+    ///    empty, a claim of the attempt refused a call, and `forget` removes every failure
+    ///    logged since `mark`. A claim numbered at or above `defs` was made after the mark,
+    ///    so its refusals were too.
     ///
     /// Test: `a_call_that_fails_at_an_atom_an_undo_takes_away_is_not_kept` (red before 3's
     /// `CallKey` removal: a key named `q0` with no definitions left), which also compares a
@@ -10213,33 +10232,77 @@ impl<'m, 't> Walk<'m, 't> {
     /// zedc-preimage but the check [`Walk::reads`] itself (and a test in `address.rs`) matches
     /// `Prim::Tuple` or `Prim::TupleGet` by name, so each part of the
     /// walk reads a term `p[k]` by the arm it gives any primitive it does not name, and reads
-    /// the parameter `p` only from such a term, since the body names it nowhere else. Those
-    /// arms are of two kinds. Some give a fixed answer without reading the operands:
-    /// [`Walk::fwd_prim`] (`Fwd::top()`), [`Walk::lin_at`] and [`Walk::formula_at`] (`None`),
-    /// [`Walk::clip_at`], [`Walk::pa_prim`], [`Walk::pa_line_prim`] and
-    /// [`Walk::by_class_prim`] (`None`), [`Walk::back_prim`] and [`Walk::scan_at`] (a stop at
-    /// `p[k]` itself, which is not [`scalar`]). The others read the operands: through
-    /// [`Walk::mentions`], `true` for `p` since its argument reads an input; [`Walk::reads_mod`],
-    /// `false`; [`Walk::defined`], `true` everywhere; and [`Walk::constant`] and
-    /// [`Walk::close_at`], which reach an operand only for a term that reads no input, never
-    /// `p[k]`, which reads `p`. A call in the body that is passed `p[k]` binds its parameter to
-    /// that term, which the same arms read. So the walk reads an argument only through those
-    /// three answers, which the checks fix, and the formula is the same for every argument
-    /// list; it holds no atom of an argument, since no linear term reads `p[k]`.
+    /// the parameter `p` only from such a term, since the body names it nowhere else.
+    ///
+    /// The arms, checked one by one (PROOF-preimage-get-key-arms, proofdoc5f). Facts used:
+    /// `TupleGet` has arity 2 (`Prim::arity` in zedc-types `term.rs`, its `_ => Some(2)` arm), so
+    /// every arity check below passes for `p[k]`; it is not [`scalar`]; and `p[k]` reads `p`.
+    /// (a) [`Walk::mentions`]: `mentions_at`'s `Node::Prim` arm is the `or` of its operands',
+    /// and that of `p` is its argument's, `true` by the check (`Some(true)`); `k`'s is `false`.
+    /// So `mentions(p[k])` is `Some(true)`, and that of every term with `p[k]` among its
+    /// parts is never `Some(false)`, since every arm of `mentions_at` is the `or` of its
+    /// parts' (a `Node::Lam` too, read with `p` still bound) through `mentions_any`, which
+    /// gives `None` where a part read before is `None`. (b) [`Walk::reads_mod`]:
+    /// `reads_mod_at` gives `q == Mod ||` the operands', `false` by the check.
+    /// (c) [`Walk::defined`]: `defined_at`'s `Node::Prim`
+    /// arm meets the operands' conditions, `true` by the check for `p` and `true` for the
+    /// literal `k`; `TupleGet` is not `IntDiv` or `Mod`, so nothing is added: `true`.
+    /// (d) [`Walk::constant`]: `constant_at` gives `None` where `mentions` is `Some(true)` or
+    /// `None` (its `?`), so by (a) for `p[k]` and every term holding it, and
+    /// [`Walk::close_at`], reached from `constant_at` only where `mentions` is `Some(false)`,
+    /// never reaches `p[k]`; the `Node::Follow` arm before that check reads the forward value
+    /// of its operand, fixed by (e). Every other arm reads the operands of `p[k]` only
+    /// through (a) to (d), whose answers the checks fix:
+    /// (e) [`Walk::fwd_at`] gives [`Walk::fwd_prim`], whose `_` arm is `Fwd::top()` (the
+    /// power test of `Mul` does not apply). (f) [`Walk::lin_at`]: `constant` is `None` by
+    /// (d), and its `Node::Prim` arm gives `_ => None`. (g) [`Walk::formula_at`]: `TupleGet`
+    /// is not among the arithmetic primitives it returns `None` for at once; `constant` is
+    /// `None`, and its `Node::Prim` arm gives `_ => None`; a comparison with `p[k]` as an
+    /// operand finds `lin(p[k])` `None` by (f), then `formula(p[k])` `None`, and
+    /// [`Walk::compare_untranslated`] gives `None` unless the operand that does not translate
+    /// is an `if`, and `p[k]` is not. (h) [`Walk::clip_at`]: `constant` is `None`, then
+    /// `_ => None`. (i) [`Walk::back`]: `clip_at` is `None`; `back_in`'s `constant` is `None`
+    /// and [`Walk::back_prim`]'s `_` arm stops at `p[k]` itself. (j) [`Walk::scan_at`]:
+    /// `mentions` is not `Some(false)`, and its `Node::Prim` arm requires [`scalar`], so it
+    /// stops at `p[k]` itself. (k) `pa_at`: `constant` is `None`, then [`Walk::pa_prim`]'s
+    /// `_ => None`; `pa_line_at` reads `pa_at` (`None`), then [`Walk::pa_line_prim`]'s
+    /// `_ => None`. (l) [`Walk::by_class_at`]: `constant` is `None`, `by_class_node` gives
+    /// [`Walk::by_class_prim`]'s `_ => None`, and then it reads `reads_mod` (`false`, (b)),
+    /// `fwd(p[k]).is_bool()` (`false`: `Fwd::top()` may fail, (e)) and `pa_at` (`None`, (k)):
+    /// `None`. (m) `remainder_test` is `None` for a term that is no comparison, and for a
+    /// comparison with `p[k]` as an operand, whose forward value is no integer by (e).
+    /// (n) [`Walk::callee`] of a `Node::Prim` is `Err(None)`, so a call whose function is
+    /// `p[k]` has none. (o) A call in the body that is passed `p[k]` binds its parameter to
+    /// that term, which the same arms read, and is itself shared by its own [`Walk::get_key`]
+    /// at most, since by (f) it has no key of linear terms. So the walk reads an argument
+    /// only through the answers of (a) to (c), which the checks fix, and the formula is the
+    /// same for every argument list; it holds no atom of an argument, since no linear term
+    /// reads `p[k]` (f). The test
+    /// `preimage::tests::only_the_reads_check_names_tuple_get` fails when any line of code in
+    /// this crate other than the one in [`Walk::reads`] names `TupleGet`, which is the change
+    /// that would break the premise of this proof; it cannot catch a change to an arm that
+    /// reaches `p[k]` without naming it (a new `_` answer that reads the operands, `scalar`
+    /// or `Prim::arity` changed in zedc-types), which the units below would have to show.
+    ///
+    /// The calls are read once for all callers: the key is the lambda `(body, lam)`, the
+    /// atoms [`Tx::by_get`] names, which depend on the lambda's parameters, `body` and `lam`
+    /// alone, and no conditions, so every call of one lambda that passes the checks has the
+    /// same key, and [`Walk::translated`] keeps one entry of `formula_calls` under it. That
+    /// entry is read again only as any memo entry is ([`Walk::cached`]): where its read
+    /// stopped under recursion and the stack has fallen, where its read entered a lambda and
+    /// the stack is higher, or where an undo removed it (`Logged::FormulaCall`); the entry of
+    /// a lambda made in the body is never made, since `before` refuses it. This is a claim
+    /// about cost only; each reading gives the same formula by the proof above.
     /// The binding [`Walk::canonical_env`] makes passes the checks too: it binds `p` to a
     /// `Node::Var` of the input `c.get` at `ROOT`, inserted in `cx.inputs` over every integer,
     /// and [`Walk::mentions`] of such a name, unbound at `ROOT`, is `cx.has`, `true`. At that
     /// name [`Walk::reads_mod`] is `false`: `reads_mod_at` gives `None => false` for a
     /// `Node::Var` that `lookup` does not bind. And [`Walk::defined`] is `true`: `defined_at`
     /// first asks [`Walk::constant`], whose `constant_at` returns `None` once `mentions` is
-    /// `true`, and then gives `None => Some(Defined::top())` for the unbound `Node::Var`. Not
-    /// proved (PROOF-preimage-get-key-arms), not checked arm by arm: that each arm listed
-    /// above as giving a fixed answer reads no operand, and that a tuple callee read only as
-    /// `p[k]` is so read once for all callers. Answers checked by the units of
+    /// `true`, and then gives `None => Some(Defined::top())` for the unbound `Node::Var`.
+    /// Answers checked by the units of
     /// `tests/steps/l01_38_omega_test/one_scope.rs` (`tg`, `tw`, `ts` and their callers),
-    /// against the relation of the body closed over the definitions it reaches; they cannot
-    /// catch an arm, added later, that matches
-    /// `Prim::TupleGet` by name.
+    /// against the relation of the body closed over the definitions it reaches.
     // Complexity tradeoff: each call that passes the checks costs O(the size of its arguments)
     // for the checks, and the body is read once for all of them, O(the body); before, each
     // call read the body in its own scope, O(the body) each, Θ(n²) for n calls of a body of n
@@ -10439,14 +10502,34 @@ impl<'m, 't> Walk<'m, 't> {
     /// atoms ([`projected`]), and `c` is not in the relation. (5) A constant argument that
     /// may fail (`(x mod n) * 0`, whose linear term may be `0`) is never swapped: its condition is
     /// not `true`, so `conds` is not empty and this returns `None`
-    /// ([`Walk::shared_call_key`]). Not proved (PROOF-preimage-claimable-refusal): that the
-    /// two keys are refused alike; a refusal gives `None`, read as no translation, so a
-    /// difference makes one key's answer coarser, not unsound. The
-    /// scope numbers differ, and with them which memo entries are met, the names
-    /// [`Tx::canonical`] gives a lambda made in the body, and which calls in it
-    /// [`Scoped`]'s `fresh` lets claim; each of those paths is exact by its own proof, so
-    /// the answers agree where both are given, but a path one key takes may refuse where the
-    /// other's does not. Test
+    /// ([`Walk::shared_call_key`]).
+    ///
+    /// Refusals (PROOF-preimage-claimable-refusal, proofdoc5f). (6) A key that swaps a
+    /// constant holds the atom `c` where the call's own arguments `k.1` hold the constant,
+    /// so `key != k.1`, and each of the three callers, [`Walk::formula_called`],
+    /// [`Walk::lin_called`] and [`Walk::defined_called`], takes the canonical path, and where
+    /// that path gives `None` (or a part of it, [`Tr::instance`] or the projection, does)
+    /// it falls through to its last line, the body read at the call's own place with each
+    /// parameter bound to its argument ([`Walk::formula_call`], [`Walk::lin_call`],
+    /// [`Walk::defined_call`] with `literal_terms(&k)`). A key that kept the constant, as
+    /// this did before FAIL-linear-question-const-args-per-caller, has the same fall-through.
+    /// So under either key a call's answer is the canonical one where that key's canonical
+    /// path gives one, and otherwise the read at the call's place: each exact by its own
+    /// proof, and equal where both canonical paths give one, by (3). Not proved
+    /// (PROOF-preimage-claimable-refusal), the one open sub-case: a call whose canonical path
+    /// refuses under one key and not under the other while the read at its place refuses
+    /// too, so that its answer is `None` under one key only. That is a loss of precision,
+    /// never of soundness: `None` is read as no translation. The causes it could have are
+    /// the four things the two readings do not share: the scope numbers, and with them which
+    /// memo entries are met, an entry held under recursion ([`Walk::cached`]) being one that
+    /// may stop; the input `c`, over every integer, that [`Walk::canonical_env`] adds to
+    /// `cx.inputs`, which the box over every input ([`Tx::whole`]) then holds; the names
+    /// [`Tx::canonical`] gives a lambda made in the body, from the scope it is made in; and
+    /// which calls in the body [`Scoped`]'s `fresh` lets claim. A way to close it: bind no
+    /// parameter the body does not read ([`Reads::Not`]) in [`Walk::canonical_env`] and add
+    /// no input for it, so the two keys make one scope and one context and the readings are
+    /// the same step by step; not done, since the lambda's own question shares the entry
+    /// and may report the parameter's atom among its inputs. Test
     /// `l01_38_omega_test::one_scope::a_relation_read_under_the_unit_scope_is_the_relation_of_the_closed_body`
     /// (units `un`, `ur`, `ua` to `ue`: other constants at an unread `k`, a name there, only
     /// constants, and a callee that reads its constant), which compares the written relation
@@ -15492,6 +15575,43 @@ mod tests {
     use zedc_presburger::presburger::TWO_AT_A_TIME;
 
     mod bench;
+
+    /// The premise of the proof at [`Walk::get_key`] (PROOF-preimage-get-key-arms): no code in
+    /// this crate but the check in [`Walk::reads`] names the primitive that reads a part of a
+    /// tuple, so every other part of the walk reads `p[k]` by the arm it gives a primitive it
+    /// does not name. Each `.rs` file under `src` is read, and a line counts where the name
+    /// appears before any `//`, so comments do not count. The name is built from two halves,
+    /// so this test does not count itself. It cannot catch an arm that reaches `p[k]` without
+    /// naming it (see the proof).
+    #[test]
+    fn only_the_reads_check_names_tuple_get() {
+        let name = concat!("Tuple", "Get");
+        let mut todo = vec![std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src")];
+        let mut found = Vec::new();
+        while let Some(dir) = todo.pop() {
+            for entry in std::fs::read_dir(&dir).expect("a source folder") {
+                let path = entry.expect("a folder entry").path();
+                if path.is_dir() {
+                    todo.push(path);
+                } else if path.extension().is_some_and(|x| x == "rs") {
+                    let text = std::fs::read_to_string(&path).expect("a source file");
+                    for (i, line) in text.lines().enumerate() {
+                        if line
+                            .split("//")
+                            .next()
+                            .is_some_and(|code| code.contains(name))
+                        {
+                            found.push(format!("{}:{}: {}", path.display(), i + 1, line.trim()));
+                        }
+                    }
+                }
+            }
+        }
+        assert!(
+            found.len() == 1 && found[0].contains(&format!("Node::Prim(Prim::{name}, args)")),
+            "only `Walk::reads` may name the primitive; found {found:#?}"
+        );
+    }
 
     /// A range inside an earlier one (DRY-sorted-structures, D2): without the greatest end
     /// kept, `2..=3` brought the next gap's start back to 4 and gave `[(4, 9)]`.
