@@ -478,7 +478,7 @@ fn mega() -> Domains {
 }
 
 /// `i` and `m` in `[-1000, 1000]`.
-fn i_and_m() -> Domains {
+pub(super) fn i_and_m() -> Domains {
     over(&[
         ("i", IntervalSet::of(-1000, 1000)),
         ("m", IntervalSet::of(-1000, 1000)),
@@ -523,6 +523,15 @@ fn moduli_from(n: usize, guard: fn(i64) -> Term, ms: &'static [i64], d: i64) -> 
     chain(n, var("i"), guard, move |j, t| {
         let k = j + d;
         sub_c(k % 5, prim(Prim::Mod, t, int(ms[k as usize % ms.len()])))
+    })
+}
+
+/// `t0 = i; tj = if v <= j { t(j-1) } else { j mod 5 - (t(j-1) mod ms[j mod 2]) }` with `v` the
+/// input `i` at even `j` and `m` at odd `j`: the family `alternating_moduli` at `[7, 64]`.
+pub(super) fn alternating_moduli(n: usize, ms: [i64; 2]) -> Term {
+    let g = |j: i64| prim(Prim::Le, var(if j % 2 == 0 { "i" } else { "m" }), int(j));
+    chain(n, var("i"), g, move |j, t| {
+        sub_c(j % 5, prim(Prim::Mod, t, int(ms[j as usize % 2])))
     })
 }
 
@@ -771,14 +780,13 @@ pub(super) fn family(name: &str, n: usize) -> Vec<(Term, Domains, Demand)> {
             )
         }
         // Nested remainders by 7 and 64 under the guards of `alternating_2var`.
-        "alternating_moduli" => {
-            let g = |j: i64| prim(Prim::Le, var(if j % 2 == 0 { "i" } else { "m" }), int(j));
-            let ms = [7, 64];
-            let t = chain(n, var("i"), g, move |j, t| {
-                sub_c(j % 5, prim(Prim::Mod, t, int(ms[j as usize % 2])))
-            });
-            one(t, i_and_m())
-        }
+        "alternating_moduli" => one(alternating_moduli(n, [7, 64]), i_and_m()),
+        // The same with moduli near 2^40 and 2^62 (PERF-ref-memo-moduli-tables), where the
+        // tables sized by the modulus of the cross-review stage aborted.
+        "alternating_moduli_big" => one(
+            alternating_moduli(n, [(1 << 40) + 15, (1 << 62) - 57]),
+            i_and_m(),
+        ),
         // Scalar inverses that do not map pieces one to one: `t * 3`, and `t / -2`.
         "normal_mul3_chain" => one(
             steps(n, |j, t| sub_c(j % 5, prim(Prim::Mul, t, int(3)))),
@@ -835,9 +843,11 @@ fn output_grid_answers_have_k_n_pieces() {
 }
 
 /// The families that `bench::ref_memo` times, each named once.
-pub(super) const FAMILIES: [&str; 50] = [
+pub(super) const FAMILIES: [&str; 52] = [
     "alt2var_m",
     "alternating_2var",
+    "alternating_moduli",
+    "alternating_moduli_big",
     "coef2_guard",
     "const2_narrow",
     "const2_wide",
@@ -889,13 +899,14 @@ pub(super) const FAMILIES: [&str; 50] = [
 ];
 
 /// Families of terms that read two or more inputs, on the memo of `Tx::back_doubt`, that
-/// `bench::ref_memo` does not time: their work grows faster than n (row
-/// PERF-ref-memo-multi-input; T(8n)/T(n) 12.1 at 4 and 101 at 8 for `alternating_moduli`).
-/// Their answers are checked here with the timed families. `alternating_2var` (25.2 at 64 on
-/// the memo) and `alt2var_m` are timed since `Tx::affine_threshold_pair` answers them in
-/// O(n log n), and `indep_varying` (183 at 24 on the memo) since `Tx::independent_affine`
-/// answers it in O(n).
-const UNTIMED_FAMILIES: [&str; 1] = ["alternating_moduli"];
+/// `bench::ref_memo` does not time, their work growing faster than n (row
+/// PERF-ref-memo-multi-input); their answers are checked here with the timed families. None is
+/// left: `alternating_2var` (25.2 at 64 on the memo) and `alt2var_m` are timed since
+/// `Tx::affine_threshold_pair` answers them in O(n log n), `indep_varying` (183 at 24 on the
+/// memo) since `Tx::independent_affine` answers it in O(n), and `alternating_moduli` (12.1 at 4
+/// and 101 at 8 on the memo) since `Tx::mod_chain_pair` answers it in O(K n (log n + k))
+/// (PERF-ref-memo-moduli-tables).
+const UNTIMED_FAMILIES: [&str; 0] = [];
 
 /// Every family `bench::ref_memo` times, at 1 to 4 links (`output_grid` at 8), and the
 /// [`UNTIMED_FAMILIES`]: the reference preimage holds every
@@ -1172,6 +1183,271 @@ fn alt2var_m_at_one_link_removes_m_zero_exactly() {
             (End::of(1), End::of(1000)),
         ]);
         assert_eq!(p.domains["m"], want, "{p:?}");
+    }
+}
+
+/// PERF-ref-memo-moduli-tables (the Opus seat's test, preimg2-moduli-xr round 1):
+/// `alternating_moduli` at 2 links, `if m <= 1 { i } else { 1 - (i mod 64) }` under
+/// `if i <= 2 { . } else { 2 - (. mod 7) }`, `!= 0`. The projection on `i` is `[-1000, 1000]`
+/// with the 18 holes below (an `i > 2` with `i mod 64` in `[6, 62]` and `i mod 7 = 2` fails
+/// with every `m`, by a scan of the whole box), and the projection on `m` is whole; the box is
+/// not exact. `Tx::mod_chain_pair` answers it; main's memo returned the whole box. Negative
+/// control: the loop checks the box against the interpreter, so an answer that cut one value
+/// too many fails there.
+#[test]
+fn alternating_moduli_at_2_links_gets_its_exact_projections() {
+    let holes = [
+        198, 205, 212, 219, 226, 233, 240, 247, 254, 646, 653, 660, 667, 674, 681, 688, 695, 702,
+    ];
+    let want = holes.iter().fold(IntervalSet::of(-1000, 1000), |s, &h| {
+        s.minus(&IntervalSet::single(h))
+    });
+    for (t, ds, d) in family("alternating_moduli", 2) {
+        let p = preimage(&t, &ds, &d);
+        assert_eq!(p.domains.get("i"), Some(&want), "{p:?}");
+        assert!(p.domains.get("m").is_none_or(|b| *b == ds["m"]), "{p:?}");
+        assert!(!p.exact, "{p:?}");
+        let names: Vec<Arc<str>> = ds.keys().cloned().collect();
+        for i in -1000..=1000i64 {
+            for m in [-1000, -1, 0, 1, 2, 1000] {
+                let pt: Vec<Num> = names
+                    .iter()
+                    .map(|x| Num::from(if &**x == "i" { i } else { m }))
+                    .collect();
+                assert!(
+                    want.contains(i) || !meets(&t, &names, &pt, &d),
+                    "{pt:?} meets outside {p:?}"
+                );
+            }
+        }
+    }
+}
+
+/// A random chain of `n` modular links on `i` and `m` in the class of `Tx::mod_chain_pair`:
+/// each link reads one input, fires where that input exceeds a cut that only grows along the
+/// input's links (so the firing sets nest), and takes `c - (t mod M)`, `c + (t mod M)` or
+/// `(t mod M) + c` with one modulus per input, `M` drawn from `ms` and sometimes negated.
+/// The guard is written `v <= cut` (mod arm second), `cut < v` or `v >= cut + 1` (mod arm
+/// first). The demand is `t != 0` or a random set of up to three runs.
+fn mod_chain(rng: &mut Rng, n: usize, ms: &[i64]) -> (Term, Demand) {
+    let (mi, mm) = (rng.pick(ms), rng.pick(ms));
+    let mut cut = [rng.int(-14, -4), rng.int(-11, -3)];
+    let mut t = var("i");
+    for _ in 0..n {
+        let k = rng.below(2);
+        let (v, m) = if k == 0 { ("i", mi) } else { ("m", mm) };
+        cut[k] += rng.int(0, 5);
+        let m = if rng.coin() { m } else { -m };
+        let c = rng.int(-6, 6);
+        let r = prim(Prim::Mod, t.clone(), int(m));
+        let arm = match rng.below(3) {
+            0 => prim(Prim::Sub, int(c), r),
+            1 => prim(Prim::Add, int(c), r),
+            _ => prim(Prim::Add, r, int(c)),
+        };
+        let plain = Shared::new(t);
+        t = match rng.below(3) {
+            0 => Term::If(
+                Shared::new(prim(Prim::Le, var(v), int(cut[k]))),
+                plain,
+                Shared::new(arm),
+            ),
+            1 => Term::If(
+                Shared::new(prim(Prim::Lt, int(cut[k]), var(v))),
+                Shared::new(arm),
+                plain,
+            ),
+            _ => Term::If(
+                Shared::new(prim(Prim::Ge, var(v), int(cut[k] + 1))),
+                Shared::new(arm),
+                plain,
+            ),
+        };
+    }
+    if rng.coin() {
+        return (ne0(t), Demand::Bool(true));
+    }
+    let runs = (0..rng.int(1, 3)).fold(IntervalSet::empty(), |s, _| {
+        let lo = rng.int(-8, 8);
+        s.join(&IntervalSet::of(lo, lo + rng.int(0, 6)))
+    });
+    (t, Demand::Ints(runs))
+}
+
+/// The projections of the passing points of `t` over the box `ds` of `i` and `m`, by the
+/// interpreter at every point, and whether every point of their product passes.
+fn scanned(t: &Term, ds: &Domains, d: &Demand) -> (IntervalSet, IntervalSet, bool) {
+    let names: Vec<Arc<str>> = ds.keys().cloned().collect();
+    let axis = |x: &str| -> Vec<i64> {
+        let s = &ds[x];
+        let (Some(End::Fin(lo)), Some(End::Fin(hi))) = (
+            s.first().map(|p| p.0.clone()),
+            s.last().map(|p| p.1.clone()),
+        ) else {
+            panic!("a bounded box")
+        };
+        let (lo, hi) = (lo.to_i64().expect("small"), hi.to_i64().expect("small"));
+        (lo..=hi).filter(|&v| s.contains(v)).collect()
+    };
+    let (is, ms) = (axis("i"), axis("m"));
+    let (mut pi, mut pm, mut fail) = (BTreeSet::new(), BTreeSet::new(), Vec::new());
+    for &i in &is {
+        for &m in &ms {
+            let pt: Vec<Num> = names
+                .iter()
+                .map(|x| Num::from(if &**x == "i" { i } else { m }))
+                .collect();
+            if meets(t, &names, &pt, d) {
+                pi.insert(i);
+                pm.insert(m);
+            } else {
+                fail.push((i, m));
+            }
+        }
+    }
+    let all = !fail.iter().any(|(i, m)| pi.contains(i) && pm.contains(m));
+    (set_of(pi), set_of(pm), all)
+}
+
+/// Checks the answer to `t` over `ds` against [`scanned`]: it holds every passing point and,
+/// where marked exact, every point of its box passes; with `finest`, its projections are the
+/// scanned ones (an input left out is whole) and it is exact iff every point of their product
+/// passes.
+fn agrees_with_scan(what: &str, t: &Term, ds: &Domains, d: &Demand, finest: bool) {
+    let p = preimage(t, ds, d);
+    let (pi, pm, all) = scanned(t, ds, d);
+    let got = |x: &str| p.domains.get(x).unwrap_or(&ds[x]).clone();
+    let (gi, gm) = (got("i"), got("m"));
+    if pi.is_empty() {
+        assert!(!finest || gi.is_empty() || gm.is_empty(), "{what}: {p:?}");
+        assert!(!p.exact || gi.is_empty() || gm.is_empty(), "{what}: {p:?}");
+        return;
+    }
+    assert!(
+        pi.is_subset(&gi) && pm.is_subset(&gm),
+        "{what}: {pi:?} {pm:?}, {p:?}"
+    );
+    let box_passes = pi == gi && pm == gm && all;
+    assert!(!p.exact || box_passes, "{what}: marked exact, {p:?}");
+    if finest {
+        assert_eq!(gi, pi, "{what}: i, {p:?}");
+        assert_eq!(gm, pm, "{what}: m, {p:?}");
+        assert_eq!(p.exact, all, "{what}: exact, {p:?}");
+    }
+}
+
+/// PERF-ref-memo-moduli-tables: random chains of 1 to 7 modular links ([`mod_chain`]) over `i`
+/// in `[-12, 12]` and `m` in `[-9, 9]` agree with a scan of the whole box by the interpreter
+/// ([`agrees_with_scan`]). With every modulus at least 25, the width of the domain of `i`,
+/// `Tx::mod_chain_pair` never keeps a cell whole (proof at its budget), so the 400 chains of
+/// moduli 25 to `2^62 - 57` get the exact projections and the true exactness. The 400 chains
+/// of moduli 2 to 64 may exceed the budget, so they are held to soundness and a true claim of
+/// exactness. Fixed seed, so the chains are the same each run; a chain with links on both
+/// inputs reaches `Tx::mod_chain_pair`, the others main's path (which gave the exact answers
+/// too, on these seeds).
+#[test]
+fn mod_chains_agree_with_the_interpreter() {
+    let big = [25, 64, (1 << 40) + 15, (1 << 62) - 57];
+    let small = [2, 3, 5, 7, 24, 25, 64];
+    let ds = over(&[
+        ("i", IntervalSet::of(-12, 12)),
+        ("m", IntervalSet::of(-9, 9)),
+    ]);
+    let mut rng = Rng::new(0x6d6f_645f_6368_u64);
+    for k in 0..800 {
+        let n = 1 + k % 7;
+        let finest = k % 2 == 0;
+        let (t, d) = mod_chain(&mut rng, n, if finest { &big } else { &small });
+        let what = format!("chain {k} at {n}: {t:?} {d:?}");
+        agrees_with_scan(&what, &t, &ds, &d, finest);
+    }
+}
+
+/// PERF-ref-memo-moduli-tables: `alternating_moduli` with moduli near `2^40` and `2^62` in
+/// place of 7 and 64. The tables of the cross-review stage (`monotone_2var_mod`) were sized by
+/// the modulus and aborted near `2^40`; `Tx::mod_chain_pair` never reads a modulus as a size.
+/// At 1 to 8 links over `[-40, 40]^2` the answer agrees with a scan of the box; over the
+/// family's `[-1000, 1000]^2` and over `i` in `[-2^61, 2^61]` with the family's 7 and 64 (whose
+/// holes are too many to list, so the stage keeps the cells whole, not exact) an answer is
+/// given and holds every passing point the interpreter finds at the points checked. The same
+/// holds over `i` in `[-2^61, 2^61]` with the moduli near `2^40` and `2^62`, where the classes
+/// (`2^40` or more) pass `MOST_CLASSES` and main's path answers: before that switchover the
+/// stage swept every class and this test timed out at 60 s (2026-11-21).
+#[test]
+fn mod_chains_with_moduli_near_2_40_and_2_62_are_answered() {
+    let alt = |n: usize, ms: [i64; 2]| {
+        let g = |j: i64| prim(Prim::Le, var(if j % 2 == 0 { "i" } else { "m" }), int(j));
+        ne0(chain(n, var("i"), g, move |j, t| {
+            sub_c(j % 5, prim(Prim::Mod, t, int(ms[j as usize % 2])))
+        }))
+    };
+    let d = Demand::Bool(true);
+    let near = [
+        [(1 << 40) + 15, (1 << 62) - 57],
+        [(1 << 62) - 57, (1 << 40) - 87],
+    ];
+    let small = over(&[
+        ("i", IntervalSet::of(-40, 40)),
+        ("m", IntervalSet::of(-40, 40)),
+    ]);
+    for ms in near {
+        for n in 1..=8 {
+            agrees_with_scan(&format!("{ms:?} at {n}"), &alt(n, ms), &small, &d, true);
+        }
+    }
+    let wide = 1i64 << 61;
+    let wide_i = || {
+        over(&[
+            ("i", IntervalSet::of(-wide, wide)),
+            ("m", IntervalSet::of(-1000, 1000)),
+        ])
+    };
+    let cases = [
+        (alt(6, near[0]), i_and_m()),
+        (alt(6, near[1]), i_and_m()),
+        (alt(2, [7, 64]), wide_i()),
+        // A wide domain and a wide first modulus: `2^62` values of `i` in `2^40` classes.
+        (alt(6, near[0]), wide_i()),
+        (alt(6, near[1]), wide_i()),
+    ];
+    for (t, ds) in cases {
+        let p = preimage(&t, &ds, &d);
+        let names: Vec<Arc<str>> = ds.keys().cloned().collect();
+        let near_ends = |x: &str| -> Vec<i64> {
+            let (Some(End::Fin(lo)), Some(End::Fin(hi))) = (
+                ds[x].first().map(|p| p.0.clone()),
+                ds[x].last().map(|p| p.1.clone()),
+            ) else {
+                panic!("a bounded box")
+            };
+            let (lo, hi) = (lo.to_i64().expect("small"), hi.to_i64().expect("small"));
+            (-60..=60)
+                .chain(lo..=lo + 60)
+                .chain(hi - 60..=hi)
+                .chain(190..=260)
+                .collect()
+        };
+        for i in near_ends("i") {
+            for m in [-1000, -1, 0, 1, 2, 3, 1000] {
+                let pt: Vec<Num> = names
+                    .iter()
+                    .map(|x| Num::from(if &**x == "i" { i } else { m }))
+                    .collect();
+                let inside = names.iter().zip(&pt).all(|(x, v)| {
+                    p.domains
+                        .get(x)
+                        .is_none_or(|s| s.contains_end(&End::Fin(v.clone())))
+                });
+                assert!(
+                    inside || !meets(&t, &names, &pt, &d),
+                    "{pt:?} meets outside {p:?}"
+                );
+                assert!(
+                    !p.exact || !inside || meets(&t, &names, &pt, &d),
+                    "{pt:?} in exact {p:?}"
+                );
+            }
+        }
     }
 }
 

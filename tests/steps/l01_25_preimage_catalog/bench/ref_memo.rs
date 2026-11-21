@@ -1,6 +1,7 @@
 //! The scaling half of `ref_memo.rs` (plan item PERF-ref-memo-quadratic): each of the 48
 //! families of the item's benchmark, the one-input shapes of PROOF-preimage-ref-chain-cost,
-//! and the two-input threshold chains of PERF-ref-memo-multi-input,
+//! the two-input threshold chains of PERF-ref-memo-multi-input, and the two-input chains of
+//! remainders of PERF-ref-memo-moduli-tables (also over the modulus),
 //! at n and 8n, held to the plan's limit
 //! (`scaling::LIMIT`) in instructions and bytes, with no wider limit for any family; each
 //! answer grows at most 8 times (`output_grid` demands four values, 4n pieces). The answers
@@ -12,7 +13,8 @@ use zedc::store::preimage_ref::{Demand, Domains, preimage};
 
 use crate::bench::s22::on_big_stack;
 use crate::ref_memo::{
-    MIN_GAP_B_NODES, answer_pieces, family, min_gap_if_tree_nodes, output_grid, round_down_most,
+    MIN_GAP_B_NODES, alternating_moduli, answer_pieces, family, i_and_m, min_gap_if_tree_nodes,
+    output_grid, round_down_most,
 };
 
 /// [`scaling::compare`] on the reference preimage of the family `name` at `n` and `8n` links: a
@@ -134,6 +136,50 @@ scaling_tests! {
     // `Tx::independent_affine` in O(n). On the memo it read 20.9 at 6, 12.1 at 12 and 183 at
     // 24; 7.99 here (instructions 7.99, bytes 8.01, load 46).
     indep_varying_scales: "indep_varying" at 24;
+    // PERF-ref-memo-moduli-tables: two-input chains of modular links, answered by
+    // `Tx::mod_chain_pair` in O(K n (log n + k)), K = min(M_1, W) classes, no table sized by a
+    // modulus. On the memo `alternating_moduli` read 12.1 at 4 and 101 at 8; the cross-review's
+    // tables aborted at moduli near 2^40, which `alternating_moduli_big` uses.
+    alternating_moduli_scales: "alternating_moduli" at 64;
+    alternating_moduli_big_scales: "alternating_moduli_big" at 64;
+}
+
+/// PERF-ref-memo-moduli-tables, the scaling over the modulus: `alternating_moduli` at 64 links
+/// with moduli `ms` and 8 times `ms`, held to [`scaling::LIMIT`] like a pass at n and 8n.
+fn modulus_scales(ms: [i64; 2]) {
+    on_big_stack(|| {
+        let at = |ms: [i64; 2]| {
+            let d = Demand::Bool(true);
+            let t = zed_kernel::Term::Prim(
+                zed_kernel::Prim::Ne,
+                vec![
+                    alternating_moduli(64, ms),
+                    Term::Lit(zed_kernel::Value::Int(0)),
+                ],
+            );
+            (t, i_and_m(), d)
+        };
+        let (small, large) = (at(ms), at(ms.map(|m| m * 8)));
+        let run = |(t, ds, d): &(Term, Domains, Demand)| {
+            std::hint::black_box(preimage(t, ds, d));
+        };
+        let what = format!("alternating_moduli at 64 links, moduli {ms:?} and 8 times");
+        scaling::compare(&what, 1, || run(&small), || run(&large));
+    });
+}
+
+/// From (7, 64) to (56, 512) the classes `K = min(M_1, W)` grow 8 times (`W` = 2001), so the
+/// work grows about 8 times: this holds the cost to linear in the classes.
+#[test]
+fn mod_chain_modulus_scales() {
+    modulus_scales([7, 64]);
+}
+
+/// Near `2^37` and `2^59`, 8 times to near `2^40` and `2^62`: the classes stay `W`, so the work
+/// should not grow; the cross-review's tables were sized by the modulus.
+#[test]
+fn mod_chain_big_modulus_scales() {
+    modulus_scales([(1 << 37) + 3, (1 << 59) - 55]);
 }
 
 /// PROOF-round-down-piece-bound at the sizes the benchmark above times, which need a large

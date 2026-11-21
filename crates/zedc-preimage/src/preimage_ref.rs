@@ -166,6 +166,13 @@ use zedc_lattice::revision::{self, Op, Tonicity, reduce_congruence};
 use zedc_presburger::presburger::{self, Con, Formula, Lin, Refusal, Relation};
 use zedc_stage::stage;
 
+mod mod_chain;
+
+use mod_chain::{
+    MOST_CLASSES, ModLink, Pieces, ResidueMap, any_in, contains, estimate, gaps, hits, meet,
+    normal, periodic, pieces_of, residues, set_of,
+};
+
 /// An interval per input name.
 pub type Domains = BTreeMap<Arc<str>, IntervalSet>;
 
@@ -332,11 +339,22 @@ fn preimage_in(
     // inputs is answered by [`Tx::independent_affine`] in O(n), where the memo visits its
     // combinations of arms; on such a box, every link but one has one arm, so Check 2 there
     // sees single values and decides exactness (test
-    // `ref_memo::listed_independent_chains_are_answered_exactly`). `None` from it is main's path.
+    // `ref_memo::listed_independent_chains_are_answered_exactly`). A two-input chain of modular
+    // links (`alternating_moduli`) is answered by [`Tx::mod_chain_pair`] in O(K n (log n + k)),
+    // `K` its classes, with no table sized by a modulus. It runs before `independent_affine`,
+    // which also takes a chain of one guard on `m` over a mod arm of `i` but keeps the whole
+    // box there, where this stage gives the exact projections (test
+    // `ref_memo::mod_chains_agree_with_the_interpreter`); its recognizer stops at the first arm
+    // that is not modular, O(1) on the independent families. Its answer is taken for a listed
+    // input only when exact, since `enumerate` needs every listed input and main's path tries
+    // it when the box is not exact. `None` from all three is main's path.
     tx.start(inputs, Landmarks::none());
     let early = match tx.affine_threshold_pair(root, demand) {
         Some(found) => Some(found),
-        None => tx.independent_affine(root, demand),
+        None => tx
+            .mod_chain_pair(root, demand)
+            .filter(|(a, _)| a.exact || listed.is_empty())
+            .or_else(|| tx.independent_affine(root, demand)),
     };
     if let Some((answer, relation)) = early {
         return Preimage {
@@ -3911,14 +3929,17 @@ impl<'t> Tx<'t> {
     //   or, when no check decides its exactness (coNP-hard, proof there), comes here.
     // - Nested remainders: in a term that reads one input they are settled by
     //   `State1d::modulo_bounded` (the `nested_moduli_*` families, cost in the header). Under
-    //   guards on two inputs they stay on the memo: `alternating_moduli` read 12.1 at 4 and 101
-    //   at 8, row PERF-ref-memo-multi-input.
+    //   guards on two inputs `alternating_moduli` read 12.1 at 4 and 101 at 8 on this memo; a
+    //   two-input chain of links `c ± (t mod M)` no longer reaches it: `Tx::mod_chain_pair`
+    //   answers it in O(K n (log n + k)) (proof in `preimage_ref/mod_chain.rs`), 7.88 at 64
+    //   (`alternating_moduli_scales`), and 8.33 with moduli near 2^40 and 2^62
+    //   (PERF-ref-memo-moduli-tables).
     // - Products and quotients that do not map pieces one to one (`State1d::inverse` for
     //   |c| > 1, a quotient by c < -1) visit every piece of the state: `normal_mul3_chain` read
     //   8.05 at 16 and `normal_div_neg2_chain` 11.8 at 16 and 8.3 at 128. Measured only: no
     //   bound on the pieces visited per link is proved.
-    // `alternating_moduli` is not timed yet (`ref_memo::UNTIMED_FAMILIES`); its answers are
-    // checked against the interpreter. Tests: `l01_25_preimage_catalog::ref_memo`
+    // Every family is timed (`ref_memo::UNTIMED_FAMILIES` is empty); the answers are checked
+    // against the interpreter. Tests: `l01_25_preimage_catalog::ref_memo`
     // (the scaling of each family, main's changed answers, calls 22, 45 and 86). COMPLEXITY.md C56.
     fn back_doubt(&mut self, t: Tid, env: Eid, d: &Demand, dd: &IntervalSet) -> Res {
         let dd = match d {
@@ -7779,5 +7800,434 @@ fn enumerate_on(term: &Term, axes: &[(Arc<str>, Vec<Num>)], demand: &Demand) -> 
             }
             point[j] = 0;
         }
+    }
+}
+
+impl Tx<'_> {
+    /// The mod arm of a link, `(neg, c, inner, m)` for `c - (inner mod m)` (`neg`),
+    /// `c + (inner mod m)`, `(inner mod m) +- c` or `inner mod m`, with literal `c` and
+    /// nonzero literal `m`, read as `|m|` (`mod` is Euclidean). O(1).
+    fn mod_arm(&self, t: Tid) -> Option<(bool, i128, Tid, i128)> {
+        let modulo = |tx: &Self, u: Tid| -> Option<(Tid, i128)> {
+            let Node::Prim(Prim::Mod, args) = tx.node(u) else {
+                return None;
+            };
+            if args.len() != 2 {
+                return None;
+            }
+            let Node::Int(m) = tx.node(tx.arg(args, 1)) else {
+                return None;
+            };
+            (m != 0).then(|| (tx.arg(args, 0), i128::from(m).abs()))
+        };
+        if let Some((inner, m)) = modulo(self, t) {
+            return Some((false, 0, inner, m));
+        }
+        let Node::Prim(op @ (Prim::Add | Prim::Sub), args) = self.node(t) else {
+            return None;
+        };
+        if args.len() != 2 {
+            return None;
+        }
+        let (a, b) = (self.arg(args, 0), self.arg(args, 1));
+        match (self.node(a), self.node(b)) {
+            (Node::Int(c), _) => {
+                let (inner, m) = modulo(self, b)?;
+                Some((op == Prim::Sub, i128::from(c), inner, m))
+            }
+            (_, Node::Int(c)) => {
+                let (inner, m) = modulo(self, a)?;
+                let c = i128::from(c);
+                Some((false, if op == Prim::Sub { -c } else { c }, inner, m))
+            }
+            _ => None,
+        }
+    }
+
+    /// False when `t` is a chain of modular links (the shape of the module comment of
+    /// `preimage_ref/mod_chain.rs`, read from its arms alone) whose guards read no variable but
+    /// its base: such a chain reads one input and is not this stage's. True for anything else,
+    /// which the full walk then reads. This keeps the stage's cost on one-input chains of mod
+    /// links (`normal_mod_chain`, `normal_mixed_moduli`) to O(n) node reads, with no
+    /// [`Tx::difference_guard`], which takes the forward sets of both sides and translates the
+    /// guard. Each node of the guards is visited once (a visited set, P207), so O(n + the
+    /// guards' nodes).
+    fn may_read_two_inputs(&self, t: Tid) -> bool {
+        let mut guards = Vec::new();
+        let mut cur = t;
+        while let Node::If(g, a, b) = self.node(cur) {
+            cur = match (self.mod_arm(b), self.mod_arm(a)) {
+                (Some((.., inner, _)), _) if self.same_value_node(inner, a) => a,
+                (_, Some((.., inner, _))) if self.same_value_node(inner, b) => b,
+                _ => return true,
+            };
+            guards.push(g);
+        }
+        let Node::Var(base) = self.node(cur) else {
+            return true;
+        };
+        let mut seen = std::collections::HashSet::new();
+        while let Some(u) = guards.pop() {
+            if !seen.insert(u) {
+                continue;
+            }
+            match self.node(u) {
+                Node::Var(v) if v == base => {}
+                Node::Int(_) => {}
+                Node::Prim(_, args) => guards.extend((0..args.len()).map(|i| self.arg(args, i))),
+                _ => return true,
+            }
+        }
+        false
+    }
+
+    /// The exact projections of a two-input chain of modular links, and whether their box is
+    /// exact, with a relation when it is not; the terms, the proof and the costs are in the
+    /// module comment of `preimage_ref/mod_chain.rs`, which holds the residue arithmetic.
+    /// `None` for any other term, and for an unbounded base input (its classes would be all
+    /// `M_1` residues, a count set by a modulus).
+    fn mod_chain_pair(&mut self, root: Tid, d: &Demand) -> Option<(Res, Option<Relation>)> {
+        let (original, wanted) = self.integer_request_shape(root, d)?;
+        if !self.may_read_two_inputs(original) {
+            return None;
+        }
+        // The links, root to base: a guard on an input, one arm plain and the other the mod
+        // arm of that same term. The mod arm is taken where the guard is false when it is the
+        // else arm, and where it is true when it is the then arm.
+        let mut raw: Vec<(Arc<str>, bool, i128, i128, IntervalSet)> = Vec::new();
+        let mut cur = original;
+        while let Node::If(g, a, b) = self.node(cur) {
+            let (Coordinate::Input(v), yes, no) = self.difference_guard(g, ROOT)? else {
+                return None;
+            };
+            let dom = self.cx.inputs.get(&v)?.clone();
+            let live = |m: ArmMask| m.map_or_else(|| (*dom).clone(), |(l, _)| (*l).clone());
+            let (plain, (neg, c, m), fire) = if let Some((neg, c, inner, m)) = self.mod_arm(b)
+                && self.same_value_node(inner, a)
+            {
+                (a, (neg, c, m), live(no))
+            } else if let Some((neg, c, inner, m)) = self.mod_arm(a)
+                && self.same_value_node(inner, b)
+            {
+                (b, (neg, c, m), live(yes))
+            } else {
+                return None;
+            };
+            raw.push((v, neg, c, m, fire));
+            cur = plain;
+        }
+        let Node::Var(base) = self.node(cur) else {
+            return None;
+        };
+        if self.lookup(ROOT, base).is_some() || raw.is_empty() {
+            return None;
+        }
+        let x = self.name(base).clone();
+        let mut y: Option<Arc<str>> = None;
+        let (mut mx, mut my): (Option<i128>, Option<i128>) = (None, None);
+        let mut links = Vec::with_capacity(raw.len());
+        // Base outward, checking conditions (1) and (2) of the module comment of `mod_chain.rs`.
+        let (mut last_x, mut last_y): (Option<IntervalSet>, Option<IntervalSet>) = (None, None);
+        for (v, neg, c, m, fire) in raw.into_iter().rev() {
+            let on_x = v == x;
+            let (modulus, last) = if on_x {
+                (&mut mx, &mut last_x)
+            } else {
+                if y.get_or_insert_with(|| v.clone()) != &v {
+                    return None;
+                }
+                (&mut my, &mut last_y)
+            };
+            if *modulus.get_or_insert(m) != m || last.as_ref().is_some_and(|l| !fire.is_subset(l)) {
+                return None;
+            }
+            *last = Some(fire.clone());
+            links.push(ModLink { on_x, neg, c, fire });
+        }
+        let y = y?;
+        let (mx, my) = (mx.unwrap_or(1), my?);
+        if self.run.void {
+            return Some((Res::none(), None));
+        }
+        let (dom_x, dom_y) = (
+            self.cx.inputs.get(&x)?.clone(),
+            self.cx.inputs.get(&y)?.clone(),
+        );
+        let cells = |dom: &IntervalSet, on_x: bool| {
+            let mut out = Vec::new();
+            let mut rest = dom.clone();
+            for l in links.iter().filter(|l| l.on_x == on_x) {
+                out.push(rest.minus(&l.fire));
+                rest = l.fire.clone();
+            }
+            out.push(rest);
+            out
+        };
+        let (cx, cy) = (cells(&dom_x, true), cells(&dom_y, false));
+        // Bounded `x`: its classes are at most its `W` values (Complexity tradeoff in
+        // `mod_chain.rs`).
+        let xp: Vec<Pieces> = cx.iter().map(pieces_of).collect::<Option<_>>()?;
+        let xne: Vec<bool> = cx.iter().map(|c| !c.is_empty()).collect();
+        let yne: Vec<bool> = cy.iter().map(|c| !c.is_empty()).collect();
+        let n = links.len();
+        let m1 = if links[0].on_x { mx } else { my };
+        let unwanted = IntervalSet::top().minus(&wanted);
+        let modulus = |l: &ModLink| if l.on_x { mx } else { my };
+
+        // `B_p` and `C_q` (step 4), and at each position the inverse of the other input's
+        // composed map, which turns a trajectory's value into its `z` (at a link on `x`) or
+        // its `w` (at a link on `y`). `end[j]` is the cell index the link at `j` ends.
+        let mut bad_x = vec![Pieces::new(); cx.len()];
+        let mut bad_y = vec![Pieces::new(); cy.len()];
+        let (mut inv, mut end) = (Vec::with_capacity(n), Vec::with_capacity(n));
+        let (mut e, mut o) = (ResidueMap::ID, ResidueMap::ID);
+        let (mut p, mut q) = (0, 0);
+        for l in &links {
+            if l.on_x {
+                p += 1;
+                bad_x[p] = e.inverse(mx).image(&l.bad(mx, &unwanted), mx);
+                e = l.map(mx).after(e, mx);
+                inv.push(o.inverse(my));
+                end.push(p);
+            } else {
+                q += 1;
+                bad_y[q] = o.inverse(my).image(&l.bad(my, &unwanted), my);
+                o = l.map(my).after(o, my);
+                inv.push(e.inverse(mx));
+                end.push(q);
+            }
+        }
+        let gaps_x: Vec<Pieces> = bad_x.iter().map(|b| gaps(b, mx)).collect();
+        let gaps_y: Vec<Pieces> = bad_y.iter().map(|b| gaps(b, my)).collect();
+        // `later_y[p]`: the residues `z` that fail with every nonempty cell `q` after `p` (the
+        // meet of their `C_q`), `None` when there is none; `all_y` the same over every `q >= 1`.
+        let mut later_y: Vec<Option<Pieces>> = vec![None; cx.len()];
+        let mut acc: Option<Pieces> = None;
+        for j in (0..n).rev() {
+            let k = end[j];
+            if links[j].on_x {
+                later_y[k] = acc.clone();
+            } else if yne[k] {
+                acc = Some(acc.map_or_else(|| bad_y[k].clone(), |s| meet(&s, &bad_y[k])));
+            }
+        }
+        let all_y = acc;
+
+        // The cells `q` that pass with cell 0 of `x`, or (for `q = 0`) with any cell `p`.
+        let mut ypass = vec![false; cy.len()];
+        ypass[0] = yne[0]
+            && ((xne[0] && !cx[0].meet(&wanted).is_empty())
+                || (1..cx.len()).any(|p| xne[p] && any_in(&xp[p], &gaps_x[p], mx)));
+        for q in 1..cy.len() {
+            ypass[q] = yne[q] && xne[0] && any_in(&xp[0], &gaps_y[q], my);
+        }
+
+        // The classes: residues mod `M_1` of the cells `p >= 1` (step 3).
+        let present: Vec<Pieces> = (0..cx.len())
+            .map(|p| {
+                if p >= 1 {
+                    residues(&xp[p], m1)
+                } else {
+                    Vec::new()
+                }
+            })
+            .collect();
+        let classes = normal(present.iter().flatten().copied().collect());
+        let count: usize = classes
+            .iter()
+            .map(|&(a, b)| usize::try_from(b - a + 1).unwrap_or(usize::MAX))
+            .fold(0, usize::saturating_add);
+        if count > MOST_CLASSES {
+            return None;
+        }
+        let each = || classes.iter().flat_map(|&(a, b)| a..=b);
+
+        // Pass 1, per class: which `(p, u)` fail with every nonempty cell `q` (`fails[p]`, in
+        // increasing `u`), and which cells `q` pass with some class. Forward: a cell `p` passes
+        // with an earlier `q` iff some earlier `w` is outside `B_p`, and with a later `q` iff
+        // its `z` is outside their meet `later_y[p]`; a cell `q` passes with an earlier `p` iff
+        // some earlier `z` is outside `C_q`. Backward: a cell `q` passes with a later `p` iff
+        // its `w` is outside the meet of their `B_p`. Each is step 5 read over the cells.
+        let mut fails: Vec<Vec<i128>> = vec![Vec::new(); cx.len()];
+        let mut ws = vec![0i128; cy.len()];
+        for u in each() {
+            let (mut wset, mut zset) = (BTreeSet::new(), BTreeSet::new());
+            let mut v = u;
+            for (j, l) in links.iter().enumerate() {
+                v = l.value(v, modulus(l));
+                let k = end[j];
+                if l.on_x {
+                    if !xne[k] || !contains(&present[k], u) {
+                        continue;
+                    }
+                    let z = inv[j].at(v.rem_euclid(my), my);
+                    let pass = hits(&wset, &gaps_x[k])
+                        || later_y[k].as_ref().is_some_and(|s| !contains(s, z));
+                    if !pass {
+                        fails[k].push(u);
+                    }
+                    zset.insert(z);
+                } else if yne[k] {
+                    let w = inv[j].at(v.rem_euclid(mx), mx);
+                    ws[k] = w;
+                    ypass[k] = ypass[k] || hits(&zset, &gaps_y[k]);
+                    wset.insert(w);
+                }
+            }
+            let mut later_x: Option<Pieces> = None;
+            for j in (0..n).rev() {
+                let k = end[j];
+                if links[j].on_x {
+                    if xne[k] && contains(&present[k], u) {
+                        later_x =
+                            Some(later_x.map_or_else(|| bad_x[k].clone(), |s| meet(&s, &bad_x[k])));
+                    }
+                } else if yne[k] && !ypass[k] {
+                    ypass[k] = later_x.as_ref().is_some_and(|s| !contains(s, ws[k]));
+                }
+            }
+        }
+
+        // The holes of `x`. Cell 0: `x` fails with cell 0 of `y` (empty, or `x` unwanted) and
+        // with every nonempty `q >= 1` (`x mod My` in `all_y`). Cell `p >= 1`: the class fails
+        // with every `q >= 1` (`fails[p]`) and `x` fails with cell 0 of `y` (empty, or
+        // `x mod Mx` in `B_p`).
+        //
+        // The budget, `(K + K0 + P) (n + 1)` pieces for `K` classes, `K0` residues mod `My` in
+        // cell 0 and `P` pieces of the cells, is the sweeps' own count plus the input's. It is
+        // never exceeded when the hull of the domain of `x` is no wider than the least modulus
+        // (proof): then two members of the domain differ by less than any modulus, so each
+        // residue mod `M_1`, `Mx` or `My` has at most one member. Every piece
+        // [`mod_chain::periodic`] makes holds a member of its input, so each call makes at most
+        // as many pieces as its input has members: cell 0 at most `K0` (one member per residue
+        // mod `My`), and a cell `p >= 1` at most `2 |cell p|` over its two calls, `2K` in all
+        // (one member per class). `K0 + 2K <= (K + K0) (n + 1)` for `n >= 1`. Past the budget
+        // the cell is kept whole and the answer marked not exact (Complexity tradeoff in
+        // `mod_chain.rs`).
+        let k0: usize = residues(&xp[0], my)
+            .iter()
+            .map(|&(a, b)| usize::try_from(b - a + 1).unwrap_or(usize::MAX))
+            .fold(0, usize::saturating_add);
+        let pieces: usize = xp.iter().map(Vec::len).sum();
+        let mut budget = count
+            .saturating_add(k0)
+            .saturating_add(pieces)
+            .saturating_mul(n + 1);
+        let mut cover = false;
+        let mut kept: Vec<IntervalSet> = cx.clone();
+        let failing: Vec<Pieces> = fails
+            .iter()
+            .map(|f| normal(f.iter().map(|&u| (u, u)).collect()))
+            .collect();
+        for p in 0..cx.len() {
+            if !xne[p] {
+                continue;
+            }
+            let holes = if p == 0 {
+                let first = if yne[0] {
+                    cx[0].meet(&unwanted)
+                } else {
+                    cx[0].clone()
+                };
+                match &all_y {
+                    None => pieces_of(&first),
+                    Some(r) => periodic(&pieces_of(&first)?, r, my, &mut budget),
+                }
+            } else if failing[p].is_empty() {
+                Some(Vec::new())
+            } else if !yne[0] {
+                periodic(&xp[p], &failing[p], m1, &mut budget)
+            } else {
+                let (f, b) = (&failing[p], &bad_x[p]);
+                if estimate(&xp[p], f, m1) <= estimate(&xp[p], b, mx) {
+                    periodic(&xp[p], f, m1, &mut budget)
+                        .and_then(|s| periodic(&s, b, mx, &mut budget))
+                } else {
+                    periodic(&xp[p], b, mx, &mut budget)
+                        .and_then(|s| periodic(&s, f, m1, &mut budget))
+                }
+            };
+            match holes {
+                Some(h) => kept[p] = cx[p].minus(&set_of(&h)),
+                None => cover = true,
+            }
+        }
+        let proj_x = kept.iter().fold(IntervalSet::empty(), |s, c| s.join(c));
+        let proj_y = (0..cy.len())
+            .filter(|&q| ypass[q])
+            .fold(IntervalSet::empty(), |s, q| s.join(&cy[q]));
+        if proj_x.is_empty() || proj_y.is_empty() {
+            return Some((Res::none(), None));
+        }
+
+        // Exactness: no pair of a kept value and a kept cell fails (step 5 on the kept box).
+        let mut exact = !cover;
+        let kept_q = (1..cy.len()).any(|q| ypass[q]);
+        let kp: Vec<Pieces> = kept.iter().map(pieces_of).collect::<Option<_>>()?;
+        if exact && xne[0] {
+            let union = normal(
+                (1..cy.len())
+                    .filter(|&q| ypass[q])
+                    .flat_map(|q| bad_y[q].iter().copied())
+                    .collect(),
+            );
+            exact = !(ypass[0] && !kept[0].meet(&unwanted).is_empty())
+                && !(kept_q && any_in(&kp[0], &union, my));
+        }
+        for p in 1..cx.len() {
+            if exact && xne[p] {
+                exact = !(ypass[0] && any_in(&kp[p], &bad_x[p], mx))
+                    && !(kept_q && any_in(&kp[p], &failing[p], m1));
+            }
+        }
+        // Pass 2, per class, over the kept cells and the classes that pass (every value of
+        // such a class is kept): a kept `p` fails with an earlier kept `q` iff an earlier `w`
+        // is in `B_p`, and a kept `q` with an earlier kept `p` iff an earlier `z` is in `C_q`.
+        // That covers every pair `0 < jy(q) < jx(p)` and `0 < jx(p) < jy(q)`.
+        if exact {
+            'classes: for u in each() {
+                let (mut wset, mut zset) = (BTreeSet::new(), BTreeSet::new());
+                let mut v = u;
+                for (j, l) in links.iter().enumerate() {
+                    v = l.value(v, modulus(l));
+                    let k = end[j];
+                    if l.on_x {
+                        if !xne[k]
+                            || !contains(&present[k], u)
+                            || fails[k].binary_search(&u).is_ok()
+                        {
+                            continue;
+                        }
+                        if hits(&wset, &bad_x[k]) {
+                            exact = false;
+                            break 'classes;
+                        }
+                        zset.insert(inv[j].at(v.rem_euclid(my), my));
+                    } else if ypass[k] {
+                        if hits(&zset, &bad_y[k]) {
+                            exact = false;
+                            break 'classes;
+                        }
+                        wset.insert(inv[j].at(v.rem_euclid(mx), mx));
+                    }
+                }
+            }
+        }
+
+        let mut out = Res::all();
+        out.exact = exact;
+        out.vars = VarSet::Many;
+        if proj_x != *dom_x {
+            out.dom.insert(x, Rc::new(proj_x));
+        }
+        if proj_y != *dom_y {
+            out.dom.insert(y, Rc::new(proj_y));
+        }
+        let relation = if exact {
+            None
+        } else {
+            Some(self.relation_within(original, &wanted)?)
+        };
+        Some((out, relation))
     }
 }
