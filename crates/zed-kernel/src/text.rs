@@ -1529,12 +1529,19 @@ mod tests {
     }
 
     /// A text of `n` pieces of [`PIECE`] characters, each joined at the end (`left`) or at the
-    /// front.
+    /// front. The five distinct pieces are built once a call and shared, so the text holds
+    /// `O(n)` nodes and five blocks (BENCH-l0139-follow-over-cap): with a block a piece, the
+    /// 2,048,000 pieces of `try_flat_of_a_join_costs_its_length` held 1.2 GB, built in two
+    /// processes, and the test took 15.0 to 18.6 s at load 37 to 49, where its runs took 2.5 s.
+    /// A compare skips a subtree shared by both sides (`compare`), so a text this builds must
+    /// be compared with one built apart, as every caller does: the pieces are not shared across
+    /// calls.
     pub(super) fn chain_text(n: usize, left: bool) -> Text {
+        let pieces: Vec<Text> = (0..5).map(|i| Text::from(piece(i))).collect();
         let mut t = Text::from("");
         for i in 0..n {
-            let p = Text::from(piece(i));
-            t = if left { join(&t, &p) } else { join(&p, &t) };
+            let p = &pieces[i % 5];
+            t = if left { join(&t, p) } else { join(p, &t) };
         }
         t
     }

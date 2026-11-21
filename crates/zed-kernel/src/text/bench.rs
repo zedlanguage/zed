@@ -95,7 +95,9 @@ fn try_flat_of_a_join_costs_its_length() {
 fn a_compare_of_two_blocks_costs_their_length() {
     // A compare of two equal blocks of n bytes reads both once: order `n`, so 8n may do 24
     // times the work of n. It allocates nothing (`a_compare_of_two_blocks_allocates_nothing`),
-    // so only the work is measured.
+    // so only the work is measured. 100 compares a run, was 300 (BENCH-l0139-follow-over-cap):
+    // 300 read 80 GB at 8n, and beside the other text benches at load 49 the test took 28.7 s
+    // against 4.8 s alone at load 12. The ratio is of instructions, the same at any count.
     let texts = crate::scaling::inputs(1 << 24, |n| {
         (Text::from("q".repeat(n)), Text::from("q".repeat(n)))
     });
@@ -105,7 +107,7 @@ fn a_compare_of_two_blocks_costs_their_length() {
         1,
         |n| {
             let (a, b) = &texts[&n];
-            for _ in 0..300 {
+            for _ in 0..100 {
                 assert_eq!(std::hint::black_box(a).cmp(b), Ordering::Equal);
             }
         },
