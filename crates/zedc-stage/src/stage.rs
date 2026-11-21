@@ -23,7 +23,8 @@ use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 
-use zed_kernel::digest::DigestMap;
+use zed_kernel::digest::{DigestMap, DigestSet};
+use zed_kernel::term::walk;
 use zed_kernel::text;
 use zed_kernel::types::{Type, defs as printed};
 use zed_kernel::{
@@ -1181,19 +1182,58 @@ enum MapNode {
 // `O(n log n)`, each made once in `made`. That table doubles when it holds 7/8 of its buckets, so
 // its rehashes cost about twice its final buckets, which lie between 8/7 and 16/7 of its entries;
 // the step from `2^20` to `2^21` buckets at 917,505 entries makes the rehashes 16 times as many
-// from 6,250 to 50,000 where the nodes are 9.37 times. Measured: coloring 10.225 times, mixing
-// 9.914, predicted 10.21 and 9.90 from the rehash cost counted with `made` made at its final size
-// (the bench's doc gives the numbers). A table made at its final size up front would remove the
-// step, but needs a bound on the nodes known before the walk, which the paragraph above says is
-// not proved for the restrictions.
+// from 6,250 to 50,000 where the nodes are 9.37 times. Measured on 8f447824e: coloring 10.212
+// times, mixing 9.911, predicted 10.21 and 9.90 from the rehash cost counted with `made` made at
+// its final size.
+//
+// Complexity tradeoff (BENCH-l01_28-rehash-step, COMPLEXITY.md row BENCH-l01_28-rehash-step):
+// naive version, `made` a standard map grown from empty: O(1) amortized per node, but the
+// rehashes, each hashing every key again by SipHash, step 8 or 16 times between n and 8n as the
+// last doubling falls. Used: (1) `made` hashed by [`Digest`](zed_kernel::digest::Digest), as
+// [`Sets`] is, its keys being numbers the mixer draws, never a program's text; a rehash then
+// costs a few multiplies per key, not a SipHash. (2) `made` made with room for the nodes the
+// unit's binders make before the walk ([`Maps::sized`]): `O(s)` for a unit of `s` nodes, read
+// once with a visited set ([`binders`]), and no rehash where the estimate holds. Not a bound: the
+// restrictions above make nodes no estimate counts, and a name pushed under each of many calls
+// makes more; then the table doubles past the room as before, a constant factor, not a loss of
+// O(n log n). Too high (lambdas left to run, never pushed), it costs memory for at most
+// `b (log2 b + 6)` buckets, the size the pushes of the `b` names would reach. Measured on
+// the bench, instructions at 6,250 and 50,000: coloring 296.3 M, 3,025.5 M (10.212) before,
+// 205.8 M, 1,872.7 M (9.102) with (1) alone, 191.6 M, 1,628.8 M (8.503) with both; mixing 344.6 M,
+// 3,414.9 M (9.911), 254.1 M, 2,262.2 M (8.903), 239.9 M, 2,018.1 M (8.411); bytes 9.14 and 9.01
+// times before, 8.61 and 8.53 with both (2026-11-20).
 struct Maps {
     nodes: Vec<MapNode>,
     sizes: Vec<u32>,
-    made: HashMap<MapNode, Map>,
+    made: DigestMap<MapNode, Map>,
     /// The restriction of each map to each set read, by the pair.
     restricted: HashMap<(Map, Set), Map>,
     /// Whether every binding of each map is build-stage.
     known: HashMap<Map, bool>,
+}
+
+/// The number of names the definitions of `unit` bind and name, each node read once: the
+/// definitions' own names and every name [`walk::kids`] gives as bound over a part. The parts
+/// wait on a heap stack, as a term nests as deep as its program; O(s) for `s` nodes.
+fn binders(unit: &Unit) -> usize {
+    let mut seen: DigestSet<u64> = DigestSet::default();
+    let mut todo: Vec<&Term> = (unit.defs.iter())
+        .filter(|d| seen.insert(d.term.id()))
+        .map(|d| &*d.term)
+        .collect();
+    let mut count = unit.defs.len();
+    while let Some(t) = todo.pop() {
+        walk::kids(t, |k, b| {
+            if let walk::Kid::Shared(s) = k
+                && !seen.insert(s.id())
+            {
+                return;
+            }
+            b.each(|_| count += 1);
+            todo.push(k.term());
+        });
+    }
+    count
 }
 
 impl Default for Maps {
@@ -1201,7 +1241,7 @@ impl Default for Maps {
         Maps {
             nodes: vec![MapNode::Empty],
             sizes: vec![0],
-            made: HashMap::from([(MapNode::Empty, NO_MAP)]),
+            made: DigestMap::from_iter([(MapNode::Empty, NO_MAP)]),
             restricted: HashMap::new(),
             known: HashMap::new(),
         }
@@ -1209,6 +1249,22 @@ impl Default for Maps {
 }
 
 impl Maps {
+    /// The maps of a mixer of `unit`, with room in `made` for the nodes its binders make:
+    /// `b (⌊log2 b⌋ + 6)` for its `b` binders ([`binders`]). The 6: `⌊log2 b⌋ + 1 >= log2 b`,
+    /// so the room is at least `b (log2 b + 5)`, the nodes per pushed name the proof above
+    /// gives and counts (`n (log2 n + 4.95)`); with `+ 5` it fell short of the count at both
+    /// sizes the bench runs (106,267 against 109,728 at 6,250), and only the table's rounding
+    /// to a power of two hid it. The room is an estimate, not a bound: a name never pushed (a
+    /// lambda left to run) or pushed again makes it too high or too low. Too low, the table
+    /// doubles past it as before; too high, it holds empty buckets, at most the `O(b log b)`
+    /// nodes the pushes of the `b` names would make.
+    fn sized(unit: &Unit) -> Self {
+        let b = binders(unit);
+        let mut maps = Maps::default();
+        maps.made.reserve(b * (b.max(1).ilog2() as usize + 6));
+        maps
+    }
+
     fn make(&mut self, n: MapNode) -> Map {
         let Maps {
             nodes, sizes, made, ..
@@ -1372,7 +1428,7 @@ impl Maps {
 /// The stage of each definition of `unit`, by source name, in order: the stage [`mix`] binds
 /// it with, that of its mixed term, under the definitions before it, each bound mixed.
 pub fn color(unit: &Unit) -> Vec<(String, Stage)> {
-    let mut m = Mixer::default();
+    let mut m = Mixer::of(unit);
     unit.defs
         .iter()
         .map(|d| (d.name.clone(), m.bind_mixed(d).1))
@@ -1481,7 +1537,7 @@ fn mix_keeping(unit: &Unit, roots: &[&str]) -> (Unit, Mixer) {
             read.insert(&d.kernel, names);
         }
     }
-    let mut m = Mixer::default();
+    let mut m = Mixer::of(unit);
     // What each definition mixed reads in the parts the build takes, by kernel name.
     let mut taken: HashMap<&str, Vec<Arc<str>>> = HashMap::new();
     let mut out = Unit {
@@ -2649,6 +2705,15 @@ struct Mixer {
 }
 
 impl Mixer {
+    /// A mixer of `unit`, its table of map nodes made with room for the nodes the unit's
+    /// binders make ([`Maps::sized`]).
+    fn of(unit: &Unit) -> Self {
+        Mixer {
+            maps: Maps::sized(unit),
+            ..Mixer::default()
+        }
+    }
+
     fn push(&mut self, name: Arc<str>, known: Option<Shared>) {
         let reads = known
             .as_ref()
