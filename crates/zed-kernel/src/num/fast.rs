@@ -2040,14 +2040,16 @@ fn reciprocal_from(x: &BigUint, k: u64, leaf: u64) -> BigUint {
 /// over the list `sizes`, `p = s_0 > s_1 > ... > s_j`, `s_(i+1) = ceil((s_i + 3) / 2)`, built
 /// while `s_i > leaf`. It ends: for `s > 3`, `ceil((s + 3) / 2) < s`, and every caller's
 /// `leaf` is at least 4 (`RECIP_LEAF` is 4 or 64·416; the benchmark hook takes `leaf.max(4)`),
-/// so the loop steps only from a size `s > leaf >= 4`, whose successor is smaller. Base, at `h = s_j`: `x =
+/// so the loop steps only from a size `s > leaf >= 4`, whose successor is smaller. Base, at
+/// `h = s_j`: `x =
 /// floor((2^2h - 1) / a_h)` for `a_h = a >> (p - h)`, the top `h` bits, so `a_h x <= 2^2h - 1 <
 /// 2^2h` and `a_h (x + 1) > 2^2h - 1`, so `a_h (x + 1) >= 2^2h`: the step's premise
 /// `a_h x < 2^2h <= a_h (x + 2)` holds, and so does the bound when `p <= leaf` and no step
 /// runs. Step, from `h = s_(i+1)` to `q = s_i`: the top `h` bits of `top = a >> (p - q)` are
 /// `a >> (p - h)`, of exactly `h` bits as `top` has `q`; `h = ceil((q + 3) / 2)` gives `2h >=
 /// q + 3`, so `l = q - h <= h - 3`: [`newton`]'s premise `l + 3 <= h` holds, and its proof
-/// gives `0 < 2^2q / top - X < 2`, that is `top X < 2^2q < top (X + 2)`. The last step has `q = p` and
+/// gives `0 < 2^2q / top - X < 2`, that is `top X < 2^2q < top (X + 2)`. The last step has
+/// `q = p` and
 /// `top = a`. So the output has `a X < 2^2p < a (X + 2)`, which is what `reciprocal_from` needs.
 /// Tested by `tests::approximate_reciprocals_keep_their_bounds` at 5 to 13 bits in full and at
 /// 15 widths up to 30,001 bits.

@@ -237,7 +237,8 @@ fn sorted_facets(facets: &[Facet]) -> Vec<Facet> {
     // is ordered by their normal forms, which can break transitivity, and a sort by an order
     // that is not transitive need not put Equal facets side by side, so a repeat may be kept
     // (a share missed), or the standard library's sort may panic on finding the order is not
-    // total (`slice::sort_by`, Rust 1.81 and later). Equal still means equal there, so no two different facets are merged.
+    // total (`slice::sort_by`, Rust 1.81 and later). Equal still means equal there, so no two
+    // different facets are merged.
     // Its sub-case (A), `==` inside `Family::shallow_diff`, is not reached here. Cost, not
     // soundness: a number kept with
     // prime powers is written in its kept form (sec:kernel, tags 13 and 14), so of two Equal

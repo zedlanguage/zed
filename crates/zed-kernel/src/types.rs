@@ -2508,7 +2508,8 @@ impl Type {
     // perhaps as an expression (`Part::Expr`), whose form depends on how it is bracketed, nothing
     // is moved. Before PROOF-union-all-expr-parts, the joined type went to the end of `rest`,
     // which changed the bracketing of the other parts.
-    // The joined literals and the joined atoms are placed the same way (PROOF-kernel-proofdoc3a-gaps
+    // The joined literals and the joined atoms are placed the same way
+    // (PROOF-kernel-proofdoc3a-gaps
     // (g)); before, both went to the end of `rest`, which changed the pairing of the morphisms of
     // the other types (the test with literal and atom types added fails so: mask 0b1000101010).
     // Literals: a literal type has the part of nothing in every part but its scalars, as the
@@ -3966,7 +3967,8 @@ impl Type {
 
     /// The number of `f64` values: the `2^64` bit patterns less the `2 (2^52 - 1)` NaNs, which
     /// [`crate::value::F64::new`] makes one value, plus that one NaN; `-0.0` and `0.0` differ.
-    /// Odd, so no float list holds exactly half. Test: `a_float_set_has_one_digest_however_it_is_made`
+    /// Odd, so no float list holds exactly half. Test:
+    /// `a_float_set_has_one_digest_however_it_is_made`
     /// counts the values among the bit patterns of `f32`'s all-ones exponent, the one case
     /// where bit patterns and values differ, by the same rule.
     const F64_VALUES: u128 = (1 << 64) - (1 << 53) + 3;
@@ -9328,7 +9330,8 @@ pub mod rec {
     /// Tests (PROOF-kernel-proofdoc3a-gaps (l)): pairing by hash, not by written order, is
     /// checked by `l01_23_groups_and_refusals::refusals::reordered_union_arms_give_equal_members`
     /// and `::codex_r3_order_seed_10489595623140704143_trial_26` (unions), and for meets only by
-    /// verdict, in `l01_23_groups_and_refusals::group_oracle::meets_whose_parts_differ_in_order_agree_across_orders`
+    /// verdict, in
+    /// `l01_23_groups_and_refusals::group_oracle::meets_whose_parts_differ_in_order_agree_across_orders`
     /// and `cycle_dup::many_meets_written_in_two_orders_are_read_as_written_once`. No test
     /// reaches a hash tie: with 64-bit hashes none occurs in practice, and the short-address
     /// build's collision tests (`l01_37a_short_addresses`) do not take this path.

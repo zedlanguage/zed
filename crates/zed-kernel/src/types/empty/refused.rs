@@ -310,7 +310,8 @@ fn meet_operands(
     // `exact_flat_diff_decide` builds a `Bes` of its own, which never reaches a `Why`. So an
     // `And` node whose origin is a meet always has its entry.
     // Tests (PROOF-kernel-proofdoc3a-gaps (l)): the `expect` below and the length assert would
-    // fail in `l01_23_subtyping::group_refusal::a_refused_member_read_through_a_meet_names_the_meet`,
+    // fail in
+    // `l01_23_subtyping::group_refusal::a_refused_member_read_through_a_meet_names_the_meet`,
     // `::a_meet_named_by_the_message_lists_its_open_operands_as_written` and
     // `::a_meet_written_inside_a_meet_is_read_as_its_operands`, all written by hand. No random
     // test asks a `refusal_site`, and none checks that the list of places above is complete:

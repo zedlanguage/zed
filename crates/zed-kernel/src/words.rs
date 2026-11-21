@@ -130,7 +130,8 @@ pub(crate) fn word(p: Prim, x: &Value) -> Result<Value, KernelError> {
                 // `l01_26_type_resolution::random::accepted_random_programs_raise_no_type_error`
                 // and `::accepted_random_programs_raise_no_type_error_with_the_fixes_off` cast
                 // random small expressions over `.5` literals and fail on this error (seed
-                // 7289870353889267556 once did); `l01_18_scalar_interpreter::casts::a_float_to_int_must_be_whole`
+                // 7289870353889267556 once did);
+                // `l01_18_scalar_interpreter::casts::a_float_to_int_must_be_whole`
                 // and `::an_int_cast_of_a_parameter_takes_no_float` pin the checker's side.
                 // Programs outside the random grammar are not checked.
                 (Prim::CastInt, _) => {

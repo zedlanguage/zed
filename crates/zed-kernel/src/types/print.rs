@@ -1659,7 +1659,8 @@ impl Printer<'_> {
         // twelfth and thirteenth rounds' coverage found the merge never made
         // (TEST-kernel-unreached-paths-7), and it is removed. No test checks the shape's
         // absence: had a list that shape, `b & c` would print unmerged and read back as the same
-        // type (inferred), so `types::print::tests::random_types_print_alike_in_every_order_of_their_atoms`,
+        // type (inferred), so
+        // `types::print::tests::random_types_print_alike_in_every_order_of_their_atoms`,
         // `l01_22_type_representation::surface::a_few_unions_differences_and_intersections_of_rows_read_back_as_the_same_type`
         // and `l01_29_repairs_and_printing::printed::every_printed_type_parses_back_to_itself`
         // would all pass; they check that what is printed is right, not that it is shortest.
@@ -1740,7 +1741,8 @@ impl Printer<'_> {
                 // both empty, and the text after it is not the text of this block. (A block's set
                 // is a `Cell::block: Arc<Set<A>>`, a treap node that holds a literal, so
                 // `set::iter` yields one at least.) Test (PROOF-kernel-proofdoc3a-gaps (l)): the
-                // assert below, run by `types::print::tests::random_types_print_alike_in_every_order_of_their_atoms`
+                // assert below, run by
+                // `types::print::tests::random_types_print_alike_in_every_order_of_their_atoms`
                 // (random lists in every order of their atoms); a list outside its draws is not
                 // checked.
                 (false, false) => next.map(|_| match (taken.is_empty(), first.len()) {

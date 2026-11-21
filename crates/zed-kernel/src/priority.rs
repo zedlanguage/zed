@@ -70,7 +70,8 @@
 //!    one index, two indices and three indices). Both endpoints strict maxima means no
 //!    competitor of `C` is above `min(x, y)`, none of `A` above `x`, none of `B` above `y`.
 //!    (i) If `|C|` is at least a third of the larger of `|S|`, `|T|`: by Markov on the sixth
-//!    moment, `Pr <= 41 / (|C| W)^3` with `W = max(w_x, w_y)`, and `E[min(1, K / W^3)] = O(1/|C|^2)`
+//!    moment, `Pr <= 41 / (|C| W)^3` with `W = max(w_x, w_y)`, and
+//!    `E[min(1, K / W^3)] = O(1/|C|^2)`
 //!    for `K = 41/|C|^3` (`W` has density `2W`; split at `W = K^(1/3)`), which is
 //!    `O(1 / (|S| |T|))`. (ii) Otherwise two blocks among `A`, `B`, `C` that are disjoint have
 //!    sizes `a`, `b` at constant fractions of `|S|` and `|T|`, with means `alpha = a w`,

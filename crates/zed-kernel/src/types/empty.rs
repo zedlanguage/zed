@@ -419,7 +419,8 @@ fn written_closure(t: &Type) -> bool {
 /// search that met another group under way keeps nothing, and a debug build stops on it
 /// (`group_emptiness`); no test reaches it. And the `CLASSES` step at `Type::is_empty`, as for
 /// every search.
-/// Tests: `l01_23_groups_and_refusals::group_oracle::is_empty_of_a_key_chain_does_not_depend_on_the_order_asked`,
+/// Tests:
+/// `l01_23_groups_and_refusals::group_oracle::is_empty_of_a_key_chain_does_not_depend_on_the_order_asked`,
 /// `l01_23_groups_and_refusals::cycle_dup::is_empty_of_closures_over_a_group_does_not_depend_on_the_order_asked`
 /// (the closure types of (4), whose own searches stopped a debug build before `HIT`), and the
 /// tests listed at `Type::is_empty`.
@@ -1166,7 +1167,8 @@ impl Type {
             // search, and `own_emptiness`, read `OWN` (`Search::met`), each entry of which is a
             // function of its member (proved at `own_emptiness`); an answer `own_emptiness` gives
             // `self` is exact, so it is what the search of `self` gives when that is not refused.
-            // This search is not `strict`, so it reads no group's verdict or shared value (`Searching::group_verdict` and
+            // This search is not `strict`, so it reads no group's verdict or shared value
+            // (`Searching::group_verdict` and
             // `Searching::shared` return `None` first for such a search), hence no `VERDICTS`,
             // `SHARED`, `DECIDING` or value of `STORES` through them. The other kept tables are
             // each a function of the type asked, by the argument at its declaration: `HEIGHTS`
@@ -7597,7 +7599,8 @@ impl<'m> Searching<'m> {
     /// for testing the truth of certain quantified boolean formulas", Inform. Process. Lett.
     /// 8(3):121-123, 1979, doi:10.1016/0020-0190(79)90002-4 (Crossref checked 2026-11-20),
     /// quoted at [`TwoSat::solve`]; the reading into clauses is Plaisted and Greenbaum's, cited
-    /// and proved at [`read_two_sat`]. Tests: `read_two_sat_agrees_with_enumeration_on_built_and_random_parts`
+    /// and proved at [`read_two_sat`]. Tests:
+    /// `read_two_sat_agrees_with_enumeration_on_built_and_random_parts`
     /// and `the_value_shown_for_a_two_cnf_holds_every_clause`.
     async fn two_sat(&'m self, g: &Region, f: &Part<Row>) -> Option<Option<Vec<Type>>> {
         // For each component cut, its variable, the piece its literal `true` stands for, and

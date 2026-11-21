@@ -2169,7 +2169,8 @@ fn cells_windows(
             // Way A (the branch above) is exact by the composition of block summaries at
             // `Blocks` (a summary with three atoms or a kill wins, else the next is appended up
             // to the cap), which needs equal class ids to mean equal summaries, as `intern` gives;
-            // not re-derived here. Tests: `types::empty::escape::windows_tests::windows_agree_with_the_walk`
+            // not re-derived here. Tests:
+            // `types::empty::escape::windows_tests::windows_agree_with_the_walk`
             // (600 random forests and chains against the naive `walk`, finite and cofinite
             // heads and places) and
             // `::a_list_sorted_for_another_modulus_is_sorted_again`; how often the lcm moduli and

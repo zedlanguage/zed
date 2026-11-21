@@ -662,7 +662,8 @@ fn delete_cascade(g: &Bes, u_set: &[u32], t_sccs: &[Vec<u32>], sc: &mut Scratch)
         // `u_set` dies only when a tuple cycle loses its last seed, below.
         // Tests (PROOF-kernel-proofdoc3a-gaps (l)): the `unreachable!` would panic in
         // `types::bes::tests::decide_agrees_with_the_game_on_systems_drawn_at_random` and its
-        // `_second_half`, and in `l01_23_groups_and_refusals::bes::a_cycle_left_without_a_seed_is_killed_by_the_cascade`,
+        // `_second_half`, and in
+        // `l01_23_groups_and_refusals::bes::a_cycle_left_without_a_seed_is_killed_by_the_cascade`,
         // `::random_rings_with_union_chords_are_decided_right` and
         // `::every_decided_answer_is_right_and_independent_of_numbering`. They sample: about
         // 52 of the 40 000 random draws reach `delete_cascade` (COMPLETENESS.md), none asserts
@@ -1147,7 +1148,8 @@ pub fn decide(raw: &Bes) -> Decision {
                 // test the killing path. If the cascade can kill a node from here, that node's
                 // answer rests on the cascade's rule (its doc: a tuple cycle dies once nothing
                 // outside feeds it), which is checked against the game only by those direct
-                // tests and `a_cascade_passes_over_the_dead_and_keeps_what_still_has_a_seed_or_a_child`.
+                // tests and
+                // `a_cascade_passes_over_the_dead_and_keeps_what_still_has_a_seed_or_a_child`.
                 None => delete_cascade(g, &u_set, &t_sccs, &mut sc),
             }
         }
