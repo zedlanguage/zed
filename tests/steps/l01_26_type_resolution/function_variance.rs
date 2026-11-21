@@ -2465,7 +2465,7 @@ fn a_reordered_function_the_generic_body_also_passes_into_a_union_slot_is_refuse
 /// of two function types is refused both ways.
 #[test]
 fn a_reordered_function_the_generic_body_passes_only_into_a_union_slot_runs() {
-    let app3 = "app3(k: ((y: int, x: int) -> int) | #none) = k(y: 2, x: 1) else 0;\n";
+    let app3 = "app3(k: ((y: int, x: int) -> int) | #none) = k(y: 2, x: 1) else #none -> 0;\n";
     let app4 = "app4(k: ((y: int, x: int) -> int) | ((y: int, x: int) -> f64)) = \
                 { r = k(y: 2, x: 1); if r is int { r } else { 0 } };\n";
     // `re2` names its parameters in the other order from the slots, `(y: int, x: int)`.
