@@ -908,7 +908,7 @@ impl Tx<'_> {
         // From the base outward.
         links.reverse();
         let mut increasing = [true; 2];
-        for axis in 0..2 {
+        for (axis, rising) in increasing.iter_mut().enumerate() {
             let cuts = || {
                 links
                     .iter()
@@ -919,7 +919,7 @@ impl Tx<'_> {
                 if !cuts().map(|cut| -cut).is_sorted() {
                     return None;
                 }
-                increasing[axis] = false;
+                *rising = false;
             }
         }
         let names = [base_name, other_name];
