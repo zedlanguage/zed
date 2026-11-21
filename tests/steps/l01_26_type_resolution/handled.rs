@@ -159,8 +159,15 @@ fn a_parameter_of_any_value_stays_a_type_variable() {
         let a = arrow(body);
         assert!(a.params[0].as_var().is_some(), "{body}: {}", a.params[0]);
     }
+    // What `else` leaves of `line` prints as the difference (DESIGN.md sec:diagnostics: "What
+    // an `else` or a failed test leaves of a value prints with the variable of that value and
+    // the type former that removes the rest"); it printed `T -> "" | T`, which holds
+    // `#ioError`, before else1x1.
     let text = "r(positional line) = line else #ioError -> \"\";\n";
-    assert_eq!(sig(text, "r"), "T -> \"\" | T");
+    assert_eq!(
+        sig(text, "r"),
+        "T -> (T \\ (#ioError | #ioError(..))) | \"\""
+    );
 }
 
 #[test]
@@ -501,7 +508,9 @@ fn a_generic_call_whose_arguments_are_atoms_only_passes_them_by() {
 fn each_row_of_the_issue_prints_as_a_type_the_user_can_write() {
     // The rows of the table in zedlanguage/zed issue 1, and the forms beside them, each `else`
     // naming its atoms (QUESTIONS A113). An atom `#a` an `else` takes is printed `#a | #a(..)`,
-    // with any payload or none; each printed signature reads back as the same type.
+    // with any payload or none; each printed signature reads back as the same type. What the
+    // tests and `else`s leave of an untyped `line` prints as a difference of its variable, `T
+    // \ (…)` (sec:diagnostics; else1x1).
     for (body, want) in [
         (
             "if line is #notFound { #absent } else { \"s\" }",
@@ -509,7 +518,7 @@ fn each_row_of_the_issue_prints_as_a_type_the_user_can_write() {
         ),
         (
             "if line is #notFound { #absent } else { line else #ioError -> \"\" else #outOfBounds -> \"\" }",
-            "T -> \"\" | T | #absent",
+            "T -> (T \\ (#ioError | #ioError(..) | #notFound | #outOfBounds | #outOfBounds(..))) | \"\" | #absent",
         ),
         (
             "if line is #notFound { #absent } else { trim(line else #ioError -> \"\" else #outOfBounds -> \"\") }",
@@ -521,7 +530,7 @@ fn each_row_of_the_issue_prints_as_a_type_the_user_can_write() {
         ),
         (
             "line else #ioError -> \"\" else #outOfBounds -> \"\"",
-            "T -> \"\" | T",
+            "T -> (T \\ (#ioError | #ioError(..) | #outOfBounds | #outOfBounds(..))) | \"\"",
         ),
         (
             "upper(line else #ioError -> \"\" else #outOfBounds -> \"\")",

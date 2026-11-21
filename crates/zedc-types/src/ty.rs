@@ -22762,6 +22762,14 @@ struct Scope {
     /// where the program wrote one ([`Around::kept`]): [`Scope::open`] prints the variable by
     /// that name unless the name is printed around it.
     kept: HashMap<Arc<str>, Arc<str>>,
+    /// For each variable that is what a failed test leaves of another (a [`Narrow`] need's
+    /// result) and prints as that other one ([`Scope::open`]), the variable it is left of and
+    /// what the test removes, innermost signature last: it prints as a difference, `T \ #a`
+    /// ([`Scope::removed`], [`Ty::write_lefts`]).
+    left: HashMap<Arc<str>, Vec<Left>>,
+    /// The variables of [`Scope::left`] each open signature added, innermost last, so that
+    /// [`Scope::close`] takes out exactly those.
+    left_opened: Vec<Vec<Arc<str>>>,
 }
 
 /// What a message knows of the type variables around a text it prints (DESIGN.md
@@ -22791,6 +22799,28 @@ enum VarSlot {
     Free(usize),
 }
 
+/// How a difference written for a leftover prints its variable ([`Ty::lefts`]): by a name, or
+/// as a mark of the second walk, by the root of its tree ([`Ty::write_vars`]). Names sort
+/// before marks, as [`Ty::write_vars`] writes them.
+#[derive(Clone, PartialEq, Eq, PartialOrd, Ord)]
+enum LeftKey {
+    Name(Arc<str>),
+    Mark(usize),
+}
+
+/// What a failed test leaves of a variable, where the leftover prints as that variable
+/// ([`Scope::left`]).
+#[derive(Clone)]
+struct Left {
+    /// The variable it is left of.
+    on: Arc<str>,
+    /// The kernel set the test removes from it, as the difference writes it; `None` where the
+    /// removed part is no kernel set (a bare `else`, which removes the loose atoms, or an `is`
+    /// test or pattern on a type that holds a variable, a function or a payload with fields),
+    /// and the leftover then prints as the variable, as before.
+    removed: Option<KType>,
+}
+
 impl Default for Scope {
     fn default() -> Scope {
         Scope {
@@ -22812,6 +22842,8 @@ impl Default for Scope {
             unions: Vec::new(),
             written: RefCell::new(HashSet::new()),
             kept: HashMap::new(),
+            left: HashMap::new(),
+            left_opened: Vec::new(),
         }
     }
 }
@@ -22877,9 +22909,10 @@ impl Scope {
     /// them with their masks, in the order of `sig.bounds`. A name not printed around the
     /// signature is kept; otherwise the next of `T`, `U`, … not yet tried that is neither
     /// printed around it nor a name of its own nor one the program binds ([`fresh_name`]).
-    /// What a failed test leaves of an unbounded variable (`r else 0`, [`Narrow`]) is printed
-    /// as that variable: it holds no value the variable does not, so `g(r) = r else 0` is
-    /// `(r: T) -> 0 | T`.
+    /// What a failed test leaves of an unbounded variable (`r else #a -> 0`, [`Narrow`]) is
+    /// printed by the name of that variable, with what the test removes, where the removed part
+    /// is a kernel set: `g(r) = r else #a -> 0` is `(r: T) -> (T \ #a) | 0` ([`Scope::left`],
+    /// [`Ty::write_lefts`]).
     ///
     /// A variable of [`Scope::kept`] is printed by the name the program wrote for it, bounded
     /// or not, when that name is neither printed around the signature nor bound by the union
@@ -22937,8 +22970,8 @@ impl Scope {
         }
         // What a failed test leaves of an unbounded own variable kept by its written name is
         // printed by that name too, as the leftover of a free one is joined to it below: with
-        // `r: T` written, `g(positional r: T) = r else 0` is `T -> 0 | T`, not `T -> _`, which
-        // would say the result takes every value. 9ff4e6673 made such a variable a
+        // `r: T` written, `g(positional r: T) = r else #a -> 0` is `T -> (T \ #a) | 0`, not `T
+        // -> _`, which would say the result takes every value. 9ff4e6673 made such a variable a
         // [`VarSlot::Name`], and the join, which reads only [`VarSlot::Free`] slots, left its
         // leftover alone, printed `_` where it stands once (found by proofdoc4c).
         let mut kept_left: Vec<(usize, Arc<str>)> = Vec::new();
@@ -23003,7 +23036,90 @@ impl Scope {
                 }
             }
         }
+        // The joins above print a leftover by the name of the variable it is left of; what the
+        // test removed is kept here, so the leftover prints as the difference (DESIGN.md
+        // sec:diagnostics, "Types in a message": "What an `else` or a failed test leaves of a
+        // value prints with the variable of that value and the type former that removes the
+        // rest: `(T \ #outOfBounds) | 0` for the result of `g(r) = r else #outOfBounds -> 0`,
+        // and `T \ int` for what `if r is int` leaves of `r` in its `else` arm, so the printed
+        // result holds exactly the values the result can hold, and reads back as the same
+        // type"; sec:type_language: "`g(positional r) = r else #outOfBounds -> 0` has the type
+        // `(r: T) -> (T \ #outOfBounds) | 0`"). Before (plan row ELSE-explicit-atoms, fixed by
+        // else1x1), the join alone printed `(r: T) -> 0 | T`, a type that holds `#outOfBounds`,
+        // which the function never gives back; the typing kept the difference all along, as a
+        // call shows (`else_difference::a_call_removes_the_named_atom_and_keeps_the_others`).
+        // Why the text means the leftover, step by step. (1) A leftover is kept only where it
+        // prints as the variable it is left of after the joins: the same tree of free variables
+        // or the same name; one printed apart (a root given two names, a variable bound outside
+        // the text) prints as a variable of its own, never as a difference of another. (2) An
+        // `else #a ->` removes `#a` with any payload or none ([`any_payload`], DESIGN.md
+        // sec:type_resolution: "`p else #a -> d` adds `#a` with any payload"), which is
+        // written `#a | #a(..)`: the type `#a` is the bare atom alone ("`#a` and `#a()` are
+        // different types", L1.40d; `KType::atom`), so `T \ #a` would hold `#a(..)`, which the
+        // result never holds, and would read back as another type. The spec's examples write
+        // `T \ #outOfBounds`; the printer writes the parameter that `else` takes the same way,
+        // `(String | #ioError | #ioError(..)) -> String` (`handled.rs`), and the rule of the
+        // same sentence, "holds exactly the values ... and reads back as the same type", is
+        // kept over the example (reported by else1x1). (3) An `is t` test
+        // removes `t`, written as its kernel set, payloads read, where it is one
+        // ([`Ty::exact_kernel`]); a bare `else`, or a `t` with a variable, a function or a
+        // payload with fields (`r else #e(code:) -> 0`), keeps the old print, the variable
+        // alone. (4) A
+        // leftover of a leftover removes both sets ([`Scope::removed`]). Cost: one pass over the
+        // needs, O(needs), as the joins.
+        let mut opened = Vec::new();
+        for need in &sig.needs {
+            let (NeedKind::Narrow(narrow), Some(left)) = (&need.kind, &need.result) else {
+                continue;
+            };
+            let (Some(on), Some(left)) = (need.on.as_var(), left.as_var()) else {
+                continue;
+            };
+            let alike = match (self.slot(on).cloned(), self.slot(left).cloned()) {
+                (Some(VarSlot::Free(a)), Some(VarSlot::Free(b))) => self.root(a) == self.root(b),
+                (Some(VarSlot::Name(a)), Some(VarSlot::Name(b))) => a == b,
+                _ => false,
+            };
+            if !alike {
+                continue;
+            }
+            let removed = match narrow {
+                Narrow::Loose => None,
+                Narrow::Atom(name) => Some(crate::kernel_type::any_payload(name)),
+                // With its payloads read: `r else #a() -> 0` removes `#a()` alone (DESIGN.md
+                // L1.40d), which [`Ty::kernel`] would print `#a(..)`.
+                Narrow::Not(t) => t.exact_kernel(),
+            };
+            let on = on.clone();
+            (self.left.entry(left.clone()).or_default()).push(Left { on, removed });
+            opened.push(left.clone());
+        }
+        self.left_opened.push(opened);
         out
+    }
+
+    /// What the tests remove from the variable `v` of [`Scope::left`] where it is left of
+    /// another, along the chain of leftovers: `(r else #a -> 0) else #b -> 1` leaves `T \ (#a
+    /// | #b)`. `None` where `v` is no such leftover, or a test of the chain removes no kernel
+    /// set ([`Left::removed`]), or nothing: it then prints as the variable.
+    // Complexity tradeoff: naive, each leftover's whole set made when its signature opens,
+    // O(n²) for a chain of n leftovers of which only the last is printed; used, the chain
+    // walked where a leftover is written, O(length of the chain), no more than the atoms its
+    // difference writes. The chain is kept in a visited set (P207), though a test's leftover is
+    // a new variable and so never on its own chain.
+    fn removed(&self, v: &Arc<str>) -> Option<KType> {
+        let mut sets = Vec::new();
+        let mut seen = HashSet::new();
+        let mut cur = v;
+        while let Some(left) = self.left.get(cur).and_then(|s| s.last()) {
+            if !seen.insert(cur) {
+                return None;
+            }
+            sets.push(left.removed.clone()?);
+            cur = &left.on;
+        }
+        let set = KType::union_all(sets);
+        (!set.is_empty()).then_some(set)
     }
 
     /// Closes the variables `sig` binds, which [`Scope::open`] opened.
@@ -23013,6 +23129,11 @@ impl Scope {
             let names = self.names.get_mut(v).expect("opened");
             if let Some(VarSlot::Name(name)) = names.pop() {
                 self.printed.remove(&name);
+            }
+        }
+        for v in self.left_opened.pop().into_iter().flatten() {
+            if let Some(s) = self.left.get_mut(&v) {
+                s.pop();
             }
         }
     }
@@ -23272,6 +23393,12 @@ impl Ty {
                 parts.push(Print::Set(t.clone(), place, apart));
             }
         };
+        // What a failed test leaves of a variable stands first, as the spec writes it, `(T \
+        // #outOfBounds) | 0` (DESIGN.md sec:diagnostics): the order of a union (`order::cmp`)
+        // lists no difference, and a difference is a set with a variable in it, as `_ \ c` is.
+        if !self.vars.is_empty() {
+            parts.push(Print::Lefts(self, at));
+        }
         if let Some(t) = &whole {
             hole(parts, t);
         }
@@ -23322,6 +23449,118 @@ impl Ty {
         }
     }
 
+    /// The differences its union writes for what failed tests leave of its variables
+    /// ([`Scope::left`]), each the printed variable and the kernel set removed, in the order
+    /// they are written, the names in code-point order and then the marks; and, for each of
+    /// its variables, whether one of them writes it. A leftover is written so where it prints
+    /// by a name, or on the second walk as a mark (it stands in two places or more); on the
+    /// first walk a free one is left to [`Ty::write_vars`], which records it as any other.
+    /// One whose variable stands in the union too is that variable, `T | (T \ #a)` being `T`,
+    /// and two of one variable are one difference of what both remove, `(T \ a) | (T \ b)`
+    /// being `T \ (a & b)`.
+    // Complexity tradeoff: naive, each leftover compared with every other variable of the
+    // union, O(v²) for v variables; used, the printed variables in ordered sets, O(v log v),
+    // with the chains of [`Scope::removed`], each no longer than the difference it writes.
+    fn lefts(&self, scope: &Scope, walk: &Walk) -> (Vec<(LeftKey, KType)>, Vec<bool>) {
+        let mut covered = vec![false; self.vars.len()];
+        if scope.left.is_empty() {
+            return (Vec::new(), covered);
+        }
+        let key = |v: &Arc<str>, left: bool| match (scope.slot(v)?, &walk.plan) {
+            (VarSlot::Name(n), _) => Some(LeftKey::Name(n.clone())),
+            (&VarSlot::Free(k), Some(plan)) if !left || plan.count[plan.root[k]] >= 2 => {
+                Some(LeftKey::Mark(plan.root[k]))
+            }
+            _ => None,
+        };
+        let mut lefts: BTreeMap<LeftKey, (KType, Vec<usize>)> = BTreeMap::new();
+        let mut whole: BTreeSet<LeftKey> = BTreeSet::new();
+        for (i, v) in self.vars.iter().enumerate() {
+            let left = scope.removed(v).and_then(|set| Some((key(v, true)?, set)));
+            match left {
+                Some((k, set)) => match lefts.entry(k) {
+                    Entry::Vacant(e) => {
+                        e.insert((set, vec![i]));
+                    }
+                    Entry::Occupied(mut e) => {
+                        let (both, at) = e.get_mut();
+                        *both = &*both & &set;
+                        at.push(i);
+                    }
+                },
+                None => {
+                    whole.extend(key(v, false));
+                }
+            }
+        }
+        let mut out = Vec::new();
+        for (k, (set, at)) in lefts {
+            if whole.contains(&k) || set.is_empty() {
+                continue;
+            }
+            for i in at {
+                covered[i] = true;
+            }
+            out.push((k, set));
+        }
+        (out, covered)
+    }
+
+    /// Writes to `out` what failed tests leave of its variables as differences ([`Ty::lefts`]),
+    /// `T \ #a`, at `at`, each set removed as a kernel set written with the others
+    /// ([`write_parts`]). A difference is a `TypeDiff` (DESIGN.md sec:grammar: `TypeUnion =
+    /// ~TypeDiff !('|' | '&') | ~TypeOr !'\\'`, `TypeDiff = TypeDiff '\\' TypeNot | TypeNot
+    /// '\\' TypeNot`): bare where a whole `Type` or an arrow's result stands and nothing else is
+    /// in its union, as a tuple's component, `(T \ int, 0)`, and parenthesized as an operand of
+    /// `|`, `(T \ #a) | 0`, or a key or a bound, which is a `TypeNot` (`Arrow = … | TypeNot
+    /// '->' Arrow`), exactly where the grammar needs the pair (author P191, DESIGN.md
+    /// sec:diagnostics). Its right operand is a `TypeNot`, so the removed set stands as an
+    /// operand of any connective ([`TextPlace::Prim`]): `T \ (#a | #b)`.
+    fn write_lefts(
+        &self,
+        at: PrintAt,
+        out: &mut String,
+        scope: &Scope,
+        walk: &mut Walk,
+        kernel: &mut Kernel,
+    ) {
+        let (lefts, covered) = self.lefts(scope, walk);
+        if lefts.is_empty() {
+            return;
+        }
+        // At a whole `Type` or a result the union has one member besides its variables at
+        // most ([`Ty::parts`] puts a union of two members at [`PrintAt::Union`] or
+        // [`PrintAt::Member`]), so only another variable or `_` may stand beside a difference.
+        let alone = matches!(at, PrintAt::Any | PrintAt::Result)
+            && lefts.len() == 1
+            && covered.iter().all(|&c| c)
+            && !self.dynamic;
+        for (k, set) in lefts {
+            walk.sep(out);
+            if !alone {
+                out.push('(');
+            }
+            match k {
+                LeftKey::Name(n) => out.push_str(&n),
+                LeftKey::Mark(r) => {
+                    // One mark alone in a union, which [`defs::name_vars`] names as the marks
+                    // of [`Ty::write_vars`].
+                    out.push(defs::UNION);
+                    out.push(defs::VAR);
+                    out.push_str(&r.to_string());
+                    out.push(defs::UNION_END);
+                }
+            }
+            out.push_str(" \\ ");
+            kernel.at.push(out.len());
+            kernel.sets.push((set, TextPlace::Prim));
+            kernel.apart.push(false);
+            if !alone {
+                out.push(')');
+            }
+        }
+    }
+
     /// Writes its type variables to `out`, those printed by name in code-point order, with
     /// `string`, the kernel set `String` or what is left of it, among them by its name (the
     /// order of a union, `order::cmp`), and keeps in `walk` what [`Ty::write_end`] needs. On
@@ -23344,8 +23583,13 @@ impl Ty {
         let mut marks = Vec::new();
         let mut blank = self.dynamic;
         let at = walk.occ.len();
-        for v in &self.vars {
+        // The variables [`Ty::write_lefts`] wrote as differences, kept in the bookkeeping below
+        // but not written again.
+        let (lefts, covered) = self.lefts(scope, walk);
+        let left_named = lefts.iter().any(|(k, _)| matches!(k, LeftKey::Name(_)));
+        for (i, v) in self.vars.iter().enumerate() {
             match (scope.slot(v), &walk.plan) {
+                (Some(VarSlot::Free(_)), Some(_)) if covered[i] => {}
                 (Some(VarSlot::Name(name)), _) => {
                     if let Some((_, _, written)) = scope.given.get(name) {
                         written.set(true);
@@ -23360,7 +23604,9 @@ impl Ty {
                     ) {
                         named.push((k, v.clone()));
                     }
-                    names.push(name);
+                    if !covered[i] {
+                        names.push(name);
+                    }
                 }
                 (Some(&VarSlot::Free(k)), None) => walk.occ.push(k),
                 (Some(&VarSlot::Free(k)), Some(plan)) => match plan.count[plan.root[k]] >= 2 {
@@ -23374,7 +23620,7 @@ impl Ty {
             .ends
             .last_mut()
             .expect("a type's variables are in the type");
-        end.named = !names.is_empty();
+        end.named = !names.is_empty() || left_named;
         end.blank = blank;
         end.occ = at..walk.occ.len();
         names.sort_unstable();
@@ -23709,6 +23955,9 @@ enum Print<'a> {
     /// The type variables of a type, with the kernel set `String` it holds, to be written
     /// among them ([`Ty::write_vars`]).
     Vars(&'a Ty, Option<(KType, TextPlace, bool)>),
+    /// What failed tests leave of the type variables of a type, written as differences, `T \
+    /// #a`, at its place ([`Ty::write_lefts`]).
+    Lefts(&'a Ty, PrintAt),
     /// The end of a type's text ([`Ty::write_end`]), whether its union holds members other
     /// than type variables, and whether it is a key or a bound whose `)` comes after the
     /// bounds clause [`Print::Closes`] writes.
@@ -24225,6 +24474,7 @@ fn walk_parts<'a>(
             }
             Print::Family(s) => s.family_parts(scope, &mut stack),
             Print::Vars(t, string) => t.write_vars(string, out, scope, walk, &mut kernel),
+            Print::Lefts(t, at) => t.write_lefts(at, out, scope, walk, &mut kernel),
             Print::End(t, others, inside) => {
                 if let Some(at) = t.write_end(others, inside, out, scope, walk) {
                     kernel.opens.push(at);

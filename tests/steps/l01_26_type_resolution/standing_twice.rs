@@ -51,8 +51,9 @@ fn a_variable_whose_other_place_is_a_union_printed_blank_prints_as_its_bound() {
 
 /// What the failed test `r is #a` leaves of `r` prints with the variable of `r` (DESIGN.md
 /// sec:diagnostics: "What an `else` or a failed test leaves of a value prints with the
-/// variable of that value"), so the two stand in two places and print `T`, though what is
-/// left is passed at `f`.
+/// variable of that value and the type former that removes the rest"), so the two stand in two
+/// places and print `T`, though what is left is passed at `f`; the leftover in the result
+/// prints `T \ #a` (else1x1).
 #[test]
 fn what_a_failed_test_leaves_prints_with_the_variable_of_the_value() {
     let src = format!(
@@ -60,7 +61,7 @@ fn what_a_failed_test_leaves_prints_with_the_variable_of_the_value() {
     );
     let out = report(&src);
     assert!(
-        out.contains("the type the checker found for `k` is `(r: T) -> (0, 0) | (int, T)`"),
+        out.contains("the type the checker found for `k` is `(r: T) -> (0, 0) | (int, T \\ #a)`"),
         "{src}\n{out}"
     );
 }

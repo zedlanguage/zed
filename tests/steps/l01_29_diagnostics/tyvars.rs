@@ -118,9 +118,10 @@ fn several_variables_each_print_by_name_where_they_stand_twice_and_the_bounded_o
     );
     writes_back(&s.to_string());
     // A union with a variable prints it by name beside the rest: `0 | _` would be `_`, and
-    // lose the `0`. The `T` of the result is `r` without the atoms `else` removes.
+    // lose the `0`. The `T \ …` of the result is `r` without the atoms `else` removes, printed
+    // as the difference (DESIGN.md sec:diagnostics; else1x1).
     let s = sig("g(r) = r else #a -> 0;\n", "g");
-    assert_eq!(s.to_string(), "(r: T) -> 0 | T");
+    assert_eq!(s.to_string(), "(r: T) -> (T \\ (#a | #a(..))) | 0");
     writes_back(&s.to_string());
 }
 

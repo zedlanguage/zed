@@ -13,6 +13,7 @@ mod deep_scaling;
 mod deep_types;
 mod divisors;
 mod docs;
+mod else_difference;
 mod exact_casts;
 mod fits;
 mod function_variance;

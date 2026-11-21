@@ -16475,6 +16475,8 @@ struct Reading {
     free: BTreeSet<Arc<str>>,
     /// Whether the place is in its parameters.
     params: bool,
+    /// The needs of the differences `T \ s` read of its free variables ([`Denote::left_of`]).
+    needs: Vec<Need>,
 }
 
 /// A step of [`Denote::ty`], on the stack it keeps: a written type nests as deep as the program,
@@ -16717,6 +16719,9 @@ impl<'a> Denote<'a> {
             TypeKind::Diff(..) => {
                 let b = vals.pop().expect("a difference's operands are denoted");
                 let a = vals.pop().expect("a difference's operands are denoted");
+                if let Some(left) = self.left_of(&a, &b, t.span) {
+                    return left;
+                }
                 let (d, exact) = a.diff_exact(&b);
                 if !exact {
                     self.inexact.push((t.span, format_type(t)));
@@ -16827,7 +16832,49 @@ impl<'a> Denote<'a> {
         sig.own.extend(open.free);
         sig.bounds = open.bounds;
         sig.held = open.held;
+        sig.needs = open.needs;
         Ty::func(Arc::new(sig))
+    }
+
+    /// The value of the difference `a \ b` read from a printed type, where `a` is a free variable
+    /// of the text and `b` a kernel set: a new variable of the outermost function type, the home
+    /// of `a`, with the need that it is what the test `is b` leaves of `a` where it fails. `None`
+    /// for any other difference, which [`Ty::diff_exact`] makes.
+    ///
+    /// Why. The checker prints what an `else` or a failed test leaves of a value of a variable
+    /// as that difference (DESIGN.md sec:diagnostics: "What an `else` or a failed test leaves
+    /// of a value prints with the variable of that value and the type former that removes the
+    /// rest: `(T \ #outOfBounds) | 0` ... so the printed result holds exactly the values the
+    /// result can hold, and reads back as the same type"). It holds the leftover as a variable
+    /// of its own with a need `Narrow` on the variable it is left of (zedc-check's `narrowed`
+    /// in `walk.rs`), since `Ty` has no form for part of a variable: `diff_exact` keeps the
+    /// variable whole and says so, so the text would read back as `0 | T`. The need made here
+    /// is the one a failed `is b` makes, `Narrow::Not(b)`, which the printer writes as `T \ b`
+    /// (`Scope::open` in zedc-types), so the type reads back as one that prints as the same
+    /// text (`tyvars::a_printed_type_with_names_reads_back_as_itself`). A written type in a
+    /// program never reaches here: only the reader of printed types names free variables
+    /// (`denoted_free`), and a program's types are denoted with none.
+    ///
+    /// The new variable's name, `T\k` for the k-th difference read, has a `\`, so it is no name
+    /// a text writes and no two differences share one. O(1) besides `exact_kernel`.
+    fn left_of(&mut self, a: &Ty, b: &Ty, span: Span) -> Option<Ty> {
+        let on = a.as_var()?;
+        let removed = b.exact_kernel()?;
+        if !self.free.contains(on) {
+            return None;
+        }
+        let home = self.open.first_mut()?;
+        let left: Arc<str> = format!("{on}\\{}", home.needs.len()).into();
+        home.free.insert(left.clone());
+        home.needs.push(Need {
+            on: a.clone(),
+            kind: NeedKind::Narrow(Narrow::Not(Ty::set(removed))),
+            result: Some(Ty::var(left.clone())),
+            span,
+            alike: Arc::from([]),
+            via: CallPath::default(),
+        });
+        Some(Ty::var(left))
     }
 }
 

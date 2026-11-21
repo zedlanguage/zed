@@ -342,17 +342,21 @@ fn a_written_name_a_function_around_binds_is_printed_apart() {
 
 #[test]
 fn what_else_leaves_of_a_written_variable_prints_by_its_written_name() {
-    // `r else 0` leaves `r` without its atoms, which is printed as `r`'s own variable
-    // (`Scope::open` joins the two by the `Narrow` need): `T -> 0 | T` with no variable
-    // written. With `T` written, the variable is kept, and its leftover must still print `T`,
-    // not `_`, which says the result takes every value (found by proofdoc4c, checking
-    // `Sig::standing_twice` against 9ff4e6673). A `T` written once is refused, so the
-    // written form writes it for two parameters.
+    // `r else #a -> 0` leaves `r` without `#a`, which is printed with `r`'s own variable
+    // (`Scope::open` joins the two by the `Narrow` need) and the difference (DESIGN.md
+    // sec:diagnostics; else1x1): `T -> (T \ (#a | #a(..))) | 0` with no variable written. With
+    // `T` written, the variable is kept, and its leftover must still print `T`, not `_`, which
+    // says the result takes every value (found by proofdoc4c, checking `Sig::standing_twice`
+    // against 9ff4e6673). A `T` written once is refused, so the written form writes it for two
+    // parameters.
     for (src, shown) in [
-        ("g(positional r) = r else #a -> 0;\n", "0 -> T -> 0 | T"),
+        (
+            "g(positional r) = r else #a -> 0;\n",
+            "0 -> T -> (T \\ (#a | #a(..))) | 0",
+        ),
         (
             "g(positional r: T, positional s: T) = (r else #a -> 0, s);\n",
-            "0 -> (T, T) -> (0 | T, T)",
+            "0 -> (T, T) -> ((T \\ (#a | #a(..))) | 0, T)",
         ),
     ] {
         let out = rejected(&format!("{src}main(m: MainArgs) {{ m.stdout <- [g]; }}\n"));
