@@ -5,9 +5,9 @@
 # It takes the files the branch changes since its merge base with <rev> (origin/main by default;
 # fetch first), both paths of a rename, and
 #  0. when tools/merge_check.sh, tools/test_merge_check.sh, tools/run_tests.sh or
-#     tools/spec_groups.sh changed: runs both
-#     parts of tools/test_merge_check.sh, select and record, at once, each under the limit of a
-#     piece of tools/run_tests.sh (max(20, 20 × load / cores) s), and fails if either fails
+#     tools/spec_groups.sh changed: runs the four
+#     parts of tools/test_merge_check.sh, select, select2, record and chunks, at once, each under the limit of a
+#     piece of tools/run_tests.sh (max(20, 20 × load / cores) s), and fails if one fails
 #     (MERGE-tools-self-tests). They test this script on a toy workspace, about 12 s each;
 #     tools/run_tests.sh is in the list because this script's cases depend on its --only and
 #     --trace, which the toy's stub imitates. Their result is not recorded: they run on every
@@ -119,7 +119,11 @@
 #     #[path] through inline modules in a linked package is not followed by the attribute check.
 #     The pieces run after the local groups, in a call of their own,
 #     tools/run_tests.sh --full --only, and are recorded and mapped (2a, 3) as the local groups
-#     are; the messages name them apart, as tests/full pieces;
+#     are; the messages name them apart, as tests/full pieces. Each of the two is listed in one
+#     call (--list, which builds) and run in chunks of related pieces of up to 30 s by the
+#     times of earlier checks, each chunk a call of its own with jobs 1, `jobs` chunks at once;
+#     a failed piece prints as it ends, the result is the sum of the chunks, and the check fails
+#     unless the chunks ran exactly the listed pieces (step 2b at the code);
 #  2a. with --reads <dir>: adds every group whose pieces read at run time a path the branch's
 #     change can affect, by the rule of "The record" below, from the map <dir>/<group>.reads (a
 #     line `commit <sha>`, the commit it was traced at, then the paths the group's pieces named),
@@ -773,7 +777,7 @@ s=$(part_of local "$snew")
 echo "merge check: groups:${s:+ $(paste -sd' ' <<<"$s")}"
 s=$(part_of full "$snew")
 [ -z "$s" ] || echo "merge check: tests/full pieces: $(paste -sd' ' <<<"$s")"
-[ -z "$selftest" ] || echo "merge check: a file tools/test_merge_check.sh tests changed: both its parts run"
+[ -z "$selftest" ] || echo "merge check: a file tools/test_merge_check.sh tests changed: all its parts run"
 [ -z "$rtself" ] || echo "merge check: a file tools/test_run_tests.sh tests changed: all its parts run"
 
 # The record (see the header): `<commit>`, then `spec <commit>` when the spec checkout's commit
@@ -963,24 +967,25 @@ rt_wait() {
 if [ -n "$selftest" ] && [ -z "$list" ]; then
   slog=$(git rev-parse --path-format=absolute --git-path merge-check-self)
   piece_limit
-  timeout -k 5 "$limit" tools/test_merge_check.sh select >"$slog-select.log" 2>&1 &
-  p1=$!
-  timeout -k 5 "$limit" tools/test_merge_check.sh record >"$slog-record.log" 2>&1 &
-  p2=$!
-  wait $p1
-  r1=$?
-  wait $p2
-  r2=$?
-  for part in select record; do
-    [ "$part" = select ] && rc=$r1 || rc=$r2
+  sparts=(select select2 record chunks) spids=()
+  for part in "${sparts[@]}"; do
+    timeout -k 5 "$limit" tools/test_merge_check.sh "$part" >"$slog-$part.log" 2>&1 &
+    spids+=($!)
+  done
+  sbad=
+  for part in "${sparts[@]}"; do
+    wait "${spids[0]}"
+    rc=$?
+    spids=("${spids[@]:1}")
     if [ "$rc" -ne 0 ]; then
       cat "$slog-$part.log"
       echo "merge check: FAILED: tools/test_merge_check.sh $part, rc=$rc (limit ${limit}s; log $slog-$part.log)" >&2
+      sbad=1
     fi
   done
   # On a failure here step 0b is still waited for, so no part outlives the check.
-  [ "$r1" -eq 0 ] && [ "$r2" -eq 0 ] || { rt_wait; exit 1; }
-  echo "merge check: tools/test_merge_check.sh select and record passed"
+  [ -z "$sbad" ] || { rt_wait; exit 1; }
+  echo "merge check: tools/test_merge_check.sh select, select2, record and chunks passed"
 fi
 rt_wait
 
@@ -997,23 +1002,229 @@ if [ -n "$snew" ] && [ -z "$torun" ]; then
   write_record
   exit 0
 fi
-# The local groups run first, then the pieces of tests/full in a call with --full, each call with
-# a trace directory of its own; the record is written once both passed.
+# Step 2b, the tests in chunks (MERGE-full-run-split; author: "Split the 129 test pieces into
+# separate tests (try to find sensible groupings of related tests, and chunk them up)"). Until
+# then each kind was one call of tools/run_tests.sh over every selected group, a run of 2,880
+# pieces and 15 to 29 minutes on a change to the runner (spec7, 2026-11-20); tools7 wrapped one
+# in `timeout 590`, which killed it with no verdict. Now one call lists the pieces (--list, which
+# builds them), they are cut into chunks of related pieces, each chunk is a call of its own with
+# jobs 1, and up to `jobs` chunks run at once, so as many pieces run at once as before.
+#  - Related: the chunks follow the order of the list, which is the order of the table of
+#    tools/run_tests.sh, by test binary and step folder, so a chunk holds whole groups or a
+#    run of one group's pieces.
+#  - Size: a chunk is closed before the estimate of its pieces' times passes chunk_ms (30 s,
+#    half the 60 s a run may take, for the load to vary under). A piece's estimate is its time
+#    in the last check that ran it, from <git common dir>/merge-check-times, shared by every
+#    worktree; unknown_ms (1 s) for a piece never timed, above the mean of 0.7 s and the median
+#    of 0.2 s of the 2,883 pieces of spec7's check (2026-11-20, load 51 to 99). A piece longer
+#    than chunk_ms is a chunk alone. A chunk that took over 60 s is named in the output; the
+#    times it records size the next check's chunks.
+#  - Exactly the same pieces: a chunk's call names in --only the terms of the merge check's own
+#    selection (its groups) that select any of its pieces, and in --except, one per group, the
+#    other pieces those terms select. --except removes a piece by its exact name, and with it
+#    a whole group can be cut at any piece: a piece named after its group (a step folder's rest,
+#    a library's tests, zed_kernel-<hash>) cannot be selected alone by --only, whose terms take
+#    the group whole. Each call's own selection is that of the list call, from the same built
+#    binaries, so the union of the chunks is the list. Checked on every run: the pieces in the
+#    chunks' summaries must be the listed pieces, each once, or the check fails.
+#  - Failures print as they happen, a line per failed piece when its run ends, then each failed
+#    chunk's account of its failures once all chunks ended. A chunk without its line `pieces:
+#    <n>, failed: <f>` (stopped before its pieces ran, or killed) counts as failed. The result is
+#    the sum of the chunks.
+# Cost: each chunk repeats a call's own work before its first piece (cargo metadata, a build of
+# its binaries that finds nothing to do, the check of changed docs, the run's copy of the build),
+# 1.7 s at load 60 (MERGE-full-run-split, 2026-11-20: a call of one built group, 2.6 s in all for
+# a piece of 0.9 s). The 2,040 s of spec7's pieces make about 70 chunks of 30 s, so about 120 s
+# of such work, 20 s of wall time at 6 chunks at once, against the 15 to 29 minutes of the run.
+# A smaller chunk_ms costs more such work; a larger one leaves less of the 60 s for the load.
+# A chunk that ends early, by a failure or a kill, ends only that chunk.
+chunk_ms=30000 unknown_ms=1000
+times_file=$(git rev-parse --path-format=absolute --git-common-dir)/merge-check-times
+# The log directory of the run of tools/run_tests.sh whose process was $1: <base>/<UTC time>-<pid>,
+# the newest if an older run had the same process number.
+run_dir() { ls -d build/test-logs/*-"$1" 2>/dev/null | tail -n 1; }
+# run_chunk <k>: runs chunk k of $cdir with jobs 1, writes its log to $cdir/<k>.log and its result
+# to $cdir/<k>.result (`<rc> <ms> <log directory>`), and prints each failed piece's line as it ends.
+run_chunk() {
+  local k=$1 args g names pid rc start
+  args=(--skip-other-kind --only "^($(paste -sd'|' "$cdir/$k.terms"))\$")
+  while read -r g names; do args+=(--except "^($names)\$"); done <"$cdir/$k.except"
+  [ -z "$tbase" ] || args+=(--trace "$tbase/$k")
+  : >"$cdir/$k.log"
+  start=$(date +%s%N)
+  tools/run_tests.sh $fullarg "${args[@]}" 1 >>"$cdir/$k.log" 2>&1 &
+  pid=$!
+  # tail checks that $pid lives once per sleep interval, 1 s by default, so each chunk ended up
+  # to 1 s late (the toy cases of tools/test_merge_check.sh, a check of several chunks each, took
+  # 15 to 18 s longer); at 0.1 s it wakes 10 times a second per running chunk, a cost not seen.
+  tail -s 0.1 -n +1 --pid="$pid" -f "$cdir/$k.log" |
+    awk -v k="$k" -v n="$nchunks" '$2 ~ /^rc=/ && $2 != "rc=0" { print "merge check: chunk " k " of " n ": failed: " $0; fflush() }'
+  wait "$pid"
+  rc=$?
+  echo "$rc $((($(date +%s%N) - start) / 1000000)) $(run_dir "$pid")" >"$cdir/$k.result"
+}
+export -f run_chunk run_dir
+# run_chunks <terms>: lists the pieces that --only '^(<terms>)$' selects (the terms one per line),
+# runs them in chunks and fails if a chunk failed or the chunks did not run exactly the listed
+# pieces, each once. Uses $fullarg (--full or nothing) and adds each chunk's trace directory to
+# tdirs.
+run_chunks() {
+  local terms=$1 pid rc ldir k n ms dir over sum_p=0 sum_f=0 bad= start
+  cdir=$(git rev-parse --path-format=absolute --git-path "merge-check-chunks${fullarg:+-full}")
+  tbase=
+  [ -z "$record" ] || tbase=$(git rev-parse --path-format=absolute --git-path "merge-check-trace${fullarg:+-full}")
+  mkdir -p "$cdir" || return 1
+  start=$(date +%s%N)
+  # --skip-other-kind: a test target with benchmarks alone (deep_scaling, zedc_binary) is named,
+  # since its package's test targets are, and has no piece to run here. The list builds the
+  # binaries the chunks run.
+  tools/run_tests.sh $fullarg --skip-other-kind --list --only "^($(paste -sd'|' <<<"$terms"))\$" "$jobs" >"$cdir/list.log" 2>&1 &
+  pid=$!
+  wait "$pid"
+  rc=$?
+  ldir=$(run_dir "$pid")
+  if [ "$rc" -ne 0 ]; then
+    cat "$cdir/list.log"
+    return 1
+  fi
+  # The chosen pieces, `<group> <step> <name>` each (select_pieces of tools/run_tests.sh writes
+  # them): none when every term names a group of the other kind alone, which the list notes.
+  if [ -z "$ldir" ] || [ ! -s "$ldir/chosen" ]; then
+    cat "$cdir/list.log"
+    return 0
+  fi
+  cp "$ldir/chosen" "$cdir/chosen" || return 1
+  # The chunks, written as $cdir/<k>.terms (the terms for --only), <k>.except (`<group>
+  # <name>|<name>...`, one --except a line) and <k>.pieces, and $cdir/order, the chunks by
+  # estimate, longest first, so that the longest do not start last. One pass over the times and
+  # the pieces; then each chunk reads the pieces of the terms it names, so a group cut into c
+  # chunks is read c times: O(pieces × the most chunks of one group), 543 pieces times 4 for
+  # l01_26_type_resolution in spec7's check. Matching every chunk against every piece would be
+  # O(pieces × chunks), 2,880 × 70.
+  nchunks=$(awk -v cdir="$cdir" -v chunk="$chunk_ms" -v unknown="$unknown_ms" '
+    FILENAME == ARGV[1] { if (NF == 2 && $2 ~ /^[0-9]+$/) ms[$1] = $2; next }
+    FILENAME == ARGV[2] { want[$1] = 1; next }
+    !($3 in seen) {
+      seen[$3] = 1; p = ++np; name[p] = $3; grp[p] = $1
+      # The terms that select the piece: run_tests.sh selects it by its group, step or name.
+      ts = ""
+      if ($1 in want) ts = $1
+      if ($2 != $1 && ($2 in want)) ts = ts " " $2
+      if ($3 != $1 && $3 != $2 && ($3 in want)) ts = ts " " $3
+      if (ts == "") { print "merge check: the listed piece " $3 " is selected by no term" > "/dev/stderr"; exit 1 }
+      e = ($3 in ms) ? ms[$3] : unknown
+      if (k == 0 || est[k] + e > chunk) k++
+      chunk_of[p] = k; est[k] += e
+      nt = split(ts, t, " ")
+      for (i = 1; i <= nt; i++) {
+        by[t[i]] = by[t[i]] " " p
+        if (!((k, t[i]) in has)) { has[k, t[i]] = 1; terms[k] = terms[k] t[i] "\n" }
+      }
+      pieces[k] = pieces[k] $3 "\n"
+    }
+    END {
+      for (c = 1; c <= k; c++) {
+        f = cdir "/" c ".terms"; printf "%s", terms[c] > f; close(f)
+        f = cdir "/" c ".pieces"; printf "%s", pieces[c] > f; close(f)
+        f = cdir "/" c ".except"; printf "" > f
+        nt = split(terms[c], t, "\n"); delete out; delete ex; ng = 0
+        for (i = 1; i < nt; i++) {
+          m = split(by[t[i]], q, " ")
+          for (j = 1; j <= m; j++) {
+            p = q[j]
+            if (chunk_of[p] == c || (p in out)) continue
+            out[p] = 1
+            if (!(grp[p] in ex)) { gs[++ng] = grp[p]; ex[grp[p]] = name[p] }
+            else ex[grp[p]] = ex[grp[p]] "|" name[p]
+          }
+        }
+        for (i = 1; i <= ng; i++) print gs[i], ex[gs[i]] > f
+        close(f)
+        print est[c], c > (cdir "/order.unsorted")
+      }
+      close(cdir "/order.unsorted")
+      print k
+    }' <(cat "$times_file" 2>/dev/null) <(printf '%s\n' "$terms") "$cdir/chosen") || return 1
+  sort -k 1,1nr -k 2,2n "$cdir/order.unsorted" | cut -d ' ' -f 2 >"$cdir/order"
+  echo "merge check: $(wc -l <"$cdir/chosen") pieces in $nchunks chunks of up to $((chunk_ms / 1000)) s by the times of earlier checks, $jobs at once"
+  for k in $(seq 1 "$nchunks"); do : >"$cdir/$k.result"; done
+  export cdir tbase fullarg nchunks
+  xargs -P "$jobs" -I '{}' bash -c 'run_chunk "$1"' _ '{}' <"$cdir/order"
+  # The sum of the chunks and the pieces they ran.
+  : >"$cdir/ran"
+  : >"$cdir/summaries"
+  for k in $(seq 1 "$nchunks"); do
+    rc= ms= dir=
+    read -r rc ms dir <"$cdir/$k.result"
+    n=
+    if [ -n "$dir" ]; then
+      n=$(command grep -a -o -E '^pieces: [0-9]+, failed: [0-9]+' "$cdir/$k.log" | tail -n 1)
+    fi
+    over=
+    [ "${ms:-0}" -le 60000 ] || over=", over 60 s"
+    echo "merge check: chunk $k of $nchunks: ${n:-no result} in $((${ms:-0} / 1000)) s$over"
+    if [ -n "$n" ]; then
+      [ ! -f "$dir/summary" ] || awk '$2 ~ /^rc=/ { print $1 }' "$dir/summary" >>"$cdir/ran"
+      [ ! -f "$dir/summary" ] || echo "$dir/summary" >>"$cdir/summaries"
+      n=${n#pieces: } sum_p=$((sum_p + ${n%%,*})) n=${n#*failed: } sum_f=$((sum_f + ${n%%,*}))
+    fi
+    [ "${rc:-1}" = 0 ] && [ -n "$n" ] || bad="$bad $k"
+    # The trace of the chunk's call names the pieces its --except took out too (select_pieces
+    # writes it before --except); kept are the chunk's own, so that the record reads no file an
+    # earlier check left in this directory for a piece the chunk did not run.
+    if [ -n "$tbase" ] && [ -f "$tbase/$k/groups" ]; then
+      n=$(awk 'NR == FNR { p[$1] = 1; next } $1 in p' "$cdir/$k.pieces" "$tbase/$k/groups")
+      printf '%s' "${n:+$n$'\n'}" >"$tbase/$k/groups"
+      tdirs+=("$tbase/$k")
+    fi
+  done
+  # The times for the next check: the old ones, with each piece just run at its new time. Written
+  # in place, not moved over the old file (no script here moves a file over another by a path
+  # built from variables): a check that reads it during the write sees part of it and takes
+  # unknown_ms for the rest, which only sizes its chunks worse; of two checks that write at once
+  # one's times are kept, and the next check of those pieces writes them again.
+  n=$(awk 'FILENAME == ARGV[1] { if (NF == 2 && $2 ~ /^[0-9]+$/) t[$1] = $2; next }
+    $2 ~ /^rc=/ && $3 ~ /^[0-9]+ms$/ { t[$1] = $3 + 0 }
+    END { for (p in t) print p, t[p] }' <(cat "$times_file" 2>/dev/null) $(cat "$cdir/summaries") | sort)
+  [ -z "$n" ] || printf '%s\n' "$n" >"$times_file"
+  for k in $bad; do
+    echo "---- failed chunk $k of $nchunks (its log: $cdir/$k.log) ----"
+    if command grep -a -q -e '^---- failed piece ' "$cdir/$k.log"; then
+      sed -n '/^---- failed piece /,$p' "$cdir/$k.log"
+    else
+      tail -n 40 "$cdir/$k.log"
+    fi
+  done
+  # The chunks must have run the listed pieces, each once: a piece run twice or not at all means
+  # the --only and --except of the chunks did not cut the list as computed.
+  n=$(sort "$cdir/ran" | uniq -d)
+  [ -z "$n" ] || { echo "merge check: run by more than one chunk:"; echo "$n"; bad="$bad set"; }
+  if [ -z "$bad" ]; then
+    n=$(comm -3 <(awk '{ print $3 }' "$cdir/chosen" | sort -u) <(sort -u "$cdir/ran"))
+    [ -z "$n" ] || {
+      echo "merge check: the chunks did not run the listed pieces (left: listed, not run; right: run, not listed):"
+      echo "$n"
+      bad="$bad set"
+    }
+  fi
+  echo "merge check: pieces: $sum_p, failed: $sum_f, in $nchunks chunks, $((($(date +%s%N) - start) / 1000000000)) s"
+  [ -z "$bad" ]
+}
+# The local groups run first, then the pieces of tests/full with --full; the record is written
+# once both passed. A merge check with --list makes one call of each kind, which lists alone.
 tdirs=()
 for kind in local full; do
   run=$(part_of "$kind" "$torun")
   [ -n "$run" ] || continue
-  trace=() full=()
-  [ "$kind" = full ] && run=$(sed 's/^/full-/' <<<"$run") && full=(--full)
-  if [ -n "$record" ]; then
-    tdir=$(git rev-parse --path-format=absolute --git-path "merge-check-trace${full:+-full}")
-    trace=(--trace "$tdir")
-    tdirs+=("$tdir")
+  fullarg=
+  [ "$kind" = full ] && run=$(sed 's/^/full-/' <<<"$run") && fullarg=--full
+  what=$([ "$kind" = full ] && echo tests/full || echo tests)
+  if [ -n "$list" ]; then
+    tools/run_tests.sh $fullarg --skip-other-kind --only "^($(paste -sd'|' <<<"$run"))\$" --list "$jobs" ||
+      { echo "merge check: FAILED: $what (above)" >&2; exit 1; }
+    continue
   fi
-  # --skip-other-kind: a test target with benchmarks alone (deep_scaling, zedc_binary) is
-  # named, since its package's test targets are, and has no piece to run here.
-  tools/run_tests.sh "${full[@]}" --skip-other-kind --only "^($(paste -sd'|' <<<"$run"))\$" "${trace[@]}" $list "$jobs" ||
-    { echo "merge check: FAILED: $([ "$kind" = full ] && echo tests/full || echo tests) (above)" >&2; exit 1; }
+  run_chunks "$run" || { echo "merge check: FAILED: $what (above)" >&2; exit 1; }
 done
 # The groups whose pieces read a file of the spec checkout must be those tools/spec_groups.sh
 # names (step 3 above). One pass over the trace's files; spec_groups.sh runs only when a group

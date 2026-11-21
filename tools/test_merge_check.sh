@@ -4,9 +4,10 @@
 # file again and commits exactly the files of the list toy_files as the new base, and each case
 # commits only the file it changes, so a file an earlier run left behind is in no commit; see the
 # comment at toy_files). Run from a checkout's root, through zrun
-# (`/home/luke/Work/wt/zrun tools/test_merge_check.sh [select | record]`). With an argument it runs
+# (`/home/luke/Work/wt/zrun tools/test_merge_check.sh [select | select2 | record | chunks]`). With an argument it runs
 # that part of the cases alone, in a workspace of its own (build/test-merge-check-<part>), so the
-# two parts can run at once: run so, each took 11 to 12 s at load 74; the whole, 17 s at load 70.
+# parts can run at once, and with no argument all four do: run so, select, select2, record and
+# chunks took 11, 9, 15 and 4 s at load 52 (2026-11-20).
 # The workspace is the real one
 # in small: crates a, b (depends on a) and c; a package t in tests/ that depends on b, whose lib
 # file tests/src/seed.rs crate a also compiles by #[path] (as tests/src/seed.rs is compiled into
@@ -31,9 +32,28 @@ check_script=${MERGE_CHECK:-$(pwd)/tools/merge_check.sh}
 spec_groups=$(pwd)/tools/spec_groups.sh
 part=$1
 case $part in
-  '' | select | record) ;;
-  *) echo "usage: tools/test_merge_check.sh [select | record]" >&2; exit 2 ;;
+  '' | select | select2 | record | chunks) ;;
+  *) echo "usage: tools/test_merge_check.sh [select | select2 | record | chunks]" >&2; exit 2 ;;
 esac
+# With no argument the four parts run at once, each as `tools/test_merge_check.sh <part>` in its
+# own workspace as step 0 of tools/merge_check.sh runs them; one after another they took 58 to over
+# 60 s at load 50 to 77 (2026-11-20), past the 60 s a test run may take. Their output prints part
+# by part, and the run passes when all four pass.
+if [ -z "$part" ]; then
+  parts=(select select2 record chunks) pids=() bad=0
+  mkdir -p build
+  for p in "${parts[@]}"; do
+    "$0" "$p" >"build/test-merge-check-$p.log" 2>&1 &
+    pids+=($!)
+  done
+  for i in "${!parts[@]}"; do
+    wait "${pids[$i]}" || bad=$((bad + 1))
+    echo "== part ${parts[$i]} (log build/test-merge-check-${parts[$i]}.log)"
+    cat "build/test-merge-check-${parts[$i]}.log"
+  done
+  echo "test_merge_check: $bad of ${#parts[@]} parts failed"
+  exit $((bad > 0))
+fi
 ws=$(pwd)/build/test-merge-check${part:+-$part}
 mkdir -p "$ws/crates/a/src" "$ws/crates/b/src/m" "$ws/crates/c/src/m" "$ws/crates/c/data" \
   "$ws/crates/tool/src" "$ws/crates/rootuse/src" "$ws/crates/lnk/src" "$ws/crates/feat/src" "$ws/tests/src" "$ws/tests/steps/x" "$ws/tests/steps/y" "$ws/tests/steps/f" "$ws/tests/full" "$ws/tools" "$ws/docs"
@@ -55,7 +75,7 @@ git -C "$ws" config user.name test
 git -C "$ws" config user.email test@localhost
 pushd "$ws" >/dev/null || exit 1
 # Cargo.lock is not tracked: cargo tree (step 0a) writes it.
-printf '/target\n/Cargo.lock\n' >.gitignore
+printf '/target\n/Cargo.lock\n/build\n' >.gitignore
 printf '[workspace]\nresolver = "3"\nmembers = ["crates/*", "tests"]\n' >Cargo.toml
 pkg() { printf '[package]\nname = "%s"\nversion = "0.0.0"\nedition = "2024"\n%s' "$1" "$2"; }
 pkg a '' >crates/a/Cargo.toml
@@ -118,8 +138,18 @@ echo '# Notes' >docs/notes.md
 echo '# Plan' >docs/plan.md
 mkdir -p data
 echo 'notes' >data/notes.txt
-# With --trace <dir>, the stub writes for each group g of the --only pattern a piece p-g into
-# <dir>/groups and, as the paths it read, the lines `g <path>` of $STUB_READS.
+# The stub. With --trace <dir>, it writes for each piece its --only selects, before --except,
+# `<name> <group> <step>` into <dir>/groups and, as the paths the piece read, the lines `<group>
+# <path>` of $STUB_READS into <dir>/<name>.reads. The pieces are those of $STUB_PIECES (lines
+# `<group> <step> <name>`) and, for each group of --only that no line of it names, one piece
+# p-<group>; a term selects a piece when it is the piece's group, step or name, as in
+# tools/run_tests.sh. Each run writes a log directory build/test-logs/<time>-<pid> as the real one
+# does: with --list the file chosen and the names alone; otherwise, for each piece --except leaves,
+# a line `<name> rc=<rc> <ms>ms ...` on standard output and in the file summary, then `pieces: <n>,
+# failed: <f>`. A piece fails when it is $STUB_FAIL, runs into a limit of 1 s when it is $STUB_HANG
+# (rc 124, as the real per-piece limit reports), and is skipped, as if lost, when it is $STUB_DROP.
+# Each call line is appended to $STUB_CALLS too, when it is set: the merge check writes its calls'
+# output to log files.
 cat >tools/run_tests.sh <<'EOF'
 #!/bin/bash
 # The groups with a short-addresses piece: $STUB_SHORT, or by default every group of the toy.
@@ -128,9 +158,10 @@ if [ "$1" = --short-groups ]; then
   exit 0
 fi
 echo "run_tests $*"
-t= o= l=
+[ -z "$STUB_CALLS" ] || echo "run_tests $*" >>"$STUB_CALLS"
+t= o= l= x=
 while [ $# -gt 0 ]; do
-  case $1 in --trace) t=$2; shift ;; --only) o=$2; shift ;; --list) l=1 ;; esac
+  case $1 in --trace) t=$2; shift ;; --only) o=$2; shift ;; --except) x=${x:+$x|}$2; shift ;; --list) l=1 ;; esac
   shift
 done
 # A build (--list) that takes a second and then makes the file $STUB_BUILD_MARK, when it is set.
@@ -138,16 +169,48 @@ if [ -n "$l" ] && [ -n "$STUB_BUILD_MARK" ]; then
   sleep 1
   : >"$STUB_BUILD_MARK"
 fi
+[ "${STUB_RC:-0}" = 0 ] || exit "$STUB_RC"
+terms=${o#^(}
+terms=${terms%)\$}
+d=build/test-logs/$(date -u +%Y%m%dT%H%M%S.%NZ)-$$
+mkdir -p "$d"
+: >"$d/summary"
+awk -v terms="$terms" 'BEGIN { n = split(terms, a, "|"); for (i = 1; i <= n; i++) T[a[i]] = 1 }
+  FILENAME != "-" { g[$1] = 1; line[++m] = $0; next }
+  END {
+    for (i = 1; i <= n; i++) if (!(a[i] in g)) line[++m] = a[i] " " a[i] " p-" a[i]
+    for (i = 1; i <= m; i++) { split(line[i], f, " ")
+      if ((f[1] in T || f[2] in T || f[3] in T) && !seen[f[3]]++) print line[i] }
+  }' ${STUB_PIECES:-/dev/null} - </dev/null >"$d/chosen"
 if [ -n "$t" ]; then
   mkdir -p "$t"
   : >"$t/groups"
-  o=${o#^(}
-  for g in $(tr '|' ' ' <<<"${o%)\$}"); do
-    echo "p-$g $g $g" >>"$t/groups"
-    awk -v g="$g" '$1 == g { print substr($0, length(g) + 2) }' "$STUB_READS" >"$t/p-$g.reads"
-  done
+  while read -r g s n; do
+    echo "$n $g $s" >>"$t/groups"
+    awk -v g="$g" '$1 == g { print substr($0, length(g) + 2) }' "$STUB_READS" >"$t/$n.reads"
+  done <"$d/chosen"
 fi
-exit ${STUB_RC:-0}
+if [ -n "$l" ]; then
+  awk '{ print $3 }' "$d/chosen"
+  exit 0
+fi
+np=0 nf=0 dump=
+while read -r g s n; do
+  [ -z "$x" ] || ! [[ $n =~ $x ]] || continue
+  [ "$n" != "$STUB_DROP" ] || continue
+  rc=0
+  [ "$n" != "$STUB_FAIL" ] || rc=1
+  if [ "$n" = "$STUB_HANG" ]; then
+    timeout -k 1 1 sleep 30
+    rc=$?
+  fi
+  echo "$n rc=$rc ${STUB_MS:-5}ms load=0 limit=1s wait=0ms" | tee -a "$d/summary"
+  np=$((np + 1))
+  [ "$rc" = 0 ] || { nf=$((nf + 1)); dump="$dump---- failed piece $n ----"$'\n'; }
+done <"$d/chosen"
+printf '%s' "$dump"
+echo "pieces: $np, failed: $nf, load: 0 to 0, cores: 1"
+[ "$nf" = 0 ]
 EOF
 chmod +x tools/run_tests.sh
 # The base commit holds exactly the files written above, the list toy_files, staged on an index
@@ -211,9 +274,23 @@ groups_after() {
 }
 short() { local g; for g in "$@"; do printf ' %s short-%s' "$g" "$g"; done; }
 sorted() { tr ' ' '\n' <<<"$*" | command grep -a . | sort | paste -sd' '; }
+# The calls of tools/run_tests.sh that listed or ran pieces since calls last ran (the stub appends
+# each call to $STUB_CALLS, as the check writes the calls' output to log files), with --trace and
+# its directory taken out; the build of step 0b (--logs) is left out. A check calls the stub for
+# each kind once to list the pieces, with its jobs, then once for each chunk, with jobs 1.
+export STUB_CALLS=$ws/target/stub-calls
+: >"$STUB_CALLS"
+calls() { command grep -a -v '^run_tests --logs ' "$STUB_CALLS" | sed 's/ --trace [^ ]*//'; : >"$STUB_CALLS"; }
+# The two calls of one kind with one chunk: list, then run, the pieces --only '^($2)$' selects
+# ($2 a list of groups joined by |), with jobs $3 for the list (6 by default); $1 is --full or
+# empty.
+two_calls() {
+  printf 'run_tests %s--skip-other-kind --list --only ^(%s)$ %s\nrun_tests %s--skip-other-kind --only ^(%s)$ 1\n' \
+    "${1:+$1 }" "$2" "${3:-6}" "${1:+$1 }" "$2"
+}
 
 # The part select (not indented, to keep the cases' lines as they were).
-if [ "$part" != record ]; then
+if [ "$part" = select ]; then
 check "a crate's source selects it, its dependents and s_01f, not the crate beside it" \
   "merge check: groups: $(sorted "$(short a b s_01f_import_graph step_x step_y t)")" \
   "$(groups_after crates/a/src/lib.rs)"
@@ -302,26 +379,28 @@ git checkout -q --detach base
 echo "// changed" >>crates/c/src/lib.rs
 git commit -q -a -m "change c"
 check "a passing run passes the anchored selection to tools/run_tests.sh" \
-  "run_tests --skip-other-kind --only ^($(sorted "$(short c s_01f_import_graph)" | tr ' ' '|'))\$ 3
-merge check: passed
-0" \
-  "$("$check_script" --base base 3 2>&1 | command grep -a -E '^(run_tests|merge check: (passed|FAILED))'; echo "${PIPESTATUS[0]}")"
+  "merge check: passed
+0
+$(two_calls '' "$(sorted "$(short c s_01f_import_graph)" | tr ' ' '|')" 3)" \
+  "$(calls >/dev/null; "$check_script" --base base 3 2>&1 | command grep -a -E '^merge check: (passed|FAILED)'; echo "${PIPESTATUS[0]}"; calls)"
 check "a failing test run stops the check with exit 1" "merge check: FAILED: tests (above)
 1" "$(STUB_RC=1 "$check_script" --base base 2>&1 | command grep -a 'FAILED'; echo "${PIPESTATUS[0]}")"
 # Step 1a (TOOLS-merge-check-clippy): clippy -D warnings on the selected packages, before the tests.
 clippy_run() {
   # The lint's name, from clippy's line "to override `-D warnings` add `#[allow(<lint>)]`".
+  calls >/dev/null
   "$check_script" --base base 2>&1 |
-    command grep -a -o -E '^(run_tests.*|merge check: (clippy|passed|FAILED).*)|#\[allow\([a-z_:]+\)\]'
+    command grep -a -o -E '^merge check: (clippy|passed|FAILED).*|#\[allow\([a-z_:]+\)\]'
   echo "${PIPESTATUS[0]}"
+  calls
 }
 # The commit "change c", which the case after these returns to.
 change_c=$(git rev-parse HEAD)
 check "a clean branch passes clippy on its selected packages, then runs its tests" \
   "merge check: clippy -D warnings on: c
-run_tests --skip-other-kind --only ^($(sorted "$(short c s_01f_import_graph)" | tr ' ' '|'))\$ 6
 merge check: passed
-0" "$(clippy_run)"
+0
+$(two_calls '' "$(sorted "$(short c s_01f_import_graph)" | tr ' ' '|')")" "$(clippy_run)"
 change_on_base crates/c/src/lib.rs 'pub fn n(v: &Vec<u8>) -> usize { v.len() }'
 check "a branch with a clippy warning is refused with exit 1, and its tests do not run" \
   "merge check: clippy -D warnings on: c
@@ -375,43 +454,54 @@ check "a file moved from one package to another selects both" \
   "merge check: groups: $(sorted "$(short a b c s_01f_import_graph step_x step_y t)")" \
   "$(git mv crates/c/src/inl.rs crates/a/src/inl.rs && git commit -q -m move &&
     "$check_script" --base base --groups 2>&1 | command grep -a -E '^merge check: groups')"
+# Back to base, which removes the moved file: left in the tree, the next run's new base would not
+# hold it, and the check for files no commit holds would stop that run.
+git checkout -q --detach base
+fi
+
+# Part select2: the second half of the cases of selection, from here, a part of its own since
+# with the chunks of step 2b (MERGE-full-run-split) the whole took 37 s at load 58, past the limit
+# of 36 s that step 0 gives a part at that load. They use nothing the cases above set.
+if [ "$part" = select2 ]; then
 # tests/full (MERGE-runtime-inputs): a piece's folder selects that piece alone, run with --full
 # under its name full-<piece>; its main.rs selects every piece; neither selects the package t.
 # A change that reaches t through its dependencies selects every piece (MERGE-full-by-dependency).
 full_run() {
   change_on_base "$1"
-  "$check_script" --base base 2>&1 | command grep -a -E '^(run_tests|merge check: (groups|tests/full|passed))'
+  calls >/dev/null
+  "$check_script" --base base 2>&1 | command grep -a -E '^merge check: (groups|tests/full|passed)'
+  calls
 }
 check "a file in a piece's folder of tests/full selects that piece alone, run with --full" \
   "merge check: groups:
 merge check: tests/full pieces: z
-run_tests --full --skip-other-kind --only ^(full-z)\$ 6
-merge check: passed" "$(full_run tests/full/z/mod.rs)"
+merge check: passed
+$(two_calls --full full-z)" "$(full_run tests/full/z/mod.rs)"
 check "tests/full/main.rs selects every piece of tests/full" \
   "merge check: groups:
 merge check: tests/full pieces: w z
-run_tests --full --skip-other-kind --only ^(full-w|full-z)\$ 6
-merge check: passed" "$(full_run tests/full/main.rs)"
+merge check: passed
+$(two_calls --full 'full-w|full-z')" "$(full_run tests/full/main.rs)"
 all_b=$(sorted "$(short b s_01f_import_graph step_x step_y t)")
 check "a crate that a step helper of the package of tests/full names selects every target and piece using the helper, the pieces run with --full after the local groups" \
   "merge check: groups: $all_b
 merge check: tests/full pieces: w
-run_tests --skip-other-kind --only ^($(tr ' ' '|' <<<"$all_b"))\$ 6
-run_tests --full --skip-other-kind --only ^(full-w)\$ 6
-merge check: passed" "$(full_run crates/b/src/lib.rs)"
+merge check: passed
+$(two_calls '' "$(tr ' ' '|' <<<"$all_b")")
+$(two_calls --full full-w)" "$(full_run crates/b/src/lib.rs)"
 check "a crate the package of tests/full does not depend on selects no piece" \
   "merge check: groups: $(sorted "$(short c s_01f_import_graph)")" \
   "$(full_run crates/c/src/lib.rs | command grep -a -E '^merge check: (groups|tests/full)')"
 check "a failing run of tests/full stops the check with exit 1" "merge check: FAILED: tests/full (above)
 1" "$(change_on_base tests/full/w/mod.rs
     STUB_RC=1 "$check_script" --base base 2>&1 | command grep -a 'FAILED'; echo "${PIPESTATUS[0]}")"
-# The self-tests (MERGE-tools-self-tests): a change to tools/run_tests.sh runs both parts of
+# The self-tests (MERGE-tools-self-tests): a change to tools/run_tests.sh runs all parts of
 # tools/test_merge_check.sh; a part that fails refuses the branch.
-check "a change to tools/run_tests.sh runs both parts of tools/test_merge_check.sh and every part of tools/test_run_tests.sh" \
+check "a change to tools/run_tests.sh runs all parts of tools/test_merge_check.sh and every part of tools/test_run_tests.sh" \
   "merge check: a file of the test runner changed (tools/run_tests.sh, tools/lib.sh or tools/merge_check.sh): every local group
-merge check: a file tools/test_merge_check.sh tests changed: both its parts run
+merge check: a file tools/test_merge_check.sh tests changed: all its parts run
 merge check: a file tools/test_run_tests.sh tests changed: all its parts run
-merge check: tools/test_merge_check.sh select and record passed
+merge check: tools/test_merge_check.sh select, select2, record and chunks passed
 merge check: tools/test_run_tests.sh list, select, table, except, fresh, short, copy, concurrent and trace passed
 merge check: passed
 0" "$(change_on_base tools/run_tests.sh '# changed'
@@ -455,7 +545,7 @@ merge check: passed
     echo "${PIPESTATUS[0]}")"
 # Step 0's parts are timed, so they start only once step 0b's build (which has no limit) has ended.
 check "the build for tools/test_run_tests.sh ends before the timed parts of tools/test_merge_check.sh start" \
-  "merge check: tools/test_merge_check.sh select and record passed
+  "merge check: tools/test_merge_check.sh select, select2, record and chunks passed
 merge check: tools/test_run_tests.sh list, select, table, except, fresh, short, copy, concurrent and trace passed
 merge check: passed
 0" "$(change_on_base tools/test_lib.sh '# changed'
@@ -463,7 +553,7 @@ merge check: passed
       command grep -a -E '^merge check: (tools|passed|FAILED)'
     echo "${PIPESTATUS[0]}")"
 check "a change to tools/test_lib.sh runs both test scripts" \
-  "merge check: a file tools/test_merge_check.sh tests changed: both its parts run
+  "merge check: a file tools/test_merge_check.sh tests changed: all its parts run
 merge check: a file tools/test_run_tests.sh tests changed: all its parts run" \
   "$(change_on_base tools/test_lib.sh '# changed'
     "$check_script" --base base --list 2>&1 | command grep -a -E '^merge check: a file')"
@@ -511,7 +601,7 @@ git checkout -q --detach base
 fi
 
 # The part record (not indented either).
-if [ "$part" != select ]; then
+if [ "$part" = record ]; then
 # The record (MERGE-push-race). The branch changes crate c; main then moves, and the branch is
 # rebased on it (a cherry-pick of its commit), as wt/merge-push.sh does after a refused push.
 # At run time group c reads docs/plan.md, s_01f_import_graph lists the directory crates and
@@ -526,12 +616,14 @@ git commit -q -a -m "branch: change c"
 git tag -f branch >/dev/null
 all_c="$(sorted "$(short c s_01f_import_graph)")"
 # Runs the check with the record against the base $1, plus any further arguments, and prints
-# what ran, the outcome and the exit code; with show_clippy set, step 1a's lines too.
+# what ran, the outcome and the exit code, then the calls of tools/run_tests.sh; with show_clippy
+# set, step 1a's lines too.
 record_run() {
+  calls >/dev/null
   "$check_script" --base "$1" --record "$rec" "${@:2}" 2>&1 |
-    command grep -a -E "^(run_tests|merge check: (to run|tests/full pieces to run|${show_clippy:+clippy|}passed|FAILED))" |
-    sed 's/ --trace [^ ]*//'
+    command grep -a -E "^merge check: (to run|tests/full pieces to run|${show_clippy:+clippy|}passed|FAILED)"
   echo "${PIPESTATUS[0]}"
+  calls
 }
 # Moves main, the tag upstream (the toy repository's branch main is another ref), on by a change
 # to the file $1 and rebases the branch on it.
@@ -548,9 +640,9 @@ check "with no record, every selected group runs, and clippy on every selected p
   "merge check: to run: $all_c
 merge check: clippy to run: c
 merge check: clippy -D warnings on: c
-run_tests --skip-other-kind --only ^($(tr ' ' '|' <<<"$all_c"))\$ 6
 merge check: passed
-0" "$(show_clippy=1 record_run base --reads "$ws/target/map-record")"
+0
+$(two_calls '' "$(tr ' ' '|' <<<"$all_c")")" "$(show_clippy=1 record_run base --reads "$ws/target/map-record")"
 check "a passing run writes the map file of each group that ran, from the trace" "commit $(git rev-parse HEAD)
 docs/plan.md
 commit $(git rev-parse HEAD)
@@ -577,9 +669,9 @@ merge check: passed (every selected group passed at the record's commit, with th
 check "the record now names the rebased commit" "$(git rev-parse HEAD)" "$(head -n 1 "$rec")"
 main_moves docs/plan.md
 check "main moved by a file a group read at run time: that group runs" "merge check: to run: c
-run_tests --skip-other-kind --only ^(c)\$ 6
 merge check: passed
-0" "$(record_run upstream)"
+0
+$(two_calls '' "c")" "$(record_run upstream)"
 check "the group that ran keeps its reads in the new record" "read c docs/plan.md
 read s_01f_import_graph crates
 read short-c data" "$(command grep -a '^read' "$rec")"
@@ -630,10 +722,10 @@ git tag -f branch >/dev/null
 check "local groups and a piece of tests/full run in two calls, the second with --full" \
   "merge check: to run: $all_c
 merge check: tests/full pieces to run: z
-run_tests --skip-other-kind --only ^($(tr ' ' '|' <<<"$all_c"))\$ 6
-run_tests --full --skip-other-kind --only ^(full-z)\$ 6
 merge check: passed
-0" "$(record_run base --reads "$ws/target/map-full")"
+0
+$(two_calls '' "$(tr ' ' '|' <<<"$all_c")")
+$(two_calls --full "full-z")" "$(record_run base --reads "$ws/target/map-full")"
 check "the record holds the piece of tests/full and what it read, from the trace of its own call" \
   "group full-z
 read c docs/plan.md
@@ -647,10 +739,10 @@ main_moves docs/plan.md
 check "main moved by a file the piece read at run time: the piece runs again with --full" \
   "merge check: to run: c short-s_01f_import_graph
 merge check: tests/full pieces to run: z
-run_tests --skip-other-kind --only ^(c|short-s_01f_import_graph)\$ 6
-run_tests --full --skip-other-kind --only ^(full-z)\$ 6
 merge check: passed
-0" "$(record_run upstream)"
+0
+$(two_calls '' "c|short-s_01f_import_graph")
+$(two_calls --full "full-z")" "$(record_run upstream)"
 # A group whose pieces read a file of the spec checkout must be one tools/spec_groups.sh names
 # (MERGE-spec-reads-map): in the toy step_x, not short-step_x (the toy has no short_steps).
 rec=$ws/target/record-spec
@@ -661,16 +753,16 @@ git commit -q -a -m "branch: change the step x"
 sx=$(sorted "$(short step_x)")
 echo 'step_x spec:DESIGN.md' >>"$STUB_READS"
 check "a group that read the spec and that spec_groups.sh names passes" "merge check: to run: $sx
-run_tests --skip-other-kind --only ^($(tr ' ' '|' <<<"$sx"))\$ 6
 merge check: passed
-0" "$(record_run base)"
+0
+$(two_calls '' "$(tr ' ' '|' <<<"$sx")")" "$(record_run base)"
 : >"$rec"
 echo 'short-step_x spec:EXAMPLES.md' >>"$STUB_READS"
 check "a group that read the spec and that spec_groups.sh does not name fails, and no record is written" \
   "merge check: to run: $sx
-run_tests --skip-other-kind --only ^($(tr ' ' '|' <<<"$sx"))\$ 6
 merge check: FAILED: tools/spec_groups.sh (above)
-1" "$(record_run base; cat "$rec")"
+1
+$(two_calls '' "$(tr ' ' '|' <<<"$sx")")" "$(record_run base; cat "$rec")"
 # The spec's commit in the record (MERGE-spec-push-check): a group that read the spec runs again
 # when the spec checkout moved since the record or has uncommitted changes, and only then.
 command grep -a -v '^short-step_x ' "$STUB_READS" >"$STUB_READS-2"
@@ -684,9 +776,9 @@ echo "more" >>"$ZED_SPEC_DIR/DESIGN.md"
 git -C "$ZED_SPEC_DIR" commit -q -a -m "spec: more"
 check "the spec moved: the group that read it runs, the other does not, and the record names the new commit" \
   "merge check: to run: step_x
-run_tests --skip-other-kind --only ^(step_x)\$ 6
 merge check: passed
 0
+$(two_calls '' "step_x")
 spec $(git -C "$ZED_SPEC_DIR" rev-parse HEAD)" "$(record_run base; sed -n 2p "$rec")"
 echo "uncommitted" >>"$ZED_SPEC_DIR/DESIGN.md"
 check "the spec has uncommitted changes: the group that read it runs, and the record names no spec commit" \
@@ -696,6 +788,84 @@ git -C "$ZED_SPEC_DIR" checkout -q DESIGN.md
 check "then with the spec clean again, the record's unknown spec commit runs it once more" \
   "merge check: to run: step_x" "$(record_run base | command grep -a 'to run')"
 check "and then nothing" "merge check: to run:" "$(record_run base | command grep -a 'to run')"
+fi
+
+if [ "$part" = chunks ]; then
+# Part chunks: the chunks of step 2b (MERGE-full-run-split), a part of their own since they took
+# the record part from 18 to 40 s at load 44, past the limit of 27.5 s that step 0 gives a part at
+# that load. Crate c has three pieces, c (named after its group, as a
+# step folder's rest is), c::x and c::y, each 20 s by the times of an earlier check, so with
+# chunks of up to 30 s each is a chunk, and c::y shares its chunk with the three pieces of
+# unknown time (1 s each). Each chunk's call names its terms in --only and the other pieces
+# those terms select in --except. The chunks run at once, so their calls are compared sorted.
+pieces=$ws/target/stub-pieces
+printf 'c c c\nc c c::x\nc c c::y\n' >"$pieces"
+times=$(git rev-parse --path-format=absolute --git-common-dir)/merge-check-times
+slow_times() { printf 'c 20000\nc::x 20000\nc::y 20000\n' >"$times"; }
+git checkout -q --detach base
+echo "// changed" >>crates/c/src/lib.rs
+git commit -q -a -m "branch: change c, for the chunks"
+# Runs the check with the times of slow_times and prints its lines about the chunks and the
+# outcome, without their times in seconds, and its exit code.
+chunk_run() {
+  slow_times
+  calls >/dev/null
+  STUB_PIECES=$pieces "$check_script" --base base 2>&1 |
+    command grep -a -E '^(merge check: (.*chunks?|pieces|passed|FAILED|run by|the chunks)|c(::[xy])?$)' |
+    sed -E 's/ in [0-9]+ s(, over 60 s)?$//; s/, in 3 chunks, [0-9]+ s$/, in 3 chunks/'
+  echo "${PIPESTATUS[0]}"
+}
+check "pieces timed by earlier checks are cut into chunks of up to 30 s, each its own call with jobs 1" \
+  "merge check: 6 pieces in 3 chunks of up to 30 s by the times of earlier checks, 6 at once
+merge check: chunk 1 of 3: pieces: 1, failed: 0
+merge check: chunk 2 of 3: pieces: 1, failed: 0
+merge check: chunk 3 of 3: pieces: 4, failed: 0
+merge check: pieces: 6, failed: 0, in 3 chunks
+merge check: passed
+0
+run_tests --skip-other-kind --list --only ^(c|s_01f_import_graph|short-c|short-s_01f_import_graph)\$ 6
+run_tests --skip-other-kind --only ^(c)\$ --except ^(c::x|c::y)\$ 1
+run_tests --skip-other-kind --only ^(c)\$ --except ^(c|c::y)\$ 1
+run_tests --skip-other-kind --only ^(c|s_01f_import_graph|short-c|short-s_01f_import_graph)\$ --except ^(c|c::x)\$ 1" \
+  "$(chunk_run; calls | LC_ALL=C sort)"
+check "the check writes each piece's time for the next check's chunks" "c 5
+c::x 5
+c::y 5
+p-s_01f_import_graph 5
+p-short-c 5
+p-short-s_01f_import_graph 5" "$(cat "$times")"
+check "a failing piece in one chunk prints as it ends, before the chunks' sums, and fails the check" \
+  "merge check: 6 pieces in 3 chunks of up to 30 s by the times of earlier checks, 6 at once
+merge check: chunk 2 of 3: failed: c::x rc=1 5ms load=0 limit=1s wait=0ms
+merge check: chunk 1 of 3: pieces: 1, failed: 0
+merge check: chunk 2 of 3: pieces: 1, failed: 1
+merge check: chunk 3 of 3: pieces: 4, failed: 0
+merge check: pieces: 6, failed: 1, in 3 chunks
+merge check: FAILED: tests (above)
+1" "$(STUB_FAIL=c::x chunk_run)"
+# The stub stops a hung piece at a limit of 1 s, as tools/run_tests.sh stops one at its limit.
+start=$SECONDS
+check "a hung piece is stopped at its limit, reported, and fails the check" \
+  "merge check: 6 pieces in 3 chunks of up to 30 s by the times of earlier checks, 6 at once
+merge check: chunk 3 of 3: failed: c::y rc=124 5ms load=0 limit=1s wait=0ms
+merge check: chunk 1 of 3: pieces: 1, failed: 0
+merge check: chunk 2 of 3: pieces: 1, failed: 0
+merge check: chunk 3 of 3: pieces: 4, failed: 1
+merge check: pieces: 6, failed: 1, in 3 chunks
+merge check: FAILED: tests (above)
+1" "$(STUB_HANG=c::y chunk_run)"
+check "and the check ends well before the hung piece would have (30 s)" yes \
+  "$([ $((SECONDS - start)) -lt 20 ] && echo yes || echo "no: $((SECONDS - start)) s")"
+check "a listed piece that no chunk ran fails the check" \
+  "merge check: 6 pieces in 3 chunks of up to 30 s by the times of earlier checks, 6 at once
+merge check: chunk 1 of 3: pieces: 1, failed: 0
+merge check: chunk 2 of 3: pieces: 0, failed: 0
+merge check: chunk 3 of 3: pieces: 4, failed: 0
+merge check: the chunks did not run the listed pieces (left: listed, not run; right: run, not listed):
+c::x
+merge check: pieces: 5, failed: 0, in 3 chunks
+merge check: FAILED: tests (above)
+1" "$(STUB_DROP=c::x chunk_run)"
 git checkout -q --detach base
 fi
 popd >/dev/null || exit 1
