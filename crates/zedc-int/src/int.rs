@@ -19,8 +19,8 @@ use zed_kernel::num::{
     pow_uint, read_digits, room, sqrt_rem_uint, to_decimal, trees,
 };
 use zed_numtheory::{
-    bezout_i128, gcd_big_u64, gcd_u64, gcd_u128, inverse_mod_2_64, is_prime, next_prime,
-    odd_primes_below, odd_root_mod_2_64, pow_mod, pow_mod_2_64, rem_big_u64,
+    bezout_i128, gcd_big_u64, gcd_u64, gcd_u128, inverse_mod_2_64, is_prime, log2_bounds,
+    next_prime, odd_primes_below, odd_root_mod_2_64, pow_mod, pow_mod_2_64, rem_big_u64,
 };
 
 /// An integer. A value that fits in `i128` is always `Small`, so that two equal values have
@@ -1531,9 +1531,23 @@ impl Core {
     }
 
     /// The order of the values, given `a = self.approx(64)` and `b = o.approx(64)`: equal in
-    /// form, else at 64 bits, else by [`Core::same`], else at twice as many bits and more until
-    /// they are apart. Equal values agree at 64 bits, so `same` runs only for cores that do.
-    /// The caller (`collect`) computes each core's `approx(64)` once for all its comparisons.
+    /// form, else at 64 bits, else for two powers of one integer by their exponents, else by
+    /// [`Core::same`], else by bounds on their binary logarithms ([`Core::log2_bounds`]), else
+    /// at twice as many bits and more until they are apart. Equal values agree at 64 bits, so
+    /// `same` runs only for cores that do. The caller
+    /// (`collect`) computes each core's `approx(64)` once for all its comparisons.
+    // Complexity tradeoff: the powers and the logarithms' bounds are tried only once the 64-bit
+    // approximations overlap, so a sum whose cores those part (`kept_sum`) pays nothing more.
+    // They are needed for a power `b ^ e` of an exponent of more than about 64 bits: its
+    // approximation at `p` bits is off by a factor of about `2^(e 2^-p)`, so its lower end
+    // stays above 0 only once `p` passes the bits of `e`, and `approx_cmp` doubled `p` to
+    // there, about `bits(e)` products of `bits(e)`-bit numbers a round (item
+    // PERF-num-kept-multi-term-precision); the bounds of `e log2(b)` cost one product of `e` by
+    // a 72-bit word. Cores whose logarithms differ by less than the bounds' width, about `e
+    // 2^-64`, still go to the doubling, since no bound used here says how near two such
+    // logarithms can be without being equal; the answer is exact either way. Test:
+    // `l01_24_refinement_lattices::past_i64::bench::differences_of_powers_by_an_exponent_of_n_bits_scale_with_its_bits`;
+    // COMPLEXITY.md row PERF-num-kept-multi-term-precision.
     fn value_cmp_at(&self, a: &Approx, o: &Core, b: &Approx) -> Ordering {
         if self == o {
             return Ordering::Equal;
@@ -1544,8 +1558,26 @@ impl Core {
         if b.below(a) {
             return Ordering::Greater;
         }
+        // `b ^ e` against `b ^ f` for `b >= 2`: `b ^ x` rises with `x`.
+        if let (Some((b1, e1)), Some((b2, e2))) = (self.int_power(), o.int_power())
+            && b1 == b2
+        {
+            return e1.cmp(e2);
+        }
+        // Equal values agree at 64 bits and their logarithms' bounds always overlap, so `same`
+        // runs first and spares them the bounds.
         if self.same(o) {
             return Ordering::Equal;
+        }
+        // Bounds `l <= 2^64 log2(value) <= h` that are apart order the values, `log2` being
+        // increasing.
+        if let (Some((l1, h1)), Some((l2, h2))) = (self.log2_bounds(), o.log2_bounds()) {
+            if h1 < l2 {
+                return Ordering::Less;
+            }
+            if h2 < l1 {
+                return Ordering::Greater;
+            }
         }
         approx_cmp(128, |bits| self.approx(bits), |bits| o.approx(bits))
     }
@@ -1610,6 +1642,8 @@ impl Core {
     fn approx(&self, bits: u64) -> Approx {
         #[cfg(test)]
         tests::CORE_APPROXES.with(|n| n.set(n.get() + 1));
+        #[cfg(test)]
+        tests::CORE_APPROX_BITS.with(|n| n.set(n.get().max(bits)));
         self.0
             .iter()
             .map(|(a, e)| a.approx(bits).pow(e, bits))
@@ -1650,6 +1684,23 @@ impl Core {
                 Atom::Root { .. } => e * 127u32,
             })
             .sum()
+    }
+
+    /// Integers `(l, h)` with `l <= 2^64 log2(value) <= h`, or `None` when a factor is a root:
+    /// the sum over the factors `b ^ e` of `e` times the bounds of `log2_bounds(b, 64)`
+    /// (zed-numtheory), since `log2` of a product is the sum of the logarithms of its factors
+    /// and `log2(b ^ e) = e log2(b)` with `e >= 0`. The width is the sum of `e` times 1 or 2.
+    /// O(m) logarithms of words to 64 bits and products of an exponent by a word, for `m`
+    /// factors.
+    fn log2_bounds(&self) -> Option<(BigInt, BigInt)> {
+        let (mut l, mut h) = (BigInt::ZERO, BigInt::ZERO);
+        for (a, e) in &self.0 {
+            let Atom::Int(b) = a else { return None };
+            let (lb, hb) = log2_bounds(b, LOG2_BITS);
+            l += BigInt::from(e * lb);
+            h += BigInt::from(e * hb);
+        }
+        Some((l, h))
     }
 
     /// The value modulo `n >= 1`, by `modpow`, or `None` when a factor is a root, whose
@@ -1743,6 +1794,15 @@ fn fold(terms: &mut Vec<(BigInt, Core)>) {
     }
     terms.retain(|(c, _)| !c.is_zero());
 }
+
+/// The bits after the point of the bounds on binary logarithms that order cores and place
+/// sums ([`Core::log2_bounds`], [`Kept::dominant_sign`]). Why 64: the bounds of `e log2(b)`
+/// are `e` units of `2^-64` wide, so they part powers whose logarithms differ by more than about
+/// `e 2^-63`, which for exponents below `2^60` is any two that the 64-bit approximations do
+/// not already part; a larger value would narrow the bounds for larger exponents at the cost
+/// of `2 k` squarings per logarithm. Any value gives exact answers, since a case the bounds do
+/// not decide goes to the approximations.
+const LOG2_BITS: u32 = 64;
 
 /// The terms in decreasing order of the values of their cores, with the coefficients of equal
 /// cores added and zero ones dropped: `O(n log n)` comparisons of cores for `n` terms, and
@@ -1899,6 +1959,87 @@ impl Kept {
                 s.add(&Approx::of(c, bits).mul(&core.approx(bits), bits), bits)
             })
             .div(&self.den, bits)
+    }
+
+    /// Whether the value is negative, when one term `c_j * core_j` outweighs the others and
+    /// `d` so far that the value lies outside `i128` with the sign of `c_j`; `None` when the
+    /// bounds below do not show that, or a core holds a root. For the term it picks the one
+    /// whose lower bound on `log2 |c * core|` is largest; any choice is sound.
+    ///
+    /// Proof. Write `K = 2^64`, `lo(x)` and `hi(x)` for the ends of `log2_bounds(x, 64)`, so
+    /// `lo(x) <= K log2(x) <= hi(x)`, and `(l_i, h_i)` for `core_i.log2_bounds()`. For each
+    /// `i != j`, `D_i` below satisfies `|c_i core_i| <= 2^(D_i / K) core_j`:
+    /// - `core_i = b ^ e_i` and `core_j = b ^ e_j` for one integer `b`: `core_i / core_j =
+    ///   2^((e_i - e_j) log2(b))`, and `(e_i - e_j) log2(b) <= (e_i - e_j) lo(b) / K` when
+    ///   `e_i < e_j`, `<= (e_i - e_j) hi(b) / K` otherwise; so `D_i = hi(|c_i|) + (e_i - e_j)
+    ///   lo(b)` or `hi(|c_i|) + (e_i - e_j) hi(b)`. Measured from the difference of the
+    ///   exponents, this stays narrow for exponents of any size, which the case below does not.
+    /// - otherwise `|c_i core_i| <= 2^((hi(|c_i|) + h_i) / K)` and `core_j >= 2^(l_j / K)`, so
+    ///   `D_i = hi(|c_i|) + h_i - l_j`.
+    /// - for `d != 0`, likewise `D_d = hi(|d|) - l_j`.
+    ///
+    /// With `m >= 1` such others and `W` the largest `D`, their sum is at most `m 2^(W / K)
+    /// core_j <= 2^((hi(m) + W) / K) core_j`. The test `hi(m) + W <= lo(|c_j|) - K` makes this
+    /// at most `|c_j| core_j / 2`, so the numerator `c_j core_j + rest` has the sign of `c_j`
+    /// and magnitude at least `|c_j| core_j / 2 >= 2^((lo(|c_j|) + l_j - K) / K)`. Divided by
+    /// `den <= 2^(hi(den) / K)`, the value is at least `2^((lo(|c_j|) + l_j - K - hi(den)) /
+    /// K)` in magnitude, and the test that this exponent is at least `128 K` puts it past
+    /// `2^127`, outside `i128`. There the loop of [`Num::kept`] returns this form with
+    /// `negative` set to the sign of the value, which is the sign of `c_j`: the same answer.
+    ///
+    /// Cost: O(n) logarithms of the coefficients, `d`, `den` and the cores' integers to 64 bits,
+    /// each O(bits + 64 M(72)), and O(n) products of exponents by words, for `n` terms; none
+    /// depends on the value's bits.
+    fn dominant_sign(&self) -> Option<bool> {
+        let unit = BigInt::from(1u32) << LOG2_BITS;
+        let bounds = |x: &BigUint| {
+            let (l, h) = log2_bounds(x, LOG2_BITS);
+            (BigInt::from(l), BigInt::from(h))
+        };
+        let logs = (self.terms.iter())
+            .map(|(_, core)| core.log2_bounds())
+            .collect::<Option<Vec<_>>>()?;
+        let coefficients: Vec<_> = (self.terms.iter())
+            .map(|(c, _)| bounds(c.magnitude()))
+            .collect();
+        let low: Vec<BigInt> = (coefficients.iter().zip(&logs))
+            .map(|((lc, _), (l, _))| lc + l)
+            .collect();
+        let j = (0..low.len()).max_by(|&x, &y| low[x].cmp(&low[y]))?;
+        let (c_j, core_j) = &self.terms[j];
+        let l_j = &logs[j].0;
+        let mut worst: Option<BigInt> = None;
+        let mut others = 0u64;
+        for (i, (((_, core), (_, h)), (_, hc))) in
+            (self.terms.iter().zip(&logs).zip(&coefficients)).enumerate()
+        {
+            if i == j {
+                continue;
+            }
+            let d_i = match (core.int_power(), core_j.int_power()) {
+                (Some((b, e)), Some((bj, ej))) if b == bj => {
+                    let gap = BigInt::from(e.clone()) - BigInt::from(ej.clone());
+                    let (lb, hb) = bounds(b);
+                    hc + gap.clone() * if gap.sign() == Sign::Minus { lb } else { hb }
+                }
+                _ => hc + h - l_j,
+            };
+            worst = Some(worst.map_or(d_i.clone(), |w| w.max(d_i)));
+            others += 1;
+        }
+        if !self.d.is_zero() {
+            let d_d = bounds(self.d.magnitude()).1 - l_j;
+            worst = Some(worst.map_or(d_d.clone(), |w| w.max(d_d)));
+            others += 1;
+        }
+        let lead = &coefficients[j].0;
+        if let Some(w) = worst
+            && bounds(&BigUint::from(others)).1 + w > lead - &unit
+        {
+            return None;
+        }
+        (lead + l_j - &unit - bounds(&self.den).1 >= BigInt::from(128u32) * &unit)
+            .then(|| below_zero(c_j))
     }
 
     /// The value, written out: its cost is that of the value's digits.
@@ -2453,6 +2594,18 @@ impl Num {
                 && scaled_cmp(&a.hi, &a.shift, &edge, &zero) == Ordering::Less
             {
                 return Num::from(k.expand());
+            }
+            // Several terms, one of which outweighs the rest past `i128` (item
+            // PERF-num-kept-multi-term-precision): placed by the bounds on the logarithms of
+            // the terms once 64 bits leave the value undecided, rather than by doubling `bits`
+            // to past those of the cores' exponents. `Kept::dominant_sign` proves it gives the
+            // sign the loop gives, for a value the loop finds outside `i128`; a sum it does not
+            // decide goes on in the loop.
+            if bits == 64
+                && let Some(negative) = k.dominant_sign()
+            {
+                k.negative = negative;
+                return Num(Word::Kept(Box::new(k)));
             }
             bits *= 2;
         }
@@ -3364,6 +3517,8 @@ mod tests {
     thread_local! {
         /// The calls of `Core::approx` on this thread.
         pub(super) static CORE_APPROXES: Cell<u64> = const { Cell::new(0) };
+        /// The largest `bits` of those calls.
+        pub(super) static CORE_APPROX_BITS: Cell<u64> = const { Cell::new(0) };
     }
 
     /// `floor_root(k)` and `ceil_root(k)` of values not kept, for `k` 2, 3 and 7, by the
@@ -3534,6 +3689,90 @@ mod tests {
                 assert_eq!(got.signum(), want.signum(), "{c} * 3^{e} + {d}");
             }
         }
+    }
+
+    /// Sums of two to four powers of 2, 3, 5 and 6 of about one size (300 to 600 bits), with
+    /// coefficients -3 to 3 and an added `d`, so that some cancel in their high bits: where
+    /// `Kept::dominant_sign` decides, the value written out lies outside `i128` with that
+    /// sign, and every sum built by `+` equals its value written out, in value and sign
+    /// (item PERF-num-kept-multi-term-precision).
+    #[test]
+    fn sums_placed_by_the_logarithms_of_their_terms_equal_their_values_written_out() {
+        let (mut rng, _) = crate::seed::Rng::fresh(
+            "sums_placed_by_the_logarithms_of_their_terms_equal_their_values_written_out",
+        );
+        let edge = BigInt::one() << 127u32;
+        let (mut decided, mut undecided) = (0, 0);
+        for _ in 0..400 {
+            let size = 300 + rng.next_u64() % 300;
+            let d = (rng.next_u64() % 2001) as i64 - 1000;
+            let mut terms = Vec::new();
+            let (mut got, mut want) = (Num::from(d), BigInt::from(d));
+            for _ in 0..1 + rng.next_u64() % 4 {
+                let b = [2u32, 3, 5, 6][(rng.next_u64() % 4) as usize];
+                let e = (size as f64 / f64::from(b).log2()) as u32 + (rng.next_u64() % 3) as u32;
+                let c = (rng.next_u64() % 7) as i64 - 3;
+                let power = Num::power(false, BigUint::from(b), BigUint::from(e));
+                got = &got + &(&power * &Num::from(c));
+                want += BigInt::from(b).pow(e) * c;
+                terms.push((
+                    BigInt::from(c),
+                    Core::power(BigUint::from(b), BigUint::from(e)),
+                ));
+            }
+            assert_eq!(got, Num::from(want.clone()), "the sum {terms:?} + {d}");
+            assert_eq!(
+                got.signum(),
+                Num::from(want.clone()).signum(),
+                "{terms:?} + {d}"
+            );
+            let mut terms = collect(terms);
+            fold(&mut terms);
+            if terms.is_empty() {
+                continue;
+            }
+            let k = Kept {
+                terms,
+                d: BigInt::from(d),
+                den: BigUint::one(),
+                negative: false,
+            };
+            match k.dominant_sign() {
+                Some(negative) => {
+                    decided += 1;
+                    assert!(want.magnitude() > edge.magnitude(), "{k:?} is past i128");
+                    assert_eq!(negative, want.sign() == Sign::Minus, "the sign of {k:?}");
+                }
+                None => undecided += 1,
+            }
+        }
+        assert!(
+            decided > 0 && undecided > 0,
+            "{decided} decided, {undecided} not"
+        );
+    }
+
+    /// Sums of powers by an exponent of 4097 bits, `3^e - 3^(e - 1)`, `2^e - 3^e` and `5^e -
+    /// 3^e + 2^e`, are ordered and placed with no core approximated past 64 bits. Before
+    /// PERF-num-kept-multi-term-precision `collect` and `Num::kept` approximated them at 128,
+    /// 256, ... bits until past the 4097 bits of `e`.
+    #[test]
+    fn sums_of_powers_of_a_huge_exponent_are_placed_by_their_logarithms() {
+        let e = BigUint::one() << 4096u32;
+        let power = |b: u32, e: BigUint| Num::power(false, BigUint::from(b), e);
+        let (three, below) = (power(3, e.clone()), power(3, &e - 1u32));
+        let (two, five) = (power(2, e.clone()), power(5, e.clone()));
+        CORE_APPROX_BITS.with(|c| c.set(0));
+        let x = &three - &below;
+        let y = &two - &three;
+        let z = &(&five - &three) + &two;
+        let widest = CORE_APPROX_BITS.with(|c| c.get());
+        assert!(x.is_kept() && x.signum() > 0);
+        assert!(y.is_kept() && y.signum() < 0);
+        assert!(z.is_kept() && z.signum() > 0);
+        assert_eq!(widest, 64, "the most bits a core was approximated to");
+        assert!((&x - &(&below * &Num::from(2))).is_zero());
+        assert!(y < x && x < z);
     }
 
     #[test]

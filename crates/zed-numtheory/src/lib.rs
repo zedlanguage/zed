@@ -463,6 +463,80 @@ pub fn first_primes(n: usize) -> Vec<u64> {
     }
 }
 
+/// Integers `(lo, hi)` with `lo <= 2^k log2(x) <= hi`, for `x >= 1`: the binary logarithm of
+/// `x` to `k` bits after the point, rounded down and up. For a power of 2 `lo` is exact.
+///
+/// Method: `log2(x) = t + log2(y)` with `t = bits(x) - 1` and `y = x / 2^t` in `[1, 2)`, and
+/// `log2(y^2) = 2 log2(y)`, so squaring `y` moves the next bit of `log2(y)` to the units: it
+/// is 1 exactly when `y^2 >= 2`, and then `y^2 / 2` continues. `y` is held as `Y / 2^q`,
+/// with `q = k + 8` bits after the point, in two runs: one rounding each step down, one up.
+/// Proof of the bounds, by induction on the step `j` with `A_0 = t` and `A_(j+1) = 2 A_j + b_j`
+/// for the bit `b_j` the run reads:
+/// - Down: `2^j log2(x) >= A_j + log2(Y_j / 2^q)` and `Y_j >= 2^q`. At `j = 0`, `Y_0 =
+///   floor(x 2^(q - t))`, so `Y_0 / 2^q <= y` and `Y_0 >= 2^q` since `x >= 2^t`. A step
+///   sets `Z = floor(Y_j^2 / 2^q) <= Y_j^2 / 2^q`, so `log2(Z / 2^q) <= 2 log2(Y_j / 2^q)`;
+///   if `Z >= 2^(q + 1)` it reads `b_j = 1` and `Y_(j+1) = floor(Z / 2)`, else `b_j = 0` and
+///   `Y_(j+1) = Z`; either way `b_j + log2(Y_(j+1) / 2^q) <= log2(Z / 2^q)` and `Y_(j+1) >=
+///   2^q` (`Z >= Y_j >= 2^q`, and `floor(Z / 2) >= 2^q` when `Z >= 2^(q + 1)`). Doubling the
+///   hypothesis gives it at `j + 1`. At `j = k`, `log2(Y_k / 2^q) >= 0`, so `2^k log2(x) >=
+///   A_k = lo`.
+/// - Up: `2^j log2(x) <= A_j + log2(Y_j / 2^q)` and `Y_j <= 2^(q + 1)`, with every floor
+///   above a ceiling, so each inequality turns over; `Z = ceil(Y_j^2 / 2^q) <= 2^(q + 2)`,
+///   and `ceil(Z / 2) <= 2^(q + 1)`. At `j = k`, `log2(Y_k / 2^q) <= 1`, so `2^k log2(x) <=
+///   A_k + 1 = hi`.
+///
+/// Neither bound depends on `q`; `q` sets only how far apart they are. Each rounding moves
+/// `log2(Y)` by less than `2^-q / ln 2`, and a move at step `j` reaches the result times
+/// `2^(k - j)`, so the two runs part by less than `2 * 2^(k - q + 1) / ln 2 < 0.03` units of
+/// `2^-k` besides the final 1: `hi - lo` is 1 or 2 (test
+/// `tests::log2_bounds_hold_and_are_tight`).
+// Complexity tradeoff: `2 k` squarings of `(q + 2)`-bit numbers and one shift of `x`, so
+// O(k M(k) + bits(x)) for `M` the cost of a product. Faster methods exist for large `k`
+// (the AGM, O(M(k) log k)); the callers ask for `k = 64` (zedc-int `Core::log2_bounds`), so
+// the plain method is kept. The P324 searches of PERF-num-kept-multi-term-precision (paperclip,
+// 2026-11-21) found no paper giving this method with directed rounding, so the proof above is
+// written out in full.
+pub fn log2_bounds(x: &BigUint, k: u32) -> (BigUint, BigUint) {
+    assert!(x.bits() > 0, "log2 of 0");
+    let t = x.bits() - 1;
+    let q = u64::from(k) + 8;
+    let one = BigUint::from(1u32) << q;
+    let two = &one << 1u32;
+    let (down, up) = if q >= t {
+        let y = x << (q - t);
+        (y.clone(), y)
+    } else {
+        let y = x >> (t - q);
+        let exact = (&y << (t - q)) == *x;
+        let up = if exact { y.clone() } else { &y + 1u32 };
+        (y, up)
+    };
+    let run = |mut y: BigUint, round_up: bool| {
+        let mut a = BigUint::from(t);
+        for _ in 0..k {
+            let sq = &y * &y;
+            let mut z = &sq >> q;
+            if round_up && (&z << q) != sq {
+                z += 1u32;
+            }
+            a <<= 1u32;
+            if z >= two {
+                a += 1u32;
+                let odd = z.bit(0);
+                z >>= 1u32;
+                if round_up && odd {
+                    z += 1u32;
+                }
+            }
+            y = z;
+        }
+        a
+    };
+    let lo = run(down, false);
+    let hi = run(up, true) + 1u32;
+    (lo, hi)
+}
+
 /// Arithmetic modulo the Mersenne prime `P = 2^61 - 1`, the one copy for every residue and
 /// hash of the workspace that works modulo it.
 ///

@@ -14465,9 +14465,12 @@ fn split_around(root: Tree, cut: i128) -> (Tree, Option<CutPiece>, Tree) {
 /// (PROOF-preimage-treap-cost-widened); see [`invert_treap`]'s
 /// tradeoff. What holds then (proofdoc5f): each call recurses only into its own two
 /// children, so each of the `p` nodes is visited at most once, and the time is `O(p log p)`
-/// expected, four joins at most per node. Open sub-case: the `O((m + s + 1) log^2 n)` bound
-/// when a tag above has slope not 0; closing it needs each subtree's hulls, as at
-/// `invert_treap`. No benchmark measures it. Test:
+/// expected, four joins at most per node. That is the bound kept: the `O((m + s + 1) log^2 n)`
+/// bound does not hold when a tag above has slope not 0, and hulls are not kept to restore it,
+/// for the reasons at [`invert_treap`] (PERF-preimage-treap-hulls). Bench, the worst case
+/// (every node visited, no value changed):
+/// `tests::bench::a_summary_under_a_sloped_tag_is_inverted_and_clamped_in_time_linear_in_its_pieces`,
+/// 8.0 times the instructions from p = 100,000 to 8p with the inversion. Test:
 /// `tests::a_clamped_summary_is_the_summary_clamped_at_every_point` checks the values, not
 /// the count.
 ///
@@ -14641,15 +14644,33 @@ fn add_into(big: Tree, walk: &Tree, f: &Tag) -> Tree {
 /// Complexity tradeoff: after a line is added to a summary whose values slope the other way
 /// (`n + (if n > 0 { -n } else { 0 })` is 0 for every `n > 0`), a subtree's bounds may be
 /// wider than its values, so inverting may visit every piece of a subtree whose values miss
-/// `z`: up to `O(p)` for `p` pieces, where it was `O((m + 1) log p)` for `m` pieces met. What
-/// is given up: that bound after such a sum (PROOF-preimage-treap-cost-widened, open); the
-/// preimage stays exact. Why: the least and the
-/// greatest value of `v + slope * x` over a subtree for any `slope` is a query on the convex
-/// hull of its pieces' ends, which a tag cannot keep in `O(1)`. Trigger: a sum of a line and
-/// a summary sloping the other way, inverted. Test:
-/// `tests::a_sum_of_summaries_is_the_sum_at_every_point` (exactness). A complete solution
-/// would keep each subtree's upper and lower hull of its pieces' ends, merged on join,
-/// queried in `O(log p)` for the slope.
+/// `z`: up to `O(p)` for `p` pieces, where it was `O((1 + m + j) log p)`. What is given up:
+/// that bound after such a sum; the preimage stays exact. What holds in every case (proofdoc5f):
+/// each call recurses only into its own two children, so each node is visited at most once and
+/// an inversion visits `O(p)` nodes. Why: the least and the greatest value of `v + slope * x`
+/// over a subtree for any `slope` is a query on the convex hull of its pieces' ends, which a
+/// tag cannot keep in `O(1)`. Trigger: a sum of a line and a summary sloping the other way,
+/// inverted. Test: `tests::a_sum_of_summaries_is_the_sum_at_every_point` (exactness).
+///
+/// Not done (PERF-preimage-treap-hulls): keeping each subtree's upper and lower hull of its
+/// pieces' ends, merged on join and queried in `O(log p)` for the slope. Measured first:
+/// `tests::bench::a_summary_under_a_sloped_tag_is_inverted_and_clamped_in_time_linear_in_its_pieces`,
+/// a staircase under a tag of slope -1 whose every node is visited and meets nothing, 8.0 times
+/// the instructions and the bytes from p = 100,000 to 8p (load 43), under the limit, as the
+/// `O(p)` bound says. Hulls would not lower the worst case: with exact bounds (no slope) the
+/// pieces `0, 10, 0, 10, ...` and `z = 4..=6` already visit every node (`j = p - 1` above), so
+/// an inversion is `Θ(p)` in the worst case with or without them, and `k` inversions of one
+/// summary of `p` pieces cost `O(k p)` either way. They would cost on every path that builds a
+/// treap: a hull kept per subtree in a balanced tree is merged at each join, split, and push of
+/// a tag in `O(log^2 p)` (the structure of Overmars and van Leeuwen, "Maintenance of
+/// configurations in the plane", J. Comput. Syst. Sci. 23 (1981), doi:10.1016/0022-0000(81)90012-X;
+/// DOI checked on Crossref, the bound recalled, the paper not read here), against `O(1)` for
+/// the hull of values kept now, and every summary is built by joins (`to_treap`, `split_at`,
+/// `add_into`, `clamp_treap`). The literature search (P324, 2026-11-21: paperclip, semantic and
+/// keyword) found dynamic and mergeable hull structures ("Engineering Fully Dynamic Convex
+/// Hulls", "Simple and Robust Dynamic Two-Dimensional Convex Hull", "Parallel Range, Segment
+/// and Rectangle Queries with Augmented Maps") and none that keeps a hull under affine tags in
+/// `O(1)` a join.
 fn invert_treap(node: &Tree, f: &Tag, z: &IntervalSet, out: &mut Vec<(End, End)>) {
     let Some(n) = node else {
         return;

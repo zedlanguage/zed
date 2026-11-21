@@ -81,6 +81,35 @@ fn a_power_past_2_to_the_32_over_n_pieces_scales_linearly() {
     });
 }
 
+/// `x ^ e - y ^ e` for `x` and `y` in `2..=3` and `e = 2^n`, whose ends `2^e - 3^e` and
+/// `3^e - 2^e` are kept sums of two terms, and `3^e - 3^(e - 1)`, a sum of two powers of one
+/// integer, placed in sign; the size is the bits of `e`. Before PERF-num-kept-multi-term-precision
+/// each such sum was placed against `i128` by approximations at 64, 128, ... bits, and the
+/// approximation of `3 ^ e` keeps a lower end above 0 only once its bits pass those of `e`, so
+/// the cost was about `n` products of `n`-bit numbers a round: 37.3 times the instructions at
+/// n = 256. Now n = 16384; 1x 0.20 s at load 23, ratio 7.9.
+#[test]
+fn differences_of_powers_by_an_exponent_of_n_bits_scale_with_its_bits() {
+    scaling::check(
+        "differences of powers by an exponent of n bits",
+        16384,
+        |bits| {
+            let e = two_big(bits as u32);
+            let x = IntervalSet::of(2, 3);
+            let image = forward(&pow(e.clone()), &x, &x);
+            let d = forward(&Op::Sub, &image, &image);
+            let (low, high) = (Num::pow2(&e), Num::from(3).pow_by(&e).unwrap());
+            let gap = &high - &low;
+            assert!(gap.signum() > 0);
+            assert_eq!(d, IntervalSet::range(End::Fin(-&gap), End::Fin(gap)));
+            let below = Num::from(3).pow_by(&(&e - &Num::ONE)).unwrap();
+            let twice = &high - &below;
+            assert!(twice.signum() > 0);
+            assert!((&twice - &(&below * &n(2))).is_zero());
+        },
+    );
+}
+
 /// The reduction of n pieces onto a class past `i64`.
 /// TEST-bench-move-l0123, author P169: n was 2000, now 180_000; 1x 0.65 s at load 38.
 #[test]

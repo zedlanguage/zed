@@ -1446,3 +1446,56 @@ fn the_factored_shares_agree_with_pairwise_gcds() {
         same(&xs);
     }
 }
+
+/// `log2_bounds(x, k)` holds `2^k log2(x)` between its ends, checked exactly as `2^lo <=
+/// x^(2^k) <= 2^hi`, with `hi - lo` 1 or 2: for 1, powers of 2 (where `lo` is exact) and
+/// their neighbors, small primes, values of more bits than `q = k + 8` (so the first shift
+/// rounds), and random words, at `k` from 0 to 10; and at `k = 64` against `f64` for words.
+#[test]
+fn log2_bounds_hold_and_are_tight() {
+    let mut xs: Vec<BigUint> = [1u64, 2, 3, 5, 7, 255, 256, 257, 1 << 40, (1 << 40) - 1]
+        .into_iter()
+        .map(BigUint::from)
+        .collect();
+    xs.push((BigUint::from(1u32) << 300u32) + 1u32);
+    xs.push((BigUint::from(1u32) << 301u32) - 1u32);
+    xs.push(BigUint::from(3u32).pow(200));
+    let mut w = words("log2_bounds_hold_and_are_tight");
+    for _ in 0..40 {
+        xs.push(BigUint::from(w() >> (w() % 64)) + 1u32);
+    }
+    for x in &xs {
+        for k in 0..=10u32 {
+            let (lo, hi) = log2_bounds(x, k);
+            let width = &hi - &lo;
+            assert!(
+                width == BigUint::from(1u32) || width == BigUint::from(2u32),
+                "{x} at {k}: {lo}..{hi}"
+            );
+            let p = x.pow(1u32 << k);
+            let lo_u = u64::try_from(&lo).expect("a small bound");
+            let hi_u = u64::try_from(&hi).expect("a small bound");
+            assert!(BigUint::from(1u32) << lo_u <= p, "{x} at {k}: low end {lo}");
+            assert!(
+                p <= BigUint::from(1u32) << hi_u,
+                "{x} at {k}: high end {hi}"
+            );
+            if x.count_ones() == 1 {
+                assert_eq!(lo, BigUint::from(x.bits() - 1) << k, "{x} at {k}");
+            }
+        }
+    }
+    for x in xs.iter().filter(|x| x.bits() <= 53) {
+        let (lo, hi) = log2_bounds(x, 64);
+        let f = (u64::try_from(x).expect("a word") as f64).log2();
+        let scale = 2f64.powi(64);
+        let (lo_f, hi_f) = (
+            lo.to_string().parse::<f64>().expect("a number") / scale,
+            hi.to_string().parse::<f64>().expect("a number") / scale,
+        );
+        assert!(
+            lo_f <= f + 1e-12 && f - 1e-12 <= hi_f,
+            "{x}: {lo_f}..{hi_f} against {f}"
+        );
+    }
+}

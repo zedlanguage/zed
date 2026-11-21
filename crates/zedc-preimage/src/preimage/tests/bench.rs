@@ -12,6 +12,58 @@ use super::*;
 /// The n of [`refused_joins_between_two_large_classes_scale`].
 const REFUSED_N: usize = 350_000;
 
+/// The p of [`a_summary_under_a_sloped_tag_is_inverted_and_clamped_in_time_linear_in_its_pieces`].
+const SLOPED_P: usize = 100_000;
+
+/// A staircase of `p` constant pieces, piece `i` over `2i..=2i + 1` with value `2i`, under the
+/// tag `v - x` of slope -1, so each piece's values are 0 and -1, while each subtree's bounds
+/// ([`Tag::vals`]) widen to about its staircase's span and hold 5 for every subtree of more than
+/// three pieces. An inversion at `z = {5}` and a clamp `min(_, 5)` then meet no value and change
+/// none, yet visit every node (PERF-preimage-treap-hulls): the worst case of the bound proved at
+/// [`invert_treap`] and [`clamp_treap`], each node at most once, so O(p) nodes for the inversion
+/// and O(p) joins of O(log p) expected for the clamp. The treaps are built outside the measured
+/// runs, so the ratio is that of the two calls alone: about 8 (every node) for the inversion and
+/// about 8 log(8p) / log p for the clamp's joins, where kept hulls would give O(log p) for this
+/// input. Why hulls are not kept: see [`invert_treap`].
+#[test]
+fn a_summary_under_a_sloped_tag_is_inverted_and_clamped_in_time_linear_in_its_pieces() {
+    fn staircase(p: usize) -> Tree {
+        let mut root = None;
+        for i in 0..p as i64 {
+            let node = make_node(
+                End::of(2 * i),
+                End::of(2 * i + 1),
+                Int::ZERO,
+                (2 * i).into(),
+                None,
+                None,
+            );
+            root = join_treap(root, Some(node));
+        }
+        let down = Tag {
+            mul: Int::ONE,
+            slope: Int::from(-1),
+            add: Int::ZERO,
+        };
+        root.map(|n| apply_tag(&n, &down))
+    }
+    let run = |root: &Tree, p: usize| {
+        let mut out = Vec::new();
+        invert_treap(root, &Tag::ID, &IntervalSet::of(5, 5), &mut out);
+        assert!(out.is_empty(), "no value is 5");
+        let clamped = clamp_treap(root, true, &Int::from(5)).expect("ends well inside i128");
+        assert_eq!(clamped.as_ref().map_or(0, |n| n.len), p);
+        std::hint::black_box(clamped);
+    };
+    let (small, large) = (staircase(SLOPED_P), staircase(8 * SLOPED_P));
+    crate::scaling::compare(
+        "inverting and clamping a staircase of p pieces under a tag of slope -1, p and 8p",
+        1,
+        || run(&small, SLOPED_P),
+        || run(&large, 8 * SLOPED_P),
+    );
+}
+
 /// The k of [`copies_of_an_if_are_read_in_time_near_their_count`].
 const COPIES_N: usize = 8000;
 
