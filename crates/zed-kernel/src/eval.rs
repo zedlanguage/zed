@@ -1185,9 +1185,13 @@ struct Lattice<'t> {
     join: Operator<'t>,
 }
 
-/// A `gen` running.
+/// A `gen` running. A frame may be a function or hold one (DESIGN.md step L1.17: only a use
+/// that needs data is an error): the frames of `foldl` and `foldr` are `(entry, acc)`, and an
+/// accumulator may be a function, as in `[1, 2].foldl(y -> y, (a, x) -> (y -> a(y) + x))`
+/// (row FAIL-fold-rotating-tuple-rounds). Before, a frame had to be data, and such a fold,
+/// which the checker takes, stopped with zedc's message for a bug of its own.
 struct Gen<'t> {
-    frames: Vec<Value>,
+    frames: Vec<V<'t>>,
     from: Option<usize>,
     step: Operator<'t>,
     guard: Operator<'t>,
@@ -1738,6 +1742,8 @@ impl<'t> Machine<'_, 't> {
                 Ok(v)
             }
             0 if holds_data => Ok(V::Data(Value::Family(family(data(v)?)?))),
+            // A `gen`'s first frame may hold a function, as each of its frames may (`Gen`).
+            0 if matches!(region, Term::Gen { .. }) => Ok(v),
             0 => Ok(V::Data(data(v)?)),
             2 if matches!(region, Term::Fold { .. }) => Ok(V::Data(data(v)?)),
             _ => Ok(v),
@@ -1779,6 +1785,20 @@ impl<'t> Machine<'_, 't> {
                 }
                 _ => {}
             }
+        }
+        if let Term::Gen { pos, .. } = region {
+            let step = (next(), Some(self.ev.child(at, 1)));
+            let guard = (next(), Some(self.ev.child(at, 2)));
+            let st = Box::new(Gen {
+                frames: vec![first],
+                from,
+                step,
+                guard,
+            });
+            return match pos {
+                GuardPos::Before => self.gen_guard(st),
+                GuardPos::After => self.gen_step(st),
+            };
         }
         let first = data(first)?;
         match region {
@@ -1830,20 +1850,6 @@ impl<'t> Machine<'_, 't> {
                     self.begin_definedness(first, step, at, this, key, env)
                 }
             },
-            Term::Gen { pos, .. } => {
-                let step = (next(), Some(self.ev.child(at, 1)));
-                let guard = (next(), Some(self.ev.child(at, 2)));
-                let st = Box::new(Gen {
-                    frames: vec![first],
-                    from,
-                    step,
-                    guard,
-                });
-                match pos {
-                    GuardPos::Before => self.gen_guard(st),
-                    GuardPos::After => self.gen_step(st),
-                }
-            }
             _ => unreachable!("only a region has operands"),
         }
     }
@@ -2018,10 +2024,7 @@ impl<'t> Machine<'_, 't> {
             }
             Wait::GenStep(mut st) => {
                 self.ev.leave(1);
-                let V::Data(next) = v else {
-                    return type_err("a gen step returned a function");
-                };
-                st.frames.push(next);
+                st.frames.push(v);
                 st.from = self.ev.last_fact();
                 self.gen_guard(st)
             }
@@ -2029,10 +2032,10 @@ impl<'t> Machine<'_, 't> {
                 self.ev.leave(1);
                 match v {
                     V::Data(Value::Bool(true)) => self.gen_step(st),
-                    V::Data(Value::Bool(false)) => gen_end(*st),
+                    V::Data(Value::Bool(false)) => self.gen_end(*st),
                     V::Data(end @ Value::Atom(_)) => {
-                        st.frames.push(end);
-                        gen_end(*st)
+                        st.frames.push(V::Data(end));
+                        self.gen_end(*st)
                     }
                     V::Data(other) => type_err(format!(
                         "a gen guard returned a value of type `{}`",
@@ -3438,7 +3441,7 @@ impl<'t> Machine<'_, 't> {
         let last = st.frames.last().expect("generation 0 is present").clone();
         self.ev.enter(&[Value::Int(st.frames.len() as i64)]);
         self.ev.aim(st.step.1, &[st.from]);
-        let step = self.apply(&st.step.0, vec![V::Data(last)]);
+        let step = self.apply(&st.step.0, vec![last]);
         self.wait(Wait::GenStep(st));
         step
     }
@@ -3449,9 +3452,27 @@ impl<'t> Machine<'_, 't> {
         let last = st.frames.last().expect("generation 0 is present").clone();
         self.ev.enter(&[Value::Int(st.frames.len() as i64 - 1)]);
         self.ev.aim(st.guard.1, &[st.from]);
-        let step = self.apply(&st.guard.0, vec![V::Data(last)]);
+        let step = self.apply(&st.guard.0, vec![last]);
         self.wait(Wait::GenGuard(st));
         step
+    }
+
+    /// The family of a `gen`'s frames, keyed `0 ..< count`: data when every frame is, and
+    /// held when one is a function or holds one ([`Self::made_family`]).
+    fn gen_end(&self, st: Gen<'t>) -> R<Step<'t>> {
+        let mut entries = Vec::with_capacity(st.frames.len());
+        let mut parts = Vec::new();
+        for (t, f) in st.frames.into_iter().enumerate() {
+            let k = Value::Int(t as i64);
+            match f {
+                V::Data(v) => entries.push((k, Some(v))),
+                f => {
+                    entries.push((k, None));
+                    parts.push(f);
+                }
+            }
+        }
+        Ok(Step::Give(self.made_family(entries, parts)?))
     }
 }
 
@@ -3712,15 +3733,6 @@ fn held_leaves<'t>(h: &Held<'t>) -> Vec<(Keypath, V<'t>)> {
         }
     }
     out
-}
-
-fn gen_end<'t>(st: Gen<'t>) -> R<Step<'t>> {
-    let leaves = st
-        .frames
-        .into_iter()
-        .enumerate()
-        .map(|(t, f)| (vec![Value::Int(t as i64)], f));
-    give(Value::Family(Family::from_leaves(leaves)?))
 }
 
 /// The keys `fix`'s rounds left undefined, or its family.

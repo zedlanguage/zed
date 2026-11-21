@@ -450,6 +450,34 @@ fn a_running_balance_is_a_generation_loop() {
     );
 }
 
+/// A frame may hold a function (DESIGN.md step L1.17), as the frame `(entry, acc)` of
+/// `foldl` does when its accumulator is one: frame `(n, g)` steps to `(n + 1, y -> g(y) + 1)`
+/// while `n < 2`, and the last frame's function is called. Before (row
+/// FAIL-fold-rotating-tuple-rounds), the run stopped at the first frame with "expected data,
+/// found a function".
+#[test]
+fn a_frame_may_hold_a_function() {
+    let step = lam(
+        &["f"],
+        prim(
+            Prim::Tuple,
+            vec![
+                add(nth(var("f"), 0), lit(1)),
+                lam(&["y"], add(app(nth(var("f"), 1), vec![var("y")]), lit(1))),
+            ],
+        ),
+    );
+    let more = lam(&["f"], prim(Prim::Lt, vec![nth(var("f"), 0), lit(2)]));
+    let frames = Term::Gen {
+        init: rc(prim(Prim::Tuple, vec![lit(0), lam(&["x"], var("x"))])),
+        step: rc(step),
+        guard: rc(more),
+        pos: GuardPos::Before,
+    };
+    let last = nth(get(frames, lit(2)), 1);
+    assert_eq!(eval(&app(last, vec![lit(5)])).unwrap(), Value::Int(7));
+}
+
 #[test]
 fn a_guard_atom_ends_the_loop_with_that_value() {
     // Stop at an overdraft: the end-position guard reads the frame it just committed.
@@ -810,15 +838,6 @@ fn a_step_or_guard_of_the_wrong_kind_is_reported() {
                 app(var("this"), vec![lit(0)]),
             ),
             "a family is read with `[]`, not called",
-        ),
-        (
-            Term::Gen {
-                init: rc(lit(0)),
-                step: rc(lam(&["f"], id.clone())),
-                guard: rc(lam(&["f"], lit(true))),
-                pos: GuardPos::Before,
-            },
-            "a gen step returned a function",
         ),
         (
             Term::Gen {

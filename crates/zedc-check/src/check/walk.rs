@@ -4931,14 +4931,14 @@ impl<'t, 'a> Ck<'t, 'a> {
     // argument below. Each round also builds two forms of what `f` gives (linear in its
     // distinct nodes, `zedc_types::forms::Forms::of`) and, on a round whose skeleton is new,
     // compares it with each earlier new skeleton (`Forms::embeds`, O(|s| |t|) pairs each).
-    // The accumulator keeps only its pieces that this round's result does not hold: a piece
+    // The accumulator keeps only its tuple rows that this round's result does not hold: a row
     // dropped is a subset of the result's carriers, which the new accumulator holds, so the
     // accumulator is the same set of values and the answer is unchanged. Naive, as first
     // written, the union of every round's result: a tuple of n parts that `f` rotates grew
     // to n rows of n parts, and each application read them all, 1569 ms at n = 32 and over
-    // 23 s at n = 48. Pruned, it holds the start value and the latest result where `f`'s
-    // results grow round by round (measured: one or two rows at every round, n = 16 and 32),
-    // 191 ms at n = 32. A fold that settles in a few rounds is then linear in the width
+    // 23 s at n = 48. Pruned, a rotation keeps the start value and the latest result
+    // (measured: one or two rows at every round, n = 16 and 32), 191 ms at n = 32. Rounds
+    // whose results hold none of the earlier rows drop nothing. A fold that settles in a few rounds is then linear in the width
     // (bench `l03_02_map_run::bench::a_tuple_accumulator_settling_in_three_rounds_checks_in_
     // linear_time`: 14, 20, 37, 79 ms at n = 32 to 256). Kept: a rotation of n parts takes
     // n + 1 rounds, as each round moves the change one part along, so this method is Θ(n²)
@@ -5064,10 +5064,13 @@ impl<'t, 'a> Ck<'t, 'a> {
         // The accumulator's type `A`: `init`'s carriers, joined round by round with the
         // carriers of what `f` gives, until `f` gives nothing outside it. Write `A_1` for
         // `init.carriers()`, `g_k` for what `f` gives on `A_k` and the entries' type `V` in
-        // round k, and `A_{k+1}` for `A_k | g_k.carriers()`. The code writes `A_{k+1}` without
-        // the pieces of `A_k` that `g_k.carriers()` holds (`self.subtype`, sound: a yes means
-        // the piece's values are among the carriers'), so it is the same set of values, and
-        // every step below reads only that set: `A_k <: A_{k+1}` and `g_k <: A_{k+1}` hold.
+        // round k, `G_k` for `g_k.carriers()`, and `A_{k+1}` for `A_k | G_k`. The code writes
+        // `A_{k+1}` without the tuple rows of `A_k` that `G_k` already holds (`self.subtype`,
+        // sound: a yes means the row's values are among `G_k`'s); every other part of `A_k`
+        // (scalars, atoms with their payload shapes and named-family marks, functions) stays
+        // as it is. So `A_{k+1}` stands for the same set of values and the same named atom
+        // families as `A_k | G_k`: `A_k <: A_{k+1}`, `A_k.family <= A_{k+1}.family`, and
+        // `g_k <: G_k <: A_{k+1}` hold.
         //
         // Accepted, it is sound. The loop returns `A_k` only where `g_k <: A_k` (or where `x`
         // lists no entry, so the result is `init`, and `init <: A_1 <: A_k`). Every
@@ -5077,67 +5080,140 @@ impl<'t, 'a> Ck<'t, 'a> {
         // `apply` reports for arguments of types `A_k` and `V`, which is `g_k`, so the next
         // accumulator is in `g_k <: A_k`.
         //
-        // The rounds end, with no cap. Each round's `g_k` has a skeleton and a canonical form
-        // (`zedc_types::forms`: the tree of its unions, tuples, payloads, functions and arrows,
-        // with the leaves' labels erased or kept). Two tests refuse the fold:
-        //   (a) a canonical form that some earlier `g_j` had: refused; and
-        //   (b) a skeleton `s` new to the fold, where an earlier new skeleton `t` embeds in `s`
-        //       (`Forms::embeds`) and `s` is deeper or wider than `t`: refused.
+        // The rounds end, with no cap. Fix before the loop the finite set `K` of pre-fold
+        // known variables (every variable appearing in `init`, `V`, `fsig`, or `self.classes`).
+        // Each round's `G_k = g_k.carriers()` is read as a canonical form `c_k`, a skeleton
+        // `s_k` (whose top-level non-union pieces are `P_k`), and `v_k`, the total count of
+        // distinct fresh variables (not in `K`) across `G_k` (`zedc_types::forms::Forms::of_in`).
+        // After round 1, `fold_depth_limit` sets a depth limit `D` (a finite number, or none);
+        // write `full_k` for "some round `j <= k` has `depth(s_j) > D`, or there is no `D`".
+        // Two tests refuse the fold:
+        //   (a) a canonical form `c_k` that some earlier round had: refused; and
+        //   (b) for each top-level non-union piece `p` in `P_k` where `(p, v_k)` is new to the
+        //       fold: if a new pair `(q, u)` of an earlier round with the same top-level
+        //       constructor tag
+        //       (`Forms::root_tag(q) == Forms::root_tag(p)`) satisfies `embeds(q, p)` and
+        //       `u <= v_k`, and (`full_k` and `depth(p) > depth(q)`) or `width(p) > width(q)`
+        //       or `v_k > u`: refused.
+        // Without `D`, (b) refuses a fold whose results grow deeper a few times and then
+        // settle, as the delay chain `(a, x) -> (0, (a[0],), (a[1],))` from `(0, 0, 0)`, whose
+        // result `(0, (0,), ((0,),))` is reached at depth 3 (B1 of round 1). `D` lets such a
+        // fold go as deep as `fold_depth_limit` proves its results can go; past `D`, (b) is
+        // as without `D`, from that round on.
         // Suppose no round settles and neither test refuses, so the rounds go on forever.
-        //  1. The new skeletons, in the order they come, are distinct by construction.
-        //     Suppose there are infinitely many. Kruskal's tree theorem for ordered trees with
-        //     well-quasi-ordered labels (cited and stated at `Forms::embeds`) makes embedding a
-        //     well-quasi-order on them, and every infinite sequence in a well-quasi-order has an
-        //     infinite subsequence `s_1, s_2, ...` with each `s_i` embedding in `s_{i+1}`
-        //     (the standard consequence: color each pair i < j by whether `s_i` embeds in
-        //     `s_j`; Ramsey's theorem gives an infinite set of one color, and the color "does
-        //     not embed" would be an infinite bad sequence).
-        //  2. Along that subsequence, (b) did not refuse `s_{i+1}`, though `s_i` embeds in it:
-        //     so `s_{i+1}` is neither deeper nor wider than `s_i`; and embedding never makes
-        //     a form shallower or narrower (proved at `Forms::embeds`), so depth and width
-        //     are equal along it, `D` and `W` say.
-        //  3. Finitely many skeletons have depth at most `D` and width at most `W`, by
-        //     induction on `D`. A node that is not a union has at most `W` children, each of
-        //     depth less than its own, of which finitely many exist by induction; and its label
-        //     comes from a finite set: a payload's atom name, a shape's field names and a
-        //     function's word are names the program or the prelude writes (every atom from a
-        //     written name, as `zedc_types::forms::Leaf` records; a word from a prelude name,
-        //     the only sites that set one being mod.rs `word_sig` and `bit_sig`), a function's flags and parameters number at most `W`, its
-        //     ends at most `W` characters, and a skeleton leaf's variables at most `W`. A
-        //     union's children are distinct non-union forms of depth at most `D` (no child of
-        //     a union is a union), finitely many, so finitely many sets of them.
-        //  4. So the subsequence of step 1, infinite and of distinct skeletons, lies in a
-        //     finite set: a contradiction. Only finitely many rounds have a new skeleton.
-        //  5. Every other round's `g_k` has a skeleton from that finite set, and its canonical
-        //     form is one of finitely many on each: each leaf of the skeleton takes one of
-        //     finitely many labels (`zedc_types::forms::Leaf`), and the skeleton is a function
-        //     of the canonical form, so a canonical form fixes which skeleton it has. Test (a)
-        //     refuses the second round with one canonical form, so finitely many rounds run.
+        //  0. Either no round has `depth(s_k) > D` (case I), or a first round `m` has it, and
+        //     every round from `m` on has `full_k` (case II). In case II only finitely many
+        //     pairs come before round `m`, so steps 1 to 4 below take the pairs introduced
+        //     from round `m` on; each of them was tested by (b) with `full_k` against every
+        //     pair kept in an earlier round, those of its own subsequence among them. In case I, every
+        //     skeleton piece has depth at most `D`, and steps 1 to 4 take all pairs, with the
+        //     depth clause of (b) left out and `depth <= D` used in its place.
+        //  1. Consider the stream of newly introduced pairs `(p, v)` across those rounds, where
+        //     `p` is a non-union skeleton piece and `v` is that round's fresh-variable count.
+        //     Each pair is distinct by construction. Suppose there are infinitely many. There
+        //     are finitely many `RootTag` values (`Leaf`, `Tuple`, `Fn(bool)`, `Other`, and
+        //     `Payload(name)` for atom names from the finite program+compiler set), so by the
+        //     pigeonhole principle some single root tag `r` occurs infinitely often. On
+        //     skeletons drawn from this program and prelude, every non-count node label comes
+        //     from a finite set fixed before the loop (`Payload` atom names from the
+        //     program+compiler set, `Shape` field-name lists as sorted subsets of the finite
+        //     program+compiler field-name set, and `Fn.word` from the prelude names set only by
+        //     mod.rs `word_sig` and `bit_sig`), `Fn.positional` is ordered by Higman
+        //     subsequence over `{false, true}` (WQO by Higman 1952, Theorem 4.3, p. 332, with
+        //     no arity bound needed), and every count label (`Leaf`'s `(vars, text_len)` and
+        //     `Fn`'s lengths) is ordered by `<=` componentwise (WQO by Dickson 1913, Lemma A,
+        //     p. 414). Thus Kruskal's tree theorem for ordered labeled trees (Kruskal 1960,
+        //     DOI 10.2307/1993287, Tree Theorem, p. 212; in this term form Gallier 1991, DOI
+        //     10.1016/0168-0072(91)90022-E, Definition 4.4 and Theorem 4.5, p. 207; quoted at
+        //     `Forms::embeds`) paired with `(N, <=)` on
+        //     `v` (Dickson's lemma) makes `(embeds, <=)` a well-quasi-order on the tag-`r`
+        //     pairs. A round adds finitely many pairs (one per piece of its result), so the
+        //     infinitely many tag-`r` pairs come from infinitely many rounds; keep one of them
+        //     per such round, in round order, an infinite sequence whose pairs come from
+        //     strictly later rounds. Every infinite sequence in a WQO has an infinite
+        //     increasing subsequence `(p_1, v_1), (p_2, v_2), ...` with `embeds(p_i, p_{i+1})`
+        //     and `v_i <= v_{i+1}` (by Ramsey's theorem on pairs colored by whether
+        //     `(p_i, v_i) <= (p_j, v_j)`), and in it `(p_i, v_i)` comes from an earlier round
+        //     than `(p_{i+1}, v_{i+1})`.
+        //  2. Along that tag-`r` subsequence, (b) did not refuse `(p_{i+1}, v_{i+1})`, though
+        //     `(p_i, v_i)` was kept in an earlier round, `embeds(p_i, p_{i+1})` and
+        //     `v_i <= v_{i+1}`:
+        //     so `width(p_{i+1}) <= width(p_i)` and `v_{i+1} <= v_i`, and in case II
+        //     `depth(p_{i+1}) <= depth(p_i)`. Since embedding never makes a form shallower or
+        //     narrower (proved at `Forms::embeds`) and `v_i <= v_{i+1}`, `width` and `v` are
+        //     constant along the subsequence, `W` and `V`; in case II `depth` is constant
+        //     too, and in case I it is at most `D`. Write `D'` for that depth bound.
+        //  3. Finitely many skeletons have depth at most `D'` and width at most `W`, by
+        //     induction on `D'`. A non-union node has at most `W` children, each of depth less
+        //     than its own (finitely many by induction), and its label comes from a finite
+        //     set (fixed finite non-count labels above, plus counts each at most `W`). A union
+        //     node's children are a subset of the finitely many non-union forms of depth at
+        //     most `D` and width at most `W`, so finitely many unions exist too.
+        //  4. Hence the infinite subsequence of distinct pairs `(p_i, V)` lies in a finite
+        //     set: contradiction. Only finitely many pairs `(p, v)` are ever introduced. In
+        //     particular, the set of top-level non-union skeleton pieces across all rounds is
+        //     finite, say `P_all`, and every round has `v_k <= V_max` and `width(s_k) <= W_max`.
+        //     Every round's whole skeleton `s_k` is a union of a subset of `P_all`, so only
+        //     finitely many whole skeletons appear.
+        //  5. Fix any whole skeleton `s` from that finite set, with `v_k <= V_max` and
+        //     `width(s) <= W_max`. The skeleton is a function of the canonical form (erasing
+        //     `Leaf.label` and `Fn.exact_ends` and merging equal union children), and by
+        //     induction on `depth(s)` only finitely many canonical forms map to `s` with at
+        //     most `V_max` distinct fresh variables: at depth 0, a canonical leaf has finitely
+        //     many choices (`zedc_types::forms::Leaf`: six carrier bits; at most eight tagged
+        //     texts, the printed scalar bases inside a function, the atoms where one carries
+        //     a payload or the set holds every unlisted name, and the kind-wide part
+        //     (`forms::leaf_texts`), each of byte length at most `W_max` because the greatest
+        //     length counts in the width, so finitely many strings; bare atom and family names
+        //     from the finite program and prelude set; one bit; a subset of the finite set
+        //     `K`; and at most `W_max` fresh-variable places each strictly less than
+        //     `V_max`), and a union of distinct canonical leaves is a
+        //     subset of that finite set; at depth `d > 0`, a non-union canonical node has the
+        //     same non-leaf kind (and for `Fn`, `exact_ends` of printed length at most `W_max`,
+        //     finitely many) and children mapping to the skeleton's children (finitely many by
+        //     induction), and a union is a subset of those finitely many non-union preimages.
+        //     Test (a) refuses the second round with one canonical form, so finitely many
+        //     rounds run.
         // So the rounds end, at a settled `A_k`, an empty `x`, or a refusal.
         //
         // What the refusals prove, and what they do not. Neither test proves that the fold
         // never settles, so the refusal says that zedc finds no type, not that none exists.
-        // (a) says more where `carriers()` of a type depends only on its canonical form, as
-        // it does for a type of scalars, atoms and tuples of them with no variable or
-        // kind-wide part: then `g_k.carriers() = g_j.carriers() <: A_{j+1} <: A_k`, and with
-        // `g_k <: g_k.carriers()`, `g_k <: A_k` would have settled the round; so (a) refuses
-        // only types whose variables, kind-wide part or functions' bounds and needs (which the
-        // forms do not record) change between rounds. (b) is Leuschel's whistle (SAS 1998,
-        // DOI 10.1007/3-540-49727-7_14), sharpened by depth and width: a result that holds an
-        // earlier one nested deeper, as `(a, x) -> (a, x)` makes `(int, int)` then
-        // `((int, int) | int, int)`, is refused at the second such round; a fold whose
-        // results grow so twice and then settle would be refused, and no test has one.
-        // Tested: tests/steps/l03_02_map_run/folds.rs (rotations of 2 to 20 parts settle, and a
-        // rotation of nested 1-tuples), types.rs
-        // `a_growing_accumulator_is_refused_with_a_repair_in_its_own_form` (results that nest
-        // are refused, with the repair), bench.rs
-        // `a_tuple_accumulator_settling_in_three_rounds_checks_in_linear_time`, and the unit
-        // tests of zedc_types::forms. No test has a result that widens without nesting.
+        // (a) refuses only when `G_k` and an earlier `G_j` share a canonical form yet `g_k` is
+        // not a subtype of `A_k` (which can happen only for parts not recorded in the canonical
+        // form, as a function's bounds, parameter names, and needs). (b) uses homeomorphic
+        // embedding
+        // (Marlet 1994, section 6.2.4; Sørensen & Glück ILPS 1995, not read, see
+        // `Forms::embeds`; Leuschel SAS 1998, DOI 10.1007/3-540-49727-7_14, Proposition 4,
+        // p. 238) per top-level non-union piece and root tag, sharpened by
+        // depth (past `D` only), width, and fresh-variable count: a fold whose results nest
+        // within the same constructor deeper than `fold_depth_limit` can prove they stop
+        // (a body that is not a tuple of projections, as `(a, x) -> (a, x)`) is refused at the
+        // second such round, while folds whose depth is proved bounded, transitions across
+        // distinct constructors and rotations of arrays, ranges, maps, functions, or
+        // pre-fold type variables settle.
+        // Tested: tests/steps/l03_02_map_run/folds.rs, tests/steps/l03_02_map_run/types.rs,
+        // and the unit tests of zedc_types::forms.
+        use zedc_types::forms::{FormId, Forms, RootTag};
         let mut acc = init.carriers();
-        let mut forms = zedc_types::forms::Forms::new();
-        let mut canon: HashMap<zedc_types::forms::FormId, Ty> = HashMap::new();
-        let mut skeletons = HashSet::new();
-        let mut grown: Vec<(zedc_types::forms::FormId, Ty)> = Vec::new();
+        let mut known_vars: HashSet<Arc<str>> = HashSet::new();
+        Forms::collect_vars(init, &mut known_vars);
+        Forms::collect_vars(&values, &mut known_vars);
+        Forms::collect_vars(&Ty::func(fsig.clone()), &mut known_vars);
+        for i in 0..self.classes.len() {
+            known_vars.insert(Arc::from(format!("${i}")));
+            if let Some(n) = &self.classes[i].name {
+                known_vars.insert(n.clone());
+            }
+        }
+        let mut forms = Forms::new();
+        let mut canon: HashMap<FormId, Ty> = HashMap::new();
+        let mut seen_pieces: HashSet<(FormId, u64)> = HashSet::new();
+        let mut grown: HashMap<RootTag, Vec<(FormId, u64, Ty)>> = HashMap::new();
+        // The depth limit `D` of the argument above, set after round 1 (`None` before it and
+        // where `fold_depth_limit` finds no bound), and whether (b) has turned full: from the
+        // first round whose result is deeper than `D` on, for good.
+        let (mut limit, mut full): (Option<u64>, bool) = (None, false);
+        let mut round = 0u64;
         let (earlier, later) = loop {
             if values.lists_nothing() {
                 return out.union(&acc);
@@ -5155,62 +5231,291 @@ impl<'t, 'a> Ck<'t, 'a> {
             if self.subtype(&gives, &acc) {
                 return out.union(&acc);
             }
-            let c = forms.of(&gives, true);
+            let g = gives.carriers();
+            let (c, _) = forms.of_in(&g, true, &known_vars);
             if let Some(before) = canon.get(&c) {
                 break (before.clone(), gives);
             }
             canon.insert(c, gives.clone());
-            let s = forms.of(&gives, false);
-            if skeletons.insert(s) {
-                let blown = grown.iter().find(|&&(t, _)| {
-                    forms.embeds(t, s)
-                        && (forms.depth(s) > forms.depth(t) || forms.width(s) > forms.width(t))
-                });
-                if let Some((_, before)) = blown {
-                    break (before.clone(), gives);
-                }
-                grown.push((s, gives.clone()));
+            let (s, fresh_v) = forms.of_in(&g, false, &known_vars);
+            round += 1;
+            if round == 1 {
+                limit = Self::fold_depth_limit(f.expr, right, init, &g, &mut forms);
             }
-            let g = gives.carriers();
-            let kept = acc
-                .pieces()
+            full |= limit.is_none_or(|d| forms.depth(s) > d);
+            // A round's new pairs are compared with earlier rounds' only, and join `grown`
+            // after all of them are tested: one result may hold a piece and a deeper one that
+            // embeds it, as `(x,) | ((x,),)` from `if a is int { (x,) } else { ((x,),) }`,
+            // which is not growth from round to round (step 1 below takes one pair per round).
+            let pieces: Vec<FormId> = forms.pieces(&s).to_vec();
+            let mut blown_before = None;
+            let mut new_pairs: Vec<(RootTag, FormId)> = Vec::new();
+            for p in pieces {
+                if seen_pieces.insert((p, fresh_v)) {
+                    let tag = forms.root_tag(p);
+                    let group = grown.get(&tag).map_or(&[][..], |g| &g[..]);
+                    let found = group.iter().find(|&&(q, u, _)| {
+                        u <= fresh_v
+                            && forms.embeds(q, p)
+                            && ((full && forms.depth(p) > forms.depth(q))
+                                || forms.width(p) > forms.width(q)
+                                || fresh_v > u)
+                    });
+                    if let Some((_, _, before)) = found {
+                        blown_before = Some(before.clone());
+                        break;
+                    }
+                    new_pairs.push((tag, p));
+                }
+            }
+            for (tag, p) in new_pairs {
+                grown
+                    .entry(tag)
+                    .or_default()
+                    .push((p, fresh_v, gives.clone()));
+            }
+            if let Some(before) = blown_before {
+                break (before, gives);
+            }
+            // `A_{k+1}`: `A_k` without its tuple rows that `G_k` holds, joined with `G_k`. Each
+            // row dropped is a subtype of `G_k` (a yes of `subtype` means its values are
+            // among `G_k`'s), so the join stands for the values of `A_k | G_k`. Only rows are
+            // dropped: a payload, function, scalar or atom of `A_k` stays as it is, with its
+            // payload shapes and its named-family marks (`Ty::family`), which a piece rebuilt
+            // from `Ty::pieces` would lose (B2 of round 1: `#ok(int)` became `#ok(..)`).
+            // The test needs `&mut self`, so the rows are copied out first (O(rows)).
+            let rows = acc.tuples.to_vec();
+            let keep: Vec<bool> = rows
+                .iter()
+                .map(|r| !self.subtype(&Ty::of_row(r.clone()), &g))
+                .collect();
+            acc.tuples = rows
                 .into_iter()
-                .map(|p| p.ty())
-                .filter(|p| !self.subtype(p, &g))
-                .fold(Ty::empty(), |t, p| t.union(&p));
-            acc = kept.union(&g);
+                .zip(keep)
+                .filter_map(|(r, k)| k.then_some(r))
+                .collect();
+            acc = acc.union(&g);
         };
         // Two results of `f` that show the accumulator growing: the earlier one the test
         // compared, and this round's. The union of every round is too long to read.
         let i = self.text(init);
         let (a, b) = (self.text(&earlier), self.text(&later));
-        // The repair takes the accumulator's own form: a function that gives back each part
-        // of a tuple start value keeps its type; another start value takes `+`.
+        // The repair takes the accumulator's own form and checks as valid Zed: a tuple gives
+        // back its parts (whether or not a part holds a type variable); matching numeric
+        // carriers take `+`; matching strings take `++`; every other start value gives back `a`.
+        let pair = |body: &str| match right {
+            false => format!("`(a, x) -> {body}`"),
+            true => format!("`(x, a) -> {body}`"),
+        };
+        let single_carrier = |t: &Ty| match &t.pieces()[..] {
+            [p] => p.carrier(),
+            _ => None,
+        };
         let repair = match &init.pieces()[..] {
-            [Piece::Tuple(r)] if !r.open() => {
+            [Piece::Tuple(r)] => {
                 let parts: Vec<String> = (0..r.len()).map(|k| format!("a[{k}]")).collect();
                 let tuple = match parts.len() {
                     1 => format!("({},)", parts[0]),
                     _ => format!("({})", parts.join(", ")),
                 };
+                pair(&tuple)
+            }
+            _ if matches!(
+                (single_carrier(init), single_carrier(&values)),
+                (Some(a), Some(b)) if a == b && Carrier::NUMBERS.contains(&a)
+            ) =>
+            {
+                shape.to_string()
+            }
+            _ if single_carrier(init) == Some(Carrier::Str)
+                && single_carrier(&values) == Some(Carrier::Str) =>
+            {
                 match right {
-                    false => format!("`(a, x) -> {tuple}`"),
-                    true => format!("`(x, a) -> {tuple}`"),
+                    false => "`(a, x) -> a ++ x`".to_string(),
+                    true => "`(x, a) -> x ++ a`".to_string(),
                 }
             }
-            _ => shape.to_string(),
+            // A list or other family (a function held as data, `Sig::data`) takes the entry
+            // at its end; `a ++ x` would join a family with an entry.
+            [Piece::Fn(s)] if s.data => match right {
+                false => "`(a, x) -> a ++ [x]`".to_string(),
+                true => "`(x, a) -> [x] ++ a`".to_string(),
+            },
+            _ => pair("a"),
+        };
+        // Two results that print alike differ in a part no type text shows (test (a) above):
+        // say so, and name the needs where they are the part, as for `y -> a(y) + x`, whose
+        // need "call `a`" holds the accumulator's type, one step deeper each round. Before,
+        // the message read "makes it _ -> int, then _ -> int" with nothing to tell them apart.
+        // Complexity: O(the needs of the two results), on the error path only.
+        let alike = match a == b {
+            false => "",
+            true => {
+                let needs = |t: &Ty| -> Vec<Need> {
+                    t.fns.iter().flat_map(|s| s.needs.iter().cloned()).collect()
+                };
+                match needs(&earlier) != needs(&later) {
+                    true => {
+                        ", which print alike but differ in what the function needs of its \
+                             argument"
+                    }
+                    false => ", which print alike but differ in parts no type text shows",
+                }
+            }
         };
         self.error_offering(
             span,
             format!(
                 "the accumulator of {word} starts as {i}, and its function makes it {a}, then \
-                 {b}: zedc finds no one type that holds every step"
+                 {b}{alike}: zedc finds no one type that holds every step"
             ),
             [format!(
                 "repair: give the function a result of the start value's type, as {repair}"
             )],
         );
         Ty::empty()
+    }
+
+    /// The depth limit `D` of the argument at [`Self::fold_dir_end`]: a depth that no result
+    /// of `f` passes when `f` is a lambda whose body is a tuple built from literal projections
+    /// of the accumulator `a` and from values that do not read `a`; `None` for any other `f`.
+    /// `g` is the result of round 1, `init` the start value.
+    ///
+    /// Any finite `D` ends the loop (the argument at `fold_dir_end`); this method only sizes it
+    /// so that such a fold, as the delay chain `(a, x) -> (0, (a[0],), (a[1],))` from
+    /// `(0, 0, 0)`, settles before (b) turns full (B1 of round 1 of
+    /// FAIL-fold-rotating-tuple-rounds). A `D` too small costs a refusal, never a wrong type.
+    ///
+    /// Proof that no result passes the `D` returned, where one is:
+    /// 1. Write the body `(e_0, ..., e_{n-1})`. Every `e_j` is a tuple of sub-expressions; at
+    ///    path `q` (`q[0] = j`, `|q|` the number of tuple levels down to it, 1 for `e_j`) it
+    ///    holds either a chain `a[k_1]...[k_m]` (`m >= 1`, every `k_i` an integer literal) or
+    ///    an expression that does not name `a` (else `None` is returned).
+    /// 2. An expression that does not name `a` has the same type at every round: `f` is applied
+    ///    to the same values `V` each round, and only `a`'s type changes. So its depth is at
+    ///    most that of part `j` of `g_1`, which is in `S_j`.
+    /// 3. Let `B_k` bound the depth of part `k` of every accumulator row. A projection takes
+    ///    one tuple level off a value (a tuple is one deeper than its deepest part, `Forms::
+    ///    depth`), so `a[k_1]...[k_m]` has depth at most `B_{k_1} - (m - 1)`, and placed at
+    ///    path `q` it makes part `q[0]` at most `|q| - 1` levels deeper: depth
+    ///    `<= B_{k_1} + |q| - m`. That is the edge `k_1 -> q[0]` of weight `|q| - m`.
+    /// 4. So `B` is a bound when `B_j >= S_j` and `B_j >= B_k + w` for every edge `k -> j` of
+    ///    weight `w`, by induction on the rounds: the start rows' parts are in `S` (base); a
+    ///    round's result parts are bounded by steps 2 and 3, and the next accumulator is
+    ///    the union of the old one and the result, whose depth is the greater of the two.
+    /// 5. Such a `B` exists exactly when no cycle has positive weight. A cycle lies inside one
+    ///    strongly connected component; if every edge inside every component has weight
+    ///    `<= 0`, giving each component the greatest `B` of its members satisfies every edge
+    ///    inside it, and the components taken from the source end of the condensation
+    ///    (`zed_graph::components` numbers them so that edges between them go to lower
+    ///    numbers) satisfy the edges between them by one pass of `max(B_t, B_c + w)`. A
+    ///    positive edge inside a component returns `None` (it may sit on a positive cycle;
+    ///    the sufficient test is used, not the exact one, which only costs a refusal).
+    /// 6. A row of `n` parts each of depth `<= max B` has depth `<= 1 + max B = D`. ∎
+    ///
+    /// Complexity: O(size of the body) for the walk; one canonical form per part of each row of
+    /// `init` and `g`, O(their size); Tarjan's O(n + edges). Naive alternative: run rounds
+    /// until the depth stops growing, which is the question asked.
+    fn fold_depth_limit(
+        f: Option<&Expr>,
+        right: bool,
+        init: &Ty,
+        g: &Ty,
+        forms: &mut zedc_types::forms::Forms,
+    ) -> Option<u64> {
+        let ExprKind::Lambda { params, body } = &f?.kind else {
+            return None;
+        };
+        let [p0, p1] = &params[..] else { return None };
+        let a = if right { p1 } else { p0 };
+        let ExprKind::Tuple(parts) = &body.kind else {
+            return None;
+        };
+        let n = parts.len();
+        if a.tuple.is_some() || n == 0 {
+            return None;
+        }
+        // S_j (step 2 and the base of step 4), from rows of `n` closed parts only.
+        let mut s = vec![0i64; n];
+        let none = HashSet::new();
+        for t in [&init.carriers(), g] {
+            if !t.set.is_empty() || !t.fns.is_empty() || !t.vars.is_empty() || t.dynamic {
+                return None;
+            }
+            for r in t.tuples.iter() {
+                if r.open() || r.len() != n {
+                    return None;
+                }
+                for (j, c) in r.iter().enumerate() {
+                    let (form, _) = forms.of_in(c, false, &none);
+                    s[j] = s[j].max(forms.depth(form) as i64);
+                }
+            }
+        }
+        // The edges of step 3: `out[k]` holds `(j, |q| - m)`.
+        let names_a = |e: &Expr| {
+            let mut stack = vec![e];
+            let mut found = false;
+            while let Some(e) = stack.pop() {
+                found |= matches!(&e.kind, ExprKind::Name(x) if *x == a.name);
+                zedc_syntax::ast::expr_kids(&e.kind, zedc_syntax::ast::Blocks::Enter, &mut |k| {
+                    stack.push(k)
+                });
+            }
+            found
+        };
+        let mut out: Vec<Vec<(usize, i64)>> = vec![Vec::new(); n];
+        let mut stack: Vec<(&Expr, usize, i64)> =
+            parts.iter().enumerate().map(|(j, e)| (e, j, 1)).collect();
+        while let Some((e, j, len)) = stack.pop() {
+            if let ExprKind::Tuple(es) = &e.kind {
+                stack.extend(es.iter().map(|k| (k, j, len + 1)));
+                continue;
+            }
+            // `a[k_1]...[k_m]` is `Index(... Index(a, k_1) ..., k_m)`: the outermost index is
+            // the last.
+            let (mut at, mut ks) = (e, Vec::new());
+            while let ExprKind::Index(of, k) = &at.kind
+                && let ExprKind::Int { radix, digits } = &k.kind
+                && let Ok(Some(Value::Int(i))) = Value::int_text(digits, *radix)
+                && let Ok(i) = usize::try_from(i)
+            {
+                ks.push(i);
+                at = of;
+            }
+            match (&at.kind, ks.last()) {
+                (ExprKind::Name(x), Some(&k1)) if *x == a.name && k1 < n => {
+                    out[k1].push((j, len - ks.len() as i64));
+                }
+                _ if names_a(e) => return None,
+                _ => {}
+            }
+        }
+        // Step 5.
+        let comp = zed_graph::components(&out, |&(t, _)| t);
+        let count = comp.iter().max().map_or(0, |&c| c + 1);
+        let mut bc = vec![i64::MIN; count];
+        for (v, &c) in comp.iter().enumerate() {
+            bc[c] = bc[c].max(s[v]);
+            if out[v].iter().any(|&(t, w)| comp[t] == c && w > 0) {
+                return None;
+            }
+        }
+        let mut members: Vec<Vec<usize>> = vec![Vec::new(); count];
+        for (v, &c) in comp.iter().enumerate() {
+            members[c].push(v);
+        }
+        for c in (0..count).rev() {
+            for &v in &members[c] {
+                for &(t, w) in &out[v] {
+                    if comp[t] != c {
+                        bc[comp[t]] = bc[comp[t]].max(bc[c] + w);
+                    }
+                }
+            }
+        }
+        // Step 6.
+        Some(1 + bc.into_iter().max().unwrap_or(0).max(0) as u64)
     }
 
     /// The operator of `x >< f`, `f` of type `f` and not an operator section (step L3.2;
@@ -14530,6 +14835,18 @@ impl<'t, 'a> Ck<'t, 'a> {
         what: &str,
         span: Span,
     ) -> bool {
+        if self.sub(got, r, binds) {
+            return true;
+        }
+        // A solved class variable that a signature keeps inside the functions it holds stands
+        // for the type it was solved to ([`Self::stale`]: "each reading of those functions
+        // reads it as this type"), so `got` is read with each such variable replaced
+        // ([`Self::settled`]), which is the same set of values, not a wider one. Before (row
+        // FAIL-fold-rotating-tuple-rounds), `[1, 2, 3].foldl([0], (a, x) -> [(a[0] else 0) + 1])`
+        // replayed `a[0] else 0` as `0 | $3`, `$3` the solved class of the entries of `[0]`,
+        // which `sub` does not read, and was refused with "gives int here, which is not int".
+        // Complexity: O(size of `got`), only where the first `sub` refused.
+        let got = &self.settled(got);
         if self.sub(got, r, binds) {
             return true;
         }

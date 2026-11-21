@@ -152,6 +152,18 @@ fn a_growing_accumulator_is_refused_with_a_repair_in_its_own_form() {
             "repair: give the function a result of the start value's type, as \
              `(a, x) -> a + x`",
         ),
+        (
+            "grows_foldl_payload",
+            "${[1, 2].foldl(#a(0), (a, x) -> #a(a))}",
+            "repair: give the function a result of the start value's type, as \
+             `(a, x) -> a`",
+        ),
+        (
+            "grows_foldr_payload",
+            "${[1, 2].foldr((x, a) -> #ok(a), #start(n: 0))}",
+            "repair: give the function a result of the start value's type, as \
+             `(x, a) -> a`",
+        ),
     ] {
         let e = refused(name, body);
         assert!(
@@ -160,6 +172,207 @@ fn a_growing_accumulator_is_refused_with_a_repair_in_its_own_form() {
         );
         assert!(e.contains(repair), "{name}: {e}");
     }
+}
+
+/// Every refusal repair emitted by `fold_dir_end` fits its start value and entries and checks
+/// with zero errors when substituted into the program.
+#[test]
+fn fold_refusal_repairs_fit_every_start_value_and_check() {
+    use zed_tests::step_helpers::l01_26_type_resolution::Resolved;
+    for (name, failing, want_repair, fixed) in [
+        (
+            "open_tuple",
+            "f(y) = [1, 2].foldl((y, 0), (a, x) -> (a, x));\n",
+            "`(a, x) -> (a[0], a[1])`",
+            "f(y) = [1, 2].foldl((y, 0), (a, x) -> (a[0], a[1]));\n",
+        ),
+        (
+            "empty_tuple",
+            "f() = [1, 2].foldl((), (a, x) -> (a, x));\n",
+            "`(a, x) -> ()`",
+            "f() = [1, 2].foldl((), (a, x) -> ());\n",
+        ),
+        (
+            "string_over_int",
+            "f() = [1, 2].foldl(\"hi\", (a, x) -> (a, x));\n",
+            "`(a, x) -> a`",
+            "f() = [1, 2].foldl(\"hi\", (a, x) -> a);\n",
+        ),
+        (
+            "string_over_string",
+            "f() = [\"a\", \"b\"].foldl(\"hi\", (a, x) -> (a, x));\n",
+            "`(a, x) -> a ++ x`",
+            "f() = [\"a\", \"b\"].foldl(\"hi\", (a, x) -> a ++ x);\n",
+        ),
+        (
+            "int_over_string",
+            "f() = [\"a\", \"b\"].foldl(0, (a, x) -> (a, x));\n",
+            "`(a, x) -> a`",
+            "f() = [\"a\", \"b\"].foldl(0, (a, x) -> a);\n",
+        ),
+        (
+            "float_over_int",
+            "f() = [1, 2].foldl(1.5, (a, x) -> (a, x));\n",
+            "`(a, x) -> a`",
+            "f() = [1, 2].foldl(1.5, (a, x) -> a);\n",
+        ),
+        (
+            "bool_start",
+            "f() = [1, 2].foldl(true, (a, x) -> (a, x));\n",
+            "`(a, x) -> a`",
+            "f() = [1, 2].foldl(true, (a, x) -> a);\n",
+        ),
+        (
+            "atom_start",
+            "f() = [1, 2].foldl(#a, (a, x) -> (a, x));\n",
+            "`(a, x) -> a`",
+            "f() = [1, 2].foldl(#a, (a, x) -> a);\n",
+        ),
+        (
+            "payload_start",
+            "f() = [1, 2].foldl(#ok(0), (a, x) -> (a, x));\n",
+            "`(a, x) -> a`",
+            "f() = [1, 2].foldl(#ok(0), (a, x) -> a);\n",
+        ),
+        (
+            "array_start",
+            "f() = [1, 2].foldl([0], (a, x) -> (a, x));\n",
+            "`(a, x) -> a ++ [x]`",
+            "f() = [1, 2].foldl([0], (a, x) -> a ++ [x]);\n",
+        ),
+        (
+            "foldr_array_start",
+            "f() = [1, 2].foldr((x, a) -> (a, x), [0]);\n",
+            "`(x, a) -> [x] ++ a`",
+            "f() = [1, 2].foldr((x, a) -> [x] ++ a, [0]);\n",
+        ),
+        (
+            "union_of_tuples",
+            "f(b: bool) = [1, 2].foldl(if b { (0, 0) } else { (1, 1, 1) }, (a, x) -> (a, x));\n",
+            "`(a, x) -> a`",
+            "f(b: bool) = [1, 2].foldl(if b { (0, 0) } else { (1, 1, 1) }, (a, x) -> a);\n",
+        ),
+        (
+            "fn_start",
+            "f() = [1, 2].foldl(y -> y, (a, x) -> (a, x));\n",
+            "`(a, x) -> a`",
+            "f() = [1, 2].foldl(y -> y, (a, x) -> a);\n",
+        ),
+        (
+            "foldr_string_over_int",
+            "f() = [1, 2].foldr((x, a) -> (a, x), \"hi\");\n",
+            "`(x, a) -> a`",
+            "f() = [1, 2].foldr((x, a) -> a, \"hi\");\n",
+        ),
+        (
+            "foldr_string_over_string",
+            "f() = [\"a\", \"b\"].foldr((x, a) -> (a, x), \"hi\");\n",
+            "`(x, a) -> x ++ a`",
+            "f() = [\"a\", \"b\"].foldr((x, a) -> x ++ a, \"hi\");\n",
+        ),
+    ] {
+        let inf = Resolved::new(failing).check();
+        assert_eq!(inf.errors.len(), 1, "{name}: {:?}", inf.errors);
+        assert!(
+            inf.errors[0]
+                .message
+                .contains("zedc finds no one type that holds every step"),
+            "{name}: {}",
+            inf.errors[0].message
+        );
+        assert!(
+            inf.errors[0]
+                .notes
+                .iter()
+                .any(|n| n.text.contains(want_repair)),
+            "{name}: {:?}",
+            inf.errors[0].notes
+        );
+        let ok = Resolved::new(fixed).check();
+        assert!(
+            ok.errors.is_empty(),
+            "{name} repair failed: {:?}",
+            ok.errors
+        );
+    }
+}
+
+/// The repair fits a start value that is not a tuple, and runs: `+` only where the start is
+/// a number of the entries' carrier (`0.5 + 1` is refused), the entry at the end for a list,
+/// and the accumulator given back for an atom, a payload, a function or a union of tuples
+/// (Opus seat, round 1). Each repair, written into the program, runs and prints the line
+/// given; the function the repaired fold gives is called at 3 (before the kernel's `gen` held
+/// functions, row FAIL-fold-rotating-tuple-rounds, that call stopped the run).
+#[test]
+fn a_growing_accumulator_that_is_not_a_tuple_gets_a_repair_that_fits_it() {
+    let pair = "if m.args.count > 0 { (0, 0) } else { (0, 0, 0) }";
+    for (name, start, right, repair, expected) in [
+        ("grows_atom", "#n", false, "(a, x) -> a", "true"),
+        ("grows_payload", "#p(0)", false, "(a, x) -> a", "true"),
+        ("grows_f64", "0.5", false, "(a, x) -> a", "0.5"),
+        (
+            "grows_list",
+            "[0]",
+            false,
+            "(a, x) -> a ++ [x]",
+            "{0, 1, 2}",
+        ),
+        (
+            "grows_list_r",
+            "[0]",
+            true,
+            "(x, a) -> [x] ++ a",
+            "{0 -> 1, 1 -> 2, 2 -> 0}",
+        ),
+        ("grows_union", pair, false, "(a, x) -> a", "(0, 0, 0)"),
+        ("grows_fn", "y -> y", false, "(a, x) -> a", "3"),
+    ] {
+        let fold = |f: &str| match right {
+            false => format!("[1, 2].foldl({start}, {f})"),
+            true => format!("[1, 2].foldr({f}, {start})"),
+        };
+        let grows = if right {
+            "(x, a) -> (x, a)"
+        } else {
+            "(a, x) -> (a, x)"
+        };
+        let e = refused(name, &format!("${{{}}}", fold(grows)));
+        let offered =
+            format!("repair: give the function a result of the start value's type, as `{repair}`");
+        assert!(e.contains(&offered), "{name}: {e}");
+        let shown = match start {
+            "#n" | "#p(0)" => format!("${{{} == {start}}}", fold(repair)),
+            "y -> y" => format!("${{{}(3)}}", fold(repair)),
+            _ => format!("${{{}}}", fold(repair)),
+        };
+        let ran = run(&format!("{name}_repaired"), &shown);
+        assert_eq!(
+            (ran.status, ran.stdout.trim_end()),
+            (0, expected),
+            "{name}: {shown}\n{}",
+            ran.stderr
+        );
+    }
+}
+
+/// A fold whose function makes a function that calls the accumulator is refused, and the
+/// message says how its two steps differ, though they print alike: each `y -> a(y) + x`
+/// needs a call of `a`, whose type holds the step before, one level deeper each round, so no
+/// type zedc can write holds every step. Before, the message read "makes it _ -> int, then
+/// _ -> int" with nothing to tell the two apart.
+#[test]
+fn a_fold_whose_steps_print_alike_says_how_they_differ() {
+    let e = refused(
+        "fold_composes",
+        "${[1, 2, 3].foldl(y -> y, (a, x) -> (y -> a(y) + x))(10)}",
+    );
+    assert!(
+        e.contains(
+            "makes it _ -> int, then _ -> int, which print alike but differ in what the \
+             function needs of its argument: zedc finds no one type that holds every step"
+        ),
+        "{e}"
+    );
 }
 
 /// A scan by an operator whose fold is not built is named as a scan, with the function the
