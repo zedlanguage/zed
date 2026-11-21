@@ -12427,8 +12427,43 @@ fn probe(p: Parts, kept: &HashSet<u64>) -> Result<Option<Parts>, Refusal> {
 /// `settle`'s test of one disjunct against the base does not do), a `Refuted` of the slack
 /// index read with the order's own `I`, a `settle` that refuses (an `Err` counts as not
 /// refuted) or answers differently on a stronger `q`, and the disjuncts kept untested as
-/// `Immune`. Neither (M1) nor (M2) is proved here; no test of two orders has shown a
-/// difference.
+/// `Immune`. Neither (M1) nor (M2) is proved here.
+///
+/// A fifth source, found by `probe_order::probe_leaves_the_same_parts_in_every_order` and fixed
+/// (2026-11-21): [`drop_by_bounds`] and [`bounds_refute`] read the parts four and two times in
+/// an order made from the order they were written in, and those readings stop short of the
+/// bounds' fixed point, so a disjunct without a point that `settle` does not refute was removed
+/// in one order and kept in another (27 answers of 3669 on seed 1). They now read the parts in
+/// the order of their content ([`read_order`], whose note proves that the readings then depend
+/// on the parts alone), so neither depends on the order now; the four sub-cases are read again
+/// below, each against the code as it stands.
+///
+/// (a) A bound of [`learn`] proved by [`bounds_refute`] alone. `bounds_refute` of given parts
+/// and bound no longer depends on their order, but `learn` asks it only after a disjunct is
+/// refuted by the slack index or by `settle`, of the parts as they are at that step, and an
+/// order that removes that disjunct first by [`refuted_by_links`] or by `implied` asks
+/// nothing. Not proved (PROOF-probe-order-independent) that the bounds learned in one order
+/// are found, or not needed, in the other.
+///
+/// (b) The slack index. [`SlackIndex::of`] reads the constraints, `implied` and the
+/// disjunctions of the round, so its `Refuted` and `Immune` follow the order through
+/// `implied` as in (a). Not proved (PROOF-probe-order-independent).
+///
+/// (c) Refusals. Under the cover's meter ([`meter::charge`]) the work of the rounds before
+/// counts, and the rounds differ between orders, so a question can be refused in one order
+/// and answered in another. A refusal is no answer, never a wrong one: `Err` from `settle`
+/// keeps the disjunct here, and a refusal of the probe itself ([`meter::charge`]) is the
+/// question's refusal. Not proved (PROOF-probe-order-independent) that an `Err` of `settle`
+/// with no meter is the same in every order.
+///
+/// (d) `Immune` with every probe checked keeps a disjunct untested; whether it is `Immune`
+/// is read as in (b). Not proved (PROOF-probe-order-independent).
+///
+/// Measured: the test above draws 1500 sets of parts (rows, slack-index sums and chains whose
+/// bounds reach their ends only through the hulls of the steps) and compares the written
+/// order, the order reversed and a shuffle: no difference on seeds 1 to 8 at 4000 sets each
+/// and 9 and 10 at 800 with chains of up to 12 steps, with 150 to 250 disjuncts a seed kept
+/// without a point (40 to 50 at 800), which is where an order could matter.
 ///
 /// Complexity tradeoff: testing each piece of a set of values of one atom costs one search of
 /// the whole formula per piece that the rounds by halves cannot refute together, O(h·n) for a
@@ -13247,8 +13282,9 @@ impl<'a> Unit<'a> {
 /// each end to the middle and the second carries them on to the other end. `x` is left out
 /// of the neighbors because the guards on it reach every part of a chain of guards, so that
 /// every part would be one step from the constraints. The order is that of the parts'
-/// structure, not of the atoms' names. Each reading costs each constraint once, `O(n log n)`
-/// for parts of `n` terms with the map from atoms to parts.
+/// structure and content ([`read_order`]), not of the order they are written in. Each
+/// reading costs each constraint once, `O(n log n)` for parts of `n` terms with the map from
+/// atoms to parts.
 ///
 /// Complexity tradeoff: the propagation is not repeated until no bound moves, so a proof that
 /// needs bounds carried along a chain more than twice is not found here; [`learn`] then asks
@@ -13285,12 +13321,47 @@ impl<'a> Unit<'a> {
 
 /// The order in which [`bounds_refute`] and [`drop_by_bounds`] read `units`: breadth first
 /// from the first part of each set of connected parts, two parts being neighbors when they
-/// share an atom other than `x`. `O(n log n)` for parts of `n` terms.
+/// share an atom other than `x`, the parts taken in the order of their content (the
+/// constraints first, each disjunction after them by its disjuncts' constraints, sorted), not
+/// in the order they are written. `O(n log n)` for parts of `n` terms.
+///
+/// Why the order of content (PROOF-probe-order-independent): the four readings stop short of
+/// the bounds' fixed point, so what they find depends on the order they read the parts in. Read
+/// in the written order, the same parts with their disjunctions written in another order left
+/// a disjunct without a point in one order and removed it in the other, and `settle` does not
+/// refute it either (`probe_order::a_disjunct_without_a_point_is_removed_in_every_order`): the
+/// probe's answer, and the hulls read from it, depended on the order. Proof that the order now
+/// depends only on the parts' content: two parts with the same key are a constraint and the same
+/// constraint, or two disjunctions whose disjuncts have the same constraints, sorted; such two
+/// mention the same atoms, and [`narrow`] and [`narrow_or`] move the bounds and mark the
+/// disjuncts of either the same way (they read a disjunct's constraints only, not the
+/// disjunctions below it). So swapping two such parts in the order leaves every reading as it
+/// was, and the sort, stable, makes one order of the keys from every written order. Cost: the
+/// keys are the parts' constraints, sorted within each disjunct and each disjunction, and the
+/// sort of the parts compares them, `O(n log n)` comparisons of at most a part's size each.
 fn read_order(units: &[Unit<'_>], x: Option<&Atom>) -> Vec<usize> {
+    let keys: Vec<(bool, Vec<Vec<&Con>>)> = (units.iter())
+        .map(|u| match u {
+            Unit::Con(c) => (false, vec![vec![*c]]),
+            Unit::Or(ds) => {
+                let mut k: Vec<Vec<&Con>> = (ds.iter())
+                    .map(|d| {
+                        let mut cs: Vec<&Con> = d.cons.iter().collect();
+                        cs.sort();
+                        cs
+                    })
+                    .collect();
+                k.sort();
+                (true, k)
+            }
+        })
+        .collect();
+    let mut ranked: Vec<usize> = (0..units.len()).collect();
+    ranked.sort_by(|&a, &b| keys[a].cmp(&keys[b]));
     let atoms: Vec<Vec<&Atom>> = units.iter().map(|u| u.atoms(x)).collect();
     let mut by_atom: BTreeMap<&Atom, Vec<usize>> = BTreeMap::new();
-    for (u, xs) in atoms.iter().enumerate() {
-        for a in xs {
+    for &u in &ranked {
+        for a in &atoms[u] {
             by_atom.entry(a).or_default().push(u);
         }
     }
@@ -13298,7 +13369,7 @@ fn read_order(units: &[Unit<'_>], x: Option<&Atom>) -> Vec<usize> {
     let mut order: Vec<usize> = Vec::with_capacity(units.len());
     let mut done: BTreeSet<&Atom> = BTreeSet::new();
     let mut head = 0;
-    for start in 0..units.len() {
+    for &start in &ranked {
         if seen[start] {
             continue;
         }
@@ -32968,6 +33039,267 @@ mod jointly_empty_order {
         assert!(ors.iter().all(|ds| ds.len() == 1));
         back.reverse();
         assert_eq!(kept(&ors), kept(&back));
+    }
+}
+
+#[cfg(test)]
+mod probe_order {
+    use super::*;
+    use crate::seed::Rng;
+
+    fn v(i: usize) -> Lin {
+        Lin::atom(Atom::Sym(format!("v{i}").into()))
+    }
+
+    fn ge(l: Lin) -> Formula {
+        Formula::Con(Con::ge(&l, &Lin::default()))
+    }
+
+    fn eq(l: Lin) -> Formula {
+        Formula::Con(Con::eq(&l, &Lin::default()))
+    }
+
+    fn c(k: i128) -> Lin {
+        Lin::constant(k)
+    }
+
+    /// The parts [`probe`] leaves, as text the order does not change: the constraints and the
+    /// constraints of each disjunction left with one disjunct, sorted, and each disjunction of
+    /// two disjuncts or more as its disjuncts sorted, the disjunctions sorted.
+    fn key(p: &Parts) -> (Vec<String>, Vec<Vec<String>>) {
+        let text = |d: &Parts| {
+            let mut s: Vec<String> = d.cons.iter().map(|c| format!("{c:?}")).collect();
+            s.sort();
+            let mut o: Vec<String> = d.ors.iter().map(|o| format!("{:?}", key_ors(o))).collect();
+            o.sort();
+            format!("{s:?} {o:?}")
+        };
+        fn key_ors(o: &[Rc<Parts>]) -> Vec<String> {
+            let mut k: Vec<String> = o.iter().map(|d| format!("{:?}", key(d))).collect();
+            k.sort();
+            k
+        }
+        let mut cons: Vec<String> = p.cons.iter().map(|c| format!("{c:?}")).collect();
+        let mut ors = Vec::new();
+        for o in &p.ors {
+            if let [d] = o.as_slice() {
+                cons.push(text(d));
+            } else {
+                let mut k: Vec<String> = o.iter().map(|d| text(d)).collect();
+                k.sort();
+                ors.push(k);
+            }
+        }
+        cons.sort();
+        cons.dedup();
+        ors.sort();
+        (cons, ors)
+    }
+
+    /// Atoms in `0..=b`, rows of two or three of them, and disjunctions of bounds and equalities
+    /// on the rows' forms and on single atoms.
+    fn rows(rng: &mut Rng) -> Formula {
+        let n = 2 + rng.below(5);
+        let b = 2 + rng.int_i128(0, 8);
+        let mut fs = Vec::new();
+        for i in 0..n {
+            fs.push(ge(v(i)));
+            fs.push(ge(c(b).minus(&v(i))));
+        }
+        let form = |rng: &mut Rng| {
+            let a = rng.below(n);
+            let mut l = v(a);
+            for _ in 0..rng.below(3) {
+                let x = v(rng.below(n));
+                l = if rng.coin() { l.plus(&x) } else { l.minus(&x) };
+            }
+            l
+        };
+        for _ in 0..rng.below(3) {
+            fs.push(ge(form(rng).plus(&c(rng.int_i128(-3, 3)))));
+        }
+        for _ in 0..2 + rng.below(4) {
+            let f = form(rng);
+            let ds = (0..2 + rng.below(3))
+                .map(|_| {
+                    let k = c(rng.int_i128(-3, 2 * b));
+                    match rng.below(3) {
+                        0 => ge(k.minus(&f)),
+                        1 => ge(f.minus(&k)),
+                        _ => eq(f.minus(&k)),
+                    }
+                })
+                .collect();
+            fs.push(Formula::or(ds));
+        }
+        Formula::and(fs)
+    }
+
+    /// Two-point disjunctions `v[i] == a || v[i] == b` coupled by a wide row of unit
+    /// coefficients, with guards of single atoms, as the slack index reads.
+    fn slack(rng: &mut Rng) -> Formula {
+        let n = 2 + rng.below(6);
+        let mut fs = Vec::new();
+        let mut sum = Lin::default();
+        for i in 0..n {
+            let a = rng.int_i128(0, 3);
+            let w = 1 + rng.int_i128(0, 4);
+            fs.push(Formula::or(vec![
+                eq(v(i).minus(&c(a))),
+                eq(v(i).minus(&c(a + w))),
+            ]));
+            sum = if rng.coin() || i == 0 {
+                sum.plus(&v(i))
+            } else {
+                sum.minus(&v(i))
+            };
+        }
+        let t = c(rng.int_i128(-4, 12));
+        fs.push(if rng.coin() {
+            eq(sum.minus(&t))
+        } else {
+            ge(sum.minus(&t))
+        });
+        for _ in 0..rng.below(4) {
+            let (i, j) = (rng.below(n), rng.below(n));
+            let (k, l) = (c(rng.int_i128(0, 6)), c(rng.int_i128(0, 6)));
+            fs.push(Formula::or(vec![ge(k.minus(&v(i))), ge(v(j).minus(&l))]));
+        }
+        Formula::and(fs)
+    }
+
+    /// A chain `v[i+1] - v[i]` in a set of two or three steps, each a disjunction, so that a
+    /// bound reaches the far end only through the hulls of the steps ([`bounds_refute`]), and
+    /// disjunctions of bounds of one atom on the chain's atoms.
+    fn chain(rng: &mut Rng) -> Formula {
+        let n = 2 + rng.below(7);
+        let mut fs = vec![ge(v(0)), ge(c(rng.int_i128(0, 6)).minus(&v(0)))];
+        for i in 0..n {
+            let step = v(i + 1).minus(&v(i));
+            let ds = (0..2 + rng.below(2))
+                .map(|_| eq(step.minus(&c(rng.int_i128(-2, 4)))))
+                .collect();
+            fs.push(Formula::or(ds));
+        }
+        for _ in 0..2 + rng.below(4) {
+            let ds = (0..2 + rng.below(2))
+                .map(|_| {
+                    let x = v(rng.below(n + 1));
+                    let k = c(rng.int_i128(-4, 4 * n as i128 + 6));
+                    if rng.coin() {
+                        ge(k.minus(&x))
+                    } else {
+                        ge(x.minus(&k))
+                    }
+                })
+                .collect();
+            fs.push(Formula::or(ds));
+        }
+        Formula::and(fs)
+    }
+
+    /// Steps of a chain from `v0` in `0..=4` to `v5`, whose values reach at most 17, and a
+    /// guard with the disjunct `v5 >= 18`, which has no point.
+    fn chain_case() -> Formula {
+        let step = |i: usize, ks: &[i128]| {
+            let s = v(i + 1).minus(&v(i));
+            Formula::or(ks.iter().map(|&k| eq(s.minus(&c(k)))).collect())
+        };
+        Formula::and(vec![
+            ge(v(0)),
+            ge(c(4).minus(&v(0))),
+            step(0, &[1, 3]),
+            step(1, &[-2, 4, 4]),
+            step(2, &[4, 0, 2]),
+            step(3, &[-1, -2]),
+            step(4, &[0, 3, 3]),
+            Formula::or(vec![ge(v(1).plus(&c(4))), ge(c(0).minus(&v(3)))]),
+            Formula::or(vec![
+                ge(c(20).minus(&v(3))),
+                ge(v(1).plus(&c(2))),
+                ge(v(5).minus(&c(18))),
+            ]),
+        ])
+    }
+
+    /// Before [`read_order`] read the parts in the order of their content, [`drop_by_bounds`]
+    /// removed `v5 >= 18` with the parts as written and not with the disjunctions reversed,
+    /// and `settle` did not refute it, so the two answers differed.
+    #[test]
+    fn a_disjunct_without_a_point_is_removed_in_every_order() {
+        let p = Parts::of(nnf(&chain_case(), true));
+        let mut back = p.clone();
+        back.ors.reverse();
+        for o in &mut back.ors {
+            o.reverse();
+        }
+        let a = probe(p, &HashSet::new())
+            .expect("answered")
+            .expect("a point");
+        let b = probe(back, &HashSet::new())
+            .expect("answered")
+            .expect("a point");
+        assert_eq!(key(&a), key(&b));
+    }
+
+    /// The parts [`probe`] leaves in the written order, with the constraints, the disjunctions
+    /// and their disjuncts reversed, and with them shuffled, are the same
+    /// (PROOF-probe-order-independent). In the exploration that found the fault above (4000
+    /// cases a seed, seeds 1 to 8), the answers of a seed kept 150 to 250 disjuncts without a
+    /// point ([`has_point`] of the parts with each), so the test reaches the answers where an
+    /// order could matter; 27 of 3669 differed on seed 1 before [`read_order`] read the parts
+    /// in the order of their content, none on any seed after.
+    #[test]
+    fn probe_leaves_the_same_parts_in_every_order() {
+        let (mut rng, seed) = Rng::fresh("probe_leaves_the_same_parts_in_every_order");
+        let mut diffs = Vec::new();
+        let mut asked = 0;
+        for case in 0..1500 {
+            let f = match case % 3 {
+                0 => rows(&mut rng),
+                1 => slack(&mut rng),
+                _ => chain(&mut rng),
+            };
+            let p = Parts::of(nnf(&f, true));
+            if p.ors.len() < 2 {
+                continue;
+            }
+            asked += 1;
+            let run = |mut q: Parts, rng: Option<&mut Rng>, rev: bool| {
+                if rev {
+                    q.cons.reverse();
+                    q.ors.reverse();
+                    for o in &mut q.ors {
+                        o.reverse();
+                    }
+                }
+                if let Some(rng) = rng {
+                    rng.shuffle(&mut q.cons);
+                    rng.shuffle(&mut q.ors);
+                    for o in &mut q.ors {
+                        rng.shuffle(o);
+                    }
+                }
+                match probe(q, &HashSet::new()) {
+                    Ok(Some(q)) => format!("{:?}", key(&q)),
+                    other => format!("{:?}", other.map(|o| o.is_some())),
+                }
+            };
+            let first = run(p.clone(), None, false);
+            let back = run(p.clone(), None, true);
+            let mixed = run(p.clone(), Some(&mut rng), false);
+            if first != back || first != mixed {
+                diffs.push(format!(
+                    "case {case}: {f:?}\n  in order {first}\n  reversed {back}\n  shuffled {mixed}"
+                ));
+            }
+        }
+        assert!(
+            diffs.is_empty(),
+            "seed {seed:#x}, {} of {asked}:\n{}",
+            diffs.len(),
+            diffs.join("\n")
+        );
     }
 }
 
