@@ -71,10 +71,21 @@
 # diagnostics rows hours before their zed-impl halves landed, l01_21_test_runner then failed at
 # C0 54b8e6459 too, and was filed as FAIL-main-54b8e6459, a cause no bisect of zed-impl can find.
 # Known failures. main-watch-known.txt lists failures a plan row owns, one a line,
-# `<kind>:<piece> <row>`: such a piece still runs and is reported with its row, but is not
-# bisected or fixed here, and does not keep a head from being checked. A third field `skip` keeps
-# the piece from being started at all (tools/run_tests.sh --except), for a piece too costly to run
-# while it fails: bench rung2 at n = 600 held 67 to 71 GB a run (TOOL-main-watch-start-green).
+# `<kind>:<piece> <row> [skip] [fixed-by <commit>]`: such a piece still runs and is reported with
+# its row, but is not bisected or fixed here, and does not keep a head from being checked. A third
+# field `skip` keeps the piece from being started at all (tools/run_tests.sh --except), for a piece
+# too costly to run while it fails: bench rung2 at n = 600 held 67 to 71 GB a run
+# (TOOL-main-watch-start-green). The row's owner never takes the line out: once the fix has landed
+# on main it appends `fixed-by <the landed commit>` (MAINWATCH-known-fixed-by, 2026-11-21). The
+# line is then in force at every commit that does not contain that commit (known_lines), and
+# the watcher itself takes it out at the first check of a head that contains the commit and at
+# which the piece passes. Before this, knownf3 took the exp_families line out when its fix
+# 0ad3544ed landed; the watcher was then checking 46c1d2b71, which lacks the fix, saw the old
+# failure as new, and filed the duplicate row FAIL-main-af9161e5a. A piece that still fails at a
+# head containing its fixed-by commit goes back to its row (a QUEUE line, or a stuck entry), and
+# its line loses the fixed-by, so it is in force again. Each checked line records the known
+# failures its head was checked with (a fourth field), so a failure found at the last checked
+# commit that was known there is filed under its row again, not as FAIL-main-<C0>.
 # Queue mode. With MAIN_WATCH_QUEUE=<file> (/home/luke/Work/wt/main-watch.sh sets it to
 # spawn-queue.txt) step 5 starts no fixing agent: each culprit C becomes one line
 # `QUEUE <row> (filed by main-watch <time>: first bad commit <C> ... fails <pieces>; ...)` in that
@@ -150,8 +161,8 @@ runlog=$home/running-log.md
 ledger=$home/ledger.jsonl
 stuck_file=$home/main-watch-stuck.md
 flakes=$home/main-watch-flakes.log
-# Failures a plan row owns, one a line: <kind>:<piece> <row> [skip]. Written by hand and in queue
-# mode; see check.
+# Failures a plan row owns, one a line: <kind>:<piece> <row> [skip] [fixed-by <commit>]. Written by
+# hand and in queue mode; see Known failures above, and check.
 known_file=$home/main-watch-known.txt
 queue=${MAIN_WATCH_QUEUE:-}
 self=$(realpath -e "$0")
@@ -160,6 +171,31 @@ export MAIN_WATCH_HOME=$home MAIN_WATCH_REPO=$repo MAIN_WATCH_FULL=$full MAIN_WA
 ts() { date -u +%FT%TZ; }
 say() { echo "main-watch: $*"; }
 short() { git -C "$repo" rev-parse --short=9 "$1"; }
+
+# fixed_of <known line>: the commit its `fixed-by <commit>` names (fields after the row), if any.
+fixed_of() { awk '{ for (i = 3; i < NF; i++) if ($i == "fixed-by") { print $(i + 1); exit } }' <<<"$1"; }
+# known_lines <commit> in|fixed: `in`, the lines of the known list in force at the commit, as
+# written: all but comments, blank lines, and lines whose fixed-by commit the commit contains (is
+# an ancestor of it, or is it); `fixed`, those last lines alone. Why the first is the right set:
+# the fixed-by commit F is the commit its row's owner landed as the fix, so at a commit without F
+# the failure is the old one and stays the row's; at a commit
+# with F the piece should pass, and if it fails anyway check sends it back to the row (Known
+# failures above), so no failure is ever taken from its row unreported. A fixed-by commit that
+# does not resolve (a typo, or the sha of a branch commit that merge-push.sh's rebase replaced)
+# makes `merge-base --is-ancestor` exit 128, so the line stays in force (known, never dropped), and
+# check says so at each check. Cost: one awk and at most one git process per line, O(n) in the
+# list's n lines (a few dozen at most); it runs once per check and once per run of every piece.
+known_lines() {
+  local c=$1 want=$2 line f set
+  [ -s "$known_file" ] || return 0
+  while IFS= read -r line; do
+    case $line in '#'* | '') continue ;; esac
+    f=$(fixed_of "$line")
+    set=in
+    [ -n "$f" ] && git -C "$repo" merge-base --is-ancestor "$f" "$c" 2>/dev/null && set=fixed
+    [ "$set" != "$want" ] || printf '%s\n' "$line"
+  done <"$known_file"
+}
 
 # Runs the pieces "$3"... of kind $2 (test or bench) in the current directory, a worktree, with
 # tools/run_tests.sh's own log directory $1. No piece named: all of that kind. The piece BUILD
@@ -184,9 +220,10 @@ run_pieces() {
     a+=(--list)
   else
     # A run of every piece leaves out those of this kind the known list marks skip, each as its
-    # own anchored alternative, as for --only above.
+    # own anchored alternative, as for --only above; only lines in force at the commit checked out
+    # here, so a skipped piece runs at a commit holding its fix and can be seen to pass.
     local skip
-    skip=$([ -s "$known_file" ] && awk -v k="$kind:" '$3 == "skip" && index($1, k) == 1 { print substr($1, length(k) + 1) }' "$known_file" |
+    skip=$(known_lines "$(git rev-parse HEAD)" in | awk -v k="$kind:" '$3 == "skip" && index($1, k) == 1 { print substr($1, length(k) + 1) }' |
       sed 's/[][\.*^$+?(){}|/]/\\&/g; s/.*/^&$/' | paste -sd'|')
     [ -z "$skip" ] || a+=(--except "$skip")
   fi
@@ -354,6 +391,65 @@ known_add() {
     echo "$p $1" >>"$known_file"
   done
 }
+# known_edit <commit> <items> drop|unfix: each line of an item (<kind>:<piece>) whose fixed-by
+# commit the commit contains is taken out (drop: the piece passes there, so its fix holds) or
+# kept without its fixed-by (unfix: the piece still fails there, so the line is in force again).
+# The list is shared and others append to it, so it is replaced by rename, as every shared file
+# here that is not only appended to (No locks below): the new text is written to a file of this
+# process, the list is read again, and the rename happens only if the list is still the text the
+# edit was made from; otherwise the edit is made again from the new text, until the list stands
+# still between the read and the check. An append that lands after that check and before the
+# rename is lost: the window is one rename(2) call, and is not closed (no lock, by the author's
+# rule of 2026-11-19). The loop ends: each pass that does not rename saw an append, and appends
+# come from people and agents, a few a day.
+known_edit() {
+  local c=$1 items=$2 how=$3 old new line f
+  while :; do
+    old=$(cat "$known_file") || return 0
+    new=$(while IFS= read -r line; do
+      f=$(fixed_of "$line")
+      if [ -n "$f" ] && [ -n "$(inter "${line%% *}" "$items")" ] && git -C "$repo" merge-base --is-ancestor "$f" "$c" 2>/dev/null; then
+        [ "$how" = drop ] || sed -E 's/ +fixed-by +[^ ]+//g' <<<"$line"
+      else
+        printf '%s\n' "$line"
+      fi
+    done <<<"$old")
+    [ "$new" != "$old" ] || return 0
+    printf '%s\n' "$new" >"$known_file.$$"
+    if [ "$(cat "$known_file")" = "$old" ]; then
+      mv -T "$known_file.$$" "$known_file" || say "could not replace $known_file ($how of $(paste -sd' ' <<<"$items"))"
+      return 0
+    fi
+  done
+}
+# known_checked <C0>: the known failures the last checked commit C0 was checked with, one
+# `<kind>:<piece> <row>` a line (none: empty), or `?` when that is not recorded. The checked file's
+# fourth field holds them (`<kind>:<piece>=<row>,...`, `-` for none; checked_head and --start write
+# it); a line written before that field existed lacks it, and then they are read from the
+# running log's line `checked <C0>: every test and benchmark passes but the known failures <p>
+# (<row>) ... (<n> landings since ...)`, which checked_head has written in that form since
+# 2026-11-20 (running-log.md line 14225 holds af9161e5a's, with the exp_families bench).
+known_checked() {
+  local f l
+  f=$(cut -d' ' -f4 "$checked_file")
+  if [ -n "$f" ]; then
+    [ "$f" = - ] || tr ',' '\n' <<<"$f" | sed 's/=/ /'
+    return 0
+  fi
+  l=$(command grep -a -F "| NO-LOCKS-optimistic:main-watch | checked $(short "$1"): every test and benchmark passes" "$runlog" 2>/dev/null | tail -n 1)
+  [ -n "$l" ] || { echo '?'; return 0; }
+  sed -n 's/.* but the known failures \(.*\) ([0-9]* landings since [^)]*)$/\1/p' <<<"$l" |
+    command grep -a -o -E '[^ ]+ \([^)]*\)' | sed -E 's/ \((.*)\)$/ \1/'
+  return 0
+}
+# known_state <C0's known failures, from known_checked>: the words for the state C0 was checked in.
+known_state() {
+  case $1 in
+    '') echo "which passed every test and benchmark when it was checked" ;;
+    '?') echo "which passed every test and benchmark when it was checked, but for known failures that check did not record" ;;
+    *) echo "which passed every test and benchmark when it was checked but the known failures $(sed -E 's/^([^ ]+) (.*)$/\1 (\2)/' <<<"$1" | paste -sd' ')" ;;
+  esac
+}
 # stuck <commit or -> <reason> <details> [<row> <items>]: records the case for the author, puts
 # the items on the known list with the row, and returns, so polling goes on. A case already
 # recorded (the same commit and reason) is not written again.
@@ -368,7 +464,7 @@ stuck() {
     echo
     echo "## $(ts) main-watch stuck: $why"
     echo
-    echo "Holds up: ${row:-nothing in main-watch}${row:+, whose pieces $(paste -sd' ' <<<"$items") main-watch now reports as known failures (in $known_file) and does not bisect or fix; take their lines out once the row fixes them}. main-watch goes on polling."
+    echo "Holds up: ${row:-nothing in main-watch}${row:+, whose pieces $(paste -sd' ' <<<"$items") main-watch now reports as known failures (in $known_file) and does not bisect or fix; once the fix of the row has landed, append \`fixed-by <the landed commit>\` to their lines there, never take them out}. main-watch goes on polling."
     echo
     echo "Commit: ${c:--}. Head checked: $head. The watcher's worktree, left as it was: $copy. Its logs: $logroot."
     echo
@@ -520,7 +616,7 @@ spec_culprit() {
   else
     known_add "$row" "$items"
     command grep -a -q "^QUEUE .*: spec commit ${s:0:9} " "$queue" 2>/dev/null ||
-      echo "QUEUE $row (filed by main-watch $(ts): $what; the row's owner fixes it and takes these pieces' lines out of $known_file)" >>"$queue"
+      echo "QUEUE $row (filed by main-watch $(ts): $what; the row's owner fixes it and, once the fix has landed, appends \`fixed-by <the landed commit>\` to these pieces' lines in $known_file, never taking them out)" >>"$queue"
     runlog "$row: spec commit ${s:0:9} breaks $pieces at $(short "$head"); queued in $queue and put on $known_file"
     say "$row: spec commit ${s:0:9} breaks $pieces; queued"
   fi
@@ -546,7 +642,7 @@ fix() {
     local owner
     owner=$(owner_row "$c")
     command grep -a -q "^QUEUE .*first bad commit $(short "$c") " "$queue" 2>/dev/null ||
-      echo "QUEUE $owner (filed by main-watch $(ts): first bad commit $(short "$c") \"$sub\" ($who) fails $pieces; bisect log $bisect_log, outputs in $logroot; the row's owner fixes it and takes these pieces' lines out of $known_file)" >>"$queue"
+      echo "QUEUE $owner (filed by main-watch $(ts): first bad commit $(short "$c") \"$sub\" ($who) fails $pieces; bisect log $bisect_log, outputs in $logroot; the row's owner fixes it and, once the fix has landed, appends \`fixed-by <the landed commit>\` to these pieces' lines in $known_file, never taking them out)" >>"$queue"
     for t in $items; do echo "$t $owner" >>"$known_file"; done
     runlog "$row: queued to $owner in $queue: first bad commit $(short "$c") fails $pieces (no fixing agent in queue mode)"
     say "$row: queued to $owner"
@@ -618,10 +714,13 @@ fix() {
 }
 
 # checked_head <C0> <known failures>: records $head as checked, publishes the build of the
-# watcher's worktree at $head and removes the worktree.
+# watcher's worktree at $head and removes the worktree. The known failures (`<p> (<row>) ...`) go
+# in the checked line's fourth field, `<p>=<row>,...` or `-`, for known_checked; the running-log
+# line keeps its form, which known_checked reads for older checked lines.
 checked_head() {
-  local c0=$1 known=$2
-  echo "$head $(ts) $spec_head" >"$checked_file.$$" && mv -T "$checked_file.$$" "$checked_file"
+  local c0=$1 known=$2 kf
+  kf=$(command grep -a -o -E '[^ ]+ \([^)]*\)' <<<"$known" | sed -E 's/ \((.*)\)$/=\1/' | paste -sd,)
+  echo "$head $(ts) $spec_head ${kf:--}" >"$checked_file.$$" && mv -T "$checked_file.$$" "$checked_file"
   runlog "checked $(short "$head"): every test and benchmark passes${known:+ but the known failures $known}($(landings_in "$c0" "$head" | wc -l) landings since $(short "$c0"))"
   say "checked $(short "$head"): everything passes${known:+ but the known failures $known}"
   # The worktree's build, of a head where everything passes, becomes the central build that
@@ -660,7 +759,7 @@ check() {
     spec_at "$spec_head"
     while read -r p r; do
       runlog "not run: $p ($r) at $(short "$head"), marked skip in $known_file"
-    done < <([ -s "$known_file" ] && awk '$3 == "skip" { print $1, $2 }' "$known_file")
+    done < <(known_lines "$head" in | awk '$3 == "skip" { print $1, $2 }')
     all=
     fails=
     local crashed=
@@ -685,11 +784,16 @@ check() {
     # A failure that $known_file gives a plan row ran like every piece and is reported with its
     # row, but is not run again, bisected or fixed here, and does not keep the head from being
     # checked and its build published: its row's owner fixes it (TOOL-main-watch-start-green,
-    # 2026-11-20: rows owned bench failures at every commit, so no head could be checked). A
-    # listed piece that passes is reported, so its line can be taken out.
+    # 2026-11-20: rows owned bench failures at every commit, so no head could be checked). Only
+    # lines in force at the head count (known_lines): a line whose fixed-by commit the head
+    # contains does not (MAINWATCH-known-fixed-by). The list is read after the runs, so a line
+    # appended during them counts.
+    local kin kfixed fb line dropped=
+    kin=$(known_lines "$head" in)
+    kfixed=$(known_lines "$head" fixed)
     known=
     for p in $fails; do
-      r=$([ -s "$known_file" ] && awk -v p="$p" '$1 == p { print $2; exit }' "$known_file")
+      r=$(awk -v p="$p" '$1 == p { print $2; exit }' <<<"$kin")
       [ -n "$r" ] || continue
       known+="$p ($r) "
       fails=$(minus "$fails" "$p")
@@ -698,8 +802,30 @@ check() {
       say "known failures at $(short "$head"): $known"
       runlog "known failures at $(short "$head"), each owned by its row ($known_file): $known"
     }
-    for p in $([ -s "$known_file" ] && awk '{ print $1 }' "$known_file"); do
-      [ "${good[$p]:-}" != "$head" ] || say "$p, listed in $known_file, passes at $(short "$head"); take its line out"
+    # A fixed-by commit not in origin/main as this check fetched it is either newer (it landed
+    # while an older head was being checked, as 0ad3544ed did during the check of 46c1d2b71) or
+    # never comes into a head (a typo, or the sha of a branch commit that merge-push.sh's rebase
+    # replaced), and then its line stays in force for good: said at each check, so its row's owner
+    # can correct the second kind.
+    while IFS= read -r line; do
+      fb=$(fixed_of "$line")
+      [ -z "$fb" ] || git -C "$repo" merge-base --is-ancestor "$fb" origin/main 2>/dev/null ||
+        runlog "the fixed-by commit $fb of the line \"$line\" in $known_file is not in origin/main as fetched for this check, so the line stays in force; if that commit is not the one merge-push.sh printed as landed, its row's owner corrects it"
+    done <<<"$kin"
+    # A listed piece that passes at the head: with a fixed-by commit the head contains, its fix
+    # holds, and its line is taken out here; with none, it is reported, for its row's owner to
+    # append fixed-by once the fix has landed.
+    for p in $(awk '{ print $1 }' <<<"$kfixed" | sort -u); do
+      [ "${good[$p]:-}" != "$head" ] || dropped+="$p"$'\n'
+    done
+    dropped=$(sed '/^$/d' <<<"$dropped")
+    if [ -n "$dropped" ]; then
+      known_edit "$head" "$dropped" drop
+      runlog "fixed at $(short "$head"): $(paste -sd' ' <<<"$dropped") pass there, which holds the fixed-by commit of each line; their lines are taken out of $known_file"
+      say "taken out of $known_file, passing at $(short "$head") with their fixed-by commits: $(paste -sd' ' <<<"$dropped")"
+    fi
+    for p in $(awk '{ print $1 }' <<<"$kin"); do
+      [ "${good[$p]:-}" != "$head" ] || say "$p, listed in $known_file, passes at $(short "$head"); once its row's fix has landed, append fixed-by <the landed commit> to its line"
     done
     # Each failure run again alone; one that passes is a flake.
     items=
@@ -714,6 +840,30 @@ check() {
       fi
     done
     items=$(sed '/^$/d' <<<"$items")
+    # Confirmed failures whose line names a fixed-by commit the head contains: the fix did not
+    # hold. They go back to the line's row, not to a new one (they are its failure, and the row
+    # was told), and the line loses its fixed-by, so it is in force again until the owner writes a
+    # new one; no spec search or bisect, which would only find the cause the row already owns.
+    local back= rb
+    for p in $items; do
+      rb=$(awk -v p="$p" '$1 == p { print $2; exit }' <<<"$kfixed")
+      [ -n "$rb" ] || continue
+      back+="$p"$'\n'
+      known+="$p ($rb) "
+      local what="$p still fails at $(short "$head"), which holds $(awk -v p="$p" '$1 == p { for (i = 3; i < NF; i++) if ($i == "fixed-by") print $(i + 1) }' <<<"$kfixed" | paste -sd' '), the commit its line in $known_file names with fixed-by, so that fix did not hold; the line is in force again without its fixed-by. Outputs: $all"
+      if [ -n "$queue" ]; then
+        command grep -a -F "$p still fails at $(short "$head"), which holds" "$queue" 2>/dev/null | command grep -a -q "^QUEUE $rb " ||
+          echo "QUEUE $rb (filed by main-watch $(ts): $what; the row's owner fixes it and, once the fix has landed, appends \`fixed-by <the landed commit>\` to the line again)" >>"$queue"
+        runlog "$rb: $p still fails at $(short "$head"), which holds its fixed-by commit; queued in $queue, its line in force again"
+        say "$rb: $p still fails at $(short "$head") with its fixed-by commit; queued"
+      else
+        stuck - "$p still fails at $(short "$head") with its fixed-by commit" "$what." "$rb" "$p"
+      fi
+    done
+    if [ -n "$back" ]; then
+      known_edit "$head" "$back" unfix
+      items=$(minus "$items" "$(sed '/^$/d' <<<"$back")")
+    fi
     if [ -z "$items" ]; then
       checked_head "$c0" "$known"
       return 0
@@ -763,21 +913,46 @@ check() {
       : >"$evidence"
       f=$(inter "$(fails_twice "$fresh")" "$fresh")
       if [ -n "$f" ]; then
-        # They existed before the range, so a bisect over it cannot find their cause: filed as
-        # FAIL-main-<C0>, on the known list, and checking goes on without them.
-        local old pieces
+        # They existed before the range, so a bisect over it cannot find their cause. One that C0
+        # was checked with as a known failure of a row R0 is R0's: its line was taken out before
+        # a checked head held its fix (FAIL-main-af9161e5a, 2026-11-21, a duplicate of
+        # PRES-growth-exp-families), so it goes back to R0 and onto the list with R0. The rest are
+        # filed as FAIL-main-<C0>. All go on the known list, and checking goes on without them.
+        local old pieces k0 r0 fnew= what
         old=FAIL-main-$(short "$c0")
-        pieces=$(paste -sd' ' <<<"$f")
-        if [ -n "$queue" ]; then
-          known_add "$old" "$f"
+        k0=$(known_checked "$c0")
+        for p in $f; do
+          r0=$([ "$k0" = '?' ] || awk -v p="$p" '$1 == p { print $2; exit }' <<<"$k0")
+          if [ -z "$r0" ]; then
+            fnew+="$p"$'\n'
+            continue
+          fi
+          known+="$p ($r0) "
+          what="$p fails at $(short "$head") and at the last checked commit $(short "$c0"), which was checked with it as a known failure of $r0, so it is $r0's: its line was taken out of $known_file before a checked commit held its fix; it is on the list with $r0 again; outputs: $(sort -u "$evidence" | paste -sd' ')"
+          if [ -n "$queue" ]; then
+            known_add "$r0" "$p"
+            command grep -a -F "$p fails at $(short "$head") and at the last checked commit" "$queue" 2>/dev/null | command grep -a -q "^QUEUE $r0 " ||
+              echo "QUEUE $r0 (filed by main-watch $(ts): $what; once the fix has landed, its owner appends \`fixed-by <the landed commit>\` to the line, never taking it out)" >>"$queue"
+            runlog "$r0: $p fails at $(short "$c0") too, where it was $r0's known failure; queued in $queue and put on $known_file with $r0"
+            say "$r0: $p fails at $(short "$c0") too, where it was known; queued"
+          else
+            stuck - "$p fails at the last checked commit $(short "$c0") too, where it was a known failure of $r0" "$what." "$r0" "$p"
+          fi
+        done
+        fnew=$(sed '/^$/d' <<<"$fnew")
+        pieces=$(paste -sd' ' <<<"$fnew")
+        if [ -z "$fnew" ]; then
+          :
+        elif [ -n "$queue" ]; then
+          known_add "$old" "$fnew"
           command grep -a -q "^QUEUE $old " "$queue" 2>/dev/null ||
-            echo "QUEUE $old (filed by main-watch $(ts): $pieces fail at the last checked commit $(short "$c0") too, which passed every test and benchmark when it was checked, so no bisect over $(short "$c0")..$(short "$head") can find their cause; outputs: $(sort -u "$evidence" | paste -sd' '); the row's owner fixes it and takes these pieces' lines out of $known_file)" >>"$queue"
+            echo "QUEUE $old (filed by main-watch $(ts): $pieces fail at the last checked commit $(short "$c0") too, $(known_state "$k0"), so no bisect over $(short "$c0")..$(short "$head") can find their cause; outputs: $(sort -u "$evidence" | paste -sd' '); the row's owner fixes it and, once the fix has landed, appends \`fixed-by <the landed commit>\` to these pieces' lines in $known_file, never taking them out)" >>"$queue"
           runlog "$old: $pieces fail at the last checked commit $(short "$c0") too; queued in $queue and put on $known_file"
           say "$old: $pieces fail at $(short "$c0") too; queued"
         else
-          stuck - "$pieces fail at the last checked commit $(short "$c0") too" "These pieces fail at $(short "$c0"), which passed every test and benchmark when it was checked. Outputs: $(sort -u "$evidence" | paste -sd' ')." "$old" "$f"
+          stuck - "$pieces fail at the last checked commit $(short "$c0") too" "These pieces fail at $(short "$c0"), $(known_state "$k0"). Outputs: $(sort -u "$evidence" | paste -sd' ')." "$old" "$fnew"
         fi
-        for p in $f; do known+="$p ($old) "; done
+        for p in $fnew; do known+="$p ($old) "; done
         items=$(minus "$items" "$f")
         if [ -z "$items" ]; then
           checked_head "$c0" "$known"
@@ -840,7 +1015,9 @@ export ZED_SPEC_DIR=$spec_dir
 head= spec_head= s0=
 if [ -n "$start" ]; then
   spec_head=$(spec_now) || exit 2
-  echo "$start $(ts) $spec_head" >"$checked_file.$$" && mv -T "$checked_file.$$" "$checked_file"
+  # The start commit is taken as checked with the known lines in force there (known_checked).
+  kf=$(known_lines "$start" in | awk '{ print $1 "=" $2 }' | paste -sd,)
+  echo "$start $(ts) $spec_head ${kf:--}" >"$checked_file.$$" && mv -T "$checked_file.$$" "$checked_file"
   say "recorded $(short "$start") as checked"
 fi
 n=0

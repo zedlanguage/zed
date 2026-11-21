@@ -6,7 +6,8 @@
 # and appends its landing to landings.log, as merge-push.sh does.
 # Usage: tools/test_main_watch.sh [case...]; with no case, all. `controls:<name>` runs the one
 # mutant <name> of the case controls, so each can run apart under the 60 s limit of a piece.
-# under the directory it prints, for inspection.
+# The toy repositories are made under the directory it prints, which is removed at exit unless
+# MW_KEEP=1.
 pushd "$(dirname "$0")/.." >/dev/null || exit 2
 root=$(pwd -P)
 popd >/dev/null || exit 2
@@ -15,7 +16,18 @@ popd >/dev/null || exit 2
 watch=${MW_WATCH:-$root/tools/main_watch.sh}
 fails=0
 top=$(mktemp -d "${TMPDIR:-/tmp}/test-main-watch.XXXXXX")
-echo "toy repositories under $top"
+# The toy repositories hold thousands of files, and /tmp is a tmpfs with a fixed number of inodes
+# (it ran out on 2026-11-21, with leftover test-main-watch.* directories of 5,000 to 13,000 files
+# among the largest), so the directory is removed at every exit, failures and signals included
+# (timeout sends TERM, after which bash runs no EXIT trap unless the signal is trapped). The rm
+# names the literal path mktemp made, fixed when the trap is set; MW_KEEP=1 keeps it for
+# inspection.
+case $top in "${TMPDIR:-/tmp}"/test-main-watch.??????) ;; *) echo "mktemp gave '$top'"; exit 2 ;; esac
+if [ -z "${MW_KEEP:-}" ]; then
+  trap "rm -rf --one-file-system --preserve-root=all $(printf %q "$top")" EXIT
+  trap 'exit 143' TERM INT HUP
+fi
+echo "toy repositories under $top${MW_KEEP:+ (kept: MW_KEEP)}"
 
 # Makes the toy repositories and stubs in the new directory $t; the base commit is $c0. With $1
 # set, the piece $1 is broken in the base commit already.
@@ -84,6 +96,9 @@ for n in "${names[@]}"; do
   # A piece also fails while the spec it reads has breaks/<piece>, as a piece that reads DESIGN.md
   # fails at a spec change whose zed-impl half has not landed.
   [ ! -e "$ZED_SPEC_DIR/breaks/$n" ] || r=1
+  # A piece also fails at every commit while $MW_STATE/env-broken/<piece> exists: the machine
+  # changed, so it fails at a commit that passed when it was checked.
+  [ ! -e "$MW_STATE/env-broken/$n" ] || r=1
   # MW_SEGV=<piece>: that piece, while broken, is killed by SIGSEGV; its rc is 139, as
   # run_tests.sh reports a piece ended by a signal (128 + the signal).
   if [ "$r" = 1 ] && [ "$n" = "${MW_SEGV:-}" ]; then
@@ -551,6 +566,91 @@ bench:b_beta FAIL-main-${b:0:9}" "$(cat "$t/home/main-watch-known.txt")"
     check "known: the running log names the failure and its row" 1 \
       "$(command grep -a -c 'known failures at .*test:t_delta (TEST-row-known)' "$t/home/running-log.md")"
     ;;
+  fixedby | fixedbyfail)
+    # A known line with `fixed-by F` (MAINWATCH-known-fixed-by). Phase 1, the case of 46c1d2b71
+    # (2026-11-21): F is on a side branch only, so the line is in force at the head and the
+    # failure is known there: no row is filed and the line is kept. Phase 2: F lands on main.
+    # fixedby: F fixes the piece, which passes, and the watcher takes the line out. fixedbyfail: F
+    # does not; the piece goes back to the line's row and the line loses its fixed-by.
+    setup t_delta
+    local q=$t/home/spawn-queue.txt k=$t/home/main-watch-known.txt fx fb
+    export MAIN_WATCH_QUEUE=$q
+    git clone -q "$t/remote.git" "$t/fx"
+    if [ "$1" = fixedby ]; then git -C "$t/fx" rm -q broken/t_delta; else echo x >"$t/fx/other"; fi
+    git -C "$t/fx" add -A
+    gitc -C "$t/fx" commit -q -m "TEST-row-known: the fix"
+    git -C "$t/fx" push -q origin HEAD:side
+    fx=$(git -C "$t/fx" rev-parse HEAD)
+    fb="test:t_delta TEST-row-known fixed-by ${fx:0:9}"
+    printf '%s\n' "# header" "$fb" >"$k"
+    for n in $(seq 1 15); do land "$n"; done
+    watch
+    check "$1: phase 1 exits 0" 0 "$rc"
+    check "$1: phase 1 queues nothing" 0 "$(cat "$q" 2>/dev/null | wc -l)"
+    check "$1: phase 1 keeps the line" "# header
+$fb" "$(cat "$k")"
+    check "$1: phase 1 checks the head, with the failure known" "$(head_of) test:t_delta=TEST-row-known" \
+      "$(cut -d' ' -f1,4 "$t/home/main-watch.checked")"
+    check "$1: phase 1 reports it with its row" 1 \
+      "$(command grep -a -c 'known failures at .*test:t_delta (TEST-row-known)' "$t/home/running-log.md")"
+    git -C "$t/dev" fetch -q origin side
+    gitc -C "$t/dev" merge -q --no-edit origin/side
+    land 16
+    MAIN_WATCH_MIN=1 timeout 50 "$watch" >"$t/out2" 2>&1
+    check "$1: phase 2 exits 0" 0 "$?"
+    if [ "$1" = fixedby ]; then
+      check "fixedby: phase 2 takes the line out" "# header" "$(cat "$k")"
+      check "fixedby: phase 2 queues nothing" 0 "$(cat "$q" 2>/dev/null | wc -l)"
+      check "fixedby: phase 2 logs it" 1 "$(command grep -a -c 'fixed at .*: test:t_delta pass there' "$t/home/running-log.md")"
+      check "fixedby: phase 2 checks the head, with no known failure" "$(head_of) -" "$(cut -d' ' -f1,4 "$t/home/main-watch.checked")"
+    else
+      check "fixedbyfail: phase 2 queues one line, to the line's row" 1 \
+        "$(command grep -a -c "^QUEUE TEST-row-known (filed by main-watch .*: test:t_delta still fails at $(git -C "$t/repo" rev-parse --short=9 "$(head_of)"), which holds ${fx:0:9}" "$q")"
+      check "fixedbyfail: phase 2 queues nothing else" 1 "$(wc -l <"$q")"
+      check "fixedbyfail: the line is in force again" "# header
+test:t_delta TEST-row-known" "$(cat "$k")"
+      check "fixedbyfail: phase 2 checks the head, with the failure known" "$(head_of) test:t_delta=TEST-row-known" \
+        "$(cut -d' ' -f1,4 "$t/home/main-watch.checked")"
+    fi
+    check "$1: nothing filed as FAIL-main" 0 "$(cat "$q" "$k" "$t/home/main-red.log" 2>/dev/null | command grep -a -c FAIL-main)"
+    check "$1: no culprit" "" "$(opened)"
+    ;;
+  oldknown | oldknownlog)
+    # FAIL-main-af9161e5a (2026-11-21): C0 was checked with t_delta a known failure of
+    # TEST-row-known; then its line was taken out before a checked head held a fix, and the next
+    # check found t_delta failing at C0 too. It goes back to TEST-row-known, not to FAIL-main-<C0>.
+    # t_gamma fails at C0 too (the machine changed): it is filed as FAIL-main-<C0>, with a message
+    # that names C0's known failures. oldknown: C0's checked line records them (fourth field);
+    # oldknownlog: a line of the older form, so they are read from the running log.
+    setup t_delta
+    local q=$t/home/spawn-queue.txt k=$t/home/main-watch-known.txt h1
+    export MAIN_WATCH_QUEUE=$q
+    printf '%s\n' "# header" "test:t_delta TEST-row-known" >"$k"
+    for n in $(seq 1 15); do land "$n"; done
+    watch
+    h1=$(head_of)
+    check "$1: phase 1 exits 0" 0 "$rc"
+    check "$1: phase 1 checks the head, with the failure known" "$h1 test:t_delta=TEST-row-known" \
+      "$(cut -d' ' -f1,4 "$t/home/main-watch.checked")"
+    local c3
+    c3=$(cut -d' ' -f1-3 "$t/home/main-watch.checked")
+    [ "$1" = oldknown ] || echo "$c3" >"$t/home/main-watch.checked"
+    echo "# header" >"$k"
+    mkdir -p "$t/state/env-broken"
+    : >"$t/state/env-broken/t_gamma"
+    land 16
+    MAIN_WATCH_MIN=1 timeout 50 "$watch" >"$t/out2" 2>&1
+    check "$1: phase 2 exits 0" 0 "$?"
+    check "$1: t_delta goes back to its row" 1 \
+      "$(command grep -a -c "^QUEUE TEST-row-known (filed by main-watch .*: test:t_delta fails at .* and at the last checked commit ${h1:0:9}, which was checked with it as a known failure of TEST-row-known" "$q")"
+    check "$1: t_gamma is filed as FAIL-main-<C0>, naming C0's known failures" 1 \
+      "$(command grep -a -c "^QUEUE FAIL-main-${h1:0:9} (filed by main-watch .*: test:t_gamma fail at the last checked commit ${h1:0:9} too, which passed every test and benchmark when it was checked but the known failures test:t_delta (TEST-row-known), so" "$q")"
+    check "$1: two QUEUE lines" 2 "$(wc -l <"$q")"
+    check "$1: the known list" "test:t_delta TEST-row-known
+test:t_gamma FAIL-main-${h1:0:9}" "$(command grep -a -v '^#' "$k" | sort)"
+    check "$1: the head is checked" "$(head_of)" "$(checked)"
+    check "$1: no culprit" "" "$(opened)"
+    ;;
   skip)
     # A known line marked skip: the piece is not started at all (rung2 at n = 600 holds 67 to
     # 71 GB a run), through run_tests.sh's --except; the head is checked without it.
@@ -645,6 +745,11 @@ bench:b_beta TEST-row-12" "$(cat "$t/home/main-watch-known.txt")"
       "publish-unchecked|s/^  if \\[ -n \"\\\$copy\" \\] .* checkout -q --detach .*; then\$/  if false; then/|queue"
       "no-spec-split|s/^    if \\[ \"\\\$spec_head\" != \"\\\$s0\" \\]; then\$/    if false; then/|spec"
       "unpinned-spec|s/^export ZED_SPEC_DIR=\\\$spec_dir\$/:/|spec"
+      "fixed-by-ignored|s/&& set=fixed\$/\\&\\& set=in/|fixedby"
+      "fixed-by-always|s#git -C \"\\\$repo\" merge-base --is-ancestor \"\\\$f\" \"\\\$c\" 2>/dev/null && set=fixed\$#set=fixed#|fixedby"
+      "no-unfix|s/^      known_edit \"\\\$head\" \"\\\$back\" unfix\$/      :/|fixedbyfail"
+      "no-known-checked|s#^  f=\\\$(cut -d' ' -f4 \"\\\$checked_file\")\$#  echo '?'; return 0#|oldknown"
+      "no-log-fallback|s#^  \\[ -n \"\\\$l\" \\] .*\$#  echo '?'; return 0#|oldknownlog"
     )
     for m in "${mutants[@]}"; do
       IFS='|' read -r name expr cases <<<"$m"
@@ -664,7 +769,7 @@ bench:b_beta TEST-row-12" "$(cat "$t/home/main-watch-known.txt")"
   esac
 }
 
-all_cases="two zrun fixbreak failfix nofix segv runkill nottwice nobisect setuperr clean few old oldqueue spec specold known skip queue reap build controls"
+all_cases="two zrun fixbreak failfix nofix segv runkill nottwice nobisect setuperr clean few old oldqueue spec specold known fixedby fixedbyfail oldknown oldknownlog skip queue reap build controls"
 for c in ${@:-$all_cases}; do run_case "$c"; done
 echo "checks failed: $fails"
 [ "$fails" = 0 ]
