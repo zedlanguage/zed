@@ -4387,6 +4387,13 @@ thread_local! {
 /// mention, from [`Scope::question_parts`].
 type Question = (BTreeSet<Arc<Formula>>, BTreeSet<Arc<str>>);
 
+/// A case's values on some names, the key of the answers [`Scope::written_dead`] keeps.
+type Point = Vec<(Arc<str>, Value)>;
+
+/// The name a move of [`BatchRaise`] came from, the edge (its formula and side) it came by,
+/// and the edge's pair weight.
+type Came = (Arc<str>, (Arc<Formula>, bool), Pair);
+
 /// What a turn of a [`BatchRaise`] ended with.
 enum Batched {
     /// The work it was given is spent.
@@ -4460,7 +4467,7 @@ struct BatchRaise {
     moves: Dijkstra<Arc<str>, Pair, BTreeMap<Arc<str>, Pair>>,
     /// The name and edge each name's move came from, and the edge's pair weight: the
     /// predecessor forest.
-    via: BTreeMap<Arc<str>, (Arc<str>, (Arc<Formula>, bool), Pair)>,
+    via: BTreeMap<Arc<str>, Came>,
     /// The children of each name in `via`.
     children: BTreeMap<Arc<str>, BTreeSet<Arc<str>>>,
 }
@@ -4596,10 +4603,10 @@ impl BatchRaise {
             for b in &below {
                 self.via.remove(b);
             }
-            if let Some((p, _, _)) = self.via.get(to) {
-                if let Some(kids) = self.children.get_mut(p) {
-                    kids.remove(to);
-                }
+            if let Some((p, _, _)) = self.via.get(to)
+                && let Some(kids) = self.children.get_mut(p)
+            {
+                kids.remove(to);
             }
             self.moves.lower(to.clone(), c);
             self.via.insert(to.clone(), (s.clone(), (h, hb), fw));
@@ -10763,8 +10770,7 @@ impl Scope {
             // The answers of the relation at the points already asked of this constraint, keyed
             // by the names left open and the point's values on the names the question reads
             // (`Scope::question_parts`), so cases that differ only on other names ask once.
-            let mut asked: BTreeMap<(Vec<&Arc<str>>, Vec<(Arc<str>, Value)>), bool> =
-                BTreeMap::new();
+            let mut asked: BTreeMap<(Vec<&Arc<str>>, Point), bool> = BTreeMap::new();
             let mut read: BTreeMap<Vec<&Arc<str>>, Option<Question>> = BTreeMap::new();
             for k in tests {
                 let Some(t) = self.kept.tests.get(k).filter(|_| !out.contains(k)) else {
@@ -10793,7 +10799,7 @@ impl Scope {
                     let Some((parts, names)) = &*q else {
                         return false;
                     };
-                    let on: Vec<(Arc<str>, Value)> = (ps.iter())
+                    let on: Point = (ps.iter())
                         .filter(|(n, v)| matches!(v, Value::Int(_)) && names.contains(n))
                         .cloned()
                         .collect();
