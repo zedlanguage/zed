@@ -115,6 +115,32 @@ fn div_and_mod_keep_the_euclidean_law() {
     }
 }
 
+/// The same law on random 128-bit values (MOD-positive-modulus, QUESTIONS A174): `x` any
+/// i128, `m` in `1..2^127`, and the remainder against Rust's `rem_euclid`, which for `m >= 1`
+/// is the residue in `0..<m` (Rust std, `i128::rem_euclid`). A new seed each run (P169); one
+/// program holds every pair, so it is elaborated once.
+#[test]
+fn div_and_mod_keep_the_euclidean_law_on_128_bit_values() {
+    use zed_tests::seed::Rng;
+    let (mut rng, seed) = Rng::fresh("div_and_mod_keep_the_euclidean_law_on_128_bit_values");
+    let mut wide = || (u128::from(rng.next_u64()) << 64) | u128::from(rng.next_u64());
+    let euclid = "euclid(x: int, m: int[1..], r: int) = { q = x div m; \
+                  x mod m == r && x == m * q + r && 0 <= r && r <= m - 1 };\n";
+    let calls: Vec<String> = (0..40)
+        .map(|_| {
+            let xv = wide() as i128;
+            let mv = ((wide() >> 1) as i128).max(1);
+            format!("euclid(x: {xv}, m: {mv}, r: {})", xv.rem_euclid(mv))
+        })
+        .collect();
+    let src = format!("{euclid}ok = {};\n", calls.join(" && "));
+    assert_eq!(
+        zed_tests::step_helpers::l01_16_elaboration::value(&src, "ok"),
+        "true",
+        "seed {seed}: {src}"
+    );
+}
+
 #[test]
 fn mixed_kinds_select_no_arrow() {
     assert_eq!(

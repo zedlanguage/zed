@@ -7,8 +7,8 @@ use zedc::store::presburger::{Entailment, Relation, entails};
 
 #[test]
 fn the_condition_that_no_operation_fails_scales() {
-    // One condition `n + i != 0` for each of k divisors, each made once, and k divisors each
-    // shown not 0 by the guard of its `||`, so that no condition is left; the translation is
+    // One condition `n + i != 0` for each of k quotients, each made once, and k moduli each
+    // shown at least 1 by the guard of its `||`, so that no condition is left; the translation is
     // timed at k and 8k. The entailment is checked at k here and timed in
     // `a_chain_of_guarded_remainders_scales` and `a_chain_of_remainders_by_terms_scales`.
     // COMPLEXITY.md rows RUNG2-definedness, PRES-mod-conjuncts and PRES-guarded-chain.
@@ -18,7 +18,7 @@ fn the_condition_that_no_operation_fails_scales() {
         assert!(matches!(e, Entailment::Proved(_)), "{e}");
     }
     let measure = move || {
-        scaling::check_order("the definedness of k remainders by terms", n, 1, |k| {
+        scaling::check_order("the definedness of k quotients by terms", n, 1, |k| {
             divisors(k);
         });
         scaling::check_order("the definedness of k guarded remainders", n, 1, |k| {
@@ -30,9 +30,10 @@ fn the_condition_that_no_operation_fails_scales() {
 
 #[test]
 fn a_chain_of_guarded_remainders_scales() {
-    // PRES-guarded-chain: the goal `(n + 0 == 0 || x mod (n + 0) >= 0) && ...` over k
-    // divisors under the premise `true`. Its negation is a disjunction of k disjuncts
-    // `n + i != 0 && x mod (n + i) < 0`, each refuted only through the cases of its own
+    // PRES-guarded-chain: the goal `(n + 0 <= 0 || x mod (n + 0) >= 0) && ...` over k
+    // divisors under the premise `true` (guards `<= 0`, not `== 0`, since QUESTIONS A174; see
+    // `guarded_divisors`). Its negation is a disjunction of k disjuncts
+    // `n + i >= 1 && x mod (n + i) < 0`, each refuted only through the cases of its own
     // remainder's definition, and each was refuted by a settling of the whole formula: 1.14G
     // instructions at k = 16 and 148.6G at k = 128, 130 times (measured 2026-11-08). Now each is
     // refuted by a settling of its own definition alone (`refuted_by_links` in `probe`). The
@@ -59,26 +60,28 @@ fn a_chain_of_remainders_by_terms_scales() {
     // the premise `true` and 22 times the work under `n >= 1` after the first fix alone
     // (measured 2026-11-08; 2.04G instructions at k = 16 before either). The entailment is
     // timed at k and 8k. Under `n >= 1` it is proved; under `true` it is refuted at a
-    // divisor 0. COMPLEXITY.md row PRES-mod-conjuncts.
+    // divisor 0. COMPLEXITY.md row PRES-mod-conjuncts. Since QUESTIONS A174 the chain and the
+    // sum are of quotients, which share the remainders' definitions ([`quotient_chain`]): a
+    // remainder by `n + i` is refused by the checker, and building the refusals timed out here.
     let n = 62;
     let cases = [
-        ("proved", "a chain of remainders by terms", "n >= 1"),
-        ("refuted", "a chain of remainders that may fail", "true"),
+        ("proved", "a chain of quotients by terms", "n >= 1"),
+        ("refuted", "a chain of quotients that may fail", "true"),
     ];
     for (verdict, _, premise) in cases {
-        let (p, g) = remainder_chain(premise, n);
+        let (p, g) = quotient_chain(premise, n);
         assert_eq!(kind(&entails(&p, &g)), verdict, "{premise}");
     }
     let measure = move || {
         for (verdict, what, premise) in cases {
-            let inputs = scaling::inputs(n, |k| remainder_chain(premise, k));
+            let inputs = scaling::inputs(n, |k| quotient_chain(premise, k));
             scaling::check_order(what, n, 1, |k| {
                 let (p, g) = &inputs[&k];
                 assert_eq!(kind(&entails(p, g)), verdict);
             });
         }
         let inputs = scaling::inputs(n, divisors);
-        scaling::check_order("a sum of remainders by terms", n, 1, |k| {
+        scaling::check_order("a sum of quotients by terms", n, 1, |k| {
             let (p, g) = &inputs[&k];
             assert_eq!(kind(&entails(p, g)), "proved");
         });

@@ -416,11 +416,14 @@ fn a_call_with_an_argument_that_may_fail_is_read_at_its_place() {
     assert_proved("ok(x, n) = n <= -1;", &goal);
 }
 
-/// The premise `n >= 1` and the goal `(x mod (n + 0)) * 0 + ... == 0` over `k` divisors,
-/// translated.
+/// The premise `n >= 1` and the goal `(x div (n + 0)) * 0 + ... == 0` over `k` divisors,
+/// translated. Quotients, not remainders: `mod` takes only a modulus shown in `int[1..]`
+/// (QUESTIONS A174), and the checker, which does not read the premise, refuses each `n + i`,
+/// each refusal citing the earlier ones, O(k^2) text that the benchmarks would time; `div`
+/// keeps the same Euclidean definitions by terms with no refusal.
 pub(super) fn divisors(k: usize) -> (Relation, Relation) {
     let head = "ok(x, n)";
-    let goal: Vec<String> = (0..k).map(|i| format!("(x mod (n + {i})) * 0")).collect();
+    let goal: Vec<String> = (0..k).map(|i| format!("(x div (n + {i})) * 0")).collect();
     let (ps, p) = function(&format!("{head} = n >= 1;"));
     let (_, g) = function(&format!("{head} = {} == 0;", goal.join(" + ")));
     let mut rs = relations(&[&p, &g], &ps, true).expect("in the domain");
@@ -428,12 +431,14 @@ pub(super) fn divisors(k: usize) -> (Relation, Relation) {
     (rs.pop().expect("two relations"), g)
 }
 
-/// The premise `true` and the goal `(n + 0 == 0 || x mod (n + 0) >= 0) && ...` over `k`
-/// divisors, each guarded by its own test, translated.
+/// The premise `true` and the goal `(n + 0 <= 0 || x mod (n + 0) >= 0) && ...` over `k`
+/// divisors, each guarded by its own test, translated. The guard is `<= 0`, not `== 0`:
+/// `mod` takes only a modulus shown in `int[1..]` (QUESTIONS A174), and a guard that shows
+/// only `n + i != 0` leaves each remainder refused, each refusal citing the earlier ones.
 pub(super) fn guarded_divisors(k: usize) -> (Relation, Relation) {
     let head = "ok(x, n)";
     let goal: Vec<String> = (0..k)
-        .map(|i| format!("(n + {i} == 0 || x mod (n + {i}) >= 0)"))
+        .map(|i| format!("(n + {i} <= 0 || x mod (n + {i}) >= 0)"))
         .collect();
     let (ps, p) = function(&format!("{head} = true;"));
     let (_, g) = function(&format!("{head} = {};", goal.join(" && ")));
@@ -442,11 +447,17 @@ pub(super) fn guarded_divisors(k: usize) -> (Relation, Relation) {
     (rs.pop().expect("two relations"), g)
 }
 
-/// The premise `premise` and the goal `x mod (n + 0) >= 0 && ...` over `k` divisors, a chain
-/// of `&&` written from the left, translated.
-pub(super) fn remainder_chain(premise: &str, k: usize) -> (Relation, Relation) {
+/// The premise `premise` and the goal `x div (n + 0) * 0 == 0 && ...` over `k` divisors, a
+/// chain of `&&` written from the left, translated. Quotients for the reason at [`divisors`]:
+/// with `mod`, each later modulus is refused with a derivation that cites every earlier
+/// conjunct. Each conjunct asks only that its quotient is defined, as `x mod (n + i) >= 0`
+/// did; `x div (n + i) >= 0` would need the product of the quotient and `n`, which no rung
+/// here reads.
+pub(super) fn quotient_chain(premise: &str, k: usize) -> (Relation, Relation) {
     let head = "ok(x, n)";
-    let goal: Vec<String> = (0..k).map(|i| format!("x mod (n + {i}) >= 0")).collect();
+    let goal: Vec<String> = (0..k)
+        .map(|i| format!("x div (n + {i}) * 0 == 0"))
+        .collect();
     let (ps, p) = function(&format!("{head} = {premise};"));
     let (_, g) = function(&format!("{head} = {};", goal.join(" && ")));
     let mut rs = relations(&[&p, &g], &ps, true).expect("in the domain");
@@ -1106,15 +1117,16 @@ fn the_bounds_found_do_not_depend_on_names() {
     assert!(differ.is_empty(), "{}", differ.join("\n"));
 }
 
-/// `g{k}`, which calls `g{k-1}` twice, each time with the argument `b mod (b + 1)`, which fails
+/// `g{k}`, which calls `g{k-1}` twice, each time with the argument `b div (b + 1)`, which fails
 /// at `b = -1`, and so on down to `g0(a, b) = b >= 0`; and `ok(x, n) = g{k}(x, n)`. Not `f`,
-/// since `f64` names a type.
+/// since `f64` names a type. A quotient, not a remainder: `mod` takes only a modulus shown in
+/// `int[1..]` (QUESTIONS A174), so `b mod (b + 1)` is refused rather than failing at `b = -1`.
 pub(super) fn nested_double_calls(k: usize) -> String {
     let mut src = String::from("g0(positional a, positional b) = b >= 0;\n");
     for i in 1..=k {
         let j = i - 1;
         src.push_str(&format!(
-            "g{i}(positional a, positional b) = g{j}(b mod (b + 1), b) && g{j}(b mod (b + 1), b);\n"
+            "g{i}(positional a, positional b) = g{j}(b div (b + 1), b) && g{j}(b div (b + 1), b);\n"
         ));
     }
     src.push_str(&format!("ok(x, n) = g{k}(x, n);"));
@@ -1161,7 +1173,7 @@ pub(super) fn ok_relation(src: &str) -> Relation {
 fn calls_whose_arguments_may_fail_alike_share_one_translation() {
     // The two calls of `g{k-1}` in `g{k}` pass arguments made apart but alike, with the same
     // terms and the same conditions, so they share one translation ([`Walk::shared_call_key`]
-    // in preimage.rs). The argument `b mod (b + 1)` fails at `b = -1`, but no callee reads
+    // in preimage.rs). The argument `b div (b + 1)` fails at `b = -1`, but no callee reads
     // it, so `ok` is `n >= 0`.
     for k in [1, 2, 3] {
         let goal = nested_double_calls(k);
@@ -1308,9 +1320,9 @@ fn the_families_of_the_benchmarks_are_answered_at_small_sizes() {
         for k in [1, 2, 4] {
             proved(&divisors(k));
             proved(&guarded_divisors(k));
-            let (p, g) = remainder_chain("n >= 1", k);
+            let (p, g) = quotient_chain("n >= 1", k);
             assert_eq!(kind(&entails(&p, &g)), "proved", "{k}");
-            let (p, g) = remainder_chain("true", k);
+            let (p, g) = quotient_chain("true", k);
             assert_eq!(kind(&entails(&p, &g)), "refuted", "{k}");
             proved(&product_sum(k));
             proved(&product_chain_with_abs(k));

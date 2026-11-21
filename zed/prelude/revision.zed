@@ -88,7 +88,10 @@ roundDown(positional v, positional m, positional r) = match v {
 reduceCongruence(positional xs, positional c) = match c {
   #bottom -> [[], #bottom],
   #class(modulus: m, residue: r) -> {
-    moved = if m == 0 { xs.filter(p -> endLe(p[0], r) && endLe(r, p[1])).map(p -> [r, r]) }
+    // `m <= 0`, not `m == 0`: a modulus is at least 0, so the two agree, and the last arm
+    // then has `m` in int[2..], which `roundUp` and `roundDown` need for `mod`
+    // (QUESTIONS A174: `mod` takes `m` in int[1..]).
+    moved = if m <= 0 { xs.filter(p -> endLe(p[0], r) && endLe(r, p[1])).map(p -> [r, r]) }
       else if m == 1 { xs }
       else { xs.map(p -> [roundUp(p[0], m, r), roundDown(p[1], m, r)]).filter(p -> endLe(p[0], p[1])) };
     single = moved::len == 1 && moved[0][0] == moved[0][1];

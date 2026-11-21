@@ -149,11 +149,16 @@ intervalNarrow(positional old, positional new, positional marks) =
 // one before), so the widening is the join. Descending chains are not (0 mod 2,
 // 0 mod 4, ...), so the narrowing takes new only from the top, or when new is
 // one value or none: it changes at most three times.
+//
+// `mod` takes `m` in int[1..] (QUESTIONS A174), so each test of a modulus below is
+// `m <= 0`, not `m == 0`: a modulus is at least 0, so the two agree on every class, and
+// the other arm has `m` in int[1..]. `gcd` is called only with arguments at least 0
+// (moduli and `abs(r - s)`), where `b <= 0` and `b == 0` agree.
 
-gcd(positional a, positional b) = if b == 0 { a } else { gcd(b, a mod b) };
+gcd(positional a, positional b) = if b <= 0 { a } else { gcd(b, a mod b) };
 
 congruence(positional m, positional r) =
-  #class(modulus: m, residue: if m == 0 { r } else { r mod m });
+  #class(modulus: m, residue: if m <= 0 { r } else { r mod m });
 
 congruenceJoin(positional a, positional b) = match a {
   #bottom -> b,
@@ -165,7 +170,7 @@ congruenceJoin(positional a, positional b) = match a {
 
 member(positional c, positional v) = match c {
   #bottom -> false,
-  #class(modulus: m, residue: r) -> if m == 0 { v == r } else { v mod m == r },
+  #class(modulus: m, residue: r) -> if m <= 0 { v == r } else { v mod m == r },
 };
 
 // The inverse of a modulo n, for a and n coprime: the extended Euclidean
@@ -184,14 +189,26 @@ congruenceMeet(positional a, positional b) = match a {
   #class(modulus: m, residue: r) -> match b {
     #bottom -> #bottom,
     #class(modulus: n, residue: s) ->
-      if m == 0 { if member(b, r) { a } else { #bottom } }
-      else if n == 0 { if member(a, s) { b } else { #bottom } }
-      else if (s - r) mod gcd(m, n) != 0 { #bottom }
+      if m <= 0 { if member(b, r) { a } else { #bottom } }
+      else if n <= 0 { if member(a, s) { b } else { #bottom } }
       else {
+        // Here m >= 1 and n >= 1, so g = gcd(m, n) >= 1, and g divides n, so
+        // ng = n div g >= 1: the two tests below never take their first arm, which keeps
+        // the operand with the larger modulus, the sound bound used for overflow. They
+        // are written because `mod` takes `m` in int[1..] (QUESTIONS A174) and the
+        // checker does not prove these facts of `gcd`.
         g = gcd(m, n);
-        l = m div g * n;   // #overflow when lcm(m, n) leaves the integer range; g > 0, since m != 0
-        k = (s - r) div g mod (n div g) * inverse(m div g, n div g) mod (n div g);
-        if l == #overflow { if m >= n { a } else { b } } else { congruence(l, r + m * k) }
+        if g <= 0 { if m >= n { a } else { b } }
+        else {
+          ng = n div g;
+          if ng <= 0 { if m >= n { a } else { b } }
+          else if (s - r) mod g != 0 { #bottom }
+          else {
+            l = m div g * n;   // #overflow when lcm(m, n) leaves the integer range; g > 0
+            k = (s - r) div g mod ng * inverse(m div g, ng) mod ng;
+            if l == #overflow { if m >= n { a } else { b } } else { congruence(l, r + m * k) }
+          }
+        }
       },
   },
 };
