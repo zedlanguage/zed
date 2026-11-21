@@ -279,3 +279,88 @@ fn an_exact_scope_keeps_a_point_and_the_ends_an_enumeration_gives() {
         }
     }
 }
+
+/// `Scope::atom` keeps no written copy of a test of one integer name whose preimage is
+/// exact, nor of a test the relation holds as a bound on a sum of names of coefficients one
+/// and minus one (row TEST-atom-written-copy). Each case, as true and as false, in a plain
+/// and an `@exact` scope that also holds `x * y mod 10 == 1`, is compared with the same
+/// scope given the written copy back: the two allow the same values of each name with the
+/// other one open (the case of one open name that enumeration runs). Both are compared with
+/// the points that meet the two tests: at each point of the box, and, in the `@exact` scope,
+/// in the values each name is allowed (a plain scope's are coarser: with `y` open it allows
+/// `x` in 0..=6 for `3·x + 1 <= 20`, where the points give 1 and 3). The copy is checked to
+/// be dropped first, so the comparison is not vacuous. Checked to fail (2026-11-21) when the
+/// relation leaves out a unit sum whose copy is dropped. What this cannot catch: a box or a
+/// constraint other than these where a dropped copy would matter.
+#[test]
+fn a_test_whose_written_copy_is_dropped_allows_what_the_copy_allows() {
+    let sum = |a: Term, b: Term| prim(Prim::Add, vec![a, b]);
+    // `3·x + 1 <= 20`: one name, an exact preimage.
+    let one = prim(
+        Prim::Le,
+        vec![
+            sum(prim(Prim::Mul, vec![lit(3), var("x")]), lit(1)),
+            lit(20),
+        ],
+    );
+    // `x - y + 2 >= 0`: a bound on a unit sum.
+    let unit = prim(
+        Prim::Ge,
+        vec![
+            sum(prim(Prim::Sub, vec![var("x"), var("y")]), lit(2)),
+            lit(0),
+        ],
+    );
+    let other = product_mod_10("x", "y", 1);
+    let box_ = [("x", 0, 12), ("y", 0, 12)];
+    let cases: [(&Term, fn(i64, i64) -> bool, bool); 2] = [
+        (&one, |a, _| 3 * a + 1 <= 20, false),
+        (&unit, |a, b| a - b + 2 >= 0, true),
+    ];
+    for exact in [false, true] {
+        for (t, holds, is_unit) in cases {
+            for outcome in [true, false] {
+                let at = format!("{t} {outcome}, exact {exact}");
+                let meets = |a: i64, b: i64| holds(a, b) == outcome && (a * b) % 10 == 1;
+                let without = written(within(&box_, exact), std::slice::from_ref(&other)).assume(
+                    t,
+                    outcome,
+                    &none(),
+                );
+                // Under `@exact` the unit sum's copy is kept; elsewhere it is dropped.
+                let kept = exact && is_unit;
+                assert_eq!(without.written.len(), if kept { 2 } else { 1 }, "{at}");
+                let copy = if outcome {
+                    t.clone()
+                } else {
+                    prim(Prim::Not, vec![t.clone()])
+                };
+                let with = written(without.clone(), &[copy]);
+                assert_eq!(with.written.len(), 2, "{at}");
+                let xs: Vec<i64> = (0..=12)
+                    .filter(|&a| (0..=12).any(|b| meets(a, b)))
+                    .collect();
+                let ys: Vec<i64> = (0..=12)
+                    .filter(|&b| (0..=12).any(|a| meets(a, b)))
+                    .collect();
+                for n in ["x", "y"] {
+                    let one_way = allowed(&without, n, 0, 12);
+                    assert_eq!(one_way, allowed(&with, n, 0, 12), "{n}, {at}");
+                }
+                for s in [&without, &with] {
+                    if exact {
+                        assert_eq!(allowed(s, "x", 0, 12), xs, "x, {at}");
+                        assert_eq!(allowed(s, "y", 0, 12), ys, "y, {at}");
+                    }
+                    for a in 0..=12 {
+                        for b in 0..=12 {
+                            let point = prim(Prim::And, vec![is("x", a), is("y", b)]);
+                            let bottom = s.assume(&point, true, &none()).bottom;
+                            assert_eq!(bottom, !meets(a, b), "x = {a}, y = {b}, {at}");
+                        }
+                    }
+                }
+            }
+        }
+    }
+}

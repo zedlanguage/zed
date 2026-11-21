@@ -5381,6 +5381,27 @@ impl Split {
     /// with its text. Not proved: that any rule here gives the enumeration's ends; open
     /// sub-case: a group that holds one variable `y` of a part whose `S_y` is not its
     /// interval and class.
+    ///
+    /// Found 2026-11-21 (row FAIL-preimage-group-holes-precision), with prints at
+    /// `Scope::project_part`: in that example the rule here is not reached. The disjunction
+    /// and the two constraints are two blocks, the biconnected components joined at `y` alone
+    /// ([`Scope::project`]), so the disjunction's part is projected without the constraints
+    /// (`x <= 0 || (x >= 10 && y <= 5 && y >= 5)`) and the constraints' own part alone, and a
+    /// block passes the other only `y`'s interval and class. Taking a group holding one of
+    /// `g`'s variables here (`k >= 1`), with [`Block::reframe`] waking every part holding one
+    /// variable of a changed group, left `x` in `{0, 10}`. With the constraints assumed before
+    /// the disjunction, or with it, `x` is `0..=0`: the disjunction's cases are tried as it is
+    /// assumed, each against the constraints then held
+    /// (`lazy::a_group_on_one_name_of_a_disjunction_assumed_before_it_bounds_its_points`).
+    /// What the open sub-case needs is one of: the blocks joined at a name whose projection
+    /// has holes its interval and class do not show, or a product that holds such holes
+    /// (residues modulo the coefficients), or the earlier disjunctions' cases tried again
+    /// when a later constraint reaches them through a shared name, which is the O(k) wake per
+    /// test, O(k^2) on a hub, that the rule above avoids. Exactness in general is as hard as
+    /// integer feasibility: with `y <= 5`, a system `A z <= b + K·(5 - y)` (K past every
+    /// row's range on the box) holds for each `y <= 4` and, at `y == 5`, exactly when
+    /// `A z <= b` has an integer point, so the arm `y == 5` meets the constraints exactly
+    /// then. This is for the author's decision.
     // Complexity tradeoff: naive version, every constraint of the block in `with`, so that each
     // constraint added or gone made every part due, O(k) projections for k parts, O(k^2) for k
     // tests on a term no part compares (the walk through a shared name). Used: the groups that
@@ -12952,9 +12973,14 @@ impl Scope {
         // `reduce`), over intervals that are the points `v_i`, so the projection gives that
         // bound with no rounding, the coefficient of `x` being one or minus one. The first
         // case rests on `exact` from `Scope::atom_names`: the preimage met into the interval
-        // is then the whole set of values that meet the test. Test: none named here compares
-        // either case with and without its written copy; a test is still to be named or
-        // written (row TEST-atom-written-copy).
+        // is then the whole set of values that meet the test. Test (row
+        // TEST-atom-written-copy): l01_39_reduced_product::exact::
+        // a_test_whose_written_copy_is_dropped_allows_what_the_copy_allows compares each case,
+        // as true and as false, with and without its written copy and with the points that
+        // meet it, in a plain and an `@exact` scope that also holds `x * y mod 10 == 1`.
+        // Checked to fail (2026-11-21) when the relation leaves out a unit sum whose copy is
+        // dropped (at x = 1, y = 11). It cannot catch a box or a constraint other than its own
+        // where a dropped copy would matter.
         if !(exact && inputs.len() == 1 && free.len() == 1) && !unit {
             let kept = if outcome {
                 test.clone()

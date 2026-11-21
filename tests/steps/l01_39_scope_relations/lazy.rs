@@ -1103,3 +1103,45 @@ fn a_bound_on_two_names_of_a_disjunction_assumed_after_it_bounds_its_points() {
         }
     }
 }
+
+/// A group of constraints on one name `y` of a disjunction, assumed before it or with it,
+/// that leaves holes in `y`'s values: `0 <= y - 3·z <= 1` leaves `y mod 3` in `{0, 1}`, so
+/// the arm `x >= 10 && y == 5` has no point (5 mod 3 is 2) and `x` is `0`. The disjunction's
+/// cases are tried as it is assumed, each against the constraints then held, and the arm's
+/// case finds no point. Assumed after the disjunction, the same constraint leaves `x` in
+/// `{0, 10}`, eager and lazy (row FAIL-preimage-group-holes-precision, measured 2026-11-21;
+/// text of that test in /home/luke/Work/wt/failing-tests): the disjunction and the
+/// constraints are blocks apart, joined at `y` alone, and a block passes the next only `y`'s
+/// interval and class, which the residues 0 and 1 modulo 3 are not.
+#[test]
+fn a_group_on_one_name_of_a_disjunction_assumed_before_it_bounds_its_points() {
+    let ge = |a: Term, k: i64| prim(Prim::Ge, a, int(k));
+    let le = |a: Term, k: i64| prim(Prim::Le, a, int(k));
+    let y3z = || prim(Prim::Sub, var("y"), prim(Prim::Mul, int(3), var("z")));
+    let either = || {
+        or(
+            and(ge(var("x"), 10), and(ge(var("y"), 5), le(var("y"), 5))),
+            le(var("x"), 0),
+        )
+    };
+    let orders: [(&str, Vec<Term>); 2] = [
+        ("before", vec![ge(y3z(), 0), le(y3z(), 1), either()]),
+        (
+            "at once",
+            vec![and(ge(y3z(), 0), and(le(y3z(), 1), either()))],
+        ),
+    ];
+    let p = Premises::new();
+    for (how, tests) in orders {
+        for lazy in [false, true] {
+            let s = ints(&names(&["x", "y", "z"]));
+            let s = if lazy { s.lazy() } else { s };
+            let s = [ge(var("x"), 0), le(var("x"), 10)]
+                .into_iter()
+                .chain(tests.iter().cloned())
+                .fold(s, |s, t| s.assume(&t, true, &p));
+            let x = s.settled(&Arc::from("x")).ints().clone();
+            assert_eq!(x, IntervalSet::of(0, 0), "{how}, lazy {lazy}");
+        }
+    }
+}
