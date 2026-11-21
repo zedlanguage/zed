@@ -38,8 +38,9 @@
 //!   optimal." Its proof for halving counts only every other node of a find path (the
 //!   "essential" nodes, exactly those whose parent changes), bounds those by the
 //!   multiple-partition charge of Lemma 6 used for compression, and doubles it, since at
-//!   least half of each path is essential. The same paper: "Perhaps the best is linking by rank with halving, since it
-//!   saves space over linking by size and uses only one pass over each find path." The
+//!   least half of each path is essential. The same paper: "Perhaps the best is linking by
+//!   rank with halving, since it saves space over linking by size and uses only one pass over
+//!   each find path." The
 //!   matching lower bound is Tarjan's earlier paper ("Efficiency of a good but not linear
 //!   set union algorithm", JACM 22(2), 215-225, 1975, doi:10.1145/321879.321884; read
 //!   2026-11-20 in the OpenAlex copy): for "a sequence of m ≥ n FINDs and n - 1 intermixed

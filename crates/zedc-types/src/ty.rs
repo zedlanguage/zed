@@ -957,9 +957,10 @@ struct Same<'a> {
     /// the keys are addresses the allocator chose, never a program's text, so it needs no seed
     /// (DRY-sorted-structures-2, job 3, which removed the folded multiply this table had alone).
     // Proof that no key names a freed node (checked again for DOC-proofs-in-comments-audit,
-    // as dryC1 asked in c4937d86c): (1) keys are put in only by `Same::assumed`; (2) its callers `alike_rows`, `alike_shapes` and `func` (impl `Nodes`
-    // for `Same`) pass `Arc::as_ptr` of operands typed `&'a`; (3) a `Same<'a>` cannot outlive
-    // `'a`, which the borrow checker enforces, and one is made for each comparison
+    // as dryC1 asked in c4937d86c): (1) keys are put in only by `Same::assumed`; (2) its callers
+    // `alike_rows`, `alike_shapes` and `func` (impl `Nodes` for `Same`) pass `Arc::as_ptr` of
+    // operands typed `&'a`; (3) a `Same<'a>` cannot outlive `'a`, which the borrow checker
+    // enforces, and one is made for each comparison
     // (`Lazy::same`, `Sig::eq`). So each key names a node alive for the table's whole life.
     // Test: `equality_reads_a_new_type_at_the_address_of_one_dropped`, which checks a type
     // made at a dropped one's address compares as itself, from a new table; a node freed
