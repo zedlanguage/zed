@@ -1106,11 +1106,9 @@ fn a_bound_on_two_names_of_a_disjunction_assumed_after_it_bounds_its_points() {
 /// that leaves holes in `y`'s values: `0 <= y - 3·z <= 1` leaves `y mod 3` in `{0, 1}`, so
 /// the arm `x >= 10 && y == 5` has no point (5 mod 3 is 2) and `x` is `0`. The disjunction's
 /// cases are tried as it is assumed, each against the constraints then held, and the arm's
-/// case finds no point. Assumed after the disjunction, the same constraint leaves `x` in
-/// `{0, 10}`, eager and lazy (row FAIL-preimage-group-holes-precision, measured 2026-11-21;
-/// text of that test in /home/luke/Work/wt/failing-tests): the disjunction and the
-/// constraints are blocks apart, joined at `y` alone, and a block passes the next only `y`'s
-/// interval and class, which the residues 0 and 1 modulo 3 are not.
+/// case finds no point. Assumed after the disjunction, the same constraint left `x` in
+/// `{0, 10}`, eager and lazy, until the case's point was asked of the relation
+/// (`a_group_on_one_name_of_a_disjunction_assumed_after_it_bounds_its_points`, below).
 #[test]
 fn a_group_on_one_name_of_a_disjunction_assumed_before_it_bounds_its_points() {
     let ge = |a: Term, k: i64| prim(Prim::Ge, a, int(k));
@@ -1141,5 +1139,140 @@ fn a_group_on_one_name_of_a_disjunction_assumed_before_it_bounds_its_points() {
             let x = s.settled(&Arc::from("x")).ints().clone();
             assert_eq!(x, IntervalSet::of(0, 0), "{how}, lazy {lazy}");
         }
+    }
+}
+
+/// The same group with its second constraint assumed after the disjunction (row
+/// FAIL-preimage-group-holes-precision): `0 <= y - 3·z` holds when the disjunction is
+/// assumed, so its arm `x >= 10 && y == 5` has the point `y = 5, z = 1` then; `y - 3·z <= 1`
+/// comes after, and at `y = 5` the two leave `z` no integer (`4/3 <= z <= 5/3`). The kept
+/// disjunction's case fixes `y` to 5 and leaves `z` open, so the later constraint is decided
+/// at that point with the other written constraints it reaches through `z`, and the case is
+/// found to hold no state: `x` is `0`.
+#[test]
+fn a_group_on_one_name_of_a_disjunction_assumed_after_it_bounds_its_points() {
+    let ge = |a: Term, k: i64| prim(Prim::Ge, a, int(k));
+    let le = |a: Term, k: i64| prim(Prim::Le, a, int(k));
+    let y3z = || prim(Prim::Sub, var("y"), prim(Prim::Mul, int(3), var("z")));
+    let p = Premises::new();
+    for lazy in [false, true] {
+        let s = ints(&names(&["x", "y", "z"]));
+        let s = if lazy { s.lazy() } else { s };
+        let s = [
+            ge(var("x"), 0),
+            le(var("x"), 10),
+            ge(y3z(), 0),
+            or(
+                and(ge(var("x"), 10), and(ge(var("y"), 5), le(var("y"), 5))),
+                le(var("x"), 0),
+            ),
+            le(y3z(), 1),
+        ]
+        .into_iter()
+        .fold(s, |s, t| s.assume(&t, true, &p));
+        let x = s.settled(&Arc::from("x")).ints().clone();
+        assert_eq!(x, IntervalSet::of(0, 0), "lazy {lazy}");
+    }
+}
+
+/// Three cases whose classes join wider than their union (row
+/// PROOF-product-join-cases-classes-inexact, sub-case (a)): `x % 3 == 0 && y == 2·x`,
+/// `x % 3 == 1 && y == 2·x + 1`, each with `0 <= x <= 9`, and `20 <= x <= 29 && y == 3·x + 1`.
+/// The first two give `y` the classes 0 and 3 modulo 6, which join to 0 modulo 3, and `x` the
+/// classes 0 and 1 modulo 3, which join to every integer; `x = 2` (and 5, 8) is in no case,
+/// and with `y` in 0 modulo 3 neither of the first two cases' relations meets it. The answer
+/// is `x` in `{0, 1, 3, 4, 6, 7, 9}` or `20..=29`, eager and lazy.
+#[test]
+fn three_cases_whose_classes_join_wide_keep_only_their_values() {
+    let ge = |a: Term, k: i64| prim(Prim::Ge, a, int(k));
+    let le = |a: Term, k: i64| prim(Prim::Le, a, int(k));
+    let eq = |a: Term, b: Term| prim(Prim::Eq, a, b);
+    let modulo = |r: i64| eq(prim(Prim::Mod, var("x"), int(3)), int(r));
+    let lin = |a: i64, b: i64| prim(Prim::Add, prim(Prim::Mul, int(a), var("x")), int(b));
+    let range = |lo: i64, hi: i64| and(ge(var("x"), lo), le(var("x"), hi));
+    let test = or(
+        or(
+            and(range(0, 9), and(modulo(0), eq(var("y"), lin(2, 0)))),
+            and(range(0, 9), and(modulo(1), eq(var("y"), lin(2, 1)))),
+        ),
+        and(range(20, 29), eq(var("y"), lin(3, 1))),
+    );
+    let want = [0, 1, 3, 4, 6, 7, 9]
+        .into_iter()
+        .map(|v| IntervalSet::of(v, v))
+        .fold(IntervalSet::of(20, 29), |a, b| a.join(&b));
+    let p = Premises::new();
+    for lazy in [false, true] {
+        let s = ints(&names(&["x", "y"]));
+        let s = if lazy { s.lazy() } else { s };
+        let s = s.assume(&test, true, &p);
+        let x = s.settled(&Arc::from("x")).ints().clone();
+        assert_eq!(x, want, "lazy {lazy}");
+    }
+}
+
+/// The tests and constraints of [`points_asked_after_a_disjunction_scale`] at size `k`: for
+/// each `i < k`, `0 <= x_i <= 10`, `0 <= y_i - 3·z_i`, the test `(x_i >= 10 && y_i == 5) ||
+/// x_i <= 0`, whose first case fixes `y_i`, and after it `y_i - 3·z_i <= 1` for even `i`,
+/// which leaves that case no point, or `<= 2` for odd `i`, which leaves it one.
+fn points_asked(k: usize) -> Vec<Term> {
+    let ge = |a: Term, v: i64| prim(Prim::Ge, a, int(v));
+    let le = |a: Term, v: i64| prim(Prim::Le, a, int(v));
+    let mut out = Vec::new();
+    for i in 0..k {
+        let (x, y) = (|| var(&format!("x{i}")), || var(&format!("y{i}")));
+        let y3z = || {
+            prim(
+                Prim::Sub,
+                y(),
+                prim(Prim::Mul, int(3), var(&format!("z{i}"))),
+            )
+        };
+        out.push(ge(x(), 0));
+        out.push(le(x(), 10));
+        out.push(ge(y3z(), 0));
+        out.push(or(
+            and(ge(x(), 10), and(ge(y(), 5), le(y(), 5))),
+            le(x(), 0),
+        ));
+        out.push(le(y3z(), 1 + (i % 2) as i64));
+    }
+    out
+}
+
+/// A constraint written after a kept test whose case fixes one of its names and leaves
+/// another open is asked at the case's point (`Scope::written_dead`, `Scope::no_point_at`):
+/// k groups of [`points_asked`], eager and lazy, at k and 8k. The even groups' `x_i` is 0
+/// and the odd groups' is 0 or 10, checked at each size.
+#[test]
+fn points_asked_after_a_disjunction_scale() {
+    let p = Premises::new();
+    let made = zed_tests::scaling::inputs(64, |k| {
+        let ns: Vec<String> = (0..k)
+            .flat_map(|i| [format!("x{i}"), format!("y{i}"), format!("z{i}")])
+            .collect();
+        let ns: Vec<&str> = ns.iter().map(|s| s.as_str()).collect();
+        (ints(&names(&ns)), points_asked(k))
+    });
+    for lazy in [false, true] {
+        let what = format!("constraints asked at kept points, lazy: {lazy}");
+        zed_tests::scaling::check(&what, 64, |k| {
+            let (s, ts) = &made[&k];
+            let s = if lazy { s.clone().lazy() } else { s.clone() };
+            let s = ts.iter().fold(s, |s, t| s.assume(t, true, &p));
+            for i in [0, 1, k - 2, k - 1] {
+                let x = s
+                    .settled(&Arc::from(format!("x{i}").as_str()))
+                    .ints()
+                    .clone();
+                let want = if i % 2 == 0 {
+                    IntervalSet::of(0, 0)
+                } else {
+                    IntervalSet::of(0, 0).join(&IntervalSet::of(10, 10))
+                };
+                assert_eq!(x, want, "x{i} at {k}, lazy {lazy}");
+            }
+            std::hint::black_box(s);
+        });
     }
 }

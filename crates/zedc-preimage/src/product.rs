@@ -10499,29 +10499,92 @@ impl Scope {
             }
             let statics = self.statics_of(free);
             let open: Vec<&Arc<str>> = free.iter().filter(|n| !statics.contains_key(*n)).collect();
-            let Some(least) = open.iter().min_by_key(|n| self.kept.fixed.count(n)) else {
-                continue;
-            };
-            for k in self.kept.fixed.of(least) {
+            let tests: BTreeSet<&Address> =
+                (open.iter()).flat_map(|n| self.kept.fixed.of(n)).collect();
+            // The answers of the relation at the points already asked of this constraint.
+            let mut asked: BTreeMap<Vec<(Arc<str>, Value)>, bool> = BTreeMap::new();
+            for k in tests {
                 let Some(t) = self.kept.tests.get(k).filter(|_| !out.contains(k)) else {
                     continue;
                 };
                 let dead = t.points.iter().any(|ps| {
                     let mut at = statics.clone();
                     at.extend((ps.iter()).filter(|(n, _)| free.contains(n)).cloned());
-                    if !open.iter().all(|n| at.contains_key(*n)) {
+                    let left: Vec<&Arc<str>> = open
+                        .iter()
+                        .copied()
+                        .filter(|n| !at.contains_key(*n))
+                        .collect();
+                    if left.is_empty() {
+                        let c = substitute(w.term(), &at);
+                        return stage::ends(&c)
+                            && matches!(Evaluator::new(World::new()).run(&c),
+                                Ok(v) if v != Value::Bool(true));
+                    }
+                    if left.len() == open.len() {
                         return false;
                     }
-                    let c = substitute(w.term(), &at);
-                    stage::ends(&c)
-                        && matches!(Evaluator::new(World::new()).run(&c),
-                            Ok(v) if v != Value::Bool(true))
+                    let key: Vec<(Arc<str>, Value)> = ps.clone();
+                    *(asked.entry(key)).or_insert_with(|| self.no_point_at(&left, ps))
                 });
                 if dead {
                     out.insert(k.clone());
                 }
             }
         }
+    }
+
+    /// Whether the relation's conjuncts that mention a name of `left` have no integer point
+    /// where each name of `ps` has its value: a case that fixes those names ([`KeptTest::
+    /// points`]) then holds no state, since each of its states meets every conjunct of the
+    /// relation. A question the solver refuses gives `false`: the case is kept, sound and
+    /// wider.
+    // Proof that `true` means the case holds no state. (1) Every conjunct of `self.relation`
+    // holds in every state of the scope: the relation is met with each test's linear part as
+    // it is assumed (`Scope::narrow_atom`, `self.relation.and(body)`), and a join keeps the
+    // conjuncts both sides hold and the disjunction of the rest (`Scope::join`). (2) A state
+    // of a kept case is a state of the scope (the scope's states are the union of its cases'
+    // states, each met since with every later test), and gives each name of `ps` its value
+    // there (`case_points` takes only the names the case fixes to one value). (3) So such a
+    // state gives the conjuncts taken here, a subset of the relation, an integer point with
+    // the names of `ps` at their values: the formula asked below, the conjuncts with an
+    // equality for each name of `ps` they mention, has a point. Its having none (`Ok(None)`)
+    // leaves the case no state. The names the conjuncts mention outside `ps` are left free,
+    // which only widens the formula, so the answer stays sound.
+    // Complexity tradeoff: naive, narrow again by each kept test whose case fixes a name of a
+    // newly written constraint, one narrowing of the whole scope for each, as the order that
+    // writes the constraint first does for each case. Used: one solver question over the
+    // conjuncts at the names the point leaves open, asked once for each distinct point
+    // (`asked` in `Scope::written_dead`); a case found to hold no state narrows its test
+    // again ([`Scope::narrow_kept_again`]). Tradeoff: the case's ends and classes on names
+    // it does not fix are not in the question, so a case those alone leave with no state is
+    // kept (row FAIL-preimage-block-cut-residues); and each written constraint asks again at
+    // each point, so k tests with a point on one name and m constraints written after them
+    // on that name and another ask O(k·m) questions, as the order that writes the
+    // constraints first reads the m constraints in each of the k tests' cases. Tests:
+    // `l01_39_scope_relations::lazy::a_group_on_one_name_of_a_disjunction_assumed_after_it_bounds_its_points`
+    // (red before this question, `x` in {0, 10}; green after), and the bench
+    // `…::lazy::points_asked_after_a_disjunction_scale`.
+    fn no_point_at(&self, left: &[&Arc<str>], ps: &[(Arc<str>, Value)]) -> bool {
+        let mut parts: BTreeSet<Arc<Formula>> = BTreeSet::new();
+        for n in left {
+            parts.extend(self.relation.mentioning(n).cloned());
+        }
+        if parts.is_empty() {
+            return false;
+        }
+        let mentioned: BTreeSet<Arc<str>> =
+            parts.iter().flat_map(|f| conjuncts::names(f)).collect();
+        let mut f: Vec<Formula> = parts.iter().map(|g| Formula::clone(g)).collect();
+        for (n, v) in ps {
+            if let Value::Int(v) = v
+                && mentioned.contains(n)
+            {
+                let x = Lin::atom(Atom::Sym(n.clone()));
+                f.push(Formula::Con(Con::eq(&x, &Lin::constant(*v))));
+            }
+        }
+        matches!(presburger::satisfiable(&Formula::and(f)), Ok(None))
     }
 
     /// Forgets every projection made, so that the next reduction projects the whole relation
@@ -18738,6 +18801,17 @@ fn balanced(p: Prim, mut level: Vec<Term>) -> Term {
 // a loss of precision against the reducing method, never of soundness. Measured on the
 // groups above only (COMPLEXITY.md F158, test
 // `l01_39_scope_relations::two_disjunctions::bench`).
+// On (a), checked 2026-11-21 (pd6pb): the example above, three cases `x` in `0..=9` of class
+// 0 mod 3, in `0..=9` of class 1 mod 3, and in `20..=29`, each with a second name tied to `x`
+// so that the join keeps a relation, gives exactly the cases' values of `x` with and without
+// the reductions of the joins (test `l01_39_scope_relations::lazy::
+// three_cases_whose_classes_join_wide_keep_only_their_values`, eager and lazy). The reason
+// found: an inner reduction removes a value such as 1 only through the relation of the join,
+// which is the disjunction of the two cases' rests, and a disjunction is projected case by
+// case and joined ([`Scope::stated`] holds the conjuncts and finite ends but no class), so
+// that inner projection joins the classes as wide as the outer one does. (a) can then differ
+// only where the projection of a disjunction at an inner level is finer than at the outer
+// one, which is (b). Neither step is proved for every projection; both stay open.
 fn join_cases(mut cases: Vec<Scope>) -> Scope {
     while cases.len() > 1 {
         let mut it = std::mem::take(&mut cases).into_iter();
