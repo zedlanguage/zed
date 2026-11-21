@@ -229,7 +229,11 @@ fn words<L: Borrow<BigUint>>(xs: &[L]) -> Option<Vec<u64>> {
 /// the count beside one `factor` an input) rather than taken through the trees (`by_halves`,
 /// `shares_a_factor_by_tree`, O(M(N) log^2 N) and O(M(N) log k)). Pollard's rho costs about
 /// `2^(b/4)` products on a product of two primes of `b / 2` bits, so past some width the trees
-/// are the cheaper.
+/// are the cheaper. That figure is Pollard's heuristic; up to 44 bits the cost of `factor` on
+/// one input also has a proved bound, a constant (Brent's rho with `c = 1`,
+/// doi:10.1007/BF01933190, bounded by a table over every prime below 2^22, and Lehman's method,
+/// doi:10.1090/S0025-5718-1974-0340163-2; every step at `zed_numtheory::factor`,
+/// PROOF-factored-coprime-cost), so the factoring path is proved linear in the count.
 ///
 /// The factoring path is taken only from [`FACTOR_INPUTS`] inputs on: factoring costs a fixed
 /// amount for each input at a width, and the trees' share for each input grows with the count
@@ -650,7 +654,10 @@ pub fn strip(rest: &mut BigUint, c: &BigUint) -> u64 {
 // (`the_shared_factor_methods_agree`). Sparse word values (`V > B`) of at most `FACTOR_BITS`
 // bits, at least `FACTOR_INPUTS` of them, are factored into primes instead
 // ([`zed_numtheory::shares_a_factor_by_factoring`]): one `factor` each, about `V^(1/4)`
-// products at worst by Pollard's rho (expected, not proved), then a count of each prime in
+// products in a typical case by Pollard's rho (expected, not proved), and at most a proved
+// constant below 2^44 (Brent's rho with c = 1, doi:10.1007/BF01933190, bounded by a table over
+// every prime below 2^22, and Lehman 1974, doi:10.1090/S0025-5718-1974-0340163-2; every step at
+// `zed_numtheory::factor`, PROOF-factored-coprime-cost), then a count of each prime in
 // O(k) expected hash operations, so linear in `k` at a fixed width; a measured switchover, at
 // `FACTOR_BITS`. Measured 2026-11-20 (load 42, `pncx_common_factor_tree_side_scale`, 512 and
 // 4096 values): 16.105 on the trees before, 6.683 after. What is left on the tree: wide

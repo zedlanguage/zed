@@ -107,17 +107,25 @@ fn by_prime(xs: &[u64]) -> ByPrime {
 /// the hash. `factor` of a prime or of a product of primes below 38 is deterministic:
 /// Miller-Rabin with the bases that decide every 64-bit number, O(log n) word products (cited
 /// at `is_prime`), after a division by each prime up to 37. Splitting a composite runs
-/// Pollard's rho in Brent's form, which ends (proved at `factor::split`), but its O(sqrt p)
-/// expected products for the least prime `p` of the number split is Pollard's heuristic, not
-/// a theorem (unproved here; the walk is a fixed polynomial, not a random function). For a
-/// balanced product of two primes of `b / 2` bits that is about `2^(b/4)` products, so the
-/// kernel takes this path only up to its measured switchover `FACTOR_BITS` on the largest
-/// input. Linear in `k` at a fixed width, proved without that heuristic: `factor` is
-/// deterministic and ends on every input (proved at `factor::split`), and there are finitely
-/// many inputs of at most `b` bits, so the most work `factor` does on any of them is a finite
-/// constant `C_b`; `k` inputs of at most `b` bits then cost at most `C_b k` in `factor`, plus
-/// O(k) in expectation for the rest. Only the size of `C_b` and its growth with `b` rest on the
-/// heuristic, and the kernel fixes `b <= FACTOR_BITS`. Tests:
+/// Pollard's rho in Brent's form with `c = 1` (R. P. Brent 1980, doi:10.1007/BF01933190), and
+/// R. S. Lehman's method (Math. Comp. 28, 1974, doi:10.1090/S0025-5718-1974-0340163-2) when
+/// that run ends without a factor; both end on every input (proved at `factor::rho` and
+/// `factor::lehman_search`). Rho's O(sqrt p) expected products for the least prime `p` is
+/// Pollard's heuristic, not a theorem (the walk is a fixed polynomial, not a random function):
+/// about `2^(b/4)` products for a balanced product of two primes of `b / 2` bits, which is why
+/// the kernel takes this path only up to its measured switchover `FACTOR_BITS` (44).
+///
+/// Below 2^44 the cost of `factor` on one input is bounded by a proved constant `C_44`, with no
+/// heuristic (PROOF-factored-coprime-cost, 2026-11-20; every step in the cost comment at
+/// `factor.rs`): the run with `c = 1` on a composite stops no later than the run on its
+/// least prime, which is below 2^22, and the run on every odd prime below 2^22 is computed once
+/// by the test `factor::tests::the_rho_cost_below_2_22_is_the_table` (at most 25854 steps,
+/// 9471 products and 80 gcds, then at most 128 steps and gcds back); Lehman's method is at most
+/// 26006 divisions and 65019 tries at `n < 2^44`; there are at most 26 splits and 53 primality
+/// tests an input. So `k` inputs of at most 44 bits cost at most `C_44 k` in `factor`, plus
+/// O(k) in expectation over the hash for the rest: linear in `k`. Wider inputs (which the
+/// kernel never sends here) still end, with a finite largest cost `C_b` at each width, but its
+/// size above 44 bits rests on the heuristic. Tests:
 /// `tests::the_factored_coprime_base_is_natural` (against [`crate::coprime_base_u64`]), and in
 /// zed-kernel `num::coprime::tests`.
 // Complexity tradeoff: factor refinement ([`crate::coprime_base_u64`]) costs O(k^2) word gcds;

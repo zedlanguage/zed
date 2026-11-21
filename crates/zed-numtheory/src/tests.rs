@@ -374,7 +374,10 @@ fn the_cube_roots_are_exact() {
     let mut next = words("the_cube_roots_are_exact");
     for n in (0..100_000).map(|_| next()).chain(EDGES) {
         let r = u128::from(cbrt_floor(n));
-        assert!(r.pow(3) <= u128::from(n) && u128::from(n) < (r + 1).pow(3), "{n}");
+        assert!(
+            r.pow(3) <= u128::from(n) && u128::from(n) < (r + 1).pow(3),
+            "{n}"
+        );
     }
 }
 

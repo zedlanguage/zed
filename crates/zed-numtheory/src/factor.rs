@@ -1,5 +1,7 @@
 //! The prime factors of a 64-bit integer: Miller-Rabin with the bases that decide every
-//! 64-bit number, and Pollard's rho in Brent's form to split a composite.
+//! 64-bit number, and Pollard's rho in Brent's form to split a composite, with Lehman's method
+//! when that run ends without a factor; below 2^44 the cost per number has a proved bound
+//! (comment at [`factor`]).
 //!
 //! Sources: G. L. Miller, "Riemann's hypothesis and tests for primality", J. Comput. Syst. Sci.
 //! 13(3):300-317, 1976, doi:10.1016/S0022-0000(76)80043-8, and M. O. Rabin, "Probabilistic
@@ -7,15 +9,41 @@
 //! doi:10.1016/0022-314X(80)90084-0, for the strong-probable-prime test of [`is_prime`] (the
 //! bases are cited there); J. M. Pollard, "A Monte Carlo method for factorization", BIT
 //! 15(3):331-334, 1975, doi:10.1007/BF01933667, and R. P. Brent, BIT 20, 1980 (cited at
-//! `split`), for the rho walk; P. L. Montgomery, 1985 (cited at `Montgomery`), for the
-//! products. Checked 2026-11-20: the four DOIs on Crossref; Miller, Rabin and Pollard not read,
+//! `rho`), for the rho walk; R. S. Lehman, Math. Comp. 28, 1974 (cited at `lehman`), for the
+//! fallback; P. L. Montgomery, 1985 (cited at `Montgomery`), for the products. Checked 2026-11-20: the four DOIs on Crossref; Miller, Rabin and Pollard not read,
 //! from memory; Brent read.
 
 /// The prime factors of `n` with their multiplicities, in increasing order of prime; empty for
 /// `n <= 1`.
 // Complexity tradeoff: trial division is O(sqrt n) divisions, 2^32 for a 64-bit prime product;
-// Pollard's rho finds a factor `p` in O(sqrt p) = O(n^(1/4)) expected products, and
-// Miller-Rabin tells a prime in O(log n) products.
+// Pollard's rho finds a factor `p` in O(sqrt p) = O(n^(1/4)) expected products (Pollard's
+// heuristic, unproved in general), and Miller-Rabin tells a prime in O(log n) products.
+//
+// Cost for `n < 2^44` (proof; PROOF-factored-coprime-cost, 2026-11-20). Every number `split`
+// gets is an odd composite `m` dividing `n`, so `m < 2^44`, and its least prime `p` is at most
+// `m^(1/2) < 2^22`.
+// 1. The run with `c = 1` ([`rho`], Brent 1980, doi:10.1007/BF01933190) on `m` costs through its
+//    last batch at most what the run on `p` costs (proof at `rho`), which is at most the table
+//    `the_rho_cost_below_2_22_is_the_table` computes over every odd prime below 2^22: 25854
+//    steps, 9471 products into `q` and 80 gcds. The search back adds at most 128 steps and 128
+//    gcds (proof at `rho`). Each step is one Montgomery product and one addition.
+// 2. When that run ends with `g = m`, Lehman's method (R. S. Lehman 1974,
+//    doi:10.1090/S0025-5718-1974-0340163-2; proof at `lehman_search`) costs, with `r =
+//    floor(m^(1/3)) <= floor((2^44 - 1)^(1/3)) = 26007` (`26008^3 > 2^44`): at most `r - 1 =
+//    26006` divisions and `2.5 r + 0.75 < 65019` tries, and per `k <= r` two `isqrt` and one
+//    division.
+// 3. The odd part of `n` has at most 27 prime factors with multiplicity (`3^27 < 2^44 < 3^28`),
+//    and each `split` adds one entry to `left`, so there are at most 26 splits; every entry ever
+//    pushed is tested by `is_prime` once, at most `2 * 26 + 1 = 53` calls, each at most 12 bases
+//    of at most `2 * 44` products for the power and 43 squarings, under 1600 products, and one
+//    128-bit remainder in `Montgomery::new`.
+// So `factor(n)` for `n < 2^44` costs at most 26 * (25982 steps + 9471 products + 208 gcds +
+// 26006 divisions + 65019 tries + 26007 `k` values) + 53 * 1600 products, a constant: O(1) per
+// input, with no expectation and no heuristic. The constant is large and loose (it adds the
+// worst case of every part at once); `examples/timing.rs` measures the typical cost. What the
+// tests cannot catch: the table test fixes the run's code at the time it ran, so the proof at
+// `rho` (that the table covers composites) is checked only on samples
+// (`a_run_stops_no_later_than_on_its_least_prime`).
 pub fn factor(n: u64) -> Vec<(u64, u64)> {
     // 0 has no prime factorization, and `0 >> 0.trailing_zeros()` below would shift by 64.
     if n == 0 {
@@ -206,94 +234,246 @@ pub fn is_prime(n: u64) -> bool {
     true
 }
 
-/// A factor of the odd composite `n` other than 1 and `n`.
+/// A factor of the odd composite `n` other than 1 and `n`: Pollard's rho in Brent's form with
+/// `c = 1` ([`rho`]), and Lehman's method ([`lehman`]) when that run ends without one.
+// Complexity tradeoff: rho costs O(sqrt p) products for the least prime `p` in expectation by
+// Pollard's heuristic (unproved), and Lehman's method O(n^(1/3)) operations, proved. Below 2^44
+// both are bounded by proved constants (the cost comment at `factor`). Trying the next `c`
+// instead of Lehman's method, as before 2026-11-20, is about as fast in expectation but has no
+// proved bound short of `c = p - 2`, about `p` runs. Measured 2026-11-20: the run with `c = 1`
+// ends with `g = n` on 111 of 200000 random products of two 22-bit primes and on none of 5000
+// products of two 32-bit primes, so Lehman's method runs on few inputs; it takes 1.4 ms on the
+// largest prime below 2^44 (a full search, which `split` never runs: `factor` calls it only on
+// composites) and 11 ms on 4294967291 * 4294967279, nearly all of it trial division.
 fn split(n: u64) -> u64 {
-    // Brent's cycle search on `x^2 + c` (R. P. Brent, "An improved Monte Carlo factorization
-    // algorithm", BIT 20(2):176-184, 1980, doi:10.1007/BF01933190), with a new `c` when a cycle
-    // closes without a factor. The loop below is the paper's final algorithm of section 7,
-    // with its names: "repeat x := y; for i := 1 to r do y := f(y); k := 0; repeat ys := y; for
-    // i := 1 to min(m, r - k) do begin y := f(y); q := q × |x - y| mod N end; G := GCD(q, N);
-    // k := k + m until (k > r) or (G > 1); r := 2 × r until G > 1", then, if `G = N`, "repeat
-    // ys := f(ys); G := GCD(|x - ys|, N) until G > 1". Departures: the paper's tests took
-    // `x0 = 0`, `f(x) = x^2 + 3` and `m = 1`; here `x0 = 2`, `c` from 1 and `m = 128`; the inner
-    // loop stops at `k >= r`, which skips only the paper's last batch of `min(m, 0) = 0` steps;
-    // and where the paper stops on "failure" (`G = N` again) the next `c` is tried. Checked
-    // 2026-11-20: the DOI on Crossref and the algorithm read in the paper (the author's scan).
-    // `factors_agree_with_trial_division` and `factors_of_wide_numbers_are_their_primes` check
-    // the factors; they cannot tell this walk from a slower correct one. The start `x = 2` and
-    // the first `c = 1` are the usual choices; any start works, and the proof below shows that
-    // `c` running up from 1 always ends. The differences are multiplied in batches of 128 and
-    // one gcd is taken per batch, so the O(log n) gcd costs 1/128 of a product per
-    // step; a batch that overshoots (`g = n`) is searched again one step at a time from `ys`.
-    // Any batch size is exact; a larger one saves gcds and costs more steps when a batch
-    // overshoots.
-    //
-    // The walk is in Montgomery form (P. L. Montgomery 1985,
-    // doi:10.1090/S0025-5718-1985-0777282-X; the full comment is at struct `Montgomery`): it
-    // holds `x R` for each `x` of the walk above, since `(x R)^2 R^-1 + c R = (x^2 + c) R`. A
-    // difference of held values is the difference of the values times `R`, and each product
-    // into `q` adds a factor `R^-1`; `R` is a unit modulo the odd `n`, so every gcd with `n`
-    // below, and so the proof at the end, is as for the plain walk.
-    let mont = Montgomery::new(n);
+    let run = rho(&Montgomery::new(n));
+    if run.g != n {
+        return run.g;
+    }
+    lehman(n).0
+}
+
+/// What a run of [`rho`] cost up to the end of the batch where it stopped: calls of the step
+/// `x^2 + 1`, products into `q`, and gcds with the modulus.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+struct RhoCost {
+    steps: u64,
+    products: u64,
+    gcds: u64,
+}
+
+/// The run of Brent's search with `c = 1` on the odd modulus `n > 1` of `mont`.
+struct RhoRun {
+    /// The gcd it ends with, above 1: a factor of `n`, and `n` itself when the search back
+    /// found every prime of `n` at once.
+    g: u64,
+    /// The cost through the batch whose gcd first passed 1. Read only by the tests that check
+    /// the cost bound (counting costs a few additions a batch); the counts are made by this
+    /// code, not by a copy, so the table test measures the walk `split` runs.
+    #[cfg_attr(not(test), expect(dead_code, reason = "read by the cost tests"))]
+    batches: RhoCost,
+    /// The steps of the search back from that batch's start, each one step and one gcd; 0 when
+    /// the batch's gcd was below `n`. At most 128, the batch's length (proof at `rho`).
+    #[cfg_attr(not(test), expect(dead_code, reason = "read by the cost tests"))]
+    back: u64,
+}
+
+/// Brent's cycle search on `x^2 + 1` modulo `n`, from 2 (R. P. Brent, "An improved Monte Carlo
+/// factorization algorithm", BIT 20(2):176-184, 1980, doi:10.1007/BF01933190). The loop is the
+/// paper's final algorithm of section 7, with its names: "repeat x := y; for i := 1 to r do
+/// y := f(y); k := 0; repeat ys := y; for i := 1 to min(m, r - k) do begin y := f(y);
+/// q := q × |x - y| mod N end; G := GCD(q, N); k := k + m until (k > r) or (G > 1); r := 2 × r
+/// until G > 1", then, if `G = N`, "repeat ys := f(ys); G := GCD(|x - ys|, N) until G > 1".
+/// Departures: the paper's tests took `x0 = 0`, `f(x) = x^2 + 3` and `m = 1`; here `x0 = 2`,
+/// `c = 1` and `m = 128`; the inner loop stops at `k >= r`, which skips only the paper's last
+/// batch of `min(m, 0) = 0` steps; and where the paper stops on "failure" (`G = N` again),
+/// [`split`] goes on with Lehman's method, not another `c`. Checked 2026-11-20: the DOI on
+/// Crossref and the algorithm read in the paper (the author's scan). The differences are
+/// multiplied in batches of 128 and one gcd is taken per batch, so the O(log n) gcd costs 1/128
+/// of a product per step; a batch that overshoots (`g = n`) is searched again one step at a
+/// time from `ys`. Any batch size is exact; a larger one saves gcds and costs more steps when a
+/// batch overshoots.
+///
+/// The walk is in Montgomery form (P. L. Montgomery 1985,
+/// doi:10.1090/S0025-5718-1985-0777282-X; the full comment is at struct `Montgomery`): it holds
+/// `x R` for each `x` of the walk above, since `(x R)^2 R^-1 + R = (x^2 + 1) R`. A difference of
+/// held values is the difference of the values times `R`, and each product into `q` adds a
+/// factor `R^-1`; `R = 2^64` is a unit modulo every odd number, so every gcd below is as for
+/// the plain walk.
+///
+/// It ends, for every odd `n > 1`: the walk modulo `n` is eventually periodic, with tail `mu`
+/// and period `lambda`. A round of size `r` sets `x` to the current `y`, moves `y` on `r` steps
+/// with no comparison, then compares `x` with the next `r` values, at distances `r + 1` to `2 r`
+/// from `x`, and leaves `y` `2 r` steps on. Rounds have sizes `1, 2, 4, ...`, so `x` of the round
+/// of size `r` is the walk's value at index `2 (1 + 2 + ... + r / 2) = 2 r - 2`. Once `2 r - 2 >=
+/// mu` and `r >= lambda`, `x` is in the cycle, and the `r` consecutive distances `r + 1` to `2 r`
+/// hold a multiple of `lambda`, where `y = x`: a difference of 0, so `q = 0` and `g = n` at that
+/// batch at the latest.
+///
+/// What the cost bound of [`factor`] rests on (proof). For a prime `p` dividing `n`, the run on
+/// `n` and the run on the modulus `p` (this function with `mont` for `p`) see the same walk
+/// modulo `p`: both hold `x R` for the same plain walk `x_0 = 2`, `x_(i+1) = x_i^2 + 1`, and
+/// a held value modulo `n`, reduced modulo `p`, is the held value modulo `p` (`x R mod n mod p
+/// = x R mod p`, as `p | n`). Their schedules (`r`, the batches) do not depend on the modulus
+/// until the run stops. So `p` divides a difference `|x - y|` of the run on `n` at exactly the
+/// comparisons where the difference of the run on `p` is 0, and the run on `p` stops at the
+/// end of the first batch holding such a comparison (`q` becomes 0 modulo `p`, and stays 0, so
+/// `g = p`). In the run on `n`, `q` is then 0 modulo `p` too (each product multiplies by a
+/// difference and by the unit `R^-1`, so `p | q` once `p` divides one difference), so its gcd
+/// is at least `p > 1` at that batch, and the run on `n` stops there or earlier. Its cost
+/// through its last batch is therefore at most the run on `p`'s `batches`, for every prime `p`
+/// of `n`, the least one in particular. The search back: before the last batch every gcd was 1,
+/// so no prime of `n` divided an earlier difference; a gcd of `n` means some prime of `n`
+/// divides a difference of the last batch, which has at most 128 comparisons, and the search
+/// back recomputes those differences in order from `ys` with the same `x`, so it stops after
+/// at most 128 steps. Tests: `the_rho_cost_below_2_22_is_the_table` (every odd prime below
+/// 2^22) and `a_run_stops_no_later_than_on_its_least_prime` (the inequality on composites).
+fn rho(mont: &Montgomery) -> RhoRun {
+    let n = mont.n;
+    let one = mont.one();
+    let f = |x: u64| mont.add(mont.mul(x, x), one);
     let start = mont.to(2);
-    for c in 1u64.. {
-        let held_c = mont.to(c);
-        let f = |x: u64| mont.add(mont.mul(x, x), held_c);
-        let (mut x, mut y, mut g, mut r) = (start, start, 1u64, 1u64);
-        // Any unit modulo `n` below it: the products only need their gcd with `n`.
-        let mut q = 1u64;
-        let mut ys = y;
-        while g == 1 {
-            x = y;
-            for _ in 0..r {
+    let (mut x, mut y, mut g, mut r) = (start, start, 1u64, 1u64);
+    // Any unit modulo `n`: the products only need their gcd with `n`.
+    let mut q = 1u64;
+    let mut ys = y;
+    let mut batches = RhoCost::default();
+    while g == 1 {
+        x = y;
+        for _ in 0..r {
+            y = f(y);
+        }
+        batches.steps += r;
+        let mut k = 0;
+        while k < r && g == 1 {
+            ys = y;
+            let m = 128.min(r - k);
+            for _ in 0..m {
                 y = f(y);
+                q = mont.mul(q, x.abs_diff(y));
             }
-            let mut k = 0;
-            while k < r && g == 1 {
-                ys = y;
-                for _ in 0..128.min(r - k) {
-                    y = f(y);
-                    q = mont.mul(q, x.abs_diff(y));
-                }
-                g = gcd_u64(q, n);
-                k += 128;
-            }
-            r *= 2;
+            g = gcd_u64(q, n);
+            batches.steps += m;
+            batches.products += m;
+            batches.gcds += 1;
+            k += 128;
         }
-        if g == n {
-            loop {
-                ys = f(ys);
-                g = gcd_u64(x.abs_diff(ys), n);
-                if g > 1 {
-                    break;
-                }
+        r *= 2;
+    }
+    let mut back = 0;
+    if g == n {
+        loop {
+            ys = f(ys);
+            g = gcd_u64(x.abs_diff(ys), n);
+            back += 1;
+            if g > 1 {
+                break;
             }
-        }
-        if g != n {
-            return g;
         }
     }
-    // Unreachable: each `c` ends (once `y` is in the cycle and `r` past its length, a
-    // difference is 0, so `g = n`; the search back from `ys` then meets the difference of that
-    // batch that shares a factor with `n`), and some `c` returns. The first comparison is of
-    // `x = 2` with `f(f(2)) = 2 + (c + 2)(c + 7) mod n`, so it gives `g = gcd((c + 2)(c + 7), n)`.
-    // For `p` the least prime factor of `n` (odd, so `p >= 3`) and `c = p - 2 >= 1`, that is
-    // `gcd(p (p + 5), n)`: a multiple of `p`, and `n` only if the odd `n / p >= p` divides the
-    // even `p + 5`, so `n / p <= (p + 5) / 2` and `p <= 5`, which leaves `n = 25` alone. So
-    // every odd composite but 25 is split by `c = p - 2` at the latest, and 25 is split by a
-    // smaller `c` (`factors_agree_with_trial_division`).
-    // The cases of `p <= 5`, written out: `n / p` is odd, at least `p` (as `p` is the least
-    // prime factor) and at most `(p + 5) / 2`. For `p = 3` that leaves `n / p = 3`, and 3 does
-    // not divide `p + 5 = 8`, so `n = 9` is split; for `p = 5` it leaves `n / p = 5`, which
-    // divides 10, so `n = 25`. That first batch is one step (`r = 1`), and `q` starts at 1, so
-    // `g` is the gcd of that one difference with `n` (up to units, as above). Later batches:
-    // `q` keeps the earlier batches' factors, but each earlier `g` was 1, so a new common
-    // factor comes from this batch's differences, which the search from `ys` recomputes with
-    // the same `x`. A `g = n` from the product means every prime of `n` divides some
-    // difference of the batch, so that search stops at a `g > 1`.
-    // The tests check every `n` below 2^16 and some wide `n`; they do not check that `c = p - 2`
-    // is the latest `c` used, only that each call returns a factor.
-    unreachable!("some c splits a composite")
+    RhoRun { g, batches, back }
+}
+
+/// What [`lehman`] cost: trial divisions, and values of `x` tried in the search for a square.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+struct LehmanCost {
+    divisions: u64,
+    tries: u64,
+}
+
+/// A factor of the odd composite `n` other than 1 and `n`, by R. S. Lehman's method, "Factoring
+/// large integers", Math. Comp. 28(126):637-646, 1974, doi:10.1090/S0025-5718-1974-0340163-2
+/// (read 2026-11-20 in the AMS scan, fetched by allpapers; the DOI's identity by Crossref). Trial
+/// division by every `d <= r = floor(n^(1/3))`, then [`lehman_search`]. Its cost, with `r` as
+/// above: at most `r - 1` divisions and at most `2.5 r + 0.75` tries (proof at
+/// [`lehman_search`]), each try a 128-bit square, a mask test and at most one `isqrt` and one
+/// gcd, and per `k <= r` one 128-bit and one 64-bit `isqrt` and one division.
+///
+/// Departures from the paper's program (section 5): it takes `r = floor(0.1 n^(1/3))`, tries
+/// the `k` in an order of many divisors first, uses the congruences of `x` modulo 2 and 4, and
+/// filters squares modulo 729; here `r = floor(n^(1/3))`, `k` runs from 1, every `x` of a
+/// range holding the theorem's is tried, and squares are filtered modulo 64. These change only
+/// the constant: the theorem below needs none of them.
+// Complexity tradeoff: trial division alone is O(sqrt n) divisions, 2^21 at 2^44; this is
+// O(n^(1/3)), about 26000 divisions and 65000 tries at 2^44. Shanks' SQUFOF is O(n^(1/4)) but its
+// bound is heuristic; Lehman's is a theorem.
+fn lehman(n: u64) -> (u64, LehmanCost) {
+    let r = crate::cbrt_floor(n);
+    let mut cost = LehmanCost::default();
+    for d in 2..=r {
+        cost.divisions += 1;
+        if n.is_multiple_of(d) {
+            return (d, cost);
+        }
+    }
+    let g = lehman_search(n, r, &mut cost).expect("Lehman's theorem: an odd n = p q has a pair");
+    (g, cost)
+}
+
+/// For the odd `n` with no factor in `2..=r`, `r = floor(n^(1/3))`: the first `gcd(x + y, n)`
+/// strictly between 1 and `n` over `k = 1..=r` and `x` from `isqrt(4 k n)` to
+/// `isqrt(4 k n) + e_k`, `e_k = ceil((isqrt(floor(n / k)) + 1) / (4 (r + 1)))`, where
+/// `x^2 - 4 k n = y^2` for an integer `y >= 0`; `None` when there is none, as for a prime `n`.
+///
+/// Why one is found for every such composite `n` (proof). Lehman's Theorem (section 2): "Suppose
+/// that n is a positive odd integer and r is an integer such that 1 <= r < n^(1/2). If n = pq
+/// where p and q are primes and (n/(r + 1))^(1/2) < p <= n^(1/2), then there are nonnegative
+/// integers x, y and k such that x^2 - y^2 = 4kn, 1 <= k <= r, ... 0 <= x - (4kn)^(1/2) <=
+/// (1/(4(r + 1)))(n/k)^(1/2)" (2.1, with congruences of `x` not used here), "and p =
+/// min(gcd(x + y, n), gcd(x - y, n))" (2.2).
+/// 1. `n` is `p q` with `p <= q` prime: `n` is composite with no prime factor `<= r`, and
+///    `r + 1 > n^(1/3)` (as `(r + 1)^3 > n`), so every prime factor exceeds `n^(1/3)`, and three
+///    of them would multiply to more than `n`.
+/// 2. The hypotheses hold: `n` is odd; `n >= 9`, so `r >= 2 >= 1`, and `r <= n^(1/3) < n^(1/2)`;
+///    `p <= n^(1/2)` as `p <= q`; and `p >= r + 1`, so `p^2 (r + 1) >= (r + 1)^3 > n`, which is
+///    `p > (n / (r + 1))^(1/2)`.
+/// 3. The theorem's `x` lies in the range tried for its `k`: `x >= (4 k n)^(1/2) >=
+///    isqrt(4 k n)`; and `(4 k n)^(1/2) < isqrt(4 k n) + 1`, `(n / k)^(1/2) < isqrt(floor(n / k))
+///    + 1` (as `n / k < floor(n / k) + 1 <= (isqrt(floor(n / k)) + 1)^2`), so `x < isqrt(4 k n)
+///    + 1 + e_k`, and `x <= isqrt(4 k n) + e_k` as both sides are integers.
+/// 4. At that `x`, `x^2 - 4 k n = y^2` has the one root `y >= 0`, the theorem's. The paper's
+///    proof (section 4, (4.6) and (4.7)) builds it as `x = a q + b p`, `y = |a q - b p|` with
+///    `a b = k`, `a, b >= 1`. So `x + y = 2 max(a q, b p)`, and `a, b <= k <= r < p <= q`, so
+///    neither `a` nor `b` holds `p` or `q`; with `p` odd, `gcd(2 a q, p q)` is `q` when `p != q`
+///    and `p` when `p = q`, and `gcd(2 b p, p q) = p`. So `gcd(x + y, n)` is `p` or `q`, strictly
+///    between 1 and `n`, and the search returns at that `(k, x)` or earlier.
+///
+/// No search returns a wrong factor: every value returned is checked to be a divisor strictly
+/// between 1 and `n`.
+///
+/// The number of tries (proof): `sum_(k=1..r) (e_k + 1)`, with `e_k <= ((n / k)^(1/2) + 1) / (4
+/// (r + 1)) + 1`, so it is at most `2 r + r / (4 (r + 1)) + (n^(1/2) / (4 (r + 1))) sum_k
+/// k^(-1/2)`. The sum is below `2 r^(1/2)` (each `k^(-1/2) < 2 (k^(1/2) - (k - 1)^(1/2))`), and
+/// `n^(1/2) < (r + 1)^(3/2)`, so the last term is below `(r + 1)^(1/2) r^(1/2) / 2 < (r + 1) /
+/// 2`: in all below `2 r + 1/4 + (r + 1) / 2 = 2.5 r + 0.75`. `lehman_tries_stay_in_the_bound`
+/// checks it on primes, where the search runs to the end.
+///
+/// Tests: `lehman_splits_every_odd_composite` (every odd composite below 2^16 whose least prime
+/// is above its cube root, and products of two primes near 2^22 and 2^32),
+/// `lehman_finds_nothing_in_a_prime`. They cannot tell this range from a wider one, which is
+/// also correct and only slower; the bound test sees a range too wide by a factor.
+fn lehman_search(n: u64, r: u64, cost: &mut LehmanCost) -> Option<u64> {
+    let n128 = u128::from(n);
+    let width = 4 * (u128::from(r) + 1);
+    for k in 1..=r {
+        let m = 4 * u128::from(k) * n128;
+        let s = m.isqrt();
+        let e = (u128::from((n / k).isqrt()) + 1).div_ceil(width);
+        for x in s..=s + e {
+            cost.tries += 1;
+            let Some(v) = (x * x).checked_sub(m) else {
+                continue;
+            };
+            if let Some(y) = crate::sqrt_exact_u128(v) {
+                // `x + y < 2 x`, and `x <= isqrt(4 r n) + e < 2^45` for `n < 2^64`: a `u128`.
+                let g = gcd_u64(((x + y) % n128) as u64, n);
+                if g > 1 && g < n {
+                    return Some(g);
+                }
+            }
+        }
+    }
+    None
 }
 
 #[cfg(test)]
@@ -321,9 +501,207 @@ mod tests {
         out
     }
 
-    /// NUM-expect-audit: `split` returns for every composite below `2^16`, 25 among them (the
-    /// one odd composite its proof leaves to this test), and the factors are the primes trial
-    /// division finds.
+    /// The table the cost bound of `factor` below `2^44` rests on (comment at `factor`): the
+    /// most that the run with `c = 1` costs through its last batch, over every odd prime below
+    /// `2^22`, field by field; and the search back, at most 128 steps. A computed bound, not a
+    /// sampled one: the loop covers every such prime, and the proof at `rho` carries it to every
+    /// composite whose least prime is one of them. A change to the walk, its start, the batch
+    /// size or the schedule changes these numbers and fails this test, which is then to be
+    /// updated together with the comment at `factor`. 5.4 s under a load of 45 on 32 cores
+    /// (2026-11-20).
+    #[test]
+    fn the_rho_cost_below_2_22_is_the_table() {
+        let odd = crate::odd_primes_below(1 << 22);
+        let mut most = RhoCost::default();
+        let mut back = 0;
+        for i in (1..odd.len()).filter(|&i| odd[i]) {
+            let p = 2 * i as u64 + 1;
+            let run = rho(&Montgomery::new(p));
+            assert_eq!(run.g, p, "the run on a prime ends with g = p");
+            most.steps = most.steps.max(run.batches.steps);
+            most.products = most.products.max(run.batches.products);
+            most.gcds = most.gcds.max(run.batches.gcds);
+            back = back.max(run.back);
+        }
+        assert_eq!(
+            most,
+            RhoCost {
+                steps: 25_854,
+                products: 9_471,
+                gcds: 80
+            }
+        );
+        assert_eq!(back, 128);
+    }
+
+    /// The odd composites below `2^16` with no factor up to their cube root: those Lehman's
+    /// search, not the trial division before it, must split.
+    fn lehman_inputs() -> Vec<u64> {
+        (9..1u64 << 16)
+            .step_by(2)
+            .filter(|&n| {
+                let f = by_trial(n);
+                f != [(n, 1)] && f[0].0 > crate::cbrt_floor(n)
+            })
+            .collect()
+    }
+
+    /// The inequality the cost bound of `factor` rests on (proof at `rho`): the run on a
+    /// composite `n` stops no later than the run on its least prime, step for step, product
+    /// for product and gcd for gcd, and searches back at most 128 steps. Random odd composites
+    /// below `2^44` (products of two or three random odd numbers) and products of two primes
+    /// near `2^32`.
+    #[test]
+    fn a_run_stops_no_later_than_on_its_least_prime() {
+        let (mut rng, _) = crate::seed::Rng::fresh("a_run_stops_no_later_than_on_its_least_prime");
+        let mut odd = |bits: u32| (rng.next_u64() >> (64 - bits)) | 1;
+        let mut ns: Vec<u64> = (0..2000).map(|_| odd(22) * odd(22)).collect();
+        ns.extend((0..2000).map(|_| odd(14) * odd(15) * odd(15)));
+        ns.extend([
+            4_294_967_291u64 * 4_294_967_279,
+            4_294_967_291 * 4_294_967_291,
+            25,
+        ]);
+        for n in ns {
+            if n < 9 || is_prime(n) {
+                continue;
+            }
+            let p = factor(n)[0].0;
+            let (on_n, on_p) = (rho(&Montgomery::new(n)), rho(&Montgomery::new(p)));
+            let (a, b) = (on_n.batches, on_p.batches);
+            assert!(
+                a.steps <= b.steps && a.products <= b.products && a.gcds <= b.gcds,
+                "{n} = {p} * ...: {a:?} on n, {b:?} on p"
+            );
+            assert!(on_n.back <= 128, "{n}");
+            assert!(on_n.g > 1 && n.is_multiple_of(on_n.g), "{n}");
+        }
+    }
+
+    /// Lehman's search splits every odd composite below `2^16` that trial division to the cube
+    /// root leaves, into a proper factor; and `lehman` splits every odd composite below `2^16`,
+    /// squares of primes and products of two primes near `2^22` and `2^32`.
+    #[test]
+    fn lehman_splits_every_odd_composite() {
+        let inputs = lehman_inputs();
+        assert!(inputs.contains(&25) && inputs.contains(&(251 * 257)));
+        for n in inputs {
+            let mut cost = LehmanCost::default();
+            let g = lehman_search(n, crate::cbrt_floor(n), &mut cost);
+            assert!(
+                g.is_some_and(|g| g > 1 && g < n && n.is_multiple_of(g)),
+                "{n}: {g:?}"
+            );
+        }
+        let mut wide = vec![
+            4_194_301u64 * 4_194_287,
+            4_194_301 * 4_194_301,
+            4_294_967_291 * 4_294_967_279,
+            4_294_967_291 * 4_294_967_291,
+            // Unbalanced: least prime just above the cube root.
+            26_017 * 676_212_791,
+        ];
+        wide.extend((9..1u64 << 16).step_by(2).filter(|&n| !is_prime(n)));
+        for n in wide {
+            let (g, _) = lehman(n);
+            assert!(g > 1 && g < n && n.is_multiple_of(g), "{n}: {g}");
+        }
+    }
+
+    /// Lehman's search finds no pair for a prime (the theorem's last sentence): every odd
+    /// prime below `2^16`, and the largest primes below `2^44` and `2^64`.
+    #[test]
+    fn lehman_finds_nothing_in_a_prime() {
+        for n in largest_primes()
+            .into_iter()
+            .chain((3..1u64 << 16).step_by(2).filter(|&n| is_prime(n)))
+        {
+            let mut cost = LehmanCost::default();
+            assert_eq!(
+                lehman_search(n, crate::cbrt_floor(n), &mut cost),
+                None,
+                "{n}"
+            );
+        }
+    }
+
+    /// The largest primes below `2^44` and `2^64`.
+    fn largest_primes() -> [u64; 2] {
+        let below = |top: u64| (0..).map(|i| top - 2 * i).find(|&c| is_prime(c)).unwrap();
+        [below((1 << 44) - 1), below(u64::MAX)]
+    }
+
+    /// The number of tries of Lehman's search is at most `2.5 r + 0.75` (proof at
+    /// `lehman_search`), checked on primes, where the search runs to its end: every odd prime
+    /// below `2^16` and the largest below `2^44` and `2^64`.
+    #[test]
+    fn lehman_tries_stay_in_the_bound() {
+        for n in largest_primes()
+            .into_iter()
+            .chain((3..1u64 << 16).step_by(2).filter(|&n| is_prime(n)))
+        {
+            let r = crate::cbrt_floor(n);
+            let mut cost = LehmanCost::default();
+            lehman_search(n, r, &mut cost);
+            // `tries <= 2.5 r + 0.75`, in integers.
+            assert!(4 * cost.tries <= 10 * r + 3, "{n}: {cost:?}, r {r}");
+        }
+    }
+
+    /// `split` on composites where the run with `c = 1` ends with `g = n`, so Lehman's method
+    /// gives the factor: 25 (the walk `2, 5, 1, 2, 5, ...` modulo 25 meets itself modulo 5 and 25
+    /// at once) and every other such odd composite below `2^16`.
+    #[test]
+    fn split_falls_back_to_lehman() {
+        let failing: Vec<u64> = (9..1u64 << 16)
+            .step_by(2)
+            .filter(|&n| !is_prime(n) && rho(&Montgomery::new(n)).g == n)
+            .collect();
+        assert!(failing.contains(&25), "{failing:?}");
+        for n in failing {
+            let g = split(n);
+            assert!(g > 1 && g < n && n.is_multiple_of(g), "{n}: {g}");
+        }
+    }
+
+    /// Negative control for `lehman_splits_every_odd_composite`: the search with only
+    /// `x = isqrt(4 k n)` for each `k` (a range of width 0) misses some of its inputs.
+    #[test]
+    fn a_lehman_range_of_width_0_is_caught() {
+        let narrow = |n: u64| {
+            let n128 = u128::from(n);
+            (1..=crate::cbrt_floor(n)).find_map(|k| {
+                let m = 4 * u128::from(k) * n128;
+                let x = m.isqrt();
+                let y = crate::sqrt_exact_u128((x * x).checked_sub(m)?)?;
+                let g = gcd_u64(((x + y) % n128) as u64, n);
+                (g > 1 && g < n).then_some(g)
+            })
+        };
+        assert!(lehman_inputs().into_iter().any(|n| narrow(n).is_none()));
+    }
+
+    /// Negative control for `a_run_stops_no_later_than_on_its_least_prime`: the same claim
+    /// with a prime that does not divide `n` in place of its least prime is false, and the
+    /// comparison the test makes catches it on some input. (The proof at `rho` holds for every
+    /// divisor of `n`, so a bound by the largest prime of `n` would be true and is no control.)
+    #[test]
+    fn a_bound_by_a_prime_not_dividing_n_is_caught() {
+        let (mut rng, _) = crate::seed::Rng::fresh("a_bound_by_a_prime_not_dividing_n_is_caught");
+        let caught = (0..2000).any(|_| {
+            let n = ((rng.next_u64() >> 42) | 1) * ((rng.next_u64() >> 42) | 1);
+            let q = (rng.next_u64() >> 44) | 1;
+            if n < 9 || is_prime(n) || !is_prime(q) || q < 3 || n.is_multiple_of(q) {
+                return false;
+            }
+            rho(&Montgomery::new(n)).batches.steps > rho(&Montgomery::new(q)).batches.steps
+        });
+        assert!(caught);
+    }
+
+    /// NUM-expect-audit: `split` returns for every composite below `2^16`, and the factors are
+    /// the primes trial division finds. 25 and the other composites where the run with `c = 1`
+    /// ends without a factor go through Lehman's method (`split_falls_back_to_lehman`).
     #[test]
     fn factors_agree_with_trial_division() {
         for n in 2..1u64 << 16 {
