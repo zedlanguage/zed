@@ -328,9 +328,17 @@ fn preimage_in(
     // only a box with at most one input of several members, where the product of the
     // projections is the set of passing points, so the stage, exact by Theorem 1 at
     // `threshold_box`, answers it exactly with no relation (test
-    // `ref_memo::listed_threshold_chains_are_answered_exactly`).
+    // `ref_memo::listed_threshold_chains_are_answered_exactly`). A chain of guards on distinct
+    // inputs is answered by [`Tx::independent_affine`] in O(n), where the memo visits its
+    // combinations of arms; on such a box, every link but one has one arm, so Check 2 there
+    // sees single values and decides exactness (test
+    // `ref_memo::listed_independent_chains_are_answered_exactly`). `None` from it is main's path.
     tx.start(inputs, Landmarks::none());
-    if let Some((answer, relation)) = tx.affine_threshold_pair(root, demand) {
+    let early = match tx.affine_threshold_pair(root, demand) {
+        Some(found) => Some(found),
+        None => tx.independent_affine(root, demand),
+    };
+    if let Some((answer, relation)) = early {
         return Preimage {
             domains: tx.whole(&answer),
             exact: answer.exact,
@@ -989,6 +997,753 @@ impl Tx<'_> {
                 (Node::Int(x), Node::Int(y)) => x == y,
                 _ => false,
             }
+    }
+}
+
+/// The end of a unit-slope path ([`Tx::affine_end_no_fwd`]): a constant, an input, or the first
+/// node that is not a unit-slope step (an `If`, in a chain the independent stage reads).
+#[derive(Clone, PartialEq, Eq)]
+enum AffineBase {
+    Const,
+    Input(Arc<str>),
+    Node(At),
+}
+
+/// One link of a chain [`Tx::independent_affine`] reads: the guard's input, the masks of its
+/// two arms (the values of the input that take each), and each arm's unit-slope map, `None`
+/// when its mask is empty.
+type IndepLink = (
+    Arc<str>,
+    IntervalSet,
+    IntervalSet,
+    Option<ValTag>,
+    Option<ValTag>,
+);
+
+impl Tx<'_> {
+    /// Whether two path ends have one value: both constants, the same input, or two nodes in
+    /// one environment with one value ([`Tx::same_value_node`]). O(1).
+    fn same_affine_base(&self, a: &AffineBase, b: &AffineBase) -> bool {
+        match (a, b) {
+            (AffineBase::Const, AffineBase::Const) => true,
+            (AffineBase::Input(x), AffineBase::Input(y)) => x == y,
+            (AffineBase::Node(u), AffineBase::Node(v)) => {
+                u == v || (u.1 == v.1 && self.same_value_node(u.0, v.0))
+            }
+            _ => false,
+        }
+    }
+
+    /// The end of the unit-slope path from `u` and the map from the end's value to `u`'s:
+    /// through `-t`, `t ± c`, `c ± t`, variables and lets, to a constant (base value 0), an
+    /// input or an `If`. `None` at any other node, or at a variable bound to no input. Unlike
+    /// [`Tx::affine_end`], it reads no forward fact and follows any number of inputs, which
+    /// the independent stage needs. Each node and environment is visited once (`memo`), so
+    /// the paths of a whole chain cost O(size of the chain).
+    fn affine_end_no_fwd(
+        &mut self,
+        u: At,
+        memo: &mut HashMap<At, (AffineBase, ValTag)>,
+    ) -> Option<(AffineBase, ValTag)> {
+        if let Some(v) = memo.get(&u) {
+            return Some(v.clone());
+        }
+        let out = match self.node(u.0) {
+            Node::Int(n) => (AffineBase::Const, ValTag::shift(i128::from(n))),
+            Node::Lit(Value::Big(b)) => (AffineBase::Const, ValTag(false, Num::from(&**b))),
+            Node::Var(x) => match self.lookup(u.1, x) {
+                Some(to) => self.affine_end_no_fwd(to, memo)?,
+                None => {
+                    let name = self.name(x).clone();
+                    if !self.cx.inputs.contains_key(&name) {
+                        return None;
+                    }
+                    (AffineBase::Input(name), ValTag::id())
+                }
+            },
+            Node::Let(n, e, b) => {
+                let inner = self.let_env(n, e, u.1);
+                self.affine_end_no_fwd((b, inner), memo)?
+            }
+            Node::If(..) => (AffineBase::Node(u), ValTag::id()),
+            Node::Prim(Prim::Neg, args) if args.len() == 1 => {
+                let (base, inner) = self.affine_end_no_fwd((self.arg(args, 0), u.1), memo)?;
+                (base, ValTag::neg().compose(&inner))
+            }
+            Node::Prim(p @ (Prim::Add | Prim::Sub), args) if args.len() == 2 => {
+                let (a, b) = (self.arg(args, 0), self.arg(args, 1));
+                // A literal side is read directly: `constant_int` of the other side first
+                // walks it for inputs (`mentions`), O(its size), on terms this stage declines.
+                let (ca, cb) = match (self.node(a), self.node(b)) {
+                    (Node::Int(c), _) => (Some(c), None),
+                    (_, Node::Int(c)) => (None, Some(c)),
+                    _ => (self.constant_int(a, u.1), self.constant_int(b, u.1)),
+                };
+                let (child, tag) = match (p, ca, cb) {
+                    (Prim::Add, Some(c), _) => (b, ValTag::shift(i128::from(c))),
+                    (Prim::Add, _, Some(c)) => (a, ValTag::shift(i128::from(c))),
+                    (Prim::Sub, _, Some(c)) => (a, ValTag::shift(-i128::from(c))),
+                    (Prim::Sub, Some(c), _) => (b, ValTag::reflect(i128::from(c))),
+                    _ => return None,
+                };
+                let (base, inner) = self.affine_end_no_fwd((child, u.1), memo)?;
+                (base, tag.compose(&inner))
+            }
+            _ => return None,
+        };
+        memo.insert(u, out.clone());
+        Some(out)
+    }
+
+    /// Chains of guards on distinct inputs (`indep_varying`; PERF-ref-memo-multi-input part
+    /// (b)): n links `t_j = if g_j(b_j) { T_{j,0}(t_{j-1}) } else { T_{j,1}(t_{j-1}) }`, links
+    /// numbered from the base `t_0 = z` (an input, or a constant), each guard `g_j` reading one
+    /// input `b_j`, the `b_j` distinct and none of them `z`, each arm `T` a unit-slope map
+    /// `v -> ±v + k` ([`ValTag`]), and a demand whose complement E is empty or one interval.
+    /// Arm `T_{j,s}` is *allowed* when its mask (the values of `b_j` that take it) is not empty.
+    /// The answer is the exact projections, and the exactness flag when one of four checks
+    /// decides it; `None` (main's path) otherwise.
+    ///
+    /// Independence. Every input but `z` is read by one guard only, so for any choice of one
+    /// allowed arm per link, and any z, some point of the box takes exactly those arms from z.
+    /// Every claim below about "some point" rests on this.
+    ///
+    /// Proof of the projections.
+    /// 1. Doomed values. Let U_n = E and U_j = the meet, over the allowed arms T of link j, of
+    ///    T^-1(U_{j+1}). A value v of t_j is in U_j iff every choice of arms after j fails from
+    ///    v: by induction from n down, since by independence the arm of link j can be chosen
+    ///    freely. Each T^-1 of an interval is an interval (T is a bijection of the integers
+    ///    that keeps or reverses order), and a meet of intervals is an interval, so each U_j is
+    ///    empty or one interval.
+    /// 2. z. A value z is in the projection iff some point from z passes iff z is not in U_0
+    ///    (step 1 at j = 0). So the projection is `dom(z) - U_0`, exact.
+    /// 3. b_j. Let F_j be the values t_j takes over the box. A value w of b_j in the mask of
+    ///    arm s is in the projection iff some v in F_j has T_{j,s}(v) outside U_{j+1}
+    ///    (independence again: links before j are free, links after j by step 1), that is
+    ///    iff F_j is not inside the interval W = T_{j,s}^-1(U_{j+1}). A set lies inside an
+    ///    interval iff its least and greatest members do, and these are exact:
+    ///    min F_{j+1} = min over allowed arms of `T(v)` at v = min F_j (T keeps order) or at
+    ///    v = max F_j (T reverses it), likewise max, from `[min, max]` of `dom(z)`. So each
+    ///    arm is *surviving* or not exactly, and the projection of b_j is the join of the
+    ///    masks of its surviving arms.
+    ///
+    /// Proof of the flag. The box B is the product of the projections; by independence, the
+    /// points of B are z in the z projection with any choice of one surviving arm per link,
+    /// and B is exact iff no such point lands in E.
+    /// - Check 1. If the z projection is one interval and each F'_j (the values over B, the
+    ///   join of the images of F'_{j-1} under the surviving arms) stays one interval, F'_n is
+    ///   exact, since the image of an interval under T is an interval and a join is the union:
+    ///   B is exact iff F'_n misses E.
+    /// - Check 2. The value at the root is `sigma z + K` for a sign sigma and a constant K
+    ///   that depend on the arms. For each sign, the K reached form a set, kept as an
+    ///   arithmetic progression `{lo, lo + step, ..., hi}` that contains it, marked exact when
+    ///   it equals it ([`ApNum`]). A shift or reflection keeps both properties. A join takes
+    ///   the step `g = gcd(a.step, b.step, |a.lo - b.lo|)`, so it contains both; it is exact
+    ///   only in the cases where the union fills every multiple of g in `[lo, hi]`: two single
+    ///   values; two progressions of step g that overlap or touch (`max lo <= min hi + g`); a
+    ///   progression of step g and a value within g of it; two of step 2g, which then lie on
+    ///   the two residues mod 2g, with both ends within g of each other. If neither sign can
+    ///   reach E, B is exact. If an exact progression reaches E, B is not. Reaching is tested
+    ///   per piece of the z projection: `s + lo + k step` in E for s in the piece and
+    ///   `0 <= k <= (hi - lo) / step` reduces to k step in `[E.lo - lo - s.hi, E.hi - lo -
+    ///   s.lo]`; the least such k is at most `(hi - lo) / step` because the piece lies in the
+    ///   window where some K of `[lo, hi]` reaches E, and if it is negative k = 0 serves. The
+    ///   same is done from the root down (suffix compositions), which reaches other cases.
+    /// - Checks 3 and 4 only find failing points: the compositions of least and greatest
+    ///   constant per sign, the all-first-surviving-arm choice and each choice that differs
+    ///   from it at one link (Check 3), and a walk down from each end of `E ∩ [min F_n, max
+    ///   F_n]` picking at each link a surviving arm whose preimage lies in `[min F_j, max F_j]`
+    ///   (Check 4). Each is a choice of surviving arms and a z in the z projection whose value
+    ///   is in E, so a point of B that fails: B is not exact.
+    /// - Otherwise `None`: no check decided, and main's path answers. No exact check of this
+    ///   cost exists unless P = NP: with z fixed to 0, guards `b_j <= 0` over `0..=1`, arms
+    ///   `t + a_j` and `t` with every a_j nonzero, n >= 2 and the demand `t != S`, U_j is
+    ///   empty for j < n (U_{n-1} = {S - a_n} meet {S}), so every arm survives, B is the
+    ///   whole box, and B is exact iff no subset of the a_j sums to S. Subset sum is
+    ///   NP-complete (Karp, "Reducibility among combinatorial problems", 1972,
+    ///   doi:10.1007/978-1-4684-2001-2_9, problem "Knapsack"), so deciding exactness here is
+    ///   coNP-hard (test `ref_memo::subset_sum_chains_are_exact_iff_no_subset_reaches_the_demand`).
+    ///   ∎
+    ///
+    /// Complexity tradeoff: O(n) links visited once (a memo over the affine segments), O(n)
+    /// interval and progression operations in each step and check, each on numbers of at most
+    /// B + log2(n) + 1 bits for B-bit literals (a gcd costs a factor in the bits). Why: main's
+    /// path visits the combinations of arms (`indep_varying` read 183 from 24 to 192 links on
+    /// it, 7.99 here).
+    /// Given up: exactness when no check decides, which is coNP-hard as proved above; main's
+    /// path answers it at its own cost. Trigger: the shape of the term, never a size. Tests:
+    /// `l01_25_preimage_catalog::ref_memo::independent_chains_match_the_interpreter_on_every_point`,
+    /// `bench::ref_memo::indep_varying_scales`. COMPLEXITY.md PERF-ref-memo-multi-input (b).
+    fn independent_affine(&mut self, root: Tid, d: &Demand) -> Option<(Res, Option<Relation>)> {
+        // The complement of k disjoint, non-adjacent intervals has k - 1 gaps between them, so
+        // for k >= 3 it is not one interval: decline before the O(k) copy and complement.
+        if matches!(d, Demand::Ints(z) if z.len() > 2) {
+            return None;
+        }
+        let (original, wanted) = self.integer_request_shape(root, d)?;
+        let excl_set = IntervalSet::top().minus(&wanted);
+        if excl_set.len() > 1 {
+            return None;
+        }
+        let excl: Option<(End, End)> = excl_set.first().cloned();
+        let mut memo: HashMap<At, (AffineBase, ValTag)> = HashMap::new();
+        let (mut cur, mut tail_tag) = self.affine_end_no_fwd((original, ROOT), &mut memo)?;
+        let mut seen = HashSet::new();
+        let mut guard_names = HashSet::new();
+        // Collected root-to-base, then reversed to base-to-root.
+        let mut rev_links: Vec<IndepLink> = Vec::new();
+        let base_var: Option<Arc<str>>;
+        loop {
+            match cur {
+                AffineBase::Input(x) => {
+                    if guard_names.contains(&x) {
+                        return None;
+                    }
+                    base_var = Some(x);
+                    break;
+                }
+                AffineBase::Const => {
+                    base_var = None;
+                    break;
+                }
+                AffineBase::Node(u) => {
+                    if !seen.insert(u) {
+                        return None;
+                    }
+                    let Node::If(g, a, b) = self.node(u.0) else {
+                        return None;
+                    };
+                    let (gx, m0, m1) = if let Some((Coordinate::Input(gx), y, n)) =
+                        self.difference_guard(g, u.1)
+                    {
+                        let dom_g = self.cx.inputs[&gx].clone();
+                        let to_set = |m: ArmMask| {
+                            m.map_or_else(|| (*dom_g).clone(), |(live, _)| (*live).clone())
+                        };
+                        (gx, to_set(y), to_set(n))
+                    } else {
+                        let yes = self.back_at(g, u.1, &Demand::Bool(true));
+                        let no = self.back_at(g, u.1, &Demand::Bool(false));
+                        if !yes.exact || !no.exact {
+                            return None;
+                        }
+                        let VarSet::One(gx) = yes.vars.join(&no.vars) else {
+                            return None;
+                        };
+                        let dom_g = self.cx.inputs.get(&gx)?;
+                        let to_set = |r: &Res| {
+                            if r.none {
+                                IntervalSet::empty()
+                            } else {
+                                r.dom
+                                    .get(&gx)
+                                    .map_or_else(|| (**dom_g).clone(), |s| (**s).clone())
+                            }
+                        };
+                        let (sy, sn) = (to_set(&yes), to_set(&no));
+                        (gx, sy, sn)
+                    };
+                    if !guard_names.insert(gx.clone()) {
+                        return None;
+                    }
+                    let (at, av) = self.affine_end_no_fwd((a, u.1), &mut memo)?;
+                    let (bt, bv) = self.affine_end_no_fwd((b, u.1), &mut memo)?;
+                    if !self.same_affine_base(&at, &bt) {
+                        return None;
+                    }
+                    let t0 = (!m0.is_empty()).then(|| tail_tag.compose(&av));
+                    let t1 = (!m1.is_empty()).then(|| tail_tag.compose(&bv));
+                    rev_links.push((gx, m0, m1, t0, t1));
+                    cur = at;
+                    tail_tag = ValTag::id();
+                }
+            }
+        }
+        if rev_links.is_empty() {
+            return None;
+        }
+        let mut links = rev_links;
+        links.reverse();
+        let n = links.len();
+        let dom_z = match &base_var {
+            Some(z) => (**self.cx.inputs.get(z)?).clone(),
+            None => IntervalSet::single(0),
+        };
+        let (zlo, zhi) = dom_z.bounds()?;
+
+        // Step 1a: Backward doomed intervals U_j (each <= 1 interval).
+        let map_iv = |iv: &Option<(End, End)>, t: &ValTag| -> Option<(End, End)> {
+            iv.as_ref().map(|(l, h)| t.map_range(l, h))
+        };
+        let meet_iv = |a: Option<(End, End)>, b: Option<(End, End)>| -> Option<(End, End)> {
+            let ((al, ah), (bl, bh)) = (a?, b?);
+            let (l, h) = (al.max(bl), ah.min(bh));
+            (l <= h).then_some((l, h))
+        };
+        let mut u: Vec<Option<(End, End)>> = vec![None; n + 1];
+        u[n] = excl.clone();
+        for j in (0..n).rev() {
+            let mut acc: Option<Option<(End, End)>> = None;
+            for arm in [links[j].3.as_ref(), links[j].4.as_ref()]
+                .into_iter()
+                .flatten()
+            {
+                let pre = map_iv(&u[j + 1], &arm.inverse());
+                acc = Some(match acc {
+                    None => pre,
+                    Some(old) => meet_iv(old, pre),
+                });
+            }
+            u[j] = acc.flatten();
+        }
+
+        // Step 1b: Forward exact min/max of reachable values F_j.
+        let mut f_bounds: Vec<(End, End)> = vec![(zlo.clone(), zhi.clone()); n + 1];
+        for j in 0..n {
+            let (pl, ph) = &f_bounds[j];
+            let mut acc: Option<(End, End)> = None;
+            for arm in [links[j].3.as_ref(), links[j].4.as_ref()]
+                .into_iter()
+                .flatten()
+            {
+                let (l, h) = arm.map_range(pl, ph);
+                acc = Some(match acc {
+                    None => (l, h),
+                    Some((ol, oh)) => (ol.min(l), oh.max(h)),
+                });
+            }
+            let Some(next) = acc else {
+                return Some((Res::none(), None));
+            };
+            f_bounds[j + 1] = next;
+        }
+
+        // Exact projection onto z and every guard input b_j.
+        let proj_z = match &u[0] {
+            None => dom_z.clone(),
+            Some((ul, uh)) => dom_z.minus(&IntervalSet::range(ul.clone(), uh.clone())),
+        };
+        if proj_z.is_empty() {
+            return Some((Res::none(), None));
+        }
+        let iv_contains = |outer: &Option<(End, End)>, inner: &(End, End)| -> bool {
+            outer
+                .as_ref()
+                .is_some_and(|(ol, oh)| ol <= &inner.0 && &inner.1 <= oh)
+        };
+        let mut surviving = Vec::with_capacity(n);
+        for j in 0..n {
+            let s0 = links[j]
+                .3
+                .as_ref()
+                .is_some_and(|t| !iv_contains(&map_iv(&u[j + 1], &t.inverse()), &f_bounds[j]));
+            let s1 = links[j]
+                .4
+                .as_ref()
+                .is_some_and(|t| !iv_contains(&map_iv(&u[j + 1], &t.inverse()), &f_bounds[j]));
+            surviving.push((s0, s1));
+        }
+
+        // The flag, in O(n) (the proof in the doc above), by four checks:
+        // (1) Exact 1-interval forward sets F_j (Opus criterion, generalized to interval E);
+        // (2) Forward & reverse Arithmetic Progression abstraction ApNum (Gemini criterion);
+        // (3) Attained extrema + baseline + 1-flip witness scan (Sol criterion);
+        // (4) Greedy backward witness reconstruction verified forward.
+        let mut decided_exact: Option<bool> = None;
+
+        // Check 1: Exact 1-interval forward sets F_j over narrowed box `proj_z x prod A'_j`.
+        if proj_z.len() == 1 {
+            let mut f = proj_z.clone();
+            let mut single = true;
+            for j in 0..n {
+                let mut next = IntervalSet::empty();
+                for (ok, arm) in [
+                    (surviving[j].0, links[j].3.as_ref()),
+                    (surviving[j].1, links[j].4.as_ref()),
+                ] {
+                    if ok {
+                        next = next.join(&arm.unwrap().map_set(&f));
+                    }
+                }
+                if next.len() > 1 {
+                    single = false;
+                    break;
+                }
+                f = next;
+            }
+            if single {
+                let fails = excl.as_ref().is_some_and(|(el, eh)| {
+                    !f.meet(&IntervalSet::range(el.clone(), eh.clone()))
+                        .is_empty()
+                });
+                decided_exact = Some(!fails);
+            }
+        }
+
+        // Check 2: Forward & reverse AP propagation when Check 1 did not decide.
+        #[derive(Clone)]
+        struct ApNum {
+            lo: Num,
+            hi: Num,
+            step: Num,
+            exact: bool,
+        }
+        impl ApNum {
+            fn single(v: Num) -> Self {
+                Self {
+                    lo: v.clone(),
+                    hi: v,
+                    step: Num::ZERO,
+                    exact: true,
+                }
+            }
+            fn shift(&self, d: &Num) -> Self {
+                Self {
+                    lo: &self.lo + d,
+                    hi: &self.hi + d,
+                    step: self.step.clone(),
+                    exact: self.exact,
+                }
+            }
+            fn reflect(&self, c: &Num) -> Self {
+                Self {
+                    lo: c - &self.hi,
+                    hi: c - &self.lo,
+                    step: self.step.clone(),
+                    exact: self.exact,
+                }
+            }
+            fn join(a: Option<Self>, b: Option<Self>) -> Option<Self> {
+                let (a, b) = match (a, b) {
+                    (None, x) | (x, None) => return x,
+                    (Some(a), Some(b)) => (a, b),
+                };
+                let lo = a.lo.clone().min(b.lo.clone());
+                let hi = a.hi.clone().max(b.hi.clone());
+                let g = a.step.gcd(&b.step).gcd(&(&a.lo - &b.lo).abs());
+                if g.is_zero() {
+                    return Some(Self::single(lo));
+                }
+                let two_g = &g + &g;
+                let exact = if !a.exact || !b.exact {
+                    false
+                } else if a.step.is_zero() && b.step.is_zero() {
+                    true
+                } else if a.step == g && b.step == g {
+                    a.lo.clone().max(b.lo.clone()) <= &(a.hi.clone().min(b.hi.clone())) + &g
+                } else if a.step == g && b.step.is_zero() {
+                    b.lo >= &a.lo - &g && b.lo <= &a.hi + &g
+                } else if b.step == g && a.step.is_zero() {
+                    a.lo >= &b.lo - &g && a.lo <= &b.hi + &g
+                } else if a.step == two_g && b.step == two_g {
+                    a.lo.clone().max(b.lo.clone()) <= &(a.hi.clone().min(b.hi.clone())) + &g
+                        && (&a.lo - &b.lo).abs() <= g
+                        && (&a.hi - &b.hi).abs() <= g
+                } else {
+                    false
+                };
+                Some(Self {
+                    lo,
+                    hi,
+                    step: g,
+                    exact,
+                })
+            }
+        }
+
+        // Check whether `{sigma * z + K | z in proj_z, K in ap}` meets `excl`.
+        // Returns `(possible_in_ap, definite_when_exact)`.
+        let ap_hits_excl = |sigma_neg: bool, ap: &Option<ApNum>| -> (bool, bool) {
+            let (Some((el, eh)), Some(ap)) = (&excl, ap) else {
+                return (false, false);
+            };
+            let (zlo, zhi) = if !sigma_neg {
+                (
+                    match el {
+                        Fin(v) => Fin(v - &ap.hi),
+                        e => e.clone(),
+                    },
+                    match eh {
+                        Fin(v) => Fin(v - &ap.lo),
+                        e => e.clone(),
+                    },
+                )
+            } else {
+                (
+                    match eh {
+                        Fin(v) => Fin(&ap.lo - v),
+                        NegInf => PosInf,
+                        PosInf => NegInf,
+                    },
+                    match el {
+                        Fin(v) => Fin(&ap.hi - v),
+                        NegInf => PosInf,
+                        PosInf => NegInf,
+                    },
+                )
+            };
+            let sub = proj_z.meet(&IntervalSet::range(zlo, zhi));
+            if sub.is_empty() {
+                return (false, false);
+            }
+            if ap.step.is_zero() || ap.step == Num::ONE {
+                return (true, ap.exact);
+            }
+            // Check residue congruence modulo `ap.step`.
+            let (Fin(el_n), Fin(eh_n)) = (el, eh) else {
+                return (true, ap.exact);
+            };
+            if &(eh_n - el_n) + &Num::ONE >= ap.step {
+                return (true, ap.exact);
+            }
+            for (a, b) in sub.pieces() {
+                let (sl, sh) = if !sigma_neg {
+                    (a.clone(), b.clone())
+                } else {
+                    (-b, -a)
+                };
+                let (Fin(sl_n), Fin(sh_n)) = (&sl, &sh) else {
+                    return (true, ap.exact);
+                };
+                if &(sh_n - sl_n) + &Num::ONE >= ap.step {
+                    return (true, ap.exact);
+                }
+                let lo_num = &(el_n - &ap.lo) - sh_n;
+                let hi_num = &(eh_n - &ap.lo) - sl_n;
+                let k = (&(&lo_num + &ap.step) - &Num::ONE).div_floor(&ap.step);
+                if &k * &ap.step <= hi_num {
+                    return (true, ap.exact);
+                }
+            }
+            (false, false)
+        };
+
+        let exact = if let Some(ex) = decided_exact {
+            ex
+        } else {
+            let mut pref_pos: Vec<Option<ApNum>> = vec![None; n + 1];
+            let mut pref_neg: Vec<Option<ApNum>> = vec![None; n + 1];
+            pref_pos[0] = Some(ApNum::single(Num::ZERO));
+            for j in 0..n {
+                let (mut np, mut nn) = (None, None);
+                for (ok, arm) in [
+                    (surviving[j].0, links[j].3.as_ref()),
+                    (surviving[j].1, links[j].4.as_ref()),
+                ] {
+                    if !ok {
+                        continue;
+                    }
+                    let t = arm.unwrap();
+                    if !t.0 {
+                        np = ApNum::join(np, pref_pos[j].as_ref().map(|a| a.shift(&t.1)));
+                        nn = ApNum::join(nn, pref_neg[j].as_ref().map(|a| a.shift(&t.1)));
+                    } else {
+                        np = ApNum::join(np, pref_neg[j].as_ref().map(|a| a.reflect(&t.1)));
+                        nn = ApNum::join(nn, pref_pos[j].as_ref().map(|a| a.reflect(&t.1)));
+                    }
+                }
+                pref_pos[j + 1] = np;
+                pref_neg[j + 1] = nn;
+            }
+            let (p_poss, p_def) = ap_hits_excl(false, &pref_pos[n]);
+            let (n_poss, n_def) = ap_hits_excl(true, &pref_neg[n]);
+            if !p_poss && !n_poss {
+                true
+            } else if p_def || n_def {
+                false
+            } else {
+                // Reverse (suffix) AP check in O(n).
+                let (mut suf_pos, mut suf_neg): (Option<ApNum>, Option<ApNum>) =
+                    (Some(ApNum::single(Num::ZERO)), None);
+                for j in (0..n).rev() {
+                    let (mut np, mut nn) = (None, None);
+                    for (ok, arm) in [
+                        (surviving[j].0, links[j].3.as_ref()),
+                        (surviving[j].1, links[j].4.as_ref()),
+                    ] {
+                        if !ok {
+                            continue;
+                        }
+                        let t = arm.unwrap();
+                        let neg_k = -&t.1;
+                        if !t.0 {
+                            np = ApNum::join(np, suf_pos.as_ref().map(|a| a.shift(&t.1)));
+                            nn = ApNum::join(nn, suf_neg.as_ref().map(|a| a.shift(&neg_k)));
+                        } else {
+                            np = ApNum::join(np, suf_neg.as_ref().map(|a| a.shift(&neg_k)));
+                            nn = ApNum::join(nn, suf_pos.as_ref().map(|a| a.shift(&t.1)));
+                        }
+                    }
+                    suf_pos = np;
+                    suf_neg = nn;
+                }
+                let (sp_poss, sp_def) = ap_hits_excl(false, &suf_pos);
+                let (sn_poss, sn_def) = ap_hits_excl(true, &suf_neg);
+                if !sp_poss && !sn_poss {
+                    true
+                } else if sp_def || sn_def {
+                    false
+                } else {
+                    // Check 3: Attained extrema + baseline + 1-flip witness scan (O(n)).
+                    let tag_hits = |tag: &ValTag| -> bool {
+                        excl.as_ref().is_some_and(|(el, eh)| {
+                            let (pl, ph) = tag.inverse().map_range(el, eh);
+                            !proj_z.meet(&IntervalSet::range(pl, ph)).is_empty()
+                        })
+                    };
+                    let mut min_p: Option<ValTag> = Some(ValTag::id());
+                    let mut max_p: Option<ValTag> = Some(ValTag::id());
+                    let mut min_n: Option<ValTag> = None;
+                    let mut max_n: Option<ValTag> = None;
+                    let upd_min = |cur: &mut Option<ValTag>, cand: ValTag| {
+                        if cur.as_ref().is_none_or(|c| cand.1 < c.1) {
+                            *cur = Some(cand);
+                        }
+                    };
+                    let upd_max = |cur: &mut Option<ValTag>, cand: ValTag| {
+                        if cur.as_ref().is_none_or(|c| cand.1 > c.1) {
+                            *cur = Some(cand);
+                        }
+                    };
+                    for j in 0..n {
+                        let (mut np_lo, mut np_hi, mut nn_lo, mut nn_hi) = (None, None, None, None);
+                        for (ok, arm) in [
+                            (surviving[j].0, links[j].3.as_ref()),
+                            (surviving[j].1, links[j].4.as_ref()),
+                        ] {
+                            if !ok {
+                                continue;
+                            }
+                            let t = arm.unwrap();
+                            for cand in [&min_p, &max_p, &min_n, &max_n].into_iter().flatten() {
+                                let c = t.compose(cand);
+                                if !c.0 {
+                                    upd_min(&mut np_lo, c.clone());
+                                    upd_max(&mut np_hi, c);
+                                } else {
+                                    upd_min(&mut nn_lo, c.clone());
+                                    upd_max(&mut nn_hi, c);
+                                }
+                            }
+                        }
+                        min_p = np_lo;
+                        max_p = np_hi;
+                        min_n = nn_lo;
+                        max_n = nn_hi;
+                    }
+                    let mut found_fail = [&min_p, &max_p, &min_n, &max_n]
+                        .into_iter()
+                        .flatten()
+                        .any(&tag_hits);
+                    if !found_fail {
+                        let mut suf = vec![ValTag::id(); n + 1];
+                        for j in (0..n).rev() {
+                            let base = if surviving[j].0 {
+                                links[j].3.as_ref().unwrap()
+                            } else {
+                                links[j].4.as_ref().unwrap()
+                            };
+                            suf[j] = suf[j + 1].compose(base);
+                        }
+                        found_fail = tag_hits(&suf[0]);
+                        let mut pref = ValTag::id();
+                        for j in 0..n {
+                            if found_fail {
+                                break;
+                            }
+                            let base = if surviving[j].0 {
+                                links[j].3.as_ref().unwrap()
+                            } else {
+                                links[j].4.as_ref().unwrap()
+                            };
+                            if surviving[j].0 && surviving[j].1 {
+                                let alt = links[j].4.as_ref().unwrap();
+                                if tag_hits(&suf[j + 1].compose(alt).compose(&pref)) {
+                                    found_fail = true;
+                                    break;
+                                }
+                            }
+                            pref = base.compose(&pref);
+                        }
+                    }
+                    // Check 4: Greedy backward witness from excl endpoints inside hull[n].
+                    if !found_fail && let Some((el, eh)) = &excl {
+                        let t_lo = el.clone().max(f_bounds[n].0.clone());
+                        let t_hi = eh.clone().min(f_bounds[n].1.clone());
+                        if t_lo <= t_hi {
+                            for target in [t_lo, t_hi] {
+                                if !matches!(target, Fin(_)) {
+                                    continue;
+                                }
+                                let mut cur = target;
+                                let mut ok = true;
+                                for j in (0..n).rev() {
+                                    let (hl, hh) = &f_bounds[j];
+                                    let mut picked = None;
+                                    for (s_ok, arm) in [
+                                        (surviving[j].0, links[j].3.as_ref()),
+                                        (surviving[j].1, links[j].4.as_ref()),
+                                    ] {
+                                        if !s_ok {
+                                            continue;
+                                        }
+                                        let pre = arm.unwrap().inverse().map_end(&cur);
+                                        if &pre >= hl && &pre <= hh {
+                                            picked = Some(pre);
+                                            break;
+                                        }
+                                    }
+                                    if let Some(pre) = picked {
+                                        cur = pre;
+                                    } else {
+                                        ok = false;
+                                        break;
+                                    }
+                                }
+                                if ok && proj_z.contains_end(&cur) {
+                                    found_fail = true;
+                                    break;
+                                }
+                            }
+                        }
+                    }
+                    if found_fail {
+                        false
+                    } else {
+                        // No check decided (coNP-hard in general, the doc above): main's path
+                        // answers.
+                        return None;
+                    }
+                }
+            }
+        };
+
+        let mut out = Res::all();
+        out.exact = exact;
+        out.vars = VarSet::Many;
+        if let Some(z) = base_var
+            && proj_z != dom_z
+        {
+            out.dom.insert(z, Rc::new(proj_z));
+        }
+        for (j, (gx, m0, m1, _, _)) in links.into_iter().enumerate() {
+            let mut keep = IntervalSet::empty();
+            if surviving[j].0 {
+                keep = keep.join(&m0);
+            }
+            if surviving[j].1 {
+                keep = keep.join(&m1);
+            }
+            if keep != *self.cx.inputs[&gx] {
+                out.dom.insert(gx, Rc::new(keep));
+            }
+        }
+        let rel = if out.exact {
+            None
+        } else {
+            Some(self.relation_within(original, &wanted)?)
+        };
+        Some((out, rel))
     }
 }
 
@@ -3151,7 +3906,9 @@ impl<'t> Tx<'t> {
     //   (n/2)^2 cells; a method that visits each cell is quadratic. A two-input threshold chain
     //   no longer reaches this memo: `Tx::affine_threshold_pair` answers it in O(n log n)
     //   (Theorem 1 at `threshold_box`), timed by `alternating_2var_scales` and
-    //   `alt2var_m_scales`. `indep_varying` still comes here, row PERF-ref-memo-multi-input.
+    //   `alt2var_m_scales`. Nor does a chain of guards on distinct inputs: `indep_varying`
+    //   is answered by `Tx::independent_affine` in O(n), 7.99 at 24 (`indep_varying_scales`),
+    //   or, when no check decides its exactness (coNP-hard, proof there), comes here.
     // - Nested remainders: in a term that reads one input they are settled by
     //   `State1d::modulo_bounded` (the `nested_moduli_*` families, cost in the header). Under
     //   guards on two inputs they stay on the memo: `alternating_moduli` read 12.1 at 4 and 101
@@ -3160,8 +3917,8 @@ impl<'t> Tx<'t> {
     //   |c| > 1, a quotient by c < -1) visit every piece of the state: `normal_mul3_chain` read
     //   8.05 at 16 and `normal_div_neg2_chain` 11.8 at 16 and 8.3 at 128. Measured only: no
     //   bound on the pieces visited per link is proved.
-    // `indep_varying` and `alternating_moduli` are not timed yet (`ref_memo::UNTIMED_FAMILIES`);
-    // their answers are checked against the interpreter. Tests: `l01_25_preimage_catalog::ref_memo`
+    // `alternating_moduli` is not timed yet (`ref_memo::UNTIMED_FAMILIES`); its answers are
+    // checked against the interpreter. Tests: `l01_25_preimage_catalog::ref_memo`
     // (the scaling of each family, main's changed answers, calls 22, 45 and 86). COMPLEXITY.md C56.
     fn back_doubt(&mut self, t: Tid, env: Eid, d: &Demand, dd: &IntervalSet) -> Res {
         let dd = match d {
@@ -5383,7 +6140,22 @@ impl Tx<'_> {
         })
     }
 
+    /// The integer term and the set its value must lie in: the term itself under an integer
+    /// demand, or the non-constant side of a comparison with a constant, with the ray the
+    /// comparison asks for. Its value is checked to be an integer by the forward analysis,
+    /// which [`Tx::integer_request_shape`] leaves out.
     fn integer_request(&mut self, root: Tid, d: &Demand) -> Option<(Tid, IntervalSet)> {
+        let (t, z) = self.integer_request_shape(root, d)?;
+        if matches!(d, Demand::Bool(_)) && !self.fwd(t, ROOT).is_int() {
+            return None;
+        }
+        Some((t, z))
+    }
+
+    /// [`Tx::integer_request`] without the forward check: for a stage that proves the value an
+    /// integer from the shape it reads (`independent_affine`, whose unit-slope paths end at
+    /// integer inputs or literals). O(1) beyond `constant_int` and the copy of an `Ints` demand.
+    fn integer_request_shape(&mut self, root: Tid, d: &Demand) -> Option<(Tid, IntervalSet)> {
         Some(match d {
             Demand::Ints(z) => (root, z.clone()),
             Demand::Bool(w) => {
@@ -5402,15 +6174,9 @@ impl Tx<'_> {
                 }
                 let (a, b) = (self.arg(args, 0), self.arg(args, 1));
                 if let Some(c) = self.constant_int(b, ROOT) {
-                    if !self.fwd(a, ROOT).is_int() {
-                        return None;
-                    }
                     (a, ray(p, c))
                 } else {
                     let c = self.constant_int(a, ROOT)?;
-                    if !self.fwd(b, ROOT).is_int() {
-                        return None;
-                    }
                     (b, ray(mirror(p), c))
                 }
             }

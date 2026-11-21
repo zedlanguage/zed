@@ -130,6 +130,10 @@ scaling_tests! {
     // n ≡ 18..21 (mod 20).
     alternating_2var_scales: "alternating_2var" at 64;
     alt2var_m_scales: "alt2var_m" at 20;
+    // PERF-ref-memo-multi-input part (b): guards on distinct inputs, answered by
+    // `Tx::independent_affine` in O(n). On the memo it read 20.9 at 6, 12.1 at 12 and 183 at
+    // 24; 7.99 here (instructions 7.99, bytes 8.01, load 46).
+    indep_varying_scales: "indep_varying" at 24;
 }
 
 /// PROOF-round-down-piece-bound at the sizes the benchmark above times, which need a large

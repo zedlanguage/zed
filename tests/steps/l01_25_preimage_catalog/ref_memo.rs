@@ -835,7 +835,7 @@ fn output_grid_answers_have_k_n_pieces() {
 }
 
 /// The families that `bench::ref_memo` times, each named once.
-pub(super) const FAMILIES: [&str; 49] = [
+pub(super) const FAMILIES: [&str; 50] = [
     "alt2var_m",
     "alternating_2var",
     "coef2_guard",
@@ -850,6 +850,7 @@ pub(super) const FAMILIES: [&str; 49] = [
     "i_le_j_wide",
     "indep_const2",
     "indep_small",
+    "indep_varying",
     "interleaved_wide",
     "jmod5_mega",
     "jmod5_narrow",
@@ -889,11 +890,12 @@ pub(super) const FAMILIES: [&str; 49] = [
 
 /// Families of terms that read two or more inputs, on the memo of `Tx::back_doubt`, that
 /// `bench::ref_memo` does not time: their work grows faster than n (row
-/// PERF-ref-memo-multi-input; T(8n)/T(n) 12.1 at 4 and 101 at 8 for `alternating_moduli`, 12.1 at
-/// 12 and 183 at 24 for `indep_varying`). Their answers are checked here with the timed families.
-/// `alternating_2var` (25.2 at 64 on the memo) and `alt2var_m` are timed since
-/// `Tx::affine_threshold_pair` answers them in O(n log n).
-const UNTIMED_FAMILIES: [&str; 2] = ["alternating_moduli", "indep_varying"];
+/// PERF-ref-memo-multi-input; T(8n)/T(n) 12.1 at 4 and 101 at 8 for `alternating_moduli`).
+/// Their answers are checked here with the timed families. `alternating_2var` (25.2 at 64 on
+/// the memo) and `alt2var_m` are timed since `Tx::affine_threshold_pair` answers them in
+/// O(n log n), and `indep_varying` (183 at 24 on the memo) since `Tx::independent_affine`
+/// answers it in O(n).
+const UNTIMED_FAMILIES: [&str; 1] = ["alternating_moduli"];
 
 /// Every family `bench::ref_memo` times, at 1 to 4 links (`output_grid` at 8), and the
 /// [`UNTIMED_FAMILIES`]: the reference preimage holds every
@@ -1210,6 +1212,253 @@ fn listed_threshold_chains_are_answered_exactly() {
                         assert!(p.exact && p.relation.is_none(), "{at}");
                         assert_eq!(p.domains.get("i").unwrap_or(&ds["i"]), &px, "{at}");
                         assert_eq!(p.domains.get("m").unwrap_or(&ds["m"]), &py, "{at}");
+                    }
+                }
+            }
+        }
+    }
+}
+
+/// Every point of a box given as one list of values per input, in the order of `names`.
+fn grid(names: &[Arc<str>], values: &HashMap<Arc<str>, Vec<i64>>) -> Vec<Vec<i64>> {
+    names.iter().fold(vec![vec![]], |all, x| {
+        all.into_iter()
+            .flat_map(|q| {
+                values[x].iter().map(move |&v| {
+                    let mut q = q.clone();
+                    q.push(v);
+                    q
+                })
+            })
+            .collect()
+    })
+}
+
+/// `Tx::independent_affine` (PERF-ref-memo-multi-input part (b)): on random chains whose
+/// guards read distinct inputs `b1..bn` (comparisons `<=`, `<`, `>`, `>=` with the literal on
+/// either side), with arms `t`, `-t`, `t + c`, `t - c`, `c + t`, `c - t` of one inner value,
+/// the base `z` (with holes in its domain at times) or a constant, and a demand whose
+/// complement is a point, a ray or an interval, over boxes of 1 to 3 values per guard input
+/// and 1 to 5 for `z`: the answer is the exact projections of the points that meet the demand,
+/// it is exact iff their product holds no failing point, and an attached relation holds
+/// exactly where the term meets the demand. Every point of the box is evaluated by the
+/// interpreter. Negative control: with every allowed arm marked surviving, case 11 failed on
+/// the projection of `b3` (run once, 2026-11-21).
+#[test]
+fn independent_chains_match_the_interpreter_on_every_point() {
+    let mut rng = Rng::new(0x1d5e_0002_u64);
+    for case in 0..400 {
+        let n = rng.int(1, 5) as usize;
+        let mut values: HashMap<Arc<str>, Vec<i64>> = HashMap::new();
+        let zlo = rng.int(-4, 4);
+        let mut zs: Vec<i64> = (zlo..=zlo + rng.int(0, 4))
+            .filter(|_| rng.below(4) != 0)
+            .collect();
+        if zs.is_empty() {
+            zs.push(zlo);
+        }
+        values.insert("z".into(), zs);
+        let arm = |rng: &mut Rng, t: &Shared| -> Shared {
+            let c = rng.int(-3, 3);
+            let inner = || (**t).clone();
+            match rng.below(6) {
+                0 => t.clone(),
+                1 => Shared::new(Term::Prim(Prim::Neg, vec![inner()])),
+                2 => Shared::new(prim(Prim::Add, inner(), int(c))),
+                3 => Shared::new(prim(Prim::Sub, inner(), int(c))),
+                4 => Shared::new(prim(Prim::Add, int(c), inner())),
+                _ => Shared::new(prim(Prim::Sub, int(c), inner())),
+            }
+        };
+        let mut t = if rng.below(5) == 0 {
+            int(rng.int(-3, 3))
+        } else {
+            var("z")
+        };
+        for j in 1..=n {
+            let b = format!("b{j}");
+            let lo = rng.int(-2, 1);
+            values.insert(b.as_str().into(), (lo..=lo + rng.int(0, 2)).collect());
+            let cut = rng.int(-2, 3);
+            let cmp = [Prim::Le, Prim::Lt, Prim::Gt, Prim::Ge][rng.below(4)];
+            let guard = if rng.coin() {
+                prim(cmp, var(&b), int(cut))
+            } else {
+                let mirrored = match cmp {
+                    Prim::Le => Prim::Ge,
+                    Prim::Lt => Prim::Gt,
+                    Prim::Gt => Prim::Lt,
+                    _ => Prim::Le,
+                };
+                prim(mirrored, int(cut), var(&b))
+            };
+            let inner = Shared::new(t);
+            let (yes, no) = (arm(&mut rng, &inner), arm(&mut rng, &inner));
+            t = Term::If(Shared::new(guard), yes, no);
+        }
+        let target = rng.int(-6, 6);
+        let (t, d) = match rng.below(4) {
+            0 => (prim(Prim::Ne, t, int(target)), Demand::Bool(true)),
+            1 => (prim(Prim::Eq, int(target), t), Demand::Bool(false)),
+            2 => {
+                let cmp = [Prim::Le, Prim::Lt, Prim::Gt, Prim::Ge][rng.below(4)];
+                (prim(cmp, t, int(target)), Demand::Bool(rng.coin()))
+            }
+            _ => {
+                let hole = IntervalSet::of(target, target + rng.int(0, 3));
+                (t, Demand::Ints(IntervalSet::top().minus(&hole)))
+            }
+        };
+        let ds: Domains = values
+            .iter()
+            .map(|(x, vs)| (x.clone(), set_of(vs.iter().copied())))
+            .collect();
+        let names: Vec<Arc<str>> = ds.keys().cloned().collect();
+        let p = preimage(&t, &ds, &d);
+        let pts = grid(&names, &values);
+        let pass = |pt: &[i64]| {
+            let pt: Vec<Num> = pt.iter().map(|&v| Num::from(v)).collect();
+            meets(&t, &names, &pt, &d)
+        };
+        let passing: Vec<&Vec<i64>> = pts.iter().filter(|pt| pass(pt)).collect();
+        if passing.is_empty() {
+            assert!(
+                p.domains.values().any(IntervalSet::is_empty),
+                "case {case}: no point meets, {t:?} on {ds:?}, {p:?}"
+            );
+            continue;
+        }
+        let projs: Vec<IntervalSet> = (0..names.len())
+            .map(|k| set_of(passing.iter().map(|pt| pt[k])))
+            .collect();
+        for (x, proj) in names.iter().zip(&projs) {
+            let got = p.domains.get(x).unwrap_or(&ds[x]);
+            assert_eq!(got, proj, "case {case}, {x}: {t:?} on {ds:?}, {p:?}");
+        }
+        let exact = pts
+            .iter()
+            .filter(|pt| {
+                pt.iter()
+                    .zip(&projs)
+                    .all(|(&v, s)| s.contains_end(&End::of(v)))
+            })
+            .all(|pt| pass(pt));
+        assert_eq!(
+            p.exact, exact,
+            "case {case}, exactness: {t:?} on {ds:?}, {p:?}"
+        );
+        if let Some(rel) = &p.relation {
+            for pt in &pts {
+                let at: Vec<Num> = pt.iter().map(|&v| Num::from(v)).collect();
+                assert_eq!(
+                    relation_holds(rel, &names, &at),
+                    pass(pt),
+                    "case {case}, relation at {pt:?}: {t:?}, {rel:?}"
+                );
+            }
+        } else {
+            assert!(p.exact, "case {case}: inexact with no relation, {p:?}");
+        }
+    }
+}
+
+/// The subset-sum chains of the coNP-hardness proof at `Tx::independent_affine`: `z` fixed to
+/// 0, guards `b_j <= 0` over `0..=1`, arms `t + a_j` and `t`, the demand `t != s`. Every arm
+/// survives (n >= 2), so the answer is the whole box, and it is exact iff no subset of the
+/// `a_j` sums to `s`, by the interpreter at every point. The sets leave gaps among their sums
+/// (`{3, 5}` gives 0, 3, 5, 8), where the progressions of Check 2 are not exact and must not
+/// claim a failing point; `s` is taken in the gaps, on the sums, and outside them.
+/// Negative control: with `ApNum::join` marking every join exact, the random test
+/// `independent_chains_match_the_interpreter_on_every_point` still passed, and this one failed
+/// (run once, 2026-11-21).
+#[test]
+fn subset_sum_chains_are_exact_iff_no_subset_reaches_the_demand() {
+    let sets: [&[i64]; 5] = [&[3, 5], &[2, 4, 6], &[4, 6], &[-3, 5, 7], &[3, 5, 11, 13]];
+    for a in sets {
+        let n = a.len();
+        let t = a.iter().enumerate().fold(var("z"), |t, (j, &aj)| {
+            let inner = Shared::new(t);
+            Term::If(
+                Shared::new(prim(Prim::Le, var(&format!("b{}", j + 1)), int(0))),
+                Shared::new(prim(Prim::Add, (*inner).clone(), int(aj))),
+                inner,
+            )
+        });
+        let mut ds = bits(n, 0, 0);
+        ds.insert("z".into(), IntervalSet::of(0, 0));
+        let sums: BTreeSet<i64> = (0..1u32 << n)
+            .map(|m| (0..n).filter(|j| m >> j & 1 == 1).map(|j| a[j]).sum())
+            .collect();
+        for s in -4..=33 {
+            let term = prim(Prim::Ne, t.clone(), int(s));
+            let d = Demand::Bool(true);
+            let p = preimage(&term, &ds, &d);
+            let at = format!("a={a:?} s={s}: {p:?}");
+            for (x, whole) in &ds {
+                assert_eq!(p.domains.get(x).unwrap_or(whole), whole, "{at}");
+            }
+            assert_eq!(p.exact, !sums.contains(&s), "{at}");
+        }
+    }
+}
+
+/// Listed inputs take the independent stage too (`preimage_in`): on a box `enumerate` takes,
+/// every input but one has one value, and the stage must answer it with the exact projections,
+/// exact, with no relation. On `indep_varying` at 1 to 4 links: `z` listed with holes
+/// ({1, 2, 3, 5, 8, 13}) under every choice of the bits, and each `z` in 1..=5 with one bit
+/// listed as {-1, 1} (a hole at 0) and the others fixed; listed and unlisted calls agree.
+#[test]
+fn listed_independent_chains_are_answered_exactly() {
+    for n in 1..=4usize {
+        for (t, _, d) in family("indep_varying", n) {
+            let mut boxes: Vec<HashMap<Arc<str>, Vec<i64>>> = Vec::new();
+            for mask in 0..1u32 << n {
+                let mut b: HashMap<Arc<str>, Vec<i64>> = HashMap::new();
+                b.insert("z".into(), vec![1, 2, 3, 5, 8, 13]);
+                for j in 1..=n {
+                    b.insert(format!("b{j}").into(), vec![i64::from(mask >> (j - 1) & 1)]);
+                }
+                boxes.push(b);
+            }
+            for z in 1..=5 {
+                for k in 1..=n {
+                    let mut b: HashMap<Arc<str>, Vec<i64>> = HashMap::new();
+                    b.insert("z".into(), vec![z]);
+                    for j in 1..=n {
+                        let vs = if j == k {
+                            vec![-1, 1]
+                        } else {
+                            vec![(j as i64 + z) % 2]
+                        };
+                        b.insert(format!("b{j}").into(), vs);
+                    }
+                    boxes.push(b);
+                }
+            }
+            for values in &boxes {
+                let ds: Domains = values
+                    .iter()
+                    .map(|(x, vs)| (x.clone(), set_of(vs.iter().copied())))
+                    .collect();
+                let names: Vec<Arc<str>> = ds.keys().cloned().collect();
+                let listed: Listed = names.iter().cloned().collect();
+                let passing: Vec<Vec<i64>> = grid(&names, values)
+                    .into_iter()
+                    .filter(|pt| {
+                        let pt: Vec<Num> = pt.iter().map(|&v| Num::from(v)).collect();
+                        meets(&t, &names, &pt, &d)
+                    })
+                    .collect();
+                for p in [preimage_listed(&t, &ds, &listed, &d), preimage(&t, &ds, &d)] {
+                    let at = format!("indep_varying n={n} {values:?}: {p:?}");
+                    assert!(p.exact && p.relation.is_none(), "{at}");
+                    if passing.is_empty() {
+                        assert!(p.domains.values().any(IntervalSet::is_empty), "{at}");
+                        continue;
+                    }
+                    for (k, x) in names.iter().enumerate() {
+                        let proj = set_of(passing.iter().map(|pt| pt[k]));
+                        assert_eq!(p.domains.get(x).unwrap_or(&ds[x]), &proj, "{at}");
                     }
                 }
             }
