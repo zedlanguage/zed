@@ -1191,30 +1191,35 @@ fn a_question_over_one_scaled_variable_is_decided() {
 }
 
 #[test]
-fn a_question_over_a_remainder_of_a_quotient_is_decided() {
-    // Row PRES-one-variable-scaled-and-nested-residues, its second shape: `(x div 3) mod 10`
-    // reads the quotient of `x`, which `modular::scaled` unfolds as `x = 3 q + r`, `q = 10 s + t`,
-    // a remainder of `x` by 30. It holds at 4 (4 div 3 = 1, 1 mod 10 = 1 and (4 - 4) mod 30 =
-    // 0) and not at 5 ((5 - 4) mod 30 = 1). Refused (shadows) before this row.
+fn a_refused_question_over_a_remainder_of_a_quotient_names_its_moduli() {
+    // The nested example of row PRES-one-variable-scaled-and-nested-residues: remainders of the
+    // quotients `x div 3` and `x div 7`. It holds at 4 (4 div 3 = 1, (4 - 4) mod 30 = 0,
+    // 9 mod 8 = 1, 1 mod 2 = 1, 4 mod 6 = 4, 0 mod 12 = 0) and is periodic in `x`, but
+    // `modular::scaled` declines a row on a quotient: rewritten into residues of `x`, a chain
+    // of n quotients writes about n^2 bits (ratio 35.1 at 8n), so it is still refused, a
+    // defect filed as row PRES-nested-quotient-residues. Until then this test pins the moduli
+    // the shadows reason names.
     let src = program(
-        "ok(x) = (x div 3) mod 10 <= 5 && (x - 4) mod 30 == 0;",
+        "ok(x) = (x div 3) mod 10 <= 5 && (x - 4) mod 30 <= 9 && (x + 5) mod 8 <= 7 && (x - 3) mod 2 == 1 && x mod 6 != 1 && (x div 7) mod 12 != 11;",
         "x: a",
     );
-    for (input, out) in [("4\n", "in\n"), ("5\n", "out\n")] {
-        let o = run("remainder-of-quotient-decided", &src, input, &[]);
-        assert_eq!(
-            (o.status, o.stdout.as_str(), o.stderr.as_str()),
-            (0, out, ""),
-            "{input}"
-        );
-    }
+    let printed = rejection("shadows-remainder-of-quotient", &src);
+    assert!(
+        printed.contains(
+            "The program has one variable, `x`, and the conditions read it through its \
+             remainders and quotients by 2, 3, 6, 7, 8, 10, 12 and 30; the checker gives each \
+             remainder and quotient a variable of its own."
+        ),
+        "{printed}"
+    );
 }
 
 #[test]
 fn a_refused_question_over_a_sum_of_quotients_names_its_moduli() {
     // A remainder of a sum of two quotients of `x`, `(x div 3 + x div 5) mod 7`, is periodic in
-    // `x` (period 105) but is not a chain of remainders that `modular::scaled` unfolds (a row
-    // with two quotients is not one of its definition rows), and the checker still refuses it,
+    // `x` (period 105) but is not a remainder of a multiple of `x` that `modular::scaled`
+    // rewrites (a row with two quotients is not one of its definition rows), and the checker
+    // still refuses it,
     // a defect filed as row PRES-one-variable-sum-of-quotients. Until then this test checks,
     // end to end, how `front.rs` fills the program's variable and its moduli into the shadows
     // reason (I4.11): the variables the reason counts are the checker's, one for each remainder

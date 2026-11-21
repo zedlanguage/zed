@@ -1,10 +1,13 @@
-//! Remainders of a multiple of the variable, or of a quotient of it, in a one-variable formula
-//! (PRES-one-variable-scaled-and-nested-residues): `(a * x + b) mod m` with `a` not `1` or `-1`,
-//! and `(x div d) mod m`. [`solve_modular_whole`] reads a remainder only of `x + c` or `-x + c`;
-//! [`solve`] rewrites each literal on such a remainder to a literal on a remainder of `x`
-//! itself, which it reads, and hands it the rewritten formula.
+//! Remainders of a multiple of the variable in a one-variable formula
+//! (PRES-one-variable-scaled-and-nested-residues): `(a * x + b) mod m` with `a` not `1` or `-1`.
+//! [`solve_modular_whole`] reads a remainder only of `x + c` or `-x + c`; [`solve`] rewrites
+//! each literal on such a remainder to a literal on a remainder of `x` itself, which it reads,
+//! and hands it the rewritten formula. A remainder of a quotient of `x`, such as
+//! `(x div 3) mod 10`, is declined and stays refused: rewritten into residues of `x`, a chain of
+//! `n` quotients writes about `n^2` bits (measured ratio 35.1 at 8n), so it needs a method of
+//! its own (row PRES-nested-quotient-residues).
 //!
-//! No source is used: the three identities below are elementary and are proved here.
+//! No source is used: the identity below is elementary and is proved here.
 //!
 //! Lemma A (a scaled remainder is a remainder of `x`). Let `m >= 1`, `g = gcd(a, m)`,
 //! `n = m / g`, `a' = a / g`, and `k = g * c1 + c0` with `0 <= c0 < g`. Then for every integer
@@ -17,22 +20,10 @@
 //! `t mod n -> (a' t + c1) mod n` is a bijection of `0..n`; the set of `t mod n` it sends into a
 //! set `U` is the preimage [`affine_preimage`] computes.
 //!
-//! Lemma B (a remainder of a quotient is a quotient of a remainder). For integers `W`,
-//! `d >= 1`, `m >= 1`: `floor(W / d) mod m = floor((W mod (d m)) / d)`.
-//! Proof. Write `floor(W / d) = m K + s` with `0 <= s < m`, and `W = d floor(W / d) + e` with
-//! `0 <= e < d`. Then `W = d m K + (d s + e)` and `0 <= d s + e <= d (m - 1) + d - 1 = d m - 1`,
-//! so `W mod (d m) = d s + e`, whose quotient by `d` is `s` as `0 <= e < d`. QED.
-//! So `floor(W / d) mod m` lies in `[l, h]` exactly when `W mod (d m)` lies in
-//! `[d l, d h + d - 1]`.
-//!
-//! Lemma C (nested quotients). For integers `y`, `d >= 1`, `m >= 1`:
-//! `floor(floor(y / d) / m) = floor(y / (d m))`.
-//! Proof. Write `y = d m Q + R` with `0 <= R < d m`, and `R = d R1 + R0` with `0 <= R0 < d`;
-//! then `0 <= R1 < m`. So `floor(y / d) = m Q + R1` and its quotient by `m` is `Q`. QED.
-//!
-//! Tests: `tests::scaled_and_nested_remainders_match_enumeration` (random formulas against
+//! Tests: `tests::scaled_remainders_match_enumeration` (random formulas against
 //! enumeration over a period or the bounds), `tests::an_affine_preimage_matches_enumeration`,
-//! `tests::the_rows_two_examples_are_decided`, and end to end
+//! `tests::the_rows_scaled_example_is_decided`, `tests::a_remainder_of_a_quotient_is_still_declined`,
+//! and end to end
 //! `l01_38_presburger::checker::a_question_over_one_scaled_variable_is_decided`.
 
 use super::*;
@@ -52,11 +43,9 @@ struct DefRow<'f> {
     q: Atom,
     sigma: i8,
     r: Option<Atom>,
-    /// The row whose quotient is `t`, or `None` when `t` is the variable.
+    /// The row whose quotient is `t`, or `None` when `t` is the variable; [`solve`] declines a
+    /// formula with any row that has one.
     parent: Option<usize>,
-    /// `(alpha, beta, delta)` with `a * t + k = floor((alpha * x + beta) / delta)` for every
-    /// point, when such a form is known (Lemma C), else `None`.
-    flat: Option<(Int, Int, Int)>,
 }
 
 /// The bounds `(lo, hi)` the top-level one-term constraints put on each atom; an equation that
@@ -193,11 +182,10 @@ fn def_row<'f>(shape: &Shape<'f>, q_end: usize) -> DefRow<'f> {
         sigma: if cq.is_positive() { -1 } else { 1 },
         r: shape.r.clone(),
         parent: None,
-        flat: None,
     }
 }
 
-/// Picks the variable `x` and each row's quotient, and orders the rows parents first; `None`
+/// Picks the variable `x`, each row's quotient and each row's parent; `None`
 /// when no choice fits.
 ///
 /// The rows are the edges of a graph on the atoms of their ends. Each atom other than `x` must
@@ -209,10 +197,7 @@ fn def_row<'f>(shape: &Shape<'f>, q_end: usize) -> DefRow<'f> {
 /// `e` changes only `e`'s far end from `c` to `p`. When a constraint other than the rows names
 /// an atom of the tree (`named`), that atom must be `x`, as every quotient may occur only in its
 /// rows. O(rows) steps.
-fn orient<'f>(
-    shapes: &[Shape<'f>],
-    named: Option<&Atom>,
-) -> Option<(Atom, Vec<DefRow<'f>>, Vec<usize>)> {
+fn orient<'f>(shapes: &[Shape<'f>], named: Option<&Atom>) -> Option<(Atom, Vec<DefRow<'f>>)> {
     let mut index: HashMap<&Atom, usize> = HashMap::new();
     let mut atoms: Vec<&Atom> = Vec::new();
     let mut adj: Vec<Vec<(usize, usize)>> = Vec::new();
@@ -286,23 +271,20 @@ fn orient<'f>(
             .min_by_key(|&i| matches!(atoms[i], Atom::Aux(_)))?,
     };
     // Row `e` of the result is the reading of `shapes[e]`, so the indices of `shapes` stay valid;
-    // `order` lists the rows in the order the walk met their quotients, parents first.
     let (up, met) = walk(root).expect("connected");
     let mut rows: Vec<Option<DefRow<'f>>> = (0..shapes.len()).map(|_| None).collect();
-    let mut order = Vec::with_capacity(shapes.len());
     for &c in &met[1..] {
         let e = up[c].expect("every atom but the root has a parent row");
         let q_end = if ends_at[e][0] == c { 0 } else { 1 };
         let mut row = def_row(&shapes[e], q_end);
         row.parent = up[ends_at[e][1 - q_end]];
         rows[e] = Some(row);
-        order.push(e);
     }
     let rows = rows
         .into_iter()
         .map(|row| row.expect("a tree reaches every row"))
         .collect();
-    Some((atoms[root].clone(), rows, order))
+    Some((atoms[root].clone(), rows))
 }
 
 /// The residues `t mod n`, with `n = m / gcd(a, m)`, at which `(a t + k) mod m` lies in `v`
@@ -431,39 +413,9 @@ fn reflect_residues(s: &[(Int, Int)], n: &Int) -> ResidueSet {
 }
 
 /// The residues of the variable, `(n, T)` meaning `x mod n` in `T`, at which the remainder of
-/// row `i` lies in `v` (a residue set modulo the row's `m`). A row with a flat form
-/// `a t + k = floor((alpha x + beta) / delta)` takes one step: by Lemma B its remainder lies in
-/// `v` exactly when `(alpha x + beta) mod (delta m)` lies in the intervals `[delta l,
-/// delta h + delta - 1]`, and Lemma A gives the residues of `x`. Any other row has a parent `j`
-/// with `t = q_j = sigma_j F_j`, `F_j = floor(E_j / m_j)`: Lemma A turns the condition into
-/// `q_j mod n` in `T`, which is `F_j mod n` in `T` for `sigma_j = 1` and in its reflection for
-/// `sigma_j = -1`, and Lemma B into `E_j mod (m_j n)` in `[m_j l, m_j h + m_j - 1]`; the walk
-/// goes on at row `j`. A row with no parent has a flat form, so the walk ends.
+/// row `i` (a row on `x`) lies in `v`, a residue set modulo the row's `m`: Lemma A.
 fn pull_back(rows: &[DefRow<'_>], i: usize, v: ResidueSet) -> Option<(Int, ResidueSet)> {
-    let (mut i, mut m, mut v) = (i, rows[i].m.clone(), v);
-    loop {
-        let row = &rows[i];
-        if let Some((alpha, beta, delta)) = &row.flat {
-            let wide = delta * &m;
-            let w: Vec<(Int, Int)> = (v.iter())
-                .map(|(l, h)| (delta * l, &(&(delta * h) + delta) - &Int::ONE))
-                .collect();
-            return affine_preimage(alpha, beta, &wide, &w);
-        }
-        let (n, t) = affine_preimage(&row.a, &row.k, &m, &v)?;
-        let j = row.parent.expect("a row with no parent has a flat form");
-        let t = if rows[j].sigma < 0 {
-            reflect_residues(&t, &n)
-        } else {
-            t
-        };
-        let mj = &rows[j].m;
-        v = (t.iter())
-            .map(|(l, h)| (mj * l, &(&(mj * h) + mj) - &Int::ONE))
-            .collect();
-        m = mj * &n;
-        i = j;
-    }
+    affine_preimage(&rows[i].a, &rows[i].k, &rows[i].m, &v)
 }
 
 /// The interval of values in `0..m` at which the one-term constraint `c` on a remainder holds.
@@ -483,15 +435,13 @@ fn remainder_values(c: &Con, m: &Int) -> ResidueSet {
 }
 
 /// Decides `f` as [`solve_modular_whole`] does, after rewriting each literal on a remainder of
-/// a multiple of the variable or of a quotient of it to a literal on a remainder of the variable;
-/// `None` when `f` does not have that shape.
+/// a multiple of the variable to a literal on a remainder of the variable; `None` when `f` does
+/// not have that shape.
 ///
 /// Shape. The top-level conjuncts hold definition rows ([`read_shape`], [`orient`],
-/// [`def_row`]); each quotient and
-/// remainder is defined by one row; the dividends `t` of the rows are one variable `x` (defined
-/// by no row) and quotients of other rows, with no cycle; a quotient occurs in no other
-/// constraint; a remainder occurs only in one-term constraints; every other constraint names at
-/// most `x`.
+/// [`def_row`]); each quotient and remainder is defined by one row; the dividend `t` of every
+/// row is one variable `x` (defined by no row); a quotient occurs in no other constraint; a
+/// remainder occurs only in one-term constraints; every other constraint names at most `x`.
 ///
 /// Rewrite. Each definition row becomes `true`; each one-term constraint on a remainder becomes
 /// the residues of `x` [`pull_back`] gives, written on a new remainder `s_n` of `x` for each
@@ -504,24 +454,21 @@ fn remainder_values(c: &Con, m: &Int) -> ResidueSet {
 /// literal it replaces, with `p_n = floor(x / n)`, `s_n = x mod n`; a definition row is
 /// `true` in both, and a zero remainder holds. (2) Given a point of the rewritten formula: its
 /// rows force `s_n = x mod n`. Set each quotient and remainder to the value its row defines from
-/// `x`, parents first: each row then holds (a three-term row by construction, a two-term row as
+/// `x`: each row then holds (a three-term row by construction, a two-term row as
 /// its remainder is zero), and again each literal has the truth value of the literal it replaces,
 /// so `f` holds. The Boolean structure is unchanged (`Formula::map_cons`), so the equivalence of
 /// each replaced constraint at the points of (1) and (2) carries to `f`. QED.
 /// A point found is rebuilt from `x` as in (2) and checked with [`Formula::holds`].
-// Complexity tradeoff: a literal on the remainder of a row with no flat form walks to the
-// nearest row that has one, O(depth) steps per literal, O(literals * depth) in all; naive, every
-// row walks to `x`, the same bound. Rows of `t div d` written as `t == d q + r` (coefficient
-// `1`, `sigma = 1`) have flat forms (Lemma C), so a chain of quotients costs one step per
-// literal. The numbers in the steps have the bits of the product of the moduli of the chain, as
-// the period of the remainder does, so a literal on level `i` of a chain of quotients by `d`
-// writes a residue set of `x` modulo `d^(i+1)`, about `i log2(d)` bits: with a literal on each
-// of `n` levels the rewritten formula has about `n^2 log2(d) / 2` bits from an input of about
-// `n`. Measured (bench `nested_quotients_scale_in_the_depth`, 2026-11-21, load 88): ratio 35.1
-// at 8n, 21.0 times the bytes, over the limit of 10.5; the printed rewrite grows 48.6 times
-// (35,215 to 1,712,893 characters at depth 200 and 1,600), this rewrite 10.8 times and
-// `solve_modular_whole` on it 34.5 times. Any rewrite into residues of `x` alone has this size;
-// a digit-wise method over the chain is needed to remove it (reported, not fixed: see the row).
+// Complexity tradeoff: each literal on a remainder is one [`affine_preimage`], whose cost is
+// given there; O(1) further steps per constraint. Declined, and refused as before: any row whose
+// dividend is the quotient of another row. Rewritten into residues of `x` by
+// `floor(floor(y / d) / m) = floor(y / (d m))` and `floor(W / d) mod m = floor((W mod (d m)) /
+// d)`, a literal on level `i` of a chain of quotients by `d` becomes a residue set of `x` modulo
+// `d^(i+1)`, about `i log2(d)` bits, so `n` levels with a literal each write about
+// `n^2 log2(d) / 2` bits from an input of about `n`. Measured on branch wt/presres1 (commit
+// 5634afcbb, 2026-11-21, load 88): ratio 35.1 at 8n, over the limit of 10.5; the printed
+// rewrite grew 48.6 times (35,215 to 1,712,893 characters at depth 200 and 1,600). Chains need
+// a method that does not go through residues of `x` (row PRES-nested-quotient-residues).
 pub(super) fn solve(f: &Formula, want_model: bool) -> Option<Option<Model>> {
     let mut top: Vec<&Con> = Vec::new();
     let mut clauses: Vec<&Formula> = Vec::new();
@@ -571,21 +518,10 @@ pub(super) fn solve(f: &Formula, want_model: bool) -> Option<Option<Model>> {
     if two_named {
         return None;
     }
-    let (x, mut rows, order) = orient(&shapes, named)?;
-    for &i in &order {
-        rows[i].flat = match rows[i].parent {
-            None => Some((rows[i].a.clone(), rows[i].k.clone(), Int::ONE)),
-            Some(j) if rows[i].a == Int::ONE && rows[j].sigma > 0 => {
-                // `a t + k = q_j + k = floor(E_j / m_j) + k` with `E_j = floor((alpha x + beta) /
-                // delta)`, so by Lemma C it is `floor((alpha x + beta + k delta m_j) /
-                // (delta m_j))`.
-                rows[j].flat.as_ref().map(|(alpha, beta, delta)| {
-                    let wide = delta * &rows[j].m;
-                    (alpha.clone(), beta + &(&rows[i].k * &wide), wide)
-                })
-            }
-            Some(_) => None,
-        };
+    let (x, rows) = orient(&shapes, named)?;
+    // A row on the quotient of another row: a chain, declined (see the tradeoff above).
+    if rows.iter().any(|row| row.parent.is_some()) {
+        return None;
     }
 
     // Every constraint: a definition row (top level only), a one-term constraint on a remainder,
@@ -618,7 +554,7 @@ pub(super) fn solve(f: &Formula, want_model: bool) -> Option<Option<Model>> {
     if let Some((Some(lo), Some(hi))) = bounds.get(&x)
         && lo == hi
     {
-        let model = point_at(&rows, &order, &x, lo);
+        let model = point_at(&rows, &x, lo);
         return Some(
             f.holds(&model)
                 .then(|| if want_model { model } else { Model::new() }),
@@ -725,7 +661,7 @@ pub(super) fn solve(f: &Formula, want_model: bool) -> Option<Option<Model>> {
         return Some(Some(Model::new()));
     }
     let x_value = point.get(&x).cloned().unwrap_or(Int::ZERO);
-    let model = point_at(&rows, &order, &x, &x_value);
+    let model = point_at(&rows, &x, &x_value);
     // By (2) of the proof this is a point of `f`; a failure here is a defect of this module,
     // and declining leaves `f` to the general path.
     let holds = f.holds(&model);
@@ -736,27 +672,20 @@ pub(super) fn solve(f: &Formula, want_model: bool) -> Option<Option<Model>> {
     holds.then_some(Some(model))
 }
 
-/// The values at `x = v` of `x` and of each quotient and remainder its row defines, parents
-/// first (`order`), as in (2) of the proof of [`solve`]: `E = a t + k`, `r = E mod m`,
+/// The values at `x = v` of `x` and of each quotient and remainder its row (a row on `x`)
+/// defines, as in (2) of the proof of [`solve`]: `E = a x + k`, `r = E mod m`,
 /// `q = sigma * floor(E / m)`. O(rows) arithmetic operations.
-fn point_at(rows: &[DefRow<'_>], order: &[usize], x: &Atom, v: &Int) -> Model {
+fn point_at(rows: &[DefRow<'_>], x: &Atom, v: &Int) -> Model {
     let mut model = Model::new();
     model.insert(x.clone(), v.clone());
-    let mut q_value: Vec<Option<Int>> = vec![None; rows.len()];
-    for &i in order {
-        let row = &rows[i];
-        let t = match row.parent {
-            None => v.clone(),
-            Some(j) => q_value[j].clone().expect("parents come first"),
-        };
-        let e = &(&row.a * &t) + &row.k;
+    for row in rows {
+        let e = &(&row.a * v) + &row.k;
         let fl = e.div_floor(&row.m);
         if let Some(r) = &row.r {
             model.insert(r.clone(), &e - &(&row.m * &fl));
         }
         let q = if row.sigma > 0 { fl } else { -&fl };
-        model.insert(row.q.clone(), q.clone());
-        q_value[i] = Some(q);
+        model.insert(row.q.clone(), q);
     }
     model
 }

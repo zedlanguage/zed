@@ -2755,10 +2755,11 @@ fn solve_regime_step(
     // regime was refused (test
     // `checker::a_question_over_one_variable_with_no_bound_and_its_remainders_is_decided`, refused
     // before; row PRES-one-variable-no-bound-witness). A formula whose remainders are taken of
-    // a multiple or a quotient of `x` does not reach this regime as written; [`scaled`] rewrites
-    // it into one that does (row PRES-one-variable-scaled-and-nested-residues; tests
-    // `checker::a_question_over_one_scaled_variable_is_decided` and
-    // `checker::a_question_over_a_remainder_of_a_quotient_is_decided`). Still refused: a
+    // a multiple of `x` does not reach this regime as written; [`scaled`] rewrites it into one
+    // that does (row PRES-one-variable-scaled-and-nested-residues; test
+    // `checker::a_question_over_one_scaled_variable_is_decided`). Still refused: a remainder of
+    // a quotient of `x` (row PRES-nested-quotient-residues; test
+    // `checker::a_refused_question_over_a_remainder_of_a_quotient_names_its_moduli`) and a
     // remainder of a sum of quotients of `x` (row PRES-one-variable-sum-of-quotients; test
     // `checker::a_refused_question_over_a_sum_of_quotients_names_its_moduli`).
     //

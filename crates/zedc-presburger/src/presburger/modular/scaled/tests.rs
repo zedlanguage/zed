@@ -1,6 +1,7 @@
-//! Tests of [`solve`] (PRES-one-variable-scaled-and-nested-residues): the row's two examples,
-//! a random family of scaled and nested remainders against enumeration, [`affine_preimage`]
-//! against enumeration, and the shapes that are still declined.
+//! Tests of [`solve`] (PRES-one-variable-scaled-and-nested-residues): the row's scaled example,
+//! a random family of scaled remainders against enumeration, [`affine_preimage`] against
+//! enumeration, and the shapes that are still declined, among them the row's nested example
+//! (row PRES-nested-quotient-residues).
 
 use super::*;
 use crate::scaling;
@@ -198,35 +199,28 @@ fn nested_example() -> (Vec<Div>, Formula) {
 }
 
 #[test]
-fn the_rows_two_examples_are_decided() {
-    // Both were declined, and refused by the general path with the shadows reason. The scaled
-    // example holds exactly at x = 4 mod 10; the nested one at 4 (and not at 5).
+fn the_rows_scaled_example_is_decided() {
+    // It was declined, and refused by the general path with the shadows reason. It holds
+    // exactly at x = 4 mod 10.
     let fix = |v: i64| vec![Formula::Con(Con::eq(&x(), &Lin::constant(v)))];
-    for (what, (divs, lits), ins) in [
-        ("scaled", scaled_example(), vec![4, 14, -6, 64, 124]),
-        ("nested", nested_example(), vec![4, 64, 124]),
-    ] {
-        check_answered(&formula(&divs, lits.clone(), vec![]), true, what);
-        for v in [4, 5, 14, -6, 64, 124] {
-            let f = formula(&divs, lits.clone(), fix(v));
-            let want = has_point(&f, &divs, [v].into_iter());
-            assert_eq!(want, ins.contains(&v), "{what} at {v}: the enumeration");
-            check_answered(&f, want, &format!("{what} at {v}"));
-        }
+    let (divs, lits) = scaled_example();
+    let ins = [4, 14, -6, 64, 124];
+    check_answered(&formula(&divs, lits.clone(), vec![]), true, "scaled");
+    for v in [4, 5, 14, -6, 64, 124] {
+        let f = formula(&divs, lits.clone(), fix(v));
+        let want = has_point(&f, &divs, [v].into_iter());
+        assert_eq!(want, ins.contains(&v), "scaled at {v}: the enumeration");
+        check_answered(&f, want, &format!("scaled at {v}"));
     }
 }
 
-/// A random chain of divisions, each of `x` or of an earlier quotient, with coefficients that
-/// may be negative, larger than the modulus, or share a factor with it.
+/// Up to three divisions of `x`, with coefficients that may be negative, larger than the
+/// modulus, or share a factor with it.
 fn random_divs(rng: &mut Rng) -> Vec<Div> {
     let n = 1 + rng.below(3);
     let mut divs = Vec::new();
-    for i in 0..n {
-        let t = if i > 0 && rng.coin() {
-            1 + rng.below(i)
-        } else {
-            0
-        };
+    for _ in 0..n {
+        let t = 0;
         let a = if rng.below(3) == 0 {
             rng.pick(&[1, -1])
         } else {
@@ -274,15 +268,15 @@ fn random_literals(rng: &mut Rng, divs: &[Div], depth: u32) -> Formula {
 }
 
 #[test]
-fn scaled_and_nested_remainders_match_enumeration() {
+fn scaled_remainders_match_enumeration() {
     // Every remainder is periodic in `x` with a period dividing the product `P` of the moduli
-    // (at `x + P` each row's dividend moves by a multiple of the product of its own and the
-    // later moduli, by induction along the chain), and each literal on `x` has a constant in
+    // (at `x + P` each row's dividend moves by a multiple of its modulus), and each literal on
+    // `x` has a constant in
     // [-20, 20], so it has one truth value on all of `x < -20` and one on all of `x > 20`. A
     // point at `x < -20 - P` thus has one at `x + j P` in `[-20 - P, -21]` for some `j`, and
     // likewise above, so `[-20 - P, 20 + P]` holds a point exactly when the line does; an outer
     // bound on `x` is read on its own window.
-    let (mut rng, seed) = Rng::fresh("scaled_and_nested_remainders_match_enumeration");
+    let (mut rng, seed) = Rng::fresh("scaled_remainders_match_enumeration");
     let mut answered = [0usize; 2];
     let mut by_solve = [0usize; 2];
     for case in 0..400 {
@@ -389,8 +383,7 @@ fn reflected_residues_match_enumeration() {
 #[test]
 fn a_scaled_remainder_outside_its_values_has_no_point() {
     // Negative controls: `(3 x) mod 6` is 0 or 3, so `== 1` has no point; `(4 x + 2) mod 8` is
-    // 2 or 6, so `<= 1 || == 4` has none; and the nested `((2 x) div 3) mod 4 == 1` with
-    // `x mod 3 == 0`: there `2 x div 3 = 2 (x / 3)` is even. Each was declined before.
+    // 2 or 6, so `<= 1 || == 4` has none. Each was declined before.
     let one = |a, k, m| Div {
         t: 0,
         a,
@@ -403,20 +396,6 @@ fn a_scaled_remainder_outside_its_values_has_no_point() {
     let cases = [
         (vec![one(3, 0, 6)], is(0, 1)),
         (vec![one(4, 2, 8)], Formula::or(vec![le(0, 1), is(0, 4)])),
-        (
-            vec![
-                one(2, 0, 3),
-                Div {
-                    t: 1,
-                    a: 1,
-                    k: 0,
-                    m: 4,
-                    fixed: None,
-                },
-                one(1, 0, 3),
-            ],
-            Formula::and(vec![is(1, 1), is(0, 0), is(2, 0)]),
-        ),
     ];
     for (i, (divs, lits)) in cases.into_iter().enumerate() {
         let f = formula(&divs, lits, vec![]);
@@ -477,20 +456,62 @@ fn other_shapes_are_still_declined() {
     }
 }
 
-/// The small instances of the benchmarks in `bench.rs`, against enumeration.
+#[test]
+fn a_remainder_of_a_quotient_is_still_declined() {
+    // A row on the quotient of another row is declined (see the tradeoff at [`solve`]; row
+    // PRES-nested-quotient-residues), so these stay as on main before this row: the row's
+    // nested example is refused, and a chain of quotients by 3 with a literal on each level,
+    // and `((2 x) div 3) mod 4 == 1` with `x mod 3 == 0` (no point: there `2 x div 3 = 2 (x / 3)`
+    // is even), are declined here; the general path refuses them or gives the enumerated answer.
+    let (divs, lits) = nested_example();
+    let f = formula(&divs, lits, vec![]);
+    assert!(solve(&f, true).is_none(), "nested example: answered\n{f}");
+    assert!(
+        crate::presburger::decide(&f).is_err(),
+        "nested example: not refused\n{f}"
+    );
+    let one = |t, a, m| Div {
+        t,
+        a,
+        k: 0,
+        m,
+        fixed: None,
+    };
+    let is = |i: usize, c: i64| Formula::Con(Con::eq(&r(i), &Lin::constant(c)));
+    let even = vec![one(0, 2, 3), one(1, 1, 4), one(0, 1, 3)];
+    let mut cases = vec![(
+        "an even quotient".to_string(),
+        even.clone(),
+        formula(
+            &even,
+            Formula::and(vec![is(1, 1), is(0, 0), is(2, 0)]),
+            vec![],
+        ),
+    )];
+    // Depth 1 is one row on `x`, not a chain.
+    for depth in 2..=6 {
+        let (divs, f) = chain_of_quotients(depth);
+        cases.push((format!("depth {depth}"), divs, f));
+    }
+    for (what, divs, f) in cases {
+        assert!(solve(&f, true).is_none(), "{what}: answered\n{f}");
+        let period: i64 = divs.iter().map(|d| d.m).product();
+        let want = has_point(&f, &divs, 0..period);
+        let got = crate::presburger::decide(&f);
+        assert!(
+            got.is_err() || got == Ok(want),
+            "{what}: {got:?}, want {want}\n{f}"
+        );
+    }
+}
+
+/// The small instances of the benchmark in `bench.rs`, against enumeration.
 #[test]
 fn the_benchmark_inputs_have_their_answers_at_small_sizes() {
     for m in [7, 30, 101] {
         let (divs, f) = bench_modulus(m);
         let want = has_point(&f, &divs, 0..m);
         check_answered(&f, want, &format!("modulus {m}"));
-    }
-    for depth in 1..=6 {
-        let (divs, f) = bench_depth(depth);
-        let period: i64 = divs.iter().map(|d| d.m).product();
-        let want = has_point(&f, &divs, 0..period);
-        assert!(want, "depth {depth}: the enumeration");
-        check_answered(&f, want, &format!("depth {depth}"));
     }
 }
 
@@ -516,7 +537,7 @@ fn bench_modulus(m: i64) -> (Vec<Div>, Formula) {
 /// `x div 3`, its quotient by 3, and so on, `depth` times, with the literal
 /// `(x div 3^i) mod 3 == i mod 3` on the remainder of each level, as the checker writes nested
 /// quotients: one point modulo `3^depth`.
-fn bench_depth(depth: usize) -> (Vec<Div>, Formula) {
+fn chain_of_quotients(depth: usize) -> (Vec<Div>, Formula) {
     let mut divs = Vec::new();
     let mut lits = Vec::new();
     for i in 0..depth {
